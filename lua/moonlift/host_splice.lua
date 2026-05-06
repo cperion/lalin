@@ -351,7 +351,7 @@ end
 -- ── Module items slot ─────────────────────────────────────────────────────────
 
 -- Accepted:  Lua array (trusted as Item nodes), ModuleValue with .module.items,
---            empty table (zero items).
+--            empty table (zero items), plain string (parsed as module body).
 function M.fill_items(session, slot, value, site)
     local O = session.T.MoonOpen
 
@@ -359,6 +359,21 @@ function M.fill_items(session, slot, value, site)
 
     local p = protocol(value, "module_items", session, site)
     if p ~= nil and type(p) == "table" then items = p end
+
+    -- Plain string: parse as Moonlift module body (convenience for large
+    -- generated item batches that don't need explicit moon.source wrapping).
+    if not items and type(value) == "string" then
+        local ok, result = pcall(function()
+            local T = session.T
+            local parsed = require("moonlift.parse").parse(T, value)
+            if #parsed.issues > 0 then
+                error("parse error: " .. tostring(parsed.issues[1]), 2)
+            end
+            return parsed.module.items
+        end)
+        if ok then items = result
+        else error((site or "splice") .. ": module_items source parse error: " .. tostring(result), 2) end
+    end
 
     if not items and type(value) == "table" then
         -- Module value with .module.items
@@ -368,8 +383,7 @@ function M.fill_items(session, slot, value, site)
         elseif M.is_source(value) then
             local ok, result = pcall(function()
                 local T = session.T
-                local Parse = require("moonlift.parse")
-                local parsed = Parse.parse_module(T, value.source)
+                local parsed = require("moonlift.parse").parse(T, value.source)
                 if #parsed.issues > 0 then
                     error("parse error: " .. tostring(parsed.issues[1]), 2)
                 end

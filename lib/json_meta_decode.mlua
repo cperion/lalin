@@ -392,7 +392,7 @@ end
 -- ===========================================================================
 
 local function make_skip_ws(name)
-    return region skip_ws_@{name}(p: ptr(u8), n: i32, pos: i32, depth: i32, expect: i32;
+    return region @{name}(p: ptr(u8), n: i32, pos: i32, depth: i32, expect: i32;
         ok: cont(next: i32, depth: i32, expect: i32),
         eof: cont(next: i32, depth: i32, expect: i32))
     entry start()
@@ -412,7 +412,7 @@ local function make_skip_ws(name)
 end
 
 local function make_scan_string(name)
-    return region scan_str_@{name}(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
+    return region @{name}(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
         ok: cont(end_i: i32, start_i: i32, depth: i32, next: i32),
         bad: cont(bad_pos: i32))
     entry start()
@@ -461,7 +461,7 @@ local function make_scan_string(name)
 end
 
 local function make_scan_number(name)
-    return region scan_num_@{name}(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
+    return region @{name}(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
         ok: cont(end_i: i32, start_i: i32, depth: i32, next: i32),
         bad: cont(bad_pos: i32))
     entry start()
@@ -552,8 +552,8 @@ local function make_scan_number(name)
     end
 end
 
-local function make_match_literal(name, suffix, char2, char3, char4, tag, a_val, b_val)
-    return region match_@{name}_@{suffix}(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
+local function make_match_literal(name, char2, char3, char4, tag, a_val, b_val)
+    return region @{name}(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
         ok: cont(end_i: i32, start_i: i32, depth: i32, next: i32),
         bad: cont(bad_pos: i32))
     entry start()
@@ -582,12 +582,12 @@ end
 -- Instantiate fragments
 -- ===========================================================================
 
-local skip_ws     = make_skip_ws("d")
-local scan_str    = make_scan_string("d")
-local scan_num    = make_scan_number("d")
-local match_true  = make_match_literal("true",  "d", 114, 117, 101, 8, 0, 1)    -- r, u, e
-local match_false = make_match_literal("false", "d", 97,  108, 115, 9, 0, 0)    -- a, l, s  (+check4=e)
-local match_null  = make_match_literal("null",  "d", 117, 108, 108, 10, 0, 0)   -- u, l, l
+local skip_ws     = make_skip_ws("skip_ws_d")
+local scan_str    = make_scan_string("scan_str_d")
+local scan_num    = make_scan_number("scan_num_d")
+local match_true  = make_match_literal("match_true_d",  114, 117, 101, 8, 0, 1)    -- r, u, e
+local match_false = make_match_literal("match_false_d", 97,  108, 115, 9, 0, 0)    -- a, l, s  (+check4=e)
+local match_null  = make_match_literal("match_null_d",  117, 108, 108, 10, 0, 0)   -- u, l, l
 
 -- match_false needs 4 checks (a, l, s, e), so handle it specially
 local match_false = region match_false_d(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
