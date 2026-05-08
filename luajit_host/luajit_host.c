@@ -22,15 +22,17 @@ static int cf_lj_jit_init(lua_State *L) {
     lj_dispatch_init_hotcount(G(L));
     lj_dispatch_update(G(L));
     jit_State *J = L2J(L);
+    J->L = L;
     MCode *lim;
     lj_mcode_reserve(J, &lim);
-    J->mctop = J->mcarea;
+    // Don't touch J->mctop — lj_mcode_reserve sets it correctly
     lua_pushboolean(L, 1);
     return 1;
 }
 
 static int cf_ir_trace_compile(lua_State *L) {
     jit_State *J = L2J(L);
+    J->L = L;  // must be set explicitly
     luaL_checktype(L, 1, LUA_TTABLE);
     int nir = (int)lua_objlen(L, 1);
     int nk  = (int)luaL_optinteger(L, 2, 0);
@@ -78,21 +80,25 @@ static int cf_ir_trace_compile(lua_State *L) {
     setgcrefp(T->startpt, pt);
     T->topslot=0; T->traceno=1; T->link=1; T->linktype=LJ_TRLINK_ROOT;
     T->nins=REF_BIAS+ni; T->nk=REF_BIAS; T->ir=irbuf;
-    T->nsnap=0; T->nsnapmap=0;
+    T->nsnap=1; T->nsnapmap=1;
+    T->snap=lj_mem_new(L, sizeof(SnapShot));
+    T->snapmap=lj_mem_new(L, sizeof(SnapEntry));
+    memset(T->snap,0,sizeof(SnapShot));
+    memset(T->snapmap,0,sizeof(SnapEntry));
+    T->snap[0].mapofs=0; T->snap[0].nent=0; T->snap[0].nslots=0;
+    // Register trace in the JIT trace table so traceref(J,1) works
+    if (J->sizetrace < 2) { J->sizetrace = 2; J->trace = lj_mem_newvec(L, 2, GCRef); }
+    setgcrefp(J->trace[1], T);
 
     memset(&J->cur,0,sizeof(GCtrace));
     J->cur.traceno=1; J->cur.link=1; J->cur.linktype=LJ_TRLINK_ROOT;
     J->cur.ir=irbuf; J->cur.nins=REF_BIAS+ni; J->cur.nk=REF_BIAS;
-    J->cur.nsnap=0; J->cur.nsnapmap=0;
-    J->cur.snap=lj_mem_new(L,sizeof(SnapShot));
-    J->cur.snapmap=lj_mem_new(L,sizeof(SnapEntry));
-    memset(J->cur.snap,0,sizeof(SnapShot));
-    memset(J->cur.snapmap,0,sizeof(SnapEntry));
+    J->cur.nsnap=1; J->cur.nsnapmap=1;
+    J->cur.snap=T->snap;
+    J->cur.snapmap=T->snapmap;
     J->irtoplim=REF_BIAS+ni+64; J->irbotlim=0; J->loopref=0;
-    J->framedepth=0; J->maxslot=0; J->baseslot=0;
+    J->parent = 0;
     J->bc_min=NULL; J->bc_extent=0; J->pt=NULL; J->pc=NULL;
-    J->mctop=J->mcarea;
-    J->mcbot=(MCode*)((char*)J->mcarea+J->szmcarea);
     J->curfinal=T; T->mcode=J->mctop;
     memset(&J->fold,0,sizeof(J->fold)); J->fold.ins.o=IR_NOP;
     memset(J->chain,0,sizeof(J->chain));
@@ -103,9 +109,12 @@ static int cf_ir_trace_compile(lua_State *L) {
     lj_opt_sink(J);
 
     T->nins=J->cur.nins; T->nk=J->cur.nk; T->ir=irbuf;
-    // lj_asm_trace(J, T);  // TODO: GC state wiring
+    // T->nsnap=0; T->nsnapmap=0; already set
+    lj_asm_trace(J, T);
 
     lua_newtable(L);
+    lua_pushlightuserdata(L, T->mcode); lua_setfield(L,-2,"mcode");
+    lua_pushinteger(L,(lua_Integer)T->szmcode); lua_setfield(L,-2,"size");
     lua_pushinteger(L, T->nins - T->nk); lua_setfield(L,-2,"nins");
     lua_pushinteger(L, T->nk); lua_setfield(L,-2,"nk");
     free(irbuf);
