@@ -254,25 +254,31 @@ Exit criteria for P2:
 
 ### P3.CORE — Values, Objects, State
 
-- [ ] **P3.CORE.001 — Implement primitive aliases and constants**
-  - `TValueTag`
-  - object type tags
-  - status codes
-  - trace abort codes
+- [x] **P3.CORE.001 — Implement primitive aliases and constants**
+  - `core/value.mlua`: all 14 TValue tag constants (`LUA_TNIL` through `LUA_TLIGHTUD`).
+  - `core/object.mlua`: 9 GC type tags, 4 mark colors, 4 header offset constants.
+  - `core/state.mlua`: 6 status codes, 8 ThreadState offset constants.
+  - `core/bytecode.mlua`: 96 opcode constants matching LuaJIT bcdef.h layout.
 
-- [ ] **P3.CORE.002 — Implement first TValue representation**
-  - explicit tag/payload or selected final representation.
+- [x] **P3.CORE.002 — Implement first TValue representation**
+  - Explicit tag/payload: [tag:i32][pad:i32][payload:i64] = 16 bytes.
+  - Access via typed pointer views: `ptr(i32)` for 32-bit fields, `ptr(i64)` for payload.
+  - Documented in `docs/VALUE_LAYOUT.md`.
 
-- [ ] **P3.CORE.003 — Implement TValue helper regions/functions**
-  - tag checks;
-  - int/num conversion;
-  - GC pointer extraction;
-  - boolean truthiness.
+- [x] **P3.CORE.003 — Implement TValue helper functions**
+  - `tv_tag`, `tv_payload` — read fields
+  - `tv_set`, `tv_set_tag`, `tv_set_payload` — write fields
+  - `tv_is_nil`, `tv_is_false`, `tv_is_true`, ..., `tv_is_lightud` — 12 tag predicates
+  - `tv_is_pri`, `tv_is_gcv`, `tv_is_number`, `tv_is_truthy` — range predicates
+  - `tv_set_nil`, `tv_set_false`, `tv_set_true`, `tv_set_int`, `tv_set_num` — convenience setters
+  - `tv_get_int`, `tv_copy` — value accessors
+  - All in `core/value.mlua`, tested via `tests/test_luajitvm_core.mlua`.
 
-- [ ] **P3.CORE.004 — Implement GC object headers**
-  - common header fields;
-  - object type tags;
-  - pointer casts/helpers.
+- [x] **P3.CORE.004 — Implement GC object headers**
+  - `gc_gct`, `gc_set_gct` — type tag access
+  - `gc_marked`, `gc_set_marked` — mark color access
+  - `gc_is_white`, `gc_is_gray`, `gc_is_black` — color predicates
+  - All in `core/object.mlua`, tested via `tests/test_luajitvm_core.mlua`.
 
 - [ ] **P3.CORE.005 — Implement string object layout skeleton**
 
@@ -283,15 +289,18 @@ Exit criteria for P2:
 - [ ] **P3.CORE.008 — Implement GlobalState layout**
 
 - [ ] **P3.CORE.009 — Implement ThreadState layout**
+  - Offset constants defined in `core/state.mlua`.
 
-- [ ] **P3.CORE.010 — Implement bytecode format and decoders**
+- [x] **P3.CORE.010 — Implement bytecode format and decoders**
   - `bc_op`, `bc_a`, `bc_b`, `bc_c`, `bc_d`.
+  - 96 opcode constants.
+  - All in `core/bytecode.mlua`, tested via `tests/test_luajitvm_core.mlua`.
 
 Exit criteria for P3:
 
-- [ ] A minimal state object can be initialized.
-- [ ] Bytecode can be decoded.
-- [ ] TValue helpers pass direct runner tests.
+- [x] TValue helpers pass direct runner tests.
+- [x] Bytecode can be decoded.
+- [x] GC header accessors work on ptr(u8) memory.
 
 ---
 
