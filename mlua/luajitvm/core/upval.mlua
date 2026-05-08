@@ -1,0 +1,96 @@
+-- core/upval.mlua — GCupval (upvalue) object layout.
+
+-- GCupval memory layout (exact LuaJIT offsets):
+--   Offset  Size  Field
+--   0       8     nextgc    (GCRef)
+--   8       1     marked    (u8)
+--   9       1     gct       (u8)
+--   10      1     closed    (u8: 0=open on stack, 1=closed/copied)
+--   11      1     immutable (u8: 1=readonly)
+--   12-15   4     _pad
+--   16      16    tv        (TValue, used when closed)
+--   16      8     prev      (GCRef, used when open, overlaps tv)
+--   24      8     next      (GCRef, used when open, overlaps tv)
+--   32      8     v         (ptr to stack slot when open, or &tv when closed)
+--   40      4     dhash     (u32 disambiguation hash)
+--   44-47   4     _pad
+--   Total: 48 bytes
+
+local m = module VmCoreUpval
+
+const UV_OFF_CLOSED:     i32 = 10
+const UV_OFF_IMMUTABLE:  i32 = 11
+const UV_OFF_TV:         i32 = 16   -- TValue value, also prev/next when open
+const UV_OFF_V:          i32 = 32   -- ptr to stack slot or &tv
+const UV_OFF_DHASH:      i32 = 40   -- u32 disambiguation hash
+const UV_SIZE:           i32 = 48
+
+-- Accessors
+export func uv_closed(uv: ptr(u8)) -> bool
+    return as(i32, uv[UV_OFF_CLOSED]) ~= 0
+end
+
+export func uv_set_closed(uv: ptr(u8), closed: bool)
+    if closed then uv[UV_OFF_CLOSED] = as(u8, 1) else uv[UV_OFF_CLOSED] = as(u8, 0) end
+end
+
+export func uv_immutable(uv: ptr(u8)) -> bool
+    return as(i32, uv[UV_OFF_IMMUTABLE]) ~= 0
+end
+
+export func uv_set_immutable(uv: ptr(u8), imm: bool)
+    if imm then uv[UV_OFF_IMMUTABLE] = as(u8, 1) else uv[UV_OFF_IMMUTABLE] = as(u8, 0) end
+end
+
+-- v pointer: stack slot (open) or self.tv (closed)
+export func uv_v(uv: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), uv)
+    return as(ptr(u8), p[4])
+end
+
+export func uv_set_v(uv: ptr(u8), target: ptr(u8))
+    let p: ptr(u64) = as(ptr(u64), uv)
+    p[4] = as(u64, target)
+end
+
+-- tv field: TValue storage at offset UV_OFF_TV (16).
+-- For open upvalue: prev/next overlap bytes 16-31. Use uv_prev/uv_next.
+-- For closed upvalue: tag at as(ptr(i32), uv)[4], payload at as(ptr(i64), uv)[3].
+
+export func uv_prev(uv: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), uv)
+    return as(ptr(u8), p[2])
+end
+
+export func uv_set_prev(uv: ptr(u8), prev: ptr(u8))
+    let p: ptr(u64) = as(ptr(u64), uv)
+    p[2] = as(u64, prev)
+end
+
+export func uv_next(uv: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), uv)
+    return as(ptr(u8), p[3])
+end
+
+export func uv_set_next(uv: ptr(u8), nxt: ptr(u8))
+    let p: ptr(u64) = as(ptr(u64), uv)
+    p[3] = as(u64, nxt)
+end
+
+export func uv_dhash(uv: ptr(u8)) -> u32
+    let p: ptr(u32) = as(ptr(u32), uv)
+    return p[UV_OFF_DHASH / 4]
+end
+
+export func uv_set_dhash(uv: ptr(u8), h: u32)
+    let p: ptr(u32) = as(ptr(u32), uv)
+    p[UV_OFF_DHASH / 4] = h
+end
+
+export func upval_const_check() -> i32
+    return UV_SIZE + UV_OFF_DHASH + UV_OFF_V + UV_OFF_TV
+end
+
+end
+
+return m

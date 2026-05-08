@@ -1,0 +1,174 @@
+-- core/proto.mlua — GCproto object layout.
+
+-- GCproto memory layout (exact LuaJIT offsets):
+--   Offset  Size  Field
+--   0       8     nextgc       (GCRef)
+--   8       1     marked       (u8)
+--   9       1     gct          (u8)
+--   10      1     numparams    (u8 number of fixed params)
+--   11      1     framesize    (u8 fixed frame size in slots)
+--   12      4     sizebc       (u32 number of bytecode instructions)
+--   16      8     gclist       (GCRef)
+--   24      8     k            (ptr to split constant array, points to middle)
+--   32      8     uv           (ptr to uint16_t upvalue descriptor array)
+--   40      4     sizekgc      (u32 number of collectable constants)
+--   44      4     sizekn       (u32 number of lua_Number constants)
+--   48      4     sizept       (u32 total size including colocated arrays)
+--   52      1     sizeuv       (u8 number of upvalues)
+--   53      1     flags        (u8 proto flags)
+--   54      2     trace        (u16 anchor for root trace chain)
+--   56      8     chunkname    (GCRef to name string)
+--   64      4     firstline    (u32 first source line)
+--   68      4     numline      (u32 number of source lines)
+--   72      8     lineinfo     (ptr to compressed line map)
+--   80      8     uvinfo       (ptr to upvalue name data)
+--   88      8     varinfo      (ptr to local variable names/extents)
+--   Total: 96 bytes. Bytecode follows at proto + sizeof(GCproto).
+
+local m = module VmCoreProto
+
+const P_OFF_NUMPARAMS:  i32 = 10
+const P_OFF_FRAMESIZE:  i32 = 11
+const P_OFF_SIZEBC:     i32 = 12
+const P_OFF_GCLIST:     i32 = 16
+const P_OFF_K:          i32 = 24
+const P_OFF_UV:         i32 = 32
+const P_OFF_SIZEKGC:    i32 = 40
+const P_OFF_SIZEKN:     i32 = 44
+const P_OFF_SIZEPT:     i32 = 48
+const P_OFF_SIZEUV:     i32 = 52
+const P_OFF_FLAGS:      i32 = 53
+const P_OFF_TRACE:      i32 = 54
+const P_OFF_CHUNKNAME:  i32 = 56
+const P_OFF_FIRSTLINE:  i32 = 64
+const P_OFF_NUMLINE:    i32 = 68
+const P_OFF_LINEINFO:   i32 = 72
+const P_OFF_UVINFO:     i32 = 80
+const P_OFF_VARINFO:    i32 = 88
+const P_SIZE:           i32 = 96
+
+-- Proto flags
+const PROTO_CHILD:     i32 = 1
+const PROTO_VARARG:    i32 = 2
+const PROTO_FFI:       i32 = 4
+const PROTO_NOJIT:     i32 = 8
+const PROTO_ILOOP:     i32 = 16
+
+-- Upvalue descriptor: bit 15 = local slot indicator, bits 0..14 = slot index
+const PROTO_UV_LOCAL:   i32 = 0x8000
+const PROTO_UV_IMMUTABLE: i32 = 0x4000
+
+-- Accessors
+export func proto_numparams(pt: ptr(u8)) -> i32
+    return as(i32, pt[P_OFF_NUMPARAMS])
+end
+
+export func proto_set_numparams(pt: ptr(u8), v: i32)
+    pt[P_OFF_NUMPARAMS] = as(u8, v)
+end
+
+export func proto_framesize(pt: ptr(u8)) -> i32
+    return as(i32, pt[P_OFF_FRAMESIZE])
+end
+
+export func proto_set_framesize(pt: ptr(u8), v: i32)
+    pt[P_OFF_FRAMESIZE] = as(u8, v)
+end
+
+export func proto_sizebc(pt: ptr(u8)) -> u32
+    let p: ptr(u32) = as(ptr(u32), pt)
+    return p[P_OFF_SIZEBC / 4]
+end
+
+export func proto_set_sizebc(pt: ptr(u8), v: u32)
+    let p: ptr(u32) = as(ptr(u32), pt)
+    p[P_OFF_SIZEBC / 4] = v
+end
+
+export func proto_k(pt: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), pt)
+    return as(ptr(u8), p[3])
+end
+
+export func proto_uv(pt: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), pt)
+    return as(ptr(u8), p[4])
+end
+
+export func proto_sizekgc(pt: ptr(u8)) -> u32
+    let p: ptr(u32) = as(ptr(u32), pt)
+    return p[P_OFF_SIZEKGC / 4]
+end
+
+export func proto_sizekn(pt: ptr(u8)) -> u32
+    let p: ptr(u32) = as(ptr(u32), pt)
+    return p[P_OFF_SIZEKN / 4]
+end
+
+export func proto_sizept(pt: ptr(u8)) -> u32
+    let p: ptr(u32) = as(ptr(u32), pt)
+    return p[P_OFF_SIZEPT / 4]
+end
+
+export func proto_sizeuv(pt: ptr(u8)) -> i32
+    return as(i32, pt[P_OFF_SIZEUV])
+end
+
+export func proto_flags(pt: ptr(u8)) -> i32
+    return as(i32, pt[P_OFF_FLAGS])
+end
+
+export func proto_set_flags(pt: ptr(u8), v: i32)
+    pt[P_OFF_FLAGS] = as(u8, v)
+end
+
+export func proto_trace(pt: ptr(u8)) -> i32
+    let p: ptr(u16) = as(ptr(u16), pt)
+    return as(i32, p[P_OFF_TRACE / 2])
+end
+
+export func proto_set_trace(pt: ptr(u8), v: i32)
+    let p: ptr(u16) = as(ptr(u16), pt)
+    p[P_OFF_TRACE / 2] = as(u16, v)
+end
+
+export func proto_chunkname(pt: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), pt)
+    return as(ptr(u8), p[7])
+end
+
+export func proto_firstline(pt: ptr(u8)) -> u32
+    let p: ptr(u32) = as(ptr(u32), pt)
+    return p[P_OFF_FIRSTLINE / 4]
+end
+
+export func proto_numline(pt: ptr(u8)) -> u32
+    let p: ptr(u32) = as(ptr(u32), pt)
+    return p[P_OFF_NUMLINE / 4]
+end
+
+export func proto_lineinfo(pt: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), pt)
+    return as(ptr(u8), p[9])
+end
+
+export func proto_uvinfo(pt: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), pt)
+    return as(ptr(u8), p[10])
+end
+
+export func proto_varinfo(pt: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), pt)
+    return as(ptr(u8), p[11])
+end
+
+-- Bytecode array starts at pt + P_SIZE.
+-- proto_bc(pt) = pt[P_SIZE..] cast as ptr(BCIns)
+
+export func proto_const_check() -> i32
+    return P_SIZE + P_OFF_FLAGS + P_OFF_TRACE + PROTO_VARARG + PROTO_UV_LOCAL
+end
+
+end
+
+return m

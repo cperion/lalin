@@ -1,0 +1,227 @@
+-- core/global.mlua — global_State layout (shared VM state).
+
+-- global_State memory layout (exact LuaJIT offsets):
+--   Offset  Size  Field
+--   0       8     allocf        (ptr to lua_Alloc function)
+--   8       8     allocd        (ptr to allocator userdata)
+--   16      104   gc            (GCState embedded)
+--   120     24    strempty      (GCstr, the empty string object)
+--   144     1     stremptyz     (u8 zero terminator after empty string)
+--   145     1     hookmask      (u8 debug hook mask)
+--   146     1     dispatchmode  (u8 dispatch mode)
+--   147     1     vmevmask      (u8 VM event mask)
+--   148-151 4     _pad
+--   152     32    str           (StrInternState embedded)
+--   184     4     vmstate       (volatile i32: VM state or trace number)
+--   188-191 4     _pad
+--   192     8     mainthref     (GCRef to main thread)
+--   200     16    tmpbuf        (SBuf: ptr+u32+u32+padded)
+--   216     16    tmptv         (TValue temporary)
+--   232     16    tmptv2        (TValue temporary 2)
+--   248     48    nilnode       (Node: fallback hash entry)
+--   296     16    registrytv    (TValue: registry anchor)
+--   312     8     vmthref       (GCRef to VM thread)
+--   320     48    uvhead        (GCupval: head of open upvalue list)
+--   368     4     hookcount     (i32 instruction hook countdown)
+--   372     4     hookcstart    (i32 start count for hook counter)
+--   376     8     hookf         (ptr to lua_Hook function)
+--   384     8     wrapf         (ptr to C function wrapper)
+--   392     8     panic         (ptr to panic function)
+--   400     4     bc_cfunc_int  (u32 BCIns for internal C calls)
+--   404     4     bc_cfunc_ext  (u32 BCIns for external C calls)
+--   408     8     cur_L         (GCRef to current lua_State)
+--   416     8     jit_base      (ptr to JIT code L->base)
+--   424     8     ctype_state   (ptr to C type state)
+--   432     32    prng          (PRNGState: 4*u64)
+--   464     96    gcroot[12]    (GCRef[GCROOT_MAX=12])
+--   Total: 552 bytes
+
+local m = module VmCoreGlobal
+
+-- GCState (embedded at offset 16, 104 bytes)
+-- GCState layout:
+--   0(u64) total, 8(u64) threshold
+--   16(u8) currentwhite, 17(u8) state, 18(u8) unused0, 19(u8) lightudnum
+--   20(u32) sweepstr, 24(ptr) root, 32(ptr) sweep
+--   40(ptr) gray, 48(ptr) grayagain, 56(ptr) weak, 64(ptr) mmudata
+--   72(u64) debt, 80(u64) estimate
+--   88(u32) stepmul, 92(u32) pause, 96(ptr) lightudseg
+--   Total: 104 bytes
+
+const G_OFF_ALLOCF:       i32 = 0
+const G_OFF_ALLOCD:       i32 = 8
+const G_OFF_GC:           i32 = 16   -- GCState base
+const G_OFF_GC_TOTAL:     i32 = 16
+const G_OFF_GC_THRESHOLD: i32 = 24
+const G_OFF_GC_CURRENTWHITE: i32 = 32
+const G_OFF_GC_STATE:     i32 = 33
+const G_OFF_GC_ROOT:      i32 = 40
+const G_OFF_GC_SWEEP:     i32 = 48
+const G_OFF_GC_GRAY:      i32 = 56
+const G_OFF_GC_GRAYAGAIN: i32 = 64
+const G_OFF_GC_WEAK:      i32 = 72
+const G_OFF_GC_MMUDATA:   i32 = 80
+const G_OFF_GC_DEBT:      i32 = 88
+const G_OFF_GC_ESTIMATE:  i32 = 96
+const G_OFF_GC_STEPMUL:   i32 = 104
+const G_OFF_GC_PAUSE:     i32 = 108
+const GCSIZE:             i32 = 104
+
+-- StrInternState (embedded at offset 152, 32 bytes)
+--   tab(ptr,8) mask(u32,4) num(u32,4) id(u32,4) idreseed(u8) second(u8) unused1(u8) unused2(u8) seed(u64,8)
+const G_OFF_STR_TAB:      i32 = 152
+const G_OFF_STR_MASK:     i32 = 160
+const G_OFF_STR_NUM:      i32 = 164
+const G_OFF_STR_ID:       i32 = 168
+const G_OFF_STR_SEED:     i32 = 176
+
+-- Other fields
+const G_OFF_STREMPTY:     i32 = 120
+const G_OFF_HOOKMASK:     i32 = 145
+const G_OFF_DISPATCHMODE: i32 = 146
+const G_OFF_VMEVMASK:     i32 = 147
+const G_OFF_VMSTATE:      i32 = 184
+const G_OFF_MAINTHREAD:   i32 = 192
+const G_OFF_TMPTV:        i32 = 216
+const G_OFF_TMPTV2:       i32 = 232
+const G_OFF_NILNODE:      i32 = 248
+const G_OFF_REGISTRYTV:   i32 = 296
+const G_OFF_VMTHREF:      i32 = 312
+const G_OFF_UVHEAD:       i32 = 320
+const G_OFF_HOOKCOUNT:    i32 = 368
+const G_OFF_CUR_L:        i32 = 408
+const G_OFF_JIT_BASE:     i32 = 416
+const G_OFF_CTYPE_STATE:  i32 = 424
+const G_OFF_GCROOT:       i32 = 464
+const G_SIZE:             i32 = 552
+
+-- GC state machine states
+const GCST_PAUSE:    i32 = 0
+const GCST_PROPAGATE: i32 = 1
+const GCST_ATOMIC:   i32 = 2
+const GCST_SWEEPSTRING: i32 = 3
+const GCST_SWEEP:    i32 = 4
+const GCST_FINALIZE: i32 = 5
+const GCST_LAST:     i32 = 6
+
+-- VM state codes (vmstate field, negated)
+const VMST_INTERP:  i32 = 0
+const VMST_C:       i32 = 1
+const VMST_GC:      i32 = 2
+const VMST_EXIT:    i32 = 3
+const VMST_RECORD:  i32 = 4
+const VMST_OPT:     i32 = 5
+const VMST_ASM:     i32 = 6
+
+-- GC root indices
+const GCROOT_MMNAME: i32 = 0
+const GCROOT_BASEMT: i32 = 12   -- MM__MAX = 12
+const GCROOT_MAX:    i32 = 16
+
+-- Accessors (key fields used by interpreter/dispatch)
+export func g_allocf(g: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), g)
+    return as(ptr(u8), p[0])
+end
+
+export func g_set_allocf(g: ptr(u8), f: ptr(u8))
+    let p: ptr(u64) = as(ptr(u64), g)
+    p[0] = as(u64, f)
+end
+
+export func g_allocd(g: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), g)
+    return as(ptr(u8), p[1])
+end
+
+export func g_gc_total(g: ptr(u8)) -> u64
+    let p: ptr(u64) = as(ptr(u64), g)
+    return p[2]
+end
+
+export func g_set_gc_total(g: ptr(u8), v: u64)
+    let p: ptr(u64) = as(ptr(u64), g)
+    p[2] = v
+end
+
+export func g_gc_threshold(g: ptr(u8)) -> u64
+    let p: ptr(u64) = as(ptr(u64), g)
+    return p[3]
+end
+
+export func g_gc_currentwhite(g: ptr(u8)) -> i32
+    return as(i32, g[G_OFF_GC_CURRENTWHITE])
+end
+
+export func g_set_gc_currentwhite(g: ptr(u8), v: i32)
+    g[G_OFF_GC_CURRENTWHITE] = as(u8, v)
+end
+
+export func g_gc_state(g: ptr(u8)) -> i32
+    return as(i32, g[G_OFF_GC_STATE])
+end
+
+export func g_set_gc_state(g: ptr(u8), v: i32)
+    g[G_OFF_GC_STATE] = as(u8, v)
+end
+
+export func g_gc_root(g: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), g)
+    return as(ptr(u8), p[5])
+end
+
+export func g_gc_gray(g: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), g)
+    return as(ptr(u8), p[7])
+end
+
+export func g_mainthread(g: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), g)
+    return as(ptr(u8), p[24])
+end
+
+export func g_str_tab(g: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), g)
+    return as(ptr(u8), p[19])
+end
+
+export func g_str_mask(g: ptr(u8)) -> u32
+    let p: ptr(u32) = as(ptr(u32), g)
+    return p[G_OFF_STR_MASK / 4]
+end
+
+export func g_str_num(g: ptr(u8)) -> u32
+    let p: ptr(u32) = as(ptr(u32), g)
+    return p[G_OFF_STR_NUM / 4]
+end
+
+export func g_vmstate(g: ptr(u8)) -> i32
+    let p: ptr(i32) = as(ptr(i32), g)
+    return p[G_OFF_VMSTATE / 4]
+end
+
+export func g_set_vmstate(g: ptr(u8), v: i32)
+    let p: ptr(i32) = as(ptr(i32), g)
+    p[G_OFF_VMSTATE / 4] = v
+end
+
+export func g_cur_L(g: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), g)
+    return as(ptr(u8), p[51])
+end
+
+export func g_set_cur_L(g: ptr(u8), L: ptr(u8))
+    let p: ptr(u64) = as(ptr(u64), g)
+    p[51] = as(u64, L)
+end
+
+-- TValue temporaries (g + offset, access via byte indexing or typed ptr cast)
+
+
+export func global_const_check() -> i32
+    return G_SIZE + G_OFF_GC + G_OFF_STR_TAB + G_OFF_VMSTATE + GCSIZE
+end
+
+end
+
+return m

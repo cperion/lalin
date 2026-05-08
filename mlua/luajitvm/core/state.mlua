@@ -1,19 +1,44 @@
--- core/state.mlua — ThreadState offsets, status codes.
+-- core/state.mlua — ThreadState (lua_State) layout and status constants.
+
+-- lua_State memory layout (exact LuaJIT offsets, GCHeader prefix):
+--   Offset  Size  Field
+--   0       8     nextgc     (GCRef)
+--   8       1     marked     (u8)
+--   9       1     gct        (u8 GC type tag, ~LJ_TTHREAD)
+--   10      1     dummy_ffid (u8 fake FF_C for curr_funcisL)
+--   11      1     status     (u8: LUA_OK/YIELD/ERRRUN/...)
+--   12-15   4     _pad
+--   16      8     glref      (ptr to global_State)
+--   24      8     gclist     (GCRef)
+--   32      8     base       (ptr to current frame base TValue)
+--   40      8     top        (ptr to first free TValue slot)
+--   48      8     maxstack   (ptr to last free slot)
+--   56      8     stack      (ptr to stack base)
+--   64      8     openupval  (GCRef to open upvalue list)
+--   72      8     env        (GCRef to environment table)
+--   80      8     cframe     (ptr to C stack frame chain end)
+--   88      4     stacksize  (u32 true stack size)
+--   92-95   4     _pad
+--   Total: 96 bytes
 
 local m = module VmCoreState
 
--- ThreadState byte offsets (from base of GCthread, after GCHeader at +16)
-const TS_OFF_STACK:     i32 = 16
-const TS_OFF_STACKSIZE: i32 = 24
-const TS_OFF_TOP:       i32 = 28
+-- Field offsets from lua_State base
+const TS_OFF_GCT:       i32 = 9
+const TS_OFF_STATUS:    i32 = 11
+const TS_OFF_GLREF:     i32 = 16
+const TS_OFF_GCLIST:    i32 = 24
 const TS_OFF_BASE:      i32 = 32
-const TS_OFF_MAXSTACK:  i32 = 36
-const TS_OFF_PC:        i32 = 40
-const TS_OFF_STATUS:    i32 = 48
-const TS_OFF_GLREF:     i32 = 56
+const TS_OFF_TOP:       i32 = 40
+const TS_OFF_MAXSTACK:  i32 = 48
+const TS_OFF_STACK:     i32 = 56
 const TS_OFF_OPENUPVAL: i32 = 64
+const TS_OFF_ENV:       i32 = 72
+const TS_OFF_CFRAME:    i32 = 80
+const TS_OFF_STACKSIZE: i32 = 88
+const TS_SIZE:          i32 = 96
 
--- Thread status codes
+-- Thread status codes (lua.h compatible)
 const LUA_OK:        i32 = 0
 const LUA_YIELD:     i32 = 1
 const LUA_ERRRUN:    i32 = 2
@@ -21,20 +46,101 @@ const LUA_ERRSYNTAX: i32 = 3
 const LUA_ERRMEM:    i32 = 4
 const LUA_ERRERR:    i32 = 5
 
-export func ts_get_pc_lo(ts: ptr(u8)) -> i32
-    return as(i32, ts[40])
+-- Status predicates
+export func ts_is_running(ts: ptr(u8)) -> bool
+    return as(i32, ts[TS_OFF_STATUS]) == LUA_OK
 end
 
-export func ts_get_status_byte0(ts: ptr(u8)) -> i32
-    return as(i32, ts[48])
+-- ThreadState accessors
+export func ts_status(ts: ptr(u8)) -> i32
+    return as(i32, ts[TS_OFF_STATUS])
 end
 
 export func ts_set_status(ts: ptr(u8), status: i32)
-    ts[48] = as(u8, status)
+    ts[TS_OFF_STATUS] = as(u8, status)
+end
+
+export func ts_glref(ts: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), ts)
+    return as(ptr(u8), p[2])
+end
+
+export func ts_set_glref(ts: ptr(u8), g: ptr(u8))
+    let p: ptr(u64) = as(ptr(u64), ts)
+    p[2] = as(u64, g)
+end
+
+export func ts_base(ts: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), ts)
+    return as(ptr(u8), p[4])
+end
+
+export func ts_set_base(ts: ptr(u8), base: ptr(u8))
+    let p: ptr(u64) = as(ptr(u64), ts)
+    p[4] = as(u64, base)
+end
+
+export func ts_top(ts: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), ts)
+    return as(ptr(u8), p[5])
+end
+
+export func ts_set_top(ts: ptr(u8), top: ptr(u8))
+    let p: ptr(u64) = as(ptr(u64), ts)
+    p[5] = as(u64, top)
+end
+
+export func ts_maxstack(ts: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), ts)
+    return as(ptr(u8), p[6])
+end
+
+export func ts_stack(ts: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), ts)
+    return as(ptr(u8), p[7])
+end
+
+export func ts_set_stack(ts: ptr(u8), stack: ptr(u8))
+    let p: ptr(u64) = as(ptr(u64), ts)
+    p[7] = as(u64, stack)
+end
+
+export func ts_openupval(ts: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), ts)
+    return as(ptr(u8), p[8])
+end
+
+export func ts_set_openupval(ts: ptr(u8), uv: ptr(u8))
+    let p: ptr(u64) = as(ptr(u64), ts)
+    p[8] = as(u64, uv)
+end
+
+export func ts_env(ts: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), ts)
+    return as(ptr(u8), p[9])
+end
+
+export func ts_stacksize(ts: ptr(u8)) -> u32
+    let p: ptr(u32) = as(ptr(u32), ts)
+    return p[TS_OFF_STACKSIZE / 4]
+end
+
+export func ts_set_stacksize(ts: ptr(u8), sz: u32)
+    let p: ptr(u32) = as(ptr(u32), ts)
+    p[TS_OFF_STACKSIZE / 4] = sz
+end
+
+-- Frame helpers: frame size = top - base (in TValue slots, each 16 bytes)
+export func ts_frame_slots(ts: ptr(u8)) -> i32
+    let b: ptr(u64) = as(ptr(u64), ts)
+    let tops: u64 = as(u64, b[5])
+    let bases: u64 = as(u64, b[4])
+    if tops <= bases then return 0 end
+    return as(i32, tops - bases) / 16
 end
 
 export func state_const_check() -> i32
-    return LUA_OK + LUA_ERRRUN + TS_OFF_PC
+    return TS_SIZE + TS_OFF_STATUS + TS_OFF_BASE + TS_OFF_TOP + TS_OFF_STACK + LUA_OK + LUA_ERRRUN
 end
 
 end

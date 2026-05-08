@@ -280,16 +280,26 @@ Exit criteria for P2:
   - `gc_is_white`, `gc_is_gray`, `gc_is_black` — color predicates
   - All in `core/object.mlua`, tested via `tests/test_luajitvm_core.mlua`.
 
-- [ ] **P3.CORE.005 — Implement string object layout skeleton**
+- [x] **P3.CORE.005 — Implement string object layout skeleton**
+  - `core/string.mlua`: GCstr header size (24 bytes), field offsets, u8/u32 accessors, sentinel.
+  - Verified against LuaJIT FFI offset test.
 
-- [ ] **P3.CORE.006 — Implement table object layout skeleton**
+- [x] **P3.CORE.006 — Implement table object layout skeleton**
+  - `core/table.mlua`: GCtab (56 bytes), Node (48 bytes), array/node/metatable/asize/hmask accessors.
 
-- [ ] **P3.CORE.007 — Implement proto/function/upvalue layouts**
+- [x] **P3.CORE.007 — Implement proto/function/upvalue layouts**
+  - `core/proto.mlua`: GCproto (96 bytes), numparams/framesize/sizebc/k/uv/sizekgc/sizekn/sizeuv/flags/trace/chunkname/lineinfo.
+  - `core/func.mlua`: GCfuncC (48 bytes base), GCfuncL (40 bytes base), ffid/nupvalues/env/pc/f/uvptr, type predicates.
+  - `core/upval.mlua`: GCupval (48 bytes), closed/immutable/v/prev/next/dhash, open/closed chain access.
 
-- [ ] **P3.CORE.008 — Implement GlobalState layout**
+- [x] **P3.CORE.008 — Implement GlobalState layout**
+  - `core/global.mlua`: global_State (552 bytes), GCState embedded (104 bytes), StrInternState embedded (32 bytes).
+  - Accessors for: allocf/allocd, gc.total/threshold/currentwhite/state/root/gray, strtab/strmask/strnum, vmstate, mainthread, cur_L.
 
-- [ ] **P3.CORE.009 — Implement ThreadState layout**
-  - Offset constants defined in `core/state.mlua`.
+- [x] **P3.CORE.009 — Implement ThreadState layout**
+  - `core/state.mlua`: Complete lua_State layout (96 bytes) with correct LuaJIT offsets.
+  - Fields: gct, status, glref, base, top, maxstack, stack, openupval, env, cframe, stacksize.
+  - Status codes: LUA_OK, LUA_YIELD, LUA_ERRRUN, LUA_ERRSYNTAX, LUA_ERRMEM, LUA_ERRERR.
 
 - [x] **P3.CORE.010 — Implement bytecode format and decoders**
   - `bc_op`, `bc_a`, `bc_b`, `bc_c`, `bc_d`.
@@ -301,6 +311,9 @@ Exit criteria for P3:
 - [x] TValue helpers pass direct runner tests.
 - [x] Bytecode can be decoded.
 - [x] GC header accessors work on ptr(u8) memory.
+- [x] All 6 GC object type layouts (GCstr, GCtab, GCproto, GCfuncC/L, GCupval) have offset constants and accessors.
+- [x] GlobalState and ThreadState have complete offset constants and accessors.
+- [x] All layout modules compile and verify sentinel values.
 
 ---
 

@@ -14,6 +14,13 @@ local files = {
     "mlua/luajitvm/core/bytecode.mlua",
     "mlua/luajitvm/core/object.mlua",
     "mlua/luajitvm/core/api.mlua",
+    -- Task 7-B: GC object and runtime-state layout modules (P3.CORE.005-009)
+    "mlua/luajitvm/core/string.mlua",
+    "mlua/luajitvm/core/table.mlua",
+    "mlua/luajitvm/core/proto.mlua",
+    "mlua/luajitvm/core/func.mlua",
+    "mlua/luajitvm/core/upval.mlua",
+    "mlua/luajitvm/core/global.mlua",
     "mlua/luajitvm/gc/gc.mlua",
     "mlua/luajitvm/gc/mark.mlua",
     "mlua/luajitvm/gc/sweep.mlua",

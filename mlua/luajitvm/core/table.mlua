@@ -1,0 +1,119 @@
+-- core/table.mlua — GCtab object layout.
+
+-- GCtab memory layout (exact LuaJIT offsets):
+--   Offset  Size  Field
+--   0       8     nextgc     (GCRef)
+--   8       1     marked     (u8)
+--   9       1     gct        (u8)
+--   10      1     nomm       (u8 negative metamethod cache)
+--   11      1     colo       (i8 array colocation flag)
+--   16      8     array      (ptr to TValue array part)
+--   24      8     gclist     (GCRef)
+--   32      8     metatable  (GCRef)
+--   40      8     node       (ptr to Node hash part)
+--   48      4     asize      (u32 array size)
+--   52      4     hmask      (u32 hash mask)
+--   Total: 56 bytes
+
+local m = module VmCoreTable
+
+const TAB_OFF_NOMM:      i32 = 10
+const TAB_OFF_COLO:      i32 = 11
+const TAB_OFF_ARRAY:     i32 = 16
+const TAB_OFF_GCLIST:    i32 = 24
+const TAB_OFF_METATABLE: i32 = 32
+const TAB_OFF_NODE:      i32 = 40
+const TAB_OFF_ASIZE:     i32 = 48
+const TAB_OFF_HMASK:     i32 = 52
+const TAB_SIZE:           i32 = 56
+
+-- Hash Node layout (each node is 48 bytes):
+--   0       16    val      (TValue)
+--   16      16    key      (TValue)
+--   32      8     next     (ptr to next Node)
+--   40      8     freetop  (ptr, stored in node[0] on !GC64 config)
+const NODE_OFF_VAL:     i32 = 0
+const NODE_OFF_KEY:     i32 = 16
+const NODE_OFF_NEXT:    i32 = 32
+const NODE_SIZE:        i32 = 48
+
+-- Accessors
+export func tab_nomm(t: ptr(u8)) -> i32
+    return as(i32, t[TAB_OFF_NOMM])
+end
+
+export func tab_set_nomm(t: ptr(u8), v: i32)
+    t[TAB_OFF_NOMM] = as(u8, v)
+end
+
+export func tab_colo(t: ptr(u8)) -> i32
+    return as(i32, t[TAB_OFF_COLO])
+end
+
+export func tab_set_colo(t: ptr(u8), v: i32)
+    t[TAB_OFF_COLO] = as(u8, v)
+end
+
+export func tab_array(t: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), t)
+    return as(ptr(u8), p[2])
+end
+
+export func tab_set_array(t: ptr(u8), a: ptr(u8))
+    let p: ptr(u64) = as(ptr(u64), t)
+    p[2] = as(u64, a)
+end
+
+export func tab_metatable(t: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), t)
+    return as(ptr(u8), p[4])
+end
+
+export func tab_set_metatable(t: ptr(u8), mt: ptr(u8))
+    let p: ptr(u64) = as(ptr(u64), t)
+    p[4] = as(u64, mt)
+end
+
+export func tab_node(t: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), t)
+    return as(ptr(u8), p[5])
+end
+
+export func tab_set_node(t: ptr(u8), n: ptr(u8))
+    let p: ptr(u64) = as(ptr(u64), t)
+    p[5] = as(u64, n)
+end
+
+export func tab_asize(t: ptr(u8)) -> u32
+    let p: ptr(u32) = as(ptr(u32), t)
+    return p[TAB_OFF_ASIZE / 4]
+end
+
+export func tab_set_asize(t: ptr(u8), v: u32)
+    let p: ptr(u32) = as(ptr(u32), t)
+    p[TAB_OFF_ASIZE / 4] = v
+end
+
+export func tab_hmask(t: ptr(u8)) -> u32
+    let p: ptr(u32) = as(ptr(u32), t)
+    return p[TAB_OFF_HMASK / 4]
+end
+
+export func tab_set_hmask(t: ptr(u8), v: u32)
+    let p: ptr(u32) = as(ptr(u32), t)
+    p[TAB_OFF_HMASK / 4] = v
+end
+
+-- Node next pointer: nodebase[32..39] as ptr
+export func node_next(n: ptr(u8)) -> ptr(u8)
+    let p: ptr(u64) = as(ptr(u64), n)
+    return as(ptr(u8), p[4])
+end
+
+export func table_const_check() -> i32
+    return TAB_SIZE + TAB_OFF_ASIZE + TAB_OFF_HMASK + NODE_SIZE + NODE_OFF_NEXT
+end
+
+end
+
+return m
