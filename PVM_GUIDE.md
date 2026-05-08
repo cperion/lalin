@@ -270,6 +270,61 @@ T:Define [[ module UI  { Node = Rect(string tag) unique } ]]
 
 This lets you define layers in separate blocks or even separate files.
 
+## Chapter 2.5: Control protocols — typing the control flow
+
+ASDL types describe data. The same syntax describes control flow.
+
+```lua
+T:Define [[
+    module App {
+        -- Data types (what things are)
+        Request = Get(string path)
+                | Post(string path, string* body)
+
+        -- Control protocols (what can happen next)
+        Handler = Success(string* body)
+                | NotFound
+                | Error(string code)
+
+        Parser = Int(string value)
+               | Float(string value)
+               | Error(string pos)
+    }
+]]
+```
+
+The `|` operator means "or" in both contexts. In data types, it separates
+constructors. In control protocols, it separates exits — continuations that
+the computation can take, each carrying typed parameters.
+
+A function or region declares its exit protocol:
+
+```
+region parse_int: App.Parser(p, n)
+entry start()
+    ...
+    jump Int(value = result)
+    jump Error(pos = i)
+end
+end
+```
+
+The compiler checks:
+- Every exit used in the body is declared in the protocol
+- Every exit declared is handled (exhaustiveness, like `match` on sum types)
+- Exit parameters match the protocol declaration types
+
+Control protocols are types. They compose. They are checked. They eliminate
+an entire class of bugs — unhandled exits, mismatched parameters, incomplete
+state machines — that functions alone cannot catch.
+
+This is not Moonlift-specific. Any program, in any language, has control
+protocols. A music player's transport: `Playing | Stopped | Paused`. A
+network handler: `Success | Timeout | Error`. A parser: `Ok | Err`. These
+should be declared, checked, and composed like any other type. The ASDL
+syntax gives us one language for both.
+
+
 ---
 
 ## Chapter 3: Interning — Same Values, Same Object

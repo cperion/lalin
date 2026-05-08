@@ -1,0 +1,196 @@
+-- Moonlift VM Design
+--
+-- A typed control-flow interpreter compiled once by Cranelift.
+-- Tapes are pure data assembled by the PVM compiler pipeline.
+--
+-- Architecture:
+--   .mlua source → PVM phases → MoonTree → tree_to_tape → Tape (data)
+--                                                              ↓
+--   Moonlift VM (compiled ONCE, PVM-cached forever) ←─────────┘
+--        ↓
+--   Cranelift (one call, at startup)
+--
+-- The VM doesn't know about regions, emit, or typechecking.
+-- Those are resolved at tape-generation time. The VM only sees
+-- flat blocks, typed jumps, and basic operations.
+
+-- ═══════════════════════════════════════════════════════════════
+-- Tape format
+-- ═══════════════════════════════════════════════════════════════
+--
+-- The tape is a single flat array of operations. All operations
+-- are fixed-width with a 1-word opcode header. Operands are
+-- indices into value/type/block tables stored alongside the tape.
+--
+-- Opcode table:
+--
+--   0  BLOCK     label_id type_count
+--               Followed by type_count TypeTag words
+--               Creates a named block. The block is entered via
+--               JUMP or IF/IFNOT. Block params are pushed onto
+--               the value stack when jumped to.
+--
+--   1  ENTRY     label_id param_count
+--               Followed by param_count {name_id, type_tag} pairs
+--               Like BLOCK but for the entry point. Params are
+--               bound from function arguments.
+--
+--   2  JUMP      target_label arg_count
+--               Followed by arg_count value_ids
+--               Jumps to target_label with the given arguments
+--               bound to the target's block params. Terminates
+--               the current block.
+--
+--   3  IF        cond_val then_label else_label
+--               If cond_val != 0, jump to then_label.
+--               Else jump to else_label. Terminates current block.
+--
+--   4  SWITCH    val type_tag case_count default_label
+--               Followed by case_count {case_value, target_label}
+--               Signed or unsigned dispatch. Terminates block.
+--
+--   5  CONST     dst_val_id type_tag raw_value
+--               raw_value is an i64 bit pattern.
+--               Pushes a typed constant.
+--
+--   6  LOAD      dst_val_id ptr_val_id type_tag
+--               Load from memory. ptr_val must be ptr type.
+--
+--   7  STORE     src_val_id ptr_val_id type_tag
+--               Store to memory.
+--
+--   8  BINARY    dst_val_id op lhs_val_id rhs_val_id type_tag
+--               op: 0=add 1=sub 2=mul 3=div 4=rem
+--                   5=and 6=or 7=xor 8=shl 9=shr 10=sar
+--
+--   9  COMPARE   dst_val_id op lhs_val_id rhs_val_id type_tag
+--               op: 0=eq 1=ne 2=slt 3=sle 4=ult 5=ule
+--               Result is i32 (0 or 1).
+--
+--  10  RETURN    val_id
+--               Returns val_id from the function. Terminates.
+--
+--  11  CALL      dst_val_id func_id arg_count
+--               Followed by arg_count value_ids
+--               Calls an extern function. func_id indexes the
+--               extern symbol table.
+--
+--  12  PHI       dst_val_id block_label value_id
+--               (optional, for validation/optimization hints)
+--
+--  13  HALT
+--               End of tape marker.
+
+-- ═══════════════════════════════════════════════════════════════
+-- Type tags
+-- ═══════════════════════════════════════════════════════════════
+--
+--   0  void      1  bool      2  i8       3  i16
+--   4  i32       5  i64       6  u8       7  u16
+--   8  u32       9  u64      10  f32     11  f64
+--  12  index    13  ptr
+
+-- ═══════════════════════════════════════════════════════════════
+-- Value model
+-- ═══════════════════════════════════════════════════════════════
+--
+-- Values are stored in a register array (ptr(Value)).
+-- Each value is 128 bits: {tag: i32, pad: i32, raw: i64}
+--   tag 0 = i64 (raw is the value)
+--   tag 1 = f64 (raw reinterpreted)
+--   tag 2-13 = small int in raw
+--   tag 14 = ptr (raw is the pointer address)
+--
+-- Block params push values when a jump targets the block.
+-- The VM resolves PHI-like semantics implicitly through
+-- block param binding at jump time.
+
+-- ═══════════════════════════════════════════════════════════════
+-- The VM interpreter (pseudocode)
+-- ═══════════════════════════════════════════════════════════════
+--
+-- func vm_exec(
+--     tape: ptr(Op),           -- flat opcode array
+--     values: ptr(Value),      -- register file, pre-sized
+--     blocks: ptr(BlockInfo),  -- block metadata (param count, offset)
+--     externs: ptr(ptr(u8)),   -- extern function pointers
+-- ) -> Value
+--
+--   // Current program counter (index into tape)
+--   pc: index = 0
+--   // Current value counter (next free value slot)
+--   vc: index = 0
+--
+--   while true:
+--     op = tape[pc]
+--
+--     switch op.code:
+--       case BLOCK:
+--         // Just a label. Execution falls through to next op
+--         // unless the previous op was a terminator.
+--         // Block params are set by whoever jumps here.
+--         pc += 1 + op.type_count
+--
+--       case JUMP:
+--         // Bind args to target block's params
+--         // Copy arg values to the target block's param value slots
+--         target = op.target
+--         for i in 0..op.arg_count:
+--           values[blocks[target].param_start + i] = values[op.args[i]]
+--         pc = blocks[target].offset
+--
+--       case IF:
+--         if values[op.cond] != 0:
+--           pc = blocks[op.then_label].offset
+--         else:
+--           pc = blocks[op.else_label].offset
+--
+--       case SWITCH:
+--         val = values[op.val]
+--         for case in op.cases:
+--           if val == case.value:
+--             pc = blocks[case.target].offset; break
+--         if not found: pc = blocks[op.default_label].offset
+--
+--       case CONST:
+--         values[vc] = {tag=op.type, raw=op.value}
+--         op.dst = vc
+--         vc += 1; pc += 1
+--
+--       case LOAD:
+--         ptr = values[op.ptr].raw
+--         values[vc] = load_typed(ptr, op.type)
+--         op.dst = vc
+--         vc += 1; pc += 1
+--
+--       case STORE:
+--         ptr = values[op.ptr].raw
+--         store_typed(ptr, values[op.src], op.type)
+--         pc += 1
+--
+--       case BINARY:
+--         lhs = values[op.lhs]; rhs = values[op.rhs]
+--         values[vc] = binop(op.kind, lhs, rhs, op.type)
+--         op.dst = vc
+--         vc += 1; pc += 1
+--
+--       case RETURN:
+--         return values[op.val]
+--
+--       case HALT:
+--         return error_value
+
+-- ═══════════════════════════════════════════════════════════════
+-- Why this is different from the current BackCmd → Cranelift path
+-- ═══════════════════════════════════════════════════════════════
+--
+-- CURRENT:
+--   Every .mlua function → tree_to_back → BackCmd tape → Cranelift compile
+--   Cranelift runs N times (once per function), slow, no caching
+--
+-- VM:
+--   Every .mlua function → tree_to_tape → OpTape (data)
+--   Cranelift runs ONCE (compiles the VM interpreter)
+--   The VM is PVM-cached forever
+--
+-- The tape is Moonlift's IR in data form. The VM IS the compiler backend.

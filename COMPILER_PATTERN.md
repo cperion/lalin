@@ -123,7 +123,57 @@ returns the next source. Purity gives: undo by storing the previous
 root, structural sharing through `pvm.with`, coherent memoization
 (same input → same output → skip), and tests by constructor + assertion.
 
-### 2.4 Phases
+### 2.4 Control protocols
+
+What CAN happen next.
+
+Data types describe data. Control protocols describe control flow. Both
+are types. Both are checkable. Both compose.
+
+In ASDL, the same syntax serves both purposes:
+
+```
+module Audio {
+    -- Data types (what things are)
+    Track = AudioTrack(clip: Clip*, volume: int, pan: int)
+          | MidiTrack(clip: Clip*, instrument: int)
+
+    Clip  = Clip(source: string, start: int, end: int)
+
+    -- Control protocols (what can happen next)
+    Transport = Playing(position: int)
+              | Stopped
+              | Paused(position: int)
+
+    HitTest = Hit(track: int, clip: int)
+            | Miss()
+}
+```
+
+The `|` operator means "or" in both domains. In data types, `AudioTrack |
+MidiTrack` means a Track is one or the other. In control protocols, `Playing
+| Stopped | Paused` means execution will exit through exactly one of those
+continuations, carrying the declared parameters.
+
+Control protocols are the missing type system. For sixty years, we typed
+our data (`int`, `struct`, `List<T>`) and left our control flow untyped
+(`goto`, `break`, exceptions, callbacks). Then we built crutches — monads,
+effect systems, async/await — to recover the type safety we lost.
+
+With control protocols, the compiler can check:
+- Every exit is handled (exhaustiveness, like match on sum types)
+- Every exit carries the right types (parameter matching)
+- Every composition is closed (no exit leaks)
+
+This applies to any program, in any language. A music player's transport
+has the protocol `Playing | Stopped | Paused`. A parser has the protocol
+`Ok(value) | Error(pos)`. A network request has the protocol
+`Success(response) | Timeout | Error(code)`. These are types. They should
+be declared, checked, and composed like any other type.
+
+The ASDL syntax unifies both type systems. One surface, two structures.
+
+### 2.5 Phases
 
 A phase is a fact-gathering iterator over the source.
 
@@ -161,7 +211,7 @@ nest. The outermost consumer pulls through all of them in one fused
 pass. There is no intermediate collection. Values flow from the deepest
 handler directly to the consumer.
 
-### 2.5 The loop
+### 2.6 The loop
 
 The final consumer is a loop:
 
@@ -180,7 +230,7 @@ structural identity, lazy evaluation — is machinery that makes the
 iterator fast. The loop doesn't know about any of it. It pulls a fact.
 It acts on the fact. It pulls the next.
 
-### 2.6 The live loop
+### 2.7 The live loop
 
 The five concepts yield the live loop:
 

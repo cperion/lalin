@@ -1,0 +1,68 @@
+-- Scratch API demo v2: simple inline Moonlift source
+
+local ffi = require("ffi")
+
+local Scratch = module Scratch
+
+extern func moonlift_scratch_i32(slot: i32, count: i32) -> ptr(i32)
+extern func moonlift_scratch_raw(slot: i32, elem_size: i32, count: i32) -> ptr(u8)
+
+export func test_scratch_raw() -> i32
+    -- Old API: scratch_i32(1, 100) → ptr(i32)
+    let old_p: ptr(i32) = moonlift_scratch_i32(1, 100)
+    old_p[0] = 42
+    old_p[99] = -7
+
+    -- New API: scratch_raw(2, 4, 100) → ptr(u8), cast to ptr(i32)
+    let raw: ptr(u8) = moonlift_scratch_raw(2, 4, 100)
+    let new_p: ptr(i32) = as(ptr(i32), raw)
+
+    if new_p[0] == 0 then
+        new_p[0] = 99
+        if new_p[0] == 99 then
+            return 1
+        end
+    end
+    return 0
+end
+
+-- Test: slot auto-grow beyond old limit of 8
+export func test_slot_grow() -> i32
+    let raw: ptr(u8) = moonlift_scratch_raw(100, 8, 50)
+    let p: ptr(i64) = as(ptr(i64), raw)
+    p[0] = 42
+    p[49] = 99
+    if p[0] == 42 then
+        if p[49] == 99 then
+            return 1
+        end
+    end
+    return 0
+end
+
+-- Test: scratch reuse zeros old data
+export func test_scratch_zeros() -> i32
+    -- Allocate and write
+    let raw: ptr(u8) = moonlift_scratch_raw(3, 4, 100)
+    let p: ptr(i32) = as(ptr(i32), raw)
+    p[0] = 12345
+    -- Re-allocate same slot → should be zeroed
+    let raw2: ptr(u8) = moonlift_scratch_raw(3, 4, 100)
+    let p2: ptr(i32) = as(ptr(i32), raw2)
+    if p2[0] == 0 then
+        return 1
+    end
+    return 0
+end
+
+end
+
+local compiled = Scratch:compile()
+
+print("=== Scratch API Demo ===")
+print(string.format("  scratch_raw works:        %s", compiled:get("test_scratch_raw")() == 1 and "OK" or "FAIL"))
+print(string.format("  slot_grow (slot 100):     %s", compiled:get("test_slot_grow")() == 1 and "OK" or "FAIL"))
+print(string.format("  scratch_zeros on reuse:   %s", compiled:get("test_scratch_zeros")() == 1 and "OK" or "FAIL"))
+
+compiled:free()
+return Scratch

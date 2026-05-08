@@ -1,45 +1,51 @@
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::ffi::{c_char, c_int, c_void};
+use std::cell::RefCell;
 
 unsafe extern "C" {
     fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) -> c_int;
 }
 
 thread_local! {
-    static SCRATCH_I32: std::cell::RefCell<Vec<Vec<i32>>> = std::cell::RefCell::new(vec![Vec::new(); 8]);
-    static SCRATCH_U8: std::cell::RefCell<Vec<Vec<u8>>> = std::cell::RefCell::new(vec![Vec::new(); 8]);
+    static SCRATCH: RefCell<Vec<Vec<u8>>> = RefCell::new(Vec::new());
 }
 
-pub extern "C" fn moonlift_scratch_i32(slot: i32, count: i32) -> *mut i32 {
-    if !(0..8).contains(&slot) || count <= 0 {
+// Single generic scratch function. Returns ptr(u8) to zeroed memory,
+// auto-freed on function return (thread-local, reused per slot).
+//   slot: arena index (0..N, auto-grows)
+//   elem_size: bytes per element
+//   count: number of elements
+pub extern "C" fn moonlift_scratch_raw(slot: i32, elem_size: i32, count: i32) -> *mut u8 {
+    if slot < 0 || elem_size <= 0 || count <= 0 {
         return std::ptr::null_mut();
     }
-    SCRATCH_I32.with(|scratch| {
+    let slot = slot as usize;
+    let byte_count = (elem_size as usize).saturating_mul(count as usize);
+    if byte_count == 0 {
+        return std::ptr::null_mut();
+    }
+    SCRATCH.with(|scratch| {
         let mut scratch = scratch.borrow_mut();
-        let buf = &mut scratch[slot as usize];
-        if buf.len() < count as usize {
-            buf.resize(count as usize, 0);
+        if scratch.len() <= slot {
+            scratch.resize(slot + 1, Vec::new());
+        }
+        let buf = &mut scratch[slot];
+        if buf.len() < byte_count {
+            buf.resize(byte_count, 0);
         } else {
-            buf[..count as usize].fill(0);
+            buf[..byte_count].fill(0);
         }
         buf.as_mut_ptr()
     })
+}
+
+// Legacy wrappers — delegate to scratch_raw for backward compat
+pub extern "C" fn moonlift_scratch_i32(slot: i32, count: i32) -> *mut i32 {
+    moonlift_scratch_raw(slot, 4, count).cast::<i32>()
 }
 
 pub extern "C" fn moonlift_scratch_u8(slot: i32, count: i32) -> *mut u8 {
-    if !(0..8).contains(&slot) || count <= 0 {
-        return std::ptr::null_mut();
-    }
-    SCRATCH_U8.with(|scratch| {
-        let mut scratch = scratch.borrow_mut();
-        let buf = &mut scratch[slot as usize];
-        if buf.len() < count as usize {
-            buf.resize(count as usize, 0);
-        } else {
-            buf[..count as usize].fill(0);
-        }
-        buf.as_mut_ptr()
-    })
+    moonlift_scratch_raw(slot, 1, count)
 }
 
 pub extern "C" fn moonlift_alloc_i32(count: i32) -> *mut i32 {
@@ -138,6 +144,7 @@ pub fn register_symbols(jit: &mut crate::Jit) {
     sym!("lua_settable", moonlift_lua_settable);
     sym!("lua_rawseti", moonlift_lua_rawseti);
 
+    sym!("moonlift_scratch_raw", moonlift_scratch_raw);
     sym!("moonlift_scratch_i32", moonlift_scratch_i32);
     sym!("moonlift_scratch_u8", moonlift_scratch_u8);
     sym!("moonlift_alloc_i32", moonlift_alloc_i32);

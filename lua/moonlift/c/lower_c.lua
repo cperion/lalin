@@ -1635,9 +1635,63 @@ function M.Define(T)
     -- extracts the value as a jump arg, and removes the StmtSet from the list.
     -- Also handles ExprBlock containing such StmtSet operations.
     -- For carried vars with no writes, adds identity jump arg (ValueRefName).
+    -- Helper: substitute carried-var ExprRef nodes in an expression with
+    -- their current tracked values. Non-recursive: only immediate ExprRef
+    -- children of compound exprs are replaced; the replacement itself is
+    -- not rescanned. This is safe because tracked values come from earlier
+    -- statements and cannot contain references to later ones.
+    local function subst_in_expr(expr, tracked)
+        if not expr or type(expr) ~= "table" then return end
+        local cls = pvm.classof(expr)
+        if cls == Tr.ExprRef then return end  -- leaf, handled by caller
+        -- Walk known compound expression fields
+        local fields = {}
+        if cls == Tr.ExprBinary or cls == Tr.ExprCompare or cls == Tr.ExprLogic then
+            fields = {"lhs", "rhs"}
+        elseif cls == Tr.ExprBlock then
+            if expr.stmts then for i, s in ipairs(expr.stmts) do subst_in_expr(s, tracked) end end
+            fields = {"result"}
+        elseif cls == Tr.ExprIf or cls == Tr.ExprSelect then
+            fields = {"cond", "then_expr", "else_expr"}
+        elseif cls == Tr.ExprCall then
+            fields = {"callee"}; if expr.args then for i, a in ipairs(expr.args) do subst_in_expr(a, tracked) end end
+        elseif cls == Tr.ExprCast then fields = {"value"}
+        elseif cls == Tr.ExprUnary then fields = {"value"}
+        elseif cls == Tr.ExprDeref or cls == Tr.ExprField or cls == Tr.ExprDot then fields = {"base"}
+        elseif cls == Tr.ExprIndex then fields = {"base", "index"}
+        end
+        for _, f in ipairs(fields) do
+            local child = expr[f]
+            if child and pvm.classof(child) == Tr.ExprRef then
+                local ref = child.ref
+                if ref and pvm.classof(ref) == Bind.ValueRefName and tracked[ref.name] then
+                    expr[f] = tracked[ref.name]
+                end
+            else
+                subst_in_expr(child, tracked)
+            end
+        end
+    end
+
     collect_jump_args = function(body_stmts, carried)
-        local jump_arg_map = {}  -- name → expr
+        -- Build a table tracking the current value expression for each carried
+        -- var. Walk statements in order. When we see a carried write, we record
+        -- its RHS (with references to earlier-written carried vars substituted
+        -- with their current tracked values). The StmtSet is removed from the
+        -- body since it becomes a jump arg.
+        local tracked = {}  -- name → current value expression
         local cleaned_stmts = {}
+
+        local function extract_carried_write(place, value)
+            local ref = place.ref
+            if ref and pvm.classof(ref) == Bind.ValueRefName and carried[ref.name] then
+                -- Substitute references to already-tracked carried vars
+                subst_in_expr(value, tracked)
+                tracked[ref.name] = value
+                return true
+            end
+            return false
+        end
 
         for _, stmt in ipairs(body_stmts or {}) do
             local cls = pvm.classof(stmt)
@@ -1645,18 +1699,13 @@ function M.Define(T)
             if cls == Tr.StmtSet then
                 local place = stmt.place
                 if place and pvm.classof(place) == Tr.PlaceRef then
-                    local ref = place.ref
-                    if ref and pvm.classof(ref) == Bind.ValueRefName and carried[ref.name] then
-                        -- Carried write → extract as jump arg, skip the StmtSet
-                        jump_arg_map[ref.name] = stmt.value
-                    else
+                    if not extract_carried_write(place, stmt.value) then
                         cleaned_stmts[#cleaned_stmts + 1] = stmt
                     end
                 else
                     cleaned_stmts[#cleaned_stmts + 1] = stmt
                 end
             elseif cls == Tr.StmtExpr then
-                -- Check if the expression is an ExprBlock containing carried writes
                 local expr = stmt.expr
                 if expr and pvm.classof(expr) == Tr.ExprBlock then
                     local inner_stmts = {}
@@ -1665,9 +1714,7 @@ function M.Define(T)
                         if pvm.classof(inner) == Tr.StmtSet then
                             local place = inner.place
                             if place and pvm.classof(place) == Tr.PlaceRef then
-                                local ref = place.ref
-                                if ref and pvm.classof(ref) == Bind.ValueRefName and carried[ref.name] then
-                                    jump_arg_map[ref.name] = inner.value
+                                if extract_carried_write(place, inner.value) then
                                     has_carried_write = true
                                 else
                                     inner_stmts[#inner_stmts + 1] = inner
@@ -1681,7 +1728,6 @@ function M.Define(T)
                     end
                     if has_carried_write then
                         if #inner_stmts == 0 then
-                            -- No remaining stmts, just the result
                             cleaned_stmts[#cleaned_stmts + 1] = Tr.StmtExpr(Tr.StmtSurface, expr.result)
                         else
                             cleaned_stmts[#cleaned_stmts + 1] = Tr.StmtExpr(Tr.StmtSurface,
@@ -1694,14 +1740,13 @@ function M.Define(T)
                     cleaned_stmts[#cleaned_stmts + 1] = stmt
                 end
             else
-                -- Default: keep the stmt as-is
                 cleaned_stmts[#cleaned_stmts + 1] = stmt
             end
         end
 
-        -- Build jump args from the map (only real writes, no identity)
+        -- Build jump args from tracked values (ordered insertion)
         local args_list = {}
-        for name, value in pairs(jump_arg_map) do
+        for name, value in pairs(tracked) do
             args_list[#args_list + 1] = { name = name, value = value }
         end
 
