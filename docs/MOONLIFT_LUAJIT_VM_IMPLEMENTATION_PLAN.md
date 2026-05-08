@@ -800,7 +800,7 @@ Temporary shortcut:
 6. [x] Create `mlua/luajitvm/protocols.mlua` — M0 protocol type declarations.
 7. [x] Create `mlua/luajitvm/` skeleton (P2.SKEL) — 42 files across core/runtime/gc/jit/asm/ffi/generated.
 8. [x] Stub all region signatures using protocol types (P4.PROTO) — vm_loop, table_get/set, gc_alloc/step/barrier, trace_record, ir_emit, snap_add/restore, opt_dce/loop/sink, asm_trace, ra_alloc/dest, x64_asm_one_ir, rec_bc_*, ffi_*, cdata_index.
-9. [ ] Create `VALUE_LAYOUT.md`, `IR_LAYOUT.md`, `TRACE_LAYOUT.md` drafts.
+9. [x] Create `VALUE_LAYOUT.md`, `IR_LAYOUT.md`, `TRACE_LAYOUT.md` drafts.
 
 ---
 
