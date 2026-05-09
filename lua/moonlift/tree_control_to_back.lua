@@ -172,7 +172,20 @@ function M.Define(T, base)
             if cls == Sem.ConstBool then return pvm.once(self.value.value and "1" or "0") end
             return pvm.empty()
         end,
-        [Sem.SwitchKeyExpr] = function() return pvm.empty() end,
+        [Sem.SwitchKeyExpr] = function(self)
+            -- A SwitchKeyExpr arises when a named const is used as a case label.
+            -- Evaluate the expression as a compile-time constant to get its integer.
+            local const_eval = base.const_eval
+            local get_const_env = base.get_const_env
+            if const_eval == nil or get_const_env == nil then return pvm.empty() end
+            local const_env = get_const_env()
+            local value = const_eval.value(self.expr, const_env, const_eval.empty_local_env())
+            if value == nil then return pvm.empty() end
+            local cls = pvm.classof(value)
+            if cls == Sem.ConstInt  then return pvm.once(value.raw) end
+            if cls == Sem.ConstBool then return pvm.once(value.value and "1" or "0") end
+            return pvm.empty()
+        end,
     })
 
     local function lower_body(stmts, env, ctx)

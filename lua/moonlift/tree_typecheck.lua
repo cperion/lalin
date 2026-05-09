@@ -185,12 +185,15 @@ function M.Define(T)
     end
 
     local function type_binary_op(op, lhs_ty, rhs_ty, issues)
-        -- Pointer arithmetic: ptr + int or int + ptr
+        -- Pointer arithmetic: ptr + int, int + ptr, ptr - int
         if op == C.BinAdd then
             local lhs_is_ptr = pvm.classof(lhs_ty) == Ty.TPtr
             local rhs_is_ptr = pvm.classof(rhs_ty) == Ty.TPtr
             if lhs_is_ptr and is_integer_scalar(rhs_ty) then return lhs_ty end
             if rhs_is_ptr and is_integer_scalar(lhs_ty) then return rhs_ty end
+        end
+        if op == C.BinSub then
+            if pvm.classof(lhs_ty) == Ty.TPtr and is_integer_scalar(rhs_ty) then return lhs_ty end
         end
         if not type_eq(lhs_ty, rhs_ty) then
             issues[#issues + 1] = Tr.TypeIssueInvalidBinary(tostring(op), lhs_ty, rhs_ty)
@@ -349,8 +352,17 @@ function M.Define(T)
             return pvm.once(result_expr(Tr.ExprUnary(Tr.ExprTyped(value.ty), self.op, value.expr), value.ty, issues))
         end,
         [Tr.ExprBinary] = function(self, ctx)
-            local lhs = pvm.one(type_expr(self.lhs, ctx)); local rhs = type_expr_expect(self.rhs, ctx, lhs.ty); local issues = {}
-            append_all(issues, lhs.issues); append_all(issues, rhs.issues)
+            local lhs = pvm.one(type_expr(self.lhs, ctx)); local issues = {}
+            append_all(issues, lhs.issues)
+            -- Pointer arithmetic: ptr(T) +/- integer — don't constrain rhs to ptr type
+            local lhs_is_ptr = pvm.classof(lhs.ty) == Ty.TPtr
+            local rhs
+            if lhs_is_ptr and (self.op == C.BinAdd or self.op == C.BinSub) then
+                rhs = pvm.one(type_expr(self.rhs, ctx))
+            else
+                rhs = type_expr_expect(self.rhs, ctx, lhs.ty)
+            end
+            append_all(issues, rhs.issues)
             local ty = type_binary_op(self.op, lhs.ty, rhs.ty, issues)
             return pvm.once(result_expr(Tr.ExprBinary(Tr.ExprTyped(ty), self.op, lhs.expr, rhs.expr), ty, issues))
         end,
@@ -475,6 +487,21 @@ function M.Define(T)
             check_expected("switch key", value_ty, expr.ty, issues)
             return Sem.SwitchKeyExpr(expr.expr)
         end
+        -- SwitchKeyRaw: if the raw string is a bare name (not a literal number),
+        -- re-typecheck it as an expression so named constants resolve to their values.
+        if cls == Sem.SwitchKeyRaw then
+            local raw = key.raw
+            -- Check if it looks like a non-numeric identifier
+            if raw:match("^[%a_][%w_]*$") then
+                local ref_expr = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(raw))
+                local expr = pvm.one(type_expr(ref_expr, ctx))
+                if #expr.issues == 0 then
+                    check_expected("switch key", value_ty, expr.ty, issues)
+                    return Sem.SwitchKeyExpr(expr.expr)
+                end
+                -- Name not found — fall through to keep raw (will fail at backend with clear error)
+            end
+        end
         return key
     end
 
@@ -503,14 +530,22 @@ function M.Define(T)
 
     type_stmt = pvm.phase("moonlift_tree_typecheck_stmt", {
         [Tr.StmtLet] = function(self, ctx)
-            local init = type_expr_expect(self.init, ctx, self.binding.ty); local issues = {}; append_all(issues, init.issues); check_expected("let " .. self.binding.name, self.binding.ty, init.ty, issues)
-            local binding = pvm.with(self.binding, { class = B.BindingClassLocalValue })
+            local is_inferred = pvm.classof(self.binding.ty) == Ty.TScalar and self.binding.ty.scalar == C.ScalarVoid
+            local init = is_inferred and pvm.one(type_expr(self.init, ctx)) or type_expr_expect(self.init, ctx, self.binding.ty)
+            local issues = {}; append_all(issues, init.issues)
+            local actual_ty = is_inferred and init.ty or self.binding.ty
+            if not is_inferred then check_expected("let " .. self.binding.name, actual_ty, init.ty, issues) end
+            local binding = pvm.with(self.binding, { ty = actual_ty, class = B.BindingClassLocalValue })
             local env = env_add_value(ctx.env, B.ValueEntry(binding.name, binding))
             return pvm.once(Tr.TypeStmtResult(ctx_with_env(ctx, env), { Tr.StmtLet(Tr.StmtTyped, binding, init.expr) }, issues))
         end,
         [Tr.StmtVar] = function(self, ctx)
-            local init = type_expr_expect(self.init, ctx, self.binding.ty); local issues = {}; append_all(issues, init.issues); check_expected("var " .. self.binding.name, self.binding.ty, init.ty, issues)
-            local binding = pvm.with(self.binding, { class = B.BindingClassLocalCell })
+            local is_inferred = pvm.classof(self.binding.ty) == Ty.TScalar and self.binding.ty.scalar == C.ScalarVoid
+            local init = is_inferred and pvm.one(type_expr(self.init, ctx)) or type_expr_expect(self.init, ctx, self.binding.ty)
+            local issues = {}; append_all(issues, init.issues)
+            local actual_ty = is_inferred and init.ty or self.binding.ty
+            if not is_inferred then check_expected("var " .. self.binding.name, actual_ty, init.ty, issues) end
+            local binding = pvm.with(self.binding, { ty = actual_ty, class = B.BindingClassLocalCell })
             local env = env_add_value(ctx.env, B.ValueEntry(binding.name, binding))
             return pvm.once(Tr.TypeStmtResult(ctx_with_env(ctx, env), { Tr.StmtVar(Tr.StmtTyped, binding, init.expr) }, issues))
         end,

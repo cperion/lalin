@@ -481,14 +481,24 @@ function M.Define(T)
             local scalar = back_scalar(ty) or lhs.ty
             local cmds = {}; append_all(cmds, lhs.cmds); append_all(cmds, rhs.cmds)
 
-            -- Pointer arithmetic: pointer + integer offset
-            if self.op == C.BinAdd and scalar == Back.BackPtr then
+            -- Pointer arithmetic: pointer +/- integer element offset
+            if (self.op == C.BinAdd or self.op == C.BinSub) and scalar == Back.BackPtr then
                 local ptr, off = lhs, rhs
-                if ptr.ty ~= Back.BackPtr then ptr, off = rhs, lhs end
+                if self.op == C.BinAdd and ptr.ty ~= Back.BackPtr then ptr, off = rhs, lhs end
+                -- stride = sizeof(elem) so that p+n advances by n elements
+                local stride = 1
+                if pvm.classof(ty) == Ty.TPtr then
+                    local sz = elem_size(ty.elem); if sz ~= nil and sz > 0 then stride = sz end
+                end
                 local env_e1, off_ext = env_next_value(rhs.env, "v")
                 cmds[#cmds + 1] = Back.CmdCast(off_ext, Back.BackSextend, Back.BackIndex, off.value)
+                if self.op == C.BinSub then
+                    local env_neg, neg_off = env_next_value(env_e1, "v")
+                    cmds[#cmds + 1] = Back.CmdUnary(neg_off, Back.BackUnaryIneg, Back.BackShapeScalar(Back.BackIndex), off_ext)
+                    env_e1 = env_neg; off_ext = neg_off
+                end
                 local env_e2, addr = env_next_value(env_e1, "v")
-                cmds[#cmds + 1] = Back.CmdPtrOffset(addr, Back.BackAddrValue(ptr.value), off_ext, 1, 0, Back.BackProvDerived("ptr add"), Back.BackPtrBoundsUnknown)
+                cmds[#cmds + 1] = Back.CmdPtrOffset(addr, Back.BackAddrValue(ptr.value), off_ext, stride, 0, Back.BackProvDerived("ptr arith"), Back.BackPtrBoundsUnknown)
                 return pvm.once(Tr.TreeBackExprValue(env_e2, cmds, addr, Back.BackPtr))
             end
 
@@ -1183,6 +1193,8 @@ function M.Define(T)
         expr_to_back = expr_to_back,
         stmt_to_back = stmt_to_back,
         back_scalar = back_scalar,
+        const_eval = const_eval_api,
+        get_const_env = function() return lower_context.const_env end,
     })
 
     local function abi_param_scalars(plan)

@@ -11,7 +11,7 @@ local TK = {
     shl = 37, lshr = 38, ashr = 39,
     amp2 = 40, pipe2 = 41,
     export = 100, extern = 101, func = 102, const = 103, static = 104, import = 105, type_kw = 106,
-    let = 110, var = 111, if_kw = 112, then_kw = 113, elseif_kw = 114, else_kw = 115, switch = 116, case = 117, default = 118, do_kw = 119, end_kw = 120,
+    let = 110, var = 111, if_kw = 112, then_kw = 113, elseif_kw = 114, else_kw = 115, switch = 116, case = 117, default = 118, do_kw = 119, end_kw = 120, while_kw = 121,
     block = 130, control = 131, jump = 132, yield = 133, return_kw = 134, region = 135, entry = 136, emit = 137, expr = 138,
     true_kw = 140, false_kw = 141, nil_kw = 142, and_kw = 143, or_kw = 144, not_kw = 145,
     view = 150, noalias = 151, readonly = 152, writeonly = 153, requires = 154, bounds = 155, disjoint = 156, len = 157, same_len = 158, view_window = 159, window_bounds = 160,
@@ -22,7 +22,7 @@ local TK = {
 
 local keywords = {
     export = TK.export, extern = TK.extern, func = TK.func, const = TK.const, static = TK.static, import = TK.import, ["type"] = TK.type_kw,
-    let = TK.let, var = TK.var, ["if"] = TK.if_kw, ["then"] = TK.then_kw, ["elseif"] = TK.elseif_kw, ["else"] = TK.else_kw, switch = TK.switch, case = TK.case, default = TK.default, ["do"] = TK.do_kw, ["end"] = TK.end_kw,
+    let = TK.let, var = TK.var, ["if"] = TK.if_kw, ["then"] = TK.then_kw, ["elseif"] = TK.elseif_kw, ["else"] = TK.else_kw, switch = TK.switch, case = TK.case, default = TK.default, ["do"] = TK.do_kw, ["end"] = TK.end_kw, ["while"] = TK.while_kw,
     block = TK.block, control = TK.control, jump = TK.jump, ["yield"] = TK.yield, ["return"] = TK.return_kw, region = TK.region, entry = TK.entry, emit = TK.emit, expr = TK.expr,
     ["true"] = TK.true_kw, ["false"] = TK.false_kw, ["nil"] = TK.nil_kw, ["and"] = TK.and_kw, ["or"] = TK.or_kw, ["not"] = TK.not_kw,
     view = TK.view, noalias = TK.noalias, readonly = TK.readonly, writeonly = TK.writeonly, requires = TK.requires, bounds = TK.bounds, disjoint = TK.disjoint, len = TK.len, same_len = TK.same_len, view_window = TK.view_window, window_bounds = TK.window_bounds,
@@ -850,7 +850,17 @@ function Parser:parse_stmt()
     if self:accept(TK.emit) then return self:parse_emit_stmt() end
     if self:accept(TK.let) or self:accept(TK.var) then
         local is_var = self.toks.kind[self.i - 1] == TK.var
-        local name = self:expect_name(); self:expect(TK.colon); local ty = self:parse_type(); self:expect(TK.eq); local init = self:parse_expr(0)
+        local name = self:expect_name()
+        -- Allow optional type annotation: `let x: T = e` or `let x = e` (inferred)
+        local ty
+        if self:kind() == TK.colon then
+            self.i = self.i + 1
+            ty = self:parse_type()
+        else
+            ty = self.Ty.TScalar(self.C.ScalarVoid)  -- sentinel: infer from init
+        end
+        self:expect(TK.eq)
+        local init = self:parse_expr(0)
         local binding = B.Binding(C.Id("local:" .. name), name, ty, is_var and B.BindingClassLocalCell or B.BindingClassLocalValue)
         return is_var and Tr.StmtVar(Tr.StmtSurface, binding, init) or Tr.StmtLet(Tr.StmtSurface, binding, init)
     end
