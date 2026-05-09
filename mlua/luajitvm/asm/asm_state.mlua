@@ -37,8 +37,15 @@ const REF_BIAS:  i32 = 0x8000
 const REF_FIRST: i32 = 0x8001
 
 -- AsmState field offsets
-const A_FREE:  i32 = 0
-const A_MAP:   i32 = 4
+const A_FREE:      i32 = 0
+const A_MAP:       i32 = 4
+const A_EXIT_ADDR: i32 = 260   -- ptr(u8) = deopt exit stub address (8 bytes at 260..267)
+
+-- IRT_GUARD flag in type byte: guard emitted, snapshot/deopt required
+const IRT_GUARD: i32 = 0x80
+
+-- Sentinel returned when a guard fires and trace deoptimizes
+const DEOPT_SENTINEL: i32 = 0xBAD  -- = 2989, recognisable non-computation value
 
 -- Register bitmask: rax(0) rcx(1) rdx(2) rsi(6) r8(8) r9(9) r10(10) r11(11)
 -- rdi(7) is RESERVED as the Lua base pointer — excluded from the free set.
@@ -50,12 +57,16 @@ const IR_SLOAD:   i32 = 31
 const TV_STRIDE:  i32 = 16    -- bytes per TValue slot
 const TV_PAYLOAD: i32 = 8     -- byte offset of i64 payload within TValue
 const LUA_BASE_REG: i32 = 7   -- rdi: holds Lua stack base pointer at trace entry
+const LUA_TINT:     i32 = 3   -- TValue type tag for integer values
 
 -- =========================================================================
 -- IR field accessors
 -- =========================================================================
 func ir_op_at(buf: ptr(u64), idx: i32) -> i32
     return as(i32, (buf[idx] >> 40) & 0xFF)
+end
+func ir_type_at(buf: ptr(u64), idx: i32) -> i32
+    return as(i32, (buf[idx] >> 32) & 0xFF)
 end
 func ir_op1_at(buf: ptr(u64), idx: i32) -> i32
     return as(i32, buf[idx] & 0xFFFF)
@@ -155,6 +166,23 @@ func emit_ret(J: ptr(u8))
     mc_put8(J, 0xC3)
 end
 
+-- CMP dword [rdi+disp32], imm8  (check type tag on Lua stack)
+-- Encoding: 83 /7  ModRM(mod=10,reg=7,rm=7=rdi)  disp32  imm8  (7 bytes)
+func emit_cmp_rdi_d32_imm8(J: ptr(u8), disp: i32, imm: i32)
+    mc_put8(J, imm & 0xFF)
+    mc_put32(J, disp)
+    mc_put8(J, 0xBF)   -- ModRM: mod=10 reg=7(CMP) rm=7(rdi)
+    mc_put8(J, 0x83)   -- CMP r/m32, imm8
+end
+
+-- JNE rel32  (0F 85 rel32, 6 bytes)
+-- disp = exit_stub_addr - mc_top(J) before this call (positive = forward jump)
+func emit_jne_rel32(J: ptr(u8), disp: i32)
+    mc_put32(J, disp)
+    mc_put8(J, 0x85)
+    mc_put8(J, 0x0F)
+end
+
 -- =========================================================================
 -- Register allocator state helpers
 -- =========================================================================
@@ -240,11 +268,25 @@ end
 -- Then execution reads A → B. ✓
 -- =========================================================================
 
--- SLOAD: load i64 payload from TValue at Lua stack slot `slot`.
--- Emits: MOV dst, [rdi + slot*TV_STRIDE + TV_PAYLOAD]
--- Guards (IRT_GUARD) deferred to P11c exit-stub phase.
+-- SLOAD (no guard): load i64 payload from TValue at Lua stack slot `slot`.
 func tile_sload(J: ptr(u8), dst: i32, slot: i32)
     emit_load_rdi_d32(J, dst, slot * TV_STRIDE + TV_PAYLOAD)
+end
+
+-- SLOAD with type guard: CMP tag == LUA_TINT; JNE deopt; MOV dst, payload
+-- Backward emission order: LOAD (highest) → JNE → CMP (lowest = first executed)
+-- If guard fires the trace returns DEOPT_SENTINEL (via the pre-emitted exit stub).
+func tile_sload_guard(J: ptr(u8), A: ptr(u8), dst: i32, slot: i32)
+    let payload_disp: i32 = slot * TV_STRIDE + TV_PAYLOAD
+    let tag_disp:     i32 = slot * TV_STRIDE
+    -- 1. Emit LOAD (highest addr, executes last if guard passes)
+    emit_load_rdi_d32(J, dst, payload_disp)
+    -- 2. Emit JNE to exit stub (exit_stub_addr > mc_top(J) → positive disp)
+    let exit_u64: u64 = as(ptr(u64), A + A_EXIT_ADDR)[0]
+    let jne_disp: i32 = as(i32, exit_u64 - as(u64, mc_top(J)))
+    emit_jne_rel32(J, jne_disp)
+    -- 3. Emit CMP (lowest addr, executes first)
+    emit_cmp_rdi_d32_imm8(J, tag_disp, LUA_TINT)
 end
 
 -- KINT: MOV dst, imm32
@@ -287,8 +329,14 @@ func asm_one(A: ptr(u8), J: ptr(u8), ir_buf: ptr(u64), slot: i32, o: i32) -> boo
 
     if o == IR_SLOAD then
         let dst = ra_get(A, slot)
-        if dst < 0 then return true end       -- dead slot
-        tile_sload(J, dst, op1)               -- op1 = Lua stack slot index (not an IR ref)
+        if dst < 0 then return true end
+        let t: i32 = ir_type_at(ir_buf, slot)
+        if (t & IRT_GUARD) ~= 0 then
+            tile_sload_guard(J, A, dst, op1)
+        end
+        if (t & IRT_GUARD) == 0 then
+            tile_sload(J, dst, op1)
+        end
         return true
     end
 
@@ -351,6 +399,14 @@ end
 region asm_trace(A: ptr(u8), J: ptr(u8), ir_buf: ptr(u64), nins: i32) -> AsmResult
 entry start()
     as(ptr(i32), A)[0] = FREE_INIT   -- initialise free_regs; regmap already zeroed
+    -- Emit the deopt exit stub FIRST (highest address) so guards can jump UP to it.
+    -- Execution order: [MOV rax,SENTINEL][RET]
+    -- Backward emission: emit RET first (higher addr), MOV second (lower addr = first executed)
+    emit_ret(J)
+    emit_mov_ri32(J, 0, DEOPT_SENTINEL)
+    -- Store stub entry address in AsmState for guard displacement calculation.
+    let stub_p: ptr(u64) = as(ptr(u64), A + A_EXIT_ADDR)
+    stub_p[0] = as(u64, mc_top(J))
     jump scan(slot = nins - 1)
 end
 

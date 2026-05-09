@@ -289,6 +289,89 @@ local stk9, _k9 = make_tval_stack({7})
 check("SLOAD[0]*10 = 7*10 = 70", 70, fn9(ffi.cast("void *", stk9)))
 
 ffi.C.munmap(MCODE2, MCODE_SIZE)
+
+-- =========================================================================
+-- Guard tests: SLOAD with IRT_GUARD flag
+-- IRT_GUARD = 0x80 OR'd into the type byte means a runtime type check.
+-- Guard passes  → trace runs normally, returns computed result.
+-- Guard fires   → trace returns DEOPT_SENTINEL (0xBAD = 2989).
+-- =========================================================================
+print("\n--- Guard tests (IRT_GUARD) ---")
+
+local IRT_GUARD     = 0x80
+local DEOPT_SENTINEL = 0xBAD   -- = 2989
+local MCODE3 = alloc_rwx(MCODE_SIZE)
+
+local IRT_INT_GUARD = bit.bor(IRT_INT, IRT_GUARD)
+
+-- Test 10: SLOAD with guard, correct type (LUA_TINT=3) → guard passes, returns value
+ffi.fill(J_BUF, 64, 0); J_u64[4] = ffi.cast("uint64_t", MCODE3) + MCODE_SIZE; J_u64[5] = ffi.cast("uint64_t", MCODE3)
+ffi.fill(A_BUF, 272, 0)
+for i = 0, 4 do IR_BUF[i] = 0 end
+
+IR_BUF[1] = pack_ir(IR_SLOAD, IRT_INT_GUARD, 0, 0)
+IR_BUF[2] = pack_ir(IR_RETF,  IRT_INT,       REF_BIAS + 1, 0)
+
+local entry10 = asm_fn(A_ptr, J_ptr, IR_ptr, 3)
+assert(entry10 ~= nil and ffi.cast("uint64_t", entry10) ~= 0, "guard assembly failed")
+local fn10 = ffi.cast("int64_t (*)(void *)", entry10)
+local stk10, _k10 = make_tval_stack({77})
+check("guard pass: SLOAD[0]=77", 77, fn10(ffi.cast("void *", stk10)))
+
+-- Test 11: guard fires — put wrong type tag (LUA_TSTR=6) in slot 0 → DEOPT_SENTINEL
+local LUA_TSTR = 6
+local function make_bad_stack(tag, val)
+    local buf = ffi.new("uint8_t[48]")
+    local base = ffi.cast("uint8_t *", buf)
+    ffi.cast("int32_t *", base)[0] = tag    -- wrong tag
+    ffi.cast("int64_t *", base + 8)[0] = ffi.cast("int64_t", val)
+    return base, buf
+end
+
+ffi.fill(J_BUF, 64, 0); J_u64[4] = ffi.cast("uint64_t", MCODE3) + MCODE_SIZE; J_u64[5] = ffi.cast("uint64_t", MCODE3)
+ffi.fill(A_BUF, 272, 0)
+IR_BUF[1] = pack_ir(IR_SLOAD, IRT_INT_GUARD, 0, 0)
+IR_BUF[2] = pack_ir(IR_RETF,  IRT_INT,       REF_BIAS + 1, 0)
+
+local entry11 = asm_fn(A_ptr, J_ptr, IR_ptr, 3)
+assert(entry11 ~= nil and ffi.cast("uint64_t", entry11) ~= 0)
+local fn11 = ffi.cast("int64_t (*)(void *)", entry11)
+local bad11, _b11 = make_bad_stack(LUA_TSTR, 99)
+check("guard fire: wrong type → DEOPT_SENTINEL", DEOPT_SENTINEL, fn11(ffi.cast("void *", bad11)))
+
+-- Test 12: guard with ADD: SLOAD[0](guarded) + SLOAD[1](unguarded) = a+b
+ffi.fill(J_BUF, 64, 0); J_u64[4] = ffi.cast("uint64_t", MCODE3) + MCODE_SIZE; J_u64[5] = ffi.cast("uint64_t", MCODE3)
+ffi.fill(A_BUF, 272, 0)
+for i = 0, 6 do IR_BUF[i] = 0 end
+
+IR_BUF[1] = pack_ir(IR_SLOAD, IRT_INT_GUARD, 0, 0)   -- guarded
+IR_BUF[2] = pack_ir(IR_SLOAD, IRT_INT,       1, 0)   -- unguarded
+IR_BUF[3] = pack_ir(IR_ADD,   IRT_INT, REF_BIAS+1, REF_BIAS+2)
+IR_BUF[4] = pack_ir(IR_RETF,  IRT_INT, REF_BIAS+3, 0)
+
+local entry12 = asm_fn(A_ptr, J_ptr, IR_ptr, 5)
+assert(entry12 ~= nil and ffi.cast("uint64_t", entry12) ~= 0)
+local fn12 = ffi.cast("int64_t (*)(void *)", entry12)
+local stk12, _k12 = make_tval_stack({13, 29})
+check("guard+ADD: 13+29=42", 42, fn12(ffi.cast("void *", stk12)))
+
+-- Test 13: guard fires mid-trace on first SLOAD, second SLOAD never runs
+ffi.fill(J_BUF, 64, 0); J_u64[4] = ffi.cast("uint64_t", MCODE3) + MCODE_SIZE; J_u64[5] = ffi.cast("uint64_t", MCODE3)
+ffi.fill(A_BUF, 272, 0)
+for i = 0, 6 do IR_BUF[i] = 0 end
+
+IR_BUF[1] = pack_ir(IR_SLOAD, IRT_INT_GUARD, 0, 0)
+IR_BUF[2] = pack_ir(IR_SLOAD, IRT_INT,       1, 0)
+IR_BUF[3] = pack_ir(IR_ADD,   IRT_INT, REF_BIAS+1, REF_BIAS+2)
+IR_BUF[4] = pack_ir(IR_RETF,  IRT_INT, REF_BIAS+3, 0)
+
+local entry13 = asm_fn(A_ptr, J_ptr, IR_ptr, 5)
+assert(entry13 ~= nil and ffi.cast("uint64_t", entry13) ~= 0)
+local fn13 = ffi.cast("int64_t (*)(void *)", entry13)
+local bad13, _b13 = make_bad_stack(LUA_TSTR, 999)
+check("guard fire mid-trace → DEOPT_SENTINEL", DEOPT_SENTINEL, fn13(ffi.cast("void *", bad13)))
+
+ffi.C.munmap(MCODE3, MCODE_SIZE)
 asm_mod:free()
 
 print(string.format("\n%d passed, %d failed", passed, failed))
