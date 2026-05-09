@@ -1,35 +1,45 @@
 -- runtime/dispatch.mlua -- Minimal interpreter dispatch loop.
 --
--- Handles: MOV, KSHORT, ADDVV, SUBVV, MULVV, JMP, LOOP, RET
+-- The dispatcher only decodes the external bytecode opcode and routes to a typed
+-- opcode region.  Opcode bodies live in subsystem modules and communicate by
+-- explicit continuations (`next`, `returned`, `error`) rather than by returning
+-- integer status tags.
 
 local proto = moon.require("luajitvm.protocols")
+local arith = moon.require("luajitvm.runtime.arith")
+local cmp = moon.require("luajitvm.runtime.compare")
+local stackop = moon.require("luajitvm.runtime.stackop")
+local tableop = moon.require("luajitvm.runtime.table")
+local call = moon.require("luajitvm.runtime.call")
 local m = module "luajitvm.runtime.dispatch"
 
-const BC_ISLT:  i32 = 0
-const BC_ISGE:  i32 = 1
-const BC_ISEQV: i32 = 4
-const BC_ISNEV: i32 = 5
+const BC_ISLT:   i32 = 0
+const BC_ISGE:   i32 = 1
+const BC_ISEQV:  i32 = 4
+const BC_ISNEV:  i32 = 5
+const BC_MOV:    i32 = 18
+const BC_ADDVN:  i32 = 22
+const BC_SUBVN:  i32 = 23
+const BC_MULVN:  i32 = 24
+const BC_ADDNV:  i32 = 27
+const BC_SUBNV:  i32 = 28
+const BC_MULNV:  i32 = 29
+const BC_ADDVV:  i32 = 32
+const BC_SUBVV:  i32 = 33
+const BC_MULVV:  i32 = 34
+const BC_TGETV:  i32 = 56
+const BC_TGETB:  i32 = 58
+const BC_TSETV:  i32 = 60
+const BC_TSETB:  i32 = 62
 const BC_KSHORT: i32 = 41
-const BC_KNUM:   i32 = 42
 const BC_KPRI:   i32 = 43
 const BC_KNIL:   i32 = 44
-const BC_MOV:   i32 = 18
-const BC_ADDVN: i32 = 22
-const BC_SUBVN: i32 = 23
-const BC_MULVN: i32 = 24
-const BC_ADDNV: i32 = 27
-const BC_SUBNV: i32 = 28
-const BC_MULNV: i32 = 29
-const BC_ADDVV: i32 = 32
-const BC_SUBVV: i32 = 33
-const BC_MULVV: i32 = 34
-const BC_JMP:   i32 = 88
-const BC_LOOP:  i32 = 85
-const BC_RET:   i32 = 74
-const BC_RET0:  i32 = 75
-const BC_RET1:  i32 = 76
+const BC_RET:    i32 = 74
+const BC_RET0:   i32 = 75
+const BC_RET1:   i32 = 76
+const BC_LOOP:   i32 = 85
+const BC_JMP:    i32 = 88
 
-const LUA_TINT:   i32 = 5
 const LUA_OK:     i32 = 0
 const LUA_ERRRUN: i32 = 2
 
@@ -41,112 +51,78 @@ end
 block dispatch(ip: i32)
     let ins: u32 = bc[ip]
     let op: i32 = as(i32, ins) & 0xFF
-    let a: i32 = (as(i32, ins) >> 8) & 0xFF
-    let b: i32 = (as(i32, ins) >> 24) & 0xFF
-    let cd: i32 = (as(i32, ins) >> 16) & 0xFFFF
-    -- Stack base = *(ptr*)(L + 32); cast to typed views
-    let stack: ptr(u8) = as(ptr(u8), as(ptr(u64), L)[4])
-    let tv32: ptr(i32) = as(ptr(i32), stack)
-    let tv64: ptr(i64) = as(ptr(i64), stack)
-
     switch op do
     case 41 then
-        tv32[a * 4] = LUA_TINT
-        tv64[a * 2 + 1] = as(i64, cd - ((cd >> 15) * 65536))
-        jump dispatch(ip = ip + 1)
+        emit stackop.vmop_kshort(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 18 then
-        tv32[a * 4] = tv32[b * 4]
-        tv64[a * 2 + 1] = tv64[b * 2 + 1]
-        jump dispatch(ip = ip + 1)
-    case 32 then
-        tv32[a * 4] = LUA_TINT
-        tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) + as(i32, tv64[cd * 2 + 1]))
-        jump dispatch(ip = ip + 1)
-    case 33 then
-        tv32[a * 4] = LUA_TINT
-        tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) - as(i32, tv64[cd * 2 + 1]))
-        jump dispatch(ip = ip + 1)
-    case 34 then
-        tv32[a * 4] = LUA_TINT
-        tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) * as(i32, tv64[cd * 2 + 1]))
-        jump dispatch(ip = ip + 1)
-    case 22 then
-        -- ADDVN: A = B + lit(D)
-        let lit: i32 = cd - ((cd >> 15) * 65536)
-        tv32[a * 4] = LUA_TINT
-        tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) + lit)
-        jump dispatch(ip = ip + 1)
-    case 23 then
-        let lit: i32 = cd - ((cd >> 15) * 65536)
-        tv32[a * 4] = LUA_TINT
-        tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) - lit)
-        jump dispatch(ip = ip + 1)
-    case 24 then
-        let lit: i32 = cd - ((cd >> 15) * 65536)
-        tv32[a * 4] = LUA_TINT
-        tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) * lit)
-        jump dispatch(ip = ip + 1)
-    case 27 then
-        -- ADDNV: A = lit(D) + B
-        let lit: i32 = cd - ((cd >> 15) * 65536)
-        tv32[a * 4] = LUA_TINT
-        tv64[a * 2 + 1] = as(i64, lit + as(i32, tv64[b * 2 + 1]))
-        jump dispatch(ip = ip + 1)
-    case 28 then
-        let lit: i32 = cd - ((cd >> 15) * 65536)
-        tv32[a * 4] = LUA_TINT
-        tv64[a * 2 + 1] = as(i64, lit - as(i32, tv64[b * 2 + 1]))
-        jump dispatch(ip = ip + 1)
-    case 29 then
-        let lit: i32 = cd - ((cd >> 15) * 65536)
-        tv32[a * 4] = LUA_TINT
-        tv64[a * 2 + 1] = as(i64, lit * as(i32, tv64[b * 2 + 1]))
-        jump dispatch(ip = ip + 1)
-    case 0 then
-        -- ISLT: if !(B < C) skip next instruction
-        let bv: i32 = as(i32, tv64[b * 2 + 1])
-        let cv: i32 = as(i32, tv64[cd * 2 + 1])
-        let skip: i32 = 2 - as(i32, bv < cv)
-        jump dispatch(ip = ip + skip)
-    case 1 then
-        -- ISGE: if !(B >= C) skip next instruction
-        let bv: i32 = as(i32, tv64[b * 2 + 1])
-        let cv: i32 = as(i32, tv64[cd * 2 + 1])
-        let skip: i32 = 2 - as(i32, bv >= cv)
-        jump dispatch(ip = ip + skip)
-    case 4 then
-        -- ISEQV: if !(B == C) skip next instruction
-        let bv: i32 = as(i32, tv64[b * 2 + 1])
-        let cv: i32 = as(i32, tv64[cd * 2 + 1])
-        let skip: i32 = 2 - as(i32, bv == cv)
-        jump dispatch(ip = ip + skip)
-    case 5 then
-        -- ISNEV: if !(B ~= C) skip next instruction
-        let bv: i32 = as(i32, tv64[b * 2 + 1])
-        let cv: i32 = as(i32, tv64[cd * 2 + 1])
-        let skip: i32 = 2 - as(i32, bv ~= cv)
-        jump dispatch(ip = ip + skip)
+        emit stackop.vmop_mov(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 43 then
-        -- KPRI: store primitive constant (0=nil, 1=false, 2=true)
-        tv32[a * 4] = cd
-        jump dispatch(ip = ip + 1)
+        emit stackop.vmop_kpri(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 44 then
-        -- KNIL: set slots A through A+D to nil. For now just nil slot A.
-        tv32[a * 4] = 0
-        jump dispatch(ip = ip + 1)
+        emit stackop.vmop_knil(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 88 then
-        jump dispatch(ip = ip + 1 + cd - ((cd >> 15) * 65536))
+        emit stackop.vmop_jmp(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 85 then
-        jump dispatch(ip = ip + 1 + cd - ((cd >> 15) * 65536))
+        emit stackop.vmop_loop(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+
+    case 32 then
+        emit arith.vmop_addvv(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 33 then
+        emit arith.vmop_subvv(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 34 then
+        emit arith.vmop_mulvv(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 22 then
+        emit arith.vmop_addvn(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 23 then
+        emit arith.vmop_subvn(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 24 then
+        emit arith.vmop_mulvn(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 27 then
+        emit arith.vmop_addnv(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 28 then
+        emit arith.vmop_subnv(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 29 then
+        emit arith.vmop_mulnv(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+
+    case 0 then
+        emit cmp.vmop_islt(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 1 then
+        emit cmp.vmop_isge(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 4 then
+        emit cmp.vmop_iseqv(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 5 then
+        emit cmp.vmop_isnev(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+
+    case 56 then
+        emit tableop.vmop_tgetv(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 58 then
+        emit tableop.vmop_tgetb(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 60 then
+        emit tableop.vmop_tsetv(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 62 then
+        emit tableop.vmop_tsetb(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+
     case 74 then
-        jump returned(nresults = cd - 1)
+        emit call.vmop_ret(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 75 then
-        jump returned(nresults = 0)
+        emit call.vmop_ret0(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 76 then
-        jump returned(nresults = 1)
+        emit call.vmop_ret1(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     default then
         jump error(code = LUA_ERRRUN)
     end
+end
+
+block op_next(ip: i32)
+    jump dispatch(ip = ip)
+end
+
+block op_returned(nresults: i32)
+    jump returned(nresults = nresults)
+end
+
+block op_error(code: i32)
+    jump error(code = code)
 end
 end
 
@@ -171,10 +147,9 @@ export func vm_interp_run(L: ptr(u8), bc: ptr(u32), pc: i32, status: i32) -> i32
 end
 
 export func dispatch_const_check() -> i32
-    return BC_LOOP + BC_RET + BC_MOV + BC_ADDVV + BC_KSHORT + LUA_OK
+    return BC_LOOP + BC_RET + BC_MOV + BC_ADDVV + BC_TGETV + BC_TGETB + BC_TSETV + BC_TSETB + BC_KSHORT + LUA_OK
 end
 
 end
-
 
 return m

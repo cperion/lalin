@@ -16,6 +16,7 @@ local M = {}
 local Runtime = {}; Runtime.__index = Runtime
 local ModuleValue = {}
 local module_value_mt
+local module_value_state = setmetatable({}, { __mode = "k" })
 local CompiledModule = {}; CompiledModule.__index = CompiledModule
 local CompiledFunction = {}; CompiledFunction.__index = CompiledFunction
 local FuncValue = {}; FuncValue.__index = FuncValue
@@ -158,7 +159,8 @@ local function current_dep_table(runtime)
 end
 
 local function new_module_value(runtime, module, extra_fields)
-    return setmetatable({
+    local self = setmetatable({}, module_value_mt)
+    module_value_state[self] = {
         kind = "module",
         moonlift_quote_kind = "module",
         name = module_name_of(runtime.T, module),
@@ -167,7 +169,8 @@ local function new_module_value(runtime, module, extra_fields)
         deps = current_dep_table(runtime),
         T = runtime.T,
         runtime = runtime,
-    }, module_value_mt)
+    }
+    return self
 end
 
 -- splice_to_source is kept only for debug/display use.
@@ -197,29 +200,6 @@ local function named_island(T, island)
     local Mlua = T.MoonMlua
     if pvm.classof(island.name) == Mlua.IslandNamed then return island.name.name end
     return nil
-end
-
-local function adopt_frag_map(out, frags)
-    if frags == nil then return end
-    for key, frag in pairs(frags) do
-        local name = frag.name or (frag.frag and frag.frag.name) or key
-        out[name] = out[name] or frag
-    end
-end
-
-local function adopt_splice_value(runtime, value)
-    if type(value) ~= "table" then return end
-    local kind = rawget(value, "moonlift_quote_kind") or rawget(value, "kind")
-    if kind == "region_frag" and value.frag ~= nil then
-        runtime.region_frags[value.name or value.frag.name] = value
-        local deps = value.deps
-        if deps then
-            adopt_frag_map(runtime.region_frags, deps.region_frags)
-            adopt_frag_map(runtime.expr_frags, deps.expr_frags)
-        end
-    elseif kind == "expr_frag" and value.frag ~= nil then
-        runtime.expr_frags[value.name or value.frag.name] = value
-    end
 end
 
 -- Adopt a Lua host value: register region/expr fragment values so they are
@@ -398,8 +378,11 @@ end
 local function module_value_index(self, key)
     local method = ModuleValue[key]
     if method ~= nil then return method end
-    local exports = rawget(self, "exports")
+    local state = module_value_state[self]
+    if not state then return nil end
+    local exports = state.exports
     if exports and exports[key] ~= nil then return exports[key] end
+    if key == "kind" or key == "moonlift_quote_kind" or key == "name" or key == "module" then return state[key] end
     return nil
 end
 
@@ -407,40 +390,49 @@ local function module_value_newindex(self, key)
     error("Moonlift module tables are sealed; cannot assign field " .. tostring(key), 2)
 end
 
-module_value_mt = { __index = module_value_index, __newindex = module_value_newindex }
+module_value_mt = {
+    __index = module_value_index,
+    __newindex = module_value_newindex,
+    __tostring = function(self) return ModuleValue.__tostring(self) end,
+    __metatable = "Moonlift module table",
+}
 
 function ModuleValue:moonlift_splice(role)
-    if role == "module_items" then return self.module.items end
-    if role == "module" then return self.module end
+    local state = assert(module_value_state[self], "invalid Moonlift module table")
+    if role == "module_items" then return state.module.items end
+    if role == "module" then return state.module end
     return nil
 end
 
 function ModuleValue:__tostring()
-    return "MoonModuleValue(" .. tostring(self.name or "<anonymous>") .. ")"
+    local state = module_value_state[self]
+    return "MoonModuleValue(" .. tostring((state and state.name) or "<anonymous>") .. ")"
 end
 
 local function module_with_required_deps(self)
-    local deps = self.deps or {}
-    if #deps == 0 then return self.module end
-    local Tr = self.T.MoonTree
+    local state = assert(module_value_state[self], "invalid Moonlift module table")
+    local deps = state.deps or {}
+    if #deps == 0 then return state.module end
+    local Tr = state.T.MoonTree
     local items, seen = {}, {}
     for _, dep in ipairs(deps) do
-        if type(dep) == "table" and dep ~= self and dep.module and not seen[dep.module] then
-            seen[dep.module] = true
-            items[#items + 1] = Tr.ItemUseModule("require:" .. tostring(dep.name or #items + 1), dep.module, {})
+        local dep_state = module_value_state[dep]
+        if dep_state and dep ~= self and dep_state.module and not seen[dep_state.module] then
+            seen[dep_state.module] = true
+            items[#items + 1] = Tr.ItemUseModule("require:" .. tostring(dep_state.name or #items + 1), dep_state.module, {})
         end
     end
-    for i = 1, #self.module.items do items[#items + 1] = self.module.items[i] end
-    return Tr.Module(self.module.h, items)
+    for i = 1, #state.module.items do items[#items + 1] = state.module.items[i] end
+    return Tr.Module(state.module.h, items)
 end
 
 function ModuleValue:compile()
-    local OpenExpand = require("moonlift.open_expand").Define(self.T)
-    local Typecheck = require("moonlift.tree_typecheck").Define(self.T)
-    local Layout = require("moonlift.sem_layout_resolve").Define(self.T)
-    local TreeToBack = require("moonlift.tree_to_back").Define(self.T)
-    local Validate = require("moonlift.back_validate").Define(self.T)
-    local J = require("moonlift.back_jit").Define(self.T)
+    local state = assert(module_value_state[self], "invalid Moonlift module table")
+    local Typecheck = require("moonlift.tree_typecheck").Define(state.T)
+    local Layout = require("moonlift.sem_layout_resolve").Define(state.T)
+    local TreeToBack = require("moonlift.tree_to_back").Define(state.T)
+    local Validate = require("moonlift.back_validate").Define(state.T)
+    local J = require("moonlift.back_jit").Define(state.T)
     -- Module has already been open-expanded by eval_island; typecheck/lower directly.
     local expanded = module_with_required_deps(self)
     local checked = Typecheck.check_module(expanded)
@@ -450,7 +442,7 @@ function ModuleValue:compile()
     local report = Validate.validate(program)
     if #report.issues ~= 0 then error("module back validation failed: " .. tostring(report.issues[1]), 2) end
     local artifact = J.jit():compile(program)
-    return setmetatable({ module = self, artifact = artifact, T = self.T, exports = module_funcs(self.T, checked.module), functions = {} }, CompiledModule)
+    return setmetatable({ module = self, artifact = artifact, T = state.T, exports = module_funcs(state.T, checked.module), functions = {} }, CompiledModule)
 end
 
 function CompiledModule:get(name)
@@ -494,7 +486,7 @@ local function module_path_candidates(runtime, name)
 end
 
 function Runtime:note_require_dep(value)
-    if not (type(value) == "table" and value.module) then return end
+    if not module_value_state[value] then return end
     local deps = current_dep_table(self)
     for i = 1, #deps do if deps[i] == value then return end end
     deps[#deps + 1] = value
@@ -527,7 +519,8 @@ function Runtime:require(name)
                 error(loaded_or_err, 2)
             end
             local value = loaded_or_err
-            if type(value) == "table" and value.module then value.deps = frame.deps end
+            local state = module_value_state[value]
+            if state then state.deps = frame.deps end
             self.require_cache[name] = value
             self:note_require_dep(value)
             return value

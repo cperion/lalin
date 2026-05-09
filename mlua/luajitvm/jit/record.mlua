@@ -68,10 +68,11 @@ func emit_ins(j64: ptr(u64), irbuf: ptr(u64), o: i32, t: i32, op1: i32, op2: i32
     return nins + REF_BIAS
 end
 
--- Allocate one KINT constant below REF_BIAS.  Returns slot index.
-func alloc_kint(j64: ptr(u64), irbuf: ptr(u64), val: i32) -> i32
+-- Allocate one KINT constant below REF_BIAS.
+region alloc_kint(j64: ptr(u64), irbuf: ptr(u64), val: i32; ok: cont(ref: i32), overflow: cont())
+entry start()
     let nk: i32 = as(i32, j64[2])
-    if nk <= 0 then return -1 end
+    if nk <= 0 then jump overflow() end
     let slot: i32 = nk - 1
     j64[2] = as(u64, slot)
     let m16: u64 = 0xFFFF
@@ -80,7 +81,8 @@ func alloc_kint(j64: ptr(u64), irbuf: ptr(u64), val: i32) -> i32
     let t: u64 = (as(u64, IRT_INT) & m8) << 32
     let o: u64 = (as(u64, 60) & m8) << 40
     irbuf[slot] = v | t | o
-    return slot
+    jump ok(ref = slot)
+end
 end
 
 func j_nins(j64: ptr(u64)) -> i32
@@ -186,9 +188,18 @@ entry start()
     if rhs_slot >= 0 then
         jump resolve(op1 = op1, op2 = slot_refs[rhs_slot], j4 = j64, ib = irbuf)
     end
-    let kref: i32 = alloc_kint(j64, irbuf, rhs_kval)
-    if kref < 0 then jump abort(reason = 2) end
-    jump resolve(op1 = op1, op2 = kref, j4 = j64, ib = irbuf)
+    emit alloc_kint(j64, irbuf, rhs_kval; ok = rhs_kint, overflow = rhs_kint_overflow)
+end
+
+block rhs_kint(ref: i32)
+    let j64:   ptr(u64) = as(ptr(u64), J)
+    let irbuf: ptr(u64) = j_irbuf(j64)
+    let op1: i32 = slot_refs[lhs_slot]
+    jump resolve(op1 = op1, op2 = ref, j4 = j64, ib = irbuf)
+end
+
+block rhs_kint_overflow()
+    jump abort(reason = 2)
 end
 
 block resolve(op1: i32, op2: i32, j4: ptr(u64), ib: ptr(u64))
@@ -212,10 +223,16 @@ block fold_op(a: i32, b: i32, j4: ptr(u64), ib: ptr(u64))
 end
 
 block fold_done(c: i32, j4: ptr(u64), ib: ptr(u64))
-    let kref: i32 = alloc_kint(j4, ib, c)
-    if kref < 0 then jump abort(reason = 3) end
-    slot_refs[dst_slot] = kref
-    jump done(ref = kref)
+    emit alloc_kint(j4, ib, c; ok = fold_kint, overflow = fold_kint_overflow)
+end
+
+block fold_kint(ref: i32)
+    slot_refs[dst_slot] = ref
+    jump done(ref = ref)
+end
+
+block fold_kint_overflow()
+    jump abort(reason = 3)
 end
 
 block emit_ir(ea: i32, eb: i32, j4: ptr(u64), ib: ptr(u64))

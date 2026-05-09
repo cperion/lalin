@@ -1,0 +1,88 @@
+-- runtime/stackop.mlua -- Stack/constant/control bytecode opcode regions.
+
+local m = module "luajitvm.runtime.stackop"
+
+const LUA_TINT: i32 = 5
+
+func stackop_bc_a(ins: u32) -> i32
+    return (as(i32, ins) >> 8) & 0xFF
+end
+
+func stackop_bc_b(ins: u32) -> i32
+    return (as(i32, ins) >> 24) & 0xFF
+end
+
+func stackop_bc_cd(ins: u32) -> i32
+    return (as(i32, ins) >> 16) & 0xFFFF
+end
+
+func stackop_s16(v: i32) -> i32
+    return v - ((v >> 15) * 65536)
+end
+
+func stackop_stack32(L: ptr(u8)) -> ptr(i32)
+    return as(ptr(i32), as(ptr(u8), as(ptr(u64), L)[4]))
+end
+
+func stackop_stack64(L: ptr(u8)) -> ptr(i64)
+    return as(ptr(i64), as(ptr(u8), as(ptr(u64), L)[4]))
+end
+
+region vmop_kshort(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = stackop_bc_a(ins)
+    let d: i32 = stackop_s16(stackop_bc_cd(ins))
+    let tv32: ptr(i32) = stackop_stack32(L)
+    let tv64: ptr(i64) = stackop_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, d)
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_mov(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = stackop_bc_a(ins)
+    let b: i32 = stackop_bc_b(ins)
+    let tv32: ptr(i32) = stackop_stack32(L)
+    let tv64: ptr(i64) = stackop_stack64(L)
+    tv32[a * 4] = tv32[b * 4]
+    tv64[a * 2 + 1] = tv64[b * 2 + 1]
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_kpri(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = stackop_bc_a(ins)
+    let tv32: ptr(i32) = stackop_stack32(L)
+    tv32[a * 4] = stackop_bc_cd(ins)
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_knil(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = stackop_bc_a(ins)
+    let tv32: ptr(i32) = stackop_stack32(L)
+    tv32[a * 4] = 0
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_jmp(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    jump next(ip = ip + 1 + stackop_s16(stackop_bc_cd(ins)))
+end
+end
+
+region vmop_loop(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    jump next(ip = ip + 1 + stackop_s16(stackop_bc_cd(ins)))
+end
+end
+
+end
+
+local _c = m:compile(); _c:free()
+return m

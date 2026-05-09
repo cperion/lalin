@@ -90,8 +90,17 @@ assert(is_white_fn(obj3_ptr, 1), "white obj should be white")
 -- obj1 is black
 assert(is_black_fn(obj1_ptr), "obj1 should be black")
 
--- Barrier regions: verify they compile (regions can't be called directly from Lua)
-assert(barrier:get("barrier_const_check")() == 1, "barrier sentinel")
+-- Barrier regions: black parent + white child shades child gray.
+assert(barrier:get("barrier_const_check")() == 5, "barrier sentinel")
+alloc:get("gc_mark_black")(obj1_ptr)
+obj3[8] = 1 -- white/currentwhite
+check("barrier_fwd rc", 0, barrier:get("barrier_fwd_test")(G_ptr, obj1_ptr, obj3_ptr))
+check("barrier child gray", 2, u8_at(obj3, 8))
+
+-- Backward barrier re-grays a black table.
+alloc:get("gc_mark_black")(obj2_ptr)
+check("barrier_back rc", 0, barrier:get("barrier_back_test")(G_ptr, obj2_ptr))
+check("barrier tab gray", 2, u8_at(obj2, 8))
 
 alloc:free()
 barrier:free()

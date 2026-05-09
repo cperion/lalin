@@ -37,6 +37,8 @@ local files = {
     -- Task 8: P4.PROTO.002 interpreter stubs
     "mlua/luajitvm/runtime/dispatch.mlua",  -- P5.INT: real interpreter now
     "mlua/luajitvm/runtime/arith.mlua",
+    "mlua/luajitvm/runtime/compare.mlua",
+    "mlua/luajitvm/runtime/stackop.mlua",
     "mlua/luajitvm/runtime/call.mlua",
     -- Task 8: P4.PROTO.003 table/meta stubs
     "mlua/luajitvm/runtime/table.mlua",

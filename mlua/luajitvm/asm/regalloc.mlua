@@ -41,32 +41,38 @@ func ra_set_reg(A: ptr(u8), slot: i32, r: i32)
     ra_map(A)[slot] = as(u8, r + 1)
 end
 
-func bit_scan_low(mask: i32) -> i32
-    if (mask & 1)     ~= 0 then return 0  end
-    if (mask & 2)     ~= 0 then return 1  end
-    if (mask & 4)     ~= 0 then return 2  end
-    if (mask & 8)     ~= 0 then return 3  end
-    if (mask & 0x10)  ~= 0 then return 4  end
-    if (mask & 0x20)  ~= 0 then return 5  end
-    if (mask & 0x40)  ~= 0 then return 6  end
-    if (mask & 0x80)  ~= 0 then return 7  end
-    if (mask & 0x100) ~= 0 then return 8  end
-    if (mask & 0x200) ~= 0 then return 9  end
-    if (mask & 0x400) ~= 0 then return 10 end
-    if (mask & 0x800) ~= 0 then return 11 end
-    return -1
+region choose_reg(mask: i32; found: cont(r: i32), empty: cont())
+entry start()
+    if (mask & 1)     ~= 0 then jump found(r = 0)  end
+    if (mask & 2)     ~= 0 then jump found(r = 1)  end
+    if (mask & 4)     ~= 0 then jump found(r = 2)  end
+    if (mask & 8)     ~= 0 then jump found(r = 3)  end
+    if (mask & 0x10)  ~= 0 then jump found(r = 4)  end
+    if (mask & 0x20)  ~= 0 then jump found(r = 5)  end
+    if (mask & 0x40)  ~= 0 then jump found(r = 6)  end
+    if (mask & 0x80)  ~= 0 then jump found(r = 7)  end
+    if (mask & 0x100) ~= 0 then jump found(r = 8)  end
+    if (mask & 0x200) ~= 0 then jump found(r = 9)  end
+    if (mask & 0x400) ~= 0 then jump found(r = 10) end
+    if (mask & 0x800) ~= 0 then jump found(r = 11) end
+    jump empty()
+end
 end
 
 region ra_alloc(A: ptr(u8), ref: i32, allow: i32) -> proto.RAAlloc
 entry start()
     let slot: i32 = ref_slot(ref)
     if ra_assigned(A, slot) then jump reg(r = ra_get_reg(A, slot)) end
-    let free: i32 = ra_free_mask(A) & allow
-    let r: i32 = bit_scan_low(free)
-    if r < 0 then jump fail(code = ref) end
+    emit choose_reg(ra_free_mask(A) & allow; found = alloc_found, empty = alloc_empty)
+end
+block alloc_found(r: i32)
+    let slot: i32 = ref_slot(ref)
     ra_set_free_mask(A, ra_free_mask(A) - (1 << r))
     ra_set_reg(A, slot, r)
     jump reg(r = r)
+end
+block alloc_empty()
+    jump fail(code = ref)
 end
 end
 
@@ -74,12 +80,16 @@ region ra_dest(A: ptr(u8), ref: i32, allow: i32) -> proto.RADest
 entry start()
     let slot: i32 = ref_slot(ref)
     if ra_assigned(A, slot) then jump dest_reg(r = ra_get_reg(A, slot)) end
-    let free: i32 = ra_free_mask(A) & allow
-    let r: i32 = bit_scan_low(free)
-    if r < 0 then jump fail(code = ref) end
+    emit choose_reg(ra_free_mask(A) & allow; found = dest_found, empty = dest_empty)
+end
+block dest_found(r: i32)
+    let slot: i32 = ref_slot(ref)
     ra_set_free_mask(A, ra_free_mask(A) - (1 << r))
     ra_set_reg(A, slot, r)
     jump dest_reg(r = r)
+end
+block dest_empty()
+    jump fail(code = ref)
 end
 end
 

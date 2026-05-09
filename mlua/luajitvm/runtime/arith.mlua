@@ -1,26 +1,169 @@
--- runtime/arith.mlua -- Arithmetic opcode handler stubs.
--- Protocol: OpcodeResult
--- P4.PROTO.002 stub.
+-- runtime/arith.mlua -- Arithmetic bytecode opcode regions.
+--
+-- Arithmetic handlers expose explicit opcode continuations.  They do not return
+-- integer status tags; the dispatcher composes them with `emit` and receives
+-- typed `next/returned/error` control edges.
 
 local proto = moon.require("luajitvm.protocols")
 local m = module "luajitvm.runtime.arith"
 
+const LUA_TINT: i32 = 5
 
--- BC_ADD handler stub.
+func arith_bc_a(ins: u32) -> i32
+    return (as(i32, ins) >> 8) & 0xFF
+end
+
+func arith_bc_b(ins: u32) -> i32
+    return (as(i32, ins) >> 24) & 0xFF
+end
+
+func arith_bc_cd(ins: u32) -> i32
+    return (as(i32, ins) >> 16) & 0xFFFF
+end
+
+func arith_s16(v: i32) -> i32
+    return v - ((v >> 15) * 65536)
+end
+
+func arith_stack32(L: ptr(u8)) -> ptr(i32)
+    return as(ptr(i32), as(ptr(u8), as(ptr(u64), L)[4]))
+end
+
+func arith_stack64(L: ptr(u8)) -> ptr(i64)
+    return as(ptr(i64), as(ptr(u8), as(ptr(u64), L)[4]))
+end
+
+region vmop_addvv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let c: i32 = arith_bc_cd(ins)
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) + as(i32, tv64[c * 2 + 1]))
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_subvv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let c: i32 = arith_bc_cd(ins)
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) - as(i32, tv64[c * 2 + 1]))
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_mulvv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let c: i32 = arith_bc_cd(ins)
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) * as(i32, tv64[c * 2 + 1]))
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_addvn(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let lit: i32 = arith_s16(arith_bc_cd(ins))
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) + lit)
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_subvn(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let lit: i32 = arith_s16(arith_bc_cd(ins))
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) - lit)
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_mulvn(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let lit: i32 = arith_s16(arith_bc_cd(ins))
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) * lit)
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_addnv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let lit: i32 = arith_s16(arith_bc_cd(ins))
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, lit + as(i32, tv64[b * 2 + 1]))
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_subnv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let lit: i32 = arith_s16(arith_bc_cd(ins))
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, lit - as(i32, tv64[b * 2 + 1]))
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_mulnv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let lit: i32 = arith_s16(arith_bc_cd(ins))
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, lit * as(i32, tv64[b * 2 + 1]))
+    jump next(ip = ip + 1)
+end
+end
+
+-- Canonical protocol stubs kept for the architecture catalog.  The interpreter
+-- dispatcher uses the vmop_* regions above because they carry the next PC.
 region vm_bc_add(L: ptr(u8), bc: i32) -> proto.OpcodeResult
 entry start()
     jump error(code = 0)
 end
 end
 
--- BC_SUB handler stub.
 region vm_bc_sub(L: ptr(u8), bc: i32) -> proto.OpcodeResult
 entry start()
     jump error(code = 0)
 end
 end
 
--- BC_MUL handler stub.
 region vm_bc_mul(L: ptr(u8), bc: i32) -> proto.OpcodeResult
 entry start()
     jump error(code = 0)
@@ -30,3 +173,4 @@ end
 end
 
 local _c = m:compile(); _c:free()
+return m

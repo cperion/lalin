@@ -1,25 +1,305 @@
--- runtime/table.mlua -- Table get/set region stubs.
--- Protocol: TableGet, TableSet
--- P4.PROTO.003 stub.
+-- runtime/table.mlua -- Table get/set regions.
+--
+-- Bring-up scope: array part plus existing hash-node lookup/update. Allocation
+-- of new hash nodes and metatable lookup remain explicit protocol exits so GC
+-- and metamethod work can plug in without changing callers.
 
 local proto = moon.require("luajitvm.protocols")
 local m = module "luajitvm.runtime.table"
 
+const LUA_TNIL: i32 = 0
+const LUA_TINT: i32 = 3
+const LUA_TTAB: i32 = 8
 
--- Table key lookup stub.
+const TAB_OFF_ARRAY: i32 = 16
+const TAB_OFF_NODE:  i32 = 40
+const TAB_OFF_ASIZE: i32 = 48
+const TAB_OFF_HMASK: i32 = 52
+
+const NODE_OFF_VAL:  i32 = 0
+const NODE_OFF_KEY:  i32 = 16
+const NODE_OFF_NEXT: i32 = 32
+const NODE_SIZE:     i32 = 48
+
+func tab_array(t: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), t)[2])
+end
+
+func tab_asize(t: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), t)[TAB_OFF_ASIZE / 4])
+end
+
+func tab_node(t: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), t)[5])
+end
+
+func tab_hmask(t: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), t)[TAB_OFF_HMASK / 4])
+end
+
+func tv_tag_at(base: ptr(u8), slot: i32) -> i32
+    return as(ptr(i32), base)[slot * 4]
+end
+
+func tv_payload_at(base: ptr(u8), slot: i32) -> i64
+    return as(ptr(i64), base)[slot * 2 + 1]
+end
+
+func tv_set_at(base: ptr(u8), slot: i32, tag: i32, payload: i64)
+    as(ptr(i32), base)[slot * 4] = tag
+    as(ptr(i64), base)[slot * 2 + 1] = payload
+end
+
+func node_val_tag(n: ptr(u8)) -> i32
+    return as(ptr(i32), n + NODE_OFF_VAL)[0]
+end
+
+func node_val_payload(n: ptr(u8)) -> i64
+    return as(ptr(i64), n + NODE_OFF_VAL)[1]
+end
+
+func node_set_val(n: ptr(u8), tag: i32, payload: i64)
+    as(ptr(i32), n + NODE_OFF_VAL)[0] = tag
+    as(ptr(i64), n + NODE_OFF_VAL)[1] = payload
+end
+
+func node_key_tag(n: ptr(u8)) -> i32
+    return as(ptr(i32), n + NODE_OFF_KEY)[0]
+end
+
+func node_key_payload(n: ptr(u8)) -> i64
+    return as(ptr(i64), n + NODE_OFF_KEY)[1]
+end
+
+func node_next(n: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), n)[4])
+end
+
+func key_hash(tag: i32, payload: i64) -> i32
+    return (tag * 131) ^ as(i32, payload)
+end
+
+func stack_base(L: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), L)[4])
+end
+
+func bc_a(ins: u32) -> i32
+    return (as(i32, ins) >> 8) & 0xFF
+end
+
+func bc_b(ins: u32) -> i32
+    return (as(i32, ins) >> 24) & 0xFF
+end
+
+func bc_c(ins: u32) -> i32
+    return (as(i32, ins) >> 16) & 0xFF
+end
+
+-- Integer-key array-part lookup: Lua key 1 maps to array slot 0.  Misses fall
+-- through to the hash part, keeping table control explicit in this region.
 region table_get(G: ptr(u8), tab: ptr(u8), key_tag: i32, key_payload: i64) -> proto.TableGet
 entry start()
-    jump nil_no_meta()
+    if as(u64, tab) == 0 then jump error(code = 1) end
+    if key_tag == LUA_TINT then
+        let key: i32 = as(i32, key_payload)
+        if key > 0 and key <= tab_asize(tab) then
+            let arr: ptr(u8) = tab_array(tab)
+            if as(u64, arr) ~= 0 then
+                let slot: i32 = key - 1
+                let tag: i32 = tv_tag_at(arr, slot)
+                if tag ~= LUA_TNIL then jump hit(val_tag = tag, val_payload = tv_payload_at(arr, slot)) end
+            end
+        end
+    end
+    jump hash_lookup()
+end
+
+block hash_lookup()
+    let nbase: ptr(u8) = tab_node(tab)
+    if as(u64, nbase) == 0 then jump nil_no_meta() end
+    let mask: i32 = tab_hmask(tab)
+    let bucket: i32 = key_hash(key_tag, key_payload) & mask
+    jump hash_scan(n = nbase + bucket * NODE_SIZE)
+end
+
+block hash_scan(n: ptr(u8))
+    if as(u64, n) == 0 then jump nil_no_meta() end
+    let kt: i32 = node_key_tag(n)
+    if kt == LUA_TNIL then jump nil_no_meta() end
+    if kt == key_tag and node_key_payload(n) == key_payload then
+        let vt: i32 = node_val_tag(n)
+        if vt == LUA_TNIL then jump nil_no_meta() end
+        jump hit(val_tag = vt, val_payload = node_val_payload(n))
+    end
+    jump hash_scan(n = node_next(n))
 end
 end
 
--- Table key store stub.
 region table_set(G: ptr(u8), tab: ptr(u8), key_tag: i32, key_payload: i64, val_tag: i32, val_payload: i64) -> proto.TableSet
 entry start()
-    jump error(code = 0)
+    if as(u64, tab) == 0 then jump error(code = 1) end
+    if key_tag == LUA_TINT then
+        let key: i32 = as(i32, key_payload)
+        if key > 0 and key <= tab_asize(tab) then
+            let arr: ptr(u8) = tab_array(tab)
+            if as(u64, arr) ~= 0 then
+                tv_set_at(arr, key - 1, val_tag, val_payload)
+                jump value_stored()
+            end
+        end
+    end
+    jump hash_set_lookup()
+end
+
+block hash_set_lookup()
+    let nbase: ptr(u8) = tab_node(tab)
+    if as(u64, nbase) == 0 then jump new_key() end
+    let mask: i32 = tab_hmask(tab)
+    let bucket: i32 = key_hash(key_tag, key_payload) & mask
+    jump hash_set_scan(n = nbase + bucket * NODE_SIZE)
+end
+
+block hash_set_scan(n: ptr(u8))
+    if as(u64, n) == 0 then jump new_key() end
+    let kt: i32 = node_key_tag(n)
+    if kt == LUA_TNIL then jump new_key() end
+    if kt == key_tag and node_key_payload(n) == key_payload then
+        node_set_val(n, val_tag, val_payload)
+        jump value_stored()
+    end
+    jump hash_set_scan(n = node_next(n))
+end
+
+block value_stored()
+    if val_tag >= 5 and val_tag <= 12 then
+        jump need_barrier(parent = tab, child_tag = val_tag, child_payload = val_payload)
+    end
+    jump done()
+end
+end
+
+region vmop_tgetv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let base: ptr(u8) = stack_base(L)
+    let a: i32 = bc_a(ins)
+    let b: i32 = bc_b(ins)
+    let c: i32 = bc_c(ins)
+    if tv_tag_at(base, b) ~= LUA_TTAB then jump error(code = 2) end
+    emit table_get(as(ptr(u8), as(u64, 0)), as(ptr(u8), tv_payload_at(base, b)), tv_tag_at(base, c), tv_payload_at(base, c);
+        hit = got_hit,
+        nil_no_meta = got_nil,
+        meta = got_meta,
+        error = got_error)
+end
+block got_hit(val_tag: i32, val_payload: i64)
+    let base: ptr(u8) = stack_base(L)
+    tv_set_at(base, bc_a(ins), val_tag, val_payload)
+    jump next(ip = ip + 1)
+end
+block got_nil()
+    let base: ptr(u8) = stack_base(L)
+    tv_set_at(base, bc_a(ins), LUA_TNIL, as(i64, 0))
+    jump next(ip = ip + 1)
+end
+block got_meta(mm_tag: i32, mm_payload: i64)
+    jump error(code = 3)
+end
+block got_error(code: i32)
+    jump error(code = code)
+end
+end
+
+region vmop_tsetv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let base: ptr(u8) = stack_base(L)
+    let a: i32 = bc_a(ins) -- value slot
+    let b: i32 = bc_b(ins) -- table slot
+    let c: i32 = bc_c(ins) -- key slot
+    if tv_tag_at(base, b) ~= LUA_TTAB then jump error(code = 2) end
+    emit table_set(as(ptr(u8), as(u64, 0)), as(ptr(u8), tv_payload_at(base, b)), tv_tag_at(base, c), tv_payload_at(base, c), tv_tag_at(base, a), tv_payload_at(base, a);
+        done = set_done,
+        need_barrier = set_barrier,
+        new_key = set_new_key,
+        meta = set_meta,
+        error = set_error)
+end
+block set_done()
+    jump next(ip = ip + 1)
+end
+block set_barrier(parent: ptr(u8), child_tag: i32, child_payload: i64)
+    jump next(ip = ip + 1)
+end
+block set_new_key()
+    jump error(code = 4)
+end
+block set_meta(mm_tag: i32, mm_payload: i64)
+    jump error(code = 3)
+end
+block set_error(code: i32)
+    jump error(code = code)
+end
+end
+
+region vmop_tgetb(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let base: ptr(u8) = stack_base(L)
+    let b: i32 = bc_b(ins)
+    if tv_tag_at(base, b) ~= LUA_TTAB then jump error(code = 2) end
+    emit table_get(as(ptr(u8), as(u64, 0)), as(ptr(u8), tv_payload_at(base, b)), LUA_TINT, as(i64, bc_c(ins));
+        hit = got_hit,
+        nil_no_meta = got_nil,
+        meta = got_meta,
+        error = got_error)
+end
+block got_hit(val_tag: i32, val_payload: i64)
+    let base: ptr(u8) = stack_base(L)
+    tv_set_at(base, bc_a(ins), val_tag, val_payload)
+    jump next(ip = ip + 1)
+end
+block got_nil()
+    let base: ptr(u8) = stack_base(L)
+    tv_set_at(base, bc_a(ins), LUA_TNIL, as(i64, 0))
+    jump next(ip = ip + 1)
+end
+block got_meta(mm_tag: i32, mm_payload: i64)
+    jump error(code = 3)
+end
+block got_error(code: i32)
+    jump error(code = code)
+end
+end
+
+region vmop_tsetb(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let base: ptr(u8) = stack_base(L)
+    let a: i32 = bc_a(ins) -- value slot
+    let b: i32 = bc_b(ins) -- table slot
+    if tv_tag_at(base, b) ~= LUA_TTAB then jump error(code = 2) end
+    emit table_set(as(ptr(u8), as(u64, 0)), as(ptr(u8), tv_payload_at(base, b)), LUA_TINT, as(i64, bc_c(ins)), tv_tag_at(base, a), tv_payload_at(base, a);
+        done = bset_done,
+        need_barrier = bset_barrier,
+        new_key = bset_new_key,
+        meta = bset_meta,
+        error = bset_error)
+end
+block bset_done()
+    jump next(ip = ip + 1)
+end
+block bset_barrier(parent: ptr(u8), child_tag: i32, child_payload: i64)
+    jump next(ip = ip + 1)
+end
+block bset_new_key()
+    jump error(code = 4)
+end
+block bset_meta(mm_tag: i32, mm_payload: i64)
+    jump error(code = 3)
+end
+block bset_error(code: i32)
+    jump error(code = code)
 end
 end
 
 end
 
 local _c = m:compile(); _c:free()
+return m

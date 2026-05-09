@@ -1,0 +1,60 @@
+-- runtime/compare.mlua -- Comparison bytecode opcode regions.
+
+local m = module "luajitvm.runtime.compare"
+
+func cmp_bc_b(ins: u32) -> i32
+    return (as(i32, ins) >> 24) & 0xFF
+end
+
+func cmp_bc_cd(ins: u32) -> i32
+    return (as(i32, ins) >> 16) & 0xFFFF
+end
+
+func cmp_stack64(L: ptr(u8)) -> ptr(i64)
+    return as(ptr(i64), as(ptr(u8), as(ptr(u64), L)[4]))
+end
+
+region vmop_islt(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let b: i32 = cmp_bc_b(ins)
+    let c: i32 = cmp_bc_cd(ins)
+    let tv64: ptr(i64) = cmp_stack64(L)
+    let skip: i32 = 2 - as(i32, as(i32, tv64[b * 2 + 1]) < as(i32, tv64[c * 2 + 1]))
+    jump next(ip = ip + skip)
+end
+end
+
+region vmop_isge(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let b: i32 = cmp_bc_b(ins)
+    let c: i32 = cmp_bc_cd(ins)
+    let tv64: ptr(i64) = cmp_stack64(L)
+    let skip: i32 = 2 - as(i32, as(i32, tv64[b * 2 + 1]) >= as(i32, tv64[c * 2 + 1]))
+    jump next(ip = ip + skip)
+end
+end
+
+region vmop_iseqv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let b: i32 = cmp_bc_b(ins)
+    let c: i32 = cmp_bc_cd(ins)
+    let tv64: ptr(i64) = cmp_stack64(L)
+    let skip: i32 = 2 - as(i32, as(i32, tv64[b * 2 + 1]) == as(i32, tv64[c * 2 + 1]))
+    jump next(ip = ip + skip)
+end
+end
+
+region vmop_isnev(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let b: i32 = cmp_bc_b(ins)
+    let c: i32 = cmp_bc_cd(ins)
+    let tv64: ptr(i64) = cmp_stack64(L)
+    let skip: i32 = 2 - as(i32, as(i32, tv64[b * 2 + 1]) ~= as(i32, tv64[c * 2 + 1]))
+    jump next(ip = ip + skip)
+end
+end
+
+end
+
+local _c = m:compile(); _c:free()
+return m

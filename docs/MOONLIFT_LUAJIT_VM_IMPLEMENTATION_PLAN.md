@@ -51,7 +51,8 @@ Key architectural commitments:
 - [x] Named protocol exit types as the architectural contract (`docs/VM_PROTOCOL_DESIGN.md`).
 - [x] LuaJIT-like SSA IR: `IRIns`, `TRef`, `REF_BIAS`.
 - [x] Snapshots are the deoptimization contract.
-- [x] Interpreter opcode dispatch is a `switch`.
+- [x] Interpreter bytecode decode is a `switch`, but opcode bodies are typed
+  regions composed with `emit` rather than integer-status returns.
 - [x] No Lua in the runtime hot path.
 - [x] x64 backend first; arm64 later.
 - [x] LuaJIT asm backend used as reference/oracle, not final linked dependency.
@@ -108,7 +109,7 @@ These are Moonlift language/compiler blockers that affect the VM experiment.
 
 Exit criteria for P0:
 
-- [ ] We can compile a module containing a region-composed switch dispatch loop.
+- [x] We can compile a module containing a region-composed switch dispatch loop.
 - [ ] We can define and mutate VM-state-like data structures.
 - [ ] We can run a tiny region state-machine through the normal Moonlift runner.
 
@@ -198,6 +199,8 @@ Exit criteria for P1:
 - [x] **P2.SKEL.003 — Create runtime modules**
   - [x] `runtime/dispatch.mlua`
   - [x] `runtime/arith.mlua`
+  - [x] `runtime/compare.mlua`
+  - [x] `runtime/stackop.mlua`
   - [x] `runtime/table.mlua`
   - [x] `runtime/call.mlua`
   - [x] `runtime/meta.mlua`
@@ -387,8 +390,12 @@ Exit criteria for P4:
 ### P5.INT — Switch Dispatch and Core Opcodes
 
 - [x] **P5.INT.001 — Implement `vm_loop` switch dispatch**
-  - `runtime/dispatch.mlua`: region-based dispatch loop with `switch op do`.
-  - Reads BCIns from `ptr(u32)` array, decodes op/A/B/C/D fields inline.
+  - `runtime/dispatch.mlua`: opcode decoder with `switch op do`; each case
+    immediately composes a typed opcode region with `emit`.
+  - Opcode bodies live in `runtime/stackop.mlua`, `runtime/arith.mlua`,
+    `runtime/compare.mlua`, and `runtime/call.mlua`.
+  - Opcode regions expose explicit `next(ip)`, `returned(nresults)`, and
+    `error(code)` continuation edges instead of returning integer status tags.
   - Stack access via typed pointer views (`ptr(i32)` for tags, `ptr(i64)` for payloads).
   - ThreadState extended with `TS_OFF_PC` (i32 instruction offset).
 
@@ -416,9 +423,21 @@ Exit criteria for P4:
 
 - [x] **P5.INT.007 — Add interpreter tests using Moonlift runner**
   - `tests/test_interpreter_run.lua`: FFI-backed smoke tests.
-  - 8 tests: KSHORT, MOV, arithmetic, sum, JMP, LOOP, SUBVV, MULVV.
+  - 24 tests: KSHORT, MOV, arithmetic, sum, JMP/LOOP, SUB/MUL, comparisons,
+    ADDVN/ADDNV, KPRI nil/true, TGETV/TSETV array + existing hash nodes,
+    TGETB/TSETB byte-literal array keys.
   - Stack buffers allocated with LuaJIT FFI, ThreadState wired manually.
   - No `Host.eval`.
+
+- [x] **P5.INT.008 — Implement table fast path opcodes**
+  - `runtime/table.mlua`: `table_get`/`table_set` support positive integer keys
+    into GCtab array part (`key 1 -> array[0]`) and existing hash-node
+    lookup/update for non-array keys.
+  - `vmop_tgetv`, `vmop_tsetv`, `vmop_tgetb`, and `vmop_tsetb` are typed opcode
+    regions composed by `runtime/dispatch.mlua`.
+  - Store path exposes `need_barrier(...)` for collectable values; current
+    interpreter handler acknowledges the edge and continues until full table/GC
+    integration wires the barrier module directly.
 
 Exit criteria for P5:
 
@@ -426,6 +445,8 @@ Exit criteria for P5:
 - [x] LOOP branches correctly (hotcount mechanism deferred).
 - [x] Return path is typed and explicit (`returned(nresults)` protocol).
 - [x] ISLT/ISGE/ISEQV/ISNEV work via `as(i32, bool)` arithmetic offset.
+- [x] TGETV/TSETV execute integer-key array table accesses through typed
+  `TableGet`/`TableSet` protocol regions.
 
 ---
 
@@ -446,21 +467,25 @@ Exit criteria for P5:
   - gc_mark_black/gc_mark_gray: update marked byte.
   - gc_is_white/gc_is_black: query marked color.
 
-- [x] **P6.GC.004 — Implement barrier protocol stubs**
-  - `gc/barrier.mlua`: gc_barrier_fwd, gc_barrier_back as no-op stubs.
-  - Call sites preserved; real implementation when incremental GC lands.
+- [x] **P6.GC.004 — Implement barrier protocol regions**
+  - `gc/barrier.mlua`: `gc_barrier_fwd` shades a white child gray when stored
+    into a black parent.
+  - `gc_barrier_back` re-grays a black table so propagation revisits it.
+  - Full gray-list linking is deferred to incremental GC, but the color
+    invariant repair is live and typed.
 
 - [x] **P6.GC.005 — Minimal mark helpers**
   - Mark colors: WHITE0/WHITE1/GRAY/BLACK.
   - No sweep or full GC cycle yet (deferred to incremental GC phase).
 
 - [x] **P6.GC.006 — Add allocation tests**
-  - `tests/test_gc_alloc.lua`: FFI-allocated objects, init+link, verify headers, intrusive list, mark ops.
+  - `tests/test_gc_alloc.lua`: FFI-allocated objects, init+link, verify headers,
+    intrusive list, mark ops, forward/backward barrier color transitions.
 
 Exit criteria for P6:
 
 - [x] Runtime objects can be allocated through gc_init_and_link.
-- [x] Store paths visibly route through barrier-aware edges (stubs).
+- [x] Store paths visibly route through barrier-aware typed edges.
 - [x] GC headers verified: next=NULL, marked=currentwhite, gct=type tag.
 - [x] Intrusive allgc list maintained (G.root → obj3 → obj2 → obj1 → NULL).
 
@@ -654,15 +679,17 @@ Exit criteria for P10:
   - rdi (register 7) reserved as Lua base pointer; excluded from free set.
 
 - [x] **P11.ASM.004 — Implement RegSet helpers**
-  - bit_scan_low, ra_get/set/clear/free_regs/assigned as funcs.
+  - `choose_reg` is a continuation region (`found`/`empty`) rather than a
+    sentinel-returning helper; regmap get/set/clear/free_regs remain plain data
+    accessors.
   - FREE_REGS_ALL = 0x0F47 (rax,rcx,rdx,rsi,r8-r11).
 
 - [x] **P11.ASM.005 — Implement minimal register allocator**
   - `asm/regalloc.mlua`: `ra_alloc`/`ra_dest` are proper regions with canonical
     `protocols.RAAlloc`/`protocols.RADest` exits.
   - Backward linear scan; no remat/spill yet (`fail` exit on exhaustion).
-  - `asm_state.mlua` still keeps small local regmap helpers for backward-scan
-    bookkeeping, but the architectural allocator entrypoints are regions.
+  - `asm_state.mlua` composes `emit ra.ra_alloc(...)` for operand allocation;
+    small local regmap helpers remain only for release/inspection bookkeeping.
 
 - [x] **P11.ASM.006 — Implement tiles for KINT/SLOAD/ADD/SUB/MUL/RET**
   - `asm/x64_tiles.mlua`: `x64_asm_one_ir` is a `switch` region.
@@ -704,9 +731,11 @@ Exit criteria for P10:
   **P11.ASM.REFACTOR — [x] Region-based tile dispatch restored**
   - `x64_tiles.mlua` contains `x64_asm_one_ir` as a switch region.
   - Individual x64 tile families are regions returning canonical `TileResult`.
-  - `asm_state.mlua` backward scan uses `emit tiles.x64_asm_one_ir(...)`.
-  - Follow-up: move remaining local regmap bookkeeping in `asm_state.mlua` onto
-    `emit ra_alloc`/`emit ra_dest` when spill/remat support lands.
+  - `asm_state.mlua` backward scan uses `emit ra.ra_alloc(...)` for operands and
+    `emit tiles.x64_asm_one_ir(...)` for tile emission, so allocator/tile control
+    stays in typed region continuations instead of sentinel integer checks.
+  - Follow-up: route destination/spill/remat bookkeeping through `ra_dest` once
+    spill/remat support lands.
 
 Exit criteria for P11:
 

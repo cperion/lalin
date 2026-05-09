@@ -32,15 +32,18 @@ state_u64[4] = stack_uint                                    -- base = stack_ptr
 state_u64[5] = stack_uint + StackBytes                       -- top = stack_ptr + StackBytes
 state_u64[7] = stack_uint                                    -- stack = stack_ptr
 
-local function run_program(bc, nins)
+local function run_program_with_setup(bc, nins, setup)
     -- Add RET1 at position nins to return slot 0
     bc[nins] = 76  -- RET1 with A=0
-    -- Clear stack first
     ffi.fill(stack_buf, StackBytes, 0)
+    if setup then setup() end
     local nresults = dispatch:get("vm_interp_run")(state_ptr, bc_ptr, 0, 0)
-    -- Read the TValue at slot 0 from stack: payload is i64 at offset 8
     local tv64 = ffi.cast("int64_t *", stack_buf)
     return tonumber(tv64[1])  -- payload at byte offset 8 = i64 index 1
+end
+
+local function run_program(bc, nins)
+    return run_program_with_setup(bc, nins)
 end
 
 -- Test results
@@ -67,6 +70,10 @@ check("mov", 99, run_program(bc_buf, 3))
 
 local function kshort(a, d) return 41 + (a * 256) + (d * 65536) end
 local function addvv(a, b, c) return 32 + (a * 256) + (c * 65536) + (b * 16777216) end
+local function tgetv(a, b, c) return 56 + (a * 256) + (c * 65536) + (b * 16777216) end
+local function tgetb(a, b, c) return 58 + (a * 256) + (c * 65536) + (b * 16777216) end
+local function tsetv(a, b, c) return 60 + (a * 256) + (c * 65536) + (b * 16777216) end
+local function tsetb(a, b, c) return 62 + (a * 256) + (c * 65536) + (b * 16777216) end
 
 -- Test 3: Arithmetic — (3+4)*2 = 14 (all through slot 0 and slot 1)
 bc_buf[0] = kshort(0, 3)                              -- slot0 = 3
@@ -182,6 +189,150 @@ bc_buf[1] = 76
 ffi.fill(stack_buf, StackBytes, 0)
 dispatch:get("vm_interp_run")(state_ptr, bc_ptr, 0, 0)
 check("kpri_true", 2, ffi.cast("int32_t *", stack_buf)[0])
+
+-- Test 18: TGETV array hit. stack[1]=table, stack[2]=key 1, result in stack[0].
+do
+    local tab_buf = ffi.new("uint8_t[?]", 56)
+    local arr_buf = ffi.new("uint8_t[?]", 16 * 4)
+    local tab64 = ffi.cast("uint64_t *", tab_buf)
+    local tab32 = ffi.cast("uint32_t *", tab_buf)
+    local arr32 = ffi.cast("int32_t *", arr_buf)
+    local arr64 = ffi.cast("int64_t *", arr_buf)
+    tab64[2] = tonumber(ffi.cast("uintptr_t", arr_buf)) -- array ptr @ offset 16
+    tab32[12] = 4                                      -- asize @ offset 48
+    arr32[0] = 3; arr64[1] = 1234                      -- array[1] = int 1234
+    bc_buf[0] = tgetv(0, 1, 2)
+    local got = run_program_with_setup(bc_buf, 1, function()
+        local st32 = ffi.cast("int32_t *", stack_buf)
+        local st64 = ffi.cast("int64_t *", stack_buf)
+        st32[4] = 8; st64[3] = tonumber(ffi.cast("uintptr_t", tab_buf)) -- slot1 table
+        st32[8] = 3; st64[5] = 1                                      -- slot2 key int 1
+    end)
+    check("tgetv_array", 1234, got)
+end
+
+-- Test 19: TSETV array hit then TGETV reads the stored value.
+do
+    local tab_buf = ffi.new("uint8_t[?]", 56)
+    local arr_buf = ffi.new("uint8_t[?]", 16 * 4)
+    local tab64 = ffi.cast("uint64_t *", tab_buf)
+    local tab32 = ffi.cast("uint32_t *", tab_buf)
+    tab64[2] = tonumber(ffi.cast("uintptr_t", arr_buf))
+    tab32[12] = 4
+    bc_buf[0] = tsetv(3, 1, 2) -- value slot3, table slot1, key slot2
+    bc_buf[1] = tgetv(0, 1, 2)
+    local got = run_program_with_setup(bc_buf, 2, function()
+        local st32 = ffi.cast("int32_t *", stack_buf)
+        local st64 = ffi.cast("int64_t *", stack_buf)
+        st32[4] = 8;  st64[3] = tonumber(ffi.cast("uintptr_t", tab_buf)) -- slot1 table
+        st32[8] = 3;  st64[5] = 2                                      -- slot2 key int 2
+        st32[12] = 3; st64[7] = 5678                                   -- slot3 value
+    end)
+    check("tsetv_then_get", 5678, got)
+end
+
+-- Test 20: TGETV array miss yields nil tag in destination.
+do
+    local tab_buf = ffi.new("uint8_t[?]", 56)
+    local arr_buf = ffi.new("uint8_t[?]", 16 * 1)
+    local tab64 = ffi.cast("uint64_t *", tab_buf)
+    local tab32 = ffi.cast("uint32_t *", tab_buf)
+    tab64[2] = tonumber(ffi.cast("uintptr_t", arr_buf))
+    tab32[12] = 1
+    bc_buf[0] = tgetv(0, 1, 2)
+    run_program_with_setup(bc_buf, 1, function()
+        local st32 = ffi.cast("int32_t *", stack_buf)
+        local st64 = ffi.cast("int64_t *", stack_buf)
+        st32[4] = 8; st64[3] = tonumber(ffi.cast("uintptr_t", tab_buf))
+        st32[8] = 3; st64[5] = 2
+    end)
+    check("tgetv_miss_nil", 0, ffi.cast("int32_t *", stack_buf)[0])
+end
+
+-- Test 21: TGETV hash hit for an existing non-array integer key.
+do
+    local tab_buf = ffi.new("uint8_t[?]", 56)
+    local node_buf = ffi.new("uint8_t[?]", 48)
+    local tab64 = ffi.cast("uint64_t *", tab_buf)
+    local tab32 = ffi.cast("uint32_t *", tab_buf)
+    local node32 = ffi.cast("int32_t *", node_buf)
+    local node64 = ffi.cast("int64_t *", node_buf)
+    tab64[5] = tonumber(ffi.cast("uintptr_t", node_buf)) -- node ptr @ offset 40
+    tab32[13] = 0                                      -- hmask 0: one bucket
+    node32[0] = 3; node64[1] = 4321                    -- val int 4321
+    node32[4] = 3; node64[3] = 99                      -- key int 99
+    bc_buf[0] = tgetv(0, 1, 2)
+    local got = run_program_with_setup(bc_buf, 1, function()
+        local st32 = ffi.cast("int32_t *", stack_buf)
+        local st64 = ffi.cast("int64_t *", stack_buf)
+        st32[4] = 8; st64[3] = tonumber(ffi.cast("uintptr_t", tab_buf))
+        st32[8] = 3; st64[5] = 99
+    end)
+    check("tgetv_hash", 4321, got)
+end
+
+-- Test 22: TSETV updates an existing hash node.
+do
+    local tab_buf = ffi.new("uint8_t[?]", 56)
+    local node_buf = ffi.new("uint8_t[?]", 48)
+    local tab64 = ffi.cast("uint64_t *", tab_buf)
+    local tab32 = ffi.cast("uint32_t *", tab_buf)
+    local node32 = ffi.cast("int32_t *", node_buf)
+    local node64 = ffi.cast("int64_t *", node_buf)
+    tab64[5] = tonumber(ffi.cast("uintptr_t", node_buf))
+    tab32[13] = 0
+    node32[0] = 3; node64[1] = 111
+    node32[4] = 3; node64[3] = 99
+    bc_buf[0] = tsetv(3, 1, 2)
+    bc_buf[1] = tgetv(0, 1, 2)
+    local got = run_program_with_setup(bc_buf, 2, function()
+        local st32 = ffi.cast("int32_t *", stack_buf)
+        local st64 = ffi.cast("int64_t *", stack_buf)
+        st32[4] = 8;  st64[3] = tonumber(ffi.cast("uintptr_t", tab_buf))
+        st32[8] = 3;  st64[5] = 99
+        st32[12] = 3; st64[7] = 8765
+    end)
+    check("tsetv_hash", 8765, got)
+end
+
+-- Test 23: TGETB byte literal key.
+do
+    local tab_buf = ffi.new("uint8_t[?]", 56)
+    local arr_buf = ffi.new("uint8_t[?]", 16 * 4)
+    local tab64 = ffi.cast("uint64_t *", tab_buf)
+    local tab32 = ffi.cast("uint32_t *", tab_buf)
+    local arr32 = ffi.cast("int32_t *", arr_buf)
+    local arr64 = ffi.cast("int64_t *", arr_buf)
+    tab64[2] = tonumber(ffi.cast("uintptr_t", arr_buf))
+    tab32[12] = 4
+    arr32[4] = 3; arr64[3] = 2222 -- array key 2 -> slot 1
+    bc_buf[0] = tgetb(0, 1, 2)
+    local got = run_program_with_setup(bc_buf, 1, function()
+        local st32 = ffi.cast("int32_t *", stack_buf)
+        local st64 = ffi.cast("int64_t *", stack_buf)
+        st32[4] = 8; st64[3] = tonumber(ffi.cast("uintptr_t", tab_buf))
+    end)
+    check("tgetb_array", 2222, got)
+end
+
+-- Test 24: TSETB byte literal key.
+do
+    local tab_buf = ffi.new("uint8_t[?]", 56)
+    local arr_buf = ffi.new("uint8_t[?]", 16 * 4)
+    local tab64 = ffi.cast("uint64_t *", tab_buf)
+    local tab32 = ffi.cast("uint32_t *", tab_buf)
+    tab64[2] = tonumber(ffi.cast("uintptr_t", arr_buf))
+    tab32[12] = 4
+    bc_buf[0] = tsetb(2, 1, 3) -- value slot2, table slot1, key literal 3
+    bc_buf[1] = tgetb(0, 1, 3)
+    local got = run_program_with_setup(bc_buf, 2, function()
+        local st32 = ffi.cast("int32_t *", stack_buf)
+        local st64 = ffi.cast("int64_t *", stack_buf)
+        st32[4] = 8; st64[3] = tonumber(ffi.cast("uintptr_t", tab_buf))
+        st32[8] = 3; st64[5] = 3333
+    end)
+    check("tsetb_then_get", 3333, got)
+end
 
 -- Cleanup
 dispatch:free()

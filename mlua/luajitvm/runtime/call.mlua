@@ -1,9 +1,29 @@
--- runtime/call.mlua -- Call and return region stubs.
--- Protocol: CallResult, ReturnResult, OpcodeResult
+-- runtime/call.mlua -- Call and return regions.
 
 local proto = moon.require("luajitvm.protocols")
 local m = module "luajitvm.runtime.call"
 
+func call_bc_cd(ins: u32) -> i32
+    return (as(i32, ins) >> 16) & 0xFFFF
+end
+
+region vmop_ret(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    jump returned(nresults = call_bc_cd(ins) - 1)
+end
+end
+
+region vmop_ret0(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    jump returned(nresults = 0)
+end
+end
+
+region vmop_ret1(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    jump returned(nresults = 1)
+end
+end
 
 region vm_bc_call(L: ptr(u8), bc: i32) -> proto.OpcodeResult
 entry start()
@@ -20,3 +40,4 @@ end
 end
 
 local _c = m:compile(); _c:free()
+return m

@@ -2,9 +2,9 @@
 --
 -- Pipeline (backward over IR):
 --   1. For each IR slot going downward from nins-1 to 1:
---      a. Ensure operand registers allocated (ra_ensure)
---      b. Emit x64 tile (code grows downward in J's mcode buffer)
---      c. Release destination register (ra_release)
+--      a. Compose the register allocator region for operand registers.
+--      b. Compose the x64 tile region (code grows downward in J's mcode buffer).
+--      c. Release destination register (asm_ra_release).
 --   2. Return entry pointer (lowest mctop after emission)
 --
 -- AsmState layout (A: ptr(u8), caller-allocated 260 bytes, must be zeroed):
@@ -19,6 +19,7 @@
 -- Register set: rax(0) rcx(1) rdx(2) rsi(6) rdi(7) r8(8) r9(9) r10(10) r11(11)
 
 local proto = moon.require("luajitvm.protocols")
+local ra = moon.require("luajitvm.asm.regalloc")
 local tiles = moon.require("luajitvm.asm.x64_tiles")
 local m = module "luajitvm.asm.asm_state"
 
@@ -187,65 +188,38 @@ end
 -- =========================================================================
 -- Register allocator state helpers
 -- =========================================================================
-func ra_free(A: ptr(u8)) -> i32
+func asm_ra_free(A: ptr(u8)) -> i32
     return as(ptr(i32), A)[0]
 end
-func ra_set_free(A: ptr(u8), v: i32)
+func asm_ra_set_free(A: ptr(u8), v: i32)
     as(ptr(i32), A)[0] = v
 end
-func ra_map(A: ptr(u8)) -> ptr(u8)
+func asm_ra_map(A: ptr(u8)) -> ptr(u8)
     return A + A_MAP
 end
-func ra_assigned(A: ptr(u8), slot: i32) -> bool
-    let m = ra_map(A)
+func asm_ra_assigned(A: ptr(u8), slot: i32) -> bool
+    let m = asm_ra_map(A)
     return m[slot] ~= 0
 end
-func ra_get(A: ptr(u8), slot: i32) -> i32
-    let m = ra_map(A)
+func asm_ra_get(A: ptr(u8), slot: i32) -> i32
+    let m = asm_ra_map(A)
     return as(i32, m[slot]) - 1
 end
-func ra_set(A: ptr(u8), slot: i32, r: i32)
-    let m = ra_map(A)
+func asm_ra_set(A: ptr(u8), slot: i32, r: i32)
+    let m = asm_ra_map(A)
     m[slot] = as(u8, r + 1)
 end
-func ra_clear(A: ptr(u8), slot: i32)
-    let m = ra_map(A)
+func asm_ra_clear(A: ptr(u8), slot: i32)
+    let m = asm_ra_map(A)
     m[slot] = 0
 end
 
--- Scan for the lowest set bit in mask (0-11).  Returns -1 if none set.
-func bit_scan_low(mask: i32) -> i32
-    if (mask & 1)     ~= 0 then return 0  end
-    if (mask & 2)     ~= 0 then return 1  end
-    if (mask & 4)     ~= 0 then return 2  end
-    if (mask & 8)     ~= 0 then return 3  end
-    if (mask & 0x10)  ~= 0 then return 4  end
-    if (mask & 0x20)  ~= 0 then return 5  end
-    if (mask & 0x40)  ~= 0 then return 6  end
-    if (mask & 0x80)  ~= 0 then return 7  end
-    if (mask & 0x100) ~= 0 then return 8  end
-    if (mask & 0x200) ~= 0 then return 9  end
-    if (mask & 0x400) ~= 0 then return 10 end
-    if (mask & 0x800) ~= 0 then return 11 end
-    return -1
-end
-
--- Ensure slot has a register; silently fail if none available.
-func ra_ensure(A: ptr(u8), slot: i32)
-    if ra_assigned(A, slot) then return end
-    let free = ra_free(A)
-    let r    = bit_scan_low(free)
-    if r < 0 then return end             -- out of registers: caller will see -1 via ra_get
-    ra_set_free(A, free - (1 << r))      -- clear bit r (known set)
-    ra_set(A, slot, r)
-end
-
 -- Release slot's register back to the free pool.
-func ra_release(A: ptr(u8), slot: i32)
-    if not ra_assigned(A, slot) then return end
-    let r = ra_get(A, slot)
-    ra_set_free(A, ra_free(A) | (1 << r))
-    ra_clear(A, slot)
+func asm_ra_release(A: ptr(u8), slot: i32)
+    if not asm_ra_assigned(A, slot) then return end
+    let r = asm_ra_get(A, slot)
+    asm_ra_set_free(A, asm_ra_free(A) | (1 << r))
+    asm_ra_clear(A, slot)
 end
 
 -- =========================================================================
@@ -284,30 +258,49 @@ block scan(slot: i32)
     if o == IR_NOP  then jump scan(slot = slot - 1) end
     if o == IR_LOOP then jump scan(slot = slot - 1) end
 
-    let op1 = ir_op1_at(ir_buf, slot)
-    let op2 = ir_op2_at(ir_buf, slot)
+    as(ptr(i32), A + A_CUR_SLOT)[0] = slot
 
-    -- Ensure operand registers are allocated.
-    -- For RETF op1 is the return value ref.
-    -- For KINT and SLOAD: op1/op2 are NOT IR refs — do NOT call ra_ensure.
-    if o == IR_ADD then
-        ra_ensure(A, op1 - REF_BIAS)
-        ra_ensure(A, op2 - REF_BIAS)
-    end
-    if o == IR_SUB then
-        ra_ensure(A, op1 - REF_BIAS)
-        ra_ensure(A, op2 - REF_BIAS)
-    end
-    if o == IR_MUL then
-        ra_ensure(A, op1 - REF_BIAS)
-        ra_ensure(A, op2 - REF_BIAS)
+    -- Ensure operand registers by composing the canonical register allocator
+    -- region.  KINT and SLOAD operands are immediates/stack slots, not IR refs.
+    let op1 = ir_op1_at(ir_buf, slot)
+    if o == IR_ADD or o == IR_SUB or o == IR_MUL then
+        emit ra.ra_alloc(A, op1 - REF_BIAS, FREE_INIT;
+            reg = need_rhs,
+            spill = ra_spill,
+            fail = ra_fail)
     end
     if o == IR_RETF then
-        ra_ensure(A, op1 - REF_BIAS)
+        emit ra.ra_alloc(A, op1 - REF_BIAS, FREE_INIT;
+            reg = operands_ready,
+            spill = ra_spill,
+            fail = ra_fail)
     end
+    jump emit_tile()
+end
 
-    -- Emit the x64 tile through the region-first tile dispatch surface.
-    as(ptr(i32), A + A_CUR_SLOT)[0] = slot
+block need_rhs(r: i32)
+    let slot: i32 = as(ptr(i32), A + A_CUR_SLOT)[0]
+    let op2: i32 = ir_op2_at(ir_buf, slot)
+    emit ra.ra_alloc(A, op2 - REF_BIAS, FREE_INIT;
+        reg = operands_ready,
+        spill = ra_spill,
+        fail = ra_fail)
+end
+
+block operands_ready(r: i32)
+    jump emit_tile()
+end
+
+block ra_spill(slot: i32)
+    jump abort(reason = slot)
+end
+
+block ra_fail(code: i32)
+    jump abort(reason = code)
+end
+
+block emit_tile()
+    let slot: i32 = as(ptr(i32), A + A_CUR_SLOT)[0]
     emit tiles.x64_asm_one_ir(A, J, ir_buf, slot;
         tile_done = tile_done,
         need_snapshot = tile_snapshot,
@@ -319,7 +312,7 @@ end
 block tile_done()
     let slot: i32 = as(ptr(i32), A + A_CUR_SLOT)[0]
     let o: i32 = ir_op_at(ir_buf, slot)
-    if has_dest(o) then ra_release(A, slot) end
+    if has_dest(o) then asm_ra_release(A, slot) end
     jump scan(slot = slot - 1)
 end
 
@@ -367,7 +360,7 @@ end
 
 -- Expose ra_get for inspecting regmap after assembly.
 export func ra_get_test(A: ptr(u8), slot: i32) -> i32
-    return ra_get(A, slot)
+    return asm_ra_get(A, slot)
 end
 
 export func asm_const_check() -> i32

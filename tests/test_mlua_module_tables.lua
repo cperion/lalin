@@ -24,6 +24,11 @@ end
 return main
 ]]
 
+local ok_new, err_new = pcall(function() m.new_field = 1 end)
+assert(not ok_new and tostring(err_new):match("sealed"))
+local ok_existing, err_existing = pcall(function() m.name = "mutated" end)
+assert(not ok_existing and tostring(err_existing):match("sealed"))
+
 local c = m:compile()
 assert(c:get("answer")() == 42)
 c:free()

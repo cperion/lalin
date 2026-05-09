@@ -1,28 +1,73 @@
 -- gc/barrier.mlua — GC write barrier regions.
--- Every store that can violate GC invariants routes through these edges.
+-- Every collectable store routes through explicit typed barrier edges.
 
 local proto = moon.require("luajitvm.protocols")
 local m = module "luajitvm.gc.barrier"
 
+const GC_GRAY:  i32 = 2
+const GC_BLACK: i32 = 3
 
--- Forward barrier: if parent is black and child is white, mark child gray.
--- No-op stub: no incremental GC yet.
+func gc_currentwhite(G: ptr(u8)) -> i32
+    return as(i32, G[32])
+end
+
+func gc_marked(obj: ptr(u8)) -> i32
+    return as(i32, obj[8])
+end
+
+func gc_set_marked(obj: ptr(u8), color: i32)
+    obj[8] = as(u8, color)
+end
+
+func gc_is_white(obj: ptr(u8), currentwhite: i32) -> bool
+    return as(u64, obj) ~= 0 and gc_marked(obj) == currentwhite
+end
+
+func gc_is_black(obj: ptr(u8)) -> bool
+    return as(u64, obj) ~= 0 and gc_marked(obj) == GC_BLACK
+end
+
+-- Forward barrier: if a black parent stores a white child, shade the child gray.
 region gc_barrier_fwd(G: ptr(u8), parent: ptr(u8), child: ptr(u8)) -> proto.BarrierResult
 entry start()
+    if gc_is_black(parent) and gc_is_white(child, gc_currentwhite(G)) then
+        gc_set_marked(child, GC_GRAY)
+    end
     jump done()
 end
 end
 
--- Backward barrier: if table is black, re-mark it gray.
--- No-op stub: no incremental GC yet.
+-- Backward barrier: if a black table receives a collectable reference, re-mark
+-- the table gray so it is revisited by propagation.
 region gc_barrier_back(G: ptr(u8), tab: ptr(u8)) -> proto.BarrierResult
 entry start()
+    if gc_is_black(tab) then
+        gc_set_marked(tab, GC_GRAY)
+    end
     jump done()
 end
+end
+
+export func barrier_fwd_test(G: ptr(u8), parent: ptr(u8), child: ptr(u8)) -> i32
+    return region -> i32
+    entry start()
+        emit gc_barrier_fwd(G, parent, child; done = ok)
+    end
+    block ok() yield 0 end
+    end
+end
+
+export func barrier_back_test(G: ptr(u8), tab: ptr(u8)) -> i32
+    return region -> i32
+    entry start()
+        emit gc_barrier_back(G, tab; done = ok)
+    end
+    block ok() yield 0 end
+    end
 end
 
 export func barrier_const_check() -> i32
-    return 1
+    return GC_GRAY + GC_BLACK
 end
 
 end
