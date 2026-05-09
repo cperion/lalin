@@ -40,9 +40,16 @@ const REF_FIRST: i32 = 0x8001
 const A_FREE:  i32 = 0
 const A_MAP:   i32 = 4
 
--- Register bitmask: rax(0) rcx(1) rdx(2) rsi(6) rdi(7) r8(8) r9(9) r10(10) r11(11)
--- 1+2+4+64+128+256+512+1024+2048 = 4039 = 0x0FC7
-const FREE_INIT: i32 = 0x0FC7
+-- Register bitmask: rax(0) rcx(1) rdx(2) rsi(6) r8(8) r9(9) r10(10) r11(11)
+-- rdi(7) is RESERVED as the Lua base pointer — excluded from the free set.
+-- 1+2+4+64+256+512+1024+2048 = 3911 = 0x0F47
+const FREE_INIT: i32 = 0x0F47
+
+-- IR_SLOAD opcode; TValue layout per slot (16 bytes)
+const IR_SLOAD:   i32 = 31
+const TV_STRIDE:  i32 = 16    -- bytes per TValue slot
+const TV_PAYLOAD: i32 = 8     -- byte offset of i64 payload within TValue
+const LUA_BASE_REG: i32 = 7   -- rdi: holds Lua stack base pointer at trace entry
 
 -- =========================================================================
 -- IR field accessors
@@ -132,6 +139,15 @@ func emit_mov_ri32(J: ptr(u8), dst: i32, imm: i32)
     mc_put8(J, modrm_rr(0, dst))
     mc_put8(J, 0xC7)
     mc_put8(J, rex_wb(0, dst))
+end
+
+-- MOV dst, [rdi + disp32]  —  load 64-bit TValue payload from Lua stack
+-- Encoding: REX.W + 8B /r with ModRM mod=10 (reg+disp32), rm=rdi(7)
+func emit_load_rdi_d32(J: ptr(u8), dst: i32, disp: i32)
+    mc_put32(J, disp)
+    mc_put8(J, 0x80 | ((dst & 7) << 3) | 7)
+    mc_put8(J, 0x8B)
+    mc_put8(J, 0x48 | ((dst >> 3) << 2))
 end
 
 -- RET
@@ -224,6 +240,13 @@ end
 -- Then execution reads A → B. ✓
 -- =========================================================================
 
+-- SLOAD: load i64 payload from TValue at Lua stack slot `slot`.
+-- Emits: MOV dst, [rdi + slot*TV_STRIDE + TV_PAYLOAD]
+-- Guards (IRT_GUARD) deferred to P11c exit-stub phase.
+func tile_sload(J: ptr(u8), dst: i32, slot: i32)
+    emit_load_rdi_d32(J, dst, slot * TV_STRIDE + TV_PAYLOAD)
+end
+
 -- KINT: MOV dst, imm32
 -- imm = op1 | (op2 << 16) — op2 is 0 for constants < 32768 (ir_emit_const)
 func tile_kint(J: ptr(u8), dst: i32, op1: i32, op2: i32)
@@ -261,6 +284,13 @@ end
 func asm_one(A: ptr(u8), J: ptr(u8), ir_buf: ptr(u64), slot: i32, o: i32) -> bool
     let op1 = ir_op1_at(ir_buf, slot)
     let op2 = ir_op2_at(ir_buf, slot)
+
+    if o == IR_SLOAD then
+        let dst = ra_get(A, slot)
+        if dst < 0 then return true end       -- dead slot
+        tile_sload(J, dst, op1)               -- op1 = Lua stack slot index (not an IR ref)
+        return true
+    end
 
     if o == IR_KINT then
         let dst = ra_get(A, slot)
@@ -335,9 +365,8 @@ block scan(slot: i32)
     let op2 = ir_op2_at(ir_buf, slot)
 
     -- Ensure operand registers are allocated.
-    -- For arithmetic ops both operands are IR refs.
     -- For RETF op1 is the return value ref.
-    -- For KINT op1/op2 are raw constant bits — do NOT call ra_ensure on them.
+    -- For KINT and SLOAD: op1/op2 are NOT IR refs — do NOT call ra_ensure.
     if o == IR_ADD then
         ra_ensure(A, op1 - REF_BIAS)
         ra_ensure(A, op2 - REF_BIAS)

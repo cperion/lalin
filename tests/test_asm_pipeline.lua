@@ -208,6 +208,87 @@ check("99+1 (with NOPs) = 100", 100, fn6())
 
 -- Cleanup
 ffi.C.munmap(MCODE, MCODE_SIZE)
+
+-- =========================================================================
+-- SLOAD tests: load values from a mock Lua stack
+-- TValue layout: [tag:i32 @ 0][pad @ 4][payload:i64 @ 8]  = 16 bytes/slot
+-- Trace calling convention: first arg (rdi) = base pointer
+-- =========================================================================
+print("\n--- SLOAD from Lua stack ---")
+
+local TV_STRIDE  = 16
+local TV_PAYLOAD = 8
+local LUA_TINT   = 3
+local IR_SLOAD   = 31
+
+-- Allocate a fresh RWX block and reset J/A for SLOAD tests
+local MCODE2 = alloc_rwx(MCODE_SIZE)
+
+local function make_tval_stack(values)
+    -- Allocate aligned i64 storage: N slots × 16 bytes
+    local n = #values
+    local buf = ffi.new("uint8_t[?]", n * 16 + 16)
+    -- align to 16-byte boundary
+    local base_int = tonumber(ffi.cast("uint64_t", buf)) + 15
+    local aligned  = base_int - (base_int % 16)
+    local base = ffi.cast("uint8_t *", ffi.cast("uint64_t", aligned))
+    for i, v in ipairs(values) do
+        local slot = i - 1
+        local tag_ptr = ffi.cast("int32_t *", base + slot * 16)
+        local pay_ptr = ffi.cast("int64_t *", base + slot * 16 + 8)
+        tag_ptr[0] = LUA_TINT
+        pay_ptr[0] = ffi.cast("int64_t", v)
+    end
+    return base, buf   -- return buf too to keep it alive
+end
+
+-- Test 7: SLOAD s0, RETF  → return stack[0]
+ffi.fill(J_BUF, 64, 0); J_u64[4] = ffi.cast("uint64_t", MCODE2) + MCODE_SIZE; J_u64[5] = ffi.cast("uint64_t", MCODE2)
+ffi.fill(A_BUF, 272, 0)
+for i = 0, 5 do IR_BUF[i] = 0 end
+
+IR_BUF[1] = pack_ir(IR_SLOAD, IRT_INT, 0, 0)               -- SLOAD stack slot 0
+IR_BUF[2] = pack_ir(IR_RETF,  IRT_INT, REF_BIAS + 1, 0)
+
+local entry7 = asm_fn(A_ptr, J_ptr, IR_ptr, 3)
+assert(entry7 ~= nil and ffi.cast("uint64_t", entry7) ~= 0)
+local fn7 = ffi.cast("int64_t (*)(void *)", entry7)
+local stk7, _k7 = make_tval_stack({99})
+check("SLOAD[0]=99", 99, fn7(ffi.cast("void *", stk7)))
+
+-- Test 8: SLOAD s0, SLOAD s1, ADD, RETF  → stack[0]+stack[1]
+ffi.fill(J_BUF, 64, 0); J_u64[4] = ffi.cast("uint64_t", MCODE2) + MCODE_SIZE; J_u64[5] = ffi.cast("uint64_t", MCODE2)
+ffi.fill(A_BUF, 272, 0)
+for i = 0, 6 do IR_BUF[i] = 0 end
+
+IR_BUF[1] = pack_ir(IR_SLOAD, IRT_INT, 0, 0)              -- SLOAD slot 0
+IR_BUF[2] = pack_ir(IR_SLOAD, IRT_INT, 1, 0)              -- SLOAD slot 1
+IR_BUF[3] = pack_ir(IR_ADD,   IRT_INT, REF_BIAS+1, REF_BIAS+2)
+IR_BUF[4] = pack_ir(IR_RETF,  IRT_INT, REF_BIAS+3, 0)
+
+local entry8 = asm_fn(A_ptr, J_ptr, IR_ptr, 5)
+assert(entry8 ~= nil and ffi.cast("uint64_t", entry8) ~= 0)
+local fn8 = ffi.cast("int64_t (*)(void *)", entry8)
+local stk8, _k8 = make_tval_stack({30, 12})
+check("SLOAD[0]+SLOAD[1] = 30+12 = 42", 42, fn8(ffi.cast("void *", stk8)))
+
+-- Test 9: mixed SLOAD + KINT: stack[0] * 10
+ffi.fill(J_BUF, 64, 0); J_u64[4] = ffi.cast("uint64_t", MCODE2) + MCODE_SIZE; J_u64[5] = ffi.cast("uint64_t", MCODE2)
+ffi.fill(A_BUF, 272, 0)
+for i = 0, 6 do IR_BUF[i] = 0 end
+
+IR_BUF[1] = pack_ir(IR_SLOAD, IRT_INT, 0, 0)              -- SLOAD slot 0
+IR_BUF[2] = pack_kint(10)                                  -- KINT 10
+IR_BUF[3] = pack_ir(IR_MUL,  IRT_INT, REF_BIAS+1, REF_BIAS+2)
+IR_BUF[4] = pack_ir(IR_RETF, IRT_INT, REF_BIAS+3, 0)
+
+local entry9 = asm_fn(A_ptr, J_ptr, IR_ptr, 5)
+assert(entry9 ~= nil and ffi.cast("uint64_t", entry9) ~= 0)
+local fn9 = ffi.cast("int64_t (*)(void *)", entry9)
+local stk9, _k9 = make_tval_stack({7})
+check("SLOAD[0]*10 = 7*10 = 70", 70, fn9(ffi.cast("void *", stk9)))
+
+ffi.C.munmap(MCODE2, MCODE_SIZE)
 asm_mod:free()
 
 print(string.format("\n%d passed, %d failed", passed, failed))
