@@ -82,7 +82,35 @@ Add and document:
 - `.mlua` evaluation errors include island kind and source span.
 - `run_mlua.lua` supports compile-only/module-only files without requiring `main`.
 
-## Regression policy
+### S7: Fix `var` mutation in conditional branches
+
+`var x: i32 = 0` followed by `if cond then x = 5 end` — `x` always reads 0, the assignment is silently ignored. This is a backend lowering bug: `StmtSet` on a local cell inside an `if` branch is not properly wired into the phi node / block join.
+
+Workaround until fixed: use region blocks with typed params to thread values across conditional branches instead of mutating locals.
+
+Example of broken pattern:
+
+```moonlift
+var op2: i32 = 0
+if rhs_slot >= 0 then
+    op2 = slot_refs[rhs_slot]   -- never reaches the variable
+end
+use(op2)  -- always 0
+```
+
+Correct pattern:
+
+```moonlift
+if rhs_slot >= 0 then
+    jump next(op2 = slot_refs[rhs_slot])
+end
+jump next(op2 = default_value)
+
+block next(op2: i32)
+    use(op2)  -- correct
+end
+```
+
 
 Every stabilization bug gets a test before or with the fix. Current parser/island tests cover:
 

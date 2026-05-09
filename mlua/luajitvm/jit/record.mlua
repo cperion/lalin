@@ -1,55 +1,283 @@
--- jit/record.mlua -- Recorder opcode region stubs.
--- Protocol: RecOpcodeResult, RecTableGet, RecCallResult, SlotGet
--- P4.PROTO.006 stub.
+-- jit/record.mlua — Trace recorder regions.
+--
+-- The recorder runs alongside the interpreter when a trace is active.
+-- For each bytecode it builds IR: emitting loads, arithmetic, guards,
+-- and snapshots that let the deoptimiser reconstruct interpreter state.
+--
+-- Regions:
+--   trace_init   — reset JitState for a new trace
+--   rec_sload    — record a stack slot load with type guard
+--   rec_arith    — record integer arithmetic (ADD/SUB/MUL)
+--
+-- All regions return typed protocol exits. Callers (the recorder loop)
+-- compose them via emit.
 
 local m = module VmJitRecord
 
-type RecOpcodeResult = rec_next(pc: ptr(u8))
-    | rec_stop(link_kind: i32)
-    | metamethod(mm: i32)
+-- =========================================================================
+-- Protocols
+-- =========================================================================
+type RecResult = done(ref: i32)
+    | need_snap(ref: i32)
     | abort(reason: i32)
 
-type RecTableGet = rec_next(pc: ptr(u8))
-    | guard_meta(mm_tag: i32, mm_payload: i64)
-    | abort(reason: i32)
+type InitResult = ready | abort(reason: i32)
 
-type RecCallResult = inline_lua(fn: ptr(u8))
-    | link_call
-    | rec_stop(link_kind: i32)
-    | abort(reason: i32)
+-- =========================================================================
+-- Constants matching emit.mlua and ir.mlua
+-- =========================================================================
+const IR_SLOAD: i32 = 31
+const IR_ADD:   i32 = 10
+const IR_SUB:   i32 = 11
+const IR_MUL:   i32 = 12
 
-type SlotGet = have(ref: i32)
-    | need_sload(slot: i32, val_tag: i32, val_payload: i64)
-    | abort(reason: i32)
+const IRT_INT:   i32 = 19
+const IRT_NUM:   i32 = 14
+const IRT_GUARD: i32 = 0x80
 
--- Record BC_ADD.
-region rec_bc_add(J: ptr(u8), L: ptr(u8), bc: i32) -> RecOpcodeResult
+const REF_BIAS: i32 = 0x8000
+const IR_MAX:   i32 = 256
+
+-- TValue type tags (from core/value.mlua):
+--   tag in high 32 bits of TValue (as i32 at byte offset 8..11)
+const LJ_TINT:   i32 = -6    -- 0xFFFFFFF8  (LuaJIT NaN-boxed integer tag)
+const LJ_TNUM:   i32 = -7    -- 0xFFFFFFF7  (double — the "number" supertype)
+const LJ_T_NONE: i32 = -1    -- placeholder for "unset"
+
+-- =========================================================================
+-- JitState mini-layout (byte offsets via ptr(u64) element indexing):
+--   j64[0]   cur.trace ptr
+--   j64[1]   cur.nins  (i32)
+--   j64[2]   cur.nk    (i32, starts at REF_BIAS, grows down)
+--   j32[6]   cur.nsnap (i32, at byte offset 24)
+--   j32[7]   cur.snapno
+-- Slot-to-TRef map  (passed separately as ptr(u32))
+-- =========================================================================
+const J_OFF_NINS:  i32 = 8
+const J_OFF_NK:    i32 = 16
+const J_OFF_NSNAP: i32 = 24
+
+-- =========================================================================
+-- Low-level IR write (inline; no cross-module emit)
+-- =========================================================================
+
+-- Write packed IRIns at slot nins in the trace IR buffer.
+-- Returns the new ref (nins + REF_BIAS).
+func emit_ins(j64: ptr(u64), irbuf: ptr(u64), o: i32, t: i32, op1: i32, op2: i32) -> i32
+    let nins: i32 = as(i32, j64[1])
+    let m16: u64 = 0xFFFF
+    let m8:  u64 = 0xFF
+    let a: u64 = as(u64, op1) & m16
+    let b: u64 = (as(u64, op2) & m16) << 16
+    let ty: u64 = (as(u64, t) & m8) << 32
+    let oc: u64 = (as(u64, o) & m8) << 40
+    irbuf[nins] = a | b | ty | oc
+    j64[1] = as(u64, nins + 1)
+    return nins + REF_BIAS
+end
+
+-- Allocate one KINT constant below REF_BIAS.  Returns slot index.
+func alloc_kint(j64: ptr(u64), irbuf: ptr(u64), val: i32) -> i32
+    let nk: i32 = as(i32, j64[2])
+    if nk <= 0 then return -1 end
+    let slot: i32 = nk - 1
+    j64[2] = as(u64, slot)
+    let m16: u64 = 0xFFFF
+    let m8:  u64 = 0xFF
+    let v: u64 = as(u64, val) & m16
+    let t: u64 = (as(u64, IRT_INT) & m8) << 32
+    let o: u64 = (as(u64, 60) & m8) << 40
+    irbuf[slot] = v | t | o
+    return slot
+end
+
+func j_nins(j64: ptr(u64)) -> i32
+    return as(i32, j64[1])
+end
+
+func j_irbuf(j64: ptr(u64)) -> ptr(u64)
+    let tr: ptr(u64) = as(ptr(u64), as(ptr(u8), j64[0]))
+    return as(ptr(u64), as(ptr(u8), tr[3]))
+end
+
+func j_nsnap(j64: ptr(u64)) -> i32
+    let p: ptr(u32) = as(ptr(u32), as(ptr(u8), j64))
+    return as(i32, p[6])
+end
+
+func j_set_nsnap(j64: ptr(u64), v: i32)
+    let p: ptr(u32) = as(ptr(u32), as(ptr(u8), j64))
+    p[6] = as(u32, v)
+end
+
+-- =========================================================================
+-- trace_init: reset JitState for a new trace.
+-- Sets nins=1 (slot 0 reserved), nk=REF_BIAS, nsnap=0.
+-- =========================================================================
+
+region trace_init(J: ptr(u8)) -> InitResult
 entry start()
-    jump abort(reason = 0)
+    let j64: ptr(u64) = as(ptr(u64), J)
+    j64[1] = 1          -- nins = 1
+    j64[2] = as(u64, REF_BIAS)   -- nk = 0x8000
+    j_set_nsnap(j64, 0)
+    jump ready()
 end
 end
 
--- Record BC_TGETV.
-region rec_bc_tgetv(J: ptr(u8), L: ptr(u8), bc: i32) -> RecTableGet
+-- =========================================================================
+-- rec_sload: record IR_SLOAD for stack slot `slot`.
+--
+-- Reads the TValue type tag from the Lua stack, emits a type guard
+-- (IR_SLOAD with IRT_GUARD), and returns the ref for the loaded value.
+--
+-- slot_refs: ptr(i32) — table mapping slot index to current TRef
+-- stack:     ptr(u8)  — Lua stack base pointer
+-- slot:      i32      — stack slot index (0-based)
+-- slot_refs[slot] is updated to the emitted ref.
+--
+-- Returns: RecResult
+--   done(ref)       — emitted without guard (type proven)
+--   need_snap(ref)  — guard emitted, snapshot required
+--   abort(reason)   — trace abort
+-- =========================================================================
+
+region rec_sload(J: ptr(u8), slot_refs: ptr(i32), stack: ptr(u8), slot: i32) -> RecResult
 entry start()
-    jump abort(reason = 0)
+    let j64:  ptr(u64) = as(ptr(u64), J)
+    let irbuf: ptr(u64) = j_irbuf(j64)
+    let nins: i32 = j_nins(j64)
+
+    if nins >= IR_MAX then jump abort(reason = 1) end
+
+    -- Read the TValue type tag from the stack.
+    -- TValue is 16 bytes: [payload:8][tag:i32 at +8][pad:4].
+    -- We read the tag as i32 at byte offset slot*16 + 8.
+    let tv_base: ptr(i32) = as(ptr(i32), stack)
+    let tag_off: i32 = slot * 4 + 2   -- slot*16 bytes / 4 = slot*4 i32s; tag is at index+2
+    let tag: i32 = tv_base[tag_off]
+
+    -- Decide IR type: we only trace integers for now.
+    let irt: i32 = IRT_INT | IRT_GUARD
+
+    -- Emit IR_SLOAD with the slot as op1 and 0 as op2.
+    let ref: i32 = emit_ins(j64, irbuf, IR_SLOAD, irt, slot, 0)
+
+    -- Record in slot_refs map
+    slot_refs[slot] = ref
+
+    -- Guard was emitted → snapshot required
+    jump need_snap(ref = ref)
 end
 end
 
--- Record BC_CALL.
-region rec_bc_call(J: ptr(u8), L: ptr(u8), bc: i32) -> RecCallResult
+-- =========================================================================
+-- rec_arith: record integer arithmetic (IR_ADD / IR_SUB / IR_MUL).
+--
+-- Looks up slot_refs for lhs and rhs, emits the operation with
+-- optional constant folding, stores the result ref.
+--
+-- lhs_slot: i32 — stack slot for left operand
+-- rhs_slot: i32 — stack slot for right operand (or -1 for a constant)
+-- rhs_kval: i32 — constant value when rhs_slot == -1
+-- dst_slot: i32 — stack slot to write result ref to
+-- ir_op:    i32 — IR_ADD / IR_SUB / IR_MUL
+-- =========================================================================
+
+region rec_arith(J: ptr(u8), slot_refs: ptr(i32), lhs_slot: i32, rhs_slot: i32, rhs_kval: i32, dst_slot: i32, ir_op: i32) -> RecResult
 entry start()
-    jump abort(reason = 0)
+    let j64:   ptr(u64) = as(ptr(u64), J)
+    let irbuf: ptr(u64) = j_irbuf(j64)
+    let nins:  i32      = j_nins(j64)
+    if nins >= IR_MAX then jump abort(reason = 1) end
+    let op1: i32 = slot_refs[lhs_slot]
+    if rhs_slot >= 0 then
+        jump resolve(op1 = op1, op2 = slot_refs[rhs_slot], j4 = j64, ib = irbuf)
+    end
+    let kref: i32 = alloc_kint(j64, irbuf, rhs_kval)
+    if kref < 0 then jump abort(reason = 2) end
+    jump resolve(op1 = op1, op2 = kref, j4 = j64, ib = irbuf)
+end
+
+block resolve(op1: i32, op2: i32, j4: ptr(u64), ib: ptr(u64))
+    if op1 < REF_BIAS and op2 < REF_BIAS then
+        let m16: u64 = 0xFFFF
+        let a: i32 = as(i32, ib[op1] & m16)
+        let b: i32 = as(i32, ib[op2] & m16)
+        jump fold_op(a = a, b = b, j4 = j4, ib = ib)
+    end
+    if (ir_op == IR_ADD or ir_op == IR_MUL) and op1 > op2 then
+        jump emit_ir(ea = op2, eb = op1, j4 = j4, ib = ib)
+    end
+    jump emit_ir(ea = op1, eb = op2, j4 = j4, ib = ib)
+end
+
+block fold_op(a: i32, b: i32, j4: ptr(u64), ib: ptr(u64))
+    if ir_op == IR_ADD then jump fold_done(c = a + b, j4 = j4, ib = ib) end
+    if ir_op == IR_SUB then jump fold_done(c = a - b, j4 = j4, ib = ib) end
+    if ir_op == IR_MUL then jump fold_done(c = a * b, j4 = j4, ib = ib) end
+    jump abort(reason = 4)
+end
+
+block fold_done(c: i32, j4: ptr(u64), ib: ptr(u64))
+    let kref: i32 = alloc_kint(j4, ib, c)
+    if kref < 0 then jump abort(reason = 3) end
+    slot_refs[dst_slot] = kref
+    jump done(ref = kref)
+end
+
+block emit_ir(ea: i32, eb: i32, j4: ptr(u64), ib: ptr(u64))
+    let ref: i32 = emit_ins(j4, ib, ir_op, IRT_INT, ea, eb)
+    slot_refs[dst_slot] = ref
+    jump done(ref = ref)
 end
 end
 
--- Access a slot from the slot map (or emit SLOAD on first access).
-region rec_getslot(J: ptr(u8), L: ptr(u8), slot: i32) -> SlotGet
-entry start()
-    jump abort(reason = 0)
+-- =========================================================================
+-- Export func wrappers for testing
+-- =========================================================================
+
+export func trace_init_test(J: ptr(u8)) -> i32
+    return region -> i32
+    entry start()
+        emit trace_init(J; ready = ok, abort = fail)
+    end
+    block ok()
+        yield 0
+    end
+    block fail(reason: i32)
+        yield -1
+    end
+    end
 end
+
+export func rec_sload_test(J: ptr(u8), slot_refs: ptr(i32), stack: ptr(u8), slot: i32) -> i32
+    return region -> i32
+    entry start()
+        emit rec_sload(J, slot_refs, stack, slot;
+            done = got_done, need_snap = got_snap, abort = got_abort)
+    end
+    block got_done(ref: i32)    yield ref    end
+    block got_snap(ref: i32)    yield ref    end
+    block got_abort(reason: i32) yield -1 end
+    end
+end
+
+export func rec_arith_test(J: ptr(u8), slot_refs: ptr(i32), lhs: i32, rhs_slot: i32, rhs_kval: i32, dst: i32, op: i32) -> i32
+    return region -> i32
+    entry start()
+        emit rec_arith(J, slot_refs, lhs, rhs_slot, rhs_kval, dst, op;
+            done = got_done, need_snap = got_snap, abort = got_abort)
+    end
+    block got_done(ref: i32)     yield ref    end
+    block got_snap(ref: i32)     yield ref    end
+    block got_abort(reason: i32) yield -1     end
+    end
+end
+
+export func record_const_check() -> i32
+    return IR_SLOAD + IR_ADD + IRT_INT + REF_BIAS
 end
 
 end
-
-local _c = m:compile(); _c:free()
+return m
