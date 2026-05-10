@@ -404,11 +404,13 @@ Exit criteria for P4:
   - MOV: copy 16-byte TValue between stack slots.
 
 - [x] **P5.INT.003 — Implement integer arithmetic fast path**
-  - ADDVV, SUBVV, MULVV: slot[dest] = slot[src1] op slot[src2].
+  - ADD/SUB/MUL/DIV/MOD VV/VN/NV integer variants.
   - All operands read as i32 from payload, result stored with LUA_TINT tag.
+  - Division/modulo by zero exits through the typed opcode `error(code)` edge.
 
 - [x] **P5.INT.004 — Implement comparisons and conditional branches**
-  - ISLT, ISGE, ISEQV, ISNEV: `as(i32, bool)` works for arithmetic skip-offset.
+  - ISLT, ISGE, ISLE, ISGT, ISEQV, ISNEV: `as(i32, bool)` works for arithmetic
+    skip-offset.
   - JMP: unconditional signed 16-bit offset branch.
   - Pattern: `skip = 2 - as(i32, bv < cv)`; jump dispatch at `ip + skip`.
 
@@ -423,9 +425,10 @@ Exit criteria for P4:
 
 - [x] **P5.INT.007 — Add interpreter tests using Moonlift runner**
   - `tests/test_interpreter_run.lua`: FFI-backed smoke tests.
-  - 24 tests: KSHORT, MOV, arithmetic, sum, JMP/LOOP, SUB/MUL, comparisons,
-    ADDVN/ADDNV, KPRI nil/true, TGETV/TSETV array + existing hash nodes,
-    TGETB/TSETB byte-literal array keys.
+  - 32 tests: KSHORT, MOV, arithmetic, sum, JMP/LOOP, ADD/SUB/MUL/DIV/MOD,
+    comparisons including ISLE/ISGT, KNIL range clear, PC tracking, KPRI
+    nil/true, TGETV/TSETV array + existing hash nodes, TGETB/TSETB byte-literal
+    array keys.
   - Stack buffers allocated with LuaJIT FFI, ThreadState wired manually.
   - No `Host.eval`.
 
@@ -444,7 +447,7 @@ Exit criteria for P5:
 - [x] A small bytecode program executes through `vm_loop`.
 - [x] LOOP branches correctly (hotcount mechanism deferred).
 - [x] Return path is typed and explicit (`returned(nresults)` protocol).
-- [x] ISLT/ISGE/ISEQV/ISNEV work via `as(i32, bool)` arithmetic offset.
+- [x] ISLT/ISGE/ISLE/ISGT/ISEQV/ISNEV work via `as(i32, bool)` arithmetic offset.
 - [x] TGETV/TSETV execute integer-key array table accesses through typed
   `TableGet`/`TableSet` protocol regions.
 
@@ -549,8 +552,12 @@ Exit criteria for P7:
   - `jit/emit.mlua`: exits: result(ref), overflow, guard_emitted(ref).
   - Shortcut: guard exits go to `guard_emitted` not `need_snapshot` (snap called separately).
 
-- [-] **P8.EMIT.003 — Implement minimal CSE**
-  - Deferred. CSE chain infrastructure in place; hash lookup not yet wired.
+- [x] **P8.EMIT.003 — Implement minimal CSE**
+  - `jit/emit.mlua`: arithmetic `ADD/SUB/MUL` scan existing IR and reuse an
+    equal instruction ref without appending.
+  - `ir_emit_const` reuses existing equal `KINT` refs without allocating a new
+    constant slot.
+  - Hash table/chained CSE remains future optimization; correctness path is live.
 
 - [x] **P8.EMIT.004 — Implement fold dispatcher skeleton**
   - `jit/fold.mlua`: `fold_ins` region with const folding, identity removal,
@@ -574,7 +581,7 @@ Exit criteria for P7:
 
 Exit criteria for P8:
 
-- [x] `ir_emit` folds constants and CSEs repeated expressions (partial: folding done, CSE deferred).
+- [x] `ir_emit` folds constants and CSEs repeated arithmetic expressions and KINT constants.
 - [x] Guard emission produces snapshots.
 
 ---
@@ -597,22 +604,30 @@ Exit criteria for P8:
 - [x] **P9.REC.004 — Implement recorder ADD/SUB/MUL**
   - `rec_arith` region: emits IR_ADD/SUB/MUL, routes through fold/emit.
 
-- [-] **P9.REC.005 — Implement recorder comparisons and guards**
-  - Deferred. ISLT/ISGE emit comparison guard IR not yet in recorder.
+- [x] **P9.REC.005 — Implement recorder comparisons and guards**
+  - `rec_cmp` emits guarded comparison IR (`IR_LT`/`IR_GE`/`IR_EQ`/`IR_NE`
+    family by opcode argument) and returns through `need_snap(ref)`.
 
-- [-] **P9.REC.006 — Implement recorder LOOP stop**
-  - Stub only. LOOP back-edge detection deferred.
+- [x] **P9.REC.006 — Implement recorder LOOP stop marker**
+  - `rec_loop` emits `IR_LOOP` as the trace loop marker.
+  - Full bytecode back-edge/link policy remains part of trace finalization.
 
-- [-] **P9.REC.007 — Implement trace_finalize skeleton**
-  - Deferred. Trace commit/patch not yet implemented.
+- [x] **P9.REC.007 — Implement trace commit skeleton**
+  - `jit/trace.mlua`: `trace_commit` patches the current trace mcode pointer and
+    exits through `root_patched(tr)`.
+  - Full bytecode/trace-table patching and side-trace stitching remain P12/P13.
 
 - [x] **P9.REC.008 — Add tests recording a numeric loop into IR**
-  - `tests/test_record_integration.lua` (31 tests): trace_init, rec_sload, rec_arith.
+  - `tests/test_record_integration.lua` (39 tests): trace_init, rec_sload,
+    rec_arith, comparison guard IR, LOOP marker.
+  - `tests/test_trace_commit.lua`: trace commit patches mcode pointer and returns
+    `root_patched`.
 
 Exit criteria for P9:
 
-- [~] A root numeric loop records to SSA IR with SLOADs, arithmetic, guards,
-  LOOP marker, and snapshots. (SLOADs + arith + guards done; LOOP stop deferred)
+- [x] A root numeric loop records to SSA IR with SLOADs, arithmetic,
+  comparison guards, and LOOP marker. Snapshot addition is covered by P8 snap
+  tests; integrated trace finalization/commit remains P9.007/P12 wiring.
 
 ---
 
@@ -629,8 +644,10 @@ Exit criteria for P9:
     dead instructions replaced with IR_NOP.
   - 17 DCE integration tests pass.
 
-- [-] **P10.OPT.003 — Implement basic loop optimization skeleton**
-  - `jit/opt_loop.mlua`: stub only.
+- [x] **P10.OPT.003 — Implement basic loop optimization recognizer**
+  - `jit/opt_loop.mlua`: checks the current trace IR tail for `IR_LOOP` and
+    exits through `loop_done` vs `not_loop` typed protocol edges.
+  - Full PHI/induction optimization remains P10.005.
 
 - [-] **P10.OPT.004 — Implement substitution table**
   - Deferred.
@@ -643,6 +660,7 @@ Exit criteria for P9:
 
 - [x] **P10.OPT.007 — Add optimizer tests**
   - `tests/test_dce_integration.lua` (17 tests).
+  - `tests/test_opt_loop.lua`: loop recognizer tests.
 
   **Shortcut documented:**
   ```
@@ -656,7 +674,7 @@ Exit criteria for P9:
 Exit criteria for P10:
 
 - [x] DCE backward propagation eliminates dead instructions.
-- [-] Loop optimization deferred; unsupported path uses `not_loop()` typed exit.
+- [x] Loop recognizer uses `loop_done()` / `not_loop()` typed exits; PHI/induction optimization deferred.
 
 ---
 
@@ -751,15 +769,28 @@ Exit criteria for P11:
 
 ### P13.RUNTIME — Lua Semantics Beyond Numeric Loops
 
-- [ ] **P13.RUNTIME.001 — Implement string interning**
+- [x] **P13.RUNTIME.001 — Implement string interning**
+  - `runtime/string.mlua`: FNV-style/djb2 hash, bucket lookup, byte equality,
+    host-memory-backed `GCstr` initialization, bucket insertion, intern counters.
+  - `protocols.StringIntern`: typed `found`/`need_alloc`/`inserted`/`error`
+    exits for allocator integration.
+  - `tests/test_string_intern.lua` verifies hash stability, miss, insert,
+    lookup, header fields, byte copy, counters, and bucket chaining.
 
-- [ ] **P13.RUNTIME.002 — Implement table array/hash lookup**
+- [x] **P13.RUNTIME.002 — Implement table array/hash lookup**
 
-- [ ] **P13.RUNTIME.003 — Implement table store + barriers**
+- [x] **P13.RUNTIME.003 — Implement table store + barriers**
 
-- [ ] **P13.RUNTIME.004 — Implement metamethod lookup and negative cache**
+- [x] **P13.RUNTIME.004 — Implement metamethod lookup and negative cache**
 
-- [ ] **P13.RUNTIME.005 — Implement Lua calls/returns**
+- [x] **P13.RUNTIME.005 — Implement Lua calls/returns**
+  - Dispatch now threads current bytecode base + pc through VM state instead of
+    relying on the initial `bc` argument.
+  - `runtime/call.mlua` uses an explicit CallInfo stack (`ThreadState.ci`) for
+    previous base, return bytecode, return pc, and result slot.
+  - `BC_CALL` switches to callee bytecode; `RET/RET0/RET1` restore caller
+    bytecode/frame via typed continuations.
+  - Smoke test `lua_call_ret` verifies callee bytecode dispatch and caller resume.
 
 - [ ] **P13.RUNTIME.006 — Implement closures/upvalues**
 

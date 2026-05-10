@@ -18,8 +18,12 @@
 --   72      8     env        (GCRef to environment table)
 --   80      8     cframe     (ptr to C stack frame chain end)
 --   88      4     stacksize  (u32 true stack size)
---   92-95   4     _pad
---   Total: 96 bytes
+--   92      4     pcidx      (Moonlift: i32 index in current bytecode array)
+--   96      8     curbc      (Moonlift: ptr to current bytecode array)
+--   104     8     curpc      (Moonlift: ptr to current BCIns)
+--   112     8     ci         (Moonlift: ptr to explicit CallInfo array)
+--   120     4     cidepth    (Moonlift: active CallInfo records)
+--   Total: 128 bytes
 
 local m = module "luajitvm.core.state"
 
@@ -36,8 +40,12 @@ const TS_OFF_OPENUPVAL: i32 = 64
 const TS_OFF_ENV:       i32 = 72
 const TS_OFF_CFRAME:    i32 = 80
 const TS_OFF_STACKSIZE: i32 = 88
-const TS_OFF_PC:       i32 = 92   -- i32 bytecode instruction offset
-const TS_SIZE:          i32 = 96
+const TS_OFF_PC:       i32 = 92   -- i32 bytecode instruction offset within curbc
+const TS_OFF_CURBC:    i32 = 96   -- ptr(u32) current bytecode base
+const TS_OFF_CURPC:    i32 = 104  -- ptr(u32) current instruction pointer
+const TS_OFF_CI:       i32 = 112  -- ptr(u8) explicit CallInfo stack
+const TS_OFF_CIDEPTH:  i32 = 120  -- u32 active CallInfo records
+const TS_SIZE:          i32 = 128
 
 -- Thread status codes (lua.h compatible)
 const LUA_OK:        i32 = 0
@@ -131,7 +139,9 @@ export func ts_set_stacksize(ts: ptr(u8), sz: u32)
     p[TS_OFF_STACKSIZE / 4] = sz
 end
 
--- PC offset (Moonlift extension: integer index into bytecode array)
+-- Current interpreter location (Moonlift extension): both a bytecode base +
+-- index and a direct instruction pointer are kept so CALL/RET/snapshot restore
+-- can switch bytecode streams without relying on the initial dispatch argument.
 export func ts_pc(ts: ptr(u8)) -> i32
     let p: ptr(i32) = as(ptr(i32), ts)
     return p[TS_OFF_PC / 4]
@@ -140,6 +150,38 @@ end
 export func ts_set_pc(ts: ptr(u8), pc: i32)
     let p: ptr(i32) = as(ptr(i32), ts)
     p[TS_OFF_PC / 4] = pc
+end
+
+export func ts_curbc(ts: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), ts)[TS_OFF_CURBC / 8])
+end
+
+export func ts_set_curbc(ts: ptr(u8), bc: ptr(u8))
+    as(ptr(u64), ts)[TS_OFF_CURBC / 8] = as(u64, bc)
+end
+
+export func ts_curpc(ts: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), ts)[TS_OFF_CURPC / 8])
+end
+
+export func ts_set_curpc(ts: ptr(u8), pc: ptr(u8))
+    as(ptr(u64), ts)[TS_OFF_CURPC / 8] = as(u64, pc)
+end
+
+export func ts_ci(ts: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), ts)[TS_OFF_CI / 8])
+end
+
+export func ts_set_ci(ts: ptr(u8), ci: ptr(u8))
+    as(ptr(u64), ts)[TS_OFF_CI / 8] = as(u64, ci)
+end
+
+export func ts_cidepth(ts: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), ts)[TS_OFF_CIDEPTH / 4])
+end
+
+export func ts_set_cidepth(ts: ptr(u8), depth: i32)
+    as(ptr(u32), ts)[TS_OFF_CIDEPTH / 4] = as(u32, depth)
 end
 
 -- Frame helpers: frame size = top - base (in TValue slots, each 16 bytes)
@@ -152,7 +194,7 @@ export func ts_frame_slots(ts: ptr(u8)) -> i32
 end
 
 export func state_const_check() -> i32
-    return TS_SIZE + TS_OFF_STATUS + TS_OFF_BASE + TS_OFF_TOP + TS_OFF_STACK + TS_OFF_PC + LUA_OK + LUA_ERRRUN
+    return TS_SIZE + TS_OFF_STATUS + TS_OFF_BASE + TS_OFF_TOP + TS_OFF_STACK + TS_OFF_PC + TS_OFF_CURBC + TS_OFF_CI + LUA_OK + LUA_ERRRUN
 end
 
 end

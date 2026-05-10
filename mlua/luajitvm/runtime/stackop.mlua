@@ -2,7 +2,7 @@
 
 local m = module "luajitvm.runtime.stackop"
 
-const LUA_TINT: i32 = 5
+const LUA_TINT: i32 = 3
 
 func stackop_bc_a(ins: u32) -> i32
     return (as(i32, ins) >> 8) & 0xFF
@@ -64,9 +64,14 @@ end
 region vmop_knil(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
 entry start()
     let a: i32 = stackop_bc_a(ins)
+    let last: i32 = a + stackop_bc_cd(ins)
+    jump set_nil(slot = a, last = last)
+end
+block set_nil(slot: i32, last: i32)
     let tv32: ptr(i32) = stackop_stack32(L)
-    tv32[a * 4] = 0
-    jump next(ip = ip + 1)
+    tv32[slot * 4] = 0
+    if slot >= last then jump next(ip = ip + 1) end
+    jump set_nil(slot = slot + 1, last = last)
 end
 end
 

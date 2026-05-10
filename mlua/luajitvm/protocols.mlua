@@ -41,6 +41,7 @@ type TraceLink = loop_back
 -- Top-level interpreter result returned to the embedder.
 type InterpResult = returned(nresults: i32)
     | yielded(code: i32)
+    | need_table_alloc(asize: i32, hmask: i32, ins: u32, ip: i32)
     | error(code: i32)
 
 -- Result of a single opcode handler.
@@ -79,9 +80,20 @@ type TableSet = done
     | meta(mm_tag: i32, mm_payload: i64)
     | error(code: i32)
 
+-- Result of table creation (BC_TNEW / BC_TDUP).
+type TableNew = created(tab: ptr(u8), ins: u32, ip: i32)
+    | need_alloc(asize: i32, hmask: i32, ins: u32, ip: i32)
+    | error(code: i32)
+
 -- Result of a metamethod dispatch lookup.
 type MetamethodResult = found(fn_tag: i32, fn_payload: i64, lhs_tag: i32, rhs_tag: i32)
     | not_found
+    | error(code: i32)
+
+-- Result of string interning lookup/insert.
+type StringIntern = found(str: ptr(u8))
+    | need_alloc(hash: i32, nbytes: i32)
+    | inserted(str: ptr(u8))
     | error(code: i32)
 
 -- -----------------------------------------------------------------------

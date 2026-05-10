@@ -51,6 +51,61 @@ const J_OFF_NK:     i32 = 16
 const J_OFF_NSNAP:  i32 = 24
 const J_OFF_SNAPNO: i32 = 28
 
+func ir_op1_at(buf: ptr(u64), idx: i32) -> i32
+    return as(i32, buf[idx] & 0xFFFF)
+end
+
+func ir_op2_at(buf: ptr(u64), idx: i32) -> i32
+    return as(i32, (buf[idx] >> 16) & 0xFFFF)
+end
+
+func ir_type_at(buf: ptr(u64), idx: i32) -> i32
+    return as(i32, (buf[idx] >> 32) & 0xFF)
+end
+
+func ir_op_at(buf: ptr(u64), idx: i32) -> i32
+    return as(i32, (buf[idx] >> 40) & 0xFF)
+end
+
+func cse_eligible(o: i32, t: i32) -> bool
+    if (t & IRT_GUARD) ~= 0 then return false end
+    return o == IR_ADD or o == IR_SUB or o == IR_MUL
+end
+
+region cse_lookup(irbuf: ptr(u64), idx: i32, o: i32, t: i32, op1: i32, op2: i32; found: cont(ref: i32), miss: cont())
+entry start()
+    if idx < 1 then jump miss() end
+    if ir_op_at(irbuf, idx) == o and ir_type_at(irbuf, idx) == t and ir_op1_at(irbuf, idx) == op1 and ir_op2_at(irbuf, idx) == op2 then
+        jump found(ref = idx + REF_BIAS)
+    end
+    jump scan(next_idx = idx - 1)
+end
+block scan(next_idx: i32)
+    if next_idx < 1 then jump miss() end
+    if ir_op_at(irbuf, next_idx) == o and ir_type_at(irbuf, next_idx) == t and ir_op1_at(irbuf, next_idx) == op1 and ir_op2_at(irbuf, next_idx) == op2 then
+        jump found(ref = next_idx + REF_BIAS)
+    end
+    jump scan(next_idx = next_idx - 1)
+end
+end
+
+region const_lookup(irbuf: ptr(u64), idx: i32, floor: i32, val: i32; found: cont(ref: i32), miss: cont())
+entry start()
+    if idx < floor then jump miss() end
+    if ir_op_at(irbuf, idx) == IR_KINT and ir_type_at(irbuf, idx) == IRT_INT and ir_op1_at(irbuf, idx) == val then
+        jump found(ref = idx)
+    end
+    jump scan(next_idx = idx - 1)
+end
+block scan(next_idx: i32)
+    if next_idx < floor then jump miss() end
+    if ir_op_at(irbuf, next_idx) == IR_KINT and ir_type_at(irbuf, next_idx) == IRT_INT and ir_op1_at(irbuf, next_idx) == val then
+        jump found(ref = next_idx)
+    end
+    jump scan(next_idx = next_idx - 1)
+end
+end
+
 -- =========================================================================
 -- ir_emit: write a new IR instruction into the trace buffer.
 --
@@ -84,6 +139,24 @@ entry start()
     if nins >= IR_MAX then jump overflow() end
 
     -- Read IR buffer pointer from trace (offset 24 = byte 3 in ptr(u64))
+    let tr64: ptr(u64) = as(ptr(u64), as(ptr(u8), trace_ptr))
+    let irbuf_raw: u64 = tr64[3]
+    let irbuf: ptr(u64) = as(ptr(u64), as(ptr(u8), irbuf_raw))
+
+    if cse_eligible(o, t) then
+        emit cse_lookup(irbuf, nins - 1, o, t, op1, op2; found = cse_hit, miss = cse_miss)
+    end
+    jump cse_miss()
+end
+
+block cse_hit(ref: i32)
+    jump result(ref = ref)
+end
+
+block cse_miss()
+    let j64: ptr(u64) = as(ptr(u64), J)
+    let trace_ptr: u64 = j64[0]
+    let nins: i32 = as(i32, j64[1])
     let tr64: ptr(u64) = as(ptr(u64), as(ptr(u8), trace_ptr))
     let irbuf_raw: u64 = tr64[3]
     let irbuf: ptr(u64) = as(ptr(u64), as(ptr(u8), irbuf_raw))
@@ -140,6 +213,24 @@ end
 
 region ir_emit_const(J: ptr(u8), val: i32) -> proto.IREmit
 entry start()
+    let j64: ptr(u64) = as(ptr(u64), J)
+    let trace_ptr: u64 = j64[0]
+    let nk_raw: u32 = as(u32, j64[2])
+    let nk: i32 = as(i32, nk_raw)
+
+    -- Read IR buffer from trace
+    let tr64: ptr(u64) = as(ptr(u64), as(ptr(u8), trace_ptr))
+    let irbuf_raw: u64 = tr64[3]
+    let irbuf: ptr(u64) = as(ptr(u64), as(ptr(u8), irbuf_raw))
+
+    emit const_lookup(irbuf, REF_BIAS - 1, nk, val; found = const_hit, miss = const_miss)
+end
+
+block const_hit(ref: i32)
+    jump result(ref = ref)
+end
+
+block const_miss()
     let j64: ptr(u64) = as(ptr(u64), J)
     let trace_ptr: u64 = j64[0]
     let nk_raw: u32 = as(u32, j64[2])

@@ -6,6 +6,8 @@ local m = module "luajitvm.generated.opcodes"
 -- Comparisons
 export func BC_ISLT() -> i32   return 0   end
 export func BC_ISGE() -> i32   return 1   end
+export func BC_ISLE() -> i32   return 2   end
+export func BC_ISGT() -> i32   return 3   end
 export func BC_ISEQV() -> i32  return 4   end
 export func BC_ISNEV() -> i32  return 5   end
 
@@ -14,12 +16,18 @@ export func BC_MOV() -> i32    return 18  end
 export func BC_ADDVN() -> i32  return 22  end
 export func BC_SUBVN() -> i32  return 23  end
 export func BC_MULVN() -> i32  return 24  end
+export func BC_DIVVN() -> i32  return 25  end
+export func BC_MODVN() -> i32  return 26  end
 export func BC_ADDNV() -> i32  return 27  end
 export func BC_SUBNV() -> i32  return 28  end
 export func BC_MULNV() -> i32  return 29  end
+export func BC_DIVNV() -> i32  return 30  end
+export func BC_MODNV() -> i32  return 31  end
 export func BC_ADDVV() -> i32  return 32  end
 export func BC_SUBVV() -> i32  return 33  end
 export func BC_MULVV() -> i32  return 34  end
+export func BC_DIVVV() -> i32  return 35  end
+export func BC_MODVV() -> i32  return 36  end
 export func BC_KSHORT() -> i32 return 41  end
 export func BC_KPRI() -> i32   return 43  end
 export func BC_KNIL() -> i32   return 44  end

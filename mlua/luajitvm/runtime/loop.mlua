@@ -1,0 +1,85 @@
+-- runtime/loop.mlua -- Numeric for-loop opcode regions (BC_FORI, BC_FORL).
+--
+-- LuaJIT's numeric for-loops use 4 consecutive stack slots:
+--   A+0 = index (i32), A+1 = limit (i32), A+2 = step (i32), A+3 = loop var
+-- FORI checks if the loop should execute at all; if not, it jumps past the body.
+-- FORL increments index, checks the condition, and either continues or exits.
+
+local m = module "luajitvm.runtime.loop"
+
+const LUA_TINT: i32 = 3
+
+func stack32(L: ptr(u8)) -> ptr(i32)
+    return as(ptr(i32), as(ptr(u8), as(ptr(u64), L)[4]))
+end
+
+func stack64(L: ptr(u8)) -> ptr(i64)
+    return as(ptr(i64), as(ptr(u8), as(ptr(u64), L)[4]))
+end
+
+func loop_bc_a(ins: u32) -> i32
+    return (as(i32, ins) >> 8) & 0xFF
+end
+
+func loop_bc_d(ins: u32) -> i32
+    return as(i32, (ins >> 16) & 0xFFFF)
+end
+
+func s16(v: i32) -> i32
+    return v - ((v >> 15) * 65536)
+end
+
+-- BC_FORI: A = base slot, D = jump offset if loop doesn't execute.
+-- Stack layout: [A]=index, [A+1]=limit, [A+2]=step
+-- If step > 0: execute if index <= limit
+-- If step <= 0: execute if index >= limit
+region vmop_fori(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = loop_bc_a(ins)
+    let d: i32 = s16(loop_bc_d(ins))
+    let tv64: ptr(i64) = stack64(L)
+    let idx: i32 = as(i32, tv64[(a) * 2 + 1])
+    let limit: i32 = as(i32, tv64[(a + 1) * 2 + 1])
+    let step: i32 = as(i32, tv64[(a + 2) * 2 + 1])
+    if step > 0 then
+        if idx > limit then jump next(ip = ip + 1 + d) end
+    end
+    if step <= 0 then
+        if idx < limit then jump next(ip = ip + 1 + d) end
+    end
+    let tv32: ptr(i32) = stack32(L)
+    tv32[(a + 3) * 4] = LUA_TINT
+    tv64[(a + 3) * 2 + 1] = as(i64, idx)
+    jump next(ip = ip + 1)
+end
+end
+
+-- BC_FORL: A = base slot, D = jump offset back to loop body start.
+-- Increment index by step, check condition, set loop variable.
+region vmop_forl(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = loop_bc_a(ins)
+    let d: i32 = s16(loop_bc_d(ins))
+    let tv64: ptr(i64) = stack64(L)
+    let idx: i32 = as(i32, tv64[(a) * 2 + 1])
+    let limit: i32 = as(i32, tv64[(a + 1) * 2 + 1])
+    let step: i32 = as(i32, tv64[(a + 2) * 2 + 1])
+    let nidx: i32 = idx + step
+    tv64[(a) * 2 + 1] = as(i64, nidx)
+    let tv32: ptr(i32) = stack32(L)
+    tv32[(a + 3) * 4] = LUA_TINT
+    tv64[(a + 3) * 2 + 1] = as(i64, nidx)
+    if step > 0 then
+        if nidx > limit then jump next(ip = ip + 1) end
+    end
+    if step <= 0 then
+        if nidx < limit then jump next(ip = ip + 1) end
+    end
+    jump next(ip = ip + 1 + d)
+end
+end
+
+end
+
+local _c = m:compile(); _c:free()
+return m

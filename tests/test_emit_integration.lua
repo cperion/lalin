@@ -32,8 +32,8 @@ local TR_BUF = ffi.new("uint8_t[?]", 104)
 local TR_ptr = ffi.cast("void *", TR_BUF)
 local TR_u64 = ffi.cast("uint64_t *", TR_BUF)
 
--- IR buffer: 256 instructions * 8 bytes = 2048 bytes
-local IR_CAP = 256
+-- IR buffer includes instruction slots plus constant slots below REF_BIAS.
+local IR_CAP = 0x8000
 local IR_BUF = ffi.new("uint8_t[?]", IR_CAP * 8)
 local IR_ptr = ffi.cast("void *", IR_BUF)
 local IR_u64 = ffi.cast("uint64_t *", IR_BUF)
@@ -126,8 +126,13 @@ assert(read_op1(ir2) == ref_add, "IR[2] op1 should be ref of ADD")
 assert(read_op2(ir2) == ref_sub, "IR[2] op2 should be ref of SUB")
 
 -- =========================================================================
--- 6. Emit constant and verify
+-- 6. Verify CSE, then emit constant and verify
 -- =========================================================================
+local nins_before_cse = tonumber(J_u64[1])
+local ref_add_again = emit_single(J_ptr, 10, 19, 1, 2, 0)
+assert(ref_add_again == ref_add, "duplicate ADD should CSE to original ref")
+assert(tonumber(J_u64[1]) == nins_before_cse, "CSE hit must not append IR")
+
 local ref_const = emit_const_single(J_ptr, 42)
 print(string.format("\nemit CONST 42 ref=%d", ref_const))
 -- Constant should be stored at nk-1, which after decrement was the slot just below REF_BIAS
@@ -141,6 +146,11 @@ print(string.format("IR[%d]=0x%016x op=%d t=%d op1=%d op2=%d",
 assert(read_op(ir_const)  == 60, "const opcode should be IR_KINT")
 assert(read_type(ir_const) == 19, "const type should be IRT_INT")
 assert(read_op1(ir_const) == 42, "const op1 should be 42")
+
+local nk_before_const_cse = tonumber(J_u64[2])
+local ref_const_again = emit_const_single(J_ptr, 42)
+assert(ref_const_again == ref_const, "duplicate KINT should reuse constant ref")
+assert(tonumber(J_u64[2]) == nk_before_const_cse, "constant CSE hit must not allocate")
 
 -- =========================================================================
 -- 7. Emit guard and verify need_snapshot path

@@ -1,40 +1,233 @@
--- runtime/call.mlua -- Call and return regions.
+-- runtime/call.mlua -- Lua call and return regions.
+--
+-- The interpreter uses an explicit CallInfo stack stored in ThreadState extension
+-- fields.  This avoids pretending that the initial dispatch bytecode pointer is
+-- globally valid: CALL switches to the callee bytecode and RET restores the
+-- caller bytecode through typed continuations.
 
-local proto = moon.require("luajitvm.protocols")
+local value = moon.require("luajitvm.core.value")
+local func_mod = moon.require("luajitvm.core.func")
 local m = module "luajitvm.runtime.call"
+
+const LUA_TFUNC: i32 = value.LUA_TFUNC
+const FF_LUA: i32 = func_mod.FF_LUA
+
+const FUNC_OFF_FFID: i32 = 10
+const FUNC_OFF_PC: i32 = 32
+
+-- ThreadState Moonlift extension fields.  Core LuaJIT-compatible fields remain
+-- unchanged; these fields describe the current interpreter execution state.
+const TS_OFF_CURBC: i32 = 96      -- ptr(u32): current bytecode base
+const TS_OFF_CURPC: i32 = 104     -- ptr(u32): current instruction pointer
+const TS_OFF_CI:    i32 = 112     -- ptr(u8): explicit CallInfo array
+const TS_OFF_CIDEPTH: i32 = 120   -- u32: number of active CallInfo records
+
+-- CallInfo record (32 bytes):
+--   0  prev_base   ptr(TValue)
+--   8  return_bc   ptr(u32)
+--   16 return_ip   i32
+--   20 ret_slot    i32 (caller slot receiving first result)
+--   24 reserved
+const CI_SIZE: i32 = 32
+const CI_PREV_BASE: i32 = 0
+const CI_RETURN_BC: i32 = 8
+const CI_RETURN_IP: i32 = 16
+const CI_RET_SLOT: i32 = 20
+
+func call_bc_a(ins: u32) -> i32
+    return (as(i32, ins) >> 8) & 0xFF
+end
+
+func call_bc_b(ins: u32) -> i32
+    return (as(i32, ins) >> 24) & 0xFF
+end
+
+func call_bc_c(ins: u32) -> i32
+    return (as(i32, ins) >> 16) & 0xFF
+end
 
 func call_bc_cd(ins: u32) -> i32
     return (as(i32, ins) >> 16) & 0xFFFF
 end
 
-region vmop_ret(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+func call_stack_base(L: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), L)[4])
+end
+
+func call_set_stack_base(L: ptr(u8), base: ptr(u8))
+    as(ptr(u64), L)[4] = as(u64, base)
+end
+
+func call_ci_base(L: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), L)[TS_OFF_CI / 8])
+end
+
+func call_ci_depth(L: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), L)[TS_OFF_CIDEPTH / 4])
+end
+
+func call_set_ci_depth(L: ptr(u8), d: i32)
+    as(ptr(u32), L)[TS_OFF_CIDEPTH / 4] = as(u32, d)
+end
+
+func call_ci_at(L: ptr(u8), depth: i32) -> ptr(u8)
+    return call_ci_base(L) + depth * CI_SIZE
+end
+
+func call_slot_tag(base: ptr(u8), slot: i32) -> i32
+    return as(ptr(i32), base)[slot * 4]
+end
+
+func call_slot_payload(base: ptr(u8), slot: i32) -> i64
+    return as(ptr(i64), base)[slot * 2 + 1]
+end
+
+func call_slot_set(base: ptr(u8), slot: i32, tag: i32, payload: i64)
+    as(ptr(i32), base)[slot * 4] = tag
+    as(ptr(i64), base)[slot * 2 + 1] = payload
+end
+
+func call_slot_copy(src_base: ptr(u8), src_slot: i32, dst_base: ptr(u8), dst_slot: i32)
+    call_slot_set(dst_base, dst_slot, call_slot_tag(src_base, src_slot), call_slot_payload(src_base, src_slot))
+end
+
+func call_func_bc(fn: ptr(u8)) -> ptr(u32)
+    return as(ptr(u32), as(ptr(u64), fn)[FUNC_OFF_PC / 8])
+end
+
+func call_write_ci(ci: ptr(u8), prev_base: ptr(u8), return_bc: ptr(u32), return_ip: i32, ret_slot: i32)
+    as(ptr(u64), ci)[CI_PREV_BASE / 8] = as(u64, prev_base)
+    as(ptr(u64), ci)[CI_RETURN_BC / 8] = as(u64, return_bc)
+    as(ptr(i32), ci)[CI_RETURN_IP / 4] = return_ip
+    as(ptr(i32), ci)[CI_RET_SLOT / 4] = ret_slot
+end
+
+func call_ci_prev_base(ci: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), ci)[CI_PREV_BASE / 8])
+end
+
+func call_ci_return_bc(ci: ptr(u8)) -> ptr(u32)
+    return as(ptr(u32), as(ptr(u64), ci)[CI_RETURN_BC / 8])
+end
+
+func call_ci_return_ip(ci: ptr(u8)) -> i32
+    return as(ptr(i32), ci)[CI_RETURN_IP / 4]
+end
+
+func call_ci_ret_slot(ci: ptr(u8)) -> i32
+    return as(ptr(i32), ci)[CI_RET_SLOT / 4]
+end
+
+-- BC_CALL: A=function slot, B=nargs+1, C=nresults+1.
+-- Lua function calls push an explicit CallInfo and switch bytecode stream.
+region vmop_call(L: ptr(u8), ins: u32, bc: ptr(u32), ip: i32;
+    enter_lua: cont(target_bc: ptr(u32), target_ip: i32),
+    native_call: cont(fn: ptr(u8)),
+    metamethod: cont(mm_tag: i32, mm_payload: i64),
+    error: cont(code: i32))
 entry start()
-    jump returned(nresults = call_bc_cd(ins) - 1)
+    let a: i32 = call_bc_a(ins)
+    let base: ptr(u8) = call_stack_base(L)
+    if call_slot_tag(base, a) ~= LUA_TFUNC then jump error(code = 11) end
+    let fn: ptr(u8) = as(ptr(u8), call_slot_payload(base, a))
+    let ffid: i32 = as(i32, fn[FUNC_OFF_FFID])
+    if ffid ~= FF_LUA then jump native_call(fn = fn) end
+    let ci_base: ptr(u8) = call_ci_base(L)
+    if as(u64, ci_base) == 0 then jump error(code = 14) end
+    let depth: i32 = call_ci_depth(L)
+    let ci: ptr(u8) = call_ci_at(L, depth)
+    call_write_ci(ci, base, bc, ip + 1, a)
+    call_set_ci_depth(L, depth + 1)
+    call_set_stack_base(L, base + (a + 1) * 16)
+    jump enter_lua(target_bc = call_func_bc(fn), target_ip = 0)
 end
 end
 
-region vmop_ret0(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+-- BC_CALLT: tail-call a Lua function.  The active CallInfo is reused; for a
+-- top-level tail call, final return from the callee is final return to host.
+region vmop_callt(L: ptr(u8), ins: u32, bc: ptr(u32), ip: i32;
+    enter_lua: cont(target_bc: ptr(u32), target_ip: i32),
+    native_call: cont(fn: ptr(u8)),
+    metamethod: cont(mm_tag: i32, mm_payload: i64),
+    error: cont(code: i32))
 entry start()
-    jump returned(nresults = 0)
+    let a: i32 = call_bc_a(ins)
+    let base: ptr(u8) = call_stack_base(L)
+    if call_slot_tag(base, a) ~= LUA_TFUNC then jump error(code = 11) end
+    let fn: ptr(u8) = as(ptr(u8), call_slot_payload(base, a))
+    let ffid: i32 = as(i32, fn[FUNC_OFF_FFID])
+    if ffid ~= FF_LUA then jump native_call(fn = fn) end
+    call_set_stack_base(L, base + (a + 1) * 16)
+    jump enter_lua(target_bc = call_func_bc(fn), target_ip = 0)
 end
 end
 
-region vmop_ret1(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+-- BC_RET: A=first result slot, D=nresults+1.
+region vmop_ret(L: ptr(u8), ins: u32, ip: i32;
+    resume_caller: cont(target_bc: ptr(u32), target_ip: i32),
+    final_return: cont(nresults: i32),
+    close_upvalues: cont(from: ptr(u8), target_bc: ptr(u32), target_ip: i32),
+    error: cont(code: i32))
 entry start()
-    jump returned(nresults = 1)
+    let a: i32 = call_bc_a(ins)
+    let nresults: i32 = call_bc_cd(ins) - 1
+    let depth: i32 = call_ci_depth(L)
+    if depth == 0 then jump final_return(nresults = nresults) end
+    let ci: ptr(u8) = call_ci_at(L, depth - 1)
+    let prev_base: ptr(u8) = call_ci_prev_base(ci)
+    let cur_base: ptr(u8) = call_stack_base(L)
+    let ret_slot: i32 = call_ci_ret_slot(ci)
+    jump copy_results(i = 0, n = nresults, cur_base = cur_base, prev_base = prev_base, ret_slot = ret_slot, ci = ci, depth = depth)
+end
+block copy_results(i: i32, n: i32, cur_base: ptr(u8), prev_base: ptr(u8), ret_slot: i32, ci: ptr(u8), depth: i32)
+    if i >= n then jump restore(ci = ci, depth = depth, prev_base = prev_base) end
+    call_slot_copy(cur_base, call_bc_a(ins) + i, prev_base, ret_slot + i)
+    jump copy_results(i = i + 1, n = n, cur_base = cur_base, prev_base = prev_base, ret_slot = ret_slot, ci = ci, depth = depth)
+end
+block restore(ci: ptr(u8), depth: i32, prev_base: ptr(u8))
+    call_set_stack_base(L, prev_base)
+    call_set_ci_depth(L, depth - 1)
+    jump resume_caller(target_bc = call_ci_return_bc(ci), target_ip = call_ci_return_ip(ci))
 end
 end
 
-region vm_bc_call(L: ptr(u8), bc: i32) -> proto.OpcodeResult
+region vmop_ret0(L: ptr(u8), ins: u32, ip: i32;
+    resume_caller: cont(target_bc: ptr(u32), target_ip: i32),
+    final_return: cont(nresults: i32),
+    close_upvalues: cont(from: ptr(u8), target_bc: ptr(u32), target_ip: i32),
+    error: cont(code: i32))
 entry start()
-    jump error(code = 0)
+    let depth: i32 = call_ci_depth(L)
+    if depth == 0 then jump final_return(nresults = 0) end
+    let ci: ptr(u8) = call_ci_at(L, depth - 1)
+    let prev_base: ptr(u8) = call_ci_prev_base(ci)
+    call_set_stack_base(L, prev_base)
+    call_set_ci_depth(L, depth - 1)
+    jump resume_caller(target_bc = call_ci_return_bc(ci), target_ip = call_ci_return_ip(ci))
 end
 end
 
-region vm_bc_ret(L: ptr(u8), bc: i32) -> proto.ReturnResult
+region vmop_ret1(L: ptr(u8), ins: u32, ip: i32;
+    resume_caller: cont(target_bc: ptr(u32), target_ip: i32),
+    final_return: cont(nresults: i32),
+    close_upvalues: cont(from: ptr(u8), target_bc: ptr(u32), target_ip: i32),
+    error: cont(code: i32))
 entry start()
-    jump final_return()
+    let a: i32 = call_bc_a(ins)
+    let depth: i32 = call_ci_depth(L)
+    if depth == 0 then jump final_return(nresults = 1) end
+    let ci: ptr(u8) = call_ci_at(L, depth - 1)
+    let prev_base: ptr(u8) = call_ci_prev_base(ci)
+    let cur_base: ptr(u8) = call_stack_base(L)
+    call_slot_copy(cur_base, a, prev_base, call_ci_ret_slot(ci))
+    call_set_stack_base(L, prev_base)
+    call_set_ci_depth(L, depth - 1)
+    jump resume_caller(target_bc = call_ci_return_bc(ci), target_ip = call_ci_return_ip(ci))
 end
+end
+
+export func call_version() -> i32
+    return 4
 end
 
 end

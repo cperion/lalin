@@ -1,0 +1,241 @@
+-- runtime/string.mlua -- String hashing and interning fast paths.
+--
+-- The allocator still provides raw GCstr memory.  This module owns hash/lookup,
+-- header initialization, bucket insertion, and byte copy through typed regions.
+
+local proto = moon.require("luajitvm.protocols")
+local m = module "luajitvm.runtime.string"
+
+const GCT_STR: i32 = 0
+const STR_HEADER_SIZE: i32 = 24
+const STR_OFF_SID:  i32 = 12
+const STR_OFF_HASH: i32 = 16
+const STR_OFF_LEN:  i32 = 20
+const G_OFF_GC_CURRENTWHITE: i32 = 32
+const G_OFF_STR_TAB:  i32 = 152
+const G_OFF_STR_MASK: i32 = 160
+const G_OFF_STR_NUM:  i32 = 164
+const G_OFF_STR_ID:   i32 = 168
+
+func g_currentwhite(G: ptr(u8)) -> i32
+    return as(i32, G[G_OFF_GC_CURRENTWHITE])
+end
+
+func g_str_tab(G: ptr(u8)) -> ptr(u64)
+    return as(ptr(u64), as(ptr(u64), G)[G_OFF_STR_TAB / 8])
+end
+
+func g_str_mask(G: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), G)[G_OFF_STR_MASK / 4])
+end
+
+func g_str_num(G: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), G)[G_OFF_STR_NUM / 4])
+end
+
+func g_set_str_num(G: ptr(u8), v: i32)
+    as(ptr(u32), G)[G_OFF_STR_NUM / 4] = as(u32, v)
+end
+
+func g_str_id(G: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), G)[G_OFF_STR_ID / 4])
+end
+
+func g_set_str_id(G: ptr(u8), v: i32)
+    as(ptr(u32), G)[G_OFF_STR_ID / 4] = as(u32, v)
+end
+
+func str_hash(s: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), s)[STR_OFF_HASH / 4])
+end
+
+func str_len(s: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), s)[STR_OFF_LEN / 4])
+end
+
+func str_next(s: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), s)[0])
+end
+
+func str_data(s: ptr(u8)) -> ptr(u8)
+    return s + STR_HEADER_SIZE
+end
+
+region string_hash(data: ptr(u8), len: i32; done: cont(hash: i32))
+entry start()
+    jump step(i = 0, h = as(i32, 5381))
+end
+block step(i: i32, h: i32)
+    if i >= len then jump done(hash = h) end
+    let b: i32 = as(i32, data[i])
+    jump step(i = i + 1, h = h * 33 + b)
+end
+end
+
+region bytes_equal(a: ptr(u8), b: ptr(u8), len: i32; yes: cont(), no: cont())
+entry start()
+    jump step(i = 0)
+end
+block step(i: i32)
+    if i >= len then jump yes() end
+    if a[i] ~= b[i] then jump no() end
+    jump step(i = i + 1)
+end
+end
+
+region copy_bytes(dst: ptr(u8), src: ptr(u8), len: i32; done: cont())
+entry start()
+    jump step(i = 0)
+end
+block step(i: i32)
+    if i >= len then jump done() end
+    dst[i] = src[i]
+    jump step(i = i + 1)
+end
+end
+
+region intern_lookup_hash(G: ptr(u8), data: ptr(u8), len: i32, hash: i32) -> proto.StringIntern
+entry start()
+    let buckets: ptr(u64) = g_str_tab(G)
+    if as(u64, buckets) == 0 then jump need_alloc(hash = hash, nbytes = len) end
+    let bucket: i32 = hash & g_str_mask(G)
+    let head: u64 = buckets[bucket]
+    if head == 0 then jump need_alloc(hash = hash, nbytes = len) end
+    jump scan(s = as(ptr(u8), head))
+end
+block scan(s: ptr(u8))
+    if as(u64, s) == 0 then jump need_alloc(hash = hash, nbytes = len) end
+    if str_hash(s) == hash and str_len(s) == len then
+        jump compare(candidate = s, i = 0)
+    end
+    jump scan(s = str_next(s))
+end
+block compare(candidate: ptr(u8), i: i32)
+    if i >= len then jump found(str = candidate) end
+    if str_data(candidate)[i] ~= data[i] then jump scan(s = str_next(candidate)) end
+    jump compare(candidate = candidate, i = i + 1)
+end
+end
+
+region intern_lookup(G: ptr(u8), data: ptr(u8), len: i32) -> proto.StringIntern
+entry start()
+    emit string_hash(data, len; done = hashed)
+end
+block hashed(hash: i32)
+    let buckets: ptr(u64) = g_str_tab(G)
+    if as(u64, buckets) == 0 then jump need_alloc(hash = hash, nbytes = len) end
+    let bucket: i32 = hash & g_str_mask(G)
+    let head: u64 = buckets[bucket]
+    if head == 0 then jump need_alloc(hash = hash, nbytes = len) end
+    jump scan(s = as(ptr(u8), head), hash = hash)
+end
+block scan(s: ptr(u8), hash: i32)
+    if as(u64, s) == 0 then jump need_alloc(hash = hash, nbytes = len) end
+    if str_hash(s) == hash and str_len(s) == len then
+        jump compare(candidate = s, i = 0, hash = hash)
+    end
+    jump scan(s = str_next(s), hash = hash)
+end
+block compare(candidate: ptr(u8), i: i32, hash: i32)
+    if i >= len then jump found(str = candidate) end
+    if str_data(candidate)[i] ~= data[i] then jump scan(s = str_next(candidate), hash = hash) end
+    jump compare(candidate = candidate, i = i + 1, hash = hash)
+end
+end
+
+region intern_insert_hash(G: ptr(u8), data: ptr(u8), len: i32, hash: i32, obj: ptr(u8)) -> proto.StringIntern
+entry start()
+    if as(u64, obj) == 0 then jump error(code = 1) end
+    let buckets: ptr(u64) = g_str_tab(G)
+    if as(u64, buckets) == 0 then jump error(code = 2) end
+    let bucket: i32 = hash & g_str_mask(G)
+    let op: ptr(u64) = as(ptr(u64), obj)
+    op[0] = buckets[bucket]
+    obj[8] = as(u8, g_currentwhite(G))
+    obj[9] = as(u8, GCT_STR)
+    let sid: i32 = g_str_id(G)
+    as(ptr(u32), obj)[STR_OFF_SID / 4] = as(u32, sid)
+    as(ptr(u32), obj)[STR_OFF_HASH / 4] = as(u32, hash)
+    as(ptr(u32), obj)[STR_OFF_LEN / 4] = as(u32, len)
+    g_set_str_id(G, sid + 1)
+    g_set_str_num(G, g_str_num(G) + 1)
+    buckets[bucket] = as(u64, obj)
+    emit copy_bytes(str_data(obj), data, len; done = copied)
+end
+block copied()
+    jump inserted(str = obj)
+end
+end
+
+region intern_insert(G: ptr(u8), data: ptr(u8), len: i32, obj: ptr(u8)) -> proto.StringIntern
+entry start()
+    emit string_hash(data, len; done = hashed)
+end
+block hashed(hash: i32)
+    if as(u64, obj) == 0 then jump error(code = 1) end
+    let buckets: ptr(u64) = g_str_tab(G)
+    if as(u64, buckets) == 0 then jump error(code = 2) end
+    let bucket: i32 = hash & g_str_mask(G)
+    let op: ptr(u64) = as(ptr(u64), obj)
+    op[0] = buckets[bucket]
+    obj[8] = as(u8, g_currentwhite(G))
+    obj[9] = as(u8, GCT_STR)
+    let sid: i32 = g_str_id(G)
+    as(ptr(u32), obj)[STR_OFF_SID / 4] = as(u32, sid)
+    as(ptr(u32), obj)[STR_OFF_HASH / 4] = as(u32, hash)
+    as(ptr(u32), obj)[STR_OFF_LEN / 4] = as(u32, len)
+    g_set_str_id(G, sid + 1)
+    g_set_str_num(G, g_str_num(G) + 1)
+    buckets[bucket] = as(u64, obj)
+    emit copy_bytes(str_data(obj), data, len; done = copied)
+end
+block copied()
+    jump inserted(str = obj)
+end
+end
+
+export func string_hash_test(data: ptr(u8), len: i32) -> i32
+    return region -> i32
+    entry start()
+        emit string_hash(data, len; done = got_hash)
+    end
+    block got_hash(hash: i32) yield hash end
+    end
+end
+
+export func intern_lookup_test(G: ptr(u8), data: ptr(u8), len: i32) -> ptr(u8)
+    return region -> ptr(u8)
+    entry start()
+        emit intern_lookup(G, data, len;
+            found = got_found,
+            need_alloc = got_need,
+            inserted = got_inserted,
+            error = got_error)
+    end
+    block got_found(str: ptr(u8)) yield str end
+    block got_inserted(str: ptr(u8)) yield str end
+    block got_need(hash: i32, nbytes: i32) yield as(ptr(u8), as(u64, 0)) end
+    block got_error(code: i32) yield as(ptr(u8), as(u64, 0)) end
+    end
+end
+
+export func intern_insert_test(G: ptr(u8), data: ptr(u8), len: i32, obj: ptr(u8)) -> ptr(u8)
+    return region -> ptr(u8)
+    entry start()
+        emit intern_insert(G, data, len, obj;
+            found = got_found,
+            need_alloc = got_need,
+            inserted = got_inserted,
+            error = got_error)
+    end
+    block got_found(str: ptr(u8)) yield str end
+    block got_inserted(str: ptr(u8)) yield str end
+    block got_need(hash: i32, nbytes: i32) yield as(ptr(u8), as(u64, 0)) end
+    block got_error(code: i32) yield as(ptr(u8), as(u64, 0)) end
+    end
+end
+
+end
+
+local _c = m:compile(); _c:free()
+return m

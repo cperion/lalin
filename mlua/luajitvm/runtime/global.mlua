@@ -1,0 +1,97 @@
+-- runtime/global.mlua -- Global variable get/set (BC_GGET, BC_GSET).
+--
+-- Globals are stored in the environment table (L->env).  GGET/GSET use the
+-- string constant at index D to look up the global name.  For our simplified
+-- model, the constant index IS the integer key used for lookup.
+
+local proto = moon.require("luajitvm.protocols")
+local m = module "luajitvm.runtime.global"
+
+const LUA_TNIL: i32 = 0
+const LUA_TINT: i32 = 3
+const LUA_TTAB: i32 = 8
+
+func g_stack_base(L: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), L)[4])
+end
+
+func g_bc_a(ins: u32) -> i32
+    return (as(i32, ins) >> 8) & 0xFF
+end
+
+func g_bc_d(ins: u32) -> i32
+    return (as(i32, ins) >> 16) & 0xFFFF
+end
+
+func L_env(L: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), L)[9])
+end
+
+func g_tab_array(t: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), t)[2])
+end
+
+func g_tab_asize(t: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), t)[12])
+end
+
+func g_tv_tag_at(base: ptr(u8), slot: i32) -> i32
+    return as(ptr(i32), base)[slot * 4]
+end
+
+func g_tv_payload_at(base: ptr(u8), slot: i32) -> i64
+    return as(ptr(i64), base)[slot * 2 + 1]
+end
+
+func g_tv_set_at(base: ptr(u8), slot: i32, tag: i32, payload: i64)
+    as(ptr(i32), base)[slot * 4] = tag
+    as(ptr(i64), base)[slot * 2 + 1] = payload
+end
+
+-- BC_GGET: A = dest slot, D = string constant index (used as integer key)
+region vmop_gget(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = g_bc_a(ins)
+    let d: i32 = g_bc_d(ins)
+    let env: ptr(u8) = L_env(L)
+    if as(u64, env) == 0 then jump error(code = 5) end
+    let arr: ptr(u8) = g_tab_array(env)
+    let asize: i32 = g_tab_asize(env)
+    if d > 0 and d <= asize and as(u64, arr) ~= 0 then
+        let tag: i32 = g_tv_tag_at(arr, d - 1)
+        if tag ~= LUA_TNIL then
+            let base: ptr(u8) = g_stack_base(L)
+            g_tv_set_at(base, a, tag, g_tv_payload_at(arr, d - 1))
+            jump next(ip = ip + 1)
+        end
+    end
+    let base: ptr(u8) = g_stack_base(L)
+    g_tv_set_at(base, a, LUA_TNIL, as(i64, 0))
+    jump next(ip = ip + 1)
+end
+end
+
+-- BC_GSET: A = value slot, D = string constant index (used as integer key)
+region vmop_gset(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = g_bc_a(ins)
+    let d: i32 = g_bc_d(ins)
+    let env: ptr(u8) = L_env(L)
+    if as(u64, env) == 0 then jump error(code = 5) end
+    let base: ptr(u8) = g_stack_base(L)
+    let val_tag: i32 = g_tv_tag_at(base, a)
+    let val_payload: i64 = g_tv_payload_at(base, a)
+    let arr: ptr(u8) = g_tab_array(env)
+    let asize: i32 = g_tab_asize(env)
+    if d > 0 and d <= asize and as(u64, arr) ~= 0 then
+        g_tv_set_at(arr, d - 1, val_tag, val_payload)
+        jump next(ip = ip + 1)
+    end
+    jump error(code = 6)
+end
+end
+
+end
+
+local _c = m:compile(); _c:free()
+return m

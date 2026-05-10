@@ -22,6 +22,11 @@ const IR_SLOAD: i32 = 31
 const IR_ADD:   i32 = 10
 const IR_SUB:   i32 = 11
 const IR_MUL:   i32 = 12
+const IR_LT:    i32 = 20
+const IR_GE:    i32 = 21
+const IR_EQ:    i32 = 24
+const IR_NE:    i32 = 25
+const IR_LOOP:  i32 = 80
 
 const IRT_INT:   i32 = 19
 const IRT_NUM:   i32 = 14
@@ -30,11 +35,9 @@ const IRT_GUARD: i32 = 0x80
 const REF_BIAS: i32 = 0x8000
 const IR_MAX:   i32 = 256
 
--- TValue type tags (from core/value.mlua):
---   tag in high 32 bits of TValue (as i32 at byte offset 8..11)
-const LJ_TINT:   i32 = -6    -- 0xFFFFFFF8  (LuaJIT NaN-boxed integer tag)
-const LJ_TNUM:   i32 = -7    -- 0xFFFFFFF7  (double — the "number" supertype)
-const LJ_T_NONE: i32 = -1    -- placeholder for "unset"
+-- TValue type tags use the VM's canonical 16-byte TValue layout:
+--   [tag:i32 @ +0][pad:i32 @ +4][payload:i64 @ +8]
+const LUA_TINT: i32 = 3
 
 -- =========================================================================
 -- JitState mini-layout (byte offsets via ptr(u64) element indexing):
@@ -144,14 +147,12 @@ entry start()
 
     if nins >= IR_MAX then jump abort(reason = 1) end
 
-    -- Read the TValue type tag from the stack.
-    -- TValue is 16 bytes: [payload:8][tag:i32 at +8][pad:4].
-    -- We read the tag as i32 at byte offset slot*16 + 8.
+    -- Read the TValue type tag from the canonical stack layout.
     let tv_base: ptr(i32) = as(ptr(i32), stack)
-    let tag_off: i32 = slot * 4 + 2   -- slot*16 bytes / 4 = slot*4 i32s; tag is at index+2
+    let tag_off: i32 = slot * 4
     let tag: i32 = tv_base[tag_off]
+    if tag ~= LUA_TINT then jump abort(reason = 8) end
 
-    -- Decide IR type: we only trace integers for now.
     let irt: i32 = IRT_INT | IRT_GUARD
 
     -- Emit IR_SLOAD with the slot as op1 and 0 as op2.
@@ -242,6 +243,30 @@ block emit_ir(ea: i32, eb: i32, j4: ptr(u64), ib: ptr(u64))
 end
 end
 
+region rec_cmp(J: ptr(u8), slot_refs: ptr(i32), lhs_slot: i32, rhs_slot: i32, ir_op: i32; done: cont(ref: i32), need_snap: cont(ref: i32), abort: cont(reason: i32))
+entry start()
+    let j64:   ptr(u64) = as(ptr(u64), J)
+    let irbuf: ptr(u64) = j_irbuf(j64)
+    let nins:  i32      = j_nins(j64)
+    if nins >= IR_MAX then jump abort(reason = 1) end
+    let op1: i32 = slot_refs[lhs_slot]
+    let op2: i32 = slot_refs[rhs_slot]
+    let ref: i32 = emit_ins(j64, irbuf, ir_op, IRT_INT | IRT_GUARD, op1, op2)
+    jump need_snap(ref = ref)
+end
+end
+
+region rec_loop(J: ptr(u8); done: cont(ref: i32), abort: cont(reason: i32))
+entry start()
+    let j64:   ptr(u64) = as(ptr(u64), J)
+    let irbuf: ptr(u64) = j_irbuf(j64)
+    let nins:  i32      = j_nins(j64)
+    if nins >= IR_MAX then jump abort(reason = 1) end
+    let ref: i32 = emit_ins(j64, irbuf, IR_LOOP, IRT_INT, 0, 0)
+    jump done(ref = ref)
+end
+end
+
 -- =========================================================================
 -- Canonical recorder protocol surface stubs. The current integration tests use
 -- the lower-level bring-up regions above; these protocol regions preserve the
@@ -310,6 +335,28 @@ export func rec_arith_test(J: ptr(u8), slot_refs: ptr(i32), lhs: i32, rhs_slot: 
     end
     block got_done(ref: i32)     yield ref    end
     block got_snap(ref: i32)     yield ref    end
+    block got_abort(reason: i32) yield -1     end
+    end
+end
+
+export func rec_cmp_test(J: ptr(u8), slot_refs: ptr(i32), lhs: i32, rhs: i32, op: i32) -> i32
+    return region -> i32
+    entry start()
+        emit rec_cmp(J, slot_refs, lhs, rhs, op;
+            done = got_done, need_snap = got_snap, abort = got_abort)
+    end
+    block got_done(ref: i32)     yield ref    end
+    block got_snap(ref: i32)     yield ref    end
+    block got_abort(reason: i32) yield -1     end
+    end
+end
+
+export func rec_loop_test(J: ptr(u8)) -> i32
+    return region -> i32
+    entry start()
+        emit rec_loop(J; done = got_done, abort = got_abort)
+    end
+    block got_done(ref: i32)     yield ref    end
     block got_abort(reason: i32) yield -1     end
     end
 end

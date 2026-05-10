@@ -42,7 +42,10 @@ local files = {
     "mlua/luajitvm/runtime/call.mlua",
     -- Task 8: P4.PROTO.003 table/meta stubs
     "mlua/luajitvm/runtime/table.mlua",
+    "mlua/luajitvm/runtime/string.mlua",
     "mlua/luajitvm/runtime/meta.mlua",
+    "mlua/luajitvm/runtime/global.mlua",
+    "mlua/luajitvm/runtime/loop.mlua",
     -- Task 8: P4.PROTO.004 GC stubs
     "mlua/luajitvm/gc/alloc.mlua",
     "mlua/luajitvm/gc/barrier.mlua",

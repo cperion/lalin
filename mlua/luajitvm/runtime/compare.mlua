@@ -6,6 +6,10 @@ func cmp_bc_b(ins: u32) -> i32
     return (as(i32, ins) >> 24) & 0xFF
 end
 
+func cmp_bc_c(ins: u32) -> i32
+    return (as(i32, ins) >> 16) & 0xFF
+end
+
 func cmp_bc_cd(ins: u32) -> i32
     return (as(i32, ins) >> 16) & 0xFFFF
 end
@@ -17,7 +21,7 @@ end
 region vmop_islt(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
 entry start()
     let b: i32 = cmp_bc_b(ins)
-    let c: i32 = cmp_bc_cd(ins)
+    let c: i32 = cmp_bc_c(ins)
     let tv64: ptr(i64) = cmp_stack64(L)
     let skip: i32 = 2 - as(i32, as(i32, tv64[b * 2 + 1]) < as(i32, tv64[c * 2 + 1]))
     jump next(ip = ip + skip)
@@ -27,9 +31,29 @@ end
 region vmop_isge(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
 entry start()
     let b: i32 = cmp_bc_b(ins)
-    let c: i32 = cmp_bc_cd(ins)
+    let c: i32 = cmp_bc_c(ins)
     let tv64: ptr(i64) = cmp_stack64(L)
     let skip: i32 = 2 - as(i32, as(i32, tv64[b * 2 + 1]) >= as(i32, tv64[c * 2 + 1]))
+    jump next(ip = ip + skip)
+end
+end
+
+region vmop_isle(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let b: i32 = cmp_bc_b(ins)
+    let c: i32 = cmp_bc_c(ins)
+    let tv64: ptr(i64) = cmp_stack64(L)
+    let skip: i32 = 2 - as(i32, as(i32, tv64[b * 2 + 1]) <= as(i32, tv64[c * 2 + 1]))
+    jump next(ip = ip + skip)
+end
+end
+
+region vmop_isgt(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let b: i32 = cmp_bc_b(ins)
+    let c: i32 = cmp_bc_c(ins)
+    let tv64: ptr(i64) = cmp_stack64(L)
+    let skip: i32 = 2 - as(i32, as(i32, tv64[b * 2 + 1]) > as(i32, tv64[c * 2 + 1]))
     jump next(ip = ip + skip)
 end
 end
@@ -37,7 +61,7 @@ end
 region vmop_iseqv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
 entry start()
     let b: i32 = cmp_bc_b(ins)
-    let c: i32 = cmp_bc_cd(ins)
+    let c: i32 = cmp_bc_c(ins)
     let tv64: ptr(i64) = cmp_stack64(L)
     let skip: i32 = 2 - as(i32, as(i32, tv64[b * 2 + 1]) == as(i32, tv64[c * 2 + 1]))
     jump next(ip = ip + skip)
@@ -47,10 +71,23 @@ end
 region vmop_isnev(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
 entry start()
     let b: i32 = cmp_bc_b(ins)
-    let c: i32 = cmp_bc_cd(ins)
+    let c: i32 = cmp_bc_c(ins)
     let tv64: ptr(i64) = cmp_stack64(L)
     let skip: i32 = 2 - as(i32, as(i32, tv64[b * 2 + 1]) ~= as(i32, tv64[c * 2 + 1]))
     jump next(ip = ip + skip)
+end
+end
+
+-- BC_NOT: Boolean inversion (not B -> A)
+region vmop_not(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = (as(i32, ins) >> 8) & 0xFF
+    let b: i32 = (as(i32, ins) >> 24) & 0xFF
+    let tv32: ptr(i32) = as(ptr(i32), as(ptr(u8), as(ptr(u64), L)[4]))
+    let tag: i32 = tv32[b * 4]
+    let truthy: i32 = 2 - as(i32, tag ~= 0 and tag ~= 1)
+    tv32[a * 4] = truthy
+    jump next(ip = ip + 1)
 end
 end
 

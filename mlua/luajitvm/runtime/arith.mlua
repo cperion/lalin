@@ -4,10 +4,9 @@
 -- integer status tags; the dispatcher composes them with `emit` and receives
 -- typed `next/returned/error` control edges.
 
-local proto = moon.require("luajitvm.protocols")
 local m = module "luajitvm.runtime.arith"
 
-const LUA_TINT: i32 = 5
+const LUA_TINT: i32 = 3
 
 func arith_bc_a(ins: u32) -> i32
     return (as(i32, ins) >> 8) & 0xFF
@@ -15,6 +14,10 @@ end
 
 func arith_bc_b(ins: u32) -> i32
     return (as(i32, ins) >> 24) & 0xFF
+end
+
+func arith_bc_c(ins: u32) -> i32
+    return (as(i32, ins) >> 16) & 0xFF
 end
 
 func arith_bc_cd(ins: u32) -> i32
@@ -37,7 +40,7 @@ region vmop_addvv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: 
 entry start()
     let a: i32 = arith_bc_a(ins)
     let b: i32 = arith_bc_b(ins)
-    let c: i32 = arith_bc_cd(ins)
+    let c: i32 = arith_bc_c(ins)
     let tv32: ptr(i32) = arith_stack32(L)
     let tv64: ptr(i64) = arith_stack64(L)
     tv32[a * 4] = LUA_TINT
@@ -50,7 +53,7 @@ region vmop_subvv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: 
 entry start()
     let a: i32 = arith_bc_a(ins)
     let b: i32 = arith_bc_b(ins)
-    let c: i32 = arith_bc_cd(ins)
+    let c: i32 = arith_bc_c(ins)
     let tv32: ptr(i32) = arith_stack32(L)
     let tv64: ptr(i64) = arith_stack64(L)
     tv32[a * 4] = LUA_TINT
@@ -63,11 +66,41 @@ region vmop_mulvv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: 
 entry start()
     let a: i32 = arith_bc_a(ins)
     let b: i32 = arith_bc_b(ins)
-    let c: i32 = arith_bc_cd(ins)
+    let c: i32 = arith_bc_c(ins)
     let tv32: ptr(i32) = arith_stack32(L)
     let tv64: ptr(i64) = arith_stack64(L)
     tv32[a * 4] = LUA_TINT
     tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) * as(i32, tv64[c * 2 + 1]))
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_divvv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let c: i32 = arith_bc_c(ins)
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    let rhs: i32 = as(i32, tv64[c * 2 + 1])
+    if rhs == 0 then jump error(code = 5) end
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) / rhs)
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_modvv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let c: i32 = arith_bc_c(ins)
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    let rhs: i32 = as(i32, tv64[c * 2 + 1])
+    if rhs == 0 then jump error(code = 5) end
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) % rhs)
     jump next(ip = ip + 1)
 end
 end
@@ -111,6 +144,34 @@ entry start()
 end
 end
 
+region vmop_divvn(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let lit: i32 = arith_s16(arith_bc_cd(ins))
+    if lit == 0 then jump error(code = 5) end
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) / lit)
+    jump next(ip = ip + 1)
+end
+end
+
+region vmop_modvn(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let lit: i32 = arith_s16(arith_bc_cd(ins))
+    if lit == 0 then jump error(code = 5) end
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) % lit)
+    jump next(ip = ip + 1)
+end
+end
+
 region vmop_addnv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
 entry start()
     let a: i32 = arith_bc_a(ins)
@@ -150,23 +211,51 @@ entry start()
 end
 end
 
--- Canonical protocol stubs kept for the architecture catalog.  The interpreter
--- dispatcher uses the vmop_* regions above because they carry the next PC.
-region vm_bc_add(L: ptr(u8), bc: i32) -> proto.OpcodeResult
+region vmop_divnv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
 entry start()
-    jump error(code = 0)
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let rhs: i32 = as(i32, arith_stack64(L)[b * 2 + 1])
+    if rhs == 0 then jump error(code = 5) end
+    let lit: i32 = arith_s16(arith_bc_cd(ins))
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, lit / rhs)
+    jump next(ip = ip + 1)
 end
 end
 
-region vm_bc_sub(L: ptr(u8), bc: i32) -> proto.OpcodeResult
+region vmop_modnv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
 entry start()
-    jump error(code = 0)
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let rhs: i32 = as(i32, arith_stack64(L)[b * 2 + 1])
+    if rhs == 0 then jump error(code = 5) end
+    let lit: i32 = arith_s16(arith_bc_cd(ins))
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, lit % rhs)
+    jump next(ip = ip + 1)
 end
 end
 
-region vm_bc_mul(L: ptr(u8), bc: i32) -> proto.OpcodeResult
+-- BC_UNM: Unary minus on integer
+region vmop_unm(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
 entry start()
-    jump error(code = 0)
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    let tag: i32 = tv32[b * 4]
+    if tag == LUA_TINT then
+        let val: i32 = as(i32, tv64[b * 2 + 1])
+        tv32[a * 4] = LUA_TINT
+        tv64[a * 2 + 1] = as(i64, -val)
+        jump next(ip = ip + 1)
+    end
+    jump error(code = 7)
 end
 end
 

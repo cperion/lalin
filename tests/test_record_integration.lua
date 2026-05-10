@@ -14,6 +14,8 @@ local rec    = rec_mv:compile()
 local trace_init_fn   = rec:get("trace_init_test")
 local rec_sload_fn    = rec:get("rec_sload_test")
 local rec_arith_fn    = rec:get("rec_arith_test")
+local rec_cmp_fn      = rec:get("rec_cmp_test")
+local rec_loop_fn     = rec:get("rec_loop_test")
 
 -- =========================================================================
 -- Allocate buffers
@@ -75,10 +77,9 @@ check("nsnap reset to 0",   0,    J_u32[6])
 print("\n--- rec_sload ---")
 
 -- Place a fake TValue on the Lua stack at slot 0.
--- TValue layout: [payload:8 bytes][tag:i32 at +8][pad:4].
--- Stack slot 0 → byte offset 0.  tag at byte 8 = i32 index 2.
--- LJ_TINT = -6 (integer tag)
-STACK_i32[2] = -6   -- slot 0 tag = LJ_TINT (integer)
+-- TValue layout: [tag:i32 at +0][pad:i32 at +4][payload:i64 at +8].
+-- Stack slot 0 → byte offset 0. tag at byte 0 = i32 index 0.
+STACK_i32[0] = 3   -- slot 0 tag = LUA_TINT
 
 local ref0 = rec_sload_fn(J_ptr, REFS_ptr, STACK_ptr, 0)
 print(string.format("  sload ref = 0x%x", ref0))
@@ -92,7 +93,7 @@ check("IR[1] op1 = slot 0",   0,  fld_op1(ir0))
 check("nins = 2 after sload", 2,  J_u64[1])
 
 -- Emit sload for slot 1 too
-STACK_i32[4 + 2] = -6  -- slot 1 tag (4 i32s per TValue, so slot 1 starts at index 4)
+STACK_i32[4] = 3  -- slot 1 tag (4 i32s per TValue, so slot 1 starts at index 4)
 local ref1 = rec_sload_fn(J_ptr, REFS_ptr, STACK_ptr, 1)
 check("sload slot1 ref = 0x8002", 0x8002, ref1)
 check("slot_refs[1] updated",     0x8002, REFS_BUF[1])
@@ -170,6 +171,28 @@ check("norm ref emitted", 1, ref_norm >= 0x8000 and 1 or 0)
 local ir_norm = IR_u64[ref_norm - 0x8000]
 check("norm IR op1 = 0x8001 (smaller)", 0x8001, fld_op1(ir_norm))
 check("norm IR op2 = 0x8002 (larger)",  0x8002, fld_op2(ir_norm))
+
+-- =========================================================================
+-- Test 7: comparison guard recording
+-- =========================================================================
+print("\n--- rec_cmp: LT guard ---")
+local ref_cmp = rec_cmp_fn(J_ptr, REFS_ptr, 0, 1, 20) -- IR_LT(slot0, slot1)
+check("cmp ref emitted", 1, ref_cmp >= 0x8000 and 1 or 0)
+local ir_cmp = IR_u64[ref_cmp - 0x8000]
+check("cmp IR op = IR_LT", 20, fld_op(ir_cmp))
+check("cmp IR has GUARD", 1, bit.band(fld_type(ir_cmp), 0x80) ~= 0 and 1 or 0)
+check("cmp IR op1 = slot0 ref", REFS_BUF[0], fld_op1(ir_cmp))
+check("cmp IR op2 = slot1 ref", REFS_BUF[1], fld_op2(ir_cmp))
+
+-- =========================================================================
+-- Test 8: loop marker recording
+-- =========================================================================
+print("\n--- rec_loop: LOOP marker ---")
+local ref_loop = rec_loop_fn(J_ptr)
+check("loop ref emitted", 1, ref_loop >= 0x8000 and 1 or 0)
+local ir_loop = IR_u64[ref_loop - 0x8000]
+check("loop IR op = IR_LOOP", 80, fld_op(ir_loop))
+check("loop IR op1 = 0", 0, fld_op1(ir_loop))
 
 rec:free()
 print(string.format("\n%d passed, %d failed", passed, failed))

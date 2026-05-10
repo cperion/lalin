@@ -133,8 +133,29 @@ end
 
 region trace_commit(J: ptr(u8), tr: i32, mcode_entry: ptr(u8)) -> proto.TraceCommit
 entry start()
-    jump abort(reason = 0)
+    let j64: ptr(u64) = as(ptr(u64), J)
+    let trp: ptr(u8) = as(ptr(u8), j64[0])
+    if as(u64, trp) == 0 then jump abort(reason = 1) end
+    let p64: ptr(u64) = as(ptr(u64), trp)
+    let p32: ptr(u32) = as(ptr(u32), trp)
+    p64[10] = as(u64, mcode_entry) -- GCtrace.mcode @ offset 80
+    p32[19] = 0                    -- szmcode placeholder @ offset 76
+    jump root_patched(tr = tr)
 end
+end
+
+export func trace_commit_test(J: ptr(u8), tr: i32, mcode_entry: ptr(u8)) -> i32
+    return region -> i32
+    entry start()
+        emit trace_commit(J, tr, mcode_entry;
+            root_patched = got_root,
+            side_patched = got_side,
+            abort = got_abort)
+    end
+    block got_root(tr: i32) yield tr end
+    block got_side(tr: i32) yield 1000 + tr end
+    block got_abort(reason: i32) yield -reason end
+    end
 end
 
 export func trace_const_check() -> i32

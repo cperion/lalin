@@ -12,6 +12,8 @@ export func bc_d(ins: i32)  -> i32 return (ins >> 16) & 0xFFFF end
 -- Comparisons
 const BC_ISLT:  i32 = 0
 const BC_ISGE:  i32 = 1
+const BC_ISLE:  i32 = 2
+const BC_ISGT:  i32 = 3
 const BC_ISEQV: i32 = 4
 const BC_ISNEV: i32 = 5
 
