@@ -11,6 +11,9 @@ local m = module "luajitvm.runtime.call"
 
 const LUA_TFUNC: i32 = value.LUA_TFUNC
 const FF_LUA: i32 = func_mod.FF_LUA
+const FF_NEXT: i32 = 6
+const LUA_TNIL: i32 = 0
+const LUA_TTAB: i32 = 8
 
 const FUNC_OFF_FFID: i32 = 10
 const FUNC_OFF_PC: i32 = 32
@@ -57,6 +60,10 @@ end
 
 func call_bc_cd(ins: u32) -> i32
     return (as(i32, ins) >> 16) & 0xFFFF
+end
+
+func call_s16(v: i32) -> i32
+    return v - ((v >> 15) * 65536)
 end
 
 func call_stack_base(L: ptr(u8)) -> ptr(u8)
@@ -237,6 +244,75 @@ entry start()
 end
 end
 
+-- BC_ITERC: generic-for iterator call.  LuaJIT arranges a normal two-argument
+-- call to the generator function using state/control variables and returns the
+-- iterator results into slots starting at A, where the following ITERL tests the
+-- first result.  We copy the generator/state/control into a regular CALL shape
+-- at A/A+1/A+2 and then use the same explicit CallInfo protocol as BC_CALL.
+region vmop_iterc(L: ptr(u8), ins: u32, bc: ptr(u32), ip: i32;
+    enter_lua: cont(target_bc: ptr(u32), target_ip: i32),
+    native_call: cont(fn: ptr(u8), a: i32, nargs: i32, wanted: i32),
+    metamethod: cont(mm_tag: i32, mm_payload: i64),
+    error: cont(code: i32))
+entry start()
+    let a: i32 = call_bc_a(ins)
+    let base: ptr(u8) = call_stack_base(L)
+    if call_slot_tag(base, a - 3) ~= LUA_TFUNC then jump error(code = 11) end
+    call_slot_copy(base, a - 3, base, a)
+    call_slot_copy(base, a - 2, base, a + 1)
+    call_slot_copy(base, a - 1, base, a + 2)
+    let fn: ptr(u8) = as(ptr(u8), call_slot_payload(base, a))
+    let wanted: i32 = call_bc_b(ins) - 1
+    let ffid: i32 = as(i32, fn[FUNC_OFF_FFID])
+    if ffid ~= FF_LUA then jump native_call(fn = fn, a = a, nargs = 2, wanted = wanted) end
+    let ci_base: ptr(u8) = call_ci_base(L)
+    if as(u64, ci_base) == 0 then jump error(code = 14) end
+    let depth: i32 = call_ci_depth(L)
+    let ci: ptr(u8) = call_ci_at(L, depth)
+    let new_base: ptr(u8) = base + (a + 1) * 16
+    let pt: ptr(u8) = call_func_proto(fn)
+    let nparams: i32 = call_proto_numparams(pt)
+    let var_count: i32 = call_max(2 - nparams, 0)
+    let var_base: ptr(u8) = new_base + nparams * 16
+    call_write_ci(ci, base, bc, ip + 1, a, wanted, 2, var_base, var_count)
+    call_set_ci_depth(L, depth + 1)
+    call_set_stack_base(L, new_base)
+    jump iter_fill_missing(slot = 2, nparams = nparams, new_base = new_base, target = call_func_bc(fn))
+end
+block iter_fill_missing(slot: i32, nparams: i32, new_base: ptr(u8), target: ptr(u32))
+    if slot >= nparams then jump enter_lua(target_bc = target, target_ip = 0) end
+    call_slot_set(new_base, slot, 0, as(i64, 0))
+    jump iter_fill_missing(slot = slot + 1, nparams = nparams, new_base = new_base, target = target)
+end
+end
+
+-- Iterator specialization bytecodes that are not executable yet use a typed
+-- suspension edge instead of an opaque error.
+region vmop_isnext(L: ptr(u8), ins: u32, ip: i32;
+    next: cont(ip: i32),
+    need_iterator: cont(kind: i32, a: i32, ins: u32, ip: i32),
+    error: cont(code: i32))
+entry start()
+    let a: i32 = call_bc_a(ins)
+    let base: ptr(u8) = call_stack_base(L)
+    if call_slot_tag(base, a - 3) ~= LUA_TFUNC then jump need_iterator(kind = 72, a = a, ins = ins, ip = ip) end
+    let fn: ptr(u8) = as(ptr(u8), call_slot_payload(base, a - 3))
+    if as(i32, fn[FUNC_OFF_FFID]) ~= FF_NEXT then jump need_iterator(kind = 72, a = a, ins = ins, ip = ip) end
+    if call_slot_tag(base, a - 2) ~= LUA_TTAB then jump need_iterator(kind = 72, a = a, ins = ins, ip = ip) end
+    if call_slot_tag(base, a - 1) ~= LUA_TNIL then jump need_iterator(kind = 72, a = a, ins = ins, ip = ip) end
+    call_slot_set(base, a - 1, LUA_TINT, as(i64, 0))
+    jump next(ip = ip + 1 + call_s16(call_bc_cd(ins)))
+end
+end
+
+region vmop_iterator_boundary(L: ptr(u8), ins: u32, ip: i32, kind: i32;
+    need_iterator: cont(kind: i32, a: i32, ins: u32, ip: i32),
+    error: cont(code: i32))
+entry start()
+    jump need_iterator(kind = kind, a = call_bc_a(ins), ins = ins, ip = ip)
+end
+end
+
 -- BC_VARG: copy varargs into slots starting at A. D=nresults+1, D=0 means all.
 region vmop_varg(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
 entry start()
@@ -264,6 +340,42 @@ end
 block varg_done(n: i32, base: ptr(u8), a: i32, all: bool)
     if all then call_set_top(L, base + (a + n) * 16) end
     jump next(ip = ip + 1)
+end
+end
+
+-- BC_RETM: A=first result slot, return all stack values from A up to L->top.
+region vmop_retm(L: ptr(u8), ins: u32, ip: i32;
+    resume_caller: cont(target_bc: ptr(u32), target_ip: i32),
+    final_return: cont(nresults: i32),
+    close_upvalues: cont(from: ptr(u8), target_bc: ptr(u32), target_ip: i32),
+    error: cont(code: i32))
+entry start()
+    let a: i32 = call_bc_a(ins)
+    let cur_base: ptr(u8) = call_stack_base(L)
+    let nresults: i32 = call_stack_slots(cur_base + a * 16, call_top(L))
+    let depth: i32 = call_ci_depth(L)
+    if depth == 0 then jump final_return(nresults = nresults) end
+    let ci: ptr(u8) = call_ci_at(L, depth - 1)
+    let prev_base: ptr(u8) = call_ci_prev_base(ci)
+    let ret_slot: i32 = call_ci_ret_slot(ci)
+    let wanted: i32 = call_ci_wanted(ci)
+    let copy_n: i32 = nresults
+    if wanted >= 0 then copy_n = wanted end
+    jump retm_copy(i = 0, n = copy_n, actual = nresults, cur_base = cur_base, prev_base = prev_base, ret_slot = ret_slot, ci = ci, depth = depth, a = a)
+end
+block retm_copy(i: i32, n: i32, actual: i32, cur_base: ptr(u8), prev_base: ptr(u8), ret_slot: i32, ci: ptr(u8), depth: i32, a: i32)
+    if i >= n then jump retm_restore(ci = ci, depth = depth, prev_base = prev_base) end
+    if i < actual then
+        call_slot_copy(cur_base, a + i, prev_base, ret_slot + i)
+        jump retm_copy(i = i + 1, n = n, actual = actual, cur_base = cur_base, prev_base = prev_base, ret_slot = ret_slot, ci = ci, depth = depth, a = a)
+    end
+    call_slot_set(prev_base, ret_slot + i, 0, as(i64, 0))
+    jump retm_copy(i = i + 1, n = n, actual = actual, cur_base = cur_base, prev_base = prev_base, ret_slot = ret_slot, ci = ci, depth = depth, a = a)
+end
+block retm_restore(ci: ptr(u8), depth: i32, prev_base: ptr(u8))
+    call_set_stack_base(L, prev_base)
+    call_set_ci_depth(L, depth - 1)
+    jump resume_caller(target_bc = call_ci_return_bc(ci), target_ip = call_ci_return_ip(ci))
 end
 end
 

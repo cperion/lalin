@@ -518,6 +518,11 @@ func traceasm_reg_for_slot(slot: i32) -> i32
     return 11
 end
 
+func traceasm_idiv_safe_reg(r: i32) -> i32
+    if r == 2 then return 10 end
+    return r
+end
+
 func traceasm_is_guard_sload(ir: ptr(u64), slot: i32) -> bool
     let op: i32 = as(i32, (ir[slot] >> 40) & 0xFF)
     let ty: i32 = as(i32, (ir[slot] >> 32) & 0xFF)
@@ -615,9 +620,12 @@ block emit_div(slot: i32, A: ptr(u8))
     let dst: i32 = traceasm_reg_for_slot(slot)
     let r1: i32 = traceasm_reg_for_slot(op1 - REF_BIAS)
     let r2: i32 = traceasm_reg_for_slot(op2 - REF_BIAS)
-    -- quotient in rax (r0), so move rax result to dst
+    let divr: i32 = traceasm_idiv_safe_reg(r2)
+    -- quotient in rax (r0), so move rax result to dst.  If the divisor is in
+    -- rdx, copy it to a scratch register before cqo/xor-edx setup clobbers it.
     traceasm_emit_mov_rax_to(J, dst)
-    traceasm_emit_idiv_rr(J, r2)
+    traceasm_emit_idiv_rr(J, divr)
+    if r2 == 2 then traceasm_emit_mov_rr(J, divr, r2) end
     -- ensure dividend in rax
     if r1 ~= 0 then traceasm_emit_mov_rr(J, 0, r1) end
     jump scan(slot = slot - 1, A = A)
@@ -628,9 +636,11 @@ block emit_mod(slot: i32, A: ptr(u8))
     let dst: i32 = traceasm_reg_for_slot(slot)
     let r1: i32 = traceasm_reg_for_slot(op1 - REF_BIAS)
     let r2: i32 = traceasm_reg_for_slot(op2 - REF_BIAS)
+    let divr: i32 = traceasm_idiv_safe_reg(r2)
     -- remainder in rdx (r2), so move rdx result to dst
     traceasm_emit_mov_rdx_to(J, dst)
-    traceasm_emit_idiv_rr(J, r2)
+    traceasm_emit_idiv_rr(J, divr)
+    if r2 == 2 then traceasm_emit_mov_rr(J, divr, r2) end
     if r1 ~= 0 then traceasm_emit_mov_rr(J, 0, r1) end
     jump scan(slot = slot - 1, A = A)
 end

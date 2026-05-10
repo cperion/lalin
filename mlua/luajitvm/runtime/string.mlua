@@ -61,14 +61,71 @@ func str_data(s: ptr(u8)) -> ptr(u8)
     return s + STR_HEADER_SIZE
 end
 
+-- =========================================================================
+-- LuaJIT-compatible keyed sparse ARX string hash (lj_str.c::hash_sparse).
+-- Based on Bob Jenkins' lookup3. Uses rotate-left and unaligned 32-bit LE
+-- loads. Seed is XOR'd with length for keyed hashing.
+-- =========================================================================
+
+func lj_rol32(x: i32, n: i32) -> i32
+    let ux: u32 = as(u32, x)
+    let un: u32 = as(u32, n)
+    let lo: u32 = ux << un
+    let shift: u32 = as(u32, 32) - un
+    var hi: u32 = ux >> shift
+    let mask: u32 = (as(u32, 1) << (as(u32, 32) - shift)) - as(u32, 1)
+    hi = hi & mask
+    return as(i32, lo | hi)
+end
+
+func lj_rol32_u(x: u32, n: i32) -> u32
+    let un: u32 = as(u32, n)
+    let lo: u32 = x << un
+    let shift: u32 = as(u32, 32) - un
+    var hi: u32 = x >> shift
+    -- Moonlift >> on u32 is arithmetic (sign-extending). Clear sign bits.
+    let mask: u32 = (as(u32, 1) << (as(u32, 32) - shift)) - as(u32, 1)
+    hi = hi & mask
+    return lo | hi
+end
+
+func lj_getu32_le(p: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), p)[0])
+end
+
+func arx_hash(data: ptr(u8), len: i32, seed: i32) -> i32
+    var a: u32 = as(u32, 0)
+    var b: u32 = as(u32, 0)
+    var h: u32 = as(u32, len) ^ as(u32, seed)
+    if len >= 4 then
+        a = as(u32, lj_getu32_le(data))
+        h = h ^ as(u32, lj_getu32_le(data + len - 4))
+        b = as(u32, lj_getu32_le(data + (len >> 1) - 2))
+        h = h ^ b
+        h = h - lj_rol32_u(b, 14)
+        b = b + as(u32, lj_getu32_le(data + (len >> 2) - 1))
+    else
+        a = as(u32, as(i32, data[0]))
+        h = h ^ as(u32, as(i32, data[len - 1]))
+        b = as(u32, as(i32, data[len >> 1]))
+        h = h ^ b
+        h = h - lj_rol32_u(b, 14)
+    end
+    a = a ^ h
+    a = a - lj_rol32_u(h, 11)
+    b = b ^ a
+    b = b - lj_rol32_u(a, 25)
+    h = h ^ b
+    h = h - lj_rol32_u(b, 16)
+    return as(i32, h)
+end
+
 region string_hash(data: ptr(u8), len: i32; done: cont(hash: i32))
 entry start()
-    jump step(i = 0, h = as(i32, 5381))
-end
-block step(i: i32, h: i32)
-    if i >= len then jump done(hash = h) end
-    let b: i32 = as(i32, data[i])
-    jump step(i = i + 1, h = h * 33 + b)
+    -- Use constant seed matching LuaJIT's default for deterministic tests.
+    -- In production this would be g->str.seed from the global state.
+    let hash: i32 = arx_hash(data, len, as(i32, 0xDEADBEEF))
+    jump done(hash = hash)
 end
 end
 

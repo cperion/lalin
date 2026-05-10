@@ -572,7 +572,7 @@ function M.Define(T)
         [Tr.ExprSwitch] = function(self, env)
             local arms = {}
             for i = 1, #self.arms do arms[#arms + 1] = pvm.with(self.arms[i], { body = expand_stmts(self.arms[i].body, env), result = one(expand_expr, self.arms[i].result, env) }) end
-            return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), value = one(expand_expr, self.value, env), arms = arms, default_expr = one(expand_expr, self.default_expr, env) }))
+            return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), value = one(expand_expr, self.value, env), arms = arms, default_body = expand_stmts(self.default_body or {}, env), default_expr = one(expand_expr, self.default_expr, env) }))
         end,
         [Tr.ExprControl] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), region = one(expand_control_expr_region, self.region, env) })) end,
         [Tr.ExprBlock] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), stmts = expand_stmts(self.stmts, env), result = one(expand_expr, self.result, env) })) end,

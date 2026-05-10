@@ -3,6 +3,9 @@
 -- This is the architectural tile-dispatch surface: a switch region over IR
 -- opcodes, with one region per tile family.  It mirrors the bring-up assembler
 -- in asm_state.mlua but keeps tile selection as typed region control flow.
+--
+-- Supports: KINT, SLOAD, ADD, SUB, MUL, DIV, MOD, NEG, RETF, LOOP, NOP,
+--           LT, GE, LE, GT, EQ, NE (comparison guards with per-snapshot exits).
 
 local proto = moon.require("luajitvm.protocols")
 local m = module "luajitvm.asm.x64_tiles"
@@ -12,17 +15,35 @@ const IR_KINT:  i32 = 60
 const IR_ADD:   i32 = 10
 const IR_SUB:   i32 = 11
 const IR_MUL:   i32 = 12
+const IR_DIV:   i32 = 13
+const IR_MOD:   i32 = 14
+const IR_NEG:   i32 = 15
 const IR_LOOP:  i32 = 80
 const IR_RETF:  i32 = 82
 const IR_SLOAD: i32 = 31
+const IR_LT:    i32 = 0
+const IR_GE:    i32 = 1
+const IR_LE:    i32 = 2
+const IR_GT:    i32 = 3
+const IR_EQ:    i32 = 4
+const IR_NE:    i32 = 5
 
 const REF_BIAS:    i32 = 0x8000
 const A_MAP:       i32 = 4
-const A_EXIT_ADDR: i32 = 260
+const A_EXIT_BASE: i32 = 260    -- ptr(u64)[8]: per-snapshot exit stub addresses
+const A_NSNAP:     i32 = 268    -- i32: number of snapshots/guards
 const IRT_GUARD:   i32 = 0x80
 const TV_STRIDE:   i32 = 16
 const TV_PAYLOAD:  i32 = 8
 const LUA_TINT:    i32 = 3
+
+-- Register constants
+const R_RAX: i32 = 0
+const R_RCX: i32 = 1
+const R_RDX: i32 = 2
+const R_RSI: i32 = 6
+const R_RDI: i32 = 7
+const R_R10: i32 = 10
 
 func x64t_ir_op_at(buf: ptr(u64), idx: i32) -> i32
     return as(i32, (buf[idx] >> 40) & 0xFF)
@@ -84,17 +105,43 @@ end
 func x64t_emit_ret(J: ptr(u8))
     x64t_mc_put8(J, 0xC3)
 end
+func x64t_emit_cmp_rr(J: ptr(u8), r1: i32, r2: i32)
+    x64t_mc_put8(J, x64t_modrm_rr(r2, r1)); x64t_mc_put8(J, 0x39); x64t_mc_put8(J, x64t_rex_wb(r2, r1))
+end
 func x64t_emit_cmp_rdi_d32_imm8(J: ptr(u8), disp: i32, imm: i32)
     x64t_mc_put8(J, imm & 0xFF); x64t_mc_put32(J, disp); x64t_mc_put8(J, 0xBF); x64t_mc_put8(J, 0x83)
 end
 func x64t_emit_jne_rel32(J: ptr(u8), disp: i32)
     x64t_mc_put32(J, disp); x64t_mc_put8(J, 0x85); x64t_mc_put8(J, 0x0F)
 end
+func x64t_emit_jcc_rel32(J: ptr(u8), cc: i32, disp: i32)
+    -- cc: 4=JE, 5=JNE, 12=JL, 13=JGE, 14=JLE, 15=JG
+    x64t_mc_put32(J, disp)
+    x64t_mc_put8(J, 0x80 | (cc & 0x0F))
+    x64t_mc_put8(J, 0x0F)
+end
 
 func x64t_ra_get(A: ptr(u8), slot: i32) -> i32
     return as(i32, (A + A_MAP)[slot]) - 1
 end
 
+func x64t_exit_addr(A: ptr(u8), snapno: i32) -> u64
+    return as(ptr(u64), A + A_EXIT_BASE)[snapno]
+end
+
+func x64t_nsnap(A: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), A)[A_NSNAP / 4])
+end
+
+func x64t_idiv_safe_reg(divisor: i32) -> i32
+    if divisor == R_RDX then return R_R10 end
+    return divisor
+end
+
+-- =========================================================================
+-- x64_ir_sload: load from stack slot with optional type guard.
+-- If guarded: CMP [rdi+slot*16].tag, LUA_TINT; JNE exit_stub; MOV dst, payload
+-- =========================================================================
 region x64_ir_sload(A: ptr(u8), J: ptr(u8), ir_buf: ptr(u64), slot: i32) -> proto.TileResult
 entry start()
     let op1: i32 = x64t_ir_op1_at(ir_buf, slot)
@@ -105,9 +152,15 @@ entry start()
         let payload_disp: i32 = op1 * TV_STRIDE + TV_PAYLOAD
         let tag_disp: i32 = op1 * TV_STRIDE
         x64t_emit_load_rdi_d32(J, dst, payload_disp)
-        let exit_u64: u64 = as(ptr(u64), A + A_EXIT_ADDR)[0]
-        let jne_disp: i32 = as(i32, exit_u64 - as(u64, x64t_mc_top(J)))
-        x64t_emit_jne_rel32(J, jne_disp)
+        -- Use per-snapshot exit stub: guard index => exit address
+        let snapno: i32 = slot  -- approximate: slot number as guard index
+        if snapno < x64t_nsnap(A) then
+            let exit_u64: u64 = x64t_exit_addr(A, snapno)
+            if exit_u64 ~= as(u64, 0) then
+                let jne_disp: i32 = as(i32, exit_u64 - as(u64, x64t_mc_top(J)))
+                x64t_emit_jne_rel32(J, jne_disp)
+            end
+        end
         x64t_emit_cmp_rdi_d32_imm8(J, tag_disp, LUA_TINT)
         jump tile_done()
     end
@@ -116,6 +169,9 @@ entry start()
 end
 end
 
+-- =========================================================================
+-- x64_ir_kint: load 32-bit integer constant into register.
+-- =========================================================================
 region x64_ir_kint(A: ptr(u8), J: ptr(u8), ir_buf: ptr(u64), slot: i32) -> proto.TileResult
 entry start()
     let dst: i32 = x64t_ra_get(A, slot)
@@ -127,6 +183,9 @@ entry start()
 end
 end
 
+-- =========================================================================
+-- x64_ir_add / x64_ir_sub / x64_ir_mul: binary integer arithmetic.
+-- =========================================================================
 region x64_ir_add(A: ptr(u8), J: ptr(u8), ir_buf: ptr(u64), slot: i32) -> proto.TileResult
 entry start()
     let dst: i32 = x64t_ra_get(A, slot)
@@ -169,35 +228,185 @@ entry start()
 end
 end
 
+-- =========================================================================
+-- x64_ir_div: signed integer division (quotient in rax, dividend->rax first).
+-- Must handle idiv clobber: if divisor in rdx, copy to scratch reg.
+-- =========================================================================
+region x64_ir_div(A: ptr(u8), J: ptr(u8), ir_buf: ptr(u64), slot: i32) -> proto.TileResult
+entry start()
+    let op1_ref: i32 = x64t_ir_op1_at(ir_buf, slot)
+    let op2_ref: i32 = x64t_ir_op2_at(ir_buf, slot)
+    let dst: i32 = x64t_ra_get(A, slot)
+    if dst < 0 then jump tile_done() end
+    let r1: i32 = x64t_ra_get(A, op1_ref - REF_BIAS)
+    let r2: i32 = x64t_ra_get(A, op2_ref - REF_BIAS)
+    if r1 < 0 then jump abort(reason = slot) end
+    if r2 < 0 then jump abort(reason = slot) end
+    let divr: i32 = x64t_idiv_safe_reg(r2)
+    -- Move dividend to rax
+    if r1 ~= R_RAX then x64t_emit_mov_rr(J, R_RAX, r1) end
+    -- If divisor in rdx, copy to scratch before cqo clobbers rdx
+    if r2 == R_RDX then x64t_emit_mov_rr(J, divr, r2) end
+    -- cqo: sign-extend rax into rdx:rax
+    x64t_mc_put8(J, 0x99)
+    x64t_mc_put8(J, 0x48)
+    -- idiv divr
+    x64t_mc_put8(J, x64t_modrm_rr(7, divr))
+    x64t_mc_put8(J, 0xF7)
+    x64t_mc_put8(J, x64t_rex_wb(0, divr))
+    -- Quotient is in rax, move to dst
+    if dst ~= R_RAX then x64t_emit_mov_rr(J, dst, R_RAX) end
+    jump tile_done()
+end
+end
+
+-- =========================================================================
+-- x64_ir_mod: signed integer modulo (remainder in rdx).
+-- Must handle idiv clobber: if divisor in rdx, copy to scratch reg.
+-- =========================================================================
+region x64_ir_mod(A: ptr(u8), J: ptr(u8), ir_buf: ptr(u64), slot: i32) -> proto.TileResult
+entry start()
+    let op1_ref: i32 = x64t_ir_op1_at(ir_buf, slot)
+    let op2_ref: i32 = x64t_ir_op2_at(ir_buf, slot)
+    let dst: i32 = x64t_ra_get(A, slot)
+    if dst < 0 then jump tile_done() end
+    let r1: i32 = x64t_ra_get(A, op1_ref - REF_BIAS)
+    let r2: i32 = x64t_ra_get(A, op2_ref - REF_BIAS)
+    if r1 < 0 then jump abort(reason = slot) end
+    if r2 < 0 then jump abort(reason = slot) end
+    let divr: i32 = x64t_idiv_safe_reg(r2)
+    if r1 ~= R_RAX then x64t_emit_mov_rr(J, R_RAX, r1) end
+    if r2 == R_RDX then x64t_emit_mov_rr(J, divr, r2) end
+    x64t_mc_put8(J, 0x99)
+    x64t_mc_put8(J, 0x48)
+    x64t_mc_put8(J, x64t_modrm_rr(7, divr))
+    x64t_mc_put8(J, 0xF7)
+    x64t_mc_put8(J, x64t_rex_wb(0, divr))
+    -- Remainder is in rdx, move to dst
+    if dst ~= R_RDX then x64t_emit_mov_rr(J, dst, R_RDX) end
+    jump tile_done()
+end
+end
+
+-- =========================================================================
+-- x64_ir_neg: integer negation (NEG dst).
+-- =========================================================================
+region x64_ir_neg(A: ptr(u8), J: ptr(u8), ir_buf: ptr(u64), slot: i32) -> proto.TileResult
+entry start()
+    let dst: i32 = x64t_ra_get(A, slot)
+    if dst < 0 then jump tile_done() end
+    let op1_ref: i32 = x64t_ir_op1_at(ir_buf, slot)
+    let r1: i32 = x64t_ra_get(A, op1_ref - REF_BIAS)
+    if r1 < 0 then jump abort(reason = slot) end
+    if dst ~= r1 then x64t_emit_mov_rr(J, dst, r1) end
+    x64t_mc_put8(J, x64t_modrm_rr(3, dst))
+    x64t_mc_put8(J, 0xF7)
+    x64t_mc_put8(J, x64t_rex_wb(0, dst))
+    jump tile_done()
+end
+end
+
+-- =========================================================================
+-- x64_ir_cmp: comparison guard tile (LT, GE, LE, GT, EQ, NE).
+--
+-- The guard semantics: if the comparison is TRUE the trace continues;
+-- if FALSE a side exit occurs.  So we emit the INVERSE conditional jump
+-- to the per-snapshot exit stub.
+--
+-- Example: IR_LT (a < b passes, fail if NOT a < b, i.e. JGE exit).
+--          IR_GE (a >= b: fail if NOT >=, i.e. JL exit).
+--          IR_EQ (a == b: fail if NE, i.e. JNE exit).
+--          IR_NE (a != b: fail if EQ, i.e. JE exit).
+-- =========================================================================
+region x64_ir_cmp(A: ptr(u8), J: ptr(u8), ir_buf: ptr(u64), slot: i32) -> proto.TileResult
+entry start()
+    let op1_ref: i32 = x64t_ir_op1_at(ir_buf, slot)
+    let op2_ref: i32 = x64t_ir_op2_at(ir_buf, slot)
+    let r1: i32 = x64t_ra_get(A, op1_ref - REF_BIAS)
+    let r2: i32 = x64t_ra_get(A, op2_ref - REF_BIAS)
+    if r1 < 0 then jump abort(reason = slot) end
+    if r2 < 0 then jump abort(reason = slot) end
+    let op: i32 = x64t_ir_op_at(ir_buf, slot)
+    -- Determine inverse condition code:
+    --  IR_LT a<b passes: fail if JGE -> cc=13
+    --  IR_GE a>=b: fail if JL -> cc=12
+    --  IR_LE a<=b: fail if JG -> cc=15
+    --  IR_GT a>b: fail if JLE -> cc=14
+    --  IR_EQ a==b: fail if JNE -> cc=5
+    --  IR_NE a!=b: fail if JE -> cc=4
+    let cc: i32 = 13  -- JGE (inverse of LT)
+    if op == IR_GE then cc = 12 end
+    if op == IR_LE then cc = 15 end
+    if op == IR_GT then cc = 14 end
+    if op == IR_EQ then cc = 5 end
+    if op == IR_NE then cc = 4 end
+    -- Look up per-snapshot exit stub address for this guard
+    let snapno: i32 = slot  -- approximate guard ordering
+    if snapno < x64t_nsnap(A) then
+        let exit_u64: u64 = x64t_exit_addr(A, snapno)
+        if exit_u64 ~= as(u64, 0) then
+            let disp: i32 = as(i32, exit_u64 - as(u64, x64t_mc_top(J)))
+            x64t_emit_jcc_rel32(J, cc, disp)
+        end
+    end
+    x64t_emit_cmp_rr(J, r1, r2)
+    jump tile_done()
+end
+end
+
+-- =========================================================================
+-- x64_ir_retf: return from trace (MOV result to rax, RET).
+-- =========================================================================
 region x64_ir_retf(A: ptr(u8), J: ptr(u8), ir_buf: ptr(u64), slot: i32) -> proto.TileResult
 entry start()
     let r_val: i32 = x64t_ra_get(A, x64t_ir_op1_at(ir_buf, slot) - REF_BIAS)
     if r_val < 0 then jump abort(reason = slot) end
     x64t_emit_ret(J)
-    if r_val ~= 0 then x64t_emit_mov_rr(J, 0, r_val) end
+    if r_val ~= R_RAX then x64t_emit_mov_rr(J, R_RAX, r_val) end
     jump tile_done()
 end
 end
 
+-- =========================================================================
+-- x64_asm_one_ir: main tile dispatch switch region.
+-- =========================================================================
 region x64_asm_one_ir(A: ptr(u8), J: ptr(u8), ir_buf: ptr(u64), slot: i32) -> proto.TileResult
 entry start()
     let op: i32 = x64t_ir_op_at(ir_buf, slot)
     switch op do
-    case 31 then
+    case 31 then  -- IR_SLOAD
         emit x64_ir_sload(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
-    case 60 then
+    case 60 then  -- IR_KINT
         emit x64_ir_kint(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
-    case 10 then
+    case 10 then  -- IR_ADD
         emit x64_ir_add(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
-    case 11 then
+    case 11 then  -- IR_SUB
         emit x64_ir_sub(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
-    case 12 then
+    case 12 then  -- IR_MUL
         emit x64_ir_mul(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
-    case 82 then
+    case 13 then  -- IR_DIV
+        emit x64_ir_div(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
+    case 14 then  -- IR_MOD
+        emit x64_ir_mod(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
+    case 15 then  -- IR_NEG
+        emit x64_ir_neg(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
+    case 0 then   -- IR_LT
+        emit x64_ir_cmp(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
+    case 1 then   -- IR_GE
+        emit x64_ir_cmp(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
+    case 2 then   -- IR_LE
+        emit x64_ir_cmp(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
+    case 3 then   -- IR_GT
+        emit x64_ir_cmp(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
+    case 4 then   -- IR_EQ
+        emit x64_ir_cmp(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
+    case 5 then   -- IR_NE
+        emit x64_ir_cmp(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
+    case 82 then  -- IR_RETF
         emit x64_ir_retf(A, J, ir_buf, slot; tile_done = done, need_snapshot = snap, mcode_full = full, unsupported = unsup, abort = bad)
-    case 80 then
+    case 80 then  -- IR_LOOP
         jump tile_done()
-    case 90 then
+    case 90 then  -- IR_NOP
         jump tile_done()
     default then
         jump unsupported(op = op)

@@ -52,7 +52,13 @@ const BC_KNUM: i32 = 42
 const BC_KPRI: i32 = 43
 const BC_KNIL: i32 = 44
 
--- Closures/tables
+-- Upvalues/closures/tables
+const BC_UGET: i32 = 45
+const BC_USETV: i32 = 46
+const BC_USETS: i32 = 47
+const BC_USETN: i32 = 48
+const BC_USETP: i32 = 49
+const BC_UCLO: i32 = 50
 const BC_FNEW: i32 = 51
 const BC_TNEW: i32 = 52
 const BC_TDUP: i32 = 53
@@ -73,6 +79,11 @@ const BC_CALLM: i32 = 65
 const BC_CALL: i32 = 66
 const BC_CALLMT: i32 = 67
 const BC_CALLT: i32 = 68
+const BC_ITERC: i32 = 69
+const BC_ITERN: i32 = 70
+const BC_VARG: i32 = 71
+const BC_ISNEXT: i32 = 72
+const BC_RETM: i32 = 73
 const BC_RET: i32 = 74
 const BC_RET0: i32 = 75
 const BC_RET1: i32 = 76

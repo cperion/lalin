@@ -10,12 +10,24 @@ export func bc_c(ins: i32)  -> i32 return (ins >> 16) & 0xFF end
 export func bc_d(ins: i32)  -> i32 return (ins >> 16) & 0xFFFF end
 
 -- Comparisons
-const BC_ISLT:  i32 = 0
-const BC_ISGE:  i32 = 1
-const BC_ISLE:  i32 = 2
-const BC_ISGT:  i32 = 3
-const BC_ISEQV: i32 = 4
-const BC_ISNEV: i32 = 5
+const BC_ISLT:   i32 = 0
+const BC_ISGE:   i32 = 1
+const BC_ISLE:   i32 = 2
+const BC_ISGT:   i32 = 3
+const BC_ISEQV:  i32 = 4
+const BC_ISNEV:  i32 = 5
+const BC_ISEQS:  i32 = 6
+const BC_ISNES:  i32 = 7
+const BC_ISEQN:  i32 = 8
+const BC_ISNEN:  i32 = 9
+const BC_ISEQP:  i32 = 10
+const BC_ISNEP:  i32 = 11
+const BC_ISTC:   i32 = 12
+const BC_ISFC:   i32 = 13
+const BC_IST:    i32 = 14
+const BC_ISF:    i32 = 15
+const BC_ISTYPE: i32 = 16
+const BC_ISNUM:  i32 = 17
 
 -- Constants and moves
 const BC_MOV: i32 = 18
@@ -67,9 +79,12 @@ const BC_GSET:  i32 = 55
 const BC_TGETV: i32 = 56
 const BC_TGETS: i32 = 57
 const BC_TGETB: i32 = 58
+const BC_TGETR: i32 = 59
 const BC_TSETV: i32 = 60
 const BC_TSETS: i32 = 61
 const BC_TSETB: i32 = 62
+const BC_TSETM: i32 = 63
+const BC_TSETR: i32 = 64
 
 -- Calls
 const BC_CALLM:  i32 = 65

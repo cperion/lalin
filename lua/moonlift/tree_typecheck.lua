@@ -461,8 +461,9 @@ function M.Define(T)
         [Tr.ExprDeref] = function(self, ctx) local value = pvm.one(type_expr(self.value, ctx)); local issues = {}; append_all(issues, value.issues); local ty = void_ty(); if pvm.classof(value.ty) == Ty.TPtr then ty = value.ty.elem else issues[#issues + 1] = Tr.TypeIssueNotPointer(value.ty) end; return pvm.once(result_expr(Tr.ExprDeref(Tr.ExprTyped(ty), value.expr), ty, issues)) end,
         [Tr.ExprSwitch] = function(self, ctx)
             local value = pvm.one(type_expr(self.value, ctx))
-            local default = pvm.one(type_expr(self.default_expr, ctx))
-            local issues = {}; append_all(issues, value.issues); append_all(issues, default.issues)
+            local default_body = type_stmt_body(self.default_body or {}, ctx)
+            local default = pvm.one(type_expr(self.default_expr, default_body.env))
+            local issues = {}; append_all(issues, value.issues); append_all(issues, default_body.issues); append_all(issues, default.issues)
             local arms = {}
             for i = 1, #self.arms do
                 local key = type_switch_key(self.arms[i].key, ctx, value.ty, issues)
@@ -472,7 +473,7 @@ function M.Define(T)
                 check_expected("switch arm", default.ty, result.ty, issues)
                 arms[#arms + 1] = Tr.SwitchExprArm(key, body.stmts, result.expr)
             end
-            return pvm.once(result_expr(Tr.ExprSwitch(Tr.ExprTyped(default.ty), value.expr, arms, default.expr), default.ty, issues))
+            return pvm.once(result_expr(Tr.ExprSwitch(Tr.ExprTyped(default.ty), value.expr, arms, default_body.stmts, default.expr), default.ty, issues))
         end,
         [Tr.ExprClosure] = function(self, ctx) local ty = Ty.TClosure(self.params, self.result); return pvm.once(result_expr(pvm.with(self, { h = Tr.ExprTyped(ty) }), ty, {})) end,
         [Tr.ExprSlotValue] = function(self, ctx) return pvm.once(result_expr(Tr.ExprSlotValue(Tr.ExprTyped(self.slot.ty), self.slot), self.slot.ty, {})) end,

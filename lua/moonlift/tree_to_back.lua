@@ -280,6 +280,24 @@ function M.Define(T)
         return nil
     end
 
+    local switch_key_raw = pvm.phase("moonlift_tree_switch_key_raw", {
+        [Sem.SwitchKeyRaw] = function(self) return pvm.once(self.raw) end,
+        [Sem.SwitchKeyConst] = function(self)
+            local cls = pvm.classof(self.value)
+            if cls == Sem.ConstInt then return pvm.once(self.value.raw) end
+            if cls == Sem.ConstBool then return pvm.once(self.value.value and "1" or "0") end
+            return pvm.empty()
+        end,
+        [Sem.SwitchKeyExpr] = function(self)
+            local value = const_eval_api.value(self.expr, lower_context.const_env, const_eval_api.empty_local_env())
+            if value == nil then return pvm.empty() end
+            local cls = pvm.classof(value)
+            if cls == Sem.ConstInt then return pvm.once(value.raw) end
+            if cls == Sem.ConstBool then return pvm.once(value.value and "1" or "0") end
+            return pvm.empty()
+        end,
+    })
+
     local function scalar_size_align(scalar)
         local ii = int_scalar_info[scalar]
         if ii ~= nil then
@@ -603,7 +621,71 @@ function M.Define(T)
             return pvm.once(Tr.TreeBackExprUnsupported(rhs.env, cmds, "unsupported logic op"))
         end,
         [Tr.ExprIf] = function(_, env) return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "if expression lowering deferred")) end,
-        [Tr.ExprSwitch] = function(_, env) return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "switch expression lowering deferred")) end,
+        [Tr.ExprSwitch] = function(self, env)
+            local value = expr_value(expr_to_back:one_uncached(self.value, env))
+            if value == nil then return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "unsupported switch expression value")) end
+            local result_scalar = back_scalar(expr_ty(self))
+            if result_scalar == nil then return pvm.once(Tr.TreeBackExprUnsupported(value.env, value.cmds, "switch expression result has non-scalar type")) end
+            local case_raws = {}
+            for i = 1, #self.arms do
+                local raws = switch_key_raw:drain_uncached(self.arms[i].key)
+                if #raws ~= 1 then return pvm.once(Tr.TreeBackExprUnsupported(value.env, value.cmds, "switch expression case is not an integer/bool constant")) end
+                case_raws[#case_raws + 1] = raws[1]
+            end
+
+            local current = value.env
+            local arm_blocks = {}
+            for i = 1, #self.arms do current, arm_blocks[i] = env_next_block(current, "switch.expr.arm") end
+            local default_block; current, default_block = env_next_block(current, "switch.expr.default")
+            local join_block; current, join_block = env_next_block(current, "switch.expr.join")
+            local result_value; current, result_value = env_next_value(current, "switch")
+
+            local cmds = {}
+            append_all(cmds, value.cmds)
+            for i = 1, #arm_blocks do cmds[#cmds + 1] = Back.CmdCreateBlock(arm_blocks[i]) end
+            cmds[#cmds + 1] = Back.CmdCreateBlock(default_block)
+            cmds[#cmds + 1] = Back.CmdCreateBlock(join_block)
+            cmds[#cmds + 1] = Back.CmdAppendBlockParam(join_block, result_value, shape_scalar(result_scalar))
+            local cases = {}
+            for i = 1, #case_raws do cases[i] = Back.BackSwitchCase(case_raws[i], arm_blocks[i]) end
+            cmds[#cmds + 1] = Back.CmdSwitchInt(value.value, value.ty, cases, default_block)
+            for i = 1, #arm_blocks do cmds[#cmds + 1] = Back.CmdSealBlock(arm_blocks[i]) end
+            cmds[#cmds + 1] = Back.CmdSealBlock(default_block)
+
+            for i = 1, #self.arms do
+                cmds[#cmds + 1] = Back.CmdSwitchToBlock(arm_blocks[i])
+                local start = env_with_counters(value.env, current)
+                local arm_env, arm_cmds, arm_flow = lower_body(self.arms[i].body, start)
+                append_all(cmds, arm_cmds)
+                if arm_flow ~= Back.BackTerminates then
+                    local result = expr_value(expr_to_back:one_uncached(self.arms[i].result, arm_env))
+                    if result == nil then return pvm.once(Tr.TreeBackExprUnsupported(arm_env, cmds, "unsupported switch arm result")) end
+                    append_all(cmds, result.cmds)
+                    cmds[#cmds + 1] = Back.CmdJump(join_block, { result.value })
+                    current = env_with_counters(current, result.env)
+                else
+                    current = env_with_counters(current, arm_env)
+                end
+            end
+
+            cmds[#cmds + 1] = Back.CmdSwitchToBlock(default_block)
+            local default_start = env_with_counters(value.env, current)
+            local default_env, default_cmds, default_flow = lower_body(self.default_body or {}, default_start)
+            append_all(cmds, default_cmds)
+            if default_flow ~= Back.BackTerminates then
+                local default_result = expr_value(expr_to_back:one_uncached(self.default_expr, default_env))
+                if default_result == nil then return pvm.once(Tr.TreeBackExprUnsupported(default_env, cmds, "unsupported switch default result")) end
+                append_all(cmds, default_result.cmds)
+                cmds[#cmds + 1] = Back.CmdJump(join_block, { default_result.value })
+                current = env_with_counters(current, default_result.env)
+            else
+                current = env_with_counters(current, default_env)
+            end
+
+            cmds[#cmds + 1] = Back.CmdSealBlock(join_block)
+            cmds[#cmds + 1] = Back.CmdSwitchToBlock(join_block)
+            return pvm.once(Tr.TreeBackExprValue(Tr.TreeBackEnv(value.env.locals, current.next_value, current.next_block, value.env.ret), cmds, result_value, result_scalar))
+        end,
         [Tr.ExprControl] = function(self, env) return pvm.once(control_api.expr_region_to_back:one_uncached(self.region, env)) end,
         [Tr.ExprBlock] = function(_, env) return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "block expression lowering deferred")) end,
         [Tr.ExprDot] = function(_, env) return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "dot lowering deferred")) end,

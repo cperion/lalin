@@ -637,7 +637,8 @@ Exit criteria for P9:
 
 - [x] **P10.OPT.001 — Implement DCE mark-from-snapshots**
   - `jit/opt_dce.mlua`: Phase 1 marks all guard/SLOAD/LOOP instructions live.
-  - Shortcut: marks from snapshots not yet done (marks side-effect instructions directly).
+  - `opt_dce(J, tr)` now extracts irbuf/nins from JitState/GCtrace and delegates
+    to `dce_pass`. Scratch marks buffer uses JitState extension area.
 
 - [x] **P10.OPT.002 — Implement DCE backward propagation**
   - `dce_pass` region: backward scan propagates liveness from live operands;
@@ -662,19 +663,13 @@ Exit criteria for P9:
   - `tests/test_dce_integration.lua` (17 tests).
   - `tests/test_opt_loop.lua`: loop recognizer tests.
 
-  **Shortcut documented:**
-  ```
-  Temporary shortcut:
-    What:  dce_pass takes (irbuf, marks, nins) not (J, tr).
-    Why:   JitState/trace lookup not yet wired.
-    Final-compatible because: irbuf+nins accessible from J.cur.ir+J.cur.nins.
-    Removal task: P12 wiring — wrap dce_pass in opt_dce(J, tr) region.
-  ```
-
 Exit criteria for P10:
 
 - [x] DCE backward propagation eliminates dead instructions.
-- [x] Loop recognizer uses `loop_done()` / `not_loop()` typed exits; PHI/induction optimization deferred.
+- [x] DCE wired through JitState: `opt_dce(J, tr)` extracts irbuf/nins from
+  JitState/GCtrace, eliminating the raw-parameter shortcut.
+- [x] Loop recognizer uses `loop_done()` / `not_loop()` typed exits; PHI/induction
+  optimization deferred.
 
 ---
 
@@ -714,15 +709,24 @@ Exit criteria for P10:
   - Individual tiles `x64_ir_kint`, `x64_ir_sload`, `x64_ir_add`, `x64_ir_sub`,
     `x64_ir_mul`, `x64_ir_retf` are regions returning canonical `TileResult`.
   - `asm_state.mlua` backward scan composes the tile dispatcher with `emit`.
+  - Root trace self-contained assembler in `jit/trace.mlua` also emits executable
+    ADD/SUB/MUL/DIV/MOD traces for the committed-trace smoke path. DIV/MOD follow
+    the LuaJIT x64 rule that `idiv` clobbers `rdx`; if the divisor is in `rdx`,
+    it is moved to a scratch register first.
 
 - [x] **P11.ASM.007 — Implement guard compare + exit jump tile**
   - `x64_ir_sload`: CMP [rdi+slot*16], LUA_TINT; JNE exit_stub; MOV dst, payload.
   - IRT_GUARD flag detection via IR type byte.
 
 - [x] **P11.ASM.008 — Implement exit stub skeleton**
-  - Single shared deopt stub: MOV rax, DEOPT_SENTINEL; RET.
-  - Emitted first (highest address); guards jump upward to it.
-  - **Shortcut:** single stub instead of per-snapshot stubs.
+  - `x64_exit.mlua`: per-snapshot exit stubs emit `mov eax, -(snapno+1); ret`.
+    Stub addresses stored in AsmState exit address table.  `emit_exit_stubs`
+    region iterates over snapshot count.
+  - Comparison guard tiles (`x64_ir_cmp`) emit inverse condition jumps to per-snapshot
+    exit stubs for IR_LT/GE/LE/GT/EQ/NE.
+  - Added DIV (`x64_ir_div`), MOD (`x64_ir_mod`), NEG (`x64_ir_neg`) tiles.
+  - `x64_tiles.mlua` tile dispatch now covers all opcodes emitted by the current
+    root-trace assembler plus comparison guards.
 
 - [-] **P11.ASM.009 — Implement mcode commit/cache sync abstraction**
   - Deferred. mmap(RWX) used directly in tests.
@@ -731,6 +735,8 @@ Exit criteria for P10:
   - `tests/test_x64_emit.lua` (16 tests, including RWX execution)
   - `tests/test_asm_pipeline.lua` (13 tests: KINT+RETF, ADD, SUB, MUL, chained
     arithmetic, NOP skip, SLOAD from stack, guards pass/fail)
+  - `tests/test_trace_execute_arith_more.lua`: committed root trace mcode executes
+    SUBVV, MULVV, DIVVV, MODVV.
 
   **Shortcut documented:**
   ```
@@ -814,12 +820,47 @@ Exit criteria for P11:
 
 - [x] **P13.RUNTIME.009 — Implement base library subset**
   - `runtime/base.mlua` implements deterministic VM-internal fast functions:
-    type-tag, assert, nargs, and yield. Native CALL dispatch composes this module
-    instead of unconditionally yielding/erroring.
+    type-tag, assert, nargs, yield, and `next(table, key)`. Native CALL dispatch
+    composes this module instead of unconditionally yielding/erroring.
+
+- [x] **P13.RUNTIME.010 — Expand comparison/test opcode coverage**
+  - `runtime/compare.mlua`: ISEQS/ISNES, ISEQN/ISNEN, ISEQP/ISNEP, ISTC/ISFC,
+    IST/ISF, ISTYPE, ISNUM.
+  - Dispatch remains split by opcode family to keep RNF CFG size stable.
+  - Tests: `tests/test_interpreter_extended_opcodes.lua`.
+
+- [x] **P13.RUNTIME.011 — Expand stack/constant/table/loop bytecodes**
+  - `runtime/stackop.mlua`: KCDATA, LEN, integer/string CAT fast/suspension shape.
+  - `runtime/arith.mlua`: integer POW fast path.
+  - `runtime/table.mlua`: TGETR, TSETR, TSETM bulk constructor fill.
+  - `runtime/call.mlua`: RETM dynamic return count, ITERC generic iterator call
+    setup using the normal CallInfo protocol, and ISNEXT specialization for
+    built-in `next(table, nil)`.
+  - `runtime/loop.mlua`: ITERN specialized table iteration, ITERL/IITERL/JITERL.
+  - `runtime/dispatch.mlua`: CALLM/CALLMT, JFORI/JFORL/JITERL/JLOOP aliases,
+    function header bytecode no-ops.
+  - Tests: `tests/test_interpreter_extended_opcodes.lua` (32 extended opcode tests).
+
+- [x] **P13.RUNTIME.012 — Generic iterator and string concatenation slow paths**
+  - CAT multi-operand path now computes total byte length from source strings
+    and exits via `InterpResult.need_string_concat(a, b, c, total_len, ins, ip)`.
+    `vmop_cat_finish` region copies concatenated bytes into a caller-provided
+    GCstr buffer and stores the result. Protocol type extended with `total_len`.
+  - ITERC handles Lua/native generator calls; ISNEXT specializes `next(table,nil)`
+    to ITERN and otherwise exits via typed `need_iterator`.
+  - ITERN has a LuaJIT-inspired table fast path for array/hash traversal.
+  - Remaining: full ISNEXT despecialization/bytecode patching semantics (JIT
+    unpatch).
 
 Exit criteria for P13:
 
-- [ ] Nontrivial Lua-like programs run in interpreter.
+- [~] Nontrivial Lua-like programs run in interpreter.
+  - Core calls/returns, varargs, closures/upvalues, globals, table access, many
+    tests/comparisons, table constructors, raw table ops, length, numeric loops,
+    generic iterator calls, specialized table iteration, `next`, and base fast
+    functions are live.
+  - Full string concatenation allocation and iterator despecialization/patching
+    are still typed suspensions.
 - [-] Recorder either records supported fast paths or aborts explicitly.
   - `LOOP` produces a typed interpreter `hot(pc)` edge when hookcount is expired.
   - `vm_interp_run_record` consumes the edge through `trace_record_root`.
@@ -1007,6 +1048,15 @@ Temporary shortcut:
   duplicates the type definitions.
 - Rationale: single authoritative catalog prevents drift between design docs
   and implementation.
+
+### D008 — Vendored LuaJIT as semantic/backend oracle
+
+- Status: accepted.
+- Decision: `.vendor/LuaJIT/` is the local reference for bytecode semantics,
+  recorder behavior, snapshots, and backend instruction order.
+- Rationale: when Moonlift code looks subpar or incomplete, translate LuaJIT's
+  proven design into typed regions/protocol exits instead of inventing ad-hoc
+  behavior or copying C-style hidden status control.
 
 ---
 

@@ -101,6 +101,15 @@ func tbl_stack_base(L: ptr(u8)) -> ptr(u8)
     return as(ptr(u8), as(ptr(u64), L)[4])
 end
 
+func tbl_top(L: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), L)[5])
+end
+
+func tbl_stack_slots(from: ptr(u8), to: ptr(u8)) -> i32
+    if as(u64, to) <= as(u64, from) then return 0 end
+    return as(i32, as(u64, to) - as(u64, from)) / 16
+end
+
 func tbl_global(L: ptr(u8)) -> ptr(u8)
     return as(ptr(u8), as(ptr(u64), L)[2])
 end
@@ -430,6 +439,35 @@ end
 block raw_set_new_key() jump error(code = 4) end
 block raw_set_meta(mm_tag: i32, mm_payload: i64) jump error(code = 4) end
 block raw_set_error(code: i32) jump error(code = code) end
+end
+
+-- BC_TSETM: bulk raw table initialization.  A is the table slot; D is the
+-- zero-based array start encoded in the bytecode. Values from A+1 up to L->top
+-- are copied into consecutive array slots.  It is raw by design (constructor
+-- fill path), but still repairs the table write barrier for collectable values.
+region vmop_tsetm(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let base: ptr(u8) = tbl_stack_base(L)
+    let a: i32 = tbl_bc_a(ins)
+    if tbl_tv_tag_at(base, a) ~= LUA_TTAB then jump error(code = 2) end
+    let tab: ptr(u8) = as(ptr(u8), tbl_tv_payload_at(base, a))
+    let arr: ptr(u8) = tbl_tab_array(tab)
+    if as(u64, arr) == 0 then jump error(code = 4) end
+    let top_slot: i32 = tbl_stack_slots(base, tbl_top(L))
+    let n: i32 = top_slot - (a + 1)
+    if n <= 0 then jump next(ip = ip + 1) end
+    let start_idx: i32 = (as(i32, ins) >> 16) & 0xFFFF
+    if start_idx + n > tbl_tab_asize(tab) then jump error(code = 4) end
+    jump tsetm_copy(i = 0, n = n, a = a, start_idx = start_idx, base = base, arr = arr, tab = tab)
+end
+block tsetm_copy(i: i32, n: i32, a: i32, start_idx: i32, base: ptr(u8), arr: ptr(u8), tab: ptr(u8))
+    if i >= n then jump next(ip = ip + 1) end
+    let tag: i32 = tbl_tv_tag_at(base, a + 1 + i)
+    let payload: i64 = tbl_tv_payload_at(base, a + 1 + i)
+    tbl_tv_set_at(arr, start_idx + i, tag, payload)
+    if tag >= 5 and tag <= 12 then tbl_gc_barrier_back(tab) end
+    jump tsetm_copy(i = i + 1, n = n, a = a, start_idx = start_idx, base = base, arr = arr, tab = tab)
+end
 end
 
 -- =========================================================================

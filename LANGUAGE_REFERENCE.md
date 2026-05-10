@@ -1540,8 +1540,9 @@ end
 ```
 
 Like a switch statement but each arm produces a final expression value. All
-arms must produce the same type. Currently deferred in lowering — use control
-regions with `yield` for multi-path value production.
+arms must produce the same scalar type. Integer/boolean constant cases, including
+named `const` cases, lower to backend switch blocks with a join value. Arm-local
+statements and default-arm statements are supported.
 
 ### 9.22 Block expression
 

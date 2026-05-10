@@ -673,6 +673,7 @@ return function(A)
                 A.field "h" "MoonTree.ExprHeader",
                 A.field "value" "MoonTree.Expr",
                 A.field "arms" (A.many "MoonTree.SwitchExprArm"),
+                A.field "default_body" (A.many "MoonTree.Stmt"),
                 A.field "default_expr" "MoonTree.Expr",
                 A.variant_unique,
             },

@@ -786,7 +786,7 @@ function Parser:parse_switch_expr()
     self:expect(TK.then_kw, "expected then after default")
     local default_body, default_expr = self:parse_expr_block({ [TK.end_kw] = true })
     self:expect(TK.end_kw, "expected end after switch")
-    return Tr.ExprSwitch(Tr.ExprSurface, value, arms, default_expr)
+    return Tr.ExprSwitch(Tr.ExprSurface, value, arms, default_body, default_expr)
 end
 
 function Parser:parse_expr_block(stops)

@@ -1,16 +1,185 @@
--- asm/x64_exit.mlua -- x64 exit stub emission stub.
+-- asm/x64_exit.mlua -- Per-snapshot exit stub emission for x64 guards.
+--
+-- Each guard in a trace corresponds to one snapshot.  An exit stub is emitted
+-- BEFORE the trace body (at a higher address, since mcode grows downward).
+-- The stub:
+--   1. Saves live exit-state registers into an ExitState buffer.
+--   2. Loads the snapshot number into rax.
+--   3. Returns to the trace_execute wrapper with a negative snapshot code.
+--
+-- The trace_execute wrapper maps the negative return value to a snapshot index
+-- and calls snap_restore to recover interpreter state.
 
 local proto = moon.require("luajitvm.protocols")
 local m = module "luajitvm.asm.x64_exit"
 
-region emit_exit_stub(A: ptr(u8), exitno: i32) -> proto.ExitStubResult
+-- Exit state buffer: we store the exit snapshot number in the first i64 slot,
+-- then the caller's saved registers.  This must match the ExitState layout
+-- expected by trace_execute.
+const EXIT_STATE_OFF_SNAPNO: i32 = 0      -- i64: negative (snapno+1) sentinel
+const EXIT_STATE_SIZE: i32 = 128           -- total exit state buffer bytes
+
+-- Register encodings used in x64 exit stubs.
+-- rdi (7) is reserved as Lua base pointer across all traces.
+const R_RAX: i32 = 0
+const R_RCX: i32 = 1
+const R_RDX: i32 = 2
+const R_RBX: i32 = 3
+const R_RSI: i32 = 6
+const R_R8:  i32 = 8
+const R_R9:  i32 = 9
+const R_R10: i32 = 10
+const R_R11: i32 = 11
+
+-- MCode emission helpers (mirror those in x64_tiles.mlua, with prefixed names)
+func exit_mc_top(J: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), J)[4])
+end
+
+func exit_mc_set_top(J: ptr(u8), v: ptr(u8))
+    as(ptr(u64), J)[4] = as(u64, v)
+end
+
+func exit_mc_put8(J: ptr(u8), b: i32)
+    let p = exit_mc_top(J) - 1
+    p[0] = as(u8, b)
+    exit_mc_set_top(J, p)
+end
+
+func exit_mc_put32(J: ptr(u8), v: i32)
+    let p = exit_mc_top(J) - 4
+    p[0] = as(u8, v)
+    p[1] = as(u8, v >> 8)
+    p[2] = as(u8, v >> 16)
+    p[3] = as(u8, v >> 24)
+    exit_mc_set_top(J, p)
+end
+
+func exit_mc_put64(J: ptr(u8), v: u64)
+    let p = exit_mc_top(J) - 8
+    let p64: ptr(u64) = as(ptr(u64), p)
+    p64[0] = v
+    exit_mc_set_top(J, p)
+end
+
+func exit_rex_wb(r: i32, b: i32) -> i32
+    return 0x48 | ((r >> 3) << 2) | (b >> 3)
+end
+
+func exit_modrm_rr(reg: i32, rm: i32) -> i32
+    return 0xC0 | ((reg & 7) << 3) | (rm & 7)
+end
+
+-- emit_mov_rr: mov dst, src
+func exit_emit_mov_rr(J: ptr(u8), dst: i32, src: i32)
+    exit_mc_put8(J, exit_modrm_rr(src, dst))
+    exit_mc_put8(J, 0x89)
+    exit_mc_put8(J, exit_rex_wb(src, dst))
+end
+
+-- emit_mov_ri32: mov dst, imm32 (sign-extends to 64-bit)
+func exit_emit_mov_ri32(J: ptr(u8), dst: i32, imm: i32)
+    exit_mc_put32(J, imm)
+    exit_mc_put8(J, exit_modrm_rr(0, dst))
+    exit_mc_put8(J, 0xC7)
+    exit_mc_put8(J, exit_rex_wb(0, dst))
+end
+
+-- emit_ret: ret (near return)
+func exit_emit_ret(J: ptr(u8))
+    exit_mc_put8(J, 0xC3)
+end
+
+-- emit_push_r: push r64
+func exit_emit_push(J: ptr(u8), r: i32)
+    exit_mc_put8(J, 0x50 | (r & 7))
+end
+
+-- emit_pop_r: pop r64
+func exit_emit_pop(J: ptr(u8), r: i32)
+    exit_mc_put8(J, 0x58 | (r & 7))
+end
+
+-- emit_mov_mr: mov [base+disp], src (store register to memory)
+func exit_emit_mov_mr(J: ptr(u8), base: i32, src: i32, disp: i32)
+    exit_mc_put32(J, disp)
+    exit_mc_put8(J, 0x80 | ((src & 7) << 3) | (base & 7))
+    exit_mc_put8(J, 0x89)
+    exit_mc_put8(J, exit_rex_wb(src, base))
+end
+
+-- emit_cmp_rax_imm32: cmp rax, imm32
+func exit_emit_cmp_rax_imm32(J: ptr(u8), imm: i32)
+    exit_mc_put32(J, imm)
+    exit_mc_put8(J, exit_modrm_rr(7, 0))
+    exit_mc_put8(J, 0x3D)
+    exit_mc_put8(J, 0x48)
+end
+
+-- emit_jne_rel8: jne rel8
+func exit_emit_jne_rel8(J: ptr(u8), disp: i32)
+    exit_mc_put8(J, disp & 0xFF)
+    exit_mc_put8(J, 0x75)
+end
+
+-- emit_jmp_rel8: jmp rel8
+func exit_emit_jmp_rel8(J: ptr(u8), disp: i32)
+    exit_mc_put8(J, disp & 0xFF)
+    exit_mc_put8(J, 0xEB)
+end
+
+-- =========================================================================
+-- emit_exit_stub: emits one per-snapshot exit stub.
+--
+-- The stub writes the snapshot sentinel value (-(snapno+1)) into rax, then
+-- returns.  The trace_execute wrapper in trace.mlua catches negative return
+-- values and maps them to snapshot indices for snap_restore.
+--
+-- For a full implementation, the stub would also save live registers into an
+-- ExitState buffer so snap_restore can recover computed values.  In the current
+-- bring-up, the snap_restore path reads exit-state values from the provided
+-- ex array, so we only need to set rax to the sentinel.
+--
+-- Returns the address of the emitted stub via stub_done(addr).
+-- =========================================================================
+
+region emit_exit_stub(A: ptr(u8), J: ptr(u8), exitno: i32) -> proto.ExitStubResult
 entry start()
+    let sentinel: i32 = 0 - (exitno + 1)
+    exit_emit_ret(J)
+    exit_emit_mov_ri32(J, R_RAX, sentinel)
+    let addr: ptr(u8) = exit_mc_top(J)
+    jump stub_done(addr = addr)
+end
+end
+
+-- =========================================================================
+-- emit_exit_stubs: emit stubs for all snapshots in one call.
+--
+-- Calls emit_exit_stub for snapno = 0 .. nsnap-1 via a recursive block.
+-- Stores each stub address in A[exitno] for later guard-site reference.
+-- =========================================================================
+
+region emit_exit_stubs(J: ptr(u8), A: ptr(u8), nsnap: i32; done: cont(), mcode_full: cont(), abort: cont(reason: i32))
+entry start()
+    jump emit_next(snapno = nsnap - 1)
+end
+block emit_next(snapno: i32)
+    if snapno < 0 then jump done() end
+    emit emit_exit_stub(A, J, snapno; stub_done = stub_ok, mcode_full = stub_full)
+end
+block stub_ok(addr: ptr(u8))
+    -- Store exit stub address in A[stub_idx]
+    as(ptr(u64), A)[snapno] = as(u64, addr)
+    jump emit_next(snapno = snapno - 1)
+end
+block stub_full()
     jump mcode_full()
 end
 end
 
 export func x64_exit_version() -> i32
-    return 1
+    return 2
 end
 
 end

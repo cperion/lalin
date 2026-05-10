@@ -171,6 +171,34 @@ do
   check("len_meta_exit", -509, status)
 end
 
+-- POW integer fast path.
+do
+  local bc = ffi.new("uint32_t[?]", 8)
+  bc[0] = kshort(1, 3)
+  bc[1] = kshort(2, 4)
+  bc[2] = bc_abc(37, 0, 1, 2)
+  bc[3] = ret1(0)
+  check("pow_int", 81, run(bc))
+end
+
+-- CAT single-string fast path and typed concat slow allocation exit.
+do
+  local bc = ffi.new("uint32_t[?]", 8)
+  local s = ffi.new("uint8_t[?]", 32)
+  ffi.cast("uint32_t *", s)[5] = 2
+  bc[0] = bc_abc(38, 0, 1, 1)
+  bc[1] = ret1(0)
+  check("cat_single_string", tonumber(ffi.cast("uintptr_t", s)), run(bc, function()
+    set_slot(1, 5, tonumber(ffi.cast("uintptr_t", s)))
+  end))
+  bc[0] = bc_abc(38, 0, 1, 2)
+  local _, status = run(bc, function()
+    set_slot(1, 5, tonumber(ffi.cast("uintptr_t", s)))
+    set_slot(2, 5, tonumber(ffi.cast("uintptr_t", s)))
+  end)
+  check("cat_need_concat", -702, status)
+end
+
 -- TGETR/TSETR raw table access for existing array slots.
 do
   local bc = ffi.new("uint32_t[?]", 8)
@@ -188,6 +216,39 @@ do
   end))
 end
 
+-- TSETM bulk array constructor fill from stack top.
+do
+  local bc = ffi.new("uint32_t[?]", 8)
+  local tab = ffi.new("uint8_t[?]", 56)
+  local arr = ffi.new("uint8_t[?]", 16 * 6)
+  ffi.cast("uint64_t *", tab)[2] = tonumber(ffi.cast("uintptr_t", arr))
+  ffi.cast("uint32_t *", tab)[12] = 6
+  bc[0] = bc_ad(63, 1, 1) -- store slots 2..top into table slot1 starting array index 1
+  bc[1] = bc_abc(59, 0, 1, 6)
+  bc[2] = ret1(0)
+  check("tsetm_bulk", 333, run(bc, function()
+    set_slot(1, 8, tonumber(ffi.cast("uintptr_t", tab)))
+    set_slot(2, 3, 111)
+    set_slot(3, 3, 222)
+    set_slot(4, 3, 3)
+    set_slot(5, 3, 333)
+    set_slot(6, 3, 5)
+    state_u64[5] = stack_uint + 6 * TValueSize
+  end))
+end
+
+-- RETM returns the dynamic result count from A..L->top.
+do
+  local bc = ffi.new("uint32_t[?]", 8)
+  bc[0] = kshort(0, 10)
+  bc[1] = kshort(1, 20)
+  bc[2] = bc_ad(73, 0, 0)
+  local _, nres = run(bc, function()
+    state_u64[5] = stack_uint + 2 * TValueSize
+  end)
+  check("retm_nresults", 2, nres)
+end
+
 -- Function headers are interpreter no-ops.
 do
   local bc = ffi.new("uint32_t[?]", 4)
@@ -195,6 +256,92 @@ do
   bc[1] = kshort(0, 88)
   bc[2] = ret1(0)
   check("funcf_noop", 88, run(bc))
+end
+
+-- Base FF_NEXT works through ordinary CALL as next(table, key).
+do
+  local bc = ffi.new("uint32_t[?]", 6)
+  local fn = ffi.new("uint8_t[?]", 48)
+  fn[10] = 6 -- FF_NEXT
+  local tab = ffi.new("uint8_t[?]", 56)
+  local arr = ffi.new("uint8_t[?]", 16 * 3)
+  ffi.cast("uint64_t *", tab)[2] = tonumber(ffi.cast("uintptr_t", arr))
+  ffi.cast("uint32_t *", tab)[12] = 3
+  ffi.cast("int32_t *", arr)[0] = 3
+  ffi.cast("int64_t *", arr)[1] = 555
+  bc[0] = bc_abc(66, 0, 3, 3) -- CALL function+2 args, want 2 results
+  bc[1] = bc_abc(18, 0, 1, 0) -- value result to slot0
+  bc[2] = ret1(0)
+  check("base_next_call", 555, run(bc, function()
+    set_slot(0, 9, tonumber(ffi.cast("uintptr_t", fn)))
+    set_slot(1, 8, tonumber(ffi.cast("uintptr_t", tab)))
+    set_slot(2, 0, 0)
+  end))
+end
+
+-- ITERN specialized table iterator over array slots.
+do
+  local bc = ffi.new("uint32_t[?]", 8)
+  local tab = ffi.new("uint8_t[?]", 56)
+  local arr = ffi.new("uint8_t[?]", 16 * 4)
+  ffi.cast("uint64_t *", tab)[2] = tonumber(ffi.cast("uintptr_t", arr))
+  ffi.cast("uint32_t *", tab)[12] = 4
+  ffi.cast("int32_t *", arr)[1*4] = 3
+  ffi.cast("int64_t *", arr)[1*2 + 1] = 444
+  bc[0] = bc_abc(70, 2, 0, 0) -- ITERN A=2; table at A-2, control at A-1
+  bc[1] = bc_ad(82, 2, 1)     -- following ITERL supplies branch target
+  bc[2] = kshort(3, 99)        -- skipped if pair found
+  bc[3] = bc_abc(18, 0, 3, 0) -- move value result to slot0 for top-level RET1
+  bc[4] = ret1(0)
+  check("itern_array", 444, run(bc, function()
+    set_slot(0, 8, tonumber(ffi.cast("uintptr_t", tab)))
+    set_slot(1, 3, 0)
+  end))
+end
+
+-- ITERC arranges a normal two-arg iterator call.  Use the VM-internal nargs
+-- fast function as a deterministic generator stand-in.
+do
+  local bc = ffi.new("uint32_t[?]", 6)
+  local fn = ffi.new("uint8_t[?]", 48)
+  fn[10] = 4 -- FF_NARGS
+  bc[0] = bc_abc(69, 3, 2, 3) -- A=3, B=2 => one wanted result; args are state/control
+  bc[1] = bc_abc(18, 0, 3, 0) -- MOV result to slot0
+  bc[2] = ret1(0)
+  check("iterc_native_call", 2, run(bc, function()
+    set_slot(0, 9, tonumber(ffi.cast("uintptr_t", fn)))
+    set_slot(1, 3, 101)
+    set_slot(2, 3, 202)
+  end))
+
+  bc[0] = bc_ad(72, 2, 1)
+  local _, status2 = run(bc)
+  check("isnext_need_iterator", -872, status2)
+end
+
+-- ISNEXT specializes next(table, nil) to the following ITERN fast path.
+do
+  local bc = ffi.new("uint32_t[?]", 8)
+  local fn = ffi.new("uint8_t[?]", 48)
+  fn[10] = 6 -- FF_NEXT
+  local tab = ffi.new("uint8_t[?]", 56)
+  local arr = ffi.new("uint8_t[?]", 16 * 3)
+  ffi.cast("uint64_t *", tab)[2] = tonumber(ffi.cast("uintptr_t", arr))
+  ffi.cast("uint32_t *", tab)[12] = 3
+  ffi.cast("int32_t *", arr)[0] = 3
+  ffi.cast("int64_t *", arr)[1] = 777
+  bc[0] = bc_ad(72, 3, 1)     -- ISNEXT A=3 -> jump to ITERN at pc=2
+  bc[1] = kshort(0, 99)       -- skipped on specialization
+  bc[2] = bc_abc(70, 3, 0, 0) -- ITERN A=3
+  bc[3] = bc_ad(82, 3, 1)     -- following ITERL supplies branch target
+  bc[4] = kshort(0, 88)       -- skipped if pair found
+  bc[5] = bc_abc(18, 0, 4, 0) -- move value result to slot0
+  bc[6] = ret1(0)
+  check("isnext_itern", 777, run(bc, function()
+    set_slot(0, 9, tonumber(ffi.cast("uintptr_t", fn)))
+    set_slot(1, 8, tonumber(ffi.cast("uintptr_t", tab)))
+    set_slot(2, 0, 0)
+  end))
 end
 
 -- ITERL/IITERL branch while slot A is non-nil.
@@ -205,11 +352,23 @@ do
   bc[2] = kshort(0, 99)   -- skipped
   bc[3] = ret1(0)
   check("iterl_branch", 1, run(bc))
+  bc[1] = bc_ad(84, 0, 1) -- JITERL alias uses same branch semantics
+  check("jiterl_branch", 1, run(bc))
   bc[0] = bc_ad(43, 0, 0) -- nil
   bc[1] = bc_ad(83, 0, 1) -- IITERL nil: fallthrough to kshort 22
   bc[2] = kshort(0, 22)
   bc[3] = ret1(0)
   check("iiterl_fallthrough", 22, run(bc))
+end
+
+-- JLOOP is executable like LOOP with hotcount check when a global state exists.
+do
+  local bc = ffi.new("uint32_t[?]", 8)
+  bc[0] = kshort(0, 9)
+  bc[1] = bc_ad(87, 0, 1)
+  bc[2] = kshort(0, 99)
+  bc[3] = ret1(0)
+  check("jloop_branch", 9, run(bc))
 end
 
 dispatch:free()

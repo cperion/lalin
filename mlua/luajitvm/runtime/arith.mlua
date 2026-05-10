@@ -36,6 +36,11 @@ func arith_stack64(L: ptr(u8)) -> ptr(i64)
     return as(ptr(i64), as(ptr(u8), as(ptr(u64), L)[4]))
 end
 
+func arith_ipow_i32(base: i32, exp: i32) -> i32
+    if exp <= 0 then return 1 end
+    return base * arith_ipow_i32(base, exp - 1)
+end
+
 region vmop_addvv(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
 entry start()
     let a: i32 = arith_bc_a(ins)
@@ -101,6 +106,26 @@ entry start()
     if rhs == 0 then jump error(code = 5) end
     tv32[a * 4] = LUA_TINT
     tv64[a * 2 + 1] = as(i64, as(i32, tv64[b * 2 + 1]) % rhs)
+    jump next(ip = ip + 1)
+end
+end
+
+-- BC_POW: integer fast path for non-negative integer exponents.  Negative or
+-- non-integer exponent semantics require the numeric/metamethod slow path and
+-- therefore exit through error until that typed slow path is added.
+region vmop_pow(L: ptr(u8), ins: u32, ip: i32; next: cont(ip: i32), returned: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let a: i32 = arith_bc_a(ins)
+    let b: i32 = arith_bc_b(ins)
+    let c: i32 = arith_bc_c(ins)
+    let tv32: ptr(i32) = arith_stack32(L)
+    let tv64: ptr(i64) = arith_stack64(L)
+    if tv32[b * 4] ~= LUA_TINT then jump error(code = 7) end
+    if tv32[c * 4] ~= LUA_TINT then jump error(code = 7) end
+    let exp: i32 = as(i32, tv64[c * 2 + 1])
+    if exp < 0 then jump error(code = 7) end
+    tv32[a * 4] = LUA_TINT
+    tv64[a * 2 + 1] = as(i64, arith_ipow_i32(as(i32, tv64[b * 2 + 1]), exp))
     jump next(ip = ip + 1)
 end
 end

@@ -84,6 +84,27 @@ check("BC_RET=76→3",    3, c4:get("decode")(76))
 check("unknown=99→0",   0, c4:get("decode")(99))
 c4:free()
 
+-- 3b. switch expressions with expression arms and arm-local statements.
+local c4b = compile([[local m = module T
+const OP_A: i32 = 11
+export func classify(op: i32) -> i32
+    return switch op do
+    case OP_A then 100
+    case 12 then
+        let x = 20
+        x + 2
+    default then
+        let y = 3
+        y
+    end
+end
+end
+return m]])
+check("switch expr const arm", 100, c4b:get("classify")(11))
+check("switch expr stmt arm", 22, c4b:get("classify")(12))
+check("switch expr default body", 3, c4b:get("classify")(99))
+c4b:free()
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
 print("All language-fix tests passed")

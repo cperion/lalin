@@ -1,52 +1,21 @@
--- Moonlift JSON Decoder
+-- Moonlift vs CJSON benchmark
 --
--- Pure Moonlift tape parser.  No JSON back end helpers, no Lua C API calls
--- during parsing.  The scanner validates JSON and writes a flat typed tape.
---
--- Moonlift deliberately has no mutable byte buffer, no strtod, no string
--- unescape.  The scanner validates structure; the Lua host converts values.
---
--- Showcases:
---   * region composition with typed continuation protocols
---   * switch dispatch (structured, not cascaded if-chains)
---   * continuation passthrough — depth/next thread through scanner exits
---   * jump-first control with explicit emit / yield / jump
---   * tagged tape entries with named type constants
---
--- Run:  cargo run --bin moonlift -- examples/json/json_decoder.mlua
+-- Run:  cargo run --bin moonlift -- benchmarks/bench_json_vs_cjson.mlua
 
 -- ===========================================================================
--- Tape tag constants (documentation — case values are hardcoded inline)
+-- Load cjson
 -- ===========================================================================
 
-local TAG = {
-    array_begin  = 0,
-    array_end    = 1,
-    object_begin = 2,
-    object_end   = 3,
-    key_slice    = 4,
-    string_slice = 5,
-    number_slice = 6,
-    true_val     = 7,
-    false_val    = 8,
-    null_val     = 9,
-}
+local ok_cjson, cjson = pcall(require, "cjson")
+if not ok_cjson then
+    package.cpath = package.cpath .. ";/home/cedric/.luarocks/lib64/lua/5.1/?.so;/home/cedric/.luarocks/lib/lua/5.1/?.so"
+    cjson = require("cjson")
+end
 
-local EXPECT = {
-    value        = 0,
-    done         = 1,
-    array_first  = 2,
-    array_comma  = 3,
-    obj_key      = 4,
-    obj_colon    = 5,
-    obj_value    = 6,
-    obj_comma    = 7,
-    array_val    = 8,
-    obj_key_req  = 9,
-}
+local ffi = require("ffi")
 
 -- ===========================================================================
--- Scanner regions
+-- Build the Moonlift JSON decoder module
 -- ===========================================================================
 
 local scan_str = region scan_str_json(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
@@ -164,9 +133,7 @@ end
 local match_true = region match_true_json(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
     ok: cont(end_i: i32, depth: i32, next: i32),
     bad: cont(bad_pos: i32))
-entry start()
-    jump check_r(i = start + 1)
-end
+entry start() jump check_r(i = start + 1) end
 block check_r(i: i32)
     if i >= n then jump bad(bad_pos = i) end
     if as(i32, p[i]) == 114 then jump check_u(i = i + 1) end
@@ -187,9 +154,7 @@ end
 local match_false = region match_false_json(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
     ok: cont(end_i: i32, depth: i32, next: i32),
     bad: cont(bad_pos: i32))
-entry start()
-    jump check_a(i = start + 1)
-end
+entry start() jump check_a(i = start + 1) end
 block check_a(i: i32)
     if i >= n then jump bad(bad_pos = i) end
     if as(i32, p[i]) == 97 then jump check_l(i = i + 1) end
@@ -215,9 +180,7 @@ end
 local match_null = region match_null_json(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
     ok: cont(end_i: i32, depth: i32, next: i32),
     bad: cont(bad_pos: i32))
-entry start()
-    jump check_u(i = start + 1)
-end
+entry start() jump check_u(i = start + 1) end
 block check_u(i: i32)
     if i >= n then jump bad(bad_pos = i) end
     if as(i32, p[i]) == 117 then jump check_l1(i = i + 1) end
@@ -235,10 +198,6 @@ block check_l2(i: i32)
 end
 end
 
--- ===========================================================================
--- JsonDecoder module — the tape scanner
--- ===========================================================================
-
 local json = module JsonDecoder
 
 export func json_decode_tape(p: ptr(u8), n: i32,
@@ -255,8 +214,6 @@ export func json_decode_tape(p: ptr(u8), n: i32,
         if i >= n then jump eof(expect = expect, i = i) end
         jump ws_check(i = i, depth = depth, expect = expect, c = as(i32, p[i]))
     end
-
-    -- Inline whitespace skip
     block ws_check(i: i32, depth: i32, expect: i32, c: i32)
         switch c do
         case 9  then jump dispatch(i = i + 1, depth = depth, expect = expect)
@@ -266,16 +223,11 @@ export func json_decode_tape(p: ptr(u8), n: i32,
         default then jump expect_dispatch(i = i, depth = depth, expect = expect, c = c)
         end
     end
-
     block eof(expect: i32, i: i32)
         if expect == 1 then yield meta[0] end
         yield -(i + 1)
     end
-
-    -- Expect state machine (switch on typed expect-state enum)
     block expect_dispatch(i: i32, depth: i32, expect: i32, c: i32)
-        -- Corresponds to EXPECT enum: 0=value 1=done 2=array_first 3=array_comma
-        -- 4=obj_key 5=obj_colon 6=obj_value 7=obj_comma 8=array_val 9=obj_key_req
         switch expect do
         case 0 then jump value_enter(i = i, depth = depth, next = 1, c = c)
         case 1 then yield -(i + 1)
@@ -290,8 +242,6 @@ export func json_decode_tape(p: ptr(u8), n: i32,
         default then yield -(i + 1)
         end
     end
-
-    -- Array handling
     block array_first(i: i32, depth: i32, c: i32)
         if c == 93 then jump pop_container(i = i + 1, depth = depth) end
         jump value_enter(i = i, depth = depth, next = 3, c = c)
@@ -304,16 +254,12 @@ export func json_decode_tape(p: ptr(u8), n: i32,
         if c == 93 then jump pop_container(i = i + 1, depth = depth) end
         yield -(i + 1)
     end
-
-    -- Object handling
     block obj_key(i: i32, depth: i32, c: i32)
         if c == 125 then jump pop_container(i = i + 1, depth = depth) end
         jump obj_key_quote(i = i, depth = depth, c = c)
     end
     block obj_key_quote(i: i32, depth: i32, c: i32)
-        if c == 34 then
-            emit @{scan_str}(p, n, i + 1, depth, 5; ok = key_done, bad = invalid)
-        end
+        if c == 34 then emit @{scan_str}(p, n, i + 1, depth, 5; ok = key_done, bad = invalid) end
         yield -(i + 1)
     end
     block key_done(end_i: i32, start_i: i32, depth: i32, next: i32)
@@ -331,8 +277,6 @@ export func json_decode_tape(p: ptr(u8), n: i32,
         if c == 125 then jump pop_container(i = i + 1, depth = depth) end
         yield -(i + 1)
     end
-
-    -- Value dispatch
     block value_enter(i: i32, depth: i32, next: i32, c: i32)
         switch c do
         case 34  then emit @{scan_str}(p, n, i + 1, depth, next; ok = str_done, bad = invalid)
@@ -349,8 +293,6 @@ export func json_decode_tape(p: ptr(u8), n: i32,
             yield -(i + 1)
         end
     end
-
-    -- Value completion -> tape
     block str_done(end_i: i32, start_i: i32, depth: i32, next: i32)
         jump emit_tag(i = end_i, depth = depth, next = next,
             tag = 5, aa = start_i, bb = end_i - start_i - 1)
@@ -371,8 +313,6 @@ export func json_decode_tape(p: ptr(u8), n: i32,
         jump emit_tag(i = end_i, depth = depth, next = next,
             tag = 9, aa = 0, bb = 0)
     end
-
-    -- Tape emission
     block emit_tag(i: i32, depth: i32, next: i32, tag: i32, aa: i32, bb: i32)
         if meta[0] >= tape_cap then yield -(i + 1) end
         tags[meta[0]] = tag
@@ -381,7 +321,6 @@ export func json_decode_tape(p: ptr(u8), n: i32,
         meta[0] = meta[0] + 1
         jump dispatch(i = i, depth = depth, expect = next)
     end
-
     block emit_key(start_i: i32, end_i: i32, depth: i32)
         if meta[0] >= tape_cap then yield -(start_i + 1) end
         tags[meta[0]] = 4
@@ -390,8 +329,6 @@ export func json_decode_tape(p: ptr(u8), n: i32,
         meta[0] = meta[0] + 1
         jump dispatch(i = end_i, depth = depth, expect = 5)
     end
-
-    -- Container push/pop
     block push_array(i: i32, depth: i32, next: i32)
         if depth >= stack_cap then yield -(i + 1) end
         if meta[0] >= tape_cap then yield -(i + 1) end
@@ -426,7 +363,6 @@ export func json_decode_tape(p: ptr(u8), n: i32,
         meta[0] = meta[0] + 1
         jump dispatch(i = i, depth = depth - 1, expect = next)
     end
-
     block invalid(bad_pos: i32)
         yield -(bad_pos + 1)
     end
@@ -435,71 +371,253 @@ end
 
 end
 
--- ===========================================================================
--- Compile and smoke-test the tape scanner
--- ===========================================================================
-
 local compiled = json:compile()
-local ffi = require("ffi")
+local decode_tape = compiled:get("json_decode_tape")
 
-local function buf(s)
-    local b = ffi.new("uint8_t[?]", #s + 1)
-    ffi.copy(b, s, #s)
-    return b, #s
+-- ===========================================================================
+-- Lua-side tape -> table walker
+-- ===========================================================================
+
+local TAG = { null_val = 9, true_val = 7, false_val = 8, number_slice = 6,
+    string_slice = 5, array_begin = 0, array_end = 1, object_begin = 2,
+    object_end = 3, key_slice = 4 }
+
+local function json_unescape(raw)
+    local out, i = {}, 1
+    while i <= #raw do
+        local b = raw:byte(i)
+        if b ~= 92 then out[#out+1] = raw:sub(i,i); i = i + 1
+        else
+            i = i + 1
+            local esc = raw:byte(i)
+            if     esc == 34 then out[#out+1] = '"'
+            elseif esc == 92 then out[#out+1] = '\\'
+            elseif esc == 47 then out[#out+1] = '/'
+            elseif esc == 98 then out[#out+1] = '\b'
+            elseif esc == 102 then out[#out+1] = '\f'
+            elseif esc == 110 then out[#out+1] = '\n'
+            elseif esc == 114 then out[#out+1] = '\r'
+            elseif esc == 116 then out[#out+1] = '\t'
+            elseif esc == 117 then
+                local cp = tonumber(raw:sub(i+1,i+4),16)
+                if cp >= 0xD800 and cp <= 0xDBFF then
+                    local lo = tonumber(raw:sub(i+7,i+10),16)
+                    if lo and lo >= 0xDC00 and lo <= 0xDFFF then
+                        cp = 0x10000 + ((cp-0xD800)*1024) + (lo-0xDC00); i = i + 6
+                    end
+                end
+                out[#out+1] = utf8.char(cp); i = i + 4
+            end
+            i = i + 1
+        end
+    end
+    return table.concat(out)
 end
 
-local function tape_count(p, n)
+local function tape_to_table(p,tags,a,b,tape_count,idx)
+    local i = idx; if i < 0 or i >= tape_count then return i end
+    local tag = tags[i]
+    if tag == TAG.null_val then return i+1, nil
+    elseif tag == TAG.true_val then return i+1, true
+    elseif tag == TAG.false_val then return i+1, false
+    elseif tag == TAG.number_slice then return i+1, tonumber(ffi.string(p + a[i], b[i]))
+    elseif tag == TAG.string_slice then return i+1, json_unescape(ffi.string(p + a[i], b[i]))
+    elseif tag == TAG.array_begin then
+        local t,j,k = {}, i+1, 1
+        while j < tape_count and tags[j] ~= TAG.array_end do
+            local nj,val = tape_to_table(p,tags,a,b,tape_count,j)
+            if nj then t[k],j,k = val,nj,k+1 else break end
+        end
+        return j+1,t
+    elseif tag == TAG.object_begin then
+        local t,j = {}, i+1
+        while j < tape_count and tags[j] ~= TAG.object_end do
+            if tags[j] == TAG.key_slice then
+                local key = ffi.string(p + a[j], b[j]); j = j + 1
+                local nj,val = tape_to_table(p,tags,a,b,tape_count,j)
+                if nj then t[key],j = val,nj else break end
+            else j = j + 1 end
+        end
+        return j+1,t
+    end
+    return i+1, nil
+end
+
+local function moonlift_decode(str)
+    local n = #str
+    local buf = ffi.new("uint8_t[?]", n + 1); ffi.copy(buf, str, n)
     local cap = math.max(n + 16, 16)
-    local tags  = ffi.new("int32_t[?]", cap)
-    local ta    = ffi.new("int32_t[?]", cap)
-    local tb    = ffi.new("int32_t[?]", cap)
+    local tags = ffi.new("int32_t[?]", cap)
+    local a    = ffi.new("int32_t[?]", cap)
+    local b    = ffi.new("int32_t[?]", cap)
     local snext = ffi.new("int32_t[?]", 256)
     local skind = ffi.new("int32_t[?]", 256)
     local meta  = ffi.new("int32_t[1]")
-    return compiled:get("json_decode_tape")(p, n, snext, skind, 256, tags, ta, tb, cap, meta)
+    local count = decode_tape(buf, n, snext, skind, 256, tags, a, b, cap, meta)
+    if count < 0 then error("decode failed") end
+    local _, val = tape_to_table(buf, tags, a, b, count, 0)
+    return val
 end
 
--- Valid JSON: returns tape count >= 0
-local b, n = buf("null")
-assert(tape_count(b, n) == 1)
-b, n = buf("true")
-assert(tape_count(b, n) == 1)
-b, n = buf("42")
-assert(tape_count(b, n) == 1)
-b, n = buf("-3.14")
-assert(tape_count(b, n) == 1)
-b, n = buf("1.5e2")
-assert(tape_count(b, n) == 1)
-b, n = buf('"hello"')
-assert(tape_count(b, n) == 1)
-b, n = buf('"a\\n\\t\\\\b"')
-assert(tape_count(b, n) == 1)
-b, n = buf("[]")
-assert(tape_count(b, n) == 2)   -- array_begin + array_end
-b, n = buf("[1,2,3]")
-assert(tape_count(b, n) == 5)   -- array_begin + 3 values + array_end
-b, n = buf("{}")
-assert(tape_count(b, n) == 2)   -- object_begin + object_end
-b, n = buf('{"a":1,"b":2}')
-assert(tape_count(b, n) == 6)   -- object_begin + 2 key+value pairs + object_end
-b, n = buf("[true,false,null]")
-assert(tape_count(b, n) == 5)
-b, n = buf('{"a":[1,{"b":2}]}')
-assert(tape_count(b, n) >= 8)
+-- ===========================================================================
+-- Document builders
+-- ===========================================================================
 
--- Invalid JSON: returns negative error
-b, n = buf("")
-assert(tape_count(b, n) < 0)
-b, n = buf("{")
-assert(tape_count(b, n) < 0)
-b, n = buf("tru")
-assert(tape_count(b, n) < 0)
-b, n = buf("01")
-assert(tape_count(b, n) < 0)
-b, n = buf('"unclosed')
-assert(tape_count(b, n) < 0)
-b, n = buf("[1,]")
-assert(tape_count(b, n) < 0)
+local builders = {}
+
+builders.api = function(N)
+    local p = {'{"total_count":'..(N*100+42)..',"incomplete_results":false,"items":['}
+    for i = 1, N do
+        if i > 1 then p[#p+1] = "," end
+        p[#p+1] = string.format([[
+{"id":%d,"name":"repo-%d","full_name":"user/repo-%d","owner":{"login":"user%d","id":%d},
+ "html_url":"https://github.com/user/repo-%d","description":"Repo number %d","fork":%s,
+ "created_at":"2024-%02d-15T10:30:00Z","stargazers_count":%d,"watchers_count":%d,
+ "topics":["compiler","lua","native"],"license":{"key":"mit","name":"MIT"},
+ "score":%.6f}]], i,i,i,i,i,i,i,(i%2==0)and"true"or"false",(i%12)+1,i*10,i*10+1,1/(i+.5))
+    end
+    p[#p+1] = '],"metadata":{"server":"api","took_ms":'..(N+23)..'}}'
+    return table.concat(p)
+end
+
+builders.geojson = function(N)
+    local p = {'{"type":"FeatureCollection","features":['}
+    for i = 1, N do
+        if i > 1 then p[#p+1] = "," end
+        p[#p+1] = string.format('{"type":"Feature","id":%d,"geometry":{"type":"Polygon","coordinates":[[',i)
+        for j = 1,8 do
+            if j > 1 then p[#p+1] = "," end
+            p[#p+1] = string.format("[%.6f,%.6f]",-73.985+i*.001+j*.0001,40.748+i*.001-j*.0001)
+        end
+        p[#p+1] = string.format(']]},"properties":{"name":"Site %d","category":"landmark","tags":["geo","poi"],"score":%.4f}}',i,i*1.5)
+    end
+    p[#p+1] = ']}'
+    return table.concat(p)
+end
+
+builders.logs = function(N)
+    local lvls = {"INFO","WARN","ERROR","DEBUG"}
+    local msgs = {"request completed","connection timeout","cache miss","rate limit exceeded",
+        "auth failed","schema migration","health check ok","circuit breaker open","message queued","session expired"}
+    local p = {'{"app":"moonlift","host":"node-7","logs":['}
+    for i = 1, N do
+        if i > 1 then p[#p+1] = "," end
+        p[#p+1] = string.format(
+            '{"timestamp":%d,"level":"%s","message":"%s","duration_ms":%.3f,"status":%d,"trace_id":"%08x-%04x-%04x-%04x-%012x","tags":{"service":"api","region":"us-east-%d"},"context":{"user_id":%d,"endpoint":"/api/v1/%s"}}',
+            1714000000+i, lvls[(i%#lvls)+1], msgs[(i%#msgs)+1], math.random()*500, 200+(i%5)*100,
+            i, i%65535, i%65535, i, i%65535, (i%3)+1, i%1000, (i%2==0)and"query"or"mutate")
+    end
+    p[#p+1] = '],"total":'..N..'}'
+    return table.concat(p)
+end
+
+builders.twitter = function(N)
+    local p = {'{"statuses":['}
+    for i = 1, N do
+        if i > 1 then p[#p+1] = "," end
+        p[#p+1] = string.format(
+            '{"id":%d,"created_at":"Mon Apr %02d 15:30:%02d +0000 2024","text":"Status %d about moonlift","user":{"id":%d,"name":"User %d","screen_name":"user%d","followers_count":%d,"friends_count":%d},"retweet_count":%d,"favorite_count":%d,"lang":"en","entities":{}}',
+            i*1000+1,(i%28)+1,i%60,i,i*10,i,i,i*100,i*50,i%50,i*2)
+    end
+    p[#p+1] = '],"search_metadata":{"count":'..N..'}}'
+    return table.concat(p)
+end
+
+builders.config = function(N)
+    local p = {'{"version":"2.1.0","environment":"production",'}
+    for i = 1, N do
+        if i > 1 then p[#p+1] = "," end
+        p[#p+1] = string.format(
+            '"service_%d":{"enabled":%s,"port":%d,"hosts":["host-%d-a.internal","host-%d-b.internal","host-%d-c.internal"],"timeout_ms":%d,"retry":{"max_attempts":%d,"backoff":"exponential"},"limits":{"rate":%d,"burst":%d,"concurrency":%d},"tls":{"enabled":true,"cert_file":"/etc/certs/svc%d.pem"},"paths":{"/health":{"method":"GET","auth":false},"/metrics":{"method":"GET","auth":true}},"features":{"logging":true,"tracing":%s,"metrics":true}}',
+            i,(i%3~=0)and"true"or"false",8000+i,i,i,i,30000+i*1000,3+(i%3),1000+i*100,200+i*50,50+i*10,i,(i%3==0)and"true"or"false")
+    end
+    p[#p+1] = '}'
+    return table.concat(p)
+end
+
+builders.uniform = function(N)
+    local p = {'{"items":['}
+    for i = 1, N do
+        if i > 1 then p[#p+1] = "," end
+        p[#p+1] = string.format('{"id":%d,"name":"item%d","ok":%s,"vals":[1,2,3]}',i,i,(i%2==0)and"true"or"false")
+    end
+    p[#p+1] = '],"meta":{"count":'..N..',"kind":"bench"}}'
+    return table.concat(p)
+end
+
+-- ===========================================================================
+-- Checkers
+-- ===========================================================================
+
+local checks = {
+    api = function(v,N) assert(#v.items==N); return #v.items end,
+    geojson = function(v,N) assert(#v.features==N); return #v.features end,
+    logs = function(v,N) assert(#v.logs==N); return #v.logs end,
+    twitter = function(v,N) assert(#v.statuses==N); return #v.statuses end,
+    config = function(v,N) assert(v.version=="2.1.0"); return N end,
+    uniform = function(v,N) assert(#v.items==N); return #v.items end,
+}
+
+-- ===========================================================================
+-- Benchmark
+-- ===========================================================================
+
+local function best_of(fn, check, src, N, reps, rounds)
+    collectgarbage("collect")
+    local best = math.huge
+    for _ = 1, rounds do
+        collectgarbage("collect")
+        local t0 = os.clock()
+        for _ = 1, reps do check(fn(src), N) end
+        local dt = os.clock() - t0
+        if dt < best then best = dt end
+    end
+    return best / reps
+end
+
+local labels = {
+    api = "GitHub API", geojson = "GeoJSON", logs = "Structured logs",
+    twitter = "Social timeline", config = "Config file", uniform = "Uniform items",
+}
+
+local sizes = {10, 100, 500}
+local suites = {"api", "geojson", "logs", "twitter", "config", "uniform"}
+
+print()
+print(string.rep("=", 78))
+print("  Moonlift vs CJSON — Realistic JSON Decode Benchmarks")
+print(string.rep("=", 78))
+
+local wins, ties, losses = 0, 0, 0
+
+for _, suite in ipairs(suites) do
+    print(string.format("\n  -- %s", labels[suite]))
+    for _, N in ipairs(sizes) do
+        local src = builders[suite](N)
+        local check = checks[suite]
+
+        -- Warmup
+        check(moonlift_decode(src), N)
+        check(cjson.decode(src), N)
+
+        local reps = (#src < 2048) and 1000 or (#src < 20000) and 200 or (#src < 200000) and 50 or 10
+        local tm = best_of(moonlift_decode, check, src, N, reps, 5)
+        local tc = best_of(cjson.decode, check, src, N, reps, 5)
+        local mb = #src / (1024 * 1024)
+        local ratio = tm / tc
+
+        local marker
+        if ratio < 0.85 then marker = "  << Moonlift wins strong"; wins = wins + 1
+        elseif ratio < 1.0 then marker = "  <  Moonlift wins"; wins = wins + 1
+        elseif ratio < 1.05 then marker = "  ~  tie"; ties = ties + 1
+        else marker = "     CJSON wins"; losses = losses + 1 end
+
+        print(string.format("  N=%-4d | %7d bytes | %5.1f kB |  moonlift %5.0f MB/s  cjson %5.0f MB/s  ratio %.3f%s",
+            N, #src, #src/1024, mb/tm, mb/tc, ratio, marker))
+    end
+end
 
 compiled:free()
-return "Moonlift JSON decoder demo ok"
+print(string.format("\n  Result: %d wins, %d ties, %d losses", wins, ties, losses))
+print(string.rep("=", 78))
+return "bench done"

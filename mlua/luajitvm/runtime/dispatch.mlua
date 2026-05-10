@@ -22,6 +22,8 @@ local gop = moon.require("luajitvm.runtime.global")
 local loopop = moon.require("luajitvm.runtime.loop")
 local traceop = moon.require("luajitvm.jit.trace")
 local asm_dep = moon.require("luajitvm.asm.asm_state")
+local gc_alloc = moon.require("luajitvm.gc.alloc")
+local string_mod = moon.require("luajitvm.runtime.string")
 local m = module "luajitvm.runtime.dispatch"
 
 -- Bytecode opcode constants (from core/bytecode.mlua)
@@ -62,6 +64,8 @@ const BC_SUBVV:  i32 = 33
 const BC_MULVV:  i32 = 34
 const BC_DIVVV:  i32 = 35
 const BC_MODVV:  i32 = 36
+const BC_POW:    i32 = 37
+const BC_CAT:    i32 = 38
 const BC_KSTR:   i32 = 39
 const BC_KCDATA: i32 = 40
 const BC_KSHORT: i32 = 41
@@ -92,7 +96,11 @@ const BC_CALLM:  i32 = 65
 const BC_CALL:   i32 = 66
 const BC_CALLMT: i32 = 67
 const BC_CALLT:  i32 = 68
+const BC_ITERC:  i32 = 69
+const BC_ITERN:  i32 = 70
 const BC_VARG:   i32 = 71
+const BC_ISNEXT: i32 = 72
+const BC_RETM:   i32 = 73
 const BC_RET:    i32 = 74
 const BC_RET0:   i32 = 75
 const BC_RET1:   i32 = 76
@@ -124,6 +132,14 @@ const TS_OFF_PCIDX: i32 = 92     -- i32: current instruction index in current bc
 const TS_OFF_CURBC: i32 = 96     -- ptr(u32): current bytecode base
 const TS_OFF_CURPC: i32 = 104    -- ptr(u32): current instruction pointer
 const G_OFF_HOOKCOUNT: i32 = 368
+const STR_HEADER_SIZE: i32 = 24
+const GCT_STR: i32 = 0
+const G_OFF_GC_CURRENTWHITE: i32 = 32
+const G_OFF_GC_ROOT: i32 = 40
+const G_OFF_STR_TAB: i32 = 152
+const G_OFF_STR_MASK: i32 = 160
+const G_OFF_STR_ID: i32 = 168
+const G_OFF_STR_NUM: i32 = 164
 
 func disp_set_exec(L: ptr(u8), bc: ptr(u32), ip: i32)
     as(ptr(i32), L)[TS_OFF_PCIDX / 4] = ip
@@ -276,6 +292,10 @@ block dispatch_arith(bc_v: ptr(u32), ip: i32, ins: u32, op: i32)
         emit arith.vmop_divvv(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 36 then
         emit arith.vmop_modvv(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 37 then
+        emit arith.vmop_pow(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 38 then
+        emit stackop.vmop_cat(L, ins, ip; next = op_next, returned = op_returned, need_concat = op_need_concat, error = op_error)
     default then
         jump error(code = LUA_ERRRUN)
     end
@@ -351,6 +371,8 @@ block dispatch_table_global(bc_v: ptr(u32), ip: i32, ins: u32, op: i32)
         emit tableop.vmop_tsets(L, ins, ip; next = op_next, returned = op_returned, metamethod = op_metamethod, error = op_error)
     case 62 then
         emit tableop.vmop_tsetb(L, ins, ip; next = op_next, returned = op_returned, metamethod = op_metamethod, error = op_error)
+    case 63 then
+        emit tableop.vmop_tsetm(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 64 then
         emit tableop.vmop_tsetr(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     default then
@@ -387,8 +409,20 @@ block dispatch_call_ret(bc_v: ptr(u32), ip: i32, ins: u32, op: i32)
             native_call = call_native,
             metamethod = call_metamethod,
             error = op_error)
+    case 69 then
+        emit call.vmop_iterc(L, ins, bc_v, ip;
+            enter_lua = call_enter_lua,
+            native_call = call_native,
+            metamethod = call_metamethod,
+            error = op_error)
+    case 70 then
+        emit loopop.vmop_itern(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 71 then
         emit call.vmop_varg(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 72 then
+        emit call.vmop_isnext(L, ins, ip; next = op_next, need_iterator = op_need_iterator, error = op_error)
+    case 73 then
+        emit call.vmop_retm(L, ins, ip; resume_caller = ret_resume, final_return = op_returned, close_upvalues = ret_close_upvalues, error = op_error)
     case 74 then
         emit call.vmop_ret(L, ins, ip; resume_caller = ret_resume, final_return = op_returned, close_upvalues = ret_close_upvalues, error = op_error)
     case 75 then
@@ -404,13 +438,19 @@ block dispatch_loop_branch(bc_v: ptr(u32), ip: i32, ins: u32, op: i32)
     switch op do
     case 77 then
         emit loopop.vmop_fori(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 78 then
+        emit loopop.vmop_fori(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 79 then
         emit loopop.vmop_forl(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 80 then
         emit loopop.vmop_forl(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 81 then
+        emit loopop.vmop_forl(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 82 then
         emit loopop.vmop_iterl(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 83 then
+        emit loopop.vmop_iterl(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
+    case 84 then
         emit loopop.vmop_iterl(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
     case 85 then
         let G: ptr(u8) = disp_global(L)
@@ -421,6 +461,14 @@ block dispatch_loop_branch(bc_v: ptr(u32), ip: i32, ins: u32, op: i32)
         end
         jump dispatch(bc_v = bc_v, ip = ip + 1 + disp_s16(disp_bc_d(ins)))
     case 86 then
+        jump dispatch(bc_v = bc_v, ip = ip + 1 + disp_s16(disp_bc_d(ins)))
+    case 87 then
+        let G: ptr(u8) = disp_global(L)
+        if as(u64, G) ~= 0 then
+            let hc: i32 = disp_hookcount(G)
+            if hc <= 0 then jump hot(pc = as(ptr(u8), bc_v + ip)) end
+            disp_set_hookcount(G, hc - 1)
+        end
         jump dispatch(bc_v = bc_v, ip = ip + 1 + disp_s16(disp_bc_d(ins)))
     case 88 then
         emit stackop.vmop_jmp(L, ins, ip; next = op_next, returned = op_returned, error = op_error)
@@ -516,6 +564,14 @@ block op_metamethod(mm_tag: i32, mm_payload: i64, ins: u32, ip: i32)
     jump metamethod_call(mm_tag = mm_tag, mm_payload = mm_payload, ins = ins, ip = ip)
 end
 
+block op_need_concat(a: i32, b: i32, c: i32, total_len: i32, ins: u32, ip: i32)
+    jump need_string_concat(a = a, b = b, c = c, total_len = total_len, ins = ins, ip = ip)
+end
+
+block op_need_iterator(kind: i32, a: i32, ins: u32, ip: i32)
+    jump need_iterator(kind = kind, a = a, ins = ins, ip = ip)
+end
+
 block op_returned(nresults: i32)
     jump returned(nresults = nresults)
 end
@@ -533,6 +589,8 @@ export func vm_interp_run(L: ptr(u8), bc: ptr(u32), pc: i32, status: i32) -> i32
             yielded  = got_yielded,
             need_table_alloc = got_need_table_alloc,
             need_func_alloc = got_need_func_alloc,
+            need_string_concat = got_need_string_concat,
+            need_iterator = got_need_iterator,
             metamethod_call = got_metamethod_call,
             hot = got_hot,
             error   = got_error)
@@ -548,6 +606,12 @@ export func vm_interp_run(L: ptr(u8), bc: ptr(u32), pc: i32, status: i32) -> i32
     end
     block got_need_func_alloc(pt: ptr(u8), nupvalues: i32, ins: u32, ip: i32)
         yield -300 - nupvalues
+    end
+    block got_need_string_concat(a: i32, b: i32, c: i32, total_len: i32, ins: u32, ip: i32)
+        yield -700 - (c - b + 1)
+    end
+    block got_need_iterator(kind: i32, a: i32, ins: u32, ip: i32)
+        yield -800 - kind
     end
     block got_metamethod_call(mm_tag: i32, mm_payload: i64, ins: u32, ip: i32)
         yield -500 - mm_tag
@@ -569,6 +633,8 @@ export func vm_interp_run_record(L: ptr(u8), bc: ptr(u32), pc: i32, status: i32,
             yielded = got_yielded,
             need_table_alloc = got_need_table_alloc,
             need_func_alloc = got_need_func_alloc,
+            need_string_concat = got_need_string_concat,
+            need_iterator = got_need_iterator,
             metamethod_call = got_metamethod_call,
             hot = got_hot,
             error = got_error)
@@ -577,6 +643,8 @@ export func vm_interp_run_record(L: ptr(u8), bc: ptr(u32), pc: i32, status: i32,
     block got_yielded(code: i32) yield -1 - code end
     block got_need_table_alloc(asize: i32, hmask: i32, ins: u32, ip: i32) yield -200 - asize end
     block got_need_func_alloc(pt: ptr(u8), nupvalues: i32, ins: u32, ip: i32) yield -300 - nupvalues end
+    block got_need_string_concat(a: i32, b: i32, c: i32, total_len: i32, ins: u32, ip: i32) yield -700 - (c - b + 1) end
+    block got_need_iterator(kind: i32, a: i32, ins: u32, ip: i32) yield -800 - kind end
     block got_metamethod_call(mm_tag: i32, mm_payload: i64, ins: u32, ip: i32) yield -500 - mm_tag end
     block got_hot(pc: ptr(u8))
         emit traceop.trace_record_root(J, L, pc; compiled = trace_compiled, interpret = trace_interpret, abort = trace_abort)
@@ -589,7 +657,7 @@ export func vm_interp_run_record(L: ptr(u8), bc: ptr(u32), pc: i32, status: i32,
 end
 
 export func dispatch_const_check() -> i32
-    return BC_LOOP + BC_ILOOP + BC_RET + BC_MOV + BC_NOT + BC_UNM + BC_LEN + BC_ADDVV + BC_TGETV + BC_TGETB + BC_TGETR + BC_TGETS + BC_TSETV + BC_TSETB + BC_TSETR + BC_TSETS + BC_KSHORT + BC_KCDATA + BC_UGET + BC_USETV + BC_GGET + BC_GSET + BC_TNEW + BC_TDUP + BC_CALLM + BC_CALLMT + BC_FORI + BC_FORL + BC_IFORL + BC_ITERL + BC_IITERL + BC_UCLO + BC_ISEQS + BC_ISTYPE + BC_FUNCF + BC_FUNCV + LUA_OK
+    return BC_LOOP + BC_ILOOP + BC_JLOOP + BC_RET + BC_RETM + BC_MOV + BC_NOT + BC_UNM + BC_LEN + BC_POW + BC_CAT + BC_ADDVV + BC_TGETV + BC_TGETB + BC_TGETR + BC_TGETS + BC_TSETV + BC_TSETB + BC_TSETM + BC_TSETR + BC_TSETS + BC_KSHORT + BC_KCDATA + BC_UGET + BC_USETV + BC_GGET + BC_GSET + BC_TNEW + BC_TDUP + BC_CALLM + BC_CALLMT + BC_FORI + BC_JFORI + BC_FORL + BC_IFORL + BC_JFORL + BC_ITERL + BC_IITERL + BC_JITERL + BC_UCLO + BC_ISEQS + BC_ISTYPE + BC_FUNCF + BC_FUNCV + LUA_OK
 end
 
 end

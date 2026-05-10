@@ -11,10 +11,19 @@ const FF_TYPE_TAG: i32 = 2   -- returns integer TValue tag of arg1
 const FF_ASSERT:   i32 = 3   -- assert(arg1): returns arg1 or errors
 const FF_NARGS:    i32 = 4   -- returns nargs as integer
 const FF_YIELD:    i32 = 5   -- coroutine-style yield edge
+const FF_NEXT:     i32 = 6   -- deterministic next(table, key) fast path
 
 const LUA_TNIL:   i32 = 0
 const LUA_TFALSE: i32 = 1
 const LUA_TINT:   i32 = 3
+const LUA_TTAB:   i32 = 8
+const TAB_OFF_ARRAY: i32 = 16
+const TAB_OFF_NODE: i32 = 40
+const TAB_OFF_ASIZE: i32 = 48
+const TAB_OFF_HMASK: i32 = 52
+const NODE_OFF_VAL: i32 = 0
+const NODE_OFF_KEY: i32 = 16
+const NODE_SIZE: i32 = 48
 
 func base_stack_base(L: ptr(u8)) -> ptr(u8)
     return as(ptr(u8), as(ptr(u64), L)[4])
@@ -35,6 +44,77 @@ end
 
 func base_copy(base: ptr(u8), src: i32, dst: i32)
     base_set(base, dst, base_tag_at(base, src), base_payload_at(base, src))
+end
+
+func base_tab_array(t: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), t)[TAB_OFF_ARRAY / 8])
+end
+
+func base_tab_node(t: ptr(u8)) -> ptr(u8)
+    return as(ptr(u8), as(ptr(u64), t)[TAB_OFF_NODE / 8])
+end
+
+func base_tab_asize(t: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), t)[TAB_OFF_ASIZE / 4])
+end
+
+func base_tab_hmask(t: ptr(u8)) -> i32
+    return as(i32, as(ptr(u32), t)[TAB_OFF_HMASK / 4])
+end
+
+func base_node_val_tag(n: ptr(u8)) -> i32
+    return as(ptr(i32), n + NODE_OFF_VAL)[0]
+end
+
+func base_node_val_payload(n: ptr(u8)) -> i64
+    return as(ptr(i64), n + NODE_OFF_VAL)[1]
+end
+
+func base_node_key_tag(n: ptr(u8)) -> i32
+    return as(ptr(i32), n + NODE_OFF_KEY)[0]
+end
+
+func base_node_key_payload(n: ptr(u8)) -> i64
+    return as(ptr(i64), n + NODE_OFF_KEY)[1]
+end
+
+region base_next(L: ptr(u8), a: i32, nargs: i32; done: cont(nresults: i32), error: cont(code: i32))
+entry start()
+    let base: ptr(u8) = base_stack_base(L)
+    if nargs < 1 then jump error(code = 25) end
+    if base_tag_at(base, a + 1) ~= LUA_TTAB then jump error(code = 26) end
+    let tab: ptr(u8) = as(ptr(u8), base_payload_at(base, a + 1))
+    let start_idx: i32 = 0
+    if nargs >= 2 and base_tag_at(base, a + 2) == LUA_TINT then start_idx = as(i32, base_payload_at(base, a + 2)) end
+    jump scan_array(tab = tab, a = a, idx = start_idx)
+end
+block scan_array(tab: ptr(u8), a: i32, idx: i32)
+    let asize: i32 = base_tab_asize(tab)
+    if idx >= asize then jump scan_hash(tab = tab, a = a, hidx = idx - asize) end
+    let arr: ptr(u8) = base_tab_array(tab)
+    if as(u64, arr) == 0 then jump scan_hash(tab = tab, a = a, hidx = 0) end
+    if base_tag_at(arr, idx) == LUA_TNIL then jump scan_array(tab = tab, a = a, idx = idx + 1) end
+    let base: ptr(u8) = base_stack_base(L)
+    base_set(base, a, LUA_TINT, as(i64, idx + 1))
+    base_set(base, a + 1, base_tag_at(arr, idx), base_payload_at(arr, idx))
+    jump done(nresults = 2)
+end
+block scan_hash(tab: ptr(u8), a: i32, hidx: i32)
+    let hmask: i32 = base_tab_hmask(tab)
+    if hidx > hmask then jump no_more(a = a) end
+    let nbase: ptr(u8) = base_tab_node(tab)
+    if as(u64, nbase) == 0 then jump no_more(a = a) end
+    let n: ptr(u8) = nbase + hidx * NODE_SIZE
+    if base_node_val_tag(n) == LUA_TNIL then jump scan_hash(tab = tab, a = a, hidx = hidx + 1) end
+    let base: ptr(u8) = base_stack_base(L)
+    base_set(base, a, base_node_key_tag(n), base_node_key_payload(n))
+    base_set(base, a + 1, base_node_val_tag(n), base_node_val_payload(n))
+    jump done(nresults = 2)
+end
+block no_more(a: i32)
+    base_set(base_stack_base(L), a, LUA_TNIL, as(i64, 0))
+    jump done(nresults = 1)
+end
 end
 
 region base_call(L: ptr(u8), ffid: i32, a: i32, nargs: i32, wanted: i32;
@@ -58,6 +138,9 @@ entry start()
     if ffid == FF_NARGS then
         base_set(base, a, LUA_TINT, as(i64, nargs))
         jump done(nresults = 1)
+    end
+    if ffid == FF_NEXT then
+        emit base_next(L, a, nargs; done = done, error = error)
     end
     if ffid == FF_YIELD then
         jump yielded(code = nargs)
