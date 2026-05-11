@@ -151,12 +151,6 @@ end
 type InterpResult
     = returned(nresults: i32)
     | yielded(code: i32)
-    | need_table_alloc(asize: i32, hmask: i32, ins: u32, ip: i32)
-    | need_func_alloc(pt: ptr(GCproto), nupvalues: i32, ins: u32, ip: i32)
-    | need_string_concat(a: i32, b: i32, c: i32, ins: u32, ip: i32)
-    | need_iterator(kind: i32, a: i32, ins: u32, ip: i32)
-    | metamethod_call(mm: TValue, ins: u32, ip: i32)
-    | hot(pc: ptr(BCIns))
     | error(kind: RuntimeErrorKind)
 
 -- Result of a single opcode handler.

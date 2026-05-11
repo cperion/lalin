@@ -636,28 +636,6 @@ end
 
 ### 9.2 Opcode Handler Families
 
-Current Moonlift implementation status:
-
-- Interpreter dispatch is intentionally split into opcode-family blocks before
-  each family `switch`, because RNF inlines emitted regions into the caller CFG.
-  This preserves switch dispatch while avoiding a single giant composed graph.
-- Implemented interpreter families now include comparison/test opcodes, integer
-  arithmetic including DIV/MOD and integer POW fast path, constants including
-  KSTR/KNUM/KCDATA/KPRI/KNIL, LEN for strings/raw table arrays with typed
-  metamethod exit, raw table ops TGETR/TSETR, constructor bulk fill TSETM,
-  Lua CALL/CALLM/CALLT/CALLMT, VARG, RET/RET0/RET1/RETM, numeric loops and
-  their interpreted/JIT-prefixed aliases, specialized ITERN table iteration,
-  ITERL/IITERL/JITERL, JLOOP hotcount routing, closure/upvalue opcodes, and
-  function header bytecodes as dispatch no-ops.
-- Generic iteration follows LuaJIT's split fast paths: `ITERC` arranges a normal
-  two-argument iterator call through the same CallInfo protocol as `CALL`,
-  `ITERN` traverses table array/hash storage directly, and `ISNEXT` specializes
-  `next(table, nil)` to the following `ITERN` when the generator is the VM
-  built-in `next` fast function.
-- Still-explicit slow/semantic exits include string concatenation allocation for
-  multi-operand CAT and unhandled iterator specialization fallback. These are
-  typed `InterpResult` exits, not hidden error returns.
-
 #### Arithmetic
 
 ```moonlift
@@ -1513,14 +1491,6 @@ Moonlift-native VM.
 
 ### 28.2 What We Should Reuse
 
-A vendored LuaJIT tree is present at `.vendor/LuaJIT/` and should be treated as
-an always-available oracle for bytecode semantics, recorder behavior, snapshot
-layout, and backend instruction order. When a Moonlift implementation detail is
-unclear or looks weaker than LuaJIT's, inspect the corresponding LuaJIT source
-first (for example `src/vm_x64.dasc`, `src/lj_record.c`, `src/lj_snap.c`, and
-`src/lj_asm.c`) and translate the design into typed regions/protocol exits
-rather than copying C-style status control.
-
 LuaJIT is MIT-licensed, so code reuse is legally possible if the license and
 copyright notices are preserved. But architecturally the better plan is:
 
@@ -1531,11 +1501,7 @@ copyright notices are preserved. But architecturally the better plan is:
    allocation behavior, and guard/exit layouts during development.
 3. **Port selected encoding helpers.** x64 and arm64 instruction encodings can be
    translated into Moonlift region factories/tables.
-4. **Preserve LuaJIT instruction-order invariants.** The current downward-growing
-   x64 emitter follows LuaJIT's backwards assembly discipline; DIV/MOD emission,
-   for example, must account for `idiv` clobbering `rdx` and move an `rdx`
-   divisor to a scratch register before the divide setup.
-5. **Avoid final C dependency.** A temporary C backend is acceptable only as a
+4. **Avoid final C dependency.** A temporary C backend is acceptable only as a
    bootstrap/testing aid, not as the final VM backend.
 
 ### 28.3 Backend Plan
