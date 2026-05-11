@@ -313,7 +313,6 @@ return function(A)
             A.variant "HostValueDecl",
             A.variant "HostValueModule",
             A.variant "HostValueLua",
-            A.variant "HostValueSource",
         },
 
         A.product "HostValueRef" {

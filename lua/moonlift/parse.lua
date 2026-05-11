@@ -6,8 +6,8 @@
 --
 -- Architecture:
 --   M.lex(src)           → token arrays + splice_map side table
---   parser_from_toks()   → Pratt parser over token arrays
---   parse_by_kind()      → dispatch by island kind
+--   new_parser()         → Pratt parser over token arrays
+--   M.parse(kind, src)   → dispatch by island kind
 --   M.Define(T)          → public API
 
 local byte = string.byte
@@ -29,13 +29,12 @@ local TK = {
     eqeq = 27, ne = 28, lt = 29, le = 30, gt = 31, ge = 32,
     amp = 33, pipe = 34, caret = 35, tilde = 36,
     shl = 37, lshr = 38, ashr = 39,
-    amp2 = 40, pipe2 = 41,
     -- keyword tokens (> 99 so they never collide with ASCII char checks)
     extern_kw  = 101, func_kw    = 102, const_kw   = 103, static_kw  = 104,
-    type_kw    = 106,
+    type_kw    = 106, export_kw  = 107,
     let_kw     = 110, var_kw     = 111, if_kw      = 112, then_kw    = 113,
     elseif_kw  = 114, else_kw    = 115, switch_kw  = 116, case_kw    = 117,
-    default_kw = 118, do_kw      = 119, end_kw     = 120, while_kw   = 121,
+    default_kw = 118, do_kw      = 119, end_kw     = 120,
     block_kw   = 130, control_kw = 131, jump_kw    = 132, yield_kw   = 133,
     return_kw  = 134, region_kw  = 135, entry_kw   = 136, emit_kw    = 137,
     expr_kw    = 138,
@@ -50,6 +49,7 @@ local TK = {
 
 local keywords = {
     ["extern"]   = TK.extern_kw,   ["func"]     = TK.func_kw,
+    ["export"]   = TK.export_kw,
     ["const"]    = TK.const_kw,    ["static"]   = TK.static_kw,
     ["type"]     = TK.type_kw,
     ["let"]      = TK.let_kw,      ["var"]      = TK.var_kw,
@@ -57,7 +57,7 @@ local keywords = {
     ["elseif"]   = TK.elseif_kw,   ["else"]     = TK.else_kw,
     ["switch"]   = TK.switch_kw,   ["case"]     = TK.case_kw,
     ["default"]  = TK.default_kw,  ["do"]       = TK.do_kw,
-    ["end"]      = TK.end_kw,      ["while"]    = TK.while_kw,
+    ["end"]      = TK.end_kw,
     ["block"]    = TK.block_kw,    ["control"]  = TK.control_kw,
     ["jump"]     = TK.jump_kw,     ["yield"]    = TK.yield_kw,
     ["return"]   = TK.return_kw,   ["region"]   = TK.region_kw,
@@ -272,8 +272,7 @@ function M.lex(src)
             if i < n then
                 local s2 = sub(src, i, i + 1)
                 local k2 = ({ ["->"]=TK.arrow, ["=="]=TK.eqeq, ["~="]=TK.ne, ["<="]=TK.le,
-                              [">="]=TK.ge, ["<<"]=TK.shl, [">>"]=TK.ashr, ["&&"]=TK.amp2,
-                              ["||"]=TK.pipe2 })[s2]
+                              [">="]=TK.ge, ["<<"]=TK.shl, [">>"]=TK.ashr })[s2]
                 if k2 then push_tok(t, k2, s2, i, i + 1, line, col); i = i + 2; col = col + 2; goto continue_lex end
             end
 
@@ -295,13 +294,118 @@ function M.lex(src)
 end
 
 ---------------------------------------------------------------------------
+-- Island boundary scanning
+---------------------------------------------------------------------------
+
+local island_start = {
+    [TK.func_kw]=true, [TK.region_kw]=true, [TK.expr_kw]=true,
+    [TK.struct_kw]=true, [TK.type_kw]=true, [TK.const_kw]=true,
+    [TK.static_kw]=true, [TK.extern_kw]=true,
+}
+
+local end_delimited_open = {
+    [TK.func_kw]=true, [TK.region_kw]=true, [TK.expr_kw]=true,
+    [TK.struct_kw]=true, [TK.if_kw]=true, [TK.switch_kw]=true,
+    [TK.block_kw]=true, [TK.control_kw]=true, [TK.entry_kw]=true,
+}
+
+local function scan_line_island(toks, i)
+    local j = i + 1
+    while j <= toks.n and toks.kind[j] ~= TK.nl and toks.kind[j] ~= TK.eof do
+        j = j + 1
+    end
+    return j
+end
+
+local function scan_end_delimited_island(toks, i)
+    local depth = 1
+    local j = i + 1
+    while j <= toks.n and depth > 0 do
+        local k = toks.kind[j]
+        if end_delimited_open[k] then
+            depth = depth + 1
+        elseif k == TK.end_kw then
+            depth = depth - 1
+        end
+        j = j + 1
+    end
+    return j
+end
+
+local function scan_to_first_end(toks, i)
+    local j = i + 1
+    while j <= toks.n and toks.kind[j] ~= TK.eof do
+        if toks.kind[j] == TK.end_kw then return j + 1 end
+        j = j + 1
+    end
+    return j
+end
+
+local function type_is_end_delimited(toks, i)
+    local j = i + 1
+    while j <= toks.n and toks.kind[j] ~= TK.eof do
+        local k = toks.kind[j]
+        if k == TK.struct_kw or k == TK.end_kw then return true end
+        if island_start[k] or (k == TK.export_kw and toks.kind[j + 1] == TK.func_kw) then return false end
+        j = j + 1
+    end
+    return false
+end
+
+function M.scan_islands(src)
+    local toks = M.lex(src)
+    local islands = {}
+    local i = 1
+    while i <= toks.n do
+        local k = toks.kind[i]
+        local start_i = i
+        local kind
+
+        if k == TK.export_kw and toks.kind[i + 1] == TK.func_kw then
+            kind = "func"
+            i = i + 1
+        elseif k == TK.extern_kw and toks.kind[i + 1] == TK.func_kw then
+            kind = "extern"
+        elseif island_start[k] then
+            kind = toks.text[i]
+        end
+
+        if kind then
+            local end_i
+            if kind == "extern" or kind == "const" or kind == "static" or (kind == "type" and not type_is_end_delimited(toks, i)) then
+                end_i = scan_line_island(toks, i)
+            elseif kind == "type" then
+                end_i = scan_to_first_end(toks, i)
+            else
+                end_i = scan_end_delimited_island(toks, i)
+            end
+            local stop_i = math.min(end_i - 1, toks.n)
+            local holes = {}
+            for h = start_i, stop_i do
+                if toks.kind[h] == TK.hole then holes[#holes + 1] = toks.text[h] end
+            end
+            islands[#islands + 1] = {
+                kind = kind,
+                start = toks.start[start_i],
+                stop = toks.stop[stop_i] or #src,
+                holes = holes,
+            }
+            i = end_i
+        else
+            i = i + 1
+        end
+    end
+    return { toks = toks, islands = islands, splice_map = toks.splice_map }
+end
+
+---------------------------------------------------------------------------
 -- Parser
 ---------------------------------------------------------------------------
 
 local Parser = {}
 Parser.__index = Parser
 
-local function parser_from_toks(T, toks, opts)
+local function new_parser(T, toks, opts)
     opts = opts or {}
     local C, Ty, B, O, Sem, Tr, Pm =
         T.MoonCore, T.MoonType, T.MoonBind, T.MoonOpen,
@@ -312,10 +416,7 @@ local function parser_from_toks(T, toks, opts)
         toks = toks, i = 1, issues = {},
         value_env = opts.value_env or {},
         cont_env = opts.cont_env or {},
-        region_frags = opts.region_frags or {},
-        expr_frags = opts.expr_frags or {},
         protocol_types = opts.protocol_types or {},
-        qualified_values = opts.qualified_values or {},
         splice_slots = {},
         splice_slots_by_id = {},
         region_seq = 0,
@@ -364,7 +465,7 @@ local ident_kw = {
     [TK.noalias_kw]=true, [TK.readonly_kw]=true, [TK.writeonly_kw]=true,
     [TK.requires_kw]=true, [TK.bounds_kw]=true, [TK.disjoint_kw]=true,
     [TK.len_kw]=true, [TK.same_len_kw]=true, [TK.as_kw]=true,
-    [TK.struct_kw]=true, [TK.while_kw]=true,
+    [TK.struct_kw]=true,
 }
 
 function Parser:expect_field_name(msg)
@@ -449,13 +550,6 @@ function Parser:parse_type()
         return Ty.TFunc(params, result)
     end
 
-    -- fn / fnptr alias
-    if self:kind() == TK.name and (self:text() == "fn" or self:text() == "fnptr") then
-        self.i = self.i + 1
-        local params, result = self:parse_callable_type()
-        return Ty.TFunc(params, result)
-    end
-
     if self:kind() == TK.name and self:text() == "closure" then
         self.i = self.i + 1
         local params, result = self:parse_callable_type()
@@ -485,8 +579,8 @@ end
 ---------------------------------------------------------------------------
 
 local lbp = {
-    [TK.or_kw]   = 10, [TK.pipe2]   = 10,
-    [TK.and_kw]  = 20, [TK.amp2]    = 20,
+    [TK.or_kw]   = 10,
+    [TK.and_kw]  = 20,
     [TK.eqeq]    = 30, [TK.ne]      = 30, [TK.lt]=30, [TK.le]=30, [TK.gt]=30, [TK.ge]=30,
     [TK.pipe]    = 40, [TK.caret]   = 45, [TK.amp]=50,
     [TK.shl]     = 55, [TK.lshr]    = 55, [TK.ashr]=55,
@@ -608,8 +702,8 @@ function Parser:led(k, left)
 
     if bin[k] then return Tr.ExprBinary(Tr.ExprSurface, bin[k], left, self:parse_expr(lbp[k])) end
     if cmp[k] then return Tr.ExprCompare(Tr.ExprSurface, cmp[k], left, self:parse_expr(lbp[k])) end
-    if k == TK.and_kw or k == TK.amp2 then return Tr.ExprLogic(Tr.ExprSurface, C.LogicAnd, left, self:parse_expr(lbp[k])) end
-    if k == TK.or_kw or k == TK.pipe2 then return Tr.ExprLogic(Tr.ExprSurface, C.LogicOr, left, self:parse_expr(lbp[k])) end
+    if k == TK.and_kw then return Tr.ExprLogic(Tr.ExprSurface, C.LogicAnd, left, self:parse_expr(lbp[k])) end
+    if k == TK.or_kw then return Tr.ExprLogic(Tr.ExprSurface, C.LogicOr, left, self:parse_expr(lbp[k])) end
 
     self:issue("unknown infix operator")
     return left
@@ -1060,7 +1154,7 @@ function Parser:parse_extern_func()
     return Tr.ExternFunc(name, name, params, result)
 end
 
-function Parser:parse_func()
+function Parser:parse_func(is_export)
     local Tr, Ty, C = self.Tr, self.Ty, self.C
     local name = self:expect_name("expected function name")
     self:expect(TK.lparen); local params, contracts = self:parse_param_list(); self:expect(TK.rparen)
@@ -1073,6 +1167,12 @@ function Parser:parse_func()
     end
     local body = self:parse_stmt_until({ [TK.end_kw]=true })
     self:expect(TK.end_kw, "expected end after function")
+    if is_export then
+        if #contracts > 0 then
+            return Tr.FuncExportContract(name, params, result, contracts, body)
+        end
+        return Tr.FuncExport(name, params, result, body)
+    end
     if #contracts > 0 then
         return Tr.FuncLocalContract(name, params, result, contracts, body)
     end
@@ -1219,7 +1319,7 @@ function Parser:parse_region_frag()
     end
     local entry_label = Tr.BlockLabel(self:expect_name("expected entry label"))
     local entry_params = self:parse_block_params(true)
-    local old_value_env, old_cont_env = self.value_env, self.cont_env
+    local saved_value_env, saved_cont_env = self.value_env, self.cont_env
     self.value_env, self.cont_env = param_bindings, cont_slots
     local body = self:parse_stmt_until({ [TK.end_kw]=true, [TK.block_kw]=true })
     if self:kind() == TK.end_kw then self.i = self.i + 1 end
@@ -1234,7 +1334,7 @@ function Parser:parse_region_frag()
         blocks[#blocks + 1] = Tr.ControlBlock(label, block_params, block_body)
         self:skip_nl()
     end
-    self.value_env, self.cont_env = old_value_env, old_cont_env
+    self.value_env, self.cont_env = saved_value_env, saved_cont_env
     self:expect(TK.end_kw, "expected end after region fragment")
 
     return O.RegionFrag(name_ref, params, slots, O.OpenSet({}, {}, {}, {}),
@@ -1261,11 +1361,11 @@ function Parser:parse_expr_frag()
     self:expect(TK.rparen)
     self:expect(TK.arrow, "expected -> in expression fragment")
     local result = self:parse_type()
-    local old_value_env = self.value_env
+    local saved_value_env = self.value_env
     self.value_env = param_bindings
     local body = self:parse_expr(0)
     self:skip_nl()
-    self.value_env = old_value_env
+    self.value_env = saved_value_env
     self:expect(TK.end_kw, "expected end after expression fragment")
     return O.ExprFrag(name_ref, params, O.OpenSet({}, {}, {}, {}), body, result)
 end
@@ -1356,172 +1456,76 @@ function Parser:parse_static()
     return Tr.ItemStatic(Tr.StaticItem(name, ty, self:parse_expr(0)))
 end
 
--- Item parsing (for compilation unit building via moon.compile)
-function Parser:parse_item()
-    local Tr = self.Tr
-    self:skip_nl()
-
-    -- Hole: @{items}
-    if self:kind() == TK.hole then
-        local id = self:text(); self.i = self.i + 1
-        local slot = self.O.ItemsSlot(self:splice_key("module_items", id), id)
-        self:record_splice_slot(id, self.O.SlotItems(slot), "module_items")
-        return Tr.ItemUseItemsSlot(slot)
-    end
-
-    if self:accept(TK.func_kw) then return Tr.ItemFunc(self:parse_func()) end
-    if self:accept(TK.extern_kw) then self:expect(TK.func_kw); return Tr.ItemExtern(self:parse_extern_func()) end
-    if self:accept(TK.const_kw) then return self:parse_const() end
-    if self:accept(TK.static_kw) then return self:parse_static() end
-    if self:accept(TK.type_kw) then return self:parse_type_item() end
-    if self:accept(TK.struct_kw) then return Tr.ItemType(self:parse_struct()) end
-
-    self:issue("expected item")
-    self.i = self.i + 1
-    return nil
+local function parse_result(kind, value, p)
+    return {
+        kind = kind,
+        value = value,
+        splice_slots = p.splice_slots,
+        issues = p.issues,
+        protocol_types = p.protocol_types,
+    }
 end
 
--- Parse items from source (used by host_splice for source escapes)
-function M.parse_items(T, src)
-    local toks = M.lex(src)
-    local p = parser_from_toks(T, toks, {})
+local function parser_for_source(T, src, opts)
+    return new_parser(T, M.lex(src), opts or {})
+end
+
+function M.parse_type(T, src, opts)
+    local p = parser_for_source(T, src, opts)
     p:skip_sep()
-    local items = {}
-    while p:kind() ~= TK.eof and p:kind() ~= TK.end_kw do
-        local item = p:parse_item()
-        if item ~= nil then items[#items + 1] = item end
-        p:skip_sep()
-    end
-    if p:kind() == TK.end_kw then p.i = p.i + 1 end
-    return { module = p.Tr.Module(p.Tr.ModuleSurface, items), issues = p.issues }
-end
-
-function M.parse_type_string(T, src)
-    local toks = M.lex("func __t__(x: " .. src .. ") -> void end")
-    local p = parser_from_toks(T, toks, {})
-    p:expect(TK.func_kw); p:expect_name()
-    p:expect(TK.lparen); p:expect_name()
-    p:expect(TK.colon)
     local ty = p:parse_type()
-    if #p.issues > 0 then error("type parse error: " .. tostring(p.issues[1]), 2) end
-    return ty
+    p:skip_sep()
+    if p:kind() ~= TK.eof then p:issue("unexpected token after type") end
+    return parse_result("type_expr", ty, p)
 end
 
-function M.parse_func(T, src, opts)
-    local toks = M.lex(src); local p = parser_from_toks(T, toks, opts)
-    p:skip_sep(); p:expect(TK.func_kw); return { func = p:parse_func(), splice_slots = p.splice_slots, issues = p.issues }
-end
+function M.parse(T, kind, src, opts)
+    local p = parser_for_source(T, src, opts)
+    p:skip_sep()
 
-function M.parse_region_frag(T, src, opts)
-    local toks = M.lex(src); local p = parser_from_toks(T, toks, opts)
-    p:skip_sep(); p:expect(TK.region_kw); return { frag = p:parse_region_frag(), splice_slots = p.splice_slots, issues = p.issues }
-end
-
-function M.parse_expr_frag(T, src, opts)
-    local toks = M.lex(src); local p = parser_from_toks(T, toks, opts)
-    p:skip_sep(); p:expect(TK.expr_kw); return { frag = p:parse_expr_frag(), splice_slots = p.splice_slots, issues = p.issues }
-end
-
-function M.parse_struct(T, src, opts)
-    local toks = M.lex(src); local p = parser_from_toks(T, toks, opts)
-    p:skip_sep(); p:expect(TK.struct_kw); return { struct = p:parse_struct(), splice_slots = p.splice_slots, issues = p.issues }
-end
-
-function M.parse_extern_func(T, src, opts)
-    local toks = M.lex(src); local p = parser_from_toks(T, toks, opts)
-    p:skip_sep(); p:expect(TK.extern_kw); p:expect(TK.func_kw)
-    return { func = p:parse_extern_func(), splice_slots = p.splice_slots, issues = p.issues }
-end
-
-function M.parse_type_item(T, src, opts)
-    local toks = M.lex(src); local p = parser_from_toks(T, toks, opts)
-    p:skip_sep(); p:expect(TK.type_kw)
-    local item = p:parse_type_item()
-    return { item = item, splice_slots = p.splice_slots, issues = p.issues, protocol_types = p.protocol_types }
-end
-
-function M.parse_const(T, src, opts)
-    local toks = M.lex(src); local p = parser_from_toks(T, toks, opts)
-    p:skip_sep(); p:expect(TK.const_kw); return { item = p:parse_const(), splice_slots = p.splice_slots, issues = p.issues }
-end
-
-function M.parse_static(T, src, opts)
-    local toks = M.lex(src); local p = parser_from_toks(T, toks, opts)
-    p:skip_sep(); p:expect(TK.static_kw); return { item = p:parse_static(), splice_slots = p.splice_slots, issues = p.issues }
-end
-
--- Parse a statement list from source (used by host_splice for region_body)
-function M.parse_stmt_list(T, src, opts)
-    local wrapped = "func __stmts__(x: i32) -> i32\n" .. src .. "\n    return x\nend"
-    local result = M.parse_func(T, wrapped, opts)
-    if #result.issues > 0 then return nil, result.issues end
-    if result.func and result.func.body then
-        local body = {}
-        for i = 1, #result.func.body do body[i] = result.func.body[i] end
-        return body, {}
-    end
-    return nil, { T.MoonParse.ParseIssue("source stmt list: could not extract body", 0, 0, 0) }
-end
-
----------------------------------------------------------------------------
--- Island dispatch (called by eval_island)
----------------------------------------------------------------------------
-
--- Parse an island by its kind string, returning { value = ..., splice_slots = ..., issues = ... }
-function M.parse_island(T, kind, src, opts)
-    opts = opts or {}
+    local value
     if kind == "func" then
-        local r = M.parse_func(T, src, opts)
-        return { value = r.func, splice_slots = r.splice_slots, issues = r.issues }
+        local is_export = p:accept(TK.export_kw)
+        p:expect(TK.func_kw)
+        value = p:parse_func(is_export)
     elseif kind == "region" then
-        local r = M.parse_region_frag(T, src, opts)
-        return { value = r.frag, splice_slots = r.splice_slots, issues = r.issues }
+        p:expect(TK.region_kw)
+        value = p:parse_region_frag()
     elseif kind == "expr" then
-        local r = M.parse_expr_frag(T, src, opts)
-        return { value = r.frag, splice_slots = r.splice_slots, issues = r.issues }
+        p:expect(TK.expr_kw)
+        value = p:parse_expr_frag()
     elseif kind == "struct" then
-        local r = M.parse_struct(T, src, opts)
-        return { value = r.struct, splice_slots = r.splice_slots, issues = r.issues }
+        p:expect(TK.struct_kw)
+        value = p:parse_struct()
     elseif kind == "extern" then
-        local r = M.parse_extern_func(T, src, opts)
-        return { value = r.func, splice_slots = r.splice_slots, issues = r.issues }
+        p:expect(TK.extern_kw)
+        p:expect(TK.func_kw)
+        value = p:parse_extern_func()
     elseif kind == "type" then
-        local r = M.parse_type_item(T, src, opts)
-        return { value = r.item, splice_slots = r.splice_slots, issues = r.issues,
-                 protocol_types = r.protocol_types }
+        p:expect(TK.type_kw)
+        value = p:parse_type_item()
     elseif kind == "const" then
-        local r = M.parse_const(T, src, opts)
-        return { value = r.item, splice_slots = r.splice_slots, issues = r.issues }
+        p:expect(TK.const_kw)
+        value = p:parse_const()
     elseif kind == "static" then
-        local r = M.parse_static(T, src, opts)
-        return { value = r.item, splice_slots = r.splice_slots, issues = r.issues }
-    elseif kind == "module" then
-        -- Legacy: parse as module items
-        local r = M.parse_module(T, src, opts)
-        return { value = r.module, splice_slots = r.splice_slots, issues = r.issues,
-                 protocol_types = r.protocol_types }
+        p:expect(TK.static_kw)
+        value = p:parse_static()
     else
         error("unsupported island kind: " .. tostring(kind), 2)
     end
+
+    p:skip_sep()
+    if p:kind() ~= TK.eof then p:issue("unexpected token after " .. kind .. " island") end
+    return parse_result(kind, value, p)
 end
 
 function M.Define(T)
     return {
         TK = TK,
         lex = M.lex,
-        parser_from_toks = function(toks, opts) return parser_from_toks(T, toks, opts) end,
-        parse_func = function(src, opts) return M.parse_func(T, src, opts) end,
-        parse_region_frag = function(src, opts) return M.parse_region_frag(T, src, opts) end,
-        parse_expr_frag = function(src, opts) return M.parse_expr_frag(T, src, opts) end,
-        parse_struct = function(src, opts) return M.parse_struct(T, src, opts) end,
-        parse_extern_func = function(src, opts) return M.parse_extern_func(T, src, opts) end,
-        parse_type_item = function(src, opts) return M.parse_type_item(T, src, opts) end,
-        parse_const = function(src, opts) return M.parse_const(T, src, opts) end,
-        parse_static = function(src, opts) return M.parse_static(T, src, opts) end,
-        parse_module = function(src, opts) return M.parse_module(T, src, opts) end,
-        parse_stmt_list = function(src, opts) return M.parse_stmt_list(T, src, opts) end,
-        parse_type_string = function(src) return M.parse_type_string(T, src) end,
-        parse_island = function(kind, src, opts) return M.parse_island(T, kind, src, opts) end,
+        scan_islands = M.scan_islands,
+        parse = function(kind, src, opts) return M.parse(T, kind, src, opts) end,
+        parse_type = function(src, opts) return M.parse_type(T, src, opts) end,
     }
 end
 

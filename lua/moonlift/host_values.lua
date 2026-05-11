@@ -15,16 +15,6 @@ RegionFragValue.__index = RegionFragValue
 local ExprFragValue = {}
 ExprFragValue.__index = ExprFragValue
 
-local SourceValue = {}
-SourceValue.__index = SourceValue
-
-local NilSpliceValue = {
-    kind = "source",
-    moonlift_quote_kind = "source",
-    source = "nil",
-}
-function NilSpliceValue:moonlift_splice_source() return "nil" end
-
 local function frag_name_text(session, frag)
     local ref = frag.name
     if type(ref) == "string" then return ref end  -- migration shim
@@ -85,13 +75,11 @@ local function host_kind_for_value(session, value)
         if mt == ExprFragValue or rawget(value, "kind") == "expr_frag" or rawget(value, "moonlift_quote_kind") == "expr_frag" then return H.HostValueExprFrag end
         if rawget(value, "moonlift_quote_kind") == "type" or rawget(value, "kind") == "type" or type(value.as_type_value) == "function" or (mt and mt.__moonlift_host_type_value == true) then return H.HostValueType end
         if rawget(value, "moonlift_quote_kind") == "module" then return H.HostValueModule end
-        if rawget(value, "moonlift_quote_kind") == "source" then return H.HostValueSource end
     end
     return H.HostValueLua
 end
 
 local function value_ref(session, value, pretty)
-    if value == nil then value = NilSpliceValue end
     local H = session.T.MoonHost
     local id = session:host_value_id(pretty or (type(value) == "table" and (value.name or value.kind)) or type(value))
     local kind = host_kind_for_value(session, value)
@@ -104,19 +92,6 @@ function RegionFragValue:__tostring() return "MoonRegionFragValue(" .. tostring(
 
 function ExprFragValue:moonlift_splice_source() return self.name end
 function ExprFragValue:__tostring() return "MoonExprFragValue(" .. tostring(self.name) .. ")" end
-
-function SourceValue:moonlift_splice_source() return self.source end
-function SourceValue:moonlift_splice(role, session, site)
-    -- SourceValue is the moon.source(...) escape. The actual coercion
-    -- (parsing source text for the target role) is handled in host_splice.lua.
-    -- We accept roles that can take source and return self so host_splice
-    -- can detect M.is_source(value) and handle it.
-    if role == "expr" or role == "type" or role == "region_body" or role == "module_items" then
-        return self  -- host_splice.fill_* will handle via M.is_source check
-    end
-    error((site or "splice") .. ": source value cannot splice as " .. role, 2)
-end
-function SourceValue:__tostring() return self.source end
 
 function M.region_frag_value(session, frag, opts)
     opts = opts or {}
@@ -166,20 +141,6 @@ function M.expr_frag_value(session, frag, opts)
     return value
 end
 
-function M.source_value(session, source, deps)
-    local value = setmetatable({
-        kind = "source",
-        moonlift_quote_kind = "source",
-        id = session:host_value_id("source"),
-        source = tostring(source or ""),
-        deps = deps,
-        T = session.T,
-        session = session,
-    }, SourceValue)
-    session:register_host_value(value.id, value)
-    return value
-end
-
 function M.value_ref(session, value, pretty)
     return value_ref(session, value, pretty)
 end
@@ -195,7 +156,6 @@ end
 function M.Install(api, session)
     api.CanonicalRegionFragValue = RegionFragValue
     api.CanonicalExprFragValue = ExprFragValue
-    api.HostSourceValue = SourceValue
     api.host_value_ref = function(value, pretty) return value_ref(session, value, pretty) end
     api.region_frag_value_from_asdl = function(frag, opts) return M.region_frag_value(session, frag, opts) end
     api.expr_frag_value_from_asdl = function(frag, opts) return M.expr_frag_value(session, frag, opts) end

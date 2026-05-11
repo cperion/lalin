@@ -1,9 +1,7 @@
 -- ASDL-native region composition.
 --
 -- This module lowers composition through the hosted region/ASDL builder and
--- returns real region fragment values. Parser-shaped helpers (`seq`, `choice`,
--- `star`, ...) are protocol-parameterized conveniences; byte-parser defaults
--- live in parser_compose.lua.
+-- returns real region fragment values.
 
 local M = {}
 local Compose = {}

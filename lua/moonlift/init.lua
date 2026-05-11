@@ -37,7 +37,6 @@ M.link_command_plan = require("moonlift.link_command_plan")
 M.link_execute = require("moonlift.link_execute")
 M.vec_inspect = require("moonlift.vec_inspect")
 M.region_compose = require("moonlift.region_compose")
-M.parser_compose = require("moonlift.parser_compose")
 M.std = require("moonlift.std")
 M.views = M.std.views
 M.buffer_view = M.std.buffer_view
