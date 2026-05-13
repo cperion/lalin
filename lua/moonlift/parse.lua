@@ -23,6 +23,7 @@ local M = {}
 local TK = {
     eof = 0, name = 1, int = 2, float = 3, string = 4, nl = 5,
     hole = 6,   -- @{lua_expr} → TK.hole with splice id
+    invalid = 7, -- unknown/invalid source character
     lparen = 10, rparen = 11, lbrack = 12, rbrack = 13, lbrace = 14, rbrace = 15,
     comma = 16, colon = 17, dot = 18, semi = 19,
     plus = 20, minus = 21, star = 22, slash = 23, percent = 24, eq = 25, arrow = 26,
@@ -35,14 +36,14 @@ local TK = {
     let_kw     = 110, var_kw     = 111, if_kw      = 112, then_kw    = 113,
     elseif_kw  = 114, else_kw    = 115, switch_kw  = 116, case_kw    = 117,
     default_kw = 118, do_kw      = 119, end_kw     = 120,
-    block_kw   = 130, control_kw = 131, jump_kw    = 132, yield_kw   = 133,
+    block_kw   = 130, jump_kw    = 132, yield_kw   = 133,
     return_kw  = 134, region_kw  = 135, entry_kw   = 136, emit_kw    = 137,
     expr_kw    = 138,
     true_kw    = 140, false_kw   = 141, nil_kw     = 142, and_kw     = 143,
     or_kw      = 144, not_kw     = 145,
     view_kw    = 150, noalias_kw = 151, readonly_kw= 152, writeonly_kw=153,
     requires_kw= 154, bounds_kw  = 155, disjoint_kw= 156, len_kw     = 157,
-    same_len_kw= 158,
+    same_len_kw= 158, window_bounds_kw = 159,
     as_kw      = 170,
     struct_kw  = 180,
     union_kw   = 181,
@@ -57,7 +58,7 @@ local keywords = {
     ["switch"]   = TK.switch_kw,   ["case"]     = TK.case_kw,
     ["default"]  = TK.default_kw,  ["do"]       = TK.do_kw,
     ["end"]      = TK.end_kw,
-    ["block"]    = TK.block_kw,    ["control"]  = TK.control_kw,
+    ["block"]    = TK.block_kw,
     ["jump"]     = TK.jump_kw,     ["yield"]    = TK.yield_kw,
     ["return"]   = TK.return_kw,   ["region"]   = TK.region_kw,
     ["entry"]    = TK.entry_kw,    ["emit"]     = TK.emit_kw,
@@ -69,7 +70,7 @@ local keywords = {
     ["readonly"] = TK.readonly_kw, ["writeonly"]= TK.writeonly_kw,
     ["requires"] = TK.requires_kw, ["bounds"]   = TK.bounds_kw,
     ["disjoint"] = TK.disjoint_kw, ["len"]      = TK.len_kw,
-    ["same_len"] = TK.same_len_kw,
+    ["same_len"] = TK.same_len_kw, ["window_bounds"] = TK.window_bounds_kw,
     ["as"]       = TK.as_kw,
     ["struct"]   = TK.struct_kw,
     ["union"]    = TK.union_kw,
@@ -83,6 +84,7 @@ local token_label = {
     [TK.string] = "string literal",
     [TK.nl] = "newline",
     [TK.hole] = "splice @{...}",
+    [TK.invalid] = "invalid token",
     [TK.lparen] = "'('",
     [TK.rparen] = "')'",
     [TK.lbrack] = "'['",
@@ -138,7 +140,20 @@ local function new_tokens(src)
         kind = {}, text = {}, start = {}, stop = {}, line = {}, col = {},
         splice_map = {},   -- splice_id → lua_expression_text
         splice_i = 0,
+        lex_issues = {},
     }
+end
+
+local function push_lex_issue(t, msg, offset, line, col)
+    t.lex_issues[#t.lex_issues + 1] = { message = msg, offset = offset or 0, line = line or 0, col = col or 0 }
+end
+
+local function advance_line_col(src, from_i, to_i, line, col)
+    for pos = from_i, to_i do
+        if byte(src, pos) == 10 then line = line + 1; col = 1
+        else col = col + 1 end
+    end
+    return line, col
 end
 
 local function push_tok(t, kind, text, s, e, ln, col)
@@ -181,20 +196,23 @@ local function scan_antiquote(src, i, n)
     return nil
 end
 
--- String literal scanning (returns new position after closing quote)
+-- Short string literal scanning. Moonlift strings are single-line, like Lua
+-- short strings; returns (next_position, closed, hit_newline).
 local function scan_string(src, i, n, quote)
     i = i + 1
     while i <= n do
         local c = byte(src, i)
-        if c == 92 then       -- escape
-            i = i + 1
+        if c == 92 then       -- escape next byte
+            i = i + 2
         elseif c == quote then
-            return i + 1
-        elseif c == 10 then   -- newline in string: advance
+            return i + 1, true, false
+        elseif c == 10 then
+            return i, false, true
+        else
+            i = i + 1
         end
-        i = i + 1
     end
-    return i
+    return i, false, false
 end
 
 function M.lex(src)
@@ -234,8 +252,7 @@ function M.lex(src)
         elseif b == 64 and i < n and byte(src, i + 1) == 123 then  -- '@{'
             local close = scan_antiquote(src, i + 1, n)
             if not close then
-                -- Unterminated antiquote: treat rest as error
-                push_tok(t, TK.eof, "", i, i, line, col)
+                push_lex_issue(t, "unterminated splice @{...}", i, line, col)
                 break
             end
             local lua_expr = sub(src, i + 2, close - 1)
@@ -243,7 +260,7 @@ function M.lex(src)
             local id = "splice." .. t.splice_i
             t.splice_map[id] = lua_expr
             push_tok(t, TK.hole, id, i, close, line, col)
-            col = col + (close - i + 1)
+            line, col = advance_line_col(src, i, close, line, col)
             i = close + 1
 
         -- Identifiers and keywords
@@ -268,7 +285,11 @@ function M.lex(src)
                 local nb = byte(src, i + 1)
                 if nb == 120 or nb == 88 then
                     i = i + 2
-                    while i <= n and is_hex(byte(src, i)) do i = i + 1 end
+                    while i <= n do
+                        local hc = byte(src, i)
+                        if not (is_hex(hc) or hc == 95) then break end
+                        i = i + 1
+                    end
                     local text = sub(src, s, i - 1)
                     push_tok(t, TK.int, text, s, i - 1, line, col)
                     col = col + (i - s)
@@ -276,11 +297,19 @@ function M.lex(src)
                 end
             end
             i = i + 1
-            while i <= n and is_digit(byte(src, i)) do i = i + 1 end
+            while i <= n do
+                local dc = byte(src, i)
+                if not (is_digit(dc) or dc == 95) then break end
+                i = i + 1
+            end
             -- Float: decimal point
             if i <= n and byte(src, i) == 46 and not (i < n and byte(src, i + 1) == 46) then
                 is_float = true; i = i + 1
-                while i <= n and is_digit(byte(src, i)) do i = i + 1 end
+                while i <= n do
+                    local dc = byte(src, i)
+                    if not (is_digit(dc) or dc == 95) then break end
+                    i = i + 1
+                end
             end
             -- Float: exponent
             local c = byte(src, i)
@@ -288,19 +317,27 @@ function M.lex(src)
                 is_float = true; i = i + 1
                 local sign = byte(src, i)
                 if sign == 43 or sign == 45 then i = i + 1 end
-                while i <= n and is_digit(byte(src, i)) do i = i + 1 end
+                while i <= n do
+                    local dc = byte(src, i)
+                    if not (is_digit(dc) or dc == 95) then break end
+                    i = i + 1
+                end
             end
             local text = sub(src, s, i - 1)
             push_tok(t, is_float and TK.float or TK.int, text, s, i - 1, line, col)
             col = col + (i - s)
 
         -- String literals
-        elseif b == 34 then  -- '"'
-            local s, sc = i, col
-            i = scan_string(src, i, n, 34)
-            local text = sub(src, s, i - 1)
-            push_tok(t, TK.string, text, s, i - 1, line, sc)
-            col = col + (i - s)
+        elseif b == 34 or b == 39 then  -- '"' or "'"
+            local s, sl, sc = i, line, col
+            local next_i, closed, hit_newline = scan_string(src, i, n, b)
+            if not closed then
+                push_lex_issue(t, hit_newline and "unterminated string literal before newline" or "unterminated string literal", s, sl, sc)
+            end
+            i = next_i
+            local text = sub(src, s, math.max(s, i - 1))
+            push_tok(t, TK.string, text, s, math.max(s, i - 1), sl, sc)
+            line, col = advance_line_col(src, s, i - 1, sl, sc)
 
         -- Multi-char operators and punctuation
         else
@@ -327,7 +364,12 @@ function M.lex(src)
                           ["*"]=TK.star, ["/"]=TK.slash, ["%"]=TK.percent, ["="]=TK.eq,
                           ["<"]=TK.lt, [">"]=TK.gt, ["&"]=TK.amp, ["|"]=TK.pipe,
                           ["^"]=TK.caret, ["~"]=TK.tilde })[ch]
-            if k1 then push_tok(t, k1, ch, i, i, line, col) end
+            if k1 then
+                push_tok(t, k1, ch, i, i, line, col)
+            else
+                push_tok(t, TK.invalid, ch, i, i, line, col)
+                push_lex_issue(t, "invalid character " .. string.format("%q", ch), i, line, col)
+            end
             i = i + 1; col = col + 1
         end
         ::continue_lex::
@@ -349,7 +391,7 @@ local function new_parser_internal(T, toks, first, limit, opts)
     local C, Ty, B, O, Sem, Tr, Pm =
         T.MoonCore, T.MoonType, T.MoonBind, T.MoonOpen,
         T.MoonSem, T.MoonTree, T.MoonParse
-    return setmetatable({
+    local p = setmetatable({
         T = T, C = C, Ty = Ty, B = B, O = O,
         Sem = Sem, Tr = Tr, Pm = Pm,
         toks = toks,
@@ -364,6 +406,15 @@ local function new_parser_internal(T, toks, first, limit, opts)
         splice_slots_by_id = {},
         region_seq = 0,
     }, Parser)
+    local window_start = toks.start[p.first] or 0
+    local window_stop = toks.stop[p.limit] or math.huge
+    for _, issue in ipairs(toks.lex_issues or {}) do
+        local off = issue.offset or 0
+        if off >= window_start and off <= window_stop then
+            p.issues[#p.issues + 1] = Pm.ParseIssue(issue.message, off, issue.line, issue.col)
+        end
+    end
+    return p
 end
 
 -- Token accessors (limit-aware)
@@ -396,6 +447,16 @@ function Parser:skip_nl() while self:kind() == TK.nl do self.i = self.i + 1 end 
 function Parser:skip_sep() while self:kind() == TK.nl or self:kind() == TK.semi do self.i = self.i + 1 end end
 function Parser:accept(k) if self:kind() == k then self.i = self.i + 1; return true end; return false end
 function Parser:accept_text(k) if self:kind() == k then local t = self:text(); self.i = self.i + 1; return t end; return nil end
+function Parser:accept_trailing_comma_before(close_k)
+    local save = self.i
+    self:skip_nl()
+    if self:accept(TK.comma) then
+        self:skip_nl()
+        if self:kind() == close_k then return true end
+    end
+    self.i = save
+    return false
+end
 
 function Parser:token_label(k)
     return token_label[k] or ("token " .. tostring(k))
@@ -408,7 +469,7 @@ function Parser:token_desc(offset)
     if k == TK.name and txt ~= "" then
         return label .. " '" .. txt .. "'"
     end
-    if (k == TK.int or k == TK.float or k == TK.string) and txt ~= "" then
+    if (k == TK.int or k == TK.float or k == TK.string or k == TK.invalid) and txt ~= "" then
         return label .. " " .. txt
     end
     if k == TK.eof then
@@ -434,7 +495,8 @@ function Parser:expect_name(msg)
     if self:kind() == TK.name or self:kind() == TK.len_kw then
         local t = self:text(); self.i = self.i + 1; return t
     end
-    self:issue(msg or "expected identifier")
+    self:issue((msg or "expected identifier") .. ", got " .. self:token_desc(0))
+    if self:kind() == TK.invalid then self.i = self.i + 1 end
     return ""
 end
 
@@ -444,13 +506,13 @@ local ident_kw = {
     [TK.type_kw]=true, [TK.let_kw]=true, [TK.var_kw]=true, [TK.if_kw]=true,
     [TK.then_kw]=true, [TK.elseif_kw]=true, [TK.else_kw]=true, [TK.switch_kw]=true,
     [TK.case_kw]=true, [TK.default_kw]=true, [TK.do_kw]=true, [TK.end_kw]=true,
-    [TK.block_kw]=true, [TK.control_kw]=true, [TK.jump_kw]=true, [TK.yield_kw]=true,
+    [TK.block_kw]=true, [TK.jump_kw]=true, [TK.yield_kw]=true,
     [TK.return_kw]=true, [TK.region_kw]=true, [TK.entry_kw]=true, [TK.emit_kw]=true,
     [TK.expr_kw]=true, [TK.true_kw]=true, [TK.false_kw]=true, [TK.nil_kw]=true,
     [TK.and_kw]=true, [TK.or_kw]=true, [TK.not_kw]=true, [TK.view_kw]=true,
     [TK.noalias_kw]=true, [TK.readonly_kw]=true, [TK.writeonly_kw]=true,
     [TK.requires_kw]=true, [TK.bounds_kw]=true, [TK.disjoint_kw]=true,
-    [TK.len_kw]=true, [TK.same_len_kw]=true, [TK.as_kw]=true,
+    [TK.len_kw]=true, [TK.same_len_kw]=true, [TK.window_bounds_kw]=true, [TK.as_kw]=true,
     [TK.struct_kw]=true,
     [TK.union_kw]=true,
 }
@@ -460,7 +522,8 @@ function Parser:expect_field_name(msg)
     if k == TK.name or k == TK.len_kw or ident_kw[k] then
         local t = self:text(); self.i = self.i + 1; return t
     end
-    self:issue(msg or "expected field name")
+    self:issue((msg or "expected field name") .. ", got " .. self:token_desc(0))
+    if self:kind() == TK.invalid then self.i = self.i + 1 end
     return ""
 end
 
@@ -508,11 +571,12 @@ function Parser:parse_callable_type()
             self:skip_nl()
             if not self:accept(TK.comma) then break end
             self:skip_nl()
+            if self:kind() == TK.rparen then break end
         end
     end
     self:expect(TK.rparen)
     local result = Ty.TScalar(self.C.ScalarVoid)
-    if self:accept(TK.arrow) then result = self:parse_type() end
+    if self:accept(TK.arrow) then self:skip_nl(); result = self:parse_type() end
     return params, result
 end
 
@@ -528,7 +592,7 @@ function Parser:parse_type()
     end
 
     if self:accept(TK.view_kw) then
-        self:expect(TK.lparen); local elem = self:parse_type(); self:expect(TK.rparen)
+        self:expect(TK.lparen); self:skip_nl(); local elem = self:parse_type(); self:skip_nl(); self:expect(TK.rparen)
         return Ty.TView(elem)
     end
 
@@ -545,7 +609,7 @@ function Parser:parse_type()
 
     local name = self:expect_name("expected type")
     if name == "ptr" and self:accept(TK.lparen) then
-        local elem = self:parse_type(); self:expect(TK.rparen)
+        self:skip_nl(); local elem = self:parse_type(); self:skip_nl(); self:expect(TK.rparen)
         return Ty.TPtr(elem)
     end
 
@@ -580,9 +644,11 @@ function Parser:parse_expr(rbp)
     rbp = rbp or 0
     self:skip_nl()
     local left = self:nud()
+    self:skip_nl()
     while rbp < (lbp[self:kind()] or 0) do
         local k = self:kind(); self.i = self.i + 1
         left = self:led(k, left)
+        self:skip_nl()
     end
     return left
 end
@@ -601,8 +667,8 @@ function Parser:nud()
     end
 
     if k == TK.as_kw then
-        self:expect(TK.lparen); local ty = self:parse_type()
-        self:expect(TK.comma); local val = self:parse_expr(0); self:expect(TK.rparen)
+        self:expect(TK.lparen); self:skip_nl(); local ty = self:parse_type(); self:skip_nl()
+        self:expect(TK.comma); local val = self:parse_expr(0); self:skip_nl(); self:expect(TK.rparen)
         return Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, ty, val)
     end
 
@@ -620,9 +686,9 @@ function Parser:nud()
     end
 
     if k == TK.view_kw then
-        self:expect(TK.lparen); local data = self:parse_expr(0); self:expect(TK.comma)
-        local len = self:parse_expr(0)
-        if self:accept(TK.comma) then local stride = self:parse_expr(0); self:expect(TK.rparen)
+        self:expect(TK.lparen); self:skip_nl(); local data = self:parse_expr(0); self:skip_nl(); self:expect(TK.comma)
+        local len = self:parse_expr(0); self:skip_nl()
+        if self:accept(TK.comma) then local stride = self:parse_expr(0); self:skip_nl(); self:expect(TK.rparen)
             return Tr.ExprView(Tr.ExprSurface, Tr.ViewStrided(data, self.Ty.TScalar(C.ScalarVoid), len, stride))
         end
         self:expect(TK.rparen)
@@ -633,11 +699,11 @@ function Parser:nud()
         if self:kind() ~= TK.lparen then
             return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(text))
         end
-        self.i = self.i + 1; local v = self:parse_expr(0); self:expect(TK.rparen)
+        self.i = self.i + 1; local v = self:parse_expr(0); self:skip_nl(); self:expect(TK.rparen)
         return Tr.ExprLen(Tr.ExprSurface, v)
     end
 
-    if k == TK.lparen then local e = self:parse_expr(0); self:expect(TK.rparen); return e end
+    if k == TK.lparen then local e = self:parse_expr(0); self:skip_nl(); self:expect(TK.rparen); return e end
     if k == TK.minus  then return Tr.ExprUnary(Tr.ExprSurface, C.UnaryNeg, self:parse_expr(80)) end
     if k == TK.not_kw then return Tr.ExprUnary(Tr.ExprSurface, C.UnaryNot, self:parse_expr(80)) end
     if k == TK.tilde  then return Tr.ExprUnary(Tr.ExprSurface, C.UnaryBitNot, self:parse_expr(80)) end
@@ -646,9 +712,13 @@ function Parser:nud()
     if k == TK.switch_kw then return self:parse_switch_expr() end
     if k == TK.emit_kw   then return self:parse_emit_expr() end
     if k == TK.block_kw  then return self:parse_control_expr_after_block() end
-    if k == TK.control_kw or k == TK.region_kw then return self:parse_multi_control_expr() end
+    if k == TK.region_kw then return self:parse_multi_control_expr() end
 
-    self:issue("expected expression")
+    if k == TK.invalid then
+        self:issue("invalid token in expression: " .. text)
+    else
+        self:issue("expected expression, got " .. self:token_label(k))
+    end
     return Tr.ExprLit(Tr.ExprSurface, C.LitInt("0"))
 end
 
@@ -657,8 +727,15 @@ function Parser:led(k, left)
 
     if k == TK.lparen then
         local args = {}
+        self:skip_nl()
         if self:kind() ~= TK.rparen then
-            repeat args[#args + 1] = self:parse_expr(0) until not self:accept(TK.comma)
+            while true do
+                args[#args + 1] = self:parse_expr(0)
+                self:skip_nl()
+                if not self:accept(TK.comma) then break end
+                self:skip_nl()
+                if self:kind() == TK.rparen then break end
+            end
         end
         self:expect(TK.rparen)
         -- select(cond, a, b) special form
@@ -671,7 +748,7 @@ function Parser:led(k, left)
     end
 
     if k == TK.lbrack then
-        local idx = self:parse_expr(0); self:expect(TK.rbrack)
+        local idx = self:parse_expr(0); self:skip_nl(); self:expect(TK.rbrack)
         return Tr.ExprIndex(Tr.ExprSurface, Tr.IndexBaseExpr(left), idx)
     end
 
@@ -727,6 +804,7 @@ end
 function Parser:parse_if_stmt(is_elseif)
     local Tr = self.Tr
     local cond = self:parse_expr(0)
+    self:skip_nl()
     self:expect(TK.then_kw, "expected then")
     local then_body = self:parse_stmt_until({ [TK.else_kw]=true, [TK.elseif_kw]=true, [TK.end_kw]=true })
     local else_body = {}
@@ -756,12 +834,14 @@ end
 function Parser:parse_switch_stmt()
     local Tr, Sem = self.Tr, self.Sem
     local value = self:parse_expr(0)
+    self:skip_nl()
     self:expect(TK.do_kw, "expected do after switch expression")
     self:skip_nl()
     local arms = {}
     while self:kind() == TK.case_kw do
         self.i = self.i + 1  -- consume 'case'
         local key_expr = self:parse_expr(0)
+        self:skip_nl()
         self:expect(TK.then_kw, "expected then after case expression")
         local body = self:parse_stmt_until({ [TK.case_kw]=true, [TK.default_kw]=true, [TK.end_kw]=true })
         arms[#arms + 1] = Tr.SwitchStmtArm(self:switch_key_from_expr(key_expr), body)
@@ -777,12 +857,14 @@ end
 function Parser:parse_switch_expr()
     local Tr, Sem = self.Tr, self.Sem
     local value = self:parse_expr(0)
+    self:skip_nl()
     self:expect(TK.do_kw, "expected do after switch expression")
     self:skip_nl()
     local arms = {}
     while self:kind() == TK.case_kw do
         self.i = self.i + 1
         local key_expr = self:parse_expr(0)
+        self:skip_nl()
         self:expect(TK.then_kw, "expected then after case expression")
         local body, result = self:parse_expr_block({ [TK.case_kw]=true, [TK.default_kw]=true, [TK.end_kw]=true })
         arms[#arms + 1] = Tr.SwitchExprArm(self:switch_key_from_expr(key_expr), body, result)
@@ -822,6 +904,7 @@ function Parser:parse_control_expr_after_block()
     local label = Tr.BlockLabel(self:expect_name("expected block label"))
     local params = self:parse_block_params(true)
     self:expect(TK.arrow, "expected -> for block expression")
+    self:skip_nl()
     local result_ty = self:parse_type()
     local body = self:parse_stmt_until({ [TK.end_kw]=true })
     self:expect(TK.end_kw)
@@ -830,10 +913,11 @@ function Parser:parse_control_expr_after_block()
             Tr.EntryControlBlock(label, params, body), {}))
 end
 
--- Multi-block control: control -> T entry ... end block ... end end
+-- Multi-block region expression: region -> T entry ... end block ... end end
 function Parser:parse_multi_control_expr()
     local Tr = self.Tr
-    self:expect(TK.arrow, "expected -> after control/region")
+    self:expect(TK.arrow, "expected -> after region")
+    self:skip_nl()
     local result_ty = self:parse_type()
     self:skip_nl()
     if not (self:accept(TK.entry_kw) or self:accept(TK.block_kw)) then self:expect(TK.entry_kw, "expected entry block") end
@@ -852,7 +936,7 @@ function Parser:parse_multi_control_expr()
         blocks[#blocks + 1] = Tr.ControlBlock(label, params, body)
         self:skip_nl()
     end
-    self:expect(TK.end_kw, "expected control end")
+    self:expect(TK.end_kw, "expected region end")
     return Tr.ExprControl(Tr.ExprSurface,
         Tr.ControlExprRegion(self:next_region_id(entry_label.name), result_ty,
             Tr.EntryControlBlock(entry_label, entry_params, entry_body), blocks))
@@ -881,6 +965,7 @@ function Parser:parse_block_params(entry)
             self:expect(TK.colon)
             local ty = self:parse_type()
             if entry then
+                self:skip_nl()
                 self:expect(TK.eq, "entry block params need initializers")
                 params[#params + 1] = Tr.EntryBlockParam(name, ty, self:parse_expr(0))
             else
@@ -888,6 +973,8 @@ function Parser:parse_block_params(entry)
             end
             self:skip_nl()
             if not self:accept(TK.comma) then break end
+            self:skip_nl()
+            if self:kind() == TK.rparen then break end
         end
     end
     self:expect(TK.rparen)
@@ -1025,6 +1112,7 @@ function Parser:parse_stmt()
         else
             ty = self.Ty.TScalar(self.C.ScalarVoid)  -- sentinel: infer
         end
+        self:skip_nl()
         self:expect(TK.eq)
         local init = self:parse_expr(0)
         local binding = B.Binding(C.Id("local:" .. name), name, ty,
@@ -1072,25 +1160,31 @@ function Parser:parse_contract()
     local Tr = self.Tr
     self:expect(TK.requires_kw, "expected requires")
     if self:accept(TK.bounds_kw) then
-        self:expect(TK.lparen); local base = self:parse_expr(0); self:expect(TK.comma)
-        local len = self:parse_expr(0); self:expect(TK.rparen)
+        self:expect(TK.lparen); self:skip_nl(); local base = self:parse_expr(0); self:skip_nl(); self:expect(TK.comma)
+        local len = self:parse_expr(0); self:accept_trailing_comma_before(TK.rparen); self:skip_nl(); self:expect(TK.rparen)
         return Tr.ContractBounds(base, len)
+    elseif self:accept(TK.window_bounds_kw) then
+        self:expect(TK.lparen); self:skip_nl(); local base = self:parse_expr(0); self:skip_nl(); self:expect(TK.comma)
+        local base_len = self:parse_expr(0); self:skip_nl(); self:expect(TK.comma)
+        local start = self:parse_expr(0); self:skip_nl(); self:expect(TK.comma)
+        local len = self:parse_expr(0); self:accept_trailing_comma_before(TK.rparen); self:skip_nl(); self:expect(TK.rparen)
+        return Tr.ContractWindowBounds(base, base_len, start, len)
     elseif self:accept(TK.disjoint_kw) then
-        self:expect(TK.lparen); local a = self:parse_expr(0); self:expect(TK.comma)
-        local b = self:parse_expr(0); self:expect(TK.rparen)
+        self:expect(TK.lparen); self:skip_nl(); local a = self:parse_expr(0); self:skip_nl(); self:expect(TK.comma)
+        local b = self:parse_expr(0); self:accept_trailing_comma_before(TK.rparen); self:skip_nl(); self:expect(TK.rparen)
         return Tr.ContractDisjoint(a, b)
     elseif self:accept(TK.same_len_kw) then
-        self:expect(TK.lparen); local a = self:parse_expr(0); self:expect(TK.comma)
-        local b = self:parse_expr(0); self:expect(TK.rparen)
+        self:expect(TK.lparen); self:skip_nl(); local a = self:parse_expr(0); self:skip_nl(); self:expect(TK.comma)
+        local b = self:parse_expr(0); self:accept_trailing_comma_before(TK.rparen); self:skip_nl(); self:expect(TK.rparen)
         return Tr.ContractSameLen(a, b)
     elseif self:accept(TK.noalias_kw) then
-        self:expect(TK.lparen); local base = self:parse_expr(0); self:expect(TK.rparen)
+        self:expect(TK.lparen); self:skip_nl(); local base = self:parse_expr(0); self:accept_trailing_comma_before(TK.rparen); self:skip_nl(); self:expect(TK.rparen)
         return Tr.ContractNoAlias(base)
     elseif self:accept(TK.readonly_kw) then
-        self:expect(TK.lparen); local base = self:parse_expr(0); self:expect(TK.rparen)
+        self:expect(TK.lparen); self:skip_nl(); local base = self:parse_expr(0); self:accept_trailing_comma_before(TK.rparen); self:skip_nl(); self:expect(TK.rparen)
         return Tr.ContractReadonly(base)
     elseif self:accept(TK.writeonly_kw) then
-        self:expect(TK.lparen); local base = self:parse_expr(0); self:expect(TK.rparen)
+        self:expect(TK.lparen); self:skip_nl(); local base = self:parse_expr(0); self:accept_trailing_comma_before(TK.rparen); self:skip_nl(); self:expect(TK.rparen)
         return Tr.ContractWriteonly(base)
     end
     self:issue("expected contract predicate")
@@ -1124,6 +1218,7 @@ function Parser:parse_param_list()
         end
         if not self:accept(TK.comma) then break end
         self:skip_nl()
+        if self:kind() == TK.rparen then break end
     end
     return params, contracts
 end
@@ -1137,7 +1232,7 @@ function Parser:parse_func()
     local name = self:expect_name("expected function name")
     self:expect(TK.lparen); local params, contracts = self:parse_param_list(); self:expect(TK.rparen)
     local result = Ty.TScalar(C.ScalarVoid)
-    if self:accept(TK.arrow) then result = self:parse_type() end
+    if self:accept(TK.arrow) then self:skip_nl(); result = self:parse_type() end
     self:skip_nl()
     while self:kind() == TK.requires_kw do
         contracts[#contracts + 1] = self:parse_contract()
@@ -1164,12 +1259,14 @@ function Parser:parse_cont_params(owner_name)
         self:skip_nl()
         if self:kind() ~= TK.rparen then
             while true do
+                self:skip_nl()
                 local pname = self:expect_name("expected continuation arg name")
                 self:expect(TK.colon)
                 params[#params + 1] = Tr.BlockParam(pname, self:parse_type())
                 self:skip_nl()
                 if not self:accept(TK.comma) then break end
                 self:skip_nl()
+                if self:kind() == TK.rparen then break end
             end
         end
         self:expect(TK.rparen)
@@ -1179,6 +1276,7 @@ function Parser:parse_cont_params(owner_name)
         self:skip_nl()
         if not self:accept(TK.comma) then break end
         self:skip_nl()
+        if self:kind() == TK.rparen then break end
     end
     return cont_slots, slots
 end
@@ -1216,8 +1314,9 @@ function Parser:parse_open_params(owner_name)
     local O, B, C = self.O, self.B, self.C
     local params, param_bindings = {}, {}
     self:skip_nl()
-    if self:kind() ~= TK.rparen then
+    if self:kind() ~= TK.rparen and self:kind() ~= TK.semi then
         while true do
+            self:skip_nl()
             local pname = self:expect_name("expected parameter name")
             self:expect(TK.colon)
             local ty = self:parse_type()
@@ -1227,7 +1326,7 @@ function Parser:parse_open_params(owner_name)
             self:skip_nl()
             if not self:accept(TK.comma) then break end
             self:skip_nl()
-            if self:kind() == TK.rparen then break end
+            if self:kind() == TK.rparen or self:kind() == TK.semi then break end
         end
     end
     return params, param_bindings
@@ -1263,18 +1362,19 @@ function Parser:parse_region_frag()
     -- Protocol result?
     if self:accept(TK.arrow) then
         if #slots > 0 then self:issue("region cannot mix inline continuations with protocol result") end
+        self:skip_nl()
         local protocol_ty = self:parse_type()
         cont_slots, slots = self:cont_slots_from_protocol(protocol_ty, name_key)
         self:skip_nl()
     end
 
+    local saved_value_env, saved_cont_env = self.value_env, self.cont_env
+    self.value_env, self.cont_env = param_bindings, cont_slots
     if not (self:accept(TK.entry_kw) or self:accept(TK.block_kw)) then
         self:expect(TK.entry_kw, "expected entry block in region fragment")
     end
     local entry_label = Tr.BlockLabel(self:expect_name("expected entry label"))
     local entry_params = self:parse_block_params(true)
-    local saved_value_env, saved_cont_env = self.value_env, self.cont_env
-    self.value_env, self.cont_env = param_bindings, cont_slots
     local body = self:parse_stmt_until({ [TK.end_kw]=true, [TK.block_kw]=true })
     if self:kind() == TK.end_kw then self.i = self.i + 1 end
     local blocks = {}
@@ -1314,6 +1414,7 @@ function Parser:parse_expr_frag()
     local params, param_bindings = self:parse_open_params(name_key)
     self:expect(TK.rparen)
     self:expect(TK.arrow, "expected -> in expression fragment")
+    self:skip_nl()
     local result = self:parse_type()
     local saved_value_env = self.value_env
     self.value_env = param_bindings
@@ -1459,7 +1560,7 @@ local function tokenize_island(src, island_kind, start_byte, toks)
 
     local end_open = {
         [TK.if_kw]=true, [TK.switch_kw]=true,
-        [TK.block_kw]=true, [TK.control_kw]=true, [TK.entry_kw]=true,
+        [TK.block_kw]=true, [TK.entry_kw]=true,
         [TK.region_kw]=true, [TK.expr_kw]=true,
     }
     -- Exclude the island's own start keyword so depth tracking is correct:
@@ -1479,19 +1580,29 @@ local function tokenize_island(src, island_kind, start_byte, toks)
             push_tok(toks, TK.nl, "\n", i, i, line, col)
             i = i + 1; line = line + 1; col = 1
         elseif b == 45 and i < n and byte(src, i + 1) == 45 then
-            local nl = find(src, "\n", i + 2, true)
-            i = (nl or n + 1) + (nl and 1 or 0)
-            if not nl then break end
-            line = line + 1; col = 1
+            if i + 3 <= n and sub(src, i, i + 3) == "--[[" then
+                i = i + 4; col = col + 4
+                while i < n and sub(src, i, i + 1) ~= "]]" do
+                    if byte(src, i) == 10 then line = line + 1; col = 1
+                    else col = col + 1 end
+                    i = i + 1
+                end
+                if i <= n then i = i + 2; col = col + 2 end
+            else
+                while i <= n and byte(src, i) ~= 10 do i = i + 1; col = col + 1 end
+            end
         elseif b == 64 and i < n and byte(src, i + 1) == 123 then
             local close = scan_antiquote(src, i + 1, n)
-            if not close then break end
+            if not close then
+                push_lex_issue(toks, "unterminated splice @{...}", i, line, col)
+                break
+            end
             local lua_expr = sub(src, i + 2, close - 1)
             toks.splice_i = toks.splice_i + 1
             local id = "splice." .. toks.splice_i
             toks.splice_map[id] = lua_expr
             push_tok(toks, TK.hole, id, i, close, line, col)
-            col = col + (close - i + 1)
+            line, col = advance_line_col(src, i, close, line, col)
             i = close + 1
         elseif is_alpha(b) then
             local s = i
@@ -1519,31 +1630,51 @@ local function tokenize_island(src, island_kind, start_byte, toks)
                 local nb = byte(src, i + 1)
                 if nb == 120 or nb == 88 then
                     i = i + 2
-                    while i <= n and is_hex(byte(src, i)) do i = i + 1 end
+                    while i <= n do
+                        local hc = byte(src, i)
+                        if not (is_hex(hc) or hc == 95) then break end
+                        i = i + 1
+                    end
                     push_tok(toks, TK.int, sub(src, s, i - 1), s, i - 1, line, col)
                     col = col + (i - s)
                     goto continue_tok
                 end
             end
             i = i + 1
-            while i <= n and is_digit(byte(src, i)) do i = i + 1 end
+            while i <= n do
+                local dc = byte(src, i)
+                if not (is_digit(dc) or dc == 95) then break end
+                i = i + 1
+            end
             if i <= n and byte(src, i) == 46 and not (i < n and byte(src, i + 1) == 46) then
                 is_float = true; i = i + 1
-                while i <= n and is_digit(byte(src, i)) do i = i + 1 end
+                while i <= n do
+                    local dc = byte(src, i)
+                    if not (is_digit(dc) or dc == 95) then break end
+                    i = i + 1
+                end
             end
             local c = byte(src, i)
             if c == 101 or c == 69 then
                 is_float = true; i = i + 1
                 local sign = byte(src, i); if sign == 43 or sign == 45 then i = i + 1 end
-                while i <= n and is_digit(byte(src, i)) do i = i + 1 end
+                while i <= n do
+                    local dc = byte(src, i)
+                    if not (is_digit(dc) or dc == 95) then break end
+                    i = i + 1
+                end
             end
             push_tok(toks, is_float and TK.float or TK.int, sub(src, s, i - 1), s, i - 1, line, col)
             col = col + (i - s)
-        elseif b == 34 then
-            local s, sc = i, col
-            i = scan_string(src, i, n, 34)
-            push_tok(toks, TK.string, sub(src, s, i - 1), s, i - 1, line, sc)
-            col = col + (i - s)
+        elseif b == 34 or b == 39 then
+            local s, sl, sc = i, line, col
+            local next_i, closed, hit_newline = scan_string(src, i, n, b)
+            if not closed then
+                push_lex_issue(toks, hit_newline and "unterminated string literal before newline" or "unterminated string literal", s, sl, sc)
+            end
+            i = next_i
+            push_tok(toks, TK.string, sub(src, s, math.max(s, i - 1)), s, math.max(s, i - 1), sl, sc)
+            line, col = advance_line_col(src, s, i - 1, sl, sc)
         else
             local ch = sub(src, i, i)
             if i + 2 <= n and sub(src, i, i + 2) == ">>>" then
@@ -1562,7 +1693,12 @@ local function tokenize_island(src, island_kind, start_byte, toks)
                           ["*"]=TK.star, ["/"]=TK.slash, ["%"]=TK.percent, ["="]=TK.eq,
                           ["<"]=TK.lt, [">"]=TK.gt, ["&"]=TK.amp, ["|"]=TK.pipe,
                           ["^"]=TK.caret, ["~"]=TK.tilde })[ch]
-            if k1 then push_tok(toks, k1, ch, i, i, line, col) end
+            if k1 then
+                push_tok(toks, k1, ch, i, i, line, col)
+            else
+                push_tok(toks, TK.invalid, ch, i, i, line, col)
+                push_lex_issue(toks, "invalid character " .. string.format("%q", ch), i, line, col)
+            end
             i = i + 1; col = col + 1
         end
         ::continue_tok::
@@ -1633,7 +1769,7 @@ function M.scan_document(src)
                         end
                         if pc == 61 or pc == 40 or pc == 44 or pc == 123 or pc == 91 or pc == 59 then
                             prev = 1; break
-                        elseif prev_word == "return" then
+                        elseif prev_word == "return" or prev_word == "end" then
                             prev = 1; break
                         else
                             prev = -1; break

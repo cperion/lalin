@@ -126,17 +126,10 @@ local function format_phase_exception(runtime, phase, err, extra)
     -- Render the new-format report and append it
     local new_rendered = Errors.Terminal.render(report, source_text)
 
-    -- Return a combined result: new format first, then legacy for compat
-    -- We use a metatable trick so tostring() works and old code still
-    -- sees the legacy diagnostic fields
-    local result = new_rendered
-
-    -- Copy legacy fields into result for backward compatibility
-    for k, v in pairs(diag) do result[k] = v end
-    result.__moonlift_diagnostic = true
-    result._new_render = new_rendered
-
-    return setmetatable(result, getmetatable(diag) or { __tostring = function() return new_rendered end })
+    -- Lua strings are immutable primitives; older code tried to attach legacy
+    -- diagnostic fields to the rendered string, which itself raised an error
+    -- while reporting the original failure.  Return plain text instead.
+    return new_rendered .. "\n" .. tostring(diag)
 end
 
 local function format_parse_issue(runtime, phase, issue, extra)
@@ -714,6 +707,12 @@ function M.loadstring(src, chunk_name, opts)
         local results = pack(pcall(inner, ...))
         pop()
         if not results[1] then
+            local err_text = tostring(results[2])
+            -- eval_island already formats Moonlift phase diagnostics with source
+            -- context.  Do not wrap them again as run_carrier errors.
+            if err_text:find("Moonlift error", 1, true) or err_text:find("ERROR[", 1, true) then
+                error(results[2], 0)
+            end
             error(format_phase_exception(runtime, "run_carrier", results[2], {}), 0)
         end
         return unpack(results, 2, results.n)

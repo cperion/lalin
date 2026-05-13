@@ -75,15 +75,13 @@ returns a Moonlift function specialized to that type.
 
 ### 1.2 Hosted declaration layer
 
-Inside `.mlua`, Moonlift recognizes top-level hosted islands:
+Inside `.mlua`, Moonlift recognizes these hosted islands:
 
 - `struct ... end`
-- `expose Name: subject` or `expose Name: subject ... end`
+- `union ... end`
 - `func ... end`
-- `module ... end`
 - `region ... entry ... end ... end`
 - `expr ... -> T ... end`
-- `type Name = ... end`
 
 These islands construct ASDL values and host facts. They are not source strings
 at runtime — the parser builds typed ASDL nodes directly.
@@ -149,7 +147,7 @@ Moonlift receives only the monomorphic result with all types resolved.
 ### 2.2 No angle-bracket type argument syntax
 
 Moonlift source does not use angle brackets for type arguments or casts.
-This applies everywhere: declarations, calls, conversions, and intrinsics.
+This applies everywhere: declarations, calls, and conversions.
 
 The single source-level conversion form is:
 
@@ -344,7 +342,7 @@ Complete list of reserved words in Moonlift object-language source:
 
 **Declaration keywords:**
 ```text
-func  struct  union  type
+func  struct  union
 ```
 
 **Pointer and access modifiers:**
@@ -356,12 +354,12 @@ bounds   window_bounds  disjoint  same_len
 **Statement keywords:**
 ```text
 let  var  if  then  else  elseif  switch  case  default  do  end
-block  control  entry  jump  yield  return  emit  expr
+block  entry  jump  yield  return  emit  expr
 ```
 
 **Expression keywords:**
 ```text
-true  false  nil  and  or  not  as  select  len
+true  false  nil  and  or  not  as  len
 ```
 
 **Scalar type keywords (reserved in type position):**
@@ -373,18 +371,12 @@ f32  f64
 index
 ```
 
-**Intrinsic keywords (reserved in intrinsic-call position):**
-```text
-popcount  clz  ctz  rotl  rotr  bswap
-fma  sqrt  abs  floor  ceil  trunc_float  round
-trap  assume
-```
+`select(...)` is a recognized special call form, not a reserved word.
 
-**Hosted boundary aliases (reserved in type position):**
-```text
-bool8  bool32
-bool stored <scalar>
-```
+Intrinsic names such as `popcount`, `sqrt`, `trap`, and `assume` are ordinary
+callee names at the source parser level; intrinsic lowering is not part of the
+current source parser.
+
 
 **Intentionally NOT reserved:**
 
@@ -450,11 +442,10 @@ Pointer operations:
 
 | Operation | Syntax | Semantics |
 |---|---|---|
-| Load | `*ptr` or `load(ptr, T)` | Read a `T` from memory |
-| Store | `*ptr = value` or `store(ptr, value)` | Write a `T` to memory |
-| Address-of | `&place` or `addr_of(place)` | Take address of a place |
+| Load | `*ptr` | Read a `T` from memory |
+| Store | `*ptr = value` | Write a `T` to memory |
+| Address-of | `&place` | Take address of a place |
 | Pointer add | `ptr + offset` | Add element offset to pointer |
-| Pointer offset | `ptr_offset(ptr, elem_size, count)` | Byte-level pointer arithmetic |
 
 Pointer types do not carry mutability, nullability, or lifetime information at
 the type level. These properties are expressed through parameter modifiers and
@@ -487,7 +478,6 @@ All three fields are mandatory in the internal ABI. Contiguous views use
 ```moonlift
 view(data_ptr, count)              -- contiguous view, stride = 1
 view(data_ptr, count, stride)      -- strided view
-view_window(base_view, start, len) -- window into existing view
 ```
 
 **View indexing:**
@@ -508,12 +498,12 @@ checks are enabled) or undefined behavior (when checks are elided by facts).
 
 ### 5.4 Named types
 
-Named types refer to declared structs, unions, enums, or imported type paths:
+Named types refer to declared structs, tagged unions, or qualified type paths:
 
 ```moonlift
 User              -- locally declared struct
 Pairs             -- locally declared struct
-MoonCore.Scalar   -- type from imported module (import syntax)
+MoonCore.Scalar   -- qualified named type path
 ```
 
 Named types are resolved during typechecking against the module's type
@@ -537,50 +527,9 @@ Or inline:
 struct Vec3 x: f32; y: f32; z: f32 end
 ```
 
-Fields are laid out in declaration order with natural alignment (`repr(c)`
-by default). Explicit representation controls packing:
+Fields are laid out in declaration order with natural alignment.
 
-```moonlift
-struct Packet repr(packed(1))
-    tag: u8
-    len: u32
-end
-```
-
-Supported representations: `repr(c)` (default), `repr(packed(N))` where `N`
-is the byte alignment (1, 2, 4, 8, 16).
-
-### 5.6 Enum types
-
-```moonlift
-enum Color
-    red
-    green
-    blue
-end
-```
-Note: `enum` syntax is planned but not yet implemented. Use `struct` + runtime checks for now.
-
-Enum variants are assigned consecutive integer values starting from 0. The
-underlying type is `i32` by default. Enums can be used in `switch` statements
-and compared with `==` and `~=`.
-
-### 5.7 Union types
-
-Untagged unions:
-
-```moonlift
-union Bits
-    i: i32
-    f: f32
-end
-```
-Note: untagged `union` syntax is planned but not yet implemented. Use `struct` with explicit discriminant.
-
-All fields share the same storage. The size is the maximum field size. Field
-access performs a bitcast.
-
-### 5.8 Tagged union types
+### 5.6 Tagged union types
 
 ```moonlift
 union Result ok(i32) | err(i32) end
@@ -595,21 +544,7 @@ When a tagged union is used as a region result protocol (`region r(...) -> Scann
 its variants become exits and named variant fields become continuation
 parameters. Protocol variants must use named fields.
 
-### 5.9 Hosted boundary storage types
-
-Hosted structs use exposed types plus explicit storage facts to define
-FFI-compatible layouts:
-
-```moonlift
-active: bool8                    -- 1-byte bool
-active: bool32                   -- 4-byte bool (i32-backed)
-active: bool stored i32          -- bool stored with i32 representation
-```
-
-Bare hosted boundary `bool` storage is intentionally ambiguous and should
-be rejected in host boundary structs. Always specify the storage width.
-
-### 5.10 Function and closure types (source syntax)
+### 5.7 Function and closure types (source syntax)
 
 In type position:
 
@@ -727,145 +662,18 @@ union Result ok(i32) | err(string) | none end
 
 ## 7. Hosted declarations
 
-Hosted declarations are `.mlua` top-level islands that create `MoonHost` facts
-plus corresponding object-language ASDL where appropriate. They are the primary
-way to define types and host-facing interfaces in `.mlua` files.
+The current `.mlua` source parser recognizes only these hosted declaration
+islands:
 
-### 7.1 Structs
+- `struct Name field: T ... end`
+- `union Name variant(...) | variant(...) end`
+- `func name(params...) [-> T] ... end`
+- `region name(params; continuations) ... end`
+- `expr name(params) -> T expr end`
 
-```moonlift
-struct User
-    id: i32
-    age: i32
-    active: bool32
-end
-```
-
-Default representation is `repr(c)`. Explicit representation:
-
-```moonlift
-struct Packet repr(packed(1))
-    tag: u8
-    len: u32
-end
-```
-
-Struct facts produced:
-- `HostStructDecl` — structural declaration with fields
-- `HostFieldDecl` — per-field type and layout facts
-- `HostTypeLayout` — size, alignment, field offsets
-- `HostFieldLayout` — per-field offset and access path
-- `MoonTree.TypeDeclStruct` — object-language struct type
-
-### 7.2 Field attributes
-
-Field type attributes are suffixes on the field type:
-
-```moonlift
-field: i32 readonly
-field: ptr(u8) noalias
-field: view(i32) mutable
-```
-
-| Attribute | Meaning |
-|---|---|
-| `readonly` | Field is only read in host access paths |
-| `writeonly` | Field is only written in host access paths |
-| `noalias` | Pointer field does not alias other pointers |
-| `mutable` | View/pointer field can be mutated through the host proxy |
-
-### 7.3 Expose declarations
-
-```moonlift
-expose UserRef: ptr(User)
-expose Users: view(User)
-```
-
-Expose declarations name the public host surface first, then the semantic
-subject. A one-line declaration means the default Lua + Terra + C facets.
-
-For explicit target control, use the end-delimited form:
-
-```moonlift
-expose MutableUserRef: ptr(User)
-    lua mutable
-end
-
-expose LuaOnlyUsers: view(User)
-    lua
-end
-
-expose FullExposure: view(Packet)
-    lua               -- Lua proxy, default policy
-    terra             -- Terra view, default policy
-    c proxy           -- C proxy accessor
-    moonlift          -- Internal Moonlift view (data,len,stride)
-end
-```
-
-**Expose targets:**
-
-| Target | Description |
-|---|---|
-| `lua` | LuaJIT FFI proxy with field accessor methods |
-| `terra` | Terra-compatible view/pointer type |
-| `c` | C-compatible view/pointer with accessor functions |
-| `moonlift` | Internal Moonlift view ABI (data, len, stride) |
-
-**Facet policy words:**
-
-```text
-proxy          | typed_record  | buffer_view
-descriptor     | pointer       | data_len_stride | expanded_scalars
-readonly       | mutable       | interior_mutable
-checked        | unchecked
-eager_table    | full_copy     | borrowed_view
-```
-
-**Default policies per target:**
-
-| Target | ptr default | view default |
-|---|---|---|
-| `lua` | `proxy readonly checked` | `proxy readonly checked` |
-| `c` / `terra` | `pointer readonly unchecked` | `descriptor readonly unchecked` |
-| `moonlift` | N/A (raw pointer) | `data_len_stride` (internal ABI) |
-
-### 7.4 Lua-hosted methods
-
-Ordinary Lua method syntax attaches host-side proxy methods to a struct type:
-
-```lua
-function User:is_adult()
-    return self.age >= 18
-end
-
-function User:full_name()
-    return self.first .. " " .. self.last
-end
-```
-
-These are Lua closures over generated proxy accessors. They are recorded as
-host accessor facts and can be called on any Lua proxy to a `User` value
-(including `ptr(User)` and `view(User)` proxies).
-
-### 7.5 Moonlift-native methods
-
-Moonlift-native methods use `func Type:name` syntax and compile to ordinary
-Moonlift object functions with stable generated symbols:
-
-```moonlift
-func User:is_active(self: ptr(User)) -> bool
-    return self.active
-end
-
-func User:set_age(self: ptr(User), new_age: i32)
-    self.age = new_age
-end
-```
-
-The first parameter (`self`) is the receiver. It must be a pointer or view
-type. Native methods are recorded as native host accessor facts and can be
-called from Lua proxies, C code, or other Moonlift functions.
+Host-facing APIs such as exposure policies, proxy generation, module assembly,
+and native method registration are provided through the Lua builder/host APIs,
+not through additional Moonlift source keywords.
 
 ---
 
@@ -895,8 +703,8 @@ There is no implicit statement separator other than newlines.
 ### 8.2 Let and var
 
 ```moonlift
-let name: T = expr
-var name: T = expr
+let name[: T] = expr
+var name[: T] = expr
 ```
 
 | Binding | Mutability | Semantics |
@@ -908,8 +716,8 @@ var name: T = expr
 register or stack slot at its discretion. `var` bindings are always backed
 by storage (stack slot or register with spill).
 
-Type annotations are required on `let` and `var` — there is no type inference
-for local bindings.
+Type annotations on `let` and `var` are optional. If omitted, the parser marks
+the type for later inference/checking.
 
 Examples:
 
@@ -1096,7 +904,7 @@ yield expr      -- value yield
 - Bare `yield` is valid inside a void/statement control region.
 - `yield` is rejected outside a control region.
 - After a `yield`, execution continues at the point immediately after the
-  enclosing `control ... end` or `block ... end` construct.
+  enclosing `region -> T ... end` or `block ... end` construct.
 
 ### 8.9 Return statement
 
@@ -1118,8 +926,7 @@ the function.
 An expression can appear as a statement. This is mainly useful for:
 
 - Void function calls: `do_something(x, y)`
-- Control intrinsics: `trap()`, `assume(cond)`
-- Discarded value expressions (diagnosed as a warning in strict mode)
+- Discarded value expressions
 
 ---
 
@@ -1144,14 +951,8 @@ expr ::= literal
        | len_expr    (view length)
        | view_expr   (view construction)
        | emit_expr   (expression fragment emit)
-       | control_expr(control region expression)
-       | if_expr     (if expression)
+       | region_expr (multi-block region expression)
        | switch_expr (switch expression)
-       | block_expr  (block expression with final value)
-       | closure_expr(fn expression)
-       | intrinsic   (builtin intrinsic call)
-       | agg_lit     (aggregate/struct literal)
-       | array_lit   (array literal)
 ```
 
 ### 9.2 Literals
@@ -1177,14 +978,15 @@ When the expected type is ambiguous, use `as(T, literal)`.
 ### 9.3 Name references
 
 ```moonlift
-x               -- local variable, parameter, const, or static
+x               -- local variable or parameter
 p               -- pointer parameter
 xs              -- view parameter
 ```
 
-Name resolution follows lexical scoping: function parameters, `let`/`var`
-bindings, `const`/`static` declarations, and module-level items. Shadowing
-is permitted with inner bindings hiding outer bindings.
+Name resolution follows lexical scoping: function parameters and `let`/`var`
+bindings. Host-provided/module bindings may also be made available by the
+surrounding compilation environment. Shadowing is permitted with inner bindings
+hiding outer bindings.
 
 ### 9.4 Function calls
 
@@ -1250,7 +1052,6 @@ the pointer.
 
 ```moonlift
 &place
-addr_of(place)
 ```
 
 Takes the address of a place. Valid places include `var` bindings, statics,
@@ -1318,13 +1119,10 @@ Returns the number of elements in a view, typed as `index`.
 ```moonlift
 view(data_ptr, count)
 view(data_ptr, count, stride)
-view_window(base_view, start, requested_len)
 ```
 
 - `view(ptr, count)` creates a contiguous view with `stride = 1`.
 - `view(ptr, count, stride)` creates a strided view.
-- `view_window(base, start, len)` creates a sub-view from an existing view,
-  starting at element `start` with `len` elements. The stride is inherited.
 
 ### 9.13 Unary operators
 
@@ -1343,7 +1141,7 @@ Floating-point negation is IEEE 754 `fneg`.
 +            addition
 -            subtraction
 *            multiplication
-/            division (float only; integer division uses intrinsics)
+/            division (float only; integer division is not source-defined)
 %            remainder (signed/unsigned integer, or float)
 ```
 
@@ -1397,9 +1195,7 @@ or           logical or (short-circuit)
 Both operands must have type `bool`. `and` and `or` are short-circuiting:
 the right operand is evaluated only if needed.
 
-Note: logical operators currently lower through control flow and are marked as
-"deferred" in the tree-to-back lowering. For dataflow choice without control
-flow, use `select(cond, a, b)`.
+For dataflow choice without control flow, use `select(cond, a, b)`.
 
 ### 9.18 Operator precedence
 
@@ -1431,17 +1227,7 @@ Expression fragment emit. Expression fragments return a typed expression result
 and lower through `ExprUseExprFrag`. Unlike region fragment emits, expression
 fragment emits produce a value (not a control-flow splice).
 
-### 9.20 If expression
-
-```moonlift
-if cond then expr else expr end
-```
-
-An expression-producing `if`. Both branches must have the same type. Currently
-deferred in the tree-to-back lowering — use `select(cond, a, b)` for immediate
-dataflow choices.
-
-### 9.21 Switch expression
+### 9.20 Switch expression
 
 ```moonlift
 switch value do
@@ -1458,43 +1244,9 @@ end
 ```
 
 Like a switch statement but each arm produces a final expression value. All
-arms must produce the same scalar type. Integer/boolean constant cases, including
-named `const` cases, lower to backend switch blocks with a join value. Arm-local
-statements and default-arm statements are supported.
-
-### 9.22 Block expression
-
-```moonlift
-do
-    stmt*
-    result_expr
-end
-```
-
-An expression block with statements followed by a final expression. This is
-not a control region — it does not introduce block labels or support `jump`.
-Currently deferred in lowering.
-
-### 9.23 Aggregate (struct) literals
-
-```moonlift
-Pair { left = 1, right = 2 }
-Vec3 { x = 1.0, y = 0.0, z = 0.0 }
-```
-
-Creates a struct value by naming fields. All fields must be provided. Field
-order does not matter. Field values must match the declared field types.
-
-### 9.24 Array literals
-
-```moonlift
-[]i32 { 1, 2, 3, 4 }
-[u8 { 0xFF, 0x00, 0xAB }
-```
-
-Creates an array value. The type determines the element type and the literal
-list determines the length. Array literals are primarily useful for static
-initialization and constant data.
+arms must produce the same scalar type. Integer/boolean constant cases lower to
+backend switch blocks with a join value. Arm-local statements and default-arm
+statements are supported.
 
 ---
 
@@ -1557,7 +1309,7 @@ expression must match this type.
 Multiple named blocks with explicit state transitions:
 
 ```moonlift
-return control -> i32
+return region -> i32
 entry start()
     jump loop(i = 0, acc = 0)
 end
@@ -1576,28 +1328,11 @@ end
 end
 ```
 
-A multi-block control expression wraps blocks in `control -> T ... end`.
+A multi-block control expression wraps blocks in `region -> T ... end`.
 The first block is the entry block. Entry blocks can use `entry` or `block`
 keyword — both are accepted for the first block.
 
-### 10.5 Multi-block control statement
-
-Same as above but without a result type:
-
-```moonlift
-control
-entry start()
-    jump loop(i = 0)
-end
-block loop(i: index)
-    if i >= n then yield end
-    do_work(i)
-    jump loop(i = i + 1)
-end
-end
-```
-
-### 10.6 Block parameters
+### 10.5 Block parameters
 
 **Entry block parameters** (with initializers):
 
@@ -1619,24 +1354,23 @@ Non-entry block parameters have no initializers. They receive their values
 from `jump` arguments. Each parameter name in the block must match a jump
 argument name from callers.
 
-### 10.7 Block labels
+### 10.6 Block labels
 
-Block labels are scoped to the nearest enclosing control region (`block`,
-`control`, or `region`). Labels are not visible outside their region. Duplicate
-labels within a region are rejected.
+Block labels are scoped to the nearest enclosing control region (`block` or
+`region`). Labels are not visible outside their region. Duplicate labels within
+a region are rejected.
 
 Block labels in a control expression can be used as jump targets and as emit
 continuation fill targets.
 
-### 10.8 Termination rules
+### 10.7 Termination rules
 
 Every control-block path must terminate with exactly one of:
 
 1. `jump label(args...)` — transfer to another block in the same region
 2. `yield expr` or `yield` — exit the control region
 3. `return expr` or `return` — exit the enclosing function
-4. A terminating intrinsic call: `trap()`
-5. An `if` or `switch` where every branch terminates
+4. An `if` or `switch` where every branch terminates
 
 Paths that do not terminate are rejected. Paths with multiple terminating
 statements (dead code after a jump/yield/return) produce warnings.
@@ -1645,7 +1379,7 @@ There is no implicit fallthrough from one block to the next. If you want
 sequential block execution, use an explicit `jump` from the first block to
 the second.
 
-### 10.9 Function-tail loop pattern
+### 10.8 Function-tail loop pattern
 
 When a loop is the last thing in a function, `return` can be used directly
 from within the block instead of yielding and then returning:
@@ -1663,7 +1397,7 @@ end
 
 This avoids the extra `let total = block ... end; return total` indirection.
 
-### 10.10 Validation facts
+### 10.9 Validation facts
 
 Control validation produces explicit ASDL facts and rejects:
 
@@ -1919,7 +1653,6 @@ the antiquote syntax:
 | Type position (`let x: @{T}`, `as(ptr(@{T}), x)`) | A type value (from `moon.i32`, `moon.ptr(T)`, etc.). A string/source value is accepted as an explicit source-name escape for generated code. |
 | Expression position (`@{val} + 1`) | A literal/expression source value. Numbers, booleans, `nil`, strings/source values, and expression values are accepted. |
 | Emit fragment position (`emit @{frag}(...)`) | A region or expression fragment value. A string/source value is accepted as an explicit fragment-name escape. |
-| Declaration/module item site | Source/declaration text today; first-class declaration/module ASDL splicing is a planned parser-with-typed-holes boundary. |
 | Block label/name position | String/source value (label or generated identifier) |
 | Integer constant position | Number (integer), or source value that parses as an integer expression |
 
@@ -1967,11 +1700,8 @@ as quoted string literals; use `moon.string_lit(...)` or a Moonlift string
 literal when you want a runtime `ptr(u8)` string.
 
 There is no runtime splicing. All `@{...}` expressions are evaluated exactly
-once when the `.mlua` file is loaded. The expanded form (with all splices
-resolved) is a pure Moonlift module or declaration. Implementation note: the
-current bridge still renders checked holes through a source boundary before
-parsing; the intended long-term boundary is parser-with-typed-holes so ASDL
-values need not round-trip through source text.
+once when the `.mlua` file is loaded. The parser records typed holes and the
+host bridge fills them with checked Lua values.
 
 ---
 
@@ -2221,7 +1951,7 @@ typedef struct MoonView_T {
 ```
 
 All three fields are present in the internal ABI. When a view is passed to
-or from C code through an expose declaration, the ABI depends on the target's
+or from C code through host/API exposure, the ABI depends on the target's
 policy:
 
 - **`descriptor` policy:** passes the full three-field descriptor as a struct
@@ -2253,28 +1983,10 @@ to a subrange of the original view.
 
 ### 16.4 Lua proxy semantics
 
-For `expose UserRef: ptr(User)` with Lua target:
-
-```lua
-local user = get_user_ref()
-print(user.id)              -- field access
-print(user.age)
-user.id = 42                -- field mutation (if mutable policy)
-```
-
-For `expose Users: view(User)` with Lua target:
-
-```lua
-local users = get_users()
-print(users[1].id)          -- indexed field access
-print(#users)               -- length operator
-users:get_id(1)             -- accessor method
-users:set_id(1, 42)         -- mutator method (if mutable policy)
-```
-
 Lua proxies are exposure/access facets of Moonlift views and pointers. They
 are generated by the host access plan phase and use LuaJIT FFI for zero-copy
-access where possible.
+access where possible. Proxy/exposure declarations are configured through the
+host APIs, not Moonlift source syntax.
 
 ---
 
@@ -2392,57 +2104,10 @@ files to create diagnostics.
 
 ## 19. Intrinsics
 
-Intrinsics are built-in operations that map directly to Cranelift IR
-instructions. They are called like functions but have no function call
-overhead.
-
-### 19.1 Bit manipulation intrinsics
-
-```moonlift
-popcount(x)     -- count of set bits (integer types)
-clz(x)          -- count leading zeros
-ctz(x)          -- count trailing zeros
-rotl(x, n)      -- rotate left by n bits
-rotr(x, n)      -- rotate right by n bits
-bswap(x)        -- byte swap (endianness reversal)
-```
-
-All bit manipulation intrinsics require integer operand types. The result
-type matches the operand type.
-
-### 19.2 Float math intrinsics
-
-```moonlift
-sqrt(x)         -- square root
-abs(x)          -- absolute value (float or integer)
-floor(x)        -- round toward negative infinity
-ceil(x)         -- round toward positive infinity
-trunc_float(x)  -- round toward zero
-round(x)        -- round to nearest, ties to even
-fma(a, b, c)    -- fused multiply-add: a * b + c
-```
-
-Float math intrinsics follow IEEE 754 semantics where applicable. `abs` is
-overloaded: it works on both integer and float types, using `iabs` for
-integers and `fabs` for floats.
-
-### 19.3 Control intrinsics
-
-```moonlift
-trap()          -- trigger an unrecoverable trap (ud2 on x86)
-assume(cond)    -- hint to the optimizer that cond is true
-```
-
-- `trap()` terminates execution immediately. It can be used as a terminating
-  statement in control blocks (satisfies the termination requirement).
-- `assume(cond)` tells the optimizer that `cond` is guaranteed to be true at
-  this point. If `cond` is false at runtime, behavior is undefined. Used to
-  communicate facts that the compiler cannot prove.
-
-**Note:** Intrinsic lowering from source to backend commands is currently
-deferred. Intrinsics are available in the schema and typed phases but the
-source-level intrinsic syntax lowering to `BackCmd` is in development. Use
-the builder API for supported intrinsics in the meantime.
+Intrinsic operations are currently a backend/builder API concern, not dedicated
+Moonlift source syntax. At the parser level names such as `popcount`, `sqrt`,
+`trap`, and `assume` are ordinary calls. If an intrinsic is needed, construct it
+through the Lua builder/ASDL API or provide a normal function binding.
 
 ---
 
@@ -2518,7 +2183,7 @@ end
 ### 21.2 Switch + emit dispatch
 
 ```moonlift
-export func classify(p: ptr(u8), n: i32) -> i32
+func classify(p: ptr(u8), n: i32) -> i32
     return region -> i32
     entry start()
         if n <= 0 then yield -1 end
@@ -2566,37 +2231,23 @@ local expect_B = expect_byte("B", 66, 20)
 local expect_semicolon = expect_byte("semicolon", 59, 30)
 ```
 
-### 21.4 Host declaration + native methods
+### 21.4 Hosted struct declaration
 
-```lua
+```moonlift
 struct User
     id: i32
     age: i32
-    active: bool32
-end
-
-expose UserRef: ptr(User)
-expose Users: view(User)
-
-func User:is_active(self: ptr(User)) -> bool
-    return self.active
-end
-
-func User:set_age(self: ptr(User), new_age: i32)
-    self.age = new_age
-end
-
--- Lua-hosted method
-function User:is_adult()
-    return self.age >= 18
+    active: bool
 end
 ```
+
+Host exposure and proxy methods are configured from Lua host APIs.
 
 ### 21.5 Multi-block state machine
 
 ```moonlift
-export func scan_byte(p: ptr(u8), n: i32, target: u8) -> i32
-    return control -> i32
+func scan_byte(p: ptr(u8), n: i32, target: u8) -> i32
+    return region -> i32
     entry start()
         jump loop(i = 0)
     end
