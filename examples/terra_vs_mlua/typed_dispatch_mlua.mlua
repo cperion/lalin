@@ -15,7 +15,8 @@ local function u8buf(s)
 end
 
 local function expect_byte(tag, byte, err_code)
-    return region expect_@{tag}(p: ptr(u8), n: i32, pos: i32;
+    local name = "expect_" .. tag
+    return region @{name}(p: ptr(u8), n: i32, pos: i32;
         ok: cont(next: i32),
         err: cont(pos: i32, code: i32))
     entry start()
@@ -93,7 +94,8 @@ end
 end
 
 local function positive_after(tag, pivot)
-    return expr positive_after_@{tag}(x: i32) -> i32
+    local name = "positive_after_" .. tostring(tag)
+    return expr @{name}(x: i32) -> i32
         select(x > @{pivot}, x - @{pivot}, 0)
     end
 end

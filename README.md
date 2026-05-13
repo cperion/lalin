@@ -78,7 +78,8 @@ compiled:free()
 ```lua
 -- Lua metaprogramming layer: build region fragments from Lua functions
 local function expect_byte(tag, byte, err_code)
-    return region expect_@{tag}(p: ptr(u8), n: i32, pos: i32;
+    local name = "expect_" .. tag
+    return region @{name}(p: ptr(u8), n: i32, pos: i32;
         ok: cont(next: i32),
         err: cont(pos: i32, code: i32))
     entry start()
@@ -311,7 +312,7 @@ emit @{my_fragment}(p, n; hit = done, miss = bad)
 let limit: i32 = @{SOME_CONSTANT}
 ```
 
-Splices insert typed ASDL values, never raw source text.
+Splices occupy whole syntactic positions. They do not splice into the middle of identifiers; build the full name in Lua and use `@{name}` in a name position.
 
 ### Host declarations
 
@@ -337,7 +338,8 @@ Lua is where genericity lives. Moonlift receives the monomorphic result.
 ```lua
 -- Generic fragment factory
 local function expect_byte(tag, byte, err_code)
-    return region expect_@{tag}(p: ptr(u8), n: i32, pos: i32;
+    local name = "expect_" .. tag
+    return region @{name}(p: ptr(u8), n: i32, pos: i32;
         ok: cont(next: i32), err: cont(pos: i32, code: i32))
     entry start()
         if pos >= n then jump err(pos = pos, code = @{err_code}) end

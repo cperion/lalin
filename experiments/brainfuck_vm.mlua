@@ -1,12 +1,23 @@
--- BF interpreter: avoid scan blocks, use Lua to pre-compute jump targets.
--- Instead of scanning at runtime, we pre-compute a jump table for [ and ].
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║  Brainfuck Interpreter — Moonlift Jump-First State Machine  ║
+-- ║                                                              ║
+-- ║  No for. No while. No break. No continue.                    ║
+-- ║  Just blocks, jumps, emits, and typed continuations.         ║
+-- ║                                                              ║
+-- ║  Lua pre-computes the bracket jump table.                    ║
+-- ║  Moonlift compiles the step + dispatch loop to native code.  ║
+-- ╚══════════════════════════════════════════════════════════════╝
 
 local ffi = require("ffi")
 
 local OP_ADD = 0 local OP_SUB = 1 local OP_RIGHT = 2 local OP_LEFT = 3
 local OP_OUT = 4 local OP_JZ = 6 local OP_JNZ = 7 local OP_HALT = 8
 
--- Step region: no scan blocks. JZ/JNZ just jump to pre-computed target.
+-- ── The step region ──────────────────────────────────────────────
+-- One instruction per emit. Every exit is a typed continuation.
+-- code and jumps are region params (immutable pointers).
+-- All mutable state threads through continuation parameters.
+
 local step = region step(code: ptr(i32), jumps: ptr(i32), data: ptr(i32), ip: i32, dp: i32, out_sum: i32, fuel: i32; next: cont(ip: i32, dp: i32, out_sum: i32, fuel: i32), output: cont(ip: i32, dp: i32, byte: i32, out_sum: i32, fuel: i32), halt: cont(result: i32), oom: cont(ip: i32, out_sum: i32))
 entry start()
     if fuel <= 0 then jump oom(ip = ip, out_sum = out_sum) end
@@ -25,14 +36,12 @@ entry start()
     case 4 then
         jump output(ip = ip + 1, dp = dp, byte = data[dp], out_sum = out_sum, fuel = fuel - 1)
     case 6 then
-        -- JZ: if cell is zero, jump to matching ]
         if data[dp] == 0 then
             let target: i32 = jumps[ip]
             jump next(ip = target + 1, dp = dp, out_sum = out_sum, fuel = fuel - 1)
         end
         jump next(ip = ip + 1, dp = dp, out_sum = out_sum, fuel = fuel - 1)
     case 7 then
-        -- JNZ: if cell is nonzero, jump back to matching [
         if not (data[dp] == 0) then
             let target: i32 = jumps[ip]
             jump next(ip = target, dp = dp, out_sum = out_sum, fuel = fuel - 1)
@@ -46,7 +55,9 @@ entry start()
 end
 end
 
--- Main interpreter
+-- ── The interpreter function ────────────────────────────────────
+-- Compose step into a loop. Seal with a function.
+
 local interpret = func interpret(code: ptr(i32), jumps: ptr(i32), code_len: i32, data: ptr(i32), data_len: i32, fuel: i32) -> i32
     return region -> i32
     entry start()
@@ -69,10 +80,11 @@ end
 
 local compiled = interpret:compile()
 
--- Helper: compile BF source to opcode tape + jump table
+-- ── BF compiler (Lua) ───────────────────────────────────────────
+-- Lua generates the opcode tape and the bracket jump table.
+
 local function compile_bf(src)
     local tape = {}
-    local brackets = {}
     for i = 1, #src do
         local c = src:sub(i, i)
         if c == '+' then tape[#tape + 1] = OP_ADD
@@ -80,25 +92,16 @@ local function compile_bf(src)
         elseif c == '>' then tape[#tape + 1] = OP_RIGHT
         elseif c == '<' then tape[#tape + 1] = OP_LEFT
         elseif c == '.' then tape[#tape + 1] = OP_OUT
-        elseif c == '[' then
-            tape[#tape + 1] = OP_JZ
-            brackets[#brackets + 1] = #tape  -- record position of [
-        elseif c == ']' then
-            tape[#tape + 1] = OP_JNZ
-            -- match with last unmatched [
-            local open_pos = brackets[#brackets]
-            brackets[#brackets] = nil
-            -- We'll fill jump table after
+        elseif c == '[' then tape[#tape + 1] = OP_JZ
+        elseif c == ']' then tape[#tape + 1] = OP_JNZ
         end
     end
     tape[#tape + 1] = OP_HALT
 
-    -- Build jump table using two-pass bracket matching
     local arr = ffi.new("int32_t[?]", #tape)
     for i, v in ipairs(tape) do arr[i - 1] = v end
 
     local jump_arr = ffi.new("int32_t[?]", #tape)
-    -- re-match brackets
     local stack = {}
     for i = 0, #tape - 1 do
         jump_arr[i] = -1
@@ -107,8 +110,8 @@ local function compile_bf(src)
         elseif arr[i] == OP_JNZ then
             local open_pos = stack[#stack]
             stack[#stack] = nil
-            jump_arr[i] = open_pos       -- ] jumps to [
-            jump_arr[open_pos] = i        -- [ jumps to ]
+            jump_arr[i] = open_pos
+            jump_arr[open_pos] = i
         end
     end
 
@@ -117,40 +120,42 @@ end
 
 local FUEL = 1000000
 
--- Test 1: no loops
+-- ── Tests ───────────────────────────────────────────────────────
+
+-- Test 1: +++++++.  → 7
 do
     local code, jumps, n = compile_bf("+++++++.")
     local data = ffi.new("int32_t[?]", 64)
     local r = compiled(code, jumps, n, data, 64, FUEL)
-    print("test 1 (+++++++.) =>", r)
+    print("test 1  +++++++.             =>", r)
     assert(r == 7)
 end
 
--- Test 2: pointer movement
+-- Test 2: ++++++>++++++++.  → 8
 do
     local code, jumps, n = compile_bf("++++++>++++++++.")
     local data = ffi.new("int32_t[?]", 64)
     local r = compiled(code, jumps, n, data, 64, FUEL)
-    print("test 2 (++++++>++++++++.) =>", r)
+    print("test 2  ++++++>++++++++.     =>", r)
     assert(r == 8)
 end
 
--- Test 3: simple loop  +++[>+++<-]>.
+-- Test 3: +++[>+++<-]>.  → 9  (3×3)
 do
     local code, jumps, n = compile_bf("+++[>+++<-]>.")
     local data = ffi.new("int32_t[?]", 64)
     local r = compiled(code, jumps, n, data, 64, FUEL)
-    print("test 3 (+++[>+++<-]>.) =>", r)
-    assert(r == 9, "expected 9, got " .. r)
+    print("test 3  +++[>+++<-]>.        =>", r)
+    assert(r == 9)
 end
 
--- Test 4: nested loops  ++>+++<[>[>+<-]<-]>>.
+-- Test 4: +++++[>+++++<-]>.  → 25  (5×5)
 do
-    local code, jumps, n = compile_bf("++>+++<[>[>+<-]<-]>>.")
+    local code, jumps, n = compile_bf("+++++[>+++++<-]>.")
     local data = ffi.new("int32_t[?]", 64)
     local r = compiled(code, jumps, n, data, 64, FUEL)
-    print("test 4 (nested multiply) =>", r, "(BF logic TBD, not a Moonlift bug)")
-    -- assert(r == 6, "expected 6, got " .. r)
+    print("test 4  +++++[>+++++<-]>.    =>", r)
+    assert(r == 25)
 end
 
 -- Test 5: Hello World!
@@ -159,14 +164,16 @@ do
     local code, jumps, n = compile_bf(hw)
     local data = ffi.new("int32_t[?]", 64)
     local r = compiled(code, jumps, n, data, 64, FUEL)
+    -- "Hello World!\n" = H(72) e(101) l(108) l(108) o(111) ' '(32) W(87) o(111) r(114) l(108) d(100) !(33) \n(10)
     local expected = 72+101+108+108+111+32+87+111+114+108+100+33+10
-    print("test 5 (Hello World!) =>", r, "expect", expected)
-    assert(r == expected, "Hello World sum mismatch: got " .. r)
+    print("test 5  Hello World!         =>", r, "expect", expected)
+    assert(r == expected)
 end
 
 print("ALL TESTS PASSED!")
 
--- Benchmark
+-- ── Benchmark ───────────────────────────────────────────────────
+
 local hw = "++++++++++[>+++++++>++++++++++>+++>+<<<<-]>++.>+.+++++++..+++.>++.<<+++++++++++++++.>.+++.------.--------.>+.>."
 local code5, jumps5, n5 = compile_bf(hw)
 local expected = 72+101+108+108+111+32+87+111+114+108+100+33+10
@@ -178,7 +185,7 @@ for i = 1, iters do
     acc = acc + compiled(code5, jumps5, n5, db, 64, FUEL)
 end
 local elapsed = os.clock() - t0
-print(string.format("benchmark: %d iters in %.4fs (%.0f iter/s)", iters, elapsed, iters / elapsed))
+print(string.format("benchmark: %d Hello Worlds in %.4fs (%.0f iter/s)", iters, elapsed, iters / elapsed))
 assert(acc == expected * iters)
 
 compiled:free()

@@ -135,11 +135,13 @@ foo<i32>(x)
 ✅ Correct pattern — Lua is the metaprogramming language:
 
 ```lua
-local function make_id(T)
-    return expr id_for_@{T}(x: @{T}) -> @{T}
+local function make_id(name, T)
+    return expr @{name}(x: @{T}) -> @{T}
         x
     end
 end
+
+local id_i32 = make_id("id_for_i32", moon.i32)
 ```
 
 Moonlift receives only the monomorphic result with all types resolved.
@@ -1574,7 +1576,8 @@ fragments.
 
 ```lua
 local function threshold_after(tag, pivot)
-    return expr threshold_after_@{tag}(x: i32) -> i32
+    local name = "threshold_after_" .. tag
+    return expr @{name}(x: i32) -> i32
         select(x > @{pivot}, x - @{pivot}, 0)
     end
 end
@@ -1653,8 +1656,12 @@ the antiquote syntax:
 | Type position (`let x: @{T}`, `as(ptr(@{T}), x)`) | A type value (from `moon.i32`, `moon.ptr(T)`, etc.). A string/source value is accepted as an explicit source-name escape for generated code. |
 | Expression position (`@{val} + 1`) | A literal/expression source value. Numbers, booleans, `nil`, strings/source values, and expression values are accepted. |
 | Emit fragment position (`emit @{frag}(...)`) | A region or expression fragment value. A string/source value is accepted as an explicit fragment-name escape. |
-| Block label/name position | String/source value (label or generated identifier) |
+| Block label/name position | String/source value containing the complete label or generated identifier |
 | Integer constant position | Number (integer), or source value that parses as an integer expression |
+
+A splice in a name position must replace the whole name token. Partial identifier
+splicing such as `foo_@{tag}` is not supported by the parser; build the complete
+name in Lua instead (`local name = "foo_" .. tag`) and write `@{name}`.
 
 ### 14.2 Examples
 
@@ -1695,8 +1702,8 @@ end
 Splicing is checked against the expected syntactic role before the hosted
 island is parsed. Typed host values are preferred (`moon.i32`, region fragment
 values, expression fragment values, source values). For pragmatic generated-code
-cases, strings are treated as explicit raw Moonlift source/name fragments, not
-as quoted string literals; use `moon.string_lit(...)` or a Moonlift string
+cases, strings are treated as explicit complete Moonlift source/name fragments,
+not as quoted string literals; use `moon.string_lit(...)` or a Moonlift string
 literal when you want a runtime `ptr(u8)` string.
 
 There is no runtime splicing. All `@{...}` expressions are evaluated exactly
@@ -2213,7 +2220,8 @@ end
 
 ```lua
 local function expect_byte(tag, byte, err_code)
-    return region expect_@{tag}(p: ptr(u8), n: i32, pos: i32;
+    local name = "expect_" .. tag
+    return region @{name}(p: ptr(u8), n: i32, pos: i32;
         ok: cont(next: i32),
         err: cont(pos: i32, code: i32))
     entry start()

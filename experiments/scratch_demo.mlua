@@ -2,7 +2,6 @@
 
 local ffi = require("ffi")
 
-local Scratch = module Scratch
 
 extern func moonlift_scratch_i32(slot: i32, count: i32) -> ptr(i32)
 extern func moonlift_scratch_raw(slot: i32, elem_size: i32, count: i32) -> ptr(u8)

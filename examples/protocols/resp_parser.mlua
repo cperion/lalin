@@ -23,7 +23,8 @@ local function u8buf(s)
 end
 
 local function make_line_payload(tag, err_base)
-    return region resp_line_@{tag}(p: ptr(u8), n: i32, pos: i32;
+    local name = "resp_line_" .. tostring(tag)
+    return region @{name}(p: ptr(u8), n: i32, pos: i32;
         ok: cont(bytes: i32, next: i32),
         err: cont(pos: i32, code: i32))
     entry start()
@@ -47,7 +48,8 @@ local function make_line_payload(tag, err_base)
 end
 
 local function make_decimal_line(tag, err_base)
-    return region resp_decimal_@{tag}(p: ptr(u8), n: i32, pos: i32;
+    local name = "resp_decimal_" .. tostring(tag)
+    return region @{name}(p: ptr(u8), n: i32, pos: i32;
         ok: cont(value: i32, next: i32),
         err: cont(pos: i32, code: i32))
     entry start()
@@ -82,7 +84,8 @@ local function make_decimal_line(tag, err_base)
 end
 
 local function make_bulk_string(tag, err_base)
-    return region resp_bulk_@{tag}(p: ptr(u8), n: i32, pos: i32;
+    local name = "resp_bulk_" .. tostring(tag)
+    return region @{name}(p: ptr(u8), n: i32, pos: i32;
         ok: cont(bytes: i32, next: i32),
         null: cont(next: i32),
         err: cont(pos: i32, code: i32))
