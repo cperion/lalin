@@ -88,7 +88,7 @@ for i = 1, #msgs do
     if m.method == "textDocument/publishDiagnostics" then
         if #m.params.diagnostics > 0 then
             saw_bad_diag = true
-            assert(m.params.diagnostics[1].code == "host.bareBoolBoundary")
+            assert(m.params.diagnostics[1].code == "E0505")
         else
             clear_diag_count = clear_diag_count + 1
         end

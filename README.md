@@ -62,7 +62,7 @@ metaprogramming, and who believe semantics should be data, not strings.
 ```lua
 local Host = require("moonlift.mlua_run")
 local chunk = Host.loadstring([[
-local add = func add(a: i32, b: i32) -> i32
+local add = func(a: i32, b: i32) -> i32
     return a + b
 end
 return add
@@ -96,7 +96,7 @@ local expect_A = expect_byte("A", 65, 10)
 local expect_semicolon = expect_byte("semicolon", 59, 30)
 
 -- Function with jump-first control (no module, no export)
-local parse_packet = func parse_packet(p: ptr(u8), n: i32) -> i32
+local parse_packet = func(p: ptr(u8), n: i32) -> i32
     return region -> i32
     entry start()
         if n <= 0 then yield -1 end
@@ -135,7 +135,7 @@ return { parse_packet = parse_packet }
 -- No while, for, break, or continue.
 -- Everything is blocks with explicit state transitions.
 
-local sum = func sum(xs: view(i32), n: index) -> i32
+local sum = func(xs: view(i32), n: index) -> i32
     block loop(i: index = 0, acc: i32 = 0)
         if i >= n then
             return acc
@@ -387,7 +387,7 @@ Moonlift's compilation pipeline is explicit at every step:
 ```
 .mlua source
   │
-  ├─► mlua_parse       ──► MoonTree module (ASDL)
+  ├─► parse/scan_document ─► hosted island values / MoonTree module (ASDL)
   ├─► tree_typecheck   ──► typed+resolved module
   ├─► tree_to_back     ──► MoonBack program (flat command array)
   ├─► back_validate    ──► validation facts + rejects
@@ -579,8 +579,8 @@ luajit benchmarks/bench_host_arena_native.lua   # Native host type access
 moonlift/
 ├── lua/moonlift/           Lua compiler, PVM framework, ASDL, LSP, linker
 │   ├── schema/             Schema-as-data source of truth (MoonCore, MoonType, MoonBack, ...)
-│   ├── parse.lua           Moonlift source parser
-│   ├── mlua_parse.lua      .mlua hosted island parser
+│   ├── parse.lua           Unified source parser and hosted island scanner
+│   ├── mlua_document_analysis.lua  .mlua editor/LSP analysis
 │   ├── mlua_run.lua        LuaJIT hosted island runner
 │   ├── tree_typecheck.lua  Typecheck/name resolution
 │   ├── tree_to_back.lua    Tree → flat backend commands
@@ -683,7 +683,6 @@ luajit tests/test_host_struct_values.lua
 ### `.mlua` integration tests
 
 ```bash
-luajit tests/test_mlua_parse.lua
 luajit tests/test_mlua_host_pipeline.lua
 luajit tests/test_mlua_document_analysis.lua
 luajit tests/test_mlua_splice_shapes.lua

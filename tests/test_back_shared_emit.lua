@@ -3,7 +3,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
-local MluaParse = require("moonlift.mlua_parse")
+local Parse = require("moonlift.parse")
 local Typecheck = require("moonlift.tree_typecheck")
 local TreeToBack = require("moonlift.tree_to_back")
 local Validate = require("moonlift.back_validate")
@@ -26,7 +26,7 @@ end
 
 local T = pvm.context()
 A2.Define(T)
-local MP = MluaParse.Define(T)
+local P = Parse.Define(T)
 local TC = Typecheck.Define(T)
 local Lower = TreeToBack.Define(T)
 local V = Validate.Define(T)
@@ -38,11 +38,11 @@ local LE = LinkExecute.Define(T)
 local Link = T.MoonLink
 
 local src = [[
-export func add_i32(a: i32, b: i32) -> i32
+func add_i32(a: i32, b: i32) -> i32
     return a + b
 end
 ]]
-local parsed = MP.parse(src, "shared_smoke.mlua")
+local parsed = P.parse_module(src)
 assert(#parsed.issues == 0, parsed.issues[1] and parsed.issues[1].message)
 local checked = TC.check_module(parsed.module)
 assert(#checked.issues == 0, checked.issues[1] and checked.issues[1].message)

@@ -1,7 +1,7 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 local ffi = require("ffi");local pvm = require("moonlift.pvm");local A2 = require("moonlift.asdl")
 local T = pvm.context();A2.Define(T)
-local mlua_parse = require("moonlift.mlua_parse").Define(T)
+local parse = require("moonlift.parse").Define(T)
 local OE = require("moonlift.open_expand").Define(T)
 local TC = require("moonlift.tree_typecheck").Define(T)
 local Layout = require("moonlift.sem_layout_resolve").Define(T)
@@ -9,12 +9,12 @@ local Lower = require("moonlift.tree_to_back").Define(T)
 local BL = require("moonlift.back_luajit").Define(T)
 
 local src = [[
-export func fib(n: i32) -> i32
+func fib(n: i32) -> i32
     if n <= 1 then return n end
     return fib(n - 1) + fib(n - 2)
 end
 ]]
-local parsed = mlua_parse.parse(src, "test")
+local parsed = parse.parse_module(src)
 local expanded = OE.module(parsed.module)
 local checked = TC.check_module(expanded)
 local resolved = Layout.module(checked.module, {})

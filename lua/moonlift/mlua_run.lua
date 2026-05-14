@@ -71,7 +71,6 @@ local function format_report(opts)
 end
 
 local function format_phase_exception(runtime, phase, err, extra)
-    -- First, produce the legacy diagnostic (unchanged)
     local diag = Diag.from_error(err, {
         phase = phase,
         file = runtime and runtime.chunk_name,
@@ -96,7 +95,6 @@ local function format_phase_exception(runtime, phase, err, extra)
         diag.snippet = SourceMap.snippet(runtime.line_starts, diag.src_line, 2)
     end
 
-    -- Now also produce a new-style error report for better display
     local uri = runtime and runtime.chunk_name or "?"
     local source_text = runtime and runtime.src or nil
     local span = nil
@@ -106,30 +104,20 @@ local function format_phase_exception(runtime, phase, err, extra)
             diag.src_line, (diag.src_col or 1) + 1)
     end
 
-    local report = Errors.from_legacy_error(err, {
-        phase = phase,
-        file = uri,
-        src_line = diag.src_line,
-        src_col = diag.src_col,
-    })
+    local report = Errors.Catalog.build_report("E9999", {
+        message = diag.message or tostring(err),
+        span = span,
+        phase_context = phase or "during compilation",
+    }, { source_text = source_text, uri = uri })
 
-    -- Add phase and island context
-    if phase then
-        report = Errors.Report.with_note(report, "phase: " .. phase)
-    end
+    if phase then report = Errors.Report.with_note(report, "phase: " .. phase) end
     if extra and extra.island_index then
         report = Errors.Report.with_note(report,
             "in island #" .. extra.island_index
             .. (extra.island_kind and (" (" .. extra.island_kind .. ")") or ""))
     end
 
-    -- Render the new-format report and append it
-    local new_rendered = Errors.Terminal.render(report, source_text)
-
-    -- Lua strings are immutable primitives; older code tried to attach legacy
-    -- diagnostic fields to the rendered string, which itself raised an error
-    -- while reporting the original failure.  Return plain text instead.
-    return new_rendered .. "\n" .. tostring(diag)
+    return Errors.Terminal.render(report, source_text)
 end
 
 local function format_parse_issue(runtime, phase, issue, extra)
@@ -162,28 +150,7 @@ local function format_parse_issue(runtime, phase, issue, extra)
             .. (extra.island_kind and (" (" .. extra.island_kind .. ")") or ""))
     end
 
-    -- Render the report to terminal format and return as a string
-    -- that can be thrown as an error (backward compatible)
-    local rendered = Errors.Terminal.render(report, source_text)
-
-    -- Also produce the legacy diagnostic for backward compat
-    local legacy = Diag.new({
-        phase = phase,
-        file = uri,
-        island_index = extra and extra.island_index,
-        island_kind = extra and extra.island_kind,
-        src_line = src_line,
-        src_col = src_col,
-        message = issue and issue.message or tostring(issue),
-        hint = Diag.detect_hint(issue and issue.message or issue),
-        snippet = SourceMap.snippet(runtime.line_starts, src_line, 2),
-    })
-
-    -- Return the new-format rendered string for immediate display,
-    -- but attach the legacy diag and the report for downstream consumers
-    local result = rendered
-    result = result .. "\n" .. tostring(legacy)
-    return result
+    return Errors.Terminal.render(report, source_text)
 end
 
 local function island_context(runtime, island_index)

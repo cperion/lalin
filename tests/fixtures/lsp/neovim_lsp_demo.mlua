@@ -80,7 +80,7 @@ entry start(total: i32 = 0)
 end
 end
 
-export func first_i32(xs: ptr(i32), n: index) -> i32
+func first_i32(xs: ptr(i32), n: index) -> i32
     let v: view(i32) = view(xs, n)
     if len(v) <= 0 then
         return 0
@@ -88,7 +88,7 @@ export func first_i32(xs: ptr(i32), n: index) -> i32
     return v[0]
 end
 
-export func count_to(n: index) -> index
+func count_to(n: index) -> index
     return block loop(i: index = 0) -> index
         if i >= n then
             yield i
@@ -97,7 +97,7 @@ export func count_to(n: index) -> index
     end
 end
 
-export func factorial(n: i32) -> i32
+func factorial(n: i32) -> i32
     return block loop(x: i32 = n, acc: i32 = 1) -> i32
         if x <= 1 then
             yield acc
@@ -106,7 +106,7 @@ export func factorial(n: i32) -> i32
     end
 end
 
-export func sum_view_i32(xs: view(i32)) -> i32
+func sum_view_i32(xs: view(i32)) -> i32
     return block loop(i: index = 0, acc: i32 = 0) -> i32
         if i >= len(xs) then
             yield acc
@@ -115,7 +115,7 @@ export func sum_view_i32(xs: view(i32)) -> i32
     end
 end
 
-export func dot_view_i32(xs: view(i32), ys: view(i32)) -> i32
+func dot_view_i32(xs: view(i32), ys: view(i32)) -> i32
     return block loop(i: index = 0, acc: i32 = 0) -> i32
         if i >= len(xs) then
             yield acc
@@ -124,7 +124,7 @@ export func dot_view_i32(xs: view(i32), ys: view(i32)) -> i32
     end
 end
 
-export func fill_i32(dst: view(i32), value: i32) -> i32
+func fill_i32(dst: view(i32), value: i32) -> i32
     return block loop(i: index = 0) -> i32
         if i >= len(dst) then
             yield value
@@ -133,8 +133,7 @@ export func fill_i32(dst: view(i32), value: i32) -> i32
     end
 end
 
-module ByteTools
-    region scan_until(p: ptr(u8), n: i32, target: i32; hit: cont(pos: i32), miss: cont(pos: i32))
+region scan_until(p: ptr(u8), n: i32, target: i32; hit: cont(pos: i32), miss: cont(pos: i32))
     entry loop(i: i32 = 0)
         if i >= n then jump miss(pos = i) end
         if as(i32, p[i]) == target then jump hit(pos = i) end
@@ -151,7 +150,7 @@ module ByteTools
     end
     end
 
-    export func find_byte(p: ptr(u8), n: i32, target: i32) -> i32
+    func find_byte(p: ptr(u8), n: i32, target: i32) -> i32
         return region -> i32
         entry start()
             emit scan_until(p, n, target; hit = found, miss = missing)
@@ -165,7 +164,7 @@ module ByteTools
         end
     end
 
-    export func prefix_len_or_all(p: ptr(u8), n: i32, target: i32) -> i32
+    func prefix_len_or_all(p: ptr(u8), n: i32, target: i32) -> i32
         return region -> i32
         entry start()
             emit scan_until(p, n, target; hit = found, miss = missing)
@@ -179,7 +178,7 @@ module ByteTools
         end
     end
 
-    export func sum_before_byte(p: ptr(u8), n: i32, sentinel: i32) -> i32
+    func sum_before_byte(p: ptr(u8), n: i32, sentinel: i32) -> i32
         return region -> i32
         entry start()
             emit sum_until(p, n, sentinel; done = found, eof = missing)
@@ -192,34 +191,27 @@ module ByteTools
         end
         end
     end
-end
-
-module MathTools
-    const answer: i32 = 42
-    static seed: i32 = answer
-
-    export func add1(x: i32) -> i32
+func add1(x: i32) -> i32
         return x + 1
     end
 
-    export func max_i32(a: i32, b: i32) -> i32
+    func max_i32(a: i32, b: i32) -> i32
         if a >= b then
             return a
         end
         return b
     end
 
-    export func abs_i32(x: i32) -> i32
+    func abs_i32(x: i32) -> i32
         if x < 0 then
             return 0 - x
         end
         return x
     end
-end
 
 -- Completion playground:
 -- Put your cursor at the blank line below and ask for completion. You should
--- see struct/expose/func/module/region/expr snippets.
+-- see struct/expose/func/region/expr snippets.
 
 
 -- Type completion playground:

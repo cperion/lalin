@@ -19,7 +19,7 @@ local jit_api = J.Define(T)
 local B2 = T.MoonBack
 
 local src = [[
-export func first_from_view(xs: ptr(i32), n: index) -> i32
+func first_from_view(xs: ptr(i32), n: index) -> i32
     let v: view(i32) = view(xs, n)
     if len(v) <= 0 then
         return 0
@@ -27,7 +27,7 @@ export func first_from_view(xs: ptr(i32), n: index) -> i32
     return v[0]
 end
 
-export func second_from_strided_view(xs: ptr(i32), n: index) -> i32
+func second_from_strided_view(xs: ptr(i32), n: index) -> i32
     let v: view(i32) = view(xs, n, 2)
     if len(v) <= 1 then
         return 0
@@ -35,7 +35,7 @@ export func second_from_strided_view(xs: ptr(i32), n: index) -> i32
     return v[1]
 end
 
-export func sum_strided_view(xs: ptr(i32), n: index) -> i32
+func sum_strided_view(xs: ptr(i32), n: index) -> i32
     let v: view(i32) = view(xs, n, 2)
     return block loop(i: index = 0, acc: i32 = 0) -> i32
         if i >= len(v) then
@@ -45,13 +45,13 @@ export func sum_strided_view(xs: ptr(i32), n: index) -> i32
     end
 end
 
-export func window_sum(xs: ptr(i32), n: index) -> i32
+func window_sum(xs: ptr(i32), n: index) -> i32
     let v: view(i32) = view(xs, n)
     let w: view(i32) = view_window(v, 1, 3)
     return w[0] + w[2]
 end
 
-export func strided_window_sum(xs: ptr(i32), n: index) -> i32
+func strided_window_sum(xs: ptr(i32), n: index) -> i32
     let v: view(i32) = view(xs, n, 2)
     let w: view(i32) = view_window(v, 1, 2)
     return w[0] + w[1]

@@ -92,6 +92,32 @@ function M.Define(T)
         return L.DiagnosticDocumentReport("full", diagnostic_payloads(diagnostics))
     end
 
+    local function protocol_position(pos)
+        return L.ProtocolPosition(pos.line or 0, pos.character or 0)
+    end
+
+    local function protocol_range(r)
+        return L.ProtocolRange(protocol_position(r.start or {}), protocol_position(r["end"] or r.stop or {}))
+    end
+
+    local function protocol_diagnostic(d)
+        return L.DiagnosticPayload(protocol_range(d.range or {}), d.severity or 1, tostring(d.code or "E9999"), tostring(d.message or ""))
+    end
+
+    local function protocol_diagnostic_payloads(diagnostics)
+        local out = {}
+        for i = 1, #diagnostics do out[i] = protocol_diagnostic(diagnostics[i]) end
+        return out
+    end
+
+    local function protocol_diagnostic_report(uri, version, diagnostics)
+        return L.DiagnosticReport(uri, version, protocol_diagnostic_payloads(diagnostics))
+    end
+
+    local function protocol_diagnostic_document_report(diagnostics)
+        return L.DiagnosticDocumentReport("full", protocol_diagnostic_payloads(diagnostics))
+    end
+
     local function hover(h)
         local cls = pvm.classof(h)
         if cls == E.HoverInfo then
@@ -268,6 +294,8 @@ function M.Define(T)
         diagnostic_payloads = diagnostic_payloads,
         diagnostic_report = diagnostic_report,
         diagnostic_document_report = diagnostic_document_report,
+        protocol_diagnostic_report = protocol_diagnostic_report,
+        protocol_diagnostic_document_report = protocol_diagnostic_document_report,
         hover = hover,
         completion_list = completion_list,
         document_symbols = document_symbols,

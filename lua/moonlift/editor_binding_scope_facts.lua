@@ -155,13 +155,12 @@ local function scope_kind_for_word(E, word)
     if word == "expr" then return E.BindingScopeExpr end
     if word == "block" or word == "entry" or word == "loop" then return E.BindingScopeControlBlock end
     if word == "if" or word == "then" or word == "else" or word == "elseif" or word == "switch" or word == "do" then return E.BindingScopeBranch end
-    if word == "module" then return E.BindingScopeModule end
     return E.BindingScopeOpaque(word)
 end
 
 local scope_open_words = {
     func = true, region = true, expr = true, block = true, entry = true,
-    ["if"] = true, switch = true, module = true,
+    ["if"] = true, switch = true,
 }
 
 function M.Define(T)

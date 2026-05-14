@@ -1,0 +1,13 @@
+local scan_str = region scan_str(p: ptr(u8), n: i32, start: i32;
+    ok: cont(epos: i32, start_i: i32),
+    bad: cont(bad_pos: i32))
+entry start()
+    jump scan(i = start)
+end
+block scan(i: i32)
+    if i >= n then jump bad(bad_pos = i) end
+    jump scan(i = i + 1)
+end
+end
+
+return scan_str

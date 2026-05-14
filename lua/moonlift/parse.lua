@@ -402,6 +402,7 @@ local function new_parser_internal(T, toks, first, limit, opts)
         value_env = opts.value_env or {},
         cont_env = opts.cont_env or {},
         protocol_types = opts.protocol_types or {},
+        name_hint = opts.name_hint,
         splice_slots = {},
         splice_slots_by_id = {},
         region_seq = 0,
@@ -525,6 +526,23 @@ function Parser:expect_field_name(msg)
     self:issue((msg or "expected field name") .. ", got " .. self:token_desc(0))
     if self:kind() == TK.invalid then self.i = self.i + 1 end
     return ""
+end
+
+function Parser:name_or_hint_before_lparen(msg)
+    if self:kind() == TK.lparen and self.name_hint then return self.name_hint end
+    return self:expect_name(msg)
+end
+
+function Parser:name_ref_or_hint_before_lparen(msg)
+    local O = self.O
+    if self:kind() == TK.lparen and self.name_hint then return O.NameRefText(self.name_hint) end
+    if self:kind() == TK.hole then
+        local id = self:text(); self.i = self.i + 1
+        local slot = O.NameSlot(self:splice_key("name", id), id)
+        self:record_splice_slot(id, O.SlotName(slot), "name")
+        return O.NameRefSlot(slot)
+    end
+    return O.NameRefText(self:expect_name(msg))
 end
 
 function Parser:is_stop(stops) return stops[self:kind()] == true end
@@ -1229,7 +1247,11 @@ end
 
 function Parser:parse_func()
     local Tr, Ty, C = self.Tr, self.Ty, self.C
-    local name = self:expect_name("expected function name")
+    local name = self:name_or_hint_before_lparen("expected function name")
+    if self:accept(TK.colon) then
+        local method = self:expect_name("expected method name")
+        name = name .. "_" .. method
+    end
     self:expect(TK.lparen); local params, contracts = self:parse_param_list(); self:expect(TK.rparen)
     local result = Ty.TScalar(C.ScalarVoid)
     if self:accept(TK.arrow) then self:skip_nl(); result = self:parse_type() end
@@ -1335,16 +1357,8 @@ end
 -- Region fragment: region name(params; conts) -> Protocol | entry ... end [block ... end]* end
 function Parser:parse_region_frag()
     local O, B, C, Tr = self.O, self.B, self.C, self.Tr
-    -- Name (or hole)
-    local name_ref
-    if self:kind() == TK.hole then
-        local id = self:text(); self.i = self.i + 1
-        local slot = O.NameSlot(self:splice_key("name", id), id)
-        self:record_splice_slot(id, O.SlotName(slot), "name")
-        name_ref = O.NameRefSlot(slot)
-    else
-        name_ref = O.NameRefText(self:expect_name("expected region fragment name"))
-    end
+    -- Name, hole, or Lua assignment-inferred name.
+    local name_ref = self:name_ref_or_hint_before_lparen("expected region fragment name")
     local pvm = require("moonlift.pvm")
     local name_key = pvm.classof(name_ref) == O.NameRefText and name_ref.text or ("__hole_" .. name_ref.slot.key)
 
@@ -1398,15 +1412,7 @@ end
 -- Expression fragment: expr name(params) -> T body end
 function Parser:parse_expr_frag()
     local O, B, C = self.O, self.B, self.C
-    local name_ref
-    if self:kind() == TK.hole then
-        local id = self:text(); self.i = self.i + 1
-        local slot = O.NameSlot(self:splice_key("name", id), id)
-        self:record_splice_slot(id, O.SlotName(slot), "name")
-        name_ref = O.NameRefSlot(slot)
-    else
-        name_ref = O.NameRefText(self:expect_name("expected expression fragment name"))
-    end
+    local name_ref = self:name_ref_or_hint_before_lparen("expected expression fragment name")
     local pvm = require("moonlift.pvm")
     local name_key = pvm.classof(name_ref) == O.NameRefText and name_ref.text or ("__hole_" .. name_ref.slot.key)
 
@@ -1425,11 +1431,16 @@ function Parser:parse_expr_frag()
     return O.ExprFrag(name_ref, params, O.OpenSet({}, {}, {}, {}), body, result)
 end
 
--- Type declaration: type Name = struct ... end  OR  type Name = A | B(i32)
--- Always end-delimited.
+-- Type declaration islands are `struct Name ... end` and `union Name ... end`.
 function Parser:parse_struct_island()
     local Tr, Ty = self.Tr, self.Ty
-    local name = self:expect_name("expected struct name")
+    local name
+    if self.name_hint and (self:kind() == TK.nl or self:kind() == TK.end_kw
+       or ((self:kind() == TK.name or ident_kw[self:kind()]) and self:kind(1) == TK.colon)) then
+        name = self.name_hint
+    else
+        name = self:expect_name("expected struct name")
+    end
     local fields = {}
     self:skip_nl()
     while self:kind() ~= TK.end_kw and self:kind() ~= TK.eof do
@@ -1450,7 +1461,15 @@ end
 -- Union type island: union Name variant | variant end
 function Parser:parse_union_island()
     local Tr, Ty = self.Tr, self.Ty
-    local name = self:expect_name("expected union name")
+    local name
+    local k1 = self:kind(1)
+    local current_starts_variant = (self:kind() == TK.name or ident_kw[self:kind()])
+        and (k1 == TK.pipe or k1 == TK.lparen or k1 == TK.end_kw or k1 == TK.nl)
+    if self.name_hint and (self:kind() == TK.nl or self:kind() == TK.end_kw or current_starts_variant) then
+        name = self.name_hint
+    else
+        name = self:expect_name("expected union name")
+    end
     local variants = {}
     while self:kind() ~= TK.eof and self:kind() ~= TK.end_kw do
         self:skip_nl()
@@ -1461,7 +1480,7 @@ function Parser:parse_union_island()
             self:skip_nl()
             if self:kind() == TK.rparen then
                 self.i = self.i + 1
-            elseif self:kind() == TK.name and self:kind(1) == TK.colon then
+            elseif (self:kind() == TK.name or ident_kw[self:kind()]) and self:kind(1) == TK.colon then
                 while self:kind() ~= TK.rparen and self:kind() ~= TK.eof do
                     local fname = self:expect_field_name("expected variant field name")
                     self:expect(TK.colon)
@@ -1569,7 +1588,9 @@ local function tokenize_island(src, island_kind, start_byte, toks)
     local start_kw = ({ ["func"]=TK.func_kw, ["region"]=TK.region_kw, ["expr"]=TK.expr_kw,
                           ["struct"]=TK.struct_kw, ["union"]=TK.union_kw })[island_kind]
     end_open[start_kw] = nil
-    -- struct and union islands have no internal nesting constructs.
+    -- struct and union islands have no internal nesting constructs, and their
+    -- field/variant names may reuse control keywords such as `block`/`yield`.
+    if island_kind == "struct" or island_kind == "union" then end_open = {} end
     local depth = 1
 
     while i <= n and depth > 0 do
@@ -1706,6 +1727,28 @@ local function tokenize_island(src, island_kind, start_byte, toks)
     return first_tok, toks.n, i - 1
 end
 
+local function infer_lua_assignment_name(src, island_start)
+    local p = island_start - 1
+    while p >= 1 do
+        local c = byte(src, p)
+        if c == 32 or c == 9 or c == 13 or c == 10 then p = p - 1 else break end
+    end
+    if p < 1 or byte(src, p) ~= 61 then return nil end
+    local before_eq = byte(src, p - 1)
+    if before_eq == 60 or before_eq == 62 or before_eq == 61 or before_eq == 126 then return nil end
+    p = p - 1
+    while p >= 1 do
+        local c = byte(src, p)
+        if c == 32 or c == 9 or c == 13 or c == 10 then p = p - 1 else break end
+    end
+    if p < 1 or not (is_alpha(byte(src, p)) or byte(src, p) == 95) then return nil end
+    local e = p
+    while p > 1 and (is_alpha(byte(src, p - 1)) or is_digit(byte(src, p - 1)) or byte(src, p - 1) == 95) do
+        p = p - 1
+    end
+    return sub(src, p, e)
+end
+
 -- Lua-aware document scanner.
 function M.scan_document(src)
     local toks = new_tokens(src)
@@ -1756,8 +1799,10 @@ function M.scan_document(src)
                 local prev_word = nil
                 for p = s - 1, 1, -1 do
                     local pc = byte(src, p)
-                    if pc == 10 or pc == 32 or pc == 9 or pc == 13 then
-                        -- skip whitespace
+                    if pc == 10 then
+                        prev = 1; break
+                    elseif pc == 32 or pc == 9 or pc == 13 then
+                        -- skip horizontal whitespace
                     else
                         -- Check if this is a letter/underscore (part of a Lua keyword)
                         if is_alpha(pc) or pc == 95 then
@@ -1785,6 +1830,7 @@ function M.scan_document(src)
                     islands[#islands + 1] = {
                         kind = target_kind, first_tok = first_tok, last_tok = last_tok,
                         start = s, stop = stop_byte or s, holes = holes,
+                        name_hint = infer_lua_assignment_name(src, s),
                     }
                     i = (stop_byte or s) + 1
                 end
@@ -1807,6 +1853,7 @@ function M.parse_island(T, scan, island_index, opts)
     local island = scan.islands[island_index]
     if not island then error("no island at index " .. tostring(island_index), 2) end
 
+    if opts.name_hint == nil then opts.name_hint = island.name_hint end
     local p = new_parser_internal(T, toks, island.first_tok, island.last_tok, opts)
     p:skip_sep()
 
@@ -1852,6 +1899,41 @@ function M.parse_type_string(T, src, opts)
              issues = p.issues, protocol_types = p.protocol_types }
 end
 
+function M.parse_module_document(T, src, opts)
+    opts = opts or {}
+    local pvm = require("moonlift.pvm")
+    local Tr = T.MoonTree
+    local scan = M.scan_document(src)
+    local items, issues, splice_slots = {}, {}, {}
+    local protocol_types = opts.protocol_types or {}
+    for i = 1, #scan.islands do
+        local parsed = M.parse_island(T, scan, i, { protocol_types = protocol_types })
+        for j = 1, #parsed.issues do issues[#issues + 1] = parsed.issues[j] end
+        for j = 1, #parsed.splice_slots do splice_slots[#splice_slots + 1] = parsed.splice_slots[j] end
+        protocol_types = parsed.protocol_types or protocol_types
+        if parsed.kind == "func" then
+            local func = parsed.value
+            local cls = pvm.classof(func)
+            if cls == Tr.FuncLocal then
+                func = Tr.FuncExport(func.name, func.params, func.result, func.body)
+            elseif cls == Tr.FuncLocalContract then
+                func = Tr.FuncExportContract(func.name, func.params, func.result, func.contracts, func.body)
+            end
+            items[#items + 1] = Tr.ItemFunc(func)
+        elseif parsed.kind == "struct" or parsed.kind == "union" then
+            items[#items + 1] = Tr.ItemType(parsed.value.decl)
+        end
+    end
+    return {
+        kind = "module",
+        module = Tr.Module(Tr.ModuleSurface, items),
+        scan = scan,
+        splice_slots = splice_slots,
+        issues = issues,
+        protocol_types = protocol_types,
+    }
+end
+
 function M.Define(T)
     return {
         TK = TK,
@@ -1859,6 +1941,7 @@ function M.Define(T)
         scan_document = M.scan_document,
         parse_island = function(scan, island_index, opts) return M.parse_island(T, scan, island_index, opts) end,
         parse_type = function(src, opts) return M.parse_type_string(T, src, opts) end,
+        parse_module = function(src, opts) return M.parse_module_document(T, src, opts) end,
     }
 end
 

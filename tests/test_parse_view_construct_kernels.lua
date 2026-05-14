@@ -25,7 +25,7 @@ local C = T.MoonCore
 local Vec = T.MoonVec
 
 local src = [[
-export func sum_construct_view_scalar(xs: ptr(i32), n: index) -> i32
+func sum_construct_view_scalar(xs: ptr(i32), n: index) -> i32
     let v: view(i32) = view(xs, n)
     return block loop(i: index = 0, acc: i32 = 0) -> i32
         if i >= len(v) then

@@ -26,7 +26,7 @@ local Vec = T.MoonVec
 local Tr = T.MoonTree
 
 local src = [[
-export func add_view_i32(noalias dst: view(i32), readonly a: view(i32), readonly b: view(i32)) -> i32
+func add_view_i32(noalias dst: view(i32), readonly a: view(i32), readonly b: view(i32)) -> i32
     requires same_len(dst, a)
     requires same_len(dst, b)
     block loop(i: index = 0)
@@ -38,7 +38,7 @@ export func add_view_i32(noalias dst: view(i32), readonly a: view(i32), readonly
     end
 end
 
-export func copy_view_i32(noalias dst: view(i32), readonly src: view(i32)) -> i32
+func copy_view_i32(noalias dst: view(i32), readonly src: view(i32)) -> i32
     requires same_len(dst, src)
     block loop(i: index = 0)
         if i >= len(dst) then

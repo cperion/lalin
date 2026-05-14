@@ -34,10 +34,8 @@ end
 expr FortyTwo() -> i32
     42
 end
-module Math
-    export func two() -> i32
-        return 2
-    end
+func two() -> i32
+    return 2
 end
 ]]
 local doc = S.DocumentSnapshot(uri, S.DocVersion(1), S.LangMlua, src)
@@ -71,9 +69,6 @@ assert(pvm.classof(region_pick.subject) == E.SubjectRegionFrag)
 
 local expr_pick = Subject.subject_at(query_at("FortyTwo"), analysis)
 assert(pvm.classof(expr_pick.subject) == E.SubjectExprFrag)
-
-local module_pick = Subject.subject_at(query_at("Math"), analysis)
-assert(pvm.classof(module_pick.subject) == E.SubjectTreeModule)
 
 local opaque_pos = P.offset_to_pos(idx, assert(src:find("lua = 1", 1, true)) - 1).pos
 local opaque = Subject.subject_at(E.PositionQuery(uri, S.DocVersion(1), opaque_pos), analysis)

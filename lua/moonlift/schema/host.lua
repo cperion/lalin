@@ -300,6 +300,22 @@ return function(A)
             A.unique,
         },
 
+        A.product "MluaParseResult" {
+            A.field "decls" "MoonHost.HostDeclSet",
+            A.field "module" "MoonTree.Module",
+            A.field "region_frags" (A.many "MoonOpen.RegionFrag"),
+            A.field "expr_frags" (A.many "MoonOpen.ExprFrag"),
+            A.field "issues" (A.many "MoonParse.ParseIssue"),
+            A.unique,
+        },
+
+        A.product "MluaHostPipelineResult" {
+            A.field "parsed" "MoonHost.MluaParseResult",
+            A.field "report" "MoonHost.HostReport",
+            A.field "layout_env" "MoonHost.HostLayoutEnv",
+            A.unique,
+        },
+
         A.product "HostValueId" {
             A.field "key" "string",
             A.field "pretty" "string",

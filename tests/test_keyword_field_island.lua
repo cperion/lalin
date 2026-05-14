@@ -3,17 +3,14 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local Run = require("moonlift.mlua_run")
 
 local src = [[
-local m = module KeywordFieldIsland
+local ExitWithKeywordFields = union ExitWithKeywordFields mcode(entry: ptr(u8)) | block(yield: i32) | done end
 
-type ExitWithKeywordFields = mcode(entry: ptr(u8)) | block(yield: i32) | done
-
-export func sentinel() -> i32
+local sentinel = func sentinel() -> i32
     return 1
 end
 
-end
-local c = m:compile()
-assert(c:get("sentinel")() == 1)
+local c = sentinel:compile()
+assert(c() == 1)
 c:free()
 return "keyword field island ok"
 ]]

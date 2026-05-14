@@ -1,6 +1,7 @@
 local pvm = require("moonlift.pvm")
 local AnalysisMod = require("moonlift.mlua_document_analysis")
-local Diagnostics = require("moonlift.editor_diagnostic_facts")
+local ErrorReports = require("moonlift.editor_error_reports")
+local Errors = require("moonlift.error")
 local Symbols = require("moonlift.editor_symbol_facts")
 local Hover = require("moonlift.editor_hover")
 local Completion = require("moonlift.editor_completion_items")
@@ -36,7 +37,7 @@ function M.Define(T)
     local R = T.MoonRpc
     local L = T.MoonLsp
     local Analysis = AnalysisMod.Define(T)
-    local Diag = Diagnostics.Define(T)
+    local ReportFacts = ErrorReports.Define(T)
     local Sym = Symbols.Define(T)
     local Hov = Hover.Define(T)
     local Comp = Completion.Define(T)
@@ -57,14 +58,17 @@ function M.Define(T)
         return Analysis.analyze_document(doc)
     end
 
-    local function diagnostics_payload(doc)
+    local function rendered_diagnostics(doc)
         local analysis = analyze_doc(doc)
-        return L.PayloadDiagnostics(Adapt.diagnostic_report(doc.uri, doc.version, Diag.diagnostics(analysis)))
+        return Errors.render_lsp(ReportFacts.reports(analysis))
+    end
+
+    local function diagnostics_payload(doc)
+        return L.PayloadDiagnostics(Adapt.protocol_diagnostic_report(doc.uri, doc.version, rendered_diagnostics(doc)))
     end
 
     local function diagnostic_document_payload(doc)
-        local analysis = analyze_doc(doc)
-        return L.PayloadDiagnosticDocumentReport(Adapt.diagnostic_document_report(Diag.diagnostics(analysis)))
+        return L.PayloadDiagnosticDocumentReport(Adapt.protocol_diagnostic_document_report(rendered_diagnostics(doc)))
     end
 
     local function result(id, payload)

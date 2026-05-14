@@ -28,7 +28,7 @@ local expect_B = expect_byte("expect_B", 66, 20)
 local expect_C = expect_byte("expect_C", 67, 30)
 
 return module
-export func parse_ABC(p: ptr(u8), n: i32) -> i32
+func parse_ABC(p: ptr(u8), n: i32) -> i32
     return region -> i32
     entry start()
         emit @{expect_A}(p, 0; ok = got_A, fail = bad_A)
@@ -54,7 +54,7 @@ export func parse_ABC(p: ptr(u8), n: i32) -> i32
     end
 end
 
-export func parse_A_or_B(p: ptr(u8), n: i32) -> i32
+func parse_A_or_B(p: ptr(u8), n: i32) -> i32
     return region -> i32
     entry start()
         emit @{expect_A}(p, 0; ok = done, fail = try_B)

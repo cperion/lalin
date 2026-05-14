@@ -18,7 +18,7 @@ Moonlift must be able to express the LuaJIT-grade VM directly: typed regions for
 - Parenthesize every generated island expression so host Lua never depends on newline continuation.
 - Replace fragile switch-case depth accounting with structural opener tracking: cases are not `end`-delimited; nested forms inside cases are tracked by their own openers.
 - Treat semicolons as statement/module item separators.
-- Support compact function bodies such as `export func f() -> i32 return 1 end`.
+- Support compact function bodies such as `func f() -> i32 return 1 end`.
 - Keep keyword-like field names/variant fields from being treated as island openers.
 
 Current status: first implementation landed with regression coverage in `tests/test_mlua_stabilization.lua`.
@@ -28,17 +28,15 @@ Current status: first implementation landed with regression coverage in `tests/t
 Target source shape:
 
 ```lua
-local bc = moon.require("luajitvm.core.bytecode")
-local proto = moon.require("luajitvm.protocols")
+local runtime = moon.require("tapexmem.runtime")
 
-local M = module "luajitvm.runtime.dispatch"
-
-export region vm_loop(ts: ptr(state.ThreadState)) -> proto.DispatchResult
+local vm_loop = region vm_loop(ts: ptr(runtime.ThreadState); done: cont(code: i32))
+entry start()
     ...
 end
-
 end
-return M
+
+return vm_loop
 ```
 
 Required semantics:
@@ -50,7 +48,7 @@ Required semantics:
 
 ### S2: Module-level regions
 
-- Add real module item support for `region`/`export region` instead of treating regions only as fragments hidden inside `.mlua` modules.
+- Keep regions as `.mlua` hosted islands and compose them through Lua-held fragment values.
 - Typecheck and lower exported regions.
 - Allow region-to-region composition across module boundaries through RNF.
 - Enforce: funcs cannot call regions; regions may call funcs and compose regions.

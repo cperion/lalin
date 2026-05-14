@@ -830,8 +830,8 @@ SnapRestore
 
 ## 8. What Changes vs. the Original Architecture Doc
 
-The original `MOONLIFT_LUAJIT_VM_ARCHITECTURE.md` expressed every region
-signature with inline continuation lists:
+The earlier LuaJIT VM architecture notes expressed every region signature with
+inline continuation lists:
 
 ```moonlift
 region rec_bc_add(J: ptr(JitState), L: ptr(ThreadState), bc: BCIns;

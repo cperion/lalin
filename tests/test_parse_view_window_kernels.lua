@@ -25,7 +25,7 @@ local Vec = T.MoonVec
 local B2 = T.MoonBack
 
 local src = [[
-export func sum_full_window_i32(xs: ptr(i32), n: index) -> i32
+func sum_full_window_i32(xs: ptr(i32), n: index) -> i32
     requires bounds(xs, n)
     let v: view(i32) = view(xs, n)
     let w: view(i32) = view_window(v, 0, n)
@@ -35,7 +35,7 @@ export func sum_full_window_i32(xs: ptr(i32), n: index) -> i32
     end
 end
 
-export func sum_window_i32(xs: ptr(i32), n: index, start: index, m: index) -> i32
+func sum_window_i32(xs: ptr(i32), n: index, start: index, m: index) -> i32
     requires bounds(xs, n)
     requires window_bounds(xs, n, start, m)
     let v: view(i32) = view(xs, n)
@@ -46,7 +46,7 @@ export func sum_window_i32(xs: ptr(i32), n: index, start: index, m: index) -> i3
     end
 end
 
-export func sum_prefix_shrink_window_i32(xs: ptr(i32), n: index) -> i32
+func sum_prefix_shrink_window_i32(xs: ptr(i32), n: index) -> i32
     requires bounds(xs, n)
     let m: index = n - 1
     let v: view(i32) = view(xs, n)
@@ -57,7 +57,7 @@ export func sum_prefix_shrink_window_i32(xs: ptr(i32), n: index) -> i32
     end
 end
 
-export func sum_alias_shrink_window_i32(xs: ptr(i32), n: index) -> i32
+func sum_alias_shrink_window_i32(xs: ptr(i32), n: index) -> i32
     requires bounds(xs, n)
     let s: index = 2
     let m: index = n - s
@@ -69,7 +69,7 @@ export func sum_alias_shrink_window_i32(xs: ptr(i32), n: index) -> i32
     end
 end
 
-export func sum_suffix_shrink_window_i32(xs: ptr(i32), n: index) -> i32
+func sum_suffix_shrink_window_i32(xs: ptr(i32), n: index) -> i32
     requires bounds(xs, n)
     let m: index = n - 3
     let v: view(i32) = view(xs, n)
@@ -80,7 +80,7 @@ export func sum_suffix_shrink_window_i32(xs: ptr(i32), n: index) -> i32
     end
 end
 
-export func sum_nested_window_i32(xs: ptr(i32), n: index) -> i32
+func sum_nested_window_i32(xs: ptr(i32), n: index) -> i32
     requires bounds(xs, n)
     let m1: index = n - 1
     let v: view(i32) = view(xs, n)
@@ -93,7 +93,7 @@ export func sum_nested_window_i32(xs: ptr(i32), n: index) -> i32
     end
 end
 
-export func add_window_i32(noalias dst: ptr(i32), readonly a: ptr(i32), readonly b: ptr(i32), n: index, start: index, m: index) -> i32
+func add_window_i32(noalias dst: ptr(i32), readonly a: ptr(i32), readonly b: ptr(i32), n: index, start: index, m: index) -> i32
     requires bounds(dst, n)
     requires bounds(a, n)
     requires bounds(b, n)

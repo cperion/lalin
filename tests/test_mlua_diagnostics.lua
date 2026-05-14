@@ -25,16 +25,16 @@ do
     assert(text:find("generated_line: 12", 1, true) ~= nil)
 end
 
--- End-to-end: parse island error is structured and keeps parse phase.
+-- End-to-end: parse island errors use the ErrorReport renderer.
 do
     local bad = "local r = region bad\nentry start()\n  jump x()\n"
     local fn = assert(Run.loadstring(bad, "=(diag_test.mlua)"))
     local ok, err = pcall(fn)
     assert(not ok)
     local text = tostring(err)
-    assert(text:find("phase: parse_island", 1, true) ~= nil)
-    assert(text:find("source:", 1, true) ~= nil)
-    assert(text:find("snippet:", 1, true) ~= nil)
+    assert(text:find("ERROR%[E0101%]") ~= nil)
+    assert(text:find("in island #1", 1, true) ~= nil)
+    assert(text:find("diag_test.mlua", 1, true) ~= nil)
 end
 
 print("test_mlua_diagnostics ok")

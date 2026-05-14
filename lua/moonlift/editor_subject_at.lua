@@ -173,6 +173,9 @@ function M.Define(T)
             if expr_frag then return E.SubjectExprFrag(expr_frag) end
             local fn = find_func(analysis, anchor.label)
             if fn then return E.SubjectTreeFunc(fn) end
+            if anchor.kind == S.AnchorMethodName or anchor.kind == S.AnchorFunctionName then
+                return E.SubjectBuiltin("function " .. anchor.label)
+            end
         elseif anchor.kind == S.AnchorRegionName then
             local frag = find_region_frag(analysis, anchor.label)
             if frag then return E.SubjectRegionFrag(frag) end

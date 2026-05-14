@@ -1,3 +1,0 @@
-module ProtoTest
-type Scanner = hit(pos: i32) | miss()
-end

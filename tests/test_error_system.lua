@@ -1,6 +1,8 @@
 -- tests/test_error_system.lua
 -- Tests for the new error management system.
 
+package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
+
 local Errors = require("moonlift.error")
 local Span = Errors.Span
 local Report = Errors.Report
@@ -243,25 +245,17 @@ end
 
 do
     local src = [[
-local machine = module TapeXMemMachine
+union Step again(pc: i32, tape_len: i32) | stop(code: i32) end
 
-type Step = again(
-    pc: i32,
-    tape_len: i32
-) | stop(code: i32)
-
-region check_invariants(
-    pc: i32,
-    tape_len: i32
-) -> Step
+region check_invariants(pc: i32, tape_len: i32) -> Step
 entry start()
     if fuel <= 0 then jump stop(code = -700) end
     jump again(pc = pc, tape_len = tape_len)
 end
 end
 
-export func run_machine(tape: ptr(i32), n: i32) -> i32
-    return control -> i32
+func run_machine(tape: ptr(i32), n: i32) -> i32
+    return region -> i32
     entry start()
         jump dispatch(pc = 0, tape_len = 0)
     end
@@ -274,8 +268,6 @@ export func run_machine(tape: ptr(i32), n: i32) -> i32
         yield code
     end
     end
-end
-
 end
 ]]
 

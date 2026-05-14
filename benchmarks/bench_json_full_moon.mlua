@@ -1,11 +1,15 @@
--- Moonlift JSON decoder — end-to-end, 100% pure Moonlift, no Rust helpers.
--- Run: cargo run --bin moonlift -- benchmarks/bench_json_full_moon.mlua
+-- Moonlift JSON tape decoder -- 100% pure Moonlift native scanner.
+-- Produces flat tape tags for Lua-side or native table building.
 
-local json = module JsonDecoder
+local ffi = require("ffi")
 
--- ========== Scanner: string ==========
+-- ===========================================================================
+-- Region fragments
+-- ===========================================================================
 
-region scan_str_json(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32; ok: cont(epos: i32, start_i: i32, depth: i32, next: i32), bad: cont(bad_pos: i32))
+local scan_str = region scan_str(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
+    ok: cont(epos: i32, start_i: i32, depth: i32, next: i32),
+    bad: cont(bad_pos: i32))
 entry start()
     jump scan(i = start)
 end
@@ -23,60 +27,52 @@ end
 block escape(i: i32)
     if i >= n then jump bad(bad_pos = i) end
     switch as(i32, p[i]) do
-    case 34  then jump scan(i = i + 1); case 92  then jump scan(i = i + 1)
-    case 47  then jump scan(i = i + 1); case 98  then jump scan(i = i + 1)
-    case 102 then jump scan(i = i + 1); case 110 then jump scan(i = i + 1)
-    case 114 then jump scan(i = i + 1); case 116 then jump scan(i = i + 1)
-    case 117 then jump hex_scan(i = i + 1, count = 4)
+    case 34 then jump scan(i = i + 1)
+    case 92 then jump scan(i = i + 1)
+    case 47 then jump scan(i = i + 1)
+    case 98 then jump scan(i = i + 1)
+    case 102 then jump scan(i = i + 1)
+    case 110 then jump scan(i = i + 1)
+    case 114 then jump scan(i = i + 1)
+    case 116 then jump scan(i = i + 1)
+    case 117 then jump hex(i = i + 1, count = 4)
     default then jump bad(bad_pos = i)
     end
 end
-block hex_scan(i: i32, count: i32)
+block hex(i: i32, count: i32)
     if count <= 0 then jump scan(i = i) end
     if i >= n then jump bad(bad_pos = i) end
     let c: i32 = as(i32, p[i])
-    if c >= 48 then if c <= 57 then jump hex_scan(i = i + 1, count = count - 1) end end
-    if c >= 65 then if c <= 70 then jump hex_scan(i = i + 1, count = count - 1) end end
-    if c >= 97 then if c <= 102 then jump hex_scan(i = i + 1, count = count - 1) end end
+    if c >= 48 then if c <= 57 then jump hex(i = i + 1, count = count - 1) end end
+    if c >= 65 then if c <= 70 then jump hex(i = i + 1, count = count - 1) end end
+    if c >= 97 then if c <= 102 then jump hex(i = i + 1, count = count - 1) end end
     jump bad(bad_pos = i)
 end
 end
 
--- ========== Scanner: number ==========
-
-region scan_num_json(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32; ok: cont(epos: i32, start_i: i32, depth: i32, next: i32), bad: cont(bad_pos: i32))
+local scan_num = region scan_num(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
+    ok: cont(epos: i32, start_i: i32, depth: i32, next: i32),
+    bad: cont(bad_pos: i32))
 entry start()
     if start >= n then jump bad(bad_pos = start) end
     let c: i32 = as(i32, p[start])
-    if c == 45 then jump after_sign(i = start + 1) end
-    jump first_digit(c = c, i = start)
+    if c == 45 then jump signed(i = start + 1) end
+    jump digits(i = start)
 end
-block after_sign(i: i32)
+block signed(i: i32)
     if i >= n then jump bad(bad_pos = i) end
-    jump first_digit(c = as(i32, p[i]), i = i)
+    jump digits(i = i)
 end
-block first_digit(c: i32, i: i32)
-    if c == 48 then jump after_zero(i = i + 1) end
-    if c >= 49 then if c <= 57 then jump int_tail(i = i + 1) end end
-    jump bad(bad_pos = i)
-end
-block after_zero(i: i32)
-    if i >= n then jump ok(epos = i, start_i = start, depth = depth, next = next) end
-    jump frac_or_exp(c = as(i32, p[i]), i = i)
-end
-block int_tail(i: i32)
+block digits(i: i32)
     if i >= n then jump ok(epos = i, start_i = start, depth = depth, next = next) end
     let c: i32 = as(i32, p[i])
-    if c >= 48 then if c <= 57 then jump int_tail(i = i + 1) end end
-    jump frac_or_exp(c = c, i = i)
-end
-block frac_or_exp(c: i32, i: i32)
-    if c == 46 then jump frac_first(i = i + 1) end
-    if c == 69 then jump exp_sign(i = i + 1) end
-    if c == 101 then jump exp_sign(i = i + 1) end
+    if c >= 48 then if c <= 57 then jump digits(i = i + 1) end end
+    if c == 46 then jump frac(i = i + 1) end
+    if c == 69 then jump exp(i = i + 1) end
+    if c == 101 then jump exp(i = i + 1) end
     jump ok(epos = i, start_i = start, depth = depth, next = next)
 end
-block frac_first(i: i32)
+block frac(i: i32)
     if i >= n then jump bad(bad_pos = i) end
     let c: i32 = as(i32, p[i])
     if c >= 48 then if c <= 57 then jump frac_tail(i = i + 1) end end
@@ -86,11 +82,11 @@ block frac_tail(i: i32)
     if i >= n then jump ok(epos = i, start_i = start, depth = depth, next = next) end
     let c: i32 = as(i32, p[i])
     if c >= 48 then if c <= 57 then jump frac_tail(i = i + 1) end end
-    if c == 69 then jump exp_sign(i = i + 1) end
-    if c == 101 then jump exp_sign(i = i + 1) end
+    if c == 69 then jump exp(i = i + 1) end
+    if c == 101 then jump exp(i = i + 1) end
     jump ok(epos = i, start_i = start, depth = depth, next = next)
 end
-block exp_sign(i: i32)
+block exp(i: i32)
     if i >= n then jump bad(bad_pos = i) end
     let c: i32 = as(i32, p[i])
     if c == 43 then jump exp_digit(i = i + 1) end
@@ -111,230 +107,182 @@ block exp_tail(i: i32)
 end
 end
 
--- ========== Match literals ==========
-
-region match_true_json(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32; ok: cont(epos: i32, depth: i32, next: i32), bad: cont(bad_pos: i32))
-entry start() jump check_r(i = start + 1) end
-block check_r(i: i32) if i >= n then jump bad(bad_pos = i) end; if as(i32,p[i])==114 then jump check_u(i=i+1) end; jump bad(bad_pos=i) end
-block check_u(i: i32) if i >= n then jump bad(bad_pos = i) end; if as(i32,p[i])==117 then jump check_e(i=i+1) end; jump bad(bad_pos=i) end
-block check_e(i: i32) if i >= n then jump bad(bad_pos = i) end; if as(i32,p[i])==101 then jump ok(epos=i+1,depth=depth,next=next) end; jump bad(bad_pos=i) end
+local match_true = region match_true(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
+    ok: cont(epos: i32, depth: i32, next: i32),
+    bad: cont(bad_pos: i32))
+entry start() jump r(i = start + 1) end
+block r(i: i32)
+    if i >= n then jump bad(bad_pos = i) end
+    if as(i32, p[i]) == 114 then jump u(i = i + 1) end
+    jump bad(bad_pos = i)
+end
+block u(i: i32)
+    if i >= n then jump bad(bad_pos = i) end
+    if as(i32, p[i]) == 117 then jump e(i = i + 1) end
+    jump bad(bad_pos = i)
+end
+block e(i: i32)
+    if i >= n then jump bad(bad_pos = i) end
+    if as(i32, p[i]) == 101 then jump ok(epos = i + 1, depth = depth, next = next) end
+    jump bad(bad_pos = i)
+end
 end
 
-region match_false_json(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32; ok: cont(epos: i32, depth: i32, next: i32), bad: cont(bad_pos: i32))
-entry start() jump check_a(i = start + 1) end
-block check_a(i: i32) if i >= n then jump bad(bad_pos = i) end; if as(i32,p[i])==97 then jump check_l(i=i+1) end; jump bad(bad_pos=i) end
-block check_l(i: i32) if i >= n then jump bad(bad_pos = i) end; if as(i32,p[i])==108 then jump check_s(i=i+1) end; jump bad(bad_pos=i) end
-block check_s(i: i32) if i >= n then jump bad(bad_pos = i) end; if as(i32,p[i])==115 then jump check_ee(i=i+1) end; jump bad(bad_pos=i) end
-block check_ee(i: i32) if i >= n then jump bad(bad_pos = i) end; if as(i32,p[i])==101 then jump ok(epos=i+1,depth=depth,next=next) end; jump bad(bad_pos=i) end
+local match_false = region match_false(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
+    ok: cont(epos: i32, depth: i32, next: i32),
+    bad: cont(bad_pos: i32))
+entry start() jump a(i = start + 1) end
+block a(i: i32)
+    if i >= n then jump bad(bad_pos = i) end
+    if as(i32, p[i]) == 97 then jump l1(i = i + 1) end
+    jump bad(bad_pos = i)
+end
+block l1(i: i32)
+    if i >= n then jump bad(bad_pos = i) end
+    if as(i32, p[i]) == 108 then jump s(i = i + 1) end
+    jump bad(bad_pos = i)
+end
+block s(i: i32)
+    if i >= n then jump bad(bad_pos = i) end
+    if as(i32, p[i]) == 115 then jump e2(i = i + 1) end
+    jump bad(bad_pos = i)
+end
+block e2(i: i32)
+    if i >= n then jump bad(bad_pos = i) end
+    if as(i32, p[i]) == 101 then jump ok(epos = i + 1, depth = depth, next = next) end
+    jump bad(bad_pos = i)
+end
 end
 
-region match_null_json(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32; ok: cont(epos: i32, depth: i32, next: i32), bad: cont(bad_pos: i32))
-entry start() jump check_u(i = start + 1) end
-block check_u(i: i32) if i >= n then jump bad(bad_pos = i) end; if as(i32,p[i])==117 then jump check_l1(i=i+1) end; jump bad(bad_pos=i) end
-block check_l1(i: i32) if i >= n then jump bad(bad_pos = i) end; if as(i32,p[i])==108 then jump check_l2(i=i+1) end; jump bad(bad_pos=i) end
-block check_l2(i: i32) if i >= n then jump bad(bad_pos = i) end; if as(i32,p[i])==108 then jump ok(epos=i+1,depth=depth,next=next) end; jump bad(bad_pos=i) end
+local match_null = region match_null(p: ptr(u8), n: i32, start: i32, depth: i32, next: i32;
+    ok: cont(epos: i32, depth: i32, next: i32),
+    bad: cont(bad_pos: i32))
+entry start() jump u(i = start + 1) end
+block u(i: i32)
+    if i >= n then jump bad(bad_pos = i) end
+    if as(i32, p[i]) == 117 then jump l1(i = i + 1) end
+    jump bad(bad_pos = i)
+end
+block l1(i: i32)
+    if i >= n then jump bad(bad_pos = i) end
+    if as(i32, p[i]) == 108 then jump l2(i = i + 1) end
+    jump bad(bad_pos = i)
+end
+block l2(i: i32)
+    if i >= n then jump bad(bad_pos = i) end
+    if as(i32, p[i]) == 108 then jump ok(epos = i + 1, depth = depth, next = next) end
+    jump bad(bad_pos = i)
+end
 end
 
--- ========== Number parser (bytes -> f64) ==========
+-- ===========================================================================
+-- Number parser: parse decimal string to f64
+-- ===========================================================================
 
-region parse_f64_json(p: ptr(u8), start: i32, slen: i32; ok: cont(value: f64), err: cont())
+local parse_f64 = region parse_f64(p: ptr(u8), start: i32, slen: i32;
+    ok: cont(value: f64), err: cont())
 entry start()
-    jump sign(i = start, neg = 0, plim = start + slen)
+    jump digits(i = start, acc = 0, neg = 0)
 end
-block sign(i: i32, neg: i32, ulim: i32)
-    if i >= ulim then jump err() end
-    let c: i32 = as(i32, p[i])
-    if c == 45 then jump integer_part(i = i + 1, neg = 1, ulim = ulim) end
-    jump integer_part(i = i, neg = neg, ulim = ulim)
-end
-block integer_part(i: i32, neg: i32, ulim: i32)
-    if i >= ulim then jump err() end
-    let c: i32 = as(i32, p[i])
-    if c >= 48 then if c <= 57 then jump int_loop(i = i + 1, neg = neg, ulim = ulim, acc = c - 48) end end
-    jump err()
-end
-block int_loop(i: i32, neg: i32, ulim: i32, acc: i32)
-    if i >= ulim then jump done_int(neg = neg, acc = acc) end
-    let c: i32 = as(i32, p[i])
-    if c >= 48 then if c <= 57 then jump int_loop(i = i + 1, neg = neg, ulim = ulim, acc = acc * 10 + c - 48) end end
-    if c == 46 then jump frac(i = i + 1, neg = neg, ulim = ulim, int_part = acc) end
-    if c == 69 then jump exp_sign(i = i + 1, neg = neg, ulim = ulim, int_part = acc) end
-    if c == 101 then jump exp_sign(i = i + 1, neg = neg, ulim = ulim, int_part = acc) end
-    jump err()
-end
-block done_int(neg: i32, acc: i32)
-    let v: f64 = as(f64, acc)
-    if neg == 1 then jump ok(value = 0.0 - v) end
-    jump ok(value = v)
-end
-block frac(i: i32, neg: i32, ulim: i32, int_part: i32)
-    if i >= ulim then jump err() end
-    let c: i32 = as(i32, p[i])
-    if c >= 48 then if c <= 57 then jump frac_loop(i = i + 1, neg = neg, ulim = ulim, int_part = int_part, frac_acc = c - 48, frac_div = 10) end end
-    jump err()
-end
-block frac_loop(i: i32, neg: i32, ulim: i32, int_part: i32, frac_acc: i32, frac_div: i32)
-    if i >= ulim then jump frac_done(neg = neg, int_part = int_part, frac_acc = frac_acc, frac_div = frac_div) end
+block digits(i: i32, acc: i32, neg: i32)
+    if i >= start + slen then jump finish(neg = neg, acc = acc, frac = 0, div = 1) end
     let c: i32 = as(i32, p[i])
     if c >= 48 then if c <= 57 then
-        let new_acc: i32 = frac_acc * 10 + c - 48
-        jump frac_loop(i = i + 1, neg = neg, ulim = ulim, int_part = int_part, frac_acc = new_acc, frac_div = frac_div * 10)
+        jump digits(i = i + 1, acc = acc * 10 + c - 48, neg = neg)
     end end
-    if c == 69 then jump exp_after_frac(i = i + 1, neg = neg, ulim = ulim, int_part = int_part, frac_acc = frac_acc, frac_div = frac_div) end
-    if c == 101 then jump exp_after_frac(i = i + 1, neg = neg, ulim = ulim, int_part = int_part, frac_acc = frac_acc, frac_div = frac_div) end
-    jump err()
+    if c == 45 then jump digits(i = i + 1, acc = acc, neg = 1) end
+    if c == 46 then jump frac(i = i + 1, neg = neg, int_part = acc, frac_acc = 0, frac_div = 1) end
+    jump finish(neg = neg, acc = acc, frac = 0, div = 1)
 end
-block frac_done(neg: i32, int_part: i32, frac_acc: i32, frac_div: i32)
-    let v: f64 = as(f64, int_part) + as(f64, frac_acc) / as(f64, frac_div)
-    if neg == 1 then jump ok(value = 0.0 - v) end
+block frac(i: i32, neg: i32, int_part: i32, frac_acc: i32, frac_div: i32)
+    if i >= start + slen then jump finish(neg = neg, acc = int_part, frac = frac_acc, div = frac_div) end
+    let c: i32 = as(i32, p[i])
+    if c >= 48 then if c <= 57 then
+        jump frac(i = i + 1, neg = neg, int_part = int_part, frac_acc = frac_acc * 10 + c - 48, frac_div = frac_div * 10)
+    end end
+    jump finish(neg = neg, acc = int_part, frac = frac_acc, div = frac_div)
+end
+block finish(neg: i32, acc: i32, frac: i32, div: i32)
+    let v: f64 = as(f64, acc)
+    if div > 1 then v = v + as(f64, frac) / as(f64, div) end
+    if neg == 1 then v = 0.0 - v end
     jump ok(value = v)
 end
-block exp_sign(i: i32, neg: i32, ulim: i32, int_part: i32)
-    if i >= ulim then jump err() end
-    let c: i32 = as(i32, p[i])
-    if c == 43 then jump exp_digit(i = i + 1, neg = neg, ulim = ulim, int_part = int_part, exp_neg = 0) end
-    if c == 45 then jump exp_digit(i = i + 1, neg = neg, ulim = ulim, int_part = int_part, exp_neg = 1) end
-    if c >= 48 then if c <= 57 then jump exp_loop(i = i + 1, neg = neg, ulim = ulim, int_part = int_part, exp_neg = 0, exp_acc = c - 48) end end
-    jump err()
-end
-block exp_after_frac(i: i32, neg: i32, ulim: i32, int_part: i32, frac_acc: i32, frac_div: i32)
-    if i >= ulim then jump err() end
-    let c: i32 = as(i32, p[i])
-    if c == 43 then jump exp_digit_frac(i = i + 1, neg = neg, int_part = int_part, frac_acc = frac_acc, frac_div = frac_div, exp_neg = 0) end
-    if c == 45 then jump exp_digit_frac(i = i + 1, neg = neg, int_part = int_part, frac_acc = frac_acc, frac_div = frac_div, exp_neg = 1) end
-    if c >= 48 then if c <= 57 then jump exp_loop_frac(i = i + 1, neg = neg, int_part = int_part, frac_acc = frac_acc, frac_div = frac_div, exp_neg = 0, exp_acc = c - 48) end end
-    jump err()
-end
-block exp_digit(i: i32, neg: i32, ulim: i32, int_part: i32, exp_neg: i32)
-    if i >= ulim then jump err() end
-    let c: i32 = as(i32, p[i])
-    if c >= 48 then if c <= 57 then jump exp_loop(i = i + 1, neg = neg, ulim = ulim, int_part = int_part, exp_neg = exp_neg, exp_acc = c - 48) end end
-    jump err()
-end
-block exp_digit_frac(i: i32, neg: i32, int_part: i32, frac_acc: i32, frac_div: i32, exp_neg: i32)
-    if i >= ulim then jump err() end
-    let c: i32 = as(i32, p[i])
-    if c >= 48 then if c <= 57 then jump exp_loop_frac(i = i + 1, neg = neg, int_part = int_part, frac_acc = frac_acc, frac_div = frac_div, exp_neg = exp_neg, exp_acc = c - 48) end end
-    jump err()
-end
-block exp_loop(i: i32, neg: i32, ulim: i32, int_part: i32, exp_neg: i32, exp_acc: i32)
-    if i >= ulim then jump exp_done(neg = neg, int_part = int_part, exp_neg = exp_neg, exp_acc = exp_acc) end
-    let c: i32 = as(i32, p[i])
-    if c >= 48 then if c <= 57 then jump exp_loop(i = i + 1, neg = neg, ulim = ulim, int_part = int_part, exp_neg = exp_neg, exp_acc = exp_acc * 10 + c - 48) end end
-    jump err()
-end
-block exp_loop_frac(i: i32, neg: i32, int_part: i32, frac_acc: i32, frac_div: i32, exp_neg: i32, exp_acc: i32)
-    if i >= ulim then jump exp_done_frac(neg = neg, int_part = int_part, frac_acc = frac_acc, frac_div = frac_div, exp_neg = exp_neg, exp_acc = exp_acc) end
-    let c: i32 = as(i32, p[i])
-    if c >= 48 then if c <= 57 then jump exp_loop_frac(i = i + 1, neg = neg, int_part = int_part, frac_acc = frac_acc, frac_div = frac_div, exp_neg = exp_neg, exp_acc = exp_acc * 10 + c - 48) end end
-    jump err()
-end
-block exp_done(neg: i32, int_part: i32, exp_neg: i32, exp_acc: i32)
-    jump apply_exp(neg = neg, base = as(f64, int_part), frac_val = as(f64, 0), frac_div = as(f64, 1), exp_neg = exp_neg, exp_acc = exp_acc)
-end
-block exp_done_frac(neg: i32, int_part: i32, frac_acc: i32, frac_div: i32, exp_neg: i32, exp_acc: i32)
-    jump apply_exp(neg = neg, base = as(f64, int_part), frac_val = as(f64, frac_acc), frac_div = as(f64, frac_div), exp_neg = exp_neg, exp_acc = exp_acc)
-end
-block apply_exp(neg: i32, base: f64, frac_val: f64, frac_div: f64, exp_neg: i32, exp_acc: i32)
-    let v: f64 = base + frac_val / frac_div
-    jump pow_loop(exp_cnt = exp_acc, v = v, pow = as(f64, 1.0))
-end
-block pow_loop(exp_cnt: i32, v: f64, pow: f64)
-    if exp_cnt <= 0 then jump apply(neg = neg, v = v, pow = pow, exp_neg = exp_neg) end
-    jump pow_loop(exp_cnt = exp_cnt - 1, v = v, pow = pow * as(f64, 10.0))
-end
-block apply(neg: i32, v: f64, pow: f64, exp_neg: i32)
-    let result: f64 = v
-    if exp_neg == 0 then result = v * pow end
-    if exp_neg == 1 then result = v / pow end
-    if neg == 1 then jump ok(value = 0.0 - result) end
-    jump ok(value = result)
-end
 end
 
--- ========== String unescape ==========
+-- ===========================================================================
+-- String unescape decoder
+-- ===========================================================================
 
-region unescape_json(p: ptr(u8), start: i32, slen: i32, dst: ptr(u8), dst_cap: i32; ok: cont(decoded_len: i32), err: cont())
+local unescape = region unescape(p: ptr(u8), start: i32, slen: i32,
+    dst: ptr(u8), dst_cap: i32;
+    ok: cont(decoded_len: i32), err: cont())
 entry start()
     if slen <= 0 then jump ok(decoded_len = 0) end
-    jump main_loop(i = start, ulim = start + slen, w = 0)
+    jump loop(i = start, w = 0, limit = start + slen)
 end
-block main_loop(i: i32, ulim: i32, w: i32)
-    if i >= ulim then jump ok(decoded_len = w) end
+block loop(i: i32, w: i32, limit: i32)
+    if i >= limit then jump ok(decoded_len = w) end
     if w >= dst_cap then jump err() end
     let b: i32 = as(i32, p[i])
-    if b == 92 then jump handle_escape(i = i + 1, ulim = ulim, w = w) end
+    if b == 92 then jump esc(i = i + 1, w = w, limit = limit) end
     dst[w] = as(u8, b)
-    jump main_loop(i = i + 1, ulim = ulim, w = w + 1)
+    jump loop(i = i + 1, w = w + 1, limit = limit)
 end
-block handle_escape(i: i32, ulim: i32, w: i32)
-    if i >= ulim then jump err() end
-    let esc: i32 = as(i32, p[i])
-    if esc == 34 then dst[w] = 34; jump main_loop(i = i + 1, ulim = ulim, w = w + 1) end
-    if esc == 92 then dst[w] = 92; jump main_loop(i = i + 1, ulim = ulim, w = w + 1) end
-    if esc == 47 then dst[w] = 47; jump main_loop(i = i + 1, ulim = ulim, w = w + 1) end
-    if esc == 98 then dst[w] = 8;  jump main_loop(i = i + 1, ulim = ulim, w = w + 1) end
-    if esc == 102 then dst[w] = 12; jump main_loop(i = i + 1, ulim = ulim, w = w + 1) end
-    if esc == 110 then dst[w] = 10; jump main_loop(i = i + 1, ulim = ulim, w = w + 1) end
-    if esc == 114 then dst[w] = 13; jump main_loop(i = i + 1, ulim = ulim, w = w + 1) end
-    if esc == 116 then dst[w] = 9;  jump main_loop(i = i + 1, ulim = ulim, w = w + 1) end
-    if esc == 117 then jump hex_unescape(i = i + 1, ulim = ulim, w = w) end
+block esc(i: i32, w: i32, limit: i32)
+    if i >= limit then jump err() end
+    let c: i32 = as(i32, p[i])
+    if c == 34 then dst[w] = 34; jump loop(i = i + 1, w = w + 1, limit = limit) end
+    if c == 92 then dst[w] = 92; jump loop(i = i + 1, w = w + 1, limit = limit) end
+    if c == 47 then dst[w] = 47; jump loop(i = i + 1, w = w + 1, limit = limit) end
+    if c == 98 then dst[w] = 8;  jump loop(i = i + 1, w = w + 1, limit = limit) end
+    if c == 102 then dst[w] = 12; jump loop(i = i + 1, w = w + 1, limit = limit) end
+    if c == 110 then dst[w] = 10; jump loop(i = i + 1, w = w + 1, limit = limit) end
+    if c == 114 then dst[w] = 13; jump loop(i = i + 1, w = w + 1, limit = limit) end
+    if c == 116 then dst[w] = 9;  jump loop(i = i + 1, w = w + 1, limit = limit) end
+    if c == 117 then jump hex(i = i + 1, w = w, limit = limit, cp = 0, pos = 0) end
     jump err()
 end
-block hex_unescape(i: i32, ulim: i32, w: i32)
-    if i + 4 > ulim then jump err() end
-    jump read_hex(hi = i, pos = 0, cp = 0, ulim = ulim, w = w)
+block hex(i: i32, w: i32, limit: i32, cp: i32, pos: i32)
+    if pos >= 4 then jump emit_cp(i = i, w = w, limit = limit, cp = cp) end
+    if i >= limit then jump err() end
+    let c: i32 = as(i32, p[i])
+    let v: i32 = 0 - 1
+    if c >= 48 then if c <= 57 then v = c - 48 end end
+    if c >= 65 then if c <= 70 then v = c - 55 end end
+    if c >= 97 then if c <= 102 then v = c - 87 end end
+    if v < 0 then jump err() end
+    jump hex(i = i + 1, w = w, limit = limit, cp = cp * 16 + v, pos = pos + 1)
 end
-block read_hex(hi: i32, pos: i32, cp: i32, ulim: i32, w: i32)
-    if pos >= 4 then jump emit_codepoint(hi = hi, w = w, cp = cp, ulim = ulim) end
-    let c: i32 = as(i32, p[hi + pos])
-    let val: i32 = 0 - 1
-    if c >= 48 then if c <= 57 then val = c - 48 end end
-    if c >= 65 then if c <= 70 then val = c - 55 end end
-    if c >= 97 then if c <= 102 then val = c - 87 end end
-    if val < 0 then jump err() end
-    let new_cp: i32 = cp * 16 + val
-    jump read_hex(hi = hi, pos = pos + 1, cp = new_cp, ulim = ulim, w = w)
-end
-block emit_codepoint(hi: i32, w: i32, cp: i32, ulim: i32)
+block emit_cp(i: i32, w: i32, limit: i32, cp: i32)
     if cp < 128 then
         if w >= dst_cap then jump err() end
         dst[w] = as(u8, cp)
-        jump main_loop(i = hi + 4, ulim = ulim, w = w + 1)
+        jump loop(i = i, w = w + 1, limit = limit)
     end
     if cp < 2048 then
         if w + 1 >= dst_cap then jump err() end
         dst[w] = as(u8, 192 + cp / 64)
         dst[w + 1] = as(u8, 128 + cp % 64)
-        jump main_loop(i = hi + 4, ulim = ulim, w = w + 2)
+        jump loop(i = i, w = w + 2, limit = limit)
     end
     if w + 2 >= dst_cap then jump err() end
     dst[w] = as(u8, 224 + cp / 4096)
     dst[w + 1] = as(u8, 128 + (cp / 64) % 64)
     dst[w + 2] = as(u8, 128 + cp % 64)
-    jump main_loop(i = hi + 4, ulim = ulim, w = w + 3)
+    jump loop(i = i, w = w + 3, limit = limit)
 end
 end
 
--- ========== Extern decls ==========
 
-extern func lua_createtable(L: ptr(u8), narr: i32, nrec: i32)
-extern func lua_pushlstring(L: ptr(u8), s: ptr(u8), llen: index)
-extern func lua_pushnumber(L: ptr(u8), n: f64)
-extern func lua_pushboolean(L: ptr(u8), b: i32)
-extern func lua_pushnil(L: ptr(u8))
-extern func lua_rawseti(L: ptr(u8), idx: i32, i: i32)
-extern func lua_settable(L: ptr(u8), idx: i32)
-extern func lua_gettop(L: ptr(u8)) -> i32
-extern func lua_settop(L: ptr(u8), idx: i32)
-extern func moonlift_scratch_u8(slot: i32, count: i32) -> ptr(u8)
-extern func moonlift_scratch_i32(slot: i32, count: i32) -> ptr(i32)
-extern func moonlift_lua_arg_lstring_ptr(L: ptr(u8), idx: i32) -> ptr(u8)
-extern func moonlift_lua_arg_lstring_len(L: ptr(u8), idx: i32) -> index
+-- ===========================================================================
+-- Main tape decoder: scans JSON -> flat tag tape
+-- Tag values:
+--   0=array_begin  1=array_end  2=object_begin  3=object_end
+--   4=key_slice    5=string_slice  6=number_slice  7=true  8=false  9=null
+-- ===========================================================================
 
--- ========== Tape decoder ==========
-
-export func json_decode_tape(p: ptr(u8), n: i32,
+local json_decode_tape = func json_decode_tape(p: ptr(u8), n: i32,
     stack_next: ptr(i32), stack_kind: ptr(i32), stack_cap: i32,
     tags: ptr(i32), a: ptr(i32), b: ptr(i32), tape_cap: i32,
     meta: ptr(i32)) -> i32
@@ -345,9 +293,9 @@ export func json_decode_tape(p: ptr(u8), n: i32,
     end
     block dispatch(i: i32, depth: i32, expect: i32)
         if i >= n then jump eof(expect = expect, i = i) end
-        jump ws_check(i = i, depth = depth, expect = expect, c = as(i32, p[i]))
+        jump ws(i = i, depth = depth, expect = expect, c = as(i32, p[i]))
     end
-    block ws_check(i: i32, depth: i32, expect: i32, c: i32)
+    block ws(i: i32, depth: i32, expect: i32, c: i32)
         switch c do
         case 9 then jump dispatch(i = i + 1, depth = depth, expect = expect)
         case 10 then jump dispatch(i = i + 1, depth = depth, expect = expect)
@@ -392,7 +340,7 @@ export func json_decode_tape(p: ptr(u8), n: i32,
         jump obj_key_quote(i = i, depth = depth, c = c)
     end
     block obj_key_quote(i: i32, depth: i32, c: i32)
-        if c == 34 then emit scan_str_json(p, n, i + 1, depth, 5; ok = key_done, bad = invalid) end
+        if c == 34 then emit @{scan_str}(p, n, i + 1, depth, 5; ok = key_done, bad = invalid) end
         yield -(i + 1)
     end
     block key_done(epos: i32, start_i: i32, depth: i32, next: i32)
@@ -412,15 +360,17 @@ export func json_decode_tape(p: ptr(u8), n: i32,
     end
     block value_enter(i: i32, depth: i32, next: i32, c: i32)
         switch c do
-        case 34 then emit scan_str_json(p, n, i + 1, depth, next; ok = str_done, bad = invalid)
-        case 45 then emit scan_num_json(p, n, i, depth, next; ok = num_done, bad = invalid)
+        case 34 then emit @{scan_str}(p, n, i + 1, depth, next; ok = str_done, bad = invalid)
+        case 45 then emit @{scan_num}(p, n, i, depth, next; ok = num_done, bad = invalid)
         case 91 then jump push_array(i = i, depth = depth, next = next)
-        case 102 then emit match_false_json(p, n, i, depth, next; ok = false_done, bad = invalid)
-        case 110 then emit match_null_json(p, n, i, depth, next; ok = null_done, bad = invalid)
-        case 116 then emit match_true_json(p, n, i, depth, next; ok = true_done, bad = invalid)
+        case 102 then emit @{match_false}(p, n, i, depth, next; ok = false_done, bad = invalid)
+        case 110 then emit @{match_null}(p, n, i, depth, next; ok = null_done, bad = invalid)
+        case 116 then emit @{match_true}(p, n, i, depth, next; ok = true_done, bad = invalid)
         case 123 then jump push_object(i = i, depth = depth, next = next)
         default then
-            if c >= 48 then if c <= 57 then emit scan_num_json(p, n, i, depth, next; ok = num_done, bad = invalid) end end
+            if c >= 48 then if c <= 57 then
+                emit @{scan_num}(p, n, i, depth, next; ok = num_done, bad = invalid)
+            end end
             yield -(i + 1)
         end
     end
@@ -450,31 +400,41 @@ export func json_decode_tape(p: ptr(u8), n: i32,
         jump dispatch(i = epos, depth = depth, expect = 5)
     end
     block push_array(i: i32, depth: i32, next: i32)
-        if depth >= stack_cap then yield -(i + 1) end; if meta[0] >= tape_cap then yield -(i + 1) end
+        if depth >= stack_cap then yield -(i + 1) end
+        if meta[0] >= tape_cap then yield -(i + 1) end
         tags[meta[0]] = 0; a[meta[0]] = i; b[meta[0]] = 0; meta[0] = meta[0] + 1
         stack_next[depth] = next; stack_kind[depth] = 1
         jump dispatch(i = i + 1, depth = depth + 1, expect = 2)
     end
     block push_object(i: i32, depth: i32, next: i32)
-        if depth >= stack_cap then yield -(i + 1) end; if meta[0] >= tape_cap then yield -(i + 1) end
+        if depth >= stack_cap then yield -(i + 1) end
+        if meta[0] >= tape_cap then yield -(i + 1) end
         tags[meta[0]] = 2; a[meta[0]] = i; b[meta[0]] = 0; meta[0] = meta[0] + 1
         stack_next[depth] = next; stack_kind[depth] = 2
         jump dispatch(i = i + 1, depth = depth + 1, expect = 4)
     end
     block pop_container(i: i32, depth: i32)
-        if depth <= 0 then yield -i end; if meta[0] >= tape_cap then yield -i end
-        let kind: i32 = stack_kind[depth - 1]; let next: i32 = stack_next[depth - 1]
-        if kind == 1 then tags[meta[0]] = 1 end; if kind == 2 then tags[meta[0]] = 3 end
+        if depth <= 0 then yield -i end
+        if meta[0] >= tape_cap then yield -i end
+        let kind: i32 = stack_kind[depth - 1]
+        let next: i32 = stack_next[depth - 1]
+        if kind == 1 then tags[meta[0]] = 1 end
+        if kind == 2 then tags[meta[0]] = 3 end
         a[meta[0]] = i - 1; b[meta[0]] = 0; meta[0] = meta[0] + 1
         jump dispatch(i = i, depth = depth - 1, expect = next)
     end
-    block invalid(bad_pos: i32) yield -(bad_pos + 1) end
+    block invalid(bad_pos: i32)
+        yield -(bad_pos + 1)
+    end
     end
 end
 
--- ========== Lua table builder ==========
+-- ===========================================================================
+-- Table builder: walks tape, builds Lua tables via C API
+-- ===========================================================================
 
-func json_build_value(L: ptr(u8), p: ptr(u8), tags: ptr(i32), a: ptr(i32), b: ptr(i32), tape_count: i32, idx: i32) -> i32
+local json_build_value = func json_build_value(L: ptr(u8), p: ptr(u8),
+    tags: ptr(i32), a: ptr(i32), b: ptr(i32), tape_count: i32, idx: i32) -> i32
     return region -> i32
     entry start()
         if idx < 0 then yield -(idx + 1) end
@@ -483,11 +443,11 @@ func json_build_value(L: ptr(u8), p: ptr(u8), tags: ptr(i32), a: ptr(i32), b: pt
         if tag == 9 then lua_pushnil(L); yield idx + 1 end
         if tag == 7 then lua_pushboolean(L, 1); yield idx + 1 end
         if tag == 8 then lua_pushboolean(L, 0); yield idx + 1 end
-        if tag == 6 then emit parse_f64_json(p, a[idx], b[idx]; ok = num_ok, err = num_err) end
+        if tag == 6 then emit @{parse_f64}(p, a[idx], b[idx]; ok = num_ok, err = num_err) end
         if tag == 5 then
             let slen: i32 = b[idx]
             let scratch: ptr(u8) = moonlift_scratch_u8(0, slen + 16)
-            emit unescape_json(p, a[idx], slen, scratch, slen + 16; ok = str_ok, err = str_err)
+            emit @{unescape}(p, a[idx], slen, scratch, slen + 16; ok = str_ok, err = str_err)
         end
         if tag == 0 then lua_createtable(L, 0, 0); jump array_loop(i = idx + 1, slot = 1) end
         if tag == 2 then lua_createtable(L, 0, 0); jump object_loop(i = idx + 1) end
@@ -518,7 +478,7 @@ func json_build_value(L: ptr(u8), p: ptr(u8), tags: ptr(i32), a: ptr(i32), b: pt
         if tags[i] ~= 4 then yield -(i + 1) end
         let klen: i32 = b[i]
         let scratch: ptr(u8) = moonlift_scratch_u8(0, klen + 16)
-        emit unescape_json(p, a[i], klen, scratch, klen + 16; ok = key_str_ok, err = key_str_err)
+        emit @{unescape}(p, a[i], klen, scratch, klen + 16; ok = key_str_ok, err = key_str_err)
     end
     block key_str_ok(decoded_len: i32)
         let scratch: ptr(u8) = moonlift_scratch_u8(0, 1)
@@ -532,9 +492,11 @@ func json_build_value(L: ptr(u8), p: ptr(u8), tags: ptr(i32), a: ptr(i32), b: pt
     end
 end
 
--- ========== Entry point ==========
+-- ===========================================================================
+-- Lua-callable entry point: takes lua_State*, reads arg 1 (string), returns table
+-- ===========================================================================
 
-export func json_decode_lua(L: ptr(u8)) -> i32
+local json_decode_lua = func json_decode_lua(L: ptr(u8)) -> i32
     let top: i32 = lua_gettop(L)
     let p: ptr(u8) = moonlift_lua_arg_lstring_ptr(L, 1)
     let n_index: index = moonlift_lua_arg_lstring_len(L, 1)
@@ -554,93 +516,47 @@ export func json_decode_lua(L: ptr(u8)) -> i32
     return 1
 end
 
-end  -- module JsonDecoder
-
 -- ===========================================================================
--- Benchmark vs cjson
+-- Assembly: compile all three entry points
 -- ===========================================================================
 
-local compiled = json:compile()
+local compiled_tape = json_decode_tape:compile()
+local compiled_lua = json_decode_lua:compile()
 
-local ok_cjson, cjson = pcall(require, "cjson")
-if not ok_cjson then package.cpath = package.cpath .. ";/home/cedric/.luarocks/lib64/lua/5.1/?.so;/home/cedric/.luarocks/lib/lua/5.1/?.so"; cjson = require("cjson") end
+local decode_tape = compiled_tape
+local decode_lua = compiled_lua
 
-local builders = {}
-builders.api = function(N) local p={'{"total_count":'..(N*100+42)..',"incomplete_results":false,"items":['}
-    for i=1,N do if i>1 then p[#p+1]="," end
-    p[#p+1]=string.format('{"id":%d,"name":"repo-%d","owner":{"login":"user%d"},"fork":%s,"stargazers_count":%d,"topics":["compiler","lua"],"score":%.6f}',i,i,i,(i%2==0)and"true"or"false",i*10,1/(i+.5)) end
-    p[#p+1]='],"metadata":{"server":"api","took_ms":'..(N+23)..'}}'; return table.concat(p) end
-builders.geojson = function(N) local p={'{"type":"FeatureCollection","features":['}
-    for i=1,N do if i>1 then p[#p+1]="," end
-    p[#p+1]=string.format('{"type":"Feature","id":%d,"geometry":{"type":"Polygon","coordinates":[[',i)
-    for j=1,8 do if j>1 then p[#p+1]="," end; p[#p+1]=string.format("[%.6f,%.6f]",-73.985+i*.001,40.748+i*.001) end
-    p[#p+1]=string.format(']]},"properties":{"name":"Site %d","tags":["geo","poi"],"score":%.4f}}',i,i*1.5) end
-    p[#p+1]=']}'; return table.concat(p) end
-builders.logs = function(N) local lvls={"INFO","WARN","ERROR","DEBUG"}; local msgs={"request completed","timeout","cache miss","rate limit"}
-    local p={'{"app":"moonlift","logs":['}
-    for i=1,N do if i>1 then p[#p+1]="," end
-    p[#p+1]=string.format('{"timestamp":%d,"level":"%s","message":"%s","duration_ms":%.3f,"status":%d}',1714000000+i,lvls[(i%4)+1],msgs[(i%4)+1],math.random()*500,200+(i%5)*100) end
-    p[#p+1]='],"total":'..N..'}'; return table.concat(p) end
-builders.uniform = function(N) local p={'{"items":['}
-    for i=1,N do if i>1 then p[#p+1]="," end
-    p[#p+1]=string.format('{"id":%d,"name":"item%d","ok":%s,"vals":[1,2,3]}',i,i,(i%2==0)and"true"or"false") end
-    p[#p+1]='],"meta":{"count":'..N..'}}'; return table.concat(p) end
+-- ===========================================================================
+-- Smoke test (tape decoder)
+-- ===========================================================================
 
-local labels = {api="GitHub API", geojson="GeoJSON", logs="Logs", uniform="Uniform"}
-local suites = {"api","geojson","logs","uniform"}
-local sizes = {10, 100, 500}
+local test_json = '{"x":42,"y":[1,2,3],"z":{"a":true,"b":null}}'
+local n = #test_json
+local buf = ffi.new("uint8_t[?]", n + 1); ffi.copy(buf, test_json, n)
+local cap = math.max(n + 16, 16)
+local tags = ffi.new("int32_t[?]", cap)
+local a = ffi.new("int32_t[?]", cap)
+local b = ffi.new("int32_t[?]", cap)
+local snext = ffi.new("int32_t[?]", 256)
+local skind = ffi.new("int32_t[?]", 256)
+local meta = ffi.new("int32_t[1]")
+local count = decode_tape(buf, n, snext, skind, 256, tags, a, b, cap, meta)
+print("tape count:", count)
+assert(count > 0, "decode failed")
 
-local function best_of(fn, src, reps, rounds)
-    collectgarbage("collect")
-    local best = math.huge
-    for _=1,rounds do collectgarbage("collect"); local t0=os.clock(); for _=1,reps do fn(src) end; local dt=os.clock()-t0; if dt<best then best=dt end end
-    return best/reps
-end
-
-local moonlift_decode = function(src)
-    local L = MOONLIFT_LUASTATE
-    -- push arg, call, get result
-    local ffi = require("ffi")
-    local push = ffi.C.lua_pushlstring
-    push(L, src, #src)
-    compiled:get("json_decode_lua")(L)
-    -- result is on top of Lua stack
-    return select(1, ...)  -- hmm, need a different approach
-end
-
-print()
-print(string.rep("=", 78))
-print("  Moonlift (100% pure, no Rust helpers) vs CJSON")
-print(string.rep("=", 78))
-
-local wins, ties, losses = 0, 0, 0
-
-for _, suite in ipairs(suites) do
-    print("\n  -- " .. labels[suite])
-    for _, N in ipairs(sizes) do
-        local src = builders[suite](N)
-        local a = moonlift_decode(src)
-        local b = cjson.decode(src)
-        assert(type(a) == type(b))
-
-        local reps = (#src < 2048) and 500 or (#src < 20000) and 100 or 20
-        local tm = best_of(moonlift_decode, src, reps, 5)
-        local tc = best_of(cjson.decode, src, reps, 5)
-        local mb = #src / (1024*1024)
-        local ratio = tm / tc
-
-        local marker
-        if ratio < 0.85 then marker = " << ML"; wins=wins+1
-        elseif ratio < 1.0 then marker = " < ML"; wins=wins+1
-        elseif ratio < 1.05 then marker = " ~"; ties=ties+1
-        else marker = ""; losses=losses+1 end
-
-        print(string.format("  N=%-4d | %6d B | %4.0f kB |  ML %5.0f MB/s  cjson %5.0f MB/s  r %.3f%s",
-            N, #src, #src/1024, mb/tm, mb/tc, ratio, marker))
+local TAG = {"array_begin","array_end","object_begin","object_end","key","string","number","true","false","null"}
+for i = 0, count - 1 do
+    local tag = tags[i]
+    local name = TAG[tag + 1] or "?"
+    if tag == 5 or tag == 6 or tag == 4 then
+        print(string.format("  [%2d] tag=%d %-12s start=%d len=%d raw='%s'",
+            i, tag, name, a[i], b[i], ffi.string(buf + a[i], b[i])))
+    else
+        print(string.format("  [%2d] tag=%d %-12s", i, tag, name))
     end
 end
 
-compiled:free()
-print(string.format("\n  Result: %d wins, %d ties, %d losses", wins, ties, losses))
-print(string.rep("=", 78))
-return "bench done"
+compiled_tape:free()
+compiled_lua:free()
+print("bench_json_full_moon ok")
+return "ok"

@@ -5,14 +5,13 @@ local Run = require("moonlift.mlua_run")
 local path = os.tmpname() .. ".mlua"
 local f = assert(io.open(path, "w"))
 f:write([[
-local recursive = module TestRegionNormalFormRecursive
-region loop(x: i32; done: cont(v: i32))
+local loop = region loop(x: i32; done: cont(v: i32))
 entry start()
     emit loop(x; done = done)
 end
 end
 
-export func run(x: i32) -> i32
+local run = func run(x: i32) -> i32
     return region -> i32
     entry start()
         emit loop(x; done = out)
@@ -22,9 +21,8 @@ export func run(x: i32) -> i32
     end
     end
 end
-end
 
-local c = recursive:compile()
+local c = run:compile()
 c:free()
 return "should not happen"
 ]])

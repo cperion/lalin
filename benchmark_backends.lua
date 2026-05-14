@@ -8,7 +8,7 @@ local A2 = require("moonlift.asdl")
 local T = pvm.context()
 A2.Define(T)
 
-local mlua_parse = require("moonlift.mlua_parse").Define(T)
+local parse = require("moonlift.parse").Define(T)
 local OE = require("moonlift.open_expand").Define(T)
 local OF = require("moonlift.open_facts").Define(T)
 local OV = require("moonlift.open_validate").Define(T)
@@ -20,7 +20,7 @@ local BL = require("moonlift.back_luajit").Define(T)
 local BJ = require("moonlift.back_jit").Define(T)
 
 local function compile_both(src)
-    local parsed = mlua_parse.parse(src, "bench")
+    local parsed = parse.parse_module(src)
     assert(#parsed.issues == 0, "parse: " .. tostring(parsed.issues[1] and parsed.issues[1].message))
     local expanded = OE.module(parsed.module)
     local orpt = OV.validate(OF.facts_of_module(expanded))
@@ -73,7 +73,7 @@ local results = {}
 -- ── Benchmark 1: Integer arithmetic ──
 do
     local src = [[
-export func add(x: i32, y: i32) -> i32
+func add(x: i32, y: i32) -> i32
     return x + y
 end
 ]]
@@ -91,7 +91,7 @@ end
 -- ── Benchmark 2: Fibonacci (conditional recursion pattern) ──
 do
     local src = [[
-export func fib(n: i32) -> i32
+func fib(n: i32) -> i32
     if n <= 1 then return n end
     return fib(n - 1) + fib(n - 2)
 end
@@ -110,7 +110,7 @@ end
 -- ── Benchmark 3: Counting loop (block params) ──
 do
     local src = [[
-export func count(n: i32) -> i32
+func count(n: i32) -> i32
     block loop(i: i32 = 0, acc: i32 = 0)
         if i >= n then return acc end
         jump loop(i = i + 1, acc = acc + i)
@@ -131,7 +131,7 @@ end
 -- ── Benchmark 4: Branchy (if-else) ──
 do
     local src = [[
-export func sign(x: i32) -> i32
+func sign(x: i32) -> i32
     if x < 0 then return -1 end
     if x > 0 then return 1 end
     return 0
@@ -151,7 +151,7 @@ end
 -- ── Benchmark 5: Multiply-heavy ──
 do
     local src = [[
-export func dot(a: i32, b: i32, c: i32) -> i32
+func dot(a: i32, b: i32, c: i32) -> i32
     return a * b + c
 end
 ]]
@@ -169,7 +169,7 @@ end
 -- ── Benchmark 6: Select (branchless) ──
 do
     local src = [[
-export func abs_v(x: i32) -> i32
+func abs_v(x: i32) -> i32
     return select(x < 0, -x, x)
 end
 ]]

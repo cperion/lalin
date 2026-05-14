@@ -18,27 +18,27 @@ local J = Jit.Define(T)
 local Back = T.MoonBack
 
 local src = [[
-export func first_byte() -> i32
+func first_byte() -> i32
     return as(i32, "Hi"[0])
 end
 
-export func newline_byte() -> i32
+func newline_byte() -> i32
     return as(i32, "a\n"[1])
 end
 
-export func nul_terminated() -> i32
+func nul_terminated() -> i32
     return as(i32, "A"[1])
 end
 
-export func escaped_quote_and_hex() -> i32
+func escaped_quote_and_hex() -> i32
     return as(i32, "\"\x21"[1])
 end
 
-export func octal_escape() -> i32
+func octal_escape() -> i32
     return as(i32, "\101"[0])
 end
 
-export func reused_literal() -> i32
+func reused_literal() -> i32
     return as(i32, "Z"[0]) + as(i32, "Z"[0])
 end
 ]]

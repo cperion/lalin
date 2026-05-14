@@ -21,7 +21,7 @@ end
 end
 
 return module
-export func find_byte(p: ptr(u8), n: i32, target: i32) -> i32
+func find_byte(p: ptr(u8), n: i32, target: i32) -> i32
     return region -> i32
     entry start()
         emit @{scan_until}(p, n, target; hit = found, miss = missing)
@@ -35,7 +35,7 @@ export func find_byte(p: ptr(u8), n: i32, target: i32) -> i32
     end
 end
 
-export func prefix_len_or_all(p: ptr(u8), n: i32, target: i32) -> i32
+func prefix_len_or_all(p: ptr(u8), n: i32, target: i32) -> i32
     return region -> i32
     entry start()
         emit @{scan_until}(p, n, target; hit = found, miss = missing)

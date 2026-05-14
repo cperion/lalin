@@ -224,7 +224,7 @@ Example:
 
 ```lua
 -- file.mlua
-local add = func add(a: i32, b: i32) -> i32
+local add = func(a: i32, b: i32) -> i32
     return a + b
 end
 
@@ -667,11 +667,11 @@ union Result ok(i32) | err(string) | none end
 The current `.mlua` source parser recognizes only these hosted declaration
 islands:
 
-- `struct Name field: T ... end`
-- `union Name variant(...) | variant(...) end`
-- `func name(params...) [-> T] ... end`
-- `region name(params; continuations) ... end`
-- `expr name(params) -> T expr end`
+- `struct Name field: T ... end` or `local Name = struct field: T ... end`
+- `union Name variant(...) | variant(...) end` or `local Name = union variant(...) | ... end`
+- `func name(params...) [-> T] ... end` or `local name = func(params...) [-> T] ... end`
+- `region name(params; continuations) ... end` or `local name = region(params; continuations) ... end`
+- `expr name(params) -> T expr end` or `local name = expr(params) -> T expr end`
 
 Host-facing APIs such as exposure policies, proxy generation, module assembly,
 and native method registration are provided through the Lua builder/host APIs,
@@ -2080,7 +2080,7 @@ can fail produces typed issue values.
 
 | Category | Phase | Examples |
 |---|---|---|
-| Parse issues | `mlua_parse`, `parse` | Unexpected token, unclosed block, invalid literal |
+| Parse issues | `parse`, `scan_document`, `parse_island` | Unexpected token, unclosed block, invalid literal |
 | Host declaration rejects | `host_decl_validate` | Invalid struct field type, ambiguous bool storage |
 | Open slot/fill issues | `open_validate` | Missing continuation fill, extra fill, type mismatch |
 | Type issues | `tree_typecheck` | Type mismatch, unknown identifier, invalid conversion |
@@ -2319,11 +2319,8 @@ Important implementation homes (all under `lua/moonlift/`):
 
 ```text
 -- Parsing
-parse.lua                       object source parser
-mlua_parse.lua                  .mlua hosted island parser
-mlua_lex.lua                    .mlua lexer
-mlua_island_parse.lua           island detection and extraction
-mlua_loop_expand.lua            loop sugar → block/jump lowering
+parse.lua                       unified lexer/parser and hosted island scanner
+mlua_document_analysis.lua      editor/LSP document analysis over hosted islands
 
 -- Host bridge
 mlua_run.lua                    LuaJIT hosted island runner / antiquote bridge

@@ -20,7 +20,7 @@ local Tr = T.MoonTree
 local B2 = T.MoonBack
 
 local src = [[
-export func sum(n: i32) -> i32
+func sum(n: i32) -> i32
     block loop(i: i32 = 0, acc: i32 = 0)
         if i >= n then
             return acc
@@ -53,7 +53,7 @@ assert(sum(5) == 10)
 artifact:free()
 
 local expr_src = [[
-export func fact(n: i32) -> i32
+func fact(n: i32) -> i32
     return block loop(x: i32 = n, acc: i32 = 1) -> i32
         if x <= 1 then
             yield acc
@@ -76,7 +76,7 @@ assert(fact(5) == 120)
 artifact2:free()
 
 local index_src = [[
-export func count(n: index) -> index
+func count(n: index) -> index
     return block loop(i: index = 0) -> index
         if i >= n then
             yield i
@@ -91,18 +91,20 @@ local checked_index = TC.check_module(parsed_index.module)
 assert(#checked_index.issues == 0)
 
 local item_src = [[
-extern func puts(x: i32) -> i32
-const answer: i32 = 42
-static seed: i32 = answer
+struct Pair
+    left: i32
+    right: i32
+end
+union MaybeInt some(i32) | none end
 ]]
 local parsed_items = P.parse_module(item_src)
 assert(#parsed_items.issues == 0)
-assert(#parsed_items.module.items == 3)
+assert(#parsed_items.module.items == 2)
 local checked_items = TC.check_module(parsed_items.module)
 assert(#checked_items.issues == 0)
 
 local as_src = [[
-export func byte_to_i32(p: ptr(u8)) -> i32
+func byte_to_i32(p: ptr(u8)) -> i32
     return as(i32, p[0])
 end
 ]]

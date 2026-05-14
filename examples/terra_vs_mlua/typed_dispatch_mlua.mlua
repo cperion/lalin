@@ -115,8 +115,7 @@ entry loop(i: i32 = 0, a: i32 = 0, b: i32 = 0)
 end
 end
 
-local packet = module PacketMlua
-export func parse_packet(p: ptr(u8), n: i32) -> i32
+local parse_packet = func parse_packet(p: ptr(u8), n: i32) -> i32
     return region -> i32
     entry start()
         if n <= 0 then yield -1 end
@@ -146,7 +145,7 @@ export func parse_packet(p: ptr(u8), n: i32) -> i32
     end
 end
 
-export func score_pair(p: ptr(u8), n: i32) -> i32
+local score_pair = func score_pair(p: ptr(u8), n: i32) -> i32
     return region -> i32
     entry start()
         emit score_pair_region(p, n; done = out)
@@ -156,11 +155,10 @@ export func score_pair(p: ptr(u8), n: i32) -> i32
     end
     end
 end
-end
-
-local compiled = packet:compile()
-local parse_packet = compiled:get("parse_packet")
-local score_pair = compiled:get("score_pair")
+local compiled_parse_packet = parse_packet:compile()
+local compiled_score_pair = score_pair:compile()
+parse_packet = compiled_parse_packet
+score_pair = compiled_score_pair
 
 local a, na = u8buf("A42")
 local b, nb = u8buf("BC")
@@ -176,5 +174,6 @@ assert(parse_packet(unknown, nunknown) == -9)
 local scores, nscores = u8buf(string.char(40, 55, 65))
 assert(score_pair(scores, nscores) == 2005)
 
-compiled:free()
+compiled_parse_packet:free()
+compiled_score_pair:free()
 return "Moonlift typed region dispatch comparison ok"

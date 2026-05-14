@@ -236,12 +236,10 @@ end
 end
 
 -- ===========================================================================
--- JsonDecoder module — the tape scanner
+-- JsonDecoder tape scanner
 -- ===========================================================================
 
-local json = module JsonDecoder
-
-export func json_decode_tape(p: ptr(u8), n: i32,
+local json_decode_tape = func json_decode_tape(p: ptr(u8), n: i32,
     stack_next: ptr(i32), stack_kind: ptr(i32), stack_cap: i32,
     tags: ptr(i32), a: ptr(i32), b: ptr(i32), tape_cap: i32,
     meta: ptr(i32)) -> i32
@@ -433,13 +431,11 @@ export func json_decode_tape(p: ptr(u8), n: i32,
     end
 end
 
-end
-
 -- ===========================================================================
 -- Compile and smoke-test the tape scanner
 -- ===========================================================================
 
-local compiled = json:compile()
+local compiled = json_decode_tape:compile()
 local ffi = require("ffi")
 
 local function buf(s)
@@ -456,7 +452,7 @@ local function tape_count(p, n)
     local snext = ffi.new("int32_t[?]", 256)
     local skind = ffi.new("int32_t[?]", 256)
     local meta  = ffi.new("int32_t[1]")
-    return compiled:get("json_decode_tape")(p, n, snext, skind, 256, tags, ta, tb, cap, meta)
+    return compiled(p, n, snext, skind, 256, tags, ta, tb, cap, meta)
 end
 
 -- Valid JSON: returns tape count >= 0

@@ -183,7 +183,7 @@ local P = Parse.Define(T)
 local TC = Typecheck.Define(T)
 local Lower = TreeToBack.Define(T)
 local source = [[
-export func sum_i32(xs: ptr(i32), n: i32) -> i32
+func sum_i32(xs: ptr(i32), n: i32) -> i32
     return block loop(i: i32 = 0, acc: i32 = 0) -> i32
         if i >= n then yield acc end
         jump loop(i = i + 1, acc = acc + xs[i])

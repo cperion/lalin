@@ -3,7 +3,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
-local MluaParse = require("moonlift.mlua_parse")
+local Parse = require("moonlift.parse")
 local Typecheck = require("moonlift.tree_typecheck")
 local TreeToBack = require("moonlift.tree_to_back")
 local Validate = require("moonlift.back_validate")
@@ -43,13 +43,13 @@ f:close()
 
 local T = pvm.context()
 A2.Define(T)
-local MP = MluaParse.Define(T)
+local P = Parse.Define(T)
 local TC = Typecheck.Define(T)
 local Lower = TreeToBack.Define(T)
 local V = Validate.Define(T)
 local O = Object.Define(T)
 
-local parsed = MP.parse(source, "@" .. input)
+local parsed = P.parse_module(source)
 if #parsed.issues ~= 0 then
     for j = 1, #parsed.issues do io.stderr:write(tostring(parsed.issues[j].message or parsed.issues[j]), "\n") end
     os.exit(1)

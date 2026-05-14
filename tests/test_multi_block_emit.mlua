@@ -10,8 +10,7 @@ block increment(i: i32)
 end
 end
 
-local test = module TestMultiBlock
-export func run(x: i32) -> i32
+local run = func run(x: i32) -> i32
     return region -> i32
     entry start()
         emit @{inner}(x; ok = done, bad = fail)
@@ -24,12 +23,10 @@ export func run(x: i32) -> i32
     end
     end
 end
-end
 
-local compiled = test:compile()
-local run = compiled:get("run")
-assert(run(5) == 101)
-assert(run(-3) == -3)
-assert(run(200) == 200)
+local compiled = run:compile()
+assert(compiled(5) == 101)
+assert(compiled(-3) == -3)
+assert(compiled(200) == 200)
 compiled:free()
 return "multi-block emit ok"

@@ -30,12 +30,10 @@ end
 expr FortyTwo() -> i32
     42
 end
-module Math
-    export func two() -> i32
-        return 2
-    end
+func two() -> i32
+    return 2
 end
-export func first(xs: ptr(i32), n: index) -> i32
+func first(xs: ptr(i32), n: index) -> i32
     return block loop(i: index = 0) -> i32
         if i >= n then yield i end
         jump loop(i = i + 1)
@@ -68,8 +66,6 @@ assert(pvm.classof(accessor.subject) == E.SubjectHostAccessor or pvm.classof(acc
 local func = assert(find("first", E.SymFunction))
 assert(pvm.classof(func.subject) == E.SubjectTreeFunc)
 assert(func.range.uri == uri)
-local module_sym = assert(find("Math", E.SymModule))
-assert(pvm.classof(module_sym.subject) == E.SubjectTreeModule)
 local loop_sym = assert(find("loop", E.SymEvent))
 assert(pvm.classof(loop_sym.subject) == E.SubjectContinuation)
 

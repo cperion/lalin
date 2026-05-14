@@ -198,9 +198,7 @@ block check_l2(i: i32)
 end
 end
 
-local json = module JsonDecoder
-
-export func json_decode_tape(p: ptr(u8), n: i32,
+local json_decode_tape = func json_decode_tape(p: ptr(u8), n: i32,
     stack_next: ptr(i32), stack_kind: ptr(i32), stack_cap: i32,
     tags: ptr(i32), a: ptr(i32), b: ptr(i32), tape_cap: i32,
     meta: ptr(i32)) -> i32
@@ -369,10 +367,8 @@ export func json_decode_tape(p: ptr(u8), n: i32,
     end
 end
 
-end
-
-local compiled = json:compile()
-local decode_tape = compiled:get("json_decode_tape")
+local compiled = json_decode_tape:compile()
+local decode_tape = compiled
 
 -- ===========================================================================
 -- Lua-side tape -> table walker

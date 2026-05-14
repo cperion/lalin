@@ -135,8 +135,7 @@ local integer_line = make_decimal_line(3, 40)
 local array_line = make_decimal_line(4, 50)
 local bulk_string = make_bulk_string(5, 60)
 
-local resp = module RespParser
-export func parse_one(p: ptr(u8), n: i32) -> i32
+local parse_one = func parse_one(p: ptr(u8), n: i32) -> i32
     return region -> i32
     entry start()
         if n <= 0 then yield -1 end
@@ -179,10 +178,8 @@ export func parse_one(p: ptr(u8), n: i32) -> i32
     end
     end
 end
-end
-
-local compiled = resp:compile()
-local parse_one = compiled:get("parse_one")
+local compiled = parse_one:compile()
+parse_one = compiled
 
 local simple, nsimple = u8buf("+OK\r\n")
 local errline, nerrline = u8buf("-ERR bad\r\n")

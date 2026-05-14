@@ -25,7 +25,7 @@ local Vec = T.MoonVec
 local B2 = T.MoonBack
 
 local src = [[
-export func sum_view_full_window_i32(xs: view(i32)) -> i32
+func sum_view_full_window_i32(xs: view(i32)) -> i32
     let n: index = len(xs)
     let w: view(i32) = view_window(xs, 0, n)
     return block loop(i: index = 0, acc: i32 = 0) -> i32
@@ -34,7 +34,7 @@ export func sum_view_full_window_i32(xs: view(i32)) -> i32
     end
 end
 
-export func sum_view_prefix_window_i32(xs: view(i32)) -> i32
+func sum_view_prefix_window_i32(xs: view(i32)) -> i32
     let m: index = len(xs) - 1
     let w: view(i32) = view_window(xs, 1, m)
     return block loop(i: index = 0, acc: i32 = 0) -> i32
@@ -43,7 +43,7 @@ export func sum_view_prefix_window_i32(xs: view(i32)) -> i32
     end
 end
 
-export func sum_view_nested_window_i32(xs: view(i32)) -> i32
+func sum_view_nested_window_i32(xs: view(i32)) -> i32
     let m1: index = len(xs) - 1
     let w1: view(i32) = view_window(xs, 1, m1)
     let m2: index = m1 - 1
@@ -54,7 +54,7 @@ export func sum_view_nested_window_i32(xs: view(i32)) -> i32
     end
 end
 
-export func add_view_window_i32(noalias dst: view(i32), readonly a: view(i32), readonly b: view(i32)) -> i32
+func add_view_window_i32(noalias dst: view(i32), readonly a: view(i32), readonly b: view(i32)) -> i32
     requires same_len(dst, a)
     requires same_len(dst, b)
     let n: index = len(dst)

@@ -1,0 +1,37 @@
+-- Minimal test: just one region + one func, no externs
+local ffi = require("ffi")
+
+local scan_str = region scan_str(p: ptr(u8), n: i32, start: i32;
+    ok: cont(epos: i32, start_i: i32),
+    bad: cont(bad_pos: i32))
+entry start()
+    jump scan(i = start)
+end
+block scan(i: i32)
+    if i >= n then jump bad(bad_pos = i) end
+    let c: i32 = as(i32, p[i])
+    if c == 34 then jump ok(epos = i + 1, start_i = start) end
+    jump scan(i = i + 1)
+end
+end
+
+local decode = func decode(p: ptr(u8), n: i32) -> i32
+    return region -> i32
+    entry start()
+        emit @{scan_str}(p, n, 0; ok = done, bad = err)
+    end
+    block done(epos: i32, start_i: i32)
+        yield epos
+    end
+    block err(bad_pos: i32)
+        yield -1
+    end
+    end
+end
+
+local c = decode:compile()
+local buf = ffi.new("uint8_t[?]", 10)
+ffi.copy(buf, '"hello"', 7)
+print("result:", c(buf, 7))
+c:free()
+return "ok"

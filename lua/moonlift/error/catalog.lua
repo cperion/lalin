@@ -788,6 +788,44 @@ register("E0504", "error", function(issue, analysis)
     })
 end)
 
+-- E0505: Boundary struct bool storage must be explicit
+register("E0505", "error", function(issue, analysis)
+    local span = issue_span(issue, analysis)
+    local type_name_str = issue.type_name or "?"
+    local field_name = issue.field_name or "?"
+    return Report.new({
+        code = "E0505",
+        severity = "error",
+        phase_context = "while checking host boundary declarations",
+        primary = { span = span, message = "boundary struct field `" .. field_name .. "` in `" .. type_name_str .. "` must use explicit bool storage" },
+        notes = {
+            { message = "plain `bool` has no stable host ABI size; choose `bool8` or `bool32`" },
+        },
+        suggestions = {
+            { message = "write `" .. field_name .. ": bool32` for an i32-backed boolean, or `" .. field_name .. ": bool8` for a byte-backed boolean" },
+        },
+    })
+end)
+
+-- E0506: Invalid packed alignment
+register("E0506", "error", function(issue, analysis)
+    local span = issue_span(issue, analysis)
+    local type_name_str = issue.type_name or "?"
+    local align = tostring(issue.align or "?")
+    return Report.new({
+        code = "E0506",
+        severity = "error",
+        phase_context = "while checking host layout declarations",
+        primary = { span = span, message = "invalid packed alignment `" .. align .. "` for `" .. type_name_str .. "`" },
+        notes = {
+            { message = "packed alignment must be a positive power of two" },
+        },
+        suggestions = {
+            { message = "use an alignment such as 1, 2, 4, 8, or remove `repr(packed(...))`" },
+        },
+    })
+end)
+
 -------------------------------------------------------------------------------
 -- E06xx: Backend Errors (mapped to source-level concepts)
 -------------------------------------------------------------------------------
@@ -955,6 +993,7 @@ local issue_code_map = {
     -- Name resolution
     TypeIssueUnresolvedValue = "E0201",
     TypeIssueUnresolvedPath = "E0202",
+    BindingUnresolved = "E0201",
 
     -- Type mismatches
     TypeIssueExpected = "E0301",
@@ -987,8 +1026,8 @@ local issue_code_map = {
     HostIssueUnknownBinding = "E0201",
     HostIssueExpected = "E0301",
     HostIssueArgCount = "E0305",
-    HostIssueInvalidPackedAlign = "E0504",
-    HostIssueBareBoolInBoundaryStruct = "E0301",
+    HostIssueInvalidPackedAlign = "E0506",
+    HostIssueBareBoolInBoundaryStruct = "E0505",
     HostIssueInvalidEmitFill = "E0702",
     HostIssueMissingEmitFill = "E0702",
 

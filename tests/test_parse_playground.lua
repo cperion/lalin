@@ -24,7 +24,7 @@ local B2 = T.MoonBack
 local Vec = T.MoonVec
 
 local src = [[
-export func tri(n: i32) -> i32
+func tri(n: i32) -> i32
     block loop(i: i32 = 0, acc: i32 = 0)
         if i >= n then
             return acc
@@ -37,7 +37,7 @@ export func tri(n: i32) -> i32
     end
 end
 
-export func fact(n: i32) -> i32
+func fact(n: i32) -> i32
     return block loop(x: i32 = n, acc: i32 = 1) -> i32
         if x <= 1 then
             yield acc
@@ -50,14 +50,14 @@ export func fact(n: i32) -> i32
     end
 end
 
-export func clamp_nonneg(x: i32) -> i32
+func clamp_nonneg(x: i32) -> i32
     if x < 0 then
         return 0
     end
     return x
 end
 
-export func first_three_or_n(n: i32) -> i32
+func first_three_or_n(n: i32) -> i32
     return control -> i32
     block read(i: i32 = 0)
         if i >= n then

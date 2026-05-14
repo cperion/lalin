@@ -53,18 +53,16 @@ entry start(total: i32 = 0)
     jump done(total = total)
 end
 end
-module ScopedLoops
-    func left(n: i32) -> i32
-        return block loop(i: i32 = 0) -> i32
-            if i >= n then yield i end
-            jump loop(i = i + 1)
-        end
+func left(n: i32) -> i32
+    return block loop(i: i32 = 0) -> i32
+        if i >= n then yield i end
+        jump loop(i = i + 1)
     end
-    func right(n: i32) -> i32
-        return block loop(i: i32 = 0) -> i32
-            if i >= n then yield i end
-            jump loop(i = i + 1)
-        end
+end
+func right(n: i32) -> i32
+    return block loop(i: i32 = 0) -> i32
+        if i >= n then yield i end
+        jump loop(i = i + 1)
     end
 end
 expr Use() -> i32
