@@ -23,4 +23,4 @@ run:
 	$(MOONLIFT) $(FILE)
 
 bench:
-	$(MOONLIFT) benchmarks/bench_json_hosted_decode.mlua
+	luajit benchmarks/bench_json_stack_decode.lua

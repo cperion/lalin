@@ -70,6 +70,13 @@ function M.Define(T)
         return Tr.TreeBackEnv(locals, env.next_value, env.next_block, env.ret)
     end
 
+    local function env_add_stack(env, binding, slot, ty)
+        local locals = {}
+        for i = 1, #env.locals do locals[#locals + 1] = env.locals[i] end
+        locals[#locals + 1] = Tr.TreeBackStackLocal(binding, slot, ty)
+        return Tr.TreeBackEnv(locals, env.next_value, env.next_block, env.ret)
+    end
+
     local function env_add_view(env, binding, data, len)
         local locals = {}
         for i = 1, #env.locals do locals[#locals + 1] = env.locals[i] end
@@ -128,6 +135,90 @@ function M.Define(T)
 
     local function append_all(out, xs)
         for i = 1, #xs do out[#out + 1] = xs[i] end
+    end
+
+    local function binding_key(binding)
+        return tostring(binding.id and binding.id.text or binding.name)
+    end
+
+    local collect_address_taken_stmts
+    local collect_address_taken_expr
+    local collect_address_taken_place
+
+    local function mark_addressed_place(place, out)
+        if place == nil then return end
+        local cls = pvm.classof(place)
+        if cls == Tr.PlaceRef and pvm.classof(place.ref) == Bn.ValueRefBinding then
+            local binding = place.ref.binding
+            if binding.class == Bn.BindingClassLocalCell then out[binding_key(binding)] = true end
+        elseif cls == Tr.PlaceField or cls == Tr.PlaceDot then
+            mark_addressed_place(place.base, out)
+        elseif cls == Tr.PlaceIndex then
+            if pvm.classof(place.base) == Tr.IndexBasePlace then mark_addressed_place(place.base.place, out) end
+        end
+    end
+
+    collect_address_taken_place = function(place, out)
+        if place == nil then return end
+        local cls = pvm.classof(place)
+        if cls == Tr.PlaceDeref then collect_address_taken_expr(place.base, out)
+        elseif cls == Tr.PlaceField or cls == Tr.PlaceDot then collect_address_taken_place(place.base, out)
+        elseif cls == Tr.PlaceIndex then
+            local bcls = pvm.classof(place.base)
+            if bcls == Tr.IndexBaseExpr then collect_address_taken_expr(place.base.expr, out)
+            elseif bcls == Tr.IndexBaseView then collect_address_taken_expr(place.base.view.base, out)
+            elseif bcls == Tr.IndexBasePlace then collect_address_taken_place(place.base.place, out) end
+            collect_address_taken_expr(place.index, out)
+        end
+    end
+
+    collect_address_taken_expr = function(expr, out)
+        if expr == nil then return end
+        local cls = pvm.classof(expr)
+        if cls == Tr.ExprAddrOf then mark_addressed_place(expr.place, out); collect_address_taken_place(expr.place, out)
+        elseif cls == Tr.ExprUnary or cls == Tr.ExprDeref or cls == Tr.ExprLen then collect_address_taken_expr(expr.value or expr.base, out)
+        elseif cls == Tr.ExprBinary or cls == Tr.ExprCompare or cls == Tr.ExprLogic then collect_address_taken_expr(expr.lhs, out); collect_address_taken_expr(expr.rhs, out)
+        elseif cls == Tr.ExprCast or cls == Tr.ExprMachineCast or cls == Tr.ExprLoad then collect_address_taken_expr(expr.value or expr.addr, out)
+        elseif cls == Tr.ExprCall then
+            if expr.target and expr.target.callee then collect_address_taken_expr(expr.target.callee, out) end
+            for i = 1, #expr.args do collect_address_taken_expr(expr.args[i], out) end
+        elseif cls == Tr.ExprField or cls == Tr.ExprDot then collect_address_taken_expr(expr.base, out)
+        elseif cls == Tr.ExprIndex then
+            local bcls = pvm.classof(expr.base)
+            if bcls == Tr.IndexBaseExpr then collect_address_taken_expr(expr.base.expr, out)
+            elseif bcls == Tr.IndexBaseView then collect_address_taken_expr(expr.base.view.base, out)
+            elseif bcls == Tr.IndexBasePlace then collect_address_taken_place(expr.base.place, out) end
+            collect_address_taken_expr(expr.index, out)
+        elseif cls == Tr.ExprIntrinsic or cls == Tr.ExprAgg or cls == Tr.ExprArray then
+            for i = 1, #(expr.args or expr.items or {}) do collect_address_taken_expr((expr.args or expr.items)[i], out) end
+        elseif cls == Tr.ExprIf then collect_address_taken_expr(expr.cond, out); collect_address_taken_stmts(expr.then_body, out); collect_address_taken_expr(expr.then_value, out); collect_address_taken_stmts(expr.else_body, out); collect_address_taken_expr(expr.else_value, out)
+        elseif cls == Tr.ExprSelect then collect_address_taken_expr(expr.cond, out); collect_address_taken_expr(expr.then_value, out); collect_address_taken_expr(expr.else_value, out)
+        elseif cls == Tr.ExprSwitch then
+            collect_address_taken_expr(expr.value, out)
+            for i = 1, #expr.arms do collect_address_taken_stmts(expr.arms[i].body, out); collect_address_taken_expr(expr.arms[i].result, out) end
+            collect_address_taken_stmts(expr.default_body or {}, out); if expr.default_result then collect_address_taken_expr(expr.default_result, out) end
+        elseif cls == Tr.ExprControl then collect_address_taken_stmts(expr.region.entry.body, out); for i = 1, #expr.region.blocks do collect_address_taken_stmts(expr.region.blocks[i].body, out) end
+        elseif cls == Tr.ExprBlock then collect_address_taken_stmts(expr.body, out); if expr.result then collect_address_taken_expr(expr.result, out) end
+        elseif cls == Tr.ExprView then if expr.view and expr.view.base then collect_address_taken_expr(expr.view.base, out) end
+        elseif cls == Tr.ExprCtor then for i = 1, #(expr.args or {}) do collect_address_taken_expr(expr.args[i], out) end
+        end
+    end
+
+    collect_address_taken_stmts = function(stmts, out)
+        for i = 1, #(stmts or {}) do
+            local stmt = stmts[i]
+            local cls = pvm.classof(stmt)
+            if cls == Tr.StmtLet or cls == Tr.StmtVar then collect_address_taken_expr(stmt.init, out)
+            elseif cls == Tr.StmtSet then collect_address_taken_place(stmt.place, out); collect_address_taken_expr(stmt.value, out)
+            elseif cls == Tr.StmtExpr or cls == Tr.StmtAssert or cls == Tr.StmtYieldValue or cls == Tr.StmtReturnValue then collect_address_taken_expr(stmt.expr or stmt.cond or stmt.value, out)
+            elseif cls == Tr.StmtIf then collect_address_taken_expr(stmt.cond, out); collect_address_taken_stmts(stmt.then_body, out); collect_address_taken_stmts(stmt.else_body, out)
+            elseif cls == Tr.StmtSwitch then collect_address_taken_expr(stmt.value, out); for j = 1, #stmt.arms do collect_address_taken_stmts(stmt.arms[j].body, out) end; collect_address_taken_stmts(stmt.default_body or {}, out)
+            elseif cls == Tr.StmtJump or cls == Tr.StmtJumpCont then for j = 1, #stmt.args do collect_address_taken_expr(stmt.args[j].value, out) end
+            elseif cls == Tr.StmtControl then collect_address_taken_stmts(stmt.region.entry.body, out); for j = 1, #stmt.region.blocks do collect_address_taken_stmts(stmt.region.blocks[j].body, out) end
+            elseif cls == Tr.StmtUseRegionFrag then for j = 1, #stmt.args do collect_address_taken_expr(stmt.args[j], out) end
+            end
+        end
+        return out
     end
 
     local hex = {}
@@ -232,6 +323,21 @@ function M.Define(T)
         local result = layout_api.result(ty)
         if pvm.classof(result) == Ty.TypeMemLayoutKnown then return result.layout.size end
         return nil
+    end
+
+    local function elem_align(ty)
+        local result = layout_api.result(ty)
+        if pvm.classof(result) == Ty.TypeMemLayoutKnown then return result.layout.align end
+        return nil
+    end
+
+    local function stack_slot_for_binding(binding)
+        local func = tostring(lower_context.current_func or "func")
+        return Back.BackStackSlotId("slot:" .. func .. ":" .. binding_key(binding))
+    end
+
+    local function binding_is_stack_local(binding)
+        return lower_context.stack_locals ~= nil and lower_context.stack_locals[binding_key(binding)] == true
     end
 
     local function shape_vec(vec)
@@ -440,7 +546,18 @@ function M.Define(T)
             local ref_cls = pvm.classof(self.ref)
             if ref_cls == Bn.ValueRefBinding then
                 local local_entry = env_lookup(env, self.ref.binding)
-                if local_entry ~= nil and pvm.classof(local_entry) == Tr.TreeBackScalarLocal then return pvm.once(Tr.TreeBackExprValue(env, {}, local_entry.value, local_entry.ty)) end
+                if local_entry ~= nil then
+                    local local_cls = pvm.classof(local_entry)
+                    if local_cls == Tr.TreeBackScalarLocal then
+                        return pvm.once(Tr.TreeBackExprValue(env, {}, local_entry.value, local_entry.ty))
+                    elseif local_cls == Tr.TreeBackStackLocal then
+                        local env1, addr = env_next_value(env, "addr")
+                        local env2, dst = env_next_value(env1, "v")
+                        local cmds = { Back.CmdStackAddr(addr, local_entry.slot) }
+                        local env3 = append_load_info(cmds, env2, dst, shape_scalar(local_entry.ty), addr, "stack:" .. tostring(self.ref.binding.name))
+                        return pvm.once(Tr.TreeBackExprValue(env3, cmds, dst, local_entry.ty))
+                    end
+                end
 
                 local class = self.ref.binding.class
                 local class_cls = pvm.classof(class)
@@ -1009,6 +1126,11 @@ function M.Define(T)
         [Tr.PlaceRef] = function(self, env)
             local ref_cls = pvm.classof(self.ref)
             if ref_cls == Bn.ValueRefBinding then
+                local local_entry = env_lookup(env, self.ref.binding)
+                if local_entry ~= nil and pvm.classof(local_entry) == Tr.TreeBackStackLocal then
+                    local env1, addr = env_next_value(env, "addr")
+                    return pvm.once(Tr.TreeBackExprValue(env1, { Back.CmdStackAddr(addr, local_entry.slot) }, addr, Back.BackPtr))
+                end
                 local class = self.ref.binding.class
                 local class_cls = pvm.classof(class)
                 if class_cls == Bn.BindingClassGlobalStatic or class_cls == Bn.BindingClassGlobalConst then
@@ -1065,8 +1187,13 @@ function M.Define(T)
                 local data = lower_context.slot_statics and lower_context.slot_statics[self.ref.slot.key] or nil
                 if data ~= nil then return pvm.once(store_global_data(env, data, self.ref.slot.ty, value, self.ref.slot.pretty_name)) end
             end
-            -- Local cell mutation: evaluate the RHS and rebind the variable in the env.
+            -- Local cell mutation. Stack-backed cells update their slot;
+            -- value-backed cells (legacy/non-addressed) rebind through SSA.
             if pvm.classof(self.ref) == Bn.ValueRefBinding and self.ref.binding.class == Bn.BindingClassLocalCell then
+                local local_entry = env_lookup(env, self.ref.binding)
+                if local_entry ~= nil and pvm.classof(local_entry) == Tr.TreeBackStackLocal then
+                    return store_at_addr(self, value, env)
+                end
                 local rhs = expr_value(expr_to_back:one_uncached(value, env))
                 if rhs == nil then return pvm.once(Tr.TreeBackStmtResult(env, {}, Back.BackFallsThrough)) end
                 local scalar = back_scalar(self.ref.binding.ty) or rhs.ty
@@ -1172,6 +1299,98 @@ function M.Define(T)
         return pvm.once(Tr.TreeBackStmtResult(out_env, cmds, Back.BackTerminates))
     end
 
+    local function lower_switch_stmt(self, env)
+        if #self.variant_arms > 0 then return pvm.once(Tr.TreeBackStmtResult(env, { Back.CmdTrap }, Back.BackTerminates)) end
+
+        local value = expr_value(expr_to_back:one_uncached(self.value, env))
+        if value == nil then return pvm.once(Tr.TreeBackStmtResult(env, { Back.CmdTrap }, Back.BackTerminates)) end
+
+        local case_raws = {}
+        for i = 1, #self.arms do
+            local raws = switch_key_raw:drain_uncached(self.arms[i].key)
+            if #raws ~= 1 then return pvm.once(Tr.TreeBackStmtResult(value.env, value.cmds, Back.BackTerminates)) end
+            case_raws[#case_raws + 1] = raws[1]
+        end
+
+        local current = value.env
+        local arm_blocks = {}
+        for i = 1, #self.arms do current, arm_blocks[i] = env_next_block(current, "switch.stmt.arm") end
+        local default_block; current, default_block = env_next_block(current, "switch.stmt.default")
+        local join_block; current, join_block = env_next_block(current, "switch.stmt.join")
+
+        local cmds = {}
+        append_all(cmds, value.cmds)
+        for i = 1, #arm_blocks do cmds[#cmds + 1] = Back.CmdCreateBlock(arm_blocks[i]) end
+        cmds[#cmds + 1] = Back.CmdCreateBlock(default_block)
+        cmds[#cmds + 1] = Back.CmdCreateBlock(join_block)
+        local cases = {}
+        for i = 1, #case_raws do cases[i] = Back.BackSwitchCase(case_raws[i], arm_blocks[i]) end
+        cmds[#cmds + 1] = Back.CmdSwitchInt(value.value, value.ty, cases, default_block)
+        for i = 1, #arm_blocks do cmds[#cmds + 1] = Back.CmdSealBlock(arm_blocks[i]) end
+        cmds[#cmds + 1] = Back.CmdSealBlock(default_block)
+
+        local fallers = {}
+        for i = 1, #self.arms do
+            cmds[#cmds + 1] = Back.CmdSwitchToBlock(arm_blocks[i])
+            local start = env_with_locals(env_with_counters(value.env, current), value.env.locals)
+            local arm_env, arm_cmds, arm_flow = lower_body(self.arms[i].body, start)
+            append_all(cmds, arm_cmds)
+            if arm_flow ~= Back.BackTerminates then
+                local jump_pos = #cmds + 1
+                cmds[jump_pos] = Back.CmdJump(join_block, {})
+                fallers[#fallers + 1] = { env = arm_env, jump_pos = jump_pos, args = {} }
+            end
+            current = env_with_counters(current, arm_env)
+        end
+
+        cmds[#cmds + 1] = Back.CmdSwitchToBlock(default_block)
+        local default_start = env_with_locals(env_with_counters(value.env, current), value.env.locals)
+        local default_env, default_cmds, default_flow = lower_body(self.default_body or {}, default_start)
+        append_all(cmds, default_cmds)
+        if default_flow ~= Back.BackTerminates then
+            local jump_pos = #cmds + 1
+            cmds[jump_pos] = Back.CmdJump(join_block, {})
+            fallers[#fallers + 1] = { env = default_env, jump_pos = jump_pos, args = {} }
+        end
+        current = env_with_counters(current, default_env)
+
+        local out_locals = {}
+        for i = 1, #value.env.locals do out_locals[#out_locals + 1] = value.env.locals[i] end
+        local pre_counters = current
+        if #fallers > 0 then
+            for i = 1, #value.env.locals do
+                local local_entry = value.env.locals[i]
+                if pvm.classof(local_entry) == Tr.TreeBackScalarLocal
+                    and local_entry.binding.class == Bn.BindingClassLocalCell then
+                    local changed = false
+                    local vals = {}
+                    for j = 1, #fallers do
+                        local found = env_lookup(fallers[j].env, local_entry.binding)
+                        local v = found and found.value or local_entry.value
+                        vals[j] = v
+                        if v ~= local_entry.value then changed = true end
+                    end
+                    if changed then
+                        local phi_env, phi_val = env_next_value(pre_counters, "phi")
+                        pre_counters = phi_env
+                        cmds[#cmds + 1] = Back.CmdAppendBlockParam(join_block, phi_val, shape_scalar(local_entry.ty))
+                        for j = 1, #fallers do fallers[j].args[#fallers[j].args + 1] = vals[j] end
+                        out_locals[#out_locals + 1] = Tr.TreeBackScalarLocal(local_entry.binding, phi_val, local_entry.ty)
+                    end
+                end
+            end
+            for i = 1, #fallers do cmds[fallers[i].jump_pos] = Back.CmdJump(join_block, fallers[i].args) end
+        end
+
+        local out_env = Tr.TreeBackEnv(out_locals, pre_counters.next_value, pre_counters.next_block, value.env.ret)
+        cmds[#cmds + 1] = Back.CmdSealBlock(join_block)
+        if #fallers > 0 then
+            cmds[#cmds + 1] = Back.CmdSwitchToBlock(join_block)
+            return pvm.once(Tr.TreeBackStmtResult(out_env, cmds, Back.BackFallsThrough))
+        end
+        return pvm.once(Tr.TreeBackStmtResult(out_env, cmds, Back.BackTerminates))
+    end
+
     stmt_to_back = pvm.phase("moonlift_tree_stmt_to_back", {
         [Tr.StmtLet] = function(self, env)
             local lowered = expr_to_back:one_uncached(self.init, env)
@@ -1200,7 +1419,9 @@ function M.Define(T)
                         append_all(cmds, arg.cmds); args[#args + 1] = arg.value; params[#params + 1] = arg.ty; current = arg.env
                     end
                     local target = call_target:one_uncached(self.expr.target, current)
-                    local sig, declare_call_sig = Back.BackSigId("sig:callstmt:" .. tostring(#cmds)), true
+                    lower_context.callstmt_seq = (lower_context.callstmt_seq or 0) + 1
+                    local sig_prefix = "sig:callstmt:" .. tostring(lower_context.module_name or "") .. ":" .. tostring(lower_context.current_func or "") .. ":"
+                    local sig, declare_call_sig = Back.BackSigId(sig_prefix .. tostring(lower_context.callstmt_seq)), true
                     if pvm.classof(target) == Back.BackCallExtern then
                         sig = Back.BackSigId("sig:extern:" .. tostring(target.func.text))
                         declare_call_sig = false
@@ -1240,11 +1461,31 @@ function M.Define(T)
             return pvm.once(Tr.TreeBackStmtResult(value.env, cmds, Back.BackTerminates))
         end,
         [Tr.StmtReturnVoid] = function(_, env) return pvm.once(Tr.TreeBackStmtResult(env, { Back.CmdReturnVoid }, Back.BackTerminates)) end,
-        [Tr.StmtVar] = function(self, env) return pvm.once(stmt_to_back:one_uncached(Tr.StmtLet(self.h, self.binding, self.init), env)) end,
+        [Tr.StmtVar] = function(self, env)
+            if not binding_is_stack_local(self.binding) then
+                return pvm.once(stmt_to_back:one_uncached(Tr.StmtLet(self.h, self.binding, self.init), env))
+            end
+            local init = expr_value(expr_to_back:one_uncached(self.init, env))
+            if init == nil then return pvm.once(Tr.TreeBackStmtResult(env, { Back.CmdTrap }, Back.BackTerminates)) end
+            local scalar = back_scalar(self.binding.ty) or init.ty
+            local size, align = elem_size(self.binding.ty), elem_align(self.binding.ty)
+            if size == nil or align == nil then
+                size, align = scalar_size_align(scalar)
+            end
+            if size == nil or align == nil then return pvm.once(Tr.TreeBackStmtResult(init.env, init.cmds, Back.BackTerminates)) end
+            local slot = stack_slot_for_binding(self.binding)
+            local env1, addr = env_next_value(init.env, "addr")
+            local cmds = { Back.CmdCreateStackSlot(slot, size, align) }
+            append_all(cmds, init.cmds)
+            cmds[#cmds + 1] = Back.CmdStackAddr(addr, slot)
+            local env2 = append_store_info(cmds, env1, shape_scalar(scalar), addr, init.value, "stack:init:" .. tostring(self.binding.name))
+            local env3 = env_add_stack(env2, self.binding, slot, scalar)
+            return pvm.once(Tr.TreeBackStmtResult(env3, cmds, Back.BackFallsThrough))
+        end,
         [Tr.StmtSet] = function(self, env) return pvm.once(place_store_to_back:one_uncached(self.place, self.value, env)) end,
         [Tr.StmtAssert] = function(_, env) return pvm.once(Tr.TreeBackStmtResult(env, {}, Back.BackFallsThrough)) end,
         [Tr.StmtIf] = lower_if_stmt,
-        [Tr.StmtSwitch] = function(_, env) return pvm.once(Tr.TreeBackStmtResult(env, { Back.CmdTrap }, Back.BackTerminates)) end,
+        [Tr.StmtSwitch] = lower_switch_stmt,
         [Tr.StmtJump] = function(_, env) return pvm.once(Tr.TreeBackStmtResult(env, { Back.CmdTrap }, Back.BackTerminates)) end,
         [Tr.StmtJumpCont] = function(_, env) return pvm.once(Tr.TreeBackStmtResult(env, { Back.CmdTrap }, Back.BackTerminates)) end,
         [Tr.StmtYieldVoid] = function(_, env) return pvm.once(Tr.TreeBackStmtResult(env, { Back.CmdTrap }, Back.BackTerminates)) end,
@@ -1461,9 +1702,12 @@ function M.Define(T)
         local env = env_from_abi_params(abi_plan)
         local param_vals = abi_param_values(abi_plan)
         local previous_func = lower_context.current_func
+        local previous_stack_locals = lower_context.stack_locals
         lower_context.current_func = name
+        lower_context.stack_locals = collect_address_taken_stmts(body, {})
         local _, body_cmds, flow = lower_body(body, env)
         lower_context.current_func = previous_func
+        lower_context.stack_locals = previous_stack_locals
         local cmds = {
             Back.CmdCreateSig(sig, param_scalars, result_scalars),
             Back.CmdDeclareFunc(visibility, func, sig),
@@ -1527,17 +1771,39 @@ function M.Define(T)
         return nil
     end
 
-    local function hoist_data_cmds(cmds)
-        local data_cmds, other_cmds, seen = {}, {}, {}
+    local function decl_cmd_key(cmd)
+        local k = cmd.kind
+        if k == "CmdCreateSig" then return table.concat({ k, cmd.sig.text }, "\t"), "sig" end
+        if k == "CmdDeclareFunc" then return table.concat({ k, cmd.func.text }, "\t"), "func" end
+        if k == "CmdDeclareExtern" then return table.concat({ k, cmd.func.text }, "\t"), "extern" end
+        return nil, nil
+    end
+
+    local function hoist_module_cmds(cmds)
+        local sig_cmds, func_cmds, extern_cmds, data_cmds, other_cmds = {}, {}, {}, {}, {}
+        local seen = {}
         for i = 1, #cmds do
-            local key = data_cmd_key(cmds[i])
-            if key ~= nil then
-                if not seen[key] then data_cmds[#data_cmds + 1] = cmds[i]; seen[key] = true end
+            local dkey, dkind = decl_cmd_key(cmds[i])
+            if dkey ~= nil then
+                if not seen[dkey] then
+                    if dkind == "sig" then sig_cmds[#sig_cmds + 1] = cmds[i]
+                    elseif dkind == "func" then func_cmds[#func_cmds + 1] = cmds[i]
+                    else extern_cmds[#extern_cmds + 1] = cmds[i] end
+                    seen[dkey] = true
+                end
             else
-                other_cmds[#other_cmds + 1] = cmds[i]
+                local key = data_cmd_key(cmds[i])
+                if key ~= nil then
+                    if not seen[key] then data_cmds[#data_cmds + 1] = cmds[i]; seen[key] = true end
+                else
+                    other_cmds[#other_cmds + 1] = cmds[i]
+                end
             end
         end
         local out = {}
+        append_all(out, sig_cmds)
+        append_all(out, func_cmds)
+        append_all(out, extern_cmds)
         append_all(out, data_cmds)
         append_all(out, other_cmds)
         return out
@@ -1632,7 +1898,7 @@ function M.Define(T)
         return with_module_context(module, function()
             local cmds = {}
             for i = 1, #module.items do append_all(cmds, lower_item_direct(module.items[i]).cmds) end
-            cmds = hoist_data_cmds(cmds)
+            cmds = hoist_module_cmds(cmds)
             cmds[#cmds + 1] = Back.CmdFinalizeModule
             return Back.BackProgram(cmds)
         end)

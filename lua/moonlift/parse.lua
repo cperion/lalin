@@ -139,6 +139,7 @@ local function new_tokens(src)
         n = 0,
         kind = {}, text = {}, start = {}, stop = {}, line = {}, col = {},
         splice_map = {},   -- splice_id → lua_expression_text
+        splice_spread = {}, -- splice_id → true when written @{expr...}
         splice_i = 0,
         lex_issues = {},
     }
@@ -146,6 +147,12 @@ end
 
 local function push_lex_issue(t, msg, offset, line, col)
     t.lex_issues[#t.lex_issues + 1] = { message = msg, offset = offset or 0, line = line or 0, col = col or 0 }
+end
+
+local function split_splice_expr(lua_expr)
+    local stripped = lua_expr:match("^(.-%S)%s*%.%.%.%s*$")
+    if stripped then return stripped, true end
+    return lua_expr, false
 end
 
 local function advance_line_col(src, from_i, to_i, line, col)
@@ -255,10 +262,11 @@ function M.lex(src)
                 push_lex_issue(t, "unterminated splice @{...}", i, line, col)
                 break
             end
-            local lua_expr = sub(src, i + 2, close - 1)
+            local lua_expr, is_spread = split_splice_expr(sub(src, i + 2, close - 1))
             t.splice_i = t.splice_i + 1
             local id = "splice." .. t.splice_i
             t.splice_map[id] = lua_expr
+            if is_spread then t.splice_spread[id] = true end
             push_tok(t, TK.hole, id, i, close, line, col)
             line, col = advance_line_col(src, i, close, line, col)
             i = close + 1
@@ -402,6 +410,7 @@ local function new_parser_internal(T, toks, first, limit, opts)
         value_env = opts.value_env or {},
         cont_env = opts.cont_env or {},
         protocol_types = opts.protocol_types or {},
+        splice_values = opts.splice_values or {},
         name_hint = opts.name_hint,
         splice_slots = {},
         splice_slots_by_id = {},
@@ -572,10 +581,60 @@ function Parser:record_splice_slot(splice_id, slot_sum, role)
     local key = tostring(role) .. ":" .. tostring(splice_id)
     local existing = self.splice_slots_by_id[key]
     if existing then return existing end
-    local entry = { splice_id = splice_id, slot = slot_sum, role = role }
+    local entry = { splice_id = splice_id, slot = slot_sum, role = role, spread = self.toks.splice_spread[splice_id] or false }
     self.splice_slots[#self.splice_slots + 1] = entry
     self.splice_slots_by_id[key] = entry
     return entry
+end
+
+function Parser:spread_expr_slot(role, id)
+    local slot = self.O.ExprSlot(self:splice_key(role, id), id, nil)
+    self:record_splice_slot(id, self.O.SlotExpr(slot), role)
+    return slot
+end
+
+function Parser:spread_type_slot(role, id)
+    local slot = self.O.TypeSlot(self:splice_key(role, id), id)
+    self:record_splice_slot(id, self.O.SlotType(slot), role)
+    return slot
+end
+
+function Parser:spread_region_slot(role, id)
+    local slot = self.O.RegionSlot(self:splice_key(role, id), id)
+    self:record_splice_slot(id, self.O.SlotRegion(slot), role)
+    return slot
+end
+
+local function spread_sentinel(role, slot)
+    return "__moonlift_spread_" .. role .. ":" .. slot.key
+end
+
+function Parser:splice_value(id)
+    local rec = self.splice_values and self.splice_values[id]
+    if type(rec) == "table" and rec.present then return rec.value end
+    return rec
+end
+
+function Parser:param_from_value(v)
+    local pvm = require("moonlift.pvm")
+    if pvm.classof(v) == self.Ty.Param then return v end
+    if type(v) == "table" and v.decl and pvm.classof(v.decl) == self.Ty.Param then return v.decl end
+    return nil
+end
+
+function Parser:block_param_from_value(v)
+    local pvm = require("moonlift.pvm")
+    if pvm.classof(v) == self.Tr.BlockParam then return v end
+    local p = self:param_from_value(v)
+    if p then return self.Tr.BlockParam(p.name, p.ty) end
+    return nil
+end
+
+function Parser:entry_param_from_value(v)
+    local pvm = require("moonlift.pvm")
+    if pvm.classof(v) == self.Tr.EntryBlockParam then return v end
+    if type(v) == "table" and v.decl and pvm.classof(v.decl) == self.Tr.EntryBlockParam then return v.decl end
+    return nil
 end
 
 ---------------------------------------------------------------------------
@@ -598,7 +657,12 @@ function Parser:parse_callable_type()
     local params = {}
     if self:kind() ~= TK.rparen then
         while true do
-            params[#params + 1] = self:parse_type()
+            if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
+                local id = self:text(); self.i = self.i + 1
+                params[#params + 1] = Ty.TSlot(self:spread_type_slot("type_list", id))
+            else
+                params[#params + 1] = self:parse_type()
+            end
             self:skip_nl()
             if not self:accept(TK.comma) then break end
             self:skip_nl()
@@ -761,7 +825,12 @@ function Parser:led(k, left)
         self:skip_nl()
         if self:kind() ~= TK.rparen then
             while true do
-                args[#args + 1] = self:parse_expr(0)
+                if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
+                    local id = self:text(); self.i = self.i + 1
+                    args[#args + 1] = Tr.ExprSlotValue(Tr.ExprSurface, self:spread_expr_slot("expr_list", id))
+                else
+                    args[#args + 1] = self:parse_expr(0)
+                end
                 self:skip_nl()
                 if not self:accept(TK.comma) then break end
                 self:skip_nl()
@@ -869,13 +938,19 @@ function Parser:parse_switch_stmt()
     self:expect(TK.do_kw, "expected do after switch expression")
     self:skip_nl()
     local arms = {}
-    while self:kind() == TK.case_kw do
-        self.i = self.i + 1  -- consume 'case'
-        local key_expr = self:parse_expr(0)
-        self:skip_nl()
-        self:expect(TK.then_kw, "expected then after case expression")
-        local body = self:parse_stmt_until({ [TK.case_kw]=true, [TK.default_kw]=true, [TK.end_kw]=true })
-        arms[#arms + 1] = Tr.SwitchStmtArm(self:switch_key_from_expr(key_expr), body)
+    while self:kind() == TK.case_kw or (self:kind() == TK.hole and self.toks.splice_spread[self:text()]) do
+        if self:kind() == TK.hole then
+            local id = self:text(); self.i = self.i + 1
+            local slot = self:spread_region_slot("switch_stmt_arm_list", id)
+            arms[#arms + 1] = Tr.SwitchStmtArm(Sem.SwitchKeyRaw(spread_sentinel("switch_stmt_arm_list", slot)), {})
+        else
+            self.i = self.i + 1  -- consume 'case'
+            local key_expr = self:parse_expr(0)
+            self:skip_nl()
+            self:expect(TK.then_kw, "expected then after case expression")
+            local body = self:parse_stmt_until({ [TK.case_kw]=true, [TK.default_kw]=true, [TK.end_kw]=true })
+            arms[#arms + 1] = Tr.SwitchStmtArm(self:switch_key_from_expr(key_expr), body)
+        end
         self:skip_nl()
     end
     self:expect(TK.default_kw, "expected default in switch")
@@ -892,13 +967,19 @@ function Parser:parse_switch_expr()
     self:expect(TK.do_kw, "expected do after switch expression")
     self:skip_nl()
     local arms = {}
-    while self:kind() == TK.case_kw do
-        self.i = self.i + 1
-        local key_expr = self:parse_expr(0)
-        self:skip_nl()
-        self:expect(TK.then_kw, "expected then after case expression")
-        local body, result = self:parse_expr_block({ [TK.case_kw]=true, [TK.default_kw]=true, [TK.end_kw]=true })
-        arms[#arms + 1] = Tr.SwitchExprArm(self:switch_key_from_expr(key_expr), body, result)
+    while self:kind() == TK.case_kw or (self:kind() == TK.hole and self.toks.splice_spread[self:text()]) do
+        if self:kind() == TK.hole then
+            local id = self:text(); self.i = self.i + 1
+            local slot = self:spread_region_slot("switch_expr_arm_list", id)
+            arms[#arms + 1] = Tr.SwitchExprArm(Sem.SwitchKeyRaw(spread_sentinel("switch_expr_arm_list", slot)), {}, Tr.ExprLit(Tr.ExprSurface, self.C.LitInt("0")))
+        else
+            self.i = self.i + 1
+            local key_expr = self:parse_expr(0)
+            self:skip_nl()
+            self:expect(TK.then_kw, "expected then after case expression")
+            local body, result = self:parse_expr_block({ [TK.case_kw]=true, [TK.default_kw]=true, [TK.end_kw]=true })
+            arms[#arms + 1] = Tr.SwitchExprArm(self:switch_key_from_expr(key_expr), body, result)
+        end
         self:skip_nl()
     end
     self:expect(TK.default_kw, "expected default in switch")
@@ -958,13 +1039,19 @@ function Parser:parse_multi_control_expr()
     if self:kind() == TK.end_kw then self.i = self.i + 1 end
     local blocks = {}
     self:skip_nl()
-    while self:kind() == TK.block_kw do
-        self.i = self.i + 1
-        local label = Tr.BlockLabel(self:expect_name("expected block label"))
-        local params = self:parse_block_params(false)
-        local body = self:parse_stmt_until({ [TK.end_kw]=true })
-        self:expect(TK.end_kw)
-        blocks[#blocks + 1] = Tr.ControlBlock(label, params, body)
+    while self:kind() == TK.block_kw or (self:kind() == TK.hole and self.toks.splice_spread[self:text()]) do
+        if self:kind() == TK.hole then
+            local id = self:text(); self.i = self.i + 1
+            local slot = self:spread_region_slot("control_block_list", id)
+            blocks[#blocks + 1] = Tr.ControlBlock(Tr.BlockLabel(spread_sentinel("control_block_list", slot)), {}, {})
+        else
+            self.i = self.i + 1
+            local label = Tr.BlockLabel(self:expect_name("expected block label"))
+            local params = self:parse_block_params(false)
+            local body = self:parse_stmt_until({ [TK.end_kw]=true })
+            self:expect(TK.end_kw)
+            blocks[#blocks + 1] = Tr.ControlBlock(label, params, body)
+        end
         self:skip_nl()
     end
     self:expect(TK.end_kw, "expected region end")
@@ -992,15 +1079,26 @@ function Parser:parse_block_params(entry)
     if self:kind() ~= TK.rparen then
         while true do
             self:skip_nl()
-            local name = self:expect_name("expected block parameter")
-            self:expect(TK.colon)
-            local ty = self:parse_type()
-            if entry then
-                self:skip_nl()
-                self:expect(TK.eq, "entry block params need initializers")
-                params[#params + 1] = Tr.EntryBlockParam(name, ty, self:parse_expr(0))
+            if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
+                local id = self:text(); self.i = self.i + 1
+                local role = entry and "entry_param_list" or "block_param_list"
+                local slot = self:spread_region_slot(role, id)
+                if entry then
+                    params[#params + 1] = Tr.EntryBlockParam(spread_sentinel(role, slot), self.Ty.TScalar(self.C.ScalarVoid), Tr.ExprLit(Tr.ExprSurface, self.C.LitInt("0")))
+                else
+                    params[#params + 1] = Tr.BlockParam(spread_sentinel(role, slot), self.Ty.TScalar(self.C.ScalarVoid))
+                end
             else
-                params[#params + 1] = Tr.BlockParam(name, ty)
+                local name = self:expect_name("expected block parameter")
+                self:expect(TK.colon)
+                local ty = self:parse_type()
+                if entry then
+                    self:skip_nl()
+                    self:expect(TK.eq, "entry block params need initializers")
+                    params[#params + 1] = Tr.EntryBlockParam(name, ty, self:parse_expr(0))
+                else
+                    params[#params + 1] = Tr.BlockParam(name, ty)
+                end
             end
             self:skip_nl()
             if not self:accept(TK.comma) then break end
@@ -1066,7 +1164,12 @@ function Parser:parse_emit_stmt()
     self:skip_nl()
     if self:kind() ~= TK.rparen and self:kind() ~= TK.semi then
         while true do
-            args[#args + 1] = self:parse_expr(0)
+            if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
+                local id = self:text(); self.i = self.i + 1
+                args[#args + 1] = Tr.ExprSlotValue(Tr.ExprSurface, self:spread_expr_slot("expr_list", id))
+            else
+                args[#args + 1] = self:parse_expr(0)
+            end
             self:skip_nl()
             if not self:accept(TK.comma) then break end
             self:skip_nl()
@@ -1104,7 +1207,12 @@ function Parser:parse_emit_expr()
     self:skip_nl()
     if self:kind() ~= TK.rparen then
         while true do
-            args[#args + 1] = self:parse_expr(0)
+            if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
+                local id = self:text(); self.i = self.i + 1
+                args[#args + 1] = Tr.ExprSlotValue(Tr.ExprSurface, self:spread_expr_slot("expr_list", id))
+            else
+                args[#args + 1] = self:parse_expr(0)
+            end
             self:skip_nl()
             if not self:accept(TK.comma) then break end
             self:skip_nl()
@@ -1233,19 +1341,25 @@ function Parser:parse_param_list()
     if self:kind() == TK.rparen then return params, contracts end
     while true do
         self:skip_nl()
-        local mods = {}
-        while self:kind() == TK.noalias_kw or self:kind() == TK.readonly_kw or self:kind() == TK.writeonly_kw do
-            mods[#mods + 1] = self:kind(); self.i = self.i + 1
-        end
-        local name = self:expect_name("expected parameter name")
-        self:expect(TK.colon, "expected ':' in parameter")
-        params[#params + 1] = Ty.Param(name, self:parse_type())
-        -- Convert modifiers to contracts
-        local ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(name))
-        for i = 1, #mods do
-            if mods[i] == TK.noalias_kw then contracts[#contracts + 1] = Tr.ContractNoAlias(ref)
-            elseif mods[i] == TK.readonly_kw then contracts[#contracts + 1] = Tr.ContractReadonly(ref)
-            elseif mods[i] == TK.writeonly_kw then contracts[#contracts + 1] = Tr.ContractWriteonly(ref) end
+        if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
+            local id = self:text(); self.i = self.i + 1
+            local slot = self:spread_region_slot("param_list", id)
+            params[#params + 1] = Ty.Param(spread_sentinel("param_list", slot), Ty.TScalar(self.C.ScalarVoid))
+        else
+            local mods = {}
+            while self:kind() == TK.noalias_kw or self:kind() == TK.readonly_kw or self:kind() == TK.writeonly_kw do
+                mods[#mods + 1] = self:kind(); self.i = self.i + 1
+            end
+            local name = self:expect_name("expected parameter name")
+            self:expect(TK.colon, "expected ':' in parameter")
+            params[#params + 1] = Ty.Param(name, self:parse_type())
+            -- Convert modifiers to contracts
+            local ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(name))
+            for i = 1, #mods do
+                if mods[i] == TK.noalias_kw then contracts[#contracts + 1] = Tr.ContractNoAlias(ref)
+                elseif mods[i] == TK.readonly_kw then contracts[#contracts + 1] = Tr.ContractReadonly(ref)
+                elseif mods[i] == TK.writeonly_kw then contracts[#contracts + 1] = Tr.ContractWriteonly(ref) end
+            end
         end
         if not self:accept(TK.comma) then break end
         self:skip_nl()
@@ -1286,28 +1400,64 @@ function Parser:parse_cont_params(owner_name)
     local O, Tr = self.O, self.Tr
     local cont_slots, slots = {}, {}
     while self:kind() ~= TK.rparen and self:kind() ~= TK.eof do
-        local name = self:expect_name("expected continuation parameter name")
-        self:expect(TK.colon, "expected ':' in continuation parameter")
-        self:expect_name()  -- consume 'cont'
-        self:expect(TK.lparen)
-        local params = {}
-        self:skip_nl()
-        if self:kind() ~= TK.rparen then
-            while true do
-                self:skip_nl()
-                local pname = self:expect_name("expected continuation arg name")
-                self:expect(TK.colon)
-                params[#params + 1] = Tr.BlockParam(pname, self:parse_type())
-                self:skip_nl()
-                if not self:accept(TK.comma) then break end
-                self:skip_nl()
-                if self:kind() == TK.rparen then break end
+        if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
+            local id = self:text(); self.i = self.i + 1
+            local value = self:splice_value(id)
+            if type(value) == "table" then
+                local pvm = require("moonlift.pvm")
+                for j = 1, #value do
+                    local raw = value[j]
+                    local slot
+                    if pvm.classof(raw) == O.ContSlot then
+                        slot = raw
+                    elseif type(raw) == "table" and raw.name then
+                        local params = {}
+                        local src = raw.block_params or (raw.cont and raw.cont.block_params) or raw.params or {}
+                        for k = 1, #src do
+                            local bp = self:block_param_from_value(src[k])
+                            if bp then params[#params + 1] = bp end
+                        end
+                        slot = O.ContSlot("cont:" .. owner_name .. ":" .. raw.name .. ":splice:" .. tostring(j), raw.name, params)
+                    end
+                    if slot then
+                        cont_slots[slot.pretty_name] = slot
+                        slots[#slots + 1] = slot
+                    end
+                end
+            else
+                local slot = self:spread_region_slot("cont_slot_list", id)
+                slots[#slots + 1] = O.ContSlot(spread_sentinel("cont_slot_list", slot), spread_sentinel("cont_slot_list", slot), {})
             end
+        else
+            local name = self:expect_name("expected continuation parameter name")
+            self:expect(TK.colon, "expected ':' in continuation parameter")
+            self:expect_name()  -- consume 'cont'
+            self:expect(TK.lparen)
+            local params = {}
+            self:skip_nl()
+            if self:kind() ~= TK.rparen then
+                while true do
+                    self:skip_nl()
+                    if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
+                        local id = self:text(); self.i = self.i + 1
+                        local slot = self:spread_region_slot("block_param_list", id)
+                        params[#params + 1] = Tr.BlockParam(spread_sentinel("block_param_list", slot), self.Ty.TScalar(self.C.ScalarVoid))
+                    else
+                        local pname = self:expect_name("expected continuation arg name")
+                        self:expect(TK.colon)
+                        params[#params + 1] = Tr.BlockParam(pname, self:parse_type())
+                    end
+                    self:skip_nl()
+                    if not self:accept(TK.comma) then break end
+                    self:skip_nl()
+                    if self:kind() == TK.rparen then break end
+                end
+            end
+            self:expect(TK.rparen)
+            local slot = O.ContSlot("cont:" .. owner_name .. ":" .. name .. ":" .. tostring(#slots + 1), name, params)
+            cont_slots[name] = slot
+            slots[#slots + 1] = slot
         end
-        self:expect(TK.rparen)
-        local slot = O.ContSlot("cont:" .. owner_name .. ":" .. name .. ":" .. tostring(#slots + 1), name, params)
-        cont_slots[name] = slot
-        slots[#slots + 1] = slot
         self:skip_nl()
         if not self:accept(TK.comma) then break end
         self:skip_nl()
@@ -1352,12 +1502,37 @@ function Parser:parse_open_params(owner_name)
     if self:kind() ~= TK.rparen and self:kind() ~= TK.semi then
         while true do
             self:skip_nl()
-            local pname = self:expect_name("expected parameter name")
-            self:expect(TK.colon)
-            local ty = self:parse_type()
-            local param = O.OpenParam("param:" .. owner_name .. ":" .. pname .. ":" .. tostring(#params + 1), pname, ty)
-            params[#params + 1] = param
-            param_bindings[pname] = B.Binding(C.Id("open-param:" .. owner_name .. ":" .. pname), pname, ty, B.BindingClassOpenParam(param))
+            if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
+                local id = self:text(); self.i = self.i + 1
+                local value = self:splice_value(id)
+                if type(value) == "table" then
+                    for j = 1, #value do
+                        local raw = value[j]
+                        local param
+                        local pvm = require("moonlift.pvm")
+                        if pvm.classof(raw) == O.OpenParam then
+                            param = raw
+                        else
+                            local p = self:param_from_value(raw)
+                            if p then param = O.OpenParam("param:" .. owner_name .. ":" .. p.name .. ":splice:" .. tostring(j), p.name, p.ty) end
+                        end
+                        if param then
+                            params[#params + 1] = param
+                            param_bindings[param.name] = B.Binding(C.Id("open-param:" .. owner_name .. ":" .. param.name), param.name, param.ty, B.BindingClassOpenParam(param))
+                        end
+                    end
+                else
+                    local slot = self:spread_region_slot("open_param_list", id)
+                    params[#params + 1] = O.OpenParam(spread_sentinel("open_param_list", slot), spread_sentinel("open_param_list", slot), self.Ty.TScalar(self.C.ScalarVoid))
+                end
+            else
+                local pname = self:expect_name("expected parameter name")
+                self:expect(TK.colon)
+                local ty = self:parse_type()
+                local param = O.OpenParam("param:" .. owner_name .. ":" .. pname .. ":" .. tostring(#params + 1), pname, ty)
+                params[#params + 1] = param
+                param_bindings[pname] = B.Binding(C.Id("open-param:" .. owner_name .. ":" .. pname), pname, ty, B.BindingClassOpenParam(param))
+            end
             self:skip_nl()
             if not self:accept(TK.comma) then break end
             self:skip_nl()
@@ -1406,13 +1581,19 @@ function Parser:parse_region_frag()
     if self:kind() == TK.end_kw then self.i = self.i + 1 end
     local blocks = {}
     self:skip_nl()
-    while self:kind() == TK.block_kw do
-        self.i = self.i + 1
-        local label = Tr.BlockLabel(self:expect_name("expected fragment block label"))
-        local block_params = self:parse_block_params(false)
-        local block_body = self:parse_stmt_until({ [TK.end_kw]=true })
-        self:expect(TK.end_kw)
-        blocks[#blocks + 1] = Tr.ControlBlock(label, block_params, block_body)
+    while self:kind() == TK.block_kw or (self:kind() == TK.hole and self.toks.splice_spread[self:text()]) do
+        if self:kind() == TK.hole then
+            local id = self:text(); self.i = self.i + 1
+            local slot = self:spread_region_slot("control_block_list", id)
+            blocks[#blocks + 1] = Tr.ControlBlock(Tr.BlockLabel(spread_sentinel("control_block_list", slot)), {}, {})
+        else
+            self.i = self.i + 1
+            local label = Tr.BlockLabel(self:expect_name("expected fragment block label"))
+            local block_params = self:parse_block_params(false)
+            local block_body = self:parse_stmt_until({ [TK.end_kw]=true })
+            self:expect(TK.end_kw)
+            blocks[#blocks + 1] = Tr.ControlBlock(label, block_params, block_body)
+        end
         self:skip_nl()
     end
     self.value_env, self.cont_env = saved_value_env, saved_cont_env
@@ -1463,9 +1644,15 @@ function Parser:parse_struct_island()
     local fields = {}
     self:skip_nl()
     while self:kind() ~= TK.end_kw and self:kind() ~= TK.eof do
-        local fname = self:expect_field_name("expected field name")
-        self:expect(TK.colon, "expected ':' in field declaration")
-        fields[#fields + 1] = Ty.FieldDecl(fname, self:parse_type())
+        if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
+            local id = self:text(); self.i = self.i + 1
+            local slot = self:spread_region_slot("field_list", id)
+            fields[#fields + 1] = Ty.FieldDecl(spread_sentinel("field_list", slot), Ty.TScalar(self.C.ScalarVoid))
+        else
+            local fname = self:expect_field_name("expected field name")
+            self:expect(TK.colon, "expected ':' in field declaration")
+            fields[#fields + 1] = Ty.FieldDecl(fname, self:parse_type())
+        end
         self:skip_nl()
         if self:accept(TK.comma) or self:accept(TK.semi) then self:skip_nl() end
     end
@@ -1483,8 +1670,14 @@ function Parser:parse_union_island()
     local Tr, Ty = self.Tr, self.Ty
     local name
     local k1 = self:kind(1)
-    local current_starts_variant = (self:kind() == TK.name or ident_kw[self:kind()])
-        and (k1 == TK.pipe or k1 == TK.lparen or k1 == TK.end_kw or k1 == TK.nl)
+    local first_is_name = (self:kind() == TK.name or ident_kw[self:kind()])
+    local current_starts_variant = first_is_name and (k1 == TK.pipe or k1 == TK.lparen or k1 == TK.end_kw)
+    if first_is_name and k1 == TK.nl then
+        local j = self.i + 1
+        while self.toks.kind[j] == TK.nl do j = j + 1 end
+        local kj = self.toks.kind[j]
+        current_starts_variant = (kj == TK.pipe or kj == TK.end_kw)
+    end
     if self.name_hint and (self:kind() == TK.nl or self:kind() == TK.end_kw or current_starts_variant) then
         name = self.name_hint
     elseif self:kind() == TK.nl or self:kind() == TK.end_kw or current_starts_variant then
@@ -1496,30 +1689,36 @@ function Parser:parse_union_island()
     local variants = {}
     while self:kind() ~= TK.eof and self:kind() ~= TK.end_kw do
         self:skip_nl()
-        local vname = self:expect_field_name("expected variant name")
-        local payload = Ty.TScalar(self.C.ScalarVoid)
-        local fields = {}
-        if self:accept(TK.lparen) then
-            self:skip_nl()
-            if self:kind() == TK.rparen then
-                self.i = self.i + 1
-            elseif (self:kind() == TK.name or ident_kw[self:kind()]) and self:kind(1) == TK.colon then
-                while self:kind() ~= TK.rparen and self:kind() ~= TK.eof do
-                    local fname = self:expect_field_name("expected variant field name")
-                    self:expect(TK.colon)
-                    fields[#fields + 1] = Ty.FieldDecl(fname, self:parse_type())
-                    self:skip_nl()
-                    if not self:accept(TK.comma) then break end
-                    self:skip_nl()
-                    if self:kind() == TK.rparen then break end
+        if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
+            local id = self:text(); self.i = self.i + 1
+            local slot = self:spread_region_slot("variant_list", id)
+            variants[#variants + 1] = Ty.VariantDecl(spread_sentinel("variant_list", slot), Ty.TScalar(self.C.ScalarVoid), {})
+        else
+            local vname = self:expect_field_name("expected variant name")
+            local payload = Ty.TScalar(self.C.ScalarVoid)
+            local fields = {}
+            if self:accept(TK.lparen) then
+                self:skip_nl()
+                if self:kind() == TK.rparen then
+                    self.i = self.i + 1
+                elseif (self:kind() == TK.name or ident_kw[self:kind()]) and self:kind(1) == TK.colon then
+                    while self:kind() ~= TK.rparen and self:kind() ~= TK.eof do
+                        local fname = self:expect_field_name("expected variant field name")
+                        self:expect(TK.colon)
+                        fields[#fields + 1] = Ty.FieldDecl(fname, self:parse_type())
+                        self:skip_nl()
+                        if not self:accept(TK.comma) then break end
+                        self:skip_nl()
+                        if self:kind() == TK.rparen then break end
+                    end
+                    self:expect(TK.rparen)
+                else
+                    payload = self:parse_type()
+                    self:expect(TK.rparen)
                 end
-                self:expect(TK.rparen)
-            else
-                payload = self:parse_type()
-                self:expect(TK.rparen)
             end
+            variants[#variants + 1] = Ty.VariantDecl(vname, payload, fields)
         end
-        variants[#variants + 1] = Ty.VariantDecl(vname, payload, fields)
         self:skip_nl()
         if not self:accept(TK.pipe) then break end
     end
@@ -1641,10 +1840,11 @@ local function tokenize_island(src, island_kind, start_byte, toks)
                 push_lex_issue(toks, "unterminated splice @{...}", i, line, col)
                 break
             end
-            local lua_expr = sub(src, i + 2, close - 1)
+            local lua_expr, is_spread = split_splice_expr(sub(src, i + 2, close - 1))
             toks.splice_i = toks.splice_i + 1
             local id = "splice." .. toks.splice_i
             toks.splice_map[id] = lua_expr
+            if is_spread then toks.splice_spread[id] = true end
             push_tok(toks, TK.hole, id, i, close, line, col)
             line, col = advance_line_col(src, i, close, line, col)
             i = close + 1
@@ -1873,7 +2073,7 @@ function M.scan_document(src)
         end
     end
 
-    return { src = src, toks = toks, islands = islands, splice_map = toks.splice_map }
+    return { src = src, toks = toks, islands = islands, splice_map = toks.splice_map, splice_spread = toks.splice_spread }
 end
 
 ---------------------------------------------------------------------------
@@ -1932,6 +2132,16 @@ function M.parse_type_string(T, src, opts)
              issues = p.issues, protocol_types = p.protocol_types }
 end
 
+function M.parse_stmt_string(T, src, opts)
+    local toks = M.lex(src)
+    local p = new_parser_internal(T, toks, 1, toks.n, opts or {})
+    local stmts = p:parse_stmt_until({})
+    p:skip_sep()
+    if p:kind() ~= TK.eof then p:issue("unexpected token after statement list") end
+    return { kind = "stmt_list", value = stmts, splice_slots = p.splice_slots,
+             issues = p.issues, protocol_types = p.protocol_types }
+end
+
 function M.parse_module_document(T, src, opts)
     opts = opts or {}
     local pvm = require("moonlift.pvm")
@@ -1974,6 +2184,7 @@ function M.Define(T)
         scan_document = M.scan_document,
         parse_island = function(scan, island_index, opts) return M.parse_island(T, scan, island_index, opts) end,
         parse_type = function(src, opts) return M.parse_type_string(T, src, opts) end,
+        parse_stmts = function(src, opts) return M.parse_stmt_string(T, src, opts) end,
         parse_module = function(src, opts) return M.parse_module_document(T, src, opts) end,
     }
 end

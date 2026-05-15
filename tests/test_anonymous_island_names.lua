@@ -73,6 +73,15 @@ assert(Inline.source_hint:match("^_anon_struct_"))
 local AnonU = Host.eval [[return union ok(i32) | err(i32) end]]
 assert(AnonU.source_hint:match("^_anon_union_"))
 
+-- ── Returned named union split over lines ──
+local NamedU = Host.eval [[
+return union NamedU
+    ok(i32) | err(i32)
+end
+]]
+assert(NamedU.source_hint == "NamedU")
+assert(#NamedU.decl.variants == 2)
+
 -- ── Table field struct ──
 local M = Host.eval [[
 local M = {}

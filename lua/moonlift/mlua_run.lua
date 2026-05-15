@@ -393,6 +393,7 @@ function Runtime:eval_island(island_index, closures)
     -- 2. Parse island from token window (no source slice)
     local parse_opts = {
         protocol_types = self.protocol_types,
+        splice_values = luamap,
     }
     local ok_parse, parsed_or_err = pcall(ParseApi.parse_island, self.scan, island_index, parse_opts)
     if not ok_parse then phase_fail("parse_island", parsed_or_err) end
@@ -419,7 +420,7 @@ function Runtime:eval_island(island_index, closures)
             local rendered = Errors.Terminal.render(report, self.src)
             error(rendered, 0)
         end
-        local ok_fill, binding_or_err = pcall(Splice.fill, self.session, ss.slot, rec.value, "splice " .. ss.splice_id)
+        local ok_fill, binding_or_err = pcall(Splice.fill, self.session, ss.slot, rec.value, "splice " .. ss.splice_id, ss.role, ss.spread)
         if not ok_fill then phase_fail("splice_fill", binding_or_err) end
         bindings[#bindings + 1] = binding_or_err
     end

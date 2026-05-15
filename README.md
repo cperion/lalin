@@ -129,6 +129,40 @@ end
 return { parse_packet = parse_packet }
 ```
 
+### Spread splices: generate switch arms from Lua
+
+```lua
+-- Build switch arms in Lua, spread them into a switch
+local literal_arms = {
+    moon.switch_arm(116, moon.stmts [=[
+        if i + 4 > n then jump fail() end
+        if as(i32, p[i + 1]) ~= 114 then jump fail() end
+        if as(i32, p[i + 2]) ~= 117 then jump fail() end
+        if as(i32, p[i + 3]) ~= 101 then jump fail() end
+        pushboolean(L, 1)
+        jump done(next_i = i + 4)
+    ]=]),
+    moon.switch_arm(110, moon.stmts [=[
+        if i + 4 > n then jump fail() end
+        if as(i32, p[i + 1]) ~= 117 then jump fail() end
+        if as(i32, p[i + 2]) ~= 108 then jump fail() end
+        if as(i32, p[i + 3]) ~= 108 then jump fail() end
+        pushnil(L)
+        jump done(next_i = i + 4)
+    ]=]),
+}
+
+-- Inside a region:
+    switch as(i32, p[i]) do
+    @{literal_arms...}
+    case 34 then emit @{parse_string}(...)
+    default then emit @{parse_number}(...)
+    end
+```
+
+See `examples/json/json_lua_stack_decoder.mlua` for a complete decoder that
+beats lua-cjson by 2.3× using this pattern.
+
 ### Control: typed blocks, jumps, yields
 
 ```moonlift
@@ -306,20 +340,35 @@ No fallthrough. Explicit, verifiable control branches.
 
 ### Splicing: Lua → Moonlift values
 
-Inside hosted islands, `@{lua_expr}` splices typed ASDL values:
+Inside hosted islands, `@{lua_expr}` splices one typed value and
+`@{lua_expr...}` spreads a Lua list of typed values into the current syntactic
+list:
 
 ```lua
 local T = moon.i32
--- Splice in type position
-let x: @{T} = 0
+local params = { moon.param("a", moon.i32), moon.param("b", moon.i32) }
+local fields = { moon.field("x", moon.i32), moon.field("y", moon.i32) }
+local args = { 20, 22 }
 
--- Splice a fragment
+-- Splice one value in type/expression/name/fragment position
+let x: @{T} = 0
+let limit: i32 = @{SOME_CONSTANT}
 emit @{my_fragment}(p, n; hit = done, miss = bad)
 
--- Splice constants
-let limit: i32 = @{SOME_CONSTANT}
+-- Spread lists in list positions
+func add(@{params...}) -> i32
+    return a + b
+end
+
+struct Pair
+    @{fields...}
+end
+
+return add(@{args...})
 ```
 
+Spread splices work for expression/type/parameter/field/statement lists and for
+region lists such as runtime params, continuations, block params, and blocks.
 Splices occupy whole syntactic positions. They do not splice into the middle of identifiers; build the full name in Lua and use `@{name}` in a name position.
 
 ### Host declarations
@@ -362,6 +411,37 @@ end
 local expect_A = expect_byte("A", 65, 10)
 local expect_B = expect_byte("B", 66, 20)
 -- expect_A and expect_B are distinct, monomorphic, differently-named regions
+```
+
+### Lua builds statement lists
+
+Lua can build statement lists as values and Moonlift source can spread them into
+function or region bodies. This is the preferred escape hatch when a body is
+mostly generated: Lua builds `Stmt[]`; Moonlift syntax decides where it goes.
+
+```lua
+local body = moon.stmts({ x = moon.i32 }, function(b)
+    local x = b:param("x")
+    local y = b:let("y", moon.i32, x + 1)
+    b:return_(y * 2)
+end)
+
+return func twice_plus_two(x: i32) -> i32
+    @{body...}
+end
+```
+
+Region blocks are values too; use `moon.control_block(...)` when generating a
+list for `@{blocks...}` in a region.
+
+For small source-shaped snippets, `moon.stmts [[...]]` parses a Moonlift
+statement list directly:
+
+```lua
+local body = moon.stmts [[
+    let y: i32 = x + 1
+    return y * 2
+]]
 ```
 
 ### Lua assembles modules
@@ -557,30 +637,49 @@ benchmarks/compare_compile_ll.sh
 Compares the old triplet-based validation path against the flat fact loop
 used for build-time compilation work.
 
-### JSON benchmarks
+### JSON stack decoder benchmark
 
-Moonlift's hosted JSON decoder is a jump-first native state machine that parses
-to a flat tape, then builds Lua values directly through the Lua C API — no
+Moonlift's hosted JSON stack decoder is a jump-first native state machine that
+parses JSON and builds Lua values directly through the Lua C API — no
 interpreter overhead in the parsing loop, no `strtod`, pre-counted table
-allocations. It is benchmarked against **lua-cjson 2.1.0** (the standard
-fast C JSON library for Lua) on realistic payloads.
+allocations, region fragments for zero-cost control-flow composition.
+
+It uses `moon.switch_arm` + `@{literal_arms...}` spread splices to generate
+the `true`/`false`/`null` dispatch arms from Lua, direct mutual recursion for
+`parse_value`/`parse_array`/`parse_object`, and module extern symbols for Lua C
+API calls.
+
+Benchmarked against **lua-cjson 2.1.0** (the standard fast C JSON library
+for Lua), **dkjson** (pure Lua), and a hand-written pure-Lua recursive descent
+decoder on a realistic 2.9 KB payload with 50 user records:
 
 ```bash
-cargo run --release --bin moonlift -- benchmarks/bench_json_hosted_decode.mlua
+luajit benchmarks/bench_json_stack_decode.lua          # quick
+luajit benchmarks/bench_json_stack_decode.lua full     # full
 ```
 
-**Results: Moonlift wins 17/18, ties 1/18, loses 0.**
+**Results: Moonlift beats cjson by 2.3×, pure Lua by 3.9×.**
 
-| Payload shape | N=10 | N=100 | N=500 |
+| Decoder | Time | ns/byte | Throughput |
 |---|---|---|---|
-| GitHub API (nested objects, dates, URLs) | **1.19×** faster | **1.34×** faster | **1.13×** faster |
-| GeoJSON (deep number arrays) | **1.87×** faster | **1.63×** faster | **1.18×** faster |
-| Structured logs (uniform records, hex IDs) | **1.41×** faster | **1.27×** faster | **1.05×** faster |
-| Twitter timeline (entities, varied shapes) | **1.38×** faster | **1.26×** faster | **1.00×** (tie) |
-| Config file (deep nesting, escapes) | **1.27×** faster | 1.08× (cjson) | **1.07×** faster |
-| Uniform items (baseline) | **1.15×** faster | **2.02×** faster | **1.43×** faster |
+| **moonlift_json_stack** | 0.102s | 3.5 | **286 MB/s** |
+| cjson_decode | 0.230s | 7.9 | 127 MB/s |
+| pure_lua_json | 0.394s | 13.5 | 74 MB/s |
+| dkjson_decode | 1.266s | 43.4 | 23 MB/s |
 
-All payloads produce live Lua tables checked for correctness against cjson output.
+| Comparison | Speedup |
+|---|---|
+| Moonlift / cjson | **2.26×** |
+| Moonlift / pure Lua | **3.87×** |
+| Moonlift / dkjson | **12.44×** |
+
+The decoder source lives in `examples/json/json_lua_stack_decoder.mlua`.
+For cjson/dkjson comparison, install locally:
+
+```bash
+luarocks --lua-version=5.1 --local install lua-cjson
+luarocks --lua-version=5.1 --local install dkjson
+```
 
 ### Host type benchmarks
 
@@ -627,6 +726,7 @@ moonlift/
 ├── lib/                    Moonlift standard library
 │   └── ...
 ├── examples/               Runnable examples
+│   ├── json/              JSON stack decoder (spread splices, region composition)
 │   ├── protocols/          RESP parser example
 │   └── terra_vs_mlua/              Terra comparison
 ├── benchmarks/             Performance benchmarks
@@ -700,6 +800,21 @@ luajit tests/test_vec_to_back.lua
 luajit tests/test_host_value_jit.lua
 luajit tests/test_host_metaprogramming_patterns.lua
 luajit tests/test_host_struct_values.lua
+luajit tests/test_host_stmt_list_builder.lua
+luajit tests/test_host_func_values.lua
+```
+
+### Metaprogramming and splice tests
+
+```bash
+luajit tests/test_parse_spread_splice.lua
+luajit tests/test_spread_splice_lists.lua
+luajit tests/test_spread_splice_regions.lua
+luajit tests/test_switch_stmt_lowering.lua
+luajit tests/test_region_frag_runtime_param_call.lua
+luajit tests/test_direct_mutual_recursion.lua
+luajit tests/test_host_extern_symbol.lua
+luajit tests/test_addr_of_var_stack.lua
 ```
 
 ### `.mlua` integration tests
@@ -708,6 +823,7 @@ luajit tests/test_host_struct_values.lua
 luajit tests/test_mlua_host_pipeline.lua
 luajit tests/test_mlua_document_analysis.lua
 luajit tests/test_mlua_splice_shapes.lua
+luajit run_mlua.lua examples/json/json_lua_stack_decoder.mlua
 ```
 
 ### LSP tests

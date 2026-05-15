@@ -98,6 +98,18 @@ function ModuleValue:export_func(name, params, result, builder_fn)
     return self:add_func(self.api._module_export_func(self, name, params, result, builder_fn))
 end
 
+function ModuleValue:symbol(name, ptr)
+    assert(type(name) == "string" and name ~= "", "symbol expects an extern symbol name")
+    self.extern_symbols[name] = ptr
+    return self
+end
+
+function ModuleValue:symbols(map)
+    assert(type(map) == "table", "symbols expects a map of name -> pointer")
+    for name, ptr in pairs(map) do self:symbol(name, ptr) end
+    return self
+end
+
 function ModuleValue:to_asdl()
     for i = 1, #self.drafts do
         if not self.drafts[i].sealed then self.api.raise_host_issue(self.session.T.MoonHost.HostIssueUnsealedType(self.name, self.drafts[i].name)) end
@@ -148,7 +160,8 @@ local function c_sig_of(api, func_value)
     return ret .. " (*)(" .. table.concat(args, ", ") .. ")"
 end
 
-function ModuleValue:compile()
+function ModuleValue:compile(opts)
+    opts = opts or {}
     local pvm = require("moonlift.pvm")
     local OpenFacts = require("moonlift.open_facts")
     local OpenValidate = require("moonlift.open_validate")
@@ -179,7 +192,10 @@ function ModuleValue:compile()
     local program = Lower.module(resolved_module)
     local report = V.validate(program)
     if #report.issues ~= 0 then error("host module back validation failed: " .. tostring(report.issues[1]), 2) end
-    local artifact = jit_api.jit():compile(program)
+    local jit = jit_api.jit()
+    for name, ptr in pairs(self.extern_symbols or {}) do jit:symbol(name, ptr) end
+    for name, ptr in pairs(opts.symbols or {}) do jit:symbol(name, ptr) end
+    local artifact = jit:compile(program)
     return setmetatable({ module = self, artifact = artifact, T = T, functions = {} }, CompiledModule)
 end
 
@@ -227,6 +243,7 @@ function M.Install(api, session)
             type_values = {},
             type_names = {},
             func_names = {},
+            extern_symbols = {},
         }, ModuleValue)
     end
 

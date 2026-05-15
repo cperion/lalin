@@ -60,11 +60,17 @@ function M.Install(api, session)
         return place_value(Tr.PlaceRef(Tr.PlaceSurface, B.ValueRefBinding(binding)), ty, source_hint or binding.name, { binding = binding })
     end
 
+    function api.place_name(name, ty)
+        assert(type(name) == "string" and name:match("^[_%a][_%w]*$"), "place_name expects an identifier")
+        return place_value(Tr.PlaceRef(Tr.PlaceSurface, B.ValueRefName(name)), ty, name, { ref_name = name })
+    end
+
     local ExprValue = api.ExprValue
 
     function ExprValue:place()
-        assert(self.binding ~= nil, "only binding-backed expression values can be viewed as places")
-        return api.place_ref(self.binding, self.type, self.source_hint)
+        if self.binding ~= nil then return api.place_ref(self.binding, self.type, self.source_hint) end
+        if self.ref_name ~= nil then return api.place_name(self.ref_name, self.type) end
+        error("only name- or binding-backed expression values can be viewed as places", 2)
     end
 
     function ExprValue:index_place(index)

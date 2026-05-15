@@ -407,6 +407,54 @@ return function(A)
                 A.field "expr" "MoonTree.Expr",
                 A.variant_unique,
             },
+            A.variant "SlotValueExprs" {
+                A.field "exprs" (A.many "MoonTree.Expr"),
+                A.variant_unique,
+            },
+            A.variant "SlotValueTypes" {
+                A.field "types" (A.many "MoonType.Type"),
+                A.variant_unique,
+            },
+            A.variant "SlotValueParams" {
+                A.field "params" (A.many "MoonType.Param"),
+                A.variant_unique,
+            },
+            A.variant "SlotValueFields" {
+                A.field "fields" (A.many "MoonType.FieldDecl"),
+                A.variant_unique,
+            },
+            A.variant "SlotValueVariants" {
+                A.field "variants" (A.many "MoonType.VariantDecl"),
+                A.variant_unique,
+            },
+            A.variant "SlotValueBlockParams" {
+                A.field "params" (A.many "MoonTree.BlockParam"),
+                A.variant_unique,
+            },
+            A.variant "SlotValueEntryParams" {
+                A.field "params" (A.many "MoonTree.EntryBlockParam"),
+                A.variant_unique,
+            },
+            A.variant "SlotValueOpenParams" {
+                A.field "params" (A.many "MoonOpen.OpenParam"),
+                A.variant_unique,
+            },
+            A.variant "SlotValueContSlots" {
+                A.field "conts" (A.many "MoonOpen.ContSlot"),
+                A.variant_unique,
+            },
+            A.variant "SlotValueControlBlocks" {
+                A.field "blocks" (A.many "MoonTree.ControlBlock"),
+                A.variant_unique,
+            },
+            A.variant "SlotValueSwitchStmtArms" {
+                A.field "arms" (A.many "MoonTree.SwitchStmtArm"),
+                A.variant_unique,
+            },
+            A.variant "SlotValueSwitchExprArms" {
+                A.field "arms" (A.many "MoonTree.SwitchExprArm"),
+                A.variant_unique,
+            },
             A.variant "SlotValuePlace" {
                 A.field "place" "MoonTree.Place",
                 A.variant_unique,

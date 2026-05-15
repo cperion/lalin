@@ -25,6 +25,7 @@ function M.Define(T, cb)
     cb = cb or {}
     local O = T.MoonOpen
     local B = T.MoonBind
+    local Sem = T.MoonSem
     local Tr = T.MoonTree
 
     local function one_expand_type(ty, env) return cb.expand_type(ty, env) end
@@ -35,6 +36,11 @@ function M.Define(T, cb)
         local g, p, c = cb.expand_stmt(stmt, env)
         pvm.drain_into(g, p, c, out)
         return out
+    end
+
+    local function expand_switch_stmt_arms(arms, env)
+        if cb.expand_switch_stmt_arms then return cb.expand_switch_stmt_arms(arms, env) end
+        return arms
     end
 
     local function expand_exprs(xs, env)
@@ -92,6 +98,106 @@ function M.Define(T, cb)
 
     local function runtime_param_expr(name)
         return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(runtime_param_name(name)))
+    end
+
+    local function runtime_name_map(frag)
+        local out = {}
+        for i = 1, #frag.params do out[frag.params[i].name] = runtime_param_name(frag.params[i].name) end
+        return out
+    end
+
+    local rewrite_runtime_expr
+    local rewrite_runtime_stmts
+
+    local function rewrite_runtime_args(xs, names)
+        local out = {}
+        for i = 1, #(xs or {}) do out[i] = rewrite_runtime_expr(xs[i], names) end
+        return out
+    end
+
+    local function rewrite_call_target(target, names)
+        local cls = pvm.classof(target)
+        if cls == Sem.CallUnresolved then
+            return Sem.CallUnresolved(rewrite_runtime_expr(target.callee, names))
+        elseif cls == Sem.CallIndirect then
+            return pvm.with(target, { callee = rewrite_runtime_expr(target.callee, names) })
+        end
+        return target
+    end
+
+    rewrite_runtime_expr = function(expr, names)
+        local cls = pvm.classof(expr)
+        if cls == Tr.ExprRef and pvm.classof(expr.ref) == B.ValueRefName and names[expr.ref.name] then
+            return pvm.with(expr, { ref = B.ValueRefName(names[expr.ref.name]) })
+        elseif cls == Tr.ExprRef and pvm.classof(expr.ref) == B.ValueRefBinding and pvm.classof(expr.ref.binding.class) == B.BindingClassOpenParam and names[expr.ref.binding.class.param.name] then
+            return pvm.with(expr, { ref = B.ValueRefName(names[expr.ref.binding.class.param.name]) })
+        elseif cls == Tr.ExprUnary then
+            return pvm.with(expr, { value = rewrite_runtime_expr(expr.value, names) })
+        elseif cls == Tr.ExprBinary or cls == Tr.ExprCompare or cls == Tr.ExprLogic then
+            return pvm.with(expr, { lhs = rewrite_runtime_expr(expr.lhs, names), rhs = rewrite_runtime_expr(expr.rhs, names) })
+        elseif cls == Tr.ExprCast or cls == Tr.ExprMachineCast then
+            return pvm.with(expr, { value = rewrite_runtime_expr(expr.value, names) })
+        elseif cls == Tr.ExprCall then
+            return pvm.with(expr, { target = rewrite_call_target(expr.target, names), args = rewrite_runtime_args(expr.args, names) })
+        elseif cls == Tr.ExprIntrinsic then
+            return pvm.with(expr, { args = rewrite_runtime_args(expr.args, names) })
+        elseif cls == Tr.ExprLen then
+            return pvm.with(expr, { value = rewrite_runtime_expr(expr.value, names) })
+        elseif cls == Tr.ExprField then
+            return pvm.with(expr, { base = rewrite_runtime_expr(expr.base, names) })
+        elseif cls == Tr.ExprIndex then
+            return pvm.with(expr, { base = rewrite_runtime_expr(expr.base, names), index = rewrite_runtime_expr(expr.index, names) })
+        elseif cls == Tr.ExprIf then
+            return pvm.with(expr, { cond = rewrite_runtime_expr(expr.cond, names), then_expr = rewrite_runtime_expr(expr.then_expr, names), else_expr = rewrite_runtime_expr(expr.else_expr, names) })
+        elseif cls == Tr.ExprSelect then
+            return pvm.with(expr, { cond = rewrite_runtime_expr(expr.cond, names), then_expr = rewrite_runtime_expr(expr.then_expr, names), else_expr = rewrite_runtime_expr(expr.else_expr, names) })
+        elseif cls == Tr.ExprArray then
+            return pvm.with(expr, { elems = rewrite_runtime_args(expr.elems, names) })
+        elseif cls == Tr.ExprAgg then
+            local fields = {}
+            for i = 1, #expr.fields do fields[i] = pvm.with(expr.fields[i], { value = rewrite_runtime_expr(expr.fields[i].value, names) }) end
+            return pvm.with(expr, { fields = fields })
+        end
+        return expr
+    end
+
+    local function rewrite_jump_args(xs, names)
+        local out = {}
+        for i = 1, #(xs or {}) do out[i] = pvm.with(xs[i], { value = rewrite_runtime_expr(xs[i].value, names) }) end
+        return out
+    end
+
+    rewrite_runtime_stmts = function(stmts, frag)
+        local names = runtime_name_map(frag)
+        local out = {}
+        for i = 1, #(stmts or {}) do
+            local stmt = stmts[i]
+            local cls = pvm.classof(stmt)
+            if cls == Tr.StmtExpr then
+                out[i] = pvm.with(stmt, { expr = rewrite_runtime_expr(stmt.expr, names) })
+            elseif cls == Tr.StmtLet or cls == Tr.StmtVar then
+                out[i] = pvm.with(stmt, { init = rewrite_runtime_expr(stmt.init, names) })
+            elseif cls == Tr.StmtSet then
+                out[i] = pvm.with(stmt, { value = rewrite_runtime_expr(stmt.value, names) })
+            elseif cls == Tr.StmtAssert then
+                out[i] = pvm.with(stmt, { cond = rewrite_runtime_expr(stmt.cond, names) })
+            elseif cls == Tr.StmtIf then
+                out[i] = pvm.with(stmt, { cond = rewrite_runtime_expr(stmt.cond, names), then_body = rewrite_runtime_stmts(stmt.then_body, frag), else_body = rewrite_runtime_stmts(stmt.else_body, frag) })
+            elseif cls == Tr.StmtSwitch then
+                local arms = {}
+                for j = 1, #stmt.arms do arms[j] = pvm.with(stmt.arms[j], { body = rewrite_runtime_stmts(stmt.arms[j].body, frag) }) end
+                local variant_arms = {}
+                for j = 1, #(stmt.variant_arms or {}) do variant_arms[j] = pvm.with(stmt.variant_arms[j], { body = rewrite_runtime_stmts(stmt.variant_arms[j].body, frag) }) end
+                out[i] = pvm.with(stmt, { value = rewrite_runtime_expr(stmt.value, names), arms = arms, variant_arms = variant_arms, default_body = rewrite_runtime_stmts(stmt.default_body, frag) })
+            elseif cls == Tr.StmtJump or cls == Tr.StmtJumpCont then
+                out[i] = pvm.with(stmt, { args = rewrite_jump_args(stmt.args, names) })
+            elseif cls == Tr.StmtYieldValue or cls == Tr.StmtReturnValue then
+                out[i] = pvm.with(stmt, { value = rewrite_runtime_expr(stmt.value, names) })
+            else
+                out[i] = stmt
+            end
+        end
+        return out
     end
 
     local function runtime_block_params(frag, env)
@@ -228,7 +334,7 @@ function M.Define(T, cb)
             entry_args[#entry_args + 1] = Tr.JumpArg(p.name, one_expand_expr(p.init, init_env))
         end
 
-        local entry_body, entry_nested = normalize_stmts(frag.entry.body, local_env, child_stack)
+        local entry_body, entry_nested = normalize_stmts(rewrite_runtime_stmts(frag.entry.body, frag), local_env, child_stack)
         local entry_body2 = cb.expand_stmts(rebase_stmts(entry_body, map, frag, capture_params), local_env)
         local blocks = { Tr.ControlBlock(map[frag.entry.label.name], entry_params, entry_body2) }
         for i = 1, #entry_nested do blocks[#blocks + 1] = rebase_control_block_body(entry_nested[i], map, frag, capture_params) end
@@ -239,7 +345,7 @@ function M.Define(T, cb)
             for j = 1, #block.params do
                 params[#params + 1] = pvm.with(block.params[j], { ty = one_expand_type(block.params[j].ty, local_env) })
             end
-            local block_body, block_nested = normalize_stmts(block.body, local_env, child_stack)
+            local block_body, block_nested = normalize_stmts(rewrite_runtime_stmts(block.body, frag), local_env, child_stack)
             local block_body2 = cb.expand_stmts(rebase_stmts(block_body, map, frag, capture_params), local_env)
             blocks[#blocks + 1] = Tr.ControlBlock(map[block.label.name], params, block_body2)
             for j = 1, #block_nested do blocks[#blocks + 1] = rebase_control_block_body(block_nested[j], map, frag, capture_params) end
@@ -270,9 +376,10 @@ function M.Define(T, cb)
                 append_all(blocks, else_blocks)
             elseif cls == Tr.StmtSwitch then
                 local arms = {}
-                for j = 1, #stmt.arms do
-                    local arm_body, arm_blocks = normalize_stmts(stmt.arms[j].body, env, stack)
-                    arms[#arms + 1] = pvm.with(stmt.arms[j], { body = arm_body })
+                local expanded_arms = expand_switch_stmt_arms(stmt.arms, env)
+                for j = 1, #expanded_arms do
+                    local arm_body, arm_blocks = normalize_stmts(expanded_arms[j].body, env, stack)
+                    arms[#arms + 1] = pvm.with(expanded_arms[j], { body = arm_body })
                     append_all(blocks, arm_blocks)
                 end
                 local variant_arms = {}

@@ -65,10 +65,28 @@ function M.Define(T)
         return values[1]
     end
 
+    local function spread_region_slot(role, name)
+        local prefix = "__moonlift_spread_" .. role .. ":"
+        if type(name) ~= "string" or name:sub(1, #prefix) ~= prefix then return nil end
+        local key = name:sub(#prefix + 1)
+        local pretty = key:match("([^:]+)$") or key
+        return O.RegionSlot(key, pretty)
+    end
+
     local function expand_types(xs, env)
         local out = {}
         for i = 1, #xs do
-            out[#out + 1] = one(expand_type, xs[i], env)
+            local x = xs[i]
+            if pvm.classof(x) == Ty.TSlot then
+                local values = pvm.drain(lookup_slot_value(O.SlotType(x.slot), env))
+                if #values == 1 and pvm.classof(values[1]) == O.SlotValueTypes then
+                    for j = 1, #values[1].types do out[#out + 1] = one(expand_type, values[1].types[j], env) end
+                else
+                    out[#out + 1] = one(expand_type, x, env)
+                end
+            else
+                out[#out + 1] = one(expand_type, x, env)
+            end
         end
         return out
     end
@@ -76,7 +94,17 @@ function M.Define(T)
     local function expand_exprs(xs, env)
         local out = {}
         for i = 1, #xs do
-            out[#out + 1] = one(expand_expr, xs[i], env)
+            local x = xs[i]
+            if pvm.classof(x) == Tr.ExprSlotValue then
+                local values = pvm.drain(lookup_slot_value(O.SlotExpr(x.slot), env))
+                if #values == 1 and pvm.classof(values[1]) == O.SlotValueExprs then
+                    for j = 1, #values[1].exprs do out[#out + 1] = one(expand_expr, values[1].exprs[j], env) end
+                else
+                    out[#out + 1] = one(expand_expr, x, env)
+                end
+            else
+                out[#out + 1] = one(expand_expr, x, env)
+            end
         end
         return out
     end
@@ -93,6 +121,215 @@ function M.Define(T)
     local function expand_jump_args(xs, env)
         local out = {}
         for i = 1, #xs do out[#out + 1] = pvm.with(xs[i], { value = one(expand_expr, xs[i].value, env) }) end
+        return out
+    end
+
+    local function expand_params(xs, env)
+        local out = {}
+        for i = 1, #xs do
+            local slot = spread_region_slot("param_list", xs[i].name)
+            if slot then
+                local values = pvm.drain(lookup_slot_value(O.SlotRegion(slot), env))
+                if #values == 1 and pvm.classof(values[1]) == O.SlotValueParams then
+                    for j = 1, #values[1].params do
+                        local p = values[1].params[j]
+                        out[#out + 1] = pvm.with(p, { ty = one(expand_type, p.ty, env) })
+                    end
+                else
+                    out[#out + 1] = pvm.with(xs[i], { ty = one(expand_type, xs[i].ty, env) })
+                end
+            else
+                out[#out + 1] = pvm.with(xs[i], { ty = one(expand_type, xs[i].ty, env) })
+            end
+        end
+        return out
+    end
+
+    local function expand_fields(xs, env)
+        local out = {}
+        for i = 1, #xs do
+            local slot = spread_region_slot("field_list", xs[i].field_name)
+            if slot then
+                local values = pvm.drain(lookup_slot_value(O.SlotRegion(slot), env))
+                if #values == 1 and pvm.classof(values[1]) == O.SlotValueFields then
+                    for j = 1, #values[1].fields do
+                        local f = values[1].fields[j]
+                        out[#out + 1] = pvm.with(f, { ty = one(expand_type, f.ty, env) })
+                    end
+                else
+                    out[#out + 1] = pvm.with(xs[i], { ty = one(expand_type, xs[i].ty, env) })
+                end
+            else
+                out[#out + 1] = pvm.with(xs[i], { ty = one(expand_type, xs[i].ty, env) })
+            end
+        end
+        return out
+    end
+
+    local function expand_variants(xs, env)
+        local out = {}
+        for i = 1, #xs do
+            local slot = spread_region_slot("variant_list", xs[i].name)
+            if slot then
+                local values = pvm.drain(lookup_slot_value(O.SlotRegion(slot), env))
+                if #values == 1 and pvm.classof(values[1]) == O.SlotValueVariants then
+                    for j = 1, #values[1].variants do
+                        local v = values[1].variants[j]
+                        out[#out + 1] = Ty.VariantDecl(v.name, one(expand_type, v.payload, env), expand_fields(v.fields, env))
+                    end
+                else
+                    out[#out + 1] = Ty.VariantDecl(xs[i].name, one(expand_type, xs[i].payload, env), expand_fields(xs[i].fields, env))
+                end
+            else
+                out[#out + 1] = Ty.VariantDecl(xs[i].name, one(expand_type, xs[i].payload, env), expand_fields(xs[i].fields, env))
+            end
+        end
+        return out
+    end
+
+    local function spread_slot_from_switch_key(role, key)
+        if pvm.classof(key) == Sem.SwitchKeyRaw then return spread_region_slot(role, key.raw) end
+        return nil
+    end
+
+    local function expand_open_params(xs, env)
+        local out = {}
+        for i = 1, #xs do
+            local slot = spread_region_slot("open_param_list", xs[i].name)
+            if slot then
+                local values = pvm.drain(lookup_slot_value(O.SlotRegion(slot), env))
+                if #values == 1 and pvm.classof(values[1]) == O.SlotValueOpenParams then
+                    for j = 1, #values[1].params do
+                        local p = values[1].params[j]
+                        out[#out + 1] = O.OpenParam(p.key, p.name, one(expand_type, p.ty, env))
+                    end
+                else
+                    out[#out + 1] = O.OpenParam(xs[i].key, xs[i].name, one(expand_type, xs[i].ty, env))
+                end
+            else
+                out[#out + 1] = O.OpenParam(xs[i].key, xs[i].name, one(expand_type, xs[i].ty, env))
+            end
+        end
+        return out
+    end
+
+    local function expand_block_params(xs, env)
+        local out = {}
+        for i = 1, #xs do
+            local slot = spread_region_slot("block_param_list", xs[i].name)
+            if slot then
+                local values = pvm.drain(lookup_slot_value(O.SlotRegion(slot), env))
+                if #values == 1 and pvm.classof(values[1]) == O.SlotValueBlockParams then
+                    for j = 1, #values[1].params do
+                        local p = values[1].params[j]
+                        out[#out + 1] = Tr.BlockParam(p.name, one(expand_type, p.ty, env))
+                    end
+                else
+                    out[#out + 1] = Tr.BlockParam(xs[i].name, one(expand_type, xs[i].ty, env))
+                end
+            else
+                out[#out + 1] = Tr.BlockParam(xs[i].name, one(expand_type, xs[i].ty, env))
+            end
+        end
+        return out
+    end
+
+    local function expand_entry_params(xs, env)
+        local out = {}
+        for i = 1, #xs do
+            local slot = spread_region_slot("entry_param_list", xs[i].name)
+            if slot then
+                local values = pvm.drain(lookup_slot_value(O.SlotRegion(slot), env))
+                if #values == 1 and pvm.classof(values[1]) == O.SlotValueEntryParams then
+                    for j = 1, #values[1].params do
+                        local p = values[1].params[j]
+                        out[#out + 1] = Tr.EntryBlockParam(p.name, one(expand_type, p.ty, env), one(expand_expr, p.init, env))
+                    end
+                else
+                    out[#out + 1] = Tr.EntryBlockParam(xs[i].name, one(expand_type, xs[i].ty, env), one(expand_expr, xs[i].init, env))
+                end
+            else
+                out[#out + 1] = Tr.EntryBlockParam(xs[i].name, one(expand_type, xs[i].ty, env), one(expand_expr, xs[i].init, env))
+            end
+        end
+        return out
+    end
+
+    local function expand_cont_slots(xs, env)
+        local out = {}
+        for i = 1, #xs do
+            local slot = spread_region_slot("cont_slot_list", xs[i].pretty_name)
+            if slot then
+                local values = pvm.drain(lookup_slot_value(O.SlotRegion(slot), env))
+                if #values == 1 and pvm.classof(values[1]) == O.SlotValueContSlots then
+                    for j = 1, #values[1].conts do
+                        local c = values[1].conts[j]
+                        out[#out + 1] = O.ContSlot(c.key, c.pretty_name, expand_block_params(c.params, env))
+                    end
+                else
+                    out[#out + 1] = O.ContSlot(xs[i].key, xs[i].pretty_name, expand_block_params(xs[i].params, env))
+                end
+            else
+                out[#out + 1] = O.ContSlot(xs[i].key, xs[i].pretty_name, expand_block_params(xs[i].params, env))
+            end
+        end
+        return out
+    end
+
+    local function expand_control_blocks(xs, env)
+        local out = {}
+        for i = 1, #xs do
+            local slot = spread_region_slot("control_block_list", xs[i].label.name)
+            if slot then
+                local values = pvm.drain(lookup_slot_value(O.SlotRegion(slot), env))
+                if #values == 1 and pvm.classof(values[1]) == O.SlotValueControlBlocks then
+                    for j = 1, #values[1].blocks do
+                        local b = values[1].blocks[j]
+                        out[#out + 1] = Tr.ControlBlock(b.label, expand_block_params(b.params, env), expand_stmts(b.body, env))
+                    end
+                end
+            else
+                out[#out + 1] = Tr.ControlBlock(xs[i].label, expand_block_params(xs[i].params, env), expand_stmts(xs[i].body, env))
+            end
+        end
+        return out
+    end
+
+    local function expand_switch_stmt_arms(xs, env)
+        local out = {}
+        for i = 1, #xs do
+            local slot = spread_slot_from_switch_key("switch_stmt_arm_list", xs[i].key)
+            if slot then
+                local values = pvm.drain(lookup_slot_value(O.SlotRegion(slot), env))
+                if #values == 1 and pvm.classof(values[1]) == O.SlotValueSwitchStmtArms then
+                    for j = 1, #values[1].arms do
+                        local a = values[1].arms[j]
+                        out[#out + 1] = pvm.with(a, { body = expand_stmts(a.body, env) })
+                    end
+                end
+            else
+                out[#out + 1] = pvm.with(xs[i], { body = expand_stmts(xs[i].body, env) })
+            end
+        end
+        return out
+    end
+
+    local function expand_switch_expr_arms(xs, env)
+        local out = {}
+        for i = 1, #xs do
+            local slot = spread_slot_from_switch_key("switch_expr_arm_list", xs[i].key)
+            if slot then
+                local values = pvm.drain(lookup_slot_value(O.SlotRegion(slot), env))
+                if #values == 1 and pvm.classof(values[1]) == O.SlotValueSwitchExprArms then
+                    for j = 1, #values[1].arms do
+                        local a = values[1].arms[j]
+                        out[#out + 1] = pvm.with(a, { body = expand_stmts(a.body, env), result = one(expand_expr, a.result, env) })
+                    end
+                end
+            else
+                out[#out + 1] = pvm.with(xs[i], { body = expand_stmts(xs[i].body, env), result = one(expand_expr, xs[i].result, env) })
+            end
+        end
         return out
     end
 
@@ -516,6 +753,7 @@ function M.Define(T)
         expand_stmt_header = function(h, env) return one(expand_stmt_header, h, env) end,
         expand_stmt = function(stmt, env) return expand_stmt(stmt, env) end,
         expand_stmts = expand_stmts,
+        expand_switch_stmt_arms = expand_switch_stmt_arms,
         lookup_region_frag_ref = lookup_region_frag_ref,
         env_at_path = env_at_path,
         env_with_fills_conts_and_params = env_with_fills_conts_and_params,
@@ -570,13 +808,11 @@ function M.Define(T)
         [Tr.ExprIf] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), cond = one(expand_expr, self.cond, env), then_expr = one(expand_expr, self.then_expr, env), else_expr = one(expand_expr, self.else_expr, env) })) end,
         [Tr.ExprSelect] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), cond = one(expand_expr, self.cond, env), then_expr = one(expand_expr, self.then_expr, env), else_expr = one(expand_expr, self.else_expr, env) })) end,
         [Tr.ExprSwitch] = function(self, env)
-            local arms = {}
-            for i = 1, #self.arms do arms[#arms + 1] = pvm.with(self.arms[i], { body = expand_stmts(self.arms[i].body, env), result = one(expand_expr, self.arms[i].result, env) }) end
-            return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), value = one(expand_expr, self.value, env), arms = arms, default_body = expand_stmts(self.default_body or {}, env), default_expr = one(expand_expr, self.default_expr, env) }))
+            return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), value = one(expand_expr, self.value, env), arms = expand_switch_expr_arms(self.arms, env), default_body = expand_stmts(self.default_body or {}, env), default_expr = one(expand_expr, self.default_expr, env) }))
         end,
         [Tr.ExprControl] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), region = one(expand_control_expr_region, self.region, env) })) end,
         [Tr.ExprBlock] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), stmts = expand_stmts(self.stmts, env), result = one(expand_expr, self.result, env) })) end,
-        [Tr.ExprClosure] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), body = expand_stmts(self.body, env) })) end,
+        [Tr.ExprClosure] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), params = expand_params(self.params, env), result = one(expand_type, self.result, env), body = expand_stmts(self.body, env) })) end,
         [Tr.ExprView] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), view = one(expand_view, self.view, env) })) end,
         [Tr.ExprLoad] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), ty = one(expand_type, self.ty, env), addr = one(expand_expr, self.addr, env) })) end,
         [Tr.ExprSlotValue] = function(self, env)
@@ -604,11 +840,9 @@ function M.Define(T)
         [Tr.StmtAssert] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_stmt_header, self.h, env), cond = one(expand_expr, self.cond, env) })) end,
         [Tr.StmtIf] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_stmt_header, self.h, env), cond = one(expand_expr, self.cond, env), then_body = expand_stmts(self.then_body, env), else_body = expand_stmts(self.else_body, env) })) end,
         [Tr.StmtSwitch] = function(self, env)
-            local arms = {}
-            for i = 1, #self.arms do arms[#arms + 1] = pvm.with(self.arms[i], { body = expand_stmts(self.arms[i].body, env) }) end
             local var_arms = {}
             for i = 1, #(self.variant_arms or {}) do var_arms[#var_arms + 1] = pvm.with(self.variant_arms[i], { binds = self.variant_arms[i].binds, body = expand_stmts(self.variant_arms[i].body, env) }) end
-            return pvm.once(pvm.with(self, { h = one(expand_stmt_header, self.h, env), value = one(expand_expr, self.value, env), arms = arms, variant_arms = var_arms, default_body = expand_stmts(self.default_body, env) }))
+            return pvm.once(pvm.with(self, { h = one(expand_stmt_header, self.h, env), value = one(expand_expr, self.value, env), arms = expand_switch_stmt_arms(self.arms, env), variant_arms = var_arms, default_body = expand_stmts(self.default_body, env) }))
         end,
         [Tr.StmtJump] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_stmt_header, self.h, env), args = expand_jump_args(self.args, env) })) end,
         [Tr.StmtJumpCont] = function(self, env)
@@ -643,24 +877,16 @@ function M.Define(T)
 
     expand_func = pvm.phase("moonlift_open_expand_func", {
         [Tr.FuncLocal] = function(self, env)
-            local params = {}
-            for i = 1, #self.params do params[i] = pvm.with(self.params[i], { ty = one(expand_type, self.params[i].ty, env) }) end
-            return pvm.once(pvm.with(self, { params = params, result = one(expand_type, self.result, env), body = expand_stmts(self.body, env) }))
+            return pvm.once(pvm.with(self, { params = expand_params(self.params, env), result = one(expand_type, self.result, env), body = expand_stmts(self.body, env) }))
         end,
         [Tr.FuncExport] = function(self, env)
-            local params = {}
-            for i = 1, #self.params do params[i] = pvm.with(self.params[i], { ty = one(expand_type, self.params[i].ty, env) }) end
-            return pvm.once(pvm.with(self, { params = params, result = one(expand_type, self.result, env), body = expand_stmts(self.body, env) }))
+            return pvm.once(pvm.with(self, { params = expand_params(self.params, env), result = one(expand_type, self.result, env), body = expand_stmts(self.body, env) }))
         end,
         [Tr.FuncLocalContract] = function(self, env)
-            local params = {}
-            for i = 1, #self.params do params[i] = pvm.with(self.params[i], { ty = one(expand_type, self.params[i].ty, env) }) end
-            return pvm.once(pvm.with(self, { params = params, result = one(expand_type, self.result, env), body = expand_stmts(self.body, env) }))
+            return pvm.once(pvm.with(self, { params = expand_params(self.params, env), result = one(expand_type, self.result, env), body = expand_stmts(self.body, env) }))
         end,
         [Tr.FuncExportContract] = function(self, env)
-            local params = {}
-            for i = 1, #self.params do params[i] = pvm.with(self.params[i], { ty = one(expand_type, self.params[i].ty, env) }) end
-            return pvm.once(pvm.with(self, { params = params, result = one(expand_type, self.result, env), body = expand_stmts(self.body, env) }))
+            return pvm.once(pvm.with(self, { params = expand_params(self.params, env), result = one(expand_type, self.result, env), body = expand_stmts(self.body, env) }))
         end,
         [Tr.FuncOpen] = function(self, env)
             local local_env = merge_fills(env, {})
@@ -670,9 +896,7 @@ function M.Define(T)
 
     expand_extern = pvm.phase("moonlift_open_expand_extern", {
         [Tr.ExternFunc] = function(self, env)
-            local params = {}
-            for i = 1, #self.params do params[i] = pvm.with(self.params[i], { ty = one(expand_type, self.params[i].ty, env) }) end
-            return pvm.once(pvm.with(self, { params = params, result = one(expand_type, self.result, env) }))
+            return pvm.once(pvm.with(self, { params = expand_params(self.params, env), result = one(expand_type, self.result, env) }))
         end,
         [Tr.ExternFuncOpen] = function(self, env) return pvm.once(pvm.with(self, { result = one(expand_type, self.result, env) })) end,
     }, { args_cache = "last" })
@@ -689,26 +913,18 @@ function M.Define(T)
 
     expand_type_decl = pvm.phase("moonlift_open_expand_type_decl", {
         [Tr.TypeDeclStruct] = function(self, env)
-            local fields = {}
-            for i = 1, #self.fields do fields[#fields + 1] = pvm.with(self.fields[i], { ty = one(expand_type, self.fields[i].ty, env) }) end
-            return pvm.once(pvm.with(self, { fields = fields }))
+            return pvm.once(pvm.with(self, { fields = expand_fields(self.fields, env) }))
         end,
         [Tr.TypeDeclUnion] = function(self, env)
-            local fields = {}
-            for i = 1, #self.fields do fields[#fields + 1] = pvm.with(self.fields[i], { ty = one(expand_type, self.fields[i].ty, env) }) end
-            return pvm.once(pvm.with(self, { fields = fields }))
+            return pvm.once(pvm.with(self, { fields = expand_fields(self.fields, env) }))
         end,
         [Tr.TypeDeclEnumSugar] = function(self) return pvm.once(self) end,
-        [Tr.TypeDeclTaggedUnionSugar] = function(self) return pvm.once(self) end,
+        [Tr.TypeDeclTaggedUnionSugar] = function(self, env) return pvm.once(pvm.with(self, { variants = expand_variants(self.variants, env) })) end,
         [Tr.TypeDeclOpenStruct] = function(self, env)
-            local fields = {}
-            for i = 1, #self.fields do fields[#fields + 1] = pvm.with(self.fields[i], { ty = one(expand_type, self.fields[i].ty, env) }) end
-            return pvm.once(pvm.with(self, { fields = fields }))
+            return pvm.once(pvm.with(self, { fields = expand_fields(self.fields, env) }))
         end,
         [Tr.TypeDeclOpenUnion] = function(self, env)
-            local fields = {}
-            for i = 1, #self.fields do fields[#fields + 1] = pvm.with(self.fields[i], { ty = one(expand_type, self.fields[i].ty, env) }) end
-            return pvm.once(pvm.with(self, { fields = fields }))
+            return pvm.once(pvm.with(self, { fields = expand_fields(self.fields, env) }))
         end,
     }, { args_cache = "last" })
 
@@ -784,46 +1000,16 @@ function M.Define(T)
         -- params, body, and blocks using the given env, but does NOT inline
         -- nested emit uses — those are resolved later at use sites).
         expand_region_frag = function(frag, env)
-            local params = {}
-            for i = 1, #frag.params do
-                local p = frag.params[i]
-                params[i] = O.OpenParam(p.key, p.name, one(expand_type, p.ty, env))
-            end
-            local conts = {}
-            for i = 1, #frag.conts do
-                local c = frag.conts[i]
-                local cparams = {}
-                for j = 1, #c.params do
-                    cparams[j] = Tr.BlockParam(c.params[j].name, one(expand_type, c.params[j].ty, env))
-                end
-                conts[i] = O.ContSlot(c.key, c.pretty_name, cparams)
-            end
-            local eparams = {}
-            for i = 1, #frag.entry.params do
-                local p = frag.entry.params[i]
-                eparams[i] = Tr.EntryBlockParam(p.name, one(expand_type, p.ty, env), one(expand_expr, p.init, env))
-            end
-            local ebody = expand_stmts(frag.entry.body, env)
-            local entry = Tr.EntryControlBlock(frag.entry.label, eparams, ebody)
-            local blocks = {}
-            for i = 1, #frag.blocks do
-                local b = frag.blocks[i]
-                local bparams = {}
-                for j = 1, #b.params do
-                    bparams[j] = Tr.BlockParam(b.params[j].name, one(expand_type, b.params[j].ty, env))
-                end
-                blocks[i] = Tr.ControlBlock(b.label, bparams, expand_stmts(b.body, env))
-            end
+            local params = expand_open_params(frag.params, env)
+            local conts = expand_cont_slots(frag.conts, env)
+            local entry = Tr.EntryControlBlock(frag.entry.label, expand_entry_params(frag.entry.params, env), expand_stmts(frag.entry.body, env))
+            local blocks = expand_control_blocks(frag.blocks, env)
             local resolved_name = name_text(frag.name, env) or "<unresolved>"
             return O.RegionFrag(O.NameRefText(resolved_name), params, conts, frag.open, entry, blocks)
         end,
         -- Expand a standalone ExprFrag (resolves type/expr slots).
         expand_expr_frag = function(frag, env)
-            local params = {}
-            for i = 1, #frag.params do
-                local p = frag.params[i]
-                params[i] = O.OpenParam(p.key, p.name, one(expand_type, p.ty, env))
-            end
+            local params = expand_open_params(frag.params, env)
             local body   = one(expand_expr, frag.body, env)
             local result = one(expand_type, frag.result, env)
             local resolved_name = name_text(frag.name, env) or "<unresolved>"

@@ -38,14 +38,15 @@ ASDL.
 13. [Contracts](#13-contracts)
 14. [Lua splicing and antiquote](#14-lua-splicing-and-antiquote)
 15. [Lua builder API reference](#15-lua-builder-api-reference)
-16. [View and host ABI semantics](#16-view-and-host-abi-semantics)
-17. [Vectorization and facts](#17-vectorization-and-facts)
-18. [Error and diagnostic model](#18-error-and-diagnostic-model)
-19. [Intrinsics](#19-intrinsics)
-20. [Memory operations](#20-memory-operations)
-21. [Complete examples](#21-complete-examples)
-22. [Implementation/layer map](#22-implementationlayer-map)
-23. [Summary doctrine](#23-summary-doctrine)
+16. [Metaprogramming and composition guide](#16-metaprogramming-and-composition-guide)
+17. [View and host ABI semantics](#17-view-and-host-abi-semantics)
+18. [Vectorization and facts](#18-vectorization-and-facts)
+19. [Error and diagnostic model](#19-error-and-diagnostic-model)
+20. [Intrinsics](#20-intrinsics)
+21. [Memory operations](#21-memory-operations)
+22. [Complete examples](#22-complete-examples)
+23. [Implementation/layer map](#23-implementationlayer-map)
+24. [Summary doctrine](#24-summary-doctrine)
 
 ---
 
@@ -1713,15 +1714,31 @@ Inside hosted source islands, Lua values are spliced into Moonlift source with
 the antiquote syntax:
 
 ```moonlift
-@{lua_expr}
+@{lua_expr}      -- one value
+@{lua_expr...}   -- spread a Lua list into a Moonlift list position
 ```
+
+`@{x}` inserts one typed value. `@{xs...}` evaluates `xs` and expands its
+sequential Lua elements in the current syntactic list. The parser owns
+separators; Lua values do not include commas or semicolons.
 
 ### 14.1 Splice positions and expected kinds
 
 | Source position | Expected splice kind |
 |---|---|
 | Type position (`let x: @{T}`, `as(ptr(@{T}), x)`) | A type value (from `moon.i32`, `moon.ptr(T)`, etc.). A string/source value is accepted as an explicit source-name escape for generated code. |
+| Type list position (`func(@{types...}) -> T`) | A Lua array of type values. |
 | Expression position (`@{val} + 1`) | A literal/expression source value. Numbers, booleans, `nil`, strings/source values, and expression values are accepted. |
+| Expression list position (`f(@{args...})`, `emit frag(@{args...}; ...)`) | A Lua array of expression values/literals. |
+| Function parameter list (`func f(@{params...})`) | A Lua array of `moon.param(...)` values or raw `MoonType.Param` nodes. |
+| Struct field list (`struct S @{fields...} end`) | A Lua array of `moon.field(...)` values or raw `MoonType.FieldDecl` nodes. |
+| Tagged-union variant list (`union ... @{variants...} end`) | A Lua array of `moon.variant(...)` values or raw `MoonType.VariantDecl` nodes. |
+| Statement/body position (`@{stmts...}`) | A Lua array of `MoonTree.Stmt` nodes, commonly produced by `moon.stmts(...)`. |
+| Region runtime/open parameter list (`region r(@{params...}; ...)`) | A Lua array of params/open params. Spliced params are visible by name in the region body. |
+| Region continuation list (`region r(...; @{conts...})`) | A Lua array of continuation descriptors (`{ name = ..., params = {...} }`) or `MoonOpen.ContSlot` nodes. Spliced continuations are visible by name for `jump`. |
+| Region block parameter list (`entry e(@{entry_params...})`, `block b(@{params...})`) | Entry params from `moon.entry_param(...)`; block/continuation params from `moon.param(...)` or `MoonTree.BlockParam`. |
+| Region block list (`@{blocks...}` after an entry block) | A Lua array of raw `MoonTree.ControlBlock` nodes or block values. |
+| Switch arm list (`@{arms...}` before `default`) | A Lua array of `MoonTree.SwitchStmtArm` or `MoonTree.SwitchExprArm` nodes. |
 | Emit fragment position (`emit @{frag}(...)`) | A region or expression fragment value. A string/source value is accepted as an explicit fragment-name escape. |
 | Block label/name position | String/source value containing the complete label or generated identifier |
 | Integer constant position | Number (integer), or source value that parses as an integer expression |
@@ -1733,6 +1750,25 @@ name in Lua instead (`local name = "foo_" .. tag`) and write `@{name}`.
 ### 14.2 Examples
 
 ```lua
+-- Spread generated params and body statements
+local params = { moon.param("a", moon.i32), moon.param("b", moon.i32) }
+local body = moon.stmts({ a = moon.i32, b = moon.i32 }, function(b)
+    b:return_(b:param("a") + b:param("b"))
+end)
+
+return func add(@{params...}) -> i32
+    @{body...}
+end
+
+-- Spread region params and continuations
+local rparams = { moon.param("n", moon.i32) }
+local exits = { { name = "done", params = { moon.param("v", moon.i32) } } }
+return region generated(@{rparams...}; @{exits...})
+entry start()
+    jump done(v = n)
+end
+end
+
 -- Splice a type
 local T = moon.i32
 local inc = expr(x: @{T}) -> @{T}
@@ -1766,12 +1802,16 @@ end
 
 ### 14.3 Splicing semantics
 
-Splicing is checked against the expected syntactic role before the hosted
-island is parsed. Typed host values are preferred (`moon.i32`, region fragment
-values, expression fragment values, source values). For pragmatic generated-code
-cases, strings are treated as explicit complete Moonlift source/name fragments,
-not as quoted string literals; use `moon.string_lit(...)` or a Moonlift string
-literal when you want a runtime `ptr(u8)` string.
+Splicing is checked against the expected syntactic role. Typed host values are
+preferred (`moon.i32`, params, fields, statements, region fragment values,
+expression fragment values, source values). Spread splices are role-checked per
+element, so `@{params...}` is accepted in parameter-list positions and rejected
+where fields/statements/expressions are expected.
+
+For pragmatic generated-code cases, strings are treated as explicit complete
+Moonlift source/name fragments, not as quoted string literals; use
+`moon.string_lit(...)` or a Moonlift string literal when you want a runtime
+`ptr(u8)` string.
 
 There is no runtime splicing. All `@{...}` expressions are evaluated exactly
 once when the `.mlua` file is loaded. The parser records typed holes and the
@@ -1899,12 +1939,86 @@ end)
 M:extern_func("puts", {
     moon.param("s", moon.ptr(moon.u8)),
 }, moon.i32)
+
+-- Bind extern symbols for JIT compilation from Lua.
+-- (The object/shared-library path leaves externs for the system linker.)
+M:symbol("puts", ffi.cast("void *", ffi.C.puts))
 ```
 
 Inside function bodies, parameter names are available as expression values
-directly on the `fn` object (e.g. `fn.a`, `fn.b`).
+through the builder (`fn:param("a")`, and on builder-backed functions also via
+binding accessors where installed).
 
-### 15.5 Regions
+### 15.5 Statement lists
+
+`moon.stmts` constructs a `MoonTree.Stmt[]` value. Statement lists are ordinary
+Lua arrays of statement ASDL nodes and are spread into function/region bodies
+with `@{stmts...}`.
+
+Builder form:
+
+```lua
+local body = moon.stmts({ x = moon.i32 }, function(b)
+    local x = b:param("x")      -- name-backed expression value for an outer Moonlift binding
+    local y = b:let("y", moon.i32, x + 1)
+    b:if_(y:gt(10), function(t)
+        t:return_(y)
+    end, function(e)
+        e:return_(0)
+    end)
+end)
+
+return func f(x: i32) -> i32
+    @{body...}
+end
+```
+
+Source-snippet form:
+
+```lua
+local body = moon.stmts [[
+    let y: i32 = x + 1
+    return y * 2
+]]
+```
+
+Snippet strings parse Moonlift statements and return a statement list. They do
+not evaluate nested `@{...}` antiquote; splice values outside the snippet or use
+the builder form when values must be inserted programmatically.
+
+Statement builder methods:
+
+```lua
+b:param("name")                              -- expression value for an existing binding
+b:let(name, type, expr)                      -- let binding, returns expression value
+b:var(name, type, expr)                      -- var binding, returns expression value
+b:set(place, expr)                           -- assignment
+b:if_(cond, then_fn, else_fn?)               -- if statement
+b:switch_(value, arms, default_fn?)          -- switch statement
+b:emit(region_frag, { args... }, { exit = label, ... }) -- region emit statement
+b:use_region(region_frag, args, fills)       -- alias for region emit
+b:jump(label_or_block, { name = expr, ... }) -- jump statement for control bodies
+b:yield_(expr?)                              -- yield statement for control bodies
+b:return_(expr?)                             -- return statement
+b:expr(expr)                                 -- expression statement
+b:emit(raw_stmt)                             -- raw ASDL statement escape hatch
+```
+
+Related list helpers:
+
+```lua
+moon.control_block(name, params, body)       -- generated region block
+moon.cont_decl(name, params)                 -- generated region continuation declaration
+moon.switch_arm(key, body)                   -- generated switch statement arm
+```
+
+`body` may be a statement list, source string, or builder function.
+
+`moon.ref(name, type)` and `moon.place_name(name, type)` create name-backed
+expression/place values for builder code that targets bindings supplied by the
+surrounding Moonlift source.
+
+### 15.6 Regions
 
 ```lua
 -- Declare a region fragment
@@ -1947,7 +2061,7 @@ block:set_(place, expr)                        -- assignment
 block:stmt(expr)                                -- expression statement
 ```
 
-### 15.6 Expression fragments
+### 15.7 Expression fragments
 
 ```lua
 -- Declare
@@ -1961,7 +2075,7 @@ end)
 local result = moon.emit_expr(inc, { moon.int(5) })
 ```
 
-### 15.7 Host declarations (in builder)
+### 15.8 Host declarations (in builder)
 
 ```lua
 -- Struct
@@ -1981,7 +2095,7 @@ moon.native_method(User, "is_active", {
 end)
 ```
 
-### 15.8 Compilation and JIT
+### 15.9 Compilation and JIT
 
 ```lua
 -- Compile the module
@@ -2012,9 +2126,363 @@ is undefined behavior.
 
 ---
 
-## 16. View and host ABI semantics
+## 16. Metaprogramming and composition guide
 
-### 16.1 Canonical view descriptor
+Moonlift metaprogramming has one coherent rule:
+
+```text
+Lua builds Moonlift values.
+@{x} splices one value.
+@{xs...} spreads a Lua array of values.
+Moonlift receives one monomorphic, typed program.
+```
+
+This is the preferred alternative to string concatenation. Strings remain useful
+for small source snippets (`moon.stmts [[...]]`) and generated names, but program
+meaning should live in typed values: types, expressions, params, fields,
+statements, fragments, regions, blocks, and modules.
+
+### 16.1 The three composition levels
+
+Use the lowest level that expresses the pattern cleanly.
+
+1. **Value splicing** — insert one generated value:
+
+   ```moonlift
+   let x: @{T} = @{initial}
+   emit @{fragment}(p, n; ok = done, err = bad)
+   ```
+
+2. **List spreading** — insert many generated values into a syntactic list:
+
+   ```moonlift
+   func f(@{params...}) -> i32
+       @{body...}
+   end
+
+   struct Row
+       @{fields...}
+   end
+   ```
+
+3. **Typed region composition** — use `emit` to compose control-flow fragments:
+
+   ```moonlift
+   emit scan_byte(p, n, pos, 65; ok = got_A, err = bad)
+   ```
+
+These are the same idea at different phases: splice/inline a typed value at the
+current site.
+
+### 16.2 Lists are ordinary Lua arrays
+
+A spread splice expects a sequential Lua table. The role is determined by the
+Moonlift grammar position and checked per element.
+
+```lua
+local params = {
+    moon.param("a", moon.i32),
+    moon.param("b", moon.i32),
+}
+
+local fields = {
+    moon.field("x", moon.f64),
+    moon.field("y", moon.f64),
+}
+
+local args = { 20, 22 }
+```
+
+```moonlift
+func add(@{params...}) -> i32
+    return a + b
+end
+
+struct Point
+    @{fields...}
+end
+
+return add(@{args...})
+```
+
+The parser supplies commas/newlines/field separators. Do not put separator text
+in Lua values.
+
+### 16.3 Dynamic statement bodies
+
+Function and region bodies are statement lists. Build them from Lua and spread
+them into source:
+
+```lua
+local body = moon.stmts({ x = moon.i32 }, function(b)
+    local x = b:param("x")
+    local acc = b:let("acc0", moon.i32, 0)
+    for i = 1, 4 do
+        acc = b:let("acc" .. i, moon.i32, acc + i)
+    end
+    b:return_(acc + x)
+end)
+```
+
+```moonlift
+func generated(x: i32) -> i32
+    @{body...}
+end
+```
+
+For source-shaped snippets, use `moon.stmts [[...]]`:
+
+```lua
+local body = moon.stmts [[
+    let y: i32 = x + 1
+    return y * 2
+]]
+```
+
+Snippet strings are parsed as Moonlift statements. They are a containment tool
+for source-shaped code, not an invitation to concatenate whole functions.
+Prefer builder form for loops, conditional generation, and insertion of Lua
+values.
+
+### 16.4 Generated data declarations
+
+Structs, unions, params, and callable types are all list-spliceable:
+
+```lua
+local fields = {}
+for i = 0, N - 1 do
+    fields[#fields + 1] = moon.field("lane" .. i, moon.f32)
+end
+
+local variants = {
+    moon.variant("ok", moon.i32),
+    moon.variant("err", moon.i32),
+}
+```
+
+```moonlift
+local VecN = struct
+    @{fields...}
+end
+
+local Result = union
+    @{variants...}
+end
+```
+
+When returning a named multiline union, the name is explicit:
+
+```moonlift
+return union Result
+    @{variants...}
+end
+```
+
+Anonymous unions still work when the first token is a variant:
+
+```moonlift
+return union ok(i32) | err(i32) end
+```
+
+### 16.5 Generated region interfaces
+
+Region fragments are especially good metaprogramming targets because their
+interfaces are typed control contracts.
+
+```lua
+local params = {
+    moon.param("p", moon.ptr(moon.u8)),
+    moon.param("n", moon.i32),
+}
+
+local exits = {
+    moon.cont_decl("hit",  { moon.param("pos", moon.i32) }),
+    moon.cont_decl("miss", { moon.param("pos", moon.i32) }),
+}
+```
+
+```moonlift
+return region scan(@{params...}; @{exits...})
+entry loop(i: i32 = 0)
+    if i >= n then jump miss(pos = i) end
+    jump loop(i = i + 1)
+end
+end
+```
+
+Spliced runtime params are visible by name in the region body. Spliced
+continuations are visible as jump targets.
+
+Entry/block/continuation parameter lists and additional blocks can also be
+spread. `moon.control_block` is the convenient Lua constructor for generated
+blocks:
+
+```lua
+local blocks = {
+    moon.control_block("done", { moon.param("v", moon.i32) }, function(b)
+        b:yield_(b:param("v"))
+    end),
+}
+```
+
+```moonlift
+entry start(@{entry_params...})
+    jump done(v = 42)
+end
+@{blocks...}
+```
+
+### 16.6 Fragment factories
+
+The common pattern for specialization is a Lua factory that returns a typed
+fragment:
+
+```lua
+local function expect_byte(name, byte, code)
+    return region @{name}(p: ptr(u8), n: i32, pos: i32;
+                    ok: cont(next: i32), err: cont(pos: i32, code: i32))
+    entry start()
+        if pos >= n then jump err(pos = pos, code = @{code}) end
+        if as(i32, p[pos]) == @{byte} then jump ok(next = pos + 1) end
+        jump err(pos = pos, code = @{code})
+    end
+    end
+end
+
+local expect_A = expect_byte("expect_A", 65, 10)
+local expect_B = expect_byte("expect_B", 66, 20)
+```
+
+Use fragments with `emit`; do not generate call wrappers for zero-cost control
+composition:
+
+```moonlift
+emit @{expect_A}(p, n, 0; ok = got_A, err = bad)
+```
+
+### 16.7 Expression construction
+
+For generated expressions, use expression values rather than source strings:
+
+```lua
+local args = { 20, 22 }
+local sum = moon.int(0)
+for i = 1, #args do
+    sum = sum + args[i]
+end
+```
+
+```moonlift
+return @{sum}
+```
+
+When builder code needs to refer to an outer source binding, create a
+name-backed value:
+
+```lua
+local x = moon.ref("x", moon.i32)
+local body = moon.stmts(function(b)
+    b:return_(x + 1)
+end)
+```
+
+### 16.8 Names and hygiene
+
+Moonlift name splices replace whole tokens only:
+
+```moonlift
+func @{generated_name}(x: i32) -> i32
+    return x
+end
+```
+
+Partial token splicing is intentionally unsupported:
+
+```moonlift
+-- Not supported:
+func prefix_@{tag}(x: i32) -> i32 ... end
+```
+
+Build the complete name in Lua:
+
+```lua
+local generated_name = "prefix_" .. tag
+```
+
+For local values produced by statement builders, prefer unique generated names
+(`acc0`, `acc1`, ...), or let the builder allocate ASDL bindings through
+`b:let`/`b:var`. Avoid relying on hidden side tables; meaningful state should be
+in ASDL values.
+
+### 16.9 Composition recipes
+
+**Generate an unrolled body:**
+
+```lua
+local body = moon.stmts({ xs = moon.ptr(moon.i32) }, function(b)
+    local xs = b:param("xs")
+    local acc = b:let("acc0", moon.i32, 0)
+    for i = 0, N - 1 do
+        acc = b:let("acc" .. (i + 1), moon.i32, acc + xs:index(i))
+    end
+    b:return_(acc)
+end)
+```
+
+**Generate a family of fragments:**
+
+```lua
+local scanners = {}
+for _, spec in ipairs(specs) do
+    scanners[#scanners + 1] = expect_byte(spec.name, spec.byte, spec.err)
+end
+```
+
+**Generate a packed type and functions over it:**
+
+```lua
+local fields, params, args = {}, {}, {}
+for i = 1, N do
+    fields[i] = moon.field("v" .. i, moon.i32)
+    params[i] = moon.param("x" .. i, moon.i32)
+    args[i] = moon.ref("x" .. i, moon.i32)
+end
+```
+
+```moonlift
+local Pack = struct
+    @{fields...}
+end
+
+func make_pack(@{params...}) -> Pack
+    -- body may be source-shaped or produced by moon.stmts
+end
+```
+
+### 16.10 Anti-patterns
+
+Avoid these unless deliberately escaping:
+
+- concatenating whole Moonlift functions as strings;
+- encoding types/control flow in string names;
+- generating comma-separated text in Lua;
+- keeping semantic compiler state in Lua side tables instead of ASDL values;
+- using function calls where a region `emit` is the intended zero-cost control
+  composition.
+
+Prefer these instead:
+
+- Lua arrays + `@{xs...}` for repeated syntax;
+- `moon.stmts` for generated bodies;
+- expression values for generated expressions;
+- fragment factories + `emit` for reusable control;
+- modules/types/functions as explicit host values.
+
+---
+
+## 17. View and host ABI semantics
+
+### 17.1 Canonical view descriptor
 
 ```c
 typedef struct MoonView_T {
@@ -2035,7 +2503,7 @@ policy:
 - **`pointer` policy:** passes only the data pointer (for single-element
   pointer semantics).
 
-### 16.2 Indexing
+### 17.2 Indexing
 
 ```text
 element_address(i) = data + i * stride * sizeof(T)
@@ -2044,7 +2512,7 @@ element_address(i) = data + i * stride * sizeof(T)
 For contiguous views (`stride = 1`), this simplifies to standard C array
 indexing: `data[i]`.
 
-### 16.3 Windowing
+### 17.3 Windowing
 
 ```text
 windowed_data    = data + start * stride * sizeof(T)
@@ -2055,7 +2523,7 @@ windowed_stride  = stride
 Windowing does not copy data. It creates a new view descriptor pointing
 to a subrange of the original view.
 
-### 16.4 Lua proxy semantics
+### 17.4 Lua proxy semantics
 
 Lua proxies are exposure/access facets of Moonlift views and pointers. They
 are generated by the host access plan phase and use LuaJIT FFI for zero-copy
@@ -2064,12 +2532,12 @@ host APIs, not Moonlift source syntax.
 
 ---
 
-## 17. Vectorization and facts
+## 18. Vectorization and facts
 
 Moonlift vectorization is fact-driven. The source language provides typed
 control and contracts; phases decide whether vectorization applies.
 
-### 17.1 Vectorization fact pipeline
+### 18.1 Vectorization fact pipeline
 
 ```text
 source control region
@@ -2082,7 +2550,7 @@ source control region
   → explicit reject for unsupported shapes
 ```
 
-### 17.2 Canonical counted shape
+### 18.2 Canonical counted shape
 
 The vectorizer recognizes this pattern:
 
@@ -2102,7 +2570,7 @@ The fact phase identifies:
 - `acc` as the reduction accumulator
 - Memory accesses with stride patterns
 
-### 17.3 Vector types
+### 18.3 Vector types
 
 Vector types are represented as `BackVec` with an element scalar type and
 lane count (must be power of two ≥ 2):
@@ -2113,7 +2581,7 @@ BackVec { elem: f64, lanes: 2 }    -- 2 x f64 = 128-bit vector
 BackVec { elem: i32, lanes: 8 }    -- 8 x i32 = 256-bit AVX2 vector
 ```
 
-### 17.4 Vector kernel plan
+### 18.4 Vector kernel plan
 
 The vector kernel planner consumes counted-loop facts and memory access
 facts, then produces a vector schedule:
@@ -2127,7 +2595,7 @@ facts, then produces a vector schedule:
 - **Reduction lowering:** scalar reductions are accumulated in a vector
   register and horizontally reduced at loop exit.
 
-### 17.5 Explicit rejects
+### 18.5 Explicit rejects
 
 Vectorization produces explicit rejects for unsupported shapes, including:
 - Non-affine induction variables
@@ -2138,12 +2606,12 @@ Vectorization produces explicit rejects for unsupported shapes, including:
 
 ---
 
-## 18. Error and diagnostic model
+## 19. Error and diagnostic model
 
 Moonlift diagnostics are ASDL values, not format strings. Every phase that
 can fail produces typed issue values.
 
-### 18.1 Diagnostic categories
+### 19.1 Diagnostic categories
 
 | Category | Phase | Examples |
 |---|---|---|
@@ -2156,7 +2624,7 @@ can fail produces typed issue values.
 | Vector rejects | `vec_loop_facts`, `vec_kernel_safety` | Non-counted loop, unsafe memory pattern |
 | Backend issues | `back_validate` | Mismatched operand types, invalid switch cases |
 
-### 18.2 Diagnostic structure
+### 19.2 Diagnostic structure
 
 Each diagnostic carries:
 
@@ -2168,7 +2636,7 @@ Each diagnostic carries:
 - optional fix suggestion (for code actions)
 ```
 
-### 18.3 Consuming diagnostics
+### 19.3 Consuming diagnostics
 
 Tools and LSP features consume diagnostic facts directly as ASDL values. They
 should not rediscover language semantics from raw text or re-parse source
@@ -2176,7 +2644,7 @@ files to create diagnostics.
 
 ---
 
-## 19. Intrinsics
+## 20. Intrinsics
 
 Intrinsic operations are currently a backend/builder API concern, not dedicated
 Moonlift source syntax. At the parser level names such as `popcount`, `sqrt`,
@@ -2185,9 +2653,9 @@ through the Lua builder/ASDL API or provide a normal function binding.
 
 ---
 
-## 20. Memory operations
+## 21. Memory operations
 
-### 20.1 Load and store
+### 21.1 Load and store
 
 In Moonlift source, memory operations use pointer dereference and assignment
 syntax:
@@ -2205,7 +2673,7 @@ moon.load(addr, T)            -- load T from address
 moon.store(addr, value)       -- store value to address
 ```
 
-### 20.2 Memory copy and set
+### 21.2 Memory copy and set
 
 ```moonlift
 -- In builder API:
@@ -2216,7 +2684,7 @@ moon.memset(dst, byte, len)   -- set len bytes at dst to byte value
 Both `memcpy` and `memset` take pointer arguments and a length argument.
 The length is in bytes, not elements.
 
-### 20.3 Memory access facts
+### 21.3 Memory access facts
 
 Every load and store carries memory access facts:
 
@@ -2233,9 +2701,9 @@ alias analysis, and instruction scheduling.
 
 ---
 
-## 21. Complete examples
+## 22. Complete examples
 
-### 21.1 Typed dispatch over bytes
+### 22.1 Typed dispatch over bytes
 
 ```moonlift
 region parse_digit(p: ptr(u8), n: i32, pos: i32;
@@ -2254,7 +2722,7 @@ end
 end
 ```
 
-### 21.2 Switch + emit dispatch
+### 22.2 Switch + emit dispatch
 
 ```moonlift
 func classify(p: ptr(u8), n: i32) -> i32
@@ -2283,7 +2751,7 @@ func classify(p: ptr(u8), n: i32) -> i32
 end
 ```
 
-### 21.3 Lua-generated monomorphic fragments
+### 22.3 Lua-generated monomorphic fragments
 
 ```lua
 local function expect_byte(tag, byte, err_code)
@@ -2306,7 +2774,7 @@ local expect_B = expect_byte("B", 66, 20)
 local expect_semicolon = expect_byte("semicolon", 59, 30)
 ```
 
-### 21.4 Hosted struct declaration
+### 22.4 Hosted struct declaration
 
 ```moonlift
 struct User
@@ -2318,7 +2786,7 @@ end
 
 Host exposure and proxy methods are configured from Lua host APIs.
 
-### 21.5 Multi-block state machine
+### 22.5 Multi-block state machine
 
 ```moonlift
 func scan_byte(p: ptr(u8), n: i32, target: u8) -> i32
@@ -2335,7 +2803,7 @@ func scan_byte(p: ptr(u8), n: i32, target: u8) -> i32
 end
 ```
 
-### 21.6 Counted sum with region fragment
+### 22.6 Counted sum with region fragment
 
 ```moonlift
 region sum_range(xs: view(i32), start: index, len: index;
@@ -2358,7 +2826,7 @@ func sum_first_n(xs: view(i32), n: index) -> i32
 end
 ```
 
-### 21.7 Phase dispatch (tagged union switch)
+### 22.7 Phase dispatch (tagged union switch)
 
 ```moonlift
 region classify_uncached(ctx: ptr(i32), tag: i32;
@@ -2380,7 +2848,7 @@ end
 
 ---
 
-## 22. Implementation/layer map
+## 23. Implementation/layer map
 
 Important implementation homes (all under `lua/moonlift/`):
 
@@ -2546,7 +3014,7 @@ schema/pvm_surface.lua          MoonPvmSurface schema
 
 ---
 
-## 23. Summary doctrine
+## 24. Summary doctrine
 
 Moonlift source is small on purpose:
 

@@ -1250,6 +1250,12 @@ return function(A)
                 A.field "ty" "MoonBack.BackScalar",
                 A.variant_unique,
             },
+            A.variant "TreeBackStackLocal" {
+                A.field "binding" "MoonBind.Binding",
+                A.field "slot" "MoonBack.BackStackSlotId",
+                A.field "ty" "MoonBack.BackScalar",
+                A.variant_unique,
+            },
             A.variant "TreeBackViewLocal" {
                 A.field "binding" "MoonBind.Binding",
                 A.field "data" "MoonBack.BackValId",
