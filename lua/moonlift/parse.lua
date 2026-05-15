@@ -1801,7 +1801,7 @@ end
 -- Find the matching close long bracket.
 local function skip_lua_long_bracket(src, start)
     local eqs = 0
-    local j = start
+    local j = start + 1
     while j <= #src and byte(src, j) == 61 do eqs = eqs + 1; j = j + 1 end
     if j > #src or byte(src, j) ~= 91 then return nil end
     local close_pat = "]" .. string.rep("=", eqs) .. "]"

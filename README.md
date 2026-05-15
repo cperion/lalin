@@ -367,6 +367,20 @@ end
 return add(@{args...})
 ```
 
+### Extern imports
+
+Source-level extern declarations describe C-ABI imports directly in `.mlua`:
+
+```moonlift
+extern write(fd: i32, buf: ptr(u8), count: index) -> index end
+extern host_add7(x: i32) -> i32 as "host_add7_impl" end
+```
+
+Moonlift code calls these names like ordinary functions. The Cranelift JIT
+resolves normal process symbols through dynamic lookup, and custom JIT symbols
+can still be supplied with `module:symbol(name, ptr)` / compile options when
+needed. Object/shared-library emission leaves externs as normal linker imports.
+
 Spread splices work for expression/type/parameter/field/statement lists and for
 region lists such as runtime params, continuations, block params, and blocks.
 Splices occupy whole syntactic positions. They do not splice into the middle of identifiers; build the full name in Lua and use `@{name}` in a name position.
@@ -644,10 +658,10 @@ parses JSON and builds Lua values directly through the Lua C API — no
 interpreter overhead in the parsing loop, no `strtod`, pre-counted table
 allocations, region fragments for zero-cost control-flow composition.
 
-It uses `moon.switch_arm` + `@{literal_arms...}` spread splices to generate
-the `true`/`false`/`null` dispatch arms from Lua, direct mutual recursion for
-`parse_value`/`parse_array`/`parse_object`, and module extern symbols for Lua C
-API calls.
+It uses source-level `extern ... end` declarations for Lua C API calls,
+`moon.switch_arm` + `@{literal_arms...}` spread splices to generate the
+`true`/`false`/`null` dispatch arms from Lua, and direct mutual recursion for
+`parse_value`/`parse_array`/`parse_object`.
 
 Benchmarked against **lua-cjson 2.1.0** (the standard fast C JSON library
 for Lua), **dkjson** (pure Lua), and a hand-written pure-Lua recursive descent

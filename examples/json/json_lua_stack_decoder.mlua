@@ -4,13 +4,12 @@
 -- values by calling Lua C API extern symbols.  It is intentionally a
 -- composition/metaprogramming showcase:
 --
---   * Lua builds switch-arm statement lists as typed values, not strings of a
---     whole function.
+--   * Source-level `extern` declarations describe the Lua C API boundary.
+--   * Lua generates tiny switch-arm bodies for JSON literals; Moonlift parses
+--     those snippets into real switch arms.
 --   * @{literal_arms...} spreads those generated arms into the dispatcher.
 --   * region fragments (`skip_ws`, `parse_string`, `parse_number`) are emitted
 --     as zero-cost control-flow splices.
---   * module extern symbols form the host API boundary; Lua supplies concrete
---     symbol addresses at compile time.
 --
 -- Strings are fully unescaped: backslash escapes (\n, \t, etc.) and \uXXXX
 -- codepoints (including UTF-16 surrogate pairs) are decoded to proper UTF-8.
@@ -25,24 +24,28 @@ ffi.cdef [[
     lua_State* luaL_newstate(void);
     void lua_close(lua_State *L);
 
-    void lua_createtable(lua_State *L, int narr, int nrec);
-    void lua_pushlstring(lua_State *L, const char *s, size_t len);
-    void lua_pushnumber(lua_State *L, double n);
-    void lua_pushboolean(lua_State *L, int b);
-    void lua_pushnil(lua_State *L);
-    void lua_settable(lua_State *L, int idx);
-    void lua_rawseti(lua_State *L, int idx, int n);
-
+    /* Lua-side self-test helpers only.  The native Moonlift decoder calls
+       Lua C API functions through source-level `extern ... end` declarations
+       below, not through LuaJIT ffi.cdef. */
     int lua_gettop(lua_State *L);
     int lua_type(lua_State *L, int idx);
-    double lua_tonumber(lua_State *L, int idx);
-    int lua_toboolean(lua_State *L, int idx);
     size_t lua_objlen(lua_State *L, int idx);
     const char *lua_tolstring(lua_State *L, int idx, size_t *len);
 ]]
 
 local voidp = moon.rawptr
-local u8p = moon.ptr(moon.u8)
+
+-- ---------------------------------------------------------------------------
+-- Extern imports used by generated native code
+-- ---------------------------------------------------------------------------
+
+local lua_createtable = extern lua_createtable(L: @{voidp}, narr: i32, nrec: i32) end
+local lua_pushlstring = extern lua_pushlstring(L: @{voidp}, s: ptr(u8), len: index) end
+local lua_pushnumber = extern lua_pushnumber(L: @{voidp}, n: f64) end
+local lua_pushboolean = extern lua_pushboolean(L: @{voidp}, b: i32) end
+local lua_pushnil = extern lua_pushnil(L: @{voidp}) end
+local lua_settable = extern lua_settable(L: @{voidp}, idx: i32) end
+local lua_rawseti = extern lua_rawseti(L: @{voidp}, idx: i32, n: i32) end
 
 -- ---------------------------------------------------------------------------
 -- Region fragments
@@ -232,32 +235,29 @@ end
 -- Generated literal switch arms
 -- ---------------------------------------------------------------------------
 
+local function byte_checks(text, push_src)
+    local bytes = { text:byte(1, #text) }
+    local lines = {}
+
+    lines[#lines + 1] = ("if i + %d > n then jump fail() end"):format(#bytes)
+    for off = 2, #bytes do
+        lines[#lines + 1] = ("if as(i32, p[i + %d]) ~= %d then jump fail() end"):format(off - 1, bytes[off])
+    end
+    lines[#lines + 1] = push_src
+    lines[#lines + 1] = ("jump done(next_i = i + %d)"):format(#bytes)
+
+    return table.concat(lines, "\n")
+end
+
+local function literal_arm(text, push_src)
+    local bytes = { text:byte(1, #text) }
+    return moon.switch_arm(bytes[1], byte_checks(text, push_src))
+end
+
 local literal_arms = {
-    moon.switch_arm(116, moon.stmts [[
-        if i + 4 > n then jump fail() end
-        if as(i32, p[i + 1]) ~= 114 then jump fail() end
-        if as(i32, p[i + 2]) ~= 117 then jump fail() end
-        if as(i32, p[i + 3]) ~= 101 then jump fail() end
-        lua_pushboolean(L, 1)
-        jump done(next_i = i + 4)
-    ]]),
-    moon.switch_arm(102, moon.stmts [[
-        if i + 5 > n then jump fail() end
-        if as(i32, p[i + 1]) ~= 97 then jump fail() end
-        if as(i32, p[i + 2]) ~= 108 then jump fail() end
-        if as(i32, p[i + 3]) ~= 115 then jump fail() end
-        if as(i32, p[i + 4]) ~= 101 then jump fail() end
-        lua_pushboolean(L, 0)
-        jump done(next_i = i + 5)
-    ]]),
-    moon.switch_arm(110, moon.stmts [[
-        if i + 4 > n then jump fail() end
-        if as(i32, p[i + 1]) ~= 117 then jump fail() end
-        if as(i32, p[i + 2]) ~= 108 then jump fail() end
-        if as(i32, p[i + 3]) ~= 108 then jump fail() end
-        lua_pushnil(L)
-        jump done(next_i = i + 4)
-    ]]),
+    literal_arm("true",  "lua_pushboolean(L, 1)"),
+    literal_arm("false", "lua_pushboolean(L, 0)"),
+    literal_arm("null",  "lua_pushnil(L)"),
 }
 
 -- ---------------------------------------------------------------------------
@@ -406,27 +406,17 @@ end
 -- ---------------------------------------------------------------------------
 
 local module = moon.module("json_lua_stack_decoder")
-module:extern_func("lua_createtable", { moon.param("L", voidp), moon.param("narr", moon.i32), moon.param("nrec", moon.i32) }, moon.void)
-module:extern_func("lua_pushlstring", { moon.param("L", voidp), moon.param("s", u8p), moon.param("len", moon.index) }, moon.void)
-module:extern_func("lua_pushnumber", { moon.param("L", voidp), moon.param("n", moon.f64) }, moon.void)
-module:extern_func("lua_pushboolean", { moon.param("L", voidp), moon.param("b", moon.i32) }, moon.void)
-module:extern_func("lua_pushnil", { moon.param("L", voidp) }, moon.void)
-module:extern_func("lua_settable", { moon.param("L", voidp), moon.param("idx", moon.i32) }, moon.void)
-module:extern_func("lua_rawseti", { moon.param("L", voidp), moon.param("idx", moon.i32), moon.param("n", moon.i32) }, moon.void)
+module:add_func(lua_createtable)
+module:add_func(lua_pushlstring)
+module:add_func(lua_pushnumber)
+module:add_func(lua_pushboolean)
+module:add_func(lua_pushnil)
+module:add_func(lua_settable)
+module:add_func(lua_rawseti)
 module:add_func(parse_array)
 module:add_func(parse_object)
 module:add_func(parse_value)
 module:add_func(decode_json_to_lua_stack)
-module:symbols({
-    lua_createtable = ffi.cast("void *", ffi.C.lua_createtable),
-    lua_pushlstring = ffi.cast("void *", ffi.C.lua_pushlstring),
-    lua_pushnumber = ffi.cast("void *", ffi.C.lua_pushnumber),
-    lua_pushboolean = ffi.cast("void *", ffi.C.lua_pushboolean),
-    lua_pushnil = ffi.cast("void *", ffi.C.lua_pushnil),
-    lua_settable = ffi.cast("void *", ffi.C.lua_settable),
-    lua_rawseti = ffi.cast("void *", ffi.C.lua_rawseti),
-})
-
 local compiled_module = module:compile()
 local compiled = compiled_module:get("decode_json_to_lua_stack")
 

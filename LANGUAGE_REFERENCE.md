@@ -344,9 +344,9 @@ Float literals support decimal notation with optional exponent (`1.5`, `2.0`,
 
 Complete list of reserved words in Moonlift object-language source:
 
-**Declaration keywords:**
+**Declaration / hosted-island keywords:**
 ```text
-func  struct  union
+func  struct  union  extern  region  expr
 ```
 
 **Pointer and access modifiers:**
@@ -358,7 +358,7 @@ bounds   window_bounds  disjoint  same_len
 **Statement keywords:**
 ```text
 let  var  if  then  else  elseif  switch  case  default  do  end
-block  entry  jump  yield  return  emit  expr  extern
+block  entry  jump  yield  return  emit
 ```
 
 **Expression keywords:**
