@@ -1,29 +1,20 @@
 -- CLI policy for the standalone `mom` binary.
--- Uses MOM to compile Moonlift source.  For .mlua files, delegates to LuaJIT
--- (.mlua parsing + MOM compilation of each Moonlift island).
+-- Uses the native MOM pipeline (moon.native_dofile / moon.emit_object).
+-- For .mlua files with Lua carrier code that MOM cannot handle yet,
+-- falls back to moon.dofile (hosted-Lua pipeline).
 
-local ffi = require("ffi")
-local mom = require("moonlift.host_mom")
-local Host = require("moonlift.mlua_run")
+local moon = require("moonlift")
 
 local M = {}
 
 local function usage(out)
     out:write([[usage:
-  mom run [--call NAME] [--ret i32|void] [--arg-i32 N ...] FILE.mlua
-  mom --emit-object -o OUT.o [--module-name NAME] FILE.mlua
+  mom run [--call NAME] [--ret i32|void] [--arg-i32 N ...] FILE
+  mom --emit-object -o OUT.o [--module-name NAME] FILE
 
 The run path compiles the source through MOM and calls NAME (default: main).
 The object path emits a relocatable object through moonlift_object_compile_binary.
 ]])
-end
-
-local function read_all(path)
-    local f, err = io.open(path, "rb")
-    if not f then error(err or ("unable to open " .. tostring(path))) end
-    local s = f:read("*a")
-    f:close()
-    return s
 end
 
 local function parse(argv)
@@ -59,33 +50,6 @@ local function parse(argv)
     return opts
 end
 
-local function cast_i32_function(ptr, nargs)
-    if nargs == 0 then return ffi.cast("int32_t (*)()", ptr) end
-    if nargs == 1 then return ffi.cast("int32_t (*)(int32_t)", ptr) end
-    if nargs == 2 then return ffi.cast("int32_t (*)(int32_t, int32_t)", ptr) end
-    if nargs == 3 then return ffi.cast("int32_t (*)(int32_t, int32_t, int32_t)", ptr) end
-    if nargs == 4 then return ffi.cast("int32_t (*)(int32_t, int32_t, int32_t, int32_t)", ptr) end
-    error("mom run supports up to four i32 arguments")
-end
-
-local function cast_void_function(ptr, nargs)
-    if nargs == 0 then return ffi.cast("void (*)()", ptr) end
-    if nargs == 1 then return ffi.cast("void (*)(int32_t)", ptr) end
-    if nargs == 2 then return ffi.cast("void (*)(int32_t, int32_t)", ptr) end
-    if nargs == 3 then return ffi.cast("void (*)(int32_t, int32_t, int32_t)", ptr) end
-    if nargs == 4 then return ffi.cast("void (*)(int32_t, int32_t, int32_t, int32_t)", ptr) end
-    error("mom run supports up to four i32 arguments")
-end
-
-local function call_with_args(fn, args)
-    if #args == 0 then return fn() end
-    if #args == 1 then return fn(args[1]) end
-    if #args == 2 then return fn(args[1], args[2]) end
-    if #args == 3 then return fn(args[1], args[2], args[3]) end
-    if #args == 4 then return fn(args[1], args[2], args[3], args[4]) end
-    error("mom run supports up to four i32 arguments")
-end
-
 function M.run(argv)
     local ok, err = xpcall(function()
         argv = argv or {}
@@ -94,39 +58,89 @@ function M.run(argv)
         if not opts.input then usage(io.stderr); return 2 end
         if opts.mode == "object" and not opts.output then error("--emit-object requires -o OUT.o") end
 
-        local source = read_all(opts.input)
+        local source_file = io.open(opts.input, "rb")
+        if not source_file then error("unable to open " .. tostring(opts.input)) end
+        local source = source_file:read("*a")
+        source_file:close()
+
         if opts.mode == "object" then
-            mom.emit_object(source, opts.output, opts.module_name or opts.input:gsub("[/\\]", "_"):gsub("%.mlua$", ""))
+            moon.host_mom.emit_object(source, opts.output, opts.module_name or opts.input:gsub("[/\\]", "_"):gsub("%.mlua$", ""))
             io.stdout:write(opts.output, "\n")
             return 0
         end
 
-        -- Try MOM path first (pure Moonlift .mlua).
-        -- If the source contains Lua carrier code, MOM's parser will produce
-        -- issues — fall back to LuaJIT + hosted_jit.
-        local ok, compiled_or_err = pcall(mom, source)
-        if ok then
-            compiled = compiled_or_err
-            ptr = compiled:get(opts.call)
-        else
-            -- .mlua with Lua carrier — use LuaJIT to parse, hosted_jit to compile
-            local mod = Host.dofile(opts.input)
-            compiled = mod:compile()
-            ptr = compiled.artifact:getpointer(opts.call)
+        -- Try native MOM path first.
+        local ok_native, result = pcall(moon.native_loadstring, source)
+        if ok_native then
+            local compiled = result
+            local ptr = compiled:get(opts.call)
+            local ffi = require("ffi")
+            local nargs = #opts.args_i32
+            local function call_i32(ptr_sig, args)
+                return ffi.cast(ptr_sig, ptr)(unpack(args, 1, #args))
+            end
+            if opts.ret == "void" then
+                local sigs = {
+                    [0] = "void (*)()",
+                    [1] = "void (*)(int32_t)",
+                    [2] = "void (*)(int32_t,int32_t)",
+                    [3] = "void (*)(int32_t,int32_t,int32_t)",
+                    [4] = "void (*)(int32_t,int32_t,int32_t,int32_t)",
+                }
+                call_i32(sigs[nargs] or error("too many args"), opts.args_i32)
+            elseif opts.ret == "i32" then
+                local sigs = {
+                    [0] = "int32_t (*)()",
+                    [1] = "int32_t (*)(int32_t)",
+                    [2] = "int32_t (*)(int32_t,int32_t)",
+                    [3] = "int32_t (*)(int32_t,int32_t,int32_t)",
+                    [4] = "int32_t (*)(int32_t,int32_t,int32_t,int32_t)",
+                }
+                local r = call_i32(sigs[nargs] or error("too many args"), opts.args_i32)
+                io.stdout:write(tostring(tonumber(r)), "\n")
+            else
+                error("unsupported --ret " .. tostring(opts.ret))
+            end
+            compiled:free()
+            return 0
         end
-        local code = 0
+
+        -- .mlua with Lua carrier — fall back to hosted-Lua pipeline.
+        local mod = moon.dofile(opts.input)
+        if type(mod) ~= "table" or not mod.compile then
+            error("hosted fallback did not produce a module")
+        end
+        local compiled_hosted = mod:compile()
+        local ptr_hosted = compiled_hosted.artifact:getpointer(opts.call)
+        local ffi = require("ffi")
+        local nargs = #opts.args_i32
+        local function call_i32_hosted(ptr_sig, args)
+            return ffi.cast(ptr_sig, ptr_hosted)(unpack(args, 1, #args))
+        end
         if opts.ret == "void" then
-            local fn = cast_void_function(ptr, #opts.args_i32)
-            call_with_args(fn, opts.args_i32)
+            local sigs = {
+                [0] = "void (*)()",
+                [1] = "void (*)(int32_t)",
+                [2] = "void (*)(int32_t,int32_t)",
+                [3] = "void (*)(int32_t,int32_t,int32_t)",
+                [4] = "void (*)(int32_t,int32_t,int32_t,int32_t)",
+            }
+            call_i32_hosted(sigs[nargs] or error("too many args"), opts.args_i32)
         elseif opts.ret == "i32" then
-            local fn = cast_i32_function(ptr, #opts.args_i32)
-            local result = tonumber(call_with_args(fn, opts.args_i32))
-            io.stdout:write(tostring(result), "\n")
+            local sigs = {
+                [0] = "int32_t (*)()",
+                [1] = "int32_t (*)(int32_t)",
+                [2] = "int32_t (*)(int32_t,int32_t)",
+                [3] = "int32_t (*)(int32_t,int32_t,int32_t)",
+                [4] = "int32_t (*)(int32_t,int32_t,int32_t,int32_t)",
+            }
+            local r = call_i32_hosted(sigs[nargs] or error("too many args"), opts.args_i32)
+            io.stdout:write(tostring(tonumber(r)), "\n")
         else
             error("unsupported --ret " .. tostring(opts.ret))
         end
-        compiled:free()
-        return code
+        compiled_hosted.artifact:free()
+        return 0
     end, debug.traceback)
 
     if ok then return err or 0 end

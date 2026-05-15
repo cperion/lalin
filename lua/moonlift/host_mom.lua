@@ -1,29 +1,36 @@
--- moonlift/host_mom.lua — moon.mom() API for the MOM frontend.
+-- moonlift/host_mom.lua — Native (MOM) pipeline entry points.
 --
--- Compiles Moonlift source through the native MOM pipeline and returns a
--- compiled module (same interface as the Lua frontend's compiled modules).
+-- Provides loadstring/loadfile/dofile matching LuaJIT conventions, plus
+-- direct compilation and object emission through the native MOM pipeline.
 --
--- Usage:
---   local moon = require("moonlift.host_mom")
---   local compiled = moon([[
---     func add(x: i32, y: i32) -> i32
---       return x + y
---     end
---   ]])
---   local add = ffi.cast("int32_t (*)(int32_t, int32_t)", compiled:get("add"))
---   print(add(3, 4))  -- 7
---   compiled:free()
+-- When the pre-compiled MOM .o files are linked into the binary (via
+-- libmom_precompiled.a), the lexer/parser/lower/backend functions are
+-- resolved directly from ffi.C without JIT compilation at startup.
+-- Otherwise, falls back to JIT-compiling the MOM .mlua modules.
 
 local ffi = require("ffi")
 local Host = require("moonlift.mlua_run")
 
-ffi.cdef[[
-typedef struct moonlift_bytes_t { uint8_t* data; size_t len; } moonlift_bytes_t;
+local function cdef_once(code)
+    local ok, err = pcall(ffi.cdef, code)
+    if not ok then
+        local already_defined = tostring(err):find("redefine") or tostring(err):find("already")
+        if not already_defined then
+            error("ffi.cdef failed: " .. tostring(err), 2)
+        end
+    end
+end
 
+-- Shared types with back_object.lua — may already be defined.
+cdef_once[[
+typedef struct moonlift_bytes_t { uint8_t* data; size_t len; } moonlift_bytes_t;
 const char* moonlift_last_error_message(void);
 int moonlift_object_compile_binary(const uint8_t* data, size_t len, const char* module_name, moonlift_bytes_t* out);
 void moonlift_bytes_free(uint8_t* data, size_t len);
+]]
 
+-- MOM-specific types — always defined.
+ffi.cdef[[
 typedef struct MomWireBuilder {
     uint8_t *data;
     size_t len;
@@ -48,6 +55,17 @@ typedef struct NativeParseOut {
 } NativeParseOut;
 ]]
 
+-- Pre-compiled native function signatures.
+-- These match the Cranelift-emitted C ABI for the corresponding Moonlift functions.
+cdef_once[[
+typedef int64_t (*mom_lex_into_t)(const uint8_t* p, int64_t n, int32_t* kinds, int32_t* starts, int32_t* stops, int32_t* lines, int32_t* cols, int64_t cap);
+typedef int32_t (*mom_parse_native_core_t)(const uint8_t* src, int64_t n, int32_t* kinds, int32_t* starts, int32_t* stops, int64_t ntok, NativeParseOut* out);
+typedef int64_t (*mom_lower_native_core_to_wire_t)(const uint8_t* src, int32_t* starts, int32_t* stops, NativeParseOut* out, int32_t nitems, MomWireBuilder* w, uint8_t* data, int64_t cap);
+typedef uint8_t* (*mom_backend_compile_binary_t)(const uint8_t* data, int64_t len);
+typedef uint8_t* (*mom_backend_getpointer_t)(const uint8_t* artifact, const char* func_name);
+typedef void (*mom_backend_free_artifact_t)(const uint8_t* artifact);
+]]
+
 local MOM_DIR = "lua/moonlift/mom/"
 
 local function load_mom(path)
@@ -64,6 +82,67 @@ local function compile_mod(path)
     local compiled, err = mod:compile()
     assert(compiled, "moonlift.host_mom: compile " .. path .. ": " .. tostring(err))
     return compiled
+end
+
+-- Try to resolve a pre-compiled native symbol from the process.
+-- Returns the function pointer (cast to the given ctype), or nil if unavailable.
+local function try_precompiled(sym_name, ctype)
+    local ok, ptr = pcall(function()
+        local sym = ffi.C[sym_name]
+        return sym ~= nil
+    end)
+    if ok and ptr then
+        return ffi.cast(ctype, ffi.C[sym_name])
+    end
+    return nil
+end
+
+-- Resolve MOM pipeline functions.
+-- Strategy: try pre-compiled symbols first (linked into the binary),
+-- then fall back to JIT compilation.
+local mom_lex, mom_parse, mom_lower_wire
+local mom_compile_binary, mom_getpointer, mom_free_artifact
+local _lexer_mod, _parser_mod, _lower_mod, _backend_mod
+
+local function resolve_precompiled()
+    local lex = try_precompiled("mom_lex_into", "mom_lex_into_t")
+    if not lex then return false end
+    local parse = try_precompiled("mom_parse_native_core", "mom_parse_native_core_t")
+    if not parse then return false end
+    local lower = try_precompiled("mom_lower_native_core_to_wire", "mom_lower_native_core_to_wire_t")
+    if not lower then return false end
+    local compile_bin = try_precompiled("mom_backend_compile_binary", "mom_backend_compile_binary_t")
+    if not compile_bin then return false end
+    local getptr = try_precompiled("mom_backend_getpointer", "mom_backend_getpointer_t")
+    if not getptr then return false end
+    local free_art = try_precompiled("mom_backend_free_artifact", "mom_backend_free_artifact_t")
+    if not free_art then return false end
+
+    mom_lex = lex
+    mom_parse = parse
+    mom_lower_wire = lower
+    mom_compile_binary = compile_bin
+    mom_getpointer = getptr
+    mom_free_artifact = free_art
+    return true
+end
+
+local function resolve_jit()
+    _lexer_mod = compile_mod("parser/native_lexer.mlua")
+    _parser_mod = compile_mod("parser/native_core.mlua")
+    _lower_mod = compile_mod("driver/lower_wire.mlua")
+    _backend_mod = compile_mod("driver/backend_ffi.mlua")
+
+    mom_lex = _lexer_mod:get("mom_lex_into")
+    mom_parse = _parser_mod:get("mom_parse_native_core")
+    mom_lower_wire = _lower_mod:get("mom_lower_native_core_to_wire")
+    mom_compile_binary = _backend_mod:get("mom_backend_compile_binary")
+    mom_getpointer = _backend_mod:get("mom_backend_getpointer")
+    mom_free_artifact = _backend_mod:get("mom_backend_free_artifact")
+end
+
+if not resolve_precompiled() then
+    resolve_jit()
 end
 
 local function alloc_parse_out(cap)
@@ -112,19 +191,6 @@ local function object_lib()
     assert(ok_lib, "moonlift.host_mom: object backend symbols are unavailable")
     return lib
 end
-
--- Pre-compile MOM modules once at load time.
-local lexer_mod = compile_mod("parser/native_lexer.mlua")
-local parser_mod = compile_mod("parser/native_core.mlua")
-local lower_mod = compile_mod("driver/lower_wire.mlua")
-local backend_mod = compile_mod("driver/backend_ffi.mlua")
-
-local mom_lex = lexer_mod:get("mom_lex_into")
-local mom_parse = parser_mod:get("mom_parse_native_core")
-local mom_lower_wire = lower_mod:get("mom_lower_native_core_to_wire")
-local mom_compile_binary = backend_mod:get("mom_backend_compile_binary")
-local mom_getpointer = backend_mod:get("mom_backend_getpointer")
-local mom_free_artifact = backend_mod:get("mom_backend_free_artifact")
 
 local function build_wire(source)
     source = tostring(source)
@@ -182,16 +248,70 @@ end
 
 local HostMom = {}
 
+--- Native pipeline: compile source string to artifact.
+function HostMom.native_loadstring(source, name)
+    return mom_compile(source)
+end
+
+--- Native pipeline: compile file to artifact.
+function HostMom.native_loadfile(path)
+    local f, err = io.open(path, "rb")
+    if not f then error("host_mom native_loadfile: " .. tostring(err), 2) end
+    local src = f:read("*a")
+    f:close()
+    return mom_compile(src)
+end
+
+--- Native pipeline: compile file and call a function by name.
+function HostMom.native_dofile(path, opts, ...)
+    opts = opts or {}
+    local call = opts.call or "main"
+    local ret = opts.ret or "i32"
+    local args_i32 = opts.args_i32 or {}
+    local compiled = HostMom.native_loadfile(path)
+    local ptr = compiled:get(call)
+    local nargs = #args_i32
+    local function call_fn(sig, args)
+        return ffi.cast(sig, ptr)(unpack(args, 1, #args))
+    end
+    local i32_sigs_void = {
+        [0] = "void (*)()",
+        [1] = "void (*)(int32_t)",
+        [2] = "void (*)(int32_t,int32_t)",
+        [3] = "void (*)(int32_t,int32_t,int32_t)",
+        [4] = "void (*)(int32_t,int32_t,int32_t,int32_t)",
+    }
+    local i32_sigs_ret = {
+        [0] = "int32_t (*)()",
+        [1] = "int32_t (*)(int32_t)",
+        [2] = "int32_t (*)(int32_t,int32_t)",
+        [3] = "int32_t (*)(int32_t,int32_t,int32_t)",
+        [4] = "int32_t (*)(int32_t,int32_t,int32_t,int32_t)",
+    }
+    if ret == "void" then
+        call_fn(i32_sigs_void[nargs] or error("native_dofile supports up to four i32 arguments"), args_i32)
+        compiled:free()
+        return
+    elseif ret == "i32" then
+        local result = call_fn(i32_sigs_ret[nargs] or error("native_dofile supports up to four i32 arguments"), args_i32)
+        compiled:free()
+        return tonumber(result)
+    else
+        error("native_dofile: unsupported ret type " .. tostring(ret))
+    end
+end
+
 function HostMom.wire(source)
     return build_wire(source)
 end
 
 function HostMom.emit_object(source, path, module_name)
-    local payload = build_wire(source)
-    local buf = ffi.new("uint8_t[?]", #payload + 1, payload)
+    local wire, nwire = build_wire(source)
+    local buf = ffi.new("uint8_t[?]", nwire)
+    ffi.copy(buf, wire, nwire)
     local out = ffi.new("moonlift_bytes_t[1]")
     local lib = object_lib()
-    local rc = lib.moonlift_object_compile_binary(buf, #payload, ffi.new("char[?]", #(module_name or "mom_object") + 1, module_name or "mom_object"), out)
+    local rc = lib.moonlift_object_compile_binary(buf, nwire, ffi.new("char[?]", #(module_name or "mom_object") + 1, module_name or "mom_object"), out)
     if rc == 0 then error("moonlift MOM object compile failed: " .. last_error()) end
     local bytes = ffi.string(out[0].data, tonumber(out[0].len))
     lib.moonlift_bytes_free(out[0].data, out[0].len)

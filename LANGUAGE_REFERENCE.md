@@ -204,20 +204,28 @@ fully resolved before backend command generation.
 
 A `.mlua` file is LuaJIT Lua with Moonlift value islands embedded as Lua
 expressions. Each island produces a host value (function, region fragment,
-expr fragment, struct type, or union type). The file is loaded by the `.mlua`
-runner:
+expr fragment, struct type, or union type). The file is loaded through the
+unified Moonlift module:
 
 ```lua
-local Host = require("moonlift.mlua_run")
-local chunk = Host.loadfile("file.mlua")
+local moon = require("moonlift")
+local chunk = moon.loadfile("file.mlua")
 local result = chunk()
+
+-- Or directly:
+local result = moon.dofile("file.mlua")
 ```
 
-From the repo runner:
+From the command line:
 
 ```bash
-luajit run_mlua.lua file.mlua
+moonlift file.mlua                        # hosted Lua pipeline (default)
+moonlift run --call main file.mlua         # hosted, call specific function
 ```
+
+Inside `.mlua` files, the `moon` table provides `moon.require`,
+`moon.native_loadstring`, `moon.native_loadfile`, `moon.native_dofile`,
+and `moon.emit_object`.
 
 The `.mlua` file returns any Lua value — typically a function or a table of
 functions.
@@ -245,10 +253,56 @@ local result = P.parse_type("ptr(i32)")
 -- result.value is a MoonType.TPtr(elem = MoonType.TScalar(ScalarI32))
 ```
 
-### 3.3 Lua builder API (two surfaces)
+### 3.3 Unified module API
 
-Moonlift provides two builder APIs, both of which produce the same ASDL values
-consumed by the same PVM phases. Neither is a separate compiler IR.
+The primary entry point is `require("moonlift")`, which provides the full
+compilation pipeline alongside the builder API:
+
+**Hosted-Lua pipeline:**
+
+```lua
+local moon = require("moonlift")
+local chunk = moon.loadstring(src, name, opts)    -- compile and return callable
+local chunk = moon.loadfile(path, opts)            -- compile and return callable from file
+local result = moon.dofile(path, opts, ...)        -- load and execute
+local result = moon.eval(src, ...)                 -- loadstring + immediate call
+```
+
+**Native (MOM) pipeline:**
+
+```lua
+local moon = require("moonlift")
+moon.native_loadstring(src, name)    -- compile through MOM pipeline
+moon.native_loadfile(path)           -- compile file through MOM pipeline
+moon.native_dofile(path, opts)       -- compile and execute through MOM
+```
+
+**Object emission:**
+
+```lua
+local obj_bytes = moon.emit_object(src, path, name)   -- emit .o bytes
+local so_bytes  = moon.emit_shared(src, path, name)   -- emit .so/.dylib bytes
+```
+
+**Inside `.mlua` files**, the `moon` table provides `moon.require`,
+`moon.native_loadstring`, `moon.native_loadfile`, `moon.native_dofile`,
+and `moon.emit_object`.
+
+**Builder API** — the unified module also exposes the builder surface:
+
+```lua
+local M = moon.module("Demo")
+M:export_func("add", { ... }, moon.i32, function(fn) ... end)
+```
+
+Backward-compatible aliases: `require("moonlift.mlua_run")` and
+`require("moonlift.host_mom")` / `moon.host_mom` still work but the
+unified `require("moonlift")` module is preferred.
+
+### 3.4 Low-level builder APIs
+
+Two additional builder APIs produce the same ASDL values consumed by the same
+PVM phases. Neither is a separate compiler IR.
 
 **Low-level node constructor API:**
 
@@ -267,18 +321,26 @@ local moon = require("moonlift.host")
 ```
 
 The `moonlift.host` API provides ergonomic builders with automatic name
-generation, session management, and JIT compilation.
+generation, session management, and JIT compilation. The unified module
+re-exports this surface, so `require("moonlift")` provides the same builder
+methods.
 
 Both APIs construct identical ASDL values. Choose based on preference and task.
 
-### 3.4 Command-line tools
+### 3.5 Command-line tools
 
 | Command | Purpose |
 |---|---|
-| `luajit run_mlua.lua file.mlua` | JIT and run a `.mlua` file |
-| `luajit emit_object.lua input.mlua -o output.o` | Compile to relocatable object file |
-| `luajit emit_shared.lua input.mlua -o liboutput.so` | Compile to shared library |
+| `moonlift file.mlua` | Hosted-Lua pipeline (default) |
+| `moonlift run --call main file.mlua` | Hosted, call specific function |
+| `moonlift --native file.mlua` | MOM native pipeline |
+| `mom run file.mlua` | MOM native (default subcommand) |
+| `mom run --call main --ret i32 file.mlua` | MOM native with options |
+| `mom --emit-object -o out.o file.mlua` | MOM object emission |
 | `luajit lsp.lua` | Start the Moonlift LSP server |
+
+For programmatic compilation and execution from Lua, use the unified module
+API (§3.3) instead of invoking CLI tools.
 
 ---
 
@@ -1832,14 +1894,15 @@ host bridge fills them with checked Lua values.
 
 ## 15. Lua builder API reference
 
-The builder API mirrors source constructs. This section documents the
-high-level `moonlift.host` API. The low-level `moonlift.ast` API constructs
-the same ASDL values with more explicit field-by-field control.
+The builder API mirrors source constructs. This section documents the builder
+surface exposed by the unified `require("moonlift")` module (which re-exports
+the `moonlift.host` API). The low-level `moonlift.ast` API constructs the same
+ASDL values with more explicit field-by-field control.
 
 ### 15.1 Sessions
 
 ```lua
-local moon = require("moonlift.host")
+local moon = require("moonlift")
 local session = moon.new_session({ prefix = "demo" })
 local api = session:api()
 
@@ -1848,7 +1911,9 @@ local M = moon.module("Demo")
 ```
 
 The session manages name generation, symbol prefixes, and compilation context.
-The default `moon` object uses a session with prefix `"moon"`.
+The default `moon` object uses a session with prefix `"moon"`. The unified
+`require("moonlift")` module re-exports the `moonlift.host` builder surface;
+`require("moonlift.host")` is still available for backward compatibility.
 
 ### 15.2 Types
 
@@ -2915,7 +2980,7 @@ parse.lua                       unified lexer/parser and hosted island scanner
 mlua_document_analysis.lua      editor/LSP document analysis over hosted islands
 
 -- Host bridge
-mlua_run.lua                    LuaJIT hosted island runner / antiquote bridge
+mlua_run.lua                    LuaJIT hosted island runner / antiquote bridge (backward compat; prefer require("moonlift"))
 host.lua                        high-level builder API entry point
 host_session.lua                session management
 host_module_values.lua          module value construction

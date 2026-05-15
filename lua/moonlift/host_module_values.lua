@@ -160,7 +160,7 @@ local function c_sig_of(api, func_value)
     return ret .. " (*)(" .. table.concat(args, ", ") .. ")"
 end
 
-function ModuleValue:compile(opts)
+function ModuleValue:_lower_program(opts)
     opts = opts or {}
     local pvm = require("moonlift.pvm")
     local OpenFacts = require("moonlift.open_facts")
@@ -170,7 +170,6 @@ function ModuleValue:compile(opts)
     local SemLayout = require("moonlift.sem_layout_resolve")
     local TreeToBack = require("moonlift.tree_to_back")
     local Validate = require("moonlift.back_validate")
-    local Jit = require("moonlift.back_jit")
 
     local T = self.session.T
     local OF = OpenFacts.Define(T)
@@ -180,7 +179,6 @@ function ModuleValue:compile(opts)
     local Layout = SemLayout.Define(T)
     local Lower = TreeToBack.Define(T)
     local V = Validate.Define(T)
-    local jit_api = Jit.Define(T)
 
     local module = self:to_asdl()
     local expanded = OE.module(module)
@@ -192,11 +190,31 @@ function ModuleValue:compile(opts)
     local program = Lower.module(resolved_module)
     local report = V.validate(program)
     if #report.issues ~= 0 then error("host module back validation failed: " .. tostring(report.issues[1]), 2) end
+    return program
+end
+
+function ModuleValue:compile(opts)
+    opts = opts or {}
+    local program = self:_lower_program(opts)
+    local Jit = require("moonlift.back_jit")
+    local T = self.session.T
+    local jit_api = Jit.Define(T)
     local jit = jit_api.jit()
     for name, ptr in pairs(self.extern_symbols or {}) do jit:symbol(name, ptr) end
     for name, ptr in pairs(opts.symbols or {}) do jit:symbol(name, ptr) end
     local artifact = jit:compile(program)
     return setmetatable({ module = self, artifact = artifact, T = T, functions = {} }, CompiledModule)
+end
+
+function ModuleValue:emit_object(opts)
+    opts = opts or {}
+    local program = self:_lower_program(opts)
+    local T = self.session.T
+    local Object = require("moonlift.back_object")
+    local O = Object.Define(T)
+    local name = opts.module_name or self.name
+    local artifact = O.compile(program, { module_name = name })
+    return artifact
 end
 
 function ModuleValue:__tostring()

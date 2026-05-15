@@ -10,10 +10,10 @@ libraries.
 
 Two compiler frontends share a single binary protocol:
 
-| Frontend | Audience | When to use |
+| Frontend | Entry point | Best for |
 |---|---|---|
-| **MOM** (`moon.mom()`) | End users | Default path. Compile pure Moonlift source directly to native code. |
-| **Lua** (`moonlift.mlua_run`) | Compiler developers | Metaprogramming host, test oracles, `.mlua` staging. |
+| **MOM** | `moon.native_loadstring(source)` | Default path. Compile pure Moonlift source directly to native code. End-user compilation, production. |
+| **Lua** | `moon.loadstring(source)` / builder API | Metaprogramming host, `.mlua` staging, conformance oracle. |
 
 MOM is the default — native Moonlift-on-Moonlift compiler, zero Lua in the hot
 path. The Lua frontend is the bootstrap seed and conformance oracle: two
@@ -72,16 +72,14 @@ metaprogramming, and who believe semantics should be data, not strings.
 ### MOM: compile Moonlift source directly (default path)
 
 ```lua
-local mom = require("moonlift.host_mom")
-local compiled = mom([[
+local moon = require("moonlift")
+local add_val = moon.native_loadstring([[
   func add(x: i32, y: i32) -> i32
     return x + y
   end
 ]])
-local ffi = require("ffi")
-local add = ffi.cast("int32_t (*)(int32_t, int32_t)", compiled:get("add"))
-print(add(3, 4))  -- 7, running as native machine code
-compiled:free()
+print(add_val:get("add")(3, 4))  -- 7, running as native machine code
+add_val:free()
 ```
 
 No Lua in the compiler core — source goes directly to native code through the
@@ -251,26 +249,25 @@ Produces fully static binaries at `target/release/moonlift` and `target/release/
 ### Run your first `.mlua` file
 
 ```bash
-# MOM frontend binary — native compiler path, copy anywhere, zero deps
-target/release/mom run --call main my_program.mlua
-
-# Lua frontend binary — staging/oracle path, copy anywhere, zero deps
+# Hosted-Lua pipeline (default)
 target/release/moonlift examples/protocols/resp_parser.mlua
 
-# Or via LuaJIT runner (needs libmoonlift.so and repo files)
-luajit run_mlua.lua examples/protocols/resp_parser.mlua
+# MOM native pipeline
+target/release/mom run --call main my_program.mlua
 ```
 
 ### Compile to a native object file
 
 ```bash
-luajit emit_object.lua examples/protocols/resp_parser.mlua -o build/resp_parser.o
+target/release/mom --emit-object -o build/resp_parser.o examples/protocols/resp_parser.mlua
+# Or from Lua: moon.emit_object(source, "build/resp_parser.o")
 ```
 
 ### Compile to a shared library
 
 ```bash
-luajit emit_shared.lua examples/protocols/resp_parser.mlua -o build/libresp_parser.so
+target/release/mom --emit-object -o build/resp_parser.o examples/protocols/resp_parser.mlua
+# Or from Lua: moon.emit_shared(source, "build/libresp_parser.so")
 ```
 
 ### Quick validation
@@ -493,8 +490,8 @@ end
 
 | Frontend | Entry point | Compiler core runtime | Best for |
 |---|---|---|---|
-| **MOM** | `moon.mom(source)` → compiled module | Pure Moonlift (native) | End-user compilation, production paths |
-| **Lua** | `moonlift.host` module builder + `:compile()` | Lua + PVM phases | Metaprogramming, `.mlua` staging, cross-check oracle |
+| **MOM** | `moon.native_loadstring(source)` | Pure Moonlift (native) | End-user compilation, production |
+| **Lua** | `moon.loadstring(source)` / builder API | Lua + PVM phases | Metaprogramming, `.mlua` staging, cross-check oracle |
 
 Both frontends produce the same MLBT v3 binary format consumed by the same
 Rust Cranelift backend. MOM is the default path — faster to compile, no Lua
@@ -541,18 +538,6 @@ allocating FFI-compatible buffers.
 Both pipelines produce the same MLBT v3 binary wire format consumed by the
 same Rust Cranelift backend. The Lua frontend is the conformance oracle and
 metaprogramming host; MOM is the default compilation path.
-.mlua source
-  │
-  ├─► parse/scan_document ─► hosted island values / MoonTree module (ASDL)
-  ├─► tree_typecheck   ──► typed+resolved module
-  ├─► tree_to_back     ──► MoonBack program (flat command array)
-  ├─► back_validate    ──► validation facts + rejects
-  │
-  ├─► back_jit         ──► Cranelift JIT → function pointers (Rust)
-  ├─► back_object       ──► Cranelift → .o relocatable object (Rust)
-  └─► back_object
-        + link_target   ──► link plan → system linker → .so/.dylib
-```
 
 ### PVM: the phase framework
 
@@ -593,18 +578,26 @@ This is deliberately flat and verifiable. No nested IR, no hidden context.
 ### JIT: Lua-hosted function pointers
 
 ```lua
-local M = moon.module("Demo")
-M:export_func("add", params, result_type, body_fn)
-local compiled = M:compile()
+local moon = require("moonlift")
+local compiled = moon.loadstring([[
+  local add = func(a: i32, b: i32) -> i32
+    return a + b
+  end
+  return add
+]], "demo.mlua")()
 local add_fn = compiled:get("add")
-print(add_fn(1, 2))  -- 3
+print(add_fn(3, 4))  -- 7, running as native machine code
 compiled:free()
 ```
 
 ### Object files (.o)
 
-```bash
-luajit emit_object.lua examples/protocols/resp_parser.mlua -o build/resp_parser.o
+From Lua:
+
+```lua
+local moon = require("moonlift")
+local obj_bytes = moon.emit_object(source, "build/resp_parser.o")
+-- Or from CLI: mom --emit-object -o build/resp_parser.o file.mlua
 ```
 
 Publishable, linkable object files for use with C, Rust, or any language
@@ -612,7 +605,9 @@ that consumes ELF/Mach-O/COFF.
 
 ### Shared libraries (.so/.dylib)
 
-```bash
+```lua
+local moon = require("moonlift")
+local so_bytes = moon.emit_shared(source, "build/libresp_parser.so")
 ```
 
 The linker path: `.mlua` → parse → typecheck → lower → object → link plan → system linker → `.so`.
@@ -621,9 +616,13 @@ The linker path: `.mlua` → parse → typecheck → lower → object → link p
 
 ```bash
 make
+# Hosted-Lua pipeline (default)
+target/release/moonlift file.mlua
+
+# MOM native pipeline
+target/release/moonlift --native file.mlua
 target/release/mom run --call main my_program.mlua
-target/release/mom --emit-object -o my_program.o my_program.mlua
-target/release/moonlift my_program.mlua
+target/release/mom --emit-object -o out.o my_program.mlua
 ```
 
 The `mom` and `moonlift` binaries are fully static with zero runtime dependencies.
@@ -631,12 +630,28 @@ Copy them anywhere. No `libluajit.so`, no `lua/` directory, no `libmoonlift.so`.
 
 ### From Lua with the builder API
 
-```bash
-luajit run_mlua.lua examples/terra_vs_mlua/typed_dispatch_mlua.mlua
-```
+```lua
+local moon = require("moonlift")
 
-The `run_mlua.lua` runner loads `.mlua` files with the host quote bridge and
-automatically calls exported `main`, `run`, or `test` functions if present.
+-- Hosted JIT pipeline
+local compiled = moon.loadstring([[
+  local add = func(a: i32, b: i32) -> i32
+    return a + b
+  end
+  return add
+]], "demo.mlua")()
+local fn = compiled:get("add")
+print(fn(3, 4))  -- 7
+compiled:free()
+
+-- Or use the builder API
+local M = moon.module("Demo")
+M:export_func("add", params, result_type, body_fn)
+local built = M:compile()
+local add_fn = built:get("add")
+print(add_fn(1, 2))  -- 3
+built:free()
+```
 
 ---
 
@@ -772,7 +787,7 @@ moonlift/
 │   │   ├── driver/         MLBT v3 wire generation, Rust backend FFI
 │   │   ├── runtime/        Runtime builders, integer maps
 │   │   └── schema/         Schema seed (MoonBack, MoonCore, ...)
-│   ├── host_mom.lua        MOM frontend entry point — moon.mom()
+│   ├── host_mom.lua        MOM frontend — moon.native_loadstring / moon.native_loadfile
 │   ├── host.lua            High-level Lua builder API (Lua frontend)
 │   ├── ast.lua             Low-level ASDL node constructor API
 │   ├── back_jit.lua        Lua→Rust JIT FFI bridge (now uses binary wire format)
@@ -802,9 +817,9 @@ moonlift/
 ├── tests/                  Lua test suite (~130+ tests)
 │   └── fixtures/           Non-runnable editor/LSP fixtures
 ├── Cargo.toml              Rust project configuration
-├── emit_object.lua         .mlua → native .o
-├── emit_shared.lua         .mlua → .so/.dylib
-├── run_mlua.lua            Run hosted .mlua with LuaJIT staging
+├── emit_object.lua         Legacy: .mlua → native .o (use moon.emit_object or mom --emit-object)
+├── emit_shared.lua         Legacy: .mlua → .so/.dylib (use moon.emit_shared)
+├── run_mlua.lua            Legacy: run hosted .mlua (use moonlift binary or moon.loadfile)
 ├── lsp.lua                 LSP entry point
 ├── init.lua                Package init
 ├── LANGUAGE_REFERENCE.md   Complete language reference
@@ -856,7 +871,7 @@ luajit tests/test_mom_vec.lua               # Vec facts → decide → plan → 
 luajit tests/test_mom_wire.lua              # MLBT v3 wire builder
 
 # Frontend API
-luajit -e 'local m=require("moonlift.host_mom"); print(m"func f()->i32 return 7 end":get("f"))'
+luajit -e 'local m=require("moonlift"); print(m.native_loadstring("func f()->i32 return 7 end"):get("f"))'
 ```
 
 ### Lua frontend tests (bootstrap / oracle)
@@ -919,7 +934,7 @@ luajit tests/test_addr_of_var_stack.lua
 luajit tests/test_mlua_host_pipeline.lua
 luajit tests/test_mlua_document_analysis.lua
 luajit tests/test_mlua_splice_shapes.lua
-luajit run_mlua.lua examples/json/json_lua_stack_decoder.mlua
+target/release/moonlift examples/json/json_lua_stack_decoder.mlua
 ```
 
 ### LSP tests

@@ -1,7 +1,22 @@
 -- Public Moonlift Lua facade.
 --
--- The PVM/ASDL implementation is internal to the moonlift package and exposed
--- through this namespace. Prefer `require("moonlift.pvm")` or this facade.
+-- Unified entry API follows LuaJIT conventions:
+--   moon.loadstring(src [, name [, opts]])  — compile and return a callable
+--   moon.loadfile(path [, opts])            — compile and return a callable
+--   moon.dofile(path [, opts, ...])         — load and immediately execute
+--   moon.eval(src, ...)                     — loadstring + immediate call
+--
+-- Native (MOM) pipeline (explicit opt-in):
+--   moon.native_loadstring(src [, name])    — compile through MOM native path
+--   moon.native_loadfile(path)              — compile through MOM native path
+--   moon.native_dofile(path [, opts, ...])  — compile and execute through MOM
+--
+-- Object emission:
+--   moon.emit_object(src [, path [, name]])  — emit .o bytes (hosted pipeline)
+--   moon.emit_shared(src [, path [, name]])  — emit .so/.dylib (hosted pipeline)
+--
+-- Builder API (unchanged):
+--   moon.module("name"), moon.func(...), etc.
 
 local M = {}
 
@@ -31,19 +46,230 @@ M.back_target_model = require("moonlift.back_target_model")
 M.back_inspect = require("moonlift.back_inspect")
 M.back_diagnostics = require("moonlift.back_diagnostics")
 M.back_object = require("moonlift.back_object")
-M.host_mom = require("moonlift.host_mom")
 M.link_target_model = require("moonlift.link_target_model")
 M.link_plan_validate = require("moonlift.link_plan_validate")
 M.link_command_plan = require("moonlift.link_command_plan")
 M.link_execute = require("moonlift.link_execute")
 M.vec_inspect = require("moonlift.vec_inspect")
 M.region_compose = require("moonlift.region_compose")
+
+local _mlua_run = require("moonlift.mlua_run")
+local _host_mom = require("moonlift.host_mom")
+
 M.std = require("moonlift.std")
 M.views = M.std.views
 M.buffer_view = M.std.buffer_view
 M.host = M.std.host
-M.mlua = M.std.mlua
 M.lsp = require("moonlift.rpc_stdio_loop")
+
+--- Hosted-Lua pipeline (current mlua_run behavior).
+
+function M.loadstring(src, chunk_name, opts)
+    return _mlua_run.loadstring(src, chunk_name, opts)
+end
+
+function M.loadfile(path, opts)
+    return _mlua_run.loadfile(path, opts)
+end
+
+function M.dofile(path, opts, ...)
+    return _mlua_run.dofile(path, opts, ...)
+end
+
+function M.eval(src, chunk_name, ...)
+    return _mlua_run.eval(src, chunk_name, ...)
+end
+
+function M.current_runtime()
+    return _mlua_run.current_runtime()
+end
+
+--- Native (MOM) pipeline.
+
+function M.native_loadstring(src, name)
+    return _host_mom.native_loadstring(src, name)
+end
+
+function M.native_loadfile(path)
+    local f, err = io.open(path, "rb")
+    if not f then error("native_loadfile: " .. tostring(err), 2) end
+    local src = f:read("*a")
+    f:close()
+    return _host_mom.native_loadstring(src, path)
+end
+
+function M.native_dofile(path, opts, ...)
+    local call = opts and opts.call or "main"
+    local ret = opts and opts.ret or "i32"
+    local args_i32 = opts and opts.args_i32 or {}
+    local compiled = M.native_loadfile(path)
+    local ptr = compiled:get(call)
+    local ffi = require("ffi")
+    local nargs = #args_i32
+    if ret == "void" then
+        if nargs == 0 then ffi.cast("void (*)()", ptr)()
+        elseif nargs == 1 then ffi.cast("void (*)(int32_t)", ptr)(args_i32[1])
+        elseif nargs == 2 then ffi.cast("void (*)(int32_t,int32_t)", ptr)(args_i32[1], args_i32[2])
+        elseif nargs == 3 then ffi.cast("void (*)(int32_t,int32_t,int32_t)", ptr)(args_i32[1], args_i32[2], args_i32[3])
+        elseif nargs == 4 then ffi.cast("void (*)(int32_t,int32_t,int32_t,int32_t)", ptr)(args_i32[1], args_i32[2], args_i32[3], args_i32[4])
+        else error("native_dofile supports up to four i32 arguments")
+        end
+        compiled:free()
+        return
+    end
+    if ret == "i32" then
+        local fn
+        if nargs == 0 then fn = ffi.cast("int32_t (*)()", ptr)
+        elseif nargs == 1 then fn = ffi.cast("int32_t (*)(int32_t)", ptr)
+        elseif nargs == 2 then fn = ffi.cast("int32_t (*)(int32_t,int32_t)", ptr)
+        elseif nargs == 3 then fn = ffi.cast("int32_t (*)(int32_t,int32_t,int32_t)", ptr)
+        elseif nargs == 4 then fn = ffi.cast("int32_t (*)(int32_t,int32_t,int32_t,int32_t)", ptr)
+        else error("native_dofile supports up to four i32 arguments")
+        end
+        local result = fn(args_i32[1], args_i32[2], args_i32[3], args_i32[4])
+        compiled:free()
+        return tonumber(result)
+    end
+    error("native_dofile: unsupported ret type " .. tostring(ret))
+end
+
+--- Object/shared emission through the hosted (PVM) pipeline.
+
+function M.emit_object(src, path, name)
+    local _ = _mlua_run
+    local pvm = require("moonlift.pvm")
+    local A2 = require("moonlift.asdl")
+    local Parse = require("moonlift.parse")
+    local Typecheck = require("moonlift.tree_typecheck")
+    local TreeToBack = require("moonlift.tree_to_back")
+    local Validate = require("moonlift.back_validate")
+    local Object = require("moonlift.back_object")
+
+    local T = pvm.context(); A2.Define(T)
+    local P = Parse.Define(T)
+    local TC = Typecheck.Define(T)
+    local Lower = TreeToBack.Define(T)
+    local V = Validate.Define(T)
+    local O = Object.Define(T)
+
+    local parsed = P.parse_module(src)
+    if #parsed.issues ~= 0 then
+        local msgs = {}
+        for j = 1, #parsed.issues do msgs[#msgs + 1] = tostring(parsed.issues[j].message or parsed.issues[j]) end
+        error("emit_object parse failed: " .. table.concat(msgs, "\n"), 2)
+    end
+    local checked = TC.check_module(parsed.module)
+    if #checked.issues ~= 0 then
+        local msgs = {}
+        for j = 1, #checked.issues do msgs[#msgs + 1] = tostring(checked.issues[j].message or checked.issues[j]) end
+        error("emit_object typecheck failed: " .. table.concat(msgs, "\n"), 2)
+    end
+    local program = Lower.module(checked.module)
+    local report = V.validate(program)
+    if #report.issues ~= 0 then
+        local msgs = {}
+        for j = 1, #report.issues do msgs[#msgs + 1] = tostring(report.issues[j].message or report.issues[j]) end
+        error("emit_object validate failed: " .. table.concat(msgs, "\n"), 2)
+    end
+    name = name or "moonlift_object"
+    local artifact = O.compile(program, { module_name = name })
+    local bytes = artifact:bytes()
+    if path then
+        local f = assert(io.open(path, "wb"))
+        f:write(bytes)
+        f:close()
+    end
+    return bytes
+end
+
+function M.emit_shared(src, path, name, opts)
+    local _ = _mlua_run
+    local pvm = require("moonlift.pvm")
+    local A2 = require("moonlift.asdl")
+    local Parse = require("moonlift.parse")
+    local Typecheck = require("moonlift.tree_typecheck")
+    local TreeToBack = require("moonlift.tree_to_back")
+    local Validate = require("moonlift.back_validate")
+    local Object = require("moonlift.back_object")
+    local LinkTarget = require("moonlift.link_target_model")
+    local LinkValidate = require("moonlift.link_plan_validate")
+    local LinkCommand = require("moonlift.link_command_plan")
+    local LinkExecute = require("moonlift.link_execute")
+    local Link = require("moonlift.pvm").context().MoonLink or A2.Define(pvm.context()).MoonLink
+
+    local T = pvm.context(); A2.Define(T)
+    local P = Parse.Define(T)
+    local TC = Typecheck.Define(T)
+    local Lower = TreeToBack.Define(T)
+    local V = Validate.Define(T)
+    local O = Object.Define(T)
+    local LT = LinkTarget.Define(T)
+    local LV = LinkValidate.Define(T)
+    local LC = LinkCommand.Define(T)
+    local LE = LinkExecute.Define(T)
+
+    local parsed = P.parse_module(src)
+    if #parsed.issues ~= 0 then
+        local msgs = {}
+        for j = 1, #parsed.issues do msgs[#msgs + 1] = tostring(parsed.issues[j].message or parsed.issues[j]) end
+        error("emit_shared parse failed: " .. table.concat(msgs, "\n"), 2)
+    end
+    local checked = TC.check_module(parsed.module)
+    if #checked.issues ~= 0 then
+        local msgs = {}
+        for j = 1, #checked.issues do msgs[#msgs + 1] = tostring(checked.issues[j].message or checked.issues[j]) end
+        error("emit_shared typecheck failed: " .. table.concat(msgs, "\n"), 2)
+    end
+    local program = Lower.module(checked.module)
+    local report = V.validate(program)
+    if #report.issues ~= 0 then
+        local msgs = {}
+        for j = 1, #report.issues do msgs[#msgs + 1] = tostring(report.issues[j].message or report.issues[j]) end
+        error("emit_shared validate failed: " .. table.concat(msgs, "\n"), 2)
+    end
+
+    name = name or "moonlift_shared"
+    local keep_object = opts and opts.keep_object
+    local object_path = keep_object or (os.tmpname() .. ".o")
+    local object = O.compile(program, { module_name = name })
+    object:write(object_path)
+
+    local link_plan = Link.LinkPlan(
+        LT.default_object(),
+        Link.LinkArtifactSharedLibrary,
+        Link.LinkTool(Link.LinkerSystemCc, Link.LinkPath("cc")),
+        Link.LinkPath(path or "lib" .. name .. ".so"),
+        { Link.LinkInputObject(Link.LinkPath(object_path)) },
+        Link.LinkExportAll,
+        Link.LinkExternRequireResolved,
+        {}
+    )
+    local link_report = LV.validate(link_plan)
+    if #link_report.issues ~= 0 then
+        local msgs = {}
+        for j = 1, #link_report.issues do msgs[#msgs + 1] = tostring(link_report.issues[j].message or link_report.issues[j]) end
+        error("emit_shared link validation failed: " .. table.concat(msgs, "\n"), 2)
+    end
+    local commands = LC.plan(link_plan)
+    local result = LE.execute(commands)
+    if not keep_object then os.remove(object_path) end
+
+    local LinkFailed = T.MoonLink.LinkFailed
+    if pvm.classof(result) == LinkFailed then
+        error("emit_shared link failed", 2)
+    end
+    return path
+end
+
+--- Internal: backward-compatible aliases.
+
+M.host_mom = _host_mom
+
+--- Internal: CLI entry point for standalone binaries.
+
+M._mom_cli_run = function(argv)
+    return require("moonlift.mom_cli").run(argv)
+end
 
 function M.context(opts)
     return M.pvm.context(opts)

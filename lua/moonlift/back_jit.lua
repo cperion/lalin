@@ -8,7 +8,7 @@
 local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 
-ffi.cdef [[
+pcall(ffi.cdef, [[
 typedef struct moonlift_jit_t moonlift_jit_t;
 typedef struct moonlift_artifact_t moonlift_artifact_t;
 
@@ -22,7 +22,7 @@ moonlift_artifact_t* moonlift_jit_compile_binary(moonlift_jit_t*, const uint8_t*
 
 void moonlift_artifact_free(moonlift_artifact_t*);
 const void* moonlift_artifact_getpointer(const moonlift_artifact_t*, const char* func);
-]]
+]])
 
 local M = {}
 

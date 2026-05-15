@@ -180,7 +180,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     lua.globals().set("_MOM_ARGV", args_table)?;
 
     let code: i64 = lua
-        .load(r#"return require("moonlift.mom_cli").run(_MOM_ARGV)"#)
+        .load(r#"return require("moonlift")._mom_cli_run(_MOM_ARGV)"#)
         .eval()?;
     std::process::exit(code as i32);
 }

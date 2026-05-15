@@ -6,13 +6,13 @@
 local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 
-ffi.cdef [[
+pcall(ffi.cdef, [[
 typedef struct moonlift_bytes_t { uint8_t* data; size_t len; } moonlift_bytes_t;
 
 const char* moonlift_last_error_message(void);
 int moonlift_object_compile_binary(const uint8_t* data, size_t len, const char* module_name, moonlift_bytes_t* out);
 void moonlift_bytes_free(uint8_t* data, size_t len);
-]]
+]])
 
 local M = {}
 

@@ -167,19 +167,42 @@ fn init_lua(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-fn run_mlua_file(lua: &Lua, path: &str) -> mlua::Result<()> {
+fn run_mlua_file(lua: &Lua, path: &str, native: bool) -> mlua::Result<()> {
     lua.globals().set("_MOONLIFT_RUN_PATH", path)?;
+    lua.globals().set("_MOONLIFT_RUN_NATIVE", native)?;
     lua.load(
         r#"
-        local Run = require("moonlift.mlua_run")
-        local result = Run.dofile(_MOONLIFT_RUN_PATH)
-        if result ~= nil then print(result) end
+        local moon = require("moonlift")
+        if _MOONLIFT_RUN_NATIVE then
+            local result = moon.native_dofile(_MOONLIFT_RUN_PATH)
+            if result ~= nil then print(result) end
+        else
+            local result = moon.dofile(_MOONLIFT_RUN_PATH)
+            if result ~= nil then print(result) end
+        end
     "#,
     )
     .exec()
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    let mut native = false;
+    let mut file_path: Option<&str> = None;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--native" => native = true,
+            "--help" | "-h" => {
+                println!("MoonLift host — compiles and runs .mlua files.\n\nusage: moonlift [--native] file.mlua\n\n  --native    use native (MOM) pipeline instead of hosted-Lua\n\nWithout --native, uses the hosted-Lua pipeline (moon.dofile).\nWith --native, uses the native MOM pipeline (moon.native_dofile).");
+                return Ok(());
+            }
+            s if !s.starts_with('-') && file_path.is_none() => file_path = Some(s),
+            _ => eprintln!("unknown option: {}", args[i]),
+        }
+        i += 1;
+    }
+
     let lua = unsafe { Lua::unsafe_new() };
     init_lua(&lua)?;
 
@@ -189,10 +212,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     lua.load(r#"require("moonlift.mlua_run")"#).exec()?;
 
-    if let Some(path) = std::env::args().nth(1) {
-        run_mlua_file(&lua, &path)?;
-    } else {
-        println!("MoonLift host ready. usage: moonlift file.mlua");
+    if let Some(path) = file_path {
+        run_mlua_file(&lua, path, native)?;
+    } else if args.len() == 1 {
+        println!("MoonLift host ready. usage: moonlift [--native] file.mlua");
     }
 
     Ok(())
