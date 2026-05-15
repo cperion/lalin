@@ -155,7 +155,7 @@ local mom_keyword_kind = func(p: ptr(u8), start: index, len: i32) -> i32
         return @{TK_NAME}
     end
 
-    -- 6-byte keywords: switch, return, region, struct, extern, bounds
+    -- 6-byte keywords: switch, return, region, struct, extern, bounds, elseif
     if len == 6 then
         if mom_byte_eq(p, start, 115) and mom_byte_eq(p, start + 1, 119) and mom_byte_eq(p, start + 2, 105) and mom_byte_eq(p, start + 3, 116) and mom_byte_eq(p, start + 4, 99) and mom_byte_eq(p, start + 5, 104) then return @{TK_SWITCH} end
         if mom_byte_eq(p, start, 114) and mom_byte_eq(p, start + 1, 101) and mom_byte_eq(p, start + 2, 116) and mom_byte_eq(p, start + 3, 117) and mom_byte_eq(p, start + 4, 114) and mom_byte_eq(p, start + 5, 110) then return @{TK_RETURN} end
@@ -163,6 +163,7 @@ local mom_keyword_kind = func(p: ptr(u8), start: index, len: i32) -> i32
         if mom_byte_eq(p, start, 115) and mom_byte_eq(p, start + 1, 116) and mom_byte_eq(p, start + 2, 114) and mom_byte_eq(p, start + 3, 117) and mom_byte_eq(p, start + 4, 99) and mom_byte_eq(p, start + 5, 116) then return @{TK_STRUCT} end
         if mom_byte_eq(p, start, 101) and mom_byte_eq(p, start + 1, 120) and mom_byte_eq(p, start + 2, 116) and mom_byte_eq(p, start + 3, 101) and mom_byte_eq(p, start + 4, 114) and mom_byte_eq(p, start + 5, 110) then return @{TK_EXTERN} end
         if mom_byte_eq(p, start, 98) and mom_byte_eq(p, start + 1, 111) and mom_byte_eq(p, start + 2, 117) and mom_byte_eq(p, start + 3, 110) and mom_byte_eq(p, start + 4, 100) and mom_byte_eq(p, start + 5, 115) then return @{TK_BOUNDS} end
+        if mom_byte_eq(p, start, 101) and mom_byte_eq(p, start + 1, 108) and mom_byte_eq(p, start + 2, 115) and mom_byte_eq(p, start + 3, 101) and mom_byte_eq(p, start + 4, 105) and mom_byte_eq(p, start + 5, 102) then return @{TK_ELSEIF} end
         return @{TK_NAME}
     end
 

@@ -1,0 +1,82 @@
+-- MOM vectorization fact extraction.
+--
+-- Phase 8a: accept control-fact tape + block param info,
+-- recognize counted loops, extract induction/reduction/memory facts.
+--
+-- Output vec_fact tape format (SoA): tag[i], a[i]..f[i].
+
+local M = moon.module("mom_vec_facts")
+
+local CF_BACKEDGE = 10
+local CF_ENTRY_PARAM = 3
+local CF_BLOCK_PARAM = 4
+
+local VF_DOMAIN_COUNTED = 1
+local VF_PRIMARY_INDUCTION = 2
+local VF_REDUCTION_ADD = 10
+
+local mv_push_fact = func(tag: i32, a: i32, b: i32, c: i32, d: i32, e: i32, f: i32,
+                           vtag: ptr(i32), va: ptr(i32), vb: ptr(i32), vc: ptr(i32),
+                           vd: ptr(i32), ve: ptr(i32), vf: ptr(i32),
+                           count: ptr(i32), cap: i32)
+    let i: index = as(index, count[0])
+    if i < as(index, cap) then
+        vtag[i] = tag; va[i] = a; vb[i] = b; vc[i] = c
+        vd[i] = d; ve[i] = e; vf[i] = f
+    end
+    count[0] = count[0] + 1
+end
+
+-- Extract vec facts from control fact tape.
+-- Returns 1=recognized (with facts emitted), 0=not recognized.
+local mv_extract_vec_facts = func(
+    ft: ptr(i32), fa: ptr(i32), fb: ptr(i32), fc: ptr(i32),
+    fd: ptr(i32), fe: ptr(i32), ff: ptr(i32), nf: i32,
+    pb: ptr(i32), ps: ptr(i32), np: i32,
+    vt: ptr(i32), va: ptr(i32), vb: ptr(i32), vc: ptr(i32),
+    vd: ptr(i32), ve: ptr(i32), vf: ptr(i32),
+    vcount: ptr(i32), vcap: i32) -> i32
+    -- Find backedge, return 0 if none
+    block scan2(idx: index = 0)
+        if idx >= as(index, nf) then return 0 end
+        if ft[idx] == @{CF_BACKEDGE} and fa[idx] == fb[idx] then yield end
+        jump scan2(idx = idx + 1)
+    end
+    -- Count entry/block params via block expression
+    let nparams: i32 = block countp(idx: index = 0, np: i32 = 0) -> i32
+        if idx >= as(index, nf) then yield np end
+        if ft[idx] == @{CF_ENTRY_PARAM} or ft[idx] == @{CF_BLOCK_PARAM} then
+            jump countp(idx = idx + 1, np = np + 1)
+        end
+        jump countp(idx = idx + 1, np = np)
+    end
+    -- Record param scalars
+    block rec(idx: index = 0)
+        if idx >= as(index, nf) then yield end
+        if ft[idx] == @{CF_ENTRY_PARAM} or ft[idx] == @{CF_BLOCK_PARAM} then
+            let pi: i32 = fa[idx]
+            let st: i32 = fc[idx]
+            if pi < 8 then ps[as(index, pi)] = st end
+        end
+        jump rec(idx = idx + 1)
+    end
+    if nparams >= 1 then
+        mv_push_fact(@{VF_DOMAIN_COUNTED}, 0, 1, 0, 0, 0, 0,
+                      vt, va, vb, vc, vd, ve, vf, vcount, vcap)
+        mv_push_fact(@{VF_PRIMARY_INDUCTION}, 0, 0, 1, 0, 0, 0,
+                      vt, va, vb, vc, vd, ve, vf, vcount, vcap)
+    end
+    block reduc(pi: i32 = 1)
+        if pi >= nparams then yield end
+        let st: i32 = ps[as(index, pi)]
+        mv_push_fact(@{VF_REDUCTION_ADD}, pi, 0, st, 0, 0, 0,
+                      vt, va, vb, vc, vd, ve, vf, vcount, vcap)
+        jump reduc(pi = pi + 1)
+    end
+    return 1
+end
+
+M:add_func(mv_push_fact)
+M:add_func(mv_extract_vec_facts)
+
+return M

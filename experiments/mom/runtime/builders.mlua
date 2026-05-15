@@ -25,6 +25,55 @@ local MomIssueBuilder = M:struct("MomIssueBuilder", {
     moon.field("cap", moon.index),
 })
 
+local MomCmdBuffer = M:struct("MomCmdBuffer", {
+    moon.field("tag", i32p),
+    moon.field("a", i32p),
+    moon.field("b", i32p),
+    moon.field("c", i32p),
+    moon.field("d", i32p),
+    moon.field("e", i32p),
+    moon.field("f", i32p),
+    moon.field("len", moon.index),
+    moon.field("cap", moon.index),
+})
+
+local cmd_buffer_p = moon.ptr(MomCmdBuffer)
+
+local LowerState = M:struct("LowerState", {
+    moon.field("cmds", cmd_buffer_p),
+    moon.field("next_value", moon.i32),
+    moon.field("next_block", moon.i32),
+})
+
+local mr_cmd_buffer_reset = func(b: ptr(@{MomCmdBuffer}))
+    b.len = 0
+end
+
+local mr_cmd_buffer_push = func(b: ptr(@{MomCmdBuffer}), tag: i32, a: i32, bb: i32, c: i32, d: i32, e: i32, f: i32) -> index
+    let i: index = b.len
+    if i < b.cap then
+        b.tag[i] = tag
+        b.a[i] = a; b.b[i] = bb; b.c[i] = c
+        b.d[i] = d; b.e[i] = e; b.f[i] = f
+    end
+    b.len = i + as(index, 1)
+    return i
+end
+
+local mr_cmd_buffer_overflowed = func(b: ptr(@{MomCmdBuffer})) -> bool
+    return b.len > b.cap
+end
+
+local mr_fresh_value = func(st: ptr(@{LowerState})) -> i32
+    st.next_value = st.next_value + 1
+    return st.next_value
+end
+
+local mr_fresh_block = func(st: ptr(@{LowerState})) -> i32
+    st.next_block = st.next_block + 1
+    return st.next_block
+end
+
 local mr_i32_builder_reset = func(b: ptr(@{MomI32Builder}))
     b.len = 0
 end
@@ -61,6 +110,11 @@ local mr_issue_builder_overflowed = func(b: ptr(@{MomIssueBuilder})) -> bool
     return b.len > b.cap
 end
 
+M:add_func(mr_cmd_buffer_reset)
+M:add_func(mr_cmd_buffer_push)
+M:add_func(mr_cmd_buffer_overflowed)
+M:add_func(mr_fresh_value)
+M:add_func(mr_fresh_block)
 M:add_func(mr_i32_builder_reset)
 M:add_func(mr_i32_builder_push)
 M:add_func(mr_i32_builder_overflowed)

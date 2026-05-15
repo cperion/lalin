@@ -115,6 +115,53 @@ local MB_BIN_FLOAT = 2
 local MB_BIN_BIT = 3
 local MB_BIN_SHIFT = 4
 
+-- MachineCastOp tags (MoonCyclic declaration order).
+local MC_IDENTITY = 1
+local MC_BITCAST = 2
+local MC_IREDUCE = 3
+local MC_SEXTEND = 4
+local MC_UEXTEND = 5
+local MC_FPROMOTE = 6
+local MC_FDEMOTE = 7
+local MC_STOF = 8
+local MC_UTOF = 9
+local MC_FTOS = 10
+local MC_FTOU = 11
+
+-- SurfaceCastOp tags (MoonCyclic declaration order).
+local SC_SURFACE_CAST = 1
+local SC_TRUNC = 2
+local SC_ZEXT = 3
+local SC_SEXT = 4
+local SC_BITCAST = 5
+local SC_SAT_CAST = 6
+
+-- BackCastOp tags (MoonBack declaration order).
+local BACK_BITCAST = 1
+local BACK_IREDUCE = 2
+local BACK_SEXTEND = 3
+local BACK_UEXTEND = 4
+local BACK_FPROMOTE = 5
+local BACK_FDEMOTE = 6
+local BACK_STOF = 7
+local BACK_UTOF = 8
+local BACK_FTOS = 9
+local BACK_FTOU = 10
+
+-- Type union tags (MoonCyclic declaration order).
+-- Used by type_to_back_scalar and other semantic helpers.
+local TY_SCALAR = 1
+local TY_PTR = 2
+local TY_ARRAY = 3
+local TY_SLICE = 4
+local TY_VIEW = 5
+local TY_FUNC = 6
+local TY_CLOSURE = 7
+local TY_NAMED = 8
+local TY_SLOT = 9
+local TY_CTYPE = 10
+local TY_CFUNC_PTR = 11
+
 local mb_is_float_scalar = func(s: i32) -> bool
     return s == @{B_F32} or s == @{B_F64}
 end
@@ -209,6 +256,71 @@ local mb_binary_op_code = func(op: i32, scalar: i32) -> i32
     end
 end
 
+-- SurfaceCastOp → MachineCastOp. Identity (1) returns 0 (no lowering needed).
+local mb_lower_surface_cast_op = func(op: i32) -> i32
+    switch op do
+    case @{SC_SURFACE_CAST} then return @{MC_BITCAST}
+    case @{SC_TRUNC} then return @{MC_IREDUCE}
+    case @{SC_ZEXT} then return @{MC_UEXTEND}
+    case @{SC_SEXT} then return @{MC_SEXTEND}
+    case @{SC_BITCAST} then return @{MC_BITCAST}
+    case @{SC_SAT_CAST} then return @{MC_BITCAST}
+    default then return 0
+    end
+end
+
+-- MachineCastOp → BackCastOp. Identity (1) returns 0 (no backend op needed).
+local mb_lower_cast_op = func(op: i32) -> i32
+    switch op do
+    case @{MC_BITCAST} then return @{BACK_BITCAST}
+    case @{MC_IREDUCE} then return @{BACK_IREDUCE}
+    case @{MC_SEXTEND} then return @{BACK_SEXTEND}
+    case @{MC_UEXTEND} then return @{BACK_UEXTEND}
+    case @{MC_FPROMOTE} then return @{BACK_FPROMOTE}
+    case @{MC_FDEMOTE} then return @{BACK_FDEMOTE}
+    case @{MC_STOF} then return @{BACK_STOF}
+    case @{MC_UTOF} then return @{BACK_UTOF}
+    case @{MC_FTOS} then return @{BACK_FTOS}
+    case @{MC_FTOU} then return @{BACK_FTOU}
+    default then return 0
+    end
+end
+
+-- AtomicOrdering → BackAtomicOrdering. Both have one variant: SeqCst.
+local mb_lower_atomic_ordering = func(op: i32) -> i32
+    switch op do
+    case 1 then return 1   -- AtomicSeqCst → BackAtomicSeqCst
+    default then return 0
+    end
+end
+
+-- AtomicRmwOp → BackAtomicRmwOp. Both share the same declaration ordering.
+local mb_lower_atomic_rmw_op = func(op: i32) -> i32
+    switch op do
+    case 1 then return 1   -- AtomicRmwAdd → BackAtomicRmwAdd
+    case 2 then return 2   -- AtomicRmwSub → BackAtomicRmwSub
+    case 3 then return 3   -- AtomicRmwAnd → BackAtomicRmwAnd
+    case 4 then return 4   -- AtomicRmwOr  → BackAtomicRmwOr
+    case 5 then return 5   -- AtomicRmwXor → BackAtomicRmwXor
+    case 6 then return 6   -- AtomicRmwXchg → BackAtomicRmwXchg
+    default then return 0
+    end
+end
+
+-- Type union tag → BackScalar. For TScalar, the caller must extract and pass
+-- the scalar sub-tag separately since the schema stores it as a child field.
+-- Returns 0 for types with no scalar backend representation (aggregates, views,
+-- closures, slots, etc.).
+local mb_type_to_back_scalar = func(ty_tag: i32, scalar: i32) -> i32
+    switch ty_tag do
+    case @{TY_SCALAR} then return mb_core_scalar_to_back(scalar)
+    case @{TY_PTR} then return @{B_PTR}
+    case @{TY_FUNC} then return @{B_PTR}
+    case @{TY_CFUNC_PTR} then return @{B_PTR}
+    default then return 0
+    end
+end
+
 M:add_func(mb_is_float_scalar)
 M:add_func(mb_is_signed_int_scalar)
 M:add_func(mb_is_unsigned_int_scalar)
@@ -218,5 +330,10 @@ M:add_func(mb_lower_unary_op)
 M:add_func(mb_lower_compare_op)
 M:add_func(mb_binary_class)
 M:add_func(mb_binary_op_code)
+M:add_func(mb_lower_surface_cast_op)
+M:add_func(mb_lower_cast_op)
+M:add_func(mb_lower_atomic_ordering)
+M:add_func(mb_lower_atomic_rmw_op)
+M:add_func(mb_type_to_back_scalar)
 
 return M

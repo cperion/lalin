@@ -555,10 +555,16 @@ local np_parse_stmt_list = func(src: ptr(u8), kinds: ptr(i32), starts: ptr(i32),
             jump loop()
         end
 
-        if k == @{TK_IF} or k == @{TK_SWITCH} or k == @{TK_BLOCK} or k == @{TK_REGION} or k == @{TK_EMIT} then
+        if k == @{TK_IF} then
+            let st: i32 = np_parse_if(src, kinds, starts, stops, ntok, out)
+            np_push_stmt_list(out, st)
+            jump loop()
+        end
+
+        if k == @{TK_SWITCH} or k == @{TK_BLOCK} or k == @{TK_REGION} or k == @{TK_EMIT} then
             let end_i: index = np_find_nested_end(kinds, ntok, tok)
             out.state[@{S_CURSOR}] = as(i32, end_i + as(index, 1))
-            let tag: i32 = select(k == @{TK_IF}, @{ST_IF}, select(k == @{TK_SWITCH}, @{ST_SWITCH_SKIP}, select(k == @{TK_EMIT}, @{ST_EMIT_SKIP}, @{ST_CONTROL_SKIP})))
+            let tag: i32 = select(k == @{TK_SWITCH}, @{ST_SWITCH_SKIP}, select(k == @{TK_EMIT}, @{ST_EMIT_SKIP}, @{ST_CONTROL_SKIP}))
             let st: i32 = np_add_stmt(out, tag, tok, as(i32, end_i), 0, 0, 0, 0)
             np_push_stmt_list(out, st)
             jump loop()
@@ -622,6 +628,45 @@ local np_parse_param_list = func(src: ptr(u8), kinds: ptr(i32), starts: ptr(i32)
     end
     np_accept(kinds, ntok, out, @{TK_RPAREN})
     return start
+end
+
+-- Parse the body of an if/elseif statement (cursor must be at the condition).
+-- kw_tok is the token index of the 'if' or 'elseif' keyword.
+-- When is_elseif=true, the trailing 'end' is NOT consumed (caller handles it).
+-- Returns ST_IF stmt index with: a=cond, b=then_start, c=then_count,
+-- d=else_start (-1 if none), e=else_count.
+-- Elseif is desugared to a nested if inside the else body.
+local np_parse_if_after_kw = func(src: ptr(u8), kinds: ptr(i32), starts: ptr(i32), stops: ptr(i32), ntok: index, out: ptr(@{NativeParseOut}), kw_tok: index, is_elseif: bool) -> i32
+    let cond: i32 = np_parse_expr(src, kinds, starts, stops, ntok, out, 0)
+    np_accept(kinds, ntok, out, @{TK_THEN})
+    let then_start: i32 = out.state[@{S_SLISTS}]
+    np_parse_stmt_list(src, kinds, starts, stops, ntok, out, true, false, true)
+    let then_count: i32 = out.state[@{S_SLISTS}] - then_start
+    var else_start: i32 = -1
+    var else_count: i32 = 0
+    if np_peek(kinds, ntok, out) == @{TK_ELSEIF} then
+        np_advance(ntok, out)
+        let es: index = as(index, out.state[@{S_SLISTS}])
+        let inner_kw: index = as(index, out.state[@{S_CURSOR}]) - as(index, 1)
+        let inner: i32 = np_parse_if_after_kw(src, kinds, starts, stops, ntok, out, inner_kw, true)
+        np_push_stmt_list(out, inner)
+        else_start = as(i32, es)
+        else_count = 1
+    elseif np_accept(kinds, ntok, out, @{TK_ELSE}) then
+        else_start = out.state[@{S_SLISTS}]
+        np_parse_stmt_list(src, kinds, starts, stops, ntok, out, false, false, true)
+        else_count = out.state[@{S_SLISTS}] - else_start
+    end
+    if not is_elseif then np_accept(kinds, ntok, out, @{TK_END}) end
+    return np_add_stmt(out, @{ST_IF}, kw_tok, cond, then_start, then_count, else_start, else_count)
+end
+
+-- Parse a complete if statement (cursor at TK_IF). Consumes 'if' keyword,
+-- delegates to np_parse_if_after_kw. Always consumes 'end'.
+local np_parse_if = func(src: ptr(u8), kinds: ptr(i32), starts: ptr(i32), stops: ptr(i32), ntok: index, out: ptr(@{NativeParseOut})) -> i32
+    let tok: index = as(index, out.state[@{S_CURSOR}])
+    np_advance(ntok, out)
+    return np_parse_if_after_kw(src, kinds, starts, stops, ntok, out, tok, false)
 end
 
 local np_find_simple_end = func(kinds: ptr(i32), ntok: index, i0: index) -> index
@@ -770,6 +815,8 @@ M:add_func(np_stop_stmt)
 M:add_func(np_parse_stmt_list)
 M:add_func(np_parse_param_list)
 M:add_func(np_find_simple_end)
+M:add_func(np_parse_if_after_kw)
+M:add_func(np_parse_if)
 M:add_func(np_parse_decl)
 M:add_func(mom_parse_native_core)
 

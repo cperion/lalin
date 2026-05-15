@@ -149,7 +149,7 @@ Allocation belongs in runtime/arena/driver modules, not in phase logic.
 Existing native MOM modules:
 
 | File | Role |
-|---|---|
+|---|---|---|
 | `runtime/builders.mlua` | allocation-free typed builders |
 | `runtime/sets.mlua` | allocation-free integer maps for symbol/fact ids |
 | `back/ids.mlua` | backend id allocator core |
@@ -157,6 +157,10 @@ Existing native MOM modules:
 | `back/ops.mlua` | pure backend op/scalar selection helpers |
 | `parser/native_lexer.mlua` | native lexer and parse-event scanner |
 | `parser/native_core.mlua` | native AST tape parser core |
+| `vec/vec_facts.mlua` | Phase 8a: loop recognition → VecFact tape |
+| `vec/vec_decide.mlua` | Phase 8b: VecFact → legal/illegal decision |
+| `vec/vec_plan.mlua` | Phase 8c: decision → VecKernelPlan |
+| `vec/vec_lower.mlua` | Phase 8d: plan → BackCmd vector blocks |
 
 Verification harness code:
 
@@ -176,6 +180,7 @@ luajit experiments/mom/test_native_lexer.mlua
 luajit experiments/mom/test_native_core.lua
 luajit experiments/mom/test_native_ast.lua
 luajit experiments/mom/check_correctness.mlua
+luajit experiments/mom/test_vec.lua
 ```
 
 Regression for region-id collision:

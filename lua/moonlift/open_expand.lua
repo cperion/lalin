@@ -295,6 +295,15 @@ function M.Define(T)
         return out
     end
 
+    local function expand_switch_key(key, env)
+        local Sem = T.MoonSem
+        if pvm.classof(key) == Sem.SwitchKeyExpr then
+            local expanded = one(expand_expr, key.expr, env)
+            return Sem.SwitchKeyExpr(expanded)
+        end
+        return key
+    end
+
     local function expand_switch_stmt_arms(xs, env)
         local out = {}
         for i = 1, #xs do
@@ -304,11 +313,11 @@ function M.Define(T)
                 if #values == 1 and pvm.classof(values[1]) == O.SlotValueSwitchStmtArms then
                     for j = 1, #values[1].arms do
                         local a = values[1].arms[j]
-                        out[#out + 1] = pvm.with(a, { body = expand_stmts(a.body, env) })
+                        out[#out + 1] = pvm.with(a, { key = expand_switch_key(a.key, env), body = expand_stmts(a.body, env) })
                     end
                 end
             else
-                out[#out + 1] = pvm.with(xs[i], { body = expand_stmts(xs[i].body, env) })
+                out[#out + 1] = pvm.with(xs[i], { key = expand_switch_key(xs[i].key, env), body = expand_stmts(xs[i].body, env) })
             end
         end
         return out
@@ -323,11 +332,11 @@ function M.Define(T)
                 if #values == 1 and pvm.classof(values[1]) == O.SlotValueSwitchExprArms then
                     for j = 1, #values[1].arms do
                         local a = values[1].arms[j]
-                        out[#out + 1] = pvm.with(a, { body = expand_stmts(a.body, env), result = one(expand_expr, a.result, env) })
+                        out[#out + 1] = pvm.with(a, { key = expand_switch_key(a.key, env), body = expand_stmts(a.body, env), result = one(expand_expr, a.result, env) })
                     end
                 end
             else
-                out[#out + 1] = pvm.with(xs[i], { body = expand_stmts(xs[i].body, env), result = one(expand_expr, xs[i].result, env) })
+                out[#out + 1] = pvm.with(xs[i], { key = expand_switch_key(xs[i].key, env), body = expand_stmts(xs[i].body, env), result = one(expand_expr, xs[i].result, env) })
             end
         end
         return out

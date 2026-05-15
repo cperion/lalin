@@ -1,0 +1,345 @@
+-- MOM backend command-producing functions.
+--
+-- Phase 3: pure functions that construct Cmd variant entries. Each takes raw
+-- op/scalar/value ID parameters and fills a CmdEntry output struct. Callers
+-- (Phase 4 expression regions) append the entry to a CmdBuffer.
+--
+-- Field layout for CmdEntry (tag + 6 data fields a-f):
+--   CmdIntBinary:   a=dst b=op c=scalar d=sem(e<<16|o) e=lhs f=rhs
+--   CmdFloatBinary: a=dst b=op c=scalar d=sem      e=lhs f=rhs
+--   CmdBitBinary:   a=dst b=op c=scalar d=lhs      e=rhs f=0
+--   CmdShift:       a=dst b=op c=scalar d=lhs      e=rhs f=0
+--   CmdUnary:       a=dst b=op c=shape_tag d=scalar e=value f=0
+--   CmdCompare:     a=dst b=op c=shape_tag d=scalar e=lhs  f=rhs
+--   CmdCast:        a=dst b=back_cast_op c=scalar d=value  e=0    f=0
+--   CmdTrap:        a=0 b=0 c=0 d=0 e=0 f=0
+
+local M = moon.module("mom_back_cmd")
+
+local i32p = moon.ptr(moon.i32)
+
+local CmdEntry = M:struct("CmdEntry", {
+    moon.field("tag", moon.i32),
+    moon.field("a", moon.i32),
+    moon.field("b", moon.i32),
+    moon.field("c", moon.i32),
+    moon.field("d", moon.i32),
+    moon.field("e", moon.i32),
+    moon.field("f", moon.i32),
+})
+
+-- Cmd variant tags (from MoonBack schema declaration order).
+local CMD_UNARY = 21
+local CMD_COMPARE = 23
+local CMD_CAST = 24
+local CMD_INT_BINARY = 33
+local CMD_BIT_BINARY = 34
+local CMD_BIT_NOT = 35
+local CMD_SHIFT = 36
+local CMD_ROTATE = 37
+local CMD_FLOAT_BINARY = 38
+local CMD_SELECT = 42
+local CMD_TRAP = 57
+
+-- Core Scalar tags (mirror back/ops.mlua).
+local B_F32 = 11
+local B_F64 = 12
+local B_I8 = 3
+local B_I16 = 4
+local B_I32 = 5
+local B_I64 = 6
+local B_U8 = 7
+local B_U16 = 8
+local B_U32 = 9
+local B_U64 = 10
+local B_INDEX = 14
+
+-- Core binary op tags.
+local BIN_ADD = 1
+local BIN_SUB = 2
+local BIN_MUL = 3
+local BIN_DIV = 4
+local BIN_REM = 5
+local BIN_BIT_AND = 6
+local BIN_BIT_OR = 7
+local BIN_BIT_XOR = 8
+local BIN_SHL = 9
+local BIN_LSHR = 10
+local BIN_ASHR = 11
+
+-- Core compare op tags.
+local CMP_EQ = 1
+local CMP_NE = 2
+local CMP_LT = 3
+local CMP_LE = 4
+local CMP_GT = 5
+local CMP_GE = 6
+
+-- Core unary op tags.
+local U_NEG = 1
+local U_NOT = 2
+local U_BIT_NOT = 3
+
+-- MachineCastOp tags.
+local MC_IDENTITY = 1
+local MC_BITCAST = 2
+local MC_IREDUCE = 3
+local MC_SEXTEND = 4
+local MC_UEXTEND = 5
+local MC_FPROMOTE = 6
+local MC_FDEMOTE = 7
+local MC_STOF = 8
+local MC_UTOF = 9
+local MC_FTOS = 10
+local MC_FTOU = 11
+
+-- Back op tags.
+local BACK_INT_ADD = 1
+local BACK_INT_SUB = 2
+local BACK_INT_MUL = 3
+local BACK_INT_SDIV = 4
+local BACK_INT_UDIV = 5
+local BACK_INT_SREM = 6
+local BACK_INT_UREM = 7
+
+local BACK_BIT_AND = 1
+local BACK_BIT_OR = 2
+local BACK_BIT_XOR = 3
+
+local BACK_SHIFT_LEFT = 1
+local BACK_SHIFT_LOGICAL_RIGHT = 2
+local BACK_SHIFT_ARITHMETIC_RIGHT = 3
+
+local BACK_FLOAT_ADD = 1
+local BACK_FLOAT_SUB = 2
+local BACK_FLOAT_MUL = 3
+local BACK_FLOAT_DIV = 4
+
+local BACK_UNARY_INEG = 1
+local BACK_UNARY_FNEG = 2
+local BACK_UNARY_BNOT = 3
+local BACK_UNARY_BOOL_NOT = 4
+
+local BACK_ICMP_EQ = 1
+local BACK_ICMP_NE = 2
+local BACK_SICMP_LT = 3
+local BACK_SICMP_LE = 4
+local BACK_SICMP_GT = 5
+local BACK_SICMP_GE = 6
+local BACK_UICMP_LT = 7
+local BACK_UICMP_LE = 8
+local BACK_UICMP_GT = 9
+local BACK_UICMP_GE = 10
+local BACK_FCMP_EQ = 11
+local BACK_FCMP_NE = 12
+local BACK_FCMP_LT = 13
+local BACK_FCMP_LE = 14
+local BACK_FCMP_GT = 15
+local BACK_FCMP_GE = 16
+
+local BACK_BITCAST = 1
+local BACK_IREDUCE = 2
+local BACK_SEXTEND = 3
+local BACK_UEXTEND = 4
+local BACK_FPROMOTE = 5
+local BACK_FDEMOTE = 6
+local BACK_STOF = 7
+local BACK_UTOF = 8
+local BACK_FTOS = 9
+local BACK_FTOU = 10
+
+-- BackShape tags.
+local BACK_SHAPE_SCALAR = 1
+local BACK_SHAPE_VEC = 2
+
+-- Helpers.
+local mb_is_float = func(s: i32) -> bool
+    return s == @{B_F32} or s == @{B_F64}
+end
+
+local mb_is_signed = func(s: i32) -> bool
+    return s == @{B_I8} or s == @{B_I16} or s == @{B_I32} or s == @{B_I64}
+end
+
+local mb_is_unsigned = func(s: i32) -> bool
+    return s == @{B_U8} or s == @{B_U16} or s == @{B_U32} or s == @{B_U64} or s == @{B_INDEX}
+end
+
+-- Clear a CmdEntry to CmdTrap (zeroed).
+local mb_cmd_trap = func(out: ptr(@{CmdEntry}))
+    out.tag = @{CMD_TRAP}
+    out.a = 0; out.b = 0; out.c = 0
+    out.d = 0; out.e = 0; out.f = 0
+end
+
+-- Fill a CmdEntry for CmdIntBinary.
+local mb_cmd_int_binary = func(out: ptr(@{CmdEntry}), dst: i32, op: i32, scalar: i32, sem_packed: i32, lhs: i32, rhs: i32)
+    out.tag = @{CMD_INT_BINARY}
+    out.a = dst; out.b = op; out.c = scalar; out.d = sem_packed; out.e = lhs; out.f = rhs
+end
+
+-- Fill a CmdEntry for CmdFloatBinary.
+local mb_cmd_float_binary = func(out: ptr(@{CmdEntry}), dst: i32, op: i32, scalar: i32, sem_packed: i32, lhs: i32, rhs: i32)
+    out.tag = @{CMD_FLOAT_BINARY}
+    out.a = dst; out.b = op; out.c = scalar; out.d = sem_packed; out.e = lhs; out.f = rhs
+end
+
+-- Fill a CmdEntry for CmdBitBinary.
+local mb_cmd_bit_binary = func(out: ptr(@{CmdEntry}), dst: i32, op: i32, scalar: i32, lhs: i32, rhs: i32)
+    out.tag = @{CMD_BIT_BINARY}
+    out.a = dst; out.b = op; out.c = scalar; out.d = lhs; out.e = rhs; out.f = 0
+end
+
+-- Fill a CmdEntry for CmdShift.
+local mb_cmd_shift = func(out: ptr(@{CmdEntry}), dst: i32, op: i32, scalar: i32, lhs: i32, rhs: i32)
+    out.tag = @{CMD_SHIFT}
+    out.a = dst; out.b = op; out.c = scalar; out.d = lhs; out.e = rhs; out.f = 0
+end
+
+-- Fill a CmdEntry for CmdUnary.
+local mb_cmd_unary = func(out: ptr(@{CmdEntry}), dst: i32, op: i32, shape_tag: i32, scalar: i32, value: i32)
+    out.tag = @{CMD_UNARY}
+    out.a = dst; out.b = op; out.c = shape_tag; out.d = scalar; out.e = value; out.f = 0
+end
+
+-- Fill a CmdEntry for CmdCompare.
+local mb_cmd_compare = func(out: ptr(@{CmdEntry}), dst: i32, op: i32, shape_tag: i32, scalar: i32, lhs: i32, rhs: i32)
+    out.tag = @{CMD_COMPARE}
+    out.a = dst; out.b = op; out.c = shape_tag; out.d = scalar; out.e = lhs; out.f = rhs
+end
+
+-- Fill a CmdEntry for CmdCast.
+local mb_cmd_cast = func(out: ptr(@{CmdEntry}), dst: i32, op: i32, scalar: i32, value: i32)
+    out.tag = @{CMD_CAST}
+    out.a = dst; out.b = op; out.c = scalar; out.d = value; out.e = 0; out.f = 0
+end
+
+-- Lower a binary operation to the appropriate Cmd variant.
+-- op: Core BinaryOp tag. sem_packed: (exact << 16) | overflow.
+local mb_lower_binary = func(op: i32, scalar: i32, dst: i32, lhs: i32, rhs: i32, sem_packed: i32, out: ptr(@{CmdEntry}))
+    let is_float: bool = mb_is_float(scalar)
+    switch op do
+    case @{BIN_ADD} then
+        if is_float then
+            mb_cmd_float_binary(out, dst, @{BACK_FLOAT_ADD}, scalar, 1, lhs, rhs)
+            return
+        end
+        mb_cmd_int_binary(out, dst, @{BACK_INT_ADD}, scalar, sem_packed, lhs, rhs)
+    case @{BIN_SUB} then
+        if is_float then
+            mb_cmd_float_binary(out, dst, @{BACK_FLOAT_SUB}, scalar, 1, lhs, rhs)
+            return
+        end
+        mb_cmd_int_binary(out, dst, @{BACK_INT_SUB}, scalar, sem_packed, lhs, rhs)
+    case @{BIN_MUL} then
+        if is_float then
+            mb_cmd_float_binary(out, dst, @{BACK_FLOAT_MUL}, scalar, 1, lhs, rhs)
+            return
+        end
+        mb_cmd_int_binary(out, dst, @{BACK_INT_MUL}, scalar, sem_packed, lhs, rhs)
+    case @{BIN_DIV} then
+        if is_float then
+            mb_cmd_float_binary(out, dst, @{BACK_FLOAT_DIV}, scalar, 1, lhs, rhs)
+            return
+        end
+        mb_cmd_int_binary(out, dst, @{BACK_INT_SDIV}, scalar, sem_packed, lhs, rhs)
+    case @{BIN_REM} then
+        mb_cmd_int_binary(out, dst, @{BACK_INT_SREM}, scalar, sem_packed, lhs, rhs)
+    case @{BIN_BIT_AND} then
+        mb_cmd_bit_binary(out, dst, @{BACK_BIT_AND}, scalar, lhs, rhs)
+    case @{BIN_BIT_OR} then
+        mb_cmd_bit_binary(out, dst, @{BACK_BIT_OR}, scalar, lhs, rhs)
+    case @{BIN_BIT_XOR} then
+        mb_cmd_bit_binary(out, dst, @{BACK_BIT_XOR}, scalar, lhs, rhs)
+    case @{BIN_SHL} then
+        mb_cmd_shift(out, dst, @{BACK_SHIFT_LEFT}, scalar, lhs, rhs)
+    case @{BIN_LSHR} then
+        mb_cmd_shift(out, dst, @{BACK_SHIFT_LOGICAL_RIGHT}, scalar, lhs, rhs)
+    case @{BIN_ASHR} then
+        mb_cmd_shift(out, dst, @{BACK_SHIFT_ARITHMETIC_RIGHT}, scalar, lhs, rhs)
+    default then
+        mb_cmd_trap(out)
+    end
+end
+
+-- Lower a unary operation to CmdUnary.
+-- op: Core UnaryOp tag. shape_tag=1 for scalar shape.
+local mb_lower_unary_cmd = func(op: i32, scalar: i32, dst: i32, value: i32, shape_tag: i32, out: ptr(@{CmdEntry}))
+    switch op do
+    case @{U_NEG} then
+        let back_op: i32 = select(mb_is_float(scalar), @{BACK_UNARY_FNEG}, @{BACK_UNARY_INEG})
+        mb_cmd_unary(out, dst, back_op, shape_tag, scalar, value)
+    case @{U_NOT} then
+        mb_cmd_unary(out, dst, @{BACK_UNARY_BOOL_NOT}, shape_tag, scalar, value)
+    case @{U_BIT_NOT} then
+        mb_cmd_unary(out, dst, @{BACK_UNARY_BNOT}, shape_tag, scalar, value)
+    default then
+        mb_cmd_trap(out)
+    end
+end
+
+-- Lower a compare operation to CmdCompare.
+-- Handles signed-int, unsigned-int, and float comparisons correctly.
+local mb_lower_compare = func(op: i32, scalar: i32, dst: i32, lhs: i32, rhs: i32, shape_tag: i32, out: ptr(@{CmdEntry}))
+    let is_float: bool = mb_is_float(scalar)
+    let is_signed: bool = mb_is_signed(scalar)
+    switch op do
+    case @{CMP_EQ} then
+        let back_op: i32 = select(is_float, @{BACK_FCMP_EQ}, @{BACK_ICMP_EQ})
+        mb_cmd_compare(out, dst, back_op, shape_tag, scalar, lhs, rhs)
+    case @{CMP_NE} then
+        let back_op: i32 = select(is_float, @{BACK_FCMP_NE}, @{BACK_ICMP_NE})
+        mb_cmd_compare(out, dst, back_op, shape_tag, scalar, lhs, rhs)
+    case @{CMP_LT} then
+        let back_op: i32 = select(is_float, @{BACK_FCMP_LT}, select(is_signed, @{BACK_SICMP_LT}, @{BACK_UICMP_LT}))
+        mb_cmd_compare(out, dst, back_op, shape_tag, scalar, lhs, rhs)
+    case @{CMP_LE} then
+        let back_op: i32 = select(is_float, @{BACK_FCMP_LE}, select(is_signed, @{BACK_SICMP_LE}, @{BACK_UICMP_LE}))
+        mb_cmd_compare(out, dst, back_op, shape_tag, scalar, lhs, rhs)
+    case @{CMP_GT} then
+        let back_op: i32 = select(is_float, @{BACK_FCMP_GT}, select(is_signed, @{BACK_SICMP_GT}, @{BACK_UICMP_GT}))
+        mb_cmd_compare(out, dst, back_op, shape_tag, scalar, lhs, rhs)
+    case @{CMP_GE} then
+        let back_op: i32 = select(is_float, @{BACK_FCMP_GE}, select(is_signed, @{BACK_SICMP_GE}, @{BACK_UICMP_GE}))
+        mb_cmd_compare(out, dst, back_op, shape_tag, scalar, lhs, rhs)
+    default then
+        mb_cmd_trap(out)
+    end
+end
+
+-- Lower a MachineCastOp to CmdCast. cast_op is MachineCastOp tag (not BackCastOp).
+local mb_lower_cast_cmd = func(cast_op: i32, scalar: i32, dst: i32, value: i32, out: ptr(@{CmdEntry}))
+    switch cast_op do
+    case @{MC_BITCAST} then mb_cmd_cast(out, dst, @{BACK_BITCAST}, scalar, value)
+    case @{MC_IREDUCE} then mb_cmd_cast(out, dst, @{BACK_IREDUCE}, scalar, value)
+    case @{MC_SEXTEND} then mb_cmd_cast(out, dst, @{BACK_SEXTEND}, scalar, value)
+    case @{MC_UEXTEND} then mb_cmd_cast(out, dst, @{BACK_UEXTEND}, scalar, value)
+    case @{MC_FPROMOTE} then mb_cmd_cast(out, dst, @{BACK_FPROMOTE}, scalar, value)
+    case @{MC_FDEMOTE} then mb_cmd_cast(out, dst, @{BACK_FDEMOTE}, scalar, value)
+    case @{MC_STOF} then mb_cmd_cast(out, dst, @{BACK_STOF}, scalar, value)
+    case @{MC_UTOF} then mb_cmd_cast(out, dst, @{BACK_UTOF}, scalar, value)
+    case @{MC_FTOS} then mb_cmd_cast(out, dst, @{BACK_FTOS}, scalar, value)
+    case @{MC_FTOU} then mb_cmd_cast(out, dst, @{BACK_FTOU}, scalar, value)
+    default then mb_cmd_trap(out)
+    end
+end
+
+-- Internal helpers must be registered via M:add_func so the typechecker
+-- can resolve them when called from other functions in the same module.
+M:add_func(mb_is_float)
+M:add_func(mb_is_signed)
+M:add_func(mb_is_unsigned)
+M:add_func(mb_cmd_trap)
+M:add_func(mb_cmd_int_binary)
+M:add_func(mb_cmd_float_binary)
+M:add_func(mb_cmd_bit_binary)
+M:add_func(mb_cmd_shift)
+M:add_func(mb_cmd_unary)
+M:add_func(mb_cmd_compare)
+M:add_func(mb_cmd_cast)
+M:add_func(mb_lower_binary)
+M:add_func(mb_lower_unary_cmd)
+M:add_func(mb_lower_compare)
+M:add_func(mb_lower_cast_cmd)
+
+return M
