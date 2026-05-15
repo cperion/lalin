@@ -47,6 +47,7 @@ local TK = {
     as_kw      = 170,
     struct_kw  = 180,
     union_kw   = 181,
+    extern_kw  = 182,
 }
 
 local keywords = {
@@ -74,6 +75,7 @@ local keywords = {
     ["as"]       = TK.as_kw,
     ["struct"]   = TK.struct_kw,
     ["union"]    = TK.union_kw,
+    ["extern"]   = TK.extern_kw,
 }
 
 local token_label = {
@@ -512,6 +514,23 @@ function Parser:expect_name(msg)
     return ""
 end
 
+function Parser:expect_string(msg)
+    if self:kind() == TK.string then
+        local text = self:text(); self.i = self.i + 1
+        local loader = loadstring or load
+        local fn, err = loader("return " .. text)
+        if fn then
+            local ok, value = pcall(fn)
+            if ok and type(value) == "string" then return value end
+        end
+        self:issue("invalid string literal" .. (err and (": " .. tostring(err)) or ""))
+        return ""
+    end
+    self:issue((msg or "expected string literal") .. ", got " .. self:token_desc(0))
+    if self:kind() == TK.invalid then self.i = self.i + 1 end
+    return ""
+end
+
 -- Identifier keywords (can be used as field names etc.)
 local ident_kw = {
     [TK.func_kw]=true,
@@ -527,6 +546,7 @@ local ident_kw = {
     [TK.len_kw]=true, [TK.same_len_kw]=true, [TK.window_bounds_kw]=true, [TK.as_kw]=true,
     [TK.struct_kw]=true,
     [TK.union_kw]=true,
+    [TK.extern_kw]=true,
 }
 
 function Parser:expect_field_name(msg)
@@ -1372,6 +1392,22 @@ end
 -- Top-level declaration parsing
 ---------------------------------------------------------------------------
 
+function Parser:parse_extern()
+    local Tr, Ty, C = self.Tr, self.Ty, self.C
+    local name = self:name_or_hint_before_lparen("expected extern function name")
+    self:expect(TK.lparen); local params, _ = self:parse_param_list(); self:expect(TK.rparen)
+    local result = Ty.TScalar(C.ScalarVoid)
+    if self:accept(TK.arrow) then self:skip_nl(); result = self:parse_type() end
+    local symbol = name
+    if self:accept(TK.as_kw) then
+        self:skip_nl()
+        symbol = self:expect_string("expected extern symbol string")
+    end
+    self:skip_nl()
+    self:expect(TK.end_kw, "expected end after extern declaration")
+    return Tr.ExternFunc(name, symbol, params, result)
+end
+
 function Parser:parse_func()
     local Tr, Ty, C = self.Tr, self.Ty, self.C
     local name = self:name_or_hint_before_lparen("expected function name")
@@ -1808,11 +1844,13 @@ local function tokenize_island(src, island_kind, start_byte, toks)
     -- the initial keyword sets depth=1, and its matching `end` brings depth to 0.
     -- Remove it from end_open entirely so it doesn't count as an opener.
     local start_kw = ({ ["func"]=TK.func_kw, ["region"]=TK.region_kw, ["expr"]=TK.expr_kw,
-                          ["struct"]=TK.struct_kw, ["union"]=TK.union_kw })[island_kind]
-    end_open[start_kw] = nil
-    -- struct and union islands have no internal nesting constructs, and their
-    -- field/variant names may reuse control keywords such as `block`/`yield`.
-    if island_kind == "struct" or island_kind == "union" then end_open = {} end
+                          ["struct"]=TK.struct_kw, ["union"]=TK.union_kw,
+                          ["extern"]=TK.extern_kw })[island_kind]
+    if start_kw then end_open[start_kw] = nil end
+    -- struct/union/extern islands only terminate at their own `end`.
+    -- Field/variant/parameter names may reuse control keywords such as
+    -- `block`/`yield`, so don't treat nested control keywords as island nesting.
+    if island_kind == "struct" or island_kind == "union" or island_kind == "extern" then end_open = {} end
     local depth = 1
 
     while i <= n and depth > 0 do
@@ -1991,7 +2029,7 @@ function M.scan_document(src)
 
     local island_kind_map = {
         ["func"] = "func", ["region"] = "region", ["expr"] = "expr",
-        ["struct"] = "struct", ["union"] = "union",
+        ["struct"] = "struct", ["union"] = "union", ["extern"] = "extern",
     }
 
     while i <= n do
@@ -2106,6 +2144,9 @@ function M.parse_island(T, scan, island_index, opts)
     elseif island.kind == "union" then
         p:expect(TK.union_kw)
         value = p:parse_union_island()
+    elseif island.kind == "extern" then
+        p:expect(TK.extern_kw)
+        value = p:parse_extern()
     else
         error("unsupported island kind: " .. tostring(island.kind), 2)
     end
@@ -2165,6 +2206,8 @@ function M.parse_module_document(T, src, opts)
             items[#items + 1] = Tr.ItemFunc(func)
         elseif parsed.kind == "struct" or parsed.kind == "union" then
             items[#items + 1] = Tr.ItemType(parsed.value.decl)
+        elseif parsed.kind == "extern" then
+            items[#items + 1] = Tr.ItemExtern(parsed.value)
         end
     end
     return {

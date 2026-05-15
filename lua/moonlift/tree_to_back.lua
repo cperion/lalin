@@ -1738,16 +1738,16 @@ function M.Define(T)
     local function lower_extern_direct(func_node)
         local cls = pvm.classof(func_node)
         if cls == Tr.ExternFunc then
-            local sig = Back.BackSigId("sig:extern:" .. func_node.name)
+            local sig = Back.BackSigId("sig:extern:" .. func_node.symbol)
             local ps, rs = func_sig(func_node.params, func_node.result)
-            return Tr.TreeBackItemResult({ Back.CmdCreateSig(sig, ps, rs), Back.CmdDeclareExtern(Back.BackExternId(func_node.name), func_node.symbol, sig) })
+            return Tr.TreeBackItemResult({ Back.CmdCreateSig(sig, ps, rs), Back.CmdDeclareExtern(Back.BackExternId(func_node.symbol), func_node.symbol, sig) })
         end
         if cls == Tr.ExternFuncOpen then
-            local sig = Back.BackSigId("sig:extern:" .. func_node.sym.name)
+            local sig = Back.BackSigId("sig:extern:" .. func_node.sym.symbol)
             local result_scalar = back_scalar(func_node.result)
             local rs = {}
             if result_scalar ~= nil and result_scalar ~= Back.BackVoid then rs[#rs + 1] = result_scalar end
-            return Tr.TreeBackItemResult({ Back.CmdCreateSig(sig, {}, rs), Back.CmdDeclareExtern(Back.BackExternId(func_node.sym.name), func_node.sym.symbol, sig) })
+            return Tr.TreeBackItemResult({ Back.CmdCreateSig(sig, {}, rs), Back.CmdDeclareExtern(Back.BackExternId(func_node.sym.symbol), func_node.sym.symbol, sig) })
         end
         return Tr.TreeBackItemResult({})
     end

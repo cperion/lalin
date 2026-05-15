@@ -207,12 +207,14 @@ end
 -- Dependency tracking
 ---------------------------------------------------------------------------
 
-local function empty_deps() return { type_decls = {}, region_frags = {}, expr_frags = {} } end
+local function empty_deps() return { type_decls = {}, extern_funcs = {}, region_frags = {}, expr_frags = {} } end
 
 local function merge_deps(a, b)
-    local out = { type_decls = {}, region_frags = {}, expr_frags = {} }
+    local out = { type_decls = {}, extern_funcs = {}, region_frags = {}, expr_frags = {} }
     for _, v in ipairs(a.type_decls or {}) do out.type_decls[#out.type_decls + 1] = v end
     for _, v in ipairs(b.type_decls or {}) do out.type_decls[#out.type_decls + 1] = v end
+    for _, v in ipairs(a.extern_funcs or {}) do out.extern_funcs[#out.extern_funcs + 1] = v end
+    for _, v in ipairs(b.extern_funcs or {}) do out.extern_funcs[#out.extern_funcs + 1] = v end
     for _, v in ipairs(a.region_frags or {}) do out.region_frags[#out.region_frags + 1] = v end
     for _, v in ipairs(b.region_frags or {}) do out.region_frags[#out.region_frags + 1] = v end
     for _, v in ipairs(a.expr_frags or {}) do out.expr_frags[#out.expr_frags + 1] = v end
@@ -226,6 +228,14 @@ local function deps_of(value)
     local d = deps_of_value[value]
     if d then return d end
     return empty_deps()
+end
+
+local function extern_deps_from_runtime(runtime)
+    local out = empty_deps()
+    if runtime and runtime.extern_funcs then
+        for _, value in pairs(runtime.extern_funcs) do out.extern_funcs[#out.extern_funcs + 1] = value end
+    end
+    return out
 end
 
 local function collect_closure_deps(luamap)
@@ -251,9 +261,13 @@ end
 local function internal_module_for_func(T, func, deps, name)
     local Tr = T.MoonTree
     local items = {}
-    -- Add type deps as ItemType
+    -- Add dependencies before the function so direct references typecheck/lower.
     for _, td in ipairs(deps.type_decls or {}) do
         items[#items + 1] = Tr.ItemType(td.decl)
+    end
+    for _, ex in ipairs(deps.extern_funcs or {}) do
+        local item = ex.item or (ex.func and Tr.ItemExtern(ex.func)) or ex
+        items[#items + 1] = item
     end
     items[#items + 1] = Tr.ItemFunc(func)
     return Tr.Module(Tr.ModuleSurface, items)
@@ -453,7 +467,7 @@ function Runtime:eval_island(island_index, closures)
     elseif parsed.kind == "func" then
         -- Expand by wrapping in internal module
         local Tr = T.MoonTree
-        local deps = merge_deps(closure_deps, deps_of(self))
+        local deps = merge_deps(merge_deps(closure_deps, deps_of(self)), extern_deps_from_runtime(self))
         local raw_mod = internal_module_for_func(T, parsed.value, deps, parsed.value.name)
         local ok_mod, expanded_mod_or_err = pcall(Expand.expand_module, raw_mod, env)
         if not ok_mod then phase_fail("expand_func", expanded_mod_or_err) end
@@ -504,6 +518,54 @@ function Runtime:eval_island(island_index, closures)
             runtime = self,
         }, FuncValue)
         track_deps(value, deps)
+        return value
+
+    elseif parsed.kind == "extern" then
+        local Tr = T.MoonTree
+        local raw_mod = Tr.Module(Tr.ModuleSurface, { Tr.ItemExtern(parsed.value) })
+        local ok_mod, expanded_mod_or_err = pcall(Expand.expand_module, raw_mod, env)
+        if not ok_mod then phase_fail("expand_extern", expanded_mod_or_err) end
+
+        local expanded_extern
+        for i = 1, #expanded_mod_or_err.items do
+            if pvm.classof(expanded_mod_or_err.items[i]) == Tr.ItemExtern then
+                expanded_extern = expanded_mod_or_err.items[i].func
+                break
+            end
+        end
+        if not expanded_extern then
+            error(format_report({
+                phase = "expand_extern",
+                file = self.chunk_name,
+                island_index = ctx.island_index,
+                island_kind = ctx.island_kind,
+                src_line = ctx.src_line,
+                src_col = ctx.src_col,
+                message = "extern island did not produce an extern function after expansion",
+                snippet = render_snippet(self.src, self.line_starts, ctx.src_line, 2),
+            }), 0)
+        end
+
+        local api = self.session:api()
+        local func_params = {}
+        for i = 1, #expanded_extern.params do
+            local p = expanded_extern.params[i]
+            func_params[i] = { name = p.name, type = api.type_from_asdl(p.ty, p.name) }
+        end
+        local value = setmetatable({
+            kind = "extern_func",
+            name = expanded_extern.name,
+            visibility = "extern",
+            symbol = expanded_extern.symbol,
+            func = expanded_extern,
+            item = Tr.ItemExtern(expanded_extern),
+            params = func_params,
+            result = api.type_from_asdl(expanded_extern.result, tostring(expanded_extern.result)),
+            T = T,
+            runtime = self,
+        }, FuncValue)
+        self.extern_funcs[value.name] = value
+        track_deps(value, { extern_funcs = { value } })
         return value
 
     elseif parsed.kind == "struct" or parsed.kind == "union" then
@@ -613,6 +675,7 @@ function M.loadstring(src, chunk_name, opts)
         region_frags = opts.region_frags or (parent and parent.region_frags) or {},
         expr_frags = opts.expr_frags or (parent and parent.expr_frags) or {},
         protocol_types = opts.protocol_types or (parent and parent.protocol_types) or {},
+        extern_funcs = opts.extern_funcs or (parent and parent.extern_funcs) or {},
         require_cache = opts.require_cache or (parent and parent.require_cache) or {},
         require_stack = opts.require_stack or (parent and parent.require_stack) or {},
         module_path_patterns = opts.module_path_patterns or opts.module_paths

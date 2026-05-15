@@ -12,9 +12,8 @@
 --   * module extern symbols form the host API boundary; Lua supplies concrete
 --     symbol addresses at compile time.
 --
--- Strings are pushed as raw JSON string slices with escape bytes preserved; this
--- demo validates string structure but does not unescape \uXXXX or backslash
--- escapes.  It is a fast Lua-stack decoder skeleton, not a full JSON library.
+-- Strings are fully unescaped: backslash escapes (\n, \t, etc.) and \uXXXX
+-- codepoints (including UTF-16 surrogate pairs) are decoded to proper UTF-8.
 --
 -- Run:
 --   luajit run_mlua.lua examples/json/json_lua_stack_decoder.mlua
@@ -64,50 +63,91 @@ end
 end
 
 local parse_string = region parse_json_string(
-    L: @{voidp}, p: ptr(u8), n: i32, pos: i32;
+    L: @{voidp}, p: ptr(u8), n: i32, pos: i32, buf: ptr(u8);
     ok: cont(next_i: i32), err: cont()
 )
 entry start()
     if pos >= n then jump err() end
     if as(i32, p[pos]) ~= 34 then jump err() end
-    jump loop(i = pos + 1)
+    jump copy(i = pos + 1, j = 0)
 end
-block loop(i: i32)
+block copy(i: i32, j: i32)
     if i >= n then jump err() end
-    let c = as(i32, p[i])
+    let c: i32 = as(i32, p[i])
     if c == 34 then
-        let len = i - (pos + 1)
-        let str_start: ptr(u8) = p + (pos + 1)
-        lua_pushlstring(L, str_start, as(index, len))
+        lua_pushlstring(L, buf, as(index, j))
         jump ok(next_i = i + 1)
     end
     if c < 32 then jump err() end
-    if c == 92 then jump escaped(i = i + 1) end
-    jump loop(i = i + 1)
+    if c == 92 then jump escaped(i = i + 1, j = j) end
+    buf[j] = as(u8, c)
+    jump copy(i = i + 1, j = j + 1)
 end
-block escaped(i: i32)
+block escaped(i: i32, j: i32)
     if i >= n then jump err() end
-    switch as(i32, p[i]) do
-    case 34  then jump loop(i = i + 1)
-    case 92  then jump loop(i = i + 1)
-    case 47  then jump loop(i = i + 1)
-    case 98  then jump loop(i = i + 1)
-    case 102 then jump loop(i = i + 1)
-    case 110 then jump loop(i = i + 1)
-    case 114 then jump loop(i = i + 1)
-    case 116 then jump loop(i = i + 1)
-    case 117 then jump hex(i = i + 1, left = 4)
+    let c: i32 = as(i32, p[i])
+    switch c do
+    case 34 then buf[j] = as(u8, 34); jump copy(i = i + 1, j = j + 1)
+    case 92 then buf[j] = as(u8, 92); jump copy(i = i + 1, j = j + 1)
+    case 47 then buf[j] = as(u8, 47); jump copy(i = i + 1, j = j + 1)
+    case 98 then buf[j] = as(u8, 8); jump copy(i = i + 1, j = j + 1)
+    case 102 then buf[j] = as(u8, 12); jump copy(i = i + 1, j = j + 1)
+    case 110 then buf[j] = as(u8, 10); jump copy(i = i + 1, j = j + 1)
+    case 114 then buf[j] = as(u8, 13); jump copy(i = i + 1, j = j + 1)
+    case 116 then buf[j] = as(u8, 9); jump copy(i = i + 1, j = j + 1)
+    case 117 then jump hex4(i = i + 1, j = j, cp = 0, left = 4)
     default then jump err()
     end
     jump err()
 end
-block hex(i: i32, left: i32)
-    if left == 0 then jump loop(i = i) end
+block hex4(i: i32, j: i32, cp: i32, left: i32)
+    if left == 0 then jump emit_codepoint(i = i, j = j, cp = cp) end
     if i >= n then jump err() end
-    let c = as(i32, p[i])
-    if c >= 48 and c <= 57 then jump hex(i = i + 1, left = left - 1) end
-    if c >= 65 and c <= 70 then jump hex(i = i + 1, left = left - 1) end
-    if c >= 97 and c <= 102 then jump hex(i = i + 1, left = left - 1) end
+    let c: i32 = as(i32, p[i])
+    if c >= 48 and c <= 57 then jump hex4(i = i + 1, j = j, cp = cp * 16 + (c - 48), left = left - 1) end
+    if c >= 65 and c <= 70 then jump hex4(i = i + 1, j = j, cp = cp * 16 + (c - 55), left = left - 1) end
+    if c >= 97 and c <= 102 then jump hex4(i = i + 1, j = j, cp = cp * 16 + (c - 87), left = left - 1) end
+    jump err()
+end
+block emit_codepoint(i: i32, j: i32, cp: i32)
+    if cp >= 55296 and cp <= 56319 then jump expect_low(i = i, j = j, hi = cp) end
+    if cp >= 56320 and cp <= 57343 then jump err() end
+    if cp < 128 then
+        buf[j] = as(u8, cp)
+        jump copy(i = i, j = j + 1)
+    end
+    if cp < 2048 then
+        buf[j] = as(u8, 192 + (cp >> 6))
+        buf[j + 1] = as(u8, 128 + (cp & 63))
+        jump copy(i = i, j = j + 2)
+    end
+    buf[j] = as(u8, 224 + (cp >> 12))
+    buf[j + 1] = as(u8, 128 + ((cp >> 6) & 63))
+    buf[j + 2] = as(u8, 128 + (cp & 63))
+    jump copy(i = i, j = j + 3)
+end
+block expect_low(i: i32, j: i32, hi: i32)
+    if i + 1 >= n then jump err() end
+    if as(i32, p[i]) ~= 92 then jump err() end
+    if as(i32, p[i + 1]) ~= 117 then jump err() end
+    jump hex4_low(i = i + 2, j = j, hi = hi, cp = 0, left = 4)
+end
+block hex4_low(i: i32, j: i32, hi: i32, cp: i32, left: i32)
+    if left == 0 then
+        if cp < 56320 then jump err() end
+        if cp > 57343 then jump err() end
+        let full: i32 = 65536 + (hi - 55296) * 1024 + (cp - 56320)
+        buf[j] = as(u8, 240 + (full >> 18))
+        buf[j + 1] = as(u8, 128 + ((full >> 12) & 63))
+        buf[j + 2] = as(u8, 128 + ((full >> 6) & 63))
+        buf[j + 3] = as(u8, 128 + (full & 63))
+        jump copy(i = i, j = j + 4)
+    end
+    if i >= n then jump err() end
+    let c: i32 = as(i32, p[i])
+    if c >= 48 and c <= 57 then jump hex4_low(i = i + 1, j = j, hi = hi, cp = cp * 16 + (c - 48), left = left - 1) end
+    if c >= 65 and c <= 70 then jump hex4_low(i = i + 1, j = j, hi = hi, cp = cp * 16 + (c - 55), left = left - 1) end
+    if c >= 97 and c <= 102 then jump hex4_low(i = i + 1, j = j, hi = hi, cp = cp * 16 + (c - 87), left = left - 1) end
     jump err()
 end
 end
@@ -224,7 +264,7 @@ local literal_arms = {
 -- Mutually-recursive parser functions
 -- ---------------------------------------------------------------------------
 
-local parse_array = func(L: @{voidp}, p: ptr(u8), n: i32, pos: i32) -> i32
+local parse_array = func(L: @{voidp}, p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
     return region -> i32
     entry start()
         lua_createtable(L, 16, 0)
@@ -236,7 +276,7 @@ local parse_array = func(L: @{voidp}, p: ptr(u8), n: i32, pos: i32) -> i32
         jump parse_elem(i = i, arr_idx = 1)
     end
     block parse_elem(i: i32, arr_idx: i32)
-        let next_i = parse_value(L, p, n, i)
+        let next_i = parse_value(L, p, n, i, buf)
         if next_i < 0 then yield -1 end
         lua_rawseti(L, -2, arr_idx)
         jump ws_after_elem(i = next_i, arr_idx = arr_idx + 1)
@@ -273,7 +313,7 @@ local parse_array = func(L: @{voidp}, p: ptr(u8), n: i32, pos: i32) -> i32
     end
 end
 
-local parse_object = func(L: @{voidp}, p: ptr(u8), n: i32, pos: i32) -> i32
+local parse_object = func(L: @{voidp}, p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
     return region -> i32
     entry start()
         lua_createtable(L, 0, 16)
@@ -286,7 +326,7 @@ local parse_object = func(L: @{voidp}, p: ptr(u8), n: i32, pos: i32) -> i32
     end
     block parse_key(i: i32)
         if as(i32, p[i]) ~= 34 then yield -1 end
-        emit @{parse_string}(L, p, n, i; ok = check_colon, err = fail)
+        emit @{parse_string}(L, p, n, i, buf; ok = check_colon, err = fail)
     end
     block check_colon(next_i: i32)
         emit @{skip_ws}(p, n, next_i; ok = check_colon_char)
@@ -297,7 +337,7 @@ local parse_object = func(L: @{voidp}, p: ptr(u8), n: i32, pos: i32) -> i32
         emit @{skip_ws}(p, n, i + 1; ok = parse_val)
     end
     block parse_val(i: i32)
-        let after_val = parse_value(L, p, n, i)
+        let after_val = parse_value(L, p, n, i, buf)
         if after_val < 0 then yield -1 end
         lua_settable(L, -3) -- table[-3][key(-2)] = value(-1); pops key and value
         emit @{skip_ws}(p, n, after_val; ok = check_comma)
@@ -315,7 +355,7 @@ local parse_object = func(L: @{voidp}, p: ptr(u8), n: i32, pos: i32) -> i32
     end
 end
 
-local parse_value = func(L: @{voidp}, p: ptr(u8), n: i32, pos: i32) -> i32
+local parse_value = func(L: @{voidp}, p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
     return region -> i32
     entry start()
         emit @{skip_ws}(p, n, pos; ok = dispatch)
@@ -324,13 +364,13 @@ local parse_value = func(L: @{voidp}, p: ptr(u8), n: i32, pos: i32) -> i32
         if i >= n then yield -1 end
         switch as(i32, p[i]) do
         @{literal_arms...}
-        case 34 then emit @{parse_string}(L, p, n, i; ok = done, err = fail)
+        case 34 then emit @{parse_string}(L, p, n, i, buf; ok = done, err = fail)
         case 91 then
-            let next_i = parse_array(L, p, n, i)
+            let next_i = parse_array(L, p, n, i, buf)
             if next_i < 0 then jump fail() end
             jump done(next_i = next_i)
         case 123 then
-            let next_i = parse_object(L, p, n, i)
+            let next_i = parse_object(L, p, n, i, buf)
             if next_i < 0 then jump fail() end
             jump done(next_i = next_i)
         default then
@@ -347,10 +387,10 @@ local parse_value = func(L: @{voidp}, p: ptr(u8), n: i32, pos: i32) -> i32
     end
 end
 
-local decode_json_to_lua_stack = func(L: @{voidp}, p: ptr(u8), n: i32) -> i32
+local decode_json_to_lua_stack = func(L: @{voidp}, p: ptr(u8), n: i32, buf: ptr(u8)) -> i32
     return region -> i32
     entry start()
-        let after_value = parse_value(L, p, n, 0)
+        let after_value = parse_value(L, p, n, 0, buf)
         if after_value < 0 then yield -1 end
         emit @{skip_ws}(p, n, after_value; ok = finish)
     end
@@ -394,7 +434,8 @@ local function decode_into_new_state(json)
     local C = ffi.C
     local L = C.luaL_newstate()
     local p = ffi.cast("uint8_t *", json)
-    local parsed_end = compiled(L, p, #json)
+    local buf = ffi.new("uint8_t[?]", #json + 1)
+    local parsed_end = compiled(L, p, #json, buf)
     return L, parsed_end
 end
 
@@ -442,6 +483,44 @@ for _, bad in ipairs({ "", "tru", "[1,]", "{", "+1", "01", '"unclosed' }) do
     assert(parsed < 0, "expected invalid JSON: " .. bad)
     close(L)
 end
+
+-- Escape sequence tests
+L, parsed = decode_into_new_state('"he\\\\llo"')  -- JSON: "he\\llo" → he\llo
+assert(parsed > 0)
+s = ffi.C.lua_tolstring(L, 1, lenp)
+assert(ffi.string(s, tonumber(lenp[0])) == "he\\llo")
+close(L)
+
+L, parsed = decode_into_new_state('"line1\\nline2"')  -- JSON: "line1\nline2" → line1<newline>line2
+assert(parsed > 0)
+s = ffi.C.lua_tolstring(L, 1, lenp)
+assert(ffi.string(s, tonumber(lenp[0])) == "line1\nline2")
+close(L)
+
+L, parsed = decode_into_new_state('"tab\\there"')  -- JSON: "tab\there" → tab<tab>here
+assert(parsed > 0)
+s = ffi.C.lua_tolstring(L, 1, lenp)
+assert(ffi.string(s, tonumber(lenp[0])) == "tab\there")
+close(L)
+
+L, parsed = decode_into_new_state('"quote\\"inside"')  -- JSON: "quote\"inside" → quote"inside
+assert(parsed > 0)
+s = ffi.C.lua_tolstring(L, 1, lenp)
+assert(ffi.string(s, tonumber(lenp[0])) == 'quote"inside')
+close(L)
+
+L, parsed = decode_into_new_state('"\\u0041\\u0042\\u0043"')  -- JSON: "\u0041\u0042\u0043" → ABC
+assert(parsed > 0)
+s = ffi.C.lua_tolstring(L, 1, lenp)
+assert(ffi.string(s, tonumber(lenp[0])) == "ABC")
+close(L)
+
+L, parsed = decode_into_new_state('"\\uD83D\\uDE00"')  -- surrogate pair: 😀
+assert(parsed > 0)
+s = ffi.C.lua_tolstring(L, 1, lenp)
+assert(tonumber(lenp[0]) == 4)  -- 4-byte UTF-8 for U+1F600
+assert(string.byte(ffi.string(s, 4), 1) == 0xF0)
+close(L)
 
 compiled_module:free()
 return "Moonlift Lua-stack JSON decoder ok"

@@ -80,6 +80,7 @@ Inside `.mlua`, Moonlift recognizes these hosted islands:
 
 - `struct ... end`
 - `union ... end`
+- `extern ... end`
 - `func ... end`
 - `region ... entry ... end ... end`
 - `expr ... -> T ... end`
@@ -357,7 +358,7 @@ bounds   window_bounds  disjoint  same_len
 **Statement keywords:**
 ```text
 let  var  if  then  else  elseif  switch  case  default  do  end
-block  entry  jump  yield  return  emit  expr
+block  entry  jump  yield  return  emit  expr  extern
 ```
 
 **Expression keywords:**
@@ -692,6 +693,7 @@ Lua assignment target or auto-generated:
 
 - `struct [Name] field: T ... end`
 - `union [Name] variant(...) | variant(...) end`
+- `extern [name](params...) [-> T] [as "symbol"] end`
 - `func [name](params...) [-> T] ... end`
 - `region [name](params; continuations) ... end`
 - `expr [name](params) -> T expr end`
@@ -739,7 +741,16 @@ Name inference handles identifiers ending in digits (e.g. `load_u64`,
 `parse_i32`) correctly — the trailing digits are part of the identifier, not
 treated as an index suffix.
 
-The same inference rules apply to `region` and `expr` anonymous forms.
+The same inference rules apply to `region`, `expr`, and `extern` anonymous forms.
+
+Extern declarations create typed imported function items. The source name is the
+Moonlift callee name; the optional `as "symbol"` names the dynamic symbol to
+resolve through the JIT/linker:
+
+```lua
+local strlen = extern strlen(s: ptr(u8)) -> index end
+local host_add = extern add7(x: i32) -> i32 as "host_add7" end
+```
 
 Host-facing APIs such as exposure policies, proxy generation, module assembly,
 and native method registration are provided through the Lua builder/host APIs,

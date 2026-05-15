@@ -104,7 +104,8 @@ print(string.format("%.3fs", os.clock() - t_compile))
 local json_p = ffi.cast("uint8_t *", JSON)
 do
     local L = C.luaL_newstate()
-    local endpos = compiled(L, json_p, JSON_LEN)
+    local buf = ffi.new("uint8_t[?]", JSON_LEN + 1)
+    local endpos = compiled(L, json_p, JSON_LEN, buf)
     assert(tonumber(endpos) == JSON_LEN, "Moonlift decoder failed on benchmark input: endpos=" .. tonumber(endpos))
     C.lua_close(L)
 end
@@ -278,9 +279,10 @@ print()
 -- Reuse one lua_State. Creating/closing a Lua state per decode is several
 -- microseconds of host-side overhead and completely drowns the native parser.
 local moonlift_L = C.luaL_newstate()
+local decode_buf = ffi.new("uint8_t[?]", JSON_LEN + 1)
 
 local function moonlift_decode()
-    local endpos = compiled(moonlift_L, json_p, JSON_LEN)
+    local endpos = compiled(moonlift_L, json_p, JSON_LEN, decode_buf)
     C.lua_settop(moonlift_L, 0)
     return endpos == JSON_LEN and 1 or 0
 end

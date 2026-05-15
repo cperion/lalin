@@ -161,7 +161,7 @@ local literal_arms = {
 ```
 
 See `examples/json/json_lua_stack_decoder.mlua` for a complete decoder that
-beats lua-cjson by 2.3× using this pattern.
+beats lua-cjson by 2.5× using this pattern.
 
 ### Control: typed blocks, jumps, yields
 
@@ -658,20 +658,20 @@ luajit benchmarks/bench_json_stack_decode.lua          # quick
 luajit benchmarks/bench_json_stack_decode.lua full     # full
 ```
 
-**Results: Moonlift beats cjson by 2.3×, pure Lua by 3.9×.**
+**Results: Moonlift beats cjson by 2.5×, pure Lua by 4.6×.**
 
 | Decoder | Time | ns/byte | Throughput |
 |---|---|---|---|
-| **moonlift_json_stack** | 0.102s | 3.5 | **286 MB/s** |
-| cjson_decode | 0.230s | 7.9 | 127 MB/s |
-| pure_lua_json | 0.394s | 13.5 | 74 MB/s |
-| dkjson_decode | 1.266s | 43.4 | 23 MB/s |
+| **moonlift_json_stack** | 0.109s | 3.7 | **268 MB/s** |
+| cjson_decode | 0.268s | 9.2 | 109 MB/s |
+| pure_lua_json | 0.505s | 17.3 | 58 MB/s |
+| dkjson_decode | 1.363s | 46.7 | 21 MB/s |
 
 | Comparison | Speedup |
 |---|---|
-| Moonlift / cjson | **2.26×** |
-| Moonlift / pure Lua | **3.87×** |
-| Moonlift / dkjson | **12.44×** |
+| Moonlift / cjson | **2.46×** |
+| Moonlift / pure Lua | **4.63×** |
+| Moonlift / dkjson | **12.50×** |
 
 The decoder source lives in `examples/json/json_lua_stack_decoder.mlua`.
 For cjson/dkjson comparison, install locally:
