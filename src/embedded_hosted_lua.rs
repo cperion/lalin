@@ -226,6 +226,7 @@ pub fn embedded_mlua_sources() -> Vec<(&'static str, &'static str)> {
         ("lua/moonlift/mom/driver/compile_module.mlua", include_str!("../lua/moonlift/mom/driver/compile_module.mlua")),
         ("lua/moonlift/mom/driver/compile_source.mlua", include_str!("../lua/moonlift/mom/driver/compile_source.mlua")),
         ("lua/moonlift/mom/driver/lower_wire.mlua", include_str!("../lua/moonlift/mom/driver/lower_wire.mlua")),
+        ("lua/moonlift/mom/driver/lua_api.mlua", include_str!("../lua/moonlift/mom/driver/lua_api.mlua")),
         ("lua/moonlift/mom/driver/native_entry.mlua", include_str!("../lua/moonlift/mom/driver/native_entry.mlua")),
         ("lua/moonlift/mom/driver/wire.mlua", include_str!("../lua/moonlift/mom/driver/wire.mlua")),
         ("lua/moonlift/mom/layout/layout_env.mlua", include_str!("../lua/moonlift/mom/layout/layout_env.mlua")),
