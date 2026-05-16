@@ -19,7 +19,8 @@ local T = require("moonlift.mom.tags.mom_tags")
 local MomDiag = M.MomDiag
 local MomDiagBuilder = M.MomDiagBuilder
 
--- Compilation result codes
+-- Compilation result codes (Moonlift doesn't have local enum syntax)
+-- Use schema enum if available, or numeric constants
 local COMPILE_OK = 0
 local COMPILE_DIAGNOSTIC_ERROR = 1
 local COMPILE_CAPACITY_ERROR = 2
@@ -27,7 +28,7 @@ local COMPILE_INTERNAL_ERROR = 3
 
 -- Compilation result struct
 local MomCompileResult = M:type("MomCompileResult", struct MomCompileResult
-    code: i32           -- result code (COMPILE_OK, COMPILE_*_ERROR)
+    code: i32           -- result code (0=OK, 1=diag error, 2=capacity error, 3=internal)
     wire_len: index     -- bytes written to wire_out (or 0 on error)
     diag_count: i32     -- number of diagnostics collected
 end)
@@ -55,12 +56,12 @@ M.mom_driver_compile_source_to_wire = func(
 ) -> MomCompileResult
     -- Result structure
     let result: MomCompileResult
-    result.code = @{COMPILE_OK}
+    result.code = 0  -- COMPILE_OK
     result.wire_len = 0
     result.diag_count = 0
 
     -- Placeholder: return diagnostic error for now
-    result.code = @{COMPILE_DIAGNOSTIC_ERROR}
+    result.code = 1  -- COMPILE_DIAGNOSTIC_ERROR
     return result
 end
 
@@ -96,7 +97,7 @@ M.mom_driver_compile_source_to_artifact = func(
     let result: MomCompileResult = M.mom_driver_compile_source_to_wire(
         src, src_len, wire_buf, wire_cap, diags, diag_cap)
 
-    if result.code != @{COMPILE_OK} then
+    if result.code != 0 then  -- COMPILE_OK
         return nil
     end
 
