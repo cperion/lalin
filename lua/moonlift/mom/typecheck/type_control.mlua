@@ -1,4 +1,4 @@
-local T = require("moonlift.mom.back.back_tags")
+local T = require("moonlift.mom.tags.mom_tags")
 
 return function(M)
 local CR_DUPLICATE_LABEL = 1

@@ -1,5 +1,6 @@
-local T = require("moonlift.mom.back.back_tags")
-local M = moon.module("mom_type_expr")
+local T = require("moonlift.mom.tags.mom_tags")
+
+return function(M)
 
 local TI_UNRESOLVED_VALUE = 1
 local TI_EXPECTED = 3
@@ -247,7 +248,8 @@ M:add_func(mt_push_issue)
 M:add_func(mt_literal_scalar)
 M:add_func(mt_type_class)
 M:add_func(mt_type_scalar)
-M:add_func(mt_type_elem)
-M:add_func(mt_type_expr)
+M:local_func("mt_type_elem", mt_type_elem)
+M:local_func("mt_type_expr", mt_type_expr)
 
 return M
+end

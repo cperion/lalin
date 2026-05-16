@@ -5,7 +5,7 @@
 //
 //   cargo run --bin moonlift -- path/to/file.mlua
 
-mod embedded_lua;
+mod embedded_hosted_lua;
 
 use std::cell::RefCell;
 use std::ffi::{c_int, c_void};
@@ -123,7 +123,7 @@ fn init_lua(lua: &Lua) -> mlua::Result<()> {
     // Register all embedded Lua modules so require() finds them without disk I/O.
     let package = lua.globals().get::<mlua::Table>("package")?;
     let preload = package.get::<mlua::Table>("preload")?;
-    for (name, source) in embedded_lua::embedded_modules() {
+    for (name, source) in embedded_hosted_lua::embedded_modules() {
         let loader = lua.create_function(move |lua, ()| {
             let chunk = lua.load(source).set_name(name).into_function()?;
             let result: mlua::Value = chunk.call(())?;
@@ -133,7 +133,7 @@ fn init_lua(lua: &Lua) -> mlua::Result<()> {
     }
 
     let embedded_mlua = lua.create_table()?;
-    for (path, source) in embedded_lua::embedded_mlua_sources() {
+    for (path, source) in embedded_hosted_lua::embedded_mlua_sources() {
         embedded_mlua.set(path, source)?;
     }
     lua.globals().set("_MOONLIFT_EMBEDDED_MLUA", embedded_mlua)?;

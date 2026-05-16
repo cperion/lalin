@@ -2,10 +2,9 @@
 --
 -- Phase 8d: accept kernel plan, emit BackCmd vector commands.
 
-local T = require("moonlift.mom.back.back_tags")
+local T = require("moonlift.mom.tags.mom_tags")
 
-local M = moon.module("mom_vec_lower")
-
+return function(M)
 local mv_push_cmd = func(tag: i32, a: i32, b: i32, c: i32, d: i32, e: i32, f: i32,
                            ct: ptr(i32), ca: ptr(i32), cb: ptr(i32), cc: ptr(i32),
                            cd: ptr(i32), ce: ptr(i32), cf: ptr(i32),
@@ -81,8 +80,9 @@ local mv_lower_kernel = func(
     end
 end
 
-M:add_func(mv_push_cmd)
-M:add_func(mv_lower_reduce)
-M:add_func(mv_lower_kernel)
+M:local_func("mv_push_cmd", mv_push_cmd)
+M:local_func("mv_lower_reduce", mv_lower_reduce)
+M:local_func("mv_lower_kernel", mv_lower_kernel)
 
 return M
+end

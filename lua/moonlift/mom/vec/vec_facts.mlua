@@ -5,10 +5,9 @@
 --
 -- Output vec_fact tape format (SoA): tag[i], a[i]..f[i].
 
-local T = require("moonlift.mom.back.back_tags")
+local T = require("moonlift.mom.tags.mom_tags")
 
-local M = moon.module("mom_vec_facts")
-
+return function(M)
 local mv_push_fact = func(tag: i32, a: i32, b: i32, c: i32, d: i32, e: i32, f: i32,
                            vtag: ptr(i32), va: ptr(i32), vb: ptr(i32), vc: ptr(i32),
                            vd: ptr(i32), ve: ptr(i32), vf: ptr(i32),
@@ -70,7 +69,8 @@ local mv_extract_vec_facts = func(
     return 1
 end
 
-M:add_func(mv_push_fact)
-M:add_func(mv_extract_vec_facts)
+M:local_func("mv_push_fact", mv_push_fact)
+M:local_func("mv_extract_vec_facts", mv_extract_vec_facts)
 
 return M
+end

@@ -13,9 +13,9 @@
 -- by lowering passes (phase 5/6 expr/stmt lowering, phase 12 func/module
 -- lowering). No builders, no state, no allocations.
 
-local T = require("moonlift.mom.back.back_tags")
-local M = moon.module("mom_back_abi")
+local T = require("moonlift.mom.tags.mom_tags")
 
+return function(M)
 -- Inline scalar→BackScalar mapping (same as ops.mlua mb_core_scalar_to_back
 -- but self-contained since compiled Moonlift modules don't share imports).
 
@@ -161,10 +161,11 @@ local mb_abi_type_to_back_scalar = func(ty_tag: i32, scalar: i32) -> i32
     end
 end
 
-M:add_func(mb_core_scalar_to_back)
-M:add_func(mb_abi_classify)
-M:add_func(mb_abi_param_classify)
-M:add_func(mb_abi_result_classify)
-M:add_func(mb_abi_type_to_back_scalar)
+M:local_func("mb_core_scalar_to_back", mb_core_scalar_to_back)
+M:local_func("mb_abi_classify", mb_abi_classify)
+M:local_func("mb_abi_param_classify", mb_abi_param_classify)
+M:local_func("mb_abi_result_classify", mb_abi_result_classify)
+M:local_func("mb_abi_type_to_back_scalar", mb_abi_type_to_back_scalar)
 
 return M
+end

@@ -5,47 +5,47 @@
 -- Append functions always advance length and conditionally store when capacity
 -- is available, so callers can detect required capacity by comparing len > cap.
 
-local M = moon.module("mom_runtime_builders")
+return function(M)
 
 local i32p = moon.ptr(moon.i32)
 
-local MomI32Builder = M:struct("MomI32Builder", {
-    moon.field("data", i32p),
-    moon.field("len", moon.index),
-    moon.field("cap", moon.index),
-})
+local MomI32Builder = M:type("MomI32Builder", struct MomI32Builder
+    data: ptr(i32)
+    len: index
+    cap: index
+end)
 
-local MomIssueBuilder = M:struct("MomIssueBuilder", {
-    moon.field("tag", i32p),
-    moon.field("a", i32p),
-    moon.field("b", i32p),
-    moon.field("c", i32p),
-    moon.field("d", i32p),
-    moon.field("len", moon.index),
-    moon.field("cap", moon.index),
-})
+local MomIssueBuilder = M:type("MomIssueBuilder", struct MomIssueBuilder
+    tag: ptr(i32)
+    a: ptr(i32)
+    b: ptr(i32)
+    c: ptr(i32)
+    d: ptr(i32)
+    len: index
+    cap: index
+end)
 
-local MomCmdBuffer = M:struct("MomCmdBuffer", {
-    moon.field("tag", i32p),
-    moon.field("a", i32p),
-    moon.field("b", i32p),
-    moon.field("c", i32p),
-    moon.field("d", i32p),
-    moon.field("e", i32p),
-    moon.field("f", i32p),
-    moon.field("len", moon.index),
-    moon.field("cap", moon.index),
-})
+local MomCmdBuffer = M:type("MomCmdBuffer", struct MomCmdBuffer
+    tag: ptr(i32)
+    a: ptr(i32)
+    b: ptr(i32)
+    c: ptr(i32)
+    d: ptr(i32)
+    e: ptr(i32)
+    f: ptr(i32)
+    len: index
+    cap: index
+end)
 
 local cmd_buffer_p = moon.ptr(MomCmdBuffer)
 
-local LowerState = M:struct("LowerState", {
-    moon.field("cmds", cmd_buffer_p),
-    moon.field("cmd_count", moon.index),
-    moon.field("cmd_cap", moon.index),
-    moon.field("next_value", moon.i32),
-    moon.field("next_block", moon.i32),
-})
+local LowerState = M:type("LowerState", struct LowerState
+    cmds: ptr(@{MomCmdBuffer})
+    cmd_count: index
+    cmd_cap: index
+    next_value: i32
+    next_block: i32
+end)
 
 local mr_cmd_buffer_reset = func(b: ptr(@{MomCmdBuffer}))
     b.len = 0
@@ -112,16 +112,17 @@ local mr_issue_builder_overflowed = func(b: ptr(@{MomIssueBuilder})) -> bool
     return b.len > b.cap
 end
 
-M:add_func(mr_cmd_buffer_reset)
-M:add_func(mr_cmd_buffer_push)
-M:add_func(mr_cmd_buffer_overflowed)
-M:add_func(mr_fresh_value)
-M:add_func(mr_fresh_block)
-M:add_func(mr_i32_builder_reset)
-M:add_func(mr_i32_builder_push)
-M:add_func(mr_i32_builder_overflowed)
-M:add_func(mr_issue_builder_reset)
-M:add_func(mr_issue_push4)
-M:add_func(mr_issue_builder_overflowed)
+M:local_func("mr_cmd_buffer_reset", mr_cmd_buffer_reset)
+M:local_func("mr_cmd_buffer_push", mr_cmd_buffer_push)
+M:local_func("mr_cmd_buffer_overflowed", mr_cmd_buffer_overflowed)
+M:local_func("mr_fresh_value", mr_fresh_value)
+M:local_func("mr_fresh_block", mr_fresh_block)
+M:local_func("mr_i32_builder_reset", mr_i32_builder_reset)
+M:local_func("mr_i32_builder_push", mr_i32_builder_push)
+M:local_func("mr_i32_builder_overflowed", mr_i32_builder_overflowed)
+M:local_func("mr_issue_builder_reset", mr_issue_builder_reset)
+M:local_func("mr_issue_push4", mr_issue_push4)
+M:local_func("mr_issue_builder_overflowed", mr_issue_builder_overflowed)
 
 return M
+end

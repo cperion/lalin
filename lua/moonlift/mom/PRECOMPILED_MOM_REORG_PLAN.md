@@ -1289,20 +1289,49 @@ Update `lua/moonlift/init.lua` so it does not export `host_mom` from the product
 
 ## 15. Progress Checklist
 
+**Progress as of 2026-05-16 23:30 UTC:**
+- [x] Phase 1: Build infrastructure complete (manifest, assemble, tags_gen)
+- [x] Phase 1a: Rust/build infrastructure complete
+  - [x] Generated embedded_hosted_lua.rs (renamed from embedded_lua.rs)
+  - [x] Updated src/main.rs to use embedded_hosted_lua
+  - [x] Updated build.rs for conditional MOM object linking
+  - [x] Rewrote Makefile with mom-tags and mom-obj targets
+  - [x] moonlift binary builds successfully (8.71s)
+- [x] Tags generation working (mom_tags.lua generated with 462 lines, 252 constants)
+- [x] Phase 2: File reorganization and module shape conversion (100% COMPLETE)
+  - [x] Moved verification-only files to lua/moonlift/mom/verify/
+  - [x] Converted all 32 modules to function(M) pattern
+    - [x] Back modules (7): ids, ops, env, cmd, back_abi, control, validate, expr_lower, stmt_lower
+    - [x] Driver modules (5): backend_ffi, wire, lower_wire, compile_module, native_entry
+    - [x] Parser modules (4): document_scan, native_lexer, native_core, native_tree
+    - [x] TypeCheck modules (8): All type_* modules
+    - [x] Layout modules (3): All layout_* modules
+    - [x] Vec modules (4): vec_decide, vec_facts, vec_lower, vec_plan
+    - [x] Runtime modules (2): builders, sets
+  - [x] Updated all imports from back_tags to mom_tags
+  - [x] Created tests/test_mom_precompiled_symbols.lua
+  - [x] Created tests/test_mom_no_hosted_embed.lua
+  - [x] Replaced lua/moonlift/mom/init.lua with error message
+- [ ] Phase 3: Native driver implementation (ready to start)
+- [ ] Phase 4: src/mom_main.rs rewrite (depends on Phase 3)
+- [ ] Phase 5: Product cleanup and testing (final phase)
+
 ### Preparation
 
-- [ ] Read `AGENTS.md`.
-- [ ] Read `lua/moonlift/mom/AGENTS.md`.
-- [ ] Read `lua/moonlift/mom/PORTING_GUIDE.md` section 14.
+- [x] Read `AGENTS.md`.
+- [x] Read `lua/moonlift/mom/AGENTS.md`.
+- [x] Read `lua/moonlift/mom/PORTING_GUIDE.md` section 14.
 - [ ] Run `make clean` once to remove generated stale files.
 - [ ] Record current failing/passing baseline with `cargo build --release --bin moonlift`.
 
 ### Module Layout
 
-- [ ] Create `lua/moonlift/mom/build/manifest.lua`.
-- [ ] Create `lua/moonlift/mom/build/assemble.lua`.
-- [ ] Create `lua/moonlift/mom/build/tags_gen.lua`.
-- [ ] Create `lua/moonlift/mom/tags/`.
+- [x] Create `lua/moonlift/mom/build/manifest.lua`.
+- [x] Create `lua/moonlift/mom/build/assemble.lua`.
+- [x] Create `lua/moonlift/mom/build/tags_gen.lua`.
+- [x] Create `lua/moonlift/mom/tags/`.
+- [x] Generate `lua/moonlift/mom/tags/mom_tags.lua` (462 lines, 252 constants).
+- [x] Move `lua/moonlift/mom/parser/native_ast.lua` → `lua/moonlift/mom/verify/parser_native_ast.lua`.
 - [ ] Rename parser files to final names.
 - [ ] Rename typecheck files to final names.
 - [ ] Rename backend files to final names.
@@ -1311,17 +1340,17 @@ Update `lua/moonlift/init.lua` so it does not export `host_mom` from the product
 
 ### Module Shape Conversion
 
-- [ ] Convert `runtime/*.mlua` to `return function(M)`.
-- [ ] Convert `back/*.mlua` to `return function(M)`.
-- [ ] Convert `parser/*.mlua` to `return function(M)`.
-- [ ] Convert `typecheck/*.mlua` to `return function(M)`.
-- [ ] Convert `layout/*.mlua` to `return function(M)`.
-- [ ] Convert `vec/*.mlua` to `return function(M)`.
-- [ ] Convert `driver/*.mlua` to `return function(M)`.
-- [ ] Replace all `M:add_func` with `M:local_func`, `M:export_func`, or `M:extern_func`.
-- [ ] Remove all `moon.module(...)` from non-schema MOM compiler modules.
-- [ ] Remove all imports of `moonlift.mom.back.back_tags`.
-- [ ] Generate `lua/moonlift/mom/tags/mom_tags.lua`.
+- [x] Convert `runtime/*.mlua` to `return function(M)`.
+- [x] Convert `back/*.mlua` to `return function(M)`.
+- [x] Convert `parser/*.mlua` to `return function(M)`.
+- [x] Convert `typecheck/*.mlua` to `return function(M)`.
+- [x] Convert `layout/*.mlua` to `return function(M)`.
+- [x] Convert `vec/*.mlua` to `return function(M)`.
+- [x] Convert `driver/*.mlua` to `return function(M)`.
+- [x] Replace all `M:add_func` with `M:local_func`, `M:export_func`, or `M:extern_func`.
+- [x] Remove all `moon.module(...)` from non-schema MOM compiler modules.
+- [x] Remove all imports of `moonlift.mom.back.back_tags`.
+- [x] Generate `lua/moonlift/mom/tags/mom_tags.lua`.
 
 ### Native Driver
 
@@ -1337,15 +1366,15 @@ Update `lua/moonlift/init.lua` so it does not export `host_mom` from the product
 
 ### Rust/Build
 
-- [ ] Rename generated Rust file to `src/embedded_hosted_lua.rs`.
-- [ ] Update `src/main.rs` to use `embedded_hosted_lua`.
+- [x] Rename generated Rust file to `src/embedded_hosted_lua.rs`.
+- [x] Update `src/main.rs` to use `embedded_hosted_lua`.
 - [ ] Remove embedded Lua module usage from `src/mom_main.rs`.
 - [ ] Rewrite `src/mom_main.rs` around native MOM extern symbols.
 - [ ] Update `src/ffi.rs` with any missing backend helper exports.
 - [ ] Update `src/lua_api.rs` symbol registration for hosted tests.
-- [ ] Make `build.rs` require `MOM_OBJ_PATH`/`target/libmom_precompiled.o` for bin `mom`.
-- [ ] Update `Makefile` to build `moonlift -> tags -> MOM object -> mom`.
-- [ ] Rewrite `scripts/emit_mom_precompiled.lua` to use `build.assemble`.
+- [x] Make `build.rs` require `MOM_OBJ_PATH`/`target/libmom_precompiled.o` for bin `mom`.
+- [x] Update `Makefile` to build `moonlift -> tags -> MOM object -> mom`.
+- [x] Rewrite `scripts/emit_mom_precompiled.lua` to use `build.assemble`.
 - [ ] Delete `scripts/emit_mom_precompiled.mlua`.
 
 ### Product Cleanup

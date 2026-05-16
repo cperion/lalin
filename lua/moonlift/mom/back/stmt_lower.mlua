@@ -5,19 +5,19 @@
 -- passed as flat ptr(i32) arrays for name→value ID binding (ST_LET)
 -- and lookup (EX_REF).
 
-local T = require("moonlift.mom.back.back_tags")
-local M = moon.module("mom_back_stmt_lower")
+local T = require("moonlift.mom.tags.mom_tags")
 
+return function(M)
 local i32p = moon.ptr(moon.i32)
 
 -- LowerState struct definition (must match builders.mlua)
-local LowerState = M:struct("LowerState", {
-    moon.field("cmds", moon.ptr(i32p)),
-    moon.field("cmd_count", moon.index),
-    moon.field("cmd_cap", moon.index),
-    moon.field("next_value", moon.i32),
-    moon.field("next_block", moon.i32),
-})
+local LowerState = M:type("LowerState", struct LowerState
+    cmds: moon.ptr(i32p)
+    cmd_count: moon.index
+    cmd_cap: moon.index
+    next_value: moon.i32
+    next_block: moon.i32
+end)
 
 -- ── Cmd buffer helpers ─────────────────────────────────────────────
 -- st: LowerState with cmd_count, cmd_cap, next_value, next_block.
@@ -517,32 +517,33 @@ local mb_lower_stmt = func(expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr(i32
 end
 
 -- ── Exports ──────────────────────────────────────────────────────────
-M:add_func(mb_push_cmd)
-M:add_func(mb_push_cmd_w10)
-M:add_func(mb_push_cmd_w15)
-M:add_func(mb_fresh_val)
-M:add_func(mb_fresh_block)
-M:add_func(mb_is_float)
-M:add_func(mb_is_signed)
-M:add_func(mb_token_to_unary_op)
-M:add_func(mb_token_to_binary_op)
-M:add_func(mb_token_to_cmp_op)
-M:add_func(mb_lower_lit)
-M:add_func(mb_lower_ref)
-M:add_func(mb_lower_unary_expr)
-M:add_func(mb_lower_binary_expr)
-M:add_func(mb_lower_compare_expr)
-M:add_func(mb_lower_select_expr)
-M:add_func(mb_lower_expr)
-M:add_func(mb_lower_return_void)
-M:add_func(mb_lower_return_value)
-M:add_func(mb_lower_expr_stmt)
-M:add_func(mb_lower_let_stmt)
-M:add_func(mb_lower_var_stmt)
-M:add_func(mb_lower_set_stmt)
-M:add_func(mb_lower_switch_stmt)
-M:add_func(mb_lower_trap_stmt)
-M:add_func(mb_lower_if_stmt)
-M:add_func(mb_lower_stmt)
+M:local_func("mb_push_cmd", mb_push_cmd)
+M:local_func("mb_push_cmd_w10", mb_push_cmd_w10)
+M:local_func("mb_push_cmd_w15", mb_push_cmd_w15)
+M:local_func("mb_fresh_val", mb_fresh_val)
+M:local_func("mb_fresh_block", mb_fresh_block)
+M:local_func("mb_is_float", mb_is_float)
+M:local_func("mb_is_signed", mb_is_signed)
+M:local_func("mb_token_to_unary_op", mb_token_to_unary_op)
+M:local_func("mb_token_to_binary_op", mb_token_to_binary_op)
+M:local_func("mb_token_to_cmp_op", mb_token_to_cmp_op)
+M:local_func("mb_lower_lit", mb_lower_lit)
+M:local_func("mb_lower_ref", mb_lower_ref)
+M:local_func("mb_lower_unary_expr", mb_lower_unary_expr)
+M:local_func("mb_lower_binary_expr", mb_lower_binary_expr)
+M:local_func("mb_lower_compare_expr", mb_lower_compare_expr)
+M:local_func("mb_lower_select_expr", mb_lower_select_expr)
+M:local_func("mb_lower_expr", mb_lower_expr)
+M:local_func("mb_lower_return_void", mb_lower_return_void)
+M:local_func("mb_lower_return_value", mb_lower_return_value)
+M:local_func("mb_lower_expr_stmt", mb_lower_expr_stmt)
+M:local_func("mb_lower_let_stmt", mb_lower_let_stmt)
+M:local_func("mb_lower_var_stmt", mb_lower_var_stmt)
+M:local_func("mb_lower_set_stmt", mb_lower_set_stmt)
+M:local_func("mb_lower_switch_stmt", mb_lower_switch_stmt)
+M:local_func("mb_lower_trap_stmt", mb_lower_trap_stmt)
+M:local_func("mb_lower_if_stmt", mb_lower_if_stmt)
+M:local_func("mb_lower_stmt", mb_lower_stmt)
 
 return M
+end

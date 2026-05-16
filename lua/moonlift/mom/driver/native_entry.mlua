@@ -9,7 +9,7 @@
 --   mc_lower_module, mc_validate_tape, mc_wire_tape,
 --   mb_push_cmd, mb_validate, mom_backend_compile_binary
 
-local T = require("moonlift.mom.back.back_tags")
+local T = require("moonlift.mom.tags.mom_tags")
 return function(M)
 
 -- Marker function — proves the .o symbol is linked.

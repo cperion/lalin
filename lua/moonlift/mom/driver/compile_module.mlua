@@ -3,7 +3,7 @@
 -- Orchestrates: materialized AST + typecheck output → lower → validate → wire → backend.
 -- This module provides the post-typecheck stages.
 
-local T = require("moonlift.mom.back.back_tags")
+local T = require("moonlift.mom.tags.mom_tags")
 return function(M)
 local LowerState = M.LowerState
 local MomWireBuilder = M.MomWireBuilder

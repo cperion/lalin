@@ -4,10 +4,9 @@
 -- The validation engine checks labels, jump args, yield modes, and termination.
 -- Uses i32-based fact tape: fact_tag[i], fact_a[i]..fact_f[i].
 
-local T = require("moonlift.mom.back.back_tags")
+local T = require("moonlift.mom.tags.mom_tags")
 
-local M = moon.module("mom_back_control")
-
+return function(M)
 -- ── Helpers ────────────────────────────────────────────────────────
 
 -- Push a control fact entry to the fact tape.
@@ -224,12 +223,13 @@ local mb_validate_control = func(fact_tag: ptr(i32), fact_a: ptr(i32), fact_b: p
     return @{T.CD_REDUCIBLE}
 end
 
-M:add_func(mb_push_fact)
-M:add_func(mb_push_reject)
-M:add_func(a_val_hash)
-M:add_func(mb_pass1)
-M:add_func(mb_pass2)
-M:add_func(mb_extract_jump_facts)
-M:add_func(mb_validate_control)
+M:local_func("mb_push_fact", mb_push_fact)
+M:local_func("mb_push_reject", mb_push_reject)
+M:local_func("a_val_hash", a_val_hash)
+M:local_func("mb_pass1", mb_pass1)
+M:local_func("mb_pass2", mb_pass2)
+M:local_func("mb_extract_jump_facts", mb_extract_jump_facts)
+M:local_func("mb_validate_control", mb_validate_control)
 
 return M
+end

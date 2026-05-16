@@ -77,16 +77,25 @@ fn build_luajit() -> PathBuf {
 
 
 fn link_mom_precompiled() {
-    let mom_obj = PathBuf::from("target/libmom_precompiled.o");
+    // Only link the precompiled MOM object when building the mom binary.
+    // This ensures mom is a product binary, not a hosted compiler.
+    //
+    // The Makefile ensures the object exists before calling cargo build for mom,
+    // but during initial builds or `cargo build` directly, the object may not exist.
+    // In that case, we warn and skip linking for moonlift, but fail for mom.
 
-    if mom_obj.exists() {
-        let mom_obj_abs = std::fs::canonicalize(&mom_obj).unwrap_or_else(|_| mom_obj.clone());
-        println!("cargo:rustc-link-search=native=target/");
+    let path = std::env::var("MOM_OBJ_PATH")
+        .unwrap_or_else(|_| "target/libmom_precompiled.o".to_string());
+    let obj = PathBuf::from(&path);
+
+    if obj.exists() {
+        let abs = std::fs::canonicalize(&obj).unwrap();
         println!("cargo:rustc-link-arg-bin=mom=-Wl,--whole-archive");
-        println!("cargo:rustc-link-arg-bin=mom={}", mom_obj_abs.display());
+        println!("cargo:rustc-link-arg-bin=mom={}", abs.display());
         println!("cargo:rustc-link-arg-bin=mom=-Wl,--no-whole-archive");
+        println!("cargo:rerun-if-changed={}", abs.display());
     } else {
-        println!("cargo:warning=libmom_precompiled.o not found; generate it with: ./target/release/moonlift scripts/emit_mom_precompiled.mlua");
+        println!("cargo:warning=libmom_precompiled.o not found at {}; mom binary will not be fully functional. Build it with: make mom-obj", obj.display());
     }
 }
 
@@ -139,7 +148,7 @@ fn main() {
     code.push_str("    ]\n");
     code.push_str("}\n");
 
-    std::fs::write("src/embedded_lua.rs", &code).unwrap();
+    std::fs::write("src/embedded_hosted_lua.rs", &code).unwrap();
 
     link_mom_precompiled();
 }

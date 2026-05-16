@@ -5,14 +5,14 @@
 -- lowering logic uses this allocator so freshness and function scoping are
 -- explicit and testable.
 
-local M = moon.module("mom_back_ids")
+return function(M)
 
-local MomBackIdAllocator = M:struct("MomBackIdAllocator", {
-    moon.field("next_value", moon.i32),
-    moon.field("next_block", moon.i32),
-    moon.field("next_access", moon.i32),
-    moon.field("next_slot", moon.i32),
-})
+local MomBackIdAllocator = M:type("MomBackIdAllocator", struct MomBackIdAllocator
+    next_value: i32
+    next_block: i32
+    next_access: i32
+    next_slot: i32
+end)
 
 local mb_ids_reset_func = func(ids: ptr(@{MomBackIdAllocator}))
     ids.next_value = 0
@@ -41,10 +41,11 @@ local mb_fresh_slot = func(ids: ptr(@{MomBackIdAllocator})) -> i32
     return ids.next_slot
 end
 
-M:add_func(mb_ids_reset_func)
-M:add_func(mb_fresh_value)
-M:add_func(mb_fresh_block)
-M:add_func(mb_fresh_access)
-M:add_func(mb_fresh_slot)
+M:local_func("mb_ids_reset_func", mb_ids_reset_func)
+M:local_func("mb_fresh_value", mb_fresh_value)
+M:local_func("mb_fresh_block", mb_fresh_block)
+M:local_func("mb_fresh_access", mb_fresh_access)
+M:local_func("mb_fresh_slot", mb_fresh_slot)
 
 return M
+end

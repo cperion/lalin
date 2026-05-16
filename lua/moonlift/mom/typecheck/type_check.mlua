@@ -1,5 +1,6 @@
 local T = require("moonlift.mom.back.back_tags")
-local M = moon.module("mom_type_check")
+
+return function(M)
 
 -- Flow tags
 local FLOW_FALLS = 0
@@ -755,8 +756,9 @@ M:add_func(mt_find_field_type)
 M:add_func(mt_func_result)
 M:add_func(mt_func_nparams)
 M:add_func(mt_type_expr)
-M:add_func(mt_type_place)
-M:add_func(mt_type_stmt)
-M:add_func(mt_type_module)
+M:local_func("mt_type_place", mt_type_place)
+M:local_func("mt_type_stmt", mt_type_stmt)
+M:local_func("mt_type_module", mt_type_module)
 
 return M
+end

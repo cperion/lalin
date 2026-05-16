@@ -1,10 +1,12 @@
--- emit_mom_precompiled.lua — Precompile all 34 MOM modules into ONE unified .o file.
+-- Emit MOM precompiled object file
 --
 -- This must be run through the moonlift binary:
 --   ./target/release/moonlift scripts/emit_mom_precompiled.lua
 --
--- Loads all MOM .mlua modules via moonlift.mom.init, combines them into a single
+-- Loads all MOM compiler modules via build.assemble, combines them into a single
 -- unified module, and emits to a single relocatable object file.
+
+package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local output_path = os.getenv("MOM_OBJ_PATH") or "target/libmom_precompiled.o"
 
@@ -14,21 +16,17 @@ if output_dir ~= "" then
     os.execute("mkdir -p " .. output_dir)
 end
 
-print("Loading Mom.init module compiler...")
-local Mom = require("moonlift.mom.init")
+print("Loading MOM build assembler...")
+local Assemble = require("moonlift.mom.build.assemble")
 
-print("Loading all 34 MOM modules into unified scope...")
-local scope, rt = Mom.load()
-
-print("Emitting unified object file...")
-local artifact = Mom.emit_object(scope, {
-    runtime = rt,
+print("Assembling all MOM compiler modules into unified module...")
+local artifact = Assemble.emit_object({
     name = "mom",
-    module_name = "libmom_precompiled"
+    module_name = "libmom_precompiled",
 })
 
 print("Writing: " .. output_path)
 artifact:write(output_path)
 
-print("\n✓ Success: 34 MOM modules compiled to single unified object")
+print("\n✓ Success: MOM modules compiled to precompiled object")
 print("  " .. output_path)

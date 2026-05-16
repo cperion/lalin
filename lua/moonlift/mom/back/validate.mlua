@@ -4,10 +4,9 @@
 -- maintains declaration tables for all symbol classes.
 -- All mutable state via block loop parameters (Moonlift SSA discipline).
 
-local T = require("moonlift.mom.back.back_tags")
+local T = require("moonlift.mom.tags.mom_tags")
 
-local M = moon.module("mom_back_validate")
-
+return function(M)
 -- Push an issue entry.
 local mb_push = func(tag: i32, a: i32, b: i32, c: i32,
                       it: ptr(i32), ia: ptr(i32), ib: ptr(i32), ic: ptr(i32),
@@ -268,8 +267,9 @@ local mb_validate = func(ct: ptr(i32), ca: ptr(i32), cb: ptr(i32), cc: ptr(i32),
     return icnt[0]
 end
 
-M:add_func(mb_push)
-M:add_func(mb_has)
-M:add_func(mb_add)
-M:add_func(mb_validate)
+M:local_func("mb_push", mb_push)
+M:local_func("mb_has", mb_has)
+M:local_func("mb_add", mb_add)
+M:local_func("mb_validate", mb_validate)
 return M
+end

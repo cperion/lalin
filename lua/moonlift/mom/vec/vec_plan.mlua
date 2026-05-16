@@ -3,10 +3,9 @@
 -- Phase 8c: accept vec-facts + decision, produce kernel plan tape
 -- (map/reduce/algebraic).
 
-local T = require("moonlift.mom.back.back_tags")
+local T = require("moonlift.mom.tags.mom_tags")
 
-local M = moon.module("mom_vec_plan")
-
+return function(M)
 local mv_count_tag = func(tag: i32, vt: ptr(i32), nv: i32) -> i32
     block lp(n: i32 = 0, i: i32 = 0)
         if i >= nv then return n end
@@ -72,8 +71,9 @@ local mv_plan_kernel = func(
     pcount[0] = pcount[0] + 1
 end
 
-M:add_func(mv_count_tag)
-M:add_func(mv_find_first)
-M:add_func(mv_plan_kernel)
+M:local_func("mv_count_tag", mv_count_tag)
+M:local_func("mv_find_first", mv_find_first)
+M:local_func("mv_plan_kernel", mv_plan_kernel)
 
 return M
+end

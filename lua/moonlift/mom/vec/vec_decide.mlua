@@ -3,10 +3,9 @@
 -- Phase 8b: accept vec-fact tape, check target capabilities,
 -- produce decision tape (legal/illegal + shape/schedule).
 
-local T = require("moonlift.mom.back.back_tags")
+local T = require("moonlift.mom.tags.mom_tags")
 
-local M = moon.module("mom_vec_decide")
-
+return function(M)
 local DEFAULT_VECTOR_BITS = 128
 
 local mv_elem_bits = func(scalar: i32) -> i32
@@ -69,9 +68,10 @@ local mv_decide = func(vt: ptr(i32), va: ptr(i32), vb: ptr(i32), vc: ptr(i32),
     dec_count[0] = dec_count[0] + 1
 end
 
-M:add_func(mv_count_tag)
-M:add_func(mv_find_first)
-M:add_func(mv_elem_bits)
-M:add_func(mv_decide)
+M:local_func("mv_count_tag", mv_count_tag)
+M:local_func("mv_find_first", mv_find_first)
+M:local_func("mv_elem_bits", mv_elem_bits)
+M:local_func("mv_decide", mv_decide)
 
 return M
+end

@@ -9,8 +9,7 @@
 --   word[1..17]  = command slots; only the prefix defined by slot_count(tag) is
 --                  serialized.
 
-local M = moon.module("mom_driver_lower_wire")
-
+return function(M)
 local i32p = moon.ptr(moon.i32)
 local u8p = moon.ptr(moon.u8)
 
@@ -22,14 +21,14 @@ local MLBT_MAGIC = 1296843348 -- 0x4d4c4254, bytes "TBLM" little-endian
 local MLBT_VERSION = 3
 local CMD_STRIDE = 18
 
-local MomWireBuilder = M:struct("MomWireBuilder", {
-    moon.field("data", u8p),
-    moon.field("len", moon.index),
-    moon.field("cap", moon.index),
-    moon.field("string_count", moon.i32),
-    moon.field("aux_count", moon.i32),
-    moon.field("error", moon.i32),
-})
+local MomWireBuilder = M:type("MomWireBuilder", struct MomWireBuilder
+    data: u8p
+    len: moon.index
+    cap: moon.index
+    string_count: moon.i32
+    aux_count: moon.i32
+    error: moon.i32
+end)
 
 local mw_mark = func(w: ptr(@{MomWireBuilder}), code: i32)
     if w.error == @{MW_OK} then w.error = code end
@@ -282,10 +281,11 @@ M:add_func(mw_write_pool_slice)
 M:add_func(mw_write_pool_generated)
 M:add_func(mw_begin_aux)
 M:add_func(mw_write_aux_i32s)
-M:add_func(mom_wire_slot_count)
-M:add_func(mom_cmd_tape_set)
-M:add_func(mom_cmd_tape_clear)
-M:add_func(mom_cmd_tape_push)
-M:add_func(mom_lower_cmd_tape_to_wire)
+M:local_func("mom_wire_slot_count", mom_wire_slot_count)
+M:local_func("mom_cmd_tape_set", mom_cmd_tape_set)
+M:local_func("mom_cmd_tape_clear", mom_cmd_tape_clear)
+M:local_func("mom_cmd_tape_push", mom_cmd_tape_push)
+M:local_func("mom_lower_cmd_tape_to_wire", mom_lower_cmd_tape_to_wire)
 
 return M
+end

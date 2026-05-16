@@ -1,6 +1,6 @@
-local T = require("moonlift.mom.back.back_tags")
-local M = moon.module("mom_type_scalar")
+local T = require("moonlift.mom.tags.mom_tags")
 
+return function(M)
 local mt_is_float_scalar = func(s: i32) -> bool
     return s == @{T.ScalarF32} or s == @{T.ScalarF64}
 end
@@ -47,14 +47,15 @@ local mt_adopt_literal_to_scalar = func(lit_scalar: i32, expected: i32) -> i32
     return lit_scalar
 end
 
-M:add_func(mt_is_float_scalar)
-M:add_func(mt_is_signed_int_scalar)
-M:add_func(mt_is_unsigned_int_scalar)
-M:add_func(mt_is_integer_scalar)
-M:add_func(mt_is_bool_scalar)
-M:add_func(mt_is_void_scalar)
-M:add_func(mt_is_numeric_scalar)
-M:add_func(mt_scalar_bit_width)
-M:add_func(mt_adopt_literal_to_scalar)
+M:local_func("mt_is_float_scalar", mt_is_float_scalar)
+M:local_func("mt_is_signed_int_scalar", mt_is_signed_int_scalar)
+M:local_func("mt_is_unsigned_int_scalar", mt_is_unsigned_int_scalar)
+M:local_func("mt_is_integer_scalar", mt_is_integer_scalar)
+M:local_func("mt_is_bool_scalar", mt_is_bool_scalar)
+M:local_func("mt_is_void_scalar", mt_is_void_scalar)
+M:local_func("mt_is_numeric_scalar", mt_is_numeric_scalar)
+M:local_func("mt_scalar_bit_width", mt_scalar_bit_width)
+M:local_func("mt_adopt_literal_to_scalar", mt_adopt_literal_to_scalar)
 
 return M
+end

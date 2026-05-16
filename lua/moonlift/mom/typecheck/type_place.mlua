@@ -1,6 +1,6 @@
-local T = require("moonlift.mom.back.back_tags")
-local M = moon.module("mom_type_place")
+local T = require("moonlift.mom.tags.mom_tags")
 
+return function(M)
 local TI_UNRESOLVED_VALUE = 1
 local TI_NOT_POINTER = 7
 
@@ -94,7 +94,8 @@ local mt_place_type = func(ei: i32,
     return @{T.ScalarVoid}
 end
 
-M:add_func(mt_push_issue)
-M:add_func(mt_place_type)
+M:local_func("mt_push_issue", mt_push_issue)
+M:local_func("mt_place_type", mt_place_type)
 
 return M
+end

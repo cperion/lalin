@@ -1,6 +1,6 @@
-local T = require("moonlift.mom.back.back_tags")
-local M = moon.module("mom_layout_field")
+local T = require("moonlift.mom.tags.mom_tags")
 
+return function(M)
 local mt_field_size = func(type_tag: ptr(i32), type_scalar_arr: ptr(i32), ft: i32) -> i32
     if ft < 0 then return 1 end
     let tgi: index = as(index, ft)
@@ -63,8 +63,9 @@ local mt_struct_field_offsets = func(field_type: ptr(i32), nfields: i32,
     end
 end
 
-M:add_func(mt_field_size)
-M:add_func(mt_field_align)
-M:add_func(mt_struct_field_offsets)
+M:local_func("mt_field_size", mt_field_size)
+M:local_func("mt_field_align", mt_field_align)
+M:local_func("mt_struct_field_offsets", mt_struct_field_offsets)
 
 return M
+end

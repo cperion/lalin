@@ -1,6 +1,6 @@
-local T = require("moonlift.mom.back.back_tags")
-local M = moon.module("mom_layout_env")
+local T = require("moonlift.mom.tags.mom_tags")
 
+return function(M)
 -- Scalar size/alignment table
 local mt_scalar_size = func(s: i32) -> i32
     if s == @{T.ScalarVoid} then return 0 end
@@ -55,9 +55,10 @@ local mt_type_align = func(type_tag: ptr(i32), type_scalar_arr: ptr(i32),
     return 1
 end
 
-M:add_func(mt_scalar_size)
-M:add_func(mt_scalar_align)
-M:add_func(mt_type_size)
-M:add_func(mt_type_align)
+M:local_func("mt_scalar_size", mt_scalar_size)
+M:local_func("mt_scalar_align", mt_scalar_align)
+M:local_func("mt_type_size", mt_type_size)
+M:local_func("mt_type_align", mt_type_align)
 
 return M
+end

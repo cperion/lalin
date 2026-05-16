@@ -1,5 +1,6 @@
-local T = require("moonlift.mom.back.back_tags")
-local M = moon.module("mom_type_stmt")
+local T = require("moonlift.mom.tags.mom_tags")
+
+return function(M)
 
 local mt_is_float_scalar = func(s: i32) -> bool
     return s == @{T.ScalarF32} or s == @{T.ScalarF64}
@@ -144,8 +145,9 @@ local mt_type_stmt = func(si: i32,
     return @{FLOW_FALLS}
 end
 
-M:add_func(mt_push_issue)
-M:add_func(mt_env_bind)
-M:add_func(mt_type_stmt)
+M:local_func("mt_push_issue", mt_push_issue)
+M:local_func("mt_env_bind", mt_env_bind)
+M:local_func("mt_type_stmt", mt_type_stmt)
 
 return M
+end

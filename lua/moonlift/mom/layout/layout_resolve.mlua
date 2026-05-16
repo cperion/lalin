@@ -1,6 +1,6 @@
-local T = require("moonlift.mom.back.back_tags")
-local M = moon.module("mom_layout_resolve")
+local T = require("moonlift.mom.tags.mom_tags")
 
+return function(M)
 -- Resolve a field access on a struct/union type.
 -- Takes the type index and field name token, looks up the field in the item arena.
 -- Returns the field's type index from the field_type array.
@@ -28,6 +28,7 @@ local mt_resolve_field = func(type_idx: i32, field_name: i32,
     return -1
 end
 
-M:add_func(mt_resolve_field)
+M:local_func("mt_resolve_field", mt_resolve_field)
 
 return M
+end

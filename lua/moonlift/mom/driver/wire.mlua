@@ -4,8 +4,7 @@
 -- provides the byte buffer and owns pool/aux ordering.  The writer appends the
 -- same binary format consumed by moonlift_jit_compile_binary.
 
-local M = moon.module("mom_driver_wire")
-
+return function(M)
 local u8p = moon.ptr(moon.u8)
 local i32p = moon.ptr(moon.i32)
 
@@ -15,14 +14,14 @@ local MW_OVERFLOW = 1
 local MLBT_MAGIC = 1296843348 -- 0x4d4c4254, bytes "TBLM" little-endian
 local MLBT_VERSION = 3
 
-local MomWireBuilder = M:struct("MomWireBuilder", {
-    moon.field("data", u8p),
-    moon.field("len", moon.index),
-    moon.field("cap", moon.index),
-    moon.field("string_count", moon.i32),
-    moon.field("aux_count", moon.i32),
-    moon.field("error", moon.i32),
-})
+local MomWireBuilder = M:type("MomWireBuilder", struct MomWireBuilder
+    data: u8p
+    len: moon.index
+    cap: moon.index
+    string_count: moon.i32
+    aux_count: moon.i32
+    error: moon.i32
+end)
 
 local mw_mark_overflow = func(w: ptr(@{MomWireBuilder}))
     w.error = @{MW_OVERFLOW}
@@ -159,21 +158,22 @@ local mw_write_cmd7 = func(w: ptr(@{MomWireBuilder}), tag: i32, a: i32, b: i32, 
     mw_write_u32(w, g)
 end
 
-M:add_func(mw_mark_overflow)
-M:add_func(mw_put_u8)
-M:add_func(mw_write_u32)
-M:add_func(mw_patch_u32)
-M:add_func(mw_align4)
-M:add_func(mw_init)
-M:add_func(mw_finish)
-M:add_func(mw_ok)
-M:add_func(mw_write_pool_string)
-M:add_func(mw_write_aux_i32s)
-M:add_func(mw_write_cmd)
-M:add_func(mw_write_cmd0)
-M:add_func(mw_write_cmd1)
-M:add_func(mw_write_cmd3)
-M:add_func(mw_write_cmd5)
-M:add_func(mw_write_cmd7)
+M:local_func("mw_mark_overflow", mw_mark_overflow)
+M:local_func("mw_put_u8", mw_put_u8)
+M:local_func("mw_write_u32", mw_write_u32)
+M:local_func("mw_patch_u32", mw_patch_u32)
+M:local_func("mw_align4", mw_align4)
+M:local_func("mw_init", mw_init)
+M:local_func("mw_finish", mw_finish)
+M:local_func("mw_ok", mw_ok)
+M:local_func("mw_write_pool_string", mw_write_pool_string)
+M:local_func("mw_write_aux_i32s", mw_write_aux_i32s)
+M:local_func("mw_write_cmd", mw_write_cmd)
+M:local_func("mw_write_cmd0", mw_write_cmd0)
+M:local_func("mw_write_cmd1", mw_write_cmd1)
+M:local_func("mw_write_cmd3", mw_write_cmd3)
+M:local_func("mw_write_cmd5", mw_write_cmd5)
+M:local_func("mw_write_cmd7", mw_write_cmd7)
 
 return M
+end
