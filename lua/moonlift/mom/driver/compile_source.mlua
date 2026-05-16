@@ -1,25 +1,1136 @@
 -- MOM source-to-wire compiler driver.
 --
--- Current approach: minimal stubs while investigating Cranelift JIT backend issue.
--- The index arithmetic with pointer offsets triggers sextend.i64 errors in code gen.
--- Keeping stubs stable until backend lowering is understood.
+-- Native product pipeline driver.  Each phase receives caller-owned workspace
+-- slices and reports a precise boundary status.  Hosted Lua is not used here.
+
+local T = require("moonlift.mom.tags.mom_tags")
 
 return function(M)
 
+local NativeParseOut = M.NativeParseOut
+local MomTreeOut = M.MomTreeOut
+local MomCmdBuffer = M.MomCmdBuffer
+local MomWireBuilder = M.MomWireBuilder
+local LowerState = M.LowerState
+
+-- Lexer workspace: five i32 arrays: kind/start/stop/line/col.
+local TOKEN_CAP = 16384
+local TOKEN_ARRAY_SIZE = TOKEN_CAP * 4
+local TOKEN_BYTES = TOKEN_ARRAY_SIZE * 5
+
+-- Parser workspace: one NativeParseOut descriptor plus state and output arrays.
+local PARSE_CAP = 4096
+local PARSE_STRUCT_BYTES = 512
+local PARSE_STATE_I32S = 16
+local PARSE_ARRAY_COUNT = 50
+local PARSE_ARRAY_BYTES = (PARSE_STATE_I32S + PARSE_ARRAY_COUNT * PARSE_CAP) * 4
+local PARSE_BYTES = PARSE_STRUCT_BYTES + PARSE_ARRAY_BYTES
+
+local TREE_CAP = 4096
+local TREE_STRUCT_BYTES = 512
+local TREE_COUNT_I32S = 16
+local TREE_ARRAY_COUNT = 52
+local TREE_ARRAY_BYTES = (TREE_COUNT_I32S + TREE_ARRAY_COUNT * TREE_CAP) * 4
+local TREE_BYTES = TREE_STRUCT_BYTES + TREE_ARRAY_BYTES
+local TREE_OFFSET = TOKEN_BYTES + PARSE_BYTES
+
+local TYPECHECK_CAP = 4096
+local TYPECHECK_COUNTER_I32S = 2
+local TYPECHECK_ARRAY_COUNT = 8
+local TYPECHECK_OFFSET = TREE_OFFSET + TREE_BYTES
+local TYPECHECK_BYTES = (TYPECHECK_COUNTER_I32S + TYPECHECK_ARRAY_COUNT * TYPECHECK_CAP) * 4
+
+local LAYOUT_CAP = 4096
+local LAYOUT_ARRAY_COUNT = 6
+local LAYOUT_OFFSET = TYPECHECK_OFFSET + TYPECHECK_BYTES
+local LAYOUT_BYTES = (LAYOUT_ARRAY_COUNT * LAYOUT_CAP) * 4
+
+local LOWER_CAP = 4096
+local LOWER_CMD_CAP = 8192
+local LOWER_STATE_BYTES = 128
+local LOWER_OFFSET = LAYOUT_OFFSET + LAYOUT_BYTES
+local LOWER_EXPR_ARRAY_COUNT = 4
+local LOWER_STMT_ARRAY_COUNT = 6
+local LOWER_ENV_ARRAY_COUNT = 2
+local LOWER_ARRAY_COUNT = LOWER_EXPR_ARRAY_COUNT + LOWER_STMT_ARRAY_COUNT + LOWER_ENV_ARRAY_COUNT
+local LOWER_ARRAY_BYTES = (LOWER_ARRAY_COUNT * LOWER_CAP) * 4
+local LOWER_CMD_BYTES = LOWER_CMD_CAP * 18 * 4
+local LOWER_BYTES = LOWER_STATE_BYTES + LOWER_ARRAY_BYTES + LOWER_CMD_BYTES
+
+local MC_OK = 0
+local MC_WORK_OVERFLOW = 1
+local MC_LEX_ERROR = 2
+local MC_PARSE_ERROR = 4
+local MC_TREE_ERROR = 5
+local MC_TYPECHECK_ERROR = 6
+local MC_LAYOUT_ERROR = 7
+local VALIDATE_CAP = 8192
+local VALIDATE_MAP_CAP = 8192
+local VALIDATE_COUNTER_I32S = 1
+local VALIDATE_ARRAY_COUNT = 11
+local VALIDATE_OFFSET = LOWER_OFFSET + LOWER_BYTES
+local VALIDATE_BYTES = (VALIDATE_COUNTER_I32S + VALIDATE_ARRAY_COUNT * VALIDATE_CAP + 2 * 8 * VALIDATE_MAP_CAP) * 4
+
+local MC_LOWER_ERROR = 8
+local WIRE_BUILDER_OFFSET = VALIDATE_OFFSET + VALIDATE_BYTES
+local WIRE_BUILDER_BYTES = 128
+
+local MC_VALIDATE_ERROR = 9
+local MC_WIRE_ERROR = 10
+local MC_OBJECT_NOT_IMPLEMENTED = 11
+local MC_ARTIFACT_NOT_IMPLEMENTED = 12
+
+local S_ISSUES = 5
+
+local mc_lex_kinds = func(work_buf: ptr(u8)) -> ptr(i32)
+    return as(ptr(i32), work_buf)
+end
+
+local mc_lex_starts = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lex_kinds(work_buf) + as(index, @{TOKEN_CAP})
+end
+
+local mc_lex_stops = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lex_kinds(work_buf) + as(index, @{TOKEN_CAP * 2})
+end
+
+local mc_lex_lines = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lex_kinds(work_buf) + as(index, @{TOKEN_CAP * 3})
+end
+
+local mc_lex_cols = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lex_kinds(work_buf) + as(index, @{TOKEN_CAP * 4})
+end
+
+-- Returns positive token count on success, negative status on failure.
+local mc_lex_phase = func(src: ptr(u8), src_len: index, work_buf: ptr(u8), work_cap: index) -> i32
+    if as(index, @{TOKEN_BYTES}) > work_cap then
+        return -@{MC_WORK_OVERFLOW}
+    end
+
+    let token_cap: index = as(index, @{TOKEN_CAP})
+    let ntok: index = mom_lex_into(src, src_len,
+                                   mc_lex_kinds(work_buf), mc_lex_starts(work_buf), mc_lex_stops(work_buf),
+                                   mc_lex_lines(work_buf), mc_lex_cols(work_buf), token_cap)
+    if ntok == 0 then
+        return -@{MC_LEX_ERROR}
+    end
+    if ntok > token_cap then
+        return -@{MC_WORK_OVERFLOW}
+    end
+    return as(i32, ntok)
+end
+
+local mc_parse_arr = func(base: ptr(i32), cap: index, slot: index) -> ptr(i32)
+    return base + as(index, @{PARSE_STATE_I32S}) + (slot * cap)
+end
+
+local mc_init_parse_out = func(out: ptr(@{NativeParseOut}), arrays: ptr(i32), cap: index)
+    out.state = arrays
+
+    out.type_tag = mc_parse_arr(arrays, cap, as(index, 0))
+    out.type_tok = mc_parse_arr(arrays, cap, as(index, 1))
+    out.type_a = mc_parse_arr(arrays, cap, as(index, 2))
+    out.type_b = mc_parse_arr(arrays, cap, as(index, 3))
+    out.type_c = mc_parse_arr(arrays, cap, as(index, 4))
+
+    out.expr_tag = mc_parse_arr(arrays, cap, as(index, 5))
+    out.expr_tok = mc_parse_arr(arrays, cap, as(index, 6))
+    out.expr_a = mc_parse_arr(arrays, cap, as(index, 7))
+    out.expr_b = mc_parse_arr(arrays, cap, as(index, 8))
+    out.expr_c = mc_parse_arr(arrays, cap, as(index, 9))
+    out.expr_d = mc_parse_arr(arrays, cap, as(index, 10))
+
+    out.stmt_tag = mc_parse_arr(arrays, cap, as(index, 11))
+    out.stmt_tok = mc_parse_arr(arrays, cap, as(index, 12))
+    out.stmt_a = mc_parse_arr(arrays, cap, as(index, 13))
+    out.stmt_b = mc_parse_arr(arrays, cap, as(index, 14))
+    out.stmt_c = mc_parse_arr(arrays, cap, as(index, 15))
+    out.stmt_d = mc_parse_arr(arrays, cap, as(index, 16))
+    out.stmt_e = mc_parse_arr(arrays, cap, as(index, 17))
+
+    out.item_tag = mc_parse_arr(arrays, cap, as(index, 18))
+    out.item_tok = mc_parse_arr(arrays, cap, as(index, 19))
+    out.item_a = mc_parse_arr(arrays, cap, as(index, 20))
+    out.item_b = mc_parse_arr(arrays, cap, as(index, 21))
+    out.item_c = mc_parse_arr(arrays, cap, as(index, 22))
+    out.item_d = mc_parse_arr(arrays, cap, as(index, 23))
+    out.item_e = mc_parse_arr(arrays, cap, as(index, 24))
+    out.item_f = mc_parse_arr(arrays, cap, as(index, 25))
+
+    out.param_name = mc_parse_arr(arrays, cap, as(index, 26))
+    out.param_type = mc_parse_arr(arrays, cap, as(index, 27))
+    out.field_name = mc_parse_arr(arrays, cap, as(index, 28))
+    out.field_type = mc_parse_arr(arrays, cap, as(index, 29))
+    out.jarg_name = mc_parse_arr(arrays, cap, as(index, 30))
+    out.jarg_expr = mc_parse_arr(arrays, cap, as(index, 31))
+
+    out.expr_list = mc_parse_arr(arrays, cap, as(index, 32))
+    out.stmt_list = mc_parse_arr(arrays, cap, as(index, 33))
+    out.type_list = mc_parse_arr(arrays, cap, as(index, 34))
+    out.issue_tag = mc_parse_arr(arrays, cap, as(index, 35))
+    out.issue_tok = mc_parse_arr(arrays, cap, as(index, 36))
+
+    out.switch_arm_key = mc_parse_arr(arrays, cap, as(index, 37))
+    out.switch_arm_body_start = mc_parse_arr(arrays, cap, as(index, 38))
+    out.switch_arm_body_count = mc_parse_arr(arrays, cap, as(index, 39))
+
+    out.ctrl_block_label = mc_parse_arr(arrays, cap, as(index, 40))
+    out.ctrl_block_param_start = mc_parse_arr(arrays, cap, as(index, 41))
+    out.ctrl_block_param_count = mc_parse_arr(arrays, cap, as(index, 42))
+    out.ctrl_block_body_start = mc_parse_arr(arrays, cap, as(index, 43))
+    out.ctrl_block_body_count = mc_parse_arr(arrays, cap, as(index, 44))
+
+    out.entry_param_name = mc_parse_arr(arrays, cap, as(index, 45))
+    out.entry_param_type = mc_parse_arr(arrays, cap, as(index, 46))
+    out.entry_param_init = mc_parse_arr(arrays, cap, as(index, 47))
+    out.cont_fill_name = mc_parse_arr(arrays, cap, as(index, 48))
+    out.cont_fill_label = mc_parse_arr(arrays, cap, as(index, 49))
+
+    out.cap_nodes = cap
+    out.cap_lists = cap
+end
+
+local mc_parse_out_ptr = func(work_buf: ptr(u8)) -> ptr(@{NativeParseOut})
+    return as(ptr(@{NativeParseOut}), work_buf + as(index, @{TOKEN_BYTES}))
+end
+
+local mc_parse_arrays = func(work_buf: ptr(u8)) -> ptr(i32)
+    return as(ptr(i32), work_buf + as(index, @{TOKEN_BYTES + PARSE_STRUCT_BYTES}))
+end
+
+-- Returns item count on success, negative status on failure.
+local mc_parse_phase = func(src: ptr(u8), src_len: index, ntok_i: i32, work_buf: ptr(u8), work_cap: index) -> i32
+    if as(index, @{TOKEN_BYTES + PARSE_BYTES}) > work_cap then
+        return -@{MC_WORK_OVERFLOW}
+    end
+
+    let out: ptr(@{NativeParseOut}) = mc_parse_out_ptr(work_buf)
+    let cap: index = as(index, @{PARSE_CAP})
+    mc_init_parse_out(out, mc_parse_arrays(work_buf), cap)
+
+    let nitems: i32 = mom_parse_native_core(src, src_len,
+                                            mc_lex_kinds(work_buf), mc_lex_starts(work_buf), mc_lex_stops(work_buf),
+                                            as(index, ntok_i), out)
+    if out.state[as(index, @{S_ISSUES})] ~= 0 then
+        return -@{MC_PARSE_ERROR}
+    end
+    return nitems
+end
+
+local mc_tree_arr = func(base: ptr(i32), cap: index, slot: index) -> ptr(i32)
+    return base + as(index, @{TREE_COUNT_I32S}) + (slot * cap)
+end
+
+local mc_init_tree_out = func(out: ptr(@{MomTreeOut}), arrays: ptr(i32), cap: index)
+    out.counts = arrays
+
+    out.type_tag = mc_tree_arr(arrays, cap, as(index, 0))
+    out.type_tok = mc_tree_arr(arrays, cap, as(index, 1))
+    out.type_scalar = mc_tree_arr(arrays, cap, as(index, 2))
+    out.type_name_tok = mc_tree_arr(arrays, cap, as(index, 3))
+    out.type_elem = mc_tree_arr(arrays, cap, as(index, 4))
+    out.type_list_start = mc_tree_arr(arrays, cap, as(index, 5))
+    out.type_list_count = mc_tree_arr(arrays, cap, as(index, 6))
+    out.type_result = mc_tree_arr(arrays, cap, as(index, 7))
+
+    out.param_name = mc_tree_arr(arrays, cap, as(index, 8))
+    out.param_type = mc_tree_arr(arrays, cap, as(index, 9))
+    out.field_name = mc_tree_arr(arrays, cap, as(index, 10))
+    out.field_type = mc_tree_arr(arrays, cap, as(index, 11))
+
+    out.expr_tag = mc_tree_arr(arrays, cap, as(index, 12))
+    out.expr_tok = mc_tree_arr(arrays, cap, as(index, 13))
+    out.expr_op = mc_tree_arr(arrays, cap, as(index, 14))
+    out.expr_lhs = mc_tree_arr(arrays, cap, as(index, 15))
+    out.expr_rhs = mc_tree_arr(arrays, cap, as(index, 16))
+    out.expr_aux0 = mc_tree_arr(arrays, cap, as(index, 17))
+    out.expr_aux1 = mc_tree_arr(arrays, cap, as(index, 18))
+    out.expr_aux2 = mc_tree_arr(arrays, cap, as(index, 19))
+
+    out.stmt_tag = mc_tree_arr(arrays, cap, as(index, 20))
+    out.stmt_tok = mc_tree_arr(arrays, cap, as(index, 21))
+    out.stmt_name = mc_tree_arr(arrays, cap, as(index, 22))
+    out.stmt_type = mc_tree_arr(arrays, cap, as(index, 23))
+    out.stmt_value = mc_tree_arr(arrays, cap, as(index, 24))
+    out.stmt_body_start = mc_tree_arr(arrays, cap, as(index, 25))
+    out.stmt_body_count = mc_tree_arr(arrays, cap, as(index, 26))
+    out.stmt_aux = mc_tree_arr(arrays, cap, as(index, 27))
+
+    out.item_tag = mc_tree_arr(arrays, cap, as(index, 28))
+    out.item_tok = mc_tree_arr(arrays, cap, as(index, 29))
+    out.item_name = mc_tree_arr(arrays, cap, as(index, 30))
+    out.item_member_start = mc_tree_arr(arrays, cap, as(index, 31))
+    out.item_member_count = mc_tree_arr(arrays, cap, as(index, 32))
+    out.item_result = mc_tree_arr(arrays, cap, as(index, 33))
+    out.item_body_start = mc_tree_arr(arrays, cap, as(index, 34))
+    out.item_body_count = mc_tree_arr(arrays, cap, as(index, 35))
+
+    out.expr_list = mc_tree_arr(arrays, cap, as(index, 36))
+    out.stmt_list = mc_tree_arr(arrays, cap, as(index, 37))
+    out.type_list = mc_tree_arr(arrays, cap, as(index, 38))
+    out.jump_arg_name = mc_tree_arr(arrays, cap, as(index, 39))
+    out.jump_arg_expr = mc_tree_arr(arrays, cap, as(index, 40))
+
+    out.switch_arm_key = mc_tree_arr(arrays, cap, as(index, 41))
+    out.switch_arm_body_start = mc_tree_arr(arrays, cap, as(index, 42))
+    out.switch_arm_body_count = mc_tree_arr(arrays, cap, as(index, 43))
+
+    out.ctrl_block_label = mc_tree_arr(arrays, cap, as(index, 44))
+    out.ctrl_block_param_start = mc_tree_arr(arrays, cap, as(index, 45))
+    out.ctrl_block_param_count = mc_tree_arr(arrays, cap, as(index, 46))
+    out.ctrl_block_body_start = mc_tree_arr(arrays, cap, as(index, 47))
+    out.ctrl_block_body_count = mc_tree_arr(arrays, cap, as(index, 48))
+
+    out.entry_param_name = mc_tree_arr(arrays, cap, as(index, 49))
+    out.entry_param_type = mc_tree_arr(arrays, cap, as(index, 50))
+    out.entry_param_init = mc_tree_arr(arrays, cap, as(index, 51))
+
+    out.cap_nodes = cap
+    out.cap_lists = cap
+end
+
+local mc_tree_out_ptr = func(work_buf: ptr(u8)) -> ptr(@{MomTreeOut})
+    return as(ptr(@{MomTreeOut}), work_buf + as(index, @{TREE_OFFSET}))
+end
+
+local mc_tree_arrays = func(work_buf: ptr(u8)) -> ptr(i32)
+    return as(ptr(i32), work_buf + as(index, @{TREE_OFFSET + TREE_STRUCT_BYTES}))
+end
+
+local mc_tree_phase = func(work_buf: ptr(u8), work_cap: index) -> i32
+    if as(index, @{TREE_OFFSET + TREE_BYTES}) > work_cap then
+        return -@{MC_WORK_OVERFLOW}
+    end
+
+    let parse_out: ptr(@{NativeParseOut}) = mc_parse_out_ptr(work_buf)
+    let tree_out: ptr(@{MomTreeOut}) = mc_tree_out_ptr(work_buf)
+    let cap: index = as(index, @{TREE_CAP})
+    mc_init_tree_out(tree_out, mc_tree_arrays(work_buf), cap)
+
+    let nitems: i32 = mom_materialize_tree(parse_out, tree_out)
+    if nitems < 0 then
+        return -@{MC_TREE_ERROR}
+    end
+    return nitems
+end
+
+local mc_typecheck_base = func(work_buf: ptr(u8)) -> ptr(i32)
+    return as(ptr(i32), work_buf + as(index, @{TYPECHECK_OFFSET}))
+end
+
+local mc_typecheck_arr = func(base: ptr(i32), cap: index, slot: index) -> ptr(i32)
+    return base + as(index, @{TYPECHECK_COUNTER_I32S}) + (slot * cap)
+end
+
+local mc_tc_env_count = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_typecheck_base(work_buf)
+end
+
+local mc_tc_issue_count = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_typecheck_base(work_buf) + as(index, 1)
+end
+
+local mc_tc_env_name = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_typecheck_arr(mc_typecheck_base(work_buf), as(index, @{TYPECHECK_CAP}), as(index, 0))
+end
+
+local mc_tc_env_type = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_typecheck_arr(mc_typecheck_base(work_buf), as(index, @{TYPECHECK_CAP}), as(index, 1))
+end
+
+local mc_tc_expr_scalar = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_typecheck_arr(mc_typecheck_base(work_buf), as(index, @{TYPECHECK_CAP}), as(index, 2))
+end
+
+local mc_tc_expr_type = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_typecheck_arr(mc_typecheck_base(work_buf), as(index, @{TYPECHECK_CAP}), as(index, 3))
+end
+
+local mc_tc_stmt_flow = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_typecheck_arr(mc_typecheck_base(work_buf), as(index, @{TYPECHECK_CAP}), as(index, 4))
+end
+
+local mc_tc_issue_tag = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_typecheck_arr(mc_typecheck_base(work_buf), as(index, @{TYPECHECK_CAP}), as(index, 5))
+end
+
+local mc_tc_issue_d0 = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_typecheck_arr(mc_typecheck_base(work_buf), as(index, @{TYPECHECK_CAP}), as(index, 6))
+end
+
+local mc_tc_issue_d1 = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_typecheck_arr(mc_typecheck_base(work_buf), as(index, @{TYPECHECK_CAP}), as(index, 7))
+end
+
+local mc_first_func_item = func(tree: ptr(@{MomTreeOut})) -> i32
+    let ni: index = as(index, tree.counts[as(index, 3)])
+    block scan(i: index = 0)
+        if i >= ni then return -1 end
+        if tree.item_tag[i] == @{T.IT_FUNC} then return as(i32, i) end
+        jump scan(i = i + as(index, 1))
+    end
+    return -1
+end
+
+local mc_back_scalar_from_type = func(tree: ptr(@{MomTreeOut}), type_idx: i32) -> i32
+    if type_idx < 0 then return @{T.BackI32} end
+    let ti: index = as(index, type_idx)
+    if tree.type_tag[ti] == @{T.MT_SCALAR} then
+        let s: i32 = tree.type_scalar[ti]
+        if s == @{T.ScalarBool} then return @{T.BackBool} end
+        if s == @{T.ScalarI8} then return @{T.BackI8} end
+        if s == @{T.ScalarI16} then return @{T.BackI16} end
+        if s == @{T.ScalarI32} then return @{T.BackI32} end
+        if s == @{T.ScalarI64} then return @{T.BackI64} end
+        if s == @{T.ScalarU8} then return @{T.BackU8} end
+        if s == @{T.ScalarU16} then return @{T.BackU16} end
+        if s == @{T.ScalarU32} then return @{T.BackU32} end
+        if s == @{T.ScalarU64} then return @{T.BackU64} end
+        if s == @{T.ScalarF32} then return @{T.BackF32} end
+        if s == @{T.ScalarF64} then return @{T.BackF64} end
+        if s == @{T.ScalarRawPtr} then return @{T.BackPtr} end
+        if s == @{T.ScalarIndex} then return @{T.BackIndex} end
+    end
+    if tree.type_tag[ti] == @{T.MT_PTR} then return @{T.BackPtr} end
+    return @{T.BackI32}
+end
+
+local mc_token_text_eq = func(src: ptr(u8), starts: ptr(i32), stops: ptr(i32), a: i32, b: i32) -> bool
+    if a < 0 or b < 0 then return false end
+    let ai: index = as(index, a)
+    let bi: index = as(index, b)
+    let alen: i32 = stops[ai] - starts[ai]
+    let blen: i32 = stops[bi] - starts[bi]
+    if alen ~= blen then return false end
+    let abase: index = as(index, starts[ai])
+    let bbase: index = as(index, starts[bi])
+    block loop(i: index = 0)
+        if i >= as(index, alen) then return true end
+        if src[abase + i] ~= src[bbase + i] then return false end
+        jump loop(i = i + as(index, 1))
+    end
+end
+
+local mc_normalize_param_refs = func(src: ptr(u8), work_buf: ptr(u8))
+    let tree: ptr(@{MomTreeOut}) = mc_tree_out_ptr(work_buf)
+    let func_item: i32 = mc_first_func_item(tree)
+    if func_item < 0 then return end
+    let fi: index = as(index, func_item)
+    let pstart: index = as(index, tree.item_member_start[fi])
+    let pcount: index = as(index, tree.item_member_count[fi])
+    let ne: index = as(index, tree.counts[as(index, 1)])
+    let starts: ptr(i32) = mc_lex_starts(work_buf)
+    let stops: ptr(i32) = mc_lex_stops(work_buf)
+    block exprs(ei: index = 0)
+        if ei >= ne then return end
+        if tree.expr_tag[ei] == @{T.ME_REF} then
+            let ref_tok: i32 = tree.expr_tok[ei]
+            block params(pi: index = 0)
+                if pi >= pcount then yield end
+                let param_tok: i32 = tree.param_name[pstart + pi]
+                if mc_token_text_eq(src, starts, stops, ref_tok, param_tok) then
+                    tree.expr_tok[ei] = param_tok
+                    tree.expr_op[ei] = param_tok
+                    yield
+                end
+                jump params(pi = pi + as(index, 1))
+            end
+        end
+        jump exprs(ei = ei + as(index, 1))
+    end
+end
+
+local mc_typecheck_clear = func(work_buf: ptr(u8), count: index)
+    mc_tc_env_count(work_buf)[0] = 0
+    mc_tc_issue_count(work_buf)[0] = 0
+    let expr_scalar: ptr(i32) = mc_tc_expr_scalar(work_buf)
+    let expr_type: ptr(i32) = mc_tc_expr_type(work_buf)
+    let stmt_flow: ptr(i32) = mc_tc_stmt_flow(work_buf)
+    block loop(i: index = 0)
+        if i >= count then return end
+        expr_scalar[i] = 0
+        expr_type[i] = -1
+        stmt_flow[i] = 0
+        jump loop(i = i + as(index, 1))
+    end
+end
+
+local mc_typecheck_bind_params = func(tree: ptr(@{MomTreeOut}), work_buf: ptr(u8))
+    let func_item: i32 = mc_first_func_item(tree)
+    if func_item < 0 then return end
+    let fi: index = as(index, func_item)
+    let start: index = as(index, tree.item_member_start[fi])
+    let count: index = as(index, tree.item_member_count[fi])
+    let env_name: ptr(i32) = mc_tc_env_name(work_buf)
+    let env_type: ptr(i32) = mc_tc_env_type(work_buf)
+    let env_count: ptr(i32) = mc_tc_env_count(work_buf)
+    block loop(i: index = 0)
+        if i >= count then return end
+        let slot: index = as(index, env_count[0])
+        env_name[slot] = tree.param_name[start + i]
+        env_type[slot] = mc_back_scalar_from_type(tree, tree.param_type[start + i])
+        env_count[0] = env_count[0] + 1
+        jump loop(i = i + as(index, 1))
+    end
+end
+
+local mc_typecheck_phase = func(work_buf: ptr(u8), work_cap: index) -> i32
+    if as(index, @{TYPECHECK_OFFSET + TYPECHECK_BYTES}) > work_cap then
+        return -@{MC_WORK_OVERFLOW}
+    end
+
+    let tree: ptr(@{MomTreeOut}) = mc_tree_out_ptr(work_buf)
+    let cap: index = as(index, @{TYPECHECK_CAP})
+    let ne: index = as(index, tree.counts[as(index, 1)])
+    let ns: index = as(index, tree.counts[as(index, 2)])
+    let clear_count: index = select(ne > ns, ne, ns)
+    if clear_count > cap then
+        return -@{MC_WORK_OVERFLOW}
+    end
+    mc_typecheck_clear(work_buf, clear_count)
+    mc_typecheck_bind_params(tree, work_buf)
+    let issues: i32 = mt_type_module(
+        tree.type_tag, tree.type_scalar, tree.type_elem,
+        tree.type_result, tree.type_list_count,
+        tree.type_list_start, tree.type_list,
+        tree.expr_tag, tree.expr_tok, tree.expr_op,
+        tree.expr_lhs, tree.expr_rhs, tree.expr_aux0,
+        tree.expr_list,
+        tree.stmt_tag, tree.stmt_tok,
+        tree.stmt_name, tree.stmt_type, tree.stmt_value,
+        tree.stmt_body_start, tree.stmt_body_count,
+        tree.item_tag, tree.item_tok, tree.item_name,
+        tree.item_member_start, tree.item_member_count,
+        tree.item_result, tree.item_body_start, tree.item_body_count,
+        tree.field_name, tree.field_type,
+        tree.param_name, tree.param_type,
+        tree.counts,
+        mc_tc_env_name(work_buf), mc_tc_env_type(work_buf), mc_tc_env_count(work_buf), cap,
+        mc_tc_expr_scalar(work_buf), mc_tc_expr_type(work_buf),
+        mc_tc_stmt_flow(work_buf),
+        mc_tc_issue_tag(work_buf), mc_tc_issue_d0(work_buf), mc_tc_issue_d1(work_buf),
+        mc_tc_issue_count(work_buf), cap)
+    if issues ~= 0 then
+        return -@{MC_TYPECHECK_ERROR}
+    end
+    return issues
+end
+
+local mc_layout_base = func(work_buf: ptr(u8)) -> ptr(i32)
+    return as(ptr(i32), work_buf + as(index, @{LAYOUT_OFFSET}))
+end
+
+local mc_layout_arr = func(base: ptr(i32), cap: index, slot: index) -> ptr(i32)
+    return base + (slot * cap)
+end
+
+local mc_layout_type_size = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_layout_arr(mc_layout_base(work_buf), as(index, @{LAYOUT_CAP}), as(index, 0))
+end
+
+local mc_layout_type_align = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_layout_arr(mc_layout_base(work_buf), as(index, @{LAYOUT_CAP}), as(index, 1))
+end
+
+local mc_layout_field_offset = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_layout_arr(mc_layout_base(work_buf), as(index, @{LAYOUT_CAP}), as(index, 2))
+end
+
+local mc_layout_field_size = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_layout_arr(mc_layout_base(work_buf), as(index, @{LAYOUT_CAP}), as(index, 3))
+end
+
+local mc_layout_item_size = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_layout_arr(mc_layout_base(work_buf), as(index, @{LAYOUT_CAP}), as(index, 4))
+end
+
+local mc_layout_item_align = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_layout_arr(mc_layout_base(work_buf), as(index, @{LAYOUT_CAP}), as(index, 5))
+end
+
+local mc_layout_clear = func(work_buf: ptr(u8), count: index)
+    let type_size: ptr(i32) = mc_layout_type_size(work_buf)
+    let type_align: ptr(i32) = mc_layout_type_align(work_buf)
+    let field_offset: ptr(i32) = mc_layout_field_offset(work_buf)
+    let field_size: ptr(i32) = mc_layout_field_size(work_buf)
+    let item_size: ptr(i32) = mc_layout_item_size(work_buf)
+    let item_align: ptr(i32) = mc_layout_item_align(work_buf)
+    block loop(i: index = 0)
+        if i >= count then return end
+        type_size[i] = 0
+        type_align[i] = 1
+        field_offset[i] = 0
+        field_size[i] = 0
+        item_size[i] = 0
+        item_align[i] = 1
+        jump loop(i = i + as(index, 1))
+    end
+end
+
+local mc_layout_find_item = func(tree: ptr(@{MomTreeOut}), name_tok: i32) -> i32
+    let ni: index = as(index, tree.counts[as(index, 3)])
+    block scan(i: index = 0)
+        if i >= ni then return -1 end
+        if tree.item_name[i] == name_tok then return as(i32, i) end
+        jump scan(i = i + as(index, 1))
+    end
+    return -1
+end
+
+local mc_layout_resolved_type_size = func(tree: ptr(@{MomTreeOut}), item_size: ptr(i32), ti: i32) -> i32
+    if ti < 0 then return 0 end
+    let idx: index = as(index, ti)
+    let tg: i32 = tree.type_tag[idx]
+    if tg == @{T.TY_SCALAR} then return mt_scalar_size(tree.type_scalar[idx]) end
+    if tg == @{T.TY_PTR} or tg == @{T.TY_FUNC} or tg == @{T.TY_CLOSURE} then return 8 end
+    if tg == @{T.TY_VIEW} then return 24 end
+    if tg == @{T.TY_NAMED} then
+        let item_idx: i32 = mc_layout_find_item(tree, tree.type_name_tok[idx])
+        if item_idx >= 0 then return item_size[as(index, item_idx)] end
+    end
+    return 0
+end
+
+local mc_layout_resolved_type_align = func(tree: ptr(@{MomTreeOut}), item_align: ptr(i32), ti: i32) -> i32
+    if ti < 0 then return 1 end
+    let idx: index = as(index, ti)
+    let tg: i32 = tree.type_tag[idx]
+    if tg == @{T.TY_SCALAR} then return mt_scalar_align(tree.type_scalar[idx]) end
+    if tg == @{T.TY_PTR} or tg == @{T.TY_FUNC} or tg == @{T.TY_CLOSURE} then return 8 end
+    if tg == @{T.TY_VIEW} then return 8 end
+    if tg == @{T.TY_NAMED} then
+        let item_idx: i32 = mc_layout_find_item(tree, tree.type_name_tok[idx])
+        if item_idx >= 0 then return item_align[as(index, item_idx)] end
+    end
+    return 1
+end
+
+local mc_layout_align_up = func(value: i32, align: i32) -> i32
+    if align <= 1 then return value end
+    let rem: i32 = value % align
+    if rem == 0 then return value end
+    return value + align - rem
+end
+
+local mc_layout_phase = func(work_buf: ptr(u8), work_cap: index) -> i32
+    if as(index, @{LAYOUT_OFFSET + LAYOUT_BYTES}) > work_cap then
+        return -@{MC_WORK_OVERFLOW}
+    end
+
+    let tree: ptr(@{MomTreeOut}) = mc_tree_out_ptr(work_buf)
+    let type_size: ptr(i32) = mc_layout_type_size(work_buf)
+    let type_align: ptr(i32) = mc_layout_type_align(work_buf)
+    let field_offset: ptr(i32) = mc_layout_field_offset(work_buf)
+    let field_size: ptr(i32) = mc_layout_field_size(work_buf)
+    let item_size: ptr(i32) = mc_layout_item_size(work_buf)
+    let item_align: ptr(i32) = mc_layout_item_align(work_buf)
+
+    let nt: index = as(index, tree.counts[as(index, 0)])
+    let nf: index = as(index, tree.counts[as(index, 5)])
+    let ni: index = as(index, tree.counts[as(index, 3)])
+    let max_count: index = select(nt > nf, select(nt > ni, nt, ni), select(nf > ni, nf, ni))
+    if max_count > as(index, @{LAYOUT_CAP}) then return -@{MC_WORK_OVERFLOW} end
+    mc_layout_clear(work_buf, max_count)
+
+    block types_direct(i: index = 0)
+        if i >= nt then yield end
+        type_size[i] = mc_layout_resolved_type_size(tree, item_size, as(i32, i))
+        type_align[i] = mc_layout_resolved_type_align(tree, item_align, as(i32, i))
+        jump types_direct(i = i + as(index, 1))
+    end
+
+    block items(i: index = 0)
+        if i >= ni then yield end
+        let tag: i32 = tree.item_tag[i]
+        if tag == @{T.IT_STRUCT} then
+            let start: index = as(index, tree.item_member_start[i])
+            let count: index = as(index, tree.item_member_count[i])
+            block fields(fi: index = 0, off: i32 = 0, max_align: i32 = 1)
+                if fi >= count then
+                    item_size[i] = mc_layout_align_up(off, max_align)
+                    item_align[i] = max_align
+                    yield
+                end
+                let field_index: index = start + fi
+                let ft: i32 = tree.field_type[field_index]
+                let falign: i32 = mc_layout_resolved_type_align(tree, item_align, ft)
+                let fsize: i32 = mc_layout_resolved_type_size(tree, item_size, ft)
+                let padded: i32 = mc_layout_align_up(off, falign)
+                field_offset[field_index] = padded
+                field_size[field_index] = fsize
+                let next_align: i32 = select(falign > max_align, falign, max_align)
+                jump fields(fi = fi + as(index, 1), off = padded + fsize, max_align = next_align)
+            end
+        elseif tag == @{T.IT_UNION} then
+            let start: index = as(index, tree.item_member_start[i])
+            let count: index = as(index, tree.item_member_count[i])
+            block variants(fi: index = 0, max_size: i32 = 0, max_align: i32 = 1)
+                if fi >= count then
+                    item_size[i] = mc_layout_align_up(max_size, max_align)
+                    item_align[i] = max_align
+                    yield
+                end
+                let field_index: index = start + fi
+                let ft: i32 = tree.field_type[field_index]
+                let falign: i32 = mc_layout_resolved_type_align(tree, item_align, ft)
+                let fsize: i32 = mc_layout_resolved_type_size(tree, item_size, ft)
+                field_offset[field_index] = 0
+                field_size[field_index] = fsize
+                let next_size: i32 = select(fsize > max_size, fsize, max_size)
+                let next_align: i32 = select(falign > max_align, falign, max_align)
+                jump variants(fi = fi + as(index, 1), max_size = next_size, max_align = next_align)
+            end
+        end
+        jump items(i = i + as(index, 1))
+    end
+
+    block types_resolved(i: index = 0)
+        if i >= nt then yield end
+        type_size[i] = mc_layout_resolved_type_size(tree, item_size, as(i32, i))
+        type_align[i] = mc_layout_resolved_type_align(tree, item_align, as(i32, i))
+        jump types_resolved(i = i + as(index, 1))
+    end
+
+    return 0
+end
+
+local mc_lower_state = func(work_buf: ptr(u8)) -> ptr(@{LowerState})
+    return as(ptr(@{LowerState}), work_buf + as(index, @{LOWER_OFFSET}))
+end
+
+local mc_lower_base = func(work_buf: ptr(u8)) -> ptr(i32)
+    return as(ptr(i32), work_buf + as(index, @{LOWER_OFFSET + LOWER_STATE_BYTES}))
+end
+
+local mc_lower_arr = func(base: ptr(i32), cap: index, slot: index) -> ptr(i32)
+    return base + (slot * cap)
+end
+
+local mc_lower_expr_a = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lower_arr(mc_lower_base(work_buf), as(index, @{LOWER_CAP}), as(index, 0))
+end
+
+local mc_lower_expr_b = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lower_arr(mc_lower_base(work_buf), as(index, @{LOWER_CAP}), as(index, 1))
+end
+
+local mc_lower_expr_c = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lower_arr(mc_lower_base(work_buf), as(index, @{LOWER_CAP}), as(index, 2))
+end
+
+local mc_lower_expr_d = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lower_arr(mc_lower_base(work_buf), as(index, @{LOWER_CAP}), as(index, 3))
+end
+
+local mc_lower_stmt_tok = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lower_arr(mc_lower_base(work_buf), as(index, @{LOWER_CAP}), as(index, 4))
+end
+
+local mc_lower_stmt_a = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lower_arr(mc_lower_base(work_buf), as(index, @{LOWER_CAP}), as(index, 5))
+end
+
+local mc_lower_stmt_b = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lower_arr(mc_lower_base(work_buf), as(index, @{LOWER_CAP}), as(index, 6))
+end
+
+local mc_lower_stmt_c = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lower_arr(mc_lower_base(work_buf), as(index, @{LOWER_CAP}), as(index, 7))
+end
+
+local mc_lower_stmt_d = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lower_arr(mc_lower_base(work_buf), as(index, @{LOWER_CAP}), as(index, 8))
+end
+
+local mc_lower_stmt_e = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lower_arr(mc_lower_base(work_buf), as(index, @{LOWER_CAP}), as(index, 9))
+end
+
+local mc_lower_env_name = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lower_arr(mc_lower_base(work_buf), as(index, @{LOWER_CAP}), as(index, 10))
+end
+
+local mc_lower_env_val = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_lower_arr(mc_lower_base(work_buf), as(index, @{LOWER_CAP}), as(index, 11))
+end
+
+local mc_lower_cmds = func(work_buf: ptr(u8)) -> ptr(i32)
+    return as(ptr(i32), work_buf + as(index, @{LOWER_OFFSET + LOWER_STATE_BYTES + LOWER_ARRAY_BYTES}))
+end
+
+local mc_lower_clear = func(work_buf: ptr(u8), count: index)
+    let base: ptr(i32) = mc_lower_base(work_buf)
+    block loop(i: index = 0)
+        if i >= count then return end
+        base[i] = 0
+        jump loop(i = i + as(index, 1))
+    end
+end
+
+local mc_parse_i32_token = func(src: ptr(u8), starts: ptr(i32), stops: ptr(i32), tok: i32) -> i32
+    let start: index = as(index, starts[as(index, tok)])
+    let stop: index = as(index, stops[as(index, tok)])
+    block digits(i: index = start, acc: i32 = 0)
+        if i >= stop then return acc end
+        let c: i32 = as(i32, src[i])
+        if c < 48 or c > 57 then return acc end
+        jump digits(i = i + as(index, 1), acc = (acc * 10) + (c - 48))
+    end
+end
+
+local mc_patch_literal_values = func(src: ptr(u8), work_buf: ptr(u8), tree: ptr(@{MomTreeOut}), ne: index)
+    let out_d: ptr(i32) = mc_lower_expr_d(work_buf)
+    let starts: ptr(i32) = mc_lex_starts(work_buf)
+    let stops: ptr(i32) = mc_lex_stops(work_buf)
+    block loop(i: index = 0)
+        if i >= ne then return end
+        if tree.expr_tag[i] == @{T.ME_LIT} then
+            let tok_kind: i32 = tree.expr_op[i]
+            if tok_kind == @{T.TK_INT} then
+                out_d[i] = mc_parse_i32_token(src, starts, stops, tree.expr_tok[i])
+            elseif tok_kind == @{T.TK_TRUE} then
+                out_d[i] = 1
+            else
+                out_d[i] = 0
+            end
+        end
+        jump loop(i = i + as(index, 1))
+    end
+end
+
+local mc_cmd_set = func(cmds: ptr(i32), cmd_index: index, word: index, value: i32)
+    cmds[(cmd_index * as(index, 18)) + word] = value
+end
+
+local mc_push_cmd6 = func(cmds: ptr(i32), st: ptr(@{LowerState}), tag: i32, a: i32, b: i32, c: i32, d: i32, e: i32, f: i32)
+    let i: index = st.cmd_count
+    if i < st.cmd_cap then
+        mc_cmd_set(cmds, i, as(index, 0), tag)
+        mc_cmd_set(cmds, i, as(index, 1), a)
+        mc_cmd_set(cmds, i, as(index, 2), b)
+        mc_cmd_set(cmds, i, as(index, 3), c)
+        mc_cmd_set(cmds, i, as(index, 4), d)
+        mc_cmd_set(cmds, i, as(index, 5), e)
+        mc_cmd_set(cmds, i, as(index, 6), f)
+        block clear(j: index = as(index, 7))
+            if j >= as(index, 18) then yield end
+            mc_cmd_set(cmds, i, j, 0)
+            jump clear(j = j + as(index, 1))
+        end
+    end
+    st.cmd_count = i + as(index, 1)
+end
+
+local mc_init_param_env = func(tree: ptr(@{MomTreeOut}), func_item: i32, work_buf: ptr(u8)) -> index
+    if func_item < 0 then return 0 end
+    let item_i: index = as(index, func_item)
+    let start: index = as(index, tree.item_member_start[item_i])
+    let count: index = as(index, tree.item_member_count[item_i])
+    let env_name: ptr(i32) = mc_lower_env_name(work_buf)
+    let env_val: ptr(i32) = mc_lower_env_val(work_buf)
+    block loop(i: index = 0)
+        if i >= count then return count end
+        env_name[i] = tree.param_name[start + i]
+        env_val[i] = as(i32, i + as(index, 1))
+        jump loop(i = i + as(index, 1))
+    end
+end
+
+local mc_lower_phase = func(src: ptr(u8), work_buf: ptr(u8), work_cap: index) -> i32
+    if as(index, @{LOWER_OFFSET + LOWER_BYTES}) > work_cap then
+        return -@{MC_WORK_OVERFLOW}
+    end
+
+    let tree: ptr(@{MomTreeOut}) = mc_tree_out_ptr(work_buf)
+    let ne: index = as(index, tree.counts[as(index, 1)])
+    let ns: index = as(index, tree.counts[as(index, 2)])
+    if ne > as(index, @{LOWER_CAP}) or ns > as(index, @{LOWER_CAP}) then
+        return -@{MC_WORK_OVERFLOW}
+    end
+    mc_lower_clear(work_buf, as(index, @{LOWER_ARRAY_COUNT * LOWER_CAP}))
+
+    mc_bridge_expr_arrays(tree.expr_tag, tree.expr_op, tree.expr_tok,
+                          tree.expr_lhs, tree.expr_rhs, tree.expr_aux0,
+                          ne,
+                          mc_lower_expr_a(work_buf), mc_lower_expr_b(work_buf),
+                          mc_lower_expr_c(work_buf), mc_lower_expr_d(work_buf))
+    mc_patch_literal_values(src, work_buf, tree, ne)
+    mc_bridge_stmt_arrays(tree.stmt_tag, tree.stmt_tok, tree.stmt_name,
+                          tree.stmt_type, tree.stmt_value,
+                          tree.stmt_body_start, tree.stmt_body_count, tree.stmt_aux,
+                          ns,
+                          mc_lower_stmt_tok(work_buf), mc_lower_stmt_a(work_buf),
+                          mc_lower_stmt_b(work_buf), mc_lower_stmt_c(work_buf),
+                          mc_lower_stmt_d(work_buf), mc_lower_stmt_e(work_buf))
+
+    let st: ptr(@{LowerState}) = mc_lower_state(work_buf)
+    let cmds: ptr(i32) = mc_lower_cmds(work_buf)
+    st.cmds = as(ptr(@{MomCmdBuffer}), work_buf)
+    st.cmd_count = 0
+    st.cmd_cap = as(index, @{LOWER_CMD_CAP})
+    let func_item: i32 = mc_first_func_item(tree)
+    let nparams: index = mc_init_param_env(tree, func_item, work_buf)
+    st.next_value = as(i32, nparams)
+    st.next_block = 0
+
+    mc_push_cmd6(cmds, st, @{T.CmdTargetModel}, 0, 0, 0, 0, 0, 0)
+    mc_push_cmd6(cmds, st, @{T.CmdCreateSig}, 0, 0, as(i32, nparams), 1, 1, 0)
+    mc_push_cmd6(cmds, st, @{T.CmdDeclareFunc}, 1, 1, 0, 0, 0, 0)
+    mc_push_cmd6(cmds, st, @{T.CmdBeginFunc}, 1, 0, 0, 0, 0, 0)
+    mc_push_cmd6(cmds, st, @{T.CmdCreateBlock}, 2, 0, 0, 0, 0, 0)
+    mc_push_cmd6(cmds, st, @{T.CmdSwitchToBlock}, 2, 0, 0, 0, 0, 0)
+    if nparams > 0 then
+        mc_push_cmd6(cmds, st, @{T.CmdBindEntryParams}, 2, 2, as(i32, nparams), 0, 0, 0)
+    end
+
+    mc_lower_module(tree.expr_tag, mc_lower_expr_a(work_buf), mc_lower_expr_b(work_buf),
+                    mc_lower_expr_c(work_buf), mc_lower_expr_d(work_buf),
+                    ne,
+                    tree.stmt_tag, mc_lower_stmt_tok(work_buf),
+                    mc_lower_stmt_a(work_buf), mc_lower_stmt_b(work_buf), mc_lower_stmt_c(work_buf),
+                    mc_lower_stmt_d(work_buf), mc_lower_stmt_e(work_buf),
+                    ns,
+                    tree.stmt_list,
+                    mc_tc_expr_scalar(work_buf),
+                    mc_lower_env_name(work_buf), mc_lower_env_val(work_buf), nparams, as(index, @{LOWER_CAP}),
+                    st, cmds)
+
+    mc_push_cmd6(cmds, st, @{T.CmdSealBlock}, 2, 0, 0, 0, 0, 0)
+    mc_push_cmd6(cmds, st, @{T.CmdFinishFunc}, 1, 0, 0, 0, 0, 0)
+    mc_push_cmd6(cmds, st, @{T.CmdFinalizeModule}, 0, 0, 0, 0, 0, 0)
+    if st.cmd_count > st.cmd_cap then
+        return -@{MC_WORK_OVERFLOW}
+    end
+    return as(i32, st.cmd_count)
+end
+
+local mc_validate_base = func(work_buf: ptr(u8)) -> ptr(i32)
+    return as(ptr(i32), work_buf + as(index, @{VALIDATE_OFFSET}))
+end
+
+local mc_validate_arr = func(base: ptr(i32), cap: index, slot: index) -> ptr(i32)
+    return base + as(index, @{VALIDATE_COUNTER_I32S}) + (slot * cap)
+end
+
+local mc_validate_issue_count = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_validate_base(work_buf)
+end
+
+local mc_v_tag = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_validate_arr(mc_validate_base(work_buf), as(index, @{VALIDATE_CAP}), as(index, 0))
+end
+
+local mc_v_a = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_validate_arr(mc_validate_base(work_buf), as(index, @{VALIDATE_CAP}), as(index, 1))
+end
+
+local mc_v_b = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_validate_arr(mc_validate_base(work_buf), as(index, @{VALIDATE_CAP}), as(index, 2))
+end
+
+local mc_v_c = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_validate_arr(mc_validate_base(work_buf), as(index, @{VALIDATE_CAP}), as(index, 3))
+end
+
+local mc_v_d = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_validate_arr(mc_validate_base(work_buf), as(index, @{VALIDATE_CAP}), as(index, 4))
+end
+
+local mc_v_e = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_validate_arr(mc_validate_base(work_buf), as(index, @{VALIDATE_CAP}), as(index, 5))
+end
+
+local mc_v_f = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_validate_arr(mc_validate_base(work_buf), as(index, @{VALIDATE_CAP}), as(index, 6))
+end
+
+local mc_v_issue_tag = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_validate_arr(mc_validate_base(work_buf), as(index, @{VALIDATE_CAP}), as(index, 7))
+end
+
+local mc_v_issue_a = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_validate_arr(mc_validate_base(work_buf), as(index, @{VALIDATE_CAP}), as(index, 8))
+end
+
+local mc_v_issue_b = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_validate_arr(mc_validate_base(work_buf), as(index, @{VALIDATE_CAP}), as(index, 9))
+end
+
+local mc_v_issue_c = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_validate_arr(mc_validate_base(work_buf), as(index, @{VALIDATE_CAP}), as(index, 10))
+end
+
+local mc_v_map_state = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_validate_base(work_buf) + as(index, @{VALIDATE_COUNTER_I32S + VALIDATE_ARRAY_COUNT * VALIDATE_CAP})
+end
+
+local mc_v_map_key = func(work_buf: ptr(u8)) -> ptr(i32)
+    return mc_v_map_state(work_buf) + as(index, @{8 * VALIDATE_MAP_CAP})
+end
+
+local mc_validate_clear = func(work_buf: ptr(u8), count: index)
+    mc_validate_issue_count(work_buf)[0] = 0
+    let base: ptr(i32) = mc_validate_base(work_buf)
+    block loop(i: index = 0)
+        if i >= count then return end
+        base[i] = 0
+        jump loop(i = i + as(index, 1))
+    end
+end
+
+local mc_validate_bridge = func(cmds: ptr(i32), ncmds: index, work_buf: ptr(u8))
+    let vt: ptr(i32) = mc_v_tag(work_buf)
+    let va: ptr(i32) = mc_v_a(work_buf)
+    let vb: ptr(i32) = mc_v_b(work_buf)
+    let vc: ptr(i32) = mc_v_c(work_buf)
+    let vd: ptr(i32) = mc_v_d(work_buf)
+    let ve: ptr(i32) = mc_v_e(work_buf)
+    let vf: ptr(i32) = mc_v_f(work_buf)
+    block loop(i: index = 0)
+        if i >= ncmds then return end
+        let base: index = i * as(index, 18)
+        vt[i] = cmds[base]
+        va[i] = cmds[base + as(index, 1)]
+        vb[i] = cmds[base + as(index, 2)]
+        vc[i] = cmds[base + as(index, 3)]
+        vd[i] = cmds[base + as(index, 4)]
+        ve[i] = cmds[base + as(index, 5)]
+        vf[i] = cmds[base + as(index, 6)]
+        jump loop(i = i + as(index, 1))
+    end
+end
+
+local mc_validate_phase = func(work_buf: ptr(u8), work_cap: index) -> i32
+    if as(index, @{VALIDATE_OFFSET + VALIDATE_BYTES}) > work_cap then
+        return -@{MC_WORK_OVERFLOW}
+    end
+    let st: ptr(@{LowerState}) = mc_lower_state(work_buf)
+    if st.cmd_count > as(index, @{VALIDATE_CAP}) then return -@{MC_WORK_OVERFLOW} end
+    mc_validate_clear(work_buf, as(index, @{VALIDATE_COUNTER_I32S + VALIDATE_ARRAY_COUNT * VALIDATE_CAP + 2 * 8 * VALIDATE_MAP_CAP}))
+    mc_validate_bridge(mc_lower_cmds(work_buf), st.cmd_count, work_buf)
+    let issues: i32 = mb_validate(mc_v_tag(work_buf), mc_v_a(work_buf), mc_v_b(work_buf), mc_v_c(work_buf),
+                                  mc_v_d(work_buf), mc_v_e(work_buf), mc_v_f(work_buf), as(i32, st.cmd_count),
+                                  mc_v_issue_tag(work_buf), mc_v_issue_a(work_buf), mc_v_issue_b(work_buf), mc_v_issue_c(work_buf),
+                                  mc_validate_issue_count(work_buf), as(i32, @{VALIDATE_CAP}),
+                                  mc_v_map_state(work_buf), mc_v_map_key(work_buf), as(i32, @{VALIDATE_MAP_CAP}))
+    if issues ~= 0 then return -@{MC_VALIDATE_ERROR} end
+    return 0
+end
+
+local mc_wire_builder = func(work_buf: ptr(u8)) -> ptr(@{MomWireBuilder})
+    return as(ptr(@{MomWireBuilder}), work_buf + as(index, @{WIRE_BUILDER_OFFSET}))
+end
+
+local mc_wire_phase = func(src: ptr(u8), work_buf: ptr(u8), work_cap: index, wire_out: ptr(u8), wire_cap: index) -> i32
+    if as(index, @{WIRE_BUILDER_OFFSET + WIRE_BUILDER_BYTES}) > work_cap then return -@{MC_WORK_OVERFLOW} end
+
+    let st: ptr(@{LowerState}) = mc_lower_state(work_buf)
+    let w: ptr(@{MomWireBuilder}) = mc_wire_builder(work_buf)
+    mw_init(w, wire_out, wire_cap)
+
+    let tree: ptr(@{MomTreeOut}) = mc_tree_out_ptr(work_buf)
+    let func_item: i32 = mc_first_func_item(tree)
+    let func_i: index = as(index, func_item)
+    let nparams: index = select(func_item >= 0, as(index, tree.item_member_count[func_i]), as(index, 0))
+    let param_start: index = select(func_item >= 0, as(index, tree.item_member_start[func_i]), as(index, 0))
+    let name_tok: i32 = select(func_item >= 0, tree.item_name[func_i], -1)
+
+    mw_write_pool_generated(w, 115, 0) -- pool[0] = generated signature id
+    if name_tok >= 0 then
+        mw_write_pool_slice(w, src, mc_lex_starts(work_buf), mc_lex_stops(work_buf), name_tok)
+    else
+        mw_write_pool_generated(w, 102, 1)
+    end
+    mw_write_pool_generated(w, 98, 2) -- pool[2] = generated entry block id
+    block pool_values(i: i32 = 1)
+        if i > st.next_value then yield end
+        mw_write_pool_generated(w, 118, i)
+        jump pool_values(i = i + 1)
+    end
+
+    let aux_word: ptr(i32) = mc_validate_base(work_buf)
+    block sig_params(i: index = 0)
+        if i >= nparams then yield end
+        aux_word[i] = mom_schema_scalar_to_wire(mc_back_scalar_from_type(tree, tree.param_type[param_start + i]))
+        jump sig_params(i = i + as(index, 1))
+    end
+    mw_write_aux_i32s(w, aux_word, nparams)
+    aux_word[0] = 4 -- wire BackI32 scalar code
+    mw_write_aux_i32s(w, aux_word, as(index, 1))
+    block entry_vals(i: index = 0)
+        if i >= nparams then yield end
+        aux_word[i] = mom_wire_value_pool(as(i32, i + as(index, 1)))
+        jump entry_vals(i = i + as(index, 1))
+    end
+    mw_write_aux_i32s(w, aux_word, nparams)
+
+    let cmds: ptr(i32) = mc_lower_cmds(work_buf)
+    block commands(i: index = 0)
+        if i >= st.cmd_count then yield end
+        let ok: i32 = mom_write_schema_cmd_to_wire(w, cmds, i)
+        if ok ~= 0 then return -@{MC_WIRE_ERROR} end
+        jump commands(i = i + as(index, 1))
+    end
+
+    let wire_len: index = mw_finish(w)
+    if w.error ~= 0 then return -@{MC_WIRE_ERROR} end
+    return as(i32, wire_len)
+end
+
 local mom_driver_compile_source_to_wire = func(src: ptr(u8), src_len: index, wire_out: ptr(u8), wire_cap: index, work_buf: ptr(u8), work_cap: index) -> i32
-    return 1  -- NOT_IMPLEMENTED
+    let ntok_i: i32 = mc_lex_phase(src, src_len, work_buf, work_cap)
+    if ntok_i < 0 then
+        return ntok_i
+    end
+
+    let nitems: i32 = mc_parse_phase(src, src_len, ntok_i, work_buf, work_cap)
+    if nitems < 0 then
+        return nitems
+    end
+
+    let tree_items: i32 = mc_tree_phase(work_buf, work_cap)
+    if tree_items < 0 then
+        return tree_items
+    end
+    mc_normalize_param_refs(src, work_buf)
+
+    let typecheck_status: i32 = mc_typecheck_phase(work_buf, work_cap)
+    if typecheck_status < 0 then
+        return typecheck_status
+    end
+
+    let layout_status: i32 = mc_layout_phase(work_buf, work_cap)
+    if layout_status < 0 then
+        return layout_status
+    end
+
+    let lower_status: i32 = mc_lower_phase(src, work_buf, work_cap)
+    if lower_status < 0 then
+        return lower_status
+    end
+
+    let validate_status: i32 = mc_validate_phase(work_buf, work_cap)
+    if validate_status < 0 then
+        return validate_status
+    end
+
+    let wire_status: i32 = mc_wire_phase(src, work_buf, work_cap, wire_out, wire_cap)
+    if wire_status < 0 then
+        return wire_status
+    end
+
+    return wire_status
 end
 
 local mom_driver_compile_source_to_object = func(src: ptr(u8), src_len: index, obj_out: ptr(u8), obj_cap: index, work_buf: ptr(u8), work_cap: index) -> i32
-    return 1
+    return -@{MC_OBJECT_NOT_IMPLEMENTED}
 end
 
 local mom_driver_compile_source_to_artifact = func(src: ptr(u8), src_len: index, diags: ptr(u8), diag_cap: index, work_buf: ptr(u8), work_cap: index) -> i32
-    return 1
+    return -@{MC_ARTIFACT_NOT_IMPLEMENTED}
 end
 
--- Backend index lowering probe.  This is deliberately separate from the product
--- compile entry points so failures in arithmetic/cast lowering are isolated.
 local mom_driver_index_arith_probe = func(buf: ptr(u8), cap: index) -> i32
     let zero: index = 0
     let one: index = 1
@@ -30,7 +1141,99 @@ local mom_driver_index_arith_probe = func(buf: ptr(u8), cap: index) -> i32
     return as(i32, buf[zero]) + as(i32, buf[one])
 end
 
+M.mc_lex_kinds = mc_lex_kinds
+M.mc_lex_starts = mc_lex_starts
+M.mc_lex_stops = mc_lex_stops
+M.mc_lex_lines = mc_lex_lines
+M.mc_lex_cols = mc_lex_cols
 M.mc_lex_phase = mc_lex_phase
+M.mc_parse_arr = mc_parse_arr
+M.mc_init_parse_out = mc_init_parse_out
+M.mc_parse_out_ptr = mc_parse_out_ptr
+M.mc_parse_arrays = mc_parse_arrays
+M.mc_parse_phase = mc_parse_phase
+M.mc_tree_arr = mc_tree_arr
+M.mc_init_tree_out = mc_init_tree_out
+M.mc_tree_out_ptr = mc_tree_out_ptr
+M.mc_tree_arrays = mc_tree_arrays
+M.mc_tree_phase = mc_tree_phase
+M.mc_typecheck_base = mc_typecheck_base
+M.mc_typecheck_arr = mc_typecheck_arr
+M.mc_tc_env_count = mc_tc_env_count
+M.mc_tc_issue_count = mc_tc_issue_count
+M.mc_tc_env_name = mc_tc_env_name
+M.mc_tc_env_type = mc_tc_env_type
+M.mc_tc_expr_scalar = mc_tc_expr_scalar
+M.mc_tc_expr_type = mc_tc_expr_type
+M.mc_tc_stmt_flow = mc_tc_stmt_flow
+M.mc_tc_issue_tag = mc_tc_issue_tag
+M.mc_tc_issue_d0 = mc_tc_issue_d0
+M.mc_tc_issue_d1 = mc_tc_issue_d1
+M.mc_token_text_eq = mc_token_text_eq
+M.mc_normalize_param_refs = mc_normalize_param_refs
+M.mc_typecheck_clear = mc_typecheck_clear
+M.mc_typecheck_bind_params = mc_typecheck_bind_params
+M.mc_typecheck_phase = mc_typecheck_phase
+M.mc_layout_base = mc_layout_base
+M.mc_layout_arr = mc_layout_arr
+M.mc_layout_type_size = mc_layout_type_size
+M.mc_layout_type_align = mc_layout_type_align
+M.mc_layout_field_offset = mc_layout_field_offset
+M.mc_layout_field_size = mc_layout_field_size
+M.mc_layout_item_size = mc_layout_item_size
+M.mc_layout_item_align = mc_layout_item_align
+M.mc_layout_clear = mc_layout_clear
+M.mc_layout_find_item = mc_layout_find_item
+M.mc_layout_resolved_type_size = mc_layout_resolved_type_size
+M.mc_layout_resolved_type_align = mc_layout_resolved_type_align
+M.mc_layout_align_up = mc_layout_align_up
+M.mc_layout_phase = mc_layout_phase
+M.mc_lower_state = mc_lower_state
+M.mc_lower_base = mc_lower_base
+M.mc_lower_arr = mc_lower_arr
+M.mc_lower_expr_a = mc_lower_expr_a
+M.mc_lower_expr_b = mc_lower_expr_b
+M.mc_lower_expr_c = mc_lower_expr_c
+M.mc_lower_expr_d = mc_lower_expr_d
+M.mc_lower_stmt_tok = mc_lower_stmt_tok
+M.mc_lower_stmt_a = mc_lower_stmt_a
+M.mc_lower_stmt_b = mc_lower_stmt_b
+M.mc_lower_stmt_c = mc_lower_stmt_c
+M.mc_lower_stmt_d = mc_lower_stmt_d
+M.mc_lower_stmt_e = mc_lower_stmt_e
+M.mc_lower_env_name = mc_lower_env_name
+M.mc_lower_env_val = mc_lower_env_val
+M.mc_lower_cmds = mc_lower_cmds
+M.mc_lower_clear = mc_lower_clear
+M.mc_parse_i32_token = mc_parse_i32_token
+M.mc_patch_literal_values = mc_patch_literal_values
+M.mc_cmd_set = mc_cmd_set
+M.mc_push_cmd6 = mc_push_cmd6
+M.mc_first_func_item = mc_first_func_item
+M.mc_back_scalar_from_type = mc_back_scalar_from_type
+M.mc_init_param_env = mc_init_param_env
+M.mc_lower_phase = mc_lower_phase
+M.mc_validate_base = mc_validate_base
+M.mc_validate_arr = mc_validate_arr
+M.mc_validate_issue_count = mc_validate_issue_count
+M.mc_v_tag = mc_v_tag
+M.mc_v_a = mc_v_a
+M.mc_v_b = mc_v_b
+M.mc_v_c = mc_v_c
+M.mc_v_d = mc_v_d
+M.mc_v_e = mc_v_e
+M.mc_v_f = mc_v_f
+M.mc_v_issue_tag = mc_v_issue_tag
+M.mc_v_issue_a = mc_v_issue_a
+M.mc_v_issue_b = mc_v_issue_b
+M.mc_v_issue_c = mc_v_issue_c
+M.mc_v_map_state = mc_v_map_state
+M.mc_v_map_key = mc_v_map_key
+M.mc_validate_clear = mc_validate_clear
+M.mc_validate_bridge = mc_validate_bridge
+M.mc_validate_phase = mc_validate_phase
+M.mc_wire_builder = mc_wire_builder
+M.mc_wire_phase = mc_wire_phase
 M.mom_driver_compile_source_to_wire = mom_driver_compile_source_to_wire
 M.mom_driver_compile_source_to_object = mom_driver_compile_source_to_object
 M.mom_driver_compile_source_to_artifact = mom_driver_compile_source_to_artifact

@@ -29,6 +29,7 @@ unsafe extern "C" {
         work_buf: *mut u8,
         work_cap: usize,
     ) -> i32;
+    #[allow(dead_code)]
     fn mom_compile_source_to_artifact_internal(
         src: *mut u8,
         src_len: usize,
@@ -148,15 +149,31 @@ fn status() -> i32 {
     let hello = unsafe { mom_hello() };
     let mut probe_buf = [0u8; 2];
     let index_probe = unsafe { mom_debug_index_arithmetic(probe_buf.as_mut_ptr(), probe_buf.len()) };
+
+    let mut src = b"func main() -> i32\n  return 0\nend\n".to_vec();
+    let mut wire = vec![0u8; 64 * 1024];
+    let mut work = vec![0u8; 4 * 1024 * 1024];
+    let pipeline_probe = unsafe {
+        mom_compile_source_to_wire_internal(
+            src.as_mut_ptr(),
+            src.len(),
+            wire.as_mut_ptr(),
+            wire.len(),
+            work.as_mut_ptr(),
+            work.len(),
+        )
+    };
+
     println!("mom integration: precompiled native MOM object linked");
     println!("mom_hello: {hello}");
     println!("mom index arithmetic probe: {index_probe}");
-    if hello == 42 && index_probe == 40 { 0 } else { 1 }
+    println!("mom native pipeline probe: {pipeline_probe}");
+    if hello == 42 && index_probe == 40 && pipeline_probe > 0 { 0 } else { 1 }
 }
 
 fn compile_wire_smoke(source: &mut [u8]) -> Result<Vec<u8>, i32> {
     let mut wire = vec![0u8; source.len().saturating_mul(64).max(64 * 1024)];
-    let mut work = vec![0u8; 512 * 1024]; // 512KB work buffer for intermediate structures
+    let mut work = vec![0u8; 4 * 1024 * 1024];
     let rc = unsafe {
         mom_compile_source_to_wire_internal(
             source.as_mut_ptr(),
@@ -167,13 +184,18 @@ fn compile_wire_smoke(source: &mut [u8]) -> Result<Vec<u8>, i32> {
             work.len()
         )
     };
-    if rc == 0 { Ok(wire) } else { Err(rc) }
+    if rc > 0 {
+        wire.truncate(rc as usize);
+        Ok(wire)
+    } else {
+        Err(rc)
+    }
 }
 
 fn emit_object(path: PathBuf, output: PathBuf) -> Result<(), String> {
     let mut source = fs::read(&path).map_err(|e| format!("unable to read {}: {e}", path.display()))?;
     let mut obj = vec![0u8; source.len().saturating_mul(128).max(128 * 1024)];
-    let mut work = vec![0u8; 512 * 1024]; // 512KB work buffer
+    let mut work = vec![0u8; 4 * 1024 * 1024];
     let rc = unsafe {
         mom_compile_source_to_object_internal(
             source.as_mut_ptr(),
@@ -184,40 +206,54 @@ fn emit_object(path: PathBuf, output: PathBuf) -> Result<(), String> {
             work.len()
         )
     };
-    if rc != 0 {
+    if rc <= 0 {
         return Err(format!("native MOM object emission failed with status {rc}"));
     }
+    obj.truncate(rc as usize);
     fs::write(&output, &obj).map_err(|e| format!("unable to write {}: {e}", output.display()))?;
     println!("{}", output.display());
     Ok(())
 }
 
 fn run_file(opts: &Opts) -> Result<(), String> {
-    let input = opts.input.as_ref().ok_or_else(|| "missing input file".to_string())?;
-    let mut source = fs::read(input).map_err(|e| format!("unable to read {}: {e}", input.display()))?;
-
-    // The current precompiled native object is linked and callable.  The full
-    // source->artifact pipeline is still being filled in on the native side; use
-    // the product ABI and report its status instead of falling back to hosted Lua.
-    let mut work = vec![0u8; 512 * 1024]; // 512KB work buffer
-    let rc = unsafe {
-        mom_compile_source_to_artifact_internal(
-            source.as_mut_ptr(),
-            source.len(),
-            std::ptr::null_mut(),
-            0,
-            work.as_mut_ptr(),
-            work.len()
-        )
-    };
-    if rc != 0 {
-        return Err(format!("native MOM artifact compilation failed with status {rc}"));
+    if opts.ret != "i32" && opts.ret != "void" {
+        return Err(format!("unsupported --ret {}; expected i32 or void", opts.ret));
     }
 
-    // Until the native artifact ABI returns an executable handle, verify the
-    // source-to-wire boundary as the product path smoke test.
-    compile_wire_smoke(&mut source).map_err(|rc| format!("native MOM wire compilation failed with status {rc}"))?;
-    println!("0");
+    let input = opts.input.as_ref().ok_or_else(|| "missing input file".to_string())?;
+    let mut source = fs::read(input).map_err(|e| format!("unable to read {}: {e}", input.display()))?;
+    let wire = compile_wire_smoke(&mut source)
+        .map_err(|rc| format!("native MOM wire compilation failed with status {rc}"))?;
+
+    let jit = moonlift::Jit::new();
+    let artifact = jit
+        .compile_binary(&wire)
+        .map_err(|e| format!("native MOM backend compilation failed: {}", e.0))?;
+
+    let ptr = artifact
+        .getpointer_by_name(&opts.call)
+        .map_err(|e| format!("native MOM entry point lookup failed: {}", e.0))?;
+
+    if opts.ret == "void" {
+        match opts.args_i32.as_slice() {
+            [] => { let f: extern "C" fn() = unsafe { std::mem::transmute(ptr) }; f(); }
+            [a] => { let f: extern "C" fn(i32) = unsafe { std::mem::transmute(ptr) }; f(*a); }
+            [a, b] => { let f: extern "C" fn(i32, i32) = unsafe { std::mem::transmute(ptr) }; f(*a, *b); }
+            [a, b, c] => { let f: extern "C" fn(i32, i32, i32) = unsafe { std::mem::transmute(ptr) }; f(*a, *b, *c); }
+            [a, b, c, d] => { let f: extern "C" fn(i32, i32, i32, i32) = unsafe { std::mem::transmute(ptr) }; f(*a, *b, *c, *d); }
+            _ => return Err("native MOM run supports at most four i32 arguments".to_string()),
+        }
+    } else {
+        let result = match opts.args_i32.as_slice() {
+            [] => { let f: extern "C" fn() -> i32 = unsafe { std::mem::transmute(ptr) }; f() }
+            [a] => { let f: extern "C" fn(i32) -> i32 = unsafe { std::mem::transmute(ptr) }; f(*a) }
+            [a, b] => { let f: extern "C" fn(i32, i32) -> i32 = unsafe { std::mem::transmute(ptr) }; f(*a, *b) }
+            [a, b, c] => { let f: extern "C" fn(i32, i32, i32) -> i32 = unsafe { std::mem::transmute(ptr) }; f(*a, *b, *c) }
+            [a, b, c, d] => { let f: extern "C" fn(i32, i32, i32, i32) -> i32 = unsafe { std::mem::transmute(ptr) }; f(*a, *b, *c, *d) }
+            _ => return Err("native MOM run supports at most four i32 arguments".to_string()),
+        };
+        println!("{}", result);
+    }
     Ok(())
 }
 

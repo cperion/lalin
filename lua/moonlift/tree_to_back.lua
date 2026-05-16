@@ -632,8 +632,14 @@ function M.Define(T)
                 if pvm.classof(ty) == Ty.TPtr then
                     local sz = elem_size(ty.elem); if sz ~= nil and sz > 0 then stride = sz end
                 end
-                local env_e1, off_ext = env_next_value(rhs.env, "v")
-                cmds[#cmds + 1] = Back.CmdCast(off_ext, Back.BackSextend, Back.BackIndex, off.value)
+                local env_e1 = rhs.env
+                local off_ext = off.value
+                if off.ty ~= Back.BackIndex then
+                    local cast_env, cast_val = env_next_value(env_e1, "v")
+                    cmds[#cmds + 1] = Back.CmdCast(cast_val, Back.BackSextend, Back.BackIndex, off.value)
+                    env_e1 = cast_env
+                    off_ext = cast_val
+                end
                 if self.op == C.BinSub then
                     local env_neg, neg_off = env_next_value(env_e1, "v")
                     cmds[#cmds + 1] = Back.CmdUnary(neg_off, Back.BackUnaryIneg, Back.BackShapeScalar(Back.BackIndex), off_ext)

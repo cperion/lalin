@@ -11,6 +11,8 @@ local ok, _, out = capture("./target/release/mom status")
 assert(ok, out)
 assert(out:match("precompiled native MOM object linked"), out)
 assert(out:match("mom_hello:%s*42"), out)
+assert(out:match("mom index arithmetic probe:%s*40"), out)
+assert(out:match("mom native pipeline probe:%s*[1-9]%d*"), out)
 assert(not out:match("tree_to_back"), out)
 assert(not out:match("hosted Lua"), out)
 

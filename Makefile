@@ -44,6 +44,7 @@ clean:
 
 test-mom: $(MOM)
 	luajit tests/test_mom_cli.lua
+	luajit tests/test_mom_run_2plus2.lua
 
 run:
 	$(MOONLIFT) $(FILE)

@@ -681,6 +681,7 @@ local mt_type_module = func(
     item_member_start: ptr(i32), item_member_count: ptr(i32),
     item_result: ptr(i32), item_body_start: ptr(i32), item_body_count: ptr(i32),
     field_name_arr: ptr(i32), field_type_arr: ptr(i32),
+    param_name_arr: ptr(i32), param_type_arr: ptr(i32),
     counts: ptr(i32),
     env_name: ptr(i32), env_type: ptr(i32), env_count: ptr(i32), env_cap: index,
     out_expr_scalar: ptr(i32), out_expr_type: ptr(i32),
@@ -700,6 +701,22 @@ local mt_type_module = func(
         if name >= 0 and (tg == @{T.IT_FUNC} or tg == @{T.IT_EXTERN}) then
             let ei: index = as(index, env_count[0])
             if ei < env_cap then env_name[ei] = name; env_type[ei] = @{T.TY_FUNC}; env_count[0] = env_count[0] + 1 end
+        end
+        if tg == @{T.IT_FUNC} then
+            let pstart: index = as(index, item_member_start[ij])
+            let pcount: index = as(index, item_member_count[ij])
+            block params(pi: index = 0)
+                if pi >= pcount then yield end
+                let pslot: index = as(index, env_count[0])
+                let ptype: i32 = param_type_arr[pstart + pi]
+                let pscalar: i32 = mt_type_scalar(type_tag, type_scalar_arr, ptype)
+                if pslot < env_cap then
+                    env_name[pslot] = param_name_arr[pstart + pi]
+                    env_type[pslot] = pscalar
+                end
+                env_count[0] = env_count[0] + 1
+                jump params(pi = pi + as(index, 1))
+            end
         end
         jump items(ij = ij + as(index, 1))
     end

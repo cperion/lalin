@@ -7,7 +7,7 @@
 - ✅ Phase 3 COMPLETE: All core driver/runtime infrastructure implemented
 - ✅ Phase 4 PARTIAL: `mom` is now a product binary that links and calls `target/libmom_precompiled.o`; it no longer embeds hosted compiler Lua
   - runtime/diag.mlua: Complete with MomDiag struct and diagnostic builders
-  - driver/compile_source.mlua: Skeleton orchestrator with main entry point
+  - driver/compile_source.mlua: Native source driver now runs lexer → parser core → tree materializer → typecheck → layout → lowering → validation → MLBT wire emission over caller-owned workspace
   - driver/native_entry.mlua: C ABI exports fully implemented
   - driver/lua_api.mlua: Lua module registration infrastructure
   - driver/wire.mlua: Verified complete with MLBT v3 serialization
@@ -23,10 +23,13 @@
 - `target/libmom_precompiled.o` now generates successfully and exports `mom_compile_source_to_wire`, `mom_compile_source_to_object`, `mom_compile_source_to_artifact`, `mom_luaopen_moonlift`, and `mom_hello`.
 - `src/mom_main.rs` was rewritten as a native product CLI with no embedded hosted Lua.
 - `make test-mom` now builds `moonlift -> libmoonlift.so -> libmom_precompiled.o -> mom` and passes the status/symbol/no-hosted-embed checks.
+- Fixed pointer-arithmetic lowering to avoid redundant index→index sign-extension; this unblocked real workspace slicing in the native driver.
+- `mom status` now probes the native source-to-wire pipeline on a tiny source and reports the emitted MLBT byte length.
+- `target/release/mom` can JIT-run native source-to-wire output by real source function name; `tests/test_mom_run_2plus2.lua` verifies `main(): 2 + 2 -> 4` and `add(i32, i32): 20 + 22 -> 42`.
 
 **Phase 3 Progress: 6 of 6 core tasks complete (100%)**
 - ✅ Task #34 (11): runtime/diag.mlua - diagnostic types and builders
-- ✅ Task #35 (14): driver/compile_source.mlua - compilation orchestrator (skeleton)
+- ✅ Task #35 (14): driver/compile_source.mlua - compilation orchestrator through tree materialization
 - ✅ Task #36 (13): driver/wire.mlua - MLBT v3 wire format (verified complete)
 - ✅ Task #37 (12): driver/backend_ffi.mlua - FFI integration (verified complete)
 - ✅ Task #38 (16): driver/native_entry.mlua - C ABI exports
@@ -232,7 +235,7 @@ The most efficient path forward is to:
 
 No build blocker remains for producing and linking `target/libmom_precompiled.o`.
 
-Current implementation gap: the native source-to-wire/source-to-object/source-to-artifact functions are product ABI stubs. They are linked and callable from `mom`, but the full native semantic pipeline still has to replace the placeholder status returns.
+Current implementation gap: native source-to-wire now emits MLBT bytes for the current minimal lowered command subset. Native source-to-object/source-to-artifact still intentionally return product errors until Rust backend invocation and executable artifact handles are wired.
 
 ## Verification Checklist for Completion
 
@@ -250,16 +253,17 @@ Current implementation gap: the native source-to-wire/source-to-object/source-to
 ## Phase 3 Status
 
 **Objective:** Implement native driver layer for compilation pipeline
-**Status:** ✅ INFRASTRUCTURE COMPLETE; native semantic pipeline implementation remains
+**Status:** ✅ INFRASTRUCTURE COMPLETE; native source-to-wire pipeline connected through MLBT emission
 
 **Completed:**
 - ✅ Diagnostic infrastructure (MomDiag, MomDiagBuilder)
-- ✅ Compilation orchestrator skeleton (mom_driver_compile_source_to_wire)
+- ✅ Compilation orchestrator through lex → parse → tree → typecheck → layout → lower → validate → wire (`mom_driver_compile_source_to_wire`)
 - ✅ Native entry points (6 exported C functions)
 - ✅ Lua API stubs (module registration hooks)
 - ✅ Build manifest updated with new modules
 - ✅ All modules compile successfully as standalone
 
 **Remaining:**
-- Fill in `driver/compile_source.mlua` with the real native semantic pipeline instead of placeholder status returns.
-- Replace the placeholder artifact/object ABI with real handles/bytes once native source-to-wire is complete.
+- Extend name resolution beyond function parameters to locals, globals, and multi-function modules using the hosted compiler behavior in `lua/moonlift/` as source of truth.
+- Broaden lowering/wire coverage from the current command subset to the full command surface.
+- Wire native source-to-object/source-to-artifact to the Rust backend and return real object bytes/artifact handles.

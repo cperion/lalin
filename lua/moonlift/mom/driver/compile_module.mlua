@@ -17,7 +17,11 @@ local mc_bridge_expr_arrays = func(
     block loop(i: index = 0)
         if i >= ne then return end
         let tag: i32 = expr_tag[i]
-        if tag == @{T.ME_LIT} or tag == @{T.ME_REF} or tag == @{T.ME_HOLE} then
+        if tag == @{T.ME_LIT} then
+            out_a[i] = expr_op[i]
+            out_b[i] = 0; out_c[i] = 0
+            out_d[i] = expr_aux0[i]
+        elseif tag == @{T.ME_REF} or tag == @{T.ME_HOLE} then
             out_a[i] = expr_tok[i]
             out_b[i] = 0; out_c[i] = 0
             out_d[i] = expr_aux0[i]
