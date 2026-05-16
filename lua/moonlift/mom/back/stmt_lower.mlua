@@ -334,33 +334,32 @@ local mb_lower_expr_stmt = func(expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: pt
 end
 
 -- ST_LET: stmt_tok=keyword, stmt_a=name_tok, stmt_b=type_idx, stmt_c=init_expr_idx
--- Lower init, bind name_tok→val in env.
+-- Lower init, bind name_tok→val in env. Returns updated env_len.
 local mb_lower_let_stmt = func(expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr(i32),
                                 expr_c: ptr(i32), expr_d: ptr(i32),
                                 name_tok: i32, init_idx: i32,
                                 env_name: ptr(i32), env_val: ptr(i32),
-                                env_len: ptr(index), env_cap: index,
-                                st: ptr(@{LowerState}), cmds: ptr(i32))
+                                env_len: index, env_cap: index,
+                                st: ptr(@{LowerState}), cmds: ptr(i32)) -> index
     let val: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, init_idx,
-                                  env_name, env_val, env_len[0], st, cmds)
-    let i: index = env_len[0]
-    if i < env_cap then
-        env_name[i] = name_tok
-        env_val[i] = val
+                                  env_name, env_val, env_len, st, cmds)
+    if env_len < env_cap then
+        env_name[env_len] = name_tok
+        env_val[env_len] = val
     end
-    env_len[0] = i + as(index, 1)
+    return env_len + as(index, 1)
 end
 
 -- ST_VAR: same field layout as ST_LET. Create stack slot, lower init, store.
--- Simplified: uses CmdCreateStackSlot + CmdStackAddr + CmdStoreInfo.
+-- Simplified: uses CmdCreateStackSlot + CmdStackAddr + CmdStoreInfo. Returns updated env_len.
 local mb_lower_var_stmt = func(expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr(i32),
                                 expr_c: ptr(i32), expr_d: ptr(i32),
                                 name_tok: i32, scalar: i32, init_idx: i32,
                                 env_name: ptr(i32), env_val: ptr(i32),
-                                env_len: ptr(index), env_cap: index,
-                                st: ptr(@{LowerState}), cmds: ptr(i32))
+                                env_len: index, env_cap: index,
+                                st: ptr(@{LowerState}), cmds: ptr(i32)) -> index
     let init_val: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, init_idx,
-                                       env_name, env_val, env_len[0], st, cmds)
+                                       env_name, env_val, env_len, st, cmds)
     let slot: i32 = mb_fresh_block(st)
     let size: i32 = select(scalar == @{T.BackI32} or scalar == @{T.BackF32} or scalar == @{T.BackBool}, 4,
                       select(scalar == @{T.BackI64} or scalar == @{T.BackF64}, 8,
@@ -372,12 +371,11 @@ local mb_lower_var_stmt = func(expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr
     mb_push_cmd(@{T.CmdStackAddr}, addr_val, slot, 0, 0, 0, 0, st, cmds)
     mb_push_cmd_w15(@{T.CmdStoreInfo}, @{T.BackShapeScalar}, scalar, 1, 0, addr_val, 0,
                     0, 1, 4, 0, 4, 0, 0, 1, init_val, st, cmds)
-    let i: index = env_len[0]
-    if i < env_cap then
-        env_name[i] = name_tok
-        env_val[i] = init_val
+    if env_len < env_cap then
+        env_name[env_len] = name_tok
+        env_val[env_len] = init_val
     end
-    env_len[0] = i + as(index, 1)
+    return env_len + as(index, 1)
 end
 
 -- ST_SET: stmt_tok=keyword, stmt_a=place_expr_idx, stmt_b=value_expr_idx
@@ -470,6 +468,7 @@ local mb_lower_stmt = func(expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr(i32
                             slist: ptr(i32), sidx: i32,
                             env_name: ptr(i32), env_val: ptr(i32), env_len: index,
                             st: ptr(@{LowerState}), cmds: ptr(i32))
+    var env_len: index = env_len
     let tag: i32 = stmt_tag[as(index, sidx)]
     if tag == @{T.ST_RETURN_VOID} then
         mb_lower_return_void(st, cmds)
@@ -480,14 +479,14 @@ local mb_lower_stmt = func(expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr(i32
         mb_lower_expr_stmt(expr_tag, expr_a, expr_b, expr_c, expr_d,
                            stmt_a[as(index, sidx)], env_name, env_val, env_len, st, cmds)
     elseif tag == @{T.ST_LET} then
-        mb_lower_let_stmt(expr_tag, expr_a, expr_b, expr_c, expr_d,
+        env_len = mb_lower_let_stmt(expr_tag, expr_a, expr_b, expr_c, expr_d,
                           stmt_a[as(index, sidx)], stmt_c[as(index, sidx)],
-                          env_name, env_val, stmt_tok, st.cmd_cap,
+                          env_name, env_val, env_len, st.cmd_cap,
                           st, cmds)
     elseif tag == @{T.ST_VAR} then
-        mb_lower_var_stmt(expr_tag, expr_a, expr_b, expr_c, expr_d,
+        env_len = mb_lower_var_stmt(expr_tag, expr_a, expr_b, expr_c, expr_d,
                           stmt_a[as(index, sidx)], 0, stmt_c[as(index, sidx)],
-                          env_name, env_val, stmt_tok, st.cmd_cap,
+                          env_name, env_val, env_len, st.cmd_cap,
                           st, cmds)
     elseif tag == @{T.ST_SET} then
         mb_lower_set_stmt(expr_tag, expr_a, expr_b, expr_c, expr_d,
