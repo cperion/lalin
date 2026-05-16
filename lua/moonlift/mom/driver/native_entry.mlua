@@ -4,17 +4,73 @@
 -- with a predictable symbol name in the .o file. Rust mom_main.rs
 -- calls them directly through extern "C" declarations.
 --
--- Individual pipeline functions that work standalone:
---   mom_lex_into, np_parse_module, mom_materialize_tree,
---   mc_lower_module, mc_validate_tape, mc_wire_tape,
---   mb_push_cmd, mb_validate, mom_backend_compile_binary
+-- Main pipeline:
+--   mom_compile_source_to_wire - source bytes → MLBT v3 wire
+--   mom_compile_source_to_object - source bytes → object format
+--   mom_compile_source_to_artifact - source bytes → JIT artifact
+--
+-- Artifact management:
+--   mom_artifact_getpointer - get function pointer from artifact
+--   mom_artifact_free - release artifact resources
 
 local T = require("moonlift.mom.tags.mom_tags")
 return function(M)
+
+-- Main compilation entry point: source → wire
+-- Signature matches mom_driver_compile_source_to_wire
+M.mom_compile_source_to_wire = func(
+    src: ptr(u8),
+    src_len: index,
+    wire_out: ptr(u8),
+    wire_cap: index,
+    diags: ptr(M.MomDiag),
+    diag_cap: index
+) -> M.MomCompileResult
+    return M.mom_driver_compile_source_to_wire(src, src_len, wire_out, wire_cap, diags, diag_cap)
+end
+
+-- Compilation entry point: source → object
+M.mom_compile_source_to_object = func(
+    src: ptr(u8),
+    src_len: index,
+    obj_out: ptr(u8),
+    obj_cap: index,
+    diags: ptr(M.MomDiag),
+    diag_cap: index
+) -> M.MomCompileResult
+    return M.mom_driver_compile_source_to_object(src, src_len, obj_out, obj_cap, diags, diag_cap)
+end
+
+-- Compilation entry point: source → JIT artifact
+M.mom_compile_source_to_artifact = func(
+    src: ptr(u8),
+    src_len: index,
+    diags: ptr(M.MomDiag),
+    diag_cap: index
+) -> ptr(u8)
+    return M.mom_driver_compile_source_to_artifact(src, src_len, diags, diag_cap)
+end
+
+-- Artifact helper: get function pointer
+M.mom_artifact_getpointer = func(artifact: ptr(u8), func_name: ptr(u8)) -> ptr(u8)
+    return M.mom_backend_getpointer(artifact, func_name)
+end
+
+-- Artifact helper: free artifact
+M.mom_artifact_free = func(artifact: ptr(u8))
+    M.mom_backend_free_artifact(artifact)
+end
+
+-- Lua module initialization (called from Rust to register moon API)
+M.mom_luaopen_moonlift = func(state: ptr(u8)) -> i32
+    -- TODO: Register Lua API functions into the provided state
+    return 0
+end
 
 -- Marker function — proves the .o symbol is linked.
 M.mom_hello = func() -> i32
     return 42
 end
 
+return M
 end
