@@ -41,12 +41,18 @@ M.compiler_sources = {
     "lua/moonlift/mom/typecheck/type_check.mlua",
     "lua/moonlift/mom/typecheck/type_control.mlua",
 
-    -- Phase 3: layout resolution
+    -- Phase 3: parser (native compiler frontend) - must come before driver
+    "lua/moonlift/mom/parser/document_scan.mlua",
+    "lua/moonlift/mom/parser/native_lexer.mlua",
+    "lua/moonlift/mom/parser/native_core.mlua",
+    "lua/moonlift/mom/parser/native_tree.mlua",
+
+    -- Phase 4: layout resolution
     "lua/moonlift/mom/layout/layout_env.mlua",
     "lua/moonlift/mom/layout/layout_field.mlua",
     "lua/moonlift/mom/layout/layout_resolve.mlua",
 
-    -- Phase 4: driver / wire / backend
+    -- Phase 5: driver / wire / backend
     "lua/moonlift/mom/driver/wire.mlua",
     "lua/moonlift/mom/driver/lower_wire.mlua",
     "lua/moonlift/mom/driver/backend_ffi.mlua",
@@ -55,17 +61,11 @@ M.compiler_sources = {
     "lua/moonlift/mom/driver/lua_api.mlua",
     "lua/moonlift/mom/driver/native_entry.mlua",
 
-    -- Phase 5: vectorization (skeletons)
+    -- Phase 6: vectorization (skeletons)
     "lua/moonlift/mom/vec/vec_facts.mlua",
     "lua/moonlift/mom/vec/vec_decide.mlua",
     "lua/moonlift/mom/vec/vec_lower.mlua",
     "lua/moonlift/mom/vec/vec_plan.mlua",
-
-    -- Phase 6: parser (native compiler frontend)
-    "lua/moonlift/mom/parser/document_scan.mlua",
-    "lua/moonlift/mom/parser/native_lexer.mlua",
-    "lua/moonlift/mom/parser/native_core.mlua",
-    "lua/moonlift/mom/parser/native_tree.mlua",
 }
 
 return M

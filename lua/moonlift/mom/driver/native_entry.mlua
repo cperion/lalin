@@ -2,16 +2,17 @@
 
 return function(M)
 
-local mom_compile_source_to_wire = func(src: ptr(u8), src_len: index, wire_out: ptr(u8), wire_cap: index) -> i32
-    return mom_driver_compile_source_to_wire(src, src_len, wire_out, wire_cap)
+-- Internal versions that take work buffers (called from Rust)
+local mom_compile_source_to_wire_internal = func(src: ptr(u8), src_len: index, wire_out: ptr(u8), wire_cap: index, work_buf: ptr(u8), work_cap: index) -> i32
+    return mom_driver_compile_source_to_wire(src, src_len, wire_out, wire_cap, work_buf, work_cap)
 end
 
-local mom_compile_source_to_object = func(src: ptr(u8), src_len: index, obj_out: ptr(u8), obj_cap: index) -> i32
-    return mom_driver_compile_source_to_object(src, src_len, obj_out, obj_cap)
+local mom_compile_source_to_object_internal = func(src: ptr(u8), src_len: index, obj_out: ptr(u8), obj_cap: index, work_buf: ptr(u8), work_cap: index) -> i32
+    return mom_driver_compile_source_to_object(src, src_len, obj_out, obj_cap, work_buf, work_cap)
 end
 
-local mom_compile_source_to_artifact = func(src: ptr(u8), src_len: index, diags: ptr(u8), diag_cap: index) -> i32
-    return mom_driver_compile_source_to_artifact(src, src_len, diags, diag_cap)
+local mom_compile_source_to_artifact_internal = func(src: ptr(u8), src_len: index, diags: ptr(u8), diag_cap: index, work_buf: ptr(u8), work_cap: index) -> i32
+    return mom_driver_compile_source_to_artifact(src, src_len, diags, diag_cap, work_buf, work_cap)
 end
 
 local mom_artifact_getpointer = func(artifact: ptr(u8), func_name: ptr(u8)) -> ptr(u8)
@@ -30,9 +31,11 @@ local mom_hello = func() -> i32
     return 42
 end
 
-M.export.mom_compile_source_to_wire = mom_compile_source_to_wire
-M.export.mom_compile_source_to_object = mom_compile_source_to_object
-M.export.mom_compile_source_to_artifact = mom_compile_source_to_artifact
+-- Export internal versions (called from Rust)
+M.export.mom_compile_source_to_wire_internal = mom_compile_source_to_wire_internal
+M.export.mom_compile_source_to_object_internal = mom_compile_source_to_object_internal
+M.export.mom_compile_source_to_artifact_internal = mom_compile_source_to_artifact_internal
+
 M.export.mom_artifact_getpointer = mom_artifact_getpointer
 M.export.mom_artifact_free = mom_artifact_free
 M.export.mom_luaopen_moonlift = mom_luaopen_moonlift

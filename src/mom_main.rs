@@ -13,23 +13,29 @@ unsafe extern "C" {
     fn mom_hello() -> i32;
     #[allow(dead_code)]
     fn mom_luaopen_moonlift(state: *mut c_void) -> i32;
-    fn mom_compile_source_to_wire(
+    fn mom_compile_source_to_wire_internal(
         src: *mut u8,
         src_len: usize,
         wire_out: *mut u8,
         wire_cap: usize,
+        work_buf: *mut u8,
+        work_cap: usize,
     ) -> i32;
-    fn mom_compile_source_to_object(
+    fn mom_compile_source_to_object_internal(
         src: *mut u8,
         src_len: usize,
         obj_out: *mut u8,
         obj_cap: usize,
+        work_buf: *mut u8,
+        work_cap: usize,
     ) -> i32;
-    fn mom_compile_source_to_artifact(
+    fn mom_compile_source_to_artifact_internal(
         src: *mut u8,
         src_len: usize,
         diags: *mut u8,
         diag_cap: usize,
+        work_buf: *mut u8,
+        work_cap: usize,
     ) -> i32;
 }
 
@@ -146,8 +152,16 @@ fn status() -> i32 {
 
 fn compile_wire_smoke(source: &mut [u8]) -> Result<Vec<u8>, i32> {
     let mut wire = vec![0u8; source.len().saturating_mul(64).max(64 * 1024)];
+    let mut work = vec![0u8; 512 * 1024]; // 512KB work buffer for intermediate structures
     let rc = unsafe {
-        mom_compile_source_to_wire(source.as_mut_ptr(), source.len(), wire.as_mut_ptr(), wire.len())
+        mom_compile_source_to_wire_internal(
+            source.as_mut_ptr(),
+            source.len(),
+            wire.as_mut_ptr(),
+            wire.len(),
+            work.as_mut_ptr(),
+            work.len()
+        )
     };
     if rc == 0 { Ok(wire) } else { Err(rc) }
 }
@@ -155,8 +169,16 @@ fn compile_wire_smoke(source: &mut [u8]) -> Result<Vec<u8>, i32> {
 fn emit_object(path: PathBuf, output: PathBuf) -> Result<(), String> {
     let mut source = fs::read(&path).map_err(|e| format!("unable to read {}: {e}", path.display()))?;
     let mut obj = vec![0u8; source.len().saturating_mul(128).max(128 * 1024)];
+    let mut work = vec![0u8; 512 * 1024]; // 512KB work buffer
     let rc = unsafe {
-        mom_compile_source_to_object(source.as_mut_ptr(), source.len(), obj.as_mut_ptr(), obj.len())
+        mom_compile_source_to_object_internal(
+            source.as_mut_ptr(),
+            source.len(),
+            obj.as_mut_ptr(),
+            obj.len(),
+            work.as_mut_ptr(),
+            work.len()
+        )
     };
     if rc != 0 {
         return Err(format!("native MOM object emission failed with status {rc}"));
@@ -173,8 +195,16 @@ fn run_file(opts: &Opts) -> Result<(), String> {
     // The current precompiled native object is linked and callable.  The full
     // source->artifact pipeline is still being filled in on the native side; use
     // the product ABI and report its status instead of falling back to hosted Lua.
+    let mut work = vec![0u8; 512 * 1024]; // 512KB work buffer
     let rc = unsafe {
-        mom_compile_source_to_artifact(source.as_mut_ptr(), source.len(), std::ptr::null_mut(), 0)
+        mom_compile_source_to_artifact_internal(
+            source.as_mut_ptr(),
+            source.len(),
+            std::ptr::null_mut(),
+            0,
+            work.as_mut_ptr(),
+            work.len()
+        )
     };
     if rc != 0 {
         return Err(format!("native MOM artifact compilation failed with status {rc}"));
