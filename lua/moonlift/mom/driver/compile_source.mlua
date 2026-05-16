@@ -1,17 +1,13 @@
 -- MOM source-to-wire compiler driver.
 --
--- Current product ABI debug stage:
---   1. keep compile_source entry points as minimal stubs to prove C ABI/object
---      linking without exercising the incomplete native pipeline;
---   2. keep a separate explicit index-arithmetic probe so backend index lowering
---      can be tested independently from parser/typecheck wiring.
+-- Current approach: minimal stubs while investigating Cranelift JIT backend issue.
+-- The index arithmetic with pointer offsets triggers sextend.i64 errors in code gen.
+-- Keeping stubs stable until backend lowering is understood.
 
 return function(M)
 
--- Minimal source -> wire ABI stub.  No pointer arithmetic, no casts, no writes.
--- Returns 1 to mean "native pipeline not implemented".
 local mom_driver_compile_source_to_wire = func(src: ptr(u8), src_len: index, wire_out: ptr(u8), wire_cap: index, work_buf: ptr(u8), work_cap: index) -> i32
-    return 1
+    return 1  -- NOT_IMPLEMENTED
 end
 
 local mom_driver_compile_source_to_object = func(src: ptr(u8), src_len: index, obj_out: ptr(u8), obj_cap: index, work_buf: ptr(u8), work_cap: index) -> i32
@@ -34,6 +30,7 @@ local mom_driver_index_arith_probe = func(buf: ptr(u8), cap: index) -> i32
     return as(i32, buf[zero]) + as(i32, buf[one])
 end
 
+M.mc_lex_phase = mc_lex_phase
 M.mom_driver_compile_source_to_wire = mom_driver_compile_source_to_wire
 M.mom_driver_compile_source_to_object = mom_driver_compile_source_to_object
 M.mom_driver_compile_source_to_artifact = mom_driver_compile_source_to_artifact
