@@ -120,6 +120,30 @@ M.TY_SLOT = 9
 M.TY_CTYPE = 10
 M.TY_CFUNC_PTR = 11
 
+-- ── AbiClass tags (from MoonType schema) ──────────────────────────────
+-- Authoritative source: lua/moonlift/schema/type.lua line 155
+
+M.ABI_IGNORE = 1
+M.ABI_DIRECT = 2
+M.ABI_INDIRECT = 3
+M.ABI_DESCRIPTOR = 4
+M.ABI_UNKNOWN = 5
+
+-- ── AbiParamPlan tags (from MoonType schema) ──────────────────────────
+-- Authoritative source: lua/moonlift/schema/type.lua line 181
+
+M.ABI_PARAM_SCALAR = 1
+M.ABI_PARAM_VIEW = 2
+M.ABI_PARAM_REJECTED = 3
+
+-- ── AbiResultPlan tags (from MoonType schema) ─────────────────────────
+-- Authoritative source: lua/moonlift/schema/type.lua line 205
+
+M.ABI_RESULT_VOID = 1
+M.ABI_RESULT_SCALAR = 2
+M.ABI_RESULT_VIEW = 3
+M.ABI_RESULT_REJECTED = 4
+
 -- ── Token kind tags ──────────────────────────────────────────────────
 -- Authoritative source: lua/moonlift/mom/parser/native_lexer.mlua
 
