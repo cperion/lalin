@@ -1,145 +1,43 @@
--- MOM source-to-wire compiler driver (full native pipeline).
+-- MOM source-to-wire compiler driver.
 --
--- Orchestrates all 12 compilation phases without hosted Lua:
--- 1. Document scan (markdown islands) - defer for now, assume native source
--- 2. Lexing (bytes → token arrays)
--- 3. Parsing (tokens → NativeParseOut tape)
--- 4. Tree materialization (parse tape → MomTreeOut AST)
--- 5. Open facts (semantic info extraction)
--- 6. Expansion (macro/template - defer if not needed)
--- 7. Validation (semantic constraints)
--- 8. TypeCheck (type inference)
--- 9. Layout (memory allocation for types)
--- 10. Backend lowering (typed AST → MomCmdBuffer command tape)
--- 11. Back validation (command tape integrity)
--- 12. Wire formatting (MomCmdBuffer → MLBT v3 bytes)
---
--- All buffers pre-allocated; returns 0 on success, error code on failure.
+-- Current product ABI debug stage:
+--   1. keep compile_source entry points as minimal stubs to prove C ABI/object
+--      linking without exercising the incomplete native pipeline;
+--   2. keep a separate explicit index-arithmetic probe so backend index lowering
+--      can be tested independently from parser/typecheck wiring.
 
 return function(M)
 
-local T = require("moonlift.mom.tags.mom_tags")
-local NativeParseOut = M.NativeParseOut
-local MomCmdBuffer = M.MomCmdBuffer
-local MomTreeOut = M.MomTreeOut
-local LowerState = M.LowerState
-local MomWireBuilder = M.MomWireBuilder
-
--- Buffer size constants (tunable for larger programs)
-local TOKENS_CAP = 16384
-local PARSE_STATE_CAP = 32768
-local TREE_OUT_CAP = 8192
-local CMD_BUFFER_CAP = 4096
-
--- Compile source bytes → MLBT v3 wire format.
--- Full 12-phase pipeline with error propagation.
--- Work buffers must be pre-allocated by the caller.
+-- Minimal source -> wire ABI stub.  No pointer arithmetic, no casts, no writes.
+-- Returns 1 to mean "native pipeline not implemented".
 local mom_driver_compile_source_to_wire = func(src: ptr(u8), src_len: index, wire_out: ptr(u8), wire_cap: index, work_buf: ptr(u8), work_cap: index) -> i32
-    -- Phase 1: Document scan (skip for now - assume native source, not markdown)
-    -- Would call mom_scan_document if needed
-
-    -- Phase 2: Lexing (bytes → tokens)
-    -- Use work buffer for token arrays (5 arrays: kind, start, stop, line, col)
-    -- Each array is TOKENS_CAP i32s = 16384 * 4 = 65536 bytes per array
-    let work_pos: index = 0
-    let token_kinds_buf: ptr(u8) = work_buf + work_pos; work_pos = work_pos + as(index, @{TOKENS_CAP} * 4)
-    let token_starts_buf: ptr(u8) = work_buf + work_pos; work_pos = work_pos + as(index, @{TOKENS_CAP} * 4)
-    let token_stops_buf: ptr(u8) = work_buf + work_pos; work_pos = work_pos + as(index, @{TOKENS_CAP} * 4)
-    let token_lines_buf: ptr(u8) = work_buf + work_pos; work_pos = work_pos + as(index, @{TOKENS_CAP} * 4)
-    let token_cols_buf: ptr(u8) = work_buf + work_pos; work_pos = work_pos + as(index, @{TOKENS_CAP} * 4)
-
-    -- Check we have enough work buffer space for lexer output
-    if work_pos >= work_cap then
-        return 1  -- WORK_BUFFER_OVERFLOW
-    end
-
-    -- Call lexer: mom_lex_into(src, src_len, kinds, starts, stops, lines, cols, cap) -> ntok
-    let ntok: index = mom_lex_into(src, src_len, as(ptr(i32), token_kinds_buf), as(ptr(i32), token_starts_buf),
-                                    as(ptr(i32), token_stops_buf), as(ptr(i32), token_lines_buf),
-                                    as(ptr(i32), token_cols_buf), as(index, @{TOKENS_CAP}))
-    if ntok == 0 then
-        return 2  -- LEX_ERROR
-    end
-
-    -- Phase 3: Parsing (tokens → NativeParseOut)
-    let parse_out_buf_u8: ptr(u8) = work_buf + work_pos
-    work_pos = work_pos + as(index, @{PARSE_STATE_CAP})
-
-    if work_pos >= work_cap then
-        return 3  -- WORK_BUFFER_OVERFLOW
-    end
-
-    let parse_out_buf: ptr(@{NativeParseOut}) = as(ptr(@{NativeParseOut}), parse_out_buf_u8)
-    -- Call parser: mom_parse_native_core(src, src_len, kinds, starts, stops, ntok, out) -> status
-    let parse_status: i32 = mom_parse_native_core(src, src_len,
-                                                    as(ptr(i32), token_kinds_buf), as(ptr(i32), token_starts_buf),
-                                                    as(ptr(i32), token_stops_buf), ntok, parse_out_buf)
-    if parse_status ~= 0 then
-        return 4  -- PARSE_ERROR
-    end
-
-    -- Phase 4: Tree materialization (parse tape → MomTreeOut)
-    let tree_out_buf_u8: ptr(u8) = work_buf + work_pos
-    work_pos = work_pos + as(index, @{TREE_OUT_CAP})
-
-    if work_pos >= work_cap then
-        return 5  -- WORK_BUFFER_OVERFLOW
-    end
-
-    let tree_out_buf: ptr(@{MomTreeOut}) = as(ptr(@{MomTreeOut}), tree_out_buf_u8)
-    -- Call materializer: mom_materialize_tree(parse_out, tree_out) -> status
-    let materialize_status: i32 = mom_materialize_tree(parse_out_buf, tree_out_buf)
-    if materialize_status ~= 0 then
-        return 6  -- MATERIALIZE_ERROR
-    end
-
-    -- Phase 5-7: Open facts, Expansion, Validation (defer detailed implementation)
-    -- These are currently handled within typecheck in most compilers
-
-    -- Phase 8: TypeCheck (type inference on materialized AST)
-    -- Defer full typecheck implementation
-    let typecheck_status: i32 = 7  -- TYPECHECK_NOT_IMPLEMENTED
-    if typecheck_status ~= 0 then
-        return typecheck_status
-    end
-
-    -- Phase 9: Layout (memory allocation for types)
-    -- Defer detailed layout computation
-    let layout_status: i32 = 8  -- LAYOUT_NOT_IMPLEMENTED
-    if layout_status ~= 0 then
-        return layout_status
-    end
-
-    -- Phase 10: Backend lowering (typed AST → command tape)
-    -- TODO: Wire backend lowering when types/layout are complete
-    return 10  -- BACKEND_NOT_IMPLEMENTED
+    return 1
 end
 
--- Compile source to object bytes (uses wire internally)
 local mom_driver_compile_source_to_object = func(src: ptr(u8), src_len: index, obj_out: ptr(u8), obj_cap: index, work_buf: ptr(u8), work_cap: index) -> i32
-    return mom_driver_compile_source_to_wire(src, src_len, obj_out, obj_cap, work_buf, work_cap)
+    return 1
 end
 
--- Compile source to JIT artifact (calls compile_binary backend)
 local mom_driver_compile_source_to_artifact = func(src: ptr(u8), src_len: index, diags: ptr(u8), diag_cap: index, work_buf: ptr(u8), work_cap: index) -> i32
-    -- Allocate space for wire output within work buffer
-    let wire_cap: index = 65536
-    let wire_buf: ptr(u8) = work_buf
+    return 1
+end
 
-    -- Compile to wire format
-    let wire_status: i32 = mom_driver_compile_source_to_wire(src, src_len, wire_buf, wire_cap, work_buf + 65536, work_cap - 65536)
-    if wire_status ~= 0 then
-        return wire_status
-    end
-
-    -- TODO: Call JIT backend with wire bytes
-    -- artifact = mom_backend_compile_binary(wire_buf, wire_len)
-    return 0  -- Success (placeholder until backend integration)
+-- Backend index lowering probe.  This is deliberately separate from the product
+-- compile entry points so failures in arithmetic/cast lowering are isolated.
+local mom_driver_index_arith_probe = func(buf: ptr(u8), cap: index) -> i32
+    let zero: index = 0
+    let one: index = 1
+    let two: index = one + one
+    if cap < two then return 2 end
+    buf[zero] = as(u8, 17)
+    buf[one] = as(u8, 23)
+    return as(i32, buf[zero]) + as(i32, buf[one])
 end
 
 M.mom_driver_compile_source_to_wire = mom_driver_compile_source_to_wire
 M.mom_driver_compile_source_to_object = mom_driver_compile_source_to_object
 M.mom_driver_compile_source_to_artifact = mom_driver_compile_source_to_artifact
+M.mom_driver_index_arith_probe = mom_driver_index_arith_probe
 
 return M
 end

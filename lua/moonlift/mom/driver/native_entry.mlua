@@ -27,6 +27,10 @@ local mom_luaopen_moonlift = func(state: ptr(u8)) -> i32
     return mom_luaopen_moonlift_impl(state)
 end
 
+local mom_debug_index_arithmetic = func(buf: ptr(u8), cap: index) -> i32
+    return mom_driver_index_arith_probe(buf, cap)
+end
+
 local mom_hello = func() -> i32
     return 42
 end
@@ -39,6 +43,7 @@ M.export.mom_compile_source_to_artifact_internal = mom_compile_source_to_artifac
 M.export.mom_artifact_getpointer = mom_artifact_getpointer
 M.export.mom_artifact_free = mom_artifact_free
 M.export.mom_luaopen_moonlift = mom_luaopen_moonlift
+M.export.mom_debug_index_arithmetic = mom_debug_index_arithmetic
 M.export.mom_hello = mom_hello
 
 return M

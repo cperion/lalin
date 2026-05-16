@@ -37,6 +37,7 @@ unsafe extern "C" {
         work_buf: *mut u8,
         work_cap: usize,
     ) -> i32;
+    fn mom_debug_index_arithmetic(buf: *mut u8, cap: usize) -> i32;
 }
 
 #[allow(dead_code)]
@@ -145,9 +146,12 @@ fn parse_args() -> Result<Opts, String> {
 
 fn status() -> i32 {
     let hello = unsafe { mom_hello() };
+    let mut probe_buf = [0u8; 2];
+    let index_probe = unsafe { mom_debug_index_arithmetic(probe_buf.as_mut_ptr(), probe_buf.len()) };
     println!("mom integration: precompiled native MOM object linked");
     println!("mom_hello: {hello}");
-    if hello == 42 { 0 } else { 1 }
+    println!("mom index arithmetic probe: {index_probe}");
+    if hello == 42 && index_probe == 40 { 0 } else { 1 }
 }
 
 fn compile_wire_smoke(source: &mut [u8]) -> Result<Vec<u8>, i32> {
