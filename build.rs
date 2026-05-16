@@ -75,22 +75,6 @@ fn build_luajit() -> PathBuf {
     abs
 }
 
-fn link_mom_precompiled() {
-    let mom_objs_dir = Path::new("target/mom_objs");
-    let mom_lib = mom_objs_dir.join("libmom_precompiled.a");
-
-    if mom_lib.exists() {
-        let mom_lib_abs = std::fs::canonicalize(&mom_lib).unwrap_or_else(|_| mom_lib.clone());
-        println!("cargo:rustc-link-search=native={}", mom_objs_dir.display());
-        // Allow multiple definitions since separate MOM modules may define
-        // overlapping helper functions (e.g. mw_put_u8 in both wire.mlua
-        // and lower_wire.mlua). The linker picks the first definition.
-        println!("cargo:rustc-link-arg-bin=mom=-Wl,--allow-multiple-definition");
-        println!("cargo:rustc-link-arg-bin=mom=-Wl,--whole-archive");
-        println!("cargo:rustc-link-arg-bin=mom={}", mom_lib_abs.display());
-        println!("cargo:rustc-link-arg-bin=mom=-Wl,--no-whole-archive");
-    }
-}
 
 fn main() {
     println!("cargo::rerun-if-changed=lua/");
@@ -129,6 +113,4 @@ fn main() {
     code.push_str("}\n");
 
     std::fs::write("src/embedded_lua.rs", &code).unwrap();
-
-    link_mom_precompiled();
 }
