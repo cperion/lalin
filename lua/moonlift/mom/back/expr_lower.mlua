@@ -84,6 +84,15 @@ local mb_token_to_binary_op = func(tok: i32) -> i32
            select(tok == @{T.TK_ASHR}, @{T.BinAShr}, 0)))))))))))
 end
 
+local mb_token_to_compare_op = func(tok: i32) -> i32
+    return select(tok == @{T.TK_EQEQ}, @{T.CmpEq},
+           select(tok == @{T.TK_NE}, @{T.CmpNe},
+           select(tok == @{T.TK_LT}, @{T.CmpLt},
+           select(tok == @{T.TK_LE}, @{T.CmpLe},
+           select(tok == @{T.TK_GT}, @{T.CmpGt},
+           select(tok == @{T.TK_GE}, @{T.CmpGe}, 0))))))
+end
+
 -- ── Case regions ───────────────────────────────────────────────────
 
 -- Lower a literal expression.
@@ -234,7 +243,9 @@ entry start()
     if rhs_ok == false then jump done(value = 0, scalar = 0, ok = false) end
     if rhs_scalar ~= lhs_scalar then jump done(value = 0, scalar = 0, ok = false) end
     let tok: i32 = ctx.tree.expr_op[idx]
-    let cmp_op: i32 = mb_lower_compare_op(tok, lhs_scalar)
+    let sem_op: i32 = mb_token_to_compare_op(tok)
+    if sem_op == 0 then jump done(value = 0, scalar = 0, ok = false) end
+    let cmp_op: i32 = mb_lower_compare_op(sem_op, lhs_scalar)
     if cmp_op == 0 then jump done(value = 0, scalar = 0, ok = false) end
     let dst: i32 = mb_ctx_fresh_value(ctx)
     mb_emit_compare(ctx, dst, cmp_op, 0, lhs_scalar, 0, lhs_val, rhs_val)
@@ -387,7 +398,7 @@ end
 -- ── Step 6: new expression lowering regions ────────────────────────
 
 -- Expr addr‑of: delegate to mb_place_addr_to_back.
-local mb_expr_opddr_of = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
+local mb_expr_addr_of = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
                                done: cont(value: i32, scalar: i32, ok: bool))
 entry start()
     let child_idx: i32 = ctx.tree.expr_lhs[idx]
@@ -448,7 +459,7 @@ entry start()
     case @{T.EX_DEREF} then emit mb_expr_deref(ctx, idx; done = out)
     case @{T.EX_LEN} then emit mb_expr_len(ctx, idx; done = out)
     case @{T.EX_VIEW} then emit mb_expr_view(ctx, idx; done = out_view)
-    case @{T.EX_ADDR} then emit mb_expr_opddr_of(ctx, idx; done = out)
+    case @{T.EX_ADDR} then emit mb_expr_addr_of(ctx, idx; done = out)
     case @{T.EX_INDEX} then emit mb_expr_index(ctx, idx; done = out)
     case @{T.EX_CONTROL} then emit mb_lower_control_expr(ctx, idx; done = out)
     case @{T.EX_DOT} then emit mb_expr_dot(ctx, idx; done = out)
@@ -518,9 +529,10 @@ M.mb_expr_call = mb_expr_call
 M.mb_expr_deref = mb_expr_deref
 M.mb_expr_view = mb_expr_view
 M.mb_expr_len = mb_expr_len
-M.mb_expr_opddr_of = mb_expr_opddr_of
+M.mb_expr_addr_of = mb_expr_addr_of
 M.mb_expr_index = mb_expr_index
 M.mb_expr_dot = mb_expr_dot
+M.mb_token_to_compare_op = mb_token_to_compare_op
 
 return M
 end
