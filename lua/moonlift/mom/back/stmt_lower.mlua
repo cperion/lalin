@@ -49,6 +49,9 @@ local mb_emit_store_info = M.mb_emit_store_info
 local mb_emit_load_info = M.mb_emit_load_info
 local mb_emit_select = M.mb_emit_select
 local mb_emit_compare = M.mb_emit_compare
+local mb_emit_atomic_store = M.mb_emit_atomic_store
+local mb_emit_atomic_fence = M.mb_emit_atomic_fence
+local mb_emit_switch_int = M.mb_emit_switch_int
 
 -- Scalar/ops helpers (from back/ops.mlua).
 local mb_is_float_scalar = M.mb_is_float_scalar
@@ -297,7 +300,6 @@ entry start()
     mb_emit_seal_block(ctx, join_blk)
     mb_emit_switch_to_block(ctx, join_blk)
     jump done(flow = @{BackFallsThrough}, ok = true)
-end
 end
 end
 
