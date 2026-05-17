@@ -1,0 +1,21 @@
+-- MOM expression lowering: references.
+-- Lower reference expressions: emit CmdTrap (env lookup not yet wired).
+
+local T = require("moonlift.mom.tags.mom_tags")
+
+return function(M)
+
+local mb_fresh_val = M.mb_fresh_val
+local mb_push_cmd = M.mb_push_cmd
+
+local mb_lower_ref = region(; done: cont(st: ptr(M.LowerState), cmds: ptr(i32), value: i32))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
+    let dst: i32 = mb_fresh_val(st)
+    jump done(st = st, cmds = cmds, value = dst)
+end
+end
+
+M.mb_lower_ref = mb_lower_ref
+return M
+end

@@ -1,0 +1,84 @@
+-- MOM function ABI wrapping.
+-- Handles function prologue/epilogue, parameter passing ABI,
+-- return value marshaling, and stack frame setup.
+
+local T = require("moonlift.mom.tags.mom_tags")
+
+return function(M)
+
+local mb_fresh_val = M.mb_fresh_val
+local mb_push_cmd = M.mb_push_cmd
+local mb_append_env = M.mb_append_env
+
+-- Emit function prologue: set up frame, load parameters, create entry block.
+local mb_func_prologue = region(func_id: i32, param_count: i32, param_scalars: ptr(i32);\
+                                done: cont(st: ptr(M.LowerState), cmds: ptr(i32), \
+                                          env_name: ptr(i32), env_val: ptr(i32), env_len: index,\
+                                          entry_block: i32))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32), env_name: ptr(i32), env_val: ptr(i32), env_len: index)
+    let entry_block: i32 = mb_fresh_val(st)
+    mb_push_cmd(@{T.CmdFuncStart}, func_id, param_count, entry_block, 0, 0, 0, st, cmds)
+    jump load_params(st = st, cmds = cmds, env_name = env_name, env_val = env_val,
+                     env_len = env_len, entry_block = entry_block, i = 0)
+end
+block load_params(st1: ptr(M.LowerState), cmds1: ptr(i32), env_name1: ptr(i32), env_val1: ptr(i32),
+                  env_len1: index, entry_block1: i32, i: i32)
+    if i >= param_count then
+        jump done(st = st1, cmds = cmds1, env_name = env_name1, env_val = env_val1,
+                  env_len = env_len1, entry_block = entry_block1)
+    end
+    let param_val: i32 = mb_fresh_val(st1)
+    let param_scalar: i32 = @load(param_scalars + i * @sizeof(i32))
+    mb_push_cmd(@{T.CmdParamLoad}, i, param_scalar, param_val, 0, 0, 0, st1, cmds1)
+    let env_len2: index = mb_append_env(env_name1, env_val1, env_len1, i, param_val)
+    jump load_params(st = st1, cmds = cmds1, env_name = env_name1, env_val = env_val1,
+                     env_len = env_len2, entry_block = entry_block1, i = i + 1)
+end
+end
+
+-- Emit function epilogue: finalize frame, return result.
+local mb_func_epilogue = region(return_scalar: i32, return_val: i32;\
+                                done: cont(st: ptr(M.LowerState), cmds: ptr(i32)))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    mb_push_cmd(@{T.CmdReturn}, return_val, return_scalar, 0, 0, 0, 0, st, cmds)
+    mb_push_cmd(@{T.CmdFuncEnd}, 0, 0, 0, 0, 0, 0, st, cmds)
+    jump done(st = st, cmds = cmds)
+end
+end
+
+-- Handle void return (no value).
+local mb_void_return = region(done: cont(st: ptr(M.LowerState), cmds: ptr(i32)))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    mb_push_cmd(@{T.CmdReturnVoid}, 0, 0, 0, 0, 0, 0, st, cmds)
+    mb_push_cmd(@{T.CmdFuncEnd}, 0, 0, 0, 0, 0, 0, st, cmds)
+    jump done(st = st, cmds = cmds)
+end
+end
+
+-- Marshal a call result into a local value.
+local mb_call_result = region(call_id: i32, result_scalar: i32;\
+                              done: cont(st: ptr(M.LowerState), cmds: ptr(i32), result_val: i32))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    let result_val: i32 = mb_fresh_val(st)
+    mb_push_cmd(@{T.CmdCallResult}, call_id, result_scalar, result_val, 0, 0, 0, st, cmds)
+    jump done(st = st, cmds = cmds, result_val = result_val)
+end
+end
+
+-- Setup frame slot for a stack variable.
+local mb_frame_slot = region(slot_id: i32, scalar: i32, size: i32;\
+                             done: cont(st: ptr(M.LowerState), cmds: ptr(i32)))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    mb_push_cmd(@{T.CmdFrameSlot}, slot_id, scalar, size, 0, 0, 0, st, cmds)
+    jump done(st = st, cmds = cmds)
+end
+end
+
+M.mb_func_prologue = mb_func_prologue
+M.mb_func_epilogue = mb_func_epilogue
+M.mb_void_return = mb_void_return
+M.mb_call_result = mb_call_result
+M.mb_frame_slot = mb_frame_slot
+
+return M
+end

@@ -1,0 +1,87 @@
+-- MOM control flow graph lowering.
+-- Handles creation and management of basic blocks, block switching,
+-- unconditional/conditional jumps, and join-point sealing.
+
+local T = require("moonlift.mom.tags.mom_tags")
+
+return function(M)
+
+local mb_fresh_val = M.mb_fresh_val
+local mb_push_cmd = M.mb_push_cmd
+
+-- Create a new basic block and prepare it for code emission.
+local mb_create_block = region(done: cont(st: ptr(M.LowerState), cmds: ptr(i32), block_id: i32))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    let block_id: i32 = mb_fresh_val(st)
+    mb_push_cmd(@{T.CmdBlockCreate}, block_id, 0, 0, 0, 0, 0, st, cmds)
+    jump done(st = st, cmds = cmds, block_id = block_id)
+end
+end
+
+-- Switch emitter to a specific block.
+local mb_switch_to_block = region(block_id: i32;\
+                                  done: cont(st: ptr(M.LowerState), cmds: ptr(i32)))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    mb_push_cmd(@{T.CmdBlockSwitch}, block_id, 0, 0, 0, 0, 0, st, cmds)
+    jump done(st = st, cmds = cmds)
+end
+end
+
+-- Emit unconditional jump to a block.
+local mb_jump = region(target_block: i32;\
+                       done: cont(st: ptr(M.LowerState), cmds: ptr(i32)))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    mb_push_cmd(@{T.CmdJump}, target_block, 0, 0, 0, 0, 0, st, cmds)
+    jump done(st = st, cmds = cmds)
+end
+end
+
+-- Emit conditional jump (br_if).
+local mb_br_if = region(cond_val: i32, then_block: i32, else_block: i32;\
+                        done: cont(st: ptr(M.LowerState), cmds: ptr(i32)))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    mb_push_cmd(@{T.CmdBrIf}, cond_val, then_block, else_block, 0, 0, 0, st, cmds)
+    jump done(st = st, cmds = cmds)
+end
+end
+
+-- Seal a join-point block (no more predecessors expected).
+local mb_seal_join = region(join_block: i32;\
+                            done: cont(st: ptr(M.LowerState), cmds: ptr(i32)))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    mb_push_cmd(@{T.CmdBlockSeal}, join_block, 0, 0, 0, 0, 0, st, cmds)
+    jump done(st = st, cmds = cmds)
+end
+end
+
+-- Create and seal a block in one command (for linear control flow).
+local mb_linear_block = region(done: cont(st: ptr(M.LowerState), cmds: ptr(i32), block_id: i32))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    let block_id: i32 = mb_fresh_val(st)
+    mb_push_cmd(@{T.CmdBlockCreate}, block_id, 0, 0, 0, 0, 0, st, cmds)
+    mb_push_cmd(@{T.CmdBlockSwitch}, block_id, 0, 0, 0, 0, 0, st, cmds)
+    jump done(st = st, cmds = cmds, block_id = block_id)
+end
+end
+
+-- Manage phi-node values at join points.
+-- Placeholder: CFG reconstruction phase will handle phi insertion.
+local mb_phi_insert = region(var_id: i32, val_pred0: i32, val_pred1: i32;\
+                             done: cont(st: ptr(M.LowerState), cmds: ptr(i32), phi_val: i32))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    let phi_val: i32 = mb_fresh_val(st)
+    mb_push_cmd(@{T.CmdPhi}, var_id, val_pred0, val_pred1, 0, 0, 0, st, cmds)
+    jump done(st = st, cmds = cmds, phi_val = phi_val)
+end
+end
+
+M.mb_create_block = mb_create_block
+M.mb_switch_to_block = mb_switch_to_block
+M.mb_jump = mb_jump
+M.mb_br_if = mb_br_if
+M.mb_seal_join = mb_seal_join
+M.mb_linear_block = mb_linear_block
+M.mb_phi_insert = mb_phi_insert
+
+return M
+end

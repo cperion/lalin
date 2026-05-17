@@ -1,0 +1,26 @@
+-- MOM expression lowering: pointer dereference.
+-- Placeholder: requires memory access lowering.
+
+local T = require("moonlift.mom.tags.mom_tags")
+
+return function(M)
+
+local mb_fresh_val = M.mb_fresh_val
+local mb_push_cmd = M.mb_push_cmd
+
+local mb_lower_deref = region(scalar: i32;
+                              done: cont(st: ptr(M.LowerState), cmds: ptr(i32), value: i32),
+                              lower_ptr: cont(st: ptr(M.LowerState), cmds: ptr(i32), ptr_val: i32) -> void)
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    emit lower_ptr(st = st, cmds = cmds, ptr_val = ?)
+end
+block with_ptr(st1: ptr(M.LowerState), cmds1: ptr(i32), ptr_val: i32)
+    let dst: i32 = mb_fresh_val(st1)
+    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st1, cmds1)
+    jump done(st = st1, cmds = cmds1, value = dst)
+end
+end
+
+M.mb_lower_deref = mb_lower_deref
+return M
+end

@@ -1,0 +1,392 @@
+-- MOM backend lowering regions (refactored from tree_to_back.lua → back_lower.mlua)
+--
+-- Core compilation kernel: Tree IR → Backend IR lowering
+-- Implementation: Region-based dispatcher with continuation protocol
+--
+-- Per PORTING_GUIDE.md §5-6, lowering is organized as:
+-- 1. Expression lowering: expr_lower region (19 expression tags)
+-- 2. Statement lowering: stmt_lower region (19 statement tags)
+-- 3. Helper regions for addresses, views, places
+--
+-- Environment threading model:
+--   LowerEnv = { locals_ptr, locals_len, next_value, next_block, ret_kind, ret_out }
+--   All environment operations are IMMUTABLE (return new env).
+--
+-- CONTINUATION PATTERN (from expr_lower.mlua):
+--   region foo(params; done: cont(...), other_cont: cont(...))
+--   entry start(st, cmds) { emit bar(...; done=done_impl) }
+--   block done_impl(st1, ...) { use result from bar, emit done() }
+
+local T = require("moonlift.mom.tags.mom_tags")
+
+return function(M)
+
+local LowerState = M.LowerState
+
+-- ╔════════════════════════════════════════════════════════════════════════════╗
+-- ║ PART 1: ENVIRONMENT HELPERS & HELPER FUNCTIONS                            ║
+-- ╚════════════════════════════════════════════════════════════════════════════╝
+
+-- Local entry discriminator tags (from tree_to_back.lua)
+local LOCAL_SCALAR = 1
+local LOCAL_STACK = 2
+local LOCAL_VIEW = 3
+local LOCAL_VIEW_STRIDED = 4
+
+-- Return strategy tags
+local RET_SCALAR = 1
+local RET_VIEW = 2
+
+-- Environment entry type: { kind, binding_id, val/slot, len/stride, scalar_ty }
+local LocalEntry = @{T.LocalEntry}
+
+-- Create empty environment
+local func mb_env_empty(ret_kind: i32, ret_out: i32) -> @{T.LowerEnv}
+    return @{T.LowerEnv}(null as ptr(LocalEntry), 0 as index, 0, 0, ret_kind, ret_out)
+end
+
+-- Environment capacity (max locals per function)
+local func mb_env_locals_cap() -> index
+    return 256 as index
+end
+
+-- Append scalar local to environment (returns new env, immutable)
+local func mb_env_add_scalar(env: @{T.LowerEnv}, binding_id: i32, value: i32, scalar_ty: i32,
+                             locals_arena: ptr(LocalEntry)) -> @{T.LowerEnv}
+    if env.locals_len < mb_env_locals_cap() then
+        let entry_ptr: ptr(LocalEntry) = env.locals_ptr + env.locals_len
+        let entry: LocalEntry = @{T.LocalEntry}(LOCAL_SCALAR, binding_id, value, 0, scalar_ty)
+        *entry_ptr = entry
+        return @{T.LowerEnv}(env.locals_ptr or locals_arena, env.locals_len + as(index, 1),
+                             env.next_value, env.next_block, env.ret_kind, env.ret_out)
+    end
+    return env
+end
+
+-- Lookup local entry by binding ID (linear search from end, LIFO)
+local func mb_env_lookup(env: @{T.LowerEnv}, binding_id: i32) -> ptr(LocalEntry)
+    if env.locals_ptr == null then return null end
+    let i: index = env.locals_len
+    while i > 0 as index do
+        i = i - as(index, 1)
+        let entry: LocalEntry = *(env.locals_ptr + i)
+        if entry.binding_id == binding_id then
+            return env.locals_ptr + i
+        end
+    end
+    return null
+end
+
+-- Fresh value ID allocation
+local func mb_env_next_value(env: @{T.LowerEnv}) -> (env: @{T.LowerEnv}, val_id: i32)
+    let next: i32 = env.next_value + 1
+    return (@{T.LowerEnv}(env.locals_ptr, env.locals_len, next, env.next_block, env.ret_kind, env.ret_out), next)
+end
+
+-- Fresh block ID allocation
+local func mb_env_next_block(env: @{T.LowerEnv}) -> (env: @{T.LowerEnv}, block_id: i32)
+    let next: i32 = env.next_block + 1
+    return (@{T.LowerEnv}(env.locals_ptr, env.locals_len, env.next_value, next, env.ret_kind, env.ret_out), next)
+end
+
+-- ╔════════════════════════════════════════════════════════════════════════════╗
+-- ║ PART 2: OPERATOR & TYPE HELPERS (same as expr_lower.mlua)                 ║
+-- ╚════════════════════════════════════════════════════════════════════════════╝
+
+-- Type classification helpers
+local func mb_is_float_scalar(scalar: i32) -> bool
+    return scalar == @{T.BackF32} or scalar == @{T.BackF64}
+end
+
+local func mb_is_signed_scalar(s: i32) -> bool
+    return s == @{T.BackI8} or s == @{T.BackI16} or s == @{T.BackI32} or s == @{T.BackI64}
+end
+
+-- Command buffer stride (tag + w0..w16 = 18 words per entry)
+local CMD_STRIDE = 18
+
+-- Push command with 6 data words (tag + w0..w5, zeros w6..w16)
+local func mb_push_cmd(cmd_tag: i32, w0: i32, w1: i32, w2: i32, w3: i32, w4: i32, w5: i32,
+                       st: ptr(@{LowerState}), cmds: ptr(i32))
+    let i: index = st.cmd_count
+    if i < st.cmd_cap then
+        let base: index = i * as(index, @{CMD_STRIDE})
+        cmds[base] = cmd_tag
+        cmds[base + as(index, 1)] = w0
+        cmds[base + as(index, 2)] = w1
+        cmds[base + as(index, 3)] = w2
+        cmds[base + as(index, 4)] = w3
+        cmds[base + as(index, 5)] = w4
+        cmds[base + as(index, 6)] = w5
+        cmds[base + as(index, 7)] = 0
+        cmds[base + as(index, 8)] = 0
+        cmds[base + as(index, 9)] = 0
+        cmds[base + as(index, 10)] = 0
+        cmds[base + as(index, 11)] = 0
+        cmds[base + as(index, 12)] = 0
+        cmds[base + as(index, 13)] = 0
+        cmds[base + as(index, 14)] = 0
+        cmds[base + as(index, 15)] = 0
+        cmds[base + as(index, 16)] = 0
+    end
+    st.cmd_count = i + as(index, 1)
+end
+
+-- Push command with 10 data words (tag + w0..w9, zeros w10..w16)
+local func mb_push_cmd_w10(cmd_tag: i32, w0: i32, w1: i32, w2: i32, w3: i32, w4: i32,
+                           w5: i32, w6: i32, w7: i32, w8: i32, w9: i32,
+                           st: ptr(@{LowerState}), cmds: ptr(i32))
+    let i: index = st.cmd_count
+    if i < st.cmd_cap then
+        let base: index = i * as(index, @{CMD_STRIDE})
+        cmds[base] = cmd_tag
+        cmds[base + as(index, 1)] = w0
+        cmds[base + as(index, 2)] = w1
+        cmds[base + as(index, 3)] = w2
+        cmds[base + as(index, 4)] = w3
+        cmds[base + as(index, 5)] = w4
+        cmds[base + as(index, 6)] = w5
+        cmds[base + as(index, 7)] = w6
+        cmds[base + as(index, 8)] = w7
+        cmds[base + as(index, 9)] = w8
+        cmds[base + as(index, 10)] = w9
+        cmds[base + as(index, 11)] = 0
+        cmds[base + as(index, 12)] = 0
+        cmds[base + as(index, 13)] = 0
+        cmds[base + as(index, 14)] = 0
+        cmds[base + as(index, 15)] = 0
+        cmds[base + as(index, 16)] = 0
+    end
+    st.cmd_count = i + as(index, 1)
+end
+
+-- Fresh value ID (simple wrapper)
+local func mb_fresh_val(st: ptr(@{LowerState})) -> i32
+    st.next_value = st.next_value + 1
+    return st.next_value
+end
+
+-- Token kind to unary op mapping (3 cases)
+local func mb_token_to_unary_op(tok: i32) -> i32
+    return select(tok == @{T.TK_MINUS}, @{T.UnaryNeg},
+           select(tok == @{T.TK_NOT}, @{T.UnaryNot},
+           select(tok == @{T.TK_TILDE}, @{T.UnaryBitNot}, 0)))
+end
+
+-- Token kind to binary op mapping (11 arithmetic cases)
+local func mb_token_to_binary_op(tok: i32) -> i32
+    return select(tok == @{T.TK_PLUS}, @{T.BinAdd},
+           select(tok == @{T.TK_MINUS}, @{T.BinSub},
+           select(tok == @{T.TK_STAR}, @{T.BinMul},
+           select(tok == @{T.TK_SLASH}, @{T.BinDiv},
+           select(tok == @{T.TK_PERCENT}, @{T.BinRem},
+           select(tok == @{T.TK_AMP}, @{T.BinBitAnd},
+           select(tok == @{T.TK_PIPE}, @{T.BinBitOr},
+           select(tok == @{T.TK_CARET}, @{T.BinBitXor},
+           select(tok == @{T.TK_SHL}, @{T.BinShl},
+           select(tok == @{T.TK_LSHR}, @{T.BinLShr},
+           select(tok == @{T.TK_ASHR}, @{T.BinAShr}, 0)))))))))))
+end
+
+-- Token kind to compare op mapping (6 cases)
+local func mb_token_to_cmp_op(tok: i32) -> i32
+    return select(tok == @{T.TK_EQEQ}, @{T.CmpEq},
+           select(tok == @{T.TK_NE}, @{T.CmpNe},
+           select(tok == @{T.TK_LT}, @{T.CmpLt},
+           select(tok == @{T.TK_LE}, @{T.CmpLe},
+           select(tok == @{T.TK_GT}, @{T.CmpGt},
+           select(tok == @{T.TK_GE}, @{T.CmpGe}, 0))))))
+end
+
+-- ╔════════════════════════════════════════════════════════════════════════════╗
+-- ║ PART 3: EXPRESSION LOWERING REGIONS (IMPLEMENTED CASES)                    ║
+-- ╚════════════════════════════════════════════════════════════════════════════╝
+
+-- Pattern from expr_lower.mlua lines 226-234:
+-- Lower a literal expression: emit CmdConst.
+-- Captures: st, cmds pointers from closure.
+local mb_lower_lit_region = region(tok_kind: i32; done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32))
+entry start(st: ptr(@{LowerState}), cmds: ptr(i32))
+    let dst: i32 = mb_fresh_val(st)
+    let scalar: i32 = select(tok_kind == @{T.TK_TRUE} or tok_kind == @{T.TK_FALSE}, @{T.BackBool},
+                       select(tok_kind == @{T.TK_FLOAT}, @{T.BackF64},
+                       select(tok_kind == @{T.TK_NIL}, @{T.BackPtr}, @{T.BackI32})))
+    mb_push_cmd(@{T.CmdConst}, dst, scalar, tok_kind, 0, 0, 0, st, cmds)
+    jump done(st = st, cmds = cmds, value = dst)
+end
+end
+
+-- Lower a ref expression: emit CmdTrap (env lookup not yet wired)
+local mb_lower_ref_region = region(; done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32))
+entry start(st: ptr(@{LowerState}), cmds: ptr(i32))
+    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
+    let dst: i32 = mb_fresh_val(st)
+    jump done(st = st, cmds = cmds, value = dst)
+end
+end
+
+-- Pattern from expr_lower.mlua lines 248-264:
+-- Lower a unary expression: recursively lower operand, apply unary op.
+-- Uses continuation protocol: lower_child emits the child, with_child receives result.
+local mb_lower_unary_region = region(expr_op: i32, scalar: i32;
+                                      done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32),
+                                      lower_child: cont(st: ptr(@{LowerState}), cmds: ptr(i32), child_val: i32) -> void)
+entry start(st: ptr(@{LowerState}), cmds: ptr(i32))
+    emit lower_child(st = st, cmds = cmds, child_val = ?)
+end
+block with_child(st1: ptr(@{LowerState}), cmds1: ptr(i32), child_val: i32)
+    let dst: i32 = mb_fresh_val(st1)
+    let unary_op: i32 = mb_token_to_unary_op(expr_op)
+    let back_op: i32 = select(unary_op == @{T.UnaryNeg},
+                         select(mb_is_float_scalar(scalar), @{T.BackUnaryFneg}, @{T.BackUnaryIneg}),
+                         select(unary_op == @{T.UnaryNot}, @{T.BackUnaryBoolNot},
+                         select(unary_op == @{T.UnaryBitNot}, @{T.BackUnaryBnot}, 0)))
+    mb_push_cmd(@{T.CmdUnary}, dst, back_op, 1, scalar, child_val, 0, st1, cmds1)
+    jump done(st = st1, cmds = cmds1, value = dst)
+end
+end
+
+-- Pattern from expr_lower.mlua lines 281-341:
+-- Lower a binary expression: recursively lower left and right, apply binary op.
+-- CRITICAL: This pattern shows how to thread values through nested blocks.
+local mb_lower_binary_region = region(expr_op: i32, scalar: i32;
+                                       done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32),
+                                       lower_children: cont(st: ptr(@{LowerState}), cmds: ptr(i32), left_val: i32, right_val: i32) -> void)
+entry start(st: ptr(@{LowerState}), cmds: ptr(i32))
+    emit lower_children(st = st, cmds = cmds, left_val = ?, right_val = ?)
+end
+block with_children(st1: ptr(@{LowerState}), cmds1: ptr(i32), left_val: i32, right_val: i32)
+    let dst: i32 = mb_fresh_val(st1)
+    let is_float: bool = mb_is_float_scalar(scalar)
+    if expr_op == @{T.TK_PLUS} then
+        if is_float then
+            mb_push_cmd(@{T.CmdFloatBinary}, dst, @{T.BackFloatAdd}, scalar, 1, left_val, right_val, st1, cmds1)
+            jump done(st = st1, cmds = cmds1, value = dst)
+        end
+        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntAdd}, scalar, 65537, left_val, right_val, st1, cmds1)
+        jump done(st = st1, cmds = cmds1, value = dst)
+    elseif expr_op == @{T.TK_MINUS} then
+        if is_float then
+            mb_push_cmd(@{T.CmdFloatBinary}, dst, @{T.BackFloatSub}, scalar, 1, left_val, right_val, st1, cmds1)
+            jump done(st = st1, cmds = cmds1, value = dst)
+        end
+        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntSub}, scalar, 65537, left_val, right_val, st1, cmds1)
+        jump done(st = st1, cmds = cmds1, value = dst)
+    elseif expr_op == @{T.TK_STAR} then
+        if is_float then
+            mb_push_cmd(@{T.CmdFloatBinary}, dst, @{T.BackFloatMul}, scalar, 1, left_val, right_val, st1, cmds1)
+            jump done(st = st1, cmds = cmds1, value = dst)
+        end
+        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntMul}, scalar, 65537, left_val, right_val, st1, cmds1)
+        jump done(st = st1, cmds = cmds1, value = dst)
+    elseif expr_op == @{T.TK_SLASH} then
+        if is_float then
+            mb_push_cmd(@{T.CmdFloatBinary}, dst, @{T.BackFloatDiv}, scalar, 1, left_val, right_val, st1, cmds1)
+            jump done(st = st1, cmds = cmds1, value = dst)
+        end
+        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntSDiv}, scalar, 65537, left_val, right_val, st1, cmds1)
+        jump done(st = st1, cmds = cmds1, value = dst)
+    elseif expr_op == @{T.TK_PERCENT} then
+        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntSRem}, scalar, 65537, left_val, right_val, st1, cmds1)
+        jump done(st = st1, cmds = cmds1, value = dst)
+    elseif expr_op == @{T.TK_AMP} then
+        mb_push_cmd(@{T.CmdBitBinary}, dst, @{T.BackBitAnd}, scalar, left_val, right_val, 0, st1, cmds1)
+        jump done(st = st1, cmds = cmds1, value = dst)
+    elseif expr_op == @{T.TK_PIPE} then
+        mb_push_cmd(@{T.CmdBitBinary}, dst, @{T.BackBitOr}, scalar, left_val, right_val, 0, st1, cmds1)
+        jump done(st = st1, cmds = cmds1, value = dst)
+    elseif expr_op == @{T.TK_CARET} then
+        mb_push_cmd(@{T.CmdBitBinary}, dst, @{T.BackBitXor}, scalar, left_val, right_val, 0, st1, cmds1)
+        jump done(st = st1, cmds = cmds1, value = dst)
+    elseif expr_op == @{T.TK_SHL} then
+        mb_push_cmd(@{T.CmdShift}, dst, @{T.BackShiftLeft}, scalar, left_val, right_val, 0, st1, cmds1)
+        jump done(st = st1, cmds = cmds1, value = dst)
+    elseif expr_op == @{T.TK_LSHR} then
+        mb_push_cmd(@{T.CmdShift}, dst, @{T.BackShiftLogicalRight}, scalar, left_val, right_val, 0, st1, cmds1)
+        jump done(st = st1, cmds = cmds1, value = dst)
+    else
+        mb_push_cmd(@{T.CmdShift}, dst, @{T.BackShiftArithmeticRight}, scalar, left_val, right_val, 0, st1, cmds1)
+        jump done(st = st1, cmds = cmds1, value = dst)
+    end
+end
+end
+
+-- ╔════════════════════════════════════════════════════════════════════════════╗
+-- ║ PART 4: STATEMENT LOWERING REGIONS (STUBS FOR NOW)                         ║
+-- ╚════════════════════════════════════════════════════════════════════════════╝
+
+-- Simple stmt_lower stub: dispatches on tag, emits commands
+-- Real implementation would recursively lower expressions via expr_lower
+region stmt_lower(stmt_idx: i32;
+                  done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), flow: i32),
+                  stmt_tag: ptr(i32), stmt_a: ptr(i32), stmt_b: ptr(i32), stmt_c: ptr(i32),
+                  expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr(i32), expr_c: ptr(i32))
+entry start(st: ptr(@{LowerState}), cmds: ptr(i32))
+    let tag: i32 = stmt_tag[stmt_idx]
+
+    switch tag do
+    case @{T.ST_RETURN_VOID} then
+        mb_push_cmd(@{T.CmdReturnVoid}, 0, 0, 0, 0, 0, 0, st, cmds)
+        jump done(st = st, cmds = cmds, flow = 1)
+    case @{T.ST_EXPR} then
+        mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
+        jump done(st = st, cmds = cmds, flow = 0)
+    case @{T.ST_LET} then
+        -- TODO: recursively lower init expression via expr_lower
+        mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
+        jump done(st = st, cmds = cmds, flow = 0)
+    case @{T.ST_VAR} then
+        -- TODO: allocate stack slot, lower init
+        let slot: i32 = st.next_block
+        st.next_block = st.next_block + 1
+        mb_push_cmd(@{T.CmdCreateStackSlot}, slot, 8, 8, 0, 0, 0, st, cmds)
+        jump done(st = st, cmds = cmds, flow = 0)
+    default then
+        mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
+        jump done(st = st, cmds = cmds, flow = 0)
+    end
+end
+end
+
+-- ╔════════════════════════════════════════════════════════════════════════════╗
+-- ║ PART 5: MODULE/FUNCTION LOWERING STUBS                                     ║
+-- ╚════════════════════════════════════════════════════════════════════════════╝
+
+-- Placeholder: lower a function
+-- TODO: wire expr_lower and stmt_lower to recursively lower body
+local func back_lower_func(func_id: i32, st: ptr(@{LowerState}))
+    -- Stub: create function entry, body, return
+end
+
+-- Placeholder: lower entire module
+-- TODO: iterate items, lower each via back_lower_func or lower_item
+local func back_lower_module(module: i32, st: ptr(@{LowerState}))
+    -- Stub: dispatch on module items
+end
+
+-- ╔════════════════════════════════════════════════════════════════════════════╗
+-- ║ PART 6: PUBLIC API EXPORTS                                                 ║
+-- ╚════════════════════════════════════════════════════════════════════════════╝
+
+M.mb_push_cmd = mb_push_cmd
+M.mb_push_cmd_w10 = mb_push_cmd_w10
+M.mb_fresh_val = mb_fresh_val
+M.mb_is_float_scalar = mb_is_float_scalar
+M.mb_is_signed_scalar = mb_is_signed_scalar
+M.mb_token_to_unary_op = mb_token_to_unary_op
+M.mb_token_to_binary_op = mb_token_to_binary_op
+M.mb_token_to_cmp_op = mb_token_to_cmp_op
+M.mb_env_empty = mb_env_empty
+M.mb_env_add_scalar = mb_env_add_scalar
+M.mb_env_lookup = mb_env_lookup
+M.mb_env_next_value = mb_env_next_value
+M.mb_env_next_block = mb_env_next_block
+M.mb_lower_lit_region = mb_lower_lit_region
+M.mb_lower_ref_region = mb_lower_ref_region
+M.mb_lower_unary_region = mb_lower_unary_region
+M.mb_lower_binary_region = mb_lower_binary_region
+M.back_lower_func = back_lower_func
+M.back_lower_module = back_lower_module
+
+return M
+end

@@ -1,0 +1,104 @@
+-- MOM address lowering: views, places, indices, field access.
+-- Handles lowering of memory address computations for views, places,
+-- array/struct field access, and pointer arithmetic.
+
+local T = require("moonlift.mom.tags.mom_tags")
+
+return function(M)
+
+local mb_fresh_val = M.mb_fresh_val
+local mb_push_cmd = M.mb_push_cmd
+
+-- Lower a view (slice/array reference with base and bounds).
+local mb_lower_view = region(base_type_class: i32, elem_type_class: i32, len: i32;\
+                             done: cont(st: ptr(M.LowerState), cmds: ptr(i32), view_val: i32),\
+                             lower_base: cont(st: ptr(M.LowerState), cmds: ptr(i32), base_val: i32) -> void)
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    emit lower_base(st = st, cmds = cmds, base_val = ?)
+end
+block with_base(st1: ptr(M.LowerState), cmds1: ptr(i32), base_val: i32)
+    let view_val: i32 = mb_fresh_val(st1)
+    mb_push_cmd(@{T.CmdViewCreate}, base_val, len, 0, 0, 0, 0, st1, cmds1)
+    jump done(st = st1, cmds = cmds1, view_val = view_val)
+end
+end
+
+-- Lower a place (lvalue for assignment).
+local mb_lower_place = region(place_kind: i32, obj_val: i32, offset: i32;\
+                              done: cont(st: ptr(M.LowerState), cmds: ptr(i32), place_val: i32))
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    let place_val: i32 = mb_fresh_val(st)
+    mb_push_cmd(@{T.CmdPlaceCreate}, place_kind, obj_val, offset, 0, 0, 0, st, cmds)
+    jump done(st = st, cmds = cmds, place_val = place_val)
+end
+end
+
+-- Lower index operation (arr[i] or ptr+offset).
+local mb_lower_index = region(base_scalar: i32, elem_scalar: i32;\
+                              done: cont(st: ptr(M.LowerState), cmds: ptr(i32), index_addr: i32),\
+                              lower_base: cont(st: ptr(M.LowerState), cmds: ptr(i32), base_val: i32) -> void,\
+                              lower_idx: cont(st: ptr(M.LowerState), cmds: ptr(i32), idx_val: i32) -> void)
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    emit lower_base(st = st, cmds = cmds, base_val = ?)
+end
+block got_base(st1: ptr(M.LowerState), cmds1: ptr(i32), base_val: i32)
+    emit lower_idx(st = st1, cmds = cmds1, idx_val = ?)
+end
+block got_idx(st2: ptr(M.LowerState), cmds2: ptr(i32), idx_val: i32)
+    let index_addr: i32 = mb_fresh_val(st2)
+    mb_push_cmd(@{T.CmdIndex}, base_val, idx_val, elem_scalar, 0, 0, 0, st2, cmds2)
+    jump done(st = st2, cmds = cmds2, index_addr = index_addr)
+end
+end
+
+-- Lower field access (struct.field or tuple.0).
+local mb_lower_field = region(field_offset: i32, field_scalar: i32;\
+                              done: cont(st: ptr(M.LowerState), cmds: ptr(i32), field_addr: i32),\
+                              lower_obj: cont(st: ptr(M.LowerState), cmds: ptr(i32), obj_val: i32) -> void)
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    emit lower_obj(st = st, cmds = cmds, obj_val = ?)
+end
+block got_obj(st1: ptr(M.LowerState), cmds1: ptr(i32), obj_val: i32)
+    let field_addr: i32 = mb_fresh_val(st1)
+    mb_push_cmd(@{T.CmdField}, obj_val, field_offset, field_scalar, 0, 0, 0, st1, cmds1)
+    jump done(st = st1, cmds = cmds1, field_addr = field_addr)
+end
+end
+
+-- Lower dereference (*ptr).
+local mb_lower_deref = region(pointee_scalar: i32;\
+                              done: cont(st: ptr(M.LowerState), cmds: ptr(i32), deref_val: i32),\
+                              lower_ptr: cont(st: ptr(M.LowerState), cmds: ptr(i32), ptr_val: i32) -> void)
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    emit lower_ptr(st = st, cmds = cmds, ptr_val = ?)
+end
+block got_ptr(st1: ptr(M.LowerState), cmds1: ptr(i32), ptr_val: i32)
+    let deref_val: i32 = mb_fresh_val(st1)
+    mb_push_cmd(@{T.CmdDeref}, ptr_val, pointee_scalar, 0, 0, 0, 0, st1, cmds1)
+    jump done(st = st1, cmds = cmds1, deref_val = deref_val)
+end
+end
+
+-- Lower address-of (&obj).
+local mb_lower_addr = region(obj_type_class: i32;\
+                             done: cont(st: ptr(M.LowerState), cmds: ptr(i32), addr_val: i32),\
+                             lower_obj: cont(st: ptr(M.LowerState), cmds: ptr(i32), obj_val: i32) -> void)
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    emit lower_obj(st = st, cmds = cmds, obj_val = ?)
+end
+block got_obj(st1: ptr(M.LowerState), cmds1: ptr(i32), obj_val: i32)
+    let addr_val: i32 = mb_fresh_val(st1)
+    mb_push_cmd(@{T.CmdAddr}, obj_val, 0, 0, 0, 0, 0, st1, cmds1)
+    jump done(st = st1, cmds = cmds1, addr_val = addr_val)
+end
+end
+
+M.mb_lower_view = mb_lower_view
+M.mb_lower_place = mb_lower_place
+M.mb_lower_index = mb_lower_index
+M.mb_lower_field = mb_lower_field
+M.mb_lower_deref = mb_lower_deref
+M.mb_lower_addr = mb_lower_addr
+
+return M
+end

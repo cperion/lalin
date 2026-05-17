@@ -1,0 +1,27 @@
+-- MOM expression lowering: casts.
+
+local T = require("moonlift.mom.tags.mom_tags")
+
+return function(M)
+
+local mb_fresh_val = M.mb_fresh_val
+local mb_push_cmd = M.mb_push_cmd
+local mb_lower_surface_cast = M.mb_lower_surface_cast
+
+local mb_lower_cast = region(cast_op: i32, src_scalar: i32, dst_scalar: i32;
+                             done: cont(st: ptr(M.LowerState), cmds: ptr(i32), value: i32),
+                             lower_child: cont(st: ptr(M.LowerState), cmds: ptr(i32), child_val: i32) -> void)
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    emit lower_child(st = st, cmds = cmds, child_val = ?)
+end
+block with_child(st1: ptr(M.LowerState), cmds1: ptr(i32), child_val: i32)
+    let back_op: i32 = mb_lower_surface_cast(cast_op, src_scalar, dst_scalar)
+    let dst: i32 = mb_fresh_val(st1)
+    mb_push_cmd(@{T.CmdCast}, dst, back_op, src_scalar, dst_scalar, child_val, 0, st1, cmds1)
+    jump done(st = st1, cmds = cmds1, value = dst)
+end
+end
+
+M.mb_lower_cast = mb_lower_cast
+return M
+end

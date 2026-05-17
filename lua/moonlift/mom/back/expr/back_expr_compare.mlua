@@ -1,0 +1,25 @@
+-- MOM expression lowering: comparisons.
+
+local T = require("moonlift.mom.tags.mom_tags")
+
+return function(M)
+
+local mb_fresh_val = M.mb_fresh_val
+local mb_push_cmd = M.mb_push_cmd
+
+local mb_lower_compare = region(cmp_op: i32, scalar: i32;
+                                done: cont(st: ptr(M.LowerState), cmds: ptr(i32), value: i32),
+                                lower_children: cont(st: ptr(M.LowerState), cmds: ptr(i32), lhs_val: i32, rhs_val: i32) -> void)
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    emit lower_children(st = st, cmds = cmds, lhs_val = ?, rhs_val = ?)
+end
+block with_children(st1: ptr(M.LowerState), cmds1: ptr(i32), lhs_val: i32, rhs_val: i32)
+    let dst: i32 = mb_fresh_val(st1)
+    mb_push_cmd(@{T.CmdCompare}, dst, cmp_op, scalar, lhs_val, rhs_val, 0, st1, cmds1)
+    jump done(st = st1, cmds = cmds1, value = dst)
+end
+end
+
+M.mb_lower_compare = mb_lower_compare
+return M
+end

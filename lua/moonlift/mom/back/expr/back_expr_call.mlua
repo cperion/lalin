@@ -1,0 +1,25 @@
+-- MOM expression lowering: function calls.
+
+local T = require("moonlift.mom.tags.mom_tags")
+
+return function(M)
+
+local mb_fresh_val = M.mb_fresh_val
+local mb_push_cmd = M.mb_push_cmd
+
+local mb_lower_call = region(scalar: i32;
+                             done: cont(st: ptr(M.LowerState), cmds: ptr(i32), value: i32),
+                             lower_func: cont(st: ptr(M.LowerState), cmds: ptr(i32), func_val: i32) -> void)
+entry start(st: ptr(M.LowerState), cmds: ptr(i32))
+    emit lower_func(st = st, cmds = cmds, func_val = ?)
+end
+block with_func(st1: ptr(M.LowerState), cmds1: ptr(i32), func_val: i32)
+    let dst: i32 = mb_fresh_val(st1)
+    mb_push_cmd(@{T.CmdCall}, dst, 0, func_val, 0, 0, 0, st1, cmds1)
+    jump done(st = st1, cmds = cmds1, value = dst)
+end
+end
+
+M.mb_lower_call = mb_lower_call
+return M
+end
