@@ -19,6 +19,17 @@ M.MomAddressResult = struct MomAddressResult
     ok: bool
 end
 
+M.MomControlRegionWorkspace = struct MomControlRegionWorkspace
+    ctrl_start: i32
+    n_blocks: i32
+    block_ids_aux: i32
+    param_vals_aux: i32
+    exit_blk: i32
+    is_expr: bool
+    result_scalar: i32
+    result_val: i32
+end
+
 M.BackScalar = union BackScalar | BackVoid | BackBool | BackI8 | BackI16 | BackI32 | BackI64 | BackU8 | BackU16 | BackU32 | BackU64 | BackF32 | BackF64 | BackPtr | BackIndex end
 
 M.BackSigId = struct BackSigId text: ptr(u8) end
