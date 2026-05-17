@@ -37,15 +37,13 @@ end
 local mc_wire_tape = func(
     ct: ptr(i32), ca: ptr(i32), ncmds: index,
     w: ptr(@{MomWireBuilder})) -> index
-    -- placeholder: return 0 (failure) until real encoder is wired
+    -- Wire encoder not yet connected; returns 0 (failure).
     return 0
 end
 
 -- Lower the whole module using the new back/module.mlua lowering.
 local mc_lower_module = func(ctx: ptr(@{MomBackLowerCtx})) -> i32
-    -- plain function, not a region expression
-    let status: i32 = 0
-    status = region -> i32
+    return block -> i32
     entry start()
         emit mb_collect_module_context(ctx; collected)
     end
@@ -57,10 +55,6 @@ local mc_lower_module = func(ctx: ptr(@{MomBackLowerCtx})) -> i32
         yield s
     end
     end
-    if status != 0 then return status end
-    -- After lowering, the command tape resides in ctx.cmd_buffer.
-    -- A future step will call mc_wire_tape on it.
-    return 0
 end
 
 M.mc_lower_module = mc_lower_module

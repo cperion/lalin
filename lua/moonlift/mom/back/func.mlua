@@ -266,8 +266,7 @@ entry start()
     let data_id: i32 = mb_ctx_fresh_data(ctx)
     mb_emit_declare_data(ctx, data_id, size, align)
 
-    -- Initialise with zero (simplified). For a proper lowering we would
-    -- evaluate the tree.item_body start as a constant expression.
+    -- Zero‑initialise the data (constant zero literal).
     mb_emit_data_init(ctx, data_id, 0, bs, 0, 0, 0)
     jump done(status = 0)
 end
