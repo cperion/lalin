@@ -119,16 +119,14 @@ end
 
 -- ── Single statement dispatch region ────────────────────────────────
 
-local mb_lower_stmt = region(ctx: ptr(@{MomBackLowerCtx}), stmt_idx: i32;
-                             done: cont(flow: i32, ok: bool))
+local mb_lower_stmt_simple = region(ctx: ptr(@{MomBackLowerCtx}), stmt_idx: i32;
+                                    done: cont(flow: i32, ok: bool))
 entry start()
     let tree: ptr = ctx.tree
     let tag: i32 = tree.stmt_tag[stmt_idx]
     let stmt_a: i32 = tree.stmt_name[stmt_idx]
     let stmt_b: i32 = tree.stmt_type[stmt_idx]
     let stmt_c: i32 = tree.stmt_value[stmt_idx]
-    let stmt_d: i32 = tree.stmt_body_start[stmt_idx]
-    let stmt_e: i32 = tree.stmt_body_count[stmt_idx]
 
     switch tag do
     case @{T.ST_LET} then
@@ -206,47 +204,6 @@ entry start()
     case @{T.ST_USEREGIONFRAG} then
         jump done(flow = @{BackFallsThrough}, ok = true)
 
-    case @{T.ST_IF} then
-        -- Pre‑flatten changed bindings (Lua code, outside region)
-        local then_start: index = as(index, stmt_b)
-        local then_count: index = as(index, stmt_c)
-        local else_start: index = as(index, stmt_d)
-        local else_count: index = as(index, stmt_e)
-        local changed = mb_collect_changed_bindings(ctx.tree, then_start, then_count)
-        if else_count > 0 then
-            local else_changed = mb_collect_changed_bindings(ctx.tree, else_start, else_count)
-            for k, _ in pairs(else_changed) do changed[k] = true end
-        end
-        local phi_aux: i32; local n_phi: i32
-        phi_aux, n_phi = mb_flatten_changed(changed, ctx)
-        emit mb_lower_if_stmt(ctx, stmt_idx, phi_aux, n_phi; out_if)
-
-    case @{T.ST_SWITCH} then
-        -- Pre‑flatten changed bindings + raw switch keys
-        local arm_start: i32 = stmt_b
-        local arm_count: i32 = stmt_c
-        local def_start: i32 = stmt_d
-        local def_count: i32 = stmt_e
-        local changed = {}
-        local keys_aux = as(i32, ctx.aux_i32.len)
-        for a = 0, arm_count - 1 do
-            local body_start = ctx.tree.switch_arm_body_start[arm_start + a]
-            local body_count = ctx.tree.switch_arm_body_count[arm_start + a]
-            local ac = mb_collect_changed_bindings(ctx.tree, body_start, body_count)
-            for k, _ in pairs(ac) do changed[k] = true end
-            local key_expr = ctx.tree.switch_arm_key[arm_start + a]
-            local raw = mb_switch_key_raw(ctx, key_expr)
-            mb_ctx_push_aux_i32(ctx, raw)
-            mb_ctx_push_aux_i32(ctx, 0)
-        end
-        if def_count > 0 then
-            local dc = mb_collect_changed_bindings(ctx.tree, def_start, def_count)
-            for k, _ in pairs(dc) do changed[k] = true end
-        end
-        local phi_aux2: i32; local n_phi2: i32
-        phi_aux2, n_phi2 = mb_flatten_changed(changed, ctx)
-        emit mb_lower_switch_stmt(ctx, stmt_idx, keys_aux, arm_count, phi_aux2, n_phi2; out_switch)
-
     case @{T.ST_JUMP} then
     case @{T.ST_YIELD} then
     case @{T.ST_EMIT} then
@@ -255,12 +212,6 @@ entry start()
     default then
         jump done(flow = @{BackFallsThrough}, ok = false)
     end
-end
-block out_if(flow: i32, ok: bool)
-    jump done(flow = flow, ok = ok)
-end
-block out_switch(flow: i32, ok: bool)
-    jump done(flow = flow, ok = ok)
 end
 end
 
@@ -322,6 +273,7 @@ entry start()
         end
         mb_emit_jump(ctx, join_blk, args_aux, n_phi)
     end
+    mb_emit_seal_block(ctx, then_blk)
 
     -- Else branch
     mb_emit_switch_to_block(ctx, else_blk)
@@ -345,6 +297,7 @@ entry start()
         end
         mb_emit_jump(ctx, join_blk, args_aux2, n_phi)
     end
+    mb_emit_seal_block(ctx, else_blk)
 
     mb_emit_seal_block(ctx, join_blk)
     mb_emit_switch_to_block(ctx, join_blk)
@@ -413,6 +366,9 @@ entry start()
         let arm_blk: i32 = mb_ctx_fresh_block(ctx)
         mb_emit_create_block(ctx, arm_blk)
         mb_ctx_push_aux_i32(ctx, arm_blk)
+        -- Fill the third word of each case entry (key_lo, key_hi, dest)
+        let dest_idx: index = as(index, keys_aux) + as(index, a) * 3 + 2
+        ctx.aux_i32.data[dest_idx] = arm_blk
         jump create_arms(a = a + 1)
     end
 
@@ -497,17 +453,73 @@ entry start()
     block loop(i: index = 0)
         if i >= list_count then jump done(flow = flow, ok = ok) end
         let sidx: i32 = as(i32, list_start + i)
-        local stmt_flow: i32; local stmt_ok: bool
-        emit mb_lower_stmt(ctx, sidx, stmt_flow, stmt_ok)
-        if stmt_ok == false then
-            jump done(flow = @{BackFallsThrough}, ok = false)
+        let tree: ptr = ctx.tree
+        let tag: i32 = tree.stmt_tag[sidx]
+
+        if tag == @{T.ST_IF} then
+            local then_start: i32 = tree.stmt_type[sidx]
+            local then_count: i32 = tree.stmt_value[sidx]
+            local else_start: i32 = tree.stmt_body_start[sidx]
+            local else_count: i32 = tree.stmt_body_count[sidx]
+            local changed = mb_collect_changed_bindings(tree, then_start, then_count)
+            if else_count > 0 then
+                local else_changed = mb_collect_changed_bindings(tree, else_start, else_count)
+                for k, _ in pairs(else_changed) do changed[k] = true end
+            end
+            local phi_aux: i32; local n_phi: i32
+            phi_aux, n_phi = mb_flatten_changed(changed, ctx)
+            local if_flow: i32; local if_ok: bool
+            emit mb_lower_if_stmt(ctx, sidx, phi_aux, n_phi; done = out_if)
+        elseif tag == @{T.ST_SWITCH} then
+            local arm_start: i32 = tree.stmt_type[sidx]
+            local arm_count: i32 = tree.stmt_value[sidx]
+            local def_start: i32 = tree.stmt_body_start[sidx]
+            local def_count: i32 = tree.stmt_body_count[sidx]
+            local changed = {}
+            local keys_aux = as(i32, ctx.aux_i32.len)
+            for a = 0, arm_count - 1 do
+                local body_start = tree.switch_arm_body_start[arm_start + a]
+                local body_count = tree.switch_arm_body_count[arm_start + a]
+                local ac = mb_collect_changed_bindings(tree, body_start, body_count)
+                for k, _ in pairs(ac) do changed[k] = true end
+                local key_expr = tree.switch_arm_key[arm_start + a]
+                local raw = mb_switch_key_raw(ctx, key_expr)
+                mb_ctx_push_aux_i32(ctx, raw)
+                mb_ctx_push_aux_i32(ctx, 0)
+                mb_ctx_push_aux_i32(ctx, 0)  -- placeholder for dest block ID
+            end
+            if def_count > 0 then
+                local dc = mb_collect_changed_bindings(tree, def_start, def_count)
+                for k, _ in pairs(dc) do changed[k] = true end
+            end
+            local phi_aux2: i32; local n_phi2: i32
+            phi_aux2, n_phi2 = mb_flatten_changed(changed, ctx)
+            local sw_flow: i32; local sw_ok: bool
+            emit mb_lower_switch_stmt(ctx, sidx, keys_aux, arm_count, phi_aux2, n_phi2; done = out_switch)
+        else
+            local stmt_flow: i32; local stmt_ok: bool
+            emit mb_lower_stmt_simple(ctx, sidx; done = out_simple)
         end
-        flow = stmt_flow
-        if flow == @{BackTerminates} then
-            jump done(flow = flow, ok = true)
-        end
-        jump loop(i = i + as(index, 1))
+
     end
+end
+block out_if(flow: i32, ok: bool)
+    if ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
+    flow = flow
+    if flow == @{BackTerminates} then jump done(flow = flow, ok = true) end
+    jump loop(i = i + as(index, 1))
+end
+block out_switch(flow: i32, ok: bool)
+    if ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
+    flow = flow
+    if flow == @{BackTerminates} then jump done(flow = flow, ok = true) end
+    jump loop(i = i + as(index, 1))
+end
+block out_simple(flow: i32, ok: bool)
+    if ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
+    flow = flow
+    if flow == @{BackTerminates} then jump done(flow = flow, ok = true) end
+    jump loop(i = i + as(index, 1))
 end
 end
 
