@@ -62,6 +62,35 @@ end
 
 -- Lower a module: walk all expressions then all statements, produce cmd tape.
 -- ls must have cmd_cap set; cmds must have capacity for cmd_cap * 18 int32_ts.
+local mc_lower_module_region = region(
+    expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr(i32),
+    expr_c: ptr(i32), expr_d: ptr(i32),
+    ne: index,
+    stmt_tag: ptr(i32), stmt_tok: ptr(i32),
+    stmt_a: ptr(i32), stmt_b: ptr(i32), stmt_c: ptr(i32),
+    stmt_d: ptr(i32), stmt_e: ptr(i32),
+    ns: index,
+    slist: ptr(i32),
+    e_scalar: ptr(i32),
+    env_name: ptr(i32), env_val: ptr(i32), env_len: index, env_cap: index,
+    ls: ptr(@{LowerState}), cmds: ptr(i32);
+    done: cont())
+entry expr_loop(i: index = as(index, 0))
+    if i >= ne then jump stmt_loop(i = as(index, 0), env_cur = env_len) end
+    mb_stmt_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d,
+                       as(i32, i), env_name, env_val, env_len, ls, cmds)
+    jump expr_loop(i = i + as(index, 1))
+end
+block stmt_loop(i: index, env_cur: index)
+    if i >= ns then jump done() end
+    let sidx: i32 = slist[i]
+    let next_env: index = mb_lower_stmt(expr_tag, expr_a, expr_b, expr_c, expr_d,
+                                        stmt_tag, stmt_tok, stmt_a, stmt_b, stmt_c, stmt_d, stmt_e,
+                                        slist, sidx, env_name, env_val, env_cur, ls, cmds)
+    jump stmt_loop(i = i + as(index, 1), env_cur = next_env)
+end
+end
+
 local mc_lower_module = func(
     expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr(i32),
     expr_c: ptr(i32), expr_d: ptr(i32),
@@ -74,23 +103,16 @@ local mc_lower_module = func(
     e_scalar: ptr(i32),
     env_name: ptr(i32), env_val: ptr(i32), env_len: index, env_cap: index,
     ls: ptr(@{LowerState}), cmds: ptr(i32))
-
-    -- Lower all expressions to populate env and cmd tape
-    block ei(i: index = 0)
-        if i >= ne then yield end
-        mb_stmt_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d,
-                           as(i32, i), env_name, env_val, env_len, ls, cmds)
-        jump ei(i = i + 1)
+    let lowered: i32 = region -> i32
+    entry start()
+        emit mc_lower_module_region(expr_tag, expr_a, expr_b, expr_c, expr_d, ne,
+                                    stmt_tag, stmt_tok, stmt_a, stmt_b, stmt_c, stmt_d, stmt_e,
+                                    ns, slist, e_scalar, env_name, env_val, env_len, env_cap,
+                                    ls, cmds; done = finished)
     end
-
-    -- Lower all statements
-    block si(i: index = 0)
-        if i >= ns then yield end
-        let sidx: i32 = slist[i]
-        mb_lower_stmt(expr_tag, expr_a, expr_b, expr_c, expr_d,
-                      stmt_tag, stmt_tok, stmt_a, stmt_b, stmt_c, stmt_d, stmt_e,
-                      slist, sidx, env_name, env_val, env_len, ls, cmds)
-        jump si(i = i + 1)
+    block finished()
+        yield 0
+    end
     end
 end
 
@@ -101,9 +123,16 @@ local mc_validate_tape = func(
     it: ptr(i32), ia: ptr(i32), ib: ptr(i32), ic: ptr(i32),
     icnt: ptr(i32), icap: i32,
     ms: ptr(i32), mk: ptr(i32), mcap: i32) -> i32
-    mb_validate(ct, ca, cb, cc, cd, ce, cf, as(i32, ncmds),
-                it, ia, ib, ic, icnt, icap, ms, mk, mcap)
-    return icnt[0]
+    return region -> i32
+    entry start()
+        emit mb_validate_region(ct, ca, cb, cc, cd, ce, cf, as(i32, ncmds),
+                                it, ia, ib, ic, icnt, icap, ms, mk, mcap;
+                                done = checked)
+    end
+    block checked(issue_count: i32)
+        yield issue_count
+    end
+    end
 end
 
 -- Encode a command tape to MLBT v3 wire format.
@@ -116,6 +145,7 @@ end
 
 M.mc_bridge_expr_arrays = mc_bridge_expr_arrays
 M.mc_bridge_stmt_arrays = mc_bridge_stmt_arrays
+M.mc_lower_module_region = mc_lower_module_region
 M.mc_lower_module = mc_lower_module
 M.mc_validate_tape = mc_validate_tape
 M.mc_wire_tape = mc_wire_tape

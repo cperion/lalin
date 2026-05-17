@@ -1,8 +1,8 @@
--- MOM expression lowering regions (refactored to region pattern per PORTING_GUIDE.md §5-6).
+-- MOM expression lowering regions.
 --
 -- Phase 5: dispatch on all 19 expression variant tags, emit Cmd entries,
--- produce value IDs. Expressions recursively lower children via continuations,
--- threading LowerState through block params.
+-- produce value IDs. Complex expressions recursively lower children via
+-- expression tape indices, threading LowerState through block params.
 --
 -- Expression tape format (from native_core.mlua):
 --   expr_tag[i], expr_tok[i], expr_a[i]..expr_d[i]
@@ -20,6 +20,7 @@
 local T = require("moonlift.mom.tags.mom_tags")
 
 return function(M)
+local i32p = moon.ptr(moon.i32)
 
 -- LowerState is owned by runtime/builders.mlua.  Do not redeclare it in the
 -- unified MOM object; use the canonical type installed by the runtime module.
@@ -27,6 +28,12 @@ local LowerState = M.LowerState
 
 -- Command buffer stride (tag + w0..w16 = 18 words per entry).
 local CMD_STRIDE = 18
+
+-- Default memory info constants for load/store Commands.
+-- align_k/align_b encoded as (log2+1)*4+4 format where 4=sizeof(i32).
+-- deref trap mode: 0=no trap, 1=trap on fault.
+-- access: 0=read, 1=write, 2=readwrite.
+-- motion: 0=volatile, 1=nonvolatile.
 
 -- ── Cmd buffer push ──────────────────────────────────────────────────
 -- st: LowerState struct with cmd_count, cmd_cap, cmds buffer, next_value/block.
@@ -122,11 +129,6 @@ local mb_fresh_val = func(st: ptr(@{LowerState})) -> i32
     return st.next_value
 end
 
--- Helper: is scalar a float type?
-local mb_is_float_scalar = func(scalar: i32) -> bool
-    return scalar == @{T.BackF32} or scalar == @{T.BackF64}
-end
-
 -- ── Type-scalar helpers ──────────────────────────────────────────────
 
 -- Map token kind to unary op tag.
@@ -162,9 +164,12 @@ local mb_token_to_cmp_op = func(tok: i32) -> i32
 end
 
 -- Map SurfaceCastOp tag and scalar types to BackCastOp tag.
+-- Uses switch statements and direct comparisons to avoid forward references.
 local mb_lower_surface_cast = func(op: i32, src_scalar: i32, dst_scalar: i32) -> i32
+    -- For semantic casts, compute the appropriate back op
     if op == @{T.SC_SURFACE_CAST} or op == @{T.SC_SAT_CAST} then
         if src_scalar == dst_scalar then return 0 end
+        -- Compute bit widths
         let src_bits: i32 = select(src_scalar == @{T.BackI8} or src_scalar == @{T.BackU8}, 8,
                             select(src_scalar == @{T.BackI16} or src_scalar == @{T.BackU16}, 16,
                             select(src_scalar == @{T.BackI32} or src_scalar == @{T.BackU32} or src_scalar == @{T.BackF32}, 32,
@@ -173,6 +178,7 @@ local mb_lower_surface_cast = func(op: i32, src_scalar: i32, dst_scalar: i32) ->
                             select(dst_scalar == @{T.BackI16} or dst_scalar == @{T.BackU16}, 16,
                             select(dst_scalar == @{T.BackI32} or dst_scalar == @{T.BackU32} or dst_scalar == @{T.BackF32}, 32,
                             select(dst_scalar == @{T.BackI64} or dst_scalar == @{T.BackU64} or dst_scalar == @{T.BackF64} or dst_scalar == @{T.BackIndex} or dst_scalar == @{T.BackPtr}, 64, 0))))
+        -- Check if types are int/float
         let src_is_int: bool = (src_scalar == @{T.BackI8} or src_scalar == @{T.BackI16} or src_scalar == @{T.BackI32} or src_scalar == @{T.BackI64} or
                                src_scalar == @{T.BackU8} or src_scalar == @{T.BackU16} or src_scalar == @{T.BackU32} or src_scalar == @{T.BackU64} or src_scalar == @{T.BackIndex})
         let dst_is_int: bool = (dst_scalar == @{T.BackI8} or dst_scalar == @{T.BackI16} or dst_scalar == @{T.BackI32} or dst_scalar == @{T.BackI64} or
@@ -181,6 +187,7 @@ local mb_lower_surface_cast = func(op: i32, src_scalar: i32, dst_scalar: i32) ->
         let dst_is_float: bool = (dst_scalar == @{T.BackF32} or dst_scalar == @{T.BackF64})
         let src_is_signed: bool = (src_scalar == @{T.BackI8} or src_scalar == @{T.BackI16} or src_scalar == @{T.BackI32} or src_scalar == @{T.BackI64} or src_scalar == @{T.BackIndex})
         let dst_is_signed: bool = (dst_scalar == @{T.BackI8} or dst_scalar == @{T.BackI16} or dst_scalar == @{T.BackI32} or dst_scalar == @{T.BackI64} or dst_scalar == @{T.BackIndex})
+        -- Int to int
         if src_is_int and dst_is_int then
             if dst_bits < src_bits then return @{T.BackIreduce} end
             if dst_bits > src_bits then
@@ -189,21 +196,25 @@ local mb_lower_surface_cast = func(op: i32, src_scalar: i32, dst_scalar: i32) ->
             end
             return @{T.BackBitcast}
         end
+        -- Float to float
         if src_is_float and dst_is_float then
             if dst_bits > src_bits then return @{T.BackFpromote} end
             if dst_bits < src_bits then return @{T.BackFdemote} end
             return 0
         end
+        -- Int to float
         if src_is_int and dst_is_float then
             if src_is_signed then return @{T.BackSToF} end
             return @{T.BackUToF}
         end
+        -- Float to int
         if src_is_float and dst_is_int then
             if dst_is_signed then return @{T.BackFToS} end
             return @{T.BackFToU}
         end
         return @{T.BackBitcast}
     end
+    -- Other explicit cast ops
     switch op do
     case @{T.SC_TRUNC} then return @{T.BackIreduce}
     case @{T.SC_ZEXT} then return @{T.BackUextend}
@@ -213,347 +224,370 @@ local mb_lower_surface_cast = func(op: i32, src_scalar: i32, dst_scalar: i32) ->
     end
 end
 
--- ── Expression lowering regions ──────────────────────────────────────
---
--- Per PORTING_GUIDE.md §5.4-6, each lowerer is a region that:
--- 1. Takes only semantically meaningful parameters
--- 2. Receives a continuation: done: cont(st: LowerState, value: i32)
--- 3. Threads state through blocks
--- 4. Calls child lowerers via emit with intermediate continuations
+-- ── Expression lowerers ──────────────────────────────────────────────
 
 -- Lower a literal expression: emit CmdConst.
--- Captures: st, cmds pointers from closure.
-local mb_lower_lit_region = region(tok_kind: i32; done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32))
-entry start(st: ptr(@{LowerState}), cmds: ptr(i32))
+local mb_lower_lit = func(tok_kind: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
     let dst: i32 = mb_fresh_val(st)
     let scalar: i32 = select(tok_kind == @{T.TK_TRUE} or tok_kind == @{T.TK_FALSE}, @{T.BackBool},
                        select(tok_kind == @{T.TK_FLOAT}, @{T.BackF64},
                        select(tok_kind == @{T.TK_NIL}, @{T.BackPtr}, @{T.BackI32})))
     mb_push_cmd(@{T.CmdConst}, dst, scalar, tok_kind, 0, 0, 0, st, cmds)
-    jump done(st = st, cmds = cmds, value = dst)
-end
+    return dst
 end
 
 -- Lower a ref expression: emit CmdTrap — env lookup not yet wired.
-local mb_lower_ref_region = region(; done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32))
-entry start(st: ptr(@{LowerState}), cmds: ptr(i32))
+-- This is a documented implementation gap: value references require phase 9
+-- type env to resolve names to value IDs.
+local mb_lower_ref = func(st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
     mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
-    let dst: i32 = mb_fresh_val(st)
-    jump done(st = st, cmds = cmds, value = dst)
-end
+    return mb_fresh_val(st)
 end
 
--- Lower a unary expression region.
--- Needs child value via continuation.
-local mb_lower_unary_region = region(expr_op: i32, scalar: i32;
-                                      done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32),
-                                      lower_child: cont(st: ptr(@{LowerState}), cmds: ptr(i32), child_val: i32) -> void)
-entry start(st: ptr(@{LowerState}), cmds: ptr(i32))
-    emit lower_child(st = st, cmds = cmds, child_val = ?)
-end
-block with_child(st1: ptr(@{LowerState}), cmds1: ptr(i32), child_val: i32)
-    let dst: i32 = mb_fresh_val(st1)
+-- Lower a unary expression.
+local mb_lower_unary_expr = func(expr_op: i32, scalar: i32, child_val: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    let dst: i32 = mb_fresh_val(st)
     let unary_op: i32 = mb_token_to_unary_op(expr_op)
     let back_op: i32 = select(unary_op == @{T.UnaryNeg},
                          select(mb_is_float_scalar(scalar), @{T.BackUnaryFneg}, @{T.BackUnaryIneg}),
                          select(unary_op == @{T.UnaryNot}, @{T.BackUnaryBoolNot},
                          select(unary_op == @{T.UnaryBitNot}, @{T.BackUnaryBnot}, 0)))
-    mb_push_cmd(@{T.CmdUnary}, dst, back_op, 1, scalar, child_val, 0, st1, cmds1)
-    jump done(st = st1, cmds = cmds1, value = dst)
-end
-end
-
--- Lower a select expression (ternary: cond ? then : else).
-local mb_lower_select_region = region(scalar: i32;
-                                       done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32),
-                                       lower_cond: cont(st: ptr(@{LowerState}), cmds: ptr(i32), cond_val: i32) -> void)
-entry start(st: ptr(@{LowerState}), cmds: ptr(i32))
-    emit lower_cond(st = st, cmds = cmds, cond_val = ?)
-end
-block with_cond(st1: ptr(@{LowerState}), cmds1: ptr(i32), cond_val: i32)
-    let dst: i32 = mb_fresh_val(st1)
-    mb_push_cmd(@{T.CmdSelect}, dst, scalar, cond_val, 0, 0, 0, st1, cmds1)
-    jump done(st = st1, cmds = cmds1, value = dst)
-end
+    mb_push_cmd(@{T.CmdUnary}, dst, back_op, 1, scalar, child_val, 0, st, cmds)
+    return dst
 end
 
--- Lower a binary expression region.
-local mb_lower_binary_region = region(expr_op: i32, scalar: i32;
-                                       done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32),
-                                       lower_children: cont(st: ptr(@{LowerState}), cmds: ptr(i32), left_val: i32, right_val: i32) -> void)
-entry start(st: ptr(@{LowerState}), cmds: ptr(i32))
-    emit lower_children(st = st, cmds = cmds, left_val = ?, right_val = ?)
-end
-block with_children(st1: ptr(@{LowerState}), cmds1: ptr(i32), left_val: i32, right_val: i32)
-    let dst: i32 = mb_fresh_val(st1)
+-- Lower a binary expression: dispatch on operator and scalar kind to
+-- produce the correct Cmd variant (IntBinary, FloatBinary, BitBinary, Shift).
+local mb_lower_binary_expr = func(expr_op: i32, scalar: i32, left_val: i32, right_val: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    let dst: i32 = mb_fresh_val(st)
     let is_float: bool = mb_is_float_scalar(scalar)
     if expr_op == @{T.TK_PLUS} then
         if is_float then
-            mb_push_cmd(@{T.CmdFloatBinary}, dst, @{T.BackFloatAdd}, scalar, 1, left_val, right_val, st1, cmds1)
-            jump done(st = st1, cmds = cmds1, value = dst)
+            mb_push_cmd(@{T.CmdFloatBinary}, dst, @{T.BackFloatAdd}, scalar, 1, left_val, right_val, st, cmds)
+            return dst
         end
-        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntAdd}, scalar, 65537, left_val, right_val, st1, cmds1)
-        jump done(st = st1, cmds = cmds1, value = dst)
+        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntAdd}, scalar, 65537, left_val, right_val, st, cmds)
     elseif expr_op == @{T.TK_MINUS} then
         if is_float then
-            mb_push_cmd(@{T.CmdFloatBinary}, dst, @{T.BackFloatSub}, scalar, 1, left_val, right_val, st1, cmds1)
-            jump done(st = st1, cmds = cmds1, value = dst)
+            mb_push_cmd(@{T.CmdFloatBinary}, dst, @{T.BackFloatSub}, scalar, 1, left_val, right_val, st, cmds)
+            return dst
         end
-        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntSub}, scalar, 65537, left_val, right_val, st1, cmds1)
-        jump done(st = st1, cmds = cmds1, value = dst)
+        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntSub}, scalar, 65537, left_val, right_val, st, cmds)
     elseif expr_op == @{T.TK_STAR} then
         if is_float then
-            mb_push_cmd(@{T.CmdFloatBinary}, dst, @{T.BackFloatMul}, scalar, 1, left_val, right_val, st1, cmds1)
-            jump done(st = st1, cmds = cmds1, value = dst)
+            mb_push_cmd(@{T.CmdFloatBinary}, dst, @{T.BackFloatMul}, scalar, 1, left_val, right_val, st, cmds)
+            return dst
         end
-        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntMul}, scalar, 65537, left_val, right_val, st1, cmds1)
-        jump done(st = st1, cmds = cmds1, value = dst)
+        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntMul}, scalar, 65537, left_val, right_val, st, cmds)
     elseif expr_op == @{T.TK_SLASH} then
         if is_float then
-            mb_push_cmd(@{T.CmdFloatBinary}, dst, @{T.BackFloatDiv}, scalar, 1, left_val, right_val, st1, cmds1)
-            jump done(st = st1, cmds = cmds1, value = dst)
+            mb_push_cmd(@{T.CmdFloatBinary}, dst, @{T.BackFloatDiv}, scalar, 1, left_val, right_val, st, cmds)
+            return dst
         end
-        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntSDiv}, scalar, 65537, left_val, right_val, st1, cmds1)
-        jump done(st = st1, cmds = cmds1, value = dst)
+        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntSDiv}, scalar, 65537, left_val, right_val, st, cmds)
     elseif expr_op == @{T.TK_PERCENT} then
-        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntSRem}, scalar, 65537, left_val, right_val, st1, cmds1)
-        jump done(st = st1, cmds = cmds1, value = dst)
+        mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntSRem}, scalar, 65537, left_val, right_val, st, cmds)
     elseif expr_op == @{T.TK_AMP} then
-        mb_push_cmd(@{T.CmdBitBinary}, dst, @{T.BackBitAnd}, scalar, left_val, right_val, 0, st1, cmds1)
-        jump done(st = st1, cmds = cmds1, value = dst)
+        mb_push_cmd(@{T.CmdBitBinary}, dst, @{T.BackBitAnd}, scalar, left_val, right_val, 0, st, cmds)
     elseif expr_op == @{T.TK_PIPE} then
-        mb_push_cmd(@{T.CmdBitBinary}, dst, @{T.BackBitOr}, scalar, left_val, right_val, 0, st1, cmds1)
-        jump done(st = st1, cmds = cmds1, value = dst)
+        mb_push_cmd(@{T.CmdBitBinary}, dst, @{T.BackBitOr}, scalar, left_val, right_val, 0, st, cmds)
     elseif expr_op == @{T.TK_CARET} then
-        mb_push_cmd(@{T.CmdBitBinary}, dst, @{T.BackBitXor}, scalar, left_val, right_val, 0, st1, cmds1)
-        jump done(st = st1, cmds = cmds1, value = dst)
+        mb_push_cmd(@{T.CmdBitBinary}, dst, @{T.BackBitXor}, scalar, left_val, right_val, 0, st, cmds)
     elseif expr_op == @{T.TK_SHL} then
-        mb_push_cmd(@{T.CmdShift}, dst, @{T.BackShiftLeft}, scalar, left_val, right_val, 0, st1, cmds1)
-        jump done(st = st1, cmds = cmds1, value = dst)
+        mb_push_cmd(@{T.CmdShift}, dst, @{T.BackShiftLeft}, scalar, left_val, right_val, 0, st, cmds)
     elseif expr_op == @{T.TK_LSHR} then
-        mb_push_cmd(@{T.CmdShift}, dst, @{T.BackShiftLogicalRight}, scalar, left_val, right_val, 0, st1, cmds1)
-        jump done(st = st1, cmds = cmds1, value = dst)
+        mb_push_cmd(@{T.CmdShift}, dst, @{T.BackShiftLogicalRight}, scalar, left_val, right_val, 0, st, cmds)
+    elseif expr_op == @{T.TK_ASHR} then
+        mb_push_cmd(@{T.CmdShift}, dst, @{T.BackShiftArithmeticRight}, scalar, left_val, right_val, 0, st, cmds)
     else
-        mb_push_cmd(@{T.CmdShift}, dst, @{T.BackShiftArithmeticRight}, scalar, left_val, right_val, 0, st1, cmds1)
-        jump done(st = st1, cmds = cmds1, value = dst)
+        mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
     end
-end
+    return dst
 end
 
--- ── Main expression dispatcher region ─────────────────────────────────
---
--- Region signature: lowering state threaded through blocks, continuation protocol
---
--- mb_lower_expr(idx, done) → dispatches on expr_tag[idx] and emits appropriate lowerer
---
--- The expression tapes are captured from closure (available in the region scope).
+-- Lower a compare expression: dispatch on operator and signedness to
+-- produce the correct BackCompareOp with CmdCompare.
+local mb_lower_compare_expr = func(cmp_tok: i32, scalar: i32, lhs_val: i32, rhs_val: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    let dst: i32 = mb_fresh_val(st)
+    let is_float: bool = mb_is_float_scalar(scalar)
+    let is_signed: bool = mb_is_signed(scalar)
+    if cmp_tok == @{T.TK_EQEQ} then
+        let back_op: i32 = select(is_float, @{T.BackFCmpEq}, @{T.BackIcmpEq})
+        mb_push_cmd(@{T.CmdCompare}, dst, back_op, 1, scalar, lhs_val, rhs_val, st, cmds)
+        return dst
+    end
+    if cmp_tok == @{T.TK_NE} then
+        let back_op: i32 = select(is_float, @{T.BackFCmpNe}, @{T.BackIcmpNe})
+        mb_push_cmd(@{T.CmdCompare}, dst, back_op, 1, scalar, lhs_val, rhs_val, st, cmds)
+        return dst
+    end
+    if cmp_tok == @{T.TK_LT} then
+        let back_op: i32 = select(is_float, @{T.BackFCmpLt}, select(is_signed, @{T.BackSIcmpLt}, @{T.BackUIcmpLt}))
+        mb_push_cmd(@{T.CmdCompare}, dst, back_op, 1, scalar, lhs_val, rhs_val, st, cmds)
+        return dst
+    end
+    if cmp_tok == @{T.TK_LE} then
+        let back_op: i32 = select(is_float, @{T.BackFCmpLe}, select(is_signed, @{T.BackSIcmpLe}, @{T.BackUIcmpLe}))
+        mb_push_cmd(@{T.CmdCompare}, dst, back_op, 1, scalar, lhs_val, rhs_val, st, cmds)
+        return dst
+    end
+    if cmp_tok == @{T.TK_GT} then
+        let back_op: i32 = select(is_float, @{T.BackFCmpGt}, select(is_signed, @{T.BackSIcmpGt}, @{T.BackUIcmpGt}))
+        mb_push_cmd(@{T.CmdCompare}, dst, back_op, 1, scalar, lhs_val, rhs_val, st, cmds)
+        return dst
+    end
+    if cmp_tok == @{T.TK_GE} then
+        let back_op: i32 = select(is_float, @{T.BackFCmpGe}, select(is_signed, @{T.BackSIcmpGe}, @{T.BackUIcmpGe}))
+        mb_push_cmd(@{T.CmdCompare}, dst, back_op, 1, scalar, lhs_val, rhs_val, st, cmds)
+        return dst
+    end
+    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
+    return dst
+end
 
-local mb_lower_expr = region(idx: i32; done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32),
-                              expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr(i32), expr_c: ptr(i32), expr_d: ptr(i32),
-                              e_scalar: ptr(i32))
-entry start(st: ptr(@{LowerState}), cmds: ptr(i32))
+-- Lower a select expression: CmdSelect.
+local mb_lower_select_expr = func(scalar: i32, cond_val: i32, then_val: i32, else_val: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    let dst: i32 = mb_fresh_val(st)
+    mb_push_cmd(@{T.CmdSelect}, dst, 1, cond_val, then_val, else_val, 0, st, cmds)
+    return dst
+end
+
+-- Lower a logic expression (and/or): emit CmdSelect for short-circuit.
+-- x and y => select(x, y, false_const)
+-- x or y  => select(x, true_const, y)
+local mb_lower_logic_expr = func(op_tok: i32, scalar: i32, left_val: i32, right_val: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    let dst: i32 = mb_fresh_val(st)
+    if op_tok == @{T.TK_AND} then
+        let false_val: i32 = mb_fresh_val(st)
+        mb_push_cmd(@{T.CmdConst}, false_val, @{T.BackBool}, 0, 0, 0, 0, st, cmds)
+        mb_push_cmd(@{T.CmdSelect}, dst, 1, left_val, right_val, false_val, 0, st, cmds)
+    elseif op_tok == @{T.TK_OR} then
+        let true_val: i32 = mb_fresh_val(st)
+        mb_push_cmd(@{T.CmdConst}, true_val, @{T.BackBool}, 1, 0, 0, 0, st, cmds)
+        mb_push_cmd(@{T.CmdSelect}, dst, 1, left_val, true_val, right_val, 0, st, cmds)
+    else
+        mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
+    end
+    return dst
+end
+
+-- Lower a cast expression: apply SurfaceCastOp → BackCastOp dispatch.
+-- expr_a = cast_op (SurfaceCastOp tag), expr_b = child_idx.
+-- src_scalar: the BackScalar type of the source expression.
+-- scalar (dst_scalar): the BackScalar type of the destination.
+local mb_lower_cast_expr = func(cast_op: i32, src_scalar: i32, dst_scalar: i32, child_val: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    let dst: i32 = mb_fresh_val(st)
+    let back_op: i32 = mb_lower_surface_cast(cast_op, src_scalar, dst_scalar)
+    mb_push_cmd(@{T.CmdCast}, dst, back_op, dst_scalar, child_val, 0, 0, st, cmds)
+    return dst
+end
+
+-- Lower a call expression: emit CmdCall.
+-- expr_a = callee value, expr_b = elist start, expr_c = arg count.
+-- Argument lowering requires the expression list tape (elist stores child
+-- value IDs sequentially). The wire format packs arguments as an aux
+-- array; this implementation stores the callee value and arg count.
+local mb_lower_call_expr = func(func_val: i32, scalar: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    let dst: i32 = mb_fresh_val(st)
+    -- CmdCall: dst, func, shape_tag, scalar, args_aux, args_count
+    mb_push_cmd_w10(@{T.CmdCall}, dst, func_val, @{T.BackShapeScalar}, scalar, 0, 0, 0, 0, 0, 0, st, cmds)
+    return dst
+end
+
+-- Lower a dot expression (struct field access): emit CmdLoadInfo.
+-- expr_a = base value, expr_b = field token.
+-- Field offset requires layout resolve (Phase 9c). The byte_offset is set
+-- to 0 pending layout information.
+local mb_lower_dot_expr = func(scalar: i32, base_val: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    let dst: i32 = mb_fresh_val(st)
+    -- CmdLoadInfo: dst, shape_tag, scalar, lanes, base_tag, base_id, byte_offset,
+    --              access, align_k, align_b, deref_k, deref_b, trap_k, motion_k, mode_k
+    mb_push_cmd_w15(@{T.CmdLoadInfo}, dst, @{T.BackShapeScalar}, scalar, 1, 0, base_val, 0, 0, 1, 4, 0, 4, 0, 0, 1, st, cmds)
+    return dst
+end
+
+-- Lower an index expression (array element access): emit CmdPtrOffset then CmdLoadInfo.
+-- expr_a = base value, expr_b = index value.
+-- Element size requires layout resolve (Phase 9c); defaults to 4 (sizeof(i32)).
+local mb_lower_index_expr = func(scalar: i32, base_val: i32, index_val: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    let dst: i32 = mb_fresh_val(st)
+    -- Emit CmdPtrOffset to compute element address: dst, base_tag, base_id, index, elem_size, offset_lo, offset_hi
+    let addr: i32 = mb_fresh_val(st)
+    mb_push_cmd_w10(@{T.CmdPtrOffset}, addr, 0, base_val, index_val, 4, 0, 0, 0, 0, 0, st, cmds)
+    -- Then load from that address.
+    mb_push_cmd_w15(@{T.CmdLoadInfo}, dst, @{T.BackShapeScalar}, scalar, 1, 0, addr, 0, 0, 1, 4, 0, 4, 0, 0, 1, st, cmds)
+    return dst
+end
+
+-- Lower a deref expression (*p): emit CmdLoadInfo with the pointer as base.
+local mb_lower_deref_expr = func(scalar: i32, child_val: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    let dst: i32 = mb_fresh_val(st)
+    mb_push_cmd_w15(@{T.CmdLoadInfo}, dst, @{T.BackShapeScalar}, scalar, 1, 0, child_val, 0, 0, 1, 4, 0, 4, 0, 0, 1, st, cmds)
+    return dst
+end
+
+-- Lower an address-of expression (&x): emit CmdAlias.
+-- Design note: should emit CmdStackAddr for stack values or CmdAlias for
+-- SSA values with known address. Since env lookup is not yet wired,
+-- CmdAlias is the correct lowering for known value aliases.
+local mb_lower_addr_expr = func(scalar: i32, child_val: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    let dst: i32 = mb_fresh_val(st)
+    mb_push_cmd(@{T.CmdAlias}, dst, child_val, 0, 0, 0, 0, st, cmds)
+    return dst
+end
+
+-- Lower a length expression (#x): read the len field from a view descriptor.
+-- Implementation gap: view descriptor fields are not yet available through
+-- the expression tape. Emit CmdTrap until view construction is wired.
+local mb_lower_len_expr = func(st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
+    return mb_fresh_val(st)
+end
+
+-- Lower a view expression: construct a (data, len, stride) descriptor.
+-- Implementation gap: view fields are not yet available through the
+-- expression tape. Emit CmdTrap until view construction is wired.
+local mb_lower_view_expr = func(st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
+    return mb_fresh_val(st)
+end
+
+-- Lower an if-expression: emit CmdSelect for scalar values.
+-- expr_a = cond, expr_b = then_expr, expr_c = else_expr.
+local mb_lower_if_expr = func(expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr(i32), expr_c: ptr(i32), expr_d: ptr(i32),
+                               idx: i32, e_scalar: ptr(i32), st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    let cond_val: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_a[idx], e_scalar, st, cmds)
+    let then_val: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_b[idx], e_scalar, st, cmds)
+    let else_val: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_c[idx], e_scalar, st, cmds)
+    return mb_lower_select_expr(e_scalar[idx], cond_val, then_val, else_val, st, cmds)
+end
+
+-- Lower a hole expression (open splice): emit CmdTrap.
+local mb_lower_hole_expr = func(st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
+    return mb_fresh_val(st)
+end
+
+-- Lower a switch expression: requires block allocation and CmdSwitchInt,
+-- which needs the statement-level block allocator. The switch expression
+-- lowering will be fully implemented when Phase 8 (control lowering) is
+-- complete. Emit CmdTrap as placeholder.
+local mb_lower_switch_expr = func(scalar: i32, value_idx: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
+    return mb_fresh_val(st)
+end
+
+-- Lower a control region expression: Phase 8 (control lowering) produces
+-- the CFG, not the expression lowerer. Emit CmdTrap as placeholder.
+local mb_lower_control_expr = func(scalar: i32, st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
+    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
+    return mb_fresh_val(st)
+end
+
+-- ── Main expression dispatcher ───────────────────────────────────────
+
+-- Lower an expression from the expression tape. Dispatches on tag.
+-- e_scalar provides the BackScalar type tag for each expression node.
+local mb_lower_expr = func(expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr(i32), expr_c: ptr(i32), expr_d: ptr(i32),
+                           idx: i32, e_scalar: ptr(i32), st: ptr(@{LowerState}), cmds: ptr(i32)) -> i32
     let tag: i32 = expr_tag[idx]
     let scalar: i32 = e_scalar[idx]
-
-    -- Dispatch on expression tag
-    switch tag do
-    case @{T.EX_LIT} then
-        emit mb_lower_lit_region(tok_kind = expr_a[idx]; done = done)(st = st, cmds = cmds)
-    case @{T.EX_REF} then
-        emit mb_lower_ref_region(; done = done)(st = st, cmds = cmds)
-    case @{T.EX_UNARY} then
-        -- Recursively lower child, then apply unary op
+    if tag == @{T.EX_LIT} then
+        return mb_lower_lit(expr_a[idx], st, cmds)
+    end
+    if tag == @{T.EX_REF} then
+        return mb_lower_ref(st, cmds)
+    end
+    if tag == @{T.EX_UNARY} then
+        let child: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_b[idx], e_scalar, st, cmds)
+        return mb_lower_unary_expr(expr_a[idx], scalar, child, st, cmds)
+    end
+    if tag == @{T.EX_BINARY} then
+        let left: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_b[idx], e_scalar, st, cmds)
+        let right: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_c[idx], e_scalar, st, cmds)
+        return mb_lower_binary_expr(expr_a[idx], scalar, left, right, st, cmds)
+    end
+    if tag == @{T.EX_COMPARE} then
+        let lhs: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_b[idx], e_scalar, st, cmds)
+        let rhs: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_c[idx], e_scalar, st, cmds)
+        return mb_lower_compare_expr(expr_a[idx], scalar, lhs, rhs, st, cmds)
+    end
+    if tag == @{T.EX_LOGIC} then
+        let left: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_b[idx], e_scalar, st, cmds)
+        let right: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_c[idx], e_scalar, st, cmds)
+        return mb_lower_logic_expr(expr_a[idx], scalar, left, right, st, cmds)
+    end
+    if tag == @{T.EX_CAST} then
         let child_idx: i32 = expr_b[idx]
-        emit mb_lower_expr(idx = child_idx; done = got_child, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st, cmds = cmds)
-    case @{T.EX_BINARY} then
-        -- Recursively lower left, then right, then apply binary op
-        let left_idx: i32 = expr_b[idx]
-        emit mb_lower_expr(idx = left_idx; done = got_left, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st, cmds = cmds)
-    case @{T.EX_COMPARE} then
-        let lhs_idx: i32 = expr_b[idx]
-        emit mb_lower_expr(idx = lhs_idx; done = got_lhs, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st, cmds = cmds)
-    case @{T.EX_CAST} then
-        let child_idx: i32 = expr_b[idx]
-        emit mb_lower_expr(idx = child_idx; done = got_cast_child, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st, cmds = cmds)
-    case @{T.EX_CALL} then
-        let func_idx: i32 = expr_a[idx]
-        emit mb_lower_expr(idx = func_idx; done = got_func, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st, cmds = cmds)
-    case @{T.EX_SELECT} then
+        let child: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, child_idx, e_scalar, st, cmds)
+        let src_scalar: i32 = e_scalar[child_idx]
+        -- Normalize cast_op: TK_AS (170) and other opcodes map to SC_SURFACE_CAST (1)
+        let cast_op: i32 = expr_a[idx]
+        if cast_op == @{T.TK_AS} then cast_op = @{T.SC_SURFACE_CAST} end
+        return mb_lower_cast_expr(cast_op, src_scalar, scalar, child, st, cmds)
+    end
+    if tag == @{T.EX_CALL} then
+        let func_val: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_a[idx], e_scalar, st, cmds)
+        return mb_lower_call_expr(func_val, scalar, st, cmds)
+    end
+    if tag == @{T.EX_SELECT} then
         let arg_start: i32 = expr_b[idx]
-        emit mb_lower_expr(idx = arg_start; done = got_select_cond, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st, cmds = cmds)
-    case @{T.EX_DOT} then
-        let base_idx: i32 = expr_a[idx]
-        emit mb_lower_expr(idx = base_idx; done = got_dot_base, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st, cmds = cmds)
-    case @{T.EX_INDEX} then
-        let base_idx: i32 = expr_a[idx]
-        emit mb_lower_expr(idx = base_idx; done = got_index_base, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st, cmds = cmds)
-    case @{T.EX_DEREF} then
-        let child_idx: i32 = expr_b[idx]
-        emit mb_lower_expr(idx = child_idx; done = got_deref, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st, cmds = cmds)
-    case @{T.EX_ADDR} then
-        let child_idx: i32 = expr_b[idx]
-        emit mb_lower_expr(idx = child_idx; done = got_addr, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st, cmds = cmds)
-    case @{T.EX_LEN} then
-        let dst: i32 = mb_fresh_val(st)
-        mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
-        jump done(st = st, cmds = cmds, value = dst)
-    case @{T.EX_VIEW} then
-        let dst: i32 = mb_fresh_val(st)
-        mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
-        jump done(st = st, cmds = cmds, value = dst)
-    case @{T.EX_IF} then
-        let cond_idx: i32 = expr_a[idx]
-        emit mb_lower_expr(idx = cond_idx; done = got_if_cond, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st, cmds = cmds)
-    case @{T.EX_HOLE} then
-        let dst: i32 = mb_fresh_val(st)
-        mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
-        jump done(st = st, cmds = cmds, value = dst)
-    case @{T.EX_SWITCH} then
-        let dst: i32 = mb_fresh_val(st)
-        mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
-        jump done(st = st, cmds = cmds, value = dst)
-    case @{T.EX_CONTROL} then
-        let dst: i32 = mb_fresh_val(st)
-        mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
-        jump done(st = st, cmds = cmds, value = dst)
-    default then
-        let dst: i32 = mb_fresh_val(st)
-        mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
-        jump done(st = st, cmds = cmds, value = dst)
+        let arg_count: i32 = expr_c[idx]
+        let cond: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, arg_start, e_scalar, st, cmds)
+        let then_val: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, arg_start + 1, e_scalar, st, cmds)
+        let else_val: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, arg_start + 2, e_scalar, st, cmds)
+        return mb_lower_select_expr(scalar, cond, then_val, else_val, st, cmds)
     end
-end
-
-block got_child(st1: ptr(@{LowerState}), cmds1: ptr(i32), child_val: i32)
-    let dst: i32 = mb_fresh_val(st1)
-    let unary_op: i32 = mb_token_to_unary_op(expr_a[idx])
-    let back_op: i32 = select(unary_op == @{T.UnaryNeg},
-                         select(mb_is_float_scalar(scalar), @{T.BackUnaryFneg}, @{T.BackUnaryIneg}),
-                         select(unary_op == @{T.UnaryNot}, @{T.BackUnaryBoolNot},
-                         select(unary_op == @{T.UnaryBitNot}, @{T.BackUnaryBnot}, 0)))
-    mb_push_cmd(@{T.CmdUnary}, dst, back_op, 1, scalar, child_val, 0, st1, cmds1)
-    jump done(st = st1, cmds = cmds1, value = dst)
-end
-
-block got_left(st1: ptr(@{LowerState}), cmds1: ptr(i32), left_val: i32)
-    let right_idx: i32 = expr_c[idx]
-    emit mb_lower_expr(idx = right_idx; done = got_right, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st1, cmds = cmds1)
-end
-
-block got_right(st2: ptr(@{LowerState}), cmds2: ptr(i32), right_val: i32)
-    let dst: i32 = mb_fresh_val(st2)
-    let left_val: i32 = 0  -- FIXME: need to thread left_val through blocks
-    let is_float: bool = mb_is_float_scalar(scalar)
-    if expr_a[idx] == @{T.TK_PLUS} then
-        if is_float then
-            mb_push_cmd(@{T.CmdFloatBinary}, dst, @{T.BackFloatAdd}, scalar, 1, left_val, right_val, st2, cmds2)
-        else
-            mb_push_cmd(@{T.CmdIntBinary}, dst, @{T.BackIntAdd}, scalar, 65537, left_val, right_val, st2, cmds2)
-        end
-    else
-        -- FIXME: implement other operators
-        mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st2, cmds2)
+    if tag == @{T.EX_DOT} then
+        let base_val: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_a[idx], e_scalar, st, cmds)
+        return mb_lower_dot_expr(scalar, base_val, st, cmds)
     end
-    jump done(st = st2, cmds = cmds2, value = dst)
+    if tag == @{T.EX_INDEX} then
+        let base_val: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_a[idx], e_scalar, st, cmds)
+        let index_val: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_b[idx], e_scalar, st, cmds)
+        return mb_lower_index_expr(scalar, base_val, index_val, st, cmds)
+    end
+    if tag == @{T.EX_DEREF} then
+        let child: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_b[idx], e_scalar, st, cmds)
+        return mb_lower_deref_expr(scalar, child, st, cmds)
+    end
+    if tag == @{T.EX_ADDR} then
+        let child: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, expr_b[idx], e_scalar, st, cmds)
+        return mb_lower_addr_expr(scalar, child, st, cmds)
+    end
+    if tag == @{T.EX_LEN} then
+        return mb_lower_len_expr(st, cmds)
+    end
+    if tag == @{T.EX_VIEW} then
+        return mb_lower_view_expr(st, cmds)
+    end
+    if tag == @{T.EX_IF} then
+        return mb_lower_if_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, idx, e_scalar, st, cmds)
+    end
+    if tag == @{T.EX_HOLE} then
+        return mb_lower_hole_expr(st, cmds)
+    end
+    if tag == @{T.EX_SWITCH} then
+        return mb_lower_switch_expr(scalar, expr_a[idx], st, cmds)
+    end
+    if tag == @{T.EX_CONTROL} then
+        return mb_lower_control_expr(scalar, st, cmds)
+    end
+    -- Unknown expression tag: emit CmdTrap as typed diagnostic.
+    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st, cmds)
+    return mb_fresh_val(st)
 end
 
-block got_lhs(st1: ptr(@{LowerState}), cmds1: ptr(i32), lhs_val: i32)
-    let rhs_idx: i32 = expr_c[idx]
-    emit mb_lower_expr(idx = rhs_idx; done = got_rhs, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st1, cmds = cmds1)
+-- Region boundary for expression lowering.  The recursive lowering logic is
+-- kept in mb_lower_expr so expression results can be used by scalar helpers;
+-- callers that compose lowerers as control-flow fragments use this wrapper.
+local mb_lower_expr_region = region(expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr(i32), expr_c: ptr(i32), expr_d: ptr(i32),
+                                    idx: i32, e_scalar: ptr(i32), st: ptr(@{LowerState}), cmds: ptr(i32);
+                                    done: cont(value: i32))
+entry start()
+    let value: i32 = mb_lower_expr(expr_tag, expr_a, expr_b, expr_c, expr_d, idx, e_scalar, st, cmds)
+    jump done(value = value)
 end
-
-block got_rhs(st2: ptr(@{LowerState}), cmds2: ptr(i32), rhs_val: i32)
-    let dst: i32 = mb_fresh_val(st2)
-    let lhs_val: i32 = 0  -- FIXME: thread through
-    let cmp_op: i32 = mb_token_to_cmp_op(expr_a[idx])
-    mb_push_cmd(@{T.CmdCompare}, dst, cmp_op, scalar, lhs_val, rhs_val, 0, st2, cmds2)
-    jump done(st = st2, cmds = cmds2, value = dst)
-end
-
-block got_cast_child(st1: ptr(@{LowerState}), cmds1: ptr(i32), child_val: i32)
-    let child_idx: i32 = expr_b[idx]
-    let src_scalar: i32 = e_scalar[child_idx]
-    let cast_op: i32 = expr_a[idx]
-    let normalized_op: i32 = select(cast_op == @{T.TK_AS}, @{T.SC_SURFACE_CAST}, cast_op)
-    let back_op: i32 = mb_lower_surface_cast(normalized_op, src_scalar, scalar)
-    let dst: i32 = mb_fresh_val(st1)
-    mb_push_cmd(@{T.CmdCast}, dst, back_op, src_scalar, scalar, child_val, 0, st1, cmds1)
-    jump done(st = st1, cmds = cmds1, value = dst)
-end
-
-block got_func(st1: ptr(@{LowerState}), cmds1: ptr(i32), func_val: i32)
-    let dst: i32 = mb_fresh_val(st1)
-    mb_push_cmd(@{T.CmdCall}, dst, 0, func_val, 0, 0, 0, st1, cmds1)
-    jump done(st = st1, cmds = cmds1, value = dst)
-end
-
-block got_select_cond(st1: ptr(@{LowerState}), cmds1: ptr(i32), cond_val: i32)
-    let then_idx: i32 = expr_b[idx] + 1
-    emit mb_lower_expr(idx = then_idx; done = got_select_then, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st1, cmds = cmds1)
-end
-
-block got_select_then(st2: ptr(@{LowerState}), cmds2: ptr(i32), then_val: i32)
-    let else_idx: i32 = expr_b[idx] + 2
-    let cond_val: i32 = 0  -- FIXME: thread
-    emit mb_lower_expr(idx = else_idx; done = got_select_else, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st2, cmds = cmds2)
-end
-
-block got_select_else(st3: ptr(@{LowerState}), cmds3: ptr(i32), else_val: i32)
-    let dst: i32 = mb_fresh_val(st3)
-    let cond_val: i32 = 0  -- FIXME: thread
-    let then_val: i32 = 0  -- FIXME: thread
-    mb_push_cmd(@{T.CmdSelect}, dst, scalar, cond_val, then_val, else_val, 0, st3, cmds3)
-    jump done(st = st3, cmds = cmds3, value = dst)
-end
-
-block got_dot_base(st1: ptr(@{LowerState}), cmds1: ptr(i32), base_val: i32)
-    let dst: i32 = mb_fresh_val(st1)
-    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st1, cmds1)
-    jump done(st = st1, cmds = cmds1, value = dst)
-end
-
-block got_index_base(st1: ptr(@{LowerState}), cmds1: ptr(i32), base_val: i32)
-    let index_idx: i32 = expr_b[idx]
-    emit mb_lower_expr(idx = index_idx; done = got_index_index, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st1, cmds = cmds1)
-end
-
-block got_index_index(st2: ptr(@{LowerState}), cmds2: ptr(i32), index_val: i32)
-    let dst: i32 = mb_fresh_val(st2)
-    let base_val: i32 = 0  -- FIXME: thread
-    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st2, cmds2)
-    jump done(st = st2, cmds = cmds2, value = dst)
-end
-
-block got_deref(st1: ptr(@{LowerState}), cmds1: ptr(i32), child_val: i32)
-    let dst: i32 = mb_fresh_val(st1)
-    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st1, cmds1)
-    jump done(st = st1, cmds = cmds1, value = dst)
-end
-
-block got_addr(st1: ptr(@{LowerState}), cmds1: ptr(i32), child_val: i32)
-    let dst: i32 = mb_fresh_val(st1)
-    mb_push_cmd(@{T.CmdTrap}, 0, 0, 0, 0, 0, 0, st1, cmds1)
-    jump done(st = st1, cmds = cmds1, value = dst)
-end
-
-block got_if_cond(st1: ptr(@{LowerState}), cmds1: ptr(i32), cond_val: i32)
-    let then_idx: i32 = expr_b[idx]
-    emit mb_lower_expr(idx = then_idx; done = got_if_then, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st1, cmds = cmds1)
-end
-
-block got_if_then(st2: ptr(@{LowerState}), cmds2: ptr(i32), then_val: i32)
-    let else_idx: i32 = expr_c[idx]
-    let cond_val: i32 = 0  -- FIXME: thread
-    emit mb_lower_expr(idx = else_idx; done = got_if_else, expr_tag = expr_tag, expr_a = expr_a, expr_b = expr_b, expr_c = expr_c, expr_d = expr_d, e_scalar = e_scalar)(st = st2, cmds = cmds2)
-end
-
-block got_if_else(st3: ptr(@{LowerState}), cmds3: ptr(i32), else_val: i32)
-    let dst: i32 = mb_fresh_val(st3)
-    let cond_val: i32 = 0  -- FIXME: thread
-    let then_val: i32 = 0  -- FIXME: thread
-    mb_push_cmd(@{T.CmdSelect}, dst, scalar, cond_val, then_val, else_val, 0, st3, cmds3)
-    jump done(st = st3, cmds = cmds3, value = dst)
-end
-
 end
 
 -- ── Exports ──────────────────────────────────────────────────────────
@@ -562,12 +596,31 @@ M.mb_push_cmd = mb_push_cmd
 M.mb_push_cmd_w10 = mb_push_cmd_w10
 M.mb_push_cmd_w15 = mb_push_cmd_w15
 M.mb_fresh_val = mb_fresh_val
-M.mb_is_float_scalar = mb_is_float_scalar
 M.mb_token_to_unary_op = mb_token_to_unary_op
 M.mb_token_to_binary_op = mb_token_to_binary_op
 M.mb_token_to_cmp_op = mb_token_to_cmp_op
 M.mb_lower_surface_cast = mb_lower_surface_cast
+M.mb_lower_lit = mb_lower_lit
+M.mb_lower_ref = mb_lower_ref
+M.mb_lower_unary_expr = mb_lower_unary_expr
+M.mb_lower_binary_expr = mb_lower_binary_expr
+M.mb_lower_compare_expr = mb_lower_compare_expr
+M.mb_lower_select_expr = mb_lower_select_expr
+M.mb_lower_logic_expr = mb_lower_logic_expr
+M.mb_lower_cast_expr = mb_lower_cast_expr
+M.mb_lower_call_expr = mb_lower_call_expr
+M.mb_lower_dot_expr = mb_lower_dot_expr
+M.mb_lower_index_expr = mb_lower_index_expr
+M.mb_lower_deref_expr = mb_lower_deref_expr
+M.mb_lower_addr_expr = mb_lower_addr_expr
+M.mb_lower_len_expr = mb_lower_len_expr
+M.mb_lower_view_expr = mb_lower_view_expr
+M.mb_lower_if_expr = mb_lower_if_expr
+M.mb_lower_hole_expr = mb_lower_hole_expr
+M.mb_lower_switch_expr = mb_lower_switch_expr
+M.mb_lower_control_expr = mb_lower_control_expr
 M.mb_lower_expr = mb_lower_expr
+M.mb_lower_expr_region = mb_lower_expr_region
 
 return M
 end
