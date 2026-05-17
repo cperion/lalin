@@ -14,9 +14,12 @@
 /read lua/moonlift/mom/back/ids.mlua
 /read lua/moonlift/mom/back/expr_lower.mlua
 /read lua/moonlift/mom/back/stmt_lower.mlua
-/read lua/moonlift/mom/driver/compile_module.mlua
-/read lua/moonlift/mom/driver/compile_source.mlua
-/read lua/moonlift/mom/build/aider/step05-func-module.md
+/read lua/moonlift/mom/back/address.mlua
+/read lua/moonlift/mom/back/func.mlua
+/read lua/moonlift/mom/back/module.mlua
+/read lua/moonlift/mom/build/aider/step09-memory-atomic-globals.md
+/add lua/moonlift/mom/back/expr_lower.mlua
+/add lua/moonlift/mom/back/stmt_lower.mlua
+/add lua/moonlift/mom/back/address.mlua
 /add lua/moonlift/mom/back/func.mlua
 /add lua/moonlift/mom/back/module.mlua
-/add lua/moonlift/mom/driver/compile_module.mlua
