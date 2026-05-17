@@ -188,7 +188,7 @@ local mb_ctx_fresh_phi_table = func(ctx: ptr(@{MomBackLowerCtx}), n_changed: i32
     end
     let entries_ptr: ptr(i32) = ctx.aux_i32.data + as(index, entry_base)
     return M.MomIfPhiTable(
-        entries = as(ptr(??), entries_ptr),
+        entries = view(as(ptr(M.MomIfPhiEntry), entries_ptr), n_changed),
         n_changed = n_changed,
         then_blk = 0,
         else_blk = 0,
@@ -205,7 +205,7 @@ local mb_ctx_fresh_switch_table = func(ctx: ptr(@{MomBackLowerCtx}), n_cases: i3
     end
     let entries_ptr: ptr(i32) = ctx.aux_i32.data + as(index, entry_base)
     return M.MomSwitchCaseTable(
-        entries = as(ptr(??), entries_ptr),
+        entries = view(as(ptr(M.MomSwitchCaseEntry), entries_ptr), n_cases),
         n_cases = n_cases,
         default_blk = 0
     )
