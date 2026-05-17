@@ -236,7 +236,7 @@ M.mb_validate_control = mb_validate_control
 local mb_control_find_block_by_label = func(ctrl_label: ptr(i32), start: i32, count: i32, target_label: i32) -> i32
     block scan(i: index = as(index, start))
         if i >= as(index, start + count) then return -1 end
-        if ctrl_label[i] == target_label then return as(i32, i) end
+        if ctrl_label[i] == target_label then return as(i32, i) - start end
         jump scan(i = i + as(index, 1))
     end
     return -1

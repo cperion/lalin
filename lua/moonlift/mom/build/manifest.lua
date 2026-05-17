@@ -36,12 +36,12 @@ M.compiler_sources = {
     "lua/moonlift/mom/back/lower_ctx.mlua",
     "lua/moonlift/mom/back/cmd.mlua",
     "lua/moonlift/mom/back/control.mlua",
-    "lua/moonlift/mom/back/control_lower.mlua",
     "lua/moonlift/mom/back/validate.mlua",
     "lua/moonlift/mom/back/back_abi.mlua",
     "lua/moonlift/mom/back/expr_lower.mlua",
     "lua/moonlift/mom/back/address.mlua",
     "lua/moonlift/mom/back/stmt_lower.mlua",
+    "lua/moonlift/mom/back/control_lower.mlua",
 
     -- Phase 3: type system
     -- Keep one typecheck implementation in the product object.  The split
