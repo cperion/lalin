@@ -42,6 +42,7 @@ local mb_validate = func(cmds: ptr(@{MomCmdSlice}),
     let MS: i32 = 0; let MD: i32 = 1; let MF: i32 = 2; let ME: i32 = 3
     let MB: i32 = 4; let MSL: i32 = 5; let MV: i32 = 6; let MA: i32 = 7
 
+    let n: i32 = cmds.n
     if n == 0 then
         mb_push(@{T.BackIssueEmptyProgram}, 0, 0, 0, it, ia, ib, ic, icnt, icap)
         mb_push(@{T.BackIssueMissingFinalize}, 0, 0, 0, it, ia, ib, ic, icnt, icap)
@@ -59,9 +60,9 @@ local mb_validate = func(cmds: ptr(@{MomCmdSlice}),
             jump lp(i = i + 1, act = act, fin = fin)
         end
 
-        let tg: i32 = ct[i]
-        let a: i32 = ca[i]; let b: i32 = cb[i]; let c: i32 = cc[i]
-        let d: i32 = cd[i]; let e: i32 = ce[i]; let f: i32 = cf[i]
+        let tg: i32 = cmds.tag[i]
+        let a: i32 = cmds.a[i]; let b: i32 = cmds.b[i]; let c: i32 = cmds.c[i]
+        let d: i32 = cmds.d[i]; let e: i32 = cmds.e[i]; let f: i32 = cmds.f[i]
 
         if tg == @{T.CmdFinalizeModule} then jump lp(i = i + 1, act = act, fin = 1) end
 
