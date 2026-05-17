@@ -556,6 +556,30 @@ local mb_emit_binary = func(ctx: ptr(@{MomBackLowerCtx}), shape_tag: i32, scalar
     mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
 end
 
+local mb_emit_int_binary = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, op: i32, scalar: i32, overflow: i32, exact: i32, lhs: i32, rhs: i32)
+    let e: CmdEntry
+    mb_cmd_int_binary(e, dst, op, scalar, overflow, exact, lhs, rhs)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
+local mb_emit_float_binary = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, op: i32, scalar: i32, semantics: i32, lhs: i32, rhs: i32)
+    let e: CmdEntry
+    mb_cmd_float_binary(e, dst, op, scalar, semantics, lhs, rhs)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
+local mb_emit_bit_binary = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, op: i32, scalar: i32, lhs: i32, rhs: i32)
+    let e: CmdEntry
+    mb_cmd_bit_binary(e, dst, op, scalar, lhs, rhs)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
+local mb_emit_shift = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, op: i32, scalar: i32, lhs: i32, rhs: i32)
+    let e: CmdEntry
+    mb_cmd_shift(e, dst, op, scalar, lhs, rhs)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
 local mb_emit_compare = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, op: i32, shape_tag: i32, scalar: i32, lanes: i32, lhs: i32, rhs: i32)
     let e: CmdEntry
     mb_cmd_compare(e, dst, op, shape_tag, scalar, lanes, lhs, rhs)
@@ -783,6 +807,10 @@ M.mb_emit_cmd = mb_emit_cmd
 M.mb_emit_const = mb_emit_const
 M.mb_emit_unary = mb_emit_unary
 M.mb_emit_binary = mb_emit_binary
+M.mb_emit_int_binary = mb_emit_int_binary
+M.mb_emit_float_binary = mb_emit_float_binary
+M.mb_emit_bit_binary = mb_emit_bit_binary
+M.mb_emit_shift = mb_emit_shift
 M.mb_emit_compare = mb_emit_compare
 M.mb_emit_cast = mb_emit_cast
 M.mb_emit_select = mb_emit_select
