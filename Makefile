@@ -46,6 +46,18 @@ test-mom: $(MOM)
 	luajit tests/test_mom_cli.lua
 	luajit tests/test_mom_run_2plus2.lua
 
+# MOM port tracking — zero-friction CLI for AI agents.
+MOM_TASK = ./scripts/mom-task
+
+task-status:           ; @$(MOM_TASK) status
+task-progress:         ; @$(MOM_TASK) progress
+task-next:             ; @$(MOM_TASK) next
+task-list:             ; @$(MOM_TASK) list
+task-verify:           ; @$(MOM_TASK) verify
+task-json:             ; @$(MOM_TASK) json
+task-done-%:           ; @$(MOM_TASK) done $*
+task-reset-%:          ; @$(MOM_TASK) reset $*
+
 run:
 	$(MOONLIFT) $(FILE)
 
