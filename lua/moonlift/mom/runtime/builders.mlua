@@ -29,12 +29,23 @@ local MomIssueBuilder = M.MomIssueBuilder
 
 M.MomCmdBuffer = struct MomCmdBuffer
     tag: ptr(i32)
-    a: ptr(i32)
-    b: ptr(i32)
-    c: ptr(i32)
-    d: ptr(i32)
-    e: ptr(i32)
-    f: ptr(i32)
+    w0: ptr(i32)
+    w1: ptr(i32)
+    w2: ptr(i32)
+    w3: ptr(i32)
+    w4: ptr(i32)
+    w5: ptr(i32)
+    w6: ptr(i32)
+    w7: ptr(i32)
+    w8: ptr(i32)
+    w9: ptr(i32)
+    w10: ptr(i32)
+    w11: ptr(i32)
+    w12: ptr(i32)
+    w13: ptr(i32)
+    w14: ptr(i32)
+    w15: ptr(i32)
+    w16: ptr(i32)
     len: index
     cap: index
 end
@@ -179,8 +190,31 @@ local mr_cmd_buffer_push = func(b: ptr(@{MomCmdBuffer}), tag: i32, a: i32, bb: i
     let i: index = b.len
     if i < b.cap then
         b.tag[i] = tag
-        b.a[i] = a; b.b[i] = bb; b.c[i] = c
-        b.d[i] = d; b.e[i] = e; b.f[i] = f
+        b.w0[i] = a; b.w1[i] = bb; b.w2[i] = c
+        b.w3[i] = d; b.w4[i] = e; b.w5[i] = f
+        b.w6[i] = 0; b.w7[i] = 0; b.w8[i] = 0
+        b.w9[i] = 0; b.w10[i] = 0; b.w11[i] = 0
+        b.w12[i] = 0; b.w13[i] = 0; b.w14[i] = 0
+        b.w15[i] = 0; b.w16[i] = 0
+    end
+    b.len = i + as(index, 1)
+    return i
+end
+
+local mr_cmd_buffer_push_entry = func(b: ptr(@{MomCmdBuffer}), tag: i32,
+                                       w0: i32, w1: i32, w2: i32, w3: i32,
+                                       w4: i32, w5: i32, w6: i32, w7: i32,
+                                       w8: i32, w9: i32, w10: i32, w11: i32,
+                                       w12: i32, w13: i32, w14: i32, w15: i32,
+                                       w16: i32) -> index
+    let i: index = b.len
+    if i < b.cap then
+        b.tag[i] = tag
+        b.w0[i] = w0; b.w1[i] = w1; b.w2[i] = w2; b.w3[i] = w3
+        b.w4[i] = w4; b.w5[i] = w5; b.w6[i] = w6; b.w7[i] = w7
+        b.w8[i] = w8; b.w9[i] = w9; b.w10[i] = w10; b.w11[i] = w11
+        b.w12[i] = w12; b.w13[i] = w13; b.w14[i] = w14; b.w15[i] = w15
+        b.w16[i] = w16
     end
     b.len = i + as(index, 1)
     return i
@@ -238,6 +272,8 @@ end
 
 M.mr_cmd_buffer_reset = mr_cmd_buffer_reset
 M.mr_cmd_buffer_push = mr_cmd_buffer_push
+M.mr_cmd_buffer_push_entry = mr_cmd_buffer_push_entry
+M.mr_cmd_buffer_push_entry = mr_cmd_buffer_push_entry
 M.mr_cmd_buffer_overflowed = mr_cmd_buffer_overflowed
 M.mr_fresh_value = mr_fresh_value
 M.mr_fresh_block = mr_fresh_block

@@ -231,12 +231,12 @@ local mb_validate_region = region(ct: ptr(i32), ca: ptr(i32), cb: ptr(i32), cc: 
                                   it: ptr(i32), ia: ptr(i32), ib: ptr(i32), ic: ptr(i32),
                                   icnt: ptr(i32), icap: i32,
                                   ms: ptr(i32), mk: ptr(i32), mcap: i32;
-                                  done: cont(issue_count: i32))
+                                  done: cont(result: MomValidateResult))
 entry start()
     let issue_count: i32 = mb_validate(ct, ca, cb, cc, cd, ce, cf, n,
                                        it, ia, ib, ic, icnt, icap,
                                        ms, mk, mcap)
-    jump done(issue_count = issue_count)
+    jump done(result = MomValidateResult{issue_count = issue_count})
 end
 end
 
