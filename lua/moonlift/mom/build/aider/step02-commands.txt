@@ -1,0 +1,8 @@
+/read lua/moonlift/mom/AGENTS.md
+/read lua/moonlift/mom/build/port_map.lua
+/read lua/moonlift/mom/build/lua-map.md
+/read lua/moonlift/mom/back/cmd.mlua
+/read lua/moonlift/mom/runtime/builders.mlua
+/read lua/moonlift/mom/back/lower_ctx.mlua
+/read lua/moonlift/mom/build/aider/step02-emit-helpers.md
+/add lua/moonlift/mom/back/cmd.mlua

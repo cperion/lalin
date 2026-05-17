@@ -7,3 +7,4 @@
 luajit_host/luajit_host
 src/embedded_lua.rs
 .cargo/
+.aider*
