@@ -568,15 +568,21 @@ local mb_emit_stack_addr = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, slot: i3
 end
 
 local mb_emit_data_addr = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, data: i32)
-    mb_emit_cmd(ctx, @{T.CmdDataAddr}, dst, data, 0, 0, 0, 0)
+    let e: CmdEntry
+    mb_cmd_data_addr(e, dst, data)
+    mb_emit_cmd_entry(ctx, e)
 end
 
 local mb_emit_func_addr = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, func_id: i32)
-    mb_emit_cmd(ctx, @{T.CmdFuncAddr}, dst, func_id, 0, 0, 0, 0)
+    let e: CmdEntry
+    mb_cmd_func_addr(e, dst, func_id)
+    mb_emit_cmd_entry(ctx, e)
 end
 
 local mb_emit_extern_addr = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, extern_id: i32)
-    mb_emit_cmd(ctx, @{T.CmdExternAddr}, dst, extern_id, 0, 0, 0, 0)
+    let e: CmdEntry
+    mb_cmd_extern_addr(e, dst, extern_id)
+    mb_emit_cmd_entry(ctx, e)
 end
 
 local mb_emit_unary = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, op: i32, shape_tag: i32, scalar: i32, lanes: i32, value: i32)
