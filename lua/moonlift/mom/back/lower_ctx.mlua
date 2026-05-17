@@ -67,6 +67,13 @@ M.MomBackLowerCtx = struct MomBackLowerCtx
     source: ptr(i8)
     token_start: ptr(i32)
     token_stop: ptr(i32)
+
+    -- Function-based lowering results (avoids region-in-region restriction)
+    last_expr_value: i32
+    last_expr_scalar: i32
+    last_expr_ok: bool
+    last_addr: i32
+    last_pointee_scalar: i32
 end
 local MomBackLowerCtx = M.MomBackLowerCtx
 
@@ -106,6 +113,11 @@ local mb_ctx_init = func(ctx: ptr(@{MomBackLowerCtx}),
     ctx.source = source
     ctx.token_start = token_start
     ctx.token_stop = token_stop
+    ctx.last_expr_value = 0
+    ctx.last_expr_scalar = 0
+    ctx.last_expr_ok = false
+    ctx.last_addr = 0
+    ctx.last_pointee_scalar = 0
 end
 
 local mb_ctx_reset_func = func(ctx: ptr(@{MomBackLowerCtx}), func_id: i32, return_mode: i32)
