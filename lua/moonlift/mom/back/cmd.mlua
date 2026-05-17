@@ -14,6 +14,10 @@ local T = require("moonlift.mom.tags.mom_tags")
 return function(M)
 local i32p = moon.ptr(moon.i32)
 
+local MomBackLowerCtx = M.MomBackLowerCtx
+local MomCmdBuffer = M.MomCmdBuffer
+local mr_cmd_buffer_push = M.mr_cmd_buffer_push
+
 M.CmdEntry = struct CmdEntry
     tag: i32
     w0: i32
@@ -527,6 +531,74 @@ local mb_cmd_vec_store_info = func(out: ptr(@{CmdEntry}), elem_scalar: i32, lane
     out.w10 = deref_b; out.w11 = trap_k; out.w12 = motion_k; out.w13 = mode_k
 end
 
+-- ── Append helpers ────────────────────────────────────────────────
+-- These combine CmdEntry construction with a push to the context's cmd_buffer.
+
+local mb_emit_cmd = func(ctx: ptr(@{MomBackLowerCtx}), tag: i32, w0: i32, w1: i32, w2: i32, w3: i32, w4: i32, w5: i32)
+    mr_cmd_buffer_push(ctx.cmd_buffer, tag, w0, w1, w2, w3, w4, w5)
+end
+
+local mb_emit_const = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, scalar: i32, lit_tag: i32, lit_lo: i32, lit_hi: i32)
+    let e: CmdEntry
+    mb_cmd_const(e, dst, scalar, lit_tag, lit_lo, lit_hi)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
+local mb_emit_unary = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, op: i32, shape_tag: i32, scalar: i32, lanes: i32, value: i32)
+    let e: CmdEntry
+    mb_cmd_unary(e, dst, op, shape_tag, scalar, lanes, value)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
+local mb_emit_binary = func(ctx: ptr(@{MomBackLowerCtx}), shape_tag: i32, scalar: i32, dst: i32, lhs: i32, rhs: i32, op: i32, overflow: i32, exact: i32)
+    let e: CmdEntry
+    mb_cmd_int_binary(e, dst, op, scalar, overflow, exact, lhs, rhs)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
+local mb_emit_compare = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, op: i32, shape_tag: i32, scalar: i32, lanes: i32, lhs: i32, rhs: i32)
+    let e: CmdEntry
+    mb_cmd_compare(e, dst, op, shape_tag, scalar, lanes, lhs, rhs)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
+local mb_emit_cast = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, op: i32, scalar: i32, value: i32)
+    let e: CmdEntry
+    mb_cmd_cast(e, dst, op, scalar, value)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
+local mb_emit_select = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, shape_tag: i32, scalar: i32, lanes: i32, cond: i32, then_val: i32, else_val: i32)
+    let e: CmdEntry
+    mb_cmd_select(e, dst, shape_tag, scalar, lanes, cond, then_val, else_val)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
+local mb_emit_call = func(ctx: ptr(@{MomBackLowerCtx}), result_tag: i32, result_dst: i32, result_scalar: i32, target_tag: i32, target_id: i32, sig: i32, args_aux: i32, count: i32)
+    let e: CmdEntry
+    mb_cmd_call(e, result_tag, result_dst, result_scalar, target_tag, target_id, sig, args_aux, count)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
+local mb_emit_ptr_offset = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, base_tag: i32, base_id: i32, index: i32, elem_size: i32, offset_lo: i32, offset_hi: i32)
+    let e: CmdEntry
+    mb_cmd_ptr_offset(e, dst, base_tag, base_id, index, elem_size, offset_lo, offset_hi)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
+local mb_emit_load_info = func(ctx: ptr(@{MomBackLowerCtx}), dst: i32, shape_tag: i32, scalar: i32, lanes: i32, base_tag: i32, base_id: i32, byte_offset: i32,
+    access: i32, align_k: i32, align_b: i32, deref_k: i32, deref_b: i32, trap_k: i32, motion_k: i32, mode_k: i32)
+    let e: CmdEntry
+    mb_cmd_load_info(e, dst, shape_tag, scalar, lanes, base_tag, base_id, byte_offset, access, align_k, align_b, deref_k, deref_b, trap_k, motion_k, mode_k)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
+local mb_emit_return_value = func(ctx: ptr(@{MomBackLowerCtx}), value: i32)
+    let e: CmdEntry
+    mb_cmd_return_value(e, value)
+    mb_emit_cmd(ctx, e.tag, e.w0, e.w1, e.w2, e.w3, e.w4, e.w5)
+end
+
 -- ── Dispatch helpers ──────────────────────────────────────────────
 
 -- Lower a binary operation to the appropriate Cmd variant.
@@ -707,6 +779,17 @@ M.mb_lower_binary = mb_lower_binary
 M.mb_lower_unary_cmd = mb_lower_unary_cmd
 M.mb_lower_compare = mb_lower_compare
 M.mb_lower_cast_cmd = mb_lower_cast_cmd
+M.mb_emit_cmd = mb_emit_cmd
+M.mb_emit_const = mb_emit_const
+M.mb_emit_unary = mb_emit_unary
+M.mb_emit_binary = mb_emit_binary
+M.mb_emit_compare = mb_emit_compare
+M.mb_emit_cast = mb_emit_cast
+M.mb_emit_select = mb_emit_select
+M.mb_emit_call = mb_emit_call
+M.mb_emit_ptr_offset = mb_emit_ptr_offset
+M.mb_emit_load_info = mb_emit_load_info
+M.mb_emit_return_value = mb_emit_return_value
 
 return M
 end
