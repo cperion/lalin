@@ -127,6 +127,7 @@ pub fn embedded_modules() -> Vec<(&'static str, &'static str)> {
         ("moonlift.mom.tags.mom_tags", include_str!("../lua/moonlift/mom/tags/mom_tags.lua")),
         ("moonlift.mom.verify.parser_native_ast", include_str!("../lua/moonlift/mom/verify/parser_native_ast.lua")),
         ("moonlift.mom_cli", include_str!("../lua/moonlift/mom_cli.lua")),
+        ("moonlift.moonlift_sar", include_str!("../lua/moonlift/moonlift_sar.lua")),
         ("moonlift.open_expand", include_str!("../lua/moonlift/open_expand.lua")),
         ("moonlift.open_facts", include_str!("../lua/moonlift/open_facts.lua")),
         ("moonlift.open_rewrite", include_str!("../lua/moonlift/open_rewrite.lua")),
@@ -216,9 +217,11 @@ pub fn embedded_modules() -> Vec<(&'static str, &'static str)> {
 
 pub fn embedded_mlua_sources() -> Vec<(&'static str, &'static str)> {
     vec![
+        ("lua/moonlift/mom/back/address.mlua", include_str!("../lua/moonlift/mom/back/address.mlua")),
         ("lua/moonlift/mom/back/back_abi.mlua", include_str!("../lua/moonlift/mom/back/back_abi.mlua")),
         ("lua/moonlift/mom/back/cmd.mlua", include_str!("../lua/moonlift/mom/back/cmd.mlua")),
         ("lua/moonlift/mom/back/control.mlua", include_str!("../lua/moonlift/mom/back/control.mlua")),
+        ("lua/moonlift/mom/back/control_lower.mlua", include_str!("../lua/moonlift/mom/back/control_lower.mlua")),
         ("lua/moonlift/mom/back/env.mlua", include_str!("../lua/moonlift/mom/back/env.mlua")),
         ("lua/moonlift/mom/back/expr_lower.mlua", include_str!("../lua/moonlift/mom/back/expr_lower.mlua")),
         ("lua/moonlift/mom/back/func.mlua", include_str!("../lua/moonlift/mom/back/func.mlua")),

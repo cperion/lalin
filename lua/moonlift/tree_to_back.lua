@@ -47,8 +47,10 @@ function M.Define(T)
     local control_api
     local append_load_info
     local append_store_info
+    local append_zero_offset
     local memory_info
     local address_from_ptr
+    local address_from_data
     local atomic_ordering
     local atomic_rmw_op
     local global_data_addr
@@ -196,7 +198,9 @@ function M.Define(T)
             elseif bcls == Tr.IndexBasePlace then collect_address_taken_place(expr.base.place, out) end
             collect_address_taken_expr(expr.index, out)
         elseif cls == Tr.ExprIntrinsic or cls == Tr.ExprAgg or cls == Tr.ExprArray then
-            for i = 1, #(expr.args or expr.items or {}) do collect_address_taken_expr((expr.args or expr.items)[i], out) end
+            if expr.args ~= nil then for i = 1, #expr.args do collect_address_taken_expr(expr.args[i], out) end
+            elseif expr.items ~= nil then for i = 1, #expr.items do collect_address_taken_expr(expr.items[i], out) end
+            elseif expr.fields ~= nil then for i = 1, #expr.fields do collect_address_taken_expr(expr.fields[i].value, out) end end
         elseif cls == Tr.ExprIf then collect_address_taken_expr(expr.cond, out); collect_address_taken_stmts(expr.then_body, out); collect_address_taken_expr(expr.then_value, out); collect_address_taken_stmts(expr.else_body, out); collect_address_taken_expr(expr.else_value, out)
         elseif cls == Tr.ExprSelect then collect_address_taken_expr(expr.cond, out); collect_address_taken_expr(expr.then_value, out); collect_address_taken_expr(expr.else_value, out)
         elseif cls == Tr.ExprSwitch then
@@ -320,6 +324,11 @@ function M.Define(T)
 
     local function is_view_type(ty)
         return pvm.classof(ty) == Ty.TView
+    end
+
+    local function is_aggregate_type(ty)
+        local cls = pvm.classof(ty)
+        return cls == Ty.TArray or cls == Ty.TNamed
     end
 
     local function shape_scalar(s)
@@ -534,6 +543,26 @@ function M.Define(T)
         [Sem.CallClosure] = function() return pvm.empty() end,
         [Sem.CallUnresolved] = function() return pvm.empty() end,
     }, { args_cache = "last" })
+
+    local function add_ptr_offset(value, offset)
+        if offset == 0 then return value end
+        local cmds = {}; append_all(cmds, value.cmds)
+        local env1, off_val = env_next_value(value.env, "v")
+        local env2, addr_val = env_next_value(env1, "v")
+        cmds[#cmds + 1] = Back.CmdConst(off_val, Back.BackIndex, Back.BackLitInt(tostring(offset)))
+        cmds[#cmds + 1] = Back.CmdPtrOffset(addr_val, Back.BackAddrValue(value.value), off_val, 1, 0, Back.BackProvDerived("tree byte offset"), Back.BackPtrBoundsUnknown)
+        return Tr.TreeBackExprValue(env2, cmds, addr_val, Back.BackPtr)
+    end
+
+    append_zero_offset = function(cmds, current)
+        local env1, zero = env_next_value(current, "v")
+        cmds[#cmds + 1] = Back.CmdConst(zero, Back.BackIndex, Back.BackLitInt("0"))
+        return env1, zero
+    end
+
+    address_from_data = function(data, offset)
+        return Back.BackAddress(Back.BackAddrData(data), offset, Back.BackProvData(data), Back.BackPtrInBounds("global data"))
+    end
 
     expr_to_back = pvm.phase("moonlift_tree_expr_to_back", {
         [Tr.ExprLit] = function(self, env)
@@ -848,8 +877,86 @@ function M.Define(T)
             local env3 = append_load_info(cmds, env2, dst, shape_scalar(scalar), lowered.value, dst.text)
             return pvm.once(Tr.TreeBackExprValue(env3, cmds, dst, scalar))
         end,
-        [Tr.ExprAgg] = function(_, env) return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "aggregate lowering deferred")) end,
-        [Tr.ExprArray] = function(_, env) return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "array lowering deferred")) end,
+        [Tr.ExprAgg] = function(self, env)
+            local size = elem_size(self.ty)
+            local align = elem_align(self.ty)
+            if size == nil or align == nil then
+                return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "aggregate type has unknown layout"))
+            end
+            local func = tostring(lower_context.current_func or "anon")
+            local slot
+            local cmds
+            local env1, addr
+            -- Use target slot if set by StmtLet for aggregate-typed bindings
+            if lower_context.target_agg_slot then
+                slot = lower_context.target_agg_slot
+                cmds = {}
+                env1, addr = env_next_value(env, "v")
+                cmds[#cmds + 1] = Back.CmdStackAddr(addr, slot)
+            else
+                slot = Back.BackStackSlotId("slot:" .. func .. ":agg:" .. tostring(env.next_value))
+                cmds = { Back.CmdCreateStackSlot(slot, size, align) }
+                env1, addr = env_next_value(env, "v")
+                cmds[#cmds + 1] = Back.CmdStackAddr(addr, slot)
+            end
+            local current = env1
+            for i = 1, #self.fields do
+                local fi = self.fields[i]
+                local field_val = expr_value(expr_to_back:one_uncached(fi.value, current))
+                if field_val == nil then
+                    return pvm.once(Tr.TreeBackExprUnsupported(current, cmds, "struct field value unsupported"))
+                end
+                append_all(cmds, field_val.cmds)
+                current = field_val.env
+                if fi.offset == 0 then
+                    current = append_store_info(cmds, current, shape_scalar(field_val.ty), addr, field_val.value, "agg:" .. fi.name)
+                else
+                    local off = add_ptr_offset(Tr.TreeBackExprValue(current, {}, addr, Back.BackPtr), fi.offset)
+                    append_all(cmds, off.cmds); current = off.env
+                    local dst_addr_val = off.value
+                    local env_s, zero = append_zero_offset(cmds, current)
+                    cmds[#cmds + 1] = Back.CmdStoreInfo(shape_scalar(field_val.ty), address_from_ptr(dst_addr_val, zero), field_val.value, memory_info("tree:agg:" .. fi.name, Back.BackAccessWrite))
+                    current = env_s
+                end
+            end
+            return pvm.once(Tr.TreeBackExprValue(current, cmds, addr, Back.BackPtr))
+        end,
+        [Tr.ExprArray] = function(self, env)
+            if #self.elems == 0 then
+                return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "empty array literal"))
+            end
+            local elem_sz = elem_size(self.elem_ty)
+            local elem_al = elem_align(self.elem_ty)
+            if elem_sz == nil or elem_al == nil then
+                return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "array element type has unknown layout"))
+            end
+            local total_size = elem_sz * #self.elems
+            local func = tostring(lower_context.current_func or "anon")
+            local slot = Back.BackStackSlotId("slot:" .. func .. ":arr:" .. tostring(env.next_value))
+            local cmds = { Back.CmdCreateStackSlot(slot, total_size, elem_al) }
+            local env1, addr = env_next_value(env, "v")
+            cmds[#cmds + 1] = Back.CmdStackAddr(addr, slot)
+            local current = env1
+            for i = 1, #self.elems do
+                local elem_val = expr_value(expr_to_back:one_uncached(self.elems[i], current))
+                if elem_val == nil then
+                    return pvm.once(Tr.TreeBackExprUnsupported(current, cmds, "array element unsupported"))
+                end
+                append_all(cmds, elem_val.cmds)
+                current = elem_val.env
+                local off = (i - 1) * elem_sz
+                if off == 0 then
+                    current = append_store_info(cmds, current, shape_scalar(elem_val.ty), addr, elem_val.value, "arr:" .. tostring(i))
+                else
+                    local off_ptr = add_ptr_offset(Tr.TreeBackExprValue(current, {}, addr, Back.BackPtr), off)
+                    append_all(cmds, off_ptr.cmds); current = off_ptr.env
+                    local env_s, zero = append_zero_offset(cmds, current)
+                    cmds[#cmds + 1] = Back.CmdStoreInfo(shape_scalar(elem_val.ty), address_from_ptr(off_ptr.value, zero), elem_val.value, memory_info("tree:arr:" .. tostring(i), Back.BackAccessWrite))
+                    current = env_s
+                end
+            end
+            return pvm.once(Tr.TreeBackExprValue(current, cmds, addr, Back.BackPtr))
+        end,
         [Tr.ExprClosure] = function(_, env) return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "closure lowering deferred")) end,
         [Tr.ExprView] = function(self, env) return pvm.once(view_to_back:one_uncached(self.view, env)) end,
         [Tr.ExprLoad] = function(self, env)
@@ -945,18 +1052,8 @@ function M.Define(T)
         return Back.BackAtomicRmwXchg
     end
 
-    local function append_zero_offset(cmds, current)
-        local env1, zero = env_next_value(current, "v")
-        cmds[#cmds + 1] = Back.CmdConst(zero, Back.BackIndex, Back.BackLitInt("0"))
-        return env1, zero
-    end
-
     address_from_ptr = function(ptr, offset)
         return Back.BackAddress(Back.BackAddrValue(ptr), offset, Back.BackProvUnknown, Back.BackPtrBoundsUnknown)
-    end
-
-    local function address_from_data(data, offset)
-        return Back.BackAddress(Back.BackAddrData(data), offset, Back.BackProvData(data), Back.BackPtrInBounds("global data"))
     end
 
     global_data_addr = function(env, data)
@@ -998,16 +1095,6 @@ function M.Define(T)
         local env1, zero = append_zero_offset(cmds, current)
         cmds[#cmds + 1] = Back.CmdStoreInfo(shape, address_from_ptr(ptr, zero), value, memory_info("tree:" .. tostring(access_tag or ptr.text), Back.BackAccessWrite))
         return env1
-    end
-
-    local function add_ptr_offset(value, offset)
-        if offset == 0 then return value end
-        local cmds = {}; append_all(cmds, value.cmds)
-        local env1, off_val = env_next_value(value.env, "v")
-        local env2, addr_val = env_next_value(env1, "v")
-        cmds[#cmds + 1] = Back.CmdConst(off_val, Back.BackIndex, Back.BackLitInt(tostring(offset)))
-        cmds[#cmds + 1] = Back.CmdPtrOffset(addr_val, Back.BackAddrValue(value.value), off_val, 1, 0, Back.BackProvDerived("tree byte offset"), Back.BackPtrBoundsUnknown)
-        return Tr.TreeBackExprValue(env2, cmds, addr_val, Back.BackPtr)
     end
 
     field_addr_from_base_ptr = function(base, field)
@@ -1196,6 +1283,15 @@ function M.Define(T)
         [Tr.PlaceRef] = function(self, env)
             local ref_cls = pvm.classof(self.ref)
             if ref_cls == Bn.ValueRefBinding then
+                -- Check for aggregate binding stored in lower_context (only if binding has aggregate type)
+                if is_aggregate_type(self.ref.binding.ty) and lower_context.agg_binding_slots then
+                    local slot = lower_context.agg_binding_slots[self.ref.binding]
+                    if slot then
+                        local env1, addr = env_next_value(env, "addr")
+                        local cmds = { Back.CmdStackAddr(addr, slot) }
+                        return pvm.once(Tr.TreeBackExprValue(env1, cmds, addr, Back.BackPtr))
+                    end
+                end
                 local local_entry = env_lookup(env, self.ref.binding)
                 if local_entry ~= nil and pvm.classof(local_entry) == Tr.TreeBackStackLocal then
                     local env1, addr = env_next_value(env, "addr")
@@ -1463,6 +1559,25 @@ function M.Define(T)
 
     stmt_to_back = pvm.phase("moonlift_tree_stmt_to_back", {
         [Tr.StmtLet] = function(self, env)
+            -- For aggregate-typed bindings, create a stack slot for the binding itself
+            if is_aggregate_type(self.binding.ty) then
+                local binding_size = elem_size(self.binding.ty)
+                local binding_align = elem_align(self.binding.ty)
+                local slot = stack_slot_for_binding(self.binding)
+                local cmds = { Back.CmdCreateStackSlot(slot, binding_size, binding_align) }
+                -- Set target slot so ExprAgg uses it instead of creating a temp slot
+                local prev_target_slot = lower_context.target_agg_slot
+                lower_context.target_agg_slot = slot
+                local lowered = expr_to_back:one_uncached(self.init, env)
+                lower_context.target_agg_slot = prev_target_slot
+                append_all(cmds, lowered.cmds)
+                -- Don't add to environment - aggregate bindings are accessed via field/index/address, not direct reference
+                -- Store slot in lower_context for later PlaceRef lookup
+                if not lower_context.agg_binding_slots then lower_context.agg_binding_slots = {} end
+                lower_context.agg_binding_slots[self.binding] = slot
+                return pvm.once(Tr.TreeBackStmtResult(lowered.env, cmds, Back.BackFallsThrough))
+            end
+
             local lowered = expr_to_back:one_uncached(self.init, env)
             local view_init = expr_view_value(lowered)
             if view_init ~= nil then
@@ -1534,6 +1649,24 @@ function M.Define(T)
         [Tr.StmtVar] = function(self, env)
             if not binding_is_stack_local(self.binding) then
                 return pvm.once(stmt_to_back:one_uncached(Tr.StmtLet(self.h, self.binding, self.init), env))
+            end
+            -- For aggregate-typed var bindings, create a stack slot for the binding itself
+            if is_aggregate_type(self.binding.ty) then
+                local binding_size = elem_size(self.binding.ty)
+                local binding_align = elem_align(self.binding.ty)
+                local slot = stack_slot_for_binding(self.binding)
+                local cmds = { Back.CmdCreateStackSlot(slot, binding_size, binding_align) }
+                -- Set target slot so ExprAgg uses it instead of creating a temp slot
+                local prev_target_slot = lower_context.target_agg_slot
+                lower_context.target_agg_slot = slot
+                local lowered = expr_to_back:one_uncached(self.init, env)
+                lower_context.target_agg_slot = prev_target_slot
+                append_all(cmds, lowered.cmds)
+                -- Don't add to environment - aggregate bindings are accessed via field/index/address, not direct reference
+                -- Store slot in lower_context for later PlaceRef lookup
+                if not lower_context.agg_binding_slots then lower_context.agg_binding_slots = {} end
+                lower_context.agg_binding_slots[self.binding] = slot
+                return pvm.once(Tr.TreeBackStmtResult(lowered.env, cmds, Back.BackFallsThrough))
             end
             local init = expr_value(expr_to_back:one_uncached(self.init, env))
             if init == nil then return pvm.once(Tr.TreeBackStmtResult(env, { Back.CmdTrap }, Back.BackTerminates)) end
@@ -1787,11 +1920,14 @@ function M.Define(T)
         local param_vals = abi_param_values(abi_plan)
         local previous_func = lower_context.current_func
         local previous_stack_locals = lower_context.stack_locals
+        local previous_agg_slots = lower_context.agg_binding_slots
         lower_context.current_func = name
         lower_context.stack_locals = collect_address_taken_stmts(body, {})
+        lower_context.agg_binding_slots = {}
         local _, body_cmds, flow = lower_body(body, env)
         lower_context.current_func = previous_func
         lower_context.stack_locals = previous_stack_locals
+        lower_context.agg_binding_slots = previous_agg_slots
         local cmds = {
             Back.CmdCreateSig(sig, param_scalars, result_scalars),
             Back.CmdDeclareFunc(visibility, func, sig),

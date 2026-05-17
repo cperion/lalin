@@ -72,6 +72,7 @@ return function(A)
         A.product "FieldInit" {
             A.field "name" "string",
             A.field "value" "MoonTree.Expr",
+            A.field "offset" "number",
             A.unique,
         },
 

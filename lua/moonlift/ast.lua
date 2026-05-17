@@ -600,8 +600,9 @@ local function install(api, T)
     ---Field initializer for aggregate expressions.
     ---@param name string Field name.
     ---@param value moonlift.ast.Expr Field value.
+    ---@param offset number Byte offset from struct base (0 if unknown, filled by typechecker).
     ---@return moonlift.ast.FieldInit
-    function api.field_init(name, value) return Tr.FieldInit(assert_name(name, "field_init"), as_expr(value, "field_init value")) end
+    function api.field_init(name, value, offset) return Tr.FieldInit(assert_name(name, "field_init"), as_expr(value, "field_init value"), offset or 0) end
 
     ---Array expression.
     ---@param elem_ty moonlift.ast.Type Element type.

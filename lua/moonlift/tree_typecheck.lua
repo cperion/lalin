@@ -453,7 +453,61 @@ function M.Define(T)
             local ty = Ty.TArray(Ty.ArrayLenConst(#elems), self.elem_ty)
             return pvm.once(result_expr(Tr.ExprArray(Tr.ExprTyped(ty), self.elem_ty, elems), ty, issues))
         end,
-        [Tr.ExprAgg] = function(self, ctx) return pvm.once(result_expr(pvm.with(self, { h = Tr.ExprTyped(self.ty) }), self.ty, {})) end,
+        [Tr.ExprAgg] = function(self, ctx)
+            local issues = {}
+            local ref = named_ref(self.ty)
+            local layout
+            if ref then
+                for i = 1, #ctx.env.layouts do
+                    local l = ctx.env.layouts[i]
+                    local cls = pvm.classof(l)
+                    local matches = false
+                    if cls == Sem.LayoutNamed and pvm.classof(ref) == Ty.TypeRefPath then
+                        matches = #ref.path.parts == 1 and l.type_name == ref.path.parts[1].text
+                    end
+                    if matches then layout = l; break end
+                end
+                if not layout then
+                    issues[#issues + 1] = Pm.TypeIssue("unknown struct type: " .. (ref.path and ref.path.parts[1].text or "?"), self.h)
+                end
+            end
+            if layout then
+                local field_map = {}
+                for j = 1, #layout.fields do field_map[layout.fields[j].field_name] = layout.fields[j] end
+                local field_exprs = {}
+                for j = 1, #self.fields do
+                    local fi = self.fields[j]
+                    local decl = field_map[fi.name]
+                    if not decl then
+                        issues[#issues + 1] = Pm.TypeIssue("unknown field '" .. fi.name .. "'", self.h)
+                    else
+                        local ev = type_expr_expect(fi.value, ctx, decl.ty)
+                        append_all(issues, ev.issues)
+                        check_expected("struct field '" .. fi.name .. "'", decl.ty, ev.ty, issues)
+                        field_exprs[j] = Tr.FieldInit(fi.name, ev.expr, decl.offset)
+                    end
+                end
+                return pvm.once(result_expr(Tr.ExprAgg(Tr.ExprTyped(self.ty), self.ty, field_exprs), self.ty, issues))
+            end
+            return pvm.once(result_expr(pvm.with(self, { h = Tr.ExprTyped(self.ty) }), self.ty, {}))
+        end,
+        [Tr.ExprArray] = function(self, ctx)
+            if #self.elems == 0 then
+                return pvm.once(result_expr(pvm.with(self, { h = Tr.ExprTyped(self.ty) }), self.ty, {}))
+            end
+            local issues = {}
+            local first_ty = pvm.one(type_expr(self.elems[1], ctx)).ty
+            local elem_ty = first_ty
+            local checked = {}
+            for i = 1, #self.elems do
+                local ev = type_expr_expect(self.elems[i], ctx, elem_ty)
+                append_all(issues, ev.issues)
+                check_expected("array elem", elem_ty, ev.ty, issues)
+                checked[i] = ev.expr
+            end
+            local ty = Ty.TArray(Ty.ArrayLenConst(#self.elems), elem_ty)
+            return pvm.once(result_expr(Tr.ExprArray(Tr.ExprTyped(ty), elem_ty, checked), ty, issues))
+        end,
         [Tr.ExprView] = function(self, ctx) local view = pvm.one(type_view(self.view, ctx)); local ty = Ty.TView(view_elem(view.view)); return pvm.once(result_expr(Tr.ExprView(Tr.ExprTyped(ty), view.view), ty, view.issues)) end,
         [Tr.ExprLoad] = function(self, ctx) local addr = pvm.one(type_expr(self.addr, ctx)); return pvm.once(result_expr(Tr.ExprLoad(Tr.ExprTyped(self.ty), self.ty, addr.expr), self.ty, addr.issues)) end,
         [Tr.ExprAtomicLoad] = function(self, ctx)

@@ -756,7 +756,7 @@ local lbp = {
     [TK.shl]     = 55, [TK.lshr]    = 55, [TK.ashr]=55,
     [TK.plus]    = 60, [TK.minus]   = 60,
     [TK.star]    = 70, [TK.slash]   = 70, [TK.percent]=70,
-    [TK.lparen]  = 90, [TK.lbrack]  = 90, [TK.dot]=90,
+    [TK.lparen]  = 90, [TK.lbrack]  = 90, [TK.lbrace] = 90, [TK.dot]=90,
 }
 
 function Parser:parse_expr(rbp)
@@ -828,6 +828,44 @@ function Parser:nud()
     if k == TK.tilde  then return Tr.ExprUnary(Tr.ExprSurface, C.UnaryBitNot, self:parse_expr(80)) end
     if k == TK.star   then return Tr.ExprDeref(Tr.ExprSurface, self:parse_expr(80)) end
     if k == TK.amp    then return Tr.ExprAddrOf(Tr.ExprSurface, self:expr_to_place(self:parse_expr(80))) end
+    if k == TK.lbrace then
+        -- Anonymous struct literal: { field = expr, ... }
+        local left_name = nil
+        local fields = {}
+        self:skip_nl()
+        if self:kind() ~= TK.rbrace then
+            while true do
+                local fname = self:expect_name("expected field name")
+                self:expect(TK.eq, "expected '=' after field name")
+                fields[#fields + 1] = Tr.FieldInit(fname, self:parse_expr(0), 0)
+                self:skip_sep()
+                if not self:accept(TK.comma) then break end
+                self:skip_nl()
+                if self:kind() == TK.rbrace then break end
+            end
+        end
+        self:expect(TK.rbrace)
+        local ty = self.Ty.TScalar(self.C.ScalarVoid)
+        return Tr.ExprAgg(Tr.ExprSurface, ty, fields)
+    end
+
+    if k == TK.lbrack then
+        -- Array literal: [elem1, elem2, ...]
+        local elems = {}
+        self:skip_nl()
+        if self:kind() ~= TK.rbrack then
+            while true do
+                elems[#elems + 1] = self:parse_expr(0)
+                self:skip_nl()
+                if not self:accept(TK.comma) then break end
+                self:skip_nl()
+                if self:kind() == TK.rbrack then break end
+            end
+        end
+        self:expect(TK.rbrack)
+        return Tr.ExprArray(Tr.ExprSurface, self.Ty.TScalar(self.C.ScalarVoid), elems)
+    end
+
     if k == TK.switch_kw then return self:parse_switch_expr() end
     if k == TK.emit_kw   then return self:parse_emit_expr() end
     if k == TK.block_kw  then return self:parse_control_expr_after_block() end
@@ -900,6 +938,33 @@ function Parser:led(k, left)
     if k == TK.lbrack then
         local idx = self:parse_expr(0); self:skip_nl(); self:expect(TK.rbrack)
         return Tr.ExprIndex(Tr.ExprSurface, Tr.IndexBaseExpr(left), idx)
+    end
+
+    if k == TK.lbrace then
+        -- Struct literal: TypeName{ field = expr, ... }
+        self:skip_nl()
+        local left_name = nil
+        if pvm.classof(left) == Tr.ExprRef and pvm.classof(left.ref) == B.ValueRefName then left_name = left.ref.name end
+        local fields = {}
+        if self:kind() ~= TK.rbrace then
+            while true do
+                local fname = self:expect_name("expected field name")
+                self:expect(TK.eq, "expected '=' after field name")
+                fields[#fields + 1] = Tr.FieldInit(fname, self:parse_expr(0), 0)
+                self:skip_sep()
+                if not self:accept(TK.comma) then break end
+                self:skip_nl()
+                if self:kind() == TK.rbrace then break end
+            end
+        end
+        self:expect(TK.rbrace)
+        local ty
+        if left_name then
+            ty = self.Ty.TNamed(self.Ty.TypeRefPath(self.C.Path({ self.C.Name(left_name) })))
+        else
+            ty = self.Ty.TScalar(self.C.ScalarVoid)
+        end
+        return Tr.ExprAgg(Tr.ExprSurface, ty, fields)
     end
 
     if k == TK.dot then

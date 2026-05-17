@@ -16,8 +16,6 @@
 local T = require("moonlift.mom.tags.mom_tags")
 
 return function(M)
-local i32p = moon.ptr(moon.i32)
-
 local MomBackLowerCtx = M.MomBackLowerCtx
 local mb_ctx_fresh_value = M.mb_ctx_fresh_value
 local mb_ctx_fresh_block = M.mb_ctx_fresh_block
@@ -363,7 +361,105 @@ entry start()
     end
 
     if tag == @{T.MS_SWITCH} then
-        jump done(flow = @{BackFallsThrough}, ok = false)
+        let tree: ptr = ctx.tree
+        let value_idx: i32 = tree.stmt_name[stmt_idx]
+        let arm_start: i32 = tree.stmt_type[stmt_idx]
+        let arm_count: i32 = tree.stmt_value[stmt_idx]
+        let default_start: i32 = tree.stmt_body_start[stmt_idx]
+        let default_count: i32 = tree.stmt_body_count[stmt_idx]
+
+        -- evaluate switch value
+        var value_val: i32 = 0
+        var value_scalar: i32 = 0
+        var value_ok: bool = false
+        emit mb_lower_expr_region(ctx, value_idx, value_val, value_scalar, value_ok)
+        if value_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
+
+        -- create arm blocks
+        let arm_block_aux: i32 = as(i32, ctx.aux_i32.len)
+        block create_arms(ai: i32 = 0)
+            if ai >= arm_count then yield end
+            let blk: i32 = mb_ctx_fresh_block(ctx)
+            mb_ctx_push_aux_i32(ctx, blk)
+            mb_emit_create_block(ctx, blk)
+            jump create_arms(ai = ai + 1)
+        end
+        let default_blk: i32 = mb_ctx_fresh_block(ctx)
+        mb_emit_create_block(ctx, default_blk)
+        let join_blk: i32 = mb_ctx_fresh_block(ctx)
+        mb_emit_create_block(ctx, join_blk)
+
+        -- build cases_aux: key_val + target_block per arm
+        let cases_aux: i32 = as(i32, ctx.aux_i32.len)
+        block build_cases(ci: i32 = 0)
+            if ci >= arm_count then yield end
+            let key_expr: i32 = tree.switch_arm_key[as(index, arm_start) + as(index, ci)]
+            var key_val: i32 = 0
+            var key_scalar: i32 = 0
+            var key_ok: bool = false
+            emit mb_lower_expr_region(ctx, key_expr, key_val, key_scalar, key_ok)
+            if key_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
+            mb_ctx_push_aux_i32(ctx, key_val)
+            mb_ctx_push_aux_i32(ctx, ctx.aux_i32.data[as(index, arm_block_aux) + as(index, ci)])
+            jump build_cases(ci = ci + 1)
+        end
+
+        mb_emit_switch_int(ctx, value_val, value_scalar, cases_aux, arm_count, default_blk)
+
+        -- seal arm blocks and default
+        block seal_arms(ai: i32 = 0)
+            if ai >= arm_count then yield end
+            let blk: i32 = ctx.aux_i32.data[as(index, arm_block_aux) + as(index, ai)]
+            mb_emit_seal_block(ctx, blk)
+            jump seal_arms(ai = ai + 1)
+        end
+        mb_emit_seal_block(ctx, default_blk)
+
+        -- lower each arm
+        var any_falls: bool = false
+        block lower_arms(ai: i32 = 0)
+            if ai >= arm_count then yield end
+            let blk: i32 = ctx.aux_i32.data[as(index, arm_block_aux) + as(index, ai)]
+            mb_emit_switch_to_block(ctx, blk)
+            let body_start_arm: i32 = tree.switch_arm_body_start[as(index, arm_start) + as(index, ai)]
+            let body_count_arm: i32 = tree.switch_arm_body_count[as(index, arm_start) + as(index, ai)]
+            var arm_flow: i32 = @{BackFallsThrough}
+            if body_count_arm > 0 then
+                var arm_ok: bool = false
+                emit mb_lower_control_stmt_list(ctx, body_start_arm, body_count_arm,
+                                                ctrl_start, n_blocks, block_ids_aux, exit_blk,
+                                                is_expr, result_scalar, arm_flow, arm_ok)
+                if arm_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
+            end
+            if arm_flow ~= @{BackTerminates} then
+                mb_emit_jump(ctx, join_blk, 0, 0)
+                any_falls = true
+            end
+            jump lower_arms(ai = ai + 1)
+        end
+
+        -- lower default
+        mb_emit_switch_to_block(ctx, default_blk)
+        var def_flow: i32 = @{BackFallsThrough}
+        if default_count > 0 then
+            var def_ok: bool = false
+            emit mb_lower_control_stmt_list(ctx, default_start, default_count,
+                                            ctrl_start, n_blocks, block_ids_aux, exit_blk,
+                                            is_expr, result_scalar, def_flow, def_ok)
+            if def_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
+        end
+        if def_flow ~= @{BackTerminates} then
+            mb_emit_jump(ctx, join_blk, 0, 0)
+            any_falls = true
+        end
+
+        if any_falls then
+            mb_emit_seal_block(ctx, join_blk)
+            mb_emit_switch_to_block(ctx, join_blk)
+        end
+
+        let overall_flow: i32 = select(any_falls, @{BackFallsThrough}, @{BackTerminates})
+        jump done(flow = overall_flow, ok = true)
     end
 
     -- Delegate non‑control statements to the normal stmt lowerer.

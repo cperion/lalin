@@ -1,149 +1,27 @@
--- MOM expression lowering regions.
---
--- Phase 5: dispatch on all 19 expression variant tags, emit Cmd entries,
--- produce value IDs. Complex expressions recursively lower children via
--- expression tape indices, threading MomBackLowerCtx through block params.
---
--- Expression tape format (from native_core.mlua):
---   expr_tag[i], expr_tok[i], expr_op[i]..expr_aux0[i]
---
--- Tags: EX_LIT=1, EX_REF=2, EX_UNARY=3, EX_BINARY=4, EX_COMPARE=5,
---        EX_LOGIC=6, EX_CAST=7, EX_CALL=8, EX_SELECT=9,
---        EX_DOT=10, EX_INDEX=11, EX_DEREF=12, EX_ADDR=13,
---        EX_LEN=14, EX_VIEW=15, EX_IF=16, EX_HOLE=17,
---        EX_SWITCH=18, EX_CONTROL=19
---
--- This file uses MomBackLowerCtx and mb_emit_* helpers from back/cmd.mlua.
--- Lowerers use named command helpers and share scalar helpers from back/ops.mlua.
+-- Transform expr_lower.mlua: replace recursive regions with func-based lowering
+-- Usage: luajit scripts/transform_expr_lower.lua
 
-local T = require("moonlift.mom.tags.mom_tags")
+local f = io.open("lua/moonlift/mom/back/expr_lower.mlua", "r")
+local content = f:read("*all")
+f:close()
 
-return function(M)
-local i32p = moon.ptr(moon.i32)
+-- 1. Add MomTreeOut import
+content = content:gsub(
+  "local MomBackLowerCtx = M.MomBackLowerCtx",
+  "local MomTreeOut = M.MomTreeOut\nlocal MomBackLowerCtx = M.MomBackLowerCtx"
+)
 
--- Import context and helpers installed by previously loaded modules.
-local MomTreeOut = M.MomTreeOut
-local MomBackLowerCtx = M.MomBackLowerCtx
-local mb_ctx_fresh_value = M.mb_ctx_fresh_value
-local mb_ctx_push_aux_i32 = M.mb_ctx_push_aux_i32
+-- 2. Replace old address region imports with func imports; remove control_expr import
+content = content:gsub(
+  "%-%- Address/store helpers from back/address%.mlua %(registered by step 6%).\nlocal mb_place_addr_to_back = M%.mb_place_addr_to_back\nlocal mb_index_addr_to_back = M%.mb_index_addr_to_back\n\n%-%- Control expression lowerer %(from back/control_lower%.mlua%).\nlocal mb_lower_control_expr = M%.mb_lower_control_expr",
+  "-- Address/store helpers from back/address.mlua (func-based).\nlocal mb_place_addr_to_back_fn = M.mb_place_addr_to_back_fn\nlocal mb_index_addr_to_back_fn = M.mb_index_addr_to_back_fn"
+)
 
--- Scalar helpers from back/ops.mlua.
-local mb_is_float_scalar = M.mb_is_float_scalar
-local mb_is_signed = M.mb_is_signed
-local mb_is_integer_scalar = M.mb_is_integer_scalar
-local mb_scalar_bits = M.mb_scalar_bits
-local mb_semantic_cast_op = M.mb_semantic_cast_op
-local mb_lower_unary_op = M.mb_lower_unary_op
-local mb_lower_compare_op = M.mb_lower_compare_op
-local mb_lower_surface_cast_op = M.mb_lower_surface_cast_op
+-- 3. Remove recursive regions + old Step 6 regions (unary through dot, excluding call/view/len)
+-- We match from "Lower a unary expression." through the end of mb_expr_dot region.
+-- This covers lines ~149-440 minus the kept call/view/len regions.
 
--- Command emission helpers from back/cmd.mlua.
-local mb_emit_const = M.mb_emit_const
-local mb_emit_unary = M.mb_emit_unary
-local mb_emit_int_binary = M.mb_emit_int_binary
-local mb_emit_float_binary = M.mb_emit_float_binary
-local mb_emit_bit_binary = M.mb_emit_bit_binary
-local mb_emit_shift = M.mb_emit_shift
-local mb_emit_compare = M.mb_emit_compare
-local mb_emit_cast = M.mb_emit_cast
-local mb_emit_select = M.mb_emit_select
-local mb_emit_call = M.mb_emit_call
-local mb_emit_load_info = M.mb_emit_load_info
-local mb_emit_stack_addr = M.mb_emit_stack_addr
-local mb_emit_ptr_offset = M.mb_emit_ptr_offset
--- Local environment helpers from back/env.mlua.
-local MB_LOCAL_SCALAR = 1
-local MB_LOCAL_VIEW = 2
-local MB_LOCAL_STACK = 3
-local mb_env_lookup = M.mb_env_lookup
-
--- Address/store helpers from back/address.mlua (func-based).
-local mb_place_addr_to_back_fn = M.mb_place_addr_to_back_fn
-local mb_index_addr_to_back_fn = M.mb_index_addr_to_back_fn
-
--- Token maps (may be imported from ops.mlua in future).
-local mb_token_to_unary_op = func(tok: i32) -> i32
-    return select(tok == @{T.TK_MINUS}, @{T.UnaryNeg},
-           select(tok == @{T.TK_NOT}, @{T.UnaryNot},
-           select(tok == @{T.TK_TILDE}, @{T.UnaryBitNot}, 0)))
-end
-
-local mb_token_to_binary_op = func(tok: i32) -> i32
-    return select(tok == @{T.TK_PLUS}, @{T.BinAdd},
-           select(tok == @{T.TK_MINUS}, @{T.BinSub},
-           select(tok == @{T.TK_STAR}, @{T.BinMul},
-           select(tok == @{T.TK_SLASH}, @{T.BinDiv},
-           select(tok == @{T.TK_PERCENT}, @{T.BinRem},
-           select(tok == @{T.TK_AMP}, @{T.BinBitAnd},
-           select(tok == @{T.TK_PIPE}, @{T.BinBitOr},
-           select(tok == @{T.TK_CARET}, @{T.BinBitXor},
-           select(tok == @{T.TK_SHL}, @{T.BinShl},
-           select(tok == @{T.TK_LSHR}, @{T.BinLShr},
-           select(tok == @{T.TK_ASHR}, @{T.BinAShr}, 0)))))))))))
-end
-
-local mb_token_to_compare_op = func(tok: i32) -> i32
-    return select(tok == @{T.TK_EQEQ}, @{T.CmpEq},
-           select(tok == @{T.TK_NE}, @{T.CmpNe},
-           select(tok == @{T.TK_LT}, @{T.CmpLt},
-           select(tok == @{T.TK_LE}, @{T.CmpLe},
-           select(tok == @{T.TK_GT}, @{T.CmpGt},
-           select(tok == @{T.TK_GE}, @{T.CmpGe}, 0))))))
-end
-
--- ── Case regions ───────────────────────────────────────────────────
-
--- Lower a literal expression.
-local mb_expr_lit = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
-                           done: cont(value: i32, scalar: i32, ok: bool))
-entry start()
-    let tok_kind: i32 = ctx.tree.expr_op[idx]
-    if tok_kind == @{T.TK_NIL} then
-        jump done(value = 0, scalar = 0, ok = false) -- unsupported
-    end
-    if tok_kind == @{T.TK_STRING} then
-        jump done(value = 0, scalar = 0, ok = false)
-    end
-    let dst: i32 = mb_ctx_fresh_value(ctx)
-    let scalar: i32 = select(tok_kind == @{T.TK_TRUE} or tok_kind == @{T.TK_FALSE}, @{T.BackBool},
-                       select(tok_kind == @{T.TK_FLOAT}, @{T.BackF64},
-                              @{T.BackI32}))
-    let lit_tag: i32 = select(tok_kind == @{T.TK_TRUE}, 1,
-                       select(tok_kind == @{T.TK_FALSE}, 1,
-                       select(tok_kind == @{T.TK_INT}, 2,
-                       select(tok_kind == @{T.TK_FLOAT}, 3, 0))))
-    let lit_lo: i32 = select(tok_kind == @{T.TK_TRUE}, 1, 0)
-    mb_emit_const(ctx, dst, scalar, lit_tag, lit_lo, 0)
-    jump done(value = dst, scalar = scalar, ok = true)
-end
-end
-
--- Lower a ref expression.
-local mb_expr_ref = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
-                           done: cont(value: i32, scalar: i32, ok: bool))
-entry start()
-    let tok: i32 = ctx.tree.expr_tok[idx]
-    let slot: i32 = mb_env_lookup(ctx.env, tok)
-    let kind: i32 = select(slot >= 0, ctx.env.kind[as(index, slot)], 0)
-    let scalar: i32 = select(slot >= 0, ctx.env.scalar[as(index, slot)], 0)
-    let val: i32 = select(slot >= 0, ctx.env.val[as(index, slot)], 0)
-    let aux0: i32 = select(slot >= 0, ctx.env.aux0[as(index, slot)], 0)
-    if slot < 0 then
-        jump done(value = 0, scalar = 0, ok = false)
-    end
-    if kind == @{MB_LOCAL_SCALAR} then
-        jump done(value = val, scalar = scalar, ok = true)
-    end
-    if kind == @{MB_LOCAL_STACK} then
-        let dst: i32 = mb_ctx_fresh_value(ctx)
-        mb_emit_stack_addr(ctx, dst, val)
-        mb_emit_load_info(ctx, dst, 0, scalar, 0, 0, dst, 0, 0, 0, 0, 0, 0, 0, 0, 1)
-        jump done(value = dst, scalar = scalar, ok = true)
-    end
-    jump done(value = 0, scalar = 0, ok = false)
-end
-end
-
+local kMB_EXPR_CALL = [[
 -- Lower a call expression stub.
 local mb_expr_call = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
                             done: cont(value: i32, scalar: i32, ok: bool))
@@ -152,6 +30,9 @@ entry start()
 end
 end
 
+]]
+
+local kMB_EXPR_VIEW = [[
 -- Expr view lowering stub (view result protocol).
 local mb_expr_view = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
                             done: cont(data: i32, len: i32, stride: i32, elem_scalar: i32, ok: bool))
@@ -160,6 +41,9 @@ entry start()
 end
 end
 
+]]
+
+local kMB_EXPR_LEN = [[
 -- Expr length lowering.
 local mb_expr_len = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
                            done: cont(value: i32, scalar: i32, ok: bool))
@@ -181,6 +65,9 @@ entry start()
 end
 end
 
+]]
+
+local kNEW_STEP6 = [[
 -- ── Step 6: func-based addr/index/dot lowering ──────────────────────
 
 -- Expr addr‑of: delegate to mb_place_addr_to_back_fn.
@@ -219,6 +106,9 @@ entry start()
 end
 end
 
+]]
+
+local kMB_LOWER_EXPR_FN = [[
 -- ── Function-based expression lowering (avoids region emit recursion) ──
 
 local mb_lower_expr_fn = func(ctx: ptr(@{MomBackLowerCtx}), tree: ptr(@{MomTreeOut}), idx: i32) -> bool
@@ -461,6 +351,9 @@ local mb_lower_expr_fn = func(ctx: ptr(@{MomBackLowerCtx}), tree: ptr(@{MomTreeO
     return false
 end
 
+]]
+
+local kNEW_MB_LOWER_EXPR_REGION = [[
 -- ── Required protocol entrypoints ───────────────────────────────────
 
 -- Lower an expression returning ExprResult protocol.
@@ -474,45 +367,9 @@ entry start()
 end
 end
 
-local mb_lower_expr_ops_view = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
-                                     done: cont(data: i32, len: i32, stride: i32, elem_scalar: i32, ok: bool))
-entry start()
-    let tag: i32 = ctx.tree.expr_tag[idx]
-    if tag == @{T.EX_VIEW} then
-        emit mb_expr_view(ctx, idx; done = out_view)
-    end
-    jump done(data = 0, len = 0, stride = 0, elem_scalar = 0, ok = false)
-end
-block out_view(data: i32, len: i32, stride: i32, elem_scalar: i32, ok: bool)
-    jump done(data = data, len = len, stride = stride, elem_scalar = elem_scalar, ok = ok)
-end
-end
+]]
 
--- Lower call arguments: collect expression values into aux_i32 and return starting index.
-local mb_lower_call_args = region(ctx: ptr(@{MomBackLowerCtx}), list_start: i32, list_count: i32;
-                                  done: cont(aux: i32, n_args: i32, ok: bool))
-entry start()
-    let base: i32 = list_start
-    jump loop(i = as(index, 0))
-end
-block loop(i: index)
-    if i >= as(index, list_count) then jump finish() end
-    var arg_val: i32 = 0
-    var arg_scalar: i32 = 0
-    var arg_ok: bool = false
-    emit mb_lower_expr_region(ctx, base + as(i32, i), arg_val, arg_scalar, arg_ok)
-    if arg_ok == false then jump done(aux = 0, n_args = 0, ok = false) end
-    mb_ctx_push_aux_i32(ctx, arg_val)
-    jump loop(i = i + as(index, 1))
-end
-block finish()
-    let aux_start: i32 = as(i32, ctx.aux_i32.len) - as(i32, as(index, list_count))
-    jump done(aux = aux_start, n_args = list_count, ok = true)
-end
-end
-
--- ── Exports ────────────────────────────────────────────────────────
-
+local kNEW_EXPORTS = [[
 M.mb_lower_expr_region = mb_lower_expr_region
 M.mb_lower_expr_ops_view = mb_lower_expr_ops_view
 M.mb_lower_call_args = mb_lower_call_args
@@ -528,3 +385,61 @@ M.mb_token_to_compare_op = mb_token_to_compare_op
 
 return M
 end
+]]
+
+-- Now build the final content.
+-- Strategy: anchor replacements on unique comment headers.
+
+-- 3a. Remove the old recursive regions + Step 6 section.
+-- Pattern: from "Lower a unary expression." up to (but not including) "Required protocol entrypoints"
+-- But we need to KEEP: mb_expr_call, mb_expr_view, mb_expr_len
+
+-- First, replace the entire block from "-- Lower a unary expression." through the Step 6 end
+-- with a placeholder that just keeps call/view/len + new content.
+
+local remove_start = "-- Lower a unary expression."
+local remove_end_marker = "-- ── Required protocol entrypoints ───────────────────────────────────"
+
+local s_start, s_end = content:find(remove_start, 1, true)
+local e_start, e_end = content:find(remove_end_marker, 1, true)
+
+local head = content:sub(1, s_start - 1)
+local tail = content:sub(e_start)
+
+local middle = kMB_EXPR_CALL .. kMB_EXPR_VIEW .. kMB_EXPR_LEN .. kNEW_STEP6 .. kMB_LOWER_EXPR_FN
+
+content = head .. middle .. tail
+
+-- 4. Replace the old mb_lower_expr_region with the new func-based version
+local old_region_start = "-- Lower an expression returning ExprResult protocol."
+local old_region_end = "end\n\n-- Lower an expression returning ViewResult protocol."
+
+local rs, re = content:find(old_region_start, 1, true)
+local es2, ee2 = content:find(old_region_end, 1, true)
+
+local head2 = content:sub(1, rs - 1)
+local tail2 = content:sub(ee2)
+
+content = head2 .. "-- Lower an expression returning ExprResult protocol.\n-- Delegates to mb_lower_expr_fn (func-based, no region emits).\n-- Safe to emit from other regions since this region emits no sub-regions.\nlocal mb_lower_expr_region = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;\n                                    done: cont(value: i32, scalar: i32, ok: bool))\nentry start()\n    let ok: bool = mb_lower_expr_fn(ctx, ctx.tree, idx)\n    jump done(value = ctx.last_expr_value, scalar = ctx.last_expr_scalar, ok = ok)\nend\nend\n\n" .. tail2
+
+-- 5. Replace old exports with new exports
+local old_exports_start = "M.mb_lower_expr_region = mb_lower_expr_region\nM.mb_lower_expr_ops_view = mb_lower_expr_ops_view\nM.mb_lower_call_args = mb_lower_call_args"
+local es3, ee3 = content:find(old_exports_start, 1, true)
+if not es3 then
+    -- Try alternate pattern (with different spacing)
+    old_exports_start = "M%.mb_lower_expr_region = mb_lower_expr_region"
+    es3, ee3 = content:find(old_exports_start, 1, true)
+end
+
+if es3 then
+    local head3 = content:sub(1, es3 - 1)
+    content = head3 .. kNEW_EXPORTS
+else
+    error("Could not find exports section")
+end
+
+f = io.open("lua/moonlift/mom/back/expr_lower.mlua", "w")
+f:write(content)
+f:close()
+
+print("Transformation complete")
