@@ -179,6 +179,12 @@ entry start()
     default then
         jump done(flow = @{BackFallsThrough}, ok = false)
     end
+block out_if(flow: i32, ok: bool)
+    jump done(flow = flow, ok = ok)
+end
+block out_switch(flow: i32, ok: bool)
+    jump done(flow = flow, ok = ok)
+end
 end
 
 -- ── Dedicated if‑statement lowering region ─────────────────────────
