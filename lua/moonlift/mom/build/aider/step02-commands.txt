@@ -1,3 +1,4 @@
+/read LANGUAGE_REFERENCE.md
 /read lua/moonlift/mom/AGENTS.md
 /read lua/moonlift/mom/build/port_map.lua
 /read lua/moonlift/mom/build/lua-map.md
