@@ -51,6 +51,7 @@ M.compiler_sources = {
 
     -- Backend function/module lowering (depends on vec modules)
     "lua/moonlift/mom/back/func.mlua",
+    "lua/moonlift/mom/back/module.mlua",
 
     -- Phase 3: type system
     -- Keep one typecheck implementation in the product object.  The split

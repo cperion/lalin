@@ -19,6 +19,11 @@ local mb_emit_return_void = M.mb_emit_return_void
 local mb_emit_return_value = M.mb_emit_return_value
 local mb_place_store_to_back_fn = M.mb_place_store_to_back_fn
 
+-- Lazy dispatch to control_lower (loaded later in manifest)
+local mb_lower_control_stmt_fn = func(ctx: ptr(@{MomBackLowerCtx}), stmt_idx: i32) -> bool
+    return M.mb_lower_control_stmt_fn(ctx, stmt_idx)
+end
+
 local MB_LOCAL_SCALAR = 1
 local BackFallsThrough = 0
 local BackTerminates = 1
@@ -84,6 +89,9 @@ local mb_lower_stmt_fn = func(ctx: ptr(@{MomBackLowerCtx}), stmt_idx: i32) -> bo
         if not mb_lower_expr_fn(ctx, ctx.tree, stmt_name) then return mb_set_stmt_result(ctx, @{BackTerminates}, false) end
         mb_emit_return_value(ctx, ctx.last_expr_value)
         return mb_set_stmt_result(ctx, @{BackTerminates}, true)
+    end
+    if tag == @{T.MS_CONTROL} then
+        return mb_lower_control_stmt_fn(ctx, stmt_idx)
     end
     return mb_set_stmt_result(ctx, @{BackFallsThrough}, false)
 end

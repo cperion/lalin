@@ -1,42 +1,10 @@
--- MOM control-region lowering entry points with named result continuations.
-
-local T = require("moonlift.mom.tags.mom_tags")
-
 return function(M)
 local MomBackLowerCtx = M.MomBackLowerCtx
-local MomExprResult = M.MomExprResult
-local MomStmtResult = M.MomStmtResult
-local MomControlReturnValue = M.MomControlReturnValue
 
-local BackFallsThrough = 0
-
-local mb_lower_control_expr = region(ctx: ptr(@{MomBackLowerCtx}), expr_idx: i32; done: cont(result: MomExprResult))
-entry start()
-    jump done(result = MomExprResult{value = 0, scalar = 0, ok = false})
+local a = func(ctx: ptr(@{MomBackLowerCtx}), n: i32) -> i32
+    if n <= 0 then return 0 end
+    return a(ctx, n - 1) + 1
 end
-end
-
-local mb_lower_control_stmt = region(ctx: ptr(@{MomBackLowerCtx}), stmt_idx: i32; done: cont(result: MomStmtResult))
-entry start()
-    jump done(result = MomStmtResult{flow = @{BackFallsThrough}, ok = false})
-end
-end
-
-local mb_lower_control_region = region(ctx: ptr(@{MomBackLowerCtx}), ctrl_start: i32, n_blocks: i32, is_expr: bool, result_scalar: i32; done: cont(result: MomControlReturnValue))
-entry start()
-    jump done(result = MomControlReturnValue{value = 0, flow = @{BackFallsThrough}, ok = false})
-end
-end
-
-local mb_lower_control_stmt_in_region = region(ctx: ptr(@{MomBackLowerCtx}), stmt_idx: i32, ctrl_start: i32, n_blocks: i32, block_ids_aux: i32, exit_blk: i32, is_expr: bool, result_scalar: i32; done: cont(result: MomStmtResult))
-entry start()
-    jump done(result = MomStmtResult{flow = @{BackFallsThrough}, ok = false})
-end
-end
-
-M.mb_lower_control_expr = mb_lower_control_expr
-M.mb_lower_control_stmt = mb_lower_control_stmt
-M.mb_lower_control_region = mb_lower_control_region
-M.mb_lower_control_stmt_in_region = mb_lower_control_stmt_in_region
+M.a = a
 return M
 end

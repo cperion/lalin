@@ -64,6 +64,11 @@ local mb_env_lookup = M.mb_env_lookup
 local mb_place_addr_to_back_fn = M.mb_place_addr_to_back_fn
 local mb_index_addr_to_back_fn = M.mb_index_addr_to_back_fn
 
+-- Lazy dispatch to control_lower (loaded later in manifest)
+local mb_lower_control_expr_fn = func(ctx: ptr(@{MomBackLowerCtx}), expr_idx: i32) -> bool
+    return M.mb_lower_control_expr_fn(ctx, expr_idx)
+end
+
 -- Token maps (may be imported from ops.mlua in future).
 local mb_token_to_unary_op = func(tok: i32) -> i32
     return select(tok == @{T.TK_MINUS}, @{T.UnaryNeg},
@@ -452,7 +457,7 @@ local mb_lower_expr_fn = func(ctx: ptr(@{MomBackLowerCtx}), tree: ptr(@{MomTreeO
         ctx.last_expr_ok = false; return false
     end
     if tag == @{T.EX_CONTROL} then
-        ctx.last_expr_ok = false; return false
+        return mb_lower_control_expr_fn(ctx, idx)
     end
     if tag == @{T.EX_DOT} then
         ctx.last_expr_ok = false; return false
