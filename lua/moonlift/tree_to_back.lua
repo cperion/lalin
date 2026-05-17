@@ -1563,6 +1563,9 @@ function M.Define(T)
             if is_aggregate_type(self.binding.ty) then
                 local binding_size = elem_size(self.binding.ty)
                 local binding_align = elem_align(self.binding.ty)
+                if binding_size == nil or binding_align == nil then
+                    return pvm.once(Tr.TreeBackStmtResult(env, {}, Back.BackFallsThrough))
+                end
                 local slot = stack_slot_for_binding(self.binding)
                 local cmds = { Back.CmdCreateStackSlot(slot, binding_size, binding_align) }
                 -- Set target slot so ExprAgg uses it instead of creating a temp slot
@@ -1654,6 +1657,9 @@ function M.Define(T)
             if is_aggregate_type(self.binding.ty) then
                 local binding_size = elem_size(self.binding.ty)
                 local binding_align = elem_align(self.binding.ty)
+                if binding_size == nil or binding_align == nil then
+                    return pvm.once(Tr.TreeBackStmtResult(env, {}, Back.BackFallsThrough))
+                end
                 local slot = stack_slot_for_binding(self.binding)
                 local cmds = { Back.CmdCreateStackSlot(slot, binding_size, binding_align) }
                 -- Set target slot so ExprAgg uses it instead of creating a temp slot
