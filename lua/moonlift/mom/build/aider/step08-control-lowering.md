@@ -1,332 +1,384 @@
 # Step 8: Control region lowering
 
-Create `lua/moonlift/mom/back/control_lower.mlua` — lowers control regions (block/jump/yield) to backend blocks and jumps.
+Create `lua/moonlift/mom/back/control_lower.mlua` and wire control-region
+lowering into statement/function lowering. This step lowers parsed
+`block`/`region` control blocks (`MS_CONTROL`, `ME_CONTROL`, `MS_JUMP`,
+`MS_YIELD_*`) to backend blocks, block params, jumps, and region-exit blocks.
 
-Modify `lua/moonlift/mom/back/control.mlua` to export control facts needed by the lowerer.
+**Policy: hard rewrite for the touched lowerers. No compatibility shims, no
+Lua tables in native lowering, no raw command packing, no `CmdTrap` fallback,
+no fake continuation args.**
 
-**Policy: Hard rewrite. No backward compat shims. No placeholder code. Every function complete.**
+## Required source-of-truth checks
 
-## Tree encoding — control regions
+Before coding, verify these files agree:
 
-### Control region expressions (EX_CONTROL)
+1. `lua/moonlift/mom/parser/native_core.mlua` control parsing:
+   - `np_parse_control_stmt`
+   - `np_parse_control_expr`
+   - `np_parse_region_blocks`
+   - `np_add_stmt` / `np_add_expr` payload order
+2. `lua/moonlift/mom/parser/native_tree.mlua` materialization:
+   - parser `ST_*` tags are converted to typed `MS_*` tags
+   - expression tags are converted to typed `ME_*` tags
+   - `MomTreeOut.counts` layout
+3. Hosted oracle:
+   - `lua/moonlift/tree_control_to_back.lua`
+   - control-related cases in `lua/moonlift/tree_to_back.lua`
+4. Language semantics:
+   - `LANGUAGE_REFERENCE.md` control-region section
+   - `PROTOCOL_SYNTAX.md` for named exits/continuations
 
-EX_CONTROL (tag 19) is produced at `native_core.mlua:912`:
+## Typed tree facts that must be used
+
+After materialization, lowerers consume `MomTreeOut`, not parser-private tags.
+Use these generated constants:
+
+- Expressions: `T.ME_CONTROL`, `T.ME_*`
+- Statements: `T.MS_CONTROL`, `T.MS_JUMP`, `T.MS_YIELD_VOID`,
+  `T.MS_YIELD_VALUE`, `T.MS_RETURN_VOID`, `T.MS_RETURN_VALUE`, etc.
+- Types: `T.MT_SCALAR`, `T.MT_PTR`, `T.MT_VIEW`, etc.
+
+Do **not** use parser `ST_*` or `EX_*` constants in this lowerer.
+
+### `MomTreeOut.counts` indices
+
+From `native_tree.mlua`:
+
 ```
-np_add_expr(out, EX_CONTROL, tok, result_ty, ctrl_start, 1, 0)
+counts[0]  = type count
+counts[1]  = expr count
+counts[2]  = stmt count
+counts[3]  = item count
+counts[4]  = param count
+counts[5]  = field count
+counts[6]  = jump arg count
+counts[7]  = expr list count
+counts[8]  = stmt list count
+counts[9]  = type list count
+counts[10] = switch arm count
+counts[11] = control block count
+counts[12] = entry param count
 ```
 
-In `MomTreeOut`:
-```
-expr_tag[idx]   = 19 (ME_CONTROL)
-expr_tok[idx]   = token index
-expr_op[idx]    = result type index (0 = void)
-expr_lhs[idx]   = ctrl_start (index into ctrl_block_* arrays)
-expr_rhs[idx]   = 1 (block count — always 1 for single-entry region; all sub-blocks follow)
-expr_aux0[idx]  = 0
-```
+## Control tree encoding
 
-### Control region statements (ST_CONTROL)
+### Control region expression: `ME_CONTROL`
 
-ST_CONTROL (tag 11) is produced at `native_core.mlua:888`:
-```
-np_add_stmt(out, ST_CONTROL, tok, label_tok, entry_param_start, param_count, ctrl_start, 1)
-```
+Produced by `np_parse_control_expr`:
 
 ```
-stmt_name[i]         = label_tok (entry block name token)
-stmt_type[i]         = entry_param_start (index into entry_param_* arrays)
-stmt_value[i]        = param_count (number of entry block params)
-stmt_body_start[i]   = ctrl_start (index into ctrl_block_* arrays)
-stmt_body_count[i]   = 1 (block count for entry)
+expr_tag[idx]  = T.ME_CONTROL
+expr_tok[idx]  = token index
+expr_op[idx]   = result type index (0 or negative means void/no scalar result)
+expr_lhs[idx]  = ctrl_start, index into ctrl_block_* arrays
+expr_rhs[idx]  = parser-local count; currently 1 for inline block/region expr
+expr_aux0[idx] = 0
+```
+
+For item-level `region` declarations, control blocks are stored in item fields:
+
+```
+item_tag[i]        = IT_REGION
+item_body_start[i] = ctrl_start
+item_body_count[i] = ctrl_count
+```
+
+### Control region statement: `MS_CONTROL`
+
+Produced by `np_parse_control_stmt` and materialized to `MS_CONTROL`:
+
+```
+stmt_name[i]       = entry label token
+stmt_type[i]       = entry_param_start
+stmt_value[i]      = entry_param_count
+stmt_body_start[i] = ctrl_start
+stmt_body_count[i] = parser-local count; currently 1 for inline block stmt
 ```
 
 ### Control block arrays
 
-There are 5 parallel arrays in `MomTreeOut`:
 ```
-ctrl_block_label[ctrl_start + b]          = label token for block b
-ctrl_block_param_start[ctrl_start + b]    = index into entry_param_* or param_* arrays
-ctrl_block_param_count[ctrl_start + b]    = number of params
-ctrl_block_body_start[ctrl_start + b]     = index into stmt_list for block body
-ctrl_block_body_count[ctrl_start + b]     = number of stmts in block body
-```
-
-### Entry param arrays
-
-```
-entry_param_name[ep_start + i]    = name token for entry param i
-entry_param_type[ep_start + i]    = type index for entry param i
-entry_param_init[ep_start + i]    = initializer expression index for entry param i
+ctrl_block_label[ctrl_start + b]       = label token
+ctrl_block_param_start[ctrl_start + b] = entry_param_* start for b=0, param_* start otherwise
+ctrl_block_param_count[ctrl_start + b] = number of block params
+ctrl_block_body_start[ctrl_start + b]  = stmt_list start
+ctrl_block_body_count[ctrl_start + b]  = stmt_list count
 ```
 
-The first block (b=0) in a region is always the entry block. Its params are in `entry_param_*` arrays. All other blocks' params use the flat `param_name/param_type` arrays (from `native_core.mlua:984`).
+Entry block is always block index `0` within a region. There is no
+`ctrl_block_entry_flag`.
 
-**There is NO `param_init` array for non-entry blocks** — non-entry block params don't have initializers (they receive values from jumps).
-
-**There is NO `ctrl_block_entry_flag`** — the entry block is always `ctrl_block_*[ctrl_start + 0]` (the first block in the ctrl block array for a region).
-
-### Jump statements in control bodies
-
-ST_JUMP (10) in a control body targets a block label:
-```
-stmt_name[idx]  = target name token (block label to jump to)
-stmt_type[idx]  = arg_start (index into jump_arg_name/expr arrays)
-stmt_value[idx] = arg_count
-```
-
-The target block is found by matching `stmt_name` against `ctrl_block_label` for all blocks in the region.
-
-### What does NOT exist
-
-- **No `ctrl_region_*` arrays** — control regions are just EX_CONTROL/ST_CONTROL with `ctrl_start` pointing into the flat `ctrl_block_*` arrays.
-- **No `control_target_resolution`** — target block is resolved by matching label tokens (name-based, not indexed).
-- **No `block_cont_spec`** — continuations are not used for block/jump inside control regions.
-- **No separate `ctrl_block_entry_flag`** — entry is block 0.
-- **No `param_init` for non-entry blocks** — only entry params have initializers.
-
-### Existing helpers available in cmd.mlua
+Entry block params use:
 
 ```
-mb_emit_create_block(ctx, blk_id)
-mb_emit_switch_to_block(ctx, blk_id) 
-mb_emit_append_block_param(ctx, blk_id, val, shape_tag, scalar, lanes)
-mb_emit_seal_block(ctx, blk_id)
-mb_emit_jump(ctx, target_blk, args_aux, count)
-mb_emit_br_if(ctx, cond, then_blk, then_args, then_count, else_blk, else_args, else_count)
-mb_emit_return_void(ctx)
-mb_emit_return_value(ctx, val)
-mb_emit_switch_int(ctx, val, scalar, cases_aux, n_cases, default_blk)
-mb_ctx_fresh_value(ctx)
-mb_ctx_fresh_block(ctx)
-mb_ctx_push_aux_i32(ctx, val)
+entry_param_name/type/init
 ```
 
-## control.mlua changes
+Non-entry block params use:
 
-Add to `lua/moonlift/mom/back/control.mlua`:
+```
+param_name/type
+```
+
+There is no initializer for non-entry params.
+
+### Jump statements
+
+`MS_JUMP` payload:
+
+```
+stmt_name[idx]  = target block label token
+stmt_type[idx]  = jump_arg_start
+stmt_value[idx] = jump_arg_count
+```
+
+Jump args are:
+
+```
+jump_arg_name[jump_arg_start + i]
+jump_arg_expr[jump_arg_start + i]
+```
+
+Resolve jump targets by integer token equality against `ctrl_block_label`.
+
+## New helpers in `back/control.mlua`
+
+Add exported pure/native helpers:
 
 ```moonlift
-mb_control_get_region_info(ctx, region_idx)
-  → ctrl_start: i32, n_blocks: i32, entry_label: i32, result_scalar: i32
-  -- Extract control region info from EX_CONTROL or ST_CONTROL tree node.
-  -- For EX_CONTROL: reads expr_op (result type) and expr_lhs (ctrl_start)
-  --   + expr_rhs (block count, always 1 for the entry; total blocks = scan till labels change)
-  -- For ST_CONTROL: reads stmt_type (entry_param_start), stmt_value (param_count),
-  --   stmt_body_start (ctrl_start), stmt_body_count (block count)
-  -- Returns the ctrl_start index, total n_blocks (count non-zero labels), etc.
-
-mb_control_find_block_by_label(tree, ctrl_start, n_blocks, label_tok) → block_idx: i32
-  -- Linear scan: ctrl_block_label[ctrl_start + b] == label_tok → return b
-  -- Returns -1 if not found
-
-mb_control_get_block_params(tree, ctrl_start, block_idx) 
-  → param_start, param_count: i32
-  -- Delegate: if block_idx == 0 (entry), return from entry_param_start/count
-  -- else return from ctrl_block_param_start/count
-
-mb_control_get_param_type(tree, ctrl_start, block_idx, param_offset) → type_idx: i32
-  -- Get type for a specific block param
-  -- Entry params from entry_param_type[], non-entry from param_type[]
+mb_control_find_block_by_label(tree: ptr(MomTreeOut), ctrl_start: i32, n_blocks: i32, label_tok: i32) -> i32
+mb_control_block_param_start(tree: ptr(MomTreeOut), ctrl_start: i32, block_idx: i32) -> i32
+mb_control_block_param_count(tree: ptr(MomTreeOut), ctrl_start: i32, block_idx: i32) -> i32
+mb_control_block_param_name(tree: ptr(MomTreeOut), ctrl_start: i32, block_idx: i32, param_i: i32) -> i32
+mb_control_block_param_type(tree: ptr(MomTreeOut), ctrl_start: i32, block_idx: i32, param_i: i32) -> i32
+mb_control_type_to_scalar(ctx: ptr(MomBackLowerCtx), type_idx: i32) -> i32
 ```
 
-## control_lower.mlua
+Rules:
+
+- `block_idx == 0` reads `entry_param_*` arrays.
+- `block_idx > 0` reads `param_*` arrays.
+- Scalar conversion must use existing backend type helpers (`mb_type_to_back_scalar`
+  or equivalent), not raw `type_scalar` alone.
+
+Do **not** build maps/tables. Linear scans are fine.
+
+## New module: `back/control_lower.mlua`
+
+### Exported entrypoints
 
 ```moonlift
-return function(M)
-  -- imports from cmd.mlua, env.mlua, expr_lower.mlua, stmt_lower.mlua, control.mlua
-  return M
-end
-```
-
-### Entrypoints
-
-```moonlift
-mb_lower_control_region(ctx: ptr(MomBackLowerCtx), region_idx: i32)
-  -> value: i32, flow: i32, ok: bool
+mb_lower_control_expr(ctx: ptr(MomBackLowerCtx), expr_idx: i32)
+  -> value: i32, scalar: i32, ok: bool
 
 mb_lower_control_stmt(ctx: ptr(MomBackLowerCtx), stmt_idx: i32)
   -> flow: i32, ok: bool
+
+mb_lower_control_region(ctx: ptr(MomBackLowerCtx), ctrl_start: i32, n_blocks: i32,
+                        is_expr: bool, result_scalar: i32)
+  -> value: i32, flow: i32, ok: bool
+
+mb_lower_control_stmt_in_region(ctx: ptr(MomBackLowerCtx), stmt_idx: i32,
+                                ctrl_start: i32, n_blocks: i32,
+                                block_ids_aux: i32, exit_blk: i32,
+                                is_expr: bool, result_scalar: i32)
+  -> flow: i32, ok: bool
+
+mb_lower_control_stmt_list(ctx: ptr(MomBackLowerCtx), body_start: i32, body_count: i32,
+                           ctrl_start: i32, n_blocks: i32,
+                           block_ids_aux: i32, exit_blk: i32,
+                           is_expr: bool, result_scalar: i32)
+  -> flow: i32, ok: bool
 ```
 
-### Control lowering algorithm
+Use local constants in the file:
 
 ```
-mb_lower_control_region(ctx, region_idx):
-  1. Determine if region is an expression or statement region:
-     - If ctx.tree.expr_tag[region_idx] == ME_CONTROL (19):
-       → expression region. result_ty = ctx.tree.expr_op[region_idx]
-       → result_scalar = ctx.expr_scalar[region_idx] or BackVoid
-       → ctrl_start = ctx.tree.expr_lhs[region_idx]
-     - If ctx.tree.stmt_tag[region_idx] == MS_CONTROL (11):
-       → statement region. result_ty = 0 (void)
-       → result_scalar = BackVoid
-       → ctrl_start = ctx.tree.stmt_body_start[region_idx]
-     
-     n_blocks = count blocks: scan ctrl_block_label from ctrl_start until 0 or end of array
-               (practical approach: look at counts[COUNT_CTRL_BLOCKS] - ctrl_start)
-     
-  2. Build label→block_idx map:
-     For b = 0..n_blocks-1:
-       label_tok = ctx.tree.ctrl_block_label[ctrl_start + b]
-       store in Lua table: label_map[label_tok] = b
-
-  3. Create backend block IDs:
-     For entry block (=ctrl_start + 0) and each named block:
-       mb_ctx_fresh_block(ctx) → blk_id
-       store in array: blk_ids[b] = blk_id
-       mb_emit_create_block(ctx, blk_id)
-
-  4. Lower entry block params and entry jump:
-     entry_param_start = ctx.tree.ctrl_block_param_start[ctrl_start + 0]
-     entry_param_count = ctx.tree.ctrl_block_param_count[ctrl_start + 0]
-     
-     For ep = 0..entry_param_count-1:
-       name_tok = ctx.tree.entry_param_name[entry_param_start + ep]
-       init_expr = ctx.tree.entry_param_init[entry_param_start + ep]
-       mb_lower_expr_region(ctx, init_expr, ...) → (init_val, scalar, ok)
-       mb_emit_append_block_param(ctx, blk_ids[0], init_val, 0, scalar, 0)
-       (Don't bind in env yet — params are bound when entering the block)
-
-  5. For each block b in order (0..n_blocks-1):
-     mb_emit_switch_to_block(ctx, blk_ids[b])
-     
-     -- Bind block params
-     if b == 0:
-       param_start = ctx.tree.ctrl_block_param_start[ctrl_start + 0]
-       param_count = ctx.tree.ctrl_block_param_count[ctrl_start + 0]
-       -- Entry param init already done in step 4. Now bind them in env:
-       for ep = 0..param_count-1:
-         name_tok = ctx.tree.entry_param_name[param_start + ep]
-         param_type = ctx.tree.entry_param_type[param_start + ep]
-         scalar = ctx.tree.type_scalar[param_type]  -- for MT_SCALAR types
-         mb_ctx_fresh_value(ctx) → param_val
-         mb_emit_append_block_param(ctx, blk_ids[b], param_val, 0, scalar, 0)
-         mb_env_bind_scalar(ctx.env, name_tok, param_val, scalar)
-     else:
-       param_start = ctx.tree.ctrl_block_param_start[ctrl_start + b]
-       param_count = ctx.tree.ctrl_block_param_count[ctrl_start + b]
-       for p = 0..param_count-1:
-         name_tok = ctx.tree.param_name[param_start + p]
-         param_type = ctx.tree.param_type[param_start + p]
-         scalar = ctx.tree.type_scalar[param_type]
-         mb_ctx_fresh_value(ctx) → param_val
-         mb_emit_append_block_param(ctx, blk_ids[b], param_val, 0, scalar, 0)
-         mb_env_bind_scalar(ctx.env, name_tok, param_val, scalar)
-     
-     -- Lower block body
-     body_start = ctx.tree.ctrl_block_body_start[ctrl_start + b]
-     body_count = ctx.tree.ctrl_block_body_count[ctrl_start + b]
-     body_flow, body_ok = mb_lower_stmt_list_body(ctx, body_start, body_count)
-     
-     (body_flow should be BackTerminates — every block must end in jump/yield/return)
-
-  6. After all blocks lowered, seal them:
-     for b = 0..n_blocks-1:
-       mb_emit_seal_block(ctx, blk_ids[b])
-
-  7. For expression regions:
-     The region produces a value through its yields. Create an exit block:
-     mb_emit_create_block(ctx, exit_blk)
-     mb_ctx_fresh_value(ctx) → result_val
-     mb_emit_append_block_param(ctx, exit_blk, result_val, 0, result_scalar, 0)
-     mb_emit_switch_to_block(ctx, exit_blk)
-     mb_emit_seal_block(ctx, exit_blk)
-     Return (result_val, BackTerminates, ok=true)
-
-  8. For statement regions (void):
-     Return (0, BackTerminates, ok=true)
+BackFallsThrough = 0
+BackTerminates   = 1
 ```
 
-### Control statement lowering dispatcher
+Do not rely on nonexistent generated `T.BackTerminates` tags.
+
+## Correct lowering algorithm
+
+### Region setup
+
+`mb_lower_control_expr`:
+
+1. Assert/dispatch `ctx.tree.expr_tag[expr_idx] == T.ME_CONTROL`.
+2. `ctrl_start = ctx.tree.expr_lhs[expr_idx]`.
+3. Determine `n_blocks`:
+   - For inline `ME_CONTROL`, `expr_rhs` is currently parser-local and may be `1`.
+   - Use `expr_rhs` if it is greater than `1`.
+   - Otherwise conservatively use `ctx.tree.counts[11] - ctrl_start`, but stop at first zero label if encountered.
+4. `result_scalar = ctx.expr_scalar[expr_idx]`; if zero, use `T.BackVoid`.
+5. Call `mb_lower_control_region(..., is_expr=true, result_scalar)`.
+
+`mb_lower_control_stmt`:
+
+1. Assert/dispatch `ctx.tree.stmt_tag[stmt_idx] == T.MS_CONTROL`.
+2. `ctrl_start = ctx.tree.stmt_body_start[stmt_idx]`.
+3. Determine `n_blocks` using `stmt_body_count` if greater than `1`, otherwise the same conservative count rule.
+4. Call `mb_lower_control_region(..., is_expr=false, result_scalar=T.BackVoid)`.
+
+### Block creation and exit block
+
+Inside `mb_lower_control_region`:
+
+1. Reserve an aux segment for backend block ids:
+   - `block_ids_aux = ctx.aux_i32.len`
+   - for each control block: fresh block id, push to aux, emit `mb_emit_create_block`.
+2. Always create a region exit block:
+   - `exit_blk = fresh block`, emit `mb_emit_create_block`.
+   - If `is_expr`, create `result_val = fresh value` and emit
+     `mb_emit_append_block_param(exit_blk, result_val, scalar shape, result_scalar, 0)`.
+   - If statement region, exit block has no params.
+3. Append block params for every control block before lowering any body:
+   - for each block param: fresh value id, emit `mb_emit_append_block_param(block_id, param_val, scalar shape, scalar, 0)`.
+   - Store param value ids in a second aux segment in block-major order, or recompute through a deterministic aux layout.
+
+### Entry initializer trampoline
+
+The current insertion block is the block that contains the control expression or
+statement. Do not switch to the entry block before lowering initializers.
+
+1. Lower every entry param initializer expression in the current block.
+2. Push initializer values to `ctx.aux_i32`.
+3. Emit `mb_emit_jump(ctx, entry_block_id, init_args_aux, entry_param_count)`.
+4. Then switch to each region block and lower its body.
+
+This is the key distinction:
+
+- `mb_emit_append_block_param` defines a block parameter.
+- `mb_emit_jump` supplies runtime arguments to those parameters.
+
+Do not append entry params twice.
+
+### Per-block body lowering
+
+For each control block `b`:
+
+1. `mb_emit_switch_to_block(ctx, block_id)`.
+2. Mark env: `mark = mb_env_mark(ctx.env)`.
+3. Bind block params into env using the already-created param value ids:
+   - entry params from `entry_param_name/type`
+   - non-entry params from `param_name/type`
+4. Lower `ctrl_block_body_start/count` with `mb_lower_control_stmt_list`.
+5. If body flow is not terminating, this is invalid for a control block; return `ok=false`.
+6. Truncate env to mark.
+
+After all blocks are lowered, seal all region blocks and the exit block.
+Finally switch to the exit block. Return:
+
+- expression region: `(result_val, BackFallsThrough, true)`
+- statement region: `(0, BackFallsThrough, true)`
+
+### Statement dispatch inside a region
+
+`mb_lower_control_stmt_in_region` dispatches on `MS_*` tags.
+
+#### `T.MS_JUMP`
+
+1. Resolve target label by linear scan.
+2. For each jump arg:
+   - `arg_expr = jump_arg_expr[arg_start + i]`
+   - lower `arg_expr` via `mb_lower_expr_region`
+   - push value to aux
+3. Emit `mb_emit_jump(ctx, target_block_id, args_aux, arg_count)`.
+4. Return `BackTerminates`.
+
+Do not use jump arg names as values. Names are for checking/protocol matching;
+the expression payload supplies the runtime value.
+
+#### `T.MS_YIELD_VALUE`
+
+Only valid for expression regions.
+
+1. Lower `stmt_name[stmt_idx]` via `mb_lower_expr_region`.
+2. Push value as the single exit-block arg.
+3. Emit `mb_emit_jump(ctx, exit_blk, args_aux, 1)`.
+4. Return `BackTerminates`.
+
+Do **not** emit `CmdReturnValue` for yield.
+
+#### `T.MS_YIELD_VOID`
+
+Only valid for statement/void regions.
+
+1. Emit `mb_emit_jump(ctx, exit_blk, 0, 0)`.
+2. Return `BackTerminates`.
+
+Do **not** emit `CmdReturnVoid` for yield.
+
+#### `T.MS_RETURN_VOID` / `T.MS_RETURN_VALUE`
+
+These are function returns inside a region; emit `CmdReturn*` and return
+`BackTerminates`.
+
+#### Normal statements
+
+Delegate to existing scalar statement lowerer for:
+
+- `MS_LET`
+- `MS_VAR`
+- `MS_SET`
+- `MS_EXPR`
+
+The existing lowerer must not dispatch `MS_JUMP`/`MS_YIELD_*` outside this
+region context.
+
+#### `MS_IF` / `MS_SWITCH`
+
+If Step 7 phi lowering exists and is correct, delegate to it. Otherwise return
+`ok=false`. Do not produce fake branch lowering.
+
+#### Nested `MS_CONTROL`
+
+Lower recursively through `mb_lower_control_stmt` or return `ok=false` if the
+current implementation cannot preserve nested-region exit semantics.
+
+## Integration requirements
+
+1. `expr_lower.mlua`:
+   - Add `case T.ME_CONTROL` -> `mb_lower_control_expr`.
+2. `stmt_lower.mlua`:
+   - Add `case T.MS_CONTROL` -> `mb_lower_control_stmt`.
+   - Do not handle `MS_JUMP`/`MS_YIELD_*` outside a control region; return `ok=false`.
+3. `func.mlua`:
+   - Function body lowering must use `mb_lower_stmt_list` normally.
+   - If the first body statement is `MS_CONTROL`, the statement dispatcher handles it; do not special-case with fake returns.
+4. `build/manifest.lua`:
+   - Add `lua/moonlift/mom/back/control_lower.mlua` after `stmt_lower.mlua` or after dependencies are loaded.
+
+## Tests to add/run
+
+Add focused tests under `tests/`:
+
+1. Control expression with value yield:
+
+```moonlift
+func main() -> i32
+    return block loop(i: i32 = 0, acc: i32 = 0)
+        if i >= 4 then yield acc end
+        jump loop(i = i + 1, acc = acc + 1)
+    end
+end
+```
+
+2. Control statement with void yield in a void function.
+3. Jump target resolution failure should return native error/status, not emit invalid commands.
+4. Entry block params are initialized via a jump arg, not by duplicate block params.
+
+Run:
 
 ```
-mb_lower_control_stmt(ctx, stmt_idx):
-  dispatch on ctx.tree.stmt_tag[stmt_idx]:
-    ST_JUMP (10):
-      → target_label = ctx.tree.stmt_name[stmt_idx]
-      → arg_start = ctx.tree.stmt_type[stmt_idx]
-      → arg_count = ctx.tree.stmt_value[stmt_idx]
-      → Find target block in label_map
-      → For each arg i:
-          name_tok = ctx.tree.jump_arg_name[arg_start + i]
-          arg_expr = ctx.tree.jump_arg_expr[arg_start + i]
-          If arg_expr is name-token-based (jump by name):
-            kind, val, scalar = mb_env_lookup_into(ctx.env, name_tok)
-            mb_ctx_push_aux_i32(ctx, val)
-          Else:
-            mb_lower_expr_region(ctx, arg_expr) → (val, scalar, ok)
-            mb_ctx_push_aux_i32(ctx, val)
-      → mb_emit_jump(ctx, target_blk, args_aux_start, arg_count)
-      → Return (BackTerminates, ok=true)
-
-    ST_YIELD_VOID (8):
-      → mb_emit_return_void(ctx)
-      → Return (BackTerminates, ok=true)
-
-    ST_YIELD_VALUE (9):
-      → value_expr = ctx.tree.stmt_name[stmt_idx]
-      → mb_lower_expr_region(ctx, value_expr) → (val, scalar, ok)
-      → mb_emit_return_value(ctx, val)
-      → Return (BackTerminates, ok=true)
-
-    ST_IF (5): → delegate to mb_lower_if_stmt(ctx, stmt_idx)
-    ST_SWITCH (13): → delegate to mb_lower_switch_stmt(ctx, stmt_idx)
-    ST_LET (1): → delegate to mb_stmt_let(ctx, stmt_idx)
-    ST_VAR (2): → delegate to mb_stmt_var(ctx, stmt_idx)
-    ST_SET (3): → delegate to mb_stmt_set(ctx, stmt_idx)
-    ST_EXPR (4): → delegate to mb_stmt_expr(ctx, stmt_idx)
-    ST_RETURN_VOID (6): → mb_emit_return_void(ctx); Return (BackTerminates, ok=true)
-    ST_RETURN_VALUE (7): → mb_lower_expr + mb_emit_return_value; Return (BackTerminates, ok=true)
-    ST_CONTROL (11): → recursive: mb_lower_control_region(ctx, stmt_idx) for nested regions
-    else → Return (BackFallsThrough, ok=false)
+luajit scripts/emit_mom_precompiled.lua
+luajit tests/test_mom_run_2plus2.lua
+luajit tests/test_mom_control_lower.lua
+luajit scripts/check_mom_hygiene.lua
 ```
 
-### Statement list body lowering
-
-Reuses the same `mb_lower_stmt_list_body` from step 7. For each stmt in the range:
-- Dispatch to the appropriate handler based on `stmt_tag`.
-- Track `mb_last_flow` for termination detection.
-- If previous stmt terminated, remaining stmts are dead code (skip without error).
-
-### Integration with func.mlua
-
-`mb_lower_func_body` should handle the body containing control regions:
-- If the func body's first stmt is ST_CONTROL, it might be a region-based func body.
-- The body list may also contain just normal stmts (simple func body).
-
-For now, a simple func body with `let/return` etc. uses the normal stmt lowering.
-A func body that starts with a control region delegates to `mb_lower_control_region`.
-
-### What to export from control_lower.mlua
-
-```lua
-return {
-  mb_lower_control_region = mb_lower_control_region,
-  mb_lower_control_stmt = mb_lower_control_stmt,
-  mb_lower_stmt_list_body = mb_lower_stmt_list_body,
-}
-```
-
-### Wiring
-
-| Function | Lives in | Called from |
-|---|---|---|
-| `mb_control_get_region_info` | `control.mlua` | `control_lower.mlua` |
-| `mb_control_find_block_by_label` | `control.mlua` | `control_lower.mlua` |
-| `mb_control_get_block_params` | `control.mlua` | `control_lower.mlua` |
-| `mb_lower_control_region` | `control_lower.mlua` | `func.mlua` (if func body is a region) |
-| `mb_lower_control_stmt` | `control_lower.mlua` | body lowering inside regions |
-| `mb_lower_stmt_list_body` | `control_lower.mlua` | body lowering (shared) |
-
-## Hard bans
-
-- No raw command packing — use `mb_emit_create_block`, `mb_emit_switch_to_block`, `mb_emit_append_block_param`, `mb_emit_jump`, `mb_emit_return_*`, `mb_emit_seal_block`
-- No `LowerState` — only `MomBackLowerCtx`
-- No `CmdTrap` fallbacks
-- No `TODO`/`FIXME`/`placeholder`/`simplified`
-- Block params are real typed values — no fake continuation args
-- Every block must be sealed after its body lowers
-- Entry block params have initializers (entry_param_init) — lower those before binding param values
-- Non-entry block params have NO initializers — they receive values from jumps at runtime
-- Block labels are name tokens, not string names — compare with integer equality
-- Target resolution for jumps is label-based: find matching `ctrl_block_label` in the region
+Existing repository-wide hygiene may still report known schema/vector issues;
+new touched files must not add new hygiene failures.

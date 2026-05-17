@@ -1,324 +1,274 @@
-# Step 10: Vector integration
+# Step 10: Vector integration without fake vectorization
 
-Connect the existing `vec/*.mlua` modules to the lowering pipeline. Refactor them to use `MomBackLowerCtx` and `mb_emit_*` helpers, and integrate into function lowering.
+This step removes raw vector command packing and integrates the vector pipeline
+as a conservative try/fallback pass. It must never fabricate vector facts or
+emit vectorized loops unless legality and plan data are explicitly proven from
+control-region structure.
 
-**Policy: Hard rewrite. No backward compat shims. No placeholder code. Every function complete.**
+**Prerequisites:** Step 8 control lowering is complete and Step 9 command tape
+width/`mb_emit_vec_*` helpers are correct. If either prerequisite is missing,
+this step must stop after making vec modules compile-safe and scalar-fallback
+only.
 
-## Tree encoding — what exists and what does not
+**Policy: hard rewrite for touched vec files. No raw command packing, no
+`LowerState`, no `CmdTrap` fallback, no hidden allocation, no fake vector facts,
+no fake vector plans. Vector failure must always fall back to scalar lowering.**
 
-### Vector-related tree arrays
+## Required source-of-truth checks
 
-**There are NO vector-specific arrays in `MomTreeOut`.** The parser does not emit vector expressions or statements. Vectorization operates at the control-flow level: it looks at loop patterns in control regions (step 8 lowering output) and replaces scalar loop bodies with vectorized equivalents.
+Read before editing:
 
-### Existing vec modules and their current state
+- `lua/moonlift/vec_kernel_plan.lua`
+- `lua/moonlift/vec_kernel_to_back.lua`
+- vector-related sections in `lua/moonlift/tree_to_back.lua`
+- `BACK_WIRE_FORMAT.md` vector command slots
+- `lua/moonlift/mom/vec/*.mlua` current skeletons
+- `lua/moonlift/mom/back/control_lower.mlua`
+- `lua/moonlift/mom/back/cmd.mlua`
+- `lua/moonlift/mom/back/func.mlua`
 
-The vec modules in `lua/moonlift/mom/vec/` exist but use raw array packing (`mv_push_cmd`) and `LowerState`-style structs. They must be refactored:
+## What exists and what does not
 
-| Module | Current interface | Target interface |
-|--------|-------------------|------------------|
-| `vec_facts.mlua` | `mv_extract_vec_facts(back, tree, state)` | `mv_extract_vec_facts(ctx: MomBackLowerCtx) → fact_count, ok` |
-| `vec_decide.mlua` | `mv_decide(tree, state, facts)` | `mv_decide(ctx: MomBackLowerCtx, fact_count) → decision, scalar, lanes` |
-| `vec_plan.mlua` | `mv_plan_kernel(tree, state, decision)` | `mv_plan_kernel(ctx: MomBackLowerCtx) → plan_count, ok` |
-| `vec_lower.mlua` | `mv_lower_kernel(back, tree, state, plan)` | `mv_lower_kernel(ctx: MomBackLowerCtx, back_ctx: MomBackLowerCtx) → status` |
+There are no vector-specific parsed AST arrays in `MomTreeOut`:
 
-### Vector-related tag constants (from mom_tags.lua)
+- no `vec_op`
+- no `vec_lanes`
+- no vector expression tags from source syntax
+- no vector statement tags from source syntax
 
-```
-VF_PRIMARY_INDUCTION = 2   — induction variable fact
-VF_REDUCTION_ADD     = 10  — reduction fact (add)
-VF_MEMORY_LOAD       = 20  — memory load fact
-VF_MEMORY_STORE      = 21  — memory store fact
-VF_REJECT            = 99  — reject fact
-VF_DOMAIN_COUNTED   = 1    — domain fact
+Vectorization is a compiler optimization over already typechecked control
+regions. It must inspect `ctrl_block_*`, `stmt_list`, expression trees, and
+backend scalar/type facts.
 
-VD_LEGAL   = 1
-VD_ILLEGAL = 2
+## Required command helpers
 
-VP_NO_PLAN   = 1
-VP_REDUCE    = 2
-VP_MAP       = 3
-VP_ALGEBRAIC = 4
+Before touching vec lowering, verify these helpers exist and push full-width
+command entries:
 
-BackShapeScalar = 1
-BackShapeVec    = 2
-
-DEFAULT_VECTOR_BITS = 128  — max vector width in bits
-```
-
-### Fact encoding in aux_i32
-
-Vector facts are encoded as tagged tuples in `ctx.aux_i32`:
-
-```
-Induction fact (VF_PRIMARY_INDUCTION = 2):
-  aux[0] = VF_PRIMARY_INDUCTION
-  aux[1] = iv_value_id    — the induction variable's SSA value
-  aux[2] = init_expr_idx  — initial value expression index
-  aux[3] = step_expr_idx  — step value expression index
-  aux[4] = trip_count_id  — trip count value ID
-
-Memory load fact (VF_MEMORY_LOAD = 20):
-  aux[0] = VF_MEMORY_LOAD
-  aux[1] = base_ptr_id    — base pointer value ID
-  aux[2] = stride_expr    — element stride expression index
-  aux[3] = elem_scalar    — element scalar tag
-  aux[4] = result_val_id  — loaded value ID
-
-Memory store fact (VF_MEMORY_STORE = 21):
-  aux[0] = VF_MEMORY_STORE
-  aux[1] = base_ptr_id    — base pointer value ID
-  aux[2] = stride_expr    — element stride expression index
-  aux[3] = elem_scalar    — element scalar tag
-  aux[4] = stored_val_id  — stored value ID
-
-Reduction fact (VF_REDUCTION_ADD = 10):
-  aux[0] = VF_REDUCTION_ADD
-  aux[1] = accumulator_id  — reduction accumulator value ID
-  aux[2] = update_val_id   — value being reduced
-  aux[3] = init_val_id     — initial accumulator value
-
-Domain fact (VF_DOMAIN_COUNTED = 1):
-  aux[0] = VF_DOMAIN_COUNTED
-  aux[1] = lower_bound_expr  — loop lower bound expression index
-  aux[2] = upper_bound_expr  — loop upper bound expression index
-  aux[3] = trip_count_val_id — trip count value ID
-```
-
-### What does NOT exist
-
-- **No vector tree arrays** — no `vec_op`, `vec_lanes`, `vec_elem_ty` in `MomTreeOut`.
-- **No EX_VEC_* expression tags** — vector operations are not parsed expressions; they are compiler-generated during vectorization.
-- **No ST_VEC_* statement tags** — no vector statements in source AST.
-- **No `vec_intrinsic` or `vec_builtin` mappings** in the tree — vector lowering maps scalar ops to vector ops.
-
-## Entrypoints
-
-```moonlift
-mv_extract_vec_facts(ctx: ptr(MomBackLowerCtx))
-  -> fact_count: i32, ok: bool
-
-mv_decide(ctx: ptr(MomBackLowerCtx), fact_count: i32)
-  -> decision_tag: i32, elem_scalar: i32, lanes: i32  -- or VD_ILLEGAL
-
-mv_plan_kernel(ctx: ptr(MomBackLowerCtx))
-  -> plan_count: i32, ok: bool
-
-mv_lower_kernel(ctx: ptr(MomBackLowerCtx), back_ctx: ptr(MomBackLowerCtx))
-  -> status: i32
-
-mb_try_vector_func(ctx: ptr(MomBackLowerCtx), item_idx: i32)
-  -> choice: i32 (0=scalar, 1=vectorized)
-```
-
-## 1. vec_facts.mlua — Fact extraction
-
-Current implementation uses raw `vtag/va/vb/vc/vd/ve/vf` arrays. Replace with:
-
-```moonlift
-mv_extract_vec_facts(ctx):
-  -- 1. Read control region info from ctx.tree
-  --    Find the function body's control region (if any)
-  --    Get ctrl_start from expr_op/expr_lhs of the body expression
-  --    OR from stmt_body_start if the func body is a ST_CONTROL
-  -- 
-  -- 2. Scan ctrl blocks for loop patterns:
-  --    A "loop" is a block that jumps to an earlier block (backedge).
-  --    For each block b in the region:
-  --      body_start = ctx.tree.ctrl_block_body_start[ctrl_start + b]
-  --      body_count = ctx.tree.ctrl_block_body_count[ctrl_start + b]
-  --      Scan stmts in body for ST_JUMP where target label is an
-  --      earlier block in the same region.
-  --      → CF_BACKEDGE pattern
-  --
-  -- 3. If no backedge found: return (0, true) — not a loop, skip vectorization
-  --
-  -- 4. Extract induction variable:
-  --    Look at block params of the loop header block
-  --    params that increment by a constant each iteration → induction var
-  --    Push VF_PRIMARY_INDUCTION fact to aux_i32
-  --
-  -- 5. Extract memory access patterns:
-  --    Scan stmts for ST_SET on deref (EX_DEREF with indexed base)
-  --    → VF_MEMORY_STORE fact
-  --    Scan exprs for EX_DEREF in load context
-  --    → VF_MEMORY_LOAD fact
-  --
-  -- 6. Extract reduction patterns:
-  --    Look for binop patterns where result feeds back into next iter
-  --    → VF_REDUCTION_ADD/MUL/XOR fact
-  --
-  -- 7. Return (fact_count, ok=true)
-```
-
-Edge: no backedge found → return (0, true). Loop pattern not recognized → return (0, true) — don't emit error, just skip vectorization.
-
-## 2. vec_decide.mlua — Legality decision
-
-```moonlift
-mv_decide(ctx, fact_count):
-  -- Read facts from ctx.aux_i32 (written by mv_extract_vec_facts)
-  -- fact_count entries, each entry is 5 aux_i32 slots
-  -- Use mb_ctx_read_aux_i32(ctx, idx) or direct ctx.aux_i32 access
-  
-  -- 1. Check target vector width: DEFAULT_VECTOR_BITS = 128
-  -- 2. Compute elem_scalar * lanes fits in 128 bits
-  --    e.g., i32 (32 bits) × 4 lanes = 128 bits → legal
-  --    e.g., i64 (64 bits) × 2 lanes = 128 bits → legal
-  --    e.g., i32 × 8 lanes = 256 bits → illegal for 128-bit target
-  -- 3. Check all memory accesses are contiguous and aligned
-  -- 4. Check loop has single induction variable
-  -- 5. Check no function calls inside loop body
-  -- 6. Check all operations in loop body are vectorizable
-  
-  -- Return: (VD_LEGAL=1, elem_scalar, lanes) or (VD_ILLEGAL=2, reject_reason, 0)
-```
-
-Edge: multiple memory streams → legal if all same stride pattern.
-Edge: non-contiguous access → illegal.
-Edge: call inside loop → illegal (unless known vectorizable intrinsic).
-Edge: no reducible operations → legal (MAP plan still possible).
-
-## 3. vec_plan.mlua — Kernel plan
-
-```moonlift
-mv_plan_kernel(ctx):
-  -- Read decision from aux_i32 (written by mv_decide)
-  -- Read facts from aux_i32 (written by mv_extract_vec_facts)
-  
-  -- Classify the kernel:
-  -- If all operations are element-wise with no cross-iteration dependency:
-  --   → VP_MAP plan (3)
-  -- If kernel has reduction pattern:
-  --   → VP_REDUCE plan (2)
-  -- If kernel has algebraic simplification opportunity:
-  --   → VP_ALGEBRAIC plan (4)
-  -- Otherwise:
-  --   → VP_NO_PLAN (1)
-  
-  -- Push plan to aux_i32 as:
-  --   aux[0] = plan_tag
-  --   aux[1] = elem_scalar
-  --   aux[2] = stop_value (trip count)
-  --   aux[3] = counter_init
-  --   aux[4] = extra_info
-  
-  -- Return (plan_count (=1 plan), ok=true) or (0, ok=false)
-```
-
-## 4. vec_lower.mlua — Kernel lowering
-
-This is the critical refactoring: replace all raw `mv_push_cmd` calls with `mb_emit_*` helpers:
-
-```moonlift
-mv_lower_kernel(ctx, back_ctx):
-  -- Read kernel plan from aux_i32
-  -- Create vectorized loop blocks:
-  blk_entry = mb_ctx_fresh_block(back_ctx)
-  blk_loop  = mb_ctx_fresh_block(back_ctx)
-  blk_body  = mb_ctx_fresh_block(back_ctx)
-  blk_exit  = mb_ctx_fresh_block(back_ctx)
-  
-  mb_emit_create_block(back_ctx, blk_entry)
-  mb_emit_create_block(back_ctx, blk_loop)
-  mb_emit_create_block(back_ctx, blk_body)
-  mb_emit_create_block(back_ctx, blk_exit)
-  
-  -- Entry block: initialize induction variable, compute trip count (rounded down)
-  mb_emit_switch_to_block(back_ctx, blk_entry)
-  -- ... compute trip_count_vec = trip_count - (trip_count % lanes) ...
-  -- mb_emit_jump(back_ctx, blk_loop, args_aux, count)
-  
-  -- Loop block: compare IV against vectorized trip count
-  mb_emit_switch_to_block(back_ctx, blk_loop)
-  -- mb_emit_append_block_param(back_ctx, blk_loop, iv_val, 0, scalar, 0)
-  -- mb_emit_compare(back_ctx, cond, cmp_op, BackShapeScalar, scalar, 0, iv_val, trip_count_vec)
-  -- mb_emit_br_if(back_ctx, cond, blk_body, 0, 0, blk_exit, 0, 0)
-  
-  -- Body block: load vectors, apply vector ops, store/reduce
-  mb_emit_switch_to_block(back_ctx, blk_body)
-  -- For each memory load fact:
-  --   mb_emit_vec_load_info(back_ctx, vec_dst, elem_scalar, lanes, 0, base_ptr, iv_scaled, ...)
-  -- For each operation fact:
-  --   mb_emit_vec_binary(back_ctx, vec_dst, vec_op, elem_scalar, lanes, lhs, rhs)
-  --   mb_emit_vec_compare(back_ctx, vec_dst, cmp_op, elem_scalar, lanes, lhs, rhs)
-  --   mb_emit_vec_select(back_ctx, vec_dst, elem_scalar, lanes, cond, then_val, else_val)
-  -- For each memory store fact:
-  --   mb_emit_vec_store_info(back_ctx, elem_scalar, lanes, 0, base_ptr, iv_scaled, vec_val, ...)
-  -- For reduction:
-  --   mb_emit_vec_splat(back_ctx, splat, elem_scalar, lanes, scalar_val)
-  --   mb_emit_vec_binary(...) -- horizontal op across lanes
-  -- Update induction variable by lanes
-  -- mb_emit_jump(back_ctx, blk_loop, args_aux, count)
-  
-  -- Exit block: scalar remainder (if any)
-  mb_emit_switch_to_block(back_ctx, blk_exit)
-  -- ... handle remainder loop ...
-  
-  -- Seal all blocks
-  mb_emit_seal_block(back_ctx, blk_entry)
-  mb_emit_seal_block(back_ctx, blk_loop)
-  mb_emit_seal_block(back_ctx, blk_body)
-  mb_emit_seal_block(back_ctx, blk_exit)
-  
-  -- Return status (0=ok)
-```
-
-Vector emit helpers (already exist in cmd.mlua from step 2):
 ```
 mb_emit_vec_splat(ctx, dst, elem_scalar, lanes, scalar_val)
 mb_emit_vec_binary(ctx, dst, op, elem_scalar, lanes, lhs, rhs)
 mb_emit_vec_compare(ctx, dst, op, elem_scalar, lanes, lhs, rhs)
 mb_emit_vec_select(ctx, dst, elem_scalar, lanes, cond, then_val, else_val)
-mb_emit_vec_load_info(ctx, dst, elem_scalar, lanes, addr_base_tag, addr_base_id, byte_offset, ...)
-mb_emit_vec_store_info(ctx, elem_scalar, lanes, addr_base_tag, addr_base_id, byte_offset, value, ...)
 mb_emit_vec_mask(ctx, dst, op, mask, ...)
+mb_emit_vec_load_info(ctx, dst, elem_scalar, lanes, base_tag, base_id, byte_offset, ...)
+mb_emit_vec_store_info(ctx, elem_scalar, lanes, base_tag, base_id, byte_offset, value, ...)
 ```
 
-## 5. func.mlua — Integration
+If these helpers are missing or are empty stubs, implement/fix them in
+`back/cmd.mlua` first. Do not call `mv_push_cmd` or write command slots by hand.
+
+## Aux layout discipline
+
+Use `ctx.aux_i32` for facts/plans. Every aux segment must start with a header:
+
+```
+aux[start + 0] = segment_tag
+aux[start + 1] = entry_count
+aux[start + 2] = entry_stride
+aux[start + 3] = first_entry_word...
+```
+
+Do not rely on global implicit offsets. Return the segment start from each
+phase.
+
+Suggested segment tags local to vec modules:
+
+```
+MV_SEG_FACTS = 1
+MV_SEG_DECISION = 2
+MV_SEG_PLAN = 3
+```
+
+Fact entry stride is 6 words:
+
+```
+[fact_tag, a, b, c, d, e]
+```
+
+Plan entry stride is 8 words:
+
+```
+[plan_tag, elem_scalar, lanes, trip_count_val, iv_init_val, iv_step_val, body_block_idx, flags]
+```
+
+## New/rewritten vec entrypoints
+
+### `vec_facts.mlua`
+
+Export:
 
 ```moonlift
-mb_try_vector_func(ctx, item_idx):
-  -- 1. mv_extract_vec_facts(ctx) → (fact_count, ok)
-  -- 2. If fact_count == 0 → return 0 (scalar path)
-  -- 3. mv_decide(ctx, fact_count) → (decision, elem, lanes)
-  -- 4. If decision != VD_LEGAL → return 0 (scalar path)
-  -- 5. mv_plan_kernel(ctx) → (plan_count, ok)
-  -- 6. If plan_count == 0 → return 0 (scalar path)
-  -- 7. mv_lower_kernel(ctx, ctx) → status
-  -- 8. If status == 0 → return 1 (vectorized path)
-  -- 9. Else → return 0 (scalar fallback)
+mv_extract_vec_facts(ctx: ptr(MomBackLowerCtx), item_idx: i32)
+  -> facts_aux: i32, fact_count: i32, ok: bool
 ```
 
-Called from `mb_lower_func`:
+Algorithm:
+
+1. Find the function body's control region.
+   - If no body control region: create an empty facts segment and return
+     `(facts_aux, 0, true)`.
+2. Determine `ctrl_start` and `n_blocks` from item/body metadata. Do not guess
+   across unrelated control regions.
+3. Find backedges:
+   - scan each control block body for `MS_JUMP`
+   - resolve target label by linear scan
+   - a target block index `<= current block index` is a potential backedge
+4. If no backedge: return zero facts, `ok=true`.
+5. Extract only facts that can be proven exactly:
+   - one primary induction variable from a block param that is updated by a
+     backedge arg of form `iv + constant_step`
+   - counted domain from compare/yield guard if recognizable
+   - contiguous memory load/store only when address expression is an indexed
+     pointer/view with invariant base and induction index
+   - reduction only when accumulator block param is updated as `acc + value`
+6. If a pattern is not recognized, do not reject the program; return fewer facts
+   or a `VF_REJECT` fact. Vector try will fall back to scalar.
+
+Do not use Lua tables. Use linear scans and `ctx.aux_i32`.
+
+### `vec_decide.mlua`
+
+Export:
+
+```moonlift
+mv_decide(ctx: ptr(MomBackLowerCtx), facts_aux: i32, fact_count: i32)
+  -> decision_aux: i32, decision_tag: i32, elem_scalar: i32, lanes: i32, ok: bool
 ```
-mb_lower_func(ctx, item_idx):
-  1. If item has loop body (control region with backedge):
-     let vec_choice = mb_try_vector_func(ctx, item_idx)
-     if vec_choice == 1 → return (vectorized, ok=true)
-  2. Else: proceed with scalar lowering (existing algorithm)
+
+Algorithm:
+
+1. If `fact_count == 0`, return `VD_ILLEGAL`, `ok=true`.
+2. Reject if any `VF_REJECT` fact exists.
+3. Require exactly one primary induction fact.
+4. Require a counted domain/trip count fact.
+5. Determine element scalar from memory/reduction facts.
+6. Compute lanes from 128-bit vector width:
+   - lanes = `128 / scalar_bits(elem_scalar)`
+   - reject if scalar bits are 0 or lanes < 2
+7. Reject calls, unknown statements, non-contiguous memory, unsupported scalar ops.
+8. Write a decision segment and return `VD_LEGAL` only if every required check
+   succeeds.
+
+### `vec_plan.mlua`
+
+Export:
+
+```moonlift
+mv_plan_kernel(ctx: ptr(MomBackLowerCtx), facts_aux: i32, fact_count: i32,
+               decision_aux: i32, decision_tag: i32, elem_scalar: i32, lanes: i32)
+  -> plan_aux: i32, plan_count: i32, ok: bool
 ```
 
-## 6. Wiring table
+Algorithm:
 
-| Function | Module | Purpose |
-|---|---|---|
-| `mv_extract_vec_facts` | vec_facts.mlua | Extract loop facts → aux_i32 |
-| `mv_decide` | vec_decide.mlua | Decide if vectorization is legal |
-| `mv_plan_kernel` | vec_plan.mlua | Create vectorization plan → aux_i32 |
-| `mv_lower_kernel` | vec_lower.mlua | Emit vectorized loop using mb_emit_vec_* |
-| `mb_try_vector_func` | func.mlua | Try+fallback: attempt vectorization → scalar |
-| Remaining helpers | cmd.mlua | All vector emit helpers exist |
-| `ctx.aux_i32` | lower_ctx.mlua | Shared data conduit between vec modules |
+1. If decision is not `VD_LEGAL`, return `(plan_aux, 0, true)`.
+2. Classify plan:
+   - reduction facts -> `VP_REDUCE`
+   - memory map with elementwise operations -> `VP_MAP`
+   - otherwise `VP_NO_PLAN`
+3. Do not invent algebraic plans unless hosted oracle has an exact matching rule.
+4. Write one plan entry only when lowering has enough operands/block ids to emit
+   a correct vector loop. Otherwise return no plan and scalar fallback.
 
-## Hard bans
+### `vec_lower.mlua`
 
-- No raw command packing — vec_lower must use `mb_emit_vec_*` helpers exclusively
-- No `LowerState` — only `MomBackLowerCtx`
-- No `CmdTrap` fallbacks
-- No `TODO`/`FIXME`/`placeholder`/`simplified`
-- Vector emit helpers must already exist in cmd.mlua — do NOT add new ones in this step
-- Vectorization failure must NOT prevent scalar lowering — it's a try/fallback
-- All vector operations must specify `elem_scalar` + `lanes` (shape_tag=1=BackShapeVec when using vec emits — but the `mb_emit_vec_*` helpers handle this internally)
-- `ctx.aux_i32` is the communication channel between vec modules — read/write use `ctx.aux_i32.data[start]` or `mb_ctx_push_aux_i32`/helper to read
-- Do NOT create new tree arrays — vectorization is a lowering-time optimization, not a parsed language feature
-- Remainder loop (trip_count % lanes != 0): lower as a scalar remainder block following the vectorized loop
+Export:
+
+```moonlift
+mv_lower_kernel(ctx: ptr(MomBackLowerCtx), plan_aux: i32, plan_count: i32)
+  -> status: i32
+```
+
+Rules:
+
+- If `plan_count == 0`, return nonzero scalar-fallback status.
+- Use only `mb_emit_*` helpers.
+- Do not call `mv_push_cmd`.
+- Do not write command arrays directly.
+- Every vector op must specify `elem_scalar` and `lanes`.
+- Remainder handling is mandatory for any emitted vector loop. If remainder
+  lowering is not implemented for the plan, return scalar-fallback status
+  before emitting partial vector CFG.
+
+Lowering outline for a legal complete plan:
+
+1. Create vector loop blocks with `mb_ctx_fresh_block` and `mb_emit_create_block`.
+2. Append/bind loop block params for induction/reduction values.
+3. Compute vector trip count = `trip_count - (trip_count % lanes)`.
+4. Emit loop compare and `mb_emit_br_if`.
+5. Emit vector loads/ops/stores/reduction using vector helpers.
+6. Jump back with updated IV/reduction params.
+7. Emit scalar remainder block or delegate to scalar body lowering with IV start
+   at vector trip count.
+8. Seal all blocks.
+
+If any operand id, trip count, memory base, or remainder detail is unavailable,
+return scalar-fallback status before emitting vector commands.
+
+## `func.mlua` integration
+
+Add:
+
+```moonlift
+mb_try_vector_func(ctx: ptr(MomBackLowerCtx), item_idx: i32) -> i32
+```
+
+Algorithm:
+
+1. `mv_extract_vec_facts`.
+2. If no facts or not ok -> return `0` (scalar).
+3. `mv_decide`.
+4. If not legal -> return `0`.
+5. `mv_plan_kernel`.
+6. If no plan -> return `0`.
+7. `mv_lower_kernel`.
+8. If status is success -> return `1`, else return `0`.
+
+Call from `mb_lower_func` only after function signature/entry setup is ready and
+before scalar body lowering. If vector try returns `0`, scalar lowering must run
+unchanged.
+
+Important: if vector lowering emits any command before discovering failure, it
+cannot safely fall back unless command-buffer rollback exists. Therefore either:
+
+- add a command-buffer mark/truncate API and use it around vector try, or
+- require `mv_lower_kernel` to validate all required facts/plans before emitting
+  its first command.
+
+Prefer the second approach unless rollback already exists.
+
+## Manifest and hygiene
+
+- Ensure `vec_facts`, `vec_decide`, `vec_plan`, `vec_lower` load after backend
+  context/cmd/control modules and before `func.mlua` if `func.mlua` imports them.
+- Remove or replace raw-packing code in `vec_lower.mlua`.
+- Repository hygiene currently flags raw vector packing; this step must eliminate
+  those vector raw-packing failures.
+
+## Tests to add/run
+
+Add tests:
+
+1. `tests/test_mom_vec_no_loop_fallback.lua`
+   - function with no loop -> scalar path still works.
+2. `tests/test_mom_vec_reject_call.lua`
+   - loop with call -> vector decision illegal, scalar fallback.
+3. `tests/test_mom_vec_raw_packing_hygiene.lua`
+   - hygiene no longer reports `vec_lower.mlua` raw packing.
+4. Only if a complete legal vector loop is implemented:
+   - `tests/test_mom_vec_counted_map.lua`
+   - validates vectorized result and scalar remainder.
+
+Run:
+
+```
+luajit scripts/emit_mom_precompiled.lua
+luajit tests/test_mom_run_2plus2.lua
+luajit tests/test_mom_vec.lua
+luajit tests/test_mom_vec_no_loop_fallback.lua
+luajit scripts/check_mom_hygiene.lua
+```
+
+Do not mark Step 10 complete unless raw vector packing is gone and vector try
+cannot corrupt scalar fallback.
