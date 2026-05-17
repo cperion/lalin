@@ -26,6 +26,21 @@ local Runtime = {}; Runtime.__index = Runtime
 
 local FuncValue = {}; FuncValue.__index = FuncValue
 
+function FuncValue:__call(...)
+    if not self._compiled then
+        local runtime = self.runtime
+        if runtime and runtime._func_artifacts and runtime._func_artifacts[self.name] then
+            self._compiled = runtime._func_artifacts[self.name]
+        end
+    end
+    if not self._compiled then self._compiled = self:compile() end
+    return self._compiled(...)
+end
+
+function FuncValue:free()
+    if self._compiled then self._compiled:free(); self._compiled = nil end
+end
+
 function FuncValue:as_item()
     return self.item
 end
@@ -295,8 +310,34 @@ function FuncValue:compile()
     local Validate = require("moonlift.back_validate").Define(T)
     local Tr = T.MoonTree
 
-    local deps = deps_of(self) or empty_deps()
-    local mod = internal_module_for_func(T, self.func, deps, self.name)
+    -- Collect all sibling func items from this compilation unit so
+    -- cross-references resolve without requiring M.xxx exports.
+    local items = {}
+    local seen = {}
+    local runtime = self.runtime
+    if runtime and runtime.func_values then
+        for name, fv in pairs(runtime.func_values) do
+            items[#items + 1] = fv.item or fv:as_item()
+            seen[name] = true
+        end
+    end
+
+    -- Add type_decls and extern_funcs from ALL sibling funcs' deps.
+    local merged = empty_deps()
+    if runtime and runtime.func_values then
+        for _, fv in pairs(runtime.func_values) do
+            merged = merge_deps(merged, deps_of(fv))
+        end
+    end
+
+    for _, td in ipairs(merged.type_decls) do
+        items[#items + 1] = Tr.ItemType(td.decl)
+    end
+    for _, ex in ipairs(merged.extern_funcs) do
+        items[#items + 1] = ex.item or (ex.func and Tr.ItemExtern(ex.func)) or ex
+    end
+
+    local mod = Tr.Module(Tr.ModuleSurface, items)
 
     local checked = Typecheck.check_module(mod)
     if #checked.issues ~= 0 then error("func " .. tostring(self.name) .. " typecheck failed: " .. tostring(checked.issues[1]), 2) end
@@ -336,6 +377,11 @@ function FuncValue:compile()
         artifact = artifact, T = T,
     }, CompiledFunction)
     self._compiled = wrapped
+    -- Cache on runtime so sibling funcs reuse the JIT artifact
+    if runtime then
+        runtime._func_artifacts = runtime._func_artifacts or {}
+        runtime._func_artifacts[self.name] = wrapped
+    end
     return wrapped
 end
 
@@ -518,6 +564,7 @@ function Runtime:eval_island(island_index, closures)
             runtime = self,
         }, FuncValue)
         track_deps(value, deps)
+        self.func_values[value.name] = value
         return value
 
     elseif parsed.kind == "extern" then
@@ -680,6 +727,7 @@ function M.loadstring(src, chunk_name, opts)
         require_stack = opts.require_stack or (parent and parent.require_stack) or {},
         module_path_patterns = opts.module_path_patterns or opts.module_paths
             or (parent and parent.module_path_patterns),
+        func_values = opts.func_values or (parent and parent.func_values) or {},
     }, Runtime)
 
     local q = Quote()

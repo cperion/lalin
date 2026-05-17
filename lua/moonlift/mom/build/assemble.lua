@@ -187,6 +187,16 @@ function A.load(opts)
         assert(type(installer) == "function", path .. " must return function(M) ... return M end")
         local returned = installer(assembly)
         assert(returned == assembly, path .. " did not return the assembly object")
+
+        -- Absorb all func values from this module's runtime into the assembly
+        -- module (including those not explicitly exported via M.xxx = xxx).
+        if assembly.rt and assembly.rt.func_values then
+            for name, fv in pairs(assembly.rt.func_values) do
+                if assembly.names[name] == nil then
+                    install_decl(assembly, name, fv, "local_func")
+                end
+            end
+        end
     end
 
     return assembly
