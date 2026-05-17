@@ -290,7 +290,7 @@ entry start()
 
     -- If/switch inside a control region require region‑aware phi lowering
     -- (step 8). Until then, return unsupported.
-    if tag == @{T.MS_IF} or tag == @{T.MS_SWITCH} then
+    if tag == 5 or tag == 13 then
         jump done(flow = @{BackFallsThrough}, ok = false)
     end
 
