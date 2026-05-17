@@ -145,8 +145,7 @@ end
 local mb_ctx_overflowed = func(ctx: ptr(@{MomBackLowerCtx})) -> bool
     return mr_cmd_buffer_overflowed(ctx.cmd_buffer) or 
            mr_i32_builder_overflowed(ctx.aux_i32) or
-           mr_issue_builder_overflowed(ctx.issues) or
-           mb_env_overflowed(ctx.env)
+           mr_issue_builder_overflowed(ctx.issues)
 end
 
 M.mb_ctx_init = mb_ctx_init
