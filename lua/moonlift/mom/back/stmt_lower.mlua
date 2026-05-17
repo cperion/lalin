@@ -87,13 +87,11 @@ entry start()
 
     switch tag do
     case @{T.ST_LET} then
-        -- let name = init_expr
-        let name_tok: i32 = stmt_a
-        let init_idx: i32 = stmt_c
+        local name_tok: i32 = stmt_a
+        local init_idx: i32 = stmt_c
         local init_val: i32; local init_scalar: i32; local init_ok: bool
         emit mb_lower_expr_region(ctx, init_idx, init_val, init_scalar, init_ok)
         if init_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
-        -- Bind scalar (view handling deferred for later).
         mb_env_bind_scalar(ctx.env, name_tok, init_scalar, init_val)
         jump done(flow = @{BackFallsThrough}, ok = true)
 
@@ -116,8 +114,7 @@ entry start()
         jump done(flow = @{BackFallsThrough}, ok = true)
 
     case @{T.ST_SET} then
-        -- Place store: delegate to mb_place_store_to_back.
-        -- Currently unsupported in scalar‑only lowering (address module not yet wired).
+        -- Place store: delegate to future address module (still unsupported in scalar‑only lowering).
         jump done(flow = @{BackFallsThrough}, ok = false)
 
     case @{T.ST_EXPR} then
@@ -155,8 +152,6 @@ entry start()
         jump done(flow = @{BackFallsThrough}, ok = true)
 
     case @{T.ST_ATOMIC_FENCE} then
-        let ordering_idx: i32 = stmt_a
-        -- ordering token not yet wired; emit default seq-cst fence.
         mb_emit_atomic_fence(ctx, @{T.AtomicSeqCst})
         jump done(flow = @{BackFallsThrough}, ok = true)
 
@@ -170,65 +165,10 @@ entry start()
         jump done(flow = @{BackFallsThrough}, ok = true)
 
     case @{T.ST_IF} then
-        -- Delegate to dedicated if‑lowering region.
-        let cond_idx: i32 = stmt_a
-        let then_start: i32 = stmt_b
-        let then_count: i32 = stmt_c
-        let else_start: i32 = stmt_d
-        let else_count: i32 = stmt_e
-        local cond_val: i32; local cond_scalar: i32; local cond_ok: bool
-        emit mb_lower_expr_region(ctx, cond_idx, cond_val, cond_scalar, cond_ok)
-        if cond_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
-        let then_blk: i32 = mb_ctx_fresh_block(ctx)
-        let else_blk: i32 = mb_ctx_fresh_block(ctx)
-        let join_blk: i32 = mb_ctx_fresh_block(ctx)
-        mb_emit_create_block(ctx, then_blk)
-        mb_emit_create_block(ctx, else_blk)
-        mb_emit_create_block(ctx, join_blk)
-        mb_emit_br_if(ctx, cond_val, then_blk, 0, 0, else_blk, 0, 0)
-        mb_emit_switch_to_block(ctx, then_blk)
-        local then_flow: i32; local then_ok: bool
-        emit mb_lower_stmt_list(ctx, then_start, then_count, then_flow, then_ok)
-        if then_flow != @{BackTerminates} then
-            mb_emit_jump(ctx, join_blk, 0, 0)
-        end
-        mb_emit_switch_to_block(ctx, else_blk)
-        if else_count > 0 then
-            local else_flow: i32; local else_ok: bool
-            emit mb_lower_stmt_list(ctx, else_start, else_count, else_flow, else_ok)
-            if else_flow != @{BackTerminates} then
-                mb_emit_jump(ctx, join_blk, 0, 0)
-            end
-        else
-            mb_emit_jump(ctx, join_blk, 0, 0)
-        end
-        mb_emit_seal_block(ctx, join_blk)
-        mb_emit_switch_to_block(ctx, join_blk)
-        jump done(flow = @{BackFallsThrough}, ok = true)
+        emit mb_lower_if_stmt(ctx, stmt_idx; out_if)
 
     case @{T.ST_SWITCH} then
-        -- Delegate to dedicated switch‑lowering region.
-        let val_idx: i32 = stmt_a
-        let arm_start: i32 = stmt_b
-        let arm_count: i32 = stmt_c
-        local val: i32; local scalar: i32; local val_ok: bool
-        emit mb_lower_expr_region(ctx, val_idx, val, scalar, val_ok)
-        if val_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
-        let default_blk: i32 = mb_ctx_fresh_block(ctx)
-        let join_blk: i32 = mb_ctx_fresh_block(ctx)
-        mb_emit_create_block(ctx, default_blk)
-        mb_emit_create_block(ctx, join_blk)
-        -- Cases_aux and n_cases: we do not yet have aux_i32 populated, so we pass 0,0.
-        mb_emit_switch_int(ctx, val, scalar, 0, 0, default_blk)
-        mb_emit_switch_to_block(ctx, default_blk)
-        local def_flow: i32; local def_ok: bool
-        emit mb_lower_stmt_list(ctx, stmt_e, 0, def_flow, def_ok)   -- default body indices?
-        if def_flow != @{BackTerminates} then
-            mb_emit_jump(ctx, join_blk, 0, 0)
-        end
-        mb_emit_seal_block(ctx, join_blk)
-        mb_emit_switch_to_block(ctx, join_blk)
-        jump done(flow = @{BackFallsThrough}, ok = true)
+        emit mb_lower_switch_stmt(ctx, stmt_idx; out_switch)
 
     case @{T.ST_JUMP} then
     case @{T.ST_YIELD} then
@@ -236,8 +176,6 @@ entry start()
         -- Outside control region → unsupported.
         jump done(flow = @{BackTerminates}, ok = false)
 
-    -- ST_ATOMIC_STORE and ST_ATOMIC_FENCE not yet implemented in tree layout;
-    -- treat as unsupported for now.
     default then
         jump done(flow = @{BackFallsThrough}, ok = false)
     end
@@ -297,25 +235,59 @@ local mb_lower_switch_stmt = region(ctx: ptr(@{MomBackLowerCtx}), stmt_idx: i32;
 entry start()
     let tree: ptr = ctx.tree
     let val_idx: i32 = tree.stmt_name[stmt_idx]
-    local arm_start: i32 = tree.stmt_value[stmt_idx]
-    local arm_count: i32 = tree.stmt_aux[stmt_idx]
+    let arm_start: i32 = tree.stmt_value[stmt_idx]
+    let arm_count: i32 = tree.stmt_aux[stmt_idx]
     local val: i32; local scalar: i32; local val_ok: bool
     emit mb_lower_expr_region(ctx, val_idx, val, scalar, val_ok)
     if val_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
+
+    -- Create default and join blocks
     let default_blk: i32 = mb_ctx_fresh_block(ctx)
     let join_blk: i32 = mb_ctx_fresh_block(ctx)
     mb_emit_create_block(ctx, default_blk)
     mb_emit_create_block(ctx, join_blk)
-    mb_emit_switch_int(ctx, val, scalar, 0, arm_count, default_blk)
+
+    -- Push case keys and arm block IDs to auxiliary i32 array
+    let aux_start: i32 = as(i32, ctx.aux_i32.len)
+    block arm_create(i: index = 0)
+        if i >= as(index, arm_count) then yield end
+        let arm_blk: i32 = mb_ctx_fresh_block(ctx)
+        mb_emit_create_block(ctx, arm_blk)
+        let key: i32 = tree.switch_arm_key[as(index, arm_start) + i]
+        mb_ctx_push_aux_i32(ctx, key)
+        mb_ctx_push_aux_i32(ctx, arm_blk)
+        jump arm_create(i = i + as(index, 1))
+    end
+    let n_cases: i32 = arm_count
+    mb_emit_switch_int(ctx, val, scalar, aux_start, n_cases, default_blk)
+
+    -- Lower default body
     mb_emit_switch_to_block(ctx, default_blk)
+    local default_body_start: i32 = tree.stmt_body_start[stmt_idx]
+    local default_body_count: i32 = tree.stmt_body_count[stmt_idx]
     local def_flow: i32; local def_ok: bool
-    local default_start: i32 = tree.stmt_body_start[stmt_idx]
-    local default_count: i32 = tree.stmt_body_count[stmt_idx]
-    emit mb_lower_stmt_list(ctx, default_start, default_count, def_flow, def_ok)
+    emit mb_lower_stmt_list(ctx, default_body_start, default_body_count, def_flow, def_ok)
     if def_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
     if def_flow != @{BackTerminates} then
         mb_emit_jump(ctx, join_blk, 0, 0)
     end
+
+    -- Lower each arm
+    block arm_body(i: index = 0)
+        if i >= as(index, arm_count) then yield end
+        local arm_blk: i32 = ctx.aux_i32.data[as(index, aux_start) + as(index, i) * 2 + 1]
+        mb_emit_switch_to_block(ctx, arm_blk)
+        local arm_body_start: i32 = tree.switch_arm_body_start[as(index, arm_start) + i]
+        local arm_body_count: i32 = tree.switch_arm_body_count[as(index, arm_start) + i]
+        local arm_flow: i32; local arm_ok: bool
+        emit mb_lower_stmt_list(ctx, arm_body_start, arm_body_count, arm_flow, arm_ok)
+        if arm_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
+        if arm_flow != @{BackTerminates} then
+            mb_emit_jump(ctx, join_blk, 0, 0)
+        end
+        jump arm_body(i = i + as(index, 1))
+    end
+
     mb_emit_seal_block(ctx, join_blk)
     mb_emit_switch_to_block(ctx, join_blk)
     jump done(flow = @{BackFallsThrough}, ok = true)
