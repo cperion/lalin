@@ -43,33 +43,59 @@ Progress persists across sessions and agents.
 
 ---
 
-## 2. First: Load the Port Map
+## 2. First: Load the Map Files
 
 ```lua
 local port_map = require("moonlift.mom.build.port_map")
 ```
 
-The port map is the complete module/signature mapping from hosted Lua compiler
-to native MOM. **Read it before any implementation change.** If a change is not
-represented there, update the mapping first and stop. Do not implement orphan
-features.
+The port map is the authoritative module/signature mapping from hosted Lua
+compiler to native MOM. `lua/moonlift/mom/build/lua-map.md` is the detailed
+companion — it captures every hosted function signature, decision branch, and
+edge case from the source files. **Read port_map.lua before any implementation
+change.** Use `lua-map.md` when you need the full algorithm, not just the mapping.
+
+**Chain of truth (strict):**
+```
+Lua hosted code (oracle) → our map files (port_map.lua + lua-map.md) → MOM code
+```
+
+1. Lua hosted code (`lua/moonlift/*.lua`) is the ultimate oracle — it defines
+   how the compiler actually works.
+2. `port_map.lua` and `lua-map.md` extract every decision from the oracle into
+   an executable plan. If the Lua code changes, update the maps.
+3. MOM code must implement what the maps describe. If MOM code disagrees with
+   the maps, fix the MOM code. If the maps disagree with the Lua code, fix the
+   maps.
+
+**If a change is not represented in the port map, update the map first and
+stop. Do not implement orphan features.**
 
 ---
 
 ## 3. Source of Truth Hierarchy
 
+```
+lua/moonlift/*.lua (oracle)
+  → port_map.lua + lua-map.md (extracted decisions)
+    → MOM implementation
+```
+
 | Priority | Source | Purpose |
 |----------|--------|---------|
 | 1 | `lua/moonlift/*.lua` (relevant file named in port_map) | **Hosted semantic oracle.** Exact behavior to port. |
-| 2 | `LANGUAGE_REFERENCE.md` | **Language semantics.** Types, expressions, control, ABI, fragments, views, splices. The complete language contract. |
-| 3 | `BACK_WIRE_FORMAT.md` | **Wire format.** MLBT v3 serialization layout, slot positions. |
-| 4 | `lua/moonlift/mom/schema/*.mlua` | **Schema definitions.** ASDL type trees, union variants, field types. |
-| 5 | `SOURCE_GRAMMAR.md` | **Grammar.** Jump-first control, tokens, parser contract. |
-| 6 | `lua/moonlift/mom/tags/mom_tags.lua` | **Generated numeric constants only.** Never infer design from tag values. |
+| 2 | `lua/moonlift/mom/build/port_map.lua` | **Authoritative port plan.** Module/signature mapping, design decisions, algorithm descriptions. Pre-digested from the oracle. |
+| 3 | `lua/moonlift/mom/build/lua-map.md` | **Detailed algorithm capture.** Every function signature, decision branch, edge case, command construction pattern, mapping table. Companion to port_map when you need the full algorithm. |
+| 4 | `LANGUAGE_REFERENCE.md` | **Language semantics.** Types, expressions, control, ABI, fragments, views, splices. The complete language contract. |
+| 5 | `BACK_WIRE_FORMAT.md` | **Wire format.** MLBT v3 serialization layout, slot positions. |
+| 6 | `lua/moonlift/mom/schema/*.mlua` | **Schema definitions.** ASDL type trees, union variants, field types. |
+| 7 | `SOURCE_GRAMMAR.md` | **Grammar.** Jump-first control, tokens, parser contract. |
+| 8 | `lua/moonlift/mom/tags/mom_tags.lua` | **Generated numeric constants only.** Never infer design from tag values. |
 
 **Rules:**
 - Never invent semantics. The hosted compiler is the oracle.
 - Never use `mom_tags.lua` as design evidence — mechanically generated.
+- **If `lua-map.md` diverges from the hosted Lua code, update `lua-map.md`** before writing MOM code. The map must reflect the current oracle.
 - When in doubt, read the hosted `.lua` file and `LANGUAGE_REFERENCE.md`.
 
 ---
@@ -151,18 +177,25 @@ Step 10: Vector integration               — connect vec/*.mlua to lowering
 
 1. **`make task-next`** — find what to work on.
 2. **`make task-show-<id>`** — read section details.
-3. **Read the hosted oracle** named in the port map's `hosted_function_map`.
-4. **Read `LANGUAGE_REFERENCE.md`** sections relevant to the semantics.
-5. **State the contract** in your response: "Implementing X. Input: Y. Output: Z.
-   Hosted oracle: tree_to_back.lua lines N-M."
-6. **Check existing helpers.** If a named helper is missing, add it first.
-7. **Write the code.** Follow `return function(M) ... end` pattern. Naming
-   prefixes: `mr_`=runtime, `mt_`=type, `mb_`=backend, `mc_`=driver, `mw_`=wire.
-8. **Add a focused test** from the test ladder.
-9. **Run the test.**
-10. **Run hygiene:** `luajit scripts/check_mom_hygiene.lua`.
-11. **`make task-done-<id>`** — marks complete with auto-verification.
-12. **Report exact commands run** and their output.
+3. **Read `lua-map.md`** for the full algorithm of the section's hosted oracle
+   — function signatures, decision branches, edge cases, command construction.
+4. **Verify `lua-map.md` is current** — cross-check against the hosted Lua file
+   named in the port map. If they diverge, update `lua-map.md` first.
+5. **Read `port_map.lua`** section entry for the task — design decisions, cases,
+   algorithm field, hosted_function_map signatures.
+6. **Read the hosted oracle** named in the port map's `hosted_function_map` (the
+   `.lua` source, not the map). Confirm the map captures correctly.
+7. **Read `LANGUAGE_REFERENCE.md`** sections relevant to the semantics.
+8. **State the contract** in your response: "Implementing X. Input: Y. Output: Z.
+   Hosted oracle: tree_to_back.lua lines N-M. Port map case: ... Algorithm: ..."
+9. **Check existing helpers.** If a named helper is missing, add it first.
+10. **Write the code.** Follow `return function(M) ... end` pattern. Naming
+    prefixes: `mr_`=runtime, `mt_`=type, `mb_`=backend, `mc_`=driver, `mw_`=wire.
+11. **Add a focused test** from the test ladder.
+12. **Run the test.**
+13. **Run hygiene:** `luajit scripts/check_mom_hygiene.lua`.
+14. **`make task-done-<id>`** — marks complete with auto-verification.
+15. **Report exact commands run** and their output.
 
 ---
 
@@ -188,6 +221,7 @@ Step 10: Vector integration               — connect vec/*.mlua to lowering
 | **Stale markers** | `TODO` in committed code | `CmdTrap` is real, not a marker. Ship complete code. |
 | **Raw slot packing** | `mb_push_cmd(@{T.CmdFoo})` in lowerers | Add helper first. |
 | **Copy-paste duplication** | Same expr logic in both expr+stmt lowerers | Import from ops.mlua/cmd.mlua. |
+| **Stale map** | `lua-map.md` diverges from hosted Lua | Update `lua-map.md` before writing MOM code. Map must reflect current oracle. |
 | **Skipping oracle** | Guessing semantics from context | Stop. Read the hosted file. |
 | **Scope creep** | Unrelated features in same change | One section per change. |
 | **Hidden allocation** | `@malloc` or arena-free allocs | All buffers pre-allocated. |
@@ -202,7 +236,9 @@ and `LANGUAGE_REFERENCE.md`. If still unsure, ask the human.
 
 | What | Where |
 |------|-------|
-| Port map (authoritative plan) | `lua/moonlift/mom/build/port_map.lua` |
+| Port map (authoritative plan with algorithms) | `lua/moonlift/mom/build/port_map.lua` |
+| Detailed algorithm capture | `lua/moonlift/mom/build/lua-map.md` |
+| Lua→PDF→MOM chain of truth | port_map.lua(lua-map.md) → MOM code |
 | Task stack (progress tracker) | `lua/moonlift/mom/build/taskstack.lua` |
 | Task CLI | `./scripts/mom-task` |
 | Makefile targets | `make task-progress`, `make task-next`, `make task-done-<id>` |
