@@ -101,6 +101,9 @@ end
 local function mb_switch_key_raw(ctx, expr_idx)
     local tag = ctx.tree.expr_tag[expr_idx]
     if tag ~= T.EX_LIT then return 0 end
+    local tok_kind = ctx.tree.expr_a[expr_idx]
+    if tok_kind == T.TK_TRUE then return 1 end
+    if tok_kind == T.TK_FALSE then return 0 end
     local tok = ctx.tree.expr_tok[expr_idx]
     local start = ctx.token_start[tok]
     local stop = ctx.token_stop[tok]
@@ -156,6 +159,20 @@ entry start()
     case @{T.ST_SET} then
         let place_idx: i32 = stmt_a
         let value_idx: i32 = stmt_c
+        -- Check for SSA scalar-local rebind
+        if ctx.tree.expr_tag[place_idx] == @{T.EX_REF} then
+            let name_tok: i32 = ctx.tree.expr_tok[place_idx]
+            local kind: i32; local scalar: i32; local cur_val: i32; local aux0: i32
+            let found: bool = mb_env_lookup_into(ctx.env, name_tok, kind, scalar, cur_val, aux0)
+            if found and kind == @{MB_LOCAL_SCALAR} then
+                local value_val: i32; local value_scalar: i32; local value_ok: bool
+                emit mb_lower_expr_region(ctx, value_idx, value_val, value_scalar, value_ok)
+                if value_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
+                mb_env_bind_scalar(ctx.env, name_tok, value_scalar, value_val)
+                jump done(flow = @{BackFallsThrough}, ok = true)
+            end
+        end
+        -- Fall through to general place store (stack slots, pointers, etc.)
         local flow: i32; local store_ok: bool
         emit mb_place_store_to_back(ctx, place_idx, value_idx, flow, store_ok)
         if store_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
@@ -180,22 +197,8 @@ entry start()
         jump done(flow = @{BackTerminates}, ok = true)
 
     case @{T.ST_ATOMIC_STORE} then
-        let addr_idx: i32 = stmt_a
-        let val_idx: i32 = stmt_b
-        local addr_val: i32; local addr_scalar: i32; local addr_ok: bool
-        emit mb_lower_expr_region(ctx, addr_idx, addr_val, addr_scalar, addr_ok)
-        if addr_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
-        local value_val: i32; local value_scalar: i32; local value_ok: bool
-        emit mb_lower_expr_region(ctx, val_idx, value_val, value_scalar, value_ok)
-        if value_ok == false then jump done(flow = @{BackFallsThrough}, ok = false) end
-        let zero: i32 = mb_ctx_fresh_value(ctx)
-        mb_emit_const(ctx, zero, @{T.BackIndex}, 0, 0, 0)
-        mb_emit_atomic_store(ctx, value_scalar, addr_val, zero, value_val, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-        jump done(flow = @{BackFallsThrough}, ok = true)
-
     case @{T.ST_ATOMIC_FENCE} then
-        mb_emit_atomic_fence(ctx, @{T.AtomicSeqCst})
-        jump done(flow = @{BackFallsThrough}, ok = true)
+        jump done(flow = @{BackFallsThrough}, ok = false)
 
     case @{T.ST_ASSERT} then
         jump done(flow = @{BackFallsThrough}, ok = true)
@@ -268,7 +271,19 @@ entry start()
             let name_tok: i32 = ctx.aux_i32.data[as(index, phi_aux) + as(index, i)]
             let kind: i32; let scalar: i32; let val: i32; let aux0: i32
             let found: bool = mb_env_lookup_into(ctx.env, name_tok, kind, scalar, val, aux0)
-            if found then mb_ctx_push_aux_i32(ctx, val) else mb_ctx_push_aux_i32(ctx, 0) end
+            if found then
+                if kind == @{MB_LOCAL_STACK} then
+                    let addr_val: i32 = mb_ctx_fresh_value(ctx)
+                    mb_emit_stack_addr(ctx, addr_val, val)
+                    let load_val: i32 = mb_ctx_fresh_value(ctx)
+                    mb_emit_load_info(ctx, load_val, 0, scalar, 0, 0, addr_val, 0, 0, 1, 4, 0, 4, 0, 0, 1)
+                    mb_ctx_push_aux_i32(ctx, load_val)
+                else
+                    mb_ctx_push_aux_i32(ctx, val)
+                end
+            else
+                mb_ctx_push_aux_i32(ctx, 0)
+            end
             jump then_args(i = i + 1)
         end
         mb_emit_jump(ctx, join_blk, args_aux, n_phi)
@@ -292,7 +307,19 @@ entry start()
             let name_tok: i32 = ctx.aux_i32.data[as(index, phi_aux) + as(index, i)]
             let kind: i32; let scalar: i32; let val: i32; let aux0: i32
             let found: bool = mb_env_lookup_into(ctx.env, name_tok, kind, scalar, val, aux0)
-            if found then mb_ctx_push_aux_i32(ctx, val) else mb_ctx_push_aux_i32(ctx, 0) end
+            if found then
+                if kind == @{MB_LOCAL_STACK} then
+                    let addr_val: i32 = mb_ctx_fresh_value(ctx)
+                    mb_emit_stack_addr(ctx, addr_val, val)
+                    let load_val: i32 = mb_ctx_fresh_value(ctx)
+                    mb_emit_load_info(ctx, load_val, 0, scalar, 0, 0, addr_val, 0, 0, 1, 4, 0, 4, 0, 0, 1)
+                    mb_ctx_push_aux_i32(ctx, load_val)
+                else
+                    mb_ctx_push_aux_i32(ctx, val)
+                end
+            else
+                mb_ctx_push_aux_i32(ctx, 0)
+            end
             jump else_args(i = i + 1)
         end
         mb_emit_jump(ctx, join_blk, args_aux2, n_phi)
@@ -391,7 +418,19 @@ entry start()
             let name_tok: i32 = ctx.aux_i32.data[as(index, phi_aux) + as(index, i)]
             let kind: i32; let scalar: i32; let val2: i32; let aux0: i32
             let found: bool = mb_env_lookup_into(ctx.env, name_tok, kind, scalar, val2, aux0)
-            if found then mb_ctx_push_aux_i32(ctx, val2) else mb_ctx_push_aux_i32(ctx, 0) end
+            if found then
+                if kind == @{MB_LOCAL_STACK} then
+                    let addr_val: i32 = mb_ctx_fresh_value(ctx)
+                    mb_emit_stack_addr(ctx, addr_val, val2)
+                    let load_val: i32 = mb_ctx_fresh_value(ctx)
+                    mb_emit_load_info(ctx, load_val, 0, scalar, 0, 0, addr_val, 0, 0, 1, 4, 0, 4, 0, 0, 1)
+                    mb_ctx_push_aux_i32(ctx, load_val)
+                else
+                    mb_ctx_push_aux_i32(ctx, val2)
+                end
+            else
+                mb_ctx_push_aux_i32(ctx, 0)
+            end
             jump def_args(i = i + 1)
         end
         mb_emit_jump(ctx, join_blk, args_aux, n_phi)
@@ -415,7 +454,19 @@ entry start()
                 let name_tok: i32 = ctx.aux_i32.data[as(index, phi_aux) + as(index, i)]
                 let kind: i32; let scalar: i32; let val2: i32; let aux0: i32
                 let found: bool = mb_env_lookup_into(ctx.env, name_tok, kind, scalar, val2, aux0)
-                if found then mb_ctx_push_aux_i32(ctx, val2) else mb_ctx_push_aux_i32(ctx, 0) end
+                if found then
+                    if kind == @{MB_LOCAL_STACK} then
+                        let addr_val: i32 = mb_ctx_fresh_value(ctx)
+                        mb_emit_stack_addr(ctx, addr_val, val2)
+                        let load_val: i32 = mb_ctx_fresh_value(ctx)
+                        mb_emit_load_info(ctx, load_val, 0, scalar, 0, 0, addr_val, 0, 0, 1, 4, 0, 4, 0, 0, 1)
+                        mb_ctx_push_aux_i32(ctx, load_val)
+                    else
+                        mb_ctx_push_aux_i32(ctx, val2)
+                    end
+                else
+                    mb_ctx_push_aux_i32(ctx, 0)
+                end
                 jump arm_args(i = i + 1)
             end
             mb_emit_jump(ctx, join_blk, args_aux2, n_phi)
