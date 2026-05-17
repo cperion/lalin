@@ -81,16 +81,8 @@ entry start()
         jump create_blocks(bi = bi + as(index, 1))
     end
 
-    -- 2. Create exit block.
-    let exit_blk: i32 = mb_ctx_fresh_block(ctx)
-    mb_emit_create_block(ctx, exit_blk)
-    if is_expr then
-        let result_val: i32 = mb_ctx_fresh_value(ctx)
-        mb_ctx_push_aux_i32(ctx, result_val)
-        mb_emit_append_block_param(ctx, exit_blk, result_val, 0, result_scalar, 0)
-    end
-
-    -- 3. Append block params for each control block (before body lowering).
+    -- 2. Append block params for each control block (before creating exit block
+    --    so param values are always at a fixed offset after block IDs).
     block append_params(bi: index = as(index, 0))
         if bi >= as(index, n_blocks) then yield end
         let blk: i32 = ctx.aux_i32.data[as(index, block_ids_aux) + bi]
@@ -105,6 +97,15 @@ entry start()
             jump each_p(pi = pi + as(index, 1))
         end
         jump append_params(bi = bi + as(index, 1))
+    end
+
+    -- 3. Create exit block (after param values so offset to params is stable).
+    let exit_blk: i32 = mb_ctx_fresh_block(ctx)
+    mb_emit_create_block(ctx, exit_blk)
+    if is_expr then
+        let result_val: i32 = mb_ctx_fresh_value(ctx)
+        mb_ctx_push_aux_i32(ctx, result_val)
+        mb_emit_append_block_param(ctx, exit_blk, result_val, 0, result_scalar, 0)
     end
 
     -- 4. Lower entry initializers and jump to entry block.
@@ -136,6 +137,7 @@ entry start()
         let mark: index = mb_env_mark(ctx.env)
 
         -- Bind block param values into env.
+        -- Params are stored immediately after block IDs: offset = block_ids_aux + n_blocks.
         let n_params: i32 = mb_control_block_param_count(tree, ctrl_start, as(i32, bi))
         var total_before: i32 = 0
         block sum_prv(bk: i32 = 0)
@@ -167,7 +169,6 @@ entry start()
         mb_env_truncate(ctx.env, mark)
         if body_ok == false then jump done(value = 0, flow = @{BackFallsThrough}, ok = false) end
         if body_flow ~= @{BackTerminates} then
-            -- Block must terminate.
             jump done(value = 0, flow = @{BackFallsThrough}, ok = false)
         end
         jump lower_blocks(bi = bi + as(index, 1))

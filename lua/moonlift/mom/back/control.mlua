@@ -231,5 +231,60 @@ M.mb_pass2 = mb_pass2
 M.mb_extract_jump_facts = mb_extract_jump_facts
 M.mb_validate_control = mb_validate_control
 
+-- ── Helpers for control lowerer ────────────────────────────────────
+
+local mb_control_find_block_by_label = func(ctrl_label: ptr(i32), start: i32, count: i32, target_label: i32) -> i32
+    block scan(i: index = as(index, start))
+        if i >= as(index, start + count) then return -1 end
+        if ctrl_label[i] == target_label then return as(i32, i) end
+        jump scan(i = i + as(index, 1))
+    end
+    return -1
+end
+
+local mb_control_block_param_start = func(tree: ptr, ctrl_start: i32, block_idx: i32) -> i32
+    let idx: index = as(index, ctrl_start) + as(index, block_idx)
+    return tree.ctrl_block_param_start[idx]
+end
+
+local mb_control_block_param_count = func(tree: ptr, ctrl_start: i32, block_idx: i32) -> i32
+    let idx: index = as(index, ctrl_start) + as(index, block_idx)
+    return tree.ctrl_block_param_count[idx]
+end
+
+local mb_control_block_param_name = func(tree: ptr, ctrl_start: i32, block_idx: i32, param_i: i32) -> i32
+    let base: index = as(index, mb_control_block_param_start(tree, ctrl_start, block_idx))
+    if block_idx == 0 then
+        return tree.entry_param_name[base + as(index, param_i)]
+    end
+    return tree.param_name[base + as(index, param_i)]
+end
+
+local mb_control_block_param_type = func(tree: ptr, ctrl_start: i32, block_idx: i32, param_i: i32) -> i32
+    let base: index = as(index, mb_control_block_param_start(tree, ctrl_start, block_idx))
+    if block_idx == 0 then
+        return tree.entry_param_type[base + as(index, param_i)]
+    end
+    return tree.param_type[base + as(index, param_i)]
+end
+
+local mb_control_type_to_scalar = func(tree: ptr, type_idx: i32) -> i32
+    if type_idx < 0 then return 0 end
+    let tag: i32 = tree.type_tag[as(index, type_idx)]
+    if tag == @{T.TY_SCALAR} then
+        let sub: i32 = tree.type_scalar[as(index, type_idx)]
+        return M.mb_core_scalar_to_back(sub)
+    end
+    if tag == @{T.TY_PTR} then return @{T.BackPtr} end
+    return 0
+end
+
+M.mb_control_find_block_by_label = mb_control_find_block_by_label
+M.mb_control_block_param_start = mb_control_block_param_start
+M.mb_control_block_param_count = mb_control_block_param_count
+M.mb_control_block_param_name = mb_control_block_param_name
+M.mb_control_block_param_type = mb_control_block_param_type
+M.mb_control_type_to_scalar = mb_control_type_to_scalar
+
 return M
 end

@@ -36,6 +36,7 @@ M.compiler_sources = {
     "lua/moonlift/mom/back/lower_ctx.mlua",
     "lua/moonlift/mom/back/cmd.mlua",
     "lua/moonlift/mom/back/control.mlua",
+    "lua/moonlift/mom/back/control_lower.mlua",
     "lua/moonlift/mom/back/validate.mlua",
     "lua/moonlift/mom/back/back_abi.mlua",
     "lua/moonlift/mom/back/expr_lower.mlua",

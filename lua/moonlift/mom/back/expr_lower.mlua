@@ -60,6 +60,9 @@ local mb_env_lookup = M.mb_env_lookup
 local mb_place_addr_to_back = M.mb_place_addr_to_back
 local mb_index_addr_to_back = M.mb_index_addr_to_back
 
+-- Control expression lowerer (from back/control_lower.mlua).
+local mb_lower_control_expr = M.mb_lower_control_expr
+
 -- Token maps (may be imported from ops.mlua in future).
 local mb_token_to_unary_op = func(tok: i32) -> i32
     return select(tok == @{T.TK_MINUS}, @{T.UnaryNeg},
@@ -447,6 +450,7 @@ entry start()
     case @{T.EX_VIEW} then emit mb_expr_view(ctx, idx; done = out_view)
     case @{T.EX_ADDR} then emit mb_expr_opddr_of(ctx, idx; done = out)
     case @{T.EX_INDEX} then emit mb_expr_index(ctx, idx; done = out)
+    case @{T.EX_CONTROL} then emit mb_lower_control_expr(ctx, idx; done = out)
     case @{T.EX_DOT} then emit mb_expr_dot(ctx, idx; done = out)
     default then jump done(value = 0, scalar = 0, ok = false)
     end

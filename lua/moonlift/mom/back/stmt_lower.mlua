@@ -17,6 +17,7 @@ local mb_emit_store_info = M.mb_emit_store_info
 local mb_emit_return_void = M.mb_emit_return_void
 local mb_emit_return_value = M.mb_emit_return_value
 local mb_place_store_to_back = M.mb_place_store_to_back
+local mb_lower_control_stmt = M.mb_lower_control_stmt
 
 local MB_LOCAL_SCALAR = 1
 local BackFallsThrough = 0
@@ -119,6 +120,12 @@ entry start()
         if ret_ok == false then jump done(flow = @{BackTerminates}, ok = false) end
         mb_emit_return_value(ctx, ret_val)
         jump done(flow = @{BackTerminates}, ok = true)
+
+    case @{ST_CONTROL} then
+        var ctrl_flow: i32 = @{BackFallsThrough}
+        var ctrl_ok: bool = false
+        emit mb_lower_control_stmt(ctx, stmt_idx, ctrl_flow, ctrl_ok)
+        jump done(flow = ctrl_flow, ok = ctrl_ok)
 
     default then
         jump done(flow = @{BackFallsThrough}, ok = false)
