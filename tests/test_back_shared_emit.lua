@@ -3,10 +3,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
-local Parse = require("moonlift.parse")
-local Typecheck = require("moonlift.tree_typecheck")
-local TreeToBack = require("moonlift.tree_to_back")
-local Validate = require("moonlift.back_validate")
+local Pipeline = require("moonlift.frontend_pipeline")
 local Object = require("moonlift.back_object")
 local LinkTarget = require("moonlift.link_target_model")
 local LinkValidate = require("moonlift.link_plan_validate")
@@ -26,10 +23,6 @@ end
 
 local T = pvm.context()
 A2.Define(T)
-local P = Parse.Define(T)
-local TC = Typecheck.Define(T)
-local Lower = TreeToBack.Define(T)
-local V = Validate.Define(T)
 local O = Object.Define(T)
 local LT = LinkTarget.Define(T)
 local LV = LinkValidate.Define(T)
@@ -42,12 +35,9 @@ func add_i32(a: i32, b: i32) -> i32
     return a + b
 end
 ]]
-local parsed = P.parse_module(src)
-assert(#parsed.issues == 0, parsed.issues[1] and parsed.issues[1].message)
-local checked = TC.check_module(parsed.module)
-assert(#checked.issues == 0, checked.issues[1] and checked.issues[1].message)
-local program = Lower.module(checked.module)
-local report = V.validate(program)
+local result = Pipeline.Define(T).parse_and_lower(src, { site = "test_back_shared_emit" })
+local program = result.program
+local report = result.back_report
 assert(#report.issues == 0)
 
 local base = os.tmpname():gsub("[^A-Za-z0-9_./-]", "_")

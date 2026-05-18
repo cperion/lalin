@@ -7,10 +7,7 @@ local ffi = require("ffi")
 local bit = require("bit")
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
-local Parse = require("moonlift.parse")
-local Typecheck = require("moonlift.tree_typecheck")
-local TreeToBack = require("moonlift.tree_to_back")
-local Validate = require("moonlift.back_validate")
+local Pipeline = require("moonlift.frontend_pipeline")
 local J = require("moonlift.back_jit")
 
 local mode = arg and arg[1] or nil
@@ -327,20 +324,14 @@ end
 
 local T = pvm.context()
 A2.Define(T)
-local P = Parse.Define(T)
-local TC = Typecheck.Define(T)
-local Lower = TreeToBack.Define(T)
-local V = Validate.Define(T)
+local P = Pipeline.Define(T)
 local jit_api = J.Define(T)
 local B2 = T.MoonBack
 
 local compile_start = os.clock()
-local parsed = P.parse_module(SRC)
-assert(#parsed.issues == 0, "parse issues: " .. #parsed.issues)
-local checked = TC.check_module(parsed.module)
-assert(#checked.issues == 0, "type issues: " .. #checked.issues)
-local program = Lower.module(checked.module)
-local report = V.validate(program)
+local result = P.parse_and_lower(SRC, { site = "bench_kernels" })
+local program = result.program
+local report = result.back_report
 assert(#report.issues == 0, "back validation issues: " .. #report.issues)
 local artifact = jit_api.jit():compile(program)
 local compile_time = os.clock() - compile_start

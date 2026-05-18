@@ -3,19 +3,12 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 local Schema = require("moonlift.schema")
-local Parse = require("moonlift.parse")
-local Typecheck = require("moonlift.tree_typecheck")
-local TreeToBack = require("moonlift.tree_to_back")
-local Validate = require("moonlift.back_validate")
+local Pipeline = require("moonlift.frontend_pipeline")
 local Jit = require("moonlift.back_jit")
 
 local T = pvm.context()
 Schema.Define(T)
 
-local P = Parse.Define(T)
-local TC = Typecheck.Define(T)
-local Lower = TreeToBack.Define(T)
-local V = Validate.Define(T)
 local J = Jit.Define(T)
 
 local src = [[
@@ -31,17 +24,9 @@ func sum_i32(xs: ptr(i32), n: i32) -> i32
 end
 ]]
 
-local parsed = P.parse_module(src)
-assert(#parsed.issues == 0, "parse issues: " .. #parsed.issues)
-assert(pvm.classof(parsed.module) == T.MoonTree.Module)
-
-local checked = TC.check_module(parsed.module)
-assert(#checked.issues == 0, "type issues: " .. #checked.issues)
-assert(pvm.classof(checked.module) == T.MoonTree.Module)
-
-local program = Lower.module(checked.module)
-assert(pvm.classof(program) == T.MoonBack.BackProgram)
-local report = V.validate(program)
+local result = Pipeline.Define(T).parse_and_lower(src, { site = "test_schema_compile_pipeline" })
+local program = result.program
+local report = result.back_report
 assert(#report.issues == 0, "back validation issues: " .. #report.issues)
 
 local artifact = J.jit():compile(program)

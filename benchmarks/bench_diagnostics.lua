@@ -5,10 +5,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
-local Parse = require("moonlift.parse")
-local Typecheck = require("moonlift.tree_typecheck")
-local TreeToBack = require("moonlift.tree_to_back")
-local Validate = require("moonlift.back_validate")
+local Pipeline = require("moonlift.frontend_pipeline")
 local KernelPlan = require("moonlift.vec_kernel_plan")
 local BackInspect = require("moonlift.back_inspect")
 local BackDiagnostics = require("moonlift.back_diagnostics")
@@ -47,10 +44,7 @@ end
 
 local T = pvm.context()
 A2.Define(T)
-local P = Parse.Define(T)
-local TC = Typecheck.Define(T)
-local Lower = TreeToBack.Define(T)
-local V = Validate.Define(T)
+local P = Pipeline.Define(T)
 local KP = KernelPlan.Define(T)
 local BI = BackInspect.Define(T)
 local BD = BackDiagnostics.Define(T)
@@ -58,13 +52,11 @@ local B = T.MoonBack
 local Vec = T.MoonVec
 local Core = T.MoonCore
 
-local parsed = P.parse_module(SRC)
-assert(#parsed.issues == 0)
-local checked = TC.check_module(parsed.module)
-assert(#checked.issues == 0)
-local program = Lower.module(checked.module)
-local report = V.validate(program)
+local result = P.parse_and_lower(SRC, { site = "bench_diagnostics" })
+local program = result.program
+local report = result.back_report
 assert(#report.issues == 0)
+local checked = result.checked
 
 local decisions = {}
 for i = 1, #checked.module.items do

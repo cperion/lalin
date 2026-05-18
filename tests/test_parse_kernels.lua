@@ -4,18 +4,11 @@ local ffi = require("ffi")
 local bit = require("bit")
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
-local Parse = require("moonlift.parse")
-local Typecheck = require("moonlift.tree_typecheck")
-local TreeToBack = require("moonlift.tree_to_back")
-local Validate = require("moonlift.back_validate")
+local Pipeline = require("moonlift.frontend_pipeline")
 local J = require("moonlift.back_jit")
 
 local T = pvm.context()
 A2.Define(T)
-local P = Parse.Define(T)
-local TC = Typecheck.Define(T)
-local Lower = TreeToBack.Define(T)
-local V = Validate.Define(T)
 local jit_api = J.Define(T)
 local B2 = T.MoonBack
 
@@ -263,12 +256,9 @@ func add_u64(dst: ptr(u64), a: ptr(u64), b: ptr(u64), n: i32) -> i32
 end
 ]]
 
-local parsed = P.parse_module(src)
-assert(#parsed.issues == 0)
-local checked = TC.check_module(parsed.module)
-assert(#checked.issues == 0)
-local program = Lower.module(checked.module)
-local report = V.validate(program)
+local result = Pipeline.Define(T).parse_and_lower(src, { site = "test_parse_kernels" })
+local program = result.program
+local report = result.back_report
 assert(#report.issues == 0)
 local saw_vec_load, saw_vec_add, saw_vec_sub, saw_vec_mul, saw_vec_band, saw_vec_bor, saw_vec_bxor, saw_vec_store = false, false, false, false, false, false, false, false
 local saw_alias_fact = false

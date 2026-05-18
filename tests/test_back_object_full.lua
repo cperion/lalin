@@ -2,9 +2,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
-local Parse = require("moonlift.parse")
-local Typecheck = require("moonlift.tree_typecheck")
-local TreeToBack = require("moonlift.tree_to_back")
+local Pipeline = require("moonlift.frontend_pipeline")
 local Validate = require("moonlift.back_validate")
 local Object = require("moonlift.back_object")
 
@@ -179,9 +177,6 @@ assert(#report.issues == 0, "back validation issues: " .. #report.issues)
 local full_object = object_api.compile(full_program, { module_name = "moonlift_object_full" })
 assert(#full_object:bytes() > 0)
 
-local P = Parse.Define(T)
-local TC = Typecheck.Define(T)
-local Lower = TreeToBack.Define(T)
 local source = [[
 func sum_i32(xs: ptr(i32), n: i32) -> i32
     return block loop(i: i32 = 0, acc: i32 = 0) -> i32
@@ -190,12 +185,9 @@ func sum_i32(xs: ptr(i32), n: i32) -> i32
     end
 end
 ]]
-local parsed = P.parse_module(source)
-assert(#parsed.issues == 0)
-local checked = TC.check_module(parsed.module)
-assert(#checked.issues == 0)
-local source_program = Lower.module(checked.module)
-local source_report = validate.validate(source_program)
+local source_result = Pipeline.Define(T).parse_and_lower(source, { site = "test_back_object_full:sum" })
+local source_program = source_result.program
+local source_report = source_result.back_report
 assert(#source_report.issues == 0)
 local source_object = object_api.compile(source_program, { module_name = "moonlift_object_source" })
 assert(#source_object:bytes() > 0)

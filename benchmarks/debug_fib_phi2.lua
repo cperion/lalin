@@ -15,16 +15,12 @@ local kernels = fn()
 
 local T = runtime.T
 Mx.set_context(T)
-local Typecheck = require("moonlift.tree_typecheck").Define(T)
-local Layout = require("moonlift.sem_layout_resolve").Define(T)
-local TreeToBack = require("moonlift.tree_to_back").Define(T)
+local Pipeline = require("moonlift.frontend_pipeline").Define(T)
 local Tr = T.MoonTree
 
 local k = kernels.fib
 local mod = Tr.Module(Tr.ModuleSurface, { Tr.ItemFunc(k.func) })
-local checked = Typecheck.check_module(mod)
-local resolved = Layout.module(checked.module)
-local program = TreeToBack.module(resolved)
+local program = Pipeline.lower_module(mod, { site = "debug_fib_phi2" }).program
 
 local collected = P_collect.run(program)
 local cm = Mx.phase_module_maps(collected)

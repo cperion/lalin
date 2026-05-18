@@ -3,17 +3,10 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 local A = require("moonlift.asdl")
-local Parse = require("moonlift.parse")
-local Typecheck = require("moonlift.tree_typecheck")
-local TreeToBack = require("moonlift.tree_to_back")
-local Validate = require("moonlift.back_validate")
+local Pipeline = require("moonlift.frontend_pipeline")
 local Jit = require("moonlift.back_jit")
 
 local T = pvm.context(); A.Define(T)
-local P = Parse.Define(T)
-local TC = Typecheck.Define(T)
-local Lower = TreeToBack.Define(T)
-local V = Validate.Define(T)
 local J = Jit.Define(T)
 local Back = T.MoonBack
 
@@ -43,12 +36,9 @@ func reused_literal() -> i32
 end
 ]]
 
-local parsed = P.parse_module(src)
-assert(#parsed.issues == 0, tostring(parsed.issues[1]))
-local checked = TC.check_module(parsed.module)
-assert(#checked.issues == 0, tostring(checked.issues[1]))
-local program = Lower.module(checked.module)
-local report = V.validate(program)
+local result = Pipeline.Define(T).parse_and_lower(src, { site = "test_string_literals" })
+local program = result.program
+local report = result.back_report
 assert(#report.issues == 0, tostring(report.issues[1]))
 
 local artifact = J.jit():compile(program)

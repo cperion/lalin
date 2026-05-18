@@ -3,18 +3,11 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 local A = require("moonlift.asdl")
-local Parse = require("moonlift.parse")
-local Typecheck = require("moonlift.tree_typecheck")
-local TreeToBack = require("moonlift.tree_to_back")
-local Validate = require("moonlift.back_validate")
+local Pipeline = require("moonlift.frontend_pipeline")
 local J = require("moonlift.back_jit")
 
 local T = pvm.context()
 A.Define(T)
-local P = Parse.Define(T)
-local TC = Typecheck.Define(T)
-local Lower = TreeToBack.Define(T)
-local V = Validate.Define(T)
 local jit_api = J.Define(T)
 local B = T.MoonBack
 
@@ -29,12 +22,9 @@ func atomic_demo(p: ptr(i32)) -> i32
 end
 ]]
 
-local parsed = P.parse_module(src)
-assert(#parsed.issues == 0, parsed.issues[1] and parsed.issues[1].message)
-local checked = TC.check_module(parsed.module)
-assert(#checked.issues == 0, checked.issues[1] and checked.issues[1].kind)
-local program = Lower.module(checked.module)
-local report = V.validate(program)
+local result = Pipeline.Define(T).parse_and_lower(src, { site = "test_atomics" })
+local program = result.program
+local report = result.back_report
 assert(#report.issues == 0, report.issues[1] and report.issues[1].kind)
 
 local saw_load, saw_store, saw_rmw, saw_cas, saw_fence = false, false, false, false, false

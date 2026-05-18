@@ -2,9 +2,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local pvm = require("moonlift.pvm")
 local A = require("moonlift.asdl")
-local Parse = require("moonlift.parse")
-local Typecheck = require("moonlift.tree_typecheck")
-local Lower = require("moonlift.tree_to_back")
+local Pipeline = require("moonlift.frontend_pipeline")
 local Validate = require("moonlift.back_validate")
 
 local SRC = [[
@@ -45,16 +43,10 @@ local function ms(x) return x * 1000.0 end
 local function build_case()
     local T = pvm.context()
     A.Define(T)
-    local P = Parse.Define(T)
-    local TC = Typecheck.Define(T)
-    local L = Lower.Define(T)
+    local P = Pipeline.Define(T)
     local V = Validate.Define(T)
-    local parsed = P.parse_module(SRC)
-    assert(#parsed.issues == 0)
-    local checked = TC.check_module(parsed.module)
-    assert(#checked.issues == 0)
-    local program = L.module(checked.module)
-    return { V = V, program = program }
+    local result = P.parse_and_lower(SRC, { site = "bench_compile_back_validate_ll" })
+    return { V = V, program = result.program }
 end
 
 local rounds = tonumber(arg[1]) or 30

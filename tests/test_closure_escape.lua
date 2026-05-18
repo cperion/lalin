@@ -4,10 +4,7 @@ local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
 local ClosureConvert = require("moonlift.closure_convert")
-local Typecheck = require("moonlift.tree_typecheck")
-local Layout = require("moonlift.sem_layout_resolve")
-local TreeToBack = require("moonlift.tree_to_back")
-local Validate = require("moonlift.back_validate")
+local Pipeline = require("moonlift.frontend_pipeline")
 local Jit = require("moonlift.back_jit")
 
 local T = pvm.context()
@@ -73,11 +70,9 @@ local module = Tr.Module(Tr.ModuleSurface, {
 })
 
 local converted = ClosureConvert.Define(T).module(module)
-local checked = Typecheck.Define(T).check_module(converted)
-assert(#checked.issues == 0, tostring(checked.issues[1]))
-local resolved = Layout.Define(T).module(checked.module)
-local program = TreeToBack.Define(T).module(resolved)
-local report = Validate.Define(T).validate(program)
+local result = Pipeline.Define(T).lower_module(converted, { site = "test_closure_escape" })
+local program = result.program
+local report = result.back_report
 assert(#report.issues == 0, tostring(report.issues[1]))
 
 local artifact = Jit.Define(T).jit():compile(program)

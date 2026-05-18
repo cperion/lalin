@@ -13,10 +13,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
-local Parse = require("moonlift.parse")
-local Typecheck = require("moonlift.tree_typecheck")
-local TreeToBack = require("moonlift.tree_to_back")
-local Validate = require("moonlift.back_validate")
+local Pipeline = require("moonlift.frontend_pipeline")
 local Cranelift = require("moonlift.back_jit")
 local LuaJITBack = require("moonlift.back_luajit")
 
@@ -95,21 +92,14 @@ local T = pvm.context()
 A2.Define(T)
 local P = Parse.Define(T)
 local TC = Typecheck.Define(T)
-local Lower = TreeToBack.Define(T)
-local V = Validate.Define(T)
+local P = Pipeline.Define(T)
 local cranelift_api = Cranelift.Define(T)
 local luajit_api = LuaJITBack.Define(T)
 local B = T.MoonBack
 
 local common_t, program = timed(function()
-    local parsed = P.parse_module(SRC)
-    assert(#parsed.issues == 0, "parse issues: " .. tostring(parsed.issues[1] and parsed.issues[1].message))
-    local checked = TC.check_module(parsed.module)
-    assert(#checked.issues == 0, "type issues: " .. tostring(checked.issues[1] and checked.issues[1].message))
-    local program = Lower.module(checked.module)
-    local report = V.validate(program)
-    assert(#report.issues == 0, "back validation issues: " .. tostring(report.issues[1] and report.issues[1].message))
-    return program
+    local result = P.parse_and_lower(SRC, { site = "bench_luajit_vs_cranelift" })
+    return result.program
 end)
 
 local cranelift_compile_t, cranelift_artifact, cranelift_jit = timed(function()

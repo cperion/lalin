@@ -4,10 +4,7 @@ local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
 local ClosureConvert = require("moonlift.closure_convert")
-local Typecheck = require("moonlift.tree_typecheck")
-local Layout = require("moonlift.sem_layout_resolve")
-local TreeToBack = require("moonlift.tree_to_back")
-local Validate = require("moonlift.back_validate")
+local Pipeline = require("moonlift.frontend_pipeline")
 local Jit = require("moonlift.back_jit")
 
 local T = pvm.context()
@@ -44,12 +41,9 @@ local module = Tr.Module(Tr.ModuleSurface, { Tr.ItemFunc(main), Tr.ItemFunc(capt
 local converted = ClosureConvert.Define(T).module(module)
 assert(#converted.items == 4, "closure conversion should hoist two helpers")
 
-local checked = Typecheck.Define(T).check_module(converted)
-assert(#checked.issues == 0, tostring(checked.issues[1]))
-local resolved = Layout.Define(T).module(checked.module)
-local program = TreeToBack.Define(T).module(resolved)
-local report = Validate.Define(T).validate(program)
-assert(#report.issues == 0, tostring(report.issues[1]))
+local result = Pipeline.Define(T).lower_module(converted, { site = "test_closure_convert" })
+local program = result.program
+assert(#result.back_report.issues == 0, tostring(result.back_report.issues[1]))
 
 local artifact = Jit.Define(T).jit():compile(program)
 local direct_fn = ffi.cast("int32_t (*)()", artifact:getpointer(Back.BackFuncId("closure_direct")))

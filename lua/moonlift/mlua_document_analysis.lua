@@ -5,9 +5,7 @@ local HostValidate = require("moonlift.host_decl_validate")
 local HostLayout = require("moonlift.host_layout_resolve")
 local OpenFacts = require("moonlift.open_facts")
 local OpenValidate = require("moonlift.open_validate")
-local TreeTypecheck = require("moonlift.tree_typecheck")
-local LayoutResolve = require("moonlift.sem_layout_resolve")
-local TreeToBack = require("moonlift.tree_to_back")
+local Pipeline_mod = require("moonlift.frontend_pipeline")
 local BackValidate = require("moonlift.back_validate")
 
 local M = {}
@@ -62,9 +60,7 @@ function M.Define(T)
     local HostL = HostLayout.Define(T)
     local OpenF = OpenFacts.Define(T)
     local OpenV = OpenValidate.Define(T)
-    local Typecheck = TreeTypecheck.Define(T)
-    local Layout = LayoutResolve.Define(T)
-    local ToBack = TreeToBack.Define(T)
+    local Pipeline = require("moonlift.frontend_pipeline").Define(T)
     local BackV = BackValidate.Define(T)
 
     local function range(index, start_offset, stop_offset)
@@ -346,27 +342,27 @@ function M.Define(T)
         local open_report = O.ValidationReport({})
         local type_issues, control_facts = {}, {}
         local checked_module = combined.module
+        local type_issues = {}
+        local result_or_err = nil
         if #combined.module.items > 0 then
-            local ok_tc, checked = pcall(Typecheck.check_module, combined.module)
-            if ok_tc and checked then
-                checked_module = checked.module
-                type_issues = checked.issues or {}
-            elseif not ok_tc then
-                issues[#issues + 1] = Pm.ParseIssue("internal: typecheck panic: " .. tostring(checked), 0, 1, 1)
+            local ok_tc, res = pcall(function()
+                local r = Pipeline.lower_module(combined.module, { site = "mlua_document_analysis" })
+                return r
+            end)
+            result_or_err = res
+            if ok_tc and res then
+                checked_module = res.checked.module
+                type_issues = res.checked.issues or {}
+                open_report = res.open_report or O.ValidationReport({})
+            else
+                issues[#issues + 1] = Pm.ParseIssue("internal: pipeline error: " .. tostring(res), 0, 1, 1)
             end
         end
 
         local back_report = B.BackValidationReport({})
         if #type_issues == 0 and #checked_module.items > 0 then
-            local ok_back, report_or_err = pcall(function()
-                local resolved = Layout.module(checked_module)
-                local program = ToBack.module(resolved)
-                return BackV.validate(program)
-            end)
-            if ok_back and report_or_err then
-                back_report = report_or_err
-            elseif not ok_back then
-                issues[#issues + 1] = Pm.ParseIssue("internal: backend pipeline error: " .. tostring(report_or_err), 0, 1, 1)
+            if result_or_err and result_or_err.back_report then
+                back_report = result_or_err.back_report
             end
         end
 

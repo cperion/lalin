@@ -3,9 +3,7 @@ local ffi = require("ffi");local pvm = require("moonlift.pvm");local A2 = requir
 local T = pvm.context();A2.Define(T)
 local parse = require("moonlift.parse").Define(T)
 local OE = require("moonlift.open_expand").Define(T)
-local TC = require("moonlift.tree_typecheck").Define(T)
-local Layout = require("moonlift.sem_layout_resolve").Define(T)
-local Lower = require("moonlift.tree_to_back").Define(T)
+local Pipeline = require("moonlift.frontend_pipeline").Define(T)
 local BL = require("moonlift.back_luajit").Define(T)
 
 local src = [[
@@ -16,9 +14,7 @@ end
 ]]
 local parsed = parse.parse_module(src)
 local expanded = OE.module(parsed.module)
-local checked = TC.check_module(expanded)
-local resolved = Layout.module(checked.module, {})
-local program = Lower.module(resolved)
+local program = Pipeline.lower_module(expanded, { site = "debug_fib_source" }).program
 
 -- Instrument the backend to print generated source
 -- Patch quote:compile to print source

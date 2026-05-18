@@ -3,20 +3,14 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;./lua/?.lua;./
 local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
-local Parse = require("moonlift.parse")
-local Typecheck = require("moonlift.tree_typecheck")
-local TreeToBack = require("moonlift.tree_to_back")
-local Validate = require("moonlift.back_validate")
+local Pipeline = require("moonlift.frontend_pipeline")
 local J = require("moonlift.back_jit")
 local VecFacts = require("moonlift.vec_loop_facts")
 local VecDecide = require("moonlift.vec_loop_decide")
 
 local T = pvm.context()
 A2.Define(T)
-local P = Parse.Define(T)
-local TC = Typecheck.Define(T)
-local Lower = TreeToBack.Define(T)
-local VBack = Validate.Define(T)
+local P = Pipeline.Define(T)
 local jit_api = J.Define(T)
 local VF = VecFacts.Define(T)
 local VD = VecDecide.Define(T)
@@ -78,17 +72,9 @@ func first_three_or_n(n: i32) -> i32
 end
 ]]
 
-local parsed = P.parse_module(src)
-assert(#parsed.issues == 0)
-print("parsed items", #parsed.module.items)
-
-local checked = TC.check_module(parsed.module)
-assert(#checked.issues == 0)
-print("typechecked module", checked.module.h.module_name)
-
-local program = Lower.module(checked.module)
-local report = VBack.validate(program)
-assert(#report.issues == 0)
+local result = P.parse_and_lower(src, { site = "test_parse_playground" })
+local program = result.program
+assert(#result.back_report.issues == 0)
 print("lowered backend commands", #program.cmds)
 
 local target = Vec.VecTargetModel(Vec.VecTargetCraneliftJit, {
@@ -96,6 +82,7 @@ local target = Vec.VecTargetModel(Vec.VecTargetCraneliftJit, {
     Vec.VecTargetSupportsShape(Vec.VecVectorShape(Vec.VecElemI32, 4)),
 })
 
+local checked = result.checked
 local tri_region = checked.module.items[1].func.body[1].region
 local tri_facts = VF.facts(tri_region)
 local tri_decision = VD.decide(tri_facts, target)

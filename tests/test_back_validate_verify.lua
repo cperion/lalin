@@ -4,9 +4,7 @@ local pvm = require("moonlift.pvm")
 local A = require("moonlift.asdl")
 local Schema = require("moonlift.schema")
 local Validate = require("moonlift.back_validate")
-local Parse = require("moonlift.parse")
-local Typecheck = require("moonlift.tree_typecheck")
-local TreeToBack = require("moonlift.tree_to_back")
+local Pipeline = require("moonlift.frontend_pipeline")
 
 local function test_schema_path()
     local T = pvm.context()
@@ -101,9 +99,7 @@ end
 local function test_full_pipeline()
     local T = pvm.context()
     Schema.Define(T)
-    local P = Parse.Define(T)
-    local TC = Typecheck.Define(T)
-    local Lower = TreeToBack.Define(T)
+    local P = Pipeline.Define(T)
     local V = Validate.Define(T)
 
     local srcs = {
@@ -115,12 +111,8 @@ local function test_full_pipeline()
     }
 
     for i = 1, #srcs do
-        local parsed = P.parse_module(srcs[i])
-        assert(#parsed.issues == 0, "parse issues in src " .. i)
-        local checked = TC.check_module(parsed.module)
-        assert(#checked.issues == 0, "type issues in src " .. i)
-        local program = Lower.module(checked.module)
-        V.validate_verify(program)
+        local result = P.parse_and_lower(srcs[i], { site = "test_back_validate_verify:" .. i })
+        V.validate_verify(result.program)
     end
 
     return "full_pipeline"

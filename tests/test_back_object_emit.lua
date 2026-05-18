@@ -2,10 +2,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
-local Parse = require("moonlift.parse")
-local Typecheck = require("moonlift.tree_typecheck")
-local TreeToBack = require("moonlift.tree_to_back")
-local Validate = require("moonlift.back_validate")
+local Pipeline = require("moonlift.frontend_pipeline")
 local Object = require("moonlift.back_object")
 
 local function shell_quote(text)
@@ -29,10 +26,6 @@ end
 
 local T = pvm.context()
 A2.Define(T)
-local P = Parse.Define(T)
-local TC = Typecheck.Define(T)
-local Lower = TreeToBack.Define(T)
-local V = Validate.Define(T)
 local O = Object.Define(T)
 
 local src = [[
@@ -41,13 +34,7 @@ func add_i32(a: i32, b: i32) -> i32
 end
 ]]
 
-local parsed = P.parse_module(src)
-assert(#parsed.issues == 0, "parse issues: " .. #parsed.issues)
-local checked = TC.check_module(parsed.module)
-assert(#checked.issues == 0, "type issues: " .. #checked.issues)
-local program = Lower.module(checked.module)
-local report = V.validate(program)
-assert(#report.issues == 0, "back validation issues: " .. #report.issues)
+local program = Pipeline.Define(T).parse_and_lower(src, { site = "test_back_object_emit" }).program
 
 local object = O.compile(program, { module_name = "moonlift_object_smoke" })
 local bytes = object:bytes()

@@ -11,18 +11,15 @@ local kernels = fn()
 -- Get the raw program before compilation
 local k = kernels.fib
 local T = runtime.T
-local Typecheck = require("moonlift.tree_typecheck").Define(T)
-local Layout = require("moonlift.sem_layout_resolve").Define(T)
-local TreeToBack = require("moonlift.tree_to_back").Define(T)
+local Pipeline = require("moonlift.frontend_pipeline").Define(T)
 local Validate = require("moonlift.back_validate").Define(T)
 local Tr = T.MoonTree
 
 -- Manually compile to see the BackProgram
 local deps = { type_decls = {}, region_frags = {}, expr_frags = {} }
 local mod = Tr.Module(Tr.ModuleSurface, { Tr.ItemFunc(k.func) })
-local checked = Typecheck.check_module(mod)
-local resolved = Layout.module(checked.module)
-local program = TreeToBack.module(resolved)
+local result = Pipeline.lower_module(mod, { site = "debug_fib_phi" })
+local program = result.program
 
 local report = Validate.validate(program)
 print("validation issues:", #report.issues)
