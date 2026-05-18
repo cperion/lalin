@@ -869,7 +869,7 @@ function M.Define(T)
         end,
         [Tr.ExprIndex] = function(self, env)
             local lowered = index_addr_to_back:one_uncached(self.base, self.index, expr_ty(self), env)
-            if pvm.classof(lowered) ~= Tr.TreeBackExprValue then return lowered end
+            if pvm.classof(lowered) ~= Tr.TreeBackExprValue then return pvm.once(lowered) end
             local scalar = back_scalar(expr_ty(self))
             if scalar == nil then return pvm.once(Tr.TreeBackExprUnsupported(lowered.env, lowered.cmds, "index result has non-scalar type")) end
             local env2, dst = env_next_value(lowered.env, "v")

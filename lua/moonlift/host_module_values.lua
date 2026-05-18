@@ -27,7 +27,7 @@ end
 
 local function append_item(self, value)
     self.items[#self.items + 1] = value.item or value:as_item()
-    if type(value) == "table" and (value.kind == "struct" or value.kind == "union" or value.kind == "struct_draft") then
+    if type(value) == "table" and (value.kind == "struct" or value.kind == "union" or value.kind == "struct_draft" or value.kind == "type") then
         self.type_values[#self.type_values + 1] = value
     end
     return value
@@ -122,11 +122,27 @@ end
 
 function ModuleValue:layout_env()
     local Sem = self.session.T.MoonSem
+    local pvm = require("moonlift.pvm")
     local layouts = {}
-    for i = 1, #self.type_values do
-        local layout = self.session:layout_of(self.type_values[i])
-        if layout ~= nil then layouts[#layouts + 1] = layout end
+    local resolved = {}
+    
+    -- Multi-pass: retry types whose dependencies aren't resolved yet.
+    for pass = 1, 10 do
+        local progress = false
+        for i = 1, #self.type_values do
+            if not resolved[i] then
+                local tv = self.type_values[i]
+                local layout = self.session:layout_of(tv)
+                if layout ~= nil then
+                    layouts[#layouts + 1] = layout
+                    resolved[i] = true
+                    progress = true
+                end
+            end
+        end
+        if not progress then break end
     end
+    
     return Sem.LayoutEnv(layouts)
 end
 

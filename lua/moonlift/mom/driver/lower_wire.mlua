@@ -238,108 +238,23 @@ local mom_wire_value_pool = func(value_id: i32) -> i32
     return value_id + 2
 end
 
-local mom_write_schema_cmd_to_wire = func(w: ptr(@{MomWireBuilder}), cmds: ptr(i32), idx: index) -> i32
-    let base: index = idx * as(index, @{CMD_STRIDE})
-    let schema_tag: i32 = cmds[base]
-    let tag: i32 = mom_schema_cmd_tag_to_wire(schema_tag)
-    if tag < 0 then return -1 end
-
-    mw_write_u32(w, tag)
-    if schema_tag == @{T.CmdCreateSig} then
-        mw_write_u32(w, cmds[base + as(index, 1)])
-        mw_write_u32(w, cmds[base + as(index, 2)])
-        mw_write_u32(w, cmds[base + as(index, 3)])
-        mw_write_u32(w, cmds[base + as(index, 4)])
-        mw_write_u32(w, cmds[base + as(index, 5)])
-    elseif schema_tag == @{T.CmdDeclareFunc} then
-        mw_write_u32(w, cmds[base + as(index, 1)])
-        mw_write_u32(w, cmds[base + as(index, 2)])
-        mw_write_u32(w, cmds[base + as(index, 3)])
-    elseif schema_tag == @{T.CmdBeginFunc} or schema_tag == @{T.CmdCreateBlock} or schema_tag == @{T.CmdSwitchToBlock}
-        or schema_tag == @{T.CmdSealBlock} or schema_tag == @{T.CmdFinishFunc} then
-        mw_write_u32(w, cmds[base + as(index, 1)])
-    elseif schema_tag == @{T.CmdBindEntryParams} then
-        mw_write_u32(w, cmds[base + as(index, 1)])
-        mw_write_u32(w, cmds[base + as(index, 2)])
-        mw_write_u32(w, cmds[base + as(index, 3)])
-    elseif schema_tag == @{T.CmdReturnValue} then
-        mw_write_u32(w, mom_wire_value_pool(cmds[base + as(index, 1)]))
-    elseif schema_tag == @{T.CmdConst} then
-        mw_write_u32(w, mom_wire_value_pool(cmds[base + as(index, 1)]))
-        mw_write_u32(w, mom_schema_scalar_to_wire(cmds[base + as(index, 2)]))
-        mw_write_u32(w, mom_schema_lit_tag_to_wire(cmds[base + as(index, 3)]))
-        mw_write_u32(w, cmds[base + as(index, 4)])
-        mw_write_u32(w, cmds[base + as(index, 5)])
-    elseif schema_tag == @{T.CmdIntBinary} then
-        mw_write_u32(w, mom_wire_value_pool(cmds[base + as(index, 1)]))
-        mw_write_u32(w, cmds[base + as(index, 2)])
-        mw_write_u32(w, mom_schema_scalar_to_wire(cmds[base + as(index, 3)]))
-        mw_write_u32(w, 0)
-        mw_write_u32(w, 0)
-        mw_write_u32(w, mom_wire_value_pool(cmds[base + as(index, 5)]))
-        mw_write_u32(w, mom_wire_value_pool(cmds[base + as(index, 6)]))
-    end
-    return 0
-end
-
-local mom_cmd_tape_set = func(cmds: ptr(i32), cmd_index: i32, word: i32, value: i32)
-    cmds[as(index, cmd_index * @{CMD_STRIDE} + word)] = value
-end
-
-local mom_cmd_tape_clear = func(cmds: ptr(i32), cmd_index: i32)
-    block loop(i: i32 = 0)
-        if i >= @{CMD_STRIDE} then return end
-        mom_cmd_tape_set(cmds, cmd_index, i, 0)
-        jump loop(i = i + 1)
-    end
-end
-
-local mom_cmd_tape_push = func(cmds: ptr(i32), count: ptr(i32), cap: i32, tag: i32, slots: ptr(i32)) -> i32
-    let i: i32 = count[0]
-    if i < cap then
-        mom_cmd_tape_clear(cmds, i)
-        mom_cmd_tape_set(cmds, i, 0, tag)
-        let n: i32 = mom_wire_slot_count(tag)
-        if n >= 0 then
-            block loop(j: i32 = 0)
-                if j >= n then yield end
-                mom_cmd_tape_set(cmds, i, j + 1, slots[as(index, j)])
-                jump loop(j = j + 1)
-            end
-        end
-    end
-    count[0] = i + 1
-    return i
-end
-
-local mom_lower_cmd_tape_to_wire = func(cmds: ptr(i32), ncmds: i32, w: ptr(@{MomWireBuilder})) -> index
+-- Column-major command writer: reads from 7 column arrays instead of flat tape.
+local mom_write_cmd_columns_to_wire = func(w: ptr(@{MomWireBuilder}),
+    tag: ptr(i32), wa: ptr(i32), wb: ptr(i32), wc: ptr(i32),
+    wd: ptr(i32), we: ptr(i32), wf: ptr(i32), n: i32) -> i32
     block cmds_loop(i: i32 = 0)
-        if i >= ncmds then return w.len end
-        let base: index = as(index, i * @{CMD_STRIDE})
-        let tag: i32 = cmds[base]
-        let nslots: i32 = mom_wire_slot_count(tag)
-        if nslots < 0 then
-            mw_mark(w, @{MW_BAD_TAG})
-            return w.len
-        end
-        mw_write_u32(w, tag)
-        if nslots >= 1 then mw_write_u32(w, cmds[base + as(index, 1)]) end
-        if nslots >= 2 then mw_write_u32(w, cmds[base + as(index, 2)]) end
-        if nslots >= 3 then mw_write_u32(w, cmds[base + as(index, 3)]) end
-        if nslots >= 4 then mw_write_u32(w, cmds[base + as(index, 4)]) end
-        if nslots >= 5 then mw_write_u32(w, cmds[base + as(index, 5)]) end
-        if nslots >= 6 then mw_write_u32(w, cmds[base + as(index, 6)]) end
-        if nslots >= 7 then mw_write_u32(w, cmds[base + as(index, 7)]) end
-        if nslots >= 8 then mw_write_u32(w, cmds[base + as(index, 8)]) end
-        if nslots >= 9 then mw_write_u32(w, cmds[base + as(index, 9)]) end
-        if nslots >= 10 then mw_write_u32(w, cmds[base + as(index, 10)]) end
-        if nslots >= 11 then mw_write_u32(w, cmds[base + as(index, 11)]) end
-        if nslots >= 12 then mw_write_u32(w, cmds[base + as(index, 12)]) end
-        if nslots >= 13 then mw_write_u32(w, cmds[base + as(index, 13)]) end
-        if nslots >= 14 then mw_write_u32(w, cmds[base + as(index, 14)]) end
-        if nslots >= 15 then mw_write_u32(w, cmds[base + as(index, 15)]) end
-        if nslots >= 16 then mw_write_u32(w, cmds[base + as(index, 16)]) end
-        if nslots >= 17 then mw_write_u32(w, cmds[base + as(index, 17)]) end
+        if i >= n then return 0 end
+        let schema_tag: i32 = tag[i]
+        let wire_tag: i32 = mom_schema_cmd_tag_to_wire(schema_tag)
+        if wire_tag < 0 then return -1 end
+        mw_write_u32(w, wire_tag)
+        let nslots: i32 = mom_wire_slot_count(schema_tag)
+        if nslots >= 1 then mw_write_u32(w, wa[i]) end
+        if nslots >= 2 then mw_write_u32(w, wb[i]) end
+        if nslots >= 3 then mw_write_u32(w, wc[i]) end
+        if nslots >= 4 then mw_write_u32(w, wd[i]) end
+        if nslots >= 5 then mw_write_u32(w, we[i]) end
+        if nslots >= 6 then mw_write_u32(w, wf[i]) end
         jump cmds_loop(i = i + 1)
     end
 end
@@ -361,11 +276,7 @@ M.mom_schema_scalar_to_wire = mom_schema_scalar_to_wire
 M.mom_schema_cmd_tag_to_wire = mom_schema_cmd_tag_to_wire
 M.mom_schema_lit_tag_to_wire = mom_schema_lit_tag_to_wire
 M.mom_wire_value_pool = mom_wire_value_pool
-M.mom_write_schema_cmd_to_wire = mom_write_schema_cmd_to_wire
-M.mom_cmd_tape_set = mom_cmd_tape_set
-M.mom_cmd_tape_clear = mom_cmd_tape_clear
-M.mom_cmd_tape_push = mom_cmd_tape_push
-M.mom_lower_cmd_tape_to_wire = mom_lower_cmd_tape_to_wire
+M.mom_write_cmd_columns_to_wire = mom_write_cmd_columns_to_wire
 
 return M
 end

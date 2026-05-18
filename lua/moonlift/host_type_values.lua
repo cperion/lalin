@@ -18,6 +18,15 @@ local function is_identifier(s)
     return type(s) == "string" and s:match("^[_%a][_%w]*$") ~= nil
 end
 
+function TypeValue:as_item()
+    local decl = rawget(self, "decl")
+    if decl then
+        local T = self.session and self.session.T
+        if T then return T.MoonTree.ItemType(decl) end
+    end
+    error("type value has no decl for as_item", 2)
+end
+
 function TypeValue:as_type_value()
     return self
 end

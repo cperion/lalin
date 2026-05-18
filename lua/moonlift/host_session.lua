@@ -94,6 +94,19 @@ function Session:layout_of(type_value)
     local tv
     if type(type_value) == "table" and type(type_value.as_type_value) == "function" then tv = type_value:as_type_value() else tv = api.as_type_value(type_value, "layout_of expects type value") end
     local fields = type_value.fields or tv.fields
+    -- Also extract fields from ASDL decl if present
+    if fields == nil and tv.decl and tv.decl.fields then
+        fields = {}
+        for i = 1, #tv.decl.fields do
+            local df = tv.decl.fields[i]
+            local fname = df.field_name or df.name
+            if type(fname) == "table" and fname.text then fname = fname.text
+            elseif type(fname) ~= "string" then fname = tostring(fname or "field" .. tostring(i)) end
+            if fname ~= nil and fname ~= "" then
+                fields[i] = { name = fname, type = api.type_from_asdl(df.ty, fname) }
+            end
+        end
+    end
     local fields_by_name = type_value.fields_by_name or tv.fields_by_name
     if fields == nil and fields_by_name == nil then return nil end
     local offset = 0

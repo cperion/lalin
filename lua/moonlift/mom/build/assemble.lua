@@ -13,30 +13,8 @@ local Manifest = require("moonlift.mom.build.manifest")
 local A = {}
 local MomAssembly = {}
 
-local function is_source_type_value(v)
-    return type(v) == "table" and v.kind == "type" and v.decl ~= nil
-end
-
-local function is_host_type_value(v)
-    return type(v) == "table" and (
-        v.kind == "struct" or v.kind == "union" or v.kind == "struct_draft" or
-        v.kind == "enum" or v.kind == "tagged_union" or v.kind == "type_decl"
-    )
-end
-
 local function is_func_value(v)
     return type(v) == "table" and v.visibility ~= nil and v.name ~= nil
-end
-
-local function adapt_source_type(self, name, value)
-    local Tr = self.rt.T.MoonTree
-    return {
-        kind = "type_decl",
-        name = name,
-        item = Tr.ItemType(value.decl),
-        type = value,
-        decl = value.decl,
-    }
 end
 
 local function install_type(self, name, value)
@@ -44,14 +22,7 @@ local function install_type(self, name, value)
     self.names[name] = "type"
     self.types[#self.types + 1] = value
     self.values[name] = value
-
-    if value.item ~= nil or type(value.as_item) == "function" then
-        self.module:add_type(value)
-    elseif is_source_type_value(value) then
-        self.module:add_type(adapt_source_type(self, name, value))
-    else
-        error("MOM type " .. tostring(name) .. " has no item or decl", 3)
-    end
+    self.module:add_type(value)
     return value
 end
 
@@ -70,7 +41,7 @@ local function install_decl(self, name, value, kind)
     assert(type(name) == "string" and name:match("^[_%a][_%w]*$"), "invalid MOM declaration name: " .. tostring(name))
 
     local effective_kind = kind
-    if kind == "type" or is_source_type_value(value) or is_host_type_value(value) then
+    if kind == "type" or (type(value) == "table" and (value.kind == "type" or value.kind == "struct" or value.kind == "union" or value.kind == "struct_draft")) then
         effective_kind = "type"
     end
 

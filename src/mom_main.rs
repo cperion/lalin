@@ -5,7 +5,7 @@
 // compiler modules.
 
 use std::env;
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void};
 use std::fs;
 use std::path::PathBuf;
 
@@ -13,31 +13,14 @@ unsafe extern "C" {
     fn mom_hello() -> i32;
     #[allow(dead_code)]
     fn mom_luaopen_moonlift(state: *mut c_void) -> i32;
-    fn mom_compile_source_to_wire_internal(
+    fn mom_compile_to_artifact_internal(
         src: *mut u8,
         src_len: usize,
-        wire_out: *mut u8,
-        wire_cap: usize,
         work_buf: *mut u8,
         work_cap: usize,
-    ) -> i32;
-    fn mom_compile_source_to_object_internal(
-        src: *mut u8,
-        src_len: usize,
-        obj_out: *mut u8,
-        obj_cap: usize,
-        work_buf: *mut u8,
-        work_cap: usize,
-    ) -> i32;
-    #[allow(dead_code)]
-    fn mom_compile_source_to_artifact_internal(
-        src: *mut u8,
-        src_len: usize,
-        diags: *mut u8,
-        diag_cap: usize,
-        work_buf: *mut u8,
-        work_cap: usize,
-    ) -> i32;
+    ) -> *mut c_void;
+    fn mom_artifact_getpointer(artifact: *const c_void, name: *const c_char) -> *const c_void;
+    fn mom_artifact_free(artifact: *mut c_void);
     fn mom_debug_index_arithmetic(buf: *mut u8, cap: usize) -> i32;
 }
 
@@ -151,18 +134,20 @@ fn status() -> i32 {
     let index_probe = unsafe { mom_debug_index_arithmetic(probe_buf.as_mut_ptr(), probe_buf.len()) };
 
     let mut src = b"func main() -> i32\n  return 0\nend\n".to_vec();
-    let mut wire = vec![0u8; 64 * 1024];
     let mut work = vec![0u8; 4 * 1024 * 1024];
-    let pipeline_probe = unsafe {
-        mom_compile_source_to_wire_internal(
+    let artifact = unsafe {
+        mom_compile_to_artifact_internal(
             src.as_mut_ptr(),
             src.len(),
-            wire.as_mut_ptr(),
-            wire.len(),
             work.as_mut_ptr(),
             work.len(),
         )
     };
+
+    let pipeline_probe = if artifact.is_null() { 0 } else { 1 };
+    if !artifact.is_null() {
+        unsafe { mom_artifact_free(artifact); }
+    }
 
     println!("mom integration: precompiled native MOM object linked");
     println!("mom_hello: {hello}");
@@ -171,48 +156,10 @@ fn status() -> i32 {
     if hello == 42 && index_probe == 40 && pipeline_probe > 0 { 0 } else { 1 }
 }
 
-fn compile_wire_smoke(source: &mut [u8]) -> Result<Vec<u8>, i32> {
-    let mut wire = vec![0u8; source.len().saturating_mul(64).max(64 * 1024)];
-    let mut work = vec![0u8; 4 * 1024 * 1024];
-    let rc = unsafe {
-        mom_compile_source_to_wire_internal(
-            source.as_mut_ptr(),
-            source.len(),
-            wire.as_mut_ptr(),
-            wire.len(),
-            work.as_mut_ptr(),
-            work.len()
-        )
-    };
-    if rc > 0 {
-        wire.truncate(rc as usize);
-        Ok(wire)
-    } else {
-        Err(rc)
-    }
-}
-
-fn emit_object(path: PathBuf, output: PathBuf) -> Result<(), String> {
-    let mut source = fs::read(&path).map_err(|e| format!("unable to read {}: {e}", path.display()))?;
-    let mut obj = vec![0u8; source.len().saturating_mul(128).max(128 * 1024)];
-    let mut work = vec![0u8; 4 * 1024 * 1024];
-    let rc = unsafe {
-        mom_compile_source_to_object_internal(
-            source.as_mut_ptr(),
-            source.len(),
-            obj.as_mut_ptr(),
-            obj.len(),
-            work.as_mut_ptr(),
-            work.len()
-        )
-    };
-    if rc <= 0 {
-        return Err(format!("native MOM object emission failed with status {rc}"));
-    }
-    obj.truncate(rc as usize);
-    fs::write(&output, &obj).map_err(|e| format!("unable to write {}: {e}", output.display()))?;
-    println!("{}", output.display());
-    Ok(())
+fn emit_object(path: PathBuf, _output: PathBuf) -> Result<(), String> {
+    let _source = fs::read(&path).map_err(|e| format!("unable to read {}: {e}", path.display()))?;
+    // Object emission not yet implemented in the new pipeline.
+    Err("native MOM object emission not yet implemented".to_string())
 }
 
 fn run_file(opts: &Opts) -> Result<(), String> {
@@ -222,17 +169,26 @@ fn run_file(opts: &Opts) -> Result<(), String> {
 
     let input = opts.input.as_ref().ok_or_else(|| "missing input file".to_string())?;
     let mut source = fs::read(input).map_err(|e| format!("unable to read {}: {e}", input.display()))?;
-    let wire = compile_wire_smoke(&mut source)
-        .map_err(|rc| format!("native MOM wire compilation failed with status {rc}"))?;
+    let mut work = vec![0u8; 4 * 1024 * 1024];
+    let artifact = unsafe {
+        mom_compile_to_artifact_internal(
+            source.as_mut_ptr(),
+            source.len(),
+            work.as_mut_ptr(),
+            work.len(),
+        )
+    };
+    if artifact.is_null() {
+        return Err("native MOM compilation failed".to_string());
+    }
 
-    let jit = moonlift::Jit::new();
-    let artifact = jit
-        .compile_binary(&wire)
-        .map_err(|e| format!("native MOM backend compilation failed: {}", e.0))?;
-
-    let ptr = artifact
-        .getpointer_by_name(&opts.call)
-        .map_err(|e| format!("native MOM entry point lookup failed: {}", e.0))?;
+    let c_name = std::ffi::CString::new(opts.call.as_str())
+        .map_err(|e| format!("invalid function name: {e}"))?;
+    let ptr = unsafe { mom_artifact_getpointer(artifact, c_name.as_ptr()) };
+    if ptr.is_null() {
+        unsafe { mom_artifact_free(artifact); }
+        return Err(format!("native MOM entry point '{}' not found", opts.call));
+    }
 
     if opts.ret == "void" {
         match opts.args_i32.as_slice() {
@@ -252,8 +208,10 @@ fn run_file(opts: &Opts) -> Result<(), String> {
             [a, b, c, d] => { let f: extern "C" fn(i32, i32, i32, i32) -> i32 = unsafe { std::mem::transmute(ptr) }; f(*a, *b, *c, *d) }
             _ => return Err("native MOM run supports at most four i32 arguments".to_string()),
         };
-        println!("{}", result);
+        println!("{result}");
     }
+
+    unsafe { mom_artifact_free(artifact); }
     Ok(())
 }
 
