@@ -253,5 +253,21 @@ return function(A)
             A.field "text" "string",
             A.unique,
         },
+
+        A.sum "SymKind" {
+            A.variant "SymKindFunc",
+            A.variant "SymKindExtern",
+            A.variant "SymKindConst",
+            A.variant "SymKindStatic",
+            A.variant "SymKindType",
+        },
+
+        A.product "OpenSym" {
+            A.field "kind" "MoonCore.SymKind",
+            A.field "key" "string",
+            A.field "name" "string",
+            A.field "symbol" "string",
+            A.unique,
+        },
     }
 end
