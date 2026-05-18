@@ -575,7 +575,7 @@ fn decode_body(buf: &[u8], ptr_ty: Type, ctx: &mut BodyCtx<'_>, refs: &FuncRefs)
                 let args: Vec<Value> = ids.iter().map(|&id| ctx.val(id)).collect::<Result<_,_>>()?;
                 let sig = ctx.builder.import_signature(Signature::new(ctx.builder.func.signature.call_conv));
                 let inst = ctx.builder.ins().call_indirect(sig, callee, &args);
-                if rt == 1 { ctx.bind(s[1], ctx.builder.inst_results(inst)[0])?; }
+                if rt == 1 { if let Some(&r) = ctx.builder.inst_results(inst).first() { ctx.bind(s[1], r)?; } }
             }
 
             // Singleton ops

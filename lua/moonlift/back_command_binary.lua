@@ -116,7 +116,12 @@ local function renumber(bodies)
     end
 end
 
--- Emit an inline-counted list: [count, id0, id1, ...]
+local function u64_split(raw)
+    local r = raw % 4294967296.0
+    local lo = bit.band(r < 0 and r + 4294967296 or r, 0xFFFFFFFF)
+    local hi = math.floor(raw / 4294967296.0)
+    return lo, hi
+end
 local function emit_ids(buf, list, b)
     w4(buf, #list)
     for _, x in ipairs(list) do w4(buf, b:nid(x)) end
@@ -181,11 +186,13 @@ local function encode_body(cmds, b)
                 if ty == 4 then -- I32
                     w4(buf, T.ConstI32); w4(buf, b:nid(cmd.dst)); w4(buf, bit.band(raw, 0xFFFFFFFF))
                 elseif ty == 5 then -- I64
-                    w4(buf, T.ConstI64); w4(buf, b:nid(cmd.dst))
-                    w4(buf, bit.band(raw, 0xFFFFFFFF)); w4(buf, bit.rshift(raw, 32))
+                    local lo, hi = u64_split(raw)
+                w4(buf, T.ConstI64); w4(buf, b:nid(cmd.dst))
+                w4(buf, lo); w4(buf, hi)
                 else
-                    w4(buf, T.ConstInt); w4(buf, b:nid(cmd.dst)); w4(buf, ty)
-                    w4(buf, bit.band(raw, 0xFFFFFFFF)); w4(buf, bit.rshift(raw, 32))
+                w4(buf, T.ConstInt); w4(buf, b:nid(cmd.dst)); w4(buf, ty)
+                    local lo, hi = u64_split(raw)
+                    w4(buf, lo); w4(buf, hi)
                 end
             elseif v.kind == "BackLitFloat" then
                 local bits = ffi.new("union { double d; uint32_t w[2]; }")
@@ -382,6 +389,15 @@ local function encode_body(cmds, b)
             emit_ids(buf, cmd.then_args, b)
             w4(buf, b:nid(cmd.else_block))
             emit_ids(buf, cmd.else_args, b)
+        elseif k == "CmdSwitchInt" then
+            w4(buf, T.SwitchInt); w4(buf, b:nid(cmd.value)); w4(buf, st(cmd.ty)); w4(buf, #cmd.cases)
+            w4(buf, b:nid(cmd.default_dest))
+            for _, c in ipairs(cmd.cases) do
+                local raw = tonumber(c.raw) or 0
+                local lo, hi = u64_split(raw)
+                w4(buf, lo); w4(buf, hi)
+                w4(buf, b:nid(c.dest))
+            end
 
         -- Select / FMA
         elseif k == "CmdSelect" then
@@ -655,7 +671,8 @@ function M.encode(program)
             elseif v.kind == "BackLitBool" then w4(dbuf, 1); w4(dbuf, v.value and 1 or 0); w4(dbuf, 0)
             elseif v.kind == "BackLitInt" then
                 local raw = tonumber(v.raw) or 0
-                w4(dbuf, 2); w4(dbuf, bit.band(raw, 0xFFFFFFFF)); w4(dbuf, bit.rshift(raw, 32))
+                lo, hi = u64_split(raw)
+                w4(dbuf, 2); w4(dbuf, lo); w4(dbuf, hi)
             elseif v.kind == "BackLitFloat" then
                 local bits = ffi.new("union { double d; uint32_t w[2]; }")
                 bits.d = tonumber(v.raw) or 0.0
