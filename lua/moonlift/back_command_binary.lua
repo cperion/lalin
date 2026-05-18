@@ -1,651 +1,672 @@
--- BackProgram binary wire format encoder.
+-- BackProgram Flatline wire format encoder.
 --
--- Encodes MoonBack.BackProgram into the MLBT v3 binary format described in
--- BACK_WIRE_FORMAT.md.  Replaces the text-based BackCommandTape path with
--- zero string escaping, zero string parsing, and identifier deduplication
--- via a string pool.
+-- Encodes MoonBack.BackProgram into the Flatline binary format.
+-- One tag per Cranelift IR operation. No sub-tag dispatch.
 
 local ffi = require("ffi")
 local bit = require("bit")
 
 local M = {}
 
--- Scalar kind → numeric tag (matches BACK_WIRE_FORMAT.md §8.1).
-local SCALAR_TAG = {
-    BackBool  = 1,  BackI8  = 2,  BackI16 = 3,  BackI32 = 4,  BackI64 = 5,
-    BackU8    = 6,  BackU16 = 7,  BackU32 = 8,  BackU64 = 9,  BackF32 = 10,
-    BackF64   = 11, BackPtr = 12, BackIndex = 13,
+-- Flat tags (matches wire_tags.rs)
+local T = {
+    -- Structural
+    CreateBlock      = 1,
+    SwitchToBlock    = 2,
+    AppendBlockParam = 3,
+    CreateStackSlot  = 4,
+    Alias            = 190,
+    -- Constants
+    ConstI32 = 10,  ConstI64 = 11,  ConstF32 = 12,  ConstF64 = 13,
+    ConstBool= 14,  ConstNull= 15,  ConstInt = 16,
+    -- Integer
+    Iadd = 20,  Isub = 21,  Imul = 22,  Sdiv = 23,  Udiv = 24,
+    Srem = 25,  Urem = 26,  Ineg = 27,
+    -- Float
+    Fadd = 30,  Fsub = 31,  Fmul = 32,  Fdiv = 33,  Fneg = 34,
+    Fabs = 35,  Fma  = 36,  Sqrt = 37,  Floor = 38, Ceil = 39,
+    Trunc = 40, Nearest = 41,
+    -- Bitwise
+    Band = 50,  Bor = 51,  Bxor = 52,  Bnot = 53,
+    -- Shift / Rotate
+    Ishl = 60,  Ushr = 61,  Sshr = 62,
+    Rotl = 63,  Rotr = 64,
+    -- Compare
+    Icmp = 70,  Fcmp = 71,
+    -- Cast
+    Bitcast = 80,  Ireduce = 81, Sextend = 82, Uextend = 83,
+    Fpromote = 84, Fdemote = 85,
+    FcvtFromSint = 86, FcvtFromUint = 87, FcvtToSint = 88, FcvtToUint= 89,
+    -- Intrinsics
+    Popcnt = 90, Clz = 91, Ctz = 92, Bswap = 93, Iabs = 94,
+    -- Address
+    StackAddr = 100, GlobalValue = 101, FuncAddr = 102, ExternAddr = 103,
+    -- Memory
+    Load = 110, Store = 111,
+    AtomicLoad = 112, AtomicStore = 113, AtomicRmw = 114, AtomicCas = 115,
+    Fence = 116,
+    Memcpy = 117, Memset = 118,
+    -- Pointer
+    PtrAdd = 120, PtrOffset = 121,
+    -- Vector
+    Splat = 130, InsertLane = 131, ExtractLane = 132,
+    VecIadd = 133, VecIsub = 134, VecImul = 135,
+    VecBand = 136, VecBor = 137, VecBxor = 138,
+    VecIcmpEq = 139, VecIcmpNe = 140,
+    VecSIcmpLt = 141, VecSIcmpLe = 142,
+    VecSIcmpGt = 143, VecSIcmpGe = 144,
+    VecUIcmpLt = 145, VecUIcmpLe = 146,
+    VecUIcmpGt = 147, VecUIcmpGe = 148,
+    VecSelect = 149,
+    VecMaskNot = 150, VecMaskAnd = 151, VecMaskOr = 152,
+    VecLoad = 153, VecStore = 154,
+    -- Select
+    Select = 160,
+    -- Control
+    Jump = 170, Brif = 171, SwitchInt = 172,
+    ReturnVoid = 173, ReturnValue = 174, Trap = 175,
+    -- Call
+    CallDirect = 180, CallExtern = 181, CallIndirect = 182,
 }
 
--- Command kind → numeric tag (matches BACK_WIRE_FORMAT.md §7).
-local CMD_TAG = {
-    CmdTargetModel     = 1,  CmdAliasFact       = 2,
-    CmdCreateSig       = 3,  CmdDeclareData     = 4,
-    CmdDataInitZero    = 5,  CmdDataInit        = 6,
-    CmdDataAddr        = 7,  CmdFuncAddr        = 8,
-    CmdExternAddr      = 9,  CmdDeclareFunc     = 10,
-    CmdDeclareExtern   = 11, CmdBeginFunc       = 12,
-    CmdCreateBlock     = 13, CmdSwitchToBlock   = 14,
-    CmdSealBlock       = 15, CmdBindEntryParams = 16,
-    CmdAppendBlockParam= 17, CmdCreateStackSlot = 18,
-    CmdAlias           = 19, CmdStackAddr       = 20,
-    CmdConst           = 21, CmdUnary           = 22,
-    CmdIntrinsic       = 23, CmdCompare         = 24,
-    CmdCast            = 25, CmdPtrOffset       = 26,
-    CmdLoadInfo        = 27, CmdStoreInfo       = 28,
-    CmdAtomicLoad      = 29, CmdAtomicStore     = 30,
-    CmdAtomicRmw       = 31, CmdAtomicCas       = 32,
-    CmdAtomicFence     = 33,
-    CmdIntBinary       = 34, CmdBitBinary       = 35,
-    CmdBitNot          = 36, CmdShift           = 37,
-    CmdRotate          = 38, CmdFloatBinary     = 39,
-    CmdMemcpy          = 40, CmdMemset          = 41,
-    CmdSelect          = 42, CmdFma             = 43,
-    CmdVecSplat        = 44, CmdVecBinary       = 45,
-    CmdVecCompare      = 46, CmdVecSelect       = 47,
-    CmdVecMask         = 48, CmdVecInsertLane   = 49,
-    CmdVecExtractLane  = 50, CmdVecLoadInfo     = 51,
-    CmdVecStoreInfo    = 52,
-    CmdCall            = 53, CmdJump            = 54,
-    CmdBrIf            = 55, CmdSwitchInt       = 56,
-    CmdReturnVoid      = 57, CmdReturnValue     = 58,
-    CmdTrap            = 59, CmdFinishFunc      = 60,
-    CmdFinalizeModule  = 61,
-}
+local function id(node) return type(node) == "string" and node or node.text end
 
--- Integer overflow kind → numeric tag.
-local OVERFLOW_TAG = {
-    BackIntWrap = 0, BackIntNoSignedWrap = 1,
-    BackIntNoUnsignedWrap = 2, BackIntNoWrap = 3,
-}
+-- Scalar tags 1-13
+local S = { BackBool=1, BackI8=2, BackI16=3, BackI32=4, BackI64=5,
+    BackU8=6, BackU16=7, BackU32=8, BackU64=9, BackF32=10,
+    BackF64=11, BackPtr=12, BackIndex=13 }
 
--- Op kind → numeric tag tables (match BACK_WIRE_FORMAT.md §8.13–§8.24).
-local INT_OP_TAG = {
-    BackIntAdd = 1, BackIntSub = 2, BackIntMul = 3,
-    BackIntSDiv = 4, BackIntUDiv = 5, BackIntSRem = 6, BackIntURem = 7,
-}
-local BIT_OP_TAG = {
-    BackBitAnd = 1, BackBitOr = 2, BackBitXor = 3,
-}
-local SHIFT_OP_TAG = {
-    BackShiftLeft = 1, BackShiftLogicalRight = 2, BackShiftArithmeticRight = 3,
-}
-local ROTATE_OP_TAG = {
-    BackRotateLeft = 1, BackRotateRight = 2,
-}
-local FLOAT_OP_TAG = {
-    BackFloatAdd = 1, BackFloatSub = 2, BackFloatMul = 3, BackFloatDiv = 4,
-}
-local UNARY_OP_TAG = {
-    BackUnaryIneg = 1, BackUnaryFneg = 2, BackUnaryBnot = 3, BackUnaryBoolNot = 4,
-}
-local INTRINSIC_OP_TAG = {
-    BackIntrinsicPopcount = 1, BackIntrinsicClz = 2, BackIntrinsicCtz = 3,
-    BackIntrinsicBswap = 4, BackIntrinsicSqrt = 5, BackIntrinsicAbs = 6,
-    BackIntrinsicFloor = 7, BackIntrinsicCeil = 8, BackIntrinsicTruncFloat = 9,
-    BackIntrinsicRound = 10,
-}
-local COMPARE_OP_TAG = {
-    BackIcmpEq = 1, BackIcmpNe = 2,
-    BackSIcmpLt = 3, BackSIcmpLe = 4, BackSIcmpGt = 5, BackSIcmpGe = 6,
-    BackUIcmpLt = 7, BackUIcmpLe = 8, BackUIcmpGt = 9, BackUIcmpGe = 10,
-    BackFCmpEq = 11, BackFCmpNe = 12, BackFCmpLt = 13, BackFCmpLe = 14,
-    BackFCmpGt = 15, BackFCmpGe = 16,
-}
-local CAST_OP_TAG = {
-    BackBitcast = 1, BackIreduce = 2, BackSextend = 3, BackUextend = 4,
-    BackFpromote = 5, BackFdemote = 6, BackSToF = 7, BackUToF = 8,
-    BackFToS = 9, BackFToU = 10,
-}
-local VEC_BIN_OP_TAG = {
-    BackVecIntAdd = 1, BackVecIntSub = 2, BackVecIntMul = 3,
-    BackVecBitAnd = 4, BackVecBitOr = 5, BackVecBitXor = 6,
-}
-local VEC_CMP_OP_TAG = {
-    BackVecIcmpEq = 1, BackVecIcmpNe = 2,
-    BackVecSIcmpLt = 3, BackVecSIcmpLe = 4, BackVecSIcmpGt = 5, BackVecSIcmpGe = 6,
-    BackVecUIcmpLt = 7, BackVecUIcmpLe = 8, BackVecUIcmpGt = 9, BackVecUIcmpGe = 10,
-}
-local VEC_MASK_OP_TAG = {
-    BackVecMaskNot = 1, BackVecMaskAnd = 2, BackVecMaskOr = 3,
-}
-local ATOMIC_RMW_OP_TAG = {
-    BackAtomicRmwAdd = 1, BackAtomicRmwSub = 2, BackAtomicRmwAnd = 3,
-    BackAtomicRmwOr = 4, BackAtomicRmwXor = 5, BackAtomicRmwXchg = 6,
-}
+local function st(s) return assert(S[s.kind], "bad scalar "..tostring(s.kind)) end
 
-local function id_text(node) return type(node) == "string" and node or node.text end
-
-local function scalar_tag(s)
-    return assert(SCALAR_TAG[s.kind], "unsupported scalar kind " .. tostring(s.kind))
+-- Helper: write 4 bytes LE
+local function w4(buf, v)
+    buf[#buf+1] = string.char(
+        bit.band(v, 0xff), bit.band(bit.rshift(v, 8), 0xff),
+        bit.band(bit.rshift(v, 16), 0xff), bit.band(bit.rshift(v, 24), 0xff))
 end
 
-local function op_tag(table, op)
-    return assert(table[op.kind], "unsupported op kind " .. tostring(op.kind))
-end
-
--- Shape encoding: returns (shape_tag, scalar, lanes).
--- shape_tag: 0=scalar, 1=vector.
-local function shape_parts(shape)
-    if shape.kind == "BackShapeScalar" then
-        return 0, scalar_tag(shape.scalar), 0
+-- MemFlags: bit0=notrap, bit1=aligned, bit2=can_move
+local function memflags(m)
+    local bits = 0
+    if m.trap.kind == "BackNonTrapping" or m.trap.kind == "BackChecked" then
+        bits = bit.bor(bits, 1)
     end
-    return 1, scalar_tag(shape.vec.elem), shape.vec.lanes
-end
-
--- Address base encoding: returns (base_tag, base_id_string).
--- base_tag: 0=value, 1=stack, 2=data.
-local function base_parts(base)
-    if base.kind == "BackAddrValue" then return 0, id_text(base.value) end
-    if base.kind == "BackAddrStack" then return 1, id_text(base.slot)  end
-    if base.kind == "BackAddrData"  then return 2, id_text(base.data)  end
-    error("unsupported address base kind " .. tostring(base.kind))
-end
-
--- Memory info encoding: returns 8 values.
--- access_id_string, align_k, align_b, deref_k, deref_b, trap_k, motion_k, mode_k
-local function mem_parts(m, Back)
-    local ak, ab = 0, 0
-    if m.alignment.kind == "BackAlignKnown"      then ak, ab = 1, m.alignment.bytes
-    elseif m.alignment.kind == "BackAlignAtLeast" then ak, ab = 2, m.alignment.bytes
-    elseif m.alignment.kind == "BackAlignAssumed" then ak, ab = 3, m.alignment.bytes end
-    local dk, db = 0, 0
-    if m.dereference.kind == "BackDerefBytes"     then dk, db = 1, m.dereference.bytes
-    elseif m.dereference.kind == "BackDerefAssumed" then dk, db = 2, m.dereference.bytes end
-    local tk = 0
-    if m.trap.kind == "BackNonTrapping" then tk = 1
-    elseif m.trap.kind == "BackChecked"  then tk = 2 end
-    local mk = m.motion.kind == "BackCanMove" and 1 or 0
-    local mode = 1
-    if m.mode == Back.BackAccessWrite       then mode = 2
-    elseif m.mode == Back.BackAccessReadWrite then mode = 3 end
-    return id_text(m.access), ak, ab, dk, db, tk, mk, mode
-end
-
-local function u64_parts_from_number(raw)
-    local text = tostring(raw or "0")
-    local neg = false
-    if text:sub(1, 1) == "-" then
-        neg = true
-        text = text:sub(2)
-    elseif text:sub(1, 1) == "+" then
-        text = text:sub(2)
+    if (m.alignment.kind == "BackAlignKnown" or m.alignment.kind == "BackAlignAtLeast")
+       and m.alignment.bytes >= 4 then
+        bits = bit.bor(bits, 2)
     end
-    local lo, hi = 0, 0
-    for i = 1, #text do
-        local d = text:byte(i) - 48
-        if d >= 0 and d <= 9 then
-            local x = lo * 10 + d
-            lo = x % 4294967296
-            hi = (hi * 10 + math.floor(x / 4294967296)) % 4294967296
+    if m.motion.kind == "BackCanMove" then
+        bits = bit.bor(bits, 4)
+    end
+    return bits
+end
+
+-- Text ID → numeric.  Assigns fresh u32s.
+local function renumber(bodies)
+    for _, b in ipairs(bodies) do
+        local nid = 0
+        local map = {}
+        b.map = map
+        b.nid = function(self, x)
+            if type(x) == "number" then return x end
+            local s = type(x) == "string" and x or x.text
+            if map[s] == nil then map[s] = nid; nid = nid + 1 end
+            return map[s]
         end
     end
-    if neg then
-        if lo == 0 then
-            hi = (-hi) % 4294967296
-        else
-            lo = 4294967296 - lo
-            hi = (4294967295 - hi) % 4294967296
-        end
-    end
-    return lo, hi
 end
 
--- Literal encoding: returns (lit_tag, lit_lo, lit_hi).
--- lit_tag: 0=null, 1=bool, 2=int, 3=float.
-local function lit_parts(v)
-    if v.kind == "BackLitNull"  then return 0, 0, 0 end
-    if v.kind == "BackLitBool"  then return 1, v.value and 1 or 0, 0 end
-    if v.kind == "BackLitInt"   then
-        local lo, hi = u64_parts_from_number(v.raw)
-        return 2, lo, hi
-    end
-    if v.kind == "BackLitFloat" then
-        local bits = ffi.new("union { double d; uint32_t w[2]; }")
-        bits.d = tonumber(v.raw) or 0.0
-        return 3, tonumber(bits.w[0]), tonumber(bits.w[1])
-    end
-    error("unsupported literal kind " .. tostring(v.kind))
+-- Emit an inline-counted list: [count, id0, id1, ...]
+local function emit_ids(buf, list, b)
+    w4(buf, #list)
+    for _, x in ipairs(list) do w4(buf, b:nid(x)) end
 end
 
--- Call result encoding: returns (result_tag, result_dst_string, result_scalar).
--- result_tag: 0=stmt, 1=value.
-local function call_result_parts(result)
-    if result.kind == "BackCallStmt" then return 0, nil, 0 end
-    return 1, id_text(result.dst), scalar_tag(result.ty)
-end
-
--- Call target encoding: returns (target_tag, target_id_string).
--- target_tag: 0=direct, 1=extern, 2=indirect.
-local function call_target_parts(target)
-    if target.kind == "BackCallDirect"   then return 0, id_text(target.func) end
-    if target.kind == "BackCallExtern"   then return 1, id_text(target.func) end
-    if target.kind == "BackCallIndirect" then return 2, id_text(target.callee) end
-    error("unsupported call target kind " .. tostring(target.kind))
-end
-
--- Atomic ordering encoding.
-local function ordering_tag(o)
-    if o.kind == "BackAtomicSeqCst" then return 1 end
-    error("unsupported atomic ordering kind " .. tostring(o.kind))
-end
-
--- Integer semantics encoding: returns (overflow, exact).
-local function int_sem_parts(s)
-    local ok = assert(OVERFLOW_TAG[s.overflow.kind], "unsupported overflow kind " .. tostring(s.overflow.kind))
-    local ek = s.exact.kind == "BackIntExact" and 1 or 0
-    return ok, ek
-end
-
--- Float semantics encoding: returns u32.
-local function float_sem_tag(s)
-    return s.kind == "BackFloatFastMath" and 1 or 0
-end
-
--- =========================================================================
--- WireBuilder: accumulates the four sections of the wire format.
--- =========================================================================
-
-local WireBuilder = {}
-WireBuilder.__index = WireBuilder
-
-function WireBuilder.new()
-    local self = setmetatable({}, WireBuilder)
-    self._pool_map = {}        -- [string] → pool index (0-based)
-    self._pool_buf = {}        -- list: alternating len_u32, byte1, byte2, ..., pad_bytes
-    self._pool_count = 0
-    self._aux_entries = {}     -- list of { count, data[] }
-    self._aux_count = 0
-    self._cmd_buf = {}         -- flat u32 list: tag, slots..., tag, slots...
-    return self
-end
-
--- Intern a string into the pool. Returns the pool index (0-based).
-function WireBuilder:pool(text)
-    text = tostring(text)
-    local idx = self._pool_map[text]
-    if idx ~= nil then return idx end
-    idx = self._pool_count
-    self._pool_map[text] = idx
-    self._pool_count = idx + 1
-    -- Store as: len + raw bytes + padding (will be serialized in :tostring()).
-    self._pool_buf[#self._pool_buf + 1] = { len = #text, text = text }
-    return idx
-end
-
--- Append a u32 array to aux data. Returns the aux index (0-based).
-function WireBuilder:aux(data)
-    local idx = self._aux_count
-    self._aux_count = idx + 1
-    self._aux_entries[#self._aux_entries + 1] = { count = #data, data = data }
-    return idx
-end
-
--- Append a command: tag followed by slot values.
-function WireBuilder:cmd(tag, slots)
-    self._cmd_buf[#self._cmd_buf + 1] = tag
-    for i = 1, #slots do
-        self._cmd_buf[#self._cmd_buf + 1] = slots[i]
-    end
-end
-
--- Serialize the full wire buffer into a Lua string.
-function WireBuilder:tostring()
+-- Encode one function body into a byte buffer
+local function encode_body(cmds, b)
     local buf = {}
-    local function w32(v)
-        buf[#buf + 1] = string.char(
-            bit.band(v, 0xff),
-            bit.band(bit.rshift(v, 8), 0xff),
-            bit.band(bit.rshift(v, 16), 0xff),
-            bit.band(bit.rshift(v, 24), 0xff)
-        )
+    for _, cmd in ipairs(cmds) do
+        local k = cmd.kind
+
+        -- Structural: keep as-is
+        if k == "CmdCreateBlock" then
+            w4(buf, T.CreateBlock); w4(buf, b:nid(cmd.block))
+        elseif k == "CmdSwitchToBlock" then
+            w4(buf, T.SwitchToBlock); w4(buf, b:nid(cmd.block))
+        elseif k == "CmdAppendBlockParam" then
+            w4(buf, T.AppendBlockParam); w4(buf, b:nid(cmd.block)); w4(buf, st(cmd.ty))
+        elseif k == "CmdCreateStackSlot" then
+            w4(buf, T.CreateStackSlot); w4(buf, b:nid(cmd.slot)); w4(buf, cmd.size); w4(buf, cmd.align or 0)
+        elseif k == "CmdSealBlock" or k == "CmdBindEntryParams" then
+            -- BindEntryParams: emit AppendBlockParam for each param
+            if k == "CmdBindEntryParams" and b.sig then
+                for idx, p in ipairs(b.sig.params) do
+                    local val = cmd.values[idx]
+                    w4(buf, T.AppendBlockParam)
+                    w4(buf, b:nid(cmd.block))
+                    w4(buf, st(p))
+                    w4(buf, b:nid(val))
+                end
+            end
+        elseif k == "CmdAlias" then
+            -- Emit as Alias tag (decoder just does HashMap insert)
+            w4(buf, T.Alias); w4(buf, b:nid(cmd.dst)); w4(buf, b:nid(cmd.src))
+
+        -- Constants
+        elseif k == "CmdConst" then
+            local v = cmd.value
+            if v.kind == "BackLitNull" then
+                w4(buf, T.ConstNull); w4(buf, b:nid(cmd.dst))
+            elseif v.kind == "BackLitBool" then
+                w4(buf, T.ConstBool); w4(buf, b:nid(cmd.dst)); w4(buf, v.value and 1 or 0)
+            elseif v.kind == "BackLitInt" then
+                local raw = tonumber(v.raw) or 0
+                local ty = st(cmd.ty)
+                if ty == 4 then -- I32
+                    w4(buf, T.ConstI32); w4(buf, b:nid(cmd.dst)); w4(buf, bit.band(raw, 0xFFFFFFFF))
+                elseif ty == 5 then -- I64
+                    w4(buf, T.ConstI64); w4(buf, b:nid(cmd.dst))
+                    w4(buf, bit.band(raw, 0xFFFFFFFF)); w4(buf, bit.rshift(raw, 32))
+                else
+                    w4(buf, T.ConstInt); w4(buf, b:nid(cmd.dst)); w4(buf, ty)
+                    w4(buf, bit.band(raw, 0xFFFFFFFF)); w4(buf, bit.rshift(raw, 32))
+                end
+            elseif v.kind == "BackLitFloat" then
+                local bits = ffi.new("union { double d; uint32_t w[2]; }")
+                bits.d = tonumber(v.raw) or 0.0
+                if tonumber(bits.w[1]) == 0 then
+                    w4(buf, T.ConstF32); w4(buf, b:nid(cmd.dst)); w4(buf, tonumber(bits.w[0]))
+                else
+                    w4(buf, T.ConstF64); w4(buf, b:nid(cmd.dst))
+                    w4(buf, tonumber(bits.w[0])); w4(buf, tonumber(bits.w[1]))
+                end
+            end
+
+        -- Integer binary
+        elseif k == "CmdIntBinary" then
+            local op = cmd.op
+            local ok = op.kind or op  -- might be a string or table
+            if ok == "BackIntAdd" then w4(buf, T.Iadd)
+            elseif ok == "BackIntSub" then w4(buf, T.Isub)
+            elseif ok == "BackIntMul" then w4(buf, T.Imul)
+            elseif ok == "BackIntSDiv" then w4(buf, T.Sdiv)
+            elseif ok == "BackIntUDiv" then w4(buf, T.Udiv)
+            elseif ok == "BackIntSRem" then w4(buf, T.Srem)
+            elseif ok == "BackIntURem" then w4(buf, T.Urem)
+            else w4(buf, T.Iadd) end
+            w4(buf, b:nid(cmd.dst)); w4(buf, b:nid(cmd.lhs)); w4(buf, b:nid(cmd.rhs))
+
+        -- Float binary
+        elseif k == "CmdFloatBinary" then
+            local ok = cmd.op.kind or cmd.op
+            if ok == "BackFloatAdd" then w4(buf, T.Fadd)
+            elseif ok == "BackFloatSub" then w4(buf, T.Fsub)
+            elseif ok == "BackFloatMul" then w4(buf, T.Fmul)
+            elseif ok == "BackFloatDiv" then w4(buf, T.Fdiv)
+            else w4(buf, T.Fadd) end
+            w4(buf, b:nid(cmd.dst)); w4(buf, b:nid(cmd.lhs)); w4(buf, b:nid(cmd.rhs))
+
+        -- Bit binary
+        elseif k == "CmdBitBinary" then
+            local ok = cmd.op.kind or cmd.op
+            if ok == "BackBitAnd" then w4(buf, T.Band)
+            elseif ok == "BackBitOr" then w4(buf, T.Bor)
+            elseif ok == "BackBitXor" then w4(buf, T.Bxor)
+            else w4(buf, T.Band) end
+            w4(buf, b:nid(cmd.dst)); w4(buf, b:nid(cmd.lhs)); w4(buf, b:nid(cmd.rhs))
+
+        -- BitNot
+        elseif k == "CmdBitNot" then
+            w4(buf, T.Bnot); w4(buf, b:nid(cmd.dst)); w4(buf, b:nid(cmd.value))
+
+        -- Shift
+        elseif k == "CmdShift" then
+            local ok = cmd.op.kind or cmd.op
+            if ok == "BackShiftLeft" then w4(buf, T.Ishl)
+            elseif ok == "BackShiftLogicalRight" then w4(buf, T.Ushr)
+            elseif ok == "BackShiftArithmeticRight" then w4(buf, T.Sshr)
+            else w4(buf, T.Ishl) end
+            w4(buf, b:nid(cmd.dst)); w4(buf, b:nid(cmd.lhs)); w4(buf, b:nid(cmd.rhs))
+
+        -- Compare
+        elseif k == "CmdCompare" then
+            local ok = cmd.op.kind or cmd.op
+            local is_float = ok:match("^BackFCmp")
+            if is_float then w4(buf, T.Fcmp) else w4(buf, T.Icmp) end
+            w4(buf, b:nid(cmd.dst))
+            local cc = 0
+            if ok == "BackIcmpEq" then cc = 1 elseif ok == "BackIcmpNe" then cc = 2
+            elseif ok == "BackSIcmpLt" then cc = 3 elseif ok == "BackSIcmpLe" then cc = 4
+            elseif ok == "BackSIcmpGt" then cc = 5 elseif ok == "BackSIcmpGe" then cc = 6
+            elseif ok == "BackUIcmpLt" then cc = 7 elseif ok == "BackUIcmpLe" then cc = 8
+            elseif ok == "BackUIcmpGt" then cc = 9 elseif ok == "BackUIcmpGe" then cc = 10
+            elseif ok == "BackFCmpEq" then cc = 1 elseif ok == "BackFCmpNe" then cc = 2
+            elseif ok == "BackFCmpLt" then cc = 3 elseif ok == "BackFCmpLe" then cc = 4
+            elseif ok == "BackFCmpGt" then cc = 5 elseif ok == "BackFCmpGe" then cc = 6 end
+            w4(buf, cc); w4(buf, b:nid(cmd.lhs)); w4(buf, b:nid(cmd.rhs))
+
+        -- Cast
+        elseif k == "CmdCast" then
+            local ok = cmd.op.kind or cmd.op
+            if ok == "BackBitcast" then w4(buf, T.Bitcast)
+            elseif ok == "BackIreduce" then w4(buf, T.Ireduce)
+            elseif ok == "BackSextend" then w4(buf, T.Sextend)
+            elseif ok == "BackUextend" then w4(buf, T.Uextend)
+            elseif ok == "BackFpromote" then w4(buf, T.Fpromote)
+            elseif ok == "BackFdemote" then w4(buf, T.Fdemote)
+            elseif ok == "BackSToF" then w4(buf, T.FcvtFromSint)
+            elseif ok == "BackUToF" then w4(buf, T.FcvtFromUint)
+            elseif ok == "BackFToS" then w4(buf, T.FcvtToSint)
+            elseif ok == "BackFToU" then w4(buf, T.FcvtToUint)
+            else w4(buf, T.Bitcast) end
+            w4(buf, b:nid(cmd.dst)); w4(buf, st(cmd.ty)); w4(buf, b:nid(cmd.value))
+
+        -- Memory
+        elseif k == "CmdLoadInfo" then
+            local base = cmd.addr.base
+            -- Emit address computation for stack/data bases
+            if base.kind == "BackAddrStack" then
+                local at = "_a" .. tostring(b:nid(base.slot))
+                w4(buf, T.StackAddr); w4(buf, b:nid(at)); w4(buf, 12); w4(buf, b:nid(base.slot))
+                local boff = cmd.addr.byte_offset
+                if boff and b:nid(boff) ~= 0 then
+                    local apt = "_ap" .. tostring(b:nid(base.slot))
+                    w4(buf, T.PtrAdd); w4(buf, b:nid(apt)); w4(buf, b:nid(at)); w4(buf, b:nid(boff))
+                    base = nil; w4(buf, T.Load); w4(buf, b:nid(cmd.dst))
+                    local ty = cmd.ty
+                    w4(buf, ty.kind == "BackShapeScalar" and st(ty.scalar) or st(ty.vec.elem))
+                    w4(buf, memflags(cmd.memory))
+                    w4(buf, b:nid(apt))
+                else
+                    base = nil; w4(buf, T.Load); w4(buf, b:nid(cmd.dst))
+                    local ty = cmd.ty
+                    w4(buf, ty.kind == "BackShapeScalar" and st(ty.scalar) or st(ty.vec.elem))
+                    w4(buf, memflags(cmd.memory))
+                    w4(buf, b:nid(at))
+                end
+            elseif base.kind == "BackAddrData" then
+                local at = "_d" .. tostring(b:nid(base.data))
+                w4(buf, T.GlobalValue); w4(buf, b:nid(at)); w4(buf, 12); w4(buf, b:nid(base.data))
+                base = nil; w4(buf, T.Load); w4(buf, b:nid(cmd.dst))
+                local ty = cmd.ty
+                w4(buf, ty.kind == "BackShapeScalar" and st(ty.scalar) or st(ty.vec.elem))
+                w4(buf, memflags(cmd.memory))
+                w4(buf, b:nid(at))
+            else
+                w4(buf, T.Load); w4(buf, b:nid(cmd.dst))
+                local ty = cmd.ty
+                w4(buf, ty.kind == "BackShapeScalar" and st(ty.scalar) or st(ty.vec.elem))
+                w4(buf, memflags(cmd.memory))
+                w4(buf, b:nid(base.value))
+            end
+        elseif k == "CmdStoreInfo" then
+            w4(buf, T.Store); w4(buf, b:nid(cmd.value))
+            local ty = cmd.ty
+            w4(buf, ty.kind == "BackShapeScalar" and st(ty.scalar) or st(ty.vec.elem))
+            w4(buf, memflags(cmd.memory))
+            local base = cmd.addr.base
+            if base.kind == "BackAddrValue" then
+                w4(buf, 0); w4(buf, b:nid(base.value))
+            elseif base.kind == "BackAddrStack" then
+                w4(buf, 1); w4(buf, b:nid(base.slot))
+            else
+                w4(buf, 2); w4(buf, b:nid(base.data))
+            end
+            w4(buf, b:nid(cmd.addr.byte_offset))
+
+        -- Unary
+        elseif k == "CmdUnary" then
+            local ok = cmd.op.kind or cmd.op
+            if ok == "BackUnaryIneg" then w4(buf, T.Ineg)
+            elseif ok == "BackUnaryFneg" then w4(buf, T.Fneg)
+            elseif ok == "BackUnaryBnot" then w4(buf, T.Bnot)
+            elseif ok == "BackUnaryBoolNot" then w4(buf, T.Band) -- composite
+            else w4(buf, T.Ineg) end
+            w4(buf, b:nid(cmd.dst)); w4(buf, b:nid(cmd.value))
+
+        -- Intrinsic
+        elseif k == "CmdIntrinsic" then
+            local ok = cmd.op.kind or cmd.op
+            if ok == "BackIntrinsicPopcnt" then w4(buf, T.Popcnt)
+            elseif ok == "BackIntrinsicClz" then w4(buf, T.Clz)
+            elseif ok == "BackIntrinsicCtz" then w4(buf, T.Ctz)
+            elseif ok == "BackIntrinsicBswap" then w4(buf, T.Bswap)
+            elseif ok == "BackIntrinsicSqrt" then w4(buf, T.Sqrt)
+            elseif ok == "BackIntrinsicAbs" then w4(buf, T.Iabs)
+            elseif ok == "BackIntrinsicFloor" then w4(buf, T.Floor)
+            elseif ok == "BackIntrinsicCeil" then w4(buf, T.Ceil)
+            elseif ok == "BackIntrinsicTruncFloat" then w4(buf, T.Trunc)
+            elseif ok == "BackIntrinsicRound" then w4(buf, T.Nearest)
+            else w4(buf, T.Popcnt) end
+            w4(buf, b:nid(cmd.dst)); w4(buf, b:nid(cmd.args[1]))
+
+        -- Memory intrinsic
+        elseif k == "CmdMemcpy" then
+            w4(buf, T.Memcpy); w4(buf, b:nid(cmd.dst)); w4(buf, b:nid(cmd.src)); w4(buf, b:nid(cmd.len))
+        elseif k == "CmdMemset" then
+            w4(buf, T.Memset); w4(buf, b:nid(cmd.dst)); w4(buf, b:nid(cmd.byte)); w4(buf, b:nid(cmd.len))
+
+        -- Control flow
+        elseif k == "CmdReturnVoid" then
+            w4(buf, T.ReturnVoid)
+        elseif k == "CmdReturnValue" then
+            w4(buf, T.ReturnValue); w4(buf, b:nid(cmd.value))
+        elseif k == "CmdTrap" then
+            w4(buf, T.Trap)
+        elseif k == "CmdJump" then
+            w4(buf, T.Jump); w4(buf, b:nid(cmd.dest))
+            emit_ids(buf, cmd.args, b)
+        elseif k == "CmdBrIf" then
+            w4(buf, T.Brif); w4(buf, b:nid(cmd.cond)); w4(buf, b:nid(cmd.then_block))
+            emit_ids(buf, cmd.then_args, b)
+            w4(buf, b:nid(cmd.else_block))
+            emit_ids(buf, cmd.else_args, b)
+
+        -- Select / FMA
+        elseif k == "CmdSelect" then
+            w4(buf, T.Select)
+            w4(buf, b:nid(cmd.dst)); w4(buf, b:nid(cmd.cond))
+            w4(buf, b:nid(cmd.then_value)); w4(buf, b:nid(cmd.else_value))
+        elseif k == "CmdFma" then
+            w4(buf, T.Fma); w4(buf, b:nid(cmd.dst))
+            w4(buf, b:nid(cmd.a)); w4(buf, b:nid(cmd.b)); w4(buf, b:nid(cmd.c))
+
+        -- Vector splat
+        elseif k == "CmdVecSplat" then
+            w4(buf, T.Splat); w4(buf, b:nid(cmd.dst))
+            w4(buf, st(cmd.ty.elem)); w4(buf, b:nid(cmd.value))
+
+        -- Vector insert lane
+        elseif k == "CmdVecInsertLane" then
+            w4(buf, T.InsertLane); w4(buf, b:nid(cmd.dst))
+            w4(buf, b:nid(cmd.value)); w4(buf, b:nid(cmd.lane_value)); w4(buf, cmd.lane)
+
+        -- Vector extract lane
+        elseif k == "CmdVecExtractLane" then
+            w4(buf, T.ExtractLane); w4(buf, b:nid(cmd.dst))
+            w4(buf, st(cmd.ty)); w4(buf, b:nid(cmd.value)); w4(buf, cmd.lane)
+
+        -- Vector binary (check op.kind or string)
+        elseif k == "CmdVecBinary" then
+            local ok = cmd.op.kind or cmd.op
+            if ok == "BackVecIntAdd" then w4(buf, T.VecIadd)
+            elseif ok == "BackVecIntSub" then w4(buf, T.VecIsub)
+            elseif ok == "BackVecIntMul" then w4(buf, T.VecImul)
+            elseif ok == "BackVecBitAnd" then w4(buf, T.VecBand)
+            elseif ok == "BackVecBitOr" then w4(buf, T.VecBor)
+            elseif ok == "BackVecBitXor" then w4(buf, T.VecBxor)
+            else w4(buf, T.VecIadd) end
+            w4(buf, b:nid(cmd.dst)); w4(buf, b:nid(cmd.lhs)); w4(buf, b:nid(cmd.rhs))
+
+        -- Vector compare
+        elseif k == "CmdVecCompare" then
+            local ok = cmd.op.kind or cmd.op
+            if ok == "BackVecIcmpEq" then w4(buf, T.VecIcmpEq)
+            elseif ok == "BackVecIcmpNe" then w4(buf, T.VecIcmpNe)
+            elseif ok == "BackVecSIcmpLt" then w4(buf, T.VecSIcmpLt)
+            elseif ok == "BackVecSIcmpLe" then w4(buf, T.VecSIcmpLe)
+            elseif ok == "BackVecSIcmpGt" then w4(buf, T.VecSIcmpGt)
+            elseif ok == "BackVecSIcmpGe" then w4(buf, T.VecSIcmpGe)
+            elseif ok == "BackVecUIcmpLt" then w4(buf, T.VecUIcmpLt)
+            elseif ok == "BackVecUIcmpLe" then w4(buf, T.VecUIcmpLe)
+            elseif ok == "BackVecUIcmpGt" then w4(buf, T.VecUIcmpGt)
+            elseif ok == "BackVecUIcmpGe" then w4(buf, T.VecUIcmpGe)
+            else w4(buf, T.VecIadd) end
+            w4(buf, b:nid(cmd.dst)); w4(buf, b:nid(cmd.lhs)); w4(buf, b:nid(cmd.rhs))
+
+        -- Vector select
+        elseif k == "CmdVecSelect" then
+            w4(buf, T.VecSelect); w4(buf, b:nid(cmd.dst))
+            w4(buf, b:nid(cmd.mask)); w4(buf, b:nid(cmd.then_value)); w4(buf, b:nid(cmd.else_value))
+
+        -- Vector load
+        elseif k == "CmdVecLoadInfo" then
+            w4(buf, T.VecLoad); w4(buf, b:nid(cmd.dst))
+            w4(buf, st(cmd.ty.elem)); w4(buf, cmd.ty.lanes)
+            w4(buf, memflags(cmd.memory))
+            local base = cmd.addr.base
+            if base.kind == "BackAddrValue" then w4(buf, 0); w4(buf, b:nid(base.value))
+            elseif base.kind == "BackAddrStack" then w4(buf, 1); w4(buf, b:nid(base.slot))
+            else w4(buf, 2); w4(buf, b:nid(base.data)) end
+            w4(buf, b:nid(cmd.addr.byte_offset))
+
+        -- Vector store
+        elseif k == "CmdVecStoreInfo" then
+            w4(buf, T.VecStore); w4(buf, b:nid(cmd.value))
+            w4(buf, st(cmd.ty.elem)); w4(buf, cmd.ty.lanes)
+            w4(buf, memflags(cmd.memory))
+            local base = cmd.addr.base
+            if base.kind == "BackAddrValue" then w4(buf, 0); w4(buf, b:nid(base.value))
+            elseif base.kind == "BackAddrStack" then w4(buf, 1); w4(buf, b:nid(base.slot))
+            else w4(buf, 2); w4(buf, b:nid(base.data)) end
+            w4(buf, b:nid(cmd.addr.byte_offset))
+
+        -- Call
+        elseif k == "CmdCall" then
+            local res = cmd.result
+            local rt = res.kind == "BackCallValue" and 1 or 0
+            local tgt = cmd.target
+            local tag, target_id
+            if tgt.kind == "BackCallDirect" then
+                tag = T.CallDirect
+                target_id = b.func_map[id(tgt.func)] or 0
+            elseif tgt.kind == "BackCallExtern" then
+                tag = T.CallExtern
+                target_id = b.func_map[id(tgt.func)] or 0
+            else
+                tag = T.CallIndirect
+                target_id = b:nid(tgt.callee)
+            end
+            -- tag + 5 fixed slots: [result_tag, dst, scalar_type, target_id, sig_id]
+            w4(buf, tag)
+            w4(buf, rt)
+            if rt == 1 then
+                w4(buf, b:nid(res.dst))
+                w4(buf, st(res.ty))
+            else
+                w4(buf, 0xFFFFFFFF)
+                w4(buf, 0)
+            end
+            w4(buf, target_id)
+            w4(buf, 0) -- sig_id placeholder
+            emit_ids(buf, cmd.args, b)
+        end
+    end
+    return table.concat(buf)
+end
+
+function M.encode(program)
+    -- Collect: sigs, funcs, datas, inits, externs, body cmds per function
+    local sigs = {}
+    local funcs = {}
+    local datas = {}
+    local inits = {}
+    local externs = {}
+    local bodies = {}
+    local current = { cmds = {}, func_id = nil, sig = nil }
+    local current_sig_id = nil
+    local sig_map = {}  -- func_id -> { params = [{kind}], results = [{kind}] }
+    local func_sig_map = {} -- func text -> sig
+
+    local function flush()
+        if #current.cmds > 0 then
+            if current.func_id then
+                current.sig = func_sig_map[current.func_id]
+            end
+            bodies[#bodies + 1] = current
+            current = { cmds = {}, func_id = nil, sig = nil }
+        end
     end
 
-    -- 1. Header.
-    w32(0x4D4C4254)    -- magic "MLBT"
-    w32(3)              -- version
-    w32(self._pool_count)
-    w32(self._aux_count)
-
-    -- 2. String pool.
-    for i = 1, #self._pool_buf do
-        local entry = self._pool_buf[i]
-        w32(entry.len)
-        if entry.len > 0 then
-            buf[#buf + 1] = entry.text
-        end
-        local pad = (4 - (entry.len % 4)) % 4
-        if pad > 0 then
-            buf[#buf + 1] = ("\0"):rep(pad)
+    for _, cmd in ipairs(program.cmds) do
+        local k = cmd.kind
+        if k == "CmdCreateSig" then
+            flush()
+            local sid = id(cmd.sig)
+            local params = {}
+            for i, p in ipairs(cmd.params) do params[i] = p end
+            local results = {}
+            for i, r in ipairs(cmd.results) do results[i] = r end
+            sig_map[sid] = { params = params, results = results }
+            sigs[#sigs + 1] = cmd
+        elseif k == "CmdDeclareFunc" or k == "CmdDeclareFuncExport" or k == "CmdDeclareFuncLocal" then
+            flush()
+            local fid = id(cmd.func)
+            local sid = id(cmd.sig)
+            func_sig_map[fid] = sig_map[sid]
+            funcs[#funcs + 1] = cmd
+        elseif k == "CmdDeclareFuncExtern" or k == "CmdDeclareExtern" then
+            flush()
+            externs[#externs + 1] = cmd
+        elseif k == "CmdDeclareData" then
+            flush()
+            datas[#datas + 1] = cmd
+        elseif k == "CmdDataInit" or k == "CmdDataInitZero" then
+            flush()
+            inits[#inits + 1] = cmd
+        elseif k == "CmdBeginFunc" then
+            flush()
+            current.func_id = id(cmd.func)
+        elseif k == "CmdFinishFunc" then
+            flush()
+        elseif k == "CmdFinalizeModule" then
+            flush()
+        elseif k == "CmdTargetModel" or k == "CmdAliasFact" then
+            -- skip, no-op in Rust decoder
+        else
+            current.cmds[#current.cmds + 1] = cmd
         end
     end
+    flush()
 
-    -- 3. Aux data.
-    for i = 1, #self._aux_entries do
-        local entry = self._aux_entries[i]
-        w32(entry.count)
-        for j = 1, entry.count do
-            w32(entry.data[j])
-        end
+    renumber(bodies)
+
+    -- Build func_id mapping (text -> wire_id)
+    local func_map = {}
+    for i, cmd in ipairs(funcs) do
+        func_map[id(cmd.func)] = i - 1
     end
 
-    -- 4. Command stream.
-    for i = 1, #self._cmd_buf do
-        w32(self._cmd_buf[i])
+    -- Encode each body to compute lengths
+    local body_data = {}
+    local total_body = 0
+    for i, b in ipairs(bodies) do
+        b.func_map = func_map
+        local bytes = encode_body(b.cmds, b)
+        body_data[i] = { bytes = bytes, offset = total_body }
+        total_body = total_body + #bytes
+    end
+
+    -- Build layout
+    local header_size = 28  -- 7 u32
+    local decl_size = 0
+
+    -- Estimate decl size: sigs + funcs + datas + inits + externs
+    decl_size = decl_size + 4 -- sig count
+    for _ in ipairs(sigs) do
+        decl_size = decl_size + 4 -- sig_id
+        -- We'll write params inline
+        decl_size = decl_size + 4 + 4 -- n_params + n_results
+        -- plus param types + result types (estimate per sig)
+    end
+
+    -- We need to compute precisely. Let's build the decl section first.
+    local dbuf = {}
+    -- Sigs
+    w4(dbuf, #sigs)
+    for _, cmd in ipairs(sigs) do
+        w4(dbuf, 0) -- sig_id placeholder
+        local params = cmd.params
+        w4(dbuf, #params)
+        for _, p in ipairs(params) do w4(dbuf, st(p)) end
+        local results = cmd.results
+        w4(dbuf, #results)
+        for _, r in ipairs(results) do w4(dbuf, st(r)) end
+    end
+    -- Build func_id mapping (text -> wire_id)
+    local func_map = {}
+    for i, cmd in ipairs(funcs) do
+        func_map[id(cmd.func)] = i - 1
+    end
+
+    -- Funcs
+    w4(dbuf, #funcs)
+    for i, cmd in ipairs(funcs) do
+        w4(dbuf, i - 1); w4(dbuf, 0); -- func_id, sig_id (placeholders)
+        local v = cmd.visibility
+        local vis = (type(v) == "table" and v.kind == "VisibilityExport") and 1 or 0
+        w4(dbuf, vis)
+        local name = id(cmd.func)
+        w4(dbuf, #name)
+        -- write name as raw bytes
+        dbuf[#dbuf+1] = name
+        local pad = (4 - (#name % 4)) % 4
+        if pad > 0 then dbuf[#dbuf+1] = ("\0"):rep(pad) end
+    end
+    -- Datas
+    w4(dbuf, #datas)
+    for _, cmd in ipairs(datas) do
+        w4(dbuf, 0); w4(dbuf, cmd.size); w4(dbuf, cmd.align or 0)
+    end
+    -- Inits
+    w4(dbuf, #inits)
+    for _, cmd in ipairs(inits) do
+        w4(dbuf, 0) -- data_id placeholder
+        if cmd.kind == "CmdDataInitZero" then
+            w4(dbuf, cmd.offset); w4(dbuf, 0); w4(dbuf, cmd.size); w4(dbuf, 0)
+        else
+            w4(dbuf, cmd.offset)
+            local v = cmd.value
+            if v.kind == "BackLitNull" then w4(dbuf, 0); w4(dbuf, 0); w4(dbuf, 0)
+            elseif v.kind == "BackLitBool" then w4(dbuf, 1); w4(dbuf, v.value and 1 or 0); w4(dbuf, 0)
+            elseif v.kind == "BackLitInt" then
+                local raw = tonumber(v.raw) or 0
+                w4(dbuf, 2); w4(dbuf, bit.band(raw, 0xFFFFFFFF)); w4(dbuf, bit.rshift(raw, 32))
+            elseif v.kind == "BackLitFloat" then
+                local bits = ffi.new("union { double d; uint32_t w[2]; }")
+                bits.d = tonumber(v.raw) or 0.0
+                w4(dbuf, 3); w4(dbuf, tonumber(bits.w[0])); w4(dbuf, tonumber(bits.w[1]))
+            else w4(dbuf, 0); w4(dbuf, 0); w4(dbuf, 0) end
+        end
+    end
+    -- Externs
+    w4(dbuf, #externs)
+    for _, cmd in ipairs(externs) do
+        w4(dbuf, 0); w4(dbuf, 0); w4(dbuf, 0)
+    end
+
+    local decl_bytes = table.concat(dbuf)
+    local body_tbl_size = #body_data * 12
+    local body_start = header_size + #decl_bytes + body_tbl_size
+
+    -- Build full buffer
+    local buf = {}
+    -- Header
+    w4(buf, 0x4D4C); w4(buf, 4); w4(buf, #body_data)
+    w4(buf, header_size); w4(buf, #decl_bytes)
+    w4(buf, header_size + #decl_bytes); w4(buf, body_tbl_size)
+
+    -- Declarations
+    buf[#buf+1] = decl_bytes
+
+    -- Body table
+    for i, bd in ipairs(body_data) do
+        local bid = func_map[bodies[i].func_id] or 0
+        w4(buf, bid); w4(buf, body_start + bd.offset); w4(buf, #bd.bytes)
+    end
+
+    -- Body streams
+    for _, bd in ipairs(body_data) do
+        buf[#buf+1] = bd.bytes
     end
 
     return table.concat(buf)
 end
 
--- =========================================================================
--- Encoder: walks a BackProgram and writes into a WireBuilder.
--- =========================================================================
-
-local Encoder = {}
-Encoder.__index = Encoder
-
-function Encoder.new(Back)
-    local self = setmetatable({}, Encoder)
-    self._Back = Back
-    self._wb = WireBuilder.new()
-    return self
-end
-
--- Intern an ID string into the pool and return its pool index.
-function Encoder:pid(node)
-    return self._wb:pool(id_text(node))
-end
-
--- Intern a list of ID strings into aux and return (aux_idx, count).
-function Encoder:val_ids(nodes)
-    local data = {}
-    for i = 1, #nodes do data[i] = self._wb:pool(id_text(nodes[i])) end
-    return self._wb:aux(data), #nodes
-end
-
--- Intern a list of scalar tags into aux and return (aux_idx, count).
-function Encoder:scalar_ids(nodes)
-    local data = {}
-    for i = 1, #nodes do data[i] = scalar_tag(nodes[i]) end
-    return self._wb:aux(data), #nodes
-end
-
--- Memory info: returns 8 u32 values for the slots.
-function Encoder:mem(m)
-    local access_id, ak, ab, dk, db, tk, mk, mode = mem_parts(m, self._Back)
-    return self._wb:pool(access_id), ak, ab, dk, db, tk, mk, mode
-end
-
--- Encode a single command.
-function Encoder:encode_cmd(cmd)
-    local k = cmd.kind
-    local wb = self._wb
-    local tag = assert(CMD_TAG[k], "unsupported command kind " .. tostring(k))
-
-    if k == "CmdTargetModel" or k == "CmdAliasFact" then
-        wb:cmd(tag, {})
-
-    elseif k == "CmdCreateSig" then
-        local pa, pn = self:scalar_ids(cmd.params)
-        local ra, rn = self:scalar_ids(cmd.results)
-        wb:cmd(tag, { self:pid(cmd.sig), pa, pn, ra, rn })
-
-    elseif k == "CmdDeclareData" then
-        wb:cmd(tag, { self:pid(cmd.data), cmd.size, cmd.align })
-
-    elseif k == "CmdDataInitZero" then
-        wb:cmd(tag, { self:pid(cmd.data), cmd.offset, cmd.size })
-
-    elseif k == "CmdDataInit" then
-        local lt, ll, lh = lit_parts(cmd.value)
-        wb:cmd(tag, { self:pid(cmd.data), cmd.offset, scalar_tag(cmd.ty), lt, ll, lh })
-
-    elseif k == "CmdDataAddr" then
-        wb:cmd(tag, { self:pid(cmd.dst), self:pid(cmd.data) })
-
-    elseif k == "CmdFuncAddr" then
-        wb:cmd(tag, { self:pid(cmd.dst), self:pid(cmd.func) })
-
-    elseif k == "CmdExternAddr" then
-        wb:cmd(tag, { self:pid(cmd.dst), self:pid(cmd.func) })
-
-    elseif k == "CmdDeclareFunc" then
-        local vis = cmd.visibility.kind == "VisibilityExport" and 1 or 0
-        wb:cmd(tag, { vis, self:pid(cmd.func), self:pid(cmd.sig) })
-
-    elseif k == "CmdDeclareExtern" then
-        wb:cmd(tag, { self:pid(cmd.func), wb:pool(cmd.symbol), self:pid(cmd.sig) })
-
-    elseif k == "CmdBeginFunc" then
-        wb:cmd(tag, { self:pid(cmd.func) })
-
-    elseif k == "CmdCreateBlock" then
-        wb:cmd(tag, { self:pid(cmd.block) })
-
-    elseif k == "CmdSwitchToBlock" then
-        wb:cmd(tag, { self:pid(cmd.block) })
-
-    elseif k == "CmdSealBlock" then
-        wb:cmd(tag, { self:pid(cmd.block) })
-
-    elseif k == "CmdBindEntryParams" then
-        local va, vc = self:val_ids(cmd.values)
-        wb:cmd(tag, { self:pid(cmd.block), va, vc })
-
-    elseif k == "CmdAppendBlockParam" then
-        local st, sc, sl = shape_parts(cmd.ty)
-        wb:cmd(tag, { self:pid(cmd.block), self:pid(cmd.value), st, sc, sl })
-
-    elseif k == "CmdCreateStackSlot" then
-        wb:cmd(tag, { self:pid(cmd.slot), cmd.size, cmd.align })
-
-    elseif k == "CmdAlias" then
-        wb:cmd(tag, { self:pid(cmd.dst), self:pid(cmd.src) })
-
-    elseif k == "CmdStackAddr" then
-        wb:cmd(tag, { self:pid(cmd.dst), self:pid(cmd.slot) })
-
-    elseif k == "CmdConst" then
-        local lt, ll, lh = lit_parts(cmd.value)
-        wb:cmd(tag, { self:pid(cmd.dst), scalar_tag(cmd.ty), lt, ll, lh })
-
-    elseif k == "CmdUnary" then
-        local st, sc, sl = shape_parts(cmd.ty)
-        wb:cmd(tag, { self:pid(cmd.dst), op_tag(UNARY_OP_TAG, cmd.op), st, sc, sl, self:pid(cmd.value) })
-
-    elseif k == "CmdIntrinsic" then
-        local st, sc, sl = shape_parts(cmd.ty)
-        local aa, ac = self:val_ids(cmd.args)
-        wb:cmd(tag, { self:pid(cmd.dst), op_tag(INTRINSIC_OP_TAG, cmd.op), st, sc, sl, aa, ac })
-
-    elseif k == "CmdCompare" then
-        local st, sc, sl = shape_parts(cmd.ty)
-        wb:cmd(tag, { self:pid(cmd.dst), op_tag(COMPARE_OP_TAG, cmd.op), st, sc, sl, self:pid(cmd.lhs), self:pid(cmd.rhs) })
-
-    elseif k == "CmdCast" then
-        wb:cmd(tag, { self:pid(cmd.dst), op_tag(CAST_OP_TAG, cmd.op), scalar_tag(cmd.ty), self:pid(cmd.value) })
-
-    elseif k == "CmdPtrOffset" then
-        local bt, bi_str = base_parts(cmd.base)
-        local co_lo, co_hi = u64_parts_from_number(cmd.const_offset)
-        wb:cmd(tag, { self:pid(cmd.dst), bt, wb:pool(bi_str), self:pid(cmd.index), cmd.elem_size, co_lo, co_hi })
-
-    elseif k == "CmdLoadInfo" then
-        local st, sc, sl = shape_parts(cmd.ty)
-        local bt, bi_str = base_parts(cmd.addr.base)
-        local bi = wb:pool(bi_str)
-        local m1, m2, m3, m4, m5, m6, m7, m8 = self:mem(cmd.memory)
-        wb:cmd(tag, { self:pid(cmd.dst), st, sc, sl, bt, bi, self:pid(cmd.addr.byte_offset), m1, m2, m3, m4, m5, m6, m7, m8 })
-
-    elseif k == "CmdStoreInfo" then
-        local st, sc, sl = shape_parts(cmd.ty)
-        local bt, bi_str = base_parts(cmd.addr.base)
-        local bi = wb:pool(bi_str)
-        local m1, m2, m3, m4, m5, m6, m7, m8 = self:mem(cmd.memory)
-        wb:cmd(tag, { st, sc, sl, bt, bi, self:pid(cmd.addr.byte_offset), self:pid(cmd.value), m1, m2, m3, m4, m5, m6, m7, m8 })
-
-    elseif k == "CmdAtomicLoad" then
-        local bt, bi_str = base_parts(cmd.addr.base)
-        local bi = wb:pool(bi_str)
-        local m1, m2, m3, m4, m5, m6, m7, m8 = self:mem(cmd.memory)
-        wb:cmd(tag, { self:pid(cmd.dst), scalar_tag(cmd.ty), bt, bi, self:pid(cmd.addr.byte_offset), m1, m2, m3, m4, m5, m6, m7, m8, ordering_tag(cmd.ordering), 0 })
-
-    elseif k == "CmdAtomicStore" then
-        local bt, bi_str = base_parts(cmd.addr.base)
-        local bi = wb:pool(bi_str)
-        local m1, m2, m3, m4, m5, m6, m7, m8 = self:mem(cmd.memory)
-        wb:cmd(tag, { scalar_tag(cmd.ty), bt, bi, self:pid(cmd.addr.byte_offset), self:pid(cmd.value), m1, m2, m3, m4, m5, m6, m7, m8, ordering_tag(cmd.ordering) })
-
-    elseif k == "CmdAtomicRmw" then
-        local bt, bi_str = base_parts(cmd.addr.base)
-        local bi = wb:pool(bi_str)
-        local m1, m2, m3, m4, m5, m6, m7, m8 = self:mem(cmd.memory)
-        wb:cmd(tag, { self:pid(cmd.dst), op_tag(ATOMIC_RMW_OP_TAG, cmd.op), scalar_tag(cmd.ty), bt, bi, self:pid(cmd.addr.byte_offset), self:pid(cmd.value), m1, m2, m3, m4, m5, m6, m7, m8, ordering_tag(cmd.ordering) })
-
-    elseif k == "CmdAtomicCas" then
-        local bt, bi_str = base_parts(cmd.addr.base)
-        local bi = wb:pool(bi_str)
-        local m1, m2, m3, m4, m5, m6, m7, m8 = self:mem(cmd.memory)
-        wb:cmd(tag, { self:pid(cmd.dst), scalar_tag(cmd.ty), bt, bi, self:pid(cmd.addr.byte_offset), self:pid(cmd.expected), self:pid(cmd.replacement), m1, m2, m3, m4, m5, m6, m7, m8, ordering_tag(cmd.ordering), 0 })
-
-    elseif k == "CmdAtomicFence" then
-        wb:cmd(tag, { ordering_tag(cmd.ordering) })
-
-    elseif k == "CmdIntBinary" then
-        local ok, ek = int_sem_parts(cmd.semantics)
-        wb:cmd(tag, { self:pid(cmd.dst), op_tag(INT_OP_TAG, cmd.op), scalar_tag(cmd.scalar), ok, ek, self:pid(cmd.lhs), self:pid(cmd.rhs) })
-
-    elseif k == "CmdBitBinary" then
-        wb:cmd(tag, { self:pid(cmd.dst), op_tag(BIT_OP_TAG, cmd.op), scalar_tag(cmd.scalar), self:pid(cmd.lhs), self:pid(cmd.rhs) })
-
-    elseif k == "CmdBitNot" then
-        wb:cmd(tag, { self:pid(cmd.dst), scalar_tag(cmd.scalar), self:pid(cmd.value) })
-
-    elseif k == "CmdShift" then
-        wb:cmd(tag, { self:pid(cmd.dst), op_tag(SHIFT_OP_TAG, cmd.op), scalar_tag(cmd.scalar), self:pid(cmd.lhs), self:pid(cmd.rhs) })
-
-    elseif k == "CmdRotate" then
-        wb:cmd(tag, { self:pid(cmd.dst), op_tag(ROTATE_OP_TAG, cmd.op), scalar_tag(cmd.scalar), self:pid(cmd.lhs), self:pid(cmd.rhs) })
-
-    elseif k == "CmdFloatBinary" then
-        wb:cmd(tag, { self:pid(cmd.dst), op_tag(FLOAT_OP_TAG, cmd.op), scalar_tag(cmd.scalar), float_sem_tag(cmd.semantics), self:pid(cmd.lhs), self:pid(cmd.rhs) })
-
-    elseif k == "CmdMemcpy" then
-        wb:cmd(tag, { self:pid(cmd.dst), self:pid(cmd.src), self:pid(cmd.len) })
-
-    elseif k == "CmdMemset" then
-        wb:cmd(tag, { self:pid(cmd.dst), self:pid(cmd.byte), self:pid(cmd.len) })
-
-    elseif k == "CmdSelect" then
-        local st, sc, sl = shape_parts(cmd.ty)
-        wb:cmd(tag, { self:pid(cmd.dst), st, sc, sl, self:pid(cmd.cond), self:pid(cmd.then_value), self:pid(cmd.else_value) })
-
-    elseif k == "CmdFma" then
-        wb:cmd(tag, { self:pid(cmd.dst), scalar_tag(cmd.ty), float_sem_tag(cmd.semantics), self:pid(cmd.a), self:pid(cmd.b), self:pid(cmd.c) })
-
-    elseif k == "CmdVecSplat" then
-        wb:cmd(tag, { self:pid(cmd.dst), scalar_tag(cmd.ty.elem), cmd.ty.lanes, self:pid(cmd.value) })
-
-    elseif k == "CmdVecBinary" then
-        wb:cmd(tag, { self:pid(cmd.dst), op_tag(VEC_BIN_OP_TAG, cmd.op), scalar_tag(cmd.ty.elem), cmd.ty.lanes, self:pid(cmd.lhs), self:pid(cmd.rhs) })
-
-    elseif k == "CmdVecCompare" then
-        wb:cmd(tag, { self:pid(cmd.dst), op_tag(VEC_CMP_OP_TAG, cmd.op), scalar_tag(cmd.ty.elem), cmd.ty.lanes, self:pid(cmd.lhs), self:pid(cmd.rhs) })
-
-    elseif k == "CmdVecSelect" then
-        wb:cmd(tag, { self:pid(cmd.dst), scalar_tag(cmd.ty.elem), cmd.ty.lanes, self:pid(cmd.mask), self:pid(cmd.then_value), self:pid(cmd.else_value) })
-
-    elseif k == "CmdVecMask" then
-        local aa, ac = self:val_ids(cmd.args)
-        wb:cmd(tag, { self:pid(cmd.dst), op_tag(VEC_MASK_OP_TAG, cmd.op), scalar_tag(cmd.ty.elem), cmd.ty.lanes, aa, ac })
-
-    elseif k == "CmdVecInsertLane" then
-        wb:cmd(tag, { self:pid(cmd.dst), scalar_tag(cmd.ty.elem), cmd.ty.lanes, self:pid(cmd.value), self:pid(cmd.lane_value), cmd.lane })
-
-    elseif k == "CmdVecExtractLane" then
-        wb:cmd(tag, { self:pid(cmd.dst), scalar_tag(cmd.ty), self:pid(cmd.value), cmd.lane })
-
-    elseif k == "CmdVecLoadInfo" then
-        local bt, bi_str = base_parts(cmd.addr.base)
-        local bi = wb:pool(bi_str)
-        local m1, m2, m3, m4, m5, m6, m7, m8 = self:mem(cmd.memory)
-        wb:cmd(tag, { self:pid(cmd.dst), scalar_tag(cmd.ty.elem), cmd.ty.lanes, bt, bi, self:pid(cmd.addr.byte_offset), m1, m2, m3, m4, m5, m6, m7, m8, 0 })
-
-    elseif k == "CmdVecStoreInfo" then
-        local bt, bi_str = base_parts(cmd.addr.base)
-        local bi = wb:pool(bi_str)
-        local m1, m2, m3, m4, m5, m6, m7, m8 = self:mem(cmd.memory)
-        wb:cmd(tag, { scalar_tag(cmd.ty.elem), cmd.ty.lanes, bt, bi, self:pid(cmd.addr.byte_offset), self:pid(cmd.value), m1, m2, m3, m4, m5, m6, m7, m8 })
-
-    elseif k == "CmdCall" then
-        local rt, rd_str, rs = call_result_parts(cmd.result)
-        local tt, ti_str = call_target_parts(cmd.target)
-        local rd = rd_str and wb:pool(rd_str) or 0xFFFFFFFF
-        local ti = wb:pool(ti_str)
-        local aa, ac = self:val_ids(cmd.args)
-        wb:cmd(tag, { rt, rd, rs, tt, ti, self:pid(cmd.sig), aa, ac })
-
-    elseif k == "CmdJump" then
-        local aa, ac = self:val_ids(cmd.args)
-        wb:cmd(tag, { self:pid(cmd.dest), aa, ac })
-
-    elseif k == "CmdBrIf" then
-        local ta, tc = self:val_ids(cmd.then_args)
-        local ea, ec = self:val_ids(cmd.else_args)
-        wb:cmd(tag, { self:pid(cmd.cond), self:pid(cmd.then_block), ta, tc, self:pid(cmd.else_block), ea, ec })
-
-    elseif k == "CmdSwitchInt" then
-        local cases_data = {}
-        for i = 1, #cmd.cases do
-            local lo, hi = u64_parts_from_number(cmd.cases[i].raw)
-            cases_data[#cases_data + 1] = lo
-            cases_data[#cases_data + 1] = hi
-            cases_data[#cases_data + 1] = wb:pool(id_text(cmd.cases[i].dest))
-        end
-        local ca = wb:aux(cases_data)
-        wb:cmd(tag, { self:pid(cmd.value), scalar_tag(cmd.ty), ca, #cmd.cases, self:pid(cmd.default_dest) })
-
-    elseif k == "CmdReturnVoid" then
-        wb:cmd(tag, {})
-
-    elseif k == "CmdReturnValue" then
-        wb:cmd(tag, { self:pid(cmd.value) })
-
-    elseif k == "CmdTrap" then
-        wb:cmd(tag, {})
-
-    elseif k == "CmdFinishFunc" then
-        wb:cmd(tag, { self:pid(cmd.func) })
-
-    elseif k == "CmdFinalizeModule" then
-        wb:cmd(tag, {})
-
-    else
-        error("unsupported command kind " .. tostring(k))
-    end
-end
-
--- Encode a full BackProgram into a binary string.
-function Encoder:encode(program)
-    for i = 1, #program.cmds do
-        self:encode_cmd(program.cmds[i])
-    end
-    return self._wb:tostring()
-end
-
--- =========================================================================
--- Public API: same interface as back_command_tape.
--- =========================================================================
-
 function M.Define(T)
-    local Back = T.MoonBack or T.MoonBack
-    assert(Back, "moonlift.back_command_binary.Define expects MoonBack in the context")
-
     local function encode(program)
-        local enc = Encoder.new(Back)
-        return enc:encode(program)
+        return M.encode(program)
     end
-
     return { encode = encode }
 end
 

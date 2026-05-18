@@ -31,8 +31,8 @@ fn keep_rust_backend_symbols_linked() {
     // even before the native driver calls all paths.
     let _ = moonlift::ffi::moonlift_jit_new as extern "C" fn() -> *mut moonlift::ffi::moonlift_jit_t;
     let _ = moonlift::ffi::moonlift_jit_free as extern "C" fn(*mut moonlift::ffi::moonlift_jit_t);
-    let _ = moonlift::ffi::moonlift_jit_compile_binary as extern "C" fn(*mut moonlift::ffi::moonlift_jit_t, *const u8, usize) -> *mut moonlift::ffi::moonlift_artifact_t;
-    let _ = moonlift::ffi::moonlift_artifact_getpointer as extern "C" fn(*const moonlift::ffi::moonlift_artifact_t, *const std::ffi::c_char) -> *const c_void;
+    let _ = moonlift::ffi::moonlift_jit_compile_binary as extern "C" fn(*mut moonlift::ffi::moonlift_jit_t, *const u8, usize) -> *mut std::ffi::c_void;
+    let _ = moonlift::ffi::moonlift_artifact_getpointer as extern "C" fn(*mut moonlift::ffi::moonlift_artifact_t, *const std::ffi::c_char) -> *const std::ffi::c_void;
     let _ = moonlift::ffi::moonlift_artifact_free as extern "C" fn(*mut moonlift::ffi::moonlift_artifact_t);
 }
 
