@@ -448,13 +448,414 @@ pub enum BackCmd {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BackDeclCmd {
+    CreateSig(BackSigId, Vec<BackScalar>, Vec<BackScalar>),
+    DeclareData(BackDataId, u32, u32),
+    DataInitZero(BackDataId, u32, u32),
+    DataInitInt(BackDataId, u32, BackScalar, String),
+    DataInitFloat(BackDataId, u32, BackScalar, String),
+    DataInitBool(BackDataId, u32, bool),
+    DeclareFuncLocal(BackFuncId, BackSigId),
+    DeclareFuncExport(BackFuncId, BackSigId),
+    DeclareFuncExtern(BackExternId, String, BackSigId),
+    BeginFunc(BackFuncId),
+    FinishFunc(BackFuncId),
+    FinalizeModule,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BackBodyCmd {
+    CreateBlock(BackBlockId),
+    SwitchToBlock(BackBlockId),
+    SealBlock(BackBlockId),
+    BindEntryParams(BackBlockId, Vec<BackValId>),
+    AppendBlockParam(BackBlockId, BackValId, BackScalar),
+    AppendVecBlockParam(BackBlockId, BackValId, BackVec),
+    CreateStackSlot(BackStackSlotId, u32, u32),
+    Alias(BackValId, BackValId),
+    StackAddr(BackValId, BackStackSlotId),
+    DataAddr(BackValId, BackDataId),
+    FuncAddr(BackValId, BackFuncId),
+    ExternAddr(BackValId, BackExternId),
+    ConstInt(BackValId, BackScalar, String),
+    ConstFloat(BackValId, BackScalar, String),
+    ConstBool(BackValId, bool),
+    ConstNull(BackValId),
+    Ineg(BackValId, BackScalar, BackValId),
+    Fneg(BackValId, BackScalar, BackValId),
+    Bnot(BackValId, BackScalar, BackValId),
+    BoolNot(BackValId, BackValId),
+    Popcount(BackValId, BackScalar, BackValId),
+    Clz(BackValId, BackScalar, BackValId),
+    Ctz(BackValId, BackScalar, BackValId),
+    Bswap(BackValId, BackScalar, BackValId),
+    Sqrt(BackValId, BackScalar, BackValId),
+    Abs(BackValId, BackScalar, BackValId),
+    Floor(BackValId, BackScalar, BackValId),
+    Ceil(BackValId, BackScalar, BackValId),
+    TruncFloat(BackValId, BackScalar, BackValId),
+    Round(BackValId, BackScalar, BackValId),
+    Iadd(BackValId, BackScalar, BackIntSemantics, BackValId, BackValId),
+    Isub(BackValId, BackScalar, BackIntSemantics, BackValId, BackValId),
+    Imul(BackValId, BackScalar, BackIntSemantics, BackValId, BackValId),
+    Fadd(BackValId, BackScalar, BackFloatSemantics, BackValId, BackValId),
+    Fsub(BackValId, BackScalar, BackFloatSemantics, BackValId, BackValId),
+    Fmul(BackValId, BackScalar, BackFloatSemantics, BackValId, BackValId),
+    Sdiv(BackValId, BackScalar, BackIntSemantics, BackValId, BackValId),
+    Udiv(BackValId, BackScalar, BackIntSemantics, BackValId, BackValId),
+    Fdiv(BackValId, BackScalar, BackFloatSemantics, BackValId, BackValId),
+    Srem(BackValId, BackScalar, BackIntSemantics, BackValId, BackValId),
+    Urem(BackValId, BackScalar, BackIntSemantics, BackValId, BackValId),
+    Band(BackValId, BackScalar, BackValId, BackValId),
+    Bor(BackValId, BackScalar, BackValId, BackValId),
+    Bxor(BackValId, BackScalar, BackValId, BackValId),
+    Ishl(BackValId, BackScalar, BackValId, BackValId),
+    Ushr(BackValId, BackScalar, BackValId, BackValId),
+    Sshr(BackValId, BackScalar, BackValId, BackValId),
+    Rotl(BackValId, BackScalar, BackValId, BackValId),
+    Rotr(BackValId, BackScalar, BackValId, BackValId),
+    IcmpEq(BackValId, BackScalar, BackValId, BackValId),
+    IcmpNe(BackValId, BackScalar, BackValId, BackValId),
+    SIcmpLt(BackValId, BackScalar, BackValId, BackValId),
+    SIcmpLe(BackValId, BackScalar, BackValId, BackValId),
+    SIcmpGt(BackValId, BackScalar, BackValId, BackValId),
+    SIcmpGe(BackValId, BackScalar, BackValId, BackValId),
+    UIcmpLt(BackValId, BackScalar, BackValId, BackValId),
+    UIcmpLe(BackValId, BackScalar, BackValId, BackValId),
+    UIcmpGt(BackValId, BackScalar, BackValId, BackValId),
+    UIcmpGe(BackValId, BackScalar, BackValId, BackValId),
+    FCmpEq(BackValId, BackScalar, BackValId, BackValId),
+    FCmpNe(BackValId, BackScalar, BackValId, BackValId),
+    FCmpLt(BackValId, BackScalar, BackValId, BackValId),
+    FCmpLe(BackValId, BackScalar, BackValId, BackValId),
+    FCmpGt(BackValId, BackScalar, BackValId, BackValId),
+    FCmpGe(BackValId, BackScalar, BackValId, BackValId),
+    Bitcast(BackValId, BackScalar, BackValId),
+    Ireduce(BackValId, BackScalar, BackValId),
+    Sextend(BackValId, BackScalar, BackValId),
+    Uextend(BackValId, BackScalar, BackValId),
+    Fpromote(BackValId, BackScalar, BackValId),
+    Fdemote(BackValId, BackScalar, BackValId),
+    SToF(BackValId, BackScalar, BackValId),
+    UToF(BackValId, BackScalar, BackValId),
+    FToS(BackValId, BackScalar, BackValId),
+    FToU(BackValId, BackScalar, BackValId),
+    PtrAdd(BackValId, BackValId, BackValId),
+    PtrOffset(BackValId, BackValId, BackValId, u32, i64),
+    LoadInfo(BackValId, BackScalar, BackValId, BackMemoryInfo),
+    StoreInfo(BackScalar, BackValId, BackValId, BackMemoryInfo),
+    AtomicLoad(BackValId, BackScalar, BackValId, BackMemoryInfo, BackAtomicOrdering),
+    AtomicStore(BackScalar, BackValId, BackValId, BackMemoryInfo, BackAtomicOrdering),
+    AtomicRmw(BackValId, BackAtomicRmwOp, BackScalar, BackValId, BackValId, BackMemoryInfo, BackAtomicOrdering),
+    AtomicCas(BackValId, BackScalar, BackValId, BackValId, BackValId, BackMemoryInfo, BackAtomicOrdering),
+    AtomicFence(BackAtomicOrdering),
+    Memcpy(BackValId, BackValId, BackValId),
+    Memset(BackValId, BackValId, BackValId),
+    Select(BackValId, BackScalar, BackValId, BackValId, BackValId),
+    Fma(BackValId, BackScalar, BackFloatSemantics, BackValId, BackValId, BackValId),
+    VecSplat(BackValId, BackVec, BackValId),
+    VecIcmpEq(BackValId, BackVec, BackValId, BackValId),
+    VecIcmpNe(BackValId, BackVec, BackValId, BackValId),
+    VecSIcmpLt(BackValId, BackVec, BackValId, BackValId),
+    VecSIcmpLe(BackValId, BackVec, BackValId, BackValId),
+    VecSIcmpGt(BackValId, BackVec, BackValId, BackValId),
+    VecSIcmpGe(BackValId, BackVec, BackValId, BackValId),
+    VecUIcmpLt(BackValId, BackVec, BackValId, BackValId),
+    VecUIcmpLe(BackValId, BackVec, BackValId, BackValId),
+    VecUIcmpGt(BackValId, BackVec, BackValId, BackValId),
+    VecUIcmpGe(BackValId, BackVec, BackValId, BackValId),
+    VecSelect(BackValId, BackVec, BackValId, BackValId, BackValId),
+    VecMaskNot(BackValId, BackVec, BackValId),
+    VecMaskAnd(BackValId, BackVec, BackValId, BackValId),
+    VecMaskOr(BackValId, BackVec, BackValId, BackValId),
+    VecIadd(BackValId, BackVec, BackValId, BackValId),
+    VecIsub(BackValId, BackVec, BackValId, BackValId),
+    VecImul(BackValId, BackVec, BackValId, BackValId),
+    VecBand(BackValId, BackVec, BackValId, BackValId),
+    VecBor(BackValId, BackVec, BackValId, BackValId),
+    VecBxor(BackValId, BackVec, BackValId, BackValId),
+    VecLoadInfo(BackValId, BackVec, BackValId, BackMemoryInfo),
+    VecStoreInfo(BackVec, BackValId, BackValId, BackMemoryInfo),
+    VecInsertLane(BackValId, BackVec, BackValId, BackValId, u32),
+    VecExtractLane(BackValId, BackScalar, BackValId, u32),
+    CallValueDirect(BackValId, BackScalar, BackFuncId, BackSigId, Vec<BackValId>),
+    CallStmtDirect(BackFuncId, BackSigId, Vec<BackValId>),
+    CallValueExtern(BackValId, BackScalar, BackExternId, BackSigId, Vec<BackValId>),
+    CallStmtExtern(BackExternId, BackSigId, Vec<BackValId>),
+    CallValueIndirect(BackValId, BackScalar, BackValId, BackSigId, Vec<BackValId>),
+    CallStmtIndirect(BackValId, BackSigId, Vec<BackValId>),
+    Jump(BackBlockId, Vec<BackValId>),
+    BrIf(BackValId, BackBlockId, Vec<BackValId>, BackBlockId, Vec<BackValId>),
+    SwitchInt(BackValId, BackScalar, Vec<BackSwitchCase>, BackBlockId),
+    ReturnVoid,
+    ReturnValue(BackValId),
+    Trap,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BackProgram {
-    pub cmds: Vec<BackCmd>,
+    pub decls: Vec<BackDeclCmd>,
+    pub bodies: Vec<(BackFuncId, Vec<BackBodyCmd>)>,
 }
 
 impl BackProgram {
-    pub fn new(cmds: Vec<BackCmd>) -> Self {
-        Self { cmds }
+    pub fn new(decls: Vec<BackDeclCmd>, bodies: Vec<(BackFuncId, Vec<BackBodyCmd>)>) -> Self {
+        Self { decls, bodies }
+    }
+
+    pub fn partition(cmds: Vec<BackCmd>) -> Result<Self, MoonliftError> {
+        let mut decls: Vec<BackDeclCmd> = Vec::new();
+        let mut bodies: Vec<(BackFuncId, Vec<BackBodyCmd>)> = Vec::new();
+        let mut current_func: Option<BackFuncId> = None;
+        let mut current_cmds: Vec<BackBodyCmd> = Vec::new();
+
+        for cmd in cmds {
+            match cmd {
+                BackCmd::CreateSig(a, b, c) => {
+                    if current_func.is_some() {
+                        return Err(MoonliftError::new("CreateSig cannot appear inside a function body".to_string()));
+                    }
+                    decls.push(BackDeclCmd::CreateSig(a, b, c));
+                }
+                BackCmd::DeclareData(a, b, c) => {
+                    if current_func.is_some() {
+                        return Err(MoonliftError::new("DeclareData cannot appear inside a function body".to_string()));
+                    }
+                    decls.push(BackDeclCmd::DeclareData(a, b, c));
+                }
+                BackCmd::DataInitZero(a, b, c) => {
+                    if current_func.is_some() {
+                        return Err(MoonliftError::new("DataInitZero cannot appear inside a function body".to_string()));
+                    }
+                    decls.push(BackDeclCmd::DataInitZero(a, b, c));
+                }
+                BackCmd::DataInitInt(a, b, c, d) => {
+                    if current_func.is_some() {
+                        return Err(MoonliftError::new("DataInitInt cannot appear inside a function body".to_string()));
+                    }
+                    decls.push(BackDeclCmd::DataInitInt(a, b, c, d));
+                }
+                BackCmd::DataInitFloat(a, b, c, d) => {
+                    if current_func.is_some() {
+                        return Err(MoonliftError::new("DataInitFloat cannot appear inside a function body".to_string()));
+                    }
+                    decls.push(BackDeclCmd::DataInitFloat(a, b, c, d));
+                }
+                BackCmd::DataInitBool(a, b, c) => {
+                    if current_func.is_some() {
+                        return Err(MoonliftError::new("DataInitBool cannot appear inside a function body".to_string()));
+                    }
+                    decls.push(BackDeclCmd::DataInitBool(a, b, c));
+                }
+                BackCmd::DataAddr(a, b) => {
+                    if current_func.is_none() {
+                        return Err(MoonliftError::new("DataAddr cannot appear at module top level".to_string()));
+                    }
+                    current_cmds.push(BackBodyCmd::DataAddr(a, b));
+                }
+                BackCmd::FuncAddr(a, b) => {
+                    if current_func.is_none() {
+                        return Err(MoonliftError::new("FuncAddr cannot appear at module top level".to_string()));
+                    }
+                    current_cmds.push(BackBodyCmd::FuncAddr(a, b));
+                }
+                BackCmd::ExternAddr(a, b) => {
+                    if current_func.is_none() {
+                        return Err(MoonliftError::new("ExternAddr cannot appear at module top level".to_string()));
+                    }
+                    current_cmds.push(BackBodyCmd::ExternAddr(a, b));
+                }
+                BackCmd::DeclareFuncLocal(a, b) => {
+                    if current_func.is_some() {
+                        return Err(MoonliftError::new("DeclareFuncLocal cannot appear inside a function body".to_string()));
+                    }
+                    decls.push(BackDeclCmd::DeclareFuncLocal(a, b));
+                }
+                BackCmd::DeclareFuncExport(a, b) => {
+                    if current_func.is_some() {
+                        return Err(MoonliftError::new("DeclareFuncExport cannot appear inside a function body".to_string()));
+                    }
+                    decls.push(BackDeclCmd::DeclareFuncExport(a, b));
+                }
+                BackCmd::DeclareFuncExtern(a, b, c) => {
+                    if current_func.is_some() {
+                        return Err(MoonliftError::new("DeclareFuncExtern cannot appear inside a function body".to_string()));
+                    }
+                    decls.push(BackDeclCmd::DeclareFuncExtern(a, b, c));
+                }
+                BackCmd::BeginFunc(func) => {
+                    if current_func.is_some() {
+                        return Err(MoonliftError::new(format!(
+                            "nested BeginFunc for '{}' is not allowed",
+                            func.as_str()
+                        )));
+                    }
+                    if bodies.iter().any(|(id, _)| id == &func) {
+                        return Err(MoonliftError::new(format!(
+                            "duplicate BeginFunc for '{}'",
+                            func.as_str()
+                        )));
+                    }
+                    decls.push(BackDeclCmd::BeginFunc(func.clone()));
+                    current_func = Some(func);
+                    current_cmds.clear();
+                }
+                BackCmd::FinishFunc(func) => {
+                    let open = current_func.take().ok_or_else(|| {
+                        MoonliftError::new(format!(
+                            "FinishFunc('{}') appears outside any function body",
+                            func.as_str()
+                        ))
+                    })?;
+                    if open != func {
+                        return Err(MoonliftError::new(format!(
+                            "FinishFunc('{}') closes '{}', expected matching function id",
+                            func.as_str(),
+                            open.as_str()
+                        )));
+                    }
+                    decls.push(BackDeclCmd::FinishFunc(func));
+                    bodies.push((open, std::mem::take(&mut current_cmds)));
+                }
+                BackCmd::FinalizeModule => {
+                    if current_func.is_some() {
+                        return Err(MoonliftError::new("FinalizeModule cannot appear inside a function body".to_string()));
+                    }
+                    decls.push(BackDeclCmd::FinalizeModule);
+                }
+                BackCmd::CreateBlock(a) => current_cmds.push(BackBodyCmd::CreateBlock(a)),
+                BackCmd::SwitchToBlock(a) => current_cmds.push(BackBodyCmd::SwitchToBlock(a)),
+                BackCmd::SealBlock(a) => current_cmds.push(BackBodyCmd::SealBlock(a)),
+                BackCmd::BindEntryParams(a, b) => current_cmds.push(BackBodyCmd::BindEntryParams(a, b)),
+                BackCmd::AppendBlockParam(a, b, c) => current_cmds.push(BackBodyCmd::AppendBlockParam(a, b, c)),
+                BackCmd::AppendVecBlockParam(a, b, c) => current_cmds.push(BackBodyCmd::AppendVecBlockParam(a, b, c)),
+                BackCmd::CreateStackSlot(a, b, c) => current_cmds.push(BackBodyCmd::CreateStackSlot(a, b, c)),
+                BackCmd::Alias(a, b) => current_cmds.push(BackBodyCmd::Alias(a, b)),
+                BackCmd::StackAddr(a, b) => current_cmds.push(BackBodyCmd::StackAddr(a, b)),
+                BackCmd::ConstInt(a, b, c) => current_cmds.push(BackBodyCmd::ConstInt(a, b, c)),
+                BackCmd::ConstFloat(a, b, c) => current_cmds.push(BackBodyCmd::ConstFloat(a, b, c)),
+                BackCmd::ConstBool(a, b) => current_cmds.push(BackBodyCmd::ConstBool(a, b)),
+                BackCmd::ConstNull(a) => current_cmds.push(BackBodyCmd::ConstNull(a)),
+                BackCmd::Ineg(a, b, c) => current_cmds.push(BackBodyCmd::Ineg(a, b, c)),
+                BackCmd::Fneg(a, b, c) => current_cmds.push(BackBodyCmd::Fneg(a, b, c)),
+                BackCmd::Bnot(a, b, c) => current_cmds.push(BackBodyCmd::Bnot(a, b, c)),
+                BackCmd::BoolNot(a, b) => current_cmds.push(BackBodyCmd::BoolNot(a, b)),
+                BackCmd::Popcount(a, b, c) => current_cmds.push(BackBodyCmd::Popcount(a, b, c)),
+                BackCmd::Clz(a, b, c) => current_cmds.push(BackBodyCmd::Clz(a, b, c)),
+                BackCmd::Ctz(a, b, c) => current_cmds.push(BackBodyCmd::Ctz(a, b, c)),
+                BackCmd::Bswap(a, b, c) => current_cmds.push(BackBodyCmd::Bswap(a, b, c)),
+                BackCmd::Sqrt(a, b, c) => current_cmds.push(BackBodyCmd::Sqrt(a, b, c)),
+                BackCmd::Abs(a, b, c) => current_cmds.push(BackBodyCmd::Abs(a, b, c)),
+                BackCmd::Floor(a, b, c) => current_cmds.push(BackBodyCmd::Floor(a, b, c)),
+                BackCmd::Ceil(a, b, c) => current_cmds.push(BackBodyCmd::Ceil(a, b, c)),
+                BackCmd::TruncFloat(a, b, c) => current_cmds.push(BackBodyCmd::TruncFloat(a, b, c)),
+                BackCmd::Round(a, b, c) => current_cmds.push(BackBodyCmd::Round(a, b, c)),
+                BackCmd::Iadd(a, b, c, d, e) => current_cmds.push(BackBodyCmd::Iadd(a, b, c, d, e)),
+                BackCmd::Isub(a, b, c, d, e) => current_cmds.push(BackBodyCmd::Isub(a, b, c, d, e)),
+                BackCmd::Imul(a, b, c, d, e) => current_cmds.push(BackBodyCmd::Imul(a, b, c, d, e)),
+                BackCmd::Fadd(a, b, c, d, e) => current_cmds.push(BackBodyCmd::Fadd(a, b, c, d, e)),
+                BackCmd::Fsub(a, b, c, d, e) => current_cmds.push(BackBodyCmd::Fsub(a, b, c, d, e)),
+                BackCmd::Fmul(a, b, c, d, e) => current_cmds.push(BackBodyCmd::Fmul(a, b, c, d, e)),
+                BackCmd::Sdiv(a, b, c, d, e) => current_cmds.push(BackBodyCmd::Sdiv(a, b, c, d, e)),
+                BackCmd::Udiv(a, b, c, d, e) => current_cmds.push(BackBodyCmd::Udiv(a, b, c, d, e)),
+                BackCmd::Fdiv(a, b, c, d, e) => current_cmds.push(BackBodyCmd::Fdiv(a, b, c, d, e)),
+                BackCmd::Srem(a, b, c, d, e) => current_cmds.push(BackBodyCmd::Srem(a, b, c, d, e)),
+                BackCmd::Urem(a, b, c, d, e) => current_cmds.push(BackBodyCmd::Urem(a, b, c, d, e)),
+                BackCmd::Band(a, b, c, d) => current_cmds.push(BackBodyCmd::Band(a, b, c, d)),
+                BackCmd::Bor(a, b, c, d) => current_cmds.push(BackBodyCmd::Bor(a, b, c, d)),
+                BackCmd::Bxor(a, b, c, d) => current_cmds.push(BackBodyCmd::Bxor(a, b, c, d)),
+                BackCmd::Ishl(a, b, c, d) => current_cmds.push(BackBodyCmd::Ishl(a, b, c, d)),
+                BackCmd::Ushr(a, b, c, d) => current_cmds.push(BackBodyCmd::Ushr(a, b, c, d)),
+                BackCmd::Sshr(a, b, c, d) => current_cmds.push(BackBodyCmd::Sshr(a, b, c, d)),
+                BackCmd::Rotl(a, b, c, d) => current_cmds.push(BackBodyCmd::Rotl(a, b, c, d)),
+                BackCmd::Rotr(a, b, c, d) => current_cmds.push(BackBodyCmd::Rotr(a, b, c, d)),
+                BackCmd::IcmpEq(a, b, c, d) => current_cmds.push(BackBodyCmd::IcmpEq(a, b, c, d)),
+                BackCmd::IcmpNe(a, b, c, d) => current_cmds.push(BackBodyCmd::IcmpNe(a, b, c, d)),
+                BackCmd::SIcmpLt(a, b, c, d) => current_cmds.push(BackBodyCmd::SIcmpLt(a, b, c, d)),
+                BackCmd::SIcmpLe(a, b, c, d) => current_cmds.push(BackBodyCmd::SIcmpLe(a, b, c, d)),
+                BackCmd::SIcmpGt(a, b, c, d) => current_cmds.push(BackBodyCmd::SIcmpGt(a, b, c, d)),
+                BackCmd::SIcmpGe(a, b, c, d) => current_cmds.push(BackBodyCmd::SIcmpGe(a, b, c, d)),
+                BackCmd::UIcmpLt(a, b, c, d) => current_cmds.push(BackBodyCmd::UIcmpLt(a, b, c, d)),
+                BackCmd::UIcmpLe(a, b, c, d) => current_cmds.push(BackBodyCmd::UIcmpLe(a, b, c, d)),
+                BackCmd::UIcmpGt(a, b, c, d) => current_cmds.push(BackBodyCmd::UIcmpGt(a, b, c, d)),
+                BackCmd::UIcmpGe(a, b, c, d) => current_cmds.push(BackBodyCmd::UIcmpGe(a, b, c, d)),
+                BackCmd::FCmpEq(a, b, c, d) => current_cmds.push(BackBodyCmd::FCmpEq(a, b, c, d)),
+                BackCmd::FCmpNe(a, b, c, d) => current_cmds.push(BackBodyCmd::FCmpNe(a, b, c, d)),
+                BackCmd::FCmpLt(a, b, c, d) => current_cmds.push(BackBodyCmd::FCmpLt(a, b, c, d)),
+                BackCmd::FCmpLe(a, b, c, d) => current_cmds.push(BackBodyCmd::FCmpLe(a, b, c, d)),
+                BackCmd::FCmpGt(a, b, c, d) => current_cmds.push(BackBodyCmd::FCmpGt(a, b, c, d)),
+                BackCmd::FCmpGe(a, b, c, d) => current_cmds.push(BackBodyCmd::FCmpGe(a, b, c, d)),
+                BackCmd::Bitcast(a, b, c) => current_cmds.push(BackBodyCmd::Bitcast(a, b, c)),
+                BackCmd::Ireduce(a, b, c) => current_cmds.push(BackBodyCmd::Ireduce(a, b, c)),
+                BackCmd::Sextend(a, b, c) => current_cmds.push(BackBodyCmd::Sextend(a, b, c)),
+                BackCmd::Uextend(a, b, c) => current_cmds.push(BackBodyCmd::Uextend(a, b, c)),
+                BackCmd::Fpromote(a, b, c) => current_cmds.push(BackBodyCmd::Fpromote(a, b, c)),
+                BackCmd::Fdemote(a, b, c) => current_cmds.push(BackBodyCmd::Fdemote(a, b, c)),
+                BackCmd::SToF(a, b, c) => current_cmds.push(BackBodyCmd::SToF(a, b, c)),
+                BackCmd::UToF(a, b, c) => current_cmds.push(BackBodyCmd::UToF(a, b, c)),
+                BackCmd::FToS(a, b, c) => current_cmds.push(BackBodyCmd::FToS(a, b, c)),
+                BackCmd::FToU(a, b, c) => current_cmds.push(BackBodyCmd::FToU(a, b, c)),
+                BackCmd::PtrAdd(a, b, c) => current_cmds.push(BackBodyCmd::PtrAdd(a, b, c)),
+                BackCmd::PtrOffset(a, b, c, d, e) => current_cmds.push(BackBodyCmd::PtrOffset(a, b, c, d, e)),
+                BackCmd::LoadInfo(a, b, c, d) => current_cmds.push(BackBodyCmd::LoadInfo(a, b, c, d)),
+                BackCmd::StoreInfo(a, b, c, d) => current_cmds.push(BackBodyCmd::StoreInfo(a, b, c, d)),
+                BackCmd::AtomicLoad(a, b, c, d, e) => current_cmds.push(BackBodyCmd::AtomicLoad(a, b, c, d, e)),
+                BackCmd::AtomicStore(a, b, c, d, e) => current_cmds.push(BackBodyCmd::AtomicStore(a, b, c, d, e)),
+                BackCmd::AtomicRmw(a, b, c, d, e, f, g) => current_cmds.push(BackBodyCmd::AtomicRmw(a, b, c, d, e, f, g)),
+                BackCmd::AtomicCas(a, b, c, d, e, f, g) => current_cmds.push(BackBodyCmd::AtomicCas(a, b, c, d, e, f, g)),
+                BackCmd::AtomicFence(a) => current_cmds.push(BackBodyCmd::AtomicFence(a)),
+                BackCmd::Memcpy(a, b, c) => current_cmds.push(BackBodyCmd::Memcpy(a, b, c)),
+                BackCmd::Memset(a, b, c) => current_cmds.push(BackBodyCmd::Memset(a, b, c)),
+                BackCmd::Select(a, b, c, d, e) => current_cmds.push(BackBodyCmd::Select(a, b, c, d, e)),
+                BackCmd::Fma(a, b, c, d, e, f) => current_cmds.push(BackBodyCmd::Fma(a, b, c, d, e, f)),
+                BackCmd::VecSplat(a, b, c) => current_cmds.push(BackBodyCmd::VecSplat(a, b, c)),
+                BackCmd::VecIcmpEq(a, b, c, d) => current_cmds.push(BackBodyCmd::VecIcmpEq(a, b, c, d)),
+                BackCmd::VecIcmpNe(a, b, c, d) => current_cmds.push(BackBodyCmd::VecIcmpNe(a, b, c, d)),
+                BackCmd::VecSIcmpLt(a, b, c, d) => current_cmds.push(BackBodyCmd::VecSIcmpLt(a, b, c, d)),
+                BackCmd::VecSIcmpLe(a, b, c, d) => current_cmds.push(BackBodyCmd::VecSIcmpLe(a, b, c, d)),
+                BackCmd::VecSIcmpGt(a, b, c, d) => current_cmds.push(BackBodyCmd::VecSIcmpGt(a, b, c, d)),
+                BackCmd::VecSIcmpGe(a, b, c, d) => current_cmds.push(BackBodyCmd::VecSIcmpGe(a, b, c, d)),
+                BackCmd::VecUIcmpLt(a, b, c, d) => current_cmds.push(BackBodyCmd::VecUIcmpLt(a, b, c, d)),
+                BackCmd::VecUIcmpLe(a, b, c, d) => current_cmds.push(BackBodyCmd::VecUIcmpLe(a, b, c, d)),
+                BackCmd::VecUIcmpGt(a, b, c, d) => current_cmds.push(BackBodyCmd::VecUIcmpGt(a, b, c, d)),
+                BackCmd::VecUIcmpGe(a, b, c, d) => current_cmds.push(BackBodyCmd::VecUIcmpGe(a, b, c, d)),
+                BackCmd::VecSelect(a, b, c, d, e) => current_cmds.push(BackBodyCmd::VecSelect(a, b, c, d, e)),
+                BackCmd::VecMaskNot(a, b, c) => current_cmds.push(BackBodyCmd::VecMaskNot(a, b, c)),
+                BackCmd::VecMaskAnd(a, b, c, d) => current_cmds.push(BackBodyCmd::VecMaskAnd(a, b, c, d)),
+                BackCmd::VecMaskOr(a, b, c, d) => current_cmds.push(BackBodyCmd::VecMaskOr(a, b, c, d)),
+                BackCmd::VecIadd(a, b, c, d) => current_cmds.push(BackBodyCmd::VecIadd(a, b, c, d)),
+                BackCmd::VecIsub(a, b, c, d) => current_cmds.push(BackBodyCmd::VecIsub(a, b, c, d)),
+                BackCmd::VecImul(a, b, c, d) => current_cmds.push(BackBodyCmd::VecImul(a, b, c, d)),
+                BackCmd::VecBand(a, b, c, d) => current_cmds.push(BackBodyCmd::VecBand(a, b, c, d)),
+                BackCmd::VecBor(a, b, c, d) => current_cmds.push(BackBodyCmd::VecBor(a, b, c, d)),
+                BackCmd::VecBxor(a, b, c, d) => current_cmds.push(BackBodyCmd::VecBxor(a, b, c, d)),
+                BackCmd::VecLoadInfo(a, b, c, d) => current_cmds.push(BackBodyCmd::VecLoadInfo(a, b, c, d)),
+                BackCmd::VecStoreInfo(a, b, c, d) => current_cmds.push(BackBodyCmd::VecStoreInfo(a, b, c, d)),
+                BackCmd::VecInsertLane(a, b, c, d, e) => current_cmds.push(BackBodyCmd::VecInsertLane(a, b, c, d, e)),
+                BackCmd::VecExtractLane(a, b, c, d) => current_cmds.push(BackBodyCmd::VecExtractLane(a, b, c, d)),
+                BackCmd::CallValueDirect(a, b, c, d, e) => current_cmds.push(BackBodyCmd::CallValueDirect(a, b, c, d, e)),
+                BackCmd::CallStmtDirect(a, b, c) => current_cmds.push(BackBodyCmd::CallStmtDirect(a, b, c)),
+                BackCmd::CallValueExtern(a, b, c, d, e) => current_cmds.push(BackBodyCmd::CallValueExtern(a, b, c, d, e)),
+                BackCmd::CallStmtExtern(a, b, c) => current_cmds.push(BackBodyCmd::CallStmtExtern(a, b, c)),
+                BackCmd::CallValueIndirect(a, b, c, d, e) => current_cmds.push(BackBodyCmd::CallValueIndirect(a, b, c, d, e)),
+                BackCmd::CallStmtIndirect(a, b, c) => current_cmds.push(BackBodyCmd::CallStmtIndirect(a, b, c)),
+                BackCmd::Jump(a, b) => current_cmds.push(BackBodyCmd::Jump(a, b)),
+                BackCmd::BrIf(a, b, c, d, e) => current_cmds.push(BackBodyCmd::BrIf(a, b, c, d, e)),
+                BackCmd::SwitchInt(a, b, c, d) => current_cmds.push(BackBodyCmd::SwitchInt(a, b, c, d)),
+                BackCmd::ReturnVoid => current_cmds.push(BackBodyCmd::ReturnVoid),
+                BackCmd::ReturnValue(a) => current_cmds.push(BackBodyCmd::ReturnValue(a)),
+                BackCmd::Trap => current_cmds.push(BackBodyCmd::Trap),
+            }
+        }
+
+        if let Some(func) = current_func {
+            return Err(MoonliftError::new(format!(
+                "unterminated function body for '{}'",
+                func.as_str()
+            )));
+        }
+
+        Ok(Self { decls, bodies })
     }
 }
 
@@ -549,18 +950,21 @@ impl Jit {
 
     pub fn compile_tape(&self, payload: &str) -> Result<Artifact, MoonliftError> {
         let cmds = ffi::parse_back_command_tape(payload)?;
-        self.compile(&BackProgram::new(cmds))
+        let program = BackProgram::partition(cmds)?;
+        self.compile(&program)
     }
 
     pub fn compile_binary(&self, payload: &[u8]) -> Result<Artifact, MoonliftError> {
         let cmds = ffi::parse_back_command_binary(payload)?;
-        self.compile(&BackProgram::new(cmds))
+        let program = BackProgram::partition(cmds)?;
+        self.compile(&program)
     }
 }
 
 pub fn compile_object_binary(payload: &[u8], module_name: &str) -> Result<ObjectArtifact, MoonliftError> {
     let cmds = ffi::parse_back_command_binary(payload)?;
-    compile_object(&BackProgram::new(cmds), module_name)
+    let program = BackProgram::partition(cmds)?;
+    compile_object(&program, module_name)
 }
 
 impl Default for Jit {
@@ -656,7 +1060,7 @@ struct Compiler<M: Module> {
     funcs: HashMap<BackFuncId, FuncDecl>,
     externs: HashMap<BackExternId, ExternDecl>,
     datas: HashMap<BackDataId, DataDecl>,
-    bodies: Vec<(BackFuncId, Vec<BackCmd>)>,
+    bodies: Vec<(BackFuncId, Vec<BackBodyCmd>)>,
 }
 
 impl Compiler<JITModule> {
@@ -727,77 +1131,39 @@ impl<M: Module> Compiler<M> {
     }
 
     fn collect(&mut self, program: &BackProgram) -> Result<(), MoonliftError> {
-        let mut current_func: Option<BackFuncId> = None;
-        let mut current_cmds: Vec<BackCmd> = Vec::new();
+        // Index all declarations
+        for cmd in &program.decls {
+            self.collect_global_decl_from_decl_cmd(cmd)?;
+        }
 
-        for cmd in &program.cmds {
-            self.collect_global_decl(cmd)?;
-            match cmd {
-                BackCmd::BeginFunc(func) => {
-                    if current_func.is_some() {
-                        return Err(MoonliftError::new(format!(
-                            "nested BackCmdBeginFunc for '{}' is not allowed",
-                            func.as_str()
-                        )));
-                    }
-                    if self.bodies.iter().any(|(id, _)| id == func) {
-                        return Err(MoonliftError::new(format!(
-                            "duplicate BackCmdBeginFunc for '{}'",
-                            func.as_str()
-                        )));
-                    }
-                    current_func = Some(func.clone());
-                    current_cmds.clear();
-                }
-                BackCmd::FinishFunc(func) => {
-                    let open = current_func.take().ok_or_else(|| {
-                        MoonliftError::new(format!(
-                            "BackCmdFinishFunc('{}') appears outside any function body",
-                            func.as_str()
-                        ))
-                    })?;
-                    if &open != func {
-                        return Err(MoonliftError::new(format!(
-                            "BackCmdFinishFunc('{}') closes '{}', expected matching function id",
-                            func.as_str(),
-                            open.as_str()
-                        )));
-                    }
-                    self.bodies.push((open, current_cmds.clone()));
-                    current_cmds.clear();
-                }
-                other => {
-                    if current_func.is_some() {
-                        current_cmds.push(other.clone());
-                    } else {
-                        self.validate_top_level_cmd(other)?;
-                    }
-                }
+        // Verify begin/finish pairing was already done by partition()
+        let mut seen_funcs: HashSet<BackFuncId> = HashSet::new();
+        for (func_id, _) in &program.bodies {
+            if !seen_funcs.insert(func_id.clone()) {
+                return Err(MoonliftError::new(format!(
+                    "duplicate function body for '{}'", func_id.as_str()
+                )));
             }
         }
 
-        if let Some(func) = current_func {
-            return Err(MoonliftError::new(format!(
-                "unterminated function body for '{}'",
-                func.as_str()
-            )));
-        }
-
         for (func, decl) in &self.funcs {
-            if decl.linkage != Linkage::Import && !self.bodies.iter().any(|(id, _)| id == func) {
+            if decl.linkage != Linkage::Import && !seen_funcs.contains(func) {
                 return Err(MoonliftError::new(format!(
-                    "declared function '{}' has no BackCmdBeginFunc/BackCmdFinishFunc body",
+                    "declared function '{}' has no body",
                     func.as_str()
                 )));
             }
         }
 
+        // Copy bodies directly — no extraction needed
+        self.bodies = program.bodies.clone();
+
         Ok(())
     }
 
-    fn collect_global_decl(&mut self, cmd: &BackCmd) -> Result<(), MoonliftError> {
+    fn collect_global_decl_from_decl_cmd(&mut self, cmd: &BackDeclCmd) -> Result<(), MoonliftError> {
         match cmd {
-            BackCmd::CreateSig(id, params, results) => {
+            BackDeclCmd::CreateSig(id, params, results) => {
                 if results.len() > 1 {
                     return Err(MoonliftError::new(format!(
                         "signature '{}' currently has {} results; the direct function-pointer artifact API currently supports at most one result",
@@ -817,7 +1183,7 @@ impl<M: Module> Compiler<M> {
                     self.signatures.insert(id.clone(), sig);
                 }
             }
-            BackCmd::DeclareData(data, size, align) => {
+            BackDeclCmd::DeclareData(data, size, align) => {
                 if *size == 0 {
                     return Err(MoonliftError::new(format!(
                         "data object '{}' must have size >= 1",
@@ -854,37 +1220,37 @@ impl<M: Module> Compiler<M> {
                     }
                 }
             }
-            BackCmd::DataInitZero(data, offset, size) => {
+            BackDeclCmd::DataInitZero(data, offset, size) => {
                 let decl = self.datas.get_mut(data).ok_or_else(|| {
                     MoonliftError::new(format!("data init references unknown data '{}'", data.as_str()))
                 })?;
                 decl.inits.push(DataInit::Zero { offset: *offset, size: *size });
             }
-            BackCmd::DataInitInt(data, offset, ty, raw) => {
+            BackDeclCmd::DataInitInt(data, offset, ty, raw) => {
                 let decl = self.datas.get_mut(data).ok_or_else(|| {
                     MoonliftError::new(format!("data init references unknown data '{}'", data.as_str()))
                 })?;
                 decl.inits.push(DataInit::Int { offset: *offset, ty: *ty, raw: raw.clone() });
             }
-            BackCmd::DataInitFloat(data, offset, ty, raw) => {
+            BackDeclCmd::DataInitFloat(data, offset, ty, raw) => {
                 let decl = self.datas.get_mut(data).ok_or_else(|| {
                     MoonliftError::new(format!("data init references unknown data '{}'", data.as_str()))
                 })?;
                 decl.inits.push(DataInit::Float { offset: *offset, ty: *ty, raw: raw.clone() });
             }
-            BackCmd::DataInitBool(data, offset, value) => {
+            BackDeclCmd::DataInitBool(data, offset, value) => {
                 let decl = self.datas.get_mut(data).ok_or_else(|| {
                     MoonliftError::new(format!("data init references unknown data '{}'", data.as_str()))
                 })?;
                 decl.inits.push(DataInit::Bool { offset: *offset, value: *value });
             }
-            BackCmd::DeclareFuncLocal(func, sig) => {
+            BackDeclCmd::DeclareFuncLocal(func, sig) => {
                 self.insert_func_decl(func, sig, Linkage::Local)?;
             }
-            BackCmd::DeclareFuncExport(func, sig) => {
+            BackDeclCmd::DeclareFuncExport(func, sig) => {
                 self.insert_func_decl(func, sig, Linkage::Export)?;
             }
-            BackCmd::DeclareFuncExtern(extern_id, symbol, sig) => {
+            BackDeclCmd::DeclareFuncExtern(extern_id, symbol, sig) => {
                 let spec = self
                     .signatures
                     .get(sig)
@@ -922,7 +1288,9 @@ impl<M: Module> Compiler<M> {
                     }
                 }
             }
-            _ => {}
+            BackDeclCmd::BeginFunc(_)
+            | BackDeclCmd::FinishFunc(_)
+            | BackDeclCmd::FinalizeModule => {}
         }
         Ok(())
     }
@@ -970,30 +1338,6 @@ impl<M: Module> Compiler<M> {
             }
         }
         Ok(())
-    }
-
-    fn validate_top_level_cmd(&self, cmd: &BackCmd) -> Result<(), MoonliftError> {
-        match cmd {
-            BackCmd::CreateSig(..)
-            | BackCmd::DeclareData(..)
-            | BackCmd::DataInitZero(..)
-            | BackCmd::DataInitInt(..)
-            | BackCmd::DataInitFloat(..)
-            | BackCmd::DataInitBool(..)
-            | BackCmd::DeclareFuncLocal(..)
-            | BackCmd::DeclareFuncExport(..)
-            | BackCmd::DeclareFuncExtern(..)
-            | BackCmd::FinalizeModule => Ok(()),
-            BackCmd::FinishFunc(func) => Err(MoonliftError::new(format!(
-                "BackCmdFinishFunc('{}') appears outside any function body",
-                func.as_str()
-            ))),
-            BackCmd::BeginFunc(..) => Ok(()),
-            other => Err(MoonliftError::new(format!(
-                "command '{:?}' cannot appear at module top level; only declarations, BeginFunc/FinishFunc, and FinalizeModule are allowed outside a function body",
-                other
-            ))),
-        }
     }
 
     fn declare_all(&mut self) -> Result<(), MoonliftError> {
@@ -1144,99 +1488,16 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
         }
     }
 
-    fn lower(&mut self, cmds: &[BackCmd]) -> Result<(), MoonliftError> {
+    fn lower(&mut self, cmds: &[BackBodyCmd]) -> Result<(), MoonliftError> {
         for cmd in cmds {
             self.lower_cmd(cmd)?;
         }
         Ok(())
     }
 
-    fn lower_cmd(&mut self, cmd: &BackCmd) -> Result<(), MoonliftError> {
+    fn lower_cmd(&mut self, cmd: &BackBodyCmd) -> Result<(), MoonliftError> {
         match cmd {
-            BackCmd::CreateSig(id, params, results) => {
-                let expected = self.signatures.get(id).ok_or_else(|| {
-                    MoonliftError::new(format!(
-                        "function '{}' references unknown signature '{}'",
-                        self.func_name.as_str(),
-                        id.as_str()
-                    ))
-                })?;
-                let local = make_signature(self.module, params, results);
-                if &local != expected {
-                    return Err(MoonliftError::new(format!(
-                        "function '{}' re-declared signature '{}' with a different shape",
-                        self.func_name.as_str(),
-                        id.as_str()
-                    )));
-                }
-                Ok(())
-            }
-            BackCmd::DeclareData(data, size, align) => {
-                let decl = self.datas.get(data).ok_or_else(|| {
-                    MoonliftError::new(format!(
-                        "function '{}' references undeclared data '{}': missing top-level declaration collection",
-                        self.func_name.as_str(),
-                        data.as_str()
-                    ))
-                })?;
-                if decl.size != *size || decl.align != *align {
-                    return Err(MoonliftError::new(format!(
-                        "function '{}' re-declared data '{}' with different size/alignment",
-                        self.func_name.as_str(),
-                        data.as_str()
-                    )));
-                }
-                Ok(())
-            }
-            BackCmd::DataInitZero(..)
-            | BackCmd::DataInitInt(..)
-            | BackCmd::DataInitFloat(..)
-            | BackCmd::DataInitBool(..) => Ok(()),
-            BackCmd::DeclareFuncLocal(func, sig) | BackCmd::DeclareFuncExport(func, sig) => {
-                let decl = self.funcs.get(func).ok_or_else(|| {
-                    MoonliftError::new(format!(
-                        "function '{}' references undeclared callee '{}': missing top-level declaration collection",
-                        self.func_name.as_str(),
-                        func.as_str()
-                    ))
-                })?;
-                if decl.sig != *sig {
-                    return Err(MoonliftError::new(format!(
-                        "function '{}' re-declared '{}' with a different signature id",
-                        self.func_name.as_str(),
-                        func.as_str()
-                    )));
-                }
-                Ok(())
-            }
-            BackCmd::DeclareFuncExtern(extern_id, symbol, sig) => {
-                let decl = self.externs.get(extern_id).ok_or_else(|| {
-                    MoonliftError::new(format!(
-                        "function '{}' references undeclared extern '{}': missing top-level declaration collection",
-                        self.func_name.as_str(),
-                        extern_id.as_str()
-                    ))
-                })?;
-                if decl.sig != *sig || decl.symbol != *symbol {
-                    return Err(MoonliftError::new(format!(
-                        "function '{}' re-declared extern '{}' with different symbol/signature data",
-                        self.func_name.as_str(),
-                        extern_id.as_str()
-                    )));
-                }
-                Ok(())
-            }
-            BackCmd::BeginFunc(func) => Err(MoonliftError::new(format!(
-                "nested BackCmdBeginFunc('{}') inside function '{}'",
-                func.as_str(),
-                self.func_name.as_str()
-            ))),
-            BackCmd::FinishFunc(func) => Err(MoonliftError::new(format!(
-                "unexpected BackCmdFinishFunc('{}') inside function body '{}'",
-                func.as_str(),
-                self.func_name.as_str()
-            ))),
-            BackCmd::CreateBlock(id) => {
+            BackBodyCmd::CreateBlock(id) => {
                 let block = self.builder.create_block();
                 if self.blocks.insert(id.clone(), block).is_some() {
                     return Err(MoonliftError::new(format!(
@@ -1247,17 +1508,17 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 }
                 Ok(())
             }
-            BackCmd::SwitchToBlock(id) => {
+            BackBodyCmd::SwitchToBlock(id) => {
                 let block = self.block(id)?;
                 self.builder.switch_to_block(block);
                 Ok(())
             }
-            BackCmd::SealBlock(id) => {
+            BackBodyCmd::SealBlock(id) => {
                 let block = self.block(id)?;
                 self.builder.seal_block(block);
                 Ok(())
             }
-            BackCmd::SwitchInt(value_id, ty, cases, default_id) => {
+            BackBodyCmd::SwitchInt(value_id, ty, cases, default_id) => {
                 let value = self.value(value_id)?;
                 let value_ty = self.builder.func.dfg.value_type(value);
                 let expected_ty = ty.clif_type(self.ptr_ty);
@@ -1287,7 +1548,7 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 switch.emit(&mut self.builder, value, default_block);
                 Ok(())
             }
-            BackCmd::BindEntryParams(id, values) => {
+            BackBodyCmd::BindEntryParams(id, values) => {
                 let block = self.block(id)?;
                 self.builder.append_block_params_for_function_params(block);
                 let block_params = self.builder.block_params(block).to_vec();
@@ -1305,19 +1566,19 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 }
                 Ok(())
             }
-            BackCmd::AppendBlockParam(block_id, value_id, ty) => {
+            BackBodyCmd::AppendBlockParam(block_id, value_id, ty) => {
                 let block = self.block(block_id)?;
                 let value = self.builder.append_block_param(block, ty.clif_type(self.ptr_ty));
                 self.bind_value(value_id, value)?;
                 Ok(())
             }
-            BackCmd::AppendVecBlockParam(block_id, value_id, ty) => {
+            BackBodyCmd::AppendVecBlockParam(block_id, value_id, ty) => {
                 let block = self.block(block_id)?;
                 let value = self.builder.append_block_param(block, ty.clif_type(self.ptr_ty)?);
                 self.bind_value(value_id, value)?;
                 Ok(())
             }
-            BackCmd::CreateStackSlot(id, size, align) => {
+            BackBodyCmd::CreateStackSlot(id, size, align) => {
                 let align_shift = align_to_shift(*align)?;
                 let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
                     StackSlotKind::ExplicitSlot,
@@ -1333,23 +1594,23 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 }
                 Ok(())
             }
-            BackCmd::Alias(dst, src) => {
+            BackBodyCmd::Alias(dst, src) => {
                 let value = self.value(src)?;
                 self.values.insert(dst.clone(), value);
                 Ok(())
             }
-            BackCmd::StackAddr(dst, slot_id) => {
+            BackBodyCmd::StackAddr(dst, slot_id) => {
                 let slot = self.stack_slot(slot_id)?;
                 let value = self.builder.ins().stack_addr(self.ptr_ty, slot, 0);
                 self.bind_value(dst, value)
             }
-            BackCmd::DataAddr(dst, data_id) => {
+            BackBodyCmd::DataAddr(dst, data_id) => {
                 let data = self.data(data_id)?;
                 let gv = self.module.declare_data_in_func(data, &mut self.builder.func);
                 let value = self.builder.ins().global_value(self.ptr_ty, gv);
                 self.bind_value(dst, value)
             }
-            BackCmd::FuncAddr(dst, func) => {
+            BackBodyCmd::FuncAddr(dst, func) => {
                 let decl = self.funcs.get(func).ok_or_else(|| {
                     MoonliftError::new(format!(
                         "function '{}' takes address of unknown function '{}'",
@@ -1364,7 +1625,7 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 let value = self.builder.ins().func_addr(self.ptr_ty, func_ref);
                 self.bind_value(dst, value)
             }
-            BackCmd::ExternAddr(dst, extern_id) => {
+            BackBodyCmd::ExternAddr(dst, extern_id) => {
                 let decl = self.externs.get(extern_id).ok_or_else(|| {
                     MoonliftError::new(format!(
                         "function '{}' takes address of unknown extern '{}'",
@@ -1379,69 +1640,69 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 let value = self.builder.ins().func_addr(self.ptr_ty, func_ref);
                 self.bind_value(dst, value)
             }
-            BackCmd::ConstInt(dst, ty, raw) => {
+            BackBodyCmd::ConstInt(dst, ty, raw) => {
                 let value = lower_const_int(self.builder, self.ptr_ty, *ty, raw)?;
                 self.bind_value(dst, value)
             }
-            BackCmd::ConstFloat(dst, ty, raw) => {
+            BackBodyCmd::ConstFloat(dst, ty, raw) => {
                 let value = lower_const_float(self.builder, *ty, raw)?;
                 self.bind_value(dst, value)
             }
-            BackCmd::ConstBool(dst, value) => {
+            BackBodyCmd::ConstBool(dst, value) => {
                 let raw = self.builder.ins().iconst(types::I8, if *value { 1 } else { 0 });
                 self.bind_value(dst, raw)
             }
-            BackCmd::ConstNull(dst) => {
+            BackBodyCmd::ConstNull(dst) => {
                 let value = self.builder.ins().iconst(self.ptr_ty, 0);
                 self.bind_value(dst, value)
             }
-            BackCmd::Ineg(dst, _, value) => {
+            BackBodyCmd::Ineg(dst, _, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().ineg(value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Fneg(dst, _, value) => {
+            BackBodyCmd::Fneg(dst, _, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().fneg(value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Bnot(dst, _, value) => {
+            BackBodyCmd::Bnot(dst, _, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().bnot(value);
                 self.bind_value(dst, out)
             }
-            BackCmd::BoolNot(dst, value) => {
+            BackBodyCmd::BoolNot(dst, value) => {
                 let value = self.value(value)?;
                 let cond = self.builder.ins().icmp_imm(IntCC::Equal, value, 0);
                 let out = bool_value_from_cond(self.builder, cond);
                 self.bind_value(dst, out)
             }
-            BackCmd::Popcount(dst, _, value) => {
+            BackBodyCmd::Popcount(dst, _, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().popcnt(value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Clz(dst, _, value) => {
+            BackBodyCmd::Clz(dst, _, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().clz(value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Ctz(dst, _, value) => {
+            BackBodyCmd::Ctz(dst, _, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().ctz(value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Bswap(dst, _, value) => {
+            BackBodyCmd::Bswap(dst, _, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().bswap(value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Sqrt(dst, _, value) => {
+            BackBodyCmd::Sqrt(dst, _, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().sqrt(value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Abs(dst, ty, value) => {
+            BackBodyCmd::Abs(dst, ty, value) => {
                 let value = self.value(value)?;
                 let out = match ty {
                     BackScalar::F32 | BackScalar::F64 => self.builder.ins().fabs(value),
@@ -1449,112 +1710,112 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 };
                 self.bind_value(dst, out)
             }
-            BackCmd::Floor(dst, _, value) => {
+            BackBodyCmd::Floor(dst, _, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().floor(value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Ceil(dst, _, value) => {
+            BackBodyCmd::Ceil(dst, _, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().ceil(value);
                 self.bind_value(dst, out)
             }
-            BackCmd::TruncFloat(dst, _, value) => {
+            BackBodyCmd::TruncFloat(dst, _, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().trunc(value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Round(dst, _, value) => {
+            BackBodyCmd::Round(dst, _, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().nearest(value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Iadd(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().iadd(l, r)),
-            BackCmd::Isub(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().isub(l, r)),
-            BackCmd::Imul(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().imul(l, r)),
-            BackCmd::Fadd(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().fadd(l, r)),
-            BackCmd::Fsub(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().fsub(l, r)),
-            BackCmd::Fmul(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().fmul(l, r)),
-            BackCmd::Sdiv(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().sdiv(l, r)),
-            BackCmd::Udiv(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().udiv(l, r)),
-            BackCmd::Fdiv(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().fdiv(l, r)),
-            BackCmd::Srem(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().srem(l, r)),
-            BackCmd::Urem(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().urem(l, r)),
-            BackCmd::Band(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().band(l, r)),
-            BackCmd::Bor(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().bor(l, r)),
-            BackCmd::Bxor(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().bxor(l, r)),
-            BackCmd::Ishl(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().ishl(l, r)),
-            BackCmd::Ushr(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().ushr(l, r)),
-            BackCmd::Sshr(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().sshr(l, r)),
-            BackCmd::Rotl(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().rotl(l, r)),
-            BackCmd::Rotr(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().rotr(l, r)),
-            BackCmd::IcmpEq(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::Equal, lhs, rhs),
-            BackCmd::IcmpNe(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::NotEqual, lhs, rhs),
-            BackCmd::SIcmpLt(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::SignedLessThan, lhs, rhs),
-            BackCmd::SIcmpLe(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::SignedLessThanOrEqual, lhs, rhs),
-            BackCmd::SIcmpGt(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::SignedGreaterThan, lhs, rhs),
-            BackCmd::SIcmpGe(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::SignedGreaterThanOrEqual, lhs, rhs),
-            BackCmd::UIcmpLt(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::UnsignedLessThan, lhs, rhs),
-            BackCmd::UIcmpLe(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::UnsignedLessThanOrEqual, lhs, rhs),
-            BackCmd::UIcmpGt(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::UnsignedGreaterThan, lhs, rhs),
-            BackCmd::UIcmpGe(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::UnsignedGreaterThanOrEqual, lhs, rhs),
-            BackCmd::FCmpEq(dst, _, lhs, rhs) => self.bind_fcmp(dst, FloatCC::Equal, lhs, rhs),
-            BackCmd::FCmpNe(dst, _, lhs, rhs) => self.bind_fcmp(dst, FloatCC::NotEqual, lhs, rhs),
-            BackCmd::FCmpLt(dst, _, lhs, rhs) => self.bind_fcmp(dst, FloatCC::LessThan, lhs, rhs),
-            BackCmd::FCmpLe(dst, _, lhs, rhs) => self.bind_fcmp(dst, FloatCC::LessThanOrEqual, lhs, rhs),
-            BackCmd::FCmpGt(dst, _, lhs, rhs) => self.bind_fcmp(dst, FloatCC::GreaterThan, lhs, rhs),
-            BackCmd::FCmpGe(dst, _, lhs, rhs) => self.bind_fcmp(dst, FloatCC::GreaterThanOrEqual, lhs, rhs),
-            BackCmd::Bitcast(dst, ty, value) => {
+            BackBodyCmd::Iadd(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().iadd(l, r)),
+            BackBodyCmd::Isub(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().isub(l, r)),
+            BackBodyCmd::Imul(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().imul(l, r)),
+            BackBodyCmd::Fadd(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().fadd(l, r)),
+            BackBodyCmd::Fsub(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().fsub(l, r)),
+            BackBodyCmd::Fmul(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().fmul(l, r)),
+            BackBodyCmd::Sdiv(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().sdiv(l, r)),
+            BackBodyCmd::Udiv(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().udiv(l, r)),
+            BackBodyCmd::Fdiv(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().fdiv(l, r)),
+            BackBodyCmd::Srem(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().srem(l, r)),
+            BackBodyCmd::Urem(dst, _, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().urem(l, r)),
+            BackBodyCmd::Band(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().band(l, r)),
+            BackBodyCmd::Bor(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().bor(l, r)),
+            BackBodyCmd::Bxor(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().bxor(l, r)),
+            BackBodyCmd::Ishl(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().ishl(l, r)),
+            BackBodyCmd::Ushr(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().ushr(l, r)),
+            BackBodyCmd::Sshr(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().sshr(l, r)),
+            BackBodyCmd::Rotl(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().rotl(l, r)),
+            BackBodyCmd::Rotr(dst, _, lhs, rhs) => self.bind_binop(dst, lhs, rhs, |b, l, r| b.ins().rotr(l, r)),
+            BackBodyCmd::IcmpEq(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::Equal, lhs, rhs),
+            BackBodyCmd::IcmpNe(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::NotEqual, lhs, rhs),
+            BackBodyCmd::SIcmpLt(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::SignedLessThan, lhs, rhs),
+            BackBodyCmd::SIcmpLe(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::SignedLessThanOrEqual, lhs, rhs),
+            BackBodyCmd::SIcmpGt(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::SignedGreaterThan, lhs, rhs),
+            BackBodyCmd::SIcmpGe(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::SignedGreaterThanOrEqual, lhs, rhs),
+            BackBodyCmd::UIcmpLt(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::UnsignedLessThan, lhs, rhs),
+            BackBodyCmd::UIcmpLe(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::UnsignedLessThanOrEqual, lhs, rhs),
+            BackBodyCmd::UIcmpGt(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::UnsignedGreaterThan, lhs, rhs),
+            BackBodyCmd::UIcmpGe(dst, _, lhs, rhs) => self.bind_icmp(dst, IntCC::UnsignedGreaterThanOrEqual, lhs, rhs),
+            BackBodyCmd::FCmpEq(dst, _, lhs, rhs) => self.bind_fcmp(dst, FloatCC::Equal, lhs, rhs),
+            BackBodyCmd::FCmpNe(dst, _, lhs, rhs) => self.bind_fcmp(dst, FloatCC::NotEqual, lhs, rhs),
+            BackBodyCmd::FCmpLt(dst, _, lhs, rhs) => self.bind_fcmp(dst, FloatCC::LessThan, lhs, rhs),
+            BackBodyCmd::FCmpLe(dst, _, lhs, rhs) => self.bind_fcmp(dst, FloatCC::LessThanOrEqual, lhs, rhs),
+            BackBodyCmd::FCmpGt(dst, _, lhs, rhs) => self.bind_fcmp(dst, FloatCC::GreaterThan, lhs, rhs),
+            BackBodyCmd::FCmpGe(dst, _, lhs, rhs) => self.bind_fcmp(dst, FloatCC::GreaterThanOrEqual, lhs, rhs),
+            BackBodyCmd::Bitcast(dst, ty, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().bitcast(ty.clif_type(self.ptr_ty), MemFlags::new(), value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Ireduce(dst, ty, value) => {
+            BackBodyCmd::Ireduce(dst, ty, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().ireduce(ty.clif_type(self.ptr_ty), value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Sextend(dst, ty, value) => {
+            BackBodyCmd::Sextend(dst, ty, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().sextend(ty.clif_type(self.ptr_ty), value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Uextend(dst, ty, value) => {
+            BackBodyCmd::Uextend(dst, ty, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().uextend(ty.clif_type(self.ptr_ty), value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Fpromote(dst, ty, value) => {
+            BackBodyCmd::Fpromote(dst, ty, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().fpromote(ty.clif_type(self.ptr_ty), value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Fdemote(dst, ty, value) => {
+            BackBodyCmd::Fdemote(dst, ty, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().fdemote(ty.clif_type(self.ptr_ty), value);
                 self.bind_value(dst, out)
             }
-            BackCmd::SToF(dst, ty, value) => {
+            BackBodyCmd::SToF(dst, ty, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().fcvt_from_sint(ty.clif_type(self.ptr_ty), value);
                 self.bind_value(dst, out)
             }
-            BackCmd::UToF(dst, ty, value) => {
+            BackBodyCmd::UToF(dst, ty, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().fcvt_from_uint(ty.clif_type(self.ptr_ty), value);
                 self.bind_value(dst, out)
             }
-            BackCmd::FToS(dst, ty, value) => {
+            BackBodyCmd::FToS(dst, ty, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().fcvt_to_sint(ty.clif_type(self.ptr_ty), value);
                 self.bind_value(dst, out)
             }
-            BackCmd::FToU(dst, ty, value) => {
+            BackBodyCmd::FToU(dst, ty, value) => {
                 let value = self.value(value)?;
                 let out = self.builder.ins().fcvt_to_uint(ty.clif_type(self.ptr_ty), value);
                 self.bind_value(dst, out)
             }
-            BackCmd::PtrAdd(dst, base, byte_offset) => {
+            BackBodyCmd::PtrAdd(dst, base, byte_offset) => {
                 let base_value = self.value(base)?;
                 let offset_value = self.value(byte_offset)?;
                 self.require_value_type(base, base_value, self.ptr_ty, "BackCmdPtrAdd base")?;
@@ -1562,7 +1823,7 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 let out = self.builder.ins().iadd(base_value, offset_value);
                 self.bind_value(dst, out)
             }
-            BackCmd::PtrOffset(dst, base, index, elem_size, const_offset) => {
+            BackBodyCmd::PtrOffset(dst, base, index, elem_size, const_offset) => {
                 let base_value = self.value(base)?;
                 let index_value = self.value(index)?;
                 self.require_value_type(base, base_value, self.ptr_ty, "BackCmdPtrOffset base")?;
@@ -1578,7 +1839,7 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 let out = self.builder.ins().iadd(base_value, total);
                 self.bind_value(dst, out)
             }
-            BackCmd::LoadInfo(dst, ty, addr, memory) => {
+            BackBodyCmd::LoadInfo(dst, ty, addr, memory) => {
                 let addr = self.value(addr)?;
                 let clif_ty = ty.clif_type(self.ptr_ty);
                 let ptr_bytes = self.ptr_ty.bytes();
@@ -1586,7 +1847,7 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 let out = self.builder.ins().load(clif_ty, flags, addr, 0);
                 self.bind_value(dst, out)
             }
-            BackCmd::StoreInfo(ty, addr, value, memory) => {
+            BackBodyCmd::StoreInfo(ty, addr, value, memory) => {
                 let addr = self.value(addr)?;
                 let value = self.value(value)?;
                 let ptr_bytes = self.ptr_ty.bytes();
@@ -1594,7 +1855,7 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 self.builder.ins().store(flags, value, addr, 0);
                 Ok(())
             }
-            BackCmd::AtomicLoad(dst, ty, addr, memory, BackAtomicOrdering::SeqCst) => {
+            BackBodyCmd::AtomicLoad(dst, ty, addr, memory, BackAtomicOrdering::SeqCst) => {
                 if !ty.supports_atomic() {
                     return Err(MoonliftError::new(format!("BackCmdAtomicLoad requires integer/pointer type, got {:?}", ty)));
                 }
@@ -1606,7 +1867,7 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 let out = self.builder.ins().atomic_load(clif_ty, flags, addr_value);
                 self.bind_value(dst, out)
             }
-            BackCmd::AtomicStore(ty, addr, value, memory, BackAtomicOrdering::SeqCst) => {
+            BackBodyCmd::AtomicStore(ty, addr, value, memory, BackAtomicOrdering::SeqCst) => {
                 if !ty.supports_atomic() {
                     return Err(MoonliftError::new(format!("BackCmdAtomicStore requires integer/pointer type, got {:?}", ty)));
                 }
@@ -1620,7 +1881,7 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 self.builder.ins().atomic_store(flags, store_value, addr_value);
                 Ok(())
             }
-            BackCmd::AtomicRmw(dst, op, ty, addr, value, memory, BackAtomicOrdering::SeqCst) => {
+            BackBodyCmd::AtomicRmw(dst, op, ty, addr, value, memory, BackAtomicOrdering::SeqCst) => {
                 if !op.supports_scalar(*ty) {
                     return Err(MoonliftError::new(format!("BackCmdAtomicRmw op {:?} does not support type {:?}", op, ty)));
                 }
@@ -1634,7 +1895,7 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 let out = self.builder.ins().atomic_rmw(clif_ty, flags, op.clif(), addr_value, input_value);
                 self.bind_value(dst, out)
             }
-            BackCmd::AtomicCas(dst, ty, addr, expected, replacement, memory, BackAtomicOrdering::SeqCst) => {
+            BackBodyCmd::AtomicCas(dst, ty, addr, expected, replacement, memory, BackAtomicOrdering::SeqCst) => {
                 if !ty.supports_atomic() {
                     return Err(MoonliftError::new(format!("BackCmdAtomicCas requires integer/pointer type, got {:?}", ty)));
                 }
@@ -1650,11 +1911,11 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 let out = self.builder.ins().atomic_cas(flags, addr_value, expected_value, replacement_value);
                 self.bind_value(dst, out)
             }
-            BackCmd::AtomicFence(BackAtomicOrdering::SeqCst) => {
+            BackBodyCmd::AtomicFence(BackAtomicOrdering::SeqCst) => {
                 self.builder.ins().fence();
                 Ok(())
             }
-            BackCmd::Memcpy(dst, src, len) => {
+            BackBodyCmd::Memcpy(dst, src, len) => {
                 let dst_value = self.value(dst)?;
                 let src_value = self.value(src)?;
                 let len_value = self.value(len)?;
@@ -1665,7 +1926,7 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 self.builder.call_memcpy(config, dst_value, src_value, len_value);
                 Ok(())
             }
-            BackCmd::Memset(dst, byte, len) => {
+            BackBodyCmd::Memset(dst, byte, len) => {
                 let dst_value = self.value(dst)?;
                 let len_value = self.value(len)?;
                 self.require_value_type(dst, dst_value, self.ptr_ty, "BackCmdMemset destination")?;
@@ -1675,48 +1936,48 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 self.builder.call_memset(config, dst_value, byte_value, len_value);
                 Ok(())
             }
-            BackCmd::Select(dst, _, cond, then_value, else_value) => {
+            BackBodyCmd::Select(dst, _, cond, then_value, else_value) => {
                 let cond_value = self.cond_value(cond)?;
                 let then_value = self.value(then_value)?;
                 let else_value = self.value(else_value)?;
                 let out = self.builder.ins().select(cond_value, then_value, else_value);
                 self.bind_value(dst, out)
             }
-            BackCmd::Fma(dst, _, _, a, b, c) => {
+            BackBodyCmd::Fma(dst, _, _, a, b, c) => {
                 let a = self.value(a)?;
                 let b = self.value(b)?;
                 let c = self.value(c)?;
                 let out = self.builder.ins().fma(a, b, c);
                 self.bind_value(dst, out)
             }
-            BackCmd::VecSplat(dst, ty, value) => {
+            BackBodyCmd::VecSplat(dst, ty, value) => {
                 let scalar = self.value(value)?;
                 let scalar_ty = ty.elem.clif_type(self.ptr_ty);
                 self.require_value_type(value, scalar, scalar_ty, "BackCmdVecSplat scalar")?;
                 let out = self.builder.ins().splat(ty.clif_type(self.ptr_ty)?, scalar);
                 self.bind_value(dst, out)
             }
-            BackCmd::VecIcmpEq(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::Equal, lhs, rhs),
-            BackCmd::VecIcmpNe(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::NotEqual, lhs, rhs),
-            BackCmd::VecSIcmpLt(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::SignedLessThan, lhs, rhs),
-            BackCmd::VecSIcmpLe(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::SignedLessThanOrEqual, lhs, rhs),
-            BackCmd::VecSIcmpGt(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::SignedGreaterThan, lhs, rhs),
-            BackCmd::VecSIcmpGe(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::SignedGreaterThanOrEqual, lhs, rhs),
-            BackCmd::VecUIcmpLt(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::UnsignedLessThan, lhs, rhs),
-            BackCmd::VecUIcmpLe(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::UnsignedLessThanOrEqual, lhs, rhs),
-            BackCmd::VecUIcmpGt(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::UnsignedGreaterThan, lhs, rhs),
-            BackCmd::VecUIcmpGe(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::UnsignedGreaterThanOrEqual, lhs, rhs),
-            BackCmd::VecSelect(dst, ty, mask, then_value, else_value) => self.bind_vec_select(dst, *ty, mask, then_value, else_value),
-            BackCmd::VecMaskNot(dst, ty, value) => self.bind_vec_mask_not(dst, *ty, value),
-            BackCmd::VecMaskAnd(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().band(l, r)),
-            BackCmd::VecMaskOr(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().bor(l, r)),
-            BackCmd::VecIadd(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().iadd(l, r)),
-            BackCmd::VecIsub(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().isub(l, r)),
-            BackCmd::VecImul(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().imul(l, r)),
-            BackCmd::VecBand(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().band(l, r)),
-            BackCmd::VecBor(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().bor(l, r)),
-            BackCmd::VecBxor(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().bxor(l, r)),
-            BackCmd::VecLoadInfo(dst, ty, addr, memory) => {
+            BackBodyCmd::VecIcmpEq(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::Equal, lhs, rhs),
+            BackBodyCmd::VecIcmpNe(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::NotEqual, lhs, rhs),
+            BackBodyCmd::VecSIcmpLt(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::SignedLessThan, lhs, rhs),
+            BackBodyCmd::VecSIcmpLe(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::SignedLessThanOrEqual, lhs, rhs),
+            BackBodyCmd::VecSIcmpGt(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::SignedGreaterThan, lhs, rhs),
+            BackBodyCmd::VecSIcmpGe(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::SignedGreaterThanOrEqual, lhs, rhs),
+            BackBodyCmd::VecUIcmpLt(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::UnsignedLessThan, lhs, rhs),
+            BackBodyCmd::VecUIcmpLe(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::UnsignedLessThanOrEqual, lhs, rhs),
+            BackBodyCmd::VecUIcmpGt(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::UnsignedGreaterThan, lhs, rhs),
+            BackBodyCmd::VecUIcmpGe(dst, ty, lhs, rhs) => self.bind_vec_icmp(dst, *ty, IntCC::UnsignedGreaterThanOrEqual, lhs, rhs),
+            BackBodyCmd::VecSelect(dst, ty, mask, then_value, else_value) => self.bind_vec_select(dst, *ty, mask, then_value, else_value),
+            BackBodyCmd::VecMaskNot(dst, ty, value) => self.bind_vec_mask_not(dst, *ty, value),
+            BackBodyCmd::VecMaskAnd(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().band(l, r)),
+            BackBodyCmd::VecMaskOr(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().bor(l, r)),
+            BackBodyCmd::VecIadd(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().iadd(l, r)),
+            BackBodyCmd::VecIsub(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().isub(l, r)),
+            BackBodyCmd::VecImul(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().imul(l, r)),
+            BackBodyCmd::VecBand(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().band(l, r)),
+            BackBodyCmd::VecBor(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().bor(l, r)),
+            BackBodyCmd::VecBxor(dst, ty, lhs, rhs) => self.bind_vec_binop(dst, *ty, lhs, rhs, |b, l, r| b.ins().bxor(l, r)),
+            BackBodyCmd::VecLoadInfo(dst, ty, addr, memory) => {
                 let addr_value = self.value(addr)?;
                 self.require_value_type(addr, addr_value, self.ptr_ty, "BackCmdVecLoadInfo addr")?;
                 let ptr_bytes = self.ptr_ty.bytes();
@@ -1724,7 +1985,7 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 let out = self.builder.ins().load(ty.clif_type(self.ptr_ty)?, flags, addr_value, 0);
                 self.bind_value(dst, out)
             }
-            BackCmd::VecStoreInfo(ty, addr, value, memory) => {
+            BackBodyCmd::VecStoreInfo(ty, addr, value, memory) => {
                 let addr_value = self.value(addr)?;
                 let store_value = self.value(value)?;
                 self.require_value_type(addr, addr_value, self.ptr_ty, "BackCmdVecStoreInfo addr")?;
@@ -1734,7 +1995,7 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 self.builder.ins().store(flags, store_value, addr_value, 0);
                 Ok(())
             }
-            BackCmd::VecInsertLane(dst, ty, value, lane_value, lane) => {
+            BackBodyCmd::VecInsertLane(dst, ty, value, lane_value, lane) => {
                 let vector = self.value(value)?;
                 let scalar = self.value(lane_value)?;
                 let vector_ty = ty.clif_type(self.ptr_ty)?;
@@ -1753,7 +2014,7 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 let out = self.builder.ins().insertlane(vector, scalar, lane_u8);
                 self.bind_value(dst, out)
             }
-            BackCmd::VecExtractLane(dst, ty, value, lane) => {
+            BackBodyCmd::VecExtractLane(dst, ty, value, lane) => {
                 let vector = self.value(value)?;
                 let vector_ty = self.builder.func.dfg.value_type(vector);
                 if !vector_ty.is_vector() {
@@ -1787,37 +2048,37 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 let out = self.builder.ins().extractlane(vector, lane_u8);
                 self.bind_value(dst, out)
             }
-            BackCmd::CallValueDirect(dst, _, func, sig, args) => {
+            BackBodyCmd::CallValueDirect(dst, _, func, sig, args) => {
                 let value = self.call_direct(func, sig, args)?;
                 self.bind_value(dst, value)
             }
-            BackCmd::CallStmtDirect(func, sig, args) => {
+            BackBodyCmd::CallStmtDirect(func, sig, args) => {
                 self.call_direct_stmt(func, sig, args)?;
                 Ok(())
             }
-            BackCmd::CallValueExtern(dst, _, func, sig, args) => {
+            BackBodyCmd::CallValueExtern(dst, _, func, sig, args) => {
                 let value = self.call_extern(func, sig, args)?;
                 self.bind_value(dst, value)
             }
-            BackCmd::CallStmtExtern(func, sig, args) => {
+            BackBodyCmd::CallStmtExtern(func, sig, args) => {
                 self.call_extern_stmt(func, sig, args)?;
                 Ok(())
             }
-            BackCmd::CallValueIndirect(dst, _, callee, sig, args) => {
+            BackBodyCmd::CallValueIndirect(dst, _, callee, sig, args) => {
                 let value = self.call_indirect(callee, sig, args)?;
                 self.bind_value(dst, value)
             }
-            BackCmd::CallStmtIndirect(callee, sig, args) => {
+            BackBodyCmd::CallStmtIndirect(callee, sig, args) => {
                 self.call_indirect_stmt(callee, sig, args)?;
                 Ok(())
             }
-            BackCmd::Jump(dest, args) => {
+            BackBodyCmd::Jump(dest, args) => {
                 let block = self.block(dest)?;
                 let args = self.block_args(args)?;
                 self.builder.ins().jump(block, &args);
                 Ok(())
             }
-            BackCmd::BrIf(cond, then_block, then_args, else_block, else_args) => {
+            BackBodyCmd::BrIf(cond, then_block, then_args, else_block, else_args) => {
                 let cond = self.cond_value(cond)?;
                 let then_block = self.block(then_block)?;
                 let else_block = self.block(else_block)?;
@@ -1826,22 +2087,20 @@ impl<'a, 'b, M: Module> FunctionLowerer<'a, 'b, M> {
                 self.builder.ins().brif(cond, then_block, &then_args, else_block, &else_args);
                 Ok(())
             }
-            BackCmd::ReturnVoid => {
+            BackBodyCmd::ReturnVoid => {
                 self.builder.ins().return_(&[]);
                 Ok(())
             }
-            BackCmd::ReturnValue(value) => {
+            BackBodyCmd::ReturnValue(value) => {
                 let value = self.value(value)?;
                 self.builder.ins().return_(&[value]);
                 Ok(())
             }
-            BackCmd::Trap => {
+            BackBodyCmd::Trap => {
                 self.builder.ins().trap(TrapCode::unwrap_user(1));
                 Ok(())
             }
-            BackCmd::FinalizeModule => Err(MoonliftError::new(
-                "BackCmdFinalizeModule cannot appear inside a function body",
-            )),
+
         }
     }
 
@@ -2475,7 +2734,7 @@ mod tests {
     #[test]
     fn compiles_and_calls_exported_function() {
         let jit = Jit::new();
-        let program = BackProgram::new(vec![
+        let program = BackProgram::partition(vec![
             BackCmd::CreateSig(BackSigId::from("sig:add1"), vec![BackScalar::I32], vec![BackScalar::I32]),
             BackCmd::DeclareFuncExport(BackFuncId::from("add1"), BackSigId::from("sig:add1")),
             BackCmd::BeginFunc(BackFuncId::from("add1")),
@@ -2494,7 +2753,7 @@ mod tests {
             BackCmd::SealBlock(BackBlockId::from("entry")),
             BackCmd::FinishFunc(BackFuncId::from("add1")),
             BackCmd::FinalizeModule,
-        ]);
+        ]).unwrap();
 
         let artifact = jit.compile(&program).unwrap();
         let ptr = artifact.getpointer_by_name("add1").unwrap();
@@ -2511,7 +2770,7 @@ mod tests {
         let mut jit = Jit::new();
         jit.symbol("triple_host", triple as *const u8);
 
-        let program = BackProgram::new(vec![
+        let program = BackProgram::partition(vec![
             BackCmd::CreateSig(BackSigId::from("sig:triple"), vec![BackScalar::I32], vec![BackScalar::I32]),
             BackCmd::DeclareFuncExtern(
                 BackExternId::from("triple"),
@@ -2535,7 +2794,7 @@ mod tests {
             BackCmd::SealBlock(BackBlockId::from("entry")),
             BackCmd::FinishFunc(BackFuncId::from("caller")),
             BackCmd::FinalizeModule,
-        ]);
+        ]).unwrap();
 
         let artifact = jit.compile(&program).unwrap();
         let ptr = artifact.getpointer_by_name("caller").unwrap();
@@ -2546,7 +2805,7 @@ mod tests {
     #[test]
     fn compiles_and_reads_data_object() {
         let jit = Jit::new();
-        let program = BackProgram::new(vec![
+        let program = BackProgram::partition(vec![
             BackCmd::DeclareData(BackDataId::from("const:k"), 4, 4),
             BackCmd::DataInitInt(BackDataId::from("const:k"), 0, BackScalar::I32, "42".to_string()),
             BackCmd::CreateSig(BackSigId::from("sig:getk"), vec![], vec![BackScalar::I32]),
@@ -2560,7 +2819,7 @@ mod tests {
             BackCmd::SealBlock(BackBlockId::from("entry")),
             BackCmd::FinishFunc(BackFuncId::from("getk")),
             BackCmd::FinalizeModule,
-        ]);
+        ]).unwrap();
 
         let artifact = jit.compile(&program).unwrap();
         let ptr = artifact.getpointer_by_name("getk").unwrap();
@@ -2571,7 +2830,7 @@ mod tests {
     #[test]
     fn compiles_block_param_loop_cfg() {
         let jit = Jit::new();
-        let program = BackProgram::new(vec![
+        let program = BackProgram::partition(vec![
             BackCmd::CreateSig(BackSigId::from("sig:count"), vec![], vec![BackScalar::I32]),
             BackCmd::DeclareFuncExport(BackFuncId::from("count"), BackSigId::from("sig:count")),
             BackCmd::BeginFunc(BackFuncId::from("count")),
@@ -2620,7 +2879,7 @@ mod tests {
             BackCmd::ReturnValue(BackValId::from("result")),
             BackCmd::FinishFunc(BackFuncId::from("count")),
             BackCmd::FinalizeModule,
-        ]);
+        ]).unwrap();
 
         let artifact = jit.compile(&program).unwrap();
         let ptr = artifact.getpointer_by_name("count").unwrap();
@@ -2631,7 +2890,7 @@ mod tests {
     #[test]
     fn compiles_memcpy_command() {
         let jit = Jit::new();
-        let program = BackProgram::new(vec![
+        let program = BackProgram::partition(vec![
             BackCmd::CreateSig(
                 BackSigId::from("sig:copy_i32"),
                 vec![BackScalar::Ptr, BackScalar::Ptr],
@@ -2656,7 +2915,7 @@ mod tests {
             BackCmd::SealBlock(BackBlockId::from("entry.copy_i32")),
             BackCmd::FinishFunc(BackFuncId::from("copy_i32")),
             BackCmd::FinalizeModule,
-        ]);
+        ]).unwrap();
 
         let artifact = jit.compile(&program).unwrap();
         let ptr = artifact.getpointer_by_name("copy_i32").unwrap();
@@ -2673,7 +2932,7 @@ mod tests {
     #[test]
     fn compiles_memset_command() {
         let jit = Jit::new();
-        let program = BackProgram::new(vec![
+        let program = BackProgram::partition(vec![
             BackCmd::CreateSig(
                 BackSigId::from("sig:zero_i32"),
                 vec![BackScalar::Ptr],
@@ -2696,7 +2955,7 @@ mod tests {
             BackCmd::SealBlock(BackBlockId::from("entry.zero_i32")),
             BackCmd::FinishFunc(BackFuncId::from("zero_i32")),
             BackCmd::FinalizeModule,
-        ]);
+        ]).unwrap();
 
         let artifact = jit.compile(&program).unwrap();
         let ptr = artifact.getpointer_by_name("zero_i32").unwrap();

@@ -448,7 +448,7 @@ pub extern "C" fn moonlift_object_compile_tape(
             read_cstr(module_name, "object module name")?
         };
         let cmds = parse_back_command_tape(&payload)?;
-        let artifact = compile_object(&BackProgram::new(cmds), &module_name)?;
+        let artifact = compile_object(&BackProgram::partition(cmds)?, &module_name)?;
         let mut bytes = artifact.into_bytes().into_boxed_slice();
         out.data = bytes.as_mut_ptr();
         out.len = bytes.len();
@@ -629,7 +629,7 @@ pub extern "C" fn moonlift_jit_compile_tape(
         let jit = require_ptr(jit, "moonlift_jit_t")?;
         let payload = read_cstr(payload, "BackCommandTape payload")?;
         let cmds = parse_back_command_tape(&payload)?;
-        let artifact = jit.inner.compile(&BackProgram::new(cmds))?;
+        let artifact = jit.inner.compile(&BackProgram::partition(cmds)?)?;
         Ok(Box::into_raw(Box::new(moonlift_artifact_t { inner: artifact })))
     })();
     match result {
@@ -1585,7 +1585,7 @@ pub extern "C" fn moonlift_jit_compile_binary(
         }
         let buf = unsafe { std::slice::from_raw_parts(data, len) };
         let cmds = parse_back_command_binary(buf)?;
-        let artifact = jit.inner.compile(&BackProgram::new(cmds))?;
+        let artifact = jit.inner.compile(&BackProgram::partition(cmds)?)?;
         Ok(Box::into_raw(Box::new(moonlift_artifact_t { inner: artifact })))
     })();
     match result {
@@ -1614,7 +1614,7 @@ pub extern "C" fn moonlift_object_compile_binary(
             read_cstr(module_name, "object module name")?
         };
         let cmds = parse_back_command_binary(buf)?;
-        let artifact = compile_object(&BackProgram::new(cmds), &module_name)?;
+        let artifact = compile_object(&BackProgram::partition(cmds)?, &module_name)?;
         let mut bytes = artifact.into_bytes().into_boxed_slice();
         out.data = bytes.as_mut_ptr();
         out.len = bytes.len();
