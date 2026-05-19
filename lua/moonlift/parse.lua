@@ -2345,7 +2345,7 @@ function M.parse_func_string(T, src, opts)
     local toks = M.lex(src)
     local p = new_parser_internal(T, toks, 1, toks.n, opts or {})
     p:skip_sep()
-    p:expect(TK.func_kw)
+    p:accept(TK.func_kw)  -- optional, may already be implied by moon.func
     local value = p:parse_func()
     p:skip_sep()
     if p:kind() ~= TK.eof then p:issue("unexpected token after function") end
@@ -2357,7 +2357,7 @@ function M.parse_region_string(T, src, opts)
     local toks = M.lex(src)
     local p = new_parser_internal(T, toks, 1, toks.n, opts or {})
     p:skip_sep()
-    p:expect(TK.region_kw)
+    p:accept(TK.region_kw)  -- optional, may already be implied by moon.region
     local value = p:parse_region_frag()
     p:skip_sep()
     if p:kind() ~= TK.eof then p:issue("unexpected token after region") end
@@ -2369,7 +2369,7 @@ function M.parse_struct_string(T, src, opts)
     local toks = M.lex(src)
     local p = new_parser_internal(T, toks, 1, toks.n, opts or {})
     p:skip_sep()
-    p:expect(TK.struct_kw)
+    p:accept(TK.struct_kw)  -- optional, may already be implied by moon.struct
     local value = p:parse_struct_island()
     p:skip_sep()
     if p:kind() ~= TK.eof then p:issue("unexpected token after struct") end
@@ -2381,7 +2381,7 @@ function M.parse_union_string(T, src, opts)
     local toks = M.lex(src)
     local p = new_parser_internal(T, toks, 1, toks.n, opts or {})
     p:skip_sep()
-    p:expect(TK.union_kw)
+    p:accept(TK.union_kw)  -- optional, may already be implied by moon.union
     local value = p:parse_union_island()
     p:skip_sep()
     if p:kind() ~= TK.eof then p:issue("unexpected token after union") end
@@ -2393,7 +2393,7 @@ function M.parse_extern_string(T, src, opts)
     local toks = M.lex(src)
     local p = new_parser_internal(T, toks, 1, toks.n, opts or {})
     p:skip_sep()
-    p:expect(TK.extern_kw)
+    p:accept(TK.extern_kw)  -- optional, may already be implied by moon.extern
     local value = p:parse_extern()
     p:skip_sep()
     if p:kind() ~= TK.eof then p:issue("unexpected token after extern") end
@@ -2405,7 +2405,7 @@ function M.parse_expr_frag_string(T, src, opts)
     local toks = M.lex(src)
     local p = new_parser_internal(T, toks, 1, toks.n, opts or {})
     p:skip_sep()
-    p:expect(TK.expr_kw)
+    p:accept(TK.expr_kw)  -- optional, may already be implied by moon.expr_frag
     local value = p:parse_expr_frag()
     p:skip_sep()
     if p:kind() ~= TK.eof then p:issue("unexpected token after expr fragment") end

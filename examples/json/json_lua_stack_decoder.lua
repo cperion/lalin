@@ -26,19 +26,19 @@ ffi.cdef [[
 -- Extern imports — referenced by name in Moonlift source
 -- ---------------------------------------------------------------------------
 
-local lua_createtable = moon.extern [[extern lua_createtable(L: ptr(u8), narr: i32, nrec: i32) end]]
-local lua_pushlstring = moon.extern [[extern lua_pushlstring(L: ptr(u8), s: ptr(u8), len: index) end]]
-local lua_pushnumber  = moon.extern [[extern lua_pushnumber(L: ptr(u8), n: f64) end]]
-local lua_pushboolean = moon.extern [[extern lua_pushboolean(L: ptr(u8), b: i32) end]]
-local lua_pushnil     = moon.extern [[extern lua_pushnil(L: ptr(u8)) end]]
-local lua_settable    = moon.extern [[extern lua_settable(L: ptr(u8), idx: i32) end]]
-local lua_rawseti     = moon.extern [[extern lua_rawseti(L: ptr(u8), idx: i32, n: i32) end]]
+local lua_createtable = moon.extern [[lua_createtable(L: ptr(u8), narr: i32, nrec: i32) end]]
+local lua_pushlstring = moon.extern [[lua_pushlstring(L: ptr(u8), s: ptr(u8), len: index) end]]
+local lua_pushnumber  = moon.extern [[lua_pushnumber(L: ptr(u8), n: f64) end]]
+local lua_pushboolean = moon.extern [[lua_pushboolean(L: ptr(u8), b: i32) end]]
+local lua_pushnil     = moon.extern [[lua_pushnil(L: ptr(u8)) end]]
+local lua_settable    = moon.extern [[lua_settable(L: ptr(u8), idx: i32) end]]
+local lua_rawseti     = moon.extern [[lua_rawseti(L: ptr(u8), idx: i32, n: i32) end]]
 
 -- ---------------------------------------------------------------------------
 -- Region fragments — referenced by name via emit, no @{} needed
 -- ---------------------------------------------------------------------------
 
-local skip_ws = moon.region [[region skip_ws(p: ptr(u8), n: i32, pos: i32; ok: cont(i: i32))
+local skip_ws = moon.region [[skip_ws(p: ptr(u8), n: i32, pos: i32; ok: cont(i: i32))
 entry loop(i: i32 = pos)
     if i >= n then jump ok(i = i) end
     switch as(i32, p[i]) do
@@ -52,7 +52,7 @@ entry loop(i: i32 = pos)
 end
 end]]
 
-local parse_string = moon.region [[region parse_string(
+local parse_string = moon.region [[parse_string(
     L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8);
     ok: cont(next_i: i32), err: cont()
 )
@@ -142,7 +142,7 @@ block hex4_low(i: i32, j: i32, hi: i32, cp: i32, left: i32)
 end
 end]]
 
-local parse_number = moon.region [[region parse_number(
+local parse_number = moon.region [[parse_number(
     L: ptr(u8), p: ptr(u8), n: i32, pos: i32;
     ok: cont(next_i: i32), err: cont()
 )
@@ -222,38 +222,12 @@ end]]
 -- Generated literal switch arms — uses @{} because arms come from Lua data
 -- ---------------------------------------------------------------------------
 
-local function byte_checks(text, push_src)
-    local bytes = { text:byte(1, #text) }
-    local lines = {}
-    lines[#lines + 1] = ("if i + %d > n then jump fail() end"):format(#bytes)
-    for off = 2, #bytes do
-        lines[#lines + 1] = ("if as(i32, p[i + %d]) ~= %d then jump fail() end"):format(off - 1, bytes[off])
-    end
-    lines[#lines + 1] = push_src
-    lines[#lines + 1] = ("jump done(next_i = i + %d)"):format(#bytes)
-    return table.concat(lines, "\n")
-end
-
-local function literal_arm(text, push_src)
-    local bytes = { text:byte(1, #text) }
-    return {
-        raw_key = tostring(bytes[1]),
-        body = moon.stmts(byte_checks(text, push_src)),
-    }
-end
-
-local literal_arms = {
-    literal_arm("true",  "lua_pushboolean(L, 1)"),
-    literal_arm("false", "lua_pushboolean(L, 0)"),
-    literal_arm("null",  "lua_pushnil(L)"),
-}
-
 -- ---------------------------------------------------------------------------
 -- Mutually-recursive parser functions — region/lextern names resolve at compile time
 -- @{} only for literal_arms (Lua-generated data)
 -- ---------------------------------------------------------------------------
 
-local parse_array = moon.func [[func parse_array(L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
+local parse_array = moon.func [[parse_array(L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
     return region -> i32
     entry start()
         lua_createtable(L, 16, 0)
@@ -302,7 +276,7 @@ local parse_array = moon.func [[func parse_array(L: ptr(u8), p: ptr(u8), n: i32,
     end
 end]]
 
-local parse_object = moon.func [[func parse_object(L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
+local parse_object = moon.func [[parse_object(L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
     return region -> i32
     entry start()
         lua_createtable(L, 0, 16)
@@ -344,28 +318,30 @@ local parse_object = moon.func [[func parse_object(L: ptr(u8), p: ptr(u8), n: i3
     end
 end]]
 
--- Build literal switch arms as Moonlift source text via string concatenation.
--- This avoids the expander thunk issue with the values binder.
-local function literal_arm_src(text, push_src)
+-- Generate literal switch arms as tables — the values binder fills them via @{}.
+local function literal_arm(text, push_src)
     local bytes = { text:byte(1, #text) }
     local lines = {}
-    lines[#lines + 1] = "case " .. bytes[1] .. " then"
-    lines[#lines + 1] = ("    if i + %d > n then jump fail() end"):format(#bytes)
+    lines[#lines + 1] = ("if i + %d > n then jump fail() end"):format(#bytes)
     for off = 2, #bytes do
-        lines[#lines + 1] = ("    if as(i32, p[i + %d]) ~= %d then jump fail() end"):format(off - 1, bytes[off])
+        lines[#lines + 1] = ("if as(i32, p[i + %d]) ~= %d then jump fail() end"):format(off - 1, bytes[off])
     end
-    lines[#lines + 1] = "    " .. push_src
-    lines[#lines + 1] = ("    jump done(next_i = i + %d)"):format(#bytes)
-    return table.concat(lines, "\n")
+    lines[#lines + 1] = push_src
+    lines[#lines + 1] = ("jump done(next_i = i + %d)"):format(#bytes)
+    return {
+        raw_key = tostring(bytes[1]),
+        body = moon.stmts(table.concat(lines, "\n")),
+    }
 end
 
-local literal_arms_src = {
-    literal_arm_src("true",  "lua_pushboolean(L, 1)"),
-    literal_arm_src("false", "lua_pushboolean(L, 0)"),
-    literal_arm_src("null",  "lua_pushnil(L)"),
+local literal_arms = {
+    literal_arm("true",  "lua_pushboolean(L, 1)"),
+    literal_arm("false", "lua_pushboolean(L, 0)"),
+    literal_arm("null",  "lua_pushnil(L)"),
 }
 
-local parse_value_src = [[func parse_value(L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
+local parse_value = moon.func { literal_arms = literal_arms } [[
+func parse_value(L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
     return region -> i32
     entry start()
         emit skip_ws(p, n, pos; ok = dispatch)
@@ -373,7 +349,7 @@ local parse_value_src = [[func parse_value(L: ptr(u8), p: ptr(u8), n: i32, pos: 
     block dispatch(i: i32)
         if i >= n then yield -1 end
         switch as(i32, p[i]) do
-]] .. table.concat(literal_arms_src, "\n") .. [[
+        @{literal_arms...}
         case 34 then emit parse_string(L, p, n, i, buf; ok = done, err = fail)
         case 91 then
             let next_i = parse_array(L, p, n, i, buf)
@@ -395,11 +371,10 @@ local parse_value_src = [[func parse_value(L: ptr(u8), p: ptr(u8), n: i32, pos: 
         yield -1
     end
     end
-end]]
+end
+]]
 
-local parse_value = moon.func(parse_value_src)
-
-local decode_json_to_lua_stack = moon.func [[func decode_json_to_lua_stack(L: ptr(u8), p: ptr(u8), n: i32, buf: ptr(u8)) -> i32
+local decode_json_to_lua_stack = moon.func [[decode_json_to_lua_stack(L: ptr(u8), p: ptr(u8), n: i32, buf: ptr(u8)) -> i32
     return region -> i32
     entry start()
         let after_value = parse_value(L, p, n, 0, buf)

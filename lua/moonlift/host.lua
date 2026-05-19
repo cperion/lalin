@@ -161,8 +161,10 @@ M.func = make_quote(
         error("moon.func[[]] expected a function", 2)
     end,
     function(e, value, env)
+        local pvm = require("moonlift.pvm")
         local Tr = default_session.T.MoonTree
-        return e.item_stream(Tr.ItemFunc(value), env)
+        local g, p, c = e.item_stream(Tr.ItemFunc(value), env)
+        return pvm.one(g, p, c)
     end
 )
 
@@ -174,7 +176,11 @@ M.region = make_quote(
             session = default_session, name = value.name, frag = value, conts = {},
             params = {}, blocks = {} }, rfv)
     end,
-    function(e, value, env) return e.expand_open_set(value, env) end
+    function(e, value, env)
+        local pvm = require("moonlift.pvm")
+        local g, p, c = e.expand_open_set(value, env)
+        return pvm.one(g, p, c)
+    end
 )
 
 M.expr_frag = make_quote(
@@ -184,7 +190,11 @@ M.expr_frag = make_quote(
             name = value.name, frag = value, params = {} },
             require("moonlift.host_values").ExprFragValue or {})
     end,
-    function(e, value, env) return e.expand_open_set(value, env) end
+    function(e, value, env)
+        local pvm = require("moonlift.pvm")
+        local g, p, c = e.expand_open_set(value, env)
+        return pvm.one(g, p, c)
+    end
 )
 
 M.struct = make_quote(
@@ -195,7 +205,11 @@ M.struct = make_quote(
         return setmetatable({ kind = "struct", session = default_session, name = name,
             fields = {}, fields_by_name = {}, decl = value.decl, type = ty }, api.StructValue or {})
     end,
-    function(e, value, env) return e.expand_type_decl(value, env) end
+    function(e, value, env)
+        local pvm = require("moonlift.pvm")
+        local g, p, c = e.expand_type_decl(value, env)
+        return pvm.one(g, p, c)
+    end
 )
 
 M.union = make_quote(
@@ -206,7 +220,11 @@ M.union = make_quote(
         return setmetatable({ kind = "union", session = default_session, name = name,
             decl = value.decl, type = ty }, api.StructValue or {})
     end,
-    function(e, value, env) return e.expand_type_decl(value, env) end
+    function(e, value, env)
+        local pvm = require("moonlift.pvm")
+        local g, p, c = e.expand_type_decl(value, env)
+        return pvm.one(g, p, c)
+    end
 )
 
 M.extern = make_quote(
@@ -228,8 +246,10 @@ M.extern = make_quote(
             name = ext_val.name, func = ext_val, params = params, item = Tr.ItemExtern(ext_val) }, api.FuncValue or {})
     end,
     function(e, value, env)
+        local pvm = require("moonlift.pvm")
         local Tr = default_session.T.MoonTree
-        return e.item_stream(Tr.ItemExtern(value), env)
+        local g, p, c = e.item_stream(Tr.ItemExtern(value), env)
+        return pvm.one(g, p, c)
     end
 )
 
