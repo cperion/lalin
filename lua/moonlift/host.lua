@@ -112,27 +112,27 @@ CallableFunc.__index = CallableFunc
 function CallableFunc:__call(...)
     if not self._compiled then
         local api = self._api
-        local m = api.module(self.name .. "_auto")
+        local b = api.bundle(self.name .. "_auto")
 
-        -- Register dependency values as module items so the typechecker
+        -- Register dependency values as bundle items so the typechecker
         -- can resolve cross-function @{} name references.
         if self._dep_values then
             for _, value in pairs(self._dep_values) do
                 local kind = rawget(value, "kind")
                 if kind == "func" or kind == "extern_func" then
-                    m:add_func(value)
+                    b:pack(value)
                 elseif kind == "region_frag" or rawget(value, "moonlift_quote_kind") == "region_frag" then
-                    m:add_region(value)
+                    b:pack(value)
                 elseif kind == "struct" or kind == "union" then
-                    m:add_type(value)
+                    b:pack(value)
                 end
             end
         end
 
-        m:add_func(self)
-        local compiled = m:compile()
-        self._compiled = compiled
-        self._fn = compiled:get(self.name)
+        b:pack(self)
+        local artifact = b:jit()
+        self._compiled = artifact
+        self._fn = artifact:get(self.name)
     end
     return self._fn(...)
 end
@@ -311,7 +311,7 @@ M.extern = make_quote(
 -- api.stmts is a table with metatable supporting both [[]] and {} dispatch.
 M.stmts = api.stmts
 
--- ── Module builder ────────────────────────────────────────────────────────────
--- M.module = api.module  (already available via M = api)
+-- ── Bundle builder ────────────────────────────────────────────────────────────
+M.bundle = api.bundle
 
 return M

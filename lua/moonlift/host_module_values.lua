@@ -2,8 +2,9 @@ local ffi = require("ffi")
 
 local M = {}
 
-local ModuleValue = {}
-ModuleValue.__index = ModuleValue
+local BundleValue = {}
+BundleValue.__index = BundleValue
+local ModuleValue = BundleValue  -- internal alias for compat
 
 local CompiledModule = {}
 CompiledModule.__index = CompiledModule
@@ -33,20 +34,37 @@ local function append_item(self, value)
     return value
 end
 
-function ModuleValue:add_type(value)
+function BundleValue:add_type(value)
     return append_item(self, value)
 end
 
-function ModuleValue:add_func(value)
+function BundleValue:add_func(value)
     if value.visibility == "export" then self.exports[value.name] = value end
     return append_item(self, value)
 end
 
-function ModuleValue:add_region(value)
+function BundleValue:add_region(value)
     if value.frag then
         self.region_frags[#self.region_frags + 1] = value.frag
     end
     return value
+end
+
+function BundleValue:pack(...)
+    for i = 1, select("#", ...) do
+        local v = select(i, ...)
+        local kind = rawget(v, "kind") or rawget(v, "moonlift_quote_kind")
+        if kind == "func" or kind == "extern_func" then
+            self:add_func(v)
+        elseif kind == "region_frag" or rawget(v, "moonlift_quote_kind") == "region_frag" then
+            self:add_region(v)
+        elseif kind == "struct" or kind == "union" then
+            self:add_type(v)
+        else
+            error("bundle:pack() expected a Moonlift value (func, region, struct, union), got " .. type(v), 2)
+        end
+    end
+    return self
 end
 
 local function reserve_type_name(self, name)
@@ -61,63 +79,63 @@ local function reserve_func_name(self, name)
     self.func_names[name] = true
 end
 
-function ModuleValue:struct(name, fields)
+function BundleValue:struct(name, fields)
     reserve_type_name(self, name)
     return self:add_type(self.api._module_struct(self, name, fields))
 end
 
-function ModuleValue:union(name, fields)
+function BundleValue:union(name, fields)
     reserve_type_name(self, name)
     return self:add_type(self.api._module_union(self, name, fields))
 end
 
-function ModuleValue:enum(name, variants)
+function BundleValue:enum(name, variants)
     reserve_type_name(self, name)
     return self:add_type(self.api._module_enum(self, name, variants))
 end
 
-function ModuleValue:tagged_union(name, variants)
+function BundleValue:tagged_union(name, variants)
     reserve_type_name(self, name)
     return self:add_type(self.api._module_tagged_union(self, name, variants))
 end
 
-function ModuleValue:newstruct(name)
+function BundleValue:newstruct(name)
     reserve_type_name(self, name)
     return self.api._module_newstruct(self, name)
 end
 
-function ModuleValue:instantiate(template, args)
+function BundleValue:instantiate(template, args)
     return self.api._module_instantiate(self, template, args)
 end
 
-function ModuleValue:func(name, params, result, builder_fn)
+function BundleValue:func(name, params, result, builder_fn)
     reserve_func_name(self, name)
     return self:add_func(self.api._module_func(self, name, params, result, builder_fn))
 end
 
-function ModuleValue:extern_func(name, params, result, symbol)
+function BundleValue:extern_func(name, params, result, symbol)
     reserve_func_name(self, name)
     return self:add_func(self.api._module_extern_func(self, name, params, result, symbol))
 end
 
-function ModuleValue:export_func(name, params, result, builder_fn)
+function BundleValue:export_func(name, params, result, builder_fn)
     reserve_func_name(self, name)
     return self:add_func(self.api._module_export_func(self, name, params, result, builder_fn))
 end
 
-function ModuleValue:symbol(name, ptr)
+function BundleValue:symbol(name, ptr)
     assert(type(name) == "string" and name ~= "", "symbol expects an extern symbol name")
     self.extern_symbols[name] = ptr
     return self
 end
 
-function ModuleValue:symbols(map)
+function BundleValue:symbols(map)
     assert(type(map) == "table", "symbols expects a map of name -> pointer")
     for name, ptr in pairs(map) do self:symbol(name, ptr) end
     return self
 end
 
-function ModuleValue:to_asdl()
+function BundleValue:to_asdl()
     for i = 1, #self.drafts do
         if not self.drafts[i].sealed then self.api.raise_host_issue(self.session.T.MoonHost.HostIssueUnsealedType(self.name, self.drafts[i].name)) end
     end
@@ -127,7 +145,7 @@ function ModuleValue:to_asdl()
     return Tr.Module(Tr.ModuleTyped(self.name), items)
 end
 
-function ModuleValue:layout_env()
+function BundleValue:layout_env()
     local Sem = self.session.T.MoonSem
     local pvm = require("moonlift.pvm")
     local layouts = {}
@@ -183,7 +201,7 @@ local function c_sig_of(api, func_value)
     return ret .. " (*)(" .. table.concat(args, ", ") .. ")"
 end
 
-function ModuleValue:_lower_program(opts)
+function BundleValue:_lower_program(opts)
     opts = opts or {}
     local Pipeline = require("moonlift.frontend_pipeline").Define(self.session.T)
     local lower_opts = {
@@ -200,7 +218,7 @@ function ModuleValue:_lower_program(opts)
     return Pipeline.lower_module(self:to_asdl(), lower_opts).program
 end
 
-function ModuleValue:compile(opts)
+function BundleValue:compile(opts)
     opts = opts or {}
     local program = self:_lower_program(opts)
     local Jit = require("moonlift.back_jit")
@@ -213,7 +231,7 @@ function ModuleValue:compile(opts)
     return setmetatable({ module = self, artifact = artifact, T = T, functions = {} }, CompiledModule)
 end
 
-function ModuleValue:emit_object(opts)
+function BundleValue:emit_object(opts)
     opts = opts or {}
     local program = self:_lower_program(opts)
     local T = self.session.T
@@ -224,8 +242,67 @@ function ModuleValue:emit_object(opts)
     return artifact
 end
 
-function ModuleValue:__tostring()
-    return "MoonModuleValue(" .. self.name .. ")"
+function BundleValue:jit(opts)
+    return self:compile(opts)
+end
+
+function BundleValue:object(path_or_opts)
+    local opts = path_or_opts
+    if type(path_or_opts) == "string" then opts = { object_path = path_or_opts } end
+    local artifact = self:emit_object(opts)
+    if opts.object_path then
+        artifact:write(opts.object_path)
+    end
+    return artifact
+end
+
+function BundleValue:library(path_or_opts)
+    local opts = path_or_opts
+    if type(path_or_opts) == "string" then opts = { shared_path = path_or_opts } end
+    local object_artifact = self:emit_object(opts)
+    local object_path = opts.object_path or (os.tmpname() .. ".o")
+    object_artifact:write(object_path)
+
+    local LinkTarget = require("moonlift.link_target_model")
+    local LinkValidate = require("moonlift.link_plan_validate")
+    local LinkCommand = require("moonlift.link_command_plan")
+    local LinkExecute = require("moonlift.link_execute")
+    local T = self.session.T
+    local Link = T.MoonLink
+    local LT = LinkTarget.Define(T)
+    local LV = LinkValidate.Define(T)
+    local LC = LinkCommand.Define(T)
+    local LE = LinkExecute.Define(T)
+
+    local link_plan = Link.LinkPlan(
+        LT.default_object(),
+        Link.LinkArtifactSharedLibrary,
+        Link.LinkTool(Link.LinkerSystemCc, Link.LinkPath("cc")),
+        Link.LinkPath(opts.shared_path or "lib" .. self.name .. ".so"),
+        { Link.LinkInputObject(Link.LinkPath(object_path)) },
+        Link.LinkExportAll,
+        Link.LinkExternRequireResolved,
+        {}
+    )
+    local link_report = LV.validate(link_plan)
+    if #link_report.issues ~= 0 then
+        local msgs = {}
+        for j = 1, #link_report.issues do
+            msgs[#msgs + 1] = tostring(link_report.issues[j].message or link_report.issues[j])
+        end
+        error("bundle:library link validation failed: " .. table.concat(msgs, "\n"), 2)
+    end
+    local commands = LC.plan(link_plan)
+    local result = LE.execute(commands)
+    local LinkFailed = T.MoonLink.LinkFailed
+    if pvm.classof(result) == LinkFailed then
+        error("bundle:library link failed", 2)
+    end
+    return opts.shared_path
+end
+
+function BundleValue:__tostring()
+    return "MoonBundle(" .. self.name .. ")"
 end
 
 function CompiledModule:get(name)
@@ -256,10 +333,10 @@ function CompiledFunction:__tostring()
 end
 
 function M.Install(api, session)
-    local function new_module(name)
-        assert_name(name, "module")
+    local function new_bundle(name)
+        assert_name(name, "bundle")
         return setmetatable({
-            kind = "module",
+            kind = "bundle",
             session = session,
             api = api,
             name = name,
@@ -271,18 +348,24 @@ function M.Install(api, session)
             func_names = {},
             extern_symbols = {},
             region_frags = {},
-        }, ModuleValue)
+        }, BundleValue)
     end
 
+    function api.bundle(name)
+        return new_bundle(name)
+    end
+
+    -- Internal alias for backward compat
     function api.module(name)
-        return new_module(name)
+        return new_bundle(name)
     end
 
     function session:module(name)
-        return new_module(name)
+        return new_bundle(name)
     end
 
-    api.ModuleValue = ModuleValue
+    api.BundleValue = BundleValue
+    api.ModuleValue = BundleValue  -- alias for compat
 end
 
 return M

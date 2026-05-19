@@ -291,7 +291,7 @@ and `moon.emit_object`.
 **Builder API** — the unified module also exposes the quoting and table builder surface:
 
 ```lua
-local M = moon.module("Demo")
+local M = moon.bundle("Demo")
 M:export_func("add", { ... }, moon.i32, function(fn) ... end)
 ```
 
@@ -2125,13 +2125,13 @@ f:free()
 
 ### When to use the module path instead
 
-The explicit `moon.module()` path is still available for complex cases:
+The explicit `moon.bundle()` path is still available for complex cases:
 - Large multi-function artifacts that need to be compiled together
 - When you need a shared compilation artifact across multiple call sites
 - When you need explicit export control
 
 ```lua
-local m = moon.module("decoder")
+local b = moon.bundle("decoder")
 m:add_func(parse_array)
 m:add_func(parse_value)
 m:add_func(decode)
@@ -2236,7 +2236,7 @@ moon.array_expr(elem_ty, elems) -- array literal
 
 ```lua
 -- Module creation
-local M = moon.module("Demo")
+local M = moon.bundle("Demo")
 
 -- Exported function (uses function builder body)
 M:export_func("add", {

@@ -81,7 +81,7 @@ local moon = require("moonlift")
 local add = moon.func [[add(a: i32, b: i32) -> i32 return a + b end]]
 
 -- Compile and run
-local module = moon.module("demo")
+local bundle = moon.bundle("demo")
 module:add_func(add)
 local compiled = module:compile()
 local fn = compiled:get("add")
@@ -452,7 +452,7 @@ The old builder API (`b:let`, `b:if_`, `b:switch_`, `b:return_`, `b:jump`,
 table builders.
 
 What stays:
-- `moon.module("Name")` — module assembly (inherently imperative)
+- `moon.bundle("Name")` — output packaging (compile together, emit .o/.so)
 - `moon.ast.*` — low-level ASDL constructors (escape hatch)
 - Lua `for` loops for building tables — the only "builder" you need
 
@@ -579,7 +579,7 @@ dep:free()
 **Explicit module path** — still available for complex multi-function artifacts:
 
 ```lua
-local module = moon.module("demo")
+local bundle = moon.bundle("demo")
 module:add_func(add)
 local compiled = module:compile()
 local fn = compiled:get("add")

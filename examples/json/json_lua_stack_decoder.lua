@@ -392,23 +392,13 @@ end]]
 -- Execution test
 -- ---------------------------------------------------------------------------
 
-local module = moon.module("json_lua_stack_decoder")
-module:add_func(lua_createtable)
-module:add_func(lua_pushlstring)
-module:add_func(lua_pushnumber)
-module:add_func(lua_pushboolean)
-module:add_func(lua_pushnil)
-module:add_func(lua_settable)
-module:add_func(lua_rawseti)
-module:add_region(skip_ws)
-module:add_region(parse_string)
-module:add_region(parse_number)
-module:add_func(parse_array)
-module:add_func(parse_object)
-module:add_func(parse_value)
-module:add_func(decode_json_to_lua_stack)
-local compiled_module = module:compile()
-local compiled = compiled_module:get("decode_json_to_lua_stack")
+local bundle = moon.bundle("json_lua_stack_decoder")
+bundle:pack(lua_createtable, lua_pushlstring, lua_pushnumber, lua_pushboolean,
+           lua_pushnil, lua_settable, lua_rawseti)
+bundle:pack(skip_ws, parse_string, parse_number)
+bundle:pack(parse_array, parse_object, parse_value, decode_json_to_lua_stack)
+local artifact = bundle:jit()
+local compiled = artifact:get("decode_json_to_lua_stack")
 
 local function decode_into_new_state(json)
     local C = ffi.C
@@ -498,6 +488,6 @@ assert(tonumber(lenp[0]) == 4)
 assert(string.byte(ffi.string(s, 4), 1) == 0xF0)
 close(L)
 
-compiled_module:free()
+artifact:free()
 print("Moonlift Lua-stack JSON decoder ok")
 return "Moonlift Lua-stack JSON decoder ok"
