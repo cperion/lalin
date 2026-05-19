@@ -997,6 +997,13 @@ function M.Define(T)
         -- params, body, and blocks using the given env, but does NOT inline
         -- nested emit uses — those are resolved later at use sites).
         expand_region_frag = function(frag, env)
+            local pvm = require("moonlift.pvm")
+            if pvm.classof(frag) == O.RegionFragDecl then
+                local params = expand_open_params(frag.params, env)
+                local conts = expand_cont_slots(frag.conts, env)
+                local resolved_name = name_text(frag.name, env) or "<unresolved>"
+                return O.RegionFragDecl(O.NameRefText(resolved_name), params, conts)
+            end
             local params = expand_open_params(frag.params, env)
             local conts = expand_cont_slots(frag.conts, env)
             local entry = Tr.EntryControlBlock(frag.entry.label, expand_entry_params(frag.entry.params, env), expand_stmts(frag.entry.body, env))

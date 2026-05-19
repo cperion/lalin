@@ -102,23 +102,39 @@ function M.Install(api, session)
         }, ParamValue)
     end
 
+    local function sorted_string_keys(t)
+        local keys = {}
+        for k in pairs(t) do
+            if type(k) == "string" then keys[#keys + 1] = k end
+        end
+        table.sort(keys)
+        return keys
+    end
+
+    local function param_from_spec(spec, site)
+        if type(spec) == "table" and getmetatable(spec) == ParamValue then return spec end
+        if type(spec) == "table" and spec.name ~= nil then
+            return api.param(spec.name, spec.type)
+        end
+        if type(spec) == "table" and type(spec[1]) == "string" then
+            return api.param(spec[1], spec[2])
+        end
+        error((site or "params") .. " expects param specs as {name=..., type=...} or {\"name\", type}", 3)
+    end
+
     function api.params(specs)
-        if type(specs) == "table" and #specs > 0 and type(specs[1]) == "table" and specs[1].name ~= nil then
-            local out = {}
-            for i = 1, #specs do
-                local spec = specs[i]
-                local tv = api.as_type_value(spec.type, "params element expects type value")
-                out[i] = setmetatable({
-                    kind = "param",
-                    session = session,
-                    name = spec.name,
-                    type = tv,
-                    decl = Ty.Param(spec.name, tv.ty),
-                }, ParamValue)
-            end
+        assert(type(specs) == "table", "moon.params expects a table")
+        local out = {}
+        if #specs > 0 then
+            for i = 1, #specs do out[i] = param_from_spec(specs[i], "params element") end
             return out
         end
-        error("moon.params{table} expects array of {name, type} records", 2)
+        -- Convenience map form: moon.params { a = moon.i32, b = moon.i32 }.
+        -- Map keys are sorted for deterministic output; use list/pair form to
+        -- control ABI parameter order.
+        local keys = sorted_string_keys(specs)
+        for i = 1, #keys do out[i] = api.param(keys[i], specs[keys[i]]) end
+        return out
     end
 
     function FuncBuilder:param(name)
@@ -422,6 +438,37 @@ function M.Install(api, session)
         error("moon.stmts expects a string [[]] or table {}", 3)
     end
     api.stmts = setmetatable({}, stmts_mt)
+
+    function api.switch_stmt_arm(raw_key, body)
+        return { kind = "switch_stmt_arm", raw_key = tostring(raw_key), body = body }
+    end
+
+    function api.switch_arms(specs, default_body)
+        assert(type(specs) == "table", "moon.switch_arms expects a table")
+        local function make_arm(key, body)
+            return { raw_key = tostring(key), body = body }
+        end
+        local out = {}
+        if #specs > 0 then
+            local first = specs[1]
+            -- Single compact arm: {42, body}
+            if type(first) == "number" or type(first) == "string" then
+                out[#out + 1] = make_arm(first, specs[2])
+            else
+                -- Array of compact arms: {{42, body1}, {10, body2}}
+                for i = 1, #specs do
+                    local s = specs[i]
+                    if type(s) == "table" then
+                        out[#out + 1] = make_arm(s[1], s[2])
+                    end
+                end
+            end
+        end
+        if default_body then
+            out[#out + 1] = make_arm("default", default_body)
+        end
+        return out
+    end
 
     api.ParamValue = ParamValue
     api.FuncValue = FuncValue

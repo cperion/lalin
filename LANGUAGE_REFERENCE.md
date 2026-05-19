@@ -1949,7 +1949,7 @@ name in Lua instead (`local name = "foo_" .. tag`) and write `@{name}`.
 
 ```lua
 -- Spread generated params and body statements
-local params = moon.params { {name="a", type=moon.i32}, {name="b", type=moon.i32} }
+local params = moon.params { {"a", moon.i32}, {"b", moon.i32} }
 local body = moon.stmts [[ return a + b ]]
 
 return func add(@{params...}) -> i32
@@ -1957,7 +1957,7 @@ return func add(@{params...}) -> i32
 end
 
 -- Spread region params and continuations
-local rparams = moon.params { {name="n", type=moon.i32} }
+local rparams = moon.params { {"n", moon.i32} }
 local exits = { { name = "done", params = { {name="v", type=moon.i32} } } }
 return region generated(@{rparams...}; @{exits...})
 entry start()
@@ -2313,22 +2313,22 @@ local M = moon.bundle("Demo")
 
 -- Exported function (uses function builder body)
 M:export_func("add", {
-    {name="a", type=moon.i32},
-    {name="b", type=moon.i32},
+    {"a", moon.i32},
+    {"b", moon.i32},
 }, moon.i32, function(fn)
     fn:return_(fn:param("a") + fn:param("b"))
 end)
 
 -- Local function
 M:func("helper", {
-    {name="x", type=moon.i32},
+    {"x", moon.i32},
 }, moon.i32, function(fn)
     fn:return_(fn:param("x") * moon.int(2))
 end)
 
 -- Extern function
 M:extern_func("puts", {
-    {name="s", type=moon.ptr(moon.u8)},
+    {"s", moon.ptr(moon.u8)},
 }, moon.i32)
 
 -- Bind extern symbols for JIT compilation from Lua.
@@ -2336,7 +2336,7 @@ M:symbol("puts", ffi.cast("void *", ffi.C.puts))
 ```
 
 Function params are specified as Lua arrays of `{name, type}` record tables.
-The duck-typed table `{name="a", type=moon.i32}` is accepted everywhere
+The duck-typed table `{"a", moon.i32}` is accepted everywhere
 `moon.param("a", moon.i32)` was previously required.
 
 Inside function bodies, parameter names are available as expression values
@@ -2397,20 +2397,20 @@ Table builders for declaration-shaped things. Each returns an array of typed ASD
 -- Parameters
 local params = moon.params {
     {name="a", type=moon.i32, mods={noalias=true}},
-    {name="b", type=moon.i32},
+    {"b", moon.i32},
 }
 
 -- Fields
 local fields = moon.fields {
-    {name="x", type=moon.i32},
-    {name="y", type=moon.f64},
+    {"x", moon.i32},
+    {"y", moon.f64},
 }
 
 -- Variants
 local variants = moon.variants {
-    {name="Some", payload=moon.i32},
-    {name="None"},
-    {name="Pair", fields={ {name="a", type=moon.i32}, {name="b", type=moon.f64} }},
+    {"Some", moon.i32},
+    "none",
+    {name="Pair", fields={ {"a", moon.i32}, {name="b", type=moon.f64} }},
 }
 
 -- Continuations (named map — keyed by continuation name)
@@ -2764,7 +2764,7 @@ Use the lowest level that expresses the pattern cleanly.
 3. **List spreading** — insert many generated values into a syntactic list:
 
    ```lua
-   local params = moon.params { {name="a", type=moon.i32}, {name="b", type=moon.i32} }
+   local params = moon.params { {"a", moon.i32}, {"b", moon.i32} }
 
    return func add(@{params...}) -> i32
        return a + b
@@ -2784,13 +2784,13 @@ Moonlift grammar position and checked per element.
 
 ```lua
 local params = moon.params {
-    {name="a", type=moon.i32},
-    {name="b", type=moon.i32},
+    {"a", moon.i32},
+    {"b", moon.i32},
 }
 
 local fields = moon.fields {
-    {name="x", type=moon.f64},
-    {name="y", type=moon.f64},
+    {"x", moon.f64},
+    {"y", moon.f64},
 }
 
 local args = { 20, 22 }
@@ -2862,8 +2862,8 @@ for i = 0, N - 1 do
 end
 
 local variants = moon.variants {
-    {name="ok", payload=moon.i32},
-    {name="err", payload=moon.i32},
+    {"ok", moon.i32},
+    {"err", moon.i32},
 }
 ```
 
@@ -2899,7 +2899,7 @@ interfaces are typed control contracts.
 ```lua
 local params = moon.params {
     {name="p", type=moon.ptr(moon.u8)},
-    {name="n", type=moon.i32},
+    {"n", moon.i32},
 }
 
 local exits = {

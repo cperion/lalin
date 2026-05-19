@@ -2,31 +2,31 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local Host = require("moonlift.mlua_run")
 
-local f = Host.eval [[
-local params = moon.params { {name="a", type=moon.i32}, {name="b", type=moon.i32} }
+local f = Host.eval [=[
+local params = moon.params[[ a: i32, b: i32 ]]
 return func spread_params(@{params...}) -> i32
     return a + b
 end
-]]
+]=]
 assert(#f.func.params == 2)
 assert(f.func.params[1].name == "a")
 assert(f.func.params[2].name == "b")
 
-local Pair = Host.eval [[
-local fields = moon.fields { {name="x", type=moon.i32}, {name="y", type=moon.i32} }
+local Pair = Host.eval [=[
+local fields = moon.fields{ T = moon.i32 }[[ x: @{T}; y: @{T} ]]
 return struct Pair
     @{fields...}
 end
-]]
+]=]
 assert(Pair.decl.fields[1].field_name == "x")
 assert(Pair.decl.fields[2].field_name == "y")
 
-local U = Host.eval [[
-local variants = moon.variants { {name="a", payload=moon.i32}, {name="b", payload=moon.i64} }
+local U = Host.eval [=[
+local variants = moon.variants{ A = moon.i32 }[[ a(@{A}) | b(i64) ]]
 return union U
     @{variants...}
 end
-]]
+]=]
 assert(#U.decl.variants == 2)
 assert(U.decl.variants[1].name == "a")
 assert(U.decl.variants[2].name == "b")

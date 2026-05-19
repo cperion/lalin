@@ -44,28 +44,44 @@ end
 
 local CallableFunc
 
--- ── Helper: create a quoting entry point ──────────────────────────────────────
-
-local function make_quote(parse_fn, wrap_fn, expand_fn)
+-- ── moon.chain: the universal applicative API constructor ─────────────────────
+-- Every moon.XXX is a chain. A chain is a callable table whose __call dispatches
+-- on argument type: string → parse ([[...]]), string-keyed table → binder {},
+-- array-keyed table → builder {}. Each step returns another chain carrying
+-- accumulated state. The terminal is when a value is produced.
+--
+-- Config fields:
+--   name      – for error messages ("variants", "fields", etc.)
+--   parse     – function(T, src) → parsed
+--   wrap      – function(value, parsed, T, src, bindings?) → final value
+--   expand    – function(e, value, env) → expanded value (for binder+quote)
+--   table_fn  – function(arg) → value (for array-keyed table call, builder form)
+local function make_chain(config)
+    local name = config.name or "?"
+    local parse_fn = config.parse
+    local wrap_fn = config.wrap
+    local expand_fn = config.expand
+    local table_fn = config.table_fn
     return setmetatable({}, {
+        __index = { _chain_config = config },
         __call = function(_, arg)
             if type(arg) == "string" then
-                -- Pure quote: moon.XXX[[src]]
                 local T = default_session.T
                 local parsed = parse_fn(T, arg)
                 if #parsed.issues ~= 0 then error(parsed.issues[1].message, 2) end
                 if #parsed.splice_slots ~= 0 then
-                    error("moon.XXX[[]] does not evaluate @{}; use moon.XXX{values}[[src]] instead", 2)
+                    error("moon." .. name .. "[[]] does not evaluate @{}; use moon." .. name .. "{values}[[src]] instead", 2)
                 end
                 return wrap_fn(parsed.value, parsed, T, arg)
             end
             if type(arg) == "table" then
-                -- Values binder: moon.XXX{values} returns a quote function
                 local has_str_keys = false
                 for k in pairs(arg) do
                     if type(k) == "string" then has_str_keys = true; break end
                 end
-                if not has_str_keys then return arg end  -- pass-through for table builders
+                if not has_str_keys then
+                    return table_fn and table_fn(arg) or arg
+                end
                 local bound_values = {}
                 for k, v in pairs(arg) do bound_values[k] = v end
                 return function(src)
@@ -91,7 +107,6 @@ local function make_quote(parse_fn, wrap_fn, expand_fn)
                     env = e.env_with_fills(env, bindings)
                     local expanded = expand_fn(e, parsed.value, env)
                     local result = wrap_fn(expanded, parsed, T, src, bound_values)
-                    -- Attach deps for lazy compilation in CallableFunc:__call
                     if type(result) == "table" then
                         local mt = getmetatable(result)
                         if mt == CallableFunc then
@@ -101,9 +116,14 @@ local function make_quote(parse_fn, wrap_fn, expand_fn)
                     return result
                 end
             end
-            error("moon.XXX expects a string [[]] or table {}", 2)
+            error("moon." .. name .. " expects a string [[]] or table {}", 2)
         end,
     })
+end
+
+-- Convenience: positional wrapper for existing call sites
+local function make_quote(parse_fn, wrap_fn, expand_fn, table_fn)
+    return make_chain({ parse = parse_fn, wrap = wrap_fn, expand = expand_fn, table_fn = table_fn })
 end
 
 CallableFunc = {}
@@ -152,6 +172,12 @@ end
 -- ── Scalar types ──────────────────────────────────────────────────────────────
 
 M.void = api.void; M.bool = api.bool
+
+-- ── The universal applicative primitive ────────────────────────────────────────
+-- Every moon.XXX is an instance of moon.chain. Users can define their own:
+--   my_api = moon.chain { name = "my_api", parse = ..., wrap = ... }
+M.chain = make_chain
+
 M.i8 = api.i8; M.i16 = api.i16; M.i32 = api.i32; M.i64 = api.i64
 M.u8 = api.u8; M.u16 = api.u16; M.u32 = api.u32; M.u64 = api.u64
 M.f32 = api.f32; M.f64 = api.f64; M.index = api.index; M.rawptr = api.rawptr
@@ -171,10 +197,9 @@ M.atomic_load = api.atomic_load; M.atomic_store = api.atomic_store
 M.atomic_rmw = api.atomic_rmw; M.atomic_cas = api.atomic_cas; M.atomic_fence = api.atomic_fence
 
 -- ── Table builders (data-shaped things) ───────────────────────────────────────
+-- Installed after make_quote helpers below so builders also support [[]] and
+-- {bindings}[[]] quote forms.
 
-M.params = api.params
-M.fields = api.fields
-M.variants = api.variants
 M.conts = api.conts
 M.blocks = api.blocks
 M.entry_params = api.entry_params
@@ -192,6 +217,110 @@ M.expr = make_quote(
     function(value) return api.expr_from_asdl(value, nil, "moon.expr quote") end,
     function(e, value, env) return e.expr(value, env) end
 )
+
+local function typed_list_parse_error(prefix, parsed)
+    if parsed and parsed.issues and #parsed.issues ~= 0 then error(parsed.issues[1].message, 3) end
+    error(prefix .. " parse failed", 3)
+end
+
+local function parse_params_quote(T, src)
+    local P = require("moonlift.parse").Define(T)
+    local parsed = P.parse_func("func __moon_params(" .. src .. ") end")
+    if not parsed.value then typed_list_parse_error("params", parsed) end
+    return parsed
+end
+
+local function wrap_params_quote(value)
+    local out = {}
+    for i = 1, #(value.params or {}) do
+        local p = value.params[i]
+        out[i] = api.param(p.name, api.type_from_asdl(p.ty, p.name))
+    end
+    return out
+end
+
+local function expand_params_quote(e, value, env)
+    local pvm = require("moonlift.pvm")
+    local Tr = default_session.T.MoonTree
+    local result = pvm.one(e.item_stream(Tr.ItemFunc(value), env))
+    local item = result.items and result.items[1]
+    return item and item.func or value
+end
+
+local function parse_fields_quote(T, src)
+    local P = require("moonlift.parse").Define(T)
+    local parsed = P.parse_struct("struct __moon_fields\n" .. src .. "\nend")
+    if not parsed.value then typed_list_parse_error("fields", parsed) end
+    return parsed
+end
+
+local function wrap_fields_quote(value)
+    local decl = value.decl or value
+    local out = {}
+    for i = 1, #(decl.fields or {}) do
+        local f = decl.fields[i]
+        out[i] = api.field(f.field_name, api.type_from_asdl(f.ty, f.field_name))
+    end
+    return out
+end
+
+local function expand_fields_quote(e, value, env)
+    return { name = value.name, decl = e.expand_type_decl(value.decl or value, env) }
+end
+
+local function parse_variants_quote(T, src)
+    local P = require("moonlift.parse").Define(T)
+    local parsed = P.parse_union("union __moon_variants\n" .. src .. "\nend")
+    if not parsed.value then typed_list_parse_error("variants", parsed) end
+    return parsed
+end
+
+local function wrap_variants_quote(value)
+    local decl = value.decl or value
+    local out = {}
+    for i = 1, #(decl.variants or {}) do
+        local v = decl.variants[i]
+        local fields = v.fields or {}
+        if #fields > 0 then
+            out[i] = { kind = "variant", name = v.name, payload = nil, fields = fields, decl = v }
+        else
+            out[i] = api.variant(v.name, api.type_from_asdl(v.payload, v.name))
+        end
+    end
+    return out
+end
+
+local function expand_variants_quote(e, value, env)
+    return { name = value.name, decl = e.expand_type_decl(value.decl or value, env) }
+end
+
+-- exits: same union parser, but wraps into ExitProtocol instead of variant array
+local function parse_exits_quote(T, src)
+    return parse_variants_quote(T, src)  -- same grammar: ok(i32) | err(i64)
+end
+
+local function wrap_exits_quote(value)
+    local decl = value.decl or value
+    local exits = wrap_variants_quote(value)  -- [{kind="variant", name, type}, ...]
+    -- Re-key variant values into exit values
+    for i = 1, #exits do
+        local v = exits[i]
+        exits[i] = { kind = "exit", name = v.name, ty = v.type }
+    end
+    return setmetatable({ kind = "exit_protocol", exits = exits, _owner = "exits" }, { __index = api.ExitProtocol })
+end
+
+local function expand_exits_quote(e, value, env)
+    return e.expand_type_decl(value.decl or value, env)
+end
+
+M.params = make_quote(parse_params_quote, wrap_params_quote, expand_params_quote, api.params)
+M.fields = make_quote(parse_fields_quote, wrap_fields_quote, expand_fields_quote, api.fields)
+M.variants = make_quote(parse_variants_quote, wrap_variants_quote, expand_variants_quote, api.variants)
+M.exits = make_quote(parse_exits_quote, wrap_exits_quote, expand_exits_quote, api.exits)
+
+-- Switch arms builder
+M.switch_arms = api.switch_arms
 
 M.func = make_quote(
     function(T, src) return require("moonlift.parse").Define(T).parse_func(src) end,
@@ -361,9 +490,7 @@ M.struct = make_quote(
             fields = {}, fields_by_name = {}, decl = value.decl, type = ty }, api.StructValue or {})
     end,
     function(e, value, env)
-        local pvm = require("moonlift.pvm")
-        local g, p, c = e.expand_type_decl(value, env)
-        return pvm.one(g, p, c)
+        return { name = value.name, decl = e.expand_type_decl(value.decl or value, env) }
     end
 )
 
@@ -376,9 +503,7 @@ M.union = make_quote(
             decl = value.decl, type = ty }, api.StructValue or {})
     end,
     function(e, value, env)
-        local pvm = require("moonlift.pvm")
-        local g, p, c = e.expand_type_decl(value, env)
-        return pvm.one(g, p, c)
+        return { name = value.name, decl = e.expand_type_decl(value.decl or value, env) }
     end
 )
 

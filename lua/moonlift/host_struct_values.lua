@@ -166,18 +166,41 @@ function M.Install(api, session)
         }, FieldValue)
     end
 
+    local function sorted_string_keys(t)
+        local keys = {}
+        for k in pairs(t) do
+            if type(k) == "string" then keys[#keys + 1] = k end
+        end
+        table.sort(keys)
+        return keys
+    end
+
+    local function field_from_spec(spec, site)
+        if type(spec) == "table" and getmetatable(spec) == FieldValue then return spec end
+        if type(spec) == "table" and spec.name ~= nil then
+            return api.field(spec.name, spec.type)
+        end
+        if type(spec) == "table" and type(spec[1]) == "string" then
+            return api.field(spec[1], spec[2])
+        end
+        error((site or "fields") .. " expects field specs as {name=..., type=...} or {\"name\", type}", 3)
+    end
+
     function api.fields(specs)
+        assert(type(specs) == "table", "moon.fields expects a table")
         local out = {}
-        for i = 1, #specs do
-            local spec = specs[i]
-            local tv = api.as_type_value(spec.type, "fields element expects type value")
-            out[i] = setmetatable({
-                kind = "field",
-                session = session,
-                name = spec.name,
-                type = tv,
-                decl = Ty.FieldDecl(spec.name, tv.ty),
-            }, FieldValue)
+        if #specs > 0 then
+            for i = 1, #specs do
+                out[i] = field_from_spec(specs[i], "fields element")
+            end
+            return out
+        end
+        -- Convenience map form: moon.fields { x = moon.i32, y = moon.i32 }.
+        -- Lua 5.1 does not preserve literal table key order, so map keys are
+        -- emitted in sorted order. Use list/pair form when layout order matters.
+        local keys = sorted_string_keys(specs)
+        for i = 1, #keys do
+            out[i] = api.field(keys[i], specs[keys[i]])
         end
         return out
     end
@@ -188,25 +211,35 @@ function M.Install(api, session)
         return { kind = "variant", name = name, type = tv, decl = Ty.VariantDecl(name, tv.ty, {}) }
     end
 
-    function api.variants(specs)
-        local out = {}
-        for i = 1, #specs do
-            local spec = specs[i]
-            if spec.fields then
-                local fields = {}
-                for j = 1, #spec.fields do
-                    local f = spec.fields[j]
-                    local ftv = api.as_type_value(f.type, "variant field type")
-                    fields[j] = Ty.FieldDecl(f.name, ftv.ty)
-                end
-                out[i] = { kind = "variant", name = spec.name, payload = nil, fields = fields,
-                           decl = Ty.VariantDecl(spec.name, api.void.ty, fields) }
-            else
-                local tv = api.as_type_value(spec.payload or api.void, "variant payload expects type value")
-                out[i] = { kind = "variant", name = spec.name, type = tv, payload = tv,
-                           decl = Ty.VariantDecl(spec.name, tv.ty, {}) }
-            end
+    local function variant_from_spec(spec, site)
+        if type(spec) == "string" then return api.variant(spec, api.void) end
+        if type(spec) == "table" and type(spec[1]) == "string" then
+            return api.variant(spec[1], spec[2] or api.void)
         end
+        if type(spec) ~= "table" or spec.name == nil then
+            error((site or "variants") .. " expects variant specs as {name=..., payload=...}, {\"name\", payload}, or \"name\"", 3)
+        end
+        if spec.fields then
+            local field_values = api.fields(spec.fields)
+            local fields = {}
+            for j = 1, #field_values do fields[j] = field_values[j].decl end
+            return { kind = "variant", name = spec.name, payload = nil, fields = fields,
+                     decl = Ty.VariantDecl(spec.name, api.void.ty, fields) }
+        end
+        return api.variant(spec.name, spec.payload or spec.type or api.void)
+    end
+
+    function api.variants(specs)
+        assert(type(specs) == "table", "moon.variants expects a table")
+        local out = {}
+        if #specs > 0 then
+            for i = 1, #specs do out[i] = variant_from_spec(specs[i], "variants element") end
+            return out
+        end
+        -- Convenience map form: moon.variants { ok = T, err = E }.
+        -- Keys are sorted; use list/pair form to control declaration order.
+        local keys = sorted_string_keys(specs)
+        for i = 1, #keys do out[i] = api.variant(keys[i], specs[keys[i]]) end
         return out
     end
 
@@ -274,6 +307,85 @@ function M.Install(api, session)
     api.StructValue = StructValue
     api.DraftStructValue = DraftStructValue
     api.TypeDeclValue = TypeDeclValue
+
+    -- ExitProtocol: unified exits for union variants and region continuations.
+    -- Implements moonlift_splice(role) to dispatch to the right shape based on
+    -- whether the splice is in union context (variant_list) or region context
+    -- (cont_slot_list).
+    local ExitProtocol = {}
+    ExitProtocol.__index = ExitProtocol
+
+    function ExitProtocol:moonlift_splice(role, session, site)
+        if role == "variant_list" then
+            local out = {}
+            for _, e in ipairs(self.exits) do
+                local name = e.name or e[1]
+                local fields = e.fields or {}
+                local decl
+                if e.decl then
+                    decl = e.decl
+                elseif #fields > 0 then
+                    decl = Ty.VariantDecl(name, Ty.TScalar(C.ScalarVoid), fields)
+                else
+                    local ty = api.as_type_value(e.ty or e.type or api.void, "exit type").ty
+                    decl = Ty.VariantDecl(name, ty, {})
+                end
+                out[#out + 1] = decl
+            end
+            return O.SlotBinding(O.SlotRegion(slot), O.SlotValueVariants(out))
+        end
+        if role == "cont_slot_list" then
+            local out = {}
+            for _, e in ipairs(self.exits) do
+                local slot_key = e.slot and e.slot.key or ("cont:" .. self._owner .. ":" .. (e.name or e[1]))
+                local name = e.name or e[1]
+                local params = {}
+                -- Convert fields to block params for continuation slots
+                for k = 1, #(e.fields or e.params or {}) do
+                    local f = e.fields[k] or e.params[k]
+                    local fn = f.name or f.field_name or f[1]
+                    local ft = (f.type or f.ty or f[2])
+                    params[#params + 1] = Tr.BlockParam(fn, api.as_type_value(ft, "cont param").ty)
+                end
+                out[#out + 1] = O.ContSlot(slot_key, name, params)
+            end
+            return O.SlotBinding(O.SlotRegion(slot), O.SlotValueContSlots(out))
+        end
+        error((site or "splice") .. ": ExitProtocol cannot splice as " .. role, 2)
+    end
+
+    local ExitMetatable = {}
+    ExitMetatable.__index = ExitProtocol
+
+    function api.exit(name, ty)
+        local tv = api.as_type_value(ty or api.void, "exit expects a type value")
+        return { kind = "exit", name = name, ty = tv, is_exit = true }
+    end
+
+    local function exit_from_spec(spec, site)
+        if type(spec) == "string" then return api.exit(spec, api.void) end
+        if type(spec) == "table" then
+            if type(spec[1]) == "string" then return api.exit(spec[1], spec[2] or api.void) end
+            if spec.name then return api.exit(spec.name, spec.payload or spec.type or api.void) end
+        end
+        error((site or "exits") .. " expects exit specs", 3)
+    end
+
+    function api.exits(specs)
+        assert(type(specs) == "table", "moon.exits expects a table")
+        local out = {}
+        if #specs > 0 then
+            for i = 1, #specs do out[i] = exit_from_spec(specs[i], "exits element") end
+        else
+            local keys = sorted_string_keys(specs)
+            for i = 1, #keys do out[i] = api.exit(keys[i], specs[keys[i]]) end
+        end
+        return setmetatable({ kind = "exit_protocol", exits = out, _owner = "exits" }, ExitMetatable)
+    end
+
+    api.ExitProtocol = ExitProtocol
+
+    -- api.variants stays for backward compat — returns old format array
 end
 
 return M

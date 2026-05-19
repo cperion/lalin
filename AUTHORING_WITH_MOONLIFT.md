@@ -87,14 +87,26 @@ expressions). The `@{}` syntax in the source references these bindings by name.
 For programmatic construction of lists:
 
 ```lua
-local params = moon.params {
-    { name = "a", type = moon.i32 },
-    { name = "b", type = moon.i32 },
-}
-local fields = moon.fields {
-    { name = "x", type = moon.f32 },
-    { name = "y", type = moon.f32 },
-}
+-- Pair form — clean, minimal
+moon.params { {"a", moon.i32}, {"b", moon.i32} }
+moon.fields  { {"x", moon.f32}, {"y", moon.f32} }
+moon.variants { {"ok", moon.i32}, {"err", moon.i64} }
+
+-- Map form (fields only, when order doesn't matter)
+moon.fields { x = moon.f32, y = moon.f32, z = moon.f32 }
+
+-- Variant without payload
+moon.variants { "none" }
+```
+
+The pair form `{"name", type}` is the primary form. The map form `{name = type}`
+is convenient when field declaration order doesn't affect ABI layout.
+
+```lua
+-- Spread splices expand directly into source declarations
+local fields = moon.fields { {"x", moon.f32}, {"y", moon.f32} }
+moon.struct[[ Point @{fields...} end ]]
+-- Expands to: struct Point x: f32; y: f32 end
 ```
 
 Table builders return plain ASDL values that can be stored, spliced, or
@@ -560,7 +572,7 @@ Valid in: type position, expression position, fragment position, name position.
 Spreads a Lua array into a syntactic list:
 
 ```lua
-local params = moon.params { { name = "x", type = moon.i32 }, { name = "y", type = moon.i32 } }
+local params = moon.params { {"x", moon.i32}, {"y", moon.i32} }
 local fn = moon.func[[ add(@{params...}) -> i32 return x + y end ]]
 ```
 
@@ -703,7 +715,7 @@ local Point = moon.struct[[ x: f32; y: f32 end ]]
 local Point = struct x: f32; y: f32 end
 
 -- Table builder
-local fields = moon.fields { { name = "x", type = moon.f32 }, { name = "y", type = moon.f32 } }
+local fields = moon.fields { {"x", moon.f32}, {"y", moon.f32} }
 local Point = moon.struct("Point", fields)
 ```
 
@@ -819,6 +831,10 @@ The implementations are separate concerns.
 | Emit .so/.dylib | `moon.emit_shared(src, path, name)` |
 | Session (separate namespace) | `moon.new_session({ prefix = "name" })` |
 | Access scalar type | `moon.i32`, `moon.f64`, `moon.u8`, etc. |
+| Build params list | `moon.params { {"a", moon.i32}, {"b", moon.i32} }` |
+| Build fields list | `moon.fields { {"x", moon.f32}, {"y", moon.f32} }` |
+| Build fields (map) | `moon.fields { x = moon.f32, y = moon.f32 }` |
+| Build variants list | `moon.variants { {"ok", moon.i32}, {"err", moon.i64} }` |
 | Compound type | `moon.ptr(T)`, `moon.view(T)`, `moon.named(module, name)` |
 
 ---
