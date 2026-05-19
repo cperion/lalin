@@ -903,3 +903,199 @@ Now I have all the details I need. Let me formulate three distinct approaches.
 - **Pick A** if the goal is incremental improvement: make snippets more powerful while keeping the builder API for Lua loops and complex generation. Best risk/reward ratio — the existing Slot/expander machinery directly supports it modulo slot identity issues.
 - **Pick B** if the goal is a radical simplification: eliminate the builder API entirely by making Moonlift source self-sufficient for code generation. Best for the user who wants to stay in source syntax. Highest risk — language gets a metaprogramming subsystem that looks like the runtime language.
 - **Pick C** if the goal is conceptual elegance: unify everything under one model, even if the builder API remains. Best for the compiler developer who values minimal orthogonal primitives over API surface reduction.
+
+## Scout Output — 2026-05-19 11:22:49
+
+I now have a complete picture. Here is the full inventory.
+
+---
+
+## Complete Stale Reference Inventory
+
+### 1. `README.md` — Most heavily affected
+
+**RETIRED BUILDER API — 10 references:**
+
+| Line(s) | Pattern | Details |
+|---------|---------|---------|
+| 19 | `moon.loadstring(source)` / builder API | Production pipeline table says "builder API" |
+| 144, 152 | `moon.switch_arm(...)` | Example code with retired `moon.switch_arm` (2x) |
+| 359 | `moon.param("a", moon.i32)` | Example code — retired |
+| 360 | `moon.field("x", moon.i32), moon.field("y", moon.i32)` | Example code — retired (2x) |
+| 447-451 | `moon.stmts({ x = moon.i32 }, function(b) ... b:let(...) ... b:return_(...) ... end)` | Full builder pattern example — entire block is stale |
+| 458 | `moon.control_block(...)` | Comment reference to retired `moon.control_block` |
+| 488 | `moon.loadstring(source)` / builder API | Frontend table — stale |
+| 622-638 | "From Lua with the builder API" section + example | Entire subsection heading and code example stale |
+| 638 | "Or use the builder API" | Comment in code |
+| 782 | "High-level Lua builder API" | Repo layout description of `host.lua` |
+
+**MLBT v3 → should be v4 Flatline — 11 references:**
+
+| Line(s) | Phrase |
+|---------|--------|
+| 12 | `→ MLBT v3 → Cranelift` |
+| 20 | "MLBT v3 binary ABI" |
+| 491 | "Both entry points emit MLBT v3 binary format" |
+| 510 | `MLBT v3 binary (Lua encoder)` |
+| 515 | "produces MLBT v3 binary wire format" |
+| 527 | `MLBT v3 binary` |
+| 778 | "MLBT v3 wire generation" |
+| 785 | "MLBT v3 binary wire format encoder" |
+| 833 | "**MLBT v3 binary wire format.**" |
+| 862 | "MLBT v3 wire builder" |
+| 958 | "the same MLBT v3 binary wire format" |
+
+**MOM / `lua/moonlift/mom/` — ~30 references:**
+
+Entire "Two frontends" model throughout the document. Major sections affected:
+- Lines 11-21: "Two frontends, one ABI" intro table with MOM rows
+- Line 72-81: "MOM binary/API" section
+- Line 238-239: mom binary embedding MOM sources
+- Lines 250-251: MOM binary/API sub-section
+- Line 489: MOM in frontend table
+- Lines 518-531: "MOM pipeline target" section (pipeline diagram)
+- Lines 592, 614-619: mom CLI examples
+- Lines 774-785: `mom/` directory, `host_mom.lua` in repo layout
+- Lines 831-832: MOM doc links (`PORTING_GUIDE.md`, `PARSER_DESIGN.md`)
+- Lines 844-865: "MOM tests" listing (8 test references + `mom status`)
+- Line 956: "MOM (Moonlift-on-Moonlift) is the default compiler"
+- Line 958: "both produce the same MLBT v3 binary wire format"
+
+---
+
+### 2. `LANGUAGE_REFERENCE.md` — Partially updated, 8 stale builder references remain
+
+**RETIRED BUILDER API — 8 references:**
+
+| Line(s) | Pattern | Context |
+|---------|---------|---------|
+| 40 | "15. Lua builder API reference" | TOC entry (section title is now "Quoting and builder API reference" but the `function(b)` pattern is documented as retired) |
+| 259 | "alongside the builder API" | Section 3 intro |
+| 302 | "### 3.4 Low-level builder APIs" | Section header |
+| 304 | "Two additional builder APIs" | Still describes it as current |
+| 1416 | "through the builder API (`BackCmd.Sdiv`)" | Section 9.16 — should say "through ASDL construction" or similar |
+| 2052 | "## 15. Quoting and builder API reference" | Title says "builder API" |
+| 2939 | "-- In builder API:" | Section 21.2 comment in example code |
+| 3168 | "high-level builder API entry point" | Implementation map for host.lua |
+
+Also: Line 993 `moon.stmts("jump handler_" .. key .. "(result)")` — this is the two-arg string form. If that was also retired, this is stale.
+
+**Note**: LANGUAGE_REFERENCE.md sections 3.4 (lines 302-320) describe `moonlift.ast` as a "low-level builder API" but this is the ASDL node constructor API which is NOT retired. The text says "Two additional builder APIs produce the same ASDL values" — the `moonlift.ast` API is still valid; only the wording "builder API" is misleading.
+
+**MLBT v3**: No references found in LANGUAGE_REFERENCE.md — clean.
+
+**MOM**: 4 references (lines 271, 275-277, 336-339) — all in section 3.2 describing `moon.native_loadstring` through the MOM pipeline.
+
+---
+
+### 3. `AGENTS.md` — 3 MLBT v3, 9 MOM references
+
+**MLBT v3 → should be v4:**
+
+| Line | Phrase |
+|------|--------|
+| 78 | "MLBT v3 wire format" (test docstring) |
+| 334 | "MLBT v3 binary wire format encoder" |
+| 335 | "Binary wire format specification (MLBT v3)" |
+
+**MOM:**
+
+| Line | Reference |
+|------|-----------|
+| 31 | "MOM status" section — "mom binary links ... MOM sources" |
+| 33 | "Do not route compilation through parser-tape shortcuts" |
+| 63-65 | MOM test references (3x: `test_mom_groundwork`, `test_mom_native_lexer`, etc.) |
+| 78 | MOM wire test |
+| 79 | "MOM API source → MLBT → execute" |
+| 337 | `host_mom.lua` in key files table |
+| 338 | `lua/moonlift/mom/` directory in key files table |
+| 339 | "When working under `lua/moonlift/mom/`" guidance |
+
+---
+
+### 4. `BACK_WIRE_FORMAT.md` — Correct as-is
+
+This file documents itself as "v4 — Flatline" (correct). Lines 5 and 388 reference "MLBT v3" as historical context ("Replaces MLBT v3" and "What Changed from MLBT v3"), which is correct changelog documentation. **No stale references.**
+
+---
+
+### 5. `explicit_programming.md` — 1 stale builder reference
+
+| Line | Pattern |
+|------|---------|
+| 2947 | `moon.switch_arm(i, moon.stmts(function(b)` |
+
+---
+
+### 6. `IMPLEMENTATION_STATUS.md` — Entirely about MOM, 3 MLBT v3 references
+
+**MLBT v3:** Lines 13, 33, 159 (all `driver/wire.mlua` — "MLBT v3 serialization/wire format").
+
+**MOM:** The entire 260-line document is a MOM reorganization status tracker. If MOM is retired, the entire file is stale.
+
+---
+
+### 7. `CURRENT_TASK.md` — 10 MOM references
+
+Lines 128-140 reference `lua/moonlift/mom/back/` and `lua/moonlift/mom/vec/` files. If MOM is retired, this file's task description is stale.
+
+---
+
+### 8. `struct-conversion.md` — Entirely about MOM (~300 lines)
+
+Whole document is "MOM Struct Conversion Implementation Plan" with references to `lua/moonlift/mom/schema/`, `lua/moonlift/mom/back/`, etc. Stale if MOM retired.
+
+---
+
+### 9. `README_BACK_LOWER.md` — MOM references
+
+Lines 8-11 reference `lua/moonlift/mom/back/back_lower.mlua` and `lua/moonlift/mom/back/BACK_LOWER_GUIDE.md`.
+
+---
+
+### 10. `BLOCKER_RESOLUTION_REPORT.md` — MOM references
+
+Lines 3-16 reference `lua/moonlift/mom/back/back_lower.mlua` and related files.
+
+---
+
+### 11. Lua source file comments/docstrings
+
+| File | Line | Stale text | Fix needed |
+|------|------|-----------|-----------|
+| `lua/moonlift/back_object.lua` | 3 | "as the **MLBT v3** binary wire format" | Change to "as the Flatline binary wire format (v4)" |
+| `lua/moonlift/host_func_values.lua` | ~1-428 | Entire `FuncBuilder` class, `b:let`, `b:if_`, `b:return_`, etc. | **But**: These are internal helpers used by `api._module_func`/`:export_func` and `pvm_surface_cache_values.lua` — not directly user-facing. Task says internal APIs are preserved. Comment/docstrings are fine if they're internal use only. |
+| `lua/moonlift/host_region_values.lua` | ~1-410 | Entire `RegionBuilder`/`BlockBuilder` classes, `api.region_frag(...)` | Same — internal API preserved. |
+| `lua/moonlift/region_compose.lua` | 167-372 | Uses `b:emit(...)`, `api.region_frag(...)`, `b:jump(...)` | Internal API usage — fine if preserved internally. |
+
+---
+
+### 12. Files that are CLEAN (no stale references found)
+
+- `DESIGN_PHILOSOPHY.md` — no builder, MOM, or MLBT v3 references
+- `HOWTO.md` — clean
+- `STRUCTURED_PAPER_DRAFT.md` — clean
+- `designing_software_with_moonlift.md` — clean
+- `COMPILER_PATTERN.md` — clean (about ASDL compiler pattern, not Moonlift-specific)
+- `PVM_GUIDE.md` — clean (the "named-field builders" references are about ASDL builders, not the Moonlift builder API)
+- `SOURCE_GRAMMAR.md` — does not exist on disk
+- `PROTOCOL_SYNTAX.md` — does not exist on disk
+
+---
+
+### Summary Count
+
+| Category | Files affected | Total instances |
+|----------|---------------|-----------------|
+| Retired builder API (`moon.param`, `moon.field`, `moon.switch_arm`, `b:let`, etc.) | 3 primary + 1 internal | ~19 in docs (README.md: 10, LANGUAGE_REFERENCE.md: 8, explicit_programming.md: 1) |
+| MLBT v3 → should be v4 | 4 files | ~15 instances (README.md: 11, AGENTS.md: 3, IMPLEMENTATION_STATUS.md: 3, back_object.lua: 1) |
+| MOM / `lua/moonlift/mom/` retired | 7 files | ~60+ instances (README.md: ~30, AGENTS.md: 9, LANGUAGE_REFERENCE.md: 4, IMPLEMENTATION_STATUS.md: 260 lines, CURRENT_TASK.md: 10, struct-conversion.md: 300 lines, README_BACK_LOWER.md: 4, BLOCKER_RESOLUTION_REPORT.md: 3) |
+
+### Priority for cleanup
+
+1. **README.md** — Most visible document. Update builder API examples to `moon.stmts[[]]` / values binder, update MLBT v3 to Flatline v4, remove or minimize MOM sections.
+2. **LANGUAGE_REFERENCE.md** — Rename section 15 title, remove "builder API" language from sections 3.4 and 21, update line 1416 and 2939.
+3. **AGENTS.md** — Update MLBT v3 references, remove MOM directory pointer.
+4. **back_object.lua** — One-line docstring fix.
+5. **Explicit_programming.md** — One-line example fix.
+6. **Root-level orphan files** (IMPLEMENTATION_STATUS.md, CURRENT_TASK.md, struct-conversion.md, README_BACK_LOWER.md, BLOCKER_RESOLUTION_REPORT.md) — Either remove or archive if MOM is truly retired.

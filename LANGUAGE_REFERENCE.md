@@ -37,7 +37,7 @@ ASDL.
 12. [Expression fragments](#12-expression-fragments)
 13. [Contracts](#13-contracts)
 14. [Lua splicing and antiquote](#14-lua-splicing-and-antiquote)
-15. [Lua builder API reference](#15-lua-builder-api-reference)
+15. [Quoting and table builder API reference](#15-lua-builder-api-reference)
 16. [Metaprogramming and composition guide](#16-metaprogramming-and-composition-guide)
 17. [View and host ABI semantics](#17-view-and-host-abi-semantics)
 18. [Vectorization and facts](#18-vectorization-and-facts)
@@ -288,7 +288,7 @@ local so_bytes  = moon.emit_shared(src, path, name)   -- emit .so/.dylib bytes
 `moon.native_loadstring`, `moon.native_loadfile`, `moon.native_dofile`,
 and `moon.emit_object`.
 
-**Builder API** — the unified module also exposes the builder surface:
+**Builder API** — the unified module also exposes the quoting and table builder surface:
 
 ```lua
 local M = moon.module("Demo")
@@ -299,9 +299,9 @@ Backward-compatible aliases: `require("moonlift.mlua_run")` and
 `require("moonlift.host_mom")` / `moon.host_mom` still work but the
 unified `require("moonlift")` module is preferred.
 
-### 3.4 Low-level builder APIs
+### 3.4 Low-level ASDL construction
 
-Two additional builder APIs produce the same ASDL values consumed by the same
+Two additional APIs produce the same ASDL values consumed by the same
 PVM phases. Neither is a separate compiler IR.
 
 **Low-level node constructor API:**
@@ -1413,7 +1413,7 @@ Integer arithmetic is wrapping by default. Float arithmetic uses strict IEEE
 754 semantics.
 
 Division `/` on integers is NOT defined. Use explicit integer division through
-the lowering path or through the builder API (`BackCmd.Sdiv` / `BackCmd.Udiv`).
+the lowering path or through ASDL construction (`BackCmd.Sdiv` / `BackCmd.Udiv`).
 
 ### 9.17 Bitwise operators
 
@@ -2049,7 +2049,7 @@ local body = moon.stmts [[ let y: i32 = x + 1; return y ]]
 
 ---
 
-## 15. Quoting and builder API reference
+## 15. Quoting and table builder API reference
 
 The unified `require("moonlift")` module exposes three API shapes:
 
@@ -2073,7 +2073,7 @@ local api = session:api()
 
 The session manages name generation, symbol prefixes, and compilation context.
 The default `moon` object uses a session with prefix `"default"`. The unified
-`require("moonlift")` module re-exports the `moonlift.host` builder surface.
+`require("moonlift")` module re-exports the `moonlift.host` quoting and table builder surface.
 
 ### 15.2 Types
 
@@ -2936,7 +2936,7 @@ moon.store(addr, value)       -- store value to address
 ### 21.2 Memory copy and set
 
 ```moonlift
--- In builder API:
+-- In ASDL construction:
 moon.memcpy(dst, src, len)    -- copy len bytes from src to dst
 moon.memset(dst, byte, len)   -- set len bytes at dst to byte value
 ```
@@ -3165,7 +3165,7 @@ mlua_document_analysis.lua      editor/LSP document analysis over hosted islands
 
 -- Host bridge
 mlua_run.lua                    LuaJIT hosted island runner / antiquote bridge (backward compat; prefer require("moonlift"))
-host.lua                        high-level builder API entry point
+host.lua                        quoting and table builder API entry point
 host_session.lua                session management
 host_module_values.lua          module value construction
 host_func_values.lua            function value construction

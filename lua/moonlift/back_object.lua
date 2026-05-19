@@ -1,6 +1,6 @@
 -- Direct MoonBack -> host-native relocatable object emission.
 --
--- Encodes the flat MoonBack.BackProgram command stream as the MLBT v3 binary
+-- Encodes the flat MoonBack.BackProgram command stream as the Flatline v4 binary
 -- wire format and sends it to the Rust/Cranelift object backend for .o output.
 
 local ffi = require("ffi")

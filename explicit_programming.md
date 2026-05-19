@@ -2944,7 +2944,7 @@ by a Lua factory from a registry of resume points.
 local function build_task_dispatcher(resume_points)
     local arms = {}
     for i, point in ipairs(resume_points) do
-        arms[i] = moon.switch_arm(i, moon.stmts(function(b)
+        arms[i] = { raw_key = tostring(i), body = moon.stmts(function(b)
             b:emit(point.handler,
                 { b:var("m"), b:var("task") },
                 { resumed = "resumed" })

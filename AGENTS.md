@@ -16,11 +16,10 @@ cargo build --release                   # produces target/release/libmoonlift.so
 compiler (195 Lua sources via `include_str!`) + vendored LuaJIT — zero runtime
 deps.
 
-### MOM status
+### MOM binary (optional)
 
-The `mom` binary links LuaJIT, embedded Moonlift/MOM sources, and the Rust
-backend. Its run/object CLI uses the production semantic pipeline. Do not route
-compilation through parser-tape shortcuts.
+The `mom` binary links LuaJIT, the host compiler, and the Rust backend. It
+uses the same production pipeline as the `moonlift` binary. Build with `make`.
 
 ## Setup
 
@@ -75,7 +74,7 @@ luajit tests/test_mom_native_core.lua           # Native parser core
 luajit tests/test_mom_native_ast.lua            # Native AST verification
 luajit tests/test_mom_check_correctness.mlua    # Schema correctness
 luajit tests/test_mom_vec.lua                   # Vectorization pipeline
-luajit tests/test_mom_wire.lua                  # MLBT v3 wire format
+luajit tests/test_mom_wire.lua                  # Flatline v4 wire format
 luajit tests/test_mom_source_to_binary.lua      # MOM API source → MLBT → execute
 luajit tests/test_mom_cli.lua                   # Standalone mom run/object CLI
 ```
@@ -331,8 +330,8 @@ Explicit programming makes plain-text tooling powerful again.
 | `src/lib.rs` | Full Cranelift backend (JIT + object emission) |
 | `src/main.rs` | Standalone `moonlift` binary (embeds Lua compiler) |
 | `src/ffi.rs` | C FFI exports for LuaJIT interop (text tape + binary wire format) |
-| `lua/moonlift/back_command_binary.lua` | MLBT v3 binary wire format encoder (replaces text tape) |
-| `BACK_WIRE_FORMAT.md` | Binary wire format specification (MLBT v3) |
+| `lua/moonlift/back_command_binary.lua` | Flatline v4 binary wire format encoder (replaces text tape) |
+| `BACK_WIRE_FORMAT.md` | Binary wire format specification (Flatline v4) |
 | `lua/moonlift/back_command_tape.lua` | Legacy text tape encoder (kept for CI cross-check) |
 | `lua/moonlift/host_mom.lua` | MOM frontend `moon.host_mom` — source → native compiler → executable (`moon.mount_mom` still works as backward compat alias) |
 | `lua/moonlift/mom/` | MOM compiler modules (runtime, parser, back, vec, driver, schema) |
