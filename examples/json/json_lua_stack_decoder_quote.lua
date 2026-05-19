@@ -263,4 +263,4 @@ assert(parsed > 0); s = C.lua_tolstring(L, 1, lenp)
 assert(ffi.string(s, tonumber(lenp[0])) == "ABC"); close(L)
 
 print("Moonlift string-built JSON decoder ok")
-return "Moonlift string-built JSON decoder ok"
+return { fn = decode_json_str }

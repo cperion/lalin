@@ -70,33 +70,16 @@ ffi.cdef [[
 local C = ffi.C
 
 -- ---------------------------------------------------------------------------
--- Moonlift decoder: load and compile the .mlua example
+-- Moonlift decoder: load and compile
 -- ---------------------------------------------------------------------------
 
 io.write("  Compiling Moonlift decoder ... ")
 io.flush()
 local t_compile = os.clock()
 
--- Load the example source and modify it to return the compiled handles
--- instead of running self-tests and freeing.
-local Host = require("moonlift.mlua_run")
-local example_src = io.open("examples/json/json_lua_stack_decoder.mlua"):read("*a")
-
--- Replace the test + cleanup section at the end with a return of the
--- compiled handles.  The example ends with:
---   for _, bad in ipairs(...)  ...  end
---   compiled_module:free()
---   return "Moonlift Lua-stack JSON decoder ok"
--- We replace from the "local L, parsed = ..." test block onward.
-local test_marker = "local L, parsed = decode_into_new_state"
-local cut = example_src:find(test_marker, 1, true)
-if not cut then
-    error("could not find test section marker in example .mlua file")
-end
-local bench_src = example_src:sub(1, cut - 1)
-    .. "return compiled_module, compiled\n"
-
-local compiled_module, compiled = Host.loadstring(bench_src, "bench_json_decoder")()
+local ml_result = dofile("examples/json/json_lua_stack_decoder.lua")
+local compiled_module = ml_result.artifact
+local compiled = ml_result.fn
 
 print(string.format("%.3fs", os.clock() - t_compile))
 

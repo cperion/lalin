@@ -488,6 +488,6 @@ assert(tonumber(lenp[0]) == 4)
 assert(string.byte(ffi.string(s, 4), 1) == 0xF0)
 close(L)
 
-artifact:free()
 print("Moonlift Lua-stack JSON decoder ok")
-return "Moonlift Lua-stack JSON decoder ok"
+return { fn = compiled, artifact = artifact }
+-- artifact kept alive for caller to free
