@@ -286,6 +286,24 @@ local function moonlift_decode()
     return endpos == JSON_LEN and 1 or 0
 end
 
+-- Cold start: first decode (no warmup)
+print("  Cold start (single decode, no warmup):")
+local cold_L = C.luaL_newstate()
+local cold_buf = ffi.new("uint8_t[?]", JSON_LEN + 1)
+local t_cold_moon = os.clock()
+local r = compiled(cold_L, json_p, JSON_LEN, cold_buf)
+local cold_moon = os.clock() - t_cold_moon
+C.lua_close(cold_L)
+print(string.format("    moonlift:          %.6fs", cold_moon))
+
+local cold_L2 = C.luaL_newstate()
+local t_cold_gen = os.clock()
+local r2 = gen_decode(cold_L2, JSON, JSON_LEN, gen_buf)
+local cold_gen = os.clock() - t_cold_gen
+C.lua_close(cold_L2)
+print(string.format("    generated lua:     %.6fs", cold_gen))
+print()
+
 -- Warmup
 for _ = 1, math.max(1, math.floor(ITERS / 10)) do moonlift_decode() end
 
