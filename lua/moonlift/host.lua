@@ -93,6 +93,31 @@ local function make_quote(parse_fn, wrap_fn, expand_fn)
     })
 end
 
+-- ── Callable function — lazy compile on first call ────────────────────────
+
+local CallableFunc = {}
+CallableFunc.__index = CallableFunc
+
+function CallableFunc:__call(...)
+    if not self._compiled then
+        local api = self._api
+        local m = api.module(self.name .. "_auto")
+        m:add_func(self)
+        local compiled = m:compile()
+        self._compiled = compiled
+        self._fn = compiled:get(self.name)
+    end
+    return self._fn(...)
+end
+
+function CallableFunc:free()
+    if self._compiled then
+        self._compiled:free()
+        self._compiled = nil
+        self._fn = nil
+    end
+end
+
 -- ── Scalar types ──────────────────────────────────────────────────────────────
 
 M.void = api.void; M.bool = api.bool
@@ -156,7 +181,8 @@ M.func = make_quote(
             end
             return setmetatable({ kind = "func", session = default_session, name = func_val.name,
                 params = params, result = api.type_from_asdl(func_val.result, func_val.name),
-                func = func_val, item = Tr.ItemFunc(func_val), visibility = "export" }, api.FuncValue or {})
+                func = func_val, item = Tr.ItemFunc(func_val), visibility = "export",
+                _api = api, _session = default_session }, CallableFunc)
         end
         error("moon.func[[]] expected a function", 2)
     end,
@@ -243,7 +269,8 @@ M.extern = make_quote(
                 type = api.type_from_asdl(p.ty, p.name), decl = p }, {})
         end
         return setmetatable({ kind = "extern_func", session = default_session, visibility = "export",
-            name = ext_val.name, func = ext_val, params = params, item = Tr.ItemExtern(ext_val) }, api.FuncValue or {})
+            name = ext_val.name, func = ext_val, params = params, item = Tr.ItemExtern(ext_val),
+            _api = api, _session = default_session }, CallableFunc)
     end,
     function(e, value, env)
         local pvm = require("moonlift.pvm")
