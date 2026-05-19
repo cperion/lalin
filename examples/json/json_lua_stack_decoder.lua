@@ -227,11 +227,11 @@ end]]
 -- @{} only for literal_arms (Lua-generated data)
 -- ---------------------------------------------------------------------------
 
-local parse_array = moon.func [[parse_array(L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
+local parse_array = moon.func { skip_ws = skip_ws } [[parse_array(L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
     return region -> i32
     entry start()
         lua_createtable(L, 16, 0)
-        emit skip_ws(p, n, pos + 1; ok = check_empty)
+        emit @{skip_ws}(p, n, pos + 1; ok = check_empty)
     end
     block check_empty(i: i32)
         if i >= n then yield -1 end
@@ -276,11 +276,11 @@ local parse_array = moon.func [[parse_array(L: ptr(u8), p: ptr(u8), n: i32, pos:
     end
 end]]
 
-local parse_object = moon.func [[parse_object(L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
+local parse_object = moon.func { skip_ws = skip_ws, parse_string = parse_string } [[parse_object(L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
     return region -> i32
     entry start()
         lua_createtable(L, 0, 16)
-        emit skip_ws(p, n, pos + 1; ok = check_empty)
+        emit @{skip_ws}(p, n, pos + 1; ok = check_empty)
     end
     block check_empty(i: i32)
         if i >= n then yield -1 end
@@ -289,27 +289,27 @@ local parse_object = moon.func [[parse_object(L: ptr(u8), p: ptr(u8), n: i32, po
     end
     block parse_key(i: i32)
         if as(i32, p[i]) ~= 34 then yield -1 end
-        emit parse_string(L, p, n, i, buf; ok = check_colon, err = fail)
+        emit @{parse_string}(L, p, n, i, buf; ok = check_colon, err = fail)
     end
     block check_colon(next_i: i32)
-        emit skip_ws(p, n, next_i; ok = check_colon_char)
+        emit @{skip_ws}(p, n, next_i; ok = check_colon_char)
     end
     block check_colon_char(i: i32)
         if i >= n then yield -1 end
         if as(i32, p[i]) ~= 58 then yield -1 end
-        emit skip_ws(p, n, i + 1; ok = parse_val)
+        emit @{skip_ws}(p, n, i + 1; ok = parse_val)
     end
     block parse_val(i: i32)
         let after_val = parse_value(L, p, n, i, buf)
         if after_val < 0 then yield -1 end
         lua_settable(L, -3)
-        emit skip_ws(p, n, after_val; ok = check_comma)
+        emit @{skip_ws}(p, n, after_val; ok = check_comma)
     end
     block check_comma(i: i32)
         if i >= n then yield -1 end
         let c = as(i32, p[i])
         if c == 125 then yield i + 1 end
-        if c == 44 then emit skip_ws(p, n, i + 1; ok = parse_key) end
+        if c == 44 then emit @{skip_ws}(p, n, i + 1; ok = parse_key) end
         yield -1
     end
     block fail()
@@ -340,17 +340,17 @@ local literal_arms = {
     literal_arm("null",  "lua_pushnil(L)"),
 }
 
-local parse_value = moon.func { literal_arms = literal_arms } [[
+local parse_value = moon.func { skip_ws = skip_ws, parse_string = parse_string, parse_number = parse_number, literal_arms = literal_arms } [[
 func parse_value(L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
     return region -> i32
     entry start()
-        emit skip_ws(p, n, pos; ok = dispatch)
+        emit @{skip_ws}(p, n, pos; ok = dispatch)
     end
     block dispatch(i: i32)
         if i >= n then yield -1 end
         switch as(i32, p[i]) do
         @{literal_arms...}
-        case 34 then emit parse_string(L, p, n, i, buf; ok = done, err = fail)
+        case 34 then emit @{parse_string}(L, p, n, i, buf; ok = done, err = fail)
         case 91 then
             let next_i = parse_array(L, p, n, i, buf)
             if next_i < 0 then jump fail() end
@@ -360,7 +360,7 @@ func parse_value(L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
             if next_i < 0 then jump fail() end
             jump done(next_i = next_i)
         default then
-            emit parse_number(L, p, n, i; ok = done, err = fail)
+            emit @{parse_number}(L, p, n, i; ok = done, err = fail)
         end
         jump fail()
     end
@@ -374,12 +374,12 @@ func parse_value(L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8)) -> i32
 end
 ]]
 
-local decode_json_to_lua_stack = moon.func [[decode_json_to_lua_stack(L: ptr(u8), p: ptr(u8), n: i32, buf: ptr(u8)) -> i32
+local decode_json_to_lua_stack = moon.func { skip_ws = skip_ws } [[decode_json_to_lua_stack(L: ptr(u8), p: ptr(u8), n: i32, buf: ptr(u8)) -> i32
     return region -> i32
     entry start()
         let after_value = parse_value(L, p, n, 0, buf)
         if after_value < 0 then yield -1 end
-        emit skip_ws(p, n, after_value; ok = finish)
+        emit @{skip_ws}(p, n, after_value; ok = finish)
     end
     block finish(i: i32)
         if i == n then yield i end
