@@ -2063,7 +2063,84 @@ The `function(b)` builder pattern has been retired. All builder methods
 (`b:let`, `b:if_`, `b:return_`, etc.) are no longer available. Use `moon.stmts[[]]`
 quotes instead.
 
-### 15.1 Sessions
+### 15.1 Callable functions — auto-compile on first call
+
+`moon.func[[]]` and `moon.extern[[]]` return **callable tables**. The first
+invocation lazily compiles an ephemeral module, caches the native function
+pointer, and calls it. Subsequent calls use the cached pointer directly.
+
+```lua
+local add = moon.func [[add(a: i32, b: i32) -> i32 return a + b end]]
+print(add(3, 4))  -- 7 — first call compiles, caches, runs native
+print(add(10, 20)) -- 30 — cached, no compilation
+add:free()         -- release the compiled artifact
+```
+
+### Values table as module — cross-function dependencies
+
+When a function calls another function by name, declare the dependency in the
+values table. The function is registered in the ephemeral module's item list,
+and the typechecker resolves the name reference during compilation.
+
+```lua
+local dep = moon.func [[dep(x: i32) -> i32 return x + 1 end]]
+local main = moon.func { dep = dep } [[
+main(x: i32) -> i32
+    return @{dep}(x)
+end
+]]
+print(main(5))  -- 6 — auto-compiled with dep in ephemeral module
+main:free()
+dep:free()
+```
+
+The `@{fn}(args)` syntax is explicit: the `@{}` shows that `fn` comes from the
+values table (a Lua value), not from Moonlift scope. The expression filler
+creates a name reference, and the typechecker resolves it against the module's
+items.
+
+### Module dependencies — funcs, regions, structs
+
+The values table accepts any kind of Moonlift value. Each is registered in the
+ephemeral module before compilation:
+
+```lua
+local r = moon.region [[r(p: ptr(u8); ok: cont(v: i32))
+    entry start() jump ok(v = 42) end
+end]]
+
+local s = moon.struct [[Point x: i32; y: i32 end]]
+
+local f = moon.func { r = r, Point = s } [[
+f(p: ptr(u8)) -> i32
+    return region -> i32
+    entry start() emit r(p; ok = done) end
+    block done(v: i32) yield v end
+    end
+end
+]]
+print(f(buf))  -- 42
+f:free()
+```
+
+### When to use the module path instead
+
+The explicit `moon.module()` path is still available for complex cases:
+- Large multi-function artifacts that need to be compiled together
+- When you need a shared compilation artifact across multiple call sites
+- When you need explicit export control
+
+```lua
+local m = moon.module("decoder")
+m:add_func(parse_array)
+m:add_func(parse_value)
+m:add_func(decode)
+m:add_region(skip_ws)
+local compiled = m:compile()
+local fn = compiled:get("decode")
+```
+
+### 15.3 Sessions
 
 ```lua
 local moon = require("moonlift")
@@ -2075,7 +2152,7 @@ The session manages name generation, symbol prefixes, and compilation context.
 The default `moon` object uses a session with prefix `"default"`. The unified
 `require("moonlift")` module re-exports the `moonlift.host` quoting and table builder surface.
 
-### 15.2 Types
+### 15.4 Types
 
 ```lua
 -- Scalar types (direct properties on the API object)
@@ -2101,7 +2178,7 @@ moon.array_type(count, T)      -- array type
 moon.slice(T)                  -- slice type
 ```
 
-### 15.3 Expressions
+### 15.5 Expressions
 
 ```lua
 -- Quote form (any expression)
@@ -2155,7 +2232,7 @@ moon.agg(ty, fields)           -- struct literal (aggregate)
 moon.array_expr(elem_ty, elems) -- array literal
 ```
 
-### 15.4 Modules and functions
+### 15.6 Modules and functions
 
 ```lua
 -- Module creation
@@ -2193,7 +2270,7 @@ Inside function bodies, parameter names are available as expression values
 through `fn:param("name")` and on builder-backed functions also via bare
 binding accessors where installed.
 
-### 15.5 Statement lists
+### 15.7 Statement lists
 
 `moon.stmts` constructs a `MoonTree.Stmt[]` value. Three forms:
 
@@ -2239,7 +2316,7 @@ local body = moon.stmts { cond = moon.expr [[x > 10]] } [[
 
 Use `moon.stmts { ... } [[ src ]]` instead of the retired `moon.stmts({...}, function(b) ... end)` pattern.
 
-### 15.6 Parameters, fields, variants, continuations, blocks, entry params
+### 15.8 Parameters, fields, variants, continuations, blocks, entry params
 
 Table builders for declaration-shaped things. Each returns an array of typed ASDL.
 
@@ -2284,7 +2361,7 @@ local entry_params = moon.entry_params {
 }
 ```
 
-### 15.7 Regions
+### 15.9 Regions
 
 Use `moon.region[[]]` to define a region fragment from Moonlift source:
 
@@ -2319,7 +2396,7 @@ end
 end
 ```
 
-### 15.8 Expression fragments
+### 15.10 Expression fragments
 
 ```lua
 -- Quote form
@@ -2330,7 +2407,7 @@ local inc = moon.expr_frag [[
 ]]
 ```
 
-### 15.9 Structs and unions
+### 15.11 Structs and unions
 
 ```lua
 -- Quote form
@@ -2342,7 +2419,7 @@ local Option = moon.union [[Option Some(i32) | None end]]
 -- return struct Point @{fields...} end
 ```
 
-### 15.10 Extern declarations
+### 15.12 Extern declarations
 
 ```lua
 local write = moon.extern [[
@@ -2350,7 +2427,7 @@ local write = moon.extern [[
 ]]
 ```
 
-### 15.11 Compilation and JIT
+### 15.13 Compilation and JIT
 
 ```lua
 -- Compile the module

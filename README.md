@@ -552,14 +552,38 @@ This is deliberately flat and verifiable. No nested IR, no hidden context.
 
 ### JIT: Lua-hosted function pointers
 
+**Callable functions** — `moon.func[[]]` returns a callable table that
+auto-compiles on first invocation. No module scaffolding needed:
+
 ```lua
 local moon = require("moonlift")
 local add = moon.func [[add(a: i32, b: i32) -> i32 return a + b end]]
+print(add(3, 4))  -- 7 — first call compiles, caches, runs native
+add:free()
+```
+
+**Cross-function dependencies** — declare deps in the values table:
+
+```lua
+local dep = moon.func [[dep(x: i32) -> i32 return x + 1 end]]
+local main = moon.func { dep = dep } [[
+main(x: i32) -> i32
+    return @{dep}(x)
+end
+]]
+print(main(5))  -- 6 — dep registered in ephemeral module
+main:free()
+dep:free()
+```
+
+**Explicit module path** — still available for complex multi-function artifacts:
+
+```lua
 local module = moon.module("demo")
 module:add_func(add)
 local compiled = module:compile()
 local fn = compiled:get("add")
-print(fn(3, 4))  -- 7, running as native machine code
+print(fn(3, 4))  -- 7
 compiled:free()
 ```
 
