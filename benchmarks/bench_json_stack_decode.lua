@@ -288,20 +288,11 @@ end
 
 -- Cold start: first decode (no warmup)
 print("  Cold start (single decode, no warmup):")
-local cold_L = C.luaL_newstate()
-local cold_buf = ffi.new("uint8_t[?]", JSON_LEN + 1)
+C.lua_settop(moonlift_L, 0)
 local t_cold_moon = os.clock()
-local r = compiled(cold_L, json_p, JSON_LEN, cold_buf)
+local r = compiled(moonlift_L, json_p, JSON_LEN, decode_buf)
 local cold_moon = os.clock() - t_cold_moon
-C.lua_close(cold_L)
-print(string.format("    moonlift:          %.6fs", cold_moon))
-
-local cold_L2 = C.luaL_newstate()
-local t_cold_gen = os.clock()
-local r2 = gen_decode(cold_L2, JSON, JSON_LEN, gen_buf)
-local cold_gen = os.clock() - t_cold_gen
-C.lua_close(cold_L2)
-print(string.format("    generated lua:     %.6fs", cold_gen))
+print(string.format("    moonlift native:   %.6fs", cold_moon))
 print()
 
 -- Warmup
@@ -311,6 +302,15 @@ local t_moonlift = bench("moonlift_json_stack", moonlift_decode, ITERS)
 
 -- Generated Lua benchmark
 local gen_state = C.luaL_newstate()
+
+-- Cold start for generated Lua decoder
+C.lua_settop(gen_state, 0)
+local t_cold_gen = os.clock()
+local r2 = gen_decode(gen_state, JSON, JSON_LEN, gen_buf)
+local cold_gen = os.clock() - t_cold_gen
+print(string.format("    generated lua:     %.6fs", cold_gen))
+print()
+
 local function gen_decode_run()
     local endpos = gen_decode(gen_state, JSON, JSON_LEN, gen_buf)
     C.lua_settop(gen_state, 0)
