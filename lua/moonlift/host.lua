@@ -40,94 +40,15 @@ function M.layout_of(ty)
 end
 
 -- ── Callable function — lazy compile on first call ────────────────────────
--- MUST be declared before make_quote (LuaJIT upvalue capture quirk)
 
-local CallableFunc
-
--- ── moon.chain: the universal applicative API constructor ─────────────────────
--- Every moon.XXX is a chain. A chain is a callable table whose __call dispatches
--- on argument type: string → parse ([[...]]), string-keyed table → binder {},
--- array-keyed table → builder {}. Each step returns another chain carrying
--- accumulated state. The terminal is when a value is produced.
---
--- Config fields:
---   name      – for error messages ("variants", "fields", etc.)
---   parse     – function(T, src) → parsed
---   wrap      – function(value, parsed, T, src, bindings?) → final value
---   expand    – function(e, value, env) → expanded value (for binder+quote)
---   table_fn  – function(arg) → value (for array-keyed table call, builder form)
-local function make_chain(config)
-    local name = config.name or "?"
-    local parse_fn = config.parse
-    local wrap_fn = config.wrap
-    local expand_fn = config.expand
-    local table_fn = config.table_fn
-    return setmetatable({}, {
-        __index = { _chain_config = config },
-        __call = function(_, arg)
-            if type(arg) == "string" then
-                local T = default_session.T
-                local parsed = parse_fn(T, arg)
-                if #parsed.issues ~= 0 then error(parsed.issues[1].message, 2) end
-                if #parsed.splice_slots ~= 0 then
-                    error("moon." .. name .. "[[]] does not evaluate @{}; use moon." .. name .. "{values}[[src]] instead", 2)
-                end
-                return wrap_fn(parsed.value, parsed, T, arg)
-            end
-            if type(arg) == "table" then
-                local has_str_keys = false
-                for k in pairs(arg) do
-                    if type(k) == "string" then has_str_keys = true; break end
-                end
-                if not has_str_keys then
-                    return table_fn and table_fn(arg) or arg
-                end
-                local bound_values = {}
-                for k, v in pairs(arg) do bound_values[k] = v end
-                return function(src)
-                    local T = default_session.T
-                    local parsed = parse_fn(T, src)
-                    if #parsed.issues ~= 0 then error(parsed.issues[1].message, 2) end
-                    if #parsed.splice_slots == 0 then return wrap_fn(parsed.value, parsed, T, src, bound_values) end
-                    local hs = require("moonlift.host_splice")
-                    local open_expand = require("moonlift.open_expand")
-                    local bindings = {}
-                    for _, ss in ipairs(parsed.splice_slots) do
-                        local key = ss.splice_text or ss.splice_id
-                        local v = bound_values[key]
-                        if v == nil then
-                            error("no value bound for @" .. tostring(key) .. " in values table", 2)
-                        end
-                        local binding = hs.fill(default_session, ss.slot, v,
-                            "splice " .. ss.splice_id, ss.role, ss.spread)
-                        bindings[#bindings + 1] = binding
-                    end
-                    local e = open_expand.Define(T)
-                    local env = e.empty_env()
-                    env = e.env_with_fills(env, bindings)
-                    local expanded = expand_fn(e, parsed.value, env)
-                    local result = wrap_fn(expanded, parsed, T, src, bound_values)
-                    if type(result) == "table" then
-                        local mt = getmetatable(result)
-                        if mt == CallableFunc then
-                            result._dep_values = bound_values
-                        end
-                    end
-                    return result
-                end
-            end
-            error("moon." .. name .. " expects a string [[]] or table {}", 2)
-        end,
-    })
-end
-
--- Convenience: positional wrapper for existing call sites
-local function make_quote(parse_fn, wrap_fn, expand_fn, table_fn)
-    return make_chain({ parse = parse_fn, wrap = wrap_fn, expand = expand_fn, table_fn = table_fn })
-end
-
-CallableFunc = {}
+local CallableFunc = {}
 CallableFunc.__index = CallableFunc
+
+-- ── moon.chain: imported from chain.lua ──────────────────────────────────────
+local chain_mod = require("moonlift.chain")
+local chain_binding = chain_mod.bind(default_session, CallableFunc)
+local make_chain = chain_binding.make
+local make_quote = chain_binding.make_quote
 
 function CallableFunc:compile(opts)
     if not self._compiled then
@@ -540,5 +461,8 @@ M.stmts = api.stmts
 
 -- ── Bundle builder ────────────────────────────────────────────────────────────
 M.bundle = api.bundle
+
+-- ── Control structures (user-defined chains) ───────────────────────────────────
+M.control = require("moonlift.control").build(default_session, chain_binding)
 
 return M

@@ -192,5 +192,6 @@ M.variants = host_api.variants
 M.conts = host_api.conts
 M.blocks = host_api.blocks
 M.entry_params = host_api.entry_params
+M.control = host_api.control
 
 return M

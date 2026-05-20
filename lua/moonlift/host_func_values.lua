@@ -371,7 +371,7 @@ function M.Install(api, session)
         if #parsed.splice_slots ~= 0 then
             error("moon.stmts[[]] does not evaluate @{}; use moon.stmts{values}[[src]] instead", 3)
         end
-        return parsed.value
+        return setmetatable(parsed.value, stmts_concat_mt)
     end
 
     function api._stmts_values_binder(values)
@@ -382,7 +382,9 @@ function M.Install(api, session)
             local T_local = T
             local parsed = Parse.Define(T_local).parse_stmts(src)
             if #parsed.issues ~= 0 then error(parsed.issues[1].message, 3) end
-            if #parsed.splice_slots == 0 then return parsed.value end
+            if #parsed.splice_slots == 0 then
+                return setmetatable(parsed.value, stmts_concat_mt)
+            end
             local bindings = {}
             for _, ss in ipairs(parsed.splice_slots) do
                 local splice_key = ss.splice_text or ss.splice_id
@@ -396,11 +398,37 @@ function M.Install(api, session)
             local e = expand.Define(T_local)
             local env = e.empty_env()
             env = e.env_with_fills(env, bindings)
-            return e.stmts(parsed.value, env)
+            return setmetatable(e.stmts(parsed.value, env), stmts_concat_mt)
         end
     end
 
 
+
+    -- ── Statement concatenation ────────────────────────────────────────
+    -- Wraps Stmt[] arrays so you can compose them with `..`:
+    --   local body = moon.stmts[[ let x = 1 ]] .. moon.stmts[[ return x ]]
+    local stmts_concat_mt = {}
+    function stmts_concat_mt.__concat(a, b)
+        local result = {}
+        local function append(v)
+            if type(v) == "table" then
+                local pvm = require("moonlift.pvm")
+                -- ASDL node (has __class) → single element
+                -- Plain array → iterate
+                local mt = getmetatable(v)
+                if mt and mt.__class then
+                    result[#result + 1] = v
+                elseif #v > 0 then
+                    for i = 1, #v do result[#result + 1] = v[i] end
+                end
+                return
+            end
+            result[#result + 1] = v
+        end
+        append(a)
+        append(b)
+        return setmetatable(result, stmts_concat_mt)
+    end
 
     -- ── api.stmts — unified quoting + values binder ────────────────────────
     -- Supports three forms:
@@ -420,13 +448,15 @@ function M.Install(api, session)
             if #parsed.splice_slots ~= 0 then
                 error("moon.stmts[[]] does not evaluate @{}; use moon.stmts{values}[[src]] instead", 3)
             end
-            return parsed.value
+            return setmetatable(parsed.value, stmts_concat_mt)
         end
         if type(arg) == "table" then
             -- Table argument: values binder or ASDL pass-through
             if #arg > 0 then
                 local pvm = require("moonlift.pvm")
-                if pvm.classof(arg[1]) ~= false then return arg end
+                if pvm.classof(arg[1]) ~= false then
+                    return setmetatable(arg, stmts_concat_mt)
+                end
             end
             for k in pairs(arg) do
                 if type(k) == "string" then
