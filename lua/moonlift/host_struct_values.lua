@@ -315,7 +315,8 @@ function M.Install(api, session)
     local ExitProtocol = {}
     ExitProtocol.__index = ExitProtocol
 
-    function ExitProtocol:moonlift_splice(role, session, site)
+    function ExitProtocol:moonlift_splice(role, session, site, slot)
+        local O = session.T.MoonOpen
         if role == "variant_list" then
             local out = {}
             for _, e in ipairs(self.exits) do
@@ -340,12 +341,21 @@ function M.Install(api, session)
                 local slot_key = e.slot and e.slot.key or ("cont:" .. self._owner .. ":" .. (e.name or e[1]))
                 local name = e.name or e[1]
                 local params = {}
-                -- Convert fields to block params for continuation slots
-                for k = 1, #(e.fields or e.params or {}) do
-                    local f = e.fields[k] or e.params[k]
-                    local fn = f.name or f.field_name or f[1]
-                    local ft = (f.type or f.ty or f[2])
-                    params[#params + 1] = Tr.BlockParam(fn, api.as_type_value(ft, "cont param").ty)
+                -- Convert fields/payload to block params for continuation slots.
+                if e.decl and e.decl.fields and #e.decl.fields > 0 then
+                    for k = 1, #e.decl.fields do
+                        local f = e.decl.fields[k]
+                        params[#params + 1] = session.T.MoonTree.BlockParam(f.field_name, f.ty)
+                    end
+                elseif e.decl and e.decl.payload and tostring(e.decl.payload) ~= tostring(api.void.ty) then
+                    params[#params + 1] = session.T.MoonTree.BlockParam("arg1", e.decl.payload)
+                else
+                    for k = 1, #(e.fields or e.params or {}) do
+                        local f = e.fields[k] or e.params[k]
+                        local fn = f.name or f.field_name or f[1]
+                        local ft = (f.type or f.ty or f[2])
+                        params[#params + 1] = session.T.MoonTree.BlockParam(fn, api.as_type_value(ft, "cont param").ty)
+                    end
                 end
                 out[#out + 1] = O.ContSlot(slot_key, name, params)
             end
@@ -359,7 +369,9 @@ function M.Install(api, session)
 
     function api.exit(name, ty)
         local tv = api.as_type_value(ty or api.void, "exit expects a type value")
-        return { kind = "exit", name = name, ty = tv, is_exit = true }
+        local fields = {}
+        if ty ~= nil and ty ~= api.void then fields[1] = { name = "arg1", type = tv, ty = tv } end
+        return { kind = "exit", name = name, ty = tv, type = tv, fields = fields, is_exit = true }
     end
 
     local function exit_from_spec(spec, site)

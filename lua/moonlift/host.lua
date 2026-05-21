@@ -226,7 +226,7 @@ local function wrap_exits_quote(value)
     -- Re-key variant values into exit values
     for i = 1, #exits do
         local v = exits[i]
-        exits[i] = { kind = "exit", name = v.name, ty = v.type }
+        exits[i] = { kind = "exit", name = v.name, ty = v.type or v.payload, fields = v.fields, decl = v.decl }
     end
     return setmetatable({ kind = "exit_protocol", exits = exits, _owner = "exits" }, { __index = api.ExitProtocol })
 end
@@ -240,8 +240,34 @@ M.fields = make_quote(parse_fields_quote, wrap_fields_quote, expand_fields_quote
 M.variants = make_quote(parse_variants_quote, wrap_variants_quote, expand_variants_quote, api.variants)
 M.exits = make_quote(parse_exits_quote, wrap_exits_quote, expand_exits_quote, api.exits)
 
--- Switch arms builder
-M.switch_arms = api.switch_arms
+local function parse_switch_arms_quote(T, src)
+    -- Switch-arm keys are backend raw keys; keep the builder source-shaped but
+    -- require concrete keys here.  Generated dynamic keys are better expressed
+    -- with table form: moon.switch_arms { {key, body}, ... }.
+    if src:find("@{", 1, true) then
+        error("moon.switch_arms[[]] does not support @{} in case keys; use table form for generated keys", 3)
+    end
+    local P = require("moonlift.parse").Define(T)
+    local parsed = P.parse_stmts("switch __moon_key do\n" .. src .. "\ndefault then\nend")
+    if parsed.issues and #parsed.issues ~= 0 then error(parsed.issues[1].message, 3) end
+    return parsed
+end
+
+local function wrap_switch_arms_quote(value)
+    local pvm = require("moonlift.pvm")
+    local Tr = default_session.T.MoonTree
+    local sw = value and value[1]
+    if pvm.classof(sw) ~= Tr.StmtSwitch then return {} end
+    local out = {}
+    for i = 1, #sw.arms do out[i] = sw.arms[i] end
+    return out
+end
+
+local function expand_switch_arms_quote(e, value, env)
+    return e.stmts(value, env)
+end
+
+M.switch_arms = make_quote(parse_switch_arms_quote, wrap_switch_arms_quote, expand_switch_arms_quote, api.switch_arms)
 
 M.func = make_quote(
     function(T, src) return require("moonlift.parse").Define(T).parse_func(src) end,

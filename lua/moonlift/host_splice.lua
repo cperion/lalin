@@ -50,7 +50,7 @@ end
 local function protocol(value, role, session, site)
     if (type(value) == "table" or type(value) == "userdata")
         and type(value.moonlift_splice) == "function" then
-        return value:moonlift_splice(role, session, site)
+        return value:moonlift_splice(role, session, site, nil)
     end
     return nil
 end
@@ -231,6 +231,8 @@ function M.fill_type_list(session, slot, value, site)
 end
 
 function M.fill_param_list(session, slot, value, site)
+    local p = (type(value) == "table" and type(value.moonlift_splice) == "function") and value:moonlift_splice("param_list", session, site, slot) or nil
+    if p ~= nil then return p end
     local O, Ty = session.T.MoonOpen, session.T.MoonType
     local xs = as_array(value, site, "param_list")
     local out = {}
@@ -250,6 +252,8 @@ function M.fill_param_list(session, slot, value, site)
 end
 
 function M.fill_field_list(session, slot, value, site)
+    local p = (type(value) == "table" and type(value.moonlift_splice) == "function") and value:moonlift_splice("field_list", session, site, slot) or nil
+    if p ~= nil then return p end
     local O, Ty = session.T.MoonOpen, session.T.MoonType
     local xs = as_array(value, site, "field_list")
     local out = {}
@@ -269,6 +273,8 @@ function M.fill_field_list(session, slot, value, site)
 end
 
 function M.fill_variant_list(session, slot, value, site)
+    local p = (type(value) == "table" and type(value.moonlift_splice) == "function") and value:moonlift_splice("variant_list", session, site, slot) or nil
+    if p ~= nil then return p end
     local O, Ty = session.T.MoonOpen, session.T.MoonType
     local xs = as_array(value, site, "variant_list")
     local out = {}
@@ -308,6 +314,8 @@ local function as_switch_expr_arm(session, v, site, i)
 end
 
 function M.fill_switch_stmt_arm_list(session, slot, value, site)
+    local p = (type(value) == "table" and type(value.moonlift_splice) == "function") and value:moonlift_splice("switch_stmt_arm_list", session, site, slot) or nil
+    if p ~= nil then return p end
     local O = session.T.MoonOpen
     local xs = as_array(value, site, "switch_stmt_arm_list")
     local out = {}
@@ -318,6 +326,8 @@ function M.fill_switch_stmt_arm_list(session, slot, value, site)
 end
 
 function M.fill_switch_expr_arm_list(session, slot, value, site)
+    local p = (type(value) == "table" and type(value.moonlift_splice) == "function") and value:moonlift_splice("switch_expr_arm_list", session, site, slot) or nil
+    if p ~= nil then return p end
     local O = session.T.MoonOpen
     local xs = as_array(value, site, "switch_expr_arm_list")
     local out = {}
@@ -381,6 +391,8 @@ function M.fill_entry_param_list(session, slot, value, site)
 end
 
 function M.fill_cont_slot_list(session, slot, value, site)
+    local p = (type(value) == "table" and type(value.moonlift_splice) == "function") and value:moonlift_splice("cont_slot_list", session, site, slot) or nil
+    if p ~= nil then return p end
     local O = session.T.MoonOpen
     local xs = as_array(value, site, "cont_slot_list")
     local out = {}
