@@ -83,4 +83,11 @@ local bad_checked = TC.check_module(bad)
 assert(#bad_checked.issues >= 1)
 assert(bad_checked.issues[1] == Tr.TypeIssueExpected("return", i32, bool))
 
+local control_report = Typecheck.explain_type_issue(Tr.TypeIssueInvalidControl(
+    "rid",
+    Tr.ControlRejectMissingJumpArg("rid", Tr.BlockLabel("err"), "code")
+), { anchors = {} })
+assert(control_report.code == "E0404")
+assert(control_report.primary.message:find("missing argument `code`", 1, true))
+
 print("moonlift tree_typecheck ok")

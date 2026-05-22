@@ -1003,6 +1003,7 @@ local function site_description(site)
 end
 
 local function explain_type_issue(issue, analysis)
+    analysis = analysis or { anchors = {} }
     local resolvers = require("moonlift.error.span_resolvers")
     local pvm = require("moonlift.pvm")
     local span = resolvers.typecheck_resolver(issue, analysis)
@@ -1200,12 +1201,66 @@ local function explain_type_issue(issue, analysis)
     end
 
     if kind == "TypeIssueInvalidControl" then
-        local reason = issue.reason or "irreducible cycle detected"
-        return { code = "E0405", severity = "error", phase_context = "while checking control flow",
-            primary = { span = span, message = "irreducible control flow" },
-            notes = { { message = reason },
-                     { message = "control flow is irreducible when no block dominates the others — restructure so one block is the single entry point" } },
-            suggestions = { { message = "add a dispatch block that dominates all other blocks in this region" } } }
+        local reject = issue.reject
+        local reject_kind = reject and pvm.classof(reject).kind or "ControlRejectIrreducible"
+        local label = reject and reject.label and reject.label.name or "?"
+        local name = reject and reject.name or "?"
+        local region = issue.region_id or (reject and reject.region_id) or "?"
+        local code = "E0405"
+        local primary = "invalid control flow"
+        local notes = { { message = "region: " .. tostring(region) } }
+        local suggestions = {}
+
+        if reject_kind == "ControlRejectMissingJumpArg" then
+            code = "E0404"
+            primary = "jump to `" .. label .. "` is missing argument `" .. tostring(name) .. "`"
+            notes[#notes + 1] = { message = "target block `" .. label .. "` declares parameter `" .. tostring(name) .. "`, but this jump does not provide it" }
+            suggestions[#suggestions + 1] = { message = "pass `" .. tostring(name) .. " = ...` at the jump, or rename the target block parameter to match the existing argument" }
+        elseif reject_kind == "ControlRejectExtraJumpArg" then
+            code = "E0404"
+            primary = "jump to `" .. label .. "` has extra argument `" .. tostring(name) .. "`"
+            notes[#notes + 1] = { message = "target block `" .. label .. "` has no parameter named `" .. tostring(name) .. "`" }
+            suggestions[#suggestions + 1] = { message = "remove the extra argument or add a matching block parameter" }
+        elseif reject_kind == "ControlRejectDuplicateJumpArg" then
+            code = "E0203"
+            primary = "duplicate jump argument `" .. tostring(name) .. "` for `" .. label .. "`"
+            suggestions[#suggestions + 1] = { message = "provide each jump argument name only once" }
+        elseif reject_kind == "ControlRejectJumpType" then
+            code = "E0301"
+            primary = "jump argument `" .. tostring(name) .. "` for `" .. label .. "` has wrong type"
+            notes[#notes + 1] = { message = "expected `" .. Format.type_name(reject.expected) .. "`, got `" .. Format.type_name(reject.actual) .. "`" }
+        elseif reject_kind == "ControlRejectMissingLabel" then
+            code = "E0402"
+            primary = "missing jump target `" .. label .. "`"
+            notes[#notes + 1] = { message = "block `" .. label .. "` is not defined in this region" }
+        elseif reject_kind == "ControlRejectDuplicateLabel" then
+            code = "E0203"
+            primary = "duplicate block label `" .. label .. "`"
+            suggestions[#suggestions + 1] = { message = "rename one of the blocks" }
+        elseif reject_kind == "ControlRejectUnterminatedBlock" then
+            code = "E0406"
+            primary = "block `" .. label .. "` does not terminate"
+            notes[#notes + 1] = { message = "every block path must end in jump, yield, return, or trap" }
+        elseif reject_kind == "ControlRejectYieldOutsideRegion" then
+            code = "E0407"
+            primary = "invalid yield in control region"
+            notes[#notes + 1] = { message = reject.reason or "yield kind does not match this region" }
+        elseif reject_kind == "ControlRejectYieldType" then
+            code = "E0301"
+            primary = "yield has wrong type"
+            notes[#notes + 1] = { message = "expected `" .. Format.type_name(reject.expected) .. "`, got `" .. Format.type_name(reject.actual) .. "`" }
+        elseif reject_kind == "ControlRejectUnknownVariant" then
+            code = "E0201"
+            primary = "unknown switch variant `" .. tostring(reject.variant_name or "?") .. "`"
+        else
+            primary = "irreducible control flow"
+            notes[#notes + 1] = { message = (reject and reject.reason) or "irreducible cycle detected" }
+            notes[#notes + 1] = { message = "control flow is irreducible when no block dominates the others — restructure so one block is the single entry point" }
+            suggestions[#suggestions + 1] = { message = "add a dispatch block that dominates all other blocks in this region" }
+        end
+
+        return { code = code, severity = "error", phase_context = "while checking control flow",
+            primary = { span = span, message = primary }, notes = notes, suggestions = suggestions }
     end
 
     if kind == "TypeIssueMissingJumpTarget" then
