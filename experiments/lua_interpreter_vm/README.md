@@ -173,21 +173,24 @@ Moonlift syntax below is intentionally header-like. Names and field widths are d
 ### 3.1 Value tags
 
 ```text
-TAG_NIL
-TAG_FALSE
-TAG_TRUE
-TAG_LIGHTUD
-TAG_NUM
-TAG_STR
-TAG_TABLE
-TAG_LCLOSURE
-TAG_CCLOSURE
-TAG_USERDATA
-TAG_THREAD
-TAG_PROTO        -- internal/debug/compiler object if exposed
+TAG_NIL      = 0
+TAG_FALSE    = 1
+TAG_TRUE     = 2
+TAG_LIGHTUD  = 3
+TAG_INTEGER  = 4   -- NEW: Lua integer (i64)
+TAG_NUM      = 5   -- was 4; now float (f64)
+TAG_STR      = 6
+TAG_TABLE    = 7
+TAG_LCLOSURE = 8
+TAG_CCLOSURE = 9
+TAG_USERDATA = 10
+TAG_THREAD   = 11
+TAG_PROTO    = 12
 ```
 
 Boolean is split into `TAG_FALSE` and `TAG_TRUE` instead of `TAG_BOOL + payload`, so falsiness is one tag compare for `nil/false` and truthiness is all others.
+
+`bits` is dual-use: `as(i64, bits)` when `tag == TAG_INTEGER`; `as(f64, bits)` when `tag == TAG_NUM`.
 
 ### 3.2 Metamethod events
 
@@ -211,7 +214,14 @@ TM_LT
 TM_LE
 TM_CONCAT
 TM_CALL
-TM_N
+TM_IDIV  = 17
+TM_BAND  = 18
+TM_BOR   = 19
+TM_BXOR  = 20
+TM_SHL   = 21
+TM_SHR   = 22
+TM_CLOSE = 23
+TM_N     = 24
 ```
 
 ### 3.3 Thread statuses
@@ -245,6 +255,7 @@ RESUME_LE_MM               -- __le / fallback __lt result resumes branch
 RESUME_CALL_MM             -- __call produced call result
 RESUME_TFORLOOP_CALL       -- iterator call result resumes TFORLOOP
 RESUME_NATIVE_CONT         -- native continuation / coroutine boundary
+RESUME_TBC_CLOSE = 16      -- resuming after a __close metamethod call during TBC drain
 ```
 
 ### 3.5 Error codes
@@ -291,7 +302,8 @@ Encoding:
 nil                  tag = TAG_NIL, bits ignored
 false                tag = TAG_FALSE
 true                 tag = TAG_TRUE
-number               tag = TAG_NUM, bits = f64 bits
+integer              tag = TAG_INTEGER, bits = as(u64, i64)
+float                tag = TAG_NUM, bits = f64 bits
 collectable pointer  tag = object kind, bits = ptr bits
 light userdata       tag = TAG_LIGHTUD, bits = ptr bits
 ```
@@ -385,6 +397,7 @@ struct Instr
     a: u16
     b: u16
     c: u16
+    k: u8      -- decoded from wire bit 15
     bx: u32
     sbx: i32
 end
@@ -419,10 +432,20 @@ struct Proto
     linedefined: i32
     lastlinedefined: i32
     numparams: u8
-    is_vararg: u8
+    flag: u8     -- replaces is_vararg; use ProtoFlag.PF_VAHID to test vararg
     maxstack: u16
 end
 ```
+
+ProtoFlag bit constants (in `src/constants.lua`):
+
+```lua
+PF_VAHID = 1   -- function has hidden vararg arguments (set by VARARGPREP at call entry)
+PF_VATAB = 2   -- vararg passed as table (cleared after VARARGPREP runs)
+PF_FIXED = 4   -- prototype has parts in fixed memory (loader sets; VM treats as read-only hint)
+```
+
+`proto_is_vararg(p)` tests `(p.flag & 3) != 0`. Every site that tested `proto.is_vararg != 0` must instead test `proto.flag & PF_VAHID`.
 
 Design choice: runtime instructions are decoded products, not packed C bitfields. A loader may read packed bytecode and decode once.
 
@@ -545,6 +568,7 @@ struct LuaThread
     hookcount: i32
     basehookcount: i32
     hook: Value              -- Lua or native hook callable
+    tbc_head: index          -- index of topmost to-be-closed stack slot; 0 if no TBC slots are active
 end
 ```
 
@@ -651,7 +675,9 @@ AllocResult =
 ## 9. Value protocols
 
 ```text
-ValueAsNumber = number(x) | not_number()
+ValueAsInteger = integer(n: i64) | not_integer()
+ValueAsFloat   = float(n: f64) | not_float()
+ValueAsNumber  = integer(n: i64) | float(n: f64) | not_number()
 ValueAsString = string(s) | not_string()
 ValueAsTable  = table(t)  | not_table()
 ValueAsFunc   = lua(cl) | native(cl) | not_function()
@@ -722,8 +748,16 @@ NativeCall =
 
 ```text
 MetamethodLookup = found(mm) | missing()
-BinopDispatch = fast_number(x, y) | call_mm(mm) | type_error()
-UnopDispatch = fast_number(x) | call_mm(mm) | type_error()
+BinopDispatch =
+    fast_integer(x: i64, y: i64)
+  | fast_float(x: f64, y: f64)
+  | call_mm(mm)
+  | type_error()
+UnopDispatch =
+    fast_integer(x: i64)
+  | fast_float(x: f64)
+  | call_mm(mm)
+  | type_error()
 IndexDispatch = value(v) | call_mm(mm, self, key) | type_error() | loop_error()
 NewIndexDispatch = stored() | call_mm(mm, self, key, value) | type_error() | loop_error() | oom()
 CallDispatch = callable(func) | call_mm(mm) | type_error()
@@ -773,6 +807,8 @@ OpcodeResult =
 ```
 
 Handlers only expose continuations they can actually use. Generated signatures should remain specific, not one giant universal protocol.
+
+The MMBIN pc-skip pattern is the canonical PUC 5.5 fast path for arithmetic and bitwise opcodes: handlers advance to `pc + 2` on success (skipping the MMBIN instruction) and to `pc + 1` on failure (falling through to it). This is the fast-path-first discipline in concrete form. Arithmetic handler signatures do not carry `enter_lua`, `enter_native`, or `yielded`; those exits live exclusively on `op_mmbin`, `op_mmbini`, and `op_mmbink`.
 
 ---
 
@@ -846,18 +882,25 @@ region value_truth(v: Value;
 ```
 
 ```moonlift
-region value_as_number(v: Value;
-    number: cont(x: f64),
-    not_number: cont())
+region value_as_integer(v: Value;
+    integer: cont(n: i64),
+    not_integer: cont())
+```
+
+```moonlift
+region value_as_float(v: Value;
+    float: cont(n: f64),
+    not_float: cont())
 ```
 
 ```moonlift
 region value_to_number(v: Value;
-    number: cont(x: f64),
+    integer: cont(n: i64),
+    float: cont(n: f64),
     not_number: cont())
 ```
 
-`value_as_number` accepts only actual number values. `value_to_number` implements Lua coercion from numeric strings where the selected Lua version requires it.
+`value_as_integer` matches only `TAG_INTEGER` values. `value_as_float` matches only `TAG_NUM` values. `value_to_number` exposes both arms and replaces the old single-arm `value_as_number`. Callers that genuinely need only a float (e.g. `FORLOOP` with a float step) use `value_as_float` directly. `value_to_number` also implements Lua coercion from numeric strings where the selected Lua version requires it.
 
 ```moonlift
 region value_as_string(v: Value;
@@ -932,6 +975,34 @@ region value_less_equal(
     error: cont(code: i32),
     oom: cont())
 ```
+
+```moonlift
+expr make_integer(n: i64) -> Value
+    -- result.tag = TAG_INTEGER, result.bits = as(u64, n)
+```
+
+```moonlift
+expr make_float(n: f64) -> Value
+    -- result.tag = TAG_NUM, result.bits = as(u64, n)
+```
+
+```moonlift
+region resolve_rk(
+    L: ptr(LuaThread),
+    base: index,
+    k: u8,
+    c: u16,
+    constants: ptr(Value);
+    value: cont(v: Value))
+entry start()
+    if k == 1 then
+        jump value(v = constants[as(index, c)])
+    end
+    jump value(v = L.stack[base + as(index, c)])
+end
+```
+
+`resolve_rk` is used by opcodes where the C operand may be either a register or a constant index (`SETTABUP`, `SETTABLE`, `SETTI`, `SETFIELD`, `MMBINI`, `MMBINK`).
 
 ---
 
@@ -1012,6 +1083,8 @@ region prepare_call(
     error: cont(code: i32),
     oom: cont())
 ```
+
+Note: `prepare_call` does NOT perform vararg adjustment for 5.5 bytecode. `VARARGPREP` at `pc = 0` handles vararg frame setup for every vararg function.
 
 ```moonlift
 region try_call_metamethod(
@@ -1217,7 +1290,8 @@ region binop_dispatch(
     rhs: Value,
     event: u8;
 
-    fast_number: cont(x: f64, y: f64),
+    fast_integer: cont(x: i64, y: i64),
+    fast_float: cont(x: f64, y: f64),
     call_mm: cont(mm: Value),
     type_error: cont())
 ```
@@ -1228,7 +1302,8 @@ region unop_dispatch(
     v: Value,
     event: u8;
 
-    fast_number: cont(x: f64),
+    fast_integer: cont(x: i64),
+    fast_float: cont(x: f64),
     call_mm: cont(mm: Value),
     type_error: cont())
 ```
@@ -1309,6 +1384,21 @@ region raise_error(
 
     caught: cont(frame: ptr(Frame), handler: ptr(ProtectedFrame)),
     uncaught: cont(code: i32))
+```
+
+Before reaching `caught` or `uncaught`, `raise_error` drains the TBC chain via `tbc_close_chain` for all to-be-closed variables above the target protected frame's stack level. If the drain raises a new error, that error replaces the original.
+
+```moonlift
+region tbc_close_chain(
+    L: ptr(LuaThread),
+    level: index;
+    done: cont(),
+    error: cont(code: i32),
+    oom: cont())
+-- Walks the TBC chain from L.tbc_head down to slots >= level.
+-- For each TBC slot, calls its __close metamethod.
+-- Updates L.tbc_head as slots are closed.
+-- If __close raises, that error propagates via error().
 ```
 
 ```moonlift
@@ -1499,56 +1589,126 @@ The API functions are the only place where Lua C API conventions are allowed. In
 
 # Part IV — Opcode family
 
-The opcode set follows Lua 5.1 semantics.
+The opcode set follows PUC Lua 5.5 semantics (85 opcodes, 0–84). `GETGLOBAL`, `SETGLOBAL`, and `LOADBOOL` from 5.1 are removed; `GETTABUP`/`SETTABUP` subsume global access, and `LOADBOOL` is replaced by `LOADFALSE`, `LFALSESKIP`, and `LOADTRUE`.
 
 ```text
-MOVE
-LOADK
-LOADBOOL
-LOADNIL
-GETUPVAL
-GETGLOBAL
-GETTABLE
-SETGLOBAL
-SETUPVAL
-SETTABLE
-NEWTABLE
-SELF
-ADD
-SUB
-MUL
-DIV
-MOD
-POW
-UNM
-NOT
-LEN
-CONCAT
-JMP
-EQ
-LT
-LE
-TEST
-TESTSET
-CALL
-TAILCALL
-RETURN
-FORLOOP
-FORPREP
-TFORLOOP
-SETLIST
-CLOSE
-CLOSURE
-VARARG
+MOVE        = 0
+LOADI       = 1
+LOADF       = 2
+LOADK       = 3
+LOADKX      = 4
+LOADFALSE   = 5
+LFALSESKIP  = 6
+LOADTRUE    = 7
+LOADNIL     = 8
+GETUPVAL    = 9
+SETUPVAL    = 10
+GETTABUP    = 11
+GETTABLE    = 12
+GETI        = 13
+GETFIELD    = 14
+SETTABUP    = 15
+SETTABLE    = 16
+SETTI       = 17
+SETFIELD    = 18
+NEWTABLE    = 19
+SELF        = 20
+ADDI        = 21
+ADDK        = 22
+SUBK        = 23
+MULK        = 24
+MODK        = 25
+POWK        = 26
+DIVK        = 27
+IDIVK       = 28
+BANDK       = 29
+BORK        = 30
+BXORK       = 31
+SHLI        = 32
+SHRI        = 33
+ADD         = 34
+SUB         = 35
+MUL         = 36
+MOD         = 37
+POW         = 38
+DIV         = 39
+IDIV        = 40
+BAND        = 41
+BOR         = 42
+BXOR        = 43
+SHL         = 44
+SHR         = 45
+MMBIN       = 46
+MMBINI      = 47
+MMBINK      = 48
+UNM         = 49
+BNOT        = 50
+NOT         = 51
+LEN         = 52
+CONCAT      = 53
+CLOSE       = 54
+TBC         = 55
+JMP         = 56
+EQ          = 57
+LT          = 58
+LE          = 59
+EQK         = 60
+EQI         = 61
+LTI         = 62
+LEI         = 63
+GTI         = 64
+GEI         = 65
+TEST        = 66
+TESTSET     = 67
+CALL        = 68
+TAILCALL    = 69
+RETURN      = 70
+RETURN0     = 71
+RETURN1     = 72
+FORLOOP     = 73
+FORPREP     = 74
+TFORPREP    = 75
+TFORCALL    = 76
+TFORLOOP    = 77
+SETLIST     = 78
+CLOSURE     = 79
+VARARG      = 80
+GETVARG     = 81
+ERRNNIL     = 82
+VARARGPREP  = 83
+EXTRAARG    = 84
 ```
+
+The quickened pseudo-opcodes `LOADK_FAST = 100`, `MOVE_FAST = 101`, `ADD_NUM = 102` are retained outside the 0–84 range as optional specialization extensions.
 
 Each opcode has a generated region. Representative signatures:
 
 ```moonlift
 region op_move(...; next: cont(...))
 region op_loadk(...; next: cont(...))
-region op_loadbool(...; next: cont(...))
+region op_loadi(...; next: cont(...))
+region op_loadf(...; next: cont(...))
+region op_loadfalse(...; next: cont(...))
+region op_loadtrue(...; next: cont(...))
 region op_loadnil(...; next: cont(...))
+```
+
+`LFALSESKIP` loads false and skips one instruction (the `LOADTRUE` that follows it):
+
+```moonlift
+region op_lfalseskip(...; next: cont(...))
+-- R[A] = false; jump next(pc = pc + 2)
+```
+
+```moonlift
+region op_gettabup(...;
+    next: cont(...),
+    enter_lua: cont(child: ptr(Frame)),
+    enter_native: cont(cl: ptr(CClosure)),
+    error: cont(code: i32),
+    oom: cont())
+-- R[A] = UpValue[B][K[C]:shortstring]
+-- _ENV upvalue (index 0) provides the global table.
 ```
 
 ```moonlift
@@ -1561,6 +1721,36 @@ region op_gettable(...;
 ```
 
 ```moonlift
+region op_geti(...;
+    next: cont(...),
+    enter_lua: cont(child: ptr(Frame)),
+    enter_native: cont(cl: ptr(CClosure)),
+    error: cont(code: i32),
+    oom: cont())
+-- R[A] = R[B][C]  where C is integer immediate key
+```
+
+```moonlift
+region op_getfield(...;
+    next: cont(...),
+    enter_lua: cont(child: ptr(Frame)),
+    enter_native: cont(cl: ptr(CClosure)),
+    error: cont(code: i32),
+    oom: cont())
+-- R[A] = R[B][K[C]:shortstring]
+```
+
+```moonlift
+region op_settabup(...;
+    next: cont(...),
+    enter_lua: cont(child: ptr(Frame)),
+    enter_native: cont(cl: ptr(CClosure)),
+    error: cont(code: i32),
+    oom: cont())
+-- UpValue[A][K[B]:shortstring] = RK(C); C resolved via resolve_rk
+```
+
+```moonlift
 region op_settable(...;
     next: cont(...),
     enter_lua: cont(child: ptr(Frame)),
@@ -1570,21 +1760,146 @@ region op_settable(...;
 ```
 
 ```moonlift
-region op_arith(...;
+region op_setti(...;
     next: cont(...),
     enter_lua: cont(child: ptr(Frame)),
     enter_native: cont(cl: ptr(CClosure)),
     error: cont(code: i32),
     oom: cont())
+-- R[A][B] = RK(C)  where B is integer immediate key; C resolved via resolve_rk
 ```
 
-`op_arith` is generated once per arithmetic event or generated as distinct concrete handlers:
-
-```text
-op_add, op_sub, op_mul, op_div, op_mod, op_pow
+```moonlift
+region op_setfield(...;
+    next: cont(...),
+    enter_lua: cont(child: ptr(Frame)),
+    enter_native: cont(cl: ptr(CClosure)),
+    error: cont(code: i32),
+    oom: cont())
+-- R[A][K[B]:shortstring] = RK(C); C resolved via resolve_rk
 ```
 
-Concrete generated handlers are preferred because the metamethod event becomes a constant.
+Arithmetic and bitwise handlers follow the MMBIN skip pattern. On fast-path success the handler jumps `pc + 2` (skipping the following `MMBIN`/`MMBINI`/`MMBINK`); on fast-path failure it stores `frame.resume_a = a` and jumps `pc + 1` (entering the MMBIN handler). `enter_lua`, `enter_native`, and `yielded` are absent from arithmetic and bitwise handler signatures — those exits live exclusively on `op_mmbin`/`op_mmbini`/`op_mmbink`.
+
+```moonlift
+region op_add(...;
+    next: cont(...),
+    error: cont(code: i32))
+-- R[A] = R[B] + R[C]; integer fast path then float; pc+2 on success, pc+1 on MMBIN fallthrough
+```
+
+Concrete handlers `op_add`, `op_sub`, `op_mul`, `op_mod`, `op_pow`, `op_div`, `op_idiv`, `op_band`, `op_bor`, `op_bxor`, `op_shl`, `op_shr` are generated from the arithmetic factory. Register-immediate variants (`op_addi`, `op_shli`, `op_shri`) and register-constant variants (`op_addk`, `op_subk`, `op_mulk`, `op_modk`, `op_powk`, `op_divk`, `op_idivk`, `op_bandk`, `op_bork`, `op_bxork`) follow the same pattern. Integer-only operations (`BAND`, `BOR`, `BXOR`, `SHL`, `SHR` and their `*K`/`*I` variants) jump `pc + 1` immediately if either operand is not `TAG_INTEGER`.
+
+`SHLI` computes `sC << R[B]` (operand order reversed from `SHRI`). `DIV` and `DIVK` always produce a float. `IDIV`/`IDIVK` use floor division (toward −∞).
+
+```moonlift
+region op_mmbin(...;
+    enter_lua: cont(child: ptr(Frame)),
+    enter_native: cont(cl: ptr(CClosure)),
+    yielded: cont(nres: i32),
+    error: cont(code: i32),
+    oom: cont())
+-- metamethod dispatch for binary ops; result destination = frame.resume_a
+```
+
+```moonlift
+region op_mmbini(...;
+    enter_lua: cont(child: ptr(Frame)),
+    enter_native: cont(cl: ptr(CClosure)),
+    yielded: cont(nres: i32),
+    error: cont(code: i32),
+    oom: cont())
+-- k == 1: arguments were flipped (sB is first operand, R[A] is second)
+```
+
+```moonlift
+region op_mmbink(...;
+    enter_lua: cont(child: ptr(Frame)),
+    enter_native: cont(cl: ptr(CClosure)),
+    yielded: cont(nres: i32),
+    error: cont(code: i32),
+    oom: cont())
+-- k == 1: arguments were flipped (K[B] is first operand, R[A] is second)
+```
+
+Comparison-with-immediate and comparison-with-constant opcodes carry no `enter_lua`/`enter_native`/`yielded`. The `k` field inverts the skip condition:
+
+```moonlift
+region op_eqk(...; next: cont(...), error: cont(code: i32), oom: cont())
+-- if ((R[A] == K[B]) ~= k) then pc++
+region op_eqi(...; next: cont(...), error: cont(code: i32), oom: cont())
+-- if ((R[A] == sB) ~= k) then pc++  (sB = signed immediate from B field)
+region op_lti(...; next: cont(...), error: cont(code: i32), oom: cont())
+region op_lei(...; next: cont(...), error: cont(code: i32), oom: cont())
+region op_gti(...; next: cont(...), error: cont(code: i32), oom: cont())
+region op_gei(...; next: cont(...), error: cont(code: i32), oom: cont())
+```
+
+```moonlift
+region op_tbc(...;
+    next: cont(...),
+    error: cont(code: i32),
+    oom: cont())
+-- Marks R[A] as a to-be-closed local. Emits error if R[A] lacks __close and is not false/nil.
+```
+
+```moonlift
+region op_varargprep(...;
+    next: cont(...),
+    oom: cont())
+-- Adjusts the vararg frame at function entry (pc = 0 for vararg functions).
+-- Calls adjust_varargs; replaces the call-site adjustment removed from prepare_call.
+```
+
+```moonlift
+region op_errnnil(...;
+    next: cont(...),
+    error: cont(code: i32))
+-- if R[A] ~= nil then raise error(K[Bx - 1]) end
+```
+
+Generic for-loop uses three cooperating opcodes:
+
+```moonlift
+region op_tforprep(...;
+    do_jump: cont(...))
+-- Creates upvalue for R[A+3]; jumps forward by Bx to TFORLOOP.
+```
+
+```moonlift
+region op_tforcall(...;
+    enter_lua: cont(child: ptr(Frame)),
+    enter_native: cont(cl: ptr(CClosure)),
+    yielded: cont(nres: i32),
+    error: cont(code: i32),
+    oom: cont())
+-- R[A+4], ..., R[A+3+C] = R[A](R[A+1], R[A+2]); frame.resume_mode = RESUME_TFORLOOP_CALL
+```
+
+```moonlift
+region op_tforloop(...;
+    next: cont(...),
+    do_jump: cont(...))
+-- if R[A+2] ~= nil then { R[A] = R[A+2]; pc -= Bx }
+```
+
+```moonlift
+region op_return0(...;
+    finished: cont(nres: i32),
+    resume_parent: cont(parent: ptr(Frame), pc: index, base: index, top: index),
+    error: cont(code: i32),
+    oom: cont())
+-- return (no values); k == 1 → emit tbc_close_chain before return
+```
+
+```moonlift
+region op_return1(...;
+    finished: cont(nres: i32),
+    resume_parent: cont(parent: ptr(Frame), pc: index, base: index, top: index),
+    error: cont(code: i32),
+    oom: cont())
+-- return R[A]; k == 1 → emit tbc_close_chain before return
+```
 
 ```moonlift
 region op_call(...;
@@ -1602,6 +1917,14 @@ region op_return(...;
     finished: cont(nres: i32),
     error: cont(code: i32),
     oom: cont())
+-- k == 1 → emit tbc_close_chain(level = frame.base) before copying results
+```
+
+```moonlift
+region op_getvarg(...;
+    next: cont(...),
+    error: cont(code: i32))
+-- R[A] = R[B][R[C]]  where R[B] is the vararg parameter table; requires PF_VATAB
 ```
 
 ```moonlift
@@ -1610,6 +1933,8 @@ region op_closure(...;
     error: cont(code: i32),
     oom: cont())
 ```
+
+`EXTRAARG` is a NOP in the VM dispatch loop; the loader folds its payload into its predecessor before the instruction array is handed to the VM.
 
 Lua generation supplies the repeated boilerplate and keeps handlers monomorphic.
 
@@ -1627,12 +1952,13 @@ struct Instr
     a: u16
     b: u16
     c: u16
+    k: u8      -- decoded from wire bit 15
     bx: u32
     sbx: i32
 end
 ```
 
-`Proto.code` points to `Instr[]` in the baseline design.
+`Proto.code` points to `Instr[]` in the baseline design. The `k` field is decoded by the loader from the wire bit; the dispatch loop sees it as a clean 0/1 value.
 
 Optional experimental products (e.g. inline cache records) may be added without changing VM semantics, as long as fallback to generic behavior is explicit.
 
@@ -1757,6 +2083,7 @@ The control graph is the documentation.
 - Every runtime error goes through `raise_error`.
 - Protected calls are represented by `ProtectedFrame`, not host stack unwinding.
 - Uncaught errors set `L.err_value` and exit through `runtime_error`.
+- Every `raise_error` invocation drains the TBC chain for all active to-be-closed variables above the target protected frame before delivery.
 
 ## 36. API invariants
 
@@ -1779,9 +2106,22 @@ return {
   { name = "MOVE",     mode = "ABC",  handler = "op_move",     effects = {"next"} },
   { name = "LOADK",    mode = "ABx",  handler = "op_loadk",    effects = {"next"} },
   { name = "GETTABLE", mode = "ABC",  handler = "op_gettable", effects = {"next", "call", "error", "oom"} },
+  { name = "ADD",      mode = "ABC",  handler = "op_add",      effects = {"next", "error"},
+    mmbin_follows = true, arith_types = "both" },
   -- ...
 }
 ```
+
+Each row may carry additional fields:
+
+| Field | Meaning |
+|---|---|
+| `mmbin_follows` | Handler uses `pc+2`/`pc+1` skip; writes `frame.resume_a` on slow path. Gates removal of `enter_lua`/`enter_native`/`yielded` from signature. |
+| `arith_types` | `"both"`: integer check first, then float. `"integer"`: bitwise-only ops. `"float"`: always-float ops (`POW`, `DIV`). `nil`: no numeric fast path. |
+| `k_semantics` | `"RKC"`: emit `resolve_rk` for C operand. |
+| `immediate` | `"sC"`: C field is signed immediate. `"sBx"`: Bx field is signed immediate value (`LOADI`/`LOADF`). |
+| `tbc_aware` | Emit `tbc_close_chain` at appropriate point. True for `TBC`, `RETURN`, `RETURN0`, `RETURN1`, `CLOSE`. |
+| `vararg_adjust` | Emit `adjust_varargs` call instead of standard opcode body. True for `VARARGPREP` only. |
 
 From this, Lua generates:
 
@@ -1800,8 +2140,18 @@ Arithmetic handlers are generated from:
 
 ```lua
 local arith_ops = {
-  { name = "add", op = "ADD", tm = "TM_ADD", expr = "x + y" },
-  { name = "sub", op = "SUB", tm = "TM_SUB", expr = "x - y" },
+  { name = "add",  op = "ADD",  tm = "TM_ADD",  expr = "x + y",   arith_types = "both" },
+  { name = "sub",  op = "SUB",  tm = "TM_SUB",  expr = "x - y",   arith_types = "both" },
+  { name = "mul",  op = "MUL",  tm = "TM_MUL",  expr = "x * y",   arith_types = "both" },
+  { name = "mod",  op = "MOD",  tm = "TM_MOD",  expr = "x % y",   arith_types = "both" },
+  { name = "pow",  op = "POW",  tm = "TM_POW",  expr = "x ^ y",   arith_types = "float" },
+  { name = "div",  op = "DIV",  tm = "TM_DIV",  expr = "x / y",   arith_types = "float" },
+  { name = "idiv", op = "IDIV", tm = "TM_IDIV", expr = "x // y",  arith_types = "both" },
+  { name = "band", op = "BAND", tm = "TM_BAND", expr = "x & y",   arith_types = "integer" },
+  { name = "bor",  op = "BOR",  tm = "TM_BOR",  expr = "x | y",   arith_types = "integer" },
+  { name = "bxor", op = "BXOR", tm = "TM_BXOR", expr = "x ~ y",   arith_types = "integer" },
+  { name = "shl",  op = "SHL",  tm = "TM_SHL",  expr = "x << y",  arith_types = "integer" },
+  { name = "shr",  op = "SHR",  tm = "TM_SHR",  expr = "x >> y",  arith_types = "integer" },
   -- ...
 }
 ```
@@ -1849,7 +2199,19 @@ region validate_proto(
     oom: cont())
 ```
 
-`validate_proto` is the VM trust boundary. The interpreter loop may assume validated bytecode.
+`validate_proto` is the VM trust boundary. The interpreter loop may assume validated bytecode. `validate_proto` must also verify that EXTRAARG folding was applied: an unfolded `NEWTABLE`/`SETLIST`/`LOADKX` with `k = 1` and a non-NOP successor is rejected as invalid.
+
+### Loader EXTRAARG folding contract
+
+`LOADKX`, `NEWTABLE` (with `k = 1`), and `SETLIST` (with `k = 1`) use a trailing `EXTRAARG` instruction. The VM invariant is that every instruction is self-contained. The loader folds `EXTRAARG` information into its predecessor before handing the `Instr[]` array to the VM:
+
+| Pair | Folded result |
+|---|---|
+| `LOADKX` + `EXTRAARG Ax` | `LOADKX.bx = Ax`; EXTRAARG slot → NOP |
+| `NEWTABLE (k=1)` + `EXTRAARG Ax` | array size = `(Ax << SIZE_vC) \| vC`; EXTRAARG → NOP |
+| `SETLIST (k=1)` + `EXTRAARG Ax` | list offset = `(Ax << SIZE_vC) \| vC`; EXTRAARG → NOP |
+
+After folding, `EXTRAARG` in isolation is a NOP. The VM dispatch loop treats `EXTRAARG` as a no-op.
 
 ---
 
@@ -1919,11 +2281,11 @@ The final VM is a PUC-compatible Lua register interpreter re-authored in Moonlif
 The data tree is:
 
 ```text
-Value
+Value (integer/float split at tag level)
 GCHeader + heap objects
 String, Table, Proto, Closure, UpVal, UserData
 LuaThread, Frame, ProtectedFrame, GlobalState
-Instr, DebugInfo (optional cache products may be added)
+Instr (k-bit decoded), DebugInfo (optional cache products may be added)
 ```
 
 The control tree is:
