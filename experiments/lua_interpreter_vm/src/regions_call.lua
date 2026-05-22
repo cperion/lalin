@@ -172,9 +172,6 @@ end
 block cont_pcall_err(parent: ptr(Frame), pc: index, base: index, top: index)
     jump resume_parent(parent = parent, pc = pc, base = base, top = top)
 end
-block no_parent()
-    jump finished(nres = nres)
-end
 block ret_finished(nres: i32)
     jump finished(nres = nres)
 end

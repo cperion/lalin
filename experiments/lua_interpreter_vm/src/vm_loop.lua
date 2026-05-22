@@ -124,9 +124,6 @@ block native_ret(nres: i32)
     -- Caller frame return reshaping must be explicit; reject instead of resuming with corrupt state.
     jump error(code = @{ERR_RUNTIME})
 end
-block all_done()
-    jump finished(nres = 0)
-end
 block do_returned(nres: i32)
     jump finished(nres = nres)
 end

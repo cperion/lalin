@@ -127,8 +127,8 @@ block do_return(first: index, nres: i32)
         frame.resume_a = as(u16, nres)
         emit tbc_close_chain(L, frame.base;
             done = after_tbc_saved,
-            error = op_ret_error,
-            oom = op_ret_oom)
+            error = error,
+            oom = oom)
     end
     jump after_tbc(first = first, nres = nres)
 end
@@ -169,8 +169,8 @@ entry start()
         frame.resume_base = base
         emit tbc_close_chain(L, frame.base;
             done = after_tbc_saved,
-            error = op_ret_error,
-            oom = op_ret_oom)
+            error = error,
+            oom = oom)
     end
     jump after_tbc(first = base)
 end
@@ -212,8 +212,8 @@ entry start()
         frame.resume_base = first
         emit tbc_close_chain(L, frame.base;
             done = after_tbc_saved,
-            error = op_ret_error,
-            oom = op_ret_oom)
+            error = error,
+            oom = oom)
     end
     jump after_tbc(first = first)
 end

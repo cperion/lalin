@@ -22,6 +22,7 @@ Implemented after `ARCHITECTURE_FIX_PLAN.md`:
 - Removed handler-side `Instr` reloads from return handlers.
 - Replaced dispatch forwarding blocks with direct continuation routing for matching signatures (`next = next`, `error = error`, etc.).
   - `resume_parent` still uses one adapter block because its argument name `parent` must be translated to the outer `next` continuation's `frame` parameter.
+  - The VM loop deliberately keeps tiny loop-latch forwarding blocks: direct `next = loop` was tested and produced worse code / label-capture hazards with nested imported `loop` blocks.
 - Hardened continuation-target resolution against cont-slot cycles caused by environment fill promotion.
 - Removed arithmetic body `gsub`/expression-template generation.
 - Arithmetic hot reads now use `ptr(Value)` field reads instead of `let lhs: Value = L.stack[...]` aggregate reads.
