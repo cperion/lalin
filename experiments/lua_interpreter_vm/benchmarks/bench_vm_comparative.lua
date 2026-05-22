@@ -178,7 +178,6 @@ end
 
 local STEPS = tonumber(os.getenv("MOONLIFT_VM_STEPS")) or 10000
 local RUNS = tonumber(os.getenv("MOONLIFT_VM_RUNS")) or 1000
-local QUICKEN_WARMUP = tonumber(os.getenv("MOONLIFT_VM_QUICKEN_WARMUP")) or 64
 
 local function run_bench(name, fill_code, init_stack, steps_override)
     local steps = steps_override or STEPS
@@ -218,33 +217,11 @@ local ops = {
         end,
     },
     {
-        name = "LOADK_FAST",
-        ref = "LOADK",
-        fill = function(code, steps)
-            for i = 0, steps - 1 do
-                code[i].op = const.Op.LOADK_FAST
-                code[i].a = i % 2
-                code[i].bx = i % 2
-            end
-        end,
-    },
-    {
         name = "MOVE",
         ref = "MOVE",
         fill = function(code, steps)
             for i = 0, steps - 1 do
                 code[i].op = const.Op.MOVE
-                code[i].a = (i + 1) % 2
-                code[i].b = i % 2
-            end
-        end,
-    },
-    {
-        name = "MOVE_FAST",
-        ref = "MOVE",
-        fill = function(code, steps)
-            for i = 0, steps - 1 do
-                code[i].op = const.Op.MOVE_FAST
                 code[i].a = (i + 1) % 2
                 code[i].b = i % 2
             end
@@ -258,18 +235,6 @@ local ops = {
                 code[i].op = const.Op.ADD
                 -- Keep sources stable in R0/R1; write result to R2.
                 -- This avoids value blow-up from repeated as(u64, f64) conversions.
-                code[i].a = 2
-                code[i].b = 0
-                code[i].c = 1
-            end
-        end,
-    },
-    {
-        name = "ADD_NUM",
-        ref = "ADD",
-        fill = function(code, steps)
-            for i = 0, steps - 1 do
-                code[i].op = const.Op.ADD_NUM
                 code[i].a = 2
                 code[i].b = 0
                 code[i].c = 1
@@ -311,7 +276,7 @@ local function read_num(cmd)
     return tonumber(out)
 end
 
-print(string.format("\nSTEPS=%-8d  RUNS=%-8d  QUICKEN_WARMUP=%-6d\n", STEPS, RUNS, QUICKEN_WARMUP))
+print(string.format("\nSTEPS=%-8d  RUNS=%-8d\n", STEPS, RUNS))
 print(string.rep("-", 80))
 print(string.format("%-12s  %12s  %12s  %12s  %-6s", "OP", "Moonlift VM", "LuaJIT -joff", "PUC Lua", "vs LJIT"))
 print(string.rep("-", 80))

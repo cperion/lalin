@@ -47,10 +47,10 @@ local CClosure = host.struct [[struct CClosure gc: GCHeader; env: ptr(Table); fn
 -- 14. Userdata
 local UserData = host.struct [[struct UserData gc: GCHeader; metatable: ptr(Table); env: ptr(Table); len: index; data: ptr(u8) end]]
 
--- 15. Inline cache for quickening
+-- 15. Inline cache (reserved, unused)
 local InlineCache = host.struct [[struct InlineCache epoch: u32; aux0: u32; aux1: u32; key: Value; value: Value end]]
 
--- 16. Quickened instruction
+-- 16. Quickened instruction (reserved, unused)
 local QuickInstr = host.struct [[struct QuickInstr instr: Instr; cache: InlineCache end]]
 
 -- 17. Debug info record

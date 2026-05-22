@@ -1679,8 +1679,6 @@ VARARGPREP  = 83
 EXTRAARG    = 84
 ```
 
-The quickened pseudo-opcodes `LOADK_FAST = 100`, `MOVE_FAST = 101`, `ADD_NUM = 102` are retained outside the 0–84 range as optional specialization extensions.
-
 Each opcode has a generated region. Representative signatures:
 
 ```moonlift
@@ -1978,14 +1976,9 @@ GETTABLE: raw table path -> metamethod path
 CALL: direct closure/native path -> call metamethod path
 ```
 
-## 30. Optional runtime specialization
+## 30. Runtime specialization
 
-Runtime quickening/deopt may exist as an implementation extension, but it is explicitly optional and must preserve these guarantees:
-
-- generic opcode behavior remains authoritative;
-- deopt path is always available;
-- invalidation is explicit (shape/metatable/version checks);
-- no semantic dependence on specialization.
+Runtime specialization (quickening/deopt) was removed as an architectural prerequisite for the scalarization refactor (see ARCHITECTURE_FIX_PLAN.md). It may be reconsidered after the baseline interpreter shape is correct and measurable.
 
 ---
 
@@ -2268,7 +2261,7 @@ The design above is complete. Construction can be ordered without changing the a
 8. Protected calls and coroutines.
 9. GC.
 10. API sealing.
-11. Optional specialization experiments (quickening/deopt), after baseline parity.
+11. Optional specialization experiments, after baseline parity.
 
 This is an implementation order only. No step is a reduced design.
 

@@ -104,11 +104,6 @@ Op.ERRNNIL = 82
 Op.VARARGPREP = 83
 Op.EXTRAARG = 84
 
--- Quickened/specialized opcodes (outside 0-84 range)
-Op.LOADK_FAST = 100
-Op.MOVE_FAST = 101
-Op.ADD_NUM = 102
-
 local TM = {}
 TM.INDEX = 0
 TM.NEWINDEX = 1

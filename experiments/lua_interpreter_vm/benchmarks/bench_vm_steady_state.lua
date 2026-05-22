@@ -4,7 +4,7 @@
 --   * raw ns/resume for RETURN-only VM entry/teardown
 --   * naive ns/dispatch including RETURN
 --   * adjusted hot ns/op with RETURN-only cost subtracted
---   * generic-vs-quickened speedups
+--   * hot ns/op after subtracting RETURN-only cost
 --   * optional reference-loop comparisons against LuaJIT -joff and PUC Lua
 --
 -- Run:
@@ -278,27 +278,9 @@ local function fill_loadk(code, hot_ops)
     put_return(code, hot_ops)
 end
 
-local function fill_loadk_fast(code, hot_ops)
-    for i = 0, hot_ops - 1 do
-        code[i].op = const.Op.LOADK_FAST
-        code[i].a = 0
-        code[i].bx = 0
-    end
-    put_return(code, hot_ops)
-end
-
 local function fill_move_self(code, hot_ops)
     for i = 0, hot_ops - 1 do
         code[i].op = const.Op.MOVE
-        code[i].a = 0
-        code[i].b = 0
-    end
-    put_return(code, hot_ops)
-end
-
-local function fill_move_fast_self(code, hot_ops)
-    for i = 0, hot_ops - 1 do
-        code[i].op = const.Op.MOVE_FAST
         code[i].a = 0
         code[i].b = 0
     end
@@ -318,16 +300,6 @@ local function fill_add_with_mmbin(code, hot_ops)
         code[pc + 1].c = 0
     end
     put_return(code, hot_ops * 2)
-end
-
-local function fill_add_num(code, hot_ops)
-    for i = 0, hot_ops - 1 do
-        code[i].op = const.Op.ADD_NUM
-        code[i].a = 2
-        code[i].b = 0
-        code[i].c = 1
-    end
-    put_return(code, hot_ops)
 end
 
 print("Compiling vm_resume runner...")
@@ -359,11 +331,8 @@ local cases = {
     make_thread({ name = "RETURN", group = "overhead", hot_ops = 0, code_slots = 1, exec_dispatches = 1, fill = fill_return_only, maxstack = 2 }),
     make_thread({ name = "LOADI", group = "load", hot_ops = STEPS, fill = fill_loadi, maxstack = 2, ref = "LOADK" }),
     make_thread({ name = "LOADK", group = "load", hot_ops = STEPS, fill = fill_loadk, maxstack = 2, ref = "LOADK" }),
-    make_thread({ name = "LOADK_FAST", group = "load", hot_ops = STEPS, fill = fill_loadk_fast, maxstack = 2, ref = "LOADK", generic = "LOADK" }),
     make_thread({ name = "MOVE", group = "move", hot_ops = STEPS, fill = fill_move_self, maxstack = 2, ref = "MOVE" }),
-    make_thread({ name = "MOVE_FAST", group = "move", hot_ops = STEPS, fill = fill_move_fast_self, maxstack = 2, ref = "MOVE", generic = "MOVE" }),
     make_thread({ name = "ADD", group = "arith", hot_ops = STEPS, code_slots = STEPS * 2 + 1, exec_dispatches = STEPS + 1, fill = fill_add_with_mmbin, maxstack = 4, ref = "ADD" }),
-    make_thread({ name = "ADD_NUM", group = "arith", hot_ops = STEPS, fill = fill_add_num, maxstack = 4, ref = "ADD", generic = "ADD" }),
 }
 
 local function verify(case)
@@ -463,25 +432,6 @@ for _, r in ipairs(results) do
         r.mops and string.format("%.1f", r.mops) or "n/a"))
 end
 line("-")
-
-print("\nGeneric / quickened speedups (higher is better):")
-line("-", 82)
-print(string.format("%-14s %-14s %12s %12s %12s", "generic", "variant", "generic ns", "variant ns", "speedup"))
-line("-", 82)
-for _, r in ipairs(results) do
-    local c = r.case
-    if c.generic then
-        local g = by_name[c.generic]
-        local speed = g and r.adjusted_ns and r.adjusted_ns > 0 and (g.adjusted_ns / r.adjusted_ns) or nil
-        print(string.format("%-14s %-14s %12s %12s %12s",
-            c.generic,
-            c.name,
-            fmt_num(g and g.adjusted_ns, 12, 2),
-            fmt_num(r.adjusted_ns, 12, 2),
-            fmt_speed(speed)))
-    end
-end
-line("-", 82)
 
 local refs = {}
 if COMPARE_REFS then
