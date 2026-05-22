@@ -31,28 +31,32 @@ block loop(pc: index)
     if pc >= p.code_len then
         jump ok()
     end
-    let instr: Instr = p.code[pc]
-    if instr.op > @{OP_EXTRAARG} then
+    let word: u32 = p.code[pc].word
+    let op: u16 = as(u16, word & 127)
+    let a: u16 = as(u16, (word >> 7) & 255)
+    let bx: u32 = (word >> 15) & 131071
+    let sbx: i32 = as(i32, bx) - 65535
+    if op > @{OP_EXTRAARG} then
         jump invalid(code = @{ERR_BAD_OPCODE})
     end
-    if instr.a >= p.maxstack then
+    if a >= p.maxstack then
         jump invalid(code = @{ERR_RUNTIME})
     end
-    if instr.op == @{OP_LOADK} or instr.op == @{OP_LOADKX} then
-        if as(index, instr.bx) >= p.constants_len then
+    if op == @{OP_LOADK} or op == @{OP_LOADKX} then
+        if as(index, bx) >= p.constants_len then
             jump invalid(code = @{ERR_RUNTIME})
         end
     end
-    if instr.op == @{OP_LOADI} then
+    if op == @{OP_LOADI} then
         -- LOADI uses sBx as immediate value, no constant table check needed
     end
-    if instr.op == @{OP_CLOSURE} then
-        if as(index, instr.bx) >= p.children_len then
+    if op == @{OP_CLOSURE} then
+        if as(index, bx) >= p.children_len then
             jump invalid(code = @{ERR_RUNTIME})
         end
     end
-    if instr.op == @{OP_JMP} or instr.op == @{OP_FORLOOP} or instr.op == @{OP_FORPREP} then
-        let target: i32 = as(i32, pc) + instr.sbx
+    if op == @{OP_JMP} or op == @{OP_FORLOOP} or op == @{OP_FORPREP} then
+        let target: i32 = as(i32, pc) + sbx
         if target < 0 or as(index, target) >= p.code_len then
             jump invalid(code = @{ERR_RUNTIME})
         end

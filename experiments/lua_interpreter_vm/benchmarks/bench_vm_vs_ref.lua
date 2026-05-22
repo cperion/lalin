@@ -5,12 +5,27 @@
 --   luajit -e 'package.path = "./lua/?.lua;./lua/?/init.lua;" .. package.path; dofile("experiments/lua_interpreter_vm/benchmarks/bench_vm_vs_ref.lua")'
 
 local ffi = require("ffi")
+local bit = require("bit")
 
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local moon = require("moonlift")
 local vm = require("experiments.lua_interpreter_vm.src.init")
 local const = vm.const
+
+local function pack_ABC(op, a, b, c, k)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift(k or 0, 15), bit.lshift(b or 0, 16), bit.lshift(c or 0, 24))
+end
+local function pack_ABx(op, a, bx)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift(bx or 0, 15))
+end
+local function pack_AsBx(op, a, sbx)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift((sbx or 0) + 65535, 15))
+end
+local function set_ABC(i, op, a, b, c, k) i.word = pack_ABC(op, a, b, c, k) end
+local function set_ABx(i, op, a, bx) i.word = pack_ABx(op, a, bx) end
+local function set_AsBx(i, op, a, sbx) i.word = pack_AsBx(op, a, sbx) end
+local function op_of(i) return bit.band(i.word, 127) end
 
 ffi.cdef [[
     void* moonlift_scratch_raw(int slot, int elem_size, int count);
@@ -33,10 +48,7 @@ local scratch_raw = libmoon.moonlift_scratch_raw
 ffi.cdef [[
     typedef struct { void* next; uint8_t tt; uint8_t marked; } GCHeader;
     typedef struct { uint32_t tag; uint32_t aux; uint64_t bits; } Value;
-    typedef struct {
-        uint16_t op; uint16_t a; uint16_t b; uint16_t c;
-        uint8_t k; uint32_t bx; int32_t sbx;
-    } Instr;
+    typedef struct { uint32_t word; } Instr;
     typedef struct {
         GCHeader gc;
         void* code; uint64_t code_len;
@@ -47,7 +59,7 @@ ffi.cdef [[
         void* upvals; uint64_t upvals_len;
         void* source;
         int32_t linedefined; int32_t lastlinedefined;
-        uint8_t numparams; uint8_t is_vararg; uint16_t maxstack;
+        uint8_t numparams; uint8_t flag; uint16_t maxstack;
     } Proto;
     typedef struct {
         GCHeader gc;
@@ -99,8 +111,8 @@ local function build_thread()
 
     -- Code: LOADK R0 K0, RETURN R0 2
     local code = scratch(11, ffi.sizeof("Instr"), 2, "Instr*")
-    code[0].op = const.Op.LOADK; code[0].a = 0; code[0].b = 0; code[0].c = 0; code[0].bx = 0; code[0].sbx = 0
-    code[1].op = const.Op.RETURN; code[1].a = 0; code[1].b = 2; code[1].c = 0; code[1].bx = 0; code[1].sbx = 0
+    set_ABx(code[0], const.Op.LOADK, 0, 0)
+    set_ABC(code[1], const.Op.RETURN, 0, 2, 0, 0)
 
     local proto = scratch(12, 1, 256, "Proto*")
     proto.code = ffi.cast("void*", code); proto.code_len = 2
@@ -111,7 +123,7 @@ local function build_thread()
     proto.upvals = nil; proto.upvals_len = 0
     proto.source = nil
     proto.linedefined = -1; proto.lastlinedefined = -1
-    proto.numparams = 0; proto.is_vararg = 0; proto.maxstack = 1
+    proto.numparams = 0; proto.flag = 0; proto.maxstack = 1
 
     local closure = scratch(13, 1, 64, "LClosure*")
     closure.env = nil; closure.proto = proto; closure.upvals = nil; closure.nupvals = 0

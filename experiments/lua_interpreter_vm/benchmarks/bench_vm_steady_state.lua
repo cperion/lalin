@@ -17,12 +17,27 @@
 --   MOONLIFT_VM_COMPARE_REFS=1     -- set 0 to skip Lua reference processes
 
 local ffi = require("ffi")
+local bit = require("bit")
 
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local moon = require("moonlift")
 local vm = require("experiments.lua_interpreter_vm.src.init")
 local const = vm.const
+
+local function pack_ABC(op, a, b, c, k)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift(k or 0, 15), bit.lshift(b or 0, 16), bit.lshift(c or 0, 24))
+end
+local function pack_ABx(op, a, bx)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift(bx or 0, 15))
+end
+local function pack_AsBx(op, a, sbx)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift((sbx or 0) + 65535, 15))
+end
+local function set_ABC(i, op, a, b, c, k) i.word = pack_ABC(op, a, b, c, k) end
+local function set_ABx(i, op, a, bx) i.word = pack_ABx(op, a, bx) end
+local function set_AsBx(i, op, a, sbx) i.word = pack_AsBx(op, a, sbx) end
+local function op_of(i) return bit.band(i.word, 127) end
 
 ffi.cdef [[
     void* moonlift_scratch_raw(int slot, int elem_size, int count);
@@ -42,10 +57,7 @@ local scratch_raw = libmoon.moonlift_scratch_raw
 ffi.cdef [[
     typedef struct { void* next; uint8_t tt; uint8_t marked; } GCHeader;
     typedef struct { uint32_t tag; uint32_t aux; uint64_t bits; } Value;
-    typedef struct {
-        uint16_t op; uint16_t a; uint16_t b; uint16_t c;
-        uint8_t  k;    uint32_t bx; int32_t sbx;
-    } Instr;
+    typedef struct { uint32_t word; } Instr;
     typedef struct {
         GCHeader gc;
         void* code; uint64_t code_len;
@@ -142,13 +154,7 @@ local function make_thread(case)
 
     local code = scratch(slot + 1, ffi.sizeof("Instr"), code_slots, "Instr*")
     for i = 0, code_slots - 1 do
-        code[i].op = const.Op.MOVE
-        code[i].a = 0
-        code[i].b = 0
-        code[i].c = 0
-        code[i].k = 0
-        code[i].bx = 0
-        code[i].sbx = 0
+        set_ABC(code[i], const.Op.MOVE, 0, 0, 0, 0)
     end
     case.fill(code, case.hot_ops, code_slots)
 
@@ -256,13 +262,7 @@ local function reset(case)
 end
 
 local function put_return(code, pc)
-    code[pc].op = const.Op.RETURN
-    code[pc].a = 0
-    code[pc].b = 2
-    code[pc].c = 0
-    code[pc].k = 0
-    code[pc].bx = 0
-    code[pc].sbx = 0
+    set_ABC(code[pc], const.Op.RETURN, 0, 2, 0, 0)
 end
 
 local function fill_return_only(code)
@@ -271,27 +271,21 @@ end
 
 local function fill_loadi(code, hot_ops)
     for i = 0, hot_ops - 1 do
-        code[i].op = const.Op.LOADI
-        code[i].a = 0
-        code[i].sbx = 42
+        set_AsBx(code[i], const.Op.LOADI, 0, 42)
     end
     put_return(code, hot_ops)
 end
 
 local function fill_loadk(code, hot_ops)
     for i = 0, hot_ops - 1 do
-        code[i].op = const.Op.LOADK
-        code[i].a = 0
-        code[i].bx = 0
+        set_ABx(code[i], const.Op.LOADK, 0, 0)
     end
     put_return(code, hot_ops)
 end
 
 local function fill_move_self(code, hot_ops)
     for i = 0, hot_ops - 1 do
-        code[i].op = const.Op.MOVE
-        code[i].a = 0
-        code[i].b = 0
+        set_ABC(code[i], const.Op.MOVE, 0, 0, 0, 0)
     end
     put_return(code, hot_ops)
 end
@@ -299,10 +293,8 @@ end
 local function fill_add_int_mmbin(code, hot_ops)
     for i = 0, hot_ops - 1 do
         local pc = i * 2
-        code[pc].op = const.Op.ADD
-        code[pc].a = 2; code[pc].b = 0; code[pc].c = 1
-        code[pc + 1].op = const.Op.MMBIN
-        code[pc + 1].a = 0; code[pc + 1].b = const.TM.ADD; code[pc + 1].c = 0
+        set_ABC(code[pc], const.Op.ADD, 2, 0, 1, 0)
+        set_ABC(code[pc + 1], const.Op.MMBIN, 0, const.TM.ADD, 0, 0)
     end
     put_return(code, hot_ops * 2)
 end
@@ -315,8 +307,8 @@ end
 local function fill_add_with_mmbin(code, hot_ops)
     for i = 0, hot_ops - 1 do
         local pc = i * 2
-        code[pc].op = const.Op.ADD; code[pc].a = 2; code[pc].b = 0; code[pc].c = 1
-        code[pc + 1].op = const.Op.MMBIN; code[pc + 1].a = 0; code[pc + 1].b = const.TM.ADD; code[pc + 1].c = 0
+        set_ABC(code[pc], const.Op.ADD, 2, 0, 1, 0)
+        set_ABC(code[pc + 1], const.Op.MMBIN, 0, const.TM.ADD, 0, 0)
     end
     put_return(code, hot_ops * 2)
 end

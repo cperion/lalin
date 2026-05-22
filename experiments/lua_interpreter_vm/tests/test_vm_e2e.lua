@@ -3,9 +3,24 @@
 package.path = "./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local ffi = require("ffi")
+local bit = require("bit")
 local moon = require("moonlift")
 local vm = require("experiments.lua_interpreter_vm.src.init")
 local const = vm.const
+
+local function pack_ABC(op, a, b, c, k)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift(k or 0, 15), bit.lshift(b or 0, 16), bit.lshift(c or 0, 24))
+end
+local function pack_ABx(op, a, bx)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift(bx or 0, 15))
+end
+local function pack_AsBx(op, a, sbx)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift((sbx or 0) + 65535, 15))
+end
+local function set_ABC(i, op, a, b, c, k) i.word = pack_ABC(op, a, b, c, k) end
+local function set_ABx(i, op, a, bx) i.word = pack_ABx(op, a, bx) end
+local function set_AsBx(i, op, a, sbx) i.word = pack_AsBx(op, a, sbx) end
+local function op_of(i) return bit.band(i.word, 127) end
 
 -- Load the moonlift shared library for scratch allocator
 local libmoon
@@ -37,10 +52,7 @@ local scratch_raw = libmoon.moonlift_scratch_raw
 
 ffi.cdef [[
     typedef struct { void* next; uint8_t tt; uint8_t marked; } GCHeader;
-    typedef struct {
-        uint16_t op; uint16_t a; uint16_t b; uint16_t c;
-        uint8_t  k;    uint32_t bx; int32_t sbx;
-    } Instr;
+    typedef struct { uint32_t word; } Instr;
     typedef struct { uint32_t tag; uint32_t aux; uint64_t bits; } Value;
     typedef struct {
         GCHeader gc;
@@ -97,8 +109,8 @@ consts[0][0].bits = num_bits.u
 -- Instructions: LOADK R0 K0, RETURN R0 2  (Instr = 20 bytes in Lua 5.5)
 local code_mem = scratch(2, 20, 2)
 local code = ffi.cast("Instr(*)[2]", code_mem)
-code[0][0].op = const.Op.LOADK; code[0][0].a = 0; code[0][0].bx = 0; code[0][0].k = 0
-code[0][1].op = const.Op.RETURN; code[0][1].a = 0; code[0][1].b = 2; code[0][1].k = 0
+set_ABx(code[0][0], const.Op.LOADK, 0, 0)
+set_ABC(code[0][1], const.Op.RETURN, 0, 2, 0, 0)
 
 -- Proto
 local proto_mem = scratch(3, 1, 256)

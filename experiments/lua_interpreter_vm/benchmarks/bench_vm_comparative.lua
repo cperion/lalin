@@ -1,12 +1,27 @@
 -- Comparative VM benchmark (Moonlift VM vs LuaJIT -joff vs PUC Lua)
 
 local ffi = require("ffi")
+local bit = require("bit")
 
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local moon = require("moonlift")
 local vm = require("experiments.lua_interpreter_vm.src.init")
 local const = vm.const
+
+local function pack_ABC(op, a, b, c, k)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift(k or 0, 15), bit.lshift(b or 0, 16), bit.lshift(c or 0, 24))
+end
+local function pack_ABx(op, a, bx)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift(bx or 0, 15))
+end
+local function pack_AsBx(op, a, sbx)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift((sbx or 0) + 65535, 15))
+end
+local function set_ABC(i, op, a, b, c, k) i.word = pack_ABC(op, a, b, c, k) end
+local function set_ABx(i, op, a, bx) i.word = pack_ABx(op, a, bx) end
+local function set_AsBx(i, op, a, sbx) i.word = pack_AsBx(op, a, sbx) end
+local function op_of(i) return bit.band(i.word, 127) end
 
 ffi.cdef [[
 void* moonlift_scratch_raw(int slot, int elem_size, int count);
@@ -28,10 +43,7 @@ local scratch_raw = lib.moonlift_scratch_raw
 ffi.cdef [[
 typedef struct { void* next; uint8_t tt; uint8_t marked; } GCHeader;
 typedef struct { uint32_t tag; uint32_t aux; uint64_t bits; } Value;
-typedef struct {
-    uint16_t op; uint16_t a; uint16_t b; uint16_t c;
-    uint8_t k; uint32_t bx; int32_t sbx;
-} Instr;
+typedef struct { uint32_t word; } Instr;
 typedef struct {
     GCHeader gc;
     void* code; uint64_t code_len;
@@ -87,12 +99,10 @@ local function build_thread(steps, fill_code, init_stack, code_slots)
 
     local code = S(slot + 1, ffi.sizeof("Instr"), code_slots + 1, "Instr*")
     for i = 0, code_slots do
-        code[i].op = 0; code[i].a = 0; code[i].b = 0; code[i].c = 0; code[i].bx = 0; code[i].sbx = 0
+        set_ABC(code[i], 0, 0, 0, 0, 0)
     end
     fill_code(code, steps)
-    code[code_slots].op = const.Op.RETURN
-    code[code_slots].a = 0
-    code[code_slots].b = 2
+    set_ABC(code[code_slots], const.Op.RETURN, 0, 2, 0, 0)
 
     local proto = S(slot + 2, 1, 256, "Proto*")
     proto.code = ffi.cast("void*", code); proto.code_len = code_slots + 1
@@ -215,9 +225,7 @@ local ops = {
         ref = "LOADK",
         fill = function(code, steps)
             for i = 0, steps - 1 do
-                code[i].op = const.Op.LOADK
-                code[i].a = i % 2
-                code[i].bx = i % 2
+                set_ABx(code[i], const.Op.LOADK, i % 2, i % 2)
             end
         end,
     },
@@ -226,9 +234,7 @@ local ops = {
         ref = "MOVE",
         fill = function(code, steps)
             for i = 0, steps - 1 do
-                code[i].op = const.Op.MOVE
-                code[i].a = (i + 1) % 2
-                code[i].b = i % 2
+                set_ABC(code[i], const.Op.MOVE, (i + 1) % 2, i % 2, 0, 0)
             end
         end,
     },
@@ -239,16 +245,10 @@ local ops = {
         fill = function(code, steps)
             for i = 0, steps - 1 do
                 local pc = i * 2
-                code[pc].op = const.Op.ADD
                 -- Lua 5.5 arithmetic instructions skip over the following MMBIN
                 -- on the fast path, so lay the stream out as ADD/MMBIN pairs.
-                code[pc].a = 2
-                code[pc].b = 0
-                code[pc].c = 1
-                code[pc + 1].op = const.Op.MMBIN
-                code[pc + 1].a = 0
-                code[pc + 1].b = const.TM.ADD
-                code[pc + 1].c = 0
+                set_ABC(code[pc], const.Op.ADD, 2, 0, 1, 0)
+                set_ABC(code[pc + 1], const.Op.MMBIN, 0, const.TM.ADD, 0, 0)
             end
         end,
     },

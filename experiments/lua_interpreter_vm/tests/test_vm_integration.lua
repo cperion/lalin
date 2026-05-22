@@ -12,10 +12,10 @@ local vm_run = moon.region [[
 region vm_run(stack: ptr(Value), code: ptr(Instr), consts: ptr(Value);
               ok: cont(nres: i32), err: cont(code: i32))
 entry start()
-    let inst: Instr = code[0]
-    let op: u16 = inst.op
-    let dst: u16 = inst.a
-    let kidx: u32 = inst.bx
+    let word: u32 = code[0].word
+    let op: u16 = as(u16, word & 127)
+    let dst: u16 = as(u16, (word >> 7) & 255)
+    let kidx: u32 = (word >> 15) & 131071
     switch op do
     case 3 then  -- LOADK
         stack[as(index, dst)] = consts[kidx]

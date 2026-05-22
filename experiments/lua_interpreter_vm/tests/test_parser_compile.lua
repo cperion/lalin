@@ -1,9 +1,11 @@
 package.path = "./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local ffi = require("ffi")
+local bit = require("bit")
 local moon = require("moonlift")
 local vm = require("experiments.lua_interpreter_vm.src.init")
 local const = vm.const
+local function op_of(i) return bit.band(i.word, 127) end
 
 ffi.cdef [[
 typedef struct String String;
@@ -13,7 +15,7 @@ typedef struct CompileArena CompileArena;
 typedef struct LabelDesc LabelDesc;
 typedef struct GCHeader { void* next; uint8_t tt; uint8_t marked; } GCHeader;
 typedef struct Value { uint32_t tag; uint32_t aux; uint64_t bits; } Value;
-typedef struct Instr { uint16_t op; uint16_t a; uint16_t b; uint16_t c; uint8_t k; uint32_t bx; int32_t sbx; } Instr;
+typedef struct Instr { uint32_t word; } Instr;
 typedef struct LocVar { String* name; uint64_t startpc; uint64_t endpc; } LocVar;
 typedef struct UpValDesc { String* name; uint8_t instack; uint16_t index; } UpValDesc;
 struct Proto {
@@ -87,7 +89,8 @@ local function run_case(src, expected_ops)
     local n = compiled(cu, b, p, bytes, #src, code, locals)
     assert(n == #expected_ops, string.format("%q code_len: got %d expected %d", src, n, #expected_ops))
     for i, op in ipairs(expected_ops) do
-        assert(code[i - 1].op == op, string.format("%q op[%d]: got %d expected %d", src, i - 1, code[i - 1].op, op))
+        local got = op_of(code[i - 1])
+        assert(got == op, string.format("%q op[%d]: got %d expected %d", src, i - 1, got, op))
     end
     print("PASS", src)
 end

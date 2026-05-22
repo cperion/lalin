@@ -426,6 +426,19 @@ function M.Define(T, cb)
                     default_body = default_body,
                 })
                 append_all(blocks, default_blocks)
+            elseif cls == Tr.StmtJumpCont then
+                -- Do not resolve continuation jumps before this fragment's
+                -- local label rebase. A cont fill can target a caller label
+                -- whose raw name collides with an imported child block (for
+                -- example vm_loop's `loop` vs op_loadnil's internal `loop`).
+                -- If open_expand resolves the continuation to StmtJump here,
+                -- rebase_stmts can mistake that caller label for a local label
+                -- and prepend the wrong runtime params. Keep it as JumpCont
+                -- until cb.expand_stmts runs after rebase.
+                body[#body + 1] = pvm.with(stmt, {
+                    h = one_expand_stmt_header(stmt.h, env),
+                    args = expand_jump_args(stmt.args, env),
+                })
             else
                 append_all(body, expand_plain_stmt(stmt, env))
             end

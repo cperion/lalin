@@ -68,8 +68,8 @@ c3:free()
 -- 5. Build a simple Instr and verify field access
 local t4 = moon.func [[
 test_instr() -> i32
-    let inst: Instr = { op = 1, a = 0, b = 0, c = 0, k = 0, bx = 0, sbx = 0 }
-    return as(i32, inst.op)
+    let inst: Instr = { word = 1 }
+    return as(i32, inst.word & 127)
 end
 ]]
 local c4 = t4:compile()
@@ -80,8 +80,8 @@ c4:free()
 -- Create a fake Code[], Instr[], and dispatch "by hand"
 local t5 = moon.func { OP_MOVE = moon.int(0) } [[
 test_switch() -> i32
-    let inst: Instr = { op = @{OP_MOVE}, a = 1, b = 2, c = 0, k = 0, bx = 0, sbx = 0 }
-    if inst.op == @{OP_MOVE} then
+    let inst: Instr = { word = as(u32, @{OP_MOVE}) | (as(u32, 1) << 7) | (as(u32, 2) << 16) }
+    if (inst.word & 127) == @{OP_MOVE} then
         return 42
     end
     return -1

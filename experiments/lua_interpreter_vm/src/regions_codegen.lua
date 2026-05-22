@@ -47,7 +47,7 @@ entry start()
     let fs: ptr(FuncBuilder) = cu.current
     if fs.code.len >= fs.code.cap then jump oom() end
     let out_pc: index = fs.code.len
-    fs.code.data[out_pc] = { op = op, a = a, b = b, c = c, k = k, bx = 0, sbx = 0 }
+    fs.code.data[out_pc] = { word = as(u32, op) | (as(u32, a) << 7) | (as(u32, k) << 15) | (as(u32, b) << 16) | (as(u32, c) << 24) }
     fs.code.len = out_pc + 1
     fs.pc = fs.code.len
     jump emitted(pc = out_pc)
@@ -62,7 +62,7 @@ entry start()
     let fs: ptr(FuncBuilder) = cu.current
     if fs.code.len >= fs.code.cap then jump oom() end
     let out_pc: index = fs.code.len
-    fs.code.data[out_pc] = { op = op, a = a, b = 0, c = 0, k = 0, bx = bx, sbx = 0 }
+    fs.code.data[out_pc] = { word = as(u32, op) | (as(u32, a) << 7) | ((bx & 131071) << 15) }
     fs.code.len = out_pc + 1
     fs.pc = fs.code.len
     jump emitted(pc = out_pc)
@@ -77,7 +77,7 @@ entry start()
     let fs: ptr(FuncBuilder) = cu.current
     if fs.code.len >= fs.code.cap then jump oom() end
     let out_pc: index = fs.code.len
-    fs.code.data[out_pc] = { op = op, a = a, b = 0, c = 0, k = 0, bx = 0, sbx = sbx }
+    fs.code.data[out_pc] = { word = as(u32, op) | (as(u32, a) << 7) | (as(u32, sbx + 65535) << 15) }
     fs.code.len = out_pc + 1
     fs.pc = fs.code.len
     jump emitted(pc = out_pc)
@@ -150,9 +150,9 @@ entry start()
     let fs: ptr(FuncBuilder) = cu.current
     if fs.code.len + 1 >= fs.code.cap then jump oom() end
     let pc_add: index = fs.code.len
-    fs.code.data[pc_add] = { op = as(u16, @{OP_ADD}), a = dst, b = lhs, c = rhs, k = 0, bx = 0, sbx = 0 }
+    fs.code.data[pc_add] = { word = as(u32, @{OP_ADD}) | (as(u32, dst) << 7) | (as(u32, lhs) << 16) | (as(u32, rhs) << 24) }
     let pc_mm: index = pc_add + 1
-    fs.code.data[pc_mm] = { op = as(u16, @{OP_MMBIN}), a = 0, b = as(u16, @{TM_ADD}), c = 0, k = 0, bx = 0, sbx = 0 }
+    fs.code.data[pc_mm] = { word = as(u32, @{OP_MMBIN}) | (as(u32, @{TM_ADD}) << 16) }
     fs.code.len = pc_mm + 1
     fs.pc = fs.code.len
     jump ok()

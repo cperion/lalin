@@ -20,8 +20,8 @@ local String = host.struct [[struct String gc: GCHeader; reserved: u8; hash: u32
 -- 5. Table
 local Table = host.struct [[struct Table gc: GCHeader; flags: u32; array_len: index; array: ptr(Value); node_mask: u32; nodes: ptr(Node); lastfree: ptr(Node); metatable: ptr(Table); shape_epoch: u32 end]]
 
--- 6. Instruction (decoded, k-bit extracted by loader)
-local Instr = host.struct [[struct Instr op: u16; a: u16; b: u16; c: u16; k: u8; bx: u32; sbx: i32 end]]
+-- 6. Instruction (Lua 5.5 compact 32-bit word)
+local Instr = host.struct [[struct Instr word: u32 end]]
 
 -- 7. Local variable descriptor
 local LocVar = host.struct [[struct LocVar name: ptr(String); startpc: index; endpc: index end]]

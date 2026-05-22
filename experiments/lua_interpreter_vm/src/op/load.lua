@@ -66,7 +66,8 @@ region op_loadkx(]] .. H .. [[;]] .. B.next_only .. [[)
 entry start()
     let cl: ptr(LClosure) = as(ptr(LClosure), frame.closure.bits)
     let extra: ptr(Instr) = cl.proto.code + (pc + 1)
-    let src: ptr(Value) = cl.proto.constants + as(index, extra.bx)
+    let extra_bx: u32 = (extra.word >> 15) & 131071
+    let src: ptr(Value) = cl.proto.constants + as(index, extra_bx)
     let dst: index = base + as(index, a)
     let tag: u32 = src.tag
     let aux: u32 = src.aux

@@ -10,7 +10,14 @@ local handlers = require("experiments.lua_interpreter_vm.src.op_handlers")
 -- Build switch arms as explicit Moonlift case blocks.
 -- Each arm is a visible string in the dispatch source.
 local arms = {}
-local DEFAULT_ARGS = "ip.a, ip.b, ip.c, ip.k, ip.bx, ip.sbx"
+local WA = "as(u16, (word >> 7) & 255)"
+local WK = "as(u8, (word >> 15) & 1)"
+local WB = "as(u16, (word >> 16) & 255)"
+local WC = "as(u16, (word >> 24) & 255)"
+local WBX = "(word >> 15) & 131071"
+local WSBX = "as(i32, ((word >> 15) & 131071)) - 65535"
+
+local DEFAULT_ARGS = table.concat({ WA, WB, WC, WK, WBX, WSBX }, ", ")
 local ZERO_U16 = "as(u16, 0)"
 local ZERO_U8 = "as(u8, 0)"
 local ZERO_U32 = "as(u32, 0)"
@@ -20,13 +27,13 @@ local function args(a, b, c, k, bx, sbx)
     return table.concat({ a or ZERO_U16, b or ZERO_U16, c or ZERO_U16, k or ZERO_U8, bx or ZERO_U32, sbx or ZERO_I32 }, ", ")
 end
 
-local ARG_A     = args("ip.a")
-local ARG_AB    = args("ip.a", "ip.b")
-local ARG_ABC   = args("ip.a", "ip.b", "ip.c")
-local ARG_ABC_K = args("ip.a", "ip.b", "ip.c", "ip.k")
-local ARG_ABX   = args("ip.a", nil, nil, nil, "ip.bx")
-local ARG_ASBX  = args("ip.a", nil, nil, nil, nil, "ip.sbx")
-local ARG_EXTRA = args("ip.a")
+local ARG_A     = args(WA)
+local ARG_AB    = args(WA, WB)
+local ARG_ABC   = args(WA, WB, WC)
+local ARG_ABC_K = args(WA, WB, WC, WK)
+local ARG_ABX   = args(WA, nil, nil, nil, WBX)
+local ARG_ASBX  = args(WA, nil, nil, nil, nil, WSBX)
+local ARG_EXTRA = args(WA)
 
 local function arm(op_num, handler_name, conts, arg_exprs)
     arms[#arms + 1] = string.format([[
@@ -35,11 +42,36 @@ local function arm(op_num, handler_name, conts, arg_exprs)
             %s)]], op_num, handler_name, arg_exprs or DEFAULT_ARGS, conts)
 end
 
--- All 85 opcodes with literal continuation routing.
-arm(0,  "op_move",       "next = next", ARG_AB)
+local function raw_arm(op_num, src)
+    arms[#arms + 1] = string.format("    case %d then\n%s", op_num, src)
+end
+
+-- The hottest baseline opcodes are inlined in dispatch.  This avoids a
+-- second imported region per instruction and keeps Cranelift's hot path close
+-- to a direct switch arm.  The standalone op_* handlers remain the semantic
+-- implementation used by tests/tooling and by non-inlined configurations.
+raw_arm(0, [[
+        let src: index = cur_base + as(index, (word >> 16) & 255)
+        let dst: index = cur_base + as(index, (word >> 7) & 255)
+        let tag: u32 = L.stack[src].tag
+        let aux: u32 = L.stack[src].aux
+        let bits: u64 = L.stack[src].bits
+        L.stack[dst].tag = tag
+        L.stack[dst].aux = aux
+        L.stack[dst].bits = bits
+        jump next(frame = cur_frame, pc = cur_pc + 1, base = cur_base, top = cur_top)]])
 arm(1,  "op_loadi",      "next = next", ARG_ASBX)
 arm(2,  "op_loadf",      "next = next", ARG_ASBX)
-arm(3,  "op_loadk",      "next = next", ARG_ABX)
+raw_arm(3, [[
+        let src: ptr(Value) = cl.proto.constants + as(index, (word >> 15) & 131071)
+        let dst: index = cur_base + as(index, (word >> 7) & 255)
+        let tag: u32 = src.tag
+        let aux: u32 = src.aux
+        let bits: u64 = src.bits
+        L.stack[dst].tag = tag
+        L.stack[dst].aux = aux
+        L.stack[dst].bits = bits
+        jump next(frame = cur_frame, pc = cur_pc + 1, base = cur_base, top = cur_top)]])
 arm(4,  "op_loadkx",     "next = next", ARG_EXTRA)
 arm(5,  "op_loadfalse",  "next = next", ARG_A)
 arm(6,  "op_lfalseskip", "next = next", ARG_A)
@@ -102,8 +134,28 @@ arm(32, "op_shli",       [[next = next,
             error = error]], ARG_ABC)
 arm(33, "op_shri",       [[next = next,
             error = error]], ARG_ABC)
-arm(34, "op_add",        [[next = next,
-            error = error]], ARG_ABC)
+raw_arm(34, [[
+        let lhs: ptr(Value) = L.stack + (cur_base + as(index, (word >> 16) & 255))
+        let rhs: ptr(Value) = L.stack + (cur_base + as(index, (word >> 24) & 255))
+        let lt: u32 = lhs.tag
+        let rt: u32 = rhs.tag
+        let lb: u64 = lhs.bits
+        let rb: u64 = rhs.bits
+        let dst: index = cur_base + as(index, (word >> 7) & 255)
+        if lt == @{TAG_NUM} and rt == @{TAG_NUM} then
+            L.stack[dst].tag = @{TAG_NUM}
+            L.stack[dst].aux = 0
+            L.stack[dst].bits = bitcast(u64, bitcast(f64, lb) + bitcast(f64, rb))
+            jump next(frame = cur_frame, pc = cur_pc + 2, base = cur_base, top = cur_top)
+        end
+        if lt == @{TAG_INTEGER} and rt == @{TAG_INTEGER} then
+            L.stack[dst].tag = @{TAG_INTEGER}
+            L.stack[dst].aux = 0
+            L.stack[dst].bits = as(u64, as(i64, lb) + as(i64, rb))
+            jump next(frame = cur_frame, pc = cur_pc + 2, base = cur_base, top = cur_top)
+        end
+        cur_frame.resume_a = as(u16, (word >> 7) & 255)
+        jump next(frame = cur_frame, pc = cur_pc + 1, base = cur_base, top = cur_top)]])
 arm(35, "op_sub",        [[next = next,
             error = error]], ARG_ABC)
 arm(36, "op_mul",        [[next = next,
@@ -214,7 +266,8 @@ region dispatch_instruction(
 entry decode()
     let cl: ptr(LClosure) = as(ptr(LClosure), cur_frame.closure.bits)
     let ip: ptr(Instr) = cl.proto.code + cur_pc
-    let op: u16 = ip.op
+    let word: u32 = ip.word
+    let op: u16 = as(u16, word & 127)
     switch op do
 ]] .. table.concat(arms, "\n") .. [[
     default then

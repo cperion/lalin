@@ -3,9 +3,24 @@
 package.path = "./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local ffi = require("ffi")
+local bit = require("bit")
 local moon = require("moonlift")
 local vm = require("experiments.lua_interpreter_vm.src.init")
 local const = vm.const
+
+local function pack_ABC(op, a, b, c, k)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift(k or 0, 15), bit.lshift(b or 0, 16), bit.lshift(c or 0, 24))
+end
+local function pack_ABx(op, a, bx)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift(bx or 0, 15))
+end
+local function pack_AsBx(op, a, sbx)
+    return bit.bor(op, bit.lshift(a or 0, 7), bit.lshift((sbx or 0) + 65535, 15))
+end
+local function set_ABC(i, op, a, b, c, k) i.word = pack_ABC(op, a, b, c, k) end
+local function set_ABx(i, op, a, bx) i.word = pack_ABx(op, a, bx) end
+local function set_AsBx(i, op, a, sbx) i.word = pack_AsBx(op, a, sbx) end
+local function op_of(i) return bit.band(i.word, 127) end
 
 local libmoon
 for _, p in ipairs({ "libmoonlift", "./target/release/libmoonlift.so", "./target/debug/libmoonlift.so" }) do
@@ -18,7 +33,7 @@ ffi.cdef [[
 void* moonlift_scratch_raw(int slot, int elem_size, int count);
 typedef struct { void* next; uint8_t tt; uint8_t marked; } GCHeader;
 typedef struct { uint32_t tag; uint32_t aux; uint64_t bits; } Value;
-typedef struct { uint16_t op; uint16_t a; uint16_t b; uint16_t c; uint8_t k; uint32_t bx; int32_t sbx; } Instr;
+typedef struct Instr { uint32_t word; } Instr;
 typedef struct {
     GCHeader gc;
     void* code; uint64_t code_len;
@@ -96,7 +111,7 @@ end
 local function make_case(ncode, nconst)
     local code = scratch(ffi.sizeof("Instr"), ncode, "Instr*")
     for i = 0, ncode - 1 do
-        code[i].op = const.Op.RETURN; code[i].a = 0; code[i].b = 1; code[i].c = 0; code[i].k = 0; code[i].bx = 0; code[i].sbx = 0
+        set_ABC(code[i], const.Op.RETURN, 0, 1, 0, 0)
     end
     local consts = scratch(16, math.max(nconst, 1), "Value*")
     for i = 0, math.max(nconst, 1) - 1 do setnil(consts[i]) end
@@ -139,8 +154,8 @@ print("=== VM opcode semantic checks ===\n")
 do
     local c = make_case(2, 0)
     setint(c.stack[1], 11); setint(c.stack[2], 22); setint(c.stack[3], 33)
-    c.code[0].op = const.Op.LOADNIL; c.code[0].a = 0; c.code[0].b = 2
-    c.code[1].op = const.Op.RETURN; c.code[1].a = 0; c.code[1].b = 2
+    set_ABC(c.code[0], const.Op.LOADNIL, 0, 2, 0, 0)
+    set_ABC(c.code[1], const.Op.RETURN, 0, 2, 0, 0)
     local n = runner(c.L)
     check("LOADNIL clears A through A+B", n == 1 and c.stack[1].tag == const.Tag.NIL and c.stack[2].tag == const.Tag.NIL and c.stack[3].tag == const.Tag.NIL)
 end
@@ -149,9 +164,9 @@ end
 do
     local c = make_case(3, 2)
     setint(c.consts[0], 111); setint(c.consts[1], 222)
-    c.code[0].op = const.Op.LOADKX; c.code[0].a = 0
-    c.code[1].op = const.Op.EXTRAARG; c.code[1].bx = 1
-    c.code[2].op = const.Op.RETURN; c.code[2].a = 0; c.code[2].b = 2
+    set_ABC(c.code[0], const.Op.LOADKX, 0, 0, 0, 0)
+    set_ABx(c.code[1], const.Op.EXTRAARG, 0, 1)
+    set_ABC(c.code[2], const.Op.RETURN, 0, 2, 0, 0)
     local n = runner(c.L)
     check("LOADKX reads EXTRAARG and advances pc by 2", n == 1 and c.stack[1].tag == const.Tag.INTEGER and tonumber(ffi.cast("int64_t", c.stack[1].bits)) == 222)
 end
@@ -160,9 +175,9 @@ end
 do
     local c = make_case(3, 0)
     setint(c.stack[1], 40); setint(c.stack[2], 9000)
-    c.code[0].op = const.Op.ADDI; c.code[0].a = 0; c.code[0].b = 0; c.code[0].c = 2
-    c.code[1].op = const.Op.MMBINI; c.code[1].a = 0; c.code[1].b = 2; c.code[1].c = const.TM.ADD
-    c.code[2].op = const.Op.RETURN; c.code[2].a = 0; c.code[2].b = 2
+    set_ABC(c.code[0], const.Op.ADDI, 0, 0, 2, 0)
+    set_ABC(c.code[1], const.Op.MMBINI, 0, 2, const.TM.ADD, 0)
+    set_ABC(c.code[2], const.Op.RETURN, 0, 2, 0, 0)
     local n = runner(c.L)
     check("ADDI uses immediate operand", n == 1 and c.stack[1].tag == const.Tag.INTEGER and tonumber(ffi.cast("int64_t", c.stack[1].bits)) == 42)
 end
@@ -171,9 +186,9 @@ end
 do
     local c = make_case(3, 1)
     setint(c.stack[1], 40); setint(c.stack[2], 9000); setint(c.consts[0], 2)
-    c.code[0].op = const.Op.ADDK; c.code[0].a = 0; c.code[0].b = 0; c.code[0].c = 0
-    c.code[1].op = const.Op.MMBINK; c.code[1].a = 0; c.code[1].b = 0; c.code[1].c = const.TM.ADD
-    c.code[2].op = const.Op.RETURN; c.code[2].a = 0; c.code[2].b = 2
+    set_ABC(c.code[0], const.Op.ADDK, 0, 0, 0, 0)
+    set_ABC(c.code[1], const.Op.MMBINK, 0, 0, const.TM.ADD, 0)
+    set_ABC(c.code[2], const.Op.RETURN, 0, 2, 0, 0)
     local n = runner(c.L)
     check("ADDK uses constant operand", n == 1 and c.stack[1].tag == const.Tag.INTEGER and tonumber(ffi.cast("int64_t", c.stack[1].bits)) == 42)
 end
@@ -183,9 +198,9 @@ end
 do
     local c = make_case(3, 0)
     setnum(c.stack[1], 1.5); setnum(c.stack[2], 2.25)
-    c.code[0].op = const.Op.ADD; c.code[0].a = 2; c.code[0].b = 0; c.code[0].c = 1
-    c.code[1].op = const.Op.MMBIN; c.code[1].a = 0; c.code[1].b = const.TM.ADD; c.code[1].c = 0
-    c.code[2].op = const.Op.RETURN; c.code[2].a = 2; c.code[2].b = 2
+    set_ABC(c.code[0], const.Op.ADD, 2, 0, 1, 0)
+    set_ABC(c.code[1], const.Op.MMBIN, 0, const.TM.ADD, 0, 0)
+    set_ABC(c.code[2], const.Op.RETURN, 2, 2, 0, 0)
     local n = runner(c.L)
     local got = bitsdbl(c.stack[3].bits)
     check("ADD preserves f64 payload semantics", n == 1 and c.stack[3].tag == const.Tag.NUM and math.abs(got - 3.75) < 1e-12, "got " .. tostring(got))
@@ -195,7 +210,7 @@ end
 do
     local c = make_case(1, 0)
     setint(c.stack[1], 111); setint(c.stack[2], 222)
-    c.code[0].op = const.Op.RETURN1; c.code[0].a = 1
+    set_ABC(c.code[0], const.Op.RETURN1, 1, 0, 0, 0)
     local n = runner(c.L)
     check("RETURN1 returns R[A]", n == 1 and c.stack[2].tag == const.Tag.INTEGER and tonumber(ffi.cast("int64_t", c.stack[2].bits)) == 222)
 end

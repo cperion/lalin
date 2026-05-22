@@ -27,6 +27,7 @@ Implemented after `ARCHITECTURE_FIX_PLAN.md`:
 - Removed arithmetic body `gsub`/expression-template generation.
 - Arithmetic hot reads now use `ptr(Value)` field reads instead of `let lhs: Value = L.stack[...]` aggregate reads.
 - Hot load/arithmetic stores use scalar field stores through indexed stack places, avoiding 16-byte aggregate memcpy.
+- `Instr` is now a compact Lua 5.5-style 32-bit word (`struct Instr word: u32`) instead of a 20-byte decoded product; dispatch, validation, parser codegen, tests, and benchmarks all pack/decode the same layout.
 - Added explicit `bitcast(T, value)` parsing and converted VM f64 payload decode/encode to bitcasts instead of numeric `as(...)` conversions.
 - `LOADKX` now reads the following `EXTRAARG` through `ptr(Instr)` instead of copying an `Instr` product.
 - Fixed comparative benchmark `Instr` FFI layout/stride and ADD/MMBIN stream shape so numbers are honest.
@@ -57,11 +58,11 @@ Representative current output:
 
 ```text
 RETURN  ~10.4 ns/resume
-LOADI   ~2.4 ns/op
-LOADK   ~3.2 ns/op
-MOVE    ~3.1 ns/op
-ADD     ~3.7 ns/op
-ADD_int ~3.2 ns/op
+LOADI   ~2.9 ns/op
+LOADK   ~2.7 ns/op
+MOVE    ~2.8 ns/op
+ADD     ~3.2–3.4 ns/op
+ADD_int ~3.6 ns/op
 ```
 
 ## Verified
