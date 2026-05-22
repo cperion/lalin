@@ -151,13 +151,21 @@ function BundleValue:layout_env()
     local layouts = {}
     local resolved = {}
     
+    local type_values = {}
+    if self.session.global_type_values then
+        for _, tv in pairs(self.session.global_type_values) do type_values[#type_values + 1] = tv end
+    end
+    for i = 1, #self.type_values do type_values[#type_values + 1] = self.type_values[i] end
+
     -- Multi-pass: retry types whose dependencies aren't resolved yet.
     for pass = 1, 10 do
         local progress = false
-        for i = 1, #self.type_values do
+        for i = 1, #type_values do
             if not resolved[i] then
-                local tv = self.type_values[i]
-                local layout = self.session:layout_of(tv)
+                local tv = type_values[i]
+                local env_layouts = {}
+                for j = 1, #layouts do env_layouts[j] = layouts[j] end
+                local layout = self.session:layout_of(tv, Sem.LayoutEnv(env_layouts))
                 if layout ~= nil then
                     layouts[#layouts + 1] = layout
                     resolved[i] = true
@@ -168,7 +176,9 @@ function BundleValue:layout_env()
         if not progress then break end
     end
     
-    return Sem.LayoutEnv(layouts)
+    local out_layouts = {}
+    for i = 1, #layouts do out_layouts[i] = layouts[i] end
+    return Sem.LayoutEnv(out_layouts)
 end
 
 local function back_scalar_name(scalar)
@@ -208,12 +218,23 @@ function BundleValue:_lower_program(opts)
         site = "host module",
         layout_env = self:layout_env(),
     }
-    -- Inject region fragments into the expansion env
-    if self.region_frags and #self.region_frags > 0 then
-        local T = self.session.T
-        local OpenExpand = require("moonlift.open_expand").Define(T)
+    -- Inject region fragments into the expansion env. Include both explicit
+    -- bundle deps and session-registered quoted fragments, because quoted
+    -- regions may refer to sibling regions by name after emit expansion.
+    local T = self.session.T
+    local region_frags = {}
+    local seen = {}
+    for _, frag in pairs(T._moonlift_host_region_frags or {}) do
+        region_frags[#region_frags + 1] = frag
+        seen[frag] = true
+    end
+    for i = 1, #(self.region_frags or {}) do
+        local frag = self.region_frags[i]
+        if not seen[frag] then region_frags[#region_frags + 1] = frag end
+    end
+    if #region_frags > 0 then
         local O = T.MoonOpen
-        lower_opts.expand_env = O.ExpandEnv(self.region_frags, {}, O.FillSet({}), {}, {}, "")
+        lower_opts.expand_env = O.ExpandEnv(region_frags, {}, O.FillSet({}), {}, {}, "")
     end
     return Pipeline.lower_module(self:to_asdl(), lower_opts).program
 end

@@ -66,9 +66,9 @@ block push_frame(base: index)
         overflow = stack_err,
         oom = out_of_mem)
 end
-block got_frame(child: ptr(Frame))
-    child.pc = 0
-    jump enter_lua(child = child)
+block got_frame(frame: ptr(Frame))
+    frame.pc = 0
+    jump enter_lua(child = frame)
 end
 block stack_err()
     jump error(code = @{ERR_STACK_OVERFLOW})
@@ -121,10 +121,10 @@ end
 block pop_it()
     emit frame_pop(L;
         parent = do_return,
-        empty = all_done)
+        empty = no_parent)
 end
-block do_return(parent: ptr(Frame))
-    emit handle_return_mode(L, parent, first_result, nres;
+block do_return(frame: ptr(Frame))
+    emit handle_return_mode(L, frame, first_result, nres;
         normal = cont_normal,
         resume_gettable_mm = cont_gettable,
         resume_settable_mm = cont_settable,
@@ -135,10 +135,10 @@ block do_return(parent: ptr(Frame))
         resume_tforloop = cont_tforloop,
         pcall_success = cont_pcall_ok,
         pcall_failure = cont_pcall_err,
-        finished = all_done,
-        yielded = did_yield,
-        error = run_err,
-        oom = out_of_mem)
+        finished = ret_finished,
+        yielded = ret_yielded,
+        error = ret_error,
+        oom = ret_oom)
 end
 block cont_normal(parent: ptr(Frame), pc: index, base: index, top: index)
     jump resume_parent(parent = parent, pc = pc, base = base, top = top)
@@ -170,16 +170,19 @@ end
 block cont_pcall_err(parent: ptr(Frame), pc: index, base: index, top: index)
     jump resume_parent(parent = parent, pc = pc, base = base, top = top)
 end
-block all_done(nres: i32)
+block no_parent()
     jump finished(nres = nres)
 end
-block did_yield(nres: i32)
+block ret_finished(nres: i32)
+    jump finished(nres = nres)
+end
+block ret_yielded(nres: i32)
     jump yielded(nres = nres)
 end
-block run_err(code: i32)
+block ret_error(code: i32)
     jump error(code = code)
 end
-block out_of_mem()
+block ret_oom()
     jump oom()
 end
 end
@@ -219,40 +222,40 @@ region handle_return_mode(L: ptr(LuaThread), parent: ptr(Frame), first_result: i
                           oom: cont())
 entry start()
     switch parent.resume_mode do
-    case @{RESUME_NORMAL} then
+    case 0 then
         emit adjust_results(L, first_result, nres, parent.wanted, parent.base;
             done = adj_normal,
-            oom = out_of_mem)
-    case @{RESUME_TAILCALL} then
+            oom = hm_oom)
+    case 1 then
         emit adjust_results(L, first_result, nres, parent.wanted, parent.base;
             done = adj_normal,
-            oom = out_of_mem)
-    case @{RESUME_GETTABLE_MM} then
+            oom = hm_oom)
+    case 4 then
         -- Result goes into resume_a register
         L.stack[parent.base + as(index, parent.resume_a)] = L.stack[first_result]
         jump normal(parent = parent, pc = parent.resume_pc, base = parent.base, top = parent.top)
-    case @{RESUME_SETTABLE_MM} then
+    case 5 then
         jump normal(parent = parent, pc = parent.resume_pc, base = parent.base, top = parent.top)
-    case @{RESUME_BINOP_MM} then
+    case 6 then
         L.stack[parent.base + as(index, parent.resume_a)] = L.stack[first_result]
         jump normal(parent = parent, pc = parent.resume_pc, base = parent.base, top = parent.top)
-    case @{RESUME_UNOP_MM} then
+    case 7 then
         L.stack[parent.base + as(index, parent.resume_a)] = L.stack[first_result]
         jump normal(parent = parent, pc = parent.resume_pc, base = parent.base, top = parent.top)
-    case @{RESUME_EQ_MM} then
+    case 10 then
         jump normal(parent = parent, pc = parent.resume_pc, base = parent.base, top = parent.top)
-    case @{RESUME_LT_MM} then
+    case 11 then
         jump normal(parent = parent, pc = parent.resume_pc, base = parent.base, top = parent.top)
-    case @{RESUME_LE_MM} then
+    case 12 then
         jump normal(parent = parent, pc = parent.resume_pc, base = parent.base, top = parent.top)
-    case @{RESUME_CONCAT_MM} then
+    case 9 then
         jump normal(parent = parent, pc = parent.resume_pc, base = parent.base, top = parent.top)
-    case @{RESUME_TFORLOOP_CALL} then
+    case 14 then
         jump normal(parent = parent, pc = parent.resume_pc, base = parent.base, top = parent.top)
-    case @{RESUME_PCALL} then
+    case 2 then
         emit adjust_results(L, first_result, nres, parent.wanted, parent.base;
             done = adj_normal,
-            oom = out_of_mem)
+            oom = hm_oom)
     default then
         jump error(code = @{ERR_RUNTIME})
     end
@@ -260,7 +263,7 @@ end
 block adj_normal(nplaced: i32)
     jump normal(parent = parent, pc = parent.pc + 1, base = parent.base, top = parent.top)
 end
-block out_of_mem()
+block hm_oom()
     jump oom()
 end
 end

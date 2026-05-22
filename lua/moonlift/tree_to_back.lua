@@ -293,7 +293,7 @@ function M.Define(T)
         if si ~= nil and di ~= nil then
             if di.bits < si.bits then return C.MachineCastIreduce end
             if di.bits > si.bits then return si.signed and C.MachineCastSextend or C.MachineCastUextend end
-            return C.MachineCastBitcast
+            return C.MachineCastIdentity
         end
         local sf, df = float_scalar_bits[src_scalar], float_scalar_bits[dst_scalar]
         if sf ~= nil and df ~= nil then
@@ -357,6 +357,12 @@ function M.Define(T)
     local function stack_slot_for_binding(binding)
         local func = tostring(lower_context.current_func or "func")
         return Back.BackStackSlotId("slot:" .. func .. ":" .. binding_key(binding))
+    end
+
+    local function new_stack_slot_for_binding(binding)
+        lower_context.stack_slot_seq = (lower_context.stack_slot_seq or 0) + 1
+        local func = tostring(lower_context.current_func or "func")
+        return Back.BackStackSlotId("slot:" .. func .. ":" .. binding_key(binding) .. ":" .. tostring(lower_context.stack_slot_seq))
     end
 
     local function binding_is_stack_local(binding)
@@ -666,6 +672,18 @@ function M.Define(T)
                     end
                 end
 
+                if is_aggregate_type(self.ref.binding.ty) then
+                    local slot = lower_context.agg_binding_slots and lower_context.agg_binding_slots[binding_key(self.ref.binding)] or nil
+                    local class_cls = pvm.classof(self.ref.binding.class)
+                    if slot == nil and (class_cls == Bn.BindingClassLocalValue or class_cls == Bn.BindingClassLocalCell) then
+                        slot = stack_slot_for_binding(self.ref.binding)
+                    end
+                    if slot ~= nil then
+                        local env1, addr = env_next_value(env, "addr")
+                        return pvm.once(Tr.TreeBackExprValue(env1, { Back.CmdStackAddr(addr, slot) }, addr, Back.BackPtr))
+                    end
+                end
+
                 local class = self.ref.binding.class
                 local class_cls = pvm.classof(class)
                 if class_cls == Bn.BindingClassGlobalConst then
@@ -779,6 +797,15 @@ function M.Define(T)
             if scalar == nil then return pvm.once(Tr.TreeBackExprUnsupported(value.env, value.cmds, "cast result has non-scalar type")) end
             local ops = machine_cast_op:drain_uncached(self.op)
             if #ops == 0 then return pvm.once(Tr.TreeBackExprValue(value.env, value.cmds, value.value, scalar)) end
+            if ops[1] == Back.BackIreduce then
+                local src_info, dst_info = int_scalar_info[value.ty], int_scalar_info[scalar]
+                if src_info ~= nil and dst_info ~= nil and dst_info.bits >= src_info.bits then
+                    return pvm.once(Tr.TreeBackExprValue(value.env, value.cmds, value.value, scalar))
+                end
+            end
+            if ops[1] == Back.BackBitcast and value.ty == scalar then
+                return pvm.once(Tr.TreeBackExprValue(value.env, value.cmds, value.value, scalar))
+            end
             local env2, dst = env_next_value(value.env, "v")
             local cmds = {}; append_all(cmds, value.cmds)
             cmds[#cmds + 1] = Back.CmdCast(dst, ops[1], scalar, value.value)
@@ -1014,7 +1041,10 @@ function M.Define(T)
             local addr = expr_value(expr_to_back:one_uncached(self.value, env))
             if addr == nil then return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "unsupported deref address")) end
             local scalar = back_scalar(expr_ty(self))
-            if scalar == nil then return pvm.once(Tr.TreeBackExprUnsupported(addr.env, addr.cmds, "deref result has non-scalar type")) end
+            if scalar == nil then
+                if is_aggregate_type(expr_ty(self)) then return pvm.once(addr) end
+                return pvm.once(Tr.TreeBackExprUnsupported(addr.env, addr.cmds, "deref result has non-scalar type"))
+            end
             local env2, dst = env_next_value(addr.env, "v")
             local cmds = {}; append_all(cmds, addr.cmds)
             local env3 = append_load_info(cmds, env2, dst, shape_scalar(scalar), addr.value, dst.text)
@@ -1025,13 +1055,17 @@ function M.Define(T)
             local base = expr_base_addr_to_back(self.base, env)
             if base == nil then return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "unsupported field expression base")) end
             local addr = field_addr_from_base_ptr(base, self.field)
+            if is_aggregate_type(expr_ty(self)) then return pvm.once(addr) end
             return pvm.once(load_from_field_addr(addr, self.field))
         end,
         [Tr.ExprIndex] = function(self, env)
             local lowered = index_addr_to_back:one_uncached(self.base, self.index, expr_ty(self), env)
             if pvm.classof(lowered) ~= Tr.TreeBackExprValue then return pvm.once(lowered) end
             local scalar = back_scalar(expr_ty(self))
-            if scalar == nil then return pvm.once(Tr.TreeBackExprUnsupported(lowered.env, lowered.cmds, "index result has non-scalar type")) end
+            if scalar == nil then
+                if is_aggregate_type(expr_ty(self)) then return pvm.once(lowered) end
+                return pvm.once(Tr.TreeBackExprUnsupported(lowered.env, lowered.cmds, "index result has non-scalar type"))
+            end
             local env2, dst = env_next_value(lowered.env, "v")
             local cmds = {}; append_all(cmds, lowered.cmds)
             local env3 = append_load_info(cmds, env2, dst, shape_scalar(scalar), lowered.value, dst.text)
@@ -1199,7 +1233,10 @@ function M.Define(T)
             local addr = expr_value(expr_to_back:one_uncached(self.addr, env))
             if addr == nil then return pvm.once(Tr.TreeBackExprUnsupported(env, {}, "unsupported load address")) end
             local scalar = back_scalar(self.ty)
-            if scalar == nil then return pvm.once(Tr.TreeBackExprUnsupported(addr.env, addr.cmds, "load result has non-scalar type")) end
+            if scalar == nil then
+                if is_aggregate_type(self.ty) then return pvm.once(addr) end
+                return pvm.once(Tr.TreeBackExprUnsupported(addr.env, addr.cmds, "load result has non-scalar type"))
+            end
             local env2, dst = env_next_value(addr.env, "v")
             local cmds = {}; append_all(cmds, addr.cmds)
             local env3 = append_load_info(cmds, env2, dst, shape_scalar(scalar), addr.value, dst.text)
@@ -1627,8 +1664,13 @@ function M.Define(T)
             local ref_cls = pvm.classof(self.ref)
             if ref_cls == Bn.ValueRefBinding then
                 -- Check for aggregate binding stored in lower_context (only if binding has aggregate type)
-                if is_aggregate_type(self.ref.binding.ty) and lower_context.agg_binding_slots then
-                    local slot = lower_context.agg_binding_slots[self.ref.binding]
+                if is_aggregate_type(self.ref.binding.ty) then
+                    local slot = lower_context.agg_binding_slots and lower_context.agg_binding_slots[binding_key(self.ref.binding)] or nil
+                    local class = self.ref.binding.class
+                    local class_cls = pvm.classof(class)
+                    if slot == nil and (class_cls == Bn.BindingClassLocalValue or class_cls == Bn.BindingClassLocalCell) then
+                        slot = stack_slot_for_binding(self.ref.binding)
+                    end
                     if slot then
                         local env1, addr = env_next_value(env, "addr")
                         local cmds = { Back.CmdStackAddr(addr, slot) }
@@ -1641,6 +1683,9 @@ function M.Define(T)
                     return pvm.once(Tr.TreeBackExprValue(env1, { Back.CmdStackAddr(addr, local_entry.slot) }, addr, Back.BackPtr))
                 end
                 if local_entry ~= nil and pvm.classof(local_entry) == Tr.TreeBackScalarLocal then
+                    if is_aggregate_type(self.ref.binding.ty) and local_entry.ty == Back.BackPtr then
+                        return pvm.once(Tr.TreeBackExprValue(env, {}, local_entry.value, Back.BackPtr))
+                    end
                     local scalar = back_scalar(self.ref.binding.ty) or local_entry.ty
                     local size, align = elem_size(self.ref.binding.ty), elem_align(self.ref.binding.ty)
                     if size == nil or align == nil then size, align = scalar_size_align(scalar) end
@@ -1681,6 +1726,15 @@ function M.Define(T)
         if pvm.classof(ty) == Ty.TPtr then return expr_value(expr_to_back:one_uncached(expr, env)) end
         local cls = pvm.classof(expr)
         if cls == Tr.ExprRef then
+            if pvm.classof(expr.ref) == Bn.ValueRefBinding and is_aggregate_type(expr.ref.binding.ty) then
+                local local_entry = env_lookup(env, expr.ref.binding)
+                if local_entry ~= nil and pvm.classof(local_entry) == Tr.TreeBackScalarLocal and local_entry.ty == Back.BackPtr then
+                    return Tr.TreeBackExprValue(env, {}, local_entry.value, Back.BackPtr)
+                end
+                local slot = lower_context.agg_binding_slots and lower_context.agg_binding_slots[binding_key(expr.ref.binding)] or stack_slot_for_binding(expr.ref.binding)
+                local env1, addr = env_next_value(env, "addr")
+                return Tr.TreeBackExprValue(env1, { Back.CmdStackAddr(addr, slot) }, addr, Back.BackPtr)
+            end
             return expr_value(place_addr_to_back:one_uncached(Tr.PlaceRef(Tr.PlaceTyped(ty), expr.ref), env))
         end
         if cls == Tr.ExprDeref then
@@ -1710,7 +1764,12 @@ function M.Define(T)
 
     local function store_at_addr(place, value, env)
         local addr = expr_value(place_addr_to_back:one_uncached(place, env))
-        if addr == nil then lowering_unsupported("store address could not be lowered") end
+        if addr == nil then
+            local reason = "store address could not be lowered"
+            local lowered_addr = place_addr_to_back:one_uncached(place, env)
+            if pvm.classof(lowered_addr) == Tr.TreeBackExprUnsupported then reason = reason .. ": " .. tostring(lowered_addr.reason) .. " at " .. tostring(place) end
+            lowering_unsupported(reason)
+        end
         local rhs = expr_value(expr_to_back:one_uncached(value, addr.env))
         if rhs == nil then return pvm.once(Tr.TreeBackStmtResult(addr.env, addr.cmds, Back.BackTerminates)) end
         local field = pvm.classof(place) == Tr.PlaceField and place.field or nil
@@ -1966,19 +2025,20 @@ function M.Define(T)
                 if binding_size == nil or binding_align == nil then
                     return pvm.once(Tr.TreeBackStmtResult(env, {}, Back.BackFallsThrough))
                 end
-                local slot = stack_slot_for_binding(self.binding)
+                local slot = new_stack_slot_for_binding(self.binding)
                 local cmds = { Back.CmdCreateStackSlot(slot, binding_size, binding_align) }
-                -- Set target slot so ExprAgg uses it instead of creating a temp slot
-                local prev_target_slot = lower_context.target_agg_slot
-                lower_context.target_agg_slot = slot
                 local lowered = expr_to_back:one_uncached(self.init, env)
-                lower_context.target_agg_slot = prev_target_slot
-                append_all(cmds, lowered.cmds)
+                local init = expr_value(lowered)
+                if init == nil then lowering_unsupported("aggregate let initializer could not be lowered") end
+                append_all(cmds, init.cmds)
+                local env1, addr = env_next_value(init.env, "addr")
+                cmds[#cmds + 1] = Back.CmdStackAddr(addr, slot)
+                local current = append_memcpy(cmds, env1, addr, init.value, binding_size, "agg-let:" .. tostring(self.binding.name))
                 -- Don't add to environment - aggregate bindings are accessed via field/index/address, not direct reference
                 -- Store slot in lower_context for later PlaceRef lookup
                 if not lower_context.agg_binding_slots then lower_context.agg_binding_slots = {} end
-                lower_context.agg_binding_slots[self.binding] = slot
-                return pvm.once(Tr.TreeBackStmtResult(lowered.env, cmds, Back.BackFallsThrough))
+                lower_context.agg_binding_slots[binding_key(self.binding)] = slot
+                return pvm.once(Tr.TreeBackStmtResult(current, cmds, Back.BackFallsThrough))
             end
 
             if binding_is_stack_local(self.binding) then
@@ -2008,7 +2068,10 @@ function M.Define(T)
                 return pvm.once(Tr.TreeBackStmtResult(env2, view_init.cmds, Back.BackFallsThrough))
             end
             local init = expr_value(lowered)
-            if init == nil then lowering_unsupported("let initializer could not be lowered") end
+            if init == nil then
+                local reason = pvm.classof(lowered) == Tr.TreeBackExprUnsupported and lowered.reason or "let initializer could not be lowered"
+                lowering_unsupported("let initializer could not be lowered: " .. tostring(reason) .. " at " .. tostring(self.init))
+            end
             local scalar = back_scalar(self.binding.ty) or init.ty
             local env2 = env_add(init.env, self.binding, init.value, scalar)
             return pvm.once(Tr.TreeBackStmtResult(env2, init.cmds, Back.BackFallsThrough))
@@ -2065,7 +2128,10 @@ function M.Define(T)
                 return pvm.once(Tr.TreeBackStmtResult(current, cmds, Back.BackTerminates))
             end
             local value = expr_value(lowered)
-            if value == nil then lowering_unsupported("return value could not be lowered") end
+            if value == nil then
+                local reason = pvm.classof(lowered) == Tr.TreeBackExprUnsupported and lowered.reason or "return value could not be lowered"
+                lowering_unsupported("return value could not be lowered: " .. tostring(reason))
+            end
             local cmds = {}; append_all(cmds, value.cmds); cmds[#cmds + 1] = Back.CmdReturnValue(value.value)
             return pvm.once(Tr.TreeBackStmtResult(value.env, cmds, Back.BackTerminates))
         end,
@@ -2081,19 +2147,20 @@ function M.Define(T)
                 if binding_size == nil or binding_align == nil then
                     return pvm.once(Tr.TreeBackStmtResult(env, {}, Back.BackFallsThrough))
                 end
-                local slot = stack_slot_for_binding(self.binding)
+                local slot = new_stack_slot_for_binding(self.binding)
                 local cmds = { Back.CmdCreateStackSlot(slot, binding_size, binding_align) }
-                -- Set target slot so ExprAgg uses it instead of creating a temp slot
-                local prev_target_slot = lower_context.target_agg_slot
-                lower_context.target_agg_slot = slot
                 local lowered = expr_to_back:one_uncached(self.init, env)
-                lower_context.target_agg_slot = prev_target_slot
-                append_all(cmds, lowered.cmds)
+                local init = expr_value(lowered)
+                if init == nil then lowering_unsupported("aggregate var initializer could not be lowered") end
+                append_all(cmds, init.cmds)
+                local env1, addr = env_next_value(init.env, "addr")
+                cmds[#cmds + 1] = Back.CmdStackAddr(addr, slot)
+                local current = append_memcpy(cmds, env1, addr, init.value, binding_size, "agg-var:" .. tostring(self.binding.name))
                 -- Don't add to environment - aggregate bindings are accessed via field/index/address, not direct reference
                 -- Store slot in lower_context for later PlaceRef lookup
                 if not lower_context.agg_binding_slots then lower_context.agg_binding_slots = {} end
-                lower_context.agg_binding_slots[self.binding] = slot
-                return pvm.once(Tr.TreeBackStmtResult(lowered.env, cmds, Back.BackFallsThrough))
+                lower_context.agg_binding_slots[binding_key(self.binding)] = slot
+                return pvm.once(Tr.TreeBackStmtResult(current, cmds, Back.BackFallsThrough))
             end
             local init = expr_value(expr_to_back:one_uncached(self.init, env))
             if init == nil then lowering_unsupported("var initializer could not be lowered") end
@@ -2164,6 +2231,8 @@ function M.Define(T)
         expr_to_back = expr_to_back,
         stmt_to_back = stmt_to_back,
         back_scalar = back_scalar,
+        elem_size = elem_size,
+        elem_align = elem_align,
         const_eval = const_eval_api,
         get_const_env = function() return lower_context.const_env end,
         get_provenance = function() return lower_context.provenance end,
@@ -2527,13 +2596,20 @@ function M.Define(T)
         end
     end
 
-    function with_module_context(module, fn)
+    function with_module_context(module, fn, opts)
+        opts = opts or {}
         local previous = lower_context
         local const_entries, globals, slot_consts, slot_statics, slot_consts_data = {}, {}, {}, {}, {}
         collect_global_context(module, const_entries, globals, slot_consts, slot_statics, slot_consts_data)
+        local layouts = {}
+        if opts.layout_env and opts.layout_env.layouts then
+            for i = 1, #opts.layout_env.layouts do layouts[#layouts + 1] = opts.layout_env.layouts[i] end
+        end
+        local module_layouts = module_type_api.env(module).layouts
+        for i = 1, #module_layouts do layouts[#layouts + 1] = module_layouts[i] end
         lower_context = {
             module_name = module_name_of(module),
-            layout_env = Sem.LayoutEnv(module_type_api.env(module).layouts),
+            layout_env = Sem.LayoutEnv(layouts),
             const_env = Bn.ConstEnv(const_entries),
             globals = globals,
             slot_consts = slot_consts,
@@ -2591,7 +2667,7 @@ function M.Define(T)
         return nil
     end
 
-    lower_module_direct = function(module)
+    lower_module_direct = function(module, opts)
         local provenance  -- captured inside fn, survives pcall
         local prog = with_module_context(module, function()
             local cmds = {}
@@ -2610,7 +2686,7 @@ function M.Define(T)
             cmds[#cmds + 1] = Back.CmdFinalizeModule
             provenance = lower_context.provenance
             return Back.BackProgram(cmds)
-        end)
+        end, opts)
         return prog, provenance
     end
 

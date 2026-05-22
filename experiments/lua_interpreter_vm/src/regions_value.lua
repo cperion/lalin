@@ -106,18 +106,18 @@ region value_raw_equal(a: Value, b: Value; equal: cont(), not_equal: cont())
 entry start()
     if a.tag ~= b.tag then jump not_equal() end
     switch a.tag do
-    case @{TAG_NIL} then jump equal()
-    case @{TAG_FALSE} then jump equal()
-    case @{TAG_TRUE} then jump equal()
-    case @{TAG_NUM} then
+    case 0 then jump equal()
+    case 1 then jump equal()
+    case 2 then jump equal()
+    case 4 then
         if as(f64, a.bits) == as(f64, b.bits) then
             jump equal()
         end
         jump not_equal()
-    case @{TAG_STR} then
+    case 5 then
         if a.bits == b.bits then jump equal() end
         jump not_equal()
-    case @{TAG_LIGHTUD} then
+    case 3 then
         if a.bits == b.bits then jump equal() end
         jump not_equal()
     default then
@@ -153,7 +153,7 @@ entry start()
     if a.tag == @{TAG_STR} and b.tag == @{TAG_STR} then
         let sa: ptr(String) = as(ptr(String), a.bits)
         let sb: ptr(String) = as(ptr(String), b.bits)
-        jump str_loop(i = 0, sa = sa, sb = sb)
+        jump str_loop(i = as(index, 0), sa = sa, sb = sb)
     end
     jump error(code = @{ERR_COMPARE})
 end
@@ -180,7 +180,7 @@ entry start()
     if a.tag == @{TAG_STR} and b.tag == @{TAG_STR} then
         let sa: ptr(String) = as(ptr(String), a.bits)
         let sb: ptr(String) = as(ptr(String), b.bits)
-        jump str_le_loop(i = 0, sa = sa, sb = sb)
+        jump str_le_loop(i = as(index, 0), sa = sa, sb = sb)
     end
     jump error(code = @{ERR_COMPARE})
 end

@@ -31,7 +31,7 @@ entry start()
     if t.nodes == nil then
         jump miss()
     end
-    jump bucket_loop(i = 0)
+    jump bucket_loop(i = as(index, 0))
 end
 block bucket_loop(i: index)
     if i > as(index, t.node_mask) then
@@ -75,7 +75,7 @@ entry start()
     if t.nodes == nil then
         jump resized()
     end
-    jump bucket_loop(i = 0)
+    jump bucket_loop(i = as(index, 0))
 end
 block bucket_loop(i: index)
     if i > as(index, t.node_mask) then
@@ -115,25 +115,28 @@ entry start()
     end
     let t: ptr(Table) = as(ptr(Table), obj.bits)
     emit table_raw_get(t, key;
-        hit = got_value,
+        hit = raw_hit,
         miss = check_meta)
 end
-block got_value(v: Value)
-    jump value(v = v)
+block raw_hit(value: Value)
+    jump value(v = value)
 end
 block check_meta()
+    let t: ptr(Table) = as(ptr(Table), obj.bits)
     if t.metatable ~= nil then
-        emit get_table_metamethod(L.global, t, @{TM_INDEX};
+        emit get_table_metamethod(L.global, t, as(u8, @{TM_INDEX});
             found = have_index,
             missing = no_index)
     end
-    jump value(v = { tag = @{TAG_NIL}, aux = 0, bits = 0 })
+    let nil_value: Value = { tag = @{TAG_NIL}, aux = 0, bits = 0 }
+    jump value(v = nil_value)
 end
 block have_index(mm: Value)
     jump call_mm(mm = mm, self = obj, key = key)
 end
 block no_index()
-    jump value(v = { tag = @{TAG_NIL}, aux = 0, bits = 0 })
+    let nil_value: Value = { tag = @{TAG_NIL}, aux = 0, bits = 0 }
+    jump value(v = nil_value)
 end
 block out_of_mem()
     jump oom()
@@ -170,8 +173,9 @@ block did_resize()
     jump check_meta()
 end
 block check_meta()
+    let t: ptr(Table) = as(ptr(Table), obj.bits)
     if t.metatable ~= nil then
-        emit get_table_metamethod(L.global, t, @{TM_NEWINDEX};
+        emit get_table_metamethod(L.global, t, as(u8, @{TM_NEWINDEX});
             found = have_newindex,
             missing = no_newindex)
     end

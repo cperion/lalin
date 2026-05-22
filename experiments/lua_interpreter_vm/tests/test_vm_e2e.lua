@@ -98,7 +98,9 @@ local consts_mem = scratch(1, 16, 1)
 local consts = ffi.cast("Value(*)[1]", consts_mem)
 consts[0][0].tag = const.Tag.NUM
 consts[0][0].aux = 0
-consts[0][0].bits = ffi.cast("uint64_t", 42.0)
+local num_bits = ffi.new("union { double d; uint64_t u; }")
+num_bits.d = 42.0
+consts[0][0].bits = num_bits.u
 
 -- Instructions: LOADK R0 K0, RETURN R0 2
 local code_mem = scratch(2, 16, 2)
@@ -107,7 +109,7 @@ code[0][0].op = const.Op.LOADK; code[0][0].a = 0; code[0][0].bx = 0
 code[0][1].op = const.Op.RETURN; code[0][1].a = 0; code[0][1].b = 2
 
 -- Proto (allocate via big scratch)
-local proto_mem = scratch(0, 1, 256)
+local proto_mem = scratch(3, 1, 256)
 local proto = ffi.cast("Proto*", proto_mem)
 proto.code = ffi.cast("void*", code)
 proto.code_len = 2
@@ -117,13 +119,13 @@ proto.maxstack = 1; proto.numparams = 0
 proto.linedefined = -1; proto.lastlinedefined = -1
 
 -- LClosure
-local closure_mem = scratch(0, 1, 64)
+local closure_mem = scratch(4, 1, 64)
 local closure = ffi.cast("LClosure*", closure_mem)
 closure.proto = proto; closure.env = nil; closure.nupvals = 0
 
 -- Stack: 64 Values
 local STACK_N = 64
-local stack_mem = scratch(0, 16, STACK_N)
+local stack_mem = scratch(5, 16, STACK_N)
 local stack = ffi.cast("Value*", stack_mem)
 for i = 0, STACK_N - 1 do
     stack[i].tag = const.Tag.NIL; stack[i].aux = 0; stack[i].bits = 0
@@ -132,7 +134,7 @@ stack[0].tag = const.Tag.LCLOSURE; stack[0].aux = 0
 stack[0].bits = ffi.cast("uint64_t", closure)
 
 -- Frames: 8
-local frames_mem = scratch(0, 1, 512)
+local frames_mem = scratch(6, 1, 512)
 local frames = ffi.cast("Frame*", frames_mem)
 frames[0].closure.tag = const.Tag.LCLOSURE
 frames[0].closure.aux = 0
@@ -141,11 +143,11 @@ frames[0].base = 1; frames[0].top = 1; frames[0].pc = 0
 frames[0].wanted = 1; frames[0].resume_mode = const.Resume.NORMAL
 
 -- Global state (minimal)
-local gstate_mem = scratch(0, 1, 64)
+local gstate_mem = scratch(7, 1, 64)
 local gstate = ffi.cast("GlobalState*", gstate_mem)
 
 -- LuaThread
-local thread_mem = scratch(0, 1, 256)
+local thread_mem = scratch(8, 1, 256)
 local thread = ffi.cast("LuaThread*", thread_mem)
 thread.stack = stack; thread.stack_size = STACK_N; thread.top = 1
 thread.frames = frames; thread.frame_count = 1; thread.frame_cap = 8
@@ -154,7 +156,9 @@ thread.global = gstate; thread.status = const.Status.OK
 print("Proto built. Instructions:")
 print("  [0] LOADK  R0 K0")
 print("  [1] RETURN R0 2")
-print("  K[0] =", ffi.cast("double", consts[0][0].bits))
+local show_k = ffi.new("union { double d; uint64_t u; }")
+show_k.u = consts[0][0].bits
+print("  K[0] =", show_k.d)
 print("  Thread frames:", thread.frame_count)
 print()
 
@@ -183,7 +187,7 @@ if not ok then
 end
 
 print("Calling vm_resume...")
-local result = compiled:get("run_vm")(thread, 0)
+local result = compiled(thread, 0)
 compiled:free()
 
 print()
@@ -191,7 +195,9 @@ if result >= 0 then
     print("SUCCESS: vm_resume returned", result)
     print("Stack[1] tag:", stack[1].tag, "(expect", const.Tag.NUM, "= 4)")
     if stack[1].tag == const.Tag.NUM then
-        local val = ffi.cast("double", stack[1].bits)
+        local out_bits = ffi.new("union { double d; uint64_t u; }")
+        out_bits.u = stack[1].bits
+        local val = out_bits.d
         print("Stack[1] value:", val, "(expect 42)")
         if math.abs(val - 42.0) < 0.001 then
             print("\n*** VM EXECUTED return 42 SUCCESSFULLY ***")

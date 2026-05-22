@@ -91,10 +91,9 @@ entry start()
     jump loop(frame = frame, pc = pc, base = base, top = top)
 end
 block loop(frame: ptr(Frame), pc: index, base: index, top: index)
-    emit commit_vm_state(L, frame, pc, top;
-        done = dispatch)
-end
-block dispatch()
+    frame.pc = pc
+    frame.top = top
+    L.top = top
     emit dispatch_instruction(L, frame, pc, base, top;
         next = cont_loop,
         do_jump = cont_jump,

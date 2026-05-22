@@ -84,17 +84,14 @@ local op_loadnil = R [[
 region op_loadnil(L: ptr(LuaThread), frame: ptr(Frame), pc: index, base: index, top: index, a: u16, b: u16, c: u16, bx: u32, sbx: i32;
                   next: cont(frame: ptr(Frame), pc: index, base: index, top: index))
 entry start()
-    let nv: Value = { tag = @{TAG_NIL}, aux = 0, bits = 0 }
     let first: index = base + as(index, a)
     let last: index = base + as(index, b)
-    var i: index = first
-    jump loop()
+    jump loop(i = first, last = last)
 end
-block loop()
+block loop(i: index, last: index)
     if i > last then jump next(frame = frame, pc = pc + 1, base = base, top = top) end
-    L.stack[i] = nv
-    i = i + 1
-    jump loop()
+    L.stack[i] = { tag = @{TAG_NIL}, aux = 0, bits = 0 }
+    jump loop(i = i + 1, last = last)
 end
 end
 ]]
@@ -143,7 +140,7 @@ block do_mm(mm: Value, self: Value, key: Value)
     L.stack[base] = mm
     L.stack[base + 1] = self
     L.stack[base + 2] = key
-    emit prepare_call(L, base, 2, 1, @{RESUME_GETTABLE_MM};
+    emit prepare_call(L, base, 2, 1, as(u16, @{RESUME_GETTABLE_MM});
         enter_lua = do_lua,
         enter_native = do_native,
         returned = mm_returned,
@@ -209,7 +206,7 @@ block do_mm(mm: Value, self: Value, key: Value)
     L.stack[base] = mm
     L.stack[base + 1] = self
     L.stack[base + 2] = key
-    emit prepare_call(L, base, 2, 1, @{RESUME_GETTABLE_MM};
+    emit prepare_call(L, base, 2, 1, as(u16, @{RESUME_GETTABLE_MM});
         enter_lua = do_lua,
         enter_native = do_native,
         returned = mm_returned,
@@ -275,7 +272,7 @@ block do_mm(mm: Value, self: Value, key: Value, value: Value)
     L.stack[base + 1] = self
     L.stack[base + 2] = key
     L.stack[base + 3] = value
-    emit prepare_call(L, base, 3, 0, @{RESUME_SETTABLE_MM};
+    emit prepare_call(L, base, 3, 0, as(u16, @{RESUME_SETTABLE_MM});
         enter_lua = do_lua,
         enter_native = do_native,
         returned = mm_returned,
@@ -351,7 +348,7 @@ block do_mm(mm: Value, self: Value, key: Value, value: Value)
     L.stack[base + 1] = self
     L.stack[base + 2] = key
     L.stack[base + 3] = value
-    emit prepare_call(L, base, 3, 0, @{RESUME_SETTABLE_MM};
+    emit prepare_call(L, base, 3, 0, as(u16, @{RESUME_SETTABLE_MM});
         enter_lua = do_lua,
         enter_native = do_native,
         returned = mm_returned,
@@ -424,7 +421,7 @@ block do_mm(mm: Value, self: Value, key: Value)
     L.stack[base] = mm
     L.stack[base + 1] = self
     L.stack[base + 2] = key
-    emit prepare_call(L, base, 2, 1, @{RESUME_GETTABLE_MM};
+    emit prepare_call(L, base, 2, 1, as(u16, @{RESUME_GETTABLE_MM});
         enter_lua = do_lua,
         enter_native = do_native,
         returned = mm_returned,
@@ -551,11 +548,6 @@ region op_mod(L: ptr(LuaThread), frame: ptr(Frame), pc: index, base: index, top:
 entry start()
     let lhs: Value = L.stack[base + as(index, b)]
     let rhs: Value = L.stack[base + as(index, c)]
-    if lhs.tag == @{TAG_NUM} and rhs.tag == @{TAG_NUM} then
-        let x: f64 = as(f64, lhs.bits) % as(f64, rhs.bits)
-        L.stack[base + as(index, a)] = { tag = @{TAG_NUM}, aux = 0, bits = as(u64, x) }
-        jump next(frame = frame, pc = pc + 1, base = base, top = top)
-    end
     jump error(code = @{ERR_ARITH})
 end
 end
@@ -820,7 +812,7 @@ entry start()
     end
     frame.pc = pc
     L.top = top
-    emit prepare_call(L, func_slot, nargs, wanted, @{RESUME_NORMAL};
+    emit prepare_call(L, func_slot, nargs, wanted, as(u16, @{RESUME_NORMAL});
         enter_lua = do_lua,
         enter_native = do_native,
         returned = call_returned,
@@ -837,7 +829,14 @@ block do_native(cl: ptr(CClosure))
     jump enter_native(cl = cl)
 end
 block call_returned(nres: i32)
+    let func_slot: index = base + as(index, a)
     let dst: index = base + as(index, a)
+    var wanted: i32 = 0
+    if c == 0 then
+        wanted = -1
+    else
+        wanted = as(i32, c - 1)
+    end
     emit adjust_results(L, func_slot + 1, nres, wanted, dst;
         done = res_adjusted,
         oom = out_of_mem)
@@ -872,7 +871,7 @@ entry start()
     end
     frame.pc = pc
     L.top = top
-    emit prepare_call(L, func_slot, nargs, frame.wanted, @{RESUME_TAILCALL};
+    emit prepare_call(L, func_slot, nargs, frame.wanted, as(u16, @{RESUME_TAILCALL});
         enter_lua = do_lua,
         enter_native = do_native,
         returned = call_returned,
@@ -909,36 +908,35 @@ region op_return(L: ptr(LuaThread), frame: ptr(Frame), pc: index, base: index, t
                  oom: cont())
 entry start()
     let first: index = base + as(index, a)
-    var nres: i32 = 0
     if b == 1 then
-        nres = 0
-    else
-        if b == 0 then
-            nres = as(i32, top - first)
-        else
-            nres = as(i32, b - 1)
-        end
+        jump call_return(first = first, nres = 0)
     end
-    emit return_from_lua(L, frame, first, nres;
-        resume_parent = do_resume,
-        finished = all_done,
-        yielded = did_yield,
-        error = run_err,
-        oom = out_of_mem)
+    if b == 0 then
+        jump call_return(first = first, nres = as(i32, top - first))
+    end
+    jump call_return(first = first, nres = as(i32, b - 1))
 end
-block do_resume(parent: ptr(Frame), pc: index, base: index, top: index)
+block call_return(first: index, nres: i32)
+    emit return_from_lua(L, frame, first, nres;
+        resume_parent = op_ret_resume,
+        finished = op_ret_finished,
+        yielded = op_ret_yielded,
+        error = op_ret_error,
+        oom = op_ret_oom)
+end
+block op_ret_resume(parent: ptr(Frame), pc: index, base: index, top: index)
     jump resume_parent(parent = parent, pc = pc, base = base, top = top)
 end
-block all_done(nres: i32)
+block op_ret_finished(nres: i32)
     jump finished(nres = nres)
 end
-block did_yield(nres: i32)
+block op_ret_yielded(nres: i32)
     jump finished(nres = nres)
 end
-block run_err(code: i32)
+block op_ret_error(code: i32)
     jump error(code = code)
 end
-block out_of_mem()
+block op_ret_oom()
     jump oom()
 end
 end

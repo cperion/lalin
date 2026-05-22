@@ -34,23 +34,21 @@ local dispatch_instruction = host.region {
 } [[
 region dispatch_instruction(
     L: ptr(LuaThread),
-    frame: ptr(Frame),
-    pc: index,
-    base: index,
-    top: index;
+    cur_frame: ptr(Frame),
+    cur_pc: index,
+    cur_base: index,
+    cur_top: index;
     next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
     do_jump: cont(frame: ptr(Frame), pc: index, base: index, top: index),
     enter_lua: cont(child: ptr(Frame)),
     enter_native: cont(cl: ptr(CClosure)),
     returned: cont(nres: i32),
     yielded: cont(nres: i32),
-    resume_parent: cont(parent: ptr(Frame), pc: index, base: index, top: index),
-    finished: cont(nres: i32),
     error: cont(code: i32),
     oom: cont())
 entry decode()
-    let cl: ptr(LClosure) = as(ptr(LClosure), frame.closure.bits)
-    let code_ptr: ptr(Instr) = cl.proto.code + pc
+    let cl: ptr(LClosure) = as(ptr(LClosure), cur_frame.closure.bits)
+    let code_ptr: ptr(Instr) = cl.proto.code + cur_pc
     let instr: Instr = *code_ptr
     let a: u16 = instr.a
     let b: u16 = instr.b
@@ -58,82 +56,82 @@ entry decode()
     let bx: u32 = instr.bx
     let sbx: i32 = instr.sbx
     switch instr.op do
-    case @{OP_MOVE} then
-        emit op_move(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next)
-    case @{OP_LOADK} then
-        emit op_loadk(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next)
-    case @{OP_LOADBOOL} then
-        emit op_loadbool(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next)
-    case @{OP_LOADNIL} then
-        emit op_loadnil(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next)
-    case @{OP_GETUPVAL} then
-        emit op_getupval(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next)
-    case @{OP_GETGLOBAL} then
-        emit op_getglobal(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error, oom = do_oom)
-    case @{OP_GETTABLE} then
-        emit op_gettable(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error, oom = do_oom)
-    case @{OP_SETGLOBAL} then
-        emit op_setglobal(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error, oom = do_oom)
-    case @{OP_SETUPVAL} then
-        emit op_setupval(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next)
-    case @{OP_SETTABLE} then
-        emit op_settable(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error, oom = do_oom)
-    case @{OP_NEWTABLE} then
-        emit op_newtable(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, oom = do_oom)
-    case @{OP_SELF} then
-        emit op_self(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error, oom = do_oom)
-    case @{OP_ADD} then
-        emit op_add(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error)
-    case @{OP_SUB} then
-        emit op_sub(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error)
-    case @{OP_MUL} then
-        emit op_mul(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error)
-    case @{OP_DIV} then
-        emit op_div(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error)
-    case @{OP_MOD} then
-        emit op_mod(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error)
-    case @{OP_POW} then
-        emit op_pow(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error)
-    case @{OP_UNM} then
-        emit op_unm(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error)
-    case @{OP_NOT} then
-        emit op_not(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next)
-    case @{OP_LEN} then
-        emit op_len(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error, oom = do_oom)
-    case @{OP_CONCAT} then
-        emit op_concat(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error, oom = do_oom)
-    case @{OP_JMP} then
-        emit op_jmp(L, frame, pc, base, top, a, b, c, bx, sbx; do_jump = forward_jump)
-    case @{OP_EQ} then
-        emit op_eq(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error, oom = do_oom)
-    case @{OP_LT} then
-        emit op_lt(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error, oom = do_oom)
-    case @{OP_LE} then
-        emit op_le(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error, oom = do_oom)
-    case @{OP_TEST} then
-        emit op_test(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump)
-    case @{OP_TESTSET} then
-        emit op_testset(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump)
-    case @{OP_CALL} then
-        emit op_call(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error, oom = do_oom)
-    case @{OP_TAILCALL} then
-        emit op_tailcall(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error, oom = do_oom)
-    case @{OP_RETURN} then
-        emit op_return(L, frame, pc, base, top, a, b, c, bx, sbx; resume_parent = do_resume, finished = do_finished, error = do_error, oom = do_oom)
-    case @{OP_FORLOOP} then
-        emit op_forloop(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump, error = do_error)
-    case @{OP_FORPREP} then
-        emit op_forprep(L, frame, pc, base, top, a, b, c, bx, sbx; do_jump = forward_jump, error = do_error)
-    case @{OP_TFORLOOP} then
-        emit op_tforloop(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump, enter_lua = do_lua, enter_native = do_native, yielded = do_yielded, error = do_error, oom = do_oom)
-    case @{OP_SETLIST} then
-        emit op_setlist(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, oom = do_oom)
-    case @{OP_CLOSE} then
-        emit op_close(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, oom = do_oom)
-    case @{OP_CLOSURE} then
-        emit op_closure(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, error = do_error, oom = do_oom)
-    case @{OP_VARARG} then
-        emit op_vararg(L, frame, pc, base, top, a, b, c, bx, sbx; next = do_next, error = do_error, oom = do_oom)
+    case 0 then
+        emit op_move(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next)
+    case 1 then
+        emit op_loadk(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next)
+    case 2 then
+        emit op_loadbool(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next)
+    case 3 then
+        emit op_loadnil(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next)
+    case 4 then
+        emit op_getupval(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next)
+    case 5 then
+        emit op_getglobal(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
+    case 6 then
+        emit op_gettable(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
+    case 7 then
+        emit op_setglobal(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
+    case 8 then
+        emit op_setupval(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next)
+    case 9 then
+        emit op_settable(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
+    case 10 then
+        emit op_newtable(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, oom = dispatch_oom)
+    case 11 then
+        emit op_self(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
+    case 12 then
+        emit op_add(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error)
+    case 13 then
+        emit op_sub(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error)
+    case 14 then
+        emit op_mul(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error)
+    case 15 then
+        emit op_div(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error)
+    case 16 then
+        emit op_mod(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error)
+    case 17 then
+        emit op_pow(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error)
+    case 18 then
+        emit op_unm(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error)
+    case 19 then
+        emit op_not(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next)
+    case 20 then
+        emit op_len(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
+    case 21 then
+        emit op_concat(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
+    case 22 then
+        emit op_jmp(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; do_jump = forward_jump)
+    case 23 then
+        emit op_eq(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
+    case 24 then
+        emit op_lt(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
+    case 25 then
+        emit op_le(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
+    case 26 then
+        emit op_test(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump)
+    case 27 then
+        emit op_testset(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump)
+    case 28 then
+        emit op_call(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
+    case 29 then
+        emit op_tailcall(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
+    case 30 then
+        emit op_return(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; resume_parent = dispatch_resume, finished = dispatch_finished, error = dispatch_error, oom = dispatch_oom)
+    case 31 then
+        emit op_forloop(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump, error = dispatch_error)
+    case 32 then
+        emit op_forprep(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; do_jump = forward_jump, error = dispatch_error)
+    case 33 then
+        emit op_tforloop(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, do_jump = forward_jump, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
+    case 34 then
+        emit op_setlist(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, oom = dispatch_oom)
+    case 35 then
+        emit op_close(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, oom = dispatch_oom)
+    case 36 then
+        emit op_closure(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, error = dispatch_error, oom = dispatch_oom)
+    case 37 then
+        emit op_vararg(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, error = dispatch_error, oom = dispatch_oom)
     default then
         jump error(code = @{ERR_BAD_OPCODE})
     end
@@ -145,29 +143,29 @@ end
 block forward_jump(frame: ptr(Frame), pc: index, base: index, top: index)
     jump do_jump(frame = frame, pc = pc, base = base, top = top)
 end
-block do_lua(child: ptr(Frame))
+block dispatch_lua(child: ptr(Frame))
     jump enter_lua(child = child)
 end
-block do_native(cl: ptr(CClosure))
+block dispatch_native(cl: ptr(CClosure))
     jump enter_native(cl = cl)
 end
-block do_returned(nres: i32)
+block dispatch_returned(nres: i32)
     jump returned(nres = nres)
 end
-block do_yielded(nres: i32)
+block dispatch_yielded(nres: i32)
     jump yielded(nres = nres)
 end
-block do_error(code: i32)
+block dispatch_error(code: i32)
     jump error(code = code)
 end
-block do_oom()
+block dispatch_oom()
     jump oom()
 end
-block do_finished(nres: i32)
-    jump finished(nres = nres)
+block dispatch_finished(nres: i32)
+    jump returned(nres = nres)
 end
-block do_resume(parent: ptr(Frame), pc: index, base: index, top: index)
-    jump resume_parent(parent = parent, pc = pc, base = base, top = top)
+block dispatch_resume(parent: ptr(Frame), pc: index, base: index, top: index)
+    jump next(frame = parent, pc = pc, base = base, top = top)
 end
 end
 ]]

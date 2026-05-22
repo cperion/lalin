@@ -26,6 +26,7 @@ function M.Define(T, base)
     local C = T.MoonCore
     local Bn = T.MoonBind
     local Sem = T.MoonSem
+    local Ty = T.MoonType
     local Tr = T.MoonTree
     local Back = T.MoonBack
 
@@ -73,7 +74,11 @@ function M.Define(T, base)
         local specs = {}
         for i = 1, #params do
             local scalar = base.back_scalar(params[i].ty)
-            if scalar == nil then return nil, "control block param has non-scalar type" end
+            if scalar == nil then
+                local ty_cls = pvm.classof(params[i].ty)
+                if ty_cls == Ty.TNamed or ty_cls == Ty.TArray or (base.elem_size ~= nil and base.elem_size(params[i].ty) ~= nil) then scalar = Back.BackPtr end
+            end
+            if scalar == nil then return nil, "control block param has non-scalar type: " .. tostring(label.name) .. "." .. tostring(params[i].name) end
             local class
             if is_entry then
                 class = Bn.BindingClassEntryBlockParam(region_id, label.name, i)
@@ -162,8 +167,12 @@ function M.Define(T, base)
         for i = 1, #target.params do
             local arg, err = find_jump_arg(stmt.args, target.params[i].name)
             if arg == nil then return nil, current, cmds, err end
-            local value = expr_value(base.expr_to_back:one_uncached(arg.value, current))
-            if value == nil then return nil, current, cmds, "unsupported jump arg " .. target.params[i].name end
+            local lowered = base.expr_to_back:one_uncached(arg.value, current)
+            local value = expr_value(lowered)
+            if value == nil then
+                local why = pvm.classof(lowered) == Tr.TreeBackExprUnsupported and lowered.reason or "unsupported expression"
+                return nil, current, cmds, "unsupported jump arg " .. target.params[i].name .. ": " .. tostring(why) .. " at " .. tostring(arg.value)
+            end
             append_all(cmds, value.cmds)
             args[#args + 1] = value.value
             current = value.env
@@ -297,12 +306,16 @@ function M.Define(T, base)
     end
 
     local function lower_switch(stmt, env, ctx)
-        local value = expr_value(base.expr_to_back:one_uncached(stmt.value, env))
-        if value == nil then return pvm.once(unsupported_stmt(env, {})) end
+        local lowered_value = base.expr_to_back:one_uncached(stmt.value, env)
+        local value = expr_value(lowered_value)
+        if value == nil then
+            local why = pvm.classof(lowered_value) == Tr.TreeBackExprUnsupported and lowered_value.reason or "unsupported switch value"
+            return pvm.once(unsupported_stmt(env, {}, "switch value unsupported: " .. tostring(why) .. " at " .. tostring(stmt.value)))
+        end
         local case_raws = {}
         for i = 1, #stmt.arms do
             local raw = stmt.arms[i].raw_key
-            if raw == nil or raw == "" then return pvm.once(unsupported_stmt(value.env, value.cmds)) end
+            if raw == nil or raw == "" then return pvm.once(unsupported_stmt(value.env, value.cmds, "switch arm has non-raw case key in " .. tostring(stmt))) end
             case_raws[#case_raws + 1] = raw
         end
         local result = lower_joining_arms(stmt.arms, stmt.default_body, value.env, ctx, function(arm_blocks, default_block)
@@ -318,8 +331,8 @@ function M.Define(T, base)
         [Tr.StmtJump] = function(self, env, ctx)
             local target = ctx.labels[label_key(self.target)]
             if target == nil then return pvm.once(unsupported_stmt(env, {})) end
-            local args, env2, cmds = jump_args_to_back(self, target, env)
-            if args == nil then return pvm.once(unsupported_stmt(env2, cmds)) end
+            local args, env2, cmds, err = jump_args_to_back(self, target, env)
+            if args == nil then return pvm.once(unsupported_stmt(env2, cmds, err)) end
             cmds[#cmds + 1] = Back.CmdJump(target.block, args)
             return pvm.once(Tr.TreeBackStmtResult(env2, cmds, Back.BackTerminates))
         end,

@@ -397,8 +397,11 @@ M.region = make_quote(
                     local parsed = require("moonlift.parse").Define(T2).parse_region(full)
                     local v = parsed.value or parsed
                     local rfv = api.CanonicalRegionFragValue or {}
+                    local rname = (type(v.name) == "table" and (v.name.text or v.name.name)) or v.name
+                    default_session.T._moonlift_host_region_frags = default_session.T._moonlift_host_region_frags or {}
+                    default_session.T._moonlift_host_region_frags[rname] = v
                     return setmetatable({ kind = "region_frag", moonlift_quote_kind = "region_frag",
-                        session = default_session, name = v.name, frag = v, conts = {},
+                        session = default_session, name = rname, frag = v, conts = {},
                         params = {}, blocks = {} }, rfv)
                 end,
             })
@@ -406,6 +409,8 @@ M.region = make_quote(
         end
         local rfv = api.CanonicalRegionFragValue or {}
         local name = (type(value.name) == "table" and (value.name.text or value.name.name)) or value.name
+        default_session.T._moonlift_host_region_frags = default_session.T._moonlift_host_region_frags or {}
+        default_session.T._moonlift_host_region_frags[name] = value
         return setmetatable({ kind = "region_frag", moonlift_quote_kind = "region_frag",
             session = default_session, name = name, frag = value, conts = {},
             params = {}, blocks = {} }, rfv)
@@ -428,13 +433,29 @@ M.expr_frag = make_quote(
     end
 )
 
+local function fields_from_type_decl(api, decl)
+    local fields, by_name = {}, {}
+    for i = 1, #(decl.fields or {}) do
+        local df = decl.fields[i]
+        local name = df.field_name or df.name
+        if type(name) == "table" and name.text then name = name.text end
+        local f = api.field(tostring(name), api.type_from_asdl(df.ty, tostring(name)))
+        fields[#fields + 1] = f
+        by_name[f.name] = f.type
+    end
+    return fields, by_name
+end
+
 M.struct = make_quote(
     function(T, src) return require("moonlift.parse").Define(T).parse_struct(src) end,
     function(value, parsed, T)
         local name = value.name or "_anon"
         local ty = api.path_named(name)
-        return setmetatable({ kind = "struct", session = default_session, name = name,
-            fields = {}, fields_by_name = {}, decl = value.decl, item = T.MoonTree.ItemType(value.decl), type = ty }, api.StructValue or {})
+        local fields, by_name = fields_from_type_decl(api, value.decl)
+        local out = setmetatable({ kind = "struct", session = default_session, name = name,
+            fields = fields, fields_by_name = by_name, decl = value.decl, item = T.MoonTree.ItemType(value.decl), type = ty }, api.StructValue or {})
+        default_session.global_type_values[name] = out
+        return out
     end,
     function(e, value, env)
         return { name = value.name, decl = e.expand_type_decl(value.decl or value, env) }
@@ -446,8 +467,11 @@ M.union = make_quote(
     function(value, parsed, T)
         local name = value.name or "_anon"
         local ty = api.path_named(name)
-        return setmetatable({ kind = "union", session = default_session, name = name,
-            decl = value.decl, item = T.MoonTree.ItemType(value.decl), type = ty }, api.StructValue or {})
+        local fields, by_name = fields_from_type_decl(api, value.decl)
+        local out = setmetatable({ kind = "union", session = default_session, name = name,
+            fields = fields, fields_by_name = by_name, decl = value.decl, item = T.MoonTree.ItemType(value.decl), type = ty }, api.StructValue or {})
+        default_session.global_type_values[name] = out
+        return out
     end,
     function(e, value, env)
         return { name = value.name, decl = e.expand_type_decl(value.decl or value, env) }

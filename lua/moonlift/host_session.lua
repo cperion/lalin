@@ -18,6 +18,7 @@ function M.new(opts)
         next_id = 0,
         _api = nil,
         host_values = {},
+        global_type_values = {},
     }, Session)
 end
 
@@ -95,7 +96,7 @@ function Session:abi_of(ty_value, env)
     return require("moonlift.type_abi_classify").Define(self.T).decide(ty, env)
 end
 
-function Session:layout_of(type_value)
+function Session:layout_of(type_value, env)
     local pvm = require("moonlift.pvm")
     local api = self:api()
     local Sem = self.T.MoonSem
@@ -123,7 +124,7 @@ function Session:layout_of(type_value)
     if fields ~= nil then
         for i = 1, #fields do
             local f = fields[i]
-            local r = self:size_align(f.type)
+            local r = self:size_align(f.type, env)
             if pvm.classof(r) ~= self.T.MoonType.TypeMemLayoutKnown then return nil end
             local a = r.layout.align
             if a > align then align = a end

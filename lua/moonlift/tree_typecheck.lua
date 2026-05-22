@@ -186,6 +186,13 @@ function M.Define(T)
             and is_integer_scalar(expected)
     end
 
+    local function is_nil_literal(expr)
+        if pvm.classof(expr) ~= Tr.ExprLit then return false end
+        if expr.value == C.LitNil then return true end
+        local cls = pvm.classof(expr.value)
+        return cls ~= false and cls.kind == "LitNil"
+    end
+
     local function array_len_const(len)
         if pvm.classof(len) == Ty.ArrayLenConst then return len.count end
         return nil
@@ -213,6 +220,9 @@ function M.Define(T)
         end
         local result = pvm.one(type_expr(expr, ctx))
         if expected ~= nil and int_literal_can_adopt(expr, expected) then
+            return result_expr(Tr.ExprLit(Tr.ExprTyped(expected), expr.value), expected, result.issues)
+        end
+        if expected ~= nil and is_nil_literal(expr) and pvm.classof(expected) == Ty.TPtr then
             return result_expr(Tr.ExprLit(Tr.ExprTyped(expected), expr.value), expected, result.issues)
         end
         return result

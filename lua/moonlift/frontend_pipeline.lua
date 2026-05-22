@@ -56,7 +56,7 @@ function M.Define(T)
         local checked = Typecheck.check_module(closed, { collector = collector, layout_env = opts.layout_env })
 
         local resolved = Layout.module(checked.module, opts.layout_env)
-        local program, provenance = Lower.module(resolved)
+        local program, provenance = Lower.module(resolved, { layout_env = opts.layout_env })
         if program == nil then error(site .. " lowering failed: tree_to_back produced nil program", 2) end
         if not _G.MOONLIFT_ALLOW_TRAP then
             assert_no_cmd_trap(T, program, site)

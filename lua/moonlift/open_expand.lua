@@ -706,7 +706,14 @@ function M.Define(T)
     }, { args_cache = "last" })
 
     expand_place = pvm.phase("moonlift_open_expand_place", {
-        [Tr.PlaceRef] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_place_header, self.h, env), ref = one(expand_value_ref, self.ref, env) })) end,
+        [Tr.PlaceRef] = function(self, env)
+            local h = one(expand_place_header, self.h, env)
+            local replacement = maybe_expr_from_value_ref(self.ref, h, env)
+            if replacement ~= nil and pvm.classof(replacement) == Tr.ExprRef then
+                return pvm.once(Tr.PlaceRef(h, replacement.ref))
+            end
+            return pvm.once(pvm.with(self, { h = h, ref = one(expand_value_ref, self.ref, env) }))
+        end,
         [Tr.PlaceDeref] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_place_header, self.h, env), base = one(expand_expr, self.base, env) })) end,
         [Tr.PlaceDot] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_place_header, self.h, env), base = one(expand_place, self.base, env) })) end,
         [Tr.PlaceField] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_place_header, self.h, env), base = one(expand_place, self.base, env) })) end,

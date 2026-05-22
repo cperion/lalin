@@ -92,17 +92,24 @@ function M.Define(T, cb)
         return map[label.name] or label
     end
 
-    local function runtime_param_name(name)
-        return "__rt_" .. name
+    local function safe_name(s)
+        return tostring(s):gsub("[^%w_]", "_")
     end
 
-    local function runtime_param_expr(name)
-        return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(runtime_param_name(name)))
+    local function runtime_param_name(param)
+        if type(param) == "table" and param.key ~= nil then
+            return "__rt_" .. safe_name(param.key)
+        end
+        return "__rt_" .. safe_name(param)
+    end
+
+    local function runtime_param_expr(param)
+        return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(runtime_param_name(param)))
     end
 
     local function runtime_name_map(frag)
         local out = {}
-        for i = 1, #frag.params do out[frag.params[i].name] = runtime_param_name(frag.params[i].name) end
+        for i = 1, #frag.params do out[frag.params[i].name] = runtime_param_name(frag.params[i]) end
         return out
     end
 
@@ -201,7 +208,7 @@ function M.Define(T, cb)
     local function runtime_block_params(frag, env)
         local out = {}
         for i = 1, #frag.params do
-            out[#out + 1] = Tr.BlockParam(runtime_param_name(frag.params[i].name), one_expand_type(frag.params[i].ty, env))
+            out[#out + 1] = Tr.BlockParam(runtime_param_name(frag.params[i]), one_expand_type(frag.params[i].ty, env))
         end
         return out
     end
@@ -209,7 +216,7 @@ function M.Define(T, cb)
     local function runtime_jump_args_from_names(frag, captures)
         local out = {}
         for i = 1, #frag.params do
-            out[#out + 1] = Tr.JumpArg(runtime_param_name(frag.params[i].name), runtime_param_expr(frag.params[i].name))
+            out[#out + 1] = Tr.JumpArg(runtime_param_name(frag.params[i]), runtime_param_expr(frag.params[i]))
         end
         for i = 1, #(captures or {}) do
             out[#out + 1] = Tr.JumpArg(captures[i].name, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(captures[i].name)))
@@ -269,7 +276,7 @@ function M.Define(T, cb)
 
     local function capture_runtime_params(frag, env)
         local seen, params, args = {}, {}, {}
-        for i = 1, #frag.params do seen[runtime_param_name(frag.params[i].name)] = true end
+        for i = 1, #frag.params do seen[runtime_param_name(frag.params[i])] = true end
         for i = 1, #env.params do
             local binding = env.params[i]
             local name = expr_ref_name(binding.value)
@@ -313,7 +320,7 @@ function M.Define(T, cb)
 
         local runtime_param_bindings = {}
         for i = 1, #frag.params do
-            runtime_param_bindings[#runtime_param_bindings + 1] = O.ParamBinding(frag.params[i], runtime_param_expr(frag.params[i].name))
+            runtime_param_bindings[#runtime_param_bindings + 1] = O.ParamBinding(frag.params[i], runtime_param_expr(frag.params[i]))
         end
         local cont_bindings = instantiate_cont_fills(frag, stmt.cont_fills)
         local local_env = cb.env_at_path(cb.env_with_fills_conts_and_params(env, stmt.fills, cont_bindings, runtime_param_bindings), child_path)
@@ -323,7 +330,7 @@ function M.Define(T, cb)
 
         local entry_params, entry_args = append_all(runtime_block_params(frag, local_env), capture_params), {}
         for i = 1, #frag.params do
-            entry_args[#entry_args + 1] = Tr.JumpArg(runtime_param_name(frag.params[i].name), one_expand_expr(stmt.args[i], env))
+            entry_args[#entry_args + 1] = Tr.JumpArg(runtime_param_name(frag.params[i]), one_expand_expr(stmt.args[i], env))
         end
         append_all(entry_args, capture_args)
         for i = 1, #frag.entry.params do

@@ -15,6 +15,7 @@ thread_local! {
 //   slot: arena index (0..N, auto-grows)
 //   elem_size: bytes per element
 //   count: number of elements
+#[unsafe(no_mangle)]
 pub extern "C" fn moonlift_scratch_raw(slot: i32, elem_size: i32, count: i32) -> *mut u8 {
     if slot < 0 || elem_size <= 0 || count <= 0 {
         return std::ptr::null_mut();
@@ -40,10 +41,12 @@ pub extern "C" fn moonlift_scratch_raw(slot: i32, elem_size: i32, count: i32) ->
 }
 
 // Legacy wrappers — delegate to scratch_raw for backward compat
+#[unsafe(no_mangle)]
 pub extern "C" fn moonlift_scratch_i32(slot: i32, count: i32) -> *mut i32 {
     moonlift_scratch_raw(slot, 4, count).cast::<i32>()
 }
 
+#[unsafe(no_mangle)]
 pub extern "C" fn moonlift_scratch_u8(slot: i32, count: i32) -> *mut u8 {
     moonlift_scratch_raw(slot, 1, count)
 }

@@ -452,7 +452,13 @@ fn decode_body(buf: &[u8], ptr_ty: Type, ctx: &mut BodyCtx<'_>, refs: &FuncRefs)
 
             // Cast
             t if t == WireTag::Bitcast as u32 => { let ty = st(s[1], ptr_ty)?; let v = ctx.val(s[2])?; let r = ctx.builder.ins().bitcast(ty, MemFlags::new(), v); ctx.bind(s[0], r)?; }
-            t if t == WireTag::Ireduce as u32 => { let ty = st(s[1], ptr_ty)?; let v = ctx.val(s[2])?; let r = ctx.builder.ins().ireduce(ty, v); ctx.bind(s[0], r)?; }
+            t if t == WireTag::Ireduce as u32 => {
+                let ty = st(s[1], ptr_ty)?;
+                let v = ctx.val(s[2])?;
+                let src_ty = ctx.builder.func.dfg.value_type(v);
+                let r = if src_ty == ty { v } else { ctx.builder.ins().ireduce(ty, v) };
+                ctx.bind(s[0], r)?;
+            }
             t if t == WireTag::Sextend as u32 => { let ty = st(s[1], ptr_ty)?; let v = ctx.val(s[2])?; let r = ctx.builder.ins().sextend(ty, v); ctx.bind(s[0], r)?; }
             t if t == WireTag::Uextend as u32 => { let ty = st(s[1], ptr_ty)?; let v = ctx.val(s[2])?; let r = ctx.builder.ins().uextend(ty, v); ctx.bind(s[0], r)?; }
             t if t == WireTag::Fpromote as u32 => { let ty = st(s[1], ptr_ty)?; let v = ctx.val(s[2])?; let r = ctx.builder.ins().fpromote(ty, v); ctx.bind(s[0], r)?; }

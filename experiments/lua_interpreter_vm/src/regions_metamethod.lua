@@ -48,11 +48,11 @@ entry start()
         hit = got,
         miss = no_mm)
 end
-block got(mm: Value)
-    if mm.tag == @{TAG_NIL} then
+block got(value: Value)
+    if value.tag == @{TAG_NIL} then
         jump missing()
     end
-    jump found(mm = mm)
+    jump found(mm = value)
 end
 block no_mm()
     jump missing()

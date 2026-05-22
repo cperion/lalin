@@ -28,7 +28,7 @@ ok(string.format("%d region fragments", region_count), region_count >= 100)
 ok(string.format("%d struct definitions", struct_count), struct_count == 23)
 
 -- Verify key architectural paths
-ok("dispatch_instruction has 10 continuations", #vm.opcodes.dispatch_instruction.frag.conts == 10)
+ok("dispatch_instruction has 8 continuations", #vm.opcodes.dispatch_instruction.frag.conts == 8)
 ok("handle_return_mode has 14 continuations", #vm.regions_call.handle_return_mode.frag.conts == 14)
 ok("prepare_call has 6 continuations", #vm.regions_call.prepare_call.frag.conts == 6)
 ok("38 opcode handlers", #vm.op_handlers.op_move.frag.params >= 10)
@@ -51,7 +51,6 @@ verify_di(L: ptr(LuaThread), frame: ptr(Frame),
             next = ok_n, do_jump = ok_j,
             enter_lua = ok_l, enter_native = ok_c,
             returned = ok_r, yielded = ok_y,
-            resume_parent = ok_p, finished = ok_f,
             error = ok_e, oom = ok_o)
     end
     block ok_n(frame: ptr(Frame), pc: index, base: index, top: index)
@@ -64,10 +63,6 @@ verify_di(L: ptr(LuaThread), frame: ptr(Frame),
     block ok_c(cl: ptr(CClosure)) yield 3 end
     block ok_r(nres: i32) yield 4 end
     block ok_y(nres: i32) yield 5 end
-    block ok_p(parent: ptr(Frame), pc: index, base: index, top: index)
-        yield 6
-    end
-    block ok_f(nres: i32) yield 7 end
     block ok_e(code: i32) yield 0 - code end
     block ok_o() yield -999 end
     end
