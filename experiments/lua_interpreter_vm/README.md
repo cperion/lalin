@@ -3,7 +3,7 @@
 Status: architectural design document.  
 Scope: a complete Moonlift-native design for a PUC-Lua-compatible register-bytecode interpreter VM.  
 Audience: implementers who know Lua, Moonlift regions, and explicit-programming discipline.  
-Primary inputs: PUC Lua 5.1 / LuaJIT `host/minilua.c`, `explicit_programming.md`, `rewriting_c_to_idiomatic_moonlift.md`.
+Primary inputs: PUC Lua 5.5 (`.vendor/Lua`), LuaJIT `host/minilua.c`, `explicit_programming.md`, `rewriting_c_to_idiomatic_moonlift.md`.
 
 This document is self-contained. It does not specify a temporary subset of Lua. It specifies the complete VM architecture. Implementation may be staged, but the design here is the final target shape.
 
@@ -375,7 +375,7 @@ Table invariants:
 - Hash part uses chained nodes compatible with Lua semantics.
 - A nil value in a node means absent.
 - `flags` caches missing metamethods; any metatable mutation clears affected flags.
-- `shape_epoch` changes on resize, metatable replacement, and shape-changing insert/delete. It supports quickening.
+- `shape_epoch` changes on resize, metatable replacement, and shape-changing insert/delete. It supports cache invalidation and optional specialization experiments.
 
 ### 5.5 Prototypes and instructions
 
@@ -1615,103 +1615,51 @@ Lua generation supplies the repeated boilerplate and keeps handlers monomorphic.
 
 ---
 
-# Part V — Quickening and specialization
+# Part V — PUC-aligned dispatch specialization
 
-Quickening is part of the final design, not an afterthought. The baseline opcode set remains semantically complete. Quickened opcodes are cache-bearing refinements with explicit invalidation protocols.
+The baseline target is **PUC-style interpreter execution**: generic opcodes with internal fast paths and explicit fallback to slow helper regions. Runtime opcode rewriting is optional experimentation, not a requirement for semantic completeness.
 
-## 28. Quickened products
+## 28. Instruction products (baseline)
 
 ```moonlift
-struct InlineCache
-    epoch: u32
-    aux0: u32
-    aux1: u32
-    key: Value
-    value: Value
-end
-
-struct QuickInstr
-    instr: Instr
-    cache: InlineCache
+struct Instr
+    op: u16
+    a: u16
+    b: u16
+    c: u16
+    bx: u32
+    sbx: i32
 end
 ```
 
-`Proto.code` may point to `Instr[]` or `QuickInstr[]` depending on build configuration. The VM design supports both by generating the fetch/decode layer.
+`Proto.code` points to `Instr[]` in the baseline design.
 
-## 29. Quickened opcode families
+Optional experimental products (e.g. inline cache records) may be added without changing VM semantics, as long as fallback to generic behavior is explicit.
 
-```text
-GETTAB_ARRAY
-GETTAB_STR_SLOT
-GETTAB_HASH_SLOT
-GETTAB_META_KNOWN
-SETTAB_ARRAY
-SETTAB_STR_SLOT
-ADD_NUM
-SUB_NUM
-MUL_NUM
-DIV_NUM
-EQ_RAW
-CALL_LUA_FIXED
-CALL_NATIVE_FIXED
-RETURN_FIXED
-JMP_SHORT
-LOADK_FAST
-```
+## 29. Opcode strategy (PUC style)
 
-Each quickened handler has explicit exits:
+The primary strategy is:
+
+1. Decode one opcode.
+2. Execute a monomorphic handler with a **fast path first**.
+3. If the guard fails (type mismatch/metamethod requirement), jump to slow helper regions.
+
+Representative specialization in this model:
 
 ```text
-hit -> next
-stale -> deopt_or_repatch
-miss -> generic_handler
-error -> error
-oom -> oom
+ADD: numeric fast path -> arithmetic fallback
+GETTABLE: raw table path -> metamethod path
+CALL: direct closure/native path -> call metamethod path
 ```
 
-## 30. Quickening protocols
+## 30. Optional runtime specialization
 
-```moonlift
-region probe_gettable_cache(
-    t: ptr(Table),
-    key: Value,
-    cache: ptr(InlineCache);
+Runtime quickening/deopt may exist as an implementation extension, but it is explicitly optional and must preserve these guarantees:
 
-    hit: cont(slot: index),
-    stale: cont(),
-    miss: cont())
-```
-
-```moonlift
-region quicken_instruction(
-    L: ptr(LuaThread),
-    proto: ptr(Proto),
-    pc: index,
-    observation_kind: u32,
-    obj: Value,
-    key: Value;
-
-    patched: cont(),
-    keep_generic: cont(),
-    oom: cont())
-```
-
-```moonlift
-region deopt_instruction(
-    proto: ptr(Proto),
-    pc: index;
-
-    done: cont())
-```
-
-Invalidation is structural:
-
-- table resize increments `shape_epoch`
-- metatable replacement increments `shape_epoch`
-- metamethod mutation clears negative cache flags and increments relevant epochs
-- string interning preserves pointer identity
-
-Quickened assumptions are never implicit. Every assumption has an epoch or guard.
+- generic opcode behavior remains authoritative;
+- deopt path is always available;
+- invalidation is explicit (shape/metatable/version checks);
+- no semantic dependence on specialization.
 
 ---
 
@@ -1842,7 +1790,7 @@ From this, Lua generates:
 - instruction mode tables
 - dispatch switch arms
 - handler declarations
-- quickened variants
+- optional specialized variants
 - disassembler metadata
 - bytecode validator metadata
 
@@ -1958,7 +1906,7 @@ The design above is complete. Construction can be ordered without changing the a
 8. Protected calls and coroutines.
 9. GC.
 10. API sealing.
-11. Quickening.
+11. Optional specialization experiments (quickening/deopt), after baseline parity.
 
 This is an implementation order only. No step is a reduced design.
 
@@ -1975,7 +1923,7 @@ Value
 GCHeader + heap objects
 String, Table, Proto, Closure, UpVal, UserData
 LuaThread, Frame, ProtectedFrame, GlobalState
-Instr, InlineCache, DebugInfo
+Instr, DebugInfo (optional cache products may be added)
 ```
 
 The control tree is:
@@ -1992,7 +1940,7 @@ protected error engine
 coroutine yield/resume
 GC allocation/barrier/step
 API sealing
-quickening/deopt
+optional specialization/deopt
 ```
 
 The deepest rule:

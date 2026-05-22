@@ -12,8 +12,12 @@ local const = require("experiments.lua_interpreter_vm.src.constants")
 local I = {}
 for k, v in pairs(const.Op) do I["OP_" .. k] = moon.int(v) end
 for k, v in pairs(const.Err) do I["ERR_" .. k] = moon.int(v) end
+for k, v in pairs(const.Tag) do I["TAG_" .. k] = moon.int(v) end
+
+local QUICKEN_WARMUP = tonumber(os.getenv("MOONLIFT_VM_QUICKEN_WARMUP")) or 64
 
 local dispatch_instruction = host.region {
+    QUICKEN_WARMUP = moon.int(QUICKEN_WARMUP),
     OP_MOVE = I.OP_MOVE, OP_LOADK = I.OP_LOADK, OP_LOADBOOL = I.OP_LOADBOOL,
     OP_LOADNIL = I.OP_LOADNIL, OP_GETUPVAL = I.OP_GETUPVAL,
     OP_GETGLOBAL = I.OP_GETGLOBAL, OP_GETTABLE = I.OP_GETTABLE,
@@ -30,6 +34,9 @@ local dispatch_instruction = host.region {
     OP_FORPREP = I.OP_FORPREP, OP_TFORLOOP = I.OP_TFORLOOP,
     OP_SETLIST = I.OP_SETLIST, OP_CLOSE = I.OP_CLOSE,
     OP_CLOSURE = I.OP_CLOSURE, OP_VARARG = I.OP_VARARG,
+    OP_LOADK_FAST = I.OP_LOADK_FAST, OP_MOVE_FAST = I.OP_MOVE_FAST,
+    OP_ADD_NUM = I.OP_ADD_NUM,
+    TAG_NUM = I.TAG_NUM,
     ERR_BAD_OPCODE = I.ERR_BAD_OPCODE,
 } [[
 region dispatch_instruction(
@@ -57,8 +64,34 @@ entry decode()
     let sbx: i32 = instr.sbx
     switch instr.op do
     case 0 then
+        let ip_move: ptr(Instr) = cl.proto.code + cur_pc
+        if ip_move.sbx <= 0 then
+            ip_move.sbx = @{QUICKEN_WARMUP}
+        else
+            if ip_move.sbx == 1 then
+                ip_move.op = as(u16, @{OP_MOVE_FAST})
+                ip_move.sbx = -1
+            else
+                if ip_move.sbx > 1 then
+                    ip_move.sbx = ip_move.sbx - 1
+                end
+            end
+        end
         emit op_move(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next)
     case 1 then
+        let ip_loadk: ptr(Instr) = cl.proto.code + cur_pc
+        if ip_loadk.sbx <= 0 then
+            ip_loadk.sbx = @{QUICKEN_WARMUP}
+        else
+            if ip_loadk.sbx == 1 then
+                ip_loadk.op = as(u16, @{OP_LOADK_FAST})
+                ip_loadk.sbx = -1
+            else
+                if ip_loadk.sbx > 1 then
+                    ip_loadk.sbx = ip_loadk.sbx - 1
+                end
+            end
+        end
         emit op_loadk(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next)
     case 2 then
         emit op_loadbool(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next)
@@ -81,6 +114,25 @@ entry decode()
     case 11 then
         emit op_self(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error, oom = dispatch_oom)
     case 12 then
+        let ip_add: ptr(Instr) = cl.proto.code + cur_pc
+        let lhs_obs: Value = L.stack[cur_base + as(index, b)]
+        let rhs_obs: Value = L.stack[cur_base + as(index, c)]
+        if ip_add.sbx <= 0 then
+            ip_add.sbx = @{QUICKEN_WARMUP}
+        else
+            if ip_add.sbx == 1 then
+                if lhs_obs.tag == @{TAG_NUM} and rhs_obs.tag == @{TAG_NUM} then
+                    ip_add.op = as(u16, @{OP_ADD_NUM})
+                    ip_add.sbx = -1
+                else
+                    ip_add.sbx = @{QUICKEN_WARMUP}
+                end
+            else
+                if ip_add.sbx > 1 then
+                    ip_add.sbx = ip_add.sbx - 1
+                end
+            end
+        end
         emit op_add(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error)
     case 13 then
         emit op_sub(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error)
@@ -132,6 +184,25 @@ entry decode()
         emit op_closure(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, error = dispatch_error, oom = dispatch_oom)
     case 37 then
         emit op_vararg(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, error = dispatch_error, oom = dispatch_oom)
+    case 100 then
+        let cl_fast: ptr(LClosure) = as(ptr(LClosure), cur_frame.closure.bits)
+        L.stack[cur_base + as(index, a)] = cl_fast.proto.constants[bx]
+        jump next(frame = cur_frame, pc = cur_pc + 1, base = cur_base, top = cur_top)
+    case 101 then
+        L.stack[cur_base + as(index, a)] = L.stack[cur_base + as(index, b)]
+        jump next(frame = cur_frame, pc = cur_pc + 1, base = cur_base, top = cur_top)
+    case 102 then
+        let lhs_fast: Value = L.stack[cur_base + as(index, b)]
+        let rhs_fast: Value = L.stack[cur_base + as(index, c)]
+        if lhs_fast.tag == @{TAG_NUM} and rhs_fast.tag == @{TAG_NUM} then
+            let sum_fast: f64 = as(f64, lhs_fast.bits) + as(f64, rhs_fast.bits)
+            L.stack[cur_base + as(index, a)] = { tag = @{TAG_NUM}, aux = 0, bits = as(u64, sum_fast) }
+            jump next(frame = cur_frame, pc = cur_pc + 1, base = cur_base, top = cur_top)
+        end
+        let ip_addnum: ptr(Instr) = cl.proto.code + cur_pc
+        ip_addnum.op = as(u16, @{OP_ADD})
+        ip_addnum.sbx = @{QUICKEN_WARMUP}
+        emit op_add(L, cur_frame, cur_pc, cur_base, cur_top, a, b, c, bx, sbx; next = do_next, enter_lua = dispatch_lua, enter_native = dispatch_native, yielded = dispatch_yielded, error = dispatch_error)
     default then
         jump error(code = @{ERR_BAD_OPCODE})
     end
@@ -210,6 +281,11 @@ local opcodes = {
     { name = "CLOSE",    mode = "A",    handler = "op_close",    effects = {"next", "oom"} },
     { name = "CLOSURE",  mode = "ABx",  handler = "op_closure",  effects = {"next", "oom"} },
     { name = "VARARG",   mode = "ABC",  handler = "op_vararg",   effects = {"next", "oom"} },
+
+    -- Quickened/specialized variants.
+    { name = "LOADK_FAST", mode = "ABx", handler = "op_loadk_fast", effects = {"next"} },
+    { name = "MOVE_FAST",  mode = "ABC", handler = "op_move_fast",  effects = {"next"} },
+    { name = "ADD_NUM",    mode = "ABC", handler = "op_add_num",    effects = {"next"} },
 }
 
 return {

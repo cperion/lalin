@@ -54,7 +54,13 @@ Op.SETLIST = 34
 Op.CLOSE = 35
 Op.CLOSURE = 36
 Op.VARARG = 37
--- Note: Lua 5.1 has 38 opcodes (0..37). The table above has 38 entries.
+-- Note: Lua 5.1 has 38 base opcodes (0..37).
+
+-- Quickened/specialized opcodes (non-PUC extensions used by this VM).
+-- Keep them outside 0..37 so generic tooling can still reason about base bytecode.
+Op.LOADK_FAST = 100
+Op.MOVE_FAST = 101
+Op.ADD_NUM = 102
 
 local TM = {}
 TM.INDEX = 0

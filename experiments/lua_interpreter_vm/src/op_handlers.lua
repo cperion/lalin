@@ -59,6 +59,28 @@ end
 end
 ]]
 
+-- Specialized fast paths (used by quickening)
+local op_move_fast = R [[
+region op_move_fast(L: ptr(LuaThread), frame: ptr(Frame), pc: index, base: index, top: index, a: u16, b: u16, c: u16, bx: u32, sbx: i32;
+                    next: cont(frame: ptr(Frame), pc: index, base: index, top: index))
+entry start()
+    L.stack[base + as(index, a)] = L.stack[base + as(index, b)]
+    jump next(frame = frame, pc = pc + 1, base = base, top = top)
+end
+end
+]]
+
+local op_loadk_fast = R [[
+region op_loadk_fast(L: ptr(LuaThread), frame: ptr(Frame), pc: index, base: index, top: index, a: u16, b: u16, c: u16, bx: u32, sbx: i32;
+                     next: cont(frame: ptr(Frame), pc: index, base: index, top: index))
+entry start()
+    let cl: ptr(LClosure) = as(ptr(LClosure), frame.closure.bits)
+    L.stack[base + as(index, a)] = cl.proto.constants[bx]
+    jump next(frame = frame, pc = pc + 1, base = base, top = top)
+end
+end
+]]
+
 -- op_loadbool: load boolean R(A) = (B != 0), skip next if C != 0
 local op_loadbool = R [[
 region op_loadbool(L: ptr(LuaThread), frame: ptr(Frame), pc: index, base: index, top: index, a: u16, b: u16, c: u16, bx: u32, sbx: i32;
@@ -474,6 +496,19 @@ entry start()
         jump next(frame = frame, pc = pc + 1, base = base, top = top)
     end
     jump error(code = @{ERR_ARITH})
+end
+end
+]]
+
+local op_add_num = R [[
+region op_add_num(L: ptr(LuaThread), frame: ptr(Frame), pc: index, base: index, top: index, a: u16, b: u16, c: u16, bx: u32, sbx: i32;
+                  next: cont(frame: ptr(Frame), pc: index, base: index, top: index))
+entry start()
+    let lhs: Value = L.stack[base + as(index, b)]
+    let rhs: Value = L.stack[base + as(index, c)]
+    let x: f64 = as(f64, lhs.bits) + as(f64, rhs.bits)
+    L.stack[base + as(index, a)] = { tag = @{TAG_NUM}, aux = 0, bits = as(u64, x) }
+    jump next(frame = frame, pc = pc + 1, base = base, top = top)
 end
 end
 ]]
@@ -1061,7 +1096,9 @@ end
 
 return {
     op_move = op_move,
+    op_move_fast = op_move_fast,
     op_loadk = op_loadk,
+    op_loadk_fast = op_loadk_fast,
     op_loadbool = op_loadbool,
     op_loadnil = op_loadnil,
     op_getupval = op_getupval,
@@ -1073,6 +1110,7 @@ return {
     op_newtable = op_newtable,
     op_self = op_self,
     op_add = op_add,
+    op_add_num = op_add_num,
     op_sub = op_sub,
     op_mul = op_mul,
     op_div = op_div,
@@ -1098,5 +1136,4 @@ return {
     op_setlist = op_setlist,
     op_close = op_close,
     op_closure = op_closure,
-    op_vararg = op_vararg,
 }
