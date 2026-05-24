@@ -456,24 +456,32 @@ inline_arm(57, [[
     jump cont_next(frame = cur_frame, pc = cur_pc + 1, base = cur_base, top = cur_top)
 ]])
 
-inline_arm(58, [[
-    let lhs: ptr(Value) = L.stack + (cur_base + as(index, (word >> 16) & 255))
-    let rhs: ptr(Value) = L.stack + (cur_base + as(index, (word >> 24) & 255))
-    let expect: bool = as(u16, (word >> 7) & 255) ~= 0
-    if lhs.tag == @{TAG_NUM} and rhs.tag == @{TAG_NUM} then
-        if (bitcast(f64, lhs.bits) < bitcast(f64, rhs.bits)) == expect then
-            jump cont_next(frame = cur_frame, pc = cur_pc + 2, base = cur_base, top = cur_top)
+local lt_values = { handler = handlers.op_lt, args = ARGS_ABC }
+for k, v in pairs(VALS) do lt_values[k] = v end
+inlined_ops[58] = true
+switch_arms[#switch_arms + 1] = {
+    raw_key = "58",
+    body = moon.stmts(lt_values) [[
+        let lhs: ptr(Value) = L.stack + (cur_base + as(index, (word >> 16) & 255))
+        let rhs: ptr(Value) = L.stack + (cur_base + as(index, (word >> 24) & 255))
+        let expect: bool = as(u16, (word >> 7) & 255) ~= 0
+        if lhs.tag == @{TAG_NUM} and rhs.tag == @{TAG_NUM} then
+            if (bitcast(f64, lhs.bits) < bitcast(f64, rhs.bits)) == expect then
+                jump cont_next(frame = cur_frame, pc = cur_pc + 2, base = cur_base, top = cur_top)
+            end
+            jump cont_next(frame = cur_frame, pc = cur_pc + 1, base = cur_base, top = cur_top)
         end
-        jump cont_next(frame = cur_frame, pc = cur_pc + 1, base = cur_base, top = cur_top)
-    end
-    if lhs.tag == @{TAG_INTEGER} and rhs.tag == @{TAG_INTEGER} then
-        if (as(i64, lhs.bits) < as(i64, rhs.bits)) == expect then
-            jump cont_next(frame = cur_frame, pc = cur_pc + 2, base = cur_base, top = cur_top)
+        if lhs.tag == @{TAG_INTEGER} and rhs.tag == @{TAG_INTEGER} then
+            if (as(i64, lhs.bits) < as(i64, rhs.bits)) == expect then
+                jump cont_next(frame = cur_frame, pc = cur_pc + 2, base = cur_base, top = cur_top)
+            end
+            jump cont_next(frame = cur_frame, pc = cur_pc + 1, base = cur_base, top = cur_top)
         end
-        jump cont_next(frame = cur_frame, pc = cur_pc + 1, base = cur_base, top = cur_top)
-    end
-    jump cont_error(code = @{ERR_COMPARE})
-]])
+        emit @{handler}(L, cur_frame, cur_pc, cur_base, cur_top, @{args...}; next = cont_next,
+            do_jump = cont_jump, enter_lua = cont_enter_lua, enter_native = cont_enter_native,
+            yielded = cont_yielded, error = cont_error, oom = cont_oom)
+    ]],
+}
 
 inline_arm(66, [[
     let val: ptr(Value) = L.stack + (cur_base + as(index, (word >> 7) & 255))

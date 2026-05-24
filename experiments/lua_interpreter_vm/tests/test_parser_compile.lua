@@ -5,6 +5,7 @@ local bit = require("bit")
 local moon = require("moonlift")
 local vm = require("experiments.lua_interpreter_vm.src.init")
 local const = vm.const
+local pconst = vm.parser_const
 local function op_of(i) return bit.band(i.word, 127) end
 
 ffi.cdef [[
@@ -52,7 +53,26 @@ struct FuncBuilder {
     uint64_t pc; uint64_t lasttarget; uint8_t numparams; uint8_t flag;
 };
 typedef struct ExpDesc { uint16_t kind; uint32_t info; uint32_t aux; uint64_t t; uint64_t f; Value value; } ExpDesc;
-typedef struct CompileUnit { CompileArena* arena; Lexer lexer; FuncBuilder* root; FuncBuilder* current; ExpDesc expr_tmp; ExpDesc expr_tmp2; Token token_tmp; } CompileUnit;
+typedef struct CompileUnit { CompileArena* arena; Lexer lexer; FuncBuilder* root; FuncBuilder* current; ExpDesc expr_tmp; ExpDesc expr_tmp2; ExpDesc expr_tmp3; Token token_tmp; uint16_t tmp_reg; } CompileUnit;
+typedef struct { GCHeader gc; void* env; Proto* proto; void** upvals; uint8_t nupvals; } LClosure;
+typedef struct {
+    Value closure; uint64_t base; uint64_t top; uint64_t pc;
+    int32_t wanted; int32_t tailcalls;
+    uint16_t resume_mode;
+    uint16_t resume_a; uint16_t resume_b; uint16_t resume_c;
+    uint64_t resume_pc; uint64_t resume_base; Value resume_value;
+} Frame;
+typedef struct {
+    GCHeader gc; uint8_t status;
+    Value* stack; uint64_t stack_size; uint64_t top;
+    Frame* frames; uint64_t frame_count; uint64_t frame_cap;
+    void* open_upvals; void* protected_top;
+    void* global; Value err_value;
+    uint8_t hookmask; uint8_t allowhook;
+    int32_t hookcount; int32_t basehookcount; Value hook;
+    uint64_t tbc_head;
+} LuaThread;
+typedef struct { void* allocator; Value registry; void* mainthread; } GlobalState;
 ]]
 
 local compile_region = vm.regions_compiler.compile_lua_source_into
@@ -78,12 +98,65 @@ end
 
 local compiled = assert(wrapper:compile())
 
-local function run_case(src, expected_ops)
+local validate_proto = vm.validate.validate_proto
+local vm_resume = vm.vm_loop.vm_resume
+local lex_next = vm.regions_lexer.lex_next
+local lex_runner = moon.func { lex_next = lex_next, TOK_EOF = moon.int(pconst.Tok.EOF) } [[
+lex_kinds(cu: ptr(CompileUnit), bytes: ptr(u8), n: index, out: ptr(u16), max: index) -> i32
+    return region -> i32
+    entry start()
+        cu.lexer.src = { bytes = bytes, len = n, source_name = nil }
+        cu.lexer.pos = 0
+        cu.lexer.line = 1
+        cu.lexer.col = 1
+        cu.lexer.has_lookahead = 0
+        jump loop(count = as(index, 0))
+    end
+    block loop(count: index)
+        if count >= max then return -900 end
+        cu.token_tmp.aux = as(u32, count)
+        emit @{lex_next}(cu; token = got, lexical_error = lex_bad, oom = oom_bad)
+    end
+    block got(tok: Token)
+        let count: index = as(index, cu.token_tmp.aux)
+        out[count] = tok.kind
+        if tok.kind == @{TOK_EOF} then return as(i32, count + 1) end
+        jump loop(count = count + 1)
+    end
+    block lex_bad(err: CompileError) return 0 - err.code end
+    block oom_bad() return -999 end
+    end
+end
+]]:compile()
+
+local runner = moon.func { validate_proto = validate_proto, vm_resume = vm_resume } [[
+run_proto(L: ptr(LuaThread), p: ptr(Proto)) -> i32
+    return region -> i32
+    entry start()
+        emit @{validate_proto}(L, p; ok = valid, invalid = invalid, oom = oom_bad)
+    end
+    block valid()
+        emit @{vm_resume}(L, 0;
+            ok = done,
+            yielded = yielded,
+            runtime_error = runtime_bad,
+            oom = oom_bad)
+    end
+    block done(nres: i32) return nres end
+    block yielded(nres: i32) return -100 - nres end
+    block runtime_bad(code: i32) return -200 - code end
+    block invalid(code: i32) return -300 - code end
+    block oom_bad() return -999 end
+    end
+end
+]]:compile()
+
+local function compile_case(src, expected_ops)
     local cu = ffi.new("CompileUnit[1]")
     local b = ffi.new("FuncBuilder[1]")
     local p = ffi.new("Proto[1]")
-    local code = ffi.new("Instr[32]")
-    local locals = ffi.new("CompileLocal[16]")
+    local code = ffi.new("Instr[128]")
+    local locals = ffi.new("CompileLocal[32]")
     local bytes = ffi.new("uint8_t[?]", #src)
     ffi.copy(bytes, src, #src)
     local n = compiled(cu, b, p, bytes, #src, code, locals)
@@ -93,10 +166,79 @@ local function run_case(src, expected_ops)
         assert(got == op, string.format("%q op[%d]: got %d expected %d", src, i - 1, got, op))
     end
     print("PASS", src)
+    return p, code
 end
 
-run_case("return 1 + 2", { const.Op.LOADI, const.Op.LOADI, const.Op.ADD, const.Op.MMBIN, const.Op.RETURN1 })
-run_case("local x = 41 return x + 1", { const.Op.LOADI, const.Op.LOADI, const.Op.ADD, const.Op.MMBIN, const.Op.RETURN1 })
+local function make_thread(proto)
+    local closure = ffi.new("LClosure[1]")
+    closure[0].proto = proto
+    local stack = ffi.new("Value[64]")
+    for i = 0, 63 do stack[i].tag = const.Tag.NIL; stack[i].aux = 0; stack[i].bits = 0 end
+    stack[0].tag = const.Tag.LCLOSURE; stack[0].bits = ffi.cast("uint64_t", closure)
+    local frames = ffi.new("Frame[8]")
+    frames[0].closure = stack[0]
+    frames[0].base = 1; frames[0].top = 1; frames[0].pc = 0; frames[0].wanted = 1; frames[0].resume_mode = const.Resume.NORMAL
+    local global = ffi.new("GlobalState[1]")
+    local L = ffi.new("LuaThread[1]")
+    L[0].status = const.Status.OK; L[0].stack = stack; L[0].stack_size = 64; L[0].top = 1
+    L[0].frames = frames; L[0].frame_count = 1; L[0].frame_cap = 8; L[0].global = global
+    global[0].mainthread = L
+    return L, stack, closure, frames, global
+end
+
+local function bits_i64(x) return tonumber(ffi.cast("int64_t", x)) end
+
+local function compile_status(src)
+    local cu = ffi.new("CompileUnit[1]")
+    local b = ffi.new("FuncBuilder[1]")
+    local p = ffi.new("Proto[1]")
+    local code = ffi.new("Instr[128]")
+    local locals = ffi.new("CompileLocal[32]")
+    local bytes = ffi.new("uint8_t[?]", #src)
+    ffi.copy(bytes, src, #src)
+    return compiled(cu, b, p, bytes, #src, code, locals)
+end
+
+local function lex_case(src, expected)
+    local cu = ffi.new("CompileUnit[1]")
+    local out = ffi.new("uint16_t[64]")
+    local bytes = ffi.new("uint8_t[?]", #src)
+    ffi.copy(bytes, src, #src)
+    local n = lex_runner(cu, bytes, #src, out, 64)
+    assert(n == #expected, string.format("lex %q count got %d expected %d", src, n, #expected))
+    for i, kind in ipairs(expected) do
+        assert(out[i - 1] == kind, string.format("lex %q token %d got %d expected %d", src, i, out[i - 1], kind))
+    end
+    print("LEX", src)
+end
+
+local function run_case(src, expected_ops, expect_int)
+    local p, code = compile_case(src, expected_ops)
+    local L, stack = make_thread(p)
+    assert(code ~= nil)
+    local nres = runner(L, p)
+    assert(nres == 1, string.format("%q vm nres: got %d", src, nres))
+    assert(stack[1].tag == const.Tag.INTEGER, string.format("%q result tag: got %d", src, stack[1].tag))
+    assert(bits_i64(stack[1].bits) == expect_int, string.format("%q result: got %d expected %d", src, bits_i64(stack[1].bits), expect_int))
+    print("RUN", src, "=>", expect_int)
+end
+
+lex_case("-- comment\nreturn 'abc' == name ~= nil ... .. :: <= >= < > - * / ,", {
+    pconst.Kw.RETURN, pconst.Tok.STRING, pconst.Tok.EQ, pconst.Tok.NAME, pconst.Tok.NE,
+    pconst.Kw.NIL, pconst.Tok.DOTDOTDOT, pconst.Tok.DOTDOT, pconst.Tok.COLONCOLON,
+    pconst.Tok.LE, pconst.Tok.GE, pconst.Tok.LT, pconst.Tok.GT,
+    pconst.Tok.MINUS, pconst.Tok.STAR, pconst.Tok.SLASH, pconst.Tok.COMMA, pconst.Tok.EOF,
+})
+
+run_case("return 1 + 2", { const.Op.LOADI, const.Op.LOADI, const.Op.ADD, const.Op.MMBIN, const.Op.RETURN1 }, 3)
+run_case("local x = 41 return x + 1", { const.Op.LOADI, const.Op.LOADI, const.Op.ADD, const.Op.MMBIN, const.Op.RETURN1 }, 42)
+run_case("local x = 1; -- comment\nlocal y = 2 return x + y", { const.Op.LOADI, const.Op.LOADI, const.Op.ADD, const.Op.MMBIN, const.Op.RETURN1 }, 3)
+run_case("return 2 + 3 * 4", { const.Op.LOADI, const.Op.LOADI, const.Op.LOADI, const.Op.MUL, const.Op.MMBIN, const.Op.ADD, const.Op.MMBIN, const.Op.RETURN1 }, 14)
+run_case("return 9 - 3 * 2", { const.Op.LOADI, const.Op.LOADI, const.Op.LOADI, const.Op.MUL, const.Op.MMBIN, const.Op.SUB, const.Op.MMBIN, const.Op.RETURN1 }, 3)
+compile_case("return 9 / 3", { const.Op.LOADI, const.Op.LOADI, const.Op.DIV, const.Op.MMBIN, const.Op.RETURN1 })
+assert(compile_status("return 1 local x = 2") < 0, "return must reject trailing statements")
 
 compiled:free()
+lex_runner:free()
+runner:free()
 return true

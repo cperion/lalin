@@ -385,6 +385,14 @@ fn decode_body(buf: &[u8], ptr_ty: Type, ctx: &mut BodyCtx<'_>, refs: &FuncRefs)
                 let v = ctx.builder.append_block_param(b, ty);
                 ctx.bind(s[2], v)?;
             }
+            t if t == WireTag::AppendBlockParamVec as u32 => {
+                let b = ctx.blk(s[0])?;
+                let elem_ty = st(s[1], ptr_ty)?;
+                let lanes = s[2];
+                let ty = elem_ty.by(lanes).ok_or_else(|| MoonliftError(format!("bad block param vector {elem_ty:?}x{lanes}")))?;
+                let v = ctx.builder.append_block_param(b, ty);
+                ctx.bind(s[3], v)?;
+            }
             t if t == WireTag::CreateStackSlot as u32 => {
                 let ss = ctx.builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, s[1], s[2] as u8));
                 if ctx.stack_slots.insert(s[0], ss).is_some() { return Err(MoonliftError(format!("slot {} dup", s[0]))); }

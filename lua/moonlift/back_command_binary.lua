@@ -11,10 +11,11 @@ local M = {}
 -- Flat tags (matches wire_tags.rs)
 local T = {
     -- Structural
-    CreateBlock      = 1,
-    SwitchToBlock    = 2,
-    AppendBlockParam = 3,
-    CreateStackSlot  = 4,
+    CreateBlock         = 1,
+    SwitchToBlock       = 2,
+    AppendBlockParam    = 3,
+    CreateStackSlot     = 4,
+    AppendBlockParamVec = 5,
     Alias            = 190,
     BoolNot          = 191,
     -- Constants
@@ -144,6 +145,26 @@ local function encode_body(cmds, b)
         addr_counter = addr_counter + 1
         return s
     end
+    local function emit_base_addr(buf, base)
+        if base.kind == "BackAddrValue" then
+            return base.value
+        elseif base.kind == "BackAddrStack" then
+            local at = fresh_id()
+            w4(buf, T.StackAddr); w4(buf, b:nid(at)); w4(buf, 12); w4(buf, b:nid(base.slot))
+            return at
+        else
+            local at = fresh_id()
+            w4(buf, T.GlobalValue); w4(buf, b:nid(at)); w4(buf, 12); w4(buf, (b.data_map or {})[id(base.data)] or 0)
+            return at
+        end
+    end
+    local function emit_effective_addr(buf, addr)
+        local base_id = emit_base_addr(buf, addr.base)
+        if addr.byte_offset == nil then return base_id end
+        local at = fresh_id()
+        w4(buf, T.PtrAdd); w4(buf, b:nid(at)); w4(buf, b:nid(base_id)); w4(buf, b:nid(addr.byte_offset))
+        return at
+    end
     for _, cmd in ipairs(cmds) do
         local k = cmd.kind
 
@@ -153,7 +174,11 @@ local function encode_body(cmds, b)
         elseif k == "CmdSwitchToBlock" then
             w4(buf, T.SwitchToBlock); w4(buf, b:nid(cmd.block))
         elseif k == "CmdAppendBlockParam" then
-            w4(buf, T.AppendBlockParam); w4(buf, b:nid(cmd.block)); w4(buf, st(cmd.ty)); w4(buf, b:nid(cmd.value))
+            if cmd.ty.kind == "BackShapeVec" then
+                w4(buf, T.AppendBlockParamVec); w4(buf, b:nid(cmd.block)); w4(buf, st(cmd.ty.vec.elem)); w4(buf, cmd.ty.vec.lanes); w4(buf, b:nid(cmd.value))
+            else
+                w4(buf, T.AppendBlockParam); w4(buf, b:nid(cmd.block)); w4(buf, st(cmd.ty)); w4(buf, b:nid(cmd.value))
+            end
         elseif k == "CmdCreateStackSlot" then
             w4(buf, T.CreateStackSlot); w4(buf, b:nid(cmd.slot)); w4(buf, cmd.size); w4(buf, cmd.align or 0)
         elseif k == "CmdSealBlock" or k == "CmdBindEntryParams" then
@@ -301,7 +326,6 @@ local function encode_body(cmds, b)
 
         -- Memory
         elseif k == "CmdLoadInfo" then
-            local base = cmd.addr.base
             local is_vec = cmd.ty.kind ~= "BackShapeScalar"
             local elem_st, lanes, mem
             if is_vec then
@@ -313,19 +337,7 @@ local function encode_body(cmds, b)
                 lanes = 0
                 mem = memflags(cmd.memory)
             end
-            -- Emit address computation for non-value bases
-            local addr_id
-            if base.kind == "BackAddrValue" then
-                addr_id = base.value
-            elseif base.kind == "BackAddrStack" then
-                local at = fresh_id()
-                w4(buf, T.StackAddr); w4(buf, b:nid(at)); w4(buf, 12); w4(buf, b:nid(base.slot))
-                addr_id = at
-            else
-                local at = fresh_id()
-                w4(buf, T.GlobalValue); w4(buf, b:nid(at)); w4(buf, 12); w4(buf, b:nid(base.data))
-                addr_id = at
-            end
+            local addr_id = emit_effective_addr(buf, cmd.addr)
             if is_vec then
                 w4(buf, T.VecLoad); w4(buf, b:nid(cmd.dst))
                 w4(buf, elem_st); w4(buf, lanes); w4(buf, mem); w4(buf, b:nid(addr_id))
@@ -335,20 +347,7 @@ local function encode_body(cmds, b)
             end
         elseif k == "CmdStoreInfo" then
             local is_vec = cmd.ty.kind ~= "BackShapeScalar"
-            local base = cmd.addr.base
-            -- Emit address computation for non-value bases
-            local addr_id
-            if base.kind == "BackAddrValue" then
-                addr_id = base.value
-            elseif base.kind == "BackAddrStack" then
-                local at = fresh_id()
-                w4(buf, T.StackAddr); w4(buf, b:nid(at)); w4(buf, 12); w4(buf, b:nid(base.slot))
-                addr_id = at
-            else
-                local at = fresh_id()
-                w4(buf, T.GlobalValue); w4(buf, b:nid(at)); w4(buf, 12); w4(buf, b:nid(base.data))
-                addr_id = at
-            end
+            local addr_id = emit_effective_addr(buf, cmd.addr)
             if is_vec then
                 w4(buf, T.VecStore); w4(buf, st(cmd.ty.vec.elem)); w4(buf, cmd.ty.vec.lanes)
                 w4(buf, memflags(cmd.memory)); w4(buf, b:nid(addr_id)); w4(buf, b:nid(cmd.value))

@@ -451,7 +451,7 @@ local ops = {
         fill = function(code, steps)
             for i = 0, steps - 1 do
                 local pc = i * 2
-                set_ABC(code[pc], const.Op.LT, 1, 1, 2, 0)
+                set_ABC(code[pc], const.Op.LT, 1, 0, 1, 0)
                 set_ABC(code[pc + 1], const.Op.MOVE, 1, 1, 0, 0)
             end
         end,
@@ -505,7 +505,7 @@ for _, op in ipairs(ops) do
     local elapsed = run_bench(op.name, op.fill, op.init_stack, nil, op.code_slots, op.init_consts, op.maxstack)
     local divisor = op.divisor or 1
     op.semantic_ops = STEPS * divisor
-    results[op.name] = math.max(0, ((elapsed / RUNS) * 1e9 - ret_ns) / op.semantic_ops)
+    results[op.name] = ((elapsed / RUNS) * 1e9 - ret_ns) / op.semantic_ops
 end
 
 -- Reference scripts (written to files: avoids shell quoting hazards).
@@ -545,5 +545,6 @@ for _, op in ipairs(ops) do
 end
 print(string.rep("-", 104))
 print("VM/LJ and VM/PUC are cost ratios; lower is better for Moonlift VM.")
+print("Negative VM ns/op means RETURN-overhead subtraction noise; increase MOONLIFT_VM_STEPS/RUNS.")
 
 runner_fn:free()

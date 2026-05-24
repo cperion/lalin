@@ -8,6 +8,7 @@ pub enum WireTag {
     SwitchToBlock = 2,
     AppendBlockParam = 3,
     CreateStackSlot = 4,
+    AppendBlockParamVec = 5,
 
     // ── Constants ────
     ConstI32 = 10,
@@ -161,6 +162,7 @@ pub static TAG_SLOTS: [u8; 256] = {
     t[WireTag::SwitchToBlock as usize] = 1;   // [block_id]
     t[WireTag::AppendBlockParam as usize] = 3; // [block_id, scalar_type, value_id]
     t[WireTag::CreateStackSlot as usize] = 3; // [slot_id, size, align_log2]
+    t[WireTag::AppendBlockParamVec as usize] = 4; // [block_id, scalar_type, lanes, value_id]
 
     // Constants
     t[WireTag::ConstI32 as usize] = 2;   // [dst, value]

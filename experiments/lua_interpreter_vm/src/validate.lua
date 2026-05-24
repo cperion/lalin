@@ -25,7 +25,7 @@ entry start()
     if p.code_len == 0 then
         jump ok()
     end
-    jump loop(pc = 0)
+    jump loop(pc = as(index, 0))
 end
 block loop(pc: index)
     if pc >= p.code_len then

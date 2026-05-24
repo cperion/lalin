@@ -758,16 +758,11 @@ function M.Define(T)
         local contribution = contribution_expr(acc_arg.value, acc_binding, red_op)
         if contribution == nil then return reject(region.region_id, "reduction contribution not recognized") end
         if #common.facts.memory == 0 then
-            --- Reduction with zero memory loads — SIMD adds overhead
-            --- (splat + vector-op + extract).  First try an algebraic
-            --- closed form; otherwise fall back to scalar Cranelift.
-            local alg = try_algebraic(contribution, common)
-            if alg then
-                local alg_elem = elem_from_type(acc_binding.ty)
-                if alg_elem ~= nil then
-                    return V.VecKernelAlgebraic(common.facts, alg.kind, alg_elem, common.stop, acc_binding)
-                end
-            end
+            --- Reduction with zero memory loads has no SIMD payload.  Do not
+            --- rewrite it to a closed form here: the planner currently has no
+            --- proof for zero-trip signed bounds, accumulator identity, or
+            --- wide intermediate overflow.  Let the ordinary control lowering
+            --- preserve the source CFG exactly.
             return reject(region.region_id, "scalar-only reduction — no parallel data to vectorize")
         end
         local reduction = common.facts.reductions[1]

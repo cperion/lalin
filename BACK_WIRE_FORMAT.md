@@ -187,14 +187,15 @@ Tags are dense (1..=N). Each tag has a fixed slot count defined in `TAG_SLOTS`.
 Variable-length tags have their fixed prefix counted; the decoder reads additional slots
 based on count fields.
 
-### Structural (1–4)
+### Structural (1–5)
 
 | Tag | Name | Slots | Description |
 |-----|------|-------|-------------|
 | 1 | `CreateBlock` | 1 | `[block_id]` |
 | 2 | `SwitchToBlock` | 1 | `[block_id]` |
-| 3 | `AppendBlockParam` | 2 | `[block_id, scalar_type]` |
+| 3 | `AppendBlockParam` | 3 | `[block_id, scalar_type, value_id]` |
 | 4 | `CreateStackSlot` | 3 | `[slot_id, size, align_log2]` |
+| 5 | `AppendBlockParamVec` | 4 | `[block_id, scalar_type, lanes, value_id]` |
 
 ### Constants (10–16)
 
@@ -438,12 +439,12 @@ Declarations:
 Body Table:
   0000 0000  | func_id = 0
   4C00 0000  | body_offset = 76
-  3800 0000  | body_len = 56
+  3C00 0000  | body_len = 60
 
-Body (56 bytes at offset 76):
+Body (60 bytes at offset 76):
   01 00000000  | CreateBlock(block=0)
   02 00000000  | SwitchToBlock(block=0)
-  03 00000000 04000000  | AppendBlockParam(block=0, I32)
+  03 00000000 04000000 00000000  | AppendBlockParam(block=0, I32, value=0)
    BE 00000000 01000000  | Alias(dst=0, src=1)  -- v0 = arg
   0A 01000000 01000000  | ConstI32(dst=1, value=1)  -- v1 = 1
   14 02000000 00000000 01000000  | Iadd(dst=2, lhs=0, rhs=1)  -- v2 = v0 + v1

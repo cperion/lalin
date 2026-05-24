@@ -143,20 +143,111 @@ end
 end
 ]]
 
-local emit_add = host.region(V) [[
-region emit_add(cu: ptr(CompileUnit), dst: u16, lhs: u16, rhs: u16;
-                ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+local emit_load_false = host.region(V) [[
+region emit_load_false(cu: ptr(CompileUnit), dst: u16;
+                       ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_ABC(cu, as(u16, @{OP_LOADFALSE}), dst, as(u16, 0), as(u16, 0), as(u8, 0);
+        emitted = done_pc, limit_error = too_big, oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_load_true = host.region(V) [[
+region emit_load_true(cu: ptr(CompileUnit), dst: u16;
+                      ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_ABC(cu, as(u16, @{OP_LOADTRUE}), dst, as(u16, 0), as(u16, 0), as(u8, 0);
+        emitted = done_pc, limit_error = too_big, oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_load_nil = host.region(V) [[
+region emit_load_nil(cu: ptr(CompileUnit), dst: u16;
+                     ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_ABC(cu, as(u16, @{OP_LOADNIL}), dst, as(u16, 0), as(u16, 0), as(u8, 0);
+        emitted = done_pc, limit_error = too_big, oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_binary_op = host.region(V) [[
+region emit_binary_op(cu: ptr(CompileUnit), op: u16, tm: u16, dst: u16, lhs: u16, rhs: u16;
+                      ok: cont(), limit_error: cont(err: CompileError), oom: cont())
 entry start()
     let fs: ptr(FuncBuilder) = cu.current
     if fs.code.len + 1 >= fs.code.cap then jump oom() end
-    let pc_add: index = fs.code.len
-    fs.code.data[pc_add] = { word = as(u32, @{OP_ADD}) | (as(u32, dst) << 7) | (as(u32, lhs) << 16) | (as(u32, rhs) << 24) }
-    let pc_mm: index = pc_add + 1
-    fs.code.data[pc_mm] = { word = as(u32, @{OP_MMBIN}) | (as(u32, @{TM_ADD}) << 16) }
+    let pc_op: index = fs.code.len
+    fs.code.data[pc_op] = { word = as(u32, op) | (as(u32, dst) << 7) | (as(u32, lhs) << 16) | (as(u32, rhs) << 24) }
+    let pc_mm: index = pc_op + 1
+    fs.code.data[pc_mm] = { word = as(u32, @{OP_MMBIN}) | (as(u32, tm) << 16) }
     fs.code.len = pc_mm + 1
     fs.pc = fs.code.len
     jump ok()
 end
+end
+]]
+
+local emit_add = host.region(V) [[
+region emit_add(cu: ptr(CompileUnit), dst: u16, lhs: u16, rhs: u16;
+                ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_binary_op(cu, as(u16, @{OP_ADD}), as(u16, @{TM_ADD}), dst, lhs, rhs;
+        ok = done, limit_error = too_big, oom = out_of_mem)
+end
+block done() jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_sub = host.region(V) [[
+region emit_sub(cu: ptr(CompileUnit), dst: u16, lhs: u16, rhs: u16;
+                ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_binary_op(cu, as(u16, @{OP_SUB}), as(u16, @{TM_SUB}), dst, lhs, rhs;
+        ok = done, limit_error = too_big, oom = out_of_mem)
+end
+block done() jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_mul = host.region(V) [[
+region emit_mul(cu: ptr(CompileUnit), dst: u16, lhs: u16, rhs: u16;
+                ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_binary_op(cu, as(u16, @{OP_MUL}), as(u16, @{TM_MUL}), dst, lhs, rhs;
+        ok = done, limit_error = too_big, oom = out_of_mem)
+end
+block done() jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_div = host.region(V) [[
+region emit_div(cu: ptr(CompileUnit), dst: u16, lhs: u16, rhs: u16;
+                ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_binary_op(cu, as(u16, @{OP_DIV}), as(u16, @{TM_DIV}), dst, lhs, rhs;
+        ok = done, limit_error = too_big, oom = out_of_mem)
+end
+block done() jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
 end
 ]]
 
@@ -226,38 +317,18 @@ block scan(i: index)
     if i == 0 then jump missing() end
     let j: index = i - 1
     let local_desc: CompileLocal = cu.current.locals[j]
-    if local_desc.hash == as(u32, tok.bits) then
-        emit same_name(cu.lexer.src.bytes, local_desc.name_start, local_desc.name_len, tok.start, tok.len;
-            yes = matched,
-            no = next_one)
+    if local_desc.hash == as(u32, tok.bits) and local_desc.name_len == tok.len then
+        jump compare(idx = j, off = as(index, 0))
     end
     jump scan(i = j)
 end
-block matched()
-    -- Re-scan to recover the matching register without carrying hidden state.
-    jump scan_reg(i = cu.current.locals_len)
-end
-block scan_reg(i: index)
-    let j: index = i - 1
-    let local_desc: CompileLocal = cu.current.locals[j]
-    if local_desc.hash == as(u32, tok.bits) then
-        emit same_name(cu.lexer.src.bytes, local_desc.name_start, local_desc.name_len, tok.start, tok.len;
-            yes = matched_reg,
-            no = scan_reg_next)
+block compare(idx: index, off: index)
+    let local_desc: CompileLocal = cu.current.locals[idx]
+    if off >= tok.len then jump found(reg = local_desc.reg) end
+    if cu.lexer.src.bytes[local_desc.name_start + off] ~= cu.lexer.src.bytes[tok.start + off] then
+        jump scan(i = idx)
     end
-    jump scan_reg_next()
-end
-block matched_reg()
-    let j: index = cu.current.locals_len - 1
-    -- First milestone has one active local in tests; full implementation will carry the index.
-    jump found(reg = cu.current.locals[j].reg)
-end
-block scan_reg_next()
-    jump missing()
-end
-block next_one()
-    -- First milestone keeps local lookup minimal and explicit.
-    jump missing()
+    jump compare(idx = idx, off = off + 1)
 end
 end
 ]]
@@ -295,7 +366,14 @@ return {
     reserve_reg = reserve_reg,
     emit_load_integer = emit_load_integer,
     emit_move = emit_move,
+    emit_load_false = emit_load_false,
+    emit_load_true = emit_load_true,
+    emit_load_nil = emit_load_nil,
+    emit_binary_op = emit_binary_op,
     emit_add = emit_add,
+    emit_sub = emit_sub,
+    emit_mul = emit_mul,
+    emit_div = emit_div,
     emit_return1 = emit_return1,
     add_local = add_local,
     same_name = same_name,

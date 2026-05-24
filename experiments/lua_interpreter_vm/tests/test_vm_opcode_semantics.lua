@@ -34,6 +34,7 @@ void* moonlift_scratch_raw(int slot, int elem_size, int count);
 typedef struct { void* next; uint8_t tt; uint8_t marked; } GCHeader;
 typedef struct { uint32_t tag; uint32_t aux; uint64_t bits; } Value;
 typedef struct Instr { uint32_t word; } Instr;
+typedef struct String { GCHeader gc; uint8_t reserved; uint32_t hash; uint64_t len; uint8_t* bytes; } String;
 typedef struct {
     GCHeader gc;
     void* code; uint64_t code_len;
@@ -89,6 +90,15 @@ end
 local function setnil(v) v.tag = const.Tag.NIL; v.aux = 0; v.bits = 0 end
 local function setint(v, x) v.tag = const.Tag.INTEGER; v.aux = 0; v.bits = ffi.cast("uint64_t", x) end
 local function setnum(v, x) v.tag = const.Tag.NUM; v.aux = 0; v.bits = dblbits(x) end
+local function setbool(v, b) v.tag = b and const.Tag.TRUE or const.Tag.FALSE; v.aux = 0; v.bits = 0 end
+local function setstr(v, text)
+    local bytes = scratch(1, #text, "uint8_t*")
+    for i = 1, #text do bytes[i - 1] = string.byte(text, i) end
+    local s = scratch(ffi.sizeof("String"), 1, "String*")
+    s.gc.next = nil; s.gc.tt = const.Tag.STR; s.gc.marked = 0
+    s.reserved = 0; s.hash = 0; s.len = #text; s.bytes = bytes
+    v.tag = const.Tag.STR; v.aux = 0; v.bits = ffi.cast("uint64_t", s)
+end
 
 local runner = moon.func { vm_resume = vm.vm_loop.vm_resume } [[
 run(L: ptr(LuaThread)) -> i32
@@ -139,7 +149,7 @@ local function make_case(ncode, nconst)
     L.frames = frames; L.frame_count = 1; L.frame_cap = 8; L.open_upvals = nil; L.protected_top = nil; L.global = g
     setnil(L.err_value); L.hookmask = 0; L.allowhook = 0; L.hookcount = 0; L.basehookcount = 0; setnil(L.hook); L.tbc_head = 0
     g.mainthread = L
-    return { code = code, consts = consts, stack = stack, L = L }
+    return { code = code, consts = consts, stack = stack, frames = frames, L = L }
 end
 
 local pass, fail = 0, 0
@@ -204,6 +214,57 @@ do
     local n = runner(c.L)
     local got = bitsdbl(c.stack[3].bits)
     check("ADD preserves f64 payload semantics", n == 1 and c.stack[3].tag == const.Tag.NUM and math.abs(got - 3.75) < 1e-12, "got " .. tostring(got))
+end
+
+-- Inlined scalar ops: LOADI/LOADF/LOADTRUE/NOT/TEST/JMP should preserve handler semantics.
+do
+    local c = make_case(7, 0)
+    set_ABC(c.code[0], const.Op.LOADTRUE, 0, 0, 0, 0)
+    set_ABC(c.code[1], const.Op.NOT, 1, 0, 0, 0)
+    set_ABC(c.code[2], const.Op.TEST, 1, 0, 0, 0) -- false and c=0: no skip
+    set_AsBx(c.code[3], const.Op.JMP, 0, 2)
+    set_AsBx(c.code[4], const.Op.LOADI, 2, 13)
+    set_AsBx(c.code[5], const.Op.LOADI, 2, 42)
+    set_ABC(c.code[6], const.Op.RETURN, 2, 2, 0, 0)
+    c.frames[0].top = 4; c.L.top = 4
+    local n = runner(c.L)
+    check("LOADTRUE/NOT/TEST/JMP inline semantics", n == 1 and c.stack[3].tag == const.Tag.INTEGER and tonumber(ffi.cast("int64_t", c.stack[3].bits)) == 42)
+end
+
+do
+    local c = make_case(2, 0)
+    set_AsBx(c.code[0], const.Op.LOADF, 0, 42)
+    set_ABC(c.code[1], const.Op.RETURN, 0, 2, 0, 0)
+    local n = runner(c.L)
+    check("LOADF inline stores f64 payload", n == 1 and c.stack[1].tag == const.Tag.NUM and math.abs(bitsdbl(c.stack[1].bits) - 42.0) < 1e-12)
+end
+
+-- Inlined compare ops keep numeric fast paths and LT falls back for strings.
+do
+    local c = make_case(5, 0)
+    setnum(c.stack[1], 42.0); setnum(c.stack[2], 42.0)
+    set_ABC(c.code[0], const.Op.EQ, 1, 0, 1, 0) -- true => skip failure
+    set_AsBx(c.code[1], const.Op.JMP, 0, 3)
+    set_AsBx(c.code[2], const.Op.LOADI, 2, 42)
+    set_ABC(c.code[3], const.Op.RETURN, 2, 2, 0, 0)
+    set_AsBx(c.code[4], const.Op.LOADI, 2, 13)
+    c.frames[0].top = 4; c.L.top = 4
+    local n = runner(c.L)
+    check("EQ numeric inline semantics", n == 1 and c.stack[3].tag == const.Tag.INTEGER and tonumber(ffi.cast("int64_t", c.stack[3].bits)) == 42)
+end
+
+do
+    local c = make_case(6, 0)
+    setstr(c.stack[1], "a"); setstr(c.stack[2], "b")
+    set_ABC(c.code[0], const.Op.LT, 1, 0, 1, 0) -- string fallback true => success path
+    set_AsBx(c.code[1], const.Op.JMP, 0, 3)
+    set_AsBx(c.code[2], const.Op.LOADI, 2, 42)
+    set_ABC(c.code[3], const.Op.RETURN, 2, 2, 0, 0)
+    set_AsBx(c.code[4], const.Op.LOADI, 2, 13)
+    set_ABC(c.code[5], const.Op.RETURN, 2, 2, 0, 0)
+    c.frames[0].top = 4; c.L.top = 4
+    local n = runner(c.L)
+    check("LT string fallback semantics", n == 1 and c.stack[3].tag == const.Tag.INTEGER and tonumber(ffi.cast("int64_t", c.stack[3].bits)) == 42)
 end
 
 -- RETURN1 carries A through the return path.
