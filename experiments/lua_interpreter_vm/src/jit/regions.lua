@@ -13,6 +13,7 @@ local V = {}
 for k, v in pairs(C.Effect) do V["EFF_" .. k] = moon.int(v) end
 for k, v in pairs(C.ProjectionReq) do V["PROJ_" .. k] = moon.int(v) end
 for k, v in pairs(C.BoundaryReq) do V["BOUND_" .. k] = moon.int(v) end
+for k, v in pairs(C.TraceStatus) do V["TRACE_STATUS_" .. k] = moon.int(v) end
 
 local R = host.region(V)
 
@@ -117,8 +118,87 @@ end
 end
 ]]
 
+local try_enter_jit = R [[
+region try_enter_jit(ent: ptr(EntryCell), L: ptr(LuaThread), frame: ptr(Frame);
+                     entered_jit: cont(nres: i32, pc: index),
+                     use_interpreter: cont())
+block start()
+    if ent == nil then jump use_interpreter() end
+    let code: ptr(u8) = ent.target
+    if code == nil then jump use_interpreter() end
+    -- Code is available: attempt JIT entry
+    -- The actual call to code happens in native implementation
+    -- For MVP: pass control to entered_jit with result
+    -- Real implementation will invoke code and handle outcome
+    jump entered_jit(nres = 0, pc = frame.pc)
+end
+end
+]]
+
+local record_trace_ops = R [[
+region record_trace_ops(rec: ptr(TraceRecord), anchor: ptr(TraceAnchor);
+                        recording: cont(),
+                        no_capacity: cont())
+block start()
+    if rec == nil or anchor == nil then jump no_capacity() end
+    if rec.op_count == 0 then jump no_capacity() end
+    anchor.status = as(u8, @{TRACE_STATUS_RECORDING})
+    jump recording()
+end
+end
+]]
+
+local trace_record_guard_check = R [[
+region trace_record_guard_check(rec: ptr(TraceRecord);
+                                has_guards: cont(),
+                                no_guards: cont())
+block start()
+    if rec == nil then jump no_guards() end
+    if rec.guard_count == 0 then jump no_guards() end
+    if rec.snapshot_count == 0 then jump no_guards() end
+    jump has_guards()
+end
+end
+]]
+
+local materialize_stencil_plan = R [[
+region materialize_stencil_plan(plan: ptr(StencilPlan), slab: ptr(CodeSlab);
+                                materialized: cont(code: ptr(u8)),
+                                no_space: cont(),
+                                invalid_plan: cont())
+block start()
+    if plan == nil or slab == nil then jump invalid_plan() end
+    if plan.node_count == 0 then jump invalid_plan() end
+    if plan.estimated_size == 0 then jump invalid_plan() end
+    if slab.used + plan.estimated_size > slab.size then jump no_space() end
+    let code: ptr(u8) = slab.rw + slab.used
+    jump materialized(code = code)
+end
+end
+]]
+
+local link_executable_unit = R [[
+region link_executable_unit(unit: ptr(ExecutableUnit), ent: ptr(EntryCell),
+                            code: ptr(u8);
+                            linked: cont(),
+                            invalid: cont())
+block start()
+    if unit == nil or ent == nil or code == nil then jump invalid() end
+    unit.code = code
+    ent.target = code
+    ent.unit = as(ptr(u8), unit)
+    jump linked()
+end
+end
+]]
+
 return {
     classify_effect = classify_effect,
     validate_stencil_plan = validate_stencil_plan,
     require_projection_for_effect = require_projection_for_effect,
+    try_enter_jit = try_enter_jit,
+    record_trace_ops = record_trace_ops,
+    trace_record_guard_check = trace_record_guard_check,
+    materialize_stencil_plan = materialize_stencil_plan,
+    link_executable_unit = link_executable_unit,
 }

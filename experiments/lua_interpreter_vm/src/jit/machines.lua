@@ -352,6 +352,179 @@ jit_layout_stencil_plan(plan: ptr(StencilPlan)) -> index
 end
 ]]
 
+local jit_init_entry_cell = moon.func [[
+jit_init_entry_cell(out: ptr(EntryCell), addr: SemanticAddr,
+                    hot_threshold: u32) -> bool
+    if out == nil then return false end
+    out.addr.proto = addr.proto
+    out.addr.pc = addr.pc
+    out.addr.frame = addr.frame
+    out.target = nil
+    out.fallback = nil
+    out.unit = nil
+    out.counter = 0
+    out.status = 0  -- Cold/ready for recording
+    out.generation = 0
+    return true
+end
+]]
+
+local jit_entry_cell_is_hot = moon.func [[
+jit_entry_cell_is_hot(ent: ptr(EntryCell), hot_threshold: u32) -> bool
+    if ent == nil then return false end
+    if ent.target == nil then return false end
+    return true
+end
+]]
+
+local jit_entry_cell_tick = moon.func [[
+jit_entry_cell_tick(ent: ptr(EntryCell), hot_threshold: u32) -> bool
+    if ent == nil then return false end
+    ent.counter = ent.counter + 1
+    -- For MVP: always return false (no recording yet)
+    -- When trace recording is implemented, return true when counter >= hot_threshold
+    return false
+end
+]]
+
+local jit_init_edge_cell = moon.func [[
+jit_init_edge_cell(out: ptr(EdgeCell)) -> bool
+    if out == nil then return false end
+    out.target = nil
+    out.fallback = nil
+    out.target_unit = nil
+    out.kind = 0
+    out.status = 0
+    out.pad0 = 0
+    out.generation = 0
+    return true
+end
+]]
+
+local jit_entry_cell_link_unit = moon.func [[
+jit_entry_cell_link_unit(ent: ptr(EntryCell), unit: ptr(ExecutableUnit),
+                         code: ptr(u8)) -> bool
+    if ent == nil or unit == nil or code == nil then return false end
+    ent.target = code
+    ent.unit = as(ptr(u8), unit)
+    return true
+end
+]]
+
+local jit_entry_cell_fallback = moon.func [[
+jit_entry_cell_fallback(ent: ptr(EntryCell), fallback: ptr(u8)) -> bool
+    if ent == nil or fallback == nil then return false end
+    ent.fallback = fallback
+    return true
+end
+]]
+
+local jit_record_trace_op = moon.func [[
+jit_record_trace_op(rec: ptr(TraceRecord), op: StateOp, idx: index) -> bool
+    if rec == nil or rec.ops == nil then return false end
+    if idx >= rec.op_count then return false end
+    let slot: ptr(StateOp) = rec.ops + idx
+    slot.kind = op.kind
+    slot.op = op.op
+    slot.a = op.a
+    slot.b = op.b
+    slot.c = op.c
+    slot.aux0 = op.aux0
+    slot.aux1 = op.aux1
+    slot.effect.flags = op.effect.flags
+    return true
+end
+]]
+
+local jit_record_trace_guard = moon.func [[
+jit_record_trace_guard(rec: ptr(TraceRecord), guard: Guard, idx: index) -> bool
+    if rec == nil or rec.guards == nil then return false end
+    if idx >= rec.guard_count then return false end
+    let slot: ptr(Guard) = rec.guards + idx
+    slot.kind = guard.kind
+    slot.value_id = guard.value_id
+    slot.dep_index = guard.dep_index
+    slot.projection_id = guard.projection_id
+    slot.flags = guard.flags
+    slot.aux0 = guard.aux0
+    slot.aux1 = guard.aux1
+    return true
+end
+]]
+
+local jit_record_trace_snapshot = moon.func [[
+jit_record_trace_snapshot(rec: ptr(TraceRecord), snap: ptr(Projection), idx: index) -> bool
+    if rec == nil or rec.snapshots == nil then return false end
+    if idx >= rec.snapshot_count then return false end
+    let slot: ptr(Projection) = rec.snapshots + idx
+    slot.id = snap.id
+    slot.kind = snap.kind
+    slot.addr.proto = snap.addr.proto
+    slot.addr.pc = snap.addr.pc
+    slot.addr.frame = snap.addr.frame
+    slot.frame = snap.frame
+    slot.base = snap.base
+    slot.top = snap.top
+    slot.slots = snap.slots
+    slot.slot_count = snap.slot_count
+    slot.roots = snap.roots
+    slot.root_count = snap.root_count
+    slot.flags = snap.flags
+    return true
+end
+]]
+
+local jit_trace_is_recordable = moon.func [[
+jit_trace_is_recordable(rec: ptr(TraceRecord)) -> bool
+    if rec == nil then return false end
+    if rec.op_count == 0 then return false end
+    if rec.guard_count == 0 then return false end
+    if rec.snapshot_count == 0 then return false end
+    return true
+end
+]]
+
+local jit_stencil_plan_from_trace = moon.func [[
+jit_stencil_plan_from_trace(rec: ptr(TraceRecord), plan: ptr(StencilPlan)) -> bool
+    if rec == nil or plan == nil then return false end
+    plan.projections = rec.snapshots
+    plan.projection_count = rec.snapshot_count
+    plan.nodes = nil
+    plan.node_count = 0
+    plan.fixups = nil
+    plan.fixup_count = 0
+    plan.estimated_size = 0
+    return true
+end
+]]
+
+local jit_stencil_plan_is_valid = moon.func [[
+jit_stencil_plan_is_valid(plan: ptr(StencilPlan)) -> bool
+    if plan == nil then return false end
+    if plan.node_count == 0 then return false end
+    return true
+end
+]]
+
+local jit_materialize_plan_start = moon.func [[
+jit_materialize_plan_start(plan: ptr(StencilPlan), slab: ptr(CodeSlab)) -> ptr(u8)
+    if plan == nil or slab == nil then return nil end
+    if plan.estimated_size == 0 then return nil end
+    if slab.used + plan.estimated_size > slab.size then return nil end
+    let code: ptr(u8) = slab.rw + slab.used
+    return code
+end
+]]
+
+local jit_materialize_plan_finish = moon.func [[
+jit_materialize_plan_finish(slab: ptr(CodeSlab), size: index) -> bool
+    if slab == nil then return false end
+    slab.used = slab.used + size
+    slab.generation = slab.generation + 1
+    return true
+end
+]]
+
 return {
     jit_init_virtual_state = jit_init_virtual_state,
     jit_build_projection_header = jit_build_projection_header,
@@ -370,4 +543,18 @@ return {
     jit_stencil_summary_within_policy = jit_stencil_summary_within_policy,
     jit_plan_metrics_from_plan = jit_plan_metrics_from_plan,
     jit_layout_stencil_plan = jit_layout_stencil_plan,
+    jit_init_entry_cell = jit_init_entry_cell,
+    jit_entry_cell_is_hot = jit_entry_cell_is_hot,
+    jit_entry_cell_tick = jit_entry_cell_tick,
+    jit_init_edge_cell = jit_init_edge_cell,
+    jit_entry_cell_link_unit = jit_entry_cell_link_unit,
+    jit_entry_cell_fallback = jit_entry_cell_fallback,
+    jit_record_trace_op = jit_record_trace_op,
+    jit_record_trace_guard = jit_record_trace_guard,
+    jit_record_trace_snapshot = jit_record_trace_snapshot,
+    jit_trace_is_recordable = jit_trace_is_recordable,
+    jit_stencil_plan_from_trace = jit_stencil_plan_from_trace,
+    jit_stencil_plan_is_valid = jit_stencil_plan_is_valid,
+    jit_materialize_plan_start = jit_materialize_plan_start,
+    jit_materialize_plan_finish = jit_materialize_plan_finish,
 }
