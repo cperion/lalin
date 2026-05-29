@@ -69,6 +69,27 @@ do
   assert_true(f.fact_transfer.killed_sig, "killed signature missing")
 end
 
+-- Mixed unary/binary integer loop body lowers as one abstract fragment. This
+-- keeps the new descriptor path from regressing to the old function-tile shape.
+do
+  local facts = {
+    Facts.fact("type", Facts.slot("R0"), "is_i64", true),
+    Facts.fact("type", Facts.slot("R3"), "is_i64", true),
+  }
+  local r = SSA.compile({
+    { op = "UNM", a = 1, b = 0 },
+    { op = "BNOT", a = 2, b = 1 },
+    { op = "MUL", a = 3, b = 3, c = 3 },
+    { op = "ADDI", a = 4, b = 3, c = 5 },
+  }, facts)
+  assert_true(r.ok, table.concat(r.errors or {}, "\n"))
+  local fr = StencilToFragment.generate(r, { facts = facts })
+  assert_true(fr.ok, table.concat(fr.errors or {}, "\n"))
+  assert_eq(fr.fragment.len, 4, "mixed fragment length")
+  assert_true(#(fr.fragment.slotmaps or {}) >= 4, "mixed fragment slotmaps")
+  assert_true(has_control(fr.fragment, "guard_fail"), "mixed fragment guard control reloc")
+end
+
 -- Boundary exit lowering is covered and projected.
 do
   local r = SSA.compile({ { op = "RETURN1", a = 1 } }, {})
