@@ -521,7 +521,13 @@ local function encode_body(cmds, b)
                 w4(buf, 0)
             end
             w4(buf, target_id)
-            w4(buf, 0) -- sig_id placeholder
+            if tag == T.CallIndirect then
+                local sid = b.sig_map and b.sig_map[id(cmd.sig)]
+                assert(sid ~= nil, "missing indirect call signature id: " .. tostring(id(cmd.sig)))
+                w4(buf, sid)
+            else
+                w4(buf, 0) -- direct/extern calls do not use the per-call sig_id slot
+            end
             emit_ids(buf, cmd.args, b)
         end
     end
@@ -625,6 +631,7 @@ function M.encode(program)
         b.func_map = func_map
         b.data_map = data_map
         b.extern_map = extern_map
+        b.sig_map = sig_idx
         local bytes = encode_body(b.cmds, b)
         body_data[i] = { bytes = bytes, offset = total_body }
         total_body = total_body + #bytes
