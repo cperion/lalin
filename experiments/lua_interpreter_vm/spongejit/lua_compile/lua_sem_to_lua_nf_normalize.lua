@@ -15,6 +15,7 @@ local function atom_to_nf(a, env)
   if a.kind == "SlotI64" then
     local cur = env[a.slot.id]
     if cur and cur.kind == "BoxI64TValue" then return cur.value end
+    if cur and cur.kind == "VarargTValue" then return NF.CanonAffineI64({ NF.I64Term(1, NF.VarargI64(cur.base, cur.index)) }, 0) end
     return NF.CanonAffineI64({ NF.I64Term(1, NF.SrcSlotI64(a.slot)) }, 0)
   elseif a.kind == "ImmI64" then
     return NF.CanonAffineI64({}, a.imm.value)
@@ -72,6 +73,7 @@ function M.f64(x, env)
   if x.kind == "SlotF64" then
     local cur = env[x.slot.id]
     if cur and cur.kind == "BoxF64TValue" then return cur.value end
+    if cur and cur.kind == "VarargTValue" then return NF.VarargF64(cur.base, cur.index) end
     return NF.ToF64(NF.SrcSlotTValue(x.slot))
   elseif x.kind == "ConstF64" then return NF.ConstF64(x.k)
   elseif x.kind == "ImmF64" then return NF.ImmF64(x.imm)
@@ -189,18 +191,12 @@ local function lower_observation(obs, state)
     local exit = NF.LoopRegionExit(next_exit_id(state), obs.region, Proj.for_exit(state.env))
     state.exits[#state.exits + 1] = exit; state.steps[#state.steps + 1] = NF.StepExit(exit)
     state.has_terminal_exit = true
-  elseif obs.kind == "CallProtocolObservation" then
-    local exit = NF.CallProtocolExit(next_exit_id(state), obs.pc, obs.base, obs.nargs, obs.nresults, obs.tail, Proj.for_exit(state.env))
-    state.exits[#state.exits + 1] = exit; state.steps[#state.steps + 1] = NF.StepExit(exit)
-    state.has_terminal_exit = true
-  elseif obs.kind == "CloseProtocolObservation" then
-    local exit = NF.CloseProtocolExit(next_exit_id(state), obs.pc, obs.slot, obs.tbc, Proj.for_exit(state.env))
-    state.exits[#state.exits + 1] = exit; state.steps[#state.steps + 1] = NF.StepExit(exit)
-    state.has_terminal_exit = true
-  elseif obs.kind == "GenericForProtocolObservation" then
-    local exit = NF.GenericForProtocolExit(next_exit_id(state), obs.pc, obs.base, obs.nresults, obs.offset, obs.phase, Proj.for_exit(state.env))
-    state.exits[#state.exits + 1] = exit; state.steps[#state.steps + 1] = NF.StepExit(exit)
-    state.has_terminal_exit = true
+  elseif obs.kind == "CallProtocolObservation"
+      or obs.kind == "CloseProtocolObservation"
+      or obs.kind == "GenericForProtocolObservation"
+      or obs.kind == "SetListProtocolObservation"
+      or obs.kind == "GetVargProtocolObservation" then
+    error("forbidden protocol observation reached LuaNF normalization: " .. tostring(obs.kind))
   end
 end
 
@@ -215,8 +211,6 @@ local function normalize_value(program)
       state.steps[#state.steps + 1] = NF.StepWrite(NF.ArrayWrite(M.address(eff.write.address, state.env), M.tvalue(eff.write.value, state.env)))
     elseif eff.kind == "DoWrite" and eff.write.kind == "UpvalueWrite" then
       state.steps[#state.steps + 1] = NF.StepWrite(NF.UpvalueWrite(eff.write.up, M.tvalue(eff.write.value, state.env)))
-    elseif eff.kind == "DoWrite" and eff.write.kind == "SetListWrite" then
-      state.steps[#state.steps + 1] = NF.StepWrite(NF.SetListWrite(eff.write.table, eff.write.narray, eff.write.start))
     elseif eff.kind == "Observe" then
       lower_observation(eff.observation, state)
     elseif eff.kind == "BarrierAfterStore" then

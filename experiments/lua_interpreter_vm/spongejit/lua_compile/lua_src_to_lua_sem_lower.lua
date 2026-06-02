@@ -479,27 +479,15 @@ add_decision("TESTSET", "semantic", function(ctx, op)
   ctx.effects[#ctx.effects + 1] = Sem.Observe(Sem.TestSetObservation(op.pc, ctx.env:slot_class(op.a), value, condition, B.offset(1)))
 end)
 
-add_decision("CALL", "semantic", function(ctx, op)
-  ctx.effects[#ctx.effects + 1] = Sem.Observe(Sem.CallProtocolObservation(op.pc, op.base, op.nargs, op.nresults, false))
-end)
-add_decision("TAILCALL", "semantic", function(ctx, op)
-  ctx.effects[#ctx.effects + 1] = Sem.Observe(Sem.CallProtocolObservation(op.pc, op.base, op.nargs, op.nresults, true))
-end)
-add_decision("CLOSE", "semantic", function(ctx, op)
-  ctx.effects[#ctx.effects + 1] = Sem.Observe(Sem.CloseProtocolObservation(op.pc, op.a, false))
-end)
-add_decision("TBC", "semantic", function(ctx, op)
-  ctx.effects[#ctx.effects + 1] = Sem.Observe(Sem.CloseProtocolObservation(op.pc, op.a, true))
-end)
-add_decision("TFORPREP", "semantic", function(ctx, op)
-  ctx.effects[#ctx.effects + 1] = Sem.Observe(Sem.GenericForProtocolObservation(op.pc, op.base, B.count(0), op.offset, "prep"))
-end)
-add_decision("TFORCALL", "semantic", function(ctx, op)
-  ctx.effects[#ctx.effects + 1] = Sem.Observe(Sem.GenericForProtocolObservation(op.pc, op.base, op.nresults, B.offset(0), "call"))
-end)
-add_decision("TFORLOOP", "semantic", function(ctx, op)
-  ctx.effects[#ctx.effects + 1] = Sem.Observe(Sem.GenericForProtocolObservation(op.pc, op.base, B.count(0), op.offset, "loop"))
-end)
+-- CFG reset: these are valid Lua operations but not accepted compiled success
+-- until represented as MoonCFG regions. Do not emit protocol observations.
+add_decision("CALL", "semantic", function(_ctx, op) return reject(op, "unsupported_semantic_case") end)
+add_decision("TAILCALL", "semantic", function(_ctx, op) return reject(op, "unsupported_semantic_case") end)
+add_decision("CLOSE", "semantic", function(_ctx, op) return reject(op, "unsupported_semantic_case") end)
+add_decision("TBC", "semantic", function(_ctx, op) return reject(op, "unsupported_semantic_case") end)
+add_decision("TFORPREP", "semantic", function(_ctx, op) return reject(op, "unsupported_semantic_case") end)
+add_decision("TFORCALL", "semantic", function(_ctx, op) return reject(op, "unsupported_semantic_case") end)
+add_decision("TFORLOOP", "semantic", function(_ctx, op) return reject(op, "unsupported_semantic_case") end)
 
 add_decision("GETUPVAL", "semantic", function(ctx, op)
   write_slot(ctx, op.a, Sem.UpvalueValue(op.up))
@@ -510,8 +498,8 @@ end)
 add_decision("CLOSURE", "semantic", function(ctx, op)
   write_slot(ctx, op.a, Sem.ClosureObject(Sem.ProtoClosure(op.proto)))
 end)
-add_decision("SETLIST", "semantic", function(ctx, op)
-  ctx.effects[#ctx.effects + 1] = Sem.DoWrite(Sem.SetListWrite(op.table, op.narray, op.start))
+add_decision("SETLIST", "semantic", function(_ctx, op)
+  return reject(op, "unsupported_semantic_case")
 end)
 local function write_vararg_results(ctx, op, dst, base, nresults)
   local n = nresults and nresults.value or 0
@@ -523,15 +511,13 @@ end
 add_decision("VARARG", "semantic", function(ctx, op)
   return write_vararg_results(ctx, op, op.a, B.slot(0), op.nresults)
 end)
-add_decision("GETVARG", "semantic", function(ctx, op)
-  return write_vararg_results(ctx, op, op.a, op.base, op.nresults)
+add_decision("GETVARG", "semantic", function(_ctx, op)
+  return reject(op, "unsupported_semantic_case")
 end)
 add_decision("VARARGPREP", "semantic", function(_ctx, _op)
   -- Frame-entry vararg setup marker. In this PVM output, frame setup is not a
-  -- hidden runtime action: every actual read is represented explicitly by
-  -- VARARG/GETVARG as VarargTValue(base,index). Therefore VARARGPREP carries no
-  -- MoonOut event or value by itself; variable-count reads still reject until a
-  -- multi-result ABI exists.
+  -- hidden runtime action: fixed OP_VARARG reads become VarargTValue(base,index).
+  -- GETVARG and open VARARG require MoonCFG region semantics before success.
 end)
 add_decision("ERRNNIL", "semantic", function(ctx, op)
   local subject = Fact.SrcSlot(op.a)

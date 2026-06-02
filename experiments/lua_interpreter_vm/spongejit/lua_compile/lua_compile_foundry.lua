@@ -2,13 +2,14 @@
 --
 -- This is an offline foundry boundary. It consumes opcode windows plus foundry
 -- evidence bundles, compiles them through LuaCompile.Unit -> LuaNF/LuaContract
--- -> MoonOut.Kernel, and dedupes by semantic representative key. It does not
+-- -> MoonCFG.Kernel, and dedupes by semantic representative key. It does not
 -- emit or adapt the retired native-runtime artifact APIs.
 
 local C = require("lua_compile")
 local FoundryEvidence = require("lua_compile.lua_fact_from_foundry_bundle")
 local NFKey = require("lua_compile.lua_nf_key")
 local ContractKey = require("lua_compile.lua_contract_key")
+local CFGKey = require("lua_compile.moon_cfg_key")
 local MoonEmit = require("lua_compile.moon_out_emit")
 local Diagnostics = require("lua_compile.diagnostics")
 
@@ -302,8 +303,10 @@ end
 
 local function kernel_summary(kernel)
   local params = {}
-  for _, p in ipairs((kernel and kernel.params) or {}) do params[#params + 1] = { name = p.name, moon_type = p.moon_type } end
-  return { kind = kernel and kernel.kind and kernel.kind.kind or kernel and kernel.kind, params = params }
+  for _, p in ipairs((kernel and kernel.params) or {}) do
+    params[#params + 1] = { name = p.name and p.name.text or p.name, moon_type = p.type and p.type.moon_type or p.moon_type }
+  end
+  return { kind = kernel and kernel.kind and kernel.kind.kind or kernel and kernel.kind, params = params, blocks = kernel and kernel.body and #(kernel.body.blocks or {}) or 0 }
 end
 
 function M.compile_window(ops, bundle, opts)
@@ -320,27 +323,29 @@ function M.compile_window(ops, bundle, opts)
   local contract = nf_result.product.contract
   local normal_key = NFKey.key(nf)
   local ckey = ContractKey.key(contract)
-  local rep_key = normal_key .. "\n-- LuaContract --\n" .. ckey
 
   local moon_result = C.compile_to_moon_kernel(unit)
   if moon_result.kind == "Reject" then
     return { ok = false, reason = rejection_reason(moon_result.rejection), rejection = moon_result.rejection, source_ops = copy_array(ops) }
   end
   local kernel = moon_result.product.kernel
+  local cfg_key = CFGKey.key(kernel)
+  local rep_key = cfg_key .. "\n-- LuaContract --\n" .. ckey
   local ok, source_or_err = pcall(MoonEmit.emit, kernel, { name = opts.kernel_name or "lua_compile_foundry_kernel" })
   if not ok then
-    return { ok = false, reason = "moon_out_emit_failed", error = tostring(source_or_err), source_ops = copy_array(ops) }
+    return { ok = false, reason = "moon_cfg_emit_failed", error = tostring(source_or_err), source_ops = copy_array(ops) }
   end
 
   return {
     ok = true,
     representative_key = rep_key,
+    moon_cfg_key = cfg_key,
     normal_form_key = normal_key,
     contract_key = ckey,
     normal_form = nf,
     contract = contract,
-    moon_out_kernel = kernel,
-    moon_out_kernel_summary = kernel_summary(kernel),
+    moon_cfg_kernel = kernel,
+    moon_cfg_kernel_summary = kernel_summary(kernel),
     moonlift_source = source_or_err,
     source_ops = copy_array(ops),
     fact_bundle = copy_array(bundle),
@@ -389,9 +394,10 @@ function M.run_windows(windows, config)
           rep = {
             representative_id = #reps + 1,
             representative_key = cr.representative_key,
+            moon_cfg_key = cr.moon_cfg_key,
             normal_form_key = cr.normal_form_key,
             contract_key = cr.contract_key,
-            moon_out_kernel = cr.moon_out_kernel_summary,
+            moon_cfg_kernel = cr.moon_cfg_kernel_summary,
             moonlift_source = cr.moonlift_source,
             aliases = {},
             count = 0,
@@ -403,9 +409,10 @@ function M.run_windows(windows, config)
         add_alias(rep, ops, bundle, w.count)
         map_entry.status = "ok"
         map_entry.representative_key = cr.representative_key
+        map_entry.moon_cfg_key = cr.moon_cfg_key
         map_entry.normal_form_key = cr.normal_form_key
         map_entry.contract_key = cr.contract_key
-        map_entry.moon_out_kind = cr.moon_out_kernel_summary and cr.moon_out_kernel_summary.kind
+        map_entry.moon_cfg_kind = cr.moon_cfg_kernel_summary and cr.moon_cfg_kernel_summary.kind
       else
         stats.rejected = stats.rejected + 1
         local reason = tostring(cr.reason or "Rejected")
@@ -474,12 +481,13 @@ local function representative_index(result)
   for _, r in ipairs(result.representatives or {}) do
     out.representatives[#out.representatives + 1] = {
       representative_id = r.representative_id,
+      moon_cfg_key = r.moon_cfg_key,
       normal_form_key = r.normal_form_key,
       contract_key = r.contract_key,
       representative_key = r.representative_key,
       count = r.count,
       aliases = #(r.aliases or {}),
-      moon_out_kernel = r.moon_out_kernel,
+      moon_cfg_kernel = r.moon_cfg_kernel,
       moonlift_source_bytes = #(r.moonlift_source or ""),
     }
   end
@@ -520,15 +528,15 @@ function M.write_artifacts(result, out_dir)
   local s = result.stats or {}
   md[#md + 1] = string.format("Windows: **%d**; compiles: **%d**; ok: **%d**; rejected: **%d**; unique representatives: **%d**", s.windows or 0, s.compiles or 0, s.ok or 0, s.rejected or 0, s.unique_representatives or 0)
   md[#md + 1] = ""
-  md[#md + 1] = "Artifacts are `LuaNF + LuaContract` semantic representatives with MoonOut/Moonlift source. Source opcode windows are aliases only."
+  md[#md + 1] = "Artifacts are `MoonCFG + LuaContract` semantic representatives with MoonCFG/Moonlift source. Source opcode windows are aliases only."
   md[#md + 1] = ""
-  md[#md + 1] = "| Rep | Count | Aliases | MoonOut kind | Source preview |"
+  md[#md + 1] = "| Rep | Count | Aliases | MoonCFG kind | Source preview |"
   md[#md + 1] = "|---:|---:|---:|---|---|"
   for i, r in ipairs(result.representatives or {}) do
     if i > 40 then break end
     local first = r.aliases and r.aliases[1]
     local preview = first and ops_key(first.source_ops):sub(1, 80) or ""
-    md[#md + 1] = string.format("| %d | %d | %d | `%s` | `%s` |", i, r.count or 0, #(r.aliases or {}), tostring(r.moon_out_kernel and r.moon_out_kernel.kind or "?"), preview:gsub("`", "'"))
+    md[#md + 1] = string.format("| %d | %d | %d | `%s` | `%s` |", i, r.count or 0, #(r.aliases or {}), tostring(r.moon_cfg_kernel and r.moon_cfg_kernel.kind or "?"), preview:gsub("`", "'"))
   end
   md[#md + 1] = ""
   write_file(out_dir .. "/lua_compile_representatives.md", table.concat(md, "\n"))

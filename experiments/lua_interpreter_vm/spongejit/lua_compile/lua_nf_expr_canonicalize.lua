@@ -10,6 +10,7 @@ local function atom_key(a)
   if a.kind == "SrcSlotI64" then return "S" .. a.slot.id end
   if a.kind == "ImmI64" then return "I" .. a.imm.value end
   if a.kind == "ConstI64" then return "K" .. a.k.id end
+  if a.kind == "VarargI64" then return "V" .. a.base.id .. ":" .. a.index.value end
   return tostring(a.kind)
 end
 

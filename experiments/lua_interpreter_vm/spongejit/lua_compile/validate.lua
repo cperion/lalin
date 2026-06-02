@@ -68,9 +68,15 @@ function M.lua_contract(contract)
   return #errors == 0, errors
 end
 
+function M.moon_cfg_kernel(kernel)
+  local errors = {}
+  if pvm.classof(kernel) ~= T.MoonCFG.Kernel then add(errors, "expected MoonCFG.Kernel") end
+  return #errors == 0, errors
+end
+
 function M.moon_out_kernel(kernel)
   local errors = {}
-  if pvm.classof(kernel) ~= T.MoonOut.Kernel then add(errors, "expected MoonOut.Kernel") end
+  if pvm.classof(kernel) ~= T.MoonOut.Kernel then add(errors, "expected legacy MoonOut.Kernel") end
   return #errors == 0, errors
 end
 

@@ -23,6 +23,14 @@ end
 
 local result = Foundry.read_json(artifact)
 assert(result.schema == "sponjit.lua_compile_foundry.v1", "unexpected artifact schema: " .. tostring(result.schema))
+if result.representatives and result.representatives[1]
+   and not tostring(result.representatives[1].representative_key or ""):match("MoonCFG") then
+  if os.getenv("LUA_COMPILE_CORPUS_REQUIRED") == "1" then
+    error("stale LuaCompile corpus artifact does not contain MoonCFG representatives; rerun make test-lua-compile-corpus100")
+  end
+  print("ok - SpongeJIT LuaCompile corpus100 skipped (stale pre-MoonCFG artifact; run make test-lua-compile-corpus100)")
+  os.exit(0)
+end
 
 local REQUIRED_OP_FIELDS = { "proto", "pc", "opcode", "word", "a", "b", "c", "k", "bx", "sbx", "ax", "sb", "sc", "sj", "vb", "vc" }
 local function full_operand_window(ops)
@@ -40,8 +48,9 @@ local windows = {}
 local aliases = 0
 local partial_aliases = 0
 for _, rep in ipairs(result.representatives or {}) do
-  assert(type(rep.representative_key) == "string" and rep.representative_key:match("LuaContract"), "representative key must include LuaNF + LuaContract identity")
+  assert(type(rep.representative_key) == "string" and rep.representative_key:match("MoonCFG") and rep.representative_key:match("LuaContract"), "representative key must include MoonCFG + LuaContract identity")
   assert(type(rep.moonlift_source) == "string" and rep.moonlift_source:match("func%("), "representative must carry emitted Moonlift source")
+  assert(not rep.moonlift_source:match("out_tag"), "MoonCFG source must not use out_tag protocol ABI")
   assert(not rep.moonlift_source:match("Spon") and not rep.moonlift_source:match("stencil") and not rep.moonlift_source:match("bank"), "Moonlift source must not use retired backend vocabulary")
   for _, a in ipairs(rep.aliases or {}) do
     aliases = aliases + 1

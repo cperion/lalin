@@ -9,7 +9,8 @@
 --   LuaNF       answers: what is the least equivalent semantic computation?
 --   LuaContract answers: what facts/exits/projections are required/transferred?
 --   LuaPlace    answers: where may already-reduced values live? (optional if Moonlift/Cranelift owns placement)
---   MoonOut     answers: what Moonlift-level kernel boundary is emitted.
+--   MoonCFG     answers: what explicit Moonlift CFG is emitted.
+--   MoonOut     legacy/quarantined name; accepted kernels use MoonCFG.
 --
 -- Source opcode mechanics are code-shaping in LuaSrc and must be dead after LuaSem.
 -- Physical residency is not semantic identity.
@@ -31,6 +32,7 @@ module LuaSrc {
     BinOp = Add | Sub | Mul | Mod | Pow | Div | IDiv | BAnd | BOr | BXor | Shl | Shr
     UnOp  = Unm | BNot | Not | Len
     CmpOp = Eq | Lt | Le | EqI | LtI | LeI | GtI | GeI | EqK
+    GenericForPhase = GenericForPrep | GenericForCall | GenericForLoop
 
     Op = MOVE(LuaSrc.Pc pc, LuaSrc.Slot a, LuaSrc.Slot b) unique
 
@@ -123,7 +125,7 @@ module LuaSrc {
        | SETLIST(LuaSrc.Pc pc, LuaSrc.Slot table, LuaSrc.Count narray, LuaSrc.Count start) unique
        | CLOSURE(LuaSrc.Pc pc, LuaSrc.Slot a, LuaSrc.KRef proto) unique
        | VARARG(LuaSrc.Pc pc, LuaSrc.Slot a, LuaSrc.Count nresults) unique
-       | GETVARG(LuaSrc.Pc pc, LuaSrc.Slot a, LuaSrc.Slot base, LuaSrc.Count nresults) unique
+       | GETVARG(LuaSrc.Pc pc, LuaSrc.Slot a, LuaSrc.Slot base, LuaSrc.Slot index) unique
        | ERRNNIL(LuaSrc.Pc pc, LuaSrc.Slot a) unique
        | VARARGPREP(LuaSrc.Pc pc, LuaSrc.Count fixed_params) unique
        | EXTRAARG(LuaSrc.Pc pc, LuaSrc.Ax ax) unique
@@ -324,7 +326,6 @@ module LuaSem {
           | FieldWrite(LuaSem.Address address, LuaSem.TValue value) unique
           | ArrayWrite(LuaSem.Address address, LuaSem.TValue value) unique
           | UpvalueWrite(LuaSrc.UpRef up, LuaSem.TValue value) unique
-          | SetListWrite(LuaSrc.Slot table, LuaSrc.Count narray, LuaSrc.Count start) unique
 
     Guard = FactGuard(LuaFact.Subject subject,
                       LuaFact.Predicate predicate,
@@ -343,7 +344,9 @@ module LuaSem {
                 | CallObservation(LuaSrc.Pc pc, LuaSem.TValue callee) unique
                 | CallProtocolObservation(LuaSrc.Pc pc, LuaSrc.Slot base, LuaSrc.Count nargs, LuaSrc.Count nresults, boolean tail) unique
                 | CloseProtocolObservation(LuaSrc.Pc pc, LuaSrc.Slot slot, boolean tbc) unique
-                | GenericForProtocolObservation(LuaSrc.Pc pc, LuaSrc.Slot base, LuaSrc.Count nresults, LuaSrc.Offset offset, string phase) unique
+                | GenericForProtocolObservation(LuaSrc.Pc pc, LuaSrc.Slot base, LuaSrc.Count nresults, LuaSrc.Offset offset, LuaSrc.GenericForPhase phase) unique
+                | SetListProtocolObservation(LuaSrc.Pc pc, LuaSrc.Slot table, LuaSrc.Slot first_value, LuaSrc.Count narray, LuaSrc.Count start) unique
+                | GetVargProtocolObservation(LuaSrc.Pc pc, LuaSrc.Slot dst, LuaSrc.Slot base, LuaSrc.Slot index) unique
                 | ReturnObservation(LuaSrc.Pc pc, LuaSem.TValue value) unique
                 | Return0Observation(LuaSrc.Pc pc) unique
                 | JumpObservation(LuaSrc.Pc pc, LuaSrc.Offset offset) unique
@@ -411,6 +414,7 @@ module LuaNF {
             | ConstI64(LuaSrc.KRef k) unique
             | UnboxI64(LuaNF.TValue value) unique
             | TableLenI64(LuaNF.Table table) unique
+            | VarargI64(LuaSrc.Slot base, LuaSrc.Count index) unique
             | RefI64(LuaNF.ValueId id) unique
 
     I64Term = (number coefficient, LuaNF.I64Atom atom) unique
@@ -427,6 +431,7 @@ module LuaNF {
         | CanonBitNotI64(LuaNF.I64 value) unique
 
     F64 = RefF64(LuaNF.ValueId id) unique
+        | VarargF64(LuaSrc.Slot base, LuaSrc.Count index) unique
         | ConstF64(LuaSrc.KRef k) unique
         | ImmF64(LuaSrc.Imm imm) unique
         | ToF64(LuaNF.TValue value) unique
@@ -467,7 +472,6 @@ module LuaNF {
           | FieldWrite(LuaNF.Address address, LuaNF.TValue value) unique
           | ArrayWrite(LuaNF.Address address, LuaNF.TValue value) unique
           | UpvalueWrite(LuaSrc.UpRef up, LuaNF.TValue value) unique
-          | SetListWrite(LuaSrc.Slot table, LuaSrc.Count narray, LuaSrc.Count start) unique
 
     Barrier = BarrierAfterStore(LuaNF.TValue owner, LuaNF.TValue value, LuaFact.PayloadLease payload) unique
 
@@ -522,8 +526,21 @@ module LuaNF {
                                   LuaSrc.Slot base,
                                   LuaSrc.Count nresults,
                                   LuaSrc.Offset offset,
-                                  string phase,
+                                  LuaSrc.GenericForPhase phase,
                                   LuaNF.Projection* projection) unique
+         | SetListProtocolExit(LuaNF.ExitId id,
+                               LuaSrc.Pc pc,
+                               LuaSrc.Slot table,
+                               LuaSrc.Slot first_value,
+                               LuaSrc.Count narray,
+                               LuaSrc.Count start,
+                               LuaNF.Projection* projection) unique
+         | GetVargProtocolExit(LuaNF.ExitId id,
+                               LuaSrc.Pc pc,
+                               LuaSrc.Slot dst,
+                               LuaSrc.Slot base,
+                               LuaSrc.Slot index,
+                               LuaNF.Projection* projection) unique
 
     Guard = FactGuard(LuaFact.Subject subject,
                       LuaFact.Predicate predicate,
@@ -601,27 +618,122 @@ module LuaPlace {
             LuaPlace.ProjectionPlan* projections) unique
 }
 
-module MoonOut {
-    -- Direct Moonlift lowering target. This is an interface vocabulary, not a
-    -- physical register allocation vocabulary.
-    AbiValue = ExecCtx unique
-             | StackPtr unique
-             | ConstPtr unique
-             | UpvaluePtr unique
-             | PrimitiveTable unique
+module MoonCFG {
+    Name = (string text) unique
+    TypeRef = (string moon_type) unique
+    KernelId = (MoonCFG.Name name) unique
+    RegionId = (MoonCFG.Name name) unique
+    BlockId = (MoonCFG.Name name) unique
+    ContId = (MoonCFG.Name name) unique
 
     KernelKind = InlineSpan | FunctionFastPath
 
-    Param = (string name, string moon_type) unique
+    ParamMode = ValueParam | ReadonlyPtr | WriteonlyPtr | NoaliasPtr
+    Param = (MoonCFG.Name name, MoonCFG.TypeRef type, MoonCFG.ParamMode mode) unique
 
-    Projection = (LuaNF.Exit exit,
-                  LuaNF.Projection* obligations) unique
+    ContinuationKind = LocalContinuation | RegionOk | RegionError | RegionYield | RegionGuardFail | KernelExit
+    Continuation = (MoonCFG.ContId id, MoonCFG.Param* params, MoonCFG.ContinuationKind kind) unique
 
-    Kernel = (MoonOut.KernelKind kind,
-              MoonOut.Param* params,
-              LuaNF.Program normal_form,
-              LuaContract.Contract contract,
-              MoonOut.Projection* projections) unique
+    RegionRef = (MoonCFG.RegionId id) unique
+    BlockRef = (MoonCFG.BlockId id) unique
+    ContRef = (MoonCFG.ContId id) unique
+
+    Const = I64Const(number value) unique
+          | F64Const(number value) unique
+          | BoolConst(boolean value) unique
+          | StringConst(string value) unique
+
+    Place = StackSlot(number index) unique
+          | ConstSlot(number index) unique
+          | UpvalueSlot(number index) unique
+          | VarargSlot(number index) unique
+          | Temp(MoonCFG.Name name) unique
+          | FrameTop unique
+          | ExecCtx unique
+          | TableField(MoonCFG.Value table, MoonCFG.Value key) unique
+          | ArrayElement(MoonCFG.Value table, MoonCFG.Value index) unique
+
+    Value = PlaceValue(MoonCFG.Place place) unique
+          | ConstValue(MoonCFG.Const const) unique
+          | ParamValue(MoonCFG.Name name) unique
+          | UnitValue unique
+
+    PrimOp = AddI64 | SubI64 | MulI64 | DivF64 | ModI64 | IDivI64
+           | Eq | Lt | Le | Not | Truthy
+           | LoadTag | LoadArrayLen | RawGet | RawSet
+           | CheckNil | CheckNonNil
+           | StringLen | StringConcatPrimitive
+
+    Expr = ValueExpr(MoonCFG.Value value) unique
+         | Primitive(MoonCFG.PrimOp op, MoonCFG.Value* args) unique
+         | Load(MoonCFG.Place place) unique
+         | AddressOf(MoonCFG.Place place) unique
+         | Convert(MoonCFG.TypeRef type, MoonCFG.Value value) unique
+
+    Arg = (MoonCFG.Name name, MoonCFG.Value value) unique
+
+    TypeTest = IsNil | IsBool | IsI64 | IsF64 | IsString | IsTable
+             | IsClosure | IsFunction | IsThread | IsUserdata
+
+    NumericTest = NumEq | NumLt | NumLe | NumGt | NumGe | NumNonZero
+
+    Metamethod = Add | Sub | Mul | Mod | Pow | Div | IDiv | Band | Bor | Bxor
+               | Shl | Shr | Unm | Bnot | EqMM | LtMM | LeMM | Index | NewIndex
+               | Call | Len | Concat | Close
+
+    Choice = BoolChoice(MoonCFG.Value value) unique
+           | NilChoice(MoonCFG.Value value) unique
+           | TypeChoice(MoonCFG.Value value, MoonCFG.TypeTest test) unique
+           | NumericChoice(MoonCFG.NumericTest test, MoonCFG.Value left, MoonCFG.Value right) unique
+           | EqualityChoice(MoonCFG.Value left, MoonCFG.Value right) unique
+           | MetamethodPresentChoice(MoonCFG.Value value, MoonCFG.Metamethod metamethod) unique
+           | GuardChoice(LuaContract.FactUse* facts) unique
+
+    ExitProtocol = ReturnExit | ErrorExit | GuardDeoptExit | YieldExit | UnsupportedExit
+
+    Projection = ValueKind | Payload | ArrayLength | Shape | Metatable
+
+    ContBinding = (MoonCFG.ContRef continuation, MoonCFG.BlockRef target) unique
+
+    Op = Let(MoonCFG.Place dst, MoonCFG.Expr expr) unique
+       | Assign(MoonCFG.Place dst, MoonCFG.Value src) unique
+       | Store(MoonCFG.Place dst, MoonCFG.Value src) unique
+       | EmitRegion(MoonCFG.RegionRef region, MoonCFG.Arg* args, MoonCFG.ContBinding* continuations) unique
+       | Project(MoonCFG.Place dst, MoonCFG.Value src, MoonCFG.Projection projection) unique
+       | Assert(MoonCFG.Expr condition, MoonCFG.ExitProtocol on_fail) unique
+
+    SwitchArm = (MoonCFG.Const match, MoonCFG.BlockRef target) unique
+
+    Terminator = Jump(MoonCFG.BlockRef target, MoonCFG.Arg* args) unique
+               | Branch(MoonCFG.Choice choice, MoonCFG.BlockRef if_true, MoonCFG.BlockRef if_false) unique
+               | Switch(MoonCFG.Value value, MoonCFG.SwitchArm* arms, MoonCFG.BlockRef default) unique
+               | Continue(MoonCFG.ContRef continuation, MoonCFG.Arg* args) unique
+               | Return(MoonCFG.Value* values) unique
+               | Exit(MoonCFG.ExitProtocol protocol, MoonCFG.Value* args) unique
+               | Unreachable unique
+
+    Block = (MoonCFG.BlockId id, MoonCFG.Param* params, MoonCFG.Op* ops, MoonCFG.Terminator terminator) unique
+
+    Region = (MoonCFG.RegionId id,
+              MoonCFG.Param* params,
+              MoonCFG.Continuation* continuations,
+              MoonCFG.BlockId entry,
+              MoonCFG.Block* blocks) unique
+
+    Kernel = (MoonCFG.KernelId id,
+              MoonCFG.KernelKind kind,
+              MoonCFG.Param* params,
+              MoonCFG.TypeRef* returns,
+              MoonCFG.Region body,
+              LuaContract.Contract contract) unique
+
+    Module = (MoonCFG.Region* regions, MoonCFG.Kernel* kernels) unique
+}
+
+module MoonOut {
+    -- Legacy compatibility vocabulary. Accepted LuaCompile kernels are
+    -- MoonCFG.Kernel values; this wrapper exists only for old require paths.
+    Kernel = (MoonCFG.Kernel cfg) unique
 }
 
 module LuaCompile {
@@ -630,7 +742,7 @@ module LuaCompile {
 
     Product = NormalForm(LuaNF.Program nf,
                          LuaContract.Contract contract) unique
-            | MoonKernel(MoonOut.Kernel kernel) unique
+            | MoonKernel(MoonCFG.Kernel kernel) unique
 
     Result = Ok(LuaCompile.Product product) unique
            | Reject(LuaSem.Rejection rejection) unique
