@@ -1,7 +1,16 @@
 # SponJIT Shadow Simulator
 
-Non-executing economic simulator for SponJIT. It validates absorber economics before
-building native codegen.
+**Status:** older non-executing economic simulator. It is useful historical analysis, but it is not the current maintained SpongeJIT foundry/runtime pipeline.
+
+Current maintained SponJIT docs live at:
+
+- `../../SPONJIT_ARCHITECTURE.md`
+- `../../SPONJIT_FOUNDRY_SSA.md`
+- `../../SPONJIT_TIER2_PLANNER_SPEC.md`
+- `../../SPONJIT_COPY_LINK_PATCH.md`
+- `../../SPONJIT_RUNTIME_DESIGN.md`
+
+The simulator models absorber economics before native stencil materialization exists.
 
 It models:
 

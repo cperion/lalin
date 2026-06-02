@@ -1,0 +1,16 @@
+{
+  "runId": "run-ae6063c5",
+  "workflowId": "wf-sponjit-copy-link-patch",
+  "agent": "planner",
+  "task": "Plan the complete implementation for making SponJIT no-residual and semantically truthful. The end state is: residual is not a runtime/design category; unsupported opcode/fact cases are not accepted as native stencils; L0 coverage means real semantic coverage; the selector cannot rely on residual stubs for progress; Copy-Link-Patch materialization links only semantically implemented stencils; missing opcode coverage is implemented cleanly in the foundry/native surface rather than hidden behind residuals. Use the accumulated scout and knowledge-builder context. Produce a comprehensive code-level implementation plan across docs, SSA, Stencil IR, native lowering, bank generation, selector, tests, generated artifacts, metrics, and opcode-family coverage. Include sequencing, temporary compatibility gates if unavoidable, verification commands, and final invariants. Do not implement.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-ae6063c5.jsonl",
+  "status": "completed",
+  "created": "2026-05-31T19:35:46.935Z",
+  "updated": "2026-05-31T19:40:14.095Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "## Goal\n\nMake SponJIT no-residual and semantically truthful: unsupported cases are rejected or implemented exactly, never represented as runtime residual stubs.\n\n## Plan\n\n1. **Write the no-residual contract first**\n   - Update docs to define three legal outcomes only:\n     - semantically exact inline native stencil\n     - semantically exact helper-backed native stencil\n     - compile/selection rejection\n   - Define that `boundary` is legal only for real VM control transfer, not unsupported fallb",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 30
+}

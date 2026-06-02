@@ -1,38 +1,19 @@
-## SponJIT Stencil Library
+# Archived SponJIT Shadow Stencil Notes
 
-Precompiled native-code stencils for the copy-and-patch JIT materialization path.
+**Status:** archived design notes for the old shadow simulator. This directory is not the current maintained SpongeJIT bank pipeline.
 
-### Files
+The current maintained SpongeJIT direction is:
 
-- `stencil_abi.h` — C-side stencil ABI: function signatures, hole descriptor format,
-  artifact template structure, residency convention, and the runtime materialization
-  API (`sponjit_materialize`, `sponjit_patch`, `sponjit_free_artifact`).
-
-### Model
-
-Each SSA node (from `foundry_ssa.lua`) maps to exactly one stencil. The stencil
-is a small C function compiled by GCC/Clang into position-independent machine code.
-The build system extracts `.text` bytes and relocation records. The foundry
-concatenates stencils into artifact templates with patch-hole metadata.
-
-### Residency convention
-
-```
-rax  = current tagged TValue
-rcx  = current unboxed i64 accumulator
-rdx  = scratch
-rbx  = Lua stack base
-rsi  = constants table
-rdi  = scratch (table/upvalue ptr)
+```text
+semantic SSA -> Stencil IR -> abstract native-stencil descriptors -> Tier 2 online fusion planner -> future native stencil materializer
 ```
 
-### Implementation status
+Do not treat the old shadow stencil vocabulary, C ABI sketches, or materialization API names in this directory as current implementation contracts.
 
-- [x] Stencil vocabulary designed (25 base stencils + 3 fused)
-- [x] C ABI header with full signatures
-- [x] Lua-side stencil model + lowering pass (`stencil_model.lua`)
-- [x] Tests pass: SSA → stencil cover → template
-- [ ] GCC-compiled stencil `.o` files
-- [ ] Build system extraction of `.text` + relocs
-- [ ] Runtime `sponjit_materialize` / `sponjit_patch` implementation
-- [ ] Benchmark harness
+Current contracts live in:
+
+- `experiments/lua_interpreter_vm/SPONJIT_ARCHITECTURE.md`
+- `experiments/lua_interpreter_vm/SPONJIT_FOUNDRY_SSA.md`
+- `experiments/lua_interpreter_vm/SPONJIT_TIER2_PLANNER_SPEC.md`
+- `experiments/lua_interpreter_vm/SPONJIT_COPY_LINK_PATCH.md`
+- `experiments/lua_interpreter_vm/SPONJIT_RUNTIME_DESIGN.md`

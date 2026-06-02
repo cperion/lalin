@@ -1,0 +1,16 @@
+{
+  "runId": "run-39f321d2",
+  "workflowId": "wf-sponjit-copy-link-patch",
+  "agent": "documenter",
+  "task": "Document the implemented native byte-stencil milestone. Faithfully capture only what was done and verified: new x86-64 native byte emitter, descriptor/ABI extensions, build_bank byte arrays/accessors, default full L1 native bank stats, tests/logs, and remaining gaps. Do not add new analysis or proposals.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-39f321d2.jsonl",
+  "status": "completed",
+  "created": "2026-05-31T14:27:09.243Z",
+  "updated": "2026-05-31T14:31:38.353Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "# Native Byte-Stencil Milestone Documentation\n\n## Goal\n\nRecord the implemented SpongeJIT milestone that moves the maintained foundry output from abstract metadata-only stencil descriptors to a native x86-64 byte-stencil bank for the supported first surface, including descriptor/ABI extensions, generated bank byte arrays/accessors, default full-bank build stats, tests/log artifacts, and remaining non-implemented runtime gaps.\n\n## Incentives\n\nThis milestone addresses the prior gap where SpongeJIT ",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 95
+}

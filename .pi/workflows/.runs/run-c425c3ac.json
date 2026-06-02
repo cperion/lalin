@@ -1,0 +1,16 @@
+{
+  "runId": "run-c425c3ac",
+  "workflowId": "wf-sponjit-copy-link-patch",
+  "agent": "knowledge-builder",
+  "task": "Analyze the scout findings about SponJIT residuals and opcode coverage. Produce second-order observations only: tensions, invariants, hidden coupling, design contradictions, migration risks, semantic boundaries, and what facts imply for a no-residual Copy-Link-Patch architecture. Do not propose solutions or implementation approaches yet.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-c425c3ac.jsonl",
+  "status": "completed",
+  "created": "2026-05-31T19:28:39.545Z",
+  "updated": "2026-05-31T19:29:18.146Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "### What Matters Most for This Problem\n\n- **Opcode coverage truthfulness:** “native L0 coverage” currently means byte-body coverage, not semantic coverage.\n- **Residual as semantic boundary:** residual is the main mechanism preserving correctness for unsupported or insufficiently proven opcodes.\n- **No-residual meaning:** removing residuals means removing the project’s dominant fallback semantics, not just deleting an exit kind.\n- **Fact-flow implications:** residual exits currently kill facts a",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 5
+}

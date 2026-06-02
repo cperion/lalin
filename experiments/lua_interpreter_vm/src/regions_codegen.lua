@@ -11,6 +11,7 @@ for k, v in pairs(const.Tag) do V["TAG_" .. k] = moon.int(v) end
 for k, v in pairs(const.TM) do V["TM_" .. k] = moon.int(v) end
 for k, v in pairs(pconst.ParseErr) do V["PERR_" .. k] = moon.int(v) end
 for k, v in pairs(pconst.ExpKind) do V["EXP_" .. k] = moon.int(v) end
+V.SIZE_STRING = moon.int(40)
 
 local emit_compile_error = host.region(V) [[
 region emit_compile_error(cu: ptr(CompileUnit), code: i32, token: u16;
@@ -20,6 +21,20 @@ entry start()
     let e: CompileError = {
         code = code,
         pos = { offset = lx.pos, line = lx.line, col = lx.col },
+        token = token
+    }
+    jump error(err = e)
+end
+end
+]]
+
+local emit_compile_error_at_span = host.region(V) [[
+region emit_compile_error_at_span(cu: ptr(CompileUnit), code: i32, token: u16, span: SourceSpan;
+                                  error: cont(err: CompileError))
+entry start()
+    let e: CompileError = {
+        code = code,
+        pos = { offset = span.start, line = span.line, col = span.col },
         token = token
     }
     jump error(err = e)
@@ -135,6 +150,303 @@ end
 block too_many(err: CompileError)
     jump limit_error(err = err)
 end
+end
+]]
+
+local mark_regs = host.region(V) [[
+region mark_regs(cu: ptr(CompileUnit); mark: cont(r: u16))
+entry start()
+    jump mark(r = cu.current.freereg)
+end
+end
+]]
+
+local release_regs_to = host.region(V) [[
+region release_regs_to(cu: ptr(CompileUnit), mark: u16; ok: cont())
+entry start()
+    cu.current.freereg = mark
+    jump ok()
+end
+end
+]]
+
+local arena_alloc_bytes = host.region(V) [[
+region arena_alloc_bytes(cu: ptr(CompileUnit), size: index, align: u32;
+                         ok: cont(ptr: ptr(u8)), oom: cont())
+entry start()
+    var pos: index = cu.arena.pos
+    let mask: index = as(index, align) - 1
+    if mask ~= 0 then
+        if (pos & mask) ~= 0 then pos = (pos + mask) & (as(index, 0) - as(index, align)) end
+    end
+    let end_pos: index = pos + size
+    if end_pos > cu.arena.cap then
+        cu.arena.overflowed = 1
+        jump oom()
+    end
+    let ptr: ptr(u8) = cu.arena.base + pos
+    cu.arena.pos = end_pos
+    jump ok(ptr = ptr)
+end
+end
+]]
+
+local constant_push = host.region(V) [[
+region constant_push(cu: ptr(CompileUnit), value: Value;
+                     ok: cont(idx: index), oom: cont())
+entry start()
+    let fs: ptr(FuncBuilder) = cu.current
+    if fs.constants.data == nil then jump oom() end
+    if fs.constants.len >= fs.constants.cap then jump oom() end
+    let idx: index = fs.constants.len
+    fs.constants.data[idx] = value
+    fs.constants.len = idx + 1
+    jump ok(idx = idx)
+end
+end
+]]
+
+local upvaldesc_push = host.region(V) [[
+region upvaldesc_push(cu: ptr(CompileUnit), desc: UpValDesc;
+                      ok: cont(idx: index), oom: cont())
+entry start()
+    let fs: ptr(FuncBuilder) = cu.current
+    if fs.upvals.data == nil then jump oom() end
+    if fs.upvals.len >= fs.upvals.cap then jump oom() end
+    let idx: index = fs.upvals.len
+    fs.upvals.data[idx] = desc
+    fs.upvals.len = idx + 1
+    jump ok(idx = idx)
+end
+end
+]]
+
+local proto_ptr_push = host.region(V) [[
+region proto_ptr_push(cu: ptr(CompileUnit), proto: ptr(Proto);
+                      ok: cont(idx: index), oom: cont())
+entry start()
+    let fs: ptr(FuncBuilder) = cu.current
+    if fs.children.data == nil then jump oom() end
+    if fs.children.len >= fs.children.cap then jump oom() end
+    let idx: index = fs.children.len
+    fs.children.data[idx] = proto
+    fs.children.len = idx + 1
+    jump ok(idx = idx)
+end
+end
+]]
+
+local ensure_env_upvalue = host.region(V) [[
+region ensure_env_upvalue(cu: ptr(CompileUnit); ok: cont(), oom: cont())
+entry start()
+    if cu.current.upvals.len > 0 then jump ok() end
+    let desc: UpValDesc = { name = nil, instack = 1, index = 0 }
+    emit upvaldesc_push(cu, desc; ok = made, oom = out_of_mem)
+end
+block made(idx: index) jump ok() end
+block out_of_mem() jump oom() end
+end
+]]
+
+local workspace_string_from_source = host.region(V) [[
+region workspace_string_from_source(cu: ptr(CompileUnit), start: index, len: index;
+                                    ok: cont(str: ptr(String)), oom: cont())
+entry start()
+    emit arena_alloc_bytes(cu, as(index, @{SIZE_STRING}) + len + 1, as(u32, 8);
+        ok = allocated,
+        oom = out_of_mem)
+end
+block allocated(ptr: ptr(u8))
+    let s: ptr(String) = as(ptr(String), ptr)
+    s.gc.next = nil
+    s.gc.tt = as(u8, @{TAG_STR})
+    s.gc.marked = 0
+    s.reserved = 0
+    s.hash = as(u32, len)
+    s.len = len
+    s.bytes = ptr + as(index, @{SIZE_STRING})
+    jump copy_loop(s = s, i = as(index, 0), h = as(u32, 5381))
+end
+block copy_loop(s: ptr(String), i: index, h: u32)
+    if i >= s.len then jump copied(s = s, h = h) end
+    let b: u8 = cu.lexer.src.bytes[start + i]
+    s.bytes[i] = b
+    jump copy_loop(s = s, i = i + 1, h = h * 33 + as(u32, b))
+end
+block copied(s: ptr(String), h: u32)
+    s.bytes[s.len] = 0
+    s.hash = h
+    jump ok(str = s)
+end
+block out_of_mem() jump oom() end
+end
+]]
+
+local get_string_constant = host.region(V) [[
+region get_string_constant(cu: ptr(CompileUnit), start: index, len: index;
+                           ok: cont(idx: index), oom: cont())
+entry start()
+    if cu.current.constants.len == 0 then jump missing() end
+    jump scan(i = as(index, 0))
+end
+block scan(i: index)
+    if i >= cu.current.constants.len then jump missing() end
+    let v: Value = cu.current.constants.data[i]
+    if v.tag == @{TAG_STR} then
+        let s: ptr(String) = as(ptr(String), v.bits)
+        if s.len == len then jump compare(idx = i, s = s, off = as(index, 0)) end
+    end
+    jump scan(i = i + 1)
+end
+block compare(idx: index, s: ptr(String), off: index)
+    if off >= len then jump ok(idx = idx) end
+    if s.bytes[off] ~= cu.lexer.src.bytes[start + off] then jump scan(i = idx + 1) end
+    jump compare(idx = idx, s = s, off = off + 1)
+end
+block missing()
+    emit workspace_string_from_source(cu, start, len; ok = made_string, oom = out_of_mem)
+end
+block made_string(str: ptr(String))
+    let v: Value = { tag = @{TAG_STR}, aux = 0, bits = as(u64, str) }
+    emit constant_push(cu, v; ok = pushed, oom = out_of_mem)
+end
+block pushed(idx: index) jump ok(idx = idx) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_loadk = host.region(V) [[
+region emit_loadk(cu: ptr(CompileUnit), dst: u16, const_idx: index;
+                  ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_ABx(cu, as(u16, @{OP_LOADK}), dst, as(u32, const_idx);
+        emitted = done_pc,
+        limit_error = too_big,
+        oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_getupval = host.region(V) [[
+region emit_getupval(cu: ptr(CompileUnit), dst: u16, upidx: u16;
+                     ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_ABC(cu, as(u16, @{OP_GETUPVAL}), dst, upidx, as(u16, 0), as(u8, 0);
+        emitted = done_pc,
+        limit_error = too_big,
+        oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_setupval = host.region(V) [[
+region emit_setupval(cu: ptr(CompileUnit), src: u16, upidx: u16;
+                     ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_ABC(cu, as(u16, @{OP_SETUPVAL}), src, upidx, as(u16, 0), as(u8, 0);
+        emitted = done_pc,
+        limit_error = too_big,
+        oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_gettabup = host.region(V) [[
+region emit_gettabup(cu: ptr(CompileUnit), dst: u16, upidx: u16, key_idx: index;
+                     ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_ABC(cu, as(u16, @{OP_GETTABUP}), dst, upidx, as(u16, key_idx), as(u8, 0);
+        emitted = done_pc,
+        limit_error = too_big,
+        oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_settabup = host.region(V) [[
+region emit_settabup(cu: ptr(CompileUnit), upidx: u16, key_idx: index, src: u16;
+                     ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_ABC(cu, as(u16, @{OP_SETTABUP}), upidx, as(u16, key_idx), src, as(u8, 0);
+        emitted = done_pc,
+        limit_error = too_big,
+        oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_gettable = host.region(V) [[
+region emit_gettable(cu: ptr(CompileUnit), dst: u16, table_reg: u16, key_reg: u16;
+                     ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_ABC(cu, as(u16, @{OP_GETTABLE}), dst, table_reg, key_reg, as(u8, 0);
+        emitted = done_pc,
+        limit_error = too_big,
+        oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_settable = host.region(V) [[
+region emit_settable(cu: ptr(CompileUnit), value_reg: u16, table_reg: u16, key_reg: u16;
+                     ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_ABC(cu, as(u16, @{OP_SETTABLE}), value_reg, table_reg, key_reg, as(u8, 0);
+        emitted = done_pc,
+        limit_error = too_big,
+        oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_getfield = host.region(V) [[
+region emit_getfield(cu: ptr(CompileUnit), dst: u16, table_reg: u16, key_idx: index;
+                     ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_ABC(cu, as(u16, @{OP_GETFIELD}), dst, table_reg, as(u16, key_idx), as(u8, 0);
+        emitted = done_pc,
+        limit_error = too_big,
+        oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
+local emit_setfield = host.region(V) [[
+region emit_setfield(cu: ptr(CompileUnit), table_reg: u16, key_idx: index, value_reg: u16;
+                     ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_ABC(cu, as(u16, @{OP_SETFIELD}), table_reg, as(u16, key_idx), value_reg, as(u8, 0);
+        emitted = done_pc,
+        limit_error = too_big,
+        oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
 end
 ]]
 
@@ -438,6 +750,19 @@ block out_of_mem() jump oom() end
 end
 ]]
 
+local emit_closure = host.region(V) [[
+region emit_closure(cu: ptr(CompileUnit), dst: u16, child_idx: index;
+                    ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    emit emit_ABx(cu, as(u16, @{OP_CLOSURE}), dst, as(u32, child_idx);
+        emitted = done_pc, limit_error = too_big, oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
+end
+]]
+
 local emit_call = host.region(V) [[
 region emit_call(cu: ptr(CompileUnit), func_reg: u16, nargs: u16, wanted: u16;
                  ok: cont(), limit_error: cont(err: CompileError), oom: cont())
@@ -559,26 +884,24 @@ region emit_compare_bool(cu: ptr(CompileUnit), op: u16, expect: u16, dst: u16, l
                          ok: cont(), limit_error: cont(err: CompileError), oom: cont())
 entry start()
     emit emit_compare_jump_false(cu, op, expect, lhs, rhs;
-        emitted = got_false_jump,
-        limit_error = too_big,
-        oom = out_of_mem)
+        emitted = got_false_jump, limit_error = too_big, oom = out_of_mem)
 end
-block got_false_jump(false_jmp: index)
-    cu.scratch_index = false_jmp
+block got_false_jump(jmp_pc: index)
+    cu.durable_mark = jmp_pc
     emit emit_load_true(cu, dst; ok = true_loaded, limit_error = too_big, oom = out_of_mem)
 end
 block true_loaded()
-    emit emit_jump_placeholder(cu; emitted = got_end_jump, limit_error = too_big, oom = out_of_mem)
+    emit emit_jump_placeholder(cu; emitted = got_after_jump, limit_error = too_big, oom = out_of_mem)
 end
-block got_end_jump(end_jmp: index)
-    cu.scratch_index2 = end_jmp
-    emit patch_jump_to_current(cu, cu.scratch_index; ok = false_target_ready)
+block got_after_jump(pc: index)
+    cu.parse_mark = pc
+    emit patch_jump_to_current(cu, cu.durable_mark; ok = false_target_ready)
 end
 block false_target_ready()
     emit emit_load_false(cu, dst; ok = false_loaded, limit_error = too_big, oom = out_of_mem)
 end
 block false_loaded()
-    emit patch_jump_to_current(cu, cu.scratch_index2; ok = patched_end)
+    emit patch_jump_to_current(cu, cu.parse_mark; ok = patched_end)
 end
 block patched_end() jump ok() end
 block too_big(err: CompileError) jump limit_error(err = err) end
@@ -608,6 +931,17 @@ region patch_jump_to_current(cu: ptr(CompileUnit), jmp_pc: index;
                              ok: cont())
 entry start()
     let target: index = cu.current.code.len
+    let sj: i32 = as(i32, target) - as(i32, jmp_pc)
+    cu.current.code.data[jmp_pc].word = as(u32, @{OP_JMP}) | (as(u32, sj + 16777215) << 7)
+    jump ok()
+end
+end
+]]
+
+local patch_jump_to_pc = host.region(V) [[
+region patch_jump_to_pc(cu: ptr(CompileUnit), jmp_pc: index, target: index;
+                        ok: cont())
+entry start()
     let sj: i32 = as(i32, target) - as(i32, jmp_pc)
     cu.current.code.data[jmp_pc].word = as(u32, @{OP_JMP}) | (as(u32, sj + 16777215) << 7)
     jump ok()
@@ -678,6 +1012,22 @@ end
 block out_of_mem()
     jump oom()
 end
+end
+]]
+
+local emit_return_n = host.region(V) [[
+region emit_return_n(cu: ptr(CompileUnit), first: u16, count: u16;
+                     ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+entry start()
+    if count == 0 then emit emit_return0(cu; ok = done, limit_error = too_big, oom = out_of_mem) end
+    if count == 1 then emit emit_return1(cu, first; ok = done, limit_error = too_big, oom = out_of_mem) end
+    emit emit_ABC(cu, as(u16, @{OP_RETURN}), first, count + 1, as(u16, 0), as(u8, 0);
+        emitted = done_pc, limit_error = too_big, oom = out_of_mem)
+end
+block done_pc(pc: index) jump ok() end
+block done() jump ok() end
+block too_big(err: CompileError) jump limit_error(err = err) end
+block out_of_mem() jump oom() end
 end
 ]]
 
@@ -771,6 +1121,7 @@ end
 
 return {
     emit_compile_error = emit_compile_error,
+    emit_compile_error_at_span = emit_compile_error_at_span,
     instr_push = instr_push,
     emit_ABC = emit_ABC,
     emit_AvBCk = emit_AvBCk,
@@ -778,6 +1129,24 @@ return {
     emit_AsBx = emit_AsBx,
     reserve_reg = reserve_reg,
     ensure_stack_reg = ensure_stack_reg,
+    mark_regs = mark_regs,
+    release_regs_to = release_regs_to,
+    arena_alloc_bytes = arena_alloc_bytes,
+    constant_push = constant_push,
+    upvaldesc_push = upvaldesc_push,
+    proto_ptr_push = proto_ptr_push,
+    ensure_env_upvalue = ensure_env_upvalue,
+    workspace_string_from_source = workspace_string_from_source,
+    get_string_constant = get_string_constant,
+    emit_loadk = emit_loadk,
+    emit_getupval = emit_getupval,
+    emit_setupval = emit_setupval,
+    emit_gettabup = emit_gettabup,
+    emit_settabup = emit_settabup,
+    emit_gettable = emit_gettable,
+    emit_settable = emit_settable,
+    emit_getfield = emit_getfield,
+    emit_setfield = emit_setfield,
     emit_load_integer = emit_load_integer,
     emit_move = emit_move,
     emit_load_false = emit_load_false,
@@ -799,6 +1168,7 @@ return {
     emit_unary_minus = emit_unary_minus,
     emit_bnot = emit_bnot,
     emit_not = emit_not,
+    emit_closure = emit_closure,
     emit_call = emit_call,
     emit_len = emit_len,
     emit_newtable = emit_newtable,
@@ -810,10 +1180,12 @@ return {
     emit_compare_bool = emit_compare_bool,
     emit_jump_placeholder = emit_jump_placeholder,
     patch_jump_to_current = patch_jump_to_current,
+    patch_jump_to_pc = patch_jump_to_pc,
     emit_jump_to_pc = emit_jump_to_pc,
     emit_forprep_placeholder = emit_forprep_placeholder,
     emit_forloop_patch = emit_forloop_patch,
     emit_return1 = emit_return1,
+    emit_return_n = emit_return_n,
     add_local = add_local,
     same_name = same_name,
     resolve_local = resolve_local,

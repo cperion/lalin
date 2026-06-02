@@ -1,0 +1,16 @@
+{
+  "runId": "run-60eaf4dd",
+  "workflowId": "wf-sponjit-copy-link-patch",
+  "agent": "documenter",
+  "task": "Append a faithful update for the native materializer work just implemented. Capture: explicit fallthrough control reloc in native emitter; new materialize_native_x64.lua; materializer behavior (copy bytes, patch data relocs, patch fallthrough pc32 to next stencil, mmap helper); new test_spongejit_materialize_native.lua; full rebuilt L1 bank stats after fallthrough; verification logs. Do not add new plans or analysis.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-60eaf4dd.jsonl",
+  "status": "completed",
+  "created": "2026-05-31T14:45:42.715Z",
+  "updated": "2026-05-31T14:48:25.490Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "# Native Materializer Update\n\n## Goal\n\nAppend the implemented native materializer milestone: native x86-64 SpongeJIT stencils now carry an explicit `fallthrough` control relocation, can be copied into one image, have data relocations patched from concrete opcode/slot/constant bindings, and can link a `pc32` success jump to the next stencil for first-surface tests.\n\n## Incentives\n\nThe previous native byte-stencil milestone produced executable bytes and bank metadata, but each stencil still return",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 48
+}

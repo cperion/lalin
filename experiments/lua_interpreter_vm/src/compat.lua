@@ -9,6 +9,8 @@ local chunk = require("experiments.lua_interpreter_vm.src.regions_chunk")
 return {
     formats = const.CompatFormat,
     internal_proto_validator = validate.validate_proto,
+    -- Source frontier ABI includes caller-owned code/local buffers plus an
+    -- explicit compiler workspace for parse products, HIR, and lowering state.
     source_frontier = compiler.compile_lua_source_into,
     binary_chunk_frontier = chunk.load_lua55_binary_chunk,
     native_abi_frontier = native.decode_native_result,

@@ -1,0 +1,16 @@
+{
+  "runId": "run-e412f848",
+  "workflowId": "wf-lua-vm-explicit-complete",
+  "agent": "approach-proposer",
+  "task": "Propose three genuinely distinct approaches for completing the Moonlift-native Lua 5.5 VM, grounded in explicit_programming.md and the accumulated scout/knowledge-builder context. The completed VM must be idiomatic Moonlift: dual data/control tree, typed products/sums/continuation protocols, regions as state machines, emit/forward composition, explicit persistent state, no hidden C runtime behavior, no PUC architecture port, no stringly/boolean/intly implicit control beyond validated ABI-level encodings, and Lua metaprogramming only for named monomorphic axes of variation. Vendored Lua 5.5 is semantic/bytecode oracle only. Scope includes source programs and binary chunks, subset stdlib, weak tables, finalizers, userdata __gc, LuaJIT-style FFI; full C API compatibility may come later; SponJIT remains separate. Provide tradeoffs and 'done' criteria, but do not evaluate or recommend.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-e412f848.jsonl",
+  "status": "completed",
+  "created": "2026-05-29T23:53:58.507Z",
+  "updated": "2026-05-29T23:54:59.705Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "### Approach A: Direct Contract-Completion of the Existing VM\n\n- **Core idea**: Keep the current `src/` interpreter architecture and complete it in place, making the existing bytecode validator, dispatch loop, opcode handlers, allocator/GC, and call/error/yield protocols semantically complete.\n\n- **Key changes**:\n  - Fix Lua 5.5 bytecode decoding/validation in `opcodes.lua` and `validate.lua`: `sJ`, `sC`, `vB/vC`, `Bx`, `EXTRAARG`, comparison→jump adjacency, open-call/result rules.\n  - Complete ",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 5
+}

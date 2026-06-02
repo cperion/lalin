@@ -1,0 +1,16 @@
+{
+  "runId": "run-3186bd9f",
+  "workflowId": "wf-sponjit-copy-link-patch",
+  "agent": "knowledge-builder",
+  "task": "Analyze the current SpongeJIT abstract-stencil pipeline and derive the non-obvious constraints for adding real x86-64 byte stencils without breaking the foundry → SSA normal-form → dedupe boundary. Focus on explicit data/control vocabulary, reloc metadata needed by a materializer, and minimal correct milestone. Do not propose alternatives; produce constraints and insights.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-3186bd9f.jsonl",
+  "status": "completed",
+  "created": "2026-05-31T13:50:03.584Z",
+  "updated": "2026-05-31T13:53:29.539Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "### What Matters Most\n\n- Preserve the current boundary: **foundry workers produce SSA-consumed normal forms only; byte code must be derived after global dedupe**.\n- Keep abstract and native stencil products structurally distinct.\n- Make every materializer decision depend on explicit descriptor data, not on Lua-only `source_ops`, string roles, or representative artifacts.\n- Do not let native code generation depend on facts/opcode operands that were intentionally treated as aliases by normal-form ",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 51
+}

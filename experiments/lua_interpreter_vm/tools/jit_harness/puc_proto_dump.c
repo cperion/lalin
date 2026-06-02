@@ -14,6 +14,33 @@
 #include "lopcodes.h"
 #include "lopnames.h"
 
+static const char *const_type_name(const TValue *o) {
+    if (o == NULL) return "";
+    if (ttisinteger(o)) return "i64";
+    if (ttisfloat(o)) return "f64";
+    if (ttisstring(o)) return "string";
+    if (ttisnil(o)) return "nil";
+    if (ttisboolean(o)) return "bool";
+    return "other";
+}
+
+static long long const_i64_value(const Proto *p, int idx) {
+    if (idx < 0 || idx >= p->sizek) return 0;
+    const TValue *o = &p->k[idx];
+    return ttisinteger(o) ? (long long)ivalue(o) : 0;
+}
+
+static double const_f64_value(const Proto *p, int idx) {
+    if (idx < 0 || idx >= p->sizek) return 0.0;
+    const TValue *o = &p->k[idx];
+    return ttisfloat(o) ? (double)fltvalue(o) : (ttisinteger(o) ? (double)ivalue(o) : 0.0);
+}
+
+static const char *const_type_at(const Proto *p, int idx) {
+    if (idx < 0 || idx >= p->sizek) return "";
+    return const_type_name(&p->k[idx]);
+}
+
 static void dump_proto(const Proto *p, int depth, unsigned long *proto_id) {
     unsigned long id = (*proto_id)++;
     for (int pc = 0; pc < p->sizecode; pc++) {
@@ -26,9 +53,17 @@ static void dump_proto(const Proto *p, int depth, unsigned long *proto_id) {
         int bx = GETARG_Bx(ins);
         int sbx = GETARG_sBx(ins);
         int ax = GETARG_Ax(ins);
+        int sb = GETARG_sB(ins);
+        int sc = GETARG_sC(ins);
+        int sj = GETARG_sJ(ins);
+        int vb = GETARG_vB(ins);
+        int vc = GETARG_vC(ins);
         const char *name = opnames[op];
-        printf("%lu\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%u\n",
-            id, depth, pc, (int)op, name ? name : "?", a, b, c, k, bx, sbx, ax, (unsigned int)ins);
+        printf("%lu\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%u\t%d\t%d\t%d\t%d\t%d\t%s\t%lld\t%.17g\t%s\t%lld\t%.17g\n",
+            id, depth, pc, (int)op, name ? name : "?", a, b, c, k, bx, sbx, ax, (unsigned int)ins,
+            sb, sc, sj, vb, vc,
+            const_type_at(p, b), const_i64_value(p, b), const_f64_value(p, b),
+            const_type_at(p, c), const_i64_value(p, c), const_f64_value(p, c));
     }
     for (int i = 0; i < p->sizep; i++) {
         dump_proto(p->p[i], depth + 1, proto_id);
@@ -56,7 +91,7 @@ int main(int argc, char **argv) {
         lua_close(L);
         return 1;
     }
-    printf("proto\tdepth\tpc\topcode\tname\ta\tb\tc\tk\tbx\tsbx\tax\tword\n");
+    printf("proto\tdepth\tpc\topcode\tname\ta\tb\tc\tk\tbx\tsbx\tax\tword\tsb\tsc\tsj\tvb\tvc\tkb_type\tkb_i64\tkb_f64\tkc_type\tkc_i64\tkc_f64\n");
     unsigned long proto_id = 0;
     dump_proto(clLvalue(o)->p, 0, &proto_id);
     lua_close(L);

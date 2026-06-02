@@ -1,0 +1,16 @@
+{
+  "runId": "run-369cd538",
+  "workflowId": "wf-sponjit-copy-link-patch",
+  "agent": "worker",
+  "task": "Continue implementing real SponJIT opcode semantic coverage. The previous local change only added NOT; that is not enough. Do substantially more work in this run. Do not introduce residuals, opcode helpers, fallback stubs, or fake coverage. Implement multiple missing opcode families through the existing SSA -> Stencil IR -> native x64 stencil pipeline, with tests and rebuilt bank if feasible. Prioritize semantically self-contained opcodes/op families that reduce strict L0 missing coverage materially (for example shifts, comparisons/tests if exact semantics can be represented, LOADF/LOADKX/LFALSESKIP if exact semantics are tractable, simple bit/integer ops currently missing). Keep unsupported cases explicit rejections. Preserve no-residual/no-helper gates. Run relevant tests and report exact L0 coverage delta and remaining missing opcodes.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-369cd538.jsonl",
+  "status": "completed",
+  "created": "2026-05-31T20:39:54.661Z",
+  "updated": "2026-05-31T20:57:07.965Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "## Completed\n\nImplemented substantially more no-residual SponJIT opcode coverage:\n\n- Added inline native `LOADF` support with F64 immediate patching and `LUA_VNUMFLT` tagging.\n- Added exact i64 shift lowering/emission for:\n  - `SHL`, `SHR`\n  - `SHLI`, `SHRI`\n- Added exact VM-boundary coverage for structural/control opcodes:\n  - `LOADKX`\n  - `LFALSESKIP`\n  - `EQ`, `LT`, `LE`, `EQK`\n  - `EQI`, `LTI`, `LEI`, `GTI`, `GEI`\n  - `TEST`, `TESTSET`\n- Preserved explicit rejection for unsupported opcodes l",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 151
+}

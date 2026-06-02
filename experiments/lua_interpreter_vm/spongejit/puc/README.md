@@ -1,11 +1,17 @@
 # SpongeJIT PUC integration status
 
-The legacy PUC benchmark and C-function tile materialization paths were removed
-with the unified native-fragment ABI hard-yank. Maintained SpongeJIT artifacts
-are abstract native-fragment metadata descriptors produced by `src/worker_compile.lua`.
+There is no maintained PUC runtime integration here.
 
-There is intentionally no PUC executable integration in this directory until the
-native fragment linker exists and consumes `SponFragmentDesc`, `SponDataReloc`,
-`SponControlReloc`, endpoint locations, clobbers, and projection entries directly.
-Do not resurrect the removed tile-era local ABI declarations or stale bank
-benchmarks.
+SpongeJIT's maintained role is the **offline LuaCompile foundry**:
+
+```text
+PUC bytecode windows / grammar windows + evidence
+→ LuaCompile.Unit
+→ LuaNF + LuaContract
+→ MoonOut.Kernel + Moonlift source
+→ representative bank artifacts
+```
+
+PUC bytecode is currently used for side validation/profiling through full operand-bearing corpus windows. It is not a runtime JIT entry point.
+
+The old native-stencil descriptor/bank/materializer path has been retired and removed from maintained flow. Do not resurrect `SponStencilDesc`, `sponbank`, old copy-link-patch descriptors, or C-function tile benchmark APIs.

@@ -1,0 +1,16 @@
+{
+  "runId": "run-c2e38ce1",
+  "workflowId": "wf-sponjit-copy-link-patch",
+  "agent": "reviewer",
+  "task": "Review the just-made SSA store-sinking/value-normalization changes for SpongeJIT. Focus on experiments/lua_interpreter_vm/spongejit/src/ssa_opt.lua and experiments/lua_interpreter_vm/tests/test_spongejit_real_ssa.lua. Check for semantic risks around guards/boundaries/final frame sync, and whether the ADDI^4 invariant is correctly tested. Do not modify files.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-c2e38ce1.jsonl",
+  "status": "completed",
+  "created": "2026-06-01T10:51:52.465Z",
+  "updated": "2026-06-01T10:55:27.537Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "## Files Reviewed\n- `experiments/lua_interpreter_vm/spongejit/src/ssa_opt.lua` (lines 56-245)\n- `experiments/lua_interpreter_vm/tests/test_spongejit_real_ssa.lua` (lines 53-220)\n\n## Critical (must fix)\n- `experiments/lua_interpreter_vm/spongejit/src/ssa_opt.lua:141` - `pass_dead_frame_store` does not treat `gc_barrier`/call-like effects as observation points. A store can be removed if overwritten after a `BarrierCheck`, leaving the interpreter frame unsynced while the barrier primitive/GC/runtim",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 46
+}

@@ -60,8 +60,6 @@ function M.infer_observed(op, prev_op, next_op, mode)
     elseif op == "CALL" or op == "TAILCALL" then
         if level >= 2 then add("known_call_target") end
         if prev_op == "GETFIELD" or prev_op == "GETTABUP" or prev_op == "SELF" then add("callee_from_prev") end
-    elseif op == "FORLOOP" or op == "FORPREP" then
-        if level >= 1 then add("loop_i64") end
     end
     return f
 end
@@ -130,11 +128,13 @@ function M.workloads_from_profile(profile, config)
     for _, e in ipairs(sorted_entries(profile and profile.static_operand_windows, max_len)) do
         if #e.ops >= min_len then entries[#entries + 1] = e end
     end
-    for _, e in ipairs(sorted_entries(profile and profile.motif_counts, max_len)) do
-        if #e.ops >= min_len then entries[#entries + 1] = e end
-    end
-    for _, e in ipairs(sorted_entries((profile and (profile.window_counts or profile.static_window_counts or profile.dynamic_window_counts)), max_len)) do
-        if #e.ops >= min_len then entries[#entries + 1] = e end
+    if not config.operand_only then
+        for _, e in ipairs(sorted_entries(profile and profile.motif_counts, max_len)) do
+            if #e.ops >= min_len then entries[#entries + 1] = e end
+        end
+        for _, e in ipairs(sorted_entries((profile and (profile.window_counts or profile.static_window_counts or profile.dynamic_window_counts)), max_len)) do
+            if #e.ops >= min_len then entries[#entries + 1] = e end
+        end
     end
 
     local seen, out = {}, {}

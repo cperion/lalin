@@ -1,0 +1,16 @@
+{
+  "runId": "run-4d7273a9",
+  "workflowId": "wf-sponjit-copy-link-patch",
+  "agent": "knowledge-builder",
+  "task": "Analyze the fresh scout findings and the prior workflow for the Tier 2 SponJIT Copy-Link-Patch effort. Produce second-order observations: non-obvious design tensions, invariants, missing contracts, sequencing constraints, and places where the current solid backend changes the design space. Do not propose concrete implementation approaches yet.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-4d7273a9.jsonl",
+  "status": "completed",
+  "created": "2026-05-30T19:00:33.382Z",
+  "updated": "2026-05-30T19:04:41.060Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "### What Matters Most for This Problem\n\n- **Truthfulness of the ABI boundary**: Lua fragment metadata, JSON artifacts, `sponbank.h`, docs, and any future generated bank must describe the same thing without lossy gaps.\n- **Abstract vs executable phase separation**: current fragments are validated metadata, not native code. That distinction is now central.\n- **Projection and resume correctness**: current `SYNCED_FRAME` projection is safe but intentionally does not unlock the main Copy-Link-Patch o",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 43
+}

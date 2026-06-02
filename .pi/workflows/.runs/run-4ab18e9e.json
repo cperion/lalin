@@ -5,7 +5,12 @@
   "task": "Find everything relevant to the remaining work required to make the Moonlift-native Lua 5.5 VM complete. Treat completion as one concrete target, not a loose list: a complete VM means this implementation can run Lua 5.5 programs with correct VM semantics through its own Moonlift-native runtime, with SponJIT still separate. Gather facts about the current post-contract state, remaining stubs, missing semantic/runtime pieces, tests/conformance gaps, source/compiler coverage, and dependencies among unfinished areas. Include what is already done so the remaining work is grounded in the actual repo state.",
   "cwd": "/home/cedric/dev/moonlift",
   "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-4ab18e9e.jsonl",
-  "status": "running",
+  "status": "completed",
   "created": "2026-05-29T18:28:29.355Z",
-  "updated": "2026-05-29T18:28:29.355Z"
+  "updated": "2026-05-29T18:33:33.309Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "## Files Retrieved\n\n1. `experiments/lua_interpreter_vm/VM_CONTRACT.md` (lines 1-86) - Post-contract architectural gate: Lua 5.5 semantics, SponJIT separate, validator/frame/native/error/yield/allocator invariants.\n2. `experiments/lua_interpreter_vm/src/contract.lua` (lines 1-17) - Machine-readable ABI/contract gates; `sponjit_allowed = false`.\n3. `experiments/lua_interpreter_vm/src/init.lua` (lines 1-32) - VM module loader; exports `contract`.\n4. `experiments/lua_interpreter_vm/src/constants.lua",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 90
 }

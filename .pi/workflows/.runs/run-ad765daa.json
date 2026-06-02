@@ -1,0 +1,18 @@
+{
+  "runId": "run-ad765daa",
+  "workflowId": "wf-lua-vm-finish-final",
+  "agent": "worker",
+  "task": "Continue implementing, but make this a much larger worker turn than the previous one. The user says the last closure/upvalue chunk was not enough. Starting from the current tree and prior session, remove multiple major remaining VM gaps in one sustained implementation pass. Prioritize real end-to-end runtime behavior, not contract reshuffling. Target several connected areas if possible: finish varargs alongside closures; implement callable metamethod fallback for arithmetic/comparison/table/call/len/concat; implement protected calls and value-carrying error unwind; implement native yield/reenter-Lua; implement binary chunk loading; implement GC weak/finalizer execution. Choose the most productive set based on the code and keep going until a real technical blocker or multiple substantial semantic chunks are complete. Preserve explicit_programming.md discipline, PUC Lua 5.5 as oracle only, and SponJIT separation. Report concrete semantics implemented, files changed, tests run, and blockers.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-4cd65651.jsonl",
+  "status": "completed",
+  "created": "2026-05-30T12:00:25.023Z",
+  "updated": "2026-05-30T12:28:44.852Z",
+  "resumedFromRunId": "run-b4e34531",
+  "sessionEntriesBefore": 377,
+  "exitCode": 0,
+  "stopReason": "stop",
+  "errorMessage": "WebSocket closed 1006",
+  "lastOutputPreview": "## Completed\n\nImplemented several connected runtime semantics beyond the prior closure/upvalue chunk:\n\n- **Varargs**\n  - `adjust_varargs` no longer fails with OOM; it preserves the incoming argument window and pads missing fixed params with nil.\n  - `OP_VARARG` now copies actual varargs from after fixed parameters.\n  - `OP_VARARG C=0` sets the open top for all available varargs.\n  - `VARARGPREP` remains explicit no-hidden-state because varargs live in the frame argument window.\n\n- **Callable `__",
+  "sessionEntriesAfter": 499
+}

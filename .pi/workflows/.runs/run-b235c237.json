@@ -1,0 +1,16 @@
+{
+  "runId": "run-b235c237",
+  "workflowId": "wf-sponjit-copy-link-patch",
+  "agent": "worker",
+  "task": "Continue the real SponJIT opcode coverage work from the current no-residual state. Current exact L0 coverage is 66/85; remaining missing opcodes are GETUPVAL SETUPVAL GETTABUP GETTABLE GETI GETFIELD SETTABUP SETTABLE SETI SETFIELD SELF MODK POWK DIVK IDIVK MOD POW DIV IDIV. Do another substantial implementation pass. Do not introduce residuals, opcode helpers, fallback stubs, generic execute-opcode escapes, or fake coverage. Be stricter than the previous boundary pass: do not mark an opcode covered by boundary unless it is genuinely a defined VM control/structural handoff with explicit semantics; prefer real SSA -> Stencil IR -> native x64 lowering for fact-specialized arithmetic/table cases. Implement as many of the remaining families as can be made semantically honest. Good targets include fact-proven integer DIV/IDIV/MOD where exact behavior and guards can be encoded, or table/upvalue/SELF only if the existing fact/payload model is sufficient for real lowering; otherwise keep them explicitly unsupported. Add native execution tests and generated-bank selector/materializer tests for any newly covered opcodes. Rebuild stencils/bank if feasible. Run make test and make test-bank. Report newly covered opcodes, exact L0 coverage delta, remaining missing opcodes, and which cases remain unsupported because semantics are not yet explicit enough.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-b235c237.jsonl",
+  "status": "completed",
+  "created": "2026-05-31T21:14:00.394Z",
+  "updated": "2026-05-31T21:35:15.692Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "## Completed\n\nContinued the no-residual opcode coverage pass.\n\nNew exact opcode coverage added:\n\n```text\nMODK DIVK IDIVK\nMOD  DIV  IDIV\n```\n\nCoverage changed:\n\n```text\nExact L0: 66/85 -> 72/85\nDelta: +6\n```\n\nImplemented semantics:\n- `IDIV` / `IDIVK`: native i64 Lua floor-division, including negative quotient adjustment and `-1` special case.\n- `MOD` / `MODK`: native i64 Lua floor-modulo, including negative remainder adjustment and `-1` special case.\n- `DIV` / `DIVK`: native i64-to-f64 division w",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 177
+}

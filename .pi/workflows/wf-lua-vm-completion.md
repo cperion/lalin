@@ -1897,3 +1897,569 @@ git diff --check -- experiments/lua_interpreter_vm/src ... contract/test paths
 - Did not implement actual native invocation, allocator bridge, full protected-call allocation, or complete coroutine resume semantics; existing fail-loud ABI stubs remain.
 - Did not touch SponJIT despite unrelated dirty SponJIT files in the working tree.
 - Used `parent.pc` as the stable handoff point in return resume blocks to avoid Moonlift name-shadowing behavior in continuation block params.
+
+## Scout Output — 2026-05-29 18:33:33
+
+## Files Retrieved
+
+1. `experiments/lua_interpreter_vm/VM_CONTRACT.md` (lines 1-86) - Post-contract architectural gate: Lua 5.5 semantics, SponJIT separate, validator/frame/native/error/yield/allocator invariants.
+2. `experiments/lua_interpreter_vm/src/contract.lua` (lines 1-17) - Machine-readable ABI/contract gates; `sponjit_allowed = false`.
+3. `experiments/lua_interpreter_vm/src/init.lua` (lines 1-32) - VM module loader; exports `contract`.
+4. `experiments/lua_interpreter_vm/src/constants.lua` (lines 1-238) - Lua 5.5 tags/opcodes/resume/status/native ABI/frame/thread flags.
+5. `experiments/lua_interpreter_vm/src/products.lua` (lines 1-111) - Current VM ABI structs: expanded `Frame`, `LuaThread`, `Allocator`, `NativeFunc`, `NativeCallResult`.
+6. `experiments/lua_interpreter_vm/src/vm_loop.lua` (lines 1-171) - Main interpreter loop; post-contract frame-cache reload and error routing.
+7. `experiments/lua_interpreter_vm/src/opcodes.lua` (lines 1-725) - Dispatch, inline hot opcodes, handler map, opcode metadata.
+8. `experiments/lua_interpreter_vm/src/op/_init.lua` (lines 1-156) - Shared opcode continuation signatures; table metamethod scratch now uses `top`.
+9. `experiments/lua_interpreter_vm/src/op/load.lua` (lines 1-174) - MOVE/LOAD*/upvalue load/store/EXTRAARG.
+10. `experiments/lua_interpreter_vm/src/op/arithmetic.lua` (lines 1-473) - Arithmetic/bitwise/unary handlers; MOD/IDIV/POW and metamethod fallbacks still fail.
+11. `experiments/lua_interpreter_vm/src/op/table.lua` (lines 1-261) - GET/SET table opcodes; `NEWTABLE`/`SETLIST` still OOM.
+12. `experiments/lua_interpreter_vm/src/op/compare.lua` (lines 1-216) - EQ/LT/LE/immediate comparisons; metamethod compare calls still error.
+13. `experiments/lua_interpreter_vm/src/op/call.lua` (lines 1-252) - CALL/TAILCALL/RETURN; explicit result-base return path fixed.
+14. `experiments/lua_interpreter_vm/src/op/loop.lua` (lines 1-113) - Numeric loops partly implemented; generic for-call still runtime error.
+15. `experiments/lua_interpreter_vm/src/op/closure.lua` (lines 1-52) - CLOSURE/VARARG/GETVARG stubs.
+16. `experiments/lua_interpreter_vm/src/op/misc.lua` (lines 1-84) - LEN/CONCAT stubs; CLOSE/TBC/JMP/ERRNNIL.
+17. `experiments/lua_interpreter_vm/src/regions_value.lua` (lines 1-264) - Value predicates/equality/compare/RK; mixed numeric and metamethod semantics incomplete.
+18. `experiments/lua_interpreter_vm/src/regions_table.lua` (lines 1-226) - Raw table get/set and metamethod-aware shell; no resize/insert/new/next.
+19. `experiments/lua_interpreter_vm/src/regions_metamethod.lua` (lines 1-151) - Metamethod lookup helpers; limited to tables and not fully wired.
+20. `experiments/lua_interpreter_vm/src/regions_string.lua` (lines 1-56) - Hash implemented; intern/concat missing.
+21. `experiments/lua_interpreter_vm/src/regions_upvalue.lua` (lines 1-60) - Close-upvalues implemented; creation/closure allocation missing.
+22. `experiments/lua_interpreter_vm/src/regions_gc.lua` (lines 1-178) - Explicit allocator boundary and GC shell; allocation/propagate/sweep mostly no-op/OOM.
+23. `experiments/lua_interpreter_vm/src/regions_error.lua` (lines 1-235) - `raise_code_error` added; protected frame allocation and real pcall/TBC close calls missing.
+24. `experiments/lua_interpreter_vm/src/regions_coroutine.lua` (lines 1-73) - Explicit coroutine state distinctions; no real resume integration.
+25. `experiments/lua_interpreter_vm/src/regions_stack.lua` (lines 1-135) - Frame push/result metadata and result adjustment; no stack growth/vararg reshaping.
+26. `experiments/lua_interpreter_vm/src/regions_call.lua` (lines 1-368) - Central call/return/native ABI; native invocation and `__call` missing.
+27. `experiments/lua_interpreter_vm/src/api.lua` (lines 1-174) - Sealed API functions; simple type/top/string/ABI/status work, table/call/pcall fail loudly.
+28. `experiments/lua_interpreter_vm/src/regions_api.lua` (lines 1-43) - Basic API index decoding only.
+29. `experiments/lua_interpreter_vm/src/validate.lua` (lines 1-207) - Strengthened bytecode validator; still partial.
+30. `experiments/lua_interpreter_vm/src/parser_constants.lua` (lines 1-82) - Token/keyword/error constants for first compiler slice.
+31. `experiments/lua_interpreter_vm/src/parser_products.lua` (lines 1-49) - Source compiler structs.
+32. `experiments/lua_interpreter_vm/src/regions_lexer.lua` (lines 1-276) - Lexer supports a small token subset, more than parser uses.
+33. `experiments/lua_interpreter_vm/src/regions_parser.lua` (lines 1-558) - Parser/compiler slice: locals, return, integer/bool/nil literals, simple arithmetic.
+34. `experiments/lua_interpreter_vm/src/regions_codegen.lua` (lines 1-382) - Bytecode emission for limited compiler subset.
+35. `experiments/lua_interpreter_vm/src/regions_compiler.lua` (lines 1-84) - Public compile entry into caller buffers.
+36. `experiments/lua_interpreter_vm/tests/test_vm_smoke.lua` (lines 1-133) - Structural/module/bundle smoke; now 197 regions, 43 structs.
+37. `experiments/lua_interpreter_vm/tests/test_vm_validation_contract.lua` (lines 1-118) - Validator malformed-bytecode contract tests.
+38. `experiments/lua_interpreter_vm/tests/test_vm_call_frame_contract.lua` (lines 1-136) - Nested Lua call test for result-base and code/constants reload.
+39. `experiments/lua_interpreter_vm/tests/test_vm_error_contract.lua` (lines 1-100) - Bad opcode error-state test.
+40. `experiments/lua_interpreter_vm/tests/test_vm_abi_contract.lua` (lines 1-57) - ABI version API/contract tests.
+41. `experiments/lua_interpreter_vm/tests/test_vm_e2e.lua` (lines 1-221) - Manual Proto executes LOADK+RETURN.
+42. `experiments/lua_interpreter_vm/tests/test_vm_opcode_semantics.lua` (lines 1-287) - Focused opcode semantic microtests.
+43. `experiments/lua_interpreter_vm/tests/test_parser_compile.lua` (lines 1-250) - Source compiler + validator + VM tests for arithmetic subset.
+44. `experiments/lua_interpreter_vm/README.md` (lines 1-132) - Confirms VM and SpongeJIT are separate; current VM is experimental.
+45. `experiments/lua_interpreter_vm/spongejit/puc/README.md` (lines 1-11) - Confirms no maintained executable PUC/SponJIT integration.
+46. `experiments/lua_interpreter_vm/tools/jit_harness/README.md` (lines 1-319) - JIT harness still offline/mock in places; compiler coverage note.
+47. `experiments/lua_interpreter_vm/tools/jit_harness/compile.lua` (lines 1-336) - Harness uses current source compiler when available, fallback token compiler otherwise.
+
+## Key Code
+
+### Contract gate exists and keeps SponJIT separate
+
+```lua
+-- src/contract.lua
+return {
+    vm_abi_version = 1,
+    native_abi_version = 1,
+    validator_contract_version = 1,
+    sponjit_allowed = false,
+    required_gates = {
+        "bytecode_validator_complete",
+        "frame_cache_reload_on_switch",
+        "explicit_call_result_base",
+        "unified_error_unwind",
+        "explicit_native_abi",
+        "explicit_allocator_boundary",
+    },
+}
+```
+
+### Post-contract ABI fields are present
+
+```lua
+-- products.lua
+local NativeFunc = host.struct [[struct NativeFunc abi_version: u32; flags: u32; addr: ptr(u8); name: ptr(String) end]]
+local NativeCallResult = host.struct [[struct NativeCallResult status: u8; nresults: i32; err: Value; continuation: ptr(u8) end]]
+
+local Frame = host.struct [[struct Frame closure: Value; base: index; top: index; pc: index; wanted: i32; tailcalls: i32; resume_mode: u16; resume_a: u16; resume_b: u16; resume_c: u16; resume_pc: index; resume_base: index; resume_value: Value; result_base: index; call_top: index; yieldable: u8; flags: u8; reserved: u16 end]]
+
+local LuaThread = host.struct [[struct LuaThread ... tbc_head: index; yieldable: i32; nonyieldable: i32; last_error_code: i32; flags: u32 end]]
+```
+
+### Frame-cache reload is implemented
+
+```lua
+-- vm_loop.lua
+block cont_resume_parent(parent: ptr(Frame), pc: index, base: index, top: index,
+                         code: ptr(Instr), constants: ptr(Value))
+    let cl: ptr(LClosure) = as(ptr(LClosure), parent.closure.bits)
+    let parent_code: ptr(Instr) = cl.proto.code
+    let parent_constants: ptr(Value) = cl.proto.constants
+    jump loop(frame = parent, pc = pc, base = base, top = top,
+              code = parent_code, constants = parent_constants)
+end
+```
+
+### Call result placement now uses explicit child metadata
+
+```lua
+-- regions_call.lua
+let ret_result_base: index = frame.result_base
+let ret_wanted: i32 = frame.wanted
+let ret_resume_mode: u16 = frame.resume_mode
+...
+emit handle_return_mode(L, parent, first_result, nres,
+                        ret_result_base, ret_wanted, ret_resume_mode,
+                        ...)
+
+-- handle_return_mode normal/tailcall
+let next_pc: index = ret_resume_pc + 1
+jump adjust_start(parent = parent, dst = ret_result_base,
+                  first = first_result, nactual = nres,
+                  wanted = ret_wanted, target_pc = next_pc,
+                  is_pcall = as(u8, 0))
+```
+
+### Unified opcode error entry is present, but protected semantics are still shallow
+
+```lua
+-- regions_error.lua
+region raise_code_error(L: ptr(LuaThread), code: i32;
+                        caught: cont(frame: ptr(Frame)),
+                        uncaught: cont(code: i32),
+                        oom: cont())
+...
+    L.err_value = err
+    L.last_error_code = code
+    emit raise_error(L, err;
+        caught = was_caught,
+        uncaught = not_caught)
+```
+
+```lua
+-- regions_error.lua
+region enter_protected(...)
+entry start()
+    -- ProtectedFrame storage must be allocated by the VM allocator.
+    jump oom()
+end
+
+region protected_call(...)
+entry start()
+    L.err_value = { tag = @{TAG_NIL}, aux = @{ERR_RUNTIME}, bits = 0 }
+    L.last_error_code = @{ERR_RUNTIME}
+    jump failure(err = L.err_value)
+end
+```
+
+### Major runtime stubs remain
+
+```lua
+-- regions_gc.lua
+region alloc_object(...)
+entry start()
+    ...
+    -- Allocator extern bridge is not wired yet.
+    jump oom()
+end
+```
+
+```lua
+-- regions_string.lua
+region string_intern(...)
+entry start()
+    jump oom()
+end
+
+region string_concat_range(...)
+entry start()
+    jump error(code = @{ERR_RUNTIME})
+end
+```
+
+```lua
+-- regions_table.lua
+region table_resize(...)
+entry start()
+    jump oom()
+end
+
+region table_next(...)
+entry start()
+    jump done()
+end
+```
+
+```lua
+-- regions_upvalue.lua
+block make_new()
+    jump oom()
+end
+
+region make_lclosure(...)
+entry start()
+    jump oom()
+end
+```
+
+```lua
+-- regions_call.lua
+region call_native(...)
+entry start()
+    ...
+    L.last_error_code = @{ERR_CALL}
+    jump error(code = @{ERR_CALL})
+end
+```
+
+### Opcode stubs / incomplete semantics
+
+```lua
+-- op/closure.lua
+region op_closure(...); entry start()
+    jump error(code = @{ERR_RUNTIME})
+end
+
+region op_vararg(...); entry start()
+    jump error(code = @{ERR_RUNTIME})
+end
+
+region op_getvarg(...); entry start()
+    jump error(code = @{ERR_RUNTIME})
+end
+```
+
+```lua
+-- op/table.lua
+region op_newtable(...); entry start()
+    jump oom()
+end
+
+region op_setlist(...); entry start()
+    jump oom()
+end
+```
+
+```lua
+-- op/misc.lua
+region op_len(...); entry start()
+    jump error(code = @{ERR_RUNTIME})
+end
+
+region op_concat(...); entry start()
+    jump error(code = @{ERR_RUNTIME})
+end
+```
+
+```lua
+-- op/arithmetic.lua
+region op_mod(...);  jump error(code = @{ERR_ARITH})
+region op_idiv(...); jump error(code = @{ERR_ARITH})
+region op_pow(...);  jump error(code = @{ERR_ARITH})
+
+region op_mmbin(...);  jump error(code = @{ERR_RUNTIME})
+region op_mmbini(...); jump error(code = @{ERR_RUNTIME})
+region op_mmbink(...); jump error(code = @{ERR_RUNTIME})
+```
+
+### Source compiler is very limited
+
+```lua
+-- regions_compiler.lua
+builder.constants = { data = nil, len = 0, cap = 0 }
+builder.children = { data = nil, len = 0, cap = 0 }
+builder.locvars = { data = nil, len = 0, cap = 0 }
+builder.upvals = { data = nil, len = 0, cap = 0 }
+```
+
+Current parser supports only:
+- `return expr`
+- `local name = expr`
+- semicolons/comments
+- integer, true/false/nil, local names
+- `+ - * /` precedence
+
+Tests confirm examples like:
+
+```lua
+run_case("return 1 + 2", { LOADI, LOADI, ADD, MMBIN, RETURN1 }, 3)
+run_case("local x = 41 return x + 1", ..., 42)
+```
+
+## Relationships
+
+- Runtime execution path:
+  `vm_resume` → `vm_loop` → `dispatch_instruction` → opcode handler → runtime regions.
+- Post-contract call path:
+  `op_call` → `prepare_call` → `frame_push` → child frame → `return_from_lua` → `handle_return_mode` → parent resume with reloaded code/constants.
+- Error path:
+  opcode handler/dispatch error → `vm_loop.do_error` → `raise_code_error` → `raise_error` → protected frame if present, otherwise outer error.
+- Object allocation dependency cluster:
+  `alloc_object` is needed before `string_intern`, `table_resize`, `op_newtable`, `make_lclosure`, upvalue creation, protected frames, stack/frame growth, userdata/thread creation, real compiler constants/children, and GC ownership can be completed.
+- Metamethod dependency cluster:
+  table get/set can discover `__index`/`__newindex`, but real behavior depends on callable/table metamethod dispatch, native/Lua call completion, safe scratch areas, yield/error continuation, and recursive loop protection.
+- Source compiler dependency:
+  compiler cannot become a Lua 5.5 program entry point until runtime supports constants/strings/tables/functions/upvalues/control flow/calls/varargs and allocator-backed `Proto` construction.
+- SponJIT relation:
+  current VM contract says SponJIT is gated and separate. README and `spongejit/puc/README.md` confirm no maintained executable SponJIT/PUC integration should be used as VM completion.
+
+## Observations
+
+### Current verified post-contract state
+
+Working tree under `experiments/lua_interpreter_vm` is clean.
+
+Tests run and passed:
+
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_vm_smoke.lua
+luajit experiments/lua_interpreter_vm/tests/test_vm_validation_contract.lua
+luajit experiments/lua_interpreter_vm/tests/test_vm_call_frame_contract.lua
+luajit experiments/lua_interpreter_vm/tests/test_vm_error_contract.lua
+luajit experiments/lua_interpreter_vm/tests/test_vm_abi_contract.lua
+luajit experiments/lua_interpreter_vm/tests/test_vm_e2e.lua
+luajit experiments/lua_interpreter_vm/tests/test_vm_opcode_semantics.lua
+luajit experiments/lua_interpreter_vm/tests/test_parser_compile.lua
+```
+
+Smoke reports:
+- 197 region fragments
+- 43 struct definitions
+- 85 opcode handlers
+- dispatch/vm_resume bundle compiles
+- `Frame` has 18 fields
+- `LuaThread` has 22 fields
+- `NativeCallResult` exists
+- contract gates SponJIT.
+
+Behavior currently proven:
+- manual `LOADK; RETURN` returns `42.0`
+- focused opcode tests pass 10/10
+- nested Lua call returns into explicit result base and reloads parent constants/code
+- bad opcode sets `L.last_error_code` and `L.err_value.aux`
+- source compiler arithmetic/local subset works.
+
+### Remaining completion work, by concrete target area
+
+#### 1. VM-owned allocation and GC are the largest blocker
+
+Still missing:
+- allocator extern bridge
+- object allocation for every GC object
+- stack/frame growth
+- string allocation/intern table allocation
+- table allocation/resizing
+- closure/upvalue allocation
+- protected frame allocation
+- userdata/thread allocation
+- real mark/propagate/sweep
+- gray lists and write barriers integrated into mutations
+- weak tables/finalization/userdata GC behavior.
+
+Current GC shell is explicit but not functional:
+- `alloc_object` always OOM after boundary checks
+- `gc_step` immediately done
+- `propagate_gray` empty
+- `sweep_step` done
+- barriers exist but table/upvalue/closure writes do not consistently call them.
+
+#### 2. Strings are not semantically complete
+
+Implemented:
+- simple `string_hash`
+- string comparisons over already-built `String` objects.
+
+Missing:
+- `string_intern`
+- canonical string identity across VM
+- concat
+- numeric-to-string conversion
+- string constant creation from compiler
+- TM name initialization likely depends on interned `__add`, `__index`, etc.
+
+This matters because `value_raw_equal` compares strings by pointer identity.
+
+#### 3. Tables are only preallocated raw containers
+
+Implemented:
+- array lookup for integer keys already in range
+- hash lookup by linear scan over existing nodes
+- raw set into existing array/hash slots
+- shell for `__index`/`__newindex`.
+
+Missing:
+- `NEWTABLE`
+- insertion/growth/resize
+- `SETLIST`
+- `next`
+- numeric key canonicalization details
+- nil/NaN key rules beyond nil rejection
+- barriers/shape epoch updates
+- weak tables
+- table-valued `__index`/`__newindex` recursion and loop protection.
+
+Current `table_set` treats ordinary insertion/growth as OOM unless `__newindex` exists.
+
+#### 4. Closures/upvalues/varargs are mostly absent
+
+Implemented:
+- `GETUPVAL`, `SETUPVAL` assume existing closure/upvalue arrays
+- `close_upvalues` closes already-created ordered open upvalues.
+
+Missing:
+- `CLOSURE`
+- `make_lclosure`
+- upvalue allocation/insertion
+- open-upvalue list ordering enforcement
+- nested function compilation
+- `VARARG`, `GETVARG`
+- real fixed-arg/vararg adjustment.
+
+#### 5. Native calls/API are versioned but not executable
+
+Implemented:
+- `NativeFunc` carries ABI version
+- `call_native` checks null/version and fails loudly
+- ABI/status accessors.
+
+Missing:
+- actual native function ABI invocation
+- native outcomes: OK/error/yield/OOM/stack-grow
+- `lua_call_api`, `lua_pcall_api`
+- standard library/native closures
+- `__call` metamethod support.
+
+`try_call_metamethod` always returns not callable.
+
+#### 6. Error/protected/TBC/coroutine protocols are explicit but incomplete
+
+Implemented:
+- opcode errors flow through `raise_code_error`
+- uncaught errors preserve `err_value`/`last_error_code`
+- protected unwind has data structures.
+
+Missing:
+- protected frame allocation
+- actual `pcall`/`xpcall`
+- error object construction beyond nil-with-code
+- error handlers
+- TBC `__close` invocation
+- yields through protected/metamethod/native/TBC paths
+- real coroutine resume/re-entry.
+
+`coroutine_resume` only distinguishes states and returns `yielded(0)` for yielded target; it does not resume `vm_loop`.
+
+#### 7. Opcode semantic inventory is far from complete
+
+Mostly/partly working:
+- loads, moves, simple upvalue access
+- simple arithmetic fast paths for int/int and num/num on ADD/SUB/MUL/DIV subset
+- bitwise integer operations
+- numeric/string compare subset
+- CALL/RETURN for Lua closures in controlled cases
+- numeric for loops for homogeneous int or float triples
+- JMP/TEST/TESTSET.
+
+Missing or incomplete:
+- MOD/IDIV/POW and K variants
+- mixed int/float arithmetic/coercions
+- arithmetic/metamethod fallback (`MMBIN*`)
+- comparison metamethod calls
+- LEN/CONCAT
+- NEWTABLE/SETLIST
+- CLOSURE/VARARG/GETVARG
+- generic for-call
+- native calls
+- `__call`
+- table constructor behavior
+- full tailcall semantics
+- open-result calls/returns likely under-tested
+- TBC close semantics.
+
+#### 8. Numeric semantics remain cross-cutting risk
+
+Current facts:
+- `value_raw_equal` requires identical tags, so integer `1` and float `1.0` are unequal.
+- arithmetic fast paths generally handle int+int or num+num, not mixed.
+- table array lookup only accepts `TAG_INTEGER`.
+- table hash compares tag+bits.
+
+Lua-compatible numeric equality/key/cast semantics need to be decided and implemented across:
+- equality
+- comparison
+- arithmetic
+- table key lookup/insertion
+- constants
+- loops
+- compiler output.
+
+#### 9. Validator is stronger but not complete
+
+Now validates:
+- opcode range
+- universal A bound
+- some B/C register families
+- LOADK/LOADKX/EXTRAARG
+- arithmetic/MMBIN adjacency
+- some jump/loop/call/return windows
+- CLOSURE child bounds.
+
+Remaining holes observed:
+- upvalue bounds for `GETUPVAL`, `SETUPVAL`, `GETTABUP`, `SETTABUP`
+- many opcode-specific B/C meanings not covered
+- `EQK` appears to be validated using `c` in one grouped check, while handler uses `bx`
+- `MMBINK`/K opcode encoding metadata and dispatch/handler conventions are inconsistent in places
+- no validation of closure upvalue descriptors
+- no full stack-effect/control-flow validation
+- no validation of frame/proto object invariants beyond pointers/maxstack
+- no malformed tests for many op families.
+
+#### 10. Source compiler is a small arithmetic slice, not Lua 5.5
+
+Lexer recognizes some extra tokens, but parser/compiler lacks:
+- function definitions
+- calls
+- table constructors
+- strings as constants
+- floats
+- assignments beyond `local x = expr`
+- globals/environment/upvalues
+- if/while/repeat/for/goto/labels
+- boolean operators
+- unary operators
+- varargs
+- multi-return
+- nested protos/debug info
+- constant table allocation
+- standard library integration.
+
+The JIT harness notes only a few AWFY files compile cleanly and has fallback token compilation; this is not VM semantics.
+
+#### 11. Test/conformance gap
+
+Current tests are useful but mostly:
+- manually constructed FFI protos
+- scratch/external memory, not VM allocator
+- no real GC
+- no real strings/interning
+- no real table creation/growth
+- no closures/upvalues created by VM
+- no native calls
+- no protected calls
+- no coroutines
+- no standard library
+- no differential Lua 5.5 conformance suite
+- limited malformed-bytecode tests
+- limited nested call/open-result/tailcall coverage.
+
+Completion needs conformance tests for actual Lua programs and bytecode-level edge cases, not only opcode microsemantics.
+
+### Completion dependency shape
+
+A concrete path to “complete VM” cannot treat opcodes independently. The dependencies are clustered:
+
+1. **Allocator/GC/object creation** unlocks strings, tables, closures, protected frames, stack growth, compiler constants/protos.
+2. **String interning + TM names** unlock string equality, table keys, metamethod lookup, compiler string constants.
+3. **Tables** unlock globals/environments, metatables, standard library state, constructors, iteration.
+4. **Closures/upvalues/calls** unlock functions, nested functions, `__call`, library functions, metamethod invocation.
+5. **Unified error/protected/yield** unlocks pcall/xpcall, coroutines, yieldable metamethods/native calls, TBC.
+6. **Compiler expansion + validator hardening** make source programs and future JIT consumption safe.
+7. **Conformance suite** must pressure all above before SponJIT integration.

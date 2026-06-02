@@ -1,0 +1,16 @@
+{
+  "runId": "run-74cca10b",
+  "workflowId": "wf-lua-vm-explicit-complete",
+  "agent": "knowledge-builder",
+  "task": "Analyze the scout findings through explicit_programming.md as the governing philosophy. Focus on what completion requires for an idiomatic Moonlift Lua 5.5 VM: dual-tree shape, typed data/control clarity, hidden implicitness risks, sequencing constraints, oracle boundaries, source+binary compatibility, weak tables/finalizers/userdata __gc/FFI, and verification implications. Vendored Lua 5.5 is only semantic/bytecode oracle, not implementation architecture. SponJIT remains separate. Produce second-order observations and constraints only; do not propose approaches.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-74cca10b.jsonl",
+  "status": "completed",
+  "created": "2026-05-29T23:51:41.529Z",
+  "updated": "2026-05-29T23:53:24.350Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "### What Matters Most for This Problem\n\n- **Dual-tree completeness**: completion means every Lua 5.5 semantic distinction must appear either as typed data (`Value`, `Frame`, `Proto`, GC objects, ABI records) or typed control (`ok/error/oom/yield/metamethod/finalizer/...` continuations), not as comments, magic integers, stale flags, or side effects.\n- **Trust-boundary fidelity**: bytecode decoding and `validate_proto` must exactly cover the assumptions used by dispatch and handlers before opcode ",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 35
+}

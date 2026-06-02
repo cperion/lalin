@@ -110,13 +110,6 @@ M.L0_REWRITE_SCHEMAS = {
         projection = "call_boundary",
     },
     {
-        name = "FACT_LOOP_I64_INDUCTION",
-        kind = "PRIMITIVE_FACT",
-        unlocks = "loop-carried i64 specialization",
-        requires = { "loop_header", "i64_induction", "stable_step" },
-        projection = "side_exit",
-    },
-    {
         name = "FACT_VIRTUAL_OBJECT",
         kind = "PRIMITIVE_FACT",
         unlocks = "allocation sinking / side-exit materialization",

@@ -56,8 +56,10 @@ block loop(pc: index, prev_op: u16)
     if op > @{OP_EXTRAARG} then
         jump invalid(code = @{ERR_BAD_OPCODE})
     end
-    if a >= p.maxstack then
-        jump invalid(code = @{ERR_RUNTIME})
+    if op ~= @{OP_JMP} and op ~= @{OP_EXTRAARG} then
+        if a >= p.maxstack then
+            jump invalid(code = @{ERR_RUNTIME})
+        end
     end
 
     -- Pair-only opcodes must be paired with their producers.
@@ -107,6 +109,14 @@ block loop(pc: index, prev_op: u16)
             jump invalid(code = @{ERR_RUNTIME})
         end
     end
+    if op == @{OP_SETTABUP} or op == @{OP_SETFIELD} then
+        if k == 0 and c >= p.maxstack then
+            jump invalid(code = @{ERR_RUNTIME})
+        end
+        if k ~= 0 and as(index, c) >= p.constants_len then
+            jump invalid(code = @{ERR_RUNTIME})
+        end
+    end
 
     -- Constants and child-prototype bounds.
     if op == @{OP_LOADK} then
@@ -151,15 +161,28 @@ block loop(pc: index, prev_op: u16)
                 jump invalid(code = @{ERR_RUNTIME})
             end
         end
-        if b ~= 0 then
-            let list_end: u32 = as(u32, a) + as(u32, b)
+        if vb ~= 0 then
+            let list_end: u32 = as(u32, a) + as(u32, vb)
             if list_end >= as(u32, p.maxstack) then
                 jump invalid(code = @{ERR_RUNTIME})
             end
         end
     end
-    if op == @{OP_ADDK} or op == @{OP_SUBK} or op == @{OP_MULK} or op == @{OP_MODK} or op == @{OP_POWK} or op == @{OP_DIVK} or op == @{OP_IDIVK} or op == @{OP_BANDK} or op == @{OP_BORK} or op == @{OP_BXORK} or op == @{OP_EQK} or op == @{OP_GETFIELD} or op == @{OP_SETFIELD} then
+    if op == @{OP_ADDK} or op == @{OP_SUBK} or op == @{OP_MULK} or op == @{OP_MODK} or op == @{OP_POWK} or op == @{OP_DIVK} or op == @{OP_IDIVK} or op == @{OP_BANDK} or op == @{OP_BORK} or op == @{OP_BXORK} or op == @{OP_EQK} or op == @{OP_GETFIELD} then
         if as(index, c) >= p.constants_len then
+            jump invalid(code = @{ERR_RUNTIME})
+        end
+    end
+    if op == @{OP_GETTABUP} then
+        if as(index, b) >= p.upvals_len then jump invalid(code = @{ERR_RUNTIME}) end
+        if as(index, c) >= p.constants_len then jump invalid(code = @{ERR_RUNTIME}) end
+    end
+    if op == @{OP_SETTABUP} then
+        if as(index, a) >= p.upvals_len then jump invalid(code = @{ERR_RUNTIME}) end
+        if as(index, b) >= p.constants_len then jump invalid(code = @{ERR_RUNTIME}) end
+    end
+    if op == @{OP_SETFIELD} then
+        if as(index, b) >= p.constants_len then
             jump invalid(code = @{ERR_RUNTIME})
         end
     end

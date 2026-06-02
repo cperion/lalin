@@ -1,0 +1,16 @@
+{
+  "runId": "run-5136874b",
+  "workflowId": "wf-lua-vm-explicit-complete",
+  "agent": "worker",
+  "task": "Continue implementing Approach B: Explicit Product/Protocol Re-Foundation from the current working tree and accumulated workflow context. Start fresh but do not restart work: first inspect git status/diff and current VM tests, then continue from the existing implementation. Goal is to push toward the final completed VM shape, not temporary scaffolding. Focus on finishing remaining final-form work after the prior worker: migrate enter_native/native call spine to NativeCallContext, implement deeper allocator/GC/table/string/upvalue/native/protected/coroutine protocol semantics where practical, remove remaining raw resume/old continuation assumptions, strengthen source/binary compatibility boundaries, and add/update tests. Preserve vm_resume→vm_loop→dispatch_instruction, frame-cache reload, explicit result_base, PUC-as-oracle-only, and SponJIT disabled. Run relevant tests and report changed files, completed work, remaining blockers, and deviations.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-5136874b.jsonl",
+  "status": "completed",
+  "created": "2026-05-30T08:45:05.038Z",
+  "updated": "2026-05-30T08:58:42.054Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "## Completed\n\n- Inspected current `git status`/diff and ran the existing VM test slice before continuing.\n- Migrated the native-call continuation shape from raw fields to `NativeCallContext`:\n  - `dispatch_instruction` / opcode protocols now pass `enter_native(cl, ctx)`.\n  - `prepare_call` builds a typed `NativeCallContext`.\n  - `vm_loop` and `call_native` consume the context instead of `func_slot/nargs/wanted/result_base/resume_mode`.\n  - `NativeCallContext` now carries `ResumeState`.\n- Removed",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 192
+}

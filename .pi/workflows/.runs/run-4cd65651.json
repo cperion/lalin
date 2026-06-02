@@ -1,0 +1,16 @@
+{
+  "runId": "run-4cd65651",
+  "workflowId": "wf-lua-vm-finish-final",
+  "agent": "worker",
+  "task": "Implement the final-form VM completion plan in this workflow, starting from the current working tree. Preserve explicit_programming.md discipline, PUC Lua 5.5 as oracle only, and SponJIT separation. Work directly toward the complete idiomatic Moonlift-native VM semantics described by the edit plan; do not introduce MVP/scaffold/milestone framing. Apply concrete code changes and tests, run the relevant VM test slice, and report exactly what changed, what passes, and what remains.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-4cd65651.jsonl",
+  "status": "completed",
+  "created": "2026-05-30T10:45:54.497Z",
+  "updated": "2026-05-30T10:54:54.445Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "## Completed\n\n- Aligned VM `TM` constants with Lua 5.5 oracle order from `.vendor/Lua/ltm.h`.\n- Added explicit `TypeMeta` discriminants and appended semantic error codes.\n- Bumped VM/native/validator ABI constants and contract gates while keeping `sponjit_allowed = false`.\n- Strengthened `validate_proto` so arithmetic opcodes must be followed by matching `MMBIN*`:\n  - correct fallback opcode kind\n  - correct source operands\n  - correct metamethod event\n- Corrected source codegen for `OP_MMBIN` t",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 96
+}

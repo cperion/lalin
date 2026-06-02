@@ -276,8 +276,8 @@ block prepare()
         let extra: ptr(Instr) = cl.proto.code + (pc + 1)
         block_index = (extra.word >> 7) & 33554431
     end
-    var n: index = as(index, b)
-    if b == 0 then
+    var n: index = as(index, vb)
+    if vb == 0 then
         n = top - (base + as(index, a) + 1)
     end
     let start_index: index = (as(index, block_index) - 1) * 50

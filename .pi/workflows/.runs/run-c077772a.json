@@ -1,0 +1,16 @@
+{
+  "runId": "run-c077772a",
+  "workflowId": "wf-lua-vm-complete-runtime",
+  "agent": "scout",
+  "task": "Find everything relevant to completing the Moonlift-native Lua 5.5 VM under one concrete definition of complete: this implementation can run Lua 5.5 programs with correct VM semantics through its own Moonlift-native runtime, while SponJIT remains separate. Treat the prior VM contract milestone as background but start this as a new workflow. Gather facts about the current implementation, what is already done, all remaining runtime/compiler/semantic/test gaps, dependency clusters, stubs, TODOs, and verification evidence needed for completion.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-c077772a.jsonl",
+  "status": "completed",
+  "created": "2026-05-29T18:34:36.240Z",
+  "updated": "2026-05-29T18:39:09.798Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "## Files Retrieved\n\n1. `experiments/lua_interpreter_vm/README.md` (lines 1-120) - Current status: VM in `src/` is separate from SpongeJIT; not production; tests listed.\n2. `experiments/lua_interpreter_vm/VM_CONTRACT.md` (lines 1-86) - Prior contract gates: validator, frame cache reload, result base, error unwind, native ABI, allocator boundary.\n3. `experiments/lua_interpreter_vm/src/constants.lua` (lines 1-238) - Lua 5.5 tags, opcodes 0-84, TM events, resume modes, statuses, ABI versions.\n4. `ex",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 123
+}

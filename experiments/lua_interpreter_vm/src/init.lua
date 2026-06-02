@@ -34,6 +34,8 @@ vm.vm_loop = require("experiments.lua_interpreter_vm.src.vm_loop")
 vm.regions_codegen = require("experiments.lua_interpreter_vm.src.regions_codegen")
 vm.regions_lexer = require("experiments.lua_interpreter_vm.src.regions_lexer")
 vm.regions_parser = require("experiments.lua_interpreter_vm.src.regions_parser")
+vm.regions_semantic = require("experiments.lua_interpreter_vm.src.regions_semantic")
+vm.regions_lower = require("experiments.lua_interpreter_vm.src.regions_lower")
 vm.regions_compiler = require("experiments.lua_interpreter_vm.src.regions_compiler")
 vm.compat = require("experiments.lua_interpreter_vm.src.compat")
 

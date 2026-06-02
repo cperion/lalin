@@ -1,0 +1,16 @@
+{
+  "runId": "run-575faab1",
+  "workflowId": "wf-lua-vm-compiler-unfuck",
+  "agent": "worker",
+  "task": "Continue completing the Lua VM/compiler with a fresh worker instance from current tree and workflow context. Do not resume old runs. Preserve the repaired architecture: parser builds parse products only; semantic builds/resolves HIR; lowering alone emits bytecode; no recursive parser emit; parser never imports codegen/touches FuncBuilder. Make a substantial end-to-end push on major remaining source/VM features. Prioritize function declarations/literals, closures/upvalues from source, call execution with callable functions, method calls, expression lists/multi-return, keyed table constructors, richer call args/index expressions, varargs, or runtime gaps needed by these. Keep boundaries correct and implement real parse products, HIR, lowering, and tests. Use safe targeted capped checks only; no broad memory-heavy sweeps. Report concrete source features now parsed/HIR/lowered/executed, files changed, checks run, and exact remaining gaps.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-575faab1.jsonl",
+  "status": "completed",
+  "created": "2026-05-30T19:23:11.506Z",
+  "updated": "2026-05-30T19:50:04.218Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "## Completed\n\nMade a fresh end-to-end compiler/VM push while preserving the repaired architecture:\n\n- Parser remains parse-product-only; no codegen/`FuncBuilder` touching.\n- Semantic phase now builds more HIR shapes:\n  - multi-result `return` expression lists, e.g. `return 1, 2`\n  - multi-argument simple calls, e.g. `f(1, 2, 'x')`\n  - method-call HIR, e.g. `obj:m(7)`\n  - keyed table constructor entries:\n    - name keys: `{ answer = 40 }`\n    - bracket keys: `{ [2] = 2 }`\n    - mixed array/keyed ",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 153
+}

@@ -1,0 +1,16 @@
+{
+  "runId": "run-86ac89f9",
+  "workflowId": "wf-sponjit-copy-link-patch",
+  "agent": "scout",
+  "task": "Find everything relevant to turning current SpongeJIT abstract stencil descriptors into executable native byte stencils. Focus on existing descriptor schema, build_bank emission, runtime ABI, tests, old object/ELF helpers, and exact places that currently force executable=false/size=0/data=NULL. Report concrete facts and risks, not proposals.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-86ac89f9.jsonl",
+  "status": "failed",
+  "created": "2026-05-31T13:50:03.583Z",
+  "updated": "2026-05-31T14:04:24.276Z",
+  "exitCode": 0,
+  "stopReason": "error",
+  "errorMessage": "Codex error: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":\"Your input exceeds the context window of this model. Please adjust your input and try again.\",\"param\":\"input\"},\"sequence_number\":2}",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 117
+}

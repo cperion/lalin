@@ -1,0 +1,16 @@
+{
+  "runId": "run-24161b35",
+  "workflowId": "wf-lua-vm-compiler-complete",
+  "agent": "worker",
+  "task": "Implement the source compiler completion plan in this workflow, starting from the current working tree. Do not create a new workflow and do not resume the VM runtime worker. First fix the parser_compile segfault/stale FFI schema issue, then continue into substantial real compiler work rather than stopping: shared FFI schema, compiler ABI/allocation ownership where feasible, codegen/parser expansion, and runtime dependencies needed for compiled source execution. Preserve explicit_programming.md discipline, PUC Lua 5.5 as oracle only, and SponJIT separation. Make concrete code changes, run relevant compiler/VM tests, and report actual compiler features now compiled/executed plus remaining blockers.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-24161b35.jsonl",
+  "status": "completed",
+  "created": "2026-05-30T13:46:40.428Z",
+  "updated": "2026-05-30T14:19:43.686Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "## Completed\n- Fixed `test_parser_compile.lua` segfault cause by replacing stale inline FFI struct copies with a shared schema.\n- Added shared LuaJIT FFI schema at `experiments/lua_interpreter_vm/tools/vm_ffi_schema.lua`, synchronized with current VM/compiler products including the trailing `CompileUnit` fields and `LuaThread.coroutine`.\n- Updated JIT harness to use the shared schema and stopped hidden fallback compilation by default; fallback is now only an explicit `force_fallback` harness esc",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 121
+}

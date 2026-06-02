@@ -1,0 +1,16 @@
+{
+  "runId": "run-eff7c56f",
+  "workflowId": "wf-lua-vm-compiler-unfuck",
+  "agent": "knowledge-builder",
+  "task": "Analyze the scout findings for repairing the Lua VM source compiler architecture after the recursive-emit mistake. Produce second-order observations only: constraints, hidden dependencies, failure modes, ordering pressures, verification implications, and non-obvious risks. Ground the analysis in explicit_programming.md, LANGUAGE_REFERENCE.md, the current compiler facts, and the OOM/emit-splicing issue. Do not propose implementation approaches or solutions.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-eff7c56f.jsonl",
+  "status": "completed",
+  "created": "2026-05-30T16:40:11.017Z",
+  "updated": "2026-05-30T16:41:55.108Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "### What Matters Most for This Problem\n\n- **Static vs runtime control**: `emit` is compile-time CFG splicing, not a parser call mechanism.\n- **Unbounded grammar nesting**: Lua blocks, expressions, function bodies, calls, tables, and parentheses require source-dependent nesting depth.\n- **State lifetime**: parser “call-local” temporaries currently live in shared `CompileUnit` scratch fields.\n- **Allocator / storage boundary**: current compiler entry has no real allocator, only caller-owned fixed ",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 24
+}

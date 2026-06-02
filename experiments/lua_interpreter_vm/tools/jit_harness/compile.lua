@@ -86,10 +86,10 @@ local function init_real_compiler(config)
 
         local compile_region = vm.regions_compiler.compile_lua_source_into
         local wrapper = moon.func { compile_lua_source_into = compile_region } [[
-compile_text_for_jit_harness(cu: ptr(CompileUnit), b: ptr(FuncBuilder), p: ptr(Proto), bytes: ptr(u8), n: index, code: ptr(Instr), code_cap: index, locals: ptr(CompileLocal), locals_cap: index) -> i32
+compile_text_for_jit_harness(cu: ptr(CompileUnit), b: ptr(FuncBuilder), p: ptr(Proto), bytes: ptr(u8), n: index, code: ptr(Instr), code_cap: index, locals: ptr(CompileLocal), locals_cap: index, workspace: ptr(u8), workspace_cap: index) -> i32
     return region -> i32
     entry start()
-        emit @{compile_lua_source_into}(cu, b, p, bytes, n, code, code_cap, locals, locals_cap;
+        emit @{compile_lua_source_into}(cu, b, p, bytes, n, code, code_cap, locals, locals_cap, workspace, workspace_cap;
             ok = ok,
             syntax_error = syntax_bad,
             semantic_error = semantic_bad,
@@ -138,16 +138,18 @@ local function compile_with_real_compiler(source, name, config)
     config = config or {}
     local code_cap = config.code_cap or 8192
     local locals_cap = config.locals_cap or 1024
+    local workspace_cap = config.workspace_cap or (1024 * 1024)
 
     local cu = ffi.new("CompileUnit[1]")
     local b = ffi.new("FuncBuilder[1]")
     local p = ffi.new("Proto[1]")
     local code = ffi.new("Instr[?]", code_cap)
     local locals = ffi.new("CompileLocal[?]", locals_cap)
+    local workspace = ffi.new("uint8_t[?]", workspace_cap)
     local bytes = ffi.new("uint8_t[?]", #source)
     ffi.copy(bytes, source, #source)
 
-    local n = st.compiled(cu, b, p, bytes, #source, code, code_cap, locals, locals_cap)
+    local n = st.compiled(cu, b, p, bytes, #source, code, code_cap, locals, locals_cap, workspace, workspace_cap)
     if n < 0 then
         return nil, string.format("compile failed (%d)", n)
     end
@@ -170,6 +172,7 @@ local function compile_with_real_compiler(source, name, config)
         flag = tonumber(p[0].flag) or 0,
         constants_len = tonumber(p[0].constants_len) or 0,
         child_proto_count = tonumber(p[0].children_len) or 0,
+        _workspace = workspace,
     }
 end
 

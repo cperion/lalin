@@ -1,0 +1,16 @@
+{
+  "runId": "run-5535b200",
+  "workflowId": "wf-sponjit-copy-link-patch",
+  "agent": "documenter",
+  "task": "Create a proper standalone design specification for the approved next direction: Tier 2 SponJIT Semantic Fragment Planner first, before executable native x64 copy-link-patch. Faithfully compile only the accumulated workflow context: current state, problem statement, chosen design, architecture, data model, invariants, planner responsibilities, validation gates, non-goals, relationship to future native linker and Moonlift VM gates, risks, and initial implementation slices. Make it suitable to save as `experiments/lua_interpreter_vm/SPONJIT_TIER2_PLANNER_SPEC.md`.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-5535b200.jsonl",
+  "status": "completed",
+  "created": "2026-05-30T19:08:15.551Z",
+  "updated": "2026-05-30T19:10:38.333Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "# SponJIT Tier 2 Semantic Fragment Planner Specification\n\n**Target file:** `experiments/lua_interpreter_vm/SPONJIT_TIER2_PLANNER_SPEC.md`  \n**Workflow:** `wf-sponjit-copy-link-patch`  \n**Approved direction:** Tier 2 Semantic Fragment Planner first, before executable native x64 Copy-Link-Patch.\n\n---\n\n## Goal\n\nBuild a Tier 2 SponJIT semantic fragment planner that links and validates abstract native-fragment descriptors, tracks facts/endpoints/dependencies/projections, and proves projection and sea",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 5
+}

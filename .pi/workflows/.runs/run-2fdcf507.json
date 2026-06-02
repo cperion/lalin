@@ -1,0 +1,16 @@
+{
+  "runId": "run-2fdcf507",
+  "workflowId": "wf-sponjit-ssa-asdl-rewrite",
+  "agent": "scout",
+  "task": "Find everything relevant to designing a proper ASDL/layer vocabulary for rewriting the SpongeJIT Lua SSA compiler. Focus on current SSA/fact/opcode/lowering/runtime contracts and what semantic questions each current module answers. Gather raw facts only: files, types, operations, data flow, current leaks of residency/interpreter mechanics, observation/control/projection needs. Do not propose a design.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-2fdcf507.jsonl",
+  "status": "completed",
+  "created": "2026-06-01T11:49:32.635Z",
+  "updated": "2026-06-01T11:53:48.743Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "## Files Retrieved\n\n1. `.pi/workflows/wf-sponjit-ssa-asdl-rewrite.md` (lines 1-7) — Workflow context: ASDL/layer vocabulary rewrite, principle that SSA consumes Lua opcode semantics into canonical representation while residency/mechanics belong in separate layers.\n2. `experiments/lua_interpreter_vm/SPONJIT_FOUNDRY_SSA.md` (lines 1-307) — Current foundry/SSA design notes: pipeline, atom contract, fact state, loop-boundary stance, Stencil IR role.\n3. `experiments/lua_interpreter_vm/SPONJIT_ARCHITE",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 112
+}

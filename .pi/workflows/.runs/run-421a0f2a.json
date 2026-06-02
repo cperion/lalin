@@ -1,0 +1,16 @@
+{
+  "runId": "run-421a0f2a",
+  "workflowId": "wf-sponjit-ssa-asdl-rewrite",
+  "agent": "knowledge-builder",
+  "task": "Analyze the scout findings and the provided guide principles (COMPILER_PATTERN.md, PVM_GUIDE.md) for the SpongeJIT Lua SSA compiler rewrite. Produce second-order observations: exact layer boundaries, semantic questions, tensions, what must be source vs semantic vs normal form vs placement vs runtime ABI, and risks to avoid. Do not propose implementation details yet.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-421a0f2a.jsonl",
+  "status": "completed",
+  "created": "2026-06-01T11:54:02.336Z",
+  "updated": "2026-06-01T11:56:48.622Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "### What Matters Most for This Problem\n\n- **Layer authority:** each ASDL vocabulary must answer one real question and consume decisions from the previous layer.\n- **Semantic exhaustiveness:** Lua opcode meaning, guard conditions, boundary exits, and unsupported cases must be typed and closed, not stringly/ad hoc.\n- **Normal-form correctness:** dedupe is only sound if everything that affects selector/contract/projection/exits is represented in the normal form or explicitly kept as alias metadata.",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 19
+}

@@ -1,0 +1,16 @@
+{
+  "runId": "run-39bd0521",
+  "workflowId": "wf-lua-vm-compiler-complete",
+  "agent": "edit-planner",
+  "task": "Plan the implementation required to complete the source compiler for experiments/lua_interpreter_vm as a final-form Lua 5.5 compiler targeting the Moonlift-native VM. Use the scout and knowledge-builder findings in this workflow. Produce a concrete file-by-file edit plan with ordering, line-level anchors/patterns, allocation/lifetime decisions, parser/codegen/runtime dependencies, verification boundaries, and tests. The plan must not use MVP/milestone/scaffold framing; it should be the direct final-form implementation plan. Include immediate correction for the current parser_compile segfault/stale FFI schema issue, but do not stop at that.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-39bd0521.jsonl",
+  "status": "completed",
+  "created": "2026-05-30T13:40:17.037Z",
+  "updated": "2026-05-30T13:44:57.041Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "### Precondition Checks\n\n- Confirm `experiments/lua_interpreter_vm/src/parser_products.lua:28` still defines `CompileUnit` with trailing fields `scratch_reg`, `scratch_count`, `scratch_op`, `scratch_index`, `scratch_index2`.\n- Confirm stale FFI copies still exist at:\n  - `experiments/lua_interpreter_vm/tests/test_parser_compile.lua:56`\n  - `experiments/lua_interpreter_vm/tools/jit_harness/compile.lua:130`\n- Confirm `regions_compiler.lua:6-17` still exposes `compile_lua_source_into` without `LuaT",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 48
+}

@@ -1,0 +1,18 @@
+{
+  "runId": "run-1df74972",
+  "workflowId": "wf-lua-vm-finish-final",
+  "agent": "worker",
+  "task": "Continue implementing the VM toward completion with a larger semantic push than the last one. Do not do contract-only or test-only work. Starting from the current tree and prior session, implement substantial real Moonlift-native Lua VM semantics end-to-end. Prioritize connected hard areas that remove major remaining incompleteness: closures/upvalues/varargs, protected calls/value-carrying error unwind/TBC, table key canonicalization and rehash, metamethod fallback completion, native yield/reenter-Lua, binary chunk loading, or GC/weak/finalizers. Choose the most productive connected set based on current code and implement as much as possible until a real technical blocker or a substantial semantic area is complete. Preserve explicit_programming.md discipline, PUC Lua 5.5 as oracle only, and SponJIT separation. Report concrete semantics implemented and remaining blockers; avoid 'passes' framing except for factual test results.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-4cd65651.jsonl",
+  "status": "completed",
+  "created": "2026-05-30T11:20:42.729Z",
+  "updated": "2026-05-30T11:39:52.362Z",
+  "resumedFromRunId": "run-cc0fa994",
+  "sessionEntriesBefore": 189,
+  "exitCode": 0,
+  "stopReason": "stop",
+  "errorMessage": "WebSocket closed 1006",
+  "lastOutputPreview": "## Completed\n\nImplemented a connected table-semantics push:\n\n- Added `regions_key.lua` as the explicit table-key protocol boundary:\n  - canonical table-key hash\n  - canonical table-key equality\n  - integral float keys compare/hash like integer keys\n  - nil and NaN are invalid set keys\n  - shared node-key helpers for raw lookup, update, iteration, and rehash\n\n- Reworked table raw access:\n  - `table_raw_get` now hashes to the canonical bucket instead of scanning all buckets.\n  - `table_raw_get` an",
+  "sessionEntriesAfter": 313
+}

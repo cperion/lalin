@@ -1,0 +1,16 @@
+{
+  "runId": "run-a9e1e54d",
+  "workflowId": "wf-lua-vm-explicit-complete",
+  "agent": "edit-planner",
+  "task": "Replace the previous implementation plan. Produce a final-form implementation plan for Approach B: Explicit Product/Protocol Re-Foundation. Do not frame this as MVP/milestone slices or temporary sidecars. The user wants the final architecture, not partial scaffolding. The plan may have an order of edits, but every edit must move directly toward the final completed VM shape. No 'later milestone', no comments-only placeholders, no temporary sidecars, no 'keep this for now' unless it is the final design. Specify concrete file-by-file edits for the final products/protocols, final module boundaries, final validator/decoder boundary, final native/protected/coroutine/metamethod/GC/weak/finalizer/userdata protocols, final opcode generation shape, source/binary compatibility boundaries, tests/conformance boundaries, and migration order. Preserve the proven VM spine only where it is part of the final design. Do not implement.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-a9e1e54d.jsonl",
+  "status": "completed",
+  "created": "2026-05-30T08:11:32.362Z",
+  "updated": "2026-05-30T08:16:28.679Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "### Precondition Checks\n\nBefore edits begin:\n\n1. Confirm `experiments/lua_interpreter_vm/src/contract.lua` still has `sponjit_allowed = false`.\n2. Run current baseline tests:\n   - `luajit experiments/lua_interpreter_vm/tests/test_vm_smoke.lua`\n   - `luajit experiments/lua_interpreter_vm/tests/test_vm_validation_contract.lua`\n   - `luajit experiments/lua_interpreter_vm/tests/test_vm_call_frame_contract.lua`\n3. Verify current anchors:\n   - `products.lua`: core structs start at line 8; `Frame` curr",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 53
+}

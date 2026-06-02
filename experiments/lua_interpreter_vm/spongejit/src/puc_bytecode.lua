@@ -4,6 +4,7 @@
 local M = {}
 local util = require("src.util")
 local FactSchema = require("src.fact_schema")
+local LoopRegions = require("src.loop_regions")
 
 local function find_lua_root(repo_root, awfy_root)
     local candidates = {
@@ -24,9 +25,12 @@ local function build_tool(config, name, source_file)
     local repo_root = util.abspath(config.repo_root or util.find_repo_root(".") or ".")
     local lua_root = util.abspath(find_lua_root(repo_root, config.lua_root or config.awfy_root) or (repo_root .. "/.vendor/Lua"))
     local out = config[name .. "_path"] or config.tool_path or (repo_root .. "/experiments/lua_interpreter_vm/build/tools/" .. name)
-    if util.path_exists(out) then return out end
-    util.mkdir_p(util.dirname(out))
     local src = repo_root .. "/experiments/lua_interpreter_vm/tools/jit_harness/" .. source_file
+    if util.path_exists(out) then
+        local stale = os.execute("test " .. util.shell_quote(src) .. " -nt " .. util.shell_quote(out))
+        if not (stale == true or stale == 0) then return out end
+    end
+    util.mkdir_p(util.dirname(out))
     local cmd = string.format("cc -I%s %s %s -lm -ldl -o %s",
         util.shell_quote(lua_root), util.shell_quote(src), util.shell_quote(lua_root .. "/liblua.a"), util.shell_quote(out))
     local ok, text = util.run_capture(cmd)
@@ -56,6 +60,10 @@ local function read_dump(path)
                     proto = c[1], depth = tonumber(c[2]), pc = tonumber(c[3]), opcode = tonumber(c[4]), name = c[5],
                     a = tonumber(c[6]), b = tonumber(c[7]), c = tonumber(c[8]), k = tonumber(c[9]),
                     bx = tonumber(c[10]), sbx = tonumber(c[11]), ax = tonumber(c[12]), word = tonumber(c[13]),
+                    sb = tonumber(c[14]), sc = tonumber(c[15]), sj = tonumber(c[16]),
+                    vb = tonumber(c[17]), vc = tonumber(c[18]),
+                    kb_type = c[19], kb_i64 = tonumber(c[20]), kb_f64 = tonumber(c[21]),
+                    kc_type = c[22], kc_i64 = tonumber(c[23]), kc_f64 = tonumber(c[24]),
                 }
             end
         end
@@ -85,6 +93,9 @@ local function ins_event(row)
         op = row.name, name = row.name, proto = row.proto, pc = row.pc,
         opcode = row.opcode, a = row.a, b = row.b, c = row.c, k = row.k,
         bx = row.bx, sbx = row.sbx, ax = row.ax, word = row.word,
+        sb = row.sb, sc = row.sc, sj = row.sj, vb = row.vb, vc = row.vc,
+        kb_type = row.kb_type, kb_i64 = row.kb_i64, kb_f64 = row.kb_f64,
+        kc_type = row.kc_type, kc_i64 = row.kc_i64, kc_f64 = row.kc_f64,
     }
 end
 
@@ -159,6 +170,10 @@ local function parse_rows_text(text)
                     seq = tonumber(c[1]), proto = c[2], pc = tonumber(c[3]), opcode = tonumber(c[4]), name = c[5],
                     a = tonumber(c[6]), b = tonumber(c[7]), c = tonumber(c[8]), k = tonumber(c[9]),
                     bx = tonumber(c[10]), sbx = tonumber(c[11]), ax = tonumber(c[12]), word = tonumber(c[13]),
+                    sb = tonumber(c[14]), sc = tonumber(c[15]), sj = tonumber(c[16]),
+                    vb = tonumber(c[17]), vc = tonumber(c[18]),
+                    kb_type = c[19], kb_i64 = tonumber(c[20]), kb_f64 = tonumber(c[21]),
+                    kc_type = c[22], kc_i64 = tonumber(c[23]), kc_f64 = tonumber(c[24]),
                 }
             end
         end
@@ -266,6 +281,8 @@ function M.profile_files(files, config, dynamic_profile)
         operand_shape_counts = {},
         rewrite_fact_counts = {},
         rewrite_fact_static_counts = {},
+        loop_regions = {},
+        loop_region_rejects = {},
         rejects = {},
     }
 
@@ -313,6 +330,15 @@ function M.profile_files(files, config, dynamic_profile)
                             result.operand_shape_counts[full] = (result.operand_shape_counts[full] or 0) + 1
                         end
                     end
+                end
+                local loop_regions, loop_rejects = LoopRegions.find_in_rows(proto_rows)
+                for _, r in ipairs(loop_regions or {}) do
+                    r.file = fpath
+                    result.loop_regions[#result.loop_regions + 1] = r
+                end
+                for _, r in ipairs(loop_rejects or {}) do
+                    r.file = fpath
+                    result.loop_region_rejects[#result.loop_region_rejects + 1] = r
                 end
             end
         end

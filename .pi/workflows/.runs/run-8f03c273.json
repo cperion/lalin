@@ -1,0 +1,16 @@
+{
+  "runId": "run-8f03c273",
+  "workflowId": "wf-sponjit-copy-link-patch",
+  "agent": "worker",
+  "task": "Implement the no-residual SponJIT cleanup from the edit-planner context. End state: no residual runtime/design category; no opcode helper escape hatch; unsupported opcode/fact cases are structured compile/lower/select failures; native stencil coverage only counts exact semantic lowering; missing opcode coverage must be explicit, not hidden behind residual stubs. Follow the edit plan in the workflow context. Make the implementation coherent across SSA, Stencil IR, native lowering, descriptor ABI, bank generation/selector, Lua/C materializers, docs, and tests. Preserve the existing supported first native surface where possible. Add truthful semantic coverage/audit tests and no-residual gates. Do not introduce OpcodeHelper/HelperCall/helper ABI. Run appropriate tests and report remaining failures/gaps clearly.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-8f03c273.jsonl",
+  "status": "completed",
+  "created": "2026-05-31T19:51:41.262Z",
+  "updated": "2026-05-31T20:17:03.052Z",
+  "exitCode": 0,
+  "stopReason": "stop",
+  "lastOutputPreview": "## Completed\n\nImplemented the no-residual SponJIT cleanup across the maintained native-stencil path.\n\nKey changes:\n- Removed residual/unlowered runtime categories from SSA, Stencil IR, descriptor ABI, native emitter, materializers, selector, docs, and maintained gates.\n- Unsupported opcode/fact cases now become structured compile/lower/select failures.\n- Added exact semantic coverage metadata: native stencils must be `NATIVE | EXACT`; boundary stencils are marked separately.\n- Removed hidden L0 ",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 319
+}

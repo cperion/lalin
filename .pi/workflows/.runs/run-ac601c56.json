@@ -1,0 +1,16 @@
+{
+  "runId": "run-ac601c56",
+  "workflowId": "wf-moonlift-clp",
+  "agent": "scout",
+  "task": "Find everything relevant to the idea of adding a copy-and-patch / copy-link-patch compiler tier to Moonlift. Explore current backend interfaces (BackCmd, wire format, JIT/object paths), jump-first control/regions, and the experiments/lua_interpreter_vm SPONJIT copy-link-patch material. Gather first-order facts only: files, data structures, boundaries, existing codegen/linking mechanisms, tests, and constraints. Do not propose an architecture.",
+  "cwd": "/home/cedric/dev/moonlift",
+  "sessionFile": "/home/cedric/dev/moonlift/.pi/workflows/.sessions/run-ac601c56.jsonl",
+  "status": "failed",
+  "created": "2026-05-30T19:07:35.533Z",
+  "updated": "2026-05-30T19:18:26.214Z",
+  "exitCode": 0,
+  "stopReason": "error",
+  "errorMessage": "Codex error: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":\"Your input exceeds the context window of this model. Please adjust your input and try again.\",\"param\":\"input\"},\"sequence_number\":2}",
+  "sessionEntriesBefore": 0,
+  "sessionEntriesAfter": 205
+}
