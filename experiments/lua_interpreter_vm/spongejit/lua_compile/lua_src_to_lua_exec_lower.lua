@@ -21,9 +21,12 @@ local CONTROL_OP = { JMP = true, ERRNNIL = true }
 for k in pairs(CONDITION_OP) do CONTROL_OP[k] = true end
 local TERMINAL_RETURN = { RETURN = true, RETURN0 = true, RETURN1 = true }
 local TERMINAL_EFFECT = { SETTABLE = true }
-local ARITHMETIC_OP = { ADD = RT.ArithAdd }
-local MMBIN_OP = { Add = true }
-local SUPPORTED_INSTR = { LOADNIL = true, LOADFALSE = true, LOADTRUE = true, LOADI = true, LOADK = true, MOVE = true, NOT = true, VARARG = true, GETVARG = true, SETLIST = true, GETTABLE = true, LEN = true, CONCAT = true, MMBIN = true }
+local ARITHMETIC_OP = {
+  ADD = { op = RT.ArithAdd, lhs = "slot", rhs = "slot", companion = "MMBIN" },
+  ADDI = { op = RT.ArithAdd, lhs = "slot", rhs = "imm", companion = "MMBINI" },
+  ADDK = { op = RT.ArithAdd, lhs = "slot", rhs = "const", companion = "MMBINK" },
+}
+local SUPPORTED_INSTR = { LOADNIL = true, LOADFALSE = true, LOADTRUE = true, LOADI = true, LOADK = true, MOVE = true, NOT = true, VARARG = true, GETVARG = true, GETTABLE = true, LEN = true, CONCAT = true, MMBIN = true, MMBINI = true, MMBINK = true }
 
 local function ename(s) return Exec.Name(tostring(s)) end
 local function rtname(s) return RT.Name(tostring(s)) end
@@ -56,6 +59,54 @@ end
 
 local function add_error(errors, msg) errors[#errors + 1] = msg; return nil end
 
+local function is_add_binop(op)
+  return op == Src.Add or (op and op.kind == "Add")
+end
+
+local function same_slot(a, b) return a and b and a.id == b.id end
+local function same_imm(a, b) return a and b and a.value == b.value end
+local function same_kref(a, b) return a and b and a.id == b.id end
+
+local function arithmetic_companion_ok(op, companion)
+  local spec = ARITHMETIC_OP[op and op.kind]
+  if not spec or not companion or companion.kind ~= spec.companion then return false end
+  if not is_add_binop(companion.op) then return false end
+  if op.kind == "ADD" then
+    return same_slot(companion.lhs, op.lhs) and same_slot(companion.rhs, op.rhs)
+  elseif op.kind == "ADDI" then
+    -- LuaSrc.ADDI does not preserve the original operand-order bit. Until
+    -- that source fact is modeled on the arithmetic op itself, accept only
+    -- the unflipped companion whose operands match the ADDI operands exactly.
+    return not companion.operands_flipped and same_slot(companion.lhs, op.lhs) and same_imm(companion.rhs, op.rhs)
+  elseif op.kind == "ADDK" then
+    return not companion.operands_flipped and same_slot(companion.lhs, op.lhs) and same_kref(companion.rhs, op.rhs)
+  end
+  return false
+end
+
+local function arithmetic_next_index(ops, i, op)
+  local companion = ops[i + 1]
+  if arithmetic_companion_ok(op, companion) then return i + 2, companion.pc and companion.pc.id end
+  return i + 1, nil
+end
+
+local function standalone_marker(kind)
+  return kind == "MMBIN" or kind == "MMBINI" or kind == "MMBINK"
+end
+
+local function has_i64_fact(evidence, slot)
+  local sid = tonumber(slot and slot.id or slot) or 0
+  for _, f in ipairs((evidence and evidence.observed) or {}) do
+    local subject = f.subject
+    if subject and subject.kind == "SrcSlot" and subject.slot
+        and subject.slot.id == sid
+        and f.predicate and f.predicate.kind == "IsI64" then
+      return true, f
+    end
+  end
+  return false, nil
+end
+
 local function has_fact(evidence, subject_kind, subject_id_field, subject_id, predicate)
   for _, f in ipairs((evidence and evidence.observed) or {}) do
     local subject = f.subject
@@ -66,10 +117,6 @@ local function has_fact(evidence, subject_kind, subject_id_field, subject_id, pr
     end
   end
   return false, nil
-end
-local function has_i64_fact(evidence, slot)
-  local sid = tonumber(slot and slot.id or slot) or 0
-  return has_fact(evidence, "SrcSlot", "slot", sid, "IsI64")
 end
 local function has_bool_fact(evidence, slot)
   local sid = tonumber(slot and slot.id or slot) or 0
@@ -118,15 +165,28 @@ local function scan_shape(window)
       -- falling back to evidence/rejection.
       if fall then leaders[pc_of(fall)] = true end
     elseif ARITHMETIC_OP[op.kind] then
-      local next_i = i + 1
-      local companion = ops[next_i]
-      if companion and companion.kind == "MMBIN" then
-        if companion.op ~= Src.Add and not (companion.op and companion.op.kind == "Add") then return nil, { "lua_exec:mismatched_mmbin_companion:" .. tostring(op.pc.id) } end
-        next_i = i + 2
+      local companion = ops[i + 1]
+      if companion and companion.kind == ARITHMETIC_OP[op.kind].companion and not arithmetic_companion_ok(op, companion) then
+        return nil, { "lua_exec:mismatched_arithmetic_companion:" .. tostring(op.pc.id) }
       end
+      local next_i = arithmetic_next_index(ops, i, op)
       local fall = ops[next_i]
       if not fall then return nil, { "lua_exec:arithmetic_without_following_continuation:" .. tostring(op.pc.id) } end
       leaders[pc_of(fall)] = true
+    elseif op.kind == "GETTABLE" then
+      local fall = ops[i + 1]
+      if not fall then return nil, { "lua_exec:gettable_without_following_continuation:" .. tostring(op.pc.id) } end
+      leaders[pc_of(fall)] = true
+    elseif op.kind == "LEN" then
+      local fall = ops[i + 1]
+      if not fall then return nil, { "lua_exec:len_without_following_continuation:" .. tostring(op.pc.id) } end
+      leaders[pc_of(fall)] = true
+    elseif op.kind == "CONCAT" then
+      local fall = ops[i + 1]
+      if not fall then return nil, { "lua_exec:concat_without_following_continuation:" .. tostring(op.pc.id) } end
+      leaders[pc_of(fall)] = true
+    elseif op.kind == "SETLIST" then
+      return nil, { "lua_exec:setlist_table_write_semantics_future:" .. tostring(op.pc.id) }
     elseif TERMINAL_RETURN[op.kind] or TERMINAL_EFFECT[op.kind] then
       if ops[i + 1] then leaders[pc_of(ops[i + 1])] = true end
     elseif not SUPPORTED_INSTR[op.kind] then
@@ -154,17 +214,26 @@ local function scan_shape(window)
         term = { kind = "errnnil", op = op, nil_target = fall and pc_of(fall) or "errnnil_ok_" .. tostring(op.pc.id), error_target = "errnnil_error_" .. tostring(op.pc.id) }
         i = i + 1; break
       elseif ARITHMETIC_OP[op.kind] then
-        local next_i = i + 1
-        local companion = ops[next_i]
-        local companion_pc = nil
-        if companion and companion.kind == "MMBIN" then
-          if companion.op ~= Src.Add and not (companion.op and companion.op.kind == "Add") then return nil, { "lua_exec:mismatched_mmbin_companion:" .. tostring(op.pc.id) } end
-          companion_pc = companion.pc and companion.pc.id
-          next_i = i + 2
+        local companion = ops[i + 1]
+        if companion and companion.kind == ARITHMETIC_OP[op.kind].companion and not arithmetic_companion_ok(op, companion) then
+          return nil, { "lua_exec:mismatched_arithmetic_companion:" .. tostring(op.pc.id) }
         end
+        local next_i, companion_pc = arithmetic_next_index(ops, i, op)
         local fall = ops[next_i]
         term = { kind = "arithmetic", op = op, ok_target = fall and pc_of(fall), error_target = "arithmetic_error_" .. tostring(op.pc.id), companion_pc = companion_pc }
         i = next_i; break
+      elseif op.kind == "GETTABLE" then
+        local fall = ops[i + 1]
+        term = { kind = "gettable", op = op, ok_target = fall and pc_of(fall), error_target = "gettable_error_" .. tostring(op.pc.id) }
+        i = i + 1; break
+      elseif op.kind == "LEN" then
+        local fall = ops[i + 1]
+        term = { kind = "len", op = op, ok_target = fall and pc_of(fall), error_target = "len_error_" .. tostring(op.pc.id) }
+        i = i + 1; break
+      elseif op.kind == "CONCAT" then
+        local fall = ops[i + 1]
+        term = { kind = "concat", op = op, ok_target = fall and pc_of(fall), error_target = "concat_error_" .. tostring(op.pc.id) }
+        i = i + 1; break
       elseif TERMINAL_RETURN[op.kind] then
         term = { kind = "return", op = op }; i = i + 1; break
       elseif TERMINAL_EFFECT[op.kind] then
@@ -185,6 +254,12 @@ local function scan_shape(window)
       blocks[#blocks + 1] = { pc = term.error_target, instrs = {}, term = { kind = "error", op = term.op } }
     elseif term.kind == "arithmetic" then
       blocks[#blocks + 1] = { pc = term.error_target, instrs = {}, term = { kind = "arithmetic_error", op = term.op } }
+    elseif term.kind == "gettable" then
+      blocks[#blocks + 1] = { pc = term.error_target, instrs = {}, term = { kind = "gettable_error", op = term.op } }
+    elseif term.kind == "len" then
+      blocks[#blocks + 1] = { pc = term.error_target, instrs = {}, term = { kind = "len_error", op = term.op } }
+    elseif term.kind == "concat" then
+      blocks[#blocks + 1] = { pc = term.error_target, instrs = {}, term = { kind = "concat_error", op = term.op } }
     elseif term.kind == "settable" then
       local write_target = "settable_write_" .. tostring(term.op.pc.id)
       local raw_error_target = "settable_raw_error_" .. tostring(term.op.pc.id)
@@ -203,7 +278,7 @@ local function slot_reads_and_defs(block)
   local function def_slot(slot) local sid = slot and slot.id; if sid ~= nil then defs[sid] = true end end
   for _, op in ipairs(block.instrs or {}) do
     if op.kind == "MOVE" or op.kind == "NOT" then read_slot(op.b); def_slot(op.a)
-    elseif ARITHMETIC_OP[op.kind] then read_slot(op.lhs); read_slot(op.rhs); def_slot(op.a)
+    elseif ARITHMETIC_OP[op.kind] then read_slot(op.lhs); if ARITHMETIC_OP[op.kind].rhs == "slot" then read_slot(op.rhs) end; def_slot(op.a)
     elseif op.kind == "GETTABLE" then read_slot(op.table); read_slot(op.key); def_slot(op.a)
     elseif op.kind == "LEN" then read_slot(op.b); def_slot(op.a)
     elseif op.kind == "CONCAT" then read_slot(op.first); read_slot(op.last); def_slot(op.a)
@@ -217,7 +292,7 @@ local function slot_reads_and_defs(block)
       if wanted == 0 then def_slot(op.a) else for i = 0, math.max(0, wanted - 2) do defs[(op.a.id or 0) + i] = true end end
     elseif op.kind == "GETVARG" then read_slot(op.index); def_slot(op.a)
     elseif op.kind == "SETLIST" then
-      if (op.narray and op.narray.value or 0) == 0 then defs[-100000 - (op.table and op.table.id or 0)] = true end
+      return nil, nil, "lua_exec:setlist_table_write_semantics_future"
     else return nil, nil, "lua_exec:unsupported_instruction:" .. tostring(op.kind) end
   end
   local term = block.term
@@ -252,9 +327,17 @@ local function slot_reads_and_defs(block)
     elseif op.kind == "EQK" then read_slot(op.lhs)
     elseif op.lhs then read_slot(op.lhs); if op.rhs and op.rhs.id ~= nil then read_slot(op.rhs) end end
   elseif term.kind == "arithmetic" then
-    read_slot(term.op.lhs); read_slot(term.op.rhs)
+    read_slot(term.op.lhs); if ARITHMETIC_OP[term.op.kind].rhs == "slot" then read_slot(term.op.rhs) end
   elseif term.kind == "arithmetic_error" then
-    read_slot(term.op.lhs); read_slot(term.op.rhs)
+    read_slot(term.op.lhs); if ARITHMETIC_OP[term.op.kind].rhs == "slot" then read_slot(term.op.rhs) end
+  elseif term.kind == "gettable" then
+    read_slot(term.op.table); read_slot(term.op.key)
+  elseif term.kind == "gettable_error" then
+    read_slot(term.op.table)
+  elseif term.kind == "len" or term.kind == "len_error" then
+    read_slot(term.op.b)
+  elseif term.kind == "concat" or term.kind == "concat_error" then
+    read_slot(term.op.first); read_slot(term.op.last)
   elseif term.kind == "errnnil" or term.kind == "error" then
     read_slot(term.op.a)
   end
@@ -273,6 +356,9 @@ local function analyze_block_io(shape)
     elseif term.kind == "branch" then edge_targets[term.true_target] = true; edge_targets[term.false_target] = true
     elseif term.kind == "errnnil" then edge_targets[term.nil_target] = true; edge_targets[term.error_target] = true
     elseif term.kind == "arithmetic" then edge_targets[term.ok_target] = true; edge_targets[term.error_target] = true
+    elseif term.kind == "gettable" then edge_targets[term.ok_target] = true; edge_targets[term.error_target] = true
+    elseif term.kind == "len" then edge_targets[term.ok_target] = true; edge_targets[term.error_target] = true
+    elseif term.kind == "concat" then edge_targets[term.ok_target] = true; edge_targets[term.error_target] = true
     elseif term.kind == "settable" then edge_targets[term.ok_target] = true; edge_targets[term.error_target] = true
     elseif term.kind == "settable_ok_check" then edge_targets[term.write_target] = true; edge_targets[term.error_target] = true end
   end
@@ -298,7 +384,7 @@ local function slot_ty_for_pc(builder, pc, sid)
   local pcs = tostring(pc)
   local forced = builder.forced_slot_ty and builder.forced_slot_ty[pc] and builder.forced_slot_ty[pc][sid]
   if forced then return forced end
-  if pcs:match("^errnnil_error_") or pcs:match("^arithmetic_error_") or pcs:match("^settable_") then return "lua_value" end
+  if pcs:match("^errnnil_error_") or pcs:match("^arithmetic_error_") or pcs:match("^settable_") or pcs:match("^gettable_error_") or pcs:match("^len_error_") or pcs:match("^concat_error_") then return "lua_value" end
   return slot_ty(builder, sid)
 end
 local function exec_type_for_external_scalar(ty)
@@ -460,17 +546,7 @@ local function lower_instruction(builder, env, ops, op)
     ops[#ops + 1] = Exec.AssignValue(slot_ref(op.a.id), Exec.TempValue(ename(tmp)))
     env[op.a.id] = "lua_value"
   elseif op.kind == "SETLIST" then
-    if (op.narray and op.narray.value or 0) == 0 then
-      require_stack_params(builder)
-      local count_spec = RT.OpenFromTop(top_ref())
-      local window = RT.StackWindow(RT.ConstructorWindow, frame_ref(), RT.Slot((op.table.id or 0) + 1), count_spec)
-      local seq = RT.ValueSeq(RT.OpenSeq, {}, count_spec, RT.FromStackWindow(window))
-      ops[#ops + 1] = Exec.Let(ename(temp_name(builder, "setlist_values")), Exec.ValueSeqExpr(seq))
-      -- Table writes remain future; this consumes/builds the open sequence model
-      -- without pretending table mutation semantics are implemented.
-    else
-      return add_error(builder.errors, "lua_exec:setlist_table_write_semantics_future")
-    end
+    return add_error(builder.errors, "lua_exec:setlist_table_write_semantics_future")
   else
     return add_error(builder.errors, "lua_exec:unsupported_instruction:" .. tostring(op.kind))
   end
@@ -491,6 +567,28 @@ local function rk_value_ref(builder, env, ops, rk)
     return tmp, ty
   end
   return add_error(builder.errors, "lua_exec:unsupported_rk_value:" .. tostring(rk and rk.kind))
+end
+
+local function arithmetic_refs(builder, env, ops, op)
+  local spec = ARITHMETIC_OP[op.kind]
+  if not spec then return nil end
+  if not bind_slot(builder, ops, env, op.lhs.id) then return nil end
+  local lhs_ref = slot_ref(op.lhs.id)
+  if spec.rhs == "slot" then
+    if not bind_slot(builder, ops, env, op.rhs.id) then return nil end
+    return lhs_ref, slot_ref(op.rhs.id), env[op.lhs.id], env[op.rhs.id]
+  elseif spec.rhs == "imm" then
+    local tmp = temp_ref("add_rhs_" .. tostring(op.pc.id))
+    ops[#ops + 1] = Exec.AssignValue(tmp, Exec.ConstTValue(RT.IntValue(op.rhs and op.rhs.value or 0)))
+    return lhs_ref, tmp, env[op.lhs.id], "i64"
+  elseif spec.rhs == "const" then
+    local v = const_i64_for_k(builder, op.rhs)
+    if not v then return nil end
+    local tmp = temp_ref("add_rhs_" .. tostring(op.pc.id))
+    ops[#ops + 1] = Exec.AssignValue(tmp, v)
+    return lhs_ref, tmp, env[op.lhs.id], "i64"
+  end
+  return add_error(builder.errors, "lua_exec:unsupported_arithmetic_rhs:" .. tostring(spec.rhs))
 end
 
 local function lower_condition(builder, env, ops, op)
@@ -617,12 +715,13 @@ local function lower_block(builder, block)
   elseif block.term.kind == "arithmetic" then
     local op = block.term.op
     require_strings_params(builder)
-    if not bind_slot(builder, ops, env, op.lhs.id) then return nil end
-    if not bind_slot(builder, ops, env, op.rhs.id) then return nil end
+    local lhs, rhs, lhs_ty, rhs_ty = arithmetic_refs(builder, env, ops, op)
+    if not lhs then return nil end
+    local arith_op = ARITHMETIC_OP[op.kind].op
     local tmp = temp_name(builder, "arith_add")
-    ops[#ops + 1] = Exec.Let(ename(tmp), Exec.ArithmeticNoMetaExpr(RT.ArithAdd, slot_ref(op.lhs.id), slot_ref(op.rhs.id)))
-    local choice = Exec.ArithmeticNumericChoice(RT.ArithAdd, slot_ref(op.lhs.id), slot_ref(op.rhs.id))
-    local result_ty = (env[op.lhs.id] == "i64" and env[op.rhs.id] == "i64") and "lua_i64_value" or "lua_value"
+    ops[#ops + 1] = Exec.Let(ename(tmp), Exec.ArithmeticNoMetaExpr(arith_op, lhs, rhs))
+    local choice = Exec.ArithmeticNumericChoice(arith_op, lhs, rhs)
+    local result_ty = (lhs_ty == "i64" and rhs_ty == "i64") and "lua_i64_value" or "lua_value"
     builder.forced_slot_ty[block.term.ok_target] = builder.forced_slot_ty[block.term.ok_target] or {}
     builder.forced_slot_ty[block.term.ok_target][op.a.id] = result_ty
     local ok_env = copy_env(env)
@@ -635,13 +734,82 @@ local function lower_block(builder, block)
   elseif block.term.kind == "arithmetic_error" then
     local op = block.term.op
     require_strings_params(builder)
-    if not bind_slot(builder, ops, env, op.lhs.id) then return nil end
-    if not bind_slot(builder, ops, env, op.rhs.id) then return nil end
+    local lhs, rhs = arithmetic_refs(builder, env, ops, op)
+    if not lhs then return nil end
+    local arith_op = ARITHMETIC_OP[op.kind].op
     local tmp = temp_name(builder, "arith_error_value")
     local err_ref = temp_ref(tmp .. "_ref")
-    ops[#ops + 1] = Exec.Let(ename(tmp), Exec.ArithmeticErrorValueExpr(RT.ArithAdd, slot_ref(op.lhs.id), slot_ref(op.rhs.id)))
+    ops[#ops + 1] = Exec.Let(ename(tmp), Exec.ArithmeticErrorValueExpr(arith_op, lhs, rhs))
     ops[#ops + 1] = Exec.AssignValue(err_ref, Exec.TempValue(ename(tmp)))
     term = Exec.Error(RT.ErrorState(RT.ArithmeticError, err_ref, RT.Pc(op.pc.id or 0), top_ref()))
+  elseif block.term.kind == "gettable" then
+    local op = block.term.op
+    require_object_params(builder)
+    if not bind_slot(builder, ops, env, op.table.id) then return nil end
+    if not bind_slot(builder, ops, env, op.key.id) then return nil end
+    local raw = temp_name(builder, "rawget")
+    ops[#ops + 1] = Exec.Let(ename(raw), Exec.TableRawGetExpr(slot_ref(op.table.id), slot_ref(op.key.id)))
+    local val = temp_name(builder, "gettable")
+    ops[#ops + 1] = Exec.Let(ename(val), Exec.TableRawGetValueOrNilExpr(Exec.TempValue(ename(raw))))
+    local ok_env = copy_env(env)
+    ok_env[op.a.id] = "lua_value"
+    builder.forced_slot_ty[block.term.ok_target] = builder.forced_slot_ty[block.term.ok_target] or {}
+    builder.forced_slot_ty[block.term.ok_target][op.a.id] = "lua_value"
+    local ok_args = jump_args_for(builder, block.term.ok_target, ok_env, { [op.a.id] = Exec.TempValue(ename(val)) })
+    local err_args = jump_args_for(builder, block.term.error_target, env)
+    if not ok_args or not err_args then return nil end
+    -- The concrete raw-get support flag is represented by TableRawGetHitExpr over
+    -- the ASDL raw result; lower through a BoolChoice temp.
+    local supported = temp_name(builder, "rawget_supported")
+    ops[#ops + 1] = Exec.Let(ename(supported), Exec.TableRawGetHitExpr(Exec.TempValue(ename(raw))))
+    term = Exec.BranchArgs(Exec.BoolChoice(Exec.TempValue(ename(supported))), block_ref_for_pc(block.term.ok_target), ok_args, block_ref_for_pc(block.term.error_target), err_args)
+  elseif block.term.kind == "gettable_error" then
+    local op = block.term.op
+    if not bind_slot(builder, ops, env, op.table.id) then return nil end
+    term = Exec.Error(RT.ErrorState(RT.RuntimeError, slot_ref(op.table.id), RT.Pc(op.pc.id or 0), top_ref()))
+  elseif block.term.kind == "len" then
+    local op = block.term.op
+    require_object_params(builder)
+    if not bind_slot(builder, ops, env, op.b.id) then return nil end
+    local tmp = temp_name(builder, "len")
+    ops[#ops + 1] = Exec.Let(ename(tmp), Exec.LenNoMetaExpr(slot_ref(op.b.id)))
+    local len_ok = temp_name(builder, "len_ok")
+    ops[#ops + 1] = Exec.Let(ename(len_ok), Exec.LenNoMetaOkExpr(slot_ref(op.b.id)))
+    local len_ref = temp_ref(tmp .. "_ref")
+    ops[#ops + 1] = Exec.AssignValue(len_ref, Exec.TempValue(ename(tmp)))
+    local ok_env = copy_env(env)
+    ok_env[op.a.id] = "lua_i64_value"
+    builder.forced_slot_ty[block.term.ok_target] = builder.forced_slot_ty[block.term.ok_target] or {}
+    builder.forced_slot_ty[block.term.ok_target][op.a.id] = "lua_i64_value"
+    local ok_args = jump_args_for(builder, block.term.ok_target, ok_env, { [op.a.id] = Exec.RuntimeValue(len_ref) })
+    local err_args = jump_args_for(builder, block.term.error_target, env)
+    if not ok_args or not err_args then return nil end
+    term = Exec.BranchArgs(Exec.BoolChoice(Exec.TempValue(ename(len_ok))), block_ref_for_pc(block.term.ok_target), ok_args, block_ref_for_pc(block.term.error_target), err_args)
+  elseif block.term.kind == "len_error" then
+    local op = block.term.op
+    if not bind_slot(builder, ops, env, op.b.id) then return nil end
+    term = Exec.Error(RT.ErrorState(RT.RuntimeError, slot_ref(op.b.id), RT.Pc(op.pc.id or 0), top_ref()))
+  elseif block.term.kind == "concat" then
+    local op = block.term.op
+    require_object_params(builder)
+    if not bind_slot(builder, ops, env, op.first.id) then return nil end
+    if not bind_slot(builder, ops, env, op.last.id) then return nil end
+    local tmp = temp_name(builder, "concat")
+    ops[#ops + 1] = Exec.Let(ename(tmp), Exec.StringConcat2Expr(slot_ref(op.first.id), slot_ref(op.last.id)))
+    local concat_ref = temp_ref(tmp .. "_ref")
+    ops[#ops + 1] = Exec.AssignValue(concat_ref, Exec.TempValue(ename(tmp)))
+    local ok_env = copy_env(env)
+    ok_env[op.a.id] = "lua_value"
+    builder.forced_slot_ty[block.term.ok_target] = builder.forced_slot_ty[block.term.ok_target] or {}
+    builder.forced_slot_ty[block.term.ok_target][op.a.id] = "lua_value"
+    local ok_args = jump_args_for(builder, block.term.ok_target, ok_env, { [op.a.id] = Exec.RuntimeValue(concat_ref) })
+    local err_args = jump_args_for(builder, block.term.error_target, env)
+    if not ok_args or not err_args then return nil end
+    term = Exec.BranchArgs(Exec.TypeChoice(concat_ref, RT.IsString), block_ref_for_pc(block.term.ok_target), ok_args, block_ref_for_pc(block.term.error_target), err_args)
+  elseif block.term.kind == "concat_error" then
+    local op = block.term.op
+    if not bind_slot(builder, ops, env, op.first.id) then return nil end
+    term = Exec.Error(RT.ErrorState(RT.RuntimeError, slot_ref(op.first.id), RT.Pc(op.pc.id or 0), top_ref()))
   elseif block.term.kind == "error" then
     local op = block.term.op
     if not bind_slot(builder, ops, env, op.a.id) then return nil end
@@ -703,13 +871,6 @@ end
 local function empty_contract() return Exec.Contract({}, {}) end
 
 local function lower_value(window, evidence)
-  local raw_ops = (window and window.ops) or {}
-  for i, op in ipairs(raw_ops) do
-    if ARITHMETIC_OP[op.kind] and has_i64_fact(evidence, op.lhs) and has_i64_fact(evidence, op.rhs)
-        and not (raw_ops[i + 1] and raw_ops[i + 1].kind == "MMBIN") then
-      return nil, { "lua_exec:proven_i64_arithmetic_owned_by_closed_moon_cfg:" .. tostring(op.pc and op.pc.id) }
-    end
-  end
   local shape, errors = scan_shape(window); if not shape then return nil, errors end
   local params_by_pc, io_errors = analyze_block_io(shape); if not params_by_pc then return nil, io_errors end
   local builder = new_builder(evidence, params_by_pc)
@@ -739,6 +900,20 @@ end
 
 function M.is_candidate(window, evidence)
   return lower_value(window, evidence or B.empty_evidence()) ~= nil
+end
+
+function M.coverage_summary()
+  local supported, seen = {}, {}
+  local function add_ops(t)
+    for k in pairs(t or {}) do if not seen[k] then seen[k] = true; supported[#supported + 1] = k end end
+  end
+  add_ops(SUPPORTED_INSTR)
+  add_ops(ARITHMETIC_OP)
+  add_ops(CONTROL_OP)
+  add_ops(TERMINAL_RETURN)
+  add_ops(TERMINAL_EFFECT)
+  table.sort(supported)
+  return { supported_ops = supported }
 end
 
 M.phase = phase

@@ -126,7 +126,7 @@ end
 function M.representative_key(semantic_node, contract_key, variant)
   return table.concat({
     M.semantic_key(semantic_node),
-    "-- LuaContract --",
+    "-- CompileContract --",
     tostring(contract_key or ""),
     "-- Stencil.VariantKey --",
     M.variant_key(variant),

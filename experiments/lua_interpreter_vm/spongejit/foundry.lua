@@ -4,10 +4,10 @@
 -- Maintained architecture:
 --   opcode windows + facts/evidence
 --   -> LuaCompile.Unit
---   -> LuaRT / LuaExec / LuaSem / LuaNF / LuaContract
+--   -> LuaRT / LuaExec
 --   -> MoonCFG.Kernel + emitted Moonlift source
 --   -> ASDL StencilTemplate artifacts generated from MoonCFG/LuaExec shapes
---   -> semantic representative key (`MoonCFG + LuaContract + Stencil.VariantKey`)
+--   -> semantic representative key (`MoonCFG + CompileContract + Stencil.VariantKey`)
 --
 -- Source opcode windows are preserved as aliases/members of semantic
 -- representatives. Runtime materialization is handled by the Moonlift-native

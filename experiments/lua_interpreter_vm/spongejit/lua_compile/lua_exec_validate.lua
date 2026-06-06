@@ -58,7 +58,7 @@ local function validate_expr(expr, errors, label)
       add(errors, label .. " unsupported LuaRT.ValueProjection: " .. tostring(pk))
     end
   elseif c == Exec.ValueExpr or c == Exec.TruthinessExpr or c == Exec.NotTruthinessExpr or c == Exec.StackLoadExpr or c == Exec.TopValueExpr or c == Exec.CountExpr or c == Exec.ValueSeqExpr or c == Exec.VarargAccessExpr or c == Exec.RawGetExpr or c == Exec.RawSetExpr
-      or c == Exec.TableRawGetExpr or c == Exec.TableRawGetHitExpr or c == Exec.TableRawGetValueOrNilExpr or c == Exec.TableRawSetCanWriteExpr or c == Exec.TableWriteBarrierNeededExpr or c == Exec.TableLenExpr or c == Exec.StringLenExpr or c == Exec.LenNoMetaExpr or c == Exec.StringConcat2Expr
+      or c == Exec.TableRawGetExpr or c == Exec.TableRawGetHitExpr or c == Exec.TableRawGetValueOrNilExpr or c == Exec.TableRawSetCanWriteExpr or c == Exec.TableWriteBarrierNeededExpr or c == Exec.TableLenExpr or c == Exec.StringLenExpr or c == Exec.LenNoMetaExpr or c == Exec.LenNoMetaOkExpr or c == Exec.StringConcat2Expr
       or c == Exec.ArithmeticNumericOkExpr or c == Exec.ArithmeticNoMetaExpr or c == Exec.ArithmeticErrorValueExpr
       or c == Exec.MetamethodLookupExpr or c == Exec.AdjustResultsExpr or c == Exec.NumberOpExpr or c == Exec.StringConcatExpr then
     -- Structurally recognized; unsupported execution is rejected by lowering.

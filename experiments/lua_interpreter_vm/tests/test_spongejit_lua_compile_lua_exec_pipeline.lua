@@ -14,7 +14,7 @@ local CFGValidate = require("lua_compile.moon_cfg_validate")
 local Emit = require("lua_compile.moon_cfg_emit")
 local OutcomeModel = require("lua_compile.lua_rt_outcome_model")
 local ValueModel = require("lua_compile.lua_rt_value_model")
-local RT, Exec, CFG, Src, NF = T.LuaRT, T.LuaExec, T.MoonCFG, T.LuaSrc, T.LuaNF
+local RT, Exec, CFG, Src = T.LuaRT, T.LuaExec, T.MoonCFG, T.LuaSrc
 
 ffi.cdef[[
 typedef struct { int64_t tag; int64_t payload_i64; double payload_f64; } LuaRTValue;
@@ -43,8 +43,11 @@ end
 
 local function assert_no_luasrc_or_protocol(kernel)
   assert(not contains_class(kernel, function(cls) return Src.Op.members[cls] end), "MoonCFG output must not contain LuaSrc opcode nodes")
-  local forbidden = { [NF.CallProtocolExit]=true, [NF.CloseProtocolExit]=true, [NF.GenericForProtocolExit]=true, [NF.SetListProtocolExit]=true, [NF.GetVargProtocolExit]=true }
-  assert(not contains_class(kernel, function(cls) return forbidden[cls] end), "MoonCFG output must not contain protocol exits")
+  assert(not contains_class(kernel, function(cls)
+    local plan = cls and rawget(cls, "__plan")
+    local cname = tostring((plan and plan.name) or "")
+    return cname:match("ProtocolExit")
+  end), "MoonCFG output must not contain protocol-exit concepts")
 end
 
 local function lower_exec(events, evidence)
@@ -88,6 +91,12 @@ local function compile_kernel(events, evidence)
   assert(k.id.name.text == "lua_exec_core_kernel", "compile_to_moon_kernel should use LuaExec core path for this fixture")
   return k
 end
+
+local dyn_return_public = C.compile_to_moon_kernel(C.unit_from_events({ {op="RETURN1", pc=1, a=1} }, {}))
+assert(dyn_return_public.kind == "Ok", "dynamic RETURN1 should not hard-error after outcome retry")
+assert(dyn_return_public.product.kernel.id.name.text == "lua_exec_core_kernel")
+local dyn_return_src = Emit.emit(dyn_return_public.product.kernel, { name = "test_public_dynamic_return1_outcome" })
+assert(dyn_return_src:match("LuaRTOutcome"), "dynamic RETURN1 public compile should lower through typed outcome projection")
 
 function run_kernel(kernel, name, ...)
   local src = Emit.emit(kernel, { name = name })

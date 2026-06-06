@@ -81,6 +81,28 @@ M.TYPE_DECL = table.concat({
   "struct " .. M.RAW_GET_TYPE_NAME .. " hit: bool; value: LuaRTValue end",
 }, "\n")
 
+M.FFI_CDEF = [[
+typedef struct { int64_t byte_len; int64_t hash; int64_t numeric_kind; int64_t numeric_i64; double numeric_f64; } LuaRTString;
+typedef struct { int64_t state; LuaRTValue key; LuaRTValue value; } LuaRTTableHashEntry;
+typedef struct {
+  LuaRTValue *array;
+  int64_t array_len;
+  LuaRTTableHashEntry *hash;
+  int64_t hash_capacity;
+  int64_t hash_count;
+  int64_t metatable_kind;
+  int64_t index_table;
+  int64_t newindex_table;
+  int64_t gc_color;
+  int64_t gc_generation;
+  int64_t gc_epoch;
+  int64_t barrier_epoch;
+  int64_t barrier_count;
+  int64_t barrier_last_child_tag;
+  int64_t barrier_last_child_payload;
+} LuaRTTable;
+]]
+
 function M.hash_entry_state_value(name)
   local v = M.HASH_ENTRY_STATE[name]
   assert(v ~= nil, "unknown LuaRT hash entry state: " .. tostring(name))

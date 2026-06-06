@@ -2,8 +2,8 @@
 -- Usage: luajit src/worker_compile.lua <chunk_id>
 --
 -- Maintained offline foundry path:
---   opcode sequence + foundry evidence -> LuaCompile.Unit -> LuaRT/LuaExec/LuaNF/LuaContract
---   -> MoonCFG.Kernel/Moonlift source -> MoonCFG + LuaContract + Stencil.VariantKey.
+--   opcode sequence + foundry evidence -> LuaCompile.Unit -> LuaRT/LuaExec
+--   -> MoonCFG.Kernel/Moonlift source -> MoonCFG + CompileContract + Stencil.VariantKey.
 --
 -- This worker only uses the maintained ASDL/MoonCFG/stencil compiler path.
 

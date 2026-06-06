@@ -14,6 +14,9 @@ local M = {}
 
 M.TYPE_NAME = "LuaRTValue"
 M.TYPE_DECL = "struct LuaRTValue tag: i64; payload_i64: i64; payload_f64: f64 end"
+M.FFI_CDEF = [[
+typedef struct { int64_t tag; int64_t payload_i64; double payload_f64; } LuaRTValue;
+]]
 M.TAG_FIELD = "tag"
 M.PAYLOAD_I64_FIELD = "payload_i64"
 M.PAYLOAD_F64_FIELD = "payload_f64"

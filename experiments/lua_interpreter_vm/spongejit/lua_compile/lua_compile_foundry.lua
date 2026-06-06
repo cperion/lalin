@@ -1,20 +1,18 @@
 -- lua_compile_foundry.lua -- offline LuaCompile foundry enumeration and dedupe.
 --
--- This is an offline foundry boundary. It consumes opcode windows plus foundry
--- evidence bundles, compiles them through LuaCompile.Unit -> LuaNF/LuaContract
--- -> MoonCFG.Kernel, and dedupes by MoonCFG + LuaContract +
--- Stencil.VariantKey representative identity. It does not emit fake binary
--- stencils or adapt descriptor-runtime artifact APIs.
+-- Pipeline: opcode windows + evidence -> LuaCompile.Unit -> LuaExec -> MoonCFG.
+-- Representatives are keyed by MoonCFG + CompileContract + Stencil.VariantKey.
+-- This does not emit fake binary stencils or adapt descriptor-runtime artifact APIs.
 
 local C = require("lua_compile")
 local FoundryEvidence = require("lua_compile.lua_fact_from_foundry_bundle")
-local NFKey = require("lua_compile.lua_nf_key")
-local ContractKey = require("lua_compile.lua_contract_key")
+local ContractKey = require("lua_compile.compile_contract_key")
 local CFGKey = require("lua_compile.moon_cfg_key")
 local StencilKey = require("lua_compile.stencil_key")
 local StencilFoundry = require("lua_compile.stencil_foundry")
 local MoonEmit = require("lua_compile.moon_cfg_emit")
 local Diagnostics = require("lua_compile.diagnostics")
+local LuaExecLower = require("lua_compile.lua_src_to_lua_exec_lower")
 
 local M = {}
 
@@ -300,8 +298,8 @@ function M.fact_bundles_for_ops(ops, config)
   return out, axes
 end
 
-local function rejection_reason(rej)
-  return tostring(rej and rej.reason and rej.reason.kind or "Rejected")
+local function diagnostic_reason(diagnostic)
+  return tostring(diagnostic and diagnostic.reason and diagnostic.reason.kind or "Rejected")
 end
 
 local function kernel_summary(kernel)
@@ -317,27 +315,19 @@ function M.compile_window(ops, bundle, opts)
   local evidence = FoundryEvidence.from_bundle(bundle or {})
   local unit = C.lua_compile_unit.from_events(ops or {}, {})
   unit = C.lua_compile_unit.from_parts(unit.source, evidence)
-  local nf_result = C.compile_to_normal_form(unit)
-  if nf_result.kind == "Reject" then
-    return { ok = false, reason = rejection_reason(nf_result.rejection), rejection = nf_result.rejection, source_ops = copy_array(ops) }
-  end
-
-  local nf = nf_result.product.nf
-  local contract = nf_result.product.contract
-  local normal_key = NFKey.key(nf)
-  local ckey = ContractKey.key(contract)
-
   local moon_result = C.compile_to_moon_kernel(unit)
   if moon_result.kind == "Reject" then
-    return { ok = false, reason = rejection_reason(moon_result.rejection), rejection = moon_result.rejection, source_ops = copy_array(ops) }
+    return { ok = false, reason = diagnostic_reason(moon_result.diagnostic), diagnostic = moon_result.diagnostic, source_ops = copy_array(ops) }
   end
   local kernel = moon_result.product.kernel
+  local contract = kernel.contract
+  local ckey = ContractKey.key(contract)
   local cfg_key = CFGKey.key(kernel)
   local variant = StencilFoundry.variant_for_kernel(kernel, contract, opts)
   local stencil_variant_key = StencilKey.variant_key(variant)
   local rep_key = table.concat({
     cfg_key,
-    "-- LuaContract --",
+    "-- CompileContract --",
     ckey,
     "-- Stencil.VariantKey --",
     stencil_variant_key,
@@ -353,9 +343,7 @@ function M.compile_window(ops, bundle, opts)
     moon_cfg_key = cfg_key,
     stencil_variant = variant,
     stencil_variant_key = stencil_variant_key,
-    normal_form_key = normal_key,
     contract_key = ckey,
-    normal_form = nf,
     contract = contract,
     moon_cfg_kernel = kernel,
     moon_cfg_kernel_summary = kernel_summary(kernel),
@@ -409,7 +397,6 @@ function M.run_windows(windows, config)
             representative_key = cr.representative_key,
             moon_cfg_key = cr.moon_cfg_key,
             stencil_variant_key = cr.stencil_variant_key,
-            normal_form_key = cr.normal_form_key,
             contract_key = cr.contract_key,
             moon_cfg_kernel = cr.moon_cfg_kernel_summary,
             moonlift_source = cr.moonlift_source,
@@ -425,7 +412,6 @@ function M.run_windows(windows, config)
         map_entry.representative_key = cr.representative_key
         map_entry.moon_cfg_key = cr.moon_cfg_key
         map_entry.stencil_variant_key = cr.stencil_variant_key
-        map_entry.normal_form_key = cr.normal_form_key
         map_entry.contract_key = cr.contract_key
         map_entry.moon_cfg_kind = cr.moon_cfg_kernel_summary and cr.moon_cfg_kernel_summary.kind
       else
@@ -454,7 +440,7 @@ function M.run_windows(windows, config)
   end
   stats.unique_representatives = #reps
   return {
-    schema = "sponjit.lua_compile_foundry.v2",
+    schema = "sponjit.lua_compile_foundry.v3",
     representatives = reps,
     alias_map = alias_map,
     rejection_reasons = rejection_counts,
@@ -498,7 +484,6 @@ local function representative_index(result)
       representative_id = r.representative_id,
       moon_cfg_key = r.moon_cfg_key,
       stencil_variant_key = r.stencil_variant_key,
-      normal_form_key = r.normal_form_key,
       contract_key = r.contract_key,
       representative_key = r.representative_key,
       count = r.count,
@@ -511,22 +496,16 @@ local function representative_index(result)
 end
 
 local function coverage_manifest(result)
-  local semantic, reject = 0, 0
   local ok_windows, rejected = {}, {}
   for _, a in ipairs(result.alias_map or {}) do
     if a.status == "ok" then ok_windows[a.ops_key] = true else rejected[a.reason or "Rejected"] = (rejected[a.reason or "Rejected"] or 0) + 1 end
   end
   local ok_count = 0; for _ in pairs(ok_windows) do ok_count = ok_count + 1 end
-  local ok_lower, SemLower = pcall(require, "lua_compile.lua_src_to_lua_sem_lower")
-  if ok_lower then
-    for _, k in pairs(SemLower.SEMANTIC_DECISION_KIND or {}) do
-      if k == "semantic" then semantic = semantic + 1 elseif k == "reject" then reject = reject + 1 end
-    end
-  end
+  local exec_cov = LuaExecLower.coverage_summary and LuaExecLower.coverage_summary() or {}
   return {
     schema = "sponjit.lua_compile_foundry.coverage.v1",
     lua_src_decode = { real_ops = 85, decoded = 85 },
-    lua_sem_decisions = { semantic = semantic, reject = reject },
+    lua_exec_coverage = exec_cov,
     fact_coverage = { subjects = 8, predicates = 24, dependencies = 8, payloads = 5 },
     stats = result.stats,
     distinct_successful_windows = ok_count,
@@ -544,7 +523,7 @@ function M.write_artifacts(result, out_dir)
   local s = result.stats or {}
   md[#md + 1] = string.format("Windows: **%d**; compiles: **%d**; ok: **%d**; rejected: **%d**; unique representatives: **%d**", s.windows or 0, s.compiles or 0, s.ok or 0, s.rejected or 0, s.unique_representatives or 0)
   md[#md + 1] = ""
-  md[#md + 1] = "Artifacts are `MoonCFG + LuaContract + Stencil.VariantKey` representatives with MoonCFG/Moonlift source. Binary StencilTemplate banks are emitted only after object-byte extraction provides real CodeBlobRef data. Source opcode windows are aliases only."
+  md[#md + 1] = "Artifacts are `MoonCFG + CompileContract + Stencil.VariantKey` representatives with MoonCFG/Moonlift source. Binary StencilTemplate banks are emitted only after object-byte extraction provides real CodeBlobRef data. Source opcode windows are aliases only."
   md[#md + 1] = ""
   md[#md + 1] = "| Rep | Count | Aliases | MoonCFG kind | Source preview |"
   md[#md + 1] = "|---:|---:|---:|---|---|"

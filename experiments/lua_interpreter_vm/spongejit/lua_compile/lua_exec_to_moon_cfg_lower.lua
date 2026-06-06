@@ -8,7 +8,7 @@
 local pvm = require("moonlift.pvm")
 local B = require("lua_compile.builders")
 local T = B.T
-local RT, Exec, CFG, LC = T.LuaRT, T.LuaExec, T.MoonCFG, T.LuaContract
+local RT, Exec, CC, CFG = T.LuaRT, T.LuaExec, T.CompileContract, T.MoonCFG
 local ExecValidate = require("lua_compile.lua_exec_validate")
 local ValueModel = require("lua_compile.lua_rt_value_model")
 local OutcomeModel = require("lua_compile.lua_rt_outcome_model")
@@ -23,7 +23,20 @@ local function kid(s) return CFG.KernelId(cname(s)) end
 local function rid(s) return CFG.RegionId(cname(s)) end
 local function bid_from_exec(id) return CFG.BlockId(cname(id.name.text)) end
 local function bref_from_exec(ref) return CFG.BlockRef(bid_from_exec(ref.id)) end
-local function empty_contract() return LC.Contract(LC.Transfer({}, {}), {}, {}) end
+local function empty_contract()
+  return CC.Contract(CC.Transfer({}, {}), {}, {}, {})
+end
+local function compile_contract(exec_contract)
+  local obligations, guarantees = {}, {}
+  for _, o in ipairs((exec_contract and exec_contract.obligations) or {}) do
+    obligations[#obligations + 1] = CC.RequiresExecObligation(o)
+  end
+  for _, g in ipairs((exec_contract and exec_contract.guarantees) or {}) do
+    guarantees[#guarantees + 1] = CC.GuaranteesExec(g)
+  end
+  if #obligations == 0 and #guarantees == 0 then return empty_contract() end
+  return CC.Contract(CC.Transfer({}, {}), obligations, guarantees, {})
+end
 local function cfg_arg_from_exec(arg, value) return CFG.Arg(cname(arg.name.text), value) end
 local function key_value_ref(v)
   local cls = pvm.classof(v)
@@ -453,6 +466,14 @@ local function lower_expr(state, env, expr)
     local tables = tables_value_for_frame(state, env, frame); if not tables then return nil end
     return emit_expr(state, "len_no_meta", CFG.RuntimeLenNoMeta(strings.value, tables.value, v.value), "i64")
   end
+  if cls == Exec.LenNoMetaOkExpr then
+    local v = env.values[key_value_ref(expr.value)]
+    if not v then return add_error(state, "unbound_len_ok_value:" .. key_value_ref(expr.value)) end
+    local frame = frame_from_value_ref(expr.value)
+    local strings = strings_value_for_frame(state, env, frame); if not strings then return nil end
+    local tables = tables_value_for_frame(state, env, frame); if not tables then return nil end
+    return emit_expr(state, "len_no_meta_ok", CFG.RuntimeLenNoMetaOk(strings.value, tables.value, v.value), "bool")
+  end
   if cls == Exec.StringConcat2Expr then
     local left = env.values[key_value_ref(expr.left)]
     local right = env.values[key_value_ref(expr.right)]
@@ -802,22 +823,35 @@ local function lower_value(kernel, opts)
   local params = {}
   for _, p in ipairs(region.params or {}) do params[#params + 1] = cfg_param(p) end
   local cfg_region = CFG.Region(rid("lua_exec_core_body"), params, {}, bid_from_exec(region.entry), blocks)
-  local cfg_kernel = CFG.Kernel(kid("lua_exec_core_kernel"), CFG.InlineSpan, params, returns, cfg_region, empty_contract())
+  local cfg_kernel = CFG.Kernel(kid("lua_exec_core_kernel"), CFG.InlineSpan, params, returns, cfg_region, compile_contract(kernel.contract))
   return cfg_kernel, nil
 end
 
-local phase = pvm.phase("spongejit_lua_exec_to_moon_cfg_lower", function(kernel)
-  local cfg, errors = lower_value(kernel)
-  if not cfg then error("LuaExec->MoonCFG lower failed inside cached phase: " .. table.concat(errors or {}, "; ")) end
-  return cfg
+local function normalize_mode(opts)
+  opts = opts or {}
+  if opts.outcome then return "outcome", tostring(opts.outcome_projection or opts.projection or "kind") end
+  return "direct", "none"
+end
+
+local function opts_from_mode(mode, projection)
+  if mode == "outcome" then return { outcome = true, outcome_projection = projection ~= "none" and projection or "kind" } end
+  return nil
+end
+
+local phase = pvm.phase("spongejit_lua_exec_to_moon_cfg_lower", function(kernel, mode, projection)
+  -- Cache both successes and ordinary lowering failures. The public API unwraps
+  -- this small record into `cfg` or `nil, errors`; the PVM boundary must never
+  -- hard-error for unsupported LuaExec/MoonCFG slices.
+  local cfg, errors = lower_value(kernel, opts_from_mode(mode, projection))
+  if cfg then return { cfg = cfg } end
+  return { errors = errors or { "lua_exec_to_moon_cfg_lower_failed" } }
 end)
 
 function M.lower(kernel, opts)
-  opts = opts or {}
-  local cfg, errors = lower_value(kernel, opts)
-  if not cfg then return nil, errors end
-  if opts.outcome then return cfg end
-  return pvm.one(phase(kernel))
+  local mode, projection = normalize_mode(opts)
+  local result = pvm.one(phase(kernel, mode, projection))
+  if result and result.cfg then return result.cfg end
+  return nil, result and result.errors or { "lua_exec_to_moon_cfg_lower_no_result" }
 end
 
 function M.lower_outcome(kernel, projection)

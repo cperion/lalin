@@ -7,15 +7,14 @@ SpongeJIT is moving to an explicit-programming pipeline:
 ```text
 LuaSrc / LuaFact
 → LuaRT / LuaExec semantic ASDL
+→ CompileContract ASDL
 → MoonCFG ASDL
 → Stencil ASDL backend artifacts
 → Moonlift-native fact collection, selection, copy/patch materialization
 → executable native fast paths
 ```
 
-Accepted kernels are `MoonCFG.Kernel` products. They must not carry executable
-`LuaNF.Program` payloads, semantic `out_tag` protocol ABI, or interpreter
-handoff exits.
+Accepted kernels are LuaExec-derived `MoonCFG.Kernel` products with `CompileContract` obligations. They must not carry retired executable payloads, semantic `out_tag` protocol ABI, or interpreter handoff exits.
 
 ## Current design documents
 

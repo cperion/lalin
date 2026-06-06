@@ -15,7 +15,7 @@ local Manifest = require("lua_compile.stencil_manifest")
 local Bundle = require("lua_compile.stencil_bundle")
 
 local function empty_contract()
-  return T.LuaContract.Contract(T.LuaContract.Transfer({}, {}), {}, {})
+  return T.CompileContract.Contract(T.CompileContract.Transfer({}, {}), {}, {}, {})
 end
 
 local contract = empty_contract()

@@ -43,7 +43,9 @@ Runtime VM state
 The executor never executes Lua semantics. Lua semantics are consumed earlier:
 
 ```text
-LuaSrc + LuaFact + LuaExec/LuaSem + LuaContract
+LuaSrc + LuaFact
+  -> LuaRT/LuaExec
+  -> CompileContract
   -> MoonCFG ASDL
   -> Moonlift/Cranelift native code
   -> StencilTemplate metadata
@@ -623,8 +625,8 @@ bank of tiles.
 for each bytecode window shape up to arity 4:
   for each fact combination up to 32:
     LuaSrc + LuaFact
-      -> LuaExec/LuaSem
-      -> LuaContract
+      -> LuaRT/LuaExec
+      -> CompileContract
       -> MoonCFG
       -> native code blob
       -> StencilTemplate

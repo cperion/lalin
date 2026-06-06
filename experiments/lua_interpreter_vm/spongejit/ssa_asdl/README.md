@@ -32,7 +32,7 @@ Layer questions:
 | `LuaSrc` | What did PUC encode? |
 | `LuaFact` | What evidence/facts/payload leases are available? |
 | `LuaRT` / `LuaExec` | What Lua runtime semantics and control states are represented? |
-| `LuaSem` / `LuaNF` / `LuaContract` | What semantic forms, normal forms, and obligations are derived? |
+| `CompileContract` | What executable-route obligations, guarantees, and invalidation assumptions are attached? |
 | `MoonCFG` | What explicit Moonlift-compatible CFG is emitted? |
 | `Stencil` | What compiled artifact, patch holes, relocs, and bank keys are produced? |
 | `LuaCompile` | What compile product is produced? |

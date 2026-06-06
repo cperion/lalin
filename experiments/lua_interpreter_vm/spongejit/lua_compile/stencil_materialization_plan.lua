@@ -3,6 +3,7 @@
 -- This module builds typed metadata only. It does not produce object bytes and
 -- does not infer Lua semantics from backend descriptors.
 
+local pvm = require("moonlift.pvm")
 local B = require("lua_compile.builders")
 local T = B.T
 local S = T.Stencil
@@ -41,10 +42,12 @@ end
 function M.variant_for_kernel(kernel, contract, opts)
   opts = opts or {}
   assert(kernel and kernel.kind, "variant_for_kernel requires MoonCFG.Kernel")
+  local c = contract or kernel.contract
+  assert(pvm.classof(c) == T.CompileContract.Contract, "variant_for_kernel requires CompileContract.Contract")
   return S.VariantKey(
     opts.stencil_kind or S.KernelStencil,
     kernel.kind,
-    contract or kernel.contract,
+    c,
     opts.placement or M.empty_placement(),
     opts.target_abi or M.default_target_abi(opts),
     opts.features or M.default_feature_set(opts)

@@ -16,11 +16,12 @@ local RT, Exec = T.LuaRT, T.LuaExec
 local function ex_name(s) return Exec.Name(tostring(s)) end
 local function rt_name(s) return RT.Name(tostring(s)) end
 
-ffi.cdef[[
-typedef struct { int64_t tag; int64_t payload_i64; double payload_f64; } LuaRTValue;
-typedef struct { int64_t byte_len; int64_t hash; int64_t numeric_kind; int64_t numeric_i64; double numeric_f64; } LuaRTString;
-typedef struct { LuaRTValue *array; int64_t array_len; int64_t metatable_kind; int64_t index_table; int64_t newindex_table; int64_t gc_color; int64_t gc_generation; int64_t gc_epoch; int64_t barrier_epoch; int64_t barrier_count; int64_t barrier_last_child_tag; int64_t barrier_last_child_payload; } LuaRTTable;
-]]
+ffi.cdef(ValueModel.FFI_CDEF .. "\n" .. ObjectModel.FFI_CDEF)
+
+assert(ffi.offsetof("LuaRTTable", "hash") == 16, "LuaRTTable.hash offset must match Moonlift TYPE_DECL")
+assert(ffi.offsetof("LuaRTTable", "hash_capacity") == 24, "LuaRTTable.hash_capacity offset must match Moonlift TYPE_DECL")
+assert(ffi.offsetof("LuaRTTable", "hash_count") == 32, "LuaRTTable.hash_count offset must match Moonlift TYPE_DECL")
+assert(ffi.offsetof("LuaRTTable", "metatable_kind") == 40, "LuaRTTable.metatable_kind offset must match Moonlift TYPE_DECL")
 
 local function v(tag_name, payload)
   local x = ffi.new("LuaRTValue")
@@ -53,6 +54,9 @@ array[1] = v("ShortStringTag", 0)
 local tables = ffi.new("LuaRTTable[2]")
 tables[0].array = array
 tables[0].array_len = 2
+tables[0].hash = nil
+tables[0].hash_capacity = 0
+tables[0].hash_count = 0
 tables[0].metatable_kind = ObjectModel.METATABLE_KIND.NoMetatable
 tables[0].index_table = 0
 tables[0].newindex_table = 0
@@ -84,17 +88,69 @@ local set_err_kind = compile_outcome({ {op="SETTABLE", pc=1, a=2, b=3, c=1, k=fa
 assert(tonumber(set_err_kind(tables, strings, table0, nilkey, intval)) == OutcomeModel.ERROR_KIND.TableIndexNilError)
 set_err_kind:free()
 
+local hash = ffi.new("LuaRTTableHashEntry[8]")
+hash[0].state = ObjectModel.HASH_ENTRY_STATE.Occupied
+hash[0].key = key3
+hash[0].value = v("IntegerTag", 333)
+tables[0].hash = hash
+tables[0].hash_capacity = 8
+tables[0].hash_count = 1
+
+local get_hash_hit = compile_outcome({ {op="GETTABLE", pc=1, a=1, b=2, c=3}, {op="RETURN1", pc=2, a=1} }, "value0_payload_i64", "test_rt_gettable_hash_hit")
+assert(tonumber(get_hash_hit(tables, strings, table0, key3)) == 333)
+get_hash_hit:free()
+
+local meta_table = v("TableTag", 1)
+tables[1].array = array
+tables[1].array_len = 99
+tables[1].hash = nil
+tables[1].hash_capacity = 0
+tables[1].hash_count = 0
+local get_meta_kind = compile_outcome({ {op="GETTABLE", pc=1, a=1, b=2, c=3}, {op="RETURN1", pc=2, a=1} }, "kind", "test_rt_gettable_metatable_not_raw_success")
+tables[1].metatable_kind = ObjectModel.METATABLE_KIND.IndexFunction
+assert(tonumber(get_meta_kind(tables, strings, meta_table, key1)) == OutcomeModel.OUTCOME_KIND.LuaErrorOutcome)
+get_meta_kind:free()
+
+local set_meta_kind = compile_outcome({ {op="SETTABLE", pc=1, a=2, b=3, c=1, k=false} }, "kind", "test_rt_settable_metatable_not_raw_success")
+tables[1].metatable_kind = ObjectModel.METATABLE_KIND.NewIndexFunction
+assert(tonumber(set_meta_kind(tables, strings, meta_table, key1, intval)) == OutcomeModel.OUTCOME_KIND.LuaErrorOutcome)
+set_meta_kind:free()
+
+tables[1].metatable_kind = ObjectModel.METATABLE_KIND.NoMetatable
+
+local set_hash_kind = compile_outcome({ {op="SETTABLE", pc=1, a=2, b=3, c=1, k=false} }, "kind", "test_rt_settable_hash_update_kind")
+assert(tonumber(set_hash_kind(tables, strings, table0, key3, intval)) == OutcomeModel.OUTCOME_KIND.NormalReturnOutcome)
+set_hash_kind:free()
+assert(tonumber(hash[0].value.payload_i64) == 1234)
+assert(tonumber(tables[0].hash_count) == 1)
+
 local len_string = compile_outcome({ {op="LEN", pc=1, a=1, b=2}, {op="RETURN1", pc=2, a=1} }, "value0_payload_i64", "test_rt_len_string")
 assert(tonumber(len_string(tables, strings, str1)) == 5)
 len_string:free()
 
 local len_table = compile_outcome({ {op="LEN", pc=1, a=1, b=2}, {op="RETURN1", pc=2, a=1} }, "value0_payload_i64", "test_rt_len_table")
 assert(tonumber(len_table(tables, strings, table0)) == 2)
+-- Table LEN must not evaluate a string-bank access while deciding the table path.
+assert(tonumber(len_table(tables, ffi.cast("LuaRTString *", nil), table0)) == 2)
 len_table:free()
+
+local len_string_safe = compile_outcome({ {op="LEN", pc=1, a=1, b=2}, {op="RETURN1", pc=2, a=1} }, "value0_payload_i64", "test_rt_len_string_no_table_touch")
+-- String LEN must not evaluate a table-bank access while deciding the string path.
+assert(tonumber(len_string_safe(ffi.cast("LuaRTTable *", nil), strings, str1)) == 5)
+len_string_safe:free()
+
+tables[1].metatable_kind = ObjectModel.METATABLE_KIND.LenFunction
+local len_meta = compile_outcome({ {op="LEN", pc=1, a=1, b=2}, {op="RETURN1", pc=2, a=1} }, "kind", "test_rt_len_table_metatable_errors")
+assert(tonumber(len_meta(tables, strings, meta_table)) == OutcomeModel.OUTCOME_KIND.LuaErrorOutcome, "table LEN with metatable must produce a typed error, not sentinel normal success")
+len_meta:free()
 
 local concat_payload = compile_outcome({ {op="CONCAT", pc=1, a=1, b=2, c=3}, {op="RETURN1", pc=2, a=1} }, "value0_payload_i64", "test_rt_concat_payload")
 assert(tonumber(concat_payload(tables, strings, str0, str1)) == -8)
 concat_payload:free()
+
+local concat_bad_kind = compile_outcome({ {op="CONCAT", pc=1, a=1, b=2, c=3}, {op="RETURN1", pc=2, a=1} }, "kind", "test_rt_concat_nonstring_errors_no_string_touch")
+assert(tonumber(concat_bad_kind(tables, ffi.cast("LuaRTString *", nil), intval, v("IntegerTag", 2))) == OutcomeModel.OUTCOME_KIND.LuaErrorOutcome, "unsupported CONCAT must produce a typed error, not nil normal success")
+concat_bad_kind:free()
 
 -- Function-valued metamethod branches must be explicit region/call IR, and
 -- remain non-executable until the call subsystem can lower them. This is a

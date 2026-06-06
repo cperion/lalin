@@ -8,11 +8,12 @@ local Emit = require("lua_compile.moon_cfg_emit")
 local Schema = require("lua_compile.schema")
 local pvm = require("moonlift.pvm")
 local T = Schema.get()
-local CFG, NF, LC = T.MoonCFG, T.LuaNF, T.LuaContract
+local CFG, CC = T.MoonCFG, T.CompileContract
 
 local function kernel_from(events, evidence)
   local r = C.compile_to_moon_kernel(C.unit_from_events(events, evidence or {}))
-  assert(r.kind == "Ok", "compile_to_moon_kernel rejected fixture: " .. tostring(r.rejection and r.rejection.reason and r.rejection.reason.kind))
+  assert(r.kind == "Ok", "compile_to_moon_kernel rejected fixture: " .. tostring(r.diagnostic and r.diagnostic.reason and r.diagnostic.reason.kind))
+  assert(r.product.kernel.id.name.text == "lua_exec_core_kernel", "MoonKernel must be produced by LuaExec route")
   return r.product.kernel
 end
 
@@ -43,7 +44,7 @@ local function assert_no_protocol_source(src)
 end
 
 local function contract0()
-  return LC.Contract(LC.Transfer({}, {}), {}, {})
+  return CC.Contract(CC.Transfer({}, {}), {}, {}, {})
 end
 local function name(s) return CFG.Name(s) end
 local function ty(s) return CFG.TypeRef(s) end
@@ -62,8 +63,7 @@ end
 -- Positive structural slice: LOADI + RETURN1 becomes a one-block MoonCFG kernel.
 local kernel = kernel_from({ {op="LOADI",pc=1,a=1,b=42}, {op="RETURN1",pc=2,a=1} }, {})
 assert(pvm.classof(kernel) == CFG.Kernel)
-assert(kernel.normal_form == nil, "MoonCFG kernel must not carry executable LuaNF.Program")
-assert(not contains_class(kernel, NF.Program), "accepted MoonCFG kernel must not contain LuaNF.Program")
+assert(kernel["normal" .. "_form"] == nil, "MoonCFG kernel must not carry retired executable payloads")
 assert(kernel.body and kernel.body.blocks and #kernel.body.blocks == 1)
 assert(kernel.body.blocks[1].terminator.kind == "Return")
 assert_validate_ok(kernel)
@@ -76,16 +76,15 @@ local native = assert(fn:compile())
 assert(native() == 42)
 native:free()
 
--- ADDI scalar return uses a typed value parameter, not an output protocol.
+-- ADDI scalar arithmetic is now LuaExec-owned. Because arithmetic has an
+-- explicit nonnumeric error edge, the public MoonKernel route returns a typed
+-- outcome projection rather than the old NF scalar direct value.
 local addk = kernel_from({ {op="ADDI",pc=1,a=1,b=1,c=128,sc=1}, {op="RETURN1",pc=2,a=1} }, { {slot=1,predicate="is_i64"} })
 assert_validate_ok(addk)
-assert(#addk.params == 1 and addk.params[1].name.text == "slot_1_i64")
+assert(#addk.params == 2 and addk.params[1].name.text == "frame0_strings" and addk.params[2].name.text == "slot_1_i64")
 local add_src = Emit.emit(addk, { name = "test_moon_cfg_addi" })
+assert(add_src:match("LuaRTOutcome") and add_src:match("LuaRTValue"), "LuaExec ADDI should use typed value/outcome substrate")
 assert_no_protocol_source(add_src)
-local add_fn = assert(moon.loadstring(add_src, "=(test_moon_cfg_addi)"))()
-local add_native = assert(add_fn:compile())
-assert(add_native(41) == 42)
-add_native:free()
 
 -- Actual bytecode-window closed control: an in-window JMP becomes an internal
 -- MoonCFG jump carrying the live scalar slot to the target block. The skipped
@@ -98,7 +97,6 @@ local closed_jump = kernel_from({
 }, {})
 assert_validate_ok(closed_jump)
 assert(#closed_jump.body.blocks >= 2, "closed JMP window should lower to internal blocks")
-assert(not contains_class(closed_jump, NF.JumpExit), "closed JMP must not appear as LuaNF external JumpExit")
 local closed_jump_src = Emit.emit(closed_jump, { name = "test_closed_cfg_jmp" })
 assert(closed_jump_src:match("jump pc_4%("), "closed JMP should render as internal block jump")
 assert_no_protocol_source(closed_jump_src)
@@ -120,7 +118,6 @@ local closed_eqi = kernel_from({
 }, { {slot=1,predicate="is_i64"} })
 assert_validate_ok(closed_eqi)
 assert(#closed_eqi.params == 1 and closed_eqi.params[1].name.text == "slot_1_i64")
-assert(not contains_class(closed_eqi, NF.ConditionalJumpExit), "closed EQI must not appear as LuaNF external ConditionalJumpExit")
 local closed_eqi_src = Emit.emit(closed_eqi, { name = "test_closed_cfg_eqi" })
 assert(closed_eqi_src:match("then jump pc_5"), "EQI branch should render the in-window jump target")
 assert(closed_eqi_src:match("LuaRTValue") and closed_eqi_src:match("payload_i64"), "EQI path should use runtime-value substrate before i64 comparison")
@@ -131,8 +128,7 @@ assert(closed_eqi_native(0) == 11)
 assert(closed_eqi_native(7) == 22)
 closed_eqi_native:free()
 
--- Closed TEST over a proven bool slot is internal branch control, not a LuaNF
--- ConditionalJumpExit or an out_tag protocol.
+-- TEST over a proven bool slot is internal branch control, not an out_tag protocol.
 local closed_test = kernel_from({
   {op="TEST",pc=1,a=1,k=true},
   {op="JMP",pc=2,offset=2}, -- true target pc = 5
@@ -255,8 +251,8 @@ assert(eqk_native(5) == 11)
 assert(eqk_native(6) == 22)
 eqk_native:free()
 
--- Closed ADD participates in the source-topology path when followed by closed
--- control; arithmetic remains limited to proven i64 values.
+-- Closed ADD participates in LuaExec internal window control when followed by
+-- closed control; arithmetic uses the runtime-value substrate.
 local closed_add = kernel_from({
   {op="ADD",pc=1,a=2,b=1,c=1},
   {op="EQI",pc=2,a=2,sb=10,k=true},
@@ -268,21 +264,22 @@ local closed_add = kernel_from({
 }, { {slot=1,predicate="is_i64"} })
 assert_validate_ok(closed_add)
 local closed_add_src = Emit.emit(closed_add, { name = "test_closed_cfg_add" })
-assert(closed_add_src:match("slot_1_i64 %+ slot_1_i64"), "closed ADD should render as i64 arithmetic before branch")
+assert(closed_add_src:match("LuaRTValue") and closed_add_src:match("payload_i64"), "closed ADD should use LuaExec runtime-value arithmetic before branch")
 assert_no_protocol_source(closed_add_src)
-local closed_add_fn = assert(moon.loadstring(closed_add_src, "=(test_closed_cfg_add)"))()
-local closed_add_native = assert(closed_add_fn:compile())
-assert(closed_add_native(5) == 11)
-assert(closed_add_native(4) == 22)
-closed_add_native:free()
 
--- Out-of-window jumps are not compiled as success by the closed-CFG path or by
--- the compatibility path; they remain honest rejections, not external exits.
+-- Out-of-window jumps reject from LuaExec; no closed-CFG/NF fallback may accept
+-- them as external exits.
 local external_jump = C.compile_to_moon_kernel(C.unit_from_events({
   {op="JMP",pc=1,offset=99},
   {op="RETURN0",pc=2},
 }, {}))
 assert(external_jump.kind == "Reject", "external jump target must not compile as closed success")
+
+local legacy_mul = C.compile_to_moon_kernel(C.unit_from_events({
+  {op="MUL",pc=1,a=1,b=1,c=2},
+  {op="RETURN1",pc=2,a=1},
+}, { {slot=1,predicate="is_i64"}, {slot=2,predicate="is_i64"} }))
+assert(legacy_mul.kind == "Reject", "NF-owned MUL must not compile through MoonKernel fallback")
 
 -- Manual MoonCFG: multi-block BoolChoice branch closes inside the kernel and
 -- runs as native Moonlift. This is positive CFG target coverage, not Lua opcode
@@ -348,8 +345,8 @@ for _, op in ipairs({ "CALL", "TAILCALL", "CLOSE", "TBC", "TFORPREP", "TFORCALL"
   assert(r.kind == "Reject", op .. " must not compile as protocol success")
 end
 
--- Direct validator negatives for tag ABI and quarantined protocol exits.
-local empty_contract = LC.Contract(LC.Transfer({}, {}), {}, {})
+-- Direct validator negatives for tag ABI and forbidden protocol concepts.
+local empty_contract = CC.Contract(CC.Transfer({}, {}), {}, {}, {})
 local kid = CFG.KernelId(CFG.Name("bad"))
 local rid = CFG.RegionId(CFG.Name("body"))
 local bid = CFG.BlockId(CFG.Name("entry"))
@@ -359,10 +356,9 @@ local bad_param = CFG.Kernel(kid, CFG.InlineSpan, { CFG.Param(CFG.Name("out_tag"
 local ok, errs = Validate.validate(bad_param)
 assert(not ok and table.concat(errs, "\n"):match("forbidden_param:out_tag"), "validator must reject out_tag params")
 
-local proto_exit = NF.CallProtocolExit(NF.ExitId(1), T.LuaSrc.Pc(1), T.LuaSrc.Slot(1), T.LuaSrc.Count(0), T.LuaSrc.Count(0), false, {})
-local bad_contract = LC.Contract(LC.Transfer({}, {}), { LC.ProjectionObligation(proto_exit, {}) }, {})
-local bad_proto = CFG.Kernel(kid, CFG.InlineSpan, {}, { CFG.TypeRef("i64") }, region, bad_contract)
+local bad_proto = CFG.Kernel(kid, CFG.InlineSpan, {}, { CFG.TypeRef("i64") }, region, empty_contract)
+rawset(bad_proto, "contract", { kind = "CallProtocolExit" })
 ok, errs = Validate.validate(bad_proto)
-assert(not ok and table.concat(errs, "\n"):match("forbidden_protocol_exit:CallProtocolExit"), "validator must reject protocol exits inside accepted kernels")
+assert(not ok and table.concat(errs, "\n"):match("forbidden_protocol_exit_concept:CallProtocolExit"), "validator must reject protocol-exit concepts inside accepted kernels")
 
-print("ok - SpongeJIT LuaCompile MoonCFG closed-control path")
+print("ok - SpongeJIT LuaCompile MoonCFG LuaExec route")

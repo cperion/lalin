@@ -44,15 +44,20 @@ end
 
 function M.render(node) return render(node) end
 
-function M.rejection(r)
-  if not r then return "<no rejection>" end
-  return string.format("reject pc=%s reason=%s op=%s", tostring(r.pc and r.pc.id), tostring(r.reason and r.reason.kind), tostring(r.source_op and r.source_op.kind))
+function M.diagnostic(d)
+  if not d then return "<no diagnostic>" end
+  return string.format("diagnostic stage=%s pc=%s reason=%s op=%s message=%s",
+    tostring(d.stage and d.stage.kind),
+    tostring(d.pc and d.pc.id),
+    tostring(d.reason and d.reason.kind),
+    tostring(d.source_op and d.source_op.kind),
+    tostring(d.message or ""))
 end
 
 function M.report(result)
   local cls = Schema.classof(result)
   local T = Schema.get()
-  if cls == T.LuaCompile.Result or cls == T.LuaSem.Result then return render(result) end
+  if cls == T.LuaCompile.Result then return render(result) end
   return render(result)
 end
 

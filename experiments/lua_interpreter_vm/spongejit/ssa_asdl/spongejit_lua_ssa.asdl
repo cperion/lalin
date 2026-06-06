@@ -3,20 +3,17 @@
 -- Moonlift/PVM ASDL vocabulary for the SpongeJIT Lua SSA compiler rewrite.
 --
 -- Doctrine:
---   LuaSrc      answers: what did PUC encode?
---   LuaEvidence answers: what did runtime/foundry prove and lease?
---   LuaSem      answers: what does that bytecode mean under that evidence?
---   LuaNF       answers: what is the least equivalent semantic computation?
---   LuaContract answers: what facts/exits/projections are required/transferred?
---   LuaPlace    answers: where may already-reduced values live? (optional if Moonlift/Cranelift owns placement)
---   LuaFFI      answers: what Lua-visible C FFI declarations/types/values/facts exist.
---   LuaGC       answers: what explicit Lua GC objects/state/control facts exist.
---   LuaRT       answers: what Lua runtime semantic objects/state exist.
---   LuaExec     answers: what explicit semantic Lua CFG is executed over LuaRT.
---   MoonCFG     answers: what explicit Moonlift CFG is emitted.
---   Stencil     answers: what typed copy-and-patch backend artifact is materialized from MoonCFG.
+--   LuaSrc          answers: what did PUC encode?
+--   LuaEvidence     answers: what did runtime/foundry prove and lease?
+--   LuaFFI          answers: what Lua-visible C FFI declarations/types/values/facts exist.
+--   LuaGC           answers: what explicit Lua GC objects/state/control facts exist.
+--   LuaRT           answers: what Lua runtime semantic objects/state exist.
+--   LuaExec         answers: what explicit semantic Lua CFG is executed over LuaRT.
+--   CompileContract answers: what executable-route obligations/facts/invalidation assumptions are attached.
+--   MoonCFG         answers: what explicit Moonlift CFG is emitted.
+--   Stencil         answers: what typed copy-and-patch backend artifact is materialized from MoonCFG.
 --
--- Source opcode mechanics are code-shaping in LuaSrc and must be dead after LuaSem.
+-- Source opcode mechanics are code-shaping in LuaSrc and must be dead after LuaExec.
 -- Physical residency is not semantic identity.
 -- Runtime/Moonlift output never rediscovers Lua opcode meaning.
 
@@ -244,382 +241,6 @@ module LuaFact {
     Evidence = (LuaFact.Fact* observed,
                 LuaFact.PayloadLease* payloads,
                 LuaRegion.RegionSet regions) unique
-}
-
-module LuaSem {
-    SlotClass = (number id) unique
-    ValueId = (number id) unique
-    EffectId = (number id) unique
-
-    SlotAlias = (LuaSrc.Slot concrete,
-                 LuaSem.SlotClass canonical,
-                 LuaSrc.Pc first_pc,
-                 LuaSrc.Pc last_pc) unique
-
-    TValue = SlotValue(LuaSem.SlotClass slot) unique
-           | ConstValue(LuaSrc.KRef k) unique
-           | UpvalueValue(LuaSrc.UpRef up) unique
-           | VarargValue(LuaSrc.Slot base, LuaSrc.Count index) unique
-           | Nil unique
-           | Bool(boolean value) unique
-           | BoolValue(LuaSem.Bool value) unique
-           | BoxI64(LuaSem.I64 value) unique
-           | BoxF64(LuaSem.F64 value) unique
-           | StringValue(LuaSem.String value) unique
-           | FieldValue(LuaSem.Address address) unique
-           | ArrayValue(LuaSem.Address address) unique
-           | TableObject(LuaSem.Table object) unique
-           | ClosureObject(LuaSem.Closure object) unique
-           | UnknownTValue(string reason) unique
-
-    I64Atom = SlotI64(LuaSem.SlotClass slot) unique
-            | ImmI64(LuaSrc.Imm imm) unique
-            | ConstI64(LuaSrc.KRef k) unique
-            | UnboxI64(LuaSem.TValue value) unique
-            | ValueI64(LuaSem.ValueId id) unique
-
-    I64Term = (number coefficient, LuaSem.I64Atom atom) unique
-
-    I64 = AtomI64(LuaSem.I64Atom atom) unique
-        | AffineI64(LuaSem.I64Term* terms, number constant) unique
-        | MulI64(LuaSem.I64 lhs, LuaSem.I64 rhs) unique
-        | IDivI64(LuaSem.I64 lhs, LuaSem.I64 rhs) unique
-        | ModI64(LuaSem.I64 lhs, LuaSem.I64 rhs) unique
-        | BitAndI64(LuaSem.I64 lhs, LuaSem.I64 rhs) unique
-        | BitOrI64(LuaSem.I64 lhs, LuaSem.I64 rhs) unique
-        | BitXorI64(LuaSem.I64 lhs, LuaSem.I64 rhs) unique
-        | ShlI64(LuaSem.I64 lhs, LuaSem.I64 rhs) unique
-        | ShrI64(LuaSem.I64 lhs, LuaSem.I64 rhs) unique
-        | NegI64(LuaSem.I64 value) unique
-        | BitNotI64(LuaSem.I64 value) unique
-        | TableLenI64(LuaSem.Table table) unique
-
-    F64 = SlotF64(LuaSem.SlotClass slot) unique
-        | ConstF64(LuaSrc.KRef k) unique
-        | ImmF64(LuaSrc.Imm imm) unique
-        | ToF64(LuaSem.TValue value) unique
-        | I64ToF64(LuaSem.I64 value) unique
-        | DivF64(LuaSem.F64 lhs, LuaSem.F64 rhs) unique
-        | PowF64(LuaSem.F64 lhs, LuaSem.F64 rhs) unique
-
-    Bool = NotTValue(LuaSem.TValue value) unique
-         | CmpI64(LuaSrc.CmpOp op, LuaSem.I64 lhs, LuaSem.I64 rhs, boolean polarity) unique
-         | BoolAnd(LuaSem.Bool lhs, LuaSem.Bool rhs) unique
-         | BoolOr(LuaSem.Bool lhs, LuaSem.Bool rhs) unique
-         | IsTruthy(LuaSem.TValue value, boolean polarity) unique
-
-    String = SlotString(LuaSem.SlotClass slot) unique
-           | ConcatString(LuaSem.String* parts) unique
-
-    Table = CheckedTable(LuaSem.TValue value, LuaFact.PayloadLease* leases) unique
-          | UpvalueTable(LuaSrc.UpRef up, LuaFact.PayloadLease* leases) unique
-          | NewTable(LuaSrc.Count array_hint, LuaSrc.Count hash_hint) unique
-
-    Closure = CheckedClosure(LuaSem.TValue value, LuaFact.PayloadLease* leases) unique
-            | ProtoClosure(LuaSrc.KRef proto) unique
-
-    Address = TableField(LuaSem.Table table,
-                         LuaSrc.KRef key,
-                         LuaFact.PayloadLease field_payload) unique
-            | TableArray(LuaSem.Table table,
-                         LuaSem.I64 index,
-                         LuaFact.PayloadLease array_payload) unique
-            | UpvalueCell(LuaSrc.UpRef up) unique
-
-    Write = SlotWrite(LuaSem.SlotClass slot, LuaSem.TValue value) unique
-          | FieldWrite(LuaSem.Address address, LuaSem.TValue value) unique
-          | ArrayWrite(LuaSem.Address address, LuaSem.TValue value) unique
-          | UpvalueWrite(LuaSrc.UpRef up, LuaSem.TValue value) unique
-
-    Guard = FactGuard(LuaFact.Subject subject,
-                      LuaFact.Predicate predicate,
-                      string value_key,
-                      LuaSem.TValue value,
-                      LuaFact.Dependency* deps,
-                      LuaSrc.Pc pc) unique
-          | I64NonZeroGuard(LuaSem.I64 value,
-                            LuaSrc.Pc pc) unique
-          | BoundsGuard(LuaSem.Table table,
-                        LuaSem.I64 index,
-                        LuaFact.PayloadLease payload,
-                        LuaSrc.Pc pc) unique
-
-    Observation = GuardObservation(LuaSem.Guard guard) unique
-                | CallObservation(LuaSrc.Pc pc, LuaSem.TValue callee) unique
-                | CallProtocolObservation(LuaSrc.Pc pc, LuaSrc.Slot base, LuaSrc.Count nargs, LuaSrc.Count nresults, boolean tail) unique
-                | CloseProtocolObservation(LuaSrc.Pc pc, LuaSrc.Slot slot, boolean tbc) unique
-                | GenericForProtocolObservation(LuaSrc.Pc pc, LuaSrc.Slot base, LuaSrc.Count nresults, LuaSrc.Offset offset, LuaSrc.GenericForPhase phase) unique
-                | SetListProtocolObservation(LuaSrc.Pc pc, LuaSrc.Slot table, LuaSrc.Slot first_value, LuaSrc.Count narray, LuaSrc.Count start) unique
-                | GetVargProtocolObservation(LuaSrc.Pc pc, LuaSrc.Slot dst, LuaSrc.Slot base, LuaSrc.Slot index) unique
-                | ReturnObservation(LuaSrc.Pc pc, LuaSem.TValue value) unique
-                | Return0Observation(LuaSrc.Pc pc) unique
-                | JumpObservation(LuaSrc.Pc pc, LuaSrc.Offset offset) unique
-                | ConditionalJumpObservation(LuaSrc.Pc pc, LuaSem.Bool condition, LuaSrc.Offset offset) unique
-                | TestSetObservation(LuaSrc.Pc pc,
-                                     LuaSem.SlotClass target,
-                                     LuaSem.TValue value,
-                                     LuaSem.Bool condition,
-                                     LuaSrc.Offset offset) unique
-                | LoopRegionObservation(LuaRegion.Region region) unique
-
-    Effect = EvalTValue(LuaSem.ValueId id, LuaSem.TValue value) unique
-           | EvalI64(LuaSem.ValueId id, LuaSem.I64 value) unique
-           | EvalF64(LuaSem.ValueId id, LuaSem.F64 value) unique
-           | EvalBool(LuaSem.ValueId id, LuaSem.Bool value) unique
-           | DoWrite(LuaSem.Write write) unique
-           | BarrierAfterStore(LuaSem.TValue owner, LuaSem.TValue value, LuaFact.PayloadLease payload) unique
-           | Observe(LuaSem.Observation observation) unique
-
-    RejectionReason = ContradictoryEvidence
-                    | MissingFact
-                    | MissingPayloadLease
-                    | UnsupportedOpcode
-                    | UnsupportedFactCombination
-                    | UnsupportedSemanticCase
-                    | UnsupportedLoopRegion
-                    | UnsupportedProjection
-                    | InternalInvariantFailure
-
-    Rejection = (LuaSrc.Pc pc,
-                 LuaSem.RejectionReason reason,
-                 LuaSrc.Op source_op,
-                 LuaFact.Fact* missing_facts,
-                 LuaFact.PayloadLease* missing_payloads) unique
-
-    Program = (LuaSem.SlotAlias* slots,
-               LuaSem.Effect* effects) unique
-
-    Result = Accepted(LuaSem.Program program) unique
-           | Rejected(LuaSem.Rejection rejection) unique
-}
-
-module LuaNF {
-    ValueId = (number id) unique
-    ExitId = (number id) unique
-
-    TValue = RefTValue(LuaNF.ValueId id) unique
-           | SrcSlotTValue(LuaSem.SlotClass slot) unique
-           | ConstTValue(LuaSrc.KRef k) unique
-           | UpvalueTValue(LuaSrc.UpRef up) unique
-           | VarargTValue(LuaSrc.Slot base, LuaSrc.Count index) unique
-           | NilTValue unique
-           | BoolTValue(boolean value) unique
-           | BoolExprTValue(LuaNF.Bool value) unique
-           | BoxI64TValue(LuaNF.I64 value) unique
-           | BoxF64TValue(LuaNF.F64 value) unique
-           | StringTValue(LuaNF.String value) unique
-           | FieldTValue(LuaNF.Address address)
-           | ArrayTValue(LuaNF.Address address) unique
-           | TableTValue(LuaNF.Table table) unique
-           | ClosureTValue(LuaNF.Closure closure) unique
-
-    I64Atom = SrcSlotI64(LuaSem.SlotClass slot) unique
-            | ImmI64(LuaSrc.Imm imm) unique
-            | ConstI64(LuaSrc.KRef k) unique
-            | UnboxI64(LuaNF.TValue value) unique
-            | TableLenI64(LuaNF.Table table) unique
-            | VarargI64(LuaSrc.Slot base, LuaSrc.Count index) unique
-            | RefI64(LuaNF.ValueId id) unique
-
-    I64Term = (number coefficient, LuaNF.I64Atom atom) unique
-
-    I64 = CanonAffineI64(LuaNF.I64Term* terms, number constant) unique
-        | CanonMulI64(LuaNF.I64 lhs, LuaNF.I64 rhs) unique
-        | CanonIDivI64(LuaNF.I64 lhs, LuaNF.I64 rhs) unique
-        | CanonModI64(LuaNF.I64 lhs, LuaNF.I64 rhs) unique
-        | CanonBitAndI64(LuaNF.I64* terms) unique
-        | CanonBitOrI64(LuaNF.I64* terms) unique
-        | CanonBitXorI64(LuaNF.I64* terms) unique
-        | CanonShiftI64(LuaSrc.BinOp op, LuaNF.I64 lhs, LuaNF.I64 rhs) unique
-        | CanonNegI64(LuaNF.I64 value) unique
-        | CanonBitNotI64(LuaNF.I64 value) unique
-
-    F64 = RefF64(LuaNF.ValueId id) unique
-        | VarargF64(LuaSrc.Slot base, LuaSrc.Count index) unique
-        | ConstF64(LuaSrc.KRef k) unique
-        | ImmF64(LuaSrc.Imm imm) unique
-        | ToF64(LuaNF.TValue value) unique
-        | I64ToF64(LuaNF.I64 value) unique
-        | DivF64(LuaNF.F64 lhs, LuaNF.F64 rhs) unique
-        | PowF64(LuaNF.F64 lhs, LuaNF.F64 rhs) unique
-
-    Bool = NotTValue(LuaNF.TValue value) unique
-         | CmpI64(LuaSrc.CmpOp op, LuaNF.I64 lhs, LuaNF.I64 rhs, boolean polarity) unique
-         | BoolAnd(LuaNF.Bool lhs, LuaNF.Bool rhs) unique
-         | BoolOr(LuaNF.Bool lhs, LuaNF.Bool rhs) unique
-         | Truthy(LuaNF.TValue value, boolean polarity) unique
-
-    String = SrcSlotString(LuaSem.SlotClass slot) unique
-           | ConcatString(LuaNF.String* parts) unique
-
-    Table = TableFromTValue(LuaNF.TValue value, LuaFact.PayloadLease* leases) unique
-          | TableFromUpvalue(LuaSrc.UpRef up, LuaFact.PayloadLease* leases) unique
-          | TableFromNew(LuaSrc.Count array_hint, LuaSrc.Count hash_hint) unique
-
-    Closure = ClosureFromTValue(LuaNF.TValue value, LuaFact.PayloadLease* leases) unique
-            | ClosureFromProto(LuaSrc.KRef proto) unique
-
-    Address = FieldAddress(LuaNF.Table table,
-                           LuaSrc.KRef key,
-                           LuaFact.PayloadLease field_payload) unique
-            | ArrayAddress(LuaNF.Table table,
-                           LuaNF.I64 index,
-                           LuaFact.PayloadLease array_payload) unique
-            | UpvalueAddress(LuaSrc.UpRef up) unique
-
-    Def = TValueDef(LuaNF.ValueId id, LuaNF.TValue value) unique
-        | I64Def(LuaNF.ValueId id, LuaNF.I64 value) unique
-        | F64Def(LuaNF.ValueId id, LuaNF.F64 value) unique
-        | BoolDef(LuaNF.ValueId id, LuaNF.Bool value) unique
-
-    Write = SlotWrite(LuaSem.SlotClass slot, LuaNF.TValue value) unique
-          | FieldWrite(LuaNF.Address address, LuaNF.TValue value) unique
-          | ArrayWrite(LuaNF.Address address, LuaNF.TValue value) unique
-          | UpvalueWrite(LuaSrc.UpRef up, LuaNF.TValue value) unique
-
-    Barrier = BarrierAfterStore(LuaNF.TValue owner, LuaNF.TValue value, LuaFact.PayloadLease payload) unique
-
-    Projection = LiveTValue(LuaSem.SlotClass slot, LuaNF.TValue value) unique
-               | LiveI64(LuaSem.SlotClass slot, LuaNF.I64 value) unique
-               | LiveF64(LuaSem.SlotClass slot, LuaNF.F64 value) unique
-               | SyncedSlot(LuaSem.SlotClass slot) unique
-               | DeadSlot(LuaSem.SlotClass slot) unique
-
-    Exit = GuardExit(LuaNF.ExitId id,
-                     LuaSrc.Pc pc,
-                     LuaNF.Projection* projection) unique
-         | ReturnExit(LuaNF.ExitId id,
-                      LuaSrc.Pc pc,
-                      LuaNF.TValue value,
-                      LuaNF.Projection* projection) unique
-         | Return0Exit(LuaNF.ExitId id,
-                       LuaSrc.Pc pc,
-                       LuaNF.Projection* projection) unique
-         | JumpExit(LuaNF.ExitId id,
-                    LuaSrc.Pc pc,
-                    LuaSrc.Offset offset,
-                    LuaNF.Projection* projection) unique
-         | ConditionalJumpExit(LuaNF.ExitId id,
-                               LuaSrc.Pc pc,
-                               LuaNF.Bool condition,
-                               LuaSrc.Offset offset,
-                               LuaNF.Projection* projection) unique
-         | TestSetExit(LuaNF.ExitId id,
-                       LuaSrc.Pc pc,
-                       LuaNF.Bool condition,
-                       LuaSrc.Offset offset,
-                       LuaNF.Projection* taken_projection,
-                       LuaNF.Projection* fallthrough_projection) unique
-         | LoopRegionExit(LuaNF.ExitId id,
-                          LuaRegion.Region region,
-                          LuaNF.Projection* projection) unique
-         | CallProtocolExit(LuaNF.ExitId id,
-                            LuaSrc.Pc pc,
-                            LuaSrc.Slot base,
-                            LuaSrc.Count nargs,
-                            LuaSrc.Count nresults,
-                            boolean tail,
-                            LuaNF.Projection* projection) unique
-         | CloseProtocolExit(LuaNF.ExitId id,
-                             LuaSrc.Pc pc,
-                             LuaSrc.Slot slot,
-                             boolean tbc,
-                             LuaNF.Projection* projection) unique
-         | GenericForProtocolExit(LuaNF.ExitId id,
-                                  LuaSrc.Pc pc,
-                                  LuaSrc.Slot base,
-                                  LuaSrc.Count nresults,
-                                  LuaSrc.Offset offset,
-                                  LuaSrc.GenericForPhase phase,
-                                  LuaNF.Projection* projection) unique
-         | SetListProtocolExit(LuaNF.ExitId id,
-                               LuaSrc.Pc pc,
-                               LuaSrc.Slot table,
-                               LuaSrc.Slot first_value,
-                               LuaSrc.Count narray,
-                               LuaSrc.Count start,
-                               LuaNF.Projection* projection) unique
-         | GetVargProtocolExit(LuaNF.ExitId id,
-                               LuaSrc.Pc pc,
-                               LuaSrc.Slot dst,
-                               LuaSrc.Slot base,
-                               LuaSrc.Slot index,
-                               LuaNF.Projection* projection) unique
-
-    Guard = FactGuard(LuaFact.Subject subject,
-                      LuaFact.Predicate predicate,
-                      string value_key,
-                      LuaNF.TValue value,
-                      LuaFact.Dependency* deps,
-                      LuaNF.Exit exit) unique
-          | I64NonZeroGuard(LuaNF.I64 value,
-                            LuaNF.Exit exit) unique
-          | BoundsGuard(LuaNF.Table table,
-                        LuaNF.I64 index,
-                        LuaFact.PayloadLease payload,
-                        LuaNF.Exit exit) unique
-
-    Step = StepDefine(LuaNF.Def def) unique
-         | StepGuard(LuaNF.Guard guard) unique
-         | StepWrite(LuaNF.Write write) unique
-         | StepBarrier(LuaNF.Barrier barrier) unique
-         | StepExit(LuaNF.Exit exit) unique
-
-    Program = (LuaSem.SlotAlias* aliases,
-               LuaNF.Step* steps,
-               LuaNF.Exit* exits) unique
-}
-
-module LuaContract {
-    FactRole = Selector
-             | Required
-             | Checked
-             | Produced
-             | Killed
-
-    FactUse = (LuaContract.FactRole role,
-               LuaFact.Subject subject,
-               LuaFact.Predicate predicate,
-               string value_key,
-               LuaFact.Dependency* deps) unique
-
-    PayloadUse = (LuaFact.PayloadLease payload) unique
-
-    Transfer = (LuaContract.FactUse* facts,
-                LuaContract.PayloadUse* payloads) unique
-
-    ProjectionObligation = (LuaNF.Exit exit,
-                            LuaNF.Projection* projection) unique
-
-    Contract = (LuaContract.Transfer transfer,
-                LuaContract.ProjectionObligation* projections,
-                LuaFact.Dependency* dependencies) unique
-}
-
-module LuaPlace {
-    -- This vocabulary is not semantic identity. It may be skipped when lowering
-    -- LuaNF directly to Moonlift and letting Cranelift solve placement.
-    ValueRef = TValue(LuaNF.ValueId id) unique
-             | I64(LuaNF.ValueId id) unique
-             | F64(LuaNF.ValueId id) unique
-             | Bool(LuaNF.ValueId id) unique
-
-    Location = VirtualReg(number id) unique
-             | Scratch(number index) unique
-             | FrameSlot(LuaSem.SlotClass slot) unique
-             | ConstPool(LuaSrc.KRef k) unique
-             | Immediate(LuaSrc.Imm imm) unique
-             | RuntimeCtxField(number offset) unique
-
-    Assignment = (LuaPlace.ValueRef value, LuaPlace.Location location) unique
-
-    ProjectionPlan = SyncTValue(LuaSem.SlotClass slot, LuaPlace.Location from) unique
-                   | BoxI64ToFrame(LuaSem.SlotClass slot, LuaPlace.Location from) unique
-                   | BoxF64ToFrame(LuaSem.SlotClass slot, LuaPlace.Location from) unique
-                   | AlreadySynced(LuaSem.SlotClass slot) unique
-
-    Plan = (LuaPlace.Assignment* assignments,
-            LuaPlace.ProjectionPlan* projections) unique
 }
 
 module LuaFFI {
@@ -1600,6 +1221,7 @@ module LuaExec {
          | TableLenExpr(LuaRT.ValueRef table_value) unique
          | StringLenExpr(LuaRT.ValueRef value) unique
          | LenNoMetaExpr(LuaRT.ValueRef value) unique
+         | LenNoMetaOkExpr(LuaRT.ValueRef value) unique
          | StringConcat2Expr(LuaRT.ValueRef left, LuaRT.ValueRef right) unique
          | CDataAccessOkExpr(LuaRT.ValueRef cdata,
                              LuaFFI.CScalarKind scalar,
@@ -1698,6 +1320,40 @@ module LuaExec {
               | ClosesChain(LuaRT.CloseChain chain) unique
 }
 
+module CompileContract {
+    FactRole = Selector | Required | Checked | Produced | Killed
+
+    FactUse = (CompileContract.FactRole role,
+               LuaFact.Subject subject,
+               LuaFact.Predicate predicate,
+               string value_key,
+               LuaFact.Dependency* deps) unique
+
+    PayloadUse = (LuaFact.PayloadLease payload) unique
+
+    Transfer = (CompileContract.FactUse* facts,
+                CompileContract.PayloadUse* payloads) unique
+
+    Obligation = RequiresFact(CompileContract.FactUse fact) unique
+               | RequiresPayload(CompileContract.PayloadUse payload) unique
+               | RequiresRuntimeGuard(LuaRT.Guard guard) unique
+               | RequiresExecObligation(LuaExec.Obligation obligation) unique
+               | RequiresCompanion(LuaRT.Pc pc, LuaRT.CompanionKind kind) unique
+               | RequiresResolvedRegion(LuaExec.Name region) unique
+               | RequiresContinuation(LuaExec.ContRef continuation) unique
+
+    Guarantee = GuaranteesFact(CompileContract.FactUse fact) unique
+              | GuaranteesExec(LuaExec.Guarantee guarantee) unique
+              | ProducesRuntimeValue(LuaRT.ValueRef value) unique
+              | PreservesRuntimeFrame(LuaRT.FrameRef frame) unique
+              | UpdatesRuntimeTop(LuaRT.TopRef top) unique
+
+    Contract = (CompileContract.Transfer transfer,
+                CompileContract.Obligation* obligations,
+                CompileContract.Guarantee* guarantees,
+                LuaFact.Dependency* dependencies) unique
+}
+
 module MoonCFG {
     Name = (string text) unique
     TypeRef = (string moon_type) unique
@@ -1785,6 +1441,7 @@ module MoonCFG {
          | RuntimeTableArrayLen(MoonCFG.Value tables, MoonCFG.Value table_value) unique
          | RuntimeStringLen(MoonCFG.Value strings, MoonCFG.Value value) unique
          | RuntimeLenNoMeta(MoonCFG.Value strings, MoonCFG.Value tables, MoonCFG.Value value) unique
+         | RuntimeLenNoMetaOk(MoonCFG.Value strings, MoonCFG.Value tables, MoonCFG.Value value) unique
          | RuntimeStringConcat2(MoonCFG.Value strings, MoonCFG.Value left, MoonCFG.Value right) unique
          | RuntimeStringToNumberOk(MoonCFG.Value strings, MoonCFG.Value value) unique
          | RuntimeStringToNumber(MoonCFG.Value strings, MoonCFG.Value value) unique
@@ -1831,7 +1488,7 @@ module MoonCFG {
            | NumericChoice(MoonCFG.NumericTest test, MoonCFG.Value left, MoonCFG.Value right) unique
            | EqualityChoice(MoonCFG.Value left, MoonCFG.Value right) unique
            | MetamethodPresentChoice(MoonCFG.Value value, MoonCFG.Metamethod metamethod) unique
-           | GuardChoice(LuaContract.FactUse* facts) unique
+           | GuardChoice(CompileContract.FactUse* facts) unique
 
     ExitProtocol = ReturnExit | ErrorExit | GuardDeoptExit | YieldExit | UnsupportedExit
 
@@ -1883,7 +1540,7 @@ module MoonCFG {
               MoonCFG.Param* params,
               MoonCFG.TypeRef* returns,
               MoonCFG.Region body,
-              LuaContract.Contract contract) unique
+              CompileContract.Contract contract) unique
 
     Module = (MoonCFG.Region* regions, MoonCFG.Kernel* kernels) unique
 }
@@ -1921,7 +1578,7 @@ module Stencil {
 
     VariantKey = (Stencil.StencilKind stencil_kind,
                   MoonCFG.KernelKind kernel_kind,
-                  LuaContract.Contract contract,
+                  CompileContract.Contract contract,
                   Stencil.Placement placement,
                   Stencil.TargetABI target_abi,
                   Stencil.FeatureSet features) unique
@@ -2117,10 +1774,40 @@ module LuaCompile {
     Unit = (LuaSrc.Window source,
             LuaFact.Evidence evidence) unique
 
-    Product = NormalForm(LuaNF.Program nf,
-                         LuaContract.Contract contract) unique
-            | MoonKernel(MoonCFG.Kernel kernel) unique
+    DiagnosticStage = LuaSrcDecode
+                    | LuaSrcValidate
+                    | LuaExecLower
+                    | LuaExecValidate
+                    | MoonCFGLower
+                    | MoonCFGValidate
+                    | MoonCFGEmit
+                    | StencilValidate
+                    | StencilMaterialize
+                    | Foundry
+
+    DiagnosticReason = ContradictoryEvidence
+                     | MissingFact
+                     | MissingPayloadLease
+                     | UnsupportedOpcode
+                     | UnsupportedFactCombination
+                     | UnsupportedSemanticCase
+                     | UnsupportedLoopRegion
+                     | UnsupportedProjection
+                     | ValidationFailure
+                     | LoweringFailure
+                     | InternalInvariantFailure
+                     | StencilMaterializationFailure
+
+    Diagnostic = (LuaCompile.DiagnosticStage stage,
+                  LuaCompile.DiagnosticReason reason,
+                  LuaSrc.Pc pc,
+                  LuaSrc.Op source_op,
+                  string message,
+                  LuaFact.Fact* missing_facts,
+                  LuaFact.PayloadLease* missing_payloads) unique
+
+    Product = MoonKernel(MoonCFG.Kernel kernel) unique
 
     Result = Ok(LuaCompile.Product product) unique
-           | Reject(LuaSem.Rejection rejection) unique
+           | Reject(LuaCompile.Diagnostic diagnostic) unique
 }

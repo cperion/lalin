@@ -12,7 +12,7 @@ local OutcomeModel = require("lua_compile.lua_rt_outcome_model")
 local ObjectModel = require("lua_compile.lua_rt_object_model")
 local pvm = require("moonlift.pvm")
 local T = require("lua_compile.schema").get()
-local Exec, CFG, NF = T.LuaExec, T.MoonCFG, T.LuaNF
+local Exec, CFG = T.LuaExec, T.MoonCFG
 
 ffi.cdef[[
 typedef struct { int64_t tag; int64_t payload_i64; double payload_f64; } LuaRTValue;
@@ -45,8 +45,8 @@ strings[0].byte_len, strings[0].hash, strings[0].numeric_kind, strings[0].numeri
 strings[1].byte_len, strings[1].hash, strings[1].numeric_kind, strings[1].numeric_i64, strings[1].numeric_f64 = 3, 101, ObjectModel.STRING_NUMERIC_KIND.DecimalFloat, 0, 2.5
 strings[2].byte_len, strings[2].hash, strings[2].numeric_kind, strings[2].numeric_i64, strings[2].numeric_f64 = 3, 102, ObjectModel.STRING_NUMERIC_KIND.NotNumeric, 0, 0.0
 
-local function compile_add(events, projection, name)
-  local unit = C.unit_from_events(events, {})
+local function compile_add(events, projection, name, evidence)
+  local unit = C.unit_from_events(events, evidence or {})
   local exec_kernel, exec_errors = ExecLower.lower(unit.source, unit.evidence)
   assert(exec_kernel, table.concat(exec_errors or {}, "; "))
   assert(contains_class(exec_kernel, Exec.ArithmeticNoMetaExpr), "ADD must lower to explicit LuaExec arithmetic semantics")
@@ -56,8 +56,10 @@ local function compile_add(events, projection, name)
   assert(contains_class(cfg, CFG.RuntimeArithmeticNoMeta), "MoonCFG must contain explicit runtime arithmetic expression")
   assert(contains_class(cfg, CFG.RuntimeArithmeticNumericOk), "MoonCFG must contain explicit numeric-ok test")
   assert(contains_class(cfg, CFG.RuntimeArithmeticErrorValue), "MoonCFG must contain explicit arithmetic error value selection")
-  local forbidden = { [NF.CallProtocolExit]=true, [NF.CloseProtocolExit]=true, [NF.GenericForProtocolExit]=true, [NF.SetListProtocolExit]=true, [NF.GetVargProtocolExit]=true }
-  for cls in pairs(forbidden) do assert(not contains_class(cfg, cls), "arithmetic must not contain protocol exits") end
+  assert(not contains_class(cfg, function(cls)
+    local plan = cls and rawget(cls, "__plan")
+    return tostring((plan and plan.name) or ""):match("ProtocolExit")
+  end), "arithmetic must not contain protocol-exit concepts")
   local src = Emit.emit(cfg, { name = name })
   assert(not src:match("out_tag") and not src:match("out_event_kind"), "arithmetic must not emit protocol ABI")
   assert(not src:match("lua_add_tvalue") and not src:match("arith_helper") and not src:match("Opcode" .. "Helper"), "arithmetic must be emitted inline, not through opaque helper")
@@ -75,9 +77,22 @@ local add_no_companion = {
   {op="ADD", pc=1, a=1, b=1, c=2},
   {op="RETURN1", pc=2, a=1},
 }
+local addi_window = {
+  {op="ADDI", pc=1, a=1, b=1, c=128, sc=1},
+  {op="MMBINI", pc=2, a=1, b=128, sb=1, c="ADD"},
+  {op="RETURN1", pc=3, a=1},
+}
+local addk_window = {
+  {op="ADDK", pc=1, a=1, b=1, c=2},
+  {op="MMBINK", pc=2, a=1, b=2, c="ADD"},
+  {op="RETURN1", pc=3, a=1},
+}
 
 local ii_payload = compile_add(add_window, "value0_payload_i64", "test_rt_add_i64_i64_payload")
 assert(tonumber(ii_payload(strings, v("IntegerTag", 20), v("IntegerTag", 22))) == 42)
+-- Integer arithmetic must not touch the string bank, even when integer payloads
+-- are far outside any string-bank domain.
+assert(tonumber(ii_payload(ffi.cast("LuaRTString *", nil), v("IntegerTag", 1000000), v("IntegerTag", 22))) == 1000022)
 ii_payload:free()
 local ii_tag = compile_add(add_window, "value0_tag", "test_rt_add_i64_i64_tag")
 assert(tonumber(ii_tag(strings, v("IntegerTag", 1), v("IntegerTag", 2))) == ValueModel.TAG.IntegerTag)
@@ -127,9 +142,37 @@ local no_companion_kind = compile_add(add_no_companion, "kind", "test_rt_add_no_
 assert(tonumber(no_companion_kind(strings, v("IntegerTag", 5), v("IntegerTag", 6))) == OutcomeModel.OUTCOME_KIND.NormalReturnOutcome)
 no_companion_kind:free()
 
+local addi_exec, addi_errors = ExecLower.lower(C.unit_from_events(addi_window, {}).source, C.unit_from_events(addi_window, {}).evidence)
+assert(addi_exec, table.concat(addi_errors or {}, "; "))
+local addk_unit = C.unit_from_events(addk_window, { {const=2,predicate="const_i64",value=1} })
+local addk_exec, addk_errors = ExecLower.lower(addk_unit.source, addk_unit.evidence)
+assert(addk_exec, table.concat(addk_errors or {}, "; "))
+local public_addi = C.compile_to_moon_kernel(C.unit_from_events(addi_window, {}))
+assert(public_addi.kind == "Ok" and public_addi.product.kernel.id.name.text == "lua_exec_core_kernel", "public ADDI must route through LuaExec")
+local public_addk = C.compile_to_moon_kernel(addk_unit)
+assert(public_addk.kind == "Ok" and public_addk.product.kernel.id.name.text == "lua_exec_core_kernel", "public ADDK must route through LuaExec")
+
 local bad_unit = C.unit_from_events({ {op="MMBIN", pc=1, a=1, b=2, c="ADD"}, {op="RETURN0", pc=2} }, {})
 local bad_exec, bad_errors = ExecLower.lower(bad_unit.source, bad_unit.evidence)
 assert(not bad_exec, "standalone MMBIN must not compile as success")
 assert(table.concat(bad_errors or {}, "; "):match("unsupported_instruction:MMBIN"), table.concat(bad_errors or {}, "; "))
+
+local bad_mmbini = C.unit_from_events({
+  {op="ADDI", pc=1, a=1, b=1, c=128, sc=1},
+  {op="MMBINI", pc=2, a=2, b=128, sb=1, c="ADD"},
+  {op="RETURN1", pc=3, a=1},
+}, {})
+local bad_mmbini_exec, bad_mmbini_errors = ExecLower.lower(bad_mmbini.source, bad_mmbini.evidence)
+assert(not bad_mmbini_exec, "mismatched MMBINI operands must reject")
+assert(table.concat(bad_mmbini_errors or {}, "; "):match("mismatched_arithmetic_companion"), table.concat(bad_mmbini_errors or {}, "; "))
+
+local bad_mmbink = C.unit_from_events({
+  {op="ADDK", pc=1, a=1, b=1, c=2},
+  {op="MMBINK", pc=2, a=1, b=3, c="ADD"},
+  {op="RETURN1", pc=3, a=1},
+}, { {const=2,predicate="const_i64",value=1}, {const=3,predicate="const_i64",value=1} })
+local bad_mmbink_exec, bad_mmbink_errors = ExecLower.lower(bad_mmbink.source, bad_mmbink.evidence)
+assert(not bad_mmbink_exec, "mismatched MMBINK operands must reject")
+assert(table.concat(bad_mmbink_errors or {}, "; "):match("mismatched_arithmetic_companion"), table.concat(bad_mmbink_errors or {}, "; "))
 
 print("ok - SpongeJIT LuaRT arithmetic semantics")

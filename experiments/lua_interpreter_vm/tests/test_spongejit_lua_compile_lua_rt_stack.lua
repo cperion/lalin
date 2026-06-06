@@ -13,7 +13,7 @@ local ValueModel = require("lua_compile.lua_rt_value_model")
 local OutcomeModel = require("lua_compile.lua_rt_outcome_model")
 local StackModel = require("lua_compile.lua_rt_stack_model")
 local T = Schema.get()
-local RT, Exec, CFG, LC = T.LuaRT, T.LuaExec, T.MoonCFG, T.LuaContract
+local RT, Exec, CFG, CC = T.LuaRT, T.LuaExec, T.MoonCFG, T.CompileContract
 
 pcall(function()
   ffi.cdef[[
@@ -28,7 +28,7 @@ local function place(s) return CFG.PlaceValue(temp(s)) end
 local function param_value(s) return CFG.ParamValue(name(s)) end
 local function i64(n) return CFG.ConstValue(CFG.I64Const(n)) end
 local function param(s, t) return CFG.Param(name(s), ty(t), CFG.ValueParam) end
-local function contract0() return LC.Contract(LC.Transfer({}, {}), {}, {}) end
+local function contract0() return CC.Contract(CC.Transfer({}, {}), {}, {}, {}) end
 
 local function kernel(id, params, ops, ret)
   local block = CFG.Block(CFG.BlockId(name("entry")), {}, ops, CFG.Return({ place("out") }))
@@ -147,6 +147,22 @@ assert(run(lower_outcome(open_events, {}, "value1_payload_i64"), "test_vararg_op
 local getvarg_events = { {op="LOADI", pc=1, a=3, b=2}, {op="GETVARG", pc=2, a=1, b=0, c=3}, {op="RETURN1", pc=3, a=1} }
 assert(run(lower_outcome(getvarg_events, {}, "value0_payload_i64"), "test_getvarg_integer_key", vargs, 3) == 8)
 assert(run(lower_outcome(getvarg_events, {}, "value0_tag"), "test_getvarg_integer_key_tag", vargs, 3) == ValueModel.TAG.IntegerTag)
+
+local function vararg_get_manual_kernel()
+  local params = { param("vargs", "ptr(LuaRTValue)"), param("count", "i64"), param("key", "LuaRTValue") }
+  local ops = {
+    CFG.Let(temp("src"), CFG.RuntimeVarargSource(param_value("vargs"), param_value("count"), i64(0))),
+    CFG.Let(temp("got"), CFG.RuntimeVarargGet(place("src"), param_value("key"))),
+    CFG.Let(temp("out"), CFG.RuntimeTag(place("got"))),
+  }
+  return kernel("vararg_get_manual", params, ops, "i64")
+end
+local bad_string_key = ffi.new("LuaRTValue")
+bad_string_key.tag = ValueModel.TAG.ShortStringTag; bad_string_key.payload_i64 = -1000000
+assert(run(vararg_get_manual_kernel(), "test_getvarg_non_integer_key_safe_nil", vargs, 3, bad_string_key) == ValueModel.TAG.NilTag)
+local bad_oob_key = ffi.new("LuaRTValue")
+bad_oob_key.tag = ValueModel.TAG.IntegerTag; bad_oob_key.payload_i64 = 99
+assert(run(vararg_get_manual_kernel(), "test_getvarg_out_of_range_key_safe_nil", vargs, 3, bad_oob_key) == ValueModel.TAG.NilTag)
 
 local stack_model_ok, stack_model_missing = StackModel.validate_against_schema()
 assert(stack_model_ok, "LuaRT stack model missing schema constructors: " .. table.concat(stack_model_missing, ","))

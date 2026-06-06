@@ -1,6 +1,6 @@
 -- moon_cfg_emit.lua -- mechanical MoonCFG -> Moonlift source renderer.
 --
--- This renderer prints MoonCFG only.  It must not inspect LuaSrc/LuaNF to
+-- This renderer prints MoonCFG only.  It must not inspect source semantics to
 -- choose semantics and must not synthesize out_tag/protocol continuations.
 
 local pvm = require("moonlift.pvm")
@@ -168,8 +168,22 @@ local function render_nil_value()
   return render_box("NilTag", i64_lit(0), f64_lit(0))
 end
 
+local function ptr_null(type_name)
+  return "as(ptr(" .. type_name .. "), " .. i64_lit(0) .. ")"
+end
+
+local function ptr_not_null(expr, type_name)
+  return par(expr .. " ~= " .. ptr_null(type_name))
+end
+
 local function lua_value_ptr_null()
-  return "as(ptr(" .. ValueModel.TYPE_NAME .. "), " .. i64_lit(0) .. ")"
+  return ptr_null(ValueModel.TYPE_NAME)
+end
+
+local fresh_block_counter = 0
+local function fresh_block_name(prefix)
+  fresh_block_counter = fresh_block_counter + 1
+  return render_name(prefix .. "_" .. tostring(fresh_block_counter))
 end
 
 local function raw_get_absent_value()
@@ -177,7 +191,18 @@ local function raw_get_absent_value()
 end
 
 local function render_string_len(strings, value)
-  return "select(" .. value .. ".payload_i64 < " .. i64_lit(0) .. ", " .. par(i64_lit(0) .. " - " .. value .. ".payload_i64") .. ", " .. strings .. "[as(index, " .. value .. ".payload_i64)].byte_len)"
+  local block = fresh_block_name("rt_string_len")
+  local idx = block .. "_idx"
+  return table.concat({
+    "block " .. block .. "() -> i64",
+    "    if " .. render_tag_any(value, { "ShortStringTag", "LongStringTag" }) .. " then",
+    "        if " .. value .. ".payload_i64 < " .. i64_lit(0) .. " then yield " .. par(i64_lit(0) .. " - " .. value .. ".payload_i64") .. " end",
+    "        let " .. idx .. ": index = as(index, " .. value .. ".payload_i64)",
+    "        yield " .. strings .. "[" .. idx .. "].byte_len",
+    "    end",
+    "    yield " .. i64_lit(0),
+    "end",
+  }, "\n")
 end
 
 local function numeric_kind_lit(kind_name)
@@ -188,64 +213,100 @@ local function render_is_string(value)
   return render_tag_any(value, { "ShortStringTag", "LongStringTag" })
 end
 
-local function render_string_numeric_kind(strings, value)
-  return strings .. "[as(index, " .. value .. ".payload_i64)].numeric_kind"
+local function render_numeric_tag(value)
+  return render_tag_any(value, { "IntegerTag", "FloatTag" })
 end
 
-local function render_string_to_number_ok(strings, value)
-  return par(render_is_string(value) .. " and " .. value .. ".payload_i64 >= " .. i64_lit(0) .. " and " .. render_string_numeric_kind(strings, value) .. " ~= " .. numeric_kind_lit("NotNumeric"))
+local function render_numeric_kind_safe(strings, value)
+  local block = fresh_block_name("rt_num_kind")
+  local idx = block .. "_idx"
+  local rec = strings .. "[" .. idx .. "]"
+  return table.concat({
+    "block " .. block .. "() -> i64",
+    "    if " .. render_tag_compare(value, "IntegerTag") .. " then yield " .. i64_lit(1) .. " end",
+    "    if " .. render_tag_compare(value, "FloatTag") .. " then yield " .. i64_lit(2) .. " end",
+    "    if " .. render_is_string(value) .. " then",
+    "        if " .. value .. ".payload_i64 >= " .. i64_lit(0) .. " then",
+    "            let " .. idx .. ": index = as(index, " .. value .. ".payload_i64)",
+    "            if " .. rec .. ".numeric_kind == " .. numeric_kind_lit("DecimalInteger") .. " then yield " .. i64_lit(1) .. " end",
+    "            if " .. rec .. ".numeric_kind == " .. numeric_kind_lit("DecimalFloat") .. " then yield " .. i64_lit(2) .. " end",
+    "        end",
+    "    end",
+    "    yield " .. i64_lit(0),
+    "end",
+  }, "\n")
 end
 
-local function render_string_integral(strings, value)
-  return par(render_string_to_number_ok(strings, value) .. " and " .. render_string_numeric_kind(strings, value) .. " == " .. numeric_kind_lit("DecimalInteger"))
+local function render_numeric_i64_safe(strings, value)
+  local block = fresh_block_name("rt_num_i64")
+  local idx = block .. "_idx"
+  local rec = strings .. "[" .. idx .. "]"
+  return table.concat({
+    "block " .. block .. "() -> i64",
+    "    if " .. render_tag_compare(value, "IntegerTag") .. " then yield " .. value .. ".payload_i64 end",
+    "    if " .. render_is_string(value) .. " then",
+    "        if " .. value .. ".payload_i64 >= " .. i64_lit(0) .. " then",
+    "            let " .. idx .. ": index = as(index, " .. value .. ".payload_i64)",
+    "            if " .. rec .. ".numeric_kind == " .. numeric_kind_lit("DecimalInteger") .. " then yield " .. rec .. ".numeric_i64 end",
+    "        end",
+    "    end",
+    "    yield " .. i64_lit(0),
+    "end",
+  }, "\n")
 end
 
-local function render_string_to_number(strings, value)
-  local kind = render_string_numeric_kind(strings, value)
-  local is_int = par(kind .. " == " .. numeric_kind_lit("DecimalInteger"))
-  local is_float = par(kind .. " == " .. numeric_kind_lit("DecimalFloat"))
-  local i_payload = strings .. "[as(index, " .. value .. ".payload_i64)].numeric_i64"
-  local f_payload = strings .. "[as(index, " .. value .. ".payload_i64)].numeric_f64"
-  return ValueModel.TYPE_NAME .. "{ tag = select(" .. is_int .. ", " .. tag_lit("IntegerTag") .. ", select(" .. is_float .. ", " .. tag_lit("FloatTag") .. ", " .. tag_lit("NilTag") .. ")), payload_i64 = select(" .. is_int .. ", " .. i_payload .. ", " .. i64_lit(0) .. "), payload_f64 = select(" .. is_float .. ", " .. f_payload .. ", " .. f64_lit(0) .. ") }"
-end
-
-local function render_number_or_string_ok(strings, value)
-  return par(render_tag_any(value, { "IntegerTag", "FloatTag" }) .. " or " .. render_string_to_number_ok(strings, value))
-end
-
-local function render_effective_integral(strings, value)
-  return par(render_tag_compare(value, "IntegerTag") .. " or " .. render_string_integral(strings, value))
-end
-
-local function render_effective_i64(strings, value)
-  return "select(" .. render_tag_compare(value, "IntegerTag") .. ", " .. value .. ".payload_i64, " .. strings .. "[as(index, " .. value .. ".payload_i64)].numeric_i64)"
-end
-
-local function render_effective_f64(strings, value)
-  local string_kind = render_string_numeric_kind(strings, value)
-  local string_f64 = "select(" .. string_kind .. " == " .. numeric_kind_lit("DecimalInteger") .. ", as(f64, " .. strings .. "[as(index, " .. value .. ".payload_i64)].numeric_i64), " .. strings .. "[as(index, " .. value .. ".payload_i64)].numeric_f64)"
-  return "select(" .. render_tag_compare(value, "IntegerTag") .. ", as(f64, " .. value .. ".payload_i64), select(" .. render_tag_compare(value, "FloatTag") .. ", " .. value .. ".payload_f64, " .. string_f64 .. "))"
+local function render_numeric_f64_safe(strings, value)
+  local block = fresh_block_name("rt_num_f64")
+  local idx = block .. "_idx"
+  local rec = strings .. "[" .. idx .. "]"
+  return table.concat({
+    "block " .. block .. "() -> f64",
+    "    if " .. render_tag_compare(value, "IntegerTag") .. " then yield as(f64, " .. value .. ".payload_i64) end",
+    "    if " .. render_tag_compare(value, "FloatTag") .. " then yield " .. value .. ".payload_f64 end",
+    "    if " .. render_is_string(value) .. " then",
+    "        if " .. value .. ".payload_i64 >= " .. i64_lit(0) .. " then",
+    "            let " .. idx .. ": index = as(index, " .. value .. ".payload_i64)",
+    "            if " .. rec .. ".numeric_kind == " .. numeric_kind_lit("DecimalInteger") .. " then yield as(f64, " .. rec .. ".numeric_i64) end",
+    "            if " .. rec .. ".numeric_kind == " .. numeric_kind_lit("DecimalFloat") .. " then yield " .. rec .. ".numeric_f64 end",
+    "        end",
+    "    end",
+    "    yield " .. f64_lit(0),
+    "end",
+  }, "\n")
 end
 
 local function render_arithmetic_numeric_ok(op, strings, left, right)
   local k = op and op.kind
   if k ~= "ArithAdd" then return "false" end
-  return par(render_number_or_string_ok(strings, left) .. " and " .. render_number_or_string_ok(strings, right))
+  local block = fresh_block_name("rt_arith_ok")
+  local lk, rk = block .. "_lk", block .. "_rk"
+  return table.concat({
+    "block " .. block .. "() -> bool",
+    "    let " .. lk .. ": i64 = " .. render_numeric_kind_safe(strings, left),
+    "    if " .. lk .. " == " .. i64_lit(0) .. " then yield false end",
+    "    let " .. rk .. ": i64 = " .. render_numeric_kind_safe(strings, right),
+    "    if " .. rk .. " == " .. i64_lit(0) .. " then yield false end",
+    "    yield true",
+    "end",
+  }, "\n")
 end
 
-local function render_arithmetic_error_value(op, strings, left, right)
+local function render_arithmetic_error_value(op, _strings, left, right)
   local k = op and op.kind
   if k ~= "ArithAdd" then return left end
-  return "select(" .. render_number_or_string_ok(strings, left) .. ", " .. right .. ", " .. left .. ")"
+  local left_primitive_numeric = render_tag_any(left, { "IntegerTag", "FloatTag" })
+  return ValueModel.TYPE_NAME .. "{ tag = select(" .. left_primitive_numeric .. ", " .. right .. ".tag, " .. left .. ".tag), payload_i64 = select(" .. left_primitive_numeric .. ", " .. right .. ".payload_i64, " .. left .. ".payload_i64), payload_f64 = select(" .. left_primitive_numeric .. ", " .. right .. ".payload_f64, " .. left .. ".payload_f64) }"
 end
 
 local function render_arithmetic_no_meta(op, strings, left, right)
   local k = op and op.kind
-  if k ~= "ArithAdd" then return render_box("NilTag", i64_lit(0), f64_lit(0)) end
-  local both_int = par(render_effective_integral(strings, left) .. " and " .. render_effective_integral(strings, right))
-  local numeric = render_arithmetic_numeric_ok(op, strings, left, right)
-  local int_sum = par(render_effective_i64(strings, left) .. " + " .. render_effective_i64(strings, right))
-  local float_sum = par(render_effective_f64(strings, left) .. " + " .. render_effective_f64(strings, right))
+  if k ~= "ArithAdd" then return render_nil_value() end
+  local lk = render_numeric_kind_safe(strings, left)
+  local rk = render_numeric_kind_safe(strings, right)
+  local numeric = par(lk .. " ~= " .. i64_lit(0) .. " and " .. rk .. " ~= " .. i64_lit(0))
+  local both_int = par(lk .. " == " .. i64_lit(1) .. " and " .. rk .. " == " .. i64_lit(1))
+  local int_sum = par(render_numeric_i64_safe(strings, left) .. " + " .. render_numeric_i64_safe(strings, right))
+  local float_sum = par(render_numeric_f64_safe(strings, left) .. " + " .. render_numeric_f64_safe(strings, right))
   return ValueModel.TYPE_NAME .. "{ tag = select(" .. both_int .. ", " .. tag_lit("IntegerTag") .. ", select(" .. numeric .. ", " .. tag_lit("FloatTag") .. ", " .. tag_lit("NilTag") .. ")), payload_i64 = select(" .. both_int .. ", " .. int_sum .. ", " .. i64_lit(0) .. "), payload_f64 = select(" .. par(numeric .. " and not " .. both_int) .. ", " .. float_sum .. ", " .. f64_lit(0) .. ") }"
 end
 
@@ -253,8 +314,8 @@ local function cdata_type_id_lit(type_id)
   return i64_lit(type_id and type_id.id or 0)
 end
 
-local function render_cdata_record(cdata_bank, cdata_value)
-  return cdata_bank .. "[as(index, " .. cdata_value .. ".payload_i64)]"
+local function render_cdata_record(cdata_bank, idx)
+  return cdata_bank .. "[" .. idx .. "]"
 end
 
 local function cdata_scalar_info(scalar)
@@ -267,38 +328,87 @@ local function render_cdata_access_ok(cdata_bank, cdata_value, scalar, type_id, 
   local info = cdata_scalar_info(scalar)
   local off = tonumber(offset_bytes) or 0
   local width = tonumber(width_bytes) or 0
-  local cd = render_cdata_record(cdata_bank, cdata_value)
   local scalar_ok = width == info.width
   local aligned = info.align <= 1 or (off % info.align) == 0
-  return par(cdata_value .. ".tag == " .. tag_lit("CDataTag")
-      .. " and " .. cdata_value .. ".payload_i64 >= " .. i64_lit(0)
-      .. " and " .. cd .. ".type_id == " .. cdata_type_id_lit(type_id)
-      .. " and " .. (scalar_ok and "true" or "false")
-      .. " and " .. (aligned and "true" or "false")
-      .. " and " .. i64_lit(off) .. " >= " .. i64_lit(0)
-      .. " and " .. i64_lit(off + width) .. " <= " .. cd .. ".size_bytes")
+  local block = fresh_block_name("rt_cdata_access_ok")
+  local idx = block .. "_idx"
+  local cd = render_cdata_record(cdata_bank, idx)
+  return table.concat({
+    "block " .. block .. "() -> bool",
+    "    if " .. cdata_value .. ".tag == " .. tag_lit("CDataTag") .. " then",
+    "        if " .. cdata_value .. ".payload_i64 >= " .. i64_lit(0) .. " then",
+    "            let " .. idx .. ": index = as(index, " .. cdata_value .. ".payload_i64)",
+    "            if " .. cd .. ".type_id == " .. cdata_type_id_lit(type_id) .. " then",
+    "                if " .. (scalar_ok and "true" or "false") .. " then",
+    "                    if " .. (aligned and "true" or "false") .. " then",
+    "                        if " .. i64_lit(off) .. " >= " .. i64_lit(0) .. " then",
+    "                            if " .. i64_lit(off + width) .. " <= " .. cd .. ".size_bytes then yield true end",
+    "                        end",
+    "                    end",
+    "                end",
+    "            end",
+    "        end",
+    "    end",
+    "    yield false",
+    "end",
+  }, "\n")
 end
 
 local function render_cdata_scalar_load(cdata_bank, cdata_value, scalar, type_id, offset_bytes, width_bytes)
   local info = cdata_scalar_info(scalar)
   local off = tonumber(offset_bytes) or 0
-  local cd = render_cdata_record(cdata_bank, cdata_value)
-  local ok = render_cdata_access_ok(cdata_bank, cdata_value, scalar, type_id, offset_bytes, width_bytes)
+  local width = tonumber(width_bytes) or 0
+  local scalar_ok = width == info.width
+  local aligned = info.align <= 1 or (off % info.align) == 0
+  local block = fresh_block_name("rt_cdata_load")
+  local idx = block .. "_idx"
+  local cd = render_cdata_record(cdata_bank, idx)
+  local load
   if info.moon_type == "i32" then
-    local load = cd .. ".data_i32[as(index, " .. i64_lit(off / 4) .. ")]"
-    return "select(" .. ok .. ", " .. render_box("IntegerTag", "as(i64, " .. load .. ")", f64_lit(0)) .. ", " .. render_nil_value() .. ")"
+    load = render_box("IntegerTag", "as(i64, " .. cd .. ".data_i32[as(index, " .. i64_lit(off / 4) .. ")])", f64_lit(0))
   elseif info.moon_type == "i64" then
-    local load = cd .. ".data_i64[as(index, " .. i64_lit(off / 8) .. ")]"
-    return "select(" .. ok .. ", " .. render_box("IntegerTag", load, f64_lit(0)) .. ", " .. render_nil_value() .. ")"
+    load = render_box("IntegerTag", cd .. ".data_i64[as(index, " .. i64_lit(off / 8) .. ")]", f64_lit(0))
   elseif info.moon_type == "f64" then
-    local load = cd .. ".data_f64[as(index, " .. i64_lit(off / 8) .. ")]"
-    return "select(" .. ok .. ", " .. render_box("FloatTag", i64_lit(0), load) .. ", " .. render_nil_value() .. ")"
+    load = render_box("FloatTag", i64_lit(0), cd .. ".data_f64[as(index, " .. i64_lit(off / 8) .. ")]" )
+  else
+    error("unsupported cdata scalar type reached emission: " .. tostring(info.moon_type))
   end
-  error("unsupported cdata scalar type reached emission: " .. tostring(info.moon_type))
+  return table.concat({
+    "block " .. block .. "() -> " .. ValueModel.TYPE_NAME,
+    "    if " .. cdata_value .. ".tag == " .. tag_lit("CDataTag") .. " then",
+    "        if " .. cdata_value .. ".payload_i64 >= " .. i64_lit(0) .. " then",
+    "            let " .. idx .. ": index = as(index, " .. cdata_value .. ".payload_i64)",
+    "            if " .. cd .. ".type_id == " .. cdata_type_id_lit(type_id) .. " then",
+    "                if " .. (scalar_ok and "true" or "false") .. " then",
+    "                    if " .. (aligned and "true" or "false") .. " then",
+    "                        if " .. i64_lit(off) .. " >= " .. i64_lit(0) .. " then",
+    "                            if " .. i64_lit(off + width) .. " <= " .. cd .. ".size_bytes then yield " .. load .. " end",
+    "                        end",
+    "                    end",
+    "                end",
+    "            end",
+    "        end",
+    "    end",
+    "    yield " .. render_nil_value(),
+    "end",
+  }, "\n")
 end
 
 local function render_table_array_len(tables, value)
-  return tables .. "[as(index, " .. value .. ".payload_i64)].array_len"
+  local block = fresh_block_name("rt_table_array_len")
+  local idx = block .. "_idx"
+  local tbl = tables .. "[" .. idx .. "]"
+  return table.concat({
+    "block " .. block .. "() -> i64",
+    "    if " .. render_tag_compare(value, "TableTag") .. " then",
+    "        if " .. value .. ".payload_i64 >= " .. i64_lit(0) .. " then",
+    "            let " .. idx .. ": index = as(index, " .. value .. ".payload_i64)",
+    "            yield " .. tbl .. ".array_len",
+    "        end",
+    "    end",
+    "    yield " .. i64_lit(0),
+    "end",
+  }, "\n")
 end
 
 local function hash_state_lit(name)
@@ -309,31 +419,11 @@ local function render_is_hash_key(value)
   return par(render_tag_compare(value, "IntegerTag") .. " or " .. render_is_string(value))
 end
 
-local function render_hash_entry(tables, tablev, index)
-  local tbl = tables .. "[as(index, " .. tablev .. ".payload_i64)]"
-  return tbl .. ".hash[as(index, " .. i64_lit(index) .. ")]"
-end
-
-local function render_hash_valid(tables, tablev)
-  local tbl = tables .. "[as(index, " .. tablev .. ".payload_i64)]"
-  return par(tablev .. ".tag == " .. tag_lit("TableTag")
-      .. " and " .. tbl .. ".hash_capacity > " .. i64_lit(0)
-      .. " and " .. tbl .. ".hash_capacity <= " .. i64_lit(ObjectModel.HASH_PROBE_LIMIT)
-      .. " and " .. render_is_hash_key("__KEY__"))
-end
-
-local function render_hash_key_equal(entry_key, key)
-  local both_int = par(entry_key .. ".tag == " .. tag_lit("IntegerTag") .. " and " .. key .. ".tag == " .. tag_lit("IntegerTag") .. " and " .. entry_key .. ".payload_i64 == " .. key .. ".payload_i64")
-  local both_string = par(render_is_string(entry_key) .. " and " .. render_is_string(key) .. " and " .. entry_key .. ".payload_i64 == " .. key .. ".payload_i64")
+local function render_hash_key_equal_fields(entry_tag, entry_payload, key)
+  local entry_is_string = par(entry_tag .. " == " .. tag_lit("ShortStringTag") .. " or " .. entry_tag .. " == " .. tag_lit("LongStringTag"))
+  local both_int = par(entry_tag .. " == " .. tag_lit("IntegerTag") .. " and " .. key .. ".tag == " .. tag_lit("IntegerTag") .. " and " .. entry_payload .. " == " .. key .. ".payload_i64")
+  local both_string = par(entry_is_string .. " and " .. render_is_string(key) .. " and " .. entry_payload .. " == " .. key .. ".payload_i64")
   return par(both_int .. " or " .. both_string)
-end
-
-local function render_hash_match(entry, key)
-  return par(entry .. ".state == " .. hash_state_lit("Occupied") .. " and " .. render_hash_key_equal(entry .. ".key", key))
-end
-
-local function render_hash_insertable(entry)
-  return par(entry .. ".state == " .. hash_state_lit("Empty") .. " or " .. entry .. ".state == " .. hash_state_lit("Tombstone"))
 end
 
 local function render_collectable_value(value)
@@ -341,44 +431,163 @@ local function render_collectable_value(value)
 end
 
 local function render_table_barrier_needed(tables, tablev, value)
-  local tbl = tables .. "[as(index, " .. tablev .. ".payload_i64)]"
-  return par(tablev .. ".tag == " .. tag_lit("TableTag")
-      .. " and " .. tbl .. ".gc_color == " .. i64_lit(ObjectModel.gc_color_value("Black"))
-      .. " and " .. tbl .. ".gc_generation == " .. i64_lit(ObjectModel.gc_generation_value("Old"))
-      .. " and " .. render_collectable_value(value))
+  local block = fresh_block_name("rt_table_barrier_needed")
+  local idx = block .. "_idx"
+  local tbl = tables .. "[" .. idx .. "]"
+  return table.concat({
+    "block " .. block .. "() -> bool",
+    "    if " .. render_tag_compare(tablev, "TableTag") .. " then",
+    "        if " .. tablev .. ".payload_i64 >= " .. i64_lit(0) .. " then",
+    "            let " .. idx .. ": index = as(index, " .. tablev .. ".payload_i64)",
+    "            if " .. tbl .. ".gc_color == " .. i64_lit(ObjectModel.gc_color_value("Black")) .. " then",
+    "                if " .. tbl .. ".gc_generation == " .. i64_lit(ObjectModel.gc_generation_value("Old")) .. " then",
+    "                    if " .. render_collectable_value(value) .. " then yield true end",
+    "                end",
+    "            end",
+    "        end",
+    "    end",
+    "    yield false",
+    "end",
+  }, "\n")
+end
+
+local function render_raw_get_initial_value()
+  return ObjectModel.RAW_GET_TYPE_NAME .. "{ hit = false, value = " .. raw_get_absent_value() .. " }"
 end
 
 local function render_raw_get(tables, tablev, key)
-  local tbl = tables .. "[as(index, " .. tablev .. ".payload_i64)]"
-  local array_hit = par(tablev .. ".tag == " .. tag_lit("TableTag") .. " and " .. key .. ".tag == " .. tag_lit("IntegerTag") .. " and " .. key .. ".payload_i64 >= " .. i64_lit(1) .. " and " .. key .. ".payload_i64 <= " .. tbl .. ".array_len")
-  local array_val = tbl .. ".array[as(index, " .. key .. ".payload_i64 - " .. i64_lit(1) .. ")]"
-  local hash_valid = par((render_hash_valid(tables, tablev):gsub("__KEY__", key)))
-  local hash_hit_parts = {}
-  local value_expr = raw_get_absent_value()
-  for i = ObjectModel.HASH_PROBE_LIMIT - 1, 0, -1 do
-    local e = render_hash_entry(tables, tablev, i)
-    local in_cap = par(hash_valid .. " and " .. tbl .. ".hash_capacity > " .. i64_lit(i))
-    local hit = par(in_cap .. " and " .. render_hash_match(e, key))
-    hash_hit_parts[#hash_hit_parts + 1] = hit
-    value_expr = "select(" .. hit .. ", " .. e .. ".value, " .. value_expr .. ")"
-  end
-  local hash_hit = join_binary(hash_hit_parts, "or", "false")
-  local hit = par(array_hit .. " or " .. hash_hit)
-  local val = "select(" .. array_hit .. ", " .. array_val .. ", " .. value_expr .. ")"
-  return ObjectModel.RAW_GET_TYPE_NAME .. "{ hit = " .. hit .. ", value = " .. val .. " }"
+  return render_raw_get_initial_value()
+end
+
+local function render_raw_get_let(dst, tables, tablev, key, indent)
+  local tbl_idx = dst .. "_table_index"
+  local hptr = dst .. "_hash"
+  local tbl = tables .. "[" .. tbl_idx .. "]"
+  local lines = {
+    indent .. "var " .. dst .. ": " .. ObjectModel.RAW_GET_TYPE_NAME .. " = " .. render_raw_get_initial_value(),
+    indent .. "var " .. dst .. "_done: bool = false",
+    indent .. "if " .. tablev .. ".tag == " .. tag_lit("TableTag") .. " then",
+    indent .. "    if " .. tablev .. ".payload_i64 >= " .. i64_lit(0) .. " then",
+    indent .. "    let " .. tbl_idx .. ": index = as(index, " .. tablev .. ".payload_i64)",
+    indent .. "    if " .. tbl .. ".metatable_kind == " .. i64_lit(ObjectModel.metatable_kind_value("NoMetatable")) .. " then",
+    indent .. "    if " .. key .. ".tag == " .. tag_lit("IntegerTag") .. " then",
+    indent .. "        if " .. key .. ".payload_i64 >= " .. i64_lit(1) .. " then",
+    indent .. "            if " .. key .. ".payload_i64 <= " .. tbl .. ".array_len then",
+    indent .. "                if " .. ptr_not_null(tbl .. ".array", ValueModel.TYPE_NAME) .. " then",
+    indent .. "                    " .. dst .. ".hit = true",
+    indent .. "                    " .. dst .. ".value = " .. tbl .. ".array[as(index, " .. key .. ".payload_i64 - " .. i64_lit(1) .. ")]",
+    indent .. "                    " .. dst .. "_done = true",
+    indent .. "                end",
+    indent .. "            end",
+    indent .. "        end",
+    indent .. "    end",
+    indent .. "    if not " .. dst .. "_done then",
+    indent .. "        if " .. render_is_hash_key(key) .. " then",
+    indent .. "            if " .. tbl .. ".hash_capacity > " .. i64_lit(0) .. " then",
+    indent .. "                if " .. tbl .. ".hash_capacity <= " .. i64_lit(ObjectModel.HASH_PROBE_LIMIT) .. " then",
+    indent .. "                    if " .. ptr_not_null(tbl .. ".hash", ObjectModel.HASH_ENTRY_TYPE_NAME) .. " then",
+    indent .. "                        let " .. hptr .. ": ptr(" .. ObjectModel.HASH_ENTRY_TYPE_NAME .. ") = " .. tbl .. ".hash",
+  }
+  local loop = fresh_block_name(dst .. "_probe")
+  local e = hptr .. "[as(index, " .. loop .. "_i)]"
+  local prefix = loop .. "_entry"
+  lines[#lines + 1] = indent .. "                        let " .. loop .. "_hit: bool = block " .. loop .. "(" .. loop .. "_i: i64 = " .. i64_lit(0) .. ") -> bool"
+  lines[#lines + 1] = indent .. "                            if " .. dst .. "_done then yield true end"
+  lines[#lines + 1] = indent .. "                            if " .. loop .. "_i >= " .. tbl .. ".hash_capacity then yield false end"
+  lines[#lines + 1] = indent .. "                            let " .. prefix .. "_state: i64 = " .. e .. ".state"
+  lines[#lines + 1] = indent .. "                            if " .. prefix .. "_state == " .. hash_state_lit("Occupied") .. " then"
+  lines[#lines + 1] = indent .. "                                let " .. prefix .. "_key_tag: i64 = " .. e .. ".key.tag"
+  lines[#lines + 1] = indent .. "                                let " .. prefix .. "_key_payload: i64 = " .. e .. ".key.payload_i64"
+  lines[#lines + 1] = indent .. "                                if " .. render_hash_key_equal_fields(prefix .. "_key_tag", prefix .. "_key_payload", key) .. " then"
+  lines[#lines + 1] = indent .. "                                    " .. dst .. ".hit = true"
+  lines[#lines + 1] = indent .. "                                    " .. dst .. ".value = " .. e .. ".value"
+  lines[#lines + 1] = indent .. "                                    " .. dst .. "_done = true"
+  lines[#lines + 1] = indent .. "                                    yield true"
+  lines[#lines + 1] = indent .. "                                end"
+  lines[#lines + 1] = indent .. "                            end"
+  lines[#lines + 1] = indent .. "                            jump " .. loop .. "(" .. loop .. "_i = " .. loop .. "_i + " .. i64_lit(1) .. ")"
+  lines[#lines + 1] = indent .. "                        end"
+  lines[#lines + 1] = indent .. "                        " .. dst .. "_done = " .. loop .. "_hit"
+  lines[#lines + 1] = indent .. "                    end"
+  lines[#lines + 1] = indent .. "                end"
+  lines[#lines + 1] = indent .. "            end"
+  lines[#lines + 1] = indent .. "        end"
+  lines[#lines + 1] = indent .. "    end"
+  lines[#lines + 1] = indent .. "        if not " .. dst .. "_done then"
+  lines[#lines + 1] = indent .. "            " .. dst .. ".hit = true"
+  lines[#lines + 1] = indent .. "            " .. dst .. ".value = " .. render_nil_value()
+  lines[#lines + 1] = indent .. "        end"
+  lines[#lines + 1] = indent .. "    end"
+  lines[#lines + 1] = indent .. "    end"
+  lines[#lines + 1] = indent .. "end"
+  return table.concat(lines, "\n")
 end
 
 local function render_table_raw_set_can_write(tables, tablev, key)
-  local tbl = tables .. "[as(index, " .. tablev .. ".payload_i64)]"
-  local array_hit = par(tablev .. ".tag == " .. tag_lit("TableTag") .. " and " .. key .. ".tag == " .. tag_lit("IntegerTag") .. " and " .. key .. ".payload_i64 >= " .. i64_lit(1) .. " and " .. key .. ".payload_i64 <= " .. tbl .. ".array_len")
-  local hash_valid = par((render_hash_valid(tables, tablev):gsub("__KEY__", key)))
-  local slots = {}
-  for i = 0, ObjectModel.HASH_PROBE_LIMIT - 1 do
-    local e = render_hash_entry(tables, tablev, i)
-    local in_cap = par(hash_valid .. " and " .. tbl .. ".hash_capacity > " .. i64_lit(i))
-    slots[#slots + 1] = par(in_cap .. " and " .. par(render_hash_match(e, key) .. " or " .. render_hash_insertable(e)))
-  end
-  return par(array_hit .. " or " .. join_binary(slots, "or", "false"))
+  return "false"
+end
+
+local function render_table_raw_set_can_write_let(dst, tables, tablev, key, indent)
+  local tbl_idx = dst .. "_table_index"
+  local tbl = tables .. "[" .. tbl_idx .. "]"
+  local prefix_base = fresh_block_name("rt_raw_set_can_write")
+  local hptr = prefix_base .. "_hash"
+  local lines = {
+    indent .. "var " .. dst .. ": bool = false",
+    indent .. "if " .. tablev .. ".tag == " .. tag_lit("TableTag") .. " then",
+    indent .. "    if " .. tablev .. ".payload_i64 >= " .. i64_lit(0) .. " then",
+    indent .. "    let " .. tbl_idx .. ": index = as(index, " .. tablev .. ".payload_i64)",
+    indent .. "    if " .. tbl .. ".metatable_kind == " .. i64_lit(ObjectModel.metatable_kind_value("NoMetatable")) .. " then",
+    indent .. "    if " .. key .. ".tag == " .. tag_lit("IntegerTag") .. " then",
+    indent .. "        if " .. key .. ".payload_i64 >= " .. i64_lit(1) .. " then",
+    indent .. "            if " .. key .. ".payload_i64 <= " .. tbl .. ".array_len then",
+    indent .. "                if " .. ptr_not_null(tbl .. ".array", ValueModel.TYPE_NAME) .. " then",
+    indent .. "                    " .. dst .. " = true",
+    indent .. "                end",
+    indent .. "            end",
+    indent .. "        end",
+    indent .. "    end",
+    indent .. "    if not " .. dst .. " then",
+    indent .. "        if " .. render_is_hash_key(key) .. " then",
+    indent .. "            if " .. tbl .. ".hash_capacity > " .. i64_lit(0) .. " then",
+    indent .. "                if " .. tbl .. ".hash_capacity <= " .. i64_lit(ObjectModel.HASH_PROBE_LIMIT) .. " then",
+    indent .. "                    if " .. ptr_not_null(tbl .. ".hash", ObjectModel.HASH_ENTRY_TYPE_NAME) .. " then",
+    indent .. "                        let " .. hptr .. ": ptr(" .. ObjectModel.HASH_ENTRY_TYPE_NAME .. ") = " .. tbl .. ".hash",
+  }
+  local loop = fresh_block_name(prefix_base .. "_probe")
+  local e = hptr .. "[as(index, " .. loop .. "_i)]"
+  local prefix = loop .. "_entry"
+  lines[#lines + 1] = indent .. "                        " .. dst .. " = block " .. loop .. "(" .. loop .. "_i: i64 = " .. i64_lit(0) .. ") -> bool"
+  lines[#lines + 1] = indent .. "                            if " .. dst .. " then yield true end"
+  lines[#lines + 1] = indent .. "                            if " .. loop .. "_i >= " .. tbl .. ".hash_capacity then yield false end"
+  lines[#lines + 1] = indent .. "                            let " .. prefix .. "_state: i64 = " .. e .. ".state"
+  lines[#lines + 1] = indent .. "                            if " .. prefix .. "_state == " .. hash_state_lit("Empty") .. " then"
+  lines[#lines + 1] = indent .. "                                " .. dst .. " = true"
+  lines[#lines + 1] = indent .. "                                yield true"
+  lines[#lines + 1] = indent .. "                            end"
+  lines[#lines + 1] = indent .. "                            if " .. prefix .. "_state == " .. hash_state_lit("Tombstone") .. " then"
+  lines[#lines + 1] = indent .. "                                " .. dst .. " = true"
+  lines[#lines + 1] = indent .. "                                yield true"
+  lines[#lines + 1] = indent .. "                            end"
+  lines[#lines + 1] = indent .. "                            if " .. prefix .. "_state == " .. hash_state_lit("Occupied") .. " then"
+  lines[#lines + 1] = indent .. "                                let " .. prefix .. "_key_tag: i64 = " .. e .. ".key.tag"
+  lines[#lines + 1] = indent .. "                                let " .. prefix .. "_key_payload: i64 = " .. e .. ".key.payload_i64"
+  lines[#lines + 1] = indent .. "                                if " .. render_hash_key_equal_fields(prefix .. "_key_tag", prefix .. "_key_payload", key) .. " then"
+  lines[#lines + 1] = indent .. "                                    " .. dst .. " = true"
+  lines[#lines + 1] = indent .. "                                    yield true"
+  lines[#lines + 1] = indent .. "                                end"
+  lines[#lines + 1] = indent .. "                            end"
+  lines[#lines + 1] = indent .. "                            jump " .. loop .. "(" .. loop .. "_i = " .. loop .. "_i + " .. i64_lit(1) .. ")"
+  lines[#lines + 1] = indent .. "                        end"
+  lines[#lines + 1] = indent .. "                    end"
+  lines[#lines + 1] = indent .. "                end"
+  lines[#lines + 1] = indent .. "            end"
+  lines[#lines + 1] = indent .. "        end"
+  lines[#lines + 1] = indent .. "    end"
+  lines[#lines + 1] = indent .. "    end"
+  lines[#lines + 1] = indent .. "    end"
+  lines[#lines + 1] = indent .. "end"
+  return table.concat(lines, "\n")
 end
 
 local function seq_field(seq_expr, index)
@@ -504,8 +713,21 @@ local function render_expr(e)
   elseif cls == CFG.RuntimeVarargCount then return render_value(e.source) .. ".count"
   elseif cls == CFG.RuntimeVarargGet then
     local src, key = render_value(e.source), render_value(e.key)
-    local in_range = par(key .. ".tag == " .. tag_lit("IntegerTag") .. " and " .. key .. ".payload_i64 >= " .. i64_lit(1) .. " and " .. key .. ".payload_i64 <= " .. src .. ".count")
-    return "select(" .. in_range .. ", " .. src .. ".values[as(index, " .. key .. ".payload_i64 - " .. i64_lit(1) .. ")], " .. render_nil_value() .. ")"
+    local block = fresh_block_name("rt_vararg_get")
+    local idx = block .. "_idx"
+    return table.concat({
+      "block " .. block .. "() -> " .. ValueModel.TYPE_NAME,
+      "    if " .. key .. ".tag == " .. tag_lit("IntegerTag") .. " then",
+      "        if " .. key .. ".payload_i64 >= " .. i64_lit(1) .. " then",
+      "            if " .. key .. ".payload_i64 <= " .. src .. ".count then",
+      "                let " .. idx .. ": index = as(index, " .. key .. ".payload_i64 - " .. i64_lit(1) .. ")",
+      "                yield " .. src .. ".values[" .. idx .. "]",
+      "            end",
+      "        end",
+      "    end",
+      "    yield " .. render_nil_value(),
+      "end",
+    }, "\n")
   elseif cls == CFG.RuntimeTableRawGet then return render_raw_get(render_value(e.tables), render_value(e.table_value), render_value(e.key))
   elseif cls == CFG.RuntimeRawGetHit then return render_value(e.rawget) .. ".hit"
   elseif cls == CFG.RuntimeRawGetValue then return render_value(e.rawget) .. ".value"
@@ -516,13 +738,59 @@ local function render_expr(e)
   elseif cls == CFG.RuntimeStringLen then return render_string_len(render_value(e.strings), render_value(e.value))
   elseif cls == CFG.RuntimeLenNoMeta then
     local v, strings, tables = render_value(e.value), render_value(e.strings), render_value(e.tables)
-    local is_string = render_tag_any(v, { "ShortStringTag", "LongStringTag" })
-    local is_table = render_tag_compare(v, "TableTag")
-    return "select(" .. is_string .. ", " .. render_string_len(strings, v) .. ", select(" .. is_table .. ", " .. render_table_array_len(tables, v) .. ", " .. i64_lit(0) .. "))"
+    local block = fresh_block_name("rt_len_no_meta")
+    local tidx = block .. "_table_idx"
+    local tbl = tables .. "[" .. tidx .. "]"
+    return table.concat({
+      "block " .. block .. "() -> i64",
+      "    if " .. render_is_string(v) .. " then",
+      "        let " .. block .. "_string_len: i64 = " .. render_string_len(strings, v),
+      "        yield " .. block .. "_string_len",
+      "    end",
+      "    if " .. render_tag_compare(v, "TableTag") .. " then",
+      "        if " .. v .. ".payload_i64 >= " .. i64_lit(0) .. " then",
+      "            let " .. tidx .. ": index = as(index, " .. v .. ".payload_i64)",
+      "            if " .. tbl .. ".metatable_kind == " .. i64_lit(ObjectModel.metatable_kind_value("NoMetatable")) .. " then",
+      "                yield " .. tbl .. ".array_len",
+      "            end",
+      "        end",
+      "    end",
+      "    yield " .. i64_lit(0),
+      "end",
+    }, "\n")
+  elseif cls == CFG.RuntimeLenNoMetaOk then
+    local v, tables = render_value(e.value), render_value(e.tables)
+    local block = fresh_block_name("rt_len_no_meta_ok")
+    local tidx = block .. "_table_idx"
+    local tbl = tables .. "[" .. tidx .. "]"
+    return table.concat({
+      "block " .. block .. "() -> bool",
+      "    if " .. render_is_string(v) .. " then yield true end",
+      "    if " .. render_tag_compare(v, "TableTag") .. " then",
+      "        if " .. v .. ".payload_i64 >= " .. i64_lit(0) .. " then",
+      "            let " .. tidx .. ": index = as(index, " .. v .. ".payload_i64)",
+      "            if " .. tbl .. ".metatable_kind == " .. i64_lit(ObjectModel.metatable_kind_value("NoMetatable")) .. " then yield true end",
+      "        end",
+      "    end",
+      "    yield false",
+      "end",
+    }, "\n")
   elseif cls == CFG.RuntimeStringConcat2 then
     local left, right, strings = render_value(e.left), render_value(e.right), render_value(e.strings)
-    local len = par(render_string_len(strings, left) .. " + " .. render_string_len(strings, right))
-    return render_box("ShortStringTag", par(i64_lit(0) .. " - " .. len), f64_lit(0))
+    local block = fresh_block_name("rt_concat2")
+    local llen = block .. "_left_len"
+    local rlen = block .. "_right_len"
+    return table.concat({
+      "block " .. block .. "() -> " .. ValueModel.TYPE_NAME,
+      "    if not " .. render_is_string(left) .. " then yield " .. render_nil_value() .. " end",
+      "    if not " .. render_is_string(right) .. " then yield " .. render_nil_value() .. " end",
+      "    let " .. llen .. ": i64 = " .. render_string_len(strings, left),
+      "    if " .. llen .. " < " .. i64_lit(0) .. " then yield " .. render_nil_value() .. " end",
+      "    let " .. rlen .. ": i64 = " .. render_string_len(strings, right),
+      "    if " .. rlen .. " < " .. i64_lit(0) .. " then yield " .. render_nil_value() .. " end",
+      "    yield " .. render_box("ShortStringTag", par(i64_lit(0) .. " - " .. par(llen .. " + " .. rlen)), f64_lit(0)),
+      "end",
+    }, "\n")
   elseif cls == CFG.RuntimeArithmeticNumericOk then return render_arithmetic_numeric_ok(e.op, render_value(e.strings), render_value(e.left), render_value(e.right))
   elseif cls == CFG.RuntimeArithmeticNoMeta then return render_arithmetic_no_meta(e.op, render_value(e.strings), render_value(e.left), render_value(e.right))
   elseif cls == CFG.RuntimeArithmeticErrorValue then return render_arithmetic_error_value(e.op, render_value(e.strings), render_value(e.left), render_value(e.right))
@@ -579,7 +847,7 @@ local function infer_expr_type(e)
       or cls == CFG.RuntimeOutcomeErrorValuePayloadI64 or cls == CFG.RuntimeOutcomeSavedPc
       or cls == CFG.RuntimeOutcomeYieldKind then return "i64"
   elseif cls == CFG.RuntimePayloadF64 or cls == CFG.RuntimeOutcomeValuePayloadF64 then return "f64"
-  elseif cls == CFG.RuntimeTruthiness or cls == CFG.RuntimeTypeTest or cls == CFG.RuntimeRawGetHit or cls == CFG.RuntimeTableRawSetCanWrite or cls == CFG.RuntimeTableWriteBarrierNeeded or cls == CFG.RuntimeArithmeticNumericOk then return "bool"
+  elseif cls == CFG.RuntimeTruthiness or cls == CFG.RuntimeTypeTest or cls == CFG.RuntimeRawGetHit or cls == CFG.RuntimeTableRawSetCanWrite or cls == CFG.RuntimeTableWriteBarrierNeeded or cls == CFG.RuntimeLenNoMetaOk or cls == CFG.RuntimeArithmeticNumericOk then return "bool"
   elseif cls == CFG.ValueExpr then
     local v = e.value
     if class(v) == CFG.ConstValue then
@@ -590,10 +858,188 @@ local function infer_expr_type(e)
   return "i64"
 end
 
+local function emit_number_coerce_assign(lines, indent, dst, strings, value)
+  local idx = dst .. "_string_idx"
+  local rec = strings .. "[" .. idx .. "]"
+  lines[#lines + 1] = indent .. "var " .. dst .. ": " .. ValueModel.TYPE_NAME .. " = " .. render_nil_value()
+  lines[#lines + 1] = indent .. "if " .. render_tag_compare(value, "IntegerTag") .. " then"
+  lines[#lines + 1] = indent .. "    " .. dst .. ".tag = " .. value .. ".tag"
+  lines[#lines + 1] = indent .. "    " .. dst .. ".payload_i64 = " .. value .. ".payload_i64"
+  lines[#lines + 1] = indent .. "    " .. dst .. ".payload_f64 = " .. value .. ".payload_f64"
+  lines[#lines + 1] = indent .. "end"
+  lines[#lines + 1] = indent .. "if " .. render_tag_compare(value, "FloatTag") .. " then"
+  lines[#lines + 1] = indent .. "    " .. dst .. ".tag = " .. value .. ".tag"
+  lines[#lines + 1] = indent .. "    " .. dst .. ".payload_i64 = " .. value .. ".payload_i64"
+  lines[#lines + 1] = indent .. "    " .. dst .. ".payload_f64 = " .. value .. ".payload_f64"
+  lines[#lines + 1] = indent .. "end"
+  lines[#lines + 1] = indent .. "if " .. render_tag_compare(dst, "NilTag") .. " then"
+  lines[#lines + 1] = indent .. "    if " .. render_is_string(value) .. " then"
+  lines[#lines + 1] = indent .. "        if " .. value .. ".payload_i64 >= " .. i64_lit(0) .. " then"
+  lines[#lines + 1] = indent .. "            let " .. idx .. ": index = as(index, " .. value .. ".payload_i64)"
+  lines[#lines + 1] = indent .. "            if " .. rec .. ".numeric_kind == " .. numeric_kind_lit("DecimalInteger") .. " then"
+  lines[#lines + 1] = indent .. "                " .. dst .. ".tag = " .. tag_lit("IntegerTag")
+  lines[#lines + 1] = indent .. "                " .. dst .. ".payload_i64 = " .. rec .. ".numeric_i64"
+  lines[#lines + 1] = indent .. "                " .. dst .. ".payload_f64 = " .. f64_lit(0)
+  lines[#lines + 1] = indent .. "            end"
+  lines[#lines + 1] = indent .. "            if " .. rec .. ".numeric_kind == " .. numeric_kind_lit("DecimalFloat") .. " then"
+  lines[#lines + 1] = indent .. "                " .. dst .. ".tag = " .. tag_lit("FloatTag")
+  lines[#lines + 1] = indent .. "                " .. dst .. ".payload_i64 = " .. i64_lit(0)
+  lines[#lines + 1] = indent .. "                " .. dst .. ".payload_f64 = " .. rec .. ".numeric_f64"
+  lines[#lines + 1] = indent .. "            end"
+  lines[#lines + 1] = indent .. "        end"
+  lines[#lines + 1] = indent .. "    end"
+  lines[#lines + 1] = indent .. "end"
+end
+
+local function render_box_let(dst, tag_name, payload_i64, payload_f64, indent)
+  return table.concat({
+    indent .. "var " .. dst .. ": " .. ValueModel.TYPE_NAME .. " = " .. render_nil_value(),
+    indent .. dst .. ".tag = " .. tag_lit(tag_name),
+    indent .. dst .. ".payload_i64 = " .. (payload_i64 or i64_lit(0)),
+    indent .. dst .. ".payload_f64 = " .. (payload_f64 or f64_lit(0)),
+  }, "\n")
+end
+
+local function render_concat2_let(dst, strings, left, right, indent)
+  local llen, rlen = dst .. "_left_len", dst .. "_right_len"
+  local lines = { indent .. "var " .. dst .. ": " .. ValueModel.TYPE_NAME .. " = " .. render_nil_value() }
+  lines[#lines + 1] = indent .. "if " .. render_is_string(left) .. " then"
+  lines[#lines + 1] = indent .. "    if " .. render_is_string(right) .. " then"
+  lines[#lines + 1] = indent .. "        let " .. llen .. ": i64 = " .. render_string_len(strings, left)
+  lines[#lines + 1] = indent .. "        if " .. llen .. " >= " .. i64_lit(0) .. " then"
+  lines[#lines + 1] = indent .. "            let " .. rlen .. ": i64 = " .. render_string_len(strings, right)
+  lines[#lines + 1] = indent .. "            if " .. rlen .. " >= " .. i64_lit(0) .. " then"
+  lines[#lines + 1] = indent .. "                " .. dst .. ".tag = " .. tag_lit("ShortStringTag")
+  lines[#lines + 1] = indent .. "                " .. dst .. ".payload_i64 = " .. par(i64_lit(0) .. " - " .. par(llen .. " + " .. rlen))
+  lines[#lines + 1] = indent .. "                " .. dst .. ".payload_f64 = " .. f64_lit(0)
+  lines[#lines + 1] = indent .. "            end"
+  lines[#lines + 1] = indent .. "        end"
+  lines[#lines + 1] = indent .. "    end"
+  lines[#lines + 1] = indent .. "end"
+  return table.concat(lines, "\n")
+end
+
+local function render_vararg_get_let(dst, src, key, indent)
+  local idx = dst .. "_idx"
+  local elem = src .. ".values[" .. idx .. "]"
+  return table.concat({
+    indent .. "var " .. dst .. ": " .. ValueModel.TYPE_NAME .. " = " .. render_nil_value(),
+    indent .. "if " .. key .. ".tag == " .. tag_lit("IntegerTag") .. " then",
+    indent .. "    if " .. key .. ".payload_i64 >= " .. i64_lit(1) .. " then",
+    indent .. "        if " .. key .. ".payload_i64 <= " .. src .. ".count then",
+    indent .. "            let " .. idx .. ": index = as(index, " .. key .. ".payload_i64 - " .. i64_lit(1) .. ")",
+    indent .. "            " .. dst .. ".tag = " .. elem .. ".tag",
+    indent .. "            " .. dst .. ".payload_i64 = " .. elem .. ".payload_i64",
+    indent .. "            " .. dst .. ".payload_f64 = " .. elem .. ".payload_f64",
+    indent .. "        end",
+    indent .. "    end",
+    indent .. "end",
+  }, "\n")
+end
+
+local function render_arithmetic_numeric_ok_let(dst, op, strings, left, right, indent)
+  local lines = { indent .. "var " .. dst .. ": bool = false" }
+  if op and op.kind == "ArithAdd" then
+    local lnum, rnum = dst .. "_left_num", dst .. "_right_num"
+    emit_number_coerce_assign(lines, indent, lnum, strings, left)
+    lines[#lines + 1] = indent .. "if " .. render_numeric_tag(lnum) .. " then"
+    emit_number_coerce_assign(lines, indent .. "    ", rnum, strings, right)
+    lines[#lines + 1] = indent .. "    if " .. render_numeric_tag(rnum) .. " then"
+    lines[#lines + 1] = indent .. "        " .. dst .. " = true"
+    lines[#lines + 1] = indent .. "    end"
+    lines[#lines + 1] = indent .. "end"
+  end
+  return table.concat(lines, "\n")
+end
+
+local function render_arithmetic_no_meta_let(dst, op, strings, left, right, indent)
+  local lines = {}
+  if not (op and op.kind == "ArithAdd") then return indent .. "var " .. dst .. ": " .. ValueModel.TYPE_NAME .. " = " .. render_nil_value() end
+  local lnum, rnum = dst .. "_left_num", dst .. "_right_num"
+  lines[#lines + 1] = indent .. "var " .. dst .. ": " .. ValueModel.TYPE_NAME .. " = " .. render_nil_value()
+  emit_number_coerce_assign(lines, indent, lnum, strings, left)
+  lines[#lines + 1] = indent .. "if " .. render_numeric_tag(lnum) .. " then"
+  emit_number_coerce_assign(lines, indent .. "    ", rnum, strings, right)
+  lines[#lines + 1] = indent .. "    if " .. render_numeric_tag(rnum) .. " then"
+  lines[#lines + 1] = indent .. "        if " .. par(render_tag_compare(lnum, "IntegerTag") .. " and " .. render_tag_compare(rnum, "IntegerTag")) .. " then"
+  lines[#lines + 1] = indent .. "            " .. dst .. ".tag = " .. tag_lit("IntegerTag")
+  lines[#lines + 1] = indent .. "            " .. dst .. ".payload_i64 = " .. par(lnum .. ".payload_i64 + " .. rnum .. ".payload_i64")
+  lines[#lines + 1] = indent .. "            " .. dst .. ".payload_f64 = " .. f64_lit(0)
+  lines[#lines + 1] = indent .. "        end"
+  lines[#lines + 1] = indent .. "        if not " .. par(render_tag_compare(lnum, "IntegerTag") .. " and " .. render_tag_compare(rnum, "IntegerTag")) .. " then"
+  lines[#lines + 1] = indent .. "            let " .. dst .. "_lf: f64 = block " .. dst .. "_left_f64() -> f64"
+  lines[#lines + 1] = indent .. "                if " .. render_tag_compare(lnum, "IntegerTag") .. " then yield as(f64, " .. lnum .. ".payload_i64) end"
+  lines[#lines + 1] = indent .. "                yield " .. lnum .. ".payload_f64"
+  lines[#lines + 1] = indent .. "            end"
+  lines[#lines + 1] = indent .. "            let " .. dst .. "_rf: f64 = block " .. dst .. "_right_f64() -> f64"
+  lines[#lines + 1] = indent .. "                if " .. render_tag_compare(rnum, "IntegerTag") .. " then yield as(f64, " .. rnum .. ".payload_i64) end"
+  lines[#lines + 1] = indent .. "                yield " .. rnum .. ".payload_f64"
+  lines[#lines + 1] = indent .. "            end"
+  lines[#lines + 1] = indent .. "            " .. dst .. ".tag = " .. tag_lit("FloatTag")
+  lines[#lines + 1] = indent .. "            " .. dst .. ".payload_i64 = " .. i64_lit(0)
+  lines[#lines + 1] = indent .. "            " .. dst .. ".payload_f64 = " .. par(dst .. "_lf + " .. dst .. "_rf")
+  lines[#lines + 1] = indent .. "        end"
+  lines[#lines + 1] = indent .. "    end"
+  lines[#lines + 1] = indent .. "end"
+  return table.concat(lines, "\n")
+end
+
+local function render_arithmetic_error_value_let(dst, op, strings, left, right, indent)
+  local lines = { indent .. "var " .. dst .. ": " .. ValueModel.TYPE_NAME .. " = " .. left }
+  if op and op.kind == "ArithAdd" then
+    local lnum = dst .. "_left_num"
+    emit_number_coerce_assign(lines, indent, lnum, strings, left)
+    lines[#lines + 1] = indent .. "if " .. render_numeric_tag(lnum) .. " then"
+    lines[#lines + 1] = indent .. "    " .. dst .. ".tag = " .. right .. ".tag"
+    lines[#lines + 1] = indent .. "    " .. dst .. ".payload_i64 = " .. right .. ".payload_i64"
+    lines[#lines + 1] = indent .. "    " .. dst .. ".payload_f64 = " .. right .. ".payload_f64"
+    lines[#lines + 1] = indent .. "end"
+  end
+  return table.concat(lines, "\n")
+end
+
 local function render_op(op, indent)
   indent = indent or "    "
   local cls = class(op)
   if cls == CFG.Let then
+    if class(op.expr) == CFG.RuntimeBoxNil then
+      return render_box_let(render_place(op.dst), ValueModel.tag_name_for_nil_kind(op.expr.kind), render_nil_kind_payload(op.expr.kind), f64_lit(0), indent)
+    end
+    if class(op.expr) == CFG.RuntimeBoxI64 then
+      return render_box_let(render_place(op.dst), "IntegerTag", render_value(op.expr.value), f64_lit(0), indent)
+    end
+    if class(op.expr) == CFG.RuntimeBoxF64 then
+      return render_box_let(render_place(op.dst), "FloatTag", i64_lit(0), render_value(op.expr.value), indent)
+    end
+    if class(op.expr) == CFG.RuntimeBoxRef then
+      return render_box_let(render_place(op.dst), tag_name_from_runtime_tag(op.expr.tag), render_value(op.expr.handle), f64_lit(0), indent)
+    end
+    if class(op.expr) == CFG.RuntimeBoxBool then
+      local dst, b = render_place(op.dst), render_value(op.expr.value)
+      return table.concat({
+        indent .. "var " .. dst .. ": " .. ValueModel.TYPE_NAME .. " = " .. render_nil_value(),
+        indent .. "if " .. b .. " then",
+        indent .. "    " .. dst .. ".tag = " .. tag_lit("TrueTag"),
+        indent .. "    " .. dst .. ".payload_i64 = " .. i64_lit(1),
+        indent .. "end",
+        indent .. "if not " .. b .. " then",
+        indent .. "    " .. dst .. ".tag = " .. tag_lit("FalseTag"),
+        indent .. "    " .. dst .. ".payload_i64 = " .. i64_lit(0),
+        indent .. "end",
+      }, "\n")
+    end
+    if class(op.expr) == CFG.RuntimeTableRawGet then
+      return render_raw_get_let(render_place(op.dst), render_value(op.expr.tables), render_value(op.expr.table_value), render_value(op.expr.key), indent)
+    end
+    if class(op.expr) == CFG.RuntimeTableRawSetCanWrite then
+      return render_table_raw_set_can_write_let(render_place(op.dst), render_value(op.expr.tables), render_value(op.expr.table_value), render_value(op.expr.key), indent)
+    end
+    if class(op.expr) == CFG.RuntimeStringConcat2 then
+      return render_concat2_let(render_place(op.dst), render_value(op.expr.strings), render_value(op.expr.left), render_value(op.expr.right), indent)
+    end
+    if class(op.expr) == CFG.RuntimeVarargGet then
+      return render_vararg_get_let(render_place(op.dst), render_value(op.expr.source), render_value(op.expr.key), indent)
+    end
     return indent .. "let " .. render_place(op.dst) .. ": " .. infer_expr_type(op.expr) .. " = " .. render_expr(op.expr)
   elseif cls == CFG.RuntimeStackStore then
     return indent .. render_value(op.stack) .. "[as(index, " .. render_value(op.index) .. ")] = " .. render_value(op.value)
@@ -601,46 +1047,94 @@ local function render_op(op, indent)
     return indent .. render_value(op.top_ptr) .. "[as(index, 0)] = " .. render_value(op.top)
   elseif cls == CFG.RuntimeTableRawSet then
     local tables, tablev, key, value = render_value(op.tables), render_value(op.table_value), render_value(op.key), render_value(op.value)
-    local tbl = tables .. "[as(index, " .. tablev .. ".payload_i64)]"
-    local array_hit = par(tablev .. ".tag == " .. tag_lit("TableTag") .. " and " .. key .. ".tag == " .. tag_lit("IntegerTag") .. " and " .. key .. ".payload_i64 >= " .. i64_lit(1) .. " and " .. key .. ".payload_i64 <= " .. tbl .. ".array_len")
+    local set_prefix = fresh_block_name("rt_raw_set")
+    local tbl_idx = set_prefix .. "_table_index"
+    local hptr = set_prefix .. "_hash"
+    local tbl = tables .. "[" .. tbl_idx .. "]"
     local lines = {
-      indent .. "if " .. array_hit .. " then",
-      indent .. "    " .. tbl .. ".array[as(index, " .. key .. ".payload_i64 - " .. i64_lit(1) .. ")] = " .. value,
-      indent .. "else",
-      indent .. "    var hash_done: bool = false",
+      indent .. "if " .. tablev .. ".tag == " .. tag_lit("TableTag") .. " then",
+      indent .. "    if " .. tablev .. ".payload_i64 >= " .. i64_lit(0) .. " then",
+      indent .. "    let " .. tbl_idx .. ": index = as(index, " .. tablev .. ".payload_i64)",
+      indent .. "    var array_slot: bool = false",
+      indent .. "    if " .. key .. ".tag == " .. tag_lit("IntegerTag") .. " then",
+      indent .. "        if " .. key .. ".payload_i64 >= " .. i64_lit(1) .. " then",
+      indent .. "            if " .. key .. ".payload_i64 <= " .. tbl .. ".array_len then",
+      indent .. "                array_slot = true",
+      indent .. "                if " .. ptr_not_null(tbl .. ".array", ValueModel.TYPE_NAME) .. " then",
+      indent .. "                    " .. tbl .. ".array[as(index, " .. key .. ".payload_i64 - " .. i64_lit(1) .. ")] = " .. value,
+      indent .. "                end",
+      indent .. "            end",
+      indent .. "        end",
+      indent .. "    end",
+      indent .. "    if not array_slot then",
+      indent .. "        if " .. render_is_hash_key(key) .. " then",
+      indent .. "            if " .. tbl .. ".hash_capacity > " .. i64_lit(0) .. " then",
+      indent .. "                if " .. tbl .. ".hash_capacity <= " .. i64_lit(ObjectModel.HASH_PROBE_LIMIT) .. " then",
+      indent .. "                    if " .. ptr_not_null(tbl .. ".hash", ObjectModel.HASH_ENTRY_TYPE_NAME) .. " then",
+      indent .. "                        let " .. hptr .. ": ptr(" .. ObjectModel.HASH_ENTRY_TYPE_NAME .. ") = " .. tbl .. ".hash",
+      indent .. "                        var hash_done: bool = false",
     }
-    local hash_valid = par((render_hash_valid(tables, tablev):gsub("__KEY__", key)))
-    for i = 0, ObjectModel.HASH_PROBE_LIMIT - 1 do
-      local e = render_hash_entry(tables, tablev, i)
-      local in_cap = par(hash_valid .. " and " .. tbl .. ".hash_capacity > " .. i64_lit(i))
-      lines[#lines + 1] = indent .. "    if not hash_done and " .. in_cap .. " and " .. render_hash_match(e, key) .. " then"
-      lines[#lines + 1] = indent .. "        " .. e .. ".value = " .. value
-      lines[#lines + 1] = indent .. "        hash_done = true"
-      lines[#lines + 1] = indent .. "    end"
-    end
-    for i = 0, ObjectModel.HASH_PROBE_LIMIT - 1 do
-      local e = render_hash_entry(tables, tablev, i)
-      local in_cap = par(hash_valid .. " and " .. tbl .. ".hash_capacity > " .. i64_lit(i))
-      lines[#lines + 1] = indent .. "    if not hash_done and " .. in_cap .. " and " .. render_hash_insertable(e) .. " then"
-      lines[#lines + 1] = indent .. "        " .. e .. ".state = " .. hash_state_lit("Occupied")
-      lines[#lines + 1] = indent .. "        " .. e .. ".key = " .. key
-      lines[#lines + 1] = indent .. "        " .. e .. ".value = " .. value
-      lines[#lines + 1] = indent .. "        " .. tbl .. ".hash_count = " .. tbl .. ".hash_count + " .. i64_lit(1)
-      lines[#lines + 1] = indent .. "        hash_done = true"
-      lines[#lines + 1] = indent .. "    end"
-    end
+    local update_loop = fresh_block_name(set_prefix .. "_update")
+    local update_e = hptr .. "[as(index, " .. update_loop .. "_i)]"
+    local update_prefix = update_loop .. "_entry"
+    lines[#lines + 1] = indent .. "                        hash_done = block " .. update_loop .. "(" .. update_loop .. "_i: i64 = " .. i64_lit(0) .. ") -> bool"
+    lines[#lines + 1] = indent .. "                            if hash_done then yield true end"
+    lines[#lines + 1] = indent .. "                            if " .. update_loop .. "_i >= " .. tbl .. ".hash_capacity then yield false end"
+    lines[#lines + 1] = indent .. "                            let " .. update_prefix .. "_state: i64 = " .. update_e .. ".state"
+    lines[#lines + 1] = indent .. "                            if " .. update_prefix .. "_state == " .. hash_state_lit("Occupied") .. " then"
+    lines[#lines + 1] = indent .. "                                let " .. update_prefix .. "_key_tag: i64 = " .. update_e .. ".key.tag"
+    lines[#lines + 1] = indent .. "                                let " .. update_prefix .. "_key_payload: i64 = " .. update_e .. ".key.payload_i64"
+    lines[#lines + 1] = indent .. "                                if " .. render_hash_key_equal_fields(update_prefix .. "_key_tag", update_prefix .. "_key_payload", key) .. " then"
+    lines[#lines + 1] = indent .. "                                    " .. update_e .. ".value = " .. value
+    lines[#lines + 1] = indent .. "                                    hash_done = true"
+    lines[#lines + 1] = indent .. "                                    yield true"
+    lines[#lines + 1] = indent .. "                                end"
+    lines[#lines + 1] = indent .. "                            end"
+    lines[#lines + 1] = indent .. "                            jump " .. update_loop .. "(" .. update_loop .. "_i = " .. update_loop .. "_i + " .. i64_lit(1) .. ")"
+    lines[#lines + 1] = indent .. "                        end"
+    local insert_loop = fresh_block_name(set_prefix .. "_insert")
+    local insert_e = hptr .. "[as(index, " .. insert_loop .. "_i)]"
+    local insert_prefix = insert_loop .. "_entry"
+    lines[#lines + 1] = indent .. "                        if not hash_done then"
+    lines[#lines + 1] = indent .. "                            hash_done = block " .. insert_loop .. "(" .. insert_loop .. "_i: i64 = " .. i64_lit(0) .. ") -> bool"
+    lines[#lines + 1] = indent .. "                                if hash_done then yield true end"
+    lines[#lines + 1] = indent .. "                                if " .. insert_loop .. "_i >= " .. tbl .. ".hash_capacity then yield false end"
+    lines[#lines + 1] = indent .. "                                let " .. insert_prefix .. "_state: i64 = " .. insert_e .. ".state"
+    lines[#lines + 1] = indent .. "                                if " .. par(insert_prefix .. "_state == " .. hash_state_lit("Empty") .. " or " .. insert_prefix .. "_state == " .. hash_state_lit("Tombstone")) .. " then"
+    lines[#lines + 1] = indent .. "                                    " .. insert_e .. ".state = " .. hash_state_lit("Occupied")
+    lines[#lines + 1] = indent .. "                                    " .. insert_e .. ".key = " .. key
+    lines[#lines + 1] = indent .. "                                    " .. insert_e .. ".value = " .. value
+    lines[#lines + 1] = indent .. "                                    " .. tbl .. ".hash_count = " .. tbl .. ".hash_count + " .. i64_lit(1)
+    lines[#lines + 1] = indent .. "                                    hash_done = true"
+    lines[#lines + 1] = indent .. "                                    yield true"
+    lines[#lines + 1] = indent .. "                                end"
+    lines[#lines + 1] = indent .. "                                jump " .. insert_loop .. "(" .. insert_loop .. "_i = " .. insert_loop .. "_i + " .. i64_lit(1) .. ")"
+    lines[#lines + 1] = indent .. "                            end"
+    lines[#lines + 1] = indent .. "                        end"
+    lines[#lines + 1] = indent .. "                    end"
+    lines[#lines + 1] = indent .. "                end"
+    lines[#lines + 1] = indent .. "            end"
+    lines[#lines + 1] = indent .. "        end"
+    lines[#lines + 1] = indent .. "    end"
+    lines[#lines + 1] = indent .. "    end"
     lines[#lines + 1] = indent .. "end"
     return table.concat(lines, "\n")
   elseif cls == CFG.RuntimeTableWriteBarrier then
     local tables, tablev, value = render_value(op.tables), render_value(op.table_value), render_value(op.value)
-    local tbl = tables .. "[as(index, " .. tablev .. ".payload_i64)]"
+    local idx = fresh_block_name("rt_barrier_table_index")
+    local tbl = tables .. "[" .. idx .. "]"
     local cond = render_table_barrier_needed(tables, tablev, value)
     return table.concat({
       indent .. "if " .. cond .. " then",
-      indent .. "    " .. tbl .. ".barrier_count = " .. tbl .. ".barrier_count + " .. i64_lit(1),
-      indent .. "    " .. tbl .. ".barrier_epoch = " .. tbl .. ".gc_epoch",
-      indent .. "    " .. tbl .. ".barrier_last_child_tag = " .. value .. ".tag",
-      indent .. "    " .. tbl .. ".barrier_last_child_payload = " .. value .. ".payload_i64",
+      indent .. "    if " .. render_tag_compare(tablev, "TableTag") .. " then",
+      indent .. "        if " .. tablev .. ".payload_i64 >= " .. i64_lit(0) .. " then",
+      indent .. "            let " .. idx .. ": index = as(index, " .. tablev .. ".payload_i64)",
+      indent .. "            " .. tbl .. ".barrier_count = " .. tbl .. ".barrier_count + " .. i64_lit(1),
+      indent .. "            " .. tbl .. ".barrier_epoch = " .. tbl .. ".gc_epoch",
+      indent .. "            " .. tbl .. ".barrier_last_child_tag = " .. value .. ".tag",
+      indent .. "            " .. tbl .. ".barrier_last_child_payload = " .. value .. ".payload_i64",
+      indent .. "        end",
+      indent .. "    end",
       indent .. "end",
     }, "\n")
   elseif cls == CFG.Assign then
@@ -759,6 +1253,7 @@ local function render_region_return(region, result_ty)
 end
 
 local function render_kernel(kernel, opts)
+  fresh_block_counter = 0
   local params = {}
   for _, p in ipairs(kernel.params or {}) do params[#params + 1] = render_param(p) end
   local name = opts.name or render_name(kernel.id and kernel.id.name) or "lua_compile_kernel"

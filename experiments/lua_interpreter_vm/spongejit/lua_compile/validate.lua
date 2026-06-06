@@ -55,25 +55,13 @@ function M.lua_fact_evidence(evidence)
   return #errors == 0, errors
 end
 
-function M.lua_sem_result(result)
-  local errors = {}
-  if not T.LuaSem.Result.members[pvm.classof(result)] then add(errors, "expected LuaSem.Result") end
-  local ok, phys = M.no_physical_residency(result)
-  for _, e in ipairs(phys) do add(errors, e) end
-  return #errors == 0 and ok, errors
+function M.compile_contract(contract)
+  return require("lua_compile.compile_contract_validate").validate(contract)
 end
 
-function M.lua_nf_program(nf)
+function M.compile_diagnostic(diagnostic)
   local errors = {}
-  if pvm.classof(nf) ~= T.LuaNF.Program then add(errors, "expected LuaNF.Program") end
-  local ok, phys = M.no_physical_residency(nf)
-  for _, e in ipairs(phys) do add(errors, e) end
-  return #errors == 0 and ok, errors
-end
-
-function M.lua_contract(contract)
-  local errors = {}
-  if pvm.classof(contract) ~= T.LuaContract.Contract then add(errors, "expected LuaContract.Contract") end
+  if pvm.classof(diagnostic) ~= T.LuaCompile.Diagnostic then add(errors, "expected LuaCompile.Diagnostic") end
   return #errors == 0, errors
 end
 

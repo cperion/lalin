@@ -79,7 +79,7 @@ local function validate_variant_key(variant, errors, opts)
   end
   if not T.Stencil.StencilKind.members[cls(variant.stencil_kind)] then add(errors, "variant has invalid StencilKind") end
   if not T.MoonCFG.KernelKind.members[cls(variant.kernel_kind)] then add(errors, "variant has invalid MoonCFG.KernelKind") end
-  if not is(variant.contract, T.LuaContract.Contract) then add(errors, "variant contract must be LuaContract.Contract") end
+  if not is(variant.contract, T.CompileContract.Contract) then add(errors, "variant contract must be CompileContract.Contract") end
   if not is(variant.placement, S.Placement) then add(errors, "variant placement must be Stencil.Placement") end
   if not is(variant.target_abi, S.TargetABI) then add(errors, "variant target_abi must be Stencil.TargetABI") end
   if not is(variant.features, S.FeatureSet) then add(errors, "variant features must be Stencil.FeatureSet") end

@@ -9,7 +9,6 @@ M.diagnostics = require("lua_compile.diagnostics")
 M.errors = require("lua_compile.errors")
 
 M.lua_compile_unit = require("lua_compile.lua_compile_unit")
-M.lua_compile_to_normal_form = require("lua_compile.lua_compile_to_normal_form")
 M.lua_compile_to_moon_kernel = require("lua_compile.lua_compile_to_moon_kernel")
 M.lua_compile_validate = require("lua_compile.lua_compile_validate")
 M.moon_cfg_abi = require("lua_compile.moon_cfg_abi")
@@ -20,10 +19,10 @@ M.lua_rt_outcome_model = require("lua_compile.lua_rt_outcome_model")
 M.lua_rt_stack_model = require("lua_compile.lua_rt_stack_model")
 M.lua_rt_object_model = require("lua_compile.lua_rt_object_model")
 M.lua_rt_cdata_model = require("lua_compile.lua_rt_cdata_model")
-M.lua_nf_to_moon_cfg_lower = require("lua_compile.lua_nf_to_moon_cfg_lower")
 M.lua_src_to_lua_exec_lower = require("lua_compile.lua_src_to_lua_exec_lower")
 M.lua_exec_to_moon_cfg_lower = require("lua_compile.lua_exec_to_moon_cfg_lower")
-M.lua_src_to_moon_cfg_closed = require("lua_compile.lua_src_to_moon_cfg_closed")
+M.compile_contract_key = require("lua_compile.compile_contract_key")
+M.compile_contract_validate = require("lua_compile.compile_contract_validate")
 M.lua_ffi_validate = require("lua_compile.lua_ffi_validate")
 M.lua_gc_validate = require("lua_compile.lua_gc_validate")
 M.lua_rt_validate = require("lua_compile.lua_rt_validate")
@@ -40,10 +39,6 @@ M.stencil_object_extract = require("lua_compile.stencil_object_extract")
 
 function M.unit_from_events(events, observations)
   return M.lua_compile_unit.from_events(events, observations)
-end
-
-function M.compile_to_normal_form(unit)
-  return M.lua_compile_to_normal_form.compile(unit)
 end
 
 function M.compile_to_moon_kernel(unit)

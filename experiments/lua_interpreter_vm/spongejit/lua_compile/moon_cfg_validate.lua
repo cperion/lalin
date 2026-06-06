@@ -4,7 +4,7 @@ local pvm = require("moonlift.pvm")
 local Validate = require("lua_compile.validate")
 local B = require("lua_compile.builders")
 local T = B.T
-local CFG, NF, RT = T.MoonCFG, T.LuaNF, T.LuaRT
+local CFG, RT = T.MoonCFG, T.LuaRT
 local ValueModel = require("lua_compile.lua_rt_value_model")
 local OutcomeModel = require("lua_compile.lua_rt_outcome_model")
 local StackModel = require("lua_compile.lua_rt_stack_model")
@@ -20,14 +20,6 @@ local FORBIDDEN_STRINGS = {
   getvarg = true,
   out_tag = true,
   out_event_kind = true,
-}
-
-local FORBIDDEN_PROTOCOL_EXITS = {
-  [NF.CallProtocolExit] = "CallProtocolExit",
-  [NF.CloseProtocolExit] = "CloseProtocolExit",
-  [NF.GenericForProtocolExit] = "GenericForProtocolExit",
-  [NF.SetListProtocolExit] = "SetListProtocolExit",
-  [NF.GetVargProtocolExit] = "GetVargProtocolExit",
 }
 
 local SUPPORTED_OPS = {
@@ -227,7 +219,7 @@ local function validate_runtime_expr(expr, env, where, errors)
     if not value_is_runtime_like(expr.table_value, env) then add(errors, where .. ":runtime_table_len_requires_lua_rt_value") end
   elseif cls == CFG.RuntimeStringLen then
     if not value_is_runtime_like(expr.value, env) then add(errors, where .. ":runtime_string_len_requires_lua_rt_value") end
-  elseif cls == CFG.RuntimeLenNoMeta then
+  elseif cls == CFG.RuntimeLenNoMeta or cls == CFG.RuntimeLenNoMetaOk then
     if not value_is_runtime_like(expr.value, env) then add(errors, where .. ":runtime_len_requires_lua_rt_value") end
   elseif cls == CFG.RuntimeStringConcat2 then
     if not value_is_runtime_like(expr.left, env) then add(errors, where .. ":runtime_concat_left_requires_lua_rt_value") end
@@ -255,7 +247,7 @@ local function infer_let_type(expr)
   if cls == CFG.RuntimeTableRawGet then return ObjectModel.RAW_GET_TYPE_NAME end
   if cls == CFG.RuntimeVarargSource then return StackModel.VARARG_TYPE_NAME end
   if cls == CFG.RuntimePayloadF64 or cls == CFG.RuntimeOutcomeValuePayloadF64 then return "f64" end
-  if cls == CFG.RuntimeTruthiness or cls == CFG.RuntimeTypeTest or cls == CFG.RuntimeRawGetHit or cls == CFG.RuntimeTableRawSetCanWrite or cls == CFG.RuntimeTableWriteBarrierNeeded or cls == CFG.RuntimeArithmeticNumericOk then return "bool" end
+  if cls == CFG.RuntimeTruthiness or cls == CFG.RuntimeTypeTest or cls == CFG.RuntimeRawGetHit or cls == CFG.RuntimeTableRawSetCanWrite or cls == CFG.RuntimeTableWriteBarrierNeeded or cls == CFG.RuntimeLenNoMetaOk or cls == CFG.RuntimeArithmeticNumericOk then return "bool" end
   if cls == CFG.RuntimeTag or cls == CFG.RuntimePayloadI64 or cls == CFG.RuntimeTopLoad or cls == CFG.RuntimeOpenCountFromTop or cls == CFG.RuntimeValueSeqCount or cls == CFG.RuntimeVarargCount
       or cls == CFG.RuntimeTableArrayLen or cls == CFG.RuntimeStringLen or cls == CFG.RuntimeLenNoMeta
       or cls == CFG.RuntimeOutcomeKind or cls == CFG.RuntimeOutcomeCount
@@ -277,7 +269,7 @@ local function validate_expr(expr, env, where, errors)
       or cls == CFG.RuntimeValueSeqCount or cls == CFG.RuntimeValueSeqValue or cls == CFG.RuntimeVarargSource or cls == CFG.RuntimeVarargCount or cls == CFG.RuntimeVarargGet
       or cls == CFG.RuntimeTableRawGet or cls == CFG.RuntimeRawGetHit or cls == CFG.RuntimeRawGetValue or cls == CFG.RuntimeRawGetValueOrNil
       or cls == CFG.RuntimeTableRawSetCanWrite or cls == CFG.RuntimeTableWriteBarrierNeeded
-      or cls == CFG.RuntimeTableArrayLen or cls == CFG.RuntimeStringLen or cls == CFG.RuntimeLenNoMeta or cls == CFG.RuntimeStringConcat2
+      or cls == CFG.RuntimeTableArrayLen or cls == CFG.RuntimeStringLen or cls == CFG.RuntimeLenNoMeta or cls == CFG.RuntimeLenNoMetaOk or cls == CFG.RuntimeStringConcat2
       or cls == CFG.RuntimeArithmeticNumericOk or cls == CFG.RuntimeArithmeticNoMeta or cls == CFG.RuntimeArithmeticErrorValue
       or cls == CFG.RuntimeOutcomeKind or cls == CFG.RuntimeOutcomeCount or cls == CFG.RuntimeOutcomeValueTag
       or cls == CFG.RuntimeOutcomeValuePayloadI64 or cls == CFG.RuntimeOutcomeValuePayloadF64
@@ -387,8 +379,13 @@ function M.validate(kernel)
     if tv == "string" and FORBIDDEN_STRINGS[v] then add(errors, "forbidden_string_semantic_tag:" .. v) end
     if tv == "table" then
       local cls = pvm.classof(v)
-      if cls == NF.Program then add(errors, "forbidden_executable_lua_nf_program") end
-      if FORBIDDEN_PROTOCOL_EXITS[cls] then add(errors, "forbidden_protocol_exit:" .. FORBIDDEN_PROTOCOL_EXITS[cls]) end
+      local plan = cls and rawget(cls, "__plan")
+      local cname = tostring((plan and plan.name) or v.kind or "")
+      local retired = { "Lua" .. "Sem", "Lua" .. "NF", "Lua" .. "Contract", "Lua" .. "Place", "Normal" .. "Form" }
+      for _, token in ipairs(retired) do
+        if cname:match(token) then add(errors, "forbidden_legacy_schema_node:" .. cname) end
+      end
+      if cname:match("ProtocolExit") then add(errors, "forbidden_protocol_exit_concept:" .. cname) end
       if cls == CFG.Param then
         local pname = text_of_name(v.name)
         if pname:match("^out_") then add(errors, "forbidden_param:" .. pname) end
