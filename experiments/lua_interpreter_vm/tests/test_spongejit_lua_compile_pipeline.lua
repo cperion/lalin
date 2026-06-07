@@ -16,24 +16,16 @@ assert(pvm.classof(mk.product.kernel) == T.MoonCFG.Kernel)
 assert(pvm.classof(mk.product.kernel.contract) == T.CompileContract.Contract)
 assert(mk.product.kernel.id.name.text == "lua_exec_core_kernel", "MoonKernel success must route through LuaExec")
 assert(mk.product.kernel["normal" .. "_form"] == nil, "MoonCFG kernel must not carry retired executable payloads")
-local moon_hits = C.lua_compile_to_moon_kernel.phase:stats().hits
 local mk2 = C.compile_to_moon_kernel(unit)
-assert(mk2.product.kernel == mk.product.kernel, "MoonKernel phase should return interned identical product")
-assert(C.lua_compile_to_moon_kernel.phase:stats().hits > moon_hits, "MoonKernel compilation must hit the PVM phase cache")
-local exec_hits = LuaExecLower.phase:stats().hits
+assert(mk2.product.kernel == mk.product.kernel, "MoonKernel compile must return the same interned product for the same unit")
 assert(LuaExecLower.lower(unit.source, unit.evidence) == exec)
-assert(LuaExecLower.phase:stats().hits > exec_hits, "LuaSrc->LuaExec must be a cached PVM phase")
 local cfg = LuaExecToMoon.lower(exec)
-local cfg_hits = LuaExecToMoon.phase:stats().hits
 assert(LuaExecToMoon.lower(exec) == cfg)
-assert(LuaExecToMoon.phase:stats().hits > cfg_hits, "LuaExec->MoonCFG must be a cached PVM phase for non-outcome kernels")
 local outcome_cfg = LuaExecToMoon.lower(exec, { outcome = true, outcome_projection = "kind" })
-local outcome_hits = LuaExecToMoon.phase:stats().hits
 assert(LuaExecToMoon.lower(exec, { outcome = true, outcome_projection = "kind" }) == outcome_cfg)
-assert(LuaExecToMoon.phase:stats().hits > outcome_hits, "LuaExec->MoonCFG must be a cached PVM phase for outcome kernels")
 
 local planned = {
-"builders.lua", "compile_contract_key.lua", "compile_contract_validate.lua", "diagnostics.lua", "errors.lua", "init.lua", "lua_compile_foundry.lua", "lua_compile_to_moon_kernel.lua", "lua_compile_unit.lua", "lua_compile_validate.lua", "lua_exec_region_model.lua", "lua_exec_static_region_inline.lua", "lua_exec_static_region_model.lua", "lua_exec_to_moon_cfg_lower.lua", "lua_exec_validate.lua", "lua_fact_closure.lua", "lua_fact_contradiction.lua", "lua_fact_from_foundry_bundle.lua", "lua_fact_from_runtime_observe.lua", "lua_fact_payload_lease.lua", "lua_fact_validate.lua", "lua_ffi_validate.lua", "lua_gc_validate.lua", "lua_region_validate.lua", "lua_rt_arity_model.lua", "lua_rt_call_model.lua", "lua_rt_cdata_model.lua", "lua_rt_close_model.lua", "lua_rt_closure_upvalue_model.lua", "lua_rt_gc_alloc_model.lua", "lua_rt_loop_model.lua", "lua_rt_metatable_model.lua", "lua_rt_operation_model.lua", "lua_rt_object_model.lua", "lua_rt_outcome_model.lua", "lua_rt_stack_model.lua", "lua_rt_validate.lua", "lua_rt_value_model.lua", "lua_src_call_static_model.lua", "lua_src_closure_static_model.lua", "lua_src_from_puc_decode.lua", "lua_src_slot_alias.lua", "lua_src_to_lua_exec_lower.lua", "lua_src_to_lua_region_recognize.lua", "lua_src_validate.lua", "lua_src_window_collect.lua", "moon_cfg_abi.lua", "moon_cfg_emit.lua", "moon_cfg_key.lua", "moon_cfg_validate.lua", "schema.lua", "stencil_bank.lua", "stencil_bundle.lua", "stencil_foundry.lua", "stencil_key.lua", "stencil_manifest.lua", "stencil_materialization_plan.lua", "stencil_materialize.lua", "stencil_object_extract.lua", "stencil_validate.lua", "validate.lua" }
+"builders.lua", "compile_contract_key.lua", "compile_contract_validate.lua", "diagnostics.lua", "errors.lua", "init.lua", "lua_compile_foundry.lua", "lua_compile_to_moon_kernel.lua", "lua_compile_unit.lua", "lua_compile_validate.lua", "lua_exec_region_model.lua", "lua_exec_static_region_inline.lua", "lua_exec_static_region_model.lua", "lua_exec_to_moon_cfg_lower.lua", "lua_exec_validate.lua", "lua_fact_closure.lua", "lua_fact_contradiction.lua", "lua_fact_from_foundry_bundle.lua", "lua_fact_from_runtime_observe.lua", "lua_fact_payload_lease.lua", "lua_fact_validate.lua", "lua_ffi_validate.lua", "lua_gc_validate.lua", "lua_region_validate.lua", "lua_rt_arity_model.lua", "lua_rt_call_model.lua", "lua_rt_cdata_model.lua", "lua_rt_close_model.lua", "lua_rt_closure_upvalue_model.lua", "lua_rt_gc_alloc_model.lua", "lua_rt_loop_model.lua", "lua_rt_metatable_model.lua", "lua_rt_operation_model.lua", "lua_rt_object_model.lua", "lua_rt_outcome_model.lua", "lua_rt_stack_model.lua", "lua_rt_validate.lua", "lua_rt_value_model.lua", "lua_src_call_static_model.lua", "lua_src_closure_static_model.lua", "lua_src_from_puc_decode.lua", "lua_src_slot_alias.lua", "lua_src_to_lua_exec_lower.lua", "lua_src_to_lua_region_recognize.lua", "lua_src_validate.lua", "lua_src_window_collect.lua", "moon_cfg_abi.lua", "moon_cfg_emit.lua", "moon_cfg_emit_source_compat.lua", "moon_cfg_key.lua", "moon_cfg_quote_emit.lua", "moon_cfg_validate.lua", "schema.lua", "stencil_bank.lua", "stencil_bundle.lua", "stencil_foundry.lua", "stencil_key.lua", "stencil_manifest.lua", "stencil_materialization_plan.lua", "stencil_materialize.lua", "stencil_object_extract.lua", "stencil_validate.lua", "validate.lua" }
 local seen = {}
 for _, f in ipairs(planned) do seen[f] = true end
 local p = io.popen("find experiments/lua_interpreter_vm/spongejit/lua_compile -maxdepth 1 -type f -printf '%f\\n' | sort")

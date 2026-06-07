@@ -47,6 +47,17 @@ local function run(k, fname, ...)
   return out, src
 end
 
+local function run_quote(k, fname, ...)
+  local ok, errs = Validate.validate(k)
+  assert(ok, table.concat(errs, "\n"))
+  local native, compiled_or_errors = Emit.compile(k, { name = fname })
+  assert(native, table.concat(compiled_or_errors or {}, "; "))
+  local out = native(...)
+  if type(out) == "cdata" then out = tonumber(out) or tonumber(tostring(out):match("^-?%d+")) or out end
+  native:free()
+  return out
+end
+
 local function box_i64(n) return CFG.RuntimeBoxI64(i64(n)) end
 
 local function normalize_projection(adjustment, projection)
@@ -71,6 +82,8 @@ end
 assert(run(normalize_projection(RT.TruncateTo(RT.Count(1)), "count"), "test_arity_truncate_count") == 1)
 assert(run(normalize_projection(RT.FillNilTo(RT.Count(3)), "count"), "test_arity_fill_count") == 3)
 assert(run(normalize_projection(RT.FillNilTo(RT.Count(3)), "value2_tag"), "test_arity_fill_value2_nil") == ValueModel.TAG.NilTag)
+assert(run_quote(normalize_projection(RT.TruncateTo(RT.Count(1)), "count"), "quote_arity_truncate_count") == 1)
+assert(run_quote(normalize_projection(RT.FillNilTo(RT.Count(3)), "value2_tag"), "quote_arity_fill_value2_nil") == ValueModel.TAG.NilTag)
 
 local function stack_seq_projection(index)
   local params = { param("stack", "ptr(LuaRTValue)") }
@@ -86,6 +99,7 @@ local stack = ffi.new("LuaRTValue[4]")
 for i = 0, 3 do stack[i].tag = ValueModel.TAG.IntegerTag; stack[i].payload_i64 = (i + 1) * 11 end
 assert(run(stack_seq_projection(2), "test_stack_seq_value2", stack) == 33)
 assert(run(stack_seq_projection(3), "test_stack_seq_value3", stack) == 44)
+assert(run_quote(stack_seq_projection(2), "quote_stack_seq_value2", stack) == 33)
 
 local function seq_store_kernel()
   local params = { param("src", "ptr(LuaRTValue)"), param("dst", "ptr(LuaRTValue)") }
@@ -100,6 +114,9 @@ end
 local dst = ffi.new("LuaRTValue[3]")
 assert(run(seq_store_kernel(), "test_seq_store_three_values", stack, dst) == 33)
 assert(dst[2].payload_i64 == 33, "RuntimeValueSeqStore must copy value2 into destination stack")
+local quote_dst = ffi.new("LuaRTValue[8]")
+assert(run_quote(seq_store_kernel(), "quote_seq_store_three_values", stack, quote_dst) == 33)
+assert(quote_dst[2].payload_i64 == 33, "quote RuntimeValueSeqStore must copy value2 into destination stack")
 
 local function lower_outcome(events, projection)
   local unit = C.unit_from_events(events, {})

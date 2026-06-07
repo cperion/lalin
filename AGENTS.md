@@ -97,6 +97,10 @@ It contains stricter MOM-specific discipline for the native compiler port,
 including the no-escape-hatch/no-"for now" framing rule, module organization,
 and required verification boundaries.
 
+When working under `experiments/lua_interpreter_vm/spongejit/`, also read
+`experiments/lua_interpreter_vm/spongejit/AGENTS.md`. It contains the current
+LuaCompile/SpongeJIT architecture discipline and retired-name guardrails.
+
 | Doc | Description |
 |-----|-------------|
 | `README.md` | Full project README with examples, benchmarks, philosophy |

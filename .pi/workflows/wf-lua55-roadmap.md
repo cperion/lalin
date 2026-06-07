@@ -8336,3 +8336,1039 @@ Corpus passed: `36 ok / 106 rejected`, `30 successful windows`, `26 reps checked
 - Completed and marked `T101`–`T117` done in the structured edit plan.
 - No ready/todo/claimed tasks remain.
 - `git status` still shows unrelated/pre-existing `museum/gps.lua` submodule modification.
+
+## Reviewer Output — 2026-06-07 18:28:11
+
+## Files Reviewed
+- `experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl` (lines 1494-1527, 2281-2325)
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_from_puc_decode.lua` (lines 70-213)
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_to_lua_exec_lower.lua` (lines 135-214, 572-600, 969-989, 1070-1127)
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_call_static_model.lua` (lines 1-226)
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_closure_static_model.lua` (lines 1-160)
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_inline.lua` (lines 1-189)
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_to_moon_cfg_lower.lua` (lines 1080-1158)
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit.lua` (lines 1549-1586)
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/stencil_materialization_plan.lua` (lines 57-64, 87-105)
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/stencil_materialize.lua` (lines 426-431)
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/stencil_bundle.lua` (lines 170-179)
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/stencil_bank.lua` (lines 62-190)
+- `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_pvm_boundaries.lua` (lines 24-31, 72-153)
+
+## Critical (must fix)
+- `lua_src_from_puc_decode.lua:72-73,181-190` - New canonical decode path drops `sbx`/`value` for `LOADI`/`LOADF`. Public `Decode.decode()` now canonicalizes before decode, but `CanonicalPucEvent` stores `sbx` only in `bx`/`sj`; the `LOADI`/`LOADF` decoders read only `e.sbx or e.b or e.value`. A plain event like `{op="LOADI", sbx=-7}` now decodes as immediate `0`, causing semantic misdecode.
+
+## Warnings (should fix)
+- `stencil_materialization_plan.lua:57-64`, `stencil_materialize.lua:426-431`, `stencil_bundle.lua:170-179`, `lua_src_call_static_model.lua:203-214` - Several new phases still take plain mutable Lua tables (`opts`, `code_blobs`, `return_args`) as phase arguments and use identity/`args_cache="last"` rather than canonical ASDL inputs. This weakens the claimed PVM discipline: equivalent fresh tables will not necessarily reuse cache entries, and semantic knobs can remain hidden in plain tables.
+- `stencil_materialization_plan.lua:87`, `stencil_bank.lua:62,187`, `stencil_object_extract.lua:105` - Some deterministic artifact/product helpers remain unphased (`template`, bank index/select/materialize adapter, object metadata → `StencilTemplate`). If these are considered “meaningful deterministic product transitions,” the repair is incomplete.
+- `test_spongejit_lua_compile_pvm_boundaries.lua:24-31,72-153` - The new cache tests do assert phase hits, but mostly by reusing the exact same table objects (`no_args`, `variant_opts`, `blob_map`, `mat_opts`, `bundle_opts`). They do not catch the plain-table canonicalization problem above or prove structurally equivalent inputs reuse.
+
+## Suggestions (consider)
+- Add decode regression tests for `LOADI`/`LOADF` with `sbx` and `value` aliases through the public phased `Decode.decode()` path.
+- Either canonicalize stencil/materialization options into typed ASDL/string/number arguments before phases, or explicitly document which plain-table artifact adapters are outside the compiler product graph.
+
+## Summary
+Core PVM repairs are mostly present: `lua_src_to_lua_exec_lower.M.lower` no longer pre-runs `lower_value`, CALL/CLOSURE products are ASDL-backed and phased, static inlining is phased and used by module lowering, and direct `EmitRegion`/MoonCFG guardrails remain. I found no new VM fallback/protocol handoff path, but there is a real decode regression and some phase boundaries still depend on non-canonical plain tables. Tests were not run in this read-only review.
+
+## Edit-planner Output — 2026-06-07 18:42:53
+
+### Milestone Decision
+
+**Next milestone: executable open-result arity/top/frame-effect substrate**, centered on:
+
+- correct logical vs available value-sequence counts;
+- count-safe padding/truncation for stack/vararg/call-result sequences;
+- generic lowering of `LuaRT.FrameEffect` (`StoreSeqEffect`, `SetTopEffect`);
+- strict source `CALL C=0` support **only** for fixed-arg, evidence-backed direct Lua closure calls whose static callee result count is provable.
+
+Why next: this is the shared prerequisite for open `CALL`, open `RETURN`, `VARARG`, `SETLIST`, constructors, generic-for, and tailcall routing. It enables real Lua behavior now: `return f(...)`-style open result propagation through stack top, without accepting tailcalls/metatables/FFI/generic-for/constructors.
+
+---
+
+## Precondition Checks
+
+Before edits:
+
+- Confirm existing source `CALL`/`CLOSURE` strict tests are green.
+- Confirm `CALL B=0`, `TAILCALL`, metatable/C/FFI/unknown targets still reject.
+- Confirm `MoonCFG.EmitRegion` still rejects; static invocation remains pre-MoonCFG inlining.
+- Run/verify current LuaSrc decode tests, especially reviewer-noted `LOADI`/`LOADF` canonical aliases, before relying on broader test results.
+
+---
+
+## Files to Modify
+
+### `lua_rt_stack_model.lua`
+
+**Goal**: Represent logical count separately from available source values.
+
+**Edit**
+- Around runtime struct declaration lines ~15–23:
+  - Change `LuaRTValueSeq` from:
+    ```moonlift
+    kind, count, value0, value1, buffer, base
+    ```
+  - To include:
+    ```moonlift
+    available_count: i64
+    ```
+- Meaning:
+  - `count` = logical Lua result count.
+  - `available_count` = actual values safe to read from inline/buffer.
+  - Padding projects nil.
+
+---
+
+### `lua_rt_outcome_model.lua`
+
+**Goal**: Preserve padded/open sequence safety through outcomes.
+
+**Edit**
+- Add `available_count: i64` to `LuaRTOutcome`.
+- Outcome projections must yield nil/zero payload when:
+  - `index >= count`, or
+  - `index >= available_count`.
+
+---
+
+### `moon_cfg_emit.lua`
+
+**Goal**: Emit count-safe sequence normalization, stores, and outcome projections.
+
+**Edit blocks**
+
+1. **Sequence helpers around lines ~590–660**
+   - Update `seq_value_at*` to check both `count` and `available_count`.
+   - `FillNilTo(3)` over a one-value stack seq must not read stack[base+2].
+
+2. **`render_seq` and sequence constructors around lines ~680–830**
+   - Add `available_count`.
+   - Normal seqs: `available_count = count`.
+   - `RuntimeValueSeqNormalize`:
+     - `FillNilTo`: `count = target`, `available_count = min(source.available_count, target)`.
+     - `TruncateTo`: both logical/available capped to target.
+     - `OpenResult` / `PropagateOpenTail`: preserve source count/availability.
+
+3. **Outcome rendering around lines ~700–780 and ~1100**
+   - `RuntimeOutcomeReturnSeq` / `YieldSeq` carry `seq.available_count`.
+   - Legacy outcome constructors initialize availability consistently.
+
+4. **`RuntimeValueSeqStore` around lines ~1280–1310**
+   - Store by safe projection for every index.
+   - Padded slots must receive nil, not stale stack/buffer data.
+
+---
+
+### `lua_exec_to_moon_cfg_lower.lua`
+
+**Goal**: Make `FrameEffect` executable and reusable.
+
+**Edit blocks**
+
+1. **Near sequence lowering lines ~410–460**
+   - Keep `RuntimeValueSeqNormalize`.
+   - Ensure normalized seqs preserve new availability semantics.
+
+2. **Add helper near op lowering**
+   ```lua
+   lower_frame_effect(state, env, effect, seq)
+   lower_frame_effects(state, env, effects, seq)
+   ```
+   Rules:
+   - `StoreSeqEffect` → `RuntimeValueSeqStore`.
+   - `SetTopEffect` → `RuntimeTopStore`.
+   - `PreserveFrameEffect` → no-op.
+   - `ReplaceFrameEffect` → reject until tailcall support.
+
+3. **`AssignSeq` lines ~705–717**
+   - If source is `FromArityNormalization` with effects, lower effects.
+   - Otherwise preserve old explicit store path.
+
+4. **`ReceiveCallResults` lines ~748–756**
+   - Replace hard-coded store with `frame.results.normalization.effects`.
+   - Fixed existing call tests must still store results.
+
+---
+
+### `lua_rt_arity_model.lua`
+
+**Goal**: Help build honest result routes and frame effects.
+
+**Edit**
+- Add helpers:
+  - `stack_window_result_channel(id, window, count)`
+  - `store_seq_effect(frame, window, count)`
+  - `set_top_effect(frame, count)`
+  - `normalization(source, shape, channel, effects)` should preserve supplied effects.
+- Keep ASDL unchanged.
+
+---
+
+### `lua_src_call_static_model.lua`
+
+**Goal**: Accept `CALL C=0` only with provable fixed actual callee results.
+
+**Edit blocks**
+
+1. **Validation around lines ~80–95**
+   - Keep `B==0` rejected.
+   - Stop unconditionally rejecting `C==0`.
+   - For `C==0`, require fixed static callee result count.
+
+2. **Add helper**
+   ```lua
+   infer_static_callee_result_count(region)
+   ```
+   Strict rules:
+   - no nested `EmitRegion`;
+   - no `Return/Error/Yield` terminators;
+   - result writes are fixed count;
+   - callee terminates through `Continue`;
+   - ambiguous/dynamic/open callee result count rejects.
+
+3. **Product construction around lines ~160–202**
+   - For `C>0`: keep current result count `C-1`.
+   - For `C==0`:
+     - `actual_count = inferred static callee result count`;
+     - `CallShape.wanted_results` reflects open result request;
+     - layout/result channel use fixed actual count;
+     - normalization uses `PropagateOpenTail`;
+     - effects include:
+       - `StoreSeqEffect` to caller result window;
+       - `SetTopEffect` to `base + actual_count`.
+
+---
+
+### `lua_src_to_lua_exec_lower.lua`
+
+**Goal**: Thread open CALL results through block IO, top, and return.
+
+**Edit blocks**
+
+1. **`scan_shape` lines ~198–207**
+   - Allow `CALL C=0` only after `StaticCall.validate_static_call_slice` succeeds.
+   - Keep `CALL B=0` rejected.
+
+2. **`analyze_block_io` lines ~405–415**
+   - For `CALL C=0`, use inferred `products.result_count` for continuation defs.
+   - Result slots must not become external params.
+
+3. **`install_call_receive` lines ~792–800**
+   - Mark actual result slots.
+   - Do not assume source `C` is fixed.
+
+4. **`VARARG` lowering lines ~606–618**
+   - Build `StoreSeqEffect` and, for open vararg, `SetTopEffect`.
+   - Preserve executable behavior.
+
+5. **`RETURN B=0` lines ~803–815**
+   - Must continue to read `OpenFromTop`.
+   - No close/TBC support added.
+
+---
+
+### `lua_rt_call_model.lua`
+
+**Goal**: Permit fixed actual result layout for open result requests.
+
+**Edit**
+- Around lines ~260–295:
+  - Keep layout arg/result counts fixed for current executable support.
+  - Allow result normalization shape with open wanted count / `PropagateOpenTail` when actual layout count is fixed.
+  - Keep dynamic counts, open args, tailcall, C/FFI/metamethod targets rejected.
+
+---
+
+### `moon_cfg_validate.lua`
+
+**Goal**: Validate updated runtime sequence/outcome semantics.
+
+**Edit**
+- Update validation/inference for new runtime fields if required.
+- Keep:
+  - `MoonCFG.EmitRegion` unsupported;
+  - `Continue` / `Exit` unsupported;
+  - forbidden strings unchanged.
+
+---
+
+## Tests
+
+### Update `test_spongejit_lua_compile_lua_rt_arity.lua`
+
+Add semantic executable tests:
+
+- buffer-backed `FillNilTo(3)` from one source value:
+  - count is 3;
+  - value0 preserved;
+  - value1/value2 are nil;
+  - seq store writes nil into padded slots.
+- buffer-backed `TruncateTo(2)` from four values:
+  - count is 2;
+  - value2 projects nil.
+- `RuntimeOutcomeReturnSeq` from padded normalized seq:
+  - padded projection is nil, no stale buffer read.
+
+### Update `test_spongejit_lua_compile_source_call.lua`
+
+Add positive PUC-like test:
+
+```lua
+CALL    A=0 B=3 C=0
+RETURN  A=0 B=0
+```
+
+With static callee evidence returning fixed values.
+
+Assert:
+- compile succeeds;
+- result count equals actual static callee count;
+- value2 payload is correct;
+- caller top becomes `A + actual_count`.
+
+Update old `c=0` negative to reject only when static result arity is missing/invalid.
+
+### Update `test_spongejit_lua_compile_source_closure.lua`
+
+Add:
+
+```lua
+CLOSURE A=0
+CALL    A=0 B=3 C=0
+RETURN  A=0 B=0
+```
+
+Assert matching closure/proto/handle evidence succeeds.
+
+Keep negatives:
+- `CALL B=0`;
+- `TAILCALL`;
+- upvalues;
+- C/FFI/metamethod/unknown target;
+- bad descriptor;
+- nested `EmitRegion`;
+- target `Return/Error/Yield`;
+- missing evidence.
+
+---
+
+## Guardrails / Non-goals
+
+- Do **not** accept `TAILCALL`.
+- Do **not** accept `CALL B=0` / open arg counts.
+- Do **not** accept metatable `__call`, C closure, FFI, or unknown targets.
+- Do **not** accept `SETLIST`, `NEWTABLE`, generic-for, or constructors.
+- Do **not** add helper strings, VM dispatch, protocol exits, or fallback paths.
+- Do **not** add ASDL support-status fields.
+- Do **not** add tests that only prove design-rule compliance.
+
+---
+
+## Verification Commands
+
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_stack.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_closure.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_semantic_gates.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_exec_pipeline.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua
+cd experiments/lua_interpreter_vm/spongejit && make test
+cd experiments/lua_interpreter_vm/spongejit && make test-completion
+```
+
+Optional:
+
+```sh
+cd experiments/lua_interpreter_vm/spongejit && make test-lua-compile-corpus100
+```
+
+---
+
+## Structured Edit Plan Sidecar
+
+Updated `wf-lua55-roadmap` sidecar to revision `r220`.
+
+Added tasks `T118`–`T130`.
+
+Ready tasks:
+- `T118` Add available-count runtime sequence semantics
+- `T122` Infer static callee result arity
+
+## Worker Output — 2026-06-07 19:08:54
+
+## Completed
+Partial implementation continued for T127, but it is **blocked**.
+
+- Added executable arity padding/truncation/outcome tests.
+- Continued emitter/runtime changes around `LuaRTValueSeq` availability semantics.
+- Marked T127 blocked honestly in the edit plan.
+
+## Files Changed
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit.lua` - partial sequence emission fixes.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_rt_stack_model.lua` - partial runtime sequence layout adjustments.
+- `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua` - added padding/truncation/outcome tests.
+- `.pi/workflows/wf-lua55-roadmap.edit-plan.json` - T127 marked blocked.
+
+## Notes
+Blocking failure:
+
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+```
+
+fails with:
+
+```text
+missing stack slot `slot:test_padded_stack_store_value1_nil:local:norm:6`
+```
+
+This occurs in the new padded `RuntimeValueSeqNormalize -> RuntimeValueSeqStore` test. I did **not** proceed to T128–T130 because the current arity substrate is not green.
+
+## Edit-planner Output — 2026-06-07 19:23:12
+
+## Decision
+
+Choose a **hybrid typed emission architecture**:
+
+- Use **`moon.*` quotes/splices** for readable typed Moonlift snippets: struct declarations, simple statement groups, function/region shells, and splice-checked params/body lists.
+- Use **raw MoonTree/host builders** for generated CFG-shaped code: dynamic block lists, hygienic names, jumps, branches, control-expression regions, and place/expression construction where string interpolation is fragile.
+- Keep string source only as **compatibility/debug serialization** for existing `Emit.emit(kernel,{name=...})`; semantic execution should move to typed Moonlift products through new typed emission APIs.
+
+Why hybrid:
+- Quote-only would still tempt generated source interpolation for dynamic CFGs.
+- Raw-builder-only would be too verbose for stable runtime structs and small idiomatic Moonlift fragments.
+- Hybrid lets the worker migrate the fragile runtime sequence/outcome/call-frame paths first, while preserving all existing behavior and tests.
+
+---
+
+## Precondition Checks
+
+Before implementation:
+
+1. Confirm partial T118–T127 changes are reverted:
+   - `lua_rt_stack_model.lua` has no `available_count`.
+   - `lua_rt_outcome_model.lua` has no `available_count`.
+   - `test_spongejit_lua_compile_lua_rt_arity.lua` is green.
+2. Confirm cleanup changes remain:
+   - phased `LOADI`/`LOADF` canonical decode preserves `sbx`/`value`.
+   - removed PVM design-compliance tests are not reintroduced.
+3. Confirm guardrails:
+   - `MoonCFG.EmitRegion`, `Continue`, `Exit` unsupported.
+   - source `TAILCALL`, open `CALL`, metatable/C/FFI/upvalue paths still reject.
+   - `Emit.emit` callers still receive a source string.
+
+---
+
+## Files to Modify
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit_source_compat.lua` **(new)**
+
+**Goal**: Preserve current source-string emission as compatibility.
+
+**Plan**
+- Move the current hand-concatenating implementation from `moon_cfg_emit.lua` here mostly unchanged.
+- Export:
+  - `emit(kernel, opts) -> string`
+  - `emit_uncached(kernel, opts) -> string`
+- Keep current forbidden-string/no-helper behavior.
+- Clearly comment: compatibility/debug output only; semantic emission should use typed API.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_typed_emit.lua` **(new)**
+
+**Goal**: New typed MoonCFG → Moonlift construction layer.
+
+**Contents**
+- Require `moonlift`, and use:
+  - `moon.stmts{...}[[...]]`
+  - `moon.params`, `moon.fields`, `moon.bundle`
+  - raw MoonTree builders via `moonlift.ast` / host APIs where dynamic CFG demands it.
+- Provide:
+  - `build_bundle(kernel, opts)`
+  - `build_func(kernel, opts)`
+  - `compile(kernel, opts)`
+  - optional `run(kernel, opts, ...)` test helper
+- Maintain an emitter context:
+  - stable hygienic name generation;
+  - CFG place/value → typed Moonlift expr/place mapping;
+  - local binding table;
+  - typed runtime type registry;
+  - block/region builder helpers.
+
+**First migrated fragments**
+- `RuntimeValueSeq*`
+- `RuntimeOutcome*`
+- `RuntimeCallFrame*`
+- `RuntimeTopLoad/Store/OpenCountFromTop`
+- `RuntimeBox*`, tag/payload/truthiness projections
+
+Do **not** reintroduce open arity or `available_count` yet.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit.lua`
+
+**Goal**: Become the facade.
+
+**Edit**
+- Import:
+  - `moon_cfg_emit_source_compat`
+  - `moon_cfg_typed_emit`
+- Keep:
+  - `Emit.emit(kernel,{name=...}) -> string`
+  - existing emission phase name for compatibility.
+- Add:
+  - `Emit.build(kernel, opts)`
+  - `Emit.compile(kernel, opts)`
+  - `Emit.typed_phase` if practical.
+- Existing tests using `Emit.emit` keep working.
+- New/updated behavior tests use `Emit.compile` / typed path.
+
+---
+
+### Runtime model files
+
+#### `lua_rt_value_model.lua`
+#### `lua_rt_stack_model.lua`
+#### `lua_rt_outcome_model.lua`
+#### `lua_rt_object_model.lua`
+#### `lua_rt_call_model.lua`
+
+**Goal**: Expose typed declaration builders without deleting legacy `TYPE_DECL`.
+
+**Plan**
+- Keep `TYPE_DECL` strings for compatibility source renderer.
+- Add typed declaration helpers only if useful, e.g.:
+  - `typed_decl(moon_or_bundle)`
+  - `typed_type(moon)`
+- Do not change runtime layouts yet.
+
+---
+
+### `moon_cfg_validate.lua`
+
+**Goal**: Preserve validation; no semantic broadening.
+
+**Edit**
+- No major behavior change.
+- Ensure typed emitter uses the same validator before building.
+- Keep `MoonCFG.EmitRegion`, `Continue`, `Exit` unsupported.
+- Keep forbidden lowercase semantic strings.
+
+---
+
+## Test Updates
+
+### Existing runtime tests
+
+Update execution helpers in:
+
+- `test_spongejit_lua_compile_lua_rt_arity.lua`
+- `test_spongejit_lua_compile_lua_rt_stack.lua`
+- `test_spongejit_lua_compile_lua_rt_call.lua`
+- `test_spongejit_lua_compile_static_invoke.lua`
+- `test_spongejit_lua_compile_source_call.lua`
+- `test_spongejit_lua_compile_source_closure.lua`
+
+**Change**
+- Runtime execution should prefer typed emission:
+  - `local native = Emit.compile(cfg, { name = name })`
+- Keep `Emit.emit` source checks only for:
+  - compatibility;
+  - forbidden helper/protocol string guardrails.
+
+Do not add design-policing tests.
+
+### Decode test
+
+Ensure `test_spongejit_lua_compile_lua_src.lua` covers real behavior:
+
+- public phased `Decode.decode({op="LOADI", sbx=-7})`
+- public phased `Decode.decode({op="LOADF", value=...})`
+
+---
+
+## Migration Order
+
+1. **Extract legacy source compatibility renderer**  
+   No behavior change; tests must remain green.
+
+2. **Add typed emitter shell**  
+   Build typed runtime declarations and a typed function wrapper, but initially support only minimal `LOADI/RETURN1` or equivalent smoke path.
+
+3. **Migrate fragile runtime fragments first**  
+   Sequence/outcome/call-frame fragments move to typed builders before any open arity work resumes.
+
+4. **Wire typed execution into tests**  
+   Existing semantic runtime tests execute typed products; `Emit.emit` remains string compatibility.
+
+5. **Migrate remaining current-slice ops incrementally**
+   - primitive/load/convert/value ops;
+   - jump/branch/return/control regions;
+   - raw table/object/arithmetic/string/cdata fragments.
+
+6. **Only after typed emission is stable**, replan open arity/top/frame-effect work.
+
+---
+
+## Emit.emit Compatibility
+
+`Emit.emit(kernel,{name=...})` remains source-string output for now.
+
+Rules:
+- It delegates to `moon_cfg_emit_source_compat.lua`.
+- It is not the semantic execution path for newly migrated behavior tests.
+- It remains useful for:
+  - debug snapshots;
+  - existing source-string tests;
+  - forbidden-string checks;
+  - foundry artifact output until typed serialization is available.
+
+Typed execution uses new APIs:
+
+```lua
+local compiled = Emit.compile(cfg, { name = "test_name" })
+```
+
+or equivalent.
+
+---
+
+## Guardrails / Non-goals
+
+- Do not resume open arity/top work in this milestone.
+- Do not add `available_count` yet.
+- Do not accept `TAILCALL`.
+- Do not accept open `CALL`, metatable `__call`, C/FFI calls, upvalue closures, `SETLIST`, `NEWTABLE`, or generic-for.
+- Do not add VM dispatch, helper calls, protocol exits, or lowercase semantic tags.
+- Do not add tests that only enforce architecture/design rules.
+
+---
+
+## Verification Commands
+
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_src.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_stack.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_closure.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua
+cd experiments/lua_interpreter_vm/spongejit && make test
+cd experiments/lua_interpreter_vm/spongejit && make test-completion
+```
+
+Optional:
+
+```sh
+cd experiments/lua_interpreter_vm/spongejit && make test-lua-compile-corpus100
+```
+
+---
+
+## Structured Edit Plan Sidecar
+
+Updated `wf-lua55-roadmap` sidecar to revision `r241`.
+
+Corrected statuses:
+- `T118`–`T126`: skipped as superseded/reverted.
+- `T127`: skipped as superseded by emission architecture repair.
+- `T128`–`T130`: skipped/deferred until typed emission is fixed.
+
+Added new tasks:
+- `T131` Extract legacy source emitter facade
+- `T132` Add typed MoonCFG emission module
+- `T133` Build typed runtime ABI declarations
+- `T134` Migrate fragile runtime fragments to typed builders
+- `T135` Wire typed execution while preserving `Emit.emit`
+- `T136` Update runtime test helpers to use typed emission
+- `T137` Migrate general current-slice ops incrementally
+- `T138` Preserve decode cleanup and guardrails
+- `T139` Run typed emission verification gates
+
+Ready task: `T131`.
+
+## Edit-planner Output — 2026-06-07 19:26:02
+
+### Decision
+
+Corrected architecture: **`MoonCFG -> moon.* typed quoted fragments`**.
+
+The primary semantic emission path must build Moonlift through typed quote/splice APIs (`moon.func`, `moon.stmts`, `moon.expr`, `moon.type`, `moon.params`, `moon.fields`, etc.). The existing source-string renderer may remain only as compatibility/debug serialization behind `Emit.emit`.
+
+Raw MoonTree/ASDL builders may be used only as narrow local implementation details when the quote API cannot ergonomically express a node; they are not an architectural path.
+
+---
+
+## Precondition Checks
+
+Before edits:
+
+- Confirm T118–T130 remain skipped/deferred and partial arity/runtime changes are reverted.
+- Confirm `Emit.emit(kernel,{name=...})` still returns source string through current renderer.
+- Confirm phased decode preserves `LOADI`/`LOADF` `sbx`/`value` aliases.
+- Confirm guardrails remain:
+  - `MoonCFG.EmitRegion`, `Continue`, `Exit` unsupported.
+  - source `TAILCALL`, open `CALL`, metatable/C/FFI/upvalue paths reject.
+  - strict source `CALL`/`CLOSURE` tests are green.
+
+---
+
+## Files to Modify
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit_source_compat.lua` **(new)**
+
+**Goal**: Hold the existing hand-concatenating renderer as compatibility/debug only.
+
+**Plan**
+- Move current `moon_cfg_emit.lua` rendering implementation here mostly unchanged.
+- Export:
+  - `emit(kernel, opts) -> string`
+  - `emit_uncached(kernel, opts) -> string`
+- Preserve existing source output exactly.
+- Add comment: this is not the semantic emission path for new work.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_quote_emit.lua` **(new)**
+
+**Goal**: Primary semantic emitter: `MoonCFG -> moon.* typed quoted fragments`.
+
+**Plan**
+- Require `moonlift`.
+- Build output using:
+  - `moon.func`, `moon.stmts`, `moon.expr`, `moon.type`
+  - `moon.params`, `moon.fields`, `moon.conts`, `moon.blocks`, `moon.entry_params`
+  - `@{...}` splices for typed values, names, types, statement lists.
+- Provide APIs:
+  - `build_func(kernel, opts)`
+  - `build_bundle(kernel, opts)`
+  - `compile(kernel, opts)`
+  - optional test helper `run(kernel, opts, ...)`
+- Validate `MoonCFG.Kernel` before building.
+- Rare raw builders allowed only with local comment explaining the missing quote ergonomic.
+
+**First migrated fragments**
+- `RuntimeValueSeq*`
+- `RuntimeOutcome*`
+- `RuntimeCallFrame*`
+- `RuntimeTopLoad/Store/OpenCountFromTop`
+- `RuntimeBox*`, tag/payload/truthiness projections
+
+Do **not** reintroduce `available_count` or open-result arity changes yet.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit.lua`
+
+**Goal**: Become facade.
+
+**Edits**
+- Import:
+  - `moon_cfg_emit_source_compat`
+  - `moon_cfg_quote_emit`
+- Keep:
+  - `Emit.emit(kernel,{name=...}) -> string`
+  - existing `spongejit_moon_cfg_emit` phase behavior.
+- Add quote-first semantic APIs:
+  - `Emit.build(...)`
+  - `Emit.compile(...)`
+  - optionally `Emit.run(...)`
+- Source-string checks remain compatibility/guardrail checks only.
+
+---
+
+### Runtime model files
+
+Files:
+- `lua_rt_value_model.lua`
+- `lua_rt_stack_model.lua`
+- `lua_rt_outcome_model.lua`
+- `lua_rt_object_model.lua`
+- `lua_rt_call_model.lua`
+
+**Goal**: Expose quote-friendly type declarations while keeping legacy strings.
+
+**Edits**
+- Keep `TYPE_DECL` for compatibility renderer.
+- Add helpers only if useful for quote emitter, e.g. type/field declarations built with `moon.fields` / `moon.type`.
+- Do not change runtime layouts in this milestone.
+
+---
+
+### Tests
+
+Update runtime execution helpers in:
+- `test_spongejit_lua_compile_lua_rt_arity.lua`
+- `test_spongejit_lua_compile_lua_rt_stack.lua`
+- `test_spongejit_lua_compile_lua_rt_call.lua`
+- `test_spongejit_lua_compile_static_invoke.lua`
+- `test_spongejit_lua_compile_source_call.lua`
+- `test_spongejit_lua_compile_source_closure.lua`
+- current-slice arithmetic/object/moon_cfg tests as migrated.
+
+**Change**
+- Prefer:
+  ```lua
+  local native = Emit.compile(cfg, { name = name })
+  ```
+- Keep `Emit.emit` only for deterministic source/debug and forbidden-string checks.
+
+Also ensure `test_spongejit_lua_compile_lua_src.lua` covers:
+- phased `Decode.decode({op="LOADI", sbx=-7})`
+- phased `Decode.decode({op="LOADF", value=...})`
+
+---
+
+## Migration Order
+
+1. Extract legacy source renderer into `moon_cfg_emit_source_compat.lua`.
+2. Add `moon_cfg_quote_emit.lua` shell using `moon.*` quotes/splices.
+3. Build runtime ABI declarations through quote APIs.
+4. Migrate fragile sequence/outcome/call-frame fragments first.
+5. Wire `Emit.compile` as the semantic execution path while preserving `Emit.emit`.
+6. Update runtime tests to execute through quote emission.
+7. Migrate remaining current-slice ops incrementally.
+8. Re-run guardrail/decode tests.
+9. Only after quote emission is stable, replan open arity/top work.
+
+---
+
+## Guardrails / Non-goals
+
+- No new hand-concatenated semantic Moonlift code.
+- Do not resume open arity/top work yet.
+- Do not accept `TAILCALL`, open `CALL`, metatable `__call`, C/FFI calls, upvalue closures, `SETLIST`, `NEWTABLE`, or generic-for.
+- Do not add VM dispatch, helper calls, protocol exits, or lowercase semantic tags.
+- Do not add design-policing tests; test observable behavior.
+
+---
+
+## Verification Commands
+
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_src.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_stack.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_closure.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua
+cd experiments/lua_interpreter_vm/spongejit && make test
+cd experiments/lua_interpreter_vm/spongejit && make test-completion
+```
+
+Optional:
+
+```sh
+cd experiments/lua_interpreter_vm/spongejit && make test-lua-compile-corpus100
+```
+
+---
+
+## Structured Edit Plan Sidecar
+
+Updated `wf-lua55-roadmap` sidecar to revision `r242`.
+
+- Kept `T118`–`T130` skipped/deferred.
+- Amended `T131`–`T139` to quote-first wording.
+- Ready task remains:
+  - `T131` — Extract legacy source renderer facade.
+
+Pattern memo now enforced in task wording:
+- Primary path: **`MoonCFG -> moon.* typed quoted fragments`**
+- `Emit.emit` remains compatibility/debug source output.
+- New semantic execution uses quote-first `Emit.compile`/typed APIs.
+
+## Worker Output — 2026-06-07 19:39:08
+
+## Completed
+- Claimed and completed `T131`: extracted legacy hand-concatenating renderer into compatibility module.
+- Claimed and completed `T132`: added quote-first `moon_cfg_quote_emit.lua` facade/module skeleton.
+- Claimed and completed `T133`: added quote-built runtime ABI declarations with `moon.fields`/`bundle:struct`.
+- Claimed `T134` and marked it **blocked** honestly after partial quote runtime expression work.
+
+## Files Changed
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit.lua` - now a facade preserving `Emit.emit` and exposing quote-first API stubs.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit_source_compat.lua` - new compatibility/debug source renderer, mostly extracted unchanged.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_quote_emit.lua` - new quote-first emitter module; runtime ABI and partial runtime expression quote support.
+- `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_pipeline.lua` - planned file list updated for new modules.
+- `.pi/workflows/wf-lua55-roadmap.edit-plan.json` - task status/evidence updated.
+
+## Verification
+Passed:
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_src.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_pipeline.lua
+cd experiments/lua_interpreter_vm/spongejit && make test
+```
+
+## Notes
+`T134` is blocked because full quote-first migration of statement/control fragments (`RuntimeValueSeqStore`, `RuntimeCallFrameStoreArgs`, `RuntimeTopStore`, CFG block assembly) needs broader `build_func`/current-slice op migration. I did not add fallback string generation or broaden Lua semantics.
+
+## Edit-planner Output — 2026-06-07 19:44:56
+
+### Precondition Checks
+
+Before worker starts T140:
+
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit.lua`
+  - Still a facade.
+  - `Emit.emit` delegates to `moon_cfg_emit_source_compat`.
+  - `Emit.build/build_func/build_bundle/compile/run` delegate to `moon_cfg_quote_emit`.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_quote_emit.lua`
+  - Has quote-first comments and runtime ABI declarations.
+  - Has partial `quote_runtime_expr`.
+  - `build_func` currently fails closed via `unsupported(kernel)`.
+- Guardrails remain:
+  - no open arity / `available_count`;
+  - no new source feature acceptance;
+  - no `MoonCFG.EmitRegion`;
+  - no hand-concatenated semantic Moonlift for migrated quote paths.
+
+---
+
+### Focused Unblock Plan
+
+I updated the structured edit plan so the blocked broad task is replaced by small executable tasks.
+
+#### Superseded / skipped
+
+- `T134` skipped: too broad; split into T140–T145.
+- `T135` skipped: superseded by focused `T145`.
+- `T136` skipped: superseded by focused migrated-subset test/helper work in `T145`.
+
+#### New ready chain
+
+- `T140` **ready** — Build quote-first function shell
+- `T141` — Add quote env and statement accumulation
+- `T142` — Finish quote runtime expression dispatcher
+- `T143` — Quote imperative runtime ops
+- `T144` — Quote single-entry return control
+- `T145` — Wire quote compile subset and tests
+
+#### Existing future tasks amended
+
+- `T137` now depends on `T145`: migrate broader current-slice ops incrementally.
+- `T138` now depends on `T145`: preserve decode cleanup and guardrails.
+- `T139` remains final verification after `T137,T138`.
+
+---
+
+### Files to Modify by New Tasks
+
+#### `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_quote_emit.lua`
+
+Main work file for `T140`–`T144`.
+
+Required progression:
+
+1. Build minimal quote-first `build_func`.
+2. Add environment/place/value/statement context.
+3. Integrate current partial `quote_runtime_expr`.
+4. Add quote-first imperative ops:
+   - `RuntimeValueSeqStore`
+   - `RuntimeCallFrameStoreArgs`
+   - `RuntimeTopStore`
+   - `RuntimeStackStore`
+5. Add minimal single-entry return/control assembly.
+
+All unsupported paths must return `moon_cfg_quote_emit:not_yet_migrated:*`.
+
+#### `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit.lua`
+
+Used by `T145`.
+
+- Keep `Emit.emit` as compatibility/debug source output.
+- Wire `Emit.compile` / `Emit.run` to quote-first migrated subset.
+- Do not silently delegate quote execution to source compatibility.
+
+#### Tests
+
+`T145` should update only a small migrated subset first:
+
+- Start with `test_spongejit_lua_compile_lua_rt_arity.lua`.
+- Add one stack/call smoke only if supported by migrated subset.
+- Keep `Emit.emit` checks only for source/forbidden-string guardrails.
+- Do not add design-compliance or PVM-cache tests.
+
+---
+
+### Structured Edit Plan Sidecar
+
+Updated `wf-lua55-roadmap` sidecar to revision `r252`.
+
+Current status:
+
+- `1` ready task: `T140`
+- `0` blocked tasks
+- `9` todo tasks
+- `T134`–`T136` skipped as superseded
+
+Ready task:
+
+```text
+T140 — Build quote-first function shell
+file: experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_quote_emit.lua
+after: T133
+```
+
+### Pattern Memo
+
+- Primary path is **MoonCFG -> moon.* typed quoted fragments**.
+- No hand-concatenated semantic Moonlift for migrated quote paths.
+- Raw builders only as narrow documented local escape hatches.
+- `Emit.emit` remains compatibility/debug only.
+- Quote emitter fails closed; it must not fallback to source renderer.
+- No open arity/top/available_count work yet.
+- No new source feature acceptance.
+
+## Worker Output — 2026-06-07 20:07:36
+
+## Completed
+Implemented the focused quote-first emission chain:
+
+- `T140` quote-first function shell
+- `T141` quote env / typed value-place mapping
+- `T142` runtime expression dispatcher subset
+- `T143` imperative runtime ops subset
+- `T144` single-entry return control
+- `T145` quote compile wiring + observable tests
+- `T138` decode regression guardrail update
+
+`Emit.emit` remains source compatibility/debug output. `Emit.compile` now exercises the quote-first migrated subset and fails closed for unsupported paths.
+
+## Files Changed
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_quote_emit.lua` - implemented quote-first build/compile subset, runtime expr/op lowering, single-block return support.
+- `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua` - added `Emit.compile` quote execution coverage for arity/stack/seq-store smoke paths.
+- `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_src.lua` - added `LOADF value` phased decode regression.
+
+## Verification
+Passed:
+
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_src.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_stack.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_closure.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua
+cd experiments/lua_interpreter_vm/spongejit && make test
+cd experiments/lua_interpreter_vm/spongejit && make test-completion
+```
+
+## Notes
+- Remaining ready task: `T137` broad current-slice quote migration. I did not claim it to avoid broadening scope recklessly.
+- No source feature support was broadened: no open CALL, TAILCALL, metatable/C/FFI/upvalue paths.
+- `museum/gps.lua` and several other files show pre-existing modifications in `git status`; I did not touch them.

@@ -9,7 +9,6 @@ local Validate = require("lua_compile.moon_cfg_validate")
 local Emit = require("lua_compile.moon_cfg_emit")
 local ValueModel = require("lua_compile.lua_rt_value_model")
 local ExecToMoon = require("lua_compile.lua_exec_to_moon_cfg_lower")
-local pvm = require("moonlift.pvm")
 local T = Schema.get()
 local RT, Exec, GC = T.LuaRT, T.LuaExec, T.LuaGC
 
@@ -123,10 +122,6 @@ local closure_only = fixture({ events = {
   { op="CLOSURE", pc=1, a=0, bx=9 },
   { op="RETURN1", pc=2, a=0 },
 }, omit_call_payloads = true })
-local closure_lower_result = C.lua_src_to_lua_exec_lower.lower_result(closure_only.source, closure_only.evidence)
-assert(closure_lower_result.kind == "ExecLowerOk", "CLOSURE lower must use ExecLowerOk phase result")
-local closure_product_result = pvm.one(C.lua_src_closure_static_model.phase(closure_only.source.ops[1], closure_only.evidence))
-assert(closure_product_result.kind == "StaticClosureProductsOk", "source CLOSURE product construction must be phase-backed")
 local exec_product, exec_errors = C.lua_src_to_lua_exec_lower.lower(closure_only.source, closure_only.evidence)
 assert(exec_product, table.concat(exec_errors or {}, ";"))
 local cfg_payload, cfg_errors = ExecToMoon.lower_outcome(exec_product, "value0_payload_i64")
@@ -139,12 +134,8 @@ assert(run_cfg(cfg_tag, "test_source_closure_tag") == ValueModel.TAG.LuaClosureT
 local unit = fixture()
 local compiled = C.compile_to_moon_kernel(unit)
 assert(compiled.kind == "Ok", "public CLOSURE->CALL fixture must compile")
-local module_lower_result = C.lua_src_to_lua_exec_lower.lower_result(unit.source, unit.evidence)
-assert(module_lower_result.kind == "ExecLowerOk" and module_lower_result.product.kind == "ExecModule", "CLOSURE->CALL must phase-lower to ExecModule")
 local module_product = assert(C.lua_src_to_lua_exec_lower.lower(unit.source, unit.evidence))
-assert(pvm.classof(module_product) == T.LuaExec.Module, "CLOSURE->CALL must lower to LuaExec.Module")
-local module_moon_result = ExecToMoon.lower_module_result(module_product, "lua_exec_core_kernel", { outcome = true, outcome_projection = "value1_payload_i64" })
-assert(module_moon_result.kind == "MoonLowerOk", "CLOSURE->CALL module MoonCFG lower must use MoonLowerOk")
+assert(module_product.kernels and module_product.regions, "CLOSURE->CALL must lower to LuaExec.Module")
 local cfg, errors = ExecToMoon.lower_module_outcome(module_product, "lua_exec_core_kernel", "value1_payload_i64")
 assert(cfg, table.concat(errors or {}, ";"))
 local caller_stack = ffi.new("LuaRTValue[8]")

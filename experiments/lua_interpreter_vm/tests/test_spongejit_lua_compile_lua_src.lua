@@ -42,6 +42,14 @@ for _, name in ipairs(names) do
 end
 assert(decode_count == 85)
 
+local loadi_sbx = Decode.decode({ op="LOADI", pc=1, a=1, sbx=-7 })
+assert(loadi_sbx.value.value == -7, "LOADI public phased decode must preserve sbx signed immediate")
+local loadi_value = Decode.decode({ op="LOADI", pc=1, a=1, value=-11 })
+assert(loadi_value.value.value == -11, "LOADI public phased decode must preserve value immediate alias")
+local loadf_sbx = Decode.decode({ op="LOADF", pc=1, a=1, sbx=-3 })
+assert(loadf_sbx.value.value == -3, "LOADF public phased decode must preserve sbx signed immediate")
+local loadf_value = Decode.decode({ op="LOADF", pc=1, a=1, value=-5 })
+assert(loadf_value.value.value == -5, "LOADF public phased decode must preserve value immediate alias")
 local addi_neg = Decode.decode({ op="ADDI", pc=1, a=1, b=1, c=126 })
 assert(addi_neg.rhs.value == -1, "ADDI must decode signed sC, not raw C")
 local addi_dumped = Decode.decode({ op="ADDI", pc=1, a=1, b=1, c=126, sc=-1 })

@@ -53,6 +53,15 @@ local function bx_value(ev)
   if ev.nameidx ~= nil then return ev.nameidx end
   return 0
 end
+local function load_immediate(ev)
+  if not ev then return 0 end
+  if ev.sbx ~= nil then return ev.sbx end
+  if ev.value ~= nil then return ev.value end
+  if ev.sj ~= nil then return ev.sj end
+  if ev.b ~= nil then return ev.b end
+  if ev.bx ~= nil then return ev.bx end
+  return 0
+end
 local function rk_from_kflag(ev, field)
   local v = ev[field]
   if kflag(ev) and field == "c" then return Src.K(kref(v)) end
@@ -69,8 +78,8 @@ end
 
 local DECODER = {}
 DECODER.MOVE = function(e) return Src.MOVE(pc(e), slot(e.a), slot(e.b)) end
-DECODER.LOADI = function(e) return Src.LOADI(pc(e), slot(e.a), imm(e.sbx or e.b or e.value or 0)) end
-DECODER.LOADF = function(e) return Src.LOADF(pc(e), slot(e.a), imm(e.sbx or e.b or e.value or 0)) end
+DECODER.LOADI = function(e) return Src.LOADI(pc(e), slot(e.a), imm(load_immediate(e))) end
+DECODER.LOADF = function(e) return Src.LOADF(pc(e), slot(e.a), imm(load_immediate(e))) end
 DECODER.LOADK = function(e) return Src.LOADK(pc(e), slot(e.a), kref(e.bx or e.b)) end
 DECODER.LOADKX = function(e) return Src.LOADKX(pc(e), slot(e.a), has_following_ax(e), B.ax(following_ax(e) or 0)) end
 DECODER.LOADFALSE = function(e) return Src.LOADFALSE(pc(e), slot(e.a)) end
@@ -183,7 +192,7 @@ function M.canonical_event(ev)
     num(ev and ev.a),
     num(ev and ev.b),
     num(ev and ev.c),
-    num(ev and (ev.bx or ev.sbx or ev.offset or ev.name_index or ev.nameidx)),
+    num(ev and (ev.bx or ev.sbx or ev.value or ev.offset or ev.name_index or ev.nameidx)),
     num(ev and (ev.ax or ev.extraax)),
     num(ev and ev.vb),
     num(ev and ev.vc),
@@ -195,8 +204,8 @@ function M.canonical_event(ev)
     ev and ev.sb ~= nil or false,
     num(ev and ev.sc),
     ev and ev.sc ~= nil or false,
-    num(ev and (ev.sj or ev.sbx or ev.offset)),
-    ev and (ev.sj ~= nil or ev.sbx ~= nil or ev.offset ~= nil) or false,
+    num(ev and (ev.sj or ev.sbx or ev.value or ev.offset)),
+    ev and (ev.sj ~= nil or ev.sbx ~= nil or ev.value ~= nil or ev.offset ~= nil) or false,
     bool_c(ev and (ev.isfloat ~= nil and ev.isfloat or ev.rhs_is_float)),
     ev and (ev.isfloat ~= nil or ev.rhs_is_float ~= nil) or false
   )
