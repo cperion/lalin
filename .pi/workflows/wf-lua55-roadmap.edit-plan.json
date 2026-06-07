@@ -1,10 +1,10 @@
 {
 	"version": 1,
 	"workflowId": "wf-lua55-roadmap",
-	"revision": 113,
-	"nextId": 67,
+	"revision": 219,
+	"nextId": 118,
 	"createdAt": "2026-06-06T17:56:46.971Z",
-	"updatedAt": "2026-06-06T20:32:31.530Z",
+	"updatedAt": "2026-06-07T18:19:10.742Z",
 	"tasks": [
 		{
 			"id": "T001",
@@ -1108,6 +1108,857 @@
 			"notes": [],
 			"createdAt": "2026-06-06T19:58:41.496Z",
 			"updatedAt": "2026-06-06T20:32:31.530Z"
+		},
+		{
+			"id": "T067",
+			"title": "Add static region invocation model",
+			"detail": "Create a new model module over existing complete ASDL products. Validate LuaExec.StaticRegionBinding, StaticRegionInvocation, CallContinuationRegion in module context; index LuaExec.Module regions/kernels; find contract invocations; match EmitRegion ops to typed StaticRegionInvocation contract nodes; enforce target region exists, descriptor id/kind matches actual region, target kind is currently supportable after inlining, target contains no nested EmitRegion, target Continue terminators only use bound return continuation, CallContinuationRegion.callee_region matches target, unknown/C/FFI/metamethod/tailcall/dynamic targets reject when call-frame contracts are involved. No ASDL changes.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_model.lua",
+			"after": [],
+			"status": "done",
+			"order": 67,
+			"claimedBy": "agent-CTPXF4",
+			"evidence": "Implemented experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_model.lua with validation/gating for StaticRegionBinding, StaticRegionInvocation, CallContinuationRegion, module indexing, contract invocation lookup, EmitRegion inline shape, target descriptor/module checks, target inlineability, no nested EmitRegion/Return/Error/Yield, continuation constraints, and call-contract executable gate. Verified via luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua and static invocation test.",
+			"notes": [
+				"Completed by agent-RHNHB0 per user request; task had stale claimed worker agent-CTPXF4 and no ready tasks were available."
+			],
+			"createdAt": "2026-06-07T12:25:56.562Z",
+			"updatedAt": "2026-06-07T12:39:39.028Z"
+		},
+		{
+			"id": "T068",
+			"title": "Export model and strengthen validators",
+			"detail": "Export lua_exec_static_region_model from init.lua. In lua_exec_validate.lua require it lazily/after locals to avoid cycles. Strengthen M.module validation with region/kernel indexes, duplicate id detection, StaticRegionInvocation contract relationship checks, EmitRegion inline-shape checks (final op + Unreachable only for inlineable modules), and continuation binding validation without marking EmitRegion executable in kernel-only lowering.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_validate.lua",
+			"after": [
+				"T067"
+			],
+			"status": "done",
+			"order": 68,
+			"claimedBy": "agent-RHNHB0",
+			"evidence": "Exported lua_exec_static_region_model from lua_compile/init.lua and updated lua_exec_validate.lua to delegate static region helpers to the model. Strengthened M.module with module indexing/duplicate checks, static invocation relationship validation, EmitRegion final-op+Unreachable shape checks, target inlineability checks, and call-contract gate checks while keeping kernel-only EmitRegion structurally valid but not executable. Verified with schema/static_invoke/static_regions/semantic_gates tests and make test.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:25:56.562Z",
+			"updatedAt": "2026-06-07T12:39:47.050Z"
+		},
+		{
+			"id": "T069",
+			"title": "Implement static region inliner",
+			"detail": "Create module-to-kernel pre-lowering pass. Validate LuaExec.Module, select named or sole kernel, walk kernel.body blocks, replace final Exec.EmitRegion+Unreachable with Jump to hygienically cloned target region entry, clone target blocks with __static_<target>_<ordinal>__ prefix, rewrite internal Jump/Branch/BranchArgs block refs to cloned refs, rewrite Continue(return_cont,args) to Jump(bound caller continuation block,args), reject nested EmitRegion, target Return/Error/Yield, unbound continuations, non-final EmitRegion, target params not provided/same-named with caller region params, and multi-level invocation. Preserve kernel contract with static assumptions.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_inline.lua",
+			"after": [
+				"T067",
+				"T068"
+			],
+			"status": "done",
+			"order": 69,
+			"claimedBy": "agent-RHNHB0",
+			"evidence": "Added experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_inline.lua. It validates LuaExec.Module, selects named/sole kernels, finds final EmitRegion ops with typed StaticRegionInvocation contracts, clones target blocks with __static_<target>_<ordinal>__ prefixes, rewrites Jump/Branch/BranchArgs refs, rewrites Continue continuations to bound caller blocks, preserves kernel contracts, and rejects missing contracts, nested emits, Return/Error/Yield target terminators, unbound continuations, non-final emits, unsupported target params/args, and unsupported target regions. Verified by luajit test_spongejit_lua_compile_static_invoke.lua and make test.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:25:56.562Z",
+			"updatedAt": "2026-06-07T12:39:55.104Z"
+		},
+		{
+			"id": "T070",
+			"title": "Wire module lowering API",
+			"detail": "Import lua_exec_static_region_inline. Keep direct lower(kernel) and lower_outcome(kernel) EmitRegion rejection unchanged. Add lower_module(module,kernel_name,opts) and lower_module_outcome(module,kernel_name,projection) APIs that inline first then call existing lower_value. Add a PVM phase/cache key for module lowering or an uncached helper consistent with existing style. Preserve compile_contract propagation of static region/invocation/call-continuation assumptions.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_to_moon_cfg_lower.lua",
+			"after": [
+				"T069"
+			],
+			"status": "done",
+			"order": 70,
+			"claimedBy": "agent-RHNHB0",
+			"evidence": "Updated lua_exec_to_moon_cfg_lower.lua to import lua_exec_static_region_inline, add lower_module_value, cached module_phase, M.lower_module, M.lower_module_outcome, and M.lower_module_uncached. Direct M.lower/M.lower_outcome for kernels still reject Exec.EmitRegion with unsupported_lua_exec_op:EmitRegion:requires_typed_static_region_lowering. Existing compile_contract propagation for static region/invocation/call-continuation assumptions is preserved. Verified by static_invoke direct-reject and lower_module success tests.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:25:56.562Z",
+			"updatedAt": "2026-06-07T12:40:20.142Z"
+		},
+		{
+			"id": "T071",
+			"title": "Validate static contracts structurally",
+			"detail": "Use/static-region model helpers for AssumesStaticRegion, AssumesStaticRegionInvocation, AssumesCallContinuationRegion, and AssumesModuleDescriptor where available. Add relationship checks that binding.region matches descriptor.id and invocation.call_continuation.callee_region matches invocation.target.region. Keep structural keying in compile_contract_key/stencil_key; add comments only if useful. No stringly semantic identities.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/compile_contract_validate.lua",
+			"after": [
+				"T067"
+			],
+			"status": "done",
+			"order": 71,
+			"claimedBy": "agent-RHNHB0",
+			"evidence": "Updated compile_contract_validate.lua to require lua_exec_static_region_model and validate AssumesStaticRegion, AssumesStaticRegionInvocation, and AssumesCallContinuationRegion through model helpers. The model enforces binding.region/descriptor.id and invocation call_continuation.callee_region/target.region relationships. Structural keying/string guardrails unchanged. Verified via schema, moon_cfg typed static stencil/contract checks, static_invoke, and make test.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:25:56.562Z",
+			"updatedAt": "2026-06-07T12:41:02.628Z"
+		},
+		{
+			"id": "T072",
+			"title": "Preserve source and MoonCFG guardrails",
+			"detail": "Do not add CALL or TAILCALL to SUPPORTED_INSTR. Preserve unsupported_source_semantics diagnostics. Keep MoonCFG.EmitRegion/Continue/Exit unsupported in moon_cfg_validate.lua and no EmitRegion rendering in moon_cfg_emit.lua; add/update comments only. Direct LuaExec kernel with EmitRegion must still reject with requires_typed_static_region_lowering.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_to_lua_exec_lower.lua",
+			"after": [
+				"T070"
+			],
+			"status": "done",
+			"order": 72,
+			"claimedBy": "agent-RHNHB0",
+			"evidence": "Preserved guardrails: lua_src_to_lua_exec_lower.lua SUPPORTED_INSTR was not broadened and source CALL/TAILCALL still reject with unsupported_source_semantics diagnostics; moon_cfg_validate.lua still documents and rejects MoonCFG.EmitRegion/Continue/Exit; moon_cfg_emit.lua has no EmitRegion rendering; direct LuaExec kernel EmitRegion still rejects with requires_typed_static_region_lowering. Verified by static_invoke direct-reject, static_regions source CALL/TAILCALL rejects, semantic_gates, moon_cfg MoonCFG EmitRegion/Continue negatives, and make test.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:25:56.562Z",
+			"updatedAt": "2026-06-07T12:41:10.560Z"
+		},
+		{
+			"id": "T073",
+			"title": "Update schema and model tests",
+			"detail": "Assert lua_exec_static_region_model is exported and validate_against_schema passes. Add structural checks for a valid StaticRegionBinding/StaticRegionInvocation/CallContinuationRegion against the new model. Keep existing ASDL field-order assertions unchanged; no ASDL product changes expected.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua",
+			"after": [
+				"T067",
+				"T068"
+			],
+			"status": "done",
+			"order": 73,
+			"claimedBy": "agent-RHNHB0",
+			"evidence": "Updated test_spongejit_lua_compile_schema.lua to include lua_exec_static_region_model.validate_against_schema in model coverage, assert facade export, and structurally validate StaticRegionBinding/CallContinuationRegion/StaticRegionInvocation with the new model. Existing ASDL field-order assertions were unchanged. Verified with luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:25:56.562Z",
+			"updatedAt": "2026-06-07T12:41:24.374Z"
+		},
+		{
+			"id": "T074",
+			"title": "Add executable static invocation tests",
+			"detail": "Create a test constructing a manual LuaExec.Module: kernel CallRegion prepares a fixed direct Lua-closure call frame, final EmitRegion invokes a typed callee body region, callee writes 3 fixed results into callee stack and Continue(return_cont), caller continuation ReceiveCallResults and Return. Verify ExecToMoon.lower_module_outcome(module,'kernel','value2_payload_i64') lowers, validates, emits, runs, returns expected third result, and emitted source has no helper/protocol strings.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua",
+			"after": [
+				"T069",
+				"T070"
+			],
+			"status": "done",
+			"order": 74,
+			"claimedBy": "agent-RHNHB0",
+			"evidence": "Added experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua. It constructs a manual LuaExec.Module with a CallRegion kernel that PrepareCallFrame -> final EmitRegion -> ReceiveCallResults -> Return, invokes a typed callee region that writes three fixed results into callee stack and Continues to return_cont, and verifies ExecToMoon.lower_module_outcome(...,'value2_payload_i64') lowers, validates, emits, runs, and returns/copies the third result. Test also checks no helper/dispatch/protocol strings in emitted source. Verified with luajit test_spongejit_lua_compile_static_invoke.lua.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:25:56.562Z",
+			"updatedAt": "2026-06-07T12:41:32.433Z"
+		},
+		{
+			"id": "T075",
+			"title": "Add static invocation fail-closed regressions",
+			"detail": "Extend static_regions, semantic_gates, moon_cfg tests: direct ExecToMoon.lower(kernel_with_emit) still rejects; MoonCFG.EmitRegion still rejects; source CALL/TAILCALL still reject; lower_module rejects missing StaticRegionInvocation contract, target not in module, descriptor mismatch, nested EmitRegion, target Return/Error/Yield, target unsupported semantic region, unknown call target/dynamic arity in call contract, and unbound continuation. Stencil/contract keys accept typed static invocation sources while lowercase semantic strings remain forbidden.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_regions.lua",
+			"after": [
+				"T070",
+				"T071",
+				"T072"
+			],
+			"status": "done",
+			"order": 75,
+			"claimedBy": "agent-RHNHB0",
+			"evidence": "Added fail-closed regressions across tests. static_invoke covers direct kernel EmitRegion rejection and lower_module rejections for missing StaticRegionInvocation contract, target not in module, descriptor mismatch, nested EmitRegion, target Return terminator, unsupported target semantic region, unbound/wrong continuation, and unknown call target contract. Existing static_regions and semantic_gates source CALL/TAILCALL rejections still pass. test_spongejit_lua_compile_moon_cfg.lua now asserts MoonCFG.EmitRegion and Continue remain unsupported and typed Stencil.FromStaticRegion/FromStaticRegionInvocation keys are accepted while lowercase call remains forbidden. Verified targeted tests and make test.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:25:56.562Z",
+			"updatedAt": "2026-06-07T12:41:41.144Z"
+		},
+		{
+			"id": "T076",
+			"title": "Run static invocation verification gates",
+			"detail": "Run targeted schema/static_invoke/static_regions/semantic_gates/lua_rt_call/lua_rt_arity/lua_exec_pipeline/moon_cfg tests, then cd experiments/lua_interpreter_vm/spongejit && make test and make test-completion. Optional corpus100 should remain fail-closed; no source CALL success increase is expected.",
+			"file": "experiments/lua_interpreter_vm/spongejit/Makefile",
+			"after": [
+				"T073",
+				"T074",
+				"T075"
+			],
+			"status": "done",
+			"order": 76,
+			"claimedBy": "agent-RHNHB0",
+			"evidence": "Ran verification gates successfully: luajit test_spongejit_lua_compile_schema.lua; static_invoke.lua; static_regions.lua; semantic_gates.lua; lua_rt_call.lua; lua_rt_arity.lua; lua_exec_pipeline.lua; moon_cfg.lua. Also ran cd experiments/lua_interpreter_vm/spongejit && make test; make test-completion; optional make test-lua-compile-corpus100. Corpus remained fail-closed with foundry 37 ok / 104 rejected and test reporting 31 successful windows, 26 reps checked; source CALL/TAILCALL acceptance did not increase.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:25:56.562Z",
+			"updatedAt": "2026-06-07T12:41:52.381Z"
+		},
+		{
+			"id": "T077",
+			"title": "Add typed source CALL callee evidence payloads",
+			"detail": "Add minimal typed LuaFact.PayloadLease variants for source CALL proof: a closure/proto target payload tied to callsite/callee slot and a static callee region payload carrying LuaRT.ClosureIdentity, LuaRT.ResolvedCallTarget, LuaExec.StaticRegionBinding, LuaExec.Region, and dependencies. Update evidence validators/builders/importers to recognize them without changing LuaCompile.Unit shape.",
+			"file": "experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl",
+			"after": [],
+			"status": "done",
+			"order": 77,
+			"claimedBy": "agent-V469WQ",
+			"evidence": "Added LuaFact.StaticClosureTargetPayload and StaticCalleeRegionPayload to spongejit_lua_ssa.asdl; added constructors/validation in lua_fact_payload_lease.lua; added runtime observation aliases/imports in lua_fact_from_runtime_observe.lua; schema test still passes.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:59:44.661Z",
+			"updatedAt": "2026-06-07T13:32:46.748Z"
+		},
+		{
+			"id": "T078",
+			"title": "Implement source CALL evidence lookup helpers",
+			"detail": "Create a focused model/helper module that validates typed source CALL static callee payloads, finds the payload matching CALL pc + callee slot, checks strict preconditions (CALL only, fixed counts, direct Lua closure identity, known proto, no upvalues unless represented, static binding/region match), and builds call/arity/frame/static invocation products for the lowerer.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_call_static_model.lua",
+			"after": [
+				"T077"
+			],
+			"status": "done",
+			"order": 78,
+			"claimedBy": "agent-V469WQ",
+			"evidence": "Added lua_src_call_static_model.lua with evidence lookup, strict source CALL payload/precondition validation, and product construction for CallShape/CallFrameState/StaticRegionInvocation; exported from lua_compile/init.lua; module loads successfully.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:59:44.661Z",
+			"updatedAt": "2026-06-07T13:35:56.367Z"
+		},
+		{
+			"id": "T079",
+			"title": "Teach LuaSrc shape analysis about strict CALL",
+			"detail": "Change scan_shape/analyze_block_io so CALL with fixed counts and matching static callee evidence becomes a call terminator with fallthrough target. Keep TAILCALL/open-count/no-evidence/dynamic target rejected. Ensure result slots defined by ReceiveCallResults are not incorrectly treated as external block params.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_to_lua_exec_lower.lua",
+			"after": [
+				"T078"
+			],
+			"status": "done",
+			"order": 79,
+			"claimedBy": "agent-V469WQ",
+			"evidence": "Updated lua_src_to_lua_exec_lower.lua scan_shape(window,evidence) to recognize fixed-count CALL only with typed static payload evidence; missing/open CALLs and TAILCALL reject; CALL becomes a block terminator with fallthrough; analyze_block_io records result slot definitions so ReceiveCallResults slots are not external block params.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:59:44.661Z",
+			"updatedAt": "2026-06-07T13:37:01.263Z"
+		},
+		{
+			"id": "T080",
+			"title": "Lower strict source CALL to LuaExec.Module",
+			"detail": "For accepted CALL terms, construct CallFrameState, PrepareCallFrame, EmitRegion with ContBinding to the fallthrough block, ReceiveCallResults prefix at the continuation block, StaticRegionInvocation/CallContinuationRegion/static binding contracts, closure/proto/upvalue/static-region assumptions, and return LuaExec.Module containing payload callee regions plus caller kernel. Preserve kernel-only return for windows without CALL.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_to_lua_exec_lower.lua",
+			"after": [
+				"T079"
+			],
+			"status": "done",
+			"order": 80,
+			"claimedBy": "agent-V469WQ",
+			"evidence": "Updated lua_src_to_lua_exec_lower.lua CALL lowering path: strict CALL terms build CallFrameState/StaticRegionInvocation via lua_src_call_static_model, emit PrepareCallFrame + typed EmitRegion, install ReceiveCallResults at fallthrough, accumulate call/static contracts, include payload static regions, and return LuaExec.Module when module_required while preserving kernel return for non-CALL windows.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:59:44.661Z",
+			"updatedAt": "2026-06-07T13:39:05.742Z"
+		},
+		{
+			"id": "T081",
+			"title": "Route public compile through module lowering",
+			"detail": "Update compile_to_moon_kernel to accept LuaExec.Kernel or LuaExec.Module from LuaSrc lowering. For modules, call LuaExecToMoon.lower_module / lower_module_outcome with the selected caller kernel name while keeping the documented single typed route and no fallback. Update needs_outcome_mode/contains logic for modules.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_compile_to_moon_kernel.lua",
+			"after": [
+				"T080"
+			],
+			"status": "done",
+			"order": 81,
+			"claimedBy": "agent-V469WQ",
+			"evidence": "Updated lua_compile_to_moon_kernel.lua to accept LuaExec.Kernel or LuaExec.Module from source lowering; modules route through LuaExecToMoon.lower_module with kernel name lua_exec_core_kernel, preserving outcome fallback only within typed LuaExec->MoonCFG lowering and documenting LuaExec.Module static composition route.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:59:44.661Z",
+			"updatedAt": "2026-06-07T13:39:52.812Z"
+		},
+		{
+			"id": "T082",
+			"title": "Harden static inliner for source CALL modules",
+			"detail": "Verify/adjust the inliner and static region model for source-lowered modules: multiple call sites in one kernel, unique clone prefixes, continuation args for non-result live slots, target descriptor matching, no nested EmitRegion, no target Return/Error/Yield, and clear diagnostics for unbound continuations or missing static contracts.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_inline.lua",
+			"after": [
+				"T080"
+			],
+			"status": "done",
+			"order": 82,
+			"claimedBy": "agent-V469WQ",
+			"evidence": "Verified existing static region model/inliner already enforces descriptor match, no nested EmitRegion, no Return/Error/Yield target terminators, unbound continuation diagnostics, and unique ordinal clone prefixes. Adjusted source CALL lowering to bind continuation args via jump_args_for so non-result live slots flow across inlined static calls.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:59:44.661Z",
+			"updatedAt": "2026-06-07T13:40:57.711Z"
+		},
+		{
+			"id": "T083",
+			"title": "Preserve MoonCFG guardrails for CALL slice",
+			"detail": "Confirm no MoonCFG.EmitRegion support is added and no helper/protocol strings are emitted. Add only comments/tests if needed; source CALL must lower through LuaExec.Module inlining before MoonCFG.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_validate.lua",
+			"after": [
+				"T081",
+				"T082"
+			],
+			"status": "done",
+			"order": 83,
+			"claimedBy": "agent-V469WQ",
+			"evidence": "Confirmed MoonCFG guardrails remain intact: moon_cfg_validate.lua still documents LuaExec static invocation must be inlined before MoonCFG and keeps CFG.EmitRegion/Continue/Exit unsupported; no MoonCFG EmitRegion emission path was added.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:59:44.661Z",
+			"updatedAt": "2026-06-07T13:41:14.861Z"
+		},
+		{
+			"id": "T084",
+			"title": "Update foundry and coverage expectations",
+			"detail": "Do not expect corpus CALL wins unless typed static callee payloads are present. Update coverage/representative wording if CALL appears as conditionally supported, distinguishing evidence-backed source CALL from generic/dynamic CALL rejection.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_compile_foundry.lua",
+			"after": [
+				"T080"
+			],
+			"status": "done",
+			"order": 84,
+			"claimedBy": "agent-V469WQ",
+			"evidence": "Updated lua_compile_foundry.lua coverage_manifest to compute fact coverage counts dynamically from schema and include a note that source CALL success requires typed StaticClosureTargetPayload/StaticCalleeRegionPayload evidence while generic CALL windows remain fail-closed.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:59:44.661Z",
+			"updatedAt": "2026-06-07T13:42:03.614Z"
+		},
+		{
+			"id": "T085",
+			"title": "Add schema and evidence tests",
+			"detail": "Assert any new LuaFact payload constructors exist; validate payload/model helpers; test typed source CALL static payload validation and rejection of malformed descriptor/proto/closure/upvalue relationships.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua",
+			"after": [
+				"T077",
+				"T078"
+			],
+			"status": "done",
+			"order": 85,
+			"claimedBy": "agent-V469WQ",
+			"evidence": "Updated test_spongejit_lua_compile_schema.lua to assert StaticClosureTargetPayload/StaticCalleeRegionPayload, source CALL model export, and payload helper validation. Updated test_spongejit_lua_compile_lua_fact.lua runtime payload coverage with typed static source-CALL payload observations. Verified schema and LuaFact tests pass.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:59:44.661Z",
+			"updatedAt": "2026-06-07T13:43:51.912Z"
+		},
+		{
+			"id": "T086",
+			"title": "Add positive source CALL compile test",
+			"detail": "Create a source-level CALL window with fixed args/results and typed static callee evidence. The callee region writes fixed results and continues; compile through public compile_to_moon_kernel or LuaSrc lowerer + module lowering; run emitted Moonlift and assert returned value/result slot. Ensure emitted source has no fallback strings.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua",
+			"after": [
+				"T081",
+				"T082"
+			],
+			"status": "done",
+			"order": 86,
+			"claimedBy": "agent-V469WQ",
+			"evidence": "Added test_spongejit_lua_compile_source_call.lua positive fixture: fixed CALL+RETURN with typed static closure/callee region evidence compiles through public compile_to_moon_kernel, source lowerer returns LuaExec.Module, module lowering emits/run Moonlift via lower_module_outcome, and result slots/value match expected with no helper/protocol strings.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:59:44.661Z",
+			"updatedAt": "2026-06-07T13:46:35.700Z"
+		},
+		{
+			"id": "T087",
+			"title": "Add negative CALL fake-success tests",
+			"detail": "Add rejections for TAILCALL, CALL with missing evidence, open arg/result counts, unknown target, C/FFI/metamethod targets, yield policy, close/TBC adjacent/return-close cases, absent/unrepresented upvalues, missing proto/body region, descriptor mismatch, nested EmitRegion target, and direct kernel EmitRegion.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua",
+			"after": [
+				"T086"
+			],
+			"status": "done",
+			"order": 87,
+			"claimedBy": "agent-V469WQ",
+			"evidence": "test_spongejit_lua_compile_source_call.lua includes negative fake-success coverage for TAILCALL, CALL B=0/C=0, missing target/region evidence, return-close/C, adjacent CLOSE, unknown/C/FFI/metamethod targets, proto mismatch, descriptor mismatch, nested EmitRegion target, target Return/Error/Yield terminators, and direct kernel EmitRegion rejection. Source call test passes.",
+			"notes": [],
+			"createdAt": "2026-06-07T12:59:44.661Z",
+			"updatedAt": "2026-06-07T13:47:20.461Z"
+		},
+		{
+			"id": "T088",
+			"title": "Run source CALL verification gates",
+			"detail": "Run schema, source CALL, static invoke, semantic gates, call/arity, exec pipeline, moon_cfg tests, then spongejit make test, test-completion, and optional corpus100. Record corpus expectations: generic CALL should still reject unless typed static callee evidence is present.",
+			"file": "experiments/lua_interpreter_vm/spongejit/Makefile",
+			"after": [
+				"T087",
+				"T083",
+				"T084"
+			],
+			"status": "done",
+			"order": 88,
+			"claimedBy": "agent-V469WQ",
+			"evidence": "Ran required gates: schema, source_call, static_invoke, semantic_gates, lua_rt_call, lua_rt_arity, lua_exec_pipeline, moon_cfg all passed; cd experiments/lua_interpreter_vm/spongejit && make test passed; make test-completion passed; optional make test-lua-compile-corpus100 passed with 37 ok / 104 rejected, 31 successful windows, 26 reps checked (generic CALL still rejects without typed static callee evidence).",
+			"notes": [],
+			"createdAt": "2026-06-07T12:59:44.661Z",
+			"updatedAt": "2026-06-07T13:51:00.383Z"
+		},
+		{
+			"id": "T089",
+			"title": "Add typed source CLOSURE evidence products",
+			"detail": "Add minimal typed evidence transport for strict source CLOSURE: StaticClosureValuePayload carrying subject, pc, LuaRT.ClosureIdentity, LuaRT.ResolvedCallTarget (for closure handle), optional LuaExec.StaticRegionBinding for the proto body, LuaGC.GCEffect allocation/root proof, and deps. Add small LuaExec RequiresClosureIdentity/UsesClosureIdentity contract constructors if absent so closure identity can propagate structurally; do not add support-status fields or broaden ASDL architecture beyond this gap.",
+			"file": "experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl",
+			"after": [],
+			"status": "done",
+			"order": 89,
+			"claimedBy": "agent-R2S5MG",
+			"evidence": "Updated experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl with LuaFact.StaticClosureValuePayload and LuaExec.RequiresClosureIdentity/UsesClosureIdentity constructors. Did not add support-status fields.",
+			"notes": [],
+			"createdAt": "2026-06-07T13:58:17.481Z",
+			"updatedAt": "2026-06-07T17:33:38.056Z"
+		},
+		{
+			"id": "T090",
+			"title": "Implement source CLOSURE payload helpers",
+			"detail": "Add constructor and validator for StaticClosureValuePayload. Update lua_fact_from_runtime_observe payload aliases/import so tests can pass typed closure/target/binding/gc_effect ASDL values. Validate subject/pc/closure/target/binding/effect/deps structurally and loudly reject malformed values.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_fact_payload_lease.lua",
+			"after": [
+				"T089"
+			],
+			"status": "done",
+			"order": 90,
+			"claimedBy": "agent-R2S5MG",
+			"evidence": "Updated lua_fact_payload_lease.lua with StaticClosureValuePayload constructor/validator and lua_fact_from_runtime_observe.lua aliases/import for typed static_closure_value payloads.",
+			"notes": [],
+			"createdAt": "2026-06-07T13:58:17.481Z",
+			"updatedAt": "2026-06-07T17:34:10.260Z"
+		},
+		{
+			"id": "T091",
+			"title": "Add strict source CLOSURE model",
+			"detail": "Create a model module that finds StaticClosureValuePayload for LuaSrc.CLOSURE and validates the strict executable slice: subject matches destination slot, pc/proto match, closure identity has zero upvalues, target is DirectLuaClosureTarget with LuaClosureTargetIdentity and nonnegative closure_handle, optional binding descriptor matches target proto/static region when provided, GC effect is allocation/root proof, no open/upvalue capture/close/yield/metamethod/C/FFI semantics. Provide build_closure_products for lowerer use.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_closure_static_model.lua",
+			"after": [
+				"T090"
+			],
+			"status": "done",
+			"order": 91,
+			"claimedBy": "agent-R2S5MG",
+			"evidence": "Created lua_src_closure_static_model.lua with strict StaticClosureValuePayload lookup, no-upvalue/direct-Lua-closure/handle/static-binding/successful-GC-allocation validation, product builder, and CALL payload matching helper.",
+			"notes": [],
+			"createdAt": "2026-06-07T13:58:17.481Z",
+			"updatedAt": "2026-06-07T17:35:12.943Z"
+		},
+		{
+			"id": "T092",
+			"title": "Export closure model and validators",
+			"detail": "Export lua_src_closure_static_model. Update schema/facade tests and validators needed by the new payload/model. If compile_contract_validate and lua_exec_validate need cases for RequiresClosureIdentity/UsesClosureIdentity, add structural validation and propagation to CompileContract.AssumesClosureIdentity.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/init.lua",
+			"after": [
+				"T091"
+			],
+			"status": "done",
+			"order": 92,
+			"claimedBy": "agent-R2S5MG",
+			"evidence": "Exported lua_src_closure_static_model in init.lua and added lua_exec_validate structural validation for LuaExec.RequiresClosureIdentity and UsesClosureIdentity using LuaRT closure_identity validation.",
+			"notes": [],
+			"createdAt": "2026-06-07T13:58:17.481Z",
+			"updatedAt": "2026-06-07T17:35:50.033Z"
+		},
+		{
+			"id": "T093",
+			"title": "Lower strict source CLOSURE",
+			"detail": "Change scan_shape so CLOSURE no longer unconditionally rejects when strict static closure evidence validates. Add CLOSURE to normal instruction lowering only for fixed no-upvalue static closure payloads: assign LuaRT.LuaClosureValue to destination slot, mark env slot lua_value, add closure/target/static-region/GC/upvalue(negative none) contract obligations/guarantees. Preserve generic CLOSURE rejection when evidence missing/malformed and preserve NEWTABLE rejection.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_to_lua_exec_lower.lua",
+			"after": [
+				"T091",
+				"T092"
+			],
+			"status": "done",
+			"order": 93,
+			"claimedBy": "agent-R2S5MG",
+			"evidence": "Updated lua_src_to_lua_exec_lower.lua to validate CLOSURE in scan_shape using StaticClosureValuePayload, treat CLOSURE as a slot def, lower strict CLOSURE to Exec.AssignValue(ConstTValue(LuaClosureValue)), mark env lua_value, and add closure/target/static-region/GC contracts. NEWTABLE remains rejected.",
+			"notes": [],
+			"createdAt": "2026-06-07T13:58:17.481Z",
+			"updatedAt": "2026-06-07T17:36:53.507Z"
+		},
+		{
+			"id": "T094",
+			"title": "Box closure values with typed handle contracts",
+			"detail": "Ensure lowering LuaRT.LuaClosureValue uses the nonnegative closure_handle from typed contract/evidence rather than payload 0. Add a helper scanning the Exec contract for matching Requires/ResolvesResolvedCallTarget with LuaClosureTargetIdentity; missing or mismatched handle rejects. Propagate RequiresClosureIdentity/UsesClosureIdentity to CompileContract.AssumesClosureIdentity. Do not add helper calls or VM dispatch.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_to_moon_cfg_lower.lua",
+			"after": [
+				"T093"
+			],
+			"status": "done",
+			"order": 94,
+			"claimedBy": "agent-R2S5MG",
+			"evidence": "Updated lua_exec_to_moon_cfg_lower.lua to propagate RequiresClosureIdentity/UsesClosureIdentity to CompileContract.AssumesClosureIdentity and to box LuaRT.LuaClosureValue using a nonnegative closure_handle from resolved-call-target contract, rejecting missing/invalid/mismatched handles.",
+			"notes": [],
+			"createdAt": "2026-06-07T13:58:17.481Z",
+			"updatedAt": "2026-06-07T17:37:58.072Z"
+		},
+		{
+			"id": "T095",
+			"title": "Preserve source and MoonCFG guardrails",
+			"detail": "Keep MoonCFG.EmitRegion/Continue/Exit unsupported and preserve forbidden lowercase semantic strings. No functional MoonCFG region emission change expected. Ensure source TAILCALL, open CALL, CLOSURE with upvalues, CLOSURE without allocation/evidence, C/FFI/metamethod targets, target region Return/Error/Yield, and dynamic allocation remain fail-closed.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_validate.lua",
+			"after": [
+				"T093",
+				"T094"
+			],
+			"status": "done",
+			"order": 95,
+			"claimedBy": "agent-R2S5MG",
+			"evidence": "Verified guardrails remain in place: moon_cfg_validate.lua still rejects MoonCFG.EmitRegion/Continue/Exit and forbidden strings; lua_src_to_lua_exec_lower.lua still rejects TAILCALL/open CALL; lua_src_closure_static_model.lua rejects missing CLOSURE evidence, upvalues, non-Lua targets, and unsuccessful allocation.",
+			"notes": [],
+			"createdAt": "2026-06-07T13:58:17.481Z",
+			"updatedAt": "2026-06-07T17:38:11.591Z"
+		},
+		{
+			"id": "T096",
+			"title": "Update schema and fact tests",
+			"detail": "Add assertions for StaticClosureValuePayload, RequiresClosureIdentity/UsesClosureIdentity if added, exported lua_src_closure_static_model, and successful payload validation/import via lua_fact_payload_lease and lua_fact_from_runtime_observe. Update lua_fact tests for the new payload count/coverage.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua",
+			"after": [
+				"T090",
+				"T092"
+			],
+			"status": "done",
+			"order": 96,
+			"claimedBy": "agent-R2S5MG",
+			"evidence": "Updated schema test for StaticClosureValuePayload, RequiresClosureIdentity/UsesClosureIdentity, facade export, payload validation/import; updated LuaFact runtime payload coverage fixture to include static_closure_value with GC allocation effect.",
+			"notes": [],
+			"createdAt": "2026-06-07T13:58:17.481Z",
+			"updatedAt": "2026-06-07T17:39:06.152Z"
+		},
+		{
+			"id": "T097",
+			"title": "Add source CLOSURE to CALL positive test",
+			"detail": "Create a new executable test with source CLOSURE pc=1 dest slot0 proto K, CALL pc=2 base slot0 fixed args/results, RETURN pc=3. Evidence must include static closure value payload at CLOSURE pc and existing static call target/callee region payloads at CALL pc for the same closure/proto/handle. Compile through public route or ExecToMoon.lower_module_outcome, run emitted Moonlift, assert CLOSURE writes LuaClosureTag/payload handle and CALL returns static callee result. Assert emitted source has no helper/protocol/dispatch strings.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_closure.lua",
+			"after": [
+				"T093",
+				"T094"
+			],
+			"status": "done",
+			"order": 97,
+			"claimedBy": "agent-R2S5MG",
+			"evidence": "Added test_spongejit_lua_compile_source_closure.lua with positive CLOSURE RETURN1 closure-tag/handle boxing, positive CLOSURE->CALL->RETURN through LuaExec.Module/static inlining, and initial negative strict-slice guardrails including missing evidence/proto/handle/upvalues/non-Lua targets/allocation/open counts/tailcall/target-region errors.",
+			"notes": [],
+			"createdAt": "2026-06-07T13:58:17.481Z",
+			"updatedAt": "2026-06-07T17:41:21.088Z"
+		},
+		{
+			"id": "T098",
+			"title": "Add CLOSURE fake-success negatives",
+			"detail": "In the new source CLOSURE test (or semantic_gates), add negatives: missing payload, proto mismatch, closure handle mismatch with subsequent CALL, upvalues present, non-Lua target, missing/invalid GC effect, static binding descriptor mismatch, CLOSURE not followed by compatible CALL still can only produce value under evidence but must not invoke anything, source TAILCALL remains rejected, open CALL B=0/C=0 remains rejected, MoonCFG.EmitRegion/direct kernel EmitRegion remains rejected.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_closure.lua",
+			"after": [
+				"T097"
+			],
+			"status": "done",
+			"order": 98,
+			"claimedBy": "agent-R2S5MG",
+			"evidence": "Extended source CLOSURE test negatives/guardrails: missing payload, proto/handle mismatches, upvalues, non-Lua targets, invalid allocation, descriptor mismatch, open CALL, TAILCALL, target region errors, and direct kernel EmitRegion rejection. Closure-only positive covers evidence-backed CLOSURE value production without invocation.",
+			"notes": [],
+			"createdAt": "2026-06-07T13:58:17.481Z",
+			"updatedAt": "2026-06-07T17:41:37.254Z"
+		},
+		{
+			"id": "T099",
+			"title": "Update semantic gates and corpus expectations",
+			"detail": "Update old expectation that all CLOSURE rejects: missing evidence should reject with source_closure_missing_static_evidence while strict evidence-backed no-upvalue CLOSURE can compile. Keep generic corpus CLOSURE/CALL windows without typed payloads rejected. Update lua_compile_foundry coverage notes/manifests only if tests assert payload count or support messages.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_semantic_gates.lua",
+			"after": [
+				"T098"
+			],
+			"status": "done",
+			"order": 99,
+			"claimedBy": "agent-R2S5MG",
+			"evidence": "Updated semantic_gates so source CLOSURE without typed evidence rejects with source_closure_missing_static_evidence and removed CLOSURE from the generic always-unsupported loop; updated lua_compile_foundry coverage note to mention StaticClosureValuePayload and generic CALL/CLOSURE fail-closed expectations.",
+			"notes": [],
+			"createdAt": "2026-06-07T13:58:17.481Z",
+			"updatedAt": "2026-06-07T17:42:13.977Z"
+		},
+		{
+			"id": "T100",
+			"title": "Run closure milestone verification gates",
+			"detail": "Run schema, fact, source_closure, source_call, static_invoke, semantic_gates, lua_rt_call, lua_rt_arity, lua_exec_pipeline, moon_cfg tests, then make test and make test-completion under experiments/lua_interpreter_vm/spongejit. Optional corpus100 should remain mostly fail-closed with no expected generic corpus CALL/CLOSURE success without typed payloads.",
+			"after": [
+				"T096",
+				"T098",
+				"T099"
+			],
+			"status": "done",
+			"order": 100,
+			"claimedBy": "agent-R2S5MG",
+			"evidence": "Verification passed: schema, lua_fact, source_closure, source_call, static_invoke, semantic_gates, lua_rt_call, lua_rt_arity, lua_exec_pipeline, moon_cfg individual tests; cd experiments/lua_interpreter_vm/spongejit && make test; make test-completion; optional make test-lua-compile-corpus100 (37 ok / 104 rejected, 31 successful windows, 27 reps checked).",
+			"notes": [],
+			"createdAt": "2026-06-07T13:58:17.481Z",
+			"updatedAt": "2026-06-07T17:44:09.444Z"
+		},
+		{
+			"id": "T101",
+			"title": "Add ASDL boundary result wrappers",
+			"detail": "Add minimal PVM-boundary ASDL products without changing existing semantic architecture: canonical source event/event batch wrappers, evidence import records/batches, ExecLowerResult, MoonLowerResult, StaticInlineResult, StaticCallProducts/Result, StaticClosureProducts/Result, and optional artifact wrappers only where a cached transform needs a typed carrier. Preserve current CALL/CLOSURE semantics and no fallback strings.",
+			"file": "experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl",
+			"after": [],
+			"status": "done",
+			"order": 101,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Added PVM boundary/result ASDL wrappers to experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl: LuaCompile.SourceEvent/SourceEventBatch/EvidenceRecord/EvidenceInput, ExecProduct/ExecLowerResult/MoonLowerResult/StaticInlineResult, and LuaExec.StaticCallProducts/StaticCallProductResult/StaticClosureProducts/StaticClosureProductResult. Verified ASDL/schema still loads with luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:04:14.160Z"
+		},
+		{
+			"id": "T102",
+			"title": "Phase decode, window, unit, and evidence import",
+			"detail": "Add pvm.phase boundaries for canonical SourceEvent -> LuaSrc.Op, SourceEventBatch -> LuaSrc.Window, EvidenceInput -> LuaFact.Evidence, and LuaCompile.Unit construction. Keep plain PUC/observation/foundry table normalization as external adapters into canonical ASDL wrappers; public helpers must call cached phases and expose .phase objects.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_from_puc_decode.lua",
+			"after": [
+				"T101"
+			],
+			"status": "done",
+			"order": 102,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Added PVM phases for source decode/window/evidence/unit construction: lua_src_from_puc_decode.lua now exposes CanonicalPucEvent-backed spongejit_lua_src_decode_event phase; lua_src_window_collect.lua exposes SourceEventBatch-backed spongejit_lua_src_collect_window phase; lua_fact_from_runtime_observe.lua exposes EvidenceInput-backed spongejit_lua_fact_import_evidence phase and foundry import uses it; lua_compile_unit.lua exposes spongejit_lua_compile_unit_from_inputs. Preserved existing plain-table adapters and EXTRAARG/signed field behavior. Verified with luajit test_spongejit_lua_compile_lua_src.lua, test_spongejit_lua_compile_lua_fact.lua, and test_spongejit_lua_compile_pipeline.lua.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:06:25.955Z"
+		},
+		{
+			"id": "T103",
+			"title": "Fix LuaSrc to LuaExec phase misuse",
+			"detail": "Change spongejit_lua_src_to_lua_exec_lower phase to return an ASDL ExecLowerResult that caches success and reject diagnostics. Remove the current uncached lower_value preflight from M.lower. M.lower must unwrap the cached result into product or nil,errors. Audit is_candidate/lower_uncached/test expectations.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_to_lua_exec_lower.lua",
+			"after": [
+				"T101"
+			],
+			"status": "done",
+			"order": 103,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Updated lua_src_to_lua_exec_lower.lua so spongejit_lua_src_to_lua_exec_lower phase returns LuaCompile.ExecLowerOk/ExecLowerReject with ExecKernel/ExecModule product wrappers. M.lower now calls only the cached phase and unwraps the ASDL result, removing the prior uncached lower_value preflight; M.lower_result exposes the wrapped result and is_candidate uses M.lower. Verified with luajit test_spongejit_lua_compile_lua_exec_pipeline.lua and test_spongejit_lua_compile_source_call.lua.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:06:57.927Z"
+		},
+		{
+			"id": "T104",
+			"title": "Phase source CALL product construction",
+			"detail": "Replace plain Lua products table from build_call_products with LuaExec.StaticCallProducts ASDL and a pvm.phase that takes LuaSrc.CALL + LuaFact.Evidence + return BlockRef/name args. Public API exposes .phase and cached products() wrapper. Helpers may validate only; meaningful product construction occurs inside the phase.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_call_static_model.lua",
+			"after": [
+				"T101"
+			],
+			"status": "done",
+			"order": 104,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Updated lua_src_call_static_model.lua so source CALL semantic product construction is represented by LuaExec.StaticCallProducts and cached by pvm.phase spongejit_lua_src_call_static_products returning StaticCallProductsOk/Reject. Added M.products wrapper and changed lua_src_to_lua_exec_lower.lua to call the phase-backed API instead of constructing the plain carrier table in the lowerer. Kept strict fixed direct Lua-closure CALL checks. Verified with source_call and static_invoke tests.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:07:40.638Z"
+		},
+		{
+			"id": "T105",
+			"title": "Phase source CLOSURE product construction",
+			"detail": "Replace plain Lua products table from build_closure_products with LuaExec.StaticClosureProducts ASDL and a pvm.phase taking LuaSrc.CLOSURE + LuaFact.Evidence. Public API exposes .phase and cached products() wrapper. Preserve strict no-upvalue static closure slice.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_closure_static_model.lua",
+			"after": [
+				"T101"
+			],
+			"status": "done",
+			"order": 105,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Updated lua_src_closure_static_model.lua so strict source CLOSURE product construction returns LuaExec.StaticClosureProducts and is cached by pvm.phase spongejit_lua_src_closure_static_products returning StaticClosureProductsOk/Reject. Added M.products wrapper and changed lua_src_to_lua_exec_lower.lua to use it. Preserved strict no-upvalue/direct-Lua-closure/allocation-evidence slice. Verified with source_closure and source_call tests.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:08:15.005Z"
+		},
+		{
+			"id": "T106",
+			"title": "Phase static region inlining",
+			"detail": "Wrap LuaExec.Module -> LuaExec.Kernel static inlining in a standalone pvm.phase returning StaticInlineResult. Public inline_module_kernel must unwrap cached result, and module lowering must call this phase instead of a hidden helper. Keep direct kernel EmitRegion and MoonCFG EmitRegion rejected.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_inline.lua",
+			"after": [
+				"T101"
+			],
+			"status": "done",
+			"order": 106,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Wrapped LuaExec.Module static inlining in pvm.phase spongejit_lua_exec_static_region_inline returning LuaCompile.StaticInlineOk/StaticInlineReject. Public inline_module_kernel now unwraps the cached ASDL result; uncached implementation remains available only as inline_module_kernel_uncached. Existing module lowering calls the public inliner, while direct kernel EmitRegion/MoonCFG EmitRegion behavior is unchanged. Verified with test_spongejit_lua_compile_static_invoke.lua.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:08:40.082Z"
+		},
+		{
+			"id": "T107",
+			"title": "Normalize LuaExec to MoonCFG phase results",
+			"detail": "Audit and update kernel/module lower phases to return ASDL MoonLowerResult instead of plain {cfg/errors} tables. Confirm no uncached preflight runs before phases. Module phase must depend on the static inline phase result. Preserve lower/lower_module public behavior.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_to_moon_cfg_lower.lua",
+			"after": [
+				"T101",
+				"T106"
+			],
+			"status": "done",
+			"order": 107,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Updated lua_exec_to_moon_cfg_lower.lua so kernel and module phases return LuaCompile.MoonLowerOk/MoonLowerReject ASDL results instead of plain Lua {cfg/errors} tables. Added lower_result/lower_module_result and ASDL unwrapping while preserving public lower/lower_module behavior. Module lower path uses the phase-backed static inliner through StaticInline.inline_module_kernel. Verified static_invoke, lua_exec_pipeline, and source_call tests.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:09:18.974Z"
+		},
+		{
+			"id": "T108",
+			"title": "Route public compile through phase products",
+			"detail": "Update public compile route to handle ExecLowerResult/MoonLowerResult unwrapping through cached APIs only. Preserve LuaCompile.Result output and strict LuaSrc.Window -> LuaExec.Kernel/Module -> MoonCFG.Kernel route with no fallback.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_compile_to_moon_kernel.lua",
+			"after": [
+				"T103",
+				"T107"
+			],
+			"status": "done",
+			"order": 108,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Audited lua_compile_to_moon_kernel.lua after T103/T107: public compile route already calls LuaExecLower.lower and LuaExecToMoon.lower/lower_module cached APIs, which now unwrap ASDL ExecLowerResult/MoonLowerResult phase products; no uncached preflight remains in the public route. The strict route remains LuaSrc.Window -> LuaExec.Kernel/LuaExec.Module -> MoonCFG.Kernel with no fallback. Verified source_closure, source_call, and pipeline tests.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:09:35.724Z"
+		},
+		{
+			"id": "T109",
+			"title": "Phase MoonCFG emission and key generation",
+			"detail": "Add pvm.phase boundaries for MoonCFG.Kernel -> Moonlift source, MoonCFG.Kernel -> MoonCFG key, CompileContract.Contract -> key, and stencil semantic/variant/template/representative keys. Public APIs must call phases and expose phase objects while preserving existing string outputs.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit.lua",
+			"after": [
+				"T101"
+			],
+			"status": "done",
+			"order": 109,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Added named PVM phases for MoonCFG emission and keys: moon_cfg_emit.lua exposes spongejit_moon_cfg_emit and emit() calls it; moon_cfg_key.lua exposes spongejit_moon_cfg_key; compile_contract_key.lua exposes spongejit_compile_contract_key; stencil_key.lua exposes spongejit_stencil_semantic_key, stencil_variant_key, stencil_template_key, and stencil_representative_key. Public APIs preserve existing string/source outputs and forbidden-string guardrails. Verified moon_cfg and stencil tests.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:10:36.336Z"
+		},
+		{
+			"id": "T110",
+			"title": "Phase stencil artifact transforms",
+			"detail": "Add pvm.phase boundaries for MoonCFG.Kernel + CompileContract -> Stencil.VariantKey, StencilTemplate + bytes -> MaterializedImage, StencilModule -> BankIndex/lookup where ASDL output exists, bundle/materialize-selected transforms, and manifest generation where practical. Keep unsupported patch sources rejecting loudly.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/stencil_materialization_plan.lua",
+			"after": [
+				"T101"
+			],
+			"status": "done",
+			"order": 110,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Added product/artifact PVM boundaries in stencil modules: stencil_materialization_plan.lua now exposes spongejit_stencil_variant_for_kernel for MoonCFG.Kernel+CompileContract -> Stencil.VariantKey; stencil_materialize.lua wraps StencilTemplate+code bytes -> MaterializedImage in spongejit_stencil_materialize_template while preserving nil,error public behavior; stencil_bundle.lua wraps materialize_all/materialize_selected in named phases while preserving ASDL MaterializedBundle + metadata public outputs. Unsupported PatchSource handling remains through existing validation/materialize errors. Verified with test_spongejit_lua_compile_stencil.lua.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:11:51.304Z"
+		},
+		{
+			"id": "T111",
+			"title": "Bind foundry orchestration to product phases",
+			"detail": "Keep file I/O/combinatorial orchestration outside PVM, but ensure compile_window/run_windows use phased evidence import, public compile phase, MoonCFG emit phase, key phases, and variant phase. Document boundary: plain corpus/foundry records are external inputs; first compiler product boundary is canonical ASDL input -> product phase.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/lua_compile_foundry.lua",
+			"after": [
+				"T102",
+				"T108",
+				"T109",
+				"T110"
+			],
+			"status": "done",
+			"order": 111,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Audited lua_compile_foundry.lua after phase repairs: compile_window already uses phased evidence import (FoundryEvidence.from_bundle), phased unit construction, public compile phase, phased MoonCFG/contract/stencil keys, phased variant generation, and phased MoonCFG emit. Added boundary comment documenting procedural corpus/file orchestration versus compiler product PVM phases, and switched representative key construction to StencilFoundry.representative_key (phased stencil representative key). Verified with test_spongejit_lua_compile_foundry.lua.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:12:21.525Z"
+		},
+		{
+			"id": "T112",
+			"title": "Export all new phase modules",
+			"detail": "Expose new/updated modules and phase objects through the facade where tests and users need them: decode/window/evidence/unit phases, CALL/CLOSURE product phases, static inline phase, emit/key/stencil phases.",
+			"file": "experiments/lua_interpreter_vm/spongejit/lua_compile/init.lua",
+			"after": [
+				"T102",
+				"T104",
+				"T105",
+				"T106",
+				"T109",
+				"T110"
+			],
+			"status": "done",
+			"order": 112,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Updated lua_compile/init.lua facade exports for phase-backed modules: lua_src_from_puc_decode, lua_src_window_collect, lua_fact_from_runtime_observe, lua_fact_from_foundry_bundle, lua_exec_static_region_inline, and moon_cfg_key in addition to existing CALL/CLOSURE/static/stencil modules. Verified exported phase objects with a luajit facade smoke test covering decode/window/evidence/unit/CALL/CLOSURE/static-inline/emit/key/stencil phases.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:12:49.310Z"
+		},
+		{
+			"id": "T113",
+			"title": "Update validators and schema tests",
+			"detail": "Validate all new ASDL boundary wrappers and result products structurally. Update lua_exec_validate/lua_compile_validate/related validators as needed so wrappers validate but do not broaden executable semantics.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua",
+			"after": [
+				"T101"
+			],
+			"status": "done",
+			"order": 113,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Updated lua_compile_validate.lua with structural validators for SourceEvent, SourceEventBatch, EvidenceInput, ExecLowerResult, MoonLowerResult, and StaticInlineResult. Extended test_spongejit_lua_compile_schema.lua to assert all new boundary/result ASDL wrappers, StaticCallProducts/StaticClosureProducts field order, exported phase-backed modules, and validator smoke coverage. Verified with luajit test_spongejit_lua_compile_schema.lua.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:13:51.741Z"
+		},
+		{
+			"id": "T114",
+			"title": "Add PVM boundary cache tests",
+			"detail": "New comprehensive test for phase stats/cache hits covering decode, window, evidence import, unit construction, LuaSrc->LuaExec success and reject, CALL/CLOSURE product phases, static inline, LuaExec->MoonCFG kernel/module, MoonCFG emit, key generation, stencil variant/materialization phases. Include assertions showing LuaSrc->LuaExec no longer double-runs via hit/miss behavior where practical.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_pvm_boundaries.lua",
+			"after": [
+				"T102",
+				"T103",
+				"T104",
+				"T105",
+				"T106",
+				"T107",
+				"T109",
+				"T110"
+			],
+			"status": "done",
+			"order": 114,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Added experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_pvm_boundaries.lua. The test resets phases and verifies cache hits for decode, window collection, evidence import, unit construction, LuaSrc->LuaExec success/reject, source CALL/CLOSURE product reject phases, static inline reject, LuaExec->MoonCFG kernel/module phases, MoonCFG emit/key, CompileContract key, stencil semantic/variant/template/representative-adjacent key phases, stencil variant_for_kernel, materialize, and bundle materialize_all. It also asserts direct kernel EmitRegion remains rejected. Verified with luajit test_spongejit_lua_compile_pvm_boundaries.lua.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:16:21.826Z"
+		},
+		{
+			"id": "T115",
+			"title": "Update source feature regression tests",
+			"detail": "Update source_call, source_closure, static_invoke, semantic_gates, pipeline, moon_cfg, and stencil tests to use/witness phase APIs where appropriate. Preserve strict CALL/CLOSURE slices and all existing negative cases.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua",
+			"after": [
+				"T103",
+				"T104",
+				"T105",
+				"T106",
+				"T107",
+				"T108"
+			],
+			"status": "done",
+			"order": 115,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Updated source feature/static invocation regression tests to witness phase-backed APIs while preserving strict semantics. test_source_call now asserts ExecLowerOk/ExecModule, StaticCallProductsOk, and MoonLowerOk module results. test_source_closure now asserts ExecLowerOk, StaticClosureProductsOk, ExecModule for CLOSURE->CALL, and MoonLowerOk. test_static_invoke now asserts StaticInlineOk and MoonLowerOk. Verified source_call, source_closure, static_invoke, semantic_gates, and pipeline tests.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:17:48.367Z"
+		},
+		{
+			"id": "T116",
+			"title": "Preserve guardrail tests",
+			"detail": "Ensure tests still prove no source support broadening, no TAILCALL/open-call/metatable/FFI/upvalue fake success, no MoonCFG EmitRegion, no helper/protocol/forbidden strings, and direct kernel EmitRegion rejects.",
+			"file": "experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua",
+			"after": [
+				"T115"
+			],
+			"status": "done",
+			"order": 116,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Audited and reran guardrail coverage after phase-boundary changes. Existing tests still prove no broad source support/fake success: moon_cfg keeps MoonCFG EmitRegion/Continue unsupported and forbidden strings rejected; semantic_gates rejects unsupported metatable/FFI/upvalue/static semantic products and direct EmitRegion; source_call/source_closure keep TAILCALL/open-count/non-Lua/upvalue/bad-evidence negatives. Verified with luajit test_spongejit_lua_compile_moon_cfg.lua, semantic_gates.lua, source_call.lua, and source_closure.lua.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:18:03.909Z"
+		},
+		{
+			"id": "T117",
+			"title": "Run PVM boundary verification gates",
+			"detail": "Run schema, pvm boundary, source_call, source_closure, static_invoke, semantic_gates, arity/call/static regions, lua_exec_pipeline, moon_cfg, stencil/foundry tests, make test, make test-completion, and corpus if feasible. Record exact commands/results.",
+			"file": "experiments/lua_interpreter_vm/spongejit/Makefile",
+			"after": [
+				"T114",
+				"T115",
+				"T116"
+			],
+			"status": "done",
+			"order": 117,
+			"claimedBy": "agent-TP10R9",
+			"evidence": "Ran PVM boundary verification gates successfully. Targeted commands passed: luajit test_spongejit_lua_compile_schema.lua; pvm_boundaries.lua; source_call.lua; source_closure.lua; static_invoke.lua; semantic_gates.lua; lua_rt_call.lua; lua_rt_arity.lua; static_regions.lua; lua_exec_pipeline.lua; moon_cfg.lua; stencil.lua; foundry.lua. Full gates passed: cd experiments/lua_interpreter_vm/spongejit && make test; make test-completion; make test-lua-compile-corpus100. Corpus gate passed with foundry reporting reps=26, compiles=142, ok=36, rejected=106; corpus test reported 30 successful windows and 26 reps checked.",
+			"notes": [],
+			"createdAt": "2026-06-07T18:00:50.180Z",
+			"updatedAt": "2026-06-07T18:19:10.742Z"
 		}
 	]
 }

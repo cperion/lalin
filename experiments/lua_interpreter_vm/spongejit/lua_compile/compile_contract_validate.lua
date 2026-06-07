@@ -5,6 +5,7 @@ local Schema = require("lua_compile.schema")
 local T = Schema.get()
 local CallModel = require("lua_compile.lua_rt_call_model")
 local LuaRTValidate = require("lua_compile.lua_rt_validate")
+local StaticRegionModel = require("lua_compile.lua_exec_static_region_model")
 
 local M = {}
 
@@ -111,11 +112,14 @@ local function validate_semantic_assumption(errors, a, path)
     local ok, errs = LuaRTValidate.upvalue_identity(a.identity)
     if not ok then for _, e in ipairs(errs) do add(errors, path .. ".identity " .. e) end end
   elseif cls == T.CompileContract.AssumesStaticRegion then
-    if not is(a.binding, T.LuaExec.StaticRegionBinding) then add(errors, path .. ".binding must be LuaExec.StaticRegionBinding") end
+    local ok, errs = StaticRegionModel.validate_static_region_binding(a.binding)
+    if not ok then for _, e in ipairs(errs) do add(errors, path .. ".binding " .. e) end end
   elseif cls == T.CompileContract.AssumesStaticRegionInvocation then
-    if not is(a.invocation, T.LuaExec.StaticRegionInvocation) then add(errors, path .. ".invocation must be LuaExec.StaticRegionInvocation") end
+    local ok, errs = StaticRegionModel.validate_static_region_invocation(a.invocation)
+    if not ok then for _, e in ipairs(errs) do add(errors, path .. ".invocation " .. e) end end
   elseif cls == T.CompileContract.AssumesCallContinuationRegion then
-    if not is(a.region, T.LuaExec.CallContinuationRegion) then add(errors, path .. ".region must be LuaExec.CallContinuationRegion") end
+    local ok, errs = StaticRegionModel.validate_call_continuation_region(a.region)
+    if not ok then for _, e in ipairs(errs) do add(errors, path .. ".region " .. e) end end
   elseif cls == T.CompileContract.AssumesModuleDescriptor then
     if not is(a.descriptor, T.LuaExec.ModuleDescriptor) then add(errors, path .. ".descriptor must be LuaExec.ModuleDescriptor") end
   elseif cls == T.CompileContract.AssumesLuaOperation then

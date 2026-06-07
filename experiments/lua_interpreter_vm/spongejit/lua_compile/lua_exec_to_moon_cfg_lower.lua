@@ -8,7 +8,7 @@
 local pvm = require("moonlift.pvm")
 local B = require("lua_compile.builders")
 local T = B.T
-local RT, Exec, CC, CFG = T.LuaRT, T.LuaExec, T.CompileContract, T.MoonCFG
+local RT, Exec, CC, CFG, Compile = T.LuaRT, T.LuaExec, T.CompileContract, T.MoonCFG, T.LuaCompile
 local ExecValidate = require("lua_compile.lua_exec_validate")
 local ValueModel = require("lua_compile.lua_rt_value_model")
 local OutcomeModel = require("lua_compile.lua_rt_outcome_model")
@@ -17,6 +17,7 @@ local ObjectModel = require("lua_compile.lua_rt_object_model")
 local RegionModel = require("lua_compile.lua_exec_region_model")
 local ArityModel = require("lua_compile.lua_rt_arity_model")
 local CallModel = require("lua_compile.lua_rt_call_model")
+local StaticInline = require("lua_compile.lua_exec_static_region_inline")
 
 local M = {}
 
@@ -59,6 +60,8 @@ local function compile_contract(exec_contract)
       obligations[#obligations + 1] = CC.RequiresSemanticAssumption(CC.AssumesCallContinuationRegion(o.region))
     elseif pvm.classof(o) == Exec.RequiresMetamethodLookupPath then
       obligations[#obligations + 1] = CC.RequiresSemanticAssumption(CC.AssumesMetamethodLookupPath(o.path))
+    elseif pvm.classof(o) == Exec.RequiresClosureIdentity then
+      obligations[#obligations + 1] = CC.RequiresSemanticAssumption(CC.AssumesClosureIdentity(o.identity))
     elseif pvm.classof(o) == Exec.RequiresUpvalueIdentity then
       obligations[#obligations + 1] = CC.RequiresSemanticAssumption(CC.AssumesUpvalueIdentity(o.identity))
     elseif pvm.classof(o) == Exec.RequiresGCEffect then
@@ -102,6 +105,8 @@ local function compile_contract(exec_contract)
       guarantees[#guarantees + 1] = CC.GuaranteesSemanticAssumption(CC.AssumesCallContinuationRegion(g.region))
     elseif pvm.classof(g) == Exec.ResolvesMetamethodLookupPath then
       guarantees[#guarantees + 1] = CC.GuaranteesSemanticAssumption(CC.AssumesMetamethodLookupPath(g.path))
+    elseif pvm.classof(g) == Exec.UsesClosureIdentity then
+      guarantees[#guarantees + 1] = CC.GuaranteesSemanticAssumption(CC.AssumesClosureIdentity(g.identity))
     elseif pvm.classof(g) == Exec.UsesUpvalueIdentity then
       guarantees[#guarantees + 1] = CC.GuaranteesSemanticAssumption(CC.AssumesUpvalueIdentity(g.identity))
     elseif pvm.classof(g) == Exec.AppliesGCEffect then
@@ -279,7 +284,11 @@ local function runtime_const_from_tvalue(tv, state)
     local tag = (tv.kind == RT.LongString or (tv.kind and tv.kind.kind == "LongString")) and RT.LongStringTag or RT.ShortStringTag
     return emit_runtime_expr(state, "strv", CFG.RuntimeBoxRef(tag, i64_const(0)), { tag = tag })
   elseif cls == RT.TableValueNode then return emit_runtime_expr(state, "tablev", CFG.RuntimeBoxRef(RT.TableTag, i64_const(0)), { tag = RT.TableTag })
-  elseif cls == RT.LuaClosureValue then return emit_runtime_expr(state, "luaclosurev", CFG.RuntimeBoxRef(RT.LuaClosureTag, i64_const(0)), { tag = RT.LuaClosureTag })
+  elseif cls == RT.LuaClosureValue then
+    local key = tv.closure and tv.closure.name and tv.closure.name.text
+    local handle = key and state.closure_handles and state.closure_handles[key]
+    if handle == nil then return add_error(state, "missing_lua_closure_handle_contract:" .. tostring(key)) end
+    return emit_runtime_expr(state, "luaclosurev", CFG.RuntimeBoxRef(RT.LuaClosureTag, i64_const(handle)), { tag = RT.LuaClosureTag })
   elseif cls == RT.CClosureValue then return emit_runtime_expr(state, "cclosurev", CFG.RuntimeBoxRef(RT.CClosureTag, i64_const(0)), { tag = RT.CClosureTag })
   elseif cls == RT.LightCFunctionValue then return emit_runtime_expr(state, "lightcfv", CFG.RuntimeBoxRef(RT.LightCFunctionTag, i64_const(0)), { tag = RT.LightCFunctionTag })
   elseif cls == RT.UserdataValueNode then return emit_runtime_expr(state, "userdatav", CFG.RuntimeBoxRef(RT.UserdataTag, i64_const(0)), { tag = RT.UserdataTag })
@@ -1000,7 +1009,7 @@ local function lower_terminator(state, env, term)
   elseif cls == Exec.Yield then
     if not state.outcome_mode then return add_error(state, "lua_exec_yield_requires_outcome_mode") end
     return lower_yield_outcome(state, env, term.yield)
-  elseif cls == Exec.Unreachable then
+  elseif cls == Exec.Unreachable or (term and term.kind == "Unreachable") then
     return CFG.Unreachable
   end
   return add_error(state, "unsupported_lua_exec_terminator:" .. tostring(term and term.kind))
@@ -1033,11 +1042,38 @@ local function lower_block(state, region_env, block)
   return CFG.Block(bid_from_exec(block.id), cfg_params, ops, term)
 end
 
+local function closure_handles_for_contract(contract)
+  local handles, errors = {}, {}
+  local function record_target(target)
+    if target and target.identity and target.identity.kind == "LuaClosureTargetIdentity" then
+      local key = target.identity.closure and target.identity.closure.name and target.identity.closure.name.text
+      local handle = target.identity.closure_handle
+      if not key then return end
+      if type(handle) ~= "number" or handle < 0 then
+        errors[#errors + 1] = "invalid_lua_closure_handle_contract:" .. tostring(key)
+      elseif handles[key] ~= nil and handles[key] ~= handle then
+        errors[#errors + 1] = "mismatched_lua_closure_handle_contract:" .. tostring(key)
+      else
+        handles[key] = handle
+      end
+    end
+  end
+  for _, o in ipairs((contract and contract.obligations) or {}) do
+    if pvm.classof(o) == Exec.RequiresResolvedCallTarget then record_target(o.target) end
+  end
+  for _, g in ipairs((contract and contract.guarantees) or {}) do
+    if pvm.classof(g) == Exec.ResolvesCallTarget then record_target(g.target) end
+  end
+  return handles, errors
+end
+
 local function lower_value(kernel, opts)
   opts = opts or {}
   local ok, errs = ExecValidate.kernel(kernel)
   if not ok then return nil, errs end
-  local state = { errors = {}, temp_id = 1, return_ty = nil, current_ops = nil, outcome_mode = opts.outcome == true, outcome_projection = opts.outcome_projection or opts.projection }
+  local closure_handles, closure_handle_errors = closure_handles_for_contract(kernel.contract)
+  if #closure_handle_errors > 0 then return nil, closure_handle_errors end
+  local state = { errors = {}, temp_id = 1, return_ty = nil, current_ops = nil, outcome_mode = opts.outcome == true, outcome_projection = opts.outcome_projection or opts.projection, exec_contract = kernel.contract, closure_handles = closure_handles }
   local region = kernel.body
   local region_ok, region_reason = RegionModel.is_executable_region(region, kernel.contract)
   if not region_ok then
@@ -1060,6 +1096,12 @@ local function lower_value(kernel, opts)
   return cfg_kernel, nil
 end
 
+local function lower_module_value(module, kernel_name, opts)
+  local inlined, inline_errors = StaticInline.inline_module_kernel(module, kernel_name)
+  if not inlined then return nil, inline_errors end
+  return lower_value(inlined, opts)
+end
+
 local function normalize_mode(opts)
   opts = opts or {}
   if opts.outcome then return "outcome", tostring(opts.outcome_projection or opts.projection or "kind") end
@@ -1073,25 +1115,54 @@ end
 
 local phase = pvm.phase("spongejit_lua_exec_to_moon_cfg_lower", function(kernel, mode, projection)
   -- Cache both successes and ordinary lowering failures. The public API unwraps
-  -- this small record into `cfg` or `nil, errors`; the PVM boundary must never
+  -- this ASDL result into `cfg` or `nil, errors`; the PVM boundary must never
   -- hard-error for unsupported LuaExec/MoonCFG slices.
   local cfg, errors = lower_value(kernel, opts_from_mode(mode, projection))
-  if cfg then return { cfg = cfg } end
-  return { errors = errors or { "lua_exec_to_moon_cfg_lower_failed" } }
+  if cfg then return Compile.MoonLowerOk(cfg) end
+  return Compile.MoonLowerReject(errors or { "lua_exec_to_moon_cfg_lower_failed" })
 end)
 
-function M.lower(kernel, opts)
+local module_phase = pvm.phase("spongejit_lua_exec_module_to_moon_cfg_lower", function(module, kernel_name, mode, projection)
+  local cfg, errors = lower_module_value(module, kernel_name ~= "" and kernel_name or nil, opts_from_mode(mode, projection))
+  if cfg then return Compile.MoonLowerOk(cfg) end
+  return Compile.MoonLowerReject(errors or { "lua_exec_module_to_moon_cfg_lower_failed" })
+end)
+
+local function unwrap_moon_result(result, fallback)
+  if pvm.classof(result) == Compile.MoonLowerOk then return result.kernel end
+  if pvm.classof(result) == Compile.MoonLowerReject then return nil, result.errors end
+  return nil, { fallback }
+end
+
+function M.lower_result(kernel, opts)
   local mode, projection = normalize_mode(opts)
-  local result = pvm.one(phase(kernel, mode, projection))
-  if result and result.cfg then return result.cfg end
-  return nil, result and result.errors or { "lua_exec_to_moon_cfg_lower_no_result" }
+  return pvm.one(phase(kernel, mode, projection))
+end
+
+function M.lower(kernel, opts)
+  return unwrap_moon_result(M.lower_result(kernel, opts), "lua_exec_to_moon_cfg_lower_no_result")
 end
 
 function M.lower_outcome(kernel, projection)
   return M.lower(kernel, { outcome = true, outcome_projection = projection or "kind" })
 end
 
+function M.lower_module_result(module, kernel_name, opts)
+  local mode, projection = normalize_mode(opts)
+  return pvm.one(module_phase(module, tostring(kernel_name or ""), mode, projection))
+end
+
+function M.lower_module(module, kernel_name, opts)
+  return unwrap_moon_result(M.lower_module_result(module, kernel_name, opts), "lua_exec_module_to_moon_cfg_lower_no_result")
+end
+
+function M.lower_module_outcome(module, kernel_name, projection)
+  return M.lower_module(module, kernel_name, { outcome = true, outcome_projection = projection or "kind" })
+end
+
 M.phase = phase
+M.module_phase = module_phase
 M.lower_uncached = lower_value
+M.lower_module_uncached = lower_module_value
 
 return M

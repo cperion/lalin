@@ -16,11 +16,6 @@ cargo build --release                   # produces target/release/libmoonlift.so
 compiler (195 Lua sources via `include_str!`) + vendored LuaJIT — zero runtime
 deps.
 
-### MOM binary (optional)
-
-The `mom` binary links LuaJIT, the host compiler, and the Rust backend. It
-uses the same production pipeline as the `moonlift` binary. Build with `make`.
-
 ## Setup
 
 ```sh
@@ -65,19 +60,6 @@ luajit tests/test_mlua_host_pipeline.lua        # .mlua hosted island bridge
 luajit tests/test_parse_typecheck.lua           # Parse + typecheck pipeline
 luajit tests/test_parse_kernels.lua             # Jump-first kernel suite
 luajit tests/test_lsp_integrated.lua            # Full LSP integration
-
-## MOM tests
-
-luajit tests/test_mom_groundwork.lua            # MOM compiler foundation
-luajit tests/test_mom_native_lexer.mlua         # Native lexer
-luajit tests/test_mom_native_core.lua           # Native parser core
-luajit tests/test_mom_native_ast.lua            # Native AST verification
-luajit tests/test_mom_check_correctness.mlua    # Schema correctness
-luajit tests/test_mom_vec.lua                   # Vectorization pipeline
-luajit tests/test_mom_wire.lua                  # Flatline v4 wire format
-luajit tests/test_mom_source_to_binary.lua      # MOM API source → MLBT → execute
-luajit tests/test_mom_cli.lua                   # Standalone mom run/object CLI
-```
 
 ## Benchmarks
 
@@ -127,6 +109,7 @@ and required verification boundaries.
 ## Language cheatsheet
 
 ### Types
+
 ```
 Scalars:  void  bool  i8 i16 i32 i64  u8 u16 u32 u64  f32 f64  index
 Pointers: ptr(T)
@@ -138,6 +121,7 @@ Closure:  closure(i32) -> i32          -- closure type (function + context)
 ```
 
 ### Functions
+
 ```moonlift
 func add(a: i32, b: i32) -> i32
     return a + b
@@ -170,6 +154,7 @@ end
 ```
 
 ### Regions — typed control fragments
+
 ```moonlift
 region scan(p: ptr(u8), n: i32, target: i32;
             hit: cont(pos: i32),
@@ -186,6 +171,7 @@ emit scan(p, n, 65; hit = found, miss = not_found)
 ```
 
 ### Expression fragments
+
 ```moonlift
 expr clamp(x: i32) -> i32
     select(x < 0, 0, x)
@@ -195,18 +181,22 @@ end
 ```
 
 ### Bindings
+
 ```moonlift
 let x: i32 = 42    -- immutable (SSA-like)
 var i: index = 0   -- mutable (stack-backed)
 ```
 
 ### Conversion
+
 ```moonlift
 as(i32, u8_val)    -- only conversion form: extend/truncate/bitcast/fp convert
 ```
 
 ### Splices — `@{lua_expr}` embeds Lua values into Moonlift source
+
 Evaluated at `.mlua` load time:
+
 - Type position: `let x: @{T} = 0`
 - Fragment position: `emit @{frag}(args; ok = done)`
 - Name position: `region @{name}(...)` (must be whole token)
@@ -214,12 +204,14 @@ Evaluated at `.mlua` load time:
 - Spread: `@{list...}` expands a Lua array into a syntactic list
 
 ### Extern imports
+
 ```moonlift
 extern write(fd: i32, buf: ptr(u8), count: index) -> index end
 extern host_add7(x: i32) -> i32 as "host_add7_impl" end
 ```
 
 ### Hosted JIT: compile and call from Lua
+
 ```lua
 local moon = require("moonlift")
 local add_val = moon.loadstring([[
@@ -234,6 +226,7 @@ compiled:free()
 ```
 
 ### Native: compile to standalone executable
+
 ```lua
 local moon = require("moonlift")
 -- MOM status/error path; production compilation uses moon.loadstring
@@ -245,17 +238,20 @@ end)
 ### Unified API — `require("moonlift")` module
 
 Hosted-Lua pipeline:
+
 - `moon.loadstring(src [, name [, opts]])` — compile and return chunk
 - `moon.loadfile(path [, opts])` — compile and return chunk from file
 - `moon.dofile(path [, opts, ...])` — compile, load, and call
 - `moon.eval(src, ...)` — shorthand: compile string, call immediately
 
 MOM binary/API pipeline:
+
 - `moon.native_loadstring(src [, name])` — compile source to native executable
 - `moon.native_loadfile(path)` — compile file to native executable
 - `moon.native_dofile(path [, opts])` — compile and run native executable
 
 Object emission (hosted pipeline):
+
 - `moon.emit_object(src [, path [, name]])` — emit .o bytes
 - `moon.emit_shared(src [, path [, name]])` — emit .so/.dylib bytes
 
@@ -266,6 +262,7 @@ Inside `.mlua` files, the `moon` table provides:
 `require("moonlift.host_mom")` exposes MOM status/error entry points.
 
 ## Design philosophy
+
 - **Co-author two typed structures**: data types (type forest) + control types
   (continuation signatures). Both are checked.
 - **Regions bridge the two**: runtime params are data types; continuations are
@@ -299,6 +296,7 @@ dispatch. The control graph is in the source text, not behind compiler
 passes or runtime dispatch tables.
 
 This means you can:
+
 - Map error paths from source alone: `rg '\b(err|bad|fail|closed)\b'`
 - Trace composition: `rg 'emit read_loop'` finds every user of that region
 - Extract state machines: `rg '^\s*block '` lists all states with their params
@@ -307,6 +305,7 @@ This means you can:
 Explicit programming makes plain-text tooling powerful again.
 
 ## Non-negotiable rules
+
 1. No Moonlift source generics — Lua is where genericity lives
 2. No angle-bracket type arguments — only `as(T, value)` for conversions
 3. Explicit ASDL meaning — no hiding semantics in strings or callbacks

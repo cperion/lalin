@@ -1,7 +1,9 @@
 -- lua_src_window_collect.lua -- opcode stream -> LuaSrc.Window.
 
 local B = require("lua_compile.builders")
+local pvm = require("moonlift.pvm")
 local Decode = require("lua_compile.lua_src_from_puc_decode")
+local Compile = B.T.LuaCompile
 
 local M = {}
 
@@ -26,11 +28,33 @@ local function with_following_extraarg(ev, next_ev)
   return copy
 end
 
-function M.collect(events)
-  events = events or {}
-  local ops = {}
-  for i, ev in ipairs(events) do ops[i] = Decode.decode(with_following_extraarg(ev, events[i + 1])) end
-  return B.window(ops)
+local function canonical_plain_with_extra(ev, next_ev)
+  return Decode.canonical_event(with_following_extraarg(ev, next_ev))
 end
 
+function M.event_batch(events)
+  if pvm.classof(events) == Compile.SourceEventBatch then return events end
+  events = events or {}
+  local out = {}
+  for i, ev in ipairs(events) do
+    if pvm.classof(ev) == Compile.CanonicalPucEvent or pvm.classof(ev) == Compile.DecodedSourceOp then
+      out[i] = ev
+    else
+      out[i] = canonical_plain_with_extra(ev, events[i + 1])
+    end
+  end
+  return Compile.SourceEventBatch(out)
+end
+
+local phase = pvm.phase("spongejit_lua_src_collect_window", function(batch)
+  local ops = {}
+  for i, ev in ipairs((batch and batch.events) or {}) do ops[i] = Decode.decode_event(ev) end
+  return B.window(ops)
+end)
+
+function M.collect(events)
+  return pvm.one(phase(M.event_batch(events or {})))
+end
+
+M.phase = phase
 return M

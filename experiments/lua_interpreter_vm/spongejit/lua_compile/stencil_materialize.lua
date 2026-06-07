@@ -397,7 +397,7 @@ local function apply_relocs(out, template, offsets, addresses, opts, errors, rec
   end
 end
 
-function M.materialize(template, code_blobs, opts)
+local function materialize_uncached(template, code_blobs, opts)
   opts = opts or {}
   local errors = {}
   local ok, verr = Validate.validate_template(template, opts.validate_opts or {})
@@ -423,10 +423,24 @@ function M.materialize(template, code_blobs, opts)
   return image, {}
 end
 
+local materialize_phase = pvm.phase("spongejit_stencil_materialize_template", function(template, code_blobs, opts)
+  local image, errors = materialize_uncached(template, code_blobs or {}, opts or {})
+  return { image = image, errors = errors }
+end, { args_cache = "last" })
+
+function M.materialize(template, code_blobs, opts)
+  local result = pvm.one(materialize_phase(template, code_blobs or {}, opts or {}))
+  if result and result.image then return result.image, result.errors or {} end
+  return nil, result and result.errors or { "stencil_materialize_no_result" }
+end
+
 function M.materialize_or_error(template, code_blobs, opts)
   local image, errors = M.materialize(template, code_blobs, opts)
   if not image then error(table.concat(errors, "\n"), 2) end
   return image
 end
+
+M.phase = materialize_phase
+M.materialize_uncached = materialize_uncached
 
 return M

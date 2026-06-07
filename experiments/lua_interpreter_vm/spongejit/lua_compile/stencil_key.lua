@@ -110,29 +110,53 @@ local function key_value(v, seen, field_name)
   return "[" .. table.concat(parts, ",") .. "]"
 end
 
-function M.semantic_key(node)
+local semantic_phase = pvm.phase("spongejit_stencil_semantic_key", function(node)
   assert_clean(node)
   return key_value(node, {})
-end
+end)
 
-function M.variant_key(variant)
+local variant_phase = pvm.phase("spongejit_stencil_variant_key", function(variant)
   assert_clean(variant)
   return "Stencil.VariantKey\n" .. key_value(variant, {})
-end
+end)
 
-function M.template_key(template)
+local template_phase = pvm.phase("spongejit_stencil_template_key", function(template)
   assert_clean(template)
   return "Stencil.Template\n" .. key_value(template, {})
-end
+end)
 
-function M.representative_key(semantic_node, contract_key, variant)
+local representative_phase = pvm.phase("spongejit_stencil_representative_key", function(semantic_node, contract_key, variant)
   return table.concat({
-    M.semantic_key(semantic_node),
+    pvm.one(semantic_phase(semantic_node)),
     "-- CompileContract --",
     tostring(contract_key or ""),
     "-- Stencil.VariantKey --",
-    M.variant_key(variant),
+    pvm.one(variant_phase(variant)),
   }, "\n")
+end, { args_cache = "last" })
+
+function M.semantic_key(node)
+  return pvm.one(semantic_phase(node))
 end
+
+function M.variant_key(variant)
+  return pvm.one(variant_phase(variant))
+end
+
+function M.template_key(template)
+  return pvm.one(template_phase(template))
+end
+
+function M.representative_key(semantic_node, contract_key, variant)
+  return pvm.one(representative_phase(semantic_node, tostring(contract_key or ""), variant))
+end
+
+M.semantic_phase = semantic_phase
+M.variant_phase = variant_phase
+M.template_phase = template_phase
+M.representative_phase = representative_phase
+M.semantic_key_uncached = function(node) assert_clean(node); return key_value(node, {}) end
+M.variant_key_uncached = function(variant) assert_clean(variant); return "Stencil.VariantKey\n" .. key_value(variant, {}) end
+M.template_key_uncached = function(template) assert_clean(template); return "Stencil.Template\n" .. key_value(template, {}) end
 
 return M

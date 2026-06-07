@@ -233,6 +233,24 @@ module LuaFact {
                                      LuaSrc.Pc pc,
                                      string target_key,
                                      LuaFact.Dependency* deps) unique
+                 | StaticClosureTargetPayload(LuaFact.Subject subject,
+                                              LuaSrc.Pc pc,
+                                              LuaRT.ClosureIdentity closure,
+                                              LuaRT.ResolvedCallTarget target,
+                                              LuaFact.Dependency* deps) unique
+                 | StaticCalleeRegionPayload(LuaFact.Subject subject,
+                                             LuaSrc.Pc pc,
+                                             LuaRT.ClosureIdentity closure,
+                                             LuaExec.StaticRegionBinding binding,
+                                             LuaExec.Region region,
+                                             LuaFact.Dependency* deps) unique
+                 | StaticClosureValuePayload(LuaFact.Subject subject,
+                                             LuaSrc.Pc pc,
+                                             LuaRT.ClosureIdentity closure,
+                                             LuaRT.ResolvedCallTarget target,
+                                             LuaExec.StaticRegionBinding binding,
+                                             LuaGC.GCEffect allocation,
+                                             LuaFact.Dependency* deps) unique
                  | BarrierPayload(LuaSrc.Pc pc,
                                   LuaFact.Dependency* deps) unique
 
@@ -1473,6 +1491,41 @@ module LuaExec {
                               LuaExec.ContBinding* continuations,
                               LuaExec.CallContinuationRegion call_continuation) unique
 
+    StaticCallProducts = (LuaRT.CallRef call,
+                          LuaRT.CallShape call_shape,
+                          LuaRT.ClosureIdentity closure,
+                          LuaRT.ResolvedCallTarget resolved_target,
+                          LuaRT.CallArgChannel arg_channel,
+                          LuaRT.CallResultChannel result_channel,
+                          LuaRT.ResultChannel result_route,
+                          LuaRT.ArityNormalization result_normalization,
+                          LuaRT.CallFrameLayout layout,
+                          LuaRT.CallFrameState frame_state,
+                          LuaExec.CallContinuationRegion call_continuation,
+                          LuaExec.StaticRegionInvocation invocation,
+                          LuaExec.StaticRegionBinding static_binding,
+                          LuaExec.Region static_region,
+                          LuaRT.FrameRef callee_frame,
+                          LuaRT.FrameRef caller_frame,
+                          number result_base,
+                          number result_count,
+                          number arg_count) unique
+
+    StaticCallProductResult = StaticCallProductsOk(LuaExec.StaticCallProducts products) unique
+                            | StaticCallProductsReject(string* errors) unique
+
+    StaticClosureProducts = (number pc,
+                             number slot,
+                             LuaSrc.KRef proto,
+                             LuaRT.ClosureIdentity closure,
+                             LuaRT.ResolvedCallTarget resolved_target,
+                             LuaExec.StaticRegionBinding static_binding,
+                             LuaGC.GCEffect allocation,
+                             number handle) unique
+
+    StaticClosureProductResult = StaticClosureProductsOk(LuaExec.StaticClosureProducts products) unique
+                               | StaticClosureProductsReject(string* errors) unique
+
     BlockId = (LuaExec.Name name) unique
     BlockRef = (LuaExec.BlockId id) unique
 
@@ -1664,6 +1717,7 @@ module LuaExec {
                | RequiresStaticRegionInvocation(LuaExec.StaticRegionInvocation invocation) unique
                | RequiresCallContinuationRegion(LuaExec.CallContinuationRegion region) unique
                | RequiresMetamethodLookupPath(LuaRT.MetamethodLookupPath path) unique
+               | RequiresClosureIdentity(LuaRT.ClosureIdentity identity) unique
                | RequiresUpvalueIdentity(LuaRT.UpvalueIdentity identity) unique
                | RequiresGCEffect(LuaGC.GCEffect effect) unique
                | RequiresFFICallShape(LuaFFI.FFICallShape call) unique
@@ -1687,6 +1741,7 @@ module LuaExec {
               | InvokesStaticRegion(LuaExec.StaticRegionInvocation invocation) unique
               | BindsCallContinuationRegion(LuaExec.CallContinuationRegion region) unique
               | ResolvesMetamethodLookupPath(LuaRT.MetamethodLookupPath path) unique
+              | UsesClosureIdentity(LuaRT.ClosureIdentity identity) unique
               | UsesUpvalueIdentity(LuaRT.UpvalueIdentity identity) unique
               | AppliesGCEffect(LuaGC.GCEffect effect) unique
               | UsesFFICallShape(LuaFFI.FFICallShape call) unique
@@ -2223,8 +2278,51 @@ module Stencil {
 }
 
 module LuaCompile {
+    SourceEvent = CanonicalPucEvent(string op,
+                                    number pc,
+                                    number a,
+                                    number b,
+                                    number c,
+                                    number bx,
+                                    number ax,
+                                    number vb,
+                                    number vc,
+                                    number nresults,
+                                    boolean k,
+                                    number extraarg,
+                                    boolean has_extraarg,
+                                    number sb,
+                                    boolean has_sb,
+                                    number sc,
+                                    boolean has_sc,
+                                    number sj,
+                                    boolean has_sj,
+                                    boolean isfloat,
+                                    boolean has_isfloat) unique
+                | DecodedSourceOp(LuaSrc.Op op) unique
+
+    SourceEventBatch = (LuaCompile.SourceEvent* events) unique
+
+    EvidenceRecord = EvidenceFact(LuaFact.Fact fact) unique
+                   | EvidencePayload(LuaFact.PayloadLease payload) unique
+
+    EvidenceInput = (LuaCompile.EvidenceRecord* records,
+                     LuaRegion.RegionSet regions) unique
+
     Unit = (LuaSrc.Window source,
             LuaFact.Evidence evidence) unique
+
+    ExecProduct = ExecKernel(LuaExec.Kernel kernel) unique
+                | ExecModule(LuaExec.Module module) unique
+
+    ExecLowerResult = ExecLowerOk(LuaCompile.ExecProduct product) unique
+                    | ExecLowerReject(string* errors) unique
+
+    MoonLowerResult = MoonLowerOk(MoonCFG.Kernel kernel) unique
+                    | MoonLowerReject(string* errors) unique
+
+    StaticInlineResult = StaticInlineOk(LuaExec.Kernel kernel) unique
+                       | StaticInlineReject(string* errors) unique
 
     DiagnosticStage = LuaSrcDecode
                     | LuaSrcValidate

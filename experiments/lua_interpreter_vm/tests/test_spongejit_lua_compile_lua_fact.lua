@@ -84,12 +84,34 @@ end
 local dep_e = assert_ok(Runtime.observe({ { slot=1, predicate="is_i64", deps=dep_names } }))
 for _, kind in ipairs(alts(T.LuaFact.Dependency)) do assert(has_dep(dep_e.observed[1].deps, kind), "runtime import missed dependency " .. kind) end
 
--- Payload lease alternatives, including call-target payloads.
+-- Payload lease alternatives, including call-target/static source-CALL payloads.
+local RT, Exec, GC = T.LuaRT, T.LuaExec, T.LuaGC
+local function rn(s) return RT.Name(s) end
+local function en(s) return Exec.Name(s) end
+local caller = RT.FrameRef(rn("payload_caller"))
+local call_ref = RT.CallRef(rn("payload_call"))
+local closure_ref = RT.ClosureRef(rn("payload_closure"))
+local closure_identity = RT.ClosureIdentity(closure_ref, RT.ProtoRef(B.k(1)), {}, 1)
+local resolved_target = RT.ResolvedCallTarget(call_ref, RT.DirectLuaClosureTarget(RT.StackValue(caller, RT.Slot(0)), closure_ref), RT.LuaClosureTargetIdentity(closure_ref, B.k(1), 9, {}), RT.CallableLuaClosure)
+local region_id = Exec.RegionId(en("payload_callee"))
+local descriptor = Exec.RegionDescriptor(region_id, Exec.ReturnRegion, Exec.ReturnFamily, RT.Pc(20), RT.Pc(21))
+local binding = Exec.StaticRegionBinding(Exec.RegionRef(region_id), descriptor, Exec.StaticCalleeBodyRegion)
+local entry = Exec.BlockId(en("payload_entry"))
+local region = Exec.Region(en("payload_callee"), Exec.ReturnRegion, {}, {}, entry, { Exec.Block(entry, {}, {}, Exec.Continue(Exec.ContRef(en("ret")), {})) })
+local gc_lists = GC.GCLists(GC.NoGCRef, GC.NoGCRef, GC.NoGCRef, GC.NoGCRef, GC.NoGCRef, GC.NoGCRef, GC.NoGCRef)
+local allocator = GC.Allocator(GC.Name("ctx"), GC.Name("alloc"), GC.Name("realloc"), GC.Name("free"))
+local gc_state = GC.GCState(GC.Pause, GC.White0, gc_lists, 0, 0, GC.GCLimits(200, 100, 1024), 1, 2, allocator)
+local alloc_req = GC.AllocRequest(gc_state, GC.ClosureKind, 64, 8)
+local alloc_header = GC.GCHeader(GC.GCObjectRef(GC.Name("payload_closure_gc")), GC.NoGCRef, GC.ClosureKind, GC.White0, 0, 1)
+local allocation = GC.GCAllocationEffect(alloc_req, GC.Allocated(alloc_header))
 local payload_obs = {
   { slot=2, payload="shape", pc=10, shape_key="shape2", deps={"shape_epoch"} },
   { slot=2, payload="field", key=9, pc=10, shape_key="shape2", deps={"table_epoch"} },
   { slot=2, payload="array", pc=11, deps={"table_epoch"} },
   { callsite=12, payload="call_target", pc=12, target_key="call:foo", deps={"call_target_epoch"} },
+  { slot=0, payload="static_closure_target", pc=14, closure=closure_identity, target=resolved_target, deps={"call_target_epoch"} },
+  { slot=0, payload="static_callee_region", pc=14, closure=closure_identity, binding=binding, region=region, deps={"call_target_epoch"} },
+  { slot=0, payload="static_closure_value", pc=15, closure=closure_identity, target=resolved_target, binding=binding, allocation=allocation, deps={"call_target_epoch", "gc_barrier_protocol"} },
   { payload="barrier", pc=13, deps={"gc_barrier_protocol"} },
 }
 local payload_e = assert_ok(Runtime.observe(payload_obs))

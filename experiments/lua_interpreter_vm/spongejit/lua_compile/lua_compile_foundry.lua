@@ -3,6 +3,11 @@
 -- Pipeline: opcode windows + evidence -> LuaCompile.Unit -> LuaExec -> MoonCFG.
 -- Representatives are keyed by MoonCFG + CompileContract + Stencil.VariantKey.
 -- This does not emit fake binary stencils or adapt descriptor-runtime artifact APIs.
+--
+-- Foundry/corpus iteration and file artifact writing are procedural external
+-- orchestration.  The compiler-product transitions inside compile_window use
+-- named PVM phases: evidence import, unit construction, public compile,
+-- MoonCFG emit/key, contract key, and stencil variant/key generation.
 
 local C = require("lua_compile")
 local FoundryEvidence = require("lua_compile.lua_fact_from_foundry_bundle")
@@ -13,6 +18,7 @@ local StencilFoundry = require("lua_compile.stencil_foundry")
 local MoonEmit = require("lua_compile.moon_cfg_emit")
 local Diagnostics = require("lua_compile.diagnostics")
 local LuaExecLower = require("lua_compile.lua_src_to_lua_exec_lower")
+local T = C.schema.get()
 
 local M = {}
 
@@ -325,13 +331,7 @@ function M.compile_window(ops, bundle, opts)
   local cfg_key = CFGKey.key(kernel)
   local variant = StencilFoundry.variant_for_kernel(kernel, contract, opts)
   local stencil_variant_key = StencilKey.variant_key(variant)
-  local rep_key = table.concat({
-    cfg_key,
-    "-- CompileContract --",
-    ckey,
-    "-- Stencil.VariantKey --",
-    stencil_variant_key,
-  }, "\n")
+  local rep_key = StencilFoundry.representative_key(kernel, ckey, variant)
   local ok, source_or_err = pcall(MoonEmit.emit, kernel, { name = opts.kernel_name or "lua_compile_foundry_kernel" })
   if not ok then
     return { ok = false, reason = "moon_cfg_emit_failed", error = tostring(source_or_err), source_ops = copy_array(ops) }
@@ -495,6 +495,12 @@ local function representative_index(result)
   return out
 end
 
+local function alt_count(sum)
+  local n = 0
+  for _ in pairs((sum and sum.members) or {}) do n = n + 1 end
+  return n
+end
+
 local function coverage_manifest(result)
   local ok_windows, rejected = {}, {}
   for _, a in ipairs(result.alias_map or {}) do
@@ -506,7 +512,13 @@ local function coverage_manifest(result)
     schema = "sponjit.lua_compile_foundry.coverage.v1",
     lua_src_decode = { real_ops = 85, decoded = 85 },
     lua_exec_coverage = exec_cov,
-    fact_coverage = { subjects = 8, predicates = 24, dependencies = 8, payloads = 5 },
+    fact_coverage = {
+      subjects = alt_count(T.LuaFact.Subject),
+      predicates = alt_count(T.LuaFact.Predicate),
+      dependencies = alt_count(T.LuaFact.Dependency),
+      payloads = alt_count(T.LuaFact.PayloadLease),
+      note = "source CALL success requires typed StaticClosureTargetPayload and StaticCalleeRegionPayload evidence; source CLOSURE success requires StaticClosureValuePayload; generic CALL/CLOSURE windows remain fail-closed",
+    },
     stats = result.stats,
     distinct_successful_windows = ok_count,
     rejection_reasons = rejected,

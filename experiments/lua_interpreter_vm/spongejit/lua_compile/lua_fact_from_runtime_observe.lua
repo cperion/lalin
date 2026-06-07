@@ -8,6 +8,7 @@
 local B = require("lua_compile.builders")
 local T = B.T
 local Fact = T.LuaFact
+local Compile = T.LuaCompile
 local pvm = require("moonlift.pvm")
 local Closure = require("lua_compile.lua_fact_closure")
 
@@ -61,6 +62,9 @@ local PAYLOAD = {
   field = "field", field_payload = "field",
   array = "array", array_payload = "array",
   call_target = "call_target", calltarget = "call_target", call_target_payload = "call_target",
+  static_closure_target = "static_closure_target", static_closure_target_payload = "static_closure_target",
+  static_callee_region = "static_callee_region", static_callee_region_payload = "static_callee_region",
+  static_closure_value = "static_closure_value", static_closure_value_payload = "static_closure_value",
   barrier = "barrier", barrier_payload = "barrier",
 }
 
@@ -183,25 +187,65 @@ function M.payload(obs)
     return Fact.ArrayPayload(s, as_pc(obs.pc), M.deps(obs.deps))
   elseif kind == "call_target" then
     return Fact.CallTargetPayload(s, as_pc(obs.pc), tostring(obs.target_key or obs.value_key or obs.value or ""), M.deps(obs.deps))
+  elseif kind == "static_closure_target" then
+    return Fact.StaticClosureTargetPayload(s, as_pc(obs.pc), obs.closure, obs.target, M.deps(obs.deps))
+  elseif kind == "static_callee_region" then
+    return Fact.StaticCalleeRegionPayload(s, as_pc(obs.pc), obs.closure, obs.binding, obs.region, M.deps(obs.deps))
+  elseif kind == "static_closure_value" then
+    return Fact.StaticClosureValuePayload(s, as_pc(obs.pc), obs.closure, obs.target, obs.binding, obs.allocation or obs.gc_effect or obs.effect, M.deps(obs.deps))
   elseif kind == "barrier" then
     return Fact.BarrierPayload(as_pc(obs.pc), M.deps(obs.deps))
   end
   return nil
 end
 
-function M.observe(observations, regions)
-  local facts, payloads = {}, {}
-  for _, obs in ipairs(observations or {}) do
-    local p = M.payload(obs)
-    if p then payloads[#payloads + 1] = p end
-    local pred = M.predicate(obs.predicate or (not p and obs.kind) or obs.fact)
-    if pred then
-      facts[#facts + 1] = Fact.Fact(M.subject(obs), pred, M.value_key(obs, pred), M.deps(obs.deps))
-    end
+function M.records_from_observation(obs)
+  local out = {}
+  if T.LuaFact.Fact == pvm.classof(obs) then
+    out[#out + 1] = Compile.EvidenceFact(obs)
+    return out
   end
-  return Closure.close(Fact.Evidence(facts, payloads, regions or B.region_set({})))
+  if T.LuaFact.PayloadLease.members[pvm.classof(obs)] then
+    out[#out + 1] = Compile.EvidencePayload(obs)
+    return out
+  end
+  local p = M.payload(obs)
+  if p then out[#out + 1] = Compile.EvidencePayload(p) end
+  local pred = M.predicate(obs and (obs.predicate or (not p and obs.kind) or obs.fact))
+  if pred then
+    out[#out + 1] = Compile.EvidenceFact(Fact.Fact(M.subject(obs), pred, M.value_key(obs, pred), M.deps(obs.deps)))
+  end
+  return out
 end
 
+function M.evidence_input(observations, regions)
+  if pvm.classof(observations) == Compile.EvidenceInput then return observations end
+  local records = {}
+  for _, obs in ipairs(observations or {}) do
+    for _, r in ipairs(M.records_from_observation(obs)) do records[#records + 1] = r end
+  end
+  return Compile.EvidenceInput(records, regions or B.region_set({}))
+end
+
+local phase = pvm.phase("spongejit_lua_fact_import_evidence", function(input)
+  local facts, payloads = {}, {}
+  for _, record in ipairs((input and input.records) or {}) do
+    local cls = pvm.classof(record)
+    if cls == Compile.EvidenceFact then facts[#facts + 1] = record.fact
+    elseif cls == Compile.EvidencePayload then payloads[#payloads + 1] = record.payload end
+  end
+  return Closure.close(Fact.Evidence(facts, payloads, (input and input.regions) or B.region_set({})))
+end)
+
+function M.import(input)
+  return pvm.one(phase(input))
+end
+
+function M.observe(observations, regions)
+  return M.import(M.evidence_input(observations or {}, regions))
+end
+
+M.phase = phase
 M.PREDICATE_ALIASES = PRED
 M.DEPENDENCY_ALIASES = DEP
 M.PAYLOAD_ALIASES = PAYLOAD

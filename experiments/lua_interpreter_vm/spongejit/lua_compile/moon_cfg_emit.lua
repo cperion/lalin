@@ -1576,11 +1576,18 @@ local function render_kernel(kernel, opts)
   return table.concat(lines, "\n")
 end
 
-function M.emit(kernel, opts)
-  opts = opts or {}
+local phase = pvm.phase("spongejit_moon_cfg_emit", function(kernel, name)
   local ok, errors = Validate.validate(kernel)
   if not ok then error("MoonCFG validation failed before emission: " .. table.concat(errors, "; "), 2) end
-  return render_kernel(kernel, opts)
+  return render_kernel(kernel, { name = name ~= "" and name or nil })
+end, { args_cache = "last" })
+
+function M.emit(kernel, opts)
+  opts = opts or {}
+  return pvm.one(phase(kernel, tostring(opts.name or "")))
 end
+
+M.phase = phase
+M.emit_uncached = render_kernel
 
 return M

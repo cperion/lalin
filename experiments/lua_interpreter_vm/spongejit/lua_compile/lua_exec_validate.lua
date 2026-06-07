@@ -10,7 +10,7 @@ local RT, Exec = T.LuaRT, T.LuaExec
 local LuaRTValidate = require("lua_compile.lua_rt_validate")
 local ValueModel = require("lua_compile.lua_rt_value_model")
 local RegionModel = require("lua_compile.lua_exec_region_model")
-local StaticRegionModel = nil
+local StaticRegionModel = require("lua_compile.lua_exec_static_region_model")
 
 local M = {}
 
@@ -62,38 +62,15 @@ local function validate_region_descriptor(descriptor, errors, label)
 end
 
 function M.static_region_binding(binding)
-  local errors = {}
-  if cls(binding) ~= Exec.StaticRegionBinding then add(errors, "expected LuaExec.StaticRegionBinding"); return false, errors end
-  if cls(binding.region) ~= Exec.RegionRef then add(errors, "region must be LuaExec.RegionRef") end
-  validate_region_descriptor(binding.descriptor, errors, "descriptor")
-  if not is_member(Exec.StaticRegionRole, binding.role) then add(errors, "role must be LuaExec.StaticRegionRole") end
-  return #errors == 0, errors
+  return StaticRegionModel.validate_static_region_binding(binding)
 end
 
 function M.call_continuation_region(region)
-  local errors = {}
-  if cls(region) ~= Exec.CallContinuationRegion then add(errors, "expected LuaExec.CallContinuationRegion"); return false, errors end
-  if cls(region.call) ~= RT.CallRef then add(errors, "call must be LuaRT.CallRef") end
-  if cls(region.callee_region) ~= Exec.RegionRef then add(errors, "callee_region must be LuaExec.RegionRef") end
-  for _, field in ipairs({ "return_cont", "error_cont", "yield_cont" }) do
-    if cls(region[field]) ~= Exec.ContRef then add(errors, field .. " must be LuaExec.ContRef") end
-  end
-  return #errors == 0, errors
+  return StaticRegionModel.validate_call_continuation_region(region)
 end
 
 function M.static_region_invocation(invocation)
-  local errors = {}
-  if cls(invocation) ~= Exec.StaticRegionInvocation then add(errors, "expected LuaExec.StaticRegionInvocation"); return false, errors end
-  if cls(invocation.id) ~= Exec.Name then add(errors, "id must be LuaExec.Name") end
-  local ok_binding, binding_errors = M.static_region_binding(invocation.target)
-  if not ok_binding then for _, e in ipairs(binding_errors) do add(errors, "target " .. e) end end
-  validate_args(invocation.args, errors, "static invocation")
-  for i, binding in ipairs(invocation.continuations or {}) do
-    if cls(binding) ~= Exec.ContBinding then add(errors, "continuations[" .. i .. "] must be LuaExec.ContBinding") end
-  end
-  local ok_cont, cont_errors = M.call_continuation_region(invocation.call_continuation)
-  if not ok_cont then for _, e in ipairs(cont_errors) do add(errors, "call_continuation " .. e) end end
-  return #errors == 0, errors
+  return StaticRegionModel.validate_static_region_invocation(invocation)
 end
 
 local function validate_expr(expr, errors, label)
@@ -195,7 +172,7 @@ local function validate_terminator(term, blocks_by_id, continuations_by_id, erro
     if cls(term.error) ~= RT.ErrorState then add(errors, label .. " error terminator must carry LuaRT.ErrorState") end
   elseif c == Exec.Yield then
     if cls(term.yield) ~= RT.YieldState then add(errors, label .. " yield terminator must carry LuaRT.YieldState") end
-  elseif c == Exec.Unreachable then
+  elseif c == Exec.Unreachable or (term and term.kind == "Unreachable") then
     -- accepted structural terminator
   else
     add(errors, label .. " unsupported LuaExec terminator class")
@@ -343,6 +320,9 @@ local function validate_exec_obligation(obligation, errors, label)
   elseif c == Exec.RequiresMetamethodLookupPath then
     local ok, errs = LuaRTValidate.metamethod_lookup_path(obligation.path)
     if not ok then for _, e in ipairs(errs) do add(errors, label .. ".path " .. e) end end
+  elseif c == Exec.RequiresClosureIdentity then
+    local ok, errs = LuaRTValidate.closure_identity(obligation.identity)
+    if not ok then for _, e in ipairs(errs) do add(errors, label .. ".identity " .. e) end end
   elseif c == Exec.RequiresUpvalueIdentity then
     local ok, errs = LuaRTValidate.upvalue_identity(obligation.identity)
     if not ok then for _, e in ipairs(errs) do add(errors, label .. ".identity " .. e) end end
@@ -410,6 +390,9 @@ local function validate_exec_guarantee(guarantee, errors, label)
   elseif c == Exec.ResolvesMetamethodLookupPath then
     local ok, errs = LuaRTValidate.metamethod_lookup_path(guarantee.path)
     if not ok then for _, e in ipairs(errs) do add(errors, label .. ".path " .. e) end end
+  elseif c == Exec.UsesClosureIdentity then
+    local ok, errs = LuaRTValidate.closure_identity(guarantee.identity)
+    if not ok then for _, e in ipairs(errs) do add(errors, label .. ".identity " .. e) end end
   elseif c == Exec.UsesUpvalueIdentity then
     local ok, errs = LuaRTValidate.upvalue_identity(guarantee.identity)
     if not ok then for _, e in ipairs(errs) do add(errors, label .. ".identity " .. e) end end
@@ -467,18 +450,46 @@ function M.module(module)
     add(errors, "expected LuaExec.Module")
     return false, errors
   end
-  local ids = {}
+  local index, index_errors = StaticRegionModel.index_module(module)
+  if not index then
+    for _, e in ipairs(index_errors or {}) do add(errors, e) end
+  end
   for i, region in ipairs(module.regions or {}) do
-    local key = region and region.id and region.id.text
-    if key and ids[key] then add(errors, "duplicate module region/kernel id: " .. key) elseif key then ids[key] = true end
     local ok, errs = M.region(region)
     if not ok then for _, e in ipairs(errs) do add(errors, "module region " .. i .. " " .. e) end end
   end
   for i, kernel in ipairs(module.kernels or {}) do
-    local key = kernel and kernel.id and kernel.id.text
-    if key and ids[key] then add(errors, "duplicate module region/kernel id: " .. key) elseif key then ids[key] = true end
     local ok, errs = M.kernel(kernel)
     if not ok then for _, e in ipairs(errs) do add(errors, "module kernel " .. i .. " " .. e) end end
+    if index and cls(kernel) == Exec.Kernel then
+      local call_ok, call_reason = StaticRegionModel.validate_call_contract_for_static_invocation(kernel.contract)
+      if not call_ok then add(errors, "module kernel " .. i .. " unsupported static call contract: " .. tostring(call_reason)) end
+      for _, invocation in ipairs(StaticRegionModel.contract_static_invocations(kernel.contract)) do
+        local inv_ok, inv_errors = StaticRegionModel.validate_invocation_against_module(index, invocation)
+        if not inv_ok then for _, e in ipairs(inv_errors) do add(errors, "module kernel " .. i .. " static invocation " .. e) end end
+      end
+      for _, block in ipairs((kernel.body and kernel.body.blocks) or {}) do
+        for op_i, op in ipairs(block.ops or {}) do
+          if cls(op) == Exec.EmitRegion then
+            local shape_ok, shape_errors = StaticRegionModel.validate_emit_op_inline_shape(block, op_i)
+            if not shape_ok then for _, e in ipairs(shape_errors) do add(errors, "module kernel " .. i .. " EmitRegion " .. e) end end
+            local invocation, find_errors = StaticRegionModel.find_invocation_for_emit(kernel.contract, op)
+            if not invocation then
+              for _, e in ipairs(find_errors or {}) do add(errors, "module kernel " .. i .. " EmitRegion " .. e) end
+            else
+              local inv_ok, inv_errors = StaticRegionModel.validate_invocation_against_module(index, invocation)
+              if not inv_ok then for _, e in ipairs(inv_errors) do add(errors, "module kernel " .. i .. " EmitRegion " .. e) end end
+              local target_name = StaticRegionModel.region_ref_key(invocation.target.region)
+              local target = target_name and index.regions[target_name]
+              if target then
+                local target_ok, target_errors = StaticRegionModel.validate_target_region_for_inline(target, invocation, kernel.contract)
+                if not target_ok then for _, e in ipairs(target_errors) do add(errors, "module kernel " .. i .. " EmitRegion target " .. e) end end
+              end
+            end
+          end
+        end
+      end
+    end
   end
   return #errors == 0, errors
 end

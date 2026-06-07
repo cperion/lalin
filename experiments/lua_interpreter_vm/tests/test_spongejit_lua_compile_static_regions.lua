@@ -126,7 +126,7 @@ local function assert_source_reject(events, needle)
   assert(msg:match(needle), "expected reject diagnostic containing " .. needle .. ", got: " .. msg)
 end
 
-assert_source_reject({ {op="CALL", pc=1, a=1, b=1, c=1}, {op="RETURN0", pc=2} }, "unsupported_source_semantics:CallRegion")
+assert_source_reject({ {op="CALL", pc=1, a=1, b=1, c=1}, {op="RETURN0", pc=2} }, "source_call_missing_static_evidence")
 assert_source_reject({ {op="TAILCALL", pc=1, a=1, b=1, c=0, k=false}, {op="RETURN0", pc=2} }, "unsupported_source_semantics:TailCallRegion")
 assert_source_reject({ {op="SETLIST", pc=1, a=1, b=2, c=3, k=false}, {op="RETURN0", pc=2} }, "setlist_table_write_semantics_future")
 assert_source_reject({ {op="TFORPREP", pc=1, a=1, b=1, c=1}, {op="RETURN0", pc=2} }, "unsupported_instruction:TFORPREP")

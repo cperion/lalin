@@ -355,12 +355,12 @@ local function assert_unsupported_reject(op, needle)
   local msg = r.diagnostic and r.diagnostic.message or ""
   assert(msg:match(needle), op .. " expected " .. needle .. ", got " .. msg)
 end
-assert_unsupported_reject("CALL", "unsupported_source_semantics:CallRegion")
+assert_unsupported_reject("CALL", "source_call_missing_static_evidence")
 assert_unsupported_reject("TAILCALL", "unsupported_source_semantics:TailCallRegion")
 assert_unsupported_reject("CLOSE", "unsupported_source_semantics:CloseRegion")
 assert_unsupported_reject("TBC", "unsupported_source_semantics:CloseRegion")
 assert_unsupported_reject("NEWTABLE", "unsupported_source_semantics:GCAllocRegion")
-assert_unsupported_reject("CLOSURE", "unsupported_source_semantics:GCAllocRegion")
+assert_unsupported_reject("CLOSURE", "source_closure_missing_static_evidence")
 
 local descriptor = Exec.RegionDescriptor(
   Exec.RegionId(Exec.Name("typed_region")),
@@ -399,6 +399,11 @@ local identity = RT.LuaClosureTargetIdentity(RT.ClosureRef(RT.Name("closure0")),
 local layout = RT.CallFrameLayout(RT.CallFrameRef(RT.Name("frame_layout0")), caller, callee, RT.Slot(0), RT.Slot(1), RT.FixedCount(1), RT.Slot(2), RT.FixedCount(1), RT.Count(4))
 key_ok, key_errors = StencilKey.check_no_forbidden_strings({ Stencil.FromCallTargetIdentity(identity), Stencil.FromCallFrameLayout(layout) })
 assert(key_ok, table.concat(key_errors or {}, "\n"))
+local static_binding = Exec.StaticRegionBinding(Exec.RegionRef(descriptor.id), descriptor, Exec.StaticCalleeBodyRegion)
+local static_cont = Exec.CallContinuationRegion(RT.CallRef(RT.Name("call_static_key")), Exec.RegionRef(descriptor.id), Exec.ContRef(Exec.Name("ret")), Exec.ContRef(Exec.Name("err")), Exec.ContRef(Exec.Name("yield")))
+local static_inv = Exec.StaticRegionInvocation(Exec.Name("invoke_static_key"), static_binding, {}, {}, static_cont)
+key_ok, key_errors = StencilKey.check_no_forbidden_strings({ Stencil.FromStaticRegion(static_binding), Stencil.FromStaticRegionInvocation(static_inv) })
+assert(key_ok, table.concat(key_errors or {}, "\n"))
 key_ok, key_errors = StencilKey.check_no_forbidden_strings({ "call" })
 assert(not key_ok and table.concat(key_errors or {}, "\n"):match("forbidden stencil key string: call"), "lowercase call string must remain forbidden")
 
@@ -412,6 +417,18 @@ local region = CFG.Region(rid, {}, {}, bid, { block })
 local bad_param = CFG.Kernel(kid, CFG.InlineSpan, { CFG.Param(CFG.Name("out_tag"), CFG.TypeRef("ptr(i32)"), CFG.ValueParam) }, { CFG.TypeRef("i64") }, region, empty_contract)
 local ok, errs = Validate.validate(bad_param)
 assert(not ok and table.concat(errs, "\n"):match("forbidden_param:out_tag"), "validator must reject out_tag params")
+
+local emit_block = CFG.Block(bid, {}, { CFG.EmitRegion(CFG.RegionRef(CFG.RegionId(CFG.Name("callee_region"))), {}, {}) }, CFG.Return({ CFG.ConstValue(CFG.I64Const(0)) }))
+local emit_region = CFG.Region(rid, {}, {}, bid, { emit_block })
+local bad_emit = CFG.Kernel(kid, CFG.InlineSpan, {}, { CFG.TypeRef("i64") }, emit_region, empty_contract)
+ok, errs = Validate.validate(bad_emit)
+assert(not ok and table.concat(errs, "\n"):match("unsupported_op"), "MoonCFG.EmitRegion must remain unsupported")
+
+local continue_block = CFG.Block(bid, {}, {}, CFG.Continue(CFG.ContRef(CFG.ContId(CFG.Name("ret"))), {}))
+local continue_region = CFG.Region(rid, {}, {}, bid, { continue_block })
+local bad_continue = CFG.Kernel(kid, CFG.InlineSpan, {}, {}, continue_region, empty_contract)
+ok, errs = Validate.validate(bad_continue)
+assert(not ok and table.concat(errs, "\n"):match("unsupported_terminator:Continue"), "MoonCFG.Continue must remain unsupported")
 
 local bad_proto = CFG.Kernel(kid, CFG.InlineSpan, {}, { CFG.TypeRef("i64") }, region, empty_contract)
 rawset(bad_proto, "contract", { kind = "CallProtocolExit" })

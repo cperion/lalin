@@ -29,5 +29,13 @@ local function key(v, seen, field_name)
   return "[" .. table.concat(parts, ",") .. "]"
 end
 
-function M.key(kernel) return "MoonCFG\n" .. key(kernel) end
+local phase = pvm.phase("spongejit_moon_cfg_key", function(kernel)
+  return "MoonCFG\n" .. key(kernel)
+end)
+
+function M.key(kernel) return pvm.one(phase(kernel)) end
+
+M.phase = phase
+M.key_uncached = function(kernel) return "MoonCFG\n" .. key(kernel) end
+
 return M

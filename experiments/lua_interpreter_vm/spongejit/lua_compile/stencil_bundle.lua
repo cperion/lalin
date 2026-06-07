@@ -149,7 +149,7 @@ local function materialize_variant_keys(module, code_blobs, variant_keys, opts)
   return bundle, { manifest = manifest, index = index }
 end
 
-function M.materialize_all(module, code_blobs, opts)
+local function materialize_all_uncached(module, code_blobs, opts)
   opts = opts or {}
   local index, ierr = Bank.build_index(module, opts.bank_opts or opts)
   if not index then return nil, ierr end
@@ -158,7 +158,7 @@ function M.materialize_all(module, code_blobs, opts)
   return materialize_variant_keys(module, code_blobs, keys, opts)
 end
 
-function M.materialize_selected_variants(module, code_blobs, selected_variants, opts)
+local function materialize_selected_variants_uncached(module, code_blobs, selected_variants, opts)
   opts = opts or {}
   local errors = {}
   local keys = normalize_selected_variants(selected_variants or {}, errors)
@@ -167,8 +167,34 @@ function M.materialize_selected_variants(module, code_blobs, selected_variants, 
   return materialize_variant_keys(module, code_blobs, keys, opts)
 end
 
+local materialize_all_phase = pvm.phase("spongejit_stencil_bundle_materialize_all", function(module, code_blobs, opts)
+  local bundle, meta_or_errors = materialize_all_uncached(module, code_blobs or {}, opts or {})
+  return { bundle = bundle, meta = bundle and meta_or_errors or nil, errors = bundle and nil or meta_or_errors }
+end, { args_cache = "last" })
+
+local materialize_selected_phase = pvm.phase("spongejit_stencil_bundle_materialize_selected", function(module, code_blobs, selected_variants, opts)
+  local bundle, meta_or_errors = materialize_selected_variants_uncached(module, code_blobs or {}, selected_variants or {}, opts or {})
+  return { bundle = bundle, meta = bundle and meta_or_errors or nil, errors = bundle and nil or meta_or_errors }
+end, { args_cache = "last" })
+
+function M.materialize_all(module, code_blobs, opts)
+  local r = pvm.one(materialize_all_phase(module, code_blobs or {}, opts or {}))
+  if r and r.bundle then return r.bundle, r.meta end
+  return nil, r and r.errors or { "stencil_bundle_materialize_all_no_result" }
+end
+
+function M.materialize_selected_variants(module, code_blobs, selected_variants, opts)
+  local r = pvm.one(materialize_selected_phase(module, code_blobs or {}, selected_variants or {}, opts or {}))
+  if r and r.bundle then return r.bundle, r.meta end
+  return nil, r and r.errors or { "stencil_bundle_materialize_selected_no_result" }
+end
+
 M.materialize_selected = M.materialize_selected_variants
 M.materialize_bundle = M.materialize_all
+M.materialize_all_phase = materialize_all_phase
+M.materialize_selected_phase = materialize_selected_phase
+M.materialize_all_uncached = materialize_all_uncached
+M.materialize_selected_variants_uncached = materialize_selected_variants_uncached
 
 function M.materialize_all_or_error(module, code_blobs, opts)
   local bundle, meta_or_errors = M.materialize_all(module, code_blobs, opts)

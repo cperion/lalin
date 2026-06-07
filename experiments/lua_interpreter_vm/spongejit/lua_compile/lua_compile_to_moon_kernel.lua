@@ -22,20 +22,22 @@ local function contains_class(v, target, seen)
   return false
 end
 
-local function needs_outcome_mode(exec_kernel)
-  return contains_class(exec_kernel, T.LuaExec.Error)
-      or contains_class(exec_kernel, T.LuaExec.Yield)
-      or contains_class(exec_kernel, T.LuaExec.TableRawSet)
-      or contains_class(exec_kernel, T.LuaExec.TableRawGetExpr)
-      or contains_class(exec_kernel, T.LuaExec.LenNoMetaExpr)
-      or contains_class(exec_kernel, T.LuaExec.StringConcat2Expr)
-      or contains_class(exec_kernel, T.LuaExec.NormalizeResultsExpr)
-      or contains_class(exec_kernel, T.LuaExec.ResultChannelExpr)
-      or contains_class(exec_kernel, T.LuaRT.OpenFromTop)
-      or contains_class(exec_kernel, T.LuaRT.OpenFromVarargs)
-      or contains_class(exec_kernel, T.LuaRT.OpenFromVarargsAtBase)
-      or contains_class(exec_kernel, T.LuaExec.ArithmeticNoMetaExpr)
-      or contains_class(exec_kernel, T.LuaExec.ArithmeticNumericChoice)
+local function needs_outcome_mode(exec_product)
+  return contains_class(exec_product, T.LuaExec.Error)
+      or contains_class(exec_product, T.LuaExec.Yield)
+      or contains_class(exec_product, T.LuaExec.TableRawSet)
+      or contains_class(exec_product, T.LuaExec.TableRawGetExpr)
+      or contains_class(exec_product, T.LuaExec.LenNoMetaExpr)
+      or contains_class(exec_product, T.LuaExec.StringConcat2Expr)
+      or contains_class(exec_product, T.LuaExec.NormalizeResultsExpr)
+      or contains_class(exec_product, T.LuaExec.ResultChannelExpr)
+      or contains_class(exec_product, T.LuaExec.ReceiveCallResults)
+      or contains_class(exec_product, T.LuaExec.EmitRegion)
+      or contains_class(exec_product, T.LuaRT.OpenFromTop)
+      or contains_class(exec_product, T.LuaRT.OpenFromVarargs)
+      or contains_class(exec_product, T.LuaRT.OpenFromVarargsAtBase)
+      or contains_class(exec_product, T.LuaExec.ArithmeticNoMetaExpr)
+      or contains_class(exec_product, T.LuaExec.ArithmeticNumericChoice)
 end
 
 local function contains_error(errors, needle)
@@ -45,25 +47,36 @@ local function contains_error(errors, needle)
   return false
 end
 
-local function lower_exec_to_cfg(exec_kernel)
-  local opts = needs_outcome_mode(exec_kernel) and { outcome = true, outcome_projection = "kind" } or nil
-  local cfg_kernel, cfg_errors = LuaExecToMoon.lower(exec_kernel, opts)
+local function lower_exec_to_cfg(exec_product)
+  local opts = needs_outcome_mode(exec_product) and { outcome = true, outcome_projection = "kind" } or nil
+  local is_module = pvm.classof(exec_product) == T.LuaExec.Module
+  local cfg_kernel, cfg_errors
+  if is_module then
+    cfg_kernel, cfg_errors = LuaExecToMoon.lower_module(exec_product, "lua_exec_core_kernel", opts)
+  else
+    cfg_kernel, cfg_errors = LuaExecToMoon.lower(exec_product, opts)
+  end
   if not cfg_kernel and not opts and contains_error(cfg_errors, "unsupported_lua_value_return_without_projection") then
-    cfg_kernel, cfg_errors = LuaExecToMoon.lower(exec_kernel, { outcome = true, outcome_projection = "kind" })
+    if is_module then
+      cfg_kernel, cfg_errors = LuaExecToMoon.lower_module(exec_product, "lua_exec_core_kernel", { outcome = true, outcome_projection = "kind" })
+    else
+      cfg_kernel, cfg_errors = LuaExecToMoon.lower(exec_product, { outcome = true, outcome_projection = "kind" })
+    end
   end
   return cfg_kernel, cfg_errors
 end
 
 local function compile_value(unit)
   -- Accepted MoonKernel compilation has one executable route:
-  -- LuaSrc.Window -> LuaExec.Kernel -> MoonCFG.Kernel. Unsupported source
-  -- windows return diagnostics; there are no silent success fallbacks.
-  local exec_kernel, exec_errors = LuaExecLower.lower(unit.source, unit.evidence)
-  if not exec_kernel then
+  -- LuaSrc.Window -> LuaExec.Kernel/LuaExec.Module -> MoonCFG.Kernel.
+  -- LuaExec.Module is typed static region composition inlined before MoonCFG;
+  -- unsupported source windows return diagnostics with no fallback.
+  local exec_product, exec_errors = LuaExecLower.lower(unit.source, unit.evidence)
+  if not exec_product then
     return Errors.compile_reject_from_errors("lua_exec_lower", unit.source, exec_errors, "unsupported_semantic_case")
   end
 
-  local cfg_kernel, cfg_errors = lower_exec_to_cfg(exec_kernel)
+  local cfg_kernel, cfg_errors = lower_exec_to_cfg(exec_product)
   if not cfg_kernel then
     return Errors.compile_reject_from_errors("lua_exec_to_moon_cfg_lower", unit.source, cfg_errors, "internal_invariant_failure")
   end

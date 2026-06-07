@@ -38,18 +38,14 @@ end
 
 function M.from_bundle(bundle, regions)
   local fact_records, payload_records = normalize_bundle(bundle)
-  local facts, payloads = {}, {}
+  local records = {}
   for _, f in ipairs(fact_records) do
-    local pred = RuntimeImport.predicate(f.predicate or f.kind or f.fact)
-    if pred then
-      facts[#facts + 1] = Fact.Fact(RuntimeImport.subject(f), pred, RuntimeImport.value_key(f, pred), RuntimeImport.deps(f.deps))
-    end
+    for _, r in ipairs(RuntimeImport.records_from_observation(f)) do records[#records + 1] = r end
   end
   for _, p in ipairs(payload_records) do
-    local lease = RuntimeImport.payload(p)
-    if lease then payloads[#payloads + 1] = lease end
+    for _, r in ipairs(RuntimeImport.records_from_observation(p)) do records[#records + 1] = r end
   end
-  return Closure.close(Fact.Evidence(facts, payloads, regions or B.region_set({})))
+  return RuntimeImport.import(B.T.LuaCompile.EvidenceInput(records, regions or B.region_set({})))
 end
 
 return M

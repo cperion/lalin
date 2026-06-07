@@ -40,7 +40,17 @@ local function key_value(v, seen)
   return "[" .. table.concat(arr, ",") .. "]"
 end
 
+local phase = pvm.phase("spongejit_compile_contract_key", function(contract)
+  assert(pvm.classof(contract) == T.CompileContract.Contract, "expected CompileContract.Contract")
+  return "CompileContract\n" .. key_value(contract)
+end)
+
 function M.key(contract)
+  return pvm.one(phase(contract))
+end
+
+M.phase = phase
+M.key_uncached = function(contract)
   assert(pvm.classof(contract) == T.CompileContract.Contract, "expected CompileContract.Contract")
   return "CompileContract\n" .. key_value(contract)
 end

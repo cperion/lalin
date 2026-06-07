@@ -8,8 +8,10 @@ local pvm = require("moonlift.pvm")
 local B = require("lua_compile.builders")
 local RegionModel = require("lua_compile.lua_exec_region_model")
 local ArityModel = require("lua_compile.lua_rt_arity_model")
+local StaticCall = require("lua_compile.lua_src_call_static_model")
+local StaticClosure = require("lua_compile.lua_src_closure_static_model")
 local T = B.T
-local Src, Fact, RT, Exec = T.LuaSrc, T.LuaFact, T.LuaRT, T.LuaExec
+local Src, Fact, RT, Exec, Compile = T.LuaSrc, T.LuaFact, T.LuaRT, T.LuaExec, T.LuaCompile
 
 local M = {}
 
@@ -27,9 +29,9 @@ local ARITHMETIC_OP = {
   ADDI = { op = RT.ArithAdd, lhs = "slot", rhs = "imm", companion = "MMBINI" },
   ADDK = { op = RT.ArithAdd, lhs = "slot", rhs = "const", companion = "MMBINK" },
 }
--- Complete call products do not expand accepted LuaSrc opcodes. Source
--- CALL/TAILCALL remain rejected until callee invocation, close/yield/tailcall
--- replacement, and target contracts are implemented end-to-end.
+-- Source CALL is accepted only by a strict typed static-callee evidence path;
+-- it is handled explicitly below so generic CALL windows without evidence still
+-- reject fail-closed.  TAILCALL remains unsupported.
 local SUPPORTED_INSTR = { LOADNIL = true, LOADFALSE = true, LOADTRUE = true, LOADI = true, LOADK = true, MOVE = true, NOT = true, VARARG = true, GETVARG = true, GETTABLE = true, LEN = true, CONCAT = true, MMBIN = true, MMBINI = true, MMBINK = true }
 
 local function ename(s) return Exec.Name(tostring(s)) end
@@ -133,8 +135,10 @@ local function const_i64_fact(evidence, k)
   return tonumber(f.value_key or "")
 end
 
-local function scan_shape(window)
+local function scan_shape(window, evidence)
   local ops = (window and window.ops) or {}
+  local static_call_payloads = {}
+  local static_closure_payloads = {}
   if #ops == 0 then return nil, { "lua_exec:no_ops" } end
   local by_pc, has_return = {}, false
   for i, op in ipairs(ops) do
@@ -192,15 +196,28 @@ local function scan_shape(window)
     elseif op.kind == "SETLIST" then
       return nil, { "lua_exec:setlist_table_write_semantics_future:" .. tostring(op.pc.id) }
     elseif op.kind == "CALL" then
-      -- Complete call products are structural here; LuaSrc CALL still has no
-      -- callee invocation, close/yield, or source target contract path.
-      return nil, { "lua_exec:unsupported_source_semantics:CallRegion:" .. tostring(op.pc.id) }
+      local fall = ops[i + 1]
+      if not fall then return nil, { "lua_exec:source_call_without_following_continuation:" .. tostring(op.pc.id) } end
+      if (op.nargs and op.nargs.value or 0) == 0 then return nil, { "lua_exec:source_call_dynamic_or_open_arg_count:" .. tostring(op.pc.id) } end
+      if (op.nresults and op.nresults.value or 0) == 0 then return nil, { "lua_exec:source_call_dynamic_or_open_result_count:" .. tostring(op.pc.id) } end
+      local payloads, payload_errors = StaticCall.find_static_call_payloads(evidence, op)
+      if not payloads then return nil, payload_errors end
+      local ok, call_errors = StaticCall.validate_static_call_slice(op, payloads.target, payloads.region)
+      if not ok then return nil, call_errors end
+      static_call_payloads[op.pc.id] = payloads
+      leaders[pc_of(fall)] = true
     elseif op.kind == "TAILCALL" then
       return nil, { "lua_exec:unsupported_source_semantics:TailCallRegion:" .. tostring(op.pc.id) }
     elseif op.kind == "CLOSE" or op.kind == "TBC" then
       return nil, { "lua_exec:unsupported_source_semantics:CloseRegion:" .. tostring(op.pc.id) }
-    elseif op.kind == "NEWTABLE" or op.kind == "CLOSURE" then
+    elseif op.kind == "NEWTABLE" then
       return nil, { "lua_exec:unsupported_source_semantics:GCAllocRegion:" .. tostring(op.pc.id) }
+    elseif op.kind == "CLOSURE" then
+      local payload, payload_errors = StaticClosure.find_static_closure_payload(evidence, op)
+      if not payload then return nil, payload_errors end
+      local ok, closure_errors = StaticClosure.validate_static_closure_slice(op, payload)
+      if not ok then return nil, closure_errors end
+      static_closure_payloads[op.pc.id] = payload
     elseif TERMINAL_RETURN[op.kind] or TERMINAL_EFFECT[op.kind] then
       if ops[i + 1] then leaders[pc_of(ops[i + 1])] = true end
     elseif not SUPPORTED_INSTR[op.kind] then
@@ -248,6 +265,10 @@ local function scan_shape(window)
         local fall = ops[i + 1]
         term = { kind = "concat", op = op, ok_target = fall and pc_of(fall), error_target = "concat_error_" .. tostring(op.pc.id) }
         i = i + 1; break
+      elseif op.kind == "CALL" then
+        local fall = ops[i + 1]
+        term = { kind = "call", op = op, ok_target = fall and pc_of(fall), payloads = static_call_payloads[op.pc.id] }
+        i = i + 1; break
       elseif TERMINAL_RETURN[op.kind] then
         term = { kind = "return", op = op }; i = i + 1; break
       elseif TERMINAL_EFFECT[op.kind] then
@@ -283,7 +304,7 @@ local function scan_shape(window)
       blocks[#blocks + 1] = { pc = term.error_target, instrs = {}, term = { kind = "table_key_nil_error", op = term.op } }
     end
   end
-  return { ops = ops, by_pc = by_pc, leaders = leaders, blocks = blocks }, nil
+  return { ops = ops, by_pc = by_pc, leaders = leaders, blocks = blocks, static_call_payloads = static_call_payloads, static_closure_payloads = static_closure_payloads, call_result_defs = {} }, nil
 end
 
 local function slot_reads_and_defs(block)
@@ -296,7 +317,7 @@ local function slot_reads_and_defs(block)
     elseif op.kind == "GETTABLE" then read_slot(op.table); read_slot(op.key); def_slot(op.a)
     elseif op.kind == "LEN" then read_slot(op.b); def_slot(op.a)
     elseif op.kind == "CONCAT" then read_slot(op.first); read_slot(op.last); def_slot(op.a)
-    elseif op.kind == "LOADI" or op.kind == "LOADK" or op.kind == "LOADTRUE" or op.kind == "LOADFALSE" then def_slot(op.a)
+    elseif op.kind == "LOADI" or op.kind == "LOADK" or op.kind == "LOADTRUE" or op.kind == "LOADFALSE" or op.kind == "CLOSURE" then def_slot(op.a)
     elseif op.kind == "LOADNIL" then
       local n = math.max(1, op.count and op.count.value or 1)
       for i = 0, n - 1 do defs[(op.a.id or 0) + i] = true end
@@ -352,6 +373,12 @@ local function slot_reads_and_defs(block)
     read_slot(term.op.b)
   elseif term.kind == "concat" or term.kind == "concat_error" then
     read_slot(term.op.first); read_slot(term.op.last)
+  elseif term.kind == "call" then
+    local op = term.op
+    local base = op.base and op.base.id or 0
+    read_slot(op.base)
+    local nargs = op.nargs and op.nargs.value or 0
+    for i = 1, math.max(0, nargs - 1) do read_slot(B.slot(base + i)) end
   elseif term.kind == "errnnil" or term.kind == "error" then
     read_slot(term.op.a)
   end
@@ -373,6 +400,12 @@ local function analyze_block_io(shape)
     elseif term.kind == "gettable" then edge_targets[term.ok_target] = true; edge_targets[term.error_target] = true
     elseif term.kind == "len" then edge_targets[term.ok_target] = true; edge_targets[term.error_target] = true
     elseif term.kind == "concat" then edge_targets[term.ok_target] = true; edge_targets[term.error_target] = true
+    elseif term.kind == "call" then
+      edge_targets[term.ok_target] = true
+      shape.call_result_defs[term.ok_target] = shape.call_result_defs[term.ok_target] or {}
+      local base = term.op.base and term.op.base.id or 0
+      local nresults = term.op.nresults and term.op.nresults.value or 0
+      for i = 0, math.max(0, nresults - 2) do shape.call_result_defs[term.ok_target][base + i] = true end
     elseif term.kind == "settable" then edge_targets[term.ok_target] = true; edge_targets[term.error_target] = true
     elseif term.kind == "settable_ok_check" then edge_targets[term.write_target] = true; edge_targets[term.error_target] = true end
   end
@@ -380,13 +413,17 @@ local function analyze_block_io(shape)
   for pc in pairs(edge_targets) do
     if not by_pc[pc] then return nil, { "lua_exec:unresolved_edge_target:" .. tostring(pc) } end
     params_by_pc[pc] = {}
-    for sid in pairs(by_pc[pc].use_before_def or {}) do params_by_pc[pc][sid] = true end
+    for sid in pairs(by_pc[pc].use_before_def or {}) do
+      if not (shape.call_result_defs and shape.call_result_defs[pc] and shape.call_result_defs[pc][sid]) then
+        params_by_pc[pc][sid] = true
+      end
+    end
   end
   return params_by_pc, nil
 end
 
-local function new_builder(evidence, params_by_pc)
-  return { evidence = evidence, params_by_pc = params_by_pc or {}, forced_slot_ty = {}, kernel_params = {}, kernel_param_seen = {}, errors = {}, temp_id = 1, region_descriptors = {}, arity_normalizations = {} }
+local function new_builder(evidence, params_by_pc, shape)
+  return { evidence = evidence, params_by_pc = params_by_pc or {}, shape = shape, forced_slot_ty = {}, kernel_params = {}, kernel_param_seen = {}, errors = {}, temp_id = 1, region_descriptors = {}, arity_normalizations = {}, static_regions = {}, static_region_seen = {}, module_required = false, pre_block_ops = {}, pre_block_result_slots = {}, call_contract_obligations = {}, call_contract_guarantees = {}, static_invocations = {} }
 end
 local function slot_ty(builder, sid)
   local s = B.slot(sid)
@@ -446,6 +483,10 @@ end
 local function require_stack_params(builder)
   require_named_param(builder, "frame0_stack", "ptr_lua_value")
   require_named_param(builder, "frame0_top_ptr", "ptr_i64")
+end
+local function require_frame_stack_param(builder, frame)
+  local fname = frame and frame.name and frame.name.text or "frame0"
+  require_named_param(builder, tostring(fname) .. "_stack", "ptr_lua_value")
 end
 local function require_vararg_params(builder)
   require_named_param(builder, "frame0_varargs", "ptr_lua_value")
@@ -531,6 +572,27 @@ local function lower_instruction(builder, env, ops, op)
       ops[#ops + 1] = Exec.AssignValue(slot_ref(dsid), Exec.ConstTValue(RT.NilValue(RT.OrdinaryNil)))
       env[dsid] = "nil"
     end
+  elseif op.kind == "CLOSURE" then
+    local payload = builder.shape and builder.shape.static_closure_payloads and builder.shape.static_closure_payloads[op.pc.id]
+    if not payload then
+      local payload_errors
+      payload, payload_errors = StaticClosure.find_static_closure_payload(builder.evidence, op)
+      if not payload then for _, e in ipairs(payload_errors or {}) do add_error(builder.errors, e) end; return nil end
+    end
+    local products, closure_errors = StaticClosure.products(op, builder.evidence)
+    if not products then for _, e in ipairs(closure_errors or {}) do add_error(builder.errors, e) end; return nil end
+    ops[#ops + 1] = Exec.AssignValue(slot_ref(sid), Exec.ConstTValue(RT.LuaClosureValue(products.closure.closure)))
+    env[sid] = "lua_value"
+    env.__closure_payloads = env.__closure_payloads or {}
+    env.__closure_payloads[sid] = payload
+    builder.call_contract_obligations[#builder.call_contract_obligations + 1] = Exec.RequiresClosureIdentity(products.closure)
+    builder.call_contract_obligations[#builder.call_contract_obligations + 1] = Exec.RequiresResolvedCallTarget(products.resolved_target)
+    builder.call_contract_obligations[#builder.call_contract_obligations + 1] = Exec.RequiresStaticRegion(products.static_binding)
+    builder.call_contract_obligations[#builder.call_contract_obligations + 1] = Exec.RequiresGCEffect(products.allocation)
+    builder.call_contract_guarantees[#builder.call_contract_guarantees + 1] = Exec.UsesClosureIdentity(products.closure)
+    builder.call_contract_guarantees[#builder.call_contract_guarantees + 1] = Exec.ResolvesCallTarget(products.resolved_target)
+    builder.call_contract_guarantees[#builder.call_contract_guarantees + 1] = Exec.ProvidesStaticRegion(products.static_binding)
+    builder.call_contract_guarantees[#builder.call_contract_guarantees + 1] = Exec.AppliesGCEffect(products.allocation)
   elseif op.kind == "MOVE" then
     if not bind_slot(builder, ops, env, op.b.id) then return nil end
     ops[#ops + 1] = Exec.AssignValue(slot_ref(sid), Exec.RuntimeValue(slot_ref(op.b.id)))
@@ -693,6 +755,51 @@ local function jump_args_for(builder, target_pc, env, overrides)
 end
 local function copy_env(env) local out = {}; for k, v in pairs(env) do out[k] = v end; return out end
 
+local function add_static_region(builder, region)
+  local id = region and region.id and region.id.text
+  if not id then return add_error(builder.errors, "lua_exec:static_call_region_without_id") end
+  if not builder.static_region_seen[id] then
+    builder.static_region_seen[id] = true
+    builder.static_regions[#builder.static_regions + 1] = region
+  end
+end
+
+local function add_call_contract(builder, products)
+  local obligations = builder.call_contract_obligations
+  local guarantees = builder.call_contract_guarantees
+  obligations[#obligations + 1] = Exec.RequiresClosureIdentity(products.closure)
+  obligations[#obligations + 1] = Exec.RequiresResolvedCallTarget(products.resolved_target)
+  obligations[#obligations + 1] = Exec.RequiresCallFrameLayout(products.layout)
+  obligations[#obligations + 1] = Exec.RequiresCallArgChannel(products.arg_channel)
+  obligations[#obligations + 1] = Exec.RequiresCallResultChannel(products.result_channel)
+  obligations[#obligations + 1] = Exec.RequiresResultRoute(products.result_route)
+  obligations[#obligations + 1] = Exec.RequiresStaticRegion(products.static_binding)
+  obligations[#obligations + 1] = Exec.RequiresStaticRegionInvocation(products.invocation)
+  obligations[#obligations + 1] = Exec.RequiresCallContinuationRegion(products.call_continuation)
+  for _, up in ipairs((products.closure and products.closure.upvalues) or {}) do
+    obligations[#obligations + 1] = Exec.RequiresUpvalueIdentity(up)
+  end
+  guarantees[#guarantees + 1] = Exec.UsesClosureIdentity(products.closure)
+  guarantees[#guarantees + 1] = Exec.ResolvesCallTarget(products.resolved_target)
+  guarantees[#guarantees + 1] = Exec.PreparesCallFrame(products.frame_state)
+  guarantees[#guarantees + 1] = Exec.ProducesCallResults(products.result_channel)
+  guarantees[#guarantees + 1] = Exec.ProducesResultRoute(products.result_route)
+  guarantees[#guarantees + 1] = Exec.ProvidesStaticRegion(products.static_binding)
+  guarantees[#guarantees + 1] = Exec.InvokesStaticRegion(products.invocation)
+  guarantees[#guarantees + 1] = Exec.BindsCallContinuationRegion(products.call_continuation)
+end
+
+local function install_call_receive(builder, target_pc, products)
+  builder.pre_block_ops[target_pc] = builder.pre_block_ops[target_pc] or {}
+  builder.pre_block_ops[target_pc][#builder.pre_block_ops[target_pc] + 1] = Exec.ReceiveCallResults(products.frame_state)
+  builder.pre_block_result_slots[target_pc] = builder.pre_block_result_slots[target_pc] or {}
+  for i = 0, math.max(0, products.result_count - 1) do
+    builder.pre_block_result_slots[target_pc][products.result_base + i] = true
+    builder.forced_slot_ty[target_pc] = builder.forced_slot_ty[target_pc] or {}
+    builder.forced_slot_ty[target_pc][products.result_base + i] = "lua_value"
+  end
+end
+
 local function return_seq_for(builder, env, ops, op)
   if op.kind == "RETURN0" then
     return empty_return_seq(builder)
@@ -732,6 +839,8 @@ end
 local function lower_block(builder, block)
   local ops = {}
   local env = init_env_for_block(builder, block, ops)
+  for _, op in ipairs(builder.pre_block_ops[block.pc] or {}) do ops[#ops + 1] = op end
+  for sid in pairs(builder.pre_block_result_slots[block.pc] or {}) do env[sid] = "lua_value" end
   for _, op in ipairs(block.instrs or {}) do if not lower_instruction(builder, env, ops, op) then return nil end end
   local term
   if block.term.kind == "jump" or block.term.kind == "fallthrough" then
@@ -860,6 +969,29 @@ local function lower_block(builder, block)
     local op = block.term.op
     if not bind_slot(builder, ops, env, op.first.id) then return nil end
     term = Exec.Error(RT.ErrorState(RT.RuntimeError, slot_ref(op.first.id), RT.Pc(op.pc.id or 0), top_ref()))
+  elseif block.term.kind == "call" then
+    local op = block.term.op
+    require_stack_params(builder)
+    local return_args = jump_args_for(builder, block.term.ok_target, env)
+    if not return_args then return nil end
+    local produced_closure_payload = env.__closure_payloads and env.__closure_payloads[op.base and op.base.id or 0]
+    if produced_closure_payload then
+      local match_ok, match_reason = StaticClosure.closure_payload_matches_call(produced_closure_payload, block.term.payloads)
+      if not match_ok then return add_error(builder.errors, "lua_exec:source_call_closure_payload_mismatch:" .. tostring(match_reason)) end
+    end
+    local products, call_errors = StaticCall.products(op, builder.evidence, block_ref_for_pc(block.term.ok_target), return_args)
+    if not products then
+      for _, e in ipairs(call_errors or {}) do add_error(builder.errors, e) end
+      return nil
+    end
+    require_frame_stack_param(builder, products.callee_frame)
+    add_static_region(builder, products.static_region)
+    builder.module_required = true
+    add_call_contract(builder, products)
+    install_call_receive(builder, block.term.ok_target, products)
+    ops[#ops + 1] = Exec.PrepareCallFrame(products.frame_state)
+    ops[#ops + 1] = Exec.EmitRegion(products.static_region.id, {}, products.invocation.continuations)
+    term = Exec.Unreachable
   elseif block.term.kind == "error" then
     local op = block.term.op
     if not bind_slot(builder, ops, env, op.a.id) then return nil end
@@ -931,13 +1063,15 @@ local function contract_for_builder(descriptor, builder)
     guarantees[#guarantees + 1] = Exec.NormalizesArity(normalization)
     guarantees[#guarantees + 1] = Exec.ProducesResultChannel(normalization.result.channel)
   end
+  for _, o in ipairs(builder.call_contract_obligations or {}) do obligations[#obligations + 1] = o end
+  for _, g in ipairs(builder.call_contract_guarantees or {}) do guarantees[#guarantees + 1] = g end
   return Exec.Contract(obligations, guarantees)
 end
 
 local function lower_value(window, evidence)
-  local shape, errors = scan_shape(window); if not shape then return nil, errors end
+  local shape, errors = scan_shape(window, evidence); if not shape then return nil, errors end
   local params_by_pc, io_errors = analyze_block_io(shape); if not params_by_pc then return nil, io_errors end
-  local builder = new_builder(evidence, params_by_pc)
+  local builder = new_builder(evidence, params_by_pc, shape)
   local blocks = {}
   for _, block in ipairs(shape.blocks or {}) do
     local b = lower_block(builder, block)
@@ -950,23 +1084,47 @@ local function lower_value(window, evidence)
   local descriptor = RegionModel.descriptor_for_shape("lua_exec_core_body", shape)
   builder.region_descriptors[#builder.region_descriptors + 1] = descriptor
   local region = Exec.Region(ename("lua_exec_core_body"), rkind, builder.kernel_params, {}, entry, blocks)
-  return Exec.Kernel(ename("lua_exec_core_kernel"), make_frame(shape.blocks[1].pc), region, contract_for_builder(descriptor, builder)), nil
+  local kernel = Exec.Kernel(ename("lua_exec_core_kernel"), make_frame(shape.blocks[1].pc), region, contract_for_builder(descriptor, builder))
+  if builder.module_required then
+    return Exec.Module(builder.static_regions, { kernel }), nil
+  end
+  return kernel, nil
+end
+
+local function exec_product(product)
+  local cls = pvm.classof(product)
+  if cls == Exec.Kernel then return Compile.ExecKernel(product) end
+  if cls == Exec.Module then return Compile.ExecModule(product) end
+  error("unexpected LuaExec lower product: " .. tostring(cls), 2)
+end
+
+local function unwrap_exec_product(product)
+  local cls = pvm.classof(product)
+  if cls == Compile.ExecKernel then return product.kernel end
+  if cls == Compile.ExecModule then return product.module end
+  return nil, { "lua_exec_lower:invalid_exec_product" }
 end
 
 local phase = pvm.phase("spongejit_lua_src_to_lua_exec_lower", function(window, evidence)
-  local kernel, errors = lower_value(window, evidence)
-  if not kernel then error("LuaExec lower unsupported inside cached phase: " .. table.concat(errors or {}, "; ")) end
-  return kernel
+  local product, errors = lower_value(window, evidence)
+  if not product then return Compile.ExecLowerReject(errors or { "lua_exec_lower_failed" }) end
+  return Compile.ExecLowerOk(exec_product(product))
 end)
 
+function M.lower_result(window, evidence)
+  return pvm.one(phase(window, evidence or B.empty_evidence()))
+end
+
 function M.lower(window, evidence)
-  local kernel, errors = lower_value(window, evidence)
-  if not kernel then return nil, errors end
-  return pvm.one(phase(window, evidence))
+  local result = M.lower_result(window, evidence)
+  if pvm.classof(result) == Compile.ExecLowerReject then return nil, result.errors end
+  if pvm.classof(result) == Compile.ExecLowerOk then return unwrap_exec_product(result.product) end
+  return nil, { "lua_exec_lower:invalid_result" }
 end
 
 function M.is_candidate(window, evidence)
-  return lower_value(window, evidence or B.empty_evidence()) ~= nil
+  local product = M.lower(window, evidence or B.empty_evidence())
+  return product ~= nil
 end
 
 function M.coverage_summary()

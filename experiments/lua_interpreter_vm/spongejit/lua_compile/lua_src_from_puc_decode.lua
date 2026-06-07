@@ -1,7 +1,9 @@
 -- lua_src_from_puc_decode.lua -- PUC instruction table -> LuaSrc.Op.
 
 local B = require("lua_compile.builders")
+local pvm = require("moonlift.pvm")
 local Src = B.LuaSrc
+local Compile = B.T.LuaCompile
 
 local M = {}
 
@@ -127,12 +129,88 @@ DECODER.ERRNNIL = function(e) return Src.ERRNNIL(pc(e), slot(e.a), B.ax(bx_value
 DECODER.VARARGPREP = function(e) return Src.VARARGPREP(pc(e), count(e.a or e.b or 0)) end
 DECODER.EXTRAARG = function(e) return Src.EXTRAARG(pc(e), B.ax(e.ax or e.bx or 0)) end
 
-function M.decode(ev)
+local function event_to_plain(event)
+  if pvm.classof(event) == Compile.DecodedSourceOp then return nil, event.op end
+  if pvm.classof(event) == Compile.CanonicalPucEvent then
+    return {
+      op = event.op,
+      pc = event.pc,
+      a = event.a,
+      b = event.b,
+      c = event.c,
+      bx = event.bx,
+      ax = event.ax,
+      vb = event.vb,
+      vc = event.vc,
+      nresults = event.nresults,
+      k = event.k,
+      extraarg = event.has_extraarg and event.extraarg or nil,
+      sb = event.has_sb and event.sb or nil,
+      sc = event.has_sc and event.sc or nil,
+      sj = event.has_sj and event.sj or nil,
+      isfloat = event.has_isfloat and event.isfloat or nil,
+      rhs_is_float = event.has_isfloat and event.isfloat or nil,
+    }, nil
+  end
+  return event or {}, nil
+end
+
+local function decode_plain(ev)
   local op = ev and (ev.op or ev.name or ev.opcode_name)
   local f = DECODER[op]
   if f then return f(ev) end
   return Src.UnsupportedOpcode(pc(ev or {}), tostring(op or "<unknown>"))
 end
 
+local phase = pvm.phase("spongejit_lua_src_decode_event", function(event)
+  local plain, decoded = event_to_plain(event)
+  if decoded then return decoded end
+  return decode_plain(plain)
+end)
+
+local function num(v)
+  if type(v) == "table" then v = v.id or v.value or v.pc end
+  return tonumber(v) or 0
+end
+
+function M.canonical_event(ev)
+  if pvm.classof(ev) == Compile.CanonicalPucEvent or pvm.classof(ev) == Compile.DecodedSourceOp then return ev end
+  local op = ev and (ev.op or ev.name or ev.opcode_name) or "<unknown>"
+  local extra = explicit_extraarg(ev)
+  return Compile.CanonicalPucEvent(
+    tostring(op),
+    num(ev and (ev.pc or ev.source)),
+    num(ev and ev.a),
+    num(ev and ev.b),
+    num(ev and ev.c),
+    num(ev and (ev.bx or ev.sbx or ev.offset or ev.name_index or ev.nameidx)),
+    num(ev and (ev.ax or ev.extraax)),
+    num(ev and ev.vb),
+    num(ev and ev.vc),
+    num(ev and ev.nresults),
+    kflag(ev),
+    num(extra),
+    extra ~= nil,
+    num(ev and ev.sb),
+    ev and ev.sb ~= nil or false,
+    num(ev and ev.sc),
+    ev and ev.sc ~= nil or false,
+    num(ev and (ev.sj or ev.sbx or ev.offset)),
+    ev and (ev.sj ~= nil or ev.sbx ~= nil or ev.offset ~= nil) or false,
+    bool_c(ev and (ev.isfloat ~= nil and ev.isfloat or ev.rhs_is_float)),
+    ev and (ev.isfloat ~= nil or ev.rhs_is_float ~= nil) or false
+  )
+end
+
+function M.decode_event(event)
+  return pvm.one(phase(M.canonical_event(event)))
+end
+
+function M.decode(ev)
+  return M.decode_event(ev)
+end
+
+M.decode_uncached = decode_plain
+M.phase = phase
 M.DECODER = DECODER
 return M

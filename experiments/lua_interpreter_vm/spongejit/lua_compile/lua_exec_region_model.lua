@@ -114,6 +114,14 @@ function M.is_executable_region(region, contract)
   return false, "unsupported_semantic_region:" .. tostring(k)
 end
 
+function M.is_executable_static_target_region(region, contract)
+  local ok, reason = M.is_executable_region(region, contract)
+  if not ok then return false, reason end
+  local k = kind_name(region.kind)
+  if k == "CallRegion" or k == "TailCallRegion" then return false, "static_target_must_not_be_call_region" end
+  return true
+end
+
 function M.opcode_family_for_src_kind(kind)
   local k = kind_name(kind)
   local family

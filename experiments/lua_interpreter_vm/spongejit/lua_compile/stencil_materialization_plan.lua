@@ -39,7 +39,7 @@ function M.empty_placement()
   return S.Placement({}, {}, {})
 end
 
-function M.variant_for_kernel(kernel, contract, opts)
+local function variant_for_kernel_uncached(kernel, contract, opts)
   opts = opts or {}
   assert(kernel and kernel.kind, "variant_for_kernel requires MoonCFG.Kernel")
   local c = contract or kernel.contract
@@ -52,6 +52,14 @@ function M.variant_for_kernel(kernel, contract, opts)
     opts.target_abi or M.default_target_abi(opts),
     opts.features or M.default_feature_set(opts)
   )
+end
+
+local variant_phase = pvm.phase("spongejit_stencil_variant_for_kernel", function(kernel, contract, opts)
+  return variant_for_kernel_uncached(kernel, contract, opts or {})
+end, { args_cache = "last" })
+
+function M.variant_for_kernel(kernel, contract, opts)
+  return pvm.one(variant_phase(kernel, contract or kernel.contract, opts or {}))
 end
 
 local function patch_value_for(hole, value)
@@ -100,5 +108,8 @@ function M.template(args)
   if not ok then error(table.concat(errors, "\n"), 2) end
   return template
 end
+
+M.variant_phase = variant_phase
+M.variant_for_kernel_uncached = variant_for_kernel_uncached
 
 return M

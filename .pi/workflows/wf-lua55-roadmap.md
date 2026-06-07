@@ -5935,3 +5935,2404 @@ Corpus remained fail-closed: `37 ok / 104 rejected`, `31 successful windows`, `2
 
 ## Notes
 No blockers remaining. Structured edit plan now has no ready/todo/claimed tasks; obsolete T037–T048 remain skipped.
+
+## Edit-planner Output — 2026-06-07 12:27:06
+
+### Precondition Checks
+
+Before edits begin, verify:
+
+- `experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl`
+  - `LuaExec.Module = (regions,kernels)` exists around lines 1380-1381.
+  - `RegionDescriptor` has **no** `executable` field around lines 1443-1448.
+  - `StaticRegionBinding`, `CallContinuationRegion`, and `StaticRegionInvocation` exist around lines 1460-1474.
+  - `LuaExec.EmitRegion(region,args,continuations)` exists around line 1629.
+  - `MoonCFG.EmitRegion` exists around line 1948, but must remain unsupported.
+- Current repo fact: `lua_exec_static_region_model.lua` and `lua_exec_static_region_inline.lua` do **not** exist.
+- `lua_exec_to_moon_cfg_lower.lua`
+  - direct `Exec.EmitRegion` rejects at lines ~750-751.
+  - no `lower_module` / `lower_module_outcome` API exists near lines ~1083-1092.
+- `moon_cfg_validate.lua`
+  - comments explicitly say LuaExec static invocation must be inlined before MoonCFG around lines 16-19.
+  - `CFG.Continue` / `CFG.Exit` remain unsupported around lines ~402-403.
+- `lua_src_to_lua_exec_lower.lua`
+  - source `CALL` / `TAILCALL` still reject with `unsupported_source_semantics`.
+  - Do **not** add source `CALL` / `TAILCALL` acceptance.
+
+Chosen milestone: **typed LuaExec.Module static region invocation + inlining before MoonCFG lowering**.  
+No ASDL architecture changes are planned.
+
+---
+
+## Files to Modify
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_model.lua` **(new)**
+
+**Goal**: Centralize validation/gating for typed static region invocation over existing complete ASDL products.
+
+**Contents sketch**
+
+```lua
+local Schema = require("lua_compile.schema")
+local pvm = require("moonlift.pvm")
+local T = Schema.get()
+local Exec = T.LuaExec
+local RegionModel = require("lua_compile.lua_exec_region_model")
+local CallModel = require("lua_compile.lua_rt_call_model")
+
+local M = {}
+
+function M.validate_static_region_binding(binding) ... end
+function M.validate_call_continuation_region(region) ... end
+function M.validate_static_region_invocation(invocation) ... end
+
+function M.index_module(module) ... end
+function M.contract_static_invocations(contract) ... end
+function M.find_invocation_for_emit(contract, emit_op) ... end
+
+function M.validate_invocation_against_module(module_index, invocation) ... end
+function M.validate_emit_op_inline_shape(block, op_index) ... end
+function M.validate_target_region_for_inline(region, invocation) ... end
+
+function M.validate_against_schema() ... end
+
+return M
+```
+
+**Rules**
+- Target region must exist in `LuaExec.Module.regions`.
+- `StaticRegionBinding.region.id` must match `StaticRegionBinding.descriptor.id`.
+- Descriptor id/kind must match the actual target region.
+- `CallContinuationRegion.callee_region` must match `StaticRegionInvocation.target.region`.
+- Inlineable `EmitRegion` must be final op in its block, with `Exec.Unreachable` terminator.
+- Target region must contain no nested `EmitRegion`.
+- Target invoked region must not contain `Return`, `Error`, or `Yield` terminators; use `Continue`.
+- Phase milestone supports return continuation only; error/yield continuations may exist structurally but target must not produce them.
+- Unknown/C/FFI/metamethod/tailcall/dynamic call contracts reject.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/init.lua`
+
+**Goal**: Export static region model.
+
+**Edit block**
+- After current `M.lua_exec_region_model = ...` around line 30, add:
+
+```lua
+M.lua_exec_static_region_model = require("lua_compile.lua_exec_static_region_model")
+```
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_validate.lua`
+
+**Goal**: Strengthen structural module/static-invocation validation without making kernel-only `EmitRegion` executable.
+
+**Edit blocks**
+
+1. **Imports around lines 8-13**
+   - Replace lazy placeholder or fill it safely:
+     ```lua
+     local StaticRegionModel = require("lua_compile.lua_exec_static_region_model")
+     ```
+   - If this creates a cycle, require lazily inside `M.module`.
+
+2. **Existing static helpers around lines 64-100**
+   - Delegate `static_region_binding`, `call_continuation_region`, and `static_region_invocation` to `StaticRegionModel`.
+   - Preserve public helper names for tests.
+
+3. **Region validation around lines 200-285**
+   - Keep `EmitRegion` structurally valid.
+   - Add check for inlineable shape only when module validation asks for it:
+     - final op in block;
+     - terminator is `Exec.Unreachable`;
+     - continuations are `Exec.ContBinding`.
+
+4. **`M.module`, lines ~464-482**
+   - Build module index.
+   - Reject duplicate region/kernel ids.
+   - Validate kernel contracts with static invocations against module region library.
+   - Verify each inlineable `EmitRegion` has a matching `StaticRegionInvocation` in the kernel contract.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_inline.lua` **(new)**
+
+**Goal**: Inline typed static `EmitRegion` from `LuaExec.Module` into one `LuaExec.Kernel` before MoonCFG lowering.
+
+**Contents sketch**
+
+```lua
+local Schema = require("lua_compile.schema")
+local pvm = require("moonlift.pvm")
+local T = Schema.get()
+local Exec = T.LuaExec
+local ExecValidate = require("lua_compile.lua_exec_validate")
+local StaticRegionModel = require("lua_compile.lua_exec_static_region_model")
+
+local M = {}
+
+function M.inline_module_kernel(module, kernel_name)
+  -- returns Exec.Kernel or nil, errors
+end
+
+return M
+```
+
+**Inlining algorithm**
+1. Validate module.
+2. Select named kernel, or sole kernel.
+3. For each block in `kernel.body`:
+   - if no `EmitRegion`, copy unchanged;
+   - if final `EmitRegion` + `Unreachable`, find matching contract invocation.
+4. Clone target region blocks with prefix:
+   ```text
+   __static_<target>_<ordinal>__<old_block>
+   ```
+5. Rewrite internal `Jump`, `Branch`, `BranchArgs` block refs to cloned ids.
+6. Rewrite `Continue(return_cont,args)` to `Jump(bound_return_block,args)`.
+7. Replace caller block terminator with `Jump(cloned_target_entry, emit_args)`.
+8. Reject:
+   - nested `EmitRegion`;
+   - target `Return/Error/Yield`;
+   - missing/unbound continuation;
+   - target not in module;
+   - descriptor mismatch;
+   - unsupported target region;
+   - multi-level invocation for this milestone.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_to_moon_cfg_lower.lua`
+
+**Goal**: Add module-lowering API through static inlining; keep direct kernel `EmitRegion` rejected.
+
+**Edit blocks**
+
+1. **Imports around lines 8-19**
+   ```lua
+   local StaticInline = require("lua_compile.lua_exec_static_region_inline")
+   ```
+
+2. **`lower_op`, lines ~750-751**
+   - Keep:
+     ```lua
+     unsupported_lua_exec_op:EmitRegion:requires_typed_static_region_lowering
+     ```
+   - Do not make direct kernel lowering accept `EmitRegion`.
+
+3. **After `lower_value`, around lines ~1040-1060**
+   - Add:
+     ```lua
+     local function lower_module_value(module, kernel_name, opts)
+       local inlined, inline_errors = StaticInline.inline_module_kernel(module, kernel_name)
+       if not inlined then return nil, inline_errors end
+       return lower_value(inlined, opts)
+     end
+     ```
+
+4. **Public exports near lines ~1083-1092**
+   - Add:
+     ```lua
+     function M.lower_module(module, kernel_name, opts) ... end
+     function M.lower_module_outcome(module, kernel_name, projection) ... end
+     M.lower_module_uncached = lower_module_value
+     ```
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/compile_contract_validate.lua`
+
+**Goal**: Validate static invocation assumptions with relationship checks.
+
+**Edit block**
+- In `validate_semantic_assumption`, around lines ~113-120:
+  - For:
+    - `AssumesStaticRegion`
+    - `AssumesStaticRegionInvocation`
+    - `AssumesCallContinuationRegion`
+    - `AssumesModuleDescriptor`
+  - Use `lua_exec_static_region_model` helpers where possible.
+  - Add relationship checks:
+    - binding region matches descriptor id;
+    - invocation call-continuation callee region matches invocation target;
+    - no malformed static-region contract silently validates.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_validate.lua`
+
+**Goal**: Preserve MoonCFG guardrails.
+
+**Edit blocks**
+- Around lines 16-19, keep comment that LuaExec static invocation is inlined before MoonCFG.
+- Do **not** add `CFG.EmitRegion` to `SUPPORTED_OPS`.
+- Around lines ~402-403, keep `CFG.Continue` and `CFG.Exit` unsupported.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit.lua`
+
+**Goal**: Ensure no MoonCFG region-emission path is introduced.
+
+**Edit**
+- No functional change expected.
+- Optional comment near `render_op`, line ~1244:
+  ```lua
+  -- LuaExec static invocation must be inlined before MoonCFG; do not render MoonCFG.EmitRegion here.
+  ```
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_to_lua_exec_lower.lua`
+
+**Goal**: Preserve source CALL/TAILCALL fail-closed.
+
+**Edit**
+- No behavior change.
+- Optional comment near existing `CALL` / `TAILCALL` rejects:
+  ```lua
+  -- Static region invocation is available only for typed LuaExec.Module products;
+  -- source CALL/TAILCALL still require callee region construction, close/yield,
+  -- arity, and contracts before acceptance.
+  ```
+
+---
+
+## Tests
+
+### `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua`
+
+Add:
+- require/export check for `lua_exec_static_region_model`;
+- `validate_against_schema()` call;
+- structural validation of:
+  - `StaticRegionBinding`
+  - `StaticRegionInvocation`
+  - `CallContinuationRegion`
+
+No ASDL field-order changes.
+
+---
+
+### `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua` **(new)**
+
+**Goal**: Prove executable typed module static invocation works without source CALL acceptance.
+
+Test shape:
+1. Build manual `LuaExec.Module`.
+2. Kernel body:
+   - `PrepareCallFrame(frame_state)`
+   - final `EmitRegion(callee_region, ..., continuations)`
+   - `Unreachable`
+   - continuation block:
+     - `ReceiveCallResults(frame_state)`
+     - `Return`
+3. Callee target region:
+   - writes 3 fixed integer results into callee stack using existing `AssignValue` + `AssignSeq`;
+   - terminates with `Continue(return_cont,{})`.
+4. Contract includes:
+   - call-frame contract nodes;
+   - `RequiresStaticRegion`
+   - `RequiresStaticRegionInvocation`
+   - `RequiresCallContinuationRegion`
+   - matching guarantees.
+5. Assert:
+   - `ExecToMoon.lower_module_outcome(module, "kernel", "value2_payload_i64")` succeeds;
+   - MoonCFG validates;
+   - emitted Moonlift runs and returns expected third result;
+   - emitted source contains no forbidden helper/protocol strings.
+
+Negative cases:
+- direct `ExecToMoon.lower(kernel_with_emit)` rejects;
+- missing static invocation contract rejects;
+- target region not in module rejects;
+- descriptor mismatch rejects;
+- nested target `EmitRegion` rejects;
+- target `Return/Error/Yield` rejects;
+- unknown target / dynamic arity call contract rejects;
+- unbound continuation rejects.
+
+---
+
+### Existing regression tests
+
+Update:
+
+- `test_spongejit_lua_compile_static_regions.lua`
+  - direct kernel `EmitRegion` still rejects;
+  - existing manual contracted `CallRegion` still lowers;
+  - source `CALL` / `TAILCALL` still reject.
+
+- `test_spongejit_lua_compile_semantic_gates.lua`
+  - static invocation expression still rejects in direct kernel lowering unless going through module inliner;
+  - source dynamic semantics unchanged.
+
+- `test_spongejit_lua_compile_moon_cfg.lua`
+  - `MoonCFG.EmitRegion` still unsupported;
+  - forbidden lowercase semantic strings remain rejected.
+
+---
+
+## Order of Operations
+
+1. Add `lua_exec_static_region_model.lua`.
+2. Export it from `init.lua`.
+3. Strengthen `lua_exec_validate.lua` module/static-invocation checks.
+4. Add `lua_exec_static_region_inline.lua`.
+5. Wire `lower_module` / `lower_module_outcome` in `lua_exec_to_moon_cfg_lower.lua`.
+6. Strengthen static contract validation.
+7. Preserve source and MoonCFG guardrails.
+8. Add schema/model tests.
+9. Add executable static invocation test.
+10. Add fail-closed regressions.
+11. Run verification.
+
+---
+
+## Testing Strategy
+
+Run:
+
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_regions.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_semantic_gates.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_exec_pipeline.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua
+cd experiments/lua_interpreter_vm/spongejit && make test
+cd experiments/lua_interpreter_vm/spongejit && make test-completion
+```
+
+Optional:
+
+```sh
+cd experiments/lua_interpreter_vm/spongejit && make test-lua-compile-corpus100
+```
+
+Expected:
+- manual typed `LuaExec.Module` static invocation succeeds;
+- direct kernel `EmitRegion` rejects;
+- `MoonCFG.EmitRegion` rejects;
+- source `CALL` / `TAILCALL` reject;
+- corpus success count should not be expected to increase.
+
+---
+
+## Structured Edit Plan Sidecar
+
+Updated `wf-lua55-roadmap` sidecar to revision `r114`.
+
+Added tasks:
+- `T067` Add static region invocation model
+- `T068` Export model and strengthen validators
+- `T069` Implement static region inliner
+- `T070` Wire module lowering API
+- `T071` Validate static contracts structurally
+- `T072` Preserve source and MoonCFG guardrails
+- `T073` Update schema and model tests
+- `T074` Add executable static invocation tests
+- `T075` Add static invocation fail-closed regressions
+- `T076` Run static invocation verification gates
+
+Ready task: `T067`.
+
+---
+
+## Pattern Memo
+
+- No ASDL architecture changes unless required by compile errors.
+- Static invocation is typed `LuaExec.Module` composition, not VM dispatch.
+- Inline before MoonCFG; keep `MoonCFG.EmitRegion` rejected.
+- Direct `lower(kernel)` with `EmitRegion` still rejects.
+- Source `CALL` / `TAILCALL` remain fail-closed.
+- No lowercase semantic strings, helpers, protocol exits, or fallback paths.
+
+## Worker Output — 2026-06-07 12:42:34
+
+## Completed
+Implemented edit-plan tasks `T067`–`T076` for `wf-lua55-roadmap`.
+
+- Added typed `LuaExec.Module` static region invocation model.
+- Added static `EmitRegion` inliner before MoonCFG lowering.
+- Added `lower_module` / `lower_module_outcome` APIs.
+- Preserved direct kernel `EmitRegion` rejection.
+- Preserved source `CALL` / `TAILCALL` fail-closed behavior.
+- Preserved `MoonCFG.EmitRegion` / `Continue` guardrails.
+- Added executable static invocation tests and fail-closed regressions.
+- Marked all tasks `T067`–`T076` complete in the structured edit plan.
+
+## Files Changed
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_model.lua` - new static invocation validation/gating model.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_inline.lua` - new module static region inliner.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/init.lua` - exports static region model.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_validate.lua` - strengthened module/static invocation validation.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_to_moon_cfg_lower.lua` - added module lowering APIs.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/compile_contract_validate.lua` - validates static invocation assumptions via model helpers.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_region_model.lua` - added static target support-gate helper.
+- `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua` - new executable static invocation tests.
+- `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua` - static model export/schema tests.
+- `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua` - MoonCFG/static stencil guardrail tests.
+- `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_pipeline.lua` - planned file list updated.
+
+## Verification
+Passed:
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_regions.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_semantic_gates.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_exec_pipeline.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua
+cd experiments/lua_interpreter_vm/spongejit && make test
+cd experiments/lua_interpreter_vm/spongejit && make test-completion
+cd experiments/lua_interpreter_vm/spongejit && make test-lua-compile-corpus100
+```
+
+Corpus remained fail-closed: `37 ok / 104 rejected`, `31 successful windows`, `26 reps checked`.
+
+## Notes
+No blockers remain. `git status` also showed `museum/gps.lua` as modified/submodule status, but I did not touch it.
+
+## Edit-planner Output — 2026-06-07 13:01:23
+
+### Precondition Checks
+
+Before edits begin, verify:
+
+- `experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl`
+  - `LuaFact.PayloadLease` currently has only string `CallTargetPayload` around lines 220–237.
+  - Existing complete architecture products already exist:
+    - `LuaRT.ClosureIdentity`, `UpvalueIdentity`, `CallShape`, `ResolvedCallTarget`, `CallFrameState`
+    - `LuaExec.StaticRegionBinding`, `CallContinuationRegion`, `StaticRegionInvocation`
+    - `LuaExec.Module = (regions,kernels)`
+  - `RegionDescriptor` has no `executable` field.
+- `lua_src_to_lua_exec_lower.lua`
+  - `CALL` still rejects around lines 194–197.
+  - `SUPPORTED_INSTR` does not include `CALL`.
+  - `lower_value()` currently returns only `LuaExec.Kernel`.
+- `lua_exec_to_moon_cfg_lower.lua`
+  - direct `EmitRegion` rejects around lines 751–752.
+  - `lower_module` / `lower_module_outcome` exist around lines 1107–1115.
+- `lua_exec_static_region_inline.lua`
+  - inlines typed `LuaExec.Module` static regions before MoonCFG.
+  - currently rejects target params / emit args.
+- `MoonCFG.EmitRegion` remains unsupported.
+
+Corrected milestone: accept **one honest source `CALL` slice**, not another avoidance phase.
+
+---
+
+## Files to Modify
+
+### `experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl`
+
+**Goal**: Add only the missing evidence transport for source CALL static callee proof. The complete call/static architecture already exists.
+
+**Edit blocks**
+
+1. **Lines ~220–237, `LuaFact.PayloadLease`**: add typed payload variants after existing `CallTargetPayload`:
+
+```asdl
+| StaticClosureTargetPayload(LuaFact.Subject subject,
+                             LuaSrc.Pc pc,
+                             LuaRT.ClosureIdentity closure,
+                             LuaRT.ResolvedCallTarget target,
+                             LuaFact.Dependency* deps) unique
+| StaticCalleeRegionPayload(LuaFact.Subject subject,
+                            LuaSrc.Pc pc,
+                            LuaRT.ClosureIdentity closure,
+                            LuaExec.StaticRegionBinding binding,
+                            LuaExec.Region region,
+                            LuaFact.Dependency* deps) unique
+```
+
+**Notes**
+- `subject` should be `LuaFact.SrcSlot(callee_slot)` for the source `CALL` base slot.
+- `pc` is the source CALL pc.
+- Do **not** change `LuaCompile.Unit`.
+- Do **not** add support-status fields.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_fact_payload_lease.lua`
+
+**Goal**: Construct/validate typed static CALL evidence payloads.
+
+**Edit blocks**
+
+1. **After `call_target(...)`, around line 20**: add helpers:
+
+```lua
+function M.static_closure_target(subject, pc, closure, target, deps) ... end
+function M.static_callee_region(subject, pc, closure, binding, region, deps) ... end
+```
+
+2. **`M.validate`, around lines 48–68**: add validation for:
+- `StaticClosureTargetPayload`
+- `StaticCalleeRegionPayload`
+
+Validate:
+- subject is `LuaFact.Subject`
+- pc is `LuaSrc.Pc`
+- closure is `LuaRT.ClosureIdentity`
+- target is `LuaRT.ResolvedCallTarget`
+- binding validates via `lua_exec_static_region_model`
+- region is `LuaExec.Region`
+- deps are `LuaFact.Dependency*`
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_fact_from_runtime_observe.lua`
+
+**Goal**: Allow tests/foundry imports to provide typed static CALL payloads.
+
+**Edit blocks**
+
+1. **Payload aliases, lines ~60–70**: add names like:
+   - `static_closure_target`
+   - `static_callee_region`
+
+2. **`M.payload`, around lines 170–188**:
+   - If observation already contains ASDL values (`closure`, `target`, `binding`, `region`), construct the new typed payloads.
+   - Do not encode regions in strings.
+
+---
+
+### New file: `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_call_static_model.lua`
+
+**Goal**: Centralize source CALL proof lookup and strict precondition checks.
+
+**Contents sketch**
+
+```lua
+local Schema = require("lua_compile.schema")
+local pvm = require("moonlift.pvm")
+local T = Schema.get()
+local Src, Fact, RT, Exec = T.LuaSrc, T.LuaFact, T.LuaRT, T.LuaExec
+
+local M = {}
+
+function M.find_static_call_payloads(evidence, call_op) ... end
+function M.validate_static_call_slice(call_op, target_payload, region_payload) ... end
+function M.build_call_products(call_op, payloads, opts) ... end
+
+return M
+```
+
+**Strict checks**
+- `call_op.kind == "CALL"`.
+- `nargs.value > 0` and `nresults.value > 0`.
+- arg count = `nargs - 1`; result count = `nresults - 1`.
+- target is `DirectLuaClosureTarget`.
+- identity is `LuaClosureTargetIdentity`.
+- callable is `CallableLuaClosure`.
+- closure proto in `ClosureIdentity.proto` matches target identity proto.
+- upvalues:
+  - positive slice may use zero upvalues;
+  - if present, every upvalue must have `UpvalueIdentity` and dependencies;
+  - reject missing/unrepresented upvalues.
+- static binding descriptor matches supplied `LuaExec.Region`.
+- target region contains no nested `EmitRegion` and terminates via `Continue`, not `Return/Error/Yield`.
+- no C/FFI/metamethod/unknown target.
+- no yield/tailcall/close mode.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/init.lua`
+
+**Goal**: Export the new source CALL model.
+
+**Edit block**
+- Add near other model exports:
+
+```lua
+M.lua_src_call_static_model = require("lua_compile.lua_src_call_static_model")
+```
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_to_lua_exec_lower.lua`
+
+**Goal**: Accept only strict evidence-backed source `CALL` and lower it to typed module static invocation.
+
+**Edit blocks**
+
+1. **Imports, lines 7–12**:
+   - Add:
+
+```lua
+local StaticCall = require("lua_compile.lua_src_call_static_model")
+```
+
+2. **Header / `SUPPORTED_INSTR`, lines 30–33**:
+   - Update comment: `CALL` is conditionally supported only with typed static callee evidence.
+   - Add `CALL = true` only if tests expect coverage to report conditional support. Otherwise keep out of `SUPPORTED_INSTR` and handle explicitly in `scan_shape`.
+
+3. **`scan_shape`, around lines 194–199**:
+   - Replace unconditional `CALL` rejection.
+   - For `CALL`:
+     - require following op in same window;
+     - require fixed `nargs` and `nresults`;
+     - do **not** validate evidence here if unavailable in current function signature unless you thread evidence into `scan_shape`;
+     - create term:
+
+```lua
+term = {
+  kind = "call",
+  op = op,
+  ok_target = pc_of(fall)
+}
+```
+
+   - Add `leaders[pc_of(fall)] = true`.
+
+4. **Function signature**:
+   - Change `scan_shape(window)` to `scan_shape(window, evidence)` so CALL can reject early when evidence is missing/malformed.
+   - Update all call sites.
+
+5. **`slot_reads_and_defs`, around lines 292–355**:
+   - Add `term.kind == "call"`:
+     - read callee slot `base`;
+     - read arg slots `base+1 .. base+nargs-1`;
+     - result defs are handled on the fallthrough block, not the call block.
+
+6. **`analyze_block_io`, around lines 360–385**:
+   - Add `term.kind == "call"` edge target.
+   - Track result slot definitions for `ok_target`.
+   - When computing `params_by_pc[target]`, subtract slots defined by the call result receive so they are not treated as external params.
+
+7. **`new_builder`, around line 391**:
+   - Add fields:
+
+```lua
+static_regions = {}
+module_required = false
+pre_block_ops = {}
+call_contract_obligations = {}
+call_contract_guarantees = {}
+static_invocations = {}
+```
+
+8. **Add helpers before `lower_instruction`**:
+   - `call_ref_for_pc(pc)`
+   - `callee_frame_ref_for_call(pc)`
+   - `require_callee_stack_param(builder, frame)`
+   - `fixed_call_count(count, label, pc)`
+   - `build_static_call_frame(builder, op, payloads)`
+   - `add_call_contract(builder, products)`
+
+9. **`lower_block`, before lowering normal ops**:
+   - After `init_env_for_block`, prepend `builder.pre_block_ops[block.pc]` if any.
+   - For each `ReceiveCallResults`, mark result slots in `env` as `"lua_value"`.
+
+10. **`lower_block`, add `term.kind == "call"` case**:
+   - Build strict products from `StaticCall`.
+   - Add:
+     - `Exec.PrepareCallFrame(frame_state)`
+     - `Exec.EmitRegion(target_region_name, {}, { return cont binding to ok_target })`
+   - Set terminator `Exec.Unreachable`.
+   - Add `Exec.ReceiveCallResults(frame_state)` to `builder.pre_block_ops[ok_target]`.
+   - Add static callee region to `builder.static_regions`.
+   - Add all call/static/closure/upvalue obligations and guarantees to builder.
+
+11. **`contract_for_builder`, around lines 923–936**:
+   - Include:
+     - `RequiresResolvedCallTarget`
+     - `RequiresCallFrameLayout`
+     - `RequiresCallArgChannel`
+     - `RequiresCallResultChannel`
+     - `RequiresStaticRegion`
+     - `RequiresStaticRegionInvocation`
+     - `RequiresCallContinuationRegion`
+     - `RequiresClosureIdentity`
+     - `RequiresUpvalueIdentity` if any
+   - Include matching guarantees.
+
+12. **`lower_value`, around lines 938–957**:
+   - If `builder.module_required`:
+     - create caller kernel as today;
+     - return `Exec.Module(builder.static_regions, { kernel })`.
+   - Else return existing `Exec.Kernel`.
+
+13. **Public API, lines 962–987**:
+   - `M.lower` may now return `LuaExec.Kernel` or `LuaExec.Module`.
+   - Keep `TAILCALL` rejected.
+
+**Danger zones**
+- Do not accept `CALL B=0` or `CALL C=0`.
+- Do not accept unknown/metamethod/C/FFI targets.
+- Do not accept source `TAILCALL`.
+- Do not emit helper strings or call VM dispatch.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_compile_to_moon_kernel.lua`
+
+**Goal**: Route `LuaExec.Module` products through module lowering.
+
+**Edit blocks**
+
+1. **`needs_outcome_mode`, lines 20–38**:
+   - Make function accept either kernel or module.
+
+2. **`lower_exec_to_cfg`, lines 42–53**:
+   - Detect `pvm.classof(exec_product) == T.LuaExec.Module`.
+   - For module:
+     - call `LuaExecToMoon.lower_module(...)`
+     - kernel name should be `"lua_exec_core_kernel"` unless lowerer exposes a constant.
+   - Preserve outcome fallback only as typed `LuaExec -> MoonCFG`, not semantic fallback.
+
+3. **Comment in `compile_value`, lines 56–59**:
+   - Update route text to:
+
+```text
+LuaSrc.Window -> LuaExec.Kernel/LuaExec.Module -> MoonCFG.Kernel
+```
+
+   - Clarify module path is only typed static region composition.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_model.lua`
+
+**Goal**: Ensure source CALL static regions are gated correctly.
+
+**Edit blocks**
+
+- Strengthen `validate_target_region_for_inline` if needed:
+  - multiple source CALLs allowed;
+  - descriptor id/kind must match actual region;
+  - target must not have params for this milestone;
+  - target must not contain nested `EmitRegion`;
+  - target must `Continue(return_cont)`;
+  - no target `Return/Error/Yield`.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_inline.lua`
+
+**Goal**: Support source-lowered module shape.
+
+**Edit blocks**
+
+- Verify current no-param/no-emit-arg limitation is okay for source CALL slice.
+- Ensure clone prefix includes ordinal and target region id (already does).
+- Ensure continuation args preserve live non-result slots if caller binds them.
+- Add diagnostics for:
+  - multiple emits in one block;
+  - missing static invocation contract;
+  - descriptor mismatch;
+  - unbound continuation.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_validate.lua`
+
+**Goal**: Preserve guardrails.
+
+**Edits**
+- No functional change expected.
+- Keep `MoonCFG.EmitRegion`, `Continue`, and `Exit` unsupported.
+- Keep forbidden lowercase strings.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit.lua`
+
+**Goal**: Preserve no-fallback emission.
+
+**Edits**
+- No functional change expected.
+- Tests should assert emitted source lacks:
+  - `call`
+  - `dispatch`
+  - `helper`
+  - `out_tag`
+  - `out_event_kind`
+  - `generic_for`
+
+---
+
+## Tests
+
+### `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua`
+
+Add assertions for:
+- `LuaFact.StaticClosureTargetPayload`
+- `LuaFact.StaticCalleeRegionPayload`
+- exported `lua_src_call_static_model`
+- payload validation succeeds for a well-formed typed source CALL payload.
+
+---
+
+### New file: `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua`
+
+**Positive test**
+
+Build:
+- source window:
+  - `CALL pc=1 base=0 nargs=3 nresults=3`
+  - `RETURN pc=2 base=0 nresults=3 c=0 close=false`
+- evidence payloads:
+  - callee slot 0 is direct Lua closure
+  - closure proto identity known
+  - no upvalues or explicit empty closure identity
+  - static callee region exists and binds to proto
+- static callee region:
+  - writes two fixed results to callee result slots
+  - terminates via `Continue(ret)`
+- compile through public `compile_to_moon_kernel` or lowerer + `lower_module_outcome`.
+- run emitted Moonlift and assert result payload.
+
+**Negative tests**
+- `TAILCALL` rejects.
+- `CALL B=0` rejects.
+- `CALL C=0` rejects.
+- missing static evidence rejects.
+- unknown target rejects.
+- C closure rejects.
+- FFI target rejects.
+- metamethod target rejects.
+- closure proto mismatch rejects.
+- missing callee region rejects.
+- descriptor mismatch rejects.
+- upvalue present but not represented rejects.
+- target region nested `EmitRegion` rejects.
+- target region `Return/Error/Yield` rejects.
+- direct kernel `EmitRegion` still rejects.
+
+---
+
+### Existing tests to update
+
+- `test_spongejit_lua_compile_static_invoke.lua`
+  - keep manual module static invocation green.
+- `test_spongejit_lua_compile_semantic_gates.lua`
+  - update CALL expectation: missing evidence rejects, not unconditional unsupported.
+- `test_spongejit_lua_compile_moon_cfg.lua`
+  - keep `MoonCFG.EmitRegion` unsupported.
+- corpus/completion tests:
+  - no generic CALL success expected without typed static payloads.
+
+---
+
+## Order of Operations
+
+1. Add ASDL evidence payload constructors.
+2. Update payload validators/import helpers.
+3. Add `lua_src_call_static_model.lua`.
+4. Update source shape/IO analysis for CALL.
+5. Lower strict CALL to `LuaExec.Module` with `PrepareCallFrame`, `EmitRegion`, `ReceiveCallResults`, contracts.
+6. Route public compile through module lowering.
+7. Harden static inliner diagnostics if needed.
+8. Add schema/evidence tests.
+9. Add positive source CALL test.
+10. Add negative fake-success tests.
+11. Run verification.
+
+---
+
+## Testing Strategy
+
+Run:
+
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_semantic_gates.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_exec_pipeline.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua
+cd experiments/lua_interpreter_vm/spongejit && make test
+cd experiments/lua_interpreter_vm/spongejit && make test-completion
+```
+
+Optional:
+
+```sh
+cd experiments/lua_interpreter_vm/spongejit && make test-lua-compile-corpus100
+```
+
+Expected:
+- one evidence-backed fixed direct Lua closure source `CALL` succeeds;
+- generic corpus CALLs still reject;
+- no source `TAILCALL` acceptance;
+- no MoonCFG `EmitRegion`;
+- no helper/protocol/VM fallback strings.
+
+---
+
+## Structured Edit Plan Sidecar
+
+Updated `wf-lua55-roadmap` sidecar to revision `r135`.
+
+Added tasks:
+- `T077` Add typed source CALL callee evidence payloads
+- `T078` Implement source CALL evidence lookup helpers
+- `T079` Teach LuaSrc shape analysis about strict CALL
+- `T080` Lower strict source CALL to LuaExec.Module
+- `T081` Route public compile through module lowering
+- `T082` Harden static inliner for source CALL modules
+- `T083` Preserve MoonCFG guardrails for CALL slice
+- `T084` Update foundry and coverage expectations
+- `T085` Add schema and evidence tests
+- `T086` Add positive source CALL compile test
+- `T087` Add negative CALL fake-success tests
+- `T088` Run source CALL verification gates
+
+Ready task: `T077`.
+
+---
+
+## Pattern Memo
+
+- Source `CALL` support is real but narrow: fixed direct Lua closure + typed static callee region.
+- Evidence must carry typed closure/proto/static-region proof.
+- Lower source CALL to `LuaExec.Module` + typed `EmitRegion`; inline before MoonCFG.
+- Preserve fail-closed behavior outside the slice.
+- No helper strings, VM dispatch, protocol handoff, or fallback.
+
+## Worker Output — 2026-06-07 13:51:48
+
+## Completed
+Implemented `wf-lua55-roadmap` tasks `T077`–`T088`.
+
+- Added typed source `CALL` evidence payloads.
+- Added `lua_src_call_static_model.lua` for strict static closure/callee proof validation.
+- Taught `lua_src_to_lua_exec_lower.lua` to accept only fixed-shape, evidence-backed direct Lua closure `CALL`.
+- Source `CALL` now lowers to `LuaExec.Module` + typed `EmitRegion`, then inlines before MoonCFG.
+- Kept `TAILCALL`, open-count calls, missing evidence, C/FFI/metamethod/unknown targets, bad proto/descriptor, close/yield/error target paths, nested emit, and direct kernel `EmitRegion` fail-closed.
+- Updated public compile route to handle `LuaExec.Module`.
+- Added positive/negative source `CALL` tests.
+- Completed all edit-plan tasks; no ready/todo/claimed tasks remain.
+
+## Files Changed
+- `experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl` - added source CALL static payload variants.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_fact_payload_lease.lua` - payload constructors/validation.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_fact_from_runtime_observe.lua` - runtime import aliases for new payloads.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_call_static_model.lua` - new strict source CALL evidence/model helper.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_to_lua_exec_lower.lua` - strict CALL shape/lowering to `LuaExec.Module`.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_compile_to_moon_kernel.lua` - routes modules through module lowering.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_compile_foundry.lua` - dynamic payload coverage count and CALL evidence note.
+- Tests updated/added:
+  - `test_spongejit_lua_compile_source_call.lua`
+  - `test_spongejit_lua_compile_schema.lua`
+  - `test_spongejit_lua_compile_lua_fact.lua`
+  - `test_spongejit_lua_compile_semantic_gates.lua`
+  - `test_spongejit_lua_compile_moon_cfg.lua`
+  - `test_spongejit_lua_compile_static_regions.lua`
+  - `test_spongejit_lua_compile_pipeline.lua`
+
+## Verification
+Passed:
+
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_semantic_gates.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_exec_pipeline.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua
+cd experiments/lua_interpreter_vm/spongejit && make test
+cd experiments/lua_interpreter_vm/spongejit && make test-completion
+cd experiments/lua_interpreter_vm/spongejit && make test-lua-compile-corpus100
+```
+
+Corpus stayed fail-closed: `37 ok / 104 rejected`, `31 successful windows`, `26 reps checked`.
+
+## Notes
+No blockers. `museum/gps.lua` was already modified/submodule-marked in `git status`; I did not touch it.
+
+## Edit-planner Output — 2026-06-07 13:59:56
+
+### Decision: choose **B — source `CLOSURE`/proto/upvalue substrate sufficient to produce closure values for `CALL`**
+
+Why not the others yet:
+
+- **A TAILCALL**: unsafe next step. Even a fixed direct Lua closure tailcall needs tail frame replacement, close-aware tail exits, and final result routing. Current static invocation returns to caller continuation; that is not tailcall semantics.
+- **C broader/open CALL arity**: useful, but requires dynamic call-frame counts through `CallFrameLayout`, emitter support for dynamic arg/result counts, and top propagation through static callees.
+- **D `__call` metatable path**: depends on metatable lookup path validity plus metamethod call dispatch; too many moving parts before closure values exist.
+- **B CLOSURE**: safest real feature. It accepts a new source opcode (`CLOSURE`) under strict typed evidence, creates a real `LuaClosureTag` value, and lets existing evidence-backed `CALL` consume closure values produced by source bytecode rather than preinitialized caller stack.
+
+---
+
+## Precondition Checks
+
+Verify before edits:
+
+- `ssa_asdl/spongejit_lua_ssa.asdl`
+  - `PayloadLease` has `StaticClosureTargetPayload` / `StaticCalleeRegionPayload` around lines 220–246.
+  - `CLOSURE(pc,a,proto)` exists in `LuaSrc.Op`.
+  - `LuaRT.ClosureIdentity`, `UpvalueIdentity`, `GCEffect`, `LuaClosureValue`, `LuaClosureTag` exist.
+  - `LuaExec` has `RequiresUpvalueIdentity`, `RequiresGCEffect`, but likely lacks `RequiresClosureIdentity`.
+- `lua_src_to_lua_exec_lower.lua`
+  - `CALL` strict evidence path exists.
+  - `CLOSURE` currently rejects with `unsupported_source_semantics:GCAllocRegion`.
+  - `TAILCALL` remains rejected.
+- `lua_exec_to_moon_cfg_lower.lua`
+  - `RT.LuaClosureValue` currently boxes `LuaClosureTag` with handle `0`; this must become contract-backed for this slice.
+- `MoonCFG.EmitRegion` remains unsupported; static invocation stays pre-MoonCFG.
+
+---
+
+## Files to Modify
+
+### `experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl`
+
+**Goal**: Add minimal typed evidence/contract gap for strict source `CLOSURE`.
+
+**Edit blocks**
+
+1. **Lines ~220–247**: add to `LuaFact.PayloadLease`:
+
+```asdl
+| StaticClosureValuePayload(LuaFact.Subject subject,
+                            LuaSrc.Pc pc,
+                            LuaRT.ClosureIdentity closure,
+                            LuaRT.ResolvedCallTarget target,
+                            LuaExec.StaticRegionBinding binding,
+                            LuaGC.GCEffect allocation,
+                            LuaFact.Dependency* deps) unique
+```
+
+2. **LuaExec obligations/guarantees around lines ~1670–1705**:
+   - Add if absent:
+```asdl
+| RequiresClosureIdentity(LuaRT.ClosureIdentity identity) unique
+| UsesClosureIdentity(LuaRT.ClosureIdentity identity) unique
+```
+
+**Notes**
+- No support-status fields.
+- No ASDL phase/scaffold concepts.
+- Keep source `TAILCALL` unsupported.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_fact_payload_lease.lua`
+
+**Goal**: Construct/validate typed CLOSURE payload.
+
+Add:
+
+```lua
+function M.static_closure_value(subject, pc, closure, target, binding, allocation, deps) ... end
+```
+
+Validation:
+- subject is `LuaFact.Subject`
+- pc is `LuaSrc.Pc`
+- closure is `LuaRT.ClosureIdentity`
+- target is `LuaRT.ResolvedCallTarget`
+- binding is `LuaExec.StaticRegionBinding`
+- allocation is `LuaGC.GCEffect`
+- deps are dependencies
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_fact_from_runtime_observe.lua`
+
+**Goal**: Import closure payloads for tests/foundry.
+
+Add payload aliases:
+- `static_closure_value`
+- `static_closure_value_payload`
+
+In `M.payload`, construct `Fact.StaticClosureValuePayload(...)` from existing ASDL values. No string encoding of regions/closures.
+
+---
+
+### New file: `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_closure_static_model.lua`
+
+**Goal**: Strict source `CLOSURE` evidence model.
+
+Define:
+
+```lua
+function M.find_static_closure_payload(evidence, closure_op) ... end
+function M.validate_static_closure_slice(closure_op, payload) ... end
+function M.build_closure_products(closure_op, payload) ... end
+```
+
+Strict checks:
+- op is `LuaSrc.CLOSURE`
+- payload subject is destination slot `a`
+- payload pc matches op pc
+- `closure.proto.proto.id == op.proto.id`
+- zero upvalues for this milestone
+- `target.target` is `DirectLuaClosureTarget`
+- `target.identity` is `LuaClosureTargetIdentity`
+- `target.callable` is `CallableLuaClosure`
+- closure handle is nonnegative
+- static binding descriptor matches closure/proto region identity
+- allocation is `GCAllocationEffect` with successful `Allocated(...)`
+- reject C/FFI/metamethod/unknown targets
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/init.lua`
+
+Export:
+
+```lua
+M.lua_src_closure_static_model = require("lua_compile.lua_src_closure_static_model")
+```
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_to_lua_exec_lower.lua`
+
+**Goal**: Accept only strict evidence-backed source `CLOSURE`.
+
+Key edits:
+
+1. Import `lua_src_closure_static_model`.
+
+2. In `scan_shape`:
+   - replace unconditional `CLOSURE` rejection with:
+     - find/validate static closure payload;
+     - allow as normal instruction if valid;
+     - reject missing/malformed evidence with `source_closure_missing_static_evidence` or precise reason.
+   - keep `NEWTABLE` rejected.
+
+3. In `slot_reads_and_defs`:
+   - add `CLOSURE` as def of `op.a`.
+
+4. In `lower_instruction`:
+   - for `CLOSURE`, build products from payload.
+   - emit:
+```lua
+Exec.AssignValue(slot_ref(op.a.id), Exec.ConstTValue(RT.LuaClosureValue(payload.closure.closure)))
+```
+   - mark env slot as `lua_value`.
+   - add obligations/guarantees:
+     - closure identity
+     - resolved call target
+     - static region binding
+     - GC allocation effect
+     - upvalue identity if ever present (but reject nonempty for now)
+
+5. If a same-block later `CALL` uses that slot:
+   - verify CALL evidence closure/proto/handle matches the CLOSURE payload.
+   - mismatch rejects.
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_to_moon_cfg_lower.lua`
+
+**Goal**: Box `LuaClosureValue` with typed closure handle.
+
+Edits:
+- Add `state.exec_contract = kernel.contract` in `lower_value`.
+- Add helper scanning contract obligations/guarantees for matching `ResolvedCallTarget` with `LuaClosureTargetIdentity`.
+- Change `runtime_const_from_tvalue`:
+  - `RT.LuaClosureValue` boxes `LuaClosureTag` with the matched `closure_handle`.
+  - if missing, reject: `missing_lua_closure_handle_contract`.
+
+Also propagate:
+- `RequiresClosureIdentity` → `CompileContract.AssumesClosureIdentity`
+- `UsesClosureIdentity` → `CompileContract.AssumesClosureIdentity`
+
+---
+
+### `experiments/lua_interpreter_vm/spongejit/lua_compile/compile_contract_validate.lua`
+
+Add validation for:
+- `RequiresClosureIdentity`
+- `UsesClosureIdentity`
+- `StaticClosureValuePayload`-related assumptions as needed.
+
+Ensure closure identity and resolved target agree on closure/proto/handle.
+
+---
+
+### Tests
+
+#### `test_spongejit_lua_compile_schema.lua`
+Add assertions for:
+- `LuaFact.StaticClosureValuePayload`
+- `LuaExec.RequiresClosureIdentity`
+- `LuaExec.UsesClosureIdentity`
+- exported `lua_src_closure_static_model`
+- payload validation/import success
+
+#### New: `test_spongejit_lua_compile_source_closure.lua`
+
+Positive:
+- Source window:
+  - `CLOSURE pc=1 a=0 proto=9`
+  - `CALL pc=2 a=0 b=3 c=3`
+  - `RETURN pc=3 a=0 b=3 c=0`
+- Evidence:
+  - static closure value payload for `CLOSURE`
+  - static closure target + callee region payloads for `CALL`
+  - same closure/proto/handle
+- Assert:
+  - public compile succeeds
+  - emitted Moonlift has no helper/protocol/dispatch strings
+  - runtime result matches static callee
+  - closure slot is boxed with expected `LuaClosureTag` handle
+
+Negative:
+- missing CLOSURE evidence
+- proto mismatch
+- handle mismatch with CALL
+- upvalues present
+- unknown/C/FFI/metamethod target
+- missing/invalid GC allocation effect
+- static descriptor mismatch
+- open CALL still rejects
+- TAILCALL still rejects
+
+#### Existing regressions
+Update:
+- `semantic_gates`: CLOSURE missing evidence rejects, but strict evidence-backed CLOSURE compiles.
+- `moon_cfg`: `MoonCFG.EmitRegion` still unsupported.
+- `source_call`: existing strict CALL tests remain green.
+
+---
+
+## Order of Operations
+
+1. ASDL payload + closure contract constructors.
+2. Payload constructors/import validation.
+3. New strict CLOSURE model.
+4. Export model.
+5. Source lowerer CLOSURE scan/IO/lowering/contracts.
+6. LuaExec→MoonCFG closure handle boxing.
+7. Contract validation updates.
+8. Schema/fact tests.
+9. Positive source CLOSURE→CALL test.
+10. Negative fake-success tests.
+11. Verification.
+
+---
+
+## Testing Strategy
+
+Run:
+
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_closure.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_semantic_gates.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_exec_pipeline.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua
+cd experiments/lua_interpreter_vm/spongejit && make test
+cd experiments/lua_interpreter_vm/spongejit && make test-completion
+```
+
+Optional:
+
+```sh
+cd experiments/lua_interpreter_vm/spongejit && make test-lua-compile-corpus100
+```
+
+Expected:
+- strict no-upvalue evidence-backed `CLOSURE` succeeds;
+- `CLOSURE -> CALL` succeeds under matching typed evidence;
+- generic corpus `CLOSURE`/`CALL` without payloads reject;
+- no `TAILCALL`, metatable, FFI, open-call, or upvalue closure acceptance.
+
+---
+
+## Structured Edit Plan Sidecar
+
+Updated `wf-lua55-roadmap` to revision `r160`.
+
+Added tasks `T089`–`T100`. Ready task:
+
+- `T089` Add typed source CLOSURE evidence products
+
+---
+
+## Pattern Memo
+
+- New feature is real source `CLOSURE`, but narrow.
+- Evidence must carry closure/proto/handle/static-region/GC allocation proof.
+- `CLOSURE` produces a typed `LuaClosureTag` value; it does not dispatch.
+- Existing source `CALL` consumes that closure only under matching typed evidence.
+- Unsupported closure allocation/upvalues/open calls/tailcalls/metatables remain fail-closed.
+
+## Worker Output — 2026-06-07 17:44:49
+
+## Completed
+Implemented `wf-lua55-roadmap` tasks `T089`–`T100`.
+
+- Added typed `StaticClosureValuePayload`.
+- Added strict source `CLOSURE` evidence/model support.
+- Lowered evidence-backed no-upvalue `CLOSURE` to `LuaClosureTag` values.
+- Integrated `CLOSURE -> CALL` evidence matching.
+- Boxed closure values with contracted closure handles, rejecting missing/mismatched handles.
+- Preserved fail-closed behavior for unsupported closure/upvalue/open-call/tailcall/metatable/FFI paths.
+- Completed all structured edit-plan tasks; no ready/todo tasks remain.
+
+## Files Changed
+- `experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl` - added closure payload/contracts.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_fact_payload_lease.lua` - new payload constructor/validation.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_fact_from_runtime_observe.lua` - payload import aliases.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_closure_static_model.lua` - new strict CLOSURE model.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/init.lua` - exported closure model.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_to_lua_exec_lower.lua` - strict CLOSURE lowering and CALL matching.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_to_moon_cfg_lower.lua` - closure handle contract boxing.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_validate.lua` - closure identity contract validation.
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_compile_foundry.lua` - coverage note update.
+- `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_closure.lua` - new positive/negative tests.
+- Updated schema/fact/semantic/moon/pipeline tests.
+
+## Verification
+Passed:
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_fact.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_closure.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_semantic_gates.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_exec_pipeline.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua
+cd experiments/lua_interpreter_vm/spongejit && make test
+cd experiments/lua_interpreter_vm/spongejit && make test-completion
+cd experiments/lua_interpreter_vm/spongejit && make test-lua-compile-corpus100
+```
+
+Corpus remained fail-closed: `37 ok / 104 rejected`, `31 successful windows`, `27 reps checked`.
+
+## Notes
+- `museum/gps.lua` appears modified/submodule-marked in `git status`; I did not touch it.
+- No blockers remain.
+
+## Scout Output — 2026-06-07 17:56:36
+
+## Files Retrieved
+
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/*.lua` — all 60 package files scanned; key files read in full or near-full:
+  - `schema.lua` (1-79), `builders.lua` (1-46), `init.lua` (1-60)
+  - `lua_compile_unit.lua` (1-19), `lua_compile_to_moon_kernel.lua` (1-98)
+  - `lua_src_to_lua_exec_lower.lua` (1-1127)
+  - `lua_src_call_static_model.lua` (1-203), `lua_src_closure_static_model.lua` (1-121)
+  - `lua_exec_static_region_model.lua` (1-278), `lua_exec_static_region_inline.lua` (1-189)
+  - `lua_exec_to_moon_cfg_lower.lua` (1-1158)
+  - `moon_cfg_validate.lua` (1-440), `moon_cfg_emit.lua` (1-1586), `moon_cfg_key.lua` (1-33)
+  - `compile_contract_key.lua` (1-48), `compile_contract_validate.lua` (1-217)
+  - `stencil_key.lua` (1-138), `stencil_foundry.lua` (1-44), `stencil_materialization_plan.lua` (1-104), `stencil_materialize.lua` (1-432), `stencil_bank.lua` (1-214), `stencil_bundle.lua` (1-185), `stencil_manifest.lua` (1-455), `stencil_object_extract.lua` (1-147), `stencil_validate.lua` (1-331)
+  - runtime/fact/source helpers read: `lua_fact_from_runtime_observe.lua` (1-217), `lua_fact_from_foundry_bundle.lua` (1-55), `lua_fact_payload_lease.lua` (1-95), `lua_fact_closure.lua` (1-85), `lua_src_from_puc_decode.lua` (1-138), `lua_src_window_collect.lua` (1-36), `lua_src_to_lua_region_recognize.lua` (1-40)
+- Related tests:
+  - `test_spongejit_lua_compile_pipeline.lua` (1-57)
+  - `test_spongejit_lua_compile_source_call.lua` (1-154)
+  - `test_spongejit_lua_compile_source_closure.lua` (1-187)
+  - `test_spongejit_lua_compile_static_invoke.lua` (1-187)
+  - `test_spongejit_lua_compile_stencil.lua` (1-374)
+  - grep-scanned all `test_spongejit_lua_compile_*.lua`
+- Docs/build:
+  - `spongejit/ssa_asdl/README.md` (1-47)
+  - `SPONJIT_ARCHITECTURE.md` (1-41)
+  - `spongejit/Makefile` (1-58)
+
+---
+
+## Actual `pvm.phase` Occurrences
+
+Only four `pvm.phase` definitions occur under `lua_compile/`:
+
+| File | Lines | Phase name | Covered transformation |
+|---|---:|---|---|
+| `lua_src_to_lua_exec_lower.lua` | 1094-1098 | `spongejit_lua_src_to_lua_exec_lower` | `LuaSrc.Window + LuaFact.Evidence -> LuaExec.Kernel` or `LuaExec.Module`; phase errors on unsupported after preflight |
+| `lua_exec_to_moon_cfg_lower.lua` | 1116-1123 | `spongejit_lua_exec_to_moon_cfg_lower` | `LuaExec.Kernel + mode/projection -> { cfg=MoonCFG.Kernel }` or `{ errors=... }` |
+| `lua_exec_to_moon_cfg_lower.lua` | 1125-1130 | `spongejit_lua_exec_module_to_moon_cfg_lower` | `LuaExec.Module + kernel_name + mode/projection -> MoonCFG.Kernel`; includes static inlining internally |
+| `lua_compile_to_moon_kernel.lua` | 87-92 | `spongejit_lua_compile_to_moon_kernel` | `LuaCompile.Unit -> LuaCompile.Result` via LuaSrc→LuaExec then LuaExec/Module→MoonCFG |
+
+Test coverage for phase caching:
+- `test_spongejit_lua_compile_pipeline.lua` lines 19-33 checks phase cache hits for:
+  - `lua_compile_to_moon_kernel.phase`
+  - `lua_src_to_lua_exec_lower.phase`
+  - `lua_exec_to_moon_cfg_lower.phase`
+
+No `pvm.phase` exists for:
+- source decode/window collection,
+- runtime observation → evidence,
+- foundry bundle → evidence,
+- static CALL/CLOSURE evidence product construction,
+- static region inliner as a standalone pass,
+- MoonCFG emission,
+- key generation,
+- stencil plan/template/materialization/bank/bundle/manifest generation,
+- foundry/corpus orchestration.
+
+---
+
+## File Classification by Observed Role
+
+### Schema/model/types/constant declarations only
+
+- `schema.lua` — ASDL bootstrap/context loading; exposes `Schema.get`, `builders`, `classof`.
+- `builders.lua` — constructor conveniences only.
+- `moon_cfg_abi.lua` — typed MoonCFG parameter/name helpers.
+- `lua_rt_value_model.lua` — LuaRT value tag/runtime representation constants.
+- `lua_rt_stack_model.lua` — stack/value-sequence/vararg runtime layout constants.
+- `lua_rt_object_model.lua` — string/table/raw-get runtime layout constants.
+- `lua_rt_outcome_model.lua` — outcome/error/yield runtime layout constants.
+- `lua_rt_cdata_model.lua` — cdata scalar-bank layout constants plus ownership validation helper.
+- `lua_exec_region_model.lua` — region taxonomy/support-gate metadata and descriptor builders.
+- `stencil_materialization_plan.lua` — mostly typed Stencil ASDL builders; also validates templates.
+
+### Validator/predicate only
+
+- `validate.lua`
+- `lua_compile_validate.lua`
+- `lua_src_validate.lua`
+- `lua_region_validate.lua`
+- `lua_fact_validate.lua`
+- `lua_ffi_validate.lua`
+- `lua_gc_validate.lua`
+- `lua_rt_validate.lua`
+- `lua_exec_validate.lua`
+- `moon_cfg_validate.lua`
+- `compile_contract_validate.lua`
+- `stencil_validate.lua`
+- model validators:
+  - `lua_rt_arity_model.lua`
+  - `lua_rt_call_model.lua`
+  - `lua_rt_metatable_model.lua`
+  - `lua_rt_operation_model.lua`
+  - `lua_rt_close_model.lua`
+  - `lua_rt_closure_upvalue_model.lua`
+  - `lua_rt_gc_alloc_model.lua`
+  - `lua_rt_loop_model.lua`
+
+These files may construct small ASDL helper values in support functions, but their dominant observed role is structural validation/support gating.
+
+### Deterministic ASDL product transformation
+
+- `lua_src_from_puc_decode.lua`
+- `lua_src_window_collect.lua`
+- `lua_compile_unit.lua`
+- `lua_fact_from_runtime_observe.lua`
+- `lua_fact_from_foundry_bundle.lua`
+- `lua_fact_closure.lua`
+- `lua_src_to_lua_region_recognize.lua`
+- `lua_src_to_lua_exec_lower.lua`
+- `lua_exec_static_region_inline.lua`
+- `lua_exec_to_moon_cfg_lower.lua`
+- `lua_compile_to_moon_kernel.lua`
+- `stencil_materialization_plan.lua`
+- `stencil_object_extract.lua`
+- `stencil_materialize.lua`
+- `stencil_bundle.lua`
+
+### Source/evidence analysis that constructs semantic ASDL products
+
+- `lua_src_call_static_model.lua`
+- `lua_src_closure_static_model.lua`
+- `lua_fact_payload_lease.lua`
+- `lua_fact_from_runtime_observe.lua`
+- `lua_fact_from_foundry_bundle.lua`
+- `lua_compile_foundry.lua` fact axes/bundles
+
+### Inliner/rewriter that transforms ASDL products
+
+- `lua_exec_static_region_inline.lua`
+  - `LuaExec.Module -> LuaExec.Kernel`
+  - rewrites `EmitRegion` by cloning target region blocks and continuation rewrites.
+
+### Lowering between ASDL layers
+
+- `lua_src_to_lua_exec_lower.lua`
+  - `LuaSrc.Window + LuaFact.Evidence -> LuaExec.Kernel/LuaExec.Module`
+- `lua_exec_to_moon_cfg_lower.lua`
+  - `LuaExec.Kernel/LuaExec.Module -> MoonCFG.Kernel`
+- `lua_compile_to_moon_kernel.lua`
+  - orchestration: `LuaCompile.Unit -> LuaCompile.Result`
+
+### Emitter/materializer/artifact generation
+
+- `moon_cfg_emit.lua`
+  - `MoonCFG.Kernel -> Moonlift source string`
+- `moon_cfg_key.lua`
+  - `MoonCFG.Kernel -> structural string key`
+- `compile_contract_key.lua`
+  - `CompileContract.Contract -> structural string key`
+- `stencil_key.lua`
+  - `Stencil.* / semantic ASDL -> structural string keys`
+- `stencil_materialization_plan.lua`
+  - `MoonCFG.Kernel + CompileContract -> Stencil.VariantKey`
+  - explicit template/plan builders
+- `stencil_object_extract.lua`
+  - plain metadata + variant -> `Stencil.StencilTemplate`
+- `stencil_materialize.lua`
+  - `Stencil.StencilTemplate + code bytes -> Stencil.MaterializedImage`
+- `stencil_bank.lua`
+  - `Stencil.StencilModule -> plain Lua bank index`
+  - module/index + variant + bytes -> `Stencil.MaterializedImage`
+- `stencil_bundle.lua`
+  - `Stencil.StencilModule + code bytes -> Stencil.MaterializedBundle`
+- `stencil_manifest.lua`
+  - `Stencil.StencilModule + code bytes -> plain Lua manifest table/string/digest`
+
+### Foundry/corpus orchestration
+
+- `lua_compile_foundry.lua`
+- tests:
+  - `test_spongejit_lua_compile_foundry.lua`
+  - `test_spongejit_lua_compile_corpus100.lua`
+- `spongejit/Makefile` foundry/corpus targets.
+
+---
+
+## Deterministic Product Transformations and PVM Boundary Status
+
+| File/function | Input | Output | `pvm.phase`? | Public phase API or helper? | Visible tests |
+|---|---|---|---|---|---|
+| `schema.new_context/get` | ASDL text | PVM ASDL context/builders | No | public helper | schema/pipeline tests indirectly |
+| `lua_src_from_puc_decode.decode` | plain PUC event table | `LuaSrc.Op` | No | helper via collector | `test_spongejit_lua_compile_lua_src.lua` |
+| `lua_src_window_collect.collect` | event list | `LuaSrc.Window` | No | helper via unit facade | `lua_src`, pipeline/source tests |
+| `lua_compile_unit.from_events` | events + observations | `LuaCompile.Unit` | No | public facade `unit_from_events` | many tests |
+| `lua_fact_from_runtime_observe.observe` | plain observation records | `LuaFact.Evidence` | No | helper via unit facade | `lua_fact`, source CALL/CLOSURE tests |
+| `lua_fact_from_foundry_bundle.from_bundle` | plain foundry bundle | `LuaFact.Evidence` | No | foundry helper | foundry/corpus tests |
+| `lua_fact_closure.close` | `LuaFact.Evidence` | `LuaFact.Evidence` with implied facts | No | hidden helper in evidence import | `lua_fact` |
+| `lua_src_to_lua_region_recognize.recognize` | `LuaSrc.Window` | `LuaRegion.RegionSet` | No | public module helper | `test_spongejit_lua_compile_lua_region.lua` |
+| `lua_src_call_static_model.find_static_call_payloads` | `LuaFact.Evidence + LuaSrc.CALL` | plain payload table `{target,region}` | No | hidden helper inside source lowerer | source CALL tests |
+| `lua_src_call_static_model.build_call_products` | `LuaSrc.CALL + typed payloads` | plain Lua table containing many ASDL products | No | hidden helper inside source lowerer | source CALL/static tests |
+| `lua_src_closure_static_model.find_static_closure_payload` | `LuaFact.Evidence + LuaSrc.CLOSURE` | `LuaFact.StaticClosureValuePayload` | No | hidden helper inside source lowerer | source CLOSURE tests |
+| `lua_src_closure_static_model.build_closure_products` | `LuaSrc.CLOSURE + payload` | plain Lua table containing ASDL products | No | hidden helper inside source lowerer | source CLOSURE tests |
+| `lua_src_to_lua_exec_lower.lower_value` | `LuaSrc.Window + LuaFact.Evidence` | `LuaExec.Kernel` or `LuaExec.Module` | Wrapped by phase, but also exported as `lower_uncached`; `M.lower` pre-runs it before phase | public phase API `M.lower`; hidden major helper | pipeline, source call/closure, many runtime tests |
+| `lua_exec_static_region_inline.inline_module_kernel` | `LuaExec.Module + kernel_name` | inlined `LuaExec.Kernel` | No standalone phase | hidden inside `lua_exec_to_moon_cfg_lower` module phase; also public helper module | static invoke tests |
+| `lua_exec_to_moon_cfg_lower.lower_value` | `LuaExec.Kernel` | `MoonCFG.Kernel` | Wrapped by `phase`; exported `lower_uncached` | public phase API `M.lower` | pipeline, MoonCFG/runtime tests |
+| `lua_exec_to_moon_cfg_lower.lower_module_value` | `LuaExec.Module` | `MoonCFG.Kernel` | Wrapped by `module_phase`; exported `lower_module_uncached` | public phase API `M.lower_module` | static invoke, source CALL/CLOSURE |
+| `lua_compile_to_moon_kernel.compile_value` | `LuaCompile.Unit` | `LuaCompile.Ok/Reject` | Wrapped by phase | public phase API `M.compile`; `compile_uncached` exported | pipeline, most public tests |
+| `moon_cfg_emit.emit` | `MoonCFG.Kernel` | Moonlift source string | No | public helper | runtime tests, foundry |
+| `moon_cfg_key.key` | `MoonCFG.Kernel` | string key | No | public helper | foundry tests |
+| `compile_contract_key.key` | `CompileContract.Contract` | string key | No | public helper | foundry/MoonCFG tests |
+| `stencil_key.variant_key/template_key/...` | Stencil/semantic ASDL | string key | No | public helper | stencil/foundry/corpus tests |
+| `stencil_materialization_plan.variant_for_kernel` | `MoonCFG.Kernel + CompileContract` | `Stencil.VariantKey` | No | helper via `stencil_foundry` | stencil/foundry tests |
+| `stencil_materialization_plan.template` | explicit args | `Stencil.StencilTemplate` | No | public builder helper | stencil tests |
+| `stencil_object_extract.template_from_metadata` | plain metadata + variant | `Stencil.StencilTemplate` | No | public adapter | stencil tests |
+| `stencil_materialize.materialize` | `Stencil.StencilTemplate + code bytes` | `Stencil.MaterializedImage` | No | public materializer | stencil tests |
+| `stencil_bank.build_index` | `Stencil.StencilModule` | plain Lua index table | No | public helper | stencil tests |
+| `stencil_bank.materialize` | module/index + variant + bytes | `Stencil.MaterializedImage` | No | public helper | stencil tests |
+| `stencil_bundle.materialize_all/selected` | `Stencil.StencilModule + code bytes` | `Stencil.MaterializedBundle` plus plain meta table | No | public helper | stencil tests |
+| `stencil_manifest.build` | `Stencil.StencilModule + code bytes` | plain Lua manifest table | No | public helper | stencil tests |
+| `lua_compile_foundry.compile_window` | plain op windows + fact bundle | plain Lua result table with ASDL kernel/variant/contract/source | No | foundry helper | foundry/corpus |
+| `lua_compile_foundry.run_windows` | windows/config | plain Lua representative result table | No | foundry orchestration | foundry/corpus |
+| `lua_compile_foundry.write_artifacts` | plain result table | files/json/md | No | artifact writer | foundry/corpus |
+
+---
+
+## Key Code
+
+### PVM phase wrappers
+
+```lua
+-- lua_src_to_lua_exec_lower.lua lines 1094-1107
+local phase = pvm.phase("spongejit_lua_src_to_lua_exec_lower", function(window, evidence)
+  local kernel, errors = lower_value(window, evidence)
+  if not kernel then error("LuaExec lower unsupported inside cached phase: " .. table.concat(errors or {}, "; ")) end
+  return kernel
+end)
+
+function M.lower(window, evidence)
+  local kernel, errors = lower_value(window, evidence)
+  if not kernel then return nil, errors end
+  return pvm.one(phase(window, evidence))
+end
+```
+
+Observed: `M.lower` runs `lower_value` once before entering the phase, then the phase runs `lower_value` again on successful cases.
+
+```lua
+-- lua_exec_to_moon_cfg_lower.lua lines 1116-1130
+local phase = pvm.phase("spongejit_lua_exec_to_moon_cfg_lower", function(kernel, mode, projection)
+  local cfg, errors = lower_value(kernel, opts_from_mode(mode, projection))
+  if cfg then return { cfg = cfg } end
+  return { errors = errors or { "lua_exec_to_moon_cfg_lower_failed" } }
+end)
+
+local module_phase = pvm.phase("spongejit_lua_exec_module_to_moon_cfg_lower", function(module, kernel_name, mode, projection)
+  local cfg, errors = lower_module_value(module, kernel_name ~= "" and kernel_name or nil, opts_from_mode(mode, projection))
+  if cfg then return { cfg = cfg } end
+  return { errors = errors or { "lua_exec_module_to_moon_cfg_lower_failed" } }
+end)
+```
+
+```lua
+-- lua_compile_to_moon_kernel.lua lines 87-94
+local phase = pvm.phase("spongejit_lua_compile_to_moon_kernel", function(unit)
+  return compile_value(unit)
+end)
+
+function M.compile(unit)
+  return pvm.one(phase(unit))
+end
+```
+
+### Source CALL/CLOSURE product helpers are not PVM phases
+
+```lua
+-- lua_src_call_static_model.lua lines 40-53
+function M.find_static_call_payloads(evidence, call_op)
+  ...
+  if target_payload and region_payload then return { target = target_payload, region = region_payload } end
+  ...
+end
+```
+
+```lua
+-- lua_src_call_static_model.lua lines 129-202
+function M.build_call_products(call_op, payloads, opts)
+  ...
+  return {
+    call = call,
+    call_shape = shape,
+    closure = target_payload.closure,
+    resolved_target = target_payload.target,
+    arg_channel = arg_channel,
+    result_channel = call_result,
+    ...
+    invocation = invocation,
+    static_binding = region_payload.binding,
+    static_region = region_payload.region,
+    ...
+  }, nil
+end
+```
+
+```lua
+-- lua_src_closure_static_model.lua lines 32-39, 95-108
+function M.find_static_closure_payload(evidence, closure_op) ... end
+
+function M.build_closure_products(closure_op, payload)
+  ...
+  return {
+    pc = pc_id(closure_op.pc),
+    slot = slot_id(closure_op.a),
+    proto = closure_op.proto,
+    closure = payload.closure,
+    resolved_target = payload.target,
+    static_binding = payload.binding,
+    allocation = payload.allocation,
+    handle = payload.target.identity.closure_handle,
+  }, nil
+end
+```
+
+### Static region inliner is a major ASDL rewrite, currently called inside module lowering phase
+
+```lua
+-- lua_exec_static_region_inline.lua lines 133-187
+function M.inline_module_kernel(module, kernel_name)
+  local ok_module, module_errors = ExecValidate.module(module)
+  ...
+  for _, block in ipairs(kernel.body.blocks or {}) do
+    ...
+    if cls(op) == Exec.EmitRegion then
+      ...
+      local caller, cloned = inline_emit_block(block, emit_index, target, invocation, ordinal, errors)
+      ...
+    end
+  end
+  ...
+  local inlined_region = Exec.Region(body.id, body.kind, body.params or {}, body.continuations or {}, body.entry, new_blocks)
+  local inlined_kernel = Exec.Kernel(kernel.id, kernel.frame, inlined_region, kernel.contract)
+  ...
+  return inlined_kernel, nil
+end
+```
+
+```lua
+-- lua_exec_to_moon_cfg_lower.lua lines 1099-1103
+local function lower_module_value(module, kernel_name, opts)
+  local inlined, inline_errors = StaticInline.inline_module_kernel(module, kernel_name)
+  if not inlined then return nil, inline_errors end
+  return lower_value(inlined, opts)
+end
+```
+
+### MoonCFG emission is non-PVM artifact generation
+
+```lua
+-- moon_cfg_emit.lua lines 1549-1584
+local function render_kernel(kernel, opts)
+  ...
+  return table.concat(lines, "\n")
+end
+
+function M.emit(kernel, opts)
+  opts = opts or {}
+  local ok, errors = Validate.validate(kernel)
+  if not ok then error("MoonCFG validation failed before emission: " .. table.concat(errors, "; "), 2) end
+  return render_kernel(kernel, opts)
+end
+```
+
+### Key generation emits strings, not ASDL
+
+```lua
+-- moon_cfg_key.lua lines 1-33
+function M.key(kernel) return "MoonCFG\n" .. key(kernel) end
+```
+
+```lua
+-- compile_contract_key.lua lines 43-47
+function M.key(contract)
+  assert(pvm.classof(contract) == T.CompileContract.Contract, "expected CompileContract.Contract")
+  return "CompileContract\n" .. key_value(contract)
+end
+```
+
+```lua
+-- stencil_key.lua lines 113-136
+function M.semantic_key(node) ...
+function M.variant_key(variant) ...
+function M.template_key(template) ...
+function M.representative_key(semantic_node, contract_key, variant) ...
+```
+
+### Foundry orchestration produces plain Lua tables and files
+
+```lua
+-- lua_compile_foundry.lua lines 314-354
+function M.compile_window(ops, bundle, opts)
+  local evidence = FoundryEvidence.from_bundle(bundle or {})
+  local unit = C.lua_compile_unit.from_events(ops or {}, {})
+  unit = C.lua_compile_unit.from_parts(unit.source, evidence)
+  local moon_result = C.compile_to_moon_kernel(unit)
+  ...
+  return {
+    ok = true,
+    representative_key = rep_key,
+    moon_cfg_key = cfg_key,
+    stencil_variant = variant,
+    stencil_variant_key = stencil_variant_key,
+    contract_key = ckey,
+    contract = contract,
+    moon_cfg_kernel = kernel,
+    moonlift_source = source_or_err,
+    source_ops = copy_array(ops),
+    fact_bundle = copy_array(bundle),
+  }
+end
+```
+
+```lua
+-- lua_compile_foundry.lua lines 370-449
+function M.run_windows(windows, config)
+  ...
+  return {
+    schema = "sponjit.lua_compile_foundry.v3",
+    representatives = reps,
+    alias_map = alias_map,
+    rejection_reasons = rejection_counts,
+    stats = stats,
+    generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+  }
+end
+```
+
+---
+
+## Relationships
+
+### Current product flow with observed PVM boundaries
+
+```text
+plain PUC/event tables
+  -- no pvm.phase -->
+LuaSrc.Op
+  -- no pvm.phase -->
+LuaSrc.Window
+
+plain observation/foundry records
+  -- no pvm.phase -->
+LuaFact.Evidence
+
+LuaSrc.Window + LuaFact.Evidence
+  -- pvm.phase: spongejit_lua_src_to_lua_exec_lower -->
+LuaExec.Kernel or LuaExec.Module
+
+LuaExec.Module
+  -- inside module pvm.phase, hidden helper inline_module_kernel -->
+LuaExec.Kernel
+
+LuaExec.Kernel
+  -- pvm.phase: spongejit_lua_exec_to_moon_cfg_lower -->
+MoonCFG.Kernel
+
+LuaCompile.Unit
+  -- pvm.phase: spongejit_lua_compile_to_moon_kernel -->
+LuaCompile.Ok/Reject containing MoonCFG.Kernel
+
+MoonCFG.Kernel
+  -- no pvm.phase -->
+Moonlift source string
+
+MoonCFG.Kernel + CompileContract
+  -- no pvm.phase -->
+string keys / Stencil.VariantKey / foundry representative tables
+```
+
+### Source CALL path
+
+```text
+LuaFact.Evidence payloads
+  StaticClosureTargetPayload + StaticCalleeRegionPayload
+    -> lua_src_call_static_model.find_static_call_payloads
+    -> validate_static_call_slice
+    -> build_call_products
+    -> plain Lua table of ASDL call/static invocation products
+    -> lua_src_to_lua_exec_lower lower_block
+    -> LuaExec.Module with EmitRegion
+    -> lua_exec_to_moon_cfg_lower module_phase
+    -> lua_exec_static_region_inline.inline_module_kernel
+    -> LuaExec.Kernel
+    -> MoonCFG.Kernel
+```
+
+### Source CLOSURE path
+
+```text
+LuaFact.Evidence payload StaticClosureValuePayload
+  -> lua_src_closure_static_model.find_static_closure_payload
+  -> validate_static_closure_slice
+  -> build_closure_products
+  -> plain Lua table of ASDL closure/target/binding/allocation products
+  -> lua_src_to_lua_exec_lower lower_instruction
+  -> Exec.AssignValue(... RT.LuaClosureValue(...))
+  -> LuaExec.Kernel or LuaExec.Module
+```
+
+### Stencil/foundry path
+
+```text
+MoonCFG.Kernel + CompileContract
+  -> compile_contract_key.key / moon_cfg_key.key / stencil_key.variant_key
+  -> plain representative key strings
+  -> lua_compile_foundry.run_windows plain Lua representative table
+  -> write_artifacts JSON/markdown
+
+Stencil.StencilModule + code bytes
+  -> stencil_bank.build_index plain Lua index
+  -> stencil_materialize.materialize ASDL MaterializedImage
+  -> stencil_bundle.materialize_* ASDL MaterializedBundle + plain meta
+  -> stencil_manifest.build plain Lua manifest
+```
+
+---
+
+## Observations
+
+- The package currently has exactly four PVM phases, all in three files.
+- Major source/evidence transforms before `LuaSrc -> LuaExec` are not individual PVM phases:
+  - event decoding,
+  - window collection,
+  - runtime observation import,
+  - foundry bundle import,
+  - fact closure.
+- `lua_src_to_lua_exec_lower.M.lower` performs an uncached `lower_value` preflight before calling the `pvm.phase`, so successful calls execute the lowering logic twice: once outside the phase, once inside.
+- `lua_src_call_static_model.build_call_products` and `lua_src_closure_static_model.build_closure_products` construct significant semantic ASDL products but return plain Lua tables as carriers.
+- Static region inlining is a major ASDL rewrite from `LuaExec.Module` to `LuaExec.Kernel`; it has no standalone `pvm.phase`, but it is included inside `lua_exec_to_moon_cfg_lower`’s `module_phase`.
+- Direct kernel `Exec.EmitRegion` remains rejected by `lua_exec_to_moon_cfg_lower.lower_op`; module lowering accepts it only by pre-MoonCFG inlining.
+- `moon_cfg_emit.emit` is a deterministic artifact-generation pass from `MoonCFG.Kernel` to Moonlift source string; it is not a PVM phase.
+- Key modules (`moon_cfg_key`, `compile_contract_key`, `stencil_key`) deterministically transform ASDL products into plain strings; none are PVM phases.
+- Stencil bank/manifest/foundry orchestration often returns plain Lua tables rather than ASDL products:
+  - bank index,
+  - manifest,
+  - foundry representatives,
+  - artifact summaries.
+- Tests explicitly check PVM cache boundaries only for:
+  - public compile,
+  - LuaSrc→LuaExec,
+  - LuaExec→MoonCFG kernel lowering.
+- Tests exercise non-phase transformations directly through `*_uncached`, `lower_module_outcome`, `Emit.emit`, foundry helpers, and stencil helpers.
+- Documentation says semantic choices become ASDL/MoonCFG structure and stencil artifacts are generated from semantic CFGs/contracts; current code has several deterministic transitions after/before these products that are plain helper calls rather than named PVM phases.
+
+## Edit-planner Output — 2026-06-07 18:02:04
+
+### Precondition Checks
+
+Before edits begin, verify:
+
+- `lua_src_to_lua_exec_lower.M.lower` still pre-runs `lower_value()` before calling `phase`.
+- `lua_exec_to_moon_cfg_lower` has no preflight misuse, but uses plain `{ cfg/errors }` phase records.
+- `lua_src_call_static_model.build_call_products()` and `lua_src_closure_static_model.build_closure_products()` still return plain Lua product carrier tables.
+- `lua_exec_static_region_inline.inline_module_kernel()` is still a helper called inside module lowering, not its own phase.
+- `MoonCFG.EmitRegion`, source `TAILCALL`, open `CALL`, generic/metatable/FFI/upvalue paths remain rejected.
+- Existing strict source `CALL`/`CLOSURE` tests are green before repair.
+
+---
+
+## Files to Modify
+
+### `experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl`
+
+**Goal**: Add minimal boundary/result wrappers so phase outputs can cache successes and failures without hidden helper product transforms.
+
+**Edit blocks**
+
+1. **`LuaCompile` module, near `Unit`**: add canonical external-input wrappers:
+   - `SourceEvent = CanonicalPucEvent(...) | DecodedSourceOp(LuaSrc.Op op)`
+   - `SourceEventBatch = (LuaCompile.SourceEvent* events) unique`
+   - `EvidenceRecord = EvidenceFact(LuaFact.Fact fact) | EvidencePayload(LuaFact.PayloadLease payload) unique`
+   - `EvidenceInput = (LuaCompile.EvidenceRecord* records, LuaRegion.RegionSet regions) unique`
+
+2. **`LuaCompile` module, near `Product/Result`**: add phase result wrappers:
+   - `ExecProduct = ExecKernel(LuaExec.Kernel kernel) | ExecModule(LuaExec.Module module)`
+   - `ExecLowerResult = ExecLowerOk(LuaCompile.ExecProduct product) | ExecLowerReject(string* errors)`
+   - `MoonLowerResult = MoonLowerOk(MoonCFG.Kernel kernel) | MoonLowerReject(string* errors)`
+   - `StaticInlineResult = StaticInlineOk(LuaExec.Kernel kernel) | StaticInlineReject(string* errors)`
+
+3. **`LuaExec` module**: replace plain source helper product tables with ASDL products:
+   - `StaticCallProducts = (...) unique`
+   - `StaticCallProductResult = StaticCallProductsOk(LuaExec.StaticCallProducts products) | StaticCallProductsReject(string* errors)`
+   - `StaticClosureProducts = (...) unique`
+   - `StaticClosureProductResult = StaticClosureProductsOk(LuaExec.StaticClosureProducts products) | StaticClosureProductsReject(string* errors)`
+
+4. **Optional artifact wrappers only if needed by tests/API stability**:
+   - Prefer phase output strings for keys/source.
+   - Only add wrappers if a transform needs typed output beyond an existing ASDL product.
+
+**Danger zones**
+- Do not change existing semantic architecture.
+- Do not add support-status fields.
+- Do not broaden source opcode support.
+
+---
+
+### `lua_src_from_puc_decode.lua`
+
+**Goal**: Make decode a named phase boundary.
+
+**Edits**
+- Add `pvm.phase("spongejit_lua_src_decode_event", function(event) ... end)`.
+- Phase input is `LuaCompile.SourceEvent`.
+- `CanonicalPucEvent` decodes to `LuaSrc.Op`.
+- `DecodedSourceOp` returns the contained op.
+- Keep plain table normalization as `from_plain_event(ev)` only; it must not perform semantic lowering.
+- Expose:
+  - `M.phase`
+  - `M.decode_event(event)`
+  - existing `M.decode(ev)` delegates through canonical wrapper + phase.
+
+---
+
+### `lua_src_window_collect.lua`
+
+**Goal**: Make event batch → `LuaSrc.Window` a phase.
+
+**Edits**
+- Add `pvm.phase("spongejit_lua_src_collect_window", function(batch) ... end)`.
+- Input: `LuaCompile.SourceEventBatch`.
+- Internally calls decode phase for each event.
+- Preserve `EXTRAARG` behavior.
+- Existing `collect(events)` becomes adapter:
+  1. canonicalize plain events into `SourceEventBatch`;
+  2. return `pvm.one(M.phase(batch))`.
+
+---
+
+### `lua_fact_from_runtime_observe.lua` and `lua_fact_from_foundry_bundle.lua`
+
+**Goal**: Make canonical evidence input → `LuaFact.Evidence` a phase.
+
+**Edits**
+- Add shared phase, e.g. `spongejit_lua_fact_import_evidence`.
+- Input: `LuaCompile.EvidenceInput`.
+- Output: closed `LuaFact.Evidence`.
+- Plain runtime/foundry records may remain external adapters because they can contain arbitrary ASDL payload values; adapters must only canonicalize into `EvidenceRecord`.
+- Expose `.phase`.
+- Foundry import must use this phase after normalization.
+
+---
+
+### `lua_compile_unit.lua`
+
+**Goal**: Make unit construction phase-backed.
+
+**Edits**
+- Add `pvm.phase("spongejit_lua_compile_unit_from_inputs", function(source_batch, evidence_input) ... end)`.
+- Existing `from_events(events, observations)`:
+  - canonicalizes external records;
+  - calls window/evidence phases;
+  - returns cached `LuaCompile.Unit`.
+- Existing `from_parts(window, evidence)` may remain a simple constructor helper.
+
+---
+
+### `lua_src_to_lua_exec_lower.lua`
+
+**Goal**: Remove double-run phase misuse.
+
+**Edits**
+- Change phase to return `LuaCompile.ExecLowerResult`, not hard-error on unsupported cases.
+- `M.lower(window, evidence)` must only call:
+  ```lua
+  local result = pvm.one(phase(window, evidence))
+  ```
+  then unwrap:
+  - `ExecLowerOk(ExecKernel/ExecModule)` → product
+  - `ExecLowerReject(errors)` → `nil, errors`
+- Keep `M.lower_uncached = lower_value` for tests/debug only.
+- Update `is_candidate` to use cached `M.lower`, or explicitly document/rename if it intentionally bypasses cache.
+- Replace use of plain CALL/CLOSURE product tables with ASDL product values from their new phases.
+
+---
+
+### `lua_src_call_static_model.lua`
+
+**Goal**: Move meaningful source CALL product construction behind a phase.
+
+**Edits**
+- Keep validation helpers.
+- Replace `build_call_products(...)` plain table output with `LuaExec.StaticCallProducts`.
+- Add:
+  ```lua
+  M.phase = pvm.phase("spongejit_lua_src_call_static_products", function(call_op, evidence, return_block_ref) ... end)
+  ```
+- Public `M.products(...)` unwraps `StaticCallProductResult`.
+- `lua_src_to_lua_exec_lower.lua` must call this cached API.
+- Preserve strict slice:
+  - fixed `CALL`
+  - direct Lua closure
+  - typed static callee evidence
+  - no C/FFI/metamethod/open/tailcall.
+
+---
+
+### `lua_src_closure_static_model.lua`
+
+**Goal**: Move meaningful source CLOSURE product construction behind a phase.
+
+**Edits**
+- Keep validation helpers.
+- Replace plain table with `LuaExec.StaticClosureProducts`.
+- Add:
+  ```lua
+  M.phase = pvm.phase("spongejit_lua_src_closure_static_products", function(closure_op, evidence) ... end)
+  ```
+- Public `M.products(...)` unwraps result.
+- Preserve strict no-upvalue static closure slice.
+
+---
+
+### `lua_exec_static_region_inline.lua`
+
+**Goal**: Make static inlining its own PVM boundary.
+
+**Edits**
+- Add:
+  ```lua
+  M.phase = pvm.phase("spongejit_lua_exec_static_region_inline", function(module, kernel_name) ... end)
+  ```
+- Phase returns `LuaCompile.StaticInlineResult`.
+- `inline_module_kernel(...)` unwraps cached result.
+- Keep direct `LuaExec.EmitRegion` rejected outside module inlining.
+- Keep `MoonCFG.EmitRegion` unsupported.
+
+---
+
+### `lua_exec_to_moon_cfg_lower.lua`
+
+**Goal**: Normalize phase results and audit for preflight misuse.
+
+**Edits**
+- Kernel phase returns `LuaCompile.MoonLowerResult`.
+- Module phase returns `LuaCompile.MoonLowerResult`.
+- No uncached pre-run before phase calls.
+- Module lower path must call static inline phase, not raw helper logic.
+- Public APIs preserve current behavior:
+  - `lower(...) -> cfg | nil, errors`
+  - `lower_module(...) -> cfg | nil, errors`
+
+---
+
+### `lua_compile_to_moon_kernel.lua`
+
+**Goal**: Route public compile through phase-backed boundaries only.
+
+**Edits**
+- Keep compile phase returning `LuaCompile.Result`.
+- Use cached `LuaSrc -> LuaExec` API.
+- Use cached kernel/module `LuaExec -> MoonCFG` API.
+- Update route comment:
+  ```text
+  LuaSrc.Window -> LuaExec.Kernel/Module -> MoonCFG.Kernel
+  ```
+- No fallback/interpreter/protocol path.
+
+---
+
+### `moon_cfg_emit.lua`
+
+**Goal**: Phase MoonCFG emission.
+
+**Edits**
+- Add:
+  ```lua
+  M.phase = pvm.phase("spongejit_moon_cfg_emit", function(kernel, name) ... end)
+  ```
+- `M.emit(kernel, opts)` normalizes `opts.name` to a string and calls phase.
+- Preserve validation before rendering.
+- Output remains Moonlift source string.
+
+---
+
+### Key modules
+
+Modify:
+
+- `moon_cfg_key.lua`
+- `compile_contract_key.lua`
+- `stencil_key.lua`
+
+**Goal**: Make deterministic key generation phase-backed.
+
+**Edits**
+- Add named phases:
+  - `spongejit_moon_cfg_key`
+  - `spongejit_compile_contract_key`
+  - `spongejit_stencil_semantic_key`
+  - `spongejit_stencil_variant_key`
+  - `spongejit_stencil_template_key`
+  - `spongejit_stencil_representative_key`
+- Public key functions call `pvm.one(phase(...))`.
+- Preserve existing string outputs and forbidden-string checks.
+
+---
+
+### Stencil artifact modules
+
+Modify:
+
+- `stencil_materialization_plan.lua`
+- `stencil_materialize.lua`
+- `stencil_bank.lua`
+- `stencil_bundle.lua`
+- `stencil_manifest.lua`
+- `stencil_foundry.lua`
+
+**Goal**: Phase meaningful deterministic artifact transforms.
+
+**Required boundaries**
+- `MoonCFG.Kernel + CompileContract -> Stencil.VariantKey`
+- `Stencil.StencilTemplate + code bytes -> Stencil.MaterializedImage`
+- `Stencil.StencilModule -> Stencil.BankIndex` where ASDL output exists
+- bundle/materialize-selected transforms where inputs/outputs are ASDL
+- manifest generation if kept central; otherwise document plain manifest table as artifact serialization outside compiler product graph.
+
+**Guardrail**
+- Unsupported `PatchSource` values must reject loudly, never silently degrade.
+
+---
+
+### `lua_compile_foundry.lua`
+
+**Goal**: Keep orchestration outside PVM but use product phases internally.
+
+**Edits**
+- Do not phase file I/O, corpus loops, JSON/markdown writing.
+- `compile_window` must use:
+  - evidence import phase
+  - public compile phase
+  - MoonCFG emit phase
+  - key phases
+  - stencil variant phase
+- Document boundary: plain corpus/foundry tables are external inputs; first compiler product boundary is canonical ASDL input → product phase.
+
+---
+
+### `init.lua`
+
+**Goal**: Export new phase-backed modules/APIs.
+
+**Edits**
+- Export new/updated modules:
+  - source decode/window/evidence/unit phases
+  - CALL/CLOSURE product phases
+  - static inline phase
+  - emit/key/stencil phase APIs
+
+---
+
+## Tests
+
+### Update existing tests
+
+- `test_spongejit_lua_compile_schema.lua`
+  - Assert new ASDL wrappers/result products exist.
+  - Validate CALL/CLOSURE product wrappers.
+- `test_spongejit_lua_compile_pipeline.lua`
+  - Update phase cache assertions for new result-wrapper behavior.
+- `test_spongejit_lua_compile_source_call.lua`
+- `test_spongejit_lua_compile_source_closure.lua`
+- `test_spongejit_lua_compile_static_invoke.lua`
+- `test_spongejit_lua_compile_semantic_gates.lua`
+- `test_spongejit_lua_compile_moon_cfg.lua`
+  - Preserve all strict positive/negative behavior.
+
+### New test
+
+`experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_pvm_boundaries.lua`
+
+Cover cache hits for:
+
+- source event decode
+- event batch → window
+- evidence import
+- unit construction
+- LuaSrc → LuaExec success and rejection
+- source CALL product phase
+- source CLOSURE product phase
+- static region inline phase
+- LuaExec → MoonCFG kernel and module phases
+- MoonCFG emit phase
+- MoonCFG/contract/stencil key phases
+- stencil variant/materialization phases
+
+Also prove direct kernel `EmitRegion`, `MoonCFG.EmitRegion`, unsupported CALL/CLOSURE cases, and forbidden strings still reject.
+
+---
+
+## Order of Operations
+
+1. Add ASDL wrappers/result products.
+2. Phase decode/window/evidence/unit construction.
+3. Fix `lua_src_to_lua_exec_lower` double-run misuse.
+4. Phase CALL/CLOSURE product construction.
+5. Phase static region inlining.
+6. Normalize LuaExec→MoonCFG result wrappers.
+7. Route public compile through cached APIs.
+8. Phase emission/key/stencil artifact transforms.
+9. Update foundry to consume product phases.
+10. Update facade exports.
+11. Update schema/regression tests.
+12. Add PVM boundary cache test.
+13. Run full verification.
+
+---
+
+## Verification Commands
+
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_pvm_boundaries.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_closure.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_semantic_gates.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_exec_pipeline.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua
+cd experiments/lua_interpreter_vm/spongejit && make test
+cd experiments/lua_interpreter_vm/spongejit && make test-completion
+cd experiments/lua_interpreter_vm/spongejit && make test-lua-compile-corpus100
+```
+
+---
+
+## Structured Edit Plan Sidecar
+
+Updated `wf-lua55-roadmap` to revision `r185`.
+
+Added tasks `T101`–`T117`. Ready task:
+
+- `T101` Add ASDL boundary result wrappers
+
+---
+
+## Pattern Memo
+
+- `pvm.phase` is the only compiler boundary primitive.
+- No successful public API may pre-run an uncached transform before calling its phase.
+- Meaningful ASDL product transitions must be phase-backed.
+- Plain external tables may only be canonicalized into ASDL wrapper inputs.
+- Helpers may validate or build local values, but not hide compiler product transitions.
+- Preserve strict CALL/CLOSURE behavior; no source support broadening.
+- No fallback/interpreter/protocol/helper-string semantics.
+
+## Worker Output — 2026-06-07 18:19:38
+
+## Completed
+Implemented the full SpongeJIT PVM boundary repair plan tasks `T101`–`T117`.
+
+Key outcomes:
+- Added ASDL boundary/result wrappers.
+- Added named `pvm.phase` boundaries for:
+  - source decode
+  - window collection
+  - evidence import
+  - unit construction
+  - LuaSrc→LuaExec result wrappers
+  - strict CALL/CLOSURE product construction
+  - static region inlining
+  - LuaExec→MoonCFG result wrappers
+  - MoonCFG emission
+  - MoonCFG/contract/stencil keys
+  - stencil variant/materialization/bundle transforms
+- Removed LuaSrc→LuaExec public double-run preflight; public `lower()` now unwraps cached ASDL phase results.
+- Updated foundry to use phased product APIs internally.
+- Added PVM boundary cache tests.
+- Preserved strict SpongeJIT semantics and guardrails.
+
+## Files Changed
+- `experiments/lua_interpreter_vm/spongejit/ssa_asdl/spongejit_lua_ssa.asdl`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_from_puc_decode.lua`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_window_collect.lua`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_fact_from_runtime_observe.lua`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_fact_from_foundry_bundle.lua`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_compile_unit.lua`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_to_lua_exec_lower.lua`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_call_static_model.lua`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_src_closure_static_model.lua`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_static_region_inline.lua`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/lua_exec_to_moon_cfg_lower.lua`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/moon_cfg_emit.lua`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/*key.lua`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/stencil_*.lua`
+- `experiments/lua_interpreter_vm/spongejit/lua_compile/init.lua`
+- `experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_pvm_boundaries.lua`
+- Updated related schema/source/static/guardrail tests.
+
+## Verification
+Passed:
+```sh
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_schema.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_pvm_boundaries.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_source_closure.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_invoke.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_semantic_gates.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_call.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_rt_arity.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_static_regions.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_lua_exec_pipeline.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_moon_cfg.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_stencil.lua
+luajit experiments/lua_interpreter_vm/tests/test_spongejit_lua_compile_foundry.lua
+cd experiments/lua_interpreter_vm/spongejit && make test
+cd experiments/lua_interpreter_vm/spongejit && make test-completion
+cd experiments/lua_interpreter_vm/spongejit && make test-lua-compile-corpus100
+```
+
+Corpus passed: `36 ok / 106 rejected`, `30 successful windows`, `26 reps checked`.
+
+## Notes
+- Completed and marked `T101`–`T117` done in the structured edit plan.
+- No ready/todo/claimed tasks remain.
+- `git status` still shows unrelated/pre-existing `museum/gps.lua` submodule modification.

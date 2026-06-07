@@ -23,13 +23,18 @@ local function compile_events(events)
 end
 
 -- Source-level dynamic semantics still reject; complete ASDL products do not imply acceptance.
+-- CALL now has one strict typed-evidence static slice; generic/missing-evidence
+-- CALL windows still reject without fallback.
 local r = compile_events({ { op = "CALL", pc = 1, a = 0, b = 1, c = 1 }, { op = "RETURN0", pc = 2 } })
-assert(r.kind == "Reject", "source CALL must reject")
-assert_reject_contains(r, "unsupported_source_semantics:CallRegion", "CALL reject")
+assert(r.kind == "Reject", "source CALL without typed static callee evidence must reject")
+assert_reject_contains(r, "source_call_missing_static_evidence", "CALL missing-evidence reject")
 r = compile_events({ { op = "TAILCALL", pc = 1, a = 0, b = 1, c = 1 }, { op = "RETURN0", pc = 2 } })
 assert(r.kind == "Reject", "source TAILCALL must reject")
 assert_reject_contains(r, "unsupported_source_semantics:TailCallRegion", "TAILCALL reject")
-for _, op in ipairs({ "CLOSE", "TBC", "NEWTABLE", "CLOSURE", "SETLIST", "TFORPREP", "TFORCALL", "TFORLOOP" }) do
+r = compile_events({ { op = "CLOSURE", pc = 1, a = 0, bx = 9 }, { op = "RETURN1", pc = 2, a = 0 } })
+assert(r.kind == "Reject", "source CLOSURE without typed static closure evidence must reject")
+assert_reject_contains(r, "source_closure_missing_static_evidence", "CLOSURE missing-evidence reject")
+for _, op in ipairs({ "CLOSE", "TBC", "NEWTABLE", "SETLIST", "TFORPREP", "TFORCALL", "TFORLOOP" }) do
   local ev = { op = op, pc = 1, a = 0, b = 0, c = 0, bx = 0, ax = 0 }
   local rr = compile_events({ ev, { op = "RETURN0", pc = 2 } })
   assert(rr.kind == "Reject", op .. " must reject")
