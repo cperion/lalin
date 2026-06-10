@@ -13,7 +13,7 @@ end
 -- object-language primitive is still a typed continuation region.
 local byte_patterns = Host.eval [[
 local function expect_byte(full_name, byte, err_code)
-    return region @{full_name}(p: ptr(u8), pos: i32; ok: cont(next: i32), fail: cont(pos: i32, code: i32))
+    return region @{full_name}(p: ptr(u8), pos: i32; ok(next: i32) | fail(pos: i32, code: i32))
     entry start()
         if as(i32, p[pos]) == @{byte} then
             jump ok(next = pos + 1)
@@ -101,7 +101,7 @@ end
 local score_after_50 = positive_after("score_after_50", 50)
 local score_after_60 = positive_after("score_after_60", 60)
 
-local scan_score = region(p: ptr(u8), n: i32; done: cont(a: i32, b: i32))
+local scan_score = region(p: ptr(u8), n: i32; done(a: i32, b: i32))
 entry loop(i: i32 = 0, a: i32 = 0, b: i32 = 0)
     if i >= n then jump done(a = a, b = b) end
     let v: i32 = as(i32, p[i])
@@ -132,7 +132,7 @@ score_pair:free()
 -- Continuation adapters: the fragment reports rich exits, while the caller
 -- adapts them into a compact return convention.
 local adapter_patterns = Host.eval [[
-local classify_byte = region(p: ptr(u8), pos: i32; digit: cont(value: i32), alpha: cont(value: i32), other: cont(value: i32))
+local classify_byte = region(p: ptr(u8), pos: i32; digit(value: i32) | alpha(value: i32) | other(value: i32))
 entry start()
     let c: i32 = as(i32, p[pos])
     if c >= 48 then

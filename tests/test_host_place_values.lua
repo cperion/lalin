@@ -18,7 +18,7 @@ end
 
 -- Struct field access
 local get_x = Host.eval [[
-local Pair = struct x: i32; y: i32 end
+local Pair = struct x: i32, y: i32 end
 return func(p: ptr(Pair)): i32 return (*p).x end
 ]]
 assert(get_x.name == "get_x")
@@ -26,7 +26,7 @@ print("OK: get_x constructed")
 local ok2, compiled2 = pcall(function() return get_x:compile() end)
 if ok2 then
     assert(compiled2(42) == 42)
-    compiled2:free()
+    compiled2:free(),
     print("OK: compiled")
 end
 

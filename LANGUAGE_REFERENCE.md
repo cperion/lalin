@@ -599,25 +599,33 @@ end
 Or inline:
 
 ```moonlift
-struct Vec3 x: f32; y: f32; z: f32 end
+struct Vec3 x: f32, y: f32, z: f32 end
 ```
 
-Fields are laid out in declaration order with natural alignment.
+Fields are product members: they coexist, so fields are comma-separated just
+like function parameters. Fields are laid out in declaration order with natural
+alignment.
 
 ### 5.6 Tagged union types
 
 ```moonlift
 union Result ok(i32) | err(i32) end
-union Scanner hit(pos: i32) | miss(pos: i32) end
+
+-- Protocol-style variants use named payload fields.
+union Scanner
+    hit(pos: i32)
+  | miss(pos: i32)
+end
 ```
 
 Tagged unions carry an implicit discriminant tag followed by the variant
 payload. The tag is an integer starting from 0 in declaration order. Useful
 for explicit phase/result dispatch.
 
-When a tagged union is used as a region result protocol (`region r(...): Scanner`),
-its variants become exits and named variant fields become continuation
-parameters. Protocol variants must use named fields.
+Union variants are sum alternatives, so they are separated by `|`. A bare variant name
+means no payload. When a tagged union is used as a region result protocol
+(`region r(...): Scanner`), its variants become exits and named variant fields
+become continuation parameters. Protocol variants must use named fields.
 
 ### 5.7 Array types
 
@@ -759,14 +767,14 @@ In `.mlua` files, use `struct` and `union` islands. The name is optional when
 assigned — inferred from the assignment target:
 
 ```moonlift
-struct Pair left: i32; right: i32 end
-local Pair = struct left: i32; right: i32 end   -- same, name inferred
+struct Pair left: i32, right: i32 end
+local Pair = struct left: i32, right: i32 end   -- same, name inferred
 
 union Result ok(i32) | err(string) | none end
 local Result = union ok(i32) | err(string) | none end  -- same, name inferred
 
 -- Anonymous (auto-named)
-return struct x: f32; y: f32 end
+return struct x: f32, y: f32 end
 return union ok(i32) | err(i32) end
 ```
 
@@ -778,18 +786,40 @@ return union ok(i32) | err(i32) end
 
 The `.mlua` source parser recognizes these hosted declaration islands.
 Names in brackets are optional — when omitted, the name is inferred from the
-Lua assignment target or auto-generated:
+Lua assignment target or auto-generated.
 
-- `struct [Name] field: T ... end`
-- `union [Name] variant(...) | variant(...) end`
+Syntax follows the product/sum split: product lists use commas (`struct` fields,
+function parameters, region runtime parameters, variant payload fields); sum
+alternatives use `|` (`union` variants and region exits). Newlines are formatting,
+not separators. Trailing separators are accepted.
+
+A named product type may appear in product-list position and expands to its
+fields. A named union type may appear in region protocol position and expands to
+its variants as exits:
+
+```moonlift
+struct Point x: i32, y: i32 end
+union ParseExit ok(value: i32) | err(code: i32) end
+
+func length2(Point): i32
+    return x * x + y * y
+end
+
+region parse_point(p: ptr(u8), n: index; ParseExit)
+```
+
+- `struct [Name] field: T, field: T end` (product fields use commas)
+- `union [Name] variant(...) | variant(...) end` (sum alternatives use `|`)
 - `extern [name](params...) [: T] [as "symbol"] end`
 - `func [name](params...) [: T] ... end`
-- `region [name](params; continuations) ... end`
+- `region [name](params; exit(payload...) | empty_exit) ... end`
 - `expr [name](params): T expr end`
 
 ### 7.1 Name inference and anonymous forms
 
-When assigned, the keyword name is omitted and inferred from the assignment:
+In `.mlua`, assignment is the preferred way to name declarations. The source
+name can be omitted and is inferred from the Lua assignment target; this avoids
+repeating the name on both sides:
 
 ```lua
 local add = func(a: i32, b: i32): i32                 -- name = "add"
@@ -797,16 +827,28 @@ local add = func(a: i32, b: i32): i32                 -- name = "add"
 end
 
 local scan = region(p: ptr(u8), n: i32;
-                    hit: cont(pos: i32))
+                    hit(pos: i32))
 entry loop(i: i32 = 0)
     if i >= n then jump hit(pos = -1) end
     jump loop(i = i + 1)
 end
 end                                                       -- name = "scan"
 
-local T = struct x: f32; y: f32; z: f32 end              -- name = "T"
-local U = union ok(i32) | err(i32) end                   -- name = "U"
+local T = struct                                        -- name = "T"
+    x: f32,
+    y: f32,
+    z: f32,
+end
+
+local U = union                                         -- name = "U"
+    ok(value: i32)
+  | err(code: i32)
+  | none
+end
 ```
+
+The explicit forms still work (`struct T ... end`, `region scan(...) ... end`),
+but are usually redundant when the declaration is assigned.
 
 Name inference also works in other positions:
 
@@ -822,7 +864,7 @@ return func(a: i32, b: i32): i32                       -- auto-named
 end
 
 -- Anonymous struct / union (type context determines usage)
-return struct x: f32; y: f32 end
+return struct x: f32, y: f32 end
 return union ok(i32) | err(i32) end
 ```
 
@@ -1037,8 +1079,8 @@ Example:
 
 ```moonlift
 region parse_digit(p: ptr(u8), n: i32, pos: i32;
-                   ok: cont(next: i32, value: i32),
-                   err: cont(pos: i32, code: i32))
+                   ok(next: i32, value: i32),
+                   err(pos: i32, code: i32))
     ...
 end
 
@@ -1335,7 +1377,7 @@ need not match declaration order — the compiler resolves by name.
 Examples:
 
 ```moonlift
-struct Vec3 x: f32; y: f32; z: f32 end
+struct Vec3 x: f32, y: f32, z: f32 end
 
 func magnitude(v: Vec3): f32
     return sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
@@ -1701,8 +1743,8 @@ continuation protocol:
 
 ```moonlift
 region scan_until(p: ptr(u8), n: i32, target: i32;
-                  hit: cont(pos: i32),
-                  miss: cont(pos: i32))
+                  hit(pos: i32)
+                | miss(pos: i32))
 entry loop(i: i32 = 0)
     if i >= n then
         jump miss(pos = i)
@@ -1719,8 +1761,9 @@ end
 
 ```text
 region name ( runtime_params ;
-             cont1_name : cont(cont1_params...),
-             cont2_name : cont(cont2_params...), ... )
+             exit1_name(exit1_params...)
+             exit2_name(exit2_params...)
+             empty_exit_name )
     body (same as a control region)
 end
 ```
@@ -1728,7 +1771,9 @@ end
 - **Runtime parameters** (before the semicolon): values passed by the caller
   at each emit site.
 - **Continuations** (after the semicolon): the fragment's output protocol.
-  Each continuation declares a name and typed parameters.
+  Each continuation declares a name and typed parameters using the same
+  protocol-variant style as named-field union variants. Continuation
+  alternatives are separated by `|`. A bare continuation name means no payload.
 - **Body:** exactly one entry block and zero or more additional blocks. The
   body uses `jump cont_name(args...)` to exit through a continuation.
 
@@ -1765,7 +1810,7 @@ A fragment can emit another fragment and forward exits to its own continuation
 slots:
 
 ```moonlift
-region wrapper(p: ptr(u8), n: i32; out: cont(pos: i32))
+region wrapper(p: ptr(u8), n: i32; out(pos: i32))
 entry start()
     emit inner(p, n; hit = out)      -- forward inner.hit → wrapper.out
 end
@@ -2107,8 +2152,8 @@ h.name   -- "load"
 
 -- region signature closure
 local r = moon.region[[ scan(p: ptr(u8), n: i32;
-                              hit: cont(pos: i32),
-                              miss: cont(pos: i32)) ]]
+                              hit(pos: i32)
+                            | miss(pos: i32)) ]]
 r.kind   -- "region_header"
 r.name   -- "scan"
 
@@ -2450,7 +2495,7 @@ Use `moon.region[[]]` to define a region fragment from Moonlift source:
 ```lua
 local scan = moon.region [[
     scan(p: ptr(u8), n: i32, target: i32;
-         hit: cont(pos: i32), miss: cont(pos: i32))
+         hit(pos: i32) | miss(pos: i32))
     entry loop(i: i32 = 0)
         if i >= n then jump miss(pos = i) end
         if as(i32, p[i]) == target then jump hit(pos = i) end
@@ -2459,6 +2504,25 @@ local scan = moon.region [[
     end
 ]]
 ```
+
+In pure `.mlua` island syntax, a region header can be implemented later by
+referencing the current Lua-scope header after `region` and then writing the
+body directly. The header may itself be anonymous and assignment-named:
+
+```moonlift
+local scan = region(p: ptr(u8), n: i32;
+                    hit(pos: i32) | miss) end
+
+local scan_impl = region scan
+entry loop(i: i32 = 0)
+    if i >= n then jump miss() end
+    jump hit(pos = i)
+end
+end
+```
+
+This is transformed as a call on the Lua value `scan`, so normal Lua lexical
+scope applies. Dotted references such as `region API.scan` are also accepted.
 
 For generated region interfaces (dynamic params, conts, blocks), use the
 table builders and spread them inside the `.mlua` source:
@@ -2493,7 +2557,7 @@ local inc = moon.expr_frag [[
 
 ```lua
 -- Quote form
-local Point = moon.struct [[Point x: i32; y: i32 end]]
+local Point = moon.struct [[Point x: i32, y: i32 end]]
 local Option = moon.union [[Option Some(i32) | None end]]
 
 -- Using spread (inside .mlua)
@@ -2955,7 +3019,7 @@ fragment:
 local function expect_byte(name, byte, code)
     return moon.region [[
         @{name}(p: ptr(u8), n: i32, pos: i32;
-                ok: cont(next: i32), err: cont(pos: i32, code: i32))
+                ok(next: i32) | err(pos: i32, code: i32))
         entry start()
             if pos >= n then jump err(pos = pos, code = @{code}) end
             if as(i32, p[pos]) == @{byte} then jump ok(next = pos + 1) end
@@ -3411,8 +3475,8 @@ with `BackAtomicSeqCst` ordering and ordinary `BackMemoryInfo` facts.
 
 ```moonlift
 region parse_digit(p: ptr(u8), n: i32, pos: i32;
-                   ok: cont(next: i32, value: i32),
-                   err: cont(pos: i32, code: i32))
+                   ok(next: i32, value: i32),
+                   err(pos: i32, code: i32))
 entry start()
     if pos >= n then jump err(pos = pos, code = 1) end
     let c: i32 = as(i32, p[pos])
@@ -3461,8 +3525,8 @@ end
 local function expect_byte(tag, byte, err_code)
     local name = "expect_" .. tag
     return region @{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32),
-        err: cont(pos: i32, code: i32))
+        ok(next: i32),
+        err(pos: i32, code: i32))
     entry start()
         if pos >= n then jump err(pos = pos, code = @{err_code}) end
         if as(i32, p[pos]) == @{byte} then
@@ -3511,7 +3575,7 @@ end
 
 ```moonlift
 region sum_range(xs: view(i32), start: index, len: index;
-                 done: cont(total: i32))
+                 done(total: i32))
 entry loop(i: index = 0, acc: i32 = 0)
     if i >= len then jump done(total = acc) end
     jump loop(i = i + 1, acc = acc + xs[start + i])
@@ -3534,7 +3598,7 @@ end
 
 ```moonlift
 region classify_uncached(ctx: ptr(i32), tag: i32;
-    value: cont(delta: i32))
+    value(delta: i32))
 entry start()
     switch tag do
     case 0 then jump value(delta = 1)     -- OpConst: push

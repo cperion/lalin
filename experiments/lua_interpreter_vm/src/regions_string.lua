@@ -11,7 +11,7 @@ I.SIZE_STRING = moon.int(40)
 
 -- string_hash: compute Lua-compatible string hash
 local string_hash = host.region [[
-region string_hash(bytes: ptr(u8), len: index, seed: u32; done: cont(hash: u32))
+region string_hash(bytes: ptr(u8), len: index, seed: u32; done(hash: u32))
 entry start()
     let h: u32 = seed
     jump loop(i = as(index, 0), h = h)
@@ -28,9 +28,9 @@ end
 -- are allocated in one VM-owned block after the String header.
 local string_intern = host.region { TAG_STR = I.TAG_STR, SIZE_STRING = I.SIZE_STRING } [[
 region string_intern(L: ptr(LuaThread), bytes: ptr(u8), len: index;
-                     found: cont(s: ptr(String)),
-                     created: cont(s: ptr(String)),
-                     oom: cont())
+                     found(s: ptr(String)),
+                     created(s: ptr(String)),
+                     oom)
 entry start()
     if L == nil then jump oom() end
     if L.global == nil then jump oom() end
@@ -104,10 +104,10 @@ end
 -- distinction instead of pretending primitive success.
 local string_concat_range = host.region { TAG_STR = I.TAG_STR, ERR_CONCAT = I.ERR_CONCAT, SIZE_STRING = I.SIZE_STRING } [[
 region string_concat_range(L: ptr(LuaThread), first: index, last: index;
-                           done: cont(s: ptr(String)),
-                           call_mm: cont(mm: Value),
-                           error: cont(code: i32),
-                           oom: cont())
+                           done(s: ptr(String)),
+                           call_mm(mm: Value),
+                           error(code: i32),
+                           oom)
 entry start()
     jump measure(i = first, total = as(index, 0))
 end

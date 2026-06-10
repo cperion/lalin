@@ -57,7 +57,7 @@ Every entry point follows the same shape: `moon.XXX` where `XXX` is `func`,
 moon.func[[ add(a: i32, b: i32): i32 return a + b end ]]
 moon.struct[[ Point x: f32; y: f32 end ]]
 moon.extern[[ write(fd: i32, buf: ptr(u8), count: index): index ]]
-moon.region[[ scan(p: ptr(u8), n: i32; hit: cont(pos: i32)) ... end ]]
+moon.region[[ scan(p: ptr(u8), n: i32; hit(pos: i32)) ... end ]]
 ```
 
 The `[[ src ]]` syntax is Lua's long string literal. The source is parsed by the
@@ -106,7 +106,7 @@ is convenient when field declaration order doesn't affect ABI layout.
 -- Spread splices expand directly into source declarations
 local fields = moon.fields { {"x", moon.f32}, {"y", moon.f32} }
 moon.struct[[ Point @{fields...} end ]]
--- Expands to: struct Point x: f32; y: f32 end
+-- Expands to: struct Point x: f32, y: f32 end
 ```
 
 Table builders return plain ASDL values that can be stored, spliced, or
@@ -129,8 +129,8 @@ local add = moon.func[[ add(a: i32, b: i32): i32 ]]
 
 -- A region protocol, no body.
 local scan = moon.region[[ scan(p: ptr(u8), n: i32;
-                                  hit: cont(pos: i32),
-                                  miss: cont(pos: i32)) ]]
+                                  hit(pos: i32),
+                                  miss(pos: i32)) ]]
 -- scan carries the protocol: params + continuations, no implementation.
 
 -- Externs are always bodyless (the body is in a C library)
@@ -388,8 +388,8 @@ protocol of named exits. Bodies are provided later — or inline.
 -- Protocol only, no body (signature closure)
 local scanner = moon.region[[
     scan(p: ptr(u8), n: i32, target: i32;
-         hit: cont(pos: i32),
-         miss: cont(pos: i32))
+         hit(pos: i32),
+         miss(pos: i32))
 ]]
 -- scanner is a closure carrying the protocol
 ```
@@ -399,8 +399,8 @@ local scanner = moon.region[[
 ```lua
 local scan_impl = scanner[[
 scan(p: ptr(u8), n: i32, target: i32;
-     hit: cont(pos: i32),
-     miss: cont(pos: i32))
+     hit(pos: i32),
+     miss(pos: i32))
 entry loop(i: i32 = 0)
     if i >= n then jump miss(pos = i) end
     if as(i32, p[i]) == target then jump hit(pos = i) end
@@ -712,7 +712,7 @@ free(p)                              -- deallocate
 local Point = moon.struct[[ x: f32; y: f32 end ]]
 
 -- Inline assignment (name inferred)
-local Point = struct x: f32; y: f32 end
+local Point = struct x: f32, y: f32 end
 
 -- Table builder
 local fields = moon.fields { {"x", moon.f32}, {"y", moon.f32} }
@@ -883,6 +883,6 @@ local open = backend.open[[ return open_impl(path) end ]]
   returns `ok(value) | err(code)` should be a region with `ok(value)` and
   `err(code)` continuations at the composition site.
 - **Status codes in product returns.** Boolean `try_recv(): bool` should be
-  `region recv(...; got: cont(...), empty: cont(), closed: cont())`.
+  `region recv(...; got(...) | empty | closed)`.
 - **Strings where sums belong.** Variant tags that are compared as strings.
   Use sum types (unions) or encoded facts consumed by a region.

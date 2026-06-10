@@ -128,9 +128,9 @@ region parse_number(
     n: index,
     i: index;
 
-    ok: cont(value: f64, next: index),
-    eof: cont(pos: index),
-    bad_number: cont(pos: index))
+    ok(value: f64, next: index),
+    eof(pos: index),
+    bad_number(pos: index))
 ```
 
 The successful value and failure positions become continuation payloads. The caller fills each exit.
@@ -243,11 +243,11 @@ region consume_token(
     toks: ptr(Token),
     i: index;
 
-    ident: cont(start: index, len: index),
-    number: cont(start: index, len: index),
-    string: cont(start: index, len: index),
-    eof: cont(),
-    error: cont(pos: index, code: i32))
+    ident(start: index, len: index),
+    number(start: index, len: index),
+    string(start: index, len: index),
+    eof,
+    error(pos: index, code: i32))
 ```
 
 The tag exists as storage. The choice exists as control.
@@ -276,10 +276,10 @@ region read_packet(
     s: ptr(Socket),
     out: ptr(Packet);
 
-    got: cont(),
-    would_block: cont(),
-    closed: cont(),
-    malformed: cont(code: i32))
+    got,
+    would_block,
+    closed,
+    malformed(code: i32))
 ```
 
 The return code was dispatch. Rewrite it as a continuation set.
@@ -299,8 +299,8 @@ region lookup(
     t: ptr(Table),
     key: Key;
 
-    found: cont(value: Value),
-    missing: cont())
+    found(value: Value),
+    missing)
 ```
 
 If `out` is only meaningful on success, it belongs in the success continuation payload.
@@ -332,8 +332,8 @@ Moonlift:
 region claim_job(
     q: ptr(Queue);
 
-    got: cont(job: ptr(Job)),
-    empty: cont())
+    got(job: ptr(Job)),
+    empty)
 entry retry()
     if try_lock(&q.lock) == 0 then jump retry() end
     if q.empty then jump empty_locked() end
@@ -403,10 +403,10 @@ region visit_node(
     ast: ptr(Ast),
     node: NodeRef;
 
-    int_node: cont(n: ptr(IntNode)),
-    name_node: cont(n: ptr(NameNode)),
-    call_node: cont(n: ptr(CallNode)),
-    invalid: cont(code: i32))
+    int_node(n: ptr(IntNode)),
+    name_node(n: ptr(NameNode)),
+    call_node(n: ptr(CallNode)),
+    invalid(code: i32))
 ```
 
 Then the typechecker emits the visitor:
@@ -440,8 +440,8 @@ Moonlift:
 region parse(
     p: ptr(Parser);
 
-    value: cont(v: ptr(Value)),
-    error: cont(pos: index, code: i32))
+    value(v: ptr(Value)),
+    error(pos: index, code: i32))
 ```
 
 Callbacks are often manually encoded continuation protocols. Moonlift makes them direct.
@@ -469,8 +469,8 @@ region draw_shape(
     shape: ShapeRef,
     canvas: ptr(Canvas);
 
-    done: cont(),
-    invalid: cont(code: i32))
+    done,
+    invalid(code: i32))
 ```
 
 Then inside it, dispatch to concrete product handlers.
@@ -501,8 +501,8 @@ local function make_vec(name, T, ctype)
         v: ptr(@{Vec}),
         value: @{T};
 
-        ok: cont(),
-        oom: cont())
+        ok,
+        oom)
     ...
     end
 
@@ -686,8 +686,8 @@ This lets C callers keep C conventions while Moonlift internals remain protocol-
 |---|---|---|
 | `int` status return | Control protocol | Region continuations |
 | `bool` return | Two-way protocol | `yes/no`, `found/missing`, etc. continuations |
-| `errno` | Out-of-band protocol payload | `error: cont(code)` |
-| Out-param valid only on success | Continuation payload | `ok: cont(value)` |
+| `errno` | Out-of-band protocol payload | `error(code)` |
+| Out-param valid only on success | Continuation payload | `ok(value)` |
 | `enum kind` + `switch` | Dispatch consumer | Product tag + consumer region |
 | Tagged union struct | Delayed dispatch | Encoded products + consumer region |
 | Callback table | Continuation protocol | Region exits |
@@ -734,11 +734,11 @@ Moonlift:
 region open_db(
     path: ptr(u8);
 
-    opened: cont(db: ptr(DB)),
-    not_found: cont(),
-    permission_denied: cont(),
-    corrupt: cont(pos: index),
-    oom: cont())
+    opened(db: ptr(DB)),
+    not_found,
+    permission_denied,
+    corrupt(pos: index),
+    oom)
 ```
 
 ### 6.2 Preserve C API at the edge
@@ -843,8 +843,8 @@ region parse_string(
     i: index,
     out: ptr(u8);
 
-    done: cont(next: index, len: index),
-    err: cont(pos: index, code: i32))
+    done(next: index, len: index),
+    err(pos: index, code: i32))
 entry start(pos: index = i, len: index = 0)
     if pos >= n then jump err(pos = pos, code = 1) end
     let c: u8 = p[pos]
@@ -872,9 +872,9 @@ region parse_step(
     p: ptr(u8),
     n: index;
 
-    done: cont(next: index),
-    need_more: cont(saved_state: ptr(ParserState)),
-    err: cont(pos: index, code: i32))
+    done(next: index),
+    need_more(saved_state: ptr(ParserState)),
+    err(pos: index, code: i32))
 ```
 
 Do not hide suspension as `return PARSE_NEED_MORE`.
@@ -948,9 +948,9 @@ region visit_node(
     store: ptr(NodeStore),
     node: NodeRef;
 
-    int_node: cont(n: ptr(IntNode)),
-    call_node: cont(n: ptr(CallNode)),
-    invalid: cont(code: i32))
+    int_node(n: ptr(IntNode)),
+    call_node(n: ptr(CallNode)),
+    invalid(code: i32))
 ```
 
 This gives better memory layout too: dense arrays per concrete node type, smaller references, better locality.
@@ -980,10 +980,10 @@ region use_resource(
     rt: ptr(Runtime),
     r: ResourceRef;
 
-    file: cont(fd: i32),
-    socket: cont(fd: i32),
-    timer: cont(t: ptr(Timer)),
-    invalid: cont(code: i32))
+    file(fd: i32),
+    socket(fd: i32),
+    timer(t: ptr(Timer)),
+    invalid(code: i32))
 ```
 
 Again: product storage, protocol consumption.
@@ -1009,9 +1009,9 @@ region foo(
     ctx: ptr(Context),
     a: ptr(A);
 
-    ok: cont(b: B),
-    invalid: cont(code: i32),
-    oom: cont())
+    ok(b: B),
+    invalid(code: i32),
+    oom)
 ```
 
 ### 9.2 External API should be functions
@@ -1060,10 +1060,10 @@ region walk_tree(
     tree: ptr(Tree),
     root: NodeRef;
 
-    enter: cont(node: NodeRef),
-    leave: cont(node: NodeRef),
-    error: cont(code: i32),
-    done: cont())
+    enter(node: NodeRef),
+    leave(node: NodeRef),
+    error(code: i32),
+    done)
 ```
 
 If `enter` and `leave` are repeated events, you may instead produce fact products into a sink. But the semantic choices are still protocols at the consuming boundary.
@@ -1137,8 +1137,8 @@ region alloc_bytes(
     arena: ptr(Arena),
     n: index;
 
-    ok: cont(p: ptr(u8), n: index),
-    oom: cont())
+    ok(p: ptr(u8), n: index),
+    oom)
 ```
 
 If using LuaJIT-owned memory, the allocation may occur in Lua, and Moonlift receives the borrowed pointer.
@@ -1218,9 +1218,9 @@ region update_object(
     obj: ObjectRef,
     dt: f32;
 
-    updated: cont(),
-    removed: cont(),
-    invalid: cont(code: i32))
+    updated,
+    removed,
+    invalid(code: i32))
 ```
 
 The object reference is product data. The dispatch is protocol-consuming control.
@@ -1271,8 +1271,8 @@ end
 ```lua
 local function expect_byte(name, byte, code)
     return region @{name}(p: ptr(u8), n: index, i: index;
-        ok: cont(next: index),
-        err: cont(pos: index, code: i32))
+        ok(next: index),
+        err(pos: index, code: i32))
     entry start()
         if i >= n then jump err(pos = i, code = @{code}) end
         if p[i] == @{byte} then jump ok(next = i + 1) end
@@ -1377,11 +1377,11 @@ region next_token(
     n: index,
     i: index;
 
-    ident: cont(start: index, len: index, next: index),
-    number: cont(start: index, len: index, next: index),
-    string: cont(start: index, len: index, next: index),
-    eof: cont(pos: index),
-    error: cont(pos: index, code: i32))
+    ident(start: index, len: index, next: index),
+    number(start: index, len: index, next: index),
+    string(start: index, len: index, next: index),
+    eof(pos: index),
+    error(pos: index, code: i32))
 ```
 
 If the caller only wants to store tokens, provide a storage adapter:
@@ -1393,9 +1393,9 @@ region next_token_store(
     i: index,
     out: ptr(Token);
 
-    stored: cont(next: index),
-    eof: cont(pos: index),
-    error: cont(pos: index, code: i32))
+    stored(next: index),
+    eof(pos: index),
+    error(pos: index, code: i32))
 entry start()
     emit next_token(p, n, i;
         ident = store_ident,
@@ -1426,12 +1426,12 @@ Later parser code should not switch on `Token` directly everywhere. Create a con
 region consume_token(
     t: ptr(Token);
 
-    ident: cont(start: index, len: index),
-    number: cont(start: index, len: index),
-    string: cont(start: index, len: index),
-    eof: cont(),
-    error: cont(code: i32),
-    invalid: cont(code: i32))
+    ident(start: index, len: index),
+    number(start: index, len: index),
+    string(start: index, len: index),
+    eof,
+    error(code: i32),
+    invalid(code: i32))
 ```
 
 This centralizes tag interpretation.
@@ -1465,9 +1465,9 @@ int parse_expr(Parser *p, Expr **out) {
 region parse_expr(
     p: ptr(Parser);
 
-    expr: cont(e: ExprRef),
-    expected_expr: cont(pos: index),
-    lex_error: cont(pos: index, code: i32))
+    expr(e: ExprRef),
+    expected_expr(pos: index),
+    lex_error(pos: index, code: i32))
 entry start()
     emit next_token(p.buf, p.len, p.pos;
         ident = got_ident,
@@ -1527,9 +1527,9 @@ int queue_pop(Queue *q, Job **out) {
 region queue_pop(
     q: ptr(Queue);
 
-    got: cont(job: ptr(Job)),
-    empty: cont(),
-    closed: cont())
+    got(job: ptr(Job)),
+    empty,
+    closed)
 entry start()
     if q.closed then jump closed() end
     if q.head == nil then jump empty() end
@@ -1618,10 +1618,10 @@ region load_file(
     path: ptr(u8),
     out: ptr(Buffer);
 
-    loaded: cont(),
-    open_error: cont(code: i32),
-    oom: cont(),
-    read_error: cont(code: i32))
+    loaded,
+    open_error(code: i32),
+    oom,
+    read_error(code: i32))
 ```
 
 Internal cleanup states can be blocks:
@@ -1735,7 +1735,7 @@ Usually `found/missing`, `ok/oom`, or `opened/failed`.
 
 ### 21.4 Function writes `errno`
 
-Out-of-band `error: cont(code)`.
+Out-of-band `error(code)`.
 
 ### 21.5 Large switch on `kind`
 
@@ -1817,12 +1817,12 @@ callback may fire before return
 Moonlift should make those conventions source-level structure:
 
 ```text
-error: cont(code)
-eof: cont()
-got: cont(bytes)
+error(code)
+eof
+got(bytes)
 escape: block(pos, len)
-call_node: cont(ptr(CallNode))
-value: cont(v)
+call_node(ptr(CallNode))
+value(v)
 ```
 
 The rewrite succeeds when:

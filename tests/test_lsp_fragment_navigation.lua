@@ -34,7 +34,7 @@ end
 func use_inc(x: i32): i32
     return emit Inc(x)
 end
-region Done(x: i32; done: cont(v: i32))
+region Done(x: i32; done(v: i32))
 entry start()
     jump done(v = x)
 end

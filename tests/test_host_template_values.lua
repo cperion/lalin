@@ -43,7 +43,7 @@ assert(module.items[2].t.name == "Vec2_f64")
 
 -- Also via .mlua for direct comparison
 local Host = require("moonlift.mlua_run")
-local Direct = Host.eval [[return struct Direct x: i32; y: i32 end]]
+local Direct = Host.eval [[return struct Direct x: i32, y: i32 end]]
 assert(Direct.decl.name == "Direct")
 assert(#Direct.decl.fields == 2)
 print("OK: direct struct via .mlua")

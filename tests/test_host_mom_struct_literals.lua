@@ -5,8 +5,8 @@ local moon = dofile("init.lua")
 
 local compiled = moon.native_loadstring([[
 struct Pair
-    x: i32
-    y: i32
+    x: i32,
+    y: i32,
 end
 func main(): i32
     let p: Pair = Pair{ x = 10, y = 32 }
@@ -20,12 +20,12 @@ compiled:free()
 
 local nested = moon.native_loadstring([[
 struct Outer
-    z: i32
-    a: Inner
+    z: i32,
+    a: Inner,
 end
 struct Inner
-    x: i32
-    y: i32
+    x: i32,
+    y: i32,
 end
 func main(): i32
     let o: Outer = Outer{ z = 12, a = Inner{ x = 10, y = 20 } }

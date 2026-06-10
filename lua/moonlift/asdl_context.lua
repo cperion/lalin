@@ -721,9 +721,9 @@ function M.NewContext(opts)
         opts = opts,
     }, Context)
 
-    function ctx:Define(text)
+    function ctx:Define(text, source_name)
         local parser = require("moonlift.asdl_parser")
-        local defs = parser.parse(text)
+        local defs = parser.parse(text, source_name or opts.source_name)
         M.define(ctx, defs)
         return ctx
     end

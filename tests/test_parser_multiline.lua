@@ -21,14 +21,10 @@ local scan = region(
     p: ptr(u8),
     n: i32,
     pos: i32;
-    ok: cont(
-        next: i32,
-        value: i32,
-    ),
-    err: cont(
-        pos: i32,
-        code: i32,
-    ),
+    ok(next: i32,
+        value: i32,) |
+    err(pos: i32,
+        code: i32,) |
 )
 entry start()
     jump err(pos = pos, code = 1_000)

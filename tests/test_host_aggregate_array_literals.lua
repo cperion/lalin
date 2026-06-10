@@ -3,7 +3,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local Host = require("moonlift.mlua_run")
 
 local make_pair_sum = Host.eval [[
-local Pair = struct x: i32; y: i32 end
+local Pair = struct x: i32, y: i32 end
 return func pair_sum(): i32
     let p: Pair = Pair{ x = 10, y = 32 }
     return p.x + p.y
@@ -45,8 +45,8 @@ assert(c_addr() == 42)
 c_addr:free()
 
 local nested = Host.eval [[
-local Inner = struct x: i32; y: i32 end
-local Outer = struct z: i32; a: Inner end
+local Inner = struct x: i32, y: i32 end
+local Outer = struct z: i32, a: Inner end
 return func nested_aggregate_ok(): i32
     let o: Outer = Outer{ z = 12, a = Inner{ x = 10, y = 20 } }
     return o.z + o.a.x + o.a.y
@@ -57,7 +57,7 @@ assert(c_nested() == 42)
 c_nested:free()
 
 local array_of_struct = Host.eval [[
-local Pair = struct x: i32; y: i32 end
+local Pair = struct x: i32, y: i32 end
 return func array_of_struct_ok(): i32
     let xs = [Pair{ x = 1, y = 2 }, Pair{ x = 10, y = 32 }]
     return xs[1].x + xs[1].y

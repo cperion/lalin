@@ -54,7 +54,7 @@ func forward_block(n: i32): i32
     end
     end
 end
-region DoneRegion(n: i32; done: cont(total: i32))
+region DoneRegion(n: i32; done(total: i32))
 entry start(total: i32 = 0)
     jump done(total = total)
 end

@@ -694,18 +694,18 @@ region dispatch_instruction(
     cur_top: index,
     cur_code: ptr(Instr),
     cur_consts: ptr(Value);
-    next: cont(frame: ptr(Frame), pc: index, base: index, top: index,
+    next(frame: ptr(Frame), pc: index, base: index, top: index,
                code: ptr(Instr), constants: ptr(Value)),
-    do_jump: cont(frame: ptr(Frame), pc: index, base: index, top: index,
+    do_jump(frame: ptr(Frame), pc: index, base: index, top: index,
                   code: ptr(Instr), constants: ptr(Value)),
-    resume_parent: cont(parent: ptr(Frame), pc: index, base: index, top: index,
+    resume_parent(parent: ptr(Frame), pc: index, base: index, top: index,
                         code: ptr(Instr), constants: ptr(Value)),
-    enter_lua: cont(child: ptr(Frame)),
-    enter_native: cont(cl: ptr(CClosure), ctx: NativeCallContext),
-    returned: cont(nres: i32),
-    yielded: cont(nres: i32),
-    error: cont(code: i32),
-    oom: cont())
+    enter_lua(child: ptr(Frame)),
+    enter_native(cl: ptr(CClosure), ctx: NativeCallContext),
+    returned(nres: i32),
+    yielded(nres: i32),
+    error(code: i32),
+    oom)
 entry decode()
     let ip: ptr(Instr) = cur_code + cur_pc
     let word: u32 = ip.word

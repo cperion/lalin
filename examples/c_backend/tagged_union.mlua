@@ -1,4 +1,7 @@
-union Maybe some(i32) | none(void) end
+union Maybe
+    some(i32)
+  | none(void)
+end
 
 func tagged_pick(x: i32): i32
     let m = Maybe.some(x)

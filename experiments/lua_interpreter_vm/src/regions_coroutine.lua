@@ -18,11 +18,11 @@ local coroutine_resume = host.region {
     THREAD_DEAD = I.THREAD_DEAD,
 } [[
 region coroutine_resume(caller: ptr(LuaThread), target: ptr(LuaThread), nargs: i32;
-                        ok: cont(nres: i32),
-                        yielded: cont(nres: i32),
-                        dead: cont(),
-                        error: cont(code: i32),
-                        oom: cont())
+                        ok(nres: i32),
+                        yielded(nres: i32),
+                        dead,
+                        error(code: i32),
+                        oom)
 entry start()
     if target == nil then
         jump error(code = @{ERR_RUNTIME})
@@ -51,9 +51,9 @@ local coroutine_yield = host.region {
     THREAD_YIELDED = I.THREAD_YIELDED,
 } [[
 region coroutine_yield(L: ptr(LuaThread), nres: i32;
-                       yielded: cont(nres: i32),
-                       not_yieldable: cont(),
-                       error: cont(code: i32))
+                       yielded(nres: i32),
+                       not_yieldable,
+                       error(code: i32))
 entry start()
     if L == nil then
         jump error(code = @{ERR_RUNTIME})

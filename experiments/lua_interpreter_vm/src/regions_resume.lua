@@ -11,27 +11,27 @@ for k, v in pairs(const.Resume) do I["RESUME_" .. k] = moon.int(v) end
 
 local decode_resume_kind = host.region(I) [[
 region decode_resume_kind(state: ResumeState;
-                          normal: cont(),
-                          tailcall: cont(),
-                          pcall: cont(),
-                          xpcall: cont(),
-                          gettable_mm: cont(),
-                          settable_mm: cont(),
-                          binop_mm: cont(),
-                          unop_mm: cont(),
-                          len_mm: cont(),
-                          concat_mm: cont(),
-                          eq_mm: cont(),
-                          lt_mm: cont(),
-                          le_mm: cont(),
-                          call_mm: cont(),
-                          tforloop_call: cont(),
-                          native_cont: cont(),
-                          tbc_close: cont(),
-                          finalizer_call: cont(),
-                          coroutine_resume: cont(),
-                          coroutine_yield: cont(),
-                          unknown: cont(kind: u16))
+                          normal,
+                          tailcall,
+                          pcall,
+                          xpcall,
+                          gettable_mm,
+                          settable_mm,
+                          binop_mm,
+                          unop_mm,
+                          len_mm,
+                          concat_mm,
+                          eq_mm,
+                          lt_mm,
+                          le_mm,
+                          call_mm,
+                          tforloop_call,
+                          native_cont,
+                          tbc_close,
+                          finalizer_call,
+                          coroutine_resume,
+                          coroutine_yield,
+                          unknown(kind: u16))
 entry start()
     switch state.kind do
     case 0 then jump normal()
@@ -79,21 +79,21 @@ local resume_after_return = host.region {
 } [[
 region resume_after_return(L: ptr(LuaThread), parent: ptr(Frame), first_result: index, nres: i32,
                            state: ResumeState;
-                           normal: cont(parent: ptr(Frame), pc: index, base: index, top: index),
-                           resume_gettable_mm: cont(parent: ptr(Frame), pc: index, base: index, top: index),
-                           resume_settable_mm: cont(parent: ptr(Frame), pc: index, base: index, top: index),
-                           resume_binop_mm: cont(parent: ptr(Frame), pc: index, base: index, top: index),
-                           resume_unop_mm: cont(parent: ptr(Frame), pc: index, base: index, top: index),
-                           resume_compare_mm: cont(parent: ptr(Frame), pc: index, base: index, top: index),
-                           resume_concat_mm: cont(parent: ptr(Frame), pc: index, base: index, top: index),
-                           resume_tforloop: cont(parent: ptr(Frame), pc: index, base: index, top: index),
-                           resume_tbc_close: cont(parent: ptr(Frame), pc: index, base: index, top: index),
-                           pcall_success: cont(parent: ptr(Frame), pc: index, base: index, top: index),
-                           pcall_failure: cont(parent: ptr(Frame), pc: index, base: index, top: index),
-                           finished: cont(nres: i32),
-                           yielded: cont(nres: i32),
-                           error: cont(code: i32),
-                           oom: cont())
+                           normal(parent: ptr(Frame), pc: index, base: index, top: index),
+                           resume_gettable_mm(parent: ptr(Frame), pc: index, base: index, top: index),
+                           resume_settable_mm(parent: ptr(Frame), pc: index, base: index, top: index),
+                           resume_binop_mm(parent: ptr(Frame), pc: index, base: index, top: index),
+                           resume_unop_mm(parent: ptr(Frame), pc: index, base: index, top: index),
+                           resume_compare_mm(parent: ptr(Frame), pc: index, base: index, top: index),
+                           resume_concat_mm(parent: ptr(Frame), pc: index, base: index, top: index),
+                           resume_tforloop(parent: ptr(Frame), pc: index, base: index, top: index),
+                           resume_tbc_close(parent: ptr(Frame), pc: index, base: index, top: index),
+                           pcall_success(parent: ptr(Frame), pc: index, base: index, top: index),
+                           pcall_failure(parent: ptr(Frame), pc: index, base: index, top: index),
+                           finished(nres: i32),
+                           yielded(nres: i32),
+                           error(code: i32),
+                           oom)
 entry start()
     switch state.kind do
     case 0 then
@@ -212,7 +212,7 @@ end
 ]]
 
 local clear_resume = host.region { TAG_NIL = I.TAG_NIL, RESUME_NORMAL = I.RESUME_NORMAL } [[
-region clear_resume(frame: ptr(Frame); done: cont())
+region clear_resume(frame: ptr(Frame); done)
 entry start()
     frame.resume.kind = @{RESUME_NORMAL}
     frame.resume.a = 0

@@ -10,7 +10,7 @@ local const = vm.const
 -- Region: takes frames+stack directly, not through L.frames/L.stack
 local vm_run = moon.region [[
 region vm_run(stack: ptr(Value), code: ptr(Instr), consts: ptr(Value);
-              ok: cont(nres: i32), err: cont(code: i32))
+              ok(nres: i32), err(code: i32))
 entry start()
     let word: u32 = code[0].word
     let op: u16 = as(u16, word & 127)

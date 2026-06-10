@@ -17,8 +17,8 @@ end
 local function expect_byte(tag, byte, err_code)
     local name = "expect_" .. tag
     return region @{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32),
-        err: cont(pos: i32, code: i32))
+        ok(next: i32) |
+        err(pos: i32, code: i32))
     entry start()
         if pos >= n then jump err(pos = pos, code = @{err_code}) end
         if as(i32, p[pos]) == @{byte} then
@@ -32,8 +32,8 @@ end
 local expect_semicolon = expect_byte("semicolon", 59, 30)
 
 local digit_acc = region(p: ptr(u8), n: i32, pos: i32, acc: i32;
-    ok: cont(pos2: i32, acc: i32),
-    err: cont(pos: i32, code: i32))
+    ok(pos2: i32, acc: i32) |
+    err(pos: i32, code: i32))
 entry start()
     if pos >= n then jump err(pos = pos, code = 11) end
     let c: i32 = as(i32, p[pos])
@@ -47,8 +47,8 @@ end
 end
 
 local two_digits = region(p: ptr(u8), n: i32, pos: i32;
-    ok: cont(value: i32, pos2: i32),
-    err: cont(pos: i32, code: i32))
+    ok(value: i32, pos2: i32) |
+    err(pos: i32, code: i32))
 entry start()
     emit digit_acc(p, n, pos, 0; ok = got_one, err = err)
 end
@@ -61,8 +61,8 @@ end
 end
 
 local upper_alpha = region(p: ptr(u8), n: i32, pos: i32;
-    ok: cont(value: i32, pos2: i32),
-    err: cont(pos: i32, code: i32))
+    ok(value: i32, pos2: i32) |
+    err(pos: i32, code: i32))
 entry start()
     if pos >= n then jump err(pos = pos, code = 21) end
     let c: i32 = as(i32, p[pos])
@@ -76,8 +76,8 @@ end
 end
 
 local digit_sum_until_semicolon = region(p: ptr(u8), n: i32, pos: i32;
-    ok: cont(sum: i32, pos2: i32),
-    err: cont(pos: i32, code: i32))
+    ok(sum: i32, pos2: i32) |
+    err(pos: i32, code: i32))
 entry loop(i: i32 = pos, sum: i32 = 0)
     if i >= n then jump err(pos = i, code = 31) end
     let c: i32 = as(i32, p[i])
@@ -104,7 +104,7 @@ local score_after_50 = positive_after(50, 50)
 local score_after_60 = positive_after(60, 60)
 
 local score_pair_region = region(p: ptr(u8), n: i32;
-    done: cont(a: i32, b: i32))
+    done(a: i32, b: i32))
 entry loop(i: i32 = 0, a: i32 = 0, b: i32 = 0)
     if i >= n then jump done(a = a, b = b) end
     let v: i32 = as(i32, p[i])

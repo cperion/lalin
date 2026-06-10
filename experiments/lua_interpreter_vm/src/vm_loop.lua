@@ -14,7 +14,7 @@ local opcodes_mod = require("experiments.lua_interpreter_vm.src.opcodes")
 local dispatch_instruction = opcodes_mod.dispatch_instruction
 
 local commit_vm_state = host.region [[
-region commit_vm_state(L: ptr(LuaThread), frame: ptr(Frame), pc: index, top: index; done: cont())
+region commit_vm_state(L: ptr(LuaThread), frame: ptr(Frame), pc: index, top: index; done)
 entry start()
     frame.pc = pc
     frame.top = top
@@ -33,10 +33,10 @@ local vm_resume = host.region {
     THREAD_OOM = I.THREAD_OOM,
 } [[
 region vm_resume(L: ptr(LuaThread), nargs: i32;
-                 ok: cont(nres: i32),
-                 yielded: cont(nres: i32),
-                 runtime_error: cont(code: i32),
-                 oom: cont())
+                 ok(nres: i32),
+                 yielded(nres: i32),
+                 runtime_error(code: i32),
+                 oom)
 entry start()
     if L.frame_count == 0 then
         jump runtime_error(code = @{ERR_RUNTIME})
@@ -72,10 +72,10 @@ local vm_loop = host.region {
     ERR_BAD_OPCODE = I.ERR_BAD_OPCODE,
 } [[
 region vm_loop(L: ptr(LuaThread);
-               finished: cont(nres: i32),
-               yielded: cont(nres: i32),
-               error: cont(code: i32),
-               oom: cont())
+               finished(nres: i32),
+               yielded(nres: i32),
+               error(code: i32),
+               oom)
 entry start()
     if L.frame_count == 0 then
         jump finished(nres = 0)

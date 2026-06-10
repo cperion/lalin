@@ -363,9 +363,9 @@ region collect_tile_facts(
     out_patch_values: ptr(PatchValue),
     cap: index;
 
-    collected: cont(signature: FactSignature, patches: PatchSet),
-    capacity_exceeded: cont(required: index),
-    invalid_window: cont())
+    collected(signature: FactSignature, patches: PatchSet),
+    capacity_exceeded(required: index),
+    invalid_window)
 ```
 
 `collect_tile_facts` may inspect:
@@ -384,23 +384,23 @@ The collector decomposes into smaller regions:
 
 ```moonlift
 region observe_slot(vm: ptr(LuaVmState), slot: u32, out: ptr(RuntimeFact), cap: index;
-    observed: cont(count: index),
-    capacity_exceeded: cont(required: index))
+    observed(count: index),
+    capacity_exceeded(required: index))
 
 region observe_table_shape(vm: ptr(LuaVmState), slot: u32, out: ptr(RuntimeFact), cap: index;
-    observed: cont(count: index),
-    not_table: cont(),
-    capacity_exceeded: cont(required: index))
+    observed(count: index),
+    not_table,
+    capacity_exceeded(required: index))
 
 region observe_array_bounds(vm: ptr(LuaVmState), table_slot: u32, index_slot: u32, out: ptr(RuntimeFact), cap: index;
-    bounds_ok: cont(count: index),
-    bounds_not_known: cont(count: index),
-    not_applicable: cont())
+    bounds_ok(count: index),
+    bounds_not_known(count: index),
+    not_applicable)
 
 region derive_patch_values(vm: ptr(LuaVmState), signature: FactSignature, out: ptr(PatchValue), cap: index;
-    derived: cont(patches: PatchSet),
-    capacity_exceeded: cont(required: index),
-    unavailable: cont())
+    derived(patches: PatchSet),
+    capacity_exceeded(required: index),
+    unavailable)
 ```
 
 Each outcome is explicit. A missing fact is not a silent fallback; it produces a
@@ -416,7 +416,7 @@ region build_tile_key(
     cfg: CfgShapeId,
     target: TargetId;
 
-    built: cont(key: TileKey))
+    built(key: TileKey))
 ```
 
 This is a settled operation with one outcome. It can later be sealed as a
@@ -426,8 +426,8 @@ This is a settled operation with one outcome. It can later be sealed as a
 
 ```moonlift
 region lookup_template(bank: ptr(BankImage), key: TileKey;
-    found: cont(template: ptr(StencilTemplate)),
-    not_found: cont())
+    found(template: ptr(StencilTemplate)),
+    not_found)
 ```
 
 Lookup is not Lua semantics. `not_found` means the bank does not contain a
@@ -437,8 +437,8 @@ compiled artifact for this window/fact/contract/cfg/target combination.
 
 ```moonlift
 region allocate_writable_exec(len: index, align_log2: u8;
-    allocated: cont(mem: ptr(u8), len: index),
-    alloc_failed: cont(code: i32))
+    allocated(mem: ptr(u8), len: index),
+    alloc_failed(code: i32))
 ```
 
 This region wraps platform externs such as `mmap`.
@@ -447,8 +447,8 @@ This region wraps platform externs such as `mmap`.
 
 ```moonlift
 region copy_code_blob(dst: ptr(u8), blob: CodeBlob;
-    copied: cont(),
-    copy_failed: cont(code: i32))
+    copied,
+    copy_failed(code: i32))
 ```
 
 Copying is a byte operation.
@@ -457,10 +457,10 @@ Copying is a byte operation.
 
 ```moonlift
 region apply_patch_holes(dst: ptr(u8), template: ptr(StencilTemplate), patches: PatchSet;
-    patched: cont(),
-    missing_value: cont(hole_index: index, source_index: u32),
-    kind_mismatch: cont(hole_index: index),
-    out_of_bounds: cont(hole_index: index))
+    patched,
+    missing_value(hole_index: index, source_index: u32),
+    kind_mismatch(hole_index: index),
+    out_of_bounds(hole_index: index))
 ```
 
 Patch failure outcomes name exactly what failed.
@@ -469,22 +469,22 @@ Patch failure outcomes name exactly what failed.
 
 ```moonlift
 region apply_relocs(dst: ptr(u8), template: ptr(StencilTemplate), bank: ptr(BankImage);
-    relocated: cont(),
-    missing_symbol: cont(reloc_index: index, symbol: SymbolId),
-    unsupported_reloc: cont(reloc_index: index),
-    out_of_bounds: cont(reloc_index: index))
+    relocated,
+    missing_symbol(reloc_index: index, symbol: SymbolId),
+    unsupported_reloc(reloc_index: index),
+    out_of_bounds(reloc_index: index))
 ```
 
 ## Protection and publishing
 
 ```moonlift
 region protect_executable(mem: ptr(u8), len: index;
-    protected: cont(),
-    protect_failed: cont(code: i32))
+    protected,
+    protect_failed(code: i32))
 
 region publish_code(mem: ptr(u8), len: index, entry_offset: u32, template: TemplateId;
-    published: cont(code: MaterializedCode),
-    publish_failed: cont(code: i32))
+    published(code: MaterializedCode),
+    publish_failed(code: i32))
 ```
 
 Publishing may include instruction-cache flushes or memory fences where required
@@ -498,13 +498,13 @@ region materialize_template(
     template: ptr(StencilTemplate),
     patches: PatchSet;
 
-    materialized: cont(code: MaterializedCode),
-    alloc_failed: cont(code: i32),
-    copy_failed: cont(code: i32),
-    patch_failed: cont(hole_index: index),
-    reloc_failed: cont(reloc_index: index),
-    protect_failed: cont(code: i32),
-    publish_failed: cont(code: i32))
+    materialized(code: MaterializedCode),
+    alloc_failed(code: i32),
+    copy_failed(code: i32),
+    patch_failed(hole_index: index),
+    reloc_failed(reloc_index: index),
+    protect_failed(code: i32),
+    publish_failed(code: i32))
 ```
 
 This region composes allocation, copy, patch, relocation, protection, and
@@ -524,11 +524,11 @@ region select_and_materialize(
     patch_buf: ptr(PatchValue),
     buf_cap: index;
 
-    ready: cont(code: MaterializedCode),
-    no_matching_tile: cont(key: TileKey),
-    fact_capacity_exceeded: cont(required: index),
-    invalid_window: cont(),
-    materialization_failed: cont(code: i32))
+    ready(code: MaterializedCode),
+    no_matching_tile(key: TileKey),
+    fact_capacity_exceeded(required: index),
+    invalid_window,
+    materialization_failed(code: i32))
 ```
 
 This is the runtime root operation. It has no generic “error bool” and no hidden
@@ -644,8 +644,8 @@ Initial bank lookup can be a sorted `BankIndexEntry` array:
 
 ```moonlift
 region lookup_template(bank: ptr(BankImage), key: TileKey;
-    found: cont(template: ptr(StencilTemplate)),
-    not_found: cont())
+    found(template: ptr(StencilTemplate)),
+    not_found)
 entry search(lo: index = 0, hi: index = len(bank.entries))
     -- binary search or generated perfect hash dispatch
 end

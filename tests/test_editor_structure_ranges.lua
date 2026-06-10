@@ -21,11 +21,11 @@ local P = PositionIndex.Define(T)
 local uri = S.DocUri("file:///structure.mlua")
 local src = [[
 struct User
-    id: i32
-    active: bool32
+    id: i32,
+    active: bool32,
 end
 
-region Done(n: i32; done: cont(total: i32))
+region Done(n: i32; done(total: i32))
 entry start(total: i32 = 0)
     jump done(total = total)
 end

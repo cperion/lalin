@@ -5,7 +5,7 @@ local Host = require("moonlift.mlua_run")
 
 -- Simple region fragment
 local frag = Host.eval [[
-return region emit_hit(x: i32; hit: cont(y: i32))
+return region emit_hit(x: i32; hit(y: i32))
 entry start()
     jump hit(y = x + 1)
 end
@@ -18,7 +18,7 @@ print("OK: region fragment")
 
 -- Function using fragment
 local fn = Host.eval [[
-local frag = region emit_hit(x: i32; hit: cont(y: i32))
+local frag = region emit_hit(x: i32; hit(y: i32))
 entry start() jump hit(y = x + 1) end
 end
 return func use_hit(x: i32): i32

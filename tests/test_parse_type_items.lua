@@ -8,7 +8,7 @@ local Parse = require("moonlift.parse")
 local P = Parse.Define(T)
 
 -- Struct type island
-local scan1 = Parse.scan_document("local P = struct Pair x: i32; y: i32 end")
+local scan1 = Parse.scan_document("local P = struct Pair x: i32, y: i32 end")
 assert(#scan1.islands == 1)
 assert(scan1.islands[1].kind == "struct")
 local parsed1 = P.parse_island(scan1, 1)
@@ -37,7 +37,7 @@ local T3 = pvm.context(); A.Define(T3)
 local P3 = Parse.Define(T3)
 local src3 = [[
 local R = union ok(i32) | err(string) end
-local r = region(s: ptr(i32); ok: cont(v: i32), err: cont(msg: ptr(u8)))
+local r = region(s: ptr(i32); ok(v: i32) | err(msg: ptr(u8)))
 entry start()
     if *s >= 0 then jump ok(v = *s) else jump err(msg = "negative") end
 end

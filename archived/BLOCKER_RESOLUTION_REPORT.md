@@ -51,7 +51,7 @@ All 3 critical blockers have been **RESOLVED**. A working `back_lower.mlua` has 
 
 From **expr_lower.mlua (lines 352-357)**, the tape format is:
 ```mlua
-local mb_lower_expr = region(idx: i32; done: cont(...),
+local mb_lower_expr = region(idx: i32; done(...),
                               expr_tag: ptr(i32), expr_a: ptr(i32), expr_b: ptr(i32),
                               expr_c: ptr(i32), expr_d: ptr(i32), e_scalar: ptr(i32))
 ```
@@ -230,7 +230,7 @@ end
 
 **Continuations** are typed callbacks that accept (st, cmds, result*):
 ```mlua
-done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32)
+done(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32)
 ```
 
 ### State Threading
@@ -270,8 +270,8 @@ Add region between lines 312 and 314 (after ExprBinary):
 
 ```mlua
 local mb_lower_compare_region = region(cmp_op: i32, scalar: i32;
-    done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32),
-    lower_children: cont(st: ptr(@{LowerState}), cmds: ptr(i32), lhs_val: i32, rhs_val: i32) -> void)
+    done(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32),
+    lower_children(st: ptr(@{LowerState}), cmds: ptr(i32), lhs_val: i32, rhs_val: i32) -> void)
 entry start(st, cmds)
     emit lower_children(st = st, cmds = cmds, lhs_val = ?, rhs_val = ?)
 end

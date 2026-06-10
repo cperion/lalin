@@ -1,6 +1,6 @@
 struct Pair
-    x: i32
-    y: i32
+    x: i32,
+    y: i32,
 end
 
 func pair_sum(p: ptr(Pair)): i32

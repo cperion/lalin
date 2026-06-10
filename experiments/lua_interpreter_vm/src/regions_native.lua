@@ -10,13 +10,13 @@ for k, v in pairs(const.Err) do I["ERR_" .. k] = moon.int(v) end
 
 local invoke_native = host.region(I) [[
 region invoke_native(L: ptr(LuaThread), cl: ptr(CClosure), ctx: NativeCallContext;
-                     returned: cont(nres: i32),
-                     yielded: cont(nres: i32),
-                     error: cont(err: Value),
-                     oom: cont(),
-                     stack_grow: cont(needed: index),
-                     reenter_lua: cont(),
-                     invalid: cont())
+                     returned(nres: i32),
+                     yielded(nres: i32),
+                     error(err: Value),
+                     oom,
+                     stack_grow(needed: index),
+                     reenter_lua,
+                     invalid)
 entry start()
     if L == nil then jump invalid() end
     if cl == nil then jump invalid() end
@@ -47,13 +47,13 @@ end
 
 local decode_native_result = host.region(I) [[
 region decode_native_result(result: ptr(NativeCallResult);
-                            returned: cont(nres: i32),
-                            yielded: cont(nres: i32),
-                            error: cont(err: Value),
-                            oom: cont(),
-                            stack_grow: cont(needed: index),
-                            reenter_lua: cont(),
-                            invalid: cont())
+                            returned(nres: i32),
+                            yielded(nres: i32),
+                            error(err: Value),
+                            oom,
+                            stack_grow(needed: index),
+                            reenter_lua,
+                            invalid)
 entry start()
     if result == nil then
         jump invalid()

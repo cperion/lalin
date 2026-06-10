@@ -4,7 +4,7 @@ local Host = require("moonlift.mlua_run")
 
 local parse_abc_fn = Host.eval [[
 local match_a = region(p: ptr(u8), n: i32, pos: i32;
-                       ok: cont(next: i32), err: cont(errpos: i32, code: i32))
+                       ok(next: i32) | err(errpos: i32, code: i32))
 entry start()
     if pos >= n then jump err(errpos = pos, code = 1) end
     if as(i32, p[pos]) == 97 then jump ok(next = pos + 1) end
@@ -13,7 +13,7 @@ end
 end
 
 local match_b = region(p: ptr(u8), n: i32, pos: i32;
-                       ok: cont(next: i32), err: cont(errpos: i32, code: i32))
+                       ok(next: i32) | err(errpos: i32, code: i32))
 entry start()
     if pos >= n then jump err(errpos = pos, code = 1) end
     if as(i32, p[pos]) == 98 then jump ok(next = pos + 1) end
@@ -22,7 +22,7 @@ end
 end
 
 local match_c = region(p: ptr(u8), n: i32, pos: i32;
-                       ok: cont(next: i32), err: cont(errpos: i32, code: i32))
+                       ok(next: i32) | err(errpos: i32, code: i32))
 entry start()
     if pos >= n then jump err(errpos = pos, code = 1) end
     if as(i32, p[pos]) == 99 then jump ok(next = pos + 1) end
@@ -57,7 +57,7 @@ local c_parse = parse_abc_fn:compile()
 -- ONE_OR_MORE: also inline
 local parse_xs_fn = Host.eval [[
 local match_x = region(p: ptr(u8), n: i32, pos: i32;
-                       ok: cont(next: i32), err: cont(errpos: i32, code: i32))
+                       ok(next: i32) | err(errpos: i32, code: i32))
 entry start()
     if pos >= n then jump err(errpos = pos, code = 1) end
     if as(i32, p[pos]) == 120 then jump ok(next = pos + 1) end
@@ -89,8 +89,8 @@ local c_one_or_more = parse_xs_fn:compile()
 -- Digit parser
 local parse_digit_fn = Host.eval [[
 local match_digit = region(p: ptr(u8), n: i32, pos: i32;
-                            ok: cont(next: i32, value: i32),
-                            err: cont(errpos: i32, code: i32))
+                            ok(next: i32, value: i32) |
+                            err(errpos: i32, code: i32))
 entry start()
     if pos >= n then jump err(errpos = pos, code = 1) end
     let c: i32 = as(i32, p[pos])
@@ -124,8 +124,8 @@ local c_digit = parse_digit_fn:compile()
 -- Two-digit: sequential emit accumulating result through block params
 local parse_two_fn = Host.eval [[
 local match_digit = region(p: ptr(u8), n: i32, pos: i32;
-                            ok: cont(next: i32, value: i32),
-                            err: cont(errpos: i32, code: i32))
+                            ok(next: i32, value: i32) |
+                            err(errpos: i32, code: i32))
 entry start()
     if pos >= n then jump err(errpos = pos, code = 1) end
     let c: i32 = as(i32, p[pos])

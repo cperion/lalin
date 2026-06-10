@@ -13,10 +13,10 @@ for k, v in pairs(const.Err) do I["ERR_" .. k] = moon.int(v) end
 
 local load_lua55_binary_chunk = host.region { ERR_RUNTIME = I.ERR_RUNTIME } [[
 region load_lua55_binary_chunk(L: ptr(LuaThread), bytes: ptr(u8), len: index;
-                               ok: cont(proto: ptr(Proto)),
-                               format_error: cont(err: CompileError),
-                               semantic_error: cont(err: CompileError),
-                               oom: cont())
+                               ok(proto: ptr(Proto)),
+                               format_error(err: CompileError),
+                               semantic_error(err: CompileError),
+                               oom)
 entry start()
     let err: CompileError = {
         code = @{ERR_RUNTIME},

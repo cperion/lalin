@@ -19,8 +19,8 @@ local P = PositionIndex.Define(T)
 local uri = S.DocUri("file:///tokens.mlua")
 local src = [[
 struct User
-    id: i32
-    active: bool32
+    id: i32,
+    active: bool32,
 end
 expose Users: view(User)
 func User:is_active(self: ptr(User)): bool

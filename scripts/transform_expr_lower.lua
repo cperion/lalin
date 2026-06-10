@@ -24,7 +24,7 @@ content = content:gsub(
 local kMB_EXPR_CALL = [[
 -- Lower a call expression stub.
 local mb_expr_call = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
-                            done: cont(value: i32, scalar: i32, ok: bool))
+                            done(value: i32, scalar: i32, ok: bool))
 entry start()
     jump done(value = 0, scalar = 0, ok = false)
 end
@@ -35,7 +35,7 @@ end
 local kMB_EXPR_VIEW = [[
 -- Expr view lowering stub (view result protocol).
 local mb_expr_view = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
-                            done: cont(data: i32, len: i32, stride: i32, elem_scalar: i32, ok: bool))
+                            done(data: i32, len: i32, stride: i32, elem_scalar: i32, ok: bool))
 entry start()
     jump done(data = 0, len = 0, stride = 0, elem_scalar = 0, ok = false)
 end
@@ -46,7 +46,7 @@ end
 local kMB_EXPR_LEN = [[
 -- Expr length lowering.
 local mb_expr_len = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
-                           done: cont(value: i32, scalar: i32, ok: bool))
+                           done(value: i32, scalar: i32, ok: bool))
 entry start()
     let child_idx: i32 = ctx.tree.expr_lhs[idx]
     let child_tag: i32 = ctx.tree.expr_tag[child_idx]
@@ -72,7 +72,7 @@ local kNEW_STEP6 = [[
 
 -- Expr addr‑of: delegate to mb_place_addr_to_back_fn.
 local mb_expr_addr_of = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
-                               done: cont(value: i32, scalar: i32, ok: bool))
+                               done(value: i32, scalar: i32, ok: bool))
 entry start()
     let child_idx: i32 = ctx.tree.expr_lhs[idx]
     let ok: bool = mb_place_addr_to_back_fn(ctx, child_idx)
@@ -84,7 +84,7 @@ end
 
 -- Expr index: compute address via func, then load scalar.
 local mb_expr_index = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
-                             done: cont(value: i32, scalar: i32, ok: bool))
+                             done(value: i32, scalar: i32, ok: bool))
 entry start()
     let base_idx: i32 = ctx.tree.expr_op[idx]
     let index_expr: i32 = ctx.tree.expr_lhs[idx]
@@ -100,7 +100,7 @@ end
 
 -- Expr dot (field access): result unsupported until layout resolution.
 local mb_expr_dot = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
-                           done: cont(value: i32, scalar: i32, ok: bool))
+                           done(value: i32, scalar: i32, ok: bool))
 entry start()
     jump done(value = 0, scalar = 0, ok = false)
 end
@@ -360,7 +360,7 @@ local kNEW_MB_LOWER_EXPR_REGION = [[
 -- Delegates to mb_lower_expr_fn (func-based, no region emits).
 -- Safe to emit from other regions since this region emits no sub-regions.
 local mb_lower_expr_region = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;
-                                    done: cont(value: i32, scalar: i32, ok: bool))
+                                    done(value: i32, scalar: i32, ok: bool))
 entry start()
     let ok: bool = mb_lower_expr_fn(ctx, ctx.tree, idx)
     jump done(value = ctx.last_expr_value, scalar = ctx.last_expr_scalar, ok = ok)
@@ -420,7 +420,7 @@ local es2, ee2 = content:find(old_region_end, 1, true)
 local head2 = content:sub(1, rs - 1)
 local tail2 = content:sub(ee2)
 
-content = head2 .. "-- Lower an expression returning ExprResult protocol.\n-- Delegates to mb_lower_expr_fn (func-based, no region emits).\n-- Safe to emit from other regions since this region emits no sub-regions.\nlocal mb_lower_expr_region = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;\n                                    done: cont(value: i32, scalar: i32, ok: bool))\nentry start()\n    let ok: bool = mb_lower_expr_fn(ctx, ctx.tree, idx)\n    jump done(value = ctx.last_expr_value, scalar = ctx.last_expr_scalar, ok = ok)\nend\nend\n\n" .. tail2
+content = head2 .. "-- Lower an expression returning ExprResult protocol.\n-- Delegates to mb_lower_expr_fn (func-based, no region emits).\n-- Safe to emit from other regions since this region emits no sub-regions.\nlocal mb_lower_expr_region = region(ctx: ptr(@{MomBackLowerCtx}), idx: i32;\n                                    done(value: i32, scalar: i32, ok: bool))\nentry start()\n    let ok: bool = mb_lower_expr_fn(ctx, ctx.tree, idx)\n    jump done(value = ctx.last_expr_value, scalar = ctx.last_expr_scalar, ok = ok)\nend\nend\n\n" .. tail2
 
 -- 5. Replace old exports with new exports
 local old_exports_start = "M.mb_lower_expr_region = mb_lower_expr_region\nM.mb_lower_expr_ops_view = mb_lower_expr_ops_view\nM.mb_lower_call_args = mb_lower_call_args"

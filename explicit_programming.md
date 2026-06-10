@@ -143,11 +143,11 @@ region authenticate(
     creds: ptr(Credentials),
     store: ptr(SessionStore);
 
-    success:             cont(user_id: u64, session_token: ptr(u8)),
-    invalid_credentials: cont(),
-    account_locked:      cont(unlock_at: i64),
-    requires_2fa:        cont(challenge_id: u64),
-    rate_limited:        cont(retry_after_seconds: i32))
+    success(user_id: u64, session_token: ptr(u8)),
+    invalid_credentials,
+    account_locked(unlock_at: i64),
+    requires_2fa(challenge_id: u64),
+    rate_limited(retry_after_seconds: i32))
 ```
 
 This is a signature that declares, exhaustively, every outcome the
@@ -247,9 +247,9 @@ region handle_request(
     conn: ptr(Connection),
     auth: ptr(AuthState);
 
-    completed: cont(bytes_written: i32),
-    closed:    cont(),
-    error:     cont(code: i32))
+    completed(bytes_written: i32),
+    closed,
+    error(code: i32))
 ```
 
 The struct declares a data shape. The union declares a sum over data
@@ -443,7 +443,7 @@ later, you instead jump and resume now.
 
 A *continuation*, in the language used throughout this document, is a
 named exit slot of a region. It has a name (`ok`, `err`, `closed`,
-`retry`) and a typed parameter list (`ok: cont(value: i32, pos: i32)`).
+`retry`) and a typed parameter list (`ok(value: i32, pos: i32)`).
 At the declaration site of the region, the continuation is *abstract*:
 the region's body will eventually `jump` to it, but the region does
 not know what happens after that jump. At the emit site of the region,
@@ -455,7 +455,7 @@ A *continuation type* — what we mean when we talk about the type
 system for control — is the set of continuations a region declares
 along with their parameter signatures. Two regions with the same
 continuation type can be substituted for each other. A region with
-continuation type `(ok: cont(i32), err: cont(i32))` is exactly as
+continuation type `(ok(i32), err(i32))` is exactly as
 expressive a control fragment as another with the same signature; they
 differ only in their bodies.
 
@@ -563,8 +563,8 @@ region read_line(
     buffer_len: i32,
     start: i32;
 
-    found: cont(start: i32, length: i32, terminator: i32),
-    eof:   cont(start: i32, length: i32))
+    found(start: i32, length: i32, terminator: i32),
+    eof(start: i32, length: i32))
 ```
 
 Notice that the same information appears twice in the design: once as
@@ -919,9 +919,9 @@ end
 
 -- Right: outcome encoded as control
 region read_bytes(fd: i32, buf: ptr(u8), max: i32;
-    got:     cont(bytes: i32),
-    eof:     cont(),
-    error:   cont(code: i32))
+    got(bytes: i32),
+    eof,
+    error(code: i32))
 ```
 
 The right form admits exhaustive handling: every emit site must
@@ -939,7 +939,7 @@ sites and harder to refactor). No less (forcing the caller to look up
 information after the fact reintroduces the boundary-crossing the
 explicit protocol was meant to eliminate).
 
-A continuation `parsed: cont(value: ParsedValue, bytes_consumed: i32)`
+A continuation `parsed(value: ParsedValue, bytes_consumed: i32)`
 should pass `bytes_consumed` because the caller will need it to
 advance its cursor. It should *not* pass the original input buffer
 pointer, because the caller already has it (it passed it in). It
@@ -1009,8 +1009,8 @@ end
 
 -- Right: state machine as region
 region parse_string(input: ptr(u8), n: i32, start: i32, accum: ptr(u8);
-    done: cont(end_pos: i32, length: i32),
-    err:  cont(at: i32, code: i32))
+    done(end_pos: i32, length: i32),
+    err(at: i32, code: i32))
 entry idle(pos: i32 = start, acc_len: i32 = 0)
     if pos >= n then jump err(at = pos, code = 1) end
     let c: i32 = as(i32, input[pos])
@@ -1301,8 +1301,8 @@ body; the compiler resolves it as a direct jump.
 
 ```moonlift
 region outer(input: ptr(u8), n: i32;
-    ok: cont(result: i32),
-    err: cont(code: i32))
+    ok(result: i32),
+    err(code: i32))
 entry start()
     emit inner(input, n;
         success = ok,         -- forward: inner's success becomes outer's ok
@@ -1324,7 +1324,7 @@ continuation to a block of its own, where some additional work
 happens before exiting through one of the caller's continuations.
 
 ```moonlift
-region outer(...; ok: cont(result: i32), err: cont(code: i32))
+region outer(...; ok(result: i32), err(code: i32))
 entry start()
     emit inner(...; success = handle_success, failure = err)
 end
@@ -1384,7 +1384,7 @@ of a region with itself, via jumps that return to an earlier block.
 
 ```moonlift
 region sum_view(xs: view(i32);
-    done: cont(total: i32))
+    done(total: i32))
 entry loop(i: i32 = 0, acc: i32 = 0)
     if i >= len(xs) then jump done(total = acc) end
     jump loop(i = i + 1, acc = acc + xs[i])
@@ -1483,8 +1483,8 @@ region with those values spliced in.
 local function expect_byte(tag_name, expected_byte, err_code)
     return region @{"expect_" .. tag_name}(
         p: ptr(u8), n: i32, pos: i32;
-        ok:  cont(next: i32),
-        err: cont(at: i32, code: i32))
+        ok(next: i32),
+        err(at: i32, code: i32))
     entry start()
         if pos >= n then jump err(at = pos, code = @{err_code}) end
         if as(i32, p[pos]) == @{expected_byte} then
@@ -1689,7 +1689,7 @@ right way to design code under the methodology.
 
 In Moonlift, the natural way to write a function with multiple
 outcomes is a region with multiple continuations — the syntax for
-that case is direct (`region foo(...; ok: cont(...), err: cont(...))`).
+that case is direct (`region foo(...; ok(...), err(...))`).
 The natural way to write a state machine is a region with named
 blocks — the syntax for that case is direct (`entry s1(...) ...
 block s2(...) ...`). The natural way to handle a multi-byte parse
@@ -1792,8 +1792,8 @@ abstractions.
 local scan_until = region scan(
     p: ptr(u8), n: i32, target: i32;
 
-    hit: cont(pos: i32),
-    miss: cont(pos: i32))
+    hit(pos: i32),
+    miss(pos: i32))
 
 entry loop(i: i32 = 0)
     if i >= n then jump miss(pos = i) end
@@ -1931,7 +1931,7 @@ continuations *directly* (without an intermediate block), the
 compiler resolves the binding as continuation forwarding:
 
 ```moonlift
-region outer(...; ok: cont(v: i32), err: cont(c: i32))
+region outer(...; ok(v: i32), err(c: i32))
 entry start()
     emit inner(...; success = ok, failure = err)   -- direct forward
 end
@@ -1945,7 +1945,7 @@ When the caller binds to a *block* that does some work before
 jumping further, the binding is translation:
 
 ```moonlift
-region outer(...; ok: cont(v: i32), err: cont(c: i32))
+region outer(...; ok(v: i32), err(c: i32))
 entry start()
     emit inner(...; success = handle_success, failure = err)
 end
@@ -2137,11 +2137,11 @@ the signature itself:
 
 ```moonlift
 region authenticate(...;
-    success: cont(user_id: u64, token: ptr(u8)),
-    invalid_credentials: cont(),
-    account_locked: cont(unlock_at: i64),
-    requires_2fa: cont(challenge_id: u64),
-    rate_limited: cont(retry_after: i32))
+    success(user_id: u64, token: ptr(u8)),
+    invalid_credentials,
+    account_locked(unlock_at: i64),
+    requires_2fa(challenge_id: u64),
+    rate_limited(retry_after: i32))
 ```
 
 In most other languages, this requires a tagged union return type
@@ -2337,11 +2337,11 @@ region parse_value(
     n: i32,
     start: i32;
 
-    string:   cont(end_pos: i32, content_start: i32, content_len: i32),
-    number:   cont(end_pos: i32, value: f64),
-    literal:  cont(end_pos: i32, kind: i32),    -- 0=true, 1=false, 2=null
-    aggregate:cont(end_pos: i32, kind: i32),    -- 0=object, 1=array
-    error:    cont(at: i32, code: i32))
+    string(end_pos: i32, content_start: i32, content_len: i32),
+    number(end_pos: i32, value: f64),
+    literal(end_pos: i32, kind: i32),    -- 0=true, 1=false, 2=null
+    aggregate(end_pos: i32, kind: i32),    -- 0=object, 1=array
+    error(at: i32, code: i32))
 ```
 
 ### 17.4 Step 4: Decompose
@@ -2349,7 +2349,7 @@ region parse_value(
 The body of `parse_value` will first skip whitespace, then look at
 the first non-whitespace byte to dispatch. So we need:
 
-- A region `skip_whitespace(buf, n, start; ok: cont(pos: i32))`.
+- A region `skip_whitespace(buf, n, start; ok(pos: i32))`.
 - A region `parse_string(buf, n, start; ...)` with its own protocol.
 - A region `parse_number(buf, n, start; ...)`.
 - A region `parse_literal(buf, n, start, expected_keyword; ...)` —
@@ -2365,7 +2365,7 @@ continuation protocol, derived by the same procedure.
 
 ```moonlift
 region skip_whitespace(buf: ptr(u8), n: i32, start: i32;
-    ok: cont(pos: i32))
+    ok(pos: i32))
 entry loop(i: i32 = start)
     if i >= n then jump ok(pos = i) end
     switch as(i32, buf[i]) do
@@ -2389,8 +2389,8 @@ first non-whitespace byte.
 local function make_parse_literal(name, expected_bytes, return_kind)
     return region @{"parse_literal_" .. name}(
         buf: ptr(u8), n: i32, start: i32;
-        ok:  cont(end_pos: i32, kind: i32),
-        err: cont(at: i32, code: i32))
+        ok(end_pos: i32, kind: i32),
+        err(at: i32, code: i32))
     entry check(i: i32 = 0)
         if i >= @{#expected_bytes} then
             jump ok(end_pos = start + @{#expected_bytes}, kind = @{return_kind})
@@ -2434,8 +2434,8 @@ which can be expressed using a Lua-generated switch:
 -- In the body of parse_value, after skip_whitespace returns pos:
 region parse_value_dispatch(
     buf: ptr(u8), n: i32, pos: i32;
-    string: cont(...), number: cont(...), literal: cont(...),
-    aggregate: cont(...), error: cont(...))
+    string(...), number(...), literal(...),
+    aggregate(...), error(...))
 entry start()
     if pos >= n then jump error(at = pos, code = 1) end
     switch as(i32, buf[pos]) do
@@ -2592,10 +2592,10 @@ connection." Its outcomes:
 
 ```moonlift
 region handle_one_request(conn: ptr(HttpConn);
-    keep_alive: cont(),
-    close:      cont(),
-    error:      cont(code: i32),
-    client_closed: cont())
+    keep_alive,
+    close,
+    error(code: i32),
+    client_closed)
 ```
 
 ### 18.4 Decomposition
@@ -2619,9 +2619,9 @@ Sketches:
 
 ```moonlift
 region read_until_headers_complete(conn: ptr(HttpConn);
-    headers_complete: cont(headers_end: i32),
-    error: cont(code: i32),
-    client_closed: cont())
+    headers_complete(headers_end: i32),
+    error(code: i32),
+    client_closed)
 entry try_parse()
     -- Look for "\r\n\r\n" in conn.buffer[conn.parse_state .. conn.buffer_len]
     emit find_header_terminator(conn.buffer, conn.buffer_len, conn.parse_state;
@@ -2668,9 +2668,9 @@ discussion) is the bridge to the event loop:
 
 ```moonlift
 region io_read(loop: ptr(EventLoop), fd: i32, buf: ptr(u8), n: i32;
-    got_bytes: cont(received: i32),
-    eof: cont(),
-    error: cont(code: i32))
+    got_bytes(received: i32),
+    eof,
+    error(code: i32))
 ```
 
 Its body submits an io_uring read operation, sets the task's resume
@@ -2831,16 +2831,16 @@ purpose:
 ```moonlift
 -- The main scheduler loop for one M.
 region run_scheduler(m: ptr(M);
-    shutdown_complete: cont())
+    shutdown_complete)
 
 -- Spawn a new task.
 region spawn(m: ptr(M), env: ptr(u8), initial_step: u32;
-    spawned: cont(task: ptr(Task)),
-    out_of_memory: cont())
+    spawned(task: ptr(Task)),
+    out_of_memory)
 
 -- Submit an I/O operation that suspends the current task.
 region suspend_on_io(m: ptr(M), task: ptr(Task), op: ptr(IoUringSqe);
-    suspended: cont())
+    suspended)
 ```
 
 `run_scheduler` is the per-thread main loop. `spawn` is the
@@ -2851,7 +2851,7 @@ within a task's region body when it needs to wait for I/O.
 
 ```moonlift
 region run_scheduler(m: ptr(M);
-    shutdown_complete: cont())
+    shutdown_complete)
 entry next()
     if atomic_load(u32, &m.scheduler.shutdown) == 1 then
         jump shutdown_complete()
@@ -2910,17 +2910,17 @@ end
 
 ```moonlift
 region deque_push(d: ptr(Deque), task: u64;
-    ok: cont(),
-    full: cont())
+    ok,
+    full)
 
 region deque_pop(d: ptr(Deque);
-    got: cont(task: u64),
-    empty: cont())
+    got(task: u64),
+    empty)
 
 region deque_steal(d: ptr(Deque);
-    got: cont(task: u64),
-    empty: cont(),
-    race: cont())
+    got(task: u64),
+    empty,
+    race)
 ```
 
 Three operations, each with a few typed exits. The `race`
@@ -2952,7 +2952,7 @@ local function build_task_dispatcher(resume_points)
     end
 
     return region dispatch_task(m: ptr(M), task: ptr(Task);
-        resumed: cont())
+        resumed)
     entry start()
         switch task.resume_step do
         @{arms...}
@@ -2973,8 +2973,8 @@ type) to recover its state and continue.
 
 ```moonlift
 region spawn(m: ptr(M), env: ptr(u8), initial_step: u32;
-    spawned: cont(task: ptr(Task)),
-    out_of_memory: cont())
+    spawned(task: ptr(Task)),
+    out_of_memory)
 entry alloc()
     emit slab_acquire(m.slab;
         got = init,
@@ -2995,7 +2995,7 @@ end
 
 ```moonlift
 region suspend_on_io(m: ptr(M), task: ptr(Task), op: ptr(IoUringSqe);
-    suspended: cont())
+    suspended)
 entry submit()
     op.user_data = as(u64, task)
     emit io_uring_submit(m.ring, op;
@@ -3104,7 +3104,7 @@ discriminants.
 ```moonlift
 -- Anti-pattern: a single "result" continuation with a string status.
 region parse_request(...;
-    result: cont(status: ptr(u8), data: ptr(u8)))
+    result(status: ptr(u8), data: ptr(u8)))
 ```
 
 The caller now must compare strings (`status == "ok"`?
@@ -3118,10 +3118,10 @@ Replace the single continuation with multiple typed continuations:
 
 ```moonlift
 region parse_request(...;
-    ok: cont(data: ptr(u8), data_len: i32),
-    bad_request: cont(at: i32),
-    too_long: cont(),
-    timeout: cont())
+    ok(data: ptr(u8), data_len: i32),
+    bad_request(at: i32),
+    too_long,
+    timeout)
 ```
 
 Now every outcome is a typed variant. The compiler enforces that
@@ -3187,8 +3187,8 @@ Use a region with two continuations:
 
 ```moonlift
 region parse_int(s: ptr(u8), n: i32;
-    ok:  cont(value: i32),
-    err: cont(at: i32, code: i32))
+    ok(value: i32),
+    err(at: i32, code: i32))
 ```
 
 The caller emits:
@@ -3256,7 +3256,7 @@ Make the state explicit as a parameter:
 
 ```moonlift
 region parse_request(req: ptr(Request);
-    ok: cont(), err: cont(code: i32))
+    ok, err(code: i32))
 entry start()
     -- ... parses, writes fields to *req ...
 end
@@ -3328,8 +3328,8 @@ almost always is), use a region:
 
 ```moonlift
 region parse_thing(s: ptr(u8), n: i32, pos: i32;
-    success: cont(value: i32, end_pos: i32),
-    failure: cont(at: i32, code: i32))
+    success(value: i32, end_pos: i32),
+    failure(at: i32, code: i32))
 ```
 
 The caller emits, binds blocks, and the dispatch happens once at

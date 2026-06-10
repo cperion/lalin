@@ -5,7 +5,7 @@ local Run = require("moonlift.mlua_run")
 local path = os.tmpname() .. ".mlua"
 local f = assert(io.open(path, "w"))
 f:write([[
-local loop = region(x: i32; done: cont(v: i32))
+local loop = region(x: i32; done(v: i32))
 entry start()
     emit loop(x; done = done)
 end

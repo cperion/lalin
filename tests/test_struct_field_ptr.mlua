@@ -1,6 +1,6 @@
 -- Pointer-to-struct field access test using Lua-first .mlua
 
-local Pair = struct a: i32; b: i32 end
+local Pair = struct a: i32, b: i32 end
 
 local get_a = func(p: ptr(Pair)): i32
     return (*p).a

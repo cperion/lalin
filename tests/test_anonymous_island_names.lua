@@ -34,7 +34,7 @@ c_mul:free()
 
 -- ── Region: local X = region(params; ...) ──
 local pass, ident = Host.eval [[
-local pass = region(p: ptr(u8); ok: cont(next: i32))
+local pass = region(p: ptr(u8); ok(next: i32))
 entry start()
     jump ok(next = 0)
 end
@@ -52,26 +52,30 @@ assert(ident.name == "ident")
 -- ── Struct: local X = struct ... end ──
 local User = Host.eval [[
 local User = struct
-    id: i32
+    id: i32,
 end
 return User
 ]]
-assert(User.source_hint == "User")
+assert(User.name == "User")
+assert(User.type.source_hint == "User")
 
 -- ── Union: local X = union ... end ──
 local Result = Host.eval [[
 local Result = union ok(value: i32) | err(code: i32) end
 return Result
 ]]
-assert(Result.source_hint == "Result")
+assert(Result.name == "Result")
+assert(Result.type.source_hint == "Result")
 
 -- ── Anonymous struct ──
 local Inline = Host.eval [[return struct value: i32 end]]
-assert(Inline.source_hint:match("^_anon_struct_"))
+assert(Inline.name:match("^_anon_struct_"))
+assert(Inline.type.source_hint:match("^_anon_struct_"))
 
 -- ── Anonymous union ──
 local AnonU = Host.eval [[return union ok(i32) | err(i32) end]]
-assert(AnonU.source_hint:match("^_anon_union_"))
+assert(AnonU.name:match("^_anon_union_"))
+assert(AnonU.type.source_hint:match("^_anon_union_"))
 
 -- ── Returned named union split over lines ──
 local NamedU = Host.eval [[
@@ -79,15 +83,17 @@ return union NamedU
     ok(i32) | err(i32)
 end
 ]]
-assert(NamedU.source_hint == "NamedU")
+assert(NamedU.name == "NamedU")
+assert(NamedU.type.source_hint == "NamedU")
 assert(#NamedU.decl.variants == 2)
 
 -- ── Table field struct ──
 local M = Host.eval [[
 local M = {}
-M.Point = struct x: i32; y: i32 end
+M.Point = struct x: i32, y: i32 end
 return M.Point
 ]]
-assert(M.source_hint == "Point")
+assert(M.name == "Point")
+assert(M.type.source_hint == "Point")
 
 print("moonlift anonymous_island_names ok")

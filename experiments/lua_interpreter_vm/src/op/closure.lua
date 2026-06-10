@@ -5,9 +5,9 @@ local R, H = B.R, B.H
 
 local op_closure = R([[
 region op_closure(]] .. H .. [[;
-                  next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-                  error: cont(code: i32),
-                  oom: cont())
+                  next(frame: ptr(Frame), pc: index, base: index, top: index),
+                  error(code: i32),
+                  oom)
 entry start()
     let parent: ptr(LClosure) = as(ptr(LClosure), frame.closure.bits)
     if parent == nil then jump error(code = @{ERR_RUNTIME}) end
@@ -29,9 +29,9 @@ end
 
 local op_vararg = R([[
 region op_vararg(]] .. H .. [[;
-                 next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-                 error: cont(code: i32),
-                 oom: cont())
+                 next(frame: ptr(Frame), pc: index, base: index, top: index),
+                 error(code: i32),
+                 oom)
 entry start()
     let cl: ptr(LClosure) = as(ptr(LClosure), frame.closure.bits)
     let fixed: index = as(index, cl.proto.numparams)
@@ -72,9 +72,9 @@ end
 
 local op_getvarg = R([[
 region op_getvarg(]] .. H .. [[;
-                  next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-                  error: cont(code: i32),
-                  oom: cont())
+                  next(frame: ptr(Frame), pc: index, base: index, top: index),
+                  error(code: i32),
+                  oom)
 entry start()
     jump error(code = @{ERR_RUNTIME})
 end
@@ -83,8 +83,8 @@ end
 
 local op_varargprep = R([[
 region op_varargprep(]] .. H .. [[;
-                     next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-                     oom: cont())
+                     next(frame: ptr(Frame), pc: index, base: index, top: index),
+                     oom)
 entry start()
     -- Incoming varargs are already explicit in the frame argument window;
     -- OP_VARARGPREP records no hidden side state.

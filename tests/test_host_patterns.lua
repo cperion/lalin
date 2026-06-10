@@ -12,7 +12,7 @@ end
 -- Pattern 1: scanner fragment with success/failure continuations.
 -- The caller decides what success/failure mean; the fragment only routes control.
 local scan_until = Host.eval [[
-local scan_until = region(p: ptr(u8), n: i32, target: i32; hit: cont(pos: i32), miss: cont(pos: i32))
+local scan_until = region(p: ptr(u8), n: i32, target: i32; hit(pos: i32) | miss(pos: i32))
 entry loop(i: i32 = 0)
     if i >= n then jump miss(pos = i) end
     if as(i32, p[i]) == target then jump hit(pos = i) end
@@ -24,7 +24,7 @@ return scan_until
 ]]
 
 local find_byte = Host.eval [[
-local scan_until = region(p: ptr(u8), n: i32, target: i32; hit: cont(pos: i32), miss: cont(pos: i32))
+local scan_until = region(p: ptr(u8), n: i32, target: i32; hit(pos: i32) | miss(pos: i32))
 entry loop(i: i32 = 0)
     if i >= n then jump miss(pos = i) end
     if as(i32, p[i]) == target then jump hit(pos = i) end
@@ -50,7 +50,7 @@ return find_byte
 ]]
 
 local prefix_len_or_all = Host.eval [[
-local scan_until = region(p: ptr(u8), n: i32, target: i32; hit: cont(pos: i32), miss: cont(pos: i32))
+local scan_until = region(p: ptr(u8), n: i32, target: i32; hit(pos: i32) | miss(pos: i32))
 entry loop(i: i32 = 0)
     if i >= n then jump miss(pos = i) end
     if as(i32, p[i]) == target then jump hit(pos = i) end
@@ -89,7 +89,7 @@ c_prefix:free()
 -- parse position and accumulator through a continuation. The consumer composes
 -- it twice without runtime callbacks.
 local parse_two_digits = Host.eval [[
-local parse_digit_acc = region(p: ptr(u8), n: i32, pos: i32, acc: i32; ok: cont(pos2: i32, acc: i32), err: cont(errpos: i32, code: i32))
+local parse_digit_acc = region(p: ptr(u8), n: i32, pos: i32, acc: i32; ok(pos2: i32, acc: i32) | err(errpos: i32, code: i32))
 entry start()
     let c: i32 = as(i32, p[pos])
     if c >= 48 then
@@ -134,7 +134,7 @@ c_parse:free()
 -- Pattern 3: reducer fragment. Internal loop state is hidden in the fragment;
 -- the caller only receives typed exits.
 local sum_before_byte = Host.eval [[
-local sum_until = region(p: ptr(u8), n: i32, sentinel: i32; done: cont(sum: i32, pos: i32), eof: cont(pos: i32))
+local sum_until = region(p: ptr(u8), n: i32, sentinel: i32; done(sum: i32, pos: i32) | eof(pos: i32))
 entry loop(i: i32 = 0, sum: i32 = 0)
     if i >= n then jump eof(pos = i) end
     let v: i32 = as(i32, p[i])
@@ -173,7 +173,7 @@ local clamp_nonneg = expr(x: i32): i32
     select(x < 0, 0, x)
 end
 
-local score_scan = region(p: ptr(u8), n: i32; done: cont(score: i32))
+local score_scan = region(p: ptr(u8), n: i32; done(score: i32))
 entry loop(i: i32 = 0, score: i32 = 0)
     if i >= n then jump done(score = score) end
     let v: i32 = as(i32, p[i]) - 50

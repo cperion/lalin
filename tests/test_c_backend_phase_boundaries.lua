@@ -41,7 +41,7 @@ end
 
 local resolved_case = Pipeline.parse_and_lower_c([[
 struct Pair
-    x: i32
+    x: i32,
 end
 
 func get_x(p: ptr(Pair)): i32

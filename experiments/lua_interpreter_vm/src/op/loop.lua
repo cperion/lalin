@@ -5,9 +5,9 @@ local R, H = B.R, B.H
 
 local op_forloop = R([[
 region op_forloop(]] .. H .. [[;
-                  next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-                  do_jump: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-                  error: cont(code: i32))
+                  next(frame: ptr(Frame), pc: index, base: index, top: index),
+                  do_jump(frame: ptr(Frame), pc: index, base: index, top: index),
+                  error(code: i32))
 entry start()
     let idx_slot: index = base + as(index, a)
     let limit_slot: index = base + as(index, a + 1)
@@ -46,8 +46,8 @@ end
 
 local op_forprep = R([[
 region op_forprep(]] .. H .. [[;
-                  do_jump: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-                  error: cont(code: i32))
+                  do_jump(frame: ptr(Frame), pc: index, base: index, top: index),
+                  error(code: i32))
 entry start()
     let init_slot: index = base + as(index, a)
     let limit_slot: index = base + as(index, a + 1)
@@ -74,7 +74,7 @@ end
 
 local op_tforprep = R([[
 region op_tforprep(]] .. H .. [[;
-                   do_jump: cont(frame: ptr(Frame), pc: index, base: index, top: index))
+                   do_jump(frame: ptr(Frame), pc: index, base: index, top: index))
 entry start()
     let new_pc: index = as(index, as(i32, pc) + as(i32, bx))
     jump do_jump(frame = frame, pc = new_pc, base = base, top = top)
@@ -93,8 +93,8 @@ end
 
 local op_tforloop = R([[
 region op_tforloop(]] .. H .. [[;
-                   next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-                   do_jump: cont(frame: ptr(Frame), pc: index, base: index, top: index))
+                   next(frame: ptr(Frame), pc: index, base: index, top: index),
+                   do_jump(frame: ptr(Frame), pc: index, base: index, top: index))
 entry start()
     let var_val: Value = L.stack[base + as(index, a + 2)]
     if var_val.tag ~= @{TAG_NIL} then

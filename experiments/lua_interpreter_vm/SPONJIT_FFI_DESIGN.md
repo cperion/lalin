@@ -356,10 +356,10 @@ The registry is an explicit state object passed to FFI regions.
 
 ```moonlift
 region ffi_cdef(reg: ptr(FFIRegistry), src: view(u8);
-    ok: cont(updated: ptr(FFIRegistry)),
-    parse_error: cont(offset: index, code: u32),
-    unsupported_decl: cont(offset: index, code: u32),
-    layout_error: cont(type_name: CNameId, code: u32))
+    ok(updated: ptr(FFIRegistry)),
+    parse_error(offset: index, code: u32),
+    unsupported_decl(offset: index, code: u32),
+    layout_error(type_name: CNameId, code: u32))
 ```
 
 `ffi.cdef` is not stringly after parsing. Source text is input; typed
@@ -367,82 +367,82 @@ declarations are output.
 
 ```moonlift
 region intern_ctype(reg: ptr(FFIRegistry), ctype: CType;
-    interned: cont(id: CTypeId),
-    recursive_incomplete: cont(name: CNameId),
-    layout_error: cont(code: u32))
+    interned(id: CTypeId),
+    recursive_incomplete(name: CNameId),
+    layout_error(code: u32))
 ```
 
 ## Type queries
 
 ```moonlift
 region ffi_typeof(reg: ptr(FFIRegistry), spec: view(u8);
-    found: cont(type_id: CTypeId),
-    parse_error: cont(offset: index, code: u32),
-    unknown_type: cont(name: CNameId))
+    found(type_id: CTypeId),
+    parse_error(offset: index, code: u32),
+    unknown_type(name: CNameId))
 
 region ffi_sizeof(reg: ptr(FFIRegistry), type_id: CTypeId;
-    known: cont(size: u64),
-    incomplete: cont(type_id: CTypeId))
+    known(size: u64),
+    incomplete(type_id: CTypeId))
 
 region ffi_alignof(reg: ptr(FFIRegistry), type_id: CTypeId;
-    known: cont(align: u32),
-    incomplete: cont(type_id: CTypeId))
+    known(align: u32),
+    incomplete(type_id: CTypeId))
 
 region ffi_offsetof(reg: ptr(FFIRegistry), type_id: CTypeId, field: CNameId;
-    known: cont(offset_bytes: u64),
-    no_such_field: cont(field: CNameId),
-    not_record: cont(type_id: CTypeId),
-    bitfield: cont(field: CNameId))
+    known(offset_bytes: u64),
+    no_such_field(field: CNameId),
+    not_record(type_id: CTypeId),
+    bitfield(field: CNameId))
 ```
 
 ## Library and symbol resolution
 
 ```moonlift
 region ffi_load(reg: ptr(FFIRegistry), path: view(u8);
-    loaded: cont(lib: CLibId),
-    open_failed: cont(code: i32))
+    loaded(lib: CLibId),
+    open_failed(code: i32))
 
 region ffi_resolve_symbol(reg: ptr(FFIRegistry), lib: CLibId, name: CNameId;
-    found: cont(symbol: CSymbolId, address: ptr(u8)),
-    not_found: cont(name: CNameId),
-    wrong_kind: cont(symbol: CSymbolId))
+    found(symbol: CSymbolId, address: ptr(u8)),
+    not_found(name: CNameId),
+    wrong_kind(symbol: CSymbolId))
 ```
 
 ## Allocation and casting
 
 ```moonlift
 region ffi_new(reg: ptr(FFIRegistry), type_id: CTypeId, init: LuaValueSeq;
-    created: cont(cdata: CData),
-    incomplete_type: cont(type_id: CTypeId),
-    init_error: cont(code: u32),
-    alloc_failed: cont(size: u64))
+    created(cdata: CData),
+    incomplete_type(type_id: CTypeId),
+    init_error(code: u32),
+    alloc_failed(size: u64))
 
 region ffi_cast(reg: ptr(FFIRegistry), target: CTypeId, value: LuaValue;
-    casted: cont(cdata: CData),
-    invalid_cast: cont(from: LuaValueKind, to: CTypeId),
-    overflow: cont())
+    casted(cdata: CData),
+    invalid_cast(from: LuaValueKind, to: CTypeId),
+    overflow)
 ```
 
 ## Field and element access
 
 ```moonlift
 region ffi_get_field(reg: ptr(FFIRegistry), cdata: CData, field: CNameId;
-    value: cont(result: LuaValue),
-    no_such_field: cont(field: CNameId),
-    not_record: cont(type_id: CTypeId),
-    bitfield_read: cont(result: LuaValue))
+    value(result: LuaValue),
+    no_such_field(field: CNameId),
+    not_record(type_id: CTypeId),
+    bitfield_read(result: LuaValue))
 
 region ffi_set_field(reg: ptr(FFIRegistry), cdata: CData, field: CNameId, value: LuaValue;
-    stored: cont(),
-    no_such_field: cont(field: CNameId),
-    not_record: cont(type_id: CTypeId),
-    conversion_error: cont(code: u32),
-    readonly: cont())
+    stored,
+    no_such_field(field: CNameId),
+    not_record(type_id: CTypeId),
+    conversion_error(code: u32),
+    readonly)
 
 region ffi_index(reg: ptr(FFIRegistry), cdata: CData, index: i64;
-    value: cont(result: LuaValue),
-    not_indexable: cont(type_id: CTypeId),
-    out_of_bounds: cont(index: i64))
+    value(result: LuaValue),
+    not_indexable(type_id: CTypeId),
+    out_of_bounds(index: i64))
 ```
 
 ## C function calls
@@ -453,11 +453,11 @@ region ffi_call(
     symbol: CSymbolId,
     args: LuaValueSeq;
 
-    returned: cont(values: LuaValueSeq),
-    conversion_error: cont(arg_index: index, code: u32),
-    arity_error: cont(expected: index, got: index),
-    unsupported_abi: cont(abi: CAbi),
-    call_trap: cont(code: u32))
+    returned(values: LuaValueSeq),
+    conversion_error(arg_index: index, code: u32),
+    arity_error(expected: index, got: index),
+    unsupported_abi(abi: CAbi),
+    call_trap(code: u32))
 ```
 
 Call lowering must be operation-specific and signature-specific. It cannot call a
@@ -469,15 +469,15 @@ but JIT/stencil lowering must specialize to typed signature and ABI.
 
 ```moonlift
 region ffi_make_callback(reg: ptr(FFIRegistry), signature: CTypeId, callable: LuaValue;
-    made: cont(callback: CCallback),
-    not_function_type: cont(type_id: CTypeId),
-    unsupported_abi: cont(abi: CAbi),
-    alloc_failed: cont(size: u64))
+    made(callback: CCallback),
+    not_function_type(type_id: CTypeId),
+    unsupported_abi(abi: CAbi),
+    alloc_failed(size: u64))
 
 region ffi_callback_enter(reg: ptr(FFIRegistry), callback: CCallback, raw_args: ptr(u8);
-    returned: cont(raw_result: ptr(u8)),
-    lua_error: cont(code: u32),
-    conversion_error: cont(arg_index: index, code: u32))
+    returned(raw_result: ptr(u8)),
+    lua_error(code: u32),
+    conversion_error(arg_index: index, code: u32))
 ```
 
 Callbacks cross from C into Lua. Their continuations must represent Lua error
@@ -487,13 +487,13 @@ and conversion failure explicitly.
 
 ```moonlift
 region ffi_gc_attach(reg: ptr(FFIRegistry), cdata: CData, finalizer: CFinalizer;
-    attached: cont(cdata: CData),
-    invalid_finalizer: cont(),
-    ownership_error: cont())
+    attached(cdata: CData),
+    invalid_finalizer,
+    ownership_error)
 
 region ffi_run_finalizer(reg: ptr(FFIRegistry), cdata: CData;
-    done: cont(),
-    finalizer_error: cont(code: u32))
+    done,
+    finalizer_error(code: u32))
 ```
 
 ---

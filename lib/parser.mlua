@@ -4,8 +4,8 @@
 -- has a value type that flows through its ok continuation.
 --
 -- Protocol:
---   ok:   cont(next: i32, val: T)   -- matched + value
---   fail: cont(at: i32)              -- failed
+--   ok(next: i32, val: T)   -- matched + value
+--   fail(at: i32)              -- failed
 --
 -- Each fragment carries .val_ty (a MoonLift type string like "i32", "i64").
 -- Combinators infer continuation signatures from children's val_ty.
@@ -34,7 +34,7 @@ end
 function M.range_val(name, lo, hi, val_ty)
     val_ty = val_ty or "i32"
     local r = region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32, val: @{val_ty}), fail: cont(at: i32))
+        ok(next: i32, val: @{val_ty}) | fail(at: i32))
     entry start()
         if pos >= n then jump fail(at = pos) end
         let c: i32 = as(i32, p[pos])
@@ -49,7 +49,7 @@ end
 function M.byte_eq_val(name, val, val_ty)
     val_ty = val_ty or "i32"
     local r = region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32, val: @{val_ty}), fail: cont(at: i32))
+        ok(next: i32, val: @{val_ty}) | fail(at: i32))
     entry start()
         if pos >= n then jump fail(at = pos) end
         if as(i32, p[pos]) ~= @{val} then jump fail(at = pos) end
@@ -62,7 +62,7 @@ end
 function M.any_byte_val(name, val_ty)
     val_ty = val_ty or "i32"
     local r = region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32, val: @{val_ty}), fail: cont(at: i32))
+        ok(next: i32, val: @{val_ty}) | fail(at: i32))
     entry start()
         if pos >= n then jump fail(at = pos) end
         jump ok(next = pos + 1, val = as(@{val_ty}, as(i32, p[pos])))
@@ -74,7 +74,7 @@ end
 function M.empty_val(name, val_ty)
     val_ty = val_ty or "i32"
     local r = region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32, val: @{val_ty}))
+        ok(next: i32, val: @{val_ty}))
     entry start()
         jump ok(next = pos, val = as(@{val_ty}, 0))
     end
@@ -92,7 +92,7 @@ function M.seq_keep_b(name, a, b)
     local a_val_ty = a.val_ty or "i32"
     local b_val_ty = b.val_ty or "i32"
     return frag_with_val(region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32, val: @{b_val_ty}), fail: cont(at: i32))
+        ok(next: i32, val: @{b_val_ty}) | fail(at: i32))
     entry start()
         emit @{a}(p, n, pos; ok = @{name .. "_b"}, fail = @{name .. "_fail"})
     end
@@ -112,7 +112,7 @@ end
 function M.alt2_val(name, a, b)
     local val_ty = a.val_ty or b.val_ty or "i32"
     return frag_with_val(region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32, val: @{val_ty}), fail: cont(at: i32))
+        ok(next: i32, val: @{val_ty}) | fail(at: i32))
     entry start()
         emit @{a}(p, n, pos; ok = @{name .. "_ok"}, fail = @{name .. "_try"})
     end
@@ -132,7 +132,7 @@ end
 function M.alt2_result_nf(name, a, b)
     local val_ty = a.val_ty or b.val_ty or "i32"
     local r = region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32, val: @{val_ty}))
+        ok(next: i32, val: @{val_ty}))
     entry start()
         emit @{a}(p, n, pos; ok = @{name .. "_ok"}, fail = @{name .. "_try"})
     end
@@ -152,7 +152,7 @@ function M.seq2_a_nf(name, a, b)
     local a_val_ty = a.val_ty or "i32"
     local b_val_ty = b.val_ty or "i32"
     return frag_with_val(region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32, val: @{b_val_ty}), fail: cont(at: i32))
+        ok(next: i32, val: @{b_val_ty}) | fail(at: i32))
     entry start()
         emit @{a}(p, n, pos; ok = @{name .. "_b"})
     end
@@ -177,7 +177,7 @@ function M.opt_val(name, fragment, default_val, val_ty)
     val_ty = val_ty or fragment.val_ty or "i32"
     default_val = default_val or 0
     local r = region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32, val: @{val_ty}))
+        ok(next: i32, val: @{val_ty}))
     entry start()
         emit @{fragment}(p, n, pos; ok = ok, fail = @{name .. "_none"})
     end
@@ -196,7 +196,7 @@ end
 -- match_span: run fragment; produce (start << 32) | (next - start) as i64
 function M.match_span(name, fragment)
     local r = region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32, val: i64), fail: cont(at: i32))
+        ok(next: i32, val: i64) | fail(at: i32))
     entry start()
         emit @{fragment}(p, n, pos; ok = @{name .. "_ok"}, fail = @{name .. "_fail"})
     end
@@ -215,7 +215,7 @@ end
 function M.pred_val(name, fragment)
     local val_ty = fragment.val_ty or "i32"
     return frag_with_val(region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32, val: @{val_ty}), fail: cont(at: i32))
+        ok(next: i32, val: @{val_ty}) | fail(at: i32))
     entry start()
         emit @{fragment}(p, n, pos; ok = @{name .. "_rok"}, fail = @{name .. "_fail"})
     end
@@ -231,7 +231,7 @@ end
 -- not_pred_val: negative lookahead — succeed if fragment fails
 function M.not_pred_val(name, fragment)
     return frag_with_val(region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32, val: i32), fail: cont(at: i32))
+        ok(next: i32, val: i32) | fail(at: i32))
     entry start()
         emit @{fragment}(p, n, pos; ok = @{name .. "_ffail"}, fail = @{name .. "_ok"})
     end
@@ -363,7 +363,7 @@ function Parser:rule(name, fn)
 
     if inner.nofail then
         local frag = region r_@{region_name}(p: ptr(u8), n: i32, pos: i32;
-            ok: cont(next: i32, val: @{val_ty}))
+            ok(next: i32, val: @{val_ty}))
         entry start()
             emit @{inner}(p, n, pos; ok = @{region_name .. "_ok"})
         end
@@ -375,7 +375,7 @@ function Parser:rule(name, fn)
         self.rules[name] = frag_with_val(frag, val_ty)
     else
         local frag = region r_@{region_name}(p: ptr(u8), n: i32, pos: i32;
-            ok: cont(next: i32, val: @{val_ty}), fail: cont(at: i32))
+            ok(next: i32, val: @{val_ty}) | fail(at: i32))
         entry start()
             emit @{inner}(p, n, pos; ok = @{region_name .. "_ok"}, fail = @{region_name .. "_fail"})
         end

@@ -321,10 +321,10 @@ region gc_alloc(
     size: u64,
     align: u32;
 
-    allocated: cont(object: ptr(GCHeader)),
-    step_required: cont(debt: i64),
-    out_of_memory: cont(size: u64),
-    emergency_collect_required: cont())
+    allocated(object: ptr(GCHeader)),
+    step_required(debt: i64),
+    out_of_memory(size: u64),
+    emergency_collect_required)
 ```
 
 A caller that receives `step_required` must either perform a GC step or forward
@@ -334,49 +334,49 @@ that continuation. It cannot silently allocate through raw libc.
 
 ```moonlift
 region gc_step(gc: ptr(GCState), budget: u64;
-    progressed: cont(remaining_budget: u64),
-    completed_cycle: cont(),
-    finalizers_pending: cont(count: u64),
-    out_of_memory: cont())
+    progressed(remaining_budget: u64),
+    completed_cycle,
+    finalizers_pending(count: u64),
+    out_of_memory)
 ```
 
 The phase-specific steps are regions:
 
 ```moonlift
 region gc_mark_roots(gc: ptr(GCState), roots: RootSet;
-    marked: cont(),
-    root_error: cont(root: RootKind))
+    marked,
+    root_error(root: RootKind))
 
 region gc_propagate_one(gc: ptr(GCState);
-    propagated: cont(),
-    gray_empty: cont())
+    propagated,
+    gray_empty)
 
 region gc_atomic(gc: ptr(GCState), roots: RootSet;
-    done: cont(),
-    finalizers_found: cont(count: u64))
+    done,
+    finalizers_found(count: u64))
 
 region gc_sweep_step(gc: ptr(GCState), budget: u64;
-    swept: cont(remaining_budget: u64),
-    sweep_done: cont())
+    swept(remaining_budget: u64),
+    sweep_done)
 ```
 
 ## Mark traversal
 
 ```moonlift
 region mark_value(gc: ptr(GCState), value: TValue;
-    marked: cont(),
-    non_collectable: cont())
+    marked,
+    non_collectable)
 
 region mark_object(gc: ptr(GCState), object: ptr(GCHeader);
-    already_marked: cont(),
-    enqueued_gray: cont(),
-    fixed_object: cont())
+    already_marked,
+    enqueued_gray,
+    fixed_object)
 
 region traverse_object(gc: ptr(GCState), object: ptr(GCHeader);
-    traversed: cont(),
-    weak_table: cont(table: ptr(Table)),
-    finalizable: cont(object: ptr(GCHeader)),
-    malformed: cont(code: u32))
+    traversed,
+    weak_table(table: ptr(Table)),
+    finalizable(object: ptr(GCHeader)),
+    malformed(code: u32))
 ```
 
 Object-kind dispatch is a typed branch over `GCObjectKind`, not an opaque helper.
@@ -388,10 +388,10 @@ region gc_write_barrier(
     gc: ptr(GCState),
     barrier: BarrierKind;
 
-    clean: cont(),
-    child_marked: cont(child: ptr(GCHeader)),
-    parent_regrayed: cont(parent: ptr(GCHeader)),
-    barrier_error: cont(code: u32))
+    clean,
+    child_marked(child: ptr(GCHeader)),
+    parent_regrayed(parent: ptr(GCHeader)),
+    barrier_error(code: u32))
 ```
 
 All Lua table/upvalue/userdata/cdata reference writes emit this region or a
@@ -401,35 +401,35 @@ Specialized forms:
 
 ```moonlift
 region table_write_barrier(gc: ptr(GCState), table: ptr(Table), value: TValue;
-    clean: cont(),
-    regrayed: cont(table: ptr(Table)),
-    error: cont(code: u32))
+    clean,
+    regrayed(table: ptr(Table)),
+    error(code: u32))
 
 region upvalue_write_barrier(gc: ptr(GCState), upvalue: ptr(Upvalue), value: TValue;
-    clean: cont(),
-    regrayed: cont(upvalue: ptr(Upvalue)),
-    error: cont(code: u32))
+    clean,
+    regrayed(upvalue: ptr(Upvalue)),
+    error(code: u32))
 ```
 
 ## Finalization
 
 ```moonlift
 region enqueue_finalizer(gc: ptr(GCState), object: ptr(GCHeader), finalizer: FinalizerRef;
-    enqueued: cont(),
-    no_finalizer: cont(),
-    invalid_finalizer: cont())
+    enqueued,
+    no_finalizer,
+    invalid_finalizer)
 
 region run_one_finalizer(gc: ptr(GCState);
-    completed: cont(),
-    yielded: cont(object: ptr(GCHeader)),
-    error: cont(object: ptr(GCHeader), code: u32),
-    none_pending: cont())
+    completed,
+    yielded(object: ptr(GCHeader)),
+    error(object: ptr(GCHeader), code: u32),
+    none_pending)
 
 region run_finalizers(gc: ptr(GCState), budget: u64;
-    done: cont(),
-    yielded: cont(object: ptr(GCHeader)),
-    error: cont(object: ptr(GCHeader), code: u32),
-    budget_exhausted: cont())
+    done,
+    yielded(object: ptr(GCHeader)),
+    error(object: ptr(GCHeader), code: u32),
+    budget_exhausted)
 ```
 
 If finalizers can yield in the Lua version being targeted, yield is a typed
@@ -440,14 +440,14 @@ never hidden.
 
 ```moonlift
 region process_weak_table(gc: ptr(GCState), table: ptr(Table);
-    processed: cont(),
-    resurrected: cont(count: u64),
-    malformed: cont(code: u32))
+    processed,
+    resurrected(count: u64),
+    malformed(code: u32))
 
 region process_ephemeron_table(gc: ptr(GCState), table: ptr(Table);
-    stable: cont(),
-    marked_more: cont(count: u64),
-    malformed: cont(code: u32))
+    stable,
+    marked_more(count: u64),
+    malformed(code: u32))
 ```
 
 Weakness mode is a typed table/metatable fact, not a hidden string mode.

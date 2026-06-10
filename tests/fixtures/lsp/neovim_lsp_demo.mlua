@@ -22,30 +22,30 @@ function Demo:lua_method(value)
 end
 
 struct User 
-    id: i32
-    age: i32
-    active: bool32
-    score: i32
+    id: i32,
+    age: i32,
+    active: bool32,
+    score: i32,
 end
 
 struct Account 
-    owner_id: i32
-    balance: i64
-    locked: bool32
-    tier: i32
+    owner_id: i32,
+    balance: i64,
+    locked: bool32,
+    tier: i32,
 end
 struct Event 
-    kind: i32
-    user_id: i32
-    amount: i32
-    accepted: bool32
+    kind: i32,
+    user_id: i32,
+    amount: i32,
+    accepted: bool32,
 
 
 end
 struct Metric
-    value: i64
-    count: i32
-    ok: bool32
+    value: i64,
+    count: i32,
+    ok: bool32,
 end
 
 expose Users: view(User)
@@ -74,7 +74,7 @@ expr FortyTwo(): i32
     42
 end
 
-region DoneCounter(n: i32; done: cont(total: i32))
+region DoneCounter(n: i32; done(total: i32))
 entry start(total: i32 = 0)
     jump done(total = total)
 end
@@ -133,7 +133,7 @@ func fill_i32(dst: view(i32), value: i32): i32
     end
 end
 
-region scan_until(p: ptr(u8), n: i32, target: i32; hit: cont(pos: i32), miss: cont(pos: i32))
+region scan_until(p: ptr(u8), n: i32, target: i32; hit(pos: i32) | miss(pos: i32))
     entry loop(i: i32 = 0)
         if i >= n then jump miss(pos = i) end
         if as(i32, p[i]) == target then jump hit(pos = i) end
@@ -141,7 +141,7 @@ region scan_until(p: ptr(u8), n: i32, target: i32; hit: cont(pos: i32), miss: co
     end
     end
 
-    region sum_until(p: ptr(u8), n: i32, sentinel: i32; done: cont(sum: i32, pos: i32), eof: cont(pos: i32))
+    region sum_until(p: ptr(u8), n: i32, sentinel: i32; done(sum: i32, pos: i32) | eof(pos: i32))
     entry loop(i: i32 = 0, sum: i32 = 0)
         if i >= n then jump eof(pos = i) end
         let v: i32 = as(i32, p[i])

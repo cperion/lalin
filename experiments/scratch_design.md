@@ -22,7 +22,7 @@
 local function make_scratch_type(prefix, elem_size, moon_type)
     -- Generates: scratch_@{prefix}(slot: i32, count: i32) -> view(@{moon_type})
     return region scratch_@{prefix}(slot: i32, count: i32;
-        ok: cont(v: view(@{moon_type})))
+        ok(v: view(@{moon_type})))
     entry start()
         if count <= 0 then jump ok(v = view(null_ptr(@{moon_type}), 0)) end
         let raw: ptr(u8) = moonlift_scratch_raw(slot, @{elem_size}, count)

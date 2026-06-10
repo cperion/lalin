@@ -17,7 +17,7 @@ local alloc_object = allocator_regions.alloc_object
 
 -- gc_check: check if GC step is needed
 local gc_check = host.region [[
-region gc_check(L: ptr(LuaThread); ok: cont(), step: cont(), oom: cont())
+region gc_check(L: ptr(LuaThread); ok, step, oom)
 entry start()
     let G: ptr(GlobalState) = L.global
     if G.totalbytes > G.threshold then
@@ -30,7 +30,7 @@ end
 
 -- gc_step: one atomic GC step
 local gc_step = host.region [[
-region gc_step(L: ptr(LuaThread); done: cont(), oom: cont())
+region gc_step(L: ptr(LuaThread); done, oom)
 entry start()
     jump done()
 end
@@ -42,7 +42,7 @@ local mark_value = host.region { TAG_STR = I.TAG_STR, TAG_TABLE = I.TAG_TABLE,
     TAG_LCLOSURE = I.TAG_LCLOSURE, TAG_CCLOSURE = I.TAG_CCLOSURE,
     TAG_USERDATA = I.TAG_USERDATA, TAG_THREAD = I.TAG_THREAD,
 } [[
-region mark_value(G: ptr(GlobalState), v: Value; done: cont(), pushed_gray: cont(), oom: cont())
+region mark_value(G: ptr(GlobalState), v: Value; done, pushed_gray, oom)
 entry start()
     if v.tag == @{TAG_STR} then
         jump done()
@@ -85,7 +85,7 @@ end
 -- mark_object: mark an object from a GCHeader pointer
 local mark_object = host.region { COLOR_BLACK = I.COLOR_BLACK, COLOR_GRAY = I.COLOR_GRAY } [[
 region mark_object(G: ptr(GlobalState), obj: ptr(GCHeader);
-                   done: cont(), pushed_gray: cont(), oom: cont())
+                   done, pushed_gray, oom)
 entry start()
     if obj == nil then
         jump done()
@@ -101,7 +101,7 @@ end
 
 -- propagate_gray: process gray objects
 local propagate_gray = host.region [[
-region propagate_gray(G: ptr(GlobalState); done: cont(), empty: cont(), oom: cont())
+region propagate_gray(G: ptr(GlobalState); done, empty, oom)
 entry start()
     jump empty()
 end
@@ -110,7 +110,7 @@ end
 
 -- sweep_step: sweep one page of objects
 local sweep_step = host.region [[
-region sweep_step(G: ptr(GlobalState), limit: index; done: cont(), more: cont(), oom: cont())
+region sweep_step(G: ptr(GlobalState), limit: index; done, more, oom)
 entry start()
     jump done()
 end
@@ -124,7 +124,7 @@ local write_barrier = host.region {
     TAG_PROTO = I.TAG_PROTO, COLOR_BLACK = I.COLOR_BLACK,
 } [[
 region write_barrier(G: ptr(GlobalState), parent: ptr(GCHeader), child: Value;
-                     clean: cont(), barriered: cont())
+                     clean, barriered)
 entry start()
     if parent == nil then jump clean() end
     if parent.marked == @{COLOR_BLACK} then
@@ -139,7 +139,7 @@ end
 
 -- write_barrier_back: backward barrier
 local write_barrier_back = host.region [[
-region write_barrier_back(G: ptr(GlobalState), parent: ptr(GCHeader); done: cont())
+region write_barrier_back(G: ptr(GlobalState), parent: ptr(GCHeader); done)
 entry start()
     jump done()
 end

@@ -6,7 +6,7 @@ local ffi = require("ffi")
 
 -- Set field
 local set_y = Host.eval [[
-local Pair = struct x: i32; y: i32 end
+local Pair = struct x: i32, y: i32 end
 return func set_y(p: ptr(Pair), v: i32): i32
     (*p).y = v
     return (*p).x + (*p).y
@@ -27,7 +27,7 @@ end
 
 -- Get field
 local get_x = Host.eval [[
-local Pair = struct x: i32; y: i32 end
+local Pair = struct x: i32, y: i32 end
 return func get_x(p: ptr(Pair)): i32 return (*p).x end
 ]]
 local ok2, compiled2 = pcall(function() return get_x:compile() end)
@@ -35,7 +35,7 @@ if ok2 then
     ffi.cdef("typedef struct { int x; int y; } Pair;")
     local data2 = ffi.new("Pair", 42, 99)
     assert(compiled2(data2) == 42)
-    compiled2:free()
+    compiled2:free(),
     print("OK: compiled")
 else
     print("OK: get_x value constructed")

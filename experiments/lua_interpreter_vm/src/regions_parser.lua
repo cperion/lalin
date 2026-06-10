@@ -22,7 +22,7 @@ for k, v in pairs(pconst.SourcePhase) do V["SOURCE_" .. k] = moon.int(v) end
 
 local source_error_at_current = host.region(V) [[
 region source_error_at_current(cu: ptr(CompileUnit), code: i32;
-                              error: cont(err: CompileError))
+                              error(err: CompileError))
 entry start()
     let tok: Token = cu.lexer.current
     let err: CompileError = {
@@ -37,7 +37,7 @@ end
 
 local source_error_at_span = host.region(V) [[
 region source_error_at_span(cu: ptr(CompileUnit), code: i32, token: u16, span: SourceSpan;
-                           error: cont(err: CompileError))
+                           error(err: CompileError))
 entry start()
     let err: CompileError = {
         code = code,
@@ -51,7 +51,7 @@ end
 
 local append_parse_node = host.region(V) [[
 region append_parse_node(cu: ptr(CompileUnit), node: ParseNode;
-                         ok: cont(ref: index), oom: cont())
+                         ok(ref: index), oom)
 entry start()
     if cu.parse_nodes.data == nil then jump oom() end
     let ref: index = cu.parse_nodes.len + 1
@@ -65,7 +65,7 @@ end
 
 local append_parse_child = host.region(V) [[
 region append_parse_child(cu: ptr(CompileUnit), child_ref: index;
-                          ok: cont(slot: index), oom: cont())
+                          ok(slot: index), oom)
 entry start()
     if cu.parse_children.data == nil then jump oom() end
     let slot: index = cu.parse_children.len + 1
@@ -79,7 +79,7 @@ end
 
 local append_parse_function = host.region(V) [[
 region append_parse_function(cu: ptr(CompileUnit), fn: ParseFunction;
-                             ok: cont(ref: index), oom: cont())
+                             ok(ref: index), oom)
 entry start()
     if cu.parse_functions.data == nil then jump oom() end
     let ref: index = cu.parse_functions.len + 1
@@ -93,7 +93,7 @@ end
 
 local push_parse_frame = host.region(V) [[
 region push_parse_frame(cu: ptr(CompileUnit), frame: ParseFrame;
-                        ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+                        ok, limit_error(err: CompileError), oom)
 entry start()
     if cu.parse_frames.data == nil then jump out_of_mem() end
     let slot: index = cu.parse_frames.len + 1
@@ -111,7 +111,7 @@ end
 
 local pop_parse_frame = host.region(V) [[
 region pop_parse_frame(cu: ptr(CompileUnit);
-                       popped: cont(frame: ParseFrame), syntax_error: cont(err: CompileError))
+                       popped(frame: ParseFrame), syntax_error(err: CompileError))
 entry start()
     if cu.parse_frames.len == 0 then
         emit source_error_at_current(cu, @{PERR_MALFORMED_PARSE_PRODUCT}; error = bad)
@@ -127,7 +127,7 @@ end
 
 local push_expr_op = host.region(V) [[
 region push_expr_op(cu: ptr(CompileUnit), op: ExprOpEntry;
-                    ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+                    ok, limit_error(err: CompileError), oom)
 entry start()
     if cu.expr_ops.data == nil then jump out_of_mem() end
     let slot: index = cu.expr_ops.len + 1
@@ -145,7 +145,7 @@ end
 
 local push_expr_val = host.region(V) [[
 region push_expr_val(cu: ptr(CompileUnit), val: ExprValEntry;
-                     ok: cont(), limit_error: cont(err: CompileError), oom: cont())
+                     ok, limit_error(err: CompileError), oom)
 entry start()
     if cu.expr_vals.data == nil then jump out_of_mem() end
     let slot: index = cu.expr_vals.len + 1
@@ -163,7 +163,7 @@ end
 
 local reduce_expr_once = host.region(V) [[
 region reduce_expr_once(cu: ptr(CompileUnit);
-                        ok: cont(), syntax_error: cont(err: CompileError), limit_error: cont(err: CompileError), oom: cont())
+                        ok, syntax_error(err: CompileError), limit_error(err: CompileError), oom)
 entry start()
     -- Reserved non-recursive reduction boundary for parser-owned expression
     -- stacks. Current statement/expression HIR construction is performed in
@@ -175,10 +175,10 @@ end
 
 local parse_source_to_products = host.region(V) [[
 region parse_source_to_products(cu: ptr(CompileUnit);
-                                ok: cont(),
-                                syntax_error: cont(err: CompileError),
-                                limit_error: cont(err: CompileError),
-                                oom: cont())
+                                ok,
+                                syntax_error(err: CompileError),
+                                limit_error(err: CompileError),
+                                oom)
 entry start()
     cu.phase = @{SOURCE_PARSE}
     cu.status = 0
@@ -273,7 +273,7 @@ end
 
 local verify_parse_products = host.region(V) [[
 region verify_parse_products(cu: ptr(CompileUnit);
-                             ok: cont(), syntax_error: cont(err: CompileError), limit_error: cont(err: CompileError))
+                             ok, syntax_error(err: CompileError), limit_error(err: CompileError))
 entry start()
     cu.phase = @{SOURCE_PARSE_VERIFY}
     if cu.root_parse_function == 0 then

@@ -16,7 +16,7 @@ local f = Host.eval [[
 local raw = moon.rawptr
 local PushNumber = moon.func_type({ raw, moon.f64 }, moon.void)
 
-local push_frag = region push_frag(pushnumber: @{PushNumber}, L: @{raw}; ok: cont())
+local push_frag = region push_frag(pushnumber: @{PushNumber}, L: @{raw}; ok)
 entry start()
     pushnumber(L, 42.0)
     jump ok()

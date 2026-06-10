@@ -122,8 +122,8 @@ See `IMPLEMENTATION_EXAMPLE.md` for ExprCompare walkthrough. Follow the same 6 s
 ```mlua
 -- After line 312, add:
 local mb_lower_your_region = region(params;
-    done: cont(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32),
-    lower_children: cont(...) -> void)
+    done(st: ptr(@{LowerState}), cmds: ptr(i32), value: i32),
+    lower_children(...) -> void)
 entry start(st, cmds)
     emit lower_children(st = st, cmds = cmds, ...)
 end

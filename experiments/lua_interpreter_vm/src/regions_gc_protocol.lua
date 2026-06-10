@@ -10,8 +10,8 @@ for k, v in pairs(const.FinalizerState) do I["FINALIZER_" .. k] = moon.int(v) en
 
 local decode_weak_mode = host.region(I) [[
 region decode_weak_mode(mode_flags: u8;
-                        none: cont(), weak_values: cont(), weak_keys: cont(),
-                        ephemeron: cont(), all_weak: cont(), invalid: cont())
+                        none, weak_values, weak_keys,
+                        ephemeron, all_weak, invalid)
 entry start()
     if mode_flags == 0 then jump none() end
     if as(bool, mode_flags & @{TABLE_ALL_WEAK}) then jump all_weak() end
@@ -25,8 +25,8 @@ end
 
 local classify_finalizer_state = host.region(I) [[
 region classify_finalizer_state(state: u8;
-                                none: cont(), eligible: cont(), pending: cont(),
-                                running: cont(), done: cont(), invalid: cont())
+                                none, eligible, pending,
+                                running, done, invalid)
 entry start()
     switch state do
     case 0 then jump none()

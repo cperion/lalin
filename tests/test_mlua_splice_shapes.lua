@@ -36,7 +36,7 @@ c_expr:free()
 
 -- Region fragment use
 local use_region = Host.eval [[
-local emit_hit = region(x: i32; hit: cont(y: i32))
+local emit_hit = region(x: i32; hit(y: i32))
 entry start()
     jump hit(y = x + 1)
 end

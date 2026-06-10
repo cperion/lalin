@@ -53,7 +53,7 @@ func add(x: i32): i32
   end
 end
 
-region scan(p: ptr(u8); ok: cont())
+region scan(p: ptr(u8); ok)
 entry start()
   jump ok()
 end
@@ -64,7 +64,7 @@ expr inc(x: i32): i32
 end
 
 struct Pair
-  left: i32
+  left: i32,
 end
 union Maybe
   none

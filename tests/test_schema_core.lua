@@ -2,6 +2,49 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local pvm = require("moonlift.pvm")
 local Schema = require("moonlift.schema")
+local AsdlParser = require("moonlift.asdl_parser")
+local AsdlText = require("moonlift.asdl_text")
+
+assert(Schema.assert_schema_directory_sources())
+local ok_builder, err_builder = pcall(Schema.assert_schema_directory_sources, { "core.asdl", "init.lua", "legacy.lua" })
+assert(not ok_builder and tostring(err_builder):match("Lua schema builder modules are forbidden"))
+local ok_asdl, err_asdl = pcall(Schema.assert_schema_directory_sources, { "core.asdl", "init.lua", "surprise.asdl" })
+assert(not ok_asdl and tostring(err_asdl):match("unexpected ASDL source"))
+local ok_parse, err_parse = pcall(AsdlParser.parse, "module Bad { X = (i32 }", "bad_source.asdl")
+assert(not ok_parse and tostring(err_parse):match("bad_source%.asdl:%d+:%d+: ASDL parse error"))
+
+local function with_embedded_schema_only(body)
+    local saved = {}
+    for _, name in ipairs(Schema.schema_asdl_modules_for_test()) do
+        local preload_name = "moonlift.schema." .. name .. "_asdl"
+        local path = "lua/moonlift/schema/" .. name .. ".asdl"
+        local text = assert(AsdlText.read_file(path))
+        saved[#saved + 1] = {
+            preload_name = preload_name,
+            preload = package.preload[preload_name],
+            loaded = package.loaded[preload_name],
+        }
+        package.loaded[preload_name] = nil
+        package.preload[preload_name] = function() return text end
+    end
+    local ok, err = pcall(function()
+        AsdlText.with_read_file_for_test(function(path)
+            error("filesystem ASDL read disabled: " .. tostring(path), 0)
+        end, body)
+    end)
+    for _, item in ipairs(saved) do
+        package.preload[item.preload_name] = item.preload
+        package.loaded[item.preload_name] = item.loaded
+    end
+    if not ok then error(err, 0) end
+end
+
+with_embedded_schema_only(function()
+    local embedded_T = pvm.context()
+    local embedded_schema = Schema.schema(embedded_T)
+    assert(pvm.classof(embedded_schema) == embedded_T.MoonAsdl.Schema)
+    assert(embedded_schema.modules[1].name == "MoonCore")
+end)
 
 local T = pvm.context()
 local schema = Schema.schema(T)

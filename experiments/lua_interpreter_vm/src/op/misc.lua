@@ -123,8 +123,8 @@ end
 
 local op_close = R([[
 region op_close(]] .. H .. [[;
-                next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-                oom: cont())
+                next(frame: ptr(Frame), pc: index, base: index, top: index),
+                oom)
 entry start()
     let close_idx: index = base + as(index, a)
     emit close_upvalues(L, close_idx;
@@ -142,9 +142,9 @@ end
 
 local op_tbc = R([[
 region op_tbc(]] .. H .. [[;
-              next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-              error: cont(code: i32),
-              oom: cont())
+              next(frame: ptr(Frame), pc: index, base: index, top: index),
+              error(code: i32),
+              oom)
 entry start()
     L.tbc_head = base + as(index, a)
     jump next(frame = frame, pc = pc + 1, base = base, top = top)
@@ -154,7 +154,7 @@ end
 
 local op_jmp = R([[
 region op_jmp(]] .. H .. [[;
-              do_jump: cont(frame: ptr(Frame), pc: index, base: index, top: index))
+              do_jump(frame: ptr(Frame), pc: index, base: index, top: index))
 entry start()
     let new_pc: index = as(index, as(i32, pc) + sj)
     jump do_jump(frame = frame, pc = new_pc, base = base, top = top)
@@ -164,9 +164,9 @@ end
 
 local op_errnnil = R([[
 region op_errnnil(]] .. H .. [[;
-                  next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-                  error: cont(code: i32),
-                  oom: cont())
+                  next(frame: ptr(Frame), pc: index, base: index, top: index),
+                  error(code: i32),
+                  oom)
 entry start()
     let val: Value = L.stack[base + as(index, a)]
     if val.tag == @{TAG_NIL} then

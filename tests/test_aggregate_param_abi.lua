@@ -9,8 +9,8 @@ typedef struct MoonliftAbiPair { int32_t a; int32_t b; } MoonliftAbiPair;
 
 local chunk = assert(moon.loadstring([[
 struct MoonliftAbiPair
-    a: i32
-    b: i32
+    a: i32,
+    b: i32,
 end
 
 local abi_pair_sum = func(p: MoonliftAbiPair): i32

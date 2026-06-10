@@ -50,6 +50,30 @@ local chain_binding = chain_mod.bind(default_session, CallableFunc)
 local make_chain = chain_binding.make
 local make_quote = chain_binding.make_quote
 
+local function declaration_maps_from_session()
+    local protocol_types, product_types = {}, {}
+    for name, value in pairs(default_session.global_type_values or {}) do
+        local decl = value and value.decl
+        if decl then
+            if value.kind == "union" and decl.variants then
+                protocol_types[name] = decl.variants
+            elseif value.kind == "struct" and decl.fields then
+                product_types[name] = decl.fields
+            end
+        end
+    end
+    return protocol_types, product_types
+end
+
+local function parser_opts_with_decl_maps(opts)
+    local protocol_types, product_types = declaration_maps_from_session()
+    local out = {}
+    for k, v in pairs(opts or {}) do out[k] = v end
+    out.protocol_types = out.protocol_types or protocol_types
+    out.product_types = out.product_types or product_types
+    return out
+end
+
 function CallableFunc:compile(opts)
     opts = opts or {}
     local backend = opts.backend or opts.codegen or "cranelift"
@@ -273,7 +297,7 @@ end
 M.switch_arms = make_quote(parse_switch_arms_quote, wrap_switch_arms_quote, expand_switch_arms_quote, api.switch_arms)
 
 M.func = make_quote(
-    function(T, src) return require("moonlift.parse").Define(T).parse_func(src) end,
+    function(T, src) return require("moonlift.parse").Define(T).parse_func(src, parser_opts_with_decl_maps()) end,
     function(value, parsed, T, src, bindings)
         local pvm = require("moonlift.pvm")
         local Tr = T.MoonTree
@@ -378,37 +402,70 @@ M.func = make_quote(
     end
 )
 
+local function strip_bodyless_region_end(src)
+    local trimmed = tostring(src or ""):gsub("%s+$", "")
+    local s, e = trimmed:find("end%s*$")
+    if s and (s == 1 or not trimmed:sub(s - 1, s - 1):match("[%w_]") ) then
+        return (trimmed:sub(1, s - 1):gsub("%s+$", ""))
+    end
+    return trimmed
+end
+
+local function merge_bindings(a, b)
+    local out = {}
+    for k, v in pairs(a or {}) do out[k] = v end
+    for k, v in pairs(b or {}) do out[k] = v end
+    return out
+end
+
+local function has_bindings(t)
+    for _ in pairs(t or {}) do return true end
+    return false
+end
+
 M.region = make_quote(
-    function(T, src) return require("moonlift.parse").Define(T).parse_region(src) end,
-    function(value, parsed)
+    function(T, src) return require("moonlift.parse").Define(T).parse_region(src, parser_opts_with_decl_maps()) end,
+    function(value, parsed, T, src, bindings)
         local pvm = require("moonlift.pvm")
         local O = default_session.T.MoonOpen
-        -- Bodyless region decl — return a header closure
-        if pvm.classof(value) == O.RegionFragDecl then
-            local header = setmetatable({
+        local function make_header(sig, header_src, captured_bindings)
+            return setmetatable({
                 kind = "region_header",
-                name = value.name,
-                _src_cont = parsed and parsed.src,
+                name = sig.name,
+                _sig = sig,
+                _src = header_src,
+                _bindings = captured_bindings or {},
                 _O = O,
             }, {
-                __call = function(self, body_src)
-                    if type(body_src) ~= "string" then
-                        error("moon.region header expects a body string [[]] or nil", 2)
+                __call = function(self, arg)
+                    if type(arg) == "table" then
+                        return make_header(self._sig, self._src, merge_bindings(self._bindings, arg))
                     end
-                    local T2 = default_session.T
-                    local full = body_src
-                    local parsed = require("moonlift.parse").Define(T2).parse_region(full)
-                    local v = parsed.value or parsed
-                    local rfv = api.CanonicalRegionFragValue or {}
-                    local rname = (type(v.name) == "table" and (v.name.text or v.name.name)) or v.name
-                    default_session.T._moonlift_host_region_frags = default_session.T._moonlift_host_region_frags or {}
-                    default_session.T._moonlift_host_region_frags[rname] = v
-                    return setmetatable({ kind = "region_frag", moonlift_quote_kind = "region_frag",
-                        session = default_session, name = rname, frag = v, conts = {},
-                        params = {}, blocks = {} }, rfv)
+                    if type(arg) ~= "string" then
+                        error("moon.region header expects a body string [[]] or binding table {}", 2)
+                    end
+                    local body_src = arg
+                    local full
+                    if body_src:match("^%s*region%f[^%w_]") then
+                        -- Backward-compatible escape hatch: a complete region quote can
+                        -- still be supplied directly. The pure .mlua implementation
+                        -- shorthand passes a body-only string and takes the path below.
+                        full = body_src
+                    else
+                        if not self._src then error("moon.region header is missing its source signature", 2) end
+                        full = strip_bodyless_region_end(self._src) .. "\n" .. body_src
+                    end
+                    local merged = self._bindings or {}
+                    if has_bindings(merged) then
+                        return M.region(merged)(full)
+                    end
+                    return M.region(full)
                 end,
             })
-            return header
+        end
+        -- Bodyless region decl — return a header closure
+        if pvm.classof(value) == O.RegionFragDecl then
+            return make_header(value, src, bindings or {})
         end
         local rfv = api.CanonicalRegionFragValue or {}
         local name = (type(value.name) == "table" and (value.name.text or value.name.name)) or value.name
@@ -482,7 +539,7 @@ M.union = make_quote(
 )
 
 M.extern = make_quote(
-    function(T, src) return require("moonlift.parse").Define(T).parse_extern(src) end,
+    function(T, src) return require("moonlift.parse").Define(T).parse_extern(src, parser_opts_with_decl_maps()) end,
     function(value, parsed, T)
         local pvm = require("moonlift.pvm")
         local Tr = T.MoonTree

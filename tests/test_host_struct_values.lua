@@ -10,7 +10,7 @@ local moon = session:api()
 local host_moon = require("moonlift.host")
 
 -- Standalone struct via moon.struct[[]] quote
-local Pair = host_moon.struct [[struct Pair x: i32; y: i32 end]]
+local Pair = host_moon.struct [[struct Pair x: i32, y: i32 end]]
 assert(Pair.name == "Pair")
 assert(pvm.classof(Pair.decl) ~= false)  -- is an ASDL node
 assert(Pair.decl.name == "Pair")
@@ -26,7 +26,7 @@ print("OK: ptr(struct): " .. tostring(ptr_ty))
 
 -- Struct via .mlua
 local Host = require("moonlift.mlua_run")
-local MPair = Host.eval [[return struct MPair left: i32; right: i32 end]]
+local MPair = Host.eval [[return struct MPair left: i32, right: i32 end]]
 assert(MPair.decl.name == "MPair")
 assert(#MPair.decl.fields == 2)
 assert(MPair.decl.fields[1].field_name == "left")

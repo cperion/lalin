@@ -1,5 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::collections::HashSet;
 use std::fmt::Write;
+use std::path::{Path, PathBuf};
 
 fn module_name(path: &Path, base: &Path) -> String {
     let rel = path.strip_prefix(base).unwrap().with_extension("");
@@ -25,14 +26,33 @@ fn collect(dir: &Path, base: &Path, ext: &str, out: &mut Vec<(String, String)>) 
     }
 }
 
-fn collect_paths(dir: &Path, ext: &str, out: &mut Vec<String>) {
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if path.is_dir() {
-            collect_paths(&path, ext, out);
-        } else if path.extension().is_some_and(|e| e == ext) {
-            out.push(path.to_string_lossy().to_string());
+fn validate_schema_sources(lua_modules: &[(String, String)], asdl_modules: &[(String, String)]) {
+    for (name, path) in lua_modules {
+        if path.starts_with("lua/moonlift/schema/") && path != "lua/moonlift/schema/init.lua" {
+            panic!(
+                "stale Lua schema builder module under lua/moonlift/schema/: {path} ({name}); schemas in this directory must be .asdl text"
+            );
+        }
+    }
+
+    let mut schema_preloads = HashSet::new();
+    for (name, path) in asdl_modules {
+        if !path.starts_with("lua/moonlift/schema/") { continue; }
+        let stem = Path::new(path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_else(|| panic!("invalid schema ASDL path: {path}"));
+        let expected_name = format!("moonlift.schema.{stem}");
+        if name != &expected_name {
+            panic!("schema ASDL {path} collected as {name}, expected {expected_name}");
+        }
+        let preload_name = format!("{name}_asdl");
+        let expected_preload = format!("moonlift.schema.{stem}_asdl");
+        if preload_name != expected_preload {
+            panic!("schema ASDL {path} would generate preload {preload_name}, expected {expected_preload}");
+        }
+        if !schema_preloads.insert(preload_name) {
+            panic!("duplicate schema ASDL preload generated for {path}");
         }
     }
 }
@@ -85,13 +105,17 @@ fn main() {
     let lua_dir = Path::new("lua");
     let mut lua_modules = Vec::new();
     collect(lua_dir, lua_dir, "lua", &mut lua_modules);
+    lua_modules.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut asdl_modules = Vec::new();
     collect(lua_dir, lua_dir, "asdl", &mut asdl_modules);
+    asdl_modules.sort_by(|a, b| a.0.cmp(&b.0));
+    validate_schema_sources(&lua_modules, &asdl_modules);
 
     let stdlib_dir = Path::new("stdlib");
     if stdlib_dir.exists() {
         collect(stdlib_dir, stdlib_dir.parent().unwrap(), "mlua", &mut lua_modules);
+        lua_modules.sort_by(|a, b| a.0.cmp(&b.0));
     }
 
     let mut modules: Vec<(String, String, bool)> = Vec::new();

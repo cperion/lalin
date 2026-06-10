@@ -78,7 +78,10 @@ for i = 1, #dup.issues do if pvm.classof(dup.issues[i]) == Tr.TypeIssueDuplicate
 assert(saw_dup, "duplicate variants should be diagnosed")
 
 local parsed = Parse.parse_module([[
-union MaybeParsed some(i32) | none end
+union MaybeParsed
+    some(i32)
+  | none
+end
 func parsed_match(m: MaybeParsed): i32
     return switch m do
         case .some(x) then

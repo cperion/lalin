@@ -5,8 +5,8 @@
 -- that wires them together — zero string concat anywhere.
 --
 -- Continuation protocol:
---   ok:   cont(next: i32)   -- matched, advanced position
---   fail: cont(at: i32)     -- failed, at this position
+--   ok(next: i32)   -- matched, advanced position
+--   fail(at: i32)     -- failed, at this position
 --
 -- Usage:
 --   local G = grammar("JSON")
@@ -36,7 +36,7 @@ local M = {}
 
 function M.seq2(name, a, b)
     return region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32), fail: cont(at: i32))
+        ok(next: i32) | fail(at: i32))
     entry start()
         emit @{a}(p, n, pos; ok = @{name .. "_b"}, fail = @{name .. "_fail"})
     end
@@ -54,7 +54,7 @@ end
 
 function M.alt2(name, a, b)
     return region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32), fail: cont(at: i32))
+        ok(next: i32) | fail(at: i32))
     entry start()
         emit @{a}(p, n, pos; ok = @{name .. "_ok"}, fail = @{name .. "_try"})
     end
@@ -72,7 +72,7 @@ end
 
 function M.star(name, fragment)
     local r = region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32))
+        ok(next: i32))
     entry start()
         emit @{fragment}(p, n, pos; ok = @{name .. "_loop"}, fail = @{name .. "_done"})
     end
@@ -92,7 +92,7 @@ end
 
 function M.opt(name, fragment)
     local r = region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32))
+        ok(next: i32))
     entry start()
         emit @{fragment}(p, n, pos; ok = ok, fail = @{name .. "_none"})
     end
@@ -106,7 +106,7 @@ end
 
 function M.empty(name)
     local r = region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32))
+        ok(next: i32))
     entry start()
         jump ok(next = pos)
     end
@@ -117,7 +117,7 @@ end
 
 function M.pred(name, fragment)
     return region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32), fail: cont(at: i32))
+        ok(next: i32) | fail(at: i32))
     entry start()
         emit @{fragment}(p, n, pos; ok = @{name .. "_rok"}, fail = @{name .. "_fail"})
     end
@@ -132,7 +132,7 @@ end
 
 function M.not_pred(name, fragment)
     return region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32), fail: cont(at: i32))
+        ok(next: i32) | fail(at: i32))
     entry start()
         emit @{fragment}(p, n, pos; ok = @{name .. "_ffail"}, fail = @{name .. "_ok"})
     end
@@ -150,7 +150,7 @@ end
 -- seq2 where first fragment lacks fail (star, opt, empty)
 function M.seq2_a_nf(name, a, b)
     return region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32), fail: cont(at: i32))
+        ok(next: i32) | fail(at: i32))
     entry start()
         emit @{a}(p, n, pos; ok = @{name .. "_b"})
     end
@@ -169,7 +169,7 @@ end
 -- seq2 where second fragment lacks fail
 function M.seq2_b_nf(name, a, b)
     return region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32), fail: cont(at: i32))
+        ok(next: i32) | fail(at: i32))
     entry start()
         emit @{a}(p, n, pos; ok = @{name .. "_b"}, fail = @{name .. "_fail"})
     end
@@ -188,7 +188,7 @@ end
 -- alt2 where second alternative lacks fail → result also has no fail
 function M.alt2_result_nf(name, a, b)
     local r = region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32))
+        ok(next: i32))
     entry start()
         emit @{a}(p, n, pos; ok = @{name .. "_ok"}, fail = @{name .. "_try"})
     end
@@ -209,7 +209,7 @@ end
 
 function M.range(name, lo, hi)
     return region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32), fail: cont(at: i32))
+        ok(next: i32) | fail(at: i32))
     entry start()
         if pos >= n then jump fail(at = pos) end
         let c: i32 = as(i32, p[pos])
@@ -222,7 +222,7 @@ end
 
 function M.byte_eq(name, val)
     return region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32), fail: cont(at: i32))
+        ok(next: i32) | fail(at: i32))
     entry start()
         if pos >= n then jump fail(at = pos) end
         if as(i32, p[pos]) ~= @{val} then jump fail(at = pos) end
@@ -233,7 +233,7 @@ end
 
 function M.any_byte(name)
     return region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32), fail: cont(at: i32))
+        ok(next: i32) | fail(at: i32))
     entry start()
         if pos >= n then jump fail(at = pos) end
         jump ok(next = pos + 1)
@@ -243,7 +243,7 @@ end
 
 function M.empty(name)
     return region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32), fail: cont(at: i32))
+        ok(next: i32) | fail(at: i32))
     entry start()
         jump ok(next = pos)
     end
@@ -252,7 +252,7 @@ end
 
 function M.range_except(name, lo, hi)
     return region r_@{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32), fail: cont(at: i32))
+        ok(next: i32) | fail(at: i32))
     entry start()
         if pos >= n then jump fail(at = pos) end
         let c: i32 = as(i32, p[pos])
@@ -399,7 +399,7 @@ function Grammar:rule(name, fn)
     -- wrapper only provides ok.
     if inner.nofail then
         local frag = region r_@{region_name}(p: ptr(u8), n: i32, pos: i32;
-            ok: cont(next: i32))
+            ok(next: i32))
         entry start()
             emit @{inner}(p, n, pos; ok = @{region_name .. "_ok"})
         end
@@ -411,7 +411,7 @@ function Grammar:rule(name, fn)
         self.rules[name] = frag
     else
         local frag = region r_@{region_name}(p: ptr(u8), n: i32, pos: i32;
-            ok: cont(next: i32), fail: cont(at: i32))
+            ok(next: i32) | fail(at: i32))
         entry start()
             emit @{inner}(p, n, pos; ok = @{region_name .. "_ok"}, fail = @{region_name .. "_fail"})
         end

@@ -109,8 +109,8 @@ end
 -- Test 1: struct, func, if-then-else (existing)
 local src1 = [[
 struct Pair
-  left: i32
-  right: i32
+  left: i32,
+  right: i32,
 end
 func add(x: i32, y: i32): i32
   let z: i32 = x + y
@@ -223,7 +223,7 @@ union Maybe
   none
   some(i32)
 end
-region scan(p: ptr(u8); hit: cont(pos: i32), miss: cont())
+region scan(p: ptr(u8); hit(pos: i32) | miss)
 entry start()
   jump miss()
 end

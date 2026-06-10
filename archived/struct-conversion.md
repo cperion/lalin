@@ -89,8 +89,8 @@
  1. Add MomExprResult struct to MoonBack.mlua
  2. Convert mb_lower_expr_region continuation signature (expr_lower.mlua:469)
 
-- From: done: cont(value: i32, scalar: i32, ok: bool)
-- To: done: cont(result: MomExprResult)
+- From: done(value: i32, scalar: i32, ok: bool)
+- To: done(result: MomExprResult)
 
  1. Update all exit points in expr_lower.mlua (~15 sites):
 

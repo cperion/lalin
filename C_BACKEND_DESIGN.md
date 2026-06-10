@@ -1,9 +1,22 @@
 # Complete Moonlift C Backend Design
 
-Status: design contract. This document is intentionally broader than the first C backend
-scaffold. It defines what a **complete** C backend means before further implementation.
+Status: canonical design and execution contract. This document is intentionally broader
+than any single implementation pass. It defines what a **complete** C backend means, and
+now also records the ASDL/MoonCode refactor required to make that backend good by default.
 
-The C backend is a PVM side projection:
+Current checkpoint — 2026-06-10:
+
+- schema source files in `lua/moonlift/schema/` have been converted from Lua-builder modules
+  to compact `.asdl` text, loaded by `schema/init.lua`;
+- `MoonCode` exists as a proposed normalized typed SSA/control ASDL layer in
+  `lua/moonlift/schema/code.asdl`;
+- the current C backend path is useful and has substantial coverage, including TCC/libtcc
+  and gcc execution, but the quality/performance work is not finished because lowering still
+  largely reconstructs SSA/control from nested MoonTree;
+- final full-support status requires rebasing backend projections on `MoonCode` or an
+  equivalent frontend-normalized layer, not merely optimizing the C printer.
+
+The C backend is a PVM side projection.  The target architecture is:
 
 ```text
 source / .mlua
@@ -12,11 +25,16 @@ source / .mlua
   -> closure_convert
   -> tree_typecheck
   -> sem_layout_resolve(target = c_target)
-  -> tree_to_c
+  -> tree_to_code
+  -> code_validate
+  -> code_to_c
   -> c_validate
   -> c_emit
   -> .c
 ```
+
+The historical direct `tree_to_c` path may exist during migration, but it is not the final
+quality/full-support architecture.
 
 It is not a WASM backend. It emits C. Support for wasm-capable toolchains, embedded
 platforms, and cross compilation is a consequence of C emission.
@@ -791,9 +809,12 @@ Moonlift source -> moon.emit_c -> gcc/cc -> executable/shared object -> run/comp
 
 for every supported language feature.
 
-## 25. Full-support implementation plan
+## 25. Pre-MoonCode full-support implementation plan
 
-This is the canonical plan for finishing the backend for the real goal.
+This was the initial full-support plan before the ASDL text / MoonCode refactor.  Its
+coverage requirements remain valid, but the execution route is superseded by section 29:
+rows formerly described as `tree_to_c` work should be implemented through `tree_to_code` +
+`code_to_c` unless explicitly noted otherwise.
 
 1. Correct `lua/moonlift/c_coverage.lua` so `rejected` no longer conflates backend TODO,
    phase-unreachable, and language-level rejection.
@@ -816,46 +837,331 @@ This is the canonical plan for finishing the backend for the real goal.
 10. Add a user-facing examples directory with `.mlua -> .c -> gcc -> run` scripts.
 11. Only after all of the above pass, update this appendix to claim `C backend complete`.
 
-## 26. Completion status — 2026-06-08
+## 26. Implementation checkpoint correction — 2026-06-10
 
-The accepted implementation status is now **C backend complete native64 / hosted C fast path**.
-For the supported language covered by the current native64 target model, the user-facing path
-is proven:
+The current implementation should be described precisely, not as unrestricted completion.
+It has a working hosted/native64 C path for a substantial supported subset and it can run
+through TCC/libtcc/gcc, but that is not the final architecture for full support or good
+default C quality.
+
+The important correction is architectural:
 
 ```text
-Moonlift source -> moon.emit_c -> TCC/cc -> runnable executable
+resolved MoonTree
+  -> MoonCode normalized typed SSA/control layer
+      -> code_to_c
+      -> code_to_back
 ```
 
-The default development loop prefers TCC: `MOONLIFT_C_CC`, then `tcc`, then `cc`/`gcc`/`clang`.
-Optional `MOONLIFT_C_USE_LIBTCC=1` uses the self-contained LuaJIT FFI libtcc runner when
-libtcc is installed; absence is a skip diagnostic and falls back to the subprocess compiler.
+The C backend must remain a side projection from the typed/resolved program layer, but it
+should not recursively rediscover SSA from nested `MoonTree.Expr` trees.  The bad TCC/no-O
+shape is a symptom of this missing middle layer:
 
-Acceptance evidence:
+```c
+ml_bin_2 = ml_i32_add_intwrap(i, 1);
+ml_bin_3 = ml_i32_add_intwrap(acc, i);
+__xfer_loop_1 = ml_bin_2;
+__xfer_loop_2 = ml_bin_3;
+goto loop;
 
-- `MOONLIFT_C_BACKEND_FINAL=1 luajit tests/test_c_backend_coverage_matrix.lua` — no
-  backend-TODO coverage rows remain.
-- `luajit tests/test_c_backend_phase_boundaries.lua` — phase-unreachable rows are proven at
-  the frontend/C boundary.
-- `luajit tests/test_c_gcc_feature_corpus.lua` and
-  `MOONLIFT_C_CC=cc luajit tests/test_c_gcc_feature_corpus.lua` — supported source features
-  compile and run through TCC and cc, including pointers/views, arrays/aggregates, data
-  globals, closure descriptors, C11 atomics when target-supported, and tagged unions.
-- `luajit tests/test_c_gcc_tagged_union.lua` — ASDL/tagged-union constructor and variant
-  switch corpus compiles and runs.
-- `luajit tests/test_c_full_semantic_equivalence.lua` — C output is compared against
-  Cranelift/JIT results for representative executable corpus groups.
-- `luajit examples/c_backend/run_examples.lua` — user-facing examples cover return code,
-  arithmetic, pointer/view, struct/array, extern, function pointer, and tagged union.
+loop:
+  i = __xfer_loop_1;
+  acc = __xfer_loop_2;
+  ml_cmp_1 = (i >= n);
+  if (ml_cmp_1) goto then; else goto else;
+```
 
-Legitimate non-`supported` coverage rows are not backend gaps:
+The desired default C shape comes naturally from normalized values/control, not from a
+post-printer optimization profile:
 
-- `phase_unreachable` rows are constructs resolved or eliminated before `tree_to_c`
-  (raw dot/place-dot, surface casts, direct closure expressions, open slots/fragments/imports,
-  and open funcs/externs); proof lives in `tests/test_c_backend_phase_boundaries.lua`.
-- `language_rejected` rows are rejected before C lowering with frontend/native parity, such as
-  dynamic array lengths in type positions; proof includes `tests/test_array_len_policy.lua`
-  and the coverage matrix final gate.
+```c
+int32_t i = 0;
+int32_t acc = 0;
+loop:
+  if (i >= n) return acc;
+  acc = (int32_t)((uint32_t)acc + (uint32_t)i);
+  i = (int32_t)((uint32_t)i + 1u);
+  goto loop;
+```
 
-Do not use the historical scaffold-gap sections above as the current status; they record why
-this completion pass was required. The current completion claim is only the native64/hosted C
-fast path proven by the tests listed here, not yet a target-aware cross-compilation claim.
+Completion claims must therefore be milestone-specific:
+
+| Milestone | Meaning | Status |
+|---|---|---|
+| C hosted subset | Moonlift source can emit C and run through TCC/gcc for covered features | working subset |
+| C native64 full coverage | every resolved supported language construct classified and tested through C | in progress |
+| MoonCode normalized layer | typed SSA/control ASDL validates defs/uses, places, calls, blocks, terms | designed, not implemented |
+| C-on-MoonCode | C lowering consumes normalized code instead of nested MoonTree | planned |
+| C quality/perf readiness | TCC/no-O code has clean shape; gcc -O2 remains competitive | planned |
+| target-aware C | pointer/index/layout/endian/freestanding profiles beyond hosted native64 | future |
+
+Historical sections above remain useful as design contract and coverage rationale, but the
+current final gate is now `MoonCode` + C-on-MoonCode + full compile/run corpus, not the older
+recursive `tree_to_c` implementation.
+
+## 27. ASDL text schema refactor
+
+### 27.1 Source-of-truth rule
+
+The schema source of truth is compact ASDL text under:
+
+```text
+lua/moonlift/schema/*.asdl
+```
+
+`lua/moonlift/schema/init.lua` is a loader/index, not a schema authoring file.  Lua-builder
+schema modules under `lua/moonlift/schema/` should not return.  The builder API may remain
+for bootstrap, tests, small external models, and migration tooling, but core Moon* schema
+authoring should use `.asdl`.
+
+The conversion script is:
+
+```text
+scripts/convert_schema_lua_to_asdl.lua
+```
+
+It exists so historical builder modules can be regenerated into text, not as a reason to keep
+dual sources.
+
+### 27.2 Runtime loading contract
+
+The runtime path is:
+
+```text
+.asdl text
+  -> asdl_parser.parse
+  -> MoonAsdl.Schema value
+  -> context_define_schema.define
+  -> live PVM/ASDL context classes
+```
+
+`MoonAsdl.Schema` remains the introspection/intermediate representation used by schema tools
+such as type emission and PVM surface generation.  Text is the authored representation;
+`MoonAsdl.Schema` is the loaded representation.
+
+The embedded standalone binary must include `.asdl` files the same way it includes Lua
+modules.  Embedded ASDL modules are exposed as preload modules named:
+
+```text
+moonlift.schema.<name>_asdl
+```
+
+and return the ASDL text string.
+
+### 27.3 Required hardening
+
+The refactor is not considered fully hardened until:
+
+1. every `lua/moonlift/schema/*.asdl` parses in isolation;
+2. `require("moonlift.asdl").Define(T)` defines all expected modules, including `MoonCode`;
+3. no `lua/moonlift/schema/*.lua` exists except `init.lua`;
+4. the embedded binary can define the schema without filesystem access;
+5. ASDL parse errors report file/line/column, not only byte positions;
+6. a round-trip/stability test verifies builder-to-ASDL conversion where builder fixtures are
+   still used;
+7. docs and source references point at `.asdl`, not removed `.lua` schema files.
+
+### 27.4 Compact ASDL style
+
+Prefer the normal text form:
+
+```asdl
+CodeBlock = (MoonCode.CodeBlockId id, string name, MoonCode.CodeParam* params,
+             MoonCode.CodeInst* insts, MoonCode.CodeTerm term,
+             MoonCode.CodeOrigin origin) unique
+
+CodeTerm = CodeTermJump(MoonCode.CodeBlockId dest, MoonCode.CodeValueId* args) unique
+         | CodeTermBranch(MoonCode.CodeValueId cond, MoonCode.CodeBlockId then_dest,
+                          MoonCode.CodeValueId* then_args,
+                          MoonCode.CodeBlockId else_dest,
+                          MoonCode.CodeValueId* else_args) unique
+```
+
+Do not reintroduce Lua builder noise for core schema edits.
+
+## 28. MoonCode normalized layer
+
+`MoonCode` is the backend-neutral ASDL layer between resolved `MoonTree` and concrete
+backend projections.  It is neither `MoonBack` nor `MoonC.CBackend*`.  Its purpose is to
+make value dependencies, control dependencies, storage residence, places, memory effects,
+ABI signatures, and variant/tagged-union operations explicit once.
+
+### 28.1 Pipeline
+
+The target pipeline is:
+
+```text
+source / .mlua
+  -> parse
+  -> open_expand
+  -> closure_convert
+  -> tree_typecheck
+  -> sem_layout_resolve(target)
+  -> tree_to_code
+  -> code_validate
+  -> code_to_c       -> c_validate    -> c_emit
+  -> code_to_back    -> back_validate -> back_jit/back_object
+```
+
+During migration, `tree_to_back` may coexist with `code_to_back`, but the final architecture
+should avoid two independent lowerings that can drift semantically.
+
+### 28.2 What MoonCode must preserve
+
+MoonCode must preserve all facts needed by both C and Cranelift-like backends:
+
+- typed values with stable `CodeValueId`s;
+- block params as the only phi form;
+- terminators with typed block edge arguments;
+- expression normalization into ANF/SSA instructions;
+- local/storage residence;
+- explicit places for local/global/deref/field/index/byte access;
+- memory access metadata: type, align, volatile, ordering, trap mode;
+- direct, extern, indirect, and closure call targets with exact signatures;
+- data pointer vs code pointer distinction;
+- aggregate, array, view, closure, and variant construction as semantic operations;
+- variant tag/payload extraction and variant-switch branch facts;
+- source origins for diagnostics and debugging.
+
+### 28.3 Why C quality depends on MoonCode
+
+C wants local variables and gotos, not a pile of invented recursive-expression temporaries.
+MoonCode gives C lowering enough information to choose direct shapes safely:
+
+- branch directly on compare values when the compare is single-use by a terminator;
+- assign jump args directly when no parallel-assignment hazard exists;
+- use transfer temps only for real cycles/hazards;
+- coalesce single-use arithmetic values into UB-free inline expressions;
+- keep loop-carried block params as ordinary C locals for reducible self-loops;
+- avoid bool temps for condition-only comparisons;
+- still preserve exact Moonlift semantics for overflow, div/rem, shifts, traps, and memory.
+
+This is not an optional optimized profile.  It is the default lowering from the right IR.
+
+## 29. Full execution plan
+
+The structured edit plan for this work is stored as:
+
+```text
+.pi/workflows/wf-asdl-c-backend-full-support.edit-plan.json
+```
+
+Summary order:
+
+1. freeze `.asdl` files as schema source of truth and harden loader/embedding;
+2. harden ASDL text tooling and parser diagnostics;
+3. validate/revise `MoonCode` ASDL before depending on it;
+4. implement `code_validate`;
+5. implement `tree_to_code`;
+6. add MoonCode semantic/validation tests;
+7. implement `code_to_c` and migrate public C APIs to it;
+8. make default C output naturally optimizable: direct branches, minimal transfers,
+   single-use expression coalescing, and clean loop-shaped gotos;
+9. implement or bridge `code_to_back` to keep native parity;
+10. reclassify C coverage around MoonCode boundaries;
+11. expand TCC/libtcc/gcc compile-run and Cranelift equivalence corpus;
+12. update this document only when gates actually pass.
+
+Final full-support gates:
+
+```sh
+luajit tests/test_schema_core.lua
+luajit tests/test_schema_compile_pipeline.lua
+luajit tests/test_tree_to_code.lua
+luajit tests/test_code_validate.lua
+luajit tests/test_code_to_c.lua
+luajit tests/test_code_to_back.lua
+MOONLIFT_C_BACKEND_FINAL=1 luajit tests/test_c_backend_coverage_matrix.lua
+luajit tests/test_c_gcc_feature_corpus.lua
+MOONLIFT_C_USE_LIBTCC=1 luajit tests/test_c_gcc_feature_corpus.lua
+luajit tests/test_c_full_semantic_equivalence.lua
+luajit benchmarks/bench_c_vs_cranelift.lua quick
+MOONLIFT_BENCH_C_RUNNER=gcc MOONLIFT_C_CC=gcc \
+  MOONLIFT_BENCH_CFLAGS='-std=c99 -O2 -fPIC -shared' \
+  luajit benchmarks/bench_c_vs_cranelift.lua quick
+```
+
+A completion claim must name the milestone it satisfies.  The phrase "C backend complete"
+without a milestone means all final full-support gates above have passed.
+
+
+## 30. Retirement map: code that should disappear or become compatibility wrappers
+
+The refactor must make removal explicit.  A lot of current files exist because the first C
+backend tried to lower directly from nested `MoonTree` into `MoonC.CBackend*`.  That was a
+useful bootstrap, but it is not the final architecture.
+
+### 30.1 Public API that stays
+
+These are user-facing or stable integration points and should survive the refactor:
+
+| API/file | Fate |
+|---|---|
+| `moon.emit_c`, `moon.compile_c` | stay; internally call the new MoonCode path |
+| `BundleValue:emit_c`, `BundleValue:compile_c` | stay; internally call the new MoonCode path |
+| `lua/moonlift/c_tcc.lua` | stay; runner/toolchain integration, independent of lowering IR |
+| `lua/moonlift/c_emit.lua` | stay if `MoonC.CBackend*` remains the restricted C dialect printer |
+| `lua/moonlift/c_validate.lua` | stay, but validate output from `code_to_c`; may shrink if checks move to `code_validate` |
+| `lua/moonlift/c_helpers.lua` | stay; semantic helper library for UB-free C operations |
+| `lua/moonlift/c/c_type.lua` | stay as the CBackend ASDL until/unless the C schema also moves to `.asdl` |
+| `tests/test_c_gcc_harness.lua` | stay; compile/run harness is backend-path neutral |
+| `benchmarks/bench_c_vs_cranelift.lua` | stay; should measure the new path |
+
+### 30.2 Direct Tree-to-C lowering to retire
+
+These files are old-approach implementation details and should not survive as primary code:
+
+| File | Reason | Final fate |
+|---|---|---|
+| `lua/moonlift/tree_to_c.lua` | recursively lowers nested MoonTree, invents temps, mixes normalization/control/place/type concerns | replace with `tree_to_code.lua` + `code_to_c.lua`; delete or leave temporary shim that errors with migration guidance |
+| `lua/moonlift/tree_control_to_c.lua` | C-specific region lowering from source control blocks; duplicates logic that belongs in MoonCode terminators/block params | replace with MoonCode block/term generation in `tree_to_code.lua`; delete |
+| `lua/moonlift/type_to_c.lua` | projects `MoonType` directly to C types during recursive tree lowering | replace with `type_to_code.lua` and/or `code_type_to_c.lua`; keep only as short compatibility wrapper during migration |
+| `lua/moonlift/c_places.lua` | lowers `MoonTree.Place` directly into C places | replace by MoonCode `CodePlace` construction plus `code_to_c` place emission; delete |
+| `lua/moonlift/c_residence.lua` | computes C residence from MoonTree bindings locally inside C lowering | replace by MoonCode residence/local plan; delete or fold into `tree_to_code` |
+| `lua/moonlift/c_cfg.lua` | ad-hoc CFG builder for direct C lowering | replace by MoonCode blocks/terms and a small C emission scheduler; delete if `code_to_c` does not need it |
+| `lua/moonlift/c_data.lua` | lowers MoonTree static/data directly to C globals | replace by MoonCode globals/data initializers; keep only reusable byte/reloc helpers if any |
+| `lua/moonlift/c_layout.lua` | projects layout facts directly into CBackend declarations from the old path | keep only if it becomes `code_layout_to_c`; otherwise replace with CodeType/layout declaration emission |
+
+Removal should happen only after equivalent tests pass on the new path.  Do not delete first
+and hope coverage catches it; migrate one public API route, then remove the old module and
+its old tests in the same commit.
+
+### 30.3 Tests to rename, replace, or delete
+
+Old tests are useful as behavior specs, but their names should stop advertising `tree_to_c`.
+
+| Current tests | Fate |
+|---|---|
+| `tests/test_tree_to_c_smoke.lua` | replace with `tests/test_code_to_c_smoke.lua` |
+| `tests/test_tree_to_c_semantics_smoke.lua` | replace with `tests/test_code_to_c_semantics_smoke.lua` |
+| `tests/test_tree_to_c_logic_select.lua` | replace with MoonCode/code-to-C condition/select tests |
+| `tests/test_tagged_union_to_c.lua` | keep behavior, reroute through `tree_to_code` + `code_to_c` |
+| direct imports of `tree_to_c`, `tree_control_to_c`, `type_to_c` in tests | remove; tests should exercise public API or new layer APIs |
+
+Tests for the public C API, TCC/libtcc runner, C helpers, C validation, and gcc feature
+corpus stay.  They should become the proof that removing the old lowering did not reduce
+support.
+
+### 30.4 Frontend/API migration points
+
+These call sites must be changed deliberately:
+
+| File | Old dependency | New dependency |
+|---|---|---|
+| `lua/moonlift/frontend_pipeline.lua` | `tree_to_c`, `type_to_c` | `tree_to_code`, `code_validate`, `code_to_c` |
+| `lua/moonlift/init.lua` | exports `type_to_c`, `tree_to_c` | export `tree_to_code`, `code_to_c` only if useful; keep public `emit_c` stable |
+| `lua/moonlift/host_module_values.lua` | bundle C emission assumes current CBackend unit path | call the new pipeline but preserve method names |
+| examples under `examples/c_backend/` | should continue unchanged | only internals change |
+
+### 30.5 Deletion gate
+
+A file from section 30.2 can be removed when all of these are true:
+
+1. no production code requires it;
+2. no test requires it except tests intentionally checking the old shim/error;
+3. public `moon.emit_c` and `compile{backend="c"}` pass through the new path;
+4. feature corpus and semantic equivalence pass;
+5. benchmarks are updated to report the new phase names;
+6. this section is updated from "to retire" to "removed" with the commit/test evidence.
+
+Until then, old-path modules should be treated as migration scaffolding, not architecture.

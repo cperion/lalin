@@ -12,7 +12,7 @@ for k, v in pairs(const.TM) do I["TM_" .. k] = moon.int(v) end
 -- get_metamethod: lookup metamethod from any value's metatable
 local get_metamethod = host.region { TAG_TABLE = I.TAG_TABLE } [[
 region get_metamethod(G: ptr(GlobalState), obj: Value, event: u8;
-                      found: cont(mm: Value), missing: cont())
+                      found(mm: Value), missing)
 entry start()
     if obj.tag == @{TAG_TABLE} then
         let t: ptr(Table) = as(ptr(Table), obj.bits)
@@ -34,7 +34,7 @@ end
 -- get_table_metamethod: lookup from table's metatable (uses flags cache)
 local get_table_metamethod = host.region { TAG_STR = I.TAG_STR, TAG_NIL = I.TAG_NIL } [[
 region get_table_metamethod(G: ptr(GlobalState), t: ptr(Table), event: u8;
-                            found: cont(mm: Value), missing: cont())
+                            found(mm: Value), missing)
 entry start()
     if t.metatable == nil then
         jump missing()
@@ -65,10 +65,10 @@ local binop_dispatch = host.region {
     TAG_INTEGER = I.TAG_INTEGER, TAG_NUM = I.TAG_NUM,
 } [[
 region binop_dispatch(L: ptr(LuaThread), lhs: Value, rhs: Value, event: u8;
-                      fast_integer: cont(x: i64, y: i64),
-                      fast_float: cont(x: f64, y: f64),
-                      call_mm: cont(mm: Value),
-                      type_error: cont())
+                      fast_integer(x: i64, y: i64),
+                      fast_float(x: f64, y: f64),
+                      call_mm(mm: Value),
+                      type_error)
 entry start()
     if lhs.tag == @{TAG_INTEGER} and rhs.tag == @{TAG_INTEGER} then
         jump fast_integer(x = as(i64, lhs.bits), y = as(i64, rhs.bits))
@@ -102,10 +102,10 @@ local unop_dispatch = host.region {
     TAG_INTEGER = I.TAG_INTEGER, TAG_NUM = I.TAG_NUM,
 } [[
 region unop_dispatch(L: ptr(LuaThread), v: Value, event: u8;
-                      fast_integer: cont(x: i64),
-                      fast_float: cont(x: f64),
-                      call_mm: cont(mm: Value),
-                      type_error: cont())
+                      fast_integer(x: i64),
+                      fast_float(x: f64),
+                      call_mm(mm: Value),
+                      type_error)
 entry start()
     if v.tag == @{TAG_INTEGER} then
         jump fast_integer(x = as(i64, v.bits))
@@ -130,7 +130,7 @@ end
 local prepare_metamethod_call = host.region [[
 region prepare_metamethod_call(L: ptr(LuaThread), frame: ptr(Frame), pc: index, base: index, top: index,
                                mm: Value, nargs: i32, wanted: i32, resume: ResumeState;
-                               prepared: cont(), error: cont(code: i32), oom: cont())
+                               prepared, error(code: i32), oom)
 entry start()
     frame.pc = pc
     frame.resume = resume

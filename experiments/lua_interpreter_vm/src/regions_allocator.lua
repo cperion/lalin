@@ -37,7 +37,7 @@ local realloc_bytes = host.region({
     ALIGN_FRAME = I.ALIGN_FRAME,
 }) [[
 region realloc_bytes(G: ptr(GlobalState), old: ptr(u8), old_size: index, new_size: index, align: u32;
-                     ok: cont(ptr: ptr(u8)), step_required: cont(), oom: cont())
+                     ok(ptr: ptr(u8)), step_required, oom)
 entry start()
     if G == nil then jump oom() end
     if G.allocator == nil then jump oom() end
@@ -66,7 +66,7 @@ end
 
 local alloc_bytes = host.region(I) [[
 region alloc_bytes(G: ptr(GlobalState), size: index, align: u32;
-                   ok: cont(ptr: ptr(u8)), step_required: cont(), oom: cont())
+                   ok(ptr: ptr(u8)), step_required, oom)
 entry start()
     emit realloc_bytes(G, as(ptr(u8), as(u64, 0)), as(index, 0), size, align;
         ok = ok,
@@ -78,7 +78,7 @@ end
 
 local free_bytes = host.region [[ 
 region free_bytes(G: ptr(GlobalState), ptr: ptr(u8), size: index, align: u32;
-                  done: cont())
+                  done)
 entry start()
     if G == nil then jump done() end
     if G.allocator == nil then jump done() end
@@ -97,7 +97,7 @@ end
 
 local alloc_object = host.region(I) [[
 region alloc_object(G: ptr(GlobalState), size: index, tt: u8;
-                    ok: cont(obj: ptr(GCHeader)), step_required: cont(), oom: cont())
+                    ok(obj: ptr(GCHeader)), step_required, oom)
 entry start()
     emit alloc_bytes(G, size, as(u32, 8);
         ok = allocated,
@@ -123,7 +123,7 @@ end
 
 local grow_value_array = host.region(I) [[
 region grow_value_array(L: ptr(LuaThread), needed: index;
-                        ok: cont(data: ptr(Value), capacity: index), overflow: cont(), oom: cont())
+                        ok(data: ptr(Value), capacity: index), overflow, oom)
 entry start()
     if needed > @{MAX_STACK_SIZE} then jump overflow() end
     if needed <= L.stack_size then jump ok(data = L.stack, capacity = L.stack_size) end
@@ -150,7 +150,7 @@ end
 
 local grow_frame_array = host.region(I) [[
 region grow_frame_array(L: ptr(LuaThread), needed: index;
-                        ok: cont(data: ptr(Frame), capacity: index), overflow: cont(), oom: cont())
+                        ok(data: ptr(Frame), capacity: index), overflow, oom)
 entry start()
     if needed > @{MAX_FRAMES} then jump overflow() end
     if needed <= L.frame_cap then jump ok(data = L.frames, capacity = L.frame_cap) end

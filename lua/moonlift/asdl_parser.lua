@@ -50,11 +50,26 @@ local function tok_text(param, state)
     return lexer.text(param.lex_param.source, state.tok_start, state.tok_stop)
 end
 
+local function line_col(source, pos)
+    local line, col = 1, 1
+    for i = 1, pos do
+        if source:byte(i) == 10 then
+            line = line + 1
+            col = 1
+        else
+            col = col + 1
+        end
+    end
+    return line, col
+end
+
 local function expect(param, state, kind, what)
     if state.tok_kind ~= kind then
-        error(string.format("ASDL parse error: expected %s but found '%s' at pos %d",
+        local line, col = line_col(param.lex_param.source, state.tok_start)
+        error(string.format("%s:%d:%d: ASDL parse error: expected %s but found '%s'",
+            param.source_name or "<asdl>", line, col,
             what or lexer.TOKEN_NAME[kind] or tostring(kind),
-            tok_text(param, state), state.tok_start), 2)
+            tok_text(param, state)), 2)
     end
     local text = tok_text(param, state)
     advance(param, state)
@@ -195,15 +210,16 @@ end
 
 -- ── Public API ───────────────────────────────────────────────
 
-function M.compile(input_string)
+function M.compile(input_string, source_name)
     return {
         lex_gen = lexer.lex_next,
         lex_param = lexer.compile(input_string),
+        source_name = source_name or "<asdl>",
     }
 end
 
-function M.parse(input_string)
-    local param = M.compile(input_string)
+function M.parse(input_string, source_name)
+    local param = M.compile(input_string, source_name)
     local state = alloc_state()
     advance(param, state)
     return parse_definitions(param, state, "")

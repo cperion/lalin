@@ -18,7 +18,7 @@ local OP_OUT = 4 local OP_JZ = 6 local OP_JNZ = 7 local OP_HALT = 8
 -- code and jumps are region params (immutable pointers).
 -- All mutable state threads through continuation parameters.
 
-local step = region(code: ptr(i32), jumps: ptr(i32), data: ptr(i32), ip: i32, dp: i32, out_sum: i32, fuel: i32; next: cont(ip: i32, dp: i32, out_sum: i32, fuel: i32), output: cont(ip: i32, dp: i32, byte: i32, out_sum: i32, fuel: i32), halt: cont(result: i32), oom: cont(ip: i32, out_sum: i32))
+local step = region(code: ptr(i32), jumps: ptr(i32), data: ptr(i32), ip: i32, dp: i32, out_sum: i32, fuel: i32; next(ip: i32, dp: i32, out_sum: i32, fuel: i32), output(ip: i32, dp: i32, byte: i32, out_sum: i32, fuel: i32), halt(result: i32), oom(ip: i32, out_sum: i32))
 entry start()
     if fuel <= 0 then jump oom(ip = ip, out_sum = out_sum) end
     let op: i32 = code[ip]

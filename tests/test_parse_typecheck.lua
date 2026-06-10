@@ -79,8 +79,8 @@ assert(#checked_index.issues == 0)
 
 local item_src = [[
 struct Pair
-    left: i32
-    right: i32
+    left: i32,
+    right: i32,
 end
 union MaybeInt some(i32) | none end
 ]]

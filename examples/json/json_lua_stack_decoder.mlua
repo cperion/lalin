@@ -51,7 +51,7 @@ local lua_rawseti = extern lua_rawseti(L: @{voidp}, idx: i32, n: i32) end
 -- Region fragments
 -- ---------------------------------------------------------------------------
 
-local skip_ws = region skip_ws(p: ptr(u8), n: i32, pos: i32; ok: cont(i: i32))
+local skip_ws = region skip_ws(p: ptr(u8), n: i32, pos: i32; ok(i: i32))
 entry loop(i: i32 = pos)
     if i >= n then jump ok(i = i) end
     switch as(i32, p[i]) do
@@ -67,7 +67,7 @@ end
 
 local parse_string = region parse_json_string(
     L: @{voidp}, p: ptr(u8), n: i32, pos: i32, buf: ptr(u8);
-    ok: cont(next_i: i32), err: cont()
+    ok(next_i: i32) | err
 )
 entry start()
     if pos >= n then jump err() end
@@ -157,7 +157,7 @@ end
 
 local parse_number = region parse_json_number(
     L: @{voidp}, p: ptr(u8), n: i32, pos: i32;
-    ok: cont(next_i: i32), err: cont()
+    ok(next_i: i32) | err
 )
 entry start()
     if pos >= n then jump err() end

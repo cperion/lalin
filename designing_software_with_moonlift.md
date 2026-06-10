@@ -72,10 +72,10 @@ The semantic design is the consumer:
 
 ```moonlift
 region consume_expr(ast: ptr(Ast), expr: ExprRef;
-    int_lit: cont(e: ptr(IntLitExpr)),
-    name: cont(e: ptr(NameExpr)),
-    call: cont(e: ptr(CallExpr)),
-    invalid: cont(code: i32))
+    int_lit(e: ptr(IntLitExpr)),
+    name(e: ptr(NameExpr)),
+    call(e: ptr(CallExpr)),
+    invalid(code: i32))
 ```
 
 The important thing is not that some value is “one of int/name/call.” The important thing is that a machine consumes an encoded fact and routes control to one of several continuations.
@@ -155,8 +155,8 @@ region parse_number(
     n: index,
     i: index;
 
-    ok: cont(value: f64, next: index),
-    err: cont(pos: index, code: i32))
+    ok(value: f64, next: index),
+    err(pos: index, code: i32))
 ```
 
 The input before the semicolon is a product:
@@ -224,7 +224,7 @@ is equivalent in spirit to:
 
 ```moonlift
 region f_region(a: i32, b: i32;
-    return: cont(result: i32))
+    return(result: i32))
 ```
 
 The difference is that the continuation is sealed into an ABI/call boundary. A function has one entry and one return convention. It is useful when the machine must be callable from Lua, C, another function, or an external consumer.
@@ -262,8 +262,8 @@ then the union was only a boxed branch. The correct Moonlift form is the protoco
 
 ```moonlift
 region parse_number(...;
-    ok: cont(value: f64, next: index),
-    err: cont(pos: index, code: i32))
+    ok(value: f64, next: index),
+    err(pos: index, code: i32))
 ```
 
 The union adds:
@@ -327,10 +327,10 @@ region visit_expr(
     ast: ptr(Ast),
     expr: ExprRef;
 
-    int_lit: cont(e: ptr(IntLitExpr)),
-    name: cont(e: ptr(NameExpr)),
-    call: cont(e: ptr(CallExpr)),
-    invalid: cont(code: i32))
+    int_lit(e: ptr(IntLitExpr)),
+    name(e: ptr(NameExpr)),
+    call(e: ptr(CallExpr)),
+    invalid(code: i32))
 ```
 
 The stored thing is not a semantic sum. It is an encoded fact. The protocol is where meaning happens.
@@ -363,10 +363,10 @@ In the stricter Moonlift design, that is not the semantic model. The semantic mo
 region consume_event(
     ev: RawEvent;
 
-    key_pressed: cont(code: i32, mods: i32),
-    mouse_moved: cont(x: i32, y: i32),
-    save_requested: cont(),
-    invalid: cont(code: i32))
+    key_pressed(code: i32, mods: i32),
+    mouse_moved(x: i32, y: i32),
+    save_requested,
+    invalid(code: i32))
 ```
 
 The event queue may store bytes, tags, payload indexes, or platform records. Those are products. The meaning is realized when `consume_event` dispatches to the protocol.
@@ -447,20 +447,20 @@ Examples:
 region authenticate(
     creds: ptr(Credentials);
 
-    success: cont(user_id: u64),
-    invalid: cont(),
-    locked: cont(unlock_at: i64),
-    rate_limited: cont(retry_after: i32))
+    success(user_id: u64),
+    invalid,
+    locked(unlock_at: i64),
+    rate_limited(retry_after: i32))
 ```
 
 ```moonlift
 region recv_i32(
     ch: ptr(Channel);
 
-    got: cont(value: i32),
-    empty: cont(),
-    closed: cont(),
-    parked: cont(waiter: ptr(Waiter)))
+    got(value: i32),
+    empty,
+    closed,
+    parked(waiter: ptr(Waiter)))
 ```
 
 ```moonlift
@@ -468,10 +468,10 @@ region resolve_name(
     ctx: ptr(Context),
     symbol: u32;
 
-    local: cont(binding: u32),
-    global: cont(item: u32),
-    missing: cont(),
-    ambiguous: cont(a: u32, b: u32))
+    local(binding: u32),
+    global(item: u32),
+    missing,
+    ambiguous(a: u32, b: u32))
 ```
 
 The protocol test:
@@ -687,11 +687,11 @@ region consume_token(
     tokens: ptr(Token),
     i: index;
 
-    identifier: cont(start: index, len: index),
-    number: cont(start: index, len: index),
-    punctuation: cont(byte: u8),
-    eof: cont(),
-    invalid: cont(code: i32))
+    identifier(start: index, len: index),
+    number(start: index, len: index),
+    punctuation(byte: u8),
+    eof,
+    invalid(code: i32))
 ```
 
 ### Step 4 — Delete fake choices
@@ -729,12 +729,12 @@ region parse_value(
     n: index,
     i: index;
 
-    string: cont(next: index),
-    number: cont(next: index),
-    array: cont(next: index),
-    object: cont(next: index),
-    literal: cont(next: index),
-    err: cont(pos: index, code: i32))
+    string(next: index),
+    number(next: index),
+    array(next: index),
+    object(next: index),
+    literal(next: index),
+    err(pos: index, code: i32))
 ```
 
 Maybe this protocol is too fine-grained for the caller. If the caller does not need to know which kind of value was parsed, collapse it:
@@ -746,8 +746,8 @@ region parse_value(
     n: index,
     i: index;
 
-    ok: cont(next: index),
-    err: cont(pos: index, code: i32))
+    ok(next: index),
+    err(pos: index, code: i32))
 ```
 
 The protocol belongs to the consumer. Do not expose distinctions the consumer does not need.
@@ -864,11 +864,11 @@ region visit_expr(
     ast: ptr(Ast),
     expr: ExprRef;
 
-    int_lit: cont(e: ptr(IntLitExpr)),
-    name: cont(e: ptr(NameExpr)),
-    call: cont(e: ptr(CallExpr)),
-    binary: cont(e: ptr(BinaryExpr)),
-    invalid: cont(code: i32))
+    int_lit(e: ptr(IntLitExpr)),
+    name(e: ptr(NameExpr)),
+    call(e: ptr(CallExpr)),
+    binary(e: ptr(BinaryExpr)),
+    invalid(code: i32))
 ```
 
 This is where the choice lives.
@@ -881,10 +881,10 @@ region typecheck_expr(
     ast: ptr(Ast),
     expr: ExprRef;
 
-    ok: cont(typed: TypedExprRef, ty: TypeId),
-    missing_symbol: cont(symbol: u32),
-    type_mismatch: cont(found: TypeId, expected: TypeId),
-    invalid_expr: cont(code: i32))
+    ok(typed: TypedExprRef, ty: TypeId),
+    missing_symbol(symbol: u32),
+    type_mismatch(found: TypeId, expected: TypeId),
+    invalid_expr(code: i32))
 entry start()
     emit visit_expr(ast, expr;
         int_lit = tc_int_lit,
@@ -922,9 +922,9 @@ end
 region render_diagnostic(
     diag: ptr(DiagnosticRecord);
 
-    missing_symbol: cont(symbol: u32, span_start: index, span_len: index),
-    type_mismatch: cont(found: TypeId, expected: TypeId, span_start: index, span_len: index),
-    invalid: cont(code: i32))
+    missing_symbol(symbol: u32, span_start: index, span_len: index),
+    type_mismatch(found: TypeId, expected: TypeId, span_start: index, span_len: index),
+    invalid(code: i32))
 ```
 
 The stored diagnostic record is a compact fact. The semantic meaning is the rendering/consuming protocol.
@@ -968,11 +968,11 @@ region consume_event(
     store: ptr(EventStore),
     ev: RawEvent;
 
-    key: cont(p: ptr(KeyPayload)),
-    mouse: cont(p: ptr(MousePayload)),
-    save: cont(),
-    quit: cont(),
-    invalid: cont(code: i32))
+    key(p: ptr(KeyPayload)),
+    mouse(p: ptr(MousePayload)),
+    save,
+    quit,
+    invalid(code: i32))
 ```
 
 ### 11.3 Apply as protocol consumer
@@ -983,10 +983,10 @@ region apply_event(
     store: ptr(EventStore),
     ev: RawEvent;
 
-    changed: cont(new_revision: u64),
-    unchanged: cont(),
-    needs_io: cont(code: i32),
-    invalid: cont(code: i32))
+    changed(new_revision: u64),
+    unchanged,
+    needs_io(code: i32),
+    invalid(code: i32))
 entry start()
     emit consume_event(store, ev;
         key = handle_key,
@@ -1037,17 +1037,17 @@ end
 region claim_task(
     sched: ptr(Scheduler);
 
-    got: cont(task: ptr(Task)),
-    empty: cont(),
-    shutdown: cont())
+    got(task: ptr(Task)),
+    empty,
+    shutdown)
 
 region run_task(
     task: ptr(Task);
 
-    yielded: cont(task: ptr(Task)),
-    parked: cont(task: ptr(Task), reason: i32),
-    completed: cont(task: ptr(Task), code: i32),
-    faulted: cont(task: ptr(Task), code: i32))
+    yielded(task: ptr(Task)),
+    parked(task: ptr(Task), reason: i32),
+    completed(task: ptr(Task), code: i32),
+    faulted(task: ptr(Task), code: i32))
 ```
 
 No `TaskState` union is required as the semantic design. A `state: i32` may exist as an encoded fact. The scheduler regions consume that fact and route control.
@@ -1059,18 +1059,18 @@ region send_i32(
     ch: ptr(Channel),
     value: i32;
 
-    sent: cont(),
-    closed: cont(),
-    would_block: cont(),
-    parked: cont(task: ptr(Task)))
+    sent,
+    closed,
+    would_block,
+    parked(task: ptr(Task)))
 
 region recv_i32(
     ch: ptr(Channel);
 
-    got: cont(value: i32),
-    closed: cont(),
-    would_block: cont(),
-    parked: cont(task: ptr(Task)))
+    got(value: i32),
+    closed,
+    would_block,
+    parked(task: ptr(Task)))
 ```
 
 A channel operation is not a return value. It is a protocol.
@@ -1098,10 +1098,10 @@ region resolve_name(
     ctx: ptr(BindContext),
     symbol: u32;
 
-    local: cont(binding: u32),
-    global: cont(item: u32),
-    missing: cont(),
-    ambiguous: cont(a: u32, b: u32))
+    local(binding: u32),
+    global(item: u32),
+    missing,
+    ambiguous(a: u32, b: u32))
 ```
 
 No `ResolveResult` union.
@@ -1113,10 +1113,10 @@ region validate_jump(
     r: ptr(TypedRegion),
     jump_id: u32;
 
-    valid: cont(),
-    missing_target: cont(target: u32),
-    wrong_args: cont(expected: u32, found: u32),
-    type_error: cont(arg: u32, expected: TypeId, found: TypeId))
+    valid,
+    missing_target(target: u32),
+    wrong_args(expected: u32, found: u32),
+    type_error(arg: u32, expected: TypeId, found: TypeId))
 ```
 
 No `ValidationResult` union.
@@ -1128,9 +1128,9 @@ region lower_region(
     r: ptr(TypedRegion),
     out: ptr(BackBuilder);
 
-    emitted: cont(first_cmd: index, count: index),
-    invalid_control: cont(code: i32),
-    unsupported: cont(feature: i32))
+    emitted(first_cmd: index, count: index),
+    invalid_control(code: i32),
+    unsupported(feature: i32))
 ```
 
 The compiler phase API is explicit. Every meaningful outcome is a continuation.
@@ -1183,9 +1183,9 @@ region apply_event(
     events: ptr(EventStore),
     ev: RawEvent;
 
-    changed: cont(revision: u64),
-    unchanged: cont(),
-    invalid: cont(code: i32))
+    changed(revision: u64),
+    unchanged,
+    invalid(code: i32))
 ```
 
 ### 14.4 Fact products
@@ -1208,10 +1208,10 @@ The consumer protocol interprets it:
 region consume_render_cmd(
     cmd: RenderCmd;
 
-    clear: cont(color: u32),
-    text: cont(x: i32, y: i32, data: ptr(u8), len: index),
-    rect: cont(x: i32, y: i32, w: i32, h: i32, color: u32),
-    invalid: cont(code: i32))
+    clear(color: u32),
+    text(x: i32, y: i32, data: ptr(u8), len: index),
+    rect(x: i32, y: i32, w: i32, h: i32, color: u32),
+    invalid(code: i32))
 ```
 
 Again: the stored command is a product. The semantic alternatives are protocols.
@@ -1247,9 +1247,9 @@ region reserve_bytes(
     arena: ptr(Arena),
     n: index;
 
-    ok: cont(ptr: ptr(u8), len: index),
-    oom: cont(),
-    invalid: cont(code: i32))
+    ok(ptr: ptr(u8), len: index),
+    oom,
+    invalid(code: i32))
 ```
 
 Resource operations are protocols:
@@ -1258,9 +1258,9 @@ Resource operations are protocols:
 region close_handle(
     h: ptr(Handle);
 
-    closed: cont(),
-    already_closed: cont(),
-    error: cont(code: i32))
+    closed,
+    already_closed,
+    error(code: i32))
 ```
 
 No resource result union is needed.
@@ -1298,8 +1298,8 @@ region start_thread(
     entry: ptr(u8),
     arg: ptr(u8);
 
-    started: cont(handle: ptr(ThreadHandle)),
-    failed: cont(code: i32))
+    started(handle: ptr(ThreadHandle)),
+    failed(code: i32))
 ```
 
 Platform differences are generated by Lua. Runtime choices are protocols.
@@ -1379,8 +1379,8 @@ Good:
 
 ```moonlift
 region parse(...;
-    ok: cont(...),
-    err: cont(...))
+    ok(...),
+    err(...))
 ```
 
 ### 18.2 Semantic union
@@ -1403,9 +1403,9 @@ struct ExprRef
 end
 
 region visit_expr(...;
-    int_lit: cont(...),
-    call: cont(...),
-    invalid: cont(...))
+    int_lit(...),
+    call(...),
+    invalid(...))
 ```
 
 ### 18.3 Boolean protocol
@@ -1420,9 +1420,9 @@ Good:
 
 ```moonlift
 region recv(...;
-    got: cont(...),
-    empty: cont(),
-    closed: cont())
+    got(...),
+    empty,
+    closed)
 ```
 
 ### 18.4 Status code soup
@@ -1436,7 +1436,7 @@ return -7
 Good internally:
 
 ```moonlift
-timeout: cont(...)
+timeout(...)
 ```
 
 Acceptable at a sealed function boundary:
@@ -1456,7 +1456,7 @@ handlers["closed"] = function() ... end
 Good internally:
 
 ```moonlift
-closed: cont()
+closed
 ```
 
 ### 18.6 Stored choice with no consumer

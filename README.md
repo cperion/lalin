@@ -98,8 +98,8 @@ compiled:free()
 local function expect_byte(tag, byte, err_code)
     local name = "expect_" .. tag
     return region @{name}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32),
-        err: cont(pos: i32, code: i32))
+        ok(next: i32),
+        err(pos: i32, code: i32))
     entry start()
         if pos >= n then jump err(pos = pos, code = @{err_code}) end
         if as(i32, p[pos]) == @{byte} then
@@ -210,8 +210,8 @@ return sum
 
 ```moonlift
 region scan_until(p: ptr(u8), n: i32, target: i32;
-                  hit: cont(pos: i32),
-                  miss: cont(pos: i32))
+                  hit(pos: i32),
+                  miss(pos: i32))
 entry loop(i: i32 = 0)
     if i >= n then jump miss(pos = i) end
     if as(i32, p[i]) == target then jump hit(pos = i) end
@@ -315,7 +315,7 @@ or `return`. No implicit fallthrough.
 Regions are typed control components with named continuation exits:
 
 ```moonlift
-region my_region(params...; exit_a: cont(sig...), exit_b: cont(sig...))
+region my_region(params...; exit_a(sig...) | exit_b(sig...))
 entry start()
     emit other_fragment(args...; out = exit_a)
 end
@@ -372,8 +372,8 @@ get typed ASDL back).
 ```lua
 -- Full islands: keyword is optional (moon.func already says "func")
 local f = moon.func     [[add(a: i32, b: i32): i32 return a + b end]]
-local r = moon.region   [[scan(p: ptr(u8); hit: cont(v: i32)) entry ... end end]]
-local s = moon.struct   [[Point x: i32; y: i32 end]]
+local r = moon.region   [[scan(p: ptr(u8); hit(v: i32)) entry ... end end]]
+local s = moon.struct   [[Point x: i32, y: i32 end]]
 local u = moon.union    [[Option Some(i32) | None end]]
 local e = moon.extern   [[write(fd: i32, buf: ptr(u8)): i32 end]]
 
@@ -516,7 +516,7 @@ local params = moon.params {
 -- ⑦ region follows the same pattern (header → body)
 --    @{} works in both the header and the body; both share the bindings.
 local scan = moon.region { target = moon.i32 }
-                         [[scan(p: ptr(u8), n: i32; hit: cont(pos: i32), miss: cont())]]
+                         [[scan(p: ptr(u8), n: i32; hit(pos: i32), miss)]]
                          [[
 entry loop(i: i32 = 0)
     if i >= n then jump miss() end

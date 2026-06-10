@@ -10,11 +10,11 @@ for k, v in pairs(const.Err) do I["ERR_" .. k] = moon.int(v) end
 -- api_index_to_addr: decode Lua C API index conventions
 local api_index_to_addr = host.region { ERR_API = I.ERR_API } [[
 region api_index_to_addr(L: ptr(LuaThread), idx: i32;
-                         valid: cont(slot: index),
-                         pseudo_global: cont(),
-                         pseudo_registry: cont(),
-                         pseudo_upvalue: cont(n: i32),
-                         invalid: cont())
+                         valid(slot: index),
+                         pseudo_global,
+                         pseudo_registry,
+                         pseudo_upvalue(n: i32),
+                         invalid)
 entry start()
     -- Positive indices: 1-based from bottom of stack
     if idx > 0 then

@@ -1,0 +1,604 @@
+{
+	"version": 1,
+	"workflowId": "wf-asdl-c-backend-full-support",
+	"planId": "main",
+	"revision": 14,
+	"nextId": 36,
+	"createdAt": "2026-06-10T12:24:15.592Z",
+	"updatedAt": "2026-06-10T14:05:48.674Z",
+	"tasks": [
+		{
+			"id": "T001",
+			"title": "Freeze ASDL text schema loading",
+			"detail": "Hard-lock `lua/moonlift/schema/*.asdl` as the only schema source in this directory. Update `SCHEMA_ASDL_MODULES` so it exactly matches every `.asdl` file in `lua/moonlift/schema/` (currently verify `pvm_surface.asdl` is either intentionally loaded or removed). Add a loader-time assertion/test helper that no `lua/moonlift/schema/*.lua` exists except `init.lua`; keep C schema builder modules only under `lua/moonlift/c/`. Pass source names into ASDL parsing.",
+			"file": "lua/moonlift/schema/init.lua",
+			"after": [],
+			"status": "done",
+			"order": 1,
+			"claimedBy": "agent-625SFP",
+			"evidence": "Implemented ASDL source freeze in lua/moonlift/schema/init.lua: added loader-time assert_schema_directory_sources() guard, verified SCHEMA_ASDL_MODULES against actual schema/*.asdl plus explicit pvm_surface.asdl exclusion, and forbids schema/*.lua except init.lua. Threaded source names through AsdlText.parse_schema/load_text, asdl_parser.parse/compile, asdl_context:Define, and pvm_surface_model. Added focused assertions in tests/test_schema_core.lua. Verified with: luajit tests/test_schema_core.lua; luajit tests/test_schema_compile_pipeline.lua; luajit tests/test_pvm_surface_builder.lua; luajit tests/test_pvm_surface_schema_values.lua.",
+			"notes": [
+				"Initial `.asdl` migration already exists in the working tree; this task is for hardening and declaring it stable.",
+				"Current working tree has `.asdl` files and loader changes; still needs embedding/filesystem and no-builder guard hardening before done.",
+				"Build-time sanity check should confirm each module has a corresponding .asdl file and that `moonlift.schema` round-trips from embedded bytes without `lua` filesystem reads when package path is unavailable."
+			],
+			"createdAt": "2026-06-10T12:24:15.592Z",
+			"updatedAt": "2026-06-10T14:02:37.225Z"
+		},
+		{
+			"id": "T002",
+			"title": "Harden ASDL embedding fallback",
+			"detail": "Make `load_text(module_name, path)` deterministically prefer `<module>_asdl` preloads before filesystem reads and expose/return enough source metadata for diagnostics. Add a test-time way to prove schema loading works when filesystem reads are disabled and only embedded `_asdl` modules are available.",
+			"file": "lua/moonlift/asdl_text.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 2,
+			"claimedBy": "agent-625SFP",
+			"evidence": "Hardened lua/moonlift/asdl_text.lua load_text() to prefer <module>_asdl preloads and return source metadata; added with_read_file_for_test() to disable filesystem reads in focused tests. Updated lua/moonlift/schema/init.lua to expose schema_asdl_modules_for_test(), and tests/test_schema_core.lua now preloads all root schema ASDL bytes, disables AsdlText.read_file, and verifies Schema.schema() succeeds from embedded _asdl modules only. Verified with: luajit tests/test_schema_core.lua; luajit tests/test_schema_compile_pipeline.lua.",
+			"notes": [
+				"This is required by C_BACKEND_DESIGN §27.3 item 5 and is a blocker for stable migration tooling."
+			],
+			"createdAt": "2026-06-10T12:24:15.592Z",
+			"updatedAt": "2026-06-10T14:04:11.353Z"
+		},
+		{
+			"id": "T003",
+			"title": "Validate ASDL build inputs",
+			"detail": "Add build-time sanity checks while collecting `.asdl`: every `lua/moonlift/schema/*.asdl` has a corresponding preload name `moonlift.schema.<name>_asdl`, generated preloads sort deterministically, and stale schema Lua builders under `lua/moonlift/schema/` fail the build except `init.lua`. Keep non-schema Lua modules and `lua/moonlift/c/*.lua` unchanged.",
+			"file": "build.rs",
+			"after": [
+				"T001",
+				"T002"
+			],
+			"status": "done",
+			"order": 3,
+			"claimedBy": "agent-625SFP",
+			"evidence": "Updated build.rs to sort collected Lua/ASDL inputs deterministically and validate schema build inputs: lua/moonlift/schema/*.lua now fails except init.lua, schema ASDL files must collect as moonlift.schema.<name>, and generated preload names must be moonlift.schema.<name>_asdl with no duplicates. Non-schema Lua modules and lua/moonlift/c/*.lua collection are unchanged. Verified build.rs syntax with rustc --edition=2021 build.rs -o /tmp/moonlift-build-rs-check; reran luajit tests/test_schema_core.lua and luajit tests/test_schema_compile_pipeline.lua.",
+			"notes": [
+				"Current `MoonCode` ASDL is a proposed full layer; validate before building irreversible lowering code on it.",
+				"Keep `schema.init.lua` as canonical loader; this task only hardens the MoonCode model contract."
+			],
+			"createdAt": "2026-06-10T12:24:15.592Z",
+			"updatedAt": "2026-06-10T14:05:15.001Z"
+		},
+		{
+			"id": "T004",
+			"title": "Add ASDL source diagnostics",
+			"detail": "Change parser public API to accept `parse(input_string, source_name)` while preserving `parse(input_string)`. Track byte offset to line/column and report errors as `source:line:column: ASDL parse error...` instead of byte-only `pos`. Ensure `asdl_text.parse_schema(T, text, source_name)` passes this source through.",
+			"file": "lua/moonlift/asdl_parser.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 4,
+			"claimedBy": "agent-625SFP",
+			"evidence": "Updated lua/moonlift/asdl_parser.lua public API to parse(input_string, source_name)/compile(input_string, source_name) while preserving default calls, added byte-offset to line/column mapping, and changed parse failures to source:line:column: ASDL parse error messages. lua/moonlift/asdl_text.lua and lua/moonlift/asdl_context.lua pass source names through. tests/test_schema_core.lua asserts source/line/column diagnostics. Verified with: luajit tests/test_schema_core.lua; luajit tests/test_schema_compile_pipeline.lua; luajit tests/test_pvm_surface_builder.lua; luajit tests/test_pvm_surface_schema_values.lua.",
+			"notes": [],
+			"createdAt": "2026-06-10T12:24:15.592Z",
+			"updatedAt": "2026-06-10T14:05:48.674Z"
+		},
+		{
+			"id": "T005",
+			"title": "Finalize MoonCode ASDL contract",
+			"detail": "Audit and revise `MoonCode` for the hard architecture: CodeModule/CodeFunc/CodeBlock/CodeInst/CodeTerm must carry stable ids, explicit CodePlace/CodeResidence, direct/extern/indirect/closure call targets, memory access, global/data/reloc facts, and validation issues. Add missing fields before any lowerer relies on the schema; do not encode semantics in strings or side tables.",
+			"file": "lua/moonlift/schema/code.asdl",
+			"after": [
+				"T001",
+				"T004"
+			],
+			"status": "todo",
+			"order": 5,
+			"notes": [],
+			"createdAt": "2026-06-10T12:24:15.592Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T006",
+			"title": "Implement CodeType helpers",
+			"detail": "Create the backend-neutral type mapping helper that replaces old `type_to_c` as a direct dependency. Provide MoonTree/MoonType -> MoonCode.CodeType mapping, signature interning (`CodeSigId`), scalar/ptr/codeptr distinction, target index/pointer facts, and helpers for CodeType -> CBackend type spelling used by `code_to_c`. This file must not require `tree_to_c` or any retired C lowering modules.",
+			"file": "lua/moonlift/code_type.lua",
+			"after": [
+				"T005"
+			],
+			"status": "todo",
+			"order": 6,
+			"notes": [],
+			"createdAt": "2026-06-10T12:24:15.592Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T007",
+			"title": "Implement MoonCode validator",
+			"detail": "Create `Define(T).validate(code_module, collector_or_opts)` over `MoonCode.CodeModule`. Enforce unique ids, def/use, block existence, block arg arity/types, entry block validity, terminator presence, call sig arity/types, place/local/global typing, memory access alignment/trap shape, data reloc targets, and data/code pointer discipline. Return `MoonCode.CodeValidationReport` and integrate collector diagnostics without silently succeeding.",
+			"file": "lua/moonlift/code_validate.lua",
+			"after": [
+				"T005",
+				"T006"
+			],
+			"status": "todo",
+			"order": 7,
+			"notes": [],
+			"createdAt": "2026-06-10T12:24:15.592Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T008",
+			"title": "Implement tree_to_code normalizer",
+			"detail": "Create `Define(T).module(resolved_module, opts)` that lowers resolved/layout-processed MoonTree to normalized `MoonCode.CodeModule`: ANF/SSA CodeInst graph, block-param control flow, CodeTerm terminators, locals/residence, CodePlace, CodeMemoryAccess, CodeCallTarget, globals/data init facts, origins, and deterministic ids. It must reject phase-unreachable constructs here or earlier; no raw nested expression recursion should reach C/native backends.",
+			"file": "lua/moonlift/tree_to_code.lua",
+			"after": [
+				"T005",
+				"T006",
+				"T007"
+			],
+			"status": "todo",
+			"order": 8,
+			"notes": [],
+			"createdAt": "2026-06-10T12:24:15.592Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T009",
+			"title": "Implement code_to_back projection",
+			"detail": "Create the native projection from validated MoonCode to `MoonBack.BackProgram` plus provenance. Prefer a real CodeInst/CodeTerm -> BackCmd lowering. If an explicit bridge is unavoidable for one refactor step, confine it to this file/task with a failing final gate that prevents it from surviving; public native APIs must move to MoonCode before final completion.",
+			"file": "lua/moonlift/code_to_back.lua",
+			"after": [
+				"T007",
+				"T008"
+			],
+			"status": "todo",
+			"order": 9,
+			"notes": [
+				"Hard-refactor interpretation: an explicit native bridge is allowed only inside one refactor step and must be eliminated or blocked by final gates; public native path must switch to MoonCode."
+			],
+			"createdAt": "2026-06-10T12:24:15.592Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T010",
+			"title": "Hard-switch native pipeline",
+			"detail": "Replace `tree_to_back` lowering inside `lower_module` with `tree_to_code -> code_validate -> code_to_back -> back_validate`. Return `code_module` and `code_report` alongside existing `program`/`back_report` so public APIs keep their shape. No production path should call `tree_to_back` directly after this task.",
+			"file": "lua/moonlift/frontend_pipeline.lua",
+			"after": [
+				"T007",
+				"T008",
+				"T009"
+			],
+			"status": "todo",
+			"order": 10,
+			"notes": [],
+			"createdAt": "2026-06-10T12:24:15.592Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T011",
+			"title": "Implement code_to_c lowering",
+			"detail": "Create `Define(T).module(code_module, opts)` that validates/consumes MoonCode and emits `MoonC.CBackendUnit`. Lower CodeInst/CodeTerm explicitly; use CodePlace/CodeResidence/CodeMemoryAccess/CodeCallTarget facts directly; generate clean CBackend locals/blocks/gotos/calls/globals/helpers; keep `c_validate` as the restricted-C validator. Do not require `tree_to_c`, `tree_control_to_c`, `type_to_c`, `c_places`, `c_residence`, or `c_cfg`.",
+			"file": "lua/moonlift/code_to_c.lua",
+			"after": [
+				"T007",
+				"T008"
+			],
+			"status": "todo",
+			"order": 11,
+			"notes": [],
+			"createdAt": "2026-06-10T12:24:15.592Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T012",
+			"title": "Rewrite c_data for MoonCode",
+			"detail": "Either rewrite this file as a MoonCode data/global initializer helper consumed by `code_to_c`, or delete it if all logic moves into `code_to_c`. If it survives, remove `type_to_c` and MoonTree item/expression dependencies; it may only consume `MoonCode.CodeGlobal`, `CodeDataInit`, `CodeGlobalRef`, CodeType helpers, layout facts, and CBackend constructors.",
+			"file": "lua/moonlift/c_data.lua",
+			"after": [
+				"T006",
+				"T011"
+			],
+			"status": "todo",
+			"order": 12,
+			"notes": [
+				"Initial canonical documentation pass added to `C_BACKEND_DESIGN.md`: status correction, ASDL text refactor contract, MoonCode pipeline/rationale, and full execution plan. Do not mark done; final status updates depend on later implementation gates."
+			],
+			"createdAt": "2026-06-10T12:24:15.592Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T013",
+			"title": "Rewrite c_layout for MoonCode",
+			"detail": "Either rewrite this file as a MoonCode/CBackend declaration-layout helper consumed by `code_to_c`, or delete it if all logic moves into `code_to_c`. If it survives, remove `type_to_c` and direct MoonTree lowering dependencies; it may only consume CodeType, Sem.LayoutEnv, and CBackend declaration constructors.",
+			"file": "lua/moonlift/c_layout.lua",
+			"after": [
+				"T006",
+				"T011"
+			],
+			"status": "todo",
+			"order": 13,
+			"notes": [
+				"Removal inventory documented in `C_BACKEND_DESIGN.md` section 30: public APIs that stay, old direct Tree-to-C files to retire, tests to rename, call sites, and deletion gate.",
+				"Amended for hard-refactor requirement: no long-lived migration shims; this task now permits `c_layout.lua` to survive only as a MoonCode helper with old dependencies removed."
+			],
+			"createdAt": "2026-06-10T12:27:41.044Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T014",
+			"title": "Hard-switch C pipeline",
+			"detail": "Replace `lower_module_to_c` internals with target-aware `sem_layout_resolve -> tree_to_code -> code_validate -> code_to_c -> c_validate`. Remove `TreeToC`/`TypeToC` requires and rename phase-boundary error text from `before tree_to_c` to `before tree_to_code/code_to_c`. Return `code_module`, `code_report`, `c_unit`, and `c_report` while keeping `parse_and_lower_c` API stable.",
+			"file": "lua/moonlift/frontend_pipeline.lua",
+			"after": [
+				"T007",
+				"T008",
+				"T011",
+				"T012",
+				"T013"
+			],
+			"status": "todo",
+			"order": 14,
+			"notes": [],
+			"createdAt": "2026-06-10T12:27:41.044Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T015",
+			"title": "Reroute public facade exports",
+			"detail": "Keep public `moon.emit_c` and `moon.compile_c` behavior, but remove facade exports/imports for retired `type_to_c` and `tree_to_c`. Export `tree_to_code`, `code_validate`, `code_to_c`, and `code_to_back` only as internal/diagnostic modules if useful. Ensure `emit_c` continues to call `Pipeline.parse_and_lower_c` and therefore the MoonCode path.",
+			"file": "lua/moonlift/init.lua",
+			"after": [
+				"T010",
+				"T014"
+			],
+			"status": "todo",
+			"order": 15,
+			"notes": [],
+			"createdAt": "2026-06-10T12:27:41.044Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T016",
+			"title": "Reroute bundle C APIs",
+			"detail": "Keep `BundleValue:emit_c`, `BundleValue:compile_c`, and related C source/library methods stable, but ensure `_lower_c_unit` returns a C unit produced by MoonCode. Propagate `code_report`/`c_report` diagnostics in validation errors. Do not import retired modules here.",
+			"file": "lua/moonlift/host_module_values.lua",
+			"after": [
+				"T010",
+				"T014"
+			],
+			"status": "todo",
+			"order": 16,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T017",
+			"title": "Delete tree_to_c module",
+			"detail": "Delete the old recursive direct Tree-to-C lowering file. Do not leave a long-lived shim. Before deletion, grep production/tests for `require(\"moonlift.tree_to_c\")` and reroute all uses to public APIs or `tree_to_code`/`code_to_c`.",
+			"file": "lua/moonlift/tree_to_c.lua",
+			"after": [
+				"T011",
+				"T014",
+				"T015",
+				"T016"
+			],
+			"status": "todo",
+			"order": 17,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T018",
+			"title": "Delete tree_control_to_c module",
+			"detail": "Delete the C-specific control-region lowering file. Control lowering must live in `tree_to_code` as CodeBlock/CodeTerm generation and in `code_to_c` as block/term C emission. No `require(\"moonlift.tree_control_to_c\")` may remain.",
+			"file": "lua/moonlift/tree_control_to_c.lua",
+			"after": [
+				"T008",
+				"T011",
+				"T017"
+			],
+			"status": "todo",
+			"order": 18,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T019",
+			"title": "Delete type_to_c module",
+			"detail": "Delete the direct MoonType-to-C helper once CodeType helpers and all CBackend consumers are migrated. Rewrite tests/imports that exercised it to use CodeType/code_to_c behavior. No `require(\"moonlift.type_to_c\")` may remain.",
+			"file": "lua/moonlift/type_to_c.lua",
+			"after": [
+				"T006",
+				"T011",
+				"T012",
+				"T013",
+				"T015"
+			],
+			"status": "todo",
+			"order": 19,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T020",
+			"title": "Delete c_places module",
+			"detail": "Delete direct MoonTree place-to-C lowering. CodePlace construction belongs in `tree_to_code`; C lvalue/address emission belongs in `code_to_c`. No `require(\"moonlift.c_places\")` may remain.",
+			"file": "lua/moonlift/c_places.lua",
+			"after": [
+				"T008",
+				"T011",
+				"T017"
+			],
+			"status": "todo",
+			"order": 20,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T021",
+			"title": "Delete c_residence module",
+			"detail": "Delete direct C residence computation from MoonTree bindings. Residence facts must be represented as `MoonCode.CodeResidence`/`CodeLocal` from `tree_to_code` and consumed by `code_to_c`. No `require(\"moonlift.c_residence\")` may remain.",
+			"file": "lua/moonlift/c_residence.lua",
+			"after": [
+				"T008",
+				"T011",
+				"T017"
+			],
+			"status": "todo",
+			"order": 21,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T022",
+			"title": "Delete c_cfg module",
+			"detail": "Delete the ad-hoc direct C CFG builder. C CFG shape must be driven by MoonCode CodeBlock/CodeTerm. If `code_to_c` needs scheduling helpers, implement them inside `code_to_c` or a new Code-specific helper, not as the old Tree-to-C API. No `require(\"moonlift.c_cfg\")` may remain.",
+			"file": "lua/moonlift/c_cfg.lua",
+			"after": [
+				"T008",
+				"T011",
+				"T017",
+				"T018"
+			],
+			"status": "todo",
+			"order": 22,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T023",
+			"title": "Reclassify C coverage final statuses",
+			"detail": "Remove `backend_todo` from steady-state `VALID_STATUS`; final supported statuses are only `supported`, `phase_unreachable`, and `language_rejected`. Reword sections/reasons around MoonCode boundaries, not Tree-to-C. Update callers/tests so missing MoonCode support fails as incomplete work rather than an accepted coverage status.",
+			"file": "lua/moonlift/c_coverage.lua",
+			"after": [
+				"T011",
+				"T014"
+			],
+			"status": "todo",
+			"order": 23,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T024",
+			"title": "Update coverage matrix gate",
+			"detail": "Rewrite coverage test expectations to reject any `backend_todo` status unconditionally. Keep exhaustive schema-variant coverage checks, but describe phase boundary as `tree_to_code/code_validate/code_to_c`. Final mode should become redundant or stricter, not a way to tolerate TODO rows.",
+			"file": "tests/test_c_backend_coverage_matrix.lua",
+			"after": [
+				"T023"
+			],
+			"status": "todo",
+			"order": 24,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T025",
+			"title": "Add MoonCode validation tests",
+			"detail": "Create direct CodeModule fixtures that cover valid module, duplicate/missing value ids, missing block, jump arity/type mismatch, bad call signature, place/local/global mismatch, memory access issues, data reloc mistakes, and data/code pointer confusion. Assert structured `MoonCode.CodeIssue*` results.",
+			"file": "tests/test_code_validate.lua",
+			"after": [
+				"T007"
+			],
+			"status": "todo",
+			"order": 25,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T026",
+			"title": "Add tree_to_code tests",
+			"detail": "Create source/ASDL fixtures lowered through parse/open/closure/type/layout/tree_to_code/code_validate. Cover scalars, short-circuit control, block params/loops, places/addressed vars, views, aggregates, function pointers/closures, globals/data, atomics, and tagged unions. Assert no phase-unreachable MoonTree constructs are present in CodeModule output.",
+			"file": "tests/test_tree_to_code.lua",
+			"after": [
+				"T008",
+				"T025"
+			],
+			"status": "todo",
+			"order": 26,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T027",
+			"title": "Add code_to_back parity tests",
+			"detail": "Create tests proving native public pipeline now lowers via MoonCode and still passes `back_validate`/JIT for representative programs. Rewrite or supplement direct `tree_to_back` tests so the primary path is `tree_to_code -> code_to_back`, with old `tree_to_back` only as temporary comparison if not deleted.",
+			"file": "tests/test_code_to_back.lua",
+			"after": [
+				"T009",
+				"T010",
+				"T026"
+			],
+			"status": "todo",
+			"order": 27,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T028",
+			"title": "Rename tree_to_c tests",
+			"detail": "Replace `tests/test_tree_to_c_smoke.lua`, `test_tree_to_c_semantics_smoke.lua`, and `test_tree_to_c_logic_select.lua` with `test_code_to_c_smoke.lua`, `test_code_to_c_semantics_smoke.lua`, and `test_code_to_c_logic_select.lua`. Preserve behavior assertions but update names, messages, phase labels, and imports to public `parse_and_lower_c`/MoonCode modules.",
+			"file": "tests/test_tree_to_c_smoke.lua",
+			"after": [
+				"T011",
+				"T014",
+				"T017",
+				"T018",
+				"T019",
+				"T020",
+				"T021",
+				"T022"
+			],
+			"status": "todo",
+			"order": 28,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T029",
+			"title": "Rewrite old C module tests",
+			"detail": "Remove tests that import retired modules (`type_to_c`, `tree_to_c`, `tree_control_to_c`, `c_places`, `c_residence`, `c_cfg`). Replace `test_type_to_c.lua`, direct-import parts of `test_c_emit.lua`, `test_c_validate.lua`, `test_c_helpers.lua`, `test_c_backend_negative.lua`, `test_c_gcc_tagged_union.lua`, and `test_tagged_union_to_c.lua` with CodeType/code_to_c/public API coverage.",
+			"file": "tests/test_type_to_c.lua",
+			"after": [
+				"T006",
+				"T011",
+				"T019"
+			],
+			"status": "todo",
+			"order": 29,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T030",
+			"title": "Update public C API tests",
+			"detail": "Ensure public `moon.emit_c`, `moon.compile_c`, `BundleValue:emit_c`, and `BundleValue:compile_c` still behave identically from the caller side while internally proving the result includes/uses `code_module` and code validation. Include a regression that facade no longer exports retired old modules.",
+			"file": "tests/test_emit_c_api.lua",
+			"after": [
+				"T014",
+				"T015",
+				"T016",
+				"T028",
+				"T029"
+			],
+			"status": "todo",
+			"order": 30,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T031",
+			"title": "Expand C feature corpus",
+			"detail": "Run representative programs through MoonCode-driven C emission and C compiler execution: scalars/casts/div/rem/shift, direct branches/loops/block params, ptr/index/view, aggregates/statics/data relocs, function pointers/closures, tagged unions/variant switches, atomics, externs. Add negative diagnostics for language_rejected/phase_unreachable cases.",
+			"file": "tests/test_c_gcc_feature_corpus.lua",
+			"after": [
+				"T011",
+				"T014",
+				"T023",
+				"T026",
+				"T028",
+				"T029"
+			],
+			"status": "todo",
+			"order": 31,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T032",
+			"title": "Update benchmark phase names",
+			"detail": "Update timing labels/output/comments so compile phases say `tree_to_code`, `code_validate`, `code_to_c`, and `code_to_back` instead of old Tree-to-C/tree-to-back assumptions. Keep benchmark behavior and public backend names (`c`, `cranelift`) stable.",
+			"file": "benchmarks/bench_c_vs_cranelift.lua",
+			"after": [
+				"T010",
+				"T014"
+			],
+			"status": "todo",
+			"order": 32,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T033",
+			"title": "Update design status and retirement map",
+			"detail": "Edit design text to reflect hard-switch implementation status. Remove or replace language that says historical direct `tree_to_c` may survive or that deleted files may remain as long-lived compatibility wrappers. Record actual module fates: old direct Tree-to-C modules deleted; `c_data`/`c_layout` either MoonCode-only helpers or deleted; public APIs unchanged but internally MoonCode.",
+			"file": "C_BACKEND_DESIGN.md",
+			"after": [
+				"T014",
+				"T017",
+				"T018",
+				"T019",
+				"T020",
+				"T021",
+				"T022",
+				"T031"
+			],
+			"status": "todo",
+			"order": 33,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T034",
+			"title": "Run no-legacy grep gate",
+			"detail": "Verify no production/test/benchmark/doc references remain that import or advertise `tree_to_c`, `tree_control_to_c`, `type_to_c`, `c_places`, `c_residence`, or `c_cfg` except historical notes that explicitly say they were deleted. Also verify no schema builder Lua files exist under `lua/moonlift/schema/` except `init.lua`.",
+			"file": "lua/moonlift",
+			"after": [
+				"T015",
+				"T016",
+				"T017",
+				"T018",
+				"T019",
+				"T020",
+				"T021",
+				"T022",
+				"T028",
+				"T029",
+				"T033"
+			],
+			"status": "todo",
+			"order": 34,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		},
+		{
+			"id": "T035",
+			"title": "Run final full-support gates",
+			"detail": "Run schema, MoonCode, native parity, C coverage, public API, C feature corpus, gcc/TCC, and benchmark smoke gates: `luajit tests/test_schema_core.lua`, `test_schema_compile_pipeline.lua`, `test_code_validate.lua`, `test_tree_to_code.lua`, `test_code_to_back.lua`, `test_code_to_c*.lua`, `test_c_backend_coverage_matrix.lua`, `test_c_gcc_feature_corpus.lua`, public API tests, plus any CI-equivalent suite. Do not mark full-support done if a bridge or retired module import remains.",
+			"file": "tests",
+			"after": [
+				"T003",
+				"T004",
+				"T024",
+				"T025",
+				"T026",
+				"T027",
+				"T030",
+				"T031",
+				"T034"
+			],
+			"status": "todo",
+			"order": 35,
+			"notes": [],
+			"createdAt": "2026-06-10T12:44:02.404Z",
+			"updatedAt": "2026-06-10T12:44:02.404Z"
+		}
+	]
+}

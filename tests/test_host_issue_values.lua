@@ -17,7 +17,7 @@ print("OK: host issue construction")
 -- Region fragment via .mlua eval
 local Host = require("moonlift.mlua_run")
 local fn = Host.eval [[
-local frag = region needs_out(x: i32; out: cont(y: i32))
+local frag = region needs_out(x: i32; out(y: i32))
 entry start() jump out(y = x + 1) end
 end
 return func f(): i32

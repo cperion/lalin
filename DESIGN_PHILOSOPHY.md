@@ -53,23 +53,23 @@ fragment that declares a continuation protocol:
 
 ```
 region scan_until(p: ptr(u8), n: i32, target: i32;
-                  hit: cont(pos: i32),
-                  miss: cont(pos: i32))
+                  hit(pos: i32),
+                  miss(pos: i32))
 ```
 
 The semicolon divides two things:
 - **Before the `;`** — runtime parameters (data flowing in)
 - **After the `;`** — continuation slots (control flowing out)
 
-Each continuation is typed: `hit: cont(pos: i32)` means "this region can
-exit via `hit`, carrying an `i32` position." `miss: cont(pos: i32)` means
+Each continuation is typed: `hit(pos: i32)` means "this region can
+exit via `hit`, carrying an `i32` position." `miss(pos: i32)` means
 "this region can exit via `miss`, carrying an `i32` position."
 
 The control graph has its own type system:
 
 - **Continuation declarations** are the control graph's field types.
   Just as a struct declares `id: i32, age: i32`, a region declares
-  `hit: cont(pos: i32), miss: cont(pos: i32)`.
+  `hit(pos: i32), miss(pos: i32)`.
 
 - **Continuation fills** are the control graph's value bindings.
   Just as a struct literal sets `{ id = 42, age = 30 }`, an emit site
@@ -103,8 +103,8 @@ operations (arithmetic, loads, stores, explicit atomics) and control operations
 region my_region(
     data_in: i32,              ← data type
     data_in2: ptr(u8);         ← data type
-    ok: cont(result: i32),     ← control type
-    err: cont(code: i32)       ← control type
+    ok(result: i32),     ← control type
+    err(code: i32)       ← control type
 )
 ```
 
@@ -177,7 +177,7 @@ expose Users: view(User)
 **The control graph** — what happens:
 ```
 region process_user(u: ptr(User);
-    valid: cont(), invalid: cont(code: i32))
+    valid, invalid(code: i32))
 entry start()
     if u.age < 0 then jump invalid(code = 1) end
     jump valid()
@@ -205,8 +205,8 @@ A **region factory** is a Lua function that returns a Moonlift region:
 ```lua
 local function expect_byte(tag, byte, err_code)
     return region expect_@{tag}(p: ptr(u8), n: i32, pos: i32;
-        ok: cont(next: i32),
-        err: cont(pos: i32, code: i32))
+        ok(next: i32),
+        err(pos: i32, code: i32))
     entry start()
         if pos >= n then jump err(pos = pos, code = @{err_code}) end
         if as(i32, p[pos]) == @{byte} then

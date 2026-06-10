@@ -210,8 +210,8 @@ end
 
 local op_newtable = R([[
 region op_newtable(]] .. H .. [[;
-                   next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-                   oom: cont())
+                   next(frame: ptr(Frame), pc: index, base: index, top: index),
+                   oom)
 entry start()
     var arr: index = as(index, vb)
     if vb >= 8 then
@@ -262,8 +262,8 @@ end
 
 local op_setlist = R([[
 region op_setlist(]] .. H .. [[;
-                  next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-                  oom: cont())
+                  next(frame: ptr(Frame), pc: index, base: index, top: index),
+                  oom)
 entry start()
     jump prepare()
 end

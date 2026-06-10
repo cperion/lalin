@@ -118,7 +118,7 @@ LuaCompile/SpongeJIT architecture discipline and retired-name guardrails.
 Scalars:  void  bool  i8 i16 i32 i64  u8 u16 u32 u64  f32 f64  index
 Pointers: ptr(T)
 Views:    view(T)         -- (data, len, stride) descriptor
-Structs:  struct Name f: T; ... end
+Structs:  struct Name f: T, ... end
 Unions:   union Name a(T) | b(T) end
 Func:     func(i32, i32): i32        -- function pointer type
 Closure:  closure(i32): i32          -- closure type (function + context)
@@ -161,8 +161,8 @@ end
 
 ```moonlift
 region scan(p: ptr(u8), n: i32, target: i32;
-            hit: cont(pos: i32),
-            miss: cont(pos: i32))
+            hit(pos: i32),
+            miss(pos: i32))
 entry loop(i: i32 = 0)
     if i >= n then jump miss(pos = i) end
     if as(i32, p[i]) == target then jump hit(pos = i) end

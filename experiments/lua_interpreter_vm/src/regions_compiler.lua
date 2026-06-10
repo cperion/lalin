@@ -84,11 +84,11 @@ region compile_lua_source_into(
     workspace: ptr(u8),
     workspace_cap: index;
 
-    ok: cont(proto: ptr(Proto)),
-    syntax_error: cont(err: CompileError),
-    semantic_error: cont(err: CompileError),
-    limit_error: cont(err: CompileError),
-    oom: cont())
+    ok(proto: ptr(Proto)),
+    syntax_error(err: CompileError),
+    semantic_error(err: CompileError),
+    limit_error(err: CompileError),
+    oom)
 entry start()
     if workspace == nil then jump out_of_mem() end
     if workspace_cap < as(index, @{OFF_REQUIRED}) then jump out_of_mem() end

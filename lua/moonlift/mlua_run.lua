@@ -169,7 +169,48 @@ local function name_anonymous_island(kind, text, name_hint)
     if kind == "expr" and text:match("^%s*expr%s*%(") then
         return (text:gsub("^(%s*expr)%s*", "%1 " .. name_hint, 1))
     end
+    if kind == "struct" and (
+        text:match("^%s*struct%s*\n") or text:match("^%s*struct%s*\r\n") or
+        text:match("^%s*struct%s+[A-Za-z_][A-Za-z0-9_]*%s*:")
+    ) then
+        return (text:gsub("^(%s*struct)%s*", "%1 " .. name_hint .. " ", 1))
+    end
+    if kind == "union" and (
+        text:match("^%s*union%s*\n") or text:match("^%s*union%s*\r\n") or
+        text:match("^%s*union%s+[A-Za-z_][A-Za-z0-9_]*%s*[%(%|]") or
+        text:match("^%s*union%s+[A-Za-z_][A-Za-z0-9_]*%s+end")
+    ) then
+        return (text:gsub("^(%s*union)%s*", "%1 " .. name_hint .. " ", 1))
+    end
     return text
+end
+
+local function split_region_impl_island(text)
+    -- Pure .mlua shorthand for implementing a region header from Lua scope:
+    --
+    --     local impl = region Header.or_header
+    --     entry start()
+    --         ...
+    --     end
+    --     end
+    --
+    -- This is intentionally conservative: the reference is a Lua identifier or
+    -- dotted identifier chain. More complex expressions can still use the
+    -- explicit header[[body]] form.
+    local ref, body = text:match("^%s*region%s+([^\r\n]+)\r\n(.*)$")
+    if not ref then ref, body = text:match("^%s*region%s+([^\r\n]+)\n(.*)$") end
+    if not ref then return nil end
+    ref = ref:gsub("%s+$", "")
+    local valid_ref = true
+    if ref:match("^%.") or ref:match("%.$") or ref:match("%.%.") then valid_ref = false end
+    if valid_ref then
+        for part in ref:gmatch("[^%.]+") do
+            if not part:match("^[_%a][_%w]*$") then valid_ref = false; break end
+        end
+    end
+    if not valid_ref then return nil end
+    if not body:match("^%s*entry%f[^%w_]") and not body:match("^%s*block%f[^%w_]") then return nil end
+    return ref, body
 end
 
 local api_name_for_kind = {
@@ -192,13 +233,25 @@ local function transform_mlua(src)
     for _, island in ipairs(scan.islands) do
         out[#out + 1] = src:sub(cursor, island.start - 1)
         local island_src = src:sub(island.start, island.stop)
-        island_src = name_anonymous_island(island.kind, island_src, island.name_hint)
-        local api_name = assert(api_name_for_kind[island.kind], "unsupported .mlua island kind: " .. tostring(island.kind))
         local bindings = binding_table_for_island(scan, island)
-        if bindings ~= "" then
-            out[#out + 1] = "moon." .. api_name .. bindings .. long_bracket(island_src)
+        local impl_ref, impl_body
+        if island.kind == "region" then
+            impl_ref, impl_body = split_region_impl_island(island_src)
+        end
+        if impl_ref then
+            if bindings ~= "" then
+                out[#out + 1] = impl_ref .. bindings .. long_bracket(impl_body)
+            else
+                out[#out + 1] = impl_ref .. long_bracket(impl_body)
+            end
         else
-            out[#out + 1] = "moon." .. api_name .. long_bracket(island_src)
+            island_src = name_anonymous_island(island.kind, island_src, island.name_hint)
+            local api_name = assert(api_name_for_kind[island.kind], "unsupported .mlua island kind: " .. tostring(island.kind))
+            if bindings ~= "" then
+                out[#out + 1] = "moon." .. api_name .. bindings .. long_bracket(island_src)
+            else
+                out[#out + 1] = "moon." .. api_name .. long_bracket(island_src)
+            end
         end
         cursor = island.stop + 1
     end

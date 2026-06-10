@@ -67,8 +67,8 @@ end
         name = "struct_fields_and_mutation",
         src = [[
 struct Pair
-    x: i32
-    y: i32
+    x: i32,
+    y: i32,
 end
 func feature_pair(p: ptr(Pair), v: i32): i32
     (*p).y = v
@@ -107,8 +107,8 @@ int main(void) {
         name = "arrays_and_aggregate_literals",
         src = [[
 struct Pair
-    x: i32
-    y: i32
+    x: i32,
+    y: i32,
 end
 func feature_array_agg() -> i32
     let xs = [10, 20, 12]
@@ -183,7 +183,10 @@ int main(void) {
     {
         name = "tagged_unions_source",
         src = [[
-union Maybe some(i32) | none(void) end
+union Maybe
+    some(i32)
+  | none(void)
+end
 func feature_tagged(x: i32): i32
     let m = Maybe.some(x)
     return switch m do

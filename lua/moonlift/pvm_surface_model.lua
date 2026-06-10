@@ -10,8 +10,9 @@ local M = {}
 function M.schema(T)
     local A = Builder.Define(T)
     PhaseModel.Define(T)
-    local text = AsdlText.load_text("moonlift.schema.pvm_surface", "lua/moonlift/schema/pvm_surface.asdl")
-    return AsdlText.parse_schema(T, text)
+    local path = "lua/moonlift/schema/pvm_surface.asdl"
+    local text, source_name = AsdlText.load_text("moonlift.schema.pvm_surface", path)
+    return AsdlText.parse_schema(T, text, source_name or path)
 end
 
 function M.Define(T)

@@ -12,7 +12,7 @@ for k, v in pairs(const.TM) do I["TM_" .. k] = moon.int(v) end
 local ok, err = pcall(function()
     local r = host.region { TAG_TRUE = I.TAG_TRUE, TAG_FALSE = I.TAG_FALSE } [[
 region op_loadbool(L: ptr(LuaThread), frame: ptr(Frame), pc: index, base: index, top: index, a: u16, b: u16, c: u16, bx: u32, sbx: i32;
-                   next: cont(frame: ptr(Frame), pc: index, base: index, top: index))
+                   next(frame: ptr(Frame), pc: index, base: index, top: index))
 entry start()
     var val: Value = { tag = @{TAG_FALSE}, aux = 0, bits = 0 }
     if b ~= 0 then
@@ -36,7 +36,7 @@ if not ok then print("op_loadbool FAIL:", err) end
 local ok2, err2 = pcall(function()
     return host.region [[
 region op_move(L: ptr(LuaThread), frame: ptr(Frame), pc: index, base: index, top: index, a: u16, b: u16, c: u16, bx: u32, sbx: i32;
-               next: cont(frame: ptr(Frame), pc: index, base: index, top: index))
+               next(frame: ptr(Frame), pc: index, base: index, top: index))
 entry start()
     L.stack[base + as(index, a)] = L.stack[base + as(index, b)]
     jump next(frame = frame, pc = pc + 1, base = base, top = top)

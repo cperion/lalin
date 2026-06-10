@@ -26,7 +26,7 @@ f:close()
 
 local old_if_stmt = [[-- ── if statement phi lowering ────────────────────────────────────────
 local mb_lower_if_stmt = region(ctx: ptr(@{MomBackLowerCtx}), stmt_idx: i32;
-                                done: cont(flow: i32, ok: bool))
+                                done(flow: i32, ok: bool))
 entry start()
     let tree: ptr = ctx.tree
     let cond_idx: i32 = tree.stmt_name[stmt_idx]

@@ -38,7 +38,7 @@ local lua_rawseti     = moon.extern [[lua_rawseti(L: ptr(u8), idx: i32, n: i32) 
 -- Region fragments — referenced by name via emit, no @{} needed
 -- ---------------------------------------------------------------------------
 
-local skip_ws = moon.region [[skip_ws(p: ptr(u8), n: i32, pos: i32; ok: cont(i: i32))
+local skip_ws = moon.region [[skip_ws(p: ptr(u8), n: i32, pos: i32; ok(i: i32))
 entry loop(i: i32 = pos)
     if i >= n then jump ok(i = i) end
     switch as(i32, p[i]) do
@@ -54,7 +54,7 @@ end]]
 
 local parse_string = moon.region [[parse_string(
     L: ptr(u8), p: ptr(u8), n: i32, pos: i32, buf: ptr(u8);
-    ok: cont(next_i: i32), err: cont()
+    ok(next_i: i32) | err
 )
 entry start()
     if pos >= n then jump err() end
@@ -144,7 +144,7 @@ end]]
 
 local parse_number = moon.region [[parse_number(
     L: ptr(u8), p: ptr(u8), n: i32, pos: i32;
-    ok: cont(next_i: i32), err: cont()
+    ok(next_i: i32) | err
 )
 entry start()
     if pos >= n then jump err() end

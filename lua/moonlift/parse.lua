@@ -423,6 +423,7 @@ local function new_parser_internal(T, toks, first, limit, opts)
         value_env = opts.value_env or {},
         cont_env = opts.cont_env or {},
         protocol_types = opts.protocol_types or {},
+        product_types = opts.product_types or {},
         splice_values = opts.splice_values or {},
         name_hint = opts.name_hint,
         splice_slots = {},
@@ -1597,6 +1598,15 @@ end
 function Parser:parse_param_list()
     local Ty, Tr, B = self.Ty, self.Tr, self.B
     local params, contracts = {}, {}
+    local function append_product_params(product_name)
+        local fields = self.product_types[product_name]
+        if not fields then return false end
+        for i = 1, #fields do
+            local f = fields[i]
+            params[#params + 1] = Ty.Param(f.field_name, f.ty)
+        end
+        return true
+    end
     self:skip_nl()
     if self:kind() == TK.rparen then return params, contracts end
     while true do
@@ -1611,14 +1621,18 @@ function Parser:parse_param_list()
                 mods[#mods + 1] = self:kind(); self.i = self.i + 1
             end
             local name = self:expect_name("expected parameter name")
-            self:expect(TK.colon, "expected ':' in parameter")
-            params[#params + 1] = Ty.Param(name, self:parse_type())
-            -- Convert modifiers to contracts
-            local ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(name))
-            for i = 1, #mods do
-                if mods[i] == TK.noalias_kw then contracts[#contracts + 1] = Tr.ContractNoAlias(ref)
-                elseif mods[i] == TK.readonly_kw then contracts[#contracts + 1] = Tr.ContractReadonly(ref)
-                elseif mods[i] == TK.writeonly_kw then contracts[#contracts + 1] = Tr.ContractWriteonly(ref) end
+            if self:kind() ~= TK.colon and #mods == 0 and append_product_params(name) then
+                -- Product type in product-list position: expand its fields as params.
+            else
+                self:expect(TK.colon, "expected ':' in parameter")
+                params[#params + 1] = Ty.Param(name, self:parse_type())
+                -- Convert modifiers to contracts
+                local ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(name))
+                for i = 1, #mods do
+                    if mods[i] == TK.noalias_kw then contracts[#contracts + 1] = Tr.ContractNoAlias(ref)
+                    elseif mods[i] == TK.readonly_kw then contracts[#contracts + 1] = Tr.ContractReadonly(ref)
+                    elseif mods[i] == TK.writeonly_kw then contracts[#contracts + 1] = Tr.ContractWriteonly(ref) end
+                end
             end
         end
         if not self:accept(TK.comma) then break end
@@ -1687,6 +1701,30 @@ end
 function Parser:parse_cont_params(owner_name)
     local O, Tr = self.O, self.Tr
     local cont_slots, slots = {}, {}
+    local function parse_cont_payload()
+        local params = {}
+        self:skip_nl()
+        if self:kind() ~= TK.rparen then
+            while true do
+                self:skip_nl()
+                if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
+                    local id = self:text(); self.i = self.i + 1
+                    local slot = self:spread_region_slot("block_param_list", id)
+                    params[#params + 1] = Tr.BlockParam(spread_sentinel("block_param_list", slot), self.Ty.TScalar(self.C.ScalarVoid))
+                else
+                    local pname = self:expect_name("expected continuation arg name")
+                    self:expect(TK.colon)
+                    params[#params + 1] = Tr.BlockParam(pname, self:parse_type())
+                end
+                self:skip_nl()
+                if not self:accept(TK.comma) then break end
+                self:skip_nl()
+                if self:kind() == TK.rparen then break end
+            end
+        end
+        self:expect(TK.rparen)
+        return params
+    end
     while self:kind() ~= TK.rparen and self:kind() ~= TK.eof do
         if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
             local id = self:text(); self.i = self.i + 1
@@ -1718,38 +1756,28 @@ function Parser:parse_cont_params(owner_name)
             end
         else
             local name = self:expect_name("expected continuation parameter name")
-            self:expect(TK.colon, "expected ':' in continuation parameter")
-            self:expect_name()  -- consume 'cont'
-            self:expect(TK.lparen)
             local params = {}
-            self:skip_nl()
-            if self:kind() ~= TK.rparen then
-                while true do
-                    self:skip_nl()
-                    if self:kind() == TK.hole and self.toks.splice_spread[self:text()] then
-                        local id = self:text(); self.i = self.i + 1
-                        local slot = self:spread_region_slot("block_param_list", id)
-                        params[#params + 1] = Tr.BlockParam(spread_sentinel("block_param_list", slot), self.Ty.TScalar(self.C.ScalarVoid))
-                    else
-                        local pname = self:expect_name("expected continuation arg name")
-                        self:expect(TK.colon)
-                        params[#params + 1] = Tr.BlockParam(pname, self:parse_type())
-                    end
-                    self:skip_nl()
-                    if not self:accept(TK.comma) then break end
-                    self:skip_nl()
-                    if self:kind() == TK.rparen then break end
-                end
+            if self:accept(TK.colon) then
+                self:issue("removed continuation syntax; use 'name(...)' or bare 'name'")
+                if self:kind() == TK.name or ident_kw[self:kind()] then self.i = self.i + 1 end
+                if self:accept(TK.lparen) then parse_cont_payload() end
+            elseif self:accept(TK.lparen) then
+                params = parse_cont_payload()
             end
-            self:expect(TK.rparen)
             local slot = O.ContSlot("cont:" .. owner_name .. ":" .. name .. ":" .. tostring(#slots + 1), name, params)
             cont_slots[name] = slot
             slots[#slots + 1] = slot
         end
         self:skip_nl()
-        if not self:accept(TK.comma) then break end
-        self:skip_nl()
-        if self:kind() == TK.rparen then break end
+        if self:accept(TK.pipe) then
+            self:skip_nl()
+            if self:kind() == TK.rparen then break end
+        elseif self:kind() == TK.rparen or self:kind() == TK.eof then
+            break
+        else
+            self:issue("expected '|' between continuation alternatives")
+            if self:kind() == TK.comma or self:kind() == TK.semi then self.i = self.i + 1; self:skip_nl() end
+        end
     end
     return cont_slots, slots
 end
@@ -1787,6 +1815,17 @@ function Parser:parse_open_params(owner_name)
     local O, B, C = self.O, self.B, self.C
     local params, param_bindings = {}, {}
     self:skip_nl()
+    local function append_product_open_params(product_name)
+        local fields = self.product_types[product_name]
+        if not fields then return false end
+        for i = 1, #fields do
+            local f = fields[i]
+            local param = O.OpenParam("param:" .. owner_name .. ":" .. f.field_name .. ":product:" .. product_name .. ":" .. tostring(i), f.field_name, f.ty)
+            params[#params + 1] = param
+            param_bindings[param.name] = B.Binding(C.Id("open-param:" .. owner_name .. ":" .. param.name), param.name, param.ty, B.BindingClassOpenParam(param))
+        end
+        return true
+    end
     if self:kind() ~= TK.rparen and self:kind() ~= TK.semi then
         while true do
             self:skip_nl()
@@ -1815,11 +1854,15 @@ function Parser:parse_open_params(owner_name)
                 end
             else
                 local pname = self:expect_name("expected parameter name")
-                self:expect(TK.colon)
-                local ty = self:parse_type()
-                local param = O.OpenParam("param:" .. owner_name .. ":" .. pname .. ":" .. tostring(#params + 1), pname, ty)
-                params[#params + 1] = param
-                param_bindings[pname] = B.Binding(C.Id("open-param:" .. owner_name .. ":" .. pname), pname, ty, B.BindingClassOpenParam(param))
+                if self:kind() ~= TK.colon and append_product_open_params(pname) then
+                    -- Product type in product-list position: expand its fields as open params.
+                else
+                    self:expect(TK.colon)
+                    local ty = self:parse_type()
+                    local param = O.OpenParam("param:" .. owner_name .. ":" .. pname .. ":" .. tostring(#params + 1), pname, ty)
+                    params[#params + 1] = param
+                    param_bindings[pname] = B.Binding(C.Id("open-param:" .. owner_name .. ":" .. pname), pname, ty, B.BindingClassOpenParam(param))
+                end
             end
             self:skip_nl()
             if not self:accept(TK.comma) then break end
@@ -1844,7 +1887,13 @@ function Parser:parse_region_frag()
     self:skip_nl()
     if self:accept(TK.semi) then
         self:skip_nl()
-        cont_slots, slots = self:parse_cont_params(name_key)
+        if (self:kind() == TK.name or ident_kw[self:kind()]) and self.protocol_types[self:text()] ~= nil then
+            local protocol_name = self:text(); self.i = self.i + 1
+            cont_slots, slots = self:cont_slots_from_protocol(self.Ty.TNamed(self.Ty.TypeRefPath(self.C.Path({ self.C.Name(protocol_name) }))), name_key)
+            self:skip_nl()
+        else
+            cont_slots, slots = self:parse_cont_params(name_key)
+        end
     end
     self:expect(TK.rparen)
     self:skip_nl()
@@ -1949,9 +1998,18 @@ function Parser:parse_struct_island()
             fields[#fields + 1] = Ty.FieldDecl(fname, self:parse_type())
         end
         self:skip_nl()
-        if self:accept(TK.comma) or self:accept(TK.semi) then self:skip_nl() end
+        if self:accept(TK.comma) then
+            self:skip_nl()
+            if self:kind() == TK.end_kw then break end
+        elseif self:kind() == TK.end_kw or self:kind() == TK.eof then
+            break
+        else
+            self:issue("expected ',' between struct fields")
+            if self:kind() == TK.semi or self:kind() == TK.pipe then self.i = self.i + 1; self:skip_nl() end
+        end
     end
     self:expect(TK.end_kw, "expected end after struct")
+    self.product_types[name] = fields
     return {
         name = name,
         decl = Tr.TypeDeclStruct(name, fields),
@@ -2015,7 +2073,15 @@ function Parser:parse_union_island()
             variants[#variants + 1] = Ty.VariantDecl(vname, payload, fields)
         end
         self:skip_nl()
-        if not self:accept(TK.pipe) then break end
+        if self:accept(TK.pipe) then
+            self:skip_nl()
+            if self:kind() == TK.end_kw then break end
+        elseif self:kind() == TK.end_kw or self:kind() == TK.eof then
+            break
+        else
+            self:issue("expected '|' between union variants")
+            if self:kind() == TK.comma or self:kind() == TK.semi then self.i = self.i + 1; self:skip_nl() end
+        end
     end
     self:expect(TK.end_kw, "expected end after union")
     self.protocol_types[name] = variants
@@ -2033,6 +2099,7 @@ local function parse_result(kind, value, p)
         splice_slots = p.splice_slots,
         issues = p.issues,
         protocol_types = p.protocol_types,
+        product_types = p.product_types,
     }
 end
 
@@ -2418,6 +2485,7 @@ function M.parse_island(T, scan, island_index, opts)
         splice_slots = p.splice_slots,
         issues = p.issues,
         protocol_types = p.protocol_types,
+        product_types = p.product_types,
     }
 end
 
@@ -2532,9 +2600,10 @@ function M.parse_module_document(T, src, opts)
     local scan = M.scan_document(src)
     local items, issues, splice_slots = {}, {}, {}
     local protocol_types = opts.protocol_types or {}
+    local product_types = opts.product_types or {}
     local collector = opts.collector
     for i = 1, #scan.islands do
-        local parsed = M.parse_island(T, scan, i, { protocol_types = protocol_types })
+        local parsed = M.parse_island(T, scan, i, { protocol_types = protocol_types, product_types = product_types })
         for j = 1, #parsed.issues do
             local issue = parsed.issues[j]
             issues[#issues + 1] = issue
@@ -2542,6 +2611,7 @@ function M.parse_module_document(T, src, opts)
         end
         for j = 1, #parsed.splice_slots do splice_slots[#splice_slots + 1] = parsed.splice_slots[j] end
         protocol_types = parsed.protocol_types or protocol_types
+        product_types = parsed.product_types or product_types
         if parsed.kind == "func" then
             local func = parsed.value
             local cls = pvm.classof(func)
@@ -2564,6 +2634,7 @@ function M.parse_module_document(T, src, opts)
         splice_slots = splice_slots,
         issues = issues,
         protocol_types = protocol_types,
+        product_types = product_types,
     }
 end
 

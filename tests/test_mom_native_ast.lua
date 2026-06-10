@@ -15,8 +15,8 @@ local B = T.MoonBack
 
 local src = [[
 struct Pair
-    left: i32
-    right: i32
+    left: i32,
+    right: i32,
 end
 
 func add(x: i32, y: i32): i32

@@ -45,7 +45,7 @@ assert(#arms3[1].body == 1)
 local pvm = require("moonlift.pvm")
 local O = moon.default_session.T.MoonOpen
 local emit_done = moon.region[[
-region emit_done(; done: cont())
+region emit_done(; done)
 entry start()
     jump done()
 end

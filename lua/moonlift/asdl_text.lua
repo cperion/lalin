@@ -105,8 +105,8 @@ local function schema_from_defs(T, defs)
     return A.Schema(modules)
 end
 
-function M.parse_schema(T, text)
-    return schema_from_defs(T, parser.parse(text))
+function M.parse_schema(T, text, source_name)
+    return schema_from_defs(T, parser.parse(text, source_name))
 end
 
 function M.concat_modules(modules)
@@ -211,6 +211,15 @@ function M.read_file(path)
     return s
 end
 
+function M.with_read_file_for_test(read_file, body)
+    local old_read_file = M.read_file
+    M.read_file = read_file
+    local ok, a, b, c = pcall(body)
+    M.read_file = old_read_file
+    if not ok then error(a, 0) end
+    return a, b, c
+end
+
 function M.write_file(path, text)
     local f, err = io.open(path, "wb")
     if not f then error(err, 2) end
@@ -221,10 +230,10 @@ end
 function M.load_text(module_name, path)
     local preload_name = module_name .. "_asdl"
     local ok, embedded = pcall(require, preload_name)
-    if ok then return embedded end
+    if ok then return embedded, preload_name end
     local text, err = M.read_file(path)
     if not text then error("asdl_text: cannot read " .. path .. ": " .. tostring(err), 2) end
-    return text
+    return text, path
 end
 
 return M

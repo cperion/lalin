@@ -25,8 +25,8 @@ local P = PositionIndex.Define(T)
 local uri = S.DocUri("file:///binding.mlua")
 local src = [[
 struct User
-    id: i32
-    active: bool32
+    id: i32,
+    active: bool32,
 end
 expose Users: view(User)
 func User:is_active(self: ptr(User)): bool
@@ -48,7 +48,7 @@ func count_to(n: i32): i32
         jump loop(i = i + 1)
     end
 end
-region DoneRegion(n: i32; done: cont(total: i32))
+region DoneRegion(n: i32; done(total: i32))
 entry start(total: i32 = 0)
     jump done(total = total)
 end

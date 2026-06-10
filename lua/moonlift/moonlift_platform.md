@@ -125,8 +125,8 @@ A region is the central unit of control composition:
 
 ```moonlift
 region scan_until(p: ptr(u8), n: i32, target: i32;
-                  hit: cont(pos: i32),
-                  miss: cont(pos: i32))
+                  hit(pos: i32),
+                  miss(pos: i32))
 entry loop(i: i32 = 0)
     if i >= n then jump miss(pos = i) end
     if as(i32, p[i]) == target then jump hit(pos = i) end
@@ -423,10 +423,10 @@ A parser fragment, scheduler fragment, channel operation, protocol phase, or byt
 
 ```moonlift
 region recv(ch: ptr(Channel);
-            got: cont(value: i32),
-            parked: cont(node: ptr(WaitNode)),
-            closed: cont(),
-            would_block: cont())
+            got(value: i32),
+            parked(node: ptr(WaitNode)),
+            closed,
+            would_block)
     ...
 end
 ```
@@ -789,10 +789,10 @@ In Moonlift, this maps naturally to continuation exits:
 
 ```moonlift
 region recv(ch: ptr(Channel);
-            got: cont(value: i32),
-            parked: cont(node: ptr(WaitNode)),
-            closed: cont(),
-            would_block: cont())
+            got(value: i32),
+            parked(node: ptr(WaitNode)),
+            closed,
+            would_block)
     ...
 end
 ```

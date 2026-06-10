@@ -96,9 +96,9 @@ end
 -- EQK: R[A] == K[B]; k inverts skip
 local op_eqk = R([[
 region op_eqk(]] .. H .. [[;
-              next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-              error: cont(code: i32),
-              oom: cont())
+              next(frame: ptr(Frame), pc: index, base: index, top: index),
+              error(code: i32),
+              oom)
 entry start()
     let cl: ptr(LClosure) = as(ptr(LClosure), frame.closure.bits)
     let lhs: Value = L.stack[base + as(index, a)]
@@ -134,9 +134,9 @@ local function _cmp_imm_handler(op_name, region_name, result_field, g_flip)
     end
     return R([[
 region ]] .. op_name .. "(" .. H .. [[;
-              next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-              error: cont(code: i32),
-              oom: cont())
+              next(frame: ptr(Frame), pc: index, base: index, top: index),
+              error(code: i32),
+              oom)
 entry start()
     let int_val: Value = { tag = @{TAG_INTEGER}, aux = 0, bits = as(u64, as(i64, sc)) }
     emit ]] .. region_name .. [[(L, ]] .. lhs .. [[, ]] .. rhs .. [[;
@@ -173,8 +173,8 @@ local op_gei = _cmp_imm_handler("op_gei", "value_less_equal", "is_le", true)
 -- TEST / TESTSET
 local op_test = R([[
 region op_test(]] .. H .. [[;
-               next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-               do_jump: cont(frame: ptr(Frame), pc: index, base: index, top: index))
+               next(frame: ptr(Frame), pc: index, base: index, top: index),
+               do_jump(frame: ptr(Frame), pc: index, base: index, top: index))
 entry start()
     let val: Value = L.stack[base + as(index, a)]
     var is_true: bool = false
@@ -191,8 +191,8 @@ end
 
 local op_testset = R([[
 region op_testset(]] .. H .. [[;
-                  next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-                  do_jump: cont(frame: ptr(Frame), pc: index, base: index, top: index))
+                  next(frame: ptr(Frame), pc: index, base: index, top: index),
+                  do_jump(frame: ptr(Frame), pc: index, base: index, top: index))
 entry start()
     let val: Value = L.stack[base + as(index, b)]
     var is_true: bool = false

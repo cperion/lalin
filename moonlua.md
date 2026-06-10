@@ -117,16 +117,16 @@ Then define consumer regions:
 
 ```moonlift
 region as_number(v: Value;
-    number: cont(x: f64),
-    not_number: cont())
+    number(x: f64),
+    not_number)
 
 region as_table(v: Value;
-    table: cont(t: ptr(Table)),
-    not_table: cont())
+    table(t: ptr(Table)),
+    not_table)
 
 region is_false(v: Value;
-    yes: cont(),
-    no: cont())
+    yes,
+    no)
 ```
 
 Important distinction:
@@ -350,10 +350,10 @@ region vm_resume(
     L: ptr(LuaThread),
     nargs: i32;
 
-    ok: cont(nres: i32),
-    yielded: cont(nres: i32),
-    runtime_error: cont(code: i32),
-    oom: cont())
+    ok(nres: i32),
+    yielded(nres: i32),
+    runtime_error(code: i32),
+    oom)
 ```
 
 Everything inside is protocols. The C-ish integer return exists only at the sealed boundary.
@@ -368,10 +368,10 @@ Shape:
 region vm_loop(
     L: ptr(LuaThread);
 
-    finished: cont(nres: i32),
-    yielded: cont(nres: i32),
-    error: cont(code: i32),
-    oom: cont())
+    finished(nres: i32),
+    yielded(nres: i32),
+    error(code: i32),
+    oom)
 
 entry load_frame()
     let f: ptr(Frame) = current_frame(L)
@@ -457,7 +457,7 @@ region commit_state(
     pc: index,
     top: index;
 
-    done: cont())
+    done)
 ```
 
 This is one of the biggest speed wins: PUC mutates `L->savedpc`, `L->base`, `L->top` defensively around slow paths. In Moonlift, we make the safepoints explicit.
@@ -477,7 +477,7 @@ region op_move(
     top: index,
     ins: Instr;
 
-    next: cont(frame: ptr(Frame), pc: index, base: index, top: index))
+    next(frame: ptr(Frame), pc: index, base: index, top: index))
 
 entry start()
     stack_set(L, base + ins.a, stack_get(L, base + ins.b))
@@ -497,10 +497,10 @@ region op_add(
     top: index,
     ins: Instr;
 
-    next: cont(frame: ptr(Frame), pc: index, base: index, top: index),
-    call: cont(),
-    error: cont(code: i32),
-    oom: cont())
+    next(frame: ptr(Frame), pc: index, base: index, top: index),
+    call,
+    error(code: i32),
+    oom)
 
 entry start()
     let lhs: Value = rk_value(L, frame, base, ins.b)
@@ -534,9 +534,9 @@ This is where Moonlift shines: the helper `number_binop` is not a function retur
 
 ```moonlift
 region number_binop(lhs: Value, rhs: Value, op: i32;
-    number: cont(x: f64, y: f64),
-    metamethod: cont(),
-    type_error: cont())
+    number(x: f64, y: f64),
+    metamethod,
+    type_error)
 ```
 
 ---
@@ -552,20 +552,20 @@ region table_get_fast(
     t: ptr(Table),
     key: Value;
 
-    hit: cont(value: Value),
-    miss_no_meta: cont(),
-    metamethod: cont(mm: Value),
-    error: cont(code: i32))
+    hit(value: Value),
+    miss_no_meta,
+    metamethod(mm: Value),
+    error(code: i32))
 ```
 
 `GETTABLE` becomes:
 
 ```moonlift
 region op_gettable(...;
-    next: cont(...),
-    call: cont(),
-    error: cont(code: i32),
-    oom: cont())
+    next(...),
+    call,
+    error(code: i32),
+    oom)
 
 entry start()
     let obj: Value = stack_get(L, base + ins.b)
@@ -621,10 +621,10 @@ region resolve_index(
     obj: Value,
     key: Value;
 
-    value: cont(v: Value),
-    call_metamethod: cont(fn: Value, self: Value, key: Value),
-    type_error: cont(),
-    loop_error: cont())
+    value(v: Value),
+    call_metamethod(fn: Value, self: Value, key: Value),
+    type_error,
+    loop_error)
 ```
 
 ---
@@ -650,12 +650,12 @@ region prepare_call(
     wanted: i32,
     return_mode: u16;
 
-    enter_lua: cont(frame: ptr(Frame)),
-    enter_native: cont(fn: ptr(NativeFunc)),
-    returned: cont(nres: i32),
-    yielded: cont(nres: i32),
-    error: cont(code: i32),
-    oom: cont())
+    enter_lua(frame: ptr(Frame)),
+    enter_native(fn: ptr(NativeFunc)),
+    returned(nres: i32),
+    yielded(nres: i32),
+    error(code: i32),
+    oom)
 ```
 
 `OP_CALL` wires it:
@@ -686,9 +686,9 @@ Returning:
 
 ```moonlift
 region op_return(...;
-    resume_parent: cont(parent: ptr(Frame), pc: index, base: index, top: index),
-    finished: cont(nres: i32),
-    error: cont(code: i32))
+    resume_parent(parent: ptr(Frame), pc: index, base: index, top: index),
+    finished(nres: i32),
+    error(code: i32))
 ```
 
 Return handling examines the parent frame’s `return_mode`.
@@ -700,12 +700,12 @@ region handle_return_mode(
     first_result: index,
     nres: i32;
 
-    normal: cont(parent: ptr(Frame)),
-    resume_gettable_mm: cont(parent: ptr(Frame), dst: index),
-    resume_binop_mm: cont(parent: ptr(Frame), dst: index),
-    pcall_success: cont(parent: ptr(Frame)),
-    finished: cont(nres: i32),
-    error: cont(code: i32))
+    normal(parent: ptr(Frame)),
+    resume_gettable_mm(parent: ptr(Frame), dst: index),
+    resume_binop_mm(parent: ptr(Frame), dst: index),
+    pcall_success(parent: ptr(Frame)),
+    finished(nres: i32),
+    error(code: i32))
 ```
 
 This is the essential interpreter insight:
@@ -741,8 +741,8 @@ region raise_error(
     L: ptr(LuaThread),
     err: Value;
 
-    caught: cont(frame: ptr(Frame), handler_pc: index),
-    uncaught: cont(code: i32))
+    caught(frame: ptr(Frame), handler_pc: index),
+    uncaught(code: i32))
 ```
 
 `pcall` is not magic. It installs a protected frame, calls the function, and receives either:
@@ -761,9 +761,9 @@ region protected_call(
     nargs: i32,
     wanted: i32;
 
-    success: cont(nres: i32),
-    failure: cont(err: Value),
-    oom: cont())
+    success(nres: i32),
+    failure(err: Value),
+    oom)
 ```
 
 The sealed external C-like status code exists only at API edge.
@@ -782,9 +782,9 @@ region alloc_table(
     narr: index,
     nrec: index;
 
-    ok: cont(t: ptr(Table)),
-    step_required: cont(),
-    oom: cont())
+    ok(t: ptr(Table)),
+    step_required,
+    oom)
 ```
 
 Write barrier:
@@ -795,8 +795,8 @@ region write_barrier(
     parent: ptr(GCHeader),
     child: Value;
 
-    clean: cont(),
-    barriered: cont())
+    clean,
+    barriered)
 ```
 
 Table set wires barrier explicitly:
@@ -808,10 +808,10 @@ region table_set(
     key: Value,
     value: Value;
 
-    stored: cont(),
-    metamethod: cont(mm: Value),
-    error: cont(code: i32),
-    oom: cont())
+    stored,
+    metamethod(mm: Value),
+    error(code: i32),
+    oom)
 ```
 
 Hot path:
@@ -852,8 +852,8 @@ region get_metamethod(
     obj: Value,
     event: u8;
 
-    found: cont(mm: Value),
-    missing: cont())
+    found(mm: Value),
+    missing)
 ```
 
 Binary operation:
@@ -865,9 +865,9 @@ region binop_dispatch(
     rhs: Value,
     event: u8;
 
-    fast_number: cont(x: f64, y: f64),
-    call_mm: cont(mm: Value),
-    type_error: cont())
+    fast_number(x: f64, y: f64),
+    call_mm(mm: Value),
+    type_error)
 ```
 
 Preparing a metamethod call:
@@ -882,9 +882,9 @@ region prepare_binop_metamethod_call(
     ins: Instr,
     event: u8;
 
-    prepared: cont(),
-    error: cont(code: i32),
-    oom: cont())
+    prepared,
+    error(code: i32),
+    oom)
 ```
 
 This region:
@@ -997,9 +997,9 @@ region probe_gettable_cache(
     key: Value,
     cache: ptr(InlineCache);
 
-    hit: cont(slot: index),
-    stale: cont(),
-    miss: cont())
+    hit(slot: index),
+    stale,
+    miss)
 ```
 
 On miss:
@@ -1011,8 +1011,8 @@ region quicken_gettable(
     observed: ptr(Table),
     key: Value;
 
-    patched: cont(),
-    keep_generic: cont())
+    patched,
+    keep_generic)
 ```
 
 Metatable mutation bumps `shape_epoch`, so stale caches fail safely.
