@@ -1154,25 +1154,295 @@ A bible needs its limits stated, or it becomes a cult document. Explicit program
 
 ---
 
-## Chapter 22: The doctrine
+## Chapter 22: Host-side memory ceremony
+
+Moonlift needs a memory API that is pleasant enough to use every day and explicit enough to remain Moonlift. The rule is not "make Lua a second type system." The rule is:
 
 ```text
- 1. Facts are products.              9. The protocol belongs to the consumer.
- 2. Choices are protocols.          10. Deep region: small signature, large machine.
- 3. Regions join the two.           11. One encoding, one owning consumer.
- 4. Blocks are state products.      12. Delete continuations by strengthening products.
- 5. Jumps are total constructions.  13. Pull cases down; push variation to build time.
- 6. Every path exits by name.       14. Tags are encodings; unions are not design.
- 7. Emits compose; fills are total. 15. Diagrams are sketches; declarations are the design.
- 8. Compose with regions,           16. Lua generates families; machines stay monomorphic.
-    seal with functions.
+Lua writes the ritual.
+Moonlift checks the machine.
 ```
 
-And the four sentences that compress the four books behind them:
+The host API may use Lua's hidden metalanguage — callable tables, string calls, table calls, method calls, currying, and metatables — but every meaningful memory concept it introduces must lower to named Moonlift products, protocols, regions, handles, and scopes. Lua can be poetic. The generated machine must be inspectable. The practical user guide for applying this doctrine is [`MEMORY_API_GUIDE.md`](MEMORY_API_GUIDE.md).
+
+The preferred split is:
+
+```text
+Declarations:  poetic Lua topology
+Operations:    protocol handler tables
+Hot access:    callable borrowed owners
+Generated IR:  explicit Moonlift product/sum/region declarations
+```
+
+In slogan form:
+
+```text
+Declare with words.
+Operate with protocols.
+Borrow with calls.
+Seal with kernels.
+```
+
+### The one-card grammar
+
+The memory DSL should stay small enough to fit on one card:
+
+```text
+noun "name" { declaration }
+owner:verb { request } { outcomes }
+borrowed { dynamic_extent }
+```
+
+Mapped to Moonlift:
+
+```text
+noun declaration   -> structs, stores, handles, scopes, arenas, resources
+verb request       -> named Input product
+outcomes           -> named Output sum / region protocol
+borrowed extent    -> dynamic lifetime of raw ptr/view access
+kernel call        -> sealed function with explicit contracts
+```
+
+### Declaration: poetic topology
+
+A world declaration should read almost like a design document:
+
+```lua
+local moon = require "moonlift"
+local mem  = require "moonlift.mem"
+local M    = mem.words()
+
+local DawMemory = M.world "DawMemory" {
+    M.scope "assets" {
+        M.store "audio_buffers" {
+            handle = "AudioBufferHandle",
+            record = AudioBufferRecord,
+            capacity = 16384,
+            generation = true,
+            publish = "immutable",
+        },
+    },
+
+    M.scope "audio" {
+        M.arena "block" {
+            size = "8mb",
+            reset = "audio_quantum",
+            realtime = true,
+            allocation = "preallocated_only",
+        },
+
+        M.rule "no_general_alloc",
+        M.rule "no_resource_close",
+        M.rule "no_handle_discovery",
+    },
+}
+```
+
+This is not a replacement for explicit Moonlift. It is a factory for explicit Moonlift declarations: scope products, store owners, typed handles, arena owners, borrow inputs, borrow outputs, and named regions.
+
+### Operation: protocol handlers
+
+If an operation can fail meaningfully, it is a protocol. The host surface should make that fact visible:
+
+```lua
+assets.audio_buffers:borrow {
+    handle = buffer,
+    as = moon.view(moon.f32),
+    access = "readonly",
+} {
+    borrowed = function(samples)
+        samples {
+            function(s)
+                gain_kernel(s.ptr, s.len, gain)
+            end
+        }
+    end,
+
+    stale = function(e)
+        report_stale(e.handle)
+    end,
+
+    missing = function(e)
+        report_missing(e.handle)
+    end,
+}
+```
+
+The first table is the request product. The second table is the output protocol. The `borrowed` handler receives an owner for a dynamic extent, not a permanent raw pointer.
+
+The generated Moonlift shape should be boring and inspectable:
+
+```moonlift
+struct AudioBufferHandle
+    index: u32
+    generation: u32
+end
+
+struct AudioBufferStoreOwner
+    records: ptr(AudioBufferRecord)
+    capacity: index
+    generation: u64
+end
+
+struct BorrowAudioBufferInput
+    owner: ptr(AudioBufferStoreOwner)
+    handle: AudioBufferHandle
+end
+
+union BorrowAudioBufferOutput
+    borrowed(samples: BorrowedF32)
+  | stale(handle: AudioBufferHandle)
+  | missing(handle: AudioBufferHandle)
+  | unsupported_format
+end
+
+region borrow_audio_buffer(BorrowAudioBufferInput; BorrowAudioBufferOutput)
+```
+
+The Lua API is allowed to be graceful only because the lowered design has names.
+
+### Hot access: callable borrowed owners
+
+Once access has already been granted, a callable owner is acceptable because there are no remaining semantic outcomes to hide:
+
+```lua
+samples {
+    function(s)
+        render_kernel(s.ptr, s.len)
+    end
+}
+```
+
+This means: enter the borrow extent, expose the typed view, run the continuation, then invalidate the borrow. No hidden destructor is part of the semantics. The validity window is the call.
+
+This is preferred:
+
+```lua
+buffers:borrow { handle = h } {
+    borrowed = function(buffer)
+        buffer {
+            function(b)
+                kernel(b.ptr, b.len)
+            end
+        }
+    end,
+
+    stale = function(e) report_stale(e.handle) end,
+    missing = function(e) report_missing(e.handle) end,
+}
+```
+
+This is not:
+
+```lua
+local ptr = buffers[h].ptr
+kernel(ptr, len)
+global_cache.ptr = ptr
+```
+
+The good path should be beautiful. The bad path should be ugly or impossible.
+
+### Arenas and marks
+
+Arena use should also expose dynamic extent rather than pretending allocation is ownership-free:
+
+```lua
+DawMemory.audio {
+    runtime = runtime,
+    output = output,
+    frames = frames,
+} {
+    function(A)
+        A.output:borrow {
+            as = moon.view(moon.f32),
+            access = "writeonly",
+        } {
+            borrowed = function(out)
+                A.block:mark {
+                    function(M)
+                        local tmp = M:array {
+                            of = moon.f32,
+                            count = out.len,
+                        }
+
+                        tmp {
+                            function(t)
+                                render_audio_kernel(
+                                    A.runtime.plan.ptr,
+                                    A.runtime.plan.len,
+                                    out.ptr,
+                                    t.ptr,
+                                    A.frames
+                                )
+                            end
+                        }
+                    end
+                }
+            end,
+
+            stale = function()
+                report_xrun "stale output"
+            end,
+        }
+    end
+}
+```
+
+The ceremony is explicit:
+
+```text
+enter audio scope
+borrow output
+mark scratch arena
+allocate temp
+call sealed kernel
+rewind scratch
+release borrow
+exit scope
+```
+
+The implementation may optimize this ceremony aggressively. The design may not hide it.
+
+### Hard laws
+
+1. **Inspectable lowering.** Every memory word must generate named Moonlift declarations that can be read, grepped, and reviewed.
+2. **Boring equivalent.** Every sugar form must have a mechanically equivalent explicit form.
+3. **Protocols for failure.** Any operation with meaningful outcomes uses handler tables that correspond to a named output protocol.
+4. **Dynamic raw access.** Raw pointers and views live inside a borrow call only; they are not cached, returned, or stored globally.
+5. **No hidden ownership transfer.** Resource close, arena reset, publish, retire, and generation bump are named operations, not destructor folklore.
+6. **Scopes carry policy.** Realtime rules such as `no_general_alloc`, `no_resource_close`, and `no_handle_discovery` live in declared scopes and become checkable constraints where possible.
+7. **Kernels are seals.** Hot code receives explicit pointers/views/contracts after the memory protocol has granted access; kernels do not discover ownership.
+
+The host memory API is a convenience layer, not a semantics layer. It exists to make the right ritual easy: declare topology, request operations through protocols, borrow raw access dynamically, and call sealed kernels with explicit contracts.
+
+The host owns the ceremony. The machine owns the facts.
+
+---
+
+## Chapter 23: The doctrine
+
+```text
+ 1. Facts are products.              11. One encoding, one owning consumer.
+ 2. Choices are protocols.           12. Delete continuations by strengthening products.
+ 3. Regions join the two.            13. Pull cases down; push variation to build time.
+ 4. Blocks are state products.       14. Tags are encodings; unions are not design.
+ 5. Jumps are total constructions.   15. Diagrams are sketches; declarations are the design.
+ 6. Every path exits by name.        16. Lua generates families; machines stay monomorphic.
+ 7. Emits compose; fills are total.  17. Host APIs may be poetic; generated machines must be explicit.
+ 8. Compose with regions,            18. Memory failure is a protocol, not a nullable pointer.
+    seal with functions.             19. Borrowed raw access is a dynamic extent, not a value to keep.
+ 9. The protocol belongs to          20. Declare with words; operate with protocols; borrow with calls.
+    the consumer.
+10. Deep region: small signature,
+    large machine.
+```
+
+And the five sentences that compress the books behind them:
 
 > **Choice is control. Data is product.** *(the algebra)*
 > **Depth is a small protocol in front of a large machine.** *(Ousterhout, translated)*
 > **A region is a statechart whose final states are its signature.** *(UML, completed)*
+> **Lua writes the ritual; Moonlift checks the machine.** *(host memory ceremony)*
 > **Design the two trees; the compiler checks them against each other; then implementation is transcription.** *(the method)*
 
 The architecture is not a diagram beside the system, a document above it, or a convention around it. The architecture is the product graph plus the protocol graph — and the implementation is the same graph, lowered to native code. That is the Moonlift method.
