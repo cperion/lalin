@@ -9,6 +9,22 @@ local sdl = sdl3.sdl
 
 local M = {}
 
+M.capabilities = {
+    host = {
+        windows = true,
+        multi_window = true,
+        events = true,
+        text_input_rect = true,
+        clipboard = true,
+        timers = true,
+        hidpi = false,
+    },
+    text = {
+        clipboard = true,
+        ime = true,
+    },
+}
+
 local function round(n)
     if n >= 0 then return math.floor(n + 0.5) end
     return math.ceil(n - 0.5)
@@ -48,6 +64,8 @@ local function normalize_key(key)
     if key == sdl3.SDLK_RETURN then return input.KeyReturn end
     if key == sdl3.SDLK_ESCAPE then return input.KeyEscape end
     if key == sdl3.SDLK_BACKSPACE then return input.KeyBackspace end
+    if key == sdl3.SDLK_TAB then return input.KeyTab end
+    if key == sdl3.SDLK_SPACE then return input.KeySpace end
     if key == sdl3.SDLK_DELETE then return input.KeyDelete end
     if key == sdl3.SDLK_HOME then return input.KeyHome end
     if key == sdl3.SDLK_END then return input.KeyEnd end
@@ -91,6 +109,13 @@ local function event_window_id(ev, t)
         return tonumber(ev.wheel.windowID)
     end
     return nil
+end
+
+local function attach_typed_raw(ev)
+    if ev == nil then return nil end
+    ev.raw = input.raw_from_host_event(ev)
+    ev.raws = input.raw_many_from_host_event(ev)
+    return ev
 end
 
 local function normalize_event(ev)
@@ -184,7 +209,7 @@ function M.poll_events()
     local out = {}
     local event = ffi.new("SDL_Event[1]")
     while sdl.SDL_PollEvent(event) ~= 0 do
-        local normalized = normalize_event(event[0])
+        local normalized = attach_typed_raw(normalize_event(event[0]))
         if normalized ~= nil then
             out[#out + 1] = normalized
         end
@@ -252,12 +277,23 @@ function M.new(opts)
         end
     end
 
-    local driver = runtime_sdl3.new {
-        renderer = renderer,
-        fonts = opts.fonts,
-        resolve_font = opts.resolve_font,
-        default_font = opts.default_font,
-    }
+    local function new_runtime_driver(driver_opts)
+        driver_opts = driver_opts or {}
+        return runtime_sdl3.new {
+            renderer = renderer,
+            fonts = driver_opts.fonts or opts.fonts,
+            resolve_font = driver_opts.resolve_font or opts.resolve_font,
+            default_font = driver_opts.default_font or opts.default_font,
+            images = driver_opts.images or opts.images,
+            resolve_image = driver_opts.resolve_image or opts.resolve_image,
+            missing_image = driver_opts.missing_image or opts.missing_image,
+            require_images = driver_opts.require_images or opts.require_images,
+            on_missing_image = driver_opts.on_missing_image or opts.on_missing_image,
+            density = driver_opts.density or opts.density,
+        }
+    end
+
+    local driver = new_runtime_driver(opts.driver)
 
     local text_system = opts.text_system or text_sdl3.new {
         fonts = opts.fonts,
@@ -276,6 +312,7 @@ function M.new(opts)
         window_id = window_id,
         driver = driver,
         text_system = text_system,
+        capabilities = M.capabilities,
     }
 
     function self:id()
@@ -301,6 +338,14 @@ function M.new(opts)
             sdl3.err("ui.host_sdl3: SDL_GetRenderOutputSize failed")
         end
         return tonumber(w[0]), tonumber(h[0])
+    end
+
+    function self:pixel_size()
+        return self:size()
+    end
+
+    function self:new_runtime_driver(driver_opts)
+        return new_runtime_driver(driver_opts)
     end
 
     function self:now_ms()

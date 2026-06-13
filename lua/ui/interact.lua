@@ -157,9 +157,11 @@ local function classify_events(raw, model, report, opts)
         if raw.button == Interact.BtnLeft then
             if report.hover_id ~= Core.NoId then
                 events[#events + 1] = Interact.SetPressed(report.hover_id)
+                events[#events + 1] = Interact.SetCapture(report.hover_id, raw.x, raw.y)
                 events[#events + 1] = Interact.SetFocus(report.hover_id)
             else
                 events[#events + 1] = Interact.ClearPressed
+                events[#events + 1] = Interact.ClearCapture
                 events[#events + 1] = Interact.ClearFocus
             end
 
@@ -188,17 +190,22 @@ local function classify_events(raw, model, report, opts)
                 events[#events + 1] = Interact.DragDropped(drag.source_id, raw.x, raw.y, over_target_id, over_slot_id)
                 events[#events + 1] = Interact.ClearDrag
                 events[#events + 1] = Interact.ClearPressed
+                events[#events + 1] = Interact.ClearCapture
             elseif drag_cls == Interact.DragPending then
-                if model.pressed_id ~= Core.NoId and report.hover_id == model.pressed_id then
+                local captured_id = model.capture_id or Core.NoId
+                if model.pressed_id ~= Core.NoId and (report.hover_id == model.pressed_id or captured_id == model.pressed_id) then
                     events[#events + 1] = Interact.Activate(model.pressed_id)
                 end
                 events[#events + 1] = Interact.ClearDrag
                 events[#events + 1] = Interact.ClearPressed
+                events[#events + 1] = Interact.ClearCapture
             else
-                if model.pressed_id ~= Core.NoId and report.hover_id == model.pressed_id then
+                local captured_id = model.capture_id or Core.NoId
+                if model.pressed_id ~= Core.NoId and (report.hover_id == model.pressed_id or captured_id == model.pressed_id) then
                     events[#events + 1] = Interact.Activate(model.pressed_id)
                 end
                 events[#events + 1] = Interact.ClearPressed
+                events[#events + 1] = Interact.ClearCapture
             end
         end
 
@@ -236,6 +243,63 @@ local function classify_events(raw, model, report, opts)
         return events
     end
 
+    if cls == Interact.KeyPressed then
+        if raw.key == Interact.KeyTab then
+            local dir = raw.mods.shift and -1 or 1
+            local id = focus_move_id(report, model.focus_id, dir)
+            if id ~= Core.NoId then
+                events[#events + 1] = Interact.SetFocus(id)
+            end
+        elseif raw.key == Interact.KeyReturn or raw.key == Interact.KeySpace then
+            if model.focus_id ~= Core.NoId then
+                events[#events + 1] = Interact.Activate(model.focus_id)
+            end
+        elseif raw.key == Interact.KeyEscape then
+            local cancel_events = classify_events(Interact.CancelPointer, model, report, opts)
+            for i = 1, #cancel_events do events[#events + 1] = cancel_events[i] end
+        end
+        return events
+    end
+
+    if cls == Interact.KeyReleased then
+        return events
+    end
+
+    if cls == Interact.TextInput then
+        if model.focus_id ~= Core.NoId then
+            events[#events + 1] = Interact.InputText(model.focus_id, raw.text)
+        end
+        return events
+    end
+
+    if cls == Interact.TextEditing then
+        if model.focus_id ~= Core.NoId then
+            events[#events + 1] = Interact.EditText(model.focus_id, raw.text, raw.start, raw.length)
+        end
+        return events
+    end
+
+    if cls == Interact.FocusMove then
+        local id = focus_move_id(report, model.focus_id, raw.direction == Interact.FocusBackward and -1 or 1)
+        if id ~= Core.NoId then
+            events[#events + 1] = Interact.SetFocus(id)
+        end
+        return events
+    end
+
+    if raw == Interact.FocusLost then
+        events[#events + 1] = Interact.ClearFocus
+        events[#events + 1] = Interact.ClearPressed
+        events[#events + 1] = Interact.ClearCapture
+        local drag = model.drag
+        local drag_cls = pvm.classof(drag)
+        if drag_cls == Interact.DragPending or drag_cls == Interact.Dragging then
+            events[#events + 1] = Interact.DragCancelled(drag.source_id)
+            events[#events + 1] = Interact.ClearDrag
+        end
+        return events
+    end
+
     if raw == Interact.FocusNext then
         local id = focus_move_id(report, model.focus_id, 1)
         if id ~= Core.NoId then
@@ -259,7 +323,7 @@ local function classify_events(raw, model, report, opts)
         return events
     end
 
-    if raw == Interact.CancelPointer then
+    if raw == Interact.PointerCancelled or raw == Interact.CancelPointer then
         local drag = model.drag
         local drag_cls = pvm.classof(drag)
         if drag_cls == Interact.DragPending or drag_cls == Interact.Dragging then
@@ -268,6 +332,10 @@ local function classify_events(raw, model, report, opts)
         end
         if model.pressed_id ~= Core.NoId then
             events[#events + 1] = Interact.ClearPressed
+        end
+        if (model.capture_id or Core.NoId) ~= Core.NoId then
+            events[#events + 1] = Interact.CancelCapture(model.capture_id)
+            events[#events + 1] = Interact.ClearCapture
         end
         return events
     end
@@ -288,7 +356,35 @@ local classify_phase = pvm.phase("ui.interact.classify", {
         return pvm.seq(classify_events(self, model, report, opts))
     end,
 
+    [Interact.PointerCancelled] = function(self, model, report, opts)
+        return pvm.seq(classify_events(self, model, report, opts))
+    end,
+
     [Interact.WheelMoved] = function(self, model, report, opts)
+        return pvm.seq(classify_events(self, model, report, opts))
+    end,
+
+    [Interact.KeyPressed] = function(self, model, report, opts)
+        return pvm.seq(classify_events(self, model, report, opts))
+    end,
+
+    [Interact.KeyReleased] = function(self, model, report, opts)
+        return pvm.seq(classify_events(self, model, report, opts))
+    end,
+
+    [Interact.TextInput] = function(self, model, report, opts)
+        return pvm.seq(classify_events(self, model, report, opts))
+    end,
+
+    [Interact.TextEditing] = function(self, model, report, opts)
+        return pvm.seq(classify_events(self, model, report, opts))
+    end,
+
+    [Interact.FocusMove] = function(self, model, report, opts)
+        return pvm.seq(classify_events(self, model, report, opts))
+    end,
+
+    [Interact.FocusLost] = function(self, model, report, opts)
         return pvm.seq(classify_events(self, model, report, opts))
     end,
 
@@ -376,6 +472,12 @@ local function apply_event(model, event, report)
     if event == Interact.ClearPressed then
         return pvm.with(model, { pressed_id = Core.NoId })
     end
+    if cls == Interact.SetCapture then
+        return pvm.with(model, { capture_id = event.id })
+    end
+    if cls == Interact.ReleaseCapture or cls == Interact.CancelCapture or event == Interact.ClearCapture then
+        return pvm.with(model, { capture_id = Core.NoId })
+    end
     if cls == Interact.SetDragPending then
         return pvm.with(model, { drag = Interact.DragPending(event.source_id, event.start_x, event.start_y) })
     end
@@ -400,6 +502,7 @@ function M.model(opts)
         opts.hover_id or Core.NoId,
         opts.focus_id or Core.NoId,
         opts.pressed_id or Core.NoId,
+        opts.capture_id or Core.NoId,
         opts.drag or Interact.NoDrag,
         opts.scrolls or {}
     )
@@ -505,8 +608,36 @@ function M.pointer_released(button, x, y)
     return Interact.PointerReleased(button, x, y)
 end
 
+function M.pointer_cancelled()
+    return Interact.PointerCancelled
+end
+
 function M.wheel_moved(dx, dy, x, y)
     return Interact.WheelMoved(dx, dy, x, y)
+end
+
+function M.key_pressed(key, mods, repeat_)
+    return Interact.KeyPressed(key, mods or Interact.Modifiers(false, false, false, false), repeat_ == true)
+end
+
+function M.key_released(key, mods)
+    return Interact.KeyReleased(key, mods or Interact.Modifiers(false, false, false, false))
+end
+
+function M.text_input(text)
+    return Interact.TextInput(text or "")
+end
+
+function M.text_editing(text, start, length)
+    return Interact.TextEditing(text or "", start or 0, length or 0)
+end
+
+function M.focus_move(direction)
+    return Interact.FocusMove(direction)
+end
+
+function M.focus_lost()
+    return Interact.FocusLost
 end
 
 function M.focus_next()

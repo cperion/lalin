@@ -9,9 +9,38 @@ local ttf = sdl3.ttf
 local T = ui_asdl.T
 local Core = T.Core
 local Style = T.Style
+local Layout = T.Layout
 local Paint = T.Paint
 
 local M = {}
+
+M.capabilities = {
+    runtime = {
+        boxes = true,
+        rounded_boxes = true,
+        capsules = true,
+        clipping = true,
+        transforms = true,
+        scrolling = true,
+        layers = "generic",
+        cursors = true,
+        density = "logical-noop",
+    },
+    paint = {
+        line = true,
+        polyline = true,
+        polygon_fill = true,
+        circle_fill = true,
+        arc = true,
+        bezier = true,
+        mesh = true,
+        image = "texture-or-bmp-resolver",
+        stroke_width = true,
+    },
+    text = {
+        draw = true,
+    },
+}
 
 local function round(n)
     if n >= 0 then return math.floor(n + 0.5) end
@@ -128,6 +157,244 @@ local function arc_points(cx, cy, r, a1, a2, segments)
     return pts, segments + 1
 end
 
+local function resolved_round_rect_radius(box_visual, w, h)
+    if box_visual == nil or box_visual.shape ~= Layout.ShapeRoundRect then
+        return 0
+    end
+    local max_r = math.max(0, math.min(w, h) * 0.5)
+    local r = box_visual.radius or 0
+    if r < 0 then return 0 end
+    if r > max_r then return max_r end
+    return r
+end
+
+local function put_color(v, rgba8, opacity)
+    opacity = opacity or 1
+    local a = ((rgba8 % 256) / 255) * opacity
+    rgba8 = math.floor(rgba8 / 256)
+    local b = rgba8 % 256
+    rgba8 = math.floor(rgba8 / 256)
+    local g = rgba8 % 256
+    rgba8 = math.floor(rgba8 / 256)
+    local r = rgba8 % 256
+    v.color.r = r / 255
+    v.color.g = g / 255
+    v.color.b = b / 255
+    v.color.a = a
+end
+
+local function put_vertex(v, x, y, rgba8, opacity, u, tv)
+    v.position.x = x
+    v.position.y = y
+    put_color(v, rgba8, opacity)
+    v.tex_coord.x = u or 0
+    v.tex_coord.y = tv or 0
+end
+
+local function render_geometry(renderer, texture, vertices, num_vertices, indices, num_indices)
+    if num_vertices <= 0 then return end
+    if sdl.SDL_RenderGeometry(renderer, texture, vertices, num_vertices, indices, num_indices or 0) == 0 then
+        sdl3.err("ui.runtime_sdl3: SDL_RenderGeometry failed")
+    end
+end
+
+local function fill_polygon_points(renderer, points, rgba8, opacity)
+    local n = #points / 2
+    if n < 3 then return end
+    if points[1] == points[#points - 1] and points[2] == points[#points] then
+        n = n - 1
+        if n < 3 then return end
+    end
+    local vertices = ffi.new("SDL_Vertex[?]", n)
+    for i = 0, n - 1 do
+        put_vertex(vertices[i], points[i * 2 + 1], points[i * 2 + 2], rgba8, opacity)
+    end
+    local index_count = (n - 2) * 3
+    local indices = ffi.new("int[?]", index_count)
+    local k = 0
+    for i = 1, n - 2 do
+        indices[k] = 0
+        indices[k + 1] = i
+        indices[k + 2] = i + 1
+        k = k + 3
+    end
+    render_geometry(renderer, nil, vertices, n, indices, index_count)
+end
+
+local function fill_polygon_xy(renderer, xy, ox, oy, rgba8, opacity)
+    local n = math.floor(#xy / 2)
+    if n < 3 then return end
+    local points = {}
+    for i = 1, n do
+        points[#points + 1] = ox + xy[i * 2 - 1]
+        points[#points + 1] = oy + xy[i * 2]
+    end
+    fill_polygon_points(renderer, points, rgba8, opacity)
+end
+
+local function draw_thick_segment(renderer, x1, y1, x2, y2, stroke)
+    local width = math.max(1, stroke and stroke.width or 1)
+    if width <= 1.25 then
+        with_color(renderer, stroke.rgba8, 1)
+        if sdl.SDL_RenderLine(renderer, x1, y1, x2, y2) == 0 then
+            sdl3.err("ui.runtime_sdl3: SDL_RenderLine failed")
+        end
+        return
+    end
+    local dx, dy = x2 - x1, y2 - y1
+    local len = math.sqrt(dx * dx + dy * dy)
+    if len <= 0.00001 then return end
+    local hw = width * 0.5
+    local nx, ny = -dy / len * hw, dx / len * hw
+    fill_polygon_points(renderer, {
+        x1 + nx, y1 + ny,
+        x2 + nx, y2 + ny,
+        x2 - nx, y2 - ny,
+        x1 - nx, y1 - ny,
+    }, stroke.rgba8, 1)
+end
+
+local function draw_thick_polyline(renderer, pts, n, stroke)
+    if n < 2 then return end
+    for i = 0, n - 2 do
+        draw_thick_segment(renderer, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, stroke)
+    end
+end
+
+local function circle_segment_count(r)
+    return math.max(16, math.min(96, math.floor(math.max(1, r) * 0.8)))
+end
+
+local function fill_circle(renderer, cx, cy, r, rgba8, opacity, segments)
+    if r <= 0 then return end
+    segments = math.max(8, segments or circle_segment_count(r))
+    local vertices = ffi.new("SDL_Vertex[?]", segments + 1)
+    put_vertex(vertices[0], cx, cy, rgba8, opacity)
+    for i = 0, segments - 1 do
+        local a = (i / segments) * math.pi * 2
+        put_vertex(vertices[i + 1], cx + math.cos(a) * r, cy + math.sin(a) * r, rgba8, opacity)
+    end
+    local indices = ffi.new("int[?]", segments * 3)
+    local k = 0
+    for i = 1, segments do
+        indices[k] = 0
+        indices[k + 1] = i
+        indices[k + 2] = (i == segments) and 1 or (i + 1)
+        k = k + 3
+    end
+    render_geometry(renderer, nil, vertices, segments + 1, indices, segments * 3)
+end
+
+local function fill_rect(renderer, x, y, w, h, rgba8, opacity)
+    if w <= 0 or h <= 0 then return end
+    with_color(renderer, rgba8, opacity)
+    if sdl.SDL_RenderFillRect(renderer, frect(x, y, w, h)) == 0 then
+        sdl3.err("ui.runtime_sdl3: SDL_RenderFillRect failed")
+    end
+end
+
+local function fill_box_shape(renderer, shape, x, y, w, h, radius, rgba8, opacity)
+    if w <= 0 or h <= 0 then return end
+    if shape == Layout.ShapeCapsule then
+        if w > h then
+            local r = h * 0.5
+            fill_rect(renderer, x + r, y, w - h, h, rgba8, opacity)
+            fill_circle(renderer, x + r, y + r, r, rgba8, opacity)
+            fill_circle(renderer, x + w - r, y + r, r, rgba8, opacity)
+        elseif h > w then
+            local r = w * 0.5
+            fill_rect(renderer, x, y + r, w, h - w, rgba8, opacity)
+            fill_circle(renderer, x + r, y + r, r, rgba8, opacity)
+            fill_circle(renderer, x + r, y + h - r, r, rgba8, opacity)
+        else
+            fill_circle(renderer, x + w * 0.5, y + h * 0.5, w * 0.5, rgba8, opacity)
+        end
+        return
+    end
+    if shape == Layout.ShapeRoundRect and radius > 0 then
+        local r = math.min(radius, w * 0.5, h * 0.5)
+        fill_rect(renderer, x + r, y, w - 2 * r, h, rgba8, opacity)
+        fill_rect(renderer, x, y + r, r, h - 2 * r, rgba8, opacity)
+        fill_rect(renderer, x + w - r, y + r, r, h - 2 * r, rgba8, opacity)
+        fill_circle(renderer, x + r, y + r, r, rgba8, opacity)
+        fill_circle(renderer, x + w - r, y + r, r, rgba8, opacity)
+        fill_circle(renderer, x + w - r, y + h - r, r, rgba8, opacity)
+        fill_circle(renderer, x + r, y + h - r, r, rgba8, opacity)
+        return
+    end
+    fill_rect(renderer, x, y, w, h, rgba8, opacity)
+end
+
+local function draw_arc_stroke(renderer, cx, cy, r, a1, a2, stroke, segments)
+    local width = math.max(1, stroke and stroke.width or 1)
+    segments = math.max(6, segments or math.floor(math.abs(a2 - a1) * math.max(8, r) / 5))
+    if width <= 1.25 then
+        local pts, n = arc_points(cx, cy, r, a1, a2, segments)
+        with_color(renderer, stroke.rgba8, 1)
+        if sdl.SDL_RenderLines(renderer, pts, n) == 0 then
+            sdl3.err("ui.runtime_sdl3: SDL_RenderLines failed")
+        end
+        return
+    end
+    local outer = r + width * 0.5
+    local inner = math.max(0, r - width * 0.5)
+    local vertices = ffi.new("SDL_Vertex[?]", (segments + 1) * 2)
+    for i = 0, segments do
+        local t = i / segments
+        local a = a1 + (a2 - a1) * t
+        put_vertex(vertices[i * 2], cx + math.cos(a) * outer, cy + math.sin(a) * outer, stroke.rgba8, 1)
+        put_vertex(vertices[i * 2 + 1], cx + math.cos(a) * inner, cy + math.sin(a) * inner, stroke.rgba8, 1)
+    end
+    local indices = ffi.new("int[?]", segments * 6)
+    local k = 0
+    for i = 0, segments - 1 do
+        local a, b, c, d = i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 3
+        indices[k], indices[k + 1], indices[k + 2] = a, c, b
+        indices[k + 3], indices[k + 4], indices[k + 5] = b, c, d
+        k = k + 6
+    end
+    render_geometry(renderer, nil, vertices, (segments + 1) * 2, indices, segments * 6)
+end
+
+local function draw_box_border(renderer, shape, x, y, w, h, radius, border_w, rgba8, opacity)
+    if border_w <= 0 or rgba8 == 0 or w <= 0 or h <= 0 then return end
+    border_w = math.max(1, border_w)
+    local stroke = { rgba8 = rgba8, width = border_w }
+    if shape == Layout.ShapeCapsule then
+        if w >= h then
+            local r = h * 0.5
+            draw_thick_segment(renderer, x + r, y + border_w * 0.5, x + w - r, y + border_w * 0.5, stroke)
+            draw_thick_segment(renderer, x + r, y + h - border_w * 0.5, x + w - r, y + h - border_w * 0.5, stroke)
+            draw_arc_stroke(renderer, x + w - r, y + r, r - border_w * 0.5, -math.pi * 0.5, math.pi * 0.5, stroke)
+            draw_arc_stroke(renderer, x + r, y + r, r - border_w * 0.5, math.pi * 0.5, math.pi * 1.5, stroke)
+        else
+            local r = w * 0.5
+            draw_thick_segment(renderer, x + border_w * 0.5, y + r, x + border_w * 0.5, y + h - r, stroke)
+            draw_thick_segment(renderer, x + w - border_w * 0.5, y + r, x + w - border_w * 0.5, y + h - r, stroke)
+            draw_arc_stroke(renderer, x + r, y + r, r - border_w * 0.5, math.pi, math.pi * 2, stroke)
+            draw_arc_stroke(renderer, x + r, y + h - r, r - border_w * 0.5, 0, math.pi, stroke)
+        end
+        return
+    end
+    if shape == Layout.ShapeRoundRect and radius > 0 then
+        local r = math.min(radius, w * 0.5, h * 0.5)
+        local cr = math.max(0, r - border_w * 0.5)
+        draw_thick_segment(renderer, x + r, y + border_w * 0.5, x + w - r, y + border_w * 0.5, stroke)
+        draw_thick_segment(renderer, x + r, y + h - border_w * 0.5, x + w - r, y + h - border_w * 0.5, stroke)
+        draw_thick_segment(renderer, x + border_w * 0.5, y + r, x + border_w * 0.5, y + h - r, stroke)
+        draw_thick_segment(renderer, x + w - border_w * 0.5, y + r, x + w - border_w * 0.5, y + h - r, stroke)
+        draw_arc_stroke(renderer, x + w - r, y + r, cr, -math.pi * 0.5, 0, stroke)
+        draw_arc_stroke(renderer, x + w - r, y + h - r, cr, 0, math.pi * 0.5, stroke)
+        draw_arc_stroke(renderer, x + r, y + h - r, cr, math.pi * 0.5, math.pi, stroke)
+        draw_arc_stroke(renderer, x + r, y + r, cr, math.pi, math.pi * 1.5, stroke)
+        return
+    end
+    fill_rect(renderer, x, y, w, border_w, rgba8, opacity)
+    fill_rect(renderer, x, y + h - border_w, w, border_w, rgba8, opacity)
+    fill_rect(renderer, x, y + border_w, border_w, h - border_w * 2, rgba8, opacity)
+    fill_rect(renderer, x + w - border_w, y + border_w, border_w, h - border_w * 2, rgba8, opacity)
+end
+
 function M.new(opts)
     opts = opts or {}
     local renderer = opts.renderer
@@ -149,9 +416,108 @@ function M.new(opts)
     local cursor_cache = {}
     local current_cursor_id = false
     local font_cache = {}
+    local texture_cache = {}
+    local owned_textures = {}
+    local resolve_image = opts.resolve_image
+    local images = opts.images
+    local missing_image = opts.missing_image or (opts.require_images and "error" or "skip")
+    local on_missing_image = opts.on_missing_image
     local closed = false
 
-    local self = {}
+    local self = {
+        capabilities = M.capabilities,
+    }
+
+    local function load_bmp_texture(path)
+        local texture = texture_cache[path]
+        if texture ~= nil then
+            return texture ~= false and texture or nil
+        end
+        local surface = sdl.SDL_LoadBMP(path)
+        if surface == nil then
+            texture_cache[path] = false
+            return nil
+        end
+        texture = sdl.SDL_CreateTextureFromSurface(renderer, surface)
+        sdl.SDL_DestroySurface(surface)
+        if texture == nil then
+            texture_cache[path] = false
+            return nil
+        end
+        texture_cache[path] = texture
+        owned_textures[#owned_textures + 1] = texture
+        return texture
+    end
+
+    local function texture_from(value)
+        if value == nil or value == false then return nil end
+        if type(value) == "string" then
+            return load_bmp_texture(value)
+        end
+        if type(value) == "cdata" then
+            return value
+        end
+        if type(value) == "table" then
+            if value.texture ~= nil then return value.texture end
+            if value.sdl_texture ~= nil then return value.sdl_texture end
+            if value.path ~= nil then return load_bmp_texture(value.path) end
+        end
+        return nil
+    end
+
+    local function report_missing_image(id, primitive)
+        local name = id ~= nil and id ~= Core.NoId and id.value or "<none>"
+        local msg = "ui.runtime_sdl3: unresolved image " .. tostring(name) .. " for " .. tostring(primitive)
+        if type(on_missing_image) == "function" then
+            on_missing_image(msg, id, primitive)
+        end
+        if missing_image == "error" then
+            error(msg, 3)
+        end
+        return nil
+    end
+
+    local function lookup_texture(id, primitive)
+        if id == nil or id == Core.NoId then return nil end
+        if resolve_image ~= nil then
+            local texture = texture_from(resolve_image(id))
+            if texture ~= nil then return texture end
+        end
+        if images ~= nil then
+            local texture = texture_from(images[id.value] or images[id])
+            if texture ~= nil then return texture end
+        end
+        return report_missing_image(id, primitive)
+    end
+
+    local function mesh_indices(mode, vertex_count)
+        if vertex_count < 3 then return nil, 0 end
+        if mode == Paint.MeshStrip then
+            local count = (vertex_count - 2) * 3
+            local indices = ffi.new("int[?]", count)
+            local k = 0
+            for i = 0, vertex_count - 3 do
+                if i % 2 == 0 then
+                    indices[k], indices[k + 1], indices[k + 2] = i, i + 1, i + 2
+                else
+                    indices[k], indices[k + 1], indices[k + 2] = i + 1, i, i + 2
+                end
+                k = k + 3
+            end
+            return indices, count
+        end
+        if mode == Paint.MeshFan then
+            local count = (vertex_count - 2) * 3
+            local indices = ffi.new("int[?]", count)
+            local k = 0
+            for i = 1, vertex_count - 2 do
+                indices[k], indices[k + 1], indices[k + 2] = 0, i, i + 1
+                k = k + 3
+            end
+            return indices, count
+        end
+        return nil, 0
+    end
 
     local function font_spec_for(font_id, style)
         local spec
@@ -186,20 +552,20 @@ function M.new(opts)
         return font
     end
 
+    function self:draw_box(x, y, w, h, visual)
+        return self:draw_rect(x, y, w, h, visual)
+    end
+
     function self:draw_rect(x, y, w, h, visual)
         if visual == nil then return end
         local opacity = (visual.opacity or 100) / 100
+        local shape = visual.shape or Layout.ShapeRect
+        local radius = resolved_round_rect_radius(visual, w, h)
         if visual.bg ~= 0 then
-            with_color(renderer, visual.bg, opacity)
-            if sdl.SDL_RenderFillRect(renderer, frect(x, y, w, h)) == 0 then
-                sdl3.err("ui.runtime_sdl3: SDL_RenderFillRect failed")
-            end
+            fill_box_shape(renderer, shape, x, y, w, h, radius, visual.bg, opacity)
         end
         if visual.border_w > 0 and visual.border_color ~= 0 then
-            with_color(renderer, visual.border_color, opacity)
-            if sdl.SDL_RenderRect(renderer, frect(x, y, w, h)) == 0 then
-                sdl3.err("ui.runtime_sdl3: SDL_RenderRect failed")
-            end
+            draw_box_border(renderer, shape, x, y, w, h, radius, visual.border_w, visual.border_color, opacity)
         end
     end
 
@@ -243,34 +609,32 @@ function M.new(opts)
             local item = items[i]
             local cls = pvm.classof(item)
             if cls == Paint.Line then
-                with_color(renderer, item.stroke.rgba8, 1)
-                sdl.SDL_RenderLine(renderer, x + item.x1, y + item.y1, x + item.x2, y + item.y2)
+                draw_thick_segment(renderer, x + item.x1, y + item.y1, x + item.x2, y + item.y2, item.stroke)
             elseif cls == Paint.Polyline then
                 if #item.xy >= 4 then
                     local pts, n = poly_points(item.xy, x, y)
-                    with_color(renderer, item.stroke.rgba8, 1)
-                    sdl.SDL_RenderLines(renderer, pts, n)
+                    draw_thick_polyline(renderer, pts, n, item.stroke)
                 end
             elseif cls == Paint.Polygon then
-                if #item.xy >= 4 and item.stroke ~= nil then
-                    local pts, n = poly_points(item.xy, x, y)
-                    with_color(renderer, item.stroke.rgba8, 1)
-                    sdl.SDL_RenderLines(renderer, pts, n)
+                if #item.xy >= 6 then
+                    if item.fill ~= Paint.NoFill then
+                        fill_polygon_xy(renderer, item.xy, x, y, item.fill.rgba8, 1)
+                    end
+                    if item.stroke ~= nil then
+                        local pts, n = poly_points(item.xy, x, y)
+                        draw_thick_polyline(renderer, pts, n, item.stroke)
+                        draw_thick_segment(renderer, pts[n - 1].x, pts[n - 1].y, pts[0].x, pts[0].y, item.stroke)
+                    end
                 end
             elseif cls == Paint.Circle then
-                local pts, n = circle_points(x + item.cx, y + item.cy, item.r, 24)
-                local stroke = item.stroke
-                if stroke ~= nil then
-                    with_color(renderer, stroke.rgba8, 1)
-                    sdl.SDL_RenderLines(renderer, pts, n)
-                elseif item.fill ~= Paint.NoFill then
-                    with_color(renderer, item.fill.rgba8, 1)
-                    sdl.SDL_RenderLines(renderer, pts, n)
+                if item.fill ~= Paint.NoFill then
+                    fill_circle(renderer, x + item.cx, y + item.cy, item.r, item.fill.rgba8, 1)
+                end
+                if item.stroke ~= nil then
+                    draw_arc_stroke(renderer, x + item.cx, y + item.cy, item.r, 0, math.pi * 2, item.stroke, circle_segment_count(item.r))
                 end
             elseif cls == Paint.Arc then
-                local pts, n = arc_points(x + item.cx, y + item.cy, item.r, item.a1, item.a2, item.segments)
-                with_color(renderer, item.stroke.rgba8, 1)
-                sdl.SDL_RenderLines(renderer, pts, n)
+                draw_arc_stroke(renderer, x + item.cx, y + item.cy, item.r, item.a1, item.a2, item.stroke, item.segments)
             elseif cls == Paint.Bezier then
                 local xy = item.xy
                 if #xy >= 8 then
@@ -291,11 +655,41 @@ function M.new(opts)
                         pts[j].x = x + px
                         pts[j].y = y + py
                     end
-                    with_color(renderer, item.stroke.rgba8, 1)
-                    sdl.SDL_RenderLines(renderer, pts, segments + 1)
+                    draw_thick_polyline(renderer, pts, segments + 1, item.stroke)
+                end
+            elseif cls == Paint.Mesh then
+                local vertex_count = #item.vertices
+                if vertex_count >= 3 then
+                    local texture = lookup_texture(item.image_id, "mesh")
+                    local opacity = (item.opacity or 100) / 100
+                    local vertices = ffi.new("SDL_Vertex[?]", vertex_count)
+                    for j = 1, vertex_count do
+                        local v = item.vertices[j]
+                        put_vertex(vertices[j - 1], x + v.x, y + v.y, item.tint_rgba8, opacity, v.u, v.v)
+                    end
+                    local indices, index_count = mesh_indices(item.mode, vertex_count)
+                    render_geometry(renderer, texture, vertices, vertex_count, indices, index_count)
+                end
+            elseif cls == Paint.Image then
+                local texture = lookup_texture(item.image_id, "image")
+                if texture ~= nil then
+                    local r, g, b, a = rgba8_bytes(item.tint_rgba8, (item.opacity or 100) / 100)
+                    sdl.SDL_SetTextureColorMod(texture, r, g, b)
+                    sdl.SDL_SetTextureAlphaMod(texture, a)
+                    local src = nil
+                    if item.src_w ~= 0 and item.src_h ~= 0 then
+                        src = frect(item.src_x, item.src_y, item.src_w, item.src_h)
+                    end
+                    if sdl.SDL_RenderTexture(renderer, texture, src, frect(x, y, w, h)) == 0 then
+                        sdl3.err("ui.runtime_sdl3: SDL_RenderTexture failed")
+                    end
                 end
             end
         end
+    end
+
+    function self:push_clip_rect(x, y, w, h)
+        return self:push_clip(x, y, w, h)
     end
 
     function self:push_clip(x, y, w, h)
@@ -304,6 +698,10 @@ function M.new(opts)
         if sdl.SDL_SetRenderClipRect(renderer, top) == 0 then
             sdl3.err("ui.runtime_sdl3: SDL_SetRenderClipRect failed")
         end
+    end
+
+    function self:pop_clip_rect()
+        return self:pop_clip()
     end
 
     function self:pop_clip()
@@ -375,10 +773,15 @@ function M.new(opts)
             ttf.TTF_CloseFont(font)
         end
         for _, cursor in pairs(cursor_cache) do
-            if cursor ~= nil then
+            if cursor ~= nil and cursor ~= false then
                 sdl.SDL_DestroyCursor(cursor)
             end
         end
+        for i = 1, #owned_textures do
+            sdl.SDL_DestroyTexture(owned_textures[i])
+        end
+        owned_textures = {}
+        texture_cache = {}
         if engine ~= nil then
             ttf.TTF_DestroyRendererTextEngine(engine)
             engine = nil

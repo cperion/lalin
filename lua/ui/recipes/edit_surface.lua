@@ -382,7 +382,15 @@ return function(opts)
         return metrics, merged
     end
 
-    return core.bundle(node, surfaces, core.empty_route(), {
+    local function route_one(surfaces_, ui_event)
+        return core.widget.route_interact_event(surfaces_, ui_event)
+    end
+
+    return core.bundle(node, surfaces, route_one, {
+        kind = "edit_surface",
+        id = opts.id,
+        role = "textbox",
+        label = opts.label,
         sync_scroll = function(self, host, model, report, field, draw_opts)
             local metrics, merged = resolve_metrics(host, report, model, field, draw_opts)
             if metrics == nil then return model, false end

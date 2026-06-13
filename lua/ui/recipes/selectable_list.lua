@@ -47,27 +47,40 @@ return function(opts)
 
     local surfaces = {
         items = {},
+        activate = {},
+        focus = {},
     }
     for i = 1, #built.row_infos do
         local info = built.row_infos[i]
+        info.widget_id = opts.id
         core.add_surface(surfaces.items, info.id, info)
+        if activatable then core.add_surface(surfaces.activate, info.id, info) end
+        if focusable then core.add_surface(surfaces.focus, info.id, info) end
     end
 
     local function route_one(surfaces_, ui_event)
         local cls = pvm.classof(ui_event)
         if cls == T.Interact.Activate and activatable then
             local info = core.surface_lookup(surfaces_.items, ui_event.id)
-            if info ~= nil and opts.on_select ~= nil then
-                return opts.on_select(info.key, info.item, info.ctx)
+            if info ~= nil then
+                if opts.on_select ~= nil then return opts.on_select(info.key, info.item, info.ctx) end
+                return core.event("select", opts.id, { id = info.id, key = info.key, item = info.item, index = info.index, ctx = info.ctx, source = ui_event })
             end
         elseif cls == T.Interact.SetFocus and focusable then
             local info = core.surface_lookup(surfaces_.items, ui_event.id)
-            if info ~= nil and opts.on_focus ~= nil then
-                return opts.on_focus(info.key, info.item, info.ctx)
+            if info ~= nil then
+                if opts.on_focus ~= nil then return opts.on_focus(info.key, info.item, info.ctx) end
+                return core.focus_event(opts.id, true, { id = info.id, key = info.key, item = info.item, index = info.index, ctx = info.ctx, source = ui_event })
             end
         end
         return nil
     end
 
-    return core.bundle(built.node, surfaces, route_one)
+    return core.bundle(built.node, surfaces, route_one, {
+        kind = "selectable_list",
+        id = opts.id,
+        selected = opts.selected_key ~= nil,
+        role = "listbox",
+        label = opts.label,
+    })
 end

@@ -250,7 +250,11 @@ local function node_box(node)
     if cls == Layout.WithInput
         or cls == Layout.WithDragSource
         or cls == Layout.WithDropTarget
-        or cls == Layout.WithDropSlot then
+        or cls == Layout.WithDropSlot
+        or cls == Layout.FocusScope
+        or cls == Layout.Layer
+        or cls == Layout.Overlay
+        or cls == Layout.Modal then
         return node_box(node.child)
     end
     return node.box
@@ -261,7 +265,11 @@ local function node_with_main_size(node, axis, px)
     if cls == Layout.WithInput
         or cls == Layout.WithDragSource
         or cls == Layout.WithDropTarget
-        or cls == Layout.WithDropSlot then
+        or cls == Layout.WithDropSlot
+        or cls == Layout.FocusScope
+        or cls == Layout.Layer
+        or cls == Layout.Overlay
+        or cls == Layout.Modal then
         return pvm.with(node, { child = node_with_main_size(node.child, axis, px) })
     end
 

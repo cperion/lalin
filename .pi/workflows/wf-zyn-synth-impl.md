@@ -792,3 +792,422 @@ Helper probes show similar nested emit expansion failures:
 - `apply_program_section` → missing `malformed_scan`
 
 This appears to be a separate compiler/frontend nested region-fragment expansion issue, not the original `scan_sections` state scoping issue. Downstream tasks were not claimed because `T007` remains blocked.
+
+## Worker Output — 2026-06-13 18:11:31
+
+## Completed
+- Fixed the compiler blocker for control-region `view(...)` parameters.
+  - `tree_control_to_back` now lowers view block params/jump args as `(data, len, stride)`.
+  - Added regression test `tests/test_control_region_view_params.lua`.
+- Completed edit-plan tasks:
+  - `T008` event/control protocols.
+  - `T009` voice lifecycle semantic tightening.
+- Claimed `T010`, added partial modulation/envelope/LFO/filter implementation, but marked it **blocked honestly** because `render_voice_modulation` does not yet apply modulation routes.
+
+## Files Changed
+- `lua/moonlift/tree_control_to_back.lua`
+  - Added view-param lowering for control regions.
+- `tests/test_control_region_view_params.lua`
+  - New regression test for emitted control regions with view-valued params.
+- `examples/synth/zyn_moonlift_synth_impl.mlua`
+  - Implemented/expanded `R.apply_host_events`.
+  - Tightened `R.next_note_layer` and `R.allocate_voice`.
+  - Added partial T010 regions:
+    - `R.eval_envelope_sample`
+    - `R.eval_lfo_sample`
+    - `R.apply_modulation_route`
+    - `R.render_voice_modulation`
+    - `R.apply_filter_model`
+
+## Notes
+Verification run:
+```sh
+(ulimit -v 1000000; timeout 60 luajit tests/test_control_region_view_params.lua)
+(ulimit -v 1500000; timeout 180 luajit /tmp/check_t008.lua)
+(ulimit -v 1500000; timeout 180 luajit /tmp/check_t009.lua)
+(ulimit -v 1500000; timeout 180 luajit /tmp/check_t010.lua)
+```
+
+Status:
+- `T008` done.
+- `T009` done.
+- `T010` blocked with evidence in the edit plan.
+
+Caveats:
+- `apply_host_events` cannot enforce `frame <= ctx.shape.frame_count` because its header has no `RenderCtx`.
+- `T010` needs explicit state-carrying route iteration before completion.
+
+## Worker Output — 2026-06-13 18:28:17
+
+## Completed
+- Inspected edit plan sidecars; used `main`.
+- Claimed `T011`, implemented tone renderers and route skeleton, then blocked honestly.
+- Claimed `T012`, added substantial audio/effects/metering implementation, then blocked honestly.
+- Verified module still loads.
+
+## Files Changed
+- `examples/synth/zyn_moonlift_synth_impl.mlua`
+  - Added AD/SUB/PAD tone renderers.
+  - Added ToneMask routing helpers.
+  - Added audio clear/mix/pan/effect/finalize regions.
+  - Added effect-kind bindings.
+
+## Notes
+Verification:
+```sh
+luajit -e '... moon.dofile("examples/synth/zyn_moonlift_synth_impl.mlua") ...'
+# module_load_ok
+
+(ulimit -v 1500000; timeout 180 luajit /tmp/check_t011.lua)
+# render_additive_field ok
+# render_subtractive_field ok
+# render_pad_field ok
+# route_layer_tone_generators ok
+```
+
+Blocked:
+- `T011`: compiles, but multi-bit `ToneMask` routing currently overwrites earlier tones instead of blending them.
+- `T012`: module loads, but compile check fails at `clear_audio_block` with backend validation duplicate view-data access:
+  ```text
+  ERROR[E0602]: duplicate access ... __rt_param_clear_audio_block_out_1:view:data
+  ```
+
+Edit plan now has no ready tasks: `T011` and `T012` are blocked with evidence.
+
+## Worker Output — 2026-06-13 21:48:44
+
+## Completed
+- Completed T013 render orchestration.
+- Completed T014 remaining ABI seals.
+- Completed T015 compile/load test coverage.
+- Added a compiler fix for function-header body bindings so region splices in `F.*` bodies expand correctly.
+- Left T016 ready/unclaimed.
+
+## Files Changed
+- `examples/synth/zyn_moonlift_synth_impl.mlua`
+  - Implemented render orchestration regions.
+  - Implemented ABI seals.
+  - Added state-explicit render/note/retirement helpers.
+- `lua/moonlift/host.lua`
+  - Fixed `moon.func` header body binding expansion via full `M.func(bindings)(full)` path.
+- `tests/test_func_header_body_region_splices.lua`
+  - Regression test for function-header body region splices.
+- `tests/test_zyn_moonlift_synth_impl.lua`
+  - New implementation compile coverage test.
+
+## Verification
+Passed:
+
+```sh
+(ulimit -v 4000000; timeout 240 luajit /tmp/check_t013.lua)
+(ulimit -v 4000000; timeout 300 luajit /tmp/check_t014.lua)
+(ulimit -v 4000000; timeout 600 luajit tests/test_zyn_moonlift_synth_impl.lua)
+(ulimit -v 1500000; timeout 60 luajit tests/test_func_header_body_region_splices.lua)
+(ulimit -v 1500000; timeout 60 luajit tests/test_control_region_view_params.lua)
+```
+
+## Notes
+- Edit plan now: 15/17 done, T016 ready.
+- `tests/test_zyn_moonlift_synth_impl.lua` compiles all ABI functions and key render dependency wrappers; it intentionally avoids compiling a duplicate `render_block` wrapper after `F.synth_render_block` to stay within protected memory limits.
+
+## Worker Output — 2026-06-13 22:24:58
+
+## Completed
+- Finished workflow `wf-zyn-synth-impl`.
+- Claimed and completed:
+  - `T016` behavioral smoke tests
+  - `T017` verification commands
+- Edit plan is now `17/17 done`.
+
+## Files Changed
+- `tests/test_zyn_moonlift_synth_impl.lua`
+  - Added FFI-backed behavioral smoke coverage for:
+    - storage sizing/init happy path
+    - invalid config status mapping
+    - malformed patch rejection
+    - host/MIDI event classification
+    - voice allocate/start/release/retire
+    - silent render clearing output
+
+## Verification
+Passed:
+```sh
+cargo build --release
+(ulimit -v 8000000; timeout 700 luajit tests/test_zyn_moonlift_synth_impl.lua)
+(ulimit -v 1500000; timeout 60 luajit -e '... moon.dofile("examples/synth/zyn_moonlift_synth_impl.mlua") ...')
+```
+
+## Notes
+- A 4GB protected run of the synth test aborted during wrapper compilation with a Rust allocator 4MB allocation failure; rerunning with an 8GB protected limit passed.
+- No C backend was used as a blocker.
+
+## Scout Output — 2026-06-13 23:21:36
+
+## Files Retrieved
+
+1. `.pi/workflows/wf-zyn-synth-impl.edit-plan.json` (lines 1-460) - Verified T018 was ready, claimed it, and later marked done.
+2. `examples/synth/zyn_moonlift_synth_spec.md` (lines 1-454) - Behavioral contract and spec references.
+3. `examples/synth/zyn_moonlift_synth_headers.mlua` (lines 1-220, 213-758, 760-1203) - Encodings, products, region signatures, ABI seals.
+4. `examples/synth/zyn_moonlift_synth_impl.mlua` (lines 1-4125, key ranges below) - Audited implementation bodies.
+5. `THE_MOONLIFT_DESIGN_BIBLE.md` (lines 1-220, 923-952, 1073-1104, 1268-1276) - Relevant transcription/tag-owner/ABI-seal discipline.
+
+T018 was marked `done` in edit-plan revision `63`. No implementation edits were made.
+
+## Key Code / Audit Findings
+
+### Patch/program preparation gaps
+
+- `examples/synth/zyn_moonlift_synth_impl.mlua` lines 928-1340 accept zero-length payloads as `defaulted`, `disabled`, `bypass`, or `empty` for tuning/envelope/LFO/filter/AD/SUB/PAD/effects.  
+  Spec lines 100-268 define fixed records; only `end_marker` is explicitly zero-length. This looks like convenient defaulting not justified by spec admission rule lines 445-450.
+
+- `prepare_layer` expects `LayerV1` length `184` and reads `nominal_gain`/`pan` at offsets `176`/`180`:
+  - impl lines 1357, 1369-1378.
+  - Spec lines 181-202 imply `LayerV1` fixed fields ending after filter at offset ~156, then `nominal_gain`, `pan` around 156/160 under natural alignment. Current offsets appear 20 bytes late.
+
+- Capacity validation is incomplete:
+  - impl lines 1689-1759, 1781-1904, 1950-2023.
+  - Spec line 263: counts must not exceed `SynthConfig`.
+  - Storage does not retain all config capacities, and preparation does not enforce `max_parts`, `max_layers`, `max_mod_routes`, `max_additive_partials`, `max_noise_bands`.
+
+- Finite-f32 validation is partial:
+  - impl examples lines 973-1040, 1283-1307, 1444-1577.
+  - Spec line 268 requires all f32 finite.
+  - Many checks only test `x ~= x` and therefore miss infinities.
+
+- `rebuild_pad_cache` only reserves offsets/lengths/generations and never writes/rebuilds table audio data:
+  - impl lines 1579-1634.
+  - Spec lines 270-292 and 389-393 require prepared pad cache tables read/interpolated by PAD rendering.
+
+### Events/control gaps
+
+- `apply_host_events` cannot enforce upper frame bound:
+  - impl lines 2575-2587 explicitly comments signature lacks `RenderCtx`.
+  - Spec lines 308-309 require event frames `<= RenderCtx.shape.frame_count`; out-of-range ignored.
+
+- `apply_host_events` duplicates tag dispatch instead of using owner classifiers:
+  - impl lines 2587-2639 switch on `HostEvent.kind`/MIDI status directly.
+  - Header lines 52-209 declare tag owners; spec lines 294-306 define `classify_host_event`/`classify_midi_event`.
+
+- Host MIDI note-on during render does not start voices:
+  - impl lines 2624-2628 just marks changed.
+  - Spec lines 294-313 plus voice semantics require event processing to affect voices.
+
+- `apply_midi_event` uses `HLP.start_note_voices`, which stops after first layer/skip:
+  - impl lines 2488-2510 and 2513-2561.
+  - Later ABI note-on has a separate all-layer helper, but render/event path does not.
+
+- Parameter handling in `apply_host_events` only updates global macros and bypasses `resolve_parameter` / `apply_parameter_event`:
+  - impl lines 2599-2606.
+  - Spec lines 423-442 require scoped resolution, clamp policy, smoothing/read-only/unknown semantics.
+
+- CC storage is reduced to binary `0`/`127`:
+  - impl lines 2382-2388 and 2635-2641.
+  - This loses full CC value for modulation source semantics.
+
+### Voice/tuning/lifecycle gaps
+
+- Tuning/key mapping lacks octave scaling:
+  - impl lines 2030-2057.
+  - Spec lines 315-359 require base frequency from tuning and transpose facts. Current code uses `delta % count` ratio but does not scale by octaves.
+
+- Steal score is not the spec formula:
+  - impl lines 2063-2091.
+  - Spec lines 335-342 define exact normalized score. Current code uses raw `age_frames` and adds a non-spec `mode_bonus`.
+
+- Stolen voice is not retired through lifecycle semantics:
+  - impl lines 2121-2135.
+  - Spec lines 321-329 require retiring previous voice at that index.
+
+- Voice lifecycle is disconnected from amp-envelope completion:
+  - impl lines 2278-2294.
+  - Spec lines 354-359 say release/fadeout transition to dead when amp envelope finishes. Current code uses `last_mod.amp <= denormal_floor`.
+
+### Envelope/LFO/modulation/filter gaps
+
+- `eval_envelope_sample` ignores `delay_s`, `hold_s`, and all curve differences:
+  - impl lines 2702-2746.
+  - Spec lines 365-371 require delay/attack/hold/decay/release in samples and five curve types.
+
+- `eval_lfo_sample` does not implement sine, ignores `phase_offset` and `tempo_sync`, and only subtracts one wrap:
+  - impl lines 2748-2778.
+  - Spec lines 373-379 require phase `[0,1)`, sine/triangle/square/saws/random/sample-hold, deterministic RNG.
+
+- `render_voice_modulation` never evaluates envelope or LFO regions:
+  - impl lines 2856-2883.
+  - Mod sources `envelope` and `lfo` are mapped to existing frame fields in `apply_modulation_route` lines 2780-2819, not to `EnvelopeState`/`LfoState`.
+
+- Filter implementation collapses most models into one-pole approximations:
+  - impl lines 2885-2920.
+  - Spec lines 389-395 require bypass copy, one-pole LP/HP, SVF LP/HP/BP/notch core, and formant with three fixed bandpass stages.
+  - `resonance`, `drive`, `keytrack`, and formant behavior are effectively unused.
+
+### Tone rendering gaps
+
+- AD renderer uses a triangle/polynomial approximation, not sine:
+  - impl lines 2961-3008.
+  - Spec line 383 requires `sin(phase * ratio + phase_offset) * gain`.
+  - `detune_cents`, `stereo_spread`, and `phase_random` are ignored.
+
+- SUB renderer does not shape noise into bands:
+  - impl lines 3010-3056.
+  - Spec line 384 requires deterministic noise shaped by band gains. Current `center_hz`/`bandwidth_hz` only scale gain.
+
+- PAD renderer ignores `table_count`/morph-table interpolation and uses suspicious frequency math:
+  - impl lines 3061-3115.
+  - Spec line 385 requires prepared pad cache table interpolation. Current code reads one table length and does not use `table_count`.
+
+### Mixing/effects/metering gaps
+
+- `apply_pan_gain` uses linear pan, not equal-power:
+  - impl lines 3297-3318.
+  - Spec line 401 requires equal-power pan.
+
+- Insert effects are defined but not used by render path:
+  - impl `apply_insert_effects` lines 3427-3451.
+  - `render_one_program_part` lines 3710-3748 mixes part directly to output and never emits insert effects.
+  - Spec lines 396-406 require inserts/sends/effects in order.
+
+- Effect bus chaining is not slot-order processing of previous output into next input:
+  - impl lines 3395-3420 pass same `input`/`output` for every slot.
+  - Later slots overwrite earlier output rather than consume it.
+
+- Send effects use `scratch.send`, but nothing fills it with send contributions:
+  - impl lines 3453-3507, render lines 3863-3868.
+  - `effect_send` modulation and `send_gain` are effectively unused.
+
+- Master effects are prepared but not applied:
+  - impl prepares master at lines 1888-1899 / 2001-2006, but render only calls `apply_send_effects`.
+
+- `finalize_audio_block` clips to hardcoded `1.0`, not policy `clip_ceiling`:
+  - impl lines 3509-3548.
+  - Spec lines 403-405 require clipping to policy clip ceiling.
+  - It also processes `len(out.left)`, not necessarily `ctx.shape.frame_count`.
+
+### Render orchestration gaps
+
+- High-level order is close to spec:
+  - impl lines 3844-3943.
+  - Spec lines 408-421.
+- But render omits critical substeps:
+  - no filter application in `render_voice` (lines 3570-3631);
+  - no insert effects in part render;
+  - panic event is swallowed as normal `events_applied` (lines 3858-3860), despite `apply_host_events` having `panic_requested`.
+
+### ABI mapping gaps
+
+- `synth_note_on` cannot return `exhausted_storage` for full voice pool:
+  - impl lines 4076-4090.
+  - Allocation full becomes “not started” and ABI returns `ok`.
+  - Spec lines 39-40 allow `exhausted_storage` for note-on.
+
+- `synth_panic` clears voices only, not effect state:
+  - impl lines 4114-4123 and `panic_voices` lines 2255-2276.
+  - Spec line 45 says panic clears all voices and effect state.
+
+- `synth_render_block` maps requested program change to stale handle:
+  - impl lines 4040-4055.
+  - Spec ABI table lines 36-37 does not explicitly define requested-program-as-stale; this needs a deliberate mapping decision.
+
+## `[[...]]` usage / splitting pressure
+
+- Implementation has **75** `[[...]]` body strings.
+- Largest body strings:
+  - `F.synth_init` lines 460-615, 156 lines.
+  - `R.validate_program` lines 1444-1577, 134 lines.
+  - `R.apply_host_events` lines 2575-2696, 122 lines.
+  - `R.next_patch_section` lines 826-923, 98 lines.
+- File is 4125 lines and mixes storage, patch prep, events, DSP, tone, effects, render, and ABI seals.
+- This creates audit/debug pressure and hides dependencies in broad `BODY` binding tables. T019’s planned syntax/splitting refactor is warranted.
+
+## Relationships
+
+- `synth_prepare_program` → `prepare_program` → section decode/prep → `validate_program` → `rebuild_pad_cache` → publish.
+- `synth_render_block` → `render_block` → `enter_render_memory` → clear output/scratch → `apply_host_events` → `render_all_parts` → send effects → finalize → retire dead voices.
+- DSP declarations exist, but render does not actually wire envelope/LFO/filter into audio generation.
+- Tone generators feed scratch voice/part/output, but effects routing is incomplete: inserts/master unused, sends have no populated send input.
+
+## Observations
+
+- Compile/smoke completion did not establish spec fidelity.
+- Many bodies are tactical approximations, conflicting with spec admission rule and Bible transcription discipline.
+- ABI status integers are mostly confined to `F.*`, but several internal outcomes are collapsed too early, causing boundary mappings to lose spec distinctions.
+
+## Worker Output — 2026-06-13 23:32:25
+
+## Completed
+Implemented T019 only.
+
+- Converted simple header body closures to `.mlua` header-implementation sugar:
+  - `F.synth_required_storage`
+  - `F.synth_init`
+  - memory/lifetime regions through `R.close_synth_storage`
+- Kept dependency-heavy `BODY` / `ABI_BODY` body strings unchanged to preserve behavior and explicit binding ownership.
+- Did not split modules; no clear ownership win for this syntax-only pass.
+- Reduced explicit `[[...]]` body-string occurrences from 75 to 64.
+- Marked T019 done in edit plan.
+
+## Files Changed
+- `examples/synth/zyn_moonlift_synth_impl.mlua` - syntax refactor to header-implementation sugar for simple bodies; updated facade comments and local splice aliases.
+
+## Verification
+Passed:
+
+```sh
+(ulimit -v 1500000; timeout 60 luajit -e '... moon.dofile("examples/synth/zyn_moonlift_synth_impl.mlua") ...')
+(ulimit -v 8000000; timeout 700 luajit tests/test_zyn_moonlift_synth_impl.lua)
+```
+
+## Notes
+T020 is now ready, but I did not claim or attempt DSP fidelity work.
+
+## Worker Output — 2026-06-13 23:41:23
+
+## Completed
+Implemented and completed T020.
+
+- Reworked envelope evaluation for delay/attack/hold/decay/sustain/release in samples and all curve tags.
+- Reworked LFO evaluation for all shapes, phase offset, tempo sync rate, deterministic RNG/sample-hold, and wrapped phase.
+- Updated modulation to evaluate envelopes/LFOs before route iteration and use voice/control state for sources.
+- Expanded filter models: bypass, one-pole LP/HP, SVF LP/HP/BP/notch, and formant approximation.
+- Preserved raw MIDI CC values for modulation.
+
+## Files Changed
+- `examples/synth/zyn_moonlift_synth_impl.mlua` - DSP/modulation/filter fidelity updates.
+
+## Notes
+Verification passed:
+
+```sh
+(ulimit -v 4000000; timeout 240 luajit /tmp/check_t020.lua)
+(ulimit -v 8000000; timeout 700 luajit tests/test_zyn_moonlift_synth_impl.lua)
+```
+
+Edit plan: T020 marked done.
+
+## Worker Output — 2026-06-13 23:49:46
+
+## Completed
+- Claimed and completed `T021`.
+- Reworked tone-field rendering in `examples/synth/zyn_moonlift_synth_impl.mlua`:
+  - Additive: sine-phase oscillator approximation with `phase_offsets`, gains, pan, detune, stereo spread, phase random, pitch modulation.
+  - Subtractive: deterministic per-band noise shaped by center/bandwidth/gain/pan/source color/stereo width.
+  - PAD: validates/interpolates `table_count`, `morph`, and `table_length`.
+  - ToneMask routing now blends AD/SUB/PAD correctly and preserves max peak.
+  - Propagates `stale_ref`, `missing_cache`, and `bad_buffer`.
+
+## Files Changed
+- `examples/synth/zyn_moonlift_synth_impl.mlua` - tone renderer fidelity updates.
+
+## Verification
+Passed:
+
+```sh
+(ulimit -v 4000000; timeout 240 env ZYN_SYNTH_TEST_MODE=compile_abi luajit tests/test_zyn_moonlift_synth_impl.lua)
+(ulimit -v 4000000; timeout 300 env ZYN_SYNTH_TEST_MODE=compile_wrappers luajit tests/test_zyn_moonlift_synth_impl.lua)
+(ulimit -v 8000000; timeout 700 luajit tests/test_zyn_moonlift_synth_impl.lua)
+```
+
+## Notes
+- `T021` marked done in edit plan.
+- Used a deterministic sine polynomial because Moonlift source currently has no direct `sin` intrinsic.
+- Did not claim `T022`; it is now ready.

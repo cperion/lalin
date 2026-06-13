@@ -407,6 +407,22 @@ measure_phase = pvm.phase("ui.measure", {
     [Layout.WithDropSlot] = function(self, constraint, text_system, content_store)
         return pvm.once(pvm.one(measure_phase(self.child, constraint, text_system, content_store)))
     end,
+
+    [Layout.FocusScope] = function(self, constraint, text_system, content_store)
+        return pvm.once(pvm.one(measure_phase(self.child, constraint, text_system, content_store)))
+    end,
+
+    [Layout.Layer] = function(self, constraint, text_system, content_store)
+        return pvm.once(pvm.one(measure_phase(self.child, constraint, text_system, content_store)))
+    end,
+
+    [Layout.Overlay] = function(self, constraint, text_system, content_store)
+        return pvm.once(pvm.one(measure_phase(self.child, constraint, text_system, content_store)))
+    end,
+
+    [Layout.Modal] = function(self, constraint, text_system, content_store)
+        return pvm.once(pvm.one(measure_phase(self.child, constraint, text_system, content_store)))
+    end,
 }, {
     args_cache = "last",
 })

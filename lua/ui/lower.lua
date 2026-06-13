@@ -2,6 +2,8 @@ local pvm = require("pvm")
 local ui_asdl = require("ui.asdl")
 local norm = require("ui.normalize")
 local resolve = require("ui.resolve")
+local id_validation = require("ui.id")
+local state_bridge = require("ui.state")
 
 local T = ui_asdl.T
 local Core = T.Core
@@ -47,7 +49,11 @@ local function placement_source(auth_node)
         or cls == Auth.WithState
         or cls == Auth.WithDragSource
         or cls == Auth.WithDropTarget
-        or cls == Auth.WithDropSlot then
+        or cls == Auth.WithDropSlot
+        or cls == Auth.FocusScope
+        or cls == Auth.Layer
+        or cls == Auth.Overlay
+        or cls == Auth.Modal then
         return placement_source(auth_node.child)
     end
     return auth_node
@@ -230,6 +236,66 @@ lower_phase = pvm.phase("ui.lower", {
         return pvm.concat_all(trips)
     end,
 
+    [Auth.FocusScope] = function(self, theme, env, state)
+        local lowered = pvm.drain(lower_phase(self.child, theme, env, state))
+        if #lowered == 0 then
+            return pvm.empty()
+        end
+        if #lowered == 1 then
+            return pvm.once(Layout.FocusScope(self.id, self.policy, lowered[1]))
+        end
+        local trips = {}
+        for i = 1, #lowered do
+            trips[i] = { pvm.once(Layout.FocusScope(self.id, self.policy, lowered[i])) }
+        end
+        return pvm.concat_all(trips)
+    end,
+
+    [Auth.Layer] = function(self, theme, env, state)
+        local lowered = pvm.drain(lower_phase(self.child, theme, env, state))
+        if #lowered == 0 then
+            return pvm.empty()
+        end
+        if #lowered == 1 then
+            return pvm.once(Layout.Layer(self.id, self.kind, self.order, lowered[1]))
+        end
+        local trips = {}
+        for i = 1, #lowered do
+            trips[i] = { pvm.once(Layout.Layer(self.id, self.kind, self.order, lowered[i])) }
+        end
+        return pvm.concat_all(trips)
+    end,
+
+    [Auth.Overlay] = function(self, theme, env, state)
+        local lowered = pvm.drain(lower_phase(self.child, theme, env, state))
+        if #lowered == 0 then
+            return pvm.empty()
+        end
+        if #lowered == 1 then
+            return pvm.once(Layout.Overlay(self.id, self.anchor_id, self.placement, self.modal, lowered[1]))
+        end
+        local trips = {}
+        for i = 1, #lowered do
+            trips[i] = { pvm.once(Layout.Overlay(self.id, self.anchor_id, self.placement, self.modal, lowered[i])) }
+        end
+        return pvm.concat_all(trips)
+    end,
+
+    [Auth.Modal] = function(self, theme, env, state)
+        local lowered = pvm.drain(lower_phase(self.child, theme, env, state))
+        if #lowered == 0 then
+            return pvm.empty()
+        end
+        if #lowered == 1 then
+            return pvm.once(Layout.Modal(self.id, lowered[1]))
+        end
+        local trips = {}
+        for i = 1, #lowered do
+            trips[i] = { pvm.once(Layout.Modal(self.id, lowered[i])) }
+        end
+        return pvm.concat_all(trips)
+    end,
+
     [Auth.Text] = function(self, theme, env, state)
         local r = resolve_style(self.styles, theme, env, state)
         local text = Layout.TextLiteral(Layout.TextStyle(
@@ -368,6 +434,37 @@ lower_phase = pvm.phase("ui.lower", {
         ))
     end,
 })
+
+local function prepare_root_auth(node, opts)
+    opts = opts or {}
+
+    if opts.validate_ids ~= false then
+        id_validation.assert_auth(node, opts.id_opts or opts)
+    end
+
+    if opts.state_provider ~= nil then
+        return state_bridge.apply_to_auth(node, opts.state_provider, opts.state_opts or opts)
+    end
+
+    if opts.model ~= nil
+        or opts.report ~= nil
+        or opts.selected ~= nil
+        or opts.selected_ids ~= nil
+        or opts.disabled ~= nil
+        or opts.disabled_ids ~= nil
+        or opts.active ~= nil
+        or opts.active_ids ~= nil then
+        return state_bridge.apply_model_to_auth(node, opts.model, opts.report, opts.state_opts or opts)
+    end
+
+    return node
+end
+
+function M.root(node, theme, env, opts)
+    local auth = prepare_root_auth(node, opts)
+    local g, p, c = lower_phase(auth, theme, env, opts and opts.state or nil)
+    return pvm.drain(g, p, c)
+end
 
 M.phase = lower_phase
 M.T = T

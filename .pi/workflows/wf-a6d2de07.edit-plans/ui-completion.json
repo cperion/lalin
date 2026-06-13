@@ -1,0 +1,871 @@
+{
+	"version": 1,
+	"workflowId": "wf-a6d2de07",
+	"planId": "ui-completion",
+	"revision": 44,
+	"nextId": 56,
+	"createdAt": "2026-06-13T23:07:03.206Z",
+	"updatedAt": "2026-06-13T23:46:52.816Z",
+	"tasks": [
+		{
+			"id": "T001",
+			"title": "Write UI kernel contract documentation",
+			"detail": "Create the authoritative contract doc for Auth→Layout→View→Runtime→Interact→next Auth lifecycle, input/focus/capture/state/ID/text/session/overlay invariants, and supported layout subset. It must describe the complete productized UI kit, not a slice.",
+			"file": "lua/ui/CONTRACT.md",
+			"after": [],
+			"status": "done",
+			"order": 1,
+			"claimedBy": "agent-38835A",
+			"evidence": "Created `lua/ui/CONTRACT.md` as the authoritative contract-first UI kernel document covering Auth→Layout→View→Runtime→Interact lifecycle, ID/state/input/focus/capture/layers/text/session/backend/widget/layout/testing/completion invariants. Verified with `test -s lua/ui/CONTRACT.md && grep -q 'Auth.Node' lua/ui/CONTRACT.md && grep -q 'Definition of complete' lua/ui/CONTRACT.md`; ran `luajit tests/test_ui_smoke.lua` (ok test_ui_smoke).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:16:43.069Z"
+		},
+		{
+			"id": "T002",
+			"title": "Write backend contract documentation",
+			"detail": "Create backend driver/conformance documentation covering draw_rect/draw_text/draw_paint, clipping/transform/scroll/layer semantics, input normalization, text system lifecycle, HiDPI density, image resolution, and required/optional capabilities for SDL3 and Love.",
+			"file": "lua/ui/BACKEND_CONTRACT.md",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 2,
+			"claimedBy": "agent-38835A",
+			"evidence": "Created `lua/ui/BACKEND_CONTRACT.md` covering backend package shape, runtime driver methods (`draw_box`/`draw_rect`, `draw_text`, `draw_paint`, clip/cursor/layer hooks), render-op semantics, text/session lifecycle, paint/image contracts, host input/lifecycle, density, capabilities, SDL3/Love support, and conformance tests. Verified with `test -s lua/ui/BACKEND_CONTRACT.md && grep -q 'Runtime driver interface' lua/ui/BACKEND_CONTRACT.md && grep -q 'SDL3 product contract' lua/ui/BACKEND_CONTRACT.md`; ran `luajit tests/test_ui_smoke.lua` (ok test_ui_smoke).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:18:12.677Z"
+		},
+		{
+			"id": "T003",
+			"title": "Extend ASDL for typed input and focus contracts",
+			"detail": "Add ASDL input vocabulary for keys, modifiers, key presses/releases, text input/editing, focus directions, activation, cancellation, pointer cancel/capture semantics, and focus scopes/policies while preserving existing constructors or compatibility helpers where needed.",
+			"file": "lua/ui/asdl.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 3,
+			"claimedBy": "agent-38835A",
+			"evidence": "Extended `lua/ui/asdl.lua` with non-breaking typed input/focus vocabulary: `Interact.Key`, `Modifiers`, `FocusDirection`, `FocusPolicy`, `Capture`, new `Raw` constructors (`PointerCancelled`, `KeyPressed`, `KeyReleased`, `TextInput`, `TextEditing`, `FocusMove`, `FocusLost`), capture events (`SetCapture`, `ReleaseCapture`, `ClearCapture`, `CancelCapture`), `Auth.FocusScope`, `Layout.FocusScope`, and `View.KFocusScope`/`KEndFocusScope`. Preserved existing `Raw`, `Event`, and `Model` constructor arities. Verified with constructor-loading luajit snippet (`ok ui typed input asdl`) and `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:19:26.893Z"
+		},
+		{
+			"id": "T004",
+			"title": "Extend ASDL for layers overlays and modal contracts",
+			"detail": "Add authored/layout/view vocabulary for layer/overlay roots, popup/tooltip/modal surfaces, modal barriers, layer ordering, and report facts needed by runtime and interact. Keep all semantics typed; do not encode overlays as backend-only side tables.",
+			"file": "lua/ui/asdl.lua",
+			"after": [
+				"T003"
+			],
+			"status": "done",
+			"order": 4,
+			"claimedBy": "agent-38835A",
+			"evidence": "Extended `lua/ui/asdl.lua` with typed layer/overlay/modal vocabulary: `Interact.LayerKind`, `OverlayPlacement`, authored/lowered `Layer`, `Overlay`, and `Modal` nodes, view kinds `KPushLayer`, `KPopLayer`, `KOverlay`, `KModalBarrier`, and typed report fact records `LayerBox`, `OverlayBox`, `ModalBarrierBox`, and `FocusScopeBox`. Preserved existing `View.Op` and `Interact.Report` constructor arities for compatibility. Verified with constructor-loading luajit snippet (`ok ui layer overlay asdl`) and `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:20:09.279Z"
+		},
+		{
+			"id": "T005",
+			"title": "Add input conversion helpers",
+			"detail": "Replace/extend string-only constants with typed ASDL key/button/modifier helpers, host-event-to-Interact.Raw conversion, focus key mapping, text input/editing conversion, and compatibility aliases for existing string constants.",
+			"file": "lua/ui/input.lua",
+			"after": [
+				"T003"
+			],
+			"status": "done",
+			"order": 5,
+			"claimedBy": "agent-38835A",
+			"evidence": "Rewrote `lua/ui/input.lua` to preserve existing string constants while adding typed ASDL helpers for keys/buttons/modifiers, raw pointer/wheel/key/text/focus constructors, focus key mapping (Tab/Shift+Tab/Return/Space/Escape), and host-event conversion via `raw_from_host_event`/`raw_many_from_host_event`. Verified with a luajit snippet covering key conversion, focus intent mapping, text input, and mouse movement (`ok ui input helpers`) and ran `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:21:17.740Z"
+		},
+		{
+			"id": "T006",
+			"title": "Add full-tree ID validation module",
+			"detail": "Create a traversal module that validates duplicate IDs across Auth, Layout, Compose, scroll, input, drag/drop, focus, text content references, widget surfaces, layers, and generated child IDs. Provide collect/validate/assert APIs and precise error messages with path/context.",
+			"file": "lua/ui/id.lua",
+			"after": [
+				"T003"
+			],
+			"status": "done",
+			"order": 6,
+			"claimedBy": "agent-38835A",
+			"evidence": "Created `lua/ui/id.lua` with ID helpers (`key`, `id`, `child`), collectors for Auth/Layout/Compose/widget surfaces, duplicate validation/assertion APIs, path-aware diagnostics, and traversal coverage for scroll/input/drag/drop/focus-scope/layer/overlay/modal/content-reference IDs. Verified with a luajit snippet validating a clean authored tree and duplicate diagnostics (`ok ui id validation`) and ran `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:22:54.988Z"
+		},
+		{
+			"id": "T007",
+			"title": "Wire ID validation into facade and authoring boundaries",
+			"detail": "Export ui.id and ensure public docs/examples use ui.id.validate/assert at phase boundaries. Do not hide validation in a place that prevents tests from choosing assert vs collect behavior.",
+			"file": "lua/ui/init.lua",
+			"after": [
+				"T006"
+			],
+			"status": "done",
+			"order": 7,
+			"claimedBy": "agent-38835A",
+			"evidence": "Exported `ui.id` from `lua/ui/init.lua` so callers/tests can explicitly choose collect/validate/assert at authoring/phase boundaries without hidden validation. `CONTRACT.md` already documents ID validation as an explicit root/boundary contract. Verified with luajit facade snippet (`ok ui id facade`) and `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:23:12.271Z"
+		},
+		{
+			"id": "T008",
+			"title": "Add interaction state bridge module",
+			"detail": "Create helpers that derive Style.State for an ID from Interact.Model plus Interact.Report, including hover, focus, active/pressed/captured/dragging, selected, disabled, and explicit widget state overrides. Include subtree application helpers that wrap authored nodes in Auth.WithState consistently.",
+			"file": "lua/ui/state.lua",
+			"after": [
+				"T003"
+			],
+			"status": "done",
+			"order": 8,
+			"claimedBy": "agent-38835A",
+			"evidence": "Created `lua/ui/state.lua` with `Style.State` helpers: `for_id`, `provider`, `merge`, `apply_to_auth`, and `apply_model_to_auth`. It derives hover/focus/active from `Interact.Model`/`Report`, includes pressed/capture/drag-active paths, supports selected/disabled/active override maps/functions, and wraps authored subtrees with `Auth.WithState` while preserving current/new Auth constructors. Verified with a luajit snippet deriving and applying state (`ok ui state bridge`) and ran `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:24:15.428Z"
+		},
+		{
+			"id": "T009",
+			"title": "Wire state bridge into lowering API",
+			"detail": "Extend lower.root/phase entry points to accept interaction state/provider options and merge derived per-ID Style.State with Auth.WithState state before style normalization. Preserve pure existing phase entry for tests but add documented productized root helper.",
+			"file": "lua/ui/lower.lua",
+			"after": [
+				"T008"
+			],
+			"status": "done",
+			"order": 9,
+			"evidence": "Updated `lua/ui/lower.lua` to require `ui.id`/`ui.state`, added `lower.root(node, theme, env, opts)` that performs explicit ID validation by default and applies a supplied state provider or model/report-derived state before invoking the existing pure `lower.phase`. Preserved existing `lower.phase` behavior. Added lowering support for new `Auth.FocusScope`, `Auth.Layer`, `Auth.Overlay`, and `Auth.Modal` wrappers. Verified with a luajit snippet covering `lower.root`, duplicate ID failure, and `FocusScope` lowering (`ok ui lower root`); ran `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:25:16.299Z"
+		},
+		{
+			"id": "T010",
+			"title": "Update render for focus policies and layer ops",
+			"detail": "Emit new view ops for layers/modal barriers and enhanced focus/hit metadata. Keep append_input_ops as the single role-to-op mapping point; do not duplicate role logic in individual layout node handlers.",
+			"file": "lua/ui/render.lua",
+			"after": [
+				"T004",
+				"T009"
+			],
+			"status": "done",
+			"order": 10,
+			"claimedBy": "agent-38835A",
+			"evidence": "Updated `lua/ui/render.lua` to emit typed view ops for `Layout.FocusScope` (`KFocusScope`/`KEndFocusScope`), `Layer` (`KPushLayer`/`KPopLayer`), `Overlay` (`KOverlay` plus `KModalBarrier` when modal), and `Modal` (`KModalBarrier` with layer push/pop). Kept input role handling centralized in `append_input_ops`. Also updated `lua/ui/plan.lua` and `lua/ui/measure.lua` so new wrapper nodes delegate box lookup, main-size mutation, and measurement to their children, allowing wrappers in normal layout containers. Verified with luajit snippet measuring/rendering nested layer+focus scope and finding emitted ops (`ok ui render layer ops`); ran `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:26:45.106Z"
+		},
+		{
+			"id": "T011",
+			"title": "Update runtime for hit stacks layers and modal barriers",
+			"detail": "Consume new view ops, produce full hit stack/layer/modal report facts, apply overlay z-order, respect modal barriers for hit/focus/scroll, preserve clip/scroll intersections, and keep driver calls backend-generic.",
+			"file": "lua/ui/runtime.lua",
+			"after": [
+				"T010"
+			],
+			"status": "done",
+			"order": 11,
+			"claimedBy": "agent-38835A",
+			"evidence": "Updated `lua/ui/asdl.lua` `Interact.Report` with hit_stack/layers/overlays/modal_barriers/focus_scopes fields and updated `lua/ui/runtime.lua` to consume `KFocusScope`/`KEndFocusScope`, `KPushLayer`/`KPopLayer`, `KOverlay`, and `KModalBarrier`. Runtime now records full hit stack, layer/overlay/modal/focus-scope facts, clears lower interaction candidates when pointer is inside a modal barrier, and keeps drawing/backend behavior generic. Verified with luajit snippet rendering layer+focus-scope and modal overlay reports (`ok ui runtime layer report`) and ran `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:28:11.125Z"
+		},
+		{
+			"id": "T012",
+			"title": "Implement pointer capture and typed keyboard reducer",
+			"detail": "Revise classify/apply/model to support explicit pointer capture, capture release/cancel, typed key/text raw input, focus traversal with policies/scopes/modal layers, disabled skipping, and semantic events for widgets. Existing pointer/wheel/focus helpers must remain compatible.",
+			"file": "lua/ui/interact.lua",
+			"after": [
+				"T003",
+				"T011"
+			],
+			"status": "done",
+			"order": 12,
+			"claimedBy": "agent-38835A",
+			"evidence": "Updated `lua/ui/asdl.lua` and `lua/ui/interact.lua` for pointer capture and typed input reducer support. `Interact.Model` now carries `capture_id`; events include text routing (`InputText`, `EditText`) and capture events are applied. Pointer press sets capture, release/escape/cancel/focus-lost clears capture, typed key presses handle Tab focus movement, Space/Return activation, Escape cancel, typed text input/editing routes to focused ID, and public constructors were added for pointer cancel/key/text/focus raw inputs. Verified with luajit snippet covering pointer capture activation, keyboard activation, and focused text routing (`ok ui interact typed capture`); ran `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:29:55.857Z"
+		},
+		{
+			"id": "T013",
+			"title": "Integrate SDL host typed input normalization",
+			"detail": "Convert normalized SDL mouse/key/text/window events into typed Interact.Raw values via ui.input helpers; preserve raw host event table fields for application callbacks. Ensure Tab/Shift+Tab/Space/Return/Escape/Page/Home/End/Arrows map consistently.",
+			"file": "lua/ui/host_sdl3.lua",
+			"after": [
+				"T005"
+			],
+			"status": "done",
+			"order": 13,
+			"claimedBy": "agent-38835A",
+			"evidence": "Updated `lua/ui/host_sdl3.lua` so events returned by `poll_events()` preserve existing host table fields and attach canonical typed input fields: `ev.raw = ui.input.raw_from_host_event(ev)` and `ev.raws = ui.input.raw_many_from_host_event(ev)`. This gives key events focus intents for Tab/Shift+Tab/Space/Return/Escape while preserving existing key/page/home/end/arrow names from SDL normalization. Verified by requiring `ui.host_sdl3` and checking typed key helper mapping (`ok ui host sdl3 typed input helpers`); ran `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:30:21.136Z"
+		},
+		{
+			"id": "T014",
+			"title": "Stabilize session text lifecycle and raw routing",
+			"detail": "Automatically register session text systems under a default key, expose window/session text_system_key, route typed raw UI input through session helpers, manage text input enable/rect lifecycle, and make approximate fallback explicit/testable.",
+			"file": "lua/ui/session.lua",
+			"after": [
+				"T005",
+				"T012"
+			],
+			"status": "done",
+			"order": 14,
+			"claimedBy": "agent-38835A",
+			"evidence": "Updated `lua/ui/session.lua` to auto-generate/register a default `session:<id>` text key when a text system exists, expose `session.text_system_key` and window `text_system`/`text_key`/`text_system_key`, add window text input helpers (`set_text_input`, `set_text_input_rect`), and route typed raw UI inputs (`ev.raws`/`ev.raw`) through `window.on_raw_ui` via `dispatch_raw_ui` while preserving `on_event`. Verified with a fake backend luajit snippet covering auto text registration, window text fields, raw routing, text input helper calls, and close cleanup (`ok ui session raw text lifecycle`); ran `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:31:17.657Z"
+		},
+		{
+			"id": "T015",
+			"title": "Update SDL session wrapper for default text backend",
+			"detail": "Ensure SDL3 sessions use the new default backend/text lifecycle without requiring opts.text_key; pass backend capabilities and text-system key through to windows.",
+			"file": "lua/ui/session_sdl3.lua",
+			"after": [
+				"T014"
+			],
+			"status": "done",
+			"order": 15,
+			"claimedBy": "agent-38835A",
+			"evidence": "Updated `lua/ui/session_sdl3.lua` to expose the SDL3 backend/capabilities through the wrapper and to default `opts.register_text = true` before delegating to `ui.session`, so SDL3 sessions use the new session-owned default text lifecycle without requiring `opts.text_key`. Verified with a luajit require/facade snippet (`ok ui session_sdl3 wrapper`) and ran `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:31:42.477Z"
+		},
+		{
+			"id": "T016",
+			"title": "Harden text backend registry semantics",
+			"detail": "Add default/system-key APIs, explicit fallback policy, diagnostics for unregistered keys, and tests hooks. Preserve approx_layout but make accidental fallback opt-in or visibly reported.",
+			"file": "lua/ui/text.lua",
+			"after": [
+				"T014"
+			],
+			"status": "done",
+			"order": 16,
+			"claimedBy": "agent-38835A",
+			"evidence": "Hardened `lua/ui/text.lua` registry semantics with default-key APIs (`set_default`, `default_key`, `register_default`), explicit approximate layout entry (`layout_approx`/`system_key=false`), fallback policy controls (`set_fallback_allowed`, `fallback_allowed`, `fallback_reason`), registered key inspection, default cleanup on unregister, and diagnostics/errors for unregistered keys when fallback is disabled. Also updated `lua/ui/session.lua` to set/clear the session text key as the default while registered. Verified with a luajit snippet covering missing-key error, explicit approximate fallback, default registration/layout, and unregister cleanup (`ok ui text registry`); ran `luajit tests/test_ui_smoke.lua` (`ok test_ui_smoke`).",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:32:49.391Z"
+		},
+		{
+			"id": "T017",
+			"title": "Document and expose backend conformance helpers",
+			"detail": "Create helper assertions/probes for backend capabilities: runtime driver methods, paint/image support, text system API, host input APIs, clipboard, IME rect, density/window size, layer/clip behavior, and event normalization.",
+			"file": "lua/ui/backend_contract.lua",
+			"after": [
+				"T002"
+			],
+			"status": "done",
+			"order": 17,
+			"claimedBy": "agent-44NCGD",
+			"evidence": "Created `lua/ui/backend_contract.lua` with backend conformance helpers: capability templates/validation (including SDL3 required capability paths), backend package/runtime module/runtime driver/text module/text system/host module/host object validators, typed host-event/raw input validation, trace driver and clip/layer balance probes, and density reporting. Verified with a luajit snippet requiring `ui.backend_contract`, validating a trace runtime driver, typed raw key event, host event, and current `ui.backends.sdl3` package shape (`ok backend_contract helpers`); ran `luajit tests/test_ui_smoke.lua` and `SDL_VIDEODRIVER=dummy luajit tests/test_ui_sdl3_paint.lua` successfully.",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:39:28.740Z"
+		},
+		{
+			"id": "T018",
+			"title": "Update SDL runtime for backend contract compliance",
+			"detail": "Align SDL driver names/capabilities with BACKEND_CONTRACT, expose capability table, verify layer/clip/image/mesh/text expectations, and honor density/scaling where view/env semantics require it.",
+			"file": "lua/ui/runtime_sdl3.lua",
+			"after": [
+				"T017"
+			],
+			"status": "done",
+			"order": 18,
+			"claimedBy": "agent-44NCGD",
+			"evidence": "Updated SDL backend contract compliance across `lua/ui/runtime_sdl3.lua`, `lua/ui/host_sdl3.lua`, `lua/ui/text_sdl3.lua`, and `lua/ui/backends/sdl3/init.lua`: exposed capability metadata, added `draw_box` and `push_clip_rect`/`pop_clip_rect` contract aliases, attached per-driver capabilities, added explicit missing-image policy/callback/error handling for image/mesh paint resources, added host `pixel_size` and `new_runtime_driver`, passed image/density options through host-created drivers, and exposed package-level SDL3 product capabilities. Verified with luajit snippets validating `ui.backends.sdl3` as product SDL3 via `ui.backend_contract`, creating a dummy-video SDL3 host, validating host object and runtime drivers, and running `luajit tests/test_ui_smoke.lua` plus `SDL_VIDEODRIVER=dummy luajit tests/test_ui_sdl3_paint.lua` successfully.",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:41:36.085Z"
+		},
+		{
+			"id": "T019",
+			"title": "Update Love runtime for backend contract compliance",
+			"detail": "Align Love driver contract with SDL3 where Love remains supported: capability table, paint/image semantics, layer/clip behavior, text registration expectations, and documented optional gaps.",
+			"file": "lua/ui/runtime_love.lua",
+			"after": [
+				"T017"
+			],
+			"status": "done",
+			"order": 19,
+			"claimedBy": "agent-44NCGD",
+			"evidence": "Updated `lua/ui/runtime_love.lua` with backend contract metadata and alignment: exposed truthful secondary-support capabilities (runtime/paint/text/host including optional Love gaps), attached capabilities to driver instances, added explicit missing-image policy/callback/error handling for paint image/mesh resources, accepted image lookup by id object or string key, and added layer hook no-ops for backends that do not need native layers. Verified with a luajit snippet requiring `ui.runtime_love`, validating module capabilities with `ui.backend_contract`, and validating a fake Love-shaped runtime driver with cursor/layer methods; ran `luajit tests/test_ui_smoke.lua` and `SDL_VIDEODRIVER=dummy luajit tests/test_ui_sdl3_paint.lua` successfully.",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:42:29.099Z"
+		},
+		{
+			"id": "T020",
+			"title": "Add widget contract core",
+			"detail": "Create canonical widget result/event/model contract helpers: stable IDs, node/surfaces/route_ui_event(s), model updates, disabled/selected state inputs, style slots, accessibility/semantic names if in scope, and typed event naming conventions.",
+			"file": "lua/ui/widget.lua",
+			"after": [
+				"T001",
+				"T012"
+			],
+			"status": "done",
+			"order": 20,
+			"claimedBy": "agent-44NCGD",
+			"evidence": "Created `lua/ui/widget.lua` with canonical widget contract helpers: stable ID helpers (`id`, `require_id`, `child_id`, `semantic_id`), model helper, surface add/lookup/validation with duplicate detection, canonical widget event constructors/names, interaction-event routing for activate/text/focus/scroll/drag events, route-many helpers, bundle construction/validation methods, and selected/disabled/active state map helpers. Verified with a luajit snippet creating/validating a widget bundle, routing `Interact.Activate` to a canonical `activate` event, and confirming duplicate surface detection; ran `luajit tests/test_ui_smoke.lua` and `SDL_VIDEODRIVER=dummy luajit tests/test_ui_sdl3_paint.lua` successfully.",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:44:29.629Z"
+		},
+		{
+			"id": "T021",
+			"title": "Update recipe core to use widget contract",
+			"detail": "Amend bundle/surface helpers to delegate to ui.widget while preserving existing recipe return shape. Add duplicate surface checks and typed widget event helpers.",
+			"file": "lua/ui/recipes/_core.lua",
+			"after": [
+				"T020"
+			],
+			"status": "done",
+			"order": 21,
+			"claimedBy": "agent-44NCGD",
+			"evidence": "Updated `lua/ui/recipes/_core.lua` to delegate canonical bundle/event helpers through `ui.widget` while preserving the existing recipe bundle shape (`node`, `surfaces`, `route_one`, `route_ui_event`, `route_ui_events`). Added duplicate surface checks, grouped surface validation, widget event helper exports, and compatibility methods that keep existing recipe route functions working. Verified with a luajit snippet creating/routing an `activatable` recipe and confirming duplicate surface detection; ran `luajit tests/test_ui_smoke.lua` and `SDL_VIDEODRIVER=dummy luajit tests/test_ui_sdl3_paint.lua` successfully.",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:45:12.744Z"
+		},
+		{
+			"id": "T022",
+			"title": "Refit existing recipes to canonical contract",
+			"detail": "Update activatable, selectable_list, reorderable_list, edit_surface, and scroll_view to use typed input/focus/capture/state bridge conventions. Preserve recipe semantics but remove ad hoc event conventions.",
+			"file": "lua/ui/recipes",
+			"after": [
+				"T021"
+			],
+			"status": "done",
+			"order": 22,
+			"claimedBy": "agent-44NCGD",
+			"evidence": "Refit existing recipes to the canonical widget contract while preserving their route/callback semantics. Updated `activatable`, `selectable_list`, `reorderable_list`, `edit_surface`, and `scroll_view` to return enriched canonical bundle metadata (`kind`, `id`, role/label/selected/disabled as appropriate), register canonical surface groups (`activate`, `focus`, `edit`, `scroll`, `drag` aliases), use widget event helpers for fallback events, and route typed `Interact` events for activation/focus/text/scroll/drag. Verified with luajit snippets covering selectable/reorderable/scroll canonical routing and edit-surface text routing; ran `luajit tests/test_ui_smoke.lua` and `SDL_VIDEODRIVER=dummy luajit tests/test_ui_sdl3_paint.lua` successfully.",
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:46:52.816Z"
+		},
+		{
+			"id": "T023",
+			"title": "Refit text widgets to canonical contract",
+			"detail": "Update text_input/text_area shared shell/draw overlay contract to use ui.widget, new state bridge, typed text input lifecycle, ID validation, and session text-system defaults.",
+			"file": "lua/ui/widgets/_text_common.lua",
+			"after": [
+				"T020",
+				"T016"
+			],
+			"status": "todo",
+			"order": 23,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:07:03.206Z"
+		},
+		{
+			"id": "T024",
+			"title": "Add primitive activation widgets",
+			"detail": "Implement canonical button widget with hover/focus/active/disabled styling, pointer and keyboard activation, stable event shape, style slots, and tests/gallery coverage.",
+			"file": "lua/ui/widgets/button.lua",
+			"after": [
+				"T020",
+				"T023"
+			],
+			"status": "todo",
+			"order": 24,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.206Z",
+			"updatedAt": "2026-06-13T23:07:03.206Z"
+		},
+		{
+			"id": "T025",
+			"title": "Add toggle selection widgets",
+			"detail": "Implement toggle/switch/checkbox/radio primitives or coordinated modules with selected/disabled state, activation events, keyboard behavior, and state styling conventions.",
+			"file": "lua/ui/widgets/toggle.lua",
+			"after": [
+				"T024"
+			],
+			"status": "todo",
+			"order": 25,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T026",
+			"title": "Add continuous value widgets",
+			"detail": "Implement slider/fader/value_drag primitives using pointer capture, keyboard increments, min/max/step/value model contract, orientation variants, and event throttling/redraw conventions.",
+			"file": "lua/ui/widgets/slider.lua",
+			"after": [
+				"T012",
+				"T020"
+			],
+			"status": "todo",
+			"order": 26,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T027",
+			"title": "Add knob widget",
+			"detail": "Implement synth-ready knob using pointer capture/value drag, keyboard increments, circular paint/view, style slots, value labels, and canonical value event contract.",
+			"file": "lua/ui/widgets/knob.lua",
+			"after": [
+				"T026"
+			],
+			"status": "todo",
+			"order": 27,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T028",
+			"title": "Add meter and progress widgets",
+			"detail": "Implement meter/progress/level display widgets with paint-backed rendering, range normalization, peak/hold options, animation/redraw policy, and backend-independent tests.",
+			"file": "lua/ui/widgets/meter.lua",
+			"after": [
+				"T020"
+			],
+			"status": "todo",
+			"order": 28,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T029",
+			"title": "Add list tabs and selection widgets",
+			"detail": "Implement list/listbox/tabs primitives with focus traversal, selected state, keyboard navigation, scroll integration, route events, and disabled skipping.",
+			"file": "lua/ui/widgets/list.lua",
+			"after": [
+				"T022"
+			],
+			"status": "todo",
+			"order": 29,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T030",
+			"title": "Add menu select and popup widgets",
+			"detail": "Implement menu/context-menu/select/dropdown primitives using typed overlays/layers/modals/focus scope semantics; cover open/close/cancel/outside-click behavior and keyboard navigation.",
+			"file": "lua/ui/widgets/menu.lua",
+			"after": [
+				"T004",
+				"T012",
+				"T029"
+			],
+			"status": "todo",
+			"order": 30,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T031",
+			"title": "Add tooltip popup and modal widgets",
+			"detail": "Implement tooltip/popover/modal/dialog helpers around typed layer semantics, modal barrier behavior, focus trapping, escape/cancel, and positioning.",
+			"file": "lua/ui/widgets/overlay.lua",
+			"after": [
+				"T030"
+			],
+			"status": "todo",
+			"order": 31,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T032",
+			"title": "Add composition widgets",
+			"detail": "Implement panel/toolbar/property_row/split_pane/scroll_panel/form-field helpers using the canonical widget shape and existing compose/recipes where appropriate.",
+			"file": "lua/ui/widgets/panel.lua",
+			"after": [
+				"T020",
+				"T022"
+			],
+			"status": "todo",
+			"order": 32,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T033",
+			"title": "Add canvas custom paint widget",
+			"detail": "Implement a typed canvas/paint surface widget wrapping Auth.Paint plus rectangular semantic input, coordinate conversion, drag/capture routing, image hooks, and backend conformance expectations.",
+			"file": "lua/ui/widgets/canvas.lua",
+			"after": [
+				"T020",
+				"T018"
+			],
+			"status": "todo",
+			"order": 33,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T034",
+			"title": "Update widgets facade",
+			"detail": "Export the complete widget catalog and keep backwards-compatible text_input/text_area entries. Avoid lazy side effects; each widget module should be require-safe headless.",
+			"file": "lua/ui/widgets/init.lua",
+			"after": [
+				"T024",
+				"T025",
+				"T026",
+				"T027",
+				"T028",
+				"T029",
+				"T030",
+				"T031",
+				"T032",
+				"T033"
+			],
+			"status": "todo",
+			"order": 34,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T035",
+			"title": "Update UI facade for new modules",
+			"detail": "Export input/state/id/widget/backend_contract and any overlay helpers in the top-level ui facade. Keep existing exports stable.",
+			"file": "lua/ui/init.lua",
+			"after": [
+				"T006",
+				"T008",
+				"T017",
+				"T020",
+				"T034"
+			],
+			"status": "todo",
+			"order": 35,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T036",
+			"title": "Write widgets README",
+			"detail": "Document canonical widget API, model/event shapes, style slots, ID conventions, keyboard/focus behavior, disabled/selected handling, and every catalog widget with examples.",
+			"file": "lua/ui/widgets/README.md",
+			"after": [
+				"T034"
+			],
+			"status": "todo",
+			"order": 36,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T037",
+			"title": "Rewrite UI README for productized reality",
+			"detail": "Replace stale restart/demo text with current architecture, contract links, supported backend/layout/widget catalog, examples list, testing instructions, and known limitations. Remove nonexistent Love demo references or clearly mark supported paths.",
+			"file": "lua/ui/README.md",
+			"after": [
+				"T001",
+				"T002",
+				"T036"
+			],
+			"status": "todo",
+			"order": 37,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T038",
+			"title": "Add interaction reducer tests",
+			"detail": "Test typed key/pointer/wheel input, focus traversal/scopes, disabled skipping, pointer capture across movement/reorder/disappear, drag/drop cancellation/drop, hit stack/modal barriers, and semantic event order.",
+			"file": "tests/test_ui_interact_contract.lua",
+			"after": [
+				"T012"
+			],
+			"status": "todo",
+			"order": 38,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T039",
+			"title": "Add ID validation tests",
+			"detail": "Test duplicate IDs across authored tree, nested fragments, generated widget child IDs, scroll/input/drag/drop/content IDs, allowed NoId leaves, and precise error paths.",
+			"file": "tests/test_ui_id_validation.lua",
+			"after": [
+				"T006"
+			],
+			"status": "todo",
+			"order": 39,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T040",
+			"title": "Add state bridge tests",
+			"detail": "Test hover/focus/active/selected/disabled style conditions flowing through lowering, explicit Auth.WithState merging, widget override rules, and no cross-ID contamination.",
+			"file": "tests/test_ui_state_bridge.lua",
+			"after": [
+				"T008",
+				"T009"
+			],
+			"status": "todo",
+			"order": 40,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T041",
+			"title": "Add overlay and modal tests",
+			"detail": "Test layer ordering, clipping escape where specified, modal barriers blocking lower hits/focus/scroll, popup outside click, focus trap, tooltip/passive overlay behavior, and drag preview layer facts.",
+			"file": "tests/test_ui_overlay_layers.lua",
+			"after": [
+				"T004",
+				"T011",
+				"T012"
+			],
+			"status": "todo",
+			"order": 41,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T042",
+			"title": "Add layout golden tests",
+			"detail": "Create deterministic golden assertions for flow, flex, grid, scroll, sizing, wrapping, gaps, margins, alignment, content-store text, and documented layout limitations.",
+			"file": "tests/test_ui_layout_golden.lua",
+			"after": [
+				"T001"
+			],
+			"status": "todo",
+			"order": 42,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T043",
+			"title": "Add backend contract tests",
+			"detail": "Use ui.backend_contract helpers to validate generic no-driver behavior, SDL3 backend capabilities under dummy video where possible, paint/image/text/clip/layer expectations, and Love support if available.",
+			"file": "tests/test_ui_backend_contract.lua",
+			"after": [
+				"T017",
+				"T018",
+				"T019"
+			],
+			"status": "todo",
+			"order": 43,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T044",
+			"title": "Add text and session lifecycle tests",
+			"detail": "Test default text system registration/unregistration, explicit approximate fallback, text_key compatibility, SDL dummy session behavior, text input rect lifecycle, clipboard hooks where safe, and render/measure cache key behavior.",
+			"file": "tests/test_ui_text_session.lua",
+			"after": [
+				"T014",
+				"T016"
+			],
+			"status": "todo",
+			"order": 44,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T045",
+			"title": "Add widget contract tests",
+			"detail": "Test every widget returns canonical bundle shape, stable IDs, disabled behavior, event routing, state styling, keyboard semantics, and no duplicate internal IDs across repeated instances.",
+			"file": "tests/test_ui_widgets_contract.lua",
+			"after": [
+				"T034"
+			],
+			"status": "todo",
+			"order": 45,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T046",
+			"title": "Add widget catalog behavior tests",
+			"detail": "Cover button/toggle/checkbox/radio/slider/fader/value_drag/knob/meter/list/tabs/menu/select/tooltip/modal/panel/canvas behavior with pure render/runtime/interact fixtures.",
+			"file": "tests/test_ui_widget_catalog.lua",
+			"after": [
+				"T045"
+			],
+			"status": "todo",
+			"order": 46,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T047",
+			"title": "Add SDL gallery example",
+			"detail": "Create a complete SDL3 widget gallery exercising theme/env defaults, session text lifecycle, typed input routing, focus traversal, overlays/modals, scrolling, and all widget catalog controls.",
+			"file": "examples/ui/gallery_sdl3.lua",
+			"after": [
+				"T034",
+				"T015"
+			],
+			"status": "todo",
+			"order": 47,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T048",
+			"title": "Add synth controls example",
+			"detail": "Create synth-oriented SDL3 demo with knobs, faders, meters, value drags, menus, text fields, patch/browser lists, timed redraws, and paint-backed oscilloscope/canvas.",
+			"file": "examples/ui/synth_sdl3_demo.lua",
+			"after": [
+				"T047"
+			],
+			"status": "todo",
+			"order": 48,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T049",
+			"title": "Add backend conformance example",
+			"detail": "Create an SDL3 visual/conformance probe for clipping, layers, modal barrier, paint primitives, images, density, text input, cursor changes, and keyboard normalization.",
+			"file": "examples/ui/backend_conformance_sdl3.lua",
+			"after": [
+				"T043"
+			],
+			"status": "todo",
+			"order": 49,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T050",
+			"title": "Update existing SDL examples to new contracts",
+			"detail": "Update paint_sdl3_demo.lua, text_sdl3_probe.lua, and text_field_sdl3_demo.lua to use default session/text lifecycle, typed input helpers, current README naming, and avoid stale direct backend assumptions.",
+			"file": "examples/ui",
+			"after": [
+				"T014",
+				"T035"
+			],
+			"status": "todo",
+			"order": 50,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T051",
+			"title": "Add examples smoke tests",
+			"detail": "Run headless/dummy smoke checks for gallery, synth demo auto-quit, backend conformance probe, and existing examples without opening unsupported windows in CI.",
+			"file": "tests/test_ui_examples.lua",
+			"after": [
+				"T047",
+				"T048",
+				"T049",
+				"T050"
+			],
+			"status": "todo",
+			"order": 51,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T052",
+			"title": "Stabilize smoke tests around new facade",
+			"detail": "Update smoke test for new exports, typed input constructors, ID validation, default text key behavior, and a full author/lower/render/runtime/interact loop with state bridge.",
+			"file": "tests/test_ui_smoke.lua",
+			"after": [
+				"T035",
+				"T038"
+			],
+			"status": "todo",
+			"order": 52,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T053",
+			"title": "Update SDL paint smoke for backend contract",
+			"detail": "Adjust SDL paint smoke to assert backend capability metadata and include layer/clip/image/mesh paths guarded for dummy-video availability.",
+			"file": "tests/test_ui_sdl3_paint.lua",
+			"after": [
+				"T018",
+				"T043"
+			],
+			"status": "todo",
+			"order": 53,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T054",
+			"title": "Add changelog migration notes",
+			"detail": "Document compatibility changes from pre-contract ui: Interact.Raw additions, ui.input helpers, text_key default behavior, widget contract, ID validation, overlay semantics, and deprecated patterns.",
+			"file": "lua/ui/MIGRATION.md",
+			"after": [
+				"T037"
+			],
+			"status": "todo",
+			"order": 54,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		},
+		{
+			"id": "T055",
+			"title": "Run full UI verification suite",
+			"detail": "Run luajit tests/test_ui_smoke.lua, test_ui_interact_contract.lua, test_ui_id_validation.lua, test_ui_state_bridge.lua, test_ui_overlay_layers.lua, test_ui_layout_golden.lua, test_ui_backend_contract.lua, test_ui_text_session.lua, test_ui_widgets_contract.lua, test_ui_widget_catalog.lua, test_ui_examples.lua, and SDL dummy example smoke commands.",
+			"after": [
+				"T038",
+				"T039",
+				"T040",
+				"T041",
+				"T042",
+				"T043",
+				"T044",
+				"T045",
+				"T046",
+				"T051",
+				"T052",
+				"T053"
+			],
+			"status": "todo",
+			"order": 55,
+			"notes": [],
+			"createdAt": "2026-06-13T23:07:03.207Z",
+			"updatedAt": "2026-06-13T23:07:03.207Z"
+		}
+	]
+}

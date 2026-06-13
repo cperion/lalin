@@ -340,51 +340,17 @@ M.func = make_quote(
                                 error("moon.func header expects a body-only string, not a complete func", 2)
                             end
                             local full = strip_bodyless_decl_end(header_src) .. "\n" .. arg .. "\nend"
-                            local res = require("moonlift.parse").Define(T2).parse_func(full)
-                            local value = res.value or res
-                            local used_values = nil
-                            if #(res.splice_slots or {}) ~= 0 then
-                                local hs = require("moonlift.host_splice")
-                                local open_expand = require("moonlift.open_expand")
-                                local fills = {}
-                                used_values = {}
-                                for _, ss in ipairs(res.splice_slots) do
-                                    local key = ss.splice_text or ss.splice_id
-                                    local v = merged[key]
-                                    if v == nil then
-                                        error("no value bound for @" .. tostring(key) .. " in values table", 2)
-                                    end
-                                    used_values[key] = v
-                                    fills[#fills + 1] = hs.fill(default_session, ss.slot, v, "splice " .. ss.splice_id, ss.role, ss.spread)
-                                end
-                                local e = open_expand.Define(T2)
-                                local env = e.empty_env()
-                                env = e.env_with_fills(env, fills)
-                                local item_value = value
-                                if pvm2.classof(item_value) ~= Tr2.ItemFunc then item_value = Tr2.ItemFunc(item_value) end
-                                local g, p, c = e.item_stream(item_value, env)
-                                value = pvm2.one(g, p, c)
+                            local out
+                            local merged_has_bindings = false
+                            for _ in pairs(merged) do merged_has_bindings = true; break end
+                            if merged_has_bindings then
+                                out = M.func(merged)(full)
+                            else
+                                out = M.func(full)
                             end
-                            local fv = value
-                            if pvm2.classof(fv) == Tr2.ItemFunc then fv = fv.func end
-                            local cls = pvm2.classof(fv)
-                            if cls ~= Tr2.FuncLocal and cls ~= Tr2.FuncExport
-                               and cls ~= Tr2.FuncLocalContract and cls ~= Tr2.FuncExportContract then
-                                local issue = res.issues and res.issues[1]
-                                error((issue and issue.message) or "moon.func header body did not parse as a function implementation", 2)
+                            if type(out) ~= "table" or out.kind ~= "func" then
+                                error("moon.func header body did not produce a function implementation", 2)
                             end
-                            local new_params = {}
-                            local new_result = fv.result
-                            for pi = 1, #(fv.params or {}) do
-                                local pp = fv.params[pi]
-                                new_params[pi] = setmetatable({ kind = "param", name = pp.name,
-                                    type = api.type_from_asdl(pp.ty, pp.name), decl = pp }, {})
-                            end
-                            local out = setmetatable({ kind = "func", session = default_session, T = T2,
-                                name = fv.name, params = new_params, result = api.type_from_asdl(new_result, fv.name),
-                                func = fv, item = Tr2.ItemFunc(fv), visibility = "export",
-                                _api = api, _session = default_session }, CallableFunc)
-                            if used_values ~= nil then out._dep_values = used_values end
                             return out
                         elseif type(arg) == "table" then
                             -- Bindings override: merge and return new header

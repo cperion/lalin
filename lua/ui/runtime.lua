@@ -127,6 +127,12 @@ local function run_common(driver, opts, want_report, g, p, c)
     local KDragSource = View.KDragSource
     local KDropTarget = View.KDropTarget
     local KDropSlot = View.KDropSlot
+    local KFocusScope = View.KFocusScope
+    local KEndFocusScope = View.KEndFocusScope
+    local KPushLayer = View.KPushLayer
+    local KPopLayer = View.KPopLayer
+    local KOverlay = View.KOverlay
+    local KModalBarrier = View.KModalBarrier
 
     local tx_x, tx_y = 0, 0
     local tx_stack_x, tx_stack_y = {}, {}
@@ -147,13 +153,19 @@ local function run_common(driver, opts, want_report, g, p, c)
     local cursor_id = Core.NoId
     local cursor = Style.CursorDefault
     local scroll_id = Core.NoId
-    local collect_hits = want_report and opts.collect_hits or false
     local hits = want_report and {} or nil
     local focusables = want_report and {} or nil
     local scrollables = want_report and {} or nil
     local drag_sources = want_report and {} or nil
     local drop_targets = want_report and {} or nil
     local drop_slots = want_report and {} or nil
+    local hit_stack = want_report and {} or nil
+    local layers = want_report and {} or nil
+    local overlays = want_report and {} or nil
+    local modal_barriers = want_report and {} or nil
+    local focus_scopes = want_report and {} or nil
+    local focus_scope_stack = want_report and {} or nil
+    local layer_stack = want_report and {} or nil
 
     for _, op in g, p, c do
         local kind = op.kind
@@ -277,9 +289,9 @@ local function run_common(driver, opts, want_report, g, p, c)
                 local abs_y = tx_y + op.y
                 local ix, iy, iw, ih = rect_intersect(abs_x, abs_y, op.w, op.h, clip_x[clip_top], clip_y[clip_top], clip_w[clip_top], clip_h[clip_top])
                 if ix ~= nil then
-                    if collect_hits then
-                        hits[#hits + 1] = T.Interact.HitBox(op.id, ix, iy, iw, ih)
-                    end
+                    local box = T.Interact.HitBox(op.id, ix, iy, iw, ih)
+                    hits[#hits + 1] = box
+                    hit_stack[#hit_stack + 1] = box
                     if pointer_inside_xywh(pointer_x, pointer_y, ix, iy, iw, ih) then
                         hover_id = op.id
                     end
@@ -337,6 +349,95 @@ local function run_common(driver, opts, want_report, g, p, c)
                     drop_slots[#drop_slots + 1] = T.Interact.DropSlotBox(op.id, ix, iy, iw, ih)
                 end
             end
+
+        elseif kind == KFocusScope then
+            if want_report then
+                focus_scope_stack[#focus_scope_stack + 1] = {
+                    id = op.id,
+                    first_slot = #focusables + 1,
+                    policy = T.Interact.FocusWrap,
+                }
+            end
+
+        elseif kind == KEndFocusScope then
+            if want_report then
+                local scope = focus_scope_stack[#focus_scope_stack]
+                focus_scope_stack[#focus_scope_stack] = nil
+                if scope ~= nil then
+                    focus_scopes[#focus_scopes + 1] = T.Interact.FocusScopeBox(
+                        scope.id,
+                        scope.policy,
+                        scope.first_slot,
+                        #focusables
+                    )
+                end
+            end
+
+        elseif kind == KPushLayer then
+            if want_report then
+                local abs_x = tx_x + op.x
+                local abs_y = tx_y + op.y
+                local ix, iy, iw, ih = rect_intersect(abs_x, abs_y, op.w, op.h, clip_x[clip_top], clip_y[clip_top], clip_w[clip_top], clip_h[clip_top])
+                layer_stack[#layer_stack + 1] = op.id
+                if ix ~= nil then
+                    layers[#layers + 1] = T.Interact.LayerBox(
+                        op.id,
+                        T.Interact.LayerOverlay,
+                        op.dx or #layer_stack,
+                        ix,
+                        iy,
+                        iw,
+                        ih
+                    )
+                end
+            end
+
+        elseif kind == KPopLayer then
+            if want_report then
+                layer_stack[#layer_stack] = nil
+            end
+
+        elseif kind == KOverlay then
+            if want_report then
+                local abs_x = tx_x + op.x
+                local abs_y = tx_y + op.y
+                local ix, iy, iw, ih = rect_intersect(abs_x, abs_y, op.w, op.h, clip_x[clip_top], clip_y[clip_top], clip_w[clip_top], clip_h[clip_top])
+                if ix ~= nil then
+                    overlays[#overlays + 1] = T.Interact.OverlayBox(
+                        op.id,
+                        Core.NoId,
+                        T.Interact.PlaceAuto,
+                        false,
+                        ix,
+                        iy,
+                        iw,
+                        ih
+                    )
+                end
+            end
+
+        elseif kind == KModalBarrier then
+            if want_report then
+                local abs_x = tx_x + op.x
+                local abs_y = tx_y + op.y
+                local ix, iy, iw, ih = rect_intersect(abs_x, abs_y, op.w, op.h, clip_x[clip_top], clip_y[clip_top], clip_w[clip_top], clip_h[clip_top])
+                if ix ~= nil then
+                    modal_barriers[#modal_barriers + 1] = T.Interact.ModalBarrierBox(op.id, ix, iy, iw, ih)
+                    if pointer_inside_xywh(pointer_x, pointer_y, ix, iy, iw, ih) then
+                        hover_id = Core.NoId
+                        cursor_id = Core.NoId
+                        cursor = Style.CursorDefault
+                        scroll_id = Core.NoId
+                        hits = {}
+                        hit_stack = {}
+                        focusables = {}
+                        scrollables = {}
+                        drag_sources = {}
+                        drop_targets = {}
+                        drop_slots = {}
+                    end
+                end
+            end
         end
     end
 
@@ -357,7 +458,12 @@ local function run_common(driver, opts, want_report, g, p, c)
             scrollables,
             drag_sources,
             drop_targets,
-            drop_slots
+            drop_slots,
+            hit_stack,
+            layers,
+            overlays,
+            modal_barriers,
+            focus_scopes
         )
     end
 end

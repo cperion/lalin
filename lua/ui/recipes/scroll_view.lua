@@ -338,9 +338,17 @@ return function(opts)
     local axis = opts.axis or Style.ScrollY
     local node = build_node(opts)
     local surfaces = { scroll = {} }
-    core.add_surface(surfaces.scroll, opts.id, { id = opts.id, axis = axis })
+    core.add_surface(surfaces.scroll, opts.id, { id = opts.id, axis = axis, widget_id = opts.id })
 
-    return core.bundle(node, surfaces, core.empty_route(), {
+    local function route_one(surfaces_, ui_event)
+        return core.widget.route_interact_event(surfaces_, ui_event)
+    end
+
+    return core.bundle(node, surfaces, route_one, {
+        kind = "scroll_view",
+        id = opts.id,
+        role = "scroll_panel",
+        label = opts.label,
         visible = function(self, report)
             local box = interact.scroll_box(report, opts.id)
             if box == nil then return false end

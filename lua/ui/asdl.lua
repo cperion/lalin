@@ -475,6 +475,20 @@ function M.Define(T)
                                   Auth.Node child) unique
                  | WithDropSlot(Core.Id id,
                                 Auth.Node child) unique
+                 | FocusScope(Core.Id id,
+                              Interact.FocusPolicy policy,
+                              Auth.Node child) unique
+                 | Layer(Core.Id id,
+                         Interact.LayerKind kind,
+                         number order,
+                         Auth.Node child) unique
+                 | Overlay(Core.Id id,
+                           Core.Id anchor_id,
+                           Interact.OverlayPlacement placement,
+                           boolean modal,
+                           Auth.Node child) unique
+                 | Modal(Core.Id id,
+                         Auth.Node child) unique
                  | Fragment(Auth.Node* children) unique
                  | Empty unique
         }
@@ -766,6 +780,20 @@ function M.Define(T)
                                   Layout.Node child) unique
                  | WithDropSlot(Core.Id id,
                                 Layout.Node child) unique
+                 | FocusScope(Core.Id id,
+                              Interact.FocusPolicy policy,
+                              Layout.Node child) unique
+                 | Layer(Core.Id id,
+                         Interact.LayerKind kind,
+                         number order,
+                         Layout.Node child) unique
+                 | Overlay(Core.Id id,
+                           Core.Id anchor_id,
+                           Interact.OverlayPlacement placement,
+                           boolean modal,
+                           Layout.Node child) unique
+                 | Modal(Core.Id id,
+                         Layout.Node child) unique
         }
 
         module View {
@@ -773,6 +801,8 @@ function M.Define(T)
                  | KPushScroll | KPopScroll
                  | KHit | KFocus | KCursor
                  | KDragSource | KDropTarget | KDropSlot
+                 | KFocusScope | KEndFocusScope
+                 | KPushLayer | KPopLayer | KOverlay | KModalBarrier
 
             Op = (View.Kind kind,
                   Core.Id id,
@@ -791,6 +821,39 @@ function M.Define(T)
 
         module Interact {
             Role = Passive | HitTarget | FocusTarget | ActivateTarget | EditTarget
+
+            Key = KeyUnknown(string name) unique
+                | KeyReturn
+                | KeyEscape
+                | KeyBackspace
+                | KeyTab
+                | KeySpace
+                | KeyDelete
+                | KeyHome
+                | KeyEnd
+                | KeyPageUp
+                | KeyPageDown
+                | KeyLeft
+                | KeyRight
+                | KeyUp
+                | KeyDown
+                | KeyChar(string value) unique
+
+            Modifiers = (boolean shift,
+                         boolean ctrl,
+                         boolean alt,
+                         boolean meta) unique
+
+            FocusDirection = FocusForward | FocusBackward
+            FocusPolicy = FocusWrap | FocusClamp | FocusTrap | FocusPassthrough
+
+            LayerKind = LayerBase | LayerOverlay | LayerPopup | LayerTooltip | LayerModal | LayerDragPreview
+            OverlayPlacement = PlaceAuto | PlaceAbove | PlaceBelow | PlaceLeft | PlaceRight | PlaceCenter
+
+            Capture = NoCapture
+                    | Captured(Core.Id id,
+                               number start_x,
+                               number start_y) unique
 
             Hover = NoHover
                   | Hovered(Core.Id id) unique
@@ -853,6 +916,34 @@ function M.Define(T)
                            number w,
                            number h) unique
 
+            LayerBox = (Core.Id id,
+                        Interact.LayerKind kind,
+                        number order,
+                        number x,
+                        number y,
+                        number w,
+                        number h) unique
+
+            OverlayBox = (Core.Id id,
+                          Core.Id anchor_id,
+                          Interact.OverlayPlacement placement,
+                          boolean modal,
+                          number x,
+                          number y,
+                          number w,
+                          number h) unique
+
+            ModalBarrierBox = (Core.Id id,
+                               number x,
+                               number y,
+                               number w,
+                               number h) unique
+
+            FocusScopeBox = (Core.Id id,
+                             Interact.FocusPolicy policy,
+                             number first_slot,
+                             number last_slot) unique
+
             Report = (Core.Id hover_id,
                       Core.Id cursor_id,
                       Style.Cursor cursor,
@@ -862,7 +953,12 @@ function M.Define(T)
                       Interact.ScrollBox* scrollables,
                       Interact.DragSourceBox* drag_sources,
                       Interact.DropTargetBox* drop_targets,
-                      Interact.DropSlotBox* drop_slots) unique
+                      Interact.DropSlotBox* drop_slots,
+                      Interact.HitBox* hit_stack,
+                      Interact.LayerBox* layers,
+                      Interact.OverlayBox* overlays,
+                      Interact.ModalBarrierBox* modal_barriers,
+                      Interact.FocusScopeBox* focus_scopes) unique
 
             Button = BtnLeft | BtnMiddle | BtnRight
 
@@ -873,10 +969,22 @@ function M.Define(T)
                 | PointerReleased(Interact.Button button,
                                   number x,
                                   number y) unique
+                | PointerCancelled
                 | WheelMoved(number dx,
                              number dy,
                              number x,
                              number y) unique
+                | KeyPressed(Interact.Key key,
+                             Interact.Modifiers mods,
+                             boolean repeat_) unique
+                | KeyReleased(Interact.Key key,
+                              Interact.Modifiers mods) unique
+                | TextInput(string text) unique
+                | TextEditing(string text,
+                              number start,
+                              number length) unique
+                | FocusMove(Interact.FocusDirection direction) unique
+                | FocusLost
                 | FocusNext
                 | FocusPrev
                 | ActivateFocus
@@ -890,6 +998,12 @@ function M.Define(T)
                   | ClearFocus
                   | SetPressed(Core.Id id) unique
                   | ClearPressed
+                  | SetCapture(Core.Id id,
+                               number start_x,
+                               number start_y) unique
+                  | ReleaseCapture(Core.Id id) unique
+                  | ClearCapture
+                  | CancelCapture(Core.Id id) unique
                   | SetDragPending(Core.Id source_id,
                                    number start_x,
                                    number start_y) unique
@@ -902,6 +1016,12 @@ function M.Define(T)
                                 Core.Id over_slot_id) unique
                   | ClearDrag
                   | Activate(Core.Id id) unique
+                  | InputText(Core.Id id,
+                              string text) unique
+                  | EditText(Core.Id id,
+                             string text,
+                             number start,
+                             number length) unique
                   | DragStarted(Core.Id source_id,
                                 number start_x,
                                 number start_y) unique
@@ -925,6 +1045,7 @@ function M.Define(T)
                      Core.Id hover_id,
                      Core.Id focus_id,
                      Core.Id pressed_id,
+                     Core.Id capture_id,
                      Interact.Drag drag,
                      Solve.Scroll* scrolls) unique
 

@@ -9,6 +9,9 @@ local M = {}
 
 local HUGE = math.huge
 local systems = {}
+local default_key = nil
+local fallback_allowed = true
+local last_fallback_reason = nil
 
 local SDL_TTF_SUBSTRING_DIRECTION_MASK = 0x000000FF
 local SDL_TTF_SUBSTRING_TEXT_START = 0x00000100
@@ -775,15 +778,33 @@ local function from_result(style, constraint, result)
     )
 end
 
+local function fallback_layout(style, constraint, reason, explicit)
+    last_fallback_reason = reason
+    if not explicit and not fallback_allowed then
+        error("ui.text: " .. reason, 3)
+    end
+    return M.approx_layout(style, constraint)
+end
+
 function M.layout(style, constraint, system_key)
+    if system_key == false then
+        return fallback_layout(style, constraint, "explicit approximate layout requested", true)
+    end
+
     if system_key == nil then
-        return M.approx_layout(style, constraint)
+        system_key = default_key
+    end
+
+    if system_key == nil then
+        return fallback_layout(style, constraint, "no text system key and no default text system registered", false)
     end
 
     local system = systems[system_key]
     if system == nil then
-        return M.approx_layout(style, constraint)
+        return fallback_layout(style, constraint, "unregistered text system key: " .. tostring(system_key), false)
     end
+
+    last_fallback_reason = nil
 
     local measure
     if type(system) == "function" then
@@ -798,6 +819,34 @@ function M.layout(style, constraint, system_key)
     return from_result(style, constraint, measure(style, constraint))
 end
 
+function M.layout_approx(style, constraint)
+    return M.approx_layout(style, constraint)
+end
+
+function M.set_default(key)
+    if key ~= nil and systems[key] == nil then
+        error("ui.text.set_default: unregistered key: " .. tostring(key), 2)
+    end
+    default_key = key
+    return key
+end
+
+function M.default_key()
+    return default_key
+end
+
+function M.set_fallback_allowed(allowed)
+    fallback_allowed = allowed == true
+end
+
+function M.fallback_allowed()
+    return fallback_allowed
+end
+
+function M.fallback_reason()
+    return last_fallback_reason
+end
+
 function M.register(key, system)
     local kt = type(key)
     if kt ~= "string" and kt ~= "number" and kt ~= "boolean" then
@@ -810,12 +859,29 @@ function M.register(key, system)
     return key
 end
 
+function M.register_default(key, system)
+    M.register(key, system)
+    default_key = key
+    return key
+end
+
 function M.unregister(key)
     systems[key] = nil
+    if default_key == key then
+        default_key = nil
+    end
 end
 
 function M.lookup(key)
     return systems[key]
+end
+
+function M.registered_keys()
+    local out = {}
+    for key in pairs(systems) do
+        out[#out + 1] = key
+    end
+    return out
 end
 
 M.T = T

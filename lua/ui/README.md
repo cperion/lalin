@@ -31,7 +31,9 @@ Current files:
 - `ui/render.lua` — streamed relative-op render phase (`Layout.Node × width × height × text_system? -> View.Op*`), with `render.root(node, env, text_system)` using only root viewport size; scroll is represented by streamed scroll ops rather than cache-keyed runtime env
 - `ui/runtime.lua` — direct `View.Op` consumer; executes the op stream through transform/clip/scroll stacks and simultaneously gathers hit/focus/cursor facts from the same stream as a typed `Interact.Report`
 - `ui/runtime_love.lua` — concrete Love2D executor backend for `ui.runtime`, including `KPaint` execution for Love lines/shapes/meshes/images
-- `ui/init.lua` — minimal facade exposing `ui.asdl`, `ui.T`, `ui.normalize`, `ui.resolve`, `ui.tw`, `ui.build`, `ui.widgets`, `ui.recipes`, `ui.compose`, `ui.paint`, `ui.text`, `ui.text_love`, `ui.text_nav`, `ui.text_edit`, `ui.text_field`, `ui.text_field_view`, `ui.input`, `ui.interact`, `ui.lower`, `ui.measure`, `ui.render`, `ui.runtime`, `ui.runtime_love`, `ui.session`, and `ui.backends`
+- `ui/runtime_sdl3.lua` — concrete SDL3 renderer/text backend, including rounded/capsule boxes and `KPaint` execution for lines, thick polylines, filled/stroked polygons, circles, arcs, Beziers, meshes, and texture images
+- `ui/theme.lua` — default Tailwind-like theme and environment helpers (`ui.theme.default()`, `ui.theme.env(...)`, `ui.theme.env_for_width(...)`) for demos/apps that do not want to hand-assemble `Theme.T` and `Env.Class`
+- `ui/init.lua` — minimal facade exposing `ui.asdl`, `ui.T`, `ui.normalize`, `ui.resolve`, `ui.tw`, `ui.build`, `ui.widgets`, `ui.recipes`, `ui.compose`, `ui.paint`, `ui.theme`, `ui.text`, `ui.text_love`, `ui.text_nav`, `ui.text_edit`, `ui.text_field`, `ui.text_field_view`, `ui.input`, `ui.interact`, `ui.lower`, `ui.measure`, `ui.render`, `ui.runtime`, `ui.runtime_love`, `ui.session`, and `ui.backends`
 - `ui.session` now supports timed dirty redraw scheduling via `request_redraw_after(...)`, `request_redraw_at(...)`, and `cancel_redraw(...)`, in addition to immediate redraw requests
 
 Current design fixes already applied:

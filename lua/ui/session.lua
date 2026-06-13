@@ -2,6 +2,8 @@ local text = require("ui.text")
 
 local M = {}
 
+local session_seq = 0
+
 local function first_window(session)
     local id = session.order[1]
     if id == nil then return nil end
@@ -61,6 +63,9 @@ function M.new(opts)
         error("ui.session.new requires opts.backend", 2)
     end
 
+    session_seq = session_seq + 1
+    local session_id = opts.session_id or session_seq
+
     local shared_text_system = opts.text_system
     local own_text_system = false
     local text_key = opts.text_key
@@ -80,8 +85,14 @@ function M.new(opts)
         own_text_system = shared_text_system ~= nil
     end
 
-    if text_key ~= nil and shared_text_system ~= nil then
+    if shared_text_system ~= nil and opts.register_text ~= false then
+        if text_key == nil then
+            text_key = "session:" .. tostring(session_id)
+        end
         text.register(text_key, shared_text_system)
+        if opts.set_default_text ~= false and text.set_default ~= nil then
+            text.set_default(text_key)
+        end
         text_registered = true
     end
 
@@ -91,6 +102,7 @@ function M.new(opts)
         order = {},
         text_system = shared_text_system,
         text_key = text_key,
+        text_system_key = text_key,
         redraw_mode = opts.redraw_mode or "always",
         frame_delay_ms = opts.frame_delay_ms or 8,
         running = false,
@@ -241,10 +253,15 @@ function M.new(opts)
             auto_close = spec.auto_close ~= false,
             on_init = spec.on_init or spec.init or opts.window_init,
             on_event = spec.on_event or spec.event or opts.window_event,
+            on_raw_ui = spec.on_raw_ui or spec.raw_ui or opts.window_raw_ui,
             on_update = spec.on_update or spec.update or opts.window_update,
             on_draw = spec.on_draw or spec.draw or opts.window_draw,
             on_close = spec.on_close or spec.close or opts.window_close,
             redraw_at_ms = nil,
+            text_system = spec.text_system ~= nil and spec.text_system or shared_text_system,
+            text_key = spec.text_key or text_key,
+            text_system_key = spec.text_key or text_key,
+            interact_model = spec.interact_model,
         }
 
         function window:request_redraw()
@@ -265,6 +282,24 @@ function M.new(opts)
 
         function window:close()
             return self.session:close_window(self.window_id)
+        end
+
+        function window:set_text_input(active)
+            if self.host ~= nil and self.host.set_text_input ~= nil then
+                return self.host:set_text_input(active)
+            end
+        end
+
+        function window:set_text_input_rect(x, y, w, h)
+            if self.host ~= nil and self.host.set_text_input_rect ~= nil then
+                return self.host:set_text_input_rect(x, y, w, h)
+            end
+        end
+
+        function window:dispatch_raw_ui(raw, ev)
+            if self.on_raw_ui ~= nil then
+                return self.on_raw_ui(self.session, self, raw, ev)
+            end
         end
 
         self.windows[window.window_id] = window
@@ -319,6 +354,24 @@ function M.new(opts)
 
         if window.on_event ~= nil then
             window.on_event(self, window, ev)
+        end
+
+        if self.windows[window.window_id] == nil then
+            return
+        end
+
+        if window.on_raw_ui ~= nil then
+            local raws = ev.raws
+            if raws ~= nil and #raws > 0 then
+                for i = 1, #raws do
+                    window:dispatch_raw_ui(raws[i], ev)
+                    if self.windows[window.window_id] == nil then
+                        return
+                    end
+                end
+            elseif ev.raw ~= nil then
+                window:dispatch_raw_ui(ev.raw, ev)
+            end
         end
 
         if self.windows[window.window_id] == nil then
@@ -460,6 +513,9 @@ function M.new(opts)
         end
 
         if text_registered then
+            if text.default_key ~= nil and text.default_key() == text_key and text.set_default ~= nil then
+                text.set_default(nil)
+            end
             text.unregister(text_key)
             text_registered = false
         end

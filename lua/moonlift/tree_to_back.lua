@@ -1575,8 +1575,16 @@ function M.Define(T)
         return Back.BackLitInt(tostring(raw))
     end
 
+    local memory_access_nonce = 0
     memory_info = function(access_text, mode)
-        return Back.BackMemoryInfo(Back.BackAccessId(access_text), Back.BackAlignUnknown, Back.BackDerefUnknown, Back.BackMayTrap, Back.BackMayNotMove, mode)
+        -- BackAccessId is a command-level memory-access definition, not a
+        -- stable source-location key.  The validator requires every access def
+        -- in a function to be unique; repeated loads/stores of the same lowered
+        -- source object (for example a view descriptor's data field across CFG
+        -- jumps) must therefore get distinct ids while preserving the readable
+        -- access tag for diagnostics.
+        memory_access_nonce = memory_access_nonce + 1
+        return Back.BackMemoryInfo(Back.BackAccessId(tostring(access_text) .. "#" .. tostring(memory_access_nonce)), Back.BackAlignUnknown, Back.BackDerefUnknown, Back.BackMayTrap, Back.BackMayNotMove, mode)
     end
 
     atomic_ordering = function(ordering)

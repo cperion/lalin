@@ -46,6 +46,12 @@ function M.Define(T, base)
         return nil
     end
 
+    local function expr_view_value(result)
+        local cls = pvm.classof(result)
+        if cls == Tr.TreeBackExprView or cls == Tr.TreeBackExprStridedView then return result end
+        return nil
+    end
+
     local function shape_scalar(scalar)
         return Back.BackShapeScalar(scalar)
     end
@@ -75,6 +81,10 @@ function M.Define(T, base)
         return Back.BackValId("ctl:" .. tostring(nonce) .. ":" .. region_id .. ":" .. label.name .. ":" .. name)
     end
 
+    local function is_view_type(ty)
+        return ty ~= nil and pvm.classof(ty) == Ty.TView
+    end
+
     local function block_id(nonce, region_id, label)
         return Back.BackBlockId("ctl:" .. tostring(nonce) .. ":" .. region_id .. ":" .. label.name)
     end
@@ -90,26 +100,41 @@ function M.Define(T, base)
     local function param_specs(nonce, region_id, label, params, is_entry)
         local specs = {}
         for i = 1, #params do
-            local scalar = base.back_scalar(params[i].ty)
-            if scalar == nil then
-                local ty_cls = pvm.classof(params[i].ty)
-                if ty_cls == Ty.TNamed or ty_cls == Ty.TArray or (base.elem_size ~= nil and base.elem_size(params[i].ty) ~= nil) then scalar = Back.BackPtr end
-            end
-            if scalar == nil then return nil, "control block param has non-scalar type: " .. tostring(label.name) .. "." .. tostring(params[i].name) end
             local class
             if is_entry then
                 class = Bn.BindingClassEntryBlockParam(region_id, label.name, i)
             else
                 class = Bn.BindingClassBlockParam(region_id, label.name, i)
             end
-            specs[#specs + 1] = {
-                name = params[i].name,
-                ty = params[i].ty,
-                scalar = scalar,
-                value = value_id(nonce, region_id, label, params[i].name),
-                binding = Bn.Binding(binding_id(region_id, label, params[i].name), params[i].name, params[i].ty, class),
-                init = params[i].init,
-            }
+            local binding = Bn.Binding(binding_id(region_id, label, params[i].name), params[i].name, params[i].ty, class)
+            if is_view_type(params[i].ty) then
+                specs[#specs + 1] = {
+                    kind = "view",
+                    name = params[i].name,
+                    ty = params[i].ty,
+                    data = value_id(nonce, region_id, label, params[i].name .. ":data"),
+                    len = value_id(nonce, region_id, label, params[i].name .. ":len"),
+                    stride = value_id(nonce, region_id, label, params[i].name .. ":stride"),
+                    binding = binding,
+                    init = params[i].init,
+                }
+            else
+                local scalar = base.back_scalar(params[i].ty)
+                if scalar == nil then
+                    local ty_cls = pvm.classof(params[i].ty)
+                    if ty_cls == Ty.TNamed or ty_cls == Ty.TArray or (base.elem_size ~= nil and base.elem_size(params[i].ty) ~= nil) then scalar = Back.BackPtr end
+                end
+                if scalar == nil then return nil, "control block param has non-scalar type: " .. tostring(label.name) .. "." .. tostring(params[i].name) end
+                specs[#specs + 1] = {
+                    kind = "scalar",
+                    name = params[i].name,
+                    ty = params[i].ty,
+                    scalar = scalar,
+                    value = value_id(nonce, region_id, label, params[i].name),
+                    binding = binding,
+                    init = params[i].init,
+                }
+            end
         end
         return specs, nil
     end
@@ -119,7 +144,14 @@ function M.Define(T, base)
         for i = 1, #outside_locals do locals[#locals + 1] = outside_locals[i] end
         local out = base.env_with_locals(env, locals)
         for i = 1, #specs do
-            out = base.env_add(out, specs[i].binding, specs[i].value, specs[i].scalar)
+            if specs[i].kind == "view" then
+                local locals = {}
+                for j = 1, #out.locals do locals[#locals + 1] = out.locals[j] end
+                locals[#locals + 1] = Tr.TreeBackStridedViewLocal(specs[i].binding, specs[i].data, specs[i].len, specs[i].stride)
+                out = Tr.TreeBackEnv(locals, out.next_value, out.next_block, out.ret)
+            else
+                out = base.env_add(out, specs[i].binding, specs[i].value, specs[i].scalar)
+            end
         end
         return out
     end
@@ -149,7 +181,14 @@ function M.Define(T, base)
                     "block:" .. tostring(records[i].label.name))
             end
             for j = 1, #records[i].params do
-                cmds[#cmds + 1] = Back.CmdAppendBlockParam(records[i].block, records[i].params[j].value, shape_scalar(records[i].params[j].scalar))
+                local param = records[i].params[j]
+                if param.kind == "view" then
+                    cmds[#cmds + 1] = Back.CmdAppendBlockParam(records[i].block, param.data, shape_scalar(Back.BackPtr))
+                    cmds[#cmds + 1] = Back.CmdAppendBlockParam(records[i].block, param.len, shape_scalar(Back.BackIndex))
+                    cmds[#cmds + 1] = Back.CmdAppendBlockParam(records[i].block, param.stride, shape_scalar(Back.BackIndex))
+                else
+                    cmds[#cmds + 1] = Back.CmdAppendBlockParam(records[i].block, param.value, shape_scalar(param.scalar))
+                end
             end
         end
         cmds[#cmds + 1] = Back.CmdCreateBlock(exit_block)
@@ -167,11 +206,28 @@ function M.Define(T, base)
         local current = env
         local args = {}
         for i = 1, #entry_record.params do
-            local init = expr_value(base.expr_to_back:one_uncached(entry_record.params[i].init, current))
-            if init == nil then return unsupported_stmt(current, cmds) end
-            append_all(cmds, init.cmds)
-            args[#args + 1] = init.value
-            current = init.env
+            local param = entry_record.params[i]
+            local lowered = base.expr_to_back:one_uncached(param.init, current)
+            if param.kind == "view" then
+                local init = expr_view_value(lowered)
+                if init == nil then return unsupported_stmt(current, cmds, "entry view param could not be lowered: " .. tostring(param.name)) end
+                append_all(cmds, init.cmds)
+                args[#args + 1] = init.data
+                args[#args + 1] = init.len
+                if pvm.classof(init) == Tr.TreeBackExprStridedView then args[#args + 1] = init.stride else
+                    local env_stride, stride = base.env_next_value(init.env, "ctl.view.stride")
+                    cmds[#cmds + 1] = Back.CmdConst(stride, Back.BackIndex, Back.BackLitInt("1"))
+                    init = Tr.TreeBackExprStridedView(env_stride, init.cmds, init.data, init.len, stride)
+                    args[#args + 1] = stride
+                end
+                current = init.env
+            else
+                local init = expr_value(lowered)
+                if init == nil then return unsupported_stmt(current, cmds) end
+                append_all(cmds, init.cmds)
+                args[#args + 1] = init.value
+                current = init.env
+            end
         end
         cmds[#cmds + 1] = Back.CmdJump(entry_record.block, args)
         return Tr.TreeBackStmtResult(current, cmds, Back.BackTerminates)
@@ -182,17 +238,38 @@ function M.Define(T, base)
         local args = {}
         local current = env
         for i = 1, #target.params do
-            local arg, err = find_jump_arg(stmt.args, target.params[i].name)
+            local param = target.params[i]
+            local arg, err = find_jump_arg(stmt.args, param.name)
             if arg == nil then return nil, current, cmds, err end
             local lowered = base.expr_to_back:one_uncached(arg.value, current)
-            local value = expr_value(lowered)
-            if value == nil then
-                local why = pvm.classof(lowered) == Tr.TreeBackExprUnsupported and lowered.reason or "unsupported expression"
-                return nil, current, cmds, "unsupported jump arg " .. target.params[i].name .. ": " .. tostring(why) .. " at " .. tostring(arg.value)
+            if param.kind == "view" then
+                local view = expr_view_value(lowered)
+                if view == nil then
+                    local why = pvm.classof(lowered) == Tr.TreeBackExprUnsupported and lowered.reason or "unsupported view expression"
+                    return nil, current, cmds, "unsupported jump arg " .. param.name .. ": " .. tostring(why) .. " at " .. tostring(arg.value)
+                end
+                append_all(cmds, view.cmds)
+                args[#args + 1] = view.data
+                args[#args + 1] = view.len
+                if pvm.classof(view) == Tr.TreeBackExprStridedView then
+                    args[#args + 1] = view.stride
+                    current = view.env
+                else
+                    local env_stride, stride = base.env_next_value(view.env, "ctl.view.stride")
+                    cmds[#cmds + 1] = Back.CmdConst(stride, Back.BackIndex, Back.BackLitInt("1"))
+                    args[#args + 1] = stride
+                    current = env_stride
+                end
+            else
+                local value = expr_value(lowered)
+                if value == nil then
+                    local why = pvm.classof(lowered) == Tr.TreeBackExprUnsupported and lowered.reason or "unsupported expression"
+                    return nil, current, cmds, "unsupported jump arg " .. param.name .. ": " .. tostring(why) .. " at " .. tostring(arg.value)
+                end
+                append_all(cmds, value.cmds)
+                args[#args + 1] = value.value
+                current = value.env
             end
-            append_all(cmds, value.cmds)
-            args[#args + 1] = value.value
-            current = value.env
         end
         return args, current, cmds, nil
     end
@@ -301,7 +378,11 @@ function M.Define(T, base)
                         pre_counters = phi_env
                         cmds[#cmds + 1] = Back.CmdAppendBlockParam(join_block, phi_val, shape_scalar(local_entry.ty))
                         for j = 1, #fallers do fallers[j].args[#fallers[j].args + 1] = vals[j] end
-                        out_locals[#out_locals + 1] = Tr.TreeBackScalarLocal(local_entry.binding, phi_val, local_entry.ty)
+                        -- Replace the cell's current SSA value at the join.
+                        -- Appending another local with the same binding makes
+                        -- env.locals grow on every nested/serial if and creates
+                        -- geometric phi explosion in large explicit CFGs.
+                        out_locals[i] = Tr.TreeBackScalarLocal(local_entry.binding, phi_val, local_entry.ty)
                     end
                 end
             end
@@ -369,7 +450,11 @@ function M.Define(T, base)
                     cmds[#cmds + 1] = Back.CmdAppendBlockParam(join_block, phi_val, shape_scalar(local_entry.ty))
                     phi_then_args[#phi_then_args + 1] = then_v
                     phi_else_args[#phi_else_args + 1] = else_v
-                    out_locals[#out_locals + 1] = Tr.TreeBackScalarLocal(local_entry.binding, phi_val, local_entry.ty)
+                    -- Replace the existing local binding at the join.  Keeping
+                    -- the old value and appending the phi duplicates bindings in
+                    -- env.locals, causing later if/switch joins to emit phis for
+                    -- every historical version of the same cell.
+                    out_locals[i] = Tr.TreeBackScalarLocal(local_entry.binding, phi_val, local_entry.ty)
                 end
             end
         end

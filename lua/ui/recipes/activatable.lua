@@ -49,16 +49,24 @@ return function(opts)
     local function route_one(surfaces_, ui_event)
         local cls = pvm.classof(ui_event)
         if cls == T.Interact.Activate then
-            if core.surface_lookup(surfaces_.activate, ui_event.id) ~= nil and opts.on_activate ~= nil then
-                return opts.on_activate(ui_event.id)
+            if core.surface_lookup(surfaces_.activate, ui_event.id) ~= nil then
+                if opts.on_activate ~= nil then return opts.on_activate(ui_event.id) end
+                return core.activate_event(ui_event.id)
             end
         elseif cls == T.Interact.SetFocus then
-            if core.surface_lookup(surfaces_.focus, ui_event.id) ~= nil and opts.on_focus ~= nil then
-                return opts.on_focus(ui_event.id)
+            if core.surface_lookup(surfaces_.focus, ui_event.id) ~= nil then
+                if opts.on_focus ~= nil then return opts.on_focus(ui_event.id) end
+                return core.focus_event(ui_event.id, true)
             end
         end
         return nil
     end
 
-    return core.bundle(node, surfaces, route_one)
+    return core.bundle(node, surfaces, route_one, {
+        kind = "activatable",
+        id = id,
+        disabled = disabled,
+        role = activatable and "button" or (focusable and "focus" or nil),
+        label = opts.label,
+    })
 end

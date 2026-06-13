@@ -14,6 +14,7 @@ typedef struct SDL_Window SDL_Window;
 typedef struct SDL_Renderer SDL_Renderer;
 typedef struct SDL_Cursor SDL_Cursor;
 typedef struct SDL_Texture SDL_Texture;
+typedef struct SDL_Surface SDL_Surface;
 typedef struct SDL_GPUTexture SDL_GPUTexture;
 typedef struct TTF_Font TTF_Font;
 typedef struct TTF_TextEngine TTF_TextEngine;
@@ -44,6 +45,12 @@ typedef struct SDL_FColor {
     float b;
     float a;
 } SDL_FColor;
+
+typedef struct SDL_Vertex {
+    SDL_FPoint position;
+    SDL_FColor color;
+    SDL_FPoint tex_coord;
+} SDL_Vertex;
 
 typedef struct SDL_Color {
     Uint8 r;
@@ -198,6 +205,14 @@ int SDL_RenderRect(SDL_Renderer *renderer, const SDL_FRect *rect);
 int SDL_RenderLine(SDL_Renderer *renderer, float x1, float y1, float x2, float y2);
 int SDL_RenderLines(SDL_Renderer *renderer, const SDL_FPoint *points, int count);
 int SDL_RenderPoints(SDL_Renderer *renderer, const SDL_FPoint *points, int count);
+int SDL_RenderGeometry(SDL_Renderer *renderer, SDL_Texture *texture, const SDL_Vertex *vertices, int num_vertices, const int *indices, int num_indices);
+int SDL_RenderTexture(SDL_Renderer *renderer, SDL_Texture *texture, const SDL_FRect *srcrect, const SDL_FRect *dstrect);
+SDL_Surface *SDL_LoadBMP(const char *file);
+void SDL_DestroySurface(SDL_Surface *surface);
+SDL_Texture *SDL_CreateTextureFromSurface(SDL_Renderer *renderer, SDL_Surface *surface);
+void SDL_DestroyTexture(SDL_Texture *texture);
+int SDL_SetTextureColorMod(SDL_Texture *texture, Uint8 r, Uint8 g, Uint8 b);
+int SDL_SetTextureAlphaMod(SDL_Texture *texture, Uint8 alpha);
 int SDL_SetRenderClipRect(SDL_Renderer *renderer, const SDL_Rect *rect);
 int SDL_RenderPresent(SDL_Renderer *renderer);
 int SDL_PollEvent(SDL_Event *event);
@@ -337,13 +352,17 @@ M.SDL_BUTTON_LEFT = 1
 M.SDLK_RETURN = 0x0000000d
 M.SDLK_ESCAPE = 0x0000001b
 M.SDLK_BACKSPACE = 0x00000008
+M.SDLK_TAB = 0x00000009
+M.SDLK_SPACE = 0x00000020
 M.SDLK_DELETE = 0x0000007f
 M.SDLK_A = 0x00000061
 M.SDLK_C = 0x00000063
 M.SDLK_V = 0x00000076
 M.SDLK_X = 0x00000078
 M.SDLK_HOME = 0x4000004a
+M.SDLK_PAGEUP = 0x4000004b
 M.SDLK_END = 0x4000004d
+M.SDLK_PAGEDOWN = 0x4000004e
 M.SDLK_RIGHT = 0x4000004f
 M.SDLK_LEFT = 0x40000050
 M.SDLK_DOWN = 0x40000051

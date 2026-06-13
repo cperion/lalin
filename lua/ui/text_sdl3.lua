@@ -10,6 +10,18 @@ local Layout = T.Layout
 
 local M = {}
 
+M.capabilities = {
+    text = {
+        measure = true,
+        draw = false,
+        hit_test = true,
+        ranges = true,
+        ime = true,
+        clipboard = true,
+        shaping = "sdl_ttf",
+    },
+}
+
 local function ensure_init()
     sdl3.ensure_ttf()
 end
@@ -126,7 +138,9 @@ function M.new(opts)
     local font_cache = {}
     local closed = false
 
-    local self = {}
+    local self = {
+        capabilities = M.capabilities,
+    }
 
     local function font_spec_for(style)
         local spec

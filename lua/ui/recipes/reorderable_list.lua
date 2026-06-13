@@ -68,13 +68,20 @@ return function(opts)
 
     local surfaces = {
         items = {},
+        activate = {},
+        focus = {},
         slots = {},
         drag_sources = {},
+        drag = {},
     }
     for i = 1, #built.row_infos do
         local info = built.row_infos[i]
+        info.widget_id = opts.id
         core.add_surface(surfaces.items, info.id, info)
+        if activatable then core.add_surface(surfaces.activate, info.id, info) end
+        if focusable then core.add_surface(surfaces.focus, info.id, info) end
         core.add_surface(surfaces.drag_sources, info.id, info)
+        core.add_surface(surfaces.drag, info.id, info)
     end
     for i = 1, #built.slot_infos do
         local info = built.slot_infos[i]
@@ -85,18 +92,21 @@ return function(opts)
         local cls = pvm.classof(ui_event)
         if cls == T.Interact.Activate and activatable then
             local info = core.surface_lookup(surfaces_.items, ui_event.id)
-            if info ~= nil and opts.on_select ~= nil then
-                return opts.on_select(info.key, info.item, info.ctx)
+            if info ~= nil then
+                if opts.on_select ~= nil then return opts.on_select(info.key, info.item, info.ctx) end
+                return core.event("select", opts.id, { id = info.id, key = info.key, item = info.item, index = info.index, ctx = info.ctx, source = ui_event })
             end
         elseif cls == T.Interact.SetFocus and focusable then
             local info = core.surface_lookup(surfaces_.items, ui_event.id)
-            if info ~= nil and opts.on_focus ~= nil then
-                return opts.on_focus(info.key, info.item, info.ctx)
+            if info ~= nil then
+                if opts.on_focus ~= nil then return opts.on_focus(info.key, info.item, info.ctx) end
+                return core.focus_event(opts.id, true, { id = info.id, key = info.key, item = info.item, index = info.index, ctx = info.ctx, source = ui_event })
             end
         elseif cls == T.Interact.DragStarted then
             local info = core.surface_lookup(surfaces_.drag_sources, ui_event.source_id)
-            if info ~= nil and opts.on_drag_start ~= nil then
-                return opts.on_drag_start(info.key, info.item, info.ctx)
+            if info ~= nil then
+                if opts.on_drag_start ~= nil then return opts.on_drag_start(info.key, info.item, info.ctx) end
+                return core.event("drag_start", opts.id, { id = info.id, key = info.key, item = info.item, index = info.index, ctx = info.ctx, source = ui_event })
             end
         elseif cls == T.Interact.DragMoved then
             local slot = core.surface_lookup(surfaces_.slots, ui_event.over_slot_id)
@@ -104,8 +114,11 @@ return function(opts)
                 if opts.on_drag_preview ~= nil then
                     return opts.on_drag_preview(slot.index)
                 end
+                return core.event("drag_preview", opts.id, { id = slot.id, index = slot.index, source = ui_event })
             elseif opts.on_drag_clear_preview ~= nil then
                 return opts.on_drag_clear_preview()
+            else
+                return core.event("drag_clear_preview", opts.id, { source = ui_event })
             end
         elseif cls == T.Interact.DragDropped then
             local slot = core.surface_lookup(surfaces_.slots, ui_event.over_slot_id)
@@ -113,16 +126,26 @@ return function(opts)
                 if opts.on_drag_commit ~= nil then
                     return opts.on_drag_commit(slot.index)
                 end
+                return core.event("drag_commit", opts.id, { id = slot.id, index = slot.index, source = ui_event })
             elseif opts.on_drag_cancel ~= nil then
                 return opts.on_drag_cancel()
+            else
+                return core.cancel_event(opts.id, { source = ui_event })
             end
         elseif cls == T.Interact.DragCancelled then
             if opts.on_drag_cancel ~= nil then
                 return opts.on_drag_cancel()
             end
+            return core.cancel_event(opts.id, { source = ui_event })
         end
         return nil
     end
 
-    return core.bundle(built.node, surfaces, route_one)
+    return core.bundle(built.node, surfaces, route_one, {
+        kind = "reorderable_list",
+        id = opts.id,
+        selected = opts.selected_key ~= nil,
+        role = "listbox",
+        label = opts.label,
+    })
 end

@@ -187,6 +187,53 @@ M.phase = pvm.phase("ui.render", {
         return pvm.concat_all(parts)
     end,
 
+    [Layout.FocusScope] = function(self, w, h, text_system, content_store)
+        local parts = {}
+        append_surface_op(parts, View.KFocusScope, self.id, w, h)
+        do
+            local g, p, c = render_trip(self.child, w, h, text_system, content_store)
+            parts[#parts + 1] = { g, p, c }
+        end
+        append_surface_op(parts, View.KEndFocusScope, self.id, w, h)
+        return pvm.concat_all(parts)
+    end,
+
+    [Layout.Layer] = function(self, w, h, text_system, content_store)
+        local parts = {}
+        parts[#parts + 1] = once_trip(make_op(View.KPushLayer, self.id, 0, 0, w, h, self.order or 0, 0, nil, nil, nil, nil, nil))
+        do
+            local g, p, c = render_trip(self.child, w, h, text_system, content_store)
+            parts[#parts + 1] = { g, p, c }
+        end
+        parts[#parts + 1] = once_trip(make_op(View.KPopLayer, self.id, 0, 0, w, h, self.order or 0, 0, nil, nil, nil, nil, nil))
+        return pvm.concat_all(parts)
+    end,
+
+    [Layout.Overlay] = function(self, w, h, text_system, content_store)
+        local parts = {}
+        append_surface_op(parts, View.KOverlay, self.id, w, h)
+        if self.modal then
+            append_surface_op(parts, View.KModalBarrier, self.id, w, h)
+        end
+        do
+            local g, p, c = render_trip(self.child, w, h, text_system, content_store)
+            parts[#parts + 1] = { g, p, c }
+        end
+        return pvm.concat_all(parts)
+    end,
+
+    [Layout.Modal] = function(self, w, h, text_system, content_store)
+        local parts = {}
+        append_surface_op(parts, View.KModalBarrier, self.id, w, h)
+        parts[#parts + 1] = once_trip(make_op(View.KPushLayer, self.id, 0, 0, w, h, 0, 0, nil, nil, nil, nil, nil))
+        do
+            local g, p, c = render_trip(self.child, w, h, text_system, content_store)
+            parts[#parts + 1] = { g, p, c }
+        end
+        parts[#parts + 1] = once_trip(make_op(View.KPopLayer, self.id, 0, 0, w, h, 0, 0, nil, nil, nil, nil, nil))
+        return pvm.concat_all(parts)
+    end,
+
     [Layout.Leaf] = function(self, w, h, text_system, content_store)
         local parts = {}
         append_box_ops(parts, self, w, h)

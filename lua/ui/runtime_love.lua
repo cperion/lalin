@@ -9,6 +9,51 @@ local Paint = T.Paint
 
 local M = {}
 
+M.capabilities = {
+	runtime = {
+		boxes = true,
+		rounded_boxes = true,
+		capsules = true,
+		clipping = true,
+		transforms = true,
+		scrolling = true,
+		layers = "generic",
+		cursors = true,
+		density = "love-logical",
+	},
+	paint = {
+		line = true,
+		polyline = true,
+		polygon_fill = true,
+		circle_fill = true,
+		arc = true,
+		bezier = true,
+		mesh = true,
+		image = "love-image-resolver",
+		stroke_width = true,
+	},
+	text = {
+		draw = true,
+		measure = "basic-love-font",
+		hit_test = false,
+		ranges = false,
+		ime = false,
+		clipboard = false,
+		shaping = "love-basic",
+	},
+	host = {
+		windows = "love-loop",
+		multi_window = false,
+		events = "love-callbacks",
+		text_input_rect = false,
+		clipboard = false,
+		timers = "love-timer",
+		hidpi = "love-managed",
+	},
+}
+
+M.support = "secondary"
+
 local function round(n)
 	if n >= 0 then
 		return math.floor(n + 0.5)
@@ -197,13 +242,29 @@ function M.new(opts)
 	local cursor_cache = {}
 	local resolve_image = opts.resolve_image
 	local images = opts.images
+	local missing_image = opts.missing_image or (opts.require_images and "error" or "skip")
+	local on_missing_image = opts.on_missing_image
 	local quad_cache = setmetatable({}, { __mode = "k" })
 	local mesh_cache = setmetatable({}, { __mode = "k" })
 	local bezier_cache = setmetatable({}, { __mode = "k" })
 
-	local self = {}
+	local self = {
+		capabilities = M.capabilities,
+	}
 
-	local function lookup_image(id)
+	local function report_missing_image(id, primitive)
+		local name = id ~= nil and id ~= Core.NoId and id.value or "<none>"
+		local msg = "ui.runtime_love: unresolved image " .. tostring(name) .. " for " .. tostring(primitive)
+		if type(on_missing_image) == "function" then
+			on_missing_image(msg, id, primitive)
+		end
+		if missing_image == "error" then
+			error(msg, 3)
+		end
+		return nil
+	end
+
+	local function lookup_image(id, primitive)
 		if id == nil or id == Core.NoId then
 			return nil
 		end
@@ -213,7 +274,11 @@ function M.new(opts)
 				return img
 			end
 		end
-		return images and images[id.value] or nil
+		local img = images and (images[id.value] or images[id]) or nil
+		if img ~= nil then
+			return img
+		end
+		return report_missing_image(id, primitive)
 	end
 
 	local function cached_quad(item, image)
@@ -408,14 +473,14 @@ function M.new(opts)
 				end
 			elseif cls == Paint.Mesh then
 				local mesh = cached_mesh(item)
-				local image = lookup_image(item.image_id)
+				local image = lookup_image(item.image_id, "mesh")
 				if image ~= nil then
 					mesh:setTexture(image)
 				end
 				love.graphics.setColor(rgba8_to_love(item.tint_rgba8, (item.opacity or 100) / 100))
 				love.graphics.draw(mesh, 0, 0)
 			elseif cls == Paint.Image then
-				local image = lookup_image(item.image_id)
+				local image = lookup_image(item.image_id, "image")
 				if image ~= nil then
 					local quad = cached_quad(item, image)
 					local sx = item.src_w ~= 0 and (w / item.src_w) or 1
@@ -448,6 +513,14 @@ function M.new(opts)
 
 	self.push_clip = self.push_clip_rect
 	self.pop_clip = self.pop_clip_rect
+
+	function self:push_layer(layer_info)
+		self.current_layer = layer_info
+	end
+
+	function self:pop_layer()
+		self.current_layer = nil
+	end
 
 	function self:set_cursor(name)
 		local love_name = cursor_from_string(name)
