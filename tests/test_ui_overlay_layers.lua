@@ -17,10 +17,10 @@ local W = ui.widgets
 
 local theme = ui.theme.default()
 local env = ui.theme.env { width = 300, height = 200 }
-local solve_env = T.Solve.Env(300, 200, {})
+local solve_env = T.Solve.Env(300, 200)
 
-local function op(kind, id, x, y, w, h, dx, dy, layer_kind, focus_policy, placement, modal, anchor_id, order)
-    return View.Op(kind, id or Core.NoId, x or 0, y or 0, w or 0, h or 0, dx or 0, dy or 0, nil, nil, nil, nil, nil, layer_kind, focus_policy, placement, modal, anchor_id, order)
+local function rect(x, y, w, h)
+    return Layout.Rect(x or 0, y or 0, w or 0, h or 0)
 end
 
 local function run_ops(ops, pointer_x, pointer_y)
@@ -31,7 +31,8 @@ end
 local function render_report(auth, pointer_x, pointer_y)
     local lowered = ui.lower.root(auth, theme, env)
     assert(#lowered == 1, "expected one lowered root")
-    local rg, rp, rc = ui.render.root(lowered[1], solve_env)
+    local solved = pvm.one(ui.solve.root(lowered[1].layout, solve_env))
+    local rg, rp, rc = ui.render.root(solved, lowered[1].decor)
     return ui.runtime.run(nil, { pointer_x = pointer_x, pointer_y = pointer_y }, rg, rp, rc)
 end
 
@@ -78,17 +79,17 @@ do
     local scope = ids.id("modal-scope")
     local scroll_id = ids.id("lower-scroll")
     local ops = {
-        op(View.KHit, lower, 0, 0, 200, 200),
-        op(View.KFocus, lower, 0, 0, 200, 30),
-        op(View.KPushScroll, scroll_id, 0, 0, 200, 100, 200, 400, nil, nil, nil, nil),
-        op(View.KPopScroll, scroll_id, 0, 0, 0, 0),
-        op(View.KPushLayer, ids.id("modal-layer"), 0, 0, 200, 200, 0, 0, Interact.LayerModal, nil, nil, nil, nil, 100),
-        op(View.KModalBarrier, barrier, 0, 0, 200, 200),
-        op(View.KFocusScope, scope, 0, 0, 200, 200, 0, 0, nil, Interact.FocusTrap),
-        op(View.KHit, modal, 50, 50, 80, 40),
-        op(View.KFocus, modal, 50, 50, 80, 40),
-        op(View.KEndFocusScope, scope, 0, 0, 200, 200),
-        op(View.KPopLayer, ids.id("modal-layer"), 0, 0, 200, 200),
+        View.Hit(lower, rect(0, 0, 200, 200)),
+        View.Focus(lower, rect(0, 0, 200, 30)),
+        View.PushScroll(scroll_id, rect(0, 0, 200, 100), Style.ScrollBoth, 200, 400),
+        View.PopScroll(scroll_id),
+        View.BeginLayer(ids.id("modal-layer"), Interact.LayerModal, 100, rect(0, 0, 200, 200)),
+        View.ModalBarrier(barrier, rect(0, 0, 200, 200)),
+        View.BeginFocusScope(scope, Interact.FocusTrap),
+        View.Hit(modal, rect(50, 50, 80, 40)),
+        View.Focus(modal, rect(50, 50, 80, 40)),
+        View.EndFocusScope(scope),
+        View.EndLayer(ids.id("modal-layer")),
     }
 
     local outside_child = run_ops(ops, 10, 10)
@@ -116,12 +117,12 @@ do
     local clipped = ids.id("clipped-hit")
     local overlay = ids.id("overlay-hit")
     local ops = {
-        op(View.KPushClipRect, ids.id("clip"), 0, 0, 20, 20),
-        op(View.KHit, clipped, 30, 30, 20, 20),
-        op(View.KPopClip, ids.id("clip"), 0, 0, 0, 0),
-        op(View.KPushLayer, ids.id("overlay-layer"), 0, 0, 100, 100, 0, 0, Interact.LayerOverlay, nil, nil, nil, nil, 50),
-        op(View.KHit, overlay, 30, 30, 20, 20),
-        op(View.KPopLayer, ids.id("overlay-layer"), 0, 0, 100, 100),
+        View.PushClipRect(ids.id("clip"), rect(0, 0, 20, 20)),
+        View.Hit(clipped, rect(30, 30, 20, 20)),
+        View.PopClip(ids.id("clip")),
+        View.BeginLayer(ids.id("overlay-layer"), Interact.LayerOverlay, 50, rect(0, 0, 100, 100)),
+        View.Hit(overlay, rect(30, 30, 20, 20)),
+        View.EndLayer(ids.id("overlay-layer")),
     }
     local report = run_ops(ops, 35, 35)
     assert(not has_id(report.hits, clipped), "clipped hit outside clip is not reported")
@@ -133,7 +134,7 @@ end
 -- cancel raw/event at the widget boundary; Escape follows the same close path.
 do
     local pop = W.popover.bundle { id = "filters-popover", open = true, content = "Filters" }
-    local cancel_ev = pop:route_ui_event(Interact.CancelPointer)
+    local cancel_ev = pop:route_ui_event(Interact.CancelInteraction)
     assert(cancel_ev ~= nil and cancel_ev.kind == "close" and cancel_ev.reason == "cancel", "popover routes outside cancel to close")
     local escape_ev = pop:route_ui_event(Interact.KeyPressed(Interact.KeyEscape, Interact.Modifiers(false, false, false, false), false))
     assert(escape_ev ~= nil and escape_ev.kind == "close" and escape_ev.reason == "escape", "popover routes Escape to close")

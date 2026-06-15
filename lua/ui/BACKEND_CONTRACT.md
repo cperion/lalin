@@ -60,7 +60,7 @@ driver:draw_text(x, y, w, h, text_layout)
 driver:draw_paint(x, y, w, h, paint_program_list)
 ```
 
-`draw_box`/`draw_rect` draws `Layout.BoxVisual` including background, border,
+`draw_box`/`draw_rect` draws `Resolved.BoxVisual` including background, border,
 shape, radius, and opacity. `draw_text` draws a measured `Layout.TextLayout`.
 `draw_paint` draws a typed `Paint.ProgramList`. Coordinates are absolute after
 generic runtime transform/scroll application. The driver must not apply semantic
@@ -133,7 +133,7 @@ windows unless that host window is still represented by typed UI/session state.
 
 ## 4. Box drawing contract
 
-`draw_box` receives `Layout.BoxVisual`:
+`draw_box` receives `Resolved.BoxVisual`:
 
 - `bg`: RGBA8 background color, transparent/zero means no fill;
 - `border_color`: RGBA8 border color, transparent/zero means no border;

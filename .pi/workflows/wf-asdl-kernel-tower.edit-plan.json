@@ -1,0 +1,133 @@
+{
+	"version": 1,
+	"workflowId": "wf-asdl-kernel-tower",
+	"planId": "main",
+	"revision": 1,
+	"nextId": 1,
+	"createdAt": "2026-06-15T13:43:46.949Z",
+	"updatedAt": "2026-06-15T13:43:46.949Z",
+	"tasks": [
+		{
+			"id": "T001",
+			"title": "Stabilize Flow/Mem/Kernel ASDL shape",
+			"detail": "Curate the newly added MoonFlow/MoonMem/MoonKernel schemas so they encode the intended tower: MoonCode residual semantics; MoonFlow code-CFG facts with edge roles; MoonMem code-level memory/provenance facts and proofs; MoonKernel backend-neutral executable kernel sites, streams, cores, and schedules. Keep MoonKernel independent from MoonVec. Verify schema smoke tests.",
+			"file": "lua/moonlift/schema",
+			"after": [],
+			"status": "done",
+			"order": 1,
+			"notes": [
+				"Completed initial schema curation: added Flow edge roles and bounds, Mem code contract proofs, KernelSite, KernelAssumption, target-neutral KernelLaneShape, explicit atomic/volatile/trap rejects. Schema smoke tests pass."
+			],
+			"createdAt": "2026-06-15T13:43:46.949Z",
+			"updatedAt": "2026-06-15T13:43:46.949Z"
+		},
+		{
+			"id": "T002",
+			"title": "Add schema constructor tests for Flow/Mem/Kernel",
+			"detail": "Extend schema tests to instantiate representative MoonFlow, MoonMem, and MoonKernel nodes, including a counted loop, memory access fact, kernel stream, kernel site, and planned scalar/vector schedules.",
+			"file": "tests/test_schema_core.lua",
+			"after": [],
+			"status": "todo",
+			"order": 2,
+			"notes": [],
+			"createdAt": "2026-06-15T13:43:46.949Z",
+			"updatedAt": "2026-06-15T13:43:46.949Z"
+		},
+		{
+			"id": "T003",
+			"title": "Extract code-level contract facts",
+			"detail": "Translate Tree.ContractFact values into MoonCode.CodeContractFactSet keyed by CodeFuncId/CodeValueId so MoonMem no longer depends on MoonTree contracts for proof provenance.",
+			"file": "lua/moonlift/tree_to_code.lua",
+			"after": [],
+			"status": "todo",
+			"order": 3,
+			"notes": [],
+			"createdAt": "2026-06-15T13:43:46.949Z",
+			"updatedAt": "2026-06-15T13:43:46.949Z"
+		},
+		{
+			"id": "T004",
+			"title": "Implement code_flow_facts phase",
+			"detail": "Analyze CodeFunc blocks, terminators, block params, and jump arguments to produce MoonFlow.FlowFactSet with edges, loop roles, counted domains, inductions, exits, ranges, and rejection facts.",
+			"file": "lua/moonlift/code_flow_facts.lua",
+			"after": [],
+			"status": "todo",
+			"order": 4,
+			"notes": [],
+			"createdAt": "2026-06-15T13:43:46.949Z",
+			"updatedAt": "2026-06-15T13:43:46.949Z"
+		},
+		{
+			"id": "T005",
+			"title": "Implement code_mem_facts phase",
+			"detail": "Analyze CodeInstLoad/Store/Atomics, CodePlace and CodeInstPtrOffset/view-derived access patterns to produce MoonMem.MemFactSet. Preserve volatility/atomics/trap semantics and validate consistency against CodeMemoryAccess.",
+			"file": "lua/moonlift/code_mem_facts.lua",
+			"after": [],
+			"status": "todo",
+			"order": 5,
+			"notes": [],
+			"createdAt": "2026-06-15T13:43:46.949Z",
+			"updatedAt": "2026-06-15T13:43:46.949Z"
+		},
+		{
+			"id": "T006",
+			"title": "Implement code_kernel_plan phase",
+			"detail": "Consume CodeModule, FlowFactSet, MemFactSet, and CodeContractFactSet to produce MoonKernel.KernelModulePlan with explicit rejections for unsupported loops/memory, scalar reductions/maps, pointer-stream schedules, and vector-eligible schedules.",
+			"file": "lua/moonlift/code_kernel_plan.lua",
+			"after": [],
+			"status": "todo",
+			"order": 6,
+			"notes": [],
+			"createdAt": "2026-06-15T13:43:46.949Z",
+			"updatedAt": "2026-06-15T13:43:46.949Z"
+		},
+		{
+			"id": "T007",
+			"title": "Migrate vector facts onto Kernel tower",
+			"detail": "Treat current vec_* modules as prototype material. Move generic loop/memory/reduction/safety concepts to Flow/Mem/Kernel and leave MoonVec for vector-specific lane ops/target facts/lowering only.",
+			"file": "lua/moonlift/vec_kernel_plan.lua",
+			"after": [],
+			"status": "todo",
+			"order": 7,
+			"notes": [],
+			"createdAt": "2026-06-15T13:43:46.949Z",
+			"updatedAt": "2026-06-15T13:43:46.949Z"
+		},
+		{
+			"id": "T008",
+			"title": "Add kernel validators",
+			"detail": "Validate Flow/Mem/Kernel facts for referential integrity, deterministic ordering, no contradictions with CodeMemoryAccess, coverage of KernelSite blocks, and explicit handling of atomic/volatile/trapping accesses.",
+			"file": "lua/moonlift/kernel_validate.lua",
+			"after": [],
+			"status": "todo",
+			"order": 8,
+			"notes": [],
+			"createdAt": "2026-06-15T13:43:46.949Z",
+			"updatedAt": "2026-06-15T13:43:46.949Z"
+		},
+		{
+			"id": "T009",
+			"title": "Project Kernel plans to C and Back",
+			"detail": "Add kernel_to_c and kernel_to_back projection paths so dumb backends consume canonical kernel forms. Keep code_to_c/code_to_back as residual MoonCode projections for uncovered code.",
+			"file": "lua/moonlift/kernel_to_c.lua",
+			"after": [],
+			"status": "todo",
+			"order": 9,
+			"notes": [],
+			"createdAt": "2026-06-15T13:43:46.949Z",
+			"updatedAt": "2026-06-15T13:43:46.949Z"
+		},
+		{
+			"id": "T010",
+			"title": "Integrate fact tower in frontend pipeline",
+			"detail": "Update frontend_pipeline to run code_validate -> code_flow_facts -> code_mem_facts -> code_kernel_plan -> kernel_validate before backend projection, with residual Code fallback and observable rejection facts instead of silent pcall fallback.",
+			"file": "lua/moonlift/frontend_pipeline.lua",
+			"after": [],
+			"status": "todo",
+			"order": 10,
+			"notes": [],
+			"createdAt": "2026-06-15T13:43:46.949Z",
+			"updatedAt": "2026-06-15T13:43:46.949Z"
+		}
+	]
+}

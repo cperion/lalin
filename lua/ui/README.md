@@ -23,9 +23,10 @@ for authoring, layout, render ops, interaction, text, and widgets.
 ```text
 Auth.Node
   -> lower.root / lower.phase
-  -> Layout.Node
-  -> measure / render
-  -> View.Op[]
+  -> Scene.Node(Layout.Node layout, Decor.Node decor)
+  -> measure(layout) / solve(layout)
+  -> render(Solve.Node, Decor.Node)
+  -> View.Op[] typed variants
   -> runtime.run(driver, opts, ops...)
   -> Interact.Report
   -> interact.step(model, report, raw)
@@ -34,8 +35,10 @@ Auth.Node
 ```
 
 Meaningful UI state is represented in ASDL (`ui.asdl`) rather than hidden in
-callbacks or backend-specific tables.  Backends consume the typed view op stream;
-widgets consume typed interaction events.
+callbacks or backend-specific tables. Style normalization splits layout spec from
+decor spec; layout, decor, solve, view, and interaction facts have separate typed
+products. Backends consume the typed view op stream; widgets consume typed
+interaction events.
 
 ## Public modules
 
@@ -43,7 +46,7 @@ Main facade: `local ui = require("ui")`.
 
 | Module | Purpose |
 | --- | --- |
-| `ui.asdl`, `ui.T` | Typed vocabulary for authored, layout, view, interaction, text, paint, theme, and session data. |
+| `ui.asdl`, `ui.T` | Typed vocabulary for authored, layout, decor, solve, view, interaction, text, paint, theme, and session data. |
 | `ui.build` | Immediate-mode builders for `Auth.Node`: boxes, text, text refs, paint, scroll, input, drag/drop, state, layers, overlays, focus scopes. |
 | `ui.tw`, `ui.normalize`, `ui.resolve`, `ui.theme` | Tailwind-like style authoring, normalization, concrete theme resolution, and default env/theme helpers. |
 | `ui.compose` | ASDL composition nouns such as panels/splits/workbench lowered to `Auth.Node`. |
@@ -51,7 +54,7 @@ Main facade: `local ui = require("ui")`.
 | `ui.state` | Canonical bridge from `Interact.Model`/`Interact.Report` plus app flags to `Style.State`. |
 | `ui.input` | Backend-independent key/modifier/raw input constructors and host-event conversion. |
 | `ui.lower` | Authored tree lowering with ID validation and interaction-derived style state (`lower.root`). |
-| `ui.measure`, `ui.plan`, `ui.render` | Layout measurement/planning and typed `View.Op` stream generation. |
+| `ui.measure`, `ui.plan`, `ui.solve`, `ui.render` | Layout measurement, shared planning, solved placement, and typed `View.Op` stream generation. |
 | `ui.runtime` | Backend-independent op consumer that draws through a driver and records interaction facts. |
 | `ui.interact` | Pure reducer from typed raw input + runtime report to semantic events and next interaction model. |
 | `ui.paint` | Typed paint programs: lines, polylines, polygons, circles, arcs, Beziers, meshes, images. |
@@ -104,16 +107,18 @@ local auth = b.box {
 
 local theme = ui.theme.default()
 local env = ui.theme.env { width = 640, height = 480 }
-local layout = ui.lower.root(auth, theme, env, {
+local scene = ui.lower.root(auth, theme, env, {
     model = interact_model,
     report = last_report,
-})
+})[1]
+local solved = pvm.one(ui.solve.root(scene.layout, ui.T.Solve.Env(640, 480), text_key))
+local g, p, c = ui.render.root(solved, scene.decor)
 ```
 
-Use `ui.render.root(...)` to produce ops, `ui.runtime.run(...)` with a backend
-driver to draw and collect a report, then feed host raw input through
-`ui.input`/`ui.interact.step(...)`.  Widget bundles route the resulting semantic
-UI events to app-level events:
+Use `ui.solve.root(...)` to produce placed layout, `ui.render.root(...)` to
+produce ops, `ui.runtime.run(...)` with a backend driver to draw and collect a
+report, then feed host raw input through `ui.input`/`ui.interact.step(...)`.
+Widget bundles route the resulting semantic UI events to app-level events:
 
 ```lua
 local next_model, ui_events = ui.interact.step(interact_model, last_report, raw)

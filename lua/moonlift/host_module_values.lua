@@ -344,6 +344,12 @@ function BundleValue:_lower_c_unit(opts)
         lower_opts.expand_env = O.ExpandEnv(region_frags, {}, O.FillSet({}), {}, {}, "")
     end
     local result = Pipeline.lower_module_to_c(self:to_asdl(), lower_opts)
+    if result.code_module == nil then error("bundle:emit_c lowering failed: MoonCode module was not produced", 2) end
+    if result.code_report ~= nil and #result.code_report.issues ~= 0 then
+        local msgs = {}
+        for i = 1, #result.code_report.issues do msgs[#msgs + 1] = tostring(result.code_report.issues[i]) end
+        error("bundle:emit_c code validation failed: " .. table.concat(msgs, "\n"), 2)
+    end
     if #result.c_report.issues ~= 0 then
         local msgs = {}
         for i = 1, #result.c_report.issues do msgs[#msgs + 1] = tostring(result.c_report.issues[i]) end

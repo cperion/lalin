@@ -35,18 +35,28 @@ local function round(n)
     return math.ceil(n - 0.5)
 end
 
+local function metrics(style)
+    return style.metrics or style
+end
+
+local function content(style)
+    return style.content or ""
+end
+
 local function approx_advance(style)
-    local advance = style.font_size * 0.6 + (style.tracking or 0)
+    local m = metrics(style)
+    local advance = m.font_size * 0.6 + (m.tracking or 0)
     if advance < 1 then advance = 1 end
     return advance
 end
 
 local function approx_baseline(style)
-    return round(style.font_size * 0.8)
+    return round(metrics(style).font_size * 0.8)
 end
 
 local function default_line_h(style)
-    return style.leading > 0 and style.leading or style.font_size
+    local m = metrics(style)
+    return m.leading > 0 and m.leading or m.font_size
 end
 
 local function line_width_approx(style, text)
@@ -207,8 +217,9 @@ local function normalize_run(style, run, fallback_text, line_h, baseline, defaul
     local start_i, finish_i = raw_run_byte_range(run, default_byte_start, default_byte_end)
 
     if type(run) == "string" then
+        local m = metrics(style)
         local w = line_width_approx(style, run)
-        return Layout.TextRun(0, 0, w, line_h, baseline, start_i, finish_i, style.font_id, style.font_size, style.font_weight, style.fg, run, {})
+        return Layout.TextRun(0, 0, w, line_h, baseline, start_i, finish_i, m.font_id, m.font_size, m.font_weight, run, {})
     end
 
     if type(run) ~= "table" then
@@ -225,10 +236,9 @@ local function normalize_run(style, run, fallback_text, line_h, baseline, defaul
         run_baseline,
         start_i,
         finish_i,
-        run.font_id or style.font_id,
-        run.font_size or style.font_size,
-        run.font_weight or style.font_weight,
-        run.fg or style.fg,
+        run.font_id or metrics(style).font_id,
+        run.font_size or metrics(style).font_size,
+        run.font_weight or metrics(style).font_weight,
         run_text,
         normalize_glyphs(run.glyphs)
     )
@@ -728,7 +738,7 @@ end
 function M.approx_layout(style, constraint)
     local leading = default_line_h(style)
     local baseline = approx_baseline(style)
-    local paragraphs = split_paragraphs(style.content or "")
+    local paragraphs = split_paragraphs(content(style))
     local line_texts = {}
     local measured_w = 0
 
@@ -763,7 +773,7 @@ local function from_result(style, constraint, result)
         error("ui.text: backend measure must return Layout.TextLayout or a table", 3)
     end
 
-    local lines = result.lines or { style.content or "" }
+    local lines = result.lines or { content(style) }
     local baseline = result.baseline or approx_baseline(style)
 
     return build_layout(

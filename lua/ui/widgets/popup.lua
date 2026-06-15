@@ -148,7 +148,7 @@ function M.route_one(surfaces, ui_event, bundle)
     end
     if id == nil then return nil end
 
-    if ui_event == Interact.CancelPointer or ui_event == Interact.FocusLost then
+    if ui_event == Interact.CancelInteraction or ui_event == Interact.FocusLost then
         return M.close_event(id, { source = ui_event, reason = ui_event == Interact.FocusLost and "focus_lost" or "cancel" })
     end
     if cls == Interact.KeyPressed and ui_event.key == Interact.KeyEscape then

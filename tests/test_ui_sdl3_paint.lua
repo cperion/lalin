@@ -4,6 +4,7 @@ local ui = require("ui")
 local sdl3 = ui.backends.sdl3
 local paint = ui.paint
 local Layout = ui.T.Layout
+local Resolved = ui.T.Resolved
 
 local host = sdl3.new_host {
     title = "ui SDL3 paint smoke",
@@ -15,7 +16,7 @@ local host = sdl3.new_host {
 local driver = host.driver
 host:begin_frame(0x020617ff)
 
-driver:draw_rect(8, 8, 80, 40, Layout.BoxVisual(
+driver:draw_rect(8, 8, 80, 40, Resolved.BoxVisual(
     0x0f172aff,
     0x38bdf8ff,
     3,
@@ -24,7 +25,7 @@ driver:draw_rect(8, 8, 80, 40, Layout.BoxVisual(
     100
 ))
 
-driver:draw_rect(96, 8, 80, 40, Layout.BoxVisual(
+driver:draw_rect(96, 8, 80, 40, Resolved.BoxVisual(
     0x1e293bff,
     0xf59e0bff,
     4,

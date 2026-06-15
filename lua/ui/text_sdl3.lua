@@ -142,16 +142,25 @@ function M.new(opts)
         capabilities = M.capabilities,
     }
 
+    local function metrics(style)
+        return style.metrics or style
+    end
+
+    local function content(style)
+        return style.content or ""
+    end
+
     local function font_spec_for(style)
+        local m = metrics(style)
         local spec
         if resolve_font ~= nil then
-            spec = resolve_font(style.font_id, style)
+            spec = resolve_font(m.font_id, m)
         else
-            spec = provided_fonts[style.font_id]
+            spec = provided_fonts[m.font_id]
         end
         spec = normalize_font_spec(spec, default_font)
         if spec == nil or spec.path == nil then
-            error("ui.text_sdl3: no font path for font_id=" .. tostring(style.font_id), 3)
+            error("ui.text_sdl3: no font path for font_id=" .. tostring(m.font_id), 3)
         end
         return spec
     end
@@ -161,7 +170,7 @@ function M.new(opts)
     end
 
     local function configure_font(font, style, spec)
-        ttf.TTF_SetFontWrapAlignment(font, normalize_align(style.align))
+        ttf.TTF_SetFontWrapAlignment(font, normalize_align(metrics(style).align))
 
         local language = spec.language
         if language == nil then language = default_language end
@@ -185,14 +194,14 @@ function M.new(opts)
     end
 
     local function get_font(style, spec, seen)
-        local key = font_cache_key(spec.path, style.font_size)
+        local key = font_cache_key(spec.path, metrics(style).font_size)
         local cached = font_cache[key]
         if cached ~= nil then
             configure_font(cached, style, spec)
             return cached
         end
 
-        local font = ttf.TTF_OpenFont(spec.path, style.font_size)
+        local font = ttf.TTF_OpenFont(spec.path, metrics(style).font_size)
         if font == nil then
             err("ui.text_sdl3: TTF_OpenFont failed for " .. tostring(spec.path))
         end
@@ -233,8 +242,8 @@ function M.new(opts)
 
         local spec = font_spec_for(style)
         local font = get_font(style, spec)
-        local content = style.content or ""
-        local text = ttf.TTF_CreateText(nil, font, content, #content)
+        local content_bytes = content(style)
+        local text = ttf.TTF_CreateText(nil, font, content_bytes, #content_bytes)
         if text == nil then
             err("ui.text_sdl3: TTF_CreateText failed")
         end
@@ -313,10 +322,9 @@ function M.new(opts)
                         baseline = ascent,
                         byte_start = 0,
                         byte_end = 0,
-                        font_id = style.font_id,
-                        font_size = style.font_size,
-                        font_weight = style.font_weight,
-                        fg = style.fg,
+                        font_id = metrics(style).font_id,
+                        font_size = metrics(style).font_size,
+                        font_weight = metrics(style).font_weight,
                         text = "",
                         glyphs = {},
                     },
@@ -337,7 +345,7 @@ function M.new(opts)
             if h <= 0 then h = line_skip end
             local byte_start = tonumber(sub.offset)
             local byte_end = byte_start + tonumber(sub.length)
-            local line_text = read_text_bytes(style.content or "", byte_start, tonumber(sub.length))
+            local line_text = read_text_bytes(content(style), byte_start, tonumber(sub.length))
             local w = string_size(font, line_text)
             lines[#lines + 1] = {
                 x = x,
@@ -357,10 +365,9 @@ function M.new(opts)
                         baseline = ascent,
                         byte_start = byte_start,
                         byte_end = byte_end,
-                        font_id = style.font_id,
-                        font_size = style.font_size,
-                        font_weight = style.font_weight,
-                        fg = style.fg,
+                        font_id = metrics(style).font_id,
+                        font_size = metrics(style).font_size,
+                        font_weight = metrics(style).font_weight,
                         text = line_text,
                         glyphs = {},
                     },
@@ -510,7 +517,7 @@ function M.new(opts)
 
         local lines = collect_lines(text, font, style)
         local clusters, boundaries
-        if (style.content or "") ~= "" then
+        if content(style) ~= "" then
             clusters, boundaries = collect_text_records(text)
             boundaries = adjust_boundary_positions(font, lines, boundaries)
         end
@@ -530,7 +537,7 @@ function M.new(opts)
     self.measure = measure_impl
 
     self.hit_test = function(style, constraint, x, y)
-        if (style.content or "") == "" then
+        if content(style) == "" then
             return {
                 flow = Layout.FlowUnknown,
                 cluster_index = 1,
@@ -540,7 +547,7 @@ function M.new(opts)
                 x = 0,
                 y = 0,
                 w = 0,
-                h = tonumber(ttf.TTF_GetFontLineSkip(get_font(style, font_spec_for(style)))) or style.leading or style.font_size,
+                h = tonumber(ttf.TTF_GetFontLineSkip(get_font(style, font_spec_for(style)))) or metrics(style).leading or metrics(style).font_size,
                 text_start = true,
                 line_start = true,
                 line_end = true,
@@ -560,7 +567,7 @@ function M.new(opts)
     end
 
     self.range_query = function(style, constraint, offset, length)
-        if (style.content or "") == "" then
+        if content(style) == "" then
             return {}
         end
         local text = build_text(style, constraint)

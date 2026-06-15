@@ -25,27 +25,26 @@ local function padding_spec(padding)
 end
 
 local function default_text_style(field)
-    return T.Layout.TextStyle(1, 16, 400, 0xffffffff, 0, 20, 0, text_field.text(field))
+    return T.Layout.TextMeasure(T.Resolved.TextMetrics(1, 16, 400, 0, 20, 0), text_field.text(field))
 end
 
 local function default_composition_style(field, base)
-    return T.Layout.TextStyle(
-        base.font_id,
-        base.font_size,
-        base.font_weight,
-        base.fg,
-        base.align,
-        base.leading,
-        base.tracking,
+    local metrics = base.metrics or base
+    return T.Layout.TextMeasure(
+        T.Resolved.TextMetrics(
+            metrics.font_id,
+            metrics.font_size,
+            metrics.font_weight,
+            metrics.align,
+            metrics.leading,
+            metrics.tracking
+        ),
         field.composition_text
     )
 end
 
-local function draw_text_layout(host, layout, x, y, wrap_w)
-    host.driver:draw_text(x, y, wrap_w or layout.measured_w, layout.measured_h, {
-        style = layout.style,
-        lines = layout.lines,
-    })
+local function draw_text_layout(host, layout, x, y, wrap_w, paint)
+    host.driver:draw_text(x, y, wrap_w or layout.measured_w, layout.measured_h, layout, paint or T.Resolved.TextPaint(0xffffffff))
 end
 
 function M.resolve(host, field, opts)
@@ -62,6 +61,8 @@ function M.resolve(host, field, opts)
     local inner_h = max0(outer_h - pad.top - pad.bottom)
 
     local text_style = opts.text_style and opts.text_style(field, opts) or default_text_style(field)
+    local text_paint = opts.text_paint or T.Resolved.TextPaint(opts.text_rgba8 or 0xffffffff)
+    local composition_paint = opts.composition_paint or T.Resolved.TextPaint(opts.composition_rgba8 or 0x93c5fdff)
     local wrap_w = inner_w
     if opts.wrap_width ~= nil then
         wrap_w = opts.wrap_width
@@ -116,6 +117,8 @@ function M.resolve(host, field, opts)
         padding = pad,
         wrap_w = wrap_w,
         text_style = text_style,
+        text_paint = text_paint,
+        composition_paint = composition_paint,
         layout = layout,
         composition_layout = composition_layout,
         blink_on = blink_on,
@@ -203,12 +206,12 @@ function M.draw(host, field, resolved, opts)
         host:fill_rect(resolved.content_x + r.x, resolved.content_y + r.y, r.w, r.h, selection_rgba8, selection_opacity)
     end
 
-    draw_text_layout(host, resolved.layout, resolved.content_x, resolved.content_y, resolved.inner_w)
+    draw_text_layout(host, resolved.layout, resolved.content_x, resolved.content_y, resolved.inner_w, resolved.text_paint)
 
     if resolved.composition_layout ~= nil and field.focused then
         local caret = text_field.caret_rect(resolved.layout, field, opts.caret_w or 1)
         if caret ~= nil then
-            draw_text_layout(host, resolved.composition_layout, resolved.content_x + caret.x, resolved.content_y + caret.y, resolved.inner_w)
+            draw_text_layout(host, resolved.composition_layout, resolved.content_x + caret.x, resolved.content_y + caret.y, resolved.inner_w, resolved.composition_paint)
             host:draw_line(
                 resolved.content_x + caret.x,
                 resolved.content_y + caret.y + resolved.composition_layout.baseline + 3,

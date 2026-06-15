@@ -836,6 +836,7 @@ function M.Define(T)
             return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), callee = one(expand_expr, self.callee, env), args = expand_exprs(self.args, env) }))
         end,
         [Tr.ExprCtor] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), args = expand_exprs(self.args, env) })) end,
+        [Tr.ExprNull] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), elem = one(expand_type, self.elem, env) })) end,
         [Tr.ExprLen] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), value = one(expand_expr, self.value, env) })) end,
         [Tr.ExprField] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), base = one(expand_expr, self.base, env) })) end,
         [Tr.ExprIndex] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), base = one(expand_index_base, self.base, env), index = one(expand_expr, self.index, env) })) end,
@@ -857,6 +858,9 @@ function M.Define(T)
         [Tr.ExprClosure] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), params = expand_params(self.params, env), result = one(expand_type, self.result, env), body = expand_stmts(self.body, env) })) end,
         [Tr.ExprView] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), view = one(expand_view, self.view, env) })) end,
         [Tr.ExprLoad] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), ty = one(expand_type, self.ty, env), addr = one(expand_expr, self.addr, env) })) end,
+        [Tr.ExprSizeOf] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), ty = one(expand_type, self.ty, env) })) end,
+        [Tr.ExprAlignOf] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), ty = one(expand_type, self.ty, env) })) end,
+        [Tr.ExprIsNull] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), value = one(expand_expr, self.value, env) })) end,
         [Tr.ExprAtomicLoad] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), ty = one(expand_type, self.ty, env), addr = one(expand_expr, self.addr, env) })) end,
         [Tr.ExprAtomicRmw] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), ty = one(expand_type, self.ty, env), addr = one(expand_expr, self.addr, env), value = one(expand_expr, self.value, env) })) end,
         [Tr.ExprAtomicCas] = function(self, env) return pvm.once(pvm.with(self, { h = one(expand_expr_header, self.h, env), ty = one(expand_type, self.ty, env), addr = one(expand_expr, self.addr, env), expected = one(expand_expr, self.expected, env), replacement = one(expand_expr, self.replacement, env) })) end,

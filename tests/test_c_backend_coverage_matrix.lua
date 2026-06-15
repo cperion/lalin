@@ -7,6 +7,8 @@ local Coverage = require("moonlift.c_coverage")
 local T = pvm.context(); Schema.Define(T)
 
 local VALID = Coverage.statuses()
+assert(VALID.supported and VALID.phase_unreachable and VALID.language_rejected, "missing final C coverage status")
+assert(VALID.backend_todo == nil, "backend_todo is not a valid final C coverage status")
 
 local function class_name(cls)
     return tostring(cls):match("Class%([^%.]+%.([^%)]+)%)") or tostring(cls)
@@ -80,7 +82,6 @@ local expected = {
 }
 
 local tables = Coverage.all_tables()
-local backend_todos = {}
 
 for sum_name, expected_variants in pairs(expected) do
     local actual = tables[sum_name]
@@ -88,15 +89,13 @@ for sum_name, expected_variants in pairs(expected) do
     for variant in pairs(expected_variants) do
         local c = actual[variant]
         assert(c ~= nil, "missing coverage classification for " .. sum_name .. "." .. variant)
-        assert(VALID[c.status], "invalid status for " .. sum_name .. "." .. variant .. ": " .. tostring(c.status))
+        assert(VALID[c.status], "invalid final tree_to_code/code_validate/code_to_c coverage status for " .. sum_name .. "." .. variant .. ": " .. tostring(c.status))
         assert(type(c.section) == "string" and c.section ~= "", "missing section for " .. sum_name .. "." .. variant)
         assert(type(c.reason) == "string" and c.reason ~= "", "missing reason for " .. sum_name .. "." .. variant)
         if c.status ~= "supported" then
             assert(c.reason:match("%S"), "empty diagnostic reason for " .. sum_name .. "." .. variant)
         end
-        if c.status == "backend_todo" then
-            backend_todos[#backend_todos + 1] = sum_name .. "." .. variant .. " — " .. c.reason
-        end
+        assert(c.status ~= "backend_todo", "backend_todo is not allowed after the MoonCode C pipeline switch: " .. sum_name .. "." .. variant)
     end
     for variant in pairs(actual) do
         assert(expected_variants[variant], "stale extra coverage classification for " .. sum_name .. "." .. variant)
@@ -111,12 +110,6 @@ end
 assert(Coverage.classification("Expr", "ExprDot").status == "phase_unreachable")
 assert(Coverage.assert_known("MoonType.Type", "TScalar").status == "supported")
 
-local final_mode = os.getenv("MOONLIFT_C_BACKEND_FINAL") == "1" or arg[1] == "--final-complete"
-if final_mode then
-    table.sort(backend_todos)
-    assert(#backend_todos == 0, "C backend final-completion mode found backend_todo rows:\n" .. table.concat(backend_todos, "\n"))
-elseif #backend_todos > 0 then
-    io.write("moonlift C backend coverage matrix has ", tostring(#backend_todos), " backend_todo row(s); run with MOONLIFT_C_BACKEND_FINAL=1 or --final-complete for the final completion gate\n")
-end
-
+-- There is no relaxed/non-final mode: the MoonCode C pipeline must classify every
+-- row as supported, phase_unreachable, or language_rejected.
 io.write("moonlift C backend coverage matrix ok\n")

@@ -31,12 +31,13 @@ local function report(opts)
     )
 end
 
-local function hit(name, x, y, w, h) return I.HitBox(id(name), x, y, w, h) end
-local function focus(name, slot, x, y, w, h) return I.FocusBox(id(name), slot, x, y, w, h) end
-local function scroll(name, axis, x, y, w, h, cw, ch) return I.ScrollBox(id(name), axis, x, y, w, h, cw, ch, math.max(0, cw - w), math.max(0, ch - h)) end
-local function drag_source(name, x, y, w, h) return I.DragSourceBox(id(name), x, y, w, h) end
-local function drop_target(name, x, y, w, h) return I.DropTargetBox(id(name), x, y, w, h) end
-local function drop_slot(name, x, y, w, h) return I.DropSlotBox(id(name), x, y, w, h) end
+local function rect(x, y, w, h) return T.Layout.Rect(x, y, w, h) end
+local function hit(name, x, y, w, h) return I.HitBox(id(name), rect(x, y, w, h)) end
+local function focus(name, slot, x, y, w, h) return I.FocusBox(id(name), slot, rect(x, y, w, h)) end
+local function scroll(name, axis, x, y, w, h, cw, ch) return I.ScrollBox(id(name), axis, rect(x, y, w, h), cw, ch, math.max(0, cw - w), math.max(0, ch - h)) end
+local function drag_source(name, x, y, w, h) return I.DragSourceBox(id(name), rect(x, y, w, h)) end
+local function drop_target(name, x, y, w, h) return I.DropTargetBox(id(name), rect(x, y, w, h)) end
+local function drop_slot(name, x, y, w, h) return I.DropSlotBox(id(name), rect(x, y, w, h)) end
 
 local function classes(events)
     local out = {}
@@ -191,10 +192,10 @@ do
         hit_stack = { hit("lower-button", 0, 0, 200, 200), hit("modal-button", 50, 50, 100, 40) },
         focusables = { focus("modal-button", 1, 50, 50, 100, 40) },
         layers = {
-            I.LayerBox(id("base-layer"), I.LayerBase, 0, 0, 0, 200, 200),
-            I.LayerBox(id("modal-layer"), I.LayerModal, 100, 40, 40, 120, 80),
+            I.LayerBox(id("base-layer"), I.LayerBase, 0, rect(0, 0, 200, 200)),
+            I.LayerBox(id("modal-layer"), I.LayerModal, 100, rect(40, 40, 120, 80)),
         },
-        modal_barriers = { I.ModalBarrierBox(id("modal-barrier"), 0, 0, 200, 200) },
+        modal_barriers = { I.ModalBarrierBox(id("modal-barrier"), rect(0, 0, 200, 200)) },
         focus_scopes = { I.FocusScopeBox(id("modal-scope"), I.FocusTrap, 1, 1) },
     }
     assert(#r.hit_stack == 2 and r.hit_stack[1].id == lower and r.hit_stack[2].id == modal, "report preserves hit stack for modal diagnostics")

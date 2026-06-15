@@ -1,6 +1,8 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local moon = require("moonlift")
+assert(moon.type_to_c == nil and moon.tree_to_c == nil, "public facade should not export retired direct Tree-to-C modules")
+assert(package.loaded["moonlift.type_to_c"] == nil and package.loaded["moonlift.tree_to_c"] == nil, "public facade should not import retired direct Tree-to-C modules")
 local pvm = require("moonlift.pvm")
 local Schema = require("moonlift.schema")
 local Pipeline = require("moonlift.frontend_pipeline")
@@ -50,9 +52,13 @@ f:close()
 os.remove(out_path)
 assert(written == c_src, "emit_c should write the same source it returns")
 syntax_check(c_src, "moon.emit_c output")
+local compiled_c_src = moon.compile_c(src, { name = "emit_c_api_compile" })
+assert(compiled_c_src == moon.emit_c(src, nil, "emit_c_api_compile", {}), "moon.compile_c without runner should return emitted C source")
 
 local T = pvm.context(); Schema.Define(T)
 local lowered = Pipeline.Define(T).parse_and_lower_c(src, { site = "emit_c_api_lower" })
+assert(lowered.code_module ~= nil, "C pipeline should expose MoonCode module")
+assert(lowered.code_report ~= nil and #lowered.code_report.issues == 0, "expected no Code validation issues from API source")
 assert(#lowered.c_report.issues == 0, "expected no validation issues from API source")
 assert(lowered.c_unit.target.pointer_bits == 64 and lowered.c_unit.target.index_bits == 64, "expected native64 default target")
 
@@ -75,5 +81,22 @@ bf:close()
 os.remove(bundle_path)
 assert(bundle_written == bundle_src, "BundleValue:c_source should write the returned source")
 syntax_check(bundle_src, "BundleValue:c_source output")
+local bundle_emit_src = bundle:emit_c()
+assert(bundle_emit_src:match("int32_t hosted_add%("), "BundleValue:emit_c should return C source")
+
+local M2 = moon.module("emit_c_export_bundle")
+M2:export_func("hosted_add_export", { moon.param("a", moon.i32), moon.param("b", moon.i32) }, moon.i32, function(fn)
+    fn:return_(moon.expr[[a + b]])
+end)
+local export_src = M2:emit_c()
+assert(export_src:match("int32_t hosted_add_export%("), "exported bundle C source should contain hosted_add_export")
+if exec_ok("command -v cc >/dev/null 2>&1") then
+    local compiled = M2:compile_c({ keep = false })
+    local add_export = compiled:get("hosted_add_export")
+    assert(add_export(20, 22) == 42, "BundleValue:compile_c exported function should execute")
+    compiled:free()
+else
+    io.write("cc not found; skipping BundleValue:compile_c execution check\n")
+end
 
 io.write("moonlift emit_c_api ok\n")

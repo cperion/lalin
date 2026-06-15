@@ -4,7 +4,8 @@ local ui = require("ui")
 local sdl3 = ui.backends.sdl3
 local input = ui.input
 local paint = ui.paint
-local Layout = ui.T.Layout
+local T = ui.T
+local Layout = T.Layout
 
 local function main()
     local host = sdl3.new_host {
@@ -34,7 +35,7 @@ local function main()
 
         host:begin_frame(0x020617ff)
 
-        d:draw_rect(24, 24, w - 48, h - 48, Layout.BoxVisual(
+        d:draw_rect(24, 24, w - 48, h - 48, T.Resolved.BoxVisual(
             0x0f172aff,
             0x334155ff,
             1,
@@ -42,7 +43,7 @@ local function main()
             18,
             100
         ))
-        d:draw_rect(48, 54, 250, 72, Layout.BoxVisual(
+        d:draw_rect(48, 54, 250, 72, T.Resolved.BoxVisual(
             0x1e293bff,
             0x38bdf8ff,
             3,
@@ -50,7 +51,7 @@ local function main()
             999,
             100
         ))
-        d:draw_rect(320, 54, 250, 72, Layout.BoxVisual(
+        d:draw_rect(320, 54, 250, 72, T.Resolved.BoxVisual(
             0x111827ff,
             0xf59e0bff,
             4,

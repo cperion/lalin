@@ -20,10 +20,8 @@ local RAW_CLASSES = {
     [Interact.TextEditing] = true,
     [Interact.FocusMove] = true,
     [Interact.FocusLost] = true,
-    [Interact.FocusNext] = true,
-    [Interact.FocusPrev] = true,
-    [Interact.ActivateFocus] = true,
-    [Interact.CancelPointer] = true,
+    [Interact.ActivateFocused] = true,
+    [Interact.CancelInteraction] = true,
 }
 
 local INPUT_EVENT_TYPES = {

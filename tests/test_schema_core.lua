@@ -93,4 +93,55 @@ local Ty = T.MoonType
 local i32 = Ty.TScalar(C.ScalarI32)
 assert(i32.scalar == C.ScalarI32)
 
+local Code = T.MoonCode
+local code_i32 = Code.CodeTyInt(32, Code.CodeSigned)
+local code_sig = Code.CodeSigId("sig:add_i32")
+local code_func = Code.CodeFuncId("fn:add_i32")
+local code_extern = Code.CodeExternId("extern:puts")
+local code_data = Code.CodeDataId("data:bytes")
+local code_global = Code.CodeGlobalId("global:counter")
+local code_block = Code.CodeBlockId("block:entry")
+local code_value = Code.CodeValueId("value:result")
+local code_origin = Code.CodeOriginGenerated("schema_core contract fixture")
+local code_inst = Code.CodeInst(
+    Code.CodeInstId("inst:const"),
+    Code.CodeInstConst(code_value, Code.CodeConstLiteral(code_i32, C.LitInt("1"))),
+    code_origin
+)
+assert(code_inst.id.text == "inst:const")
+assert(pvm.classof(code_inst.kind) == Code.CodeInstConst)
+local code_term = Code.CodeTerm(
+    Code.CodeTermId("term:return"),
+    Code.CodeTermReturn({ code_value }),
+    code_origin
+)
+assert(code_term.id.text == "term:return")
+local code_block_node = Code.CodeBlock(code_block, "entry", {}, { code_inst }, code_term, code_origin)
+assert(code_block_node.term.id == code_term.id)
+local access = Code.CodeMemoryAccess(Code.CodeMemoryRead, code_i32, 4, Code.CodeMayTrap, false, nil)
+assert(access.mode == Code.CodeMemoryRead)
+local reloc = Code.CodeReloc(Code.CodeRelocId("reloc:fn"), 0, Code.CodeGlobalRefFunc(code_func), 0, code_origin)
+local data = Code.CodeData(code_data, "bytes", Code.CodeLinkageLocal, 8, 8, { Code.CodeDataReloc(reloc) }, code_origin)
+local global = Code.CodeGlobal(code_global, "counter", code_i32, Code.CodeLinkageLocal, 4, 4, {}, code_origin)
+local direct_call = Code.CodeCallDirect(code_func)
+local extern_call = Code.CodeCallExtern(code_extern)
+local indirect_call = Code.CodeCallIndirect(Code.CodeValueId("value:callee"), code_sig)
+local closure_call = Code.CodeCallClosure(Code.CodeValueId("value:closure"), code_sig)
+assert(direct_call.func == code_func)
+assert(extern_call.extern == code_extern)
+assert(indirect_call.sig == code_sig)
+assert(closure_call.sig == code_sig)
+local module = Code.CodeModule(
+    Code.CodeModuleId("module:test"),
+    { Code.CodeSig(code_sig, { code_i32, code_i32 }, { code_i32 }) },
+    { Code.CodeTypeDecl(Code.CodeTypeId("type:i32"), "i32", code_i32, code_origin) },
+    { data },
+    { global },
+    { Code.CodeExtern(code_extern, "puts", "puts", code_sig, code_origin) },
+    { Code.CodeFunc(code_func, "add_i32", Code.CodeLinkageExport, code_sig, {}, {}, code_block, { code_block_node }, code_origin) },
+    code_origin
+)
+assert(module.id.text == "module:test")
+assert(module.data[1].id == code_data)
+
 io.write("moonlift schema_core ok\n")

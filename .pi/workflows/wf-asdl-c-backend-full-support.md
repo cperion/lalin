@@ -327,3 +327,156 @@ Updated main sidecar for workflow `wf-asdl-c-backend-full-support`:
 ## Notes
 - Next ready task is `T005` (`lua/moonlift/schema/code.asdl` MoonCode contract).
 - Pre-existing unrelated working tree changes remain untouched.
+
+## Worker Output — 2026-06-15 07:59:34
+
+## Completed
+- Claimed and completed `T005`: finalized `MoonCode` ASDL contract.
+- Claimed and completed `T006`: added backend-neutral CodeType helpers.
+- Updated edit-plan sidecar: now `6/35 done`; next ready task is `T007` (`code_validate.lua`).
+
+## Files Changed
+- `lua/moonlift/schema/code.asdl` - added stable inst/term ids, typed inst/term wrappers, data/reloc facts, memory modes, typed variant refs, imported C func ptr type, expanded validation issues.
+- `lua/moonlift/code_type.lua` - new MoonType → MoonCode CodeType mapping, CodeSig interning, target helpers, CodeType → CBackend type projection.
+- `tests/test_schema_core.lua` - added MoonCode contract fixture assertions.
+- `tests/test_code_type.lua` - new focused tests for CodeType helpers.
+- `.pi/workflows/wf-asdl-c-backend-full-support.edit-plan.json` - task status updates.
+
+## Tests Run
+- `luajit tests/test_code_type.lua`
+- `luajit tests/test_schema_core.lua`
+- `luajit tests/test_schema_compile_pipeline.lua`
+- `git diff --check -- lua/moonlift/schema/code.asdl lua/moonlift/code_type.lua tests/test_schema_core.lua tests/test_code_type.lua`
+- grep gate confirming `code_type.lua`/test do not require retired Tree-to-C modules.
+
+## Notes
+- Did not start `T007`; it is ready next.
+
+## Worker Output — 2026-06-15 08:14:29
+
+## Completed
+- Completed `T007`: implemented `lua/moonlift/code_validate.lua`.
+- Completed `T025`: added focused MoonCode validator tests.
+- Blocked `T008`: full `tree_to_code.lua` normalizer is too broad for this isolated pass and should be decomposed or handled as a dedicated batch.
+- Edit plan now has no ready tasks.
+
+## Files Changed
+- `lua/moonlift/code_validate.lua` - new MoonCode validator with:
+  - duplicate/missing id checks
+  - value def/use checks
+  - block transfer arity/type validation
+  - function/call signature validation
+  - place/global/local/data typing checks
+  - memory access validation
+  - data reloc target checks
+  - data/code pointer discipline
+  - collector integration and `CodeValidationReport`
+- `tests/test_code_validate.lua` - new direct MoonCode fixtures covering valid and invalid modules.
+- `.pi/workflows/wf-asdl-c-backend-full-support.edit-plan.json` - updated task statuses/evidence.
+
+## Tests Run
+- `luajit tests/test_code_validate.lua`
+- `luajit tests/test_code_type.lua`
+- `luajit tests/test_schema_core.lua`
+- `luajit tests/test_schema_compile_pipeline.lua`
+- `git diff --check -- lua/moonlift/code_validate.lua tests/test_code_validate.lua`
+
+## Notes
+- `T008` remains the blocker for subsequent `tree_to_code -> code_validate -> code_to_*` pipeline tasks.
+- Current edit plan: `8/35 done`, `1 blocked`, `0 ready`.
+
+## Worker Output — 2026-06-15 08:25:13
+
+## Completed
+- Claimed and completed `T008A`.
+- Added scalar `MoonTree -> MoonCode` scaffold:
+  - `Define(T).module(resolved_module, opts)`
+  - deterministic lowering ids/context
+  - CodeType/CodeSig integration
+  - function + single entry-block shell
+  - params as `CodeValueId`s
+  - scalar literals, refs, unary/binary/compare, machine casts, select
+  - `let` aliases and return terminators
+- Added validation coverage through:
+  `parse -> open_expand/open_validate -> closure_convert -> tree_typecheck -> sem_layout_resolve -> tree_to_code -> code_validate`
+
+## Files Changed
+- `lua/moonlift/tree_to_code.lua` - new scalar MoonCode lowering scaffold.
+- `tests/test_tree_to_code.lua` - new focused scalar lowering integration test.
+- `.pi/workflows/wf-asdl-c-backend-full-support.edit-plan.json` - marked `T008A` done.
+
+## Tests Run
+- `luajit tests/test_tree_to_code.lua`
+- `luajit tests/test_code_validate.lua`
+- `luajit tests/test_code_type.lua`
+- `luajit tests/test_schema_core.lua`
+- `luajit tests/test_schema_compile_pipeline.lua`
+- `git diff --check -- .pi/workflows/wf-asdl-c-backend-full-support.edit-plan.json lua/moonlift/tree_to_code.lua tests/test_tree_to_code.lua`
+- exact require-grep confirming `tree_to_code.lua` / test do not require retired C modules.
+
+## Notes
+- Did not start `T008B`; it is now ready and covers locals/places/memory/addressability, which is broader than the requested narrow scalar slice.
+
+## Worker Output — 2026-06-15 08:37:09
+
+## Completed
+- Claimed and completed `T008B`.
+- Extended `lua/moonlift/tree_to_code.lua` with:
+  - mutable/address-taken local pre-scan
+  - `CodeLocal` / `CodeResidence` creation
+  - `CodePlaceLocal`, `CodePlaceDeref`, `CodePlaceField`, `CodePlaceIndex`
+  - `CodeInstAddrOf`, `CodeInstLoad`, `CodeInstStore`
+  - basic `CodeMemoryAccess` alignment/trap facts
+- Added coverage for mutable locals, address-of/deref, pointer indexing, struct field places after layout resolution, stores, and loads.
+- Marked `T008B` complete in the edit plan.
+
+## Files Changed
+- `lua/moonlift/tree_to_code.lua` - locals/place/addressability/memory lowering slice.
+- `tests/test_tree_to_code.lua` - added place/memory tests and assertions.
+- `.pi/workflows/wf-asdl-c-backend-full-support.edit-plan.json` - task status update.
+
+## Tests Run
+- `luajit tests/test_tree_to_code.lua`
+- `luajit tests/test_code_validate.lua`
+- `luajit tests/test_code_type.lua`
+- `luajit tests/test_schema_core.lua`
+- `luajit tests/test_schema_compile_pipeline.lua`
+- `git diff --check -- lua/moonlift/tree_to_code.lua tests/test_tree_to_code.lua .pi/workflows/wf-asdl-c-backend-full-support.edit-plan.json`
+- grep check for forbidden retired C-module requires in touched files.
+
+## Notes
+- Next ready task is `T008C` (`tree_to_code` control regions to `CodeBlock`/`CodeTerm`).
+- I did not claim `T008C`; it is a broader control-flow pass and not cohesive with this locals/place/memory slice.
+
+## Worker Output — 2026-06-15 08:51:22
+
+## Completed
+- Completed `T008C`: normalized MoonTree control lowering to explicit `CodeBlock` / `CodeTerm`.
+- Completed `T008D`: added call/signature/extern/global-ref lowering.
+- Stopped before `T008E` because it is a broad remaining-coverage slice, not cohesive with this pass.
+
+## Files Changed
+- `lua/moonlift/tree_to_code.lua`
+  - Added multi-block CFG builder.
+  - Lowered `if`, `switch`, short-circuit logic, control regions, block params, jumps, yields, returns, traps/assert traps.
+  - Added direct/extern/indirect/closure call target lowering.
+  - Added function/extern signature precollection and `CodeExtern` emission.
+- `tests/test_tree_to_code.lua`
+  - Added focused tests for control CFG, switch default, counted loop/block params, expression-region yields, short-circuit logic, direct/extern/indirect calls.
+- `tests/test_code_validate.lua`
+  - Added missing-signature diagnostic assertion.
+- `.pi/workflows/wf-asdl-c-backend-full-support.edit-plan.json`
+  - Marked `T008C` and `T008D` complete.
+
+## Tests Run
+- `luajit tests/test_tree_to_code.lua`
+- `luajit tests/test_code_validate.lua`
+- `luajit tests/test_code_type.lua`
+- `luajit tests/test_schema_core.lua`
+- `luajit tests/test_schema_compile_pipeline.lua`
+- `git diff --check ...`
+- Forbidden retired-module require grep on touched files.
+
+## Notes
+- Next ready task: `T008E` — aggregates/views/data/atomics/variants remaining `tree_to_code` coverage.
+- No retired C modules were imported.

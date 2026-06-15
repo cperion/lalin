@@ -4,17 +4,21 @@ Status: canonical design and execution contract. This document is intentionally 
 than any single implementation pass. It defines what a **complete** C backend means, and
 now also records the ASDL/MoonCode refactor required to make that backend good by default.
 
-Current checkpoint — 2026-06-10:
+Current checkpoint — 2026-06-15:
 
 - schema source files in `lua/moonlift/schema/` have been converted from Lua-builder modules
   to compact `.asdl` text, loaded by `schema/init.lua`;
-- `MoonCode` exists as a proposed normalized typed SSA/control ASDL layer in
+- `MoonCode` is the active normalized typed SSA/control ASDL layer in
   `lua/moonlift/schema/code.asdl`;
-- the current C backend path is useful and has substantial coverage, including TCC/libtcc
-  and gcc execution, but the quality/performance work is not finished because lowering still
-  largely reconstructs SSA/control from nested MoonTree;
-- final full-support status requires rebasing backend projections on `MoonCode` or an
-  equivalent frontend-normalized layer, not merely optimizing the C printer.
+- public native lowering now routes through `tree_to_code -> code_validate -> code_to_back`,
+  not direct `tree_to_back`;
+- public C lowering now routes through `tree_to_code -> code_validate -> code_to_c ->
+  c_validate`, not direct `tree_to_c`;
+- the old direct Tree-to-C implementation modules have been deleted with no compatibility
+  shims: `tree_to_c`, `tree_control_to_c`, `type_to_c`, `c_places`, `c_residence`, `c_cfg`,
+  `c_data`, and `c_layout`;
+- the C path has MoonCode-driven TCC/libtcc/gcc coverage for a substantial subset, but final
+  full-support status still requires closing remaining feature gaps and final gate suites.
 
 The C backend is a PVM side projection.  The target architecture is:
 
@@ -33,8 +37,8 @@ source / .mlua
   -> .c
 ```
 
-The historical direct `tree_to_c` path may exist during migration, but it is not the final
-quality/full-support architecture.
+The historical direct `tree_to_c` path has been removed. There is no long-lived compatibility
+shim; `code_to_c` is the C projection entry point.
 
 It is not a WASM backend. It emits C. Support for wasm-capable toolchains, embedded
 platforms, and cross compilation is a consequence of C emission.
@@ -119,8 +123,8 @@ MoonTree resolved program
   -> deterministic C text
 ```
 
-The printer must stay dumb. Semantics belong in `tree_to_c`, `type_to_c`, helpers, and
-validation.
+The printer must stay dumb. Semantics belong in `tree_to_code`, `code_to_c`, CodeType helpers,
+and validation.
 
 ## 5. Required CBackend ASDL extensions beyond the scaffold
 
@@ -796,8 +800,8 @@ These rows are valid only as phase-boundary assertions:
 - open slots/fragments/import forms after open expansion;
 - `FuncOpen` / `ExternFuncOpen` after open expansion.
 
-The complete plan must add tests proving they are resolved before `tree_to_c`, or fail with
-an upstream diagnostic if a phase is skipped.
+The complete plan must add tests proving they are resolved before `tree_to_code`/`code_to_c`,
+or fail with an upstream diagnostic if a phase is skipped.
 
 ### 24.3 Real user-facing completion test
 
@@ -820,14 +824,15 @@ rows formerly described as `tree_to_c` work should be implemented through `tree_
    phase-unreachable, and language-level rejection.
 2. Add a coverage proof test that fails if any backend-TODO row remains.
 3. Add phase-boundary tests proving raw dots, surface casts, closure literals, open slots,
-   imports, and open funcs/externs cannot reach `tree_to_c` through the normal pipeline.
+   imports, and open funcs/externs cannot reach `tree_to_code`/`code_to_c` through the normal
+   pipeline.
 4. Design enum/tagged-union representation once: tag layout, payload layout, constructors,
    variant binds, variant switches, ABI, data initialization, and diagnostics.
 5. Implement enum/tagged-union typing/layout support needed by both native and C paths.
 6. Implement `ExprCtor` and variant switch lowering for `tree_to_back` to preserve native
    parity.
-7. Implement `ExprCtor` and variant switch lowering for `tree_to_c` using the same layout
-   and control semantics.
+7. Implement `ExprCtor` and variant switch lowering through `tree_to_code`/`code_to_c` using
+   the same layout and control semantics.
 8. Decide and implement the dynamic array-length policy: constant-fold before layout, or
    reject in typechecking before backend.
 9. Replace smoke-only C equivalence with a gcc compile/run feature corpus covering scalars,
@@ -896,7 +901,7 @@ Completion claims must therefore be milestone-specific:
 | target-aware C | pointer/index/layout/endian/freestanding profiles beyond hosted native64 | future |
 
 Historical sections above remain useful as design contract and coverage rationale, but the
-current final gate is now `MoonCode` + C-on-MoonCode + full compile/run corpus, not the older
+current final gate is now `MoonCode` + C-on-MoonCode + full compile/run corpus, not the deleted
 recursive `tree_to_c` implementation.
 
 ## 27. ASDL text schema refactor
@@ -1085,7 +1090,7 @@ A completion claim must name the milestone it satisfies.  The phrase "C backend 
 without a milestone means all final full-support gates above have passed.
 
 
-## 30. Retirement map: code that should disappear or become compatibility wrappers
+## 30. Retirement map: removed legacy direct Tree-to-C modules
 
 The refactor must make removal explicit.  A lot of current files exist because the first C
 backend tried to lower directly from nested `MoonTree` into `MoonC.CBackend*`.  That was a
@@ -1107,61 +1112,62 @@ These are user-facing or stable integration points and should survive the refact
 | `tests/test_c_gcc_harness.lua` | stay; compile/run harness is backend-path neutral |
 | `benchmarks/bench_c_vs_cranelift.lua` | stay; should measure the new path |
 
-### 30.2 Direct Tree-to-C lowering to retire
+### 30.2 Direct Tree-to-C lowering removed
 
-These files are old-approach implementation details and should not survive as primary code:
+These old-approach implementation details have been removed with no compatibility shims:
 
-| File | Reason | Final fate |
+| File | Why it was removed | Replacement / current owner |
 |---|---|---|
-| `lua/moonlift/tree_to_c.lua` | recursively lowers nested MoonTree, invents temps, mixes normalization/control/place/type concerns | replace with `tree_to_code.lua` + `code_to_c.lua`; delete or leave temporary shim that errors with migration guidance |
-| `lua/moonlift/tree_control_to_c.lua` | C-specific region lowering from source control blocks; duplicates logic that belongs in MoonCode terminators/block params | replace with MoonCode block/term generation in `tree_to_code.lua`; delete |
-| `lua/moonlift/type_to_c.lua` | projects `MoonType` directly to C types during recursive tree lowering | replace with `type_to_code.lua` and/or `code_type_to_c.lua`; keep only as short compatibility wrapper during migration |
-| `lua/moonlift/c_places.lua` | lowers `MoonTree.Place` directly into C places | replace by MoonCode `CodePlace` construction plus `code_to_c` place emission; delete |
-| `lua/moonlift/c_residence.lua` | computes C residence from MoonTree bindings locally inside C lowering | replace by MoonCode residence/local plan; delete or fold into `tree_to_code` |
-| `lua/moonlift/c_cfg.lua` | ad-hoc CFG builder for direct C lowering | replace by MoonCode blocks/terms and a small C emission scheduler; delete if `code_to_c` does not need it |
-| `lua/moonlift/c_data.lua` | lowers MoonTree static/data directly to C globals | replace by MoonCode globals/data initializers; keep only reusable byte/reloc helpers if any |
-| `lua/moonlift/c_layout.lua` | projects layout facts directly into CBackend declarations from the old path | keep only if it becomes `code_layout_to_c`; otherwise replace with CodeType/layout declaration emission |
+| `lua/moonlift/tree_to_c.lua` | recursively lowered nested MoonTree, invented temps, and mixed normalization/control/place/type concerns | `tree_to_code.lua` normalizes; `code_to_c.lua` projects MoonCode to CBackend |
+| `lua/moonlift/tree_control_to_c.lua` | C-specific source-region lowering duplicated logic that belongs in MoonCode block params/terminators | control lowering in `tree_to_code.lua`; C block/term emission in `code_to_c.lua` |
+| `lua/moonlift/type_to_c.lua` | projected MoonType directly to C during recursive lowering | `code_type.lua` maps MoonType -> CodeType and CodeType -> CBackend type spelling |
+| `lua/moonlift/c_places.lua` | lowered MoonTree places directly to C places | CodePlace construction in `tree_to_code.lua`; place emission in `code_to_c.lua` |
+| `lua/moonlift/c_residence.lua` | computed C residence from MoonTree bindings in the C lowerer | CodeLocal/CodeResidence facts from `tree_to_code.lua`, consumed by `code_to_c.lua` |
+| `lua/moonlift/c_cfg.lua` | ad-hoc direct-C CFG builder | MoonCode CodeBlock/CodeTerm plus `code_to_c` block/term lowering |
+| `lua/moonlift/c_data.lua` | lowered MoonTree static/data directly to C globals | CodeGlobal/CodeData lowering in `tree_to_code.lua` and C global/data projection in `code_to_c.lua` |
+| `lua/moonlift/c_layout.lua` | projected layout facts directly from the old Tree-to-C path | layout-backed CBackend declarations are synthesized from MoonCode/CodeType/layout facts in `code_to_c.lua` |
 
-Removal should happen only after equivalent tests pass on the new path.  Do not delete first
-and hope coverage catches it; migrate one public API route, then remove the old module and
-its old tests in the same commit.
+Deletion happened after the public native and C APIs were hard-switched to MoonCode and the
+focused CodeType/code_to_c/public API tests were rerouted.
 
-### 30.3 Tests to rename, replace, or delete
+### 30.3 Tests renamed, replaced, or rerouted
 
-Old tests are useful as behavior specs, but their names should stop advertising `tree_to_c`.
+Old behavior specs have been kept where useful, but test names/imports now refer to public APIs
+or MoonCode/code-to-C layers rather than the retired direct Tree-to-C modules.
 
-| Current tests | Fate |
+| Historical tests/imports | Current fate |
 |---|---|
-| `tests/test_tree_to_c_smoke.lua` | replace with `tests/test_code_to_c_smoke.lua` |
-| `tests/test_tree_to_c_semantics_smoke.lua` | replace with `tests/test_code_to_c_semantics_smoke.lua` |
-| `tests/test_tree_to_c_logic_select.lua` | replace with MoonCode/code-to-C condition/select tests |
-| `tests/test_tagged_union_to_c.lua` | keep behavior, reroute through `tree_to_code` + `code_to_c` |
-| direct imports of `tree_to_c`, `tree_control_to_c`, `type_to_c` in tests | remove; tests should exercise public API or new layer APIs |
+| `tests/test_tree_to_c_smoke.lua` | replaced by `tests/test_code_to_c_smoke.lua` |
+| `tests/test_tree_to_c_semantics_smoke.lua` | replaced by `tests/test_code_to_c_semantics_smoke.lua` |
+| `tests/test_tree_to_c_logic_select.lua` | replaced by `tests/test_code_to_c_logic_select.lua` |
+| `tests/test_tagged_union_to_c.lua` | kept as behavior coverage, rerouted through `tree_to_code` + `code_to_c` |
+| direct imports of `tree_to_c`, `tree_control_to_c`, `type_to_c` in tests | removed; tests exercise public API, CodeType, `tree_to_code`, or `code_to_c` |
 
 Tests for the public C API, TCC/libtcc runner, C helpers, C validation, and gcc feature
-corpus stay.  They should become the proof that removing the old lowering did not reduce
-support.
+corpus stay as proof that removing the old lowering did not reduce supported behavior.
 
 ### 30.4 Frontend/API migration points
 
-These call sites must be changed deliberately:
+These call sites have been changed deliberately:
 
-| File | Old dependency | New dependency |
+| File | Old dependency | Current dependency |
 |---|---|---|
-| `lua/moonlift/frontend_pipeline.lua` | `tree_to_c`, `type_to_c` | `tree_to_code`, `code_validate`, `code_to_c` |
-| `lua/moonlift/init.lua` | exports `type_to_c`, `tree_to_c` | export `tree_to_code`, `code_to_c` only if useful; keep public `emit_c` stable |
-| `lua/moonlift/host_module_values.lua` | bundle C emission assumes current CBackend unit path | call the new pipeline but preserve method names |
-| examples under `examples/c_backend/` | should continue unchanged | only internals change |
+| `lua/moonlift/frontend_pipeline.lua` | `tree_to_c`, `type_to_c` | `tree_to_code`, `code_validate`, `code_to_c`, `c_validate` |
+| `lua/moonlift/init.lua` | exported `type_to_c`, `tree_to_c` | public C APIs stay stable; MoonCode diagnostics are exposed where useful |
+| `lua/moonlift/host_module_values.lua` | bundle C emission assumed the old CBackend unit path | bundle methods call the new pipeline but keep method names |
+| examples under `examples/c_backend/` | user-facing scripts should continue unchanged | only internals changed |
 
-### 30.5 Deletion gate
+### 30.5 Deletion evidence / remaining grep gate
 
-A file from section 30.2 can be removed when all of these are true:
+The deletion gate has been crossed for section 30.2 modules:
 
-1. no production code requires it;
-2. no test requires it except tests intentionally checking the old shim/error;
-3. public `moon.emit_c` and `compile{backend="c"}` pass through the new path;
-4. feature corpus and semantic equivalence pass;
-5. benchmarks are updated to report the new phase names;
-6. this section is updated from "to retire" to "removed" with the commit/test evidence.
+1. production code no longer requires them;
+2. tests were rerouted to public APIs, CodeType, `tree_to_code`, or `code_to_c`;
+3. public `moon.emit_c`, `moon.compile_c`, `BundleValue:emit_c`, and `BundleValue:compile_c`
+   pass through the MoonCode C path;
+4. the C feature corpus and renamed code-to-C smoke tests run on the new path;
+5. benchmarks report `tree_to_code`, `code_validate`, `code_to_c`, and `code_to_back` phase names;
+6. this section records the modules as removed, not migration scaffolding.
 
-Until then, old-path modules should be treated as migration scaffolding, not architecture.
+The remaining final grep gate is documentation hygiene: references to the retired names should
+only appear as historical notes saying they were deleted/retired, not as active API guidance.

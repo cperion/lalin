@@ -44,16 +44,18 @@ local function one_layout(node, opts)
     return out[1]
 end
 
-local function box_visual(layout)
-    if layout.box ~= nil then return layout.box.box_visual end
-    if layout.child ~= nil then return box_visual(layout.child) end
-    error("layout has no box visual: " .. tostring(pvm.classof(layout)))
+local function box_visual(node)
+    if node.decor ~= nil then return box_visual(node.decor) end
+    if node.box ~= nil then return node.box.visual end
+    if node.child ~= nil then return box_visual(node.child) end
+    error("decor has no box visual: " .. tostring(pvm.classof(node)))
 end
 
-local function box_cursor(layout)
-    if layout.box ~= nil then return layout.box.cursor end
-    if layout.child ~= nil then return box_cursor(layout.child) end
-    error("layout has no box cursor: " .. tostring(pvm.classof(layout)))
+local function box_cursor(node)
+    if node.decor ~= nil then return box_cursor(node.decor) end
+    if node.box ~= nil then return node.box.cursor end
+    if node.child ~= nil then return box_cursor(node.child) end
+    error("decor has no box cursor: " .. tostring(pvm.classof(node)))
 end
 
 local function root_box(id_value)
@@ -155,8 +157,8 @@ do
         b.box { b.id("b"), tw.bg.slate[800], tw.selected { tw.bg.sky[600] } },
     }
     local layout = one_layout(node, { selected_ids = { a = true } })
-    local a_bg = layout.children[1].box.box_visual.bg
-    local b_bg = layout.children[2].box.box_visual.bg
+    local a_bg = layout.decor.children[1].box.visual.bg
+    local b_bg = layout.decor.children[2].box.visual.bg
     assert(a_bg ~= b_bg, "selected state applies only to selected ID")
 end
 

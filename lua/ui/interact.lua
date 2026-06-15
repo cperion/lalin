@@ -70,8 +70,11 @@ local function scroll_limits(report, id)
     if box == nil then return 0, 0 end
     local max_x = box.max_x
     local max_y = box.max_y
-    if max_x == nil then max_x = max0((box.content_w or box.w or 0) - (box.w or 0)) end
-    if max_y == nil then max_y = max0((box.content_h or box.h or 0) - (box.h or 0)) end
+    local viewport = box.viewport or box.rect
+    local w = viewport and viewport.w or box.w or 0
+    local h = viewport and viewport.h or box.h or 0
+    if max_x == nil then max_x = max0((box.content_w or w or 0) - (w or 0)) end
+    if max_y == nil then max_y = max0((box.content_h or h or 0) - (h or 0)) end
     return max_x, max_y
 end
 
@@ -83,7 +86,8 @@ local function clamp_scroll_position(report, id, x, y)
 end
 
 local function point_inside_box(box, x, y)
-    return x >= box.x and y >= box.y and x < box.x + box.w and y < box.y + box.h
+    local r = box.rect or box.viewport or box
+    return x >= r.x and y >= r.y and x < r.x + r.w and y < r.y + r.h
 end
 
 local function topmost_box_id(boxes, x, y)
@@ -262,7 +266,7 @@ local function classify_events(raw, model, report, opts)
                 events[#events + 1] = Interact.Activate(model.focus_id)
             end
         elseif raw.key == Interact.KeyEscape then
-            local cancel_events = classify_events(Interact.CancelPointer, model, report, opts)
+            local cancel_events = classify_events(Interact.CancelInteraction, model, report, opts)
             for i = 1, #cancel_events do events[#events + 1] = cancel_events[i] end
         end
         return events
@@ -307,30 +311,14 @@ local function classify_events(raw, model, report, opts)
         return events
     end
 
-    if raw == Interact.FocusNext then
-        local id = focus_move_id(report, model.focus_id, 1)
-        if id ~= Core.NoId then
-            events[#events + 1] = Interact.SetFocus(id)
-        end
-        return events
-    end
-
-    if raw == Interact.FocusPrev then
-        local id = focus_move_id(report, model.focus_id, -1)
-        if id ~= Core.NoId then
-            events[#events + 1] = Interact.SetFocus(id)
-        end
-        return events
-    end
-
-    if raw == Interact.ActivateFocus then
+    if raw == Interact.ActivateFocused then
         if model.focus_id ~= Core.NoId then
             events[#events + 1] = Interact.Activate(model.focus_id)
         end
         return events
     end
 
-    if raw == Interact.PointerCancelled or raw == Interact.CancelPointer then
+    if raw == Interact.PointerCancelled or raw == Interact.CancelInteraction then
         local drag = model.drag
         local drag_cls = pvm.classof(drag)
         if drag_cls == Interact.DragPending or drag_cls == Interact.Dragging then
@@ -396,19 +384,11 @@ local classify_phase = pvm.phase("ui.interact.classify", {
         return pvm.seq(classify_events(self, model, report, opts))
     end,
 
-    [Interact.FocusNext] = function(self, model, report, opts)
+    [Interact.ActivateFocused] = function(self, model, report, opts)
         return pvm.seq(classify_events(self, model, report, opts))
     end,
 
-    [Interact.FocusPrev] = function(self, model, report, opts)
-        return pvm.seq(classify_events(self, model, report, opts))
-    end,
-
-    [Interact.ActivateFocus] = function(self, model, report, opts)
-        return pvm.seq(classify_events(self, model, report, opts))
-    end,
-
-    [Interact.CancelPointer] = function(self, model, report, opts)
+    [Interact.CancelInteraction] = function(self, model, report, opts)
         return pvm.seq(classify_events(self, model, report, opts))
     end,
 }, {
@@ -427,10 +407,10 @@ local function update_scrolls(scrolls, id, dx, dy)
     local out = {}
     for j = 1, #scrolls do out[j] = scrolls[j] end
     if i == 0 then
-        out[#out + 1] = Solve.Scroll(id, dx, dy)
+        out[#out + 1] = Solve.ScrollPos(id, dx, dy)
     else
         local s = scrolls[i]
-        out[i] = Solve.Scroll(id, s.x + dx, s.y + dy)
+        out[i] = Solve.ScrollPos(id, s.x + dx, s.y + dy)
     end
     return out
 end
@@ -447,7 +427,7 @@ local function clamp_model_scrolls(model, report)
         local x, y = clamp_scroll_position(report, s.id, s.x, s.y)
         if x ~= s.x or y ~= s.y then
             changed = true
-            out[i] = Solve.Scroll(s.id, x, y)
+            out[i] = Solve.ScrollPos(s.id, x, y)
         else
             out[i] = s
         end
@@ -510,7 +490,7 @@ function M.model(opts)
         opts.hover_id or Core.NoId,
         opts.focus_id or Core.NoId,
         opts.pressed_id or Core.NoId,
-        opts.capture or ((opts.capture_id ~= nil and opts.capture_id ~= Core.NoId) and Interact.Captured(opts.capture_id, opts.capture_start_x or 0, opts.capture_start_y or 0) or Interact.NoCapture),
+        opts.capture or Interact.NoCapture,
         opts.drag or Interact.NoDrag,
         opts.scrolls or {}
     )
@@ -649,19 +629,19 @@ function M.focus_lost()
 end
 
 function M.focus_next()
-    return Interact.FocusNext
+    return Interact.FocusMove(Interact.FocusForward)
 end
 
 function M.focus_prev()
-    return Interact.FocusPrev
+    return Interact.FocusMove(Interact.FocusBackward)
 end
 
 function M.activate_focus()
-    return Interact.ActivateFocus
+    return Interact.ActivateFocused
 end
 
 function M.cancel_pointer()
-    return Interact.CancelPointer
+    return Interact.CancelInteraction
 end
 
 function M.button_from_love(button)

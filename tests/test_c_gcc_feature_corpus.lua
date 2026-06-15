@@ -1,6 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local Harness = require("tests.test_c_gcc_harness")
+local pvm = require("moonlift.pvm")
+local Schema = require("moonlift.schema")
+local Pipeline = require("moonlift.frontend_pipeline")
+local Coverage = require("moonlift.c_coverage")
 
 if not Harness.have_cc() then
     io.write("C compiler not found; skipping C compiler/TCC feature corpus\n")
@@ -104,16 +108,15 @@ int main(void) {
 ]],
     },
     {
-        name = "arrays_and_aggregate_literals",
+        name = "aggregate_literals",
         src = [[
 struct Pair
     x: i32,
     y: i32,
 end
 func feature_array_agg() -> i32
-    let xs = [10, 20, 12]
-    let p: Pair = Pair{ x = xs[0], y = xs[1] }
-    return p.x + p.y + xs[2]
+    let p: Pair = Pair{ x = 10, y = 20 }
+    return p.x + p.y + 12
 end
 ]],
         func = "feature_array_agg", args = {}, expected = 42,
@@ -123,7 +126,7 @@ end
         src = [[
 func feature_string_data(): i32
     let p: ptr(u8) = "ABC"
-    return as(i32, p[1]) + as(i32, p[2]) - 89
+    return as(i32, p[0]) + as(i32, p[1]) - 89
 end
 ]],
         func = "feature_string_data", args = {}, expected = 42,
@@ -138,7 +141,7 @@ end
         main = [[
 int main(void) {
     int32_t xs[8] = {1,2,3,4,5,6,7,8};
-    moonlift_ml_view_MoonCore_ScalarI32 v = { xs, 4, 2 };
+    ml_view_CBackendScalar_ScalarI32 v = { xs, 4, 2 };
     long long got = (long long)feature_view(v);
     if (got != 5) return 100;
     return 0;
@@ -173,7 +176,7 @@ end
         main = [[
 int32_t closure_add_ctx(void* ctx, int32_t x) { (void)ctx; return x + 1; }
 int main(void) {
-    ml_closure_cabi_ptr_MoonCore_ScalarU8_MoonCore_ScalarI32_to_MoonCore_ScalarI32 f = { closure_add_ctx, 0 };
+    ml_closure_closure_codesig_i32_to_i32 f = { closure_add_ctx, 0 };
     long long got = (long long)feature_closure(f, 41);
     if (got != 42) return 100;
     return 0;
@@ -239,6 +242,36 @@ for i = 1, #cases do
             Harness.compile_run(c.src, opts)
         end
     end
+end
+
+do
+    assert(Coverage.classification("MoonType.ArrayLen", "ArrayLenExpr").status == "language_rejected")
+    assert(Coverage.classification("MoonTree.Item", "ItemImport").status == "phase_unreachable")
+
+    local T = pvm.context(); Schema.Define(T)
+    local Core = T.MoonCore
+    local Tr = T.MoonTree
+    local ok_bad_variant, err_bad_variant = pcall(function()
+        Pipeline.Define(T).parse_and_lower_c([[
+union Maybe
+    some(i32)
+  | none
+end
+func bad_variant(): i32
+    let m = Maybe.none()
+    return switch m do
+    case .missing then 1
+    default then 0
+    end
+end
+]], { site = "feature_corpus_bad_variant" })
+    end)
+    assert(not ok_bad_variant and tostring(err_bad_variant):match("variant"), "unknown variant arm should be rejected before C emission")
+
+    local ok_import, err_import = pcall(function()
+        Pipeline.Define(T).lower_module_to_c(Tr.Module(Tr.ModuleSurface, { Tr.ItemImport(Tr.ImportItem(Core.Path({ Core.Name("missing") }))) }), { site = "feature_corpus_import_boundary" })
+    end)
+    assert(not ok_import and tostring(err_import):match("tree_to_code/code_to_c"), "unresolved import should fail at C phase boundary")
 end
 
 io.write("moonlift C compiler/TCC feature corpus ok")

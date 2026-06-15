@@ -124,14 +124,15 @@ function M.value_from_point(report_or_box, id, x, y, opts)
         box = find_hit(report_or_box, id)
     end
     if box == nil then return nil end
+    local r = box.rect or box.viewport or box
     local orientation = opts.orientation or DEFAULTS.orientation
     local t
     if orientation == "vertical" then
-        local h = box.h ~= 0 and box.h or 1
-        t = 1 - ((y - box.y) / h)
+        local h = r.h ~= 0 and r.h or 1
+        t = 1 - ((y - r.y) / h)
     else
-        local w = box.w ~= 0 and box.w or 1
-        t = (x - box.x) / w
+        local w = r.w ~= 0 and r.w or 1
+        t = (x - r.x) / w
     end
     return M.value_from_normalized(t, opts), t, box
 end

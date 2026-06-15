@@ -87,10 +87,11 @@ function M.local_point(report_or_box, id, x, y, opts)
         box = M.find_hit(report_or_box, id)
     end
     if box == nil then return nil end
-    local lx = (x or 0) - (box.x or 0)
-    local ly = (y or 0) - (box.y or 0)
-    local sx = opts.scale_x or ((opts.width and box.w and box.w ~= 0) and (opts.width / box.w) or 1)
-    local sy = opts.scale_y or ((opts.height and box.h and box.h ~= 0) and (opts.height / box.h) or 1)
+    local r = box.rect or box.viewport or box
+    local lx = (x or 0) - (r.x or 0)
+    local ly = (y or 0) - (r.y or 0)
+    local sx = opts.scale_x or ((opts.width and r.w and r.w ~= 0) and (opts.width / r.w) or 1)
+    local sy = opts.scale_y or ((opts.height and r.h and r.h ~= 0) and (opts.height / r.h) or 1)
     return lx * sx, ly * sy, box
 end
 
@@ -98,7 +99,8 @@ function M.contains(report_or_box, id, x, y)
     local box = report_or_box
     if report_or_box ~= nil and (report_or_box.hits ~= nil or report_or_box.hit_stack ~= nil) then box = M.find_hit(report_or_box, id) end
     if box == nil then return false end
-    return x >= box.x and y >= box.y and x < box.x + box.w and y < box.y + box.h
+    local r = box.rect or box.viewport or box
+    return x >= r.x and y >= r.y and x < r.x + r.w and y < r.y + r.h
 end
 
 function M.node(opts)

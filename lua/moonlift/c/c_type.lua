@@ -650,6 +650,11 @@ return function(A)
                 A.field "sig" "MoonC.CBackendFuncSigId",
                 A.variant_unique,
             },
+            A.variant "CBackendCallClosure" {
+                A.field "closure" "MoonC.CBackendAtom",
+                A.field "sig" "MoonC.CBackendFuncSigId",
+                A.variant_unique,
+            },
         },
 
         A.sum "CBackendStmt" {

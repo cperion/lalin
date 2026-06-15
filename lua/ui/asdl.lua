@@ -284,49 +284,52 @@ function M.Define(T)
                  | DRowStart(number value) unique
                  | DRowSpan(number value) unique
 
-            Spec = (Style.Display display,
-                    Style.Axis axis,
-                    Style.Wrap wrap,
-                    Style.Justify justify,
-                    Style.Items items,
-                    Style.Self self_align,
+            LayoutSpec = (Style.Display display,
+                          Style.Axis axis,
+                          Style.Wrap wrap,
+                          Style.Justify justify,
+                          Style.Items items,
+                          Style.Self self_align,
 
-                    Style.Padding padding,
-                    Style.Margin margin,
-                    Style.GapSpec gap,
+                          Style.Padding padding,
+                          Style.Margin margin,
+                          Style.GapSpec gap,
 
-                    Style.Length w,
-                    Style.Length h,
-                    Style.Length min_w,
-                    Style.Length max_w,
-                    Style.Length min_h,
-                    Style.Length max_h,
+                          Style.Length w,
+                          Style.Length h,
+                          Style.Length min_w,
+                          Style.Length max_w,
+                          Style.Length min_h,
+                          Style.Length max_h,
 
-                    number grow,
-                    number shrink,
-                    Style.Basis basis,
+                          number grow,
+                          number shrink,
+                          Style.Basis basis,
 
-                    Style.ColorRef fg,
-                    Style.ColorRef bg,
-                    Style.ColorRef border_color,
-                    Style.BorderW border_w,
-                    Style.Radius radius,
-                    Style.Opacity opacity,
+                          Style.FontSize font_size,
+                          Style.FontWeight font_weight,
+                          Style.TextAlign text_align,
+                          Style.Leading leading,
+                          Style.Tracking tracking,
 
-                    Style.FontSize font_size,
-                    Style.FontWeight font_weight,
-                    Style.TextAlign text_align,
-                    Style.Leading leading,
-                    Style.Tracking tracking,
+                          Style.Overflow overflow_x,
+                          Style.Overflow overflow_y,
 
-                    Style.Overflow overflow_x,
-                    Style.Overflow overflow_y,
-                    Style.Cursor cursor,
+                          Style.Track* cols,
+                          Style.Track* rows,
+                          Style.GapSpec grid_gap,
+                          Style.GridPlacement placement) unique
 
-                    Style.Track* cols,
-                    Style.Track* rows,
-                    Style.GapSpec grid_gap,
-                    Style.GridPlacement placement) unique
+            DecorSpec = (Style.ColorRef fg,
+                         Style.ColorRef bg,
+                         Style.ColorRef border_color,
+                         Style.BorderW border_w,
+                         Style.Radius radius,
+                         Style.Opacity opacity,
+                         Style.Cursor cursor) unique
+
+            Spec = (Style.LayoutSpec layout,
+                    Style.DecorSpec decor) unique
         }
 
         module Theme {
@@ -537,33 +540,65 @@ function M.Define(T)
         }
 
         module Resolved {
-            TextStyle = (number font_id,
-                         number font_size,
-                         number font_weight,
-                         number fg,
-                         number align,
-                         number leading,
-                         number tracking) unique
+            LayoutStyle = (Layout.Sizing w,
+                           Layout.Sizing h,
+                           Layout.Min min_w,
+                           Layout.Max max_w,
+                           Layout.Min min_h,
+                           Layout.Max max_h,
+                           number grow,
+                           number shrink,
+                           Layout.Basis basis,
+                           Layout.SelfAlign self_align,
+                           Layout.Edges padding,
+                           Layout.Margin margin,
+                           Layout.Overflow overflow_x,
+                           Layout.Overflow overflow_y) unique
+
+            BoxVisual = (number bg,
+                         number border_color,
+                         number border_w,
+                         Layout.Shape shape,
+                         number radius,
+                         number opacity) unique
+
+            TextMetrics = (number font_id,
+                           number font_size,
+                           number font_weight,
+                           number align,
+                           number leading,
+                           number tracking) unique
+
+            TextPaint = (number fg) unique
+
+            InteractionStyle = (Style.Cursor cursor) unique
 
             GridPlacement = (number col_start,
                              number col_span,
                              number row_start,
                              number row_span) unique
 
-            Style = (Style.Display display,
-                     Layout.Axis axis,
-                     Layout.Wrap wrap,
-                     Layout.MainAlign justify,
-                     Layout.CrossAlign items,
-                     Layout.BoxStyle box,
-                     Resolved.TextStyle text,
-                     Layout.Track* cols,
-                     Layout.Track* rows,
-                     number gap_x,
-                     number gap_y,
-                     number col_gap,
-                     number row_gap,
-                     Resolved.GridPlacement placement) unique
+            LayoutFacts = (Style.Display display,
+                           Layout.Axis axis,
+                           Layout.Wrap wrap,
+                           Layout.MainAlign justify,
+                           Layout.CrossAlign items,
+                           Resolved.LayoutStyle box,
+                           Resolved.TextMetrics text_metrics,
+                           Layout.Track* cols,
+                           Layout.Track* rows,
+                           number gap_x,
+                           number gap_y,
+                           number col_gap,
+                           number row_gap,
+                           Resolved.GridPlacement placement) unique
+
+            DecorFacts = (Resolved.BoxVisual visual,
+                          Resolved.TextPaint text_paint,
+                          Resolved.InteractionStyle interaction) unique
+
+            Facts = (Resolved.LayoutFacts layout,
+                     Resolved.DecorFacts decor) unique
         }
 
         module Layout {
@@ -612,30 +647,32 @@ function M.Define(T)
                       Layout.MarginVal bottom,
                       Layout.MarginVal left) unique
 
-            BoxVisual = (number bg,
-                         number border_color,
-                         number border_w,
-                         Layout.Shape shape,
-                         number radius,
-                         number opacity) unique
-
             Rect = (number x,
                     number y,
                     number w,
-                    number h)
+                    number h) unique
 
-            TextStyle = (number font_id,
-                         number font_size,
-                         number font_weight,
-                         number fg,
-                         number align,
-                         number leading,
-                         number tracking,
-                         string content)
+            BoxLayout = (Layout.Sizing w,
+                         Layout.Sizing h,
+                         Layout.Min min_w,
+                         Layout.Max max_w,
+                         Layout.Min min_h,
+                         Layout.Max max_h,
+                         number grow,
+                         number shrink,
+                         Layout.Basis basis,
+                         Layout.SelfAlign self_align,
+                         Layout.Edges padding,
+                         Layout.Margin margin,
+                         Layout.Overflow overflow_x,
+                         Layout.Overflow overflow_y) unique
 
-            TextSpec = TextLiteral(Layout.TextStyle style) unique
+            TextMeasure = (Resolved.TextMetrics metrics,
+                           string content) unique
+
+            TextSpec = TextLiteral(Layout.TextMeasure text) unique
                      | TextBinding(Core.Id content_id,
-                                   Resolved.TextStyle style) unique
+                                   Resolved.TextMetrics metrics) unique
 
             TextFlow = FlowUnknown | FlowLTR | FlowRTL | FlowTTB | FlowBTT
 
@@ -646,7 +683,7 @@ function M.Define(T)
                      number advance_x,
                      number advance_y,
                      number offset_x,
-                     number offset_y)
+                     number offset_y) unique
 
             TextRun = (number x,
                        number y,
@@ -658,9 +695,8 @@ function M.Define(T)
                        number font_id,
                        number font_size,
                        number font_weight,
-                       number fg,
                        string text,
-                       Layout.Glyph* glyphs)
+                       Layout.Glyph* glyphs) unique
 
             TextLine = (number x,
                         number y,
@@ -669,7 +705,7 @@ function M.Define(T)
                         number baseline,
                         number byte_start,
                         number byte_end,
-                        Layout.TextRun* runs)
+                        Layout.TextRun* runs) unique
 
             TextCluster = (Layout.TextFlow flow,
                            number cluster_index,
@@ -679,7 +715,7 @@ function M.Define(T)
                            number x,
                            number y,
                            number w,
-                           number h)
+                           number h) unique
 
             TextBoundary = (Layout.TextFlow flow,
                             number boundary_index,
@@ -692,38 +728,21 @@ function M.Define(T)
                             boolean text_start,
                             boolean line_start,
                             boolean line_end,
-                            boolean text_end)
+                            boolean text_end) unique
 
-            TextLayout = (Layout.TextStyle style,
+            TextLayout = (Layout.TextMeasure text,
                           number max_w,
                           number measured_w,
                           number measured_h,
                           number baseline,
                           Layout.TextLine* lines,
                           Layout.TextCluster* clusters,
-                          Layout.TextBoundary* boundaries)
+                          Layout.TextBoundary* boundaries) unique
 
             Track = TrackAuto
                   | TrackFr(number fr) unique
                   | TrackFixed(number px) unique
                   | TrackMinMax(number min_px, number max_px) unique
-
-            BoxStyle = (Layout.Sizing w,
-                        Layout.Sizing h,
-                        Layout.Min min_w,
-                        Layout.Max max_w,
-                        Layout.Min min_h,
-                        Layout.Max max_h,
-                        number grow,
-                        number shrink,
-                        Layout.Basis basis,
-                        Layout.SelfAlign self_align,
-                        Layout.Edges padding,
-                        Layout.Margin margin,
-                        Layout.BoxVisual box_visual,
-                        Layout.Overflow overflow_x,
-                        Layout.Overflow overflow_y,
-                        Style.Cursor cursor) unique
 
             GridItem = (Layout.Node node,
                         number col_start,
@@ -734,14 +753,14 @@ function M.Define(T)
                         Layout.CrossAlign row_align) unique
 
             Node = Flow(Core.Id id,
-                        Layout.BoxStyle box,
+                        Layout.BoxLayout box,
                         Layout.MainAlign justify,
                         Layout.CrossAlign items,
                         number gap_y,
                         Layout.Node* children) unique
 
                  | Flex(Core.Id id,
-                        Layout.BoxStyle box,
+                        Layout.BoxLayout box,
                         Layout.Axis axis,
                         Layout.Wrap wrap,
                         Layout.MainAlign justify,
@@ -751,7 +770,7 @@ function M.Define(T)
                         Layout.Node* children) unique
 
                  | Grid(Core.Id id,
-                        Layout.BoxStyle box,
+                        Layout.BoxLayout box,
                         Layout.Track* cols,
                         Layout.Track* rows,
                         number col_gap,
@@ -759,15 +778,14 @@ function M.Define(T)
                         Layout.GridItem* items) unique
 
                  | Leaf(Core.Id id,
-                        Layout.BoxStyle box,
+                        Layout.BoxLayout box,
                         Layout.TextSpec? text) unique
 
-                 | Paint(Core.Id id,
-                         Layout.BoxStyle box,
-                         Paint.ProgramList paint) unique
+                 | Canvas(Core.Id id,
+                          Layout.BoxLayout box) unique
 
                  | Scroll(Core.Id id,
-                          Layout.BoxStyle box,
+                          Layout.BoxLayout box,
                           Style.ScrollAxis axis,
                           Layout.Node child) unique
 
@@ -796,33 +814,169 @@ function M.Define(T)
                          Layout.Node child) unique
         }
 
-        module View {
-            Kind = KBox | KText | KPaint | KPushClipRect | KPopClip | KPushTx | KPopTx
-                 | KPushScroll | KPopScroll
-                 | KHit | KFocus | KCursor
-                 | KDragSource | KDropTarget | KDropSlot
-                 | KFocusScope | KEndFocusScope
-                 | KPushLayer | KPopLayer | KOverlay | KModalBarrier
+        module Decor {
+            Box = (Resolved.BoxVisual visual,
+                   Style.Cursor cursor) unique
 
-            Op = (View.Kind kind,
-                  Core.Id id,
-                  number x,
-                  number y,
-                  number w,
-                  number h,
-                  number dx,
-                  number dy,
-                  Layout.BoxVisual? box_visual,
-                  Layout.TextLayout? text,
-                  Style.Cursor? cursor,
-                  Style.ScrollAxis? scroll_axis,
-                  Paint.ProgramList? paint,
-                  Interact.LayerKind? layer_kind,
-                  Interact.FocusPolicy? focus_policy,
-                  Interact.OverlayPlacement? placement,
-                  boolean? modal,
-                  Core.Id? anchor_id,
-                  number? order) unique
+            Text = (Resolved.TextPaint paint) unique
+
+            Paint = (Paint.ProgramList program) unique
+
+            GridItem = (Decor.Node node,
+                        number col_start,
+                        number col_span,
+                        number row_start,
+                        number row_span) unique
+
+            Node = Flow(Core.Id id,
+                        Decor.Box box,
+                        Decor.Node* children) unique
+                 | Flex(Core.Id id,
+                        Decor.Box box,
+                        Decor.Node* children) unique
+                 | Grid(Core.Id id,
+                        Decor.Box box,
+                        Decor.GridItem* items) unique
+                 | Leaf(Core.Id id,
+                        Decor.Box box,
+                        Decor.Text? text) unique
+                 | Canvas(Core.Id id,
+                          Decor.Box box,
+                          Decor.Paint? paint) unique
+                 | Scroll(Core.Id id,
+                          Decor.Box box,
+                          Decor.Node child) unique
+                 | WithInput(Core.Id id,
+                             Decor.Node child) unique
+                 | WithDragSource(Core.Id id,
+                                  Decor.Node child) unique
+                 | WithDropTarget(Core.Id id,
+                                  Decor.Node child) unique
+                 | WithDropSlot(Core.Id id,
+                                Decor.Node child) unique
+                 | FocusScope(Core.Id id,
+                              Decor.Node child) unique
+                 | Layer(Core.Id id,
+                         Decor.Node child) unique
+                 | Overlay(Core.Id id,
+                           Decor.Node child) unique
+                 | Modal(Core.Id id,
+                         Decor.Node child) unique
+        }
+
+        module Scene {
+            Node = (Layout.Node layout,
+                    Decor.Node decor) unique
+        }
+
+        module Solve {
+            ScrollPos = (Core.Id id,
+                         number x,
+                         number y) unique
+
+            Env = (number vw,
+                   number vh) unique
+
+            Placed = (Core.Id id,
+                      Layout.Rect border,
+                      Layout.Rect content,
+                      number baseline,
+                      boolean clipped) unique
+
+            GridItem = (Solve.Node node,
+                        Layout.Rect rect) unique
+
+            Node = Flow(Solve.Placed box,
+                        Solve.Node* children) unique
+                 | Flex(Solve.Placed box,
+                        Solve.Node* children) unique
+                 | Grid(Solve.Placed box,
+                        Solve.GridItem* items) unique
+                 | Leaf(Solve.Placed box,
+                        Layout.TextLayout? text) unique
+                 | Canvas(Solve.Placed box) unique
+                 | Scroll(Solve.Placed box,
+                          Style.ScrollAxis axis,
+                          number content_w,
+                          number content_h,
+                          Solve.Node child) unique
+                 | WithInput(Core.Id id,
+                             Interact.Role role,
+                             Solve.Node child) unique
+                 | WithDragSource(Core.Id id,
+                                  Solve.Node child) unique
+                 | WithDropTarget(Core.Id id,
+                                  Solve.Node child) unique
+                 | WithDropSlot(Core.Id id,
+                                Solve.Node child) unique
+                 | FocusScope(Core.Id id,
+                              Interact.FocusPolicy policy,
+                              Solve.Node child) unique
+                 | Layer(Core.Id id,
+                         Interact.LayerKind kind,
+                         number order,
+                         Solve.Node child) unique
+                 | Overlay(Core.Id id,
+                           Core.Id anchor_id,
+                           Interact.OverlayPlacement placement,
+                           boolean modal,
+                           Solve.Node child) unique
+                 | Modal(Core.Id id,
+                         Solve.Node child) unique
+        }
+
+        module View {
+            Op = Box(Core.Id id,
+                     Layout.Rect rect,
+                     Resolved.BoxVisual visual) unique
+               | Text(Core.Id id,
+                      Layout.Rect rect,
+                      Layout.TextLayout text,
+                      Resolved.TextPaint paint) unique
+               | Paint(Core.Id id,
+                       Layout.Rect rect,
+                       Paint.ProgramList paint) unique
+               | PushClipRect(Core.Id id,
+                              Layout.Rect rect) unique
+               | PopClip(Core.Id id) unique
+               | PushTx(Core.Id id,
+                        number dx,
+                        number dy) unique
+               | PopTx(Core.Id id) unique
+               | PushScroll(Core.Id id,
+                            Layout.Rect viewport,
+                            Style.ScrollAxis axis,
+                            number content_w,
+                            number content_h) unique
+               | PopScroll(Core.Id id) unique
+               | Hit(Core.Id id,
+                     Layout.Rect rect) unique
+               | Focus(Core.Id id,
+                       Layout.Rect rect) unique
+               | Cursor(Core.Id id,
+                        Layout.Rect rect,
+                        Style.Cursor cursor) unique
+               | DragSource(Core.Id id,
+                            Layout.Rect rect) unique
+               | DropTarget(Core.Id id,
+                            Layout.Rect rect) unique
+               | DropSlot(Core.Id id,
+                          Layout.Rect rect) unique
+               | BeginFocusScope(Core.Id id,
+                                 Interact.FocusPolicy policy) unique
+               | EndFocusScope(Core.Id id) unique
+               | BeginLayer(Core.Id id,
+                            Interact.LayerKind kind,
+                            number order,
+                            Layout.Rect rect) unique
+               | EndLayer(Core.Id id) unique
+               | Overlay(Core.Id id,
+                         Core.Id anchor_id,
+                         Interact.OverlayPlacement placement,
+                         boolean modal,
+                         Layout.Rect rect) unique
+               | ModalBarrier(Core.Id id,
+                              Layout.Rect rect) unique
         }
 
         module Interact {
@@ -881,69 +1035,42 @@ function M.Define(T)
                             Core.Id over_slot_id) unique
 
             HitBox = (Core.Id id,
-                      number x,
-                      number y,
-                      number w,
-                      number h) unique
+                      Layout.Rect rect) unique
 
             FocusBox = (Core.Id id,
                         number slot,
-                        number x,
-                        number y,
-                        number w,
-                        number h) unique
+                        Layout.Rect rect) unique
 
             ScrollBox = (Core.Id id,
                          Style.ScrollAxis axis,
-                         number x,
-                         number y,
-                         number w,
-                         number h,
+                         Layout.Rect viewport,
                          number content_w,
                          number content_h,
                          number max_x,
                          number max_y) unique
 
             DragSourceBox = (Core.Id id,
-                             number x,
-                             number y,
-                             number w,
-                             number h) unique
+                             Layout.Rect rect) unique
 
             DropTargetBox = (Core.Id id,
-                             number x,
-                             number y,
-                             number w,
-                             number h) unique
+                             Layout.Rect rect) unique
 
             DropSlotBox = (Core.Id id,
-                           number x,
-                           number y,
-                           number w,
-                           number h) unique
+                           Layout.Rect rect) unique
 
             LayerBox = (Core.Id id,
                         Interact.LayerKind kind,
                         number order,
-                        number x,
-                        number y,
-                        number w,
-                        number h) unique
+                        Layout.Rect rect) unique
 
             OverlayBox = (Core.Id id,
                           Core.Id anchor_id,
                           Interact.OverlayPlacement placement,
                           boolean modal,
-                          number x,
-                          number y,
-                          number w,
-                          number h) unique
+                          Layout.Rect rect) unique
 
             ModalBarrierBox = (Core.Id id,
-                               number x,
-                               number y,
-                               number w,
-                               number h) unique
+                               Layout.Rect rect) unique
 
             FocusScopeBox = (Core.Id id,
                              Interact.FocusPolicy policy,
@@ -991,10 +1118,8 @@ function M.Define(T)
                               number length) unique
                 | FocusMove(Interact.FocusDirection direction) unique
                 | FocusLost
-                | FocusNext
-                | FocusPrev
-                | ActivateFocus
-                | CancelPointer
+                | ActivateFocused
+                | CancelInteraction
 
             Event = SetPointer(number x,
                                number y) unique
@@ -1053,7 +1178,7 @@ function M.Define(T)
                      Core.Id pressed_id,
                      Interact.Capture capture,
                      Interact.Drag drag,
-                     Solve.Scroll* scrolls) unique
+                     Solve.ScrollPos* scrolls) unique
 
             State = (Interact.Hover hover,
                      Interact.Focus focus,
@@ -1079,15 +1204,6 @@ function M.Define(T)
                      number composition_length)
         }
 
-        module Solve {
-            Scroll = (Core.Id id,
-                      number x,
-                      number y) unique
-
-            Env = (number vw,
-                   number vh,
-                   Solve.Scroll* scrolls) unique
-        }
     ]]
     return T
 end

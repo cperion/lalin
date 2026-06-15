@@ -12,11 +12,11 @@ local input = ui.input
 local sdl3 = ui.backends.sdl3
 
 local function style_for(text, fg)
-    return T.Layout.TextStyle(1, 20, 400, fg or 0xe5e7ebff, 0, 26, 0, text)
+    return T.Layout.TextMeasure(T.Resolved.TextMetrics(1, 20, 400, 0, 26, 0), text)
 end
 
 local function composition_style_for(text)
-    return T.Layout.TextStyle(1, 20, 400, 0x93c5fdff, 0, 26, 0, text)
+    return T.Layout.TextMeasure(T.Resolved.TextMetrics(1, 20, 400, 0, 26, 0), text)
 end
 
 local function header_layouts(host)
@@ -47,6 +47,8 @@ local function view_opts(host)
         composition_style = function(field)
             return composition_style_for(field.composition_text)
         end,
+        text_rgba8 = 0xe5e7ebff,
+        composition_rgba8 = 0x93c5fdff,
         bg_rgba8 = 0x0f172aff,
         border_rgba8 = 0x334155ff,
         focus_border_rgba8 = 0x3b82f6ff,
@@ -58,16 +60,13 @@ local function view_opts(host)
     }
 end
 
-local function draw_text_layout(host, layout, x, y, wrap_w)
-    host.driver:draw_text(x, y, wrap_w or layout.measured_w, layout.measured_h, {
-        style = layout.style,
-        lines = layout.lines,
-    })
+local function draw_text_layout(host, layout, x, y, wrap_w, rgba8)
+    host.driver:draw_text(x, y, wrap_w or layout.measured_w, layout.measured_h, layout, T.Resolved.TextPaint(rgba8 or 0xe5e7ebff))
 end
 
 local function draw_simple_text(host, text, x, y, wrap_w, rgba8)
     local layout = ui.text.layout(style_for(text, rgba8), T.Layout.Constraint(wrap_w or math.huge, math.huge), KEY)
-    draw_text_layout(host, layout, x, y, wrap_w)
+    draw_text_layout(host, layout, x, y, wrap_w, rgba8)
 end
 
 local function main()

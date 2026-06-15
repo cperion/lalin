@@ -152,20 +152,10 @@ local function leaf_text_style(text_spec, content_store)
     if text_spec == nil then return nil end
     local cls = pvm.classof(text_spec)
     if cls == Layout.TextLiteral then
-        return text_spec.style
+        return text_spec.text
     end
     if cls == Layout.TextBinding then
-        local style = text_spec.style
-        return Layout.TextStyle(
-            style.font_id,
-            style.font_size,
-            style.font_weight,
-            style.fg,
-            style.align,
-            style.leading,
-            style.tracking,
-            content_string(content_store, text_spec.content_id)
-        )
+        return Layout.TextMeasure(text_spec.metrics, content_string(content_store, text_spec.content_id))
     end
     return text_spec
 end
@@ -212,7 +202,7 @@ local function measure_leaf(self, constraint, text_system, content_store)
     return pvm.once(Layout.Size(w, h, baseline))
 end
 
-local function measure_paint(self, constraint)
+local function measure_canvas(self, constraint)
     local box = self.box
     local pad = box.padding
     local intrinsic_w = pad.left + pad.right
@@ -376,8 +366,8 @@ measure_phase = pvm.phase("ui.measure", {
         return measure_flow(self, constraint, text_system, content_store)
     end,
 
-    [Layout.Paint] = function(self, constraint, text_system, content_store)
-        return measure_paint(self, constraint, text_system)
+    [Layout.Canvas] = function(self, constraint, text_system, content_store)
+        return measure_canvas(self, constraint, text_system)
     end,
 
     [Layout.Scroll] = function(self, constraint, text_system, content_store)

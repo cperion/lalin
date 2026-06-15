@@ -22,7 +22,7 @@ local ZERO_SPACE = S.S0
 local ZERO_MARGIN = S.MarginSpace(S.S0)
 local EMPTY_TRACKS = {}
 
-local DEFAULT_SPEC = S.Spec(
+local DEFAULT_LAYOUT_SPEC = S.LayoutSpec(
     S.DisplayFlow,
     S.AxisRow,
     S.WrapOff,
@@ -45,13 +45,6 @@ local DEFAULT_SPEC = S.Spec(
     1,
     S.BAuto,
 
-    S.Palette(S.Slate, S.S900),
-    S.TransparentRef,
-    S.TransparentRef,
-    S.BW0,
-    S.R0,
-    S.O100,
-
     S.TxtBase,
     S.Normal,
     S.TLeft,
@@ -60,13 +53,24 @@ local DEFAULT_SPEC = S.Spec(
 
     S.OverflowVisible,
     S.OverflowVisible,
-    S.CursorDefault,
 
     EMPTY_TRACKS,
     EMPTY_TRACKS,
     S.GapSpec(ZERO_SPACE, ZERO_SPACE),
     S.GridPlacement(1, 1, 1, 1)
 )
+
+local DEFAULT_DECOR_SPEC = S.DecorSpec(
+    S.Palette(S.Slate, S.S900),
+    S.TransparentRef,
+    S.TransparentRef,
+    S.BW0,
+    S.R0,
+    S.O100,
+    S.CursorDefault
+)
+
+local DEFAULT_SPEC = S.Spec(DEFAULT_LAYOUT_SPEC, DEFAULT_DECOR_SPEC)
 
 local function req_matches(req, value)
     return req == S.ReqAny
@@ -249,35 +253,48 @@ local expand_decls_phase = pvm.phase("ui.expand_decls", {
     end,
 })
 
+local function with_layout(spec, changes)
+    return pvm.with(spec, { layout = pvm.with(spec.layout, changes) })
+end
+
+local function with_decor(spec, changes)
+    return pvm.with(spec, { decor = pvm.with(spec.decor, changes) })
+end
+
 local function with_padding(spec, key, value)
-    return pvm.with(spec, { padding = pvm.with(spec.padding, { [key] = value }) })
+    local layout = spec.layout
+    return with_layout(spec, { padding = pvm.with(layout.padding, { [key] = value }) })
 end
 
 local function with_margin(spec, key, value)
-    return pvm.with(spec, { margin = pvm.with(spec.margin, { [key] = value }) })
+    local layout = spec.layout
+    return with_layout(spec, { margin = pvm.with(layout.margin, { [key] = value }) })
 end
 
 local function with_gap(spec, key, value)
-    return pvm.with(spec, { gap = pvm.with(spec.gap, { [key] = value }) })
+    local layout = spec.layout
+    return with_layout(spec, { gap = pvm.with(layout.gap, { [key] = value }) })
 end
 
 local function with_grid_gap(spec, key, value)
-    return pvm.with(spec, { grid_gap = pvm.with(spec.grid_gap, { [key] = value }) })
+    local layout = spec.layout
+    return with_layout(spec, { grid_gap = pvm.with(layout.grid_gap, { [key] = value }) })
 end
 
 local function with_placement(spec, key, value)
-    return pvm.with(spec, { placement = pvm.with(spec.placement, { [key] = value }) })
+    local layout = spec.layout
+    return with_layout(spec, { placement = pvm.with(layout.placement, { [key] = value }) })
 end
 
 local function apply_decl(spec, decl)
     local cls = pvm.classof(decl)
 
-    if cls == S.DDisplay then return pvm.with(spec, { display = decl.value }) end
-    if cls == S.DAxis then return pvm.with(spec, { axis = decl.value }) end
-    if cls == S.DWrap then return pvm.with(spec, { wrap = decl.value }) end
-    if cls == S.DJustify then return pvm.with(spec, { justify = decl.value }) end
-    if cls == S.DItems then return pvm.with(spec, { items = decl.value }) end
-    if cls == S.DSelf then return pvm.with(spec, { self_align = decl.value }) end
+    if cls == S.DDisplay then return with_layout(spec, { display = decl.value }) end
+    if cls == S.DAxis then return with_layout(spec, { axis = decl.value }) end
+    if cls == S.DWrap then return with_layout(spec, { wrap = decl.value }) end
+    if cls == S.DJustify then return with_layout(spec, { justify = decl.value }) end
+    if cls == S.DItems then return with_layout(spec, { items = decl.value }) end
+    if cls == S.DSelf then return with_layout(spec, { self_align = decl.value }) end
 
     if cls == S.DPadTop then return with_padding(spec, "top", decl.value) end
     if cls == S.DPadRight then return with_padding(spec, "right", decl.value) end
@@ -294,36 +311,36 @@ local function apply_decl(spec, decl)
     if cls == S.DGridGapX then return with_grid_gap(spec, "x", decl.value) end
     if cls == S.DGridGapY then return with_grid_gap(spec, "y", decl.value) end
 
-    if cls == S.DWidth then return pvm.with(spec, { w = decl.value }) end
-    if cls == S.DHeight then return pvm.with(spec, { h = decl.value }) end
-    if cls == S.DMinWidth then return pvm.with(spec, { min_w = decl.value }) end
-    if cls == S.DMaxWidth then return pvm.with(spec, { max_w = decl.value }) end
-    if cls == S.DMinHeight then return pvm.with(spec, { min_h = decl.value }) end
-    if cls == S.DMaxHeight then return pvm.with(spec, { max_h = decl.value }) end
+    if cls == S.DWidth then return with_layout(spec, { w = decl.value }) end
+    if cls == S.DHeight then return with_layout(spec, { h = decl.value }) end
+    if cls == S.DMinWidth then return with_layout(spec, { min_w = decl.value }) end
+    if cls == S.DMaxWidth then return with_layout(spec, { max_w = decl.value }) end
+    if cls == S.DMinHeight then return with_layout(spec, { min_h = decl.value }) end
+    if cls == S.DMaxHeight then return with_layout(spec, { max_h = decl.value }) end
 
-    if cls == S.DGrow then return pvm.with(spec, { grow = decl.value }) end
-    if cls == S.DShrink then return pvm.with(spec, { shrink = decl.value }) end
-    if cls == S.DBasis then return pvm.with(spec, { basis = decl.value }) end
+    if cls == S.DGrow then return with_layout(spec, { grow = decl.value }) end
+    if cls == S.DShrink then return with_layout(spec, { shrink = decl.value }) end
+    if cls == S.DBasis then return with_layout(spec, { basis = decl.value }) end
 
-    if cls == S.DFg then return pvm.with(spec, { fg = decl.value }) end
-    if cls == S.DBg then return pvm.with(spec, { bg = decl.value }) end
-    if cls == S.DBorderColor then return pvm.with(spec, { border_color = decl.value }) end
-    if cls == S.DBorderWidth then return pvm.with(spec, { border_w = decl.value }) end
-    if cls == S.DRadius then return pvm.with(spec, { radius = decl.value }) end
-    if cls == S.DOpacity then return pvm.with(spec, { opacity = decl.value }) end
+    if cls == S.DFg then return with_decor(spec, { fg = decl.value }) end
+    if cls == S.DBg then return with_decor(spec, { bg = decl.value }) end
+    if cls == S.DBorderColor then return with_decor(spec, { border_color = decl.value }) end
+    if cls == S.DBorderWidth then return with_decor(spec, { border_w = decl.value }) end
+    if cls == S.DRadius then return with_decor(spec, { radius = decl.value }) end
+    if cls == S.DOpacity then return with_decor(spec, { opacity = decl.value }) end
 
-    if cls == S.DFontSize then return pvm.with(spec, { font_size = decl.value }) end
-    if cls == S.DFontWeight then return pvm.with(spec, { font_weight = decl.value }) end
-    if cls == S.DTextAlign then return pvm.with(spec, { text_align = decl.value }) end
-    if cls == S.DLeading then return pvm.with(spec, { leading = decl.value }) end
-    if cls == S.DTracking then return pvm.with(spec, { tracking = decl.value }) end
+    if cls == S.DFontSize then return with_layout(spec, { font_size = decl.value }) end
+    if cls == S.DFontWeight then return with_layout(spec, { font_weight = decl.value }) end
+    if cls == S.DTextAlign then return with_layout(spec, { text_align = decl.value }) end
+    if cls == S.DLeading then return with_layout(spec, { leading = decl.value }) end
+    if cls == S.DTracking then return with_layout(spec, { tracking = decl.value }) end
 
-    if cls == S.DOverflowX then return pvm.with(spec, { overflow_x = decl.value }) end
-    if cls == S.DOverflowY then return pvm.with(spec, { overflow_y = decl.value }) end
-    if cls == S.DCursor then return pvm.with(spec, { cursor = decl.value }) end
+    if cls == S.DOverflowX then return with_layout(spec, { overflow_x = decl.value }) end
+    if cls == S.DOverflowY then return with_layout(spec, { overflow_y = decl.value }) end
+    if cls == S.DCursor then return with_decor(spec, { cursor = decl.value }) end
 
-    if cls == S.DCols then return pvm.with(spec, { cols = decl.tracks }) end
-    if cls == S.DRows then return pvm.with(spec, { rows = decl.tracks }) end
+    if cls == S.DCols then return with_layout(spec, { cols = decl.tracks }) end
+    if cls == S.DRows then return with_layout(spec, { rows = decl.tracks }) end
     if cls == S.DColStart then return with_placement(spec, "col_start", decl.value) end
     if cls == S.DColSpan then return with_placement(spec, "col_span", decl.value) end
     if cls == S.DRowStart then return with_placement(spec, "row_start", decl.value) end
@@ -337,6 +354,8 @@ local normalize_phase = pvm.phase("ui.normalize", function(token_list, env, stat
     return pvm.fold(g, p, c, DEFAULT_SPEC, apply_decl)
 end)
 
+M.default_layout_spec = DEFAULT_LAYOUT_SPEC
+M.default_decor_spec = DEFAULT_DECOR_SPEC
 M.default_spec = DEFAULT_SPEC
 M.any_state_cond = ANY_STATE_COND
 M.no_state = NO_STATE

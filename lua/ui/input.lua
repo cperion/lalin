@@ -180,14 +180,14 @@ function M.focus_intent_for_key(key, mods)
     mods = mods or M.no_modifiers()
 
     if key == Interact.KeyTab then
-        if mods.shift then return Interact.FocusPrev end
-        return Interact.FocusNext
+        if mods.shift then return Interact.FocusMove(Interact.FocusBackward) end
+        return Interact.FocusMove(Interact.FocusForward)
     end
     if key == Interact.KeyReturn or key == Interact.KeySpace then
-        return Interact.ActivateFocus
+        return Interact.ActivateFocused
     end
     if key == Interact.KeyEscape then
-        return Interact.CancelPointer
+        return Interact.CancelInteraction
     end
     return nil
 end

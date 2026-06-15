@@ -361,15 +361,16 @@ function M.new(opts)
 
 	self.draw_rect = self.draw_box
 
-	function self:draw_text(x, y, w, h, layout)
+	function self:draw_text(x, y, w, h, layout, paint)
 		if layout == nil then
 			return
 		end
-		local style = layout.style
+		local metrics = (layout.text and layout.text.metrics) or layout.style or {}
+		local fg = (paint and paint.fg) or 0xffffffff
 
 		x, y, w, h = round(x), round(y), round(w), round(h)
 		local lines = layout.lines
-		local align = style.align
+		local align = metrics.align or 0
 
 		for i = 1, #lines do
 			local line = lines[i]
@@ -386,7 +387,7 @@ function M.new(opts)
 				local run = runs[j]
 				local font = self:get_font_fields(run.font_id, run.font_size)
 				love.graphics.setFont(font)
-				love.graphics.setColor(rgba8_to_love(run.fg, 1))
+				love.graphics.setColor(rgba8_to_love(fg, 1))
 				love.graphics.print(run.text, round(draw_x + (run.x or 0)), round(draw_y + (run.y or 0)))
 			end
 		end

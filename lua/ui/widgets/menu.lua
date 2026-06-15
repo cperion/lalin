@@ -229,7 +229,7 @@ function M.route_one(surfaces, ui_event, bundle)
         end
         local ev = list.route_one(surfaces, ui_event, bundle)
         if ev ~= nil then return ev end
-    elseif ui_event == Interact.CancelPointer or ui_event == Interact.FocusLost then
+    elseif ui_event == Interact.CancelInteraction or ui_event == Interact.FocusLost then
         if bundle.open then return menu_event("close", bundle, { reason = ui_event == Interact.FocusLost and "focus_lost" or "cancel", source = ui_event }) end
     end
 

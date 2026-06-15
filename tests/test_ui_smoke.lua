@@ -40,8 +40,9 @@ local env = ui.theme.env_for_width(640)
 local lowered = pvm.drain(ui.lower.phase(root, theme, env))
 assert(#lowered == 1, "root lowers to one layout node")
 
-local solve_env = ui.T.Solve.Env(640, 360, {})
-local rg, rp, rc = ui.render.root(lowered[1], solve_env)
+local solve_env = ui.T.Solve.Env(640, 360)
+local solved = pvm.one(ui.solve.root(lowered[1].layout, solve_env, false))
+local rg, rp, rc = ui.render.root(solved, lowered[1].decor)
 local report = ui.runtime.run(nil, { pointer_x = 10, pointer_y = 10 }, rg, rp, rc)
 assert(report ~= nil, "runtime can consume rendered op stream without a driver")
 

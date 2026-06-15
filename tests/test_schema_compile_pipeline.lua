@@ -25,9 +25,12 @@ end
 ]]
 
 local result = Pipeline.Define(T).parse_and_lower(src, { site = "test_schema_compile_pipeline" })
+assert(result.code_module ~= nil, "native pipeline should expose MoonCode module")
+assert(result.code_report ~= nil and #result.code_report.issues == 0, "code validation issues")
 local program = result.program
 local report = result.back_report
 assert(#report.issues == 0, "back validation issues: " .. #report.issues)
+assert(package.loaded["moonlift.tree_to_back"] == nil, "native pipeline should not load tree_to_back")
 
 local artifact = J.jit():compile(program)
 local add_i32 = ffi.cast("int32_t (*)(int32_t, int32_t)", artifact:getpointer(T.MoonBack.BackFuncId("add_i32")))

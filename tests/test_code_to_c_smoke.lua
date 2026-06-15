@@ -49,7 +49,8 @@ func call_host(x: i32): i32
 end
 ]]
 
-local result = Pipeline.Define(T).parse_and_lower_c(src, { site = "test_tree_to_c_smoke" })
+local result = Pipeline.Define(T).parse_and_lower_c(src, { site = "test_code_to_c_smoke" })
+assert(result.code_module ~= nil and result.code_report ~= nil and #result.code_report.issues == 0, "Code validation issues")
 assert(#result.c_report.issues == 0, "C validation issues: " .. #result.c_report.issues)
 assert(#result.c_unit.funcs == 5, "expected five C backend funcs")
 assert(#result.c_unit.externs == 1, "expected one C backend extern")
@@ -61,9 +62,9 @@ local CEmit = require("moonlift.c_emit").Define(T)
 local c_src = CEmit.emit(result.c_unit)
 assert(c_src:match("int32_t add_i32%("), "expected add_i32 definition/prototype")
 assert(c_src:match("extern int32_t host_add7%("), "expected extern declaration")
-assert(c_src:match("switch %(arg_x%)"), "expected switch/goto lowering")
-assert(c_src:match("goto ml_"), "expected label/goto lowering")
-assert(c_src:match("ml_i32_add_intwrap"), "expected arithmetic helper use")
+assert(c_src:match("switch %(v_pick_arg_pick_x%)"), "expected switch/goto lowering")
+assert(c_src:match("goto block_"), "expected label/goto lowering")
+assert(c_src:match("ml_code_helper_"), "expected arithmetic helper use")
 
 local function exec_ok(cmd)
     local a = os.execute(cmd)
@@ -82,4 +83,4 @@ else
     io.write("cc not found; skipping emitted C syntax check\n")
 end
 
-io.write("moonlift tree_to_c_smoke ok\n")
+io.write("moonlift code_to_c_smoke ok\n")

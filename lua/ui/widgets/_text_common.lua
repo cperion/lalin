@@ -199,14 +199,16 @@ function M.bundle(opts, defaults, kind)
 end
 
 local function default_placeholder_style(placeholder, base, opts)
-    return T.Layout.TextStyle(
-        base.font_id,
-        base.font_size,
-        base.font_weight,
-        opts.placeholder_rgba8 or 0x94a3b8ff,
-        base.align,
-        base.leading,
-        base.tracking,
+    local metrics = base.metrics or base
+    return T.Layout.TextMeasure(
+        T.Resolved.TextMetrics(
+            metrics.font_id,
+            metrics.font_size,
+            metrics.font_weight,
+            metrics.align,
+            metrics.leading,
+            metrics.tracking
+        ),
         placeholder
     )
 end
@@ -220,10 +222,11 @@ end
 
 local function overlay_opts_for_hit(hit, opts)
     local out = copy_table(opts)
-    out.x = hit.x
-    out.y = hit.y
-    out.w = hit.w
-    out.h = hit.h
+    local r = hit.rect or hit.viewport or hit
+    out.x = r.x
+    out.y = r.y
+    out.w = r.w
+    out.h = r.h
     return out
 end
 

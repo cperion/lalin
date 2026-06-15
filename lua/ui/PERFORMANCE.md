@@ -94,7 +94,7 @@ necessary; much of it is not.
 The current pipeline is roughly:
 
 ```text
-Auth.Node -> lower -> Layout.Node -> render -> View.Op
+Auth.Node -> lower -> Scene.Node(Layout.Node, Decor.Node) -> solve(Layout.Node) -> render(Solve.Node, Decor.Node) -> View.Op
                          ^             |
                          |             calls measure/layout planning
                          measure ------+
@@ -163,7 +163,7 @@ layout-affecting or paint-only.
 The missing phase should be made explicit:
 
 ```text
-Layout.Node + constraint + text system + layout-affecting content
+Layout.Node + constraint + text metrics/system + layout-affecting content
   -> Solve.Node / Solve.Tree
 ```
 

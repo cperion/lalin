@@ -68,19 +68,20 @@ func call_host(x: i32): i32
 end
 ]]
 
-local result = Pipeline.Define(T).parse_and_lower_c(src, { site = "test_tree_to_c_semantics_smoke" })
+local result = Pipeline.Define(T).parse_and_lower_c(src, { site = "test_code_to_c_semantics_smoke" })
+assert(result.code_module ~= nil and result.code_report ~= nil and #result.code_report.issues == 0, "Code validation issues")
 assert(#result.c_report.issues == 0, "C validation issues: " .. tostring(result.c_report.issues[1]))
 assert(#result.c_unit.funcs == 8, "expected eight funcs")
 assert(#result.c_unit.externs == 1, "expected extern")
 
 local CEmit = require("moonlift.c_emit").Define(T)
 local c_src = CEmit.emit(result.c_unit)
-assert(c_src:match("if_then_"), "expected nonterminal if CFG labels")
-assert(c_src:match("switch %(arg_op%)"), "expected switch lowering")
-assert(c_src:match("switch_join_"), "expected switch expression/statement join")
-assert(c_src:match("host_add7%(arg_x%)"), "expected extern call")
-assert(c_src:match("%[%("), "expected pointer/view indexing emission")
-assert(c_src:match("ml_i32_mul_intwrap"), "expected helper-mediated multiplication")
+assert(c_src:match("if_then"), "expected nonterminal if CFG labels")
+assert(c_src:match("switch %(v_classify_expr_arg_classify_expr_op%)") or c_src:match("switch %(v_classify_stmt_arg_classify_stmt_op%)"), "expected switch lowering")
+assert(c_src:match("switch_join"), "expected switch expression/statement join")
+assert(c_src:match("host_add7%(v_call_host_arg_call_host_x%)"), "expected extern call")
+assert(c_src:match("%[v_"), "expected pointer/view indexing emission")
+assert(c_src:match("ml_code_helper_"), "expected helper-mediated multiplication")
 
 local function exec_ok(cmd)
     local a = os.execute(cmd)
@@ -99,4 +100,4 @@ else
     io.write("cc not found; skipping emitted C syntax check\n")
 end
 
-io.write("moonlift tree_to_c_semantics_smoke ok\n")
+io.write("moonlift code_to_c_semantics_smoke ok\n")

@@ -19,18 +19,17 @@ func select_expr(a: i32, b: i32, c: i32): i32
 end
 ]]
 
-local result = Pipeline.Define(T).parse_and_lower_c(src, { site = "test_tree_to_c_logic_select" })
+local result = Pipeline.Define(T).parse_and_lower_c(src, { site = "test_code_to_c_logic_select" })
+assert(result.code_module ~= nil and result.code_report ~= nil and #result.code_report.issues == 0, "Code validation issues")
 assert(#result.c_report.issues == 0, "C validation issues: " .. tostring(result.c_report.issues[1]))
 
 local CEmit = require("moonlift.c_emit").Define(T)
 local c_src = CEmit.emit(result.c_unit)
 
-assert(c_src:match("logic_true_"), "expected logic short-circuit true branch label")
-assert(c_src:match("logic_false_"), "expected logic short-circuit false branch label")
-assert(c_src:match("logic_join_"), "expected logic join label")
-assert(c_src:match("select_true_"), "expected select true branch label")
-assert(c_src:match("select_false_"), "expected select false branch label")
-assert(c_src:match("select_join_"), "expected select join label")
+assert(c_src:match("logic_rhs"), "expected logic short-circuit rhs branch label")
+assert(c_src:match("logic_short"), "expected logic short-circuit branch label")
+assert(c_src:match("logic_join"), "expected logic join label")
+assert(c_src:match("%?"), "expected select ternary lowering")
 assert(c_src:match("if %("), "expected generated branch test")
 
 local function exec_ok(cmd)
@@ -50,4 +49,4 @@ else
     io.write("cc not found; skipping emitted C syntax check\n")
 end
 
-io.write("moonlift tree_to_c_logic_select ok\n")
+io.write("moonlift code_to_c_logic_select ok\n")

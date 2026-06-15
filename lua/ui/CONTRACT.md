@@ -8,10 +8,11 @@ The kernel is a compiler-shaped UI pipeline:
 
 ```text
 Auth.Node
-  -> lower(Auth.Node, Theme.T, Env.Class, interaction state)
-  -> Layout.Node
-  -> measure/render(Layout.Node, Solve.Env, text/content systems)
-  -> View.Op*
+  -> resolve/lower(Auth.Node, Theme.T, Env.Class, interaction state)
+  -> Scene.Node(Layout.Node layout, Decor.Node decor)
+  -> measure(Layout.Node, constraints, text/content systems)
+  -> solve(Layout.Node, Solve.Env, text/content systems) -> Solve.Node
+  -> render(Solve.Node, Decor.Node) -> View.Op* typed variants
   -> runtime.run(driver, opts, View.Op*)
   -> Interact.Report
   -> interact.step(Interact.Model, Interact.Report, Interact.Raw)
@@ -45,12 +46,16 @@ The authored tree owns these meanings:
 Authored nodes must be immutable ASDL values. Apps produce a new authored tree
 when application state changes.
 
-### Lowered tree: `Layout.Node`
+### Lowered scene: `Scene.Node(Layout.Node, Decor.Node)`
 
-`Layout.Node` is the layout-ready form of the authored tree. Lowering resolves
-style tokens against the theme, environment, and interaction/app state. Lowering
-must preserve semantic wrappers in lowered form so later phases can emit runtime
-facts from the same typed structure.
+`Scene.Node` is the lowered form of the authored tree. Style normalization first
+splits authored tokens into `Style.LayoutSpec` and `Style.DecorSpec`; resolution
+then produces independent `Resolved.LayoutFacts` and `Resolved.DecorFacts`. Its
+`Layout.Node` contains only layout and measurement facts. Its parallel
+`Decor.Node` contains visual, cursor, text-paint, and paint-program facts.
+Lowering resolves style tokens against the theme, environment, and
+interaction/app state, then places each fact at the first phase that semantically
+needs it.
 
 Lowering owns:
 
@@ -64,20 +69,29 @@ Lowering owns:
 
 ### Measurement and planning
 
-Measurement computes sizes from `Layout.Node`, constraints, resolved styles, text
-layout systems, and explicit content stores. Planning helpers shared by measure
-and render are the single source of truth for flow, flex, and grid placement.
+Measurement computes sizes from `Layout.Node`, constraints, layout text metrics,
+text layout systems, and explicit content stores. It does not see visual color,
+box paint, cursor, or paint programs. Planning helpers shared by measure and
+render are the single source of truth for flow, flex, and grid placement.
 
 Measurement must not depend on pointer position, scroll offset, backend event
 state, or hidden session globals. Text measurement depends on an explicit text
 system key/system or an explicit approximate fallback.
 
+### Solve tree: `Solve.Node`
+
+Solving turns `Layout.Node` plus viewport/text/content facts into placed layout.
+`Solve.Node` owns box rectangles, content rectangles, scroll content extents, and
+text layouts. Render must not re-run layout placement; it consumes solved facts.
+
 ### Render stream: `View.Op*`
 
-Rendering turns a planned layout into a relative operation stream. The stream is
-both drawing input and semantic-runtime input. If a thing can affect hit testing,
-focus order, scrolling, dragging, cursors, overlays, or modal behavior, it must be
-represented in `View.Op`, not only in a backend callback.
+Rendering consumes `Solve.Node` plus the parallel `Decor.Node`: solve supplies
+placement, while decor supplies visual/text-paint/paint-program facts. `View.Op`
+is a typed sum of operation variants, not a nullable kitchen-sink tuple. The
+stream is both drawing input and semantic-runtime input. If a thing can affect
+hit testing, focus order, scrolling, dragging, cursors, overlays, or modal
+behavior, it must be represented in `View.Op`, not only in a backend callback.
 
 The render stream owns:
 

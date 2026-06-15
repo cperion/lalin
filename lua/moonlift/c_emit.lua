@@ -23,6 +23,15 @@ function M.Define(T)
         return "ml_closure_" .. sanitize(ty.sig.text)
     end
 
+    local function descriptor_type_name(kind, ty)
+        local elem = ty and ty.elem and sanitize(tostring(pvm.classof(ty.elem) and pvm.classof(ty.elem).kind or ty.elem)) or "any"
+        if ty and ty.elem then
+            local ecls = pvm.classof(ty.elem)
+            if ecls and ecls.kind then elem = sanitize(ecls.kind .. "_" .. tostring(ty.elem.scalar and ty.elem.scalar.kind or ty.elem.id and ty.elem.id.spelling or "elem")) end
+        end
+        return "ml_" .. kind .. "_" .. elem
+    end
+
     local function scalar_name(s)
         if s == Core.ScalarBool then return "uint8_t" end
         if s == Core.ScalarI8 then return "int8_t" end
@@ -53,8 +62,8 @@ function M.Define(T)
         if cls == C.CBackendImportedCodePtr then return "void (*)(void)" end
         if cls == C.CBackendNamed then return (ty.id.module_name .. "_" .. ty.id.spelling):gsub("[^%w_]", "_") end
         if cls == C.CBackendArray then return emit_type(ty.elem) end
-        if cls == C.CBackendSliceDescriptor then return "struct { " .. emit_type(C.CBackendDataPtr(ty.elem)) .. " data; ml_index len; }" end
-        if cls == C.CBackendViewDescriptor then return "struct { " .. emit_type(C.CBackendDataPtr(ty.elem)) .. " data; ml_index len; ml_index stride; }" end
+        if cls == C.CBackendSliceDescriptor then return descriptor_type_name("slice", ty) end
+        if cls == C.CBackendViewDescriptor then return descriptor_type_name("view", ty) end
         if cls == C.CBackendClosureDescriptor then return closure_type_name(ty) end
         if cls == C.CBackendAbiHiddenOutPtr then return emit_type(C.CBackendDataPtr(ty.result)) end
         if cls == C.CBackendVector then return emit_type(ty.elem) end
@@ -147,8 +156,12 @@ function M.Define(T)
         return out
     end
 
-    local function collect_closure_types(unit)
-        local out, order = {}, {}
+    local function collect_implicit_types(unit)
+        local out, order, descriptors, descriptor_order = {}, {}, {}, {}
+        local function add_descriptor(kind, ty)
+            local name = descriptor_type_name(kind, ty)
+            if descriptors[name] == nil then descriptors[name] = { kind = kind, ty = ty }; descriptor_order[#descriptor_order + 1] = name end
+        end
         local function visit_ty(ty)
             local cls = pvm.classof(ty)
             if cls == C.CBackendClosureDescriptor then
@@ -157,7 +170,8 @@ function M.Define(T)
             elseif cls == C.CBackendArray then visit_ty(ty.elem)
             elseif cls == C.CBackendDataPtr and ty.pointee ~= nil then visit_ty(ty.pointee)
             elseif cls == C.CBackendAbiHiddenOutPtr then visit_ty(ty.result)
-            elseif cls == C.CBackendSliceDescriptor or cls == C.CBackendViewDescriptor then visit_ty(ty.elem) end
+            elseif cls == C.CBackendSliceDescriptor then add_descriptor("slice", ty); visit_ty(ty.elem)
+            elseif cls == C.CBackendViewDescriptor then add_descriptor("view", ty); visit_ty(ty.elem) end
         end
         for i = 1, #(unit.sigs or {}) do
             for j = 1, #unit.sigs[i].params do visit_ty(unit.sigs[i].params[j]) end
@@ -171,7 +185,19 @@ function M.Define(T)
             end
         end
         for i = 1, #(unit.globals or {}) do visit_ty(unit.globals[i].ty) end
-        return out, order
+        return out, order, descriptors, descriptor_order
+    end
+
+    local function emit_descriptor_type_decls(descriptor_types, descriptor_order, out)
+        for i = 1, #descriptor_order do
+            local name = descriptor_order[i]
+            local d = descriptor_types[name]
+            if d.kind == "slice" then
+                out[#out + 1] = "struct " .. name .. " { " .. emit_type(C.CBackendDataPtr(d.ty.elem)) .. " data; ml_index len; };"
+            else
+                out[#out + 1] = "struct " .. name .. " { " .. emit_type(C.CBackendDataPtr(d.ty.elem)) .. " data; ml_index len; ml_index stride; };"
+            end
+        end
     end
 
     local function emit_closure_type_decls(closure_types, closure_order, out)
@@ -274,7 +300,12 @@ function M.Define(T)
             local callee
             if tcls == C.CBackendCallDirect then callee = s.target.func.text
             elseif tcls == C.CBackendCallExtern then callee = s.target["extern"].text
-            elseif tcls == C.CBackendCallIndirect then callee = atom(s.target.callee) end
+            elseif tcls == C.CBackendCallIndirect then callee = atom(s.target.callee)
+            elseif tcls == C.CBackendCallClosure then
+                local closure = atom(s.target.closure)
+                callee = closure .. ".fn"
+                table.insert(args, 1, closure .. ".ctx")
+            end
             local call = callee .. "(" .. table.concat(args, ", ") .. ")"
             if s.dst then out[#out + 1] = "    " .. s.dst.text .. " = " .. call .. ";" else out[#out + 1] = "    " .. call .. ";" end
         elseif cls == C.CBackendComment then out[#out + 1] = "    /* " .. s.text:gsub("%*/", "* /") .. " */"
@@ -374,9 +405,10 @@ function M.Define(T)
         out[#out + 1] = "typedef " .. index_ty .. " ml_index;"
         out[#out + 1] = ""
 
-        local closure_types, closure_order = collect_closure_types(unit)
+        local closure_types, closure_order, descriptor_types, descriptor_order = collect_implicit_types(unit)
 
         out[#out + 1] = "/* type forwards for signatures */"
+        for i = 1, #descriptor_order do out[#out + 1] = "typedef struct " .. descriptor_order[i] .. " " .. descriptor_order[i] .. ";" end
         for i = 1, #closure_order do out[#out + 1] = "typedef struct " .. closure_order[i] .. " " .. closure_order[i] .. ";" end
         for i = 1, #unit.types do
             local td = unit.types[i]
@@ -395,6 +427,7 @@ function M.Define(T)
         out[#out + 1] = ""
 
         out[#out + 1] = "/* type declarations and layout assertions */"
+        emit_descriptor_type_decls(descriptor_types, descriptor_order, out)
         emit_closure_type_decls(closure_types, closure_order, out)
         emit_type_decls(unit, out)
         out[#out + 1] = ""

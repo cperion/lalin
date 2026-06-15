@@ -381,6 +381,13 @@ function M.Define(T)
                             if not cty or pvm.classof(cty) ~= C.CBackendCodePtr then add_issue(issues, collector, C.CBackendIssueIndirectCallNonCodePtr("indirect", cty or C.CBackendVoid))
                             elseif cty.sig.text ~= s.target.sig.text then add_issue(issues, collector, C.CBackendIssueDataCodePtrConfusion("indirect", cty)) end
                             check_call_sig("indirect", sigs[s.target.sig.text], s.args, s.dst, nil, locals)
+                        elseif tcls == C.CBackendCallClosure then
+                            check_atom(s.target.closure, func, locals)
+                            local cty = atom_type(s.target.closure, locals)
+                            if not cty or pvm.classof(cty) ~= C.CBackendClosureDescriptor then
+                                add_issue(issues, collector, C.CBackendIssueIndirectCallNonCodePtr("closure", cty or C.CBackendVoid))
+                            end
+                            check_call_sig("closure", sigs[s.target.sig.text], s.args, s.dst, nil, locals)
                         end
                         mark_init(s.dst)
                     end

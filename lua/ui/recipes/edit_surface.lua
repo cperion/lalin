@@ -141,7 +141,7 @@ local function update_scroll_model(model, id, x, y)
             end
         else
             for i = 1, #scrolls do
-                out[i] = (i == index) and Solve.Scroll(id, x, y) or scrolls[i]
+                out[i] = (i == index) and Solve.ScrollPos(id, x, y) or scrolls[i]
             end
         end
         return pvm.with(model, { scrolls = out })
@@ -153,13 +153,14 @@ local function update_scroll_model(model, id, x, y)
 
     local out = {}
     for i = 1, #scrolls do out[i] = scrolls[i] end
-    out[#out + 1] = Solve.Scroll(id, x, y)
+    out[#out + 1] = Solve.ScrollPos(id, x, y)
     return pvm.with(model, { scrolls = out })
 end
 
 local function axis_geometry(metrics, axis_name, has_cross, opts)
     local resolved = metrics.resolved
     local hit = metrics.hit
+    local hit_rect = hit.rect or hit.viewport or hit
     local inset = inset_px(opts)
     local thickness = thickness_px(opts)
     local reserve = reserve_space_px(opts)
@@ -177,18 +178,18 @@ local function axis_geometry(metrics, axis_name, has_cross, opts)
         local strip = reserve
         local extra = max0(strip - thickness)
         track = {
-            x = hit.x + hit.w - strip + math.floor(extra * 0.5),
-            y = hit.y + inset,
+            x = hit_rect.x + hit_rect.w - strip + math.floor(extra * 0.5),
+            y = hit_rect.y + inset,
             w = thickness,
-            h = max0(hit.h - inset * 2 - cross_reserve),
+            h = max0(hit_rect.h - inset * 2 - cross_reserve),
         }
     else
         local strip = reserve
         local extra = max0(strip - thickness)
         track = {
-            x = hit.x + inset,
-            y = hit.y + hit.h - strip + math.floor(extra * 0.5),
-            w = max0(hit.w - inset * 2 - cross_reserve),
+            x = hit_rect.x + inset,
+            y = hit_rect.y + hit_rect.h - strip + math.floor(extra * 0.5),
+            w = max0(hit_rect.w - inset * 2 - cross_reserve),
             h = thickness,
         }
     end
@@ -332,10 +333,10 @@ return function(opts)
 
         local function resolve_with(reserve_now)
             return text_field_view.resolve(host, field, {
-                x = hit.x,
-                y = hit.y,
-                w = hit.w,
-                h = hit.h,
+                x = (hit.rect or hit.viewport or hit).x,
+                y = (hit.rect or hit.viewport or hit).y,
+                w = (hit.rect or hit.viewport or hit).w,
+                h = (hit.rect or hit.viewport or hit).h,
                 padding = resolved_padding(merged.padding, axis, reserve_now, merged),
                 text_key = merged.text_key,
                 text_style = merged.text_style,

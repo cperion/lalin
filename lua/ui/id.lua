@@ -5,6 +5,7 @@ local T = ui_asdl.T
 local Core = T.Core
 local Auth = T.Auth
 local Layout = T.Layout
+local Scene = T.Scene
 local Compose = T.Compose
 
 local M = {}
@@ -128,7 +129,9 @@ local function collect_layout_node(node, out, path, opts)
     local cls = classof(node)
     if cls == nil then return end
 
-    if cls == Layout.Flow or cls == Layout.Flex then
+    if cls == Scene.Node then
+        collect_layout_node(node.layout, out, path .. ".layout", opts)
+    elseif cls == Layout.Flow or cls == Layout.Flex then
         add_entry(out, node.id, cls == Layout.Flow and "Layout.Flow" or "Layout.Flex", path)
         for i = 1, #node.children do
             collect_layout_node(node.children[i], out, path_child(path, "children", i), opts)
@@ -146,8 +149,8 @@ local function collect_layout_node(node, out, path, opts)
                 add_entry(out, node.text.content_id, "Layout.TextBinding.content_id", path .. ".text.content_id", "content_ref")
             end
         end
-    elseif cls == Layout.Paint then
-        add_entry(out, node.id, "Layout.Paint", path)
+    elseif cls == Layout.Canvas then
+        add_entry(out, node.id, "Layout.Canvas", path)
     elseif cls == Layout.Scroll then
         add_entry(out, node.id, "Layout.Scroll", path)
         collect_layout_node(node.child, out, path_child(path, "child"), opts)

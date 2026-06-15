@@ -40,18 +40,19 @@ local function lower_one(auth)
 end
 
 local function measure(node, max_w, max_h, content_store)
-    return pvm.one(ui.measure.root(node, max_w, max_h, false, content_store))
+    return pvm.one(ui.measure.root(node.layout or node, max_w, max_h, false, content_store))
 end
 
 local function render_ops(node, w, h, content_store)
-    return pvm.drain(ui.render.root(node, T.Solve.Env(w, h, {}), false, content_store))
+    local solved = pvm.one(ui.solve.root(node.layout, T.Solve.Env(w, h), false, content_store))
+    return pvm.drain(ui.render.root(solved, node.decor))
 end
 
 local function push_translates(ops)
     local out = {}
     for i = 1, #ops do
         local op = ops[i]
-        if op.kind == V.KPushTx then
+        if pvm.classof(op) == V.PushTx then
             out[#out + 1] = { id = id_value(op.id), dx = op.dx, dy = op.dy }
         end
     end
@@ -184,9 +185,9 @@ do
     local size = measure(node, 120, 80)
     assert_eq(size.w, 120, "grid measured width")
     assert_eq(size.h, 80, "grid measured height")
-    assert_eq(#node.items, 2, "grid item count")
-    assert_eq(node.items[2].col_align, L.CStretch, "grid documented item col alignment subset")
-    assert_eq(node.items[2].row_align, L.CStretch, "grid documented item row alignment subset")
+    assert_eq(#node.layout.items, 2, "grid item count")
+    assert_eq(node.layout.items[2].col_align, L.CStretch, "grid documented item col alignment subset")
+    assert_eq(node.layout.items[2].row_align, L.CStretch, "grid documented item row alignment subset")
 
     assert_pushes(push_translates(render_ops(node, 120, 80)), {
         { "g-a", 0, 0 },
@@ -225,17 +226,17 @@ do
     local ops = render_ops(node, 50, 30)
     local push_scroll
     for i = 1, #ops do
-        if ops[i].kind == V.KPushScroll then
+        if pvm.classof(ops[i]) == V.PushScroll then
             push_scroll = ops[i]
             break
         end
     end
-    assert(push_scroll, "scroll emits KPushScroll")
+    assert(push_scroll, "scroll emits PushScroll")
     assert_eq(id_value(push_scroll.id), "scroll", "scroll op id")
-    assert_eq(push_scroll.w, 42, "scroll viewport width excludes padding")
-    assert_eq(push_scroll.h, 22, "scroll viewport height excludes padding")
-    assert_eq(push_scroll.dx, 40, "scroll content width")
-    assert_eq(push_scroll.dy, 80, "scroll content height")
+    assert_eq(push_scroll.viewport.w, 42, "scroll viewport width excludes padding")
+    assert_eq(push_scroll.viewport.h, 22, "scroll viewport height excludes padding")
+    assert_eq(push_scroll.content_w, 40, "scroll content width")
+    assert_eq(push_scroll.content_h, 80, "scroll content height")
 end
 
 -- Content-store text references measure and render through explicit content
@@ -253,11 +254,11 @@ do
 
     local ops = render_ops(node, 200, 100, store)
     assert_eq(#ops, 1, "text ref render op count")
-    assert_eq(ops[1].kind, V.KText, "text ref render op kind")
+    assert_eq(pvm.classof(ops[1]), V.Text, "text ref render op kind")
     assert_eq(id_value(ops[1].id), "text-node", "text ref op id")
     assert_eq(ops[1].text.measured_w, 48, "text ref layout width")
     assert_eq(ops[1].text.measured_h, 24, "text ref layout height")
-    assert_eq(ops[1].text.style.content, "Hello", "text ref resolved content")
+    assert_eq(ops[1].text.text.content, "Hello", "text ref resolved content")
 end
 
 print("ok test_ui_layout_golden")

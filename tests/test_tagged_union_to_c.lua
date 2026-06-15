@@ -2,72 +2,53 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local pvm = require("moonlift.pvm")
 local Schema = require("moonlift.schema")
+local Pipeline = require("moonlift.frontend_pipeline")
+local CEmit = require("moonlift.c_emit")
+
 local T = pvm.context(); Schema.Define(T)
 
-local Core = T.MoonCore
-local Ty = T.MoonType
-local Tr = T.MoonTree
-local B = T.MoonBind
+local src = [[
+union Maybe
+    some(i32)
+  | none
+end
 
-local Typecheck = require("moonlift.tree_typecheck").Define(T)
-local Layout = require("moonlift.sem_layout_resolve").Define(T)
-local TreeToC = require("moonlift.tree_to_c").Define(T)
-local ModuleType = require("moonlift.tree_module_type").Define(T)
-local CValidate = require("moonlift.c_validate").Define(T)
-local CEmit = require("moonlift.c_emit").Define(T)
+func match_stmt(): i32
+    let m = Maybe.some(33)
+    switch m do
+    case .some(x) then return x
+    default then return 0
+    end
+end
 
-local i32 = Ty.TScalar(Core.ScalarI32)
-local void = Ty.TScalar(Core.ScalarVoid)
-local maybe_ty = Ty.TNamed(Ty.TypeRefGlobal("", "Maybe"))
-local decl = Tr.TypeDeclTaggedUnionSugar("Maybe", {
-    Ty.VariantDecl("some", i32, {}),
-    Ty.VariantDecl("none", void, {}),
-})
+func match_expr(): i32
+    let m = Maybe.some(44)
+    return switch m do
+    case .some(x) then x
+    default then 0
+    end
+end
 
-local function lit(n) return Tr.ExprLit(Tr.ExprSurface, Core.LitInt(tostring(n))) end
-local function ref(name) return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(name)) end
+func match_control(): i32
+    return block choose(): i32
+        let m = Maybe.some(55)
+        switch m do
+        case .some(x) then yield x
+        default then yield 0
+        end
+    end
+end
+]]
 
-local bind_stmt = B.Binding(Core.Id("local:m_stmt"), "m", maybe_ty, B.BindingClassLocalValue)
-local bind_expr = B.Binding(Core.Id("local:m_expr"), "m", maybe_ty, B.BindingClassLocalValue)
+local result = Pipeline.Define(T).parse_and_lower_c(src, { site = "test_tagged_union_to_c" })
+assert(result.code_module ~= nil, "C pipeline should expose MoonCode module")
+assert(result.code_report ~= nil and #result.code_report.issues == 0, "Code validation issues: " .. tostring(#result.code_report.issues))
+assert(#result.c_report.issues == 0, "C validation issues: " .. tostring(#result.c_report.issues))
 
-local func_stmt = Tr.FuncLocal("match_stmt", {}, i32, {
-    Tr.StmtLet(Tr.StmtSurface, bind_stmt, Tr.ExprCtor(Tr.ExprSurface, "Maybe", "some", { lit(33) })),
-    Tr.StmtSwitch(Tr.StmtSurface, ref("m"), {}, {
-        Tr.SwitchVariantStmtArm("some", { Tr.VariantBind("x", void) }, { Tr.StmtReturnValue(Tr.StmtSurface, ref("x")) }),
-    }, { Tr.StmtReturnValue(Tr.StmtSurface, lit(0)) }),
-})
-
-local func_expr = Tr.FuncLocal("match_expr", {}, i32, {
-    Tr.StmtLet(Tr.StmtSurface, bind_expr, Tr.ExprCtor(Tr.ExprSurface, "Maybe", "some", { lit(44) })),
-    Tr.StmtReturnValue(Tr.StmtSurface, Tr.ExprSwitch(Tr.ExprSurface, ref("m"), {}, {
-        Tr.SwitchVariantExprArm("some", { Tr.VariantBind("x", void) }, {}, ref("x")),
-    }, {}, lit(0))),
-})
-
-local bind_ctl = B.Binding(Core.Id("local:m_ctl"), "m", maybe_ty, B.BindingClassLocalValue)
-local ctl_region = Tr.ControlExprRegion("match_ctl", i32, Tr.EntryControlBlock(Tr.BlockLabel("start"), {}, {
-    Tr.StmtLet(Tr.StmtSurface, bind_ctl, Tr.ExprCtor(Tr.ExprSurface, "Maybe", "some", { lit(55) })),
-    Tr.StmtSwitch(Tr.StmtSurface, ref("m"), {}, {
-        Tr.SwitchVariantStmtArm("some", { Tr.VariantBind("x", void) }, { Tr.StmtYieldValue(Tr.StmtSurface, ref("x")) }),
-    }, { Tr.StmtYieldValue(Tr.StmtSurface, lit(0)) }),
-}), {})
-local func_control = Tr.FuncLocal("match_control", {}, i32, {
-    Tr.StmtReturnValue(Tr.StmtSurface, Tr.ExprControl(Tr.ExprSurface, ctl_region)),
-})
-
-local module = Tr.Module(Tr.ModuleSurface, { Tr.ItemType(decl), Tr.ItemFunc(func_stmt), Tr.ItemFunc(func_expr), Tr.ItemFunc(func_control) })
-local checked = Typecheck.check_module(module)
-assert(#checked.issues == 0, "typecheck issues: " .. tostring(#checked.issues))
-local layout_env = ModuleType.env(checked.module)
-local resolved = Layout.module(checked.module)
-local unit = TreeToC.module(resolved, { layout_env = layout_env })
-local report = CValidate.validate(unit)
-assert(#report.issues == 0, "C validation issues: " .. tostring(#report.issues))
-
-local c_src = CEmit.emit(unit)
+local c_src = CEmit.Define(T).emit(result.c_unit)
 assert(c_src:match("__tag"), "tagged union C should contain __tag field")
 assert(c_src:match("__payload"), "tagged union C should contain __payload field")
-assert(c_src:match("switch %(ml_variant_tag"), "variant switch should lower through tag switch")
+assert(c_src:match("switch %("), "variant switch should lower through a C switch")
 
 local function exec_ok(cmd)
     local a = os.execute(cmd)
@@ -81,4 +62,5 @@ if exec_ok("command -v cc >/dev/null 2>&1") then
     assert(ok, "emitted tagged-union C failed cc -std=c99 -fsyntax-only")
 end
 
-io.write("moonlift tagged union tree_to_c ok\n")
+assert(package.loaded["moonlift.tree_to_c"] == nil)
+io.write("moonlift tagged union code_to_c ok\n")

@@ -584,9 +584,11 @@ function M.new(opts)
         end
     end
 
-    function self:draw_text(x, y, w, h, layout)
+    function self:draw_text(x, y, w, h, layout, paint)
         if layout == nil then return end
-        local align = layout.style.align
+        local metrics = (layout.text and layout.text.metrics) or layout.style or {}
+        local fg = (paint and paint.fg) or 0xffffffff
+        local align = metrics.align or 0
         for i = 1, #layout.lines do
             local line = layout.lines[i]
             local draw_x = x + line.x
@@ -598,9 +600,9 @@ function M.new(opts)
             local draw_y = y + line.y
             for j = 1, #line.runs do
                 local run = line.runs[j]
-                local font, font_key_value = get_font(run.font_id, run.font_size, layout.style)
+                local font, font_key_value = get_font(run.font_id, run.font_size, metrics)
                 local text = get_text(font, font_key_value, run.text)
-                local r, g, b, a = rgba8_bytes(run.fg, 1)
+                local r, g, b, a = rgba8_bytes(fg, 1)
                 if ttf.TTF_SetTextColor(text, r, g, b, a) == 0 then
                     sdl3.err("ui.runtime_sdl3: TTF_SetTextColor failed")
                 end

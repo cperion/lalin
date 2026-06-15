@@ -41,7 +41,7 @@ end
 
 local function text_style(text, rgba8, size)
     size = size or 14
-    return T.Layout.TextStyle(1, size, 400, rgba8 or 0xe5e7ebff, 0, math.floor(size * 1.35), 0, text or "")
+    return T.Layout.TextMeasure(T.Resolved.TextMetrics(1, size, 400, 0, math.floor(size * 1.35), 0), text or "")
 end
 
 local function text_opts(window, id, placeholder, min_h)
@@ -57,6 +57,8 @@ local function text_opts(window, id, placeholder, min_h)
         composition_style = function(field)
             return text_style(field.composition_text, 0x93c5fdff, 15)
         end,
+        text_rgba8 = 0xe5e7ebff,
+        composition_rgba8 = 0x93c5fdff,
         bg_rgba8 = 0x020617ff,
         border_rgba8 = 0x1e293bff,
         focus_border_rgba8 = 0x38bdf8ff,
@@ -549,8 +551,9 @@ local function draw_window(session, window)
     })
     assert(#lowered == 1, "gallery lowers to one root")
 
-    local solve_env = Solve.Env(vw, vh, model.interact.scrolls or {})
-    local rg, rp, rc = ui.render.root(lowered[1], solve_env, window.text_key)
+    local solve_env = Solve.Env(vw, vh)
+    local solved = pvm.one(ui.solve.root(lowered[1].layout, solve_env, window.text_key))
+    local rg, rp, rc = ui.render.root(solved, lowered[1].decor)
 
     host:begin_frame(0x020617ff)
     local report = ui.runtime.run(host.driver, {

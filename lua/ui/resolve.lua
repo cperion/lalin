@@ -346,21 +346,11 @@ local function resolve_tracks(tracks)
     return out
 end
 
-local resolve_phase = pvm.phase("ui.resolve", function(spec, theme)
+local resolve_layout_phase = pvm.phase("ui.resolve.layout", function(spec, theme)
     local font_px = resolve_font_size(spec.font_size, theme)
     local font_id, font_weight = resolve_font(theme, spec.font_weight)
 
-    local text = Resolved.TextStyle(
-        font_id,
-        font_px,
-        font_weight,
-        resolve_color(spec.fg, theme),
-        resolve_text_align(spec.text_align),
-        resolve_leading(spec.leading, font_px),
-        resolve_tracking(spec.tracking, font_px)
-    )
-
-    local box = Layout.BoxStyle(
+    local layout_box = Resolved.LayoutStyle(
         resolve_sizing(spec.w),
         resolve_sizing(spec.h),
         resolve_min(spec.min_w),
@@ -383,27 +373,27 @@ local resolve_phase = pvm.phase("ui.resolve", function(spec, theme)
             resolve_margin_value(spec.margin.bottom, theme),
             resolve_margin_value(spec.margin.left, theme)
         ),
-        Layout.BoxVisual(
-            resolve_color(spec.bg, theme),
-            resolve_color(spec.border_color, theme),
-            resolve_border_width(spec.border_w, theme),
-            resolve_box_shape(spec.radius),
-            resolve_box_radius(spec.radius, theme),
-            resolve_opacity(spec.opacity, theme)
-        ),
         resolve_overflow(spec.overflow_x),
-        resolve_overflow(spec.overflow_y),
-        spec.cursor
+        resolve_overflow(spec.overflow_y)
     )
 
-    return Resolved.Style(
+    local text_metrics = Resolved.TextMetrics(
+        font_id,
+        font_px,
+        font_weight,
+        resolve_text_align(spec.text_align),
+        resolve_leading(spec.leading, font_px),
+        resolve_tracking(spec.tracking, font_px)
+    )
+
+    return Resolved.LayoutFacts(
         spec.display,
         resolve_axis(spec.axis),
         resolve_wrap(spec.wrap),
         resolve_justify(spec.justify),
         resolve_items(spec.items),
-        box,
-        text,
+        layout_box,
+        text_metrics,
         resolve_tracks(spec.cols),
         resolve_tracks(spec.rows),
         resolve_space(spec.gap.x, theme),
@@ -419,7 +409,34 @@ local resolve_phase = pvm.phase("ui.resolve", function(spec, theme)
     )
 end)
 
+local resolve_decor_phase = pvm.phase("ui.resolve.decor", function(spec, theme)
+    local visual = Resolved.BoxVisual(
+        resolve_color(spec.bg, theme),
+        resolve_color(spec.border_color, theme),
+        resolve_border_width(spec.border_w, theme),
+        resolve_box_shape(spec.radius),
+        resolve_box_radius(spec.radius, theme),
+        resolve_opacity(spec.opacity, theme)
+    )
+
+    return Resolved.DecorFacts(
+        visual,
+        Resolved.TextPaint(resolve_color(spec.fg, theme)),
+        Resolved.InteractionStyle(spec.cursor)
+    )
+end)
+
+local resolve_phase = pvm.phase("ui.resolve", {
+    [S.Spec] = function(spec, theme)
+        local lg, lp, lc = resolve_layout_phase(spec.layout, theme)
+        local dg, dp, dc = resolve_decor_phase(spec.decor, theme)
+        return pvm.once(Resolved.Facts(pvm.one(lg, lp, lc), pvm.one(dg, dp, dc)))
+    end,
+})
+
 M.phase = resolve_phase
+M.layout_phase = resolve_layout_phase
+M.decor_phase = resolve_decor_phase
 M.T = T
 
 return M

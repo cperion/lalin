@@ -20,12 +20,20 @@ local function assert_truthy(value, label)
 end
 
 local function style_for(content)
-    return Layout.TextStyle(1, 16, 400, 0xffffffff, 0, 20, 0, content or "")
+    return Layout.TextMeasure(T.Resolved.TextMetrics(1, 16, 400, 0, 20, 0), content or "")
+end
+
+local function text_content(style)
+    return style.content or ""
+end
+
+local function text_font_size(style)
+    return (style.metrics and style.metrics.font_size) or style.font_size or 16
 end
 
 local function fixed_measure(multiplier)
     return function(style, constraint)
-        local content = style.content or ""
+        local content = text_content(style)
         return {
             measured_w = #content * multiplier,
             measured_h = 10 + multiplier,
@@ -65,10 +73,10 @@ local function fake_backend(opts)
             measure = fixed_measure(opts.multiplier or 7),
         }
         function sys.hit_test(style, constraint, x, y)
-            return { byte_start = 0, byte_end = 0, x = x or 0, y = y or 0, w = 0, h = style.font_size }
+            return { byte_start = 0, byte_end = 0, x = x or 0, y = y or 0, w = 0, h = text_font_size(style) }
         end
         function sys.range_query(style, constraint, offset, length)
-            return { { byte_start = offset or 0, byte_end = length or #style.content } }
+            return { { byte_start = offset or 0, byte_end = length or #text_content(style) } }
         end
         function sys:close()
             state.text_closed = state.text_closed + 1
@@ -222,15 +230,17 @@ do
     text.register("cache-a", { measure = fixed_measure(3) })
     text.register("cache-b", { measure = fixed_measure(11) })
 
-    local size_a = pvm.one(ui.measure.root(node, 200, 100, "cache-a", store_a))
-    local size_b = pvm.one(ui.measure.root(node, 200, 100, "cache-b", store_a))
-    local size_c = pvm.one(ui.measure.root(node, 200, 100, "cache-a", store_b))
+    local size_a = pvm.one(ui.measure.root(node.layout, 200, 100, "cache-a", store_a))
+    local size_b = pvm.one(ui.measure.root(node.layout, 200, 100, "cache-b", store_a))
+    local size_c = pvm.one(ui.measure.root(node.layout, 200, 100, "cache-a", store_b))
     assert_eq(size_a.w, 6, "cache text system A width")
     assert_eq(size_b.w, 22, "cache text system B width")
     assert_eq(size_c.w, 12, "cache content store B width")
 
-    local ops_a = pvm.drain(ui.render.root(node, T.Solve.Env(200, 100, {}), "cache-a", store_a))
-    local ops_b = pvm.drain(ui.render.root(node, T.Solve.Env(200, 100, {}), "cache-b", store_a))
+    local solved_a = pvm.one(ui.solve.root(node.layout, T.Solve.Env(200, 100), "cache-a", store_a))
+    local solved_b = pvm.one(ui.solve.root(node.layout, T.Solve.Env(200, 100), "cache-b", store_a))
+    local ops_a = pvm.drain(ui.render.root(solved_a, node.decor))
+    local ops_b = pvm.drain(ui.render.root(solved_b, node.decor))
     assert_eq(ops_a[1].text.measured_w, 6, "render cache system A width")
     assert_eq(ops_b[1].text.measured_w, 22, "render cache system B width")
 

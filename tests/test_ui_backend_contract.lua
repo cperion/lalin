@@ -35,7 +35,8 @@ local function lower_one(auth)
 end
 
 local function render(node, w, h, text_system, content_store)
-    return ui.render.root(node, T.Solve.Env(w, h, {}), text_system or false, content_store)
+    local solved = pvm.one(ui.solve.root(node.layout, T.Solve.Env(w, h), text_system or false, content_store))
+    return ui.render.root(solved, node.decor)
 end
 
 local function call_count(calls, name)
@@ -192,8 +193,8 @@ do
         assert_truthy(density.scale_x > 0 and density.scale_y > 0, "SDL density scale")
 
         host:begin_frame(0x020617ff)
-        host.driver:draw_rect(2, 2, 30, 18, Layout.BoxVisual(0x0f172aff, 0x38bdf8ff, 2, Layout.ShapeRoundRect, 6, 100))
-        host.driver:draw_rect(36, 2, 30, 18, Layout.BoxVisual(0x1e293bff, 0xf59e0bff, 2, Layout.ShapeCapsule, 999, 100))
+        host.driver:draw_rect(2, 2, 30, 18, T.Resolved.BoxVisual(0x0f172aff, 0x38bdf8ff, 2, Layout.ShapeRoundRect, 6, 100))
+        host.driver:draw_rect(36, 2, 30, 18, T.Resolved.BoxVisual(0x1e293bff, 0xf59e0bff, 2, Layout.ShapeCapsule, 999, 100))
         host.driver:push_clip_rect(0, 0, 96, 64)
         host.driver:draw_paint(0, 0, 96, 64, paint.list {
             paint.line(4, 28, 40, 32, paint.stroke(0x38bdf8ff, 2)),
@@ -207,7 +208,7 @@ do
         })
         host.driver:pop_clip_rect()
 
-        local style = Layout.TextStyle(1, 16, 400, 0xffffffff, 0, 20, 0, "SDL")
+        local style = Layout.TextMeasure(T.Resolved.TextMetrics(1, 16, 400, 0, 20, 0), "SDL")
         local constraint = Layout.Constraint(160, 80)
         local measured = host.text_system.measure(style, constraint)
         assert_truthy((measured.measured_w or measured.width or 0) > 0, "SDL text measured width")

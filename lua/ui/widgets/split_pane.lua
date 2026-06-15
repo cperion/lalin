@@ -42,10 +42,11 @@ function M.ratio_from_point(report_or_box, id, x, y, opts)
         end
     end
     if box == nil then return nil end
+    local r = box.rect or box.viewport or box
     if (opts.orientation or DEFAULTS.orientation) == "vertical" then
-        return clamp_ratio((y - box.y) / (box.h ~= 0 and box.h or 1))
+        return clamp_ratio((y - r.y) / (r.h ~= 0 and r.h or 1))
     end
-    return clamp_ratio((x - box.x) / (box.w ~= 0 and box.w or 1))
+    return clamp_ratio((x - r.x) / (r.w ~= 0 and r.w or 1))
 end
 
 function M.node(opts)

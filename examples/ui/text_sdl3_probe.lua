@@ -84,7 +84,7 @@ local function main()
     local samples = {
         {
             label = "wrap-english",
-            style = T.Layout.TextStyle(1, 18, 400, 0xffffffff, 0, 22, 0, "abc def ghi jkl mno"),
+            style = T.Layout.TextMeasure(T.Resolved.TextMetrics(1, 18, 400, 0, 22, 0), "abc def ghi jkl mno"),
             constraint = T.Layout.Constraint(80, math.huge),
             range_offset = 4,
             range_length = 7,
@@ -93,7 +93,7 @@ local function main()
         },
         {
             label = "multiline",
-            style = T.Layout.TextStyle(1, 18, 400, 0xffffffff, 0, 22, 0, "hello\nworld again"),
+            style = T.Layout.TextMeasure(T.Resolved.TextMetrics(1, 18, 400, 0, 22, 0), "hello\nworld again"),
             constraint = T.Layout.Constraint(200, math.huge),
             range_offset = 0,
             range_length = -1,

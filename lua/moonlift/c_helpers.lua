@@ -13,7 +13,31 @@ function M.Define(T)
 
     local Core = T.MoonCore
     local C = T.MoonC
-    local TypeToC = require("moonlift.type_to_c").Define(T)
+
+    local function node_key(x, seen)
+        local tx = type(x)
+        if tx ~= "table" then return tostring(x) end
+        seen = seen or {}
+        if seen[x] then return "<cycle>" end
+        seen[x] = true
+        local cls = pvm.classof(x)
+        local parts = { class_name(x) }
+        if cls and cls.__fields then
+            for i = 1, #cls.__fields do
+                local name = cls.__fields[i].name
+                parts[#parts + 1] = name .. "=" .. node_key(x[name], seen)
+            end
+        else
+            local keys = {}
+            for k in pairs(x) do keys[#keys + 1] = k end
+            table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+            for i = 1, #keys do
+                parts[#parts + 1] = tostring(keys[i]) .. "=" .. node_key(x[keys[i]], seen)
+            end
+        end
+        seen[x] = nil
+        return table.concat(parts, "{") .. "}"
+    end
 
     local function scalar_suffix(s)
         if s == Core.ScalarBool then return "bool8" end
@@ -73,7 +97,7 @@ function M.Define(T)
     end
 
     local function helper_key(kind)
-        return TypeToC.type_key(kind)
+        return node_key(kind)
     end
 
     local function helper_id(kind)

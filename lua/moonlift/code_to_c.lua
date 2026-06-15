@@ -1,0 +1,583 @@
+local pvm = require("moonlift.pvm")
+
+local M = {}
+
+local function sanitize(s)
+    s = tostring(s or "x"):gsub("[^%w_]", "_")
+    if s:match("^%d") then s = "_" .. s end
+    if s == "" then s = "x" end
+    return s
+end
+
+local function class_name(x)
+    local cls = pvm.classof(x) or x
+    return tostring(cls):match("Class%((.-)%)") or tostring(cls)
+end
+
+function M.Define(T)
+    T._moonlift_api_cache = T._moonlift_api_cache or {}
+    if T._moonlift_api_cache.code_to_c ~= nil then return T._moonlift_api_cache.code_to_c end
+
+    local Core = T.MoonCore
+    local Sem = T.MoonSem
+    local Code = T.MoonCode
+    local C = T.MoonC
+
+    local CodeType = require("moonlift.code_type").Define(T)
+    local CodeValidate = require("moonlift.code_validate").Define(T)
+
+    local api = {}
+
+    local function c_name(text) return C.CBackendName(sanitize(text)) end
+    local function c_label(id) return C.CBackendLabel(sanitize(id.text)) end
+    local function c_local_id(id) return C.CBackendLocalId(sanitize(id.text)) end
+    local function c_global_id(id) return C.CBackendGlobalId(sanitize(id.text)) end
+    local function c_sig_id(id) return C.CBackendFuncSigId(sanitize(id.text)) end
+    local function c_synth_local_id(prefix, id) return C.CBackendLocalId(sanitize(prefix .. ":" .. id.text)) end
+
+    local function add_helper(ctx, kind)
+        local key = tostring(kind)
+        ctx.helpers_by_key = ctx.helpers_by_key or {}
+        local use = ctx.helpers_by_key[key]
+        if use ~= nil then return use.id end
+        local id = C.CBackendHelperId("ml_code_helper_" .. tostring(#ctx.helper_order + 1))
+        use = C.CBackendHelperUse(id, kind)
+        ctx.helpers_by_key[key] = use
+        ctx.helpers_by_id[id.text] = use
+        ctx.helper_order[#ctx.helper_order + 1] = use
+        return id
+    end
+
+    local function c_ty(ctx, ty)
+        return CodeType.code_type_to_c(ty, ctx.type_ctx)
+    end
+
+    local function c_sig(ctx, sig_id)
+        return c_sig_id(sig_id)
+    end
+
+    local function c_trap_mode(mode)
+        if mode == Code.CodeMustNotTrap then return C.CBackendMustNotTrap end
+        if mode == Code.CodeCheckedTrap then return C.CBackendCheckedTrap end
+        return C.CBackendMayTrap
+    end
+
+    local function c_access(ctx, access)
+        return C.CBackendMemoryAccess(c_ty(ctx, access.ty), access.align, c_trap_mode(access.trap), access.volatile, access.ordering)
+    end
+
+    local function field_name(field)
+        local cls = pvm.classof(field)
+        if cls == Sem.FieldByName or cls == Sem.FieldByOffset then return field.field_name end
+        return "field"
+    end
+
+    local function atom(id)
+        return C.CBackendAtomLocal(c_local_id(id))
+    end
+
+    local function is_view_ty(ty)
+        return pvm.classof(ty) == Code.CodeTyView
+    end
+
+    local function view_parts(ctx, id)
+        return ctx.view_values and ctx.view_values[id.text] or nil
+    end
+
+    local function note_view_parts(ctx, id, parts)
+        if id ~= nil and parts ~= nil then ctx.view_values[id.text] = parts end
+    end
+
+    local function const_atom(ctx, const)
+        local cls = pvm.classof(const)
+        if cls == Code.CodeConstLiteral then return C.CBackendAtomLiteral(c_ty(ctx, const.ty), const.literal) end
+        if cls == Code.CodeConstNull then return C.CBackendAtomNull(c_ty(ctx, const.ty)) end
+        if cls == Code.CodeConstUndef then return C.CBackendAtomLiteral(c_ty(ctx, const.ty), Core.LitInt("0")) end
+        error("code_to_c: unsupported const " .. class_name(const), 2)
+    end
+
+    local place_to_c
+    place_to_c = function(ctx, place)
+        local cls = pvm.classof(place)
+        if cls == Code.CodePlaceLocal then
+            return C.CBackendPlaceLocal(c_local_id(place["local"]), c_ty(ctx, place.ty))
+        elseif cls == Code.CodePlaceGlobal then
+            return C.CBackendPlaceGlobal(c_global_id(place.global), c_ty(ctx, place.ty))
+        elseif cls == Code.CodePlaceData then
+            return C.CBackendPlaceGlobal(c_global_id(place.data), c_ty(ctx, place.ty))
+        elseif cls == Code.CodePlaceDeref then
+            return C.CBackendPlaceDeref(atom(place.addr), c_ty(ctx, place.ty), place.align)
+        elseif cls == Code.CodePlaceField then
+            return C.CBackendPlaceField(place_to_c(ctx, place.base), C.CBackendName(field_name(place.field)), c_ty(ctx, place.ty), place.offset, place.size, place.align)
+        elseif cls == Code.CodePlaceIndex then
+            return C.CBackendPlaceIndex(place_to_c(ctx, place.base), atom(place.index), c_ty(ctx, place.ty), place.elem_size)
+        elseif cls == Code.CodePlaceBytes then
+            return C.CBackendPlaceBytes(atom(place.base), place.offset, c_ty(ctx, place.ty), place.size, place.align)
+        end
+        error("code_to_c: unsupported place " .. class_name(place), 2)
+    end
+
+    local function code_func_name(ctx, id)
+        local f = ctx.funcs[id.text]
+        return c_name(f and f.name or id.text)
+    end
+
+    local function code_extern_name(ctx, id)
+        local e = ctx.externs[id.text]
+        return c_name(e and e.name or id.text)
+    end
+
+    local function global_ref_name(ctx, ref)
+        local cls = pvm.classof(ref)
+        if cls == Code.CodeGlobalRefFunc then return code_func_name(ctx, ref.func) end
+        if cls == Code.CodeGlobalRefExtern then return code_extern_name(ctx, ref["extern"]) end
+        if cls == Code.CodeGlobalRefGlobal then return c_name(ref.global.text) end
+        if cls == Code.CodeGlobalRefData then return c_name(ref.data.text) end
+        return c_name("global")
+    end
+
+    local function global_ref_sig(ctx, ref)
+        local cls = pvm.classof(ref)
+        if cls == Code.CodeGlobalRefFunc then
+            local f = ctx.funcs[ref.func.text]
+            return f and c_sig(ctx, f.sig) or C.CBackendFuncSigId("missing")
+        elseif cls == Code.CodeGlobalRefExtern then
+            local e = ctx.externs[ref["extern"].text]
+            return e and c_sig(ctx, e.sig) or C.CBackendFuncSigId("missing")
+        end
+        return C.CBackendFuncSigId("missing")
+    end
+
+    local function binary_helper_kind(ctx, k)
+        local ty = c_ty(ctx, k.ty)
+        if k.op == Core.BinDiv or k.op == Core.BinRem then
+            local mode = (k.semantics and k.semantics.div == Code.CodeDivTrapOnZeroOrOverflow) and C.CBackendDivTrapOnZeroOrOverflow or C.CBackendDivTrapOnZero
+            return C.CBackendHelperDivRem(k.op, ty, mode)
+        elseif k.op == Core.BinShl or k.op == Core.BinLShr or k.op == Core.BinAShr then
+            local mode = (k.semantics and k.semantics.shift == Code.CodeShiftTrapOutOfRange) and C.CBackendShiftTrapOutOfRange or C.CBackendShiftMaskCount
+            return C.CBackendHelperShift(k.op, ty, mode)
+        else
+            local overflow = C.CBackendIntWrap
+            if k.semantics and k.semantics.overflow == Code.CodeIntTrapOnOverflow then overflow = C.CBackendIntTrapOnOverflow end
+            if k.semantics and pvm.classof(k.semantics.overflow) == Code.CodeIntAssumeNoOverflow then overflow = C.CBackendIntAssumeNoOverflow end
+            return C.CBackendHelperIntBinary(k.op, ty, overflow)
+        end
+    end
+
+    local function inst_to_stmts(ctx, inst)
+        local k = inst.kind
+        local cls = pvm.classof(k)
+        if cls == Code.CodeInstConst then
+            return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRAtom(const_atom(ctx, k.const))) }
+        elseif cls == Code.CodeInstAlias then
+            return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRAtom(atom(k.src))) }
+        elseif cls == Code.CodeInstUnary then
+            local helper = add_helper(ctx, C.CBackendHelperUnary(k.op, c_ty(ctx, k.ty)))
+            return { C.CBackendHelperCall(c_local_id(k.dst), helper, { atom(k.value) }) }
+        elseif cls == Code.CodeInstBinary then
+            local helper = add_helper(ctx, binary_helper_kind(ctx, k))
+            return { C.CBackendHelperCall(c_local_id(k.dst), helper, { atom(k.lhs), atom(k.rhs) }) }
+        elseif cls == Code.CodeInstFloatBinary then
+            local helper = add_helper(ctx, C.CBackendHelperIntBinary(k.op, c_ty(ctx, k.ty), C.CBackendIntWrap))
+            return { C.CBackendHelperCall(c_local_id(k.dst), helper, { atom(k.lhs), atom(k.rhs) }) }
+        elseif cls == Code.CodeInstCompare then
+            return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRCompare(k.op, c_ty(ctx, k.operand_ty), atom(k.lhs), atom(k.rhs))) }
+        elseif cls == Code.CodeInstCast then
+            return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRCast(k.op, c_ty(ctx, k.to), atom(k.value))) }
+        elseif cls == Code.CodeInstSelect then
+            return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRSelect(c_ty(ctx, k.ty), atom(k.cond), atom(k.then_value), atom(k.else_value))) }
+        elseif cls == Code.CodeInstIntrinsic then
+            local helper = add_helper(ctx, C.CBackendHelperIntrinsic(k.op, c_ty(ctx, k.ty)))
+            local args = {}; for i = 1, #k.args do args[i] = atom(k.args[i]) end
+            return { C.CBackendHelperCall(k.dst and c_local_id(k.dst) or nil, helper, args) }
+        elseif cls == Code.CodeInstAddrOf then
+            return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRAddrOfPlace(place_to_c(ctx, k.place))) }
+        elseif cls == Code.CodeInstGlobalRef then
+            local rcls = pvm.classof(k.ref)
+            if rcls == Code.CodeGlobalRefFunc then
+                return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRFuncAddr(global_ref_name(ctx, k.ref), global_ref_sig(ctx, k.ref))) }
+            elseif rcls == Code.CodeGlobalRefExtern then
+                return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRExternAddr(global_ref_name(ctx, k.ref), global_ref_sig(ctx, k.ref))) }
+            else
+                return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRAtom(C.CBackendAtomGlobal(c_global_id(k.ref.global or k.ref.data)))) }
+            end
+        elseif cls == Code.CodeInstPtrOffset then
+            return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRPtrOffset(atom(k.base), atom(k.index), k.elem_size, k.const_offset)) }
+        elseif cls == Code.CodeInstLoad then
+            if is_view_ty(k.access.ty) and pvm.classof(k.place) == Code.CodePlaceLocal then
+                local parts = view_parts(ctx, k.place["local"])
+                if parts ~= nil then
+                    note_view_parts(ctx, k.dst, parts)
+                    return {}
+                end
+            end
+            return { C.CBackendPlaceLoad(c_local_id(k.dst), place_to_c(ctx, k.place)) }
+        elseif cls == Code.CodeInstStore then
+            if is_view_ty(k.access.ty) and pvm.classof(k.place) == Code.CodePlaceLocal then
+                local parts = view_parts(ctx, k.value)
+                if parts ~= nil then
+                    note_view_parts(ctx, k.place["local"], parts)
+                    return {}
+                end
+            end
+            return { C.CBackendPlaceStore(place_to_c(ctx, k.place), atom(k.value)) }
+        elseif cls == Code.CodeInstAggregate then
+            local fields = {}
+            for i = 1, #k.fields do fields[i] = C.CBackendAggregateFieldInit(C.CBackendName(field_name(k.fields[i].field)), atom(k.fields[i].value), nil) end
+            return { C.CBackendAggregateInit(C.CBackendPlaceLocal(c_local_id(k.dst), c_ty(ctx, k.ty)), c_ty(ctx, k.ty), fields) }
+        elseif cls == Code.CodeInstArray then
+            local elems = {}; for i = 1, #k.elems do elems[i] = C.CBackendArrayElemInit(k.elems[i].index, atom(k.elems[i].value)) end
+            return { C.CBackendArrayInit(C.CBackendPlaceLocal(c_local_id(k.dst), c_ty(ctx, k.ty)), c_ty(ctx, k.ty), elems) }
+        elseif cls == Code.CodeInstView then
+            note_view_parts(ctx, k.dst, { data = k.data, len = k.len, stride = k.stride })
+            return {}
+        elseif cls == Code.CodeInstViewData then
+            local parts = view_parts(ctx, k.view)
+            if parts ~= nil then return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRAtom(atom(parts.data))) } end
+            return { C.CBackendPlaceLoad(c_local_id(k.dst), C.CBackendPlaceField(C.CBackendPlaceLocal(c_local_id(k.view), c_ty(ctx, k.view_ty)), C.CBackendName("data"), c_ty(ctx, k.ptr_ty), 0, nil, nil)) }
+        elseif cls == Code.CodeInstViewLen then
+            local parts = view_parts(ctx, k.view)
+            if parts ~= nil then return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRAtom(atom(parts.len))) } end
+            return { C.CBackendPlaceLoad(c_local_id(k.dst), C.CBackendPlaceField(C.CBackendPlaceLocal(c_local_id(k.view), c_ty(ctx, k.view_ty)), C.CBackendName("len"), C.CBackendIndex, 0, nil, nil)) }
+        elseif cls == Code.CodeInstViewStride then
+            local parts = view_parts(ctx, k.view)
+            if parts ~= nil then return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRAtom(atom(parts.stride))) } end
+            return { C.CBackendPlaceLoad(c_local_id(k.dst), C.CBackendPlaceField(C.CBackendPlaceLocal(c_local_id(k.view), c_ty(ctx, k.view_ty)), C.CBackendName("stride"), C.CBackendIndex, 0, nil, nil)) }
+        elseif cls == Code.CodeInstClosure then
+            return { C.CBackendAggregateInit(C.CBackendPlaceLocal(c_local_id(k.dst), c_ty(ctx, k.ty)), c_ty(ctx, k.ty), {
+                C.CBackendAggregateFieldInit(C.CBackendName("fn"), atom(k.fn), 0),
+                C.CBackendAggregateFieldInit(C.CBackendName("ctx"), atom(k.ctx), nil),
+            }) }
+        elseif cls == Code.CodeInstVariantCtor then
+            local fields = { C.CBackendAggregateFieldInit(C.CBackendName("__tag"), C.CBackendAtomLiteral(C.CBackendScalar(Core.ScalarU32), Core.LitInt(tostring(k.variant.tag_value))), 0) }
+            if k.payload ~= nil then fields[#fields + 1] = C.CBackendAggregateFieldInit(C.CBackendName("__payload"), atom(k.payload), nil) end
+            return { C.CBackendAggregateInit(C.CBackendPlaceLocal(c_local_id(k.dst), c_ty(ctx, k.ty)), c_ty(ctx, k.ty), fields) }
+        elseif cls == Code.CodeInstVariantTag then
+            return { C.CBackendPlaceLoad(c_local_id(k.dst), C.CBackendPlaceField(C.CBackendPlaceLocal(c_local_id(k.value), c_ty(ctx, k.variant and k.variant.owner_ty or Code.CodeTyVoid)), C.CBackendName("__tag"), c_ty(ctx, k.tag_ty), 0, nil, nil)) }
+        elseif cls == Code.CodeInstVariantPayload then
+            return { C.CBackendPlaceLoad(c_local_id(k.dst), C.CBackendPlaceField(C.CBackendPlaceLocal(c_local_id(k.value), c_ty(ctx, k.variant.owner_ty)), C.CBackendName("__payload"), c_ty(ctx, k.variant.payload_ty), 0, nil, nil)) }
+        elseif cls == Code.CodeInstCall then
+            local args = {}; for i = 1, #k.args do args[i] = atom(k.args[i]) end
+            local tcls = pvm.classof(k.target)
+            local target
+            if tcls == Code.CodeCallDirect then target = C.CBackendCallDirect(code_func_name(ctx, k.target.func))
+            elseif tcls == Code.CodeCallExtern then target = C.CBackendCallExtern(code_extern_name(ctx, k.target["extern"]))
+            elseif tcls == Code.CodeCallIndirect then target = C.CBackendCallIndirect(atom(k.target.callee), c_sig(ctx, k.target.sig))
+            elseif tcls == Code.CodeCallClosure then target = C.CBackendCallClosure(atom(k.target.closure), c_sig(ctx, k.target.sig))
+            else return { C.CBackendComment("unsupported call target") } end
+            return { C.CBackendCall(k.dst and c_local_id(k.dst) or nil, target, args) }
+        elseif cls == Code.CodeInstAtomicLoad then
+            if pvm.classof(k.place) ~= Code.CodePlaceDeref then return { C.CBackendComment("atomic load of non-deref place") } end
+            local helper = add_helper(ctx, C.CBackendHelperAtomicLoad(c_access(ctx, k.access)))
+            return { C.CBackendHelperCall(c_local_id(k.dst), helper, { atom(k.place.addr) }) }
+        elseif cls == Code.CodeInstAtomicStore then
+            if pvm.classof(k.place) ~= Code.CodePlaceDeref then return { C.CBackendComment("atomic store of non-deref place") } end
+            local helper = add_helper(ctx, C.CBackendHelperAtomicStore(c_access(ctx, k.access)))
+            return { C.CBackendHelperCall(nil, helper, { atom(k.place.addr), atom(k.value) }) }
+        elseif cls == Code.CodeInstAtomicRmw then
+            if pvm.classof(k.place) ~= Code.CodePlaceDeref then return { C.CBackendComment("atomic rmw of non-deref place") } end
+            local helper = add_helper(ctx, C.CBackendHelperAtomicRmw(k.op, c_access(ctx, k.access)))
+            return { C.CBackendHelperCall(c_local_id(k.dst), helper, { atom(k.place.addr), atom(k.value) }) }
+        elseif cls == Code.CodeInstAtomicCas then
+            if pvm.classof(k.place) ~= Code.CodePlaceDeref then return { C.CBackendComment("atomic cas of non-deref place") } end
+            local expected_addr = c_synth_local_id("atomic_cas_expected_addr", inst.id)
+            local helper = add_helper(ctx, C.CBackendHelperAtomicCas(c_access(ctx, k.access), k.ordering, k.ordering))
+            return {
+                C.CBackendAssign(expected_addr, C.CBackendRAddrOfPlace(C.CBackendPlaceLocal(c_local_id(k.expected), c_ty(ctx, k.access.ty)))),
+                C.CBackendHelperCall(c_local_id(k.dst), helper, { atom(k.place.addr), C.CBackendAtomLocal(expected_addr), atom(k.replacement) }),
+            }
+        elseif cls == Code.CodeInstAtomicFence then
+            local helper = add_helper(ctx, C.CBackendHelperAtomicFence(k.ordering))
+            return { C.CBackendHelperCall(nil, helper, {}) }
+        end
+        return { C.CBackendComment("unsupported CodeInstKind " .. class_name(k)) }
+    end
+
+    local function term_to_c(ctx, term)
+        local k = term.kind
+        local cls = pvm.classof(k)
+        if cls == Code.CodeTermJump then
+            local args = {}; for i = 1, #k.args do args[i] = atom(k.args[i]) end
+            return C.CBackendGoto(c_label(k.dest), args)
+        elseif cls == Code.CodeTermBranch then
+            local then_args = {}; for i = 1, #k.then_args do then_args[i] = atom(k.then_args[i]) end
+            local else_args = {}; for i = 1, #k.else_args do else_args[i] = atom(k.else_args[i]) end
+            return C.CBackendIfGoto(atom(k.cond), c_label(k.then_dest), then_args, c_label(k.else_dest), else_args)
+        elseif cls == Code.CodeTermSwitch then
+            local cases = {}; for i = 1, #k.cases do local c = k.cases[i]; local args = {}; for j = 1, #c.args do args[j] = atom(c.args[j]) end; cases[i] = C.CBackendSwitchCase(c.literal, c_label(c.dest), args) end
+            local default_args = {}; for i = 1, #k.default_args do default_args[i] = atom(k.default_args[i]) end
+            return C.CBackendSwitchGoto(atom(k.value), cases, c_label(k.default_dest), default_args)
+        elseif cls == Code.CodeTermVariantSwitch then
+            local cases = {}; for i = 1, #k.cases do local c = k.cases[i]; local args = {}; for j = 1, #c.args do args[j] = atom(c.args[j]) end; cases[i] = C.CBackendSwitchCase(Core.LitInt(tostring(c.variant.tag_value)), c_label(c.dest), args) end
+            local default_args = {}; for i = 1, #k.default_args do default_args[i] = atom(k.default_args[i]) end
+            return C.CBackendSwitchGoto(atom(k.tag), cases, c_label(k.default_dest), default_args)
+        elseif cls == Code.CodeTermReturn then
+            if #k.values == 0 then return C.CBackendReturnVoid end
+            return C.CBackendReturn(atom(k.values[1]))
+        elseif cls == Code.CodeTermTrap or cls == Code.CodeTermUnreachable then
+            return C.CBackendTrap
+        end
+        return C.CBackendTrap
+    end
+
+    local function collect_value_locals(ctx, func)
+        local out, seen = {}, {}
+        local function add(id, ty)
+            if id == nil or seen[id.text] or ctx.param_values[id.text] then return end
+            seen[id.text] = true
+            out[#out + 1] = C.CBackendLocal(c_local_id(id), c_name(id.text), c_ty(ctx, ty))
+        end
+        for i = 1, #(func.locals or {}) do add(func.locals[i].id, func.locals[i].ty) end
+        for i = 1, #(func.blocks or {}) do
+            local b = func.blocks[i]
+            for j = 1, #(b.insts or {}) do
+                local k = b.insts[j].kind
+                local cls = pvm.classof(k)
+                if cls == Code.CodeInstConst then add(k.dst, k.const.ty)
+                elseif cls == Code.CodeInstAlias then add(k.dst, k.ty)
+                elseif cls == Code.CodeInstUnary or cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary or cls == Code.CodeInstSelect or cls == Code.CodeInstIntrinsic then add(k.dst, k.ty)
+                elseif cls == Code.CodeInstCompare then add(k.dst, Code.CodeTyBool8)
+                elseif cls == Code.CodeInstCast then add(k.dst, k.to)
+                elseif cls == Code.CodeInstAddrOf or cls == Code.CodeInstGlobalRef or cls == Code.CodeInstPtrOffset then add(k.dst, k.ptr_ty)
+                elseif cls == Code.CodeInstLoad or cls == Code.CodeInstAtomicLoad or cls == Code.CodeInstAtomicRmw then add(k.dst, k.access.ty)
+                elseif cls == Code.CodeInstAggregate or cls == Code.CodeInstArray or cls == Code.CodeInstView or cls == Code.CodeInstClosure or cls == Code.CodeInstVariantCtor then add(k.dst, k.ty)
+                elseif cls == Code.CodeInstViewData then add(k.dst, k.ptr_ty)
+                elseif cls == Code.CodeInstViewLen or cls == Code.CodeInstViewStride then add(k.dst, Code.CodeTyIndex)
+                elseif cls == Code.CodeInstVariantTag then add(k.dst, k.tag_ty)
+                elseif cls == Code.CodeInstVariantPayload then if k.variant.payload_ty ~= nil then add(k.dst, k.variant.payload_ty) end
+                elseif cls == Code.CodeInstAtomicCas then
+                    add(k.dst, k.access.ty)
+                    local sid = Code.CodeValueId("atomic_cas_expected_addr:" .. b.insts[j].id.text)
+                    add(sid, Code.CodeTyDataPtr(k.access.ty))
+                elseif cls == Code.CodeInstCall then
+                    local sig = ctx.sigs[k.sig.text]
+                    if k.dst ~= nil and sig and #sig.results == 1 then add(k.dst, sig.results[1]) end
+                end
+            end
+        end
+        return out
+    end
+
+    local function lower_func(ctx, func)
+        ctx.param_values = {}
+        ctx.view_values = {}
+        local params = {}
+        for i = 1, #(func.params or {}) do
+            ctx.param_values[func.params[i].value.text] = true
+            params[i] = C.CBackendLocal(c_local_id(func.params[i].value), c_name(func.params[i].name), c_ty(ctx, func.params[i].ty))
+        end
+        local locals = collect_value_locals(ctx, func)
+        local blocks = {}
+        for i = 1, #(func.blocks or {}) do
+            local b = func.blocks[i]
+            local stmts = {}
+            for j = 1, #(b.insts or {}) do
+                local ss = inst_to_stmts(ctx, b.insts[j])
+                for k = 1, #ss do if ss[k] ~= nil then stmts[#stmts + 1] = ss[k] end end
+            end
+            local params_ = {}
+            for j = 1, #(b.params or {}) do params_[j] = C.CBackendBlockParam(c_local_id(b.params[j].value), c_ty(ctx, b.params[j].ty)) end
+            blocks[i] = C.CBackendBlock(c_label(b.id), params_, stmts, term_to_c(ctx, b.term))
+        end
+        local visibility = (func.linkage == Code.CodeLinkageExport) and Core.VisibilityExport or Core.VisibilityLocal
+        return C.CBackendFunc(c_name(func.name), func.name, visibility, c_sig(ctx, func.sig), params, locals, blocks)
+    end
+
+    local function c_reloc_target(ref)
+        local cls = pvm.classof(ref)
+        if cls == Code.CodeGlobalRefGlobal then return C.CBackendRelocGlobal(c_global_id(ref.global)) end
+        if cls == Code.CodeGlobalRefData then return C.CBackendRelocGlobal(c_global_id(ref.data)) end
+        if cls == Code.CodeGlobalRefFunc then return C.CBackendRelocFunc(c_name(ref.func.text)) end
+        if cls == Code.CodeGlobalRefExtern then return C.CBackendRelocExtern(c_name(ref["extern"].text)) end
+        return C.CBackendRelocGlobal(C.CBackendGlobalId("missing"))
+    end
+
+    local function c_init(ctx, init)
+        local cls = pvm.classof(init)
+        if cls == Code.CodeDataZero then return C.CBackendDataZero(init.offset, init.size) end
+        if cls == Code.CodeDataBytes then return C.CBackendDataBytes(init.offset, init.bytes) end
+        if cls == Code.CodeDataScalar then return C.CBackendDataScalar(init.offset, c_ty(ctx, init.ty), init.literal) end
+        if cls == Code.CodeDataReloc then return C.CBackendDataReloc(init.reloc.offset, c_reloc_target(init.reloc.target), init.reloc.addend) end
+        return nil
+    end
+
+    local function lower_global(ctx, g)
+        local inits = {}; for i = 1, #(g.inits or {}) do inits[i] = c_init(ctx, g.inits[i]) end
+        local id = c_global_id(g.id)
+        return C.CBackendGlobal(id, C.CBackendName(id.text), Core.VisibilityLocal, c_ty(ctx, g.ty), g.size or 8, g.align or 1, inits)
+    end
+
+    local function lower_data(ctx, d)
+        local inits = {}; for i = 1, #(d.inits or {}) do inits[i] = c_init(ctx, d.inits[i]) end
+        local id = c_global_id(d.id)
+        return C.CBackendGlobal(id, C.CBackendName(id.text), Core.VisibilityLocal, C.CBackendDataPtr(nil), d.size, d.align, inits)
+    end
+
+    local function lower_extern(ctx, e)
+        return C.CBackendExtern(c_name(e.name), e.symbol, c_sig(ctx, e.sig), nil)
+    end
+
+    local function lower_type_decl(ctx, td)
+        local ty = c_ty(ctx, td.ty)
+        return C.CBackendTypedef(C.CTypeId(ctx.module_name, td.name), ty)
+    end
+
+    local function c_type_size_align(ctx, ty)
+        if ty == C.CBackendVoid or pvm.classof(ty) == C.CBackendVoid then return 0, 1 end
+        if ty == C.CBackendBool8 or pvm.classof(ty) == C.CBackendBool8 then return 1, 1 end
+        if ty == C.CBackendIndex or pvm.classof(ty) == C.CBackendIndex then local n = (ctx.target.index_bits or 64) / 8; return n, n end
+        local cls = pvm.classof(ty)
+        if cls == C.CBackendScalar then
+            local s = ty.scalar
+            if s == Core.ScalarI8 or s == Core.ScalarU8 or s == Core.ScalarBool then return 1, 1 end
+            if s == Core.ScalarI16 or s == Core.ScalarU16 then return 2, 2 end
+            if s == Core.ScalarI32 or s == Core.ScalarU32 or s == Core.ScalarF32 then return 4, 4 end
+            if s == Core.ScalarI64 or s == Core.ScalarU64 or s == Core.ScalarF64 then return 8, 8 end
+            if s == Core.ScalarIndex then local n = (ctx.target.index_bits or 64) / 8; return n, n end
+            if s == Core.ScalarRawPtr then local n = (ctx.target.pointer_bits or 64) / 8; return n, n end
+        elseif cls == C.CBackendDataPtr or cls == C.CBackendCodePtr or cls == C.CBackendImportedCodePtr then
+            local n = (ctx.target.pointer_bits or 64) / 8; return n, n
+        elseif cls == C.CBackendArray then
+            local sz, al = c_type_size_align(ctx, ty.elem); return sz * ty.count, al
+        end
+        return 8, 8
+    end
+
+    local function variant_type_id(owner_ty)
+        if pvm.classof(owner_ty) ~= Code.CodeTyNamed then return nil end
+        return C.CTypeId(owner_ty.module_name, owner_ty.type_name)
+    end
+
+    local function collect_layout_type_decls(ctx, existing)
+        local out = {}
+        local env = ctx.layout_env
+        for _, layout in ipairs((env and env.layouts) or {}) do
+            local cls = pvm.classof(layout)
+            local id
+            if cls == Sem.LayoutNamed then id = C.CTypeId(layout.module_name, layout.type_name)
+            elseif cls == Sem.LayoutLocal then id = C.CTypeId("local", layout.sym.name) end
+            if id ~= nil then
+                local key = id.module_name .. "\0" .. id.spelling
+                if not existing[key] then
+                    local fields = {}
+                    for i = 1, #(layout.fields or {}) do
+                        local lf = layout.fields[i]
+                        local fty = CodeType.type_to_c(lf.ty, ctx.type_ctx)
+                        local sz, al = c_type_size_align(ctx, fty)
+                        fields[#fields + 1] = C.CBackendField(C.CBackendName(lf.field_name), fty, lf.offset, sz, al)
+                    end
+                    out[#out + 1] = C.CBackendStructDecl(id, fields, layout.size, layout.align)
+                    existing[key] = true
+                end
+            end
+        end
+        return out
+    end
+
+    local function collect_variant_type_decls(ctx, code_module, existing)
+        local by_key, order = {}, {}
+        local function record(ref)
+            if ref == nil then return end
+            local id = variant_type_id(ref.owner_ty)
+            if id == nil then return end
+            local key = id.module_name .. "\0" .. id.spelling
+            if existing[key] then return end
+            local rec = by_key[key]
+            if rec == nil then rec = { id = id, payload_ty = nil }; by_key[key] = rec; order[#order + 1] = rec end
+            if rec.payload_ty == nil and ref.payload_ty ~= nil then rec.payload_ty = ref.payload_ty end
+        end
+        for _, func in ipairs(code_module.funcs or {}) do
+            for _, block in ipairs(func.blocks or {}) do
+                for _, inst in ipairs(block.insts or {}) do
+                    local k = inst.kind
+                    local cls = pvm.classof(k)
+                    if cls == Code.CodeInstVariantCtor or cls == Code.CodeInstVariantPayload then record(k.variant) end
+                end
+                if block.term ~= nil and pvm.classof(block.term.kind) == Code.CodeTermVariantSwitch then
+                    for _, case in ipairs(block.term.kind.cases or {}) do record(case.variant) end
+                end
+            end
+        end
+        local out = {}
+        for _, rec in ipairs(order) do
+            local tag_ty = C.CBackendScalar(Core.ScalarU32)
+            local fields = { C.CBackendField(C.CBackendName("__tag"), tag_ty, 0, 4, 4) }
+            local size, align = 4, 4
+            if rec.payload_ty ~= nil then
+                local payload_ty = c_ty(ctx, rec.payload_ty)
+                local psz, pal = c_type_size_align(ctx, payload_ty)
+                local off = math.floor((size + pal - 1) / pal) * pal
+                fields[#fields + 1] = C.CBackendField(C.CBackendName("__payload"), payload_ty, off, psz, pal)
+                size = off + psz
+                align = math.max(align, pal)
+            end
+            size = math.floor((size + align - 1) / align) * align
+            out[#out + 1] = C.CBackendStructDecl(rec.id, fields, size, align)
+            existing[rec.id.module_name .. "\0" .. rec.id.spelling] = true
+        end
+        return out
+    end
+
+    local function module(code_module, opts)
+        opts = opts or {}
+        local report = CodeValidate.validate(code_module, opts.collector)
+        if opts.validate ~= false and #report.issues > 0 then
+            error("code_to_c: CodeModule failed validation with " .. tostring(#report.issues) .. " issue(s)", 2)
+        end
+        local type_ctx = { code_sigs = {}, code_sig_order = {} }
+        local sigs = {}
+        for i = 1, #(code_module.sigs or {}) do type_ctx.code_sigs[code_module.sigs[i].id.text] = code_module.sigs[i] end
+        for i = 1, #(code_module.sigs or {}) do
+            local s = code_module.sigs[i]
+            local params = {}; for j = 1, #s.params do params[j] = CodeType.code_type_to_c(s.params[j], type_ctx) end
+            local result = (#s.results == 0) and C.CBackendVoid or CodeType.code_type_to_c(s.results[1], type_ctx)
+            sigs[#sigs + 1] = C.CBackendFuncSig(c_sig_id(s.id), params, result)
+        end
+        local ctx = {
+            module_name = code_module.id.text,
+            target = CodeType.normalize_target(opts.target or opts.c_target or opts),
+            type_ctx = type_ctx,
+            sigs = {}, funcs = {}, externs = {},
+            helpers_by_id = {}, helper_order = {}, helpers = {},
+            layout_env = opts.layout_env,
+        }
+        for i = 1, #(code_module.sigs or {}) do ctx.sigs[code_module.sigs[i].id.text] = code_module.sigs[i] end
+        for i = 1, #(code_module.funcs or {}) do ctx.funcs[code_module.funcs[i].id.text] = code_module.funcs[i] end
+        for i = 1, #(code_module.externs or {}) do ctx.externs[code_module.externs[i].id.text] = code_module.externs[i] end
+
+        local types = {}
+        local existing_type_ids = {}
+        for i = 1, #(code_module.types or {}) do
+            types[i] = lower_type_decl(ctx, code_module.types[i])
+            local id = types[i].id
+            if id ~= nil then existing_type_ids[id.module_name .. "\0" .. id.spelling] = true end
+        end
+        local variant_types = collect_variant_type_decls(ctx, code_module, existing_type_ids)
+        for i = 1, #variant_types do types[#types + 1] = variant_types[i] end
+        local layout_types = collect_layout_type_decls(ctx, existing_type_ids)
+        for i = 1, #layout_types do types[#types + 1] = layout_types[i] end
+        local globals = {}
+        for i = 1, #(code_module.data or {}) do globals[#globals + 1] = lower_data(ctx, code_module.data[i]) end
+        for i = 1, #(code_module.globals or {}) do globals[#globals + 1] = lower_global(ctx, code_module.globals[i]) end
+        local externs = {}; for i = 1, #(code_module.externs or {}) do externs[i] = lower_extern(ctx, code_module.externs[i]) end
+        local funcs = {}; for i = 1, #(code_module.funcs or {}) do funcs[i] = lower_func(ctx, code_module.funcs[i]) end
+        local seen_sigs = {}
+        for i = 1, #sigs do seen_sigs[sigs[i].id.text] = true end
+        for i = 1, #((type_ctx and type_ctx.sig_order) or {}) do
+            local sig = type_ctx.sig_order[i]
+            if not seen_sigs[sig.id.text] then
+                sigs[#sigs + 1] = sig
+                seen_sigs[sig.id.text] = true
+            end
+        end
+
+        return C.CBackendUnit(code_module.id.text, ctx.target, sigs, types, globals, externs, ctx.helper_order, funcs)
+    end
+
+    api.module = module
+
+    T._moonlift_api_cache.code_to_c = api
+    return api
+end
+
+return M

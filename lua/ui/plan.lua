@@ -3,6 +3,7 @@ local ui_asdl = require("ui.asdl")
 
 local T = ui_asdl.T
 local Layout = T.Layout
+local Scene = T.Scene
 
 local M = {}
 
@@ -247,6 +248,9 @@ end
 
 local function node_box(node)
     local cls = pvm.classof(node)
+    if cls == Scene.Node then
+        return node_box(node.layout)
+    end
     if cls == Layout.WithInput
         or cls == Layout.WithDragSource
         or cls == Layout.WithDropTarget

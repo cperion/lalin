@@ -8,7 +8,7 @@ local Core = T.MoonCore
 local C = T.MoonC
 local H = require("moonlift.c_helpers").Define(T)
 local Emit = require("moonlift.c_emit").Define(T)
-local TypeToC = require("moonlift.type_to_c").Define(T)
+local CodeType = require("moonlift.code_type").Define(T)
 
 local i32 = C.CBackendScalar(Core.ScalarI32)
 local u32 = C.CBackendScalar(Core.ScalarU32)
@@ -114,7 +114,7 @@ for i = 1, #atomic_helpers do
     assert(src:match("atomic_"), "atomic helper emits C11 atomic operation")
 end
 local atomic_use = C.CBackendHelperUse(H.helper_id(atomic_helpers[1]), atomic_helpers[1])
-local unit = C.CBackendUnit("helpers", TypeToC.default_target({ dialect = "c11" }), {}, {}, {}, {}, { atomic_use }, {})
+local unit = C.CBackendUnit("helpers", CodeType.default_target({ dialect = "c11" }), {}, {}, {}, {}, { atomic_use }, {})
 assert(Emit.emit(unit):match("#include <stdatomic.h>"), "C11 atomic unit includes stdatomic")
 
 local trap_use = C.CBackendHelperUse(H.helper_id(C.CBackendHelperTrap), C.CBackendHelperTrap)

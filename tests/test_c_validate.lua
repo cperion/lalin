@@ -8,12 +8,12 @@ local Core = T.MoonCore
 local C = T.MoonC
 local Validate = require("moonlift.c_validate").Define(T)
 local Helpers = require("moonlift.c_helpers").Define(T)
-local TypeToC = require("moonlift.type_to_c").Define(T)
+local CodeType = require("moonlift.code_type").Define(T)
 local Coverage = require("moonlift.c_coverage")
 
 local i32 = C.CBackendScalar(Core.ScalarI32)
 local i64 = C.CBackendScalar(Core.ScalarI64)
-local target = TypeToC.default_target({})
+local target = CodeType.default_target({})
 local sig_id = C.CBackendFuncSigId("sig_i32_i32_i32")
 local sig = C.CBackendFuncSig(sig_id, { i32, i32 }, i32)
 local a = C.CBackendLocal(C.CBackendLocalId("a"), C.CBackendName("a"), i32)
@@ -81,7 +81,7 @@ assert(has_issue(Validate.validate(C.CBackendUnit("m", target, { sig }, {}, {}, 
 local atomic_access = C.CBackendMemoryAccess(i32, 4, C.CBackendMayTrap, false, Core.AtomicSeqCst)
 local atomic_kind = C.CBackendHelperAtomicLoad(atomic_access)
 local atomic = C.CBackendHelperUse(Helpers.helper_id(atomic_kind), atomic_kind)
-assert(has_issue(Validate.validate(C.CBackendUnit("m", TypeToC.default_target({ dialect = "c99" }), {}, {}, {}, {}, { atomic }, {})), C.CBackendIssueInvalidTargetFeature), "invalid atomic feature reported")
+assert(has_issue(Validate.validate(C.CBackendUnit("m", CodeType.default_target({ dialect = "c99" }), {}, {}, {}, {}, { atomic }, {})), C.CBackendIssueInvalidTargetFeature), "invalid atomic feature reported")
 
 local td = C.CBackendStructDecl(C.CTypeId("m", "NoAssert"), { C.CBackendField(C.CBackendName("x"), i32, 0, 4, 4) }, nil, nil)
 assert(has_issue(Validate.validate(C.CBackendUnit("m", target, {}, { td }, {}, {}, {}, {})), C.CBackendIssueLayoutAssertionMissing), "missing layout assertion reported")

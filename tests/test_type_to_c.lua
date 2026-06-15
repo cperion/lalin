@@ -1,5 +1,7 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
+assert(package.loaded["moonlift.type_to_c"] == nil)
+
 local pvm = require("moonlift.pvm")
 local Schema = require("moonlift.schema")
 local T = pvm.context(); Schema.Define(T)
@@ -8,7 +10,8 @@ local Core = T.MoonCore
 local Ty = T.MoonType
 local Open = T.MoonOpen
 local C = T.MoonC
-local api = require("moonlift.type_to_c").Define(T)
+local Code = T.MoonCode
+local api = require("moonlift.code_type").Define(T)
 
 local all_scalars = {
     Core.ScalarVoid, Core.ScalarBool,
@@ -18,14 +21,15 @@ local all_scalars = {
     Core.ScalarRawPtr, Core.ScalarIndex,
 }
 for i = 1, #all_scalars do
-    local cty = api.scalar_to_c(all_scalars[i])
-    assert(cty ~= nil, "scalar projects: " .. tostring(all_scalars[i]))
+    local code_ty = api.scalar_to_code(all_scalars[i])
+    local cty = api.code_type_to_c(code_ty, {})
+    assert(cty ~= nil, "scalar projects through CodeType: " .. tostring(all_scalars[i]))
 end
-assert(pvm.classof(api.scalar_to_c(Core.ScalarVoid)) == pvm.classof(C.CBackendVoid))
-assert(pvm.classof(api.scalar_to_c(Core.ScalarBool)) == pvm.classof(C.CBackendBool8))
-assert(pvm.classof(api.scalar_to_c(Core.ScalarIndex)) == pvm.classof(C.CBackendIndex))
-assert(pvm.classof(api.scalar_to_c(Core.ScalarI32)) == C.CBackendScalar)
-assert(pvm.classof(api.scalar_to_c(Core.ScalarRawPtr)) == C.CBackendDataPtr)
+assert(pvm.classof(api.code_type_to_c(Code.CodeTyVoid, {})) == pvm.classof(C.CBackendVoid))
+assert(pvm.classof(api.code_type_to_c(Code.CodeTyBool8, {})) == pvm.classof(C.CBackendBool8))
+assert(pvm.classof(api.code_type_to_c(Code.CodeTyIndex, {})) == pvm.classof(C.CBackendIndex))
+assert(pvm.classof(api.code_type_to_c(Code.CodeTyInt(32, Code.CodeSigned), {})) == C.CBackendScalar)
+assert(pvm.classof(api.code_type_to_c(Code.CodeTyDataPtr(nil), {})) == C.CBackendDataPtr)
 
 local i32 = Ty.TScalar(Core.ScalarI32)
 local ptr = api.type_to_c(Ty.TPtr(i32), {})
@@ -37,19 +41,18 @@ assert(pvm.classof(arr) == C.CBackendArray and arr.count == 4)
 
 local desc_ctx = {}
 local slice = api.type_to_c(Ty.TSlice(i32), desc_ctx)
-assert(pvm.classof(slice) == C.CBackendNamed, "slice projects to a named descriptor type")
+assert(pvm.classof(slice) == C.CBackendSliceDescriptor, "slice projects through CodeType descriptor")
 local view = api.type_to_c(Ty.TView(i32), desc_ctx)
-assert(pvm.classof(view) == C.CBackendNamed, "view projects to a named descriptor type")
-assert(#desc_ctx.types >= 2, "slice/view descriptor declarations are registered")
+assert(pvm.classof(view) == C.CBackendViewDescriptor, "view projects through CodeType descriptor")
 
 local ctx = {}
 local fn_ty = Ty.TFunc({ i32, i32 }, i32)
 local codeptr = api.type_to_c(fn_ty, ctx)
 assert(pvm.classof(codeptr) == C.CBackendCodePtr)
-assert(#ctx.sig_order == 1)
+assert(#ctx.code_sig_order == 1)
 local again = api.type_to_c(fn_ty, ctx)
 assert(again.sig.text == codeptr.sig.text)
-assert(#ctx.sig_order == 1, "ensure_sig deduplicates")
+assert(#ctx.code_sig_order == 1, "ensure_sig deduplicates")
 
 local c_sig = C.CFuncSigId("host_sig")
 local c_func_ptr = api.type_to_c(Ty.TCFuncPtr(c_sig), {})
@@ -79,4 +82,5 @@ assert(pvm.classof(target.endian) == pvm.classof(C.CBackendBigEndian))
 local target2 = api.default_target({ pointer_bits = 64, index_bits = 32 })
 assert(target2.pointer_bits == 64 and target2.index_bits == 32)
 
-io.write("moonlift type_to_c ok\n")
+assert(package.loaded["moonlift.type_to_c"] == nil)
+io.write("moonlift code_type C projection ok\n")

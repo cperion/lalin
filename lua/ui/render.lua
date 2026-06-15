@@ -1,32 +1,23 @@
 local pvm = require("pvm")
 local ui_asdl = require("ui.asdl")
-local measure_mod = require("ui.measure")
-local plan = require("ui.plan")
-
 local T = ui_asdl.T
-local Core = T.Core
 local Style = T.Style
 local Layout = T.Layout
+local Decor = T.Decor
+local Solve = T.Solve
 local View = T.View
 local Interact = T.Interact
 
 local M = {}
 
-local measure_phase = measure_mod.phase
-local text_layout_phase = measure_mod.text_layout_phase
-local max0 = plan.max0
-local should_clip = plan.should_clip
-local node_box = plan.node_box
-local flow_plan = plan.flow_plan
-local flex_plan = plan.flex_plan
-local grid_plan = plan.grid_plan
+local render_phase
 
-local function has_box_visual(box_visual)
-    return box_visual.bg ~= 0 or box_visual.border_w > 0
+local function rect(x, y, w, h)
+    return Layout.Rect(x, y, w, h)
 end
 
-local function make_op(kind, id, x, y, w, h, dx, dy, box_visual, text, cursor, scroll_axis, paint, layer_kind, focus_policy, placement, modal, anchor_id, order)
-    return View.Op(kind, id, x, y, w, h, dx, dy, box_visual, text, cursor, scroll_axis, paint, layer_kind, focus_policy, placement, modal, anchor_id, order)
+local function has_box_visual(v)
+    return v ~= nil and (v.bg ~= 0 or v.border_w > 0)
 end
 
 local function once_trip(op)
@@ -34,367 +25,278 @@ local function once_trip(op)
     return { g, p, c }
 end
 
-local content_cache = setmetatable({}, { __mode = "k" })
+local function concat(parts)
+    if #parts == 0 then return pvm.empty() end
+    return pvm.concat_all(parts)
+end
 
-local function content_map(store)
-    if store == nil then return nil end
-    local map = content_cache[store]
-    if map ~= nil then return map end
-    map = {}
-    local items = store.items or store
-    for i = 1, #items do
-        local item = items[i]
-        map[item.id] = item.content
+local function solve_box(node)
+    local cls = pvm.classof(node)
+    if cls == Solve.WithInput or cls == Solve.WithDragSource or cls == Solve.WithDropTarget or cls == Solve.WithDropSlot
+        or cls == Solve.FocusScope or cls == Solve.Layer or cls == Solve.Overlay or cls == Solve.Modal then
+        return solve_box(node.child)
     end
-    content_cache[store] = map
-    return map
+    if cls == Solve.GridItem then return solve_box(node.node) end
+    return node.box
 end
 
-local function content_string(store, id)
-    if store == nil or id == nil or id == Core.NoId then return "" end
-    local map = content_map(store)
-    return map[id] or ""
-end
-
-local function leaf_text_style(text_spec, content_store)
-    if text_spec == nil then return nil end
-    local cls = pvm.classof(text_spec)
-    if cls == Layout.TextLiteral then
-        return text_spec.style
+local function decor_cursor(node)
+    if node == nil then return Style.CursorDefault end
+    local cls = pvm.classof(node)
+    if cls == Decor.Flow or cls == Decor.Flex or cls == Decor.Grid or cls == Decor.Leaf or cls == Decor.Canvas or cls == Decor.Scroll then
+        return node.box.cursor or Style.CursorDefault
     end
-    if cls == Layout.TextBinding then
-        local style = text_spec.style
-        return Layout.TextStyle(
-            style.font_id,
-            style.font_size,
-            style.font_weight,
-            style.fg,
-            style.align,
-            style.leading,
-            style.tracking,
-            content_string(content_store, text_spec.content_id)
-        )
+    if cls == Decor.WithInput or cls == Decor.WithDragSource or cls == Decor.WithDropTarget or cls == Decor.WithDropSlot
+        or cls == Decor.FocusScope or cls == Decor.Layer or cls == Decor.Overlay or cls == Decor.Modal then
+        return decor_cursor(node.child)
     end
-    return text_spec
+    return Style.CursorDefault
 end
 
-local function render_trip(node, w, h, text_system, content_store)
-    return M.phase(node, w, h, text_system, content_store)
-end
-
-local function measure_one(node, constraint, text_system, content_store)
-    return pvm.one(measure_phase(node, constraint, text_system, content_store))
-end
-
-local function text_layout_one(style, constraint, text_system)
-    return pvm.one(text_layout_phase(style, constraint, text_system))
-end
-
-local function append_box_ops(parts, node, w, h)
-    local box = node.box
-    if has_box_visual(box.box_visual) then
-        parts[#parts + 1] = once_trip(make_op(View.KBox, node.id, 0, 0, w, h, 0, 0, box.box_visual, nil, nil, nil, nil))
+local function append_box(parts, id, box, decor_box)
+    if decor_box ~= nil and has_box_visual(decor_box.visual) then
+        parts[#parts + 1] = once_trip(View.Box(id, rect(0, 0, box.border.w, box.border.h), decor_box.visual))
     end
 end
 
-local function append_input_ops(parts, id, role, cursor, w, h)
-    if role == Interact.Passive then
-        return
+local function append_clip_begin(parts, box)
+    if box.clipped then
+        parts[#parts + 1] = once_trip(View.PushClipRect(box.id, rect(0, 0, box.border.w, box.border.h)))
+        return true
     end
-    if role == Interact.HitTarget or role == Interact.ActivateTarget or role == Interact.EditTarget then
-        parts[#parts + 1] = once_trip(make_op(View.KHit, id, 0, 0, w, h, 0, 0, nil, nil, nil, nil, nil))
-    end
-    if role == Interact.FocusTarget or role == Interact.ActivateTarget or role == Interact.EditTarget then
-        parts[#parts + 1] = once_trip(make_op(View.KFocus, id, 0, 0, w, h, 0, 0, nil, nil, nil, nil, nil))
-    end
-    if cursor ~= T.Style.CursorDefault then
-        parts[#parts + 1] = once_trip(make_op(View.KCursor, id, 0, 0, w, h, 0, 0, nil, nil, cursor, nil, nil))
-    end
+    return false
 end
 
-local function append_surface_op(parts, kind, id, w, h)
-    parts[#parts + 1] = once_trip(make_op(kind, id, 0, 0, w, h, 0, 0, nil, nil, nil, nil, nil))
-end
-
-local function begin_container(parts, node, w, h)
-    append_box_ops(parts, node, w, h)
-
-    local box = node.box
-    local clipped = should_clip(box)
+local function append_clip_end(parts, id, clipped)
     if clipped then
-        parts[#parts + 1] = once_trip(make_op(View.KPushClipRect, node.id, 0, 0, w, h, 0, 0, nil, nil, nil, nil, nil))
-    end
-
-    local pad = box.padding
-    local cw = max0(w - pad.left - pad.right)
-    local ch = max0(h - pad.top - pad.bottom)
-
-    if pad.left ~= 0 or pad.top ~= 0 then
-        parts[#parts + 1] = once_trip(make_op(View.KPushTx, node.id, 0, 0, 0, 0, pad.left, pad.top, nil, nil, nil, nil, nil))
-    end
-
-    return clipped, pad, cw, ch
-end
-
-local function end_container(parts, node, clipped, pad)
-    if pad.left ~= 0 or pad.top ~= 0 then
-        parts[#parts + 1] = once_trip(make_op(View.KPopTx, node.id, 0, 0, 0, 0, 0, 0, nil, nil, nil, nil, nil))
-    end
-    if clipped then
-        parts[#parts + 1] = once_trip(make_op(View.KPopClip, node.id, 0, 0, 0, 0, 0, 0, nil, nil, nil, nil, nil))
+        parts[#parts + 1] = once_trip(View.PopClip(id))
     end
 end
 
-M.phase = pvm.phase("ui.render", {
-    [Layout.WithInput] = function(self, w, h, text_system, content_store)
+local function append_node(parts, solved, decor, is_root)
+    local g, p, c = render_phase(solved, decor, is_root == true)
+    parts[#parts + 1] = { g, p, c }
+end
+
+local function render_placed_begin(parts, box, is_root)
+    local pushed = false
+    if not is_root then
+        parts[#parts + 1] = once_trip(View.PushTx(box.id, box.border.x, box.border.y))
+        pushed = true
+    end
+    return pushed
+end
+
+local function render_placed_end(parts, box, pushed)
+    if pushed then
+        parts[#parts + 1] = once_trip(View.PopTx(box.id))
+    end
+end
+
+local function child_decor(decor, i)
+    if decor == nil then return nil end
+    if decor.children ~= nil then return decor.children[i] end
+    if decor.items ~= nil then return decor.items[i] and decor.items[i].node end
+    return nil
+end
+
+render_phase = pvm.phase("ui.render.solved", {
+    [Solve.WithInput] = function(self, decor, is_root)
         local parts = {}
-        local box = node_box(self.child)
-        append_input_ops(parts, self.id, self.role, box.cursor, w, h)
-        do
-            local g, p, c = render_trip(self.child, w, h, text_system, content_store)
-            parts[#parts + 1] = { g, p, c }
+        local box = solve_box(self.child).border
+        local r = rect(box.x, box.y, box.w, box.h)
+        if self.role ~= Interact.Passive then
+            if self.role == Interact.HitTarget or self.role == Interact.ActivateTarget or self.role == Interact.EditTarget then
+                parts[#parts + 1] = once_trip(View.Hit(self.id, r))
+            end
+            if self.role == Interact.FocusTarget or self.role == Interact.ActivateTarget or self.role == Interact.EditTarget then
+                parts[#parts + 1] = once_trip(View.Focus(self.id, r))
+            end
+            local cursor = decor_cursor(decor and decor.child)
+            if cursor ~= Style.CursorDefault then
+                parts[#parts + 1] = once_trip(View.Cursor(self.id, r, cursor))
+            end
         end
-        return pvm.concat_all(parts)
+        append_node(parts, self.child, decor and decor.child, is_root)
+        return concat(parts)
     end,
 
-    [Layout.WithDragSource] = function(self, w, h, text_system, content_store)
+    [Solve.WithDragSource] = function(self, decor, is_root)
         local parts = {}
-        append_surface_op(parts, View.KDragSource, self.id, w, h)
-        do
-            local g, p, c = render_trip(self.child, w, h, text_system, content_store)
-            parts[#parts + 1] = { g, p, c }
-        end
-        return pvm.concat_all(parts)
+        local b = solve_box(self.child).border
+        parts[#parts + 1] = once_trip(View.DragSource(self.id, rect(b.x, b.y, b.w, b.h)))
+        append_node(parts, self.child, decor and decor.child, is_root)
+        return concat(parts)
     end,
 
-    [Layout.WithDropTarget] = function(self, w, h, text_system, content_store)
+    [Solve.WithDropTarget] = function(self, decor, is_root)
         local parts = {}
-        append_surface_op(parts, View.KDropTarget, self.id, w, h)
-        do
-            local g, p, c = render_trip(self.child, w, h, text_system, content_store)
-            parts[#parts + 1] = { g, p, c }
-        end
-        return pvm.concat_all(parts)
+        local b = solve_box(self.child).border
+        parts[#parts + 1] = once_trip(View.DropTarget(self.id, rect(b.x, b.y, b.w, b.h)))
+        append_node(parts, self.child, decor and decor.child, is_root)
+        return concat(parts)
     end,
 
-    [Layout.WithDropSlot] = function(self, w, h, text_system, content_store)
+    [Solve.WithDropSlot] = function(self, decor, is_root)
         local parts = {}
-        append_surface_op(parts, View.KDropSlot, self.id, w, h)
-        do
-            local g, p, c = render_trip(self.child, w, h, text_system, content_store)
-            parts[#parts + 1] = { g, p, c }
-        end
-        return pvm.concat_all(parts)
+        local b = solve_box(self.child).border
+        parts[#parts + 1] = once_trip(View.DropSlot(self.id, rect(b.x, b.y, b.w, b.h)))
+        append_node(parts, self.child, decor and decor.child, is_root)
+        return concat(parts)
     end,
 
-    [Layout.FocusScope] = function(self, w, h, text_system, content_store)
+    [Solve.FocusScope] = function(self, decor, is_root)
         local parts = {}
-        parts[#parts + 1] = once_trip(make_op(View.KFocusScope, self.id, 0, 0, w, h, 0, 0, nil, nil, nil, nil, nil, nil, self.policy, nil, nil))
-        do
-            local g, p, c = render_trip(self.child, w, h, text_system, content_store)
-            parts[#parts + 1] = { g, p, c }
-        end
-        append_surface_op(parts, View.KEndFocusScope, self.id, w, h)
-        return pvm.concat_all(parts)
+        parts[#parts + 1] = once_trip(View.BeginFocusScope(self.id, self.policy))
+        append_node(parts, self.child, decor and decor.child, is_root)
+        parts[#parts + 1] = once_trip(View.EndFocusScope(self.id))
+        return concat(parts)
     end,
 
-    [Layout.Layer] = function(self, w, h, text_system, content_store)
+    [Solve.Layer] = function(self, decor, is_root)
         local parts = {}
-        parts[#parts + 1] = once_trip(make_op(View.KPushLayer, self.id, 0, 0, w, h, 0, 0, nil, nil, nil, nil, nil, self.kind, nil, nil, nil, nil, self.order or 0))
-        do
-            local g, p, c = render_trip(self.child, w, h, text_system, content_store)
-            parts[#parts + 1] = { g, p, c }
-        end
-        parts[#parts + 1] = once_trip(make_op(View.KPopLayer, self.id, 0, 0, w, h, 0, 0, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, self.order or 0))
-        return pvm.concat_all(parts)
+        local b = solve_box(self.child).border
+        parts[#parts + 1] = once_trip(View.BeginLayer(self.id, self.kind, self.order or 0, rect(b.x, b.y, b.w, b.h)))
+        append_node(parts, self.child, decor and decor.child, is_root)
+        parts[#parts + 1] = once_trip(View.EndLayer(self.id))
+        return concat(parts)
     end,
 
-    [Layout.Overlay] = function(self, w, h, text_system, content_store)
+    [Solve.Overlay] = function(self, decor, is_root)
         local parts = {}
-        parts[#parts + 1] = once_trip(make_op(View.KOverlay, self.id, 0, 0, w, h, 0, 0, nil, nil, nil, nil, nil, nil, nil, self.placement, self.modal == true, self.anchor_id, nil))
+        local b = solve_box(self.child).border
+        local r = rect(b.x, b.y, b.w, b.h)
+        parts[#parts + 1] = once_trip(View.Overlay(self.id, self.anchor_id, self.placement, self.modal == true, r))
         if self.modal then
-            parts[#parts + 1] = once_trip(make_op(View.KModalBarrier, self.id, 0, 0, w, h, 0, 0, nil, nil, nil, nil, nil, nil, nil, self.placement, true, self.anchor_id, nil))
+            parts[#parts + 1] = once_trip(View.ModalBarrier(self.id, r))
         end
-        do
-            local g, p, c = render_trip(self.child, w, h, text_system, content_store)
-            parts[#parts + 1] = { g, p, c }
-        end
-        return pvm.concat_all(parts)
+        append_node(parts, self.child, decor and decor.child, is_root)
+        return concat(parts)
     end,
 
-    [Layout.Modal] = function(self, w, h, text_system, content_store)
+    [Solve.Modal] = function(self, decor, is_root)
         local parts = {}
-        append_surface_op(parts, View.KModalBarrier, self.id, w, h)
-        parts[#parts + 1] = once_trip(make_op(View.KPushLayer, self.id, 0, 0, w, h, 0, 0, nil, nil, nil, nil, nil, Interact.LayerModal, nil, nil, true))
-        do
-            local g, p, c = render_trip(self.child, w, h, text_system, content_store)
-            parts[#parts + 1] = { g, p, c }
-        end
-        parts[#parts + 1] = once_trip(make_op(View.KPopLayer, self.id, 0, 0, w, h, 0, 0, nil, nil, nil, nil, nil))
-        return pvm.concat_all(parts)
+        local b = solve_box(self.child).border
+        local r = rect(b.x, b.y, b.w, b.h)
+        parts[#parts + 1] = once_trip(View.ModalBarrier(self.id, r))
+        parts[#parts + 1] = once_trip(View.BeginLayer(self.id, Interact.LayerModal, 0, r))
+        append_node(parts, self.child, decor and decor.child, is_root)
+        parts[#parts + 1] = once_trip(View.EndLayer(self.id))
+        return concat(parts)
     end,
 
-    [Layout.Leaf] = function(self, w, h, text_system, content_store)
+    [Solve.Leaf] = function(self, decor, is_root)
         local parts = {}
-        append_box_ops(parts, self, w, h)
-
-        local text_style = leaf_text_style(self.text, content_store)
-        if text_style ~= nil then
-            local pad = self.box.padding
-            local inner_w = max0(w - pad.left - pad.right)
-            local inner_h = max0(h - pad.top - pad.bottom)
-            local tl = text_layout_one(text_style, Layout.Constraint(inner_w, inner_h), text_system)
-            parts[#parts + 1] = once_trip(make_op(
-                View.KText,
-                self.id,
-                pad.left,
-                pad.top,
-                inner_w,
-                inner_h,
-                0,
-                0,
-                nil,
-                tl,
-                nil,
-                nil,
-                nil
-            ))
+        local box = self.box
+        local pushed = render_placed_begin(parts, box, is_root)
+        append_box(parts, box.id, box, decor and decor.box)
+        if self.text ~= nil and decor ~= nil and decor.text ~= nil then
+            parts[#parts + 1] = once_trip(View.Text(box.id, box.content, self.text, decor.text.paint))
         end
-
-        if #parts == 0 then return pvm.empty() end
-        return pvm.concat_all(parts)
+        render_placed_end(parts, box, pushed)
+        return concat(parts)
     end,
 
-    [Layout.Paint] = function(self, w, h, text_system, content_store)
+    [Solve.Canvas] = function(self, decor, is_root)
         local parts = {}
-        append_box_ops(parts, self, w, h)
-
-        if #self.paint.items > 0 then
-            local pad = self.box.padding
-            parts[#parts + 1] = once_trip(make_op(
-                View.KPaint,
-                self.id,
-                pad.left,
-                pad.top,
-                max0(w - pad.left - pad.right),
-                max0(h - pad.top - pad.bottom),
-                0,
-                0,
-                nil,
-                nil,
-                nil,
-                nil,
-                self.paint
-            ))
+        local box = self.box
+        local pushed = render_placed_begin(parts, box, is_root)
+        append_box(parts, box.id, box, decor and decor.box)
+        if decor ~= nil and decor.paint ~= nil and #decor.paint.program.items > 0 then
+            parts[#parts + 1] = once_trip(View.Paint(box.id, box.content, decor.paint.program))
         end
-
-        if #parts == 0 then return pvm.empty() end
-        return pvm.concat_all(parts)
+        render_placed_end(parts, box, pushed)
+        return concat(parts)
     end,
 
-    [Layout.Scroll] = function(self, w, h, text_system, content_store)
+    [Solve.Scroll] = function(self, decor, is_root)
         local parts = {}
-        append_box_ops(parts, self, w, h)
-
-        local pad = self.box.padding
-        local cw = max0(w - pad.left - pad.right)
-        local ch = max0(h - pad.top - pad.bottom)
-        local child_constraint
-        if self.axis == Style.ScrollX then
-            child_constraint = Layout.Constraint(math.huge, ch)
-        elseif self.axis == Style.ScrollY then
-            child_constraint = Layout.Constraint(cw, math.huge)
-        else
-            child_constraint = Layout.Constraint(math.huge, math.huge)
+        local box = self.box
+        local pushed = render_placed_begin(parts, box, is_root)
+        append_box(parts, box.id, box, decor and decor.box)
+        local clipped = append_clip_begin(parts, box)
+        if box.content.x ~= 0 or box.content.y ~= 0 then
+            parts[#parts + 1] = once_trip(View.PushTx(box.id, box.content.x, box.content.y))
         end
-        local child_size = measure_one(self.child, child_constraint, text_system, content_store)
-
-        if pad.left ~= 0 or pad.top ~= 0 then
-            parts[#parts + 1] = once_trip(make_op(View.KPushTx, self.id, 0, 0, 0, 0, pad.left, pad.top, nil, nil, nil, nil, nil))
+        parts[#parts + 1] = once_trip(View.PushScroll(box.id, rect(0, 0, box.content.w, box.content.h), self.axis, self.content_w, self.content_h))
+        append_node(parts, self.child, decor and decor.child, false)
+        parts[#parts + 1] = once_trip(View.PopScroll(box.id))
+        if box.content.x ~= 0 or box.content.y ~= 0 then
+            parts[#parts + 1] = once_trip(View.PopTx(box.id))
         end
-        parts[#parts + 1] = once_trip(make_op(View.KPushScroll, self.id, 0, 0, cw, ch, child_size.w, child_size.h, nil, nil, nil, self.axis, nil))
-        do
-            local g, p, c = render_trip(self.child, child_size.w, child_size.h, text_system, content_store)
-            parts[#parts + 1] = { g, p, c }
-        end
-        parts[#parts + 1] = once_trip(make_op(View.KPopScroll, self.id, 0, 0, cw, ch, 0, 0, nil, nil, nil, self.axis, nil))
-        if pad.left ~= 0 or pad.top ~= 0 then
-            parts[#parts + 1] = once_trip(make_op(View.KPopTx, self.id, 0, 0, 0, 0, 0, 0, nil, nil, nil, nil, nil))
-        end
-        return pvm.concat_all(parts)
+        append_clip_end(parts, box.id, clipped)
+        render_placed_end(parts, box, pushed)
+        return concat(parts)
     end,
 
-    [Layout.Flow] = function(self, w, h, text_system, content_store)
+    [Solve.Flow] = function(self, decor, is_root)
         local parts = {}
-        local clipped, pad, cw, ch = begin_container(parts, self, w, h)
-        local placements = flow_plan(self, cw, ch, function(node, child_constraint)
-            return measure_one(node, child_constraint, text_system, content_store)
-        end)
-
-        for i = 1, #placements do
-            local item = placements[i]
-            parts[#parts + 1] = once_trip(make_op(View.KPushTx, item.node.id, 0, 0, 0, 0, item.dx, item.dy, nil, nil, nil, nil, nil))
-            do
-                local g, p, c = render_trip(item.node, item.w, item.h, text_system, content_store)
-                parts[#parts + 1] = { g, p, c }
-            end
-            parts[#parts + 1] = once_trip(make_op(View.KPopTx, item.node.id, 0, 0, 0, 0, 0, 0, nil, nil, nil, nil, nil))
+        local box = self.box
+        local pushed = render_placed_begin(parts, box, is_root)
+        append_box(parts, box.id, box, decor and decor.box)
+        local clipped = append_clip_begin(parts, box)
+        if box.content.x ~= 0 or box.content.y ~= 0 then
+            parts[#parts + 1] = once_trip(View.PushTx(box.id, box.content.x, box.content.y))
         end
-
-        end_container(parts, self, clipped, pad)
-        return pvm.concat_all(parts)
+        for i = 1, #self.children do
+            append_node(parts, self.children[i], child_decor(decor, i), false)
+        end
+        if box.content.x ~= 0 or box.content.y ~= 0 then
+            parts[#parts + 1] = once_trip(View.PopTx(box.id))
+        end
+        append_clip_end(parts, box.id, clipped)
+        render_placed_end(parts, box, pushed)
+        return concat(parts)
     end,
 
-    [Layout.Flex] = function(self, w, h, text_system, content_store)
+    [Solve.Flex] = function(self, decor, is_root)
         local parts = {}
-        local clipped, pad, cw, ch = begin_container(parts, self, w, h)
-        local layout = flex_plan(self, cw, ch, function(node, child_constraint)
-            return measure_one(node, child_constraint, text_system, content_store)
-        end, true)
-
-        for i = 1, #layout.items do
-            local item = layout.items[i]
-            parts[#parts + 1] = once_trip(make_op(View.KPushTx, item.node.id, 0, 0, 0, 0, item.dx, item.dy, nil, nil, nil, nil, nil))
-            do
-                local g, p, c = render_trip(item.node, item.w, item.h, text_system, content_store)
-                parts[#parts + 1] = { g, p, c }
-            end
-            parts[#parts + 1] = once_trip(make_op(View.KPopTx, item.node.id, 0, 0, 0, 0, 0, 0, nil, nil, nil, nil, nil))
+        local box = self.box
+        local pushed = render_placed_begin(parts, box, is_root)
+        append_box(parts, box.id, box, decor and decor.box)
+        local clipped = append_clip_begin(parts, box)
+        if box.content.x ~= 0 or box.content.y ~= 0 then
+            parts[#parts + 1] = once_trip(View.PushTx(box.id, box.content.x, box.content.y))
         end
-
-        end_container(parts, self, clipped, pad)
-        return pvm.concat_all(parts)
+        for i = 1, #self.children do
+            append_node(parts, self.children[i], child_decor(decor, i), false)
+        end
+        if box.content.x ~= 0 or box.content.y ~= 0 then
+            parts[#parts + 1] = once_trip(View.PopTx(box.id))
+        end
+        append_clip_end(parts, box.id, clipped)
+        render_placed_end(parts, box, pushed)
+        return concat(parts)
     end,
 
-    [Layout.Grid] = function(self, w, h, text_system, content_store)
+    [Solve.Grid] = function(self, decor, is_root)
         local parts = {}
-        local clipped, pad, cw, ch = begin_container(parts, self, w, h)
-        local layout = grid_plan(self, cw, ch, function(node, child_constraint)
-            return measure_one(node, child_constraint, text_system, content_store)
-        end)
-
-        for i = 1, #layout.items do
-            local item = layout.items[i]
-            parts[#parts + 1] = once_trip(make_op(View.KPushTx, item.node.id, 0, 0, 0, 0, item.dx, item.dy, nil, nil, nil, nil, nil))
-            do
-                local g, p, c = render_trip(item.node, item.w, item.h, text_system, content_store)
-                parts[#parts + 1] = { g, p, c }
-            end
-            parts[#parts + 1] = once_trip(make_op(View.KPopTx, item.node.id, 0, 0, 0, 0, 0, 0, nil, nil, nil, nil, nil))
+        local box = self.box
+        local pushed = render_placed_begin(parts, box, is_root)
+        append_box(parts, box.id, box, decor and decor.box)
+        local clipped = append_clip_begin(parts, box)
+        if box.content.x ~= 0 or box.content.y ~= 0 then
+            parts[#parts + 1] = once_trip(View.PushTx(box.id, box.content.x, box.content.y))
         end
-
-        end_container(parts, self, clipped, pad)
-        return pvm.concat_all(parts)
+        for i = 1, #self.items do
+            append_node(parts, self.items[i].node, child_decor(decor, i), false)
+        end
+        if box.content.x ~= 0 or box.content.y ~= 0 then
+            parts[#parts + 1] = once_trip(View.PopTx(box.id))
+        end
+        append_clip_end(parts, box.id, clipped)
+        render_placed_end(parts, box, pushed)
+        return concat(parts)
     end,
 }, {
     args_cache = "last",
 })
 
-function M.root(node, env, text_system, content_store)
-    return M.phase(node, env.vw, env.vh, text_system, content_store)
+function M.root(solved, decor)
+    return render_phase(solved, decor, true)
 end
 
-M.text = measure_mod.text
+M.phase = render_phase
 M.T = T
 
 return M

@@ -158,12 +158,13 @@ local function build_node(opts)
 end
 
 local function axis_geometry(box, axis_name, offset, has_cross, opts)
+    local r = box.viewport or box.rect or box
     local inset = inset_px(opts)
     local thickness = thickness_px(opts)
     local reserve_space = reserve_space_px(opts)
     local reserve = has_cross and (thickness + inset) or 0
 
-    local viewport = axis_name == "y" and box.h or box.w
+    local viewport = axis_name == "y" and r.h or r.w
     local content = axis_name == "y" and box.content_h or box.content_w
     local max_offset = axis_name == "y" and box.max_y or box.max_x
     if viewport <= 0 or content <= viewport or max_offset <= 0 then
@@ -175,18 +176,18 @@ local function axis_geometry(box, axis_name, offset, has_cross, opts)
         local strip = reserve_space > 0 and reserve_space or (thickness + inset * 2)
         local extra = max0(strip - thickness)
         track = {
-            x = box.x + box.w - strip + math.floor(extra * 0.5),
-            y = box.y + inset,
+            x = r.x + r.w - strip + math.floor(extra * 0.5),
+            y = r.y + inset,
             w = thickness,
-            h = max0(box.h - inset * 2 - reserve),
+            h = max0(r.h - inset * 2 - reserve),
         }
     else
         local strip = reserve_space > 0 and reserve_space or (thickness + inset * 2)
         local extra = max0(strip - thickness)
         track = {
-            x = box.x + inset,
-            y = box.y + box.h - strip + math.floor(extra * 0.5),
-            w = max0(box.w - inset * 2 - reserve),
+            x = r.x + inset,
+            y = r.y + r.h - strip + math.floor(extra * 0.5),
+            w = max0(r.w - inset * 2 - reserve),
             h = thickness,
         }
     end
@@ -306,9 +307,9 @@ local function key_scroll(model, report, id, axis, key, opts)
         elseif key == "down" then
             return scroll_to_axis_offset(model, report, id, "y", cur_y + line_step), true
         elseif key == "pageup" then
-            return scroll_to_axis_offset(model, report, id, "y", cur_y - box.h * page_fraction), true
+            return scroll_to_axis_offset(model, report, id, "y", cur_y - (box.viewport or box.rect or box).h * page_fraction), true
         elseif key == "pagedown" then
-            return scroll_to_axis_offset(model, report, id, "y", cur_y + box.h * page_fraction), true
+            return scroll_to_axis_offset(model, report, id, "y", cur_y + (box.viewport or box.rect or box).h * page_fraction), true
         elseif key == "home" then
             return scroll_to_axis_offset(model, report, id, "y", 0), true
         elseif key == "end" then
