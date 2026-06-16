@@ -18,7 +18,6 @@ local mem = B.BackMemoryInfo(B.BackAccessId("load"), B.BackAlignKnown(4), B.Back
 local sem = B.BackIntSemantics(B.BackIntWrap, B.BackIntMayLose)
 
 local program = B.BackProgram({
-    B.CmdTargetModel(B.BackTargetModel(B.BackTargetCraneliftJit, { B.BackTargetSupportsShape(B.BackShapeScalar(B.BackI32)) })),
     B.CmdCreateSig(sig, { B.BackPtr }, { B.BackI32 }),
     B.CmdDeclareFunc(T.MoonCore.VisibilityExport, func, sig),
     B.CmdBeginFunc(func),
@@ -37,9 +36,8 @@ local program = B.BackProgram({
 
 local report = I.inspect(program)
 assert(pvm.classof(report) == B.BackInspectionReport)
-assert(#report.targets == 1)
 assert(#report.memory == 1)
-assert(report.memory[1].index == 10 and report.memory[1].access == B.BackAccessId("load"))
+assert(report.memory[1].index == 9 and report.memory[1].access == B.BackAccessId("load"))
 assert(#report.addresses == 1 and report.addresses[1].address == addr)
 assert(#report.pointer_offsets == 1 and report.pointer_offsets[1].dst == q and report.pointer_offsets[1].elem_size == 4)
 assert(#report.int_semantics == 1)

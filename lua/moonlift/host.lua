@@ -514,6 +514,22 @@ M.union = make_quote(
     end
 )
 
+M.handle = make_quote(
+    function(T, src) return require("moonlift.parse").Define(T).parse_handle(src) end,
+    function(value, parsed, T)
+        local name = value.name or "_anon"
+        local Ty, C, Tr = T.MoonType, T.MoonCore, T.MoonTree
+        local ty = api.type_from_asdl(Ty.THandle(Ty.TypeRefPath(C.Path({ C.Name(name) })), value.decl.repr), name)
+        local out = setmetatable({ kind = "handle", session = default_session, name = name,
+            decl = value.decl, item = Tr.ItemType(value.decl), type = ty }, api.StructValue or {})
+        default_session.global_type_values[name] = out
+        return out
+    end,
+    function(e, value, env)
+        return { name = value.name, decl = e.expand_type_decl(value.decl or value, env) }
+    end
+)
+
 M.extern = make_quote(
     function(T, src) return require("moonlift.parse").Define(T).parse_extern(src, parser_opts_with_decl_maps()) end,
     function(value, parsed, T)

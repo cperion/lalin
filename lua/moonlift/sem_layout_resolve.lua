@@ -105,9 +105,13 @@ function M.Define(T)
         [Ty.TArray] = function() return pvm.empty() end,
         [Ty.TSlice] = function() return pvm.empty() end,
         [Ty.TView] = function() return pvm.empty() end,
+        [Ty.TLease] = function() return pvm.empty() end,
+        [Ty.THandle] = function() return pvm.empty() end,
         [Ty.TFunc] = function() return pvm.empty() end,
         [Ty.TClosure] = function() return pvm.empty() end,
         [Ty.TSlot] = function() return pvm.empty() end,
+        [Ty.TCType] = function() return pvm.empty() end,
+        [Ty.TCFuncPtr] = function() return pvm.empty() end,
     }, { args_cache = "last" })
 
     field_in_layout = pvm.phase("moonlift_sem_field_in_layout", {
@@ -358,6 +362,7 @@ function M.Define(T)
         [Tr.TypeDeclUnion] = function(self) return pvm.once(self) end,
         [Tr.TypeDeclEnumSugar] = function(self) return pvm.once(self) end,
         [Tr.TypeDeclTaggedUnionSugar] = function(self) return pvm.once(self) end,
+        [Tr.TypeDeclHandle] = function(self) return pvm.once(self) end,
         [Tr.TypeDeclOpenStruct] = function(self) return pvm.once(self) end,
         [Tr.TypeDeclOpenUnion] = function(self) return pvm.once(self) end,
     })

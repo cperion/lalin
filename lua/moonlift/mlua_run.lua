@@ -182,6 +182,9 @@ local function name_anonymous_island(kind, text, name_hint)
     ) then
         return (text:gsub("^(%s*union)%s*", "%1 " .. name_hint .. " ", 1))
     end
+    if kind == "handle" and text:match("^%s*handle%s*:") then
+        return (text:gsub("^(%s*handle)%s*", "%1 " .. name_hint .. " ", 1))
+    end
     return text
 end
 
@@ -251,6 +254,7 @@ local api_name_for_kind = {
     expr = "expr_frag",
     struct = "struct",
     union = "union",
+    handle = "handle",
     extern = "extern",
 }
 

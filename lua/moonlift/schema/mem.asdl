@@ -1,6 +1,8 @@
 module MoonMem {
     MemAccessId = (string text) unique
 
+    MemObjectId = (string text) unique
+
     MemBaseId = (string text) unique
 
     MemScopeId = (string text) unique
@@ -21,6 +23,46 @@ module MoonMem {
          | MemBaseArgument(string name, MoonCode.CodeValueId value) unique
          | MemBaseDerived(MoonMem.MemBase base, string reason) unique
          | MemBaseUnknown(string reason) unique
+
+    MemObjectKind = MemObjectParam
+         | MemObjectLocal
+         | MemObjectGlobal
+         | MemObjectData
+         | MemObjectView
+         | MemObjectSlice
+         | MemObjectContract
+         | MemObjectDerived
+         | MemObjectUnknown
+
+    MemProjectionKind = MemProjectField
+         | MemProjectBytes
+         | MemProjectPtrOffset
+         | MemProjectViewData
+         | MemProjectSlice
+         | MemProjectWindow
+         | MemProjectElement
+         | MemProjectUnknown(string reason) unique
+
+    MemObjectProvenance = MemProvValue(MoonCode.CodeValueId value) unique
+         | MemProvLocal(MoonCode.CodeLocalId local) unique
+         | MemProvGlobal(MoonCode.CodeGlobalId global) unique
+         | MemProvData(MoonCode.CodeDataId data) unique
+         | MemProvView(MoonCode.CodeValueId view, MoonCode.CodeValueId data, MoonCode.CodeValueId len, MoonCode.CodeValueId? stride) unique
+         | MemProvContract(MoonCode.CodeFuncContractFact fact) unique
+         | MemProvProjection(MoonMem.MemObjectId parent, MoonMem.MemProjectionKind projection, number byte_offset) unique
+         | MemProvUnknown(string reason) unique
+
+    MemObjectExtent = MemExtentUnknown(string reason) unique
+         | MemExtentElements(MoonCode.CodeValueId len, MoonCode.CodeType elem_ty, string reason) unique
+         | MemExtentBytes(number bytes, string reason) unique
+         | MemExtentContract(MoonCode.CodeFuncContractFact fact, string reason) unique
+
+    MemObjectStride = MemStrideUnknown(string reason) unique
+         | MemStrideUnit
+         | MemStrideConstElems(number elems) unique
+         | MemStrideValue(MoonCode.CodeValueId value) unique
+
+    MemObjectFact = (MoonMem.MemObjectId id, MoonCode.CodeFuncId? func, MoonMem.MemObjectKind kind, MoonMem.MemObjectProvenance provenance, MoonCode.CodeType? elem_ty, MoonMem.MemObjectExtent extent, MoonMem.MemObjectStride stride) unique
 
     MemIndex = MemIndexNone
          | MemIndexValue(MoonCode.CodeValueId value, number elem_size, number const_offset) unique
@@ -49,6 +91,20 @@ module MoonMem {
 
     MemAccessFact = (MoonMem.MemAccessId id, MoonCode.CodeFuncId func, MoonCode.CodeBlockId block, MoonCode.CodeInstId? inst, MoonMem.MemAccessKind kind, MoonCode.CodePlace place, MoonCode.CodeMemoryAccess access, MoonMem.MemBase base, MoonMem.MemIndex index, MoonMem.MemAccessPattern pattern, MoonMem.MemAlignment alignment, MoonMem.MemBounds bounds, MoonMem.MemTrap trap) unique
 
+    MemAccessInterval = (MoonMem.MemAccessId access, MoonMem.MemObjectId object, MoonFlow.FlowLoopId? loop, MoonMem.MemIndex start, MoonFlow.FlowBound length_elems, number elem_size, number const_byte_offset, string reason) unique
+
+    MemAccessSafetyFact = MemAccessInBounds(MoonMem.MemAccessInterval interval, MoonMem.MemProof proof) unique
+         | MemAccessNonTrap(MoonMem.MemAccessId access, MoonMem.MemProof proof) unique
+         | MemAccessMovable(MoonMem.MemAccessId access, MoonMem.MemProof proof) unique
+         | MemAccessDerefBytes(MoonMem.MemAccessId access, number bytes, MoonMem.MemProof proof) unique
+         | MemAccessAlignKnown(MoonMem.MemAccessId access, number bytes, MoonMem.MemProof proof) unique
+
+    MemObjectEffectFact = MemObjectReadonly(MoonMem.MemObjectId object, MoonMem.MemProof proof) unique
+         | MemObjectWriteonly(MoonMem.MemObjectId object, MoonMem.MemProof proof) unique
+
+    MemObjectRelationFact = MemObjectsSameLen(MoonMem.MemObjectId a, MoonMem.MemObjectId b, MoonMem.MemProof proof) unique
+         | MemObjectWindowBounds(MoonMem.MemObjectId object, MoonCode.CodeValueId base_len, MoonCode.CodeValueId start, MoonCode.CodeValueId len, MoonMem.MemProof proof) unique
+
     MemAliasFact = MemAliasUnknown(MoonMem.MemAccessId a, MoonMem.MemAccessId b, string reason) unique
          | MemMayAlias(MoonMem.MemAccessId a, MoonMem.MemAccessId b, string reason) unique
          | MemNoAlias(MoonMem.MemAccessId a, MoonMem.MemAccessId b, MoonMem.MemProof proof) unique
@@ -56,7 +112,10 @@ module MoonMem {
          | MemAliasScope(MoonMem.MemAccessId access, MoonMem.MemScopeId scope) unique
 
     MemDependenceFact = MemDependenceUnknown(MoonMem.MemAccessId before, MoonMem.MemAccessId after, string reason) unique
+         | MemReadReadIndependent(MoonMem.MemAccessId a, MoonMem.MemAccessId b, string reason) unique
          | MemNoDependence(MoonMem.MemAccessId before, MoonMem.MemAccessId after, MoonMem.MemProof proof) unique
+         | MemNoLoopCarriedDependence(MoonMem.MemAccessId before, MoonMem.MemAccessId after, MoonFlow.FlowLoopId loop, MoonMem.MemProof proof) unique
+         | MemDependenceDistance(MoonMem.MemAccessId before, MoonMem.MemAccessId after, MoonFlow.FlowLoopId loop, string distance_elems, MoonMem.MemProof proof) unique
          | MemLoopCarriedDependence(MoonMem.MemAccessId before, MoonMem.MemAccessId after, MoonFlow.FlowLoopId loop, string reason) unique
 
     MemProof = MemProofBounds(string reason) unique
@@ -65,6 +124,10 @@ module MoonMem {
          | MemProofNoDependence(MoonMem.MemAccessId* accesses, string reason) unique
          | MemProofContract(MoonCode.CodeFuncContractFact fact, string reason) unique
          | MemProofFlow(MoonFlow.FlowLoopId loop, string reason) unique
+         | MemProofObject(MoonMem.MemObjectId object, string reason) unique
+         | MemProofInterval(MoonMem.MemAccessInterval interval, string reason) unique
+
+    MemSemanticFactSet = (MoonCode.CodeModuleId module, MoonMem.MemObjectFact* objects, MoonMem.MemAccessInterval* intervals, MoonMem.MemAccessSafetyFact* safety, MoonMem.MemObjectEffectFact* effects, MoonMem.MemDependenceFact* dependences, MoonMem.MemObjectRelationFact* relations, MoonMem.MemProof* proofs) unique
 
     MemFactSet = (MoonCode.CodeModuleId module, MoonMem.MemAccessFact* accesses, MoonMem.MemAliasFact* aliases, MoonMem.MemDependenceFact* dependences, MoonMem.MemProof* proofs) unique
 }

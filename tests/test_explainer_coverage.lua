@@ -126,7 +126,6 @@ local expected = {
         BackIssueLoadAccessMode = true,
         BackIssueStoreAccessMode = true,
         BackIssueDereferenceTooSmall = true,
-        BackIssueTargetUnsupportedShape = true,
         BackIssueIntScalarExpected = true,
         BackIssueFloatScalarExpected = true,
         BackIssueBitScalarExpected = true,

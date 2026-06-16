@@ -164,10 +164,14 @@ function M.Define(T)
         [Ty.TArray] = function(self, set) local t = first_target(type_rule_target, set, self); if t then return pvm.once(t) end; return pvm.once(pvm.with(self, { elem = one(rewrite_type, self.elem, set) })) end,
         [Ty.TSlice] = function(self, set) local t = first_target(type_rule_target, set, self); if t then return pvm.once(t) end; return pvm.once(pvm.with(self, { elem = one(rewrite_type, self.elem, set) })) end,
         [Ty.TView] = function(self, set) local t = first_target(type_rule_target, set, self); if t then return pvm.once(t) end; return pvm.once(pvm.with(self, { elem = one(rewrite_type, self.elem, set) })) end,
+        [Ty.TLease] = function(self, set) local t = first_target(type_rule_target, set, self); if t then return pvm.once(t) end; return pvm.once(pvm.with(self, { base = one(rewrite_type, self.base, set) })) end,
+        [Ty.THandle] = function(self, set) return pvm.once(first_target(type_rule_target, set, self) or self) end,
         [Ty.TFunc] = function(self, set) local t = first_target(type_rule_target, set, self); if t then return pvm.once(t) end; return pvm.once(pvm.with(self, { params = rewrite_types(self.params, set), result = one(rewrite_type, self.result, set) })) end,
         [Ty.TClosure] = function(self, set) local t = first_target(type_rule_target, set, self); if t then return pvm.once(t) end; return pvm.once(pvm.with(self, { params = rewrite_types(self.params, set), result = one(rewrite_type, self.result, set) })) end,
         [Ty.TNamed] = function(self, set) return pvm.once(first_target(type_rule_target, set, self) or self) end,
         [Ty.TSlot] = function(self, set) return pvm.once(first_target(type_rule_target, set, self) or self) end,
+        [Ty.TCType] = function(self, set) return pvm.once(first_target(type_rule_target, set, self) or self) end,
+        [Ty.TCFuncPtr] = function(self, set) return pvm.once(first_target(type_rule_target, set, self) or self) end,
     }, { args_cache = "last" })
 
     rewrite_binding = pvm.phase("moonlift_open_rewrite_binding", {
@@ -331,6 +335,7 @@ function M.Define(T)
         [Tr.TypeDeclUnion] = function(self, set) local fields = {}; for i = 1, #self.fields do fields[#fields + 1] = pvm.with(self.fields[i], { ty = one(rewrite_type, self.fields[i].ty, set) }) end; return pvm.once(pvm.with(self, { fields = fields })) end,
         [Tr.TypeDeclEnumSugar] = function(self) return pvm.once(self) end,
         [Tr.TypeDeclTaggedUnionSugar] = function(self) return pvm.once(self) end,
+        [Tr.TypeDeclHandle] = function(self) return pvm.once(self) end,
         [Tr.TypeDeclOpenStruct] = function(self, set) local fields = {}; for i = 1, #self.fields do fields[#fields + 1] = pvm.with(self.fields[i], { ty = one(rewrite_type, self.fields[i].ty, set) }) end; return pvm.once(pvm.with(self, { fields = fields })) end,
         [Tr.TypeDeclOpenUnion] = function(self, set) local fields = {}; for i = 1, #self.fields do fields[#fields + 1] = pvm.with(self.fields[i], { ty = one(rewrite_type, self.fields[i].ty, set) }) end; return pvm.once(pvm.with(self, { fields = fields })) end,
     }, { args_cache = "last" })

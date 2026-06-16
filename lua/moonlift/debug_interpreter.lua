@@ -141,7 +141,6 @@ function Interpreter:_init_handlers()
     self._handlers = {}
 
     local handler_map = {
-        [Back.CmdTargetModel] = "_handle_noop",
         [Back.CmdCreateSig] = "_handle_noop",
         [Back.CmdDeclareData] = "_handle_declare_data",
         [Back.CmdDataInitZero] = "_handle_data_init_zero",
@@ -184,7 +183,6 @@ function Interpreter:_init_handlers()
         [Back.CmdMemset] = "_handle_memset",
         [Back.CmdMemcmp] = "_handle_memcmp",
         [Back.CmdFma] = "_handle_fma",
-        [Back.CmdAliasFact] = "_handle_noop",
         [Back.CmdVecSplat] = "_handle_noop",
         [Back.CmdVecBinary] = "_handle_noop",
         [Back.CmdVecCompare] = "_handle_noop",

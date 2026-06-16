@@ -135,6 +135,7 @@ end]],
     },
     {
         name = "ptr_sum",
+        semantic_note = "raw pointer: no bounds/nontrap semantics, so MoonKernel should stay conservative",
         work = function() return cfg.inner_n end,
         src = [[func bench_ptr_sum(p: ptr(i32), n: i32) -> i32
     return block loop(i: i32 = 0, acc: i32 = 0) -> i32
@@ -146,7 +147,22 @@ end]],
         args = function(a) return a, cfg.inner_n end,
     },
     {
+        name = "ptr_sum_bounds",
+        semantic_note = "bounds contract: pointer extent/nontrap facts are explicit; remaining gap is scheduler/backend quality",
+        work = function() return cfg.inner_n end,
+        src = [[func bench_ptr_sum_bounds(readonly p: ptr(i32), n: i32) -> i32
+    requires bounds(p, n)
+    return block loop(i: i32 = 0, acc: i32 = 0) -> i32
+        if i >= n then yield acc end
+        jump loop(i = i + 1, acc = acc + p[i])
+    end
+end]],
+        setup = function(arrays) return arrays.a end,
+        args = function(a) return a, cfg.inner_n end,
+    },
+    {
         name = "view_sum",
+        semantic_note = "local view: source view carries extent/stride provenance, so safety should be automatic",
         work = function() return cfg.inner_n end,
         src = [[func bench_view_sum(p: ptr(i32), n: index) -> i32
     let v: view(i32) = view(p, n)
@@ -159,9 +175,44 @@ end]],
         args = function(b) return b, cfg.inner_n end,
     },
     {
+        name = "view_sum_strided",
+        semantic_note = "strided local view: bounded object semantics prove safety, but vector schedule should remain scalar/strided unless backend supports it",
+        work = function() return math.floor(cfg.inner_n / 2) end,
+        src = [[func bench_view_sum_strided(p: ptr(i32), n: index) -> i32
+    let v: view(i32) = view(p, n, as(index, 2))
+    return block loop(i: index = 0, acc: i32 = 0) -> i32
+        if i >= n then yield acc end
+        jump loop(i = i + 1, acc = acc + v[i])
+    end
+end]],
+        setup = function(arrays) return arrays.b end,
+        args = function(b) return b, math.floor(cfg.inner_n / 2) end,
+    },
+    {
         name = "triad_store",
+        semantic_note = "raw pointers: missing bounds/nontrap and write-related dependence facts",
         work = function() return cfg.inner_n end,
         src = [[func bench_triad_store(out: ptr(i32), a: ptr(i32), b: ptr(i32), k: i32, n: i32) -> i32
+    block loop(i: i32 = 0)
+        if i >= n then return 0 end
+        out[i] = a[i] + b[i] * k
+        jump loop(i = i + 1)
+    end
+end]],
+        setup = function(arrays) return arrays.out, arrays.a, arrays.b end,
+        args = function(out, a, b) return out, a, b, 3, cfg.inner_n end,
+        check = function(_, out) return tonumber(out[0] + out[cfg.inner_n - 1]) end,
+    },
+    {
+        name = "triad_store_bounds_disjoint",
+        semantic_note = "bounds+disjoint contracts: safety/dependence semantics are explicit; remaining gap is vector codegen/schedule/backend quality",
+        work = function() return cfg.inner_n end,
+        src = [[func bench_triad_store_bounds_disjoint(writeonly out: ptr(i32), readonly a: ptr(i32), readonly b: ptr(i32), k: i32, n: i32) -> i32
+    requires bounds(out, n)
+    requires bounds(a, n)
+    requires bounds(b, n)
+    requires disjoint(out, a)
+    requires disjoint(out, b)
     block loop(i: i32 = 0)
         if i >= n then return 0 end
         out[i] = a[i] + b[i] * k
@@ -253,6 +304,7 @@ local exit_status = 0
 
 local function report_case(case, results)
     print("case " .. case.name)
+    if case.semantic_note then print("  semantic-attribution " .. case.semantic_note) end
     for _, spec in ipairs(BACKENDS) do
         local r = results[spec.key]
         if r.err then

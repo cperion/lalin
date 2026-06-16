@@ -161,19 +161,13 @@ fn init_lua(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-fn run_mlua_file(lua: &Lua, path: &str, native: bool) -> mlua::Result<()> {
+fn run_mlua_file(lua: &Lua, path: &str) -> mlua::Result<()> {
     lua.globals().set("_MOONLIFT_RUN_PATH", path)?;
-    lua.globals().set("_MOONLIFT_RUN_NATIVE", native)?;
     lua.load(
         r#"
         local moon = require("moonlift")
-        if _MOONLIFT_RUN_NATIVE then
-            local result = moon.native_dofile(_MOONLIFT_RUN_PATH)
-            if result ~= nil then print(result) end
-        else
-            local result = moon.dofile(_MOONLIFT_RUN_PATH)
-            if result ~= nil then print(result) end
-        end
+        local result = moon.dofile(_MOONLIFT_RUN_PATH)
+        if result ~= nil then print(result) end
     "#,
     )
     .exec()
@@ -181,14 +175,12 @@ fn run_mlua_file(lua: &Lua, path: &str, native: bool) -> mlua::Result<()> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    let mut native = false;
     let mut file_path: Option<&str> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--native" => native = true,
             "--help" | "-h" => {
-                println!("MoonLift host — compiles and runs .mlua files.\n\nusage: moonlift [--native] file.mlua\n\n  --native    use native (MOM) pipeline instead of hosted-Lua\n\nWithout --native, uses the hosted-Lua pipeline (moon.dofile).\nWith --native, uses the native MOM pipeline (moon.native_dofile).");
+                println!("MoonLift host — compiles and runs .mlua files.\n\nusage: moonlift file.mlua\n\nUses the hosted-Lua pipeline (moon.dofile).");
                 return Ok(());
             }
             s if !s.starts_with('-') && file_path.is_none() => file_path = Some(s),
@@ -207,7 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     lua.load(r#"require("moonlift.mlua_run")"#).exec()?;
 
     if let Some(path) = file_path {
-        if let Err(err) = run_mlua_file(&lua, path, native) {
+        if let Err(err) = run_mlua_file(&lua, path) {
             let msg = err.to_string();
             // Extract just the formatted error (before "stack traceback:")
             let clean = msg.split("\nstack traceback:").next().unwrap_or(&msg);
@@ -217,7 +209,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     } else if args.len() == 1 {
-        println!("MoonLift host ready. usage: moonlift [--native] file.mlua");
+        println!("MoonLift host ready. usage: moonlift file.mlua");
     }
 
     Ok(())

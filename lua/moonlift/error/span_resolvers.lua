@@ -572,12 +572,6 @@ function M.link_resolver(issue, analysis)
     return resolved_span(issue, analysis) or fallback_span(analysis)
 end
 
---- Vec resolver: reuse typecheck resolver pattern
-function M.vec_resolver(issue, analysis)
-    -- VecReject issues reference loop expressions; try the typecheck path
-    return M.typecheck_resolver(issue, analysis)
-end
-
 -------------------------------------------------------------------------------
 -- Static resolver table
 --
@@ -593,7 +587,6 @@ M.RESOLVERS = {
     typecheck = M.typecheck_resolver,
     backend = M.backend_resolver,
     link = M.link_resolver,
-    vec = M.vec_resolver,
 }
 
 --- Validate that all phase names have resolvers

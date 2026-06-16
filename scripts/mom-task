@@ -1,8 +1,0 @@
-#!/bin/sh
-# MOM task manager — zero-friction CLI for AI agents.
-# Usage: ./scripts/mom-task [status|done <id>|reset <id>|progress|list]
-#
-# Wraps the Lua task stack so AI agents don't need to remember package.path.
-
-exec luajit -e 'package.path = "./lua/?.lua;" .. package.path' \
-  lua/moonlift/mom/build/taskstack.lua "$@"

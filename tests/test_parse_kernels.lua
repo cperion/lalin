@@ -260,48 +260,13 @@ local result = Pipeline.Define(T).parse_and_lower(src, { site = "test_parse_kern
 local program = result.program
 local report = result.back_report
 assert(#report.issues == 0)
-local saw_vec_load, saw_vec_add, saw_vec_sub, saw_vec_mul, saw_vec_band, saw_vec_bor, saw_vec_bxor, saw_vec_store = false, false, false, false, false, false, false, false
-local saw_alias_fact = false
-local saw_i64x2 = false
-local saw_vec_memory_proof = false
-local saw_vec_alignment = false
+-- The frontend no longer installs the legacy tree-shaped VecKernelPlan /
+-- VecKernelToBack replacement path.  This integrated suite checks that the
+-- kernel corpus still lowers and executes correctly; vector-specific projection
+-- coverage now belongs to the MoonCode -> Flow/Mem/Kernel/Lower tests.
 for i = 1, #program.cmds do
-    local cmd = program.cmds[i]
-    if pvm.classof(cmd) == T.MoonBack.CmdLoadInfo and pvm.classof(cmd.ty) == T.MoonBack.BackShapeVec then
-        saw_vec_load = true
-        if cmd.ty.vec.elem == T.MoonBack.BackI64 and cmd.ty.vec.lanes == 2 then saw_i64x2 = true end
-        if pvm.classof(cmd.memory.trap) == T.MoonBack.BackNonTrapping and (pvm.classof(cmd.memory.dereference) == T.MoonBack.BackDerefBytes or pvm.classof(cmd.memory.dereference) == T.MoonBack.BackDerefAssumed) then saw_vec_memory_proof = true end
-        if pvm.classof(cmd.memory.alignment) == T.MoonBack.BackAlignAssumed or pvm.classof(cmd.memory.alignment) == T.MoonBack.BackAlignKnown then saw_vec_alignment = true end
-    elseif pvm.classof(cmd) == T.MoonBack.CmdVecBinary and cmd.op == T.MoonBack.BackVecIntAdd then
-        saw_vec_add = true
-    elseif pvm.classof(cmd) == T.MoonBack.CmdVecBinary and cmd.op == T.MoonBack.BackVecIntSub then
-        saw_vec_sub = true
-    elseif pvm.classof(cmd) == T.MoonBack.CmdVecBinary and cmd.op == T.MoonBack.BackVecIntMul then
-        saw_vec_mul = true
-    elseif pvm.classof(cmd) == T.MoonBack.CmdVecBinary and cmd.op == T.MoonBack.BackVecBitAnd then
-        saw_vec_band = true
-    elseif pvm.classof(cmd) == T.MoonBack.CmdVecBinary and cmd.op == T.MoonBack.BackVecBitOr then
-        saw_vec_bor = true
-    elseif pvm.classof(cmd) == T.MoonBack.CmdVecBinary and cmd.op == T.MoonBack.BackVecBitXor then
-        saw_vec_bxor = true
-    elseif pvm.classof(cmd) == T.MoonBack.CmdStoreInfo and pvm.classof(cmd.ty) == T.MoonBack.BackShapeVec then
-        saw_vec_store = true
-    elseif pvm.classof(cmd) == T.MoonBack.CmdAliasFact then
-        saw_alias_fact = true
-    end
+    assert(pvm.classof(program.cmds[i]) ~= T.MoonBack.CmdTrap, "kernel corpus should not lower through CmdTrap")
 end
-assert(saw_vec_load, "expected vector load in sum_i32")
-assert(saw_vec_add, "expected vector add in sum_i32")
-assert(saw_vec_store, "expected vector store in fill_i32")
-assert(saw_vec_memory_proof, "expected vector memory proof to survive into BackMemoryInfo")
-assert(saw_vec_alignment, "expected vector alignment evidence to survive into BackMemoryInfo")
-assert(saw_alias_fact, "expected vector alias proof/assumption to lower into BackAliasFact")
-assert(saw_i64x2, "expected i64x2 vector operation in i64 kernels")
-assert(saw_vec_sub, "expected vector subtract in sub_i32")
-assert(saw_vec_mul, "expected vector multiply in dot_i32")
-assert(saw_vec_band, "expected vector bit-and in and_i32")
-assert(saw_vec_bor, "expected vector bit-or in or_i32")
-assert(saw_vec_bxor, "expected vector bit-xor in xor_i32")
 local artifact = jit_api.jit():compile(program)
 local sum_i32 = ffi.cast("int32_t (*)(const int32_t*, int32_t)", artifact:getpointer(B2.BackFuncId("sum_i32")))
 local fill_i32 = ffi.cast("int32_t (*)(int32_t*, int32_t, int32_t)", artifact:getpointer(B2.BackFuncId("fill_i32")))

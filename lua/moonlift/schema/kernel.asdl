@@ -5,7 +5,8 @@ module MoonKernel {
 
     KernelStreamId = (string text) unique
 
-    KernelSite = (MoonCode.CodeFuncId func, MoonFlow.FlowLoopId loop, MoonCode.CodeBlockId header, MoonCode.CodeBlockId* covered_blocks) unique
+    KernelSubject = KernelSubjectFunc(MoonCode.CodeFuncId func) unique
+         | KernelSubjectLoop(MoonCode.CodeFuncId func, MoonFlow.FlowLoopId loop) unique
 
     KernelReject = KernelRejectNoLoopFacts(MoonCode.CodeFuncId func, string reason) unique
          | KernelRejectUnsupportedLoop(MoonFlow.FlowLoopId loop, string reason) unique
@@ -17,18 +18,24 @@ module MoonKernel {
          | KernelRejectAtomic(MoonMem.MemAccessId access, string reason) unique
          | KernelRejectTrap(MoonMem.MemAccessId access, string reason) unique
          | KernelRejectSchedule(string reason) unique
+         | KernelRejectIncompleteFunction(MoonCode.CodeFuncId func, string reason) unique
 
     KernelAssumption = KernelAssumeBounds(MoonKernel.KernelStream stream, string reason) unique
          | KernelAssumeAlignment(MoonKernel.KernelStream stream, number bytes, string reason) unique
          | KernelAssumeNoAlias(MoonKernel.KernelStream* streams, string reason) unique
          | KernelAssumeNoDependence(MoonKernel.KernelStream* streams, string reason) unique
 
+    KernelClosedFormKind = KernelClosedFormArithmeticSeries(MoonCore.BinaryOp op, MoonCode.CodeType ty, MoonFlow.FlowCountedDomain domain) unique
+         | KernelClosedFormNamed(string name) unique
+
     KernelProof = KernelProofFlow(MoonFlow.FlowLoopId loop, string reason) unique
          | KernelProofMemory(MoonMem.MemProof proof, string reason) unique
          | KernelProofAlias(MoonMem.MemAliasFact fact, string reason) unique
          | KernelProofDependence(MoonMem.MemDependenceFact fact, string reason) unique
          | KernelProofReduction(string reason) unique
+         | KernelProofClosedForm(MoonKernel.KernelClosedFormKind kind, string reason) unique
          | KernelProofSchedule(string reason) unique
+         | KernelProofFunctionEquivalence(string reason) unique
 
     KernelSafety = KernelSafetyProven(MoonKernel.KernelProof* proofs) unique
          | KernelSafetyAssumed(MoonKernel.KernelProof* proofs, MoonKernel.KernelAssumption* assumptions) unique
@@ -55,23 +62,34 @@ module MoonKernel {
 
     KernelStream = (MoonKernel.KernelStreamId id, MoonKernel.KernelStreamKind kind, MoonMem.MemBase base, MoonCode.CodeType elem_ty, MoonKernel.KernelIndexOffset offset, MoonKernel.KernelLenSource len, MoonMem.MemAccessPattern pattern, MoonMem.MemAlignment alignment, MoonMem.MemBounds bounds, MoonMem.MemAccessId* accesses) unique
 
-    KernelScalarAlias = (MoonCode.CodeValueId value, MoonCode.CodeValueId source) unique
-
     KernelExpr = KernelExprLoad(MoonKernel.KernelStream stream, MoonKernel.KernelIndexOffset offset) unique
          | KernelExprValue(MoonCode.CodeValueId value) unique
+         | KernelExprKernelValue(MoonKernel.KernelValueId value) unique
+         | KernelExprCounter
          | KernelExprConst(MoonCode.CodeConst const) unique
          | KernelExprUnary(MoonCore.UnaryOp op, MoonKernel.KernelExpr value) unique
          | KernelExprBinary(MoonCore.BinaryOp op, MoonCode.CodeType ty, MoonCode.CodeIntSemantics? int_semantics, MoonCode.CodeFloatMode? float_mode, MoonKernel.KernelExpr lhs, MoonKernel.KernelExpr rhs) unique
          | KernelExprCompare(MoonCore.CmpOp op, MoonCode.CodeType ty, MoonKernel.KernelExpr lhs, MoonKernel.KernelExpr rhs) unique
          | KernelExprSelect(MoonKernel.KernelExpr cond, MoonKernel.KernelExpr then_value, MoonKernel.KernelExpr else_value) unique
 
-    KernelReduction = KernelReductionBinary(MoonCore.BinaryOp op, MoonCode.CodeType ty, MoonCode.CodeValueId accumulator, MoonKernel.KernelExpr value, string identity, MoonKernel.KernelProof* proofs) unique
+    KernelBinding = (MoonKernel.KernelValueId id, MoonCode.CodeType ty, MoonKernel.KernelExpr expr) unique
 
     KernelStore = (MoonKernel.KernelStream dst, MoonKernel.KernelIndexOffset offset, MoonKernel.KernelExpr value) unique
 
-    KernelCore = KernelCoreReduce(MoonFlow.FlowLoopFacts loop, MoonKernel.KernelCounter counter, MoonKernel.KernelScalarAlias* scalars, MoonKernel.KernelStream* streams, MoonKernel.KernelReduction reduction, MoonKernel.KernelSafety safety) unique
-         | KernelCoreMap(MoonFlow.FlowLoopFacts loop, MoonKernel.KernelCounter counter, MoonKernel.KernelScalarAlias* scalars, MoonKernel.KernelStream* streams, MoonKernel.KernelStore* stores, MoonKernel.KernelSafety safety) unique
-         | KernelCoreLoop(MoonFlow.FlowLoopFacts loop, MoonKernel.KernelCounter counter, MoonKernel.KernelStream* streams, MoonKernel.KernelSafety safety) unique
+    KernelFold = (MoonKernel.KernelValueId id, MoonCore.BinaryOp op, MoonCode.CodeType ty, MoonKernel.KernelExpr init, MoonKernel.KernelExpr value, string identity, MoonKernel.KernelProof* proofs, MoonCode.CodeValueId? source_accumulator) unique
+
+    KernelClosedForm = (MoonKernel.KernelClosedFormKind kind, MoonKernel.KernelFold? fold, MoonKernel.KernelExpr value, MoonKernel.KernelProof* proofs) unique
+
+    KernelEffect = KernelEffectStore(MoonKernel.KernelStore store) unique
+         | KernelEffectFold(MoonKernel.KernelFold fold) unique
+
+    KernelResult = KernelResultVoid
+         | KernelResultExpr(MoonKernel.KernelExpr value) unique
+         | KernelResultFold(MoonKernel.KernelValueId fold) unique
+         | KernelResultClosedForm(MoonKernel.KernelClosedForm closed_form) unique
+         | KernelResultUnmodeled(string reason) unique
+
+    KernelBody = KernelBodyCounted(MoonFlow.FlowLoopFacts loop, MoonKernel.KernelCounter counter, MoonKernel.KernelStream* streams, MoonKernel.KernelBinding* bindings, MoonKernel.KernelEffect* effects, MoonKernel.KernelResult result, MoonKernel.KernelSafety safety) unique
 
     KernelTail = KernelTailNone
          | KernelTailScalar
@@ -86,10 +104,10 @@ module MoonKernel {
          | KernelScheduleVector(MoonKernel.KernelLaneShape shape, number unroll, number interleave, MoonKernel.KernelTail tail, MoonKernel.KernelProof* proofs) unique
          | KernelScheduleFallbackCode(string reason) unique
 
-    KernelPlan = KernelNoPlan(MoonKernel.KernelSite site, MoonKernel.KernelReject* rejects) unique
-         | KernelPlanned(MoonKernel.KernelId id, MoonKernel.KernelSite site, MoonKernel.KernelCore core, MoonKernel.KernelSchedule schedule, MoonKernel.KernelReject* rejected_schedules) unique
+    KernelPlan = KernelNoPlan(MoonKernel.KernelSubject subject, MoonKernel.KernelReject* rejects) unique
+         | KernelPlanned(MoonKernel.KernelId id, MoonKernel.KernelSubject subject, MoonKernel.KernelBody body, MoonKernel.KernelSchedule schedule, MoonKernel.KernelReject* rejected_schedules) unique
 
-    KernelFuncPlan = (MoonCode.CodeFuncId func, MoonKernel.KernelPlan* plans) unique
+    KernelFuncPlan = (MoonCode.CodeFuncId func, MoonKernel.KernelPlan plan) unique
 
-    KernelModulePlan = (MoonCode.CodeModuleId module, MoonFlow.FlowFactSet flow, MoonMem.MemFactSet memory, MoonKernel.KernelFuncPlan* funcs) unique
+    KernelModulePlan = (MoonCode.CodeModuleId module, MoonFlow.FlowFactSet flow, MoonMem.MemFactSet memory, MoonKernel.KernelFuncPlan* funcs, MoonFlow.FlowSemanticFactSet? flow_semantics, MoonMem.MemSemanticFactSet? memory_semantics) unique
 }

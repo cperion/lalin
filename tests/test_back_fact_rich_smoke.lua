@@ -47,7 +47,6 @@ local program = B.BackProgram({
     B.CmdConst(value, i32, B.BackLitInt("99")),
     B.CmdStoreInfo(shape_i32, addr, value, write_info),
     B.CmdLoadInfo(loaded, shape_i32, addr, read_info),
-    B.CmdAliasFact(B.BackMayAlias(access("store.slot"), access("load.slot"), "same stack slot in smoke test")),
     B.CmdReturnValue(loaded),
     B.CmdSealBlock(entry),
     B.CmdFinishFunc(func),

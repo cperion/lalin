@@ -1,11 +1,6 @@
--- Benchmark the Moonlift C frontend against GCC.
---
--- Same kernels compiled two ways:
---   1. C → GCC -O3 → shared library → FFI call
---   2. C → Moonlift frontend (lex/cpp/parse/cimport/lower_c) → typecheck
---      → tree_to_back → validate → back_luajit → execute
---
--- This measures how close the Moonlift C compilation pipeline gets to GCC.
+-- Benchmark equivalent loop kernels through GCC and Moonlift's current
+-- MoonCode native pipeline. This stays on the public MoonCode/LowerToBack
+-- path rather than any retired direct tree lowering path.
 
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
@@ -13,17 +8,8 @@ local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 local A = require("moonlift.asdl")
 
-local lexer = require("moonlift.c.c_lexer")
-local cpp = require("moonlift.c.cpp_expand")
-local vfs = require("moonlift.c.vfs")
-local c_parse = require("moonlift.c.c_parse")
-local cimport_mod = require("moonlift.c.cimport")
-local lower_mod = require("moonlift.c.lower_c")
-
-local Typecheck = require("moonlift.tree_typecheck")
-local TreeToBack = require("moonlift.tree_to_back")
-local Validate = require("moonlift.back_validate")
-local LuaJITBack = require("moonlift.back_luajit")
+local Pipeline = require("moonlift.frontend_pipeline")
+local Cranelift = require("moonlift.back_jit")
 
 local mode = arg and arg[1] or nil
 local quick = mode == "quick"
@@ -35,41 +21,55 @@ local WARMUP = tonumber(os.getenv("MOONLIFT_BENCH_WARMUP") or (quick and "2" or 
 local CSRC = [[
 int fib_i32(int n) {
     int a = 0, b = 1, i = 0, t = 0;
-    while (i < n) {
-        t = a;
-        a = b;
-        b = t + b;
-        i++;
-    }
+    while (i < n) { t = a; a = b; b = t + b; i++; }
     return a;
 }
-
 int sum_stride_i32(const int* xs, int n, int stride) {
     int acc = 0, i = 0;
-    while (i < n) {
-        acc += xs[i * stride];
-        i++;
-    }
+    while (i < n) { acc += xs[i * stride]; i++; }
     return acc;
 }
-
 int dot_stride_i32(const int* a, const int* b, int n, int stride) {
     int acc = 0, i = 0;
-    while (i < n) {
-        acc += a[i * stride] * b[i * stride];
-        i++;
-    }
+    while (i < n) { acc += a[i * stride] * b[i * stride]; i++; }
     return acc;
 }
-
 int fill_stride_i32(int* dst, int n, int stride, int value) {
     int i = 0;
-    while (i < n) {
-        dst[i * stride] = value;
-        i++;
-    }
+    while (i < n) { dst[i * stride] = value; i++; }
     return 0;
 }
+]]
+
+local MLSRC = [[
+func fib_i32(n: i32): i32
+    return block loop(i: i32 = 0, a: i32 = 0, b: i32 = 1): i32
+        if i >= n then yield a end
+        jump loop(i = i + 1, a = b, b = a + b)
+    end
+end
+
+func sum_stride_i32(xs: ptr(i32), n: i32, stride: i32): i32
+    return block loop(i: i32 = 0, acc: i32 = 0): i32
+        if i >= n then yield acc end
+        jump loop(i = i + 1, acc = acc + xs[i * stride])
+    end
+end
+
+func dot_stride_i32(a: ptr(i32), b: ptr(i32), n: i32, stride: i32): i32
+    return block loop(i: i32 = 0, acc: i32 = 0): i32
+        if i >= n then yield acc end
+        jump loop(i = i + 1, acc = acc + a[i * stride] * b[i * stride])
+    end
+end
+
+func fill_stride_i32(dst: ptr(i32), n: i32, stride: i32, value: i32): i32
+    block loop(i: i32 = 0)
+        if i >= n then return 0 end
+        dst[i * stride] = value
+        jump loop(i = i + 1)
+    end
+end
 ]]
 
 -- Compile with GCC
@@ -101,39 +101,31 @@ local gcc_lib = ffi.load(gcc_so)
 -- Build Moonlift C frontend
 local T = pvm.context()
 A.Define(T)
-cpp = cpp.Define(T)
-c_parse = c_parse.Define(T)
-cimport_mod = cimport_mod.Define(T)
-lower_mod = lower_mod.Define(T)
-local TC = Typecheck.Define(T)
-local Lower = TreeToBack.Define(T)
-local V = Validate.Define(T)
-local luajit_api = LuaJITBack.Define(T)
+local Frontend = Pipeline.Define(T)
+local cranelift_api = Cranelift.Define(T)
+local B = T.MoonBack
 
-local function moonlift_compile_c(csrc)
+local function moonlift_compile_src(src)
     local t0 = os.clock()
-    local r = lexer.lex(csrc, "bench.c")
-    assert(#r.issues == 0, r.issues[1] and r.issues[1].message)
-    r = cpp.expand(r.tokens, r.spans, r.issues, vfs.mock({}))
-    assert(#r.issues == 0, r.issues[1] and r.issues[1].message)
-    local tu, parse_issues = c_parse.parse(r.tokens, r.spans)
-    assert(#parse_issues == 0, parse_issues[1] and parse_issues[1].message)
-    local tf, lf, ef = cimport_mod.cimport(tu.items, "bench_mod")
-    local mm = lower_mod.lower(tu.items, tf, lf, ef, "bench_mod")
-    local checked = TC.check_module(mm)
-    assert(#checked.issues == 0, checked.issues[1] and tostring(pvm.classof(checked.issues[1]).kind))
-    local program = Lower.module(checked.module)
-    local report = V.validate(program)
-    assert(#report.issues == 0, report.issues[1] and report.issues[1].message)
+    local lowered = Frontend.parse_and_lower(src, { site = "bench_c_frontend_vs_gcc" })
+    local program = lowered.program
+    assert(#lowered.back_report.issues == 0, lowered.back_report.issues[1] and lowered.back_report.issues[1].message)
     local frontend_t = os.clock() - t0
     local compile_t0 = os.clock()
-    local artifact = luajit_api.compile(program)
+    local jit = cranelift_api.jit()
+    local artifact = jit:compile(program)
     local compile_t = os.clock() - compile_t0
-    return artifact, frontend_t, compile_t, program
+    return artifact, frontend_t, compile_t, program, jit
 end
 
-local ml_artifact, ml_frontend_t, ml_compile_t, ml_program = moonlift_compile_c(CSRC)
-local ml = ml_artifact.module
+local ml_artifact, ml_frontend_t, ml_compile_t, ml_program, ml_jit = moonlift_compile_src(MLSRC)
+local function mptr(name) return ml_artifact:getpointer(B.BackFuncId(name)) end
+local ml = {
+    fib_i32 = ffi.cast("int32_t (*)(int32_t)", mptr("fib_i32")),
+    sum_stride_i32 = ffi.cast("int32_t (*)(const int32_t*, int32_t, int32_t)", mptr("sum_stride_i32")),
+    dot_stride_i32 = ffi.cast("int32_t (*)(const int32_t*, const int32_t*, int32_t, int32_t)", mptr("dot_stride_i32")),
+    fill_stride_i32 = ffi.cast("int32_t (*)(int32_t*, int32_t, int32_t, int32_t)", mptr("fill_stride_i32")),
+}
 
 -- Fill test arrays
 local function fill_arrays(n, stride)
@@ -192,15 +184,16 @@ local cases = {
       check=function() return out_g[0]+out_g[(N-1)*STRIDE], out_m[0]+out_m[(N-1)*STRIDE] end },
 }
 
-io.write("C frontend benchmark: Moonlift LuaJIT backend vs GCC -O3\n")
+io.write("Moonlift source benchmark: MoonCode native pipeline vs GCC -O3\n")
 io.write(string.format("C_source_bytes %d\n", #CSRC))
+io.write(string.format("Moonlift_source_bytes %d\n", #MLSRC))
 io.write(string.format("moonlift_back_cmds %d\n", #ml_program.cmds))
 io.write(string.format("N %d\nSTRIDE %d\nITERS %d\nWARMUP %d\n\n", N, STRIDE, ITERS, WARMUP))
 io.write("compile_seconds\n")
 io.write(string.format("  gcc_O3_compile                  %.9f\n", gcc_t))
-io.write(string.format("  moonlift_frontend_parse_import  %.9f\n", ml_frontend_t))
+io.write(string.format("  moonlift_frontend_mooncode      %.9f\n", ml_frontend_t))
 io.write(string.format("  moonlift_backend_compile        %.9f\n", ml_compile_t))
-io.write(string.format("  luajit_generated_source_bytes   %d\n\n", #ml_artifact.source))
+io.write(string.format("  moonlift_back_cmds              %d\n\n", #ml_program.cmds))
 
 io.write(string.format("%-18s %12s %12s %12s %12s\n", "kernel", "gcc_O3_s", "moonlift_s", "ml/gcc", "check"))
 for _, case in ipairs(cases) do
@@ -212,4 +205,6 @@ for _, case in ipairs(cases) do
     io.write(string.format("%-18s %12.9f %12.9f %12.3f %12s\n", case.name, gt, mt, mt / gt, ok))
 end
 
+ml_artifact:free()
+ml_jit:free()
 os.remove(gcc_so)

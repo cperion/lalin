@@ -10,7 +10,7 @@ local B = T.MoonBack
 local D = Diagnostics.Define(T)
 
 local program = B.BackProgram({ B.CmdFinalizeModule })
-local report = D.diagnostics(program, {}, {})
+local report = D.diagnostics(program, nil, {})
 assert(pvm.classof(report) == B.BackDiagnosticsReport)
 assert(pvm.classof(report.inspection) == B.BackInspectionReport)
 assert(#report.disassembly == 0)

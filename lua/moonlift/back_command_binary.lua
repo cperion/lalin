@@ -94,7 +94,7 @@ local function w4(buf, v)
         bit.band(bit.rshift(v, 16), 0xff), bit.band(bit.rshift(v, 24), 0xff))
 end
 
--- MemFlags: bit0=notrap, bit1=aligned, bit2=can_move
+-- MemFlags: bit0=notrap, bit1=aligned, bit2=can_move, bit3=readonly
 local function memflags(m)
     local bits = 0
     if m.trap.kind == "BackNonTrapping" or m.trap.kind == "BackChecked" then
@@ -106,6 +106,9 @@ local function memflags(m)
     end
     if m.motion.kind == "BackCanMove" then
         bits = bit.bor(bits, 4)
+    end
+    if m.mode.kind == "BackAccessReadonly" then
+        bits = bit.bor(bits, 8)
     end
     return bits
 end
@@ -590,8 +593,6 @@ function M.encode(program)
             flush()
         elseif k == "CmdFinalizeModule" then
             flush()
-        elseif k == "CmdTargetModel" or k == "CmdAliasFact" then
-            -- skip, no-op in Rust decoder
         else
             current.cmds[#current.cmds + 1] = cmd
         end

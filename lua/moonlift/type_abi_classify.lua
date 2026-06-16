@@ -38,6 +38,15 @@ function M.Define(T)
         [Ty.TypeClassView] = function(_, ty, env)
             return pvm.once(Ty.AbiDescriptor(known_layout(ty, env) or Sem.MemLayout(24, 8)))
         end,
+        [Ty.TypeClassLease] = function(self, ty, env)
+            local base_class = classify_api.classify(self.base)
+            return abi_class_from_type_class(base_class, self.base, env)
+        end,
+        [Ty.TypeClassHandle] = function(self, ty)
+            local r = scalar_api.result(ty)
+            if pvm.classof(r) == Ty.TypeBackScalarKnown then return pvm.once(Ty.AbiDirect(r.scalar)) end
+            return pvm.once(Ty.AbiUnknown(self))
+        end,
         [Ty.TypeClassClosure] = function(_, ty, env)
             return pvm.once(Ty.AbiDescriptor(known_layout(ty, env) or Sem.MemLayout(16, 8)))
         end,

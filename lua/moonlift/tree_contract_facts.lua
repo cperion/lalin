@@ -56,6 +56,16 @@ function M.Define(T)
             if base == nil then return pvm.once(reject("writeonly")) end
             return pvm.once(Tr.ContractFactWriteonly(base))
         end,
+        [Tr.ContractInvalidate] = function(self)
+            local base = expr_binding(self.base)
+            if base == nil then return pvm.once(reject("invalidate")) end
+            return pvm.once(Tr.ContractFactInvalidate(base))
+        end,
+        [Tr.ContractPreserve] = function(self)
+            local base = expr_binding(self.base)
+            if base == nil then return pvm.once(reject("preserve")) end
+            return pvm.once(Tr.ContractFactPreserve(base))
+        end,
     })
 
     local function facts_from_contracts(contracts)

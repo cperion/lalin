@@ -316,6 +316,36 @@ local function install(api, T)
     api.view_t = api.view_type
     api.view = api.view_type
 
+    ---Lease type.  A lease is a temporary resolved access path, normally a
+    ---`lease ptr(T)` or `lease view(T)`, whose no-escape rules are checked by
+    ---the safe handle/store access discipline.
+    ---@param base moonlift.ast.Type Leased pointer/view type.
+    ---@return moonlift.ast.Type
+    function api.lease(base, origin)
+        local o = Ty.LeaseOriginUnknown
+        if type(origin) == "string" then o = Ty.LeaseOriginParam(origin)
+        elseif origin ~= nil then o = origin end
+        return Ty.TLease(as_type(base, "lease base type"), o)
+    end
+
+    local function handle_repr(repr)
+        if repr == nil or repr == "u32" then return Ty.HandleReprScalar(C.ScalarU32) end
+        local m = { i8=C.ScalarI8, i16=C.ScalarI16, i32=C.ScalarI32, i64=C.ScalarI64,
+                    u8=C.ScalarU8, u16=C.ScalarU16, u32=C.ScalarU32, u64=C.ScalarU64,
+                    index=C.ScalarIndex }
+        if type(repr) == "string" then return Ty.HandleReprScalar(assert(m[repr], "unsupported handle repr: " .. tostring(repr))) end
+        assert(pvm.classof(repr) == Ty.HandleRepr, "handle repr expects a scalar repr name or MoonType.HandleRepr")
+        return repr
+    end
+
+    ---Opaque nominal handle type.
+    ---@param name string|string[] Dotted handle type name or path parts.
+    ---@param repr string|MoonType.HandleRepr? Integer representation. Defaults to `u32`.
+    ---@return moonlift.ast.Type
+    function api.handle_type(name, repr)
+        return Ty.THandle(Ty.TypeRefPath(as_path(name, "handle type")), handle_repr(repr))
+    end
+
     ---Function type.
     ---@param params moonlift.ast.Type[] Parameter types.
     ---@param result moonlift.ast.Type Result type.
@@ -999,6 +1029,14 @@ local function install(api, T)
         return Tr.TypeDeclTaggedUnionSugar(assert_name(spec.name, "tagged_union"), vars)
     end
 
+    ---Opaque handle type declaration.
+    ---@param spec table `{ name, repr = "u32", invalid = "0" }`.
+    ---@return moonlift.ast.TypeDecl
+    function api.handle(spec)
+        local invalid = spec.invalid ~= nil and Ty.HandleInvalidInt(tostring(spec.invalid)) or Ty.HandleInvalidNone
+        return Tr.TypeDeclHandle(assert_name(spec.name, "handle"), handle_repr(spec.repr), invalid)
+    end
+
     ---Wrap any item payload as a MoonTree.Item. Already wrapped items pass through.
     ---@param v moonlift.ast.Func|MoonTree.ExternFunc|MoonTree.ConstItem|MoonTree.StaticItem|MoonTree.ImportItem|moonlift.ast.TypeDecl|moonlift.ast.Item Item payload.
     ---@return moonlift.ast.Item
@@ -1042,6 +1080,11 @@ local function install(api, T)
     ---@param spec table Struct fields.
     ---@return moonlift.ast.Item
     function api.struct_item(spec) return Tr.ItemType(api.struct(spec)) end
+
+    ---Convenience handle item.
+    ---@param spec table Handle fields.
+    ---@return moonlift.ast.Item
+    function api.handle_item(spec) return Tr.ItemType(api.handle(spec)) end
 
     api.as_type = as_type
     api.as_expr = as_expr

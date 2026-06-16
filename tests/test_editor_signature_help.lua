@@ -72,7 +72,7 @@ local extern_parse = Mlua.DocumentParse(
     extern_base.parse.islands,
     extern_base.parse.anchors
 )
-local extern_analysis = Mlua.DocumentAnalysis(extern_parse, extern_base.host, extern_base.open_report, {}, {}, {}, {}, extern_base.back_report, extern_base.anchors)
+local extern_analysis = Mlua.DocumentAnalysis(extern_parse, extern_base.host, extern_base.open_report, {}, {}, extern_base.back_report, extern_base.anchors)
 local extern_idx = P.build_index(extern_doc)
 local _, extern_e = assert(extern_src:find("puts(", 1, true))
 local extern_help = Sig.help(E.PositionQuery(uri, S.DocVersion(1), P.offset_to_pos(extern_idx, extern_e).pos), extern_analysis)

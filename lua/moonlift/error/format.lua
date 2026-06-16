@@ -36,6 +36,23 @@ function M.type_name(ty)
         end
         if cls.kind == "TPtr" then return "ptr(" .. M.type_name(ty.elem) .. ")" end
         if cls.kind == "TView" then return "view(" .. M.type_name(ty.elem) .. ")" end
+        if cls.kind == "TLease" then
+            local origin = ""
+            local ocls = ty.origin and pvm.classof(ty.origin)
+            if ocls and ocls.kind == "LeaseOriginParam" then origin = "(" .. tostring(ty.origin.name) .. ")" end
+            return "lease" .. origin .. " " .. M.type_name(ty.base)
+        end
+        if cls.kind == "THandle" then
+            local ref = ty.ref
+            local rcls = ref and pvm.classof(ref)
+            if rcls and rcls.kind == "TypeRefGlobal" then return ref.type_name end
+            if rcls and rcls.kind == "TypeRefPath" and ref.path then
+                local parts = {}
+                for i = 1, #(ref.path.parts or {}) do parts[i] = ref.path.parts[i].text end
+                if #parts > 0 then return table.concat(parts, ".") end
+            end
+            return "handle"
+        end
         if cls.kind == "TSlice" then return "slice(" .. M.type_name(ty.elem) .. ")" end
         if cls.kind == "TArray" then return "array(" .. M.type_name(ty.elem) .. ")" end
         if cls.kind == "TFunc" then return "func(...): " .. M.type_name(ty.result) end

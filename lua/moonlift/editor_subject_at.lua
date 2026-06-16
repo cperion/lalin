@@ -77,6 +77,14 @@ function M.Define(T)
         return nil
     end
 
+    local function find_tree_type(analysis, label)
+        for i = 1, #analysis.parse.combined.module.items do
+            local item = analysis.parse.combined.module.items[i]
+            if pvm.classof(item) == Tr.ItemType and item.t and item.t.name == label then return item.t end
+        end
+        return nil
+    end
+
     local function find_func(analysis, label)
         local normalized = tostring(label):gsub(":", "_")
         for i = 1, #analysis.parse.combined.module.items do
@@ -111,15 +119,36 @@ function M.Define(T)
 
     local function diagnostic_at(analysis, offset)
         local resolved = AnalysisStore.resolved_issues(analysis)
+        local doc = analysis.parse.parts.document
+        local pos_index = P.build_index(doc)
         for i = 1, #resolved do
             local ri = resolved[i]
             if ri.span then
-                -- Create a range proxy compatible with range_contains
                 local proxy = {
                     start_offset = ri.span.start_offset or 0,
                     stop_offset = ri.span.end_offset or ri.span.start_offset or 0,
                 }
-                if range_contains(proxy, offset) then return ri.issue end
+                if range_contains(proxy, offset) then
+                    local start_hit = P.offset_to_pos(pos_index, proxy.start_offset)
+                    local stop_hit = P.offset_to_pos(pos_index, proxy.stop_offset)
+                    local range = S.SourceRange(doc.uri, proxy.start_offset, proxy.stop_offset, start_hit.pos, stop_hit.pos)
+                    local origin = E.DiagFromTransport(ri.code or "E", tostring(ri.issue))
+                    local icls = pvm.classof(ri.issue)
+                    if icls then
+                        if tostring(icls.kind or ""):match("^TypeIssue") then origin = E.DiagFromType(ri.issue) end
+                    end
+                    local message = tostring(ri.issue)
+                    local ok, report = pcall(function()
+                        local Catalog = require("moonlift.error.catalog")
+                        local ctx = {}
+                        for k, v in pairs(ri.analysis_ctx or {}) do ctx[k] = v end
+                        ctx.resolved_span = ri.span
+                        return Catalog.build_report(ri.code or "E9999", ri.issue, ri.phase or "typecheck", ctx)
+                    end)
+                    if ok and report and report.primary and report.primary.message then message = report.primary.message end
+                    if icls and icls.kind == "TypeIssueUnresolvedValue" then message = "unresolved binding `" .. tostring(ri.issue.name or "?") .. "`" end
+                    return E.DiagnosticFact(E.DiagnosticError, origin, ri.code or "E", message, range)
+                end
             end
         end
         return nil
@@ -161,7 +190,9 @@ function M.Define(T)
         if anchor.kind == S.AnchorStructName then
             local decl = find_struct(analysis, anchor.label)
             if decl then return E.SubjectHostStruct(decl) end
-            return E.SubjectType(Ty.TNamed("mlua", anchor.label))
+            local tree_type = find_tree_type(analysis, anchor.label)
+            if tree_type and pvm.classof(tree_type) == Tr.TypeDeclHandle then return E.SubjectType(Ty.THandle(Ty.TypeRefPath(C.Path({ C.Name(tree_type.name) })), tree_type.repr)) end
+            return E.SubjectType(Ty.TNamed(Ty.TypeRefGlobal("mlua", anchor.label)))
         elseif anchor.kind == S.AnchorFieldName or anchor.kind == S.AnchorFieldUse then
             local owner, field = find_field(analysis, anchor.label)
             if owner and field then return E.SubjectHostField(owner, field) end
@@ -201,6 +232,8 @@ function M.Define(T)
             if cname then return E.SubjectScalar(C[cname]) end
             local decl = find_struct(analysis, anchor.label)
             if decl then return E.SubjectHostStruct(decl) end
+            local tree_type = find_tree_type(analysis, anchor.label)
+            if tree_type and pvm.classof(tree_type) == Tr.TypeDeclHandle then return E.SubjectType(Ty.THandle(Ty.TypeRefPath(C.Path({ C.Name(tree_type.name) })), tree_type.repr)) end
             local fn = find_func(analysis, anchor.label)
             if fn then return E.SubjectTreeFunc(fn) end
             local binding_subject = fact_subject_for_anchor(analysis, anchor, function(candidate)

@@ -57,13 +57,15 @@ function M.Define(T)
         return void_ty()
     end
 
-    local function attach_variant_defs(env, defs)
-        if defs ~= nil then rawset(env, "__variant_defs", defs) end
+    local function attach_semantic_defs(env, variant_defs, handle_defs, func_effect_defs)
+        if variant_defs ~= nil then rawset(env, "__variant_defs", variant_defs) end
+        if handle_defs ~= nil then rawset(env, "__handle_defs", handle_defs) end
+        if func_effect_defs ~= nil then rawset(env, "__func_effect_defs", func_effect_defs) end
         return env
     end
 
     local function env_with_values(env, values)
-        return attach_variant_defs(B.Env(env.module_name, values, env.types, env.layouts), rawget(env, "__variant_defs"))
+        return attach_semantic_defs(B.Env(env.module_name, values, env.types, env.layouts), rawget(env, "__variant_defs"), rawget(env, "__handle_defs"), rawget(env, "__func_effect_defs"))
     end
 
     local function env_add_value(env, entry)
@@ -89,6 +91,70 @@ function M.Define(T)
 
     local function type_eq(a, b)
         return a == b
+    end
+
+    local function env_lookup_type(env, name)
+        for i = #env.types, 1, -1 do
+            if env.types[i].name == name then return env.types[i].ty end
+        end
+        return nil
+    end
+
+    local canonical_type
+    canonical_type = function(env, ty)
+        local cls = pvm.classof(ty)
+        if cls == Ty.TNamed and pvm.classof(ty.ref) == Ty.TypeRefPath and #ty.ref.path.parts == 1 then
+            return env_lookup_type(env, ty.ref.path.parts[1].text) or ty
+        elseif cls == Ty.THandle and pvm.classof(ty.ref) == Ty.TypeRefPath and #ty.ref.path.parts == 1 then
+            local found = env_lookup_type(env, ty.ref.path.parts[1].text)
+            if found ~= nil and pvm.classof(found) == Ty.THandle then return found end
+            return ty
+        elseif cls == Ty.TPtr then
+            return Ty.TPtr(canonical_type(env, ty.elem))
+        elseif cls == Ty.TArray then
+            return Ty.TArray(ty.count, canonical_type(env, ty.elem))
+        elseif cls == Ty.TSlice then
+            return Ty.TSlice(canonical_type(env, ty.elem))
+        elseif cls == Ty.TView then
+            return Ty.TView(canonical_type(env, ty.elem))
+        elseif cls == Ty.TLease then
+            return Ty.TLease(canonical_type(env, ty.base), ty.origin)
+        elseif cls == Ty.TFunc or cls == Ty.TClosure then
+            local params = {}
+            for i = 1, #ty.params do params[i] = canonical_type(env, ty.params[i]) end
+            local result = canonical_type(env, ty.result)
+            return cls == Ty.TFunc and Ty.TFunc(params, result) or Ty.TClosure(params, result)
+        end
+        return ty
+    end
+
+    local function canonical_params(env, params)
+        local out = {}
+        for i = 1, #(params or {}) do out[i] = Ty.Param(params[i].name, canonical_type(env, params[i].ty)) end
+        return out
+    end
+
+    local function type_contains_lease(ty)
+        local cls = pvm.classof(ty)
+        if cls == Ty.TLease then return true end
+        if cls == Ty.TPtr or cls == Ty.TArray or cls == Ty.TSlice or cls == Ty.TView then return type_contains_lease(ty.elem) end
+        if cls == Ty.TFunc or cls == Ty.TClosure then
+            if type_contains_lease(ty.result) then return true end
+            for i = 1, #ty.params do if type_contains_lease(ty.params[i]) then return true end end
+        end
+        return false
+    end
+
+    local function lease_access_base(ty)
+        if pvm.classof(ty) == Ty.TLease then return ty.base end
+        return ty
+    end
+
+    local function arg_matches_param(expected, actual)
+        if type_eq(expected, actual) then return true end
+        if pvm.classof(expected) == Ty.TLease and pvm.classof(actual) == Ty.TLease and type_eq(expected.base, actual.base) then return true end
+        if pvm.classof(expected) == Ty.TLease and type_eq(expected.base, actual) then return true end
+        return false
     end
 
     local function named_ref(ty)
@@ -231,7 +297,7 @@ function M.Define(T)
         if extra == nil or #extra == 0 then return env end
         local layouts = clone_values(env.layouts)
         for i = 1, #extra do layouts[#layouts + 1] = extra[i] end
-        return attach_variant_defs(B.Env(env.module_name, env.values, env.types, layouts), rawget(env, "__variant_defs"))
+        return attach_semantic_defs(B.Env(env.module_name, env.values, env.types, layouts), rawget(env, "__variant_defs"), rawget(env, "__handle_defs"), rawget(env, "__func_effect_defs"))
     end
 
     local function int_literal_can_adopt(expr, expected)
@@ -261,6 +327,11 @@ function M.Define(T)
             check_type_policy(ty.elem, issues, site)
         elseif cls == Ty.TPtr or cls == Ty.TSlice or cls == Ty.TView then
             check_type_policy(ty.elem, issues, site)
+        elseif cls == Ty.TLease then
+            check_type_policy(ty.base, issues, site)
+            if pvm.classof(ty.base) ~= Ty.TPtr and pvm.classof(ty.base) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected((site or "type") .. " lease base", Ty.TPtr(Ty.TScalar(C.ScalarVoid)), ty.base) end
+        elseif cls == Ty.THandle then
+            if pvm.classof(ty.repr) ~= Ty.HandleReprScalar then issues[#issues + 1] = Tr.TypeIssueExpected((site or "type") .. " handle repr", Ty.THandle(ty.ref, Ty.HandleReprScalar(C.ScalarU32)), ty) end
         elseif cls == Ty.TFunc or cls == Ty.TClosure then
             for i = 1, #ty.params do check_type_policy(ty.params[i], issues, site) end
             check_type_policy(ty.result, issues, site)
@@ -269,6 +340,16 @@ function M.Define(T)
 
     local function is_void_type(ty)
         return pvm.classof(ty) == Ty.TScalar and ty.scalar == C.ScalarVoid
+    end
+
+    local function is_handle_type(ty)
+        return pvm.classof(ty) == Ty.THandle
+    end
+
+    local function handle_repr_type(handle_ty)
+        if pvm.classof(handle_ty) ~= Ty.THandle then return nil end
+        if pvm.classof(handle_ty.repr) == Ty.HandleReprScalar then return Ty.TScalar(handle_ty.repr.scalar) end
+        return nil
     end
 
     local function type_name_for_ctor(type_name)
@@ -312,6 +393,74 @@ function M.Define(T)
         return defs
     end
 
+    local function build_handle_defs(module, module_name)
+        local defs = {}
+        local function add_type_decl(t, mod_name)
+            if pvm.classof(t) == Tr.TypeDeclHandle then
+                defs[t.name] = { name = t.name, ty = Ty.THandle(Ty.TypeRefGlobal(mod_name, t.name), t.repr), repr = t.repr, invalid = t.invalid }
+            end
+        end
+        for i = 1, #module.items do
+            local item = module.items[i]
+            local cls = pvm.classof(item)
+            if cls == Tr.ItemType then add_type_decl(item.t, module_name)
+            elseif cls == Tr.ItemUseModule then
+                local nested = build_handle_defs(item.module, module_name)
+                for k, v in pairs(nested) do defs[k] = v end
+            end
+        end
+        return defs
+    end
+
+    local function func_parts_for_effect(func)
+        local cls = pvm.classof(func)
+        if cls == Tr.FuncLocal or cls == Tr.FuncExport then return func.name, func.params, {} end
+        if cls == Tr.FuncLocalContract or cls == Tr.FuncExportContract then return func.name, func.params, func.contracts or {} end
+        if cls == Tr.FuncDecl then return func.name, func.params, {} end
+        return nil, nil, nil
+    end
+
+    local function effect_param_names(contracts)
+        local out = { readonly = {}, preserve = {}, invalidate = {} }
+        for i = 1, #(contracts or {}) do
+            local c = contracts[i]
+            local cls = pvm.classof(c)
+            if pvm.classof(c.base) == Tr.ExprRef and pvm.classof(c.base.ref) == B.ValueRefName then
+                local name = c.base.ref.name
+                if cls == Tr.ContractReadonly then out.readonly[name] = true; out.preserve[name] = true
+                elseif cls == Tr.ContractPreserve then out.preserve[name] = true
+                elseif cls == Tr.ContractInvalidate then out.invalidate[name] = true end
+            end
+        end
+        return out
+    end
+
+    local function build_func_effect_defs(module)
+        local defs = {}
+        for i = 1, #module.items do
+            local item = module.items[i]
+            local cls = pvm.classof(item)
+            if cls == Tr.ItemFunc then
+                local name, params, contracts = func_parts_for_effect(item.func)
+                if name ~= nil then
+                    local effects = effect_param_names(contracts)
+                    defs[name] = { params = params or {}, readonly = effects.readonly, preserve = effects.preserve, invalidate = effects.invalidate }
+                end
+            elseif cls == Tr.ItemExtern then
+                defs[item.func.name] = { params = item.func.params or {}, readonly = {}, preserve = {}, invalidate = {} }
+            elseif cls == Tr.ItemUseModule then
+                local nested = build_func_effect_defs(item.module)
+                for k, v in pairs(nested) do defs[k] = v end
+            end
+        end
+        return defs
+    end
+
+    local function find_handle_def(ctx, name)
+        local defs = rawget(ctx.env, "__handle_defs") or {}
+        return defs[name]
+    end
+
     local function find_variant(ctx, type_name, variant_name)
         local defs = rawget(ctx.env, "__variant_defs") or {}
         local def = defs[type_name]
@@ -352,6 +501,59 @@ function M.Define(T)
             env = env_add_value(env, B.ValueEntry(b.name, b))
         end
         return env, binds
+    end
+
+    local function live_lease_tys(ctx)
+        local out = {}
+        for i = #ctx.env.values, 1, -1 do
+            local ty = canonical_type(ctx.env, ctx.env.values[i].binding.ty)
+            if pvm.classof(ty) == Ty.TLease then out[#out + 1] = ty end
+        end
+        return out
+    end
+
+    local function lease_origin_name(lease_ty)
+        if pvm.classof(lease_ty) ~= Ty.TLease then return nil end
+        if pvm.classof(lease_ty.origin) == Ty.LeaseOriginParam then return lease_ty.origin.name end
+        return nil
+    end
+
+    local function expr_binding_name(expr)
+        if pvm.classof(expr) == Tr.ExprRef and pvm.classof(expr.ref) == B.ValueRefBinding then return expr.ref.binding.name end
+        return nil
+    end
+
+    local function callee_effect_def(ctx, callee_expr)
+        if pvm.classof(callee_expr) == Tr.ExprRef and pvm.classof(callee_expr.ref) == B.ValueRefBinding then
+            local defs = rawget(ctx.env, "__func_effect_defs") or {}
+            return defs[callee_expr.ref.binding.name]
+        end
+        return nil
+    end
+
+    local function call_may_invalidate_while_lease_live(ctx, callee_expr, param_tys, typed_args)
+        local leases = live_lease_tys(ctx)
+        if #leases == 0 then return nil end
+        local effect = callee_effect_def(ctx, callee_expr)
+        local preserve = effect and effect.preserve or {}
+        local explicit_invalidate = effect and effect.invalidate or {}
+        for i = 1, #(param_tys or {}) do
+            local pty = canonical_type(ctx.env, param_tys[i])
+            local pcls = pvm.classof(pty)
+            if pcls ~= Ty.TLease and (pcls == Ty.TPtr or pcls == Ty.TView) then
+                local pname = effect and effect.params and effect.params[i] and effect.params[i].name
+                local preserves_param = pname and preserve[pname]
+                local invalidates_param = (pname and explicit_invalidate[pname]) or not preserves_param
+                if invalidates_param then
+                    local arg_name = typed_args and typed_args[i] and expr_binding_name(typed_args[i]) or nil
+                    for j = 1, #leases do
+                        local origin = lease_origin_name(leases[j])
+                        if origin == nil or arg_name == nil or origin == arg_name then return leases[j] end
+                    end
+                end
+            end
+        end
+        return nil
     end
 
     type_expr_expect = function(expr, ctx, expected)
@@ -447,15 +649,17 @@ function M.Define(T)
             local base = pvm.one(type_expr(self.base, ctx))
             local issues = {}; append_all(issues, base.issues)
             local elem = self.elem
-            if pvm.classof(base.ty) == Ty.TView then elem = base.ty.elem elseif pvm.classof(base.ty) == Ty.TPtr then elem = base.ty.elem end
+            local base_access = lease_access_base(base.ty)
+            if pvm.classof(base_access) == Ty.TView then elem = base_access.elem elseif pvm.classof(base_access) == Ty.TPtr then elem = base_access.elem end
             return pvm.once(Tr.TypeViewResult(pvm.with(self, { base = base.expr, elem = elem }), issues))
         end,
         [Tr.ViewContiguous] = function(self, ctx)
             local data = pvm.one(type_expr(self.data, ctx)); local len = type_expr_expect(self.len, ctx, index_ty())
             local issues = {}; append_all(issues, data.issues); append_all(issues, len.issues)
             local elem = self.elem
-            if pvm.classof(data.ty) == Ty.TPtr then elem = data.ty.elem
-            elseif pvm.classof(data.ty) == Ty.TView then elem = data.ty.elem
+            local data_access = lease_access_base(data.ty)
+            if pvm.classof(data_access) == Ty.TPtr then elem = data_access.elem
+            elseif pvm.classof(data_access) == Ty.TView then elem = data_access.elem
             else issues[#issues + 1] = Tr.TypeIssueExpected("view data", Ty.TScalar(C.ScalarRawPtr), data.ty) end
             if not is_integer_scalar(len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view len", index_ty(), len.ty) end
             return pvm.once(Tr.TypeViewResult(pvm.with(self, { data = data.expr, elem = elem, len = len.expr }), issues))
@@ -464,8 +668,9 @@ function M.Define(T)
             local data = pvm.one(type_expr(self.data, ctx)); local len = type_expr_expect(self.len, ctx, index_ty()); local stride = type_expr_expect(self.stride, ctx, index_ty())
             local issues = {}; append_all(issues, data.issues); append_all(issues, len.issues); append_all(issues, stride.issues)
             local elem = self.elem
-            if pvm.classof(data.ty) == Ty.TPtr then elem = data.ty.elem
-            elseif pvm.classof(data.ty) == Ty.TView then elem = data.ty.elem
+            local data_access = lease_access_base(data.ty)
+            if pvm.classof(data_access) == Ty.TPtr then elem = data_access.elem
+            elseif pvm.classof(data_access) == Ty.TView then elem = data_access.elem
             else issues[#issues + 1] = Tr.TypeIssueExpected("view data", Ty.TScalar(C.ScalarRawPtr), data.ty) end
             if not is_integer_scalar(len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view len", index_ty(), len.ty) end
             if not is_integer_scalar(stride.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view stride", index_ty(), stride.ty) end
@@ -511,15 +716,16 @@ function M.Define(T)
         [Tr.IndexBaseExpr] = function(self, ctx)
             local base = pvm.one(type_expr(self.base, ctx))
             local issues = {}; append_all(issues, base.issues)
-            if pvm.classof(base.ty) == Ty.TView or pvm.classof(base.ty) == Ty.TPtr then
-                return pvm.once(Tr.TypeIndexBaseResult(Tr.IndexBaseView(Tr.ViewFromExpr(base.expr, base.ty.elem)), base.ty.elem, issues))
+            local base_access = lease_access_base(base.ty)
+            if pvm.classof(base_access) == Ty.TView or pvm.classof(base_access) == Ty.TPtr then
+                return pvm.once(Tr.TypeIndexBaseResult(Tr.IndexBaseView(Tr.ViewFromExpr(base.expr, base_access.elem)), base_access.elem, issues))
             end
-            if pvm.classof(base.ty) == Ty.TArray then
+            if pvm.classof(base_access) == Ty.TArray then
                 if pvm.classof(base.expr) == Tr.ExprRef then
-                    return pvm.once(Tr.TypeIndexBaseResult(Tr.IndexBasePlace(Tr.PlaceRef(Tr.PlaceTyped(base.ty), base.expr.ref), base.ty.elem), base.ty.elem, issues))
+                    return pvm.once(Tr.TypeIndexBaseResult(Tr.IndexBasePlace(Tr.PlaceRef(Tr.PlaceTyped(base_access), base.expr.ref), base_access.elem), base_access.elem, issues))
                 end
                 issues[#issues + 1] = Tr.TypeIssueNotIndexable(base.ty)
-                return pvm.once(Tr.TypeIndexBaseResult(Tr.IndexBaseView(Tr.ViewFromExpr(base.expr, base.ty.elem)), base.ty.elem, issues))
+                return pvm.once(Tr.TypeIndexBaseResult(Tr.IndexBaseView(Tr.ViewFromExpr(base.expr, base_access.elem)), base_access.elem, issues))
             end
             issues[#issues + 1] = Tr.TypeIssueNotIndexable(base.ty)
             return pvm.once(Tr.TypeIndexBaseResult(Tr.IndexBaseView(Tr.ViewFromExpr(base.expr, void_ty())), void_ty(), issues))
@@ -544,12 +750,13 @@ function M.Define(T)
             local base = pvm.one(type_expr(self.base, ctx))
             local issues = {}; append_all(issues, base.issues)
             local ty = void_ty()
-            if pvm.classof(base.ty) == Ty.TPtr then ty = base.ty.elem else issues[#issues + 1] = Tr.TypeIssueNotPointer(base.ty) end
+            local base_access = lease_access_base(base.ty)
+            if pvm.classof(base_access) == Ty.TPtr then ty = base_access.elem else issues[#issues + 1] = Tr.TypeIssueNotPointer(base.ty) end
             return pvm.once(result_place(Tr.PlaceDeref(Tr.PlaceTyped(ty), base.expr), ty, issues))
         end,
         [Tr.PlaceDot] = function(self, ctx)
             local base = pvm.one(type_place(self.base, ctx)); local issues = {}; append_all(issues, base.issues)
-            local lookup_ty = base.ty
+            local lookup_ty = lease_access_base(base.ty)
             if pvm.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
             local layout = field_layout_for(ctx.env, lookup_ty, self.name)
             if layout ~= nil then
@@ -615,19 +822,47 @@ function M.Define(T)
             return pvm.once(result_expr(Tr.ExprLogic(Tr.ExprTyped(bool_ty()), self.op, lhs.expr, rhs.expr), bool_ty(), issues))
         end,
         [Tr.ExprCast] = function(self, ctx)
+            local dst_ty = canonical_type(ctx.env, self.ty)
             local value = pvm.one(type_expr(self.value, ctx))
-            local issues = {}; append_all(issues, value.issues); check_type_policy(self.ty, issues, "cast")
-            local op = surface_cast_to_machine_op(self.op, value.ty, self.ty)
-            return pvm.once(result_expr(Tr.ExprMachineCast(Tr.ExprTyped(self.ty), op, self.ty, value.expr), self.ty, issues))
+            local issues = {}; append_all(issues, value.issues); check_type_policy(dst_ty, issues, "cast")
+            if (is_handle_type(value.ty) or is_handle_type(dst_ty)) and not type_eq(value.ty, dst_ty) then
+                issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle cast", is_handle_type(value.ty) and value.ty or dst_ty)
+            end
+            local op = surface_cast_to_machine_op(self.op, value.ty, dst_ty)
+            return pvm.once(result_expr(Tr.ExprMachineCast(Tr.ExprTyped(dst_ty), op, dst_ty, value.expr), dst_ty, issues))
         end,
         [Tr.ExprMachineCast] = function(self, ctx) local value = pvm.one(type_expr(self.value, ctx)); local issues = {}; append_all(issues, value.issues); check_type_policy(self.ty, issues, "machine cast"); return pvm.once(result_expr(Tr.ExprMachineCast(Tr.ExprTyped(self.ty), self.op, self.ty, value.expr), self.ty, issues)) end,
         [Tr.ExprLen] = function(self, ctx)
             local value = pvm.one(type_expr(self.value, ctx)); local issues = {}; append_all(issues, value.issues)
-            if pvm.classof(value.ty) ~= Ty.TView and pvm.classof(value.ty) ~= Ty.TArray then issues[#issues + 1] = Tr.TypeIssueExpected("len", Ty.TView(void_ty()), value.ty) end
+            local value_access = lease_access_base(value.ty)
+            if pvm.classof(value_access) ~= Ty.TView and pvm.classof(value_access) ~= Ty.TArray then issues[#issues + 1] = Tr.TypeIssueExpected("len", Ty.TView(void_ty()), value.ty) end
             return pvm.once(result_expr(Tr.ExprLen(Tr.ExprTyped(index_ty()), value.expr), index_ty(), issues))
         end,
         [Tr.ExprCall] = function(self, ctx)
             local issues = {}; local typed_args = {}
+            -- Trusted/internal handle representation operations.
+            -- `repr(handle_value)` exposes the declared scalar representation.
+            if pvm.classof(self.callee) == Tr.ExprRef and pvm.classof(self.callee.ref) == B.ValueRefName and self.callee.ref.name == "repr" and #self.args == 1 then
+                local arg = pvm.one(type_expr(self.args[1], ctx)); append_all(issues, arg.issues)
+                local hty = canonical_type(ctx.env, arg.ty)
+                local rty = handle_repr_type(hty)
+                if rty == nil then
+                    issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle repr", arg.ty)
+                    rty = void_ty()
+                end
+                return pvm.once(result_expr(Tr.ExprMachineCast(Tr.ExprTyped(rty), C.MachineCastBitcast, rty, arg.expr), rty, issues))
+            end
+            -- `HandleType.from_repr(raw)` creates a handle at an explicit trust boundary.
+            if pvm.classof(self.callee) == Tr.ExprDot and self.callee.name == "from_repr"
+               and pvm.classof(self.callee.base) == Tr.ExprRef and pvm.classof(self.callee.base.ref) == B.ValueRefName
+               and #self.args == 1 then
+                local def = find_handle_def(ctx, self.callee.base.ref.name)
+                if def ~= nil then
+                    local rty = handle_repr_type(def.ty) or void_ty()
+                    local arg = type_expr_expect(self.args[1], ctx, rty); append_all(issues, arg.issues); check_expected("handle from_repr", rty, arg.ty, issues)
+                    return pvm.once(result_expr(Tr.ExprMachineCast(Tr.ExprTyped(def.ty), C.MachineCastBitcast, def.ty, arg.expr), def.ty, issues))
+                end
+            end
             -- self.callee is the callee expression, self.args is the argument list
             local callee_r = pvm.one(type_expr(self.callee, ctx)); append_all(issues, callee_r.issues)
             local fn_ty = callee_r.ty
@@ -636,11 +871,20 @@ function M.Define(T)
                 return pvm.once(result_expr(Tr.ExprCall(Tr.ExprTyped(void_ty()), callee_r.expr, {}), void_ty(), issues))
             end
             local result_ty, param_tys = callable_result(fn_ty)
+            result_ty = canonical_type(ctx.env, result_ty)
+            local canonical_param_tys = {}
+            for i = 1, #(param_tys or {}) do canonical_param_tys[i] = canonical_type(ctx.env, param_tys[i]) end
+            param_tys = canonical_param_tys
             if #param_tys ~= #self.args then issues[#issues + 1] = Tr.TypeIssueArgCount("call", #param_tys, #self.args) end
             for i = 1, #self.args do
                 local arg = type_expr_expect(self.args[i], ctx, param_tys[i]); append_all(issues, arg.issues); typed_args[#typed_args + 1] = arg.expr
-                if param_tys[i] ~= nil then check_expected("call arg", param_tys[i], arg.ty, issues) end
+                if param_tys[i] ~= nil then
+                    if not arg_matches_param(param_tys[i], arg.ty) then check_expected("call arg", param_tys[i], arg.ty, issues) end
+                    if type_contains_lease(arg.ty) and not type_contains_lease(param_tys[i]) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape call", arg.ty) end
+                end
             end
+            local invalidated_lease = call_may_invalidate_while_lease_live(ctx, callee_r.expr, param_tys, typed_args)
+            if invalidated_lease ~= nil then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease invalidating call", invalidated_lease) end
             return pvm.once(result_expr(Tr.ExprCall(Tr.ExprTyped(result_ty), callee_r.expr, typed_args), result_ty, issues))
         end,
         [Tr.ExprField] = function(self, ctx) local base = pvm.one(type_expr(self.base, ctx)); local issues = {}; append_all(issues, base.issues); return pvm.once(result_expr(Tr.ExprField(Tr.ExprTyped(self.field.ty), base.expr, self.field), self.field.ty, issues)) end,
@@ -680,6 +924,7 @@ function M.Define(T)
                     local fi = self.fields[j]
                     local ev = pvm.one(type_expr(fi.value, ctx))
                     append_all(issues, ev.issues)
+                    if type_contains_lease(ev.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape aggregate", ev.ty) end
                     field_exprs[j] = Tr.FieldInit(fi.name, ev.expr, fi.offset)
                 end
                 return pvm.once(result_expr(Tr.ExprAgg(Tr.ExprTyped(self.ty), self.ty, field_exprs), self.ty, issues))
@@ -714,6 +959,7 @@ function M.Define(T)
                         local ev = type_expr_expect(fi.value, ctx, decl.ty)
                         append_all(issues, ev.issues)
                         check_expected("struct field '" .. fi.name .. "'", decl.ty, ev.ty, issues)
+                        if type_contains_lease(ev.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape aggregate", ev.ty) end
                         field_exprs[j] = Tr.FieldInit(fi.name, ev.expr, decl.offset)
                     end
                 end
@@ -758,8 +1004,14 @@ function M.Define(T)
             return pvm.once(result_expr(Tr.ExprAtomicCas(Tr.ExprTyped(self.ty), self.ty, addr.expr, expected.expr, replacement.expr, self.ordering), self.ty, issues))
         end,
         [Tr.ExprDot] = function(self, ctx)
+            if self.name == "invalid" and pvm.classof(self.base) == Tr.ExprRef and pvm.classof(self.base.ref) == B.ValueRefName then
+                local def = find_handle_def(ctx, self.base.ref.name)
+                if def ~= nil and pvm.classof(def.invalid) == Ty.HandleInvalidInt then
+                    return pvm.once(result_expr(Tr.ExprLit(Tr.ExprTyped(def.ty), C.LitInt(def.invalid.raw)), def.ty, {}))
+                end
+            end
             local base = pvm.one(type_expr(self.base, ctx)); local issues = {}; append_all(issues, base.issues)
-            local base_ty = base.ty
+            local base_ty = lease_access_base(base.ty)
             if pvm.classof(base_ty) == Ty.TPtr then
                 local layout = field_layout_for(ctx.env, base_ty.elem, self.name)
                 if layout ~= nil then
@@ -786,7 +1038,7 @@ function M.Define(T)
             return pvm.once(result_expr(Tr.ExprIntrinsic(Tr.ExprTyped(ty), self.op, args), ty, issues))
         end,
         [Tr.ExprAddrOf] = function(self, ctx) local place = pvm.one(type_place(self.place, ctx)); local ty = Ty.TPtr(place.ty); return pvm.once(result_expr(Tr.ExprAddrOf(Tr.ExprTyped(ty), place.place), ty, place.issues)) end,
-        [Tr.ExprDeref] = function(self, ctx) local value = pvm.one(type_expr(self.value, ctx)); local issues = {}; append_all(issues, value.issues); local ty = void_ty(); if pvm.classof(value.ty) == Ty.TPtr then ty = value.ty.elem else issues[#issues + 1] = Tr.TypeIssueNotPointer(value.ty) end; return pvm.once(result_expr(Tr.ExprDeref(Tr.ExprTyped(ty), value.expr), ty, issues)) end,
+        [Tr.ExprDeref] = function(self, ctx) local value = pvm.one(type_expr(self.value, ctx)); local issues = {}; append_all(issues, value.issues); local ty = void_ty(); local access = lease_access_base(value.ty); if pvm.classof(access) == Ty.TPtr then ty = access.elem else issues[#issues + 1] = Tr.TypeIssueNotPointer(value.ty) end; return pvm.once(result_expr(Tr.ExprDeref(Tr.ExprTyped(ty), value.expr), ty, issues)) end,
         [Tr.ExprSwitch] = function(self, ctx)
             local value = pvm.one(type_expr(self.value, ctx))
             local default_body = type_stmt_body(self.default_body or {}, ctx)
@@ -861,7 +1113,7 @@ function M.Define(T)
         [Tr.ExprIsNull] = function(self, ctx)
             local value = pvm.one(type_expr(self.value, ctx))
             local issues = {}; append_all(issues, value.issues)
-            if pvm.classof(value.ty) ~= Ty.TPtr then
+            if pvm.classof(lease_access_base(value.ty)) ~= Ty.TPtr then
                 issues[#issues + 1] = Tr.TypeIssueNotPointer(value.ty)
             end
             return pvm.once(result_expr(Tr.ExprIsNull(Tr.ExprTyped(bool_ty()), value.expr), bool_ty(), issues))
@@ -920,26 +1172,28 @@ function M.Define(T)
 
     type_stmt = pvm.phase("moonlift_tree_typecheck_stmt", {
         [Tr.StmtLet] = function(self, ctx)
-            local is_inferred = pvm.classof(self.binding.ty) == Ty.TScalar and self.binding.ty.scalar == C.ScalarVoid
-            local init = is_inferred and pvm.one(type_expr(self.init, ctx)) or type_expr_expect(self.init, ctx, self.binding.ty)
+            local binding_ty = canonical_type(ctx.env, self.binding.ty)
+            local is_inferred = pvm.classof(binding_ty) == Ty.TScalar and binding_ty.scalar == C.ScalarVoid
+            local init = is_inferred and pvm.one(type_expr(self.init, ctx)) or type_expr_expect(self.init, ctx, binding_ty)
             local issues = {}; append_all(issues, init.issues)
-            local actual_ty = is_inferred and init.ty or self.binding.ty
+            local actual_ty = is_inferred and init.ty or binding_ty
             if not is_inferred then check_expected("let " .. self.binding.name, actual_ty, init.ty, issues) end
             local binding = pvm.with(self.binding, { ty = actual_ty, class = B.BindingClassLocalValue })
             local env = env_add_value(ctx.env, B.ValueEntry(binding.name, binding))
             return pvm.once(Tr.TypeStmtResult(ctx_with_env(ctx, env), { Tr.StmtLet(Tr.StmtSurface, binding, init.expr) }, issues))
         end,
         [Tr.StmtVar] = function(self, ctx)
-            local is_inferred = pvm.classof(self.binding.ty) == Ty.TScalar and self.binding.ty.scalar == C.ScalarVoid
-            local init = is_inferred and pvm.one(type_expr(self.init, ctx)) or type_expr_expect(self.init, ctx, self.binding.ty)
+            local binding_ty = canonical_type(ctx.env, self.binding.ty)
+            local is_inferred = pvm.classof(binding_ty) == Ty.TScalar and binding_ty.scalar == C.ScalarVoid
+            local init = is_inferred and pvm.one(type_expr(self.init, ctx)) or type_expr_expect(self.init, ctx, binding_ty)
             local issues = {}; append_all(issues, init.issues)
-            local actual_ty = is_inferred and init.ty or self.binding.ty
+            local actual_ty = is_inferred and init.ty or binding_ty
             if not is_inferred then check_expected("var " .. self.binding.name, actual_ty, init.ty, issues) end
             local binding = pvm.with(self.binding, { ty = actual_ty, class = B.BindingClassLocalCell })
             local env = env_add_value(ctx.env, B.ValueEntry(binding.name, binding))
             return pvm.once(Tr.TypeStmtResult(ctx_with_env(ctx, env), { Tr.StmtVar(Tr.StmtSurface, binding, init.expr) }, issues))
         end,
-        [Tr.StmtSet] = function(self, ctx) local place = pvm.one(type_place(self.place, ctx)); local value = type_expr_expect(self.value, ctx, place.ty); local issues = {}; append_all(issues, place.issues); append_all(issues, value.issues); check_expected("set", place.ty, value.ty, issues); return pvm.once(Tr.TypeStmtResult(ctx, { Tr.StmtSet(Tr.StmtSurface, place.place, value.expr) }, issues)) end,
+        [Tr.StmtSet] = function(self, ctx) local place = pvm.one(type_place(self.place, ctx)); local value = type_expr_expect(self.value, ctx, place.ty); local issues = {}; append_all(issues, place.issues); append_all(issues, value.issues); check_expected("set", place.ty, value.ty, issues); if type_contains_lease(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape store", value.ty) end; return pvm.once(Tr.TypeStmtResult(ctx, { Tr.StmtSet(Tr.StmtSurface, place.place, value.expr) }, issues)) end,
         [Tr.StmtAtomicStore] = function(self, ctx)
             local addr = type_expr_expect(self.addr, ctx, Ty.TPtr(self.ty)); local value = type_expr_expect(self.value, ctx, self.ty); local issues = {}; append_all(issues, addr.issues); append_all(issues, value.issues)
             check_expected("atomic_store addr", Ty.TPtr(self.ty), addr.ty, issues); check_expected("atomic_store value", self.ty, value.ty, issues); check_atomic_value_type("atomic_store", self.ty, issues)
@@ -949,9 +1203,9 @@ function M.Define(T)
         [Tr.StmtExpr] = function(self, ctx) local expr = pvm.one(type_expr(self.expr, ctx)); return pvm.once(Tr.TypeStmtResult(ctx, { Tr.StmtExpr(Tr.StmtSurface, expr.expr) }, expr.issues)) end,
         [Tr.StmtAssert] = function(self, ctx) local cond = type_expr_expect(self.cond, ctx, bool_ty()); local issues = {}; append_all(issues, cond.issues); check_expected("assert", bool_ty(), cond.ty, issues); return pvm.once(Tr.TypeStmtResult(ctx, { Tr.StmtAssert(Tr.StmtSurface, cond.expr) }, issues)) end,
         [Tr.StmtReturnVoid] = function(self, ctx) local issues = {}; check_expected("return", void_ty(), ctx.return_ty, issues); return pvm.once(Tr.TypeStmtResult(ctx, { Tr.StmtReturnVoid(Tr.StmtSurface) }, issues)) end,
-        [Tr.StmtReturnValue] = function(self, ctx) local value = type_expr_expect(self.value, ctx, ctx.return_ty); local issues = {}; append_all(issues, value.issues); check_expected("return", ctx.return_ty, value.ty, issues); return pvm.once(Tr.TypeStmtResult(ctx, { Tr.StmtReturnValue(Tr.StmtSurface, value.expr) }, issues)) end,
+        [Tr.StmtReturnValue] = function(self, ctx) local value = type_expr_expect(self.value, ctx, ctx.return_ty); local issues = {}; append_all(issues, value.issues); check_expected("return", ctx.return_ty, value.ty, issues); if type_contains_lease(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape return", value.ty) end; return pvm.once(Tr.TypeStmtResult(ctx, { Tr.StmtReturnValue(Tr.StmtSurface, value.expr) }, issues)) end,
         [Tr.StmtYieldVoid] = function(self, ctx) local issues = {}; if ctx.yield ~= Tr.TypeYieldVoid then issues[#issues + 1] = Tr.TypeIssueUnexpectedYield("yield") end; return pvm.once(Tr.TypeStmtResult(ctx, { Tr.StmtYieldVoid(Tr.StmtSurface) }, issues)) end,
-        [Tr.StmtYieldValue] = function(self, ctx) local expected = pvm.classof(ctx.yield) == Tr.TypeYieldValue and ctx.yield.ty or nil; local value = type_expr_expect(self.value, ctx, expected); local issues = {}; append_all(issues, value.issues); if pvm.classof(ctx.yield) == Tr.TypeYieldValue then check_expected("yield", ctx.yield.ty, value.ty, issues) else issues[#issues + 1] = Tr.TypeIssueUnexpectedYield("yield value") end; return pvm.once(Tr.TypeStmtResult(ctx, { Tr.StmtYieldValue(Tr.StmtSurface, value.expr) }, issues)) end,
+        [Tr.StmtYieldValue] = function(self, ctx) local expected = pvm.classof(ctx.yield) == Tr.TypeYieldValue and ctx.yield.ty or nil; local value = type_expr_expect(self.value, ctx, expected); local issues = {}; append_all(issues, value.issues); if pvm.classof(ctx.yield) == Tr.TypeYieldValue then check_expected("yield", ctx.yield.ty, value.ty, issues) else issues[#issues + 1] = Tr.TypeIssueUnexpectedYield("yield value") end; if type_contains_lease(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape yield", value.ty) end; return pvm.once(Tr.TypeStmtResult(ctx, { Tr.StmtYieldValue(Tr.StmtSurface, value.expr) }, issues)) end,
         [Tr.StmtIf] = function(self, ctx)
             local cond = type_expr_expect(self.cond, ctx, bool_ty()); local then_r = type_stmt_body(self.then_body, ctx); local else_r = type_stmt_body(self.else_body, ctx); local issues = {}
             append_all(issues, cond.issues); append_all(issues, then_r.issues); append_all(issues, else_r.issues); check_expected("if cond", bool_ty(), cond.ty, issues)
@@ -1063,13 +1317,15 @@ function M.Define(T)
         if cls == Tr.ContractBounds then
             local base = pvm.one(type_expr(contract.base, ctx)); local len = type_expr_expect(contract.len, ctx, Ty.TScalar(C.ScalarIndex))
             append_all(issues, base.issues); append_all(issues, len.issues)
-            if pvm.classof(base.ty) ~= Ty.TPtr and pvm.classof(base.ty) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("bounds base", Ty.TScalar(C.ScalarRawPtr), base.ty) end
+            local base_access = lease_access_base(base.ty)
+            if pvm.classof(base_access) ~= Ty.TPtr and pvm.classof(base_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("bounds base", Ty.TScalar(C.ScalarRawPtr), base.ty) end
             if not is_integer_scalar(len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("bounds len", Ty.TScalar(C.ScalarIndex), len.ty) end
             return Tr.ContractBounds(base.expr, len.expr), issues
         elseif cls == Tr.ContractWindowBounds then
             local base = pvm.one(type_expr(contract.base, ctx)); local base_len = type_expr_expect(contract.base_len, ctx, Ty.TScalar(C.ScalarIndex)); local start = type_expr_expect(contract.start, ctx, Ty.TScalar(C.ScalarIndex)); local len = type_expr_expect(contract.len, ctx, Ty.TScalar(C.ScalarIndex))
             append_all(issues, base.issues); append_all(issues, base_len.issues); append_all(issues, start.issues); append_all(issues, len.issues)
-            if pvm.classof(base.ty) ~= Ty.TPtr and pvm.classof(base.ty) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("window_bounds base", Ty.TScalar(C.ScalarRawPtr), base.ty) end
+            local base_access = lease_access_base(base.ty)
+            if pvm.classof(base_access) ~= Ty.TPtr and pvm.classof(base_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("window_bounds base", Ty.TScalar(C.ScalarRawPtr), base.ty) end
             if not is_integer_scalar(base_len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("window_bounds base_len", Ty.TScalar(C.ScalarIndex), base_len.ty) end
             if not is_integer_scalar(start.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("window_bounds start", Ty.TScalar(C.ScalarIndex), start.ty) end
             if not is_integer_scalar(len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("window_bounds len", Ty.TScalar(C.ScalarIndex), len.ty) end
@@ -1077,21 +1333,26 @@ function M.Define(T)
         elseif cls == Tr.ContractDisjoint then
             local a = pvm.one(type_expr(contract.a, ctx)); local b = pvm.one(type_expr(contract.b, ctx))
             append_all(issues, a.issues); append_all(issues, b.issues)
-            if pvm.classof(a.ty) ~= Ty.TPtr and pvm.classof(a.ty) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("disjoint lhs", Ty.TScalar(C.ScalarRawPtr), a.ty) end
-            if pvm.classof(b.ty) ~= Ty.TPtr and pvm.classof(b.ty) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("disjoint rhs", Ty.TScalar(C.ScalarRawPtr), b.ty) end
+            local a_access, b_access = lease_access_base(a.ty), lease_access_base(b.ty)
+            if pvm.classof(a_access) ~= Ty.TPtr and pvm.classof(a_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("disjoint lhs", Ty.TScalar(C.ScalarRawPtr), a.ty) end
+            if pvm.classof(b_access) ~= Ty.TPtr and pvm.classof(b_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("disjoint rhs", Ty.TScalar(C.ScalarRawPtr), b.ty) end
             return Tr.ContractDisjoint(a.expr, b.expr), issues
         elseif cls == Tr.ContractSameLen then
             local a = pvm.one(type_expr(contract.a, ctx)); local b = pvm.one(type_expr(contract.b, ctx))
             append_all(issues, a.issues); append_all(issues, b.issues)
-            if pvm.classof(a.ty) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("same_len lhs", Ty.TView(void_ty()), a.ty) end
-            if pvm.classof(b.ty) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("same_len rhs", Ty.TView(void_ty()), b.ty) end
+            local a_access, b_access = lease_access_base(a.ty), lease_access_base(b.ty)
+            if pvm.classof(a_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("same_len lhs", Ty.TView(void_ty()), a.ty) end
+            if pvm.classof(b_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("same_len rhs", Ty.TView(void_ty()), b.ty) end
             return Tr.ContractSameLen(a.expr, b.expr), issues
-        elseif cls == Tr.ContractNoAlias or cls == Tr.ContractReadonly or cls == Tr.ContractWriteonly then
+        elseif cls == Tr.ContractNoAlias or cls == Tr.ContractReadonly or cls == Tr.ContractWriteonly or cls == Tr.ContractInvalidate or cls == Tr.ContractPreserve then
             local base = pvm.one(type_expr(contract.base, ctx)); append_all(issues, base.issues)
-            if pvm.classof(base.ty) ~= Ty.TPtr and pvm.classof(base.ty) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("memory contract base", Ty.TScalar(C.ScalarRawPtr), base.ty) end
+            local base_access = lease_access_base(base.ty)
+            if pvm.classof(base_access) ~= Ty.TPtr and pvm.classof(base_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("memory contract base", Ty.TScalar(C.ScalarRawPtr), base.ty) end
             if cls == Tr.ContractNoAlias then return Tr.ContractNoAlias(base.expr), issues end
             if cls == Tr.ContractReadonly then return Tr.ContractReadonly(base.expr), issues end
-            return Tr.ContractWriteonly(base.expr), issues
+            if cls == Tr.ContractWriteonly then return Tr.ContractWriteonly(base.expr), issues end
+            if cls == Tr.ContractInvalidate then return Tr.ContractInvalidate(base.expr), issues end
+            return Tr.ContractPreserve(base.expr), issues
         end
         return contract, issues
     end
@@ -1105,22 +1366,29 @@ function M.Define(T)
     local function check_func_types(func, issues)
         for i = 1, #(func.params or {}) do check_type_policy(func.params[i].ty, issues, "param " .. tostring(func.params[i].name)) end
         check_type_policy(func.result, issues, "result")
+        if type_contains_lease(func.result) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape result", func.result) end
+    end
+
+    local function canonical_func(self, module_env)
+        return pvm.with(self, { params = canonical_params(module_env, self.params), result = canonical_type(module_env, self.result) })
     end
 
     local function type_plain_func(self, module_env)
-        local ctx = Tr.TypeCheckEnv(env_with_params(module_env, self.name, self.params), self.result, Tr.TypeYieldNone)
-        local body = type_stmt_body(self.body, ctx)
-        local issues = {}; check_func_types(self, issues); append_all(issues, body.issues)
-        return Tr.TypeFuncResult(pvm.with(self, { body = body.stmts }), issues)
+        local func = canonical_func(self, module_env)
+        local ctx = Tr.TypeCheckEnv(env_with_params(module_env, func.name, func.params), func.result, Tr.TypeYieldNone)
+        local body = type_stmt_body(func.body, ctx)
+        local issues = {}; check_func_types(func, issues); append_all(issues, body.issues)
+        return Tr.TypeFuncResult(pvm.with(func, { body = body.stmts }), issues)
     end
 
     local function type_contract_func(self, module_env)
-        local ctx = Tr.TypeCheckEnv(env_with_params(module_env, self.name, self.params), self.result, Tr.TypeYieldNone)
-        local contracts, issues = type_contracts(self.contracts, ctx)
-        check_func_types(self, issues)
-        local body = type_stmt_body(self.body, ctx)
+        local func = canonical_func(self, module_env)
+        local ctx = Tr.TypeCheckEnv(env_with_params(module_env, func.name, func.params), func.result, Tr.TypeYieldNone)
+        local contracts, issues = type_contracts(func.contracts, ctx)
+        check_func_types(func, issues)
+        local body = type_stmt_body(func.body, ctx)
         append_all(issues, body.issues)
-        return Tr.TypeFuncResult(pvm.with(self, { contracts = contracts, body = body.stmts }), issues)
+        return Tr.TypeFuncResult(pvm.with(func, { contracts = contracts, body = body.stmts }), issues)
     end
 
     type_func = pvm.phase("moonlift_tree_typecheck_func", {
@@ -1133,15 +1401,29 @@ function M.Define(T)
 
     type_item = pvm.phase("moonlift_tree_typecheck_item", {
         [Tr.ItemFunc] = function(self, module_env) local r = pvm.one(type_func(self.func, module_env)); return pvm.once(Tr.TypeItemResult({ Tr.ItemFunc(r.func) }, r.issues)) end,
-        [Tr.ItemConst] = function(self, module_env) local ctx = Tr.TypeCheckEnv(module_env, self.c.ty, Tr.TypeYieldNone); local value = pvm.one(type_expr(self.c.value, ctx)); local issues = {}; check_type_policy(self.c.ty, issues, "const"); append_all(issues, value.issues); check_expected("const", self.c.ty, value.ty, issues); return pvm.once(Tr.TypeItemResult({ Tr.ItemConst(pvm.with(self.c, { value = value.expr })) }, issues)) end,
-        [Tr.ItemStatic] = function(self, module_env) local ctx = Tr.TypeCheckEnv(module_env, self.s.ty, Tr.TypeYieldNone); local value = pvm.one(type_expr(self.s.value, ctx)); local issues = {}; check_type_policy(self.s.ty, issues, "static"); append_all(issues, value.issues); check_expected("static", self.s.ty, value.ty, issues); return pvm.once(Tr.TypeItemResult({ Tr.ItemStatic(pvm.with(self.s, { value = value.expr })) }, issues)) end,
+        [Tr.ItemConst] = function(self, module_env)
+            local ty = canonical_type(module_env, self.c.ty)
+            local ctx = Tr.TypeCheckEnv(module_env, ty, Tr.TypeYieldNone)
+            local value = pvm.one(type_expr(self.c.value, ctx))
+            local issues = {}; check_type_policy(ty, issues, "const"); append_all(issues, value.issues); check_expected("const", ty, value.ty, issues)
+            if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape const", ty) end
+            return pvm.once(Tr.TypeItemResult({ Tr.ItemConst(pvm.with(self.c, { ty = ty, value = value.expr })) }, issues))
+        end,
+        [Tr.ItemStatic] = function(self, module_env)
+            local ty = canonical_type(module_env, self.s.ty)
+            local ctx = Tr.TypeCheckEnv(module_env, ty, Tr.TypeYieldNone)
+            local value = pvm.one(type_expr(self.s.value, ctx))
+            local issues = {}; check_type_policy(ty, issues, "static"); append_all(issues, value.issues); check_expected("static", ty, value.ty, issues)
+            if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape static", ty) end
+            return pvm.once(Tr.TypeItemResult({ Tr.ItemStatic(pvm.with(self.s, { ty = ty, value = value.expr })) }, issues))
+        end,
         [Tr.ItemExtern] = function(self) local issues = {}; check_func_types(self.func, issues); return pvm.once(Tr.TypeItemResult({ self }, issues)) end,
         [Tr.ItemImport] = function(self) return pvm.once(Tr.TypeItemResult({ self }, {})) end,
         [Tr.ItemType] = function(self)
             local issues = {}
             local cls = pvm.classof(self.t)
             if cls == Tr.TypeDeclStruct or cls == Tr.TypeDeclUnion then
-                for i = 1, #self.t.fields do check_type_policy(self.t.fields[i].ty, issues, "field " .. self.t.fields[i].field_name) end
+                for i = 1, #self.t.fields do check_type_policy(self.t.fields[i].ty, issues, "field " .. self.t.fields[i].field_name); if type_contains_lease(self.t.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape field", self.t.fields[i].ty) end end
             elseif cls == Tr.TypeDeclEnumSugar then
                 local seen = {}
                 for i = 1, #self.t.variants do
@@ -1155,10 +1437,12 @@ function M.Define(T)
                     local v = self.t.variants[i]
                     local name = v.name
                     check_type_policy(v.payload, issues, "variant " .. name)
-                    for j = 1, #(v.fields or {}) do check_type_policy(v.fields[j].ty, issues, "variant field " .. v.fields[j].field_name) end
+                    for j = 1, #(v.fields or {}) do check_type_policy(v.fields[j].ty, issues, "variant field " .. v.fields[j].field_name); if type_contains_lease(v.fields[j].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape variant field", v.fields[j].ty) end end
                     if seen[name] then issues[#issues + 1] = Tr.TypeIssueDuplicateVariant(self.t.name, name) end
                     seen[name] = true
                 end
+            elseif cls == Tr.TypeDeclHandle then
+                if pvm.classof(self.t.repr) ~= Ty.HandleReprScalar then issues[#issues + 1] = Tr.TypeIssueExpected("handle repr", Ty.THandle(Ty.TypeRefPath(C.Path({ C.Name(self.t.name) })), Ty.HandleReprScalar(C.ScalarU32)), Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(self.t.name) })))) end
             end
             return pvm.once(Tr.TypeItemResult({ self }, issues))
         end,
@@ -1173,7 +1457,7 @@ function M.Define(T)
 
     local function type_module_with_layout_env(module, extra_layout_env, target)
         local base_env = module_type_api.env(module, target)
-        attach_variant_defs(base_env, build_variant_defs(module, base_env.module_name))
+        attach_semantic_defs(base_env, build_variant_defs(module, base_env.module_name), build_handle_defs(module, base_env.module_name), build_func_effect_defs(module))
         local module_env = merge_env_layouts(base_env, extra_layout_env)
         local items = {}
         local issues = {}
@@ -1375,6 +1659,54 @@ local function explain_type_issue(issue, analysis)
     if kind == "TypeIssueInvalidUnary" then
         local op = Format.op_symbol(issue.op)
         local ty = Format.type_name(issue.ty)
+        local raw_op = tostring(issue.op or "")
+        local function report(primary, notes, suggestions)
+            return { code = "E0304", severity = "error", phase_context = "while type-checking an expression",
+                primary = { span = span, message = primary }, notes = notes or {}, suggestions = suggestions or {} }
+        end
+        if raw_op == "lease escape return" then
+            return report("lease escapes through return", {
+                { message = "lease value `" .. ty .. "` is temporary access produced by a store or boundary" },
+                { message = "leases may access memory inside their dynamic extent but may not be returned as durable identity" },
+            }, { { message = "return a handle or copied scalar data instead, or keep the pointer parameter marked `noescape`" } })
+        elseif raw_op == "lease escape yield" then
+            return report("lease escapes through yield", {
+                { message = "yielding `" .. ty .. "` would move temporary access outside the granting region" },
+            }, { { message = "yield a handle/status protocol, not the lease pointer/view" } })
+        elseif raw_op == "lease escape store" then
+            return report("lease escapes through store", {
+                { message = "storing `" .. ty .. "` would make temporary access durable" },
+            }, { { message = "store the handle, or copy the data through the lease instead" } })
+        elseif raw_op == "lease escape call" then
+            return report("lease passed to retaining parameter", {
+                { message = "a lease can only be passed to another `lease` or `noescape` parameter" },
+                { message = "plain `ptr`/`view` parameters are treated as possibly retained" },
+            }, { { message = "mark the callee parameter `noescape`, or change it to `lease ptr(T)` / `lease view(T)`" } })
+        elseif raw_op == "lease invalidating call" then
+            return report("call may invalidate store while lease is live", {
+                { message = "live lease `" .. ty .. "` may refer to storage that this call can move, free, compact, clear, or reuse" },
+                { message = "`readonly` and `preserve` parameters keep leases valid; unannotated pointer/view parameters are conservative invalidators" },
+            }, { { message = "end the lease scope before the call, call a `preserve`/`readonly` API, or use `lease(store)` to associate the lease with the correct store" } })
+        elseif raw_op == "lease escape aggregate" then
+            return report("lease captured in aggregate", {
+                { message = "aggregates can outlive the current access extent, so they cannot contain `" .. ty .. "`" },
+            }, { { message = "store a handle or copied data instead of the lease" } })
+        elseif raw_op == "lease escape field" or raw_op == "lease escape variant field" or raw_op == "lease escape result" or raw_op == "lease escape const" or raw_op == "lease escape static" then
+            return report("lease appears in durable type position", {
+                { message = "`" .. ty .. "` is temporary access, not storable data" },
+                { message = "leases may appear in function/block/continuation parameters, not durable fields/results/statics" },
+            }, { { message = "use a handle type for durable identity, or a plain pointer only at an unchecked ABI boundary" } })
+        elseif raw_op == "handle cast" then
+            return report("handle representation is opaque", {
+                { message = "handle `" .. ty .. "` is not its integer representation in safe casts" },
+                { message = "ordinary `as(...)` cannot convert handles to or from raw scalars" },
+            }, { { message = "resolve the handle through a store region, or use trusted `repr(handle)` / `Handle.from_repr(raw)` inside store implementation code" } })
+        elseif raw_op == "handle repr" then
+            return report("`repr` expects a handle", {
+                { message = "`repr(value)` is the explicit trusted handle-to-scalar boundary" },
+                { message = "the value has type `" .. ty .. "`, not a handle" },
+            })
+        end
         local unotes = {}
         local usuggestions = {}
         if op == "not" then

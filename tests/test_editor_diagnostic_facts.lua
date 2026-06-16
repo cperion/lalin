@@ -13,7 +13,6 @@ local H = T.MoonHost
 local O = T.MoonOpen
 local Tr = T.MoonTree
 local B = T.MoonBack
-local V = T.MoonVec
 local Analysis = AnalysisMod.Define(T)
 local Diag = DiagMod.Define(T)
 
@@ -109,18 +108,15 @@ local synthetic = T.MoonMlua.DocumentAnalysis(
     O.ValidationReport({ O.IssueOpenModuleName }),
     { Tr.TypeIssueUnresolvedValue("missing") },
     {},
-    {},
-    { V.VecRejectUnsupportedLoop(V.VecLoopId("loop"), "test") },
     B.BackValidationReport({ B.BackIssueMissingFinalize }),
     host_bad.anchors
 )
 local synthetic_diags = Diag.diagnostics(synthetic)
-local saw_open, saw_type, saw_vec, saw_back = false, false, false, false
+local saw_open, saw_type, saw_back = false, false, false
 for i = 1, #synthetic_diags do
     local origin = synthetic_diags[i].origin
     if pvm.classof(origin) == E.DiagFromOpen then saw_open = true end
     if pvm.classof(origin) == E.DiagFromType then saw_type = true end
-    if pvm.classof(origin) == E.DiagFromVectorReject then saw_vec = true end
     if pvm.classof(origin) == E.DiagFromBack then
         saw_back = true
         assert(synthetic_diags[i].code == "back.missingFinalize")
@@ -128,7 +124,6 @@ for i = 1, #synthetic_diags do
     end
 end
 assert(saw_open and saw_type and saw_back)
-assert(not saw_vec)
 
 Diag.document_diagnostics_phase:reset()
 pvm.drain(Diag.document_diagnostics_phase(host_bad))

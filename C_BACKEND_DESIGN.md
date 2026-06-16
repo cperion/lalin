@@ -10,8 +10,7 @@ Current checkpoint — 2026-06-15:
   to compact `.asdl` text, loaded by `schema/init.lua`;
 - `MoonCode` is the active normalized typed SSA/control ASDL layer in
   `lua/moonlift/schema/code.asdl`;
-- public native lowering now routes through `tree_to_code -> code_validate -> code_to_back`,
-  not direct `tree_to_back`;
+- public native lowering now routes through `tree_to_code -> code_validate -> Flow/Mem/Kernel/Lower -> lower_to_back/code_to_back`;
 - public C lowering now routes through `tree_to_code -> code_validate -> code_to_c ->
   c_validate`, not direct `tree_to_c`;
 - the old direct Tree-to-C implementation modules have been deleted with no compatibility
@@ -829,8 +828,8 @@ rows formerly described as `tree_to_c` work should be implemented through `tree_
 4. Design enum/tagged-union representation once: tag layout, payload layout, constructors,
    variant binds, variant switches, ABI, data initialization, and diagnostics.
 5. Implement enum/tagged-union typing/layout support needed by both native and C paths.
-6. Implement `ExprCtor` and variant switch lowering for `tree_to_back` to preserve native
-   parity.
+6. Keep native `ExprCtor` and variant switch lowering covered through the MoonCode native
+   path.
 7. Implement `ExprCtor` and variant switch lowering through `tree_to_code`/`code_to_c` using
    the same layout and control semantics.
 8. Decide and implement the dynamic array-length policy: constant-fold before layout, or
@@ -1008,8 +1007,8 @@ source / .mlua
   -> code_to_back    -> back_validate -> back_jit/back_object
 ```
 
-During migration, `tree_to_back` may coexist with `code_to_back`, but the final architecture
-should avoid two independent lowerings that can drift semantically.
+The final architecture has one normalized native lowering route. Direct Tree-to-Back lowering
+has been deleted so native and C projection cannot drift behind separate Tree walkers.
 
 ### 28.2 What MoonCode must preserve
 
@@ -1171,3 +1170,145 @@ The deletion gate has been crossed for section 30.2 modules:
 
 The remaining final grep gate is documentation hygiene: references to the retired names should
 only appear as historical notes saying they were deleted/retired, not as active API guidance.
+
+## 31. Kernel tower checkpoint — MoonCode facts to semantic lowering
+
+The kernel tower is now a semantic side path over `MoonCode`, not a source-tree replacement
+mechanism.  The intended flow is:
+
+```text
+MoonCode
+  -> CodeFlowFacts   -- CFG edges, counted-loop domains, inductions, exits
+  -> CodeMemFacts    -- memory bases, access streams, alignment/bounds/trap facts
+  -> CodeKernelPlan  -- semantic KernelBody facts and safety/schedule choices
+  -> CodeLowerPlan   -- choose Code projection or whole-function Kernel projection
+  -> LowerToBack     -- Back projection from KernelBodyCounted or Code fallback
+  -> LowerToC        -- CodeToC fallback until generic C KernelBody lowering exists
+```
+
+### 31.1 KernelBodyCounted is the semantic core
+
+`MoonKernel` should describe executable meaning, not backend recipes.  The current core is
+`KernelBodyCounted`:
+
+```text
+KernelBodyCounted(
+  loop,        -- FlowLoopFacts / counted iteration domain
+  counter,     -- executable counter policy
+  streams,     -- memory streams used by the body
+  bindings,    -- named kernel-local expression equations (reserved for growth)
+  effects,     -- stores and folds
+  result,      -- function result semantics
+  safety       -- proofs/assumptions/rejections
+)
+```
+
+Effects are explicit:
+
+```text
+KernelEffectStore(KernelStore)
+KernelEffectFold(KernelFold)
+```
+
+Results are explicit:
+
+```text
+KernelResultVoid
+KernelResultExpr(expr)
+KernelResultFold(fold_id)
+KernelResultUnmodeled(reason)
+```
+
+So a loop such as copy-and-sum is one body with one store effect and one fold effect, not a
+choice between a "map core" and a "reduce core".  Map/reduce/store-only/fold-only are
+classifications derived from effects, not primary ASDL variants.
+
+### 31.2 Subject rule: loop facts vs whole-function equivalence
+
+`KernelSubjectLoop(func, loop)` means "this loop has semantic facts".  It is analysis
+evidence only and is not enough to replace a function body.
+
+`KernelSubjectFunc(func)` means the planner proved a whole-function equivalence: the counted
+body plus its `KernelResult` accounts for the function's observable result and effects.  Only
+`KernelSubjectFunc` may become `LowerFuncKernel` in `CodeLowerPlan`.
+
+This rule prevents CFG-splicing and live-in/live-out replacement architecture from returning
+under another name.
+
+### 31.3 Schedule is not semantics
+
+`KernelScheduleScalarIndex`, `KernelScheduleVector`, and future schedules are lowering
+choices over an already-complete `KernelBody`.  A schedule may choose vector lanes, unroll,
+interleave, and tail strategy, but it must not invent stores, folds, results, or safety.
+
+Back lowering therefore consumes:
+
+```text
+KernelBodyCounted + KernelSchedule
+```
+
+and projects Back commands.  C lowering currently does not consume schedules at all.
+
+### 31.4 Back projection policy
+
+`lower_to_back` is now a first-class `LowerModule` projector:
+
+- module prelude and function declarations come from `code_to_back` helpers;
+- `LowerFuncCode` uses ordinary `CodeToBack` function body projection;
+- `LowerFuncKernel` emits a whole-function kernel body directly;
+- kernel lowering no longer goes through `replacement_funcs`.
+
+The current Back kernel projector supports the generic `KernelExpr` subset needed for stores
+and folds:
+
+- values;
+- constants;
+- loads;
+- integer/bit binary ops;
+- compares;
+- selects.
+
+Unsupported kernel expressions must fail explicitly.  They should not silently become opaque
+backend values unless the ASDL intentionally models them as external values.
+
+### 31.5 C projection policy
+
+`lower_to_c` is deliberately a pure `CodeToC` fallback today.  It accepts `LowerModule` only
+so frontend pipelines have one shape.  It must not install partial C-only kernel
+optimizations.  A future C kernel path should consume the same generic `KernelBodyCounted`
+semantics as Back, not special-case individual reductions, benchmark loops, or algebraic
+closed forms.
+
+### 31.6 Legacy vector stack hard-yanked
+
+The old tree-shaped vector stack was deleted, not quarantined:
+
+- `tree_to_back.lua`
+- `schema/vec.asdl`
+- `vec_loop_facts.lua`
+- `vec_loop_decide.lua`
+- `vec_kernel_plan.lua`
+- `vec_kernel_safety.lua`
+- `vec_kernel_to_back.lua`
+- `vec_to_back.lua`
+- `vec_inspect.lua`
+
+Public native lowering now routes through the MoonCode fact tower. Vector code generation that
+remains is Back-level vector command support plus `KernelBodyCounted` scheduling in
+`lower_to_back`. Any future vector-specific semantics must be expressed as Flow/Mem/Kernel
+facts and schedules, not as a competing source-tree recognizer.
+
+## 32. Hard-yank completion boundary
+
+This refactor is considered complete only when active code has no loadable legacy frontend
+backend path:
+
+- no direct Tree-to-Back module;
+- no MoonVec schema or tree-vector modules;
+- no `replacement_funcs` body-substitution API;
+- no tests or benchmarks requiring the deleted modules;
+- documentation describes the deleted modules only as removed history, not as available APIs.
+
+Current inspection result: `lua/moonlift`, `tests`, and `benchmarks` contain no references to
+`tree_to_back`, `MoonVec`, `vec_loop_facts`, `vec_loop_decide`, `vec_kernel_plan`,
+`vec_kernel_safety`, `vec_kernel_to_back`, `vec_to_back`, or `vec_inspect`.

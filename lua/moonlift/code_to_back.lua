@@ -47,6 +47,8 @@ function M.Define(T)
             if ty.bits == 64 then return Back.BackF64 end
         elseif cls == Code.CodeTyDataPtr or cls == Code.CodeTyCodePtr or cls == Code.CodeTyImportedCFuncPtr then
             return Back.BackPtr
+        elseif cls == Code.CodeTyHandle then
+            return scalar(ty.repr)
         end
         return nil
     end
@@ -414,15 +416,22 @@ function M.Define(T)
         ctx.cmds[#ctx.cmds + 1] = Back.CmdFinishFunc(func_id(f.id))
     end
 
-    local function module(code_module, opts)
+    local function validate_module(code_module, opts)
         opts = opts or {}
         local report = CodeValidate.validate(code_module, opts.collector)
         if opts.validate ~= false and #report.issues > 0 then
             error("code_to_back: CodeModule failed validation with " .. tostring(#report.issues) .. " issue(s)", 2)
         end
+    end
+
+    local function make_ctx(code_module)
         local ctx = { cmds = {}, sigs = {}, next_tmp = 0 }
-        for i = 1, #code_module.sigs do ctx.sigs[code_module.sigs[i].id.text] = code_module.sigs[i] end
-        for i = 1, #code_module.sigs do
+        for i = 1, #(code_module.sigs or {}) do ctx.sigs[code_module.sigs[i].id.text] = code_module.sigs[i] end
+        return ctx
+    end
+
+    local function emit_module_prelude(ctx, code_module)
+        for i = 1, #(code_module.sigs or {}) do
             local s = code_module.sigs[i]
             local params, results = {}, {}
             for j = 1, #s.params do local bs = scalar(s.params[j]); if bs == nil then unsupported(s.params[j]) end; params[j] = bs end
@@ -440,25 +449,45 @@ function M.Define(T)
             for j = 1, #g.inits do data_init(ctx, g.inits[j], data_id(g.id)) end
         end
         for i = 1, #(code_module.externs or {}) do ctx.cmds[#ctx.cmds + 1] = Back.CmdDeclareExtern(extern_id(code_module.externs[i].id), code_module.externs[i].symbol, sig_id(code_module.externs[i].sig)) end
-        local replacements = opts.replacement_funcs or {}
+    end
+
+    local function function_declare(f)
+        local vis = (f.linkage == Code.CodeLinkageExport) and Core.VisibilityExport or Core.VisibilityLocal
+        return Back.CmdDeclareFunc(vis, func_id(f.id), sig_id(f.sig))
+    end
+
+    local function function_body_commands(code_module, f)
+        local ctx = make_ctx(code_module)
+        func(ctx, f)
+        return ctx.cmds
+    end
+
+    local function module_prelude_commands(code_module, opts)
+        validate_module(code_module, opts)
+        local ctx = make_ctx(code_module)
+        emit_module_prelude(ctx, code_module)
+        return ctx.cmds
+    end
+
+    local function module(code_module, opts)
+        opts = opts or {}
+        validate_module(code_module, opts)
+        local ctx = make_ctx(code_module)
+        emit_module_prelude(ctx, code_module)
         for i = 1, #(code_module.funcs or {}) do
-            local f = code_module.funcs[i]
-            if replacements[f.name] == nil then
-                local vis = (f.linkage == Code.CodeLinkageExport) and Core.VisibilityExport or Core.VisibilityLocal
-                ctx.cmds[#ctx.cmds + 1] = Back.CmdDeclareFunc(vis, func_id(f.id), sig_id(f.sig))
-            end
-        end
-        for name, cmds in pairs(replacements) do
-            for i = 1, #cmds do ctx.cmds[#ctx.cmds + 1] = cmds[i] end
+            ctx.cmds[#ctx.cmds + 1] = function_declare(code_module.funcs[i])
         end
         for i = 1, #(code_module.funcs or {}) do
-            if replacements[code_module.funcs[i].name] == nil then func(ctx, code_module.funcs[i]) end
+            func(ctx, code_module.funcs[i])
         end
         ctx.cmds[#ctx.cmds + 1] = Back.CmdFinalizeModule
         return Back.BackProgram(ctx.cmds)
     end
 
     api.module = module
+    api.module_prelude_commands = module_prelude_commands
+    api.function_declare = function_declare
+    api.function_body_commands = function_body_commands
     api.scalar = scalar
 
     T._moonlift_api_cache.code_to_back = api

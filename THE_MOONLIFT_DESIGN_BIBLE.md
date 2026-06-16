@@ -73,6 +73,8 @@ every path must terminate explicitly — there is no fallthrough
 
 When both structures are typed, design changes character. The design is no longer a diagram beside the code, a spec above the code, or a convention around the code. **The design is the declaration graph itself** — the type forest plus the region tree — and the compiler checks the two against each other continuously. That is the thesis of this entire book, and everything else is consequences.
 
+This includes memory. A region signature is not merely a control interface; it is the place where access facts become visible. A continuation can grant a lease, deny access, prove a buffer shape, or expose that a handle was stale. The declaration already tells the caller what may be touched and what must be handled before any body is read.
+
 ---
 
 ## Chapter 2: What complexity is, and how explicitness attacks it
@@ -179,6 +181,8 @@ region R(input_product ; protocol)
 ```
 
 A region is *not* `Product → Union`. A region is `Product + Protocol → one selected continuation with a product payload`. The difference is not pedantry — it is where the entire cost model and the entire checking model come from. Because the protocol is supplied by the caller and consumed by a jump, composition is graph splicing (`emit` merges the callee's CFG into the caller's — no call, no frame, no return address), and checking is structural (the splice must type-fit).
+
+The payload is also where newly known facts appear. A `borrowed(state: lease ptr(VoiceState))` continuation does not merely carry an address; it declares that this path has resolved a handle, granted temporary access, and excluded the stale/missing paths. Region signatures are therefore control contracts and memory contracts at the same time.
 
 ### 3.4 Function — the seal
 
@@ -458,7 +462,7 @@ region reserve_bytes(arena: ptr(Arena), n: index;
     | invalid(code: i32))
 ```
 
-— and every subsequent bump-allocation inside the reserved span is infallible, so dozens of downstream protocols each lose an exit. **Count your continuations; then go redesign your products until some of them die.** That sentence is "define errors out of existence" stated as a Moonlift design exercise, and the deletion is auditable in the diff: the signature literally gets shorter.
+— and every subsequent bump-allocation inside the reserved span is infallible, so dozens of downstream protocols each lose an exit. The same move applies to memory identity: a nullable pointer result disappears when the public value is a handle and the access operation is a resolving region whose successful exit grants a lease. Downstream code no longer checks "is this pointer stale?" because stale was one named continuation at the boundary, and the `borrowed` continuation carries the access fact. **Count your continuations; then go redesign your products until some of them die.** That sentence is "define errors out of existence" stated as a Moonlift design exercise, and the deletion is auditable in the diff: the signature literally gets shorter.
 
 **Move 3 — Mask low, aggregate high, in the wiring.** Masking is filling a continuation with a local recovery block (`err = retry_once`). Aggregation is *forwarding*: `syntax = syntax` at an emit site maps the child's exit onto the parent's same-typed exit, and the error channel flows up an arbitrarily deep pipeline as compile-time wiring — zero code, zero boxing, no try/catch syntax, no unwinding machinery. This is what checked exceptions wanted to be: the throws-clause is the protocol, declaring it is mandatory, and discharging it is one identifier at one emit site rather than ceremony at every level.
 
@@ -515,14 +519,15 @@ A rapid tour of the rest of Ousterhout's craft chapters, each landing on a Moonl
 **Comments.** Ousterhout's taxonomy: interface comments (what a caller must know) versus implementation comments (how it works inside), with the cardinal rule that comments must say what the code *cannot*. In Moonlift the signature already says, precisely and checked, most of what an interface comment traditionally carried: the outcomes, by name; the payloads, by type; the obligations, by totality of fill. What remains for prose is exactly the residue types cannot carry — and that residue is a closed list worth memorizing:
 
 ```text
-OWNERSHIP      "the arena owns this allocation"; "caller owns this view"
-UNITS          retry_after is SECONDS; pos is a BYTE offset, not a codepoint
-INVARIANTS     cap is a power of two; the buffer outlives the region
-ENCODING DOCS  on the kind byte, AT the encoding owner: kind 0 = int_lit …
-PROTOCOL NUANCE  `parked` means the waiter was ENQUEUED; do not retry
+OWNERSHIP RESIDUE  "the host owns this external pointer" where no handle/store type can say it
+UNITS              retry_after is SECONDS; pos is a BYTE offset, not a codepoint
+INVARIANTS         cap is a power of two; generation increments on slot reuse
+ENCODING DOCS      on the kind byte, AT the encoding owner: kind 0 = int_lit …
+PROTOCOL NUANCE    `parked` means the waiter was ENQUEUED; do not retry
+TRUST BOUNDARIES   this region packs handle bits; this extern retains no pointer
 ```
 
-Write those, next to the declarations they govern, and stop. A comment restating a signature is noise the type system already emitted.
+Write those, next to the declarations they govern, and stop. As the language gains handles, leases, and region memory contracts, less ownership prose should remain: a `handle` says durable identity, a `lease` says temporary access, and a resolving region says which continuation granted the fact. A comment restating any of that is noise the type system already emitted.
 
 **Names.** Ousterhout treats hard-to-name as a design symptom, and Moonlift triples the naming surface — regions, blocks, *and* continuations all carry names — which triples the diagnostic power. A continuation you can only call `done2` is two outcomes fused or none understood. A block named `tmp` or `state3` is a state whose product you have not actually identified. The names in a protocol are read at every emit site in the system; they are the most-read identifiers you will ever choose. Budget accordingly.
 
@@ -582,10 +587,10 @@ The master mapping table, before we take them one at a time:
 |---|---
 | Class (attributes) | `struct` — a product
 | Class (methods) | regions/functions taking `ptr(Self)` as the first input
-| Association (1) | typed handle (`PostId`) or `ptr(T)` + ownership fact
-| Association (1..*) | `view(T)` or `{ data: ptr(T), len: index }` product
-| Composition ◆ | embedded field / arena-owned record + stated ownership
-| Aggregation ◇ | borrowed `ptr`/handle + stated non-ownership
+| Association (1) | declared handle type (`PostId`) when stable; otherwise local `ptr(T)`/`lease ptr(T)`
+| Association (1..*) | `view(T)`, `lease view(T)`, or `{ data: ptr(T), len: index }` product
+| Composition ◆ | embedded field / store-owned record + stated lifetime
+| Aggregation ◇ | handle or borrowed lease; raw `ptr` only inside the boundary that granted it
 | Interface / abstract class | a **protocol** (consumer region signature), or a Lua-shared signature
 | Inheritance / subclassing | encoded kind + one consumer region per operation, or a factory family
 | Enumeration | encoding byte, documented at its single consumer region
@@ -636,13 +641,13 @@ classDiagram
 
 Transcription rules, applied in order:
 
-**Attributes → product fields**, with conscious representation choices the diagram glossed over: `bytes` becomes `ptr(u8)` plus a `len: index` (bounds are facts; carry them), a "Slice" becomes offsets into the buffer rather than copies, and every pointer acquires a written ownership fact ("the caller owns `buf`; `Config` does not copy the bytes" — UML's dashed dependency arrow was hinting at this; the type system can't state it, so the design prose must).
+**Attributes → product fields**, with conscious representation choices the diagram glossed over: `bytes` becomes `ptr(u8)` plus a `len: index` only at a raw boundary, or a `view(u8)` when shape is first-class. A "Slice" becomes offsets into the buffer when it is stored, and a lease/view when it is temporary access. Every pointer must have an owner or a granting region; if that fact cannot be expressed as a handle, lease, view, or contract, the prose must say it.
 
-**Multiplicity → sequence products.** `"*"` is `view(T)` or an explicit `{ data: ptr(T), len: index, cap: index }`. UML's `0..1` deserves suspicion: an optional field is often a choice in product clothing — ask who branches on its absence, and if someone does, that's a protocol (Q1–Q3 of Chapter 4).
+**Multiplicity → sequence products or access protocols.** `"*"` is `view(T)`, `lease view(T)`, or an explicit `{ data: ptr(T), len: index, cap: index }` when the sequence itself is stored. UML's `0..1` deserves suspicion: an optional field is often a choice in product clothing — ask who branches on its absence, and if someone does, that's a protocol (Q1–Q3 of Chapter 4).
 
-**Composition vs aggregation → ownership facts.** The filled diamond means the whole owns the part's lifetime: embed the struct, or pool it in an arena the whole owns. The hollow diamond means borrowed: a `ptr` or typed handle, with the owner named elsewhere. UML drew the distinction and then let it mean nothing executable; in Moonlift it decides allocation strategy and gets written down.
+**Composition vs aggregation → ownership and access facts.** The filled diamond means the whole owns the part's lifetime: embed the struct, or keep it in a store the whole owns. The hollow diamond means borrowed: usually a handle whose owner is elsewhere, or a lease granted by a region. UML drew the distinction and then let it mean nothing executable; in Moonlift it decides allocation strategy, access protocol, and invalidation rules.
 
-**Cross-references → typed handles, not pointers,** when the reference must survive serialization or arena compaction: `post_id: PostId`, resolved by a typed lookup, never a string key, never a maybe-stale pointer.
+**Cross-references → handles, not pointers,** when the reference must survive serialization, reuse, or compaction: `post_id: PostId`, resolved by a typed region, never a string key, never a maybe-stale pointer. The resolved pointer/view is a lease, not the durable reference.
 
 **Methods → machines that take the product.** A UML operation `parse(buf): Config` is not a struct member; it is a region or function whose first input is the product. And its *return type* is where the class diagram was lying by omission — `Config` with no error channel. The transcription forces the honesty:
 
@@ -851,7 +856,7 @@ The remaining diagram types map quickly once Books I–III's instincts are in pl
 
 **Use case diagrams** are the outcome harvest of Book IV's Step 1, drawn as ovals. Each use case → a root region or sealed entry function; each actor → an ABI boundary (a seal); «include» → an emit; «extend» → an added continuation on the base case's protocol (an extension point with a name and a payload — which is more than UML ever made of it). The diagram's real value is the prompt it encodes: *for each oval, list every way it can end* — and that list is a protocol draft.
 
-**Component and package diagrams** → Lua module structure. A component's "provided interface" is the table of factories and sealed functions a `.mlua` module returns from `require`; its "required interface" is the externs and signatures it takes as factory parameters. **Deployment diagrams** → build-time platform selection: `if ffi.os == "Windows" then require("thread.windows").make() else require("thread.pthread").make() end`, with both branches generating machines that share the *same conceptual protocols* — platform varies, design doesn't. **ER diagrams** → arena products with typed handles: entity → record struct in a pool; relation → handle field (`post_id: PostId`); cardinality → handle vs. handle-view; and every "type/kind/status" column gets the Chapter 4 interrogation before it is allowed to exist.
+**Component and package diagrams** → Lua module structure. A component's "provided interface" is the table of factories and sealed functions a `.mlua` module returns from `require`; its "required interface" is the externs and signatures it takes as factory parameters. **Deployment diagrams** → build-time platform selection: `if ffi.os == "Windows" then require("thread.windows").make() else require("thread.pthread").make() end`, with both branches generating machines that share the *same conceptual protocols* — platform varies, design doesn't. **ER diagrams** → store products with handles: entity → record in a store; relation → handle field (`post_id: PostId`); cardinality → handle vs. view/lease granted by a resolver region; and every "type/kind/status" column gets the Chapter 4 interrogation before it is allowed to exist.
 
 ---
 
@@ -910,7 +915,7 @@ Three plain-language lists: what arrives (bytes, handles, events, records), wher
 
 ### Step 3 — Harvest the products
 
-Cluster the facts that coexist: stored records, passed tuples, views, handles, encodings, phase facts. Apply the five data rules: minimal coexistence (fields never read together are two products); facts not behavior; **no derived data in source** (a cache is a phase output, not a field — storing it beside the truth invites staleness); **structure over keys** (strings identify nothing internally; only genuinely user-authored or genuinely opaque text is a string); **cross-references are typed handles** (`PostId`, not `ptr(Post)`, when the reference must outlive a pointer's validity). Write ownership next to every pointer as a stated fact. Remember products hide in five places: struct, params, return, block state, continuation payload.
+Cluster the facts that coexist: stored records, passed tuples, views, handles, leases, encodings, phase facts. Apply the five data rules: minimal coexistence (fields never read together are two products); facts not behavior; **no derived data in source** (a cache is a phase output, not a field — storing it beside the truth invites staleness); **structure over keys** (strings identify nothing internally; only genuinely user-authored or genuinely opaque text is a string); **cross-references are typed handles** (`PostId`, not `ptr(Post)`, when the reference must outlive a pointer's validity). Then run the memory triage: which products own storage, which values are durable identity, which values are temporary access, and which raw pointers exist only because an ABI boundary forced them. Write down the owner of every pointer/view boundary, then prefer region-granted leases where the type system can carry the access fact. Remember products hide in five places: struct, params, return, block state, continuation payload.
 
 ### Step 4 — Harvest the protocols
 
@@ -922,11 +927,11 @@ Run Chapter 4's three questions on every result-like, event-like, variant-like t
 
 ### Step 6 — Declare the type forest
 
-Write the structs, views, refs as compiling declarations — leaves first, aggregates after. Every kind-like field carries a comment naming its owner region. Layout-sensitive products state their ABI intent. Nothing in the forest is a semantic union.
+Write the structs, views, handles, leases, and boundary pointer shapes as compiling declarations — leaves first, aggregates after. Every kind-like field carries a comment naming its owner region. Every handle has a nominal declaration and an invalid value if the domain needs one. Every layout-sensitive product states its ABI intent. Nothing in the forest is a semantic union, and no stable association is a raw pointer by accident.
 
 ### Step 7 — Declare the region tree, signatures only
 
-One region per decision point, leaves (scanners, primitive operations) at the bottom, orchestrators above. Apply the **granularity rule** at every signature: the protocol belongs to the consumer — collapse distinctions no caller uses (`string/number/array/object` → `ok` if the caller doesn't care), keep distinctions a caller acts on. Then run **Ousterhout's depth audit**: count each signature's surface against the machine it will hide; hunt pass-throughs; run Chapter 7 to *delete* continuations by strengthening products (views kill bounds exits; reserve-then-bump kills per-allocation oom). Finally, **read the tree aloud** — words you need that appear in no signature are missing declarations.
+One region per decision point, leaves (scanners, primitive operations) at the bottom, orchestrators above. Apply the **granularity rule** at every signature: the protocol belongs to the consumer — collapse distinctions no caller uses (`string/number/array/object` → `ok` if the caller doesn't care), keep distinctions a caller acts on. Treat memory facts the same way: a successful continuation may grant a `lease`, bounds, provenance, or readonly access; a failed continuation grants none. Then run **Ousterhout's depth audit**: count each signature's surface against the machine it will hide; hunt pass-throughs; run Chapter 7 to *delete* continuations by strengthening products (views kill bounds exits; handles plus resolving regions kill nullable stale-pointer APIs; reserve-then-bump kills per-allocation oom). Finally, **read the tree aloud** — words you need that appear in no signature are missing declarations.
 
 ### Step 8 — Find the states
 
@@ -938,7 +943,7 @@ Write the emit/fill plan: per parent, which child continuation goes to a local b
 
 ### Step 10 — Identify persistent state
 
-What survives across operations — pools, registries, connection state, caches-at-phase-boundaries? Each is a product passed *explicitly* to the regions that touch it, mutated through their protocols, never a global, never a back door. (This is the step that keeps Step 8's discipline honest at system scale.)
+What survives across operations — stores, pools, registries, connection state, caches-at-phase-boundaries? Each is a product passed *explicitly* to the regions that touch it, mutated through their protocols, never a global, never a back door. For each persistent store, name the handles it resolves, the regions that grant leases, and the operations that may invalidate those leases. (This is the step that keeps Step 8's discipline honest at system scale.)
 
 ### Step 11 — Find the families
 
@@ -976,15 +981,16 @@ The class sketch (Job, Deque, Worker, Sched; Sched ◆-owns workers and the job 
 ### V.3 The type forest (Steps 3, 5, 6, 10)
 
 ```moonlift
+handle JobRef : u32 invalid 0 end                  -- durable job identity; packing is store-private
+
 struct Job        fn: ptr(u8), arg: ptr(u8), state: u8, pad: u8, gen: u16 end
-struct JobRef     index: u32, gen: u16 end          -- typed handle, ABA-safe
 struct JobPool    items: ptr(Job), cap: index, free_head: u32 end
 struct Deque      ring: ptr(u32), cap: index, head: u64, tail: u64 end
 struct Worker     id: i32, deque: Deque, rng: u64 end
 struct Sched      pool: JobPool, workers: ptr(Worker), n_workers: index, flags: u32 end
 ```
 
-Ownership facts, written where types can't reach (Ch. 10): *Sched owns the pool and the workers array; a JobRef is borrowed and validated by `gen`; the embedding host owns the Sched.* Encoding facts, each with a named owner: *`Job.state` is an observability encoding consumed only by `observe_job` — the lifecycle semantics live in the region, not the field (Ch. 16); `Sched.flags` bit 0 = draining, consumed only by `pop_local`.* Persistent state (Step 10): `Sched` itself — passed explicitly to every region that touches it. Capacities are conspicuously absent as runtime data in one sense and present in another: `cap` is a fact the machine carries, but *choosing* it is a build-time event (V.6).
+Ownership and access facts: *Sched owns the pool and the workers array; a JobRef is durable identity resolved by pool regions; the embedding host owns the Sched.* Encoding facts, each with a named owner: *`Job.state` is an observability encoding consumed only by `observe_job` — the lifecycle semantics live in the region, not the field (Ch. 16); `Sched.flags` bit 0 = draining, consumed only by `pop_local`.* Persistent state (Step 10): `Sched` itself — passed explicitly to every region that touches it. Capacities are conspicuously absent as runtime data in one sense and present in another: `cap` is a fact the machine carries, but *choosing* it is a build-time event (V.6).
 
 ### V.4 The region tree, audited (Steps 4, 7)
 
@@ -993,6 +999,11 @@ region submit(s: ptr(Sched), fn: ptr(u8), arg: ptr(u8);
     accepted(job: JobRef)
     | full
     | shutting_down)
+
+region borrow_job(s: ptr(Sched), job: JobRef;
+    borrowed(slot: lease ptr(Job))
+    | stale(job: JobRef)
+    | missing(job: JobRef))
 
 region pop_local(w: ptr(Worker), s: ptr(Sched);
     got(job: JobRef)
@@ -1013,7 +1024,7 @@ region worker_loop(w: ptr(Worker), s: ptr(Sched);
     | aborted(code: i32))
 ```
 
-Depth audit (Ch. 5): `worker_loop` is the deep module — two exits hiding the entire pop/steal/run/park machine; the host learns five words and gets a scheduler. Granularity audit (Ch. 5): `steal` does not expose *why* the victim was empty — no caller acts on it; collapsed. Errors-out-of-existence audit (Ch. 7): the pool is fixed-capacity by design, so allocation inside `run_job` has no `oom` exit anywhere — the only capacity exit in the system is `submit.full`, at the boundary, where the caller can actually do something (and choosing *unbounded* instead would be a legitimate second draft — Ch. 10's "design it twice" — trading the `full` exit away for an arena-reserve protocol at startup; the trade is visible as which signature carries which exit, which is exactly where such a trade should be visible). Read aloud (Step 7): "the worker loop repeatedly pops locally; when empty it steals; when it has a job it runs it and fills done, failed, or cancelled; it exits drained or aborted." Every word is a signature.
+Depth audit (Ch. 5): `worker_loop` is the deep module — two exits hiding the entire pop/steal/run/park machine; the host learns five words and gets a scheduler. Granularity audit (Ch. 5): `steal` does not expose *why* the victim was empty — no caller acts on it; collapsed. Memory audit (Ch. 22): `JobRef` is the durable identity, and `borrow_job` is the only region that turns it into a `lease ptr(Job)`; stale and missing are handled at the resolution boundary, not rediscovered by every job consumer. Errors-out-of-existence audit (Ch. 7): the pool is fixed-capacity by design, so allocation inside `run_job` has no `oom` exit anywhere — the only capacity exit in the system is `submit.full`, at the boundary, where the caller can actually do something (and choosing *unbounded* instead would be a legitimate second draft — Ch. 10's "design it twice" — trading the `full` exit away for an arena-reserve protocol at startup; the trade is visible as which signature carries which exit, which is exactly where such a trade should be visible). Read aloud (Step 7): "the worker loop repeatedly pops locally; when empty it steals; when it has a job it resolves the handle, runs it, and fills done, failed, or cancelled; it exits drained or aborted." Every word is a signature.
 
 ### V.5 States and wiring (Steps 8–9)
 
@@ -1114,7 +1125,7 @@ Run this before bodies are written, and again before a design is declared done. 
 **Products**
 - [ ] Do all fields of each product genuinely coexist, usable without first choosing a branch?
 - [ ] No derived data stored beside source truth? No string keys as internal identity? Cross-references typed handles?
-- [ ] Ownership of every pointer and view written down? Units and invariants written where types can't carry them?
+- [ ] Ownership of every pointer/view boundary written down, or carried as a handle/lease fact? Units and invariants written where types can't carry them?
 - [ ] Every kind/tag/status field annotated with its single owning consumer region?
 
 **Protocols**
@@ -1127,7 +1138,14 @@ Run this before bodies are written, and again before a design is declared done. 
 - [ ] Each region: clear input product, clear protocol, depth audit passed (no pass-throughs, no step regions)?
 - [ ] Each block's parameter list the *complete* state? Every path terminating explicitly?
 - [ ] Every emit's fill total? Error channels forwarded as wiring, not re-encoded as data?
-- [ ] Continuations deleted where a stronger product could kill them (views, reserve-then-bump)?
+- [ ] Continuations deleted where a stronger product could kill them (views, handles and leases, reserve-then-bump)?
+
+**Memory contracts**
+- [ ] Are durable references handles rather than raw pointers?
+- [ ] Does every store have named resolving regions that grant leases/views on successful exits?
+- [ ] Can leases escape through returns, stores, captures, or unqualified calls?
+- [ ] Are invalidating operations named, and are same-store live leases protected from them?
+- [ ] Are raw pointers confined to ABI boundaries, store internals, or hot kernels with explicit contracts?
 
 **Seals and persistent state**
 - [ ] Every function a genuine ABI/recursion boundary — and every status-returning internal function unsealed?
@@ -1150,80 +1168,198 @@ Run this before bodies are written, and again before a design is declared done. 
 
 ## Chapter 21: When the discipline does not apply
 
-A bible needs its limits stated, or it becomes a cult document. Explicit programming earns its cost where systems have real decision structure, long lives, multiple authors, or performance budgets. It is the wrong tool, or a deferred tool, when: the program is a fifty-line script whose whole life is this afternoon (tactical programming is *correct* for throwaways — just be honest about what is actually a throwaway); the domain's interface is externally fixed and protocol-shaped thinking has no room to move; exploration genuinely precedes understanding (prototype loosely, then run the method on what you learned — the method is how you *consolidate*, and the dual tree is what you consolidate into); or the "or"s are not yet known because the problem itself is still being discovered. The failure mode to avoid is not "too little Moonlift" — it is cargo-culting signatures around a problem nobody understands yet, which produces beautifully typed wrongness.
+A bible needs its limits stated, or it becomes a cult document. Explicit programming earns its cost where systems have real decision structure, long lives, multiple authors, or performance budgets. It is the wrong tool, or a deferred tool, when: the program is a fifty-line script whose whole life is this afternoon (tactical programming is *correct* for throwaways — just be honest about what is actually a throwaway); the domain's interface is externally fixed and protocol-shaped thinking has no room to move; exploration genuinely precedes understanding (prototype loosely, then run the method on what you learned — the method is how you *consolidate*, and the dual tree is what you consolidate into); or the "or"s are not yet known because the problem itself is still being discovered. The memory discipline has the same boundary: raw externs, store-private handle representation operations, and unsafe pointer arithmetic are trust boundaries, not magically safe because the surrounding program is explicit. Wrap them in small regions whose protocols state what they promise, and keep the unsaid part small. The failure mode to avoid is not "too little Moonlift" — it is cargo-culting signatures around a problem nobody understands yet, which produces beautifully typed wrongness.
 
 ---
 
 ## Chapter 22: Memory management is ordinary Moonlift
 
 Moonlift does not need a separate memory tree. Memory management is the same
-dual tree as everything else:
+dual tree as everything else, with memory facts carried by the same declarations
+that carry data and control:
 
 ```text
-Products own bytes.
-Regions control access.
+Stores own bytes.
+Handles name durable identity.
+Regions grant access facts.
+Leases embody temporary access.
 Protocols name failure.
 ```
 
-The design method is to classify the lifetime shape before writing pointer
-fields:
+The older slogan still holds — products own bytes, regions control access — but
+first-class handles and leases make it executable instead of merely written in
+prose. A pointer is a location. A handle is a durable typed name. A lease is the
+short-lived access fact produced by resolving that name, or by crossing a
+boundary that grants a bounded pointer/view.
 
-1. Name the owner product.
-2. Decide whether access needs a stable handle.
-3. Name the access region.
+The central invariant:
+
+```text
+Handles may escape. Leases may not.
+```
+
+And the store invariant:
+
+```text
+An operation that may move, free, compact, clear, or reuse storage cannot run
+while leases from that same store are live.
+```
+
+### The design method
+
+Classify the lifetime shape before writing pointer fields:
+
+1. Name the owner product/store.
+2. Decide whether references must survive movement, reuse, serialization, or
+   time. If yes, make them handles, not pointers.
+3. Name the access region that resolves the handle or boundary input.
 4. Name every failure or alternate outcome in the region protocol.
-5. Keep borrowed pointers/views inside the region extent or pass them into
-   sealed kernels.
-6. Name lifetime changes as `reset_*`, `publish_*`, `retire_*`, or `close_*`
-   regions.
+5. Put the granted access in the successful continuation payload as
+   `lease ptr(T)` or `lease view(T)`.
+6. Keep leases inside the dynamic extent that granted them, or pass them only to
+   callees whose signatures promise no escape.
+7. Name lifetime changes as `reset_*`, `publish_*`, `retire_*`, `destroy_*`, or
+   `close_*` regions, and declare whether they invalidate live leases.
 
 Use the smallest model that fits:
 
 | Situation | Model |
 |---|---|
 | Same lifetime as parent | Field in the parent product |
-| Stable references, reuse, stale handles | `*Pool` / `*Store`, `*Ref`, `borrow_*` |
-| Temporary frame/block memory | `*Scratch` / arena, `reset_*` |
-| Host buffer for one call | Boundary region with views/pointers |
-| Version becomes visible | `publish_*` |
-| Old version is removed | `retire_*` |
-| External resource released | `close_*` |
+| Stable references, reuse, stale handles | declared handle type, `*Store`, `borrow_*` / `resolve_*` region |
+| Temporary frame/block memory | `*Scratch` / arena, `reset_*` region |
+| Host buffer for one call | Boundary region with `view(T)` or `ptr(T)` plus explicit bounds contract |
+| Hot internal access | `lease ptr(T)` / `lease view(T)` passed to a kernel or noescape callee |
+| Version becomes visible | `publish_*` region |
+| Old version is removed | `retire_*` region |
+| External resource released | `close_*` region |
 
 Inline region signatures are the default. Name separate request/result products
 only when those products are real values that are stored, passed around, or
-reused by more than one region.
+reused by more than one region. Do not box access outcomes into result objects;
+the region protocol is the memory contract.
 
-### Stores and borrows
+### Handles, stores, and leases
 
-A stable reference is a product. A store owner is a product. Access is a
-region whose protocol names stale, missing, free, rebuilding, and other cases.
+A store is an ordinary product that owns storage and liveness facts. It may use
+arrays, free lists, generation counters, sparse sets, pages, compacting arenas,
+or a dense data-oriented layout. There is no special store keyword in the
+minimal model; the store's meaning is declared by the regions that operate on
+it.
+
+A handle is a nominal opaque scalar identity:
 
 ```moonlift
-struct AudioBufferHandle
-    index: u32,
-    generation: u32,
-end
+handle AudioBuffer : u32 invalid 0 end
 
-struct AudioBufferStoreOwner
+struct AudioBufferStore
     records: ptr(AudioBufferRecord),
+    samples: ptr(f32),
     capacity: index,
     generation: u64,
 end
+```
 
-region borrow_audio_buffer(owner: ptr(AudioBufferStoreOwner),
-                           handle: AudioBufferHandle;
-    borrowed(samples: BorrowedF32)
-  | stale(handle: AudioBufferHandle)
-  | missing(handle: AudioBufferHandle)
+A handle is copyable, comparable with the same handle type, storable, passable,
+and returnable. It is not dereferenceable, not indexable, not arithmetic, and
+not implicitly convertible to its representation. Packing index/generation bits
+is store-private machinery, not public language meaning.
+
+Access is a region whose protocol names stale, missing, free, rebuilding,
+unsupported-format, and any other cases the caller can actually act on:
+
+```moonlift
+region borrow_audio_buffer(store: ptr(AudioBufferStore),
+                           buffer: AudioBuffer;
+    borrowed(samples: lease view(f32))
+  | stale(buffer: AudioBuffer)
+  | missing(buffer: AudioBuffer)
   | unsupported_format) end
 ```
 
-The region signature is the memory boundary. It is not a nullable pointer
-operation and it is not an internal status code.
+The successful exit does not return "a pointer maybe." It grants a lease. The
+payload states what is now known: the samples exist, have a shape, are valid for
+this access extent, and may be used according to the region's memory contract.
+The other exits are not errors in a side channel; they are the protocol of
+failed resolution.
+
+This is the data-oriented default: public APIs pass handles; stores keep the
+layout; resolving regions grant leases/views; hot kernels consume the resolved
+access. The layout can move from AoS to SoA, from arrays to pages, or from sparse
+to dense storage without changing public identity.
+
+### Region memory contracts
+
+A region signature is the memory boundary. It may grant facts that are true only
+on a particular continuation:
+
+```text
+borrowed(...)      access exists and is live
+missing            no slot exists
+stale              handle generation failed
+rebuilding         store is temporarily unable to grant access
+```
+
+Those facts are control-local. The caller receives them by wiring the exit, not
+by inspecting a status value. This is why region contracts matter: the same
+region may grant strong memory facts on one exit and no access at all on another.
+The protocol is the proof boundary.
+
+The compiler's memory facts should be projections of these signatures:
+
+```text
+handle parameter      durable identity fact
+lease payload         noescape access fact
+view lease            bounds + stride + provenance fact
+borrowed exit         successful resolution fact
+stale/missing exits   no access granted
+invalidating region   store-effect fact
+```
+
+A function-level contract such as `requires bounds(p, n)` is still useful, but
+it is the ABI/boundary case: it refines a raw pointer for the duration of the
+function. It is not durable identity and it should not make `ptr(T)` magically
+smart.
+
+```moonlift
+func c_sum(readonly p: ptr(i32), n: index): i32
+    requires bounds(p, n)
+```
+
+That says: this C-shaped entry point promises a bounded object. Inside ordinary
+Moonlift design, prefer a handle-resolving region or a `view(T)`/lease when the
+shape is first-class.
+
+### Invalidation and noescape
+
+No-escape alone is not enough. This must be rejected:
+
+```moonlift
+block borrowed(state: lease ptr(VoiceState))
+    destroy_voice(store, voice)
+    state.phase = 0.0       -- stale if destroy frees or reuses the slot
+end
+```
+
+Store APIs therefore have memory effects. At first a checker may conservatively
+treat mutable calls on the same store as invalidating and readonly calls as
+preserving. The full design names the effect explicitly:
+
+```moonlift
+func destroy_voice(invalidate store: ptr(VoiceStore), voice: Voice)
+func count_voices(readonly store: ptr(VoiceStore)): index
+func process_voice(state: lease ptr(VoiceState))
+```
+
+The rule is local and Moonlift-shaped: an invalidating operation cannot run while
+a lease from the same store is live. This is not a global Rust borrow checker.
+It is a checked dynamic extent attached to explicit regions and explicit store
+facts.
 
 ### Scratch and cleanup
 
-Arena reset, publication, retirement, and resource close are also protocols:
+Arena reset, publication, retirement, destruction, and resource close are also
+protocols:
 
 ```moonlift
 region reset_render_scratch(scratch: ptr(RenderScratch), shape: BlockShape;
@@ -1233,17 +1369,19 @@ region reset_render_scratch(scratch: ptr(RenderScratch), shape: BlockShape;
 ```
 
 There are no semantic destructors. If ownership or lifetime changes, a named
-region says what can happen.
+region says what can happen and what access it invalidates.
 
 ### Hard laws
 
-1. **Owners are products.** Every memory object has exactly one owner product.
-2. **Shape comes first.** Classify the memory lifetime before writing pointer fields.
-3. **Handles are facts.** Stable references are typed handles, not raw pointers.
-4. **Access is a protocol.** Meaningful failure is not `nil`, `false`, or a status code.
-5. **Raw access has an extent.** Pointers and views are not cached past the boundary that granted them.
-6. **Cleanup is named.** Resource close, arena reset, publish, retire, and generation bump are regions, not destructor folklore.
-7. **Kernels are seals.** Hot code receives already-borrowed pointers/views/contracts and does not discover ownership.
+1. **Owners are products/stores.** Every memory object has exactly one owner product.
+2. **Shape comes first.** Classify the lifetime and access shape before writing pointer fields.
+3. **Handles are durable identity.** Stable references are typed handles, not raw pointers.
+4. **Leases are temporary access.** A lease may touch memory but may not escape the extent that granted it.
+5. **Access is a protocol.** Meaningful failure is not `nil`, `false`, or a status code.
+6. **Regions grant memory facts.** Bounds, provenance, liveness, and effects belong to named exits and signatures.
+7. **Raw pointers are boundary tools.** `ptr(T)` alone is an address; bounds require a view, lease, or explicit contract.
+8. **Invalidation is named.** Resource close, arena reset, publish, retire, destroy, compact, and generation bump are region/effect facts, not destructor folklore.
+9. **Kernels are seals.** Hot code receives already-borrowed leases/views/contracts and does not discover ownership.
 
 ---
 
@@ -1258,8 +1396,8 @@ region says what can happen.
  6. Every path exits by name.        16. Lua generates families; machines stay monomorphic.
  7. Emits compose; fills are total.  17. Memory ownership is ordinary products/protocols.
  8. Compose with regions,            18. Memory failure is a protocol, not a nullable pointer.
-    seal with functions.             19. Borrowed raw access is a dynamic extent, not a value to keep.
- 9. The protocol belongs to          20. Products own bytes; regions control access.
+    seal with functions.             19. Handles may escape; leases may not.
+ 9. The protocol belongs to          20. Stores own bytes; regions grant access facts.
     the consumer.
 10. Deep region: small signature,
     large machine.
@@ -1270,7 +1408,7 @@ And the five sentences that compress the books behind them:
 > **Choice is control. Data is product.** *(the algebra)*
 > **Depth is a small protocol in front of a large machine.** *(Ousterhout, translated)*
 > **A region is a statechart whose final states are its signature.** *(UML, completed)*
-> **Products own bytes; regions control access; protocols name failure.** *(memory)*
+> **Stores own bytes; handles name durable identity; regions grant leases; protocols name failure.** *(memory)*
 > **Design the two trees; the compiler checks them against each other; then implementation is transcription.** *(the method)*
 
 The architecture is not a diagram beside the system, a document above it, or a convention around it. The architecture is the product graph plus the protocol graph — and the implementation is the same graph, lowered to native code. That is the Moonlift method.

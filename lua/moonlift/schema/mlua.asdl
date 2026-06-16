@@ -25,5 +25,5 @@ module MoonMlua {
 
     DocumentParse = (MoonMlua.DocumentParts parts, MoonHost.MluaParseResult combined, MoonMlua.IslandParse* islands, MoonSource.AnchorSet anchors) unique
 
-    DocumentAnalysis = (MoonMlua.DocumentParse parse, MoonHost.MluaHostPipelineResult host, MoonOpen.ValidationReport open_report, MoonTree.TypeIssue* type_issues, MoonTree.ControlFact* control_facts, MoonVec.VecLoopDecision* vector_decisions, MoonVec.VecReject* vector_rejects, MoonBack.BackValidationReport back_report, MoonSource.AnchorSet anchors) unique
+    DocumentAnalysis = (MoonMlua.DocumentParse parse, MoonHost.MluaHostPipelineResult host, MoonOpen.ValidationReport open_report, MoonTree.TypeIssue* type_issues, MoonTree.ControlFact* control_facts, MoonBack.BackValidationReport back_report, MoonSource.AnchorSet anchors) unique
 }

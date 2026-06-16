@@ -1,6 +1,7 @@
 local pvm = require("moonlift.pvm")
 local PositionIndex = require("moonlift.source_position_index")
 local AnchorIndex = require("moonlift.source_anchor_index")
+local Format = require("moonlift.error.format")
 
 local M = {}
 
@@ -77,28 +78,7 @@ function M.Define(T)
     end
 
     local function type_name(ty)
-        local cls = pvm.classof(ty)
-        if cls == Ty.TScalar then return scalar_name(ty.scalar) end
-        if cls == Ty.TPtr then return "ptr(" .. type_name(ty.elem) .. ")" end
-        if cls == Ty.TSlice then return "slice(" .. type_name(ty.elem) .. ")" end
-        if cls == Ty.TView then return "view(" .. type_name(ty.elem) .. ")" end
-        if cls == Ty.TArray then return "array(" .. type_name(ty.elem) .. ")" end
-        if cls == Ty.TFunc then return "func(...): " .. type_name(ty.result) end
-        if cls == Ty.TClosure then return "closure(...): " .. type_name(ty.result) end
-        if cls == Ty.TNamed then
-            local ref = ty.ref
-            local rcls = pvm.classof(ref)
-            if rcls == Ty.TypeRefGlobal then return ref.type_name end
-            if rcls == Ty.TypeRefLocal then return ref.sym.name end
-            if rcls == Ty.TypeRefPath then
-                local parts = {}
-                for i = 1, #ref.path.parts do parts[i] = ref.path.parts[i].text end
-                return table.concat(parts, ".")
-            end
-            return "named"
-        end
-        if cls == Ty.TSlot then return "slot" end
-        return class_name(ty)
+        return Format.type_name(ty)
     end
 
     local function func_parts(func)

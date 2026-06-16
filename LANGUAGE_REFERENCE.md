@@ -234,9 +234,7 @@ moonlift file.mlua                        # hosted Lua pipeline (default)
 moonlift run --call main file.mlua         # hosted, call specific function
 ```
 
-Inside `.mlua` files, the `moon` table provides `moon.require`,
-`moon.native_loadstring`, `moon.native_loadfile`, `moon.native_dofile`,
-and `moon.emit_object`.
+Inside `.mlua` files, the `moon` table provides `moon.require` and `moon.emit_object`.
 
 The `.mlua` file returns any Lua value — typically a function or a table of
 functions.
@@ -279,15 +277,6 @@ local result = moon.dofile(path, opts, ...)        -- load and execute
 local result = moon.eval(src, ...)                 -- loadstring + immediate call
 ```
 
-**Native (MOM) pipeline:**
-
-```lua
-local moon = require("moonlift")
-moon.native_loadstring(src, name)    -- compile through MOM pipeline
-moon.native_loadfile(path)           -- compile file through MOM pipeline
-moon.native_dofile(path, opts)       -- compile and execute through MOM
-```
-
 **Object emission:**
 
 ```lua
@@ -295,9 +284,7 @@ local obj_bytes = moon.emit_object(src, path, name)   -- emit .o bytes
 local so_bytes  = moon.emit_shared(src, path, name)   -- emit .so/.dylib bytes
 ```
 
-**Inside `.mlua` files**, the `moon` table provides `moon.require`,
-`moon.native_loadstring`, `moon.native_loadfile`, `moon.native_dofile`,
-and `moon.emit_object`.
+**Inside `.mlua` files**, the `moon` table provides `moon.require` and `moon.emit_object`.
 
 **Builder API** — the unified module also exposes the quoting and table builder surface:
 
@@ -306,8 +293,7 @@ local M = moon.bundle("Demo")
 M:export_func("add", { ... }, moon.i32, function(fn) ... end)
 ```
 
-Backward-compatible aliases: `require("moonlift.mlua_run")` and
-`require("moonlift.host_mom")` / `moon.host_mom` still work but the
+Backward-compatible alias: `require("moonlift.mlua_run")` still works, but the
 unified `require("moonlift")` module is preferred.
 
 ### 3.4 Low-level ASDL construction
@@ -344,10 +330,6 @@ Both APIs construct identical ASDL values. Choose based on preference and task.
 |---|---|
 | `moonlift file.mlua` | Hosted-Lua pipeline (default) |
 | `moonlift run --call main file.mlua` | Hosted, call specific function |
-| `moonlift --native file.mlua` | MOM native pipeline |
-| `mom run file.mlua` | MOM native (default subcommand) |
-| `mom run --call main --ret i32 file.mlua` | MOM native with options |
-| `mom --emit-object -o out.o file.mlua` | MOM object emission |
 | `luajit lsp.lua` | Start the Moonlift LSP server |
 
 For programmatic compilation and execution from Lua, use the unified module
@@ -3452,13 +3434,12 @@ reused by more than one region.
 
 ### 21.2 Stable Stores And Borrows
 
-Use a typed handle when a reference can outlive a raw pointer:
+Use a typed handle when a reference can outlive a raw pointer. A handle is a
+nominal, opaque scalar identity; the store owns location, liveness, generations,
+free lists, compaction, and destruction policy.
 
 ```moonlift
-struct VoiceRef
-    index: u32,
-    generation: u16,
-end
+handle Voice : u32 invalid 0 end
 
 struct VoicePool
     states: ptr(VoiceState),
@@ -3468,16 +3449,41 @@ struct VoicePool
     free_head: u32,
 end
 
-region borrow_voice_state(pool: ptr(VoicePool), voice: VoiceRef;
-    borrowed(state: ptr(VoiceState))
-  | stale_ref(voice: VoiceRef)
-  | already_free(voice: VoiceRef)) end
+region borrow_voice_state(pool: ptr(VoicePool), voice: Voice;
+    borrowed(state: lease(pool) ptr(VoiceState))
+  | stale_ref(voice: Voice)
+  | already_free(voice: Voice)) end
 ```
 
-The region input is a product. The region output is a protocol sum. Inline
-region signatures are the default memory boundary. Name a separate request or
-result product only when the value is stored, passed around, or reused by more
-than one region.
+A handle may be copied, stored, passed, returned, and serialized. It cannot be
+dereferenced or used for arithmetic, and it does not implicitly cast to its
+representation. Store implementations that must pack or unpack the scalar
+representation use the explicit trusted boundary operations `repr(handle_value)`
+and `Handle.from_repr(raw)`.
+
+A lease is the temporary access fact produced by the store. A lease may access
+memory, but it must not become durable identity: no storing it in long-lived
+memory, no returning it as an ordinary pointer, and no hiding it behind a raw
+pointer field. `lease(pool) ptr(T)` associates the lease with the `pool`
+parameter for invalidation checks; unqualified `lease ptr(T)` is conservative and
+may be treated as originating from any store.
+
+Store functions declare invalidation effects on pointer/view parameters:
+
+```moonlift
+func read_voice_count(readonly pool: ptr(VoicePool)): index
+func update_voice_metadata(preserve pool: ptr(VoicePool))
+func destroy_voice(invalidate pool: ptr(VoicePool), voice: Voice)
+```
+
+`readonly` and `preserve` keep live leases valid. `invalidate` may free, move,
+compact, or reuse storage. An unannotated mutable pointer/view parameter is
+conservatively treated as invalidating. A call that may invalidate `pool` is
+rejected while a `lease(pool) ...` value is live.
+
+Inline region signatures are the default memory boundary. Name a separate
+request or result product only when the value is stored, passed around, or reused
+by more than one region.
 
 ### 21.3 Arenas, Scratch, And Reset
 
@@ -3828,7 +3834,7 @@ type_ref_classify_surface.lua   reference type classification
 type_to_back_scalar.lua         scalar type → backend scalar
 type_func_abi_plan.lua          function ABI planning
 
--- Tree → backend lowering
+-- Tree analysis and MoonCode lowering
 tree_typecheck.lua              typecheck/name resolution
 tree_expr_type.lua              expression type resolution
 tree_stmt_type.lua              statement type resolution
@@ -3836,9 +3842,11 @@ tree_place_type.lua             place type resolution
 tree_module_type.lua            module-level type resolution
 tree_field_resolve.lua          field/access resolution
 tree_control_facts.lua          control validation facts
-tree_control_to_back.lua        region/control → backend commands
 tree_contract_facts.lua         contract validation facts
-tree_to_back.lua                tree → flat backend commands
+tree_to_code.lua                tree → normalized MoonCode
+code_validate.lua               MoonCode validation
+code_to_back.lua                MoonCode → flat backend commands
+code_to_c.lua                   MoonCode → C backend IR
 open_expand.lua                 slot/fill/fragment expansion
 open_facts.lua                  open/slot validation
 open_validate.lua               open region validation
@@ -3860,14 +3868,14 @@ back_diagnostics.lua            backend diagnostic facts
 back_inspect.lua                backend IR inspection
 back_target_model.lua           target feature model
 
--- Vectorization
-vec_loop_facts.lua              counted-loop fact extraction
-vec_loop_decide.lua             vectorization decision
-vec_kernel_plan.lua             vector kernel planning
-vec_kernel_safety.lua           vector safety proofs
-vec_kernel_to_back.lua          vector kernel → backend commands
-vec_to_back.lua                 vector lowering pipeline
-vec_inspect.lua                 vector plan inspection
+-- Kernel fact tower
+code_flow_facts.lua             CFG/counting facts over MoonCode
+code_mem_facts.lua              memory stream facts over MoonCode
+code_kernel_plan.lua            KernelBodyCounted semantic planning
+kernel_validate.lua             kernel semantic validation
+code_lower_plan.lua             choose Code vs whole-function Kernel lowering
+lower_to_back.lua               LowerModule → backend commands
+lower_to_c.lua                  LowerModule → C projection policy
 
 -- Linker
 link_target_model.lua           linker target model
@@ -3948,7 +3956,6 @@ schema/back.asdl                MoonBack schema
 schema/link.asdl                MoonLink schema
 schema/host.asdl                MoonHost schema
 schema/open.asdl                MoonOpen schema
-schema/vec.asdl                 MoonVec schema
 schema/bind.asdl                MoonBind schema
 schema/mlua.asdl                MoonMlua schema
 schema/editor.asdl              MoonEditor schema

@@ -83,8 +83,6 @@ module MoonBack {
 
     BackAccessId = (string text) unique
 
-    BackAliasScopeId = (string text) unique
-
     BackAlignment = BackAlignUnknown
          | BackAlignKnown(number bytes) unique
          | BackAlignAtLeast(number bytes) unique
@@ -104,6 +102,7 @@ module MoonBack {
     BackAccessMode = BackAccessRead
          | BackAccessWrite
          | BackAccessReadWrite
+         | BackAccessReadonly
 
     BackAtomicOrdering = BackAtomicSeqCst
 
@@ -115,12 +114,6 @@ module MoonBack {
          | BackAtomicRmwXchg
 
     BackMemoryInfo = (MoonBack.BackAccessId access, MoonBack.BackAlignment alignment, MoonBack.BackDereference dereference, MoonBack.BackTrap trap, MoonBack.BackMotion motion, MoonBack.BackAccessMode mode) unique
-
-    BackAliasFact = BackAliasUnknown(MoonBack.BackAccessId a, MoonBack.BackAccessId b, string reason) unique
-         | BackMayAlias(MoonBack.BackAccessId a, MoonBack.BackAccessId b, string reason) unique
-         | BackNoAlias(MoonBack.BackAccessId a, MoonBack.BackAccessId b, string reason) unique
-         | BackSameBaseSameIndexSafe(MoonBack.BackAccessId a, MoonBack.BackAccessId b, string reason) unique
-         | BackAliasScope(MoonBack.BackAccessId access, MoonBack.BackAliasScopeId scope) unique
 
     BackIntOverflow = BackIntWrap
          | BackIntNoSignedWrap(string reason) unique
@@ -238,8 +231,7 @@ module MoonBack {
     BackCallResult = BackCallStmt
          | BackCallValue(MoonBack.BackValId dst, MoonBack.BackScalar ty) unique
 
-    Cmd = CmdTargetModel(MoonBack.BackTargetModel target) unique
-         | CmdCreateSig(MoonBack.BackSigId sig, MoonBack.BackScalar* params, MoonBack.BackScalar* results) unique
+    Cmd = CmdCreateSig(MoonBack.BackSigId sig, MoonBack.BackScalar* params, MoonBack.BackScalar* results) unique
          | CmdDeclareData(MoonBack.BackDataId data, number size, number align) unique
          | CmdDataInitZero(MoonBack.BackDataId data, number offset, number size) unique
          | CmdDataInit(MoonBack.BackDataId data, number offset, MoonBack.BackScalar ty, MoonBack.BackLiteral value) unique
@@ -276,7 +268,6 @@ module MoonBack {
          | CmdShift(MoonBack.BackValId dst, MoonBack.BackShiftOp op, MoonBack.BackScalar scalar, MoonBack.BackValId lhs, MoonBack.BackValId rhs) unique
          | CmdRotate(MoonBack.BackValId dst, MoonBack.BackRotateOp op, MoonBack.BackScalar scalar, MoonBack.BackValId lhs, MoonBack.BackValId rhs) unique
          | CmdFloatBinary(MoonBack.BackValId dst, MoonBack.BackFloatOp op, MoonBack.BackScalar scalar, MoonBack.BackFloatSemantics semantics, MoonBack.BackValId lhs, MoonBack.BackValId rhs) unique
-         | CmdAliasFact(MoonBack.BackAliasFact fact) unique
          | CmdMemcpy(MoonBack.BackValId dst, MoonBack.BackValId src, MoonBack.BackValId len) unique
          | CmdMemset(MoonBack.BackValId dst, MoonBack.BackValId byte, MoonBack.BackValId len) unique
          | CmdMemcmp(MoonBack.BackValId dst, MoonBack.BackValId left, MoonBack.BackValId right, MoonBack.BackValId len) unique
@@ -322,7 +313,6 @@ module MoonBack {
          | BackFactValueUse(number index, MoonBack.BackValId value) unique
          | BackFactAccessDef(number index, MoonBack.BackAccessId access) unique
          | BackFactAccessRef(number index, MoonBack.BackAccessId access) unique
-         | BackFactAliasAccessRef(number index, MoonBack.BackAccessId access) unique
          | BackFactShapeUse(number index, MoonBack.BackShape shape, MoonBack.BackShapeRequirement requirement) unique
          | BackFactFunctionBodyCommand(number index) unique
 
@@ -354,7 +344,6 @@ module MoonBack {
          | BackIssueLoadAccessMode(number index, MoonBack.BackAccessMode mode) unique
          | BackIssueStoreAccessMode(number index, MoonBack.BackAccessMode mode) unique
          | BackIssueDereferenceTooSmall(number index, number dereference_bytes, number access_bytes) unique
-         | BackIssueTargetUnsupportedShape(number index, MoonBack.BackShape shape) unique
          | BackIssueIntScalarExpected(number index, MoonBack.BackScalar scalar) unique
          | BackIssueFloatScalarExpected(number index, MoonBack.BackScalar scalar) unique
          | BackIssueBitScalarExpected(number index, MoonBack.BackScalar scalar) unique
@@ -374,8 +363,6 @@ module MoonBack {
 
     BackPointerOffsetInspection = (number index, MoonBack.BackValId dst, MoonBack.BackAddressBase base, MoonBack.BackValId index_value, number elem_size, number const_offset, MoonBack.BackPointerProvenance provenance, MoonBack.BackPointerBounds bounds) unique
 
-    BackAliasInspection = (number index, MoonBack.BackAliasFact fact) unique
-
     BackIntSemanticsInspection = (number index, MoonBack.BackValId dst, MoonBack.BackIntOp op, MoonBack.BackScalar scalar, MoonBack.BackIntSemantics semantics) unique
 
     BackFloatSemanticOp = BackFloatSemanticBinary(MoonBack.BackFloatOp op) unique
@@ -383,11 +370,11 @@ module MoonBack {
 
     BackFloatSemanticsInspection = (number index, MoonBack.BackValId dst, MoonBack.BackFloatSemanticOp op, MoonBack.BackScalar scalar, MoonBack.BackFloatSemantics semantics) unique
 
-    BackInspectionReport = (MoonBack.BackCommandCount* command_counts, MoonBack.BackTargetModel* targets, MoonBack.BackMemoryInspection* memory, MoonBack.BackAddressInspection* addresses, MoonBack.BackPointerOffsetInspection* pointer_offsets, MoonBack.BackAliasInspection* aliases, MoonBack.BackIntSemanticsInspection* int_semantics, MoonBack.BackFloatSemanticsInspection* float_semantics) unique
+    BackInspectionReport = (MoonBack.BackCommandCount* command_counts, MoonBack.BackMemoryInspection* memory, MoonBack.BackAddressInspection* addresses, MoonBack.BackPointerOffsetInspection* pointer_offsets, MoonBack.BackIntSemanticsInspection* int_semantics, MoonBack.BackFloatSemanticsInspection* float_semantics) unique
 
     BackDisasmInspection = (MoonBack.BackFuncId func, string text) unique
 
-    BackDiagnosticsReport = (MoonBack.BackInspectionReport inspection, MoonVec.VecInspectionReport vector, MoonBack.BackDisasmInspection* disassembly) unique
+    BackDiagnosticsReport = (MoonBack.BackInspectionReport inspection, MoonBack.BackDisasmInspection* disassembly) unique
 
     BackFlow = BackFallsThrough
          | BackTerminates

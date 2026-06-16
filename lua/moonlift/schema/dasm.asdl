@@ -87,7 +87,6 @@ module MoonDasm {
 
     DMemoryFact = DMemoryLoadFact(MoonBack.BackValId dst, MoonBack.BackAddress addr, MoonBack.BackMemoryInfo memory, MoonBack.BackShape ty) unique
          | DMemoryStoreFact(MoonBack.BackAddress addr, MoonBack.BackValId value, MoonBack.BackMemoryInfo memory, MoonBack.BackShape ty) unique
-         | DMemoryAliasFact(MoonBack.BackAliasFact fact) unique
 
     DCallFact = DCallSiteFact(number index, MoonBack.BackSigId sig, MoonBack.BackCallTarget target, MoonBack.BackValId* args, MoonBack.BackCallResult? result) unique
          | DCallClobberFact(number index, MoonDasm.DPhysRegId* clobbers) unique

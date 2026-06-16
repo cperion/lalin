@@ -86,7 +86,7 @@ pub enum WireTag {
     ExternAddr = 103,  // [dst, ptr_type, extern_id]
 
     // ── Memory ────
-    Load = 110,        // [dst, scalar_type, memflags, addr]
+    Load = 110,        // [dst, scalar_type, memflags, addr] memflags bit0=notrap bit1=aligned bit2=can_move bit3=readonly
     Store = 111,       // [scalar_type, memflags, addr, value]
     AtomicLoad = 112,  // [dst, scalar_type, memflags, addr]
     AtomicStore = 113, // [scalar_type, memflags, addr, value]
@@ -125,7 +125,7 @@ pub enum WireTag {
     VecMaskNot = 150,        // [dst, vec]
     VecMaskAnd = 151,        // [dst, lhs, rhs]
     VecMaskOr = 152,         // [dst, lhs, rhs]
-    VecLoad = 153,           // [dst, scalar_type, lanes, memflags, addr]
+    VecLoad = 153,           // [dst, scalar_type, lanes, memflags, addr] memflags bit0=notrap bit1=aligned bit2=can_move bit3=readonly
     VecStore = 154,          // [scalar_type, lanes, memflags, addr, value]
 
     // ── Select ────

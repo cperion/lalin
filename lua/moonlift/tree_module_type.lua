@@ -68,6 +68,7 @@ function M.Define(T)
         [Tr.TypeDeclUnion] = function(self, mod_name) return pvm.once(B.TypeEntry(self.name, Ty.TNamed(Ty.TypeRefGlobal(mod_name, self.name)))) end,
         [Tr.TypeDeclEnumSugar] = function(self, mod_name) return pvm.once(B.TypeEntry(self.name, Ty.TNamed(Ty.TypeRefGlobal(mod_name, self.name)))) end,
         [Tr.TypeDeclTaggedUnionSugar] = function(self, mod_name) return pvm.once(B.TypeEntry(self.name, Ty.TNamed(Ty.TypeRefGlobal(mod_name, self.name)))) end,
+        [Tr.TypeDeclHandle] = function(self, mod_name) return pvm.once(B.TypeEntry(self.name, Ty.THandle(Ty.TypeRefGlobal(mod_name, self.name), self.repr))) end,
         [Tr.TypeDeclOpenStruct] = function(self) return pvm.once(B.TypeEntry(self.sym.name, Ty.TNamed(Ty.TypeRefLocal(self.sym)))) end,
         [Tr.TypeDeclOpenUnion] = function(self) return pvm.once(B.TypeEntry(self.sym.name, Ty.TNamed(Ty.TypeRefLocal(self.sym)))) end,
     }, { args_cache = "last" })
@@ -116,6 +117,11 @@ function M.Define(T)
             if cls == Tr.TypeDeclEnumSugar then
                 local tag_layout = layout_api.result(tag_ty(), env, target).layout
                 return pvm.once(Sem.LayoutNamed(mod_name, t.name, { Sem.FieldLayout("__tag", 0, tag_ty()) }, tag_layout.size, tag_layout.align))
+            end
+            if cls == Tr.TypeDeclHandle then
+                local repr_ty = Ty.THandle(Ty.TypeRefGlobal(mod_name, t.name), t.repr)
+                local layout = layout_api.result(repr_ty, env, target).layout
+                return pvm.once(Sem.LayoutNamed(mod_name, t.name, { Sem.FieldLayout("__handle", 0, repr_ty) }, layout.size, layout.align))
             end
             if cls == Tr.TypeDeclTaggedUnionSugar then
                 local tag_layout = layout_api.result(tag_ty(), env, target).layout

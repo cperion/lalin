@@ -30,6 +30,7 @@ function M.Define(T)
     local TypeSizeAlign = require("moonlift.type_size_align").Define(T)
     local ModuleType = require("moonlift.tree_module_type").Define(T)
     local ConstEval = require("moonlift.sem_const_eval").Define(T)
+    local TreeContractFacts = require("moonlift.tree_contract_facts").Define(T)
 
     local api = {}
 
@@ -57,6 +58,11 @@ function M.Define(T)
 
     local function is_void_type(ty)
         return pvm.classof(ty) == Ty.TScalar and ty.scalar == Core.ScalarVoid
+    end
+
+    local function source_access_base(ty)
+        if pvm.classof(ty) == Ty.TLease then return ty.base end
+        return ty
     end
 
     local function variant_name_text(v)
@@ -526,7 +532,7 @@ function M.Define(T)
             else stride = const_index(ctx, 1, "view_stride") end
             return data, len, stride
         elseif vcls == Tr.ViewFromExpr then
-            local base_ty = expr_type(view.base)
+            local base_ty = source_access_base(expr_type(view.base))
             if pvm.classof(base_ty) == Ty.TPtr then
                 local data = lower_expr(ctx, view.base)
                 local len = const_index(ctx, 1, "view_len")
@@ -631,6 +637,7 @@ function M.Define(T)
     end
 
     local function lower_field_base_place(ctx, base, base_ty)
+        base_ty = source_access_base(base_ty)
         if pvm.classof(base_ty) == Ty.TPtr then
             local addr = lower_expr(ctx, base)
             local elem_ty = base_ty.elem
@@ -655,7 +662,7 @@ function M.Define(T)
         local bcls = pvm.classof(base)
         local base_place
         if bcls == Tr.IndexBaseExpr then
-            local base_ty = expr_type(base.base)
+            local base_ty = source_access_base(expr_type(base.base))
             local btcls = pvm.classof(base_ty)
             if btcls == Ty.TPtr then
                 local addr = lower_expr(ctx, base.base)
@@ -677,7 +684,7 @@ function M.Define(T)
                 unsupported(ctx, base, "index expression base type " .. class_name(base_ty))
             end
         elseif bcls == Tr.IndexBasePlace then
-            local base_ty = place_type(base.base)
+            local base_ty = source_access_base(place_type(base.base))
             if pvm.classof(base_ty) == Ty.TView then
                 local view = load_place(ctx, lower_place(ctx, base.base), base_ty, "view_index")
                 local view_ty = code_ty(ctx, base_ty)
@@ -728,7 +735,7 @@ function M.Define(T)
             return Code.CodePlaceDeref(addr, code_ty(ctx, ty), align_of(ctx, ty))
         elseif cls == Tr.PlaceField then
             if pvm.classof(place.field) ~= Sem.FieldByOffset then unsupported(ctx, place, "field place before sem_layout_resolve") end
-            local base_ty = place_type(place.base)
+            local base_ty = source_access_base(place_type(place.base))
             local base_place
             if pvm.classof(base_ty) == Ty.TPtr and pvm.classof(place.base) == Tr.PlaceRef then
                 local addr = lower_expr(ctx, Tr.ExprRef(Tr.ExprTyped(base_ty), place.base.ref))
@@ -863,7 +870,7 @@ function M.Define(T)
             append_inst(ctx, Code.CodeInstView(dst, ty, data, len, stride), origin_generated("view"))
             return dst, ty
         elseif cls == Tr.ExprLen then
-            local vty = expr_type(expr.value)
+            local vty = source_access_base(expr_type(expr.value))
             if pvm.classof(vty) == Ty.TArray and pvm.classof(vty.count) == Ty.ArrayLenConst then
                 return const_index(ctx, vty.count.count, "array_len")
             elseif pvm.classof(vty) == Ty.TView then
@@ -1407,6 +1414,100 @@ function M.Define(T)
         return Code.CodeGlobal(code_global_id(module_ctx.module_name, name), name, code_ty(ctx, source_ty), Code.CodeLinkageLocal, size_of(ctx, source_ty), align_of(ctx, source_ty), inits, origin_generated("global " .. tostring(name)))
     end
 
+    local function contract_value_for_binding(func_name, binding)
+        return value_id_for_binding({ func_name = func_name }, binding)
+    end
+
+    local function contract_value_for_expr(func_name, expr)
+        if pvm.classof(expr) == Tr.ExprRef and pvm.classof(expr.ref) == Bind.ValueRefBinding then
+            return contract_value_for_binding(func_name, expr.ref.binding)
+        end
+        return nil, "contract expression is not a lowered binding reference: " .. class_name(expr)
+    end
+
+    local function code_contract_reject(func_id, reason)
+        return Code.CodeFuncContractFact(
+            func_id,
+            Code.CodeContractRejected(tostring(reason or "unsupported contract fact")),
+            origin_generated("contract rejection")
+        )
+    end
+
+    local function join_reasons(...)
+        local out = {}
+        for i = 1, select("#", ...) do
+            local reason = select(i, ...)
+            if reason ~= nil then out[#out + 1] = tostring(reason) end
+        end
+        return table.concat(out, "; ")
+    end
+
+    local function code_contract_fact(func_name, func_id, fact)
+        local cls = pvm.classof(fact)
+        if cls == Tr.ContractFactBounds then
+            return Code.CodeFuncContractFact(func_id, Code.CodeContractBounds(
+                contract_value_for_binding(func_name, fact.base),
+                contract_value_for_binding(func_name, fact.len)
+            ), origin_binding(fact.base))
+        elseif cls == Tr.ContractFactWindowBounds then
+            local base = contract_value_for_binding(func_name, fact.base)
+            local base_len, base_len_err = contract_value_for_expr(func_name, fact.base_len)
+            local start, start_err = contract_value_for_expr(func_name, fact.start)
+            local len, len_err = contract_value_for_expr(func_name, fact.len)
+            if base_len == nil or start == nil or len == nil then
+                return code_contract_reject(func_id, join_reasons(base_len_err, start_err, len_err))
+            end
+            return Code.CodeFuncContractFact(func_id, Code.CodeContractWindowBounds(base, base_len, start, len), origin_binding(fact.base))
+        elseif cls == Tr.ContractFactDisjoint then
+            return Code.CodeFuncContractFact(func_id, Code.CodeContractDisjoint(
+                contract_value_for_binding(func_name, fact.a),
+                contract_value_for_binding(func_name, fact.b)
+            ), origin_binding(fact.a))
+        elseif cls == Tr.ContractFactSameLen then
+            return Code.CodeFuncContractFact(func_id, Code.CodeContractSameLen(
+                contract_value_for_binding(func_name, fact.a),
+                contract_value_for_binding(func_name, fact.b)
+            ), origin_binding(fact.a))
+        elseif cls == Tr.ContractFactNoAlias then
+            return Code.CodeFuncContractFact(func_id, Code.CodeContractNoAlias(
+                contract_value_for_binding(func_name, fact.base)
+            ), origin_binding(fact.base))
+        elseif cls == Tr.ContractFactReadonly then
+            return Code.CodeFuncContractFact(func_id, Code.CodeContractReadonly(
+                contract_value_for_binding(func_name, fact.base)
+            ), origin_binding(fact.base))
+        elseif cls == Tr.ContractFactWriteonly then
+            return Code.CodeFuncContractFact(func_id, Code.CodeContractWriteonly(
+                contract_value_for_binding(func_name, fact.base)
+            ), origin_binding(fact.base))
+        elseif cls == Tr.ContractFactInvalidate then
+            return code_contract_reject(func_id, "invalidate is a typechecker-only store/lease effect")
+        elseif cls == Tr.ContractFactPreserve then
+            return code_contract_reject(func_id, "preserve is a typechecker-only store/lease effect")
+        elseif cls == Tr.ContractFactRejected then
+            return code_contract_reject(func_id, "tree contract rejected: " .. class_name(fact.issue))
+        end
+        return code_contract_reject(func_id, "unsupported tree contract fact: " .. class_name(fact))
+    end
+
+    local function lower_contracts(module, opts)
+        opts = opts or {}
+        local mod_id = Code.CodeModuleId("module:" .. sanitize(opts.module_id or module_name(module)))
+        local facts = {}
+        for i = 1, #(module.items or {}) do
+            local item = module.items[i]
+            if pvm.classof(item) == Tr.ItemFunc then
+                local name = func_parts(item.func)
+                local func_id = code_func_id(name)
+                local tree_facts = TreeContractFacts.facts(item.func)
+                for j = 1, #(tree_facts.facts or {}) do
+                    facts[#facts + 1] = code_contract_fact(name, func_id, tree_facts.facts[j])
+                end
+            end
+        end
+        return Code.CodeContractFactSet(mod_id, facts)
+    end
+
     local function lower_func(module_ctx, func)
         local name, linkage, params, result_ty, body = func_parts(func)
         local residence = collect_address_taken_stmts(body or {}, { addressed = {}, mutable = {} })
@@ -1527,7 +1628,13 @@ function M.Define(T)
         )
     end
 
+    local function lower_module_with_contracts(module, opts)
+        return lower_module(module, opts), lower_contracts(module, opts)
+    end
+
     api.module = lower_module
+    api.contracts = lower_contracts
+    api.module_with_contracts = lower_module_with_contracts
 
     T._moonlift_api_cache.tree_to_code = api
     return api

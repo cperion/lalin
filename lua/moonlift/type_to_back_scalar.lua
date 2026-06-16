@@ -55,6 +55,17 @@ function M.Define(T)
         [Ty.TypeClassView] = function(self, ty)
             return pvm.once(Ty.TypeBackScalarUnavailable(ty, self))
         end,
+        [Ty.TypeClassLease] = function(self, ty)
+            local class = classify_api.classify(self.base)
+            return type_to_back_scalar_result(class, self.base)
+        end,
+        [Ty.TypeClassHandle] = function(self, ty)
+            if pvm.classof(self.repr) == Ty.HandleReprScalar then
+                local values = scalar_to_back:drain_uncached(self.repr.scalar)
+                if #values > 0 then return pvm.once(Ty.TypeBackScalarKnown(values[1])) end
+            end
+            return pvm.once(Ty.TypeBackScalarUnavailable(ty, self))
+        end,
         [Ty.TypeClassClosure] = function()
             -- Tree-to-back represents closure values as addresses of the
             -- two-word { fn, ctx } descriptor while preserving the source

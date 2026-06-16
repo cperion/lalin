@@ -21,11 +21,11 @@ local package = W.package "moonlift.compiler" {
         W.exports { "classify", "classify_type" },
     },
 
-    W.unit "tree.to_back" {
-        W.file "moonlift.tree_to_back",
+    W.unit "code.to_back" {
+        W.file "moonlift.code_to_back",
         W.uses { "type.classify" },
-        W.phase "tree.module_to_back" {
-            W.input "MoonTree.Module",
+        W.phase "code.module_to_back" {
+            W.input "MoonCode.CodeModule",
             W.output "MoonBack.Program",
             W.cache "last",
             W.result "one",
@@ -40,9 +40,9 @@ assert(#package.units == 2)
 assert(package.units[1].file == "moonlift.type_classify")
 assert(package.units[2].uses[1].name == "type.classify")
 local phase = package.units[2].phases[1]
-assert(phase.name == "tree.module_to_back")
+assert(phase.name == "code.module_to_back")
 assert(pvm.classof(phase.input) == P.TypeRef)
-assert(phase.input.module_name == "MoonTree")
+assert(phase.input.module_name == "MoonCode")
 assert(phase.output.type_name == "Program")
 assert(phase.cache == P.CacheNodeArgsLast)
 assert(phase.result == P.ResultOne)

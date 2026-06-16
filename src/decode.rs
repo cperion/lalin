@@ -52,6 +52,7 @@ fn mf(bits: u32) -> MemFlags {
     if bits & 1 != 0 { f.set_notrap(); }
     if bits & 2 != 0 { f.set_aligned(); }
     if bits & 4 != 0 { f.set_can_move(); }
+    if bits & 8 != 0 { f.set_readonly(); }
     f
 }
 

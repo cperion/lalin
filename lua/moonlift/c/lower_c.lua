@@ -984,8 +984,8 @@ function M.Define(T)
             return Tr.ExprCall(Tr.ExprSurface, callee, args)
         end
 
-        -- Member access.  Resolve C layout facts here, because Tree Dot is a
-        -- high-level surface construct and tree_to_back only lowers resolved
+        -- Member access. Resolve C layout facts here, because Tree Dot is a
+        -- high-level surface construct and backend lowering consumes resolved
         -- FieldByOffset accesses.
         if tag == "CEDot" then
             local owner = c_expr_desc(c_expr.base, ctx)

@@ -1,0 +1,17 @@
+module MoonLower {
+    LowerTarget = LowerTargetCode
+         | LowerTargetBack
+         | LowerTargetC
+         | LowerTargetNamed(string name) unique
+
+    LowerFunc = LowerFuncCode(MoonCode.CodeFuncId func) unique
+         | LowerFuncKernel(MoonKernel.KernelPlan plan) unique
+
+    LowerModule = (MoonCode.CodeModuleId module, MoonLower.LowerTarget target, MoonKernel.KernelModulePlan kernels, MoonLower.LowerFunc* funcs) unique
+
+    LowerIssue = LowerIssueMissingFunc(MoonCode.CodeFuncId func) unique
+         | LowerIssueRejectedKernel(MoonCode.CodeFuncId func, MoonKernel.KernelReject* rejects) unique
+         | LowerIssueUnsupportedTarget(MoonLower.LowerTarget target, string reason) unique
+
+    LowerValidationReport = (MoonLower.LowerIssue* issues) unique
+}

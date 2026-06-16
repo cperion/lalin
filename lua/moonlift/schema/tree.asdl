@@ -66,6 +66,8 @@ module MoonTree {
          | ContractNoAlias(MoonTree.Expr base) unique
          | ContractReadonly(MoonTree.Expr base) unique
          | ContractWriteonly(MoonTree.Expr base) unique
+         | ContractInvalidate(MoonTree.Expr base) unique
+         | ContractPreserve(MoonTree.Expr base) unique
 
     ContractFact = ContractFactBounds(MoonBind.Binding base, MoonBind.Binding len) unique
          | ContractFactWindowBounds(MoonBind.Binding base, MoonTree.Expr base_len, MoonTree.Expr start, MoonTree.Expr len) unique
@@ -74,6 +76,8 @@ module MoonTree {
          | ContractFactNoAlias(MoonBind.Binding base) unique
          | ContractFactReadonly(MoonBind.Binding base) unique
          | ContractFactWriteonly(MoonBind.Binding base) unique
+         | ContractFactInvalidate(MoonBind.Binding base) unique
+         | ContractFactPreserve(MoonBind.Binding base) unique
          | ContractFactRejected(MoonTree.TypeIssue issue) unique
 
     ContractFactSet = (MoonTree.ContractFact* facts) unique
@@ -196,6 +200,7 @@ module MoonTree {
          | TypeDeclUnion(string name, MoonType.FieldDecl* fields) unique
          | TypeDeclEnumSugar(string name, MoonCore.Name* variants) unique
          | TypeDeclTaggedUnionSugar(string name, MoonType.VariantDecl* variants) unique
+         | TypeDeclHandle(string name, MoonType.HandleRepr repr, MoonType.HandleInvalid invalid) unique
          | TypeDeclOpenStruct(MoonCore.TypeSym sym, MoonType.FieldDecl* fields) unique
          | TypeDeclOpenUnion(MoonCore.TypeSym sym, MoonType.FieldDecl* fields) unique
 

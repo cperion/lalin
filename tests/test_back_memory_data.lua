@@ -65,7 +65,7 @@ local program = B2.BackProgram({
     B2.CmdSwitchToBlock(getk_entry),
     B2.CmdDataAddr(k_addr, k_data),
     B2.CmdConst(k_off, B2.BackIndex, B2.BackLitInt("0")),
-    B2.CmdLoadInfo(k_value, shape_i32, addr(k_addr, k_off), mem("get_k:load", B2.BackAccessRead)),
+    B2.CmdLoadInfo(k_value, shape_i32, addr(k_addr, k_off), mem("get_k:load", B2.BackAccessReadonly)),
     B2.CmdReturnValue(k_value),
     B2.CmdSealBlock(getk_entry),
     B2.CmdFinishFunc(getk_func),

@@ -34,7 +34,7 @@ end
 
 local function append_item(self, value)
     self.items[#self.items + 1] = value.item or value:as_item()
-    if type(value) == "table" and (value.kind == "struct" or value.kind == "union" or value.kind == "struct_draft" or value.kind == "type") then
+    if type(value) == "table" and (value.kind == "struct" or value.kind == "union" or value.kind == "handle" or value.kind == "struct_draft" or value.kind == "type") then
         self.type_values[#self.type_values + 1] = value
     end
     return value
@@ -171,8 +171,22 @@ function BundleValue:to_asdl()
         if not self.drafts[i].sealed then self.api.raise_host_issue(self.session.T.MoonHost.HostIssueUnsealedType(self.name, self.drafts[i].name)) end
     end
     local Tr = self.session.T.MoonTree
+    local pvm = require("moonlift.pvm")
     local items = {}
-    for i = 1, #self.items do items[i] = self.items[i] end
+    local seen_types = {}
+    if self.session.global_type_values then
+        for _, tv in pairs(self.session.global_type_values) do
+            if type(tv) == "table" and tv.item ~= nil and tv.decl ~= nil and tv.decl.name ~= nil and not seen_types[tv.decl.name] then
+                items[#items + 1] = tv.item
+                seen_types[tv.decl.name] = true
+            end
+        end
+    end
+    for i = 1, #self.items do
+        local item = self.items[i]
+        if pvm.classof(item) == Tr.ItemType and item.t and item.t.name then seen_types[item.t.name] = true end
+        items[#items + 1] = item
+    end
     return Tr.Module(Tr.ModuleTyped(self.name), items)
 end
 

@@ -182,7 +182,6 @@ local issue_code_map = {
     BackIssueLoadAccessMode = "E0301",
     BackIssueStoreAccessMode = "E0301",
     BackIssueDereferenceTooSmall = "E0301",
-    BackIssueTargetUnsupportedShape = "E0301",
     BackIssueIntScalarExpected = "E0304",
     BackIssueFloatScalarExpected = "E0304",
     BackIssueBitScalarExpected = "E0304",
@@ -230,7 +229,7 @@ end
 -------------------------------------------------------------------------------
 
 local explainers = {}
-local REQUIRED_PHASES = {"parse","host","open","binding","typecheck","backend","link","vec","source"}
+local REQUIRED_PHASES = {"parse","host","open","binding","typecheck","backend","link","source"}
 
 local function ensure_explainers()
     if explainers.parse then return end
@@ -241,7 +240,6 @@ local function ensure_explainers()
     explainers.typecheck = require("moonlift.tree_typecheck").explain_type_issue
     explainers.backend = require("moonlift.back_validate").explain_back_issue
     explainers.link = require("moonlift.link_plan_validate").explain_link_issue
-    explainers.vec = require("moonlift.vec_loop_facts").explain_vec_reject
     explainers.source = require("moonlift.source_text_apply").explain_source_issue
     -- Validate all required phases have explainers
     for _, name in ipairs(REQUIRED_PHASES) do

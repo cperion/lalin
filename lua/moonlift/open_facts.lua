@@ -368,6 +368,7 @@ function M.Define(T)
         [Tr.TypeDeclUnion] = function() return pvm.empty() end,
         [Tr.TypeDeclEnumSugar] = function() return pvm.empty() end,
         [Tr.TypeDeclTaggedUnionSugar] = function() return pvm.empty() end,
+        [Tr.TypeDeclHandle] = function() return pvm.empty() end,
         [Tr.TypeDeclOpenStruct] = function(self) return pvm.once(O.MetaFactLocalType(self.sym)) end,
         [Tr.TypeDeclOpenUnion] = function(self) return pvm.once(O.MetaFactLocalType(self.sym)) end,
     })

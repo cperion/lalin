@@ -6,7 +6,6 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
 local Pipeline = require("moonlift.frontend_pipeline")
-local KernelPlan = require("moonlift.vec_kernel_plan")
 local BackInspect = require("moonlift.back_inspect")
 local BackDiagnostics = require("moonlift.back_diagnostics")
 
@@ -45,39 +44,29 @@ end
 local T = pvm.context()
 A2.Define(T)
 local P = Pipeline.Define(T)
-local KP = KernelPlan.Define(T)
 local BI = BackInspect.Define(T)
 local BD = BackDiagnostics.Define(T)
 local B = T.MoonBack
-local Vec = T.MoonVec
-local Core = T.MoonCore
+local Kernel = T.MoonKernel
 
 local result = P.parse_and_lower(SRC, { site = "bench_diagnostics" })
 local program = result.program
 local report = result.back_report
 assert(#report.issues == 0)
-local checked = result.checked
-
-local decisions = {}
-for i = 1, #checked.module.items do
-    local item = checked.module.items[i]
-    local func = item.func
-    local plan = KP.plan(func.name, Core.VisibilityExport, func.params, func.result, func.body)
-    if pvm.classof(plan) == Vec.VecKernelReduce or pvm.classof(plan) == Vec.VecKernelMap then
-        decisions[#decisions + 1] = plan.decision
-        local sched = plan.decision.schedule
-        if pvm.classof(sched) == Vec.VecScheduleVector then
-            io.write(string.format("schedule %-10s elem=%s lanes=%d unroll=%d interleave=%d accumulators=%d tail=%s\n",
-                func.name,
-                sched.shape.elem.kind,
-                sched.shape.lanes,
-                sched.unroll,
-                sched.interleave,
-                sched.accumulators,
-                sched.tail.kind))
-        end
+for _, func_plan in ipairs(result.kernel_plan and result.kernel_plan.funcs or {}) do
+    local plan = func_plan.plan
+    if pvm.classof(plan) == Kernel.KernelPlanned and pvm.classof(plan.schedule) == Kernel.KernelScheduleVector then
+        local sched = plan.schedule
+        io.write(string.format("kernel_schedule %s lanes=%d unroll=%d interleave=%d tail=%s\n",
+            func_plan.func.text,
+            sched.shape.lanes,
+            sched.unroll,
+            sched.interleave,
+            sched.tail.kind))
     end
 end
+
+local decisions = {}
 
 local inspection = BI.inspect(program)
 for i = 1, #inspection.command_counts do

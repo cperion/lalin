@@ -1,12 +1,10 @@
 MOONLIFT  = target/release/moonlift
-MOM       = target/release/mom
 LUAJIT    = .vendor/LuaJIT/src
-MOM_OBJ   = target/libmom_precompiled.o
 MOONLIB   = target/release/libmoonlift.so
 
-.PHONY: all clean mom-obj mom-tags test-mom
+.PHONY: all clean run bench
 
-all: $(MOONLIFT) $(MOM)
+all: $(MOONLIFT)
 
 $(LUAJIT)/libluajit.a:
 	$(MAKE) -C $(LUAJIT) CFLAGS="-fPIC"
@@ -17,46 +15,15 @@ $(MOONLIFT): $(LUAJIT)/libluajit.a
 	LUAJIT_INCLUDE=$(CURDIR)/$(LUAJIT) \
 	cargo build --release --bin moonlift
 
-mom-tags: $(MOONLIFT)
-	$(MOONLIFT) scripts/generate_mom_tags.lua
-
 $(MOONLIB): $(LUAJIT)/libluajit.a
 	LUAJIT_LIB=$(CURDIR)/$(LUAJIT)/libluajit-5.1.a \
 	LUAJIT_INCLUDE=$(CURDIR)/$(LUAJIT) \
 	cargo build --release --lib
 
-$(MOM_OBJ): $(MOONLIFT) $(MOONLIB) mom-tags
-	@mkdir -p target
-	MOM_OBJ_PATH=$(MOM_OBJ) $(MOONLIFT) scripts/emit_mom_precompiled.lua
-
-mom-obj: $(MOM_OBJ)
-
-$(MOM): $(LUAJIT)/libluajit.a $(MOM_OBJ)
-	LUAJIT_LIB=$(CURDIR)/$(LUAJIT)/libluajit-5.1.a \
-	LUAJIT_INCLUDE=$(CURDIR)/$(LUAJIT) \
-	MOM_OBJ_PATH=$(CURDIR)/$(MOM_OBJ) \
-	cargo build --release --bin mom
-
 clean:
 	$(MAKE) -C $(LUAJIT) clean
 	cargo clean
-	rm -f $(LUAJIT)/libluajit-5.1.a src/embedded_hosted_lua.rs $(MOM_OBJ)
-
-test-mom: $(MOM)
-	luajit tests/test_mom_cli.lua
-	luajit tests/test_mom_run_2plus2.lua
-
-# MOM port tracking — zero-friction CLI for AI agents.
-MOM_TASK = ./scripts/mom-task
-
-task-status:           ; @$(MOM_TASK) status
-task-progress:         ; @$(MOM_TASK) progress
-task-next:             ; @$(MOM_TASK) next
-task-list:             ; @$(MOM_TASK) list
-task-verify:           ; @$(MOM_TASK) verify
-task-json:             ; @$(MOM_TASK) json
-task-done-%:           ; @$(MOM_TASK) done $*
-task-reset-%:          ; @$(MOM_TASK) reset $*
+	rm -f $(LUAJIT)/libluajit-5.1.a src/embedded_hosted_lua.rs
 
 run:
 	$(MOONLIFT) $(FILE)

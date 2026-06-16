@@ -2,17 +2,14 @@ local M = {}
 
 function M.Define(T)
     local Back = T.MoonBack
-    local Vec = T.MoonVec
-    assert(Back and Vec, "moonlift.back_diagnostics.Define expects moonlift.asdl in the context")
+    assert(Back, "moonlift.back_diagnostics.Define expects MoonBack in the context")
 
     local Inspect = require("moonlift.back_inspect").Define(T)
-    local VecInspect = require("moonlift.vec_inspect").Define(T)
     local Jit = require("moonlift.back_jit").Define(T)
 
-    local function diagnostics(program, vector_decisions, funcs, opts)
+    local function diagnostics(program, _unused, funcs, opts)
         opts = opts or {}
         local inspection = Inspect.inspect(program)
-        local vector = VecInspect.decisions(vector_decisions or {})
         local disassembly = {}
         if funcs ~= nil and #funcs > 0 then
             local jit = Jit.jit()
@@ -26,7 +23,7 @@ function M.Define(T)
             artifact:free()
             jit:free()
         end
-        return Back.BackDiagnosticsReport(inspection, vector, disassembly)
+        return Back.BackDiagnosticsReport(inspection, disassembly)
     end
 
     return { diagnostics = diagnostics }

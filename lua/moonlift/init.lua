@@ -44,7 +44,6 @@ M.link_target_model = require("moonlift.link_target_model")
 M.link_plan_validate = require("moonlift.link_plan_validate")
 M.link_command_plan = require("moonlift.link_command_plan")
 M.link_execute = require("moonlift.link_execute")
-M.vec_inspect = require("moonlift.vec_inspect")
 M.region_compose = require("moonlift.region_compose")
 M.code_type = require("moonlift.code_type")
 M.code_validate = require("moonlift.code_validate")
@@ -196,12 +195,6 @@ function M.compile_c(src, opts)
         return session, c_src
     end
     return c_src
-end
-
---- Internal: CLI entry point for standalone binaries.
-
-M._mom_cli_run = function(argv)
-    return require("moonlift.mom_cli").run(argv)
 end
 
 function M.context(opts)

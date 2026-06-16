@@ -585,6 +585,8 @@ function M.Define(T)
         [Ty.TArray] = function(self, env) return pvm.once(pvm.with(self, { elem = one(expand_type, self.elem, env) })) end,
         [Ty.TSlice] = function(self, env) return pvm.once(pvm.with(self, { elem = one(expand_type, self.elem, env) })) end,
         [Ty.TView] = function(self, env) return pvm.once(pvm.with(self, { elem = one(expand_type, self.elem, env) })) end,
+        [Ty.TLease] = function(self, env) return pvm.once(pvm.with(self, { base = one(expand_type, self.base, env) })) end,
+        [Ty.THandle] = function(self) return pvm.once(self) end,
         [Ty.TFunc] = function(self, env) return pvm.once(pvm.with(self, { params = expand_types(self.params, env), result = one(expand_type, self.result, env) })) end,
         [Ty.TClosure] = function(self, env) return pvm.once(pvm.with(self, { params = expand_types(self.params, env), result = one(expand_type, self.result, env) })) end,
         [Ty.TNamed] = function(self) return pvm.once(self) end,
@@ -595,6 +597,8 @@ function M.Define(T)
             end
             return pvm.once(self)
         end,
+        [Ty.TCType] = function(self) return pvm.once(self) end,
+        [Ty.TCFuncPtr] = function(self) return pvm.once(self) end,
     }, { args_cache = "last" })
 
     expand_open_set = pvm.phase("moonlift_open_expand_open_set", {
@@ -988,6 +992,7 @@ function M.Define(T)
         end,
         [Tr.TypeDeclEnumSugar] = function(self) return pvm.once(self) end,
         [Tr.TypeDeclTaggedUnionSugar] = function(self, env) return pvm.once(pvm.with(self, { variants = expand_variants(self.variants, env) })) end,
+        [Tr.TypeDeclHandle] = function(self) return pvm.once(self) end,
         [Tr.TypeDeclOpenStruct] = function(self, env)
             return pvm.once(pvm.with(self, { fields = expand_fields(self.fields, env) }))
         end,

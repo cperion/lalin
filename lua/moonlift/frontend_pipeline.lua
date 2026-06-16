@@ -65,45 +65,19 @@ function M.Define(T)
     local Layout = require("moonlift.sem_layout_resolve").Define(T)
     local TreeToCode = require("moonlift.tree_to_code").Define(T)
     local CodeValidate = require("moonlift.code_validate").Define(T)
+    local CodeFlowFacts = require("moonlift.code_flow_facts").Define(T)
+    local CodeMemFacts = require("moonlift.code_mem_facts").Define(T)
+    local CodeKernelPlan = require("moonlift.code_kernel_plan").Define(T)
+    local KernelValidate = require("moonlift.kernel_validate").Define(T)
+    local CodeLowerPlan = require("moonlift.code_lower_plan").Define(T)
     local CodeType = require("moonlift.code_type").Define(T)
     local CodeToBack = require("moonlift.code_to_back").Define(T)
     local CodeToC = require("moonlift.code_to_c").Define(T)
+    local LowerToBack = require("moonlift.lower_to_back").Define(T)
+    local LowerToC = require("moonlift.lower_to_c").Define(T)
     local Validate = require("moonlift.back_validate").Define(T)
     local CValidate = require("moonlift.c_validate").Define(T)
     local Errors = require("moonlift.error")
-    local VecKernelPlan = require("moonlift.vec_kernel_plan").Define(T)
-    local VecKernelToBack = require("moonlift.vec_kernel_to_back").Define(T)
-
-    local function vector_func_parts(func)
-        local Core = T.MoonCore
-        local Tr = T.MoonTree
-        local cls = pvm.classof(func)
-        if cls == Tr.FuncLocal then return func.name, Core.VisibilityLocal, func.params, func.result, func.body, {} end
-        if cls == Tr.FuncExport then return func.name, Core.VisibilityExport, func.params, func.result, func.body, {} end
-        if cls == Tr.FuncLocalContract then return func.name, Core.VisibilityLocal, func.params, func.result, func.body, func.contracts or {} end
-        if cls == Tr.FuncExportContract then return func.name, Core.VisibilityExport, func.params, func.result, func.body, func.contracts or {} end
-        return nil
-    end
-
-    local function vector_back_replacements(resolved)
-        local Tr = T.MoonTree
-        local replacements = {}
-        for i = 1, #(resolved.items or {}) do
-            local item = resolved.items[i]
-            if pvm.classof(item) == Tr.ItemFunc then
-                local name, visibility, params, result_ty, body, contracts = vector_func_parts(item.func)
-                if name ~= nil and body ~= nil then
-                    local ok_plan, plan = pcall(function() return VecKernelPlan.plan(name, visibility, params, result_ty, body, contracts or {}) end)
-                    if ok_plan and plan ~= nil then
-                        local ok_lower, lowered = pcall(function() return VecKernelToBack.lower_func(name, visibility, params, result_ty, plan) end)
-                        if ok_lower and lowered ~= nil and lowered.cmds ~= nil then replacements[name] = lowered.cmds end
-                    end
-                end
-            end
-        end
-        return replacements
-    end
-
     local function lower_module(module, opts)
         opts = opts or {}
         local site = opts.site or "frontend"
@@ -126,11 +100,18 @@ function M.Define(T)
         local checked = Typecheck.check_module(closed, { collector = collector, layout_env = opts.layout_env })
 
         local resolved = Layout.module(checked.module, opts.layout_env)
-        local code_module = TreeToCode.module(resolved, { layout_env = opts.layout_env, target = opts.target, module_id = opts.module_id })
+        local code_module, code_contracts = TreeToCode.module_with_contracts(resolved, { layout_env = opts.layout_env, target = opts.target, module_id = opts.module_id })
         if code_module == nil then error(site .. " lowering failed: tree_to_code produced nil module", 2) end
         local code_report = CodeValidate.validate(code_module, collector)
+        local flow_facts = CodeFlowFacts.facts(code_module)
+        local flow_semantics = CodeFlowFacts.semantic_facts(code_module, flow_facts)
+        local mem_facts = CodeMemFacts.facts(code_module, flow_facts)
+        local mem_semantics = CodeMemFacts.semantic_facts(code_module, flow_facts, flow_semantics, code_contracts)
+        local kernel_plan = CodeKernelPlan.plan(code_module, flow_facts, mem_facts, code_contracts, flow_semantics, mem_semantics, { target_model = opts.target_model or opts.back_target_model })
+        local kernel_report = KernelValidate.validate(code_module, flow_facts, mem_facts, kernel_plan, { collector = collector })
+        local lower_plan = CodeLowerPlan.plan(code_module, kernel_plan, { target = T.MoonLower.LowerTargetBack })
 
-        local program = CodeToBack.module(code_module, { validate = false, replacement_funcs = vector_back_replacements(resolved) })
+        local program = LowerToBack.module(code_module, lower_plan, { validate = false })
         if program == nil then error(site .. " lowering failed: code_to_back produced nil program", 2) end
         if not _G.MOONLIFT_ALLOW_TRAP then
             assert_no_cmd_trap(T, program, site)
@@ -145,7 +126,15 @@ function M.Define(T)
             checked = checked,
             resolved = resolved,
             code_module = code_module,
+            code_contracts = code_contracts,
             code_report = code_report,
+            flow_facts = flow_facts,
+            flow_semantics = flow_semantics,
+            mem_facts = mem_facts,
+            mem_semantics = mem_semantics,
+            kernel_plan = kernel_plan,
+            kernel_report = kernel_report,
+            lower_plan = lower_plan,
             program = program,
             back_report = back_report,
             provenance = nil,
@@ -182,11 +171,18 @@ function M.Define(T)
         c_opts.layout_env = layout_env
         local resolved = Layout.module(checked.module, layout_env, c_target)
         assert_no_c_phase_unreachable(resolved, opts.site or "C frontend")
-        local code_module = TreeToCode.module(resolved, { layout_env = layout_env, target = c_target, module_id = opts.module_id })
+        local code_module, code_contracts = TreeToCode.module_with_contracts(resolved, { layout_env = layout_env, target = c_target, module_id = opts.module_id })
         if code_module == nil then error((opts.site or "C frontend") .. " lowering failed: tree_to_code produced nil module", 2) end
         local code_report = CodeValidate.validate(code_module, collector)
+        local flow_facts = CodeFlowFacts.facts(code_module)
+        local flow_semantics = CodeFlowFacts.semantic_facts(code_module, flow_facts)
+        local mem_facts = CodeMemFacts.facts(code_module, flow_facts)
+        local mem_semantics = CodeMemFacts.semantic_facts(code_module, flow_facts, flow_semantics, code_contracts)
+        local kernel_plan = CodeKernelPlan.plan(code_module, flow_facts, mem_facts, code_contracts, flow_semantics, mem_semantics, { target_model = opts.target_model or opts.back_target_model })
+        local kernel_report = KernelValidate.validate(code_module, flow_facts, mem_facts, kernel_plan, { collector = collector })
+        local lower_plan = CodeLowerPlan.plan(code_module, kernel_plan, { target = T.MoonLower.LowerTargetC })
         c_opts.validate = false
-        local c_unit = CodeToC.module(code_module, c_opts)
+        local c_unit = LowerToC.module(code_module, lower_plan, c_opts)
         local c_report = CValidate.validate(c_unit, collector)
 
         return {
@@ -196,7 +192,15 @@ function M.Define(T)
             checked = checked,
             resolved = resolved,
             code_module = code_module,
+            code_contracts = code_contracts,
             code_report = code_report,
+            flow_facts = flow_facts,
+            flow_semantics = flow_semantics,
+            mem_facts = mem_facts,
+            mem_semantics = mem_semantics,
+            kernel_plan = kernel_plan,
+            kernel_report = kernel_report,
+            lower_plan = lower_plan,
             c_unit = c_unit,
             c_report = c_report,
         }
@@ -232,12 +236,14 @@ function M.Define(T)
         local counter = 0
         local function aid(prefix) counter = counter + 1; return prefix .. "." .. counter end
         local keyword_set = {
-            ["func"]=true,["region"]=true,["expr"]=true,["struct"]=true,["union"]=true,["extern"]=true,
+            ["func"]=true,["region"]=true,["expr"]=true,["struct"]=true,["union"]=true,["handle"]=true,["extern"]=true,
             ["entry"]=true,["block"]=true,["if"]=true,["then"]=true,["elseif"]=true,["else"]=true,
             ["switch"]=true,["case"]=true,["default"]=true,["do"]=true,["end"]=true,
             ["return"]=true,["yield"]=true,["jump"]=true,["emit"]=true,
             ["let"]=true,["var"]=true,["as"]=true,["select"]=true,
-            ["assert"]=true,["len"]=true,["view"]=true,["and"]=true,["or"]=true,["not"]=true,
+            ["assert"]=true,["len"]=true,["view"]=true,["lease"]=true,["invalid"]=true,
+            ["noescape"]=true,["invalidate"]=true,["preserve"]=true,
+            ["and"]=true,["or"]=true,["not"]=true,
         }
         local opaque_set = {
             ["+"]=true,["-"]=true,["*"]=true,["/"]=true,["%"]=true,["="]=true,
@@ -285,7 +291,7 @@ function M.Define(T)
                     if text == "func" then after_decl = S.AnchorFunctionName
                     elseif text == "region" then after_decl = S.AnchorRegionName
                     elseif text == "expr" then after_decl = S.AnchorExprName
-                    elseif text == "struct" then after_decl = S.AnchorStructName
+                    elseif text == "struct" or text == "handle" then after_decl = S.AnchorStructName
                     elseif text == "block" or text == "entry" then after_decl = S.AnchorContinuationName
                     elseif text == "let" or text == "var" then def_next = S.AnchorLocalName
                     end

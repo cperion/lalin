@@ -37,6 +37,8 @@ function M.Define(T)
         end
         if cls == Ty.TSlice then return "slice_" .. type_key(ty.elem) end
         if cls == Ty.TView then return "view_" .. type_key(ty.elem) end
+        if cls == Ty.TLease then return "lease_" .. type_key(ty.base) end
+        if cls == Ty.THandle then return "handle_" .. type_key(Ty.TScalar(ty.repr.scalar)) end
         if cls == Ty.TFunc then return "fn_" .. tostring(#ty.params) .. "_" .. type_key(ty.result) end
         if cls == Ty.TClosure then return "closure_" .. tostring(#ty.params) .. "_" .. type_key(ty.result) end
         if cls == Ty.TNamed then
@@ -108,6 +110,10 @@ function M.Define(T)
             return C.CBackendSliceDescriptor(project_type(ty.elem, ctx))
         elseif cls == Ty.TView then
             return C.CBackendViewDescriptor(project_type(ty.elem, ctx))
+        elseif cls == Ty.TLease then
+            return project_type(ty.base, ctx)
+        elseif cls == Ty.THandle then
+            return project_type(Ty.TScalar(ty.repr.scalar), ctx)
         elseif cls == Ty.TFunc then
             return C.CBackendCodePtr(ensure_sig(ctx, ty.params, ty.result))
         elseif cls == Ty.TClosure then

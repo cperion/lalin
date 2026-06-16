@@ -7,7 +7,7 @@ Moonlift is the monomorphic native output.
 ## Build
 
 ```sh
-make                                    # produces fully static target/release/moonlift and target/release/mom
+make                                    # produces fully static target/release/moonlift
 cargo build --release                   # produces target/release/libmoonlift.so plus binaries
 ```
 
@@ -32,16 +32,10 @@ All scripts set `package.path` to include `./lua/?.lua`.
 target/release/moonlift file.mlua
 target/release/moonlift run --call main file.mlua
 
-# MOM binary/API
-target/release/mom run --call main file.mlua
-target/release/mom --emit-object -o out.o file.mlua
-
 # From Lua
 local moon = require("moonlift")
 moon.loadstring(src)            -- hosted JIT
 moon.loadfile(path)            -- hosted JIT
-moon.native_loadstring(src)    -- MOM native status/error path
-moon.native_loadfile(path)     -- MOM native status/error path
 moon.emit_object(src, path)    -- emit .o bytes
 moon.emit_shared(src, path)    -- emit .so/.dylib bytes
 
@@ -91,11 +85,6 @@ Compilation pipeline:
 back_validate → back_jit / back_object / back_object + link_target
 
 ## Key documentation
-
-When working under `lua/moonlift/mom/`, also read `lua/moonlift/mom/AGENTS.md`.
-It contains stricter MOM-specific discipline for the native compiler port,
-including the no-escape-hatch/no-"for now" framing rule, module organization,
-and required verification boundaries.
 
 When working under `experiments/lua_interpreter_vm/spongejit/`, also read
 `experiments/lua_interpreter_vm/spongejit/AGENTS.md`. It contains the current
@@ -229,16 +218,6 @@ print(compiled(3, 4))  -- 7, running as native machine code
 compiled:free()
 ```
 
-### Native: compile to standalone executable
-
-```lua
-local moon = require("moonlift")
--- MOM status/error path; production compilation uses moon.loadstring
-local ok, err = pcall(function()
-    moon.native_loadstring([[func main(): i32 return 0 end]], "demo.mlua")
-end)
-```
-
 ### Unified API — `require("moonlift")` module
 
 Hosted-Lua pipeline:
@@ -248,22 +227,13 @@ Hosted-Lua pipeline:
 - `moon.dofile(path [, opts, ...])` — compile, load, and call
 - `moon.eval(src, ...)` — shorthand: compile string, call immediately
 
-MOM binary/API pipeline:
-
-- `moon.native_loadstring(src [, name])` — compile source to native executable
-- `moon.native_loadfile(path)` — compile file to native executable
-- `moon.native_dofile(path [, opts])` — compile and run native executable
-
 Object emission (hosted pipeline):
 
 - `moon.emit_object(src [, path [, name]])` — emit .o bytes
 - `moon.emit_shared(src [, path [, name]])` — emit .so/.dylib bytes
 
 Inside `.mlua` files, the `moon` table provides:
-`moon.require`, `moon.native_loadstring`, `moon.native_loadfile`,
-`moon.native_dofile`, `moon.emit_object`
-
-`require("moonlift.host_mom")` exposes MOM status/error entry points.
+`moon.require`, `moon.emit_object`, and hosted pipeline helpers.
 
 ## Design philosophy
 
@@ -336,5 +306,3 @@ Explicit programming makes plain-text tooling powerful again.
 | `lua/moonlift/back_command_binary.lua` | Flatline v4 binary wire format encoder (replaces text tape) |
 | `BACK_WIRE_FORMAT.md` | Binary wire format specification (Flatline v4) |
 | `lua/moonlift/back_command_tape.lua` | Legacy text tape encoder (kept for CI cross-check) |
-| `lua/moonlift/host_mom.lua` | MOM frontend `moon.host_mom` — source → native compiler → executable (`moon.mount_mom` still works as backward compat alias) |
-| `lua/moonlift/mom/` | MOM compiler modules (runtime, parser, back, vec, driver, schema) |

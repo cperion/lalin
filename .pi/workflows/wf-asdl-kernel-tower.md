@@ -379,3 +379,52 @@ emit_alias_facts(cmds, aliases or {}, alias_state)
 - Exact semantics and enforcement point of contracts such as noalias/readonly/writeonly.
 - Whether multi-module compilation can place multiple `CodeModule`s or fact sets in one backend program.
 - Which benchmarks are intended to prove the libtcc/default-C improvement path.
+
+## Worker Output — 2026-06-15 14:02:03
+
+## Completed
+Implemented ready foundational tasks for `wf-asdl-kernel-tower`:
+
+- T002 schema constructor coverage
+- T003 code-level contract fact extraction
+- T004 `MoonCode -> MoonFlow` facts
+- T005 `MoonCode -> MoonMem` facts
+- T006 `MoonCode/Flow/Mem/Contracts -> MoonKernel` planning
+- T008 Kernel tower validation
+
+Blocked as unsafe for this session:
+- T007 vector migration onto Kernel tower
+- T009 Kernel projection to C/Back
+
+No ready tasks remain.
+
+## Files Changed
+- `tests/test_schema_core.lua` - Flow/Mem/Kernel constructor tests
+- `lua/moonlift/tree_to_code.lua` - emits `CodeContractFactSet`
+- `tests/test_tree_to_code.lua` - contract lowering tests
+- `lua/moonlift/code_flow_facts.lua` - new Flow fact extraction phase
+- `tests/test_code_flow_facts.lua` - Flow fact tests
+- `lua/moonlift/code_mem_facts.lua` - new Mem fact extraction phase
+- `tests/test_code_mem_facts.lua` - Mem fact tests
+- `lua/moonlift/code_kernel_plan.lua` - new Kernel planning phase
+- `tests/test_code_kernel_plan.lua` - Kernel planning tests
+- `lua/moonlift/kernel_validate.lua` - new tower validator
+- `tests/test_kernel_validate.lua` - validation tests
+
+## Verification
+Ran:
+
+```sh
+luajit tests/test_schema_core.lua
+luajit tests/test_tree_to_code.lua
+luajit tests/test_code_flow_facts.lua
+luajit tests/test_code_mem_facts.lua
+luajit tests/test_code_kernel_plan.lua
+luajit tests/test_kernel_validate.lua
+```
+
+All passed.
+
+## Notes
+- T007/T009 were blocked rather than partially implemented because they require broader vector/projection design decisions.
+- `git status` shows unrelated existing `museum/gps.lua` submodule/modification; I did not touch it.

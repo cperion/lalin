@@ -32,11 +32,14 @@ local scalar_names = {
 
 local keyword_set = {
     ["func"] = true, ["region"] = true, ["expr"] = true, ["struct"] = true, ["union"] = true,
+    ["handle"] = true,
     ["entry"] = true, ["block"] = true, ["if"] = true, ["then"] = true, ["elseif"] = true,
     ["else"] = true, ["switch"] = true, ["case"] = true, ["default"] = true, ["do"] = true,
     ["end"] = true, ["return"] = true, ["yield"] = true, ["jump"] = true, ["emit"] = true,
     ["let"] = true, ["var"] = true, ["requires"] = true, ["noalias"] = true, ["readonly"] = true,
-    ["writeonly"] = true, ["as"] = true, ["select"] = true, ["true"] = true, ["false"] = true,
+    ["writeonly"] = true, ["noescape"] = true, ["invalidate"] = true, ["preserve"] = true,
+    ["lease"] = true, ["invalid"] = true,
+    ["as"] = true, ["select"] = true, ["true"] = true, ["false"] = true,
     ["nil"] = true, ["and"] = true, ["or"] = true, ["not"] = true,
     ["assert"] = true, ["len"] = true, ["view"] = true,
     ["bounds"] = true, ["window_bounds"] = true, ["disjoint"] = true, ["same_len"] = true,
@@ -44,6 +47,7 @@ local keyword_set = {
 
 local function island_kind(Mlua, kind)
     if kind == "struct" then return Mlua.IslandStruct end
+    if kind == "handle" then return Mlua.IslandType end
     if kind == "func" then return Mlua.IslandFunc end
     if kind == "region" then return Mlua.IslandRegion end
     if kind == "expr" then return Mlua.IslandExpr end
@@ -206,7 +210,7 @@ function M.Define(T)
                         add_anchor(anchors, index, tid("kw", i), S.AnchorKeyword, text, start, stop)
                         if text == "emit" then add_emit_use_anchor(i, start) end
                     end
-                    if text == "struct" then after_struct = true
+                    if text == "struct" or text == "handle" then after_struct = true
                     elseif text == "func" then after_func = true
                     elseif text == "region" then after_region = true
                     elseif text == "expr" then after_expr = true
@@ -347,7 +351,7 @@ function M.Define(T)
                 local tree_fields = {}
                 for fi = 1, #sd.fields do tree_fields[fi] = Ty.FieldDecl(sd.fields[fi].name, sd.fields[fi].expose_ty) end
                 items[#items + 1] = Tr.ItemType(Tr.TypeDeclStruct(sd.name, tree_fields))
-            elseif island.kind == "union" then
+            elseif island.kind == "union" or island.kind == "handle" then
                 if parsed.value and parsed.value.decl then items[#items + 1] = Tr.ItemType(parsed.value.decl) end
             elseif island.kind == "func" then
                 if parsed.value then items[#items + 1] = Tr.ItemFunc(parsed.value) end
@@ -428,7 +432,7 @@ function M.Define(T)
         if session then session:set_issue_collector(nil) end
         require("moonlift.host_splice").set_collector(nil)
 
-        local analysis = Mlua.DocumentAnalysis(parse, host, open_report, type_issues, control_facts, {}, {}, back_report, anchors)
+        local analysis = Mlua.DocumentAnalysis(parse, host, open_report, type_issues, control_facts, back_report, anchors)
         resolved_by_analysis[analysis] = filtered
         return analysis
     end

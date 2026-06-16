@@ -8,7 +8,6 @@ local T = pvm.context()
 Schema.Define(T)
 
 local B = T.MoonBack
-local V = T.MoonVec
 local H = T.MoonHost
 local api = Target.Define(T)
 
@@ -21,10 +20,5 @@ local host = api.host_target(model)
 assert(pvm.classof(host) == H.HostTargetModel)
 assert(host.pointer_bits == 64)
 assert(host.index_bits == 64)
-
-local vec = api.vec_target(model)
-assert(pvm.classof(vec) == V.VecTargetModel)
-assert(vec.target == V.VecTargetCraneliftJit)
-assert(#vec.facts > 0)
 
 io.write("moonlift schema_back_target_model ok\n")

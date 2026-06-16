@@ -65,7 +65,6 @@ module MoonEditor {
          | DiagFromOpen(MoonOpen.ValidationIssue issue) unique
          | DiagFromType(MoonTree.TypeIssue issue) unique
          | DiagFromBack(MoonBack.BackValidationIssue issue) unique
-         | DiagFromVectorReject(MoonVec.VecReject reject) unique
          | DiagFromBindingResolution(MoonEditor.BindingResolution resolution) unique
          | DiagFromSource(MoonSource.SourceApplyIssue issue) unique
          | DiagFromTransport(string code, string message) unique

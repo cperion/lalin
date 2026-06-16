@@ -856,7 +856,9 @@ moonlift/
 │   ├── open_expand.lua         Slot expansion (fill + resolve)
 │   ├── pvm.lua                 PVM: ASDL context, phases, triplets
 │   ├── tree_typecheck.lua      Typecheck/name resolution
-│   ├── tree_to_back.lua        Tree → flat backend commands
+│   ├── tree_to_code.lua        Tree → normalized MoonCode
+│   ├── code_to_back.lua        MoonCode → flat backend commands
+│   ├── lower_to_back.lua       Kernel/Code lowering → backend commands
 │   ├── back_jit.lua            Lua→Rust JIT FFI bridge (Flatline wire format)
 │   ├── back_command_binary.lua Flatline v4 binary wire format encoder
 │   ├── back_object.lua         Object file emission
@@ -935,12 +937,13 @@ luajit tests/test_back_shared_emit.lua
 luajit tests/test_link_plan.lua
 ```
 
-### Vectorization
+### Kernel lowering
 
 ```bash
-luajit tests/test_vec_loop_facts_decide.lua
-luajit tests/test_vec_kernel_plan.lua
-luajit tests/test_vec_to_back.lua
+luajit tests/test_code_flow_facts.lua
+luajit tests/test_code_mem_facts.lua
+luajit tests/test_code_kernel_plan.lua
+luajit tests/test_code_lower_plan.lua
 ```
 
 ### Metaprogramming and splice tests

@@ -143,6 +143,15 @@ function M.Define(T)
             local index = raw_layout(index_layout(target))
             return pvm.once(product_layout({ ptr, index, index }))
         end,
+        [Ty.TypeClassLease] = function(self, ty, env, target)
+            return type_layout_result(self.base, env, target)
+        end,
+        [Ty.TypeClassHandle] = function(self, ty, env, target)
+            if pvm.classof(self.repr) == Ty.HandleReprScalar then
+                return scalar_layout(self.repr.scalar, target)
+            end
+            return pvm.once(Ty.TypeMemLayoutUnknown(ty, self))
+        end,
         [Ty.TypeClassClosure] = function(self, ty, env, target)
             local ptr = raw_layout(ptr_layout(target))
             return pvm.once(product_layout({ ptr, ptr }))

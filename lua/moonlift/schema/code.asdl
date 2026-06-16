@@ -44,6 +44,7 @@ module MoonCode {
          | CodeTyArray(MoonCode.CodeType elem, number count) unique
          | CodeTySlice(MoonCode.CodeType elem) unique
          | CodeTyView(MoonCode.CodeType elem) unique
+         | CodeTyHandle(MoonCode.CodeType repr, MoonType.Type source_ty) unique
          | CodeTyClosure(MoonCode.CodeSigId sig) unique
          | CodeTyImportedC(MoonC.CTypeId id) unique
          | CodeTyImportedCFuncPtr(MoonC.CFuncSigId sig) unique

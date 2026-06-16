@@ -39,6 +39,20 @@ module MoonFlow {
 
     FlowCountedDomain = (MoonCode.CodeValueId start, MoonCode.CodeValueId stop, MoonCode.CodeValueId step, boolean stop_exclusive) unique
 
+    FlowLoopDirection = FlowLoopIncreasing
+         | FlowLoopDecreasing
+         | FlowLoopDirectionUnknown
+
+    FlowTripCount = FlowTripCountUnknown(string reason) unique
+         | FlowTripCountExact(MoonFlow.FlowBound count, string reason) unique
+         | FlowTripCountNonNegative(MoonFlow.FlowBound count, string reason) unique
+
+    FlowInductionRangeFact = (MoonFlow.FlowLoopId loop, MoonCode.CodeValueId value, MoonFlow.FlowBound min, MoonFlow.FlowBound max, boolean max_exclusive, string reason) unique
+
+    FlowLoopSemanticFact = FlowLoopNormalizedCounted(MoonFlow.FlowLoopId loop, MoonFlow.FlowCountedDomain domain, MoonFlow.FlowLoopDirection direction, MoonFlow.FlowTripCount trip_count) unique
+         | FlowLoopInductionRange(MoonFlow.FlowInductionRangeFact range) unique
+         | FlowLoopInductionNoWrap(MoonFlow.FlowLoopId loop, MoonCode.CodeValueId value, string reason) unique
+
     FlowDomain = FlowDomainUnknown
          | FlowDomainCounted(MoonFlow.FlowCountedDomain counted) unique
          | FlowDomainRejected(MoonFlow.FlowReject reject) unique
@@ -57,6 +71,8 @@ module MoonFlow {
     FlowNestedLoop = (MoonFlow.FlowLoopFacts facts) unique
 
     FlowLoopFacts = (MoonFlow.FlowLoopId id, MoonFlow.FlowLoopSource source, MoonFlow.FlowDomain domain, MoonCode.CodeBlockId* body_blocks, MoonFlow.FlowInduction* inductions, MoonFlow.FlowLoopExit* exits, MoonFlow.FlowNestedLoop* nested, MoonFlow.FlowReject* rejects) unique
+
+    FlowSemanticFactSet = (MoonCode.CodeModuleId module, MoonFlow.FlowLoopSemanticFact* facts) unique
 
     FlowFactSet = (MoonCode.CodeModuleId module, MoonFlow.FlowEdge* edges, MoonFlow.FlowLoopFacts* loops, MoonFlow.FlowValueRange* ranges, MoonFlow.FlowReject* rejects) unique
 }

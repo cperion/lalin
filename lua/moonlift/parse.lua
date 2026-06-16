@@ -44,12 +44,16 @@ local TK = {
     or_kw      = 144, not_kw     = 145,
     view_kw    = 150, noalias_kw = 151, readonly_kw= 152, writeonly_kw=153,
     requires_kw= 154, bounds_kw  = 155, disjoint_kw= 156, len_kw     = 157,
-    same_len_kw= 158, window_bounds_kw = 159,
+    same_len_kw= 158, window_bounds_kw = 159, noescape_kw = 169,
+    invalidate_kw = 168, preserve_kw = 171,
     sizeof_kw  = 160,
     alignof_kw = 161,
     null_kw    = 162,
     is_null_kw = 163,
     trap_kw    = 164,
+    lease_kw   = 165,
+    handle_kw  = 166,
+    invalid_kw = 167,
     as_kw      = 170,
     struct_kw  = 180,
     union_kw   = 181,
@@ -75,6 +79,8 @@ local keywords = {
     ["or"]       = TK.or_kw,       ["not"]      = TK.not_kw,
     ["view"]     = TK.view_kw,     ["noalias"]  = TK.noalias_kw,
     ["readonly"] = TK.readonly_kw, ["writeonly"]= TK.writeonly_kw,
+    ["noescape"] = TK.noescape_kw, ["invalidate"] = TK.invalidate_kw,
+    ["preserve"] = TK.preserve_kw,
     ["requires"] = TK.requires_kw, ["bounds"]   = TK.bounds_kw,
     ["disjoint"] = TK.disjoint_kw, ["len"]      = TK.len_kw,
     ["same_len"] = TK.same_len_kw, ["window_bounds"] = TK.window_bounds_kw,
@@ -83,6 +89,9 @@ local keywords = {
     ["null"]       = TK.null_kw,
     ["is_null"]    = TK.is_null_kw,
     ["trap"]       = TK.trap_kw,
+    ["lease"]      = TK.lease_kw,
+    ["handle"]     = TK.handle_kw,
+    ["invalid"]    = TK.invalid_kw,
     ["as"]       = TK.as_kw,
     ["struct"]   = TK.struct_kw,
     ["union"]    = TK.union_kw,
@@ -566,8 +575,10 @@ local ident_kw = {
     [TK.noalias_kw]=true, [TK.readonly_kw]=true, [TK.writeonly_kw]=true,
     [TK.requires_kw]=true, [TK.bounds_kw]=true, [TK.disjoint_kw]=true,
     [TK.len_kw]=true, [TK.same_len_kw]=true, [TK.window_bounds_kw]=true, [TK.as_kw]=true,
+    [TK.noescape_kw]=true, [TK.invalidate_kw]=true, [TK.preserve_kw]=true,
     [TK.sizeof_kw]=true, [TK.alignof_kw]=true, [TK.null_kw]=true,
-    [TK.is_null_kw]=true, [TK.trap_kw]=true,
+    [TK.is_null_kw]=true, [TK.trap_kw]=true, [TK.lease_kw]=true,
+    [TK.handle_kw]=true, [TK.invalid_kw]=true,
     [TK.struct_kw]=true,
     [TK.union_kw]=true,
     [TK.extern_kw]=true,
@@ -735,6 +746,21 @@ function Parser:parse_callable_type()
     return params, result
 end
 
+function Parser:parse_handle_repr()
+    local C, Ty = self.C, self.Ty
+    local name = self:expect_name("expected handle representation scalar")
+    local m = {
+        i8=C.ScalarI8, i16=C.ScalarI16, i32=C.ScalarI32, i64=C.ScalarI64,
+        u8=C.ScalarU8, u16=C.ScalarU16, u32=C.ScalarU32, u64=C.ScalarU64,
+        index=C.ScalarIndex,
+    }
+    if not m[name] then
+        self:issue("handle representation must be an integer scalar")
+        return Ty.HandleReprScalar(C.ScalarU32)
+    end
+    return Ty.HandleReprScalar(m[name])
+end
+
 function Parser:parse_type()
     local O, Ty, C = self.O, self.Ty, self.C
 
@@ -759,6 +785,31 @@ function Parser:parse_type()
     if self:accept(TK.view_kw) then
         self:expect(TK.lparen); self:skip_nl(); local elem = self:parse_type(); self:skip_nl(); self:expect(TK.rparen)
         return Ty.TView(elem)
+    end
+
+    if self:accept(TK.lease_kw) then
+        self:skip_nl()
+        local origin = Ty.LeaseOriginUnknown
+        if self:accept(TK.lparen) then
+            self:skip_nl()
+            origin = Ty.LeaseOriginParam(self:expect_name("expected lease origin parameter name"))
+            self:skip_nl(); self:expect(TK.rparen, "expected ')' after lease origin")
+            self:skip_nl()
+        end
+        return Ty.TLease(self:parse_type(), origin)
+    end
+
+    if self:accept(TK.handle_kw) then
+        self:expect(TK.lparen); self:skip_nl()
+        local ref_name = self:expect_name("expected handle type name")
+        local parts = { ref_name }
+        while self:accept(TK.dot) do parts[#parts + 1] = self:expect_name("expected handle type path segment") end
+        self:skip_nl(); self:expect(TK.comma, "expected ',' before handle representation")
+        self:skip_nl(); local repr = self:parse_handle_repr()
+        self:skip_nl(); self:expect(TK.rparen)
+        local path_parts = {}
+        for i = 1, #parts do path_parts[i] = C.Name(parts[i]) end
+        return Ty.THandle(Ty.TypeRefPath(C.Path(path_parts)), repr)
     end
 
     if self:accept(TK.func_kw) then
@@ -992,7 +1043,9 @@ function Parser:led(k, left)
         self:expect(TK.rparen)
         if pvm.classof(left) == Tr.ExprDot and pvm.classof(left.base) == Tr.ExprRef
            and pvm.classof(left.base.ref) == B.ValueRefName then
-            return Tr.ExprCtor(Tr.ExprSurface, left.base.ref.name, left.name, args)
+            if left.name ~= "from_repr" then
+                return Tr.ExprCtor(Tr.ExprSurface, left.base.ref.name, left.name, args)
+            end
         end
         -- select(cond, a, b) special form
         if pvm.classof(left) == Tr.ExprRef and pvm.classof(left.ref) == B.ValueRefName
@@ -1048,7 +1101,7 @@ function Parser:led(k, left)
     end
 
     if k == TK.dot then
-        local field = self:expect_name("expected field name")
+        local field = self:expect_field_name("expected field name")
         return Tr.ExprDot(Tr.ExprSurface, left, field)
     end
 
@@ -1617,7 +1670,7 @@ function Parser:parse_param_list()
             params[#params + 1] = Ty.Param(spread_sentinel("param_list", slot), Ty.TScalar(self.C.ScalarVoid))
         else
             local mods = {}
-            while self:kind() == TK.noalias_kw or self:kind() == TK.readonly_kw or self:kind() == TK.writeonly_kw do
+            while self:kind() == TK.noalias_kw or self:kind() == TK.readonly_kw or self:kind() == TK.writeonly_kw or self:kind() == TK.noescape_kw or self:kind() == TK.invalidate_kw or self:kind() == TK.preserve_kw do
                 mods[#mods + 1] = self:kind(); self.i = self.i + 1
             end
             local name = self:expect_name("expected parameter name")
@@ -1625,13 +1678,19 @@ function Parser:parse_param_list()
                 -- Product type in product-list position: expand its fields as params.
             else
                 self:expect(TK.colon, "expected ':' in parameter")
-                params[#params + 1] = Ty.Param(name, self:parse_type())
+                local ty = self:parse_type()
+                for i = 1, #mods do
+                    if mods[i] == TK.noescape_kw then ty = Ty.TLease(ty, Ty.LeaseOriginUnknown) end
+                end
+                params[#params + 1] = Ty.Param(name, ty)
                 -- Convert modifiers to contracts
                 local ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(name))
                 for i = 1, #mods do
                     if mods[i] == TK.noalias_kw then contracts[#contracts + 1] = Tr.ContractNoAlias(ref)
                     elseif mods[i] == TK.readonly_kw then contracts[#contracts + 1] = Tr.ContractReadonly(ref)
-                    elseif mods[i] == TK.writeonly_kw then contracts[#contracts + 1] = Tr.ContractWriteonly(ref) end
+                    elseif mods[i] == TK.writeonly_kw then contracts[#contracts + 1] = Tr.ContractWriteonly(ref)
+                    elseif mods[i] == TK.invalidate_kw then contracts[#contracts + 1] = Tr.ContractInvalidate(ref)
+                    elseif mods[i] == TK.preserve_kw then contracts[#contracts + 1] = Tr.ContractPreserve(ref) end
                 end
             end
         end
@@ -1970,7 +2029,7 @@ function Parser:parse_expr_frag()
 end
 
 -- Type declaration islands: `struct Name ... end`, `struct ... end`,
--- `union Name ... end`, `union ... end`.
+-- `union Name ... end`, `union ... end`, `handle Name : repr [invalid n] end`.
 -- Name is optional when inferred from a Lua assignment.
 function Parser:parse_struct_island()
     local Tr, Ty = self.Tr, self.Ty
@@ -2092,6 +2151,37 @@ function Parser:parse_union_island()
     }
 end
 
+function Parser:parse_handle_island()
+    local Tr, Ty = self.Tr, self.Ty
+    local name
+    if self.name_hint and (self:kind() == TK.colon or self:kind() == TK.invalid_kw or self:kind() == TK.end_kw) then
+        name = self.name_hint
+    else
+        name = self:expect_name("expected handle name")
+    end
+    self:expect_result_marker("expected ':' before handle representation")
+    self:skip_nl()
+    local repr = self:parse_handle_repr()
+    local invalid = Ty.HandleInvalidNone
+    self:skip_nl()
+    if self:accept(TK.invalid_kw) then
+        self:skip_nl()
+        if self:kind() == TK.int then
+            invalid = Ty.HandleInvalidInt(self:text())
+            self.i = self.i + 1
+        else
+            self:issue("expected integer invalid handle value")
+        end
+    end
+    self:skip_nl()
+    self:expect(TK.end_kw, "expected end after handle")
+    return {
+        name = name,
+        decl = Tr.TypeDeclHandle(name, repr, invalid),
+        protocol_variants = nil,
+    }
+end
+
 local function parse_result(kind, value, p)
     return {
         kind = kind,
@@ -2171,12 +2261,13 @@ local function tokenize_island(src, island_kind, start_byte, toks)
     -- Remove it from end_open entirely so it doesn't count as an opener.
     local start_kw = ({ ["func"]=TK.func_kw, ["region"]=TK.region_kw, ["expr"]=TK.expr_kw,
                           ["struct"]=TK.struct_kw, ["union"]=TK.union_kw,
+                          ["handle"]=TK.handle_kw,
                           ["extern"]=TK.extern_kw })[island_kind]
     if start_kw then end_open[start_kw] = nil end
     -- struct/union/extern islands only terminate at their own `end`.
     -- Field/variant/parameter names may reuse control keywords such as
     -- `block`/`yield`, so don't treat nested control keywords as island nesting.
-    if island_kind == "struct" or island_kind == "union" or island_kind == "extern" then end_open = {} end
+    if island_kind == "struct" or island_kind == "union" or island_kind == "handle" or island_kind == "extern" then end_open = {} end
     local depth = 1
 
     while i <= n and depth > 0 do
@@ -2355,7 +2446,7 @@ function M.scan_document(src)
 
     local island_kind_map = {
         ["func"] = "func", ["region"] = "region", ["expr"] = "expr",
-        ["struct"] = "struct", ["union"] = "union", ["extern"] = "extern",
+        ["struct"] = "struct", ["union"] = "union", ["handle"] = "handle", ["extern"] = "extern",
     }
 
     while i <= n do
@@ -2470,6 +2561,9 @@ function M.parse_island(T, scan, island_index, opts)
     elseif island.kind == "union" then
         p:expect(TK.union_kw)
         value = p:parse_union_island()
+    elseif island.kind == "handle" then
+        p:expect(TK.handle_kw)
+        value = p:parse_handle_island()
     elseif island.kind == "extern" then
         p:expect(TK.extern_kw)
         value = p:parse_extern()
@@ -2581,6 +2675,18 @@ function M.parse_extern_string(T, src, opts)
              issues = p.issues, protocol_types = p.protocol_types }
 end
 
+function M.parse_handle_string(T, src, opts)
+    local toks = M.lex(src)
+    local p = new_parser_internal(T, toks, 1, toks.n, opts or {})
+    p:skip_sep()
+    p:accept(TK.handle_kw)  -- optional, may already be implied by moon.handle
+    local value = p:parse_handle_island()
+    p:skip_sep()
+    if p:kind() ~= TK.eof then p:issue("unexpected token after handle") end
+    return { kind = "handle", value = value, splice_slots = p.splice_slots,
+             issues = p.issues, protocol_types = p.protocol_types }
+end
+
 function M.parse_expr_frag_string(T, src, opts)
     local toks = M.lex(src)
     local p = new_parser_internal(T, toks, 1, toks.n, opts or {})
@@ -2621,7 +2727,7 @@ function M.parse_module_document(T, src, opts)
                 func = Tr.FuncExportContract(func.name, func.params, func.result, func.contracts, func.body)
             end
             items[#items + 1] = Tr.ItemFunc(func)
-        elseif parsed.kind == "struct" or parsed.kind == "union" then
+        elseif parsed.kind == "struct" or parsed.kind == "union" or parsed.kind == "handle" then
             items[#items + 1] = Tr.ItemType(parsed.value.decl)
         elseif parsed.kind == "extern" then
             items[#items + 1] = Tr.ItemExtern(parsed.value)
@@ -2652,6 +2758,7 @@ function M.Define(T)
         parse_struct = function(src, opts) return M.parse_struct_string(T, src, opts) end,
         parse_union = function(src, opts) return M.parse_union_string(T, src, opts) end,
         parse_extern = function(src, opts) return M.parse_extern_string(T, src, opts) end,
+        parse_handle = function(src, opts) return M.parse_handle_string(T, src, opts) end,
         parse_expr_frag = function(src, opts) return M.parse_expr_frag_string(T, src, opts) end,
         parse_module = function(src, opts) return M.parse_module_document(T, src, opts) end,
     }

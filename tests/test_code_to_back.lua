@@ -145,6 +145,4 @@ assert(public_direct(41) == 42)
 assert(public_indirect(41) == 42)
 public_artifact:free()
 
-assert(package.loaded["moonlift.tree_to_back"] == nil)
-
 print("moonlift code_to_back ok")

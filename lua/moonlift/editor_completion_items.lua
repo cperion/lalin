@@ -14,7 +14,17 @@ end
 function M.Define(T)
     local E = T.MoonEditor
     local H = T.MoonHost
+    local Tr = T.MoonTree
     local Context = CompletionContext.Define(T)
+
+    local function add_tree_types(items, analysis)
+        for i = 1, #(analysis.parse.combined.module.items or {}) do
+            local item = analysis.parse.combined.module.items[i]
+            if pvm.classof(item) == Tr.ItemType and item.t and item.t.name then
+                add(items, E, item.t.name, E.CompletionClass, "Moonlift type", "Known Moonlift type")
+            end
+        end
+    end
 
     local items_phase = pvm.phase("moonlift_editor_completion_items", {
         [E.CompletionQuery] = function(query, analysis)
@@ -22,6 +32,7 @@ function M.Define(T)
         local context = query.context
         if context == E.CompletionTopLevel then
             add(items, E, "struct", E.CompletionSnippet, "Moonlift host struct", "Declare a host-visible struct", "struct ${1:Name}\n    ${2:field}: ${3:i32}\nend")
+            add(items, E, "handle", E.CompletionSnippet, "Moonlift handle", "Declare an opaque durable identity handle", "handle ${1:Name} : ${2:u32} invalid ${3:0} end")
             add(items, E, "expose", E.CompletionSnippet, "Moonlift host exposure", "Expose a type/view/ptr with default host facets", "expose ${1:Name}: view(${2:Type})")
             add(items, E, "func", E.CompletionSnippet, "Moonlift function", "Declare a Moonlift function", "func ${1:name}(${2}): ${3:i32}\n    ${4:return 0}\nend")
             add(items, E, "region", E.CompletionSnippet, "Moonlift region fragment", "Declare a region fragment", "region ${1:Name}(${2})\nentry start()\nend\nend")
@@ -32,12 +43,19 @@ function M.Define(T)
             end
             add(items, E, "ptr", E.CompletionSnippet, "pointer type", "Pointer type", "ptr(${1:T})")
             add(items, E, "view", E.CompletionSnippet, "view type", "Moonlift zero-copy view type", "view(${1:T})")
+            add(items, E, "handle", E.CompletionSnippet, "explicit handle type", "Explicit handle type form for generated code", "handle(${1:Name}, ${2:u32})")
+            add(items, E, "lease", E.CompletionSnippet, "lease access type", "Temporary no-escape access from a store", "lease(${1:store}) ptr(${2:T})")
+            add(items, E, "noescape", E.CompletionKeyword, "noescape parameter", "Parameter modifier for non-retained pointer/view access")
+            add(items, E, "readonly", E.CompletionKeyword, "readonly store parameter", "Reads and preserves live leases")
+            add(items, E, "preserve", E.CompletionKeyword, "preserve store parameter", "May write but keeps live leases valid")
+            add(items, E, "invalidate", E.CompletionKeyword, "invalidating store parameter", "May move/free/reuse storage and conflicts with live leases")
             for i = 1, #analysis.parse.combined.decls.decls do
                 local d = analysis.parse.combined.decls.decls[i]
                 if pvm.classof(d) == H.HostDeclStruct then
                     add(items, E, d.decl.name, E.CompletionStruct, "host struct", "Known host struct")
                 end
             end
+            add_tree_types(items, analysis)
         elseif context == E.CompletionExposeSubject then
             add(items, E, "view", E.CompletionSnippet, "view exposure", "Expose a zero-copy view", "view(${1:T})")
             add(items, E, "ptr", E.CompletionSnippet, "pointer exposure", "Expose a pointer", "ptr(${1:T})")
@@ -47,6 +65,7 @@ function M.Define(T)
                     add(items, E, d.decl.name, E.CompletionStruct, "host struct", "Expose this host struct")
                 end
             end
+            add_tree_types(items, analysis)
         elseif context == E.CompletionExposeTarget then
             add(items, E, "lua", E.CompletionKeyword, "Lua exposure target", "Generate Lua FFI access")
             add(items, E, "terra", E.CompletionKeyword, "Terra exposure target", "Generate Terra access")

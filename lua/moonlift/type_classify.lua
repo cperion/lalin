@@ -59,6 +59,12 @@ function M.Define(T)
         [Ty.TView] = function(self)
             return pvm.once(Ty.TypeClassView(self.elem))
         end,
+        [Ty.TLease] = function(self)
+            return pvm.once(Ty.TypeClassLease(self.base, self.origin))
+        end,
+        [Ty.THandle] = function(self)
+            return pvm.once(Ty.TypeClassHandle(self.repr))
+        end,
         [Ty.TFunc] = function(self)
             return pvm.once(Ty.TypeClassCallable(self.params, self.result))
         end,
@@ -69,6 +75,12 @@ function M.Define(T)
             return classify_type_ref(self.ref)
         end,
         [Ty.TSlot] = function()
+            return pvm.once(Ty.TypeClassUnknown)
+        end,
+        [Ty.TCType] = function()
+            return pvm.once(Ty.TypeClassUnknown)
+        end,
+        [Ty.TCFuncPtr] = function()
             return pvm.once(Ty.TypeClassUnknown)
         end,
     })

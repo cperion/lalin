@@ -1,5 +1,6 @@
 local pvm = require("moonlift.pvm")
 local SubjectAt = require("moonlift.editor_subject_at")
+local Format = require("moonlift.error.format")
 
 local M = {}
 
@@ -53,6 +54,13 @@ function M.Define(T)
         local cls = pvm.classof(subject)
         if cls == E.SubjectScalar then
             return E.HoverInfo(E.MarkupMarkdown, "`" .. scalar_name(C, subject.scalar) .. "` scalar", range)
+        elseif cls == E.SubjectType then
+            local ty = subject.ty
+            local detail = "Moonlift type `" .. Format.type_name(ty) .. "`"
+            if pvm.classof(ty) == T.MoonType.THandle then
+                detail = "handle `" .. Format.type_name(ty) .. "`\n\nopaque durable identity; resolve through a store region to obtain a lease"
+            end
+            return E.HoverInfo(E.MarkupMarkdown, detail, range)
         elseif cls == E.SubjectHostStruct then
             local decl = subject.decl
             local layout = find_layout(H, analysis, decl.name)

@@ -5,17 +5,11 @@ local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.asdl")
 local Pipeline = require("moonlift.frontend_pipeline")
 local J = require("moonlift.back_jit")
-local VecFacts = require("moonlift.vec_loop_facts")
-local VecDecide = require("moonlift.vec_loop_decide")
-
 local T = pvm.context()
 A2.Define(T)
 local P = Pipeline.Define(T)
 local jit_api = J.Define(T)
-local VF = VecFacts.Define(T)
-local VD = VecDecide.Define(T)
 local B2 = T.MoonBack
-local Vec = T.MoonVec
 
 local src = [[
 func tri(n: i32): i32
@@ -76,28 +70,6 @@ local result = P.parse_and_lower(src, { site = "test_parse_playground" })
 local program = result.program
 assert(#result.back_report.issues == 0)
 print("lowered backend commands", #program.cmds)
-
-local target = Vec.VecTargetModel(Vec.VecTargetCraneliftJit, {
-    Vec.VecTargetVectorBits(128),
-    Vec.VecTargetSupportsShape(Vec.VecVectorShape(Vec.VecElemI32, 4)),
-})
-
-local checked = result.checked
-local tri_region = checked.module.items[1].func.body[1].region
-local tri_facts = VF.facts(tri_region)
-local tri_decision = VD.decide(tri_facts, target)
-print("tri vec domain", pvm.classof(tri_facts.domain) == Vec.VecDomainCounted and "counted" or "rejected")
-print("tri reductions", #tri_facts.reductions)
-print("tri decision", pvm.classof(tri_decision.chosen) == Vec.VecLoopVector and "vector" or "scalar")
-
-local fact_region = checked.module.items[2].func.body[1].value.region
-local fact_facts = VF.facts(fact_region)
-print("fact vec domain", pvm.classof(fact_facts.domain) == Vec.VecDomainCounted and "counted" or "rejected")
-print("fact reductions", #fact_facts.reductions)
-
-local first_region = checked.module.items[4].func.body[1].value.region
-local first_facts = VF.facts(first_region)
-print("multi-block source", pvm.classof(first_facts.source) == Vec.VecLoopSourceRejected and "not a vector loop yet" or "recognized")
 
 local artifact = jit_api.jit():compile(program)
 local tri = ffi.cast("int32_t (*)(int32_t)", artifact:getpointer(B2.BackFuncId("tri")))

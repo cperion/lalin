@@ -45,7 +45,7 @@ local function module_pipeline(module)
     local code_module = TreeToCode.module(resolved)
     local code_report = CodeValidate.validate(code_module)
     assert_no_issues("code_validate", code_report.issues)
-    return code_module
+    return code_module, resolved
 end
 
 local function scalar_pipeline(src)
@@ -95,6 +95,48 @@ assert(seen[Code.CodeInstCompare], "expected compare instruction")
 assert(seen[Code.CodeInstSelect], "expected select instruction")
 assert(seen[Code.CodeInstCast], "expected machine cast instruction")
 assert(seen[Code.CodeInstAlias], "expected let alias instruction")
+
+local contract_module, contract_tree = scalar_pipeline([[
+func add_noalias_i32(noalias dst: ptr(i32), readonly a: ptr(i32), readonly b: ptr(i32), n: i32): i32
+    requires bounds(dst, n)
+    requires bounds(a, n)
+    requires bounds(b, n)
+    requires disjoint(dst, a)
+    requires disjoint(dst, b)
+    return 0
+end
+]])
+local contract_set = TreeToCode.contracts(contract_tree)
+assert(contract_set.module == contract_module.id, "contract fact set should be keyed to the lowered CodeModule id")
+assert(#contract_set.facts == 8, "expected explicit and parameter-modifier contracts to lower to CodeContractFactSet")
+local contract_counts = { bounds = 0, disjoint = 0, noalias = 0, readonly = 0, rejected = 0 }
+local contract_func = contract_module.funcs[1]
+local params_by_name = {}
+for _, param in ipairs(contract_func.params) do params_by_name[param.name] = param.value end
+for _, fact in ipairs(contract_set.facts) do
+    assert(fact.func == contract_func.id, "contract fact should be keyed by CodeFuncId")
+    local cls = pvm.classof(fact.fact)
+    if cls == Code.CodeContractBounds then
+        contract_counts.bounds = contract_counts.bounds + 1
+        assert(fact.fact.base == params_by_name.dst or fact.fact.base == params_by_name.a or fact.fact.base == params_by_name.b)
+        assert(fact.fact.len == params_by_name.n)
+    elseif cls == Code.CodeContractDisjoint then
+        contract_counts.disjoint = contract_counts.disjoint + 1
+    elseif cls == Code.CodeContractNoAlias then
+        contract_counts.noalias = contract_counts.noalias + 1
+        assert(fact.fact.base == params_by_name.dst)
+    elseif cls == Code.CodeContractReadonly then
+        contract_counts.readonly = contract_counts.readonly + 1
+        assert(fact.fact.base == params_by_name.a or fact.fact.base == params_by_name.b)
+    elseif cls == Code.CodeContractRejected then
+        contract_counts.rejected = contract_counts.rejected + 1
+    end
+end
+assert(contract_counts.bounds == 3)
+assert(contract_counts.disjoint == 2)
+assert(contract_counts.noalias == 1)
+assert(contract_counts.readonly == 2)
+assert(contract_counts.rejected == 0)
 
 local function scan_place(place, out)
     local cls = pvm.classof(place)

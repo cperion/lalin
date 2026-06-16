@@ -8,11 +8,21 @@ module MoonType {
          | ArrayLenConst(number count) unique
          | ArrayLenSlot(MoonOpen.ExprSlot slot) unique
 
+    HandleRepr = HandleReprScalar(MoonCore.Scalar scalar) unique
+
+    HandleInvalid = HandleInvalidNone
+         | HandleInvalidInt(string raw) unique
+
+    LeaseOrigin = LeaseOriginUnknown
+         | LeaseOriginParam(string name) unique
+
     Type = TScalar(MoonCore.Scalar scalar) unique
          | TPtr(MoonType.Type elem) unique
          | TArray(MoonType.ArrayLen count, MoonType.Type elem) unique
          | TSlice(MoonType.Type elem) unique
          | TView(MoonType.Type elem) unique
+         | TLease(MoonType.Type base, MoonType.LeaseOrigin origin) unique
+         | THandle(MoonType.TypeRef ref, MoonType.HandleRepr repr) unique
          | TFunc(MoonType.Type* params, MoonType.Type result) unique
          | TClosure(MoonType.Type* params, MoonType.Type result) unique
          | TNamed(MoonType.TypeRef ref) unique
@@ -25,6 +35,8 @@ module MoonType {
          | TypeClassArray(MoonType.Type elem, number count) unique
          | TypeClassSlice(MoonType.Type elem) unique
          | TypeClassView(MoonType.Type elem) unique
+         | TypeClassLease(MoonType.Type base, MoonType.LeaseOrigin origin) unique
+         | TypeClassHandle(MoonType.HandleRepr repr) unique
          | TypeClassCallable(MoonType.Type* params, MoonType.Type result) unique
          | TypeClassClosure(MoonType.Type* params, MoonType.Type result) unique
          | TypeClassAggregate(string module_name, string type_name) unique
