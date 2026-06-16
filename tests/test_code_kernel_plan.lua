@@ -28,7 +28,7 @@ end
 local plan2=CodeKernelPlan.plan(code2,graph2,flow2,value2,mem2,effect2)
 local saw_func_no_plan=false
 for _,p in ipairs(plan2.plans) do if pvm.classof(p)==Kernel.KernelNoPlan and pvm.classof(p.subject)==Kernel.KernelSubjectFunction then saw_func_no_plan=true end end
-assert(saw_func_no_plan,'function replacement should be explicit no-plan in semantic Kernel v1')
+assert(saw_func_no_plan,'function replacement should be explicit no-plan in semantic Kernel planning')
 
 local raw_code,raw_graph,raw_flow,raw_value,raw_mem,raw_effect=lower([[
 func raw_sum(p: ptr(i32), n: i32): i32

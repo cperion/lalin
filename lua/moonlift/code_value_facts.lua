@@ -114,7 +114,7 @@ function M.Define(T)
                 elseif cls == Code.CodeInstSelect then
                     add_expr_fact(out_values, exprs, k.dst, Value.ValueExprSelect(expr_for(exprs, k.cond), expr_for(exprs, k.then_value), expr_for(exprs, k.else_value)), identity("Code select expression"))
                 elseif cls == Code.CodeInstCast then
-                    add_expr_fact(out_values, exprs, k.dst, expr_for(exprs, k.value), identity("Code cast value alias for algebra v1"))
+                    add_expr_fact(out_values, exprs, k.dst, expr_for(exprs, k.value), identity("Code cast value alias for algebra facts"))
                 end
             end
         end

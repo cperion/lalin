@@ -630,9 +630,9 @@ Decision: `LowerStrategyCode` still consumes facts. It is not "unoptimized".
 Back ASDL is executable backend input. It is not a place to park semantic facts
 that Rust cannot consume.
 
-### 13.1 Executable Back metadata v1
+### 13.1 Executable Back metadata
 
-The first backend-consumed metadata set is deliberately finite:
+The backend-consumed metadata set is deliberately finite:
 
 ```text
 memory:
@@ -655,7 +655,7 @@ If a semantic fact is not in this executable set, it must be consumed before
 Back. For example, alias/dependence facts may choose a schedule, permit motion,
 or reject a kernel; they do not become no-op Back commands.
 
-### 13.2 Alias facts are not executable Back v1
+### 13.2 Alias facts are not executable Back metadata
 
 Decision: until the Rust/Cranelift backend consumes Moonlift alias/noalias facts
 as real metadata, alias facts do not exist in Back at all. They remain in

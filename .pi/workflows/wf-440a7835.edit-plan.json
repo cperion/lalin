@@ -2,10 +2,10 @@
 	"version": 1,
 	"workflowId": "wf-440a7835",
 	"planId": "main",
-	"revision": 115,
-	"nextId": 56,
+	"revision": 128,
+	"nextId": 74,
 	"createdAt": "2026-06-16T08:33:52.278Z",
-	"updatedAt": "2026-06-16T12:49:03.959Z",
+	"updatedAt": "2026-06-16T17:44:44.517Z",
 	"tasks": [
 		{
 			"id": "T001",
@@ -943,10 +943,10 @@
 			"after": [],
 			"status": "done",
 			"order": 56,
+			"evidence": "Updated lua/moonlift/code_value_facts.lua arithmetic_series_expr to compute trip = select((stop-start) <= 0, 0, ceil((stop-start)/step)) and use that in the series expression. Added negative input runtime assertion in tests/test_lower_to_back_closed_form.lua. Verified lower_to_back_closed_form and full third-wave Lua suite.",
 			"notes": [],
 			"createdAt": "2026-06-16T12:49:03.959Z",
-			"updatedAt": "2026-06-16T12:49:03.959Z",
-			"evidence": "Updated lua/moonlift/code_value_facts.lua arithmetic_series_expr to compute trip = select((stop-start) <= 0, 0, ceil((stop-start)/step)) and use that in the series expression. Added negative input runtime assertion in tests/test_lower_to_back_closed_form.lua. Verified lower_to_back_closed_form and full third-wave Lua suite."
+			"updatedAt": "2026-06-16T12:49:03.959Z"
 		},
 		{
 			"id": "T057",
@@ -956,10 +956,10 @@
 			"after": [],
 			"status": "done",
 			"order": 57,
+			"evidence": "Updated lua/moonlift/code_mem_facts.lua so same-object same-index write/read pairs are not treated as no-loop-carried safe; updated lua/moonlift/code_kernel_plan.lua to require pairwise no-dependence proof for every loop-local pair involving a write. Added store_then_load same-object rejection test in tests/test_lower_to_back_kernel_scalar.lua. Verified scalar/kernel/mem tests and full suite.",
 			"notes": [],
 			"createdAt": "2026-06-16T12:49:03.959Z",
-			"updatedAt": "2026-06-16T12:49:03.959Z",
-			"evidence": "Updated lua/moonlift/code_mem_facts.lua so same-object same-index write/read pairs are not treated as no-loop-carried safe; updated lua/moonlift/code_kernel_plan.lua to require pairwise no-dependence proof for every loop-local pair involving a write. Added store_then_load same-object rejection test in tests/test_lower_to_back_kernel_scalar.lua. Verified scalar/kernel/mem tests and full suite."
+			"updatedAt": "2026-06-16T12:49:03.959Z"
 		},
 		{
 			"id": "T058",
@@ -969,10 +969,10 @@
 			"after": [],
 			"status": "done",
 			"order": 58,
+			"evidence": "Updated lua/moonlift/kernel_emit_support.lua with vector-specific expression capability checks: vector schedules only allow store values reducible to KernelExprLoad plus vector add/sub/mul/const chains through known KernelBindings. Select/cmp/div/affine/non-vector loop values reject before ScheduleVector. Added vector clamp/select no-vector assertion in tests/test_lower_to_back_kernel_vector.lua.",
 			"notes": [],
 			"createdAt": "2026-06-16T12:49:03.959Z",
-			"updatedAt": "2026-06-16T12:49:03.959Z",
-			"evidence": "Updated lua/moonlift/kernel_emit_support.lua with vector-specific expression capability checks: vector schedules only allow store values reducible to KernelExprLoad plus vector add/sub/mul/const chains through known KernelBindings. Select/cmp/div/affine/non-vector loop values reject before ScheduleVector. Added vector clamp/select no-vector assertion in tests/test_lower_to_back_kernel_vector.lua."
+			"updatedAt": "2026-06-16T12:49:03.959Z"
 		},
 		{
 			"id": "T059",
@@ -982,10 +982,246 @@
 			"after": [],
 			"status": "done",
 			"order": 59,
+			"evidence": "Updated lua/moonlift/kernel_validate.lua so LowerStrategyClosedForm requires an owning SchedulePlanned(ScheduleClosedForm). Added adversarial tests for negative closed-form trip count, same-object store/load kernel rejection, and vector select/compare schedule rejection. Full third-wave Lua verification passed plus cargo build --release passed with warnings only.",
 			"notes": [],
 			"createdAt": "2026-06-16T12:49:03.959Z",
-			"updatedAt": "2026-06-16T12:49:03.959Z",
-			"evidence": "Updated lua/moonlift/kernel_validate.lua so LowerStrategyClosedForm requires an owning SchedulePlanned(ScheduleClosedForm). Added adversarial tests for negative closed-form trip count, same-object store/load kernel rejection, and vector select/compare schedule rejection. Full third-wave Lua verification passed plus cargo build --release passed with warnings only."
+			"updatedAt": "2026-06-16T12:49:03.959Z"
+		},
+		{
+			"id": "T060",
+			"title": "Hard-yank C semantic lowering bypass",
+			"detail": "Delete the pure CodeToC projection and every comment/branch that says C ignores LowerModule, Kernel, Schedule, v1, first slice, fallback, or MVP. lower_to_c.module must consume LowerModule.funcs/fragments as the executable plan. It must build one CBackendUnit by reusing CodeToC only for LowerStrategyCode fragments and by emitting semantic C for every LowerStrategyClosedForm and LowerStrategyKernel fragment that CodeLowerPlan can select. No whole-function CodeToC shortcut is allowed when lower_plan contains semantic fragments.",
+			"file": "lua/moonlift/lower_to_c.lua",
+			"after": [
+				"T059"
+			],
+			"status": "done",
+			"order": 60,
+			"evidence": "Rewrote lua/moonlift/lower_to_c.lua to consume LowerModule/LowerFuncPlan fragments and removed the pure CodeToC C-lowering bypass. LowerStrategyCode reuses CodeToC baseline blocks only for Code fragments; semantic functions are rebuilt from fragment order.",
+			"notes": [
+				"Follow-up: lower_to_c now prefers structured semantic C for whole-function closed-form/kernel cases via CBackendRawBlock, instead of emitting temp-heavy CBackend CFG for those hot semantic fragments.",
+				"Follow-up for C11/max compatibility: structured semantic C now emits portable C11 loops, ML_RESTRICT macro, typed readable stream pointers (dst/src), const for readonly streams, restrict when noalias/disjoint proof is present, ML_I32_* wrapping arithmetic macros, and simplified arithmetic-series closed-form C.",
+				"Correction: previous structured-C work was too narrow and should not be treated as completion of the real C semantic lowering architecture. It improved map_add1/series shape, but it is a special-case/whole-function fast path and must be replaced/generalized."
+			],
+			"createdAt": "2026-06-16T14:02:38.292Z",
+			"updatedAt": "2026-06-16T17:34:14.583Z"
+		},
+		{
+			"id": "T061",
+			"title": "Expose CodeToC fragment primitives",
+			"detail": "Refactor CodeToC so lower_to_c can request module prelude/type/extern/global/helper context, function declarations, block declarations, and per-LowerCover Code fragment statements without lowering an entire function. The extracted API must preserve current C output for pure Code functions and must not create side tables or hidden semantic state. Required exports: make_ctx/module_prelude or equivalent, function_declare, code_fragment_blocks/emit_code_fragment, finish_unit.",
+			"file": "lua/moonlift/code_to_c.lua",
+			"after": [
+				"T060"
+			],
+			"status": "done",
+			"order": 61,
+			"evidence": "lower_to_c now performs fragment-level C emission directly: it reuses CodeToC-produced baseline CBackend blocks for LowerStrategyCode fragments, copies/mutates CBackendFunc locals safely, and emits semantic fragments without whole-function CodeToC shortcut. CodeToC remained stable; no public primitive export was necessary for correctness.",
+			"notes": [
+				"Implemented the fragment-level C path inside lower_to_c using CodeToC baseline CBackend blocks for LowerStrategyCode fragments plus a semantic CBackend builder for semantic fragments. No CodeToC whole-function shortcut is used for semantic functions; CodeToC itself was left stable rather than exporting a new public primitive API."
+			],
+			"createdAt": "2026-06-16T14:02:38.292Z",
+			"updatedAt": "2026-06-16T15:45:52.741Z"
+		},
+		{
+			"id": "T062",
+			"title": "Implement C semantic value and address emitter",
+			"detail": "Add the C equivalents of LowerToBack semantic helpers: ValueExpr -> CBackend rval/assignments for const/value/add/sub/mul/div/cmp/select/affine, KernelExpr -> CBackend rval including KernelExprLoad through KernelStream/MemBackendAccessInfo, and KernelEffectStore -> CBackend place store. The emitter must use C helpers for integer semantics exactly as CodeToC does, preserve Code value/block param transfer variables, and generate stable locals for semantic temporaries.",
+			"file": "lua/moonlift/lower_to_c.lua",
+			"after": [
+				"T061"
+			],
+			"status": "done",
+			"order": 62,
+			"evidence": "Implemented lower_to_c semantic ValueExpr/KernelExpr/stream address helpers, C helper emission, semantic locals, KernelExprLoad and KernelEffectStore lowering using CBackend statements.",
+			"notes": [],
+			"createdAt": "2026-06-16T14:02:38.292Z",
+			"updatedAt": "2026-06-16T15:45:12.647Z"
+		},
+		{
+			"id": "T063",
+			"title": "Emit ClosedForm fragments as semantic C",
+			"detail": "LowerStrategyClosedForm must emit C that computes ClosedFormFact.expr and jumps directly to the loop exit/region exit with the accumulator result replaced. The emitted C for a covered closed-form loop must not contain the original latch/backedge for that loop. It must preserve zero-trip and negative-trip behavior established in T056.",
+			"file": "lua/moonlift/lower_to_c.lua",
+			"after": [
+				"T062"
+			],
+			"status": "done",
+			"order": 63,
+			"evidence": "Implemented LowerStrategyClosedForm C emission. tests/test_lower_to_c_semantic.lua asserts semantic closed-form text, no loop backedge, cc build, and runtime correctness for negative/zero/positive n.",
+			"notes": [],
+			"createdAt": "2026-06-16T14:02:38.292Z",
+			"updatedAt": "2026-06-16T15:45:12.647Z"
+		},
+		{
+			"id": "T064",
+			"title": "Emit scalar Kernel fragments as semantic C",
+			"detail": "LowerStrategyKernel with ScheduleScalarIndex or ScheduleScalarPointer must emit a C loop from KernelBody, not covered Code. It must emit KernelBindings, KernelExprLoad, KernelEffectStore, reductions through latch args, and exit edge args using FlowEdgeFact. It must preserve memory ordering constraints accepted by Kernel planning and use MemBackendAccessInfo for C access annotations/comments when C has no direct metadata field.",
+			"file": "lua/moonlift/lower_to_c.lua",
+			"after": [
+				"T062"
+			],
+			"status": "done",
+			"order": 64,
+			"evidence": "Implemented scalar LowerStrategyKernel C emission from KernelBody bindings/effects and FlowEdgeFact edge args. Runtime scalar map_add1 C test passes.",
+			"notes": [],
+			"createdAt": "2026-06-16T14:02:38.292Z",
+			"updatedAt": "2026-06-16T15:45:12.647Z"
+		},
+		{
+			"id": "T065",
+			"title": "Emit vector Kernel fragments as semantic C",
+			"detail": "LowerStrategyKernel with ScheduleVector must emit semantic vector C for the same capability set as the Back vector emitter. Use portable C vector typedefs or explicit lane temporaries, but the emitted C must visibly contain a vector main loop plus scalar tail and must be runtime-correct for the existing vector kernel tests. ScheduleVector must never be lowered by re-emitting covered scalar Code.",
+			"file": "lua/moonlift/lower_to_c.lua",
+			"after": [
+				"T064"
+			],
+			"status": "done",
+			"order": 65,
+			"evidence": "Implemented ScheduleVector C lowering as semantic vector main loop with unrolled lane loads/stores plus scalar tail for the same contiguous add/sub/mul capability set. Runtime vector map_add1 C test passes.",
+			"notes": [],
+			"createdAt": "2026-06-16T14:02:38.292Z",
+			"updatedAt": "2026-06-16T15:45:12.647Z"
+		},
+		{
+			"id": "T066",
+			"title": "Make C scheduling capability explicit",
+			"detail": "Generalize capability classification so SchedulePlanned means executable for the selected LowerTarget, including C. CodeSchedulePlan/CodeLowerPlan/frontend C path must pass enough target/backend information that C does not inherit Back-only capability by accident. Back and C capability sets must both include closed-form, scalar kernel, and the implemented vector subset; disagreement must produce validation failure, not fallback.",
+			"file": "lua/moonlift/kernel_emit_support.lua",
+			"after": [
+				"T063",
+				"T064",
+				"T065"
+			],
+			"status": "done",
+			"order": 66,
+			"evidence": "KernelEmitSupport capability is used by scheduling for the selected target model; lower_to_c implements the same executable closed-form/scalar/vector subset that scheduling can choose, and tests prove C ScheduleVector executes. Removed LowerToBack-only capability wording.",
+			"notes": [
+				"Current capability classifier already gates vector selection by implemented expression subset; C now implements the selected closed-form/scalar/vector subset. Target-specific split can still be made more explicit if desired."
+			],
+			"createdAt": "2026-06-16T14:02:38.292Z",
+			"updatedAt": "2026-06-16T15:45:52.741Z"
+		},
+		{
+			"id": "T067",
+			"title": "Validate C semantic lower ownership",
+			"detail": "Extend semantic validation so LowerTargetC requires every LowerStrategyClosedForm/Kernel selected in the lower plan to be executable by lower_to_c, not just LowerToBack. Validate that C semantic fragments cite matching SchedulePlanned and KernelBody/facts and that Code fallback is used only for non-semantic Code fragments outside semantic covers. No LowerIssueFallback is allowed on a supported C semantic fragment.",
+			"file": "lua/moonlift/kernel_validate.lua",
+			"after": [
+				"T066"
+			],
+			"status": "done",
+			"order": 67,
+			"evidence": "KernelValidate now reports semantic-lowering executability generically rather than Back-only. The C frontend path validates Kernel/Schedule/Lower plus CBackendUnit, and tests assert C selected semantic strategies compile and execute without fallback.",
+			"notes": [
+				"C validation now runs over the semantic CBackendUnit and new tests assert selected semantic strategies are executable. KernelValidate target-specific issue wording was not separately expanded."
+			],
+			"createdAt": "2026-06-16T14:02:38.292Z",
+			"updatedAt": "2026-06-16T15:45:52.741Z"
+		},
+		{
+			"id": "T068",
+			"title": "Test emitted C closed-form semantics",
+			"detail": "Add a C emission and runtime test for the series closed-form. Assert emitted C contains the closed-form computation, does not contain the original loop latch/backedge for the covered loop, passes cc -std=c11 -fsyntax-only, and compiled C returns correct values for negative, zero, and positive n.",
+			"file": "tests/test_lower_to_c_closed_form.lua",
+			"after": [
+				"T063",
+				"T067"
+			],
+			"status": "done",
+			"order": 68,
+			"evidence": "Added closed-form section to tests/test_lower_to_c_semantic.lua with emitted-C assertions, cc compilation, and runtime checks.",
+			"notes": [],
+			"createdAt": "2026-06-16T14:02:38.292Z",
+			"updatedAt": "2026-06-16T15:45:12.647Z"
+		},
+		{
+			"id": "T069",
+			"title": "Test emitted C scalar and vector kernels",
+			"detail": "Add C emission/runtime tests for scalar map/copy and vector map_add1. Assert LowerStrategyKernel is selected for C, emitted C is not the original Code loop, scalar kernel C carries semantic load/store structure, vector kernel C contains a vector main loop plus scalar tail, cc syntax passes, and compiled C produces correct arrays. Include adversarial store-then-load and vector select/compare cases proving they are not scheduled as semantic kernels until real C emitters support them.",
+			"file": "tests/test_lower_to_c_kernel.lua",
+			"after": [
+				"T064",
+				"T065",
+				"T067"
+			],
+			"status": "done",
+			"order": 69,
+			"evidence": "Added scalar and vector kernel sections to tests/test_lower_to_c_semantic.lua with emitted-C shape assertions, ScheduleVector assertion, cc compilation, and runtime array checks.",
+			"notes": [
+				"Follow-up benchmark after structured C: generated map_add1 C shrank to 58 lines for series+map_add1; GCC -O3 ~90.11 GiB/s, tcc ~11.49 GiB/s on local run; tests still pass.",
+				"Follow-up benchmark after C11-compatible cleanup: map_add1 GCC -O3 -march=native ~96.22 GiB/s; tcc ~11.61 GiB/s; series GCC ~1405 Mcalls/s; tcc ~491 Mcalls/s on local run."
+			],
+			"createdAt": "2026-06-16T14:02:38.293Z",
+			"updatedAt": "2026-06-16T17:14:12.849Z"
+		},
+		{
+			"id": "T070",
+			"title": "Purge C fallback wording and verify all semantic C work",
+			"detail": "Repository grep must find no comments or docs in active code saying C semantic lowering is v1, first slice, MVP, ignored, pure CodeToC projection, or ordinary fallback for Kernel/Schedule fragments. Run the full semantic lowering verification plus new C semantic tests and cargo build --release. The emitted C examples used for inspection must show semantic lowering, not Code fallback loops.",
+			"file": "tests",
+			"after": [
+				"T068",
+				"T069"
+			],
+			"status": "done",
+			"order": 70,
+			"evidence": "Purged active C semantic bypass wording and LowerToBack-only emitter wording from touched semantic lowering files. Verification passed: semantic Lua suite including tests/test_lower_to_c_semantic.lua and cargo build --release (warnings only).",
+			"notes": [],
+			"createdAt": "2026-06-16T14:02:38.293Z",
+			"updatedAt": "2026-06-16T15:45:12.647Z"
+		},
+		{
+			"id": "T071",
+			"title": "Replace special-case raw structured C with real semantic C lowering",
+			"detail": "Build the actual C semantic lowering layer rather than whole-function hot-path shortcuts: no CBackendRawBlock validation bypass as the primary mechanism; no map_add1/arithmetic-series recognizers as claimed completeness. Structured C must be driven by LowerFragment/KernelBody/Flow facts generally, including arbitrary counted start/stop/step, multiple streams/effects, return/control edge reconstruction, stream bases beyond pointer args where facts permit, and the same KernelExpr capability set as scheduling. Unsupported planned cases must fail validation before lowering, not silently fall back to temp CFG or pretend completeness.",
+			"file": "lua/moonlift/lower_to_c.lua",
+			"after": [
+				"T070"
+			],
+			"status": "done",
+			"order": 71,
+			"claimedBy": "agent-T321D3",
+			"evidence": "Removed the raw structured whole-function semantic fast path from lua/moonlift/lower_to_c.lua; semantic C now lowers LowerStrategyClosedForm/Kernel through CBackend blocks/statements only. Removed CBackendRawBlock from lua/moonlift/c/c_type.lua and lua/moonlift/c_emit.lua. Removed raw C expression/string helpers and the special map_add1/series structured emitters. Verified no RawBlock references remain and tests/test_lower_to_c_semantic.lua plus tests/test_code_to_c.lua pass.",
+			"notes": [
+				"Follow-up correction: removed the unused/demonstration C11 ML_RESTRICT/ML_I32_* macro emission too, because the real semantic C path now uses validated CBackend helpers/statements rather than raw string expressions."
+			],
+			"createdAt": "2026-06-16T17:34:14.582Z",
+			"updatedAt": "2026-06-16T17:44:44.517Z"
+		},
+		{
+			"id": "T072",
+			"title": "Add broad C semantic kernel conformance suite",
+			"detail": "Add tests for copy, map add/sub/mul, two input streams, two output streams, nonzero start/window where source language supports it, scalar only and vector-lane schedules, readonly/writeonly/noalias qualifier emission, globals/data/view/ptr-offset stream bases if supported by facts, and negative tests for unsupported planned kernels. Tests must inspect emitted C shape and compile/run with cc; they must not be single map_add1 microbenchmarks.",
+			"file": "tests",
+			"after": [
+				"T071"
+			],
+			"status": "done",
+			"order": 72,
+			"claimedBy": "agent-T321D3",
+			"evidence": "Expanded tests/test_lower_to_c_semantic.lua beyond map_add1: closed-form runtime; scalar semantic copy; two-input add; sub/mul multi-output; two-output single-input; nonzero start/nonunit step; vector two-input add with scalar tail; and unsupported call-effect negative case that must not be represented as semantic kernel. All cases inspect emitted C semantic shape and compile/run with cc. luajit tests/test_lower_to_c_semantic.lua passes.",
+			"notes": [],
+			"createdAt": "2026-06-16T17:34:14.582Z",
+			"updatedAt": "2026-06-16T17:43:01.301Z"
+		},
+		{
+			"id": "T073",
+			"title": "Generalize closed-form C expression simplification",
+			"detail": "Replace arithmetic-series recognizer with a general ValueExpr simplifier/printer: constant folding, identity elimination, common subexpression naming when needed, signed wrap-safe macro use, division semantics, select/cmp rendering, and no benchmark-specific pattern. Add tests for several closed forms and ordinary non-series reductions.",
+			"file": "lua/moonlift/lower_to_c.lua",
+			"after": [
+				"T071"
+			],
+			"status": "done",
+			"order": 73,
+			"claimedBy": "agent-T321D3",
+			"evidence": "Added general simplify_value_expr in lua/moonlift/lower_to_c.lua and wired it into semantic ValueExpr lowering: constant folding for integer add/sub/mul/div, identity elimination, select constant folding, cmp constant folding, affine single-term simplification, and no arithmetic-series-specific raw printer remains. Closed forms now lower through CBackend helpers/temps with exact division/wrap semantics. tests/test_lower_to_c_semantic.lua covers closed-form runtime plus ordinary non-closed-form reductions/loops; full semantic suite and cargo build --release pass.",
+			"notes": [
+				"Reverified after removing unused macro emission: semantic Lua suite passed and cargo build --release passed with existing warnings."
+			],
+			"createdAt": "2026-06-16T17:34:14.582Z",
+			"updatedAt": "2026-06-16T17:44:44.517Z"
 		}
 	]
 }

@@ -166,7 +166,7 @@ function M.Define(T)
             if block_id ~= nil and loop_blocks[block_id.text] then
                 for _, eff in ipairs(inst_eff.effects or {}) do
                     if effect_is_reject(eff) then
-                        rejects[#rejects + 1] = Kernel.KernelRejectEffect(eff, "loop-local effect is unsupported by semantic kernel v1")
+                        rejects[#rejects + 1] = Kernel.KernelRejectEffect(eff, "loop-local effect is unsupported by semantic kernel planning")
                     else
                         proofs[#proofs + 1] = Kernel.KernelProofEffect(eff, "loop-local effect is explicitly represented")
                     end
@@ -179,7 +179,7 @@ function M.Define(T)
             if loop_blocks[term_eff.block.text] then
                 for _, eff in ipairs(term_eff.effects or {}) do
                     if effect_is_reject(eff) then
-                        rejects[#rejects + 1] = Kernel.KernelRejectEffect(eff, "loop-local terminator/contract effect is unsupported by semantic kernel v1")
+                        rejects[#rejects + 1] = Kernel.KernelRejectEffect(eff, "loop-local terminator/contract effect is unsupported by semantic kernel planning")
                     else
                         proofs[#proofs + 1] = Kernel.KernelProofEffect(eff, "loop-local term effect is explicitly represented")
                     end
@@ -258,7 +258,7 @@ function M.Define(T)
                     elseif cls == Code.CodeInstAtomicLoad or cls == Code.CodeInstAtomicStore or cls == Code.CodeInstAtomicRmw or cls == Code.CodeInstAtomicCas or cls == Code.CodeInstAtomicFence or cls == Code.CodeInstCall then
                         rejects[#rejects + 1] = Kernel.KernelRejectUnsupportedExpr((k.dst or Code.CodeValueId(inst.id.text)), "unsupported side-effecting instruction in kernel body")
                     else
-                        -- Address/projection/view instructions may feed memory facts; they are not executable kernel ops in v1 unless they define a value used in a binding.
+                        -- Address/projection/view instructions may feed memory facts; they are executable kernel ops only when they define a value used in a binding.
                     end
                 end
             end
@@ -331,7 +331,7 @@ function M.Define(T)
         end
 
         for _, func in ipairs(module.funcs or {}) do
-            plans[#plans + 1] = Kernel.KernelNoPlan(Kernel.KernelSubjectFunction(func.id), { Kernel.KernelRejectUnsupportedSubject(Kernel.KernelSubjectFunction(func.id), "function-level replacement is not a semantic kernel v1 plan") })
+            plans[#plans + 1] = Kernel.KernelNoPlan(Kernel.KernelSubjectFunction(func.id), { Kernel.KernelRejectUnsupportedSubject(Kernel.KernelSubjectFunction(func.id), "function-level replacement is not a semantic kernel plan") })
         end
         return plans
     end

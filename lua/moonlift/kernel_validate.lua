@@ -143,7 +143,7 @@ function M.Define(T)
                 if kplan ~= nil then
                     local target = schedules.target and schedules.target.target or nil
                     local cap = KernelEmitSupport.classify(kplan, sched.kind, target)
-                    if not cap.executable then add(ctx, "schedule-not-executable", "SchedulePlanned is not executable by LowerToBack: " .. tostring(cap.reason)) end
+                    if not cap.executable then add(ctx, "schedule-not-executable", "SchedulePlanned is not executable by semantic lowering: " .. tostring(cap.reason)) end
                 end
             elseif cls == Schedule.ScheduleNoPlan then
                 if #(sched.rejects or {}) == 0 then add(ctx, "schedule-noplan-without-reject", "ScheduleNoPlan for " .. sched.kernel.text .. " has no rejects") end
@@ -201,7 +201,7 @@ function M.Define(T)
             if sched == nil or pvm.classof(sched) ~= Schedule.SchedulePlanned or sched.kind ~= Schedule.ScheduleClosedForm then add(ctx, "missing-schedule", "LowerStrategyClosedForm requires SchedulePlanned(ScheduleClosedForm) for kernel " .. strategy.kernel.text) end
             if not closed[tostring(strategy.fact)] then add(ctx, "missing-closed-form", "LowerStrategyClosedForm cites ClosedFormFact outside ValueFactSet") end
         else
-            add(ctx, "unsupported-strategy", "Lower strategy is not executable by lower_to_back without a dedicated emitter: " .. tostring(cls or strategy))
+            add(ctx, "unsupported-strategy", "Lower strategy is not executable by semantic lowering without a dedicated emitter: " .. tostring(cls or strategy))
         end
     end
 

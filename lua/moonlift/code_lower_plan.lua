@@ -108,11 +108,11 @@ function M.Define(T)
                             add_loop_code_fallback(func, loop, cover, fragments, covered, issues, "explicit Code fallback because ScheduleClosedForm has no ClosedFormFact")
                         else
                             strategy = Lower.LowerStrategyClosedForm(kplan.id, cf)
-                            proofs = { Lower.LowerProofKernel(kplan.id, "planned semantic closed-form kernel"), Lower.LowerProofSchedule(sched.id, "closed-form schedule has a LowerToBack emitter") }
+                            proofs = { Lower.LowerProofKernel(kplan.id, "planned semantic closed-form kernel"), Lower.LowerProofSchedule(sched.id, "closed-form schedule has a semantic lowering emitter") }
                         end
                     else
                         strategy = Lower.LowerStrategyKernel(kplan.id, sched.id)
-                        proofs = { Lower.LowerProofKernel(kplan.id, "planned semantic kernel"), Lower.LowerProofSchedule(sched.id, "kernel schedule has a LowerToBack emitter") }
+                        proofs = { Lower.LowerProofKernel(kplan.id, "planned semantic kernel"), Lower.LowerProofSchedule(sched.id, "kernel schedule has a semantic lowering emitter") }
                     end
                     if strategy ~= nil then
                         add(Lower.LowerFragment(

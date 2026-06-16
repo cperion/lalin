@@ -53,7 +53,7 @@ function M.Define(T)
                 elseif cls == Kernel.KernelProofValue then proofs[#proofs + 1] = Schedule.ScheduleProofAlgebra(proof.proof) end
             end
         end
-        proofs[#proofs + 1] = Schedule.ScheduleProofProfit("selected because current LowerToBack has an emitter for " .. tostring(capability.kind))
+        proofs[#proofs + 1] = Schedule.ScheduleProofProfit("selected because semantic lowering has an emitter for " .. tostring(capability.kind))
         return proofs
     end
 

@@ -273,7 +273,7 @@ function M.Define(T)
             executable = #rejects == 0,
             kind = kind_name,
             rejects = rejects,
-            reason = #rejects == 0 and "supported by current LowerToBack emitters" or "unsupported by current LowerToBack emitters",
+            reason = #rejects == 0 and "supported by current semantic emitters" or "unsupported by current semantic emitters",
         }
     end
 
