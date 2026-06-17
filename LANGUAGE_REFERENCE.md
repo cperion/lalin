@@ -2113,7 +2113,7 @@ emit @{R.scan}(p, n; hit = found, miss = not_found)
 | Region block parameter list (`entry e(@{entry_params...})`, `block b(@{params...})`) | Entry params from `moon.entry_params{...}`; block/continuation params from `moon.params{...}` or `MoonTree.BlockParam`. |
 | Region block list (`@{blocks...}` after an entry block) | A Lua array of raw `MoonTree.ControlBlock` nodes or `moon.blocks{...}` values. |
 | Switch arm list (`@{arms...}` before `default`) | A Lua array of arm values — either `MoonTree.SwitchStmtArm` nodes, or plain tables `{ raw_key, body }` where `body` is `Stmt[]`. `body` is typically produced by `moon.stmts[[]]`. |
-| Emit fragment position (`emit @{frag}(...)`) | A region or expression fragment value.  Always requires `@{}`. |
+| Emit fragment position (`emit frag(...)`, `emit @{frag}(...)`) | A region or expression fragment value.  Bare/dotted names resolve through bindings; `@{}` also supported. |
 | Block label/name position | String/source value containing the complete label or generated identifier |
 | Integer constant position | Number (integer), or source value that parses as an integer expression |
 

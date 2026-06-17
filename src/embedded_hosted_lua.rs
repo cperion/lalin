@@ -212,8 +212,6 @@ pub fn embedded_modules() -> Vec<(&'static str, &'static str)> {
         ("moonlift.source_position_index", include_str!("../lua/moonlift/source_position_index.lua")),
         ("moonlift.source_text_apply", include_str!("../lua/moonlift/source_text_apply.lua")),
         ("moonlift.std", include_str!("../lua/moonlift/std.lua")),
-        ("moonlift.tape_encode", include_str!("../lua/moonlift/tape_encode.lua")),
-        ("moonlift.tape_exec", include_str!("../lua/moonlift/tape_exec.lua")),
         ("moonlift.tracing.ir", include_str!("../lua/moonlift/tracing/ir.lua")),
         ("moonlift.tree_contract_facts", include_str!("../lua/moonlift/tree_contract_facts.lua")),
         ("moonlift.tree_control_facts", include_str!("../lua/moonlift/tree_control_facts.lua")),

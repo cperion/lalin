@@ -1,9 +1,9 @@
--- Direct MoonBack -> Rust/Cranelift tape replay.
+-- Direct MoonBack -> Rust/Cranelift binary wire replay.
 --
 -- This is the executable backend boundary for the current ASDL2 compiler path.
--- It encodes the flat MoonBack.BackProgram command stream as BackCommandTape
--- and sends that single semantic tape to Rust.  It intentionally does not pass
--- through MoonliftBack, moonlift_legacy.asdl, or per-command Lua FFI replay.
+-- It encodes the flat MoonBack.BackProgram command stream as a binary wire
+-- buffer and sends it to Rust.  It intentionally does not pass through
+-- MoonliftBack or per-command Lua FFI replay.
 
 local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
@@ -17,7 +17,6 @@ const char* moonlift_last_error_message(void);
 moonlift_jit_t* moonlift_jit_new(void);
 void moonlift_jit_free(moonlift_jit_t*);
 int moonlift_jit_symbol(moonlift_jit_t*, const char* name, const void* ptr);
-moonlift_artifact_t* moonlift_jit_compile_tape(moonlift_jit_t*, const char* payload);
 moonlift_artifact_t* moonlift_jit_compile_binary(moonlift_jit_t*, const uint8_t* data, size_t len);
 
 void moonlift_artifact_free(moonlift_artifact_t*);

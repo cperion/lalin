@@ -634,12 +634,12 @@ function Parser:read_splice_expr_no_parens(msg)
         local id = self:text(); self.i = self.i + 1
         return id
     end
-    local start_i = self.i
     local name = self:expect_name(msg)
-    -- Only consume dot chains, not () or [] — those are emit-level syntax.
+    -- Consume dot chains (e.g. R.scan), not () or [] — those are emit-level syntax.
     while self:kind() == TK.dot do
         self.i = self.i + 1
-        self:expect_name("expected field name after '.'")
+        local field = self:expect_name("expected field name after '.'")
+        name = name .. "." .. field
     end
     return name
 end
@@ -1468,14 +1468,15 @@ function Parser:parse_jump_args()
 end
 
 -- Region fragment reference (for emit/call).
--- Every name creates a splice slot resolved through bindings.
+-- Every name — bare, dotted, or @{...} — creates a splice slot resolved
+-- through bindings.
 function Parser:parse_region_frag_ref(keyword)
     local O = self.O
     local name
     if self:kind() == TK.hole then
         name = self:text(); self.i = self.i + 1
     else
-        name = self:expect_name("expected region fragment name after " .. (keyword or "emit/call"))
+        name = self:read_splice_expr_no_parens("expected region fragment name after " .. (keyword or "emit/call"))
     end
     local slot = O.RegionFragSlot(self:splice_key("region_frag", name), name)
     self:record_splice_slot(name, O.SlotRegionFrag(slot), "region_frag")
@@ -1488,7 +1489,7 @@ function Parser:parse_expr_frag_ref()
     if self:kind() == TK.hole then
         name = self:text(); self.i = self.i + 1
     else
-        name = self:expect_name("expected expression fragment name after emit")
+        name = self:read_splice_expr_no_parens("expected expression fragment name after emit")
     end
     local slot = O.ExprFragSlot(self:splice_key("expr_frag", name), name)
     self:record_splice_slot(name, O.SlotExprFrag(slot), "expr_frag")

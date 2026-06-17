@@ -302,7 +302,6 @@ Explicit programming makes plain-text tooling powerful again.
 | `lua/moonlift/ast.lua` | Low-level ASDL node constructor API |
 | `src/lib.rs` | Full Cranelift backend (JIT + object emission) |
 | `src/main.rs` | Standalone `moonlift` binary (embeds Lua compiler) |
-| `src/ffi.rs` | C FFI exports for LuaJIT interop (text tape + binary wire format) |
-| `lua/moonlift/back_command_binary.lua` | Flatline v4 binary wire format encoder (replaces text tape) |
+| `src/ffi.rs` | C FFI exports for LuaJIT interop (binary wire format) |
+| `lua/moonlift/back_command_binary.lua` | Flatline v4 binary wire format encoder |
 | `BACK_WIRE_FORMAT.md` | Binary wire format specification (Flatline v4) |
-| `lua/moonlift/back_command_tape.lua` | Legacy text tape encoder (kept for CI cross-check) |

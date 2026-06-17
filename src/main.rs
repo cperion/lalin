@@ -88,16 +88,6 @@ fn install_host_api(lua: &Lua, jit: Rc<RefCell<moonlift::Jit>>) -> mlua::Result<
     })?;
     lua.globals().set("_host_symbol", symbol_fn)?;
 
-    let compile_jit = jit.clone();
-    let compile_fn = lua.create_function(move |_lua, tape: String| {
-        let artifact = compile_jit
-            .borrow()
-            .compile_tape(&tape)
-            .map_err(|e| mlua::Error::RuntimeError(e.to_string()))?;
-        Ok(HostedArtifact(Some(artifact)))
-    })?;
-    lua.globals().set("_host_compile", compile_fn)?;
-
     let compile_binary_jit = jit.clone();
     let compile_binary_fn = lua.create_function(move |_lua, payload: mlua::String| {
         let artifact = compile_binary_jit

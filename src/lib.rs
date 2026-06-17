@@ -94,13 +94,7 @@ impl Jit {
         self.symbols.insert(name.into(), ptr);
     }
 
-    /// Compile a wire-format buffer and return an Artifact.
-    /// Compile a wire-format buffer. (tape path not yet migrated)
-    pub fn compile_tape(&self, _tape: &str) -> Result<Artifact, MoonliftError> {
-        Err(MoonliftError("tape compiler not yet migrated; use binary wire format".into()))
-    }
-
-    /// Compile a wire-format buffer and return an Artifact.
+    /// Compile a binary wire-format buffer and return an Artifact.
     pub fn compile_binary(&self, payload: &[u8]) -> Result<Artifact, MoonliftError> {
         let isa = host_isa(false)?;
         let mut builder = JITBuilder::with_isa(isa, default_libcall_names());
