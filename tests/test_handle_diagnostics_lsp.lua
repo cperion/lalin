@@ -58,7 +58,7 @@ end
 assert(d_invalidate.primary.message:match("invalidate store"))
 assert(d_invalidate.notes[1].message:match("move, free, compact"))
 
-local d_handle = explain(first_issue([[handle Voice : u32 invalid 0 end
+local d_handle = explain(first_issue([[local Voice = handle Voice : u32 invalid 0 end
 func bad(v: Voice): u32
     return as(u32, v)
 end
@@ -67,7 +67,7 @@ assert(d_handle.primary.message:match("opaque"))
 assert(d_handle.suggestions[1].message:match("repr"))
 
 local uri = S.DocUri("file:///handle_lsp.mlua")
-local src = [[handle Voice : u32 invalid 0 end
+local src = [[local Voice = handle Voice : u32 invalid 0 end
 struct Store
     slot: i32,
 end
@@ -78,8 +78,12 @@ end
 local doc = S.DocumentSnapshot(uri, S.DocVersion(1), S.LangMlua, src)
 local analysis = Analysis.analyze_document(doc)
 local idx = P.build_index(doc)
-local function query_at(text)
-    local off = assert(src:find(text, 1, true)) - 1
+local function query_at(text, skip)
+    local off = -1
+    for _ = 1, (skip or 0) + 1 do
+        local s = assert(src:find(text, off + 2, true))
+        off = s - 1
+    end
     return E.PositionQuery(uri, S.DocVersion(1), P.offset_to_pos(idx, off).pos)
 end
 local function has(items, label)
@@ -87,7 +91,7 @@ local function has(items, label)
     return false
 end
 
-local h = Hover.hover(query_at("Voice"), analysis)
+local h = Hover.hover(query_at("Voice", 1), analysis)
 assert(pvm.classof(h) == E.HoverInfo)
 assert(h.value:match("handle `Voice`"))
 assert(h.value:match("opaque durable identity"))

@@ -44,6 +44,7 @@ pub fn embedded_modules() -> Vec<(&'static str, &'static str)> {
         ("moonlift.c_validate", include_str!("../lua/moonlift/c_validate.lua")),
         ("moonlift.chain", include_str!("../lua/moonlift/chain.lua")),
         ("moonlift.closure_convert", include_str!("../lua/moonlift/closure_convert.lua")),
+        ("moonlift.code_aggregate_abi", include_str!("../lua/moonlift/code_aggregate_abi.lua")),
         ("moonlift.code_effect_facts", include_str!("../lua/moonlift/code_effect_facts.lua")),
         ("moonlift.code_flow_facts", include_str!("../lua/moonlift/code_flow_facts.lua")),
         ("moonlift.code_graph", include_str!("../lua/moonlift/code_graph.lua")),
