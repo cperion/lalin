@@ -2,10 +2,10 @@
 	"version": 1,
 	"workflowId": "wf-440a7835",
 	"planId": "main",
-	"revision": 128,
-	"nextId": 74,
+	"revision": 137,
+	"nextId": 78,
 	"createdAt": "2026-06-16T08:33:52.278Z",
-	"updatedAt": "2026-06-16T17:44:44.517Z",
+	"updatedAt": "2026-06-16T18:39:26.550Z",
 	"tasks": [
 		{
 			"id": "T001",
@@ -1222,6 +1222,73 @@
 			],
 			"createdAt": "2026-06-16T17:34:14.582Z",
 			"updatedAt": "2026-06-16T17:44:44.517Z"
+		},
+		{
+			"id": "T074",
+			"title": "Restore Back closed-form correctness for direct-return loop exits",
+			"detail": "Fix LowerStrategyClosedForm emission when the loop exit goes directly to a CodeTermReturn block returning the accumulator. The emitter must return the computed closed-form result directly instead of jumping to the old return block that returns the initial accumulator value.",
+			"file": "lua/moonlift/lower_to_back.lua",
+			"after": [
+				"T073"
+			],
+			"status": "done",
+			"order": 74,
+			"notes": [
+				"Implemented in lower_to_back.lua; tests/test_parse_typecheck.lua now passes."
+			],
+			"createdAt": "2026-06-16T18:00:00.969Z",
+			"updatedAt": "2026-06-16T18:00:00.969Z"
+		},
+		{
+			"id": "T075",
+			"title": "Implement ordinary Back ABI for named aggregate results and parameters",
+			"detail": "Remove CodeTyNamed unsupported path in Back lowering by implementing ordinary aggregate ABI below Code (not region-call-specific): signatures, calls, returns, block args, params, aggregate construction, field projection/payload/tag as needed by named structs/unions. Must preserve frontend/backend separation.",
+			"file": "lua/moonlift/code_to_back.lua",
+			"after": [
+				"T074"
+			],
+			"status": "done",
+			"order": 75,
+			"claimedBy": "agent-T321D3",
+			"evidence": "Implemented ordinary Back named aggregate ABI support in lua/moonlift/code_to_back.lua: CodeTyNamed projects as by-reference Back pointer for params; named aggregate results use hidden sret pointer in Back signatures; aggregate returns copy to sret via CmdMemcpy; aggregate-return calls allocate destination storage and pass sret; named aggregate params/locals are materialized as addresses; CodeInstAggregate constructs stack-backed aggregate values; CodeInstVariantCtor/Tag/Payload lower through layout-backed tag/payload offsets. Host layout env module names are fixed in lua/moonlift/host_module_values.lua. Added tests/test_code_to_back.lua sret ABI assertion and tests/test_aggregate_param_abi.lua passes. Verified suite including parse_typecheck, region call structural/runtime smoke, c coverage matrix, semantic lowering suite, and cargo build --release.",
+			"notes": [
+				"Partial progress only, not complete: CodeTyNamed no longer crashes in Back param signatures for by-address aggregate parameters; named aggregate parameter field load path is working in tests/test_aggregate_param_abi.lua. This does not yet complete named aggregate result/sret ABI or tagged-union result ABI.",
+				"Follow-up: hosted region-call runtime probe (`call @{scan}` hit=17/miss=-1) now passes. Fixes included merging generated module layouts into native frontend layout_env, accepting CmdTrap as a real Back terminator instead of an unsupported-lowering sentinel, and adding hidden sret entry binding in CodeToBack.fragment_commands for LowerToBack Code fragments."
+			],
+			"createdAt": "2026-06-16T18:00:00.969Z",
+			"updatedAt": "2026-06-16T18:39:26.550Z"
+		},
+		{
+			"id": "T076",
+			"title": "Unblock aggregate param field access after layout resolve",
+			"detail": "Fix tests/test_aggregate_param_abi.lua failure in tree_to_code.lua field access before sem_layout_resolve. Field places on named aggregate parameters must lower using resolved layout rather than pre-layout rejection.",
+			"file": "lua/moonlift/tree_to_code.lua",
+			"after": [
+				"T074"
+			],
+			"status": "done",
+			"order": 76,
+			"claimedBy": "agent-T321D3",
+			"evidence": "Fixed by correcting host BundleValue:layout_env to stamp session/bundle module_name onto generated LayoutNamed entries, allowing sem_layout_resolve to resolve TypeRefGlobal named fields before tree_to_code. `luajit tests/test_aggregate_param_abi.lua` now passes (field offsets resolved; no tree_to_code pre-layout field rejection).",
+			"notes": [],
+			"createdAt": "2026-06-16T18:00:00.969Z",
+			"updatedAt": "2026-06-16T18:14:00.254Z"
+		},
+		{
+			"id": "T077",
+			"title": "Classify C backend coverage handle/lease gaps",
+			"detail": "Fix tests/test_c_backend_coverage_matrix.lua missing classifications for current type variants such as MoonType.Type.TLease and handle declarations. Coverage matrix must classify every schema variant intentionally.",
+			"file": "lua/moonlift/c_coverage.lua",
+			"after": [
+				"T074"
+			],
+			"status": "done",
+			"order": 77,
+			"claimedBy": "agent-T321D3",
+			"evidence": "Added supported C backend coverage classifications for MoonType.Type.THandle, MoonType.Type.TLease, and MoonTree.TypeDecl.TypeDeclHandle. No rejected/unsupported classification was added. `luajit tests/test_c_backend_coverage_matrix.lua` passes.",
+			"notes": [],
+			"createdAt": "2026-06-16T18:00:00.969Z",
+			"updatedAt": "2026-06-16T18:14:10.819Z"
 		}
 	]
 }

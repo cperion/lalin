@@ -116,12 +116,20 @@ function M.Define(T)
         error("code_type: unsupported float width " .. tostring(bits), 3)
     end
 
-    local function named_type_name(ref)
+    local function named_type_name(ref, ctx)
         local rcls = pvm.classof(ref)
         if rcls == Ty.TypeRefGlobal then return ref.module_name, ref.type_name end
         if rcls == Ty.TypeRefLocal then return "local", ref.sym.name end
-        if rcls == Ty.TypeRefPath and #ref.path.parts > 0 then return "", ref.path.parts[#ref.path.parts].text end
+        if rcls == Ty.TypeRefPath and #ref.path.parts > 0 then return (ctx and ctx.module_name) or "", ref.path.parts[#ref.path.parts].text end
         error("code_type: unresolved named type " .. class_name(ref), 3)
+    end
+
+    local function canonical_named_source_ty(ty, module_name, type_name)
+        local ref = ty and ty.ref
+        if pvm.classof(ref) == Ty.TypeRefPath and module_name ~= nil and module_name ~= "" then
+            return Ty.TNamed(Ty.TypeRefGlobal(module_name, type_name))
+        end
+        return ty
     end
 
     local code_type_key
@@ -220,8 +228,8 @@ function M.Define(T)
             local result = type_to_code(ty.result, ctx)
             return Code.CodeTyClosure(ensure_code_sig(ctx, params, { result }))
         elseif cls == Ty.TNamed then
-            local module_name, type_name = named_type_name(ty.ref)
-            return Code.CodeTyNamed(module_name, type_name, ty)
+            local module_name, type_name = named_type_name(ty.ref, ctx)
+            return Code.CodeTyNamed(module_name, type_name, canonical_named_source_ty(ty, module_name, type_name))
         elseif cls == Ty.TCType then
             return Code.CodeTyImportedC(ty.id)
         elseif cls == Ty.TCFuncPtr then

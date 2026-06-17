@@ -69,6 +69,16 @@ local named = CodeType.type_to_code(Ty.TNamed(Ty.TypeRefGlobal("m", "Pair")), {}
 assert(pvm.classof(named) == Code.CodeTyNamed)
 assert(CodeType.code_type_to_c(named, {}) == C.CBackendNamed(C.CTypeId("m", "Pair")))
 
+local path_named_ctx = { module_name = "Demo" }
+local path_named = CodeType.type_to_code(Ty.TNamed(Ty.TypeRefPath(Core.Path({ Core.Name("__moon_region_call_demo_result") }))), path_named_ctx)
+assert(pvm.classof(path_named) == Code.CodeTyNamed)
+assert(path_named.module_name == "Demo")
+assert(path_named.type_name == "__moon_region_call_demo_result")
+assert(pvm.classof(path_named.source_ty.ref) == Ty.TypeRefGlobal)
+assert(path_named.source_ty.ref.module_name == "Demo")
+assert(path_named.source_ty.ref.type_name == "__moon_region_call_demo_result")
+assert(CodeType.code_type_to_c(path_named, {}) == C.CBackendNamed(C.CTypeId("Demo", "__moon_region_call_demo_result")))
+
 local arr = CodeType.type_to_code(Ty.TArray(Ty.ArrayLenConst(4), i32), {})
 assert(CodeType.code_type_to_c(arr, {}) == C.CBackendArray(C.CBackendScalar(Core.ScalarI32), 4))
 local slice = CodeType.type_to_c(Ty.TSlice(i32), {})

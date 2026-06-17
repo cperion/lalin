@@ -746,6 +746,7 @@ function M.Define(T)
         local edge_fact = edge_facts[exit.from.block.text .. "\0" .. exit.to.block.text]
         if edge_fact == nil then error("lower_to_back: missing FlowEdgeFact for closed-form loop exit", 2) end
         local jump_dest, jump_args_fact = exit.to.block, edge_fact
+        local jump_block = nil
         for _, func in ipairs(code_module.funcs or {}) do
             if func.id == loop.func then
                 for _, block in ipairs(func.blocks or {}) do
@@ -754,11 +755,18 @@ function M.Define(T)
                         jump_dest = block.term.kind.dest
                         jump_args_fact = edge_facts[next_key] or edge_fact
                     end
+                    if block.id == jump_dest then jump_block = block end
                 end
             end
         end
         ctx.cmds[#ctx.cmds + 1] = Back.CmdSwitchToBlock(block_id(loop.header.block))
         local result, _ = lower_value_expr(ctx, strategy.fact.expr)
+        if jump_block ~= nil and pvm.classof(jump_block.term.kind) == Code.CodeTermReturn
+            and #(jump_block.term.kind.values or {}) == 1
+            and jump_block.term.kind.values[1] == strategy.fact.reduction.accumulator then
+            ctx.cmds[#ctx.cmds + 1] = Back.CmdReturnValue(result)
+            return
+        end
         local args = {}
         for i, arg in ipairs(jump_args_fact.args or {}) do
             if arg.src == strategy.fact.reduction.accumulator then args[i] = result else args[i] = bid(arg.src) end
@@ -769,7 +777,7 @@ function M.Define(T)
     local function emit_fragment(ctx, code_module, graph, flow, value, mem, effect, kernels, fragment)
         local cls = pvm.classof(fragment.strategy)
         if cls == Lower.LowerStrategyCode then
-            local cmds = CodeToBack.fragment_commands(code_module, graph, flow, value, mem, effect, fragment.cover, { validate = false })
+            local cmds = CodeToBack.fragment_commands(code_module, graph, flow, value, mem, effect, fragment.cover, { validate = false, layout_env = ctx.layout_env, target = ctx.target })
             for _, cmd in ipairs(cmds or {}) do ctx.cmds[#ctx.cmds + 1] = cmd end
             return
         end
@@ -851,7 +859,8 @@ function M.Define(T)
         return a, b, c, d, e, f, g, h
     end
 
-    local function module(code_module, graph, flow, value, mem, effect, kernels, schedules, lower)
+    local function module(code_module, graph, flow, value, mem, effect, kernels, schedules, lower, opts)
+        opts = opts or {}
         graph, flow, value, mem, effect, kernels, schedules, lower = normalize_args(code_module, graph, flow, value, mem, effect, kernels, schedules, lower)
         graph = graph or CodeGraph.graph(code_module)
         flow = flow or CodeFlowFacts.facts(code_module, graph)
@@ -862,11 +871,11 @@ function M.Define(T)
         schedules = schedules or CodeSchedulePlan.plan(code_module, kernels, flow, value, mem, effect, nil)
         lower = lower or CodeLowerPlan.plan(code_module, graph, kernels, schedules, Lower.LowerTargetBack)
 
-        local ctx = { cmds = {}, kernels = kernels, schedules = schedules, value_types = {}, next_tmp = 0, mem_access_by_id = {}, mem_backend_by_access = {}, schedule_by_id = {} }
+        local ctx = { cmds = {}, kernels = kernels, schedules = schedules, value_types = {}, next_tmp = 0, mem_access_by_id = {}, mem_backend_by_access = {}, schedule_by_id = {}, layout_env = opts.layout_env, target = opts.target }
         for _, access in ipairs(mem and mem.accesses or {}) do ctx.mem_access_by_id[access.id.text] = access end
         for _, info in ipairs(mem and mem.backend_info or {}) do ctx.mem_backend_by_access[info.access.text] = info end
         for _, sched in ipairs(schedules and schedules.schedules or {}) do if pvm.classof(sched) == Schedule.SchedulePlanned then ctx.schedule_by_id[sched.id.text] = sched end end
-        for _, cmd in ipairs(CodeToBack.module_prelude_commands(code_module, { graph = graph, flow = flow, value = value, mem = mem, effect = effect, validate = false })) do ctx.cmds[#ctx.cmds + 1] = cmd end
+        for _, cmd in ipairs(CodeToBack.module_prelude_commands(code_module, { graph = graph, flow = flow, value = value, mem = mem, effect = effect, validate = false, layout_env = opts.layout_env, target = opts.target })) do ctx.cmds[#ctx.cmds + 1] = cmd end
         for _, func in ipairs(code_module.funcs or {}) do ctx.cmds[#ctx.cmds + 1] = CodeToBack.function_declare(func) end
 
         local funcs = func_by_id(code_module)

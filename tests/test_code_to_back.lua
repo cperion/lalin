@@ -21,6 +21,9 @@ local Pipeline = require("moonlift.frontend_pipeline").Define(T)
 
 local Back = T.MoonBack
 local Code = T.MoonCode
+local Core = T.MoonCore
+local Ty = T.MoonType
+local Sem = T.MoonSem
 
 local function assert_no_issues(label, issues)
     assert(#issues == 0, label .. " expected no issues, got " .. tostring(#issues))
@@ -151,5 +154,27 @@ local source = fh:read("*a"); fh:close()
 assert(not source:find("ctx%." .. "view_defs"), "Back lowering must not keep hidden view-def side table")
 assert(not source:find("collect_" .. "view_defs"), "Back lowering must not pre-scan view defs")
 assert(not source:find("view_" .. "parts"), "Back lowering must not use view component side table")
+
+local pair_named = Code.CodeTyNamed("M", "Pair", Ty.TNamed(Ty.TypeRefGlobal("M", "Pair")))
+local pair_sig = Code.CodeSigId("sig_pair_sret")
+local pair_func = Code.CodeFuncId("fn:id_pair_sret")
+local pair_arg = Code.CodeValueId("v:id_pair_sret:p")
+local pair_entry = Code.CodeBlockId("block:id_pair_sret:entry")
+local pair_module = Code.CodeModule(Code.CodeModuleId("module:pair_sret"),
+    { Code.CodeSig(pair_sig, { pair_named }, { pair_named }) }, {}, {}, {}, {},
+    { Code.CodeFunc(pair_func, "id_pair_sret", Code.CodeLinkageLocal, pair_sig,
+        { Code.CodeParam(pair_arg, "p", pair_named, Code.CodeOriginUnknown) }, {}, pair_entry,
+        { Code.CodeBlock(pair_entry, "entry", {}, {}, Code.CodeTerm(Code.CodeTermId("term:id_pair_sret"), Code.CodeTermReturn({ pair_arg }), Code.CodeOriginUnknown), Code.CodeOriginUnknown) },
+        Code.CodeOriginUnknown) }, Code.CodeOriginUnknown)
+local pair_env = Sem.LayoutEnv({ Sem.LayoutNamed("M", "Pair", { Sem.FieldLayout("a", 0, Ty.TScalar(Core.ScalarI32)), Sem.FieldLayout("b", 4, Ty.TScalar(Core.ScalarI32)) }, 8, 4) })
+local pair_program = CodeToBack.module(pair_module, { layout_env = pair_env, validate = false })
+local pair_report = BackValidate.validate(pair_program)
+assert_no_issues("pair sret back", pair_report.issues)
+local saw_pair_sig, saw_pair_memcpy = false, false
+for _, cmd in ipairs(pair_program.cmds) do
+    if pvm.classof(cmd) == Back.CmdCreateSig and #cmd.params == 2 and #cmd.results == 0 then saw_pair_sig = true end
+    if pvm.classof(cmd) == Back.CmdMemcpy then saw_pair_memcpy = true end
+end
+assert(saw_pair_sig and saw_pair_memcpy, "named aggregate result must lower as ordinary sret ABI with memcpy")
 
 print("moonlift code_to_back ok")

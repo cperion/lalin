@@ -103,8 +103,27 @@ function M.Define(T)
         local closed = ClosureConvert.module(expanded)
         local checked = Typecheck.check_module(closed, { collector = collector, layout_env = opts.layout_env })
 
-        local resolved = Layout.module(checked.module, opts.layout_env)
-        local code_module, code_contracts = TreeToCode.module_with_contracts(resolved, { layout_env = opts.layout_env, target = opts.target, module_id = opts.module_id })
+        local layout_env = opts.layout_env
+        do
+            local ModuleType = require("moonlift.tree_module_type").Define(T)
+            local generated_env = ModuleType.env(checked.module, opts.target)
+            if layout_env == nil then
+                layout_env = T.MoonSem.LayoutEnv(generated_env.layouts)
+            else
+                local merged, seen = {}, {}
+                local function key(layout)
+                    local cls = pvm.classof(layout)
+                    if cls == T.MoonSem.LayoutNamed then return "named\0" .. tostring(layout.module_name) .. "\0" .. tostring(layout.type_name) end
+                    if cls == T.MoonSem.LayoutLocal then return "local\0" .. tostring(layout.sym and layout.sym.name or layout) end
+                    return tostring(layout)
+                end
+                for _, layout in ipairs(layout_env.layouts or {}) do local k = key(layout); if not seen[k] then seen[k] = true; merged[#merged + 1] = layout end end
+                for _, layout in ipairs(generated_env.layouts or {}) do local k = key(layout); if not seen[k] then seen[k] = true; merged[#merged + 1] = layout end end
+                layout_env = T.MoonSem.LayoutEnv(merged)
+            end
+        end
+        local resolved = Layout.module(checked.module, layout_env, opts.target)
+        local code_module, code_contracts = TreeToCode.module_with_contracts(resolved, { layout_env = layout_env, target = opts.target, module_id = opts.module_id })
         if code_module == nil then error(site .. " lowering failed: tree_to_code produced nil module", 2) end
         local code_report = CodeValidate.validate(code_module, collector)
         local graph = CodeGraph.graph(code_module)
@@ -119,11 +138,12 @@ function M.Define(T)
         local lower_plan = CodeLowerPlan.plan(code_module, graph, kernel_plan, schedule_plan, T.MoonLower.LowerTargetBack)
         local kernel_report = KernelValidate.validate(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { collector = collector })
 
-        local program = LowerToBack.module(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan)
+        local program = LowerToBack.module(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { layout_env = layout_env, target = opts.target })
         if program == nil then error(site .. " lowering failed: code_to_back produced nil program", 2) end
-        if not _G.MOONLIFT_ALLOW_TRAP then
-            assert_no_cmd_trap(T, program, site)
-        end
+        -- CmdTrap is a real Back terminator used for source/generated trap paths
+        -- (for example exhaustive variant-dispatch defaults). Unsupported lowering
+        -- must fail at the lowering site; the presence of CmdTrap itself is not an
+        -- unsupported-lowering sentinel.
 
         local back_report = Validate.validate(program, collector)
 

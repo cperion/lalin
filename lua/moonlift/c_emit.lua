@@ -339,21 +339,26 @@ function M.Define(T)
     local function emit_func(f, sigs, out)
         local sig = sigs[f.sig.text]
         out[#out + 1] = emit_type(sig.result) .. " " .. f.name.text .. "(" .. func_params(f.params) .. ") {"
-        for i = 1, #f.locals do
-            local lty = f.locals[i].ty
-            local lcls = pvm.classof(lty)
-            if lcls == C.CBackendArray or lcls == C.CBackendSliceDescriptor or lcls == C.CBackendViewDescriptor or lcls == C.CBackendClosureDescriptor or lcls == C.CBackendNamed then
-                out[#out + 1] = "    " .. decl(lty, f.locals[i].id.text) .. ";"
+        local function needs_compound_decl_only(ty)
+            local cls = pvm.classof(ty)
+            return cls == C.CBackendArray or cls == C.CBackendSliceDescriptor or cls == C.CBackendViewDescriptor or cls == C.CBackendClosureDescriptor or cls == C.CBackendNamed
+        end
+        local function emit_local_decl(local_id, ty)
+            if needs_compound_decl_only(ty) then
+                out[#out + 1] = "    " .. decl(ty, local_id) .. ";"
             else
-                out[#out + 1] = "    " .. decl(lty, f.locals[i].id.text) .. " = 0;"
+                out[#out + 1] = "    " .. decl(ty, local_id) .. " = 0;"
             end
+        end
+        for i = 1, #f.locals do
+            emit_local_decl(f.locals[i].id.text, f.locals[i].ty)
         end
         local blocks = {}; for i = 1, #f.blocks do blocks[f.blocks[i].label.text] = f.blocks[i] end
         for i = 1, #f.blocks do
             local b = f.blocks[i]
             for j = 1, #b.params do
-                out[#out + 1] = "    " .. decl(b.params[j].ty, b.params[j]["local"].text) .. " = 0;"
-                out[#out + 1] = "    " .. decl(b.params[j].ty, "__xfer_" .. b.label.text .. "_" .. tostring(j)) .. " = 0;"
+                emit_local_decl(b.params[j]["local"].text, b.params[j].ty)
+                emit_local_decl("__xfer_" .. b.label.text .. "_" .. tostring(j), b.params[j].ty)
             end
         end
         for i = 1, #f.blocks do

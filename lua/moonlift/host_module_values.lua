@@ -231,6 +231,9 @@ function BundleValue:layout_env()
                 for j = 1, #layouts do env_layouts[j] = layouts[j] end
                 local layout = self.session:layout_of(tv, Sem.LayoutEnv(env_layouts))
                 if layout ~= nil then
+                    if pvm.classof(layout) == Sem.LayoutNamed and (layout.module_name == nil or layout.module_name == "") then
+                        layout = pvm.with(layout, { module_name = self.name })
+                    end
                     layouts[#layouts + 1] = layout
                     resolved[i] = true
                     progress = true

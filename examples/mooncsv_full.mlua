@@ -1354,4 +1354,4 @@ return {
         header_col = header_col,
         read_dialect = read_dialect,
     },
-}
+

@@ -160,4 +160,33 @@ local explained = require("moonlift.tree_typecheck").explain_type_issue(checked.
 assert(explained.primary.message:match("cannot call region"), "lease diagnostic should mention cannot call region")
 assert(explained.suggestions[1].message:match("use `emit`"), "lease diagnostic should suggest emit")
 
-io.write("moonlift region call structural tests ok\n")
+local moon = require("moonlift")
+local hosted = assert(moon.loadstring([[
+local scan = region scan(x: i32; hit(v: i32) | miss())
+entry start()
+    if x > 0 then jump hit(v = x) end
+    jump miss()
+end
+end
+
+local run = func(x: i32): i32
+    return region: i32
+    entry start()
+        call @{scan}(x; hit = found, miss = not_found)
+    end
+    block found(v: i32)
+        yield 17
+    end
+    block not_found()
+        yield -1
+    end
+    end
+end
+return run
+]], "test_region_call_runtime.mlua"))()
+local compiled = assert(hosted:compile())
+assert(compiled(5) == 17, "hosted region call hit dispatch should run through generated wrapper")
+assert(compiled(0) == -1, "hosted region call miss dispatch should run through generated wrapper")
+compiled:free()
+
+io.write("moonlift region call structural/runtime tests ok\n")

@@ -447,7 +447,9 @@ function M.Define(T)
                     defs[name] = { params = params or {}, readonly = effects.readonly, preserve = effects.preserve, invalidate = effects.invalidate }
                 end
             elseif cls == Tr.ItemExtern then
-                defs[item.func.name] = { params = item.func.params or {}, readonly = {}, preserve = {}, invalidate = {} }
+                if pvm.classof(item.func) == Tr.ExternFunc then
+                    defs[item.func.name] = { params = item.func.params or {}, readonly = {}, preserve = {}, invalidate = {} }
+                end
             elseif cls == Tr.ItemUseModule then
                 local nested = build_func_effect_defs(item.module)
                 for k, v in pairs(nested) do defs[k] = v end
