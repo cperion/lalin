@@ -374,6 +374,8 @@ function M.Define(T)
         [Tr.ItemStatic] = function(self, env, target) return pvm.once(pvm.with(self, { s = one(resolve_static, self.s, env, target) })) end,
         [Tr.ItemImport] = function(self) return pvm.once(self) end,
         [Tr.ItemType] = function(self, env, target) return pvm.once(pvm.with(self, { t = one(resolve_type_decl, self.t, env, target) })) end,
+        [Tr.ItemRegionFrag] = function(self) return pvm.once(self) end,
+        [Tr.ItemExprFrag] = function(self) return pvm.once(self) end,
         [Tr.ItemUseTypeDeclSlot] = function(self) return pvm.once(self) end,
         [Tr.ItemUseItemsSlot] = function(self) return pvm.once(self) end,
         [Tr.ItemUseModule] = function(self, env, target) return pvm.once(pvm.with(self, { module = one(resolve_module, self.module, env, target) })) end,

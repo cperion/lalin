@@ -34,6 +34,8 @@ local M = {}
 ---@alias moonlift.ast.FieldInit MoonTree.FieldInit
 ---@alias moonlift.ast.FuncContract MoonTree.FuncContract
 ---@alias moonlift.ast.TypeDecl MoonTree.TypeDecl
+---@alias moonlift.ast.RegionFrag MoonOpen.RegionFrag
+---@alias moonlift.ast.ExprFrag MoonOpen.ExprFrag
 ---@alias moonlift.ast.View MoonTree.View
 ---@alias moonlift.ast.Domain MoonTree.Domain
 
@@ -1049,6 +1051,8 @@ local function install(api, T)
         if is_a(Tr.StaticItem, v) then return Tr.ItemStatic(v) end
         if cls == Tr.ImportItem then return Tr.ItemImport(v) end
         if is_a(Tr.TypeDecl, v) then return Tr.ItemType(v) end
+        if is_a(api.T.MoonOpen.RegionFrag, v) then return Tr.ItemRegionFrag(v) end
+        if is_a(api.T.MoonOpen.ExprFrag, v) then return Tr.ItemExprFrag(v) end
         error("item expects a MoonTree item payload", 2)
     end
 

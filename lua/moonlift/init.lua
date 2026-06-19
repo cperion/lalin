@@ -61,6 +61,7 @@ M.std = require("moonlift.std")
 M.views = M.std.views
 M.buffer_view = M.std.buffer_view
 M.host = M.std.host
+M.mlua = M.std.mlua
 M.lsp = require("moonlift.rpc_stdio_loop")
 
 --- Hosted-Lua pipeline (current mlua_run behavior).

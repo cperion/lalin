@@ -43,7 +43,7 @@ end
 return func(x: i32): i32
     return region: i32
     entry start()
-        emit emit_value(x; ok = good, err = bad, empty = zero)
+        emit @{emit_value}(x; ok = good, err = bad, empty = zero)
     end
     block good(value: i32)
         yield value

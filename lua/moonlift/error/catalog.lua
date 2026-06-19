@@ -191,6 +191,16 @@ local issue_code_map = {
     BackIssueShapeRequiresScalar = "E0301",
     BackIssueShapeRequiresVector = "E0301",
 
+    -- Vectorization rejections
+    VecRejectUnsupportedLoop = "E1001",
+    VecRejectUnsupportedExpr = "E1001",
+    VecRejectUnsupportedStmt = "E1001",
+    VecRejectUnsupportedMemory = "E1002",
+    VecRejectDependence = "E1003",
+    VecRejectRange = "E1004",
+    VecRejectTarget = "E1005",
+    VecRejectCost = "E1005",
+
     -- Unknown/missing variant issues
     TypeIssueUnknownVariant = "E0301",
     TypeIssueVariantPayloadMismatch = "E0301",
@@ -229,7 +239,7 @@ end
 -------------------------------------------------------------------------------
 
 local explainers = {}
-local REQUIRED_PHASES = {"parse","host","open","binding","typecheck","backend","link","source"}
+local REQUIRED_PHASES = {"parse","host","open","binding","typecheck","backend","link","vec","source"}
 
 local function ensure_explainers()
     if explainers.parse then return end
@@ -240,6 +250,20 @@ local function ensure_explainers()
     explainers.typecheck = require("moonlift.tree_typecheck").explain_type_issue
     explainers.backend = require("moonlift.back_validate").explain_back_issue
     explainers.link = require("moonlift.link_plan_validate").explain_link_issue
+    explainers.vec = function(issue, analysis)
+        local pvm = require("moonlift.pvm")
+        local cls = pvm.classof(issue)
+        local kind = (cls and cls.kind) or issue.kind or "VecReject"
+        local reason = issue.reason or issue.message or kind
+        return {
+            code = M.code_for_issue(issue),
+            severity = "info",
+            phase_context = "while planning vectorization",
+            primary = { span = issue_span(issue, analysis), message = "vectorization rejected: " .. tostring(reason) },
+            notes = {},
+            suggestions = {},
+        }
+    end
     explainers.source = require("moonlift.source_text_apply").explain_source_issue
     -- Validate all required phases have explainers
     for _, name in ipairs(REQUIRED_PHASES) do

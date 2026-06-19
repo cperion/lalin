@@ -213,6 +213,8 @@ module MoonTree {
          | ItemStatic(MoonTree.StaticItem s) unique
          | ItemImport(MoonTree.ImportItem imp) unique
          | ItemType(MoonTree.TypeDecl t) unique
+         | ItemRegionFrag(MoonOpen.RegionFrag frag) unique
+         | ItemExprFrag(MoonOpen.ExprFrag frag) unique
          | ItemUseTypeDeclSlot(MoonOpen.TypeDeclSlot slot) unique
          | ItemUseItemsSlot(MoonOpen.ItemsSlot slot) unique
          | ItemUseModule(string use_id, MoonTree.Module module, MoonOpen.SlotBinding* fills) unique

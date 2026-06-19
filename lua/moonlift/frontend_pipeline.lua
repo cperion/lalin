@@ -60,6 +60,7 @@ function M.Define(T)
     local OpenFacts = require("moonlift.open_facts").Define(T)
     local OpenValidate = require("moonlift.open_validate").Define(T)
     local OpenExpand = require("moonlift.open_expand").Define(T)
+    local SurfaceResolve = require("moonlift.surface_resolve").Define(T)
     local ClosureConvert = require("moonlift.closure_convert").Define(T)
     local Typecheck = require("moonlift.tree_typecheck").Define(T)
     local Layout = require("moonlift.sem_layout_resolve").Define(T)
@@ -97,10 +98,11 @@ function M.Define(T)
         )
 
         local expanded = OpenExpand.module(module, opts.expand_env)
-        local open_report = OpenValidate.validate(OpenFacts.facts_of_module(expanded), collector)
+        local surfaced = SurfaceResolve.module(expanded)
+        local open_report = OpenValidate.validate(OpenFacts.facts_of_module(surfaced), collector)
         -- ThrowingCollector throws on first issue — no assert_no_issues needed
 
-        local closed = ClosureConvert.module(expanded)
+        local closed = ClosureConvert.module(surfaced)
         local checked = Typecheck.check_module(closed, { collector = collector, layout_env = opts.layout_env })
 
         local layout_env = opts.layout_env
@@ -192,8 +194,9 @@ function M.Define(T)
         c_opts.c_target = c_target
 
         local expanded = OpenExpand.module(module, opts.expand_env)
-        local open_report = OpenValidate.validate(OpenFacts.facts_of_module(expanded), collector)
-        local closed = ClosureConvert.module(expanded)
+        local surfaced = SurfaceResolve.module(expanded)
+        local open_report = OpenValidate.validate(OpenFacts.facts_of_module(surfaced), collector)
+        local closed = ClosureConvert.module(surfaced)
         local checked = Typecheck.check_module(closed, { collector = collector, layout_env = opts.layout_env, target = c_target, c_target = c_target })
         local layout_env = opts.layout_env
         if layout_env == nil then

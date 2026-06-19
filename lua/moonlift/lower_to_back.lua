@@ -31,6 +31,7 @@ function M.Define(T)
     local CodeKernelPlan = require("moonlift.code_kernel_plan").Define(T)
     local CodeSchedulePlan = require("moonlift.code_schedule_plan").Define(T)
     local CodeLowerPlan = require("moonlift.code_lower_plan").Define(T)
+    local CodeAggregateAbi = require("moonlift.code_aggregate_abi").Define(T)
     local ReductionAlgebra = require("moonlift.reduction_algebra").Define(T)
 
     local api = {}
@@ -45,6 +46,22 @@ function M.Define(T)
         local s = CodeToBack.scalar(ty)
         if s == nil then error("lower_to_back: unsupported block param type", 3) end
         return Back.BackShapeScalar(s)
+    end
+
+    local function view_component_id(view, field)
+        return Back.BackValId(view.text .. ":view_" .. field)
+    end
+
+    local function component_values(id, ty)
+        if CodeAggregateAbi.is_view(ty) then return { view_component_id(id, "data"), view_component_id(id, "len"), view_component_id(id, "stride") } end
+        return { bid(id) }
+    end
+
+    local function component_shapes(ty)
+        local scalars = CodeAggregateAbi.component_scalars(ty)
+        local out = {}
+        for i = 1, #scalars do out[i] = Back.BackShapeScalar(scalars[i]) end
+        return out
     end
 
     local function scalar(ty)
@@ -1057,7 +1074,7 @@ function M.Define(T)
     local function emit_fragment(ctx, code_module, graph, flow, value, mem, effect, kernels, fragment)
         local cls = pvm.classof(fragment.strategy)
         if cls == Lower.LowerStrategyCode then
-            local cmds = CodeToBack.fragment_commands(code_module, graph, flow, value, mem, effect, fragment.cover, { validate = false, layout_env = ctx.layout_env, target = ctx.target })
+            local cmds = CodeToBack.fragment_commands(code_module, graph, flow, value, mem, effect, fragment.cover, { validate = false, emit_local_slots = false, layout_env = ctx.layout_env, target = ctx.target })
             for _, cmd in ipairs(cmds or {}) do ctx.cmds[#ctx.cmds + 1] = cmd end
             return
         end
@@ -1123,9 +1140,13 @@ function M.Define(T)
             for _, inst in ipairs(b.insts or {}) do note_inst_dst(b, inst.kind) end
         end
         ctx.cmds[#ctx.cmds + 1] = Back.CmdBeginFunc(func_id(func.id))
+        for _, cmd in ipairs(CodeToBack.function_local_stack_slot_commands(code_module, func, { graph = graph, flow = flow, value = value, mem = mem, effect = effect, validate = false, layout_env = ctx.layout_env, target = ctx.target })) do ctx.cmds[#ctx.cmds + 1] = cmd end
         for _, b in ipairs(func.blocks or {}) do ctx.cmds[#ctx.cmds + 1] = Back.CmdCreateBlock(block_id(b.id)) end
         for _, b in ipairs(func.blocks or {}) do
-            for _, param in ipairs(b.params or {}) do ctx.cmds[#ctx.cmds + 1] = Back.CmdAppendBlockParam(block_id(b.id), bid(param.value), shape(param.ty)) end
+            for _, param in ipairs(b.params or {}) do
+                local vals, shapes = component_values(param.value, param.ty), component_shapes(param.ty)
+                for i = 1, #vals do ctx.cmds[#ctx.cmds + 1] = Back.CmdAppendBlockParam(block_id(b.id), vals[i], shapes[i]) end
+            end
         end
         for _, fragment in ipairs(ordered_fragments_for_func(func, func_plan, graph_loops)) do emit_fragment(ctx, code_module, graph, flow, value, mem, effect, ctx.kernels, fragment) end
         ctx.cmds[#ctx.cmds + 1] = Back.CmdFinishFunc(func_id(func.id))

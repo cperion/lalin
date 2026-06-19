@@ -35,7 +35,7 @@ if ok2 then
     ffi.cdef("typedef struct { int x; int y; } Pair;")
     local data2 = ffi.new("Pair", 42, 99)
     assert(compiled2(data2) == 42)
-    compiled2:free(),
+    compiled2:free()
     print("OK: compiled")
 else
     print("OK: get_x value constructed")

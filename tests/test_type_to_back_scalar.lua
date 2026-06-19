@@ -41,7 +41,7 @@ unavailable(Ty.TScalar(C.ScalarVoid))
 unavailable(Ty.TArray(Ty.ArrayLenConst(2), i32))
 unavailable(Ty.TSlice(i32))
 unavailable(Ty.TView(i32))
-unavailable(Ty.TClosure({ i32 }, i32))
+known(Ty.TClosure({ i32 }, i32), B.BackPtr)
 unavailable(Ty.TNamed(Ty.TypeRefGlobal("Demo", "Pair")))
 
 print("moonlift type_to_back_scalar ok")

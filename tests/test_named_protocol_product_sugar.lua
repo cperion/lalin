@@ -23,7 +23,7 @@ end
 return func(Input): i32
     return region: i32
     entry start()
-        emit add_or_err(x, y; ok = good, err = bad)
+        emit @{add_or_err}(x, y; ok = good, err = bad)
     end
     block good(value: i32)
         yield value

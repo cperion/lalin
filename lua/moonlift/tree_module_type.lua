@@ -157,6 +157,8 @@ function M.Define(T)
         [Tr.ItemConst] = function() return pvm.empty() end,
         [Tr.ItemStatic] = function() return pvm.empty() end,
         [Tr.ItemImport] = function() return pvm.empty() end,
+        [Tr.ItemRegionFrag] = function() return pvm.empty() end,
+        [Tr.ItemExprFrag] = function() return pvm.empty() end,
         [Tr.ItemUseTypeDeclSlot] = function() return pvm.empty() end,
         [Tr.ItemUseItemsSlot] = function() return pvm.empty() end,
         [Tr.ItemUseModule] = function(self, _, env, target)
@@ -173,6 +175,8 @@ function M.Define(T)
         [Tr.ItemStatic] = function(self, mod_name) return static_entry(self.s, mod_name) end,
         [Tr.ItemType] = function(self, mod_name) return type_entry(self.t, mod_name) end,
         [Tr.ItemImport] = function() return pvm.empty() end,
+        [Tr.ItemRegionFrag] = function() return pvm.empty() end,
+        [Tr.ItemExprFrag] = function() return pvm.empty() end,
         [Tr.ItemUseTypeDeclSlot] = function() return pvm.empty() end,
         [Tr.ItemUseItemsSlot] = function() return pvm.empty() end,
         [Tr.ItemUseModule] = function(self)

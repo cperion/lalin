@@ -16,6 +16,7 @@ local Parse = require("moonlift.parse").Define(T)
 local OpenFacts = require("moonlift.open_facts").Define(T)
 local OpenValidate = require("moonlift.open_validate").Define(T)
 local OpenExpand = require("moonlift.open_expand").Define(T)
+local SurfaceResolve = require("moonlift.surface_resolve").Define(T)
 local ClosureConvert = require("moonlift.closure_convert").Define(T)
 local Typecheck = require("moonlift.tree_typecheck").Define(T)
 local Layout = require("moonlift.sem_layout_resolve").Define(T)
@@ -34,10 +35,11 @@ end
 
 local function module_pipeline(module)
     local expanded = OpenExpand.module(module)
-    local open_report = OpenValidate.validate(OpenFacts.facts_of_module(expanded))
+    local surfaced = SurfaceResolve.module(expanded)
+    local open_report = OpenValidate.validate(OpenFacts.facts_of_module(surfaced))
     assert_no_issues("open", open_report.issues)
 
-    local closed = ClosureConvert.module(expanded)
+    local closed = ClosureConvert.module(surfaced)
     local checked = Typecheck.check_module(closed)
     assert_no_issues("typecheck", checked.issues)
 

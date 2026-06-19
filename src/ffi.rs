@@ -1,6 +1,5 @@
-use crate::decode;
-use crate::host_arena::{MoonHostFieldInit, MoonHostPtr, MoonHostRef};
-use crate::{Artifact, Jit, MoonliftError, ObjectArtifact, compile_object_binary};
+use crate::host_arena::{HostSession, MoonHostFieldInit, MoonHostPtr, MoonHostRecordSpec, MoonHostRef};
+use crate::{Artifact, Jit, MoonliftError, compile_object_binary};
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::ptr;
@@ -19,6 +18,11 @@ pub struct moonlift_artifact_t {
 pub struct moonlift_bytes_t {
     data: *mut u8,
     len: usize,
+}
+
+#[repr(C)]
+pub struct moonlift_host_session_t {
+    inner: HostSession,
 }
 
 thread_local! {
@@ -57,6 +61,11 @@ fn fail_ptr(msg: String) -> *mut c_void {
 fn fail_const_ptr(msg: String) -> *const c_void {
     set_last_error(msg);
     ptr::null()
+}
+
+fn require_mut_ptr<'a, T>(ptr: *mut T, name: &str) -> Result<&'a mut T, MoonliftError> {
+    unsafe { ptr.as_mut() }
+        .ok_or_else(|| MoonliftError(format!("{name} pointer was null")))
 }
 
 fn require_ptr<'a, T>(ptr: *const T, name: &str) -> Result<&'a T, MoonliftError> {
@@ -212,5 +221,169 @@ pub extern "C" fn moonlift_bytes_free(bytes: *mut moonlift_bytes_t) {
         if !b.data.is_null() && b.len > 0 {
             unsafe { drop(Vec::from_raw_parts(b.data, b.len, b.len)); }
         }
+    }
+}
+
+// =========================================================================
+// C API: Host arena
+// =========================================================================
+
+#[unsafe(no_mangle)]
+pub extern "C" fn moonlift_host_session_new() -> *mut moonlift_host_session_t {
+    clear_last_error();
+    Box::into_raw(Box::new(moonlift_host_session_t {
+        inner: HostSession::new(),
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn moonlift_host_session_free(session: *mut moonlift_host_session_t) {
+    if !session.is_null() {
+        clear_last_error();
+        unsafe { drop(Box::from_raw(session)); }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn moonlift_host_session_id(session: *const moonlift_host_session_t) -> u64 {
+    match require_ptr(session, "moonlift_host_session_t") {
+        Ok(session) => {
+            clear_last_error();
+            session.inner.session_id()
+        }
+        Err(err) => {
+            set_last_error(err.0);
+            0
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn moonlift_host_session_generation(session: *const moonlift_host_session_t) -> u32 {
+    match require_ptr(session, "moonlift_host_session_t") {
+        Ok(session) => {
+            clear_last_error();
+            session.inner.generation()
+        }
+        Err(err) => {
+            set_last_error(err.0);
+            0
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn moonlift_host_session_reset(session: *mut moonlift_host_session_t) -> c_int {
+    let result: Result<_, MoonliftError> = (|| {
+        let session = require_mut_ptr(session, "moonlift_host_session_t")?;
+        session.inner.reset();
+        Ok(())
+    })();
+    match result {
+        Ok(()) => ok_int(),
+        Err(err) => fail_int(err.0),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn moonlift_host_alloc_record(
+    session: *mut moonlift_host_session_t,
+    type_id: u32,
+    tag: u32,
+    size: usize,
+    align: usize,
+    out_ref: *mut MoonHostRef,
+    out_ptr: *mut MoonHostPtr,
+) -> c_int {
+    let result: Result<_, MoonliftError> = (|| {
+        let session = require_mut_ptr(session, "moonlift_host_session_t")?;
+        let out_ref = require_mut_ptr(out_ref, "MoonHostRef output")?;
+        let out_ptr = require_mut_ptr(out_ptr, "MoonHostPtr output")?;
+        let (r, p) = session.inner.alloc_record(type_id, tag, size, align)
+            .map_err(MoonliftError)?;
+        *out_ref = r;
+        *out_ptr = p;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => ok_int(),
+        Err(err) => fail_int(err.0),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn moonlift_host_alloc_records(
+    session: *mut moonlift_host_session_t,
+    specs: *const MoonHostRecordSpec,
+    specs_len: usize,
+    fields: *const MoonHostFieldInit,
+    fields_len: usize,
+    out_refs: *mut MoonHostRef,
+    out_ptrs: *mut MoonHostPtr,
+) -> c_int {
+    let result: Result<_, MoonliftError> = (|| {
+        let session = require_mut_ptr(session, "moonlift_host_session_t")?;
+        if specs_len > 0 && specs.is_null() {
+            return Err(MoonliftError("MoonHostRecordSpec input pointer was null".to_string()));
+        }
+        if fields_len > 0 && fields.is_null() {
+            return Err(MoonliftError("MoonHostFieldInit input pointer was null".to_string()));
+        }
+        if specs_len > 0 && out_refs.is_null() {
+            return Err(MoonliftError("MoonHostRef output pointer was null".to_string()));
+        }
+        if specs_len > 0 && out_ptrs.is_null() {
+            return Err(MoonliftError("MoonHostPtr output pointer was null".to_string()));
+        }
+
+        let specs = unsafe { std::slice::from_raw_parts(specs, specs_len) };
+        let fields = unsafe { std::slice::from_raw_parts(fields, fields_len) };
+        let out_refs = unsafe { std::slice::from_raw_parts_mut(out_refs, specs_len) };
+        let out_ptrs = unsafe { std::slice::from_raw_parts_mut(out_ptrs, specs_len) };
+
+        for (i, spec) in specs.iter().copied().enumerate() {
+            let end = spec.first_field
+                .checked_add(spec.field_count)
+                .ok_or_else(|| MoonliftError(format!("host record spec {i} field range overflow")))?;
+            if end > fields.len() {
+                return Err(MoonliftError(format!(
+                    "host record spec {i} field range [{}, {}) exceeds field count {}",
+                    spec.first_field,
+                    end,
+                    fields.len()
+                )));
+            }
+            let (r, p) = session.inner.alloc_record(spec.type_id, spec.tag, spec.size, spec.align)
+                .map_err(MoonliftError)?;
+            for field in &fields[spec.first_field..end] {
+                session.inner.write_field(r, *field).map_err(MoonliftError)?;
+            }
+            out_refs[i] = r;
+            out_ptrs[i] = p;
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => ok_int(),
+        Err(err) => fail_int(err.0),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn moonlift_host_ptr_for_ref(
+    session: *const moonlift_host_session_t,
+    r: MoonHostRef,
+    out_ptr: *mut MoonHostPtr,
+) -> c_int {
+    let result: Result<_, MoonliftError> = (|| {
+        let session = require_ptr(session, "moonlift_host_session_t")?;
+        let out_ptr = require_mut_ptr(out_ptr, "MoonHostPtr output")?;
+        let p = session.inner.ptr_for_ref(r).map_err(MoonliftError)?;
+        *out_ptr = p;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => ok_int(),
+        Err(err) => fail_int(err.0),
     }
 }

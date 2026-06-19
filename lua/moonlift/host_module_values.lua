@@ -51,7 +51,16 @@ end
 
 function BundleValue:add_region(value)
     if value.frag then
-        self.region_frags[#self.region_frags + 1] = value.frag
+        local Tr = self.session.T.MoonTree
+        self.items[#self.items + 1] = Tr.ItemRegionFrag(value.frag)
+    end
+    return value
+end
+
+function BundleValue:add_expr_frag(value)
+    if value.frag then
+        local Tr = self.session.T.MoonTree
+        self.items[#self.items + 1] = Tr.ItemExprFrag(value.frag)
     end
     return value
 end
@@ -74,7 +83,7 @@ function BundleValue:pack(...)
             for _, dep in pairs(deps) do
                 if type(dep) == "table" then
                     local dep_kind = rawget(dep, "kind") or rawget(dep, "moonlift_quote_kind")
-                    if dep_kind == "func" or dep_kind == "extern_func" or dep_kind == "region_frag"
+                    if dep_kind == "func" or dep_kind == "extern_func" or dep_kind == "region_frag" or dep_kind == "expr_frag"
                         or dep_kind == "struct" or dep_kind == "union" then
                         pack_one(dep)
                     end
@@ -106,6 +115,8 @@ function BundleValue:pack(...)
             self:add_func(v)
         elseif kind == "region_frag" or rawget(v, "moonlift_quote_kind") == "region_frag" then
             self:add_region(v)
+        elseif kind == "expr_frag" or rawget(v, "moonlift_quote_kind") == "expr_frag" then
+            self:add_expr_frag(v)
         elseif kind == "struct" or kind == "union" then
             self:add_type(v)
         else
@@ -343,20 +354,6 @@ function BundleValue:_lower_program(opts)
         site = "host module",
         layout_env = self:layout_env(),
     }
-    -- Inject only explicit bundle region dependencies.  A compile unit must be
-    -- determined by the values packed into the bundle and their recorded @{}
-    -- dependency closure, never by ambient session history.
-    local T = self.session.T
-    local region_frags = {}
-    local seen = {}
-    for i = 1, #(self.region_frags or {}) do
-        local frag = self.region_frags[i]
-        if not seen[frag] then region_frags[#region_frags + 1] = frag end
-    end
-    if #region_frags > 0 then
-        local O = T.MoonOpen
-        lower_opts.expand_env = O.ExpandEnv(region_frags, {}, O.FillSet({}), {}, {}, "")
-    end
     return Pipeline.lower_module(self:to_asdl(), lower_opts).program
 end
 
@@ -368,17 +365,6 @@ function BundleValue:_lower_c_unit(opts)
         layout_env = self:layout_env(),
         c_opts = opts,
     }
-    local T = self.session.T
-    local region_frags = {}
-    local seen = {}
-    for i = 1, #(self.region_frags or {}) do
-        local frag = self.region_frags[i]
-        if not seen[frag] then region_frags[#region_frags + 1] = frag end
-    end
-    if #region_frags > 0 then
-        local O = T.MoonOpen
-        lower_opts.expand_env = O.ExpandEnv(region_frags, {}, O.FillSet({}), {}, {}, "")
-    end
     local result = Pipeline.lower_module_to_c(self:to_asdl(), lower_opts)
     if result.code_module == nil then error("bundle:emit_c lowering failed: MoonCode module was not produced", 2) end
     if result.code_report ~= nil and #result.code_report.issues ~= 0 then

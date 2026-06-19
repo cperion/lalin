@@ -241,6 +241,8 @@ function M.Define(T)
         [Tr.ItemStatic] = function(self) return static_facts(self.s) end,
         [Tr.ItemImport] = function() return pvm.empty() end,
         [Tr.ItemType] = function() return pvm.empty() end,
+        [Tr.ItemRegionFrag] = function() return pvm.empty() end,
+        [Tr.ItemExprFrag] = function() return pvm.empty() end,
         [Tr.ItemUseTypeDeclSlot] = function() return pvm.empty() end,
         [Tr.ItemUseItemsSlot] = function() return pvm.empty() end,
         [Tr.ItemUseModule] = function(self) return module_facts(self.module) end,

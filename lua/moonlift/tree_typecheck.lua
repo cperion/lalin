@@ -679,8 +679,9 @@ function M.Define(T)
             return pvm.once(Tr.TypeViewResult(pvm.with(self, { data = data.expr, elem = elem, len = len.expr, stride = stride.expr }), issues))
         end,
         [Tr.ViewRestrided] = function(self, ctx)
-            local base = pvm.one(type_view(self.base, ctx)); local stride = pvm.one(type_expr(self.stride, ctx))
+            local base = pvm.one(type_view(self.base, ctx)); local stride = type_expr_expect(self.stride, ctx, index_ty())
             local issues = {}; append_all(issues, base.issues); append_all(issues, stride.issues)
+            if not is_integer_scalar(stride.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view stride", index_ty(), stride.ty) end
             return pvm.once(Tr.TypeViewResult(pvm.with(self, { base = base.view, stride = stride.expr }), issues))
         end,
         [Tr.ViewWindow] = function(self, ctx)
@@ -691,18 +692,24 @@ function M.Define(T)
             return pvm.once(Tr.TypeViewResult(pvm.with(self, { base = base.view, start = start.expr, len = len.expr }), issues))
         end,
         [Tr.ViewRowBase] = function(self, ctx)
-            local base = pvm.one(type_view(self.base, ctx)); local row_offset = pvm.one(type_expr(self.row_offset, ctx))
+            local base = pvm.one(type_view(self.base, ctx)); local row_offset = type_expr_expect(self.row_offset, ctx, index_ty())
             local issues = {}; append_all(issues, base.issues); append_all(issues, row_offset.issues)
+            if not is_integer_scalar(row_offset.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view row offset", index_ty(), row_offset.ty) end
             return pvm.once(Tr.TypeViewResult(pvm.with(self, { base = base.view, row_offset = row_offset.expr }), issues))
         end,
         [Tr.ViewInterleaved] = function(self, ctx)
-            local data = pvm.one(type_expr(self.data, ctx)); local len = pvm.one(type_expr(self.len, ctx)); local stride = pvm.one(type_expr(self.stride, ctx)); local lane = pvm.one(type_expr(self.lane, ctx))
+            local data = pvm.one(type_expr(self.data, ctx)); local len = type_expr_expect(self.len, ctx, index_ty()); local stride = type_expr_expect(self.stride, ctx, index_ty()); local lane = type_expr_expect(self.lane, ctx, index_ty())
             local issues = {}; append_all(issues, data.issues); append_all(issues, len.issues); append_all(issues, stride.issues); append_all(issues, lane.issues)
+            if not is_integer_scalar(len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view len", index_ty(), len.ty) end
+            if not is_integer_scalar(stride.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view stride", index_ty(), stride.ty) end
+            if not is_integer_scalar(lane.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view lane", index_ty(), lane.ty) end
             return pvm.once(Tr.TypeViewResult(pvm.with(self, { data = data.expr, len = len.expr, stride = stride.expr, lane = lane.expr }), issues))
         end,
         [Tr.ViewInterleavedView] = function(self, ctx)
-            local base = pvm.one(type_view(self.base, ctx)); local stride = pvm.one(type_expr(self.stride, ctx)); local lane = pvm.one(type_expr(self.lane, ctx))
+            local base = pvm.one(type_view(self.base, ctx)); local stride = type_expr_expect(self.stride, ctx, index_ty()); local lane = type_expr_expect(self.lane, ctx, index_ty())
             local issues = {}; append_all(issues, base.issues); append_all(issues, stride.issues); append_all(issues, lane.issues)
+            if not is_integer_scalar(stride.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view stride", index_ty(), stride.ty) end
+            if not is_integer_scalar(lane.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view lane", index_ty(), lane.ty) end
             return pvm.once(Tr.TypeViewResult(pvm.with(self, { base = base.view, stride = stride.expr, lane = lane.expr }), issues))
         end,
     }, { args_cache = "last" })
@@ -940,6 +947,8 @@ function M.Define(T)
                     local matches = false
                     if cls == Sem.LayoutNamed and pvm.classof(ref) == Ty.TypeRefPath then
                         matches = #ref.path.parts == 1 and l.type_name == ref.path.parts[1].text
+                    elseif cls == Sem.LayoutNamed and pvm.classof(ref) == Ty.TypeRefGlobal then
+                        matches = l.module_name == ref.module_name and l.type_name == ref.type_name
                     end
                     if matches then layout = l; break end
                 end
@@ -1460,6 +1469,8 @@ function M.Define(T)
         end,
         [Tr.ItemUseTypeDeclSlot] = function(self) return pvm.once(Tr.TypeItemResult({ self }, {})) end,
         [Tr.ItemUseItemsSlot] = function(self) return pvm.once(Tr.TypeItemResult({ self }, {})) end,
+        [Tr.ItemRegionFrag] = function() return pvm.once(Tr.TypeItemResult({}, {})) end,
+        [Tr.ItemExprFrag] = function() return pvm.once(Tr.TypeItemResult({}, {})) end,
         [Tr.ItemUseModule] = function(self)
             local r = pvm.one(type_module(self.module))
             return pvm.once(Tr.TypeItemResult({ pvm.with(self, { module = r.module }) }, r.issues))

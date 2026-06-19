@@ -154,12 +154,65 @@ M.type = make_quote(
 M.expr = make_quote(
     function(T, src) return require("moonlift.parse").Define(T).parse_expr(src) end,
     function(value) return api.expr_from_asdl(value, nil, "moon.expr quote") end,
-    function(e, value, env) return e.expr(value, env) end
+    function(e, value, env)
+        local pvm = require("moonlift.pvm")
+        local S = default_session.T.MoonSyntax
+        local cls = pvm.classof(value)
+        if S.Expr.members and S.Expr.members[cls] then
+            value = require("moonlift.syntax_lower").Define(default_session.T).expr(value, env)
+        end
+        return e.expr(value, env)
+    end
 )
 
 local function typed_list_parse_error(prefix, parsed)
     if parsed and parsed.issues and #parsed.issues ~= 0 then error(parsed.issues[1].message, 3) end
     error(prefix .. " parse failed", 3)
+end
+
+local function syntax_lower()
+    return require("moonlift.syntax_lower").Define(default_session.T)
+end
+
+local function lower_syntax_func_if_needed(value, env)
+    local pvm = require("moonlift.pvm")
+    local S = default_session.T.MoonSyntax
+    local cls = pvm.classof(value)
+    if cls == S.SyntaxFuncLocal or cls == S.SyntaxFuncExport then
+        return syntax_lower().func(value, env)
+    end
+    return value
+end
+
+local function lower_syntax_region_if_needed(value, env)
+    local pvm = require("moonlift.pvm")
+    local S = default_session.T.MoonSyntax
+    if pvm.classof(value) == S.RegionFrag then
+        return syntax_lower().region_frag(value, env)
+    end
+    return value
+end
+
+local function lower_syntax_expr_frag_if_needed(value, env)
+    local pvm = require("moonlift.pvm")
+    local S = default_session.T.MoonSyntax
+    if pvm.classof(value) == S.ExprFrag then
+        return syntax_lower().expr_frag(value, env)
+    end
+    return value
+end
+
+local function lower_syntax_type_decl_if_needed(value, env)
+    local pvm = require("moonlift.pvm")
+    local S = default_session.T.MoonSyntax
+    local decl = value and (value.decl or value)
+    local cls = pvm.classof(decl)
+    if cls == S.SyntaxTypeDeclStruct or cls == S.SyntaxTypeDeclUnion then
+        local lowered = syntax_lower().type_decl(decl, env)
+        if value and value.decl then return { name = value.name, decl = lowered, protocol_variants = value.protocol_variants } end
+        return lowered
+    end
+    return value
 end
 
 local function parse_params_quote(T, src)
@@ -181,6 +234,7 @@ end
 local function expand_params_quote(e, value, env)
     local pvm = require("moonlift.pvm")
     local Tr = default_session.T.MoonTree
+    value = lower_syntax_func_if_needed(value, env)
     local result = pvm.one(e.item_stream(Tr.ItemFunc(value), env))
     local item = result.items and result.items[1]
     return item and item.func or value
@@ -204,6 +258,7 @@ local function wrap_fields_quote(value)
 end
 
 local function expand_fields_quote(e, value, env)
+    value = lower_syntax_type_decl_if_needed(value, env)
     return { name = value.name, decl = e.expand_type_decl(value.decl or value, env) }
 end
 
@@ -230,6 +285,7 @@ local function wrap_variants_quote(value)
 end
 
 local function expand_variants_quote(e, value, env)
+    value = lower_syntax_type_decl_if_needed(value, env)
     return { name = value.name, decl = e.expand_type_decl(value.decl or value, env) }
 end
 
@@ -279,6 +335,7 @@ local function wrap_switch_arms_quote(value)
 end
 
 local function expand_switch_arms_quote(e, value, env)
+    value = require("moonlift.syntax_lower").Define(default_session.T).stmt_list(value, env)
     return e.stmts(value, env)
 end
 
@@ -402,6 +459,7 @@ M.func = make_quote(
     function(e, value, env)
         local pvm = require("moonlift.pvm")
         local Tr = default_session.T.MoonTree
+        value = lower_syntax_func_if_needed(value, env)
         local g, p, c = e.item_stream(Tr.ItemFunc(value), env)
         return pvm.one(g, p, c)
     end
@@ -470,6 +528,7 @@ M.region = make_quote(
             params = {}, blocks = {} }, rfv)
     end,
     function(e, value, env)
+        value = lower_syntax_region_if_needed(value, env)
         return e.expand_region_frag(value, env)
     end
 )
@@ -483,6 +542,7 @@ M.expr_frag = make_quote(
             require("moonlift.host_values").ExprFragValue or {})
     end,
     function(e, value, env)
+        value = lower_syntax_expr_frag_if_needed(value, env)
         return e.expand_expr_frag(value, env)
     end
 )
@@ -512,6 +572,7 @@ M.struct = make_quote(
         return out
     end,
     function(e, value, env)
+        value = lower_syntax_type_decl_if_needed(value, env)
         return { name = value.name, decl = e.expand_type_decl(value.decl or value, env) }
     end
 )
@@ -528,6 +589,7 @@ M.union = make_quote(
         return out
     end,
     function(e, value, env)
+        value = lower_syntax_type_decl_if_needed(value, env)
         return { name = value.name, decl = e.expand_type_decl(value.decl or value, env) }
     end
 )

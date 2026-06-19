@@ -2,7 +2,6 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;./lua/?.lua;./
 
 local pvm = require("moonlift.pvm")
 local A = require("moonlift.asdl")
-local HostDeclParse = require("moonlift.host_decl_parse")
 local HostDeclValidate = require("moonlift.host_decl_validate")
 local HostLayoutResolve = require("moonlift.host_layout_resolve")
 local HostViewAbiPlan = require("moonlift.host_view_abi_plan")
@@ -20,7 +19,6 @@ local C = T.MoonCore
 local Tr = T.MoonTree
 local Sem = T.MoonSem
 
-local DeclParse = HostDeclParse.Define(T)
 local DeclValidate = HostDeclValidate.Define(T)
 local LayoutResolve = HostLayoutResolve.Define(T)
 local ViewAbi = HostViewAbiPlan.Define(T)
@@ -50,7 +48,7 @@ local expose_users = H.HostExposeDecl(
     }
 )
 
-local parsed = DeclParse.parse(H.HostDeclSourceDecls({ H.HostDeclStruct(user_decl), H.HostDeclExpose(expose_users) }))
+local parsed = H.HostDeclSet({ H.HostDeclStruct(user_decl), H.HostDeclExpose(expose_users) })
 assert(pvm.classof(parsed) == H.HostDeclSet)
 assert(#parsed.decls == 2)
 local report = DeclValidate.validate(parsed)

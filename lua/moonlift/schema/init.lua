@@ -21,6 +21,7 @@ local SCHEMA_ASDL_MODULES = {
     "bind",
     "sem",
     "tree",
+    "syntax",
     "code",
     "graph",
     "flow",

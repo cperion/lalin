@@ -4,9 +4,9 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;./lua/?.lua;./
 local Host = require("moonlift.mlua_run")
 
 local Pair = Host.eval [[return struct Pair x: i32, y: i32 end]]
-assert(Pair.kind == "type")
+assert(Pair.kind == "struct")
 assert(Pair.decl.name == "Pair")
-assert(Pair.source_hint == "Pair")
+assert(Pair:moonlift_splice_source() == "Pair")
 assert(#Pair.decl.fields == 2)
 assert(Pair.decl.fields[1].field_name == "x")
 assert(Pair.decl.fields[2].field_name == "y")

@@ -87,14 +87,27 @@ function M.Define(T)
 
     local function find_func(analysis, label)
         local normalized = tostring(label):gsub(":", "_")
-        for i = 1, #analysis.parse.combined.module.items do
-            local item = analysis.parse.combined.module.items[i]
-            if item.func then
-                local name = item.func.name or (item.func.sym and item.func.sym.name)
-                if name == label or name == normalized then return item.func end
+        local function scan_module(module)
+            for i = 1, #(module and module.items or {}) do
+                local item = module.items[i]
+                if item.func then
+                    local name = item.func.name or (item.func.sym and item.func.sym.name)
+                    if name == label or name == normalized then return item.func end
+                end
             end
+            return nil
+        end
+        local found = scan_module(analysis.parse.combined.module)
+        if found then return found end
+        for i = 1, #(analysis.parse.islands or {}) do
+            found = scan_module(analysis.parse.islands[i].module)
+            if found then return found end
         end
         return nil
+    end
+
+    local function lexical_func_subject(label)
+        return E.SubjectTreeFunc(Tr.FuncDecl(tostring(label), {}, Ty.TScalar(C.ScalarVoid)))
     end
 
     local function fragment_for_label(analysis, anchor_kind, fragments, label)
@@ -210,6 +223,9 @@ function M.Define(T)
             if expr_frag then return E.SubjectExprFrag(expr_frag) end
             local fn = find_func(analysis, anchor.label)
             if fn then return E.SubjectTreeFunc(fn) end
+            if anchor.kind == S.AnchorFunctionName or anchor.kind == S.AnchorMethodName or anchor.kind == S.AnchorFunctionUse then
+                return lexical_func_subject(anchor.label)
+            end
             if anchor.kind == S.AnchorMethodName or anchor.kind == S.AnchorFunctionName then
                 return E.SubjectBuiltin("function " .. anchor.label)
             end

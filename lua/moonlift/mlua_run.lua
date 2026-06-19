@@ -367,13 +367,54 @@ local function load_mlua_chunk(src, chunk_name)
     return loader, transformed
 end
 
+local module_table_mt = {}
+module_table_mt.__index = module_table_mt
+
+local function is_packable_value(v)
+    if type(v) ~= "table" then return false end
+    local kind = rawget(v, "kind")
+    return kind == "func" or kind == "region_frag" or kind == "expr_frag"
+        or kind == "struct" or kind == "union" or kind == "handle" or kind == "extern"
+end
+
+function module_table_mt:compile(opts)
+    local moon = require("moonlift")
+    local name = (opts and opts.module_name) or rawget(self, "__moonlift_module_name") or "mlua_module"
+    local bundle = moon.bundle(tostring(name):gsub("[^_%w]", "_"))
+    local keys = {}
+    for k, v in pairs(self) do
+        if type(k) == "string" and is_packable_value(v) then keys[#keys + 1] = k end
+    end
+    table.sort(keys)
+    for i = 1, #keys do bundle:pack(self[keys[i]]) end
+    return bundle:compile(opts)
+end
+
+local function wrap_result(value, chunk_name)
+    if type(value) ~= "table" or is_packable_value(value) or getmetatable(value) ~= nil then return value end
+    local saw_packable = false
+    for _, v in pairs(value) do
+        if is_packable_value(v) then saw_packable = true; break end
+    end
+    if not saw_packable then return value end
+    rawset(value, "__moonlift_module_name", chunk_name or "mlua_module")
+    return setmetatable(value, module_table_mt)
+end
+
 -------------------------------------------------------------------------------
 -- Public API
 -------------------------------------------------------------------------------
 
 function M.loadstring(src, chunk_name, opts)
     local loader = load_mlua_chunk(src, chunk_name)
-    return loader
+    local function pack_results(...)
+        return { n = select("#", ...), ... }
+    end
+    return function(...)
+        local results = pack_results(loader(...))
+        for i = 1, results.n do results[i] = wrap_result(results[i], chunk_name) end
+        return unpack(results, 1, results.n)
+    end
 end
 
 function M.loadfile(path, opts)

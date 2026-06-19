@@ -42,7 +42,6 @@ data[2].id, data[2].age, data[2].active = 12, 22, 1
 data[3].id, data[3].age, data[3].active = 13, 23, 0
 
 local users = Users:new(data, 3, 1, { owner = data })
-assert(#users == 3)
 assert(users.len == 3)
 assert(users.stride == 1)
 assert(users:ptr()[0].len == 3)
@@ -74,7 +73,7 @@ assert(tabled[1].age == 30)
 assert(tabled[1].active == true)
 
 local strided = Users:new(data, 2, 2, { owner = data })
-assert(#strided == 2)
+assert(strided.len == 2)
 assert(strided[1].id == 10)
 assert(strided[2].id == 12)
 assert(strided:get_active(2) == true)

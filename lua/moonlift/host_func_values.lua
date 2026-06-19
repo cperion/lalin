@@ -422,6 +422,8 @@ function M.Install(api, session)
         end,
         -- expand_fn
         function(e, value, env)
+            local lowered = require("moonlift.syntax_lower").Define(session.T).stmt_list(value, env)
+            value = lowered
             return e.stmts(value, env)
         end,
         -- table_fn (ASDL pass-through)

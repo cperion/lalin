@@ -15,13 +15,18 @@ local function uri_eq(a, b)
     return a == b or (a and b and a.text == b.text)
 end
 
+local function uri_text(uri)
+    if type(uri) == "table" then return uri.text or tostring(uri) end
+    return tostring(uri or "")
+end
+
 local function span_overlaps(span_a, span_b)
-    local a_uri = span_a.uri or ""
-    local b_uri = span_b.uri or (span_b.uri and span_b.uri.text) or ""
+    local a_uri = uri_text(span_a.uri)
+    local b_uri = uri_text(span_b.uri)
     local a_start = span_a.start_offset or 0
-    local a_stop = span_a.end_offset or span_a.start_offset or 0
+    local a_stop = span_a.end_offset or span_a.stop_offset or span_a.start_offset or 0
     local b_start = span_b.start_offset or 0
-    local b_stop = span_b.end_offset or span_b.start_offset or 0
+    local b_stop = span_b.end_offset or span_b.stop_offset or span_b.start_offset or 0
     if a_uri ~= b_uri then return false end
     if a_start == a_stop then
         return a_start >= b_start and a_start <= b_stop
@@ -46,6 +51,7 @@ function M.Define(T)
     local S = T.MoonSource
     local E = T.MoonEditor
     local H = T.MoonHost
+    local Tr = T.MoonTree
     local Mlua = T.MoonMlua
     local P = PositionIndex.Define(T)
 
@@ -99,20 +105,38 @@ function M.Define(T)
         return nil
     end
 
+    local function diagnostic_code_for_issue(issue, fallback)
+        local cls = pvm.classof(issue)
+        if cls == H.HostIssueBareBoolInBoundaryStruct then return "host.bareBoolBoundary" end
+        if cls == H.HostIssueInvalidPackedAlign then return "host.invalidPackedAlign" end
+        if cls == H.HostIssueDuplicateField then return "host.duplicateField" end
+        if cls == H.HostIssueDuplicateDecl then return "host.duplicateDecl" end
+        if cls == E.BindingUnresolved or cls == Tr.TypeIssueUnresolvedValue then return "binding.unresolved" end
+        return fallback or "E"
+    end
+
     -- Get diagnostics at the query position from resolved issues
     local function candidate_diagnostics(query, analysis)
         if #query.diagnostics > 0 then return query.diagnostics end
         local resolved = AnalysisStore.resolved_issues(analysis)
         local out = {}
+        local doc = analysis.parse.parts.document
+        local index = P.build_index(doc)
         for i = 1, #resolved do
             local ri = resolved[i]
             if ri.span then
-                -- Create a diagnostic-like proxy for overlap checking
-                local d = {
-                    range = ri.span,
-                    origin = ri.issue,
-                }
                 if span_overlaps(ri.span, query.range.range) then
+                    local start_offset = ri.span.start_offset or 0
+                    local stop_offset = ri.span.end_offset or ri.span.stop_offset or start_offset
+                    local range = assert(P.range_from_offsets(index, start_offset, stop_offset))
+                    local cls = pvm.classof(ri.issue)
+                    local origin = E.DiagFromTransport(ri.code or "E", tostring(ri.issue))
+                    if cls then
+                        if tostring(cls.kind or ""):match("^HostIssue") then origin = E.DiagFromHost(ri.issue)
+                        elseif tostring(cls.kind or ""):match("^TypeIssue") then origin = E.DiagFromType(ri.issue) end
+                    end
+                    local code = diagnostic_code_for_issue(ri.issue, ri.code or "E")
+                    local d = E.DiagnosticFact(E.DiagnosticError, origin, code, tostring(ri.issue), range)
                     out[#out + 1] = d
                 end
             end
@@ -221,13 +245,23 @@ function M.Define(T)
         }
     end
 
+    local function origin_issue(origin)
+        local cls = pvm.classof(origin)
+        if cls == E.DiagFromHost or cls == E.DiagFromType or cls == E.DiagFromParse or cls == E.DiagFromOpen or cls == E.DiagFromBack or cls == E.DiagFromSource then
+            return origin.issue
+        elseif cls == E.DiagFromBindingResolution then
+            return origin.resolution
+        end
+        return origin
+    end
+
     local code_actions_phase = pvm.phase("moonlift_editor_code_actions", {
         [E.CodeActionQuery] = function(query, analysis)
             local out = {}
             local diagnostics = candidate_diagnostics(query, analysis)
             for i = 1, #diagnostics do
                 local d = diagnostics[i]
-                local issue = d.origin
+                local issue = origin_issue(d.origin)
                 local cls = pvm.classof(issue)
                 local actions = {}
                 if cls == H.HostIssueBareBoolInBoundaryStruct then
@@ -238,7 +272,7 @@ function M.Define(T)
                     actions = duplicate_field_actions(d, issue, analysis)
                 elseif cls == H.HostIssueDuplicateDecl then
                     actions = duplicate_decl_actions(d, issue)
-                elseif cls == E.BindingUnresolved then
+                elseif cls == E.BindingUnresolved or cls == Tr.TypeIssueUnresolvedValue then
                     actions = unresolved_binding_actions(d, issue, analysis)
                 end
                 for j = 1, #actions do out[#out + 1] = actions[j] end

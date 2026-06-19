@@ -247,8 +247,16 @@ function M.Install(api, session)
         return make_struct(name, fields, module_value)
     end
 
+    function api.struct(name, fields)
+        return make_struct(name, fields, nil)
+    end
+
     function api._module_union(module_value, name, fields)
         return make_union(name, fields, module_value)
+    end
+
+    function api.union(name, fields)
+        return make_union(name, fields, nil)
     end
 
     function api._module_enum(module_value, name, variants)

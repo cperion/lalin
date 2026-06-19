@@ -1,6 +1,7 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local moon = require("moonlift")
+local pvm = require("moonlift.pvm")
 
 -- An unrelated fragment in the same Lua session must not become an ambient
 -- compile dependency.
@@ -47,7 +48,20 @@ end
 
 local bundle = moon.bundle("explicit_region_dependency_closure")
 bundle:pack(run)
-assert(#bundle.region_frags == 2, "bundle should contain only outer and inner explicit region deps")
+local module = bundle:to_asdl()
+local names = {}
+local Tr = bundle.session.T.MoonTree
+local O = bundle.session.T.MoonOpen
+for i = 1, #module.items do
+    local item = module.items[i]
+    if pvm.classof(item) == Tr.ItemRegionFrag then
+        local name = item.frag.name
+        if pvm.classof(name) == O.NameRefText then name = name.text end
+        names[name] = true
+    end
+end
+assert(names.inner and names.outer, "bundle should contain explicit inner and outer region deps as module items")
+assert(not names.unrelated, "bundle must not contain unrelated ambient region deps")
 
 local compiled = run:compile()
 assert(compiled(40) == 41)

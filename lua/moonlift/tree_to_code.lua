@@ -36,7 +36,7 @@ function M.Define(T)
 
     local function unsupported(ctx, node, what)
         local site = ctx and ctx.func_name or "module"
-        error("tree_to_code scalar/place slice does not support " .. tostring(what or class_name(node)) .. " in " .. site, 3)
+        error("tree_to_code unsupported lowering: " .. tostring(what or class_name(node)) .. " in " .. site, 3)
     end
 
     local function module_name(module)
@@ -54,6 +54,33 @@ function M.Define(T)
         if binding == nil then return "<nil>" end
         if binding.id and binding.id.text then return binding.id.text end
         return tostring(binding.name)
+    end
+
+    local function scoped_binding_key(ctx, binding)
+        local key = binding_key(binding)
+        local alpha = ctx and ctx.binding_alpha
+        if alpha ~= nil and alpha[key] ~= nil then return alpha[key] end
+        return key
+    end
+
+    local function declare_binding_key(ctx, binding)
+        local key = binding_key(binding)
+        if ctx ~= nil and ctx.binding_alpha ~= nil and ctx.binding_alpha_suffix ~= nil and ctx.binding_alpha[key] == nil then
+            ctx.binding_alpha[key] = key .. "@" .. ctx.binding_alpha_suffix
+        end
+        return scoped_binding_key(ctx, binding)
+    end
+
+    local function binding_is_addressed(ctx, binding)
+        local key = binding_key(binding)
+        local scoped = scoped_binding_key(ctx, binding)
+        return (ctx.addressed and (ctx.addressed[key] or ctx.addressed[scoped])) or false
+    end
+
+    local function binding_is_mutable(ctx, binding)
+        local key = binding_key(binding)
+        local scoped = scoped_binding_key(ctx, binding)
+        return (ctx.mutable and (ctx.mutable[key] or ctx.mutable[scoped])) or false
     end
 
     local function is_void_type(ty)
@@ -165,11 +192,11 @@ function M.Define(T)
     end
 
     local function value_id_for_binding(ctx, binding)
-        return Code.CodeValueId("v:" .. sanitize(ctx.func_name) .. ":" .. sanitize(binding_key(binding)))
+        return Code.CodeValueId("v:" .. sanitize(ctx.func_name) .. ":" .. sanitize(scoped_binding_key(ctx, binding)))
     end
 
     local function local_id_for_binding(ctx, binding)
-        return Code.CodeLocalId("local:" .. sanitize(ctx.func_name) .. ":" .. sanitize(binding_key(binding)))
+        return Code.CodeLocalId("local:" .. sanitize(ctx.func_name) .. ":" .. sanitize(scoped_binding_key(ctx, binding)))
     end
 
     local function origin_binding(binding)
@@ -325,14 +352,13 @@ function M.Define(T)
     end
 
     local function residence_for(ctx, binding, ty)
-        local key = binding_key(binding)
-        if ctx.addressed[key] then return Code.CodeResidenceAddressed end
+        if binding_is_addressed(ctx, binding) then return Code.CodeResidenceAddressed end
         if is_aggregate_code_ty(code_ty(ctx, ty or binding.ty)) then return Code.CodeResidenceAggregate end
         return Code.CodeResidenceValue
     end
 
     local function ensure_local(ctx, binding, ty, residence)
-        local key = binding_key(binding)
+        local key = declare_binding_key(ctx, binding)
         local existing = ctx.locals_by_key[key]
         if existing ~= nil then return existing.id, existing.ty end
         local cty = code_ty(ctx, ty or binding.ty)
@@ -480,7 +506,7 @@ function M.Define(T)
 
     local function lookup_binding(ctx, ref)
         if pvm.classof(ref) ~= Bind.ValueRefBinding then unsupported(ctx, ref, "non-binding value reference " .. class_name(ref)) end
-        return ref.binding, binding_key(ref.binding)
+        return ref.binding, scoped_binding_key(ctx, ref.binding)
     end
 
     local function load_place(ctx, place, source_ty, reason)
@@ -523,12 +549,32 @@ function M.Define(T)
     end
 
     local function lower_view_parts(ctx, view)
+        local function lower_index_expr(expr, reason)
+            local value, ty = lower_expr(ctx, expr)
+            return as_index_value(ctx, value, ty, reason)
+        end
+
+        local function index_mul(lhs, rhs, reason)
+            local dst = new_temp(ctx, reason)
+            append_inst(ctx, Code.CodeInstBinary(dst, Core.BinMul, Code.CodeTyIndex, default_int_semantics(), lhs, rhs), origin_generated(reason))
+            return dst
+        end
+
+        local function data_offset(data, index, elem, reason)
+            local ptr_ty = Code.CodeTyDataPtr(code_ty(ctx, elem))
+            local dst = new_temp(ctx, reason)
+            local elem_size = size_of(ctx, elem)
+            if elem_size == nil then unsupported(ctx, view, "view element without known size") end
+            append_inst(ctx, Code.CodeInstPtrOffset(dst, ptr_ty, data, index, elem_size, 0), origin_generated(reason))
+            return dst
+        end
+
         local vcls = pvm.classof(view)
         if vcls == Tr.ViewContiguous or vcls == Tr.ViewStrided then
             local data = lower_expr(ctx, view.data)
-            local len = lower_expr(ctx, view.len)
+            local len = lower_index_expr(view.len, "view_len")
             local stride
-            if vcls == Tr.ViewStrided then stride = lower_expr(ctx, view.stride)
+            if vcls == Tr.ViewStrided then stride = lower_index_expr(view.stride, "view_stride")
             else stride = const_index(ctx, 1, "view_stride") end
             return data, len, stride
         elseif vcls == Tr.ViewFromExpr then
@@ -550,20 +596,33 @@ function M.Define(T)
             end
         elseif vcls == Tr.ViewRestrided then
             local data, len = lower_view_parts(ctx, view.base)
-            local stride = lower_expr(ctx, view.stride)
+            local stride = lower_index_expr(view.stride, "view_stride")
             return data, len, stride
         elseif vcls == Tr.ViewWindow then
             local data, _, stride = lower_view_parts(ctx, view.base)
-            local start = lower_expr(ctx, view.start)
-            local scaled = new_temp(ctx, "view_window_start")
-            append_inst(ctx, Code.CodeInstBinary(scaled, Core.BinMul, Code.CodeTyIndex, default_int_semantics(), start, stride), origin_generated("view window start stride"))
-            local ptr_ty = Code.CodeTyDataPtr(code_ty(ctx, view.elem))
-            local window_data = new_temp(ctx, "view_window_data")
-            local elem_size = size_of(ctx, view.elem)
-            if elem_size == nil then unsupported(ctx, view, "view element without known size") end
-            append_inst(ctx, Code.CodeInstPtrOffset(window_data, ptr_ty, data, scaled, elem_size, 0), origin_generated("view window data"))
-            local len = lower_expr(ctx, view.len)
+            local start = lower_index_expr(view.start, "view_window_start")
+            local scaled = index_mul(start, stride, "view_window_start")
+            local window_data = data_offset(data, scaled, view.elem, "view_window_data")
+            local len = lower_index_expr(view.len, "view_window_len")
             return window_data, len, stride
+        elseif vcls == Tr.ViewRowBase then
+            local data, len, stride = lower_view_parts(ctx, view.base)
+            local row = lower_index_expr(view.row_offset, "view_row_base")
+            local scaled = index_mul(row, stride, "view_row_base_offset")
+            return data_offset(data, scaled, view.elem, "view_row_base_data"), len, stride
+        elseif vcls == Tr.ViewInterleaved then
+            local data = lower_expr(ctx, view.data)
+            local len = lower_index_expr(view.len, "view_len")
+            local stride = lower_index_expr(view.stride, "view_stride")
+            local lane = lower_index_expr(view.lane, "view_lane")
+            return data_offset(data, lane, view.elem, "view_interleaved_data"), len, stride
+        elseif vcls == Tr.ViewInterleavedView then
+            local data, len, base_stride = lower_view_parts(ctx, view.base)
+            local stride_factor = lower_index_expr(view.stride, "view_stride")
+            local lane = lower_index_expr(view.lane, "view_lane")
+            local lane_offset = index_mul(lane, base_stride, "view_interleaved_lane")
+            local stride = index_mul(base_stride, stride_factor, "view_interleaved_stride")
+            return data_offset(data, lane_offset, view.elem, "view_interleaved_data"), len, stride
         end
         unsupported(ctx, view, "view form " .. class_name(view))
     end
@@ -780,14 +839,39 @@ function M.Define(T)
             append_inst(ctx, Code.CodeInstUnary(dst, expr.op, ty, value), origin_generated("unary"))
             return dst, ty
         elseif cls == Tr.ExprBinary then
-            local lhs = lower_expr(ctx, expr.lhs)
-            local rhs = lower_expr(ctx, expr.rhs)
+            local lhs, lhs_ty = lower_expr(ctx, expr.lhs)
+            local rhs, rhs_ty = lower_expr(ctx, expr.rhs)
             local ty = code_ty(ctx, expr_type(expr))
             local dst = new_temp(ctx, "bin")
-            if is_float_code_ty(ty) then
-                append_inst(ctx, Code.CodeInstFloatBinary(dst, expr.op, ty, default_float_mode(), lhs, rhs), origin_generated("float binary"))
+            local lhs_src_ty = source_access_base(expr_type(expr.lhs))
+            local rhs_src_ty = source_access_base(expr_type(expr.rhs))
+            local lhs_is_ptr = pvm.classof(lhs_src_ty) == Ty.TPtr
+            local rhs_is_ptr = pvm.classof(rhs_src_ty) == Ty.TPtr
+            if expr.op == Core.BinAdd and (lhs_is_ptr or rhs_is_ptr) then
+                local ptr_value, index_value, index_ty, elem_ty
+                if lhs_is_ptr then
+                    ptr_value, index_value, index_ty, elem_ty = lhs, rhs, rhs_ty, lhs_src_ty.elem
+                else
+                    ptr_value, index_value, index_ty, elem_ty = rhs, lhs, lhs_ty, rhs_src_ty.elem
+                end
+                local index = as_index_value(ctx, index_value, index_ty, "ptr_add_index")
+                local elem_size = size_of(ctx, elem_ty)
+                if elem_size == nil then unsupported(ctx, expr, "pointer arithmetic element without known size") end
+                append_inst(ctx, Code.CodeInstPtrOffset(dst, ty, ptr_value, index, elem_size, 0), origin_generated("pointer add"))
+            elseif expr.op == Core.BinSub and lhs_is_ptr and not rhs_is_ptr then
+                local index = as_index_value(ctx, rhs, rhs_ty, "ptr_sub_index")
+                local zero = const_index(ctx, 0, "ptr_sub_zero")
+                local neg = new_temp(ctx, "ptr_sub_neg")
+                append_inst(ctx, Code.CodeInstBinary(neg, Core.BinSub, Code.CodeTyIndex, default_int_semantics(), zero, index), origin_generated("pointer subtract index"))
+                local elem_size = size_of(ctx, lhs_src_ty.elem)
+                if elem_size == nil then unsupported(ctx, expr, "pointer arithmetic element without known size") end
+                append_inst(ctx, Code.CodeInstPtrOffset(dst, ty, lhs, neg, elem_size, 0), origin_generated("pointer subtract"))
             else
-                append_inst(ctx, Code.CodeInstBinary(dst, expr.op, ty, default_int_semantics(), lhs, rhs), origin_generated("binary"))
+                if is_float_code_ty(ty) then
+                    append_inst(ctx, Code.CodeInstFloatBinary(dst, expr.op, ty, default_float_mode(), lhs, rhs), origin_generated("float binary"))
+                else
+                    append_inst(ctx, Code.CodeInstBinary(dst, expr.op, ty, default_int_semantics(), lhs, rhs), origin_generated("binary"))
+                end
             end
             return dst, ty
         elseif cls == Tr.ExprCompare then
@@ -943,8 +1027,9 @@ function M.Define(T)
     end
 
     local function bind_alias(ctx, binding, src, ty)
+        declare_binding_key(ctx, binding)
         local dst = value_id_for_binding(ctx, binding)
-        ctx.bindings[binding_key(binding)] = dst
+        ctx.bindings[scoped_binding_key(ctx, binding)] = dst
         append_inst(ctx, Code.CodeInstAlias(dst, ty, src), origin_binding(binding))
         return dst
     end
@@ -966,7 +1051,7 @@ function M.Define(T)
         append_inst(ctx, Code.CodeInstVariantPayload(payload, ref, owner_value), origin_generated("variant payload"))
         local binding = variant_binding(kind, variant, arm.binds[1])
         local ty = code_ty(ctx, binding.ty)
-        if ctx.addressed[binding_key(binding)] or is_aggregate_code_ty(ty) then
+        if binding_is_addressed(ctx, binding) or is_aggregate_code_ty(ty) then
             bind_local_init(ctx, binding, payload, binding.ty, false)
         else
             bind_alias(ctx, binding, payload, ty)
@@ -1242,6 +1327,11 @@ function M.Define(T)
         local result_value = is_expr and new_temp(ctx, "control_result") or nil
         local exit_params = {}
         if is_expr then exit_params[1] = Code.CodeParam(result_value, "result", result_ty, origin_generated("control result")) end
+        ctx.next_control_scope = (ctx.next_control_scope or 0) + 1
+        local saved_alpha, saved_alpha_suffix = ctx.binding_alpha, ctx.binding_alpha_suffix
+        local alpha = setmetatable({}, { __index = saved_alpha })
+        local alpha_suffix = "ctl" .. tostring(ctx.next_control_scope)
+        ctx.binding_alpha, ctx.binding_alpha_suffix = alpha, alpha_suffix
         local records = {}
         local labels = {}
         local function add_record(block, is_entry)
@@ -1250,6 +1340,7 @@ function M.Define(T)
             local bindings = {}
             for i = 1, #(block.params or {}) do
                 local b = control_binding(region.region_id, block.label, block.params[i], i, is_entry)
+                declare_binding_key(ctx, b)
                 local v = value_id_for_binding(ctx, b)
                 local ty = code_ty(ctx, block.params[i].ty)
                 params[#params + 1] = Code.CodeParam(v, block.params[i].name, ty, origin_binding(b))
@@ -1265,9 +1356,11 @@ function M.Define(T)
         local exit_id = new_block_id(ctx, is_expr and "ctl_expr_exit" or "ctl_stmt_exit")
         local saved_outer = save_bindings(ctx)
         local entry_args = {}
+        ctx.binding_alpha, ctx.binding_alpha_suffix = saved_alpha, saved_alpha_suffix
         for i = 1, #(region.entry.params or {}) do
             entry_args[#entry_args + 1] = lower_expr(ctx, region.entry.params[i].init)
         end
+        ctx.binding_alpha, ctx.binding_alpha_suffix = alpha, alpha_suffix
         terminate(ctx, Code.CodeTermJump(entry.id, entry_args), origin_generated("enter control region"))
         local outer_control = ctx.control_region
         local control_region = { labels = labels, exit_id = exit_id, is_expr = is_expr, has_exit = false }
@@ -1276,11 +1369,13 @@ function M.Define(T)
         for i = 1, #records do
             local rec = records[i]
             restore_bindings(ctx, saved_region_outer)
+            ctx.binding_alpha = setmetatable({}, { __index = alpha })
+            ctx.binding_alpha_suffix = alpha_suffix .. "_b" .. tostring(i)
             start_block(ctx, rec.id, rec.name, rec.params, origin_generated("control block " .. rec.label.name))
             for j = 1, #rec.bindings do
                 local b = rec.bindings[j]
-                ctx.bindings[binding_key(b.binding)] = b.value
-                if ctx.addressed[binding_key(b.binding)] or is_aggregate_code_ty(b.code_ty) then
+                ctx.bindings[scoped_binding_key(ctx, b.binding)] = b.value
+                if binding_is_addressed(ctx, b.binding) or is_aggregate_code_ty(b.code_ty) then
                     bind_local_init(ctx, b.binding, b.value, b.ty, false)
                 end
             end
@@ -1288,6 +1383,7 @@ function M.Define(T)
             if ctx.current_block ~= nil then unsupported(ctx, rec.label, "control block `" .. tostring(rec.label.name) .. "` can fall through") end
         end
         ctx.control_region = outer_control
+        ctx.binding_alpha, ctx.binding_alpha_suffix = saved_alpha, saved_alpha_suffix
         restore_bindings(ctx, saved_outer)
         if control_region.has_exit or is_expr then
             start_block(ctx, exit_id, is_expr and "ctl.expr.exit" or "ctl.stmt.exit", exit_params, origin_generated("control exit"))
@@ -1300,12 +1396,11 @@ function M.Define(T)
         local cls = pvm.classof(stmt)
         if cls == Tr.StmtLet then
             local src, ty = lower_expr(ctx, stmt.init)
-            local key = binding_key(stmt.binding)
-            if ctx.addressed[key] or is_aggregate_code_ty(ty) then bind_local_init(ctx, stmt.binding, src, stmt.binding.ty, false)
+            if binding_is_addressed(ctx, stmt.binding) or is_aggregate_code_ty(ty) then bind_local_init(ctx, stmt.binding, src, stmt.binding.ty, false)
             else bind_alias(ctx, stmt.binding, src, ty) end
         elseif cls == Tr.StmtVar then
             local src = lower_expr(ctx, stmt.init)
-            ctx.mutable[binding_key(stmt.binding)] = true
+            ctx.mutable[declare_binding_key(ctx, stmt.binding)] = true
             bind_local_init(ctx, stmt.binding, src, stmt.binding.ty, true)
         elseif cls == Tr.StmtSet then
             local value = lower_expr(ctx, stmt.value)
@@ -1539,10 +1634,10 @@ function M.Define(T)
             local binding = param_binding(Core, Bind, name, p, i)
             local ty = code_ty(ctx, p.ty)
             local value = value_id_for_binding(ctx, binding)
-            ctx.bindings[binding_key(binding)] = value
+            ctx.bindings[scoped_binding_key(ctx, binding)] = value
             code_params[#code_params + 1] = Code.CodeParam(value, p.name, ty, origin_binding(binding))
             sig_params[#sig_params + 1] = ty
-            if ctx.addressed[binding_key(binding)] or is_aggregate_code_ty(ty) then
+            if binding_is_addressed(ctx, binding) or is_aggregate_code_ty(ty) then
                 bind_local_init(ctx, binding, value, p.ty, false)
             end
         end
@@ -1615,6 +1710,8 @@ function M.Define(T)
                 globals[#globals + 1] = lower_global(module_ctx, item.s.name, item.s.ty, item.s.value)
             elseif cls == Tr.ItemExtern or cls == Tr.ItemType or cls == Tr.ItemImport then
                 -- Declarations do not produce executable MoonCode blocks.
+            elseif cls == Tr.ItemRegionFrag or cls == Tr.ItemExprFrag then
+                unsupported({ func_name = mod_name }, item, "fragment item leaked past frontend expansion/typecheck")
             else
                 unsupported({ func_name = module_name(module) }, item, "module item " .. class_name(item))
             end

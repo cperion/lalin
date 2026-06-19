@@ -38,6 +38,8 @@ function M.Define(T)
     local const_facts
     local static_facts
     local type_decl_facts
+    local region_frag_facts
+    local expr_frag_facts
     local item_facts
     local module_facts
 
@@ -45,6 +47,27 @@ function M.Define(T)
     local function cat(trips) return pvm.concat_all(trips) end
     local function each(phase, xs) return pvm.children(phase, xs) end
     local function slot(slot_node) return pvm.once(O.MetaFactSlot(slot_node)) end
+    local function declared_cont_keys(conts)
+        local out = {}
+        for i = 1, #(conts or {}) do out[conts[i].key] = true end
+        return out
+    end
+
+    local function filter_template_facts(allowed_conts, g, p, c)
+        local facts = pvm.drain(g, p, c)
+        local out = {}
+        for i = 1, #facts do
+            local cls = pvm.classof(facts[i])
+            local keep = cls ~= O.MetaFactRegionFragUse and cls ~= O.MetaFactExprFragUse
+            if keep and cls == O.MetaFactSlot and pvm.classof(facts[i].slot) == O.SlotCont then
+                keep = not (allowed_conts and allowed_conts[facts[i].slot.slot.key])
+            end
+            if keep then
+                out[#out + 1] = facts[i]
+            end
+        end
+        return pvm.children(function(fact) return pvm.once(fact) end, out)
+    end
 
     slot_fact = pvm.phase("moonlift_open_slot_fact", {
         [O.SlotType] = function(self) return slot(self) end,
@@ -159,6 +182,9 @@ function M.Define(T)
         [O.SlotValueTypeDecl] = function(self) return type_decl_facts(self.t) end,
         [O.SlotValueItems] = function(self) return each(item_facts, self.items) end,
         [O.SlotValueModule] = function(self) return module_facts(self.module) end,
+        [O.SlotValueRegionFrag] = function(self) return region_frag_facts(self.frag) end,
+        [O.SlotValueExprFrag] = function(self) return expr_frag_facts(self.frag) end,
+        [O.SlotValueName] = function() return pvm.empty() end,
     })
 
     slot_binding_facts = pvm.phase("moonlift_open_slot_binding_facts", {
@@ -384,6 +410,26 @@ function M.Define(T)
         [Tr.TypeDeclOpenUnion] = function(self) return pvm.once(O.MetaFactLocalType(self.sym)) end,
     })
 
+    region_frag_facts = pvm.phase("moonlift_open_region_frag_facts", {
+        [O.RegionFragDecl] = function(self)
+            return pvm.empty()
+        end,
+        [O.RegionFrag] = function(self)
+            local allowed_conts = declared_cont_keys(self.conts)
+            local trips = { pack(open_set_facts(self.open)), pack(filter_template_facts(allowed_conts, entry_block_facts(self.entry))) }
+            for i = 1, #self.blocks do
+                trips[#trips + 1] = pack(filter_template_facts(allowed_conts, control_block_facts(self.blocks[i])))
+            end
+            return cat(trips)
+        end,
+    })
+
+    expr_frag_facts = pvm.phase("moonlift_open_expr_frag_facts", {
+        [O.ExprFrag] = function(self)
+            return cat({ pack(open_set_facts(self.open)), pack(filter_template_facts(nil, expr_facts(self.body))) })
+        end,
+    })
+
     item_facts = pvm.phase("moonlift_open_item_facts", {
         [Tr.ItemFunc] = function(self) return func_facts(self.func) end,
         [Tr.ItemExtern] = function(self) return extern_facts(self.func) end,
@@ -391,6 +437,8 @@ function M.Define(T)
         [Tr.ItemStatic] = function(self) return static_facts(self.s) end,
         [Tr.ItemImport] = function() return pvm.empty() end,
         [Tr.ItemType] = function(self) return type_decl_facts(self.t) end,
+        [Tr.ItemRegionFrag] = function(self) return region_frag_facts(self.frag) end,
+        [Tr.ItemExprFrag] = function(self) return expr_frag_facts(self.frag) end,
         [Tr.ItemUseTypeDeclSlot] = function(self) return pvm.once(O.MetaFactSlot(O.SlotTypeDecl(self.slot))) end,
         [Tr.ItemUseItemsSlot] = function(self) return pvm.once(O.MetaFactSlot(O.SlotItems(self.slot))) end,
         [Tr.ItemUseModule] = function(self) return cat({ pack(pvm.once(O.MetaFactModuleUse(self.use_id))), pack(module_facts(self.module)), pack(each(slot_binding_facts, self.fills)) }) end,

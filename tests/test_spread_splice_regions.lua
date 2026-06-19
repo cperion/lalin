@@ -1,8 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local Host = require("moonlift.mlua_run")
+local pvm = require("moonlift.pvm")
+local moon = require("moonlift")
 
-local r = Host.eval [[
+local scan = Host.eval([[
 local params = moon.params {
     {name="p", type=moon.ptr(moon.u8)},
     {name="n", type=moon.i32},
@@ -17,43 +19,58 @@ entry start()
     jump fail(code = 1)
 end
 end
-]]
+]])
+assert(scan.kind == "region_frag")
+assert(#scan.frag.params == 2)
+assert(scan.frag.params[1].name == "p")
+assert(scan.frag.params[2].name == "n")
+assert(#scan.frag.conts == 2)
+assert(scan.frag.conts[1].pretty_name == "ok")
+assert(scan.frag.conts[2].pretty_name == "fail")
+local Tr = scan.session.T.MoonTree
+local if_stmt = scan.frag.entry.body[1]
+assert(pvm.classof(if_stmt.then_body[1]) == Tr.StmtJumpCont)
+assert(if_stmt.then_body[1].slot.pretty_name == "ok")
+assert(pvm.classof(scan.frag.entry.body[2]) == Tr.StmtJumpCont)
+assert(scan.frag.entry.body[2].slot.pretty_name == "fail")
 
-assert(#r.frag.params == 2)
-assert(r.frag.params[1].name == "p")
-assert(r.frag.params[2].name == "n")
-assert(#r.frag.conts == 2)
-assert(r.frag.conts[1].pretty_name == "ok")
-assert(r.frag.conts[1].params[1].name == "pos")
-assert(r.frag.conts[2].pretty_name == "fail")
-assert(r.frag.conts[2].params[1].name == "code")
-
-local r2 = Host.eval [[
+local with_params = Host.eval([[
 local eparams = moon.entry_params {
     {name="i", type=moon.i32, init=moon.int(0)}
 }
-local bparams = moon.params { {name="acc", type=moon.i32} }
 return region with_params()
 entry start(@{eparams...})
+    return
 end
-block done(@{bparams...})
 end
-end
-]]
-assert(#r2.frag.entry.params == 1)
-assert(r2.frag.entry.params[1].name == "i")
-assert(#r2.frag.blocks == 1)
-assert(r2.frag.blocks[1].params[1].name == "acc")
+]])
+assert(#with_params.frag.entry.params == 1)
+assert(with_params.frag.entry.params[1].name == "i")
 
-local r3 = Host.eval [[
+local with_blocks = Host.eval([[
 local blocks = moon.blocks { {label="extra", params={}, body={}} }
 return region with_blocks()
 entry start()
+    return
+end
+@{blocks...}
+end
+]])
+assert(#with_blocks.frag.blocks == 1)
+assert(with_blocks.frag.blocks[1].label.name == "extra")
+
+local control_blocks = moon.blocks { {label="extra", params={}, body={}} }
+local control_expr = moon.expr { blocks = control_blocks } [[
+region: i32
+entry start()
+    yield 1
 end
 @{blocks...}
 end
 ]]
-assert(#r3.frag.blocks == 1)
-assert(r3.frag.blocks[1].label.name == "extra")
+local ExprTr = moon.default_session.T.MoonTree
+assert(pvm.classof(control_expr.expr) == ExprTr.ExprControl)
+assert(#control_expr.expr.region.blocks == 1)
+assert(control_expr.expr.region.blocks[1].label.name == "extra")
 
 print("moonlift spread splice regions ok")

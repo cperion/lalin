@@ -14,7 +14,7 @@ end
 local run = func(x: i32): i32
     return region: i32
     entry start()
-        emit loop(x; done = out)
+        emit @{loop}(x; done = out)
     end
     block out(v: i32)
         yield v

@@ -65,6 +65,7 @@ requires window_bounds(
     start,
     m,
 )
+    return
 end]])
 local contracty = P.parse_island(contract_scan, 1)
 assert(#contracty.issues == 0, contracty.issues[1] and contracty.issues[1].message)

@@ -134,6 +134,16 @@ local function u64_split(raw)
     local hi = math.floor(raw / 4294967296.0)
     return lo, hi
 end
+
+local function align_shift(align)
+    align = align or 1
+    if align < 1 then error("back_command_binary: stack slot alignment must be >= 1", 3) end
+    local shift, n = 0, align
+    while n > 1 and n % 2 == 0 do shift = shift + 1; n = n / 2 end
+    if n ~= 1 then error("back_command_binary: stack slot alignment is not a power of two: " .. tostring(align), 3) end
+    return shift
+end
+
 local function emit_ids(buf, list, b)
     w4(buf, #list)
     for _, x in ipairs(list) do w4(buf, b:nid(x)) end
@@ -183,7 +193,7 @@ local function encode_body(cmds, b)
                 w4(buf, T.AppendBlockParam); w4(buf, b:nid(cmd.block)); w4(buf, st(cmd.ty)); w4(buf, b:nid(cmd.value))
             end
         elseif k == "CmdCreateStackSlot" then
-            w4(buf, T.CreateStackSlot); w4(buf, b:nid(cmd.slot)); w4(buf, cmd.size); w4(buf, cmd.align or 0)
+            w4(buf, T.CreateStackSlot); w4(buf, b:nid(cmd.slot)); w4(buf, cmd.size); w4(buf, align_shift(cmd.align))
         elseif k == "CmdSealBlock" or k == "CmdBindEntryParams" then
             -- BindEntryParams: emit AppendBlockParam for each param
             if k == "CmdBindEntryParams" and b.sig then
@@ -746,13 +756,13 @@ function M.encode(program)
     end
     -- Datas
     w4(dbuf, #datas)
-    for _, cmd in ipairs(datas) do
-        w4(dbuf, 0); w4(dbuf, cmd.size); w4(dbuf, cmd.align or 0)
+    for i, cmd in ipairs(datas) do
+        w4(dbuf, i - 1); w4(dbuf, cmd.size); w4(dbuf, align_shift(cmd.align))
     end
     -- Inits
     w4(dbuf, #inits)
     for _, cmd in ipairs(inits) do
-        w4(dbuf, 0) -- data_id placeholder
+        w4(dbuf, data_map[id(cmd.data)] or 0)
         if cmd.kind == "CmdDataInitZero" then
             w4(dbuf, cmd.offset); w4(dbuf, 0); w4(dbuf, cmd.size); w4(dbuf, 0)
         else

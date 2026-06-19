@@ -1,4 +1,5 @@
--- Verify the ASDL host model exposes explicit HostProgram/HostTemplate steps.
+-- Verify the ASDL .mlua document model exposes explicit document parts,
+-- island parses, and combined host pipeline results.
 
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
@@ -17,17 +18,24 @@ end
 return r
 ]])
 
-local parts = require("moonlift.mlua_document").Define(T).document_parts(doc)
-local program = pvm.one(require("moonlift.mlua_host_model").Define(T).host_program(parts))
-assert(#program.steps >= 2)
-local saw_region = false
-for i = 1, #program.steps do
-    if program.steps[i].template and program.steps[i].template.kind_word == "region" then
-        saw_region = true
-        assert(#program.steps[i].template.parts == 3)
+local Mlua = T.MoonMlua
+local H = T.MoonHost
+local analysis = require("moonlift.mlua_document_analysis").Define(T).analyze_document(doc)
+assert(pvm.classof(analysis) == Mlua.DocumentAnalysis)
+assert(pvm.classof(analysis.parse.parts) == Mlua.DocumentParts)
+assert(pvm.classof(analysis.host) == H.MluaHostPipelineResult)
+
+local saw_region_segment = false
+for i = 1, #analysis.parse.parts.segments do
+    local seg = analysis.parse.parts.segments[i]
+    if pvm.classof(seg) == Mlua.HostedIsland and seg.island.kind == Mlua.IslandRegion then
+        saw_region_segment = true
+        assert(seg.island.source.text:match("region R"))
     end
 end
-assert(saw_region)
+assert(saw_region_segment)
+assert(#analysis.parse.islands >= 1)
+assert(#analysis.parse.combined.region_frags >= 1)
 
 print("moonlift ASDL host pipeline ok")
 return "moonlift ASDL host pipeline ok"

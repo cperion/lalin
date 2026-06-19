@@ -37,6 +37,8 @@ end
 
 function M.Define(T)
     local S = T.MoonSource
+    local C = T.MoonCore
+    local Ty = T.MoonType
     local E = T.MoonEditor
     local Mlua = T.MoonMlua
     local H = T.MoonHost
@@ -70,6 +72,12 @@ function M.Define(T)
                     emit("tree.module." .. a.label, ROOT, a.label, E.SymModule, "Moonlift module", a.range, a.range, E.SubjectTreeModule(analysis.parse.combined.module))
                 elseif a.kind == S.AnchorContinuationName then
                     emit("control.label." .. a.id.text, ROOT, a.label, E.SymEvent, "control label", a.range, a.range, E.SubjectContinuation(a.id, Tr.BlockLabel(a.label)))
+                elseif a.kind == S.AnchorFunctionName then
+                    local fn = Tr.FuncDecl(a.label, {}, Ty.TScalar(C.ScalarVoid))
+                    emit("tree.func." .. a.label, ROOT, a.label, E.SymFunction, "Moonlift function", a.range, a.range, E.SubjectTreeFunc(fn))
+                elseif a.kind == S.AnchorMethodName then
+                    local fn = Tr.FuncDecl(a.label, {}, Ty.TScalar(C.ScalarVoid))
+                    emit("tree.func." .. a.label, ROOT, a.label, E.SymMethod, "Moonlift method", a.range, a.range, E.SubjectTreeFunc(fn))
                 end
             end
 

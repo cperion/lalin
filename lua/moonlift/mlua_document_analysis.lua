@@ -200,6 +200,30 @@ function M.Define(T)
                 j = j + 1
             end
         end
+        local function nearest_open_paren(tok_i, first_tok)
+            local depth = 0
+            for j = tok_i - 1, first_tok, -1 do
+                local text = toks.text[j]
+                if text == ")" then
+                    depth = depth + 1
+                elseif text == "(" then
+                    if depth == 0 then return j end
+                    depth = depth - 1
+                end
+            end
+            return nil
+        end
+        local function param_anchor_id(tok_i, first_tok)
+            local open = nearest_open_paren(tok_i, first_tok)
+            if not open then return tid("param", tok_i) end
+            local label = toks.text[open - 1]
+            local before_label = toks.text[open - 2]
+            if type(label) ~= "string" or not label:match("^[_%a][_%w]*$") then return tid("param", tok_i) end
+            if before_label == "block" then return tid("cont.param.block." .. label, tok_i) end
+            if before_label == "entry" then return tid("cont.param.entry." .. label, tok_i) end
+            if before_label == ";" or before_label == "," then return tid("cont.param.slot." .. label, tok_i) end
+            return tid("param", tok_i)
+        end
         for si, island in ipairs(scan.islands) do
             add_anchor(anchors, index, "island." .. si, S.AnchorHostedIsland, island.kind, island.start - 1, island.stop)
             for i = island.first_tok, island.last_tok do
@@ -243,14 +267,18 @@ function M.Define(T)
                             add_anchor(anchors, index, tid("cont", i), S.AnchorContinuationName, text, start, stop); after_block = false
                         elseif def_next then
                             add_anchor(anchors, index, tid("def", i), def_next, text, start, stop); def_next = nil
+                        elseif (prev == ";" or prev == ",") and nxt == "(" then
+                            add_anchor(anchors, index, tid("cont", i), S.AnchorContinuationName, text, start, stop)
                         elseif nxt == ":" and (prev ~= ".") then
                             if island.kind == "struct" then
                                 add_anchor(anchors, index, tid("field", i), S.AnchorFieldName, text, start, stop)
                             else
-                                add_anchor(anchors, index, tid("param", i), S.AnchorParamName, text, start, stop)
+                                add_anchor(anchors, index, param_anchor_id(i, island.first_tok), S.AnchorParamName, text, start, stop)
                             end
                         elseif prev == "jump" then
                             add_anchor(anchors, index, tid("contuse", i), S.AnchorContinuationUse, text, start, stop)
+                        elseif prev == "." then
+                            add_anchor(anchors, index, tid("fielduse", i), S.AnchorFieldUse, text, start, stop)
                         elseif nxt == "(" then
                             add_anchor(anchors, index, tid("funuse", i), S.AnchorFunctionUse, text, start, stop)
                         else
@@ -362,11 +390,17 @@ function M.Define(T)
                 if parsed.value then
                     local rcls = pvm.classof(parsed.value)
                     if rcls ~= O.RegionFragDecl then
-                        region_frags[#region_frags + 1] = parsed.value; rfrags[1] = parsed.value
+                        items[#items + 1] = Tr.ItemRegionFrag(parsed.value)
+                        region_frags[#region_frags + 1] = parsed.value
+                        rfrags[1] = parsed.value
                     end
                 end
             elseif island.kind == "expr" then
-                if parsed.value then expr_frags[#expr_frags + 1] = parsed.value; efrags[1] = parsed.value end
+                if parsed.value then
+                    items[#items + 1] = Tr.ItemExprFrag(parsed.value)
+                    expr_frags[#expr_frags + 1] = parsed.value
+                    efrags[1] = parsed.value
+                end
             end
             module = Tr.Module(Tr.ModuleSurface, items)
             local island_text = Mlua.IslandText(island_kind(Mlua, island.kind), Mlua.IslandAnonymous, S.SourceSlice(src))

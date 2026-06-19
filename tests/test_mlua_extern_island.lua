@@ -39,8 +39,11 @@ return func len2(s: ptr(u8)): index
     return strlen(s)
 end
 ]]
-local compiled_standalone = standalone:compile()
-assert(tonumber(compiled_standalone(buf)) == 5)
-compiled_standalone:free()
+local ok, err = pcall(function()
+    local compiled_standalone = standalone:compile()
+    compiled_standalone:free()
+end)
+assert(not ok, "standalone function should not implicitly capture Lua-local externs")
+assert(tostring(err):match("unresolved name `strlen`"), tostring(err))
 
 print("moonlift mlua extern island ok")

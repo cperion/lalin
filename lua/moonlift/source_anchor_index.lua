@@ -54,7 +54,9 @@ function M.Define(T)
             for i = 1, #query.index.anchors do
                 local anchor = query.index.anchors[i]
                 local range = anchor.range
-                if same_uri(range.uri, query.uri) and query.offset >= range.start_offset and query.offset <= range.stop_offset then
+                local zero_width = range.start_offset == range.stop_offset
+                local contains = query.offset >= range.start_offset and (query.offset < range.stop_offset or (zero_width and query.offset == range.stop_offset))
+                if same_uri(range.uri, query.uri) and contains then
                     out[#out + 1] = anchor
                 end
             end
