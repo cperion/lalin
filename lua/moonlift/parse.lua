@@ -633,9 +633,13 @@ function Parser:starts_expr(offset)
     return expr_start[self:kind(offset)] == true
 end
 
+function Parser:parse_stmt_expr()
+    return self:parse_expr(0, { stop_at_nl = true })
+end
+
 function Parser:parse_optional_stmt_value()
     self:skip_nl()
-    if self:starts_expr() then return self:parse_expr(0) end
+    if self:starts_expr() then return self:parse_stmt_expr() end
     return nil
 end
 
@@ -1069,15 +1073,33 @@ local lbp = {
     [TK.lparen]  = 90, [TK.lbrack]  = 90, [TK.lbrace] = 90, [TK.dot]=90,
 }
 
-function Parser:parse_expr(rbp)
+local postfix_op = {
+    [TK.lparen] = true, [TK.lbrack] = true, [TK.lbrace] = true, [TK.dot] = true,
+}
+
+function Parser:skip_expr_sep(stop_at_nl)
+    if not stop_at_nl then
+        self:skip_nl()
+        return
+    end
+    if self:kind() ~= TK.nl then return end
+
+    local j = self.i
+    while self.toks.kind[j] == TK.nl and j <= self.limit do j = j + 1 end
+    local k = self.toks.kind[j]
+    if lbp[k] and not postfix_op[k] then self.i = j end
+end
+
+function Parser:parse_expr(rbp, opts)
     rbp = rbp or 0
+    local stop_at_nl = opts and opts.stop_at_nl
     self:skip_nl()
     local left = self:nud()
-    self:skip_nl()
+    self:skip_expr_sep(stop_at_nl)
     while rbp < (lbp[self:kind()] or 0) do
         local k = self:kind(); self.i = self.i + 1
-        left = self:led(k, left)
-        self:skip_nl()
+        left = self:led(k, left, opts)
+        self:skip_expr_sep(stop_at_nl)
     end
     return left
 end
@@ -1214,7 +1236,7 @@ function Parser:nud()
     return Tr.ExprLit(Tr.ExprSurface, C.LitInt("0"))
 end
 
-function Parser:led(k, left)
+function Parser:led(k, left, opts)
     local C, Sem, Tr, B = self.C, self.Sem, self.Tr, self.B
     local pvm = require("moonlift.pvm")
 
@@ -1334,10 +1356,10 @@ function Parser:led(k, left)
     local cmp = { [TK.eqeq]=C.CmpEq, [TK.ne]=C.CmpNe, [TK.lt]=C.CmpLt,
         [TK.le]=C.CmpLe, [TK.gt]=C.CmpGt, [TK.ge]=C.CmpGe }
 
-    if bin[k] then return Tr.ExprBinary(Tr.ExprSurface, bin[k], left, self:parse_expr(lbp[k])) end
-    if cmp[k] then return Tr.ExprCompare(Tr.ExprSurface, cmp[k], left, self:parse_expr(lbp[k])) end
-    if k == TK.and_kw then return Tr.ExprLogic(Tr.ExprSurface, C.LogicAnd, left, self:parse_expr(lbp[k])) end
-    if k == TK.or_kw then return Tr.ExprLogic(Tr.ExprSurface, C.LogicOr, left, self:parse_expr(lbp[k])) end
+    if bin[k] then return Tr.ExprBinary(Tr.ExprSurface, bin[k], left, self:parse_expr(lbp[k], opts)) end
+    if cmp[k] then return Tr.ExprCompare(Tr.ExprSurface, cmp[k], left, self:parse_expr(lbp[k], opts)) end
+    if k == TK.and_kw then return Tr.ExprLogic(Tr.ExprSurface, C.LogicAnd, left, self:parse_expr(lbp[k], opts)) end
+    if k == TK.or_kw then return Tr.ExprLogic(Tr.ExprSurface, C.LogicOr, left, self:parse_expr(lbp[k], opts)) end
 
     self:issue("unknown infix operator")
     return left
@@ -1908,7 +1930,7 @@ function Parser:parse_stmt()
         end
         self:skip_nl()
         self:expect(TK.eq)
-        local init = self:parse_expr(0)
+        local init = self:parse_stmt_expr()
         local binding = B.Binding(C.Id("local:" .. name), name, ty,
             is_var and B.BindingClassLocalCell or B.BindingClassLocalValue)
         if self:is_syntax_expr(init) then
@@ -1953,10 +1975,10 @@ function Parser:parse_stmt()
     end
 
     -- Expression or assignment
-    local e = self:parse_expr(0)
+    local e = self:parse_stmt_expr()
     self:skip_nl()
     if self:accept(TK.eq) then
-        return Tr.StmtSet(Tr.StmtSurface, self:expr_to_place(e), self:parse_expr(0))
+        return Tr.StmtSet(Tr.StmtSurface, self:expr_to_place(e), self:parse_stmt_expr())
     end
     if self:is_syntax_expr(e) then return self.S.SyntaxStmtExpr(self:tree_expr_item(e)) end
     return Tr.StmtExpr(Tr.StmtSurface, e)

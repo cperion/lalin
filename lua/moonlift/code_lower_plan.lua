@@ -57,6 +57,32 @@ function M.Define(T)
         return set
     end
 
+    local function loop_body_count(loop)
+        return #(loop and loop.body or {})
+    end
+
+    local function ordered_loops(graph_func)
+        local loops = {}
+        for i, loop in ipairs(graph_func and graph_func.loops or {}) do
+            loops[#loops + 1] = { loop = loop, ordinal = i, blocks = loop_body_count(loop) }
+        end
+        table.sort(loops, function(a, b)
+            if a.blocks ~= b.blocks then return a.blocks < b.blocks end
+            local at = a.loop and a.loop.id and a.loop.id.text or ""
+            local bt = b.loop and b.loop.id and b.loop.id.text or ""
+            if at ~= bt then return at < bt end
+            return a.ordinal < b.ordinal
+        end)
+        return loops
+    end
+
+    local function can_claim_loop(loop, covered)
+        for block in pairs(block_set_for(loop)) do
+            if covered[block] then return false end
+        end
+        return true
+    end
+
     local function loop_result_closed_form(kernel_plan)
         local result = kernel_plan and kernel_plan.body and kernel_plan.body.result or nil
         if pvm.classof(result) == Kernel.KernelResultClosedForm then return result.closed_form end
@@ -95,44 +121,47 @@ function M.Define(T)
             return fragment
         end
 
-        for _, loop in ipairs(graph_func and graph_func.loops or {}) do
-            local kplan = kernel_for_loop[loop.id.text]
-            local cover = Lower.LowerCoverLoop(loop.id)
-            if kplan ~= nil then
-                local sched = schedule_for_kernel[kplan.id.text]
-                if sched ~= nil and pvm.classof(sched) == Schedule.SchedulePlanned then
-                    local strategy, proofs
-                    local cf = loop_result_closed_form(kplan)
-                    if sched.kind == Schedule.ScheduleClosedForm then
-                        if cf == nil then
-                            add_loop_code_fallback(func, loop, cover, fragments, covered, issues, "explicit Code fallback because ScheduleClosedForm has no ClosedFormFact")
+        for _, ordered in ipairs(ordered_loops(graph_func)) do
+            local loop = ordered.loop
+            if can_claim_loop(loop, covered) then
+                local kplan = kernel_for_loop[loop.id.text]
+                local cover = Lower.LowerCoverLoop(loop.id)
+                if kplan ~= nil then
+                    local sched = schedule_for_kernel[kplan.id.text]
+                    if sched ~= nil and pvm.classof(sched) == Schedule.SchedulePlanned then
+                        local strategy, proofs
+                        local cf = loop_result_closed_form(kplan)
+                        if sched.kind == Schedule.ScheduleClosedForm then
+                            if cf == nil then
+                                add_loop_code_fallback(func, loop, cover, fragments, covered, issues, "explicit Code fallback because ScheduleClosedForm has no ClosedFormFact")
+                            else
+                                strategy = Lower.LowerStrategyClosedForm(kplan.id, cf)
+                                proofs = { Lower.LowerProofKernel(kplan.id, "planned semantic closed-form kernel"), Lower.LowerProofSchedule(sched.id, "closed-form schedule has a semantic lowering emitter") }
+                            end
                         else
-                            strategy = Lower.LowerStrategyClosedForm(kplan.id, cf)
-                            proofs = { Lower.LowerProofKernel(kplan.id, "planned semantic closed-form kernel"), Lower.LowerProofSchedule(sched.id, "closed-form schedule has a semantic lowering emitter") }
+                            strategy = Lower.LowerStrategyKernel(kplan.id, sched.id)
+                            proofs = { Lower.LowerProofKernel(kplan.id, "planned semantic kernel"), Lower.LowerProofSchedule(sched.id, "kernel schedule has a semantic lowering emitter") }
+                        end
+                        if strategy ~= nil then
+                            add(Lower.LowerFragment(
+                                Lower.LowerFragmentId("frag:" .. sanitize(func.id.text) .. ":semantic:" .. sanitize(loop.id.text)),
+                                cover,
+                                strategy,
+                                proofs,
+                                {}
+                            ))
+                            for block in pairs(block_set_for(loop)) do covered[block] = true end
                         end
                     else
-                        strategy = Lower.LowerStrategyKernel(kplan.id, sched.id)
-                        proofs = { Lower.LowerProofKernel(kplan.id, "planned semantic kernel"), Lower.LowerProofSchedule(sched.id, "kernel schedule has a semantic lowering emitter") }
-                    end
-                    if strategy ~= nil then
-                        add(Lower.LowerFragment(
-                            Lower.LowerFragmentId("frag:" .. sanitize(func.id.text) .. ":semantic:" .. sanitize(loop.id.text)),
-                            cover,
-                            strategy,
-                            proofs,
-                            {}
-                        ))
-                        for block in pairs(block_set_for(loop)) do covered[block] = true end
+                        local cf = loop_result_closed_form(kplan)
+                        local skipped = cf and ("closed-form fact " .. tostring(cf.id and cf.id.text or cf)) or ("kernel " .. kplan.id.text)
+                        add_loop_code_fallback(func, loop, cover, fragments, covered, issues, "explicit Code fallback for " .. skipped .. ": " .. schedule_summary(sched))
                     end
                 else
-                    local cf = loop_result_closed_form(kplan)
-                    local skipped = cf and ("closed-form fact " .. tostring(cf.id and cf.id.text or cf)) or ("kernel " .. kplan.id.text)
-                    add_loop_code_fallback(func, loop, cover, fragments, covered, issues, "explicit Code fallback for " .. skipped .. ": " .. schedule_summary(sched))
-                end
-            else
-                local no_plan = kernel_no_plan_for_loop[loop.id.text]
-                if no_plan ~= nil then
-                    add_loop_code_fallback(func, loop, cover, fragments, covered, issues, "explicit Code fallback because KernelNoPlan rejected loop: " .. reject_summary(no_plan.rejects))
+                    local no_plan = kernel_no_plan_for_loop[loop.id.text]
+                    if no_plan ~= nil then
+                        add_loop_code_fallback(func, loop, cover, fragments, covered, issues, "explicit Code fallback because KernelNoPlan rejected loop: " .. reject_summary(no_plan.rejects))
+                    end
                 end
             end
         end

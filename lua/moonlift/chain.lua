@@ -29,6 +29,76 @@
 
 local M = {}
 
+local function source_offset_from_line_col(src, line, col)
+  src = src or ""
+  line = math.max(1, tonumber(line) or 1)
+  col = math.max(1, tonumber(col) or 1)
+  local cur_line, cur_col = 1, 1
+  for i = 1, #src do
+    if cur_line == line and cur_col == col then
+      return i
+    end
+    local b = string.byte(src, i)
+    if b == 10 then
+      if cur_line == line then return i end
+      cur_line = cur_line + 1
+      cur_col = 1
+    else
+      cur_col = cur_col + 1
+    end
+  end
+  return #src + 1
+end
+
+local function render_parse_issue(T, issue, quote_src, origin)
+  if not origin or not origin.__moonlift_source then
+    return issue.message
+  end
+
+  local source = origin.__moonlift_source
+  local source_text = source.source_text or source.text or ""
+  local uri = source.uri or "?"
+  local rel_line = math.max(1, tonumber(issue.line) or 1)
+  local rel_col = math.max(1, tonumber(issue.col) or 1)
+  local line = (tonumber(origin.start_line) or 1) + rel_line - 1
+  local col = rel_col
+  if rel_line == 1 then
+    col = (tonumber(origin.start_col) or 1) + rel_col - 1
+  end
+  local offset_1 = source_offset_from_line_col(source_text, line, col)
+  local remapped = {
+    message = issue.message,
+    offset = offset_1,
+    line = line,
+    col = col,
+  }
+
+  local ok, rendered = pcall(function()
+    local Parse = require("moonlift.parse")
+    local Errors = require("moonlift.error")
+    local report = Parse.explain_parse_issue(remapped, {
+      source_text = source_text,
+      uri = uri,
+    })
+    return Errors.Terminal.render(report, source_text)
+  end)
+  if ok and rendered and rendered ~= "" then
+    return rendered
+  end
+  return tostring(uri) .. ":" .. tostring(line) .. ":" .. tostring(col) .. ": " .. tostring(issue.message)
+end
+
+local function raise_parse_issue(T, parsed, src, level, origin)
+  local issue = parsed and parsed.issues and parsed.issues[1]
+  if not issue then
+    error("parse failed", level or 2)
+  end
+  if origin then
+    error(render_parse_issue(T, issue, src, origin), 0)
+  end
+  error(issue.message, level or 2)
+end
+
 ---Bind a chain factory to a session context.
 ---@param session   table  Host session with `.T` ASDL context.
 ---@param callable_mt table? Optional metatable for CallableFunc detection.
@@ -57,7 +127,7 @@ function M.bind(session, callable_mt)
           local T = session.T
           local parsed = parse_fn(T, arg)
           if #parsed.issues ~= 0 then
-            error(parsed.issues[1].message, 2)
+            raise_parse_issue(T, parsed, arg, 2)
           end
           if #parsed.splice_slots ~= 0 then
             error(
@@ -92,9 +162,11 @@ function M.bind(session, callable_mt)
                 .. type(src), 2)
             end
             local T = session.T
-            local parsed = parse_fn(T, src)
+            local parse_opts = bound_values.__moonlift_parse_opts
+            local origin = bound_values.__moonlift_source_origin
+            local parsed = parse_fn(T, src, parse_opts)
             if #parsed.issues ~= 0 then
-              error(parsed.issues[1].message, 2)
+              raise_parse_issue(T, parsed, src, 2, origin)
             end
 
             -- No @{} splices → wrap directly

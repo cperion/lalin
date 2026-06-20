@@ -158,34 +158,45 @@ local function binding_table_for_island(scan, island)
     return "{" .. table.concat(entries, ", ") .. "}"
 end
 
-local function name_anonymous_island(kind, text, name_hint)
-    if not name_hint or name_hint == "" then return text end
-    if kind == "func" and text:match("^%s*func%s*%(") then
-        return (text:gsub("^(%s*func)%s*", "%1 " .. name_hint, 1))
+local function table_literal_inner(lit)
+    if not lit or lit == "" then return nil end
+    return lit:sub(2, -2)
+end
+
+local function merge_binding_literals(...)
+    local parts = {}
+    for i = 1, select("#", ...) do
+        local inner = table_literal_inner(select(i, ...))
+        if inner and inner ~= "" then parts[#parts + 1] = inner end
     end
-    if kind == "region" and text:match("^%s*region%s*[%(%-%>]") then
-        return (text:gsub("^(%s*region)%s*", "%1 " .. name_hint, 1))
+    return "{" .. table.concat(parts, ", ") .. "}"
+end
+
+local function source_line_col(src, offset_1)
+    local line, col = 1, 1
+    for i = 1, math.max(1, offset_1) - 1 do
+        if src:byte(i) == 10 then
+            line = line + 1
+            col = 1
+        else
+            col = col + 1
+        end
     end
-    if kind == "expr" and text:match("^%s*expr%s*%(") then
-        return (text:gsub("^(%s*expr)%s*", "%1 " .. name_hint, 1))
-    end
-    if kind == "struct" and (
-        text:match("^%s*struct%s*\n") or text:match("^%s*struct%s*\r\n") or
-        text:match("^%s*struct%s+[A-Za-z_][A-Za-z0-9_]*%s*:")
-    ) then
-        return (text:gsub("^(%s*struct)%s*", "%1 " .. name_hint .. " ", 1))
-    end
-    if kind == "union" and (
-        text:match("^%s*union%s*\n") or text:match("^%s*union%s*\r\n") or
-        text:match("^%s*union%s+[A-Za-z_][A-Za-z0-9_]*%s*[%(%|]") or
-        text:match("^%s*union%s+[A-Za-z_][A-Za-z0-9_]*%s+end")
-    ) then
-        return (text:gsub("^(%s*union)%s*", "%1 " .. name_hint .. " ", 1))
-    end
-    if kind == "handle" and text:match("^%s*handle%s*:") then
-        return (text:gsub("^(%s*handle)%s*", "%1 " .. name_hint .. " ", 1))
-    end
-    return text
+    return line, col
+end
+
+local function origin_bindings_for_island(src, island, chunk_name)
+    local line, col = source_line_col(src, island.start)
+    local opts = island.name_hint and ("name_hint = " .. quote_lua_string(island.name_hint)) or ""
+    return "{"
+        .. "[\"__moonlift_source_origin\"] = {"
+        .. "__moonlift_source = __moonlift_mlua_source, "
+        .. "start_offset = " .. tostring((island.start or 1) - 1) .. ", "
+        .. "start_line = " .. tostring(line) .. ", "
+        .. "start_col = " .. tostring(col)
+        .. "}, "
+        .. "[\"__moonlift_parse_opts\"] = {" .. opts .. "}"
+        .. "}"
 end
 
 local function split_region_impl_island(text)
@@ -264,14 +275,18 @@ local api_name_for_kind = {
     extern = "extern",
 }
 
-local function transform_mlua(src)
+local function transform_mlua(src, chunk_name)
     local Parse = require("moonlift.parse")
     local moon = require("moonlift")
     local scan = Parse.scan_document(src)
     if #scan.islands == 0 then
         return "local moon = require('moonlift')\n" .. src
     end
-    local out = { "local moon = require('moonlift')\n" }
+    local out = {
+        "local moon = require('moonlift')\n",
+        "local __moonlift_mlua_source = { uri = " .. quote_lua_string(chunk_name or "=(mlua)")
+            .. ", source_text = " .. long_bracket(src) .. " }\n",
+    }
     local cursor = 1
     -- All declared names -> Lua value expressions.
     local vars = {}
@@ -323,8 +338,9 @@ local function transform_mlua(src)
         -- Merge hole bindings with var bindings.
         local bindings = all_var_bindings()
         if hole_bindings ~= "" then
-            bindings = "{" .. hole_bindings:sub(2, -2) .. ", " .. bindings:sub(2, -2) .. "}"
+            bindings = merge_binding_literals(hole_bindings, bindings)
         end
+        bindings = merge_binding_literals(bindings, origin_bindings_for_island(src, island, chunk_name))
         local impl_ref, impl_body
         if island.kind == "region" then
             impl_ref, impl_body = split_region_impl_island(island_src)
@@ -334,7 +350,6 @@ local function transform_mlua(src)
         if impl_ref then
             out[#out + 1] = impl_ref .. bindings .. long_bracket(impl_body)
         else
-            island_src = name_anonymous_island(island.kind, island_src, hint)
             assert(api_name, "unsupported .mlua island kind: " .. tostring(island.kind))
             if has_assign then
                 out[#out + 1] = "moon." .. api_name .. bindings .. long_bracket(island_src)
@@ -359,7 +374,7 @@ local function transform_mlua(src)
 end
 
 local function load_mlua_chunk(src, chunk_name)
-    local transformed = transform_mlua(src)
+    local transformed = transform_mlua(src, chunk_name)
     local loader, err = loadstring(transformed, chunk_name or "=(mlua)")
     if not loader then
         error("loadstring: " .. tostring(err), 3)

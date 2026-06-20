@@ -17,6 +17,12 @@ for authoring, layout, render ops, interaction, text, and widgets.
   capabilities and conformance expectations.
 - [`widgets/README.md`](widgets/README.md) — canonical widget bundle/event
   contract and catalog guide.
+- [`../../experiments/mlui/mlui_design.md`](../../experiments/mlui/mlui_design.md)
+  — Moonlift-native translation experiment.  It treats this rich UI ASDL as the
+  source architecture and projects it to typed native buffers/protocols.
+- [`../../experiments/mlui/mlui_lua_api.md`](../../experiments/mlui/mlui_lua_api.md)
+  — proposed MLUI Lua authoring API: callable tables, no-parentheses builders,
+  widget bundles, and kernel/session facade.
 
 ## Pipeline
 

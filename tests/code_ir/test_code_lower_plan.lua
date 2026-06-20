@@ -58,6 +58,39 @@ local function lower_all(src)
     return code, graph, flow, value, mem, effect, kernels, schedules, lower
 end
 
+local function loop_by_id(graph)
+    local out = {}
+    for _, func in ipairs(graph.funcs or {}) do
+        for _, loop in ipairs(func.loops or {}) do
+            out[loop.id.text] = loop
+        end
+    end
+    return out
+end
+
+local function assert_disjoint_lower_fragments(graph, lower)
+    local loops = loop_by_id(graph)
+    for _, func_plan in ipairs(lower.funcs or {}) do
+        local owner = {}
+        for _, fragment in ipairs(func_plan.fragments or {}) do
+            local cover = fragment.cover
+            local cls = pvm.classof(cover)
+            local blocks = {}
+            if cls == Lower.LowerCoverBlock then
+                blocks[#blocks + 1] = cover.block.text
+            elseif cls == Lower.LowerCoverLoop then
+                for _, gb in ipairs((loops[cover.loop.text] and loops[cover.loop.text].body) or {}) do
+                    blocks[#blocks + 1] = gb.block.text
+                end
+            end
+            for _, block in ipairs(blocks) do
+                assert(owner[block] == nil, "Lower fragment overlap for block " .. block)
+                owner[block] = fragment.id.text
+            end
+        end
+    end
+end
+
 local code, graph, flow, value, mem, effect, kernels, schedules, lowered = lower_all([[
 func sum_loop(n: i32): i32
     let one: i32 = 1
@@ -76,6 +109,7 @@ assert(pvm.classof(kernels) == Kernel.KernelModulePlan, "Kernel phase should pro
 assert(pvm.classof(schedules) == Schedule.ScheduleModulePlan, "Schedule phase should produce ScheduleModulePlan")
 assert(pvm.classof(lowered.funcs[1]) == Lower.LowerFuncPlan, "Lower should use LowerFuncPlan fragments")
 assert(Lower["LowerFunc" .. "Kernel"] == nil and Lower["LowerFunc" .. "Code"] == nil, "old LowerFunc constructors must be hard-yanked")
+assert_disjoint_lower_fragments(graph, lowered)
 
 local saw_code, saw_semantic, semantic_fallback = false, false, false
 for _, fragment in ipairs(lowered.funcs[1].fragments or {}) do
@@ -118,5 +152,21 @@ assert(#unsafe_lowered.funcs[1].fragments > 0, "non-loop function still has Code
 for _, fragment in ipairs(unsafe_lowered.funcs[1].fragments or {}) do
     assert(pvm.classof(fragment.strategy) == Lower.LowerStrategyCode, "non-loop function should remain Code fallback")
 end
+
+local nested_code, nested_graph, nested_flow, nested_value, nested_mem, nested_effect, nested_kernels, nested_schedules, nested_lowered = lower_all([[
+func nested_fallback(n: i32): i32
+    return block outer(i: i32 = 0, acc: i32 = 0): i32
+        if i >= n then yield acc end
+        let inner_sum: i32 = block inner(j: i32 = 0, inner_acc: i32 = 0): i32
+            if j >= 2 then yield inner_acc end
+            jump inner(j = j + 1, inner_acc = inner_acc + i + j)
+        end
+        jump outer(i = i + 1, acc = acc + inner_sum)
+    end
+end
+]])
+assert_disjoint_lower_fragments(nested_graph, nested_lowered)
+local nested_program = LowerToBack.module(nested_code, nested_graph, nested_flow, nested_value, nested_mem, nested_effect, nested_kernels, nested_schedules, nested_lowered)
+assert_no_issues("nested fallback back", BackValidate.validate(nested_program).issues)
 
 io.write("moonlift code_lower_plan semantic fragments ok\n")

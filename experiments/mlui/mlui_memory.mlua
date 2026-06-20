@@ -1,0 +1,632 @@
+-- mlui_memory.mlua — Memory primitives for the MLUI kernel.
+--
+-- Private helpers: allocation, reallocation, freeing, zeroing, copying,
+-- and per-buffer growth regions for every MLUI kernel buffer.
+--
+-- Uses UiAllocator callbacks when present; defaults to extern malloc/realloc/free.
+-- All allocation failures flow through region oom(needed) exits.
+
+local H = moon.require("mlui_types")
+local T = H.T
+local R = H.R
+local F = H.F
+
+extern default_malloc(size: index): ptr(u8) end
+extern default_realloc(ptr: ptr(u8), new_size: index): ptr(u8) end
+extern default_free(ptr: ptr(u8)): void end
+
+local mlui_get_alloc = func(kernel: ptr(T.UiKernel)): ptr(T.UiAllocator)
+    if kernel == as(ptr(T.UiKernel), 0) then return as(ptr(T.UiAllocator), 0) end
+    return kernel.config.allocator
+end
+
+local mlui_alloc_bytes = func(alloc: ptr(T.UiAllocator), size: index, align: index): ptr(u8)
+    if alloc == as(ptr(T.UiAllocator), 0) then return default_malloc(size) end
+    return alloc.alloc(alloc.ctx, size, align)
+end
+
+local mlui_realloc_bytes = func(alloc: ptr(T.UiAllocator), p: ptr(u8),
+                                 old_size: index, new_size: index,
+                                 align: index): ptr(u8)
+    if alloc == as(ptr(T.UiAllocator), 0) then return default_realloc(p, new_size) end
+    return alloc.realloc(alloc.ctx, p, old_size, new_size, align)
+end
+
+local mlui_free_bytes = func(alloc: ptr(T.UiAllocator), p: ptr(u8),
+                              size: index, align: index): void
+    if alloc == as(ptr(T.UiAllocator), 0) then default_free(p) return end
+    alloc.free(alloc.ctx, p, size, align)
+    return
+end
+
+local mlui_zero_bytes = func(p: ptr(u8), n: index): void
+    block loop(i: index = 0)
+        if i >= n then return end
+        p[i] = as(u8, 0)
+        jump loop(i = i + 1)
+    end
+end
+
+local mlui_copy_bytes = func(dst: ptr(u8), src: ptr(u8), n: index): void
+    block loop(i: index = 0)
+        if i >= n then return end
+        dst[i] = src[i]
+        jump loop(i = i + 1)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Core growth region: grow a flat element buffer.
+-- Takes mutable ptr(index) for count and cap, ptr(ptr(u8)) for data pointer.
+-- Doubles capacity when room is insufficient.  Exits through grown or oom.
+--------------------------------------------------------------------------------
+
+local mlui_grow_elems = region grow_elems(kernel: ptr(T.UiKernel),
+                                           p_count: ptr(index),
+                                           p_cap: ptr(index),
+                                           p_data: ptr(ptr(u8)),
+                                           elem_size: index,
+                                           needed: index;
+    grown
+  | oom(needed: index))
+entry start()
+    let count: index = p_count[0]
+    let cap: index = p_cap[0]
+    let avail: index = cap - count
+    if avail >= needed then jump grown end
+    let want: index = count + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = p_data[0]
+    let old_bytes: index = cap * elem_size
+    let new_bytes: index = new_cap * elem_size
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    p_data[0] = new_ptr
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+--------------------------------------------------------------------------------
+-- Per-store growth regions.
+--
+-- Each operates on a specific kernel field path, using &(k.field)[0] for
+-- stores and direct reads for loads.
+--------------------------------------------------------------------------------
+
+local mlui_grow_node_slots = region grow_node_slots(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.nodes.n
+    let cap: index = kernel.nodes.cap
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.nodes.slots)
+    let old_bytes: index = cap * sizeof(T.UiNodeSlot)
+    let new_bytes: index = new_cap * sizeof(T.UiNodeSlot)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_slots: ptr(ptr(T.UiNodeSlot)) = &(kernel.nodes.slots)
+    let p_cap: ptr(index) = &(kernel.nodes.cap)
+    p_slots[0] = as(ptr(T.UiNodeSlot), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_node_id_map = region grow_node_id_map(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.nodes.n_id
+    let cap: index = kernel.nodes.cap_id
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.nodes.id_to_slot)
+    let old_bytes: index = cap * sizeof(u32)
+    let new_bytes: index = new_cap * sizeof(u32)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_data: ptr(ptr(u32)) = &(kernel.nodes.id_to_slot)
+    let p_cap: ptr(index) = &(kernel.nodes.cap_id)
+    p_data[0] = as(ptr(u32), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_content_slots = region grow_content_slots(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.content.n
+    let cap: index = kernel.content.cap
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.content.slots)
+    let old_bytes: index = cap * sizeof(T.UiContentSlot)
+    let new_bytes: index = new_cap * sizeof(T.UiContentSlot)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_slots: ptr(ptr(T.UiContentSlot)) = &(kernel.content.slots)
+    let p_cap: ptr(index) = &(kernel.content.cap)
+    p_slots[0] = as(ptr(T.UiContentSlot), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_text_layout_slots = region grow_text_layout_slots(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.text_layouts.n
+    let cap: index = kernel.text_layouts.cap
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.text_layouts.slots)
+    let old_bytes: index = cap * sizeof(T.UiTextLayoutSlot)
+    let new_bytes: index = new_cap * sizeof(T.UiTextLayoutSlot)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_slots: ptr(ptr(T.UiTextLayoutSlot)) = &(kernel.text_layouts.slots)
+    let p_cap: ptr(index) = &(kernel.text_layouts.cap)
+    p_slots[0] = as(ptr(T.UiTextLayoutSlot), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_paint_programs = region grow_paint_programs(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.paint.n_program
+    let cap: index = kernel.paint.cap_program
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.paint.programs)
+    let old_bytes: index = cap * sizeof(T.UiPaintProgram)
+    let new_bytes: index = new_cap * sizeof(T.UiPaintProgram)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_data: ptr(ptr(T.UiPaintProgram)) = &(kernel.paint.programs)
+    let p_cap: ptr(index) = &(kernel.paint.cap_program)
+    p_data[0] = as(ptr(T.UiPaintProgram), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_paint_points = region grow_paint_points(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.paint.n_point
+    let cap: index = kernel.paint.cap_point
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.paint.points)
+    let old_bytes: index = cap * sizeof(f64)
+    let new_bytes: index = new_cap * sizeof(f64)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_data: ptr(ptr(f64)) = &(kernel.paint.points)
+    let p_cap: ptr(index) = &(kernel.paint.cap_point)
+    p_data[0] = as(ptr(f64), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_paint_vertices = region grow_paint_vertices(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.paint.n_vertex
+    let cap: index = kernel.paint.cap_vertex
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.paint.vertices)
+    let old_bytes: index = cap * sizeof(T.UiPaintVertex)
+    let new_bytes: index = new_cap * sizeof(T.UiPaintVertex)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_data: ptr(ptr(T.UiPaintVertex)) = &(kernel.paint.vertices)
+    let p_cap: ptr(index) = &(kernel.paint.cap_vertex)
+    p_data[0] = as(ptr(T.UiPaintVertex), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_value_slots = region grow_value_slots(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.values.n
+    let cap: index = kernel.values.cap
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.values.slots)
+    let old_bytes: index = cap * sizeof(T.UiValueSlot)
+    let new_bytes: index = new_cap * sizeof(T.UiValueSlot)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_slots: ptr(ptr(T.UiValueSlot)) = &(kernel.values.slots)
+    let p_cap: ptr(index) = &(kernel.values.cap)
+    p_slots[0] = as(ptr(T.UiValueSlot), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_image_slots = region grow_image_slots(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.images.n
+    let cap: index = kernel.images.cap
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.images.slots)
+    let old_bytes: index = cap * sizeof(T.UiImageSlot)
+    let new_bytes: index = new_cap * sizeof(T.UiImageSlot)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_slots: ptr(ptr(T.UiImageSlot)) = &(kernel.images.slots)
+    let p_cap: ptr(index) = &(kernel.images.cap)
+    p_slots[0] = as(ptr(T.UiImageSlot), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_font_slots = region grow_font_slots(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.fonts.n
+    let cap: index = kernel.fonts.cap
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.fonts.slots)
+    let old_bytes: index = cap * sizeof(T.UiFontSlot)
+    let new_bytes: index = new_cap * sizeof(T.UiFontSlot)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_slots: ptr(ptr(T.UiFontSlot)) = &(kernel.fonts.slots)
+    let p_cap: ptr(index) = &(kernel.fonts.cap)
+    p_slots[0] = as(ptr(T.UiFontSlot), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_scene_layout_nodes = region grow_scene_layout_nodes(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.scene.n_node
+    let cap: index = kernel.scene.cap_node
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.scene.layout_nodes)
+    let old_bytes: index = cap * sizeof(T.UiLayoutNode)
+    let new_bytes: index = new_cap * sizeof(T.UiLayoutNode)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_data: ptr(ptr(T.UiLayoutNode)) = &(kernel.scene.layout_nodes)
+    let p_cap: ptr(index) = &(kernel.scene.cap_node)
+    p_data[0] = as(ptr(T.UiLayoutNode), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_scene_decor_nodes = region grow_scene_decor_nodes(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.scene.n_node
+    let cap: index = kernel.scene.cap_node
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.scene.decor_nodes)
+    let old_bytes: index = cap * sizeof(T.UiDecorNode)
+    let new_bytes: index = new_cap * sizeof(T.UiDecorNode)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_data: ptr(ptr(T.UiDecorNode)) = &(kernel.scene.decor_nodes)
+    let p_cap: ptr(index) = &(kernel.scene.cap_node)
+    p_data[0] = as(ptr(T.UiDecorNode), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_scene_children = region grow_scene_children(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.scene.n_child
+    let cap: index = kernel.scene.cap_child
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.scene.children)
+    let old_bytes: index = cap * sizeof(u32)
+    let new_bytes: index = new_cap * sizeof(u32)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_data: ptr(ptr(u32)) = &(kernel.scene.children)
+    let p_cap: ptr(index) = &(kernel.scene.cap_child)
+    p_data[0] = as(ptr(u32), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_scene_tracks = region grow_scene_tracks(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.scene.n_track
+    let cap: index = kernel.scene.cap_track
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.scene.tracks)
+    let old_bytes: index = cap * sizeof(T.UiStyleTrack)
+    let new_bytes: index = new_cap * sizeof(T.UiStyleTrack)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_data: ptr(ptr(T.UiStyleTrack)) = &(kernel.scene.tracks)
+    let p_cap: ptr(index) = &(kernel.scene.cap_track)
+    p_data[0] = as(ptr(T.UiStyleTrack), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_solve_nodes = region grow_solve_nodes(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.solve.n_node
+    let cap: index = kernel.solve.cap_node
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.solve.nodes)
+    let old_bytes: index = cap * sizeof(T.UiSolveNode)
+    let new_bytes: index = new_cap * sizeof(T.UiSolveNode)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_data: ptr(ptr(T.UiSolveNode)) = &(kernel.solve.nodes)
+    let p_cap: ptr(index) = &(kernel.solve.cap_node)
+    p_data[0] = as(ptr(T.UiSolveNode), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_solve_children = region grow_solve_children(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.solve.n_child
+    let cap: index = kernel.solve.cap_child
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.solve.children)
+    let old_bytes: index = cap * sizeof(u32)
+    let new_bytes: index = new_cap * sizeof(u32)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_data: ptr(ptr(u32)) = &(kernel.solve.children)
+    let p_cap: ptr(index) = &(kernel.solve.cap_child)
+    p_data[0] = as(ptr(u32), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_view_ops = region grow_view_ops(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.view.n
+    let cap: index = kernel.view.cap
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.view.ops)
+    let old_bytes: index = cap * sizeof(T.UiViewOp)
+    let new_bytes: index = new_cap * sizeof(T.UiViewOp)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_data: ptr(ptr(T.UiViewOp)) = &(kernel.view.ops)
+    let p_cap: ptr(index) = &(kernel.view.cap)
+    p_data[0] = as(ptr(T.UiViewOp), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_events = region grow_events(kernel: ptr(T.UiKernel), needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = kernel.events.n
+    let cap: index = kernel.events.cap
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), kernel.events.events)
+    let old_bytes: index = cap * sizeof(T.UiEvent)
+    let new_bytes: index = new_cap * sizeof(T.UiEvent)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_data: ptr(ptr(T.UiEvent)) = &(kernel.events.events)
+    let p_cap: ptr(index) = &(kernel.events.cap)
+    p_data[0] = as(ptr(T.UiEvent), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_auth_nodes = region grow_auth_nodes(kernel: ptr(T.UiKernel),
+                                                     auth: ptr(T.UiAuthBuffer),
+                                                     needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = auth.n_node
+    let cap: index = auth.cap_node
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), auth.nodes)
+    let old_bytes: index = cap * sizeof(T.UiAuthNode)
+    let new_bytes: index = new_cap * sizeof(T.UiAuthNode)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_nodes: ptr(ptr(T.UiAuthNode)) = &(auth.nodes)
+    let p_cap: ptr(index) = &(auth.cap_node)
+    p_nodes[0] = as(ptr(T.UiAuthNode), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_auth_children = region grow_auth_children(kernel: ptr(T.UiKernel),
+                                                           auth: ptr(T.UiAuthBuffer),
+                                                           needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = auth.n_child
+    let cap: index = auth.cap_child
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    let new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), auth.children)
+    let old_bytes: index = cap * sizeof(u32)
+    let new_bytes: index = new_cap * sizeof(u32)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_children: ptr(ptr(u32)) = &(auth.children)
+    let p_cap: ptr(index) = &(auth.cap_child)
+    p_children[0] = as(ptr(u32), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+return {
+    mlui_alloc_bytes = mlui_alloc_bytes,
+    mlui_realloc_bytes = mlui_realloc_bytes,
+    mlui_free_bytes = mlui_free_bytes,
+    mlui_zero_bytes = mlui_zero_bytes,
+    mlui_copy_bytes = mlui_copy_bytes,
+    mlui_get_alloc = mlui_get_alloc,
+    mlui_grow_elems = mlui_grow_elems,
+    mlui_grow_node_slots = mlui_grow_node_slots,
+    mlui_grow_node_id_map = mlui_grow_node_id_map,
+    mlui_grow_content_slots = mlui_grow_content_slots,
+    mlui_grow_text_layout_slots = mlui_grow_text_layout_slots,
+    mlui_grow_paint_programs = mlui_grow_paint_programs,
+    mlui_grow_paint_points = mlui_grow_paint_points,
+    mlui_grow_paint_vertices = mlui_grow_paint_vertices,
+    mlui_grow_value_slots = mlui_grow_value_slots,
+    mlui_grow_image_slots = mlui_grow_image_slots,
+    mlui_grow_font_slots = mlui_grow_font_slots,
+    mlui_grow_scene_layout_nodes = mlui_grow_scene_layout_nodes,
+    mlui_grow_scene_decor_nodes = mlui_grow_scene_decor_nodes,
+    mlui_grow_scene_children = mlui_grow_scene_children,
+    mlui_grow_scene_tracks = mlui_grow_scene_tracks,
+    mlui_grow_solve_nodes = mlui_grow_solve_nodes,
+    mlui_grow_solve_children = mlui_grow_solve_children,
+    mlui_grow_view_ops = mlui_grow_view_ops,
+    mlui_grow_events = mlui_grow_events,
+    mlui_grow_auth_nodes = mlui_grow_auth_nodes,
+    mlui_grow_auth_children = mlui_grow_auth_children,
+}

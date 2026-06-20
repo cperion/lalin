@@ -354,6 +354,15 @@ region parse_number(p: ptr(u8), n: index, i: index;
   | truncated(pos: index))
 ```
 
+Statement boundaries are part of that explicitness. A newline in statement
+position may continue an infix expression or separate a place from its
+assignment `=`, but it may not introduce a postfix call, index, aggregate-call,
+or field continuation. Moonlift must not silently join `x = value` with a
+following `(callee)(arg)` and invent a hidden call edge. If an expression is
+multiline beyond infix/assignment continuation, it is multiline inside an
+explicit delimiter or control construct. The source text should keep the same
+control shape a reader and `rg` see.
+
 `ParseInput` expands in a product-list position because it is a product.
 `ParseExit` expands in a protocol position because it is a sum. The runtime
 meaning is still different: a stored `union` is a tag and payload; a region
@@ -1004,6 +1013,14 @@ Three plain-language lists: what arrives (bytes, handles, events, records), wher
 
 Cluster the facts that coexist: stored records, passed tuples, views, handles, leases, encodings, phase facts. Apply the five data rules: minimal coexistence (fields never read together are two products); facts not behavior; **no derived data in source** (a cache is a phase output, not a field — storing it beside the truth invites staleness); **structure over keys** (strings identify nothing internally; only genuinely user-authored or genuinely opaque text is a string); **cross-references are typed handles** (`PostId`, not `ptr(Post)`, when the reference must outlive a pointer's validity). Then run the memory triage: which products own storage, which values are durable identity, which values are temporary access, and which raw pointers exist only because an ABI boundary forced them. Write down the owner of every pointer/view boundary, then prefer region-granted leases where the type system can carry the access fact. Remember products hide in five places: struct, params, return, block state, continuation payload.
 
+Do not turn this into magic `memo func`.  A function signature says products in
+and products out; it does not say which memory was read, how pointer identity is
+interpreted, when a value is stale, or who owns the cache.  If a result is worth
+remembering, the cache is a product or store, the key is a product, the validity
+rule is an epoch/generation/dependency fact, and lookup/insert/invalidate are
+regions with named outcomes.  Compilation artifacts may cache compiled function
+pointers; semantic memoization belongs to phase products.
+
 ### Step 4 — Harvest the protocols
 
 Every "or" from Step 2 becomes a named continuation set with minimal exit products. No boolean protocols, no status soup, names that say *what happened*, payloads that say *what is now known*. If a reviewer would ask "but what if X?", X is a continuation.
@@ -1030,11 +1047,11 @@ Write the emit/fill plan: per parent, which child continuation goes to a local b
 
 ### Step 10 — Identify persistent state
 
-What survives across operations — stores, pools, registries, connection state, caches-at-phase-boundaries? Each is a product passed *explicitly* to the regions that touch it, mutated through their protocols, never a global, never a back door. For each persistent store, declare the handles it resolves with `domain Store` and `target Item`, name the regions that grant leases, and name the operations that may invalidate those leases. (This is the step that keeps Step 8's discipline honest at system scale.)
+What survives across operations — stores, pools, registries, connection state, caches-at-phase-boundaries? Each is a product passed *explicitly* to the regions that touch it, mutated through their protocols, never a global, never a back door. For each persistent store, declare the handles it resolves with `domain Store` and `target Item`, name the regions that grant leases, and name the operations that may invalidate those leases. For each cache, name the owner store, key product, value product, hit/miss/stale protocol, insertion protocol, and invalidation epoch. (This is the step that keeps Step 8's discipline honest at system scale.)
 
 ### Step 11 — Find the families
 
-Where do N signatures differ in one type, one constant, one platform call? Each repetition axis is a factory parameter. Design the *family* signature for the class of uses (somewhat general-purpose); emit only the instances actually used (no speculative matrices); never let one instance's quirk into the family's parameters. Push genuine variation to build time; pull awkward cases down into the regions; let only per-call facts survive in input products. If the system is interactive or incremental, also layer it as a compiler — source ASDL, event ASDL, pure apply, memoized phases at *knowledge* boundaries, one executing loop.
+Where do N signatures differ in one type, one constant, one platform call? Each repetition axis is a factory parameter. Design the *family* signature for the class of uses (somewhat general-purpose); emit only the instances actually used (no speculative matrices); never let one instance's quirk into the family's parameters. Push genuine variation to build time; pull awkward cases down into the regions; let only per-call facts survive in input products. If the system is interactive or incremental, also layer it as a compiler — source ASDL, event ASDL, pure apply, memoized phases at *knowledge* boundaries, one executing loop. Memoize phase products, not arbitrary functions: the boundary should be where knowledge becomes reusable and where invalidation can be named.
 
 ### Step 12 — Review, then transcribe
 

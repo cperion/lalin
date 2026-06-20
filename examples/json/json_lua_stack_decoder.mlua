@@ -458,7 +458,11 @@ local bundle = moon.bundle("json_library_showcase")
 bundle:pack(parse_array_events, parse_object_events, parse_value_events, json_decode_value_events)
 local c_blob = bundle:c_source({ module_name = "moonlift_json_showcase" })
 
-local function compile_c_artifact()
+local function compile_artifact()
+    local backend = os.getenv("MOONLIFT_JSON_BACKEND") or "c"
+    if backend == "jit" or backend == "cranelift" then
+        return bundle:jit({ backend = "cranelift", module_name = "moonlift_json_showcase" }), "cranelift-jit"
+    end
     local gcc = os.getenv("MOONLIFT_JSON_CC") or "gcc"
     local ok, result = pcall(function()
         return bundle:compile({
@@ -474,7 +478,7 @@ local function compile_c_artifact()
     return bundle:compile({ backend = "c", runner = "libtcc", module_name = "moonlift_json_showcase" }), "libtcc", result
 end
 
-local artifact, c_backend, c_backend_fallback_reason = compile_c_artifact()
+local artifact, c_backend, c_backend_fallback_reason = compile_artifact()
 local value_events_compiled = artifact:get("json_decode_value_events")
 
 local Json = {}
@@ -684,6 +688,7 @@ Json.tags = {
 }
 
 Json.c_api = {
+    backend = c_backend,
     decode = "json_decode_value_events",
     meta_event_count = 0,
     meta_string_count = 1,

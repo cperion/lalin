@@ -75,7 +75,7 @@ local C = ffi.C
 
 local Host = require("moonlift.mlua_run")
 
-io.write("  Compiling Moonlift JSON library through C backend ... ")
+io.write("  Compiling Moonlift JSON library ... ")
 io.flush()
 local t_compile = os.clock()
 
@@ -83,7 +83,7 @@ local ml_result = Host.dofile("examples/json/json_lua_stack_decoder.mlua")
 local compiled_module = ml_result.artifact
 local compiled = ml_result.value_fn
 
-print(string.format("%.3fs", os.clock() - t_compile))
+print(string.format("%.3fs (%s)", os.clock() - t_compile, ml_result.c_backend or "unknown"))
 
 -- Verify it works on the benchmark input
 local json_p = ffi.cast("uint8_t *", JSON)

@@ -1176,6 +1176,20 @@ Places that can appear on the left side of `=`:
 Assignment requires the place type and expression type to match exactly.
 Implicit conversions are not performed. Use `as(T, expr)` for conversions.
 
+In statement position, a newline may continue an infix expression or separate a
+place from its assignment `=`, but it may not introduce a postfix continuation
+such as call, index, aggregate-call, or field access. This prevents:
+
+```moonlift
+x = value
+(callee)(arg)
+```
+
+from being parsed as `x = value(callee)(arg)`. Multiline expressions are still
+written inside explicit delimiters such as call arguments, aggregate literals,
+or region/control-expression bodies, or across explicit infix operators such as
+`+`, `and`, and `==`.
+
 ### 8.4 If statement
 
 ```moonlift
@@ -2597,6 +2611,47 @@ print(add(3, 4))  -- 7 — first call compiles ephemeral module
 print(add(10, 20)) -- 30 — cached pointer, no compilation
 add:free()
 ```
+
+This cache is a compilation artifact cache, not semantic result memoization.
+It remembers the native function pointer for this callable value and backend
+configuration.  It does not remember that `add(3, 4)` produced `7`.
+
+Moonlift deliberately has no implicit language form such as:
+
+```moonlift
+-- not a Moonlift feature
+memo func f(x: i32): i32
+```
+
+General function-result memoization would need to prove too many facts that do
+not belong to an ordinary function signature: purity, memory reads, pointer
+identity, ownership, aliasing, invalidation, and cache lifetime.  In Moonlift,
+semantic memoization is designed as an explicit product/protocol boundary:
+
+```moonlift
+struct MeasureCache
+    generation: u64
+    -- implementation-owned storage fields
+end
+
+region measure_cached(cache: ptr(MeasureCache), node: UiNodeRef, width: i32;
+    hit(size: UiSize)
+  | miss
+  | stale
+end
+
+region measure_insert(cache: ptr(MeasureCache), node: UiNodeRef, width: i32, size: UiSize;
+    inserted
+  | stale
+  | memory_exhausted(needed: index))
+end
+```
+
+The PVM `phase` abstraction is the Lua-hosted version of this rule: memoize
+phase outputs at knowledge boundaries, keyed by ASDL identity and explicit
+arguments.  Native systems should translate the same idea into named stores,
+handles, epochs, and regions.  Functions stay functions; caches are products
+owned by a store.
 
 ### 15.5 Values table as module — cross-function dependencies
 

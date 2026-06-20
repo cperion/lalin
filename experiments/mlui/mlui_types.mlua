@@ -1,0 +1,1638 @@
+-- mlui_types.mlua -- Moonlift-native UI kernel product/protocol header.
+--
+-- This translates the proven `lua/ui` compiler-shaped architecture into
+-- Moonlift products and region boundaries without throwing away the richness
+-- of the existing UI ASDL. Lua remains the authoring layer; this file names
+-- the typed kernel that can later be implemented as C, Cranelift, or WASM
+-- artifacts.
+
+local M = {
+    T = {},
+    R = {},
+    F = {},
+}
+
+local T = M.T
+local R = M.R
+local F = M.F
+
+--------------------------------------------------------------------------------
+-- Identity and retained stores.
+--------------------------------------------------------------------------------
+
+T.UiId = handle : u32 invalid 0 end
+T.UiKernelRef = handle : u32 invalid 0
+    target T.UiKernel
+end
+T.UiNodeRef = handle : u32 invalid 0
+    domain T.UiKernel
+    target T.UiNodeRecord
+end
+T.UiTextLayoutRef = handle : u32 invalid 0
+    domain T.UiKernel
+    target T.UiTextLayout
+end
+T.UiImageRef = handle : u32 invalid 0
+    domain T.UiKernel
+    target T.UiImageRecord
+end
+T.UiFontRef = handle : u32 invalid 0
+    domain T.UiKernel
+    target T.UiFontRecord
+end
+T.UiContentRef = handle : u32 invalid 0
+    domain T.UiKernel
+    target T.UiContent
+end
+T.UiPaintRef = handle : u32 invalid 0
+    domain T.UiKernel
+    target T.UiPaintProgram
+end
+T.UiValueRef = handle : u32 invalid 0
+    domain T.UiKernel
+    target T.UiValueRecord
+end
+
+--------------------------------------------------------------------------------
+-- Shared scalar products.  Stored enum-like fields are explicit encoded facts;
+-- the region beside each field owns its interpretation.
+--------------------------------------------------------------------------------
+
+T.UiRect = struct
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+end
+
+T.UiEdges = struct
+    top: f64,
+    right: f64,
+    bottom: f64,
+    left: f64,
+end
+
+T.UiColor = struct
+    rgba8: u32,
+end
+
+T.UiState = struct
+    hovered: bool,
+    focused: bool,
+    active: bool,
+    selected: bool,
+    disabled: bool,
+end
+
+T.UiConstraint = struct
+    max_w: f64,
+    max_h: f64,
+end
+
+T.UiSize = struct
+    w: f64,
+    h: f64,
+    baseline: f64,
+end
+
+T.UiBufferHeader = struct
+    generation: u64,
+    epoch: u64,
+    n: index,
+    cap: index,
+end
+
+T.UiAllocator = struct
+    ctx: ptr(u8),
+    alloc: func(ptr(u8), index, index): ptr(u8),
+    realloc: func(ptr(u8), ptr(u8), index, index, index): ptr(u8),
+    free: func(ptr(u8), ptr(u8), index, index),
+end
+
+T.UiKernelConfig = struct
+    allocator: ptr(T.UiAllocator),
+    initial_node_cap: index,
+    initial_op_cap: index,
+    initial_event_cap: index,
+    flags: u32,
+end
+
+T.UiStatus = struct
+    code: i32,
+    detail: i32,
+    at: index,
+    needed: index,
+end
+
+T.UiProgramHeader = struct
+    magic: u32,
+    abi_version: u32,
+    flags: u32,
+    root_index: u32,
+    root_kind: u8,         -- owner: ui_validate_program; auth/compose
+    endian: u8,
+    pointer_size: u8,
+    reserved: u8,
+    epoch: u64,
+end
+
+T.UiValueRecord = struct
+    kind: u8,             -- owner: ui_visit_value
+    id: T.UiId,
+    n: i64,
+    x: f64,
+    y: f64,
+    text: T.UiContentRef,
+end
+
+T.UiValueSlot = struct
+    gen: u32,
+    live: bool,
+    value: T.UiValueRecord,
+end
+
+T.UiValueStore = struct
+    slots: ptr(T.UiValueSlot),
+    n: index,
+    cap: index,
+    free_head: u32,
+end
+
+T.UiImageRecord = struct
+    id: T.UiId,
+    backend_key: u64,
+    w: f64,
+    h: f64,
+    generation: u64,
+end
+
+T.UiImageSlot = struct
+    gen: u32,
+    live: bool,
+    image: T.UiImageRecord,
+end
+
+T.UiImageStore = struct
+    slots: ptr(T.UiImageSlot),
+    n: index,
+    cap: index,
+    free_head: u32,
+end
+
+T.UiFontRecord = struct
+    id: T.UiId,
+    backend_key: u64,
+    generation: u64,
+end
+
+T.UiFontSlot = struct
+    gen: u32,
+    live: bool,
+    font: T.UiFontRecord,
+end
+
+T.UiFontStore = struct
+    slots: ptr(T.UiFontSlot),
+    n: index,
+    cap: index,
+    free_head: u32,
+end
+
+T.UiEnvClass = struct
+    bp: u8,               -- owner: ui_resolve_style; sm/md/lg/xl/2xl
+    scheme: u8,           -- owner: ui_resolve_style; light/dark
+    motion: u8,           -- owner: ui_resolve_style; safe/reduce
+    density: u8,          -- owner: ui_resolve_style
+end
+
+--------------------------------------------------------------------------------
+-- Theme products.
+--------------------------------------------------------------------------------
+
+T.UiPalette = struct
+    s50: T.UiColor,
+    s100: T.UiColor,
+    s200: T.UiColor,
+    s300: T.UiColor,
+    s400: T.UiColor,
+    s500: T.UiColor,
+    s600: T.UiColor,
+    s700: T.UiColor,
+    s800: T.UiColor,
+    s900: T.UiColor,
+    s950: T.UiColor,
+end
+
+T.UiSpaceScale = struct
+    s0: f64,
+    s0_5: f64,
+    s1: f64,
+    s1_5: f64,
+    s2: f64,
+    s2_5: f64,
+    s3: f64,
+    s3_5: f64,
+    s4: f64,
+    s5: f64,
+    s6: f64,
+    s7: f64,
+    s8: f64,
+    s9: f64,
+    s10: f64,
+    s11: f64,
+    s12: f64,
+    s14: f64,
+    s16: f64,
+    s20: f64,
+    s24: f64,
+    s28: f64,
+    s32: f64,
+    s36: f64,
+    s40: f64,
+    s44: f64,
+    s48: f64,
+    s52: f64,
+    s56: f64,
+    s60: f64,
+    s64: f64,
+    s72: f64,
+    s80: f64,
+    s96: f64,
+    px: f64,
+end
+
+T.UiFontScale = struct
+    xs: f64,
+    sm: f64,
+    base: f64,
+    lg: f64,
+    xl: f64,
+    x2l: f64,
+    x3l: f64,
+    x4l: f64,
+    x5l: f64,
+    x6l: f64,
+end
+
+T.UiRadiusScale = struct
+    r0: f64,
+    rsm: f64,
+    rbase: f64,
+    rmd: f64,
+    rlg: f64,
+    rxl: f64,
+    r2xl: f64,
+    r3xl: f64,
+    rfull: f64,
+end
+
+T.UiBorderScale = struct
+    bw0: f64,
+    bw1: f64,
+    bw2: f64,
+    bw4: f64,
+    bw8: f64,
+end
+
+T.UiOpacityScale = struct
+    o0: f64,
+    o5: f64,
+    o10: f64,
+    o20: f64,
+    o25: f64,
+    o30: f64,
+    o40: f64,
+    o50: f64,
+    o60: f64,
+    o70: f64,
+    o75: f64,
+    o80: f64,
+    o90: f64,
+    o95: f64,
+    o100: f64,
+end
+
+T.UiFonts = struct
+    regular: T.UiFontRef,
+    medium: T.UiFontRef,
+    semibold: T.UiFontRef,
+    bold: T.UiFontRef,
+    mono: T.UiFontRef,
+end
+
+T.UiTheme = struct
+    palettes: ptr(T.UiPalette),
+    n_palette: index,
+    white: T.UiColor,
+    black: T.UiColor,
+    transparent: T.UiColor,
+    spacing: T.UiSpaceScale,
+    font_sizes: T.UiFontScale,
+    radii: T.UiRadiusScale,
+    borders: T.UiBorderScale,
+    opacities: T.UiOpacityScale,
+    fonts: T.UiFonts,
+end
+
+--------------------------------------------------------------------------------
+-- Rich authored style vocabulary.
+--
+-- These products encode the existing lua/ui Style.Token graph.  They are not
+-- the solved layout style.  They are authored semantic facts consumed by
+-- ui_resolve_style/ui_lower_scene.  Kind fields are encodings owned by those
+-- consumer regions.
+--------------------------------------------------------------------------------
+
+T.UiStyleStateCond = struct
+    hovered: u8,          -- owner: ui_resolve_style; any/on/off
+    focused: u8,
+    active: u8,
+    selected: u8,
+    disabled: u8,
+end
+
+T.UiStyleCond = struct
+    bp: u8,               -- owner: ui_resolve_style
+    scheme: u8,
+    motion: u8,
+    state: T.UiStyleStateCond,
+end
+
+T.UiStyleLength = struct
+    kind: u8,             -- owner: ui_resolve_style; auto/hug/fill/fixed/frac
+    value: f64,
+end
+
+T.UiStyleBasis = struct
+    kind: u8,             -- owner: ui_resolve_style
+    value: f64,
+end
+
+T.UiStyleTrack = struct
+    kind: u8,             -- owner: ui_resolve_style; auto/fr/fixed/minmax
+    a: f64,
+    b: f64,
+end
+
+T.UiStyleAtom = struct
+    kind: u16,            -- owner: ui_resolve_style; mirrors Style.Atom/Decl
+    a: f64,
+    b: f64,
+    color: T.UiColor,
+    track_first: u32,
+    track_count: u32,
+end
+
+T.UiStyleToken = struct
+    cond: T.UiStyleCond,
+    atom: T.UiStyleAtom,
+end
+
+T.UiStyleTokenBuffer = struct
+    tokens: ptr(T.UiStyleToken),
+    n: index,
+    cap: index,
+    tracks: ptr(T.UiStyleTrack),
+    n_track: index,
+    cap_track: index,
+end
+
+--------------------------------------------------------------------------------
+-- Style/layout/decor products.
+--------------------------------------------------------------------------------
+
+T.UiLayoutStyle = struct
+    display: u8,          -- owner: ui_lower_scene; flow/flex/grid
+    axis: u8,             -- owner: ui_lower_scene
+    wrap: u8,             -- owner: ui_lower_scene
+    justify: u8,          -- owner: ui_solve_scene
+    items: u8,            -- owner: ui_solve_scene
+    self_align: u8,       -- owner: ui_solve_scene
+    w_kind: u8,           -- owner: ui_measure_node
+    h_kind: u8,           -- owner: ui_measure_node
+    w_value: f64,
+    h_value: f64,
+    min_w: f64,
+    max_w: f64,
+    min_h: f64,
+    max_h: f64,
+    grow: f64,
+    shrink: f64,
+    basis_kind: u8,
+    basis_value: f64,
+    padding: T.UiEdges,
+    margin: T.UiEdges,
+    overflow_x: u8,
+    overflow_y: u8,
+    gap_x: f64,
+    gap_y: f64,
+    col_gap: f64,
+    row_gap: f64,
+    col_first: u32,
+    col_count: u32,
+    row_first: u32,
+    row_count: u32,
+    col_start: f64,
+    col_span: f64,
+    row_start: f64,
+    row_span: f64,
+end
+
+T.UiBoxVisual = struct
+    bg: T.UiColor,
+    border_color: T.UiColor,
+    border_w: f64,
+    shape: u8,            -- owner: backend draw_box
+    radius: f64,
+    opacity: f64,
+end
+
+T.UiTextStyle = struct
+    font: T.UiFontRef,
+    size: f64,
+    weight: f64,
+    align: u8,
+    leading: f64,
+    tracking: f64,
+    color: T.UiColor,
+end
+
+T.UiDecorStyle = struct
+    box: T.UiBoxVisual,
+    text: T.UiTextStyle,
+    cursor: u8,           -- owner: ui_runtime_report
+end
+
+--------------------------------------------------------------------------------
+-- Rich authored/imported node representation.
+--
+-- UiAuthNode is a flat ABI encoding of lua/ui Auth.Node.  Its kind field is
+-- owned by ui_visit_auth_node/ui_lower_scene, not by random switches. Wrapper
+-- forms such as WithInput, FocusScope, Layer, Overlay, Modal, and Scroll keep
+-- their semantic payloads here so lowering does not erase authored meaning.
+--------------------------------------------------------------------------------
+
+T.UiAuthNode = struct
+    id: T.UiId,
+    kind: u8,             -- owner: ui_visit_auth_node/ui_lower_scene
+    role: u8,             -- owner: ui_lower_scene/ui_runtime_report
+    scroll_axis: u8,
+    focus_policy: u8,
+    layer_kind: u8,
+    overlay_placement: u8,
+    anchor_id: T.UiId,
+    order: f64,
+    modal: bool,
+    first_child: u32,
+    n_child: u32,
+    token_first: u32,
+    token_count: u32,
+    content: T.UiContentRef,
+    paint_first: u32,
+    paint_count: u32,
+    state: T.UiState,
+end
+
+T.UiAuthBuffer = struct
+    nodes: ptr(T.UiAuthNode),
+    n_node: index,
+    cap_node: index,
+    children: ptr(u32),
+    n_child: index,
+    cap_child: index,
+    styles: T.UiStyleTokenBuffer,
+end
+
+T.UiProgramOp = T.UiAuthNode
+
+T.UiNodeRecord = struct
+    id: T.UiId,
+    auth_index: u32,
+    gen: u32,
+    live: bool,
+end
+
+T.UiNodeSlot = struct
+    gen: u32,
+    live: bool,
+    node: T.UiNodeRecord,
+end
+
+T.UiNodeStore = struct
+    slots: ptr(T.UiNodeSlot),
+    n: index,
+    cap: index,
+    free_head: u32,
+    id_to_slot: ptr(u32),
+    n_id: index,
+    cap_id: index,
+end
+
+--------------------------------------------------------------------------------
+-- Compose products.
+--
+-- Compose.Node is still a source-level architecture feature. Native import can
+-- choose to expand it before Auth import or pass this encoded form through
+-- ui_expand_compose. Panels, splits, workbenches, and scroll panels therefore
+-- remain named semantic products instead of Lua-only recipes.
+--------------------------------------------------------------------------------
+
+T.UiComposeNode = struct
+    id: T.UiId,
+    kind: u8,             -- owner: ui_expand_compose
+    scroll_id: T.UiId,
+    scroll_axis: u8,
+    first_child: u32,
+    n_child: u32,
+    raw_auth: T.UiNodeRef,
+    style_first: u32,
+    style_count: u32,
+    header_style_first: u32,
+    header_style_count: u32,
+    body_style_first: u32,
+    body_style_count: u32,
+    footer_style_first: u32,
+    footer_style_count: u32,
+end
+
+T.UiComposeBuffer = struct
+    nodes: ptr(T.UiComposeNode),
+    n_node: index,
+    cap_node: index,
+    children: ptr(u32),
+    n_child: index,
+    cap_child: index,
+    styles: T.UiStyleTokenBuffer,
+end
+
+T.UiProgram = struct
+    header: T.UiProgramHeader,
+    auth: ptr(T.UiAuthBuffer),
+    compose: ptr(T.UiComposeBuffer),
+    paint: ptr(T.UiPaintStore),
+    content_refs: ptr(T.UiContentRef),
+    n_content: index,
+    image_refs: ptr(T.UiImageRef),
+    n_image: index,
+    font_refs: ptr(T.UiFontRef),
+    n_font: index,
+    value_refs: ptr(T.UiValueRef),
+    n_value: index,
+end
+
+--------------------------------------------------------------------------------
+-- Lowered scene products.  These mirror lua/ui Layout.Node and Decor.Node.
+--------------------------------------------------------------------------------
+
+T.UiLayoutNode = struct
+    id: T.UiId,
+    kind: u8,             -- owner: ui_solve_scene
+    role: u8,
+    first_child: u32,
+    n_child: u32,
+    style: T.UiLayoutStyle,
+    content: T.UiContentRef,
+end
+
+T.UiDecorNode = struct
+    id: T.UiId,
+    kind: u8,
+    first_child: u32,
+    n_child: u32,
+    style: T.UiDecorStyle,
+    paint_first: u32,
+    paint_count: u32,
+end
+
+T.UiSceneBuffer = struct
+    layout_nodes: ptr(T.UiLayoutNode),
+    decor_nodes: ptr(T.UiDecorNode),
+    n_node: index,
+    cap_node: index,
+    children: ptr(u32),
+    n_child: index,
+    cap_child: index,
+    tracks: ptr(T.UiStyleTrack),
+    n_track: index,
+    cap_track: index,
+end
+
+--------------------------------------------------------------------------------
+-- Paint products.
+--
+-- UiPaintProgram is the native encoding of lua/ui Paint.Program. It preserves
+-- line/polyline/polygon/circle/arc/bezier/mesh/image semantics until the backend
+-- paint consumer chooses how to draw them.
+--------------------------------------------------------------------------------
+
+T.UiPaintStroke = struct
+    color: T.UiColor,
+    width: f64,
+end
+
+T.UiPaintFill = struct
+    kind: u8,             -- owner: ui_visit_paint_program; none/solid
+    color: T.UiColor,
+end
+
+T.UiPaintVertex = struct
+    x: f64,
+    y: f64,
+    u: f64,
+    v: f64,
+end
+
+T.UiPaintProgram = struct
+    kind: u8,             -- owner: ui_visit_paint_program/backend draw_paint
+    mode: u8,
+    rect: T.UiRect,
+    stroke: T.UiPaintStroke,
+    fill: T.UiPaintFill,
+    image: T.UiImageRef,
+    tint: T.UiColor,
+    opacity: f64,
+    point_first: u32,
+    point_count: u32,
+    vertex_first: u32,
+    vertex_count: u32,
+    segments: u32,
+end
+
+T.UiPaintStore = struct
+    programs: ptr(T.UiPaintProgram),
+    n_program: index,
+    cap_program: index,
+    points: ptr(f64),
+    n_point: index,
+    cap_point: index,
+    vertices: ptr(T.UiPaintVertex),
+    n_vertex: index,
+    cap_vertex: index,
+end
+
+--------------------------------------------------------------------------------
+-- Text and content products.
+--------------------------------------------------------------------------------
+
+T.UiContent = struct
+    bytes: view(u8),
+    epoch: u64,
+    layout_affecting: bool,
+end
+
+T.UiContentSlot = struct
+    gen: u32,
+    live: bool,
+    content: T.UiContent,
+end
+
+T.UiContentStore = struct
+    slots: ptr(T.UiContentSlot),
+    n: index,
+    cap: index,
+    free_head: u32,
+end
+
+T.UiGlyph = struct
+    glyph_id: u32,
+    cluster: u32,
+    x: f64,
+    y: f64,
+    advance_x: f64,
+    advance_y: f64,
+    offset_x: f64,
+    offset_y: f64,
+end
+
+T.UiTextRun = struct
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    baseline: f64,
+    byte_start: u32,
+    byte_end: u32,
+    font: T.UiFontRef,
+    font_size: f64,
+    font_weight: f64,
+    first_glyph: u32,
+    n_glyph: u32,
+end
+
+T.UiTextLine = struct
+    byte_start: u32,
+    byte_end: u32,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    baseline: f64,
+    first_run: u32,
+    n_run: u32,
+end
+
+T.UiTextCluster = struct
+    flow: u8,             -- owner: text backend boundary
+    cluster_index: u32,
+    line_index: u32,
+    byte_start: u32,
+    byte_end: u32,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+end
+
+T.UiTextBoundary = struct
+    flow: u8,             -- owner: text backend boundary
+    boundary_index: u32,
+    line_index: u32,
+    byte_offset: u32,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    text_start: bool,
+    line_start: bool,
+    line_end: bool,
+    text_end: bool,
+end
+
+T.UiTextLayout = struct
+    content: T.UiContentRef,
+    max_w: f64,
+    measured_w: f64,
+    measured_h: f64,
+    baseline: f64,
+    lines: ptr(T.UiTextLine),
+    n_line: index,
+    runs: ptr(T.UiTextRun),
+    n_run: index,
+    glyphs: ptr(T.UiGlyph),
+    n_glyph: index,
+    clusters: ptr(T.UiTextCluster),
+    n_cluster: index,
+    boundaries: ptr(T.UiTextBoundary),
+    n_boundary: index,
+end
+
+T.UiTextLayoutSlot = struct
+    gen: u32,
+    live: bool,
+    layout: T.UiTextLayout,
+end
+
+T.UiTextLayoutStore = struct
+    slots: ptr(T.UiTextLayoutSlot),
+    n: index,
+    cap: index,
+    free_head: u32,
+end
+
+--------------------------------------------------------------------------------
+-- Solved layout artifact.  Render consumes this; it never recomputes layout.
+--------------------------------------------------------------------------------
+
+T.UiPlaced = struct
+    id: T.UiId,
+    border: T.UiRect,
+    content: T.UiRect,
+    baseline: f64,
+    clipped: bool,
+end
+
+T.UiSolveNode = struct
+    id: T.UiId,
+    kind: u8,             -- owner: ui_render_ops
+    role: u8,
+    first_child: u32,
+    n_child: u32,
+    placed: T.UiPlaced,
+    text: T.UiTextLayoutRef,
+    scroll_axis: u8,
+    scroll_content_w: f64,
+    scroll_content_h: f64,
+end
+
+T.UiSolveBuffer = struct
+    nodes: ptr(T.UiSolveNode),
+    n_node: index,
+    cap_node: index,
+    children: ptr(u32),
+    n_child: index,
+    cap_child: index,
+end
+
+--------------------------------------------------------------------------------
+-- View op products.  Paint programs remain rich products; view ops reference
+-- the selected program range rather than flattening every paint shape.
+--------------------------------------------------------------------------------
+
+T.UiViewOp = struct
+    kind: u8,             -- owner: ui_visit_view_op/ui_runtime_report/backend draw
+    id: T.UiId,
+    rect: T.UiRect,
+    other_id: T.UiId,     -- overlay anchor / paired semantic id; invalid when unused
+    first: u32,           -- op-specific range/index: paint first, focus slot, style index
+    count: u32,           -- op-specific range count
+    axis: u8,             -- scroll axis when kind is push_scroll
+    role: u8,             -- input/focus role when relevant
+    policy: u8,           -- focus scope policy
+    cursor: u8,           -- cursor kind
+    layer_kind: u8,
+    placement: u8,        -- overlay placement
+    flags: u8,            -- bit facts such as modal/required/resource flags
+    order: f64,           -- layer order
+    dx: f64,              -- transform dx / wheel-like local delta payload
+    dy: f64,              -- transform dy / wheel-like local delta payload
+    content_w: f64,       -- scroll content width when kind is push_scroll
+    content_h: f64,       -- scroll content height when kind is push_scroll
+end
+
+T.UiViewBuffer = struct
+    ops: ptr(T.UiViewOp),
+    n: index,
+    cap: index,
+end
+
+--------------------------------------------------------------------------------
+-- Interaction products.
+--------------------------------------------------------------------------------
+
+T.UiHitBox = struct
+    id: T.UiId,
+    rect: T.UiRect,
+end
+
+T.UiFocusBox = struct
+    id: T.UiId,
+    slot: u32,
+    rect: T.UiRect,
+end
+
+T.UiScrollBox = struct
+    id: T.UiId,
+    axis: u8,
+    viewport: T.UiRect,
+    content_w: f64,
+    content_h: f64,
+    max_x: f64,
+    max_y: f64,
+end
+
+T.UiDragSourceBox = struct
+    id: T.UiId,
+    rect: T.UiRect,
+end
+
+T.UiDropTargetBox = struct
+    id: T.UiId,
+    rect: T.UiRect,
+end
+
+T.UiDropSlotBox = struct
+    id: T.UiId,
+    rect: T.UiRect,
+end
+
+T.UiLayerBox = struct
+    id: T.UiId,
+    kind: u8,             -- owner: ui_runtime_report/ui_interact_step
+    order: f64,
+    rect: T.UiRect,
+end
+
+T.UiOverlayBox = struct
+    id: T.UiId,
+    anchor_id: T.UiId,
+    placement: u8,
+    modal: bool,
+    rect: T.UiRect,
+end
+
+T.UiModalBarrierBox = struct
+    id: T.UiId,
+    rect: T.UiRect,
+end
+
+T.UiFocusScopeBox = struct
+    id: T.UiId,
+    policy: u8,
+    first_slot: u32,
+    last_slot: u32,
+end
+
+T.UiReport = struct
+    hover_id: T.UiId,
+    cursor_id: T.UiId,
+    cursor: u8,
+    scroll_id: T.UiId,
+    hits: ptr(T.UiHitBox),
+    n_hit: index,
+    focusables: ptr(T.UiFocusBox),
+    n_focus: index,
+    scrollables: ptr(T.UiScrollBox),
+    n_scroll: index,
+    drag_sources: ptr(T.UiDragSourceBox),
+    n_drag_source: index,
+    drop_targets: ptr(T.UiDropTargetBox),
+    n_drop_target: index,
+    drop_slots: ptr(T.UiDropSlotBox),
+    n_drop_slot: index,
+    hit_stack: ptr(T.UiHitBox),
+    n_hit_stack: index,
+    layers: ptr(T.UiLayerBox),
+    n_layer: index,
+    overlays: ptr(T.UiOverlayBox),
+    n_overlay: index,
+    modal_barriers: ptr(T.UiModalBarrierBox),
+    n_modal_barrier: index,
+    focus_scopes: ptr(T.UiFocusScopeBox),
+    n_focus_scope: index,
+end
+
+T.UiScrollPos = struct
+    id: T.UiId,
+    x: f64,
+    y: f64,
+end
+
+T.UiCapture = struct
+    kind: u8,             -- owner: ui_interact_step; none/captured
+    id: T.UiId,
+    start_x: f64,
+    start_y: f64,
+end
+
+T.UiDrag = struct
+    kind: u8,             -- owner: ui_interact_step; none/pending/dragging
+    source_id: T.UiId,
+    start_x: f64,
+    start_y: f64,
+    x: f64,
+    y: f64,
+    over_target_id: T.UiId,
+    over_slot_id: T.UiId,
+end
+
+T.UiModel = struct
+    pointer_x: f64,
+    pointer_y: f64,
+    hover_id: T.UiId,
+    focus_id: T.UiId,
+    pressed_id: T.UiId,
+    capture_id: T.UiId,
+    drag_id: T.UiId,
+    capture: T.UiCapture,
+    drag: T.UiDrag,
+    scrolls: ptr(T.UiScrollPos),
+    n_scroll: index,
+    cap_scroll: index,
+end
+
+T.UiRawInput = struct
+    kind: u8,             -- owner: ui_visit_raw_input/ui_interact_step
+    button: u8,
+    key: u32,
+    mods: u32,
+    direction: u8,        -- focus direction or abstract navigation direction
+    repeat_: bool,
+    x: f64,
+    y: f64,
+    dx: f64,
+    dy: f64,
+    text: view(u8),       -- borrowed from backend/event buffer for this dispatch
+    text_start: u32,      -- text_editing start; zero otherwise
+    text_length: u32,     -- text_editing length; zero otherwise
+end
+
+T.UiEvent = struct
+    kind: u8,             -- owner: application/widget routing
+    id: T.UiId,
+    other: T.UiId,
+    x: f64,
+    y: f64,
+    a: i64,
+    text: view(u8),
+end
+
+T.UiEventBuffer = struct
+    events: ptr(T.UiEvent),
+    n: index,
+    cap: index,
+end
+
+T.UiTextEditState = struct
+    text: T.UiContentRef,
+    anchor: u32,
+    active: u32,
+    anchor_affinity: i32,
+    active_affinity: i32,
+    preferred_x: f64,
+    has_preferred_x: bool,
+end
+
+T.UiTextFieldState = struct
+    edit: T.UiTextEditState,
+    focused: bool,
+    dragging: bool,
+    composition_text: T.UiContentRef,
+    composition_start: u32,
+    composition_length: u32,
+end
+
+--------------------------------------------------------------------------------
+-- Kernel store.
+--------------------------------------------------------------------------------
+
+T.UiKernel = struct
+    nodes: T.UiNodeStore,
+    content: T.UiContentStore,
+    text_layouts: T.UiTextLayoutStore,
+    paint: T.UiPaintStore,
+    values: T.UiValueStore,
+    images: T.UiImageStore,
+    fonts: T.UiFontStore,
+    compose: T.UiComposeBuffer,
+    scene: T.UiSceneBuffer,
+    solve: T.UiSolveBuffer,
+    view: T.UiViewBuffer,
+    events: T.UiEventBuffer,
+    model: T.UiModel,
+    next_id: u32,
+end
+
+--------------------------------------------------------------------------------
+-- Kernel protocols.  Implementations may use raw backend APIs internally, but
+-- callers see typed regions and owned/borrowed obligations.
+--------------------------------------------------------------------------------
+
+R.ui_kernel_create = region ui_kernel_create(;
+    created(kernel: owned T.UiKernelRef)
+  | oom(needed: index))
+end
+
+R.ui_kernel_borrow = region ui_kernel_borrow(kernel: T.UiKernelRef;
+    borrowed(kernel: lease ptr(T.UiKernel))
+  | stale(kernel: T.UiKernelRef)
+  | missing(kernel: T.UiKernelRef))
+end
+
+R.ui_kernel_close = region ui_kernel_close(kernel: owned T.UiKernelRef;
+    closed
+  | stale(kernel: owned T.UiKernelRef)
+  | missing(kernel: owned T.UiKernelRef)
+  | busy(kernel: owned T.UiKernelRef))
+end
+
+R.ui_reset_auth = region ui_reset_auth(invalidate kernel: ptr(T.UiKernel);
+    reset
+  | busy
+  | oom(needed: index))
+end
+
+R.ui_reset_scene = region ui_reset_scene(invalidate kernel: ptr(T.UiKernel);
+    reset
+  | busy
+  | oom(needed: index))
+end
+
+R.ui_reset_solve = region ui_reset_solve(invalidate kernel: ptr(T.UiKernel);
+    reset
+  | busy
+  | oom(needed: index))
+end
+
+R.ui_reset_view = region ui_reset_view(invalidate kernel: ptr(T.UiKernel);
+    reset
+  | busy
+  | oom(needed: index))
+end
+
+R.ui_reset_frame_events = region ui_reset_frame_events(invalidate kernel: ptr(T.UiKernel);
+    reset
+  | busy
+  | oom(needed: index))
+end
+
+R.ui_borrow_node = region ui_borrow_node(readonly kernel: ptr(T.UiKernel), node: T.UiNodeRef;
+    borrowed(node: lease(kernel) ptr(T.UiNodeRecord))
+  | stale(node: T.UiNodeRef)
+  | missing(node: T.UiNodeRef))
+end
+
+R.ui_borrow_content = region ui_borrow_content(readonly kernel: ptr(T.UiKernel), content: T.UiContentRef;
+    borrowed(content: lease(kernel) ptr(T.UiContent))
+  | stale(content: T.UiContentRef)
+  | missing(content: T.UiContentRef))
+end
+
+R.ui_borrow_text_layout = region ui_borrow_text_layout(readonly kernel: ptr(T.UiKernel), layout: T.UiTextLayoutRef;
+    borrowed(layout: lease(kernel) ptr(T.UiTextLayout))
+  | stale(layout: T.UiTextLayoutRef)
+  | missing(layout: T.UiTextLayoutRef))
+end
+
+R.ui_borrow_paint = region ui_borrow_paint(readonly kernel: ptr(T.UiKernel), paint: T.UiPaintRef;
+    borrowed(program: lease(kernel) ptr(T.UiPaintProgram))
+  | stale(paint: T.UiPaintRef)
+  | missing(paint: T.UiPaintRef))
+end
+
+R.ui_borrow_image = region ui_borrow_image(readonly kernel: ptr(T.UiKernel), image: T.UiImageRef;
+    borrowed(image: lease(kernel) ptr(T.UiImageRecord))
+  | stale(image: T.UiImageRef)
+  | missing(image: T.UiImageRef))
+end
+
+R.ui_borrow_font = region ui_borrow_font(readonly kernel: ptr(T.UiKernel), font: T.UiFontRef;
+    borrowed(font: lease(kernel) ptr(T.UiFontRecord))
+  | stale(font: T.UiFontRef)
+  | missing(font: T.UiFontRef))
+end
+
+R.ui_borrow_value = region ui_borrow_value(readonly kernel: ptr(T.UiKernel), value: T.UiValueRef;
+    borrowed(value: lease(kernel) ptr(T.UiValueRecord))
+  | stale(value: T.UiValueRef)
+  | missing(value: T.UiValueRef))
+end
+
+R.ui_expand_compose = region ui_expand_compose(kernel: ptr(T.UiKernel), compose: view(T.UiComposeNode);
+    expanded(auth: ptr(T.UiAuthBuffer))
+  | invalid_compose(kind: u8)
+  | missing_child(at: index)
+  | duplicate_id(id: T.UiId)
+  | oom(needed: index))
+end
+
+R.ui_resolve_style = region ui_resolve_style(kernel: ptr(T.UiKernel),
+                                             theme: ptr(T.UiTheme),
+                                             env: T.UiEnvClass,
+                                             state: T.UiState,
+                                             tokens: view(T.UiStyleToken);
+    resolved(layout: T.UiLayoutStyle, decor: T.UiDecorStyle)
+  | unsupported_atom(kind: u16)
+  | unsupported_condition(kind: u8)
+  | missing_track(at: index)
+  | oom(needed: index))
+end
+
+R.ui_visit_style_atom = region ui_visit_style_atom(atom: ptr(T.UiStyleAtom);
+    display(value: u8)
+  | axis(value: u8)
+  | wrap(value: u8)
+  | justify(value: u8)
+  | items(value: u8)
+  | self_align(value: u8)
+  | gap(value: f64)
+  | gap_x(value: f64)
+  | gap_y(value: f64)
+  | pad(value: f64)
+  | pad_x(value: f64)
+  | pad_y(value: f64)
+  | pad_top(value: f64)
+  | pad_right(value: f64)
+  | pad_bottom(value: f64)
+  | pad_left(value: f64)
+  | margin(value: f64)
+  | margin_x(value: f64)
+  | margin_y(value: f64)
+  | margin_top(value: f64)
+  | margin_right(value: f64)
+  | margin_bottom(value: f64)
+  | margin_left(value: f64)
+  | margin_auto_x
+  | margin_auto_left
+  | margin_auto_right
+  | width(value: T.UiStyleLength)
+  | height(value: T.UiStyleLength)
+  | min_width(value: T.UiStyleLength)
+  | max_width(value: T.UiStyleLength)
+  | min_height(value: T.UiStyleLength)
+  | max_height(value: T.UiStyleLength)
+  | grow(value: f64)
+  | shrink(value: f64)
+  | basis(value: T.UiStyleBasis)
+  | fg(value: T.UiColor)
+  | bg(value: T.UiColor)
+  | border_color(value: T.UiColor)
+  | border_width(value: f64)
+  | rounded(value: f64)
+  | opacity(value: f64)
+  | text_size(value: f64)
+  | text_weight(value: f64)
+  | text_align(value: u8)
+  | leading(value: f64)
+  | tracking(value: f64)
+  | overflow_x(value: u8)
+  | overflow_y(value: u8)
+  | cursor(value: u8)
+  | cols(first: u32, count: u32)
+  | rows(first: u32, count: u32)
+  | col_gap(value: f64)
+  | row_gap(value: f64)
+  | col_start(value: f64)
+  | col_span(value: f64)
+  | row_start(value: f64)
+  | row_span(value: f64)
+  | invalid_kind(kind: u16))
+end
+
+R.ui_visit_compose_node = region ui_visit_compose_node(kernel: ptr(T.UiKernel), node: ptr(T.UiComposeNode);
+    raw(auth: T.UiNodeRef)
+  | fragment(first: u32, count: u32)
+  | panel(id: T.UiId)
+  | scroll_panel(id: T.UiId, scroll_id: T.UiId, axis: u8)
+  | hsplit(id: T.UiId)
+  | vsplit(id: T.UiId)
+  | workbench(id: T.UiId)
+  | invalid_kind(kind: u8))
+end
+
+R.ui_visit_auth_node = region ui_visit_auth_node(kernel: ptr(T.UiKernel), node: ptr(T.UiAuthNode);
+    box
+  | text(content: T.UiContentRef)
+  | text_ref(content: T.UiContentRef)
+  | paint(first: u32, count: u32)
+  | scroll(axis: u8)
+  | with_state(state: T.UiState)
+  | with_input(id: T.UiId, role: u8)
+  | with_drag_source(id: T.UiId)
+  | with_drop_target(id: T.UiId)
+  | with_drop_slot(id: T.UiId)
+  | focus_scope(id: T.UiId, policy: u8)
+  | layer(id: T.UiId, kind: u8, order: f64)
+  | overlay(id: T.UiId, anchor: T.UiId, placement: u8, modal: bool)
+  | modal(id: T.UiId)
+  | fragment
+  | empty
+  | invalid_kind(kind: u8))
+end
+
+R.ui_visit_layout_node = region ui_visit_layout_node(kernel: ptr(T.UiKernel), node: ptr(T.UiLayoutNode);
+    flow(id: T.UiId)
+  | flex(id: T.UiId)
+  | grid(id: T.UiId)
+  | leaf(id: T.UiId, content: T.UiContentRef)
+  | canvas(id: T.UiId)
+  | scroll(id: T.UiId, axis: u8)
+  | with_input(id: T.UiId, role: u8)
+  | with_drag_source(id: T.UiId)
+  | with_drop_target(id: T.UiId)
+  | with_drop_slot(id: T.UiId)
+  | focus_scope(id: T.UiId, policy: u8)
+  | layer(id: T.UiId, kind: u8, order: f64)
+  | overlay(id: T.UiId, anchor: T.UiId, placement: u8, modal: bool)
+  | modal(id: T.UiId)
+  | invalid_kind(kind: u8))
+end
+
+R.ui_visit_decor_node = region ui_visit_decor_node(kernel: ptr(T.UiKernel), node: ptr(T.UiDecorNode);
+    flow(id: T.UiId)
+  | flex(id: T.UiId)
+  | grid(id: T.UiId)
+  | leaf(id: T.UiId)
+  | canvas(id: T.UiId, first: u32, count: u32)
+  | scroll(id: T.UiId)
+  | with_input(id: T.UiId)
+  | with_drag_source(id: T.UiId)
+  | with_drop_target(id: T.UiId)
+  | with_drop_slot(id: T.UiId)
+  | focus_scope(id: T.UiId)
+  | layer(id: T.UiId)
+  | overlay(id: T.UiId)
+  | modal(id: T.UiId)
+  | invalid_kind(kind: u8))
+end
+
+R.ui_visit_solve_node = region ui_visit_solve_node(kernel: ptr(T.UiKernel), node: ptr(T.UiSolveNode);
+    flow(id: T.UiId)
+  | flex(id: T.UiId)
+  | grid(id: T.UiId)
+  | leaf(id: T.UiId, text: T.UiTextLayoutRef)
+  | canvas(id: T.UiId)
+  | scroll(id: T.UiId, axis: u8, content_w: f64, content_h: f64)
+  | with_input(id: T.UiId, role: u8)
+  | with_drag_source(id: T.UiId)
+  | with_drop_target(id: T.UiId)
+  | with_drop_slot(id: T.UiId)
+  | focus_scope(id: T.UiId, policy: u8)
+  | layer(id: T.UiId, kind: u8, order: f64)
+  | overlay(id: T.UiId, anchor: T.UiId, placement: u8, modal: bool)
+  | modal(id: T.UiId)
+  | invalid_kind(kind: u8))
+end
+
+R.ui_visit_view_op = region ui_visit_view_op(kernel: ptr(T.UiKernel), op: ptr(T.UiViewOp);
+    box(id: T.UiId)
+  | text(id: T.UiId)
+  | paint(id: T.UiId, first: u32, count: u32)
+  | push_clip_rect(id: T.UiId)
+  | pop_clip(id: T.UiId)
+  | push_tx(id: T.UiId, dx: f64, dy: f64)
+  | pop_tx(id: T.UiId)
+  | push_scroll(id: T.UiId)
+  | pop_scroll(id: T.UiId)
+  | hit(id: T.UiId)
+  | focus(id: T.UiId)
+  | cursor(id: T.UiId, cursor: u8)
+  | drag_source(id: T.UiId)
+  | drop_target(id: T.UiId)
+  | drop_slot(id: T.UiId)
+  | begin_focus_scope(id: T.UiId, policy: u8)
+  | end_focus_scope(id: T.UiId)
+  | begin_layer(id: T.UiId, kind: u8, order: f64)
+  | end_layer(id: T.UiId)
+  | overlay(id: T.UiId, anchor: T.UiId, placement: u8, modal: bool)
+  | modal_barrier(id: T.UiId)
+  | invalid_kind(kind: u8))
+end
+
+R.ui_visit_paint_program = region ui_visit_paint_program(kernel: ptr(T.UiKernel), program: ptr(T.UiPaintProgram);
+    line
+  | polyline(first: u32, count: u32)
+  | polygon(first: u32, count: u32)
+  | circle
+  | arc(segments: u32)
+  | bezier(first: u32, count: u32, segments: u32)
+  | mesh(first: u32, count: u32, image: T.UiImageRef)
+  | image(image: T.UiImageRef)
+  | invalid_kind(kind: u8))
+end
+
+R.ui_import_auth = region ui_import_auth(kernel: ptr(T.UiKernel), auth: view(T.UiAuthNode);
+    imported(root: T.UiNodeRef)
+  | duplicate_id(id: T.UiId)
+  | invalid_id(at: index)
+  | invalid_child(at: index)
+  | unsupported_node(kind: u8)
+  | oom(needed: index))
+end
+
+R.ui_validate_program = region ui_validate_program(kernel: ptr(T.UiKernel), program: ptr(T.UiProgram);
+    valid(root_kind: u8, root_index: u32)
+  | invalid_header(code: i32)
+  | invalid_section(section: u8)
+  | invalid_opcode(at: index, kind: u8)
+  | invalid_range(section: u8, first: u32, count: u32)
+  | invalid_arity(at: index, expected: u32, got: u32)
+  | duplicate_id(id: T.UiId)
+  | missing_resource(section: u8, index: u32)
+  | unsupported_feature(flags: u32)
+  | oom(needed: index))
+end
+
+R.ui_lower_scene = region ui_lower_scene(kernel: ptr(T.UiKernel), root: T.UiNodeRef;
+    lowered(scene: ptr(T.UiSceneBuffer))
+  | missing_node(node: T.UiNodeRef)
+  | duplicate_id(id: T.UiId)
+  | unsupported_node(kind: u8)
+  | oom(needed: index))
+end
+
+R.ui_measure_node = region ui_measure_node(kernel: ptr(T.UiKernel),
+                                            node_index: index,
+                                            constraint: T.UiConstraint;
+    measured(size: T.UiSize)
+  | missing_node(at: index)
+  | missing_text(content: T.UiContentRef)
+  | text_backend_error(code: i32)
+  | unsupported_layout(kind: u8)
+  | oom(needed: index))
+end
+
+R.ui_solve_scene = region ui_solve_scene(kernel: ptr(T.UiKernel),
+                                          env_w: f64,
+                                          env_h: f64;
+    solved(solve: ptr(T.UiSolveBuffer))
+  | missing_scene
+  | missing_text(content: T.UiContentRef)
+  | text_backend_error(code: i32)
+  | unsupported_layout(kind: u8)
+  | oom(needed: index))
+end
+
+R.ui_render_ops = region ui_render_ops(kernel: ptr(T.UiKernel);
+    rendered(ops: ptr(T.UiViewBuffer))
+  | missing_solve
+  | decor_mismatch(at: index)
+  | unsupported_node(kind: u8)
+  | oom(needed: index))
+end
+
+R.ui_runtime_report = region ui_runtime_report(kernel: ptr(T.UiKernel), ops: view(T.UiViewOp);
+    reported(report: T.UiReport)
+  | malformed_op(at: index, kind: u8)
+  | stack_unbalanced(kind: u8)
+  | oom(needed: index))
+end
+
+R.ui_visit_raw_input = region ui_visit_raw_input(raw: ptr(T.UiRawInput);
+    pointer_moved(x: f64, y: f64)
+  | pointer_pressed(button: u8, x: f64, y: f64)
+  | pointer_released(button: u8, x: f64, y: f64)
+  | pointer_cancelled
+  | wheel_moved(dx: f64, dy: f64, x: f64, y: f64)
+  | key_pressed(key: u32, mods: u32, repeat_: bool)
+  | key_released(key: u32, mods: u32)
+  | text_input(text: view(u8))
+  | text_editing(text: view(u8), start: u32, length: u32)
+  | focus_move(direction: u8)
+  | focus_lost
+  | activate_focused
+  | cancel_interaction
+  | invalid_kind(kind: u8))
+end
+
+R.ui_visit_event = region ui_visit_event(event: ptr(T.UiEvent);
+    set_pointer(x: f64, y: f64)
+  | set_hover(id: T.UiId)
+  | clear_hover
+  | set_focus(id: T.UiId)
+  | clear_focus
+  | set_pressed(id: T.UiId)
+  | clear_pressed
+  | set_capture(id: T.UiId, start_x: f64, start_y: f64)
+  | release_capture(id: T.UiId)
+  | clear_capture
+  | cancel_capture(id: T.UiId)
+  | set_drag_pending(source_id: T.UiId, start_x: f64, start_y: f64)
+  | set_dragging(source_id: T.UiId, start_x: f64, start_y: f64, x: f64, y: f64, over_target_id: T.UiId, over_slot_id: T.UiId)
+  | clear_drag
+  | activate(id: T.UiId)
+  | input_text(id: T.UiId, text: view(u8))
+  | edit_text(id: T.UiId, text: view(u8), start: u32, length: u32)
+  | drag_started(source_id: T.UiId, start_x: f64, start_y: f64)
+  | drag_moved(source_id: T.UiId, x: f64, y: f64, over_target_id: T.UiId, over_slot_id: T.UiId)
+  | drag_dropped(source_id: T.UiId, x: f64, y: f64, over_target_id: T.UiId, over_slot_id: T.UiId)
+  | drag_cancelled(source_id: T.UiId)
+  | scroll_by(id: T.UiId, dx: f64, dy: f64)
+  | invalid_kind(kind: u8))
+end
+
+R.ui_visit_key = region ui_visit_key(key: u32;
+    unknown(code: u32)
+  | return_key
+  | escape
+  | backspace
+  | tab
+  | space
+  | delete_key
+  | home
+  | end_key
+  | page_up
+  | page_down
+  | left
+  | right
+  | up
+  | down
+  | char(codepoint: u32))
+end
+
+R.ui_visit_value = region ui_visit_value(kernel: ptr(T.UiKernel), value: ptr(T.UiValueRecord);
+    none
+  | integer(value: i64)
+  | number(value: f64)
+  | point(x: f64, y: f64)
+  | text(content: T.UiContentRef)
+  | id(id: T.UiId)
+  | invalid_kind(kind: u8))
+end
+
+R.ui_interact_step = region ui_interact_step(kernel: ptr(T.UiKernel),
+                                              model: ptr(T.UiModel),
+                                              report: ptr(T.UiReport),
+                                              raw: T.UiRawInput;
+    stepped(events: ptr(T.UiEventBuffer))
+  | stale_focus(id: T.UiId)
+  | stale_capture(id: T.UiId)
+  | missing_scroll(id: T.UiId)
+  | text_input_without_focus
+  | oom(needed: index))
+end
+
+R.ui_content_retain = region ui_content_retain(kernel: ptr(T.UiKernel), bytes: view(u8), layout_affecting: bool;
+    retained(content: owned T.UiContentRef)
+  | oom(needed: index))
+end
+
+R.ui_content_publish = region ui_content_publish(kernel: ptr(T.UiKernel), content: owned T.UiContentRef;
+    published(content: T.UiContentRef)
+  | missing(content: owned T.UiContentRef)
+  | stale(content: owned T.UiContentRef))
+end
+
+R.ui_content_release = region ui_content_release(kernel: ptr(T.UiKernel), content: owned T.UiContentRef;
+    released
+  | missing(content: owned T.UiContentRef)
+  | stale(content: owned T.UiContentRef))
+end
+
+R.ui_text_layout_retain = region ui_text_layout_retain(kernel: ptr(T.UiKernel),
+                                                        content: T.UiContentRef,
+                                                        style: T.UiTextStyle,
+                                                        max_w: f64;
+    retained(layout: owned T.UiTextLayoutRef)
+  | missing_content(content: T.UiContentRef)
+  | text_backend_error(code: i32)
+  | oom(needed: index))
+end
+
+R.ui_text_layout_publish = region ui_text_layout_publish(kernel: ptr(T.UiKernel), layout: owned T.UiTextLayoutRef;
+    published(layout: T.UiTextLayoutRef)
+  | missing(layout: owned T.UiTextLayoutRef)
+  | stale(layout: owned T.UiTextLayoutRef))
+end
+
+R.ui_text_layout_release = region ui_text_layout_release(kernel: ptr(T.UiKernel), layout: owned T.UiTextLayoutRef;
+    released
+  | missing(layout: owned T.UiTextLayoutRef)
+  | stale(layout: owned T.UiTextLayoutRef))
+end
+
+R.ui_paint_retain = region ui_paint_retain(kernel: ptr(T.UiKernel), program: ptr(T.UiPaintProgram);
+    retained(paint: owned T.UiPaintRef)
+  | invalid_program(kind: u8)
+  | missing_image(image: T.UiImageRef)
+  | oom(needed: index))
+end
+
+R.ui_paint_publish = region ui_paint_publish(kernel: ptr(T.UiKernel), paint: owned T.UiPaintRef;
+    published(paint: T.UiPaintRef)
+  | missing(paint: owned T.UiPaintRef)
+  | stale(paint: owned T.UiPaintRef))
+end
+
+R.ui_paint_release = region ui_paint_release(kernel: ptr(T.UiKernel), paint: owned T.UiPaintRef;
+    released
+  | missing(paint: owned T.UiPaintRef)
+  | stale(paint: owned T.UiPaintRef))
+end
+
+R.ui_image_register = region ui_image_register(kernel: ptr(T.UiKernel), id: T.UiId, backend_key: u64, w: f64, h: f64;
+    registered(image: owned T.UiImageRef)
+  | duplicate_id(id: T.UiId)
+  | backend_error(code: i32)
+  | oom(needed: index))
+end
+
+R.ui_image_release = region ui_image_release(kernel: ptr(T.UiKernel), image: owned T.UiImageRef;
+    released
+  | missing(image: owned T.UiImageRef)
+  | stale(image: owned T.UiImageRef)
+  | backend_error(image: owned T.UiImageRef, code: i32))
+end
+
+R.ui_font_register = region ui_font_register(kernel: ptr(T.UiKernel), id: T.UiId, backend_key: u64;
+    registered(font: owned T.UiFontRef)
+  | duplicate_id(id: T.UiId)
+  | backend_error(code: i32)
+  | oom(needed: index))
+end
+
+R.ui_font_release = region ui_font_release(kernel: ptr(T.UiKernel), font: owned T.UiFontRef;
+    released
+  | missing(font: owned T.UiFontRef)
+  | stale(font: owned T.UiFontRef)
+  | backend_error(font: owned T.UiFontRef, code: i32))
+end
+
+R.ui_value_retain = region ui_value_retain(kernel: ptr(T.UiKernel), value: ptr(T.UiValueRecord);
+    retained(value: owned T.UiValueRef)
+  | invalid_value(kind: u8)
+  | oom(needed: index))
+end
+
+R.ui_value_publish = region ui_value_publish(kernel: ptr(T.UiKernel), value: owned T.UiValueRef;
+    published(value: T.UiValueRef)
+  | missing(value: owned T.UiValueRef)
+  | stale(value: owned T.UiValueRef))
+end
+
+R.ui_value_release = region ui_value_release(kernel: ptr(T.UiKernel), value: owned T.UiValueRef;
+    released
+  | missing(value: owned T.UiValueRef)
+  | stale(value: owned T.UiValueRef))
+end
+
+--------------------------------------------------------------------------------
+-- Public ABI seals.  Status codes are allowed at this boundary only.
+--------------------------------------------------------------------------------
+
+F.mlui_kernel_init = func mlui_kernel_init(out_kernel: ptr(ptr(T.UiKernel))): i32 end
+F.mlui_kernel_init_ex = func mlui_kernel_init_ex(config: ptr(T.UiKernelConfig), out_kernel: ptr(ptr(T.UiKernel))): T.UiStatus end
+F.mlui_kernel_close = func mlui_kernel_close(kernel: ptr(T.UiKernel)): i32 end
+F.mlui_kernel_reset_frame = func mlui_kernel_reset_frame(kernel: ptr(T.UiKernel)): T.UiStatus end
+F.mlui_import_auth_buffer = func mlui_import_auth_buffer(kernel: ptr(T.UiKernel), auth: ptr(T.UiAuthBuffer), out_root: ptr(T.UiNodeRef)): T.UiStatus end
+F.mlui_load_program = func mlui_load_program(kernel: ptr(T.UiKernel), program: ptr(T.UiProgram), out_root: ptr(T.UiNodeRef)): T.UiStatus end
+F.mlui_validate_program = func mlui_validate_program(kernel: ptr(T.UiKernel), program: ptr(T.UiProgram)): T.UiStatus end
+F.mlui_lower_solve_render = func mlui_lower_solve_render(kernel: ptr(T.UiKernel), env_w: f64, env_h: f64): i32 end
+F.mlui_frame = func mlui_frame(kernel: ptr(T.UiKernel), root: T.UiNodeRef, env_w: f64, env_h: f64, raw: ptr(T.UiRawInput)): T.UiStatus end
+F.mlui_runtime_report = func mlui_runtime_report(kernel: ptr(T.UiKernel)): i32 end
+F.mlui_interact_step = func mlui_interact_step(kernel: ptr(T.UiKernel), raw: ptr(T.UiRawInput)): i32 end
+F.mlui_view_ops = func mlui_view_ops(kernel: ptr(T.UiKernel), out_ops: ptr(ptr(T.UiViewOp)), out_n: ptr(index)): i32 end
+F.mlui_events = func mlui_events(kernel: ptr(T.UiKernel), out_events: ptr(ptr(T.UiEvent)), out_n: ptr(index)): i32 end
+F.mlui_report_get = func mlui_report_get(kernel: ptr(T.UiKernel), out_report: ptr(ptr(T.UiReport))): T.UiStatus end
+F.mlui_clear_events = func mlui_clear_events(kernel: ptr(T.UiKernel)): T.UiStatus end
+
+return M
