@@ -1,0 +1,523 @@
+-- mlui_style_resolve.mlua — Style tokens -> layout/decor facts.
+--
+-- Implements:
+--   R.ui_visit_style_atom  (style atom decoder)
+--   R.ui_resolve_style     (token array -> resolved layout + decor style)
+
+local H = moon.require("mlui_types")
+local T = H.T
+local R = H.R
+local F = H.F
+
+-- Style atom kind constants (mirrors lua/ui Style.Atom/Decl)
+local KIND_DISPLAY = 1
+local KIND_AXIS = 2
+local KIND_WRAP = 3
+local KIND_JUSTIFY = 4
+local KIND_ITEMS = 5
+local KIND_SELF_ALIGN = 6
+local KIND_GAP = 10
+local KIND_GAP_X = 11
+local KIND_GAP_Y = 12
+local KIND_PAD = 20
+local KIND_PAD_X = 21
+local KIND_PAD_Y = 22
+local KIND_PAD_TOP = 23
+local KIND_PAD_RIGHT = 24
+local KIND_PAD_BOTTOM = 25
+local KIND_PAD_LEFT = 26
+local KIND_MARGIN = 30
+local KIND_MARGIN_X = 31
+local KIND_MARGIN_Y = 32
+local KIND_MARGIN_TOP = 33
+local KIND_MARGIN_RIGHT = 34
+local KIND_MARGIN_BOTTOM = 35
+local KIND_MARGIN_LEFT = 36
+local KIND_WIDTH = 40
+local KIND_HEIGHT = 41
+local KIND_MIN_WIDTH = 42
+local KIND_MAX_WIDTH = 43
+local KIND_MIN_HEIGHT = 44
+local KIND_MAX_HEIGHT = 45
+local KIND_GROW = 50
+local KIND_SHRINK = 51
+local KIND_BASIS = 52
+local KIND_FG = 60
+local KIND_BG = 61
+local KIND_BORDER_COLOR = 62
+local KIND_BORDER_WIDTH = 63
+local KIND_ROUNDED = 64
+local KIND_OPACITY = 65
+local KIND_TEXT_SIZE = 70
+local KIND_TEXT_WEIGHT = 71
+local KIND_TEXT_ALIGN = 72
+local KIND_LEADING = 73
+local KIND_TRACKING = 74
+local KIND_OVERFLOW_X = 80
+local KIND_OVERFLOW_Y = 81
+local KIND_CURSOR = 90
+local KIND_COLS = 100
+local KIND_ROWS = 101
+local KIND_COL_GAP = 102
+local KIND_ROW_GAP = 103
+local KIND_COL_START = 110
+local KIND_COL_SPAN = 111
+local KIND_ROW_START = 112
+local KIND_ROW_SPAN = 113
+
+--------------------------------------------------------------------------------
+-- ui_visit_style_atom: decode a single UiStyleAtom into a typed exit.
+-- This is a pure decoder; it does not apply the atom to any style product.
+--------------------------------------------------------------------------------
+
+local ui_visit_style_atom = region @{R.ui_visit_style_atom}
+entry start()
+    let kind: u16 = atom.kind
+    if kind == as(u16, KIND_DISPLAY) then jump display(value = as(u8, as(i32, atom.a))) end
+    if kind == as(u16, KIND_AXIS) then jump axis(value = as(u8, as(i32, atom.a))) end
+    if kind == as(u16, KIND_WRAP) then jump wrap(value = as(u8, as(i32, atom.a))) end
+    if kind == as(u16, KIND_JUSTIFY) then jump justify(value = as(u8, as(i32, atom.a))) end
+    if kind == as(u16, KIND_ITEMS) then jump items(value = as(u8, as(i32, atom.a))) end
+    if kind == as(u16, KIND_SELF_ALIGN) then jump self_align(value = as(u8, as(i32, atom.a))) end
+    if kind == as(u16, KIND_GAP) then jump gap(value = atom.a) end
+    if kind == as(u16, KIND_GAP_X) then jump gap_x(value = atom.a) end
+    if kind == as(u16, KIND_GAP_Y) then jump gap_y(value = atom.a) end
+    if kind == as(u16, KIND_PAD) then jump pad(value = atom.a) end
+    if kind == as(u16, KIND_PAD_X) then jump pad_x(value = atom.a) end
+    if kind == as(u16, KIND_PAD_Y) then jump pad_y(value = atom.a) end
+    if kind == as(u16, KIND_PAD_TOP) then jump pad_top(value = atom.a) end
+    if kind == as(u16, KIND_PAD_RIGHT) then jump pad_right(value = atom.a) end
+    if kind == as(u16, KIND_PAD_BOTTOM) then jump pad_bottom(value = atom.a) end
+    if kind == as(u16, KIND_PAD_LEFT) then jump pad_left(value = atom.a) end
+    if kind == as(u16, KIND_MARGIN) then jump margin(value = atom.a) end
+    if kind == as(u16, KIND_MARGIN_X) then jump margin_x(value = atom.a) end
+    if kind == as(u16, KIND_MARGIN_Y) then jump margin_y(value = atom.a) end
+    if kind == as(u16, KIND_MARGIN_TOP) then jump margin_top(value = atom.a) end
+    if kind == as(u16, KIND_MARGIN_RIGHT) then jump margin_right(value = atom.a) end
+    if kind == as(u16, KIND_MARGIN_BOTTOM) then jump margin_bottom(value = atom.a) end
+    if kind == as(u16, KIND_MARGIN_LEFT) then jump margin_left(value = atom.a) end
+    if kind == as(u16, KIND_WIDTH) then
+        let l: T.UiStyleLength = T.UiStyleLength{ kind = as(u8, as(i32, atom.a)), value = atom.b }
+        jump width(value = l)
+    end
+    if kind == as(u16, KIND_HEIGHT) then
+        let l: T.UiStyleLength = T.UiStyleLength{ kind = as(u8, as(i32, atom.a)), value = atom.b }
+        jump height(value = l)
+    end
+    if kind == as(u16, KIND_MIN_WIDTH) then
+        let l: T.UiStyleLength = T.UiStyleLength{ kind = as(u8, as(i32, atom.a)), value = atom.b }
+        jump min_width(value = l)
+    end
+    if kind == as(u16, KIND_MAX_WIDTH) then
+        let l: T.UiStyleLength = T.UiStyleLength{ kind = as(u8, as(i32, atom.a)), value = atom.b }
+        jump max_width(value = l)
+    end
+    if kind == as(u16, KIND_MIN_HEIGHT) then
+        let l: T.UiStyleLength = T.UiStyleLength{ kind = as(u8, as(i32, atom.a)), value = atom.b }
+        jump min_height(value = l)
+    end
+    if kind == as(u16, KIND_MAX_HEIGHT) then
+        let l: T.UiStyleLength = T.UiStyleLength{ kind = as(u8, as(i32, atom.a)), value = atom.b }
+        jump max_height(value = l)
+    end
+    if kind == as(u16, KIND_GROW) then jump grow(value = atom.a) end
+    if kind == as(u16, KIND_SHRINK) then jump shrink(value = atom.a) end
+    if kind == as(u16, KIND_FG) then jump fg(value = atom.color) end
+    if kind == as(u16, KIND_BG) then jump bg(value = atom.color) end
+    if kind == as(u16, KIND_BORDER_COLOR) then jump border_color(value = atom.color) end
+    if kind == as(u16, KIND_BORDER_WIDTH) then jump border_width(value = atom.a) end
+    if kind == as(u16, KIND_ROUNDED) then jump rounded(value = atom.a) end
+    if kind == as(u16, KIND_OPACITY) then jump opacity(value = atom.a) end
+    if kind == as(u16, KIND_TEXT_SIZE) then jump text_size(value = atom.a) end
+    if kind == as(u16, KIND_TEXT_WEIGHT) then jump text_weight(value = atom.a) end
+    if kind == as(u16, KIND_TEXT_ALIGN) then
+        jump text_align(value = as(u8, as(i32, atom.a)))
+    end
+    if kind == as(u16, KIND_LEADING) then jump leading(value = atom.a) end
+    if kind == as(u16, KIND_TRACKING) then jump tracking(value = atom.a) end
+    if kind == as(u16, KIND_OVERFLOW_X) then
+        jump overflow_x(value = as(u8, as(i32, atom.a)))
+    end
+    if kind == as(u16, KIND_OVERFLOW_Y) then
+        jump overflow_y(value = as(u8, as(i32, atom.a)))
+    end
+    if kind == as(u16, KIND_CURSOR) then jump cursor(value = as(u8, as(i32, atom.a))) end
+    if kind == as(u16, KIND_COLS) then
+        jump cols(first = as(u32, as(i32, atom.a)), count = atom.track_count)
+    end
+    if kind == as(u16, KIND_ROWS) then
+        jump rows(first = as(u32, as(i32, atom.a)), count = atom.track_count)
+    end
+    if kind == as(u16, KIND_COL_GAP) then jump col_gap(value = atom.a) end
+    if kind == as(u16, KIND_ROW_GAP) then jump row_gap(value = atom.a) end
+    if kind == as(u16, KIND_COL_START) then jump col_start(value = atom.a) end
+    if kind == as(u16, KIND_COL_SPAN) then jump col_span(value = atom.a) end
+    if kind == as(u16, KIND_ROW_START) then jump row_start(value = atom.a) end
+    if kind == as(u16, KIND_ROW_SPAN) then jump row_span(value = atom.a) end
+    jump invalid_kind(kind = kind)
+end
+end
+
+--------------------------------------------------------------------------------
+-- Default layout and decor styles (zero-initialized templates).
+--------------------------------------------------------------------------------
+
+local MLUI_DISPLAY_FLOW = 0
+local MLUI_AXIS_COL = 1
+local MLUI_OVERFLOW_VISIBLE = 0
+local MLUI_ALIGN_START = 0
+local MLUI_SELF_AUTO = 0
+local MLUI_LENGTH_AUTO = 0
+local MLUI_CURSOR_DEFAULT = 0
+
+--------------------------------------------------------------------------------
+-- ui_resolve_style: resolve a token array into layout + decor styles.
+--
+-- Iterates tokens, checks conditions against env+state, applies matching
+-- atoms to the style accumulators.
+--------------------------------------------------------------------------------
+
+local ui_resolve_style = region @{R.ui_resolve_style}
+entry start()
+    let layout: T.UiLayoutStyle = T.UiLayoutStyle{
+        display = as(u8, MLUI_DISPLAY_FLOW),
+        axis = as(u8, MLUI_AXIS_COL),
+        wrap = as(u8, 0),
+        justify = as(u8, MLUI_ALIGN_START),
+        items = as(u8, MLUI_ALIGN_START),
+        self_align = as(u8, MLUI_SELF_AUTO),
+        w_kind = as(u8, MLUI_LENGTH_AUTO), w_value = 0.0,
+        h_kind = as(u8, MLUI_LENGTH_AUTO), h_value = 0.0,
+        min_w = 0.0, max_w = 0.0, min_h = 0.0, max_h = 0.0,
+        grow = 0.0, shrink = 0.0,
+        basis_kind = as(u8, 0), basis_value = 0.0,
+        padding = T.UiEdges{ top = 0.0, right = 0.0, bottom = 0.0, left = 0.0 },
+        margin = T.UiEdges{ top = 0.0, right = 0.0, bottom = 0.0, left = 0.0 },
+        overflow_x = as(u8, MLUI_OVERFLOW_VISIBLE),
+        overflow_y = as(u8, MLUI_OVERFLOW_VISIBLE),
+        gap_x = 0.0, gap_y = 0.0,
+        col_gap = 0.0, row_gap = 0.0,
+        col_first = 0, col_count = 0,
+        row_first = 0, row_count = 0,
+        col_start = 0.0, col_span = 0.0,
+        row_start = 0.0, row_span = 0.0
+    }
+    let decor: T.UiDecorStyle = T.UiDecorStyle{
+        box = T.UiBoxVisual{
+            bg = T.UiColor{ rgba8 = 0 },
+            border_color = T.UiColor{ rgba8 = 0 },
+            border_w = 0.0,
+            shape = 0,
+            radius = 0.0,
+            opacity = 1.0
+        },
+        text = T.UiTextStyle{
+            font = T.UiFontRef.from_repr(0),
+            size = 16.0,
+            weight = 400.0,
+            align = as(u8, 0),
+            leading = 1.5,
+            tracking = 0.0,
+            color = T.UiColor{ rgba8 = 0xFFFFFFFF }
+        },
+        cursor = as(u8, MLUI_CURSOR_DEFAULT)
+    }
+    if len(tokens) == as(index, 0) then
+        jump resolved(cursor = cursor, layout = layout, decor = decor)
+    end
+    let n: index = len(tokens)
+    jump token_loop(i = as(index, 0), n = n, layout = layout, decor = decor)
+end
+block token_loop(i: index, n: index, layout: T.UiLayoutStyle, decor: T.UiDecorStyle)
+    if i >= n then
+        jump resolved(cursor = cursor, layout = layout, decor = decor)
+    end
+    let token: T.UiStyleToken = tokens[i]
+    let cond: T.UiStyleCond = token.cond
+    -- Check breakpoint condition
+    if cond.bp ~= as(u8, 0) then
+        if cond.bp ~= env.bp then
+        jump token_loop(i = i + 1, n = n, layout = layout, decor = decor)
+        end
+    end
+    -- Check scheme condition
+    if cond.scheme ~= as(u8, 0) then
+        if cond.scheme ~= env.scheme then
+            jump token_loop(i = i + 1, n = n, layout = layout, decor = decor)
+        end
+    end
+    -- Check motion condition
+    if cond.motion ~= as(u8, 0) then
+        if cond.motion ~= env.motion then
+            jump token_loop(i = i + 1, n = n, layout = layout, decor = decor)
+        end
+    end
+    -- Check state conditions
+    let st: T.UiStyleStateCond = cond.state
+    if st.hovered ~= as(u8, 0) then
+        let wanted: bool = st.hovered == as(u8, 1)
+        if state.hovered ~= wanted then
+            jump token_loop(i = i + 1, n = n, layout = layout, decor = decor)
+        end
+    end
+    if st.focused ~= as(u8, 0) then
+        let wanted: bool = st.focused == as(u8, 1)
+        if state.focused ~= wanted then
+            jump token_loop(i = i + 1, n = n, layout = layout, decor = decor)
+        end
+    end
+    if st.active ~= as(u8, 0) then
+        let wanted: bool = st.active == as(u8, 1)
+        if state.active ~= wanted then
+            jump token_loop(i = i + 1, n = n, layout = layout, decor = decor)
+        end
+    end
+    if st.selected ~= as(u8, 0) then
+        let wanted: bool = st.selected == as(u8, 1)
+        if state.selected ~= wanted then
+            jump token_loop(i = i + 1, n = n, layout = layout, decor = decor)
+        end
+    end
+    if st.disabled ~= as(u8, 0) then
+        let wanted: bool = st.disabled == as(u8, 1)
+        if state.disabled ~= wanted then
+            jump token_loop(i = i + 1, n = n, layout = layout, decor = decor)
+        end
+    end
+    -- Atom matched: apply directly in the loop state.
+    let atom: T.UiStyleAtom = token.atom
+    let kind: u16 = atom.kind
+    if kind == as(u16, KIND_DISPLAY) then
+        var l: T.UiLayoutStyle = layout; l.display = as(u8, as(i32, atom.a))
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_AXIS) then
+        var l: T.UiLayoutStyle = layout; l.axis = as(u8, as(i32, atom.a))
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_WRAP) then
+        var l: T.UiLayoutStyle = layout; l.wrap = as(u8, as(i32, atom.a))
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_JUSTIFY) then
+        var l: T.UiLayoutStyle = layout; l.justify = as(u8, as(i32, atom.a))
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_ITEMS) then
+        var l: T.UiLayoutStyle = layout; l.items = as(u8, as(i32, atom.a))
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_SELF_ALIGN) then
+        var l: T.UiLayoutStyle = layout; l.self_align = as(u8, as(i32, atom.a))
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_GAP) then
+        var l: T.UiLayoutStyle = layout; l.gap_x = atom.a; l.gap_y = atom.a
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_GAP_X) then
+        var l: T.UiLayoutStyle = layout; l.gap_x = atom.a
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_GAP_Y) then
+        var l: T.UiLayoutStyle = layout; l.gap_y = atom.a
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_PAD) then
+        var l: T.UiLayoutStyle = layout
+        l.padding = T.UiEdges{ top = atom.a, right = atom.a, bottom = atom.a, left = atom.a }
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_PAD_X) then
+        var l: T.UiLayoutStyle = layout
+        var p: T.UiEdges = l.padding; p.left = atom.a; p.right = atom.a; l.padding = p
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_PAD_Y) then
+        var l: T.UiLayoutStyle = layout
+        var p: T.UiEdges = l.padding; p.top = atom.a; p.bottom = atom.a; l.padding = p
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_PAD_TOP) then
+        var l: T.UiLayoutStyle = layout
+        var p: T.UiEdges = l.padding; p.top = atom.a; l.padding = p
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_PAD_RIGHT) then
+        var l: T.UiLayoutStyle = layout
+        var p: T.UiEdges = l.padding; p.right = atom.a; l.padding = p
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_PAD_BOTTOM) then
+        var l: T.UiLayoutStyle = layout
+        var p: T.UiEdges = l.padding; p.bottom = atom.a; l.padding = p
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_PAD_LEFT) then
+        var l: T.UiLayoutStyle = layout
+        var p: T.UiEdges = l.padding; p.left = atom.a; l.padding = p
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_MARGIN) then
+        var l: T.UiLayoutStyle = layout
+        l.margin = T.UiEdges{ top = atom.a, right = atom.a, bottom = atom.a, left = atom.a }
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_MARGIN_X) then
+        var l: T.UiLayoutStyle = layout
+        var m: T.UiEdges = l.margin; m.left = atom.a; m.right = atom.a; l.margin = m
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_MARGIN_Y) then
+        var l: T.UiLayoutStyle = layout
+        var m: T.UiEdges = l.margin; m.top = atom.a; m.bottom = atom.a; l.margin = m
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_MARGIN_TOP) then
+        var l: T.UiLayoutStyle = layout
+        var m: T.UiEdges = l.margin; m.top = atom.a; l.margin = m
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_MARGIN_RIGHT) then
+        var l: T.UiLayoutStyle = layout
+        var m: T.UiEdges = l.margin; m.right = atom.a; l.margin = m
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_MARGIN_BOTTOM) then
+        var l: T.UiLayoutStyle = layout
+        var m: T.UiEdges = l.margin; m.bottom = atom.a; l.margin = m
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_MARGIN_LEFT) then
+        var l: T.UiLayoutStyle = layout
+        var m: T.UiEdges = l.margin; m.left = atom.a; l.margin = m
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_WIDTH) then
+        var l: T.UiLayoutStyle = layout; l.w_kind = as(u8, as(i32, atom.a)); l.w_value = atom.b
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_HEIGHT) then
+        var l: T.UiLayoutStyle = layout; l.h_kind = as(u8, as(i32, atom.a)); l.h_value = atom.b
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_MIN_WIDTH) then
+        var l: T.UiLayoutStyle = layout; l.min_w = atom.b
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_MAX_WIDTH) then
+        var l: T.UiLayoutStyle = layout; l.max_w = atom.b
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_MIN_HEIGHT) then
+        var l: T.UiLayoutStyle = layout; l.min_h = atom.b
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_MAX_HEIGHT) then
+        var l: T.UiLayoutStyle = layout; l.max_h = atom.b
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_GROW) then
+        var l: T.UiLayoutStyle = layout; l.grow = atom.a
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_SHRINK) then
+        var l: T.UiLayoutStyle = layout; l.shrink = atom.a
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_FG) then
+        var d: T.UiDecorStyle = decor; d.text.color = atom.color
+        jump token_loop(i = i + 1, n = n, layout = layout, decor = d)
+    end
+    if kind == as(u16, KIND_BG) then
+        var d: T.UiDecorStyle = decor; d.box.bg = atom.color
+        jump token_loop(i = i + 1, n = n, layout = layout, decor = d)
+    end
+    if kind == as(u16, KIND_BORDER_COLOR) then
+        var d: T.UiDecorStyle = decor; d.box.border_color = atom.color
+        jump token_loop(i = i + 1, n = n, layout = layout, decor = d)
+    end
+    if kind == as(u16, KIND_BORDER_WIDTH) then
+        var d: T.UiDecorStyle = decor; d.box.border_w = atom.a
+        jump token_loop(i = i + 1, n = n, layout = layout, decor = d)
+    end
+    if kind == as(u16, KIND_ROUNDED) then
+        var d: T.UiDecorStyle = decor; d.box.radius = atom.a
+        jump token_loop(i = i + 1, n = n, layout = layout, decor = d)
+    end
+    if kind == as(u16, KIND_OPACITY) then
+        var d: T.UiDecorStyle = decor; d.box.opacity = atom.a
+        jump token_loop(i = i + 1, n = n, layout = layout, decor = d)
+    end
+    if kind == as(u16, KIND_TEXT_SIZE) then
+        var d: T.UiDecorStyle = decor; d.text.size = atom.a
+        jump token_loop(i = i + 1, n = n, layout = layout, decor = d)
+    end
+    if kind == as(u16, KIND_TEXT_WEIGHT) then
+        var d: T.UiDecorStyle = decor; d.text.weight = atom.a
+        jump token_loop(i = i + 1, n = n, layout = layout, decor = d)
+    end
+    if kind == as(u16, KIND_TEXT_ALIGN) then
+        var d: T.UiDecorStyle = decor; d.text.align = as(u8, as(i32, atom.a))
+        jump token_loop(i = i + 1, n = n, layout = layout, decor = d)
+    end
+    if kind == as(u16, KIND_LEADING) then
+        var d: T.UiDecorStyle = decor; d.text.leading = atom.a
+        jump token_loop(i = i + 1, n = n, layout = layout, decor = d)
+    end
+    if kind == as(u16, KIND_TRACKING) then
+        var d: T.UiDecorStyle = decor; d.text.tracking = atom.a
+        jump token_loop(i = i + 1, n = n, layout = layout, decor = d)
+    end
+    if kind == as(u16, KIND_OVERFLOW_X) then
+        var l: T.UiLayoutStyle = layout; l.overflow_x = as(u8, as(i32, atom.a))
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_OVERFLOW_Y) then
+        var l: T.UiLayoutStyle = layout; l.overflow_y = as(u8, as(i32, atom.a))
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_CURSOR) then
+        var d: T.UiDecorStyle = decor; d.cursor = as(u8, as(i32, atom.a))
+        jump token_loop(i = i + 1, n = n, layout = layout, decor = d)
+    end
+    if kind == as(u16, KIND_COLS) then
+        var l: T.UiLayoutStyle = layout; l.col_first = as(u32, as(i32, atom.a)); l.col_count = atom.track_count
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_ROWS) then
+        var l: T.UiLayoutStyle = layout; l.row_first = as(u32, as(i32, atom.a)); l.row_count = atom.track_count
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_COL_GAP) then
+        var l: T.UiLayoutStyle = layout; l.col_gap = atom.a
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_ROW_GAP) then
+        var l: T.UiLayoutStyle = layout; l.row_gap = atom.a
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_COL_START) then
+        var l: T.UiLayoutStyle = layout; l.col_start = atom.a
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_COL_SPAN) then
+        var l: T.UiLayoutStyle = layout; l.col_span = atom.a
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_ROW_START) then
+        var l: T.UiLayoutStyle = layout; l.row_start = atom.a
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    if kind == as(u16, KIND_ROW_SPAN) then
+        var l: T.UiLayoutStyle = layout; l.row_span = atom.a
+        jump token_loop(i = i + 1, n = n, layout = l, decor = decor)
+    end
+    jump token_loop(i = i + 1, n = n, layout = layout, decor = decor)
+end
+end
+
+return {
+    ui_visit_style_atom = ui_visit_style_atom,
+    ui_resolve_style = ui_resolve_style,
+}

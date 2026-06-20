@@ -137,6 +137,14 @@ end
 local function site_range_from_anchors(anchors, analysis, site)
     site = tostring(site or "")
 
+    local field_name = site:match("^struct field '([^']+)'$")
+                    or site:match('^struct field "([^"]+)"$')
+                    or site:match("^field%s+([_%a][_%w]*)$")
+    if field_name then
+        local a = first_anchor_kind_label(anchors, "AnchorFieldName", field_name)
+        if a then return a.range end
+    end
+
     -- 1. Variable/param bindings
     local name = site:match("^let%s+([_%a][_%w]*)")
               or site:match("^var%s+([_%a][_%w]*)")

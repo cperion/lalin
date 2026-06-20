@@ -15,6 +15,18 @@ function M.Define(T, opts)
 
     local function append_all(out, xs) for i = 1, #xs do out[#out + 1] = xs[i] end end
     local function labels_equal(a, b) return a.name == b.name end
+    local function control_type_matches(expected, actual)
+        if expected == actual then return true end
+        if expected == nil or actual == nil then return false end
+        local ecls = pvm.classof(expected)
+        local acls = pvm.classof(actual)
+        if ecls == Ty.TOwned or acls == Ty.TOwned then return false end
+        if ecls == Ty.TAccess then return control_type_matches(expected.base, actual) end
+        if acls == Ty.TAccess then return control_type_matches(expected, actual.base) end
+        if ecls == Ty.TLease and acls == Ty.TLease and expected.base == actual.base then return true end
+        if ecls == Ty.TLease and expected.base == actual then return true end
+        return false
+    end
 
     local function expr_ty(expr)
         return pvm.one(expr_type(expr.h))
@@ -227,7 +239,7 @@ function M.Define(T, opts)
                 if not is_expr_region then
                     return Tr.ControlDecisionIrreducible(region.region_id, Tr.ControlRejectYieldOutsideRegion("value yield in statement control region"))
                 end
-                if fact.ty ~= region.result_ty then
+                if not control_type_matches(region.result_ty, fact.ty) then
                     return Tr.ControlDecisionIrreducible(region.region_id, Tr.ControlRejectYieldType(region.region_id, region.result_ty, fact.ty))
                 end
             end
@@ -244,7 +256,7 @@ function M.Define(T, opts)
                     if args[name] == nil then
                         return Tr.ControlDecisionIrreducible(region.region_id, Tr.ControlRejectMissingJumpArg(region.region_id, fact.to_label, name))
                     end
-                    if args[name] ~= expected then
+                    if not control_type_matches(expected, args[name]) then
                         return Tr.ControlDecisionIrreducible(region.region_id, Tr.ControlRejectJumpType(region.region_id, fact.to_label, name, expected, args[name]))
                     end
                 end

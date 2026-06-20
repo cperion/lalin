@@ -1,0 +1,390 @@
+-- mlui_program_import.mlua — UiProgram/AuthBuffer -> node store import.
+--
+-- Implements:
+--   R.ui_import_auth
+--   F.mlui_import_auth_buffer
+--   F.mlui_load_program
+--
+-- Also implements ui_visit_auth_node (auth opcode decoder).
+
+local H = moon.require("mlui_types")
+local T = H.T
+local R = H.R
+local F = H.F
+
+local Mem = moon.require("mlui_memory")
+
+-- Auth opcode constants (mirrors mlui_c_api.h)
+local AUTH_EMPTY = 1
+local AUTH_FRAGMENT = 2
+local AUTH_BOX = 3
+local AUTH_TEXT = 4
+local AUTH_TEXT_REF = 5
+local AUTH_PAINT = 6
+local AUTH_SCROLL = 7
+local AUTH_WITH_INPUT = 8
+local AUTH_WITH_DRAG_SOURCE = 9
+local AUTH_WITH_DROP_TARGET = 10
+local AUTH_WITH_DROP_SLOT = 11
+local AUTH_WITH_STATE = 12
+local AUTH_FOCUS_SCOPE = 13
+local AUTH_LAYER = 14
+local AUTH_OVERLAY = 15
+local AUTH_MODAL = 16
+
+-- Handle packing
+local MLUI_SLOT_MASK = 0x00FFFFFF
+local MLUI_GEN_SHIFT = 24
+
+--------------------------------------------------------------------------------
+-- ui_visit_auth_node: decode UiAuthNode kind into a typed continuation.
+--------------------------------------------------------------------------------
+
+local ui_visit_auth_node = region @{R.ui_visit_auth_node}
+entry start()
+    let kind: u8 = node.kind
+    if kind == as(u8, AUTH_EMPTY) then jump empty end
+    if kind == as(u8, AUTH_FRAGMENT) then jump fragment end
+    if kind == as(u8, AUTH_BOX) then jump box end
+    if kind == as(u8, AUTH_TEXT) then jump text(content = node.content) end
+    if kind == as(u8, AUTH_TEXT_REF) then jump text_ref(content = node.content) end
+    if kind == as(u8, AUTH_PAINT) then
+        jump paint(first = node.paint_first, count = node.paint_count)
+    end
+    if kind == as(u8, AUTH_SCROLL) then jump scroll(axis = node.scroll_axis) end
+    if kind == as(u8, AUTH_WITH_INPUT) then
+        jump with_input(id = node.id, role = node.role)
+    end
+    if kind == as(u8, AUTH_WITH_DRAG_SOURCE) then
+        jump with_drag_source(id = node.id)
+    end
+    if kind == as(u8, AUTH_WITH_DROP_TARGET) then
+        jump with_drop_target(id = node.id)
+    end
+    if kind == as(u8, AUTH_WITH_DROP_SLOT) then
+        jump with_drop_slot(id = node.id)
+    end
+    if kind == as(u8, AUTH_WITH_STATE) then
+        jump with_state(state = node.state)
+    end
+    if kind == as(u8, AUTH_FOCUS_SCOPE) then
+        jump focus_scope(id = node.id, policy = node.focus_policy)
+    end
+    if kind == as(u8, AUTH_LAYER) then
+        jump layer(id = node.id, kind = node.layer_kind, order = node.order)
+    end
+    if kind == as(u8, AUTH_OVERLAY) then
+        jump overlay(id = node.id, anchor = node.anchor_id,
+                     placement = node.overlay_placement, modal = node.modal)
+    end
+    if kind == as(u8, AUTH_MODAL) then
+        jump modal(id = node.id)
+    end
+    jump invalid_kind(kind = kind)
+end
+end
+
+--------------------------------------------------------------------------------
+-- ui_import_auth: import auth op buffer into kernel node store.
+--------------------------------------------------------------------------------
+
+local ui_import_auth = region @{R.ui_import_auth}
+entry start()
+    if auth == as(ptr(T.UiAuthBuffer), 0) then
+        jump invalid_id(at = as(index, 0))
+    end
+    if auth.n_node == as(index, 0) then
+        jump invalid_id(at = as(index, 0))
+    end
+    let first_node: T.UiAuthNode = auth.nodes[0]
+    if first_node.kind == as(u8, AUTH_EMPTY) then
+        -- empty program: return invalid root
+        jump invalid_id(at = as(index, 0))
+    end
+    if auth == &(kernel.auth) then
+        jump import_owned_start()
+    end
+    if kernel.auth.cap_node < auth.n_node then
+        emit Mem.mlui_grow_auth_nodes(kernel, &(kernel.auth), auth.n_node - kernel.auth.cap_node;
+            grown = ensure_auth_children, oom = grow_fail)
+    end
+    jump ensure_auth_children()
+end
+block ensure_auth_children()
+    if kernel.auth.cap_child < auth.n_child then
+        emit Mem.mlui_grow_auth_children(kernel, &(kernel.auth), auth.n_child - kernel.auth.cap_child;
+            grown = ensure_style_tokens, oom = grow_fail)
+    end
+    jump ensure_style_tokens()
+end
+block ensure_style_tokens()
+    if kernel.auth.styles.cap < auth.styles.n then
+        emit Mem.mlui_grow_style_tokens(kernel, &(kernel.auth.styles), auth.styles.n - kernel.auth.styles.cap;
+            grown = ensure_style_tracks, oom = grow_fail)
+    end
+    jump ensure_style_tracks()
+end
+block ensure_style_tracks()
+    if kernel.auth.styles.cap_track < auth.styles.n_track then
+        emit Mem.mlui_grow_style_tracks(kernel, &(kernel.auth.styles), auth.styles.n_track - kernel.auth.styles.cap_track;
+            grown = ensure_node_slots, oom = grow_fail)
+    end
+    jump ensure_node_slots()
+end
+block ensure_node_slots()
+    if kernel.nodes.cap < auth.n_node then
+        emit Mem.mlui_grow_node_slots(kernel, auth.n_node - kernel.nodes.cap;
+            grown = import_start, oom = grow_fail)
+    end
+    jump import_start()
+end
+block import_start()
+    let p_an: ptr(index) = &(kernel.auth.n_node)
+    let p_ac: ptr(index) = &(kernel.auth.n_child)
+    let p_as: ptr(index) = &(kernel.auth.styles.n)
+    let p_at: ptr(index) = &(kernel.auth.styles.n_track)
+    p_an[0] = 0
+    p_ac[0] = 0
+    p_as[0] = 0
+    p_at[0] = 0
+    let p_n: ptr(index) = &(kernel.nodes.n)
+    p_n[0] = 0
+    jump copy_nodes(i = as(index, 0))
+end
+block import_owned_start()
+    let p_n: ptr(index) = &(kernel.nodes.n)
+    p_n[0] = 0
+    jump import_loop(i = as(index, 0))
+end
+block copy_nodes(i: index)
+    if i >= auth.n_node then
+        let p_an: ptr(index) = &(kernel.auth.n_node)
+        p_an[0] = auth.n_node
+        jump copy_children(i = as(index, 0))
+    end
+    kernel.auth.nodes[i] = auth.nodes[i]
+    jump copy_nodes(i = i + 1)
+end
+block copy_children(i: index)
+    if i >= auth.n_child then
+        let p_ac: ptr(index) = &(kernel.auth.n_child)
+        p_ac[0] = auth.n_child
+        jump copy_style_tokens(i = as(index, 0))
+    end
+    kernel.auth.children[i] = auth.children[i]
+    jump copy_children(i = i + 1)
+end
+block copy_style_tokens(i: index)
+    if i >= auth.styles.n then
+        let p_as: ptr(index) = &(kernel.auth.styles.n)
+        p_as[0] = auth.styles.n
+        jump copy_style_tracks(i = as(index, 0))
+    end
+    kernel.auth.styles.tokens[i] = auth.styles.tokens[i]
+    jump copy_style_tokens(i = i + 1)
+end
+block copy_style_tracks(i: index)
+    if i >= auth.styles.n_track then
+        let p_at: ptr(index) = &(kernel.auth.styles.n_track)
+        p_at[0] = auth.styles.n_track
+        jump import_loop(i = as(index, 0))
+    end
+    kernel.auth.styles.tracks[i] = auth.styles.tracks[i]
+    jump copy_style_tracks(i = i + 1)
+end
+block import_loop(i: index)
+    if i >= auth.n_node then
+        let ref_raw: u32 = (as(u32, 1) << MLUI_GEN_SHIFT)
+        jump imported(root = T.UiNodeRef.from_repr(ref_raw))
+    end
+    let node: T.UiAuthNode = kernel.auth.nodes[i]
+    let id: T.UiId = node.id
+    if id ~= T.UiId.from_repr(0) then
+        jump scan_dups(i = i, j = as(index, 0), id = id)
+    end
+    jump store_node(i = i)
+end
+block scan_dups(i: index, j: index, id: T.UiId)
+    if j >= i then jump store_node(i = i) end
+    let other: T.UiAuthNode = kernel.auth.nodes[j]
+    if other.id == id then
+        jump duplicate_id(id = id)
+    end
+    jump scan_dups(i = i, j = j + 1, id = id)
+end
+block store_node(i: index)
+    let node: T.UiAuthNode = kernel.auth.nodes[i]
+    let slots: ptr(T.UiNodeSlot) = kernel.nodes.slots
+    let p_n: ptr(index) = &(kernel.nodes.n)
+    let idx: index = p_n[0]
+    if idx >= kernel.nodes.cap then jump oom(needed = (idx + 1) * sizeof(T.UiNodeSlot)) end
+    p_n[0] = idx + 1
+    slots[idx].gen = 1
+    slots[idx].live = true
+    slots[idx].node.id = node.id
+    slots[idx].node.auth_index = as(u32, i)
+    slots[idx].node.gen = 1
+    slots[idx].node.live = true
+    jump import_loop(i = i + 1)
+end
+block grow_fail(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+--------------------------------------------------------------------------------
+-- F.mlui_import_auth_buffer: import a ptr(UiAuthBuffer) into the kernel.
+--------------------------------------------------------------------------------
+
+local mlui_import_auth_buffer = func @{F.mlui_import_auth_buffer}
+    return region: T.UiStatus
+    entry start()
+        if auth == as(ptr(T.UiAuthBuffer), 0) then
+            yield T.UiStatus{code = 3, detail = 0, at = as(index, 0), needed = 0 }
+        end
+        emit ui_import_auth(kernel, auth;
+            imported = ok,
+            duplicate_id = dup,
+            invalid_id = bad,
+            invalid_child = badc,
+            unsupported_node = unsup,
+            oom = oom_exit)
+    end
+    block ok(root: T.UiNodeRef)
+        if out_root ~= as(ptr(T.UiNodeRef), 0) then
+            out_root[0] = root
+        end
+        yield T.UiStatus{code = 0, detail = 0, at = as(index, 0), needed = 0 }
+    end
+    block dup(id: T.UiId)
+        yield T.UiStatus{code = 2, detail = as(i32, repr(id)), at = as(index, 0), needed = 0 }
+    end
+    block bad(at: index)
+        yield T.UiStatus{code = 3, detail = 0, at = at, needed = 0 }
+    end
+    block badc(at: index)
+        yield T.UiStatus{code = 4, detail = 0, at = at, needed = 0 }
+    end
+    block unsup(kind: u8)
+        yield T.UiStatus{code = 5, detail = as(i32, kind), at = as(index, 0), needed = 0 }
+    end
+    block oom_exit(needed: index)
+        yield T.UiStatus{code = 1, detail = 0, at = as(index, 0), needed = needed }
+    end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- F.mlui_load_program: validate + expand compose + import a full UiProgram.
+--------------------------------------------------------------------------------
+
+local mlui_load_program = func @{F.mlui_load_program}
+    return region: T.UiStatus
+    entry start()
+        if program == as(ptr(T.UiProgram), 0) then
+            yield T.UiStatus{code = 15, detail = 1, at = as(index, 0), needed = 0 }
+        end
+        -- First validate
+        emit ui_validate_program(kernel, program;
+            valid = prog_valid,
+            invalid_header = bad_hdr,
+            invalid_section = bad_sec,
+            invalid_opcode = bad_op,
+            invalid_range = bad_rng,
+            invalid_arity = bad_ari,
+            duplicate_id = dup_id,
+            missing_resource = miss_res,
+            unsupported_feature = unsup,
+            oom = oom_exit)
+    end
+    block prog_valid(root_kind: u8, root_index: u32)
+        if root_kind == as(u8, 0) then
+            let auth: ptr(T.UiAuthBuffer) = program.auth
+            if auth == as(ptr(T.UiAuthBuffer), 0) then
+                yield T.UiStatus{code = 16, detail = 1, at = as(index, 0), needed = 0 }
+            end
+            emit ui_import_auth(kernel, auth;
+                imported = imported_ok,
+                duplicate_id = dup_id,
+                invalid_id = bad_id,
+                invalid_child = bad_ch,
+                unsupported_node = bad_nk,
+                oom = oom_exit)
+        end
+        if root_kind == as(u8, 1) then
+            let comp: ptr(T.UiComposeBuffer) = program.compose
+            if comp == as(ptr(T.UiComposeBuffer), 0) then
+                yield T.UiStatus{code = 16, detail = 5, at = as(index, 0), needed = 0 }
+            end
+            emit ui_expand_compose(kernel, comp;
+                expanded = comp_expanded,
+                invalid_compose = bad_cmp,
+                missing_child = miss_ch,
+                duplicate_id = dup_id_c,
+                oom = oom_exit)
+        end
+        yield T.UiStatus{code = 21, detail = as(i32, root_kind), at = as(index, root_index), needed = 0 }
+    end
+    block imported_ok(root: T.UiNodeRef)
+        if out_root ~= as(ptr(T.UiNodeRef), 0) then
+            out_root[0] = root
+        end
+        yield T.UiStatus{code = 0, detail = 0, at = as(index, 0), needed = 0 }
+    end
+    block comp_expanded(auth: ptr(T.UiAuthBuffer))
+        if auth == as(ptr(T.UiAuthBuffer), 0) then
+            yield T.UiStatus{code = 16, detail = 1, at = as(index, 0), needed = 0 }
+        end
+        emit ui_import_auth(kernel, auth;
+            imported = imported_ok,
+            duplicate_id = dup_id,
+            invalid_id = bad_id,
+            invalid_child = bad_ch,
+            unsupported_node = bad_nk,
+            oom = oom_exit)
+    end
+    block bad_hdr(code: i32)
+        yield T.UiStatus{code = 15, detail = code, at = as(index, 0), needed = 0 }
+    end
+    block bad_sec(section: u8)
+        yield T.UiStatus{code = 16, detail = as(i32, section), at = as(index, 0), needed = 0 }
+    end
+    block bad_op(at: index, kind: u8)
+        yield T.UiStatus{code = 17, detail = as(i32, kind), at = at, needed = 0 }
+    end
+    block bad_rng(section: u8, first: u32, count: u32)
+        yield T.UiStatus{code = 18, detail = as(i32, section), at = as(index, first), needed = as(index, count) }
+    end
+    block bad_ari(at: index, expected: u32, got: u32)
+        yield T.UiStatus{code = 19, detail = as(i32, expected), at = at, needed = as(index, got) }
+    end
+    block dup_id(id: T.UiId)
+        yield T.UiStatus{code = 2, detail = as(i32, repr(id)), at = as(index, 0), needed = 0 }
+    end
+    block miss_res(section: u8, index_: u32)
+        yield T.UiStatus{code = 20, detail = as(i32, section), at = as(index, index_), needed = 0 }
+    end
+    block unsup(flags: u32)
+        yield T.UiStatus{code = 21, detail = as(i32, flags), at = as(index, 0), needed = 0 }
+    end
+    block bad_id(at: index)
+        yield T.UiStatus{code = 3, detail = 0, at = at, needed = 0 }
+    end
+    block bad_ch(at: index)
+        yield T.UiStatus{code = 4, detail = 0, at = at, needed = 0 }
+    end
+    block bad_nk(kind: u8)
+        yield T.UiStatus{code = 5, detail = as(i32, kind), at = as(index, 0), needed = 0 }
+    end
+    block oom_exit(needed: index)
+        yield T.UiStatus{code = 1, detail = 0, at = as(index, 0), needed = needed }
+    end
+    end
+end
+
+return {
+    ui_visit_auth_node = ui_visit_auth_node,
+    ui_import_auth = ui_import_auth,
+    mlui_import_auth_buffer = mlui_import_auth_buffer,
+    mlui_load_program = mlui_load_program,
+}

@@ -84,6 +84,7 @@ function M.fill(session, slot, value, site, role, spread)
     if cls == O.SlotType       then return M.fill_type(session, slot.slot, value, site) end
     if cls == O.SlotExpr       then return M.fill_expr(session, slot.slot, value, site) end
     if cls == O.SlotRegion     then return M.fill_region_body(session, slot.slot, value, site) end
+    if cls == O.SlotFunc       then return M.fill_func(session, slot.slot, value, site) end
     if cls == O.SlotRegionFrag then return M.fill_region_frag(session, slot.slot, value, site) end
     if cls == O.SlotExprFrag   then return M.fill_expr_frag(session, slot.slot, value, site) end
     if cls == O.SlotName       then return M.fill_name(session, slot.slot, value, site) end
@@ -194,6 +195,39 @@ function M.fill_expr(session, slot, value, site)
     end
 
     return O.SlotBinding(O.SlotExpr(slot), O.SlotValueExpr(expr))
+end
+
+-- ── Function slot ────────────────────────────────────────────────────────────
+
+-- Accepted: canonical FuncValue, or a direct MoonTree.Func node.
+-- Function slots are used for `.mlua` dotted module calls such as
+-- `Mem.grow(buf)`: the call edge is a typed Moonlift function boundary, not a
+-- runtime table lookup.
+function M.fill_func(session, slot, value, site)
+    local Tr, O = session.T.MoonTree, session.T.MoonOpen
+
+    local func = nil
+
+    local p = protocol(value, "func", session, site)
+    if p ~= nil then func = p end
+
+    if not func and type(value) == "table" then
+        if pvm.classof(value) == Tr.FuncLocal
+            or pvm.classof(value) == Tr.FuncExport
+            or pvm.classof(value) == Tr.FuncLocalContract
+            or pvm.classof(value) == Tr.FuncExportContract then
+            func = value
+        elseif rawget(value, "kind") == "func" and value.func ~= nil then
+            func = value.func
+        end
+    end
+
+    if not func then
+        raise(site, "expected function value for call target splice, got " .. M.kind_of(value))
+        return nil
+    end
+
+    return O.SlotBinding(O.SlotFunc(slot), O.SlotValueFunc(func))
 end
 
 local function as_array(value, site, role)

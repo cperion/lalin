@@ -1,0 +1,334 @@
+-- mlui_interact.mlua — Raw input -> interaction step -> events.
+--
+-- Implements:
+--   R.ui_visit_raw_input  (raw input kind decoder)
+--   R.ui_visit_event      (event kind decoder)
+--   R.ui_visit_key        (key decoder)
+--   R.ui_interact_step    (pure reducer)
+--   F.mlui_interact_step
+--   F.mlui_events
+--   F.mlui_clear_events
+
+local H = moon.require("mlui_types")
+local T = H.T
+local R = H.R
+local F = H.F
+
+local RAW_INVALID = 0
+local RAW_POINTER_MOVED = 1
+local RAW_POINTER_PRESSED = 2
+local RAW_POINTER_RELEASED = 3
+local RAW_POINTER_CANCELLED = 4
+local RAW_WHEEL_MOVED = 5
+local RAW_KEY_PRESSED = 6
+local RAW_KEY_RELEASED = 7
+local RAW_TEXT_INPUT = 8
+local RAW_TEXT_EDITING = 9
+local RAW_FOCUS_MOVE = 10
+local RAW_FOCUS_LOST = 11
+local RAW_ACTIVATE_FOCUSED = 12
+local RAW_CANCEL_INTERACTION = 13
+
+--------------------------------------------------------------------------------
+-- ui_visit_raw_input: decode UiRawInput kind.
+--------------------------------------------------------------------------------
+
+local ui_visit_raw_input = region @{R.ui_visit_raw_input}
+entry start()
+    let kind: u8 = raw.kind
+    if kind == as(u8, RAW_POINTER_MOVED) then
+        jump pointer_moved(x = raw.x, y = raw.y)
+    end
+    if kind == as(u8, RAW_POINTER_PRESSED) then
+        jump pointer_pressed(button = raw.button, x = raw.x, y = raw.y)
+    end
+    if kind == as(u8, RAW_POINTER_RELEASED) then
+        jump pointer_released(button = raw.button, x = raw.x, y = raw.y)
+    end
+    if kind == as(u8, RAW_POINTER_CANCELLED) then
+        jump pointer_cancelled
+    end
+    if kind == as(u8, RAW_WHEEL_MOVED) then
+        jump wheel_moved(dx = raw.dx, dy = raw.dy, x = raw.x, y = raw.y)
+    end
+    if kind == as(u8, RAW_KEY_PRESSED) then
+        jump key_pressed(key = raw.key, mods = raw.mods, repeat_ = raw.repeat_)
+    end
+    if kind == as(u8, RAW_KEY_RELEASED) then
+        jump key_released(key = raw.key, mods = raw.mods)
+    end
+    if kind == as(u8, RAW_TEXT_INPUT) then
+        jump text_input(text = raw.text)
+    end
+    if kind == as(u8, RAW_TEXT_EDITING) then
+        jump text_editing(text = raw.text, start = raw.text_start, length = raw.text_length)
+    end
+    if kind == as(u8, RAW_FOCUS_MOVE) then
+        jump focus_move(direction = raw.direction)
+    end
+    if kind == as(u8, RAW_FOCUS_LOST) then jump focus_lost end
+    if kind == as(u8, RAW_ACTIVATE_FOCUSED) then jump activate_focused end
+    if kind == as(u8, RAW_CANCEL_INTERACTION) then jump cancel_interaction end
+    jump invalid_kind(kind = kind)
+end
+end
+
+--------------------------------------------------------------------------------
+-- ui_visit_event: decode UiEvent kind.
+--------------------------------------------------------------------------------
+
+local ui_visit_event = region @{R.ui_visit_event}
+entry start()
+    let kind: u8 = event.kind
+    if kind == as(u8, 1) then jump set_pointer(x = event.x, y = event.y) end
+    if kind == as(u8, 2) then jump set_hover(id = event.id) end
+    if kind == as(u8, 3) then jump clear_hover end
+    if kind == as(u8, 4) then jump set_focus(id = event.id) end
+    if kind == as(u8, 5) then jump clear_focus end
+    if kind == as(u8, 6) then jump set_pressed(id = event.id) end
+    if kind == as(u8, 7) then jump clear_pressed end
+    if kind == as(u8, 8) then
+        jump set_capture(id = event.id, start_x = event.x, start_y = event.y)
+    end
+    if kind == as(u8, 9) then jump release_capture(id = event.id) end
+    if kind == as(u8, 10) then jump clear_capture end
+    if kind == as(u8, 11) then jump cancel_capture(id = event.id) end
+    if kind == as(u8, 12) then
+        jump set_drag_pending(source_id = event.id, start_x = event.x, start_y = event.y)
+    end
+    if kind == as(u8, 13) then
+        jump set_dragging(source_id = event.id, start_x = event.x, start_y = event.y,
+                          x = event.x, y = event.y,
+                          over_target_id = event.other, over_slot_id = event.other)
+    end
+    if kind == as(u8, 14) then jump clear_drag end
+    if kind == as(u8, 15) then jump activate(id = event.id) end
+    if kind == as(u8, 16) then
+        jump input_text(id = event.id, text = event.text)
+    end
+    if kind == as(u8, 17) then
+        jump edit_text(id = event.id, text = event.text,
+                       start = as(u32, as(i32, event.a)), length = as(u32, as(i32, event.a)))
+    end
+    if kind == as(u8, 18) then
+        jump drag_started(source_id = event.id, start_x = event.x, start_y = event.y)
+    end
+    if kind == as(u8, 19) then
+        jump drag_moved(source_id = event.id, x = event.x, y = event.y,
+                        over_target_id = event.other, over_slot_id = event.other)
+    end
+    if kind == as(u8, 20) then
+        jump drag_dropped(source_id = event.id, x = event.x, y = event.y,
+                          over_target_id = event.other, over_slot_id = event.other)
+    end
+    if kind == as(u8, 21) then
+        jump drag_cancelled(source_id = event.id)
+    end
+    if kind == as(u8, 22) then
+        jump scroll_by(id = event.id, dx = event.x, dy = event.y)
+    end
+    jump invalid_kind(kind = kind)
+end
+end
+
+--------------------------------------------------------------------------------
+-- ui_visit_key: decode a key u32 into a typed key event.
+--------------------------------------------------------------------------------
+
+local ui_visit_key = region @{R.ui_visit_key}
+entry start()
+    if key == as(u32, 0x0A) then jump return_key end
+    if key == as(u32, 0x1B) then jump escape end
+    if key == as(u32, 0x08) then jump backspace end
+    if key == as(u32, 0x09) then jump tab end
+    if key == as(u32, 0x20) then jump space end
+    if key == as(u32, 0x7F) then jump delete_key end
+    if key == as(u32, 0x01) then jump home end
+    if key == as(u32, 0x04) then jump end_key end
+    if key == as(u32, 0x0B) then jump page_up end
+    if key == as(u32, 0x0C) then jump page_down end
+    if key == as(u32, 0x1C) then jump left end
+    if key == as(u32, 0x1D) then jump right end
+    if key == as(u32, 0x1E) then jump up end
+    if key == as(u32, 0x1F) then jump down end
+    if key >= as(u32, 0x20) and key < as(u32, 0x7F) then
+        jump char(codepoint = key)
+    end
+    jump unknown(code = key)
+end
+end
+
+--------------------------------------------------------------------------------
+-- ui_interact_step: pure reducer over model + report + raw input.
+--------------------------------------------------------------------------------
+
+local ui_interact_step = region @{R.ui_interact_step}
+entry start()
+    let kind: u8 = raw.kind
+    if kind == as(u8, RAW_POINTER_MOVED) then
+        (*model).pointer_x = raw.x
+        (*model).pointer_y = raw.y
+        (*model).hover_id = report.hover_id
+        jump stepped(events = as(ptr(T.UiEventBuffer), as(ptr(u8), kernel) + as(index, 0)))
+    end
+    if kind == as(u8, RAW_POINTER_PRESSED) then
+        (*model).pressed_id = report.hover_id
+        if report.hover_id ~= T.UiId.from_repr(0) then
+            if model.capture.kind == as(u8, 0) then
+                let cap: T.UiCapture = T.UiCapture{
+                    kind = 1, id = report.hover_id,
+                    start_x = raw.x, start_y = raw.y
+                }
+                (*model).capture = cap
+            end
+        end
+        jump stepped(events = as(ptr(T.UiEventBuffer), as(ptr(u8), kernel) + as(index, 0)))
+    end
+    if kind == as(u8, RAW_POINTER_RELEASED) then
+        let pressed: T.UiId = model.pressed_id
+        let hover: T.UiId = report.hover_id
+        if pressed ~= T.UiId.from_repr(0) and pressed == hover then
+            let ev: T.UiEvent = T.UiEvent{
+                kind = 15, id = pressed, other = T.UiId.from_repr(0),
+                x = raw.x, y = raw.y, a = 0, text = view(as(ptr(u8), 0), as(index, 0))
+            }
+            let p_en: ptr(index) = &(kernel.events.n)
+            let en: index = p_en[0]
+            kernel.events.events[en] = ev
+            p_en[0] = en + 1
+        end
+        (*model).pressed_id = T.UiId.from_repr(0)
+        let cap: T.UiCapture = model.capture
+        if cap.kind ~= as(u8, 0) then
+            let clear_cap: T.UiCapture = T.UiCapture{
+                kind = 0,
+                id = T.UiId.from_repr(0),
+                start_x = 0.0,
+                start_y = 0.0
+            }
+            (*model).capture = clear_cap
+        end
+        jump stepped(events = as(ptr(T.UiEventBuffer), as(ptr(u8), kernel) + as(index, 0)))
+    end
+    if kind == as(u8, RAW_KEY_PRESSED) then
+        let k: u32 = raw.key
+        if raw.mods == as(u32, 0) then
+            if k == as(u32, 0x09) then
+                let pid: T.UiId = model.hover_id
+                if pid == T.UiId.from_repr(0) then
+                    let fid: T.UiId = model.focus_id
+                    if fid ~= T.UiId.from_repr(0) then
+                        let ev: T.UiEvent = T.UiEvent{
+                            kind = 15, id = fid, other = T.UiId.from_repr(0),
+                            x = 0.0, y = 0.0, a = 0,
+                            text = view(as(ptr(u8), 0), as(index, 0))
+                        }
+                        let p_en: ptr(index) = &(kernel.events.n)
+                        let en: index = p_en[0]
+                        kernel.events.events[en] = ev
+                        p_en[0] = en + 1
+                    end
+                end
+            end
+        end
+        jump stepped(events = as(ptr(T.UiEventBuffer), as(ptr(u8), kernel) + as(index, 0)))
+    end
+    -- For all other input kinds, emit the event buffer as-is
+    jump stepped(events = as(ptr(T.UiEventBuffer), as(ptr(u8), kernel) + as(index, 0)))
+end
+end
+
+--------------------------------------------------------------------------------
+-- F.mlui_interact_step: dispatch raw input through the reducer.
+--------------------------------------------------------------------------------
+
+local mlui_interact_step = func @{F.mlui_interact_step}
+    return region: i32
+    entry start()
+        if raw == as(ptr(T.UiRawInput), 0) then yield 0 end
+        let raw_val: T.UiRawInput = raw[0]
+        let empty_report: T.UiReport = T.UiReport{
+            hover_id = T.UiId.from_repr(0), cursor_id = T.UiId.from_repr(0),
+            cursor = 0, scroll_id = T.UiId.from_repr(0),
+            hits = as(ptr(T.UiHitBox), 0), n_hit = 0,
+            focusables = as(ptr(T.UiFocusBox), 0), n_focus = 0,
+            scrollables = as(ptr(T.UiScrollBox), 0), n_scroll = 0,
+            drag_sources = as(ptr(T.UiDragSourceBox), 0), n_drag_source = 0,
+            drop_targets = as(ptr(T.UiDropTargetBox), 0), n_drop_target = 0,
+            drop_slots = as(ptr(T.UiDropSlotBox), 0), n_drop_slot = 0,
+            hit_stack = as(ptr(T.UiHitBox), 0), n_hit_stack = 0,
+            layers = as(ptr(T.UiLayerBox), 0), n_layer = 0,
+            overlays = as(ptr(T.UiOverlayBox), 0), n_overlay = 0,
+            modal_barriers = as(ptr(T.UiModalBarrierBox), 0), n_modal_barrier = 0,
+            focus_scopes = as(ptr(T.UiFocusScopeBox), 0), n_focus_scope = 0
+        }
+        emit ui_interact_step(kernel, &(kernel.model), &empty_report, raw_val;
+            stepped = ok,
+            stale_focus = bad_f,
+            stale_capture = bad_c,
+            missing_scroll = bad_s,
+            text_input_without_focus = bad_t,
+            oom = oom_exit)
+    end
+    block ok(events: ptr(T.UiEventBuffer))
+        yield 0
+    end
+    block bad_f(id: T.UiId)
+        yield 12
+    end
+    block bad_c(id: T.UiId)
+        yield 13
+    end
+    block bad_s(id: T.UiId)
+        yield 14
+    end
+    block bad_t()
+        yield as(i32, 22)
+    end
+    block oom_exit(needed: index)
+        yield 1
+    end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- F.mlui_events: return current event buffer.
+--------------------------------------------------------------------------------
+
+local mlui_events = func @{F.mlui_events}
+    return region: i32
+    entry start()
+        if out_events ~= as(ptr(ptr(T.UiEvent)), 0) then
+            out_events[0] = kernel.events.events
+        end
+        if out_n ~= as(ptr(index), 0) then
+            out_n[0] = kernel.events.n
+        end
+        yield 0
+    end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- F.mlui_clear_events: reset event buffer.
+--------------------------------------------------------------------------------
+
+local mlui_clear_events = func @{F.mlui_clear_events}
+    return region: T.UiStatus
+    entry start()
+        let p_n: ptr(index) = &(kernel.events.n)
+        p_n[0] = 0
+        yield T.UiStatus{code = 0, detail = 0, at = 0, needed = 0 }
+    end
+    end
+end
+
+return {
+    ui_visit_raw_input = ui_visit_raw_input,
+    ui_visit_event = ui_visit_event,
+    ui_visit_key = ui_visit_key,
+    ui_interact_step = ui_interact_step,
+    mlui_interact_step = mlui_interact_step,
+    mlui_events = mlui_events,
+    mlui_clear_events = mlui_clear_events,
+}

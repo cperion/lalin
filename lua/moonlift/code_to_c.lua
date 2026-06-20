@@ -53,6 +53,36 @@ function M.Define(T)
         return CodeType.code_type_to_c(ty, ctx.type_ctx)
     end
 
+    local function c_type_id_key(id)
+        return id.module_name .. "\0" .. id.spelling
+    end
+
+    local function variant_payload_union_id(owner_ty)
+        if pvm.classof(owner_ty) ~= Code.CodeTyNamed then return nil end
+        return C.CTypeId(owner_ty.module_name, owner_ty.type_name .. "_payload")
+    end
+
+    local function variant_payload_member_place(ctx, base_place, variant)
+        local union_id = variant_payload_union_id(variant.owner_ty)
+        local payload_union_ty = C.CBackendNamed(union_id)
+        local payload_place = C.CBackendPlaceField(
+            base_place,
+            C.CBackendName("__payload"),
+            payload_union_ty,
+            0,
+            nil,
+            nil
+        )
+        return C.CBackendPlaceField(
+            payload_place,
+            C.CBackendName(variant.variant_name),
+            c_ty(ctx, variant.payload_ty),
+            0,
+            nil,
+            nil
+        )
+    end
+
     local function c_sig(ctx, sig_id)
         return c_sig_id(sig_id)
     end
@@ -247,13 +277,20 @@ function M.Define(T)
                 C.CBackendAggregateFieldInit(C.CBackendName("ctx"), atom(k.ctx), nil),
             }) }
         elseif cls == Code.CodeInstVariantCtor then
-            local fields = { C.CBackendAggregateFieldInit(C.CBackendName("__tag"), C.CBackendAtomLiteral(C.CBackendScalar(Core.ScalarU32), Core.LitInt(tostring(k.variant.tag_value))), 0) }
-            if k.payload ~= nil then fields[#fields + 1] = C.CBackendAggregateFieldInit(C.CBackendName("__payload"), atom(k.payload), nil) end
-            return { C.CBackendAggregateInit(C.CBackendPlaceLocal(c_local_id(k.dst), c_ty(ctx, k.ty)), c_ty(ctx, k.ty), fields) }
+            local dst_place = C.CBackendPlaceLocal(c_local_id(k.dst), c_ty(ctx, k.ty))
+            local out = {
+                C.CBackendAggregateInit(dst_place, c_ty(ctx, k.ty), {
+                    C.CBackendAggregateFieldInit(C.CBackendName("__tag"), C.CBackendAtomLiteral(C.CBackendScalar(Core.ScalarU32), Core.LitInt(tostring(k.variant.tag_value))), 0),
+                })
+            }
+            if k.payload ~= nil then
+                out[#out + 1] = C.CBackendPlaceStore(variant_payload_member_place(ctx, dst_place, k.variant), atom(k.payload))
+            end
+            return out
         elseif cls == Code.CodeInstVariantTag then
             return { C.CBackendPlaceLoad(c_local_id(k.dst), C.CBackendPlaceField(C.CBackendPlaceLocal(c_local_id(k.value), c_ty(ctx, k.variant and k.variant.owner_ty or Code.CodeTyVoid)), C.CBackendName("__tag"), c_ty(ctx, k.tag_ty), 0, nil, nil)) }
         elseif cls == Code.CodeInstVariantPayload then
-            return { C.CBackendPlaceLoad(c_local_id(k.dst), C.CBackendPlaceField(C.CBackendPlaceLocal(c_local_id(k.value), c_ty(ctx, k.variant.owner_ty)), C.CBackendName("__payload"), c_ty(ctx, k.variant.payload_ty), 0, nil, nil)) }
+            return { C.CBackendPlaceLoad(c_local_id(k.dst), variant_payload_member_place(ctx, C.CBackendPlaceLocal(c_local_id(k.value), c_ty(ctx, k.variant.owner_ty)), k.variant)) }
         elseif cls == Code.CodeInstCall then
             local args = {}; for i = 1, #k.args do args[i] = atom(k.args[i]) end
             local tcls = pvm.classof(k.target)
@@ -457,6 +494,9 @@ function M.Define(T)
             local n = (ctx.target.pointer_bits or 64) / 8; return n, n
         elseif cls == C.CBackendArray then
             local sz, al = c_type_size_align(ctx, ty.elem); return sz * ty.count, al
+        elseif cls == C.CBackendNamed then
+            local layout = ctx.c_type_layouts and ctx.c_type_layouts[c_type_id_key(ty.id)]
+            if layout ~= nil then return layout.size, layout.align end
         end
         return 8, 8
     end
@@ -501,8 +541,11 @@ function M.Define(T)
             local key = id.module_name .. "\0" .. id.spelling
             if existing[key] then return end
             local rec = by_key[key]
-            if rec == nil then rec = { id = id, payload_ty = nil }; by_key[key] = rec; order[#order + 1] = rec end
-            if rec.payload_ty == nil and ref.payload_ty ~= nil then rec.payload_ty = ref.payload_ty end
+            if rec == nil then rec = { id = id, owner_ty = ref.owner_ty, variants = {}, by_variant = {} }; by_key[key] = rec; order[#order + 1] = rec end
+            if ref.payload_ty ~= nil and rec.by_variant[ref.variant_name] == nil then
+                rec.by_variant[ref.variant_name] = ref.payload_ty
+                rec.variants[#rec.variants + 1] = { name = ref.variant_name, payload_ty = ref.payload_ty }
+            end
         end
         for _, func in ipairs(code_module.funcs or {}) do
             for _, block in ipairs(func.blocks or {}) do
@@ -521,11 +564,22 @@ function M.Define(T)
             local tag_ty = C.CBackendScalar(Core.ScalarU32)
             local fields = { C.CBackendField(C.CBackendName("__tag"), tag_ty, 0, 4, 4) }
             local size, align = 4, 4
-            if rec.payload_ty ~= nil then
-                local payload_ty = c_ty(ctx, rec.payload_ty)
-                local psz, pal = c_type_size_align(ctx, payload_ty)
+            if #rec.variants > 0 then
+                local union_id = variant_payload_union_id(rec.owner_ty)
+                local union_fields = {}
+                local psz, pal = 0, 1
+                for i = 1, #rec.variants do
+                    local payload_ty = c_ty(ctx, rec.variants[i].payload_ty)
+                    local vsz, val = c_type_size_align(ctx, payload_ty)
+                    union_fields[#union_fields + 1] = C.CBackendField(C.CBackendName(rec.variants[i].name), payload_ty, 0, vsz, val)
+                    if vsz > psz then psz = vsz end
+                    if val > pal then pal = val end
+                end
+                psz = math.floor((psz + pal - 1) / pal) * pal
+                out[#out + 1] = C.CBackendUnionDecl(union_id, union_fields, psz, pal)
+                ctx.c_type_layouts[c_type_id_key(union_id)] = { size = psz, align = pal }
                 local off = math.floor((size + pal - 1) / pal) * pal
-                fields[#fields + 1] = C.CBackendField(C.CBackendName("__payload"), payload_ty, off, psz, pal)
+                fields[#fields + 1] = C.CBackendField(C.CBackendName("__payload"), C.CBackendNamed(union_id), off, psz, pal)
                 size = off + psz
                 align = math.max(align, pal)
             end
@@ -536,13 +590,27 @@ function M.Define(T)
         return out
     end
 
+    local function c_type_layout_index(layout_env)
+        local out = {}
+        for _, layout in ipairs((layout_env and layout_env.layouts) or {}) do
+            local cls = pvm.classof(layout)
+            if cls == Sem.LayoutNamed then
+                out[layout.module_name .. "\0" .. layout.type_name] = { size = layout.size, align = layout.align }
+            elseif cls == Sem.LayoutLocal then
+                out["local\0" .. layout.sym.name] = { size = layout.size, align = layout.align }
+            end
+        end
+        return out
+    end
+
     local function module(code_module, opts)
         opts = opts or {}
         local report = CodeValidate.validate(code_module, opts.collector)
         if opts.validate ~= false and #report.issues > 0 then
             error("code_to_c: CodeModule failed validation with " .. tostring(#report.issues) .. " issue(s)", 2)
         end
-        local type_ctx = { code_sigs = {}, code_sig_order = {} }
+        local module_name = tostring(code_module.id.text):gsub("^module:", "")
+        local type_ctx = { code_sigs = {}, code_sig_order = {}, module_name = module_name }
         local sigs = {}
         for i = 1, #(code_module.sigs or {}) do type_ctx.code_sigs[code_module.sigs[i].id.text] = code_module.sigs[i] end
         for i = 1, #(code_module.sigs or {}) do
@@ -552,12 +620,13 @@ function M.Define(T)
             sigs[#sigs + 1] = C.CBackendFuncSig(c_sig_id(s.id), params, result)
         end
         local ctx = {
-            module_name = code_module.id.text,
+            module_name = module_name,
             target = CodeType.normalize_target(opts.target or opts.c_target or opts),
             type_ctx = type_ctx,
             sigs = {}, funcs = {}, externs = {},
             helpers_by_id = {}, helper_order = {}, helpers = {},
             layout_env = opts.layout_env,
+            c_type_layouts = c_type_layout_index(opts.layout_env),
         }
         for i = 1, #(code_module.sigs or {}) do ctx.sigs[code_module.sigs[i].id.text] = code_module.sigs[i] end
         for i = 1, #(code_module.funcs or {}) do ctx.funcs[code_module.funcs[i].id.text] = code_module.funcs[i] end

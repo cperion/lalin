@@ -17,6 +17,8 @@ CCompiledModule.__index = CCompiledModule
 local CCompiledFunction = {}
 CCompiledFunction.__index = CCompiledFunction
 
+local SourceAnalysis = require("moonlift.source_analysis")
+
 local scalar_ctype = {
     BackBool = "bool",
     BackI8 = "int8_t", BackI16 = "int16_t", BackI32 = "int32_t", BackI64 = "int64_t",
@@ -31,12 +33,101 @@ local function assert_name(name, site)
     assert(type(name) == "string" and name:match("^[_%a][_%w]*$"), site .. " expects an identifier")
 end
 
-local function append_item(self, value)
-    self.items[#self.items + 1] = value.item or value:as_item()
-    if type(value) == "table" and (value.kind == "struct" or value.kind == "union" or value.kind == "handle" or value.kind == "struct_draft" or value.kind == "type") then
-        self.type_values[#self.type_values + 1] = value
+local function as_name_text(name)
+    if type(name) == "string" then return name end
+    if type(name) == "table" then return name.text or name.name or name.key end
+    return nil
+end
+
+local function item_identity_key(self, item)
+    local pvm = require("moonlift.pvm")
+    local Tr = self.session.T.MoonTree
+    local cls = pvm.classof(item)
+    if cls == Tr.ItemFunc and item.func and item.func.name then
+        return "func:" .. item.func.name
+    elseif cls == Tr.ItemExtern and item.func then
+        if item.func.name then return "extern:" .. item.func.name end
+        if item.func.sym then return "extern:" .. (item.func.sym.key or item.func.sym.name) end
+    elseif cls == Tr.ItemType and item.t then
+        local name = item.t.name or (item.t.sym and (item.t.sym.key or item.t.sym.name))
+        if name then return "type:" .. name end
+    elseif cls == Tr.ItemRegionFrag and item.frag then
+        local name = as_name_text(item.frag.name)
+        if name then return "region:" .. name end
+    elseif cls == Tr.ItemExprFrag and item.frag then
+        local name = as_name_text(item.frag.name)
+        if name then return "expr:" .. name end
+    elseif cls == Tr.ItemData and item.data and item.data.id then
+        return "data:" .. as_name_text(item.data.id)
+    elseif cls == Tr.ItemConst and item.c and item.c.name then
+        return "const:" .. item.c.name
+    elseif cls == Tr.ItemStatic and item.s and item.s.name then
+        return "static:" .. item.s.name
     end
+    return nil
+end
+
+local function remember_type_value(self, value)
+    if type(value) ~= "table" then return end
+    if not (value.kind == "struct" or value.kind == "union" or value.kind == "handle" or value.kind == "struct_draft" or value.kind == "type") then return end
+    local name = value.name or (value.decl and value.decl.name)
+    if name then
+        self._type_value_seen_by_name = self._type_value_seen_by_name or {}
+        if self._type_value_seen_by_name[name] then return end
+        self._type_value_seen_by_name[name] = true
+    end
+    self.type_values[#self.type_values + 1] = value
+end
+
+local function append_asdl_item(self, item, source_value)
+    local key = item_identity_key(self, item)
+    if key then
+        self._item_seen_by_key = self._item_seen_by_key or {}
+        if self._item_seen_by_key[key] then
+            remember_type_value(self, source_value)
+            return false
+        end
+        self._item_seen_by_key[key] = true
+    end
+    self.items[#self.items + 1] = item
+    remember_type_value(self, source_value)
+    return true
+end
+
+local function append_item(self, value)
+    append_asdl_item(self, value.item or value:as_item(), value)
     return value
+end
+
+local function append_unique_asdl_item(self, item)
+    append_asdl_item(self, item, nil)
+    return item
+end
+
+local function append_unique_module_item(self, out, seen, item)
+    local key = item_identity_key(self, item)
+    if key then
+        if seen[key] then return false end
+        seen[key] = true
+    end
+    out[#out + 1] = item
+    return true
+end
+
+local function value_source_name(value)
+    if type(value) ~= "table" then return nil end
+    local name = rawget(value, "name")
+    if type(name) == "string" and name ~= "" then return name end
+    local func = rawget(value, "func")
+    if func and func.name then return func.name end
+    local frag = rawget(value, "frag")
+    if frag and frag.name then
+        if type(frag.name) == "table" then return frag.name.text or frag.name.name end
+        return frag.name
+    end
+    local decl = rawget(value, "decl")
+    if decl and decl.name then return decl.name end
+    return nil
 end
 
 function BundleValue:add_type(value)
@@ -51,7 +142,7 @@ end
 function BundleValue:add_region(value)
     if value.frag then
         local Tr = self.session.T.MoonTree
-        self.items[#self.items + 1] = Tr.ItemRegionFrag(value.frag)
+        append_unique_asdl_item(self, Tr.ItemRegionFrag(value.frag))
     end
     return value
 end
@@ -59,7 +150,7 @@ end
 function BundleValue:add_expr_frag(value)
     if value.frag then
         local Tr = self.session.T.MoonTree
-        self.items[#self.items + 1] = Tr.ItemExprFrag(value.frag)
+        append_unique_asdl_item(self, Tr.ItemExprFrag(value.frag))
     end
     return value
 end
@@ -73,6 +164,14 @@ function BundleValue:pack(...)
         end
         if self._pack_seen[v] then return end
         self._pack_seen[v] = true
+        if rawget(v, "_source_analysis") then
+            self.source_analysis = SourceAnalysis.merge_into(self.source_analysis, rawget(v, "_source_analysis"))
+            local source_name = value_source_name(v)
+            if source_name then
+                self.source_analysis.item_analyses = self.source_analysis.item_analyses or {}
+                self.source_analysis.item_analyses[source_name] = rawget(v, "_source_analysis")
+            end
+        end
 
         -- Pack the explicit dependency closure first.  Quoted values record only
         -- the @{} values they actually used; no bundle compile may depend on
@@ -92,20 +191,8 @@ function BundleValue:pack(...)
 
         local generated_items = rawget(v, "_generated_items")
         if type(generated_items) == "table" and #generated_items > 0 then
-            self._generated_item_seen = self._generated_item_seen or {}
-            local T = self.session.T
-            local Tr = T.MoonTree
-            local pvm = require("moonlift.pvm")
             for gi = 1, #generated_items do
-                local item = generated_items[gi]
-                local cls = pvm.classof(item)
-                local key = tostring(item)
-                if cls == Tr.ItemType and item.t and item.t.name then key = "type:" .. item.t.name
-                elseif cls == Tr.ItemFunc and item.func and item.func.name then key = "func:" .. item.func.name end
-                if not self._generated_item_seen[key] then
-                    self._generated_item_seen[key] = true
-                    self.items[#self.items + 1] = item
-                end
+                append_unique_asdl_item(self, generated_items[gi])
             end
         end
 
@@ -202,11 +289,12 @@ function BundleValue:to_asdl()
     local Tr = self.session.T.MoonTree
     local pvm = require("moonlift.pvm")
     local items = {}
+    local seen_items = {}
     local seen_types = {}
     if self.session.global_type_values then
         for _, tv in pairs(self.session.global_type_values) do
             if type(tv) == "table" and tv.item ~= nil and tv.decl ~= nil and tv.decl.name ~= nil and not seen_types[tv.decl.name] then
-                items[#items + 1] = tv.item
+                append_unique_module_item(self, items, seen_items, tv.item)
                 seen_types[tv.decl.name] = true
             end
         end
@@ -214,7 +302,7 @@ function BundleValue:to_asdl()
     for i = 1, #self.items do
         local item = self.items[i]
         if pvm.classof(item) == Tr.ItemType and item.t and item.t.name then seen_types[item.t.name] = true end
-        items[#items + 1] = item
+        append_unique_module_item(self, items, seen_items, item)
     end
     return Tr.Module(Tr.ModuleTyped(self.name), items)
 end
@@ -351,6 +439,9 @@ function BundleValue:_lower_program(opts)
     local Pipeline = require("moonlift.frontend_pipeline").Define(self.session.T)
     local lower_opts = {}
     for k, v in pairs(opts) do lower_opts[k] = v end
+    if self.source_analysis then
+        lower_opts.analysis_ctx = SourceAnalysis.merge_into(lower_opts.analysis_ctx or {}, self.source_analysis)
+    end
     lower_opts.site = opts.site or "host module"
     lower_opts.layout_env = opts.layout_env or self:layout_env()
     return Pipeline.lower_module(self:to_asdl(), lower_opts).program
@@ -361,6 +452,9 @@ function BundleValue:_lower_c_unit(opts)
     local Pipeline = require("moonlift.frontend_pipeline").Define(self.session.T)
     local lower_opts = {}
     for k, v in pairs(opts) do lower_opts[k] = v end
+    if self.source_analysis then
+        lower_opts.analysis_ctx = SourceAnalysis.merge_into(lower_opts.analysis_ctx or {}, self.source_analysis)
+    end
     lower_opts.site = opts.site or "host module c"
     lower_opts.layout_env = opts.layout_env or self:layout_env()
     lower_opts.c_opts = opts

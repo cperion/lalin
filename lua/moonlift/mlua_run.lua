@@ -185,9 +185,14 @@ local function source_line_col(src, offset_1)
     return line, col
 end
 
-local function origin_bindings_for_island(src, island, chunk_name)
+local function origin_bindings_for_island(src, island, chunk_name, host_type_aliases_literal)
     local line, col = source_line_col(src, island.start)
-    local opts = island.name_hint and ("name_hint = " .. quote_lua_string(island.name_hint)) or ""
+    local opts_parts = {}
+    if island.name_hint then opts_parts[#opts_parts + 1] = "name_hint = " .. quote_lua_string(island.name_hint) end
+    if host_type_aliases_literal and host_type_aliases_literal ~= "" then
+        opts_parts[#opts_parts + 1] = "host_type_aliases = " .. host_type_aliases_literal
+    end
+    local opts = table.concat(opts_parts, ", ")
     return "{"
         .. "[\"__moonlift_source_origin\"] = {"
         .. "__moonlift_source = __moonlift_mlua_source, "
@@ -290,39 +295,41 @@ local function transform_mlua(src, chunk_name)
     local cursor = 1
     -- All declared names -> Lua value expressions.
     local vars = {}
-    -- Walk module to discover dotted names (only plain tables, not Moonlift values).
-    local function add_module_vars(lhs, mod)
-        if type(mod) ~= "table" then return end
-        local seen = {}
-        local function walk(t, prefix)
-            if seen[t] then return end
-            seen[t] = true
-            for k, v in pairs(t) do
-                if type(k) == "string" and type(v) == "table" then
-                    local path = prefix .. "." .. k
-                    vars[path] = path
-                    -- Recurse only into plain tables (no metatable = user namespace).
-                    if getmetatable(v) == nil then
-                        walk(v, path)
-                    end
-                end
-            end
-        end
-        walk(mod, lhs)
-    end
-    -- Eagerly load moon.require modules.
-    do
-        local pat = [[local%s+(%w+)%s*=%s*moon%.require%s*%(%s*["']([%w_.]+)["']%s*%)]]
-        for lhs, modname in src:gmatch(pat) do
-            local ok, mod = pcall(moon.require, modname)
-            if ok then add_module_vars(lhs, mod) end
+    local host_type_aliases = {}
+    for _, island in ipairs(scan.islands) do
+        if (island.kind == "struct" or island.kind == "union" or island.kind == "handle")
+            and island.lhs_path and island.name_hint then
+            host_type_aliases[island.lhs_path] = island.name_hint
         end
     end
-    -- Build bindings table literal from vars.
-    local function all_var_bindings()
-        if next(vars) == nil then return "{_=1}" end  -- sentinel to force binder path
+    local function host_type_aliases_literal()
         local entries = {}
-        for k, v in pairs(vars) do
+        for path, local_name in pairs(host_type_aliases) do
+            entries[#entries + 1] = "[" .. quote_lua_string(path) .. "] = " .. quote_lua_string(local_name)
+        end
+        table.sort(entries)
+        return "{" .. table.concat(entries, ", ") .. "}"
+    end
+    local host_type_aliases_src = host_type_aliases_literal()
+    local function demanded_root_bindings(island_src)
+        local roots = {}
+        for root in island_src:gmatch("([_%a][_%w]*)%s*%.") do
+            roots[root] = root
+        end
+        for root in island_src:gmatch("%f[%w_]([%u_][%u%d_]*)%f[^%w_]") do
+            roots[root] = root
+        end
+        return roots
+    end
+    -- Build bindings table literal from current declarations plus roots
+    -- demanded by this island.  Deep paths are resolved lazily by chain.lua.
+    local function all_var_bindings(island_src)
+        local merged = {}
+        for k, v in pairs(vars) do merged[k] = v end
+        for k, v in pairs(demanded_root_bindings(island_src or "")) do merged[k] = v end
+        if next(merged) == nil then return "{_=1}" end  -- sentinel to force binder path
+        local entries = {}
+        for k, v in pairs(merged) do
             entries[#entries + 1] = "[" .. string.format("%q", k) .. "] = (" .. v .. ")"
         end
         return "{" .. table.concat(entries, ", ") .. "}"
@@ -336,11 +343,11 @@ local function transform_mlua(src, chunk_name)
         local api_name = api_name_for_kind[island.kind]
         local hole_bindings = binding_table_for_island(scan, island)
         -- Merge hole bindings with var bindings.
-        local bindings = all_var_bindings()
+        local bindings = all_var_bindings(island_src)
         if hole_bindings ~= "" then
             bindings = merge_binding_literals(hole_bindings, bindings)
         end
-        bindings = merge_binding_literals(bindings, origin_bindings_for_island(src, island, chunk_name))
+        bindings = merge_binding_literals(bindings, origin_bindings_for_island(src, island, chunk_name, host_type_aliases_src))
         local impl_ref, impl_body
         if island.kind == "region" then
             impl_ref, impl_body = split_region_impl_island(island_src)

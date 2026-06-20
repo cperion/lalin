@@ -43,6 +43,7 @@ function M.Define(T, cb)
     local B = T.MoonBind
     local O = T.MoonOpen
     local Tr = T.MoonTree
+    local Sem = T.MoonSem
 
     local wrappers = {}
     local order = {}
@@ -159,13 +160,41 @@ function M.Define(T, cb)
         return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(result_name) })))
     end
 
+    local function payload_type_name(names, cont)
+        return names.result .. "_" .. safe_name(cont.pretty_name) .. "_payload"
+    end
+
+    local function payload_named_type(names, cont)
+        return result_named_type(payload_type_name(names, cont))
+    end
+
+    local function payload_structs_for_frag(frag, names)
+        local out = {}
+        for i = 1, #(frag.conts or {}) do
+            local cont = frag.conts[i]
+            if #(cont.params or {}) > 1 then
+                local fields = {}
+                for j = 1, #cont.params do
+                    fields[#fields + 1] = Ty.FieldDecl(cont.params[j].name, cont.params[j].ty)
+                end
+                out[#out + 1] = Tr.TypeDeclStruct(payload_type_name(names, cont), fields)
+            end
+        end
+        return out
+    end
+
     local function result_type_for_frag(frag, result_name)
         local variants = {}
+        local names = { result = result_name }
         for i = 1, #(frag.conts or {}) do
             local cont = frag.conts[i]
             local fields = {}
-            for j = 1, #(cont.params or {}) do
-                fields[#fields + 1] = Ty.FieldDecl(cont.params[j].name, cont.params[j].ty)
+            if #(cont.params or {}) > 1 then
+                fields[#fields + 1] = Ty.FieldDecl("__payload", payload_named_type(names, cont))
+            else
+                for j = 1, #(cont.params or {}) do
+                    fields[#fields + 1] = Ty.FieldDecl(cont.params[j].name, cont.params[j].ty)
+                end
             end
             variants[#variants + 1] = Ty.VariantDecl(cont.pretty_name, void_ty, fields)
         end
@@ -198,7 +227,17 @@ function M.Define(T, cb)
             for j = 1, #(cont.params or {}) do
                 local p = cont.params[j]
                 block_params[#block_params + 1] = Tr.BlockParam(p.name, p.ty)
-                ctor_args[#ctor_args + 1] = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(p.name))
+                if #(cont.params or {}) <= 1 then
+                    ctor_args[#ctor_args + 1] = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(p.name))
+                end
+            end
+            if #(cont.params or {}) > 1 then
+                local payload_fields = {}
+                for j = 1, #cont.params do
+                    local p = cont.params[j]
+                    payload_fields[#payload_fields + 1] = Tr.FieldInit(p.name, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(p.name)), 0)
+                end
+                ctor_args[#ctor_args + 1] = Tr.ExprAgg(Tr.ExprSurface, payload_named_type(names, cont), payload_fields)
             end
             ret_blocks[#ret_blocks + 1] = Tr.ControlBlock(label, block_params, {
                 Tr.StmtYieldValue(Tr.StmtSurface, Tr.ExprCtor(Tr.ExprSurface, names.result, cont.pretty_name, ctor_args)),
@@ -230,14 +269,20 @@ function M.Define(T, cb)
         local names = names_for_frag(frag)
         local rec = wrappers[names.key]
         if rec ~= nil then return rec end
+        local payload_decls = payload_structs_for_frag(frag, names)
         local result_decl = result_type_for_frag(frag, names.result)
         local wrapper_func = wrapper_func_for_frag(frag, names)
+        local items = {}
+        for i = 1, #payload_decls do items[#items + 1] = Tr.ItemType(payload_decls[i]) end
+        items[#items + 1] = Tr.ItemType(result_decl)
+        items[#items + 1] = Tr.ItemFunc(wrapper_func)
         rec = {
             key = names.key,
             names = names,
             result_type = result_decl,
             wrapper_func = wrapper_func,
-            items = { Tr.ItemType(result_decl), Tr.ItemFunc(wrapper_func) },
+            payload_types = payload_decls,
+            items = items,
             emitted = false,
         }
         wrappers[names.key] = rec
@@ -327,10 +372,20 @@ function M.Define(T, cb)
             local cont = frag.conts[i]
             local binds = {}
             local jump_args = {}
-            for j = 1, #(cont.params or {}) do
-                local p = cont.params[j]
-                binds[#binds + 1] = Tr.VariantBind(p.name, p.ty)
-                jump_args[#jump_args + 1] = Tr.JumpArg(p.name, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(p.name)))
+            if #(cont.params or {}) > 1 then
+                local payload_ty = payload_named_type(rec.names, cont)
+                binds[#binds + 1] = Tr.VariantBind("__payload", payload_ty)
+                local payload_expr = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName("__payload"))
+                for j = 1, #cont.params do
+                    local p = cont.params[j]
+                    jump_args[#jump_args + 1] = Tr.JumpArg(p.name, Tr.ExprField(Tr.ExprSurface, payload_expr, Sem.FieldByName(p.name, p.ty)))
+                end
+            else
+                for j = 1, #(cont.params or {}) do
+                    local p = cont.params[j]
+                    binds[#binds + 1] = Tr.VariantBind(p.name, p.ty)
+                    jump_args[#jump_args + 1] = Tr.JumpArg(p.name, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(p.name)))
+                end
             end
             local target = cont_target_for_name(stmt, cont.pretty_name)
             local body = { target and jump_to_target(target, jump_args, label_map) or Tr.StmtTrap(Tr.StmtSurface) }

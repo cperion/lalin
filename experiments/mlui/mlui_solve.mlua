@@ -1,0 +1,311 @@
+-- mlui_solve.mlua — Layout placement from scene to solve buffer.
+--
+-- Implements R.ui_visit_solve_node and R.ui_solve_scene.
+-- Places every layout node into border+content rects by walking the
+-- scene buffer and computing positions from parent constraints.
+
+local H = moon.require("mlui_types")
+local T = H.T
+local R = H.R
+local F = H.F
+local Mem = moon.require("mlui_memory")
+
+local SOLVE_FLOW = 1
+local SOLVE_FLEX = 2
+local SOLVE_GRID = 3
+local SOLVE_LEAF = 4
+local SOLVE_CANVAS = 5
+local SOLVE_SCROLL = 6
+local SOLVE_WITH_INPUT = 7
+local SOLVE_DRAG_SOURCE = 8
+local SOLVE_DROP_TARGET = 9
+local SOLVE_DROP_SLOT = 10
+local SOLVE_FOCUS_SCOPE = 11
+local SOLVE_LAYER = 12
+local SOLVE_OVERLAY = 13
+local SOLVE_MODAL = 14
+
+local LAYOUT_AXIS_ROW = 0
+local LAYOUT_AXIS_COL = 1
+
+-- Place one node: compute border/content rects from layout style + parent rect.
+-- Uses region parameters for parent rect; current_* threaded through blocks for state.
+local mlui_place_node = region mlui_place_node(kernel: ptr(T.UiKernel),
+                                            idx: index,
+                                            parent_x: f64, parent_y: f64,
+                                            parent_w: f64, parent_h: f64,
+                                            state_i: index, state_end: index,
+                                            state_x: f64, state_y: f64,
+                                            state_w: f64, state_h: f64,
+                                            state_gap: f64;
+    placed(state_i: index, state_end: index,
+           state_x: f64, state_y: f64, state_w: f64, state_h: f64, state_gap: f64,
+           bx: f64, by: f64, bw: f64, bh: f64))
+entry start()
+    let k: T.UiKernel = kernel[0]
+    let scene: T.UiSceneBuffer = k.scene
+    let layout_nodes: ptr(T.UiLayoutNode) = scene.layout_nodes
+    let ln: T.UiLayoutNode = layout_nodes[idx]
+    let st: T.UiLayoutStyle = ln.style
+    let bw: f64 = parent_w
+    let bh: f64 = parent_h
+    let m: T.UiEdges = st.margin
+    let bx: f64 = parent_x + m.left
+    let by: f64 = parent_y + m.top
+    jump placed(state_i = state_i, state_end = state_end,
+                state_x = state_x, state_y = state_y,
+                state_w = state_w, state_h = state_h, state_gap = state_gap,
+                bx = bx, by = by, bw = bw, bh = bh)
+end
+end
+
+-- Build a UiSolveNode and append to solve buffer.
+local mlui_build_solve = region mlui_build_solve(kernel: ptr(T.UiKernel),
+                                             idx: index,
+                                             bx: f64, by: f64, bw: f64, bh: f64,
+                                             state_i: index, state_end: index,
+                                             state_x: f64, state_y: f64,
+                                             state_w: f64, state_h: f64,
+                                             state_gap: f64;
+    built(state_i: index, state_end: index,
+          state_x: f64, state_y: f64, state_w: f64, state_h: f64, state_gap: f64)
+  | oom(needed: index))
+entry start()
+    if kernel[0].solve.n_node >= kernel[0].solve.cap_node then
+        emit Mem.mlui_grow_solve_nodes(kernel, as(index, 1);
+            grown = grow_ok, oom = oom_exit)
+    end
+    jump grow_ok
+end
+block grow_ok()
+    let k: T.UiKernel = kernel[0]
+    let scene: T.UiSceneBuffer = k.scene
+    let layout_nodes: ptr(T.UiLayoutNode) = scene.layout_nodes
+    let ln: T.UiLayoutNode = layout_nodes[idx]
+    let p: T.UiEdges = ln.style.padding
+    let cw: f64 = bw - p.left - p.right
+    let ch: f64 = bh - p.top - p.bottom
+    let solve_buf: T.UiSolveBuffer = k.solve
+    let solve_nodes: ptr(T.UiSolveNode) = solve_buf.nodes
+    let n: index = solve_buf.n_node
+    solve_nodes[n] = T.UiSolveNode{
+        id = ln.id, kind = ln.kind, role = ln.role,
+        focus_policy = ln.focus_policy,
+        layer_kind = ln.layer_kind,
+        overlay_placement = ln.overlay_placement,
+        anchor_id = ln.anchor_id,
+        order = ln.order,
+        modal = ln.modal,
+        first_child = ln.first_child, n_child = ln.n_child,
+        placed = T.UiPlaced{ id = ln.id,
+            border = T.UiRect{ x = bx, y = by, w = bw, h = bh },
+            content = T.UiRect{ x = bx + p.left, y = by + p.top, w = cw, h = ch },
+            baseline = 0.0, clipped = false
+        },
+        text = T.UiTextLayoutRef.from_repr(0),
+        scroll_axis = ln.scroll_axis,
+        scroll_content_w = 0.0, scroll_content_h = 0.0
+    }
+    let pn: ptr(index) = &(kernel[0].solve.n_node)
+    pn[0] = n + 1
+    jump built(state_i = state_i, state_end = state_end,
+               state_x = state_x, state_y = state_y,
+               state_w = state_w, state_h = state_h, state_gap = state_gap)
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+-- Visit decoder
+local ui_visit_solve_node = region @{R.ui_visit_solve_node}
+entry start()
+    let k: u8 = node.kind
+    if k == as(u8, SOLVE_FLOW) then jump flow(id = node.id) end
+    if k == as(u8, SOLVE_FLEX) then jump flex(id = node.id) end
+    if k == as(u8, SOLVE_GRID) then jump grid(id = node.id) end
+    if k == as(u8, SOLVE_LEAF) then jump leaf(id = node.id, text = node.text) end
+    if k == as(u8, SOLVE_CANVAS) then jump canvas(id = node.id) end
+    if k == as(u8, SOLVE_SCROLL) then
+        jump scroll(id = node.id, axis = node.scroll_axis, content_w = node.scroll_content_w, content_h = node.scroll_content_h)
+    end
+    if k == as(u8, SOLVE_WITH_INPUT) then jump with_input(id = node.id, role = node.role) end
+    if k == as(u8, SOLVE_DRAG_SOURCE) then jump with_drag_source(id = node.id) end
+    if k == as(u8, SOLVE_DROP_TARGET) then jump with_drop_target(id = node.id) end
+    if k == as(u8, SOLVE_DROP_SLOT) then jump with_drop_slot(id = node.id) end
+    if k == as(u8, SOLVE_FOCUS_SCOPE) then jump focus_scope(id = node.id, policy = node.focus_policy) end
+    if k == as(u8, SOLVE_LAYER) then jump layer(id = node.id, kind = node.layer_kind, order = node.order) end
+    if k == as(u8, SOLVE_OVERLAY) then
+        jump overlay(id = node.id, anchor = node.anchor_id, placement = node.overlay_placement, modal = node.modal)
+    end
+    if k == as(u8, SOLVE_MODAL) then jump modal(id = node.id) end
+    jump invalid_kind(kind = k)
+end
+end
+
+-- Solve scene: iterate scene nodes, place each, build solve nodes,
+-- place children.  State is threaded through block parameters.
+local ui_solve_scene = region @{R.ui_solve_scene}
+entry start()
+    if kernel[0].scene.n_node == as(index, 0) then jump missing_scene end
+    let pn: ptr(index) = &(kernel[0].solve.n_node)
+    pn[0] = 0
+    let pnc: ptr(index) = &(kernel[0].solve.n_child)
+    pnc[0] = 0
+    if kernel[0].solve.cap_node < kernel[0].scene.n_node then
+        emit Mem.mlui_grow_solve_nodes(kernel, kernel[0].scene.n_node - kernel[0].solve.cap_node;
+            grown = start_ok, oom = oom_exit)
+    end
+    jump start_ok
+end
+block start_ok()
+    jump walk(i = as(index, 0), cx = 0.0, cy = 0.0, cw = env_w, ch = env_h)
+end
+block walk(i: index, cx: f64, cy: f64, cw: f64, ch: f64)
+    if i >= kernel[0].scene.n_node then
+        jump solved(solve = as(ptr(T.UiSolveBuffer), 0))
+    end
+    emit mlui_place_node(kernel, i, cx, cy, cw, ch,
+                         i, as(index, 0), cx, cy, cw, ch, 0.0;
+        placed = placed_ok)
+end
+block placed_ok(state_i: index, state_end: index,
+                state_x: f64, state_y: f64, state_w: f64, state_h: f64, state_gap: f64,
+                bx: f64, by: f64, bw: f64, bh: f64)
+    emit mlui_build_solve(kernel, state_i, bx, by, bw, bh,
+                          state_i, state_end, state_x, state_y, state_w, state_h, state_gap;
+        built = built_ok, oom = oom_exit)
+end
+block built_ok(state_i: index, state_end: index,
+               state_x: f64, state_y: f64, state_w: f64, state_h: f64, state_gap: f64)
+    -- Place children with same constraint
+    emit place_children(kernel, state_i, state_i, state_x, state_y, state_w, state_h,
+                        state_i, state_end, state_x, state_y, state_w, state_h, state_gap;
+        done = child_done, oom = oom_exit)
+end
+block child_done(state_i: index, state_end: index,
+                 state_x: f64, state_y: f64, state_w: f64, state_h: f64, state_gap: f64)
+    -- Next sibling positioned below current
+    let k: T.UiKernel = kernel[0]
+    let scene: T.UiSceneBuffer = k.scene
+    let solve_buf: T.UiSolveBuffer = k.solve
+    let ln: T.UiLayoutNode = scene.layout_nodes[state_i]
+    let placed: T.UiPlaced = solve_buf.nodes[solve_buf.n_node - 1].placed
+    let next_y: f64 = placed.border.y + placed.border.h + ln.style.margin.bottom
+    jump walk(i = state_i + 1, cx = state_x, cy = next_y, cw = state_w, ch = state_h)
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+-- Place children of a node in the layout axis direction.
+local place_children = region place_children(kernel: ptr(T.UiKernel),
+                                              si: index, di: index,
+                                              px: f64, py: f64, pw: f64, ph: f64,
+                                              state_i: index, state_end: index,
+                                              state_x: f64, state_y: f64,
+                                              state_w: f64, state_h: f64,
+                                              state_gap: f64;
+    done(state_i: index, state_end: index,
+         state_x: f64, state_y: f64, state_w: f64, state_h: f64, state_gap: f64)
+  | oom(needed: index))
+entry start()
+    let k: T.UiKernel = kernel[0]
+    let scene: T.UiSceneBuffer = k.scene
+    let ln: T.UiLayoutNode = scene.layout_nodes[si]
+    let fc: u32 = ln.first_child
+    let nc: u32 = ln.n_child
+    if nc == as(u32, 0) then
+        jump done(state_i = state_i, state_end = state_end,
+                  state_x = state_x, state_y = state_y,
+                  state_w = state_w, state_h = state_h, state_gap = state_gap)
+    end
+    let style: T.UiLayoutStyle = ln.style
+    let p: T.UiEdges = style.padding
+    let axis: u8 = style.axis
+    var gap: f64 = style.gap_x
+    if axis == as(u8, LAYOUT_AXIS_COL) then gap = style.gap_y end
+    let child_x: f64 = px + p.left
+    let child_y: f64 = py + p.top
+    if axis == as(u8, LAYOUT_AXIS_ROW) then
+        jump place_row(idx = fc, end_i = fc + nc, x = child_x, y = child_y, w = pw, h = ph, gap = gap)
+    end
+    jump place_col(idx = fc, end_i = fc + nc, x = child_x, y = child_y, w = pw, h = ph, gap = gap)
+end
+block place_row(idx: u32, end_i: u32, x: f64, y: f64, w: f64, h: f64, gap: f64)
+    if idx >= end_i then
+        jump done(state_i = state_i, state_end = state_end,
+                  state_x = state_x, state_y = state_y,
+                  state_w = state_w, state_h = state_h, state_gap = state_gap)
+    end
+    emit mlui_place_node(kernel, as(index, idx), x, y, w, h,
+                         as(index, idx), as(index, end_i), x, y, w, h, gap;
+        placed = row_child)
+end
+block row_child(state_i: index, state_end: index,
+                state_x: f64, state_y: f64, state_w: f64, state_h: f64, state_gap: f64,
+                bx: f64, by: f64, bw: f64, bh: f64)
+    emit mlui_build_solve(kernel, state_i, bx, by, bw, bh,
+                          state_i, state_end, state_x, state_y, state_w, state_h, state_gap;
+        built = row_built, oom = oom_exit)
+end
+block row_built(state_i: index, state_end: index,
+                state_x: f64, state_y: f64, state_w: f64, state_h: f64, state_gap: f64)
+    call place_children(kernel, state_i, state_i, state_x, state_y, state_w, state_h,
+                        state_i, state_end, state_x, state_y, state_w, state_h, state_gap;
+        done = row_next, oom = oom_exit)
+end
+block row_next(state_i: index, state_end: index,
+               state_x: f64, state_y: f64, state_w: f64, state_h: f64, state_gap: f64)
+    let k: T.UiKernel = kernel[0]
+    let solve_buf: T.UiSolveBuffer = k.solve
+    let placed: T.UiPlaced = solve_buf.nodes[solve_buf.n_node - 1].placed
+    let next_x: f64 = placed.border.x + placed.border.w + state_gap
+    jump place_row(idx = as(u32, state_i + 1), end_i = as(u32, state_end),
+                   x = next_x, y = state_y, w = state_w, h = state_h, gap = state_gap)
+end
+block place_col(idx: u32, end_i: u32, x: f64, y: f64, w: f64, h: f64, gap: f64)
+    if idx >= end_i then
+        jump done(state_i = state_i, state_end = state_end,
+                  state_x = state_x, state_y = state_y,
+                  state_w = state_w, state_h = state_h, state_gap = state_gap)
+    end
+    emit mlui_place_node(kernel, as(index, idx), x, y, w, h,
+                         as(index, idx), as(index, end_i), x, y, w, h, gap;
+        placed = col_child)
+end
+block col_child(state_i: index, state_end: index,
+                state_x: f64, state_y: f64, state_w: f64, state_h: f64, state_gap: f64,
+                bx: f64, by: f64, bw: f64, bh: f64)
+    emit mlui_build_solve(kernel, state_i, bx, by, bw, bh,
+                          state_i, state_end, state_x, state_y, state_w, state_h, state_gap;
+        built = col_built, oom = oom_exit)
+end
+block col_built(state_i: index, state_end: index,
+                state_x: f64, state_y: f64, state_w: f64, state_h: f64, state_gap: f64)
+    call place_children(kernel, state_i, state_i, state_x, state_y, state_w, state_h,
+                        state_i, state_end, state_x, state_y, state_w, state_h, state_gap;
+        done = col_next, oom = oom_exit)
+end
+block col_next(state_i: index, state_end: index,
+               state_x: f64, state_y: f64, state_w: f64, state_h: f64, state_gap: f64)
+    let k: T.UiKernel = kernel[0]
+    let solve_buf: T.UiSolveBuffer = k.solve
+    let placed: T.UiPlaced = solve_buf.nodes[solve_buf.n_node - 1].placed
+    let next_y: f64 = placed.border.y + placed.border.h + state_gap
+    jump place_col(idx = as(u32, state_i + 1), end_i = as(u32, state_end),
+                   x = state_x, y = next_y, w = state_w, h = state_h, gap = state_gap)
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+return {
+    mlui_place_node = mlui_place_node,
+    mlui_build_solve = mlui_build_solve,
+    ui_visit_solve_node = ui_visit_solve_node,
+    ui_solve_scene = ui_solve_scene,
+    place_children = place_children,
+}

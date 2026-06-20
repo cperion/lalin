@@ -1,0 +1,59 @@
+-- mlui_measure.mlua — Intrinsic measurement for layout nodes.
+-- Implements R.ui_measure_node.
+
+local H = moon.require("mlui_types")
+local T = H.T
+local R = H.R
+local F = H.F
+
+local LAYOUT_FLOW = 1
+local LAYOUT_LEAF = 4
+local LAYOUT_CANVAS = 5
+
+local LEN_AUTO = 0
+local LEN_HUG = 1
+local LEN_FILL = 2
+local LEN_FIXED = 3
+
+local ui_measure_node = region @{R.ui_measure_node}
+entry start()
+    if node_index >= kernel.scene.n_node then
+        jump missing_node(at = node_index)
+    end
+    let ln: T.UiLayoutNode = kernel.scene.layout_nodes[node_index]
+    let k: u8 = ln.kind
+    let s: T.UiLayoutStyle = ln.style
+    let mw: f64 = constraint.max_w
+    let mh: f64 = constraint.max_h
+    if mw <= 0.0 then mw = 800.0 end
+    if mh <= 0.0 then mh = 600.0 end
+
+    -- Measure width
+    let w: f64 = 100.0
+    if s.w_kind == as(u8, LEN_FIXED) then w = s.w_value
+    elseif s.w_kind == as(u8, LEN_FILL) then w = mw
+    elseif k == as(u8, LAYOUT_CANVAS) then w = 200.0
+    end
+    if w > mw then w = mw end
+    if w < s.min_w then w = s.min_w end
+    if s.max_w > 0.0 and w > s.max_w then w = s.max_w end
+    if w < 0.0 then w = 0.0 end
+
+    -- Measure height
+    let h: f64 = 20.0
+    if s.h_kind == as(u8, LEN_FIXED) then h = s.h_value
+    elseif s.h_kind == as(u8, LEN_FILL) then h = mh
+    elseif k == as(u8, LAYOUT_CANVAS) then h = 200.0
+    end
+    if h > mh then h = mh end
+    if h < s.min_h then h = s.min_h end
+    if s.max_h > 0.0 and h > s.max_h then h = s.max_h end
+    if h < 0.0 then h = 0.0 end
+
+    jump measured(size = T.UiSize{w = w, h = h, baseline = h })
+end
+end
+
+return {
+    ui_measure_node = ui_measure_node,
+}

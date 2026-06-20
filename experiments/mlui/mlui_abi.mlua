@@ -1,0 +1,190 @@
+-- mlui_abi.mlua — Public ABI seals.
+--
+-- Implements every F.* function by composing lower-level regions.
+-- ABI functions may return i32 or T.UiStatus.
+-- They translate typed region exits to status codes exactly once.
+
+local H = moon.require("mlui_types")
+local T = H.T
+local R = H.R
+local F = H.F
+
+local Mem = moon.require("mlui_memory")
+local Validate = moon.require("mlui_program_validate")
+local Import = moon.require("mlui_program_import")
+local Lower = moon.require("mlui_scene_lower")
+local Solve = moon.require("mlui_solve")
+local Render = moon.require("mlui_render_ops")
+local Report = moon.require("mlui_runtime_report")
+local Interact = moon.require("mlui_interact")
+local Resource = moon.require("mlui_resource_store")
+
+-- mlui_kernel_init, mlui_kernel_init_ex, mlui_kernel_close, mlui_kernel_reset_frame
+-- are implemented in mlui_kernel_store.mlua.
+-- Load them from there.
+
+local KS = moon.require("mlui_kernel_store")
+
+--------------------------------------------------------------------------------
+-- F.mlui_lower_solve_render: compose lower + measure + solve + render.
+-- Returns i32 (0 on success).
+--------------------------------------------------------------------------------
+
+local mlui_lower_solve_render = func @{F.mlui_lower_solve_render}
+    return region: i32
+    entry start()
+        let root: T.UiNodeRef = T.UiNodeRef.from_repr(0)
+        emit Lower.ui_lower_scene(kernel, root;
+            lowered = scene_ok,
+            missing_node = miss,
+            duplicate_id = dup,
+            unsupported_node = unsup,
+            oom = oom_exit)
+    end
+    block scene_ok(scene: ptr(T.UiSceneBuffer))
+        emit Solve.ui_solve_scene(kernel, env_w, env_h;
+            solved = solve_ok,
+            missing_scene = no_scene,
+            missing_text = no_text,
+            text_backend_error = txt_err,
+            unsupported_layout = bad_ly,
+            oom = oom_exit)
+    end
+    block solve_ok(solve: ptr(T.UiSolveBuffer))
+        emit Render.ui_render_ops(kernel;
+            rendered = render_ok,
+            missing_solve = no_solve,
+            decor_mismatch = decor_bad,
+            unsupported_node = bad_nd,
+            oom = oom_exit)
+    end
+    block render_ok(ops: ptr(T.UiViewBuffer))
+        yield 0
+    end
+    block miss(node: T.UiNodeRef)
+        yield 6
+    end
+    block dup(id: T.UiId)
+        yield 2
+    end
+    block unsup(kind: u8)
+        yield 5
+    end
+    block no_scene() yield as(i32, 22) end
+    block no_text(content: T.UiContentRef) yield 7 end
+    block txt_err(code: i32) yield 8 end
+    block bad_ly(kind: u8) yield 5 end
+    block no_solve() yield as(i32, 23) end
+    block decor_bad(at: index) yield 9 end
+    block bad_nd(kind: u8) yield 5 end
+    block oom_exit(needed: index)
+        yield 1
+    end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- F.mlui_frame: compose reset/lower/solve/render/report/interact.
+-- Returns T.UiStatus.
+--------------------------------------------------------------------------------
+
+local mlui_frame = func @{F.mlui_frame}
+    return region: T.UiStatus
+    entry start()
+        (*kernel).scene.n_node = 0
+        (*kernel).scene.n_child = 0
+        (*kernel).scene.n_track = 0
+        (*kernel).solve.n_node = 0
+        (*kernel).solve.n_child = 0
+        (*kernel).view.n = 0
+        (*kernel).events.n = 0
+        emit Lower.ui_lower_scene(kernel, root;
+            lowered = scene_ok,
+            missing_node = miss,
+            duplicate_id = dup,
+            unsupported_node = unsup,
+            oom = oom_exit)
+    end
+    block scene_ok(scene: ptr(T.UiSceneBuffer))
+        emit Solve.ui_solve_scene(kernel, env_w, env_h;
+            solved = solve_ok,
+            missing_scene = no_scene,
+            missing_text = no_text,
+            text_backend_error = txt_err,
+            unsupported_layout = bad_ly,
+            oom = oom_exit)
+    end
+    block solve_ok(solve: ptr(T.UiSolveBuffer))
+        emit Render.ui_render_ops(kernel;
+            rendered = render_ok,
+            missing_solve = no_solve,
+            decor_mismatch = decor_bad,
+            unsupported_node = bad_nd,
+            oom = oom_exit)
+    end
+    block render_ok(ops: ptr(T.UiViewBuffer))
+        let view_ops: view(T.UiViewOp) = view(kernel.view.ops, kernel.view.n)
+        emit Report.ui_runtime_report(kernel, view_ops;
+            reported = report_ok,
+            malformed_op = malformed,
+            stack_unbalanced = unbal,
+            oom = oom_exit)
+    end
+    block report_ok(report: T.UiReport)
+        if raw == as(ptr(T.UiRawInput), 0) then
+            yield T.UiStatus{code = 0, detail = 0, at = as(index, 0), needed = 0 }
+        end
+        let raw_val: T.UiRawInput = raw[0]
+        emit Interact.ui_interact_step(kernel, as(ptr(T.UiModel), as(ptr(u8), kernel) + as(index, 0)),
+                                        as(ptr(T.UiReport), as(ptr(u8), 0)), raw_val;
+            stepped = done,
+            stale_focus = stale_f,
+            stale_capture = stale_c,
+            missing_scroll = miss_s,
+            text_input_without_focus = no_focus,
+            oom = oom_exit)
+    end
+    block done(events: ptr(T.UiEventBuffer))
+        yield T.UiStatus{code = 0, detail = 0, at = as(index, 0), needed = 0 }
+    end
+    block miss(node: T.UiNodeRef) yield T.UiStatus{code = 6, detail = 0, at = as(index, 0), needed = 0 } end
+    block dup(id: T.UiId) yield T.UiStatus{code = 2, detail = as(i32, repr(id)), at = as(index, 0), needed = 0 } end
+    block unsup(kind: u8) yield T.UiStatus{code = 5, detail = as(i32, kind), at = as(index, 0), needed = 0 } end
+    block no_scene() yield T.UiStatus{code = as(i32, 22), detail = 0, at = as(index, 0), needed = 0 } end
+    block no_text(content: T.UiContentRef) yield T.UiStatus{code = 7, detail = 0, at = as(index, 0), needed = 0 } end
+    block txt_err(code: i32) yield T.UiStatus{code = 8, detail = code, at = as(index, 0), needed = 0 } end
+    block bad_ly(kind: u8) yield T.UiStatus{code = 5, detail = as(i32, kind), at = as(index, 0), needed = 0 } end
+    block no_solve() yield T.UiStatus{code = as(i32, 23), detail = 0, at = as(index, 0), needed = 0 } end
+    block decor_bad(at: index) yield T.UiStatus{code = 9, detail = 0, at = at, needed = 0 } end
+    block bad_nd(kind: u8) yield T.UiStatus{code = 5, detail = as(i32, kind), at = as(index, 0), needed = 0 } end
+    block malformed(at: index, kind: u8) yield T.UiStatus{code = 10, detail = as(i32, kind), at = at, needed = 0 } end
+    block unbal(kind: u8) yield T.UiStatus{code = 11, detail = as(i32, kind), at = as(index, 0), needed = 0 } end
+    block stale_f(id: T.UiId) yield T.UiStatus{code = 12, detail = as(i32, repr(id)), at = as(index, 0), needed = 0 } end
+    block stale_c(id: T.UiId) yield T.UiStatus{code = 13, detail = as(i32, repr(id)), at = as(index, 0), needed = 0 } end
+    block miss_s(id: T.UiId) yield T.UiStatus{code = 14, detail = as(i32, repr(id)), at = as(index, 0), needed = 0 } end
+    block no_focus() yield T.UiStatus{code = as(i32, 22), detail = 0, at = as(index, 0), needed = 0 } end
+    block oom_exit(needed: index)
+        yield T.UiStatus{code = 1, detail = 0, at = as(index, 0), needed = needed }
+    end
+    end
+end
+
+return {
+    mlui_lower_solve_render = mlui_lower_solve_render,
+    mlui_frame = mlui_frame,
+    -- Re-export ABI functions from kernel_store
+    mlui_kernel_init = KS.mlui_kernel_init,
+    mlui_kernel_init_ex = KS.mlui_kernel_init_ex,
+    mlui_kernel_close = KS.mlui_kernel_close,
+    mlui_kernel_reset_frame = KS.mlui_kernel_reset_frame,
+    -- Re-export ABI functions from other files
+    mlui_validate_program = Validate.mlui_validate_program,
+    mlui_import_auth_buffer = Import.mlui_import_auth_buffer,
+    mlui_load_program = Import.mlui_load_program,
+    mlui_view_ops = Render.mlui_view_ops,
+    mlui_runtime_report = Report.mlui_runtime_report,
+    mlui_report_get = Report.mlui_report_get,
+    mlui_interact_step = Interact.mlui_interact_step,
+    mlui_events = Interact.mlui_events,
+    mlui_clear_events = Interact.mlui_clear_events,
+}

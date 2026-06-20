@@ -83,7 +83,19 @@ module MoonOpen {
 
     SourceTypeEntry = (MoonType.Type ty, MoonType.Type meta_ty) unique
 
-    SourceEnv = (string module_name, MoonOpen.SourceBindingEntry* bindings, MoonOpen.SourceTypeEntry* types) unique
+    HostPath = (MoonCore.Path path) unique
+
+    HostFacet = HostFacetType(MoonOpen.TypeSlot slot) unique
+         | HostFacetLocalType(string local_name) unique
+         | HostFacetExpr(MoonOpen.ExprSlot slot) unique
+         | HostFacetFunc(MoonOpen.ExprSlot slot) unique
+         | HostFacetRegionFrag(MoonOpen.RegionFragSlot slot) unique
+         | HostFacetExprFrag(MoonOpen.ExprFragSlot slot) unique
+         | HostFacetModule(MoonOpen.ModuleSlot slot) unique
+
+    HostBinding = (MoonOpen.HostPath path, MoonOpen.HostFacet* facets) unique
+
+    SourceEnv = (string module_name, MoonOpen.SourceBindingEntry* bindings, MoonOpen.SourceTypeEntry* types, MoonOpen.HostBinding* host_bindings) unique
 
     FragId = (string key, string pretty_name) unique
 

@@ -189,9 +189,23 @@ function M.Define(T)
         local closed = ClosureConvert.module(surfaced)
         local checked = Typecheck.check_module(closed, { collector = collector, layout_env = opts.layout_env, target = c_target, c_target = c_target })
         local layout_env = opts.layout_env
-        if layout_env == nil then
+        do
             local ModuleType = require("moonlift.tree_module_type").Define(T)
-            layout_env = T.MoonSem.LayoutEnv(ModuleType.env(checked.module, c_target).layouts)
+            local generated_env = ModuleType.env(checked.module, c_target)
+            if layout_env == nil then
+                layout_env = T.MoonSem.LayoutEnv(generated_env.layouts)
+            else
+                local merged, seen = {}, {}
+                local function key(layout)
+                    local cls = pvm.classof(layout)
+                    if cls == T.MoonSem.LayoutNamed then return "named\0" .. tostring(layout.module_name) .. "\0" .. tostring(layout.type_name) end
+                    if cls == T.MoonSem.LayoutLocal then return "local\0" .. tostring(layout.sym and layout.sym.name or layout) end
+                    return tostring(layout)
+                end
+                for _, layout in ipairs(layout_env.layouts or {}) do local k = key(layout); if not seen[k] then seen[k] = true; merged[#merged + 1] = layout end end
+                for _, layout in ipairs(generated_env.layouts or {}) do local k = key(layout); if not seen[k] then seen[k] = true; merged[#merged + 1] = layout end end
+                layout_env = T.MoonSem.LayoutEnv(merged)
+            end
         end
         c_opts.layout_env = layout_env
         local resolved = Layout.module(checked.module, layout_env, c_target)

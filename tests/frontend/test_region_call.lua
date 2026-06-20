@@ -78,11 +78,13 @@ assert_no_issues("open validate", OpenValidate.validate(OpenFacts.facts_of_modul
 local result_types, wrappers = 0, 0
 local wrapper
 for _, item in ipairs(expanded.items) do
-    if pvm.classof(item) == Tr.ItemType and pvm.classof(item.t) == Tr.TypeDeclTaggedUnionSugar and item.t.name:match("^__moon_region_call_scan_") then
+    if pvm.classof(item) == Tr.ItemType and pvm.classof(item.t) == Tr.TypeDeclStruct and item.t.name:match("^__moon_region_call_scan_.*_pair_payload$") then
+        assert(#item.t.fields == 2, "multi-payload continuation should get a two-field payload struct")
+    elseif pvm.classof(item) == Tr.ItemType and pvm.classof(item.t) == Tr.TypeDeclTaggedUnionSugar and item.t.name:match("^__moon_region_call_scan_") then
         result_types = result_types + 1
         assert(#item.t.variants == 3, "result type should mirror continuation protocol")
         for _, v in ipairs(item.t.variants) do
-            if v.name == "pair" then assert(#v.fields == 2, "multi-payload continuation should become two fields") end
+            if v.name == "pair" then assert(#v.fields == 1 and v.fields[1].field_name == "__payload", "multi-payload continuation should become one payload field") end
         end
     elseif pvm.classof(item) == Tr.ItemFunc and item.func.name:match("^__moon_region_call_scan_") then
         wrappers = wrappers + 1
@@ -104,7 +106,7 @@ local function walk_stmts(stmts)
             for _, arm in ipairs(stmt.variant_arms or {}) do
                 if arm.variant_name == "pair" then
                     pair_dispatch = pair_dispatch + 1
-                    assert(#arm.binds == 2, "pair dispatch should unpack two payloads")
+                    assert(#arm.binds == 1 and arm.binds[1].name == "__payload", "pair dispatch should bind one payload struct")
                 end
                 walk_stmts(arm.body)
             end

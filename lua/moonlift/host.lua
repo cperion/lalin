@@ -469,6 +469,22 @@ local function merge_bindings(a, b)
     local out = {}
     for k, v in pairs(a or {}) do out[k] = v end
     for k, v in pairs(b or {}) do out[k] = v end
+    if type(a) == "table" and type(b) == "table"
+        and (type(a.__moonlift_parse_opts) == "table" or type(b.__moonlift_parse_opts) == "table") then
+        local opts = {}
+        for k, v in pairs(a.__moonlift_parse_opts or {}) do opts[k] = v end
+        for k, v in pairs(b.__moonlift_parse_opts or {}) do
+            if k == "host_type_aliases" and type(opts[k]) == "table" and type(v) == "table" then
+                local merged_aliases = {}
+                for ak, av in pairs(opts[k]) do merged_aliases[ak] = av end
+                for bk, bv in pairs(v) do merged_aliases[bk] = bv end
+                opts[k] = merged_aliases
+            else
+                opts[k] = v
+            end
+        end
+        out.__moonlift_parse_opts = opts
+    end
     return out
 end
 

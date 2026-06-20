@@ -11,13 +11,12 @@ local T = H.T
 local R = H.R
 local F = H.F
 
-extern default_malloc(size: index): ptr(u8) end
-extern default_realloc(ptr: ptr(u8), new_size: index): ptr(u8) end
-extern default_free(ptr: ptr(u8)): void end
+local default_malloc = extern default_malloc(size: index): ptr(u8) end
+local default_realloc = extern default_realloc(ptr: ptr(u8), new_size: index): ptr(u8) end
+local default_free = extern default_free(ptr: ptr(u8)): void end
 
 local mlui_get_alloc = func(kernel: ptr(T.UiKernel)): ptr(T.UiAllocator)
-    if kernel == as(ptr(T.UiKernel), 0) then return as(ptr(T.UiAllocator), 0) end
-    return kernel.config.allocator
+    return as(ptr(T.UiAllocator), 0)
 end
 
 local mlui_alloc_bytes = func(alloc: ptr(T.UiAllocator), size: index, align: index): ptr(u8)
@@ -75,7 +74,7 @@ entry start()
     let avail: index = cap - count
     if avail >= needed then jump grown end
     let want: index = count + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = p_data[0]
     let old_bytes: index = cap * elem_size
@@ -105,7 +104,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.nodes.slots)
     let old_bytes: index = cap * sizeof(T.UiNodeSlot)
@@ -130,7 +129,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.nodes.id_to_slot)
     let old_bytes: index = cap * sizeof(u32)
@@ -155,7 +154,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.content.slots)
     let old_bytes: index = cap * sizeof(T.UiContentSlot)
@@ -180,7 +179,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.text_layouts.slots)
     let old_bytes: index = cap * sizeof(T.UiTextLayoutSlot)
@@ -205,7 +204,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.paint.programs)
     let old_bytes: index = cap * sizeof(T.UiPaintProgram)
@@ -230,7 +229,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.paint.points)
     let old_bytes: index = cap * sizeof(f64)
@@ -255,7 +254,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.paint.vertices)
     let old_bytes: index = cap * sizeof(T.UiPaintVertex)
@@ -280,7 +279,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.values.slots)
     let old_bytes: index = cap * sizeof(T.UiValueSlot)
@@ -305,7 +304,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.images.slots)
     let old_bytes: index = cap * sizeof(T.UiImageSlot)
@@ -330,7 +329,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.fonts.slots)
     let old_bytes: index = cap * sizeof(T.UiFontSlot)
@@ -355,18 +354,26 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
-    let old_ptr: ptr(u8) = as(ptr(u8), kernel.scene.layout_nodes)
-    let old_bytes: index = cap * sizeof(T.UiLayoutNode)
-    let new_bytes: index = new_cap * sizeof(T.UiLayoutNode)
     let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
-    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
-    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
-    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let old_layout: ptr(u8) = as(ptr(u8), kernel.scene.layout_nodes)
+    let old_layout_bytes: index = cap * sizeof(T.UiLayoutNode)
+    let new_layout_bytes: index = new_cap * sizeof(T.UiLayoutNode)
+    let new_layout: ptr(u8) = mlui_realloc_bytes(alloc, old_layout, old_layout_bytes, new_layout_bytes, 8)
+    if new_layout == as(ptr(u8), 0) then jump oom(needed = new_layout_bytes) end
+    mlui_zero_bytes(new_layout + old_layout_bytes, new_layout_bytes - old_layout_bytes)
+    let old_decor: ptr(u8) = as(ptr(u8), kernel.scene.decor_nodes)
+    let old_decor_bytes: index = cap * sizeof(T.UiDecorNode)
+    let new_decor_bytes: index = new_cap * sizeof(T.UiDecorNode)
+    let new_decor: ptr(u8) = mlui_realloc_bytes(alloc, old_decor, old_decor_bytes, new_decor_bytes, 8)
+    if new_decor == as(ptr(u8), 0) then jump oom(needed = new_decor_bytes) end
+    mlui_zero_bytes(new_decor + old_decor_bytes, new_decor_bytes - old_decor_bytes)
     let p_data: ptr(ptr(T.UiLayoutNode)) = &(kernel.scene.layout_nodes)
+    let p_decor: ptr(ptr(T.UiDecorNode)) = &(kernel.scene.decor_nodes)
     let p_cap: ptr(index) = &(kernel.scene.cap_node)
-    p_data[0] = as(ptr(T.UiLayoutNode), new_ptr)
+    p_data[0] = as(ptr(T.UiLayoutNode), new_layout)
+    p_decor[0] = as(ptr(T.UiDecorNode), new_decor)
     p_cap[0] = new_cap
     jump grown
 end
@@ -380,7 +387,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.scene.decor_nodes)
     let old_bytes: index = cap * sizeof(T.UiDecorNode)
@@ -405,7 +412,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.scene.children)
     let old_bytes: index = cap * sizeof(u32)
@@ -430,7 +437,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.scene.tracks)
     let old_bytes: index = cap * sizeof(T.UiStyleTrack)
@@ -455,7 +462,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.solve.nodes)
     let old_bytes: index = cap * sizeof(T.UiSolveNode)
@@ -480,7 +487,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.solve.children)
     let old_bytes: index = cap * sizeof(u32)
@@ -505,7 +512,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.view.ops)
     let old_bytes: index = cap * sizeof(T.UiViewOp)
@@ -530,7 +537,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), kernel.events.events)
     let old_bytes: index = cap * sizeof(T.UiEvent)
@@ -557,7 +564,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), auth.nodes)
     let old_bytes: index = cap * sizeof(T.UiAuthNode)
@@ -584,7 +591,7 @@ entry start()
     let avail: index = cap - n
     if avail >= needed then jump grown end
     let want: index = n + needed
-    let new_cap: index = cap * 2
+    var new_cap: index = cap * 2
     if new_cap < want then new_cap = want end
     let old_ptr: ptr(u8) = as(ptr(u8), auth.children)
     let old_bytes: index = cap * sizeof(u32)
@@ -601,7 +608,64 @@ entry start()
 end
 end
 
+local mlui_grow_style_tokens = region grow_style_tokens(kernel: ptr(T.UiKernel),
+                                                         styles: ptr(T.UiStyleTokenBuffer),
+                                                         needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = styles.n
+    let cap: index = styles.cap
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    var new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), styles.tokens)
+    let old_bytes: index = cap * sizeof(T.UiStyleToken)
+    let new_bytes: index = new_cap * sizeof(T.UiStyleToken)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_tokens: ptr(ptr(T.UiStyleToken)) = &(styles.tokens)
+    let p_cap: ptr(index) = &(styles.cap)
+    p_tokens[0] = as(ptr(T.UiStyleToken), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
+local mlui_grow_style_tracks = region grow_style_tracks(kernel: ptr(T.UiKernel),
+                                                         styles: ptr(T.UiStyleTokenBuffer),
+                                                         needed: index;
+    grown | oom(needed: index))
+entry start()
+    let n: index = styles.n_track
+    let cap: index = styles.cap_track
+    let avail: index = cap - n
+    if avail >= needed then jump grown end
+    let want: index = n + needed
+    var new_cap: index = cap * 2
+    if new_cap < want then new_cap = want end
+    let old_ptr: ptr(u8) = as(ptr(u8), styles.tracks)
+    let old_bytes: index = cap * sizeof(T.UiStyleTrack)
+    let new_bytes: index = new_cap * sizeof(T.UiStyleTrack)
+    let alloc: ptr(T.UiAllocator) = mlui_get_alloc(kernel)
+    let new_ptr: ptr(u8) = mlui_realloc_bytes(alloc, old_ptr, old_bytes, new_bytes, 8)
+    if new_ptr == as(ptr(u8), 0) then jump oom(needed = new_bytes) end
+    mlui_zero_bytes(new_ptr + old_bytes, new_bytes - old_bytes)
+    let p_tracks: ptr(ptr(T.UiStyleTrack)) = &(styles.tracks)
+    let p_cap: ptr(index) = &(styles.cap_track)
+    p_tracks[0] = as(ptr(T.UiStyleTrack), new_ptr)
+    p_cap[0] = new_cap
+    jump grown
+end
+end
+
 return {
+    default_malloc = default_malloc,
+    default_realloc = default_realloc,
+    default_free = default_free,
     mlui_alloc_bytes = mlui_alloc_bytes,
     mlui_realloc_bytes = mlui_realloc_bytes,
     mlui_free_bytes = mlui_free_bytes,
@@ -629,4 +693,6 @@ return {
     mlui_grow_events = mlui_grow_events,
     mlui_grow_auth_nodes = mlui_grow_auth_nodes,
     mlui_grow_auth_children = mlui_grow_auth_children,
+    mlui_grow_style_tokens = mlui_grow_style_tokens,
+    mlui_grow_style_tracks = mlui_grow_style_tracks,
 }

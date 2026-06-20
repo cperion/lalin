@@ -99,6 +99,88 @@ local function raise_parse_issue(T, parsed, src, level, origin)
   error(issue.message, level or 2)
 end
 
+local function source_path(T, text)
+  local C = T.MoonCore
+  local parts = {}
+  for part in tostring(text):gmatch("[^%.]+") do
+    parts[#parts + 1] = C.Name(part)
+  end
+  return C.Path(parts)
+end
+
+local function splice_key(role, id)
+  return "splice:" .. role .. ":" .. tostring(id)
+end
+
+local function host_binding_for_value(T, key, value)
+  if type(key) ~= "string" or key:match("^__moonlift_") then return nil end
+  local O = T.MoonOpen
+  local facets = {}
+  local tv = type(value)
+  if tv == "number" or tv == "boolean" or tv == "string" then
+    facets[#facets + 1] = O.HostFacetExpr(O.ExprSlot(splice_key("expr", key), key, nil))
+  elseif tv == "table" then
+    local kind = rawget(value, "kind") or rawget(value, "moonlift_quote_kind")
+    local dotted = key:find(".", 1, true) ~= nil
+    if (kind == "func" or kind == "extern_func") and dotted then
+      facets[#facets + 1] = O.HostFacetFunc(O.ExprSlot(splice_key("expr", key), key, nil))
+    elseif kind == "region_frag" and dotted then
+      facets[#facets + 1] = O.HostFacetRegionFrag(O.RegionFragSlot(splice_key("region_frag", key), key))
+    elseif kind == "expr_frag" and dotted then
+      facets[#facets + 1] = O.HostFacetExprFrag(O.ExprFragSlot(splice_key("expr_frag", key), key))
+    elseif kind == "type" or kind == "struct" or kind == "union" or kind == "handle"
+        or type(value.as_type_value) == "function" then
+      facets[#facets + 1] = O.HostFacetType(O.TypeSlot(splice_key("type", key), key))
+    elseif getmetatable(value) == nil or rawget(value, "__moonlift_module_name") ~= nil then
+      facets[#facets + 1] = O.HostFacetModule(O.ModuleSlot(splice_key("module", key), key))
+    end
+  end
+  if #facets == 0 then return nil end
+  return O.HostBinding(O.HostPath(source_path(T, key)), facets)
+end
+
+local function with_source_env_bindings(T, parse_opts, bound_values)
+  local O = T.MoonOpen
+  local base = parse_opts.source_env
+  local host_bindings = {}
+  if base and base.host_bindings then
+    for i = 1, #base.host_bindings do host_bindings[#host_bindings + 1] = base.host_bindings[i] end
+  end
+  for path, local_name in pairs(parse_opts.host_type_aliases or {}) do
+    if type(path) == "string" and type(local_name) == "string" then
+      host_bindings[#host_bindings + 1] = O.HostBinding(
+        O.HostPath(source_path(T, path)),
+        { O.HostFacetLocalType(local_name) }
+      )
+    end
+  end
+  parse_opts.host_type_aliases = nil
+  for k, v in pairs(bound_values) do
+    local binding = host_binding_for_value(T, k, v)
+    if binding ~= nil then host_bindings[#host_bindings + 1] = binding end
+  end
+  parse_opts.source_env = O.SourceEnv(
+    (base and base.module_name) or "",
+    (base and base.bindings) or {},
+    (base and base.types) or {},
+    host_bindings
+  )
+end
+
+local function resolve_bound_path(bound_values, key)
+  if bound_values[key] ~= nil then return bound_values[key] end
+  if type(key) ~= "string" or not key:find(".", 1, true) then return nil end
+  local head, rest = key:match("^([_%a][_%w]*)(.*)$")
+  local value = head and bound_values[head] or nil
+  if value == nil then return nil end
+  for field in tostring(rest or ""):gmatch("%.([_%a][_%w]*)") do
+    if type(value) ~= "table" then return nil end
+    value = value[field]
+    if value == nil then return nil end
+  end
+  return value
+end
+
 ---Bind a chain factory to a session context.
 ---@param session   table  Host session with `.T` ASDL context.
 ---@param callable_mt table? Optional metatable for CallableFunc detection.
@@ -162,16 +244,21 @@ function M.bind(session, callable_mt)
                 .. type(src), 2)
             end
             local T = session.T
-            local parse_opts = bound_values.__moonlift_parse_opts
+            local parse_opts = {}
+            for k, v in pairs(bound_values.__moonlift_parse_opts or {}) do parse_opts[k] = v end
+            with_source_env_bindings(T, parse_opts, bound_values)
             local origin = bound_values.__moonlift_source_origin
             local parsed = parse_fn(T, src, parse_opts)
             if #parsed.issues ~= 0 then
               raise_parse_issue(T, parsed, src, 2, origin)
             end
+            local source_analysis = require("moonlift.source_analysis").build(T, parsed, src, origin)
 
             -- No @{} splices → wrap directly
             if #parsed.splice_slots == 0 then
-              return wrap_fn(parsed.value, parsed, T, src, bound_values)
+              local result = wrap_fn(parsed.value, parsed, T, src, bound_values)
+              if type(result) == "table" then result._source_analysis = source_analysis end
+              return result
             end
 
             -- Resolve @{key} from bound_values → host_splice
@@ -182,7 +269,7 @@ function M.bind(session, callable_mt)
             local used_values = {}
             for _, ss in ipairs(parsed.splice_slots) do
               local key = ss.splice_text or ss.splice_id
-              local v = bound_values[key]
+              local v = resolve_bound_path(bound_values, key)
               if v == nil then
                 error(
                   "no value bound for @" .. tostring(key)
@@ -215,6 +302,7 @@ function M.bind(session, callable_mt)
             -- unrelated funcs/regions and turn a tiny compile into a huge one.
             if type(result) == "table" then
               result._dep_values = used_values
+              result._source_analysis = source_analysis
               -- Some frontend expansions (notably region `call`) synthesize
               -- ordinary Tree items that belong to the quoted value's compile
               -- unit.  Preserve them explicitly so a quote expanded in isolation

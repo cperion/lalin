@@ -14,6 +14,8 @@ function M.Define(T, opts)
     local lookup_param_value
     local lookup_region_frag
     local lookup_expr_frag
+    local expand_type_ref
+    local expand_handle_fact
     local expand_type
     local expand_open_set
     local expand_expr_header
@@ -129,6 +131,14 @@ function M.Define(T, opts)
         local out = {}
         for i = 1, #xs do
             out[#out + 1] = pvm.with(xs[i], { ty = one(expand_type, xs[i].ty, env) })
+        end
+        return out
+    end
+
+    local function expand_handle_facts(xs, env)
+        local out = {}
+        for i = 1, #xs do
+            out[#out + 1] = one(expand_handle_fact, xs[i], env)
         end
         return out
     end
@@ -443,6 +453,28 @@ function M.Define(T, opts)
         end,
     }, { args_cache = "last" })
 
+    expand_type_ref = pvm.phase("moonlift_open_expand_type_ref", {
+        [Ty.TypeRefPath] = function(self) return pvm.once(self) end,
+        [Ty.TypeRefGlobal] = function(self) return pvm.once(self) end,
+        [Ty.TypeRefLocal] = function(self) return pvm.once(self) end,
+        [Ty.TypeRefSlot] = function(self, env)
+            local values = pvm.drain(lookup_slot_value(O.SlotType(self.slot), env))
+            if #values == 1 and pvm.classof(values[1]) == O.SlotValueType then
+                local ty = one(expand_type, values[1].ty, env)
+                local cls = pvm.classof(ty)
+                if cls == Ty.TNamed or cls == Ty.THandle then
+                    return pvm.once(ty.ref)
+                end
+            end
+            return pvm.once(self)
+        end,
+    }, { args_cache = "last" })
+
+    expand_handle_fact = pvm.phase("moonlift_open_expand_handle_fact", {
+        [Ty.HandleDomain] = function(self, env) return pvm.once(Ty.HandleDomain(one(expand_type_ref, self.domain, env))) end,
+        [Ty.HandleTarget] = function(self, env) return pvm.once(Ty.HandleTarget(one(expand_type_ref, self.target, env))) end,
+    }, { args_cache = "last" })
+
     expand_type = pvm.phase("moonlift_open_expand_type", {
         [Ty.TScalar] = function(self) return pvm.once(self) end,
         [Ty.TPtr] = function(self, env) return pvm.once(pvm.with(self, { elem = one(expand_type, self.elem, env) })) end,
@@ -452,7 +484,7 @@ function M.Define(T, opts)
         [Ty.TLease] = function(self, env) return pvm.once(pvm.with(self, { base = one(expand_type, self.base, env) })) end,
         [Ty.TOwned] = function(self, env) return pvm.once(pvm.with(self, { base = one(expand_type, self.base, env) })) end,
         [Ty.TAccess] = function(self, env) return pvm.once(pvm.with(self, { base = one(expand_type, self.base, env) })) end,
-        [Ty.THandle] = function(self) return pvm.once(self) end,
+        [Ty.THandle] = function(self, env) return pvm.once(pvm.with(self, { ref = one(expand_type_ref, self.ref, env) })) end,
         [Ty.TFunc] = function(self, env) return pvm.once(pvm.with(self, { params = expand_types(self.params, env), result = one(expand_type, self.result, env) })) end,
         [Ty.TClosure] = function(self, env) return pvm.once(pvm.with(self, { params = expand_types(self.params, env), result = one(expand_type, self.result, env) })) end,
         [Ty.TNamed] = function(self) return pvm.once(self) end,
@@ -527,7 +559,11 @@ function M.Define(T, opts)
 
     expand_binding = pvm.phase("moonlift_open_expand_binding", {
         [B.Binding] = function(self, env)
-            return pvm.once(pvm.with(self, { ty = one(expand_type, self.ty, env) }))
+            local class = self.class
+            if pvm.classof(class) == B.BindingClassOpenParam then
+                class = B.BindingClassOpenParam(pvm.with(class.param, { ty = one(expand_type, class.param.ty, env) }))
+            end
+            return pvm.once(pvm.with(self, { ty = one(expand_type, self.ty, env), class = class }))
         end,
     }, { args_cache = "last" })
 
@@ -874,7 +910,7 @@ function M.Define(T, opts)
         end,
         [Tr.TypeDeclEnumSugar] = function(self) return pvm.once(self) end,
         [Tr.TypeDeclTaggedUnionSugar] = function(self, env) return pvm.once(pvm.with(self, { variants = expand_variants(self.variants, env) })) end,
-        [Tr.TypeDeclHandle] = function(self) return pvm.once(self) end,
+        [Tr.TypeDeclHandle] = function(self, env) return pvm.once(pvm.with(self, { facts = expand_handle_facts(self.facts, env) })) end,
         [Tr.TypeDeclOpenStruct] = function(self, env)
             return pvm.once(pvm.with(self, { fields = expand_fields(self.fields, env) }))
         end,

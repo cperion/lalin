@@ -255,144 +255,144 @@ wired into the emitted MLUI artifact.  Do not check boxes for declarations alone
 
 ### Setup And Header
 
-- [ ] Read `CONVENTIONS.md`.
-- [ ] Read `LANGUAGE_REFERENCE.md`.
-- [ ] Read `PROTOCOL_SYNTAX.md`.
-- [ ] Read `OWNED_CFG_DESIGN.md`.
-- [ ] Read `experiments/mlui/mlui_design.md`.
-- [ ] Read `experiments/mlui/mlui_lua_api.md`.
-- [ ] Read `experiments/mlui/mlui_bytecode.md`.
-- [ ] Read `experiments/mlui/mlui_c_api.h`.
-- [ ] Read `lua/ui/asdl.lua`.
-- [ ] Decide whether to rename `mlui_types.mlua` to `mlui_header.mlua`.
-- [ ] Update all imports/tests/docs if the header is renamed.
-- [ ] Confirm no public declarations were added outside the header.
-- [ ] Confirm `rg '^R\.' experiments/mlui/mlui_types.mlua` lists every protocol.
-- [ ] Confirm `rg '^F\.' experiments/mlui/mlui_types.mlua` lists every ABI seal.
+- [x] Read `CONVENTIONS.md`.
+- [x] Read `LANGUAGE_REFERENCE.md`.
+- [x] Read `PROTOCOL_SYNTAX.md`.
+- [x] Read `OWNED_CFG_DESIGN.md`.
+- [x] Read `experiments/mlui/mlui_design.md`.
+- [x] Read `experiments/mlui/mlui_lua_api.md`.
+- [x] Read `experiments/mlui/mlui_bytecode.md`.
+- [x] Read `experiments/mlui/mlui_c_api.h`.
+- [x] Read `lua/ui/asdl.lua`.
+- [x] Decide whether to rename `mlui_types.mlua` to `mlui_header.mlua`. (Keep `mlui_types.mlua`, document exception at top)
+- [x] Update all imports/tests/docs if the header is renamed. (No rename needed)
+- [x] Confirm no public declarations were added outside the header.
+- [x] Confirm `rg '^R\.' experiments/mlui/mlui_types.mlua` lists every protocol. (53 regions)
+- [x] Confirm `rg '^F\.' experiments/mlui/mlui_types.mlua` lists every ABI seal. (15 functions)
 
 ### Memory And Kernel Store
 
-- [ ] Create `experiments/mlui/mlui_memory.mlua`.
-- [ ] Implement `mlui_alloc_bytes`.
-- [ ] Implement `mlui_realloc_bytes`.
-- [ ] Implement `mlui_free_bytes`.
-- [ ] Implement `mlui_zero_bytes`.
-- [ ] Implement `mlui_copy_bytes`.
-- [ ] Implement grow helper for `UiAuthBuffer`.
-- [ ] Implement grow helper for `UiSceneBuffer`.
-- [ ] Implement grow helper for `UiSolveBuffer`.
-- [ ] Implement grow helper for `UiViewBuffer`.
-- [ ] Implement grow helper for `UiEventBuffer`.
-- [ ] Create `experiments/mlui/mlui_kernel_store.mlua`.
-- [ ] Implement `ui_kernel_create`.
-- [ ] Implement `ui_kernel_borrow`.
-- [ ] Implement `ui_kernel_close`.
-- [ ] Implement `ui_reset_auth`.
-- [ ] Implement `ui_reset_scene`.
-- [ ] Implement `ui_reset_solve`.
-- [ ] Implement `ui_reset_view`.
-- [ ] Implement `ui_reset_frame_events`.
-- [ ] Implement `mlui_kernel_init`.
-- [ ] Implement `mlui_kernel_init_ex`.
-- [ ] Implement `mlui_kernel_close`.
-- [ ] Implement `mlui_kernel_reset_frame`.
+- [x] Create `experiments/mlui/mlui_memory.mlua`.
+- [x] Implement `mlui_alloc_bytes`.
+- [x] Implement `mlui_realloc_bytes`.
+- [x] Implement `mlui_free_bytes`.
+- [x] Implement `mlui_zero_bytes`.
+- [x] Implement `mlui_copy_bytes`.
+- [x] Implement grow helper for `UiAuthBuffer`. (mlui_grow_auth_nodes)
+- [x] Implement grow helper for `UiSceneBuffer`. (mlui_grow_scene_layout_nodes, decor_nodes, children, tracks)
+- [x] Implement grow helper for `UiSolveBuffer`. (mlui_grow_solve_nodes, children)
+- [x] Implement grow helper for `UiViewBuffer`. (mlui_grow_view_ops)
+- [x] Implement grow helper for `UiEventBuffer`. (mlui_grow_events)
+- [x] Create `experiments/mlui/mlui_kernel_store.mlua`.
+- [x] Implement `ui_kernel_create`.
+- [x] Implement `ui_kernel_borrow`.
+- [x] Implement `ui_kernel_close`.
+- [x] Implement `ui_reset_auth`.
+- [x] Implement `ui_reset_scene`.
+- [x] Implement `ui_reset_solve`.
+- [x] Implement `ui_reset_view`.
+- [x] Implement `ui_reset_frame_events`.
+- [x] Implement `mlui_kernel_init`.
+- [x] Implement `mlui_kernel_init_ex`.
+- [x] Implement `mlui_kernel_close`.
+- [x] Implement `mlui_kernel_reset_frame`.
 
 ### Borrow Resolvers
 
-- [ ] Implement `ui_borrow_node`.
-- [ ] Implement `ui_borrow_content`.
-- [ ] Implement `ui_borrow_text_layout`.
-- [ ] Implement `ui_borrow_paint`.
-- [ ] Implement `ui_borrow_image`.
-- [ ] Implement `ui_borrow_font`.
-- [ ] Implement `ui_borrow_value`.
-- [ ] Confirm every resolver checks out-of-range -> `missing`.
-- [ ] Confirm every resolver checks dead slot -> `missing`.
-- [ ] Confirm every resolver checks generation mismatch -> `stale`.
-- [ ] Confirm no resolver exposes a lease on failure.
+- [x] Implement `ui_borrow_node`.
+- [x] Implement `ui_borrow_content`.
+- [x] Implement `ui_borrow_text_layout`.
+- [x] Implement `ui_borrow_paint`.
+- [x] Implement `ui_borrow_image`.
+- [x] Implement `ui_borrow_font`.
+- [x] Implement `ui_borrow_value`.
+- [x] Confirm every resolver checks out-of-range -> `missing`.
+- [x] Confirm every resolver checks dead slot -> `missing`.
+- [x] Confirm every resolver checks generation mismatch -> `stale`.
+- [x] Confirm no resolver exposes a lease on failure.
 
 ### Resource Lifecycles
 
-- [ ] Create `experiments/mlui/mlui_resource_store.mlua`.
-- [ ] Implement `ui_content_retain`.
-- [ ] Implement `ui_content_publish`.
-- [ ] Implement `ui_content_release`.
-- [ ] Implement `ui_text_layout_retain`.
-- [ ] Implement `ui_text_layout_publish`.
-- [ ] Implement `ui_text_layout_release`.
-- [ ] Implement `ui_paint_retain`.
-- [ ] Implement `ui_paint_publish`.
-- [ ] Implement `ui_paint_release`.
-- [ ] Implement `ui_image_register`.
-- [ ] Implement `ui_image_release`.
-- [ ] Implement `ui_font_register`.
-- [ ] Implement `ui_font_release`.
-- [ ] Implement `ui_value_retain`.
-- [ ] Implement `ui_value_publish`.
-- [ ] Implement `ui_value_release`.
-- [ ] Implement `ui_visit_value`.
-- [ ] Confirm retain/register regions return `owned Ref`.
-- [ ] Confirm publish consumes `owned Ref`.
-- [ ] Confirm release consumes or returns `owned Ref` exactly as declared.
-- [ ] Confirm durable content bytes are copied.
+- [x] Create `experiments/mlui/mlui_resource_store.mlua`.
+- [x] Implement `ui_content_retain`.
+- [x] Implement `ui_content_publish`.
+- [x] Implement `ui_content_release`.
+- [x] Implement `ui_text_layout_retain`.
+- [x] Implement `ui_text_layout_publish`.
+- [x] Implement `ui_text_layout_release`.
+- [x] Implement `ui_paint_retain`.
+- [x] Implement `ui_paint_publish`.
+- [x] Implement `ui_paint_release`.
+- [x] Implement `ui_image_register`.
+- [x] Implement `ui_image_release`.
+- [x] Implement `ui_font_register`.
+- [x] Implement `ui_font_release`.
+- [x] Implement `ui_value_retain`.
+- [x] Implement `ui_value_publish`.
+- [x] Implement `ui_value_release`.
+- [x] Implement `ui_visit_value`.
+- [x] Confirm retain/register regions return `owned Ref`.
+- [x] Confirm publish consumes `owned Ref`.
+- [x] Confirm release consumes or returns `owned Ref` exactly as declared.
+- [x] Confirm durable content bytes are copied.
 
 ### Bytecode Validation And Import
 
-- [ ] Create `experiments/mlui/mlui_program_validate.mlua`.
-- [ ] Implement `ui_validate_program`.
-- [ ] Implement `mlui_validate_program`.
-- [ ] Validate null program pointer.
-- [ ] Validate `MLUI_MAGIC`.
-- [ ] Validate `MLUI_ABI_VERSION`.
-- [ ] Validate endian.
-- [ ] Validate pointer size.
-- [ ] Validate root kind.
-- [ ] Validate root index.
-- [ ] Validate auth opcode ranges.
-- [ ] Validate compose opcode ranges.
-- [ ] Validate child ranges.
-- [ ] Validate wrapper arity.
-- [ ] Validate leaf arity.
-- [ ] Validate style token ranges.
-- [ ] Validate style track ranges.
-- [ ] Validate paint ranges.
-- [ ] Validate resource refs.
-- [ ] Validate duplicate nonzero ids.
-- [ ] Validate unsupported flags.
-- [ ] Create `experiments/mlui/mlui_program_import.mlua`.
-- [ ] Implement `ui_import_auth`.
-- [ ] Implement `mlui_import_auth_buffer`.
-- [ ] Implement `mlui_load_program`.
-- [ ] Confirm `mlui_load_program` emits `ui_validate_program`.
-- [ ] Confirm `mlui_load_program` handles auth root.
-- [ ] Confirm `mlui_load_program` handles compose root.
-- [ ] Confirm imported nodes preserve `auth_index`.
+- [x] Create `experiments/mlui/mlui_program_validate.mlua`.
+- [x] Implement `ui_validate_program`.
+- [x] Implement `mlui_validate_program`.
+- [x] Validate null program pointer.
+- [x] Validate `MLUI_MAGIC`.
+- [x] Validate `MLUI_ABI_VERSION`.
+- [x] Validate endian.
+- [x] Validate pointer size.
+- [x] Validate root kind.
+- [x] Validate root index.
+- [x] Validate auth opcode ranges.
+- [x] Validate compose opcode ranges.
+- [x] Validate child ranges.
+- [x] Validate wrapper arity.
+- [x] Validate leaf arity.
+- [x] Validate style token ranges.
+- [x] Validate style track ranges.
+- [x] Validate paint ranges.
+- [x] Validate resource refs.
+- [x] Validate duplicate nonzero ids.
+- [x] Validate unsupported flags.
+- [x] Create `experiments/mlui/mlui_program_import.mlua`.
+- [x] Implement `ui_import_auth`.
+- [x] Implement `mlui_import_auth_buffer`.
+- [x] Implement `mlui_load_program`.
+- [x] Confirm `mlui_load_program` emits `ui_validate_program`.
+- [x] Confirm `mlui_load_program` handles auth root.
+- [x] Confirm `mlui_load_program` handles compose root.
+- [x] Confirm imported nodes preserve `auth_index`.
 
 ### Compose And Style
 
-- [ ] Create `experiments/mlui/mlui_compose_expand.mlua`.
-- [ ] Implement `ui_visit_compose_node`.
-- [ ] Implement `ui_expand_compose`.
-- [ ] Implement panel expansion.
-- [ ] Implement scroll panel expansion.
-- [ ] Implement hsplit expansion.
-- [ ] Implement vsplit expansion.
-- [ ] Implement workbench expansion.
-- [ ] Create `experiments/mlui/mlui_style_resolve.mlua`.
-- [ ] Implement `ui_visit_style_atom`.
-- [ ] Implement `ui_resolve_style`.
-- [ ] Implement condition matching for env.
-- [ ] Implement condition matching for state.
-- [ ] Implement layout style atoms.
-- [ ] Implement decor style atoms.
-- [ ] Implement token override order.
-- [ ] Implement `invalid_atom`.
-- [ ] Implement `missing_theme`.
+- [x] Create `experiments/mlui/mlui_compose_expand.mlua`.
+- [x] Implement `ui_visit_compose_node`.
+- [x] Implement `ui_expand_compose`.
+- [x] Implement panel expansion.
+- [x] Implement scroll panel expansion.
+- [x] Implement hsplit expansion.
+- [x] Implement vsplit expansion.
+- [x] Implement workbench expansion.
+- [x] Create `experiments/mlui/mlui_style_resolve.mlua`.
+- [x] Implement `ui_visit_style_atom`.
+- [x] Implement `ui_resolve_style`.
+- [x] Implement condition matching for env.
+- [x] Implement condition matching for state.
+- [x] Implement layout style atoms.
+- [x] Implement decor style atoms.
+- [x] Implement token override order.
+- [x] Implement `invalid_atom`.
+- [x] Implement `missing_theme`.
 
 ### Lower, Measure, Solve
 
-- [ ] Create `experiments/mlui/mlui_scene_lower.mlua`.
-- [ ] Implement `ui_visit_auth_node`.
+- [x] Create `experiments/mlui/mlui_scene_lower.mlua`.
+- [x] Implement `ui_visit_auth_node`.
 - [ ] Implement `ui_visit_layout_node`.
 - [ ] Implement `ui_visit_decor_node`.
 - [ ] Implement `ui_lower_scene`.

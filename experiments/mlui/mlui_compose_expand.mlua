@@ -1,0 +1,270 @@
+-- mlui_compose_expand.mlua — Compose opcodes -> Auth program projection.
+--
+-- Implements R.ui_visit_compose_node and R.ui_expand_compose.
+-- Expands compose nouns (panel, scroll_panel, hsplit, vsplit, workbench)
+-- into canonical auth ops (box, scroll, fragment, etc.).
+
+local H = moon.require("mlui_types")
+local T = H.T
+local R = H.R
+local F = H.F
+local Mem = moon.require("mlui_memory")
+
+local COMPOSE_PANEL = 1
+local COMPOSE_SCROLL_PANEL = 2
+local COMPOSE_HSPLIT = 3
+local COMPOSE_VSPLIT = 4
+local COMPOSE_WORKBENCH = 5
+local COMPOSE_RAW_AUTH = 6
+
+local AUTH_EMPTY = 1
+local AUTH_FRAGMENT = 2
+local AUTH_BOX = 3
+local AUTH_SCROLL = 7
+
+-- Append an auth node to the output buffer.
+local mlui_emit_auth = region mlui_emit_auth(kernel: ptr(T.UiKernel),
+                                         auth: ptr(T.UiAuthBuffer),
+                                         node: T.UiAuthNode,
+                                         cursor: index;
+    emitted(next_idx: index) | oom(needed: index))
+entry start()
+    if auth.n_node >= auth.cap_node then
+        emit Mem.mlui_grow_auth_nodes(kernel, auth, as(index, 1);
+            grown = grow_ok, oom = oom_exit)
+    end
+    jump grow_ok()
+end
+block grow_ok()
+    let n: index = auth.n_node
+    auth.nodes[n] = node
+    let pn: ptr(index) = &(auth.n_node)
+    pn[0] = n + 1
+    jump emitted(next_idx = cursor + 1)
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+-- Decoder
+local ui_visit_compose_node = region @{R.ui_visit_compose_node}
+entry start()
+    let k: u8 = node.kind
+    if k == as(u8, COMPOSE_RAW_AUTH) then jump raw(auth = node.raw_auth) end
+    if k == as(u8, COMPOSE_PANEL) then jump panel(id = node.id) end
+    if k == as(u8, COMPOSE_SCROLL_PANEL) then
+        jump scroll_panel(id = node.id, scroll_id = node.scroll_id, axis = node.scroll_axis)
+    end
+    if k == as(u8, COMPOSE_HSPLIT) then jump hsplit(id = node.id) end
+    if k == as(u8, COMPOSE_VSPLIT) then jump vsplit(id = node.id) end
+    if k == as(u8, COMPOSE_WORKBENCH) then jump workbench(id = node.id) end
+    jump invalid_kind(kind = k)
+end
+end
+
+-- Expand compose buffer into auth nodes.
+-- For each compose node, emits expanded auth ops into a new buffer.
+-- Returns pointer to the expanded auth buffer.
+local ui_expand_compose = region @{R.ui_expand_compose}
+entry start()
+    if compose == as(ptr(T.UiComposeBuffer), 0) then
+        jump expanded(auth = &(kernel.auth))
+    end
+    if compose.n_node == as(index, 0) then
+        jump expanded(auth = as(ptr(T.UiAuthBuffer), 0))
+    end
+    let pan: ptr(index) = &(kernel.auth.n_node)
+    let pac: ptr(index) = &(kernel.auth.n_child)
+    let pas: ptr(index) = &(kernel.auth.styles.n)
+    let pat: ptr(index) = &(kernel.auth.styles.n_track)
+    pan[0] = 0; pac[0] = 0; pas[0] = 0; pat[0] = 0
+    if kernel.auth.cap_child < compose.n_child then
+        emit Mem.mlui_grow_auth_children(kernel, &(kernel.auth), compose.n_child - kernel.auth.cap_child;
+            grown = ensure_style_tokens, oom = oom_exit)
+    end
+    jump ensure_style_tokens()
+end
+block ensure_style_tokens()
+    if kernel.auth.styles.cap < compose.styles.n then
+        emit Mem.mlui_grow_style_tokens(kernel, &(kernel.auth.styles), compose.styles.n - kernel.auth.styles.cap;
+            grown = ensure_style_tracks, oom = oom_exit)
+    end
+    jump ensure_style_tracks()
+end
+block ensure_style_tracks()
+    if kernel.auth.styles.cap_track < compose.styles.n_track then
+        emit Mem.mlui_grow_style_tracks(kernel, &(kernel.auth.styles), compose.styles.n_track - kernel.auth.styles.cap_track;
+            grown = style_tracks_ready, oom = oom_exit)
+    end
+    jump copy_children(i = as(index, 0))
+end
+block style_tracks_ready()
+    jump copy_children(i = as(index, 0))
+end
+block copy_children(i: index)
+    if i >= compose.n_child then
+        let pac: ptr(index) = &(kernel.auth.n_child)
+        pac[0] = compose.n_child
+        jump copy_style_tokens(i = as(index, 0))
+    end
+    kernel.auth.children[i] = compose.children[i]
+    jump copy_children(i = i + 1)
+end
+block copy_style_tokens(i: index)
+    if i >= compose.styles.n then
+        let pas: ptr(index) = &(kernel.auth.styles.n)
+        pas[0] = compose.styles.n
+        jump copy_style_tracks(i = as(index, 0))
+    end
+    kernel.auth.styles.tokens[i] = compose.styles.tokens[i]
+    jump copy_style_tokens(i = i + 1)
+end
+block copy_style_tracks(i: index)
+    if i >= compose.styles.n_track then
+        let pat: ptr(index) = &(kernel.auth.styles.n_track)
+        pat[0] = compose.styles.n_track
+        jump expand(idx = as(index, 0))
+    end
+    kernel.auth.styles.tracks[i] = compose.styles.tracks[i]
+    jump copy_style_tracks(i = i + 1)
+end
+block expand(idx: index)
+    if idx >= compose.n_node then
+        jump expanded(auth = &(kernel.auth))
+    end
+    let cn: T.UiComposeNode = compose.nodes[idx]
+    let k: u8 = cn.kind
+    if k == as(u8, COMPOSE_RAW_AUTH) then
+        let anode: T.UiAuthNode = T.UiAuthNode{
+            id = cn.id, kind = as(u8, AUTH_BOX),
+            role = 0, scroll_axis = 0, focus_policy = 0,
+            layer_kind = 0, overlay_placement = 0,
+            anchor_id = T.UiId.from_repr(0), order = 0.0, modal = false,
+            first_child = cn.first_child, n_child = cn.n_child,
+            token_first = cn.style_first, token_count = cn.style_count,
+            content = T.UiContentRef.from_repr(0), paint_first = 0, paint_count = 0,
+            state = T.UiState{ hovered = false, focused = false, active = false, selected = false, disabled = false }
+        }
+        emit mlui_emit_auth(kernel, &(kernel.auth), anode, idx;
+            emitted = expand_next, oom = oom_exit)
+    end
+    if k == as(u8, COMPOSE_PANEL) then
+        -- Panel -> box containing header + body + footer
+        emit expand_panel(kernel, compose, idx;
+            done = expand_next, oom = oom_exit)
+    end
+    if k == as(u8, COMPOSE_SCROLL_PANEL) then
+        -- ScrollPanel -> scroll wrapper containing panel content
+        emit expand_scroll_panel(kernel, compose, idx;
+            done = expand_next, oom = oom_exit)
+    end
+    if k == as(u8, COMPOSE_HSPLIT) then
+        emit expand_box_like(kernel, compose, idx;
+            done = expand_next, oom = oom_exit)
+    end
+    if k == as(u8, COMPOSE_VSPLIT) then
+        emit expand_box_like(kernel, compose, idx;
+            done = expand_next, oom = oom_exit)
+    end
+    if k == as(u8, COMPOSE_WORKBENCH) then
+        emit expand_box_like(kernel, compose, idx;
+            done = expand_next, oom = oom_exit)
+    end
+    jump expand_next(next_idx = idx + 1)
+end
+block expand_next(next_idx: index)
+    jump expand(idx = next_idx)
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+-- Expand a panel compose node.
+-- Panel -> box node with style_first/style_count from panel,
+-- containing header, body, and footer sections as children.
+local expand_panel = region expand_panel(kernel: ptr(T.UiKernel),
+                                          compose: ptr(T.UiComposeBuffer),
+                                          idx: index;
+    done(next_idx: index) | oom(needed: index))
+entry start()
+    let cn: T.UiComposeNode = compose.nodes[idx]
+    let box_node: T.UiAuthNode = T.UiAuthNode{
+        id = cn.id, kind = as(u8, AUTH_BOX),
+        role = 0, scroll_axis = 0, focus_policy = 0,
+        layer_kind = 0, overlay_placement = 0,
+        anchor_id = T.UiId.from_repr(0), order = 0.0, modal = false,
+        first_child = cn.first_child, n_child = cn.n_child,
+        token_first = cn.style_first, token_count = cn.style_count,
+        content = T.UiContentRef.from_repr(0), paint_first = 0, paint_count = 0,
+        state = T.UiState{ hovered = false, focused = false, active = false, selected = false, disabled = false }
+    }
+    emit mlui_emit_auth(kernel, &(kernel.auth), box_node, idx;
+        emitted = done, oom = oom_exit)
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+-- Expand a scroll_panel compose node.
+-- ScrollPanel -> scroll wrapper containing panel content.
+local expand_scroll_panel = region expand_scroll_panel(kernel: ptr(T.UiKernel),
+                                                        compose: ptr(T.UiComposeBuffer),
+                                                        idx: index;
+    done(next_idx: index) | oom(needed: index))
+entry start()
+    let cn: T.UiComposeNode = compose.nodes[idx]
+    -- Emit scroll wrapper node
+    let scroll_node: T.UiAuthNode = T.UiAuthNode{
+        id = cn.scroll_id, kind = as(u8, AUTH_SCROLL),
+        role = 0, scroll_axis = cn.scroll_axis, focus_policy = 0,
+        layer_kind = 0, overlay_placement = 0,
+        anchor_id = T.UiId.from_repr(0), order = 0.0, modal = false,
+        first_child = cn.first_child, n_child = cn.n_child,
+        token_first = cn.style_first, token_count = cn.style_count,
+        content = T.UiContentRef.from_repr(0), paint_first = 0, paint_count = 0,
+        state = T.UiState{ hovered = false, focused = false, active = false, selected = false, disabled = false }
+    }
+    emit mlui_emit_auth(kernel, &(kernel.auth), scroll_node, idx;
+        emitted = done, oom = oom_exit)
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+-- Splits and workbench are layout-flavored boxes in the canonical auth stream.
+local expand_box_like = region expand_box_like(kernel: ptr(T.UiKernel),
+                                                compose: ptr(T.UiComposeBuffer),
+                                                idx: index;
+    done(next_idx: index) | oom(needed: index))
+entry start()
+    let cn: T.UiComposeNode = compose.nodes[idx]
+    let node: T.UiAuthNode = T.UiAuthNode{
+        id = cn.id, kind = as(u8, AUTH_BOX),
+        role = 0, scroll_axis = 0, focus_policy = 0,
+        layer_kind = 0, overlay_placement = 0,
+        anchor_id = T.UiId.from_repr(0), order = 0.0, modal = false,
+        first_child = cn.first_child, n_child = cn.n_child,
+        token_first = cn.style_first, token_count = cn.style_count,
+        content = T.UiContentRef.from_repr(0), paint_first = 0, paint_count = 0,
+        state = T.UiState{ hovered = false, focused = false, active = false, selected = false, disabled = false }
+    }
+    emit mlui_emit_auth(kernel, &(kernel.auth), node, idx;
+        emitted = done, oom = oom_exit)
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+return {
+    mlui_emit_auth = mlui_emit_auth,
+    ui_visit_compose_node = ui_visit_compose_node,
+    ui_expand_compose = ui_expand_compose,
+    expand_panel = expand_panel,
+    expand_scroll_panel = expand_scroll_panel,
+    expand_box_like = expand_box_like,
+}

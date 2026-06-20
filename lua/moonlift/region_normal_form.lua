@@ -16,10 +16,16 @@ local pvm = require("moonlift.pvm")
 
 local M = {}
 
-local function append_all(dst, src)
-    for i = 1, #(src or {}) do dst[#dst + 1] = src[i] end
-    return dst
-end
+    local function append_all(dst, src)
+        for i = 1, #(src or {}) do dst[#dst + 1] = src[i] end
+        return dst
+    end
+
+    local function concat_lists(...)
+        local out = {}
+        for i = 1, select("#", ...) do append_all(out, select(i, ...)) end
+        return out
+    end
 
 function M.Define(T, cb)
     cb = cb or {}
@@ -448,7 +454,9 @@ function M.Define(T, cb)
         local capture_params, capture_args = capture_runtime_params(frag, env)
         local nested_target_param_map = merge_param_maps(target_param_map, frag_target_param_map(frag, map, capture_params))
 
-        local entry_params, entry_args = append_all(runtime_block_params(frag, local_env), capture_params), {}
+        local current_runtime_params = runtime_block_params(frag, local_env)
+        local enclosing_params = concat_lists(current_runtime_params, capture_params)
+        local entry_params, entry_args = concat_lists(current_runtime_params, capture_params), {}
         for i = 1, #frag.params do
             entry_args[#entry_args + 1] = Tr.JumpArg(runtime_param_name(frag.params[i]), one_expand_expr(stmt.args[i], env))
         end
@@ -461,18 +469,18 @@ function M.Define(T, cb)
 
         local nested_enclosing_map = merge_label_maps(enclosing_map, map)
         local entry_body, entry_nested = normalize_stmts(rewrite_runtime_stmts(frag.entry.body, frag), local_env, child_stack, nested_enclosing_map, nested_target_param_map)
-        local entry_body2 = add_capture_args_to_enclosing_jumps(cb.expand_stmts(rebase_stmts(entry_body, map, frag, capture_params), local_env), nested_target_param_map, capture_params)
+        local entry_body2 = add_capture_args_to_enclosing_jumps(cb.expand_stmts(rebase_stmts(entry_body, map, frag, capture_params), local_env), nested_target_param_map, enclosing_params)
         local blocks = { Tr.ControlBlock(map[frag.entry.label.name], entry_params, entry_body2) }
         for i = 1, #entry_nested do blocks[#blocks + 1] = rebase_control_block_body(entry_nested[i], map, frag, capture_params) end
 
         for i = 1, #frag.blocks do
             local block = frag.blocks[i]
-            local params = append_all(runtime_block_params(frag, local_env), capture_params)
+            local params = concat_lists(current_runtime_params, capture_params)
             for j = 1, #block.params do
                 params[#params + 1] = pvm.with(block.params[j], { ty = one_expand_type(block.params[j].ty, local_env) })
             end
             local block_body, block_nested = normalize_stmts(rewrite_runtime_stmts(block.body, frag), local_env, child_stack, nested_enclosing_map, nested_target_param_map)
-            local block_body2 = add_capture_args_to_enclosing_jumps(cb.expand_stmts(rebase_stmts(block_body, map, frag, capture_params), local_env), nested_target_param_map, capture_params)
+            local block_body2 = add_capture_args_to_enclosing_jumps(cb.expand_stmts(rebase_stmts(block_body, map, frag, capture_params), local_env), nested_target_param_map, enclosing_params)
             blocks[#blocks + 1] = Tr.ControlBlock(map[block.label.name], params, block_body2)
             for j = 1, #block_nested do blocks[#blocks + 1] = rebase_control_block_body(block_nested[j], map, frag, capture_params) end
         end
@@ -625,7 +633,7 @@ function M.Define(T, cb)
             })
         end
         local body, blocks = normalize_stmts(block.body, env, { order = {}, seen = {} }, enclosing_map, target_param_map)
-        return pvm.with(block, { params = params, body = body }), blocks
+        return pvm.with(block, { params = params, body = cb.expand_stmts(body, env) }), blocks
     end
 
     local function normalize_control_block(block, env, enclosing_map, target_param_map)
@@ -635,7 +643,7 @@ function M.Define(T, cb)
             params[#params + 1] = pvm.with(block.params[i], { ty = one_expand_type(block.params[i].ty, env) })
         end
         local body, blocks = normalize_stmts(block.body, env, { order = {}, seen = {} }, enclosing_map, target_param_map)
-        return pvm.with(block, { params = params, body = body }), blocks
+        return pvm.with(block, { params = params, body = cb.expand_stmts(body, env) }), blocks
     end
 
     local function normalize_control_stmt_region(region, env)

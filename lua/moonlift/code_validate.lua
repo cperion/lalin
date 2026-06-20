@@ -35,6 +35,8 @@ function M.Define(T)
     local function type_eq(a, b, seen)
         if a == b then return true end
         local ac, bc = pvm.classof(a), pvm.classof(b)
+        if ac == Code.CodeTyLease then return type_eq(a.base, b, seen) end
+        if bc == Code.CodeTyLease then return type_eq(a, b.base, seen) end
         if ac ~= bc then
             -- Opaque data pointers are intentionally compatible with typed data pointers.
             if ac == Code.CodeTyDataPtr and bc == Code.CodeTyDataPtr then return a.pointee == nil or b.pointee == nil end

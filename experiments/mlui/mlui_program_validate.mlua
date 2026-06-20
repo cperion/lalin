@@ -1,0 +1,238 @@
+-- mlui_program_validate.mlua — UiProgram bytecode validation.
+--
+-- Implements:
+--   R.ui_validate_program
+--   F.mlui_validate_program
+
+local H = moon.require("mlui_types")
+local T = H.T
+local R = H.R
+local F = H.F
+
+local MLUI_MAGIC = 0x4d4c5549
+local MLUI_ABI_VERSION = 1
+
+-- Auth opcode ranges
+local AUTH_INVALID = 0
+local AUTH_EMPTY = 1
+local AUTH_FRAGMENT = 2
+local AUTH_BOX = 3
+local AUTH_TEXT = 4
+local AUTH_TEXT_REF = 5
+local AUTH_PAINT = 6
+local AUTH_SCROLL = 7
+local AUTH_WITH_INPUT = 8
+local AUTH_WITH_DRAG_SOURCE = 9
+local AUTH_WITH_DROP_TARGET = 10
+local AUTH_WITH_DROP_SLOT = 11
+local AUTH_WITH_STATE = 12
+local AUTH_FOCUS_SCOPE = 13
+local AUTH_LAYER = 14
+local AUTH_OVERLAY = 15
+local AUTH_MODAL = 16
+local AUTH_MAX = 16
+
+-- Compose opcode ranges
+local COMPOSE_INVALID = 0
+local COMPOSE_PANEL = 1
+local COMPOSE_SCROLL_PANEL = 2
+local COMPOSE_HSPLIT = 3
+local COMPOSE_VSPLIT = 4
+local COMPOSE_WORKBENCH = 5
+local COMPOSE_RAW_AUTH = 6
+local COMPOSE_MAX = 6
+
+-- Wrappers require exactly one child; leaves require zero.
+local MLUI_WRAPPER_BOX = 7   -- Scroll and above are wrappers
+local MLUI_FRAGMENT_KIND = 2
+
+local ui_validate_program = region @{R.ui_validate_program}
+entry start()
+    if program == as(ptr(T.UiProgram), 0) then
+        jump invalid_header(code = 1)
+    end
+    let hdr: T.UiProgramHeader = program.header
+    if hdr.magic ~= as(u32, MLUI_MAGIC) then
+        jump invalid_header(code = 2)
+    end
+    if hdr.abi_version ~= as(u32, MLUI_ABI_VERSION) then
+        jump invalid_header(code = 3)
+    end
+    if hdr.endian ~= as(u8, 1) then
+        jump invalid_header(code = 4)
+    end
+    if hdr.pointer_size ~= as(u8, 8) then
+        jump invalid_header(code = 5)
+    end
+    let rk: u8 = hdr.root_kind
+    if rk > as(u8, 1) then
+        jump invalid_header(code = 6)
+    end
+    if rk == as(u8, 0) then
+        let auth: ptr(T.UiAuthBuffer) = program.auth
+        if auth == as(ptr(T.UiAuthBuffer), 0) then
+            jump invalid_section(section = as(u8, 1))
+        end
+        let ri: u32 = hdr.root_index
+        if as(index, ri) >= auth.n_node then
+            jump invalid_range(section = as(u8, 1), first = ri, count = as(u32, 1))
+        end
+        jump check_auth_nodes(auth = auth, i = as(index, 0))
+    end
+    if rk == as(u8, 1) then
+        let comp: ptr(T.UiComposeBuffer) = program.compose
+        if comp == as(ptr(T.UiComposeBuffer), 0) then
+            jump invalid_section(section = as(u8, 5))
+        end
+        jump check_compose_nodes(comp = comp, i = as(index, 0))
+    end
+    jump invalid_header(code = 7)
+end
+block check_auth_nodes(auth: ptr(T.UiAuthBuffer), i: index)
+    if i >= auth.n_node then
+        jump check_ids(auth = auth, ai = as(index, 0))
+    end
+    let node: T.UiAuthNode = auth.nodes[i]
+    let kind: u8 = node.kind
+    if kind > as(u8, AUTH_MAX) then
+        jump invalid_opcode(at = i, kind = kind)
+    end
+    if kind == as(u8, AUTH_INVALID) then
+        jump invalid_opcode(at = i, kind = kind)
+    end
+    -- Check child count consistency
+    let nc: u32 = node.n_child
+    if kind >= as(u8, MLUI_WRAPPER_BOX) then
+        if nc ~= as(u32, 1) then
+            jump invalid_arity(at = i, expected = as(u32, 1), got = nc)
+        end
+    end
+    if kind == as(u8, AUTH_EMPTY) or kind == as(u8, AUTH_TEXT) or
+       kind == as(u8, AUTH_TEXT_REF) or kind == as(u8, AUTH_PAINT) then
+        if nc ~= as(u32, 0) then
+            jump invalid_arity(at = i, expected = as(u32, 0), got = nc)
+        end
+    end
+    -- Validate child range
+    let fc: u32 = node.first_child
+    if nc > as(u32, 0) then
+        if as(index, fc) >= auth.n_child then
+            jump invalid_range(section = as(u8, 2), first = fc, count = nc)
+        end
+        if as(index, fc + nc) > auth.n_child then
+            jump invalid_range(section = as(u8, 2), first = fc, count = nc)
+        end
+    end
+    -- Validate style token range
+    let tf: u32 = node.token_first
+    let tc: u32 = node.token_count
+    if tc > as(u32, 0) then
+        if as(index, tf) >= auth.styles.n then
+            jump invalid_range(section = as(u8, 3), first = tf, count = tc)
+        end
+        if as(index, tf + tc) > auth.styles.n then
+            jump invalid_range(section = as(u8, 3), first = tf, count = tc)
+        end
+    end
+    -- Validate paint range
+    if kind == as(u8, AUTH_PAINT) then
+        let pf: u32 = node.paint_first
+        let pc: u32 = node.paint_count
+        let paint: ptr(T.UiPaintStore) = program.paint
+        if paint ~= as(ptr(T.UiPaintStore), 0) then
+            if pc > as(u32, 0) then
+                if as(index, pf) >= paint.n_program then
+                    jump invalid_range(section = as(u8, 7), first = pf, count = pc)
+                end
+            end
+        end
+    end
+    jump check_auth_nodes(auth = auth, i = i + 1)
+end
+block check_compose_nodes(comp: ptr(T.UiComposeBuffer), i: index)
+    if i >= comp.n_node then
+        jump valid(root_kind = as(u8, 1), root_index = as(u32, i))
+    end
+    let node: T.UiComposeNode = comp.nodes[i]
+    let kind: u8 = node.kind
+    if kind > as(u8, COMPOSE_MAX) then
+        jump invalid_opcode(at = i, kind = kind)
+    end
+    if kind == as(u8, COMPOSE_INVALID) then
+        jump invalid_opcode(at = i, kind = kind)
+    end
+    jump check_compose_nodes(comp = comp, i = i + 1)
+end
+block check_ids(auth: ptr(T.UiAuthBuffer), ai: index)
+    if ai >= auth.n_node then
+        jump valid(root_kind = as(u8, 0), root_index = as(u32, 0))
+    end
+    let node: T.UiAuthNode = auth.nodes[ai]
+    let id: T.UiId = node.id
+    if id ~= T.UiId.from_repr(0) then
+        jump scan_id(auth = auth, ai = ai, id = id, j = as(index, 0))
+    end
+    jump check_ids(auth = auth, ai = ai + 1)
+end
+block scan_id(auth: ptr(T.UiAuthBuffer), ai: index, id: T.UiId, j: index)
+    if j >= ai then jump check_ids(auth = auth, ai = ai + 1) end
+    let other: T.UiAuthNode = auth.nodes[j]
+    if other.id == id then
+        jump duplicate_id(id = id)
+    end
+    jump scan_id(auth = auth, ai = ai, id = id, j = j + 1)
+end
+end
+
+local mlui_validate_program = func @{F.mlui_validate_program}
+    return region: T.UiStatus
+    entry start()
+        emit ui_validate_program(kernel, program;
+            valid = ok,
+            invalid_header = bad_header,
+            invalid_section = bad_section,
+            invalid_opcode = bad_opcode,
+            invalid_range = bad_range,
+            invalid_arity = bad_arity,
+            duplicate_id = dup_id,
+            missing_resource = missing_res,
+            unsupported_feature = unsupported,
+            oom = oom_exit)
+    end
+    block ok(root_kind: u8, root_index: u32)
+        yield T.UiStatus{code = 0, detail = as(i32, root_kind), at = as(index, root_index), needed = 0 }
+    end
+    block bad_header(code: i32)
+        yield T.UiStatus{code = 15, detail = code, at = as(index, 0), needed = 0 }
+    end
+    block bad_section(section: u8)
+        yield T.UiStatus{code = 16, detail = as(i32, section), at = as(index, 0), needed = 0 }
+    end
+    block bad_opcode(at: index, kind: u8)
+        yield T.UiStatus{code = 17, detail = as(i32, kind), at = at, needed = 0 }
+    end
+    block bad_range(section: u8, first: u32, count: u32)
+        yield T.UiStatus{code = 18, detail = as(i32, section), at = as(index, first), needed = as(index, count) }
+    end
+    block bad_arity(at: index, expected: u32, got: u32)
+        yield T.UiStatus{code = 19, detail = as(i32, expected), at = at, needed = as(index, got) }
+    end
+    block dup_id(id: T.UiId)
+        yield T.UiStatus{code = 2, detail = as(i32, repr(id)), at = as(index, 0), needed = 0 }
+    end
+    block missing_res(section: u8, index_: u32)
+        yield T.UiStatus{code = 20, detail = as(i32, section), at = as(index, index_), needed = 0 }
+    end
+    block unsupported(flags: u32)
+        yield T.UiStatus{code = 21, detail = as(i32, flags), at = as(index, 0), needed = 0 }
+    end
+    block oom_exit(needed: index)
+        yield T.UiStatus{code = 1, detail = 0, at = as(index, 0), needed = needed }
+    end
+    end
+end
+
+return {
+    ui_validate_program = ui_validate_program,
+    mlui_validate_program = mlui_validate_program,
+}

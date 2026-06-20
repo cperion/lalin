@@ -1,0 +1,418 @@
+-- mlui_render_ops.mlua — Solve/decor -> UiViewOp stream.
+--
+-- Implements:
+--   R.ui_visit_view_op, R.ui_visit_paint_program, R.ui_render_ops, F.mlui_view_ops
+--
+-- Emits a single ordered stream of UiViewOp rows from solve+decor buffers.
+-- Uses an explicit stack threaded through block parameters for tree traversal.
+
+local H = moon.require("mlui_types")
+local T = H.T
+local R = H.R
+local F = H.F
+local Mem = moon.require("mlui_memory")
+
+local VIEW_BOX = 1
+local VIEW_TEXT = 2
+local VIEW_PAINT = 3
+local VIEW_PUSH_TX = 6
+local VIEW_POP_TX = 7
+local VIEW_PUSH_SCROLL = 8
+local VIEW_POP_SCROLL = 9
+local VIEW_HIT = 10
+local VIEW_FOCUS = 11
+local VIEW_CURSOR = 12
+local VIEW_DRAG_SOURCE = 13
+local VIEW_DROP_TARGET = 14
+local VIEW_DROP_SLOT = 15
+local VIEW_BEGIN_FOCUS_SCOPE = 16
+local VIEW_END_FOCUS_SCOPE = 17
+local VIEW_BEGIN_LAYER = 18
+local VIEW_END_LAYER = 19
+local VIEW_OVERLAY = 20
+local VIEW_MODAL_BARRIER = 21
+
+local SOLVE_FLOW = 1
+local SOLVE_FLEX = 2
+local SOLVE_GRID = 3
+local SOLVE_LEAF = 4
+local SOLVE_CANVAS = 5
+local SOLVE_SCROLL = 6
+local SOLVE_WITH_INPUT = 7
+local SOLVE_DRAG_SOURCE = 8
+local SOLVE_DROP_TARGET = 9
+local SOLVE_DROP_SLOT = 10
+local SOLVE_FOCUS_SCOPE = 11
+local SOLVE_LAYER = 12
+local SOLVE_OVERLAY = 13
+local SOLVE_MODAL = 14
+
+-- Append one UiViewOp to kernel.video buffer.
+local mlui_write_op = region mlui_write_op(kernel: ptr(T.UiKernel), v: T.UiViewOp;
+    written | oom(needed: index))
+entry start()
+    if kernel[0].view.n >= kernel[0].view.cap then
+        emit Mem.mlui_grow_view_ops(kernel, as(index, 1);
+            grown = grow_ok, oom = oom_exit)
+    end
+    jump grow_ok
+end
+block grow_ok()
+    let k: T.UiKernel = kernel[0]
+    let view_buf: T.UiViewBuffer = k.view
+    let ops: ptr(T.UiViewOp) = view_buf.ops
+    let n: index = view_buf.n
+    ops[n] = v
+    let pn: ptr(index) = &(kernel[0].view.n)
+    pn[0] = n + 1
+    jump written
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+-- Helper: emit a Box op for a solve node.
+local mlui_emit_box = region mlui_emit_box(kernel: ptr(T.UiKernel),
+                                       si: index, di: index;
+    done | oom(needed: index))
+entry start()
+    let k: T.UiKernel = kernel[0]
+    let solve_buf: T.UiSolveBuffer = k.solve
+    let scene: T.UiSceneBuffer = k.scene
+    let sn: T.UiSolveNode = solve_buf.nodes[si]
+    let dn: T.UiDecorNode = scene.decor_nodes[di]
+    if dn.style.box.opacity > 0.0 or dn.style.box.bg.rgba8 ~= as(u32, 0) or
+       dn.style.box.border_w > 0.0 then
+        let op: T.UiViewOp = T.UiViewOp{
+            kind = as(u8, VIEW_BOX), id = sn.id, rect = sn.placed.border,
+            other_id = T.UiId.from_repr(0), first = 0, count = 0, axis = 0,
+            role = 0, policy = 0, cursor = 0, layer_kind = 0,
+            placement = 0, flags = 0, order = dn.style.box.opacity,
+            dx = 0.0, dy = 0.0, content_w = 0.0, content_h = 0.0
+        }
+        emit mlui_write_op(kernel, op; written = done, oom = oom_exit)
+    end
+    jump done
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+-- Helper: emit a Text op for leaf nodes with text.
+local mlui_emit_text = region mlui_emit_text(kernel: ptr(T.UiKernel), si: index;
+    done | oom(needed: index))
+entry start()
+    let k: T.UiKernel = kernel[0]
+    let solve_buf: T.UiSolveBuffer = k.solve
+    let sn: T.UiSolveNode = solve_buf.nodes[si]
+    if sn.text ~= T.UiTextLayoutRef.from_repr(0) then
+        let op: T.UiViewOp = T.UiViewOp{
+            kind = as(u8, VIEW_TEXT), id = sn.id, rect = sn.placed.content,
+            other_id = T.UiId.from_repr(0), first = repr(sn.text), count = 0,
+            axis = 0, role = 0, policy = 0, cursor = 0, layer_kind = 0,
+            placement = 0, flags = 0, order = 0.0, dx = 0.0, dy = 0.0,
+            content_w = 0.0, content_h = 0.0
+        }
+        emit mlui_write_op(kernel, op; written = done, oom = oom_exit)
+    end
+    jump done
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+-- Helper: emit semantic wrapper ops for a node.
+-- Returns the number of child indices consumed (always 0 or the child count).
+local mlui_emit_wrappers = region mlui_emit_wrappers(kernel: ptr(T.UiKernel), si: index;
+    done(has_push: bool) | oom(needed: index))
+entry start()
+    let k: T.UiKernel = kernel[0]
+    let solve_buf: T.UiSolveBuffer = k.solve
+    let sn: T.UiSolveNode = solve_buf.nodes[si]
+    let k: u8 = sn.kind
+    let id: T.UiId = sn.id
+    let placed: T.UiPlaced = sn.placed
+    -- Check if node has push/pop wrappers
+    if k == as(u8, SOLVE_SCROLL) then
+        let op: T.UiViewOp = T.UiViewOp{
+            kind = as(u8, VIEW_PUSH_SCROLL), id = id, rect = placed.content,
+            other_id = T.UiId.from_repr(0), first = 0, count = 0,
+            axis = sn.scroll_axis, role = 0, policy = 0, cursor = 0,
+            layer_kind = 0, placement = 0, flags = 0, order = 0.0,
+            dx = 0.0, dy = 0.0, content_w = sn.scroll_content_w,
+            content_h = sn.scroll_content_h
+        }
+        emit mlui_write_op(kernel, op; written = wrap_done_true, oom = oom_exit)
+    end
+    if k == as(u8, SOLVE_FOCUS_SCOPE) then
+        let op: T.UiViewOp = T.UiViewOp{
+            kind = as(u8, VIEW_BEGIN_FOCUS_SCOPE), id = id, rect = placed.content,
+            other_id = T.UiId.from_repr(0), first = 0, count = 0, axis = 0,
+            role = 0, policy = sn.focus_policy, cursor = 0, layer_kind = 0,
+            placement = 0, flags = 0, order = 0.0, dx = 0.0, dy = 0.0,
+            content_w = 0.0, content_h = 0.0
+        }
+        emit mlui_write_op(kernel, op; written = wrap_done_true, oom = oom_exit)
+    end
+    if k == as(u8, SOLVE_LAYER) then
+        let op: T.UiViewOp = T.UiViewOp{
+            kind = as(u8, VIEW_BEGIN_LAYER), id = id, rect = placed.content,
+            other_id = T.UiId.from_repr(0), first = 0, count = 0, axis = 0,
+            role = 0, policy = 0, cursor = 0, layer_kind = sn.layer_kind,
+            placement = 0, flags = 0, order = sn.order, dx = 0.0, dy = 0.0,
+            content_w = 0.0, content_h = 0.0
+        }
+        emit mlui_write_op(kernel, op; written = wrap_done_true, oom = oom_exit)
+    end
+    if k == as(u8, SOLVE_OVERLAY) then
+        let op: T.UiViewOp = T.UiViewOp{
+            kind = as(u8, VIEW_OVERLAY), id = id, rect = placed.content,
+            other_id = sn.anchor_id, first = 0, count = 0, axis = 0,
+            role = 0, policy = 0, cursor = 0, layer_kind = 0,
+            placement = sn.overlay_placement, flags = as(u8, 0),
+            order = 0.0, dx = 0.0, dy = 0.0, content_w = 0.0, content_h = 0.0
+        }
+        emit mlui_write_op(kernel, op; written = wrap_done_true, oom = oom_exit)
+    end
+    if k == as(u8, SOLVE_MODAL) then
+        let op: T.UiViewOp = T.UiViewOp{
+            kind = as(u8, VIEW_MODAL_BARRIER), id = id, rect = placed.content,
+            other_id = T.UiId.from_repr(0), first = 0, count = 0, axis = 0,
+            role = 0, policy = 0, cursor = 0, layer_kind = 0,
+            placement = 0, flags = as(u8, 1), order = 0.0, dx = 0.0, dy = 0.0,
+            content_w = 0.0, content_h = 0.0
+        }
+        emit mlui_write_op(kernel, op; written = wrap_done_true, oom = oom_exit)
+    end
+    let hp: bool = k == as(u8, SOLVE_SCROLL) or k == as(u8, SOLVE_FOCUS_SCOPE) or
+                   k == as(u8, SOLVE_LAYER) or k == as(u8, SOLVE_OVERLAY) or
+                   k == as(u8, SOLVE_MODAL)
+    jump done(has_push = hp)
+end
+block wrap_done_true()
+    jump done(has_push = true)
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+-- Helper: emit Pop wrappers for a node.
+local mlui_emit_pop_wrappers = region mlui_emit_pop_wrappers(kernel: ptr(T.UiKernel), si: index;
+    done | oom(needed: index))
+entry start()
+    let k: T.UiKernel = kernel[0]
+    let solve_buf: T.UiSolveBuffer = k.solve
+    let sn: T.UiSolveNode = solve_buf.nodes[si]
+    let k: u8 = sn.kind
+    if k == as(u8, SOLVE_MODAL) then
+        let op: T.UiViewOp = T.UiViewOp{kind = as(u8, VIEW_MODAL_BARRIER), id = sn.id,
+            rect = sn.placed.content, other_id = T.UiId.from_repr(0), first = 0, count = 0,
+            axis = 0, role = 0, policy = 0, cursor = 0, layer_kind = 0,
+            placement = 0, flags = as(u8, 0), order = 0.0, dx = 0.0, dy = 0.0,
+            content_w = 0.0, content_h = 0.0}
+        emit mlui_write_op(kernel, op; written = pop1, oom = oom_exit)
+    end
+    if k == as(u8, SOLVE_OVERLAY) then
+        let op: T.UiViewOp = T.UiViewOp{kind = as(u8, VIEW_MODAL_BARRIER), id = sn.id,
+            rect = sn.placed.content, other_id = T.UiId.from_repr(0), first = 0, count = 0,
+            axis = 0, role = 0, policy = 0, cursor = 0, layer_kind = 0,
+            placement = 0, flags = as(u8, 0), order = 0.0, dx = 0.0, dy = 0.0,
+            content_w = 0.0, content_h = 0.0}
+        emit mlui_write_op(kernel, op; written = pop2, oom = oom_exit)
+    end
+    if k == as(u8, SOLVE_LAYER) then
+        let op: T.UiViewOp = T.UiViewOp{kind = as(u8, VIEW_END_LAYER), id = sn.id,
+            rect = T.UiRect{ x = 0.0, y = 0.0, w = 0.0, h = 0.0 }, other_id = T.UiId.from_repr(0), first = 0, count = 0,
+            axis = 0, role = 0, policy = 0, cursor = 0, layer_kind = 0,
+            placement = 0, flags = as(u8, 0), order = 0.0, dx = 0.0, dy = 0.0,
+            content_w = 0.0, content_h = 0.0}
+        emit mlui_write_op(kernel, op; written = pop3, oom = oom_exit)
+    end
+    if k == as(u8, SOLVE_FOCUS_SCOPE) then
+        let op: T.UiViewOp = T.UiViewOp{kind = as(u8, VIEW_END_FOCUS_SCOPE), id = sn.id,
+            rect = T.UiRect{ x = 0.0, y = 0.0, w = 0.0, h = 0.0 }, other_id = T.UiId.from_repr(0), first = 0, count = 0,
+            axis = 0, role = 0, policy = 0, cursor = 0, layer_kind = 0,
+            placement = 0, flags = as(u8, 0), order = 0.0, dx = 0.0, dy = 0.0,
+            content_w = 0.0, content_h = 0.0}
+        emit mlui_write_op(kernel, op; written = pop4, oom = oom_exit)
+    end
+    if k == as(u8, SOLVE_SCROLL) then
+        let op: T.UiViewOp = T.UiViewOp{kind = as(u8, VIEW_POP_SCROLL), id = sn.id,
+            rect = sn.placed.content, other_id = T.UiId.from_repr(0), first = 0, count = 0,
+            axis = 0, role = 0, policy = 0, cursor = 0, layer_kind = 0,
+            placement = 0, flags = as(u8, 0), order = 0.0, dx = 0.0, dy = 0.0,
+            content_w = 0.0, content_h = 0.0}
+        emit mlui_write_op(kernel, op; written = pop5, oom = oom_exit)
+    end
+    jump done
+end
+block pop1() jump done end
+block pop2() jump done end
+block pop3() jump done end
+block pop4() jump done end
+block pop5() jump done end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+-- Main render node: emit box, text, paints, semantic ops, traverse children, pop.
+local mlui_render_node = region mlui_render_node(kernel: ptr(T.UiKernel), si: index, di: index,
+                                                state_idx: u32, state_end: u32,
+                                                state_did_push: bool;
+    done(state_idx: u32, state_end: u32, state_did_push: bool) | oom(needed: index))
+entry start()
+    -- Box
+    emit mlui_emit_box(kernel, si, di; done = emit_text_phase, oom = oom_exit)
+end
+block emit_text_phase()
+    -- Text leaf
+    emit mlui_emit_text(kernel, si; done = emit_hit_phase, oom = oom_exit)
+end
+block emit_hit_phase()
+    let k: T.UiKernel = kernel[0]
+    let solve_buf: T.UiSolveBuffer = k.solve
+    let sn: T.UiSolveNode = solve_buf.nodes[si]
+    if sn.role ~= as(u8, 0) then
+        let op: T.UiViewOp = T.UiViewOp{
+            kind = as(u8, VIEW_HIT), id = sn.id, rect = sn.placed.content,
+            other_id = T.UiId.from_repr(0), first = 0, count = 0, axis = 0,
+            role = sn.role, policy = 0, cursor = 0, layer_kind = 0,
+            placement = 0, flags = 0, order = 0.0, dx = 0.0, dy = 0.0,
+            content_w = 0.0, content_h = 0.0}
+        emit mlui_write_op(kernel, op; written = emit_wrap_phase, oom = oom_exit)
+    end
+    jump emit_wrap_phase
+end
+block emit_wrap_phase()
+    -- Semantic wrappers (scroll, focus scope, layer, overlay, modal)
+    emit mlui_emit_wrappers(kernel, si; done = render_children_phase, oom = oom_exit)
+end
+block render_children_phase(has_push: bool)
+    let k: T.UiKernel = kernel[0]
+    let solve_buf: T.UiSolveBuffer = k.solve
+    let sn: T.UiSolveNode = solve_buf.nodes[si]
+    let fc: u32 = sn.first_child
+    let nc: u32 = sn.n_child
+    if nc > as(u32, 0) then
+        jump render_child_loop(idx = fc, end_i = fc + nc, did_push = has_push)
+    end
+    jump pop_phase(did_push = has_push)
+end
+block render_child_loop(idx: u32, end_i: u32, did_push: bool)
+    if idx >= end_i then jump pop_phase(did_push = did_push) end
+    call mlui_render_node(kernel, as(index, idx), as(index, idx), idx, end_i, did_push;
+        done = child_done, oom = oom_exit)
+end
+block child_done(state_idx: u32, state_end: u32, state_did_push: bool)
+    jump render_child_loop(idx = state_idx + 1, end_i = state_end, did_push = state_did_push)
+end
+block pop_phase(did_push: bool)
+    if did_push then
+        emit mlui_emit_pop_wrappers(kernel, si; done = pop_done, oom = oom_exit)
+    end
+    jump pop_done
+end
+block pop_done()
+    jump done(state_idx = state_idx, state_end = state_end, state_did_push = state_did_push)
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+--------------------------------------------------------------------------------
+-- R.ui_render_ops: entry point.
+--------------------------------------------------------------------------------
+
+local ui_render_ops = region @{R.ui_render_ops}
+entry start()
+    if kernel[0].solve.n_node == as(index, 0) then jump missing_solve end
+    if kernel[0].solve.n_node ~= kernel[0].scene.n_node then
+        jump decor_mismatch(at = kernel[0].solve.n_node)
+    end
+    emit mlui_render_node(kernel, as(index, 0), as(index, 0), as(u32, 0), as(u32, 0), false;
+        done = all_done, oom = oom_exit)
+end
+block all_done(state_idx: u32, state_end: u32, state_did_push: bool)
+    jump rendered(ops = as(ptr(T.UiViewBuffer), 0))
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+end
+
+-- Decoder regions
+
+local ui_visit_view_op = region @{R.ui_visit_view_op}
+entry start()
+    let kind: u8 = op.kind
+    if kind == as(u8, VIEW_BOX) then jump box(id = op.id) end
+    if kind == as(u8, VIEW_TEXT) then jump text(id = op.id) end
+    if kind == as(u8, VIEW_PAINT) then jump paint(id = op.id, first = op.first, count = op.count) end
+    if kind == as(u8, 4) then jump push_clip_rect(id = op.id) end
+    if kind == as(u8, 5) then jump pop_clip(id = op.id) end
+    if kind == as(u8, 6) then jump push_tx(id = op.id, dx = op.dx, dy = op.dy) end
+    if kind == as(u8, 7) then jump pop_tx(id = op.id) end
+    if kind == as(u8, 8) then jump push_scroll(id = op.id) end
+    if kind == as(u8, 9) then jump pop_scroll(id = op.id) end
+    if kind == as(u8, 10) then jump hit(id = op.id) end
+    if kind == as(u8, 11) then jump focus(id = op.id) end
+    if kind == as(u8, 12) then jump cursor(id = op.id, cursor = op.cursor) end
+    if kind == as(u8, 13) then jump drag_source(id = op.id) end
+    if kind == as(u8, 14) then jump drop_target(id = op.id) end
+    if kind == as(u8, 15) then jump drop_slot(id = op.id) end
+    if kind == as(u8, 16) then jump begin_focus_scope(id = op.id, policy = op.policy) end
+    if kind == as(u8, 17) then jump end_focus_scope(id = op.id) end
+    if kind == as(u8, 18) then jump begin_layer(id = op.id, kind = op.layer_kind, order = op.order) end
+    if kind == as(u8, 19) then jump end_layer(id = op.id) end
+    if kind == as(u8, 20) then
+        let m: bool = op.flags ~= as(u8, 0)
+        jump overlay(id = op.id, anchor = op.other_id, placement = op.placement, modal = m)
+    end
+    if kind == as(u8, 21) then jump modal_barrier(id = op.id) end
+    jump invalid_kind(kind = kind)
+end
+end
+
+local ui_visit_paint_program = region @{R.ui_visit_paint_program}
+entry start()
+    let k: u8 = program.kind
+    if k == as(u8, 1) then jump line end
+    if k == as(u8, 2) then jump polyline(first = program.point_first, count = program.point_count) end
+    if k == as(u8, 3) then jump polygon(first = program.point_first, count = program.point_count) end
+    if k == as(u8, 4) then jump circle end
+    if k == as(u8, 5) then jump arc(segments = program.segments) end
+    if k == as(u8, 6) then jump bezier(first = program.point_first, count = program.point_count, segments = program.segments) end
+    if k == as(u8, 7) then jump mesh(first = program.vertex_first, count = program.vertex_count, image = program.image) end
+    if k == as(u8, 8) then jump image(image = program.image) end
+    jump invalid_kind(kind = k)
+end
+end
+
+local mlui_view_ops = func @{F.mlui_view_ops}
+    return region: i32
+    entry start()
+        if out_ops ~= as(ptr(ptr(T.UiViewOp)), 0) then out_ops[0] = kernel[0].view.ops end
+        if out_n ~= as(ptr(index), 0) then out_n[0] = kernel[0].view.n end
+        yield 0
+    end
+    end
+end
+
+return {
+    mlui_write_op = mlui_write_op,
+    mlui_emit_box = mlui_emit_box,
+    mlui_emit_text = mlui_emit_text,
+    mlui_emit_wrappers = mlui_emit_wrappers,
+    mlui_emit_pop_wrappers = mlui_emit_pop_wrappers,
+    mlui_render_node = mlui_render_node,
+    ui_visit_view_op = ui_visit_view_op,
+    ui_visit_paint_program = ui_visit_paint_program,
+    ui_render_ops = ui_render_ops,
+    mlui_view_ops = mlui_view_ops,
+}

@@ -1,0 +1,255 @@
+-- mlui_scene_lower.mlua — Lower imported auth nodes into scene buffers.
+--
+-- Implements R.ui_visit_layout_node, R.ui_visit_decor_node, R.ui_lower_scene.
+-- Walks imported auth nodes, resolves style for each, appends parallel
+-- layout+decor nodes to the scene buffer.
+
+local H = moon.require("mlui_types")
+local T = H.T
+local R = H.R
+local F = H.F
+local Mem = moon.require("mlui_memory")
+local RS = moon.require("mlui_resource_store")
+local Style = moon.require("mlui_style_resolve")
+
+local AUTH_EMPTY = 1
+local AUTH_FRAGMENT = 2
+local AUTH_BOX = 3
+local AUTH_TEXT = 4
+local AUTH_TEXT_REF = 5
+local AUTH_PAINT = 6
+local AUTH_SCROLL = 7
+local AUTH_WITH_INPUT = 8
+local AUTH_WITH_DRAG_SOURCE = 9
+local AUTH_WITH_DROP_TARGET = 10
+local AUTH_WITH_DROP_SLOT = 11
+local AUTH_WITH_STATE = 12
+local AUTH_FOCUS_SCOPE = 13
+local AUTH_LAYER = 14
+local AUTH_OVERLAY = 15
+local AUTH_MODAL = 16
+
+local LAYOUT_FLOW = 1
+local LAYOUT_LEAF = 4
+local LAYOUT_CANVAS = 5
+local LAYOUT_SCROLL = 6
+local LAYOUT_WITH_INPUT = 7
+local LAYOUT_DRAG_SOURCE = 8
+local LAYOUT_DROP_TARGET = 9
+local LAYOUT_DROP_SLOT = 10
+local LAYOUT_FOCUS_SCOPE = 11
+local LAYOUT_LAYER = 12
+local LAYOUT_OVERLAY = 13
+local LAYOUT_MODAL = 14
+
+local DECOR_FLOW = 1
+local DECOR_LEAF = 4
+local DECOR_CANVAS = 5
+local DECOR_SCROLL = 6
+local DECOR_WITH_INPUT = 7
+local DECOR_DRAG_SOURCE = 8
+local DECOR_DROP_TARGET = 9
+local DECOR_DROP_SLOT = 10
+local DECOR_FOCUS_SCOPE = 11
+local DECOR_LAYER = 12
+local DECOR_OVERLAY = 13
+local DECOR_MODAL = 14
+
+-- Decoder regions
+local ui_visit_layout_node = region @{R.ui_visit_layout_node}
+entry start()
+    let k: u8 = node.kind
+    if k == as(u8, LAYOUT_FLOW) then jump flow(id = node.id) end
+    if k == as(u8, LAYOUT_LEAF) then jump leaf(id = node.id, content = node.content) end
+    if k == as(u8, LAYOUT_CANVAS) then jump canvas(id = node.id) end
+    if k == as(u8, LAYOUT_SCROLL) then jump scroll(id = node.id, axis = node.scroll_axis) end
+    if k == as(u8, LAYOUT_WITH_INPUT) then jump with_input(id = node.id, role = node.role) end
+    if k == as(u8, LAYOUT_DRAG_SOURCE) then jump with_drag_source(id = node.id) end
+    if k == as(u8, LAYOUT_DROP_TARGET) then jump with_drop_target(id = node.id) end
+    if k == as(u8, LAYOUT_DROP_SLOT) then jump with_drop_slot(id = node.id) end
+    if k == as(u8, LAYOUT_FOCUS_SCOPE) then jump focus_scope(id = node.id, policy = node.focus_policy) end
+    if k == as(u8, LAYOUT_LAYER) then jump layer(id = node.id, kind = node.layer_kind, order = node.order) end
+    if k == as(u8, LAYOUT_OVERLAY) then
+        jump overlay(id = node.id, anchor = node.anchor_id, placement = node.overlay_placement, modal = node.modal)
+    end
+    if k == as(u8, LAYOUT_MODAL) then jump modal(id = node.id) end
+    jump invalid_kind(kind = k)
+end
+end
+
+local ui_visit_decor_node = region @{R.ui_visit_decor_node}
+entry start()
+    let k: u8 = node.kind
+    if k == as(u8, DECOR_FLOW) then jump flow(id = node.id) end
+    if k == as(u8, DECOR_LEAF) then jump leaf(id = node.id) end
+    if k == as(u8, DECOR_CANVAS) then jump canvas(id = node.id, first = node.paint_first, count = node.paint_count) end
+    if k == as(u8, DECOR_SCROLL) then jump scroll(id = node.id) end
+    if k == as(u8, DECOR_WITH_INPUT) then jump with_input(id = node.id) end
+    if k == as(u8, DECOR_DRAG_SOURCE) then jump with_drag_source(id = node.id) end
+    if k == as(u8, DECOR_DROP_TARGET) then jump with_drop_target(id = node.id) end
+    if k == as(u8, DECOR_DROP_SLOT) then jump with_drop_slot(id = node.id) end
+    if k == as(u8, DECOR_FOCUS_SCOPE) then jump focus_scope(id = node.id) end
+    if k == as(u8, DECOR_LAYER) then jump layer(id = node.id) end
+    if k == as(u8, DECOR_OVERLAY) then jump overlay(id = node.id) end
+    if k == as(u8, DECOR_MODAL) then jump modal(id = node.id) end
+    jump invalid_kind(kind = k)
+end
+end
+
+local mlui_layout_kind = func(kind: u8): u8
+    if kind == as(u8, 4) then return as(u8, 4) end
+    if kind == as(u8, 5) then return as(u8, 4) end
+    if kind == as(u8, 6) then return as(u8, 5) end
+    if kind == as(u8, 7) then return as(u8, 6) end
+    if kind == as(u8, 8) then return as(u8, 7) end
+    if kind == as(u8, 9) then return as(u8, 8) end
+    if kind == as(u8, 10) then return as(u8, 9) end
+    if kind == as(u8, 11) then return as(u8, 10) end
+    if kind == as(u8, 13) then return as(u8, 11) end
+    if kind == as(u8, 14) then return as(u8, 12) end
+    if kind == as(u8, 15) then return as(u8, 13) end
+    if kind == as(u8, 16) then return as(u8, 14) end
+    return as(u8, 1)
+end
+
+local mlui_decor_kind = func(kind: u8): u8
+    if kind == as(u8, 4) then return as(u8, 4) end
+    if kind == as(u8, 5) then return as(u8, 4) end
+    if kind == as(u8, 6) then return as(u8, 5) end
+    if kind == as(u8, 7) then return as(u8, 6) end
+    if kind == as(u8, 8) then return as(u8, 7) end
+    if kind == as(u8, 9) then return as(u8, 8) end
+    if kind == as(u8, 10) then return as(u8, 9) end
+    if kind == as(u8, 11) then return as(u8, 10) end
+    if kind == as(u8, 13) then return as(u8, 11) end
+    if kind == as(u8, 14) then return as(u8, 12) end
+    if kind == as(u8, 15) then return as(u8, 13) end
+    if kind == as(u8, 16) then return as(u8, 14) end
+    return as(u8, 1)
+end
+
+-- ui_lower_scene: borrow root node, produce scene buffer from owned kernel.auth.
+local ui_lower_scene = region @{R.ui_lower_scene}
+entry start()
+    emit RS.ui_borrow_node(kernel, root;
+        borrowed = root_ok, stale = stale_node, missing = miss_node)
+end
+block root_ok(node: lease(kernel) ptr(T.UiNodeRecord))
+    if kernel.auth.n_node == as(index, 0) then
+        jump missing_node(node = root)
+    end
+    let psn: ptr(index) = &(kernel.scene.n_node)
+    psn[0] = 0
+    let psc: ptr(index) = &(kernel.scene.n_child)
+    psc[0] = 0
+    let pst: ptr(index) = &(kernel.scene.n_track)
+    pst[0] = 0
+    if kernel.scene.cap_node < kernel.auth.n_node then
+        emit Mem.mlui_grow_scene_layout_nodes(kernel, kernel.auth.n_node - kernel.scene.cap_node;
+            grown = ensure_decor, oom = oom_exit)
+    end
+    jump ensure_decor()
+end
+block ensure_decor()
+    if kernel.scene.cap_node < kernel.auth.n_node then
+        emit Mem.mlui_grow_scene_decor_nodes(kernel, kernel.auth.n_node - kernel.scene.cap_node;
+            grown = ensure_children, oom = oom_exit)
+    end
+    jump ensure_children()
+end
+block ensure_children()
+    if kernel.scene.cap_child < kernel.auth.n_child then
+        emit Mem.mlui_grow_scene_children(kernel, kernel.auth.n_child - kernel.scene.cap_child;
+            grown = copy_children_start, oom = oom_exit)
+    end
+    jump copy_children(i = as(index, 0))
+end
+block copy_children_start()
+    jump copy_children(i = as(index, 0))
+end
+block copy_children(i: index)
+    if i >= kernel.auth.n_child then
+        let psc: ptr(index) = &(kernel.scene.n_child)
+        psc[0] = kernel.auth.n_child
+        jump lower_loop(i = as(index, 0))
+    end
+    kernel.scene.children[i] = kernel.auth.children[i]
+    jump copy_children(i = i + 1)
+end
+block lower_loop(i: index)
+    if i >= kernel.auth.n_node then
+        let psn: ptr(index) = &(kernel.scene.n_node)
+        psn[0] = kernel.auth.n_node
+        jump lowered(scene = &(kernel.scene))
+    end
+    let an: T.UiAuthNode = kernel.auth.nodes[i]
+    if an.kind == as(u8, AUTH_EMPTY) then
+        jump unsupported_node(kind = an.kind)
+    end
+    let env: T.UiEnvClass = T.UiEnvClass{ bp = 0, scheme = 0, motion = 0, density = 0 }
+    let token_ptr: ptr(T.UiStyleToken) = kernel.auth.styles.tokens + as(index, an.token_first)
+    let token_view: view(T.UiStyleToken) = view(token_ptr, as(index, an.token_count))
+    emit Style.ui_resolve_style(kernel, as(ptr(T.UiTheme), 0), env, an.state, i, token_view;
+        resolved = style_ok,
+        unsupported_atom = bad_atom,
+        unsupported_condition = bad_condition,
+        missing_track = bad_track,
+        oom = oom_exit)
+end
+block style_ok(cursor: index, layout: T.UiLayoutStyle, decor: T.UiDecorStyle)
+    let i: index = cursor
+    let an: T.UiAuthNode = kernel.auth.nodes[i]
+    kernel.scene.layout_nodes[i] = T.UiLayoutNode{
+        id = an.id,
+        kind = mlui_layout_kind(an.kind),
+        role = an.role,
+        scroll_axis = an.scroll_axis,
+        focus_policy = an.focus_policy,
+        layer_kind = an.layer_kind,
+        overlay_placement = an.overlay_placement,
+        anchor_id = an.anchor_id,
+        order = an.order,
+        modal = an.modal,
+        first_child = an.first_child,
+        n_child = an.n_child,
+        style = layout,
+        content = an.content
+    }
+    kernel.scene.decor_nodes[i] = T.UiDecorNode{
+        id = an.id,
+        kind = mlui_decor_kind(an.kind),
+        first_child = an.first_child,
+        n_child = an.n_child,
+        style = decor,
+        paint_first = an.paint_first,
+        paint_count = an.paint_count
+    }
+    jump lower_loop(i = i + 1)
+end
+block bad_atom(kind: u16)
+    jump unsupported_node(kind = as(u8, kind))
+end
+block bad_condition(kind: u8)
+    jump unsupported_node(kind = kind)
+end
+block bad_track(at: index)
+    jump unsupported_node(kind = as(u8, 0))
+end
+block oom_exit(needed: index)
+    jump oom(needed = needed)
+end
+block stale_node(node: T.UiNodeRef)
+    jump missing_node(node = node)
+end
+block miss_node(node: T.UiNodeRef)
+    jump missing_node(node = node)
+end
+end
+
+return {
+    mlui_layout_kind = mlui_layout_kind,
+    mlui_decor_kind = mlui_decor_kind,
+    ui_visit_layout_node = ui_visit_layout_node,
+    ui_visit_decor_node = ui_visit_decor_node,
+    ui_lower_scene = ui_lower_scene,
+}

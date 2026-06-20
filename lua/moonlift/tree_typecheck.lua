@@ -103,10 +103,12 @@ function M.Define(T)
     local canonical_type
     canonical_type = function(env, ty)
         local cls = pvm.classof(ty)
-        if cls == Ty.TNamed and pvm.classof(ty.ref) == Ty.TypeRefPath and #ty.ref.path.parts == 1 then
-            return env_lookup_type(env, ty.ref.path.parts[1].text) or ty
-        elseif cls == Ty.THandle and pvm.classof(ty.ref) == Ty.TypeRefPath and #ty.ref.path.parts == 1 then
-            local found = env_lookup_type(env, ty.ref.path.parts[1].text)
+        if cls == Ty.TNamed and pvm.classof(ty.ref) == Ty.TypeRefPath and #ty.ref.path.parts >= 1 then
+            local parts = ty.ref.path.parts
+            return env_lookup_type(env, parts[#parts].text) or ty
+        elseif cls == Ty.THandle and pvm.classof(ty.ref) == Ty.TypeRefPath and #ty.ref.path.parts >= 1 then
+            local parts = ty.ref.path.parts
+            local found = env_lookup_type(env, parts[#parts].text)
             if found ~= nil and pvm.classof(found) == Ty.THandle then return found end
             return ty
         elseif cls == Ty.TPtr then
@@ -174,11 +176,13 @@ function M.Define(T)
         return ty
     end
 
-    local function arg_matches_param(expected, actual)
+    local function arg_matches_param(env, expected, actual)
+        expected = canonical_type(env, expected)
+        actual = canonical_type(env, actual)
         if type_eq(expected, actual) then return true end
         if is_owned_type(expected) or is_owned_type(actual) then return false end
-        if pvm.classof(expected) == Ty.TAccess then return arg_matches_param(expected.base, actual) end
-        if pvm.classof(actual) == Ty.TAccess then return arg_matches_param(expected, actual.base) end
+        if pvm.classof(expected) == Ty.TAccess then return arg_matches_param(env, expected.base, actual) end
+        if pvm.classof(actual) == Ty.TAccess then return arg_matches_param(env, expected, actual.base) end
         if pvm.classof(expected) == Ty.TLease and pvm.classof(actual) == Ty.TLease and type_eq(expected.base, actual.base) then return true end
         if pvm.classof(expected) == Ty.TLease and type_eq(expected.base, actual) then return true end
         return false
@@ -189,7 +193,18 @@ function M.Define(T)
         return nil
     end
 
+    local function path_leaf(ref)
+        local cls = pvm.classof(ref)
+        if cls == Ty.TypeRefGlobal then return ref.type_name end
+        if cls == Ty.TypeRefLocal then return ref.sym and ref.sym.name or tostring(ref.sym) end
+        if cls == Ty.TypeRefPath and ref.path and #ref.path.parts > 0 then
+            return ref.path.parts[#ref.path.parts].text
+        end
+        return nil
+    end
+
     local function field_layout_for(env, ty, field_name)
+        ty = canonical_type(env, ty)
         local ref = named_ref(ty)
         if ref == nil then return nil end
         for i = 1, #env.layouts do
@@ -199,7 +214,7 @@ function M.Define(T)
             if cls == Sem.LayoutNamed and pvm.classof(ref) == Ty.TypeRefGlobal then
                 matches = layout.module_name == ref.module_name and layout.type_name == ref.type_name
             elseif cls == Sem.LayoutNamed and pvm.classof(ref) == Ty.TypeRefPath then
-                matches = #ref.path.parts == 1 and layout.type_name == ref.path.parts[1].text
+                matches = layout.type_name == path_leaf(ref)
             elseif cls == Sem.LayoutLocal and pvm.classof(ref) == Ty.TypeRefLocal then
                 matches = layout.sym == ref.sym
             end
@@ -435,6 +450,7 @@ function M.Define(T)
     end
 
     local function handle_repr_type(handle_ty)
+        if pvm.classof(handle_ty) == Ty.TOwned then handle_ty = handle_ty.base end
         if pvm.classof(handle_ty) ~= Ty.THandle then return nil end
         if pvm.classof(handle_ty.repr) == Ty.HandleReprScalar then return Ty.TScalar(handle_ty.repr.scalar) end
         return nil
@@ -1089,7 +1105,7 @@ function M.Define(T)
             for i = 1, #self.args do
                 local arg = type_expr_expect(self.args[i], ctx, param_tys[i]); append_all(issues, arg.issues); typed_args[#typed_args + 1] = arg.expr
                 if param_tys[i] ~= nil then
-                    if not arg_matches_param(param_tys[i], arg.ty) then check_expected("call arg", param_tys[i], arg.ty, issues) end
+                    if not arg_matches_param(ctx.env, param_tys[i], arg.ty) then check_expected("call arg", param_tys[i], arg.ty, issues) end
                     if type_contains_lease(arg.ty) and not type_contains_lease(param_tys[i]) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape call", arg.ty) end
                     if type_contains_owned(arg.ty) and not type_contains_owned(param_tys[i]) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned passed to non-owned parameter", arg.ty) end
                 end
@@ -1393,7 +1409,7 @@ function M.Define(T)
             local init = is_inferred and pvm.one(type_expr(self.init, ctx)) or type_expr_expect(self.init, ctx, binding_ty)
             local issues = {}; append_all(issues, init.issues)
             local actual_ty = is_inferred and init.ty or binding_ty
-            if not is_inferred then check_expected("let " .. self.binding.name, actual_ty, init.ty, issues) end
+            if not is_inferred and not arg_matches_param(ctx.env, actual_ty, init.ty) then check_expected("let " .. self.binding.name, actual_ty, init.ty, issues) end
             local binding = pvm.with(self.binding, { ty = actual_ty, class = B.BindingClassLocalValue })
             local env = env_add_value(ctx.env, B.ValueEntry(binding.name, binding))
             return pvm.once(Tr.TypeStmtResult(ctx_with_env(ctx, env), { Tr.StmtLet(Tr.StmtSurface, binding, init.expr) }, issues))
@@ -1404,7 +1420,7 @@ function M.Define(T)
             local init = is_inferred and pvm.one(type_expr(self.init, ctx)) or type_expr_expect(self.init, ctx, binding_ty)
             local issues = {}; append_all(issues, init.issues)
             local actual_ty = is_inferred and init.ty or binding_ty
-            if not is_inferred then check_expected("var " .. self.binding.name, actual_ty, init.ty, issues) end
+            if not is_inferred and not arg_matches_param(ctx.env, actual_ty, init.ty) then check_expected("var " .. self.binding.name, actual_ty, init.ty, issues) end
             local binding = pvm.with(self.binding, { ty = actual_ty, class = B.BindingClassLocalCell })
             local env = env_add_value(ctx.env, B.ValueEntry(binding.name, binding))
             return pvm.once(Tr.TypeStmtResult(ctx_with_env(ctx, env), { Tr.StmtVar(Tr.StmtSurface, binding, init.expr) }, issues))
@@ -1468,7 +1484,7 @@ function M.Define(T)
                 local value = expected and type_expr_expect(self.args[i], ctx, expected) or pvm.one(type_expr(self.args[i], ctx))
                 args[#args + 1] = value.expr
                 append_all(issues, value.issues)
-                if expected ~= nil and not arg_matches_param(expected, value.ty) then check_expected("emit arg", expected, value.ty, issues) end
+                if expected ~= nil and not arg_matches_param(ctx.env, expected, value.ty) then check_expected("emit arg", expected, value.ty, issues) end
                 if expected ~= nil and type_contains_lease(value.ty) and not type_contains_lease(expected) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape call", value.ty) end
                 if expected ~= nil and type_contains_owned(value.ty) and not type_contains_owned(expected) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned passed to non-owned parameter", value.ty) end
             end
@@ -1570,6 +1586,14 @@ function M.Define(T)
         return {}
     end
 
+    local function is_owned_handle_repr_cast(expr)
+        if pvm.classof(expr) ~= Tr.ExprMachineCast then return false end
+        local value_ty = expr_ty(expr.value)
+        if pvm.classof(value_ty) ~= Ty.TOwned then return false end
+        local repr_ty = handle_repr_type(value_ty)
+        return repr_ty ~= nil and type_eq(repr_ty, expr.ty)
+    end
+
     check_owned_expr = function(expr, state, issues, mode)
         if not state.reachable or expr == nil then return end
         mode = mode or "observe"
@@ -1631,6 +1655,7 @@ function M.Define(T)
             if is_owned_type(ty) and mode ~= "consume" then owned_issue(issues, "owned dropped", ty) end
             return
         elseif cls == Tr.ExprDot or cls == Tr.ExprField then check_owned_expr(expr.base, state, issues, "observe")
+        elseif cls == Tr.ExprMachineCast and is_owned_handle_repr_cast(expr) then return
         elseif cls == Tr.ExprUnary or cls == Tr.ExprCast or cls == Tr.ExprMachineCast or cls == Tr.ExprDeref or cls == Tr.ExprLen or cls == Tr.ExprIsNull then check_owned_expr(expr.value, state, issues, "observe")
         elseif cls == Tr.ExprBinary or cls == Tr.ExprCompare or cls == Tr.ExprLogic then check_owned_expr(expr.lhs, state, issues, "observe"); check_owned_expr(expr.rhs, state, issues, "observe")
         elseif cls == Tr.ExprIntrinsic then check_owned_exprs(expr.args, state, issues, "observe")
@@ -1652,7 +1677,7 @@ function M.Define(T)
         return by_name
     end
 
-    local function check_jump_args(args, target, state, issues)
+    local function check_jump_args(args, target, state, issues, allow_discharge)
         for i = 1, #(args or {}) do
             local arg = args[i]
             local pty = target and target[arg.name]
@@ -1663,7 +1688,7 @@ function M.Define(T)
                 check_owned_expr(arg.value, state, issues, "observe")
             end
         end
-        state_report_live(state, issues, "owned dropped")
+        if not allow_discharge then state_report_live(state, issues, "owned dropped") end
         state.live = {}
         state.reachable = false
     end
@@ -1759,9 +1784,9 @@ function M.Define(T)
             branches[#branches + 1] = check_owned_stmt_body(stmt.default_body or {}, state_clone(state), issues, block_targets, cont_targets)
             merge_branch_states(state, branches, issues, void_ty())
         elseif cls == Tr.StmtJump then
-            check_jump_args(stmt.args, block_targets and block_targets[stmt.target.name], state, issues)
+            check_jump_args(stmt.args, block_targets and block_targets[stmt.target.name], state, issues, cont_targets and cont_targets[stmt.target.name] == true)
         elseif cls == Tr.StmtJumpCont then
-            check_jump_args(stmt.args, target_params(stmt.slot.params), state, issues)
+            check_jump_args(stmt.args, target_params(stmt.slot.params), state, issues, true)
         elseif cls == Tr.StmtYieldVoid or cls == Tr.StmtReturnVoid or cls == Tr.StmtTrap then
             state_report_live(state, issues, "owned dropped")
             state.live = {}
@@ -1825,14 +1850,14 @@ function M.Define(T)
         return map
     end
 
-    local function check_owned_control_region(region, issues, region_frags, entry_extra_bindings)
+    local function check_owned_control_region(region, issues, region_frags, entry_extra_bindings, cont_targets)
         local block_targets = {}
         block_targets[region.entry.label.name] = block_param_target(region.entry.params)
         for i = 1, #(region.blocks or {}) do block_targets[region.blocks[i].label.name] = block_param_target(region.blocks[i].params) end
         local function check_block(block, is_entry)
             local bindings = block_param_bindings(region.region_id, block.label, block.params, is_entry)
             if is_entry then append_all(bindings, entry_extra_bindings or {}) end
-            local state = check_owned_stmt_body(block.body or {}, state_new(bindings, region_frags), issues, block_targets, nil)
+            local state = check_owned_stmt_body(block.body or {}, state_new(bindings, region_frags), issues, block_targets, cont_targets)
             if state.reachable then state_report_live(state, issues, "owned dropped") end
         end
         check_block(region.entry, true)
@@ -1848,7 +1873,7 @@ function M.Define(T)
             local init = type_expr_expect(block.params[i].init, ctx, p.ty)
             params[i] = pvm.with(p, { init = init.expr })
             append_all(issues, init.issues)
-            if not arg_matches_param(p.ty, init.ty) then check_expected("block param " .. block.params[i].name, p.ty, init.ty, issues) end
+            if not arg_matches_param(ctx.env, p.ty, init.ty) then check_expected("block param " .. block.params[i].name, p.ty, init.ty, issues) end
         end
         entry_params = params
         local block_env = env_with_block_params(ctx.env, region_id, block.label, entry_params, true)
@@ -2140,7 +2165,7 @@ function M.Define(T)
             for i = 1, #params do
                 local frag_name = tostring(region_frag_name_text(self.frag) or "?")
                 local open_param = self.frag.params and self.frag.params[i] or nil
-                local class = open_param and B.BindingClassOpenParam(open_param) or B.BindingClassArg(i - 1)
+                local class = open_param and B.BindingClassOpenParam(pvm.with(open_param, { ty = params[i].ty })) or B.BindingClassArg(i - 1)
                 local b = B.Binding(C.Id("open-param:" .. frag_name .. ":" .. params[i].name), params[i].name, params[i].ty, class)
                 runtime_bindings[#runtime_bindings + 1] = B.ValueEntry(params[i].name, b)
             end
@@ -2154,7 +2179,9 @@ function M.Define(T)
                 append_all(issues, bi)
             end
             local typed_region = Tr.ControlStmtRegion(region_id, typed_entry, typed_blocks)
-            check_owned_control_region(typed_region, issues, region_frags or {}, runtime_bindings)
+            local cont_targets = {}
+            for i = 1, #(self.frag.conts or {}) do cont_targets[self.frag.conts[i].pretty_name] = true end
+            check_owned_control_region(typed_region, issues, region_frags or {}, runtime_bindings, cont_targets)
             return pvm.once(Tr.TypeItemResult({}, issues))
         end,
         [Tr.ItemExprFrag] = function() return pvm.once(Tr.TypeItemResult({}, {})) end,
@@ -2165,7 +2192,46 @@ function M.Define(T)
         [Tr.ItemUseModuleSlot] = function(self) return pvm.once(Tr.TypeItemResult({ self }, {})) end,
     }, { args_cache = "last" })
 
-    local function type_module_with_layout_env(module, extra_layout_env, target)
+    local function item_diagnostic_name(item)
+        local cls = pvm.classof(item)
+        if cls == Tr.ItemFunc and item.func then return item.func.name end
+        if cls == Tr.ItemRegionFrag and item.frag then
+            local name = item.frag.name
+            if type(name) == "table" then return name.text or name.name end
+            return name
+        end
+        if cls == Tr.ItemExprFrag and item.frag then
+            local name = item.frag.name
+            if type(name) == "table" then return name.text or name.name end
+            return name
+        end
+        if cls == Tr.ItemType and item.t then return item.t.name end
+        if cls == Tr.ItemExtern and item.func then return item.func.name end
+        if cls == Tr.ItemConst and item.c then return item.c.name end
+        if cls == Tr.ItemStatic and item.s then return item.s.name end
+        return nil
+    end
+
+    local function emit_item_issues(collector, base_analysis, item, issues)
+        if not collector or #issues == 0 then return end
+        local item_name = item_diagnostic_name(item)
+        local item_analysis = item_name and base_analysis and base_analysis.item_analyses and base_analysis.item_analyses[item_name]
+        local saved = collector.analysis_ctx
+        if item_analysis then
+            collector.analysis_ctx = {
+                uri = item_analysis.uri,
+                source_text = item_analysis.source_text,
+                source_cache = base_analysis.source_cache or item_analysis.source_cache,
+                anchors = item_analysis.anchors or {},
+                document = item_analysis.document,
+                item_analyses = base_analysis.item_analyses,
+            }
+        end
+        for i = 1, #issues do collector:emit(issues[i], "typecheck") end
+        collector.analysis_ctx = saved
+    end
+
+    local function type_module_with_layout_env(module, extra_layout_env, target, collector, analysis_ctx)
         local base_env = module_type_api.env(module, target)
         attach_semantic_defs(base_env, build_variant_defs(module, base_env.module_name), build_handle_defs(module, base_env.module_name), build_func_effect_defs(module))
         local module_env = merge_env_layouts(base_env, extra_layout_env)
@@ -2175,7 +2241,13 @@ function M.Define(T)
         end
         local items = {}
         local issues = {}
-        for i = 1, #module.items do local r = pvm.one(type_item(module.items[i], module_env, region_frags)); append_all(items, r.items); append_all(issues, r.issues) end
+        for i = 1, #module.items do
+            local item = module.items[i]
+            local r = pvm.one(type_item(item, module_env, region_frags))
+            append_all(items, r.items)
+            append_all(issues, r.issues)
+            emit_item_issues(collector, analysis_ctx or {}, item, r.issues)
+        end
         return Tr.TypeModuleResult(Tr.Module(Tr.ModuleTyped(module_env.module_name), items), issues)
     end
 
@@ -2197,9 +2269,12 @@ function M.Define(T)
         module = type_module,
         check_module = function(module, opts)
             opts = opts or {}
-            local result = opts.layout_env and type_module_with_layout_env(module, opts.layout_env, opts.target or opts.c_target) or type_module_with_layout_env(module, nil, opts.target or opts.c_target)
             local collector = opts.collector
-            if collector then
+            local analysis_ctx = opts.analysis_ctx or (collector and collector.analysis_ctx) or {}
+            local result = opts.layout_env
+                and type_module_with_layout_env(module, opts.layout_env, opts.target or opts.c_target, collector, analysis_ctx)
+                or type_module_with_layout_env(module, nil, opts.target or opts.c_target, collector, analysis_ctx)
+            if collector and not analysis_ctx.item_analyses then
                 for i = 1, #result.issues do
                     collector:emit(result.issues[i], "typecheck")
                 end

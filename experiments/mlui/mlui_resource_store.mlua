@@ -14,39 +14,14 @@ local F = H.F
 
 local Mem = moon.require("mlui_memory")
 
---------------------------------------------------------------------------------
--- Handle packing/unpacking (store-private)
--- Pack: (gen << 24) | (index & 0xFFFFFF)
--- Unpack: index = ref & 0xFFFFFF, gen = ref >> 24
---------------------------------------------------------------------------------
-
 local MLUI_SLOT_MASK = 0x00FFFFFF
 local MLUI_GEN_SHIFT = 24
 
--- All of the borrow resolvers use the same pattern:
--- 1. unpack ref -> index, generation
--- 2. index out of range -> missing(ref)
--- 3. slot.live == false -> missing(ref)
--- 4. slot.gen ~= generation -> stale(ref)
--- 5. otherwise -> borrowed(lease(kernel) ptr(slot.product))
-
--- The slot pointers are computed as: base + index * sizeof(slot)
--- Since Moonlift supports ptr[index] for element access, we can index
--- into slot arrays directly.
-
--- For now, the borrow resolvers are declared but their bodies reference
--- slot arrays in the kernel.  Each borrow resolver:
---   - reads kernel.{store}.slots[index].gen
---   - reads kernel.{store}.slots[index].live
---   - returns lease ptr to the product field
-
---------------------------------------------------------------------------------
--- ui_borrow_node: resolve UiNodeRef -> lease ptr(UiNodeRecord)
---------------------------------------------------------------------------------
+-- All borrow resolvers follow the same slot+generation pattern.
 
 local ui_borrow_node = region @{R.ui_borrow_node}
 entry start()
-    let raw: u32 = as(u32, node)
+    let raw: u32 = repr(node)
     if raw == as(u32, 0) then jump missing(node = node) end
     let idx: index = as(index, raw & MLUI_SLOT_MASK)
     let gen: u32 = raw >> MLUI_GEN_SHIFT
@@ -58,13 +33,9 @@ entry start()
 end
 end
 
---------------------------------------------------------------------------------
--- ui_borrow_content: resolve UiContentRef -> lease ptr(UiContent)
---------------------------------------------------------------------------------
-
 local ui_borrow_content = region @{R.ui_borrow_content}
 entry start()
-    let raw: u32 = as(u32, content)
+    let raw: u32 = repr(content)
     if raw == as(u32, 0) then jump missing(content = content) end
     let idx: index = as(index, raw & MLUI_SLOT_MASK)
     let gen: u32 = raw >> MLUI_GEN_SHIFT
@@ -76,13 +47,9 @@ entry start()
 end
 end
 
---------------------------------------------------------------------------------
--- ui_borrow_text_layout: resolve UiTextLayoutRef -> lease ptr(UiTextLayout)
---------------------------------------------------------------------------------
-
 local ui_borrow_text_layout = region @{R.ui_borrow_text_layout}
 entry start()
-    let raw: u32 = as(u32, layout)
+    let raw: u32 = repr(layout)
     if raw == as(u32, 0) then jump missing(layout = layout) end
     let idx: index = as(index, raw & MLUI_SLOT_MASK)
     let gen: u32 = raw >> MLUI_GEN_SHIFT
@@ -94,13 +61,9 @@ entry start()
 end
 end
 
---------------------------------------------------------------------------------
--- ui_borrow_paint: resolve UiPaintRef -> lease ptr(UiPaintProgram)
---------------------------------------------------------------------------------
-
 local ui_borrow_paint = region @{R.ui_borrow_paint}
 entry start()
-    let raw: u32 = as(u32, paint)
+    let raw: u32 = repr(paint)
     if raw == as(u32, 0) then jump missing(paint = paint) end
     let idx: index = as(index, raw & MLUI_SLOT_MASK)
     let gen: u32 = raw >> MLUI_GEN_SHIFT
@@ -112,13 +75,9 @@ entry start()
 end
 end
 
---------------------------------------------------------------------------------
--- ui_borrow_image: resolve UiImageRef -> lease ptr(UiImageRecord)
---------------------------------------------------------------------------------
-
 local ui_borrow_image = region @{R.ui_borrow_image}
 entry start()
-    let raw: u32 = as(u32, image)
+    let raw: u32 = repr(image)
     if raw == as(u32, 0) then jump missing(image = image) end
     let idx: index = as(index, raw & MLUI_SLOT_MASK)
     let gen: u32 = raw >> MLUI_GEN_SHIFT
@@ -130,13 +89,9 @@ entry start()
 end
 end
 
---------------------------------------------------------------------------------
--- ui_borrow_font: resolve UiFontRef -> lease ptr(UiFontRecord)
---------------------------------------------------------------------------------
-
 local ui_borrow_font = region @{R.ui_borrow_font}
 entry start()
-    let raw: u32 = as(u32, font)
+    let raw: u32 = repr(font)
     if raw == as(u32, 0) then jump missing(font = font) end
     let idx: index = as(index, raw & MLUI_SLOT_MASK)
     let gen: u32 = raw >> MLUI_GEN_SHIFT
@@ -148,13 +103,9 @@ entry start()
 end
 end
 
---------------------------------------------------------------------------------
--- ui_borrow_value: resolve UiValueRef -> lease ptr(UiValueRecord)
---------------------------------------------------------------------------------
-
 local ui_borrow_value = region @{R.ui_borrow_value}
 entry start()
-    let raw: u32 = as(u32, value)
+    let raw: u32 = repr(value)
     if raw == as(u32, 0) then jump missing(value = value) end
     let idx: index = as(index, raw & MLUI_SLOT_MASK)
     let gen: u32 = raw >> MLUI_GEN_SHIFT
@@ -165,10 +116,6 @@ entry start()
     jump borrowed(value = as(ptr(T.UiValueRecord), as(ptr(u8), kernel.values.slots) + idx * sizeof(T.UiValueSlot)))
 end
 end
-
---------------------------------------------------------------------------------
--- ui_visit_value: decode UiValueRecord kind.
---------------------------------------------------------------------------------
 
 local ui_visit_value = region @{R.ui_visit_value}
 entry start()
@@ -183,13 +130,9 @@ entry start()
 end
 end
 
---------------------------------------------------------------------------------
--- Retain regions: allocate a slot, initialize, return owned Ref.
---------------------------------------------------------------------------------
-
 -- Helper: allocate a slot in a slot+generation store.
--- Each store has: slots ptr, n (count), cap (capacity), free_head.
--- This is a private region used by the retain/register regions.
+-- Does NOT grow; caller ensures capacity before calling.
+-- Returns oom when store is full (caller should grow and retry).
 
 local ui_slot_alloc = region slot_alloc(kernel: ptr(T.UiKernel),
                                           p_n: ptr(index),
@@ -206,7 +149,6 @@ entry start()
         let n: index = p_n[0]
         let cap: index = p_cap[0]
         if n >= cap then
-            -- need to grow; signal oom for now
             jump oom(needed = (n + 1) * slot_size)
         end
         p_n[0] = n + 1
@@ -221,25 +163,30 @@ entry start()
 end
 end
 
---------------------------------------------------------------------------------
--- ui_content_retain: copy bytes, allocate slot, return owned UiContentRef.
---------------------------------------------------------------------------------
-
 local ui_content_retain = region @{R.ui_content_retain}
 entry start()
     let alloc: ptr(T.UiAllocator) = Mem.mlui_get_alloc(kernel)
-    let n_bytes: index = bytes.len
+    let n_bytes: index = len(bytes)
     let copy_ptr: ptr(u8) = Mem.mlui_alloc_bytes(alloc, n_bytes, 1)
     if copy_ptr == as(ptr(u8), 0) then jump oom(needed = n_bytes) end
-    Mem.mlui_copy_bytes(copy_ptr, bytes.data, n_bytes)
-    emit ui_slot_alloc(kernel,
-        &(kernel.content.n), &(kernel.content.cap),
-        as(ptr(ptr(u8)), &(kernel.content.slots)),
-        &(kernel.content.free_head),
-        sizeof(T.UiContentSlot), as(ptr(u8), 0);
-        allocated = slot_ok, oom = alloc_fail)
+    Mem.mlui_copy_bytes(copy_ptr, &(bytes[0]), n_bytes)
+    if kernel.content.free_head ~= 0 then
+        let slot_idx: index = as(index, kernel.content.free_head - 1)
+        let base: ptr(u8) = as(ptr(u8), kernel.content.slots)
+        let slot_ptr: ptr(T.UiContentSlot) = as(ptr(T.UiContentSlot), base + slot_idx * sizeof(T.UiContentSlot))
+        let next_free: u32 = as(ptr(u32), slot_ptr)[0]
+        let p_free: ptr(u32) = &(kernel.content.free_head)
+        p_free[0] = next_free
+        jump slot_ok(idx = slot_idx, gen = 1, copy_ptr = copy_ptr, n_bytes = n_bytes)
+    end
+    let n: index = kernel.content.n
+    let cap: index = kernel.content.cap
+    if n >= cap then jump alloc_fail(needed = (n + 1) * sizeof(T.UiContentSlot), copy_ptr = copy_ptr, n_bytes = n_bytes) end
+    let p_n: ptr(index) = &(kernel.content.n)
+    p_n[0] = n + 1
+    jump slot_ok(idx = n, gen = 1, copy_ptr = copy_ptr, n_bytes = n_bytes)
 end
-block slot_ok(idx: index, gen: u32)
+block slot_ok(idx: index, gen: u32, copy_ptr: ptr(u8), n_bytes: index)
     let base: ptr(u8) = as(ptr(u8), kernel.content.slots)
     let slot_ptr: ptr(T.UiContentSlot) = as(ptr(T.UiContentSlot), base + idx * sizeof(T.UiContentSlot))
     (*slot_ptr).gen = gen
@@ -247,22 +194,18 @@ block slot_ok(idx: index, gen: u32)
     (*slot_ptr).content.bytes = view(copy_ptr, n_bytes)
     (*slot_ptr).content.layout_affecting = layout_affecting
     let ref: u32 = (gen << MLUI_GEN_SHIFT) | as(u32, idx)
-    jump retained(content = as(T.UiContentRef, ref))
+    jump retained(content = T.UiContentRef.from_repr(ref))
 end
-block alloc_fail(needed: index)
+block alloc_fail(needed: index, copy_ptr: ptr(u8), n_bytes: index)
     let afree: ptr(T.UiAllocator) = Mem.mlui_get_alloc(kernel)
     Mem.mlui_free_bytes(afree, copy_ptr, n_bytes, 1)
     jump oom(needed = needed)
 end
 end
 
---------------------------------------------------------------------------------
--- ui_content_publish: transfer owned obligation into durable identity.
---------------------------------------------------------------------------------
-
 local ui_content_publish = region @{R.ui_content_publish}
 entry start()
-    let raw: u32 = as(u32, content)
+    let raw: u32 = repr(content)
     if raw == as(u32, 0) then jump missing(content = content) end
     let idx: index = as(index, raw & MLUI_SLOT_MASK)
     let gen: u32 = raw >> MLUI_GEN_SHIFT
@@ -270,17 +213,13 @@ entry start()
     let slot: T.UiContentSlot = kernel.content.slots[idx]
     if slot.live == false then jump missing(content = content) end
     if slot.gen ~= gen then jump stale(content = content) end
-    jump published(content = as(T.UiContentRef, raw))
+    jump published(content = T.UiContentRef.from_repr(raw))
 end
 end
-
---------------------------------------------------------------------------------
--- ui_content_release: consume owned obligation.
---------------------------------------------------------------------------------
 
 local ui_content_release = region @{R.ui_content_release}
 entry start()
-    let raw: u32 = as(u32, content)
+    let raw: u32 = repr(content)
     if raw == as(u32, 0) then jump missing(content = content) end
     let idx: index = as(index, raw & MLUI_SLOT_MASK)
     let gen: u32 = raw >> MLUI_GEN_SHIFT
@@ -292,16 +231,11 @@ entry start()
     if slot.gen ~= gen then jump stale(content = content) end
     (*slot_ptr).live = false
     let p_fh: ptr(u32) = &(kernel.content.free_head)
-    let raw_idx: u32 = as(u32, idx + 1)
     as(ptr(u32), slot_ptr)[0] = p_fh[0]
-    p_fh[0] = raw_idx
+    p_fh[0] = as(u32, idx + 1)
     jump released
 end
 end
-
---------------------------------------------------------------------------------
--- Paint retain/publish/release (simplified: no deep copy for now).
---------------------------------------------------------------------------------
 
 local ui_paint_retain = region @{R.ui_paint_retain}
 entry start()
@@ -319,7 +253,7 @@ block ok(idx: index, gen: u32)
     let slot_ptr: ptr(T.UiPaintProgram) = as(ptr(T.UiPaintProgram), base + idx * sizeof(T.UiPaintProgram))
     slot_ptr[0] = program[0]
     let ref: u32 = (gen << MLUI_GEN_SHIFT) | as(u32, idx)
-    jump retained(paint = as(T.UiPaintRef, ref))
+    jump retained(paint = T.UiPaintRef.from_repr(ref))
 end
 block fail(needed: index)
     jump oom(needed = needed)
@@ -328,7 +262,8 @@ end
 
 local ui_paint_publish = region @{R.ui_paint_publish}
 entry start()
-    jump published(paint = paint)
+    let raw: u32 = repr(paint)
+    jump published(paint = T.UiPaintRef.from_repr(raw))
 end
 end
 
@@ -337,10 +272,6 @@ entry start()
     jump released
 end
 end
-
---------------------------------------------------------------------------------
--- Image register/release.
---------------------------------------------------------------------------------
 
 local ui_image_register = region @{R.ui_image_register}
 entry start()
@@ -361,7 +292,7 @@ block ok(idx: index, gen: u32)
     (*slot_ptr).image.w = w
     (*slot_ptr).image.h = h
     let ref: u32 = (gen << MLUI_GEN_SHIFT) | as(u32, idx)
-    jump registered(image = as(T.UiImageRef, ref))
+    jump registered(image = T.UiImageRef.from_repr(ref))
 end
 block fail(needed: index)
     jump oom(needed = needed)
@@ -370,7 +301,7 @@ end
 
 local ui_image_release = region @{R.ui_image_release}
 entry start()
-    let raw: u32 = as(u32, image)
+    let raw: u32 = repr(image)
     if raw == as(u32, 0) then jump missing(image = image) end
     let idx: index = as(index, raw & MLUI_SLOT_MASK)
     let gen: u32 = raw >> MLUI_GEN_SHIFT
@@ -387,10 +318,6 @@ entry start()
     jump released
 end
 end
-
---------------------------------------------------------------------------------
--- Font register/release.
---------------------------------------------------------------------------------
 
 local ui_font_register = region @{R.ui_font_register}
 entry start()
@@ -409,7 +336,7 @@ block ok(idx: index, gen: u32)
     (*slot_ptr).font.id = id
     (*slot_ptr).font.backend_key = backend_key
     let ref: u32 = (gen << MLUI_GEN_SHIFT) | as(u32, idx)
-    jump registered(font = as(T.UiFontRef, ref))
+    jump registered(font = T.UiFontRef.from_repr(ref))
 end
 block fail(needed: index)
     jump oom(needed = needed)
@@ -418,7 +345,7 @@ end
 
 local ui_font_release = region @{R.ui_font_release}
 entry start()
-    let raw: u32 = as(u32, font)
+    let raw: u32 = repr(font)
     if raw == as(u32, 0) then jump missing(font = font) end
     let idx: index = as(index, raw & MLUI_SLOT_MASK)
     let gen: u32 = raw >> MLUI_GEN_SHIFT
@@ -435,10 +362,6 @@ entry start()
     jump released
 end
 end
-
---------------------------------------------------------------------------------
--- Value retain/publish/release.
---------------------------------------------------------------------------------
 
 local ui_value_retain = region @{R.ui_value_retain}
 entry start()
@@ -458,7 +381,7 @@ block ok(idx: index, gen: u32)
     (*slot_ptr).live = true
     (*slot_ptr).value = value[0]
     let ref: u32 = (gen << MLUI_GEN_SHIFT) | as(u32, idx)
-    jump retained(value = as(T.UiValueRef, ref))
+    jump retained(value = T.UiValueRef.from_repr(ref))
 end
 block fail(needed: index)
     jump oom(needed = needed)
@@ -467,13 +390,14 @@ end
 
 local ui_value_publish = region @{R.ui_value_publish}
 entry start()
-    jump published(value = value)
+    let raw: u32 = repr(value)
+    jump published(value = T.UiValueRef.from_repr(raw))
 end
 end
 
 local ui_value_release = region @{R.ui_value_release}
 entry start()
-    let raw: u32 = as(u32, value)
+    let raw: u32 = repr(value)
     if raw == as(u32, 0) then jump missing(value = value) end
     let idx: index = as(index, raw & MLUI_SLOT_MASK)
     let gen: u32 = raw >> MLUI_GEN_SHIFT
@@ -491,14 +415,9 @@ entry start()
 end
 end
 
---------------------------------------------------------------------------------
--- Text layout retain/publish/release.
---------------------------------------------------------------------------------
-
 local ui_text_layout_retain = region @{R.ui_text_layout_retain}
 entry start()
-    -- Check content exists
-    let raw: u32 = as(u32, content)
+    let raw: u32 = repr(content)
     if raw == as(u32, 0) then jump missing_content(content = content) end
     let cidx: index = as(index, raw & MLUI_SLOT_MASK)
     if cidx >= kernel.content.n then jump missing_content(content = content) end
@@ -519,7 +438,7 @@ block ok(idx: index, gen: u32)
     (*slot_ptr).layout.content = content
     (*slot_ptr).layout.max_w = max_w
     let ref: u32 = (gen << MLUI_GEN_SHIFT) | as(u32, idx)
-    jump retained(layout = as(T.UiTextLayoutRef, ref))
+    jump retained(layout = T.UiTextLayoutRef.from_repr(ref))
 end
 block fail(needed: index)
     jump oom(needed = needed)
@@ -528,13 +447,14 @@ end
 
 local ui_text_layout_publish = region @{R.ui_text_layout_publish}
 entry start()
-    jump published(layout = layout)
+    let raw: u32 = repr(layout)
+    jump published(layout = T.UiTextLayoutRef.from_repr(raw))
 end
 end
 
 local ui_text_layout_release = region @{R.ui_text_layout_release}
 entry start()
-    let raw: u32 = as(u32, layout)
+    let raw: u32 = repr(layout)
     if raw == as(u32, 0) then jump missing(layout = layout) end
     let idx: index = as(index, raw & MLUI_SLOT_MASK)
     let gen: u32 = raw >> MLUI_GEN_SHIFT

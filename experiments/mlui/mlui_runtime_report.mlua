@@ -1,0 +1,428 @@
+-- mlui_runtime_report.mlua — UiViewOp stream -> UiReport.
+--
+-- Implements:
+--   R.ui_runtime_report
+--   F.mlui_runtime_report
+--   F.mlui_report_get
+--
+-- Walks the view op stream, maintains tx/clip/scroll/focus_scope/layer stacks,
+-- computes absolute rects, and collects:
+--   hits, focusables, scrollables, drag sources/drop targets/slots,
+--   layers, overlays, modal barriers, focus scopes.
+-- Selects topmost hover_id, cursor_id, scroll_id by pointer position.
+
+local H = moon.require("mlui_types")
+local T = H.T
+local R = H.R
+local F = H.F
+
+-- View op kind constants (mirrors mlui_c_api.h)
+local VIEW_INVALID = 0
+local VIEW_BOX = 1
+local VIEW_TEXT = 2
+local VIEW_PAINT = 3
+local VIEW_PUSH_CLIP = 4
+local VIEW_POP_CLIP = 5
+local VIEW_PUSH_TX = 6
+local VIEW_POP_TX = 7
+local VIEW_PUSH_SCROLL = 8
+local VIEW_POP_SCROLL = 9
+local VIEW_HIT = 10
+local VIEW_FOCUS = 11
+local VIEW_CURSOR = 12
+local VIEW_DRAG_SOURCE = 13
+local VIEW_DROP_TARGET = 14
+local VIEW_DROP_SLOT = 15
+local VIEW_BEGIN_FOCUS_SCOPE = 16
+local VIEW_END_FOCUS_SCOPE = 17
+local VIEW_BEGIN_LAYER = 18
+local VIEW_END_LAYER = 19
+local VIEW_OVERLAY = 20
+local VIEW_MODAL_BARRIER = 21
+
+local MAX_STACK = 64
+
+-- Moonlift helpers callable from region bodies.
+-- rect_intersect: returns a zero-sized rect if disjoint.
+local mlui_rect_intersect = func(ax: f64, ay: f64, aw: f64, ah: f64,
+                                  bx: f64, by: f64, bw: f64, bh: f64): T.UiRect
+    let x1: f64 = select(bx > ax, bx, ax)
+    let y1: f64 = select(by > ay, by, ay)
+    let ax2: f64 = ax + aw
+    let ay2: f64 = ay + ah
+    let bx2: f64 = bx + bw
+    let by2: f64 = by + bh
+    let x2: f64 = select(bx2 < ax2, bx2, ax2)
+    let y2: f64 = select(by2 < ay2, by2, ay2)
+    if x1 < x2 and y1 < y2 then
+        let r: T.UiRect = T.UiRect{ x = x1, y = y1, w = x2 - x1, h = y2 - y1 }
+        return r
+    end
+    let empty: T.UiRect = T.UiRect{ x = 0.0, y = 0.0, w = 0.0, h = 0.0 }
+    return empty
+end
+
+-- ptr_inside: bool if (px, py) is inside rect (rx, ry, rw, rh).
+local mlui_ptr_inside = func(px: f64, py: f64, rx: f64, ry: f64, rw: f64, rh: f64): bool
+    if px < rx then return false end
+    if py < ry then return false end
+    if px >= rx + rw then return false end
+    if py >= ry + rh then return false end
+    return true
+end
+
+-- max0: max(0, n)
+local mlui_max0 = func(n: f64): f64
+    if n < 0.0 then return 0.0 end
+    return n
+end
+
+--------------------------------------------------------------------------------
+-- ui_runtime_report: walk view ops, produce UiReport.
+--------------------------------------------------------------------------------
+
+local ui_runtime_report = region @{R.ui_runtime_report}
+entry start()
+    if len(ops) == as(index, 0) then
+        jump reported(report = T.UiReport{
+            hover_id = T.UiId.from_repr(0), cursor_id = T.UiId.from_repr(0),
+            cursor = 0, scroll_id = T.UiId.from_repr(0),
+            hits = as(ptr(T.UiHitBox), 0), n_hit = 0,
+            focusables = as(ptr(T.UiFocusBox), 0), n_focus = 0,
+            scrollables = as(ptr(T.UiScrollBox), 0), n_scroll = 0,
+            drag_sources = as(ptr(T.UiDragSourceBox), 0), n_drag_source = 0,
+            drop_targets = as(ptr(T.UiDropTargetBox), 0), n_drop_target = 0,
+            drop_slots = as(ptr(T.UiDropSlotBox), 0), n_drop_slot = 0,
+            hit_stack = as(ptr(T.UiHitBox), 0), n_hit_stack = 0,
+            layers = as(ptr(T.UiLayerBox), 0), n_layer = 0,
+            overlays = as(ptr(T.UiOverlayBox), 0), n_overlay = 0,
+            modal_barriers = as(ptr(T.UiModalBarrierBox), 0), n_modal_barrier = 0,
+            focus_scopes = as(ptr(T.UiFocusScopeBox), 0), n_focus_scope = 0
+        })
+    end
+    -- Seed stacks and accumulators; we use block params to thread state.
+    jump walk(i = as(index, 0),
+              tx_x = 0.0, tx_y = 0.0,
+              clip_x = 0.0, clip_y = 0.0, clip_w = 1.0e9, clip_h = 1.0e9,
+              n_hit = as(u32, 0), n_focus = as(u32, 0), n_scroll = as(u32, 0),
+              n_drag_src = as(u32, 0), n_drop_tgt = as(u32, 0), n_drop_slot = as(u32, 0),
+              n_hit_stack = as(u32, 0), n_layer = as(u32, 0), n_overlay = as(u32, 0),
+              n_modal = as(u32, 0), n_focus_scope = as(u32, 0),
+              hover_id = T.UiId.from_repr(0), cursor_id = T.UiId.from_repr(0),
+              cursor_kind = as(u8, 0), scroll_id = T.UiId.from_repr(0))
+end
+block walk(i: index,
+           tx_x: f64, tx_y: f64,
+           clip_x: f64, clip_y: f64, clip_w: f64, clip_h: f64,
+           n_hit: u32, n_focus: u32, n_scroll: u32,
+           n_drag_src: u32, n_drop_tgt: u32, n_drop_slot: u32,
+           n_hit_stack: u32, n_layer: u32, n_overlay: u32,
+           n_modal: u32, n_focus_scope: u32,
+           hover_id: T.UiId, cursor_id: T.UiId,
+           cursor_kind: u8, scroll_id: T.UiId)
+    -- End of ops
+    if i >= len(ops) then
+        let report: T.UiReport = T.UiReport{
+            hover_id = hover_id, cursor_id = cursor_id,
+            cursor = cursor_kind, scroll_id = scroll_id,
+            hits = as(ptr(T.UiHitBox), 0), n_hit = as(index, n_hit),
+            focusables = as(ptr(T.UiFocusBox), 0), n_focus = as(index, n_focus),
+            scrollables = as(ptr(T.UiScrollBox), 0), n_scroll = as(index, n_scroll),
+            drag_sources = as(ptr(T.UiDragSourceBox), 0), n_drag_source = as(index, n_drag_src),
+            drop_targets = as(ptr(T.UiDropTargetBox), 0), n_drop_target = as(index, n_drop_tgt),
+            drop_slots = as(ptr(T.UiDropSlotBox), 0), n_drop_slot = as(index, n_drop_slot),
+            hit_stack = as(ptr(T.UiHitBox), 0), n_hit_stack = as(index, n_hit_stack),
+            layers = as(ptr(T.UiLayerBox), 0), n_layer = as(index, n_layer),
+            overlays = as(ptr(T.UiOverlayBox), 0), n_overlay = as(index, n_overlay),
+            modal_barriers = as(ptr(T.UiModalBarrierBox), 0), n_modal_barrier = as(index, n_modal),
+            focus_scopes = as(ptr(T.UiFocusScopeBox), 0), n_focus_scope = as(index, n_focus_scope)
+        }
+        jump reported(report = report)
+    end
+    let op: T.UiViewOp = ops[i]
+    let kind: u8 = op.kind
+    let orx: f64 = op.rect.x
+    let ory: f64 = op.rect.y
+    let orw: f64 = op.rect.w
+    let orh: f64 = op.rect.h
+    let abs_x: f64 = orx + tx_x
+    let abs_y: f64 = ory + tx_y
+
+    -- Box/Text/Paint/Hit: collect hit boxes
+    if kind == as(u8, VIEW_BOX) or kind == as(u8, VIEW_TEXT) or
+       kind == as(u8, VIEW_HIT) then
+        -- Check if visible (intersects clip rect with non-zero area)
+        let hit_rect: T.UiRect = mlui_rect_intersect(abs_x, abs_y, orw, orh, clip_x, clip_y, clip_w, clip_h)
+        if hit_rect.w > 0.0 and hit_rect.h > 0.0 then
+            -- Check pointer hit for hover selection
+            if mlui_ptr_inside(0.0, 0.0, hit_rect.x, hit_rect.y, hit_rect.w, hit_rect.h) then
+                let new_hover: T.UiId = op.id
+                jump walk(i = i + 1,
+                    tx_x = tx_x, tx_y = tx_y,
+                    clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+                    n_hit = n_hit + 1, n_focus = n_focus, n_scroll = n_scroll,
+                    n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+                    n_hit_stack = n_hit_stack + 1, n_layer = n_layer, n_overlay = n_overlay,
+                    n_modal = n_modal, n_focus_scope = n_focus_scope,
+                    hover_id = new_hover, cursor_id = cursor_id,
+                    cursor_kind = cursor_kind, scroll_id = scroll_id)
+            end
+            jump walk(i = i + 1,
+                tx_x = tx_x, tx_y = tx_y,
+                clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+                n_hit = n_hit + 1, n_focus = n_focus, n_scroll = n_scroll,
+                n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+                n_hit_stack = n_hit_stack + 1, n_layer = n_layer, n_overlay = n_overlay,
+                n_modal = n_modal, n_focus_scope = n_focus_scope,
+                hover_id = hover_id, cursor_id = cursor_id,
+                cursor_kind = cursor_kind, scroll_id = scroll_id)
+        end
+        jump walk(i = i + 1,
+            tx_x = tx_x, tx_y = tx_y,
+            clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+            n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll,
+            n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+            n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay,
+            n_modal = n_modal, n_focus_scope = n_focus_scope,
+            hover_id = hover_id, cursor_id = cursor_id,
+            cursor_kind = cursor_kind, scroll_id = scroll_id)
+    end
+
+    -- Focus: collect focusable
+    if kind == as(u8, VIEW_FOCUS) then
+        let focus_rect: T.UiRect = mlui_rect_intersect(abs_x, abs_y, orw, orh, clip_x, clip_y, clip_w, clip_h)
+        jump walk(i = i + 1,
+            tx_x = tx_x, tx_y = tx_y,
+            clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+            n_hit = n_hit, n_focus = n_focus + 1, n_scroll = n_scroll,
+            n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+            n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay,
+            n_modal = n_modal, n_focus_scope = n_focus_scope,
+            hover_id = hover_id, cursor_id = cursor_id,
+            cursor_kind = cursor_kind, scroll_id = scroll_id)
+    end
+
+    -- Cursor
+    if kind == as(u8, VIEW_CURSOR) then
+        let cursor_rect: T.UiRect = mlui_rect_intersect(abs_x, abs_y, orw, orh, clip_x, clip_y, clip_w, clip_h)
+        if cursor_rect.w > 0.0 and cursor_rect.h > 0.0 then
+            if mlui_ptr_inside(0.0, 0.0, cursor_rect.x, cursor_rect.y, cursor_rect.w, cursor_rect.h) then
+                jump walk(i = i + 1,
+                    tx_x = tx_x, tx_y = tx_y,
+                    clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+                    n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll,
+                    n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+                    n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay,
+                    n_modal = n_modal, n_focus_scope = n_focus_scope,
+                    hover_id = hover_id, cursor_id = op.id,
+                    cursor_kind = op.cursor, scroll_id = scroll_id)
+            end
+        end
+        jump walk(i = i + 1,
+            tx_x = tx_x, tx_y = tx_y,
+            clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+            n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll,
+            n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+            n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay,
+            n_modal = n_modal, n_focus_scope = n_focus_scope,
+            hover_id = hover_id, cursor_id = cursor_id,
+            cursor_kind = cursor_kind, scroll_id = scroll_id)
+    end
+
+    -- Drag source
+    if kind == as(u8, VIEW_DRAG_SOURCE) then
+        jump walk(i = i + 1,
+            tx_x = tx_x, tx_y = tx_y,
+            clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+            n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll,
+            n_drag_src = n_drag_src + 1, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+            n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay,
+            n_modal = n_modal, n_focus_scope = n_focus_scope,
+            hover_id = hover_id, cursor_id = cursor_id,
+            cursor_kind = cursor_kind, scroll_id = scroll_id)
+    end
+
+    -- Drop target
+    if kind == as(u8, VIEW_DROP_TARGET) then
+        jump walk(i = i + 1,
+            tx_x = tx_x, tx_y = tx_y,
+            clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+            n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll,
+            n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt + 1, n_drop_slot = n_drop_slot,
+            n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay,
+            n_modal = n_modal, n_focus_scope = n_focus_scope,
+            hover_id = hover_id, cursor_id = cursor_id,
+            cursor_kind = cursor_kind, scroll_id = scroll_id)
+    end
+
+    -- Drop slot
+    if kind == as(u8, VIEW_DROP_SLOT) then
+        jump walk(i = i + 1,
+            tx_x = tx_x, tx_y = tx_y,
+            clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+            n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll,
+            n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot + 1,
+            n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay,
+            n_modal = n_modal, n_focus_scope = n_focus_scope,
+            hover_id = hover_id, cursor_id = cursor_id,
+            cursor_kind = cursor_kind, scroll_id = scroll_id)
+    end
+
+    -- Begin focus scope
+    if kind == as(u8, VIEW_BEGIN_FOCUS_SCOPE) then
+        jump walk(i = i + 1,
+            tx_x = tx_x, tx_y = tx_y,
+            clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+            n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll,
+            n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+            n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay,
+            n_modal = n_modal, n_focus_scope = n_focus_scope + 1,
+            hover_id = hover_id, cursor_id = cursor_id,
+            cursor_kind = cursor_kind, scroll_id = scroll_id)
+    end
+
+    -- Begin layer
+    if kind == as(u8, VIEW_BEGIN_LAYER) then
+        jump walk(i = i + 1,
+            tx_x = tx_x, tx_y = tx_y,
+            clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+            n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll,
+            n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+            n_hit_stack = n_hit_stack, n_layer = n_layer + 1, n_overlay = n_overlay,
+            n_modal = n_modal, n_focus_scope = n_focus_scope,
+            hover_id = hover_id, cursor_id = cursor_id,
+            cursor_kind = cursor_kind, scroll_id = scroll_id)
+    end
+
+    -- Overlay
+    if kind == as(u8, VIEW_OVERLAY) then
+        jump walk(i = i + 1,
+            tx_x = tx_x, tx_y = tx_y,
+            clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+            n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll,
+            n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+            n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay + 1,
+            n_modal = n_modal, n_focus_scope = n_focus_scope,
+            hover_id = hover_id, cursor_id = cursor_id,
+            cursor_kind = cursor_kind, scroll_id = scroll_id)
+    end
+
+    -- Modal barrier
+    if kind == as(u8, VIEW_MODAL_BARRIER) then
+        jump walk(i = i + 1,
+            tx_x = tx_x, tx_y = tx_y,
+            clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+            n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll,
+            n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+            n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay,
+            n_modal = n_modal + 1, n_focus_scope = n_focus_scope,
+            hover_id = hover_id, cursor_id = cursor_id,
+            cursor_kind = cursor_kind, scroll_id = scroll_id)
+    end
+
+    -- Scroll: collect scrollable, update pointer scroll selection
+    if kind == as(u8, VIEW_PUSH_SCROLL) then
+        var max_x: f64 = mlui_max0(op.content_w - orw)
+        var max_y: f64 = mlui_max0(op.content_h - orh)
+        if op.axis == as(u8, 1) then max_y = 0.0 end  -- ScrollX
+        if op.axis == as(u8, 2) then max_x = 0.0 end  -- ScrollY
+        let scroll_rect: T.UiRect = mlui_rect_intersect(abs_x, abs_y, orw, orh, clip_x, clip_y, clip_w, clip_h)
+        if scroll_rect.w > 0.0 and scroll_rect.h > 0.0 then
+            if mlui_ptr_inside(0.0, 0.0, scroll_rect.x, scroll_rect.y, scroll_rect.w, scroll_rect.h) then
+                jump walk(i = i + 1,
+                    tx_x = tx_x, tx_y = tx_y,
+                    clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+                    n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll + 1,
+                    n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+                    n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay,
+                    n_modal = n_modal, n_focus_scope = n_focus_scope,
+                    hover_id = hover_id, cursor_id = cursor_id,
+                    cursor_kind = cursor_kind, scroll_id = op.id)
+            end
+            jump walk(i = i + 1,
+                tx_x = tx_x, tx_y = tx_y,
+                clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+                n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll + 1,
+                n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+                n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay,
+                n_modal = n_modal, n_focus_scope = n_focus_scope,
+                hover_id = hover_id, cursor_id = cursor_id,
+                cursor_kind = cursor_kind, scroll_id = scroll_id)
+        end
+        jump walk(i = i + 1,
+            tx_x = tx_x, tx_y = tx_y,
+            clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+            n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll,
+            n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+            n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay,
+            n_modal = n_modal, n_focus_scope = n_focus_scope,
+            hover_id = hover_id, cursor_id = cursor_id,
+            cursor_kind = cursor_kind, scroll_id = scroll_id)
+    end
+
+    -- Paint: collect paint ops (no stack effect, just count)
+    if kind == as(u8, VIEW_PAINT) then
+        jump walk(i = i + 1,
+            tx_x = tx_x, tx_y = tx_y,
+            clip_x = clip_x, clip_y = clip_y, clip_w = clip_w, clip_h = clip_h,
+            n_hit = n_hit, n_focus = n_focus, n_scroll = n_scroll,
+            n_drag_src = n_drag_src, n_drop_tgt = n_drop_tgt, n_drop_slot = n_drop_slot,
+            n_hit_stack = n_hit_stack, n_layer = n_layer, n_overlay = n_overlay,
+            n_modal = n_modal, n_focus_scope = n_focus_scope,
+            hover_id = hover_id, cursor_id = cursor_id,
+            cursor_kind = cursor_kind, scroll_id = scroll_id)
+    end
+
+    -- Invalid kind
+    jump malformed_op(at = i, kind = kind)
+end
+end
+
+--------------------------------------------------------------------------------
+-- F.mlui_runtime_report: bridge to ui_runtime_report.
+--------------------------------------------------------------------------------
+
+local mlui_runtime_report = func @{F.mlui_runtime_report}
+    return region: i32
+    entry start()
+        let ops: view(T.UiViewOp) = view(kernel[0].view.ops, kernel[0].view.n)
+        emit ui_runtime_report(kernel, ops;
+            reported = ok,
+            malformed_op = bad,
+            stack_unbalanced = bad_s,
+            oom = oom_exit)
+    end
+    block ok(report: T.UiReport)
+        yield 0
+    end
+    block bad(at: index, kind: u8)
+        yield as(i32, 10)
+    end
+    block bad_s(kind: u8)
+        yield as(i32, 11)
+    end
+    block oom_exit(needed: index)
+        yield 1
+    end
+    end
+end
+
+local mlui_report_get = func @{F.mlui_report_get}
+    return region: T.UiStatus
+    entry start()
+        if out_report ~= as(ptr(ptr(T.UiReport)), 0) then
+            out_report[0] = as(ptr(T.UiReport), 0)
+        end
+        yield T.UiStatus{code = 0, detail = 0, at = as(index, 0), needed = 0 }
+    end
+    end
+end
+
+return {
+    mlui_rect_intersect = mlui_rect_intersect,
+    mlui_ptr_inside = mlui_ptr_inside,
+    mlui_max0 = mlui_max0,
+    ui_runtime_report = ui_runtime_report,
+    mlui_runtime_report = mlui_runtime_report,
+    mlui_report_get = mlui_report_get,
+}

@@ -167,7 +167,12 @@ function ThrowingCollector:emit(issue, phase)
             report_analysis(self.analysis_ctx, span))
         local msg
         if report and self.terminal_renderer then
-            msg = self.terminal_renderer(report, self.analysis_ctx.source_text or "")
+            local source_text = self.analysis_ctx.source_text or ""
+            local span = report.primary and report.primary.span
+            if span and self.analysis_ctx.source_cache then
+                source_text = self.analysis_ctx.source_cache[span.uri] or source_text
+            end
+            msg = self.terminal_renderer(report, source_text)
         else
             msg = "error[" .. code .. "]: " .. tostring(issue)
         end

@@ -6,6 +6,10 @@
 --   R.ui_reset_view, R.ui_reset_frame_events
 --   F.mlui_kernel_init, F.mlui_kernel_init_ex
 --   F.mlui_kernel_close, F.mlui_kernel_reset_frame
+--
+-- UiKernelRef uses a fixed-size extern slot array.  The ref packs
+-- (slot_index << 8) | generation in the u32 value.  The extern table
+-- stores the actual ptr(T.UiKernel).  This avoids pointer-to-u32 casts.
 
 local H = moon.require("mlui_types")
 local T = H.T
@@ -14,13 +18,24 @@ local F = H.F
 
 local Mem = moon.require("mlui_memory")
 
+local MLUI_MAX_KERNELS = 16
+local MLUI_REF_SHIFT = 4  -- enough bits for 16 slots
+
+-- Kernel table: small fixed-size arrays for kernel ref resolution.
+-- The extern functions read/write a small array of (ptr, gen) pairs.
+local mlui_kernel_get_ptr = extern mlui_kernel_get_ptr(slot: u32): ptr(T.UiKernel) end
+local mlui_kernel_set_ptr = extern mlui_kernel_set_ptr(slot: u32, k: ptr(T.UiKernel)): void end
+local mlui_kernel_get_gen = extern mlui_kernel_get_gen(slot: u32): u32 end
+local mlui_kernel_set_gen = extern mlui_kernel_set_gen(slot: u32, gen: u32): void end
+
+-- Free a kernel slot.
+local mlui_kernel_free_slot = func(slot: u32): void
+    mlui_kernel_set_ptr(slot, as(ptr(T.UiKernel), 0))
+    return
+end
+
 --------------------------------------------------------------------------------
 -- R.ui_kernel_create: allocate and zero UiKernel, return owned UiKernelRef.
---
--- UiKernelRef is u32.  The low 32 bits of the kernel pointer are stored as
--- the ref.  The borrow resolver reverses the cast.  This works because
--- kernel allocations are aligned and live on the heap; pointer-to-integer
--- round-trips are valid at this ABI boundary.
 --------------------------------------------------------------------------------
 
 local ui_kernel_create = region @{R.ui_kernel_create}
@@ -32,23 +47,43 @@ entry start()
     let k: ptr(T.UiKernel) = as(ptr(T.UiKernel), kptr)
     let p_next: ptr(u32) = &(k.next_id)
     p_next[0] = 1
-    let raw: u32 = as(u32, as(index, kptr))
-    let ref_val: T.UiKernelRef = as(T.UiKernelRef, raw)
-    jump created(kernel = ref_val)
+    jump scan_slot(i = as(u32, 0), kptr = kptr, k = k)
+end
+block scan_slot(i: u32, kptr: ptr(u8), k: ptr(T.UiKernel))
+    if i >= as(u32, MLUI_MAX_KERNELS) then
+        let fa: ptr(T.UiAllocator) = as(ptr(T.UiAllocator), 0)
+        Mem.mlui_free_bytes(fa, as(ptr(u8), kptr), sizeof(T.UiKernel), 8)
+        jump oom(needed = sizeof(T.UiKernel))
+    end
+    let p: ptr(T.UiKernel) = mlui_kernel_get_ptr(i)
+    if p == as(ptr(T.UiKernel), 0) then
+        let gen: u32 = mlui_kernel_get_gen(i) + 1
+        if gen == as(u32, 0) then gen = 1 end
+        mlui_kernel_set_gen(i, gen)
+        mlui_kernel_set_ptr(i, k)
+        let ref_raw: u32 = (i << MLUI_REF_SHIFT) | gen
+        let ref: T.UiKernelRef = T.UiKernelRef.from_repr(ref_raw)
+        jump created(kernel = ref)
+    end
+    jump scan_slot(i = i + 1, kptr = kptr, k = k)
 end
 end
 
 --------------------------------------------------------------------------------
 -- R.ui_kernel_borrow: resolve UiKernelRef to lease ptr(UiKernel).
--- The ref encodes the kernel pointer directly.
 --------------------------------------------------------------------------------
 
 local ui_kernel_borrow = region @{R.ui_kernel_borrow}
 entry start()
-    let raw: u32 = as(u32, kernel)
+    let raw: u32 = repr(kernel)
     if raw == as(u32, 0) then jump missing(kernel = kernel) end
-    let addr: index = as(index, raw)
-    let kptr: ptr(T.UiKernel) = as(ptr(T.UiKernel), as(ptr(u8), addr))
+    let slot: u32 = raw >> MLUI_REF_SHIFT
+    let gen: u32 = raw & as(u32, (1 << MLUI_REF_SHIFT) - 1)
+    if slot >= as(u32, MLUI_MAX_KERNELS) then jump missing(kernel = kernel) end
+    let actual_gen: u32 = mlui_kernel_get_gen(slot)
+    if actual_gen ~= gen then jump missing(kernel = kernel) end
+    if gen == as(u32, 0) then jump missing(kernel = kernel) end
+    let kptr: ptr(T.UiKernel) = mlui_kernel_get_ptr(slot)
     if kptr == as(ptr(T.UiKernel), 0) then jump missing(kernel = kernel) end
     jump borrowed(kernel = kptr)
 end
@@ -60,12 +95,17 @@ end
 
 local ui_kernel_close = region @{R.ui_kernel_close}
 entry start()
-    let raw: u32 = as(u32, kernel)
+    let raw: u32 = repr(kernel)
     if raw == as(u32, 0) then jump missing(kernel = kernel) end
-    let addr: index = as(index, raw)
-    let kptr: ptr(u8) = as(ptr(u8), addr)
-    let k: ptr(T.UiKernel) = as(ptr(T.UiKernel), kptr)
-    if kptr == as(ptr(u8), 0) then jump missing(kernel = kernel) end
+    let slot: u32 = raw >> MLUI_REF_SHIFT
+    let gen: u32 = raw & as(u32, (1 << MLUI_REF_SHIFT) - 1)
+    if slot >= as(u32, MLUI_MAX_KERNELS) then jump missing(kernel = kernel) end
+    let actual_gen: u32 = mlui_kernel_get_gen(slot)
+    if actual_gen ~= gen then jump missing(kernel = kernel) end
+    if gen == as(u32, 0) then jump missing(kernel = kernel) end
+    let kptr: ptr(T.UiKernel) = mlui_kernel_get_ptr(slot)
+    if kptr == as(ptr(T.UiKernel), 0) then jump missing(kernel = kernel) end
+    let k: ptr(T.UiKernel) = kptr
     let alloc: ptr(T.UiAllocator) = Mem.mlui_get_alloc(k)
     Mem.mlui_free_bytes(alloc, as(ptr(u8), k.nodes.slots), k.nodes.cap * sizeof(T.UiNodeSlot), 8)
     Mem.mlui_free_bytes(alloc, as(ptr(u8), k.nodes.id_to_slot), k.nodes.cap_id * sizeof(u32), 4)
@@ -77,6 +117,10 @@ entry start()
     Mem.mlui_free_bytes(alloc, as(ptr(u8), k.values.slots), k.values.cap * sizeof(T.UiValueSlot), 8)
     Mem.mlui_free_bytes(alloc, as(ptr(u8), k.images.slots), k.images.cap * sizeof(T.UiImageSlot), 8)
     Mem.mlui_free_bytes(alloc, as(ptr(u8), k.fonts.slots), k.fonts.cap * sizeof(T.UiFontSlot), 8)
+    Mem.mlui_free_bytes(alloc, as(ptr(u8), k.auth.nodes), k.auth.cap_node * sizeof(T.UiAuthNode), 8)
+    Mem.mlui_free_bytes(alloc, as(ptr(u8), k.auth.children), k.auth.cap_child * sizeof(u32), 4)
+    Mem.mlui_free_bytes(alloc, as(ptr(u8), k.auth.styles.tokens), k.auth.styles.cap * sizeof(T.UiStyleToken), 8)
+    Mem.mlui_free_bytes(alloc, as(ptr(u8), k.auth.styles.tracks), k.auth.styles.cap_track * sizeof(T.UiStyleTrack), 8)
     Mem.mlui_free_bytes(alloc, as(ptr(u8), k.scene.layout_nodes), k.scene.cap_node * sizeof(T.UiLayoutNode), 8)
     Mem.mlui_free_bytes(alloc, as(ptr(u8), k.scene.decor_nodes), k.scene.cap_node * sizeof(T.UiDecorNode), 8)
     Mem.mlui_free_bytes(alloc, as(ptr(u8), k.scene.children), k.scene.cap_child * sizeof(u32), 4)
@@ -85,7 +129,8 @@ entry start()
     Mem.mlui_free_bytes(alloc, as(ptr(u8), k.solve.children), k.solve.cap_child * sizeof(u32), 4)
     Mem.mlui_free_bytes(alloc, as(ptr(u8), k.view.ops), k.view.cap * sizeof(T.UiViewOp), 8)
     Mem.mlui_free_bytes(alloc, as(ptr(u8), k.events.events), k.events.cap * sizeof(T.UiEvent), 8)
-    Mem.mlui_free_bytes(alloc, kptr, sizeof(T.UiKernel), 8)
+    Mem.mlui_free_bytes(alloc, as(ptr(u8), k), sizeof(T.UiKernel), 8)
+    mlui_kernel_free_slot(slot)
     jump closed
 end
 end
@@ -100,6 +145,11 @@ entry start()
     let p_ni: ptr(index) = &(kernel.nodes.n_id)
     let p_fh: ptr(u32) = &(kernel.nodes.free_head)
     p_nn[0] = 0; p_ni[0] = 0; p_fh[0] = 0
+    let p_an: ptr(index) = &(kernel.auth.n_node)
+    let p_ac: ptr(index) = &(kernel.auth.n_child)
+    let p_as: ptr(index) = &(kernel.auth.styles.n)
+    let p_at: ptr(index) = &(kernel.auth.styles.n_track)
+    p_an[0] = 0; p_ac[0] = 0; p_as[0] = 0; p_at[0] = 0
     let p_cn: ptr(index) = &(kernel.compose.n_node)
     let p_cc: ptr(index) = &(kernel.compose.n_child)
     let p_cs: ptr(index) = &(kernel.compose.styles.n)
@@ -171,7 +221,7 @@ local mlui_kernel_init_ex = func @{F.mlui_kernel_init_ex}
         let alloc: ptr(T.UiAllocator) = cfg.allocator
         let kptr: ptr(u8) = Mem.mlui_alloc_bytes(alloc, sizeof(T.UiKernel), 8)
         if kptr == as(ptr(u8), 0) then
-            yield T.UiStatus(1, 0, 0, as(index, sizeof(T.UiKernel)))
+            yield T.UiStatus{code = 1, detail = 0, at = 0, needed = as(index, sizeof(T.UiKernel)) }
         end
         Mem.mlui_zero_bytes(kptr, sizeof(T.UiKernel))
         let k: ptr(T.UiKernel) = as(ptr(T.UiKernel), kptr)
@@ -180,7 +230,7 @@ local mlui_kernel_init_ex = func @{F.mlui_kernel_init_ex}
         let px: ptr(u32) = &(k.next_id)
         px[0] = 1
         out_kernel[0] = k
-        yield T.UiStatus(0, 0, 0, 0)
+        yield T.UiStatus{code = 0, detail = 0, at = 0, needed = 0 }
     end
     end
 end
@@ -201,6 +251,10 @@ local mlui_kernel_close = func @{F.mlui_kernel_close}
         Mem.mlui_free_bytes(alloc, as(ptr(u8), k.values.slots), k.values.cap * sizeof(T.UiValueSlot), 8)
         Mem.mlui_free_bytes(alloc, as(ptr(u8), k.images.slots), k.images.cap * sizeof(T.UiImageSlot), 8)
         Mem.mlui_free_bytes(alloc, as(ptr(u8), k.fonts.slots), k.fonts.cap * sizeof(T.UiFontSlot), 8)
+        Mem.mlui_free_bytes(alloc, as(ptr(u8), k.auth.nodes), k.auth.cap_node * sizeof(T.UiAuthNode), 8)
+        Mem.mlui_free_bytes(alloc, as(ptr(u8), k.auth.children), k.auth.cap_child * sizeof(u32), 4)
+        Mem.mlui_free_bytes(alloc, as(ptr(u8), k.auth.styles.tokens), k.auth.styles.cap * sizeof(T.UiStyleToken), 8)
+        Mem.mlui_free_bytes(alloc, as(ptr(u8), k.auth.styles.tracks), k.auth.styles.cap_track * sizeof(T.UiStyleTrack), 8)
         Mem.mlui_free_bytes(alloc, as(ptr(u8), k.scene.layout_nodes), k.scene.cap_node * sizeof(T.UiLayoutNode), 8)
         Mem.mlui_free_bytes(alloc, as(ptr(u8), k.scene.decor_nodes), k.scene.cap_node * sizeof(T.UiDecorNode), 8)
         Mem.mlui_free_bytes(alloc, as(ptr(u8), k.scene.children), k.scene.cap_child * sizeof(u32), 4)
@@ -229,12 +283,17 @@ local mlui_kernel_reset_frame = func @{F.mlui_kernel_reset_frame}
         p_vn[0] = 0
         let p_en: ptr(index) = &(kernel.events.n)
         p_en[0] = 0
-        yield T.UiStatus(0, 0, 0, 0)
+        yield T.UiStatus{code = 0, detail = 0, at = 0, needed = 0 }
     end
     end
 end
 
 return {
+    mlui_kernel_get_ptr = mlui_kernel_get_ptr,
+    mlui_kernel_set_ptr = mlui_kernel_set_ptr,
+    mlui_kernel_get_gen = mlui_kernel_get_gen,
+    mlui_kernel_set_gen = mlui_kernel_set_gen,
+    mlui_kernel_free_slot = mlui_kernel_free_slot,
     ui_kernel_create = ui_kernel_create,
     ui_kernel_borrow = ui_kernel_borrow,
     ui_kernel_close = ui_kernel_close,

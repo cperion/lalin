@@ -588,6 +588,13 @@ T.UiLayoutNode = struct
     id: T.UiId,
     kind: u8,             -- owner: ui_solve_scene
     role: u8,
+    scroll_axis: u8,
+    focus_policy: u8,
+    layer_kind: u8,
+    overlay_placement: u8,
+    anchor_id: T.UiId,
+    order: f64,
+    modal: bool,
     first_child: u32,
     n_child: u32,
     style: T.UiLayoutStyle,
@@ -805,6 +812,12 @@ T.UiSolveNode = struct
     id: T.UiId,
     kind: u8,             -- owner: ui_render_ops
     role: u8,
+    focus_policy: u8,
+    layer_kind: u8,
+    overlay_placement: u8,
+    anchor_id: T.UiId,
+    order: f64,
+    modal: bool,
     first_child: u32,
     n_child: u32,
     placed: T.UiPlaced,
@@ -1046,6 +1059,7 @@ end
 --------------------------------------------------------------------------------
 
 T.UiKernel = struct
+    config: T.UiKernelConfig,
     nodes: T.UiNodeStore,
     content: T.UiContentStore,
     text_layouts: T.UiTextLayoutStore,
@@ -1053,6 +1067,7 @@ T.UiKernel = struct
     values: T.UiValueStore,
     images: T.UiImageStore,
     fonts: T.UiFontStore,
+    auth: T.UiAuthBuffer,
     compose: T.UiComposeBuffer,
     scene: T.UiSceneBuffer,
     solve: T.UiSolveBuffer,
@@ -1157,7 +1172,7 @@ R.ui_borrow_value = region ui_borrow_value(readonly kernel: ptr(T.UiKernel), val
   | missing(value: T.UiValueRef))
 end
 
-R.ui_expand_compose = region ui_expand_compose(kernel: ptr(T.UiKernel), compose: view(T.UiComposeNode);
+R.ui_expand_compose = region ui_expand_compose(kernel: ptr(T.UiKernel), compose: ptr(T.UiComposeBuffer);
     expanded(auth: ptr(T.UiAuthBuffer))
   | invalid_compose(kind: u8)
   | missing_child(at: index)
@@ -1169,8 +1184,9 @@ R.ui_resolve_style = region ui_resolve_style(kernel: ptr(T.UiKernel),
                                              theme: ptr(T.UiTheme),
                                              env: T.UiEnvClass,
                                              state: T.UiState,
+                                             cursor: index,
                                              tokens: view(T.UiStyleToken);
-    resolved(layout: T.UiLayoutStyle, decor: T.UiDecorStyle)
+    resolved(cursor: index, layout: T.UiLayoutStyle, decor: T.UiDecorStyle)
   | unsupported_atom(kind: u16)
   | unsupported_condition(kind: u8)
   | missing_track(at: index)
@@ -1360,7 +1376,7 @@ R.ui_visit_paint_program = region ui_visit_paint_program(kernel: ptr(T.UiKernel)
   | invalid_kind(kind: u8))
 end
 
-R.ui_import_auth = region ui_import_auth(kernel: ptr(T.UiKernel), auth: view(T.UiAuthNode);
+R.ui_import_auth = region ui_import_auth(kernel: ptr(T.UiKernel), auth: ptr(T.UiAuthBuffer);
     imported(root: T.UiNodeRef)
   | duplicate_id(id: T.UiId)
   | invalid_id(at: index)

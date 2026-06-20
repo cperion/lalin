@@ -71,6 +71,15 @@ function M.Define(T)
         return scoped_binding_key(ctx, binding)
     end
 
+    local function declare_fresh_binding_key(ctx, binding)
+        local key = binding_key(binding)
+        if ctx ~= nil and ctx.binding_alpha ~= nil and ctx.binding_alpha_suffix ~= nil then
+            ctx.binding_alpha_seq = (ctx.binding_alpha_seq or 0) + 1
+            ctx.binding_alpha[key] = key .. "@" .. ctx.binding_alpha_suffix .. "_l" .. tostring(ctx.binding_alpha_seq)
+        end
+        return scoped_binding_key(ctx, binding)
+    end
+
     local function binding_is_addressed(ctx, binding)
         local key = binding_key(binding)
         local scoped = scoped_binding_key(ctx, binding)
@@ -1403,11 +1412,12 @@ function M.Define(T)
         local cls = pvm.classof(stmt)
         if cls == Tr.StmtLet then
             local src, ty = lower_expr(ctx, stmt.init)
+            declare_fresh_binding_key(ctx, stmt.binding)
             if binding_is_addressed(ctx, stmt.binding) or (is_aggregate_code_ty(ty) and not is_view_code_ty(ty)) then bind_local_init(ctx, stmt.binding, src, stmt.binding.ty, false)
             else bind_alias(ctx, stmt.binding, src, ty) end
         elseif cls == Tr.StmtVar then
             local src = lower_expr(ctx, stmt.init)
-            ctx.mutable[declare_binding_key(ctx, stmt.binding)] = true
+            ctx.mutable[declare_fresh_binding_key(ctx, stmt.binding)] = true
             bind_local_init(ctx, stmt.binding, src, stmt.binding.ty, true)
         elseif cls == Tr.StmtSet then
             local value = lower_expr(ctx, stmt.value)

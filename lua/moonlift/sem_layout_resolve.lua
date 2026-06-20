@@ -145,6 +145,12 @@ function M.Define(T)
         return H.HostRepOpaque("sem_layout")
     end
 
+    local function access_base_type(ty)
+        local cls = pvm.classof(ty)
+        if cls == Ty.TAccess or cls == Ty.TLease then return access_base_type(ty.base) end
+        return ty
+    end
+
     resolve_field_ref = pvm.phase("moonlift_sem_resolve_field_ref", {
         [Sem.FieldByOffset] = function(field) return pvm.once(field) end,
         [Sem.FieldByName] = function(field, base_ty, env)
@@ -175,7 +181,7 @@ function M.Define(T)
         [Tr.PlaceDot] = function(self, env, target)
             local base = one(resolve_place, self.base, env, target)
             local base_ty = type_of_place(base)
-            local lookup_ty = base_ty
+            local lookup_ty = access_base_type(base_ty)
             if lookup_ty ~= nil and pvm.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
             if lookup_ty ~= nil then
                 local field = pvm.one(resolve_field_ref(Sem.FieldByName(self.name, lookup_ty), lookup_ty, env))
@@ -186,6 +192,7 @@ function M.Define(T)
         [Tr.PlaceField] = function(self, env, target)
             local base = one(resolve_place, self.base, env, target)
             local base_ty = type_of_place(base)
+            base_ty = access_base_type(base_ty)
             if base_ty ~= nil and pvm.classof(base_ty) == Ty.TPtr then base_ty = base_ty.elem end
             local field = self.field
             if base_ty ~= nil then field = pvm.one(resolve_field_ref(self.field, base_ty, env)) end
@@ -225,7 +232,7 @@ function M.Define(T)
             local base_ty = nil
             local h_cls = pvm.classof(h)
             if h_cls == Tr.ExprTyped or h_cls == Tr.ExprOpen then base_ty = h.ty end
-            local lookup_ty = base_ty
+            local lookup_ty = access_base_type(base_ty)
             if lookup_ty ~= nil and pvm.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
             if lookup_ty ~= nil then
                 local field = pvm.one(resolve_field_ref(Sem.FieldByName(self.name, lookup_ty), lookup_ty, env))
@@ -242,7 +249,7 @@ function M.Define(T)
         [Tr.ExprIntrinsic] = function(self, env, target) return pvm.once(pvm.with(self, { args = map_exprs(self.args, env, target) })) end,
         [Tr.ExprAddrOf] = function(self, env, target) return pvm.once(pvm.with(self, { place = one(resolve_place, self.place, env, target) })) end,
         [Tr.ExprDeref] = function(self, env, target) return pvm.once(pvm.with(self, { value = one(resolve_expr, self.value, env, target) })) end,
-        [Tr.ExprCall] = function(self, env, target) return pvm.once(pvm.with(self, { args = map_exprs(self.args, env, target) })) end,
+        [Tr.ExprCall] = function(self, env, target) return pvm.once(pvm.with(self, { callee = one(resolve_expr, self.callee, env, target), args = map_exprs(self.args, env, target) })) end,
         [Tr.ExprLen] = function(self, env, target) return pvm.once(pvm.with(self, { value = one(resolve_expr, self.value, env, target) })) end,
         [Tr.ExprField] = function(self, env, target)
             local base = one(resolve_expr, self.base, env, target)
@@ -250,6 +257,7 @@ function M.Define(T)
             local base_ty = nil
             local h_cls = pvm.classof(h)
             if h_cls == Tr.ExprTyped or h_cls == Tr.ExprOpen then base_ty = h.ty end
+            base_ty = access_base_type(base_ty)
             if base_ty ~= nil and pvm.classof(base_ty) == Ty.TPtr then base_ty = base_ty.elem end
             local field = self.field
             if base_ty ~= nil then field = pvm.one(resolve_field_ref(self.field, base_ty, env)) end

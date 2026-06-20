@@ -228,9 +228,61 @@ function M.Define(T)
         end
     end
 
+    local function type_decl_key(td)
+        if td == nil or td.id == nil then return nil end
+        return td.id.module_name .. "\0" .. td.id.spelling
+    end
+
+    local function type_deps(ty, out)
+        local cls = pvm.classof(ty)
+        if cls == C.CBackendNamed then
+            out[#out + 1] = ty.id.module_name .. "\0" .. ty.id.spelling
+        elseif cls == C.CBackendArray or cls == C.CBackendVector then
+            type_deps(ty.elem, out)
+        elseif cls == C.CBackendAbiHiddenOutPtr then
+            type_deps(ty.result, out)
+        end
+    end
+
+    local function type_decl_deps(td)
+        local out = {}
+        local cls = pvm.classof(td)
+        if cls == C.CBackendTypedef then
+            type_deps(td.ty, out)
+        elseif cls == C.CBackendStructDecl or cls == C.CBackendUnionDecl then
+            for i = 1, #(td.fields or {}) do type_deps(td.fields[i].ty, out) end
+        end
+        return out
+    end
+
+    local function ordered_type_decls(types)
+        local by_key, out, perm, temp = {}, {}, {}, {}
+        for i = 1, #(types or {}) do
+            local key = type_decl_key(types[i])
+            if key ~= nil and by_key[key] == nil then by_key[key] = types[i] end
+        end
+        local function visit(td)
+            local key = type_decl_key(td)
+            if key == nil then out[#out + 1] = td; return end
+            if perm[key] then return end
+            if temp[key] then return end
+            temp[key] = true
+            local deps = type_decl_deps(td)
+            for i = 1, #deps do
+                if deps[i] ~= key and by_key[deps[i]] ~= nil then visit(by_key[deps[i]]) end
+            end
+            temp[key] = nil
+            perm[key] = true
+            out[#out + 1] = td
+        end
+        for i = 1, #(types or {}) do visit(types[i]) end
+        return out
+    end
+
     local function emit_type_decls(unit, out)
-        for i = 1, #unit.types do
-            local td = unit.types[i]
+        local types = ordered_type_decls(unit.types)
+        for i = 1, #types do
+            local td = types[i]
             local cls = pvm.classof(td)
             local name = (td.id.module_name .. "_" .. td.id.spelling):gsub("[^%w_]", "_")
             if cls == C.CBackendTypedef then out[#out + 1] = "typedef " .. decl(td.ty, name) .. ";"

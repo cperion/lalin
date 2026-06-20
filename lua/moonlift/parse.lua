@@ -434,6 +434,7 @@ local function new_parser_internal(T, toks, first, limit, opts)
         issues = {},
         value_env = opts.value_env or {},
         cont_env = opts.cont_env or {},
+        source_env = opts.source_env or O.SourceEnv("", {}, {}, {}),
         protocol_types = opts.protocol_types or {},
         product_types = opts.product_types or {},
         name_hint = opts.name_hint,
@@ -804,6 +805,143 @@ function Parser:record_splice_slot(splice_id, slot_sum, role)
     return entry
 end
 
+function Parser:path_text(path)
+    local parts = path and path.parts or {}
+    local out = {}
+    for i = 1, #parts do out[#out + 1] = parts[i].text end
+    return table.concat(out, ".")
+end
+
+function Parser:host_binding(path_text)
+    local bindings = self.source_env.host_bindings or {}
+    for i = 1, #bindings do
+        if self:path_text(bindings[i].path.path) == path_text then return bindings[i] end
+    end
+    return nil
+end
+
+function Parser:host_facet(path_text, role)
+    local binding = self:host_binding(path_text)
+    if not binding then return nil end
+    local pvm = require("moonlift.pvm")
+    local O = self.O
+    for i = 1, #(binding.facets or {}) do
+        local facet = binding.facets[i]
+        local cls = pvm.classof(facet)
+        if role == "type" and cls == O.HostFacetType then return facet end
+        if role == "local_type" and cls == O.HostFacetLocalType then return facet end
+        if role == "expr" and cls == O.HostFacetExpr then return facet end
+        if role == "func" and cls == O.HostFacetFunc then return facet end
+        if role == "region_frag" and cls == O.HostFacetRegionFrag then return facet end
+        if role == "expr_frag" and cls == O.HostFacetExprFrag then return facet end
+        if role == "module" and cls == O.HostFacetModule then return facet end
+    end
+    return nil
+end
+
+function Parser:host_path_role(path_text)
+    if self:host_facet(path_text, "local_type") then return "local_type" end
+    if self:host_facet(path_text, "type") then return "type" end
+    if self:host_facet(path_text, "func") then return "func" end
+    if self:host_facet(path_text, "expr") then return "expr" end
+    if self:host_facet(path_text, "region_frag") then return "region_frag" end
+    if self:host_facet(path_text, "expr_frag") then return "expr_frag" end
+    if self:host_facet(path_text, "module") then return "module" end
+    return nil
+end
+
+function Parser:path_root(path_text)
+    return tostring(path_text):match("^([^%.]+)")
+end
+
+function Parser:is_host_module_path(path_text)
+    local root = self:path_root(path_text)
+    return root ~= nil and path_text:find(".", 1, true) ~= nil and self:host_facet(root, "module") ~= nil
+end
+
+function Parser:record_host_type(path_text)
+    local facet = self:host_facet(path_text, "type")
+    if facet then
+        self:record_splice_slot(path_text, self.O.SlotType(facet.slot), "type")
+        return facet.slot
+    end
+    if self:is_host_module_path(path_text) then
+        local slot = self.O.TypeSlot(self:splice_key("type", path_text), path_text)
+        self:record_splice_slot(path_text, self.O.SlotType(slot), "type")
+        return slot
+    end
+    return nil
+end
+
+function Parser:host_local_type_name(path_text)
+    local facet = self:host_facet(path_text, "local_type")
+    return facet and facet.local_name or nil
+end
+
+function Parser:record_host_expr(path_text)
+    local facet = self:host_facet(path_text, "expr") or self:host_facet(path_text, "func")
+    if facet then
+        self:record_splice_slot(path_text, self.O.SlotExpr(facet.slot), "expr")
+        return facet.slot
+    end
+    return nil
+end
+
+function Parser:record_host_func(path_text)
+    local facet = self:host_facet(path_text, "func")
+    if facet then
+        self:record_splice_slot(path_text, self.O.SlotExpr(facet.slot), "expr")
+        return facet.slot
+    end
+    if self:is_host_module_path(path_text) then
+        local slot = self.O.ExprSlot(self:splice_key("expr", path_text), path_text, nil)
+        self:record_splice_slot(path_text, self.O.SlotExpr(slot), "expr")
+        return slot
+    end
+    return nil
+end
+
+function Parser:record_host_region_frag(path_text)
+    local facet = self:host_facet(path_text, "region_frag")
+    if facet then
+        self:record_splice_slot(path_text, self.O.SlotRegionFrag(facet.slot), "region_frag")
+        return facet.slot
+    end
+    if self:is_host_module_path(path_text) then
+        local slot = self.O.RegionFragSlot(self:splice_key("region_frag", path_text), path_text)
+        self:record_splice_slot(path_text, self.O.SlotRegionFrag(slot), "region_frag")
+        return slot
+    end
+    return nil
+end
+
+function Parser:record_host_expr_frag(path_text)
+    local facet = self:host_facet(path_text, "expr_frag")
+    if facet then
+        self:record_splice_slot(path_text, self.O.SlotExprFrag(facet.slot), "expr_frag")
+        return facet.slot
+    end
+    if self:is_host_module_path(path_text) then
+        local slot = self.O.ExprFragSlot(self:splice_key("expr_frag", path_text), path_text)
+        self:record_splice_slot(path_text, self.O.SlotExprFrag(slot), "expr_frag")
+        return slot
+    end
+    return nil
+end
+
+function Parser:expr_path_text(expr)
+    local pvm = require("moonlift.pvm")
+    local Tr, B = self.Tr, self.B
+    local cls = pvm.classof(expr)
+    if cls == Tr.ExprRef and pvm.classof(expr.ref) == B.ValueRefName then
+        return expr.ref.name
+    elseif cls == Tr.ExprDot then
+        local base = self:expr_path_text(expr.base)
+        if base then return base .. "." .. expr.name end
+    end
+    return nil
+end
+
 function Parser:spread_expr_slot(role, id)
     local slot = self.O.ExprSlot(self:splice_key(role, id), id, nil)
     self:record_splice_slot(id, self.O.SlotExpr(slot), role)
@@ -885,12 +1023,28 @@ end
 
 function Parser:type_name(name)
     local C, Ty = self.C, self.Ty
+    local pvm = require("moonlift.pvm")
+    if type(name) == "table" and type(name.as_type_value) == "function" then
+        local tv = name:as_type_value()
+        if tv and tv.ty then return tv.ty end
+    end
+    if type(name) == "table" and type(name.as_moonlift_type) == "function" then
+        return name:as_moonlift_type()
+    end
+    if pvm.classof(name) ~= false then
+        return name
+    end
     local m = { void=C.ScalarVoid, bool=C.ScalarBool, i8=C.ScalarI8, i16=C.ScalarI16,
         i32=C.ScalarI32, i64=C.ScalarI64, u8=C.ScalarU8, u16=C.ScalarU16,
         u32=C.ScalarU32, u64=C.ScalarU64, f32=C.ScalarF32, f64=C.ScalarF64,
         index=C.ScalarIndex, ptr=C.ScalarRawPtr }
     if m[name] then return Ty.TScalar(m[name]) end
-    return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(name) })))
+    local parts = {}
+    for part in tostring(name):gmatch("[^%.]+") do
+        parts[#parts + 1] = C.Name(part)
+    end
+    if #parts == 0 then parts[1] = C.Name(tostring(name)) end
+    return Ty.TNamed(Ty.TypeRefPath(C.Path(parts)))
 end
 
 function Parser:type_ref_name(msg)
@@ -899,6 +1053,12 @@ function Parser:type_ref_name(msg)
     while self:accept(TK.dot) do
         name = name .. "." .. self:expect_name("expected type path segment")
     end
+    local local_type_name = self:host_local_type_name(name)
+    if local_type_name then
+        return Ty.TypeRefPath(C.Path({ C.Name(local_type_name) }))
+    end
+    local host_type_slot = self:record_host_type(name)
+    if host_type_slot then return Ty.TypeRefSlot(host_type_slot) end
     return Ty.TypeRefPath(C.Path({ C.Name(name) }))
 end
 
@@ -1055,6 +1215,14 @@ function Parser:parse_type()
 
     self.i = after_name_i
     local expr = self:read_splice_expr_tail(start_i, name)
+    local local_type_name = self:host_local_type_name(expr)
+    if local_type_name then
+        return self:type_name(local_type_name)
+    end
+    local host_type_slot = self:record_host_type(expr)
+    if host_type_slot then
+        return Ty.TSlot(host_type_slot)
+    end
     return self:type_name(expr)
 end
 
@@ -1140,6 +1308,10 @@ function Parser:nud()
     if k == TK.name then
         local binding = self.value_env[text]
         if binding then return Tr.ExprRef(Tr.ExprSurface, B.ValueRefBinding(binding)) end
+        local host_expr_slot = self:record_host_expr(text)
+        if host_expr_slot then
+            return Tr.ExprSlotValue(Tr.ExprSurface, host_expr_slot)
+        end
         return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(text))
     end
 
@@ -1237,7 +1409,7 @@ function Parser:nud()
 end
 
 function Parser:led(k, left, opts)
-    local C, Sem, Tr, B = self.C, self.Sem, self.Tr, self.B
+    local C, Sem, Tr, B, O = self.C, self.Sem, self.Tr, self.B, self.O
     local pvm = require("moonlift.pvm")
 
     if k == TK.lparen then
@@ -1286,9 +1458,24 @@ function Parser:led(k, left, opts)
         self:expect(TK.rparen)
         if pvm.classof(left) == Tr.ExprDot and pvm.classof(left.base) == Tr.ExprRef
            and pvm.classof(left.base.ref) == B.ValueRefName then
-            if left.name ~= "from_repr" then
+            if left.name ~= "from_repr" and self.protocol_types[left.base.ref.name] ~= nil then
                 return Tr.ExprCtor(Tr.ExprSurface, left.base.ref.name, left.name, args)
             end
+        end
+        if pvm.classof(left) == Tr.ExprDot and left.name == "from_repr" then
+            local base_path = self:expr_path_text(left.base)
+            local local_type_name = base_path and self:host_local_type_name(base_path) or nil
+            if local_type_name or (base_path and self:record_host_type(base_path)) then
+                local leaf = local_type_name or base_path:match("([^%.]+)$") or base_path
+                local callee = Tr.ExprDot(Tr.ExprSurface, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(leaf)), "from_repr")
+                return Tr.ExprCall(Tr.ExprSurface, callee, args)
+            end
+        end
+        local bound_func_path = self:expr_path_text(left)
+        local host_func_slot = bound_func_path and self:record_host_func(bound_func_path) or nil
+        if host_func_slot then
+            local callee = Tr.ExprSlotValue(Tr.ExprSurface, host_func_slot)
+            return Tr.ExprCall(Tr.ExprSurface, callee, args)
         end
         -- select(cond, a, b) special form
         if pvm.classof(left) == Tr.ExprRef and pvm.classof(left.ref) == B.ValueRefName
@@ -1336,7 +1523,14 @@ function Parser:led(k, left, opts)
         end
         self:expect(TK.rbrace)
         local ty
-        if left_name then
+        local left_path = self:expr_path_text(left)
+        local local_type_name = left_path and self:host_local_type_name(left_path) or nil
+        local host_type_slot = (not local_type_name and left_path) and self:record_host_type(left_path) or nil
+        if local_type_name then
+            ty = self:type_name(local_type_name)
+        elseif host_type_slot then
+            ty = self.Ty.TSlot(host_type_slot)
+        elseif left_name then
             ty = self.Ty.TNamed(self.Ty.TypeRefPath(self.C.Path({ self.C.Name(left_name) })))
         else
             ty = self.Ty.TScalar(self.C.ScalarVoid)
@@ -1346,7 +1540,13 @@ function Parser:led(k, left, opts)
 
     if k == TK.dot then
         local field = self:expect_field_name("expected field name")
-        return Tr.ExprDot(Tr.ExprSurface, left, field)
+        local dotted = Tr.ExprDot(Tr.ExprSurface, left, field)
+        local path = self:expr_path_text(dotted)
+        local host_expr_slot = path and self:record_host_expr(path) or nil
+        if host_expr_slot and self:host_path_role(path) == "expr" then
+            return Tr.ExprSlotValue(Tr.ExprSurface, host_expr_slot)
+        end
+        return dotted
     end
 
     local bin = { [TK.plus]=C.BinAdd, [TK.minus]=C.BinSub, [TK.star]=C.BinMul,
@@ -1776,6 +1976,10 @@ function Parser:parse_region_frag_ref(keyword)
         return O.RegionFragRefSlot(slot), name
     else
         name = self:read_splice_expr_no_parens("expected region fragment name after " .. (keyword or "emit/call"))
+        local slot = self:record_host_region_frag(name)
+        if slot then
+            return O.RegionFragRefSlot(slot), name
+        end
         return O.RegionFragRefName(name), name
     end
 end
@@ -1791,6 +1995,10 @@ function Parser:parse_expr_frag_ref()
         return O.ExprFragRefSlot(slot), name
     else
         name = self:read_splice_expr_no_parens("expected expression fragment name after emit")
+        local slot = self:record_host_expr_frag(name)
+        if slot then
+            return O.ExprFragRefSlot(slot), name
+        end
         return O.ExprFragRefName(name), name
     end
 end
