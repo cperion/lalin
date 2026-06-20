@@ -34,6 +34,7 @@ function M.Define(T)
     local function c_global_id(id) return C.CBackendGlobalId(sanitize(id.text)) end
     local function c_sig_id(id) return C.CBackendFuncSigId(sanitize(id.text)) end
     local function c_synth_local_id(prefix, id) return C.CBackendLocalId(sanitize(prefix .. ":" .. id.text)) end
+    local function c_synth_local_id2(prefix, id, suffix) return C.CBackendLocalId(sanitize(prefix .. ":" .. id.text .. ":" .. suffix)) end
 
     local function add_helper(ctx, kind)
         local key = tostring(kind)
@@ -121,14 +122,22 @@ function M.Define(T)
         error("code_to_c: unsupported place " .. class_name(place), 2)
     end
 
+    local function atomic_place_addr_stmts(ctx, inst_id, place, suffix)
+        if pvm.classof(place) == Code.CodePlaceDeref then return {}, atom(place.addr) end
+        local addr = c_synth_local_id2("atomic_addr", inst_id, suffix or "place")
+        return { C.CBackendAssign(addr, C.CBackendRAddrOfPlace(place_to_c(ctx, place))) }, C.CBackendAtomLocal(addr)
+    end
+
     local function code_func_name(ctx, id)
         local f = ctx.funcs[id.text]
-        return c_name(f and f.name or id.text)
+        if f == nil then error("code_to_c: missing function " .. tostring(id.text), 2) end
+        return c_name(f.name)
     end
 
     local function code_extern_name(ctx, id)
         local e = ctx.externs[id.text]
-        return c_name(e and e.name or id.text)
+        if e == nil then error("code_to_c: missing extern " .. tostring(id.text), 2) end
+        return c_name(e.name)
     end
 
     local function global_ref_name(ctx, ref)
@@ -144,12 +153,14 @@ function M.Define(T)
         local cls = pvm.classof(ref)
         if cls == Code.CodeGlobalRefFunc then
             local f = ctx.funcs[ref.func.text]
-            return f and c_sig(ctx, f.sig) or C.CBackendFuncSigId("missing")
+            if f == nil then error("code_to_c: missing function ref " .. tostring(ref.func.text), 2) end
+            return c_sig(ctx, f.sig)
         elseif cls == Code.CodeGlobalRefExtern then
             local e = ctx.externs[ref["extern"].text]
-            return e and c_sig(ctx, e.sig) or C.CBackendFuncSigId("missing")
+            if e == nil then error("code_to_c: missing extern ref " .. tostring(ref["extern"].text), 2) end
+            return c_sig(ctx, e.sig)
         end
-        return C.CBackendFuncSigId("missing")
+        error("code_to_c: non-code global ref has no function signature " .. class_name(ref), 2)
     end
 
     local function binary_helper_kind(ctx, k)
@@ -251,33 +262,36 @@ function M.Define(T)
             elseif tcls == Code.CodeCallExtern then target = C.CBackendCallExtern(code_extern_name(ctx, k.target["extern"]))
             elseif tcls == Code.CodeCallIndirect then target = C.CBackendCallIndirect(atom(k.target.callee), c_sig(ctx, k.target.sig))
             elseif tcls == Code.CodeCallClosure then target = C.CBackendCallClosure(atom(k.target.closure), c_sig(ctx, k.target.sig))
-            else return { C.CBackendComment("unsupported call target") } end
+            else error("code_to_c: unsupported call target " .. class_name(k.target), 2) end
             return { C.CBackendCall(k.dst and c_local_id(k.dst) or nil, target, args) }
         elseif cls == Code.CodeInstAtomicLoad then
-            if pvm.classof(k.place) ~= Code.CodePlaceDeref then return { C.CBackendComment("atomic load of non-deref place") } end
             local helper = add_helper(ctx, C.CBackendHelperAtomicLoad(c_access(ctx, k.access)))
-            return { C.CBackendHelperCall(c_local_id(k.dst), helper, { atom(k.place.addr) }) }
+            local stmts, addr = atomic_place_addr_stmts(ctx, inst.id, k.place, "load")
+            stmts[#stmts + 1] = C.CBackendHelperCall(c_local_id(k.dst), helper, { addr })
+            return stmts
         elseif cls == Code.CodeInstAtomicStore then
-            if pvm.classof(k.place) ~= Code.CodePlaceDeref then return { C.CBackendComment("atomic store of non-deref place") } end
             local helper = add_helper(ctx, C.CBackendHelperAtomicStore(c_access(ctx, k.access)))
-            return { C.CBackendHelperCall(nil, helper, { atom(k.place.addr), atom(k.value) }) }
+            local stmts, addr = atomic_place_addr_stmts(ctx, inst.id, k.place, "store")
+            stmts[#stmts + 1] = C.CBackendHelperCall(nil, helper, { addr, atom(k.value) })
+            return stmts
         elseif cls == Code.CodeInstAtomicRmw then
-            if pvm.classof(k.place) ~= Code.CodePlaceDeref then return { C.CBackendComment("atomic rmw of non-deref place") } end
             local helper = add_helper(ctx, C.CBackendHelperAtomicRmw(k.op, c_access(ctx, k.access)))
-            return { C.CBackendHelperCall(c_local_id(k.dst), helper, { atom(k.place.addr), atom(k.value) }) }
+            local stmts, addr = atomic_place_addr_stmts(ctx, inst.id, k.place, "rmw")
+            stmts[#stmts + 1] = C.CBackendHelperCall(c_local_id(k.dst), helper, { addr, atom(k.value) })
+            return stmts
         elseif cls == Code.CodeInstAtomicCas then
-            if pvm.classof(k.place) ~= Code.CodePlaceDeref then return { C.CBackendComment("atomic cas of non-deref place") } end
             local expected_addr = c_synth_local_id("atomic_cas_expected_addr", inst.id)
             local helper = add_helper(ctx, C.CBackendHelperAtomicCas(c_access(ctx, k.access), k.ordering, k.ordering))
-            return {
-                C.CBackendAssign(expected_addr, C.CBackendRAddrOfPlace(C.CBackendPlaceLocal(c_local_id(k.expected), c_ty(ctx, k.access.ty)))),
-                C.CBackendHelperCall(c_local_id(k.dst), helper, { atom(k.place.addr), C.CBackendAtomLocal(expected_addr), atom(k.replacement) }),
-            }
+            local stmts, addr = atomic_place_addr_stmts(ctx, inst.id, k.place, "cas")
+            stmts[#stmts + 1] =
+                C.CBackendAssign(expected_addr, C.CBackendRAddrOfPlace(C.CBackendPlaceLocal(c_local_id(k.expected), c_ty(ctx, k.access.ty))))
+            stmts[#stmts + 1] = C.CBackendHelperCall(c_local_id(k.dst), helper, { addr, C.CBackendAtomLocal(expected_addr), atom(k.replacement) })
+            return stmts
         elseif cls == Code.CodeInstAtomicFence then
             local helper = add_helper(ctx, C.CBackendHelperAtomicFence(k.ordering))
             return { C.CBackendHelperCall(nil, helper, {}) }
         end
-        return { C.CBackendComment("unsupported CodeInstKind " .. class_name(k)) }
+        error("code_to_c: unsupported CodeInstKind " .. class_name(k), 2)
     end
 
     local function term_to_c(ctx, term)
@@ -304,7 +318,7 @@ function M.Define(T)
         elseif cls == Code.CodeTermTrap or cls == Code.CodeTermUnreachable then
             return C.CBackendTrap
         end
-        return C.CBackendTrap
+        error("code_to_c: unsupported CodeTermKind " .. class_name(k), 2)
     end
 
     local function collect_value_locals(ctx, func)
@@ -327,7 +341,7 @@ function M.Define(T)
                 elseif cls == Code.CodeInstCompare then add(k.dst, Code.CodeTyBool8)
                 elseif cls == Code.CodeInstCast then add(k.dst, k.to)
                 elseif cls == Code.CodeInstAddrOf or cls == Code.CodeInstGlobalRef or cls == Code.CodeInstPtrOffset then add(k.dst, k.ptr_ty)
-                elseif cls == Code.CodeInstLoad or cls == Code.CodeInstAtomicLoad or cls == Code.CodeInstAtomicRmw then add(k.dst, k.access.ty)
+                elseif cls == Code.CodeInstLoad then add(k.dst, k.access.ty)
                 elseif cls == Code.CodeInstAggregate or cls == Code.CodeInstArray or cls == Code.CodeInstClosure or cls == Code.CodeInstVariantCtor then add(k.dst, k.ty)
                 elseif cls == Code.CodeInstViewMake then add(k.dst, Code.CodeTyView(k.elem_ty))
                 elseif cls == Code.CodeInstViewData then add(k.dst, view_data_type(ctx, k.view))
@@ -338,6 +352,17 @@ function M.Define(T)
                     add(k.dst, k.access.ty)
                     local sid = Code.CodeValueId("atomic_cas_expected_addr:" .. b.insts[j].id.text)
                     add(sid, Code.CodeTyDataPtr(k.access.ty))
+                    if pvm.classof(k.place) ~= Code.CodePlaceDeref then
+                        local aid = Code.CodeValueId("atomic_addr:" .. b.insts[j].id.text .. ":cas")
+                        add(aid, Code.CodeTyDataPtr(k.access.ty))
+                    end
+                elseif cls == Code.CodeInstAtomicLoad or cls == Code.CodeInstAtomicStore or cls == Code.CodeInstAtomicRmw then
+                    if cls == Code.CodeInstAtomicLoad or cls == Code.CodeInstAtomicRmw then add(k.dst, k.access.ty) end
+                    if pvm.classof(k.place) ~= Code.CodePlaceDeref then
+                        local suffix = (cls == Code.CodeInstAtomicLoad and "load") or (cls == Code.CodeInstAtomicStore and "store") or "rmw"
+                        local aid = Code.CodeValueId("atomic_addr:" .. b.insts[j].id.text .. ":" .. suffix)
+                        add(aid, Code.CodeTyDataPtr(k.access.ty))
+                    end
                 elseif cls == Code.CodeInstCall then
                     local sig = ctx.sigs[k.sig.text]
                     if k.dst ~= nil and sig and #sig.results == 1 then add(k.dst, sig.results[1]) end
@@ -382,7 +407,7 @@ function M.Define(T)
         if cls == Code.CodeGlobalRefData then return C.CBackendRelocGlobal(c_global_id(ref.data)) end
         if cls == Code.CodeGlobalRefFunc then return C.CBackendRelocFunc(c_name(ref.func.text)) end
         if cls == Code.CodeGlobalRefExtern then return C.CBackendRelocExtern(c_name(ref["extern"].text)) end
-        return C.CBackendRelocGlobal(C.CBackendGlobalId("missing"))
+        error("code_to_c: unsupported reloc target " .. class_name(ref), 2)
     end
 
     local function c_init(ctx, init)

@@ -111,4 +111,31 @@ int x = FOO;
     print("  preprocessor + parse integration: PASS")
 end
 
+-- Test: sizeof lowers through C type facts, not a fixed sentinel value.
+do
+    local src = [[int size_i64(void) { return sizeof(long long); }]]
+    local moon_module, _, _, issues = full_pipeline(src)
+    assert(#issues == 0)
+    local ret
+    for _, item in ipairs(moon_module.items) do
+        if pvm.classof(item) == Tr.ItemFunc and item.func.name == "size_i64" then
+            ret = item.func.body[1]
+        end
+    end
+    assert(ret and pvm.classof(ret) == Tr.StmtReturnValue)
+    assert(pvm.classof(ret.value) == Tr.ExprLit)
+    assert(ret.value.value.raw == "8", "expected sizeof(long long) to lower to 8")
+    print("  sizeof lowering: PASS")
+end
+
+-- Test: parsed C compound literals are not silently lowered to a fake scalar.
+do
+    local ok, err = pcall(function()
+        full_pipeline([[int bad(void) { return (int){1}; }]])
+    end)
+    assert(not ok, "compound literal importer lowering must reject until storage lowering is implemented")
+    assert(tostring(err):match("compound literal"), "expected compound literal diagnostic, got " .. tostring(err))
+    print("  compound literal lowering rejection: PASS")
+end
+
 print("moonlift test_c_end_to_end ok")

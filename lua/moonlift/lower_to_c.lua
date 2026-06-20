@@ -82,6 +82,19 @@ function M.Define(T)
     end
 
     local function value_ty(ctx, id) return id and ctx.value_types[id.text] or nil end
+    local function view_type(ctx, id)
+        local ty = value_ty(ctx, id)
+        if pvm.classof(ty) == Code.CodeTyLease then ty = ty.base end
+        return ty
+    end
+    local function view_elem_type(ctx, id)
+        local ty = view_type(ctx, id)
+        if pvm.classof(ty) == Code.CodeTyView then return ty.elem end
+        return nil
+    end
+    local function view_data_type(ctx, id)
+        return Code.CodeTyDataPtr(view_elem_type(ctx, id))
+    end
 
     local function tmp(ctx, prefix, ty)
         ctx.next_tmp = ctx.next_tmp + 1
@@ -392,7 +405,8 @@ function M.Define(T)
             return C.CBackendSwitchGoto(atom(k.tag), cases, clabel(k.default_dest), args(k.default_args))
         end
         if cls == Code.CodeTermReturn then return (#k.values == 0) and C.CBackendReturnVoid or C.CBackendReturn(atom(k.values[1])) end
-        return C.CBackendTrap
+        if cls == Code.CodeTermTrap or cls == Code.CodeTermUnreachable then return C.CBackendTrap end
+        error("lower_to_c: unsupported CodeTermKind " .. class_name(k), 2)
     end
 
     local function graph_loop_by_id(graph)
@@ -435,6 +449,8 @@ function M.Define(T)
         return params
     end
 
+    local semantic_fragment_prelude
+
     local function emit_closed_form_fragment(ctx, graph, flow, kernels, fragment)
         local kplan = kernel_by_id(kernels)[fragment.strategy.kernel.text]
         if kplan == nil then error("lower_to_c: closed-form strategy references missing kernel " .. fragment.strategy.kernel.text, 2) end
@@ -451,6 +467,7 @@ function M.Define(T)
             end
         end
         ctx.stmts = { C.CBackendComment("semantic closed-form " .. tostring(fragment.strategy.fact.id and fragment.strategy.fact.id.text or fragment.id.text)) }
+        if semantic_fragment_prelude ~= nil then semantic_fragment_prelude(ctx, graph, fragment, loop.header.block) end
         local result = lower_value_expr(ctx, fragment.strategy.fact.expr)
         local args = {}
         for i, arg in ipairs(jump_fact and jump_fact.args or {}) do
@@ -507,12 +524,14 @@ function M.Define(T)
         local bindings_by_block, effects_by_block = place_bindings_effects(ctx, kplan)
         local header_block = ctx.block_by_id[loop.header.block.text]
         ctx.stmts = { C.CBackendComment("semantic scalar kernel " .. kplan.id.text) }
+        if semantic_fragment_prelude ~= nil then semantic_fragment_prelude(ctx, graph, fragment, loop.header.block) end
         for _, b in ipairs(bindings_by_block[loop.header.block.text] or {}) do bind_kernel_value(ctx, b) end
         ctx.blocks[#ctx.blocks + 1] = C.CBackendBlock(clabel(loop.header.block), c_block_params(ctx, header_block), ctx.stmts,
             C.CBackendIfGoto(atom(cond), clabel(exit_edge.to.block), edge_args(ctx, edge_facts[exit_edge.from.block.text .. "\0" .. exit_edge.to.block.text]), clabel(body_successor), edge_args(ctx, edge_facts[exit_edge.from.block.text .. "\0" .. body_successor.text])))
         for _, block in ipairs(ctx.code_func.blocks or {}) do
             if body_set[block.id.text] and block.id ~= loop.header.block then
                 ctx.stmts = { C.CBackendComment("semantic scalar kernel body " .. kplan.id.text) }
+                if semantic_fragment_prelude ~= nil then semantic_fragment_prelude(ctx, graph, fragment, block.id) end
                 for _, b in ipairs(bindings_by_block[block.id.text] or {}) do bind_kernel_value(ctx, b) end
                 for _, e in ipairs(effects_by_block[block.id.text] or {}) do emit_kernel_effect(ctx, e) end
                 local term
@@ -682,6 +701,7 @@ function M.Define(T)
         add_local(ctx, ok, Code.CodeTyBool8)
 
         ctx.stmts = { C.CBackendComment("semantic vector kernel dispatch " .. kplan.id.text) }
+        if semantic_fragment_prelude ~= nil then semantic_fragment_prelude(ctx, graph, fragment, loop.header.block) end
         for _, binding in ipairs(kplan.body.bindings or {}) do
             local block = ctx.kernel_value_block and ctx.kernel_value_block[binding.id.text]
             if block == loop.header.block then bind_kernel_value(ctx, binding) end
@@ -708,6 +728,7 @@ function M.Define(T)
         for _, block in ipairs(ctx.code_func.blocks or {}) do
             if body_set[block.id.text] and block.id ~= loop.header.block then
                 ctx.stmts = { C.CBackendComment("semantic vector scalar-tail body " .. kplan.id.text) }
+                if semantic_fragment_prelude ~= nil then semantic_fragment_prelude(ctx, graph, fragment, block.id) end
                 for _, b in ipairs(bindings_by_block[block.id.text] or {}) do bind_kernel_value(ctx, b) end
                 for _, e in ipairs(effects_by_block[block.id.text] or {}) do emit_kernel_effect(ctx, e) end
                 local term
@@ -740,6 +761,88 @@ function M.Define(T)
             for _, b in ipairs(func.blocks or {}) do if b.id == cover.entry then active = true end; if active then add(b) end; if b.id == cover.exit then break end end
         end
         return out, set
+    end
+
+    semantic_fragment_prelude = function(ctx, graph, fragment, only_block)
+        local _, covered = cover_blocks(fragment, ctx.code_func, graph_loop_by_id(graph))
+        local aliases = {}
+        local components = {}
+        local emitted = {}
+
+        local function ref(id, ty)
+            return { atom = atom(id), ty = ty or value_ty(ctx, id) }
+        end
+        local function emit_assign_once(dst, src)
+            if dst == nil or src == nil or emitted[dst.text] then return end
+            emitted[dst.text] = true
+            note_value(ctx, dst, src.ty)
+            ctx.stmts[#ctx.stmts + 1] = C.CBackendAssign(cid(dst), C.CBackendRAtom(src.atom))
+        end
+        local function resolve_view(id)
+            local seen = {}
+            while id ~= nil and aliases[id.text] ~= nil and not seen[id.text] do
+                seen[id.text] = true
+                id = aliases[id.text]
+            end
+            return id
+        end
+        local function component(id, field)
+            id = resolve_view(id)
+            local comp = id and components[id.text] or nil
+            return comp and comp[field] or nil
+        end
+        local function emit_field_load(dst, view, field, ty)
+            if dst == nil or view == nil or emitted[dst.text] then return end
+            emitted[dst.text] = true
+            note_value(ctx, dst, ty)
+            local vty = view_type(ctx, view)
+            if vty == nil then error("lower_to_c: semantic view projection references unknown view " .. tostring(view.text), 3) end
+            ctx.stmts[#ctx.stmts + 1] = C.CBackendPlaceLoad(cid(dst), C.CBackendPlaceField(C.CBackendPlaceLocal(cid(view), c_ty(ctx, vty)), C.CBackendName(field), c_ty(ctx, ty), 0, nil, nil))
+        end
+
+        for _, block in ipairs(ctx.code_func.blocks or {}) do
+            if covered[block.id.text] then
+                for _, inst in ipairs(block.insts or {}) do
+                    local k = inst.kind
+                    local cls = pvm.classof(k)
+                    if cls == Code.CodeInstViewMake then
+                        local vty = Code.CodeTyView(k.elem_ty)
+                        note_value(ctx, k.dst, vty)
+                        components[k.dst.text] = {
+                            data = ref(k.data, Code.CodeTyDataPtr(k.elem_ty)),
+                            len = ref(k.len, Code.CodeTyIndex),
+                            stride = ref(k.stride, Code.CodeTyIndex),
+                        }
+                    elseif cls == Code.CodeInstAlias and pvm.classof(value_ty(ctx, k.dst)) == Code.CodeTyView then
+                        local src = resolve_view(k.src)
+                        if src ~= nil then aliases[k.dst.text] = src end
+                        if src ~= nil and components[src.text] ~= nil then components[k.dst.text] = components[src.text] end
+                    end
+                end
+            end
+        end
+
+        for _, block in ipairs(ctx.code_func.blocks or {}) do
+            if covered[block.id.text] and (only_block == nil or only_block == block.id) then
+                for _, inst in ipairs(block.insts or {}) do
+                    local k = inst.kind
+                    local cls = pvm.classof(k)
+                    if cls == Code.CodeInstViewData then
+                        local src = component(k.view, "data")
+                        if src ~= nil then emit_assign_once(k.dst, src)
+                        else emit_field_load(k.dst, resolve_view(k.view), "data", view_data_type(ctx, k.view)) end
+                    elseif cls == Code.CodeInstViewLen then
+                        local src = component(k.view, "len")
+                        if src ~= nil then emit_assign_once(k.dst, src)
+                        else emit_field_load(k.dst, resolve_view(k.view), "len", Code.CodeTyIndex) end
+                    elseif cls == Code.CodeInstViewStride then
+                        local src = component(k.view, "stride")
+                        if src ~= nil then emit_assign_once(k.dst, src)
+                        else emit_field_load(k.dst, resolve_view(k.view), "stride", Code.CodeTyIndex) end
+                    end
+                end
+            end
+        end
     end
 
     local function ordered_fragments_for_func(func, func_plan, graph_loops)

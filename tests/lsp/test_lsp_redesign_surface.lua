@@ -76,7 +76,7 @@ local input = table.concat({
     frame({ jsonrpc = "2.0", method = "textDocument/didOpen", params = { textDocument = { uri = uri, languageId = "mlua", version = 1, text = src } } }),
     frame({ jsonrpc = "2.0", id = 2, method = "textDocument/completion", params = { textDocument = { uri = uri }, position = eof_pos() } }),
     frame({ jsonrpc = "2.0", id = 3, method = "textDocument/definition", params = { textDocument = { uri = uri }, position = pos_of("fail", 2) } }),
-    frame({ jsonrpc = "2.0", id = 4, method = "textDocument/definition", params = { textDocument = { uri = uri }, position = pos_of("id", 3) } }),
+    frame({ jsonrpc = "2.0", id = 4, method = "textDocument/definition", params = { textDocument = { uri = uri }, position = pos_of("id", 4) } }),
     frame({ jsonrpc = "2.0", id = 5, method = "textDocument/completion", params = { textDocument = { uri = uri }, position = pos_of("ok", 2) } }),
     frame({ jsonrpc = "2.0", id = 6, method = "textDocument/completion", params = { textDocument = { uri = uri }, position = pos_of("fail", 3) } }),
     frame({ jsonrpc = "2.0", id = 7, method = "textDocument/signatureHelp", params = { textDocument = { uri = uri }, position = pos_of("ok = done") } }),

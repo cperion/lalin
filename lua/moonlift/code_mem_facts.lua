@@ -13,6 +13,7 @@ function M.Define(T)
     T._moonlift_api_cache = T._moonlift_api_cache or {}
     if T._moonlift_api_cache.code_mem_facts ~= nil then return T._moonlift_api_cache.code_mem_facts end
 
+    local Core = T.MoonCore
     local Code = T.MoonCode
     local Graph = T.MoonGraph
     local Flow = T.MoonFlow
@@ -238,6 +239,7 @@ function M.Define(T)
             local access_records = {}
             local readonly_objects, writeonly_objects = {}, {}
             local consts = const_values(func)
+            local scaled_index_stride = {}
 
             local function extent_for_value(value, ty)
                 local bounds = value and cidx.bounds[func.id.text .. "\0" .. value.text]
@@ -311,6 +313,26 @@ function M.Define(T)
                 if old == nil then local_value_object[key] = object or false elseif old ~= object then local_value_object[key] = false end
             end
 
+            local function object_stride_const(object)
+                local fact = object_fact(object)
+                if fact == nil then return nil end
+                local cls = pvm.classof(fact.stride)
+                if fact.stride == Mem.MemStrideUnit then return 1 end
+                if cls == Mem.MemStrideConstElems then return fact.stride.elems end
+                return nil
+            end
+
+            local function pattern_for_index(index)
+                if index == Mem.MemIndexNone then return Mem.MemAccessScalar end
+                local cls = pvm.classof(index)
+                if cls == Mem.MemIndexValue then
+                    local stride = scaled_index_stride[index.value.text]
+                    if stride == "dynamic" then return Mem.MemAccessUnknown end
+                    if type(stride) == "number" and stride ~= 1 then return Mem.MemAccessStrided(stride) end
+                end
+                return Mem.MemAccessContiguous
+            end
+
             for _, block in ipairs(func.blocks or {}) do
                 for _, inst in ipairs(block.insts or {}) do
                     local k = inst.kind
@@ -335,14 +357,35 @@ function M.Define(T)
                         add_object(Mem.MemObjectFact(id, func.id, Mem.MemObjectView, Mem.MemProvView(k.dst, k.data, k.len, k.stride), k.elem_ty, Mem.MemExtentElements(k.len, k.elem_ty, "CodeInstViewMake explicit length"), stride_from_value(k.stride, consts)))
                     elseif cls == Code.CodeInstViewData then
                         value_object[k.dst.text] = value_object[k.view.text]
+                    elseif cls == Code.CodeInstViewStride then
+                        local stride = object_stride_const(value_object[k.view.text])
+                        if stride ~= nil then consts[k.dst.text] = stride end
                     elseif cls == Code.CodeInstLoad then
                         if pvm.classof(k.place) == Code.CodePlaceLocal and local_value_object[k.place["local"].text] then value_object[k.dst.text] = local_value_object[k.place["local"].text] end
                     elseif cls == Code.CodeInstStore then
                         if pvm.classof(k.place) == Code.CodePlaceLocal then merge_local_value(k.place["local"], value_object[k.value.text]) end
                     elseif cls == Code.CodeInstAlias then
                         value_object[k.dst.text] = value_object[k.src.text]
+                        if consts[k.src.text] ~= nil then consts[k.dst.text] = consts[k.src.text] end
                     elseif cls == Code.CodeInstCast then
                         value_object[k.dst.text] = value_object[k.value.text]
+                        if consts[k.value.text] ~= nil then consts[k.dst.text] = consts[k.value.text] end
+                    elseif cls == Code.CodeInstBinary then
+                        local lhs, rhs = consts[k.lhs.text], consts[k.rhs.text]
+                        if k.op == Core.BinMul then
+                            if lhs ~= nil and rhs ~= nil then
+                                consts[k.dst.text] = lhs * rhs
+                                scaled_index_stride[k.dst.text] = lhs * rhs
+                            elseif lhs ~= nil then
+                                scaled_index_stride[k.dst.text] = lhs
+                            elseif rhs ~= nil then
+                                scaled_index_stride[k.dst.text] = rhs
+                            else
+                                scaled_index_stride[k.dst.text] = "dynamic"
+                            end
+                        elseif k.op == Core.BinAdd or k.op == Core.BinSub then
+                            if lhs ~= nil and rhs ~= nil then consts[k.dst.text] = (k.op == Core.BinAdd) and (lhs + rhs) or (lhs - rhs) end
+                        end
                     end
 
                     local kind = access_kind(k)
@@ -361,7 +404,7 @@ function M.Define(T)
                             trap = Mem.MemMayTrap
                         end
                         local align = backend_alignment(k.access)
-                        local pattern = index ~= Mem.MemIndexNone and Mem.MemAccessContiguous or Mem.MemAccessScalar
+                        local pattern = pattern_for_index(index)
                         local loop_id = loops_by_func_block[func.id.text] and loops_by_func_block[func.id.text][block.id.text] or nil
                         local access_fact = Mem.MemAccessFact(id, func.id, Graph.GraphBlockId(func.id, block.id), inst.id, kind, place, k.access, base, index, pattern, align, bounds, trap)
                         accesses[#accesses + 1] = access_fact

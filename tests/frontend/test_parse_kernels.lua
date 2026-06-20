@@ -260,8 +260,8 @@ local result = Pipeline.Define(T).parse_and_lower(src, { site = "test_parse_kern
 local program = result.program
 local report = result.back_report
 assert(#report.issues == 0)
--- The frontend no longer installs the legacy tree-shaped VecKernelPlan /
--- VecKernelToBack replacement path.  This integrated suite checks that the
+-- The frontend no longer installs the retired tree-shaped VecKernelPlan /
+-- VecKernelToBack replacement path. This integrated suite checks that the
 -- kernel corpus still lowers and executes correctly; vector-specific projection
 -- coverage now belongs to the MoonCode -> Flow/Mem/Kernel/Lower tests.
 for i = 1, #program.cmds do

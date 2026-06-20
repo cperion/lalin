@@ -43,7 +43,7 @@ function M.Define(T)
         return assert(P.range_from_offsets(index, 0, math.min(#doc.text, 1)))
     end
 
-    local function legacy_range_for_issue(analysis, issue, range)
+    local function adjusted_range_for_issue(analysis, issue, range)
         if pvm.classof(issue) == H.HostIssueBareBoolInBoundaryStruct then
             local field_start = nil
             for i = 1, #analysis.anchors.anchors do
@@ -97,7 +97,7 @@ function M.Define(T)
         return E.DiagFromBindingResolution(E.BindingUnresolved(use, "unresolved binding: " .. tostring(issue.name or "?")))
     end
 
-    local function legacy_code(issue, fallback)
+    local function diagnostic_code(issue, fallback)
         local cls = pvm.classof(issue)
         local kind = cls and cls.kind or ""
         if cls == Pm.ParseIssue then return "parse" end
@@ -121,7 +121,7 @@ function M.Define(T)
         if phase == "open" or (cls and tostring(cls.kind or ""):match("^Issue")) then return E.DiagFromOpen(issue) end
         if phase == "typecheck" or (cls and tostring(cls.kind or ""):match("^TypeIssue")) then return E.DiagFromType(issue) end
         if phase == "backend" or (cls and tostring(cls.kind or ""):match("^BackIssue")) then return E.DiagFromBack(issue) end
-        return E.DiagFromTransport(legacy_code(issue, "E"), tostring(issue))
+        return E.DiagFromTransport(diagnostic_code(issue, "E"), tostring(issue))
     end
 
     local function report_message(report, issue)
@@ -141,18 +141,18 @@ function M.Define(T)
 
     local function diagnostic_from_resolved(analysis, ri)
         local range = ri.span and range_from_span(analysis, ri.span) or default_range(analysis)
-        range = legacy_range_for_issue(analysis, ri.issue, range)
+        range = adjusted_range_for_issue(analysis, ri.issue, range)
         local report = Errors.report_from_resolved(ri, {
             source_text = analysis.parse.parts.document.text,
             uri = analysis.parse.parts.document.uri and analysis.parse.parts.document.uri.text,
         })
-        local code = legacy_code(ri.issue, ri.code)
+        local code = diagnostic_code(ri.issue, ri.code)
         local origin = origin_for_issue(analysis, ri.issue, ri.phase, range, true)
         return E.DiagnosticFact(E.DiagnosticError, origin, code, report_message(report, ri.issue), range)
     end
 
     local function report_for_fallback(analysis, issue, phase, span)
-        return Errors.Catalog.build_report(legacy_code(issue), issue, phase, {
+        return Errors.Catalog.build_report(diagnostic_code(issue), issue, phase, {
             source_text = analysis.parse.parts.document.text,
             uri = analysis.parse.parts.document.uri and analysis.parse.parts.document.uri.text,
             resolved_span = span,
@@ -162,8 +162,8 @@ function M.Define(T)
     local function diagnostic_from_issue(analysis, issue, phase)
         local report = report_for_fallback(analysis, issue, phase, nil)
         local range = report and report.primary and report.primary.span and range_from_span(analysis, report.primary.span) or default_range(analysis)
-        range = legacy_range_for_issue(analysis, issue, range)
-        local code = legacy_code(issue, report and report.code)
+        range = adjusted_range_for_issue(analysis, issue, range)
+        local code = diagnostic_code(issue, report and report.code)
         local origin = origin_for_issue(analysis, issue, phase, range, false)
         return E.DiagnosticFact(E.DiagnosticError, origin, code, report_message(report, issue), range)
     end

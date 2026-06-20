@@ -45,8 +45,8 @@ end
 
 local function field_from_parsed(A, f)
     local ty = type_expr(A, f.type)
-    if f.list then ty = A.TypeList(ty)
-    elseif f.optional then ty = A.TypeOptional(ty) end
+    if f.list then ty = A.TypeList(ty) end
+    if f.optional then ty = A.TypeOptional(ty) end
     return A.Field(f.name, ty, A.FieldOne)
 end
 
@@ -174,8 +174,8 @@ local function emit_decl(A, decl, current_module)
         end
         return table.concat(variants, "\n")
     elseif cls == A.AliasDecl then
-        -- The legacy text parser has no alias production.  Preserve the old
-        -- context_define_schema behavior: aliases lower as unique value products.
+        -- Compact ASDL text has no alias production.  Aliases lower as unique
+        -- value products so generated schemas remain explicit.
         return "    " .. decl.name .. " = (" .. emit_type(A, decl.target, current_module) .. " value) unique"
     end
     error("asdl_text: unsupported Decl " .. tostring(cls and cls.kind or cls), 2)

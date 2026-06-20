@@ -1,0 +1,289 @@
+module MoonC {
+    CTypeId = (string module_name, string spelling) unique
+
+    CTypeKind = CVoid
+         | CScalar(MoonBack.BackScalar scalar) unique
+         | CPointer(MoonC.CTypeId pointee) unique
+         | CEnum(MoonBack.BackScalar scalar) unique
+         | CArray(MoonC.CTypeId elem, number count) unique
+         | CStruct
+         | CUnion
+         | COpaque
+         | CFuncPtr(MoonC.CFuncSigId sig) unique
+
+    CTypeFact = (MoonC.CTypeId id, MoonC.CTypeKind kind, boolean complete, number? size, number? align) unique
+
+    CFieldLayout = (MoonC.CTypeId owner, string name, MoonC.CTypeId type, number offset, number size, number align, number? bit_offset, number? bit_width) unique
+
+    CLayoutFact = (MoonC.CTypeId type, number size, number align, MoonC.CFieldLayout* fields) unique
+
+    CFuncSigId = (string text) unique
+
+    CFuncSig = (MoonC.CFuncSigId id, MoonC.CTypeId* params, MoonC.CTypeId result) unique
+
+    CExternFunc = (string moon_name, string symbol, MoonC.CFuncSigId sig, string? library) unique
+
+    CLibrary = (string name, string? link_name, string? path, string* symbols) unique
+
+    CBackendName = (string text) unique
+
+    CBackendLabel = (string text) unique
+
+    CBackendLocalId = (string text) unique
+
+    CBackendGlobalId = (string text) unique
+
+    CBackendHelperId = (string text) unique
+
+    CBackendFuncSigId = (string text) unique
+
+    CBackendDialect = CBackendC99
+         | CBackendC11
+         | CBackendGnuC
+         | CBackendClangC
+
+    CBackendPlatform = CBackendHostedNative
+         | CBackendFreestanding
+         | CBackendWasmCapable
+         | CBackendEmbedded
+
+    CBackendEndian = CBackendLittleEndian
+         | CBackendBigEndian
+
+    CBackendTarget = (MoonC.CBackendDialect dialect, MoonC.CBackendPlatform platform, number pointer_bits, number index_bits, MoonC.CBackendEndian endian, boolean hosted) unique
+
+    CBackendType = CBackendVoid
+         | CBackendBool8
+         | CBackendScalar(MoonCore.Scalar scalar) unique
+         | CBackendIndex
+         | CBackendDataPtr(MoonC.CBackendType? pointee) unique
+         | CBackendCodePtr(MoonC.CBackendFuncSigId sig) unique
+         | CBackendNamed(MoonC.CTypeId id) unique
+         | CBackendArray(MoonC.CBackendType elem, number count) unique
+         | CBackendSliceDescriptor(MoonC.CBackendType elem) unique
+         | CBackendViewDescriptor(MoonC.CBackendType elem) unique
+         | CBackendClosureDescriptor(MoonC.CBackendFuncSigId sig, MoonC.CBackendType? ctx) unique
+         | CBackendAbiHiddenOutPtr(MoonC.CBackendType result) unique
+         | CBackendImportedCodePtr(MoonC.CFuncSigId sig) unique
+         | CBackendVector(MoonC.CBackendType elem, number lanes) unique
+
+    CBackendParam = (MoonC.CBackendName name, MoonC.CBackendType ty) unique
+
+    CBackendFuncLinkage = CBackendLinkInternal
+         | CBackendLinkExport
+         | CBackendLinkExtern
+         | CBackendLinkDecl
+         | CBackendLinkWrapper
+         | CBackendLinkIndirect
+
+    CBackendAbiParamRole = CBackendAbiParamDirect
+         | CBackendAbiParamByAddress
+         | CBackendAbiParamDescriptor
+         | CBackendAbiParamHiddenOut
+
+    CBackendAbiResultRole = CBackendAbiResultVoid
+         | CBackendAbiResultDirect
+         | CBackendAbiResultByAddress
+         | CBackendAbiResultHiddenOut
+         | CBackendAbiResultDescriptor
+
+    CBackendAbiParam = (MoonC.CBackendName name, MoonC.CBackendType source_ty, MoonC.CBackendType lowered_ty, MoonC.CBackendAbiParamRole role) unique
+
+    CBackendAbiResult = (MoonC.CBackendType source_ty, MoonC.CBackendType lowered_ty, MoonC.CBackendAbiResultRole role) unique
+
+    CBackendFuncAbi = (MoonC.CBackendFuncSigId id, MoonC.CBackendFuncLinkage linkage, MoonC.CBackendAbiParam* params, MoonC.CBackendAbiResult result, MoonC.CFuncSigId? imported_sig) unique
+
+    CBackendFuncSig = (MoonC.CBackendFuncSigId id, MoonC.CBackendType* params, MoonC.CBackendType result) unique
+
+    CBackendField = (MoonC.CBackendName name, MoonC.CBackendType ty, number? offset, number? size, number? align) unique
+
+    CBackendTypeDecl = CBackendTypedef(MoonC.CTypeId id, MoonC.CBackendType ty) unique
+         | CBackendStructDecl(MoonC.CTypeId id, MoonC.CBackendField* fields, number? size, number? align) unique
+         | CBackendUnionDecl(MoonC.CTypeId id, MoonC.CBackendField* fields, number? size, number? align) unique
+         | CBackendOpaqueDecl(MoonC.CTypeId id) unique
+
+    CBackendResidence = CBackendResidenceValue
+         | CBackendResidenceAddressed
+         | CBackendResidenceAggregate
+         | CBackendResidenceDescriptor
+
+    CBackendLocalInitState = CBackendLocalUninitialized
+         | CBackendLocalZeroInitialized
+         | CBackendLocalInitialized
+
+    CBackendPlace = CBackendPlaceLocal(MoonC.CBackendLocalId local, MoonC.CBackendType ty) unique
+         | CBackendPlaceGlobal(MoonC.CBackendGlobalId global, MoonC.CBackendType ty) unique
+         | CBackendPlaceDeref(MoonC.CBackendAtom addr, MoonC.CBackendType ty, number? align) unique
+         | CBackendPlaceField(MoonC.CBackendPlace base, MoonC.CBackendName field, MoonC.CBackendType ty, number offset, number? size, number? align) unique
+         | CBackendPlaceIndex(MoonC.CBackendPlace base, MoonC.CBackendAtom index, MoonC.CBackendType ty, number elem_size) unique
+         | CBackendPlaceBytes(MoonC.CBackendAtom base, number offset, MoonC.CBackendType ty, number size, number align) unique
+
+    CBackendLocalStorage = (MoonC.CBackendLocalId id, MoonC.CBackendName name, MoonC.CBackendType ty, MoonC.CBackendResidence residence, MoonC.CBackendLocalInitState init_state, boolean address_taken) unique
+
+    CBackendRelocTarget = CBackendRelocGlobal(MoonC.CBackendGlobalId global) unique
+         | CBackendRelocFunc(MoonC.CBackendName func) unique
+         | CBackendRelocExtern(MoonC.CBackendName extern) unique
+
+    CBackendDataInit = CBackendDataZero(number offset, number size) unique
+         | CBackendDataBytes(number offset, string bytes) unique
+         | CBackendDataScalar(number offset, MoonC.CBackendType ty, MoonCore.Literal literal) unique
+         | CBackendDataReloc(number offset, MoonC.CBackendRelocTarget target, number addend) unique
+
+    CBackendGlobal = (MoonC.CBackendGlobalId id, MoonC.CBackendName name, MoonCore.Visibility visibility, MoonC.CBackendType ty, number size, number align, MoonC.CBackendDataInit* inits) unique
+
+    CBackendExtern = (MoonC.CBackendName name, string symbol, MoonC.CBackendFuncSigId sig, string? header) unique
+
+    CBackendAtom = CBackendAtomLocal(MoonC.CBackendLocalId local) unique
+         | CBackendAtomGlobal(MoonC.CBackendGlobalId global) unique
+         | CBackendAtomLiteral(MoonC.CBackendType ty, MoonCore.Literal literal) unique
+         | CBackendAtomNull(MoonC.CBackendType ty) unique
+
+    CBackendRValue = CBackendRAtom(MoonC.CBackendAtom atom) unique
+         | CBackendRCompare(MoonCore.CmpOp op, MoonC.CBackendType ty, MoonC.CBackendAtom lhs, MoonC.CBackendAtom rhs) unique
+         | CBackendRCast(MoonCore.MachineCastOp op, MoonC.CBackendType to, MoonC.CBackendAtom value) unique
+         | CBackendRSelect(MoonC.CBackendType ty, MoonC.CBackendAtom cond, MoonC.CBackendAtom then_value, MoonC.CBackendAtom else_value) unique
+         | CBackendRFuncAddr(MoonC.CBackendName func, MoonC.CBackendFuncSigId sig) unique
+         | CBackendRExternAddr(MoonC.CBackendName extern, MoonC.CBackendFuncSigId sig) unique
+         | CBackendRPtrOffset(MoonC.CBackendAtom base, MoonC.CBackendAtom index, number elem_size, number const_offset) unique
+         | CBackendRAddrOfPlace(MoonC.CBackendPlace place) unique
+
+    CBackendTrapMode = CBackendMayTrap
+         | CBackendMustNotTrap
+         | CBackendCheckedTrap
+
+    CBackendMemoryAccess = (MoonC.CBackendType ty, number align, MoonC.CBackendTrapMode trap, boolean volatile, MoonCore.AtomicOrdering? ordering) unique
+
+    CBackendIntOverflow = CBackendIntWrap
+         | CBackendIntTrapOnOverflow
+         | CBackendIntAssumeNoOverflow
+
+    CBackendDivMode = CBackendDivTrapOnZero
+         | CBackendDivTrapOnZeroOrOverflow
+
+    CBackendShiftMode = CBackendShiftMaskCount
+         | CBackendShiftTrapOutOfRange
+
+    CBackendTargetFeature = CBackendFeatureC11Atomics
+         | CBackendFeatureLibm
+         | CBackendFeatureBuiltinOverflow
+         | CBackendFeatureBuiltinBitops
+         | CBackendFeatureUnalignedAccess
+         | CBackendFeatureStaticAssert
+         | CBackendFeatureHostedRuntime
+
+    CBackendLayoutAssertion = (MoonC.CTypeId id, number size, number align) unique
+
+    CBackendHelperKind = CBackendHelperUnary(MoonCore.UnaryOp op, MoonC.CBackendType ty) unique
+         | CBackendHelperBoolNormalize(MoonC.CBackendType ty) unique
+         | CBackendHelperCast(MoonCore.MachineCastOp op, MoonC.CBackendType from, MoonC.CBackendType to) unique
+         | CBackendHelperPtrOffset(MoonC.CBackendType pointee, number elem_size, boolean checked) unique
+         | CBackendHelperIntBinary(MoonCore.BinaryOp op, MoonC.CBackendType ty, MoonC.CBackendIntOverflow overflow) unique
+         | CBackendHelperDivRem(MoonCore.BinaryOp op, MoonC.CBackendType ty, MoonC.CBackendDivMode mode) unique
+         | CBackendHelperShift(MoonCore.BinaryOp op, MoonC.CBackendType ty, MoonC.CBackendShiftMode mode) unique
+         | CBackendHelperIntrinsic(MoonCore.Intrinsic intrinsic, MoonC.CBackendType ty) unique
+         | CBackendHelperLoad(MoonC.CBackendMemoryAccess access) unique
+         | CBackendHelperStore(MoonC.CBackendMemoryAccess access) unique
+         | CBackendHelperAtomicLoad(MoonC.CBackendMemoryAccess access) unique
+         | CBackendHelperAtomicStore(MoonC.CBackendMemoryAccess access) unique
+         | CBackendHelperAtomicRmw(MoonCore.AtomicRmwOp op, MoonC.CBackendMemoryAccess access) unique
+         | CBackendHelperAtomicCas(MoonC.CBackendMemoryAccess access, MoonCore.AtomicOrdering success_ordering, MoonCore.AtomicOrdering failure_ordering) unique
+         | CBackendHelperAtomicFence(MoonCore.AtomicOrdering ordering) unique
+         | CBackendHelperMemcpy
+         | CBackendHelperTypedMemcpy(MoonC.CBackendType ty, number size, number align) unique
+         | CBackendHelperMemset
+         | CBackendHelperTypedMemset(MoonC.CBackendType ty, number size, number align) unique
+         | CBackendHelperMemcmp
+         | CBackendHelperLayoutAssert(MoonC.CBackendLayoutAssertion assertion) unique
+         | CBackendHelperRequireFeature(MoonC.CBackendTargetFeature feature, string reason) unique
+         | CBackendHelperTrap
+
+    CBackendHelperUse = (MoonC.CBackendHelperId id, MoonC.CBackendHelperKind kind) unique
+
+    CBackendLocal = (MoonC.CBackendLocalId id, MoonC.CBackendName name, MoonC.CBackendType ty) unique
+
+    CBackendAggregateFieldInit = (MoonC.CBackendName field, MoonC.CBackendAtom value, number? offset) unique
+
+    CBackendArrayElemInit = (number index, MoonC.CBackendAtom value) unique
+
+    CBackendCallTarget = CBackendCallDirect(MoonC.CBackendName func) unique
+         | CBackendCallExtern(MoonC.CBackendName extern) unique
+         | CBackendCallIndirect(MoonC.CBackendAtom callee, MoonC.CBackendFuncSigId sig) unique
+         | CBackendCallClosure(MoonC.CBackendAtom closure, MoonC.CBackendFuncSigId sig) unique
+
+    CBackendStmt = CBackendAssign(MoonC.CBackendLocalId dst, MoonC.CBackendRValue rhs) unique
+         | CBackendHelperCall(MoonC.CBackendLocalId? dst, MoonC.CBackendHelperId helper, MoonC.CBackendAtom* args) unique
+         | CBackendLoad(MoonC.CBackendLocalId dst, MoonC.CBackendAtom addr, MoonC.CBackendMemoryAccess access) unique
+         | CBackendStore(MoonC.CBackendAtom addr, MoonC.CBackendAtom value, MoonC.CBackendMemoryAccess access) unique
+         | CBackendPlaceLoad(MoonC.CBackendLocalId dst, MoonC.CBackendPlace place) unique
+         | CBackendPlaceStore(MoonC.CBackendPlace place, MoonC.CBackendAtom value) unique
+         | CBackendZeroInit(MoonC.CBackendPlace place, MoonC.CBackendType ty, number size) unique
+         | CBackendAggregateInit(MoonC.CBackendPlace place, MoonC.CBackendType ty, MoonC.CBackendAggregateFieldInit* fields) unique
+         | CBackendArrayInit(MoonC.CBackendPlace place, MoonC.CBackendType ty, MoonC.CBackendArrayElemInit* elems) unique
+         | CBackendCall(MoonC.CBackendLocalId? dst, MoonC.CBackendCallTarget target, MoonC.CBackendAtom* args) unique
+         | CBackendComment(string text) unique
+
+    CBackendSwitchCase = (MoonCore.Literal literal, MoonC.CBackendLabel dest, MoonC.CBackendAtom* args) unique
+
+    CBackendTerminator = CBackendGoto(MoonC.CBackendLabel dest, MoonC.CBackendAtom* args) unique
+         | CBackendIfGoto(MoonC.CBackendAtom cond, MoonC.CBackendLabel then_dest, MoonC.CBackendAtom* then_args, MoonC.CBackendLabel else_dest, MoonC.CBackendAtom* else_args) unique
+         | CBackendSwitchGoto(MoonC.CBackendAtom value, MoonC.CBackendSwitchCase* cases, MoonC.CBackendLabel default_dest, MoonC.CBackendAtom* default_args) unique
+         | CBackendReturnVoid
+         | CBackendReturn(MoonC.CBackendAtom value) unique
+         | CBackendTrap
+
+    CBackendBlockParam = (MoonC.CBackendLocalId local, MoonC.CBackendType ty) unique
+
+    CBackendBlock = (MoonC.CBackendLabel label, MoonC.CBackendBlockParam* params, MoonC.CBackendStmt* stmts, MoonC.CBackendTerminator term) unique
+
+    CBackendFunc = (MoonC.CBackendName name, string symbol, MoonCore.Visibility visibility, MoonC.CBackendFuncSigId sig, MoonC.CBackendLocal* params, MoonC.CBackendLocal* locals, MoonC.CBackendBlock* blocks) unique
+
+    CBackendUnit = (string module_name, MoonC.CBackendTarget target, MoonC.CBackendFuncSig* sigs, MoonC.CBackendTypeDecl* types, MoonC.CBackendGlobal* globals, MoonC.CBackendExtern* externs, MoonC.CBackendHelperUse* helpers, MoonC.CBackendFunc* funcs) unique
+
+    CBackendValidationIssue = CBackendIssueDuplicateSig(MoonC.CBackendFuncSigId sig) unique
+         | CBackendIssueMissingSig(MoonC.CBackendFuncSigId sig) unique
+         | CBackendIssueDuplicateFunc(MoonC.CBackendName func) unique
+         | CBackendIssueMissingFunc(MoonC.CBackendName func) unique
+         | CBackendIssueDuplicateExtern(MoonC.CBackendName extern) unique
+         | CBackendIssueMissingExtern(MoonC.CBackendName extern) unique
+         | CBackendIssueDuplicateGlobal(MoonC.CBackendGlobalId global) unique
+         | CBackendIssueMissingGlobal(MoonC.CBackendGlobalId global) unique
+         | CBackendIssueDuplicateHelper(MoonC.CBackendHelperId helper) unique
+         | CBackendIssueMissingHelper(MoonC.CBackendHelperId helper) unique
+         | CBackendIssueDuplicateLocal(MoonC.CBackendName func, MoonC.CBackendLocalId local) unique
+         | CBackendIssueMissingLocal(MoonC.CBackendName func, MoonC.CBackendLocalId local) unique
+         | CBackendIssueDuplicateLabel(MoonC.CBackendName func, MoonC.CBackendLabel label) unique
+         | CBackendIssueMissingLabel(MoonC.CBackendName func, MoonC.CBackendLabel label) unique
+         | CBackendIssueInvalidCName(string site, MoonC.CBackendName name) unique
+         | CBackendIssueDuplicateCName(string site, MoonC.CBackendName name) unique
+         | CBackendIssueFuncSigMismatch(MoonC.CBackendName func, MoonC.CBackendType expected, MoonC.CBackendType actual) unique
+         | CBackendIssueBlockArgCount(MoonC.CBackendName func, MoonC.CBackendLabel label, number expected, number actual) unique
+         | CBackendIssueBlockArgType(MoonC.CBackendName func, MoonC.CBackendLabel label, number index, MoonC.CBackendType expected, MoonC.CBackendType actual) unique
+         | CBackendIssueCallArgCount(string site, MoonC.CBackendFuncSigId sig, number expected, number actual) unique
+         | CBackendIssueCallArgType(string site, MoonC.CBackendFuncSigId sig, number index, MoonC.CBackendType expected, MoonC.CBackendType actual) unique
+         | CBackendIssueCallResultType(string site, MoonC.CBackendFuncSigId sig, MoonC.CBackendType expected, MoonC.CBackendType actual) unique
+         | CBackendIssueIndirectCallNonCodePtr(string site, MoonC.CBackendType actual) unique
+         | CBackendIssueDataCodePtrConfusion(string site, MoonC.CBackendType ty) unique
+         | CBackendIssueHelperMismatch(MoonC.CBackendHelperId helper, string message) unique
+         | CBackendIssueInvalidAlignment(string site, number align) unique
+         | CBackendIssueDataInitOutOfBounds(MoonC.CBackendGlobalId global, number offset, number size, number global_size) unique
+         | CBackendIssueCoverageMissing(string sum, string variant) unique
+         | CBackendIssueInvalidTargetFeature(MoonC.CBackendTargetFeature feature, string reason) unique
+         | CBackendIssueLayoutAssertionMissing(MoonC.CTypeId id) unique
+         | CBackendIssueLayoutAssertionMismatch(MoonC.CTypeId id, number expected_size, number actual_size, number expected_align, number actual_align) unique
+         | CBackendIssuePlaceTypeMismatch(string site, MoonC.CBackendPlace place, MoonC.CBackendType expected, MoonC.CBackendType actual) unique
+         | CBackendIssueLoadStoreTypeMismatch(string site, MoonC.CBackendType expected, MoonC.CBackendType actual) unique
+         | CBackendIssueUnmaterializedAddressTakenValue(MoonC.CBackendName func, MoonC.CBackendLocalId local) unique
+         | CBackendIssueUninitializedLocal(MoonC.CBackendName func, MoonC.CBackendLocalId local) unique
+         | CBackendIssueHelperSignatureMismatch(MoonC.CBackendHelperId helper, MoonC.CBackendType* expected, MoonC.CBackendType* actual) unique
+         | CBackendIssueDataInitPrecisionFailure(MoonC.CBackendGlobalId global, number offset, MoonC.CBackendType ty, MoonCore.Literal literal, string reason) unique
+         | CBackendIssueDataRelocFailure(MoonC.CBackendGlobalId global, number offset, MoonC.CBackendRelocTarget target, string reason) unique
+         | CBackendIssueAbiMismatch(string site, MoonC.CBackendFuncSigId sig, string reason) unique
+         | CBackendIssueUnsupportedConstruct(string sum, string variant, string reason) unique
+         | CBackendIssueUnreachableConstruct(string sum, string variant, string reason) unique
+
+    CBackendStorageRecord = (MoonC.CBackendName func, MoonC.CBackendLocalStorage* storage) unique
+
+    CBackendValidationInput = (MoonC.CBackendUnit unit, MoonC.CBackendStorageRecord* storage, MoonC.CBackendValidationIssue* abi_issues) unique
+
+    CBackendValidationReport = (MoonC.CBackendValidationIssue* issues) unique
+}

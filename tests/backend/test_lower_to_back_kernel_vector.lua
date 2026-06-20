@@ -47,6 +47,27 @@ local clamp_schedules=CodeSchedulePlan.plan(clamp_code,clamp_kernels,clamp_flow,
 local saw_clamp_vector=false
 for _,s in ipairs(clamp_schedules.schedules or {}) do if pvm.classof(s)==Schedule.SchedulePlanned and pvm.classof(s.kind)==Schedule.ScheduleVector then saw_clamp_vector=true end end
 assert(saw_clamp_vector,'vector compare/select emitter should allow clamp to select ScheduleVector')
+local triad_code,triad_graph,triad_flow,triad_value,triad_mem,triad_effect,triad_kernels=base([[
+func triad(noalias dst: ptr(i32), readonly a: ptr(i32), readonly b: ptr(i32), k: i32, n: i32): i32
+ requires bounds(dst,n)
+ requires bounds(a,n)
+ requires bounds(b,n)
+ requires disjoint(dst,a)
+ requires disjoint(dst,b)
+ block loop(i: i32 = 0)
+  if i >= n then return 0 end
+  dst[i] = a[i] + b[i] * k
+  jump loop(i = i + 1)
+ end
+end
+]])
+local triad_schedules=CodeSchedulePlan.plan(triad_code,triad_kernels,triad_flow,triad_value,triad_mem,triad_effect,target)
+local saw_triad_vector=false
+for _,s in ipairs(triad_schedules.schedules or {}) do if pvm.classof(s)==Schedule.SchedulePlanned and pvm.classof(s.kind)==Schedule.ScheduleVector then saw_triad_vector=true end end
+assert(saw_triad_vector,'loop-invariant scalar parameters should be splatted for vector store kernels')
+local triad_lower=CodeLowerPlan.plan(triad_code,triad_graph,triad_kernels,triad_schedules,Lower.LowerTargetBack)
+assert_no('triad semantic validate',KernelValidate.validate(triad_code,triad_graph,triad_flow,triad_value,triad_mem,triad_effect,triad_kernels,triad_schedules,triad_lower).issues)
+assert_no('triad back',BackValidate.validate(LowerToBack.module(triad_code,triad_graph,triad_flow,triad_value,triad_mem,triad_effect,triad_kernels,triad_schedules,triad_lower)).issues)
 local schedules=CodeSchedulePlan.plan(code,kernels,flow,value,mem,effect,target)
 local saw_vector=false; for _,s in ipairs(schedules.schedules or {}) do if pvm.classof(s)==Schedule.SchedulePlanned and pvm.classof(s.kind)==Schedule.ScheduleVector then saw_vector=true end end; assert(saw_vector,'target vector facts should select ScheduleVector')
 local lower=CodeLowerPlan.plan(code,graph,kernels,schedules,Lower.LowerTargetBack)

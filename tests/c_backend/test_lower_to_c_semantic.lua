@@ -116,6 +116,44 @@ int32_t add2(void* dst, void* a, void* b, int32_t n);
 int main(){ int32_t a[7]={1,2,3,4,5,6,7}, b[7]={10,20,30,40,50,60,70}, dst[7]={0}; if(add2(dst,a,b,7)!=0) return 1; for(int i=0;i<7;i++) if(dst[i]!=a[i]+b[i]) return 2+i; return 0; }
 ]])
 
+local view_sum_src=[[
+func view_sum(p: ptr(i32), n: index): i32
+ let v: view(i32) = view(p, n)
+ block loop(i: index = 0, acc: i32 = 0)
+  if i >= n then return acc end
+  jump loop(i = i + 1, acc = acc + v[i])
+ end
+end
+]]
+local view_sum_c, view_sum_r=lower_c(view_sum_src)
+assert(view_sum_c:find('semantic scalar kernel'), 'view sum must use semantic scalar kernel lowering')
+assert(has_strategy(view_sum_r, Lower.LowerStrategyKernel), 'view sum must select LowerStrategyKernel')
+cc_run(view_sum_c, [[
+#include <stdint.h>
+#include <stddef.h>
+int32_t view_sum(void* p, intptr_t n);
+int main(){ int32_t xs[8]={4,-2,7,1,3,-5,9,6}; int32_t want=0; for(int i=0;i<8;i++) want+=xs[i]; return view_sum(xs,8)==want ? 0 : 1; }
+]])
+
+local view_sum_strided_src=[[
+func view_sum_strided(p: ptr(i32), n: index): i32
+ let v: view(i32) = view(p, n, 2)
+ block loop(i: index = 0, acc: i32 = 0)
+  if i >= n then return acc end
+  jump loop(i = i + 1, acc = acc + v[i])
+ end
+end
+]]
+local view_sum_strided_c, view_sum_strided_r=lower_c(view_sum_strided_src)
+assert(view_sum_strided_c:find('semantic scalar kernel'), 'strided view sum must use semantic scalar kernel lowering')
+assert(has_strategy(view_sum_strided_r, Lower.LowerStrategyKernel), 'strided view sum must select LowerStrategyKernel')
+cc_run(view_sum_strided_c, [[
+#include <stdint.h>
+#include <stddef.h>
+int32_t view_sum_strided(void* p, intptr_t n);
+int main(){ int32_t xs[12]={3,100,-1,100,4,100,8,100,-6,100,2,100}; int32_t want=3-1+4+8-6+2; return view_sum_strided(xs,6)==want ? 0 : 1; }
+]])
+
 local submul_src=[[
 func submul(noalias dst_sub: ptr(i32), noalias dst_mul: ptr(i32), readonly a: ptr(i32), readonly b: ptr(i32), n: i32): i32
  requires bounds(dst_sub,n)

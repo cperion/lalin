@@ -31,6 +31,7 @@ local CValidate = require("moonlift.c_validate").Define(T)
 local CEmit = require("moonlift.c_emit").Define(T)
 
 local C = T.MoonC
+local Core = T.MoonCore
 local Code = T.MoonCode
 
 local function assert_no_issues(label, issues)
@@ -138,6 +139,58 @@ if ok_probe == true or ok_probe == 0 then
     assert(ok == true or ok == 0, "code_to_c emitted C should pass cc -std=c99 -fsyntax-only")
 else
     io.write("skipping cc syntax check; no C compiler found\n")
+end
+
+do
+    local origin = Code.CodeOriginGenerated("atomic local-place lowering")
+    local i32 = Code.CodeTyInt(32, Code.CodeSigned)
+    local sig_id = Code.CodeSigId("sig:atomic_local_place")
+    local func_id = Code.CodeFuncId("fn:atomic_local_place")
+    local block_id = Code.CodeBlockId("block:atomic_local_place:entry")
+    local slot = Code.CodeLocalId("local:atomic_slot")
+    local place = Code.CodePlaceLocal(slot, i32)
+    local one = Code.CodeValueId("v:atomic:one")
+    local two = Code.CodeValueId("v:atomic:two")
+    local seen = Code.CodeValueId("v:atomic:seen")
+    local old = Code.CodeValueId("v:atomic:old")
+    local cas = Code.CodeValueId("v:atomic:cas")
+    local access = Code.CodeMemoryAccess(Code.CodeMemoryReadWrite, i32, 4, Code.CodeMayTrap, false, Core.AtomicSeqCst)
+    local load_access = Code.CodeMemoryAccess(Code.CodeMemoryRead, i32, 4, Code.CodeMayTrap, false, Core.AtomicSeqCst)
+    local store_access = Code.CodeMemoryAccess(Code.CodeMemoryWrite, i32, 4, Code.CodeMayTrap, false, Core.AtomicSeqCst)
+    local module = Code.CodeModule(
+        Code.CodeModuleId("module:atomic_local_place"),
+        { Code.CodeSig(sig_id, {}, { i32 }) },
+        {}, {}, {}, {},
+        {
+            Code.CodeFunc(func_id, "atomic_local_place", Code.CodeLinkageLocal, sig_id, {}, {
+                Code.CodeLocal(slot, "atomic_slot", i32, Code.CodeResidenceAddressed, origin),
+            }, block_id, {
+                Code.CodeBlock(block_id, "entry", {}, {
+                    Code.CodeInst(Code.CodeInstId("inst:atomic:one"), Code.CodeInstConst(one, Code.CodeConstLiteral(i32, Core.LitInt("1"))), origin),
+                    Code.CodeInst(Code.CodeInstId("inst:atomic:two"), Code.CodeInstConst(two, Code.CodeConstLiteral(i32, Core.LitInt("2"))), origin),
+                    Code.CodeInst(Code.CodeInstId("inst:atomic:store"), Code.CodeInstAtomicStore(place, one, store_access, Core.AtomicSeqCst), origin),
+                    Code.CodeInst(Code.CodeInstId("inst:atomic:load"), Code.CodeInstAtomicLoad(seen, place, load_access, Core.AtomicSeqCst), origin),
+                    Code.CodeInst(Code.CodeInstId("inst:atomic:rmw"), Code.CodeInstAtomicRmw(old, Core.AtomicRmwAdd, place, two, access, Core.AtomicSeqCst), origin),
+                    Code.CodeInst(Code.CodeInstId("inst:atomic:cas"), Code.CodeInstAtomicCas(cas, place, two, one, access, Core.AtomicSeqCst), origin),
+                }, Code.CodeTerm(Code.CodeTermId("term:atomic_local_place:return"), Code.CodeTermReturn({ cas }), origin), origin),
+            }, origin),
+        },
+        origin
+    )
+    local atomic_unit = CodeToC.module(module, { dialect = "c11" })
+    assert_no_issues("atomic local-place c", CValidate.validate(atomic_unit).issues)
+    local atomic_src = CEmit.emit(atomic_unit)
+    assert(atomic_src:match("atomic_addr_inst_atomic_load_load"), "atomic load on a local place should declare an address scratch")
+    assert(atomic_src:match("atomic_addr_inst_atomic_store_store"), "atomic store on a local place should declare an address scratch")
+    assert(atomic_src:match("atomic_addr_inst_atomic_rmw_rmw"), "atomic rmw on a local place should declare an address scratch")
+    assert(atomic_src:match("atomic_addr_inst_atomic_cas_cas"), "atomic cas on a local place should declare an address scratch")
+    if ok_probe == true or ok_probe == 0 then
+        local path = os.tmpname() .. ".c"
+        local f = assert(io.open(path, "wb")); f:write(atomic_src); f:close()
+        local ok = os.execute(cc .. " -std=c11 -fsyntax-only " .. path .. " >/dev/null 2>&1")
+        os.remove(path)
+        assert(ok == true or ok == 0, "Code atomics on non-deref places should emit valid C")
+    end
 end
 
 assert(package.loaded["moonlift.tree_to_c"] == nil)

@@ -1,10 +1,7 @@
 -- Full clean Moon* schema authored as compact ASDL text.
 --
--- The .asdl files in this directory are the source of truth.  A few C-schema
--- modules still live under lua/moonlift/c/ as Lua-builder modules because they
--- are outside this schema directory migration.
+-- The .asdl files in this directory are the source of truth.
 
-local Builder = require("moonlift.asdl_builder")
 local AsdlText = require("moonlift.asdl_text")
 
 local M = {}
@@ -14,6 +11,8 @@ local SCHEMA_DIR = "lua/moonlift/schema"
 local SCHEMA_ASDL_MODULES = {
     "core",
     "back",
+    "c",
+    "c_ast",
     "dasm",
     "link",
     "type",
@@ -124,7 +123,6 @@ end
 function M.schema(T)
     M.assert_schema_directory_sources()
 
-    local A = Builder.Define(T)
     local modules = {}
 
     for _, name in ipairs(SCHEMA_ASDL_MODULES) do
@@ -134,11 +132,6 @@ function M.schema(T)
         local schema = AsdlText.parse_schema(T, text, source_name or path)
         append_all(modules, schema.modules)
     end
-
-    -- C frontend/backend schema modules live under lua/moonlift/c/ and are not
-    -- part of the lua/moonlift/schema/*.asdl source directory yet.
-    modules[#modules + 1] = require("moonlift.c.c_type")(A)
-    modules[#modules + 1] = require("moonlift.c.c_ast")(A)
 
     return T.MoonAsdl.Schema(modules)
 end

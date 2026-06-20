@@ -360,6 +360,10 @@ function M.Define(T)
         return Code.CodeResidenceValue
     end
 
+    local function is_view_code_ty(ty)
+        return pvm.classof(ty) == Code.CodeTyView
+    end
+
     local function ensure_local(ctx, binding, ty, residence)
         local key = declare_binding_key(ctx, binding)
         local existing = ctx.locals_by_key[key]
@@ -1399,7 +1403,7 @@ function M.Define(T)
         local cls = pvm.classof(stmt)
         if cls == Tr.StmtLet then
             local src, ty = lower_expr(ctx, stmt.init)
-            if binding_is_addressed(ctx, stmt.binding) or is_aggregate_code_ty(ty) then bind_local_init(ctx, stmt.binding, src, stmt.binding.ty, false)
+            if binding_is_addressed(ctx, stmt.binding) or (is_aggregate_code_ty(ty) and not is_view_code_ty(ty)) then bind_local_init(ctx, stmt.binding, src, stmt.binding.ty, false)
             else bind_alias(ctx, stmt.binding, src, ty) end
         elseif cls == Tr.StmtVar then
             local src = lower_expr(ctx, stmt.init)

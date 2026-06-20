@@ -301,6 +301,11 @@ function M.Define(T)
                 local tn = c_decl.parse_type_name(p)
                 if tn and tok_punct(p, ")") then
                     advance(p) -- consume ')'
+                    if tok_punct(p, "{") then
+                        advance(p) -- consume '{'
+                        local init = c_decl.parse_init_list(p)
+                        return { _variant = "CECompoundLit", type_name = tn, initializer = init }
+                    end
                     local expr = M.parse_cast_expr(p) -- cast applies to next expression
                     if expr then
                         return { _variant = "CECast", type_name = tn, expr = expr }

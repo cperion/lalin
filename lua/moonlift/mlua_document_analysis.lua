@@ -398,9 +398,13 @@ function M.Define(T)
 
         local decls, items, region_frags, expr_frags, issues, island_parses = {}, {}, {}, {}, {}, {}
         local protocol_types = {}
+        local product_types = {}
         for i, island in ipairs(scan.islands) do
             local src = document.text:sub(island.start, island.stop)
-            local parsed = ParseApi.parse_island(scan, i, { protocol_types = protocol_types })
+            local parsed = ParseApi.parse_island(scan, i, {
+                protocol_types = protocol_types,
+                product_types = product_types,
+            })
             for pi = 1, #parsed.issues do
                 local msg = parsed.issues[pi].message or ""
                 if not (msg:match("^invalid character") and #parsed.issues > 1) then
@@ -412,9 +416,15 @@ function M.Define(T)
                 end
             end
             protocol_types = parsed.protocol_types or protocol_types
+            product_types = parsed.product_types or product_types
             local decl_set = H.HostDeclSet({})
             local module = Tr.Module(Tr.ModuleSurface, {})
+            local island_items = {}
             local rfrags, efrags = {}, {}
+            local function add_item(item)
+                items[#items + 1] = item
+                island_items[#island_items + 1] = item
+            end
             if island.kind == "struct" then
                 if parsed.value and parsed.value.decl and pvm.classof(parsed.value.decl) == Tr.TypeDeclStruct then
                     local sd = host_struct_from_decl(parsed.value.decl, parsed.value.repr)
@@ -422,33 +432,33 @@ function M.Define(T)
                     decl_set = H.HostDeclSet({ H.HostDeclStruct(sd) })
                     local tree_fields = {}
                     for fi = 1, #sd.fields do tree_fields[fi] = Ty.FieldDecl(sd.fields[fi].name, sd.fields[fi].expose_ty) end
-                    items[#items + 1] = Tr.ItemType(Tr.TypeDeclStruct(sd.name, tree_fields))
+                    add_item(Tr.ItemType(Tr.TypeDeclStruct(sd.name, tree_fields)))
                 elseif parsed.value and parsed.value.decl then
-                    items[#items + 1] = Tr.ItemType(parsed.value.decl)
+                    add_item(Tr.ItemType(parsed.value.decl))
                 end
             elseif island.kind == "union" or island.kind == "handle" then
-                if parsed.value and parsed.value.decl then items[#items + 1] = Tr.ItemType(parsed.value.decl) end
+                if parsed.value and parsed.value.decl then add_item(Tr.ItemType(parsed.value.decl)) end
             elseif island.kind == "func" then
-                if parsed.value and parsed.value.kind ~= "func_impl" then items[#items + 1] = Tr.ItemFunc(parsed.value) end
+                if parsed.value and parsed.value.kind ~= "func_impl" then add_item(Tr.ItemFunc(parsed.value)) end
             elseif island.kind == "extern" then
-                if parsed.value then items[#items + 1] = Tr.ItemExtern(parsed.value) end
+                if parsed.value then add_item(Tr.ItemExtern(parsed.value)) end
             elseif island.kind == "region" then
                 if parsed.value and parsed.value.kind ~= "region_impl" then
                     local rcls = pvm.classof(parsed.value)
                     if rcls ~= O.RegionFragDecl then
-                        items[#items + 1] = Tr.ItemRegionFrag(parsed.value)
+                        add_item(Tr.ItemRegionFrag(parsed.value))
                         region_frags[#region_frags + 1] = parsed.value
                         rfrags[1] = parsed.value
                     end
                 end
             elseif island.kind == "expr" then
                 if parsed.value then
-                    items[#items + 1] = Tr.ItemExprFrag(parsed.value)
+                    add_item(Tr.ItemExprFrag(parsed.value))
                     expr_frags[#expr_frags + 1] = parsed.value
                     efrags[1] = parsed.value
                 end
             end
-            module = Tr.Module(Tr.ModuleSurface, items)
+            module = Tr.Module(Tr.ModuleSurface, island_items)
             local island_text = Mlua.IslandText(island_kind(Mlua, island.kind), Mlua.IslandAnonymous, S.SourceSlice(src))
             island_parses[#island_parses + 1] = Mlua.IslandParse(island_text, decl_set, module, rfrags, efrags, parsed.issues, anchors)
         end

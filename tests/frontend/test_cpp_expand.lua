@@ -115,12 +115,17 @@ do
 end
 
 -- ---------------------------------------------------------------------------
--- 6. #include with mock VFS (non-critical, complex VFS interaction)
+-- 6. #include with mock VFS
 -- ---------------------------------------------------------------------------
--- #include resolution is a complex VFS interaction; verified via separate tests.
 do
-    -- Skip detailed include test — the VFS pipeline needs additional integration
-    print("  #include with mock VFS: SKIP (VFS integration WIP)")
+    local r = expand("#include \"defs.h\"\nFOO\n", {
+        ["defs.h"] = "#define FOO 7\n",
+    })
+    assert(#r.issues == 0, "expected clean include expansion, got " .. #r.issues .. " issue(s)")
+    local mt = meaningful_tokens(r.tokens)
+    assert(#mt == 1, "expected included macro expansion to produce one token, got " .. #mt)
+    assert(mt[1]._variant == "CTokIntLiteral" and mt[1].raw == "7")
+    print("  #include with mock VFS: PASS")
 end
 
 -- ---------------------------------------------------------------------------
@@ -179,18 +184,19 @@ print("  #ifdef/#ifndef: PASS")
 -- 9. defined() operator in #if
 -- ---------------------------------------------------------------------------
 do
-    -- The defined() operator requires macro table integration
-    -- that may not be fully working yet. Check basic functionality.
     local r = expand("#define A\n#if defined(A)\nint a_defined;\n#endif\n")
     local mt = meaningful_tokens(r.tokens)
-    -- defined() resolution is a WIP; skip detailed assertions
+    assert(#mt == 3, "expected defined(A) branch tokens, got " .. #mt)
+    assert(mt[1]._variant == "CTokKeyword" and mt[1].kw._variant == "CKwInt")
+    assert(mt[2]._variant == "CTokIdent" and mt[2].name == "a_defined")
+    assert(mt[3]._variant == "CTokPunct" and mt[3].text == ";")
     print("  defined() operator: PASS")
 end
 
 do
     local r2 = expand("#if defined(NOTDEF)\nint b;\n#endif\n")
     local mt2 = meaningful_tokens(r2.tokens)
-    -- Should have 0 tokens since NOTDEF is not defined
+    assert(#mt2 == 0, "expected undefined branch to be inactive, got " .. #mt2 .. " token(s)")
     print("  defined() negative: PASS")
 end
 
@@ -314,9 +320,9 @@ do
 end
 
 do
-    -- #if 1+1==3 should evaluate to false. The evaluator resolution is WIP.
     local r2 = expand("#if 1 + 1 == 3\nint should_not_appear;\n#endif\n")
     local mt2 = meaningful_tokens(r2.tokens)
+    assert(#mt2 == 0, "expected false #if expression branch to be inactive, got " .. #mt2 .. " token(s)")
 end
 
 print("  #if expression evaluation: PASS")

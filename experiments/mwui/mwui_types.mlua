@@ -501,21 +501,21 @@ end
 -- Component access, mount, unmount, output, and keyed-list protocols.
 --------------------------------------------------------------------------------
 
-R.borrow_session = region borrow_session(app: ptr(T.App), s: T.SessionRef;
-    borrowed(session: lease ptr(T.Session))
+R.borrow_session = region borrow_session(readonly app: ptr(T.App), s: T.SessionRef;
+    borrowed(session: lease(app) ptr(T.Session))
   | missing(s: T.SessionRef)
   | closed(s: T.SessionRef))
 end
 
-R.borrow_component = region borrow_component(sess: ptr(T.Session), c: T.ComponentRef;
-    borrowed(component: lease ptr(T.Component))
+R.borrow_component = region borrow_component(readonly sess: ptr(T.Session), c: T.ComponentRef;
+    borrowed(component: lease(sess) ptr(T.Component))
   | stale(c: T.ComponentRef)
   | missing(c: T.ComponentRef)
   | unmounted(c: T.ComponentRef))
 end
 
 R.alloc_component = region alloc_component(invalidate sess: ptr(T.Session), kind: u16;
-    allocated(c: T.ComponentRef, component: lease ptr(T.Component))
+    allocated(c: T.ComponentRef, component: lease(sess) ptr(T.Component))
   | bad_kind(kind: u16)
   | oom(needed: index))
 end
@@ -526,8 +526,8 @@ R.retire_component = region retire_component(invalidate sess: ptr(T.Session), c:
   | missing(c: T.ComponentRef))
 end
 
-R.borrow_task = region borrow_task(sess: ptr(T.Session), task: T.TaskRef;
-    borrowed(task: lease ptr(T.Task))
+R.borrow_task = region borrow_task(readonly sess: ptr(T.Session), task: T.TaskRef;
+    borrowed(task: lease(sess) ptr(T.Task))
   | missing(task: T.TaskRef)
   | completed(task: T.TaskRef))
 end

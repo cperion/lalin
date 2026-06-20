@@ -350,21 +350,21 @@ end
 function BundleValue:_lower_program(opts)
     opts = opts or {}
     local Pipeline = require("moonlift.frontend_pipeline").Define(self.session.T)
-    local lower_opts = {
-        site = "host module",
-        layout_env = self:layout_env(),
-    }
+    local lower_opts = {}
+    for k, v in pairs(opts) do lower_opts[k] = v end
+    lower_opts.site = opts.site or "host module"
+    lower_opts.layout_env = opts.layout_env or self:layout_env()
     return Pipeline.lower_module(self:to_asdl(), lower_opts).program
 end
 
 function BundleValue:_lower_c_unit(opts)
     opts = opts or {}
     local Pipeline = require("moonlift.frontend_pipeline").Define(self.session.T)
-    local lower_opts = {
-        site = "host module c",
-        layout_env = self:layout_env(),
-        c_opts = opts,
-    }
+    local lower_opts = {}
+    for k, v in pairs(opts) do lower_opts[k] = v end
+    lower_opts.site = opts.site or "host module c"
+    lower_opts.layout_env = opts.layout_env or self:layout_env()
+    lower_opts.c_opts = opts
     local result = Pipeline.lower_module_to_c(self:to_asdl(), lower_opts)
     if result.code_module == nil then error("bundle:emit_c lowering failed: MoonCode module was not produced", 2) end
     if result.code_report ~= nil and #result.code_report.issues ~= 0 then

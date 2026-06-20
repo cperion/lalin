@@ -117,10 +117,11 @@ local function parse_field(param, state, namespace)
     local field = {}
     field.type = parse_qualified_name(param, state)
     field.namespace = namespace
-    if try(param, state, T.QUESTION) then
-        field.optional = true
-    elseif try(param, state, T.STAR) then
+    if try(param, state, T.STAR) then
         field.list = true
+        if try(param, state, T.QUESTION) then field.optional = true end
+    elseif try(param, state, T.QUESTION) then
+        field.optional = true
     end
     field.name = expect(param, state, T.IDENT, "field name")
     return field

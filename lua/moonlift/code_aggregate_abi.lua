@@ -89,6 +89,18 @@ function M.Define(T)
     local function size_align(ctx, ty)
         if is_view(ty) then return 24, 8 end
         if pvm.classof(ty) == Code.CodeTyClosure then return 16, 8 end
+        if pvm.classof(ty) == Code.CodeTyArray then
+            local elem_size, elem_align = size_align(ctx, ty.elem)
+            return elem_size * ty.count, elem_align
+        end
+        local s = scalar(ty)
+        if s ~= nil then
+            if s == Back.BackVoid then return 0, 1 end
+            if s == Back.BackBool or s == Back.BackI8 or s == Back.BackU8 then return 1, 1 end
+            if s == Back.BackI16 or s == Back.BackU16 then return 2, 2 end
+            if s == Back.BackI32 or s == Back.BackU32 or s == Back.BackF32 then return 4, 4 end
+            if s == Back.BackI64 or s == Back.BackU64 or s == Back.BackF64 or s == Back.BackPtr or s == Back.BackIndex then return 8, 8 end
+        end
         local l = layout(ctx, ty)
         if l ~= nil then return l.size, l.align end
         return 1, 1

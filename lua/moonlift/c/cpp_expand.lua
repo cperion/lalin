@@ -459,7 +459,7 @@ local function eval_expr_tokens(toks, idx)
                 end
             else
                 local op = t.text
-                local right, ni2 = binary(ni + 1, min_prec + 1)
+                local right, ni2 = binary(ni + 1, t.prec + 1)
                 left = apply_binop(op, left, right)
                 ni = ni2
             end
@@ -476,13 +476,13 @@ local function eval_expr_tokens(toks, idx)
 end
 
 -- Full #if expression evaluator:
--- 1. Macro-expand tokens
--- 2. Pre-process "defined" operator
--- 3. Evaluate the resulting expression
+-- 1. Pre-process "defined" before macro expansion; its operand is a macro name.
+-- 2. Macro-expand the remaining tokens.
+-- 3. Evaluate the resulting expression.
 local function eval_if(tokens, macro_table, disabled, line_counter_ref, file_uri_ref)
-    local expanded = expand_if_tokens(tokens, macro_table, disabled, line_counter_ref, file_uri_ref)
-    local with_defined = preprocess_defined(expanded, macro_table)
-    local toks = tokenize_expr(with_defined)
+    local with_defined = preprocess_defined(tokens, macro_table)
+    local expanded = expand_if_tokens(with_defined, macro_table, disabled, line_counter_ref, file_uri_ref)
+    local toks = tokenize_expr(expanded)
     if #toks == 0 then return 0 end
     return eval_expr_tokens(toks, 1)
 end

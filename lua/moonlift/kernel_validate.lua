@@ -132,7 +132,7 @@ function M.Define(T)
         end
     end
 
-    local function validate_schedule(ctx, kernels_by_id, schedules)
+    local function validate_schedule(ctx, kernels_by_id, schedules, flow)
         if schedules == nil then add(ctx, "missing-schedule", "missing ScheduleModulePlan"); return end
         for _, sched in ipairs(schedules.schedules or {}) do
             local cls = pvm.classof(sched)
@@ -142,7 +142,7 @@ function M.Define(T)
                 local kplan = kernels_by_id[sched.kernel.text]
                 if kplan ~= nil then
                     local target = schedules.target and schedules.target.target or nil
-                    local cap = KernelEmitSupport.classify(kplan, sched.kind, target)
+                    local cap = KernelEmitSupport.classify(kplan, sched.kind, target, flow)
                     if not cap.executable then add(ctx, "schedule-not-executable", "SchedulePlanned is not executable by semantic lowering: " .. tostring(cap.reason)) end
                 end
             elseif cls == Schedule.ScheduleNoPlan then
@@ -250,7 +250,7 @@ function M.Define(T)
         local kernels_by_id = index_kernel(kernels)
         local planned_schedules_by_id, schedules_by_kernel = index_schedule(schedules)
         validate_kernel(ctx, graph_loops, mem_backend, value, kernels)
-        validate_schedule(ctx, kernels_by_id, schedules)
+        validate_schedule(ctx, kernels_by_id, schedules, flow)
         validate_lower(ctx, code_idx, graph_loops, kernels_by_id, planned_schedules_by_id, schedules_by_kernel, closed, lower)
         return ctx
     end

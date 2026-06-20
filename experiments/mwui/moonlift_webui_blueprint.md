@@ -1210,21 +1210,21 @@ end
 ### 10.4 Component access
 
 ```moonlift
-region borrow_session(app: ptr(App), s: SessionRef;
-    borrowed(session: lease ptr(Session))
+region borrow_session(readonly app: ptr(App), s: SessionRef;
+    borrowed(session: lease(app) ptr(Session))
   | missing(s: SessionRef)
   | closed(s: SessionRef))
 end
 
-region borrow_component(sess: ptr(Session), c: ComponentRef;
-    borrowed(component: lease ptr(Component))
+region borrow_component(readonly sess: ptr(Session), c: ComponentRef;
+    borrowed(component: lease(sess) ptr(Component))
   | stale(c: ComponentRef)
   | missing(c: ComponentRef)
   | unmounted(c: ComponentRef))
 end
 
 region alloc_component(invalidate sess: ptr(Session), kind: u16;
-    allocated(c: ComponentRef, component: lease ptr(Component))
+    allocated(c: ComponentRef, component: lease(sess) ptr(Component))
   | bad_kind(kind: u16)
   | oom(needed: index))
 end
@@ -1235,8 +1235,8 @@ region retire_component(invalidate sess: ptr(Session), c: ComponentRef;
   | missing(c: ComponentRef))
 end
 
-region borrow_task(sess: ptr(Session), task: TaskRef;
-    borrowed(task: lease ptr(Task))
+region borrow_task(readonly sess: ptr(Session), task: TaskRef;
+    borrowed(task: lease(sess) ptr(Task))
   | missing(task: TaskRef)
   | completed(task: TaskRef))
 end

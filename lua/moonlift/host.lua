@@ -398,8 +398,8 @@ M.func = make_quote(
                     __call = function(self, arg)
                         if type(arg) == "string" then
                             -- Body provided: reconstruct full func from sig + body.
-                            -- Header bodies are parsed directly so legacy body-only syntax
-                            -- keeps its old parse-tolerance, but @{} holes must still be
+                            -- Header bodies are parsed directly so body-only quotes
+                            -- keep the same parser tolerance, but @{} holes must still be
                             -- resolved through the same host_splice/open_expand machinery as
                             -- full moon.func{bindings} quotes.  Otherwise expression splices
                             -- remain nil-typed ExprSlotValue nodes until typecheck.

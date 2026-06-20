@@ -148,7 +148,7 @@ do
 end
 
 ----------------------------------------------------------------------
--- Test 5: While with no carried vars (pointer-flagged, fallback)
+-- Test 5: While with no carried vars (pointer-flagged, general control)
 --    while (*flag) {}
 ----------------------------------------------------------------------
 do
@@ -159,7 +159,7 @@ do
     local body = get_func_body(mm, "wait_while")
     assert(body and #body >= 1, "expected function body statements")
 
-    -- Should fall back to StmtControl with ControlStmtRegion
+    -- Should use StmtControl with ControlStmtRegion.
     local has_control = false
     for _, s in ipairs(body) do
         if pvm.classof(s) == Tr.StmtControl then
@@ -168,7 +168,7 @@ do
             end
         end
     end
-    print("  while no-carried (fallback): " .. (has_control and "PASS" or "PASS (lowered ok)"))
+    print("  while no-carried (general control): " .. (has_control and "PASS" or "PASS (lowered ok)"))
 end
 
 ----------------------------------------------------------------------
@@ -186,7 +186,7 @@ do
 end
 
 ----------------------------------------------------------------------
--- Test 7: While with nested loop → fallback to old lowering
+-- Test 7: While with nested loop
 ----------------------------------------------------------------------
 do
     local src = [[int nested(int n) { int i = 0; while (i < n) { int j = 0; while (j < n) { j = j + 1; } i = i + 1; } return i; }]]
@@ -195,7 +195,7 @@ do
     assert(pvm.classof(mm) == Tr.Module)
     local body = get_func_body(mm, "nested")
     assert(body and #body >= 1, "expected function body statements")
-    print("  while nested (fallback): PASS (lowered ok)")
+    print("  while nested: PASS (lowered ok)")
 end
 
 print("moonlift test_c_loops ok")

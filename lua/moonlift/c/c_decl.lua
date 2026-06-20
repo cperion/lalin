@@ -322,6 +322,9 @@ function M.Define(T)
             return true
         end
         if abstract_ok then
+            if t._variant == "CTokPunct" and (t.text == "[" or t.text == ")") then
+                return true
+            end
             -- For abstract declarators, qualifiers after a pointer * are valid
             if t._variant == "CTokKeyword" then
                 local kw = t.kw._variant
@@ -888,6 +891,7 @@ function M.Define(T)
             end
         end
 
+        expect_punct(p, "}")
         return { _variant = "CInitList", items = items }
     end
 

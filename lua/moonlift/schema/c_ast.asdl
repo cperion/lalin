@@ -1,0 +1,235 @@
+module MoonCAst {
+    CKeyword = CKwAuto
+         | CKwBreak
+         | CKwCase
+         | CKwChar
+         | CKwConst
+         | CKwContinue
+         | CKwDefault
+         | CKwDo
+         | CKwDouble
+         | CKwElse
+         | CKwEnum
+         | CKwExtern
+         | CKwFloat
+         | CKwFor
+         | CKwGoto
+         | CKwIf
+         | CKwInline
+         | CKwInt
+         | CKwLong
+         | CKwRegister
+         | CKwRestrict
+         | CKwReturn
+         | CKwShort
+         | CKwSigned
+         | CKwSizeof
+         | CKwStatic
+         | CKwStruct
+         | CKwSwitch
+         | CKwTypedef
+         | CKwUnion
+         | CKwUnsigned
+         | CKwVoid
+         | CKwVolatile
+         | CKwWhile
+         | CKwBool
+         | CKwComplex
+         | CKwInline2
+         | CKwRestrict2
+
+    CDirectiveKind = CDirDefine
+         | CDirUndef
+         | CDirInclude
+         | CDirIf
+         | CDirIfdef
+         | CDirIfndef
+         | CDirElif
+         | CDirElse
+         | CDirEndif
+         | CDirError
+         | CDirPragma
+         | CDirLine
+
+    CToken = CTokIdent(string name) unique
+         | CTokKeyword(MoonCAst.CKeyword kw) unique
+         | CTokIntLiteral(string raw, string suffix) unique
+         | CTokFloatLiteral(string raw, string suffix) unique
+         | CTokCharLiteral(string raw) unique
+         | CTokStringLiteral(string raw, string prefix) unique
+         | CTokPunct(string text) unique
+         | CTokDirective(MoonCAst.CDirectiveKind kind) unique
+         | CTokNewline
+         | CTokEOF
+
+    CppDirective = CCppDefine(MoonCAst.CMacro macro) unique
+         | CCppUndef(string name) unique
+         | CCppInclude(MoonCAst.CIncludeKind kind, string path) unique
+         | CCppIf(MoonCAst.CToken* tokens) unique
+         | CCppIfdef(string name) unique
+         | CCppIfndef(string name) unique
+         | CCppElif(MoonCAst.CToken* tokens) unique
+         | CCppElse
+         | CCppEndif
+         | CCppError(string message) unique
+         | CCppPragma(MoonCAst.CToken* tokens) unique
+         | CCppLine(number line, string? file) unique
+
+    CIncludeKind = CIncludeAngle
+         | CIncludeQuoted
+
+    CMacroKind = CObjectLike
+         | CFunctionLike(string* params, boolean variadic) unique
+
+    CMacro = (string name, MoonCAst.CMacroKind kind, MoonCAst.CToken* body, MoonSource.SourceRange location) unique
+
+    TranslationUnit = (MoonCAst.TopLevelItem* items) unique
+
+    TopLevelItem = CATopDecl(MoonCAst.Decl decl) unique
+         | CATopFuncDef(MoonCAst.FuncDef func) unique
+         | CATopCpp(MoonCAst.CppDirective directive) unique
+
+    StorageClass = CStorageTypedef
+         | CStorageExtern
+         | CStorageStatic
+         | CStorageAuto
+         | CStorageRegister
+
+    Qualifier = CQualConst
+         | CQualRestrict
+         | CQualVolatile
+         | CQualInline
+
+    TypeSpec = CTyVoid
+         | CTyChar
+         | CTyShort
+         | CTyInt
+         | CTyLong
+         | CTyLongLong
+         | CTyFloat
+         | CTyDouble
+         | CTyLongDouble
+         | CTySigned
+         | CTyUnsigned
+         | CTyBool
+         | CTyComplex
+         | CTyStructOrUnion(MoonCAst.StructKind kind, string? name, MoonCAst.FieldDecl*? members) unique
+         | CTyEnum(string? name, MoonCAst.Enumerator*? enumerators) unique
+         | CTyNamed(string name) unique
+         | CTyTypeof(MoonCAst.Expr expr) unique
+
+    StructKind = CStructKindStruct
+         | CStructKindUnion
+
+    Decl = (MoonCAst.StorageClass? storage, MoonCAst.Qualifier* qualifiers, MoonCAst.TypeSpec type_spec, MoonCAst.Declarator* declarators) unique
+
+    Declarator = (string? name, MoonCAst.DerivedType* derived, MoonCAst.Initializer? initializer) unique
+
+    DerivedType = CDerivedPointer(MoonCAst.Qualifier* qualifiers) unique
+         | CDerivedArray(MoonCAst.Expr? size) unique
+         | CDerivedFunction(MoonCAst.ParamDecl* params, boolean variadic) unique
+
+    FieldDecl = (MoonCAst.TypeSpec type_spec, MoonCAst.FieldDeclarator* declarators) unique
+
+    FieldDeclarator = (MoonCAst.Declarator? declarator, MoonCAst.Expr? bit_width) unique
+
+    Enumerator = (string name, MoonCAst.Expr? value) unique
+
+    ParamDecl = (MoonCAst.TypeSpec type_spec, MoonCAst.Qualifier* qualifiers, MoonCAst.Declarator? declarator) unique
+
+    FuncDef = (MoonCAst.StorageClass? storage, MoonCAst.Qualifier* qualifiers, MoonCAst.TypeSpec type_spec, MoonCAst.Declarator declarator, MoonCAst.Stmt body) unique
+
+    TypeName = (MoonCAst.TypeSpec type_spec, MoonCAst.DerivedType* derived) unique
+
+    Expr = CEIntLit(string raw, string suffix) unique
+         | CEFloatLit(string raw, string suffix) unique
+         | CECharLit(string raw) unique
+         | CEStrLit(string raw) unique
+         | CEBoolLit(boolean value) unique
+         | CEIdent(string name) unique
+         | CEParen(MoonCAst.Expr expr) unique
+         | CEPreInc(MoonCAst.Expr operand) unique
+         | CEPreDec(MoonCAst.Expr operand) unique
+         | CEPostInc(MoonCAst.Expr operand) unique
+         | CEPostDec(MoonCAst.Expr operand) unique
+         | CEAddrOf(MoonCAst.Expr operand) unique
+         | CEDeref(MoonCAst.Expr operand) unique
+         | CEPlus(MoonCAst.Expr operand) unique
+         | CEMinus(MoonCAst.Expr operand) unique
+         | CEBitNot(MoonCAst.Expr operand) unique
+         | CENot(MoonCAst.Expr operand) unique
+         | CESizeofExpr(MoonCAst.Expr expr) unique
+         | CESizeofType(MoonCAst.TypeName type_name) unique
+         | CECast(MoonCAst.TypeName type_name, MoonCAst.Expr expr) unique
+         | CEBinary(MoonCAst.BinaryOp op, MoonCAst.Expr left, MoonCAst.Expr right) unique
+         | CETernary(MoonCAst.Expr cond, MoonCAst.Expr then_expr, MoonCAst.Expr else_expr) unique
+         | CEAssign(MoonCAst.AssignOp op, MoonCAst.Expr left, MoonCAst.Expr right) unique
+         | CEDot(MoonCAst.Expr base, string field) unique
+         | CEArrow(MoonCAst.Expr base, string field) unique
+         | CESubscript(MoonCAst.Expr base, MoonCAst.Expr index) unique
+         | CECall(MoonCAst.Expr callee, MoonCAst.Expr* args) unique
+         | CECompoundLit(MoonCAst.TypeName type_name, MoonCAst.Initializer initializer) unique
+         | CEStmtExpr(MoonCAst.BlockItem* items, MoonCAst.Expr result) unique
+         | CEComma(MoonCAst.Expr left, MoonCAst.Expr right) unique
+
+    BinaryOp = CBinAdd
+         | CBinSub
+         | CBinMul
+         | CBinDiv
+         | CBinMod
+         | CBinShl
+         | CBinShr
+         | CBinLt
+         | CBinLe
+         | CBinGt
+         | CBinGe
+         | CBinEq
+         | CBinNe
+         | CBinBitAnd
+         | CBinBitXor
+         | CBinBitOr
+         | CBinLogAnd
+         | CBinLogOr
+
+    AssignOp = CAssign
+         | CAddAssign
+         | CSubAssign
+         | CMulAssign
+         | CDivAssign
+         | CModAssign
+         | CShlAssign
+         | CShrAssign
+         | CAndAssign
+         | CXorAssign
+         | COrAssign
+
+    Stmt = CSLabeled(string label, MoonCAst.Stmt stmt) unique
+         | CSCase(MoonCAst.Expr value, MoonCAst.Stmt stmt) unique
+         | CSDefault(MoonCAst.Stmt stmt) unique
+         | CSExpr(MoonCAst.Expr? expr) unique
+         | CSCompound(MoonCAst.BlockItem* items) unique
+         | CSIf(MoonCAst.Expr cond, MoonCAst.Stmt then_stmt, MoonCAst.Stmt? else_stmt) unique
+         | CSSwitch(MoonCAst.Expr cond, MoonCAst.Stmt body) unique
+         | CSWhile(MoonCAst.Expr cond, MoonCAst.Stmt body) unique
+         | CSDoWhile(MoonCAst.Stmt body, MoonCAst.Expr cond) unique
+         | CSFor(MoonCAst.ForInit? init, MoonCAst.Expr? cond, MoonCAst.Expr? incr, MoonCAst.Stmt body) unique
+         | CSGoto(string label) unique
+         | CSContinue
+         | CSBreak
+         | CSReturn(MoonCAst.Expr? expr) unique
+
+    ForInit = CFInitExpr(MoonCAst.Expr expr) unique
+         | CFInitDecl(MoonCAst.Decl decl) unique
+
+    BlockItem = CBlockDecl(MoonCAst.Decl decl) unique
+         | CBlockStmt(MoonCAst.Stmt stmt) unique
+
+    Initializer = CInitExpr(MoonCAst.Expr expr) unique
+         | CInitList(MoonCAst.InitItem* items) unique
+
+    InitItem = (MoonCAst.Designator*? designator, MoonCAst.Initializer value) unique
+
+    Designator = CDesigField(string name) unique
+         | CDesigIndex(MoonCAst.Expr index) unique
+         | CDesigRange(MoonCAst.Expr lo, MoonCAst.Expr hi) unique
+}

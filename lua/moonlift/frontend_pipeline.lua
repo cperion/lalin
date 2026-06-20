@@ -82,10 +82,13 @@ function M.Define(T)
     local LowerToC = require("moonlift.lower_to_c").Define(T)
     local Validate = require("moonlift.back_validate").Define(T)
     local CValidate = require("moonlift.c_validate").Define(T)
+    local BackTarget = require("moonlift.back_target_model").Define(T)
     local Errors = require("moonlift.error")
     local function lower_module(module, opts)
         opts = opts or {}
         local site = opts.site or "frontend"
+        local target_model = opts.target_model or opts.back_target_model or BackTarget.default_native()
+        local target = opts.target or BackTarget.host_target(target_model)
 
         -- Standalone callers get fail-fast diagnostics; LSP/document analysis
         -- passes a CollectingCollector so all issues can be published.
@@ -108,7 +111,7 @@ function M.Define(T)
         local layout_env = opts.layout_env
         do
             local ModuleType = require("moonlift.tree_module_type").Define(T)
-            local generated_env = ModuleType.env(checked.module, opts.target)
+            local generated_env = ModuleType.env(checked.module, target)
             if layout_env == nil then
                 layout_env = T.MoonSem.LayoutEnv(generated_env.layouts)
             else
@@ -124,8 +127,8 @@ function M.Define(T)
                 layout_env = T.MoonSem.LayoutEnv(merged)
             end
         end
-        local resolved = Layout.module(checked.module, layout_env, opts.target)
-        local code_module, code_contracts = TreeToCode.module_with_contracts(resolved, { layout_env = layout_env, target = opts.target, module_id = opts.module_id })
+        local resolved = Layout.module(checked.module, layout_env, target)
+        local code_module, code_contracts = TreeToCode.module_with_contracts(resolved, { layout_env = layout_env, target = target, module_id = opts.module_id })
         if code_module == nil then error(site .. " lowering failed: tree_to_code produced nil module", 2) end
         local code_report = CodeValidate.validate(code_module, collector)
         local graph = CodeGraph.graph(code_module)
@@ -136,11 +139,11 @@ function M.Define(T)
         local mem_facts = CodeMemFacts.facts(code_module, graph, flow_facts, value_facts, code_contracts)
         local effect_facts = CodeEffectFacts.facts(code_module, graph, mem_semantics, code_contracts)
         local kernel_plan = CodeKernelPlan.plan(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts)
-        local schedule_plan = CodeSchedulePlan.plan(code_module, kernel_plan, flow_facts, value_facts, mem_semantics, effect_facts, opts.target_model or opts.back_target_model)
+        local schedule_plan = CodeSchedulePlan.plan(code_module, kernel_plan, flow_facts, value_facts, mem_semantics, effect_facts, target_model)
         local lower_plan = CodeLowerPlan.plan(code_module, graph, kernel_plan, schedule_plan, T.MoonLower.LowerTargetBack)
         local kernel_report = KernelValidate.validate(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { collector = collector })
 
-        local program = LowerToBack.module(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { layout_env = layout_env, target = opts.target })
+        local program = LowerToBack.module(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { layout_env = layout_env, target = target })
         if program == nil then error(site .. " lowering failed: code_to_back produced nil program", 2) end
         -- CmdTrap is a real Back terminator used for source/generated trap paths
         -- (for example exhaustive variant-dispatch defaults). Unsupported lowering
@@ -359,7 +362,11 @@ function M.Define(T)
         end
         analysis_ctx.anchors = anchors
 
-        local result = lower_module(parsed.module, { collector = collector, analysis_ctx = analysis_ctx })
+        local lower_opts = {}
+        for k, v in pairs(opts) do lower_opts[k] = v end
+        lower_opts.collector = collector
+        lower_opts.analysis_ctx = analysis_ctx
+        local result = lower_module(parsed.module, lower_opts)
         result.parsed = parsed
         return result
     end

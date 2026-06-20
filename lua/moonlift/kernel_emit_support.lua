@@ -187,7 +187,33 @@ function M.Define(T)
         return text:match("^kval:(.+)$")
     end
 
-    local function vector_value_expr_supported(expr, binding_by_code, seen)
+    local function loop_variant_values(body, flow)
+        local out = {}
+        if body == nil or pvm.classof(body.domain) ~= Kernel.KernelDomainFlow then return out end
+        if body.domain.counter ~= nil then out[body.domain.counter.text] = true end
+        local domain = body.domain.domain
+        if pvm.classof(domain) ~= Flow.FlowDomainLoop then return out end
+        local loop_id = domain.loop
+        local body_blocks = {}
+        for _, loop in ipairs(flow and flow.loops or {}) do
+            if loop.loop == loop_id then
+                for _, induction in ipairs(loop.inductions or {}) do out[induction.value.text] = true end
+                for _, ref in ipairs(loop.body_blocks or {}) do body_blocks[ref.block.text] = true end
+                break
+            end
+        end
+        for _, edge_fact in ipairs(flow and flow.edges or {}) do
+            local edge = edge_fact.edge
+            if edge ~= nil and body_blocks[edge.from.block.text] and body_blocks[edge.to.block.text] then
+                for _, arg in ipairs(edge_fact.args or {}) do
+                    out[arg.dst_param.text] = true
+                end
+            end
+        end
+        return out
+    end
+
+    local function vector_value_expr_supported(expr, binding_by_code, variant_by_code, seen)
         if expr == nil then return false, "missing vector ValueExpr" end
         seen = seen or {}
         if seen[expr] then return true end
@@ -195,43 +221,47 @@ function M.Define(T)
         local cls = pvm.classof(expr)
         if cls == Value.ValueExprConst then return true end
         if cls == Value.ValueExprValue then
-            return binding_by_code[expr.value.text] ~= nil, "vector expression references non-vector loop value " .. expr.value.text
+            if binding_by_code[expr.value.text] ~= nil then return true end
+            if variant_by_code[expr.value.text] then
+                return false, "vector expression references non-vector loop value " .. expr.value.text
+            end
+            return true
         end
         if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul then
-            local ok, reason = vector_value_expr_supported(expr.a, binding_by_code, seen); if not ok then return false, reason end
-            return vector_value_expr_supported(expr.b, binding_by_code, seen)
+            local ok, reason = vector_value_expr_supported(expr.a, binding_by_code, variant_by_code, seen); if not ok then return false, reason end
+            return vector_value_expr_supported(expr.b, binding_by_code, variant_by_code, seen)
         end
         if cls == Value.ValueExprCmp then
             local info = ReductionAlgebra.type_info(expr.ty)
             if info.class == "float" then return false, "Back has no vector float compare" end
-            local ok, reason = vector_value_expr_supported(expr.a, binding_by_code, seen); if not ok then return false, reason end
-            return vector_value_expr_supported(expr.b, binding_by_code, seen)
+            local ok, reason = vector_value_expr_supported(expr.a, binding_by_code, variant_by_code, seen); if not ok then return false, reason end
+            return vector_value_expr_supported(expr.b, binding_by_code, variant_by_code, seen)
         end
         if cls == Value.ValueExprSelect then
-            local ok, reason = vector_value_expr_supported(expr.cond, binding_by_code, seen); if not ok then return false, reason end
-            ok, reason = vector_value_expr_supported(expr.t, binding_by_code, seen); if not ok then return false, reason end
-            return vector_value_expr_supported(expr.f, binding_by_code, seen)
+            local ok, reason = vector_value_expr_supported(expr.cond, binding_by_code, variant_by_code, seen); if not ok then return false, reason end
+            ok, reason = vector_value_expr_supported(expr.t, binding_by_code, variant_by_code, seen); if not ok then return false, reason end
+            return vector_value_expr_supported(expr.f, binding_by_code, variant_by_code, seen)
         end
         return false, "vector emitter does not support " .. class_name(expr)
     end
 
-    local function vector_kernel_expr_supported(expr, binding_by_id, binding_by_code, seen)
+    local function vector_kernel_expr_supported(expr, binding_by_id, binding_by_code, variant_by_code, seen)
         if expr == nil then return false, "missing vector KernelExpr" end
         seen = seen or {}
         local cls = pvm.classof(expr)
         if cls == Kernel.KernelExprLoad then return true end
-        if cls == Kernel.KernelExprAlgebra then return vector_value_expr_supported(expr.expr, binding_by_code, seen) end
+        if cls == Kernel.KernelExprAlgebra then return vector_value_expr_supported(expr.expr, binding_by_code, variant_by_code, seen) end
         if cls == Kernel.KernelExprKernelValue then
             local binding = binding_by_id[expr.value.text]
             if binding == nil then return false, "vector KernelExpr references missing binding" end
             if seen[binding] then return true end
             seen[binding] = true
-            return vector_kernel_expr_supported(binding.expr, binding_by_id, binding_by_code, seen)
+            return vector_kernel_expr_supported(binding.expr, binding_by_id, binding_by_code, variant_by_code, seen)
         end
         return false, "vector emitter does not support " .. class_name(expr)
     end
 
-    local function classify(plan, schedule_kind, target)
+    local function classify(plan, schedule_kind, target, flow)
         local rejects = base_rejects(plan)
         local body = plan and plan.body or nil
         local result = body and body.result or nil
@@ -275,15 +305,16 @@ function M.Define(T)
                 local code_key = binding_code_key(binding)
                 if code_key ~= nil then binding_by_code[code_key] = binding end
             end
+            local variant_by_code = loop_variant_values(body, flow)
             for _, effect in ipairs(body and body.effects or {}) do
                 if pvm.classof(effect) == Kernel.KernelEffectStore then
-                    local ok, reason = vector_kernel_expr_supported(effect.value, binding_by_id, binding_by_code)
+                    local ok, reason = vector_kernel_expr_supported(effect.value, binding_by_id, binding_by_code, variant_by_code)
                     if not ok then rejects[#rejects + 1] = reject_target(reason) end
                 elseif pvm.classof(effect) == Kernel.KernelEffectFold then
                     if sk ~= nil and sk.tail ~= Schedule.TailScalar then rejects[#rejects + 1] = reject_target("vector reductions require TailScalar") end
                     local ok, reason = ReductionAlgebra.vector_support(effect.reduction, sk and sk.lanes and sk.lanes.elem_ty or nil)
                     if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
-                    ok, reason = vector_value_expr_supported(effect.reduction.contribution, binding_by_code)
+                    ok, reason = vector_value_expr_supported(effect.reduction.contribution, binding_by_code, variant_by_code)
                     if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
                 else
                     rejects[#rejects + 1] = reject_target("vector emitter only supports store effects")

@@ -445,7 +445,10 @@ function M.Define(T)
 
     local function base_addr(ctx, base, info)
         local cls = pvm.classof(base)
-        if cls == Mem.MemBaseValue or cls == Mem.MemBaseArgument then return Back.BackAddrValue(bid(base.value)) end
+        if cls == Mem.MemBaseValue or cls == Mem.MemBaseArgument then
+            local v = code_value(ctx, base.value)
+            return Back.BackAddrValue(v)
+        end
         if cls == Mem.MemBaseGlobal then return Back.BackAddrData(Back.BackDataId(base.global.text)) end
         if cls == Mem.MemBaseData then return Back.BackAddrData(Back.BackDataId(base.data.text)) end
         if cls == Mem.MemBaseProjection then
@@ -599,6 +602,13 @@ function M.Define(T)
             overrides[reduction.accumulator.text] = { value = values[i], ty = reduction.ty }
         end
         return overrides
+    end
+
+    local function merge_overrides(a, b)
+        local out = {}
+        for k, v in pairs(a or {}) do out[k] = v end
+        for k, v in pairs(b or {}) do out[k] = v end
+        return out
     end
 
     local function emit_scalar_kernel_fragment(ctx, code_module, graph, flow, schedules, kernels, fragment)
@@ -933,7 +943,7 @@ function M.Define(T)
 
         ctx.vector_value_by_kernel, ctx.vector_value_by_code = {}, {}
         ctx.cmds[#ctx.cmds + 1] = Back.CmdSwitchToBlock(vector_block)
-        local body_overrides = has_reductions and { [counter.text] = { value = vector_body_counter_param, ty = counter_ty } } or nil
+        local body_overrides = merge_overrides(ctx.semantic_fragment_overrides, has_reductions and { [counter.text] = { value = vector_body_counter_param, ty = counter_ty } } or nil)
         with_value_overrides(ctx, body_overrides, function()
             for _, effect in ipairs(kplan.body.effects or {}) do
                 if pvm.classof(effect) == Kernel.KernelEffectStore then
@@ -982,7 +992,7 @@ function M.Define(T)
         end
 
         ctx.cmds[#ctx.cmds + 1] = Back.CmdSwitchToBlock(tail_check)
-        local tail_overrides = {}
+        local tail_overrides = merge_overrides(ctx.semantic_fragment_overrides, {})
         if has_reductions then
             tail_overrides[counter.text] = { value = tail_counter_param, ty = counter_ty }
             for key, value in pairs(reduction_overrides(reductions, tail_acc_params)) do tail_overrides[key] = value end
@@ -1071,6 +1081,80 @@ function M.Define(T)
         ctx.cmds[#ctx.cmds + 1] = Back.CmdJump(block_id(jump_dest), args)
     end
 
+    local function semantic_fragment_overrides(ctx, graph, fragment)
+        local blocks = cover_blocks(fragment, ctx.current_func, graph_loop_by_id(graph))
+        local covered = {}
+        for _, block in ipairs(blocks or {}) do covered[block.id.text] = true end
+        local components_by_value = {}
+        local overrides = {}
+
+        local function view_ty(id)
+            local ty = value_ty(ctx, id)
+            if pvm.classof(ty) == Code.CodeTyLease then ty = ty.base end
+            return pvm.classof(ty) == Code.CodeTyView and ty or nil
+        end
+
+        local function component_ty(ty, field)
+            if field == "data" then return Code.CodeTyDataPtr(ty.elem) end
+            return Code.CodeTyIndex
+        end
+
+        local function value_ref(id, ty)
+            local ov = overrides[id.text]
+            if ov ~= nil then return ov end
+            return { value = bid(id), ty = ty or value_ty(ctx, id) }
+        end
+
+        local function default_components(id)
+            local ty = view_ty(id)
+            if ty == nil then return nil end
+            local vals = component_values(id, ty)
+            return {
+                data = { value = vals[1], ty = Code.CodeTyDataPtr(ty.elem) },
+                len = { value = vals[2], ty = Code.CodeTyIndex },
+                stride = { value = vals[3], ty = Code.CodeTyIndex },
+            }
+        end
+
+        local function components(id)
+            return components_by_value[id.text] or default_components(id)
+        end
+
+        local function set_projection(dst, view, field)
+            local comps = components(view)
+            if comps == nil or comps[field] == nil then return end
+            overrides[dst.text] = comps[field]
+        end
+
+        for _, block in ipairs(ctx.current_func.blocks or {}) do
+            for _, inst in ipairs(block.insts or {}) do
+                local k = inst.kind
+                local cls = pvm.classof(k)
+                if cls == Code.CodeInstViewMake then
+                    components_by_value[k.dst.text] = {
+                        data = value_ref(k.data, Code.CodeTyDataPtr(k.elem_ty)),
+                        len = value_ref(k.len, Code.CodeTyIndex),
+                        stride = value_ref(k.stride, Code.CodeTyIndex),
+                    }
+                elseif cls == Code.CodeInstAlias and view_ty(k.dst) ~= nil then
+                    local comps = components(k.src)
+                    if comps ~= nil then components_by_value[k.dst.text] = comps end
+                elseif cls == Code.CodeInstLoad and pvm.classof(k.access.ty) == Code.CodeTyView then
+                    -- A descriptor load defines fresh components through real memory loads in
+                    -- generic Code emission.  Semantic fragments cannot assume those loads
+                    -- exist once the block is replaced.
+                    components_by_value[k.dst.text] = nil
+                elseif covered[block.id.text] then
+                    if cls == Code.CodeInstViewData then set_projection(k.dst, k.view, "data")
+                    elseif cls == Code.CodeInstViewLen then set_projection(k.dst, k.view, "len")
+                    elseif cls == Code.CodeInstViewStride then set_projection(k.dst, k.view, "stride") end
+                end
+            end
+        end
+
+        return overrides
+    end
+
     local function emit_fragment(ctx, code_module, graph, flow, value, mem, effect, kernels, fragment)
         local cls = pvm.classof(fragment.strategy)
         if cls == Lower.LowerStrategyCode then
@@ -1079,15 +1163,22 @@ function M.Define(T)
             return
         end
         if cls == Lower.LowerStrategyKernel then
-            local sched = ctx.schedule_by_id and ctx.schedule_by_id[fragment.strategy.schedule.text]
-            if sched ~= nil and pvm.classof(sched.kind) == Schedule.ScheduleVector then
-                emit_vector_kernel_fragment(ctx, code_module, graph, flow, ctx.schedules, kernels, fragment)
-            else
-                emit_scalar_kernel_fragment(ctx, code_module, graph, flow, ctx.schedules, kernels, fragment)
-            end
+            local old_overrides = ctx.semantic_fragment_overrides
+            ctx.semantic_fragment_overrides = semantic_fragment_overrides(ctx, graph, fragment)
+            with_value_overrides(ctx, ctx.semantic_fragment_overrides, function()
+                local sched = ctx.schedule_by_id and ctx.schedule_by_id[fragment.strategy.schedule.text]
+                if sched ~= nil and pvm.classof(sched.kind) == Schedule.ScheduleVector then
+                    emit_vector_kernel_fragment(ctx, code_module, graph, flow, ctx.schedules, kernels, fragment)
+                else
+                    emit_scalar_kernel_fragment(ctx, code_module, graph, flow, ctx.schedules, kernels, fragment)
+                end
+            end)
+            ctx.semantic_fragment_overrides = old_overrides
             return
         elseif cls == Lower.LowerStrategyClosedForm then
-            emit_closed_form_fragment(ctx, code_module, graph, flow, kernels, fragment)
+            with_value_overrides(ctx, semantic_fragment_overrides(ctx, graph, fragment), function()
+                emit_closed_form_fragment(ctx, code_module, graph, flow, kernels, fragment)
+            end)
             return
         elseif cls == Lower.LowerStrategyIntrinsic then
             error("lower_to_back: LowerStrategyIntrinsic has no Back emitter; planner must emit LowerStrategyCode/Call with explicit fallback or implement the intrinsic emitter", 2)

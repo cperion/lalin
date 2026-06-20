@@ -306,12 +306,27 @@ do
 end
 
 -- ---------------------------------------------------------------------------
--- 14. Compound literal: (int[]){1, 2, 3} (advanced feature, WIP)
+-- 14. Compound literal: (int[]){1, 2, 3}
 -- ---------------------------------------------------------------------------
 do
-    -- Compound literals are a complex C99 feature. The parser
-    -- produces issues for some forms; this is expected during WIP.
-    print("  compound literal: SKIP (advanced feature, WIP)")
+    local src = [[int first(void) { return ((int[]){1, 2, 3})[0]; }]]
+    local tu, issues = parse(src)
+    assert(#issues == 0, "expected 0 issues for compound literal, got " .. #issues)
+    local func = first_func_body(tu)
+    local ret_stmt = func.body.items[1].stmt
+    assert(ret_stmt._variant == "CSReturn")
+    local sub = ret_stmt.expr
+    assert(sub._variant == "CESubscript", "expected subscript of compound literal")
+    local lit = sub.base
+    if lit._variant == "CEParen" then lit = lit.expr end
+    assert(lit._variant == "CECompoundLit",
+        "expected CECompoundLit, got " .. tostring(lit._variant))
+    assert(lit.type_name.type_spec._variant == "CTyInt")
+    assert(#lit.type_name.derived == 1)
+    assert(lit.type_name.derived[1]._variant == "CDerivedArray")
+    assert(lit.initializer._variant == "CInitList")
+    assert(#lit.initializer.items == 3)
+    print("  compound literal: PASS")
 end
 
 -- ---------------------------------------------------------------------------

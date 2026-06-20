@@ -11,6 +11,10 @@ function M.Define(T)
     local Helpers = require("moonlift.c_helpers").Define(T)
 
     local function append_all(out, xs) for i = 1, #(xs or {}) do out[#out + 1] = xs[i] end end
+    local function class_name(x)
+        local cls = pvm.classof(x) or x
+        return tostring(cls):match("Class%((.-)%)") or tostring(cls)
+    end
 
     local function sanitize(s)
         s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -47,7 +51,7 @@ function M.Define(T)
         if s == Core.ScalarRawPtr then return "void*" end
         if s == Core.ScalarIndex then return "intptr_t" end
         if s == Core.ScalarVoid then return "void" end
-        return "intptr_t"
+        error("c_emit: unsupported scalar " .. class_name(s), 2)
     end
 
     local emit_type
@@ -67,7 +71,23 @@ function M.Define(T)
         if cls == C.CBackendClosureDescriptor then return closure_type_name(ty) end
         if cls == C.CBackendAbiHiddenOutPtr then return emit_type(C.CBackendDataPtr(ty.result)) end
         if cls == C.CBackendVector then return emit_type(ty.elem) end
-        return "intptr_t"
+        error("c_emit: unsupported CBackendType " .. class_name(ty), 2)
+    end
+
+    local function c_string_literal(bytes)
+        local out = { '"' }
+        for i = 1, #bytes do
+            local b = bytes:byte(i)
+            if b == 34 then out[#out + 1] = '\\"'
+            elseif b == 92 then out[#out + 1] = "\\\\"
+            elseif b == 10 then out[#out + 1] = "\\n"
+            elseif b == 13 then out[#out + 1] = "\\r"
+            elseif b == 9 then out[#out + 1] = "\\t"
+            elseif b >= 32 and b <= 126 then out[#out + 1] = string.char(b)
+            else out[#out + 1] = string.format("\\x%02x", b) end
+        end
+        out[#out + 1] = '"'
+        return table.concat(out)
     end
 
     local function literal(lit)
@@ -75,8 +95,8 @@ function M.Define(T)
         if cls == Core.LitInt or cls == Core.LitFloat then return lit.raw end
         if cls == Core.LitBool then return lit.value and "1" or "0" end
         if cls == Core.LitNil then return "0" end
-        if cls == Core.LitString then return "0" end
-        return "0"
+        if cls == Core.LitString then return c_string_literal(lit.bytes) end
+        error("c_emit: unsupported literal " .. class_name(lit), 2)
     end
 
     local function atom(a)
@@ -85,7 +105,7 @@ function M.Define(T)
         if cls == C.CBackendAtomGlobal then return a.global.text end
         if cls == C.CBackendAtomLiteral then return "(" .. emit_type(a.ty) .. ")" .. literal(a.literal) end
         if cls == C.CBackendAtomNull then return "NULL" end
-        return "0"
+        error("c_emit: unsupported CBackendAtom " .. class_name(a), 2)
     end
 
     local place
@@ -100,7 +120,7 @@ function M.Define(T)
             return place(p.base) .. "[" .. atom(p.index) .. "]"
         end
         if cls == C.CBackendPlaceBytes then return "(*(" .. emit_type(p.ty) .. "*)((unsigned char*)" .. atom(p.base) .. " + " .. tostring(p.offset) .. "))" end
-        return "/*bad_place*/"
+        error("c_emit: unsupported CBackendPlace " .. tostring(cls and cls.kind or cls), 2)
     end
 
     local function cmp_op(op)
@@ -127,7 +147,7 @@ function M.Define(T)
         if cls == C.CBackendRExternAddr then return rv["extern"].text end
         if cls == C.CBackendRPtrOffset then return "((char*)" .. atom(rv.base) .. " + (" .. atom(rv.index) .. ") * " .. tostring(rv.elem_size) .. " + " .. tostring(rv.const_offset) .. ")" end
         if cls == C.CBackendRAddrOfPlace then return "&" .. place(rv.place) end
-        return "0"
+        error("c_emit: unsupported CBackendRValue " .. tostring(cls and cls.kind or cls), 2)
     end
 
     local function decl(ty, name)
@@ -273,22 +293,53 @@ function M.Define(T)
         end
     end
 
+    local function is_array_type(ty)
+        return pvm.classof(ty) == C.CBackendArray
+    end
+
+    local function emit_storage_copy(out, dst, src)
+        out[#out + 1] = "    memcpy(" .. dst .. ", " .. src .. ", sizeof(" .. dst .. "));"
+    end
+
     local function emit_transfer(out, block, args)
-        for i = 1, #block.params do out[#out + 1] = "    __xfer_" .. block.label.text .. "_" .. tostring(i) .. " = " .. atom(args[i]) .. ";" end
+        for i = 1, #block.params do
+            local dst = "__xfer_" .. block.label.text .. "_" .. tostring(i)
+            if is_array_type(block.params[i].ty) then
+                emit_storage_copy(out, dst, atom(args[i]))
+            else
+                out[#out + 1] = "    " .. dst .. " = " .. atom(args[i]) .. ";"
+            end
+        end
         out[#out + 1] = "    goto " .. block.label.text .. ";"
     end
 
-    local function emit_stmt(s, out, blocks)
+    local function emit_stmt(s, out, blocks, local_types)
         local cls = pvm.classof(s)
-        if cls == C.CBackendAssign then out[#out + 1] = "    " .. s.dst.text .. " = " .. rvalue(s.rhs) .. ";"
+        if cls == C.CBackendAssign then
+            if is_array_type(local_types[s.dst.text]) then
+                if pvm.classof(s.rhs) ~= C.CBackendRAtom then error("c_emit: array assignment requires atom rvalue", 2) end
+                emit_storage_copy(out, s.dst.text, atom(s.rhs.atom))
+            else
+                out[#out + 1] = "    " .. s.dst.text .. " = " .. rvalue(s.rhs) .. ";"
+            end
         elseif cls == C.CBackendHelperCall then
             local args = {}; for i = 1, #s.args do args[i] = atom(s.args[i]) end
             local call = s.helper.text .. "(" .. table.concat(args, ", ") .. ")"
             if s.dst then out[#out + 1] = "    " .. s.dst.text .. " = " .. call .. ";" else out[#out + 1] = "    " .. call .. ";" end
         elseif cls == C.CBackendLoad then out[#out + 1] = "    memcpy(&" .. s.dst.text .. ", " .. atom(s.addr) .. ", sizeof(" .. s.dst.text .. "));"
         elseif cls == C.CBackendStore then out[#out + 1] = "    memcpy(" .. atom(s.addr) .. ", &" .. atom(s.value) .. ", sizeof(" .. atom(s.value) .. "));"
-        elseif cls == C.CBackendPlaceLoad then out[#out + 1] = "    " .. s.dst.text .. " = " .. place(s.place) .. ";"
-        elseif cls == C.CBackendPlaceStore then out[#out + 1] = "    " .. place(s.place) .. " = " .. atom(s.value) .. ";"
+        elseif cls == C.CBackendPlaceLoad then
+            if is_array_type(local_types[s.dst.text]) then
+                emit_storage_copy(out, s.dst.text, place(s.place))
+            else
+                out[#out + 1] = "    " .. s.dst.text .. " = " .. place(s.place) .. ";"
+            end
+        elseif cls == C.CBackendPlaceStore then
+            if is_array_type(s.place.ty) then
+                emit_storage_copy(out, place(s.place), atom(s.value))
+            else
+                out[#out + 1] = "    " .. place(s.place) .. " = " .. atom(s.value) .. ";"
+            end
         elseif cls == C.CBackendZeroInit then out[#out + 1] = "    memset(&" .. place(s.place) .. ", 0, (size_t)" .. tostring(s.size) .. ");"
         elseif cls == C.CBackendAggregateInit then
             for i = 1, #s.fields do out[#out + 1] = "    " .. place(s.place) .. "." .. s.fields[i].field.text .. " = " .. atom(s.fields[i].value) .. ";" end
@@ -350,13 +401,18 @@ function M.Define(T)
                 out[#out + 1] = "    " .. decl(ty, local_id) .. " = 0;"
             end
         end
+        local local_types = {}
+        for i = 1, #f.params do local_types[f.params[i].id.text] = f.params[i].ty end
         for i = 1, #f.locals do
+            local_types[f.locals[i].id.text] = f.locals[i].ty
             emit_local_decl(f.locals[i].id.text, f.locals[i].ty)
         end
         local blocks = {}; for i = 1, #f.blocks do blocks[f.blocks[i].label.text] = f.blocks[i] end
         for i = 1, #f.blocks do
             local b = f.blocks[i]
             for j = 1, #b.params do
+                local_types[b.params[j]["local"].text] = b.params[j].ty
+                local_types["__xfer_" .. b.label.text .. "_" .. tostring(j)] = b.params[j].ty
                 emit_local_decl(b.params[j]["local"].text, b.params[j].ty)
                 emit_local_decl("__xfer_" .. b.label.text .. "_" .. tostring(j), b.params[j].ty)
             end
@@ -364,8 +420,16 @@ function M.Define(T)
         for i = 1, #f.blocks do
             local b = f.blocks[i]
             out[#out + 1] = b.label.text .. ":"
-            for j = 1, #b.params do out[#out + 1] = "    " .. b.params[j]["local"].text .. " = __xfer_" .. b.label.text .. "_" .. tostring(j) .. ";" end
-            for j = 1, #b.stmts do emit_stmt(b.stmts[j], out, blocks) end
+            for j = 1, #b.params do
+                local dst = b.params[j]["local"].text
+                local src = "__xfer_" .. b.label.text .. "_" .. tostring(j)
+                if is_array_type(b.params[j].ty) then
+                    emit_storage_copy(out, dst, src)
+                else
+                    out[#out + 1] = "    " .. dst .. " = " .. src .. ";"
+                end
+            end
+            for j = 1, #b.stmts do emit_stmt(b.stmts[j], out, blocks, local_types) end
             emit_term(b.term, out, blocks)
         end
         out[#out + 1] = "}"

@@ -96,6 +96,24 @@ function M.Define(T)
         return prefix .. "_" .. ctx.temp_counter
     end
 
+    local function unsupported_c_expr(node, detail)
+        local tag = type(node) == "table" and node._variant or tostring(node)
+        error("c.lower_c: unsupported C expression `" .. tostring(tag) .. "`"
+            .. (detail and (": " .. detail) or ""), 2)
+    end
+
+    local function unsupported_c_stmt(node, detail)
+        local tag = type(node) == "table" and node._variant or tostring(node)
+        error("c.lower_c: unsupported C statement `" .. tostring(tag) .. "`"
+            .. (detail and (": " .. detail) or ""), 2)
+    end
+
+    local function unsupported_c_init(init, detail)
+        local tag = type(init) == "table" and init._variant or tostring(init)
+        error("c.lower_c: unsupported C initializer `" .. tostring(tag) .. "`"
+            .. (detail and (": " .. detail) or ""), 2)
+    end
+
     --------------------------------------------------------------------------
     -- C type → MoonType.Type conversion
     --------------------------------------------------------------------------
@@ -255,6 +273,86 @@ function M.Define(T)
         local fact = id and (ctx.ctypes[id.module_name .. ":" .. id.spelling] or ctx.ctypes[id.spelling])
         if fact then return c_kind_to_moon_type(fact.kind, ctx) end
         return Ty.TScalar(C.ScalarI32)
+    end
+
+    local function scalar_size(scalar)
+        local tag = scalar and scalar._variant
+        if tag == "BackVoid" then return 0 end
+        if tag == "BackBool" or tag == "BackI8" or tag == "BackU8" then return 1 end
+        if tag == "BackI16" or tag == "BackU16" then return 2 end
+        if tag == "BackI32" or tag == "BackU32" or tag == "BackF32" then return 4 end
+        if tag == "BackI64" or tag == "BackU64" or tag == "BackF64" or tag == "BackPtr" or tag == "BackIndex" then return 8 end
+        return nil
+    end
+
+    local function c_type_id_size(id, ctx)
+        if not id then return nil end
+        local fact = ctx.ctypes[id.module_name .. ":" .. id.spelling] or ctx.ctypes[id.spelling]
+        if fact and fact.size then return fact.size end
+        local layout = ctx.layouts[id.module_name .. ":" .. id.spelling] or ctx.layouts[id.spelling]
+        if layout and layout.size then return layout.size end
+        if fact then
+            local kind = fact.kind
+            local tag = kind and kind._variant
+            if tag == "CVoid" then return 0 end
+            if tag == "CScalar" or tag == "CEnum" then return scalar_size(kind.scalar) end
+            if tag == "CPointer" or tag == "CFuncPtr" then return 8 end
+            if tag == "CArray" then
+                local elem = c_type_id_size(kind.elem, ctx)
+                return elem and (elem * kind.count) or nil
+            end
+        end
+        return nil
+    end
+
+    local function c_type_spec_size(spec, ctx)
+        local fact = ctx.ctypes[spec_to_name(spec)]
+        if fact then return c_type_id_size(fact.id, ctx) end
+        local tag = spec._variant
+        if tag == "CTyVoid" then return 0 end
+        if tag == "CTyChar" or tag == "CTyBool" then return 1 end
+        if tag == "CTyShort" then return 2 end
+        if tag == "CTyInt" or tag == "CTyFloat" or tag == "CTySigned" or tag == "CTyUnsigned" then return 4 end
+        if tag == "CTyLong" or tag == "CTyLongLong" or tag == "CTyDouble" then return 8 end
+        if tag == "CTyStructOrUnion" or tag == "CTyEnum" or tag == "CTyNamed" then
+            local id = c_type_id_for_spec(spec, ctx)
+            return c_type_id_size(id, ctx)
+        end
+        return nil
+    end
+
+    local function const_index_expr(expr)
+        if expr and expr._variant == "CEIntLit" then return tonumber(expr.raw) end
+        return nil
+    end
+
+    local function c_type_name_size(type_name, ctx)
+        local size = c_type_spec_size(type_name.type_spec, ctx)
+        for _, d in ipairs(type_name.derived or {}) do
+            if d._variant == "CDerivedPointer" or d._variant == "CDerivedFunction" then
+                size = 8
+            elseif d._variant == "CDerivedArray" then
+                local n = const_index_expr(d.size)
+                if not n or not size then return nil end
+                size = size * n
+            end
+        end
+        return size
+    end
+
+    local function c_expr_size(c_expr, ctx)
+        local tag = c_expr and c_expr._variant
+        if tag == "CEIntLit" or tag == "CECharLit" then return 4 end
+        if tag == "CEFloatLit" then return 8 end
+        if tag == "CEBoolLit" then return 1 end
+        if tag == "CEStrLit" then return #c_expr.raw + 1 end
+        if tag == "CECast" then return c_type_name_size(c_expr.type_name, ctx) end
+        if tag == "CESizeofExpr" or tag == "CESizeofType" then return 8 end
+        local desc = c_expr_desc(c_expr, ctx)
+        if not desc then return nil end
+        if desc.tag == "ptr" then return 8 end
+        if desc.tag == "type" then return c_type_id_size(desc.id, ctx) end
+        return nil
     end
 
     local function field_layout_for(owner_desc, field_name, ctx)
@@ -629,7 +727,7 @@ function M.Define(T)
         elseif tag == "CSDefault" then
             analyze_c_stmt_writes(c_stmt.stmt, out)
         elseif tag == "CSSwitch" then
-            -- Switch is not a loop; we don't consider it a fallback trigger
+            -- Switch is not a loop; we don't consider it a general-control trigger
             if c_stmt.cond then analyze_c_expr_writes(c_stmt.cond, out) end
             analyze_c_stmt_writes(c_stmt.body, out)
         end
@@ -667,7 +765,7 @@ function M.Define(T)
         end
     end
 
-    -- Main loop analysis: classify variables and detect fallback triggers
+    -- Main loop analysis: classify variables and detect general-control triggers
     local function analyze_loop(c_stmt, ctx)
         local analysis = {
             carried_vars = {},
@@ -676,7 +774,7 @@ function M.Define(T)
             has_continue = false,
             has_nested_loop = false,
             conditional_writes = {},
-            should_fallback = false,
+            needs_general_control = false,
             for_init_names = {},
         }
 
@@ -726,7 +824,7 @@ function M.Define(T)
         collect_names_declared_in_body(c_stmt.body, body_decl_names)
 
         -- Classify locals
-        local should_fallback = false
+        local needs_general_control = false
         for name, local_info in pairs(ctx.locals or {}) do
             -- Skip names declared in for-init (handled separately)
             if analysis.for_init_names[name] then
@@ -746,7 +844,7 @@ function M.Define(T)
                         live_out = false,  -- for-init vars are scoped to the loop
                     })
                     if ctx.address_taken and ctx.address_taken[name] then
-                        should_fallback = true
+                        needs_general_control = true
                     end
                 end
                 -- Non-written for-init vars: leave as regular decls before the loop
@@ -756,10 +854,10 @@ function M.Define(T)
                 -- Written in loop body → carried var
                 local live_out = true  -- non-for-init vars read after the loop
                 if writes_out.conditional_written[name] then
-                    should_fallback = true
+                    needs_general_control = true
                 end
                 if ctx.address_taken and ctx.address_taken[name] then
-                    should_fallback = true
+                    needs_general_control = true
                 end
                 local init = local_info.init or lit_int("0")
                 table.insert(analysis.carried_vars, {
@@ -775,19 +873,19 @@ function M.Define(T)
         end
 
         if analysis.has_break or analysis.has_continue then
-            should_fallback = true
+            needs_general_control = true
         end
         if analysis.has_nested_loop then
-            should_fallback = true
+            needs_general_control = true
         end
         if #analysis.carried_vars == 0 then
-            should_fallback = true
+            needs_general_control = true
         end
         -- Sort by name for deterministic live_out ordering
         table.sort(analysis.carried_vars, function(a, b) return a.name < b.name end)
         table.sort(analysis.invariant_vars, function(a, b) return a.name < b.name end)
 
-        analysis.should_fallback = should_fallback
+        analysis.needs_general_control = needs_general_control
         return analysis
     end
 
@@ -860,18 +958,17 @@ function M.Define(T)
 
         -- Address-of
         if tag == "CEAddrOf" then
-            local op = lower_expr(c_expr.operand, ctx)
-            return Tr.ExprAddrOf(Tr.ExprSurface, Tr.PlaceRef(Tr.PlaceSurface, Bind.ValueRefName("_addr")))
+            return Tr.ExprAddrOf(Tr.ExprSurface, lower_expr_to_place(c_expr.operand, ctx))
         end
 
         -- Pre/post increment/decrement
         if tag == "CEPreInc" or tag == "CEPreDec" or tag == "CEPostInc" or tag == "CEPostDec" then
-            local opname = c_expr.operand._variant == "CEIdent" and c_expr.operand.name or "tmp"
-            local old_val = Tr.ExprRef(Tr.ExprSurface, Bind.ValueRefName(opname))
+            local place = lower_expr_to_place(c_expr.operand, ctx)
+            local old_val = lower_expr(c_expr.operand, ctx)
             local is_inc = (tag == "CEPreInc" or tag == "CEPostInc")
             local one = lit_int("1")
             local new_val = Tr.ExprBinary(Tr.ExprSurface, is_inc and C.BinAdd or C.BinSub, old_val, one)
-            local stmts = { Tr.StmtSet(Tr.StmtSurface, Tr.PlaceRef(Tr.PlaceSurface, Bind.ValueRefName(opname)), new_val) }
+            local stmts = { Tr.StmtSet(Tr.StmtSurface, place, new_val) }
             if tag == "CEPostInc" or tag == "CEPostDec" then
                 return Tr.ExprBlock(Tr.ExprSurface, stmts, old_val)
             else
@@ -888,8 +985,15 @@ function M.Define(T)
         end
 
         -- sizeof
-        if tag == "CESizeofExpr" or tag == "CESizeofType" then
-            return lit_int("4")  -- placeholder
+        if tag == "CESizeofExpr" then
+            local size = c_expr_size(c_expr.expr, ctx)
+            if not size then unsupported_c_expr(c_expr, "cannot resolve sizeof operand size") end
+            return lit_int(tostring(size))
+        end
+        if tag == "CESizeofType" then
+            local size = c_type_name_size(c_expr.type_name, ctx)
+            if not size then unsupported_c_expr(c_expr, "cannot resolve sizeof type size") end
+            return lit_int(tostring(size))
         end
 
         -- Binary operators
@@ -932,7 +1036,7 @@ function M.Define(T)
                     lit_int("1"),
                     Tr.ExprCompare(Tr.ExprSurface, C.CmpNe, right, zero))
             end
-            return lit_int("0")
+            unsupported_c_expr(c_expr, "unsupported binary operator `" .. tostring(op_tag) .. "`")
         end
 
         -- Ternary
@@ -951,8 +1055,9 @@ function M.Define(T)
             local rhs_val = rhs
             if assign_tag ~= "CAssign" then
                 local old_val = lower_expr(c_expr.left, ctx)
-                local bop = C.BinAdd
-                if assign_tag == "CSubAssign" then bop = C.BinSub
+                local bop
+                if assign_tag == "CAddAssign" then bop = C.BinAdd
+                elseif assign_tag == "CSubAssign" then bop = C.BinSub
                 elseif assign_tag == "CMulAssign" then bop = C.BinMul
                 elseif assign_tag == "CDivAssign" then bop = C.BinDiv
                 elseif assign_tag == "CModAssign" then bop = C.BinRem
@@ -961,6 +1066,7 @@ function M.Define(T)
                 elseif assign_tag == "CXorAssign" then bop = C.BinBitXor
                 elseif assign_tag == "CShlAssign" then bop = C.BinShl
                 elseif assign_tag == "CShrAssign" then bop = C.BinAShr
+                else unsupported_c_expr(c_expr, "unsupported assignment operator `" .. tostring(assign_tag) .. "`")
                 end
                 rhs_val = Tr.ExprBinary(Tr.ExprSurface, bop, old_val, rhs)
             end
@@ -1016,8 +1122,9 @@ function M.Define(T)
                 Tr.IndexBaseExpr(base), index)
         end
 
-        -- Compound literal — simplified to nil for now
-        if tag == "CECompoundLit" then return lit_int("0") end
+        if tag == "CECompoundLit" then
+            unsupported_c_expr(c_expr, "compound literal requires explicit temporary storage lowering")
+        end
 
         -- Statement expression
         if tag == "CEStmtExpr" then
@@ -1035,7 +1142,7 @@ function M.Define(T)
             return Tr.ExprBlock(Tr.ExprSurface, stmts, result)
         end
 
-        return lit_int("0")
+        unsupported_c_expr(c_expr)
     end
 
     --------------------------------------------------------------------------
@@ -1070,7 +1177,7 @@ function M.Define(T)
             return Tr.PlaceIndex(Tr.PlaceSurface,
                 Tr.IndexBaseExpr(base), index)
         end
-        return Tr.PlaceRef(Tr.PlaceSurface, Bind.ValueRefName("_"))
+        unsupported_c_expr(c_expr, "expression is not an assignable/addressable place")
     end
 
     local lower_stmt, lower_decl, append_lists, collect_jump_args  -- forward declarations
@@ -1100,6 +1207,8 @@ function M.Define(T)
                 if decltor.initializer then
                     if decltor.initializer._variant == "CInitExpr" then
                         init = lower_expr(decltor.initializer.expr, ctx)
+                    else
+                        unsupported_c_init(decltor.initializer, "declaration initializer list needs aggregate storage lowering")
                     end
                 end
                 ctx.locals[name] = { binding = bind, is_var = is_var, init = init, c_desc = c_desc_from_spec_decl(decl.type_spec, decltor, ctx) }
@@ -1122,7 +1231,7 @@ function M.Define(T)
     end
 
     function lower_stmt(c_stmt, ctx)
-        if type(c_stmt) ~= "table" then return {} end
+        if type(c_stmt) ~= "table" then unsupported_c_stmt(c_stmt) end
         local tag = c_stmt._variant
 
         if tag == "CSExpr" then
@@ -1132,8 +1241,9 @@ function M.Define(T)
                     local assign_tag = c_stmt.expr.op._variant
                     if assign_tag ~= "CAssign" then
                         local old_val = lower_expr(c_stmt.expr.left, ctx)
-                        local bop = C.BinAdd
-                        if assign_tag == "CSubAssign" then bop = C.BinSub
+                        local bop
+                        if assign_tag == "CAddAssign" then bop = C.BinAdd
+                        elseif assign_tag == "CSubAssign" then bop = C.BinSub
                         elseif assign_tag == "CMulAssign" then bop = C.BinMul
                         elseif assign_tag == "CDivAssign" then bop = C.BinDiv
                         elseif assign_tag == "CModAssign" then bop = C.BinRem
@@ -1141,7 +1251,9 @@ function M.Define(T)
                         elseif assign_tag == "COrAssign" then bop = C.BinBitOr
                         elseif assign_tag == "CXorAssign" then bop = C.BinBitXor
                         elseif assign_tag == "CShlAssign" then bop = C.BinShl
-                        elseif assign_tag == "CShrAssign" then bop = C.BinAShr end
+                        elseif assign_tag == "CShrAssign" then bop = C.BinAShr
+                        else unsupported_c_expr(c_stmt.expr, "unsupported assignment operator `" .. tostring(assign_tag) .. "`")
+                        end
                         rhs = Tr.ExprBinary(Tr.ExprSurface, bop, old_val, rhs)
                     end
                     return { Tr.StmtSet(Tr.StmtSurface, lower_expr_to_place(c_stmt.expr.left, ctx), rhs) }
@@ -1183,7 +1295,7 @@ function M.Define(T)
                 end
                 return { Tr.StmtJump(Tr.StmtSurface, ctx.break_target, args) }
             end
-            return { Tr.StmtReturnVoid(Tr.StmtSurface) }
+            unsupported_c_stmt(c_stmt, "break without loop or switch target")
         end
 
         if tag == "CSContinue" then
@@ -1196,7 +1308,7 @@ function M.Define(T)
                 end
                 return { Tr.StmtJump(Tr.StmtSurface, ctx.continue_target, args) }
             end
-            return { Tr.StmtReturnVoid(Tr.StmtSurface) }
+            unsupported_c_stmt(c_stmt, "continue without loop target")
         end
 
         if tag == "CSGoto" then
@@ -1209,7 +1321,7 @@ function M.Define(T)
             local saved_continue = ctx.continue_target
             local analysis = analyze_loop(c_stmt, ctx)
 
-            if analysis.should_fallback then
+            if analysis.needs_general_control then
                 local loop_label = fresh_label(ctx, "while_loop")
                 local body_label = fresh_label(ctx, "while_body")
                 local end_label = fresh_label(ctx, "while_end")
@@ -1306,7 +1418,7 @@ function M.Define(T)
             local saved_continue = ctx.continue_target
             local analysis = analyze_loop(c_stmt, ctx)
 
-            if analysis.should_fallback then
+            if analysis.needs_general_control then
                 local body_label = fresh_label(ctx, "dowhile_body")
                 local cond_label = fresh_label(ctx, "dowhile_cond")
                 local end_label = fresh_label(ctx, "dowhile_end")
@@ -1402,7 +1514,7 @@ function M.Define(T)
             local saved_continue = ctx.continue_target
             local analysis = analyze_loop(c_stmt, ctx)
 
-            if analysis.should_fallback then
+            if analysis.needs_general_control then
                 local loop_label = fresh_label(ctx, "for_loop")
                 local body_label = fresh_label(ctx, "for_body")
                 local incr_label = fresh_label(ctx, "for_incr")
@@ -1457,8 +1569,12 @@ function M.Define(T)
                         local is_var = ctx.address_taken and ctx.address_taken[decltor.name]
                         local bind = is_var and local_cell_binding(decltor.name) or local_value_binding(decltor.name)
                         local init = lit_int("0")
-                        if decltor.initializer and decltor.initializer._variant == "CInitExpr" then
-                            init = lower_expr(decltor.initializer.expr, ctx)
+                        if decltor.initializer then
+                            if decltor.initializer._variant == "CInitExpr" then
+                                init = lower_expr(decltor.initializer.expr, ctx)
+                            else
+                                unsupported_c_init(decltor.initializer, "for-init declaration list needs aggregate storage lowering")
+                            end
                         end
                         if is_var then
                             init_stmts[#init_stmts + 1] = Tr.StmtVar(Tr.StmtSurface, bind, init)
@@ -1615,7 +1731,7 @@ function M.Define(T)
             return { Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion(region_id, entry, blocks)) }
         end
 
-        return {}
+        unsupported_c_stmt(c_stmt)
     end
 
     --------------------------------------------------------------------------
@@ -1919,8 +2035,12 @@ function M.Define(T)
                             else
                                 local ty = wrap_decl_type(c_type_spec_to_moon_type(decl.type_spec, ctx), decltor, ctx)
                                 local init = lit_int("0")
-                                if decltor.initializer and decltor.initializer._variant == "CInitExpr" then
-                                    init = lower_expr(decltor.initializer.expr, ctx)
+                                if decltor.initializer then
+                                    if decltor.initializer._variant == "CInitExpr" then
+                                        init = lower_expr(decltor.initializer.expr, ctx)
+                                    else
+                                        unsupported_c_init(decltor.initializer, "top-level declaration list needs aggregate storage lowering")
+                                    end
                                 end
                                 if is_static then
                                     out[#out + 1] = Tr.ItemStatic(Tr.StaticItem(decltor.name, ty, init))

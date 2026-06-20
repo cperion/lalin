@@ -105,7 +105,7 @@ function M.Define(T)
         local rejected_alternatives = {}
         local vector_kind = vector_candidate_kind(plan, target)
         if vector_kind ~= nil then
-            local vcap = KernelEmitSupport.classify(plan, vector_kind, target)
+            local vcap = KernelEmitSupport.classify(plan, vector_kind, target, flow)
             if vcap.executable then
                 return Schedule.SchedulePlanned(
                     Schedule.ScheduleId("schedule:" .. sanitize(kid.text) .. ":" .. sanitize(vcap.kind)),
@@ -118,7 +118,7 @@ function M.Define(T)
             for _, r in ipairs(vcap.rejects or {}) do rejected_alternatives[#rejected_alternatives + 1] = r end
         end
         local kind = scalar_or_closed_kind_for(plan)
-        local capability = KernelEmitSupport.classify(plan, kind, target)
+        local capability = KernelEmitSupport.classify(plan, kind, target, flow)
         if not capability.executable then return Schedule.ScheduleNoPlan(kid, capability.rejects) end
         return Schedule.SchedulePlanned(
             Schedule.ScheduleId("schedule:" .. sanitize(kid.text) .. ":" .. sanitize(capability.kind)),

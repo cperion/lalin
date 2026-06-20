@@ -79,13 +79,13 @@ local function module_with(items)
     return Tr.Module(Tr.ModuleSurface, items)
 end
 
-local function must_fail_before_tree_to_c(label, module, pattern)
+local function must_fail_before_c_projection(label, module, pattern)
     local ok, err = pcall(function()
         Pipeline.lower_module_to_c(module, { site = label })
     end)
     assert(not ok, label .. " unexpectedly reached C lowering successfully")
     err = tostring(err)
-    assert(not err:match("lua/moonlift/tree_to_c%.lua"), label .. " failed inside tree_to_c instead of an earlier phase/boundary: " .. err)
+    assert(not err:match("lua/moonlift/tree_to_c%.lua"), label .. " reached retired direct Tree-to-C lowering: " .. err)
     if pattern then assert(err:match(pattern), label .. " error did not match " .. pattern .. ": " .. err) end
 end
 
@@ -95,31 +95,31 @@ local closure_case = Pipeline.lower_module_to_c(module_with({
 }), { site = "test_c_backend_phase_boundaries:closure" })
 assert_absent(class_counts(closure_case.resolved), "ExprClosure")
 
-must_fail_before_tree_to_c("test_c_backend_phase_boundaries:FuncOpen", module_with({
+must_fail_before_c_projection("test_c_backend_phase_boundaries:FuncOpen", module_with({
     Tr.ItemFunc(Tr.FuncOpen(Core.FuncSym("open_f", "open_f"), Core.VisibilityLocal, {}, Open.OpenSet({}, {}, {}, {}), i32, { Tr.StmtReturnValue(Tr.StmtSurface, lit(0)) })),
 }), "phase boundary")
 
-must_fail_before_tree_to_c("test_c_backend_phase_boundaries:ExternFuncOpen", module_with({
+must_fail_before_c_projection("test_c_backend_phase_boundaries:ExternFuncOpen", module_with({
     Tr.ItemExtern(Tr.ExternFuncOpen(Core.ExternSym("open_e", "open_e", "open_e"), {}, i32)),
 }), "phase boundary")
 
-must_fail_before_tree_to_c("test_c_backend_phase_boundaries:ItemImport", module_with({
+must_fail_before_c_projection("test_c_backend_phase_boundaries:ItemImport", module_with({
     Tr.ItemImport(Tr.ImportItem(Core.Path({ Core.Name("not_resolved") }))),
 }), "phase boundary")
 
-must_fail_before_tree_to_c("test_c_backend_phase_boundaries:ItemUseItemsSlot", module_with({
+must_fail_before_c_projection("test_c_backend_phase_boundaries:ItemUseItemsSlot", module_with({
     Tr.ItemUseItemsSlot(Open.ItemsSlot("items", "items")),
 }), "unfilled items slot")
 
-must_fail_before_tree_to_c("test_c_backend_phase_boundaries:ExprSlotValue", module_with({
+must_fail_before_c_projection("test_c_backend_phase_boundaries:ExprSlotValue", module_with({
     local_func("expr_slot", i32, { Tr.StmtReturnValue(Tr.StmtSurface, Tr.ExprSlotValue(Tr.ExprSurface, Open.ExprSlot("expr", "expr", i32))) }),
 }), "unfilled expression slot")
 
-must_fail_before_tree_to_c("test_c_backend_phase_boundaries:ExprUseExprFrag", module_with({
+must_fail_before_c_projection("test_c_backend_phase_boundaries:ExprUseExprFrag", module_with({
     local_func("expr_frag", i32, { Tr.StmtReturnValue(Tr.StmtSurface, Tr.ExprUseExprFrag(Tr.ExprSurface, "frag_use", Open.ExprFragRefName("missing_frag"), {}, {})) }),
 }), "unexpanded expression fragment use")
 
-must_fail_before_tree_to_c("test_c_backend_phase_boundaries:StmtUseRegionFrag", module_with({
+must_fail_before_c_projection("test_c_backend_phase_boundaries:StmtUseRegionFrag", module_with({
     local_func("region_frag", void, { Tr.StmtUseRegionFrag(Tr.StmtSurface, Tr.RegionUseEmit, "region_use", Open.RegionFragRefName("missing_region"), {}, {}, {}), Tr.StmtReturnVoid(Tr.StmtSurface) }),
 }), "unexpanded region fragment use")
 

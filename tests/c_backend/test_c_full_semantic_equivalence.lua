@@ -103,7 +103,6 @@ end]],
     },
     {
         name = "arrays_aggregates",
-        skip_c = "C backend does not yet lower array value binding as assignable C storage",
         func = "equiv_array_agg",
         args = {},
         mlua = [[local Pair = struct Pair
