@@ -19,8 +19,9 @@ deps.
 ## Setup
 
 ```sh
-git submodule update --init    # for .vendor/LuaJIT
-luajit -v                      # must have FFI support
+git submodule update --init --recursive  # LuaJIT + TinyCC
+make libtcc                              # repo-local libtcc for C backend tests
+luajit -v                                # must have FFI support
 ```
 
 All scripts set `package.path` to include `./lua/?.lua`.
@@ -45,15 +46,20 @@ luajit lsp.lua
 
 ## Test
 
-~130+ tests under `tests/`. No test framework — each is a standalone script:
+240+ tests under `tests/`, grouped by compiler boundary. No test framework —
+each is a standalone script, with `tests/run.lua` for suites:
 
 ```sh
-luajit tests/test_back_add_i32.lua             # Cranelift JIT path
-luajit tests/test_back_object_emit.lua          # Object file emission
-luajit tests/test_mlua_host_pipeline.lua        # .mlua hosted island bridge
-luajit tests/test_parse_typecheck.lua           # Parse + typecheck pipeline
-luajit tests/test_parse_kernels.lua             # Jump-first kernel suite
-luajit tests/test_lsp_integrated.lua            # Full LSP integration
+luajit tests/run.lua                              # stable default suite
+luajit tests/run.lua frontend
+luajit tests/run.lua backend
+luajit tests/backend/test_back_add_i32.lua             # Cranelift JIT path
+luajit tests/backend/test_back_object_emit.lua          # Object file emission
+luajit tests/frontend/test_mlua_asdl_host_model.lua      # .mlua hosted island bridge
+luajit tests/frontend/test_parse_typecheck.lua           # Parse + typecheck pipeline
+luajit tests/frontend/test_parse_kernels.lua             # Jump-first kernel suite
+luajit tests/lsp/test_lsp_integrated.lua                 # Full LSP integration
+```
 
 ## Benchmarks
 

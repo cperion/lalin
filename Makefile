@@ -1,8 +1,11 @@
 MOONLIFT  = target/release/moonlift
 LUAJIT    = .vendor/LuaJIT/src
 MOONLIB   = target/release/libmoonlift.so
+TINYCC    = deps/tinycc
+TCC_PREFIX = $(CURDIR)/$(TINYCC)/.local
+LIBTCC    = $(TINYCC)/.local/lib/libtcc.so
 
-.PHONY: all clean run bench
+.PHONY: all clean run bench libtcc
 
 all: $(MOONLIFT)
 
@@ -19,6 +22,13 @@ $(MOONLIB): $(LUAJIT)/libluajit.a
 	LUAJIT_LIB=$(CURDIR)/$(LUAJIT)/libluajit-5.1.a \
 	LUAJIT_INCLUDE=$(CURDIR)/$(LUAJIT) \
 	cargo build --release --lib
+
+libtcc: $(LIBTCC)
+
+$(LIBTCC): $(TINYCC)/configure
+	cd $(TINYCC) && ./configure --prefix="$(TCC_PREFIX)" --disable-static
+	$(MAKE) -C $(TINYCC) libtcc.so libtcc1.a tcc
+	$(MAKE) -C $(TINYCC) install
 
 clean:
 	$(MAKE) -C $(LUAJIT) clean

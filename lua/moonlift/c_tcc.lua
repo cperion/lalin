@@ -38,6 +38,91 @@ local function first_nonempty(...)
     return nil
 end
 
+local function file_exists(path)
+    local f = io.open(path, "rb")
+    if f == nil then return false end
+    f:close()
+    return true
+end
+
+local function module_repo_root()
+    local info = debug.getinfo(1, "S")
+    local source = info and info.source
+    if type(source) ~= "string" then return nil end
+    if source:sub(1, 1) == "@" then source = source:sub(2) end
+    return source:match("^(.*)/lua/moonlift/c_tcc%.lua$")
+end
+
+local repo_root = module_repo_root()
+local function vendored_tcc_paths()
+    if repo_root == nil then return nil end
+    local root = repo_root .. "/deps/tinycc"
+    if not file_exists(root .. "/configure") then return nil end
+    return {
+        root = root,
+        installed_lib = root .. "/.local/lib/libtcc.so",
+        build_lib = root .. "/libtcc.so",
+        installed_tccdir = root .. "/.local/lib/tcc",
+        build_tccdir = root,
+    }
+end
+
+local function append_unique(out, seen, value)
+    if value == nil then return end
+    value = tostring(value)
+    if value == "" or seen[value] then return end
+    seen[value] = true
+    out[#out + 1] = value
+end
+
+local function merge_paths(existing, additions)
+    local out, seen = {}, {}
+    for _, value in ipairs(listify(existing)) do append_unique(out, seen, value) end
+    for _, value in ipairs(additions or {}) do append_unique(out, seen, value) end
+    return out
+end
+
+local function with_vendored_defaults(opts)
+    local v = vendored_tcc_paths()
+    if v == nil then return opts or {} end
+
+    local out = {}
+    for k, value in pairs(opts or {}) do out[k] = value end
+
+    if out.lib_path == nil then
+        if file_exists(v.installed_tccdir .. "/libtcc1.a") then
+            out.lib_path = v.installed_tccdir
+        elseif file_exists(v.build_tccdir .. "/libtcc1.a") then
+            out.lib_path = v.build_tccdir
+        end
+    end
+
+    local include_paths = {}
+    if file_exists(v.installed_tccdir .. "/include/stddef.h") then
+        include_paths[#include_paths + 1] = v.installed_tccdir .. "/include"
+    end
+    if file_exists(v.root .. "/include/stddef.h") then
+        include_paths[#include_paths + 1] = v.root .. "/include"
+    end
+
+    local library_paths = {}
+    if file_exists(v.installed_tccdir .. "/libtcc1.a") then
+        library_paths[#library_paths + 1] = v.installed_tccdir
+    end
+    if file_exists(v.build_tccdir .. "/libtcc1.a") then
+        library_paths[#library_paths + 1] = v.build_tccdir
+    end
+
+    if #include_paths > 0 then
+        out.sysinclude_paths = merge_paths(out.sysinclude_paths or out.sysinclude_path, include_paths)
+    end
+    if #library_paths > 0 then
+        out.library_paths = merge_paths(out.library_paths or out.library_path, library_paths)
+    end
+
+    return out
+end
+
 local cdef_done = false
 local function ensure_cdef()
     if cdef_done then return true end
@@ -74,6 +159,11 @@ local function candidate_names(opts)
     local names = {}
     local explicit = first_nonempty(opts.lib, opts.lib_path, opts.library, os.getenv("MOONLIFT_LIBTCC"))
     if explicit then names[#names + 1] = explicit end
+    local vendored = vendored_tcc_paths()
+    if vendored ~= nil then
+        if file_exists(vendored.installed_lib) then names[#names + 1] = vendored.installed_lib end
+        if file_exists(vendored.build_lib) then names[#names + 1] = vendored.build_lib end
+    end
     if ok_ffi then
         if ffi.os == "Windows" then
             names[#names + 1] = "tcc.dll"
@@ -202,7 +292,7 @@ local function add_each(lib, state, values, fn_name, stage)
 end
 
 function M.compile(c_source, opts)
-    opts = opts or {}
+    opts = with_vendored_defaults(opts)
     assert(type(c_source) == "string", "moonlift.c_tcc.compile expects C source string")
     local lib, avail_err = load_libtcc(opts)
     if not lib then return nil, avail_err end

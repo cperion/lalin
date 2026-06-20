@@ -228,12 +228,15 @@ end
 
 - [Rust](https://rustup.rs/) (nightly, for the Cranelift backend)
 - A C compiler (`cc`) for shared library linking
+- LuaJIT with FFI support
 
 ### Build
 
 ```bash
 git clone https://github.com/your-org/moonlift.git
 cd moonlift
+git submodule update --init --recursive
+make libtcc
 make
 ```
 
@@ -242,6 +245,10 @@ Produces a fully static binary at `target/release/moonlift`:
 - Links vendored LuaJIT statically (from `.vendor/LuaJIT/`)
 - Links the Rust/Cranelift backend in-process
 - No runtime dependencies beyond libc
+
+`make libtcc` builds the vendored TinyCC submodule under `deps/tinycc/.local`.
+The C emission tests use this repo-local `libtcc.so` for in-memory callable C
+backend coverage.
 
 ### Run a `.mlua` file
 
@@ -269,10 +276,11 @@ local obj_bytes = moon.emit_object(source, "build/out.o")
 ### Quick validation
 
 ```bash
-luajit tests/test_back_add_i32.lua          # Bare Cranelift JIT path
-luajit tests/test_mlua_host_pipeline.lua    # .mlua hosted island bridge
-luajit tests/test_parse_typecheck.lua       # Parse + typecheck pipeline
-luajit tests/test_lsp_integrated.lua        # Full LSP integration
+luajit tests/run.lua                              # Stable default suite
+luajit tests/backend/test_back_add_i32.lua          # Bare Cranelift JIT path
+luajit tests/frontend/test_mlua_asdl_host_model.lua  # .mlua hosted island bridge
+luajit tests/frontend/test_parse_typecheck.lua       # Parse + typecheck pipeline
+luajit tests/lsp/test_lsp_integrated.lua             # Full LSP integration
 ```
 
 ---
@@ -905,77 +913,84 @@ moonlift/
 
 ## Testing
 
-Moonlift has ~130+ tests covering every phase:
+Moonlift has 240+ tests grouped by compiler boundary under `tests/`.
+
+```bash
+luajit tests/run.lua              # Stable default suite
+luajit tests/run.lua frontend
+luajit tests/run.lua backend
+luajit tests/run.lua all          # Includes optional/retired suites
+```
 
 ### Parser + typechecker
 
 ```bash
-luajit tests/test_parse_typecheck.lua
-luajit tests/test_parse_kernels.lua
-luajit tests/test_tree_typecheck.lua
+luajit tests/frontend/test_parse_typecheck.lua
+luajit tests/frontend/test_parse_kernels.lua
+luajit tests/code_ir/test_tree_typecheck.lua
 ```
 
 ### Backend (JIT)
 
 ```bash
-luajit tests/test_back_add_i32.lua
-luajit tests/test_back_call.lua
-luajit tests/test_back_memory_data.lua
+luajit tests/backend/test_back_add_i32.lua
+luajit tests/backend/test_back_call.lua
+luajit tests/backend/test_back_memory_data.lua
 ```
 
 ### Object emission
 
 ```bash
-luajit tests/test_back_object_emit.lua
-luajit tests/test_back_object_full.lua
+luajit tests/backend/test_back_object_emit.lua
+luajit tests/backend/test_back_object_full.lua
 ```
 
 ### Shared library emission
 
 ```bash
-luajit tests/test_back_shared_emit.lua
-luajit tests/test_link_plan.lua
+luajit tests/backend/test_back_shared_emit.lua
+luajit tests/tooling/test_link_plan.lua
 ```
 
 ### Kernel lowering
 
 ```bash
-luajit tests/test_code_flow_facts.lua
-luajit tests/test_code_mem_facts.lua
-luajit tests/test_code_kernel_plan.lua
-luajit tests/test_code_lower_plan.lua
+luajit tests/code_ir/test_code_flow_facts.lua
+luajit tests/code_ir/test_code_mem_facts.lua
+luajit tests/code_ir/test_code_kernel_plan.lua
+luajit tests/code_ir/test_code_lower_plan.lua
 ```
 
 ### Metaprogramming and splice tests
 
 ```bash
-luajit tests/test_spread_splice_lists.lua
-luajit tests/test_spread_splice_regions.lua
-luajit tests/test_host_metaprogramming_patterns.lua
-luajit tests/test_host_struct_values.lua
-luajit tests/test_host_stmt_list_builder.lua
-luajit tests/test_parse_spread_splice.lua
-luajit tests/test_region_frag_runtime_param_call.lua
-luajit tests/test_direct_mutual_recursion.lua
-luajit tests/test_host_extern_symbol.lua
+luajit tests/frontend/test_spread_splice_lists.lua
+luajit tests/frontend/test_spread_splice_regions.lua
+luajit tests/host/test_host_metaprogramming_patterns.lua
+luajit tests/host/test_host_struct_values.lua
+luajit tests/host/test_host_stmt_list_builder.lua
+luajit tests/frontend/test_parse_spread_splice.lua
+luajit tests/frontend/test_region_frag_runtime_param_call.lua
+luajit tests/frontend/test_direct_mutual_recursion.lua
+luajit tests/host/test_host_extern_symbol.lua
 ```
 
 ### `.mlua` integration tests
 
 ```bash
-luajit tests/test_mlua_host_pipeline.lua
-luajit tests/test_mlua_document_analysis.lua
-luajit tests/test_mlua_splice_shapes.lua
+luajit tests/frontend/test_mlua_splice_shapes.lua
+luajit tests/frontend/test_mlua_asdl_host_model.lua
+luajit tests/frontend/test_mlua_diagnostics.lua
 target/release/moonlift examples/json/json_lua_stack_decoder.mlua
 ```
 
 ### LSP tests
 
 ```bash
-luajit tests/test_lsp_integrated.lua
-luajit tests/test_editor_completion_items.lua
-luajit tests/test_editor_hover.lua
-luajit tests/test_editor_semantic_tokens.lua
+luajit tests/lsp/test_lsp_integrated.lua
+luajit tests/editor/test_editor_completion_items.lua
+luajit tests/editor/test_editor_hover.lua
+luajit tests/editor/test_editor_semantic_tokens.lua
 ```
 
 ---

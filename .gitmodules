@@ -4,3 +4,6 @@
 [submodule ".vendor/Lua"]
 	path = .vendor/Lua
 	url = https://github.com/lua/lua.git
+[submodule "deps/tinycc"]
+	path = deps/tinycc
+	url = https://repo.or.cz/tinycc.git

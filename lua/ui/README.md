@@ -200,7 +200,7 @@ and typed host-event raw input attachment.
 Use dummy video for headless smoke tests:
 
 ```sh
-SDL_VIDEODRIVER=dummy luajit tests/test_ui_sdl3_paint.lua
+SDL_VIDEODRIVER=dummy luajit tests/ui/test_ui_sdl3_paint.lua
 AUTO_QUIT_MS=50 SDL_VIDEODRIVER=dummy luajit examples/ui/text_field_sdl3_demo.lua
 ```
 
@@ -243,8 +243,8 @@ used as completion signals.
 Current baseline checks:
 
 ```sh
-luajit tests/test_ui_smoke.lua
-SDL_VIDEODRIVER=dummy luajit tests/test_ui_sdl3_paint.lua
+luajit tests/ui/test_ui_smoke.lua
+SDL_VIDEODRIVER=dummy luajit tests/ui/test_ui_sdl3_paint.lua
 AUTO_QUIT_MS=50 SDL_VIDEODRIVER=dummy luajit examples/ui/text_field_sdl3_demo.lua
 ```
 
