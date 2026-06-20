@@ -225,8 +225,8 @@ Continuation names are outcomes, not status words.
 Prefer:
 
 ```moonlift
-borrowed(component: lease ptr(Component))
-allocated(c: ComponentRef, component: lease ptr(Component))
+borrowed(component: lease(sess) ptr(Component))
+allocated(c: ComponentRef, component: lease(sess) ptr(Component))
 routed(component: ComponentRef, handler: HandlerRef)
 would_block
 peer_closed
@@ -268,8 +268,8 @@ successful resolver continuation.
 The resolver region grants the lease:
 
 ```moonlift
-region borrow_component(sess: ptr(Session), c: ComponentRef;
-    borrowed(component: lease ptr(Component))
+region borrow_component(readonly sess: ptr(Session), c: ComponentRef;
+    borrowed(component: lease(sess) ptr(Component))
   | stale(c: ComponentRef)
   | missing(c: ComponentRef)
   | unmounted(c: ComponentRef))
@@ -280,7 +280,9 @@ Rules:
 
 - `Ref` handles that resolve to backend memory should have `domain` and `target`.
 - Every `handle ... target T` should have a resolver region that grants
-  `lease ptr(T)` or `lease view(T)`.
+  `lease(domain_param) ptr(T)` or `lease(domain_param) view(T)`.
+- The resolver domain parameter must be `readonly` or `preserve`, so live
+  leases cannot be invalidated through the same region signature.
 - Failed continuations must not carry the target lease.
 - Invalidating operations mark the owner parameter with `invalidate`.
 - Borrowed views are not stored except through a named materialization region.
@@ -321,7 +323,7 @@ unpack handle -> index, gen
 index out of range      -> missing
 slot not live           -> missing
 slot.gen != gen         -> stale
-otherwise               -> borrowed(lease ptr(slot.product))
+otherwise               -> borrowed(lease(store) ptr(slot.product))
 ```
 
 Rules:
@@ -342,7 +344,8 @@ Short rule:
 
 ```text
 handle TRef    durable identity
-lease ptr(T)   temporary access
+lease ptr(T)   anonymous temporary access
+lease(s) ptr(T) store-tied temporary access from resolver parameter s
 owned TRef     mandatory discharge authority
 ```
 

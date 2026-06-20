@@ -655,8 +655,8 @@ Non-consuming access to an owned resource is written as a protocol that returns
 the owner on every preserving continuation:
 
 ```moonlift
-region borrow_owned_session(app: ptr(App), s: owned SessionRef;
-    borrowed(s: owned SessionRef, session: lease ptr(Session))
+region borrow_owned_session(readonly app: ptr(App), s: owned SessionRef;
+    borrowed(s: owned SessionRef, session: lease(app) ptr(Session))
   | missing(s: owned SessionRef))
 end
 ```
@@ -3770,8 +3770,8 @@ Design memory from the outside inward:
 3. If the reference is a handle, declare its `domain Store` and `target Item`.
 4. Name the access region.
 5. Name every failure or alternate outcome in the region protocol.
-6. Put successful access in the continuation payload as `lease ptr(T)` or
-   `lease view(T)`.
+6. Put successful handle access in the continuation payload as
+   `lease(store_param) ptr(T)` or `lease(store_param) view(T)`.
 7. Keep borrowed pointers/views inside the region extent or pass them into
    sealed kernels.
 8. Name lifetime changes as `reset_*`, `publish_*`, `retire_*`, or `close_*`
@@ -3819,7 +3819,7 @@ handle Voice : u32 invalid 0
     target VoiceState
 end
 
-region borrow_voice_state(pool: ptr(VoicePool), voice: Voice;
+region borrow_voice_state(readonly pool: ptr(VoicePool), voice: Voice;
     borrowed(state: lease(pool) ptr(VoiceState))
   | stale_ref(voice: Voice)
   | already_free(voice: Voice)) end
@@ -3853,17 +3853,21 @@ TypeDeclHandle(
 ```
 
 The checker uses these facts at resolver signatures. A region that accepts a
-`Voice` and grants `lease ptr(VoiceState)` must also take access to the matching
-`VoicePool` domain. A region that accepts `Voice` and grants `lease ptr(Texture)`
-is rejected. The handle remains durable identity; only the successful
-continuation grants temporary memory access.
+`Voice` or `owned Voice` and grants `lease(pool) ptr(VoiceState)` must also take
+a `readonly` or `preserve` access parameter named `pool` whose base type is the
+matching `VoicePool` domain. A region that accepts `Voice` and grants a lease
+to `Texture`, omits the `VoicePool` parameter, uses a mutable/invalidation-
+capable domain parameter, or returns an anonymous `lease ptr(VoiceState)` is
+rejected. The handle remains durable identity; only the successful continuation
+grants temporary memory access.
 
 A lease is the temporary access fact produced by the store. A lease may access
 memory, but it must not become durable identity: no storing it in long-lived
 memory, no returning it as an ordinary pointer, and no hiding it behind a raw
 pointer field. `lease(pool) ptr(T)` associates the lease with the `pool`
-parameter for invalidation checks; unqualified `lease ptr(T)` is conservative and
-may be treated as originating from any store.
+parameter for invalidation checks. Unqualified `lease ptr(T)` remains available
+for non-handle temporary access, but handle resolvers must use an explicit
+origin tied to the handle domain parameter.
 
 Store functions declare invalidation effects on pointer/view parameters:
 

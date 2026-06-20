@@ -185,7 +185,7 @@ handle ComponentRef : u32 invalid 0
     target Component
 end
 region component_lookup(readonly store: ptr(ComponentStore), h: ComponentRef;
-    found(c: lease ptr(Component))
+    found(c: lease(store) ptr(Component))
   | missing)
 entry start()
     jump missing()
@@ -209,7 +209,7 @@ handle ComponentRef : u32 invalid 0
     target Component
 end
 region component_lookup(readonly store: ptr(ComponentStore), h: ComponentRef;
-    found(t: lease ptr(Texture))
+    found(t: lease(store) ptr(Texture))
   | missing)
 entry start()
     jump missing()
@@ -217,6 +217,119 @@ end
 end
 ]])
 assert(#TC.check_module(handle_region_bad_target.module).issues > 0, "handle target fact should reject leases to the wrong target")
+
+local function first_invalid_op(parsed)
+    local checked = TC.check_module(parsed.module)
+    assert(#checked.issues > 0, "expected a typecheck issue")
+    for i = 1, #checked.issues do
+        local issue = checked.issues[i]
+        if pvm.classof(issue) == Tr.TypeIssueInvalidUnary then return issue.op end
+    end
+    error("expected TypeIssueInvalidUnary")
+end
+
+local handle_region_missing_origin = P.parse_module([[struct ComponentStore
+    x: i32
+end
+struct Component
+    x: i32
+end
+handle ComponentRef : u32 invalid 0
+    domain ComponentStore
+    target Component
+end
+region component_lookup(readonly store: ptr(ComponentStore), h: ComponentRef;
+    found(c: lease ptr(Component))
+  | missing)
+entry start()
+    jump missing()
+end
+end
+]])
+assert(first_invalid_op(handle_region_missing_origin) == "handle lease origin missing", "handle resolver leases must name their store origin")
+
+local handle_region_owned_ok = P.parse_module([[struct ComponentStore
+    x: i32
+end
+struct Component
+    x: i32
+end
+handle ComponentRef : u32 invalid 0
+    domain ComponentStore
+    target Component
+end
+region component_lookup(readonly store: ptr(ComponentStore), h: owned ComponentRef;
+    found(h: owned ComponentRef, c: lease(store) ptr(Component))
+  | missing(h: owned ComponentRef))
+entry start()
+    jump missing(h = h)
+end
+end
+]])
+assert(#TC.check_module(handle_region_owned_ok.module).issues == 0, "owned handle resolver should enforce and accept coherent lookup region")
+
+local handle_region_owned_missing_origin = P.parse_module([[struct ComponentStore
+    x: i32
+end
+struct Component
+    x: i32
+end
+handle ComponentRef : u32 invalid 0
+    domain ComponentStore
+    target Component
+end
+region component_lookup(readonly store: ptr(ComponentStore), h: owned ComponentRef;
+    found(h: owned ComponentRef, c: lease ptr(Component))
+  | missing(h: owned ComponentRef))
+entry start()
+    jump missing(h = h)
+end
+end
+]])
+assert(first_invalid_op(handle_region_owned_missing_origin) == "handle lease origin missing", "owned handle resolver leases must name their store origin")
+
+local handle_region_mutable_domain = P.parse_module([[struct ComponentStore
+    x: i32
+end
+struct Component
+    x: i32
+end
+handle ComponentRef : u32 invalid 0
+    domain ComponentStore
+    target Component
+end
+region component_lookup(store: ptr(ComponentStore), h: ComponentRef;
+    found(c: lease(store) ptr(Component))
+  | missing)
+entry start()
+    jump missing()
+end
+end
+]])
+assert(first_invalid_op(handle_region_mutable_domain) == "handle domain access", "handle resolver domain access must be readonly/preserve")
+
+local handle_region_wrong_origin = P.parse_module([[struct ComponentStore
+    x: i32
+end
+struct TextureStore
+    x: i32
+end
+struct Component
+    x: i32
+end
+handle ComponentRef : u32 invalid 0
+    domain ComponentStore
+    target Component
+end
+region component_lookup(readonly store: ptr(ComponentStore), readonly other: ptr(TextureStore), h: ComponentRef;
+    found(c: lease(other) ptr(Component))
+  | missing)
+entry start()
+    jump missing()
+end
+end
+]])
+assert(first_invalid_op(handle_region_wrong_origin) == "handle lease origin mismatch", "handle resolver lease origin must name the matching store parameter")
 
 local handle_region_bad_domain = P.parse_module([[struct ComponentStore
     x: i32
@@ -232,7 +345,7 @@ handle ComponentRef : u32 invalid 0
     target Component
 end
 region component_lookup(readonly store: ptr(TextureStore), h: ComponentRef;
-    found(c: lease ptr(Component))
+    found(c: lease(store) ptr(Component))
   | missing)
 entry start()
     jump missing()

@@ -559,6 +559,7 @@ function M.Define(T)
     end
 
     local function find_handle_def_for_type(ctx, ty)
+        if pvm.classof(ty) == Ty.TOwned then return find_handle_def_for_type(ctx, ty.base) end
         if pvm.classof(ty) ~= Ty.THandle then return nil end
         local defs = rawget(ctx.env, "__handle_defs") or {}
         local ref = ty.ref
@@ -579,6 +580,32 @@ function M.Define(T)
         return nil
     end
 
+    local function lease_origin_name(lease_ty)
+        if pvm.classof(lease_ty) ~= Ty.TLease then return nil end
+        if pvm.classof(lease_ty.origin) == Ty.LeaseOriginParam then return lease_ty.origin.name end
+        return nil
+    end
+
+    local function lease_payload_info(ty)
+        local cls = pvm.classof(ty)
+        if cls == Ty.TAccess then return lease_payload_info(ty.base) end
+        if cls ~= Ty.TLease then return nil end
+        local base = lease_access_base(ty.base)
+        local bcls = pvm.classof(base)
+        if bcls == Ty.TPtr or bcls == Ty.TView then
+            return { lease = ty, target = base.elem, origin = lease_origin_name(ty) }
+        end
+        return nil
+    end
+
+    local function access_allows_lease_grant(ty)
+        local cls = pvm.classof(ty)
+        if cls ~= Ty.TAccess then return false end
+        if ty.access == Ty.TypeAccessReadonly or ty.access == Ty.TypeAccessPreserve then return true end
+        if ty.access == Ty.TypeAccessInvalidate or ty.access == Ty.TypeAccessWriteonly then return false end
+        return access_allows_lease_grant(ty.base)
+    end
+
     local function param_domain_matches(param_ty, domain_ref)
         local base = lease_access_base(param_ty)
         local cls = pvm.classof(base)
@@ -586,9 +613,22 @@ function M.Define(T)
         return type_ref_matches_ty(domain_ref, base.elem)
     end
 
+    local function append_domain_param(params_by_domain, domain_ref, param_name)
+        local key = type_ref_leaf(domain_ref) or ""
+        local bucket = params_by_domain[key]
+        if not bucket then bucket = {}; params_by_domain[key] = bucket end
+        bucket[#bucket + 1] = param_name
+    end
+
+    local function contains_name(names, name)
+        for i = 1, #(names or {}) do if names[i] == name then return true end end
+        return false
+    end
+
     local function check_handle_resolution_signature(ctx, params, payload_params, issues, site)
         local handle_defs = {}
-        local has_domain_param = {}
+        local domain_params = {}
+        local preserving_domain_params = {}
         local all_defs = rawget(ctx.env, "__handle_defs") or {}
         for i = 1, #(params or {}) do
             local pty = canonical_type(ctx.env, params[i].ty)
@@ -596,25 +636,35 @@ function M.Define(T)
             if def and def.target then handle_defs[#handle_defs + 1] = def end
             for _, hdef in pairs(all_defs) do
                 if hdef.domain and param_domain_matches(pty, hdef.domain) then
-                    has_domain_param[type_ref_leaf(hdef.domain) or ""] = true
+                    append_domain_param(domain_params, hdef.domain, params[i].name)
+                    if access_allows_lease_grant(pty) then append_domain_param(preserving_domain_params, hdef.domain, params[i].name) end
                 end
             end
         end
         if #handle_defs == 0 then return end
         for i = 1, #(payload_params or {}) do
-            local target_ty = lease_target_type(canonical_type(ctx.env, payload_params[i].ty))
-            if target_ty ~= nil then
+            local info = lease_payload_info(canonical_type(ctx.env, payload_params[i].ty))
+            if info ~= nil then
                 local matched = nil
                 for j = 1, #handle_defs do
-                    if type_ref_matches_ty(handle_defs[j].target, target_ty) then
+                    if type_ref_matches_ty(handle_defs[j].target, info.target) then
                         matched = handle_defs[j]
                         break
                     end
                 end
                 if matched == nil then
-                    issues[#issues + 1] = Tr.TypeIssueExpected((site or "handle resolution") .. " handle target", Ty.THandle(handle_defs[1].ty.ref, handle_defs[1].repr), target_ty)
-                elseif matched.domain and not has_domain_param[type_ref_leaf(matched.domain) or ""] then
-                    issues[#issues + 1] = Tr.TypeIssueExpected((site or "handle resolution") .. " handle domain", Ty.TNamed(matched.domain), Ty.TScalar(C.ScalarRawPtr))
+                    issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle target mismatch", info.lease)
+                elseif matched.domain then
+                    local key = type_ref_leaf(matched.domain) or ""
+                    if #(domain_params[key] or {}) == 0 then
+                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle domain missing", info.lease)
+                    elseif #(preserving_domain_params[key] or {}) == 0 then
+                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle domain access", info.lease)
+                    elseif info.origin == nil then
+                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle lease origin missing", info.lease)
+                    elseif not contains_name(preserving_domain_params[key], info.origin) then
+                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle lease origin mismatch", info.lease)
+                    end
                 end
             end
         end
@@ -669,12 +719,6 @@ function M.Define(T)
             if pvm.classof(ty) == Ty.TLease then out[#out + 1] = ty end
         end
         return out
-    end
-
-    local function lease_origin_name(lease_ty)
-        if pvm.classof(lease_ty) ~= Ty.TLease then return nil end
-        if pvm.classof(lease_ty.origin) == Ty.LeaseOriginParam then return lease_ty.origin.name end
-        return nil
     end
 
     local function expr_binding_name(expr)
@@ -2417,6 +2461,31 @@ local function explain_type_issue(issue, analysis)
                 { message = "`repr(value)` is the explicit trusted handle-to-scalar boundary" },
                 { message = "the value has type `" .. ty .. "`, not a handle" },
             })
+        elseif raw_op == "handle target mismatch" then
+            return report("handle resolver returns a lease to the wrong target", {
+                { message = "a handle with a `target` fact may only grant leases to that target type" },
+                { message = "the continuation payload has type `" .. ty .. "`" },
+            }, { { message = "change the lease payload target, or declare a different handle target fact" } })
+        elseif raw_op == "handle domain missing" then
+            return report("handle resolver does not take the owning domain", {
+                { message = "a handle with a `domain` fact must be resolved through that store/domain parameter" },
+                { message = "the continuation payload has type `" .. ty .. "`" },
+            }, { { message = "add a `readonly` or `preserve` `ptr(Store)` parameter matching the handle domain" } })
+        elseif raw_op == "handle domain access" then
+            return report("handle resolver domain parameter does not preserve leases", {
+                { message = "resolver regions that grant leases must take the owning domain as `readonly` or `preserve`" },
+                { message = "bare pointer/view parameters are conservative invalidators" },
+            }, { { message = "mark the domain parameter `readonly` or `preserve`" } })
+        elseif raw_op == "handle lease origin missing" then
+            return report("handle resolver lease is not tied to its store parameter", {
+                { message = "a handle resolver must return `lease(store) ptr(Target)` or `lease(store) view(Target)`" },
+                { message = "anonymous leases cannot participate in store invalidation checks" },
+            }, { { message = "write the lease as `lease(store_param) ptr(T)`" } })
+        elseif raw_op == "handle lease origin mismatch" then
+            return report("handle resolver lease is tied to the wrong store parameter", {
+                { message = "the lease origin must name the `readonly` or `preserve` domain parameter for the handle" },
+                { message = "the continuation payload has type `" .. ty .. "`" },
+            }, { { message = "change the `lease(...)` origin to the matching store parameter" } })
         end
         local unotes = {}
         local usuggestions = {}

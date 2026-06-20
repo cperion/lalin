@@ -171,8 +171,8 @@ region that accepts the owner and returns it on every continuation that preserve
 the obligation:
 
 ```moonlift
-region borrow_owned_session(app: ptr(App), s: owned SessionRef;
-    borrowed(s: owned SessionRef, session: lease ptr(Session))
+region borrow_owned_session(readonly app: ptr(App), s: owned SessionRef;
+    borrowed(s: owned SessionRef, session: lease(app) ptr(Session))
   | missing(s: owned SessionRef))
 end
 ```
@@ -486,7 +486,8 @@ values.  Owned authority is a CFG fact, not product data.
 `lease` and `owned` solve different problems.
 
 ```text
-lease ptr(T) = temporary access, no ownership
+lease ptr(T) = anonymous temporary access, no ownership
+lease(store) ptr(T) = store-tied temporary access from resolver parameter store
 owned T      = resource obligation, no implicit access
 ```
 
@@ -504,6 +505,9 @@ borrow_component(sess, c; borrowed = ...)
 
 Borrowing from owned identity is allowed only through explicit resolver regions.
 The resolver may accept either `ComponentRef` or `owned ComponentRef`.
+If the handle declares `domain Store target T`, the successful continuation
+must return `lease(store_param) ptr(T)` or `lease(store_param) view(T)`, and
+`store_param` must be a `readonly` or `preserve` pointer/view of the domain.
 
 If it accepts `ComponentRef`, the caller must already have a plain copyable
 handle.  If it accepts `owned ComponentRef`, it must return the owner on every
@@ -524,13 +528,13 @@ region open_session(app: ptr(App);
   | oom(needed: index))
 end
 
-region borrow_session(app: ptr(App), s: SessionRef;
-    borrowed(session: lease ptr(Session))
+region borrow_session(readonly app: ptr(App), s: SessionRef;
+    borrowed(session: lease(app) ptr(Session))
   | missing(s: SessionRef))
 end
 
-region borrow_owned_session(app: ptr(App), s: owned SessionRef;
-    borrowed(s: owned SessionRef, session: lease ptr(Session))
+region borrow_owned_session(readonly app: ptr(App), s: owned SessionRef;
+    borrowed(s: owned SessionRef, session: lease(app) ptr(Session))
   | missing(s: owned SessionRef))
 end
 
