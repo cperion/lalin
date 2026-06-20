@@ -54,7 +54,7 @@ local by_id = {}
 for i = 1, #msgs do if msgs[i].id then by_id[msgs[i].id] = msgs[i] end end
 local saw_diag = false
 for i = 1, #by_id[2].result.items do
-    if by_id[2].result.items[i].code == "E0201" then
+    if by_id[2].result.items[i].code == "binding.unresolved" then
         saw_diag = true
         assert(by_id[2].result.items[i].message:match("missing"))
         assert(by_id[2].result.items[i].range.start.line == 1)

@@ -43,12 +43,14 @@ function Output:text() return table.concat(self.parts) end
 
 local uri = "file:///tmp/test.mlua"
 local bad = "struct User\n  active: bool\nend\n"
-local good = "struct User\n  id: i32\n  active: bool32\nend\nexpose Users: view(User)\n"
+local good = "struct User\n  id: i32,\n  active: bool32\nend\nexpose Users: view(User)\n"
 local input = table.concat({
     frame({ jsonrpc = "2.0", id = 1, method = "initialize", params = { rootUri = "file:///tmp" } }),
     frame({ jsonrpc = "2.0", method = "initialized", params = {} }),
     frame({ jsonrpc = "2.0", method = "textDocument/didOpen", params = { textDocument = { uri = uri, languageId = "mlua", version = 1, text = bad } } }),
+    frame({ jsonrpc = "2.0", id = "diag-bad", method = "textDocument/diagnostic", params = { textDocument = { uri = uri } } }),
     frame({ jsonrpc = "2.0", method = "textDocument/didChange", params = { textDocument = { uri = uri, version = 2 }, contentChanges = { { text = good } } } }),
+    frame({ jsonrpc = "2.0", id = "diag-good", method = "textDocument/diagnostic", params = { textDocument = { uri = uri } } }),
     frame({ jsonrpc = "2.0", id = 2, method = "textDocument/documentSymbol", params = { textDocument = { uri = uri } } }),
     frame({ jsonrpc = "2.0", id = 3, method = "textDocument/hover", params = { textDocument = { uri = uri }, position = { line = 0, character = 7 } } }),
     frame({ jsonrpc = "2.0", id = 4, method = "textDocument/completion", params = { textDocument = { uri = uri }, position = { line = 5, character = 0 } } }),
@@ -81,17 +83,21 @@ assert(#msgs >= 6)
 assert(msgs[1].id == 1)
 assert(msgs[1].result.capabilities.positionEncoding == "utf-16")
 
-local saw_bad_diag, saw_symbols, saw_hover, saw_completion, saw_shutdown = false, false, false, false, false
-local clear_diag_count = 0
+local saw_bad_diag, saw_clear_diag, saw_symbols, saw_hover, saw_completion, saw_shutdown = false, false, false, false, false, false
+local saw_push_diag = false
 for i = 1, #msgs do
     local m = msgs[i]
     if m.method == "textDocument/publishDiagnostics" then
-        if #m.params.diagnostics > 0 then
-            saw_bad_diag = true
-            assert(m.params.diagnostics[1].code == "E0505")
-        else
-            clear_diag_count = clear_diag_count + 1
-        end
+        saw_push_diag = true
+    elseif m.id == "diag-bad" then
+        saw_bad_diag = true
+        assert(m.result.kind == "full")
+        assert(#m.result.items == 1)
+        assert(m.result.items[1].code == "host.bareBoolBoundary")
+    elseif m.id == "diag-good" then
+        saw_clear_diag = true
+        assert(m.result.kind == "full")
+        assert(#m.result.items == 0)
     elseif m.id == 2 then
         saw_symbols = true
         assert(#m.result >= 1)
@@ -107,6 +113,7 @@ for i = 1, #msgs do
         assert(m.result == JsonDecode.JSON_NULL)
     end
 end
-assert(saw_bad_diag and clear_diag_count >= 2 and saw_symbols and saw_hover and saw_completion and saw_shutdown)
+assert(not saw_push_diag)
+assert(saw_bad_diag and saw_clear_diag and saw_symbols and saw_hover and saw_completion and saw_shutdown)
 
 print("moonlift integrated lsp ok")

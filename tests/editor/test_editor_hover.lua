@@ -65,6 +65,35 @@ assert(h_region.value:match("region fragment"))
 local h_expr = Hover.hover(query_at("FortyTwo"), analysis)
 assert(h_expr.value:match("expr fragment"))
 
+local assigned_src = [[
+local T = {}
+T.ViewName = struct
+    data: ptr(u8),
+    len: index,
+end
+T.ViewAttrSpec = struct
+    value: T.ViewName,
+end
+]]
+local assigned_doc = S.DocumentSnapshot(uri, S.DocVersion(3), S.LangMlua, assigned_src)
+local assigned_analysis = Analysis.analyze_document(assigned_doc)
+local assigned_idx = P.build_index(assigned_doc)
+local function assigned_query_at_nth(text, nth)
+    local start = 1
+    local s
+    for _ = 1, nth do
+        s = assert(assigned_src:find(text, start, true))
+        start = s + #text
+    end
+    return E.PositionQuery(uri, S.DocVersion(3), P.offset_to_pos(assigned_idx, s - 1).pos)
+end
+local h_assigned_struct = Hover.hover(assigned_query_at_nth("ViewName", 1), assigned_analysis)
+assert(pvm.classof(h_assigned_struct) == E.HoverInfo)
+assert(h_assigned_struct.value:match("host struct `ViewName`"))
+local h_assigned_use = Hover.hover(assigned_query_at_nth("ViewName", 2), assigned_analysis)
+assert(pvm.classof(h_assigned_use) == E.HoverInfo)
+assert(h_assigned_use.value:match("host struct `ViewName`"))
+
 local unresolved_src = "func unresolved(): i32\n    return missing + 1\nend\n"
 local unresolved_doc = S.DocumentSnapshot(uri, S.DocVersion(2), S.LangMlua, unresolved_src)
 local unresolved_analysis = Analysis.analyze_document(unresolved_doc)

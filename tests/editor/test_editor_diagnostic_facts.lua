@@ -43,7 +43,7 @@ assert(host_diags[1].code == "host.bareBoolBoundary")
 assert(host_diags[1].range.start_offset <= (host_bad.parse.parts.document.text:find("active", 1, true) - 1))
 assert(host_diags[1].range.stop_offset >= (host_bad.parse.parts.document.text:find("active", 1, true) - 1))
 
-local dup = Analysis.analyze_document(doc("struct Dup\n id: i32\n id: i32\nend\n"))
+local dup = Analysis.analyze_document(doc("struct Dup\n id: i32,\n id: i32\nend\n"))
 local dup_diags = Diag.diagnostics(dup)
 assert(#dup_diags == 1)
 assert(dup_diags[1].code == "host.duplicateField")
@@ -53,6 +53,22 @@ local dup_decl = Analysis.analyze_document(doc("struct A\n id: i32\nend\nstruct 
 local dup_decl_diags = Diag.diagnostics(dup_decl)
 assert(#dup_decl_diags == 1)
 assert(dup_decl_diags[1].code == "host.duplicateDecl")
+
+local assigned_structs = Analysis.analyze_document(doc([[
+local T = {}
+T.A = struct
+ data: ptr(u8),
+ len: index,
+end
+T.B = struct
+ data: ptr(u8),
+ cap: index,
+end
+]]))
+local assigned_struct_diags = Diag.diagnostics(assigned_structs)
+for i = 1, #assigned_struct_diags do
+    assert(assigned_struct_diags[i].code ~= "host.duplicateDecl")
+end
 
 local bad_align = Analysis.analyze_document(doc("struct Bad repr(packed(3))\n id: i32\nend\n"))
 local bad_align_diags = Diag.diagnostics(bad_align)

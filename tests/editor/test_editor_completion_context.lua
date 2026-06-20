@@ -15,7 +15,7 @@ local Context = ContextMod.Define(T)
 local P = PositionIndex.Define(T)
 
 local uri = S.DocUri("file:///completion_context.mlua")
-local src = "struct User { id: i32 active: bool32 }\nexpose Users: view(User) { lua }\n\n"
+local src = "struct User\n  id: i32,\n  active: bool32\nend\nexpose Users: view(User) { lua }\n\n"
 local doc = S.DocumentSnapshot(uri, S.DocVersion(1), S.LangMlua, src)
 local analysis = Analysis.analyze_document(doc)
 local idx = P.build_index(doc)

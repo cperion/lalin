@@ -217,7 +217,7 @@ end
 
 T.ComponentSlot = struct
     gen: u32,
-    live: bool,
+    live: bool32,
     component: T.Component,
 end
 

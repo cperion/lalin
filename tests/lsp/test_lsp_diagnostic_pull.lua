@@ -60,7 +60,7 @@ assert(by_id[1].result.capabilities.diagnosticProvider.workspaceDiagnostics == f
 local report = assert(by_id["diag-1"].result)
 assert(report.kind == "full")
 assert(#report.items == 1)
-assert(report.items[1].code == "E0505")
+assert(report.items[1].code == "host.bareBoolBoundary")
 assert(report.items[1].source == "moonlift")
 assert(report.items[1].range.start.line == 1)
 

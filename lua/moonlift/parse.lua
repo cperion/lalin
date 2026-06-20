@@ -2428,6 +2428,35 @@ function Parser:parse_struct_island()
     else
         name = self:expect_name("expected struct name")
     end
+    local repr = nil
+    self:skip_nl()
+    if self:kind() == TK.name and self:text() == "repr" then
+        self.i = self.i + 1
+        self:skip_nl()
+        self:expect(TK.lparen, "expected '(' after struct repr")
+        self:skip_nl()
+        local repr_name = self:expect_name("expected struct repr name")
+        if repr_name == "packed" then
+            self:skip_nl()
+            self:expect(TK.lparen, "expected '(' after packed")
+            self:skip_nl()
+            local align = 0
+            if self:kind() == TK.int then
+                local align_text = (self:text() or "0"):gsub("_", "")
+                align = tonumber(align_text) or 0
+                self.i = self.i + 1
+            else
+                self:issue("expected packed alignment")
+            end
+            self:skip_nl()
+            self:expect(TK.rparen, "expected ')' after packed alignment")
+            repr = { kind = "packed", align = align }
+        else
+            self:issue("unknown struct repr: " .. tostring(repr_name))
+        end
+        self:skip_nl()
+        self:expect(TK.rparen, "expected ')' after struct repr")
+    end
     local fields, field_items = {}, {}
     local saw_spread = false
     self:skip_nl()
@@ -2451,7 +2480,13 @@ function Parser:parse_struct_island()
             break
         else
             self:issue("expected ',' between struct fields")
-            if self:kind() == TK.semi or self:kind() == TK.pipe then self.i = self.i + 1; self:skip_nl() end
+            if self:kind() == TK.semi or self:kind() == TK.pipe then
+                self.i = self.i + 1
+                self:skip_nl()
+            elseif self:kind() ~= TK.name and self:kind() ~= TK.hole then
+                self.i = self.i + 1
+                self:skip_nl()
+            end
         end
     end
     self:expect(TK.end_kw, "expected end after struct")
@@ -2460,12 +2495,14 @@ function Parser:parse_struct_island()
         return {
             name = name,
             decl = S.SyntaxTypeDeclStruct(S.SyntaxNameText(name), field_items),
+            repr = repr,
             protocol_variants = nil,
         }
     end
     return {
         name = name,
         decl = Tr.TypeDeclStruct(name, fields),
+        repr = repr,
         protocol_variants = nil,
     }
 end

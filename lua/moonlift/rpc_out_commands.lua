@@ -1,6 +1,5 @@
 local pvm = require("moonlift.pvm")
 local AnalysisMod = require("moonlift.mlua_document_analysis")
-local Errors = require("moonlift.error")
 local Symbols = require("moonlift.editor_symbol_facts")
 local Hover = require("moonlift.editor_hover")
 local Completion = require("moonlift.editor_completion_items")
@@ -14,6 +13,7 @@ local Folding = require("moonlift.editor_folding_ranges")
 local Selection = require("moonlift.editor_selection_ranges")
 local Inlay = require("moonlift.editor_inlay_hints")
 local CodeActions = require("moonlift.editor_code_actions")
+local Diagnostics = require("moonlift.editor_diagnostic_facts")
 local AdaptMod = require("moonlift.lsp_payload_adapt")
 local Capabilities = require("moonlift.lsp_capabilities")
 
@@ -31,7 +31,6 @@ local function find_doc(state, uri)
 end
 
 function M.Define(T)
-    local S = T.MoonSource
     local E = T.MoonEditor
     local R = T.MoonRpc
     local L = T.MoonLsp
@@ -49,6 +48,7 @@ function M.Define(T)
     local Sel = Selection.Define(T)
     local InlayHints = Inlay.Define(T)
     local Actions = CodeActions.Define(T)
+    local Diag = Diagnostics.Define(T)
     local Adapt = AdaptMod.Define(T)
     local Caps = Capabilities.Define(T)
 
@@ -58,26 +58,15 @@ function M.Define(T)
 
     local function rendered_diagnostics(doc)
         local analysis = analyze_doc(doc)
-        return Errors.render_lsp(Analysis.resolved_issues(analysis), {
-            source_text = doc.text,
-            uri = doc.uri and doc.uri.text,
-        })
-    end
-
-    local function diagnostics_payload(doc)
-        return L.PayloadDiagnostics(Adapt.protocol_diagnostic_report(doc.uri, doc.version, rendered_diagnostics(doc)))
+        return Diag.diagnostics(analysis)
     end
 
     local function diagnostic_document_payload(doc)
-        return L.PayloadDiagnosticDocumentReport(Adapt.protocol_diagnostic_document_report(rendered_diagnostics(doc)))
+        return L.PayloadDiagnosticDocumentReport(Adapt.diagnostic_document_report(rendered_diagnostics(doc)))
     end
 
     local function result(id, payload)
         return R.SendMessage(R.RpcResult(id, payload))
-    end
-
-    local function notification(method, payload)
-        return R.SendMessage(R.RpcOutgoingNotification(method, payload))
     end
 
     local client_initialized_class = pvm.classof(E.ClientInitialized)
@@ -98,12 +87,12 @@ function M.Define(T)
             elseif is_bare(cls, event, E.ClientExit, client_exit_class) then
                 out[#out + 1] = R.StopServer
             elseif cls == E.ClientDidOpen then
-                out[#out + 1] = notification("textDocument/publishDiagnostics", diagnostics_payload(event.document))
+                -- Diagnostics are served through textDocument/diagnostic.  Sending
+                -- push diagnostics too makes pull-capable clients show duplicates.
             elseif cls == E.ClientDidChange then
-                local doc = find_doc(tr.after, event.edit.uri)
-                if doc then out[#out + 1] = notification("textDocument/publishDiagnostics", diagnostics_payload(doc)) end
+                -- Pull diagnostics on demand.
             elseif cls == E.ClientDidClose then
-                out[#out + 1] = notification("textDocument/publishDiagnostics", L.PayloadDiagnostics(L.DiagnosticReport(event.uri, S.DocVersion(0), {})))
+                -- Pull diagnostics on demand.
             elseif cls == E.ClientHover then
                 local doc = find_doc(tr.after, event.query.uri)
                 if doc then

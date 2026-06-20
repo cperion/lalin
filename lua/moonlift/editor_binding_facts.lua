@@ -301,6 +301,11 @@ function M.Define(T)
                 if owner and field then
                     local role = anchor_is_assignment_target(analysis.parse.parts.document.text, a) and E.BindingWrite or E.BindingRead
                     facts[#facts + 1] = E.BindingFact(E.SymbolId("host.field." .. owner.name .. "." .. field.name), role, E.SubjectHostField(owner, field), a)
+                else
+                    local decl = find_struct(analysis, a.label)
+                    if decl then
+                        facts[#facts + 1] = E.BindingFact(E.SymbolId("host.struct." .. decl.name), E.BindingTypeUse, E.SubjectHostStruct(decl), a)
+                    end
                 end
             elseif a.kind == S.AnchorFunctionName or a.kind == S.AnchorMethodName then
                 local fn = find_func(analysis, a.label) or lexical_func_subject(a.label).func

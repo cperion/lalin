@@ -17,7 +17,7 @@ local Items = ItemsMod.Define(T)
 local P = PositionIndex.Define(T)
 
 local uri = S.DocUri("file:///completion_items.mlua")
-local src = "struct User\n  id: i32\n  active: bool32\nend\nexpose Users: view(User)\n\n"
+local src = "struct User\n  id: i32,\n  active: bool32\nend\nexpose Users: view(User)\n\n"
 local doc = S.DocumentSnapshot(uri, S.DocVersion(1), S.LangMlua, src)
 local analysis = Analysis.analyze_document(doc)
 local idx = P.build_index(doc)

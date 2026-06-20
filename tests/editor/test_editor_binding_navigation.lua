@@ -104,6 +104,35 @@ local refs = Refs.references(E.ReferenceQuery(q_at_nth("User", 1), true), analys
 assert(pvm.classof(refs) == E.ReferenceHit)
 assert(#refs.ranges >= 3)
 
+local assigned_src = [[
+local T = {}
+T.ViewName = struct
+    data: ptr(u8),
+    len: index,
+end
+T.ViewAttrSpec = struct
+    value: T.ViewName,
+end
+]]
+local assigned_doc = S.DocumentSnapshot(uri, S.DocVersion(2), S.LangMlua, assigned_src)
+local assigned_analysis = Analysis.analyze_document(assigned_doc)
+local assigned_idx = P.build_index(assigned_doc)
+local function assigned_q_at_nth(needle, nth)
+    local start = 1
+    local s
+    for _ = 1, nth do
+        s = assert(assigned_src:find(needle, start, true))
+        start = s + #needle
+    end
+    return E.PositionQuery(uri, S.DocVersion(2), P.offset_to_pos(assigned_idx, s - 1).pos)
+end
+local assigned_def = Def.definition(assigned_q_at_nth("ViewName", 2), assigned_analysis)
+assert(pvm.classof(assigned_def) == E.DefinitionHit)
+assert(assigned_src:sub(assigned_def.ranges[1].start_offset + 1, assigned_def.ranges[1].stop_offset) == "ViewName")
+local assigned_refs = Refs.references(E.ReferenceQuery(assigned_q_at_nth("ViewName", 1), true), assigned_analysis)
+assert(pvm.classof(assigned_refs) == E.ReferenceHit)
+assert(#assigned_refs.ranges >= 2)
+
 local highlights = Highlight.highlights(q_at_nth("User", 1), analysis)
 assert(#highlights >= 3)
 for i = 1, #highlights do assert(highlights[i].kind == E.HighlightText) end

@@ -209,6 +209,12 @@ function M.Define(T)
         elseif anchor.kind == S.AnchorFieldName or anchor.kind == S.AnchorFieldUse then
             local owner, field = find_field(analysis, anchor.label)
             if owner and field then return E.SubjectHostField(owner, field) end
+            if anchor.kind == S.AnchorFieldUse then
+                local decl = find_struct(analysis, anchor.label)
+                if decl then return E.SubjectHostStruct(decl) end
+                local tree_type = find_tree_type(analysis, anchor.label)
+                if tree_type and pvm.classof(tree_type) == Tr.TypeDeclHandle then return E.SubjectType(Ty.THandle(Ty.TypeRefPath(C.Path({ C.Name(tree_type.name) })), tree_type.repr)) end
+            end
         elseif anchor.kind == S.AnchorExposeName then
             local ex = find_expose(analysis, anchor.label)
             if ex then return E.SubjectHostExpose(ex) end

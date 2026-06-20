@@ -50,7 +50,7 @@ for i = 1, #packed_actions do
 end
 assert(saw4)
 
-local dup_field_src = "struct Dup\n  id: i32\n  id: i32\nend\n"
+local dup_field_src = "struct Dup\n  id: i32,\n  id: i32\nend\n"
 local dup_field_analysis, dup_field_doc = analyze(dup_field_src)
 local dup_field_range = assert(P.range_from_offsets(P.build_index(dup_field_doc), dup_field_src:find("id", dup_field_src:find("id") + 1, true) - 1, dup_field_src:find("id", dup_field_src:find("id") + 1, true) + 1))
 local dup_field_diag = E.DiagnosticFact(E.DiagnosticError, E.DiagFromHost(T.MoonHost.HostIssueDuplicateField("Dup", "id")), "host.duplicateField", "duplicate field", dup_field_range)

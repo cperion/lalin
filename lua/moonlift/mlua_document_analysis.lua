@@ -108,30 +108,36 @@ function M.Define(T)
         return ty_from_name(text)
     end
 
-    local function storage_for_type_name(name)
-        if name == "bool8" then return H.HostStorageBool(H.HostBoolU8, C.ScalarU8) end
-        if name == "bool32" then return H.HostStorageBool(H.HostBoolI32, C.ScalarI32) end
-        return H.HostStorageSame
-    end
-
     local function layout_id(name) return H.HostLayoutId("mlua." .. name, name) end
     local function field_id(owner, name) return H.HostFieldId("mlua." .. owner .. "." .. name, name) end
 
-    local function host_struct_from_source(src)
-        local header, body = src:match("^%s*struct%s+[^\n]*\n(.*)%s+end%s*$")
-        local name = src:match("^%s*struct%s+([_%a][_%w]*)") or ""
-        local repr = H.HostReprC
-        local align = src:match("^%s*struct%s+[^\n]*repr%s*%(%s*packed%s*%(%s*(%d+)%s*%)%s*%)")
-        if align then repr = H.HostReprPacked(tonumber(align)) end
-        body = body or src:gsub("^%s*struct%s+[^\n]*\n?", ""):gsub("%s*end%s*$", "")
+    local function single_named_type(ty)
+        if pvm.classof(ty) ~= Ty.TNamed or pvm.classof(ty.ref) ~= Ty.TypeRefPath then return nil end
+        local parts = ty.ref.path.parts
+        if #parts ~= 1 then return nil end
+        return parts[1].text
+    end
+
+    local function host_field_type(ty)
+        local name = single_named_type(ty)
+        if name == "bool8" then return Ty.TScalar(C.ScalarBool), H.HostStorageBool(H.HostBoolU8, C.ScalarU8) end
+        if name == "bool32" then return Ty.TScalar(C.ScalarBool), H.HostStorageBool(H.HostBoolI32, C.ScalarI32) end
+        return ty, H.HostStorageSame
+    end
+
+    local function host_repr_from_parsed(repr)
+        if type(repr) == "table" and repr.kind == "packed" then return H.HostReprPacked(repr.align or 0) end
+        return H.HostReprC
+    end
+
+    local function host_struct_from_decl(decl, repr)
         local fields = {}
-        for line in (body or ""):gmatch("[^\n]+") do
-            local fname, tname = line:match("^%s*([_%a][_%w]*)%s*:%s*(.-)%s*$")
-            if fname and tname and tname ~= "" then
-                fields[#fields + 1] = H.HostFieldDecl(field_id(name, fname), fname, parse_type_name(tname), storage_for_type_name(tname), {})
-            end
+        for i = 1, #(decl.fields or {}) do
+            local f = decl.fields[i]
+            local expose_ty, storage = host_field_type(f.ty)
+            fields[#fields + 1] = H.HostFieldDecl(field_id(decl.name, f.field_name), f.field_name, expose_ty, storage, {})
         end
-        return H.HostStructDecl(layout_id(name), name, repr, fields)
+        return H.HostStructDecl(layout_id(decl.name), decl.name, host_repr_from_parsed(repr), fields)
     end
 
     local function expose_subject(type_text)
@@ -224,8 +230,44 @@ function M.Define(T)
             if before_label == ";" or before_label == "," then return tid("cont.param.slot." .. label, tok_i) end
             return tid("param", tok_i)
         end
+        local function next_non_nl(tok_i)
+            local j = tok_i + 1
+            while j <= n and toks.kind[j] == TK.nl do j = j + 1 end
+            return j <= n and j or nil
+        end
+        local function has_explicit_island_name(island)
+            local j = next_non_nl(island.first_tok)
+            if not j then return false end
+            local text = toks.text[j]
+            if type(text) ~= "string" or not text:match("^[_%a][_%w]*$") or keyword_set[text] then return false end
+            local k = next_non_nl(j)
+            return not (k and toks.text[k] == ":")
+        end
+        local assignment_anchor_kind = {
+            struct = S.AnchorStructName,
+            handle = S.AnchorStructName,
+            union = S.AnchorStructName,
+            func = S.AnchorFunctionName,
+            region = S.AnchorRegionName,
+            expr = S.AnchorExprName,
+        }
+        local function assignment_target_before(start_1based)
+            local prefix = document.text:sub(1, start_1based - 1)
+            local line_start = prefix:match(".*\n()") or 1
+            local lhs = prefix:sub(line_start)
+            local s, _, name = lhs:find("([_%a][_%w]*)%s*=%s*$")
+            if not s then return nil end
+            return name, line_start + s - 2, line_start + s - 2 + #name
+        end
         for si, island in ipairs(scan.islands) do
             add_anchor(anchors, index, "island." .. si, S.AnchorHostedIsland, island.kind, island.start - 1, island.stop)
+            local assigned_kind = assignment_anchor_kind[island.kind]
+            if assigned_kind and island.name_hint and not has_explicit_island_name(island) then
+                local name, start_offset, stop_offset = assignment_target_before(island.start)
+                if name and name == island.name_hint then
+                    add_anchor(anchors, index, "assigned." .. island.kind .. "." .. si, assigned_kind, name, start_offset, stop_offset)
+                end
+            end
             for i = island.first_tok, island.last_tok do
                 local text = toks.text[i]
                 local start = (toks.start[i] or 1) - 1
@@ -235,7 +277,12 @@ function M.Define(T)
                         add_anchor(anchors, index, tid("kw", i), S.AnchorKeyword, text, start, stop)
                         if text == "emit" then add_emit_use_anchor(i, start) end
                     end
-                    if text == "struct" or text == "handle" then after_struct = true
+                    if text == "struct" or text == "union" then
+                        after_struct = has_explicit_island_name(island)
+                    elseif text == "handle" then
+                        local j = next_non_nl(i)
+                        local candidate = j and toks.text[j]
+                        after_struct = type(candidate) == "string" and candidate:match("^[_%a][_%w]*$") and not keyword_set[candidate] or false
                     elseif text == "func" then after_func = true
                     elseif text == "region" then after_region = true
                     elseif text == "expr" then after_expr = true
@@ -353,19 +400,14 @@ function M.Define(T)
         local protocol_types = {}
         for i, island in ipairs(scan.islands) do
             local src = document.text:sub(island.start, island.stop)
-            local parsed
-            if island.kind == "struct" then
-                parsed = { issues = {}, protocol_types = protocol_types }
-            else
-                parsed = ParseApi.parse_island(scan, i, { protocol_types = protocol_types })
-                for pi = 1, #parsed.issues do
-                    local msg = parsed.issues[pi].message or ""
-                    if not (msg:match("^invalid character") and #parsed.issues > 1) then
-                        if msg:match("^invalid token in expression") then
-                            issues[#issues + 1] = Pm.ParseIssue("expected expression", parsed.issues[pi].offset, parsed.issues[pi].line, parsed.issues[pi].col)
-                        else
-                            issues[#issues + 1] = parsed.issues[pi]
-                        end
+            local parsed = ParseApi.parse_island(scan, i, { protocol_types = protocol_types })
+            for pi = 1, #parsed.issues do
+                local msg = parsed.issues[pi].message or ""
+                if not (msg:match("^invalid character") and #parsed.issues > 1) then
+                    if msg:match("^invalid token in expression") then
+                        issues[#issues + 1] = Pm.ParseIssue("expected expression", parsed.issues[pi].offset, parsed.issues[pi].line, parsed.issues[pi].col)
+                    else
+                        issues[#issues + 1] = parsed.issues[pi]
                     end
                 end
             end
@@ -374,12 +416,16 @@ function M.Define(T)
             local module = Tr.Module(Tr.ModuleSurface, {})
             local rfrags, efrags = {}, {}
             if island.kind == "struct" then
-                local sd = host_struct_from_source(src)
-                decls[#decls + 1] = H.HostDeclStruct(sd)
-                decl_set = H.HostDeclSet({ H.HostDeclStruct(sd) })
-                local tree_fields = {}
-                for fi = 1, #sd.fields do tree_fields[fi] = Ty.FieldDecl(sd.fields[fi].name, sd.fields[fi].expose_ty) end
-                items[#items + 1] = Tr.ItemType(Tr.TypeDeclStruct(sd.name, tree_fields))
+                if parsed.value and parsed.value.decl and pvm.classof(parsed.value.decl) == Tr.TypeDeclStruct then
+                    local sd = host_struct_from_decl(parsed.value.decl, parsed.value.repr)
+                    decls[#decls + 1] = H.HostDeclStruct(sd)
+                    decl_set = H.HostDeclSet({ H.HostDeclStruct(sd) })
+                    local tree_fields = {}
+                    for fi = 1, #sd.fields do tree_fields[fi] = Ty.FieldDecl(sd.fields[fi].name, sd.fields[fi].expose_ty) end
+                    items[#items + 1] = Tr.ItemType(Tr.TypeDeclStruct(sd.name, tree_fields))
+                elseif parsed.value and parsed.value.decl then
+                    items[#items + 1] = Tr.ItemType(parsed.value.decl)
+                end
             elseif island.kind == "union" or island.kind == "handle" then
                 if parsed.value and parsed.value.decl then items[#items + 1] = Tr.ItemType(parsed.value.decl) end
             elseif island.kind == "func" then
