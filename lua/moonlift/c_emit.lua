@@ -433,9 +433,9 @@ function M.Define(T)
             out[#out + 1] = "    default:"
             emit_transfer(out, blocks[t.default_dest.text], t.default_args)
             out[#out + 1] = "    }"
-        elseif cls == C.CBackendReturnVoid then out[#out + 1] = "    return;"
+        elseif t == C.CBackendReturnVoid or cls == C.CBackendReturnVoid then out[#out + 1] = "    return;"
         elseif cls == C.CBackendReturn then out[#out + 1] = "    return " .. atom(t.value) .. ";"
-        elseif cls == C.CBackendTrap then out[#out + 1] = "    abort();"
+        elseif t == C.CBackendTrap or cls == C.CBackendTrap then out[#out + 1] = "    abort();"
         end
     end
 
