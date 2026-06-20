@@ -41,17 +41,28 @@ local function query_at(text)
     return E.PositionQuery(uri, S.DocVersion(1), P.offset_to_pos(idx, s - 1).pos)
 end
 
+local function assert_visual_split(hover)
+    assert(hover.value:match("```moonlift\n.-\n```\n\n%-%-%-\n"))
+end
+
 local h_struct = Hover.hover(query_at("User"), analysis)
 assert(pvm.classof(h_struct) == E.HoverInfo)
-assert(h_struct.value:match("host struct"))
-assert(h_struct.value:match("size:"))
+assert_visual_split(h_struct)
+assert(h_struct.value:match("Host Struct"))
+assert(h_struct.value:match("Layout: size"))
+assert(h_struct.value:match("```moonlift"))
+assert(not h_struct.value:match("storage"))
+assert(h_struct.value:match("id:%s+i32%s+%-%- offset"))
 
 local h_field = Hover.hover(query_at("id"), analysis)
-assert(h_field.value:match("field `User.id`"))
-assert(h_field.value:match("offset:"))
+assert(h_field.value:match("User%.id: i32"))
+assert(h_field.value:match("host field"))
+assert(h_field.value:match("layout: offset"))
 
 local h_scalar = Hover.hover(query_at("i32"), analysis)
+assert_visual_split(h_scalar)
 assert(h_scalar.value:match("scalar"))
+assert(h_scalar.value:match("i32"))
 
 local h_expose = Hover.hover(query_at("Users"), analysis)
 assert(h_expose.value:match("host expose"))
@@ -61,9 +72,11 @@ assert(h_method.value:match("accessor") or h_method.value:match("function"))
 
 local h_region = Hover.hover(query_at("Done"), analysis)
 assert(h_region.value:match("region fragment"))
+assert(h_region.value:match("done%(total: i32%)"))
 
 local h_expr = Hover.hover(query_at("FortyTwo"), analysis)
 assert(h_expr.value:match("expr fragment"))
+assert(h_expr.value:match("FortyTwo%(%)"))
 
 local assigned_src = [[
 local T = {}
@@ -89,10 +102,12 @@ local function assigned_query_at_nth(text, nth)
 end
 local h_assigned_struct = Hover.hover(assigned_query_at_nth("ViewName", 1), assigned_analysis)
 assert(pvm.classof(h_assigned_struct) == E.HoverInfo)
-assert(h_assigned_struct.value:match("host struct `ViewName`"))
+assert(h_assigned_struct.value:match("struct ViewName"))
+assert(h_assigned_struct.value:match("data:%s+ptr%(u8%)%s+%-%- offset"))
 local h_assigned_use = Hover.hover(assigned_query_at_nth("ViewName", 2), assigned_analysis)
 assert(pvm.classof(h_assigned_use) == E.HoverInfo)
-assert(h_assigned_use.value:match("host struct `ViewName`"))
+assert(h_assigned_use.value:match("struct ViewName"))
+assert(h_assigned_use.value:match("len:%s+index%s+%-%- offset"))
 
 local unresolved_src = "func unresolved(): i32\n    return missing + 1\nend\n"
 local unresolved_doc = S.DocumentSnapshot(uri, S.DocVersion(2), S.LangMlua, unresolved_src)

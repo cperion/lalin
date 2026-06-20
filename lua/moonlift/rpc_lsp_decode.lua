@@ -84,6 +84,30 @@ function M.Define(T)
         return E.RangeQuery(uri, version_from(params, doc), range)
     end
 
+    local function severity(value)
+        if value == 2 then return E.DiagnosticWarning end
+        if value == 3 then return E.DiagnosticInformation end
+        if value == 4 then return E.DiagnosticHint end
+        return E.DiagnosticError
+    end
+
+    local function diagnostics_from(params, state)
+        local out = {}
+        local uri = S.DocUri(text_document_uri(params))
+        local doc = find_doc(state, uri)
+        local ds = params and params.context and params.context.diagnostics or {}
+        for i = 1, #ds do
+            local d = ds[i]
+            local r = d.range and doc and source_range(doc, uri, d.range)
+            if r then
+                local code = d.code ~= nil and tostring(d.code) or "client"
+                local message = tostring(d.message or "")
+                out[#out + 1] = E.DiagnosticFact(severity(d.severity), E.DiagFromTransport(code, message), code, message, r)
+            end
+        end
+        return out
+    end
+
     local function did_change(params, state)
         local uri = S.DocUri(text_document_uri(params))
         local doc = find_doc(state, uri)
@@ -140,7 +164,7 @@ function M.Define(T)
         elseif method == "textDocument/semanticTokens/range" then return E.ClientSemanticTokensRange(id, range_query(params, state))
         elseif method == "textDocument/prepareRename" then return E.ClientPrepareRename(id, position_query(params, state))
         elseif method == "textDocument/rename" then return E.ClientRename(id, E.RenameQuery(position_query(params, state), tostring(params.newName or "")))
-        elseif method == "textDocument/codeAction" then return E.ClientCodeAction(id, E.CodeActionQuery(range_query(params, state), {}))
+        elseif method == "textDocument/codeAction" then return E.ClientCodeAction(id, E.CodeActionQuery(range_query(params, state), diagnostics_from(params, state)))
         elseif method == "textDocument/foldingRange" then return E.ClientFoldingRange(id, S.DocUri(text_document_uri(params)))
         elseif method == "textDocument/selectionRange" then
             local qs = {}

@@ -16,7 +16,7 @@ module MoonLsp {
     Hover = Hover(MoonEditor.MarkupKind kind, string value, MoonLsp.ProtocolRange range) unique
          | HoverNull
 
-    CompletionPayload = (string label, number kind, string detail, string documentation, string insert_text) unique
+    CompletionPayload = (string label, number kind, string detail, string documentation, string insert_text, number insert_text_format) unique
 
     CompletionList = (boolean incomplete, MoonLsp.CompletionPayload* items) unique
 

@@ -10,6 +10,15 @@ function M.Define(T)
     local P = PositionIndex.Define(T)
     local AI = AnchorIndex.Define(T)
 
+    local function range_key(r)
+        return r.uri.text .. ":" .. tostring(r.start_offset) .. ":" .. tostring(r.stop_offset)
+    end
+
+    local function contains(outer, inner)
+        return outer.uri == inner.uri and outer.start_offset <= inner.start_offset and outer.stop_offset >= inner.stop_offset
+            and (outer.start_offset ~= inner.start_offset or outer.stop_offset ~= inner.stop_offset)
+    end
+
     local selection_phase = pvm.phase("moonlift_editor_selection_ranges", function(query, analysis)
         local index = P.build_index(analysis.parse.parts.document)
         local hit = P.source_pos_to_offset(index, query.pos)
@@ -17,8 +26,17 @@ function M.Define(T)
         local anchor_index = AI.build_index(analysis.anchors)
         local lookup = AI.lookup_by_position(anchor_index, query.uri, hit.offset)
         if #lookup.anchors == 0 then return E.SelectionRange(analysis.anchors.anchors[1].range, {}) end
-        local parents = {}
-        for i = 2, #lookup.anchors do parents[#parents + 1] = lookup.anchors[i].range end
+        local parents, seen = {}, {}
+        local current = lookup.anchors[1].range
+        for i = 2, #lookup.anchors do
+            local r = lookup.anchors[i].range
+            local key = range_key(r)
+            if not seen[key] and contains(r, current) then
+                seen[key] = true
+                parents[#parents + 1] = r
+                current = r
+            end
+        end
         return E.SelectionRange(lookup.anchors[1].range, parents)
     end, { args_cache = "full" })
 

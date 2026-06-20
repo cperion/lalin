@@ -67,15 +67,19 @@ function M.Define(T)
     end
 
     local function find_field(analysis, name)
+        local owner, field = nil, nil
         for i = 1, #analysis.parse.combined.decls.decls do
             local d = analysis.parse.combined.decls.decls[i]
             if pvm.classof(d) == H.HostDeclStruct then
                 for j = 1, #d.decl.fields do
-                    if d.decl.fields[j].name == name then return d.decl, d.decl.fields[j] end
+                    if d.decl.fields[j].name == name then
+                        if field then return nil, nil end
+                        owner, field = d.decl, d.decl.fields[j]
+                    end
                 end
             end
         end
-        return nil, nil
+        return owner, field
     end
 
     local function find_accessor(analysis, label)
@@ -119,10 +123,6 @@ function M.Define(T)
             if found then return found end
         end
         return nil
-    end
-
-    local function lexical_func_subject(label)
-        return E.SubjectTreeFunc(Tr.FuncDecl(tostring(label), {}, Ty.TScalar(C.ScalarVoid)))
     end
 
     local function fragment_for_label(analysis, anchor_kind, fragments, label)
@@ -308,9 +308,11 @@ function M.Define(T)
                     end
                 end
             elseif a.kind == S.AnchorFunctionName or a.kind == S.AnchorMethodName then
-                local fn = find_func(analysis, a.label) or lexical_func_subject(a.label).func
-                local name = fn.name or (fn.sym and fn.sym.name) or a.label
-                facts[#facts + 1] = E.BindingFact(E.SymbolId("tree.func." .. name), E.BindingDef, E.SubjectTreeFunc(fn), a)
+                local fn = find_func(analysis, a.label)
+                if fn then
+                    local name = fn.name or (fn.sym and fn.sym.name) or a.label
+                    facts[#facts + 1] = E.BindingFact(E.SymbolId("tree.func." .. name), E.BindingDef, E.SubjectTreeFunc(fn), a)
+                end
             elseif a.kind == S.AnchorFunctionUse then
                 local ac = find_accessor(analysis, a.label)
                 if ac then
@@ -324,7 +326,6 @@ function M.Define(T)
                         facts[#facts + 1] = E.BindingFact(E.SymbolId(subject_key(pvm, E, E.SubjectExprFrag(expr_frag))), E.BindingCall, E.SubjectExprFrag(expr_frag), a)
                     else
                         local fn = find_func(analysis, a.label)
-                        if not fn then fn = lexical_func_subject(a.label).func end
                         if fn then
                             local name = fn.name or (fn.sym and fn.sym.name) or a.label
                             facts[#facts + 1] = E.BindingFact(E.SymbolId("tree.func." .. name), E.BindingCall, E.SubjectTreeFunc(fn), a)

@@ -27,7 +27,7 @@ function M.Define(T)
         if a.kind == S.AnchorBuiltinName then return E.TokNamespace, { E.TokModDefaultLibrary } end
         if a.kind == S.AnchorPackedAlign then return E.TokNumber, { E.TokModStorage } end
         if a.kind == S.AnchorExposeName or a.kind == S.AnchorModuleName then return E.TokNamespace, { E.TokModDefinition } end
-        if a.kind == S.AnchorBindingUse then return E.TokType, {} end
+        if a.kind == S.AnchorBindingUse then return E.TokVariable, {} end
         if a.kind == S.AnchorDiagnostic then return E.TokKeyword, { E.TokModDiagnostic } end
         return nil, nil
     end
@@ -47,7 +47,17 @@ function M.Define(T)
             if a.range.start.utf16_col ~= b.range.start.utf16_col then return a.range.start.utf16_col < b.range.start.utf16_col end
             return a.range.stop_offset < b.range.stop_offset
         end)
-        return pvm.seq(out)
+        local filtered = {}
+        local last_uri, last_stop = nil, -1
+        for i = 1, #out do
+            local r = out[i].range
+            local uri = r.uri and r.uri.text or ""
+            if uri ~= last_uri or r.start_offset >= last_stop then
+                filtered[#filtered + 1] = out[i]
+                last_uri, last_stop = uri, r.stop_offset
+            end
+        end
+        return pvm.seq(filtered)
         end,
     })
 

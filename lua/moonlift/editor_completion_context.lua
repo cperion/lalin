@@ -40,13 +40,13 @@ function M.Define(T)
         if prefix:match("expose.-{%s*[%w_]*$") then
             return E.CompletionExposeTarget
         end
-        if prefix:match(":%s*[%w_]*$") or prefix:match("%-%>%s*[%w_]*$") or prefix:match("ptr%s*%(%s*[%w_]*$") or prefix:match("view%s*%(%s*[%w_]*$") then
+        if prefix:match(":%s*[%w_]*$") or prefix:match("ptr%s*%(%s*[%w_]*$") or prefix:match("view%s*%(%s*[%w_]*$") then
             return E.CompletionTypePosition
         end
         if prefix:match("^%s*[%w_]*$") then
             return E.CompletionTopLevel
         end
-        if prefix:match("jump%s+[%w_]*$") then
+        if prefix:match("jump%s+[%w_]*$") or prefix:match("%f[%w_]emit%f[^%w_].-%(.*;%s*[%w_,%s=]*$") then
             return E.CompletionContinuationArgs
         end
         if prefix:match("moonlift%.%w*$") then

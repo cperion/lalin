@@ -104,7 +104,10 @@ for i = 1, #msgs do
         assert(m.result[1].name == "User")
     elseif m.id == 3 then
         saw_hover = true
-        assert(m.result.contents.value:match("host struct"))
+        assert(m.result.contents.value:match("Host Struct"))
+        assert(m.result.contents.value:match("```moonlift"))
+        assert(m.result.contents.value:match("id:%s+i32%s+%-%- offset"))
+        assert(not m.result.contents.value:match("storage"))
     elseif m.id == 4 then
         saw_completion = true
         assert(#m.result.items >= 1)

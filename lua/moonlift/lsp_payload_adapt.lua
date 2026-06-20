@@ -28,6 +28,11 @@ function M.Define(T)
         [E.CompletionTypeParameter] = 25,
     }
 
+    local completion_insert_format_number = {
+        [E.CompletionInsertPlainText] = 1,
+        [E.CompletionInsertSnippet] = 2,
+    }
+
     local token_type_number = {
         [E.TokNamespace] = 0, [E.TokType] = 1, [E.TokClass] = 2, [E.TokEnum] = 3,
         [E.TokInterface] = 4, [E.TokStruct] = 5, [E.TokTypeParameter] = 6,
@@ -130,7 +135,7 @@ function M.Define(T)
         local out = {}
         for i = 1, #items do
             local item = items[i]
-            out[i] = L.CompletionPayload(item.label, completion_kind_number[item.kind] or 1, item.detail, item.documentation, item.insert_text)
+            out[i] = L.CompletionPayload(item.label, completion_kind_number[item.kind] or 1, item.detail, item.documentation, item.insert_text, completion_insert_format_number[item.insert_format] or 1)
         end
         return L.CompletionList(false, out)
     end
@@ -266,23 +271,29 @@ function M.Define(T)
     local function semantic_tokens(spans)
         table.sort(spans, function(a, b)
             if a.range.start.line ~= b.range.start.line then return a.range.start.line < b.range.start.line end
-            return a.range.start.utf16_col < b.range.start.utf16_col
+            if a.range.start.utf16_col ~= b.range.start.utf16_col then return a.range.start.utf16_col < b.range.start.utf16_col end
+            return a.range.stop_offset < b.range.stop_offset
         end)
         local data, n = {}, 0
         local prev_line, prev_col = 0, 0
+        local last_uri, last_stop = nil, -1
         for i = 1, #spans do
             local span = spans[i]
-            local line = span.range.start.line
-            local col = span.range.start.utf16_col
-            local len = math.max(1, span.range.stop.utf16_col - span.range.start.utf16_col)
-            local mods = 0
-            for j = 1, #span.modifiers do mods = mods + (token_mod_bit[span.modifiers[j]] or 0) end
-            n = n + 1; data[n] = line - prev_line
-            n = n + 1; data[n] = (line == prev_line) and (col - prev_col) or col
-            n = n + 1; data[n] = len
-            n = n + 1; data[n] = token_type_number[span.token_type] or 0
-            n = n + 1; data[n] = mods
-            prev_line, prev_col = line, col
+            local uri = span.range.uri and span.range.uri.text or ""
+            if uri ~= last_uri or span.range.start_offset >= last_stop then
+                local line = span.range.start.line
+                local col = span.range.start.utf16_col
+                local len = math.max(1, span.range.stop.utf16_col - span.range.start.utf16_col)
+                local mods = 0
+                for j = 1, #span.modifiers do mods = mods + (token_mod_bit[span.modifiers[j]] or 0) end
+                n = n + 1; data[n] = line - prev_line
+                n = n + 1; data[n] = (line == prev_line) and (col - prev_col) or col
+                n = n + 1; data[n] = len
+                n = n + 1; data[n] = token_type_number[span.token_type] or 0
+                n = n + 1; data[n] = mods
+                prev_line, prev_col = line, col
+                last_uri, last_stop = uri, span.range.stop_offset
+            end
         end
         return L.SemanticTokens(data)
     end

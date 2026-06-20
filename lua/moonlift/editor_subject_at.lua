@@ -45,15 +45,19 @@ function M.Define(T)
     end
 
     local function find_field(analysis, field_name)
+        local owner, field = nil, nil
         for i = 1, #analysis.parse.combined.decls.decls do
             local d = analysis.parse.combined.decls.decls[i]
             if pvm.classof(d) == H.HostDeclStruct then
                 for j = 1, #d.decl.fields do
-                    if d.decl.fields[j].name == field_name then return d.decl, d.decl.fields[j] end
+                    if d.decl.fields[j].name == field_name then
+                        if field then return nil, nil end
+                        owner, field = d.decl, d.decl.fields[j]
+                    end
                 end
             end
         end
-        return nil, nil
+        return owner, field
     end
 
     local function find_expose(analysis, name)
@@ -104,10 +108,6 @@ function M.Define(T)
             if found then return found end
         end
         return nil
-    end
-
-    local function lexical_func_subject(label)
-        return E.SubjectTreeFunc(Tr.FuncDecl(tostring(label), {}, Ty.TScalar(C.ScalarVoid)))
     end
 
     local function fragment_for_label(analysis, anchor_kind, fragments, label)
@@ -206,15 +206,20 @@ function M.Define(T)
             local tree_type = find_tree_type(analysis, anchor.label)
             if tree_type and pvm.classof(tree_type) == Tr.TypeDeclHandle then return E.SubjectType(Ty.THandle(Ty.TypeRefPath(C.Path({ C.Name(tree_type.name) })), tree_type.repr)) end
             return E.SubjectType(Ty.TNamed(Ty.TypeRefGlobal("mlua", anchor.label)))
-        elseif anchor.kind == S.AnchorFieldName or anchor.kind == S.AnchorFieldUse then
+        elseif anchor.kind == S.AnchorFieldName then
+            local exact = fact_subject_for_anchor(analysis, anchor, function(candidate)
+                return pvm.classof(candidate) == E.SubjectHostField
+            end)
+            if exact then return exact end
             local owner, field = find_field(analysis, anchor.label)
             if owner and field then return E.SubjectHostField(owner, field) end
-            if anchor.kind == S.AnchorFieldUse then
-                local decl = find_struct(analysis, anchor.label)
-                if decl then return E.SubjectHostStruct(decl) end
-                local tree_type = find_tree_type(analysis, anchor.label)
-                if tree_type and pvm.classof(tree_type) == Tr.TypeDeclHandle then return E.SubjectType(Ty.THandle(Ty.TypeRefPath(C.Path({ C.Name(tree_type.name) })), tree_type.repr)) end
-            end
+        elseif anchor.kind == S.AnchorFieldUse then
+            local owner, field = find_field(analysis, anchor.label)
+            if owner and field then return E.SubjectHostField(owner, field) end
+            local decl = find_struct(analysis, anchor.label)
+            if decl then return E.SubjectHostStruct(decl) end
+            local tree_type = find_tree_type(analysis, anchor.label)
+            if tree_type and pvm.classof(tree_type) == Tr.TypeDeclHandle then return E.SubjectType(Ty.THandle(Ty.TypeRefPath(C.Path({ C.Name(tree_type.name) })), tree_type.repr)) end
         elseif anchor.kind == S.AnchorExposeName then
             local ex = find_expose(analysis, anchor.label)
             if ex then return E.SubjectHostExpose(ex) end
@@ -229,12 +234,10 @@ function M.Define(T)
             if expr_frag then return E.SubjectExprFrag(expr_frag) end
             local fn = find_func(analysis, anchor.label)
             if fn then return E.SubjectTreeFunc(fn) end
-            if anchor.kind == S.AnchorFunctionName or anchor.kind == S.AnchorMethodName or anchor.kind == S.AnchorFunctionUse then
-                return lexical_func_subject(anchor.label)
-            end
             if anchor.kind == S.AnchorMethodName or anchor.kind == S.AnchorFunctionName then
                 return E.SubjectBuiltin("function " .. anchor.label)
             end
+            return E.SubjectMissing("unresolved function " .. anchor.label)
         elseif anchor.kind == S.AnchorRegionName then
             local frag = find_region_frag(analysis, anchor.label)
             if frag then return E.SubjectRegionFrag(frag) end

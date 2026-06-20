@@ -38,7 +38,7 @@ local keyword_set = {
     ["end"] = true, ["return"] = true, ["yield"] = true, ["jump"] = true, ["emit"] = true,
     ["let"] = true, ["var"] = true, ["requires"] = true, ["noalias"] = true, ["readonly"] = true,
     ["writeonly"] = true, ["noescape"] = true, ["invalidate"] = true, ["preserve"] = true,
-    ["lease"] = true, ["invalid"] = true,
+    ["lease"] = true, ["owned"] = true, ["invalid"] = true,
     ["as"] = true, ["select"] = true, ["true"] = true, ["false"] = true,
     ["nil"] = true, ["and"] = true, ["or"] = true, ["not"] = true,
     ["assert"] = true, ["len"] = true, ["view"] = true,
@@ -227,7 +227,7 @@ function M.Define(T)
             if type(label) ~= "string" or not label:match("^[_%a][_%w]*$") then return tid("param", tok_i) end
             if before_label == "block" then return tid("cont.param.block." .. label, tok_i) end
             if before_label == "entry" then return tid("cont.param.entry." .. label, tok_i) end
-            if before_label == ";" or before_label == "," then return tid("cont.param.slot." .. label, tok_i) end
+            if before_label == ";" or before_label == "|" then return tid("cont.param.slot." .. label, tok_i) end
             return tid("param", tok_i)
         end
         local function next_non_nl(tok_i)
@@ -314,7 +314,7 @@ function M.Define(T)
                             add_anchor(anchors, index, tid("cont", i), S.AnchorContinuationName, text, start, stop); after_block = false
                         elseif def_next then
                             add_anchor(anchors, index, tid("def", i), def_next, text, start, stop); def_next = nil
-                        elseif (prev == ";" or prev == ",") and nxt == "(" then
+                        elseif (prev == ";" or prev == "|") and nxt == "(" then
                             add_anchor(anchors, index, tid("cont", i), S.AnchorContinuationName, text, start, stop)
                         elseif nxt == ":" and (prev ~= ".") then
                             if island.kind == "struct" then

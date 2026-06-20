@@ -93,8 +93,11 @@ end
 
 local h = Hover.hover(query_at("Voice", 1), analysis)
 assert(pvm.classof(h) == E.HoverInfo)
-assert(h.value:match("handle `Voice`"))
-assert(h.value:match("opaque durable identity"))
+assert(h.value:match("Voice"))
+assert(h.value:match("handle: durable copyable identity"))
+assert(h.value:match("repr: u32"))
+assert(h.value:match("invalid: 0"))
+assert(h.value:match("resolve through a store region"))
 
 local type_items = Items.items(E.CompletionQuery(query_at("slot"), E.CompletionTypePosition), analysis)
 assert(has(type_items, "lease"))

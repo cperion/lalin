@@ -44,7 +44,7 @@ local function argument_starts(text, open_i, close_i)
         local c = text:sub(i, i)
         if c == "(" or c == "[" or c == "{" then depth = depth + 1
         elseif c == ")" or c == "]" or c == "}" then if depth > 0 then depth = depth - 1 end
-        elseif c == "," and depth == 0 then
+        elseif (c == "," or c == ";") and depth == 0 then
             local s = skip_space(text, i + 1)
             if s < close_i then out[#out + 1] = s end
         end
@@ -80,7 +80,7 @@ function M.Define(T)
                                 for j = 1, count do
                                     local ppos = P.offset_to_pos(index, starts[j] - 1)
                                     if pvm.classof(ppos) == S.SourcePositionHit then
-                                        local name = sig.params[j].label:match("^([_%a][_%w]*)%s*:") or sig.params[j].label
+                                        local name = sig.params[j].label:match("^([_%a][_%w]*)%s*:") or sig.params[j].label:match("^([_%a][_%w]*)%s*=") or sig.params[j].label
                                         out[#out + 1] = E.InlayHint(ppos.pos, name .. ":", "parameter")
                                     end
                                 end

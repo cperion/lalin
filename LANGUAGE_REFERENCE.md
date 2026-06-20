@@ -4335,12 +4335,15 @@ editor_subject_at.lua           subject resolution at position
 
 -- LSP protocol
 lsp_capabilities.lua            LSP capabilities
+lsp_dispatch.lua                request dispatch and PVM analysis boundary
+lsp_file_scan.lua               workspace file discovery
 lsp_payload_adapt.lua           payload adaptation
+lsp_uri.lua                     file URI/path normalization
+lsp_workspace.lua               typed workspace index and disk/open overlay
 rpc_lsp_decode.lua              LSP message decoding
 rpc_lsp_encode.lua              LSP message encoding
 rpc_json_decode.lua             JSON-RPC decoding
 rpc_json_encode.lua             JSON-RPC encoding
-rpc_out_commands.lua            outgoing command buffer
 rpc_stdio_loop.lua              stdio I/O loop
 
 -- Schema (clean schema source of truth)

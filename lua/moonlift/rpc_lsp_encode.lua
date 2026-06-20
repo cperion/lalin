@@ -42,7 +42,9 @@ function M.Define(T)
     end
 
     local function completion_item_lua(item)
-        return { label = item.label, kind = item.kind, detail = item.detail, documentation = item.documentation, insertText = item.insert_text }
+        local out = { label = item.label, kind = item.kind, detail = item.detail, documentation = item.documentation, insertText = item.insert_text }
+        if item.insert_text_format and item.insert_text_format ~= 1 then out.insertTextFormat = item.insert_text_format end
+        return out
     end
 
     local function completion_list_lua(list)

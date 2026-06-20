@@ -1,5 +1,6 @@
 local pvm = require("moonlift.pvm")
 local CompletionContext = require("moonlift.editor_completion_context")
+local PositionIndex = require("moonlift.source_position_index")
 
 local M = {}
 
@@ -7,15 +8,25 @@ local scalar_labels = {
     "void", "bool", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "index", "rawptr",
 }
 
-local function add(out, E, label, kind, detail, documentation, insert_text)
-    out[#out + 1] = E.CompletionItem(label, kind, detail or "", documentation or "", insert_text or label)
+local function add(out, E, label, kind, detail, documentation, insert_text, insert_format)
+    if not insert_format then
+        insert_format = (kind == E.CompletionSnippet or tostring(insert_text or ""):find("${", 1, true)) and E.CompletionInsertSnippet or E.CompletionInsertPlainText
+    end
+    out[#out + 1] = E.CompletionItem(label, kind, detail or "", documentation or "", insert_text or label, insert_format)
 end
 
 function M.Define(T)
+    local S = T.MoonSource
     local E = T.MoonEditor
     local H = T.MoonHost
     local Tr = T.MoonTree
     local Context = CompletionContext.Define(T)
+    local P = PositionIndex.Define(T)
+
+    local function line_prefix_at(text, offset)
+        local start = text:sub(1, offset):match(".*\n()") or 1
+        return text:sub(start, offset)
+    end
 
     local function add_tree_types(items, analysis)
         for i = 1, #(analysis.parse.combined.module.items or {}) do
@@ -24,6 +35,52 @@ function M.Define(T)
                 add(items, E, item.t.name, E.CompletionClass, "Moonlift type", "Known Moonlift type")
             end
         end
+    end
+
+    local function region_frag_names(analysis)
+        local out = {}
+        for i = 1, #analysis.anchors.anchors do
+            local a = analysis.anchors.anchors[i]
+            if a.kind == S.AnchorRegionName then out[#out + 1] = a.label end
+        end
+        return out
+    end
+
+    local function region_frag_by_name(analysis, name)
+        local names = region_frag_names(analysis)
+        for i = 1, #names do
+            if names[i] == name then return analysis.parse.combined.region_frags[i] end
+        end
+        return nil
+    end
+
+    local function completion_prefix(query, analysis)
+        local doc = analysis.parse.parts.document
+        local hit = P.source_pos_to_offset(P.build_index(doc), query.position.pos)
+        if pvm.classof(hit) ~= S.SourceOffsetHit then return "" end
+        return line_prefix_at(doc.text, hit.offset)
+    end
+
+    local function add_jump_targets(items, analysis)
+        local seen = {}
+        for i = 1, #analysis.anchors.anchors do
+            local a = analysis.anchors.anchors[i]
+            if a.kind == S.AnchorContinuationName and not seen[a.label] then
+                seen[a.label] = true
+                add(items, E, a.label, E.CompletionEvent, "control label", "Jump target")
+            end
+        end
+    end
+
+    local function add_emit_routes(items, analysis, prefix)
+        local name = prefix:match("%f[%w_]emit%f[^%w_]%s+([_%a][_%w]*)%s*%(")
+        local frag = name and region_frag_by_name(analysis, name)
+        if not frag then return false end
+        for i = 1, #(frag.conts or {}) do
+            local cont = frag.conts[i]
+            add(items, E, cont.pretty_name, E.CompletionEvent, "region exit", "Route continuation exit", cont.pretty_name .. " = ${1:block}")
+        end
+        return true
     end
 
     local items_phase = pvm.phase("moonlift_editor_completion_items", {
@@ -43,7 +100,8 @@ function M.Define(T)
             end
             add(items, E, "ptr", E.CompletionSnippet, "pointer type", "Pointer type", "ptr(${1:T})")
             add(items, E, "view", E.CompletionSnippet, "view type", "Moonlift zero-copy view type", "view(${1:T})")
-            add(items, E, "lease", E.CompletionSnippet, "lease access type", "Temporary no-escape access from a store", "lease(${1:store}) ptr(${2:T})")
+            add(items, E, "lease", E.CompletionSnippet, "lease access type", "Temporary no-escape access", "lease ptr(${1:T})")
+            add(items, E, "owned", E.CompletionSnippet, "owned resource authority", "CFG-tracked resource discharge authority", "owned ${1:HandleRef}")
             add(items, E, "noescape", E.CompletionKeyword, "noescape parameter", "Parameter modifier for non-retained pointer/view access")
             add(items, E, "readonly", E.CompletionKeyword, "readonly store parameter", "Reads and preserves live leases")
             add(items, E, "preserve", E.CompletionKeyword, "preserve store parameter", "May write but keeps live leases valid")
@@ -85,6 +143,11 @@ function M.Define(T)
             add(items, E, "yield", E.CompletionKeyword, "yield", "Yield from a control expression")
             add(items, E, "return", E.CompletionKeyword, "return", "Return from a function")
             add(items, E, "call", E.CompletionKeyword, "region call", "Call a region through a generated function/result boundary")
+        elseif context == E.CompletionContinuationArgs then
+            local prefix = completion_prefix(query, analysis)
+            if not add_emit_routes(items, analysis, prefix) then
+                add_jump_targets(items, analysis)
+            end
         end
         return pvm.seq(items)
         end,

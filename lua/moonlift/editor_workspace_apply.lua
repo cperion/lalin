@@ -25,7 +25,7 @@ function M.Define(T)
     local SourceApply = SourceTextApply.Define(T)
 
     local function initial_state()
-        return E.WorkspaceState(E.ServerCreated, {}, {}, {})
+        return E.WorkspaceState(E.ServerCreated, {}, {}, {}, E.WorkspaceIndex(0, {}))
     end
 
     local function with_docs(state, docs)
@@ -62,7 +62,7 @@ function M.Define(T)
         local after = before
 
         if cls == E.ClientInitialize then
-            after = E.WorkspaceState(E.ServerInitializing, event.roots, event.capabilities, before.open_docs)
+            after = E.WorkspaceState(E.ServerInitializing, event.roots, event.capabilities, before.open_docs, before.index)
         elseif is_bare(cls, event, E.ClientInitialized, client_initialized_class) then
             after = pvm.with(before, { mode = E.ServerReady })
         elseif cls == E.ClientShutdown then

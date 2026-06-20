@@ -4,7 +4,8 @@ local JsonDecode = require("moonlift.rpc_json_decode")
 local LspDecode = require("moonlift.rpc_lsp_decode")
 local LspEncode = require("moonlift.rpc_lsp_encode")
 local Workspace = require("moonlift.editor_workspace_apply")
-local OutCommands = require("moonlift.rpc_out_commands")
+local LspWorkspace = require("moonlift.lsp_workspace")
+local LspDispatch = require("moonlift.lsp_dispatch")
 local Dap = require("moonlift.dap_server")
 
 local M = {}
@@ -46,7 +47,9 @@ function M.run(opts)
     local Decode = LspDecode.Define(T)
     local Encode = LspEncode.Define(T)
     local WorkspaceApply = Workspace.Define(T)
-    local Out = OutCommands.Define(T)
+    local WorkspaceIndex = LspWorkspace.Define(T)
+    local Dispatch = LspDispatch.Define(T)
+    local E = T.MoonEditor
     local R = T.MoonRpc
 
     -- Optional DAP handler for shared STDIO loop
@@ -70,8 +73,9 @@ function M.run(opts)
             -- Existing LSP dispatch
             local event = Decode.decode(incoming, state)
             local transition = WorkspaceApply.apply_event(state, event)
-            state = transition.after
-            local commands = Out.commands(transition)
+            state = WorkspaceIndex.sync_after_event(transition.after, event)
+            transition = E.Transition(transition.before, event, state)
+            local commands = Dispatch.commands(transition)
             for i = 1, #commands do
                 local cmd = commands[i]
                 local cls = pvm.classof(cmd)

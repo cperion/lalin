@@ -24,15 +24,16 @@ end
 
 local function active_parameter_between(text, open_pos, cursor_pos)
     local depth = 0
-    local active = 0
+    local active, part_start = 0, open_pos + 1
     for i = open_pos + 1, cursor_pos do
         local c = text:sub(i, i)
         if c == "(" or c == "[" or c == "{" then
             depth = depth + 1
         elseif c == ")" or c == "]" or c == "}" then
             if depth > 0 then depth = depth - 1 end
-        elseif c == "," and depth == 0 then
-            active = active + 1
+        elseif (c == "," or c == ";") and depth == 0 then
+            if trim(text:sub(part_start, i - 1)) ~= "" then active = active + 1 end
+            part_start = i + 1
         end
     end
     return active
@@ -142,14 +143,24 @@ function M.Define(T)
         return make_signature(name, params, result, documentation)
     end
 
-    local function region_signature(name, params)
+    local function region_signature(name, frag)
         local labels, ps = {}, {}
-        for i = 1, #params do
-            local label = params[i].name .. ": " .. type_name(params[i].ty)
+        for i = 1, #frag.params do
+            local label = frag.params[i].name .. ": " .. type_name(frag.params[i].ty)
             labels[i] = label
             ps[i] = E.SignatureParameter(label, "")
         end
-        return E.SignatureInfo(name .. "(" .. table.concat(labels, ", ") .. "): region", "Moonlift region fragment", ps)
+        for i = 1, #(frag.conts or {}) do
+            local cont = frag.conts[i]
+            local cparams = {}
+            for j = 1, #(cont.params or {}) do
+                cparams[j] = cont.params[j].name .. ": " .. type_name(cont.params[j].ty)
+            end
+            local label = cont.pretty_name .. " = <block>(" .. table.concat(cparams, ", ") .. ")"
+            labels[#labels + 1] = label
+            ps[#ps + 1] = E.SignatureParameter(label, "continuation route")
+        end
+        return E.SignatureInfo(name .. "(" .. table.concat(labels, "; ") .. "): region", "Moonlift region fragment", ps)
     end
 
     local function signature_catalog(analysis)
@@ -179,7 +190,7 @@ function M.Define(T)
             local name = region_names[i] or ("region" .. tostring(i))
             local frag = analysis.parse.combined.region_frags[i]
             catalog[name] = catalog[name] or {}
-            catalog[name][#catalog[name] + 1] = region_signature(name, frag.params)
+            catalog[name][#catalog[name] + 1] = region_signature(name, frag)
         end
         for i = 1, #analysis.parse.combined.decls.decls do
             local d = analysis.parse.combined.decls.decls[i]

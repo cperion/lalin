@@ -9,7 +9,14 @@ module MoonEditor {
 
     WorkspaceRoot = (MoonSource.DocUri uri) unique
 
-    WorkspaceState = (MoonEditor.ServerMode mode, MoonEditor.WorkspaceRoot* roots, MoonEditor.ClientCapability* capabilities, MoonSource.DocumentSnapshot* open_docs) unique
+    WorkspaceFileOrigin = WorkspaceFileOpen
+         | WorkspaceFileDisk
+
+    WorkspaceFile = (MoonSource.DocUri uri, string path, MoonSource.LanguageId language, MoonSource.DocVersion version, MoonEditor.WorkspaceFileOrigin origin, string fingerprint) unique
+
+    WorkspaceIndex = (number generation, MoonEditor.WorkspaceFile* files) unique
+
+    WorkspaceState = (MoonEditor.ServerMode mode, MoonEditor.WorkspaceRoot* roots, MoonEditor.ClientCapability* capabilities, MoonSource.DocumentSnapshot* open_docs, MoonEditor.WorkspaceIndex index) unique
 
     RpcId = RpcIdNone
          | RpcIdNumber(number value) unique
@@ -222,9 +229,12 @@ module MoonEditor {
          | CompletionOperator
          | CompletionTypeParameter
 
+    CompletionInsertFormat = CompletionInsertPlainText
+         | CompletionInsertSnippet
+
     CompletionQuery = (MoonEditor.PositionQuery position, MoonEditor.CompletionContext context) unique
 
-    CompletionItem = (string label, MoonEditor.CompletionKind kind, string detail, string documentation, string insert_text) unique
+    CompletionItem = (string label, MoonEditor.CompletionKind kind, string detail, string documentation, string insert_text, MoonEditor.CompletionInsertFormat insert_format) unique
 
     SignatureContext = SignatureCall(string callee, number active_parameter, MoonSource.SourceRange callee_range) unique
          | SignatureNoCall(string reason) unique
