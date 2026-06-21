@@ -7,7 +7,8 @@ the whole native UI machine every frame.
 
 ```text
 Lua API       builds authored MLUI ASDL
-ui.program    encodes authored ASDL into MLUI program rows
+ui.program    compiles authored ASDL into an MLUI program object
+bytecode      immutable borrowed MLUI image for VM import
 UiKernel      retains validated/imported products and runs frame phases
 backend       draws view ops and sends raw input
 application   owns domain state
@@ -35,6 +36,18 @@ same loaded program + same retained kernel + new input/model/env
 Full program load is a compiler/import operation. Frame execution is the hot
 runtime path.
 
+The native-facing program artifact is the bytecode image:
+
+```lua
+local program = ui.program(root, { epoch = app.ui_epoch })
+local bytes = program:bytecode()
+local image, len = program:bytebuffer()
+```
+
+The buffer is caller-owned immutable memory. A borrowed native load API may keep
+views into that buffer, so the caller must keep it alive while loaded roots or
+program handles derived from it are live.
+
 ## Three Levels Of Reuse
 
 ### 1. Rebuild The Lua Tree
@@ -61,6 +74,7 @@ If the authored shape and resources did not change, keep the encoded program:
 ```lua
 local root = view(app)
 local program = ui.program(root, { epoch = app.ui_epoch })
+local image, len = program:bytebuffer()
 ```
 
 Only rebuild `program` when one of these changes:
@@ -91,7 +105,8 @@ local function ensure_loaded(app)
     if loaded == nil or loaded_epoch ~= app.ui_epoch then
         local root = view(app)
         local program = ui.program(root, { epoch = app.ui_epoch })
-        loaded = kernel:load_program { program = program }
+        local image, len = program:bytebuffer()
+        loaded = kernel:load_program { image = image, len = len }
         loaded_epoch = app.ui_epoch
     end
     return loaded
@@ -119,8 +134,9 @@ Do not do this as a normal frame loop:
 while running do
     local root = view(app)
     local program = ui.program(root)
+    local image, len = program:bytebuffer()
     local kernel = ui.kernel.open {}
-    local loaded = kernel:load_program { program = program }
+    local loaded = kernel:load_program { image = image, len = len }
     local frame = kernel:frame { root = loaded, input = raw_input }
     kernel:close()
 end
@@ -138,9 +154,9 @@ local loaded = nil
 while running do
     if app.ui_dirty then
         local root = view(app)
-        loaded = kernel:load_program {
-            program = ui.program(root, { epoch = app.ui_epoch }),
-        }
+        local program = ui.program(root, { epoch = app.ui_epoch })
+        local image, len = program:bytebuffer()
+        loaded = kernel:load_program { image = image, len = len }
         app.ui_dirty = false
     end
 
@@ -383,7 +399,8 @@ local function ensure_program(kernel, app)
     if loaded_root == nil or loaded_epoch ~= app.ui_epoch then
         local root = view(app)
         local program = ui.program(root, { epoch = app.ui_epoch })
-        loaded_root = kernel:load_program { program = program }
+        local image, len = program:bytebuffer()
+        loaded_root = kernel:load_program { image = image, len = len }
         loaded_epoch = app.ui_epoch
     end
     return loaded_root

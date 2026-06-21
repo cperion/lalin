@@ -11,6 +11,8 @@ M.tw = require("mlui.tw")
 M.paint_ops = require("mlui.paint")
 M.program = program.auth
 M.encode = program.encode
+M.bytecode = program.bytecode
+M.bytebuffer = program.bytebuffer
 M.constants = program.K
 
 M.paint = setmetatable({}, {

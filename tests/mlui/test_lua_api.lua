@@ -73,4 +73,12 @@ for i = 1, #program.auth.nodes do
 end
 assert(text_row and text_row.content ~= 0)
 
+local bytes = program:bytecode()
+assert(bytes:sub(1, 4) == "MLUI", "program emits MLUI bytecode image")
+assert(bytes == ui.bytecode(program), "facade bytecode helper matches Program:bytecode")
+local buf, len = program:bytebuffer()
+assert(buf ~= nil and len == #bytes, "program bytebuffer owns caller-side immutable image bytes")
+local buf2, len2 = ui.bytebuffer(bytes)
+assert(buf2 ~= nil and len2 == #bytes, "facade bytebuffer accepts bytecode string")
+
 print("ok")

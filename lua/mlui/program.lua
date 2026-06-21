@@ -10,6 +10,8 @@ local Compose = T.Compose
 local Interact = T.Interact
 
 local M = {}
+local Program = {}
+Program.__index = Program
 
 M.K = {
     AUTH_EMPTY = 1,
@@ -47,6 +49,77 @@ M.K = {
 }
 
 local K = M.K
+
+M.MAGIC = "MLUI"
+M.VERSION = 1
+
+local function put_byte(out, x)
+    out[#out + 1] = string.char((x or 0) % 256)
+end
+
+local function put_u16(out, x)
+    x = math.floor(x or 0)
+    out[#out + 1] = string.char(x % 256, math.floor(x / 256) % 256)
+end
+
+local function put_u32(out, x)
+    x = math.floor(x or 0)
+    out[#out + 1] = string.char(
+        x % 256,
+        math.floor(x / 256) % 256,
+        math.floor(x / 65536) % 256,
+        math.floor(x / 16777216) % 256
+    )
+end
+
+local i64_union_t
+local f64_union_t
+
+local function ffi_types()
+    if i64_union_t then return end
+    local ffi = require("ffi")
+    i64_union_t = ffi.typeof("union { int64_t i; uint8_t b[8]; }")
+    f64_union_t = ffi.typeof("union { double f; uint8_t b[8]; }")
+end
+
+local function put_i64(out, x)
+    ffi_types()
+    local u = i64_union_t()
+    u.i = x or 0
+    for i = 0, 7 do put_byte(out, u.b[i]) end
+end
+
+local function put_f64(out, x)
+    ffi_types()
+    local u = f64_union_t()
+    u.f = x or 0
+    for i = 0, 7 do put_byte(out, u.b[i]) end
+end
+
+local function put_string(out, s)
+    s = tostring(s or "")
+    put_u32(out, #s)
+    out[#out + 1] = s
+end
+
+local SECTION_AUTH_NODES = 1
+local SECTION_AUTH_CHILDREN = 2
+local SECTION_STYLE_TOKENS = 3
+local SECTION_STYLE_TRACKS = 4
+local SECTION_PAINT_PROGRAMS = 5
+local SECTION_PAINT_POINTS = 6
+local SECTION_IDS = 7
+local SECTION_CONTENTS = 8
+
+local function section(out, kind, body_fn)
+    local body = {}
+    body_fn(body)
+    local bytes = table.concat(body)
+    put_u16(out, kind)
+    put_u16(out, 0)
+    put_u32(out, #bytes)
+    out[#out + 1] = bytes
+end
 
 local ATOM = {
     DISPLAY = 1, AXIS = 2, WRAP = 3, JUSTIFY = 4, ITEMS = 5, SELF = 6,
@@ -549,10 +622,153 @@ local function new_state(epoch)
     }
 end
 
+local function root_kind_code(kind)
+    if kind == "compose" then return 1 end
+    return 0
+end
+
+local function encode_program_image(program)
+    local out = {}
+    out[#out + 1] = M.MAGIC
+    put_u32(out, M.VERSION)
+    put_u32(out, root_kind_code(program.header.root_kind))
+    put_u32(out, program.header.root_index or 0)
+    put_i64(out, program.header.epoch or 0)
+
+    local sections = {}
+    section(sections, SECTION_AUTH_NODES, function(s)
+        local nodes = program.auth and program.auth.nodes or {}
+        put_u32(s, #nodes)
+        for i = 1, #nodes do
+            local n = nodes[i]
+            put_u32(s, n.id or 0)
+            put_byte(s, n.kind or 0)
+            put_byte(s, n.role or 0)
+            put_byte(s, n.scroll_axis or 0)
+            put_byte(s, n.focus_policy or 0)
+            put_byte(s, n.layer_kind or 0)
+            put_byte(s, n.overlay_placement or 0)
+            put_u16(s, 0)
+            put_u32(s, n.anchor_id or 0)
+            put_f64(s, n.order or 0)
+            put_byte(s, n.modal and 1 or 0)
+            put_byte(s, n.state and n.state.hovered and 1 or 0)
+            put_byte(s, n.state and n.state.focused and 1 or 0)
+            put_byte(s, n.state and n.state.active and 1 or 0)
+            put_byte(s, n.state and n.state.selected and 1 or 0)
+            put_byte(s, n.state and n.state.disabled and 1 or 0)
+            put_u16(s, 0)
+            put_u32(s, n.first_child or 0)
+            put_u32(s, n.n_child or 0)
+            put_u32(s, n.token_first or 0)
+            put_u32(s, n.token_count or 0)
+            put_u32(s, n.content or 0)
+            put_u32(s, n.paint_first or 0)
+            put_u32(s, n.paint_count or 0)
+        end
+    end)
+    section(sections, SECTION_AUTH_CHILDREN, function(s)
+        local children = program.auth and program.auth.children or {}
+        put_u32(s, #children)
+        for i = 1, #children do put_u32(s, children[i] or 0) end
+    end)
+    section(sections, SECTION_STYLE_TOKENS, function(s)
+        local tokens = program.auth and program.auth.styles and program.auth.styles.tokens or {}
+        put_u32(s, #tokens)
+        for i = 1, #tokens do
+            local t = tokens[i]
+            local c = t.cond or {}
+            local st = c.state or {}
+            local a = t.atom or {}
+            put_byte(s, c.bp or 0)
+            put_byte(s, c.scheme or 0)
+            put_byte(s, c.motion or 0)
+            put_byte(s, st.hovered or 0)
+            put_byte(s, st.focused or 0)
+            put_byte(s, st.active or 0)
+            put_byte(s, st.selected or 0)
+            put_byte(s, st.disabled or 0)
+            put_u16(s, a.kind or 0)
+            put_u16(s, 0)
+            put_f64(s, a.a or 0)
+            put_f64(s, a.b or 0)
+            put_u32(s, a.color or 0)
+            put_u32(s, a.track_first or 0)
+            put_u32(s, a.track_count or 0)
+        end
+    end)
+    section(sections, SECTION_STYLE_TRACKS, function(s)
+        local tracks = program.auth and program.auth.styles and program.auth.styles.tracks or {}
+        put_u32(s, #tracks)
+        for i = 1, #tracks do
+            local t = tracks[i]
+            put_byte(s, t.kind or 0)
+            put_byte(s, 0)
+            put_u16(s, 0)
+            put_f64(s, t.a or 0)
+            put_f64(s, t.b or 0)
+        end
+    end)
+    section(sections, SECTION_PAINT_PROGRAMS, function(s)
+        local programs = program.paint and program.paint.programs or {}
+        put_u32(s, #programs)
+        for i = 1, #programs do
+            local p = programs[i]
+            put_byte(s, p.kind or 0)
+            put_byte(s, 0)
+            put_u16(s, 0)
+            put_u32(s, p.point_first or 0)
+            put_u32(s, p.point_count or 0)
+            put_u32(s, p.vertex_first or 0)
+            put_u32(s, p.vertex_count or 0)
+            put_u32(s, p.image or 0)
+            put_f64(s, p.segments or 0)
+        end
+    end)
+    section(sections, SECTION_PAINT_POINTS, function(s)
+        local points = program.paint and program.paint.points or {}
+        put_u32(s, #points)
+        for i = 1, #points do
+            local p = points[i]
+            put_f64(s, p.x or 0)
+            put_f64(s, p.y or 0)
+        end
+    end)
+    section(sections, SECTION_IDS, function(s)
+        local ids = program.resources and program.resources.ids or {}
+        put_u32(s, #ids)
+        for i = 1, #ids do put_string(s, ids[i]) end
+    end)
+    section(sections, SECTION_CONTENTS, function(s)
+        local contents = program.resources and program.resources.contents or {}
+        put_u32(s, #contents)
+        for i = 1, #contents do put_string(s, contents[i]) end
+    end)
+
+    local section_bytes = table.concat(sections)
+    put_u32(out, 8)
+    put_u32(out, #section_bytes)
+    out[#out + 1] = section_bytes
+    return table.concat(out)
+end
+
+function Program:bytecode()
+    if self._bytecode == nil then self._bytecode = encode_program_image(self) end
+    return self._bytecode
+end
+
+function Program:bytebuffer()
+    local bytes = self:bytecode()
+    local ffi = require("ffi")
+    local buf = ffi.new("uint8_t[?]", #bytes)
+    ffi.copy(buf, bytes, #bytes)
+    return buf, #bytes
+end
+
 function M.auth(root, opts)
     local state = new_state(opts and opts.epoch)
     local root_index = encode_auth(root, state)
-    return {
+    return setmetatable({
         header = {
             magic = "MLUI",
             abi_version = 1,
@@ -576,9 +792,23 @@ function M.auth(root, opts)
             ids = state.id_values,
             contents = state.content_values,
         },
-    }
+    }, Program)
 end
 
 M.encode = M.auth
+
+function M.bytecode(program)
+    if getmetatable(program) == Program then return program:bytecode() end
+    return setmetatable(program, Program):bytecode()
+end
+
+function M.bytebuffer(bytes)
+    if getmetatable(bytes) == Program then return bytes:bytebuffer() end
+    assert(type(bytes) == "string", "mlui.bytebuffer expects bytecode string or Program")
+    local ffi = require("ffi")
+    local buf = ffi.new("uint8_t[?]", #bytes)
+    ffi.copy(buf, bytes, #bytes)
+    return buf, #bytes
+end
 
 return M

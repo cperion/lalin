@@ -934,6 +934,7 @@ moonlift/
 ├── OWNED_CFG_DESIGN.md         Linear owned/handle/lease design
 ├── CONVENTIONS.md              Naming and file organization conventions
 ├── PVM_GUIDE.md                PVM ASDL/phase framework guide
+├── LLPVM_GUIDE.md              Low-level PVM bytecode/native VM guide
 ├── COMPILER_PATTERN.md         Interactive software as compilers
 ├── BACK_WIRE_FORMAT.md         Flatline v4 binary wire format
 ├── explicit_programming.md     Explicit programming philosophy
@@ -951,6 +952,7 @@ moonlift/
 | [`CONVENTIONS.md`](CONVENTIONS.md) | **Project conventions.** Naming, headers vs implementations, handles, generations, stores, and protocol naming. |
 | [`BACK_WIRE_FORMAT.md`](BACK_WIRE_FORMAT.md) | **Flatline v4 binary wire format.** The stable ABI between the Lua frontend and the Rust Cranelift backend. |
 | [`PVM_GUIDE.md`](PVM_GUIDE.md) | **Complete PVM guide.** ASDL contexts, structural update, recording-triplet phases, pull-driven evaluation, the triplet algebra. |
+| [`LLPVM_GUIDE.md`](LLPVM_GUIDE.md) | **Complete LLPVM guide.** Low-level PVM doctrine, direct borrowed bytecode images, native VM handles, C blob ABI, phases, streams, recordings, and cache discipline. |
 | [`COMPILER_PATTERN.md`](COMPILER_PATTERN.md) | **Interactive software as compilers.** The philosophy behind Moonlift's architecture: ASDL as the input language, live compilation, memoized phase boundaries. |
 | [`explicit_programming.md`](explicit_programming.md) | **Explicit programming philosophy.** A guide to designing systems with typed data types and typed control protocols. |
 

@@ -77,6 +77,100 @@ This includes memory. A region signature is not merely a control interface; it i
 
 ---
 
+## Chapter 1.5: The VM stack view
+
+The two-structure thesis is the foundation: every program has a type forest and
+a control graph. But there is a second practical lens that makes large systems
+snap into focus:
+
+```text
+All serious programs become stacks of virtual machines.
+```
+
+Not one giant VM with one universal bytecode. A stack of small machines:
+
+```text
+source VM
+    consumes source text/bytes/tokens
+    produces syntax or semantic IR
+
+semantic VM
+    consumes typed IR
+    produces lowered IR
+
+runtime VM
+    consumes lowered bytecode/ops
+    produces buffers, commands, reports, events, or machine code
+```
+
+This is not an argument for slow interpreters. It is an argument for making the
+instruction language of each layer explicit. A VM is simply a machine with:
+
+```text
+an instruction language
+a cursor, stream, or program counter
+an environment/store product
+typed transitions
+diagnostics
+ownership rules
+an output language or materialized buffer
+```
+
+Once this is visible, many "API design" problems become compiler problems with
+better answers. A UI toolkit is not a bag of widgets; it is a compiler from
+authored UI bytecode to layout, render, hit-test, and event bytecode. A parser is
+a VM from bytes to syntax products. A renderer is a VM from view ops to backend
+commands. A Lua bridge is a VM boundary between dynamic host values and semantic
+handles. A compiler is a stack of VMs whose stages consume and produce typed IR
+languages.
+
+The design question changes from:
+
+```text
+What objects and methods should this subsystem expose?
+```
+
+to:
+
+```text
+What bytecode does this layer consume?
+What bytecode, stream, report, or buffer does it produce?
+What validates the input language?
+Who owns the bytes?
+Can the input be borrowed?
+What is the environment product?
+Where are the phase/cache boundaries?
+What can be retained between runs?
+What diagnostics can this VM emit?
+Can this stage run without the authoring language?
+```
+
+This lens is why PVM works: it made compiler phases into lazy machines over
+ASDL products. It is why LLPVM works: it makes that machine boundary concrete as
+borrowed bytecode images, native handles, streams, buffers, recordings, and C
+ABI seals. It is why MLUI should remain a rich compiler while still emitting a
+dense borrowed image for the native UI VM.
+
+The VM-stack view does not replace the dual tree. It sharpens it:
+
+```text
+TYPE FOREST    names the instruction languages, stores, handles, buffers
+CONTROL GRAPH  names the VM transitions, phase exits, validation outcomes
+BYTECODE       is the portable product at a machine boundary
+```
+
+Design law:
+
+```text
+When a subsystem has repeated execution, retained state, diagnostics,
+incremental invalidation, or a performance boundary, identify its VM and
+instruction language before designing public APIs.
+```
+
+Do not start with wrappers around objects. Find the VM stack first.
+
+---
+
 ## Chapter 2: What complexity is, and how explicitness attacks it
 
 Before designing anything, we need a theory of what we are designing *against*. The best available theory is John Ousterhout's, from *A Philosophy of Software Design*, and it is worth restating in compressed form because Moonlift turns out to be, almost point for point, a language-level answer to it.
@@ -1529,6 +1623,8 @@ region/function says what can happen, what access it invalidates, and whether an
 10. **Invalidation is named.** Resource close, arena reset, publish, retire, destroy, compact, and generation bump are region/effect facts, not destructor folklore.
 11. **Kernels are seals.** Hot code receives already-borrowed leases/views/contracts and does not discover ownership.
 12. **Foreign runtimes get bridges.** LuaJIT stack slots, registry refs, borrowed strings, protected calls, and userdata proxies cross through LuaBridge protocols, not ad hoc raw externs.
+13. **Repeated systems are VMs.** If a subsystem has repeated execution, retained state, diagnostics, incremental invalidation, or a performance boundary, name its instruction language and VM stack before designing public APIs.
+14. **Bytecode is a boundary product.** Dense borrowed images, streams, command buffers, and IR rows are first-class products; wrapper APIs are authoring conveniences around them, not the architecture.
 
 ---
 
@@ -1548,11 +1644,14 @@ region/function says what can happen, what access it invalidates, and whether an
     the consumer.
 10. Deep region: small signature,    21. Foreign runtime facts cross through typed bridges.
     large machine.
+                                      22. Serious systems are stacks of VMs.
+                                      23. Bytecode is a boundary product.
 ```
 
 And the six sentences that compress the books behind them:
 
 > **Choice is control. Data is product.** *(the algebra)*
+> **Find the VM stack; each layer consumes and produces an instruction language.** *(the operational lens)*
 > **Depth is a small protocol in front of a large machine.** *(Ousterhout, translated)*
 > **A region is a statechart whose final states are its signature.** *(UML, completed)*
 > **Stores own bytes; handles name durable identity; regions grant leases; protocols name failure.** *(memory)*

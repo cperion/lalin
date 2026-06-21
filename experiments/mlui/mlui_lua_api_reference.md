@@ -3,8 +3,9 @@
 Status: reference for the current `require "mlui"` authoring API.
 
 The Lua API is a frontend compiler surface. It builds MLUI-owned ASDL values
-from `lua/mlui/asdl.lua`, then `ui.program(root)` encodes those values into
-row-shaped MLUI program data. It does not depend on `lua/ui`.
+from `lua/mlui/asdl.lua`, then `ui.program(root)` compiles those values into a
+program object. The row-shaped tables remain available for inspection, while
+`program:bytecode()` is the runtime/import artifact for the MLUI VM.
 
 ## Import
 
@@ -28,7 +29,8 @@ Exports:
 | `ui.tw` | Style token DSL |
 | `ui.paint` | Paint node builder and paint-program namespace |
 | `ui.widgets` | Small canonical widget bundles |
-| `ui.program`, `ui.encode` | ASDL tree to MLUI program rows |
+| `ui.program`, `ui.encode` | ASDL tree to MLUI program object |
+| `ui.bytecode`, `ui.bytebuffer` | Program object to immutable byte image / caller-owned byte buffer |
 | `ui.constants` | Auth/compose/paint opcode constants |
 
 ## Builder Grammar
@@ -369,7 +371,7 @@ Widgets are data bundles. They do not call application callbacks.
 local program = ui.program(root, { epoch = app.ui_epoch })
 ```
 
-Returns a Lua table with row-shaped MLUI program sections:
+Returns a program object with row-shaped MLUI program sections for inspection:
 
 ```text
 program.header
@@ -385,5 +387,23 @@ program.resources.contents
 
 `ui.encode` is an alias for `ui.program`.
 
-The encoded program is the frontend contract for later native loading. It is
+Runtime-facing byte image:
+
+```lua
+local program = ui.program(root, { epoch = app.ui_epoch })
+local bytes = program:bytecode()
+local image, len = program:bytebuffer()
+```
+
+Facade helpers:
+
+```lua
+local bytes = ui.bytecode(program)
+local image, len = ui.bytebuffer(bytes)
+```
+
+The bytecode image is the frontend contract for native loading. It is
+caller-owned immutable memory: when passed to the VM through a borrowed image
+API, the caller must keep the buffer alive for as long as derived program handles
+or roots may reference it. The row tables are not the native ABI.
 not the retained kernel itself.
