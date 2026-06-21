@@ -96,8 +96,8 @@ local function wrap_status(st)
 end
 
 local function require_handle(value, what)
-    if type(value) == "table" and rawget(value, "__llpvm_node") ~= nil then
-        error("LLPVM runtime " .. what .. " expects a native VM handle, not an authored ASDL proxy; encode/load a bytecode program first", 3)
+    if type(value) == "table" then
+        error("LLPVM runtime " .. what .. " expects a numeric native handle, not an authored Lua proxy; encode/load a bytecode program first", 3)
     end
     local n = tonumber(value or 0)
     assert(n ~= nil, "LLPVM runtime " .. what .. " expects a numeric native handle")

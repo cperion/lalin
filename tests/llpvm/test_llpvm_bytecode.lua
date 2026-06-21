@@ -39,7 +39,7 @@ local bytes = program:bytecode()
 assert(bytes:sub(1, 4) == "LLPV", "bytecode image has LLPV magic")
 assert(#bytes > 64, "bytecode image contains records")
 assert(bytes == ll.bytecode(program), "facade bytecode helper matches Program:bytecode")
-assert(bytes == standalone_bytecode.encode(program.__llpvm_node), "standalone bytecode encoder matches facade")
+assert(type(standalone_bytecode.builder) == "function", "standalone bytecode module exposes direct builder")
 
 local path = os.tmpname()
 local wrote_path, n = program:write(path)

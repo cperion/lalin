@@ -72,6 +72,9 @@ local cache_code = {
 local Encoder = {}
 Encoder.__index = Encoder
 
+local Builder = {}
+Builder.__index = Builder
+
 local i64_union_t = ffi.typeof("union { int64_t i; uint8_t b[8]; }")
 local f64_union_t = ffi.typeof("union { double f; uint8_t b[8]; }")
 
@@ -143,6 +146,12 @@ local function record(out, tag, body)
     local bytes = table.concat(body_out)
     put_u32(out, #bytes)
     out[#out + 1] = bytes
+end
+
+local function record_bytes(tag, body)
+    local out = {}
+    record(out, tag, body)
+    return table.concat(out)
 end
 
 local function new_encoder()
@@ -355,10 +364,340 @@ end
 
 function M.encode(value)
     local node = value
-    if type(value) == "table" and rawget(value, "__llpvm_node") ~= nil then node = rawget(value, "__llpvm_node") end
     local cls = pvm.classof(node)
     if cls == T.Program then return M.encode_program(node) end
     error("llpvm.bytecode.encode expects LlPvm.Program", 2)
+end
+
+function M.builder()
+    return setmetatable({
+        records = {},
+        next_id = 1,
+        symbol_ids = {},
+        scalar_ids = {},
+        handle_ids = {},
+        pointer_ids = {},
+        view_ids = {},
+    }, Builder)
+end
+
+function Builder:alloc_id()
+    local id = self.next_id
+    self.next_id = id + 1
+    return id
+end
+
+function Builder:add(tag, body)
+    self.records[#self.records + 1] = record_bytes(tag, body)
+end
+
+function Builder:symbol(value)
+    value = tostring(value or "")
+    local id = self.symbol_ids[value]
+    if id then return id end
+    id = self:alloc_id()
+    self.symbol_ids[value] = id
+    self:add(M.TAG.symbol, function(out)
+        put_u32(out, id)
+        put_string(out, value)
+    end)
+    return id
+end
+
+function Builder:scalar(code_name)
+    local id = self.scalar_ids[code_name]
+    if id then return id end
+    local code = assert(({
+        Void = 0, Bool = 1, I8 = 2, I16 = 3, I32 = 4, I64 = 5,
+        U8 = 6, U16 = 7, U32 = 8, U64 = 9, F32 = 10, F64 = 11,
+        Index = 12,
+    })[code_name], "unknown LLPVM scalar: " .. tostring(code_name))
+    id = self:alloc_id()
+    self.scalar_ids[code_name] = id
+    self:add(M.TAG.type_scalar, function(out)
+        put_u32(out, id)
+        put_u32(out, code)
+    end)
+    return id
+end
+
+function Builder:handle(name)
+    name = tostring(name or "")
+    local id = self.handle_ids[name]
+    if id then return id end
+    local sym = self:symbol(name)
+    id = self:alloc_id()
+    self.handle_ids[name] = id
+    self:add(M.TAG.type_handle, function(out)
+        put_u32(out, id)
+        put_u32(out, sym)
+    end)
+    return id
+end
+
+function Builder:pointer(to)
+    local key = tostring(to)
+    local id = self.pointer_ids[key]
+    if id then return id end
+    id = self:alloc_id()
+    self.pointer_ids[key] = id
+    self:add(M.TAG.type_pointer, function(out)
+        put_u32(out, id)
+        put_u32(out, to)
+    end)
+    return id
+end
+
+function Builder:view(item)
+    local key = tostring(item)
+    local id = self.view_ids[key]
+    if id then return id end
+    id = self:alloc_id()
+    self.view_ids[key] = id
+    self:add(M.TAG.type_view, function(out)
+        put_u32(out, id)
+        put_u32(out, item)
+    end)
+    return id
+end
+
+function Builder:field(name, type_id)
+    local id = self:alloc_id()
+    local sym = self:symbol(name)
+    self:add(M.TAG.field, function(out)
+        put_u32(out, id)
+        put_u32(out, sym)
+        put_u32(out, type_id)
+    end)
+    return id
+end
+
+function Builder:struct(name, field_ids)
+    local id = self:alloc_id()
+    local sym = self:symbol(name)
+    self:add(M.TAG.type_struct, function(out)
+        put_u32(out, id)
+        put_u32(out, sym)
+        put_id_list(out, field_ids or {})
+    end)
+    return id
+end
+
+function Builder:op_kind(name, field_ids)
+    local id = self:alloc_id()
+    local sym = self:symbol(name)
+    self:add(M.TAG.op_kind, function(out)
+        put_u32(out, id)
+        put_u32(out, sym)
+        put_id_list(out, field_ids or {})
+    end)
+    return id
+end
+
+function Builder:abi(name, version, op_kind_ids, resource_type_id)
+    local id = self:alloc_id()
+    local sym = self:symbol(name)
+    self:add(M.TAG.abi, function(out)
+        put_u32(out, id)
+        put_u32(out, sym)
+        put_u32(out, version or 1)
+        put_u32(out, resource_type_id or 0)
+        put_id_list(out, op_kind_ids or {})
+    end)
+    return id
+end
+
+function Builder:world(name, abi_id)
+    local id = self:alloc_id()
+    local sym = self:symbol(name)
+    self:add(M.TAG.world, function(out)
+        put_u32(out, id)
+        put_u32(out, sym)
+        put_u32(out, abi_id)
+    end)
+    return id
+end
+
+function Builder:payload(value)
+    local id = self:alloc_id()
+    local tv = type(value)
+    if value == nil then
+        self:add(M.TAG.payload_nil, function(out) put_u32(out, id) end)
+    elseif tv == "boolean" then
+        self:add(M.TAG.payload_bool, function(out) put_u32(out, id); put_byte(out, value and 1 or 0) end)
+    elseif tv == "number" then
+        if value % 1 == 0 then
+            self:add(M.TAG.payload_int, function(out) put_u32(out, id); put_i64(out, value) end)
+        else
+            self:add(M.TAG.payload_float, function(out) put_u32(out, id); put_f64(out, value) end)
+        end
+    elseif tv == "string" then
+        self:add(M.TAG.payload_string, function(out) put_u32(out, id); put_string(out, value) end)
+    else
+        error("unsupported LLPVM payload value: " .. tv, 2)
+    end
+    return id
+end
+
+function Builder:ref_payload(raw)
+    local id = self:alloc_id()
+    self:add(M.TAG.payload_ref, function(out)
+        put_u32(out, id)
+        put_u32(out, raw)
+    end)
+    return id
+end
+
+function Builder:arg(value)
+    local id = self:alloc_id()
+    local tv = type(value)
+    if value == nil then
+        self:add(M.TAG.arg_nil, function(out) put_u32(out, id) end)
+    elseif tv == "boolean" then
+        self:add(M.TAG.arg_bool, function(out) put_u32(out, id); put_byte(out, value and 1 or 0) end)
+    elseif tv == "number" then
+        if value % 1 == 0 then
+            self:add(M.TAG.arg_int, function(out) put_u32(out, id); put_i64(out, value) end)
+        else
+            self:add(M.TAG.arg_float, function(out) put_u32(out, id); put_f64(out, value) end)
+        end
+    elseif tv == "string" then
+        self:add(M.TAG.arg_string, function(out) put_u32(out, id); put_string(out, value) end)
+    else
+        error("unsupported LLPVM arg value: " .. tv, 2)
+    end
+    return id
+end
+
+function Builder:ref_arg(raw)
+    local id = self:alloc_id()
+    self:add(M.TAG.arg_ref, function(out)
+        put_u32(out, id)
+        put_u32(out, raw)
+    end)
+    return id
+end
+
+function Builder:args(arg_ids)
+    local id = self:alloc_id()
+    self:add(M.TAG.args, function(out)
+        put_u32(out, id)
+        put_id_list(out, arg_ids or {})
+    end)
+    return id
+end
+
+function Builder:op(world_id, kind_name, payload_ids)
+    local id = self:alloc_id()
+    local kind = self:symbol(kind_name)
+    self:add(M.TAG.op, function(out)
+        put_u32(out, id)
+        put_u32(out, world_id)
+        put_u32(out, kind)
+        put_id_list(out, payload_ids or {})
+    end)
+    return id
+end
+
+function Builder:empty(world_id)
+    local id = self:alloc_id()
+    self:add(M.TAG.stream_empty, function(out)
+        put_u32(out, id)
+        put_u32(out, world_id)
+    end)
+    return id
+end
+
+function Builder:once(op_id)
+    local id = self:alloc_id()
+    self:add(M.TAG.stream_once, function(out)
+        put_u32(out, id)
+        put_u32(out, op_id)
+    end)
+    return id
+end
+
+function Builder:seq(world_id, op_ids)
+    local id = self:alloc_id()
+    self:add(M.TAG.stream_seq, function(out)
+        put_u32(out, id)
+        put_u32(out, world_id)
+        put_id_list(out, op_ids or {})
+    end)
+    return id
+end
+
+function Builder:concat(stream_ids)
+    local id = self:alloc_id()
+    self:add(M.TAG.stream_concat, function(out)
+        put_u32(out, id)
+        put_id_list(out, stream_ids or {})
+    end)
+    return id
+end
+
+function Builder:phase_map(phase_id, input_id, args_id)
+    local id = self:alloc_id()
+    self:add(M.TAG.stream_phase_map, function(out)
+        put_u32(out, id)
+        put_u32(out, phase_id)
+        put_u32(out, input_id)
+        put_u32(out, args_id)
+    end)
+    return id
+end
+
+function Builder:machine(name, input_id, output_id, entry_name)
+    local id = self:alloc_id()
+    local name_id = self:symbol(name)
+    local entry_id = self:symbol(entry_name or name)
+    self:add(M.TAG.machine_region, function(out)
+        put_u32(out, id)
+        put_u32(out, name_id)
+        put_u32(out, input_id)
+        put_u32(out, output_id)
+        put_u32(out, entry_id)
+    end)
+    return id
+end
+
+function Builder:cache(mode)
+    local tag = M.TAG.cache_full
+    if mode == false or mode == "none" or mode == "off" then tag = M.TAG.cache_none end
+    if mode == "record" or mode == "record_only" then tag = M.TAG.cache_record end
+    local id = self:alloc_id()
+    self:add(tag, function(out) put_u32(out, id) end)
+    return id
+end
+
+function Builder:phase(name, input_id, output_id, machine_id, cache_id)
+    local id = self:alloc_id()
+    local name_id = self:symbol(name)
+    self:add(M.TAG.phase, function(out)
+        put_u32(out, id)
+        put_u32(out, name_id)
+        put_u32(out, input_id)
+        put_u32(out, output_id)
+        put_u32(out, machine_id)
+        put_u32(out, cache_id)
+    end)
+    return id
+end
+
+function Builder:finish(root_stream_ids, root_op_ids)
+    root_stream_ids = root_stream_ids or {}
+    root_op_ids = root_op_ids or {}
+    assert(#root_stream_ids > 0, "LLPVM bytecode program requires at least one root")
+    assert(#root_op_ids > 0, "LLPVM bytecode root stream must contain at least one op")
+    local header = {}
+    header[#header + 1] = M.MAGIC
+    put_u32(header, M.VERSION)
+    put_u32(header, root_stream_ids[1])
+    put_u32(header, #root_op_ids)
+    put_u32(header, 20)
+    local root_table = {}
+    for i = 1, #root_op_ids do put_u32(root_table, root_op_ids[i]) end
+    return table.concat(header) .. table.concat(root_table) .. table.concat(self.records)
 end
 
 return M

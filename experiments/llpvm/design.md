@@ -95,7 +95,8 @@ LlPvm.Report
 LlPvm.Diagnostic
 ```
 
-Lua builders use ASDL literals/FastBuilders. Literals are constructors when the
+Lua builders write the LLPV image directly. ASDL literals/FastBuilders remain
+available for schema design, tests, and debug tooling. Literals are constructors when the
 language has the information required to construct the product directly. Do not
 invent parallel constructor APIs when the literal form is already the idiomatic
 Moonlift form.
@@ -833,12 +834,13 @@ integers with store validation and generation checks.
 
 ## Bytecode Image Boundary
 
-LLPVM is a real VM. Lua does not feed it objects one call at a time. Lua authors
-a typed program, encodes it into a dense image, and the native VM imports that
+LLPVM is a real VM. Lua does not feed it objects one call at a time. The normal
+Lua facade writes a dense LLPV image directly and the native VM imports that
 image in one bulk operation:
 
 ```text
-Lua ASDL authoring
+Lua no-parens facade
+    -> direct LLPV image builder
     -> LLPV bytecode image
     -> llpvm_load_program(vm, image)
     -> native handles
@@ -851,8 +853,12 @@ the execution loop.
 The bytecode image starts with:
 
 ```text
-magic   "LLPV"
-u32     version
+u8[4]   magic = "LLPV"
+u32     version = 2
+u32     root_stream_id
+u32     root_op_count
+u32     root_op_table_offset
+u32[]   root_op_ids
 record* tagged little-endian records
 ```
 
@@ -864,10 +870,10 @@ u32     payload_bytes
 u8[]    payload
 ```
 
-The Lua encoder assigns dense image-local ids to every symbol, type, ABI, world,
-op, stream, machine, phase, args product, and root. Records reference each other
-by those ids. The native importer resolves ids into validated stores and returns
-native handles. No authored ASDL object is a native handle.
+The Lua image builder assigns dense image-local ids to every symbol, type, ABI,
+world, op, stream, machine, phase, args product, and root. Records reference each
+other by those ids. The native importer resolves ids into validated stores and
+returns native handles. No authored Lua proxy is a native handle.
 
 Required native import boundary:
 
@@ -900,7 +906,7 @@ Suggested module:
 local ll = require "llpvm"
 ```
 
-The Lua API is no-parens and ASDL-shaped:
+The Lua API is no-parens and bytecode-shaped:
 
 ```lua
 local vm = ll.vm { cache_bytes = 64 * 1024 * 1024 }
@@ -959,21 +965,22 @@ The current Lua facade lives at:
 local ll = require "llpvm"
 ```
 
-It exposes both standard ASDL constructors and idiomatic no-parens helpers:
+It exposes the direct no-parens bytecode facade, plus standard ASDL constructors
+for tools that need the structural vocabulary:
 
 ```lua
 ll.T        -- ASDL context
-ll.B        -- FastBuilders root
-ll.B.LlPvm -- direct ASDL literals/constructors
+ll.B        -- optional FastBuilders root
+ll.B.LlPvm -- optional ASDL literals/constructors
 ```
 
-Use direct ASDL literals when the product is already obvious:
+Use ASDL literals only when a tool explicitly needs ASDL products:
 
 ```lua
 local sym = ll.B.LlPvm.Symbol { value = "Expr" }
 ```
 
-Use the facade when authoring a VM family:
+Use the facade for normal program images:
 
 ```lua
 local vm = ll.vm { cache_bytes = 64 * 1024 * 1024 }
@@ -1006,14 +1013,12 @@ ll.view(ll.u8)
 ll.struct "Pair" { left = ll.i32, right = ll.i32 }
 ```
 
-Available product helpers:
+Available low-level helpers:
 
 ```lua
 ll.symbol "name"
 ll.field("value", ll.i64)
-ll.op "Int" { value = ll.i64 }
 ll.cache "full"      -- also "none", "off", "record"
-ll.args { target = "wasm32", opt = 3 }
 ll.ref_payload(42)
 ll.ref_arg(42)
 ```
@@ -1039,11 +1044,11 @@ local output = lower(input)
 local output_with_args = lower { target = "wasm32", opt = 3 } (input)
 ```
 
-Stream proxies expose host-side inspection helpers for authored ASDL streams:
+Stream proxies expose host-side inspection helpers for locally knowable streams:
 
 ```lua
-stream:drain() -- returns materialized authored ops when locally knowable
-stream:one()   -- exactly one authored product
+stream:drain() -- returns materialized authored Lua op proxies when locally knowable
+stream:one()   -- exactly one authored op proxy
 stream:each(function(op, i) ... end)
 ```
 
@@ -1059,7 +1064,7 @@ status:assert("llpvm_load_program")
 local drain_status, buffer = runtime_vm:drain(root_stream)
 ```
 
-The runtime API rejects authored streams. `load_program` is the boundary that
+The runtime API rejects authored Lua proxies. `load_program` is the boundary that
 turns caller-owned immutable bytecode image views into numeric native handles
 owned by the VM. The image buffer must outlive streams derived from it.
 

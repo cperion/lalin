@@ -26,7 +26,7 @@ local authored = ll.vm {}
 local Expr = authored.abi "Expr" { Int = { value = ll.i64 } }
 local input = authored.seq(Expr:world()) { Expr.Int { value = 1 } }
 local ok, err = pcall(function() vm:drain(input) end)
-assert(not ok and tostring(err):match("authored ASDL proxy"), "runtime must reject authored streams that were not loaded as bytecode")
+assert(not ok and tostring(err):match("authored Lua proxy"), "runtime must reject authored streams that were not loaded as bytecode")
 
 local image = authored.program { input }:bytecode()
 local ffi = require("ffi")
