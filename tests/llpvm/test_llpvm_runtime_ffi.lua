@@ -23,8 +23,11 @@ assert(drain_status.code == 0, "empty stream drain currently succeeds as empty")
 assert(out_buffer == 0, "empty drain returns invalid buffer")
 
 local authored = ll.vm {}
-local Expr = authored.abi "Expr" { Int = { value = ll.i64 } }
-local input = authored.seq(Expr:world()) { Expr.Int { value = 1 } }
+local Expr = authored.language "Expr"
+local Node = Expr "Node"
+Node.Int = { value = ll.i64 }
+local ExprWorld = Expr:world()
+local input = ExprWorld:seq { ExprWorld.Node.Int { value = 1 } }
 local ok, err = pcall(function() vm:drain(input) end)
 assert(not ok and tostring(err):match("authored Lua proxy"), "runtime must reject authored streams that were not loaded as bytecode")
 

@@ -11,11 +11,20 @@ local M = {
 local Vm = {}
 Vm.__index = Vm
 
-local Abi = {}
-Abi.__index = Abi
+local Language = {}
+local LanguageMethods = {}
+
+local TypeDecl = {}
+local TypeDeclMethods = {}
 
 local World = {}
-World.__index = World
+local WorldMethods = {}
+
+local WorldType = {}
+WorldType.__index = WorldType
+
+local Constructor = {}
+Constructor.__index = Constructor
 
 local Stream = {}
 Stream.__index = Stream
@@ -32,6 +41,9 @@ Retained.__index = Retained
 local Type = {}
 Type.__index = Type
 
+local Value = {}
+Value.__index = Value
+
 local scalar_names = {
     void = "Void",
     bool = "Bool",
@@ -46,6 +58,23 @@ local scalar_names = {
     f32 = "F32",
     f64 = "F64",
     index = "Index",
+}
+
+local integer_scalar = {
+    i8 = true,
+    i16 = true,
+    i32 = true,
+    i64 = true,
+    u8 = true,
+    u16 = true,
+    u32 = true,
+    u64 = true,
+    index = true,
+}
+
+local float_scalar = {
+    f32 = true,
+    f64 = true,
 }
 
 local function is_array(t)
@@ -70,6 +99,13 @@ local function list(v)
     if v == nil then return {} end
     if is_array(v) then return v end
     return { v }
+end
+
+local function has_key(t, key)
+    for k in pairs(t) do
+        if k == key then return true end
+    end
+    return false
 end
 
 local function unwrap(v)
@@ -112,13 +148,16 @@ M.u64 = scalar("u64")
 M.f32 = scalar("f32")
 M.f64 = scalar("f64")
 M.index = scalar("index")
-M.node = { __llpvm_builtin = "node" }
+
+local function is_type_decl(v)
+    return getmetatable(unwrap(v)) == TypeDecl
+end
 
 local function resolve_type(vm, spec)
     spec = unwrap(spec)
     if getmetatable(spec) == Type then return spec end
+    if getmetatable(spec) == TypeDecl then return spec:resolved_type() end
     if type(spec) == "table" and spec.scalar then return vm:_scalar_type(spec.scalar) end
-    if type(spec) == "table" and spec.__llpvm_builtin == "node" then return vm:_handle_type("node") end
     if type(spec) == "table" and spec.id then return spec end
     error("LLPVM type expected", 3)
 end
@@ -139,6 +178,18 @@ function M.struct(name)
     return function(fields)
         return { __llpvm_type_form = "struct", name = tostring(name), fields = fields or {} }
     end
+end
+
+function M.field(name, typ)
+    return { __llpvm_field = true, name = tostring(name), type = typ }
+end
+
+function M.symbol(v)
+    return tostring(v or "")
+end
+
+function M.cache(mode)
+    return mode
 end
 
 function Vm:_scalar_type(name)
@@ -164,8 +215,8 @@ end
 function Vm:_lower_type_form(spec)
     spec = unwrap(spec)
     if getmetatable(spec) == Type then return spec end
+    if getmetatable(spec) == TypeDecl then return spec:resolved_type() end
     if type(spec) == "table" and spec.scalar then return self:_scalar_type(spec.scalar) end
-    if type(spec) == "table" and spec.__llpvm_builtin == "node" then return self:_handle_type("node") end
     if type(spec) ~= "table" then error("LLPVM type form expected", 3) end
     if spec.__llpvm_type_form == "handle" then return self:_handle_type(spec.name) end
     if spec.__llpvm_type_form == "ptr" then
@@ -180,7 +231,15 @@ function Vm:_lower_type_form(spec)
         local field_ids = {}
         local fields = spec.fields or {}
         if is_array(fields) then
-            for i = 1, #fields do field_ids[i] = id_of(fields[i], "field") end
+            for i = 1, #fields do
+                local f = fields[i]
+                if type(f) == "table" and f.__llpvm_field then
+                    local ft = resolve_type(self, self:_lower_type_form(f.type))
+                    field_ids[i] = self.builder:field(f.name, ft.id)
+                else
+                    field_ids[i] = id_of(f, "field")
+                end
+            end
         else
             for i, k in ipairs(sorted_string_keys(fields)) do
                 local ft = resolve_type(self, self:_lower_type_form(fields[k]))
@@ -192,161 +251,313 @@ function Vm:_lower_type_form(spec)
     error("unknown LLPVM type form", 3)
 end
 
-function M.field(name, typ)
-    return { __llpvm_field = true, name = tostring(name), type = typ }
-end
-
-local function payload_id(vm, v)
-    v = unwrap(v)
-    if type(v) == "table" and v.__llpvm_ref_payload then return vm.builder:ref_payload(v.value) end
-    return vm.builder:payload(v)
-end
-
-local function arg_id(vm, v)
-    v = unwrap(v)
-    if type(v) == "table" and v.__llpvm_ref_arg then return vm.builder:ref_arg(v.value) end
-    return vm.builder:arg(v)
-end
-
-function M.ref_payload(raw)
-    return { __llpvm_ref_payload = true, value = raw }
-end
-
-function M.ref_arg(raw)
-    return { __llpvm_ref_arg = true, value = raw }
-end
-
-function M.symbol(v)
-    return tostring(v or "")
-end
-
-function M.cache(mode)
-    return mode
-end
-
-local function stream_wrap(vm, id, kind, extra)
-    extra = extra or {}
-    extra.vm = vm
-    extra.id = id
-    extra.kind = kind
-    return setmetatable(extra, Stream)
-end
-
-local function world_wrap(vm, abi, id, name)
-    return setmetatable({ vm = vm, abi = abi, id = id, name = name }, World)
-end
-
-local function phase_wrap(vm, id, name)
-    return setmetatable({ vm = vm, id = id, name = name }, Phase)
-end
-
-function Abi:_make_op(kind_name, payload_spec)
-    payload_spec = payload_spec or {}
-    local payload_ids = {}
-    local payload_values = {}
-    local fields = self.__op_fields[kind_name] or {}
-    if is_array(payload_spec) then
-        for i = 1, #payload_spec do
-            payload_ids[i] = payload_id(self.vm, payload_spec[i])
-            payload_values[i] = payload_spec[i]
+local function field_list(vm, fields)
+    fields = fields or {}
+    local out = {}
+    if is_array(fields) then
+        for i = 1, #fields do
+            local f = fields[i]
+            assert(type(f) == "table" and f.__llpvm_field, "array payload schemas must contain ll.field values")
+            out[i] = {
+                name = f.name,
+                spec = f.type,
+                type = resolve_type(vm, vm:_lower_type_form(f.type)),
+            }
         end
     else
-        for i = 1, #fields do
-            local name = fields[i]
-            local v = payload_spec[name]
-            payload_ids[i] = payload_id(self.vm, v)
-            payload_values[i] = v
+        for i, k in ipairs(sorted_string_keys(fields)) do
+            local spec = fields[k]
+            out[i] = {
+                name = k,
+                spec = spec,
+                type = resolve_type(vm, vm:_lower_type_form(spec)),
+            }
         end
     end
-    local world = self:world()
-    local id = self.vm.builder:op(world.id, kind_name, payload_ids)
-    return { vm = self.vm, id = id, world = world, kind = kind_name, payload = payload_values }
+    return out
 end
 
-function Abi:world(name)
+function TypeDeclMethods:resolved_type()
+    if not self.__resolved_type then
+        rawset(self, "__resolved_type", self.language.vm:_handle_type(self.qualified_name))
+    end
+    return self.__resolved_type
+end
+
+function TypeDeclMethods:define_op(name, payload_spec)
+    assert(not self.language.__sealed, "cannot define LLPVM constructors after language is sealed")
+    assert(type(name) == "string" and name ~= "", "LLPVM op name must be a non-empty string")
+    assert(type(payload_spec) == "table", "LLPVM op payload schema must be a table")
+    assert(self.__ops_by_name[name] == nil, "duplicate LLPVM op: " .. self.qualified_name .. "." .. name)
+    local op = {
+        owner = self,
+        name = name,
+        qualified_name = self.name .. "." .. name,
+        payload_spec = payload_spec,
+        fields = nil,
+    }
+    self.__ops_by_name[name] = op
+    self.__ops[#self.__ops + 1] = op
+    return op
+end
+
+TypeDecl.__index = function(self, key)
+    local method = TypeDeclMethods[key]
+    if method then return method end
+    return rawget(self, key)
+end
+
+TypeDecl.__newindex = function(self, key, value)
+    if type(key) == "string" and key:sub(1, 2) == "__" then
+        rawset(self, key, value)
+        return
+    end
+    if type(key) == "string" then
+        self:define_op(key, value)
+        return
+    end
+    rawset(self, key, value)
+end
+
+Language.__index = function(self, key)
+    local method = LanguageMethods[key]
+    if method then return method end
+    local typ = self.__types_by_field[key]
+    if typ then return typ end
+    return rawget(self, key)
+end
+
+Language.__newindex = function(self, key, value)
+    if self.__sealed then error("cannot mutate LLPVM language after it is sealed", 2) end
+    if type(key) == "string" and getmetatable(value) == TypeDecl then
+        self:install_type(key, value)
+        return
+    end
+    rawset(self, key, value)
+end
+
+local function language_new_type(language, name)
+    assert(not language.__sealed, "cannot define LLPVM types after language is sealed")
+    local type_name = tostring(name)
+    assert(type_name ~= "", "LLPVM type name must be non-empty")
+    return setmetatable({
+        language = language,
+        name = type_name,
+        qualified_name = language.name .. "." .. type_name,
+        __ops = {},
+        __ops_by_name = {},
+    }, TypeDecl)
+end
+
+Language.__call = function(self, name)
+    local typ = language_new_type(self, name)
+    self:install_type(typ.name, typ)
+    return typ
+end
+
+function LanguageMethods:install_type(field_name, typ)
+    assert(not self.__sealed, "cannot install LLPVM type after language is sealed")
+    assert(typ.language == self, "cannot install a type from another LLPVM language")
+    assert(self.__types_by_field[field_name] == nil, "duplicate LLPVM type field: " .. field_name)
+    rawset(typ, "field_name", field_name)
+    self.__types_by_field[field_name] = typ
+    self.__types[#self.__types + 1] = typ
+    rawset(self, field_name, typ)
+end
+
+function LanguageMethods:seal(version, resource_type)
+    if self.__sealed then return self end
+    local op_kind_ids = {}
+    for _, typ in ipairs(self.__types) do
+        typ:resolved_type()
+        for _, op in ipairs(typ.__ops) do
+            op.fields = field_list(self.vm, op.payload_spec)
+            local field_ids = {}
+            for i, field in ipairs(op.fields) do
+                field_ids[i] = self.vm.builder:field(field.name, field.type.id)
+            end
+            op_kind_ids[#op_kind_ids + 1] = self.vm.builder:op_kind(op.qualified_name, field_ids)
+        end
+    end
+    local resource = resource_type and resolve_type(self.vm, self.vm:_lower_type_form(resource_type)).id or 0
+    self.id = self.vm.builder:abi(self.name, version or 1, op_kind_ids, resource)
+    self.__sealed = true
+    self.vm.abis[#self.vm.abis + 1] = self
+    return self
+end
+
+function LanguageMethods:world(name)
+    self:seal()
     name = name or self.name
     if self.__worlds[name] == nil then
         local id = self.vm.builder:world(name, self.id)
-        local world = world_wrap(self.vm, self, id, name)
+        local world = setmetatable({
+            vm = self.vm,
+            language = self,
+            abi = self,
+            id = id,
+            name = name,
+            __types = {},
+        }, World)
+        for _, typ in ipairs(self.__types) do
+            world.__types[typ.field_name or typ.name] = setmetatable({ world = world, type = typ, __ctors = {} }, WorldType)
+        end
         self.__worlds[name] = world
         self.vm.worlds[#self.vm.worlds + 1] = world
     end
     return self.__worlds[name]
 end
 
-function Vm:abi(name)
-    return function(spec)
-        spec = spec or {}
-        local op_kind_ids = {}
-        local op_fields = {}
-        for _, k in ipairs(sorted_string_keys(spec)) do
-            if k ~= "version" and k ~= "resource_type" then
-                local field_ids = {}
-                local field_names = {}
-                local fields = spec[k] or {}
-                for i, field_name in ipairs(sorted_string_keys(fields)) do
-                    local ft = resolve_type(self, self:_lower_type_form(fields[field_name]))
-                    field_ids[i] = self.builder:field(field_name, ft.id)
-                    field_names[i] = field_name
-                end
-                op_kind_ids[#op_kind_ids + 1] = self.builder:op_kind(k, field_ids)
-                op_fields[k] = field_names
-            end
+World.__index = function(self, key)
+    local method = WorldMethods[key]
+    if method then return method end
+    local typ = self.__types[key]
+    if typ then return typ end
+    return rawget(self, key)
+end
+
+function WorldMethods:empty()
+    local id = self.vm.builder:empty(self.id)
+    return setmetatable({ vm = self.vm, id = id, kind = "empty", world = self, ops = {} }, Stream)
+end
+
+function WorldMethods:once(value)
+    value = unwrap(value)
+    assert(getmetatable(value) == Value, "world:once expects a typed LLPVM value")
+    assert(value.world == self, "world:once value belongs to another world")
+    local id = self.vm.builder:once(value.id)
+    return setmetatable({ vm = self.vm, id = id, kind = "once", world = self, ops = { value } }, Stream)
+end
+
+function WorldMethods:seq(values)
+    values = list(values)
+    local op_ids = {}
+    local ops = {}
+    for i = 1, #values do
+        local value = unwrap(values[i])
+        assert(getmetatable(value) == Value, "world:seq expects typed LLPVM values")
+        assert(value.world == self, "world:seq value belongs to another world")
+        op_ids[i] = value.id
+        ops[i] = value
+    end
+    local id = self.vm.builder:seq(self.id, op_ids)
+    return setmetatable({ vm = self.vm, id = id, kind = "seq", world = self, ops = ops }, Stream)
+end
+
+function WorldMethods:program(roots)
+    return self.vm:program(roots)
+end
+
+local function validate_scalar_value(field, scalar_name, value)
+    if scalar_name == "void" then
+        assert(value == nil, "field '" .. field.name .. "' expects void/nil")
+    elseif scalar_name == "bool" then
+        assert(type(value) == "boolean", "field '" .. field.name .. "' expects bool")
+    elseif integer_scalar[scalar_name] then
+        assert(type(value) == "number" and value % 1 == 0, "field '" .. field.name .. "' expects integer " .. scalar_name)
+    elseif float_scalar[scalar_name] then
+        assert(type(value) == "number", "field '" .. field.name .. "' expects number " .. scalar_name)
+    end
+end
+
+local function payload_id_for_field(world, field, value)
+    value = unwrap(value)
+    if is_type_decl(field.spec) then
+        assert(getmetatable(value) == Value, "field '" .. field.name .. "' expects " .. field.spec.qualified_name)
+        assert(value.type == field.spec, "field '" .. field.name .. "' expects " .. field.spec.qualified_name)
+        assert(value.world == world, "field '" .. field.name .. "' value belongs to another world")
+        return world.vm.builder:ref_payload(value.id)
+    end
+    if field.type.kind == "scalar" then validate_scalar_value(field, field.type.name, value) end
+    return world.vm.builder:payload(value)
+end
+
+function Constructor:__call(payload_spec)
+    local op = self.op
+    payload_spec = payload_spec or {}
+    assert(type(payload_spec) == "table", "LLPVM constructor payload must be a named table")
+    assert(not is_array(payload_spec) or #payload_spec == 0, "LLPVM constructors require named payload fields")
+    local used = {}
+    local payload_ids = {}
+    local payload_values = {}
+    for i, field in ipairs(op.fields or {}) do
+        assert(has_key(payload_spec, field.name), "missing LLPVM payload field: " .. op.qualified_name .. "." .. field.name)
+        local value = payload_spec[field.name]
+        used[field.name] = true
+        payload_ids[i] = payload_id_for_field(self.world, field, value)
+        payload_values[i] = value
+    end
+    for k in pairs(payload_spec) do
+        assert(used[k], "unknown LLPVM payload field: " .. op.qualified_name .. "." .. tostring(k))
+    end
+    local id = self.world.vm.builder:op(self.world.id, op.qualified_name, payload_ids)
+    return setmetatable({
+        vm = self.world.vm,
+        id = id,
+        world = self.world,
+        type = self.type,
+        type_name = self.type.name,
+        kind = op.name,
+        qualified_kind = op.qualified_name,
+        payload = payload_values,
+    }, Value)
+end
+
+function WorldType:__index(key)
+    local op = self.type.__ops_by_name[key]
+    if op then
+        local ctor = self.__ctors[key]
+        if ctor == nil then
+            ctor = setmetatable({
+                world = self.world,
+                type = self.type,
+                op = op,
+                name = op.name,
+                qualified_name = op.qualified_name,
+            }, Constructor)
+            self.__ctors[key] = ctor
         end
-        local resource = spec.resource_type and resolve_type(self, self:_lower_type_form(spec.resource_type)).id or 0
-        local id = self.builder:abi(name, spec.version or 1, op_kind_ids, resource)
-        local abi = setmetatable({ vm = self, id = id, name = name, __op_fields = op_fields, __worlds = {} }, Abi)
-        for op_name in pairs(op_fields) do
-            abi[op_name] = function(payload_spec) return abi:_make_op(op_name, payload_spec) end
-        end
-        self.abis[#self.abis + 1] = abi
-        return abi
+        return ctor
     end
+    return rawget(WorldType, key)
 end
 
-function Vm:world(name)
-    return function(spec)
-        spec = spec or {}
-        local abi = assert(spec.abi, "vm.world requires abi")
-        local id = self.builder:world(name, id_of(abi, "abi"))
-        local world = world_wrap(self, abi, id, name)
-        self.worlds[#self.worlds + 1] = world
-        return world
-    end
-end
-
-function Vm:empty(world)
-    local id = self.builder:empty(id_of(world, "world"))
-    return stream_wrap(self, id, "empty", { world = world, ops = {} })
-end
-
-function Vm:once(op)
-    op = unwrap(op)
-    local id = self.builder:once(id_of(op, "op"))
-    return stream_wrap(self, id, "once", { world = op.world, ops = { op } })
-end
-
-function Vm:seq(world)
-    return function(ops)
-        ops = list(ops)
-        local op_ids = {}
-        for i = 1, #ops do op_ids[i] = id_of(ops[i], "op") end
-        local id = self.builder:seq(id_of(world, "world"), op_ids)
-        return stream_wrap(self, id, "seq", { world = world, ops = ops })
-    end
+function Vm:language(name)
+    name = tostring(name)
+    assert(name ~= "", "LLPVM language name must be non-empty")
+    assert(self.languages_by_name[name] == nil, "duplicate LLPVM language: " .. name)
+    local language = setmetatable({
+        vm = self,
+        id = nil,
+        name = name,
+        __types = {},
+        __types_by_field = {},
+        __worlds = {},
+        __sealed = false,
+    }, Language)
+    self.languages_by_name[name] = language
+    self.languages[#self.languages + 1] = language
+    return language
 end
 
 function Vm:concat(streams)
     streams = list(streams)
     local stream_ids = {}
     local ops = {}
+    local world = nil
     for i = 1, #streams do
         local s = unwrap(streams[i])
+        assert(getmetatable(s) == Stream, "vm:concat expects streams")
+        if world == nil then
+            world = s.world
+        else
+            assert(s.world == world, "vm:concat streams must share one world")
+        end
         stream_ids[i] = id_of(s, "stream")
         for j = 1, #(s.ops or {}) do ops[#ops + 1] = s.ops[j] end
     end
     local id = self.builder:concat(stream_ids)
-    return stream_wrap(self, id, "concat", { ops = ops })
+    return setmetatable({ vm = self, id = id, kind = "concat", world = world, ops = ops }, Stream)
 end
 
 function Vm:machine(name)
@@ -369,10 +580,16 @@ function Vm:phase(name)
         local machine = assert(spec.machine, "phase requires machine")
         local cache_id = self.builder:cache(spec.cache)
         local id = self.builder:phase(name, id_of(input, "input world"), id_of(output, "output world"), id_of(machine, "machine"), cache_id)
-        local phase = phase_wrap(self, id, name)
+        local phase = setmetatable({ vm = self, id = id, name = name, input = input, output = output }, Phase)
         self.phases[#self.phases + 1] = phase
         return phase
     end
+end
+
+local function arg_id(vm, v)
+    v = unwrap(v)
+    if getmetatable(v) == Value then return vm.builder:ref_arg(v.id) end
+    return vm.builder:arg(v)
 end
 
 function Phase:with_args(args)
@@ -386,14 +603,24 @@ function Phase:with_args(args)
     local args_id = self.vm.builder:args(values)
     return setmetatable({ vm = self.vm, phase = self, args_id = args_id }, {
         __call = function(bound, input)
+            input = unwrap(input)
+            assert(getmetatable(input) == Stream, "phase input must be an LLPVM stream")
+            assert(input.world == bound.phase.input, "phase input stream has the wrong world")
             local id = bound.vm.builder:phase_map(bound.phase.id, id_of(input, "input stream"), bound.args_id)
-            return stream_wrap(bound.vm, id, "phase_map", { input = input, ops = { { id = id, kind = "phase_map" } } })
+            return setmetatable({
+                vm = bound.vm,
+                id = id,
+                kind = "phase_map",
+                world = bound.phase.output,
+                input = input,
+                ops = { { id = id, kind = "phase_map", world = bound.phase.output } },
+            }, Stream)
         end,
     })
 end
 
 function Phase:__call(arg)
-    if getmetatable(arg) == Stream then return self:with_args({})(arg) end
+    if getmetatable(unwrap(arg)) == Stream then return self:with_args({})(arg) end
     return self:with_args(arg or {})
 end
 
@@ -457,23 +684,22 @@ function Retained:get()
 end
 
 function M.vm(config)
+    if type(config) == "string" then config = { name = config } end
     config = config or {}
     local self = setmetatable({
         config = config,
         generation = 1,
         builder = bytecode.builder(),
         types = {},
+        languages = {},
+        languages_by_name = {},
         abis = {},
         worlds = {},
         machines = {},
         phases = {},
         retained = {},
     }, Vm)
-    self.abi = function(name) return Vm.abi(self, name) end
-    self.world = function(name) return Vm.world(self, name) end
-    self.empty = function(world) return Vm.empty(self, world) end
-    self.once = function(op) return Vm.once(self, op) end
-    self.seq = function(world) return Vm.seq(self, world) end
+    self.language = function(name) return Vm.language(self, name) end
     self.concat = function(streams) return Vm.concat(self, streams) end
     self.machine = function(name) return Vm.machine(self, name) end
     self.phase = function(name) return Vm.phase(self, name) end

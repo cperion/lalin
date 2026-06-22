@@ -195,9 +195,10 @@ function M.Define(T)
 
     cont_binding_facts = pvm.phase("moonlift_open_cont_binding_facts", {
         [O.ContBinding] = function(binding)
-            if pvm.classof(binding.target) == O.ContTargetSlot then
-                return pvm.once(O.MetaFactSlot(O.SlotCont(binding.target.slot)))
-            end
+            -- A continuation target slot in a fill binding is a lexical route,
+            -- not an unfilled template hole.  Missing continuation fills are
+            -- still reported from the StmtJumpCont left after RNF when no route
+            -- exists.
             return pvm.empty()
         end,
     })

@@ -358,8 +358,17 @@ function M.Define(T, cb)
         return out
     end
 
+    local resolve_cont_jumps
+
     local function rebase_control_block_body(block, map, frag, captures)
         return pvm.with(block, { body = rebase_stmts(block.body, map, frag, captures) })
+    end
+
+    local function rebase_expand_control_block_body(block, map, frag, captures, env, target_param_map, enclosing_params)
+        local rebased = rebase_control_block_body(block, map, frag, captures)
+        local expanded_body = resolve_cont_jumps(cb.expand_stmts(rebased.body, env), env)
+        local body = add_capture_args_to_enclosing_jumps(expanded_body, target_param_map, enclosing_params)
+        return pvm.with(rebased, { body = body })
     end
 
     local function expr_ref_name(expr)
@@ -405,12 +414,92 @@ function M.Define(T, cb)
         return target
     end
 
-    local function instantiate_cont_fills(frag, cont_fills, enclosing_map)
+    local resolve_cont_target
+
+    local function resolve_cont_fill_target(target, env, enclosing_map)
+        if pvm.classof(target) == O.ContTargetSlot then
+            return resolve_cont_target(target.slot, env) or target
+        end
+        return rebase_cont_target(target, enclosing_map)
+    end
+
+    local function resolve_cont_fill_targets(cont_fills, env, enclosing_map)
+        local out = {}
+        for i = 1, #(cont_fills or {}) do
+            local fill = cont_fills[i]
+            out[i] = O.ContBinding(fill.name, resolve_cont_fill_target(fill.target, env, enclosing_map))
+        end
+        return out
+    end
+
+    local function instantiate_cont_fills(frag, cont_fills, env, enclosing_map)
         local out = {}
         for i = 1, #(cont_fills or {}) do
             local fill = cont_fills[i]
             local slot = cont_slot_by_name(frag, fill.name)
-            if slot ~= nil then out[#out + 1] = O.ContBinding(slot.key, rebase_cont_target(fill.target, enclosing_map)) end
+            if slot ~= nil then
+                local target = resolve_cont_fill_target(fill.target, env, enclosing_map)
+                out[#out + 1] = O.ContBinding(slot.key, target)
+            end
+        end
+        return out
+    end
+
+    resolve_cont_target = function(slot, env)
+        local current = slot
+        local seen = {}
+        while current ~= nil do
+            if seen[current.key] then return nil end
+            seen[current.key] = true
+            local target = nil
+            for i = #(env.conts or {}), 1, -1 do
+                local binding = env.conts[i]
+                if binding.name == current.key then
+                    target = binding.target
+                    break
+                end
+            end
+            if target == nil then return current == slot and nil or O.ContTargetSlot(current) end
+            local cls = pvm.classof(target)
+            if cls == O.ContTargetLabel then return target end
+            if cls == O.ContTargetSlot then current = target.slot else return nil end
+        end
+        return nil
+    end
+
+    resolve_cont_jumps = function(stmts, env)
+        local out = {}
+        for i = 1, #(stmts or {}) do
+            local stmt = stmts[i]
+            local cls = pvm.classof(stmt)
+            if cls == Tr.StmtJumpCont then
+                local target = resolve_cont_target(stmt.slot, env)
+                local tcls = target and pvm.classof(target) or nil
+                if tcls == O.ContTargetLabel then
+                    out[i] = Tr.StmtJump(stmt.h, target.label, stmt.args)
+                elseif tcls == O.ContTargetSlot then
+                    out[i] = pvm.with(stmt, { slot = target.slot })
+                else
+                    out[i] = stmt
+                end
+            elseif cls == Tr.StmtIf then
+                out[i] = pvm.with(stmt, {
+                    then_body = resolve_cont_jumps(stmt.then_body, env),
+                    else_body = resolve_cont_jumps(stmt.else_body, env),
+                })
+            elseif cls == Tr.StmtSwitch then
+                local arms = {}
+                for j = 1, #stmt.arms do arms[j] = pvm.with(stmt.arms[j], { body = resolve_cont_jumps(stmt.arms[j].body, env) }) end
+                local variant_arms = {}
+                for j = 1, #(stmt.variant_arms or {}) do variant_arms[j] = pvm.with(stmt.variant_arms[j], { body = resolve_cont_jumps(stmt.variant_arms[j].body, env) }) end
+                out[i] = pvm.with(stmt, {
+                    arms = arms,
+                    variant_arms = variant_arms,
+                    default_body = resolve_cont_jumps(stmt.default_body, env),
+                })
+            else
+                out[i] = stmt
+            end
         end
         return out
     end
@@ -436,7 +525,11 @@ function M.Define(T, cb)
     local function normalize_region_frag_use(stmt, env, stack, enclosing_map, target_param_map)
         local frag = cb.lookup_region_frag_ref(stmt.frag, env)
         if frag == pvm.NIL then
-            return pvm.with(stmt, { h = one_expand_stmt_header(stmt.h, env), args = expand_exprs(stmt.args, env) }), {}
+            return pvm.with(stmt, {
+                h = one_expand_stmt_header(stmt.h, env),
+                args = expand_exprs(stmt.args, env),
+                cont_fills = resolve_cont_fill_targets(stmt.cont_fills, env, enclosing_map),
+            }), {}
         end
 
         local frag_key = name_ref_key(frag.name)
@@ -447,7 +540,7 @@ function M.Define(T, cb)
         for i = 1, #frag.params do
             runtime_param_bindings[#runtime_param_bindings + 1] = O.ParamBinding(frag.params[i], runtime_param_expr(frag.params[i]))
         end
-        local cont_bindings = instantiate_cont_fills(frag, stmt.cont_fills, enclosing_map)
+        local cont_bindings = instantiate_cont_fills(frag, stmt.cont_fills, env, enclosing_map)
         local local_env = cb.env_at_path(cb.env_with_fills_conts_and_params(env, stmt.fills, cont_bindings, runtime_param_bindings), child_path)
         local init_env = cb.env_at_path(cb.env_with_fills_conts_and_params(env, stmt.fills, cont_bindings, cb.frag_param_bindings(frag.params, stmt.args, env)), child_path)
         local map = label_map_for_frag(frag, child_path)
@@ -469,9 +562,11 @@ function M.Define(T, cb)
 
         local nested_enclosing_map = merge_label_maps(enclosing_map, map)
         local entry_body, entry_nested = normalize_stmts(rewrite_runtime_stmts(frag.entry.body, frag), local_env, child_stack, nested_enclosing_map, nested_target_param_map)
-        local entry_body2 = add_capture_args_to_enclosing_jumps(cb.expand_stmts(rebase_stmts(entry_body, map, frag, capture_params), local_env), nested_target_param_map, enclosing_params)
+        local entry_body2 = add_capture_args_to_enclosing_jumps(resolve_cont_jumps(cb.expand_stmts(rebase_stmts(entry_body, map, frag, capture_params), local_env), local_env), nested_target_param_map, enclosing_params)
         local blocks = { Tr.ControlBlock(map[frag.entry.label.name], entry_params, entry_body2) }
-        for i = 1, #entry_nested do blocks[#blocks + 1] = rebase_control_block_body(entry_nested[i], map, frag, capture_params) end
+        for i = 1, #entry_nested do
+            blocks[#blocks + 1] = rebase_expand_control_block_body(entry_nested[i], map, frag, capture_params, local_env, nested_target_param_map, enclosing_params)
+        end
 
         for i = 1, #frag.blocks do
             local block = frag.blocks[i]
@@ -480,9 +575,11 @@ function M.Define(T, cb)
                 params[#params + 1] = pvm.with(block.params[j], { ty = one_expand_type(block.params[j].ty, local_env) })
             end
             local block_body, block_nested = normalize_stmts(rewrite_runtime_stmts(block.body, frag), local_env, child_stack, nested_enclosing_map, nested_target_param_map)
-            local block_body2 = add_capture_args_to_enclosing_jumps(cb.expand_stmts(rebase_stmts(block_body, map, frag, capture_params), local_env), nested_target_param_map, enclosing_params)
+            local block_body2 = add_capture_args_to_enclosing_jumps(resolve_cont_jumps(cb.expand_stmts(rebase_stmts(block_body, map, frag, capture_params), local_env), local_env), nested_target_param_map, enclosing_params)
             blocks[#blocks + 1] = Tr.ControlBlock(map[block.label.name], params, block_body2)
-            for j = 1, #block_nested do blocks[#blocks + 1] = rebase_control_block_body(block_nested[j], map, frag, capture_params) end
+            for j = 1, #block_nested do
+                blocks[#blocks + 1] = rebase_expand_control_block_body(block_nested[j], map, frag, capture_params, local_env, nested_target_param_map, enclosing_params)
+            end
         end
 
         return Tr.StmtJump(one_expand_stmt_header(stmt.h, env), map[frag.entry.label.name], entry_args), blocks

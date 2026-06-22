@@ -917,34 +917,39 @@ error. It must fail loudly until the program image has been loaded.
 
 ## Lua API
 
-Suggested module:
+Module:
 
 ```lua
 local ll = require "llpvm"
 ```
 
-The Lua API is no-parens and PVM-shaped, but its artifact is bytecode:
+The Lua API is no-parens and PVM-shaped. Types are Lua tables, constructors are
+named fields on those type tables, and worlds project the types into recording
+constructors. Bytecode references are internal encoder facts.
 
 ```lua
 local vm = ll.vm { cache_bytes = 64 * 1024 * 1024 }
 
-local Expr = vm.abi "Expr" {
-    Int = { value = ll.i64 },
-    Add = { left = ll.node, right = ll.node },
-}
+local Expr = vm.language "Expr"
+local ExprNode = Expr "Node"
+ExprNode.Int = { value = ll.i64 }
+ExprNode.Add = { left = ExprNode, right = ExprNode }
 
-local Back = vm.abi "Back" {
-    ConstI64 = { value = ll.i64 },
-    AddI64 = {},
-}
+local Back = vm.language "Back"
+local BackValue = Back "Value"
+BackValue.ConstI64 = { value = ll.i64 }
+BackValue.AddI64 = {}
 
 local ExprWorld = Expr:world()
 local BackWorld = Back:world()
 
-local input = vm.seq(ExprWorld) {
-    Expr.Int { value = 1 },
-    Expr.Int { value = 2 },
-    Expr.Add(),
+local one = ExprWorld.Node.Int { value = 1 }
+local two = ExprWorld.Node.Int { value = 2 }
+
+local input = ExprWorld:seq {
+    one,
+    two,
+    ExprWorld.Node.Add { left = one, right = two },
 }
 
 local lower = vm.phase "lower_expr" {
@@ -977,14 +982,8 @@ wasm is not planned yet its just an illustration.
 
 ### Implemented Lua Authoring Surface
 
-The current Lua facade lives at:
-
-```lua
-local ll = require "llpvm"
-```
-
-It exposes the direct no-parens bytecode facade, plus standard ASDL constructors
-for tools that need the structural vocabulary:
+The facade exposes the direct no-parens bytecode API, plus standard ASDL
+constructors for tools that need the structural vocabulary:
 
 ```lua
 ll.T        -- ASDL context
@@ -1003,17 +1002,20 @@ Use the facade for normal program images:
 ```lua
 local vm = ll.vm { cache_bytes = 64 * 1024 * 1024 }
 
-local Expr = vm.abi "Expr" {
-    Int = { value = ll.i64 },
-    Add = { left = ll.node, right = ll.node },
-}
+local Expr = vm.language "Expr"
+local Node = Expr "Node"
+Node.Int = { value = ll.i64 }
+Node.Add = { left = Node, right = Node }
 
 local ExprWorld = Expr:world()
 
-local input = vm.seq(ExprWorld) {
-    Expr.Int { value = 1 },
-    Expr.Int { value = 2 },
-    Expr.Add {},
+local one = ExprWorld.Node.Int { value = 1 }
+local two = ExprWorld.Node.Int { value = 2 }
+
+local input = ExprWorld:seq {
+    one,
+    two,
+    ExprWorld.Node.Add { left = one, right = two },
 }
 ```
 
@@ -1024,31 +1026,27 @@ ll.void ll.bool
 ll.i8 ll.i16 ll.i32 ll.i64
 ll.u8 ll.u16 ll.u32 ll.u64
 ll.f32 ll.f64 ll.index
-ll.node
 ll.handle "NodeRef"
 ll.ptr(ll.i32)
 ll.view(ll.u8)
 ll.struct "Pair" { left = ll.i32, right = ll.i32 }
 ```
 
-Available low-level helpers:
+Available helpers:
 
 ```lua
 ll.symbol "name"
 ll.field("value", ll.i64)
 ll.cache "full"      -- also "none", "off", "record"
-ll.ref_payload(42)
-ll.ref_arg(42)
 ```
 
 VM authoring helpers:
 
 ```lua
-vm.abi "Name" { ... }
-vm.world "Name" { abi = Abi }
-vm.empty(World)
-vm.once(Op)
-vm.seq(World) { Op, Op }
+vm.language "Name"
+World:empty()
+World:once(Value)
+World:seq { Value, Value }
 vm.concat { Stream, Stream }
 vm.machine "name" { from = InWorld, to = OutWorld, entry = "region_symbol" }
 vm.phase "name" { from = InWorld, to = OutWorld, machine = Machine, cache = "full" }
@@ -1094,9 +1092,9 @@ owned by the VM. The image buffer must outlive streams derived from it.
 local retained_input = vm.retain(input)
 
 local next_input = vm.rebuild(function(next_vm)
-    return next_vm.seq(ExprWorld) {
+    return ExprWorld:seq {
         retained_input:get():drain()[1],
-        Expr.Int { value = 4 },
+        ExprWorld.Node.Int { value = 4 },
     }
 end)
 ```

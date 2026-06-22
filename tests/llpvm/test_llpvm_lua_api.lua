@@ -5,29 +5,33 @@ assert(ll.T and ll.B, "llpvm exposes ASDL context and FastBuilders")
 
 local vm = ll.vm { cache_bytes = 64 * 1024 }
 
-local Expr = vm.abi "Expr" {
-    Int = { value = ll.i64 },
-    Add = { left = ll.node, right = ll.node },
-}
+local Expr = vm.language "Expr"
+local ExprNode = Expr "Node"
+ExprNode.Int = { value = ll.i64 }
+ExprNode.Add = { left = ExprNode, right = ExprNode }
 
-local Back = vm.abi "Back" {
-    ConstI64 = { value = ll.i64 },
-    AddI64 = {},
-}
+local Back = vm.language "Back"
+local BackValue = Back "Value"
+BackValue.ConstI64 = { value = ll.i64 }
+BackValue.AddI64 = {}
 
 local ExprWorld = Expr:world()
 local BackWorld = Back:world()
 
-local input = vm.seq(ExprWorld) {
-    Expr.Int { value = 1 },
-    Expr.Int { value = 2 },
-    Expr.Add {},
-}
+assert(type(ExprWorld.Node.Int) == "table", "world constructor is a callable table")
+assert(ExprWorld.Node.Int.name == "Int", "constructor table keeps its name")
+
+local one = ExprWorld.Node.Int { value = 1 }
+local two = ExprWorld.Node.Int { value = 2 }
+local sum = ExprWorld.Node.Add { left = one, right = two }
+
+local input = ExprWorld:seq { one, two, sum }
 
 local ops = input:drain()
 assert(#ops == 3, "seq drains to three authored ops")
 assert(ops[1].kind == "Int", "first op kind preserved")
 assert(ops[1].payload[1] == 1, "named payload lowers to schema order")
+assert(ops[3].payload[1] == one and ops[3].payload[2] == two, "typed payloads retain produced values")
 
 local machine = vm.machine "lower_expr" {
     from = ExprWorld,
@@ -52,12 +56,23 @@ assert(mapped_node.kind == "phase_map", "phase call returns a phase-map stream")
 
 local retained_input = vm.retain(input)
 local rebuilt = vm.rebuild(function(next_vm)
-    return next_vm.seq(ExprWorld) {
+    return ExprWorld:seq {
         retained_input:get():drain()[1],
-        Expr.Int { value = 4 },
+        ExprWorld.Node.Int { value = 4 },
     }
 end)
 assert(#rebuilt:drain() == 2, "retained nodes can seed an incremental rebuild")
+
+local ok_missing = pcall(function() ExprWorld.Node.Add { left = one } end)
+assert(not ok_missing, "typed constructors reject missing fields")
+local ok_extra = pcall(function() ExprWorld.Node.Int { value = 1, extra = true } end)
+assert(not ok_extra, "typed constructors reject unknown fields")
+local ok_wrong_type = pcall(function() ExprWorld.Node.Add { left = one, right = BackWorld.Value.ConstI64 { value = 3 } } end)
+assert(not ok_wrong_type, "typed constructors reject values from another type/world")
+local ok_after_seal = pcall(function() ExprNode.Bad = {} end)
+assert(not ok_after_seal, "sealed languages reject new constructors")
+assert(ll.node == nil, "global erased node type is not part of the public API")
+assert(vm.abi == nil and vm.seq == nil, "old ABI-level constructor path is not exposed")
 
 local program = vm.program { input, mapped }
 assert(#vm.abis == 2, "program captures ABIs")

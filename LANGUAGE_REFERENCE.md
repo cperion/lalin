@@ -4681,6 +4681,33 @@ schema/source.asdl              MoonSource schema
 schema/pvm_surface.asdl         MoonPvmSurface schema
 ```
 
+### LLPVM authoring facade
+
+The public LLPVM Lua facade is type-table based. Authoring code declares a
+language, installs named type tables, declares constructors on those tables, and
+then constructs values through world-projected callable constructor tables:
+
+```lua
+local ll = require "llpvm"
+local vm = ll.vm {}
+
+local Expr = vm.language "Expr"
+local Node = Expr "Node"
+Node.Int = { value = ll.i64 }
+Node.Add = { left = Node, right = Node }
+
+local raw = Expr:world()
+local one = raw.Node.Int { value = 1 }
+local two = raw.Node.Int { value = 2 }
+local sum = raw.Node.Add { left = one, right = two }
+local stream = raw:seq { one, two, sum }
+```
+
+`ll.node`, public raw reference wrappers, ABI-level op constructors, and
+`vm.seq(world)` are not part of the facade. Typed payload references are emitted
+internally when a constructor field declared as a language-local type receives a
+produced value of that type. See `LLPVM_GUIDE.md` for the complete API reference.
+
 ---
 
 ## 25. Summary doctrine

@@ -46,20 +46,20 @@ end
 
 local function make_program(op_count)
     local vm = ll.vm {}
-    local Expr = vm.abi "Expr" {
-        Int = { value = ll.i64 },
-        Add = { left = ll.node, right = ll.node },
-    }
+    local Expr = vm.language "Expr"
+    local Node = Expr "Node"
+    Node.Int = { value = ll.i64 }
+    Node.Add = { left = Node, right = Node }
     local world = Expr:world()
     local ops = {}
     for i = 1, op_count do
-        if i % 8 == 0 then
-            ops[i] = Expr.Add {}
+        if i % 8 == 0 and i > 2 then
+            ops[i] = world.Node.Add { left = ops[i - 1], right = ops[i - 2] }
         else
-            ops[i] = Expr.Int { value = i }
+            ops[i] = world.Node.Int { value = i }
         end
     end
-    local stream = vm.seq(world)(ops)
+    local stream = world:seq(ops)
     local program = vm.program { stream }
     return program, ops
 end

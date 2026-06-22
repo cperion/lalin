@@ -177,7 +177,7 @@ is the concrete low-level form of this chapter:
 ```text
 Bible concept              LLPVM realization
 ---------------------------------------------------------------
-type forest                ABI, World, Op, Stream, Buffer, Phase
+type forest                Language, Type table, World, Value, Stream, Buffer, Phase
 control graph              native regions over streams and stores
 instruction language       LLPV bytecode records
 machine boundary           borrowed immutable image
@@ -1158,10 +1158,12 @@ Write the structs, views, handles, leases, and boundary pointer shapes as compil
 If the forest is an instruction language rather than a one-off kernel data
 model, switch lenses: author it in the PVM style. In hosted/compiler work that
 may be an ASDL context. In portable native runtime work, the standard-library
-answer is LLPVM: define ABIs, worlds, op payload products, streams, and phases,
-then emit a borrowed bytecode image. Free-form Moonlift remains the language for
-bespoke declarations; LLPVM is the canonical type-authoring surface for typed VM
-stacks.
+answer is LLPVM: define languages as Lua type tables with named constructors,
+project them into worlds, build streams and phases, then emit a borrowed
+bytecode image. The image still contains ABI records, but ABI is the encoded
+boundary product, not the public authoring shape. Free-form Moonlift remains the
+language for bespoke declarations; LLPVM is the canonical type-authoring surface
+for typed VM stacks.
 
 ### Step 7 — Declare the region tree, signatures only
 

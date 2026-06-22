@@ -8,19 +8,22 @@ assert(package.loaded["llpvm"] == nil, "llpvm.bytecode must not load the llpvm f
 local ll = require("llpvm")
 
 local vm = ll.vm {}
-local Expr = vm.abi "Expr" {
-    Int = { value = ll.i64 },
-    Add = { left = ll.node, right = ll.node },
-}
-local Back = vm.abi "Back" {
-    ConstI64 = { value = ll.i64 },
-}
+local Expr = vm.language "Expr"
+local ExprNode = Expr "Node"
+ExprNode.Int = { value = ll.i64 }
+ExprNode.Add = { left = ExprNode, right = ExprNode }
+
+local Back = vm.language "Back"
+local BackValue = Back "Value"
+BackValue.ConstI64 = { value = ll.i64 }
 local expr_world = Expr:world()
 local back_world = Back:world()
-local input = vm.seq(expr_world) {
-    Expr.Int { value = 1 },
-    Expr.Int { value = 2 },
-    Expr.Add {},
+local a = expr_world.Node.Int { value = 1 }
+local b = expr_world.Node.Int { value = 2 }
+local input = expr_world:seq {
+    a,
+    b,
+    expr_world.Node.Add { left = a, right = b },
 }
 local machine = vm.machine "lower_expr" {
     from = expr_world,

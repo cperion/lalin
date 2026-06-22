@@ -214,6 +214,38 @@ mwui_app_run
 mwui_send
 ```
 
+## Lua Authoring Surfaces
+
+Lua DSLs should keep semantic constructors visible in the call path. Prefer
+named callable/type tables over generic helper functions when the user is
+constructing a typed IR value.
+
+Good LLPVM style:
+
+```lua
+local Expr = vm.language "Expr"
+local Node = Expr "Node"
+Node.Int = { value = ll.i64 }
+Node.Add = { left = Node, right = Node }
+
+local raw = Expr:world()
+local one = raw.Node.Int { value = 1 }
+local two = raw.Node.Int { value = 2 }
+local sum = raw.Node.Add { left = one, right = two }
+```
+
+Weak style:
+
+```lua
+ll.node
+ll.ref "Node"
+vm.op "Add" { left = one, right = two }
+```
+
+The weak form hides the type forest behind an erased helper name. If a subsystem
+is authoring a VM instruction language, use type tables and named constructors
+so `rg 'Node.Add'` finds the semantic operation directly.
+
 ## Continuations
 
 Keep the visual grammar meaningful: commas are for product-shaped lists, and
