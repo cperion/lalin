@@ -1,0 +1,1020 @@
+-- mlui_stack.mlua
+-- Canonical LLPVM stack declaration for MLUI.
+--
+-- This file is the semantic source of truth.  It declares the MLUI operation
+-- languages, typed constructors, worlds, machines, phases, cache policy, row
+-- projections, ABI names, and validation tables.  mlui_header.mlua,
+-- mlui_bytecode.md, mlui_c_api.h, and WASM constants should be generated from or
+-- mechanically checked against this file.
+
+local ll = require "llpvm"
+
+local M = {}
+
+M.vm = ll.vm {
+    cache_bytes = 64 * 1024,
+}
+
+local function struct(name, fields)
+    return ll.struct(name)(fields)
+end
+
+local function field(name, ty)
+    return ll.field(name, ty)
+end
+
+-- -----------------------------------------------------------------------------
+-- Shared LLPVM type products.
+-- -----------------------------------------------------------------------------
+
+M.T = {}
+local T = M.T
+
+T.Id      = ll.u64
+T.Ref     = ll.u32
+T.Epoch   = ll.u64
+T.Kind    = ll.u16
+T.Flags   = ll.u32
+T.Index32 = ll.u32
+T.Axis    = ll.u8
+T.Role    = ll.u8
+T.Policy  = ll.u16
+
+T.Vec2 = struct("MluiCore.Vec2", {
+    field("x", ll.f32),
+    field("y", ll.f32),
+})
+
+T.Rect = struct("MluiCore.Rect", {
+    field("x", ll.f32),
+    field("y", ll.f32),
+    field("w", ll.f32),
+    field("h", ll.f32),
+})
+
+T.Insets = struct("MluiCore.Insets", {
+    field("left", ll.f32),
+    field("top", ll.f32),
+    field("right", ll.f32),
+    field("bottom", ll.f32),
+})
+
+T.Color = struct("MluiCore.Color", {
+    field("r", ll.f32),
+    field("g", ll.f32),
+    field("b", ll.f32),
+    field("a", ll.f32),
+})
+
+T.Range = struct("MluiCore.Range", {
+    field("first", ll.u32),
+    field("count", ll.u32),
+})
+
+T.Size = struct("MluiCore.Size", {
+    field("w", ll.f32),
+    field("h", ll.f32),
+})
+
+T.Viewport = struct("MluiCore.Viewport", {
+    field("x", ll.f32),
+    field("y", ll.f32),
+    field("w", ll.f32),
+    field("h", ll.f32),
+    field("device_scale", ll.f32),
+})
+
+T.Length = struct("MluiStyle.Length", {
+    field("kind", ll.u8),
+    field("value", ll.f32),
+    field("min", ll.f32),
+    field("max", ll.f32),
+})
+
+T.Track = struct("MluiStyle.Track", {
+    field("min", T.Length),
+    field("max", T.Length),
+    field("repeat_count", ll.u32),
+    field("flags", ll.u32),
+})
+
+T.EnvClass = struct("MluiEnv.ClassRecord", {
+    field("breakpoint", ll.u8),
+    field("color_scheme", ll.u8),
+    field("motion", ll.u8),
+    field("density", ll.u8),
+    field("pointer", ll.u8),
+    field("platform", ll.u8),
+    field("flags", ll.u32),
+})
+
+T.StateFacts = struct("MluiModel.StateFacts", {
+    field("id", T.Id),
+    field("state_mask", ll.u32),
+    field("hover_id", T.Id),
+    field("focus_id", T.Id),
+    field("capture_id", T.Id),
+    field("drag_id", T.Id),
+    field("active_id", T.Id),
+    field("model_epoch", T.Epoch),
+})
+
+T.EnvArgs = struct("MluiPhase.EnvArgs", {
+    field("env_class", T.EnvClass),
+    field("viewport", T.Viewport),
+    field("time_ms", ll.u64),
+    field("flags", ll.u32),
+})
+
+T.ThemeArgs = struct("MluiPhase.ThemeArgs", {
+    field("theme_ref", T.Ref),
+    field("theme_epoch", T.Epoch),
+})
+
+T.ResourceArgs = struct("MluiPhase.ResourceArgs", {
+    field("content_epoch", T.Epoch),
+    field("paint_epoch", T.Epoch),
+    field("image_epoch", T.Epoch),
+    field("font_epoch", T.Epoch),
+    field("value_epoch", T.Epoch),
+    field("text_layout_epoch", T.Epoch),
+})
+
+T.InteractionArgs = struct("MluiPhase.InteractionArgs", {
+    field("model_epoch", T.Epoch),
+    field("hover_id", T.Id),
+    field("focus_id", T.Id),
+    field("capture_id", T.Id),
+    field("drag_id", T.Id),
+    field("scroll_epoch", T.Epoch),
+})
+
+T.SolveArgs = struct("MluiPhase.SolveArgs", {
+    field("viewport_w", ll.f32),
+    field("viewport_h", ll.f32),
+    field("scroll_epoch", T.Epoch),
+    field("text_layout_epoch", T.Epoch),
+})
+
+T.RenderArgs = struct("MluiPhase.RenderArgs", {
+    field("solve_epoch", T.Epoch),
+    field("decor_epoch", T.Epoch),
+    field("paint_epoch", T.Epoch),
+    field("text_epoch", T.Epoch),
+})
+
+T.ReportArgs = struct("MluiPhase.ReportArgs", {
+    field("view_epoch", T.Epoch),
+    field("model_epoch", T.Epoch),
+})
+
+T.IntrinsicSize = struct("MluiMeasure.IntrinsicSize", {
+    field("min_w", ll.f32),
+    field("min_h", ll.f32),
+    field("pref_w", ll.f32),
+    field("pref_h", ll.f32),
+    field("max_w", ll.f32),
+    field("max_h", ll.f32),
+    field("baseline", ll.f32),
+    field("flags", ll.u32),
+})
+
+-- -----------------------------------------------------------------------------
+-- Languages.
+-- -----------------------------------------------------------------------------
+
+M.Core     = M.vm.language "MluiCore"
+M.Env      = M.vm.language "MluiEnv"
+M.Theme    = M.vm.language "MluiTheme"
+M.Style    = M.vm.language "MluiStyle"
+M.Resource = M.vm.language "MluiResource"
+M.Auth     = M.vm.language "MluiAuth"
+M.Compose  = M.vm.language "MluiCompose"
+M.Imported = M.vm.language "MluiImported"
+M.Scene    = M.vm.language "MluiScene"
+M.Measure  = M.vm.language "MluiMeasure"
+M.Solve    = M.vm.language "MluiSolve"
+M.View     = M.vm.language "MluiView"
+M.Report   = M.vm.language "MluiReport"
+M.Input    = M.vm.language "MluiInput"
+M.Event    = M.vm.language "MluiEvent"
+M.Model    = M.vm.language "MluiModel"
+
+-- -----------------------------------------------------------------------------
+-- Core / env / theme / style languages.
+-- -----------------------------------------------------------------------------
+
+M.EnvClass = M.Env "Class"
+M.EnvClass.Default = {}
+M.EnvClass.Custom = {
+    breakpoint = ll.u8,
+    color_scheme = ll.u8,
+    motion = ll.u8,
+    density = ll.u8,
+    pointer = ll.u8,
+    platform = ll.u8,
+    flags = ll.u32,
+}
+
+M.EnvViewport = M.Env "Viewport"
+M.EnvViewport.Viewport = {
+    width = ll.f32,
+    height = ll.f32,
+    device_scale = ll.f32,
+}
+
+M.ThemeRecord = M.Theme "Record"
+M.ThemeRecord.Palette = { name = T.Id, color = T.Color }
+M.ThemeRecord.Spacing = { name = T.Id, value = ll.f32 }
+M.ThemeRecord.Font = { name = T.Id, content_ref = T.Ref, font_ref = T.Ref, size = ll.f32, weight = ll.u32, flags = ll.u32 }
+M.ThemeRecord.Radius = { name = T.Id, value = ll.f32 }
+M.ThemeRecord.Border = { name = T.Id, width = ll.f32, color = T.Color }
+M.ThemeRecord.Opacity = { name = T.Id, value = ll.f32 }
+M.ThemeRecord.Theme = {
+    id = T.Ref,
+    epoch = T.Epoch,
+    palette = T.Range,
+    spacing = T.Range,
+    font = T.Range,
+    radius = T.Range,
+    border = T.Range,
+    opacity = T.Range,
+}
+
+M.StyleToken = M.Style "Token"
+M.StyleToken.Token = {
+    id = T.Id,
+    conds = T.Range,
+    atoms = T.Range,
+    order = ll.u32,
+    flags = ll.u32,
+}
+
+M.StyleCond = M.Style "Cond"
+M.StyleCond.State = { mask = ll.u32, op = ll.u8, flags = ll.u32 }
+M.StyleCond.Env = { key = ll.u32, op = ll.u8, rhs_i = ll.i32, rhs_f = ll.f32, rhs_id = T.Id, flags = ll.u32 }
+M.StyleCond.Resource = { section = ll.u8, ref = T.Ref, epoch = T.Epoch, flags = ll.u32 }
+
+M.StyleAtom = M.Style "Atom"
+M.StyleAtom.Display = { kind = ll.u16 }
+M.StyleAtom.Position = { kind = ll.u16 }
+M.StyleAtom.Width = { length = T.Length }
+M.StyleAtom.Height = { length = T.Length }
+M.StyleAtom.MinWidth = { length = T.Length }
+M.StyleAtom.MinHeight = { length = T.Length }
+M.StyleAtom.MaxWidth = { length = T.Length }
+M.StyleAtom.MaxHeight = { length = T.Length }
+M.StyleAtom.Margin = { insets = T.Insets }
+M.StyleAtom.Padding = { insets = T.Insets }
+M.StyleAtom.Gap = { x = ll.f32, y = ll.f32 }
+M.StyleAtom.FlexDirection = { direction = ll.u8 }
+M.StyleAtom.FlexGrow = { value = ll.f32 }
+M.StyleAtom.FlexShrink = { value = ll.f32 }
+M.StyleAtom.FlexBasis = { length = T.Length }
+M.StyleAtom.AlignItems = { value = ll.u16 }
+M.StyleAtom.JustifyContent = { value = ll.u16 }
+M.StyleAtom.GridTracks = { axis = T.Axis, tracks = T.Range }
+M.StyleAtom.Overflow = { axis = T.Axis, policy = T.Policy }
+M.StyleAtom.BackgroundColor = { color = T.Color, theme_name = T.Id }
+M.StyleAtom.ForegroundColor = { color = T.Color, theme_name = T.Id }
+M.StyleAtom.BorderColor = { color = T.Color, theme_name = T.Id }
+M.StyleAtom.BorderWidth = { width = ll.f32 }
+M.StyleAtom.Radius = { radius = ll.f32 }
+M.StyleAtom.Opacity = { value = ll.f32 }
+M.StyleAtom.Font = { font_ref = T.Ref, theme_name = T.Id }
+M.StyleAtom.FontSize = { size = ll.f32 }
+M.StyleAtom.FontWeight = { weight = ll.u32 }
+M.StyleAtom.TextAlign = { align = ll.u16 }
+M.StyleAtom.LineHeight = { value = ll.f32 }
+M.StyleAtom.Cursor = { cursor = ll.u16 }
+M.StyleAtom.LayerOrder = { order = ll.i32 }
+M.StyleAtom.UserFlag = { flag = ll.u32 }
+
+M.StyleResolved = M.Style "Resolved"
+M.StyleResolved.Layout = { id = T.Id, style_index = ll.u32, flags = ll.u32 }
+M.StyleResolved.Decor = { id = T.Id, style_index = ll.u32, flags = ll.u32 }
+M.StyleResolved.Interaction = { id = T.Id, role = T.Role, policy = T.Policy, flags = ll.u32 }
+
+-- -----------------------------------------------------------------------------
+-- Resource language.
+-- -----------------------------------------------------------------------------
+
+M.ResourceRecord = M.Resource "Record"
+M.ResourceRecord.Content = { ref = T.Ref, byte_len = ll.u32, encoding = ll.u32, layout_affecting = ll.bool, epoch = T.Epoch }
+M.ResourceRecord.TextLayout = { ref = T.Ref, content_ref = T.Ref, font_ref = T.Ref, width_constraint = ll.f32, epoch = T.Epoch }
+M.ResourceRecord.PaintProgram = { ref = T.Ref, ops = T.Range, epoch = T.Epoch }
+M.ResourceRecord.Image = { ref = T.Ref, host_key = ll.u64, width = ll.f32, height = ll.f32, format = ll.u32, epoch = T.Epoch }
+M.ResourceRecord.Font = { ref = T.Ref, host_key = ll.u64, family_content_ref = T.Ref, size = ll.f32, weight = ll.u32, style = ll.u32, epoch = T.Epoch }
+M.ResourceRecord.Value = { ref = T.Ref, kind = ll.u16, payload_a = ll.u64, payload_b = ll.u64, epoch = T.Epoch }
+
+M.Value = M.Resource "Value"
+M.Value.None = {}
+M.Value.Bool = { value = ll.bool }
+M.Value.I32 = { value = ll.i32 }
+M.Value.U32 = { value = ll.u32 }
+M.Value.F32 = { value = ll.f32 }
+M.Value.F64 = { value = ll.f64 }
+M.Value.Id = { value = T.Id }
+M.Value.Ref = { value = T.Ref }
+M.Value.Range = { min = ll.f32, max = ll.f32, value = ll.f32 }
+M.Value.Color = { color = T.Color }
+M.Value.Text = { content_ref = T.Ref }
+M.Value.Custom = { kind = ll.u16, data_ref = T.Ref }
+
+-- -----------------------------------------------------------------------------
+-- Auth and compose languages.  Auth nodes are authored semantic opcodes, not
+-- draw commands.  Ranges are row-profile compatible; id/ref 0 means absent.
+-- -----------------------------------------------------------------------------
+
+M.AuthNode = M.Auth "Node"
+M.AuthNode.Empty = { id = T.Id, state = T.StateFacts, styles = T.Range }
+M.AuthNode.Fragment = { id = T.Id, children = T.Range }
+M.AuthNode.Box = { id = T.Id, styles = T.Range, children = T.Range, state = T.StateFacts }
+M.AuthNode.Text = { id = T.Id, content_ref = T.Ref, styles = T.Range, state = T.StateFacts }
+M.AuthNode.TextInline = { id = T.Id, content_ref = T.Ref, styles = T.Range, state = T.StateFacts }
+M.AuthNode.TextRef = { id = T.Id, text_layout_ref = T.Ref, styles = T.Range, state = T.StateFacts }
+M.AuthNode.Paint = { id = T.Id, paint_ref = T.Ref, paint_range = T.Range, styles = T.Range, state = T.StateFacts }
+M.AuthNode.Canvas = { id = T.Id, value_ref = T.Ref, paint_ref = T.Ref, paint_range = T.Range, styles = T.Range, state = T.StateFacts }
+M.AuthNode.Image = { id = T.Id, image_ref = T.Ref, styles = T.Range, state = T.StateFacts }
+M.AuthNode.Scroll = { id = T.Id, axis = T.Axis, policy = T.Policy, child = ll.u32, styles = T.Range, state = T.StateFacts }
+M.AuthNode.InputSurface = { id = T.Id, role = T.Role, policy = T.Policy, child = ll.u32, styles = T.Range, state = T.StateFacts }
+M.AuthNode.DragSource = { id = T.Id, policy = T.Policy, child = ll.u32, styles = T.Range, state = T.StateFacts }
+M.AuthNode.DropTarget = { id = T.Id, policy = T.Policy, child = ll.u32, styles = T.Range, state = T.StateFacts }
+M.AuthNode.FocusScope = { id = T.Id, policy = T.Policy, children = T.Range, styles = T.Range, state = T.StateFacts }
+M.AuthNode.Layer = { id = T.Id, layer_kind = ll.u8, order = ll.i32, child = ll.u32, styles = T.Range, state = T.StateFacts }
+M.AuthNode.Overlay = { id = T.Id, anchor_id = T.Id, placement = ll.u8, child = ll.u32, styles = T.Range, state = T.StateFacts }
+M.AuthNode.Modal = { id = T.Id, barrier_policy = T.Policy, child = ll.u32, styles = T.Range, state = T.StateFacts }
+M.AuthNode.TextField = { id = T.Id, content_ref = T.Ref, text_field_state_ref = T.Ref, styles = T.Range, state = T.StateFacts }
+M.AuthNode.Slot = { id = T.Id, slot_kind = ll.u16, value_ref = T.Ref, child = ll.u32, styles = T.Range, state = T.StateFacts }
+
+M.ComposeNode = M.Compose "Node"
+M.ComposeNode.Panel = { id = T.Id, header = ll.u32, body = ll.u32, footer = ll.u32, styles = T.Range, state = T.StateFacts }
+M.ComposeNode.ScrollPanel = { id = T.Id, header = ll.u32, body = ll.u32, footer = ll.u32, axis = T.Axis, styles = T.Range, state = T.StateFacts }
+M.ComposeNode.HSplit = { id = T.Id, panes = T.Range, ratios = T.Range, styles = T.Range, state = T.StateFacts }
+M.ComposeNode.VSplit = { id = T.Id, panes = T.Range, ratios = T.Range, styles = T.Range, state = T.StateFacts }
+M.ComposeNode.Workbench = { id = T.Id, toolbar = ll.u32, sidebar = ll.u32, main = ll.u32, bottom = ll.u32, styles = T.Range, state = T.StateFacts }
+
+M.ImportedNode = M.Imported "Node"
+M.ImportedNode.Record = {
+    ref = T.Ref,
+    kind = T.Kind,
+    id = T.Id,
+    children = T.Range,
+    styles = T.Range,
+    content_ref = T.Ref,
+    text_layout_ref = T.Ref,
+    image_ref = T.Ref,
+    paint_ref = T.Ref,
+    value_ref = T.Ref,
+    other_id = T.Id,
+    axis = T.Axis,
+    role = T.Role,
+    policy = T.Policy,
+    state_mask = ll.u32,
+    flags = ll.u32,
+    epoch = T.Epoch,
+}
+
+-- -----------------------------------------------------------------------------
+-- Scene / measure / solve / view / report / input / model / event languages.
+-- -----------------------------------------------------------------------------
+
+M.SceneLayout = M.Scene "Layout"
+M.SceneLayout.Empty = { id = T.Id }
+M.SceneLayout.Fragment = { id = T.Id, children = T.Range }
+M.SceneLayout.Flow = { id = T.Id, children = T.Range, style_index = ll.u32 }
+M.SceneLayout.FlexRow = { id = T.Id, children = T.Range, style_index = ll.u32 }
+M.SceneLayout.FlexColumn = { id = T.Id, children = T.Range, style_index = ll.u32 }
+M.SceneLayout.Grid = { id = T.Id, children = T.Range, tracks = T.Range, style_index = ll.u32 }
+M.SceneLayout.Text = { id = T.Id, content_ref = T.Ref, style_index = ll.u32 }
+M.SceneLayout.TextRef = { id = T.Id, text_layout_ref = T.Ref, style_index = ll.u32 }
+M.SceneLayout.Paint = { id = T.Id, paint_ref = T.Ref, style_index = ll.u32 }
+M.SceneLayout.Canvas = { id = T.Id, value_ref = T.Ref, paint_ref = T.Ref, style_index = ll.u32 }
+M.SceneLayout.Image = { id = T.Id, image_ref = T.Ref, style_index = ll.u32 }
+M.SceneLayout.Scroll = { id = T.Id, axis = T.Axis, child = ll.u32, style_index = ll.u32 }
+M.SceneLayout.InputSurface = { id = T.Id, role = T.Role, child = ll.u32, style_index = ll.u32 }
+M.SceneLayout.Wrapper = { id = T.Id, kind = T.Kind, child = ll.u32, style_index = ll.u32 }
+
+M.SceneDecor = M.Scene "Decor"
+M.SceneDecor.None = { id = T.Id }
+M.SceneDecor.Box = { id = T.Id, visual_index = ll.u32 }
+M.SceneDecor.Text = { id = T.Id, text_style_index = ll.u32, content_ref = T.Ref, text_layout_ref = T.Ref }
+M.SceneDecor.Paint = { id = T.Id, paint_ref = T.Ref, paint_range = T.Range }
+M.SceneDecor.Image = { id = T.Id, image_ref = T.Ref }
+M.SceneDecor.Cursor = { id = T.Id, cursor = ll.u16 }
+M.SceneDecor.Hit = { id = T.Id, role = T.Role, policy = T.Policy }
+M.SceneDecor.Focus = { id = T.Id, policy = T.Policy }
+M.SceneDecor.Drag = { id = T.Id, policy = T.Policy }
+M.SceneDecor.Drop = { id = T.Id, policy = T.Policy }
+M.SceneDecor.Layer = { id = T.Id, layer_kind = ll.u8, order = ll.i32 }
+M.SceneDecor.Overlay = { id = T.Id, anchor_id = T.Id, placement = ll.u8 }
+M.SceneDecor.ModalBarrier = { id = T.Id, policy = T.Policy }
+
+M.MeasureNode = M.Measure "Node"
+M.MeasureNode.Measured = { id = T.Id, layout_index = ll.u32, intrinsic = T.IntrinsicSize, text_layout_ref = T.Ref, epoch = T.Epoch }
+M.MeasureNode.Missing = { id = T.Id, layout_index = ll.u32, reason = ll.u16 }
+
+M.SolveNode = M.Solve "Node"
+M.SolveNode.Placed = {
+    kind = T.Kind,
+    id = T.Id,
+    layout_index = ll.u32,
+    decor_index = ll.u32,
+    parent = ll.u32,
+    children = T.Range,
+    border_rect = T.Rect,
+    content_rect = T.Rect,
+    clip_rect = T.Rect,
+    scroll_x = ll.f32,
+    scroll_y = ll.f32,
+    content_w = ll.f32,
+    content_h = ll.f32,
+    text_layout_ref = T.Ref,
+    flags = ll.u32,
+}
+
+M.ViewOp = M.View "Op"
+M.ViewOp.Box = { id = T.Id, rect = T.Rect, visual_index = ll.u32, flags = ll.u32 }
+M.ViewOp.Text = { id = T.Id, rect = T.Rect, text_layout_ref = T.Ref, text_style_index = ll.u32, flags = ll.u32 }
+M.ViewOp.Paint = { id = T.Id, rect = T.Rect, paint_ref = T.Ref, paint_range = T.Range, flags = ll.u32 }
+M.ViewOp.PushClipRect = { rect = T.Rect }
+M.ViewOp.PopClip = {}
+M.ViewOp.PushTx = { dx = ll.f32, dy = ll.f32 }
+M.ViewOp.PopTx = {}
+M.ViewOp.PushScroll = { id = T.Id, viewport_rect = T.Rect, content_w = ll.f32, content_h = ll.f32, scroll_x = ll.f32, scroll_y = ll.f32 }
+M.ViewOp.PopScroll = {}
+M.ViewOp.Hit = { id = T.Id, rect = T.Rect, role = T.Role, policy = T.Policy }
+M.ViewOp.Focus = { id = T.Id, rect = T.Rect, policy = T.Policy }
+M.ViewOp.Cursor = { id = T.Id, rect = T.Rect, cursor = ll.u16 }
+M.ViewOp.DragSource = { id = T.Id, rect = T.Rect, policy = T.Policy }
+M.ViewOp.DropTarget = { id = T.Id, rect = T.Rect, policy = T.Policy }
+M.ViewOp.DropSlot = { id = T.Id, rect = T.Rect, other_id = T.Id, policy = T.Policy }
+M.ViewOp.BeginFocusScope = { id = T.Id, rect = T.Rect, policy = T.Policy }
+M.ViewOp.EndFocusScope = { id = T.Id }
+M.ViewOp.BeginLayer = { id = T.Id, layer_kind = ll.u8, order = ll.i32 }
+M.ViewOp.EndLayer = { id = T.Id }
+M.ViewOp.Overlay = { id = T.Id, anchor_id = T.Id, rect = T.Rect, placement = ll.u8 }
+M.ViewOp.ModalBarrier = { id = T.Id, rect = T.Rect, policy = T.Policy }
+
+M.ReportFact = M.Report "Fact"
+M.ReportFact.HitBox = { id = T.Id, rect = T.Rect, role = T.Role, policy = T.Policy, order = ll.i32, layer = ll.i32, flags = ll.u32 }
+M.ReportFact.FocusBox = { id = T.Id, rect = T.Rect, policy = T.Policy, scope_id = T.Id, order = ll.i32, flags = ll.u32 }
+M.ReportFact.ScrollBox = { id = T.Id, viewport_rect = T.Rect, content_w = ll.f32, content_h = ll.f32, scroll_x = ll.f32, scroll_y = ll.f32, axis = T.Axis, policy = T.Policy, flags = ll.u32 }
+M.ReportFact.DragBox = { id = T.Id, rect = T.Rect, policy = T.Policy, flags = ll.u32 }
+M.ReportFact.DropBox = { id = T.Id, rect = T.Rect, policy = T.Policy, slot_id = T.Id, flags = ll.u32 }
+M.ReportFact.LayerBox = { id = T.Id, order = ll.i32, layer_kind = ll.u8, range = T.Range, flags = ll.u32 }
+M.ReportFact.OverlayBox = { id = T.Id, anchor_id = T.Id, rect = T.Rect, placement = ll.u8, flags = ll.u32 }
+M.ReportFact.ModalBarrier = { id = T.Id, rect = T.Rect, policy = T.Policy, flags = ll.u32 }
+M.ReportFact.FocusScope = { id = T.Id, rect = T.Rect, policy = T.Policy, parent_scope_id = T.Id, flags = ll.u32 }
+M.ReportFact.ReportHeader = { epoch = T.Epoch, viewport = T.Rect, pointer = T.Vec2, hover_id = T.Id, cursor_id = T.Id, cursor = ll.u16, scroll_target_id = T.Id, modal_depth = ll.u32, flags = ll.u32 }
+
+M.InputRaw = M.Input "Raw"
+M.InputRaw.PointerMoved = { x = ll.f32, y = ll.f32 }
+M.InputRaw.PointerPressed = { button = ll.u16, x = ll.f32, y = ll.f32 }
+M.InputRaw.PointerReleased = { button = ll.u16, x = ll.f32, y = ll.f32 }
+M.InputRaw.PointerCancelled = {}
+M.InputRaw.WheelMoved = { dx = ll.f32, dy = ll.f32, x = ll.f32, y = ll.f32 }
+M.InputRaw.KeyPressed = { key = ll.u32, mods = ll.u32, repeat_ = ll.u32 }
+M.InputRaw.KeyReleased = { key = ll.u32, mods = ll.u32 }
+M.InputRaw.TextInput = { content_ref = T.Ref }
+M.InputRaw.TextEditing = { content_ref = T.Ref, start = ll.u32, length = ll.u32 }
+M.InputRaw.FocusMove = { direction = ll.u32 }
+M.InputRaw.FocusLost = {}
+M.InputRaw.ActivateFocused = {}
+M.InputRaw.CancelInteraction = {}
+
+M.ModelState = M.Model "State"
+M.ModelState.Model = {
+    epoch = T.Epoch,
+    pointer = T.Vec2,
+    hover_id = T.Id,
+    pressed_id = T.Id,
+    capture_id = T.Id,
+    focus_id = T.Id,
+    active_id = T.Id,
+    drag_id = T.Id,
+    drag_state = ll.u8,
+    drag_start = T.Vec2,
+    modal_scope_id = T.Id,
+    focus_scope_id = T.Id,
+    scroll_epoch = T.Epoch,
+}
+M.ModelState.Scroll = { id = T.Id, x = ll.f32, y = ll.f32, content_w = ll.f32, content_h = ll.f32, viewport_w = ll.f32, viewport_h = ll.f32, epoch = T.Epoch }
+M.ModelState.TextEdit = { id = T.Id, cursor = ll.u32, selection_start = ll.u32, selection_end = ll.u32, composing_start = ll.u32, composing_len = ll.u32, flags = ll.u32, epoch = T.Epoch }
+
+M.EventEvent = M.Event "Event"
+M.EventEvent.HoverChanged = { id = T.Id, hovered = ll.bool }
+M.EventEvent.Pressed = { id = T.Id, button = ll.u16 }
+M.EventEvent.Released = { id = T.Id, button = ll.u16 }
+M.EventEvent.Activated = { id = T.Id }
+M.EventEvent.FocusChanged = { old_id = T.Id, new_id = T.Id }
+M.EventEvent.ScrollChanged = { id = T.Id, x = ll.f32, y = ll.f32 }
+M.EventEvent.DragStarted = { id = T.Id, x = ll.f32, y = ll.f32 }
+M.EventEvent.DragMoved = { id = T.Id, x = ll.f32, y = ll.f32, dx = ll.f32, dy = ll.f32 }
+M.EventEvent.DragEnded = { id = T.Id, x = ll.f32, y = ll.f32 }
+M.EventEvent.DragCancelled = { id = T.Id }
+M.EventEvent.Dropped = { source_id = T.Id, target_id = T.Id, slot_id = T.Id }
+M.EventEvent.TextInput = { id = T.Id, content_ref = T.Ref }
+M.EventEvent.TextEditing = { id = T.Id, content_ref = T.Ref, start = ll.u32, length = ll.u32 }
+M.EventEvent.TextInputWithoutFocus = { content_ref = T.Ref }
+M.EventEvent.Cancelled = { id = T.Id }
+M.EventEvent.CaptureChanged = { old_id = T.Id, new_id = T.Id }
+
+-- -----------------------------------------------------------------------------
+-- Worlds.
+-- -----------------------------------------------------------------------------
+
+M.worlds = {}
+M.worlds.env           = M.Env:world "env"
+M.worlds.theme         = M.Theme:world "theme"
+M.worlds.style         = M.Style:world "style"
+M.worlds.style_resolved = M.Style:world "style_resolved"
+M.worlds.resource      = M.Resource:world "resource"
+M.worlds.compose       = M.Compose:world "compose"
+M.worlds.auth          = M.Auth:world "auth"
+M.worlds.auth_checked  = M.Auth:world "auth_checked"
+M.worlds.imported      = M.Imported:world "imported"
+M.worlds.scene         = M.Scene:world "scene"
+M.worlds.measure       = M.Measure:world "measure"
+M.worlds.solve         = M.Solve:world "solve"
+M.worlds.view          = M.View:world "view"
+M.worlds.report        = M.Report:world "report"
+M.worlds.input         = M.Input:world "input"
+M.worlds.model         = M.Model:world "model"
+M.worlds.event         = M.Event:world "event"
+
+-- -----------------------------------------------------------------------------
+-- Machines and cached phases.  This is where MLUI becomes naturally retained:
+-- app/frontends may rebuild streams immediately; LLPVM phase keys reuse stable
+-- phase products when streams, explicit args, and resource generations match.
+-- -----------------------------------------------------------------------------
+
+M.machines = {}
+M.phases = {}
+
+M.machines.expand_compose = M.vm.machine "mlui_expand_compose" {
+    from = M.worlds.compose,
+    to = M.worlds.auth,
+    entry = "ui_expand_compose",
+}
+
+M.machines.validate_auth = M.vm.machine "mlui_validate_auth" {
+    from = M.worlds.auth,
+    to = M.worlds.auth_checked,
+    entry = "ui_validate_program",
+}
+
+M.machines.import_auth = M.vm.machine "mlui_import_auth" {
+    from = M.worlds.auth_checked,
+    to = M.worlds.imported,
+    entry = "ui_import_auth",
+}
+
+M.machines.resolve_style = M.vm.machine "mlui_resolve_style" {
+    from = M.worlds.style,
+    to = M.worlds.style_resolved,
+    entry = "ui_resolve_style",
+}
+
+M.machines.lower_scene = M.vm.machine "mlui_lower_scene" {
+    from = M.worlds.imported,
+    to = M.worlds.scene,
+    entry = "ui_lower_scene",
+}
+
+M.machines.measure_scene = M.vm.machine "mlui_measure_scene" {
+    from = M.worlds.scene,
+    to = M.worlds.measure,
+    entry = "ui_measure_scene",
+}
+
+M.machines.solve_scene = M.vm.machine "mlui_solve_scene" {
+    from = M.worlds.measure,
+    to = M.worlds.solve,
+    entry = "ui_solve_scene",
+}
+
+M.machines.render_view = M.vm.machine "mlui_render_view" {
+    from = M.worlds.solve,
+    to = M.worlds.view,
+    entry = "ui_render_ops",
+}
+
+M.machines.build_report = M.vm.machine "mlui_build_report" {
+    from = M.worlds.view,
+    to = M.worlds.report,
+    entry = "ui_runtime_report",
+}
+
+M.machines.interact_step = M.vm.machine "mlui_interact_step" {
+    from = M.worlds.input,
+    to = M.worlds.event,
+    entry = "ui_interact_step",
+}
+
+M.phases.expand_compose = M.vm.phase "mlui_expand_compose" {
+    from = M.worlds.compose,
+    to = M.worlds.auth,
+    machine = M.machines.expand_compose,
+    cache = "full",
+}
+
+M.phases.validate_auth = M.vm.phase "mlui_validate_auth" {
+    from = M.worlds.auth,
+    to = M.worlds.auth_checked,
+    machine = M.machines.validate_auth,
+    cache = "record",
+}
+
+M.phases.import_auth = M.vm.phase "mlui_import_auth" {
+    from = M.worlds.auth_checked,
+    to = M.worlds.imported,
+    machine = M.machines.import_auth,
+    cache = "full",
+}
+
+M.phases.resolve_style = M.vm.phase "mlui_resolve_style" {
+    from = M.worlds.style,
+    to = M.worlds.style_resolved,
+    machine = M.machines.resolve_style,
+    cache = "full",
+}
+
+M.phases.lower_scene = M.vm.phase "mlui_lower_scene" {
+    from = M.worlds.imported,
+    to = M.worlds.scene,
+    machine = M.machines.lower_scene,
+    cache = "full",
+}
+
+M.phases.measure_scene = M.vm.phase "mlui_measure_scene" {
+    from = M.worlds.scene,
+    to = M.worlds.measure,
+    machine = M.machines.measure_scene,
+    cache = "full",
+}
+
+M.phases.solve_scene = M.vm.phase "mlui_solve_scene" {
+    from = M.worlds.measure,
+    to = M.worlds.solve,
+    machine = M.machines.solve_scene,
+    cache = "full",
+}
+
+M.phases.render_view = M.vm.phase "mlui_render_view" {
+    from = M.worlds.solve,
+    to = M.worlds.view,
+    machine = M.machines.render_view,
+    cache = "record",
+}
+
+M.phases.build_report = M.vm.phase "mlui_build_report" {
+    from = M.worlds.view,
+    to = M.worlds.report,
+    machine = M.machines.build_report,
+    cache = "record",
+}
+
+M.phases.interact_step = M.vm.phase "mlui_interact_step" {
+    from = M.worlds.input,
+    to = M.worlds.event,
+    machine = M.machines.interact_step,
+    cache = nil,
+}
+
+M.phase_order = {
+    "expand_compose",
+    "validate_auth",
+    "import_auth",
+    "resolve_style",
+    "lower_scene",
+    "measure_scene",
+    "solve_scene",
+    "render_view",
+    "build_report",
+    "interact_step",
+}
+
+M.phase_args = {
+    expand_compose = {},
+    validate_auth = { "resource_args" },
+    import_auth = { "resource_args" },
+    resolve_style = { "env_args", "theme_args", "interaction_args" },
+    lower_scene = { "env_args", "theme_args", "resource_args", "interaction_args" },
+    measure_scene = { "env_args", "resource_args" },
+    solve_scene = { "solve_args" },
+    render_view = { "render_args" },
+    build_report = { "report_args" },
+    interact_step = { "env_args", "interaction_args" },
+}
+
+-- -----------------------------------------------------------------------------
+-- Canonical row-kind and status enums.  Generators should emit C constants from
+-- these maps.  The order matches mlui_header.mlua.
+-- -----------------------------------------------------------------------------
+
+M.enums = {
+    status = {
+        OK = 0,
+        OOM = 1,
+        DUPLICATE_ID = 2,
+        INVALID_ID = 3,
+        INVALID_CHILD = 4,
+        UNSUPPORTED_NODE = 5,
+        MISSING_NODE = 6,
+        MISSING_TEXT = 7,
+        TEXT_BACKEND_ERROR = 8,
+        DECOR_MISMATCH = 9,
+        MALFORMED_OP = 10,
+        STACK_UNBALANCED = 11,
+        STALE_FOCUS = 12,
+        STALE_CAPTURE = 13,
+        MISSING_SCROLL = 14,
+        INVALID_HEADER = 15,
+        INVALID_SECTION = 16,
+        INVALID_OPCODE = 17,
+        INVALID_RANGE = 18,
+        INVALID_ARITY = 19,
+        MISSING_RESOURCE = 20,
+        UNSUPPORTED_FEATURE = 21,
+        STALE_REF = 22,
+        BUSY = 23,
+        BAD_ARGUMENT = 24,
+        BACKEND_ERROR = 25,
+    },
+    root_kind = { NONE = 0, AUTH = 1, COMPOSE = 2, LLPV = 3 },
+    axis = { NONE = 0, X = 1, Y = 2, BOTH = 3 },
+    auth_kind = {
+        EMPTY = 0,
+        FRAGMENT = 1,
+        BOX = 2,
+        TEXT = 3,
+        TEXT_INLINE = 4,
+        TEXT_REF = 5,
+        PAINT = 6,
+        CANVAS = 7,
+        IMAGE = 8,
+        SCROLL = 9,
+        INPUT_SURFACE = 10,
+        DRAG_SOURCE = 11,
+        DROP_TARGET = 12,
+        FOCUS_SCOPE = 13,
+        LAYER = 14,
+        OVERLAY = 15,
+        MODAL = 16,
+        TEXT_FIELD = 17,
+        SLOT = 18,
+    },
+    compose_kind = { PANEL = 1, SCROLL_PANEL = 2, HSPLIT = 3, VSPLIT = 4, WORKBENCH = 5 },
+    view_kind = {
+        BOX = 1,
+        TEXT = 2,
+        PAINT = 3,
+        PUSH_CLIP_RECT = 4,
+        POP_CLIP = 5,
+        PUSH_TX = 6,
+        POP_TX = 7,
+        PUSH_SCROLL = 8,
+        POP_SCROLL = 9,
+        HIT = 10,
+        FOCUS = 11,
+        CURSOR = 12,
+        DRAG_SOURCE = 13,
+        DROP_TARGET = 14,
+        DROP_SLOT = 15,
+        BEGIN_FOCUS_SCOPE = 16,
+        END_FOCUS_SCOPE = 17,
+        BEGIN_LAYER = 18,
+        END_LAYER = 19,
+        OVERLAY = 20,
+        MODAL_BARRIER = 21,
+    },
+    raw_input_kind = {
+        POINTER_MOVED = 1,
+        POINTER_PRESSED = 2,
+        POINTER_RELEASED = 3,
+        POINTER_CANCELLED = 4,
+        WHEEL_MOVED = 5,
+        KEY_PRESSED = 6,
+        KEY_RELEASED = 7,
+        TEXT_INPUT = 8,
+        TEXT_EDITING = 9,
+        FOCUS_MOVE = 10,
+        FOCUS_LOST = 11,
+        ACTIVATE_FOCUSED = 12,
+        CANCEL_INTERACTION = 13,
+    },
+    event_kind = {
+        HOVER_CHANGED = 1,
+        PRESSED = 2,
+        RELEASED = 3,
+        ACTIVATED = 4,
+        FOCUS_CHANGED = 5,
+        SCROLL_CHANGED = 6,
+        DRAG_STARTED = 7,
+        DRAG_MOVED = 8,
+        DRAG_ENDED = 9,
+        DRAG_CANCELLED = 10,
+        DROPPED = 11,
+        TEXT_INPUT = 12,
+        TEXT_EDITING = 13,
+        TEXT_INPUT_NO_FOCUS = 14,
+        CANCELLED = 15,
+        CAPTURE_CHANGED = 16,
+    },
+}
+
+-- Auth arity table used by validators and C/WASM builder generators.
+M.auth_arity = {
+    EMPTY = { min = 0, max = 0 },
+    FRAGMENT = { min = 0, max = false },
+    BOX = { min = 0, max = false },
+    TEXT = { min = 0, max = 0 },
+    TEXT_INLINE = { min = 0, max = 0 },
+    TEXT_REF = { min = 0, max = 0 },
+    PAINT = { min = 0, max = 0 },
+    CANVAS = { min = 0, max = 0 },
+    IMAGE = { min = 0, max = 0 },
+    SCROLL = { min = 1, max = 1 },
+    INPUT_SURFACE = { min = 1, max = 1 },
+    DRAG_SOURCE = { min = 1, max = 1 },
+    DROP_TARGET = { min = 1, max = 1 },
+    FOCUS_SCOPE = { min = 0, max = false },
+    LAYER = { min = 1, max = 1 },
+    OVERLAY = { min = 1, max = 1 },
+    MODAL = { min = 1, max = 1 },
+    TEXT_FIELD = { min = 0, max = 0 },
+    SLOT = { min = 0, max = 1 },
+}
+
+M.row_profiles = {
+    auth_node = {
+        c_name = "mlui_auth_node",
+        kind_enum = "auth_kind",
+        fields = {
+            { "kind", "uint16_t" },
+            { "id", "mlui_id" },
+            { "parent", "uint32_t" },
+            { "first_child", "uint32_t" },
+            { "child_count", "uint32_t" },
+            { "first_style", "uint32_t" },
+            { "style_count", "uint32_t" },
+            { "first_paint", "uint32_t" },
+            { "paint_count", "uint32_t" },
+            { "content_ref", "mlui_content_ref" },
+            { "text_layout_ref", "mlui_text_layout_ref" },
+            { "image_ref", "mlui_image_ref" },
+            { "font_ref", "mlui_font_ref" },
+            { "value_ref", "mlui_value_ref" },
+            { "other_id", "mlui_id" },
+            { "axis", "uint8_t" },
+            { "role", "uint8_t" },
+            { "policy", "uint16_t" },
+            { "state_mask", "uint32_t" },
+            { "flags", "uint32_t" },
+        },
+    },
+    compose_node = {
+        c_name = "mlui_compose_node",
+        kind_enum = "compose_kind",
+        fields = {
+            { "kind", "uint16_t" },
+            { "id", "mlui_id" },
+            { "first_child", "uint32_t" },
+            { "child_count", "uint32_t" },
+            { "first_style", "uint32_t" },
+            { "style_count", "uint32_t" },
+            { "first_weight", "uint32_t" },
+            { "weight_count", "uint32_t" },
+            { "axis", "uint8_t" },
+            { "flags", "uint32_t" },
+        },
+    },
+    view_op = {
+        c_name = "mlui_view_op",
+        kind_enum = "view_kind",
+        fields = {
+            { "kind", "uint16_t" },
+            { "axis_role_policy_hi", "uint16_t" },
+            { "flags", "uint32_t" },
+            { "id", "mlui_id" },
+            { "other_id", "mlui_id" },
+            { "rect", "mlui_rect" },
+            { "first", "uint32_t" },
+            { "count", "uint32_t" },
+            { "content_ref", "mlui_content_ref" },
+            { "text_layout_ref", "mlui_text_layout_ref" },
+            { "paint_ref", "mlui_paint_ref" },
+            { "image_ref", "mlui_image_ref" },
+            { "order", "int32_t" },
+            { "dx", "float" },
+            { "dy", "float" },
+            { "content_w", "float" },
+            { "content_h", "float" },
+        },
+    },
+    raw_input = {
+        c_name = "mlui_raw_input",
+        kind_enum = "raw_input_kind",
+        borrowed_text = true,
+    },
+    event = {
+        c_name = "mlui_event",
+        kind_enum = "event_kind",
+        borrowed_text_until = "next mlui_clear_events/mlui_frame/reset/close",
+    },
+}
+
+M.validation = {
+    program = {
+        "non_null_program",
+        "magic",
+        "abi_version",
+        "endian",
+        "pointer_size",
+        "root_kind",
+        "root_index",
+        "section_pointer_count_pairs",
+        "auth_kind_range",
+        "compose_kind_range",
+        "child_ranges",
+        "auth_arity",
+        "style_ranges",
+        "track_ranges",
+        "paint_ranges",
+        "required_resource_refs",
+        "duplicate_nonzero_ids",
+        "feature_flags",
+    },
+    view_stream = {
+        "kind_range",
+        "transform_stack_balanced",
+        "clip_stack_balanced",
+        "scroll_stack_balanced",
+        "focus_scope_stack_balanced",
+        "layer_stack_balanced",
+    },
+    text = {
+        "borrowed_input_text_dispatch_only",
+        "durable_text_copied_into_content_store",
+        "render_consumes_text_layout_ref_only",
+    },
+}
+
+M.abi = {
+    header = "mlui_header.mlua",
+    c_header = "mlui_c_api.h",
+    c_prefix = "mlui_",
+    wasm_prefix = "mlui_wasm_",
+    functions = {
+        "mlui_abi_version",
+        "mlui_kernel_init",
+        "mlui_kernel_init_ex",
+        "mlui_kernel_close",
+        "mlui_kernel_reset_frame",
+        "mlui_validate_program",
+        "mlui_load_program",
+        "mlui_load_llpv_program",
+        "mlui_import_auth_buffer",
+        "mlui_lower_solve_render",
+        "mlui_frame",
+        "mlui_runtime_report",
+        "mlui_interact_step",
+        "mlui_view_ops",
+        "mlui_events",
+        "mlui_report_get",
+        "mlui_clear_events",
+        "mlui_content_retain_copy",
+        "mlui_content_release",
+        "mlui_paint_retain",
+        "mlui_paint_release",
+        "mlui_image_register",
+        "mlui_image_release",
+        "mlui_font_register",
+        "mlui_font_release",
+        "mlui_value_set",
+        "mlui_value_retain",
+        "mlui_value_release",
+    },
+    wasm_functions = {
+        "mlui_wasm_abi_version",
+        "mlui_wasm_kernel_init",
+        "mlui_wasm_kernel_close",
+        "mlui_wasm_load_program",
+        "mlui_wasm_load_llpv_program",
+        "mlui_wasm_frame",
+        "mlui_wasm_view_ops",
+        "mlui_wasm_events",
+        "mlui_wasm_report_get",
+    },
+}
+
+function M.program(roots)
+    return M.vm.program(roots)
+end
+
+function M.bytecode(roots)
+    return M.program(roots):bytecode()
+end
+
+return M
