@@ -172,17 +172,52 @@ or continuation maps. The shape is already present in the Lua value.
 
 ## Loading
 
+### Quick: `moon.use()` for plain `.lua` files
+
+The simplest way to author Moonlift is to call `require("moonlift").use()` at
+the top of any `.lua` file. This injects all DSL names (`fn`, `i32`, `module`,
+`struct`, `region`, etc.) as Lua globals:
+
+```lua
+-- my_module.lua
+local moon = require("moonlift")
+moon.use()
+
+return module "Demo" {
+  fn .add { a [i32], b [i32] } [i32] { ret (a + b) },
+}
+```
+
+For headers split across files, call `moon.use()` at the top of each `.lua`
+file:
+
+```lua
+-- math_header.lua
+require("moonlift").use()
+return { fn .add { a [i32], b [i32] } [i32] }
+
+-- math_impl.lua
+require("moonlift").use()
+local header = require("math_header")
+return module "Math" { header[1] { ret (a + b) } }
+```
+
+### `dsl.loadstring()` — inline, isolated env
+
+For programmatic use, `dsl.loadstring()` creates an isolated environment without
+touching `_G`:
+
 ```lua
 local dsl = require("moonlift.dsl")
 
 -- One-shot: compile and execute
-local module = dsl.load([[return module "Demo" { ... }]], "demo.mld.lua")
+local module = dsl.load([[return module "Demo" { ... }]], "demo.lua")
 
 -- From a file
-local chunk = dsl.loadfile("demo.mld.lua")
+local chunk = dsl.loadfile("demo.lua")
 local module = chunk()
 
--- Module require: finds name.mld.lua or name/init.mld.lua, caches result
+-- Module require: finds name.lua or name/init.lua, caches result
 local header = dsl.require("math_header")
 
 -- Full pipeline
@@ -196,26 +231,26 @@ module:emit_c_artifact()
 ### Package searcher integration
 
 Once loaded, the DSL auto-installs a Lua `package.searchers` entry so
-plain `require("foo")` automatically finds `foo.mld.lua` files:
+plain `require("foo")` automatically finds `foo.lua` files:
 
 ```lua
 local dsl = require("moonlift.dsl")
 dsl.loadstring([[...]], "main")  -- triggers searcher install
 
--- Now any .mld.lua file can require other .mld.lua files:
-local header = require("math_header")  -- finds math_header.mld.lua
+-- Now any .lua file can require other .lua files:
+local header = require("math_header")  -- finds math_header.lua
 ```
 
 This enables header/impl split across files with zero ceremony:
 
 ```lua
--- math_header.mld.lua
+-- math_header.lua
 return {
   fn .add { a [i32], b [i32] } [i32],
   fn .sub { a [i32], b [i32] } [i32],
 }
 
--- math_impl.mld.lua
+-- math_impl.lua
 local header = require("math_header")
 return module "Math" {
   header[1] { ret (a + b) },
@@ -283,7 +318,7 @@ fn .add { a [i32], b [i32] } [i32] {
 This means headers and implementations can live in separate files:
 
 ```lua
--- math_header.mld.lua
+-- math_header.lua
 return {
   fn .add { a [i32], b [i32] } [i32],
   fn .sub { a [i32], b [i32] } [i32],
@@ -291,7 +326,7 @@ return {
 ```
 
 ```lua
--- math_impl.mld.lua
+-- math_impl.lua
 local header = require("math_header")
 return module "Math" {
   header[1] { ret (a + b) },
@@ -302,7 +337,7 @@ return module "Math" {
 The same pattern works for regions:
 
 ```lua
--- io_header.mld.lua
+-- io_header.lua
 return {
   region .read { fd [i32], buf [ptr [u8]], count [index] } { ok{n[index]}, err{code[i32]} },
   region .write { fd [i32], buf [ptr [u8]], count [index] } { ok{n[index]}, err{code[i32]} },

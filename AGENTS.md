@@ -29,24 +29,32 @@ luajit -v                                # must have FFI support
 
 All scripts set `package.path` to include `./lua/?.lua`.
 
-## Run DSL files (.mld.lua)
+## Run DSL files (.lua)
 
 ```sh
-# From Lua
+# From Lua — with use() for global DSL names
+local moon = require("moonlift")
+moon.use()
+local add = fn .add { a = i32, b = i32 } [i32] { ret (a + b) }
+local compiled = add:compile()
+print(compiled(3, 4))  -- 7
+
+# Inline via loadstring (isolated env, no use() needed)
 local moon = require("moonlift")
 local add_val = moon.loadstring([[
-    local add = fn("add", { a = i32, b = i32 }, i32)
-        return a + b
-    end
+    local add = fn .add { a = i32, b = i32 } [i32] { ret (a + b) }
     return add
-]], "demo.mld.lua")()
+]], "demo.lua")()
 local compiled = add_val:compile()
 print(compiled(3, 4))  -- 7
 
-# Cross-file require
-local dsl = require("moonlift.dsl")
-dsl.install_searcher()           -- so plain require() finds .mld.lua
-local header = require("math_header")  -- finds math_header.mld.lua
+# Cross-file require — each .lua file calls moon.use() at the top
+-- main.lua:
+--   require("moonlift").use()
+--   local header = require("math_header")
+-- math_header.lua:
+--   require("moonlift").use()
+--   return { fn .add { a = i32, b = i32 } [i32] }
 
 # LSP
 luajit lsp.lua

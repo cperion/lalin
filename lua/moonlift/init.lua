@@ -57,6 +57,15 @@ M.c_tcc = require("moonlift.c_tcc")
 
 M.lsp = require("moonlift.rpc_stdio_loop")
 
+--- Install Moonlift DSL globals into _G so plain .lua files can use
+-- fn, i32, module, struct, region, etc. as unqualified names.
+-- Call this once at the top of any .lua file that authors Moonlift DSL.
+--
+--   require("moonlift").use()       -- injects DSL globals into _G
+--   fn .add { a = i32, b = i32 } [i32] { ret (a + b) }
+--   return add
+M.use = M.dsl.use
+
 --- Hosted load/compile via DSL.
 
 function M.loadstring(src, chunk_name)

@@ -17,8 +17,9 @@ is the declaration target. The design discipline became the syntax.
 The `moonlift` binary is no longer built — Moonlift is a pure LuaJIT library.
 
 ```
-.mld.lua source
-  → moonlift.dsl values (Lua tables with typed constructors)
+.lua source
+  → moon.use() injects DSL globals into _G
+  → Lua tables with typed constructors
   → ASDL (interned, immutable, typed)
   → typecheck → lower → validate
   → Flatline binary wire format (v4)
@@ -79,44 +80,35 @@ metaprogramming, and who believe semantics should be data, not strings.
 ### Authoring — the Lua-owned DSL
 
 ```lua
-local dsl = require("moonlift.dsl")
-local m = dsl.loadstring([[
-return module "Demo" {
+local moon = require("moonlift")
+moon.use()                         -- inject DSL globals into _G
+
+local m = module "Demo" {
   struct .Point { x [f32], y [f32] },
 
   fn .add { a [i32], b [i32] } [i32] {
     ret (a + b),
   },
-
-  region .scan
-    { p [ptr [u8]], n [i32], target [i32] }
-    { hit { pos [i32] }, miss { pos [i32] } }
-    {
-      entry .loop { i [i32] (0) } {
-        when (i:ge(n)) { jump .miss { pos = i } },
-        when (as [i32] (p[i]):eq(target)) { jump .hit { pos = i } },
-        jump .loop { i = i + 1 },
-      },
-    },
 }
-]], "demo.mld.lua")()
 
 -- Full pipeline
-m:lower()      -- lowered program
-m:compile()    -- JIT-compiled native code
-m:emit_c_artifact()  -- C/header/support artifact
+m:lower()               -- lowered program
+m:compile()             -- JIT-compiled native code
+m:emit_c_artifact()     -- C/header/support artifact
 ```
 
 ### Header / implementation split
 
 ```lua
--- math_header.mld.lua — signatures, no bodies
+-- math_header.lua — signatures, no bodies
+require("moonlift").use()
 return {
   fn .add { a [i32], b [i32] } [i32],
   fn .sub { a [i32], b [i32] } [i32],
 }
 
--- math_impl.mld.lua — fill the bodies
+-- math_impl.lua — fill the bodies
+require("moonlift").use()
 local header = require("math_header")
 return module "Math" {
   header[1] { ret (a + b) },
@@ -171,12 +163,11 @@ just a Rust cdylib.
 
 ```lua
 -- Any LuaJIT process with lua/ on package.path and libmoonlift.so in system path
-local dsl = require("moonlift.dsl")
-local m = dsl.load([[
-return module "Demo" {
+local moon = require("moonlift")
+moon.use()
+local m = module "Demo" {
   fn .add { a [i32], b [i32] } [i32] { ret (a + b) },
 }
-]], "demo")
 print(m:compile().add(3, 4))  -- 7, running as native machine code
 ```
 
@@ -197,7 +188,6 @@ Not needed for JIT compilation — only if you want the C artifact emitter.
 luajit tests/run.lua                              # Stable default suite
 luajit tests/backend/test_back_add_i32.lua          # Bare Cranelift JIT path
 luajit tests/frontend/test_dsl_lua_owned.lua        # DSL integration test
-luajit tests/lsp/test_lsp_integrated.lua             # Full LSP integration
 ```
 
 ---
@@ -326,16 +316,16 @@ emission leaves externs as normal linker imports.
 
 ## Authoring — the Lua-owned DSL
 
-All Moonlift is authored through the Lua-owned DSL (`require("moonlift.dsl")`).
-Lua parses the program shape mechanically; the DSL normalizes Lua values into
-Moonlift ASDL. No separate parser, no textual antiquote, no string quotes.
-Values are values.
+All Moonlift is authored through the Lua-owned DSL (`require("moonlift")`).
+Once `moon.use()` is called, DSL names (fn, i32, struct, etc.) become
+available as Lua globals. No separate parser, no textual antiquote, no string
+quotes. Values are values.
 
 ```lua
-local dsl = require("moonlift.dsl")
+local moon = require("moonlift")
+moon.use()
 
-local m = dsl.loadstring([[
-return module "Demo" {
+local m = module "Demo" {
   struct .Point { x [f32], y [f32] },
 
   fn .add { a [i32], b [i32] } [i32] {
@@ -353,7 +343,6 @@ return module "Demo" {
       },
     },
 }
-]], "demo.mld.lua")()
 
 -- Pipeline: syntax → ast → typecheck → lower → jit / object / c
 local lowered = m:lower()
@@ -381,13 +370,13 @@ function waiting for the body. Export it from a header file, call it with a
 body in an implementation file:
 
 ```lua
--- math_header.mld.lua — declare signatures
+-- math_header.lua — declare signatures
 return {
   fn .add { a [i32], b [i32] } [i32],
   fn .sub { a [i32], b [i32] } [i32],
 }
 
--- math_impl.mld.lua — fill bodies
+-- math_impl.lua — fill bodies
 local header = require("math_header")
 return module "Math" {
   header[1] { ret (a + b) },
@@ -452,9 +441,9 @@ local artifact = bundle:jit()  -- Cranelift JIT
 ### Single pipeline
 
 ```
-moonlift.dsl source (.mld.lua)
+moon.use() DSL source (.lua)
   │
-  ├─► parse or Lua-owned value normalization ──► ASDL
+  ├─► Lua table normalization ──► ASDL
   ├─► fill/expand for quoted carriers, direct values for DSL
   ├─► typecheck ──► typed + resolved module
   ├─► lower ──► flat BackCmd array
@@ -505,27 +494,23 @@ This is deliberately flat and verifiable. No nested IR, no hidden context.
 ### Loading and compiling
 
 ```lua
-local dsl = require("moonlift.dsl")
+local moon = require("moonlift")
+moon.use()
 
--- From string
-local m = dsl.loadstring([[
-return module "Demo" {
+-- Inline
+local m = module "Demo" {
   fn .add { a [i32], b [i32] } [i32] { ret (a + b) },
 }
-]], "demo.mld.lua")()
 
 -- From file
-local chunk = dsl.loadfile("demo.mld.lua")
+local chunk = moon.loadfile("demo.lua")
 local m = chunk()
 
 -- One-shot convenience
-local m = dsl.load(src, "demo.mld.lua")
+local m = require("moonlift.dsl").load(src, "demo.lua")
 
--- Module require (finds name.mld.lua, caches)
-local header = dsl.require("math_header")
-
--- Cross-file: plain require() auto-finds .mld.lua once DSL is loaded
-local dep = require("my_dependency")  -- finds my_dependency.mld.lua
+-- Cross-file: call moon.use() at the top of each .lua file
+-- require("moonlift").use(); local header = require("math_header")
 
 -- Compile: JIT, object, or shared library
 local jit = m:compile()                     -- Cranelift JIT
@@ -533,7 +518,7 @@ local obj = m:lower()                       -- lowered program for object emissi
 local art = m:emit_c_artifact { c_path = "out.c" }  -- C blob + header
 ```
 
-The linker path: `.mld.lua` → DSL normalize → typecheck → lower → object → link plan → system linker → `.so`.
+The linker path: `.lua` → moon.use() → DSL normalize → typecheck → lower → object → link plan → system linker → `.so`.
 
 ---
 

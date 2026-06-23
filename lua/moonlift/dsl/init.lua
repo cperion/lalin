@@ -1070,7 +1070,7 @@ end
 
 local _searcher_installed = false
 
-local function ensure_mld_searcher()
+local function ensure_searcher()
     if not _searcher_installed then
         _searcher_installed = true
         M.install_searcher()
@@ -1081,7 +1081,7 @@ local function make_env(opts)
     opts = opts or {}
     local env = {}
     for k, v in pairs(_G) do env[k] = v end
-    ensure_mld_searcher()
+    ensure_searcher()
     env.module, env.fn, env.export_fn = head("module"), head("fn"), head("export_fn")
     env.extern, env.handle, env.const, env.static = head("extern"), head("handle"), head("const"), head("static")
     env.import, env.expr_frag = head("import"), head("expr_frag")
@@ -1144,6 +1144,65 @@ local function make_env(opts)
     })
 end
 
+local _auto_name_generating = false
+
+local function enable_auto_names()
+    if _auto_name_generating then return end
+    _auto_name_generating = true
+    local existing_mt = getmetatable(_G)
+    local existing_index = existing_mt and existing_mt.__index
+    setmetatable(_G, {
+        __index = function(t, k)
+            -- If G already has an __index (e.g. from traceback module), try it first
+            if existing_index then
+                local v
+                if type(existing_index) == "function" then
+                    v = existing_index(t, k)
+                else
+                    v = existing_index[k]
+                end
+                if v ~= nil then return v end
+            end
+            -- Otherwise, auto-generate name tokens for unknown identifiers
+            if type(k) == "string" and k:match("^[_%a][_%w]*$") then
+                local n = name_token(k)
+                rawset(t, k, n)
+                return n
+            end
+        end,
+        __newindex = existing_mt and existing_mt.__newindex,
+        __metatable = existing_mt and existing_mt.__metatable or false,
+    })
+end
+
+--- Install Moonlift DSL globals into _G so plain .lua files can use
+-- fn, i32, module, struct, region, etc. as unqualified names.
+-- Also enables auto-name-token generation for unknown identifiers (a, b, pos, etc.),
+-- which is the same behavior as the dsl.loadstring() isolated environment.
+-- Call this once at the top of any .lua file that authors Moonlift DSL.
+--
+--   require("moonlift").use()       -- or require("moonlift.dsl").use()
+--
+-- Returns the filled environment table for explicit capture if desired:
+--   local moon = require("moonlift").use()
+--   moon.fn .add { ... }
+--
+-- opts.global (default true) — when false, skips _G injection and returns env.
+function M.use(opts)
+    opts = opts or {}
+    local env = make_env(opts)
+    if opts.global ~= false then
+        for k, v in pairs(env) do
+            if _G[k] == nil then
+                _G[k] = v
+            end
+        end
+        enable_auto_names()
+    end
+    M._installed = true
+    return env
+end
+
 function M.loadstring(src, chunk_name, opts)
     local loader = loadstring or load
     local env = make_env(opts)
@@ -1186,26 +1245,26 @@ function M.load(src, name, opts)
     return chunk()
 end
 
--- Module lookup: resolve a name to a .mld.lua file, load it, cache it.
--- Uses standard package.path with .mld.lua and init.mld.lua patterns.
-M._mld_cache = {}
-M._mld_search_paths = {
-    "./?.mld.lua",
-    "./?/init.mld.lua",
-    "lua/?.mld.lua",
-    "lua/?/init.mld.lua",
+-- Module lookup: resolve a name to a .lua file, load it, cache it.
+-- Searches standard Lua module paths.
+M._cache = {}
+M._search_paths = {
+    "./?.lua",
+    "./?/init.lua",
+    "lua/?.lua",
+    "lua/?/init.lua",
 }
 
 function M.require(mod_name)
-    if M._mld_cache[mod_name] ~= nil then return M._mld_cache[mod_name] end
+    if M._cache[mod_name] ~= nil then return M._cache[mod_name] end
     local tried = {}
-    for _, template in ipairs(M._mld_search_paths) do
+    for _, template in ipairs(M._search_paths) do
         local path = template:gsub("%?", mod_name)
         local f = io.open(path)
         if f then f:close()
             local chunk = M.loadfile(path)
             local result = chunk()
-            M._mld_cache[mod_name] = result
+            M._cache[mod_name] = result
             return result
         end
         tried[#tried + 1] = path
@@ -1214,29 +1273,20 @@ function M.require(mod_name)
 end
 
 -- Install a package.searchers entry so Lua's built-in require()
--- automatically handles .mld.lua files.
+-- auto-injects the DSL environment into .lua files.
 function M.install_searcher()
-    local searchers = package.searchers or package.loaders  -- LuaJIT / 5.1 compat
+    local searchers = package.searchers or package.loaders
     if not searchers then return end
-
-    -- Avoid double-install.
     for _, s in ipairs(searchers) do
-        if s == M._mld_searcher then return end
+        if s == M._searcher then return end
     end
-
-    -- mld_searcher: Lua require() calls this with the module name.
-    -- It returns a loader function that require() will call to get the value.
-    local function mld_searcher(mod_name)
-        -- Try known search paths (same as M.require above).
+    local function searcher(mod_name)
         local tried = {}
-        for _, template in ipairs(M._mld_search_paths) do
+        for _, template in ipairs(M._search_paths) do
             local path = template:gsub("%?", mod_name)
             local f = io.open(path, "rb")
             if f then
                 f:close()
-                -- Return a loader function.  Lua's require() calls it,
-                -- caches the result in package.loaded[mod_name], and
-                -- returns it to the caller.
                 return function()
                     local chunk = M.loadfile(path)
                     return chunk()
@@ -1244,10 +1294,10 @@ function M.install_searcher()
             end
             tried[#tried + 1] = path
         end
-        return "\n\tno .mld.lua file found (tried: " .. table.concat(tried, ", ") .. ")"
+        return "\n\tno file found (tried: " .. table.concat(tried, ", ") .. ")"
     end
-    M._mld_searcher = mld_searcher
-    table.insert(searchers, mld_searcher)
+    M._searcher = searcher
+    table.insert(searchers, searcher)
 end
 
 function M.make_env(opts) return make_env(opts) end
