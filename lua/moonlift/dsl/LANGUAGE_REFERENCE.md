@@ -175,30 +175,58 @@ or continuation maps. The shape is already present in the Lua value.
 ```lua
 local dsl = require("moonlift.dsl")
 
+-- One-shot: compile and execute
+local module = dsl.load([[return module "Demo" { ... }]], "demo.mld.lua")
+
+-- From a file
 local chunk = dsl.loadfile("demo.mld.lua")
 local module = chunk()
 
-local tree_module = module:ast()
-local checked = module:typecheck()
-local lowered = module:lower()
+-- Module require: finds name.mld.lua or name/init.mld.lua, caches result
+local header = dsl.require("math_header")
+
+-- Full pipeline
+module:ast()
+module:typecheck()
+module:lower()
+module:compile()
+module:emit_c_artifact()
 ```
 
-String loading:
+### Package searcher integration
+
+Once loaded, the DSL auto-installs a Lua `package.searchers` entry so
+plain `require("foo")` automatically finds `foo.mld.lua` files:
 
 ```lua
-local chunk = dsl.loadstring([[
-return module "Demo" {
-  fn .id { x [i32] } [i32] {
-    ret (x),
-  },
+local dsl = require("moonlift.dsl")
+dsl.loadstring([[...]], "main")  -- triggers searcher install
+
+-- Now any .mld.lua file can require other .mld.lua files:
+local header = require("math_header")  -- finds math_header.mld.lua
+```
+
+This enables header/impl split across files with zero ceremony:
+
+```lua
+-- math_header.mld.lua
+return {
+  fn .add { a [i32], b [i32] } [i32],
+  fn .sub { a [i32], b [i32] } [i32],
 }
-]], "demo")
+
+-- math_impl.mld.lua
+local header = require("math_header")
+return module "Math" {
+  header[1] { ret (a + b) },
+  header[2] { ret (a - b) },
+}
 ```
 
 Strict global mode:
 
 ```lua
-local chunk = dsl.loadstring(src, "demo", { strict = true })
+dsl.loadstring(src, "demo", { strict = true })
 ```
 
 In strict mode, assignment to a previously unknown global is rejected.

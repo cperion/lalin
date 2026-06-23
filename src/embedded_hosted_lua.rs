@@ -76,6 +76,7 @@ pub fn embedded_modules() -> Vec<(&'static str, &'static [u8])> {
         ("moonlift.debug_init", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_debug_init.ljbc")).as_slice()),
         ("moonlift.debug_interpreter", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_debug_interpreter.ljbc")).as_slice()),
         ("moonlift.debugger_core", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_debugger_core.ljbc")).as_slice()),
+        ("moonlift.dsl", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_dsl.ljbc")).as_slice()),
         ("moonlift.editor_binding_facts", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_editor_binding_facts.ljbc")).as_slice()),
         ("moonlift.editor_binding_scope_facts", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_editor_binding_scope_facts.ljbc")).as_slice()),
         ("moonlift.editor_code_actions", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_editor_code_actions.ljbc")).as_slice()),

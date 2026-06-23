@@ -9,6 +9,11 @@ maps as table values; the DSL normalizes them into typed ASDL. The compiler
 turns them into JIT-ed function pointers, relocatable `.o` files, or
 `.so`/`.dylib` shared libraries.
 
+The DSL works because Moonlift's semantics are exactly two structures:
+products (data shapes) and sums (control alternatives). Lua arrays are
+products. Lua record tables are fill maps. `[]` is the type slot. `.name`
+is the declaration target. The design discipline became the syntax.
+
 The `moonlift` binary embeds the full compiler (Lua staging + Cranelift backend).
 Zero runtime dependencies — copy it anywhere.
 
@@ -148,52 +153,51 @@ end
 
 ## Quick Start
 
+Moonlift is a **LuaJIT library**. Any LuaJIT process is the runtime host.
+
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) (nightly, for the Cranelift backend)
-- A C compiler (`cc`) for shared library linking
-- LuaJIT with FFI support
+- LuaJIT with FFI support (`luajit -v` must show FFI)
+- Rust toolchain (`rustup`, for building the Cranelift backend)
 
-### Build
-
-```bash
-git clone https://github.com/your-org/moonlift.git
-cd moonlift
-git submodule update --init --recursive
-make libtcc
-make
-```
-
-Produces a fully static binary at `target/release/moonlift`:
-- Embeds the Moonlift Lua staging layer as LuaJIT bytecode
-- Links vendored LuaJIT statically (from `.vendor/LuaJIT/`)
-- Links the Rust/Cranelift backend in-process
-- No runtime dependencies beyond libc
-
-`make libtcc` builds the vendored TinyCC submodule under `deps/tinycc/.local`.
-The C emission tests use this repo-local `libtcc.so` for in-memory callable C
-backend coverage.
-
-### Run a file
+### Build the library
 
 ```bash
-target/release/moonlift run examples/demo.mld.lua
+cargo build --release           # produces libmoonlift.so + moonlift binary
+# or minimal:
+cargo build --release --lib     # just libmoonlift.so
 ```
 
-The JSON example returns a Lua library table with `decode`, `decode_or_nil`,
-`encode`, `valid`, `new_decoder`, `c_blob`, `c_header`, `c_api`, and
-`emcc_args`. Its native parser emits a Lua-free C API, prefers a GCC `-O3`
-shared artifact for local execution, and can be compiled by external C-to-WASM
-toolchains such as Emscripten. JavaScript typed-array bindings are a host-side
-binding decision, not a Moonlift ABI claim.
+`libmoonlift.so` is the Cranelift JIT backend. LuaJIT loads it via FFI when
+you `require("moonlift")`. No vendored LuaJIT, no submodules, no make —
+just a Rust cdylib.
 
-### Compile to a native object file
+The `moonlift` binary is an optional convenience that embeds LuaJIT statically
+for zero-dep standalone use. It is not required.
+
+### Use it
 
 ```lua
--- From Lua: moon.emit_object(source, "build/out.o")
-local moon = require("moonlift")
-local obj_bytes = moon.emit_object(source, "build/out.o")
+-- Any LuaJIT process with lua/ on package.path and libmoonlift.so in system path
+local dsl = require("moonlift.dsl")
+local m = dsl.load([[
+return module "Demo" {
+  fn .add { a [i32], b [i32] } [i32] { ret (a + b) },
+}
+]], "demo")
+print(m:compile().add(3, 4))  -- 7, running as native machine code
 ```
+
+### C emission (optional)
+
+C backend tests need `libtcc`:
+
+```bash
+git submodule update --init deps/tinycc
+make libtcc
+```
+
+Not needed for JIT compilation — only if you want the C artifact emitter.
 
 ### Quick validation
 
@@ -523,6 +527,15 @@ return module "Demo" {
 local chunk = dsl.loadfile("demo.mld.lua")
 local m = chunk()
 
+-- One-shot convenience
+local m = dsl.load(src, "demo.mld.lua")
+
+-- Module require (finds name.mld.lua, caches)
+local header = dsl.require("math_header")
+
+-- Cross-file: plain require() auto-finds .mld.lua once DSL is loaded
+local dep = require("my_dependency")  -- finds my_dependency.mld.lua
+
 -- Compile: JIT, object, or shared library
 local jit = m:compile()                     -- Cranelift JIT
 local obj = m:lower()                       -- lowered program for object emission
@@ -531,15 +544,16 @@ local art = m:emit_c_artifact { c_path = "out.c" }  -- C blob + header
 
 The linker path: `.mld.lua` → DSL normalize → typecheck → lower → object → link plan → system linker → `.so`.
 
-### Standalone binary
+### Standalone binary (optional)
 
 ```bash
-make
+cargo build --release --bin moonlift    # needs vendored LuaJIT submodule
 target/release/moonlift run file.mld.lua
 ```
 
-The `moonlift` binary is fully static with zero runtime dependencies.
-Copy it anywhere. No `libluajit.so`, no `lua/` directory.
+The binary is a self-contained convenience that embeds LuaJIT statically.
+Zero runtime dependencies. Not required — the library path works anywhere
+LuaJIT is already available.
 
 ---
 

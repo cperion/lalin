@@ -5,9 +5,10 @@ TINYCC    = deps/tinycc
 TCC_PREFIX = $(CURDIR)/$(TINYCC)/.local
 LIBTCC    = $(TINYCC)/.local/lib/libtcc.so
 
-.PHONY: all clean run bench libtcc
+.PHONY: all lib clean run bench libtcc
 
-all: $(MOONLIFT)
+all: lib $(MOONLIFT)
+lib: $(MOONLIB)
 
 $(LUAJIT)/libluajit.a:
 	$(MAKE) -C $(LUAJIT) CFLAGS="-fPIC"
@@ -18,9 +19,7 @@ $(MOONLIFT): $(LUAJIT)/libluajit.a
 	LUAJIT_INCLUDE=$(CURDIR)/$(LUAJIT) \
 	cargo build --release --bin moonlift
 
-$(MOONLIB): $(LUAJIT)/libluajit.a
-	LUAJIT_LIB=$(CURDIR)/$(LUAJIT)/libluajit-5.1.a \
-	LUAJIT_INCLUDE=$(CURDIR)/$(LUAJIT) \
+$(MOONLIB):
 	cargo build --release --lib
 
 libtcc: $(LIBTCC)

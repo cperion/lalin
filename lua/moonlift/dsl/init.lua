@@ -1068,10 +1068,20 @@ local function type_list(xs)
     return out
 end
 
+local _searcher_installed = false
+
+local function ensure_mld_searcher()
+    if not _searcher_installed then
+        _searcher_installed = true
+        M.install_searcher()
+    end
+end
+
 local function make_env(opts)
     opts = opts or {}
     local env = {}
     for k, v in pairs(_G) do env[k] = v end
+    ensure_mld_searcher()
     env.module, env.fn, env.export_fn = head("module"), head("fn"), head("export_fn")
     env.extern, env.handle, env.const, env.static = head("extern"), head("handle"), head("const"), head("static")
     env.import, env.expr_frag = head("import"), head("expr_frag")
@@ -1168,6 +1178,76 @@ function M.loadfile(path_, opts)
     local src = f:read("*a")
     f:close()
     return M.loadstring(src, path_, opts)
+end
+
+-- Convenience: load and execute in one call.
+function M.load(src, name, opts)
+    local chunk = M.loadstring(src, name, opts)
+    return chunk()
+end
+
+-- Module lookup: resolve a name to a .mld.lua file, load it, cache it.
+-- Uses standard package.path with .mld.lua and init.mld.lua patterns.
+M._mld_cache = {}
+M._mld_search_paths = {
+    "./?.mld.lua",
+    "./?/init.mld.lua",
+    "lua/?.mld.lua",
+    "lua/?/init.mld.lua",
+}
+
+function M.require(mod_name)
+    if M._mld_cache[mod_name] ~= nil then return M._mld_cache[mod_name] end
+    local tried = {}
+    for _, template in ipairs(M._mld_search_paths) do
+        local path = template:gsub("%?", mod_name)
+        local f = io.open(path)
+        if f then f:close()
+            local chunk = M.loadfile(path)
+            local result = chunk()
+            M._mld_cache[mod_name] = result
+            return result
+        end
+        tried[#tried + 1] = path
+    end
+    die("module '" .. mod_name .. "' not found; tried: " .. table.concat(tried, ", "), 2)
+end
+
+-- Install a package.searchers entry so Lua's built-in require()
+-- automatically handles .mld.lua files.
+function M.install_searcher()
+    local searchers = package.searchers or package.loaders  -- LuaJIT / 5.1 compat
+    if not searchers then return end
+
+    -- Avoid double-install.
+    for _, s in ipairs(searchers) do
+        if s == M._mld_searcher then return end
+    end
+
+    -- mld_searcher: Lua require() calls this with the module name.
+    -- It returns a loader function that require() will call to get the value.
+    local function mld_searcher(mod_name)
+        -- Try known search paths (same as M.require above).
+        local tried = {}
+        for _, template in ipairs(M._mld_search_paths) do
+            local path = template:gsub("%?", mod_name)
+            local f = io.open(path, "rb")
+            if f then
+                f:close()
+                -- Return a loader function.  Lua's require() calls it,
+                -- caches the result in package.loaded[mod_name], and
+                -- returns it to the caller.
+                return function()
+                    local chunk = M.loadfile(path)
+                    return chunk()
+                end
+            end
+            tried[#tried + 1] = path
+        end
+        return "\n\tno .mld.lua file found (tried: " .. table.concat(tried, ", ") .. ")"
+    end
+    M._mld_searcher = mld_searcher
+    table.insert(searchers, mld_searcher)
 end
 
 function M.make_env(opts) return make_env(opts) end

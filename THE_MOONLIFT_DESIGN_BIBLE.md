@@ -84,6 +84,8 @@ every path must terminate explicitly — there is no fallthrough
 
 When both structures are typed, design changes character. The design is no longer a diagram beside the code, a spec above the code, or a convention around the code. **The design is the declaration graph itself** — the type forest plus the region tree — and the compiler checks the two against each other continuously. That is the thesis of this entire book, and everything else is consequences.
 
+There is a practical consequence. Because Moonlift is built on exactly two structures — products and sums — the authoring surface falls directly out of the host language. Lua arrays are products. Lua record tables are fill maps and continuation bindings. `[]` is the type slot. `.name` is the declaration target. The DSL is not a separate language with its own parser; it is Lua table shapes recognized as Moonlift semantics. The design discipline became the syntax.
+
 This includes memory. A region signature is not merely a control interface; it is the place where access facts become visible. A continuation can grant a lease, deny access, prove a buffer shape, or expose that a handle was stale. The declaration already tells the caller what may be touched and what must be handled before any body is read.
 
 ---
