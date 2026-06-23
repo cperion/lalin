@@ -8,7 +8,7 @@
 ---Usage with an existing compiler context:
 ---```lua
 ---local pvm = require("moonlift.pvm")
----local schema = require("moonlift.asdl")
+---local schema = require("moonlift.schema_projection")
 ---local ast = require("moonlift.ast")
 ---local T = pvm.context(); schema.Define(T)
 ---local m = ast.new(T).module { ... }
@@ -20,7 +20,7 @@
 ---universe.
 
 local pvm = require("moonlift.pvm")
-local schema = require("moonlift.asdl")
+local schema = require("moonlift.schema_projection")
 
 local M = {}
 
@@ -1110,11 +1110,11 @@ local function install(api, T)
 end
 
 ---Create a Moonlift AST constructor API bound to an existing ASDL context.
----The context must already have `moonlift.asdl` defined.
+---The context must already have `moonlift.schema_projection` defined.
 ---@param T table ASDL context containing the Moonlift schema.
 ---@return table api Constructor API.
 function M.new(T)
-    assert(T and T.MoonTree and T.MoonType, "moonlift.ast.new expects a context with moonlift.asdl defined")
+    assert(T and T.MoonTree and T.MoonType, "moonlift.ast.new expects a context with moonlift.schema_projection defined")
     return install({}, T)
 end
 

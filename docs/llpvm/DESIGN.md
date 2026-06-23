@@ -36,7 +36,7 @@ LLPVM turns that shape into an official Moonlift standard-library API surface.
 ## Doctrine
 
 ```text
-ASDL defines meaning.
+MoonSchema-projected typed values define meaning.
 LLPVM stores and runs meaning.
 Lua authors VM families.
 Moonlift executes VM instances.
@@ -1227,7 +1227,7 @@ No C-only design that bypasses Moonlift types.
 
 ```text
 LLPVM is the low-level typed substrate for PVMs.
-ASDL defines each operation language.
+MoonSchema/LLB define each operation language.
 Worlds carry semantic layers.
 Machines are Moonlift regions.
 Phases are cache boundaries.

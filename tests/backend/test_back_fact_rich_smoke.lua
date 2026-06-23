@@ -2,7 +2,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
-local A2 = require("moonlift.asdl")
+local A2 = require("moonlift.schema_projection")
 local J = require("moonlift.back_jit")
 local Validate = require("moonlift.back_validate")
 

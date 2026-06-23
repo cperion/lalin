@@ -159,10 +159,10 @@ Can this stage run without the authoring language?
 ```
 
 This lens is why PVM works: it made compiler phases into lazy machines over
-ASDL products. It is why LLPVM works: it makes that machine boundary concrete as
-borrowed bytecode images, native handles, streams, buffers, recordings, and C
-ABI seals. It is why MLUI should remain a rich compiler while still emitting a
-dense borrowed image for the native UI VM.
+MoonSchema-projected products. It is why LLPVM works: it makes that machine
+boundary concrete as borrowed bytecode images, native handles, streams, buffers,
+recordings, and C ABI seals. It is why MLUI should remain a rich compiler while
+still emitting a dense borrowed image for the native UI VM.
 
 The VM-stack view does not replace the dual tree. It sharpens it:
 
@@ -700,12 +700,12 @@ So the host may remain poetic, but the runtime bridge must be explicit. Lua is
 where genericity lives; LuaBridge is where LuaJIT's dynamic runtime facts stop
 being ambient and become Moonlift facts.
 
-### 3.7 Unified ASDL — one shape language for data and control
+### 3.7 Unified MoonSchema — one shape language for data and control
 
-This is the unifying point: Moonlift is **ASDL generalized from data into
-control**.
+This is the unifying point: Moonlift is **MoonSchema-projected products and sums
+generalized from data into control**.
 
-Classic ASDL names products and sums of stored data. Moonlift keeps that, then
+Classic algebraic data modeling names products and sums of stored data. Moonlift keeps that, then
 uses the same product/sum vocabulary at executable boundaries:
 
 ```text
@@ -798,7 +798,7 @@ protocol is direct control, selected by `jump`. But the **shape language** is
 shared.
 
 This is why the declarations are the architecture. You are not separately
-inventing an AST schema, an event schema, a callback interface, a state-machine
+inventing a syntax schema, an event schema, a callback interface, a state-machine
 diagram, and an ABI. You are naming one forest:
 
 ```text
@@ -1670,7 +1670,7 @@ declare a world is to declare a cache identity and an invalidation contract.
 
 If the forest is an instruction language rather than a one-off kernel data
 model, switch lenses: author it in the PVM style. In hosted/compiler work that
-may be an ASDL context. In portable native runtime work, the standard-library
+may be a MoonSchema projection context. In portable native runtime work, the standard-library
 answer is LLPVM: define languages as Lua type tables with named constructors,
 project them into worlds, build streams and phases, then emit a borrowed
 bytecode image. The image still contains ABI records, but ABI is the encoded
@@ -1732,7 +1732,7 @@ What survives across operations — stores, pools, registries, connection state,
 
 ### Step 11 — Find the families
 
-Where do N signatures differ in one type, one constant, one platform call? Each repetition axis is a factory parameter. Design the *family* signature for the class of uses (somewhat general-purpose); emit only the instances actually used (no speculative matrices); never let one instance's quirk into the family's parameters. Push genuine variation to build time; pull awkward cases down into the regions; let only per-call facts survive in input products. If the system is interactive or incremental, also layer it as a compiler — source ASDL, event ASDL, pure apply, memoized phases at reuse frontiers, one executing loop. Memoize phase products, not arbitrary functions: the boundary should be where knowledge becomes reusable and where invalidation can be named in one sentence.
+Where do N signatures differ in one type, one constant, one platform call? Each repetition axis is a factory parameter. Design the *family* signature for the class of uses (somewhat general-purpose); emit only the instances actually used (no speculative matrices); never let one instance's quirk into the family's parameters. Push genuine variation to build time; pull awkward cases down into the regions; let only per-call facts survive in input products. If the system is interactive or incremental, also layer it as a compiler: MoonSchema-authored source values, typed event values, pure apply, memoized phases at reuse frontiers, one executing loop. Memoize phase products, not arbitrary functions: the boundary should be where knowledge becomes reusable and where invalidation can be named in one sentence.
 
 ### Step 12 — Review, then transcribe
 
@@ -2257,7 +2257,7 @@ but the reason should be visible in the design header.
 
 `domain` is the identity namespace: the store, pool, registry, or table that can
 validate the handle. `target` is the logical product a successful resolver may
-grant access to. These facts are explicit ASDL, not comments and not parser
+grant access to. These facts are explicit MoonSchema-projected typed values, not comments and not parser
 sugar:
 
 ```text

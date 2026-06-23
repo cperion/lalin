@@ -73,18 +73,18 @@ local unpack = unpack or table.unpack
 
 local pvm = {}
 pvm.NIL = {}
-local ASDL = nil
+local SCHEMA_CONTEXT = nil
 
-local function get_asdl()
-	if ASDL ~= nil then
-		return ASDL
+local function get_schema_context()
+	if SCHEMA_CONTEXT ~= nil then
+		return SCHEMA_CONTEXT
 	end
-	ASDL = require("moonlift.asdl_context")
-	return ASDL
+	SCHEMA_CONTEXT = require("moonlift.schema_context")
+	return SCHEMA_CONTEXT
 end
 
 function pvm.context(opts)
-	local ctx = get_asdl().NewContext(opts)
+	local ctx = get_schema_context().NewContext(opts)
 	local orig = ctx.Define
 	function ctx:Define(text)
 		orig(self, text)

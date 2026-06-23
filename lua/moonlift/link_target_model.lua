@@ -5,7 +5,7 @@ local M = {}
 function M.Define(T)
     local Link = T.MoonLink
     local BackTarget = require("moonlift.back_target_model").Define(T)
-    assert(Link, "moonlift.link_target_model.Define expects moonlift.asdl in the context")
+    assert(Link, "moonlift.link_target_model.Define expects moonlift.schema_projection in the context")
 
     local api = {}
 

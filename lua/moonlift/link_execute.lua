@@ -24,7 +24,7 @@ end
 
 function M.Define(T)
     local Link = T.MoonLink
-    assert(Link, "moonlift.link_execute.Define expects moonlift.asdl in the context")
+    assert(Link, "moonlift.link_execute.Define expects moonlift.schema_projection in the context")
 
     local function execute(plan)
         for i = 1, #plan.commands do

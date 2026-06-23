@@ -5,7 +5,7 @@
 
 Moonlift compiles to native machine code. You author Moonlift in ordinary Lua
 via `require("moonlift.dsl")` — Lua parses products, protocols, bodies, and fill
-maps as table values; the DSL normalizes them into typed ASDL. The compiler
+maps as table values; the DSL normalizes them into typed Moonlift runtime values. The compiler
 turns them into JIT-ed function pointers, relocatable `.o` files, or
 `.so`/`.dylib` shared libraries.
 
@@ -20,7 +20,7 @@ The `moonlift` binary is no longer built — Moonlift is a pure LuaJIT library.
 .lua source
   → moon.use() injects DSL globals into _G
   → Lua tables with typed constructors
-  → ASDL (interned, immutable, typed)
+  → MoonSchema-projected runtime values (interned, immutable, typed)
   → typecheck → lower → validate
   → Flatline binary wire format (v4)
   → Cranelift JIT / object emission
@@ -61,10 +61,10 @@ Moonlift takes a different approach:
 | Concern | Moonlift's answer |
 |---|---|
 | **Metaprogramming** | LuaJIT Lua. Real genericity lives in Lua, not in template syntax. |
-| **Authoring** | Lua-owned DSL (`require("moonlift.dsl")`). Lua parses the shape, stdlib LLB hosts declaration/control heads, and Moonlift normalizes to ASDL. Header/impl split via callable stages. |
+| **Authoring** | Lua-owned DSL (`require("moonlift.dsl")`). Lua parses the shape, stdlib LLB hosts declaration/control heads, and Moonlift normalizes to MoonSchema-projected runtime values. Header/impl split via callable stages. |
 | **Native performance** | Cranelift JIT + object emission. Same backend tier as wasmtime. |
 | **Control flow** | Typed blocks with explicit jump/yield/return. No hidden `next`, no implicit fallthrough. |
-| **Semantics** | Everything meaningful is represented as ASDL (Algebraic Semi-structured Data Language) values. No hidden state in strings, callbacks, or mutable tables. |
+| **Semantics** | Everything meaningful is represented as MoonSchema-projected typed values. No hidden state in strings, callbacks, or mutable tables. |
 | **Composability** | Region fragments with named continuation exits. Compose with `emit`. Dispatch with `switch`. |
 | **Resource discipline** | Handles are durable identity, leases are temporary access, and `owned T` is explicit CFG discharge authority. No hidden destructors. |
 | **Vectorization** | Explicit facts-based vectorization. No secret pattern matching on loop shapes. |
@@ -705,12 +705,9 @@ One production compiler. One Flatline v4 binary wire format between the Lua
 frontend and the Rust Cranelift backend. No parallel implementations — a single
 battle-tested path from source to machine code.
 
-### 2. ASDL is the architecture
+### 2. MoonSchema is the architecture
 
-If a distinction matters to compilation, it is represented as an ASDL value —
-interned, immutable, with structural identity. Meaning must not hide in strings,
-callbacks, mutable side tables, or backend-only IR. Everything downstream
-consumes explicit facts.
+If a distinction matters to compilation, it is represented as a MoonSchema-projected runtime value: interned, immutable, and structurally typed. MoonAsdl remains the internal projection vocabulary, not the source language. Meaning must not hide in strings, callbacks, mutable side tables, or backend-only IR. Everything downstream consumes explicit facts.
 
 ### 3. Lua is the metaprogramming language
 
@@ -728,7 +725,7 @@ explicit facts, not parser guesses about loop shapes.
 ### 5. Every phase is explicit
 
 Parse → typecheck → lower → validate → emit. Each phase produces explicit
-facts, decisions, proofs, and rejects. Diagnostics are ASDL values consumed by
+facts, decisions, proofs, and rejects. Diagnostics are typed runtime values consumed by
 tools and LSP features — not format strings rediscovered from raw text.
 
 ### 5.5. Typed instruction languages use LLPVM

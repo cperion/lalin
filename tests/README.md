@@ -23,7 +23,7 @@ Directories:
 - `schema/` - schema smoke tests
 - `editor/` and `lsp/` - editor facts and LSP integration
 - `lisle/` - Lisle rule language tests
-- `pvm/` - PVM surface and phase tests
+- `pvm/` - PVM phase tests
 - `core/` - core operators, types, source utilities, std facade
 - `tooling/` - reports, explainer coverage, link planning
 - `debug/` - debug interpreter/debugger and ELF parser tests

@@ -187,8 +187,10 @@ local add_checked = fn. add_checked { a [i32], b [i32] } [i32] {
   (inline, no call overhead).
 - **Lua is metaprogramming**: generics, templates, codegen live in Lua. Moonlift
   receives monomorphic result.
-- **ASDL is the architecture**: all meaningful compilation state is interned,
-  immutable ASDL values. No hidden state in strings, callbacks, or side tables.
+- **MoonSchema is the architecture**: all meaningful compilation state is
+  interned, immutable MoonSchema-projected runtime values. MoonAsdl is the
+  internal projection vocabulary, not the source language. No hidden state in
+  strings, callbacks, or side tables.
 - **PVM phases are auto-cached memoization boundaries**: edit one subtree, only
   that subtree recompiles.
 - **Flat backend commands**: compilation target is `BackCmd[]` — flat, verifiable,

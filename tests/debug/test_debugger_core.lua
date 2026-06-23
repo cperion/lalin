@@ -7,7 +7,7 @@ package.path = table.concat({
 }, ";")
 
 local pvm = require("moonlift.pvm")
-local Asdl = require("moonlift.asdl")
+local Asdl = require("moonlift.schema_projection")
 
 local T = pvm.context()
 Asdl.Define(T)

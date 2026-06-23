@@ -19,22 +19,13 @@ local M = {}
 
 M.pvm = require("moonlift.pvm")
 M.triplet = require("moonlift.triplet")
-M.asdl_context = require("moonlift.asdl_context")
-M.asdl_lexer = require("moonlift.asdl_lexer")
-M.asdl_parser = require("moonlift.asdl_parser")
-M.asdl_model = require("moonlift.asdl_model")
-M.asdl_builder = require("moonlift.asdl_builder")
+M.schema_context = require("moonlift.schema_context")
+M.schema_projection_model = require("moonlift.schema_projection_model")
 M.schema = require("moonlift.schema")
+M.schema_projection = require("moonlift.schema_projection")
 M.context_define_schema = require("moonlift.context_define_schema")
 M.phase_model = require("moonlift.phase_model")
 M.phase_builder = require("moonlift.phase_builder")
-M.pvm_surface_model = require("moonlift.pvm_surface_model")
-M.pvm_surface_builder = require("moonlift.pvm_surface_builder")
-M.pvm_surface_region_values = require("moonlift.pvm_surface_region_values")
-M.pvm_surface_schema_values = require("moonlift.pvm_surface_schema_values")
-M.pvm_surface_cache_values = require("moonlift.pvm_surface_cache_values")
-M.pvm_surface_union_values = require("moonlift.pvm_surface_union_values")
-M.type_ref_classify_surface = require("moonlift.type_ref_classify_surface")
 M.ast = require("moonlift.ast")
 M.dsl = require("moonlift.dsl")
 M.frontend_pipeline = require("moonlift.frontend_pipeline")
@@ -114,7 +105,7 @@ end
 
 function M.emit_object(decl, path, name)
     local pvm = require("moonlift.pvm")
-    local A2 = require("moonlift.asdl")
+    local A2 = require("moonlift.schema_projection")
     local Pipeline = require("moonlift.frontend_pipeline")
     local Object = require("moonlift.back_object")
 
@@ -139,7 +130,7 @@ end
 
 function M.emit_shared(decl, path, name, opts)
     local pvm = require("moonlift.pvm")
-    local A2 = require("moonlift.asdl")
+    local A2 = require("moonlift.schema_projection")
     local Pipeline = require("moonlift.frontend_pipeline")
     local Object = require("moonlift.back_object")
     local LinkTarget = require("moonlift.link_target_model")
@@ -201,7 +192,7 @@ function M.emit_c_artifact(decl, path_or_opts, name, opts)
     end
     opts = opts or {}
     local pvm = require("moonlift.pvm")
-    local A2 = require("moonlift.asdl")
+    local A2 = require("moonlift.schema_projection")
     local Pipeline = require("moonlift.frontend_pipeline")
     local CEmit = require("moonlift.c_emit")
 
@@ -261,7 +252,7 @@ function M.context(opts)
 end
 
 function M.Define(T)
-    return require("moonlift.asdl").Define(T)
+    return require("moonlift.schema_projection").Define(T)
 end
 
 return M

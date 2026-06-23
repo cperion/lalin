@@ -4,7 +4,7 @@ local M = {}
 
 function M.Define(T)
     local Link = T.MoonLink
-    assert(Link, "moonlift.link_plan_validate.Define expects moonlift.asdl in the context")
+    assert(Link, "moonlift.link_plan_validate.Define expects moonlift.schema_projection in the context")
 
     local function input_path(input)
         local cls = pvm.classof(input)

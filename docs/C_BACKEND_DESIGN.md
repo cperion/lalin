@@ -7,9 +7,9 @@ now also records the ASDL/MoonCode refactor required to make that backend good b
 Current checkpoint — 2026-06-15:
 
 - schema source files in `lua/moonlift/schema/` have been converted from Lua-builder modules
-  to compact `.asdl` text, loaded by `schema/init.lua`;
+  to MoonSchema Lua data, loaded by `schema/init.lua`;
 - `MoonCode` is the active normalized typed SSA/control ASDL layer in
-  `lua/moonlift/schema/code.asdl`;
+  `lua/moonlift/schema/code.lua`;
 - public native lowering now routes through `tree_to_code -> code_validate -> Flow/Mem/Kernel/Lower -> lower_to_back/code_to_back`;
 - public C lowering now routes through `tree_to_code -> code_validate -> code_to_c ->
   c_validate`, not direct `tree_to_c`;
@@ -835,85 +835,38 @@ Historical sections above remain useful as design contract and coverage rational
 current final gate is the full compile/run corpus plus target-model coverage, not the deleted
 recursive `tree_to_c` implementation.
 
-## 25. ASDL text schema refactor
+## 25. MoonSchema source projection
 
-### 25.1 Source-of-truth rule
-
-The schema source of truth is compact ASDL text under:
+The schema source of truth is MoonSchema Lua data under:
 
 ```text
-lua/moonlift/schema/*.asdl
+lua/moonlift/schema/*.lua
 ```
-
-`lua/moonlift/schema/init.lua` is a loader/index, not a schema authoring file.  Lua-builder
-schema modules under `lua/moonlift/schema/` should not return.  The builder API may remain
-for bootstrap, tests, small external models, and migration tooling, but core Moon* schema
-authoring should use `.asdl`.
-
-The conversion script is:
-
-```text
-scripts/convert_schema_lua_to_asdl.lua
-```
-
-It exists so historical builder modules can be regenerated into text, not as a reason to keep
-dual sources.
-
-### 25.2 Runtime loading contract
 
 The runtime path is:
 
 ```text
-.asdl text
-  -> asdl_parser.parse
-  -> MoonAsdl.Schema value
+MoonSchema Lua module
+  -> MoonSchema module value
+  -> MoonAsdl.Schema projection value
   -> context_define_schema.define
-  -> live PVM/ASDL context classes
+  -> live runtime classes
 ```
 
-`MoonAsdl.Schema` remains the introspection/intermediate representation used by schema tools
-such as type emission and PVM surface generation.  Text is the authored representation;
-`MoonAsdl.Schema` is the loaded representation.
+`MoonAsdl.Schema` is a projection value used by existing compiler/runtime class
+machinery. It is not the authored representation. There is no schema text parser
+or `.asdl` source path in the active compiler.
 
-The embedded standalone binary must include `.asdl` files the same way it includes Lua
-modules.  Embedded ASDL modules are exposed as preload modules named:
+The C backend consumes typed compiler values produced from this projection.
+The embedded standalone binary includes schema Lua modules like every other
+hosted Lua module.
 
-```text
-moonlift.schema.<name>_asdl
-```
+Current contract:
 
-and return the ASDL text string.
-
-### 25.3 Required hardening
-
-The refactor is not considered fully hardened until:
-
-1. every `lua/moonlift/schema/*.asdl` parses in isolation;
-2. `require("moonlift.asdl").Define(T)` defines all expected modules, including `MoonCode`;
-3. no `lua/moonlift/schema/*.lua` exists except `init.lua`;
-4. the embedded binary can define the schema without filesystem access;
-5. ASDL parse errors report file/line/column, not only byte positions;
-6. a round-trip/stability test verifies builder-to-ASDL conversion where builder fixtures are
-   still used;
-7. docs and source references point at `.asdl`, not removed `.lua` schema files.
-
-### 25.4 Compact ASDL style
-
-Prefer the normal text form:
-
-```asdl
-CodeBlock = (MoonCode.CodeBlockId id, string name, MoonCode.CodeParam* params,
-             MoonCode.CodeInst* insts, MoonCode.CodeTerm term,
-             MoonCode.CodeOrigin origin) unique
-
-CodeTerm = CodeTermJump(MoonCode.CodeBlockId dest, MoonCode.CodeValueId* args) unique
-         | CodeTermBranch(MoonCode.CodeValueId cond, MoonCode.CodeBlockId then_dest,
-                          MoonCode.CodeValueId* then_args,
-                          MoonCode.CodeBlockId else_dest,
-                          MoonCode.CodeValueId* else_args) unique
-```
-
-Do not reintroduce Lua builder noise for core schema edits.
+1. every `lua/moonlift/schema/*.lua` loads as a MoonSchema module;
+2. `require("moonlift.schema_projection").Define(T)` defines all expected runtime modules;
+3. docs and source references point at MoonSchema Lua modules, not schema text files;
+4. `MoonAsdl` names remain internal projection vocabulary only.
 
 ## 26. MoonCode normalized layer
 
@@ -984,8 +937,8 @@ The structured edit plan for this work is stored as:
 
 Summary order:
 
-1. freeze `.asdl` files as schema source of truth and harden loader/embedding;
-2. harden ASDL text tooling and parser diagnostics;
+1. freeze MoonSchema Lua files as schema source of truth and harden loader/embedding;
+2. harden MoonSchema diagnostics and projection validation;
 3. validate/revise `MoonCode` ASDL before depending on it;
 4. implement `code_validate`;
 5. implement `tree_to_code`;
@@ -1039,7 +992,7 @@ These are user-facing or stable integration points and should survive the refact
 | `lua/moonlift/c_emit.lua` | stay if `MoonC.CBackend*` remains the restricted C dialect printer |
 | `lua/moonlift/c_validate.lua` | stay, but validate output from `code_to_c`; may shrink if checks move to `code_validate` |
 | `lua/moonlift/c_helpers.lua` | stay; semantic helper library for UB-free C operations |
-| `lua/moonlift/schema/c.asdl` | canonical `MoonC` / `CBackend` ASDL consumed by C emission |
+| `lua/moonlift/schema/c.lua` | canonical `MoonC` / `CBackend` ASDL consumed by C emission |
 | `tests/test_c_gcc_harness.lua` | stay; compile/run harness is backend-path neutral |
 | `benchmarks/bench_c_vs_cranelift.lua` | stay; should measure the new path |
 
@@ -1216,7 +1169,7 @@ closed forms.
 The tree-shaped vector stack was deleted, not quarantined:
 
 - `tree_to_back.lua`
-- `schema/vec.asdl`
+- `schema/vec.lua`
 - `vec_loop_facts.lua`
 - `vec_loop_decide.lua`
 - `vec_kernel_plan.lua`

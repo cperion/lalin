@@ -6,7 +6,7 @@
 -- role and emits MoonTree/MoonOpen ASDL directly.
 
 local pvm = require("moonlift.pvm")
-local schema = require("moonlift.asdl")
+local schema = require("moonlift.schema_projection")
 local llb = require("llb")
 local ErrorSpan = require("moonlift.error.span")
 local SourceAnalysis = require("moonlift.source_analysis")

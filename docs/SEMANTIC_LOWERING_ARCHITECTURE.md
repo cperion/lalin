@@ -92,16 +92,16 @@ and does not exist in Back.
 The target schema tree is:
 
 ```text
-lua/moonlift/schema/code.asdl       existing; canonical Code, extended for leases/views
-lua/moonlift/schema/graph.asdl      new; Code graph indices
-lua/moonlift/schema/flow.asdl       existing; loop/control facts, tightened
-lua/moonlift/schema/value.asdl      new; symbolic values, affine/reduction/algebra facts
-lua/moonlift/schema/mem.asdl        existing; memory objects/access/safety/lease facts
-lua/moonlift/schema/effect.asdl     new; calls, invalidation, noescape, trap/effect summaries
-lua/moonlift/schema/kernel.asdl     existing; semantic kernels only, no schedules
-lua/moonlift/schema/schedule.asdl   new; target-specific schedules/profitability
-lua/moonlift/schema/lower.asdl      replace; compositional function fragment plan
-lua/moonlift/schema/back.asdl       existing; executable Back only, no decorative facts
+lua/moonlift/schema/code.lua       existing; canonical Code, extended for leases/views
+lua/moonlift/schema/graph.lua      new; Code graph indices
+lua/moonlift/schema/flow.lua       existing; loop/control facts, tightened
+lua/moonlift/schema/value.lua      new; symbolic values, affine/reduction/algebra facts
+lua/moonlift/schema/mem.lua        existing; memory objects/access/safety/lease facts
+lua/moonlift/schema/effect.lua     new; calls, invalidation, noescape, trap/effect summaries
+lua/moonlift/schema/kernel.lua     existing; semantic kernels only, no schedules
+lua/moonlift/schema/schedule.lua   new; target-specific schedules/profitability
+lua/moonlift/schema/lower.lua      replace; compositional function fragment plan
+lua/moonlift/schema/back.lua       existing; executable Back only, no decorative facts
 ```
 
 Implementation modules mirror the schema tree:
@@ -721,7 +721,7 @@ This is the concrete implementation order.
 
 ### Step 1: Add Graph phase
 
-- Add `schema/graph.asdl`.
+- Add `schema/graph.lua`.
 - Implement `code_graph.lua`.
 - Port Flow/Mem to use Graph IDs where relevant.
 
@@ -740,13 +740,13 @@ This is the concrete implementation order.
 
 ### Step 4: Add Value/Algebra phase
 
-- Add `schema/value.asdl`.
+- Add `schema/value.lua`.
 - Move closed-form reduction facts out of Kernel planner.
 - Kernel consumes `ClosedFormFact`.
 
 ### Step 5: Add Effect phase
 
-- Add `schema/effect.asdl`.
+- Add `schema/effect.lua`.
 - Normalize readonly/writeonly/noescape/invalidate/call effects.
 - Lease checks consume Effect facts.
 
@@ -758,7 +758,7 @@ This is the concrete implementation order.
 
 ### Step 7: Add Schedule phase
 
-- Add `schema/schedule.asdl`.
+- Add `schema/schedule.lua`.
 - Move target vector/unroll/tail decisions out of Kernel.
 - Schedule rejection reasons are facts.
 

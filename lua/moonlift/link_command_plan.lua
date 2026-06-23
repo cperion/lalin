@@ -4,7 +4,7 @@ local M = {}
 
 function M.Define(T)
     local Link = T.MoonLink
-    assert(Link, "moonlift.link_command_plan.Define expects moonlift.asdl in the context")
+    assert(Link, "moonlift.link_command_plan.Define expects moonlift.schema_projection in the context")
 
     local function tool_path(tool)
         if tool.path and tool.path.text ~= "" then return tool.path.text end

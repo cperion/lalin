@@ -1,0 +1,157 @@
+local S = require("moonlift.schema.dsl")
+S.use()
+
+return schema. MoonSource {
+  product. DocUri { interned, text [str], },
+  product. DocVersion { interned, field "value" [number], },
+  sum. LanguageId {
+    LangMlua,
+    LangMoonlift,
+    LangLua,
+    LangUnknown { variant_unique, field "name" [str], },
+  },
+  product. DocumentSnapshot {
+    uri [ty "MoonSource.DocUri"],
+    version [ty "MoonSource.DocVersion"],
+    language [ty "MoonSource.LanguageId"],
+    text [str],
+  },
+  sum. PositionEncoding { PosUtf8Bytes, PosUtf16CodeUnits, PosUtf32Codepoints, },
+  product. SourcePos { interned, line [number], byte_col [number], utf16_col [number], },
+  product. SourceRange {
+    interned,
+    uri [ty "MoonSource.DocUri"],
+    start_offset [number],
+    stop_offset [number],
+    start [ty "MoonSource.SourcePos"],
+    stop [ty "MoonSource.SourcePos"],
+  },
+  sum. TextChange {
+    ReplaceAll { text [str], },
+    ReplaceRange { range [ty "MoonSource.SourceRange"], text [str], },
+  },
+  product. DocumentEdit {
+    uri [ty "MoonSource.DocUri"],
+    version [ty "MoonSource.DocVersion"],
+    changes [many [ty "MoonSource.TextChange"]],
+  },
+  product. SourceSlice { text [str], },
+  product. SourceOccurrence {
+    slice [ty "MoonSource.SourceSlice"],
+    range [ty "MoonSource.SourceRange"],
+  },
+  product. AnchorId { interned, text [str], },
+  sum. AnchorKind {
+    AnchorDocument,
+    AnchorLuaOpaque,
+    AnchorHostedIsland,
+    AnchorIslandBody,
+    AnchorKeyword,
+    AnchorScalarType,
+    AnchorStructName,
+    AnchorFieldName,
+    AnchorFieldUse,
+    AnchorFunctionName,
+    AnchorFunctionUse,
+    AnchorMethodName,
+    AnchorParamName,
+    AnchorLocalName,
+    AnchorBindingDef,
+    AnchorBindingUse,
+    AnchorRegionName,
+    AnchorExprName,
+    AnchorContinuationName,
+    AnchorContinuationUse,
+    AnchorBuiltinName,
+    AnchorPackedAlign,
+    AnchorDiagnostic,
+    AnchorExposeName,
+    AnchorModuleName,
+    AnchorOpaque { variant_unique, field "name" [str], },
+  },
+  product. Anchor {
+    interned,
+    field "id" [ty "MoonSource.AnchorId"],
+    kind [ty "MoonSource.AnchorKind"],
+    label [str],
+  },
+  product. AnchorSpan {
+    interned,
+    field "id" [ty "MoonSource.AnchorId"],
+    kind [ty "MoonSource.AnchorKind"],
+    label [str],
+    range [ty "MoonSource.SourceRange"],
+  },
+  product. AnchorSet { interned, anchors [many [ty "MoonSource.AnchorSpan"]], },
+  product. SourceLineSpan {
+    interned,
+    line [number],
+    start_offset [number],
+    stop_offset [number],
+    next_offset [number],
+  },
+  product. PositionIndex {
+    document [ty "MoonSource.DocumentSnapshot"],
+    lines [many [ty "MoonSource.SourceLineSpan"]],
+  },
+  sum. SourceApplyIssue {
+    SourceIssueWrongDocument {
+      variant_unique,
+      expected [ty "MoonSource.DocUri"],
+      actual [ty "MoonSource.DocUri"],
+    },
+    SourceIssueStaleVersion {
+      variant_unique,
+      expected_after [ty "MoonSource.DocVersion"],
+      actual [ty "MoonSource.DocVersion"],
+    },
+    SourceIssueInvalidRange { variant_unique, reason [str], },
+    SourceIssueOverlappingRanges {
+      variant_unique,
+      previous [ty "MoonSource.SourceRange"],
+      current [ty "MoonSource.SourceRange"],
+    },
+    SourceIssueMixedReplaceAll,
+  },
+  sum. SourceApplyResult {
+    SourceApplyOk { document [ty "MoonSource.DocumentSnapshot"], },
+    SourceApplyRejected {
+      document [ty "MoonSource.DocumentSnapshot"],
+      issues [many [ty "MoonSource.SourceApplyIssue"]],
+    },
+  },
+  sum. SourcePositionResult {
+    SourcePositionHit { variant_unique, pos [ty "MoonSource.SourcePos"], },
+    SourcePositionMiss { variant_unique, reason [str], },
+  },
+  sum. SourceOffsetResult {
+    SourceOffsetHit { variant_unique, offset [number], },
+    SourceOffsetMiss { variant_unique, reason [str], },
+  },
+  product. AnchorIndex {
+    interned,
+    set [ty "MoonSource.AnchorSet"],
+    anchors [many [ty "MoonSource.AnchorSpan"]],
+  },
+  sum. AnchorQuery {
+    AnchorQueryPosition {
+      variant_unique,
+      index [ty "MoonSource.AnchorIndex"],
+      uri [ty "MoonSource.DocUri"],
+      offset [number],
+    },
+    AnchorQueryRange {
+      variant_unique,
+      index [ty "MoonSource.AnchorIndex"],
+      range [ty "MoonSource.SourceRange"],
+    },
+    AnchorQueryId {
+      variant_unique,
+      index [ty "MoonSource.AnchorIndex"],
+      field "id" [ty "MoonSource.AnchorId"],
+    },
+  },
+  sum. AnchorLookupResult {
+    AnchorLookup { variant_unique, anchors [many [ty "MoonSource.AnchorSpan"]], },
+  },
+}

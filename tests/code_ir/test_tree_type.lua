@@ -1,7 +1,7 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local pvm = require("moonlift.pvm")
-local A = require("moonlift.asdl")
+local A = require("moonlift.schema_projection")
 local ExprType = require("moonlift.tree_expr_type")
 local PlaceType = require("moonlift.tree_place_type")
 local StmtType = require("moonlift.tree_stmt_type")

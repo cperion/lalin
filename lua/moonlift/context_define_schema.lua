@@ -1,9 +1,9 @@
 -- Define ASDL context modules directly from MoonAsdl.Schema data.
 -- No text round-trip — converts MoonAsdl values straight to the definition
--- format that asdl_context expects.
+-- format that schema_context expects.
 
 local pvm = require("moonlift.pvm")
-local asdl_context = require("moonlift.asdl_context")
+local schema_context = require("moonlift.schema_context")
 
 local M = {}
 
@@ -119,7 +119,7 @@ function M.define(T, schema)
         end
     end
 
-    asdl_context.define(T, defs)
+    schema_context.define(T, defs)
     return T
 end
 

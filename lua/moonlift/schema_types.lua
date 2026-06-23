@@ -18,7 +18,7 @@ local M = {}
 -- ── Context ─────────────────────────────────────────────────────────────────────
 
 local ctx = pvm.context()
-require("moonlift.asdl").Define(ctx)
+require("moonlift.schema_projection").Define(ctx)
 
 local A      = ctx.MoonAsdl
 local Ty     = ctx.MoonType
@@ -32,7 +32,7 @@ end
 
 -- ── Declarations blob ─────────────────────────────────────────────────────────
 
-M.declarations = require("moonlift.asdl_emit_types").emit_all(ctx)
+M.declarations = require("moonlift.schema_emit_types").emit_all(ctx)
 
 -- ── Tags ───────────────────────────────────────────────────────────────────────
 

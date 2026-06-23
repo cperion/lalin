@@ -4,7 +4,7 @@ MoonSchema is the schema and compiler-package architecture for Moonlift
 bootstrap.
 
 It replaces text `.asdl` as the source of truth. It is not an adapter over the
-old ASDL grammar. It is an LLB-authored, Moonlift-typed schema language whose
+old schema text grammar. It is an LLB-authored, Moonlift-typed schema language whose
 values project to runtime classes, LLPVM packages, Moonlift data declarations,
 C ABI surfaces, documentation, diagnostics, and tooling.
 
@@ -29,7 +29,7 @@ C consumes sealed ABI projections.
 Cranelift consumes final backend programs.
 ```
 
-No `.asdl` text is part of the architecture.
+No `.asdl` text is part of the architecture. The active schema directory contains Lua/MoonSchema modules only.
 
 No duplicate schema type system exists.
 
@@ -48,7 +48,7 @@ MoonSchema
   Product/sum/identity/diagnostic/projection language.
 
 Runtime projection
-  Generated ASDL-style classes, builders, interning, and structural update.
+  Generated MoonAsdl-backed classes, builders, interning, and structural update.
 
 LLPVM projection
   Executable worlds, streams, phases, bytecode images, and process events.
@@ -73,7 +73,7 @@ lua/moonlift/schema/type.lua
 lua/moonlift/schema/tree.lua
 lua/moonlift/schema/code.lua
 lua/moonlift/schema/back.lua
-lua/moonlift/schema/compiler.lua
+lua/moonlift/schema/phase.lua
 ```
 
 Each module returns a MoonSchema value.
@@ -120,13 +120,13 @@ count [i64]
 ok [bool]
 index [index]
 bytes [view [u8]]
-ty [MoonType.Type]
-expr [MoonTree.Expr]
-origin [optional [MoonSource.Range]]
-items [many [Item]]
-owner [ref [Module]]
-binding_id [id [MoonBind.Binding]]
-by_name [map [str] [Binding]]
+ty [ty "MoonType.Type"]
+expr [ty "MoonTree.Expr"]
+origin [optional [ty "MoonSource.Range"]]
+items [many [ty "Item"]]
+owner [ref [ty "Module"]]
+binding_id [id [ty "MoonBind.Binding"]]
+by_name [map [str] [ty "Binding"]]
 ```
 
 Schema-specific type wrappers are minimal and semantic:
@@ -169,7 +169,6 @@ Canonical top-level heads:
 
 ```lua
 schema. Name { ... }
-use. Module
 product. Name { ... }
 sum. Name { ... }
 alias. Name [T]
@@ -799,7 +798,7 @@ lua/moonlift/schema/type.lua
 lua/moonlift/schema/tree.lua
 lua/moonlift/schema/code.lua
 lua/moonlift/schema/back.lua
-lua/moonlift/schema/compiler.lua
+lua/moonlift/schema/phase.lua
 ```
 
 Files not in the architecture:
@@ -811,7 +810,7 @@ lua/moonlift/asdl_parser.lua
 lua/moonlift/asdl_text.lua
 ```
 
-`asdl_context.lua` is replaced or refactored into runtime projection machinery.
+`schema_context.lua` is replaced or refactored into runtime projection machinery.
 It is not fed by text ASDL.
 
 ## Non-negotiables

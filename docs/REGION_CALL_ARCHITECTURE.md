@@ -166,7 +166,7 @@ The exact representation should reuse existing language-level struct/union/varia
 
 Safe implementation areas:
 
-- `lua/moonlift/schema/tree.asdl`
+- `lua/moonlift/schema/tree.lua`
 - `lua/moonlift/dsl/init.lua`
 - `lua/moonlift/open_expand.lua`
 - `lua/moonlift/region_normal_form.lua`
@@ -175,13 +175,13 @@ Safe implementation areas:
 
 Avoid backend and semantic-lowering areas:
 
-- `lua/moonlift/schema/code.asdl`
+- `lua/moonlift/schema/code.lua`
 - `lua/moonlift/code_type.lua`
 - `lua/moonlift/code_validate.lua`
 - `lua/moonlift/code_to_back.lua`
 - `lua/moonlift/lower_to_back.lua`
 - `lua/moonlift/frontend_pipeline.lua` unless only adding frontend boundary checks
-- `lua/moonlift/schema/{flow,mem,kernel,lower}.asdl`
+- `lua/moonlift/schema/{flow,mem,kernel,lower}.lua`
 - `lua/moonlift/code_{flow,mem,kernel,lower}_*.lua`
 - `lua/moonlift/kernel_validate.lua`
 

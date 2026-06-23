@@ -54,7 +54,7 @@ ll.loadstring(src, name)  -- load a DSL chunk
 ll.loadfile(path)         -- load a DSL file
 ll.load(src, name)        -- load and evaluate a DSL chunk
 
-ll.bytecode(value)        -- encode ProgramSpec/ProgramImage/ASDL program
+ll.bytecode(value)        -- encode ProgramSpec/ProgramImage
 ll.bytebuffer(bytes)      -- copy a Lua string into uint8_t[] for FFI
 
 ll.records(bytes)         -- raw process stream over LLPV bytecode records
@@ -70,7 +70,6 @@ ll.stream_items(items)    -- fragment helper for stream values
 ll._(fragment)            -- structural splice marker
 ll.spread(fragment)       -- explicit alias for ll._
 
-ll.asdl, ll.T, ll.B       -- ASDL context/builders for tools and tests
 ```
 
 Removed public API:

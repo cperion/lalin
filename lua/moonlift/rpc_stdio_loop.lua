@@ -1,5 +1,5 @@
 local pvm = require("moonlift.pvm")
-local Asdl = require("moonlift.asdl")
+local Asdl = require("moonlift.schema_projection")
 local JsonDecode = require("moonlift.rpc_json_decode")
 local LspDecode = require("moonlift.rpc_lsp_decode")
 local LspEncode = require("moonlift.rpc_lsp_encode")

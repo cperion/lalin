@@ -1466,7 +1466,7 @@ its generated source on the type's metatable and can be inspected for debugging:
 
 ```lua
 -- ASDL constructor codegen (interning trie, unrolled per field count):
--- Access via the type's metatable.__source if exposed by asdl_context
+-- Access via the type's metatable.__source if exposed by schema_context
 ```
 
 `pvm.phase` dispatch uses `pvm.classof(node)` — no loadstring,
@@ -1692,7 +1692,7 @@ Module.TypeName?                          -- optional
 ```lua
 -- ── Context and types ──────────────────────────────────────────────────
 pvm.context()                          → T (ASDL context)
-T:Define(schema_string)                → T (chainable)
+Schema.Define(T)                       -> T (MoonSchema projection)
 T:Builders()                           → B (safe named-field builder namespace)
 T:FastBuilders()                       → F (trusted named-field builder namespace)
 

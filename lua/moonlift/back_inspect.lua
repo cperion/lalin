@@ -2,7 +2,7 @@ local M = {}
 
 function M.Define(T)
     local Back = T.MoonBack
-    assert(Back, "moonlift.back_inspect.Define expects moonlift.asdl in the context")
+    assert(Back, "moonlift.back_inspect.Define expects moonlift.schema_projection in the context")
 
     local function sorted_counts(counts)
         local keys = {}
