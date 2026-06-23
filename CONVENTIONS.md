@@ -295,24 +295,24 @@ Continuation names are outcomes, not status words.
 
 Prefer:
 
-```moonlift
-borrowed(component: lease(sess) ptr(Component))
-allocated(c: ComponentRef, component: lease(sess) ptr(Component))
-routed(component: ComponentRef, handler: HandlerRef)
+```lua
+borrowed { component [lease (sess, ptr [Component])] }
+allocated { c [ComponentRef], component [lease (sess, ptr [Component])] }
+routed { component [ComponentRef], handler [HandlerRef] }
 would_block
 peer_closed
-bad_frame(code: i32)
-stale(c: ComponentRef)
-missing(c: ComponentRef)
-oom(needed: index)
+bad_frame { code [i32] }
+stale { c [ComponentRef] }
+missing { c [ComponentRef] }
+oom { needed [index] }
 ```
 
 Avoid:
 
-```moonlift
+```lua
 ok
 done
-error(code: i32)
+error { code [i32] }
 failed
 none
 ```
@@ -330,11 +330,12 @@ handle names in source instead of collapsing them to raw integers.
 
 Store-resolved handles declare their resolver facts:
 
-```moonlift
-handle ComponentRef : u64 invalid 0
-    domain Session
-    target Component
-end
+```lua
+handle .ComponentRef {
+    invalid = 0,
+    domain = "Session",
+    target = "Component",
+}
 ```
 
 `domain` names the public resolver product.  It does not have to be the physical
@@ -343,13 +344,15 @@ successful resolver continuation.
 
 The resolver region grants the lease:
 
-```moonlift
-region borrow_component(readonly sess: ptr(Session), c: ComponentRef;
-    borrowed(component: lease(sess) ptr(Component))
-  | stale(c: ComponentRef)
-  | missing(c: ComponentRef)
-  | unmounted(c: ComponentRef))
-end
+```lua
+region .borrow_component
+  { sess [readonly [ptr [Session]]], c [ComponentRef] }
+  {
+    borrowed { component [lease (sess, ptr [Component])] },
+    stale { c [ComponentRef] },
+    missing { c [ComponentRef] },
+    unmounted { c [ComponentRef] },
+  }
 ```
 
 Rules:
@@ -377,19 +380,19 @@ Without a generation, an old handle can accidentally resolve to a new occupant
 after a slot is retired and reused.  With a generation, the resolver can reject
 that old handle as `stale`.
 
-```moonlift
-struct ComponentSlot
-    gen: u32,
-    live: bool32,
-    component: Component,
-end
+```lua
+struct .ComponentSlot {
+    gen [u32],
+    live [bool32],
+    component [Component],
+}
 
-struct ComponentStore
-    slots: ptr(ComponentSlot),
-    n: index,
-    cap: index,
-    free_head: u32,
-end
+struct .ComponentStore {
+    slots [ptr [ComponentSlot]],
+    n [index],
+    cap [index],
+    free_head [u32],
+}
 ```
 
 Resolver shape:
@@ -429,21 +432,18 @@ owned TRef     mandatory discharge authority
 cleanup machine is a normal region, and the CFG checker must prove every path
 consumes or transfers the owned value.
 
-```moonlift
-region close_session(app: ptr(App), s: owned SessionRef;
-    closed
-  | missing(s: owned SessionRef))
-end
+```lua
+region .close_session
+  { app [ptr [App]], s [owned [SessionRef]] }
+  { closed, missing { s [owned [SessionRef]] } }
 ```
 
 If an operation preserves the obligation, the continuation returns it:
 
-```moonlift
-region poll_task(task: owned TaskRef;
-    pending(task: owned TaskRef)
-  | completed
-  | failed(code: i32))
-end
+```lua
+region .poll_task
+  { task [owned [TaskRef]] }
+  { pending { task [owned [TaskRef]] }, completed, failed { code [i32] } }
 ```
 
 ## Access Verbs

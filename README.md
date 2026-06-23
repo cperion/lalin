@@ -1,24 +1,20 @@
 # Moonlift
 
 **A typed, jump-first compiled language that generates native code through Cranelift.**
-**Metaprogrammed through LuaJIT — quoted with `moon.XXX`, embedded in `.mlua`,
-or authored through the Lua-owned DSL — compiled to machine code.**
+**Authored through the Lua-owned DSL — metaprogrammed through LuaJIT — compiled to machine code.**
 
-Moonlift compiles to native machine code. You write Moonlift source enclosed in
-`moon.func[[]]`, `moon.region[[]]`, `moon.stmts[[]]` quotes; embed it in `.mlua`
-files where `@{...}` carrier closures resolve bindings automatically; or use
-`require("moonlift.dsl")`, where Lua itself parses products, protocols, bodies,
-and fill maps as table values. The compiler turns them into JIT-ed function
-pointers, relocatable `.o` files, or `.so`/`.dylib` shared libraries.
-
-Recommended for new code: Lua-owned DSL.
+Moonlift compiles to native machine code. You author Moonlift in ordinary Lua
+via `require("moonlift.dsl")` — Lua parses products, protocols, bodies, and fill
+maps as table values; the DSL normalizes them into typed ASDL. The compiler
+turns them into JIT-ed function pointers, relocatable `.o` files, or
+`.so`/`.dylib` shared libraries.
 
 The `moonlift` binary embeds the full compiler (Lua staging + Cranelift backend).
 Zero runtime dependencies — copy it anywhere.
 
 ```
-.mlua / .lua / .mld.lua source
-  → moon.func[[]] / moon.region[[]] quotes or moonlift.dsl values
+.mld.lua source
+  → moonlift.dsl values (Lua tables with typed constructors)
   → ASDL (interned, immutable, typed)
   → typecheck → lower → validate
   → Flatline binary wire format (v4)
@@ -62,7 +58,7 @@ Moonlift takes a different approach:
 | Concern | Moonlift's answer |
 |---|---|
 | **Metaprogramming** | LuaJIT Lua. Real genericity lives in Lua, not in template syntax. |
-| **Authoring APIs** | `moon.func[[]]`, `.mlua` hosted islands, and the Lua-owned DSL. The DSL is the minimal solid path when you want Lua values and table shapes instead of textual antiquote. |
+| **Authoring** | Lua-owned DSL (`require("moonlift.dsl")`). Lua parses the shape, Moonlift normalizes to ASDL. Header/impl split via body-closures. |
 | **Native performance** | Cranelift JIT + object emission. Same backend tier as wasmtime. |
 | **Control flow** | Typed blocks with explicit jump/yield/return. No hidden `next`, no implicit fallthrough. |
 | **Semantics** | Everything meaningful is represented as ASDL (Algebraic Semi-structured Data Language) values. No hidden state in strings, callbacks, or mutable tables. |
@@ -78,215 +74,73 @@ metaprogramming, and who believe semantics should be data, not strings.
 
 ## At a Glance
 
-### From Lua: `moon.func[[]]` quotes
-
-```lua
-local moon = require("moonlift")
-
--- Define a function by quoting Moonlift source
-local add = moon.func [[add(a: i32, b: i32): i32 return a + b end]]
-
--- Compile and run
-local bundle = moon.bundle("demo")
-module:add_func(add)
-local compiled = module:compile()
-local fn = compiled:get("add")
-print(fn(3, 4))  -- 7, running as native machine code
-compiled:free()
-```
-
-### From `.mlua`: Lua host + typed islands with `@{...}`
-
-```lua
--- .mlua files mix Lua and Moonlift with automatic binding resolution.
--- @{lua_expr} splices Lua values into Moonlift source.
-
-local function expect_byte(tag, byte, err_code)
-    local name = "expect_" .. tag
-    return region @{name}(p: ptr(u8), n: i32, pos: i32;
-        ok(next: i32),
-        err(pos: i32, code: i32))
-    entry start()
-        if pos >= n then jump err(pos = pos, code = @{err_code}) end
-        if as(i32, p[pos]) == @{byte} then
-            jump ok(next = pos + 1)
-        end
-        jump err(pos = pos, code = @{err_code})
-    end
-    end
-end
-
-local expect_A = expect_byte("A", 65, 10)
-local expect_semicolon = expect_byte("semicolon", 59, 30)
-
--- Function with jump-first control
-local parse_packet = func(p: ptr(u8), n: i32): i32
-    return region: i32
-    entry start()
-        if n <= 0 then yield -1 end
-        switch as(i32, p[0]) do
-        case 65 then
-            emit two_digits(p, n, 1; ok = got_A, err = bad)
-        case 66 then
-            emit @{expect_A}(p, n, 1; ok = got_byte, err = bad)
-        case 67 then
-            emit digit_sum_until_semicolon(p, n, 1; ok = got_C, err = bad)
-        default then
-            yield -9
-        end
-    end
-    block got_A(value: i32, pos2: i32)
-        yield 1000 + value
-    end
-    block got_byte(next: i32)
-        yield 2000
-    end
-    block got_C(sum: i32, pos2: i32)
-        yield 3000 + sum
-    end
-    block bad(pos: i32, code: i32)
-        yield 0 - code
-    end
-    end
-end
-
-return { parse_packet = parse_packet }
-```
-
-### From the Lua-owned DSL: no parser, no antiquote
+### Authoring — the Lua-owned DSL
 
 ```lua
 local dsl = require("moonlift.dsl")
-
-local chunk = dsl.loadstring([[
+local m = dsl.loadstring([[
 return module "Demo" {
-  region .expect_A
-    { p [ptr [u8]], n [i32], pos [i32] }
+  struct .Point { x [f32], y [f32] },
+
+  fn .add { a [i32], b [i32] } [i32] {
+    ret (a + b),
+  },
+
+  region .scan
+    { p [ptr [u8]], n [i32], target [i32] }
+    { hit { pos [i32] }, miss { pos [i32] } }
     {
-      ok  { next [i32] },
-      err { pos [i32], code [i32] },
-    }
-    {
-      entry .start {} {
-        when (pos:ge(n)) {
-          jump .err { pos = pos, code = 10 },
-        },
-
-        when (eq(as [i32] (p[pos]), 65)) {
-          jump .ok { next = pos + 1 },
-        },
-
-        jump .err { pos = pos, code = 10 },
-      },
-    },
-
-  fn .parse_packet
-    { p [ptr [u8]], n [i32] }
-    [i32]
-    {
-      entry .start {} {
-        emit .expect_A { p, n, 0 } {
-          ok  = got_byte,
-          err = bad,
-        },
-      },
-
-      block .got_byte { next [i32] } {
-        ret (2000),
-      },
-
-      block .bad { pos [i32], code [i32] } {
-        ret (0 - code),
+      entry .loop { i [i32] (0) } {
+        when (i:ge(n)) { jump .miss { pos = i } },
+        when (as [i32] (p[i]):eq(target)) { jump .hit { pos = i } },
+        jump .loop { i = i + 1 },
       },
     },
 }
-]], "demo.mld.lua")
+]], "demo.mld.lua")()
 
-local module = chunk()
-local lowered = module:lower()
+-- Full pipeline
+m:lower()      -- lowered program
+m:compile()    -- JIT-compiled native code
+m:emit_c_artifact()  -- C/header/support artifact
 ```
 
-In the DSL, `[]` receives actual Lua values, not textual holes. `{}` is kept as
-semantic structure: products, protocols, bodies, and fill maps are ordinary Lua
-tables normalized into ASDL.
-
-### Values binder: generate code from Lua data
+### Header / implementation split
 
 ```lua
--- Build switch arms from Lua data, spread into Moonlift source
-local function literal_arm(text, tag)
-    local bytes = { text:byte(1, #text) }
-    local lines = {}
-    lines[#lines + 1] = ("if i + %d > n then jump fail() end"):format(#bytes)
-    for off = 2, #bytes do
-        lines[#lines + 1] = ("if as(i32, p[i + %d]) ~= %d then jump fail() end"):format(off - 1, bytes[off])
-    end
-    lines[#lines + 1] = "tags[meta[0]] = " .. tostring(tag)
-    lines[#lines + 1] = "a[meta[0]] = 0"
-    lines[#lines + 1] = "b[meta[0]] = 0"
-    lines[#lines + 1] = "nums[meta[0]] = 0.0"
-    lines[#lines + 1] = "meta[0] = meta[0] + 1"
-    lines[#lines + 1] = ("jump done(next_i = i + %d)"):format(#bytes)
-    return { raw_key = tostring(bytes[1]), body = moon.stmts(table.concat(lines, "\n")) }
-end
-
-local literal_arms = {
-    literal_arm("true",  8),
-    literal_arm("false", 9),
-    literal_arm("null",  10),
+-- math_header.mld.lua — signatures, no bodies
+return {
+  fn .add { a [i32], b [i32] } [i32],
+  fn .sub { a [i32], b [i32] } [i32],
 }
 
--- Bind values, then quote: moon.func { values } [[ source ]]
-local parse_value = moon.func { literal_arms = literal_arms } [[
-parse_value(p: ptr(u8), n: i32, pos: i32, tags: ptr(i32), a: ptr(i32),
-            b: ptr(i32), nums: ptr(f64), meta: ptr(i32)): i32
-    return region: i32
-    entry start()
-        switch as(i32, p[i]) do
-        @{literal_arms...}
-        case 34 then emit parse_string_event(...)
-        default then emit parse_number_event(...)
-        end
-    end
-    ...
-end
-]]
+-- math_impl.mld.lua — fill the bodies
+local header = require("math_header")
+return module "Math" {
+  header[1] { ret (a + b) },
+  header[2] { ret (a - b) },
+}
 ```
 
-See `examples/json/json_lua_stack_decoder.mlua` for the JSON showcase: a
-library-shaped decoder/encoder that emits a full C backend blob. Its canonical
-decode path builds a typed Moonlift value-event tape first, then projects that
-explicit value stream to Lua while preserving JSON null and array/object shape.
+### Factory — Lua is the generator
 
-### Control: typed blocks, jumps, yields
-
-```moonlift
--- No while, for, break, or continue.
--- Everything is blocks with explicit state transitions.
-
-local sum = func(xs: view(i32), n: index): i32
-    block loop(i: index = 0, acc: i32 = 0)
-        if i >= n then
-            return acc
-        end
-        jump loop(i = i + 1, acc = acc + xs[i])
+```lua
+local function expect_byte(tag, byte, err_code)
+    local name = "expect_" .. tag
+    return function()
+        return {
+            region[name]
+              { p [ptr [u8]], n [index], pos [index] }
+              { ok { next [index] }, err { pos [index], code [i32] } }
+              {
+                entry .start {} {
+                  when (pos:ge(n)) { jump .err { pos = pos, code = err_code } },
+                  when (as [i32] (p[pos]):eq(byte)) { jump .ok { next = pos + 1 } },
+                  jump .err { pos = pos, code = err_code },
+                },
+              },
+        }
     end
-end
-
-return sum
-```
-
-### Regions: typed control fragments with continuation protocols
-
-```moonlift
-region scan_until(p: ptr(u8), n: i32, target: i32;
-                  hit(pos: i32),
-                  miss(pos: i32))
-entry loop(i: i32 = 0)
-    if i >= n then jump miss(pos = i) end
-    if as(i32, p[i]) == target then jump hit(pos = i) end
-    jump loop(i = i + 1)
-end
 end
 ```
 
@@ -320,10 +174,10 @@ Produces a fully static binary at `target/release/moonlift`:
 The C emission tests use this repo-local `libtcc.so` for in-memory callable C
 backend coverage.
 
-### Run a `.mlua` file
+### Run a file
 
 ```bash
-target/release/moonlift examples/json/json_lua_stack_decoder.mlua
+target/release/moonlift run examples/demo.mld.lua
 ```
 
 The JSON example returns a Lua library table with `decode`, `decode_or_nil`,
@@ -379,9 +233,9 @@ No source-level generics. Lua generates monomorphic concrete types.
 
 Handles are nominal durable identities:
 
-```moonlift
-handle SessionRef : u64 invalid 0 end
-handle VoiceRef : u32 invalid 0 domain VoiceStore target VoiceState end
+```lua
+handle .SessionRef { invalid = 0 }
+handle .VoiceRef { invalid = 0, domain = "VoiceStore", target = "VoiceState" }
 ```
 
 `lease ptr(T)` and `lease view(T)` are temporary access facts granted by
@@ -410,12 +264,12 @@ or `return`. No implicit fallthrough.
 
 Regions are typed control components with named continuation exits:
 
-```moonlift
-region my_region(params...; exit_a(sig...) | exit_b(sig...))
-entry start()
-    emit other_fragment(args...; out = exit_a)
-end
-end
+```lua
+region .my_region { params ... } { exit_a { sig ... }, exit_b { sig ... } } {
+    entry .start {} {
+      emit .other_fragment { args ... } { out = exit_a }
+    },
+  }
 ```
 
 Compose regions with `emit`. The caller decides what each exit means.
@@ -424,15 +278,14 @@ Compose regions with `emit`. The caller decides what each exit means.
 returns ownership on a continuation, the filled target must declare a matching
 `owned` parameter:
 
-```moonlift
-region close_session(app: ptr(App), s: owned SessionRef;
-    closed()
-  | missing(s: owned SessionRef))
-end
+```lua
+region .close_session
+  { app [ptr [App]], s [owned [SessionRef]] }
+  { closed, missing { s [owned [SessionRef]] } }
 
-block retry(s: owned SessionRef)
-    emit close_session(app, s; closed = done, missing = retry)
-end
+block .retry { s [owned [SessionRef]] } {
+    emit .close_session { app, s } { closed = done, missing = retry }
+}
 ```
 
 Expression-style region calls reject continuation payloads containing leases or
@@ -451,12 +304,12 @@ local int = C:seq({optional_sign, number})
 
 ### Switch dispatch
 
-```moonlift
-switch tag do
-case 0 then jump value(delta = 1)
-case 1 then jump value(delta = -1)
-default then jump value(delta = 0)
-end
+```lua
+switch (tag) {
+    case (0) { jump .value { delta = 1 } },
+    case (1) { jump .value { delta = -1 } },
+    default { jump .value { delta = 0 } },
+}
 ```
 
 No fallthrough. Explicit, verifiable control branches.
@@ -465,9 +318,9 @@ No fallthrough. Explicit, verifiable control branches.
 
 Source-level extern declarations describe C-ABI imports:
 
-```moonlift
-extern write(fd: i32, buf: ptr(u8), count: index): index end
-extern host_add7(x: i32): i32 as "host_add7_impl" end
+```lua
+extern .write { fd [i32], buf [ptr [u8]], count [index] } [index] { symbol = "write" }
+extern .host_add7 { x [i32] } [i32] { symbol = "host_add7_impl" }
 ```
 
 Moonlift code calls these names like ordinary functions. The Cranelift JIT
@@ -476,382 +329,126 @@ emission leaves externs as normal linker imports.
 
 ---
 
-## Metaprogramming Model
+## Authoring — the Lua-owned DSL
 
-Every `moon.XXX` is either a **quote** (write Moonlift syntax in a string,
-get typed ASDL back) or a **table builder** (build data with Lua loops,
-get typed ASDL back).
-
-### Quotes `moon.XXX[[]]` — code-shaped things
-
-```lua
--- Full islands: keyword is optional (moon.func already says "func")
-local f = moon.func     [[add(a: i32, b: i32): i32 return a + b end]]
-local r = moon.region   [[scan(p: ptr(u8); hit(v: i32)) entry ... end end]]
-local s = moon.struct   [[Point x: i32, y: i32 end]]
-local u = moon.union    [[Option Some(i32) | None end]]
-local e = moon.extern   [[write(fd: i32, buf: ptr(u8)): i32 end]]
-
--- Fine-grained
-local stmts = moon.stmts [[let y = x + 1; return y * 2]]
-local ty    = moon.type  [[ptr(i32)]]
-local expr  = moon.expr  [[x + 1]]
-```
-
-### Table builders `moon.XXX{ }` — data-shaped things
-
-```lua
--- Build arrays with Lua loops, get typed ASDL
-local params = moon.params {
-    { name = "x", type = moon.i32 },
-    { name = "y", type = moon.i32 },
-}
-
-local fields = moon.fields {
-    { name = "x", type = moon.f64 },
-    { name = "y", type = moon.f64 },
-}
-
-local variants = moon.variants {
-    { name = "Some", payload = moon.i32 },
-    { name = "None" },
-}
-
-local conts = moon.conts {
-    hit  = { params = { { name = "pos", type = moon.i32 } } },
-    miss = { params = {} },
-}
-
--- Codegen: build tables with a Lua for loop
-local params = {}
-for i = 1, N do
-    params[i] = { name = "x" .. i, type = moon.i32 }
-end
-```
-
-### Values binder `moon.XXX{values}[[src]]` — Lua data meets Moonlift syntax
-
-```lua
--- Bind Lua values in a table, then quote Moonlift with @{} holes
-moon.func { T = moon.i32, params = param_list } [[
-add(@{params...}): @{T}
-    return a + b
-end
-]]
-
--- Switch arms generated from Lua data
-moon.func { literal_arms = arm_array } [[
-parse_value(...): i32
-    switch as(i32, p[i]) do
-    @{literal_arms...}
-    default then ...
-    end
-end
-]]
-```
-
-### The single dispatch rule
-
-Every `moon.XXX` is a **chain object** (see `lua/moonlift/chain.lua`). Its
-`__call` dispatches on the type of the first argument:
-
-| Input | Means | Returns |
-|---|---|---|
-| `moon.XXX [[src]]` | Pure quote — `@{}` in `src` is an error (no bindings) | Typed ASDL directly |
-| `moon.XXX { string keys }` | Values binder — `@{key}` in the next string resolves from table | Quote closure `fn(src)` |
-| `moon.XXX { string keys } [[src]]` | Binder + quote — `@{key}` in `src` bound from table | Typed ASDL directly |
-| `moon.XXX { int keys }` | Table builder — records from data | Typed ASDL array |
-| `moon.XXX [[header only]]` | Bodyless decl (`func`/`region`) — `@{}` is an error (no bindings yet) | **Header closure** (callable) |
-| `moon.XXX {b} [[header with @{}]]` | Binder → header — `@{}` in header resolved from `b` | **Header closure** carrying `b` |
-| `header [[body with @{}]]` | Body string — `@{}` resolved from header's accumulated bindings | Typed ASDL directly |
-| `header { more } [[body with @{}]]` | Merge more bindings, then body — `@{}` resolved from merged set | Typed ASDL directly |
-
-### The `chain.lua` monoid — composable call steps
-
-Because every step returns something callable, calls compose left-to-right
-without extra variables. This is the monoid property of `chain.lua`: each
-returned value is either typed ASDL (terminal) or something that continues
-accepting calls.
-
-**`@{}` resolves from the accumulated bindings at each string.**  Any string
-passed to a chain step — whether a header string or a body string — is parsed
-and `@{key}` holes are filled from the bindings table accumulated so far in
-the chain.  Two separate strings in the same chain share the same binding
-scope.
-
-```lua
--- ① Pure quote — one call, one result
-local add = moon.func [[add(a: i32, b: i32): i32
-    return a + b
-end]]
-
--- ② Binder + quote — {values} then [[src]]
---    The {values} call returns a closure; [[src]] calls it immediately.
-local add = moon.func { T = moon.i32 } [[
-add(a: @{T}, b: @{T}): @{T}
-    return a + b
-end]]
-
--- ③ Header closure — split declaration from body
---    moon.func sees a bodyless `func` (no body, no `end`), returns a
---    header closure instead of ASDL. The closure is then called with
---    the body string. @{} is NOT available here (no bindings table).
-local header = moon.func [[add(a: i32, b: i32): i32]]
-local add    = header [[return a + b]]
-
--- The two steps collapse into one expression:
-local add = moon.func [[add(a: i32, b: i32): i32]]
-                      [[return a + b]]
-
--- ④ Binder → header closure → body  (all three in one expression)
---    {bindings} seeds the binding scope. Both the header string and the
---    body string can use @{key} — they share the same accumulated bindings.
-local add = moon.func { T = moon.i32 }
-                      [[add(a: @{T}, b: @{T}): @{T}]]   -- @{T} resolved here
-                      [[return a + b]]                     -- @{T} also available here
-
--- ⑤ Header closure + extra bindings injected mid-chain
---    The header itself has no bindings yet (plain [[...]] call), so @{}
---    would error there. Bindings are supplied on the header closure, and
---    then @{} in the body string resolves from those bindings.
-local generic_header = moon.func [[add(a: @{T}, b: @{T}): @{T}]]
---                              ^^^ no @{} resolved yet — parsed but slots left open
-
-local add_i32 = generic_header { T = moon.i32 } [[return a + b]]
---                             ^^^^^^^^^^^^^^ bindings provided here, @{T} resolved
-local add_f64 = generic_header { T = moon.f64 } [[return a + b]]
-
--- ⑥ Table builder — integer-keyed, no quotes involved
---    moon.params / moon.fields / moon.variants etc. use this path.
-local params = moon.params {
-    { name = "x", type = moon.i32 },
-    { name = "y", type = moon.i32 },
-}
-
--- ⑦ region follows the same pattern (header → body)
---    @{} works in both the header and the body; both share the bindings.
-local scan = moon.region { target = moon.i32 }
-                         [[scan(p: ptr(u8), n: i32; hit(pos: i32), miss)]]
-                         [[
-entry loop(i: i32 = 0)
-    if i >= n then jump miss() end
-    if as(i32, p[i]) == @{target} then jump hit(pos = i) end
-    jump loop(i = i + 1)
-end
-end]]
-```
-
-**Why it works.**  `moon.XXX` is a table with `__call`. Calling it with
-`{string keys}` returns a plain Lua `function` that carries the bindings.
-Calling that function with a string resolves `@{key}` holes from those
-bindings.  Calling `moon.XXX` directly with a string (`[[...]]`) or with
-`{int keys}` returns typed ASDL — `@{}` in a bare string with no prior
-bindings table is a parse error.  For `moon.func` and `moon.region`, when
-the parsed result is a *bodyless declaration*, `wrap_fn` returns a
-**header closure** — a table with its own `__call` — instead of typed ASDL.
-That closure carries the accumulated bindings from all `{...}` steps so far.
-Calling the header closure with a body string resolves any `@{key}` in
-that string from the same accumulated bindings, then produces final ASDL.
-Header calls take body-only strings: no repeated outer declaration and no
-outer closing `end`.
-In `.mlua` files, function and region headers can also be implemented without
-explicit long-bracket calls:
-
-```lua
-local add_h = func add(a: i32, b: i32): i32 end
-local add = func add_h
-    return a + b
-end
-
-local scan_h = region scan(; done) end
-local scan = region scan_h
-entry start()
-    jump done()
-end
-end
-```
-
-Calling it with a `{table}` merges more bindings and returns a new header
-closure.  The chain terminates exactly once, when a fully-resolved ASDL
-value is produced.
-
-The implementation lives entirely in two files:
-- `lua/moonlift/chain.lua` — the generic chain/dispatch machinery
-- `lua/moonlift/host.lua` — all `moon.XXX` instances wired up via `make_quote`
-
-Extending with your own chain:
-
-```lua
-local moon = require("moonlift")
--- moon.chain is make_chain bound to the default session
-local my_api = moon.chain {
-    name    = "my_api",
-    parse   = function(T, src) ... end,
-    wrap    = function(value, parsed, T, src, bindings) ... end,
-    expand  = function(e, value, env) ... end,  -- for @{} splice support
-    table_fn = function(arr) ... end,            -- for {int-key} builder form
-}
--- my_api then has the same moon.XXX calling conventions
-```
-
-### No buildr API, no `function(b) ... end`
-
-The old builder API (`b:let`, `b:if_`, `b:switch_`, `b:return_`, `b:jump`,
-`b:yield_`, `b:emit`) is retired. All codegen goes through quotes or
-table builders.
-
-What stays:
-- `moon.bundle("Name")` — output packaging (compile together, emit .o/.so)
-- `moon.ast.*` — low-level ASDL constructors (escape hatch)
-- Lua `for` loops for building tables — the only "builder" you need
-
----
-
-## Lua-Owned DSL
-
-The Lua-owned DSL is the recommended authoring surface for generated Moonlift.
-It is a real alternative to `.mlua`: Lua parses the program shape, Moonlift
-receives ASDL-backed values, and `[]` naturally evaluates to ordinary Lua
-values. There is no second parser pass for splicing and no textual antiquote
-carrier.
-
-Use `.mlua` only when you need source-style Moonlift text islands. Use
-`require("moonlift.dsl")` when code is generated, assembled, or sliced by Lua
-data (recommended).
+All Moonlift is authored through the Lua-owned DSL (`require("moonlift.dsl")`).
+Lua parses the program shape mechanically; the DSL normalizes Lua values into
+Moonlift ASDL. No separate parser, no textual antiquote, no string quotes.
+Values are values.
 
 ```lua
 local dsl = require("moonlift.dsl")
+
 local m = dsl.loadstring([[
-local T = i32
-
 return module "Demo" {
-  region .scan { p [ptr(u8)], n [i32], target [i32] } {
-    hit { pos [i32] } | miss { pos [i32] }
-  } {
-    entry .loop { i [i32] = 0 } {
-      when (i >= n) { jump .miss { pos = i } },
-      when (as(i32, p[i]) == target) { jump .hit { pos = i } },
-      jump .loop { i = i + 1 },
-    },
+  struct .Point { x [f32], y [f32] },
+
+  fn .add { a [i32], b [i32] } [i32] {
+    ret (a + b),
   },
 
-  fn .find_A { p [ptr(u8)], n [i32] } [i32] {
-    block .found { pos [i32] } { ret (pos) },
-    block .not_found { pos [i32] } { ret (-1) },
-    emit .scan { p, n, 65 } { hit = found, miss = not_found },
-  },
+  region .scan
+    { p [ptr [u8]], n [i32], target [i32] }
+    { hit { pos [i32] }, miss { pos [i32] } }
+    {
+      entry .loop { i [i32] (0) } {
+        when (i:ge(n)) { jump .miss { pos = i } },
+        when (as [i32] (p[i]):eq(target)) { jump .hit { pos = i } },
+        jump .loop { i = i + 1 },
+      },
+    },
 }
 ]], "demo.mld.lua")()
 
+-- Pipeline: syntax → ast → typecheck → lower → jit / object / c
 local lowered = m:lower()
+local compiled = m:compile()
 ```
 
-The same slicing pattern that needs `@{items...}` in `.mlua` becomes ordinary
-Lua table construction in the DSL:
+### Table shapes
+
+The DSL assigns meaning to Lua table shapes:
+
+| Lua syntax | DSL meaning |
+|---|---|
+| `.name` | fixed DSL token or declared name |
+| `[expr]` | type slot, computed name, value insertion |
+| `{ a, b, c }` | ordered product (params, fields, body, conts) |
+| `{ k = v }` | unordered record (jump args, emit fills, options) |
+| `name[T]` | typed name token |
+| `name[T](init)` | typed name with initializer |
+
+### Header / implementation split
+
+`fn` and `region` declarations are **curried**. Supplying params and result
+does not create the declaration — it returns a **body-closure**, a Lua
+function waiting for the body. Export it from a header file, call it with a
+body in an implementation file:
 
 ```lua
-local fields = product { x [i32], y [i32], tag [u8] }
-return module "M" {
-  struct .Point { spread(fields) },
-  fn .tag_of { p [Point] } [u8] {
-    ret (p.tag),
-  },
-}
-```
-
-## The `@{}` Bridge — Lua values in Moonlift
-
-Inside `.mlua` files, `@{lua_expr}` splices Lua values into Moonlift source:
-
-```moonlift
-let x: @{T} = @{initial}
-emit @{fragment}(p, n; ok = done, err = bad)
-
-func f(@{params...}): i32
-    @{body...}
-end
-```
-
-Inside standalone `moon.XXX{values}[[src]]` calls, `@{key}` fills from the
-values table. Both paths go through the same `host_splice` + `open_expand`
-pipeline — the same ASDL slots, the same expansion, the same result.
-
-### Splice positions
-
-| Position | Example | Value type |
-|---|---|---|
-| Type | `let x: @{T}` | `TypeValue` |
-| Expression | `if x > @{limit}` | `ExprValue`, number, bool |
-| Name | `func @{name}(...)` | String |
-| List (spread) | `@{params...}` | Lua array of matching type |
-| Fragment | `emit @{frag}(...)` | `RegionFragValue` |
-| Switch arms | `@{arms...}` | `{ raw_key, body }[]` |
-| Params | `@{params...}` | `{ name, type }[]` |
-| Fields | `@{fields...}` | `{ name, type }[]` |
-| Variants | `@{variants...}` | `{ name, payload? }[]` |
-| Blocks | `@{blocks...}` | `{ label, params?, body? }[]` |
-| Conts | `@{conts...}` | `{ [name] = { params? } }` map |
-
-See `LANGUAGE_REFERENCE.md` §14 for the complete reference.
-
-### Lua-owned DSL alternative
-
-The Lua-owned DSL avoids `@{}` entirely in normal authoring:
-
-```lua
-local T = i32
-local params = product { a [T], b [T] }
-
-return module "Demo" {
-  fn .add
-    { spread(params) }
-    [T]
-    {
-      ret (a + b),
-    },
-}
-```
-
-Here `T` and `params` are already Lua values. Lua parses and evaluates them;
-Moonlift only normalizes their role. This is the more solid and minimal surface
-for metaprogramming-heavy code because it removes the parse/fill/expand
-antiquote carrier from the common path.
-
-### Header-style composition with `require` + `spread`
-
-For header-like layering, keep contracts in a plain Lua-required declaration
-table and splice them into an implementation module:
-
-```lua
--- types_decl.lua
-local dsl = require("moonlift.dsl")
-return dsl.loadstring([[
+-- math_header.mld.lua — declare signatures
 return {
-  struct .Point { x [f32], y [f32] },
-  union .Result {
-    ok { value [i32] },
-    err { code [i32] },
-  }
+  fn .add { a [i32], b [i32] } [i32],
+  fn .sub { a [i32], b [i32] } [i32],
 }
-]], "types_decl")()
+
+-- math_impl.mld.lua — fill bodies
+local header = require("math_header")
+return module "Math" {
+  header[1] { ret (a + b) },
+  header[2] { ret (a - b) },
+}
 ```
+
+### Composition — spread and fragments
+
+Program slicing is ordinary Lua table construction:
 
 ```lua
--- demo_ops.mld.lua
-local types = require("types_decl")
+local xy = product { x [f32], y [f32] }
 
-return module "DemoOps" {
-  spread(types),
-
-  fn .read { p [ptr [u8]], n [i32] } [i32] {
-    entry .start {} {
-      ret (as [i32] (n)),
-    },
-  },
+return module "M" {
+  struct .Point { spread(xy), z [f32] },
+  fn .tag_of { p [Point] } [u8] { ret (p.tag) },
 }
 ```
 
-No DSL `import` is involved; composition is normal Lua `require` + value splice.
+### Contracts — `requires {...}`
+
+Functions carry typed contract annotations via the `requires` keyword:
+
+```lua
+fn .read
+  { buf [ptr [u8]], count [index] }
+  [index]
+  {
+    requires { bounds (buf, count), noalias (buf) },
+    ret (count),
+  }
+```
+
+### Atomics
+
+```lua
+let .a [i32] (aload (i32, p))
+astore (i32, p, v)
+let .b [i32] (armw ("xchg", i32, p, v))
+afence ()
+```
+
+### Low-level ASDL — the escape hatch
+
+For tooling and AST construction that bypasses the DSL, `require("moonlift.ast")`
+exposes direct ASDL constructors. Prefer the DSL for normal authoring.
+
+### Bundle — output packaging
+
+```lua
+local bundle = dsl.bundle("MyModule")
+bundle:pack(func_value)
+local artifact = bundle:jit()  -- Cranelift JIT
+-- or: bundle:emit_object() / bundle:emit_shared() / bundle:emit_c_artifact()
+```
 
 ---
 
@@ -860,7 +457,7 @@ No DSL `import` is involved; composition is normal Lua `require` + value splice.
 ### Single pipeline
 
 ```
-.mlua / moon.XXX / moonlift.dsl source
+moonlift.dsl source (.mld.lua)
   │
   ├─► parse or Lua-owned value normalization ──► ASDL
   ├─► fill/expand for quoted carriers, direct values for DSL
@@ -910,72 +507,35 @@ This is deliberately flat and verifiable. No nested IR, no hidden context.
 
 ## Artifact Emission
 
-### JIT: Lua-hosted function pointers
-
-**Callable functions** — `moon.func[[]]` returns a callable table that
-auto-compiles on first invocation. No module scaffolding needed:
+### Loading and compiling
 
 ```lua
-local moon = require("moonlift")
-local add = moon.func [[add(a: i32, b: i32): i32 return a + b end]]
-print(add(3, 4))  -- 7 — first call compiles, caches, runs native
-add:free()
+local dsl = require("moonlift.dsl")
+
+-- From string
+local m = dsl.loadstring([[
+return module "Demo" {
+  fn .add { a [i32], b [i32] } [i32] { ret (a + b) },
+}
+]], "demo.mld.lua")()
+
+-- From file
+local chunk = dsl.loadfile("demo.mld.lua")
+local m = chunk()
+
+-- Compile: JIT, object, or shared library
+local jit = m:compile()                     -- Cranelift JIT
+local obj = m:lower()                       -- lowered program for object emission
+local art = m:emit_c_artifact { c_path = "out.c" }  -- C blob + header
 ```
 
-**Cross-function dependencies** — declare deps in the values table:
-
-```lua
-local dep = moon.func [[dep(x: i32): i32 return x + 1 end]]
-local main = moon.func { dep = dep } [[
-main(x: i32): i32
-    return @{dep}(x)
-end
-]]
-print(main(5))  -- 6 — dep registered in ephemeral module
-main:free()
-dep:free()
-```
-
-**Explicit module path** — still available for complex multi-function artifacts:
-
-```lua
-local bundle = moon.bundle("demo")
-module:add_func(add)
-local compiled = module:compile()
-local fn = compiled:get("add")
-print(fn(3, 4))  -- 7
-compiled:free()
-```
-
-### From `.mlua` files
-
-```lua
-local moon = require("moonlift")
-local chunk = moon.loadfile("file.mlua")
-local result = chunk()
-```
-
-### Object files (.o)
-
-```lua
-local moon = require("moonlift")
-local obj_bytes = moon.emit_object(source, "build/out.o")
-```
-
-### Shared libraries (.so/.dylib)
-
-```lua
-local moon = require("moonlift")
-local so_bytes = moon.emit_shared(source, "build/libout.so")
-```
-
-The linker path: `.mlua` → parse → typecheck → lower → object → link plan → system linker → `.so`.
+The linker path: `.mld.lua` → DSL normalize → typecheck → lower → object → link plan → system linker → `.so`.
 
 ### Standalone binary
 
 ```bash
 make
-target/release/moonlift file.mlua
+target/release/moonlift run file.mld.lua
 ```
 
 The `moonlift` binary is fully static with zero runtime dependencies.
@@ -1047,7 +607,7 @@ benchmarks/run_vs_terra.sh quick    # Quick mode
 ### JSON value-event benchmark
 
 Moonlift's hosted JSON showcase parses JSON in typed native kernels and
-materializes those kernels as a C backend blob. The canonical `.mlua` library
+materializes those kernels as a C backend blob. The canonical library
 constructs a Moonlift-owned value-event tape for `null`, booleans, numbers,
 strings, arrays, objects, and object keys. The raw benchmark measures that
 typed-array-shaped event API. A separate benchmark line measures full Lua object
@@ -1131,7 +691,7 @@ moonlift/
 
 | Document | Description |
 |---|---|
-| [`LANGUAGE_REFERENCE.md`](LANGUAGE_REFERENCE.md) | **Complete Moonlift language reference.** Types, modules, functions, control regions, fragments, `.mlua`, the Lua-owned DSL, quoting API, splicing, host declarations, view ABI, vectorization. |
+| [`LANGUAGE_REFERENCE.md`](LANGUAGE_REFERENCE.md) | **Complete DSL language reference.** Types, modules, functions, control regions, fragments, contracts, atomics, host declarations, view ABI, vectorization. |
 | [`lua/moonlift/dsl/LANGUAGE_REFERENCE.md`](lua/moonlift/dsl/LANGUAGE_REFERENCE.md) | **Lua-owned DSL reference.** Direct Lua-value authoring, structural `{}` products/protocols/bodies, no-antiquote metaprogramming, and natural program slicing without a second parser. |
 | [`OWNED_CFG_DESIGN.md`](OWNED_CFG_DESIGN.md) | **Owned CFG resource discipline.** Final rules for `owned T`, handles, leases, emit transfer, disallowed aggregates, and diagnostics. |
 | [`CONVENTIONS.md`](CONVENTIONS.md) | **Project conventions.** Naming, headers vs implementations, handles, generations, stores, and protocol naming. |
@@ -1208,13 +768,13 @@ luajit tests/frontend/test_direct_mutual_recursion.lua
 luajit tests/host/test_host_extern_symbol.lua
 ```
 
-### `.mlua` integration tests
+### DSL + integration tests
 
 ```bash
 luajit tests/frontend/test_mlua_splice_shapes.lua
 luajit tests/frontend/test_mlua_asdl_host_model.lua
 luajit tests/frontend/test_mlua_diagnostics.lua
-target/release/moonlift examples/json/json_lua_stack_decoder.mlua
+target/release/moonlift run examples/json/json_lua_stack_decoder.mlua
 ```
 
 ### LSP tests

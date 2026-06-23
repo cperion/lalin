@@ -36,16 +36,16 @@ return module "json_library_showcase" {
                     jump .ok { i = i },
                 },
                 switch( as [i32] (p[i]) ) {
-                    case_value(32) {
+                    case(32) {
                         jump .loop { i = i + 1 },
                     },
-                    case_value(10) {
+                    case(10) {
                         jump .loop { i = i + 1 },
                     },
-                    case_value(13) {
+                    case(13) {
                         jump .loop { i = i + 1 },
                     },
-                    case_value(9) {
+                    case(9) {
                         jump .loop { i = i + 1 },
                     },
                     default {
@@ -105,47 +105,47 @@ return module "json_library_showcase" {
                 },
                 let .c [i32] { as [i32] (p[i]) },
                 switch( c ) {
-                    case_value(34) {
+                    case(34) {
                         let .esc_out [i32] { base + j },
                         set(out[esc_out], as [u8] (34) ),
                         jump .copy { i = i + 1, j = j + 1, base = base },
                     },
-                    case_value(92) {
+                    case(92) {
                         let .esc_out [i32] { base + j },
                         set(out[esc_out], as [u8] (92) ),
                         jump .copy { i = i + 1, j = j + 1, base = base },
                     },
-                    case_value(47) {
+                    case(47) {
                         let .esc_out [i32] { base + j },
                         set(out[esc_out], as [u8] (47) ),
                         jump .copy { i = i + 1, j = j + 1, base = base },
                     },
-                    case_value(98) {
+                    case(98) {
                         let .esc_out [i32] { base + j },
                         set(out[esc_out], as [u8] (8) ),
                         jump .copy { i = i + 1, j = j + 1, base = base },
                     },
-                    case_value(102) {
+                    case(102) {
                         let .esc_out [i32] { base + j },
                         set(out[esc_out], as [u8] (12) ),
                         jump .copy { i = i + 1, j = j + 1, base = base },
                     },
-                    case_value(110) {
+                    case(110) {
                         let .esc_out [i32] { base + j },
                         set(out[esc_out], as [u8] (10) ),
                         jump .copy { i = i + 1, j = j + 1, base = base },
                     },
-                    case_value(114) {
+                    case(114) {
                         let .esc_out [i32] { base + j },
                         set(out[esc_out], as [u8] (13) ),
                         jump .copy { i = i + 1, j = j + 1, base = base },
                     },
-                    case_value(116) {
+                    case(116) {
                         let .esc_out [i32] { base + j },
                         set(out[esc_out], as [u8] (9) ),
                         jump .copy { i = i + 1, j = j + 1, base = base },
                     },
-                    case_value(117) {
+                    case(117) {
                         jump .hex4 { i = i + 1, j = j, base = base, cp = 0, left = 4 },
                     },
                     default {

@@ -38,7 +38,7 @@ return module "DslSmoke" {
     {}
     [ptr [u8]]
     {
-      ret ("hello, moonlift"),
+      ret "hello, moonlift",
     },
 
   fn .lit
@@ -74,7 +74,7 @@ return module "DslSmoke" {
 
       block .done { pos [i32] } {
         switch (pos) {
-          case_value (0) {
+          case (0) {
             ret (answer),
           },
 
@@ -125,7 +125,7 @@ return module "DslSmoke" {
     [i32]
     {
       switch (x) {
-        case_value (1) {
+        case (1) {
           ret (1),
         },
 

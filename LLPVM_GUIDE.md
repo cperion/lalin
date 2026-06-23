@@ -190,14 +190,22 @@ directly. No global erased node type exists.
 ## Type API
 
 LLPVM does not define a parallel type language. Constructor schemas accept
-Moonlift type values. In `.mlua`, write real Moonlift declarations:
+Moonlift type values. Write real Moonlift declarations via the DSL:
 
-```moonlift
-local Vec2 = struct Vec2
-    x: f32,
-    y: f32
-end
+```lua
+local dsl = require("moonlift.dsl")
+local chunk = dsl.loadstring([[
+return module "LLPVMTypes" {
+  struct .Vec2 {
+    x [f32],
+    y [f32],
+  },
+}
+]], "llpvm_types")
+local module = chunk()
+local Vec2 = module  -- the compiled module, usable as a type value
 
+-- Now Vec2 can be used in LLPVM constructor schemas:
 Node.Move = {
     id = moon.u64,
     pos = Vec2,

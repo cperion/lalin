@@ -953,9 +953,6 @@ function Head:__call(t)
             __index = Stmt,
         })
     end
-    if kind == "case" then
-        return function(body) return setmetatable({ key = name_token(name), binds = t or {}, body = body or {} }, Case) end
-    end
     if kind == "entry" then return function(body) return { kind = "entry_decl", name = name, params = t or {}, body = body or {} } end end
     if kind == "block" then return function(body) return { kind = "block_decl", name = name, params = t or {}, body = body or {} } end end
     die("unsupported head call " .. tostring(kind), 2)
@@ -1002,11 +999,33 @@ local function name_head_stmt(kind)
     })
 end
 
-function M.case(v)
+local function case_literal(v)
     return setmetatable({ key = v }, {
         __call = function(self, body) return setmetatable({ key = self.key, body = body or {} }, Case) end,
     })
 end
+
+local function case_variant(name)
+    return setmetatable({ _case_name = name }, {
+        __call = function(self, binds)
+            return function(body)
+                return setmetatable({ key = name_token(self._case_name), binds = binds or {}, body = body or {} }, Case)
+            end
+        end,
+    })
+end
+
+M.case = setmetatable({}, {
+    __index = function(_, k)
+        if type(k) == "string" and k:match("^[_%a][_%w]*$") then
+            return case_variant(ident(k, "case variant"))
+        end
+        return nil
+    end,
+    __call = function(_, v)
+        return case_literal(v)
+    end,
+})
 
 function M.default(body) return setmetatable({ body = body or {} }, Default) end
 
@@ -1064,8 +1083,7 @@ local function make_env(opts)
     env.requires = M.requires
     env.astore, env.afence = M.astore, M.afence
     env.aload, env.armw, env.acas = M.aload, M.armw, M.acas
-    env.switch, env.case, env.default = M.switch, head("case"), M.default
-    env.case_value = M.case
+    env.switch, env.case, env.default = M.switch, M.case, M.default
     env.bit = {
         band = M.band,
         bor = M.bor,

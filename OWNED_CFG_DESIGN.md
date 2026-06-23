@@ -46,17 +46,17 @@ transfers the ownership explicitly.
 
 `owned` is a type wrapper:
 
-```moonlift
-owned SessionRef
-owned FileRef
+```lua
+owned [SessionRef]
+owned [FileRef]
 ```
 
 It composes with the existing type grammar:
 
-```moonlift
-owned ComponentRef
-lease ptr(Component)
-readonly ptr(Session)
+```lua
+owned [ComponentRef]
+lease [ptr [Component]]
+readonly [ptr [Session]]
 ```
 
 `owned lease T` is invalid.  A lease is temporary access, not a durable resource
@@ -64,9 +64,9 @@ obligation.  `lease owned T` is also invalid.
 
 Access modifiers apply outside-in exactly like other type wrappers:
 
-```moonlift
-readonly ptr(Store)       -- access fact
-owned StoreRef            -- ownership obligation
+```lua
+readonly [ptr [Store]]      -- access fact
+owned [StoreRef]            -- ownership obligation
 ```
 
 `owned ptr(T)` and access-qualified owned pointers are rejected.  Raw pointer
@@ -130,16 +130,16 @@ A binding enters `owned_live` when its type is `owned T`.
 
 Examples:
 
-```moonlift
-func f(s: owned SessionRef): void
+```lua
+fn .f { s [owned [SessionRef]] } {
     ...
-end
+}
 ```
 
 At function entry, `s` is live.
 
-```moonlift
-let s: owned SessionRef = make()
+```lua
+let .s [owned [SessionRef]] { make () }
 ```
 
 After the `let`, `s` is live.
@@ -170,11 +170,13 @@ Therefore, a non-consuming operation over an owned resource is written as a
 region that accepts the owner and returns it on every continuation that preserves
 the obligation:
 
-```moonlift
-region borrow_owned_session(readonly app: ptr(App), s: owned SessionRef;
-    borrowed(s: owned SessionRef, session: lease(app) ptr(Session))
-  | missing(s: owned SessionRef))
-end
+```lua
+region .borrow_owned_session
+  { app [readonly [ptr [App]]], s [owned [SessionRef]] }
+  {
+    borrowed { s [owned [SessionRef]], session [lease (app, ptr [Session])] },
+    missing { s [owned [SessionRef]] },
+  }
 ```
 
 The operation still owns `s` while it runs.  The `borrowed` and `missing`
@@ -182,27 +184,27 @@ continuations explicitly transfer the ownership obligation back to the caller.
 
 This is illegal:
 
-```moonlift
-func bad(s: owned SessionRef): SessionRef
-    return s
-end
+```lua
+fn .bad { s [owned [SessionRef]] } [SessionRef] {
+    ret (s)
+}
 ```
 
 This is legal:
 
-```moonlift
-func pass(s: owned SessionRef): owned SessionRef
-    return s
-end
+```lua
+fn .pass { s [owned [SessionRef]] } [owned [SessionRef]] {
+    ret (s)
+}
 ```
 
 This is illegal because `s` is used after move:
 
-```moonlift
-func bad(app: ptr(App), s: owned SessionRef): void
-    close_session(app, s)
-    close_session(app, s)
-end
+```lua
+fn .bad { app [ptr [App]], s [owned [SessionRef]] } {
+    close_session (app, s)
+    close_session (app, s)
+}
 ```
 
 ## Copying
@@ -211,10 +213,10 @@ end
 
 The checker rejects:
 
-```moonlift
-let a: owned FileRef = open_file(...)
-let b: owned FileRef = a
-let c: owned FileRef = a
+```lua
+let .a [owned [FileRef]] { open_file (...) }
+let .b [owned [FileRef]] { a }
+let .c [owned [FileRef]] { a }
 ```
 
 The first assignment moves `a` into `b`; the second use of `a` is use-after-move.
@@ -226,20 +228,20 @@ different type.
 
 Functions can consume ownership by taking `owned` parameters:
 
-```moonlift
-func destroy_buffer(buf: owned BufferRef): void
+```lua
+fn .destroy_buffer { buf [owned [BufferRef]] } {
     ...
-end
+}
 ```
 
 Function calls have one outcome: if the call typechecks, all `owned` arguments
 are moved into the callee and the result ownership is determined by the result
 type.  A function that preserves an owned obligation must return it explicitly.
 
-```moonlift
-func transfer(s: owned SessionRef): owned SessionRef
-    return s
-end
+```lua
+fn .transfer { s [owned [SessionRef]] } [owned [SessionRef]] {
+    ret (s)
+}
 ```
 
 Function bodies must end with no live owned obligations unless those obligations
@@ -251,11 +253,13 @@ Regions are the primary ownership protocol mechanism.
 
 Input ownership:
 
-```moonlift
-region close_session(app: ptr(App), s: owned SessionRef;
-    closed
-  | missing(s: owned SessionRef))
-end
+```lua
+region .close_session
+  { app [ptr [App]], s [owned [SessionRef]] }
+  {
+    closed,
+    missing { s [owned [SessionRef]] },
+  }
 ```
 
 The call/emit starts by moving `s` into the region.  Each continuation says what
@@ -273,12 +277,14 @@ per-continuation, not hidden effects.
 
 Preserving operations must return the owner:
 
-```moonlift
-region poll_task(task: owned TaskRef;
-    pending(task: owned TaskRef)
-  | completed
-  | failed(code: i32))
-end
+```lua
+region .poll_task
+  { task [owned [TaskRef]] }
+  {
+    pending { task [owned [TaskRef]] },
+    completed,
+    failed { code [i32] },
+  }
 ```
 
 Here `pending` preserves the obligation, while `completed` and `failed` consume
@@ -287,12 +293,8 @@ it.  If failure should remain caller-owned, the failure continuation must carry
 
 Another valid shape:
 
-```moonlift
-region retire_component(sess: ptr(Session), c: owned ComponentRef;
-    retired
-  | stale
-  | missing)
-end
+```lua
+region .retire_component { sess [ptr [Session]], c [owned [ComponentRef]] } { retired, stale, missing }
 ```
 
 Here every continuation consumes `c`.  Even failure means the retirement machine
@@ -300,12 +302,14 @@ has taken responsibility for the invalid handle.
 
 If the caller must keep responsibility on failure, the signature must say so:
 
-```moonlift
-region retire_component(sess: ptr(Session), c: owned ComponentRef;
-    retired
-  | stale(c: owned ComponentRef)
-  | missing(c: owned ComponentRef))
-end
+```lua
+region .retire_component
+  { sess [ptr [Session]], c [owned [ComponentRef]] }
+  {
+    retired,
+    stale { c [owned [ComponentRef]] },
+    missing { c [owned [ComponentRef]] },
+  }
 ```
 
 ## `emit` And Continuations
@@ -313,14 +317,15 @@ end
 `emit` transfers owned arguments into the emitted region.  Continuation block
 parameters receive whatever ownership the selected continuation grants.
 
-```moonlift
-emit close_session(app, s;
+```lua
+emit .close_session { app, s } {
     closed = done,
-    missing = retry)
+    missing = retry,
+}
 
-block retry(s: owned SessionRef)
+block .retry { s [owned [SessionRef]] } {
     ...
-end
+}
 ```
 
 The fill target for a continuation with `owned` payload must bind those payloads
@@ -349,10 +354,10 @@ authority.
 
 Block params may be owned:
 
-```moonlift
-block use(s: owned SessionRef)
-    jump close(s = s)
-end
+```lua
+block .use { s [owned [SessionRef]] } {
+    jump .close { s = s }
+}
 ```
 
 A jump to a block transfers ownership to that block if the target parameter is
@@ -373,53 +378,53 @@ owned target arg moves the source binding
 
 Legal:
 
-```moonlift
-if cond then
-    assert true
-else
-    assert true
-end
+```lua
+when (cond) {
+    assert_ (true)
+} {
+    assert_ (true)
+}
 -- s is still live on both paths
 ```
 
 Legal:
 
-```moonlift
-if cond then
-    close_session(app, s)
-    return
-else
-    close_session(app, s)
-    return
-end
+```lua
+when (cond) {
+    close_session (app, s)
+    ret ()
+} {
+    close_session (app, s)
+    ret ()
+}
 ```
 
 Also legal: one branch consumes and terminates, the other keeps ownership and
 continues.
 
-```moonlift
-if cond then
-    close_session(app, s)
-    return
-else
-    assert true
-end
-close_session(app, s)
-return
+```lua
+when (cond) {
+    close_session (app, s)
+    ret ()
+} {
+    assert_ (true)
+}
+close_session (app, s)
+ret ()
 ```
 
 Illegal:
 
-```moonlift
-if cond then
-    close_session(app, s)
-else
+```lua
+when (cond) {
+    close_session (app, s)
+} {
     -- s remains live
-end
-return
+}
+ret ()
 ```
 
-The two paths reach `return` with different ownership states.  The checker must
+The two paths reach `ret ()` with different ownership states.  The checker must
 reject before or at the merge.
 
 For a branch construct that does not syntactically terminate, all surviving
@@ -453,8 +458,8 @@ function call owned args
 
 `let` may bind owned values:
 
-```moonlift
-let f: owned FileRef = ...
+```lua
+let .f [owned [FileRef]] { ... }
 ```
 
 `var owned T` is rejected.
@@ -467,10 +472,8 @@ parameters to thread changing ownership state.
 
 Durable fields of type `owned T` are rejected.
 
-```moonlift
-struct Bad
-    f: owned FileRef
-end
+```lua
+struct .Bad { f [owned [FileRef]] }
 ```
 
 Reason: Moonlift does not make products secretly linear.  If a product owns a
@@ -493,14 +496,14 @@ owned T      = resource obligation, no implicit access
 
 An owned handle does not grant access:
 
-```moonlift
-owned ComponentRef
+```lua
+owned [ComponentRef]
 ```
 
 still requires:
 
-```moonlift
-borrow_component(sess, c; borrowed = ...)
+```lua
+borrow_component (sess, c; borrowed = ...)
 ```
 
 Borrowing from owned identity is allowed only through explicit resolver regions.
@@ -517,31 +520,40 @@ continuation that preserves the close/retire obligation.
 
 Common pattern:
 
-```moonlift
-handle SessionRef : u64 invalid 0
-    domain App
-    target Session
-end
+```lua
+handle .SessionRef {
+    invalid = 0,
+    domain = "App",
+    target = "Session",
+}
 
-region open_session(app: ptr(App);
-    opened(s: owned SessionRef)
-  | oom(needed: index))
-end
+region .open_session
+  { app [ptr [App]] }
+  {
+    opened { s [owned [SessionRef]] },
+    oom { needed [index] },
+  }
 
-region borrow_session(readonly app: ptr(App), s: SessionRef;
-    borrowed(session: lease(app) ptr(Session))
-  | missing(s: SessionRef))
-end
+region .borrow_session
+  { app [readonly [ptr [App]]], s [SessionRef] }
+  {
+    borrowed { session [lease (app, ptr [Session])] },
+    missing { s [SessionRef] },
+  }
 
-region borrow_owned_session(readonly app: ptr(App), s: owned SessionRef;
-    borrowed(s: owned SessionRef, session: lease(app) ptr(Session))
-  | missing(s: owned SessionRef))
-end
+region .borrow_owned_session
+  { app [readonly [ptr [App]]], s [owned [SessionRef]] }
+  {
+    borrowed { s [owned [SessionRef]], session [lease (app, ptr [Session])] },
+    missing { s [owned [SessionRef]] },
+  }
 
-region close_session(app: ptr(App), s: owned SessionRef;
-    closed
-  | missing(s: owned SessionRef))
-end
+region .close_session
+  { app [ptr [App]], s [owned [SessionRef]] }
+  {
+    closed,
+    missing { s [owned [SessionRef]] },
+  }
 ```
 
 The copyable handle `SessionRef` is durable identity.  The owned wrapper says

@@ -97,12 +97,22 @@ Concrete rules:
 | afence | `afence ()` | `afence()` |
 | requires | `requires { ... }` | `requires{...}` |
 
-Only Lua literals can omit the parens space in `ret`/`yield`:
+### Lua no-parens rule
+
+Lua omits parentheses for single literal arguments. The DSL follows this:
+no `()` for a single literal, `()` required for expressions and multi-arity.
 
 ```lua
-ret ("bytes")
-ret ({ 1, 2, 3 })
-ret ()
+ret 42               -- numeric literal, no parens
+ret "done"           -- string literal, no parens
+ret { 1, 2, 3 }      -- table literal, no parens
+ret true             -- boolean literal, no parens
+ret (a + b)           -- expression, parens required
+ret ()                -- void return, parens required
+
+assert_ (cond)         -- expression, parens required
+store (place, value)   -- multi-arity, parens required
+aload (i32, p)         -- multi-arity
 ```
 
 This convention makes DSL source grep-shaped: `rg 'ret \('` finds returns,
@@ -668,12 +678,12 @@ Literal cases:
 
 ```lua
 switch (x) {
-  case_value(0) {
-    ret (1),
+  case (0) {
+    ret 1,
   },
 
   default {
-    ret (2),
+    ret 2,
   },
 }
 ```
@@ -794,10 +804,10 @@ Because these are Lua calls, the no-parens form only applies to Lua's special
 single-argument forms:
 
 ```lua
-const .greeting [ptr [u8]] "hello, moonlift"
-const .nums [array [i32][3]] { 1, 2, 3 }
-ret "done"
-ret { 1, 2, 3 }
+  const .greeting [ptr [u8]] "hello, moonlift"
+  const .nums [array [i32] [3]] { 1, 2, 3 }
+  ret "done"
+  ret { 1, 2, 3 }
 ```
 
 Other literals (`1`, `true`, `nil`) are written with parentheses: `ret (1)`,
