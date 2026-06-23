@@ -5,13 +5,13 @@ local dsl = require("moonlift.dsl")
 local src = [=[
 return module "DslSmoke" {
   struct .Vec2 {
-    x[f32],
-    y[f32],
+    x [f32],
+    y [f32],
   },
 
   union .Result {
-    ok { value[i32] },
-    err { code[i32] },
+    ok { value [i32] },
+    err { code [i32] },
     none,
   },
 
@@ -20,7 +20,7 @@ return module "DslSmoke" {
   },
 
   extern .host_add
-    { x[i32] }
+    { x [i32] }
     [i32]
     { symbol = "host_add" },
 
@@ -30,7 +30,7 @@ return module "DslSmoke" {
   static .zero [i32] (0),
 
   expr_frag .inc
-    ({ x[i32] })
+    ({ x [i32] })
     [i32]
     (x + 1),
 
@@ -38,21 +38,21 @@ return module "DslSmoke" {
     {}
     [ptr [u8]]
     {
-      ret("hello, moonlift"),
+      ret ("hello, moonlift"),
     },
 
   fn .lit
-    { x[i32] }
+    { x [i32] }
     [i32]
     {
-      let .xs [array [i32][2]] ({ x, x + 1 }),
-      ret(xs[0]),
+      let .xs [array [i32] [2]] ({ x, x + 1 }),
+      ret (xs[0]),
     },
 
   region .scan
-    { x[i32] }
+    { x [i32] }
     {
-      hit { pos[i32] },
+      hit { pos [i32] },
       miss,
     }
     {
@@ -62,7 +62,7 @@ return module "DslSmoke" {
     },
 
   fn .choose
-    { x[i32] }
+    { x [i32] }
     [i32]
     {
       entry .start {} {
@@ -72,14 +72,14 @@ return module "DslSmoke" {
         },
       },
 
-      block .done { pos[i32] } {
-      switch(pos) {
-          case_value(0) {
-            ret(answer),
+      block .done { pos [i32] } {
+        switch (pos) {
+          case_value (0) {
+            ret (answer),
           },
 
           default {
-            ret(as[i32](pos)),
+            ret (as [i32] (pos)),
           },
         },
       },
@@ -89,12 +89,12 @@ return module "DslSmoke" {
     { p [ptr [i32]], v [i32] }
     [i32]
     {
-      let .a [i32] (aload(i32, p)),
-      astore(i32, p, v),
-      let .b [i32] (armw("xchg", i32, p, v)),
-      let .c [i32] (acas(i32, p, v, 0)),
-      afence(),
-      ret(a),
+      let .a [i32] (aload (i32, p)),
+      astore (i32, p, v),
+      let .b [i32] (armw ("xchg", i32, p, v)),
+      let .c [i32] (acas (i32, p, v, 0)),
+      afence (),
+      ret (a),
     },
 
   fn .contract_demo
@@ -102,10 +102,10 @@ return module "DslSmoke" {
     [index]
     {
       requires {
-        bounds(buf, count),
-        noalias(buf),
+        bounds (buf, count),
+        noalias (buf),
       },
-      ret(count),
+      ret (count),
     },
 
   fn .readonly_contract
@@ -113,24 +113,24 @@ return module "DslSmoke" {
     [index]
     {
       requires {
-        bounds(buf, count),
-        readonly(buf),
-        writeonly(buf),
+        bounds (buf, count),
+        readonly (buf),
+        writeonly (buf),
       },
-      ret(count),
+      ret (count),
     },
 
   fn .use_switch
     { x [i32] }
     [i32]
     {
-      switch(x) {
-        case_value(1) {
-          ret(1),
+      switch (x) {
+        case_value (1) {
+          ret (1),
         },
 
         default {
-          ret(0),
+          ret (0),
         },
       },
     },
@@ -146,8 +146,8 @@ return module "DslSmoke" {
         },
       },
 
-      block .done { pos[i32] } {
-        ret(pos),
+      block .done { pos [i32] } {
+        ret (pos),
       },
     },
 }
@@ -158,6 +158,28 @@ assert(module:syntax(), "syntax() failed")
 assert(module:ast(), "ast() failed")
 assert(module:typecheck(), "typecheck() failed")
 assert(module:lower({ site = "test_dsl_lua_owned" }), "lower() failed")
+
+-- Test header / implementation split pattern
+local header = dsl.loadstring([[
+return {
+  fn .add { a [i32], b [i32] } [i32],
+  fn .sub { a [i32], b [i32] } [i32],
+}
+]], "header")()
+assert(type(header[1]) == "function", "header fn .add did not produce body-closure")
+assert(type(header[2]) == "function", "header fn .sub did not produce body-closure")
+
+local impl = dsl.loadstring([[
+local header = ...
+return module "HeaderImpl" {
+  header[1] { ret (a + b) },
+  header[2] { ret (a - b) },
+}
+]], "impl")(header)
+assert(impl:syntax(), "header/impl syntax failed")
+assert(impl:ast(), "header/impl ast failed")
+assert(impl:typecheck(), "header/impl typecheck failed")
+assert(impl:lower({ site = "test_dsl_header_impl" }), "header/impl lower failed")
 
 -- Test strict mode
 local strict_src = [=[

@@ -66,6 +66,48 @@ as [T](x)
 
 carry actual Lua values, not textual splice holes.
 
+## Spacing Convention
+
+A space is placed between every DSL keyword and what follows it, and between
+every name and its type bracket. Lua table-access syntax (`[T]`) includes the
+space for readability even though Lua does not require it:
+
+```text
+name [Type]           -- parameter/field/entry typing
+keyword (value)       -- statement or expression keyword
+keyword .name         -- declared name, block label, region target
+keyword { body }      -- body, continuation, switch arm
+```
+
+Concrete rules:
+
+| Form | Do | Don't |
+|------|----|----- |
+| typed name | `x [i32]` | `x[i32]` |
+| type constructor | `ptr [u8]` | `ptr[u8]` |
+| cast | `as [i32] (x)` | `as[i32](x)` |
+| ret / yield | `ret (expr)` | `ret(expr)` |
+| when | `when (cond) { ... }` | `when(cond){...}` |
+| let / var | `let .x [i32] { 0 }` | `let.x[i32]{0}` |
+| store / set | `store (place, value)` | `store(place,value)` |
+| jump | `jump .loop { i = i + 1 }` | `jump.loop{i=i+1}` |
+| emit | `emit .scan { args } { fills }` | `emit.scan{args}{fills}` |
+| switch | `switch (value) { ... }` | `switch(value){...}` |
+| trap / assert_ / assume | `trap ()` | `trap()` |
+| afence | `afence ()` | `afence()` |
+| requires | `requires { ... }` | `requires{...}` |
+
+Only Lua literals can omit the parens space in `ret`/`yield`:
+
+```lua
+ret ("bytes")
+ret ({ 1, 2, 3 })
+ret ()
+```
+
+This convention makes DSL source grep-shaped: `rg 'ret \('` finds returns,
+`rg 'jump \.'` finds jumps, `rg 'x \[i32\]'` finds typed names.
+
 ## Design Rule
 
 Moonlift structure uses `{}`.
@@ -181,52 +223,62 @@ spread(decls_fragment)
 In this Lua-owned DSL, module composition is done by Lua `require` and value
 splicing (`[]` / `spread(...)`), not by a DSL `import` declaration.
 
-### Header-style module pattern
+### Header / implementation split
 
-Because declaration arrays are first-class Lua tables, split header-style DSL
-composition into two files naturally:
+The DSL's `fn` and `region` declaration chains are **curried**: supplying
+params and result does not create the declaration — it returns a **body-closure**,
+a Lua function waiting for the body. This is the header.
 
 ```lua
--- types_decl.lua
-local dsl = require("moonlift.dsl")
-return dsl.loadstring([[
+fn .add { a [i32], b [i32] } [i32]
+```
+
+The line above does not produce a function. It produces a callable Lua value.
+Call it with a body table to produce the full declaration:
+
+```lua
+fn .add { a [i32], b [i32] } [i32] {
+  ret (a + b),
+}
+```
+
+This means headers and implementations can live in separate files:
+
+```lua
+-- math_header.mld.lua
 return {
-  struct .Point { x [f32], y [f32] },
-  union .Result {
-    ok { value [i32] },
-    err { code [i32] },
-  },
-  const .Magic [u8] { 0x80 },
+  fn .add { a [i32], b [i32] } [i32],
+  fn .sub { a [i32], b [i32] } [i32],
 }
-]], "types_decl")()
 ```
 
 ```lua
--- demo/ops.mld.lua
-local header = require("types_decl")
-local dsl = require("moonlift.dsl")
-
-return module "DemoOps" {
-  spread(header),
-
-  fn .read { p [ptr [u8]], n [i32] } [i32] {
-    entry .start {} {
-      jump .done { x = as [i32] (n) },
-    },
-
-    block .done { x [i32] } {
-      ret (x),
-    },
-  },
+-- math_impl.mld.lua
+local header = require("math_header")
+return module "Math" {
+  header[1] { ret (a + b) },
+  header[2] { ret (a - b) },
 }
 ```
 
-The key difference is: required values enter through normal Lua
-`require` + `[]`/`spread` flow, not textual import directives.
+The same pattern works for regions:
 
-This keeps contracts (`struct`, `union`, `handle`, signatures, `const`) in one
-declaration unit and runtime behavior (regions/functions) in another, while
-staying entirely in Lua data and values with no textual antiquote layer.
+```lua
+-- io_header.mld.lua
+return {
+  region .read { fd [i32], buf [ptr [u8]], count [index] } { ok{n[index]}, err{code[i32]} },
+  region .write { fd [i32], buf [ptr [u8]], count [index] } { ok{n[index]}, err{code[i32]} },
+}
+```
+
+What this unlocks:
+- **Contract-first design**: sign the protocol before any implementation
+- **Signature reuse**: same body-closure can be implemented differently per target
+- **Factories**: generate body-closures from parameters; fill bodies later
+- **Library mode**: modules export body-closures for callers to wire up
+
+The body-closure is an ordinary Lua value — storable, passable, exportable.
+No textual import directives. No parser. No antiquote.
 
 ## Names
 
@@ -574,8 +626,8 @@ var .i [index] { 0 }
 Assignment:
 
 ```lua
-store(dst[i], value)
-set(dst[i], value)
+store (dst[i], value)
+set (dst[i], value)
 ```
 
 Conditional:

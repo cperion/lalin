@@ -540,24 +540,42 @@ A function is product-to-product. That is a wonderful shape at an ABI boundary o
 
 ### 3.5 Lua — the family generator
 
-Moonlift source is deliberately monomorphic: no generics, no type parameters, no angle brackets. All genericity lives one level up, in Lua, where a **factory** — an ordinary Lua function — builds and returns concrete, distinctly named Moonlift declarations:
+Moonlift source is deliberately monomorphic: no generics, no type parameters, no angle brackets. All genericity lives one level up, in Lua, where a **factory** — an ordinary Lua function — builds and returns concrete, distinctly named Moonlift declarations using the Lua-owned DSL:
 
 ```lua
 local function expect_byte(tag, byte, err_code)
-    return moon.region{ byte = byte, code = err_code }[[
-    expect_@{tag}(p: ptr(u8), n: index, pos: index;
-        ok(next: index)
-        | err(pos: index, code: i32))
-    entry start()
-        if pos >= n then jump err(pos = pos, code = @{code}) end
-        if as(i32, p[pos]) == @{byte} then jump ok(next = pos + 1) end
-        jump err(pos = pos, code = @{code})
+    return function()
+        local name = "expect_" .. tag
+        local scope = dsl.make_env()
+        scope.T = i32  -- or any user-provided type
+        scope.byte = byte
+        scope.code = err_code
+        return (function()
+            return {
+                region[name]
+                  { p [ptr [u8]], n [index], pos [index] }
+                  {
+                    ok { next [index] },
+                    err { pos [index], code [i32] },
+                  }
+                  {
+                    entry .start {} {
+                      when (pos:ge(n)) {
+                        jump .err { pos = pos, code = code },
+                      },
+                      when (as [i32] (p[pos]):eq(byte)) {
+                        jump .ok { next = pos + 1 },
+                      },
+                      jump .err { pos = pos, code = code },
+                    },
+                  },
+            }
+        end)()
     end
-    end ]]
 end
 ```
 
-`@{x}` splices a typed ASDL value — a type, a constant, a fragment — never a string. The parser sees a complete monomorphic program. Factories are not an implementation convenience; they are the design representation of a *family* of machines, and Book II will show that they quietly resolve one of Ousterhout's hardest trade-offs.
+Every value is an ordinary Lua value — types, constants, names — passed directly. No textual splice, no parser. The factory produces a complete, monomorphic, checked Moonlift declaration. Factories are not an implementation convenience; they are the design representation of a *family* of machines, and Book II will show that they quietly resolve one of Ousterhout's hardest trade-offs.
 
 ### 3.6 LuaBridge — the dynamic host boundary
 

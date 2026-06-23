@@ -9,8 +9,8 @@ it behind framework names or folder depth.
 Use lowercase words separated by `_`.
 
 ```text
-<subsystem>_header.mlua
-<subsystem>_<machine>.mlua
+<subsystem>_header.mld.lua
+<subsystem>_<machine>.mld.lua
 <subsystem>_build.lua
 <subsystem>_blueprint.md
 ```
@@ -18,15 +18,15 @@ Use lowercase words separated by `_`.
 Examples:
 
 ```text
-mwui_header.mlua
-mwui_component_store.mlua
-mwui_session_store.mlua
-mwui_transport.mlua
-mwui_event.mlua
-mwui_render.mlua
-mwui_mutation.mlua
-mwui_task.mlua
-mwui_app.mlua
+mwui_header.mld.lua
+mwui_component_store.mld.lua
+mwui_session_store.mld.lua
+mwui_transport.mld.lua
+mwui_event.mld.lua
+mwui_render.mld.lua
+mwui_mutation.mld.lua
+mwui_task.mld.lua
+mwui_app.mld.lua
 mwui_build.lua
 mwui_blueprint.md
 ```
@@ -34,12 +34,12 @@ mwui_blueprint.md
 Avoid vague names:
 
 ```text
-core.mlua
-utils.mlua
-helpers.mlua
-manager.mlua
-impl.mlua
-runtime.mlua
+core.mld.lua
+utils.mld.lua
+helpers.mld.lua
+manager.mld.lua
+impl.mld.lua
+runtime.mld.lua
 ```
 
 If a file implements a machine, the filename should name that machine.
@@ -50,11 +50,11 @@ Prefer one flat folder per subsystem.
 
 ```text
 experiments/mwui/
-  mwui_header.mlua
-  mwui_component_store.mlua
-  mwui_event.mlua
-  mwui_render.mlua
-  mwui_app.mlua
+  mwui_header.mld.lua
+  mwui_component_store.mld.lua
+  mwui_event.mld.lua
+  mwui_render.mld.lua
+  mwui_app.mld.lua
   mwui_build.lua
   mwui_blueprint.md
 ```
@@ -64,70 +64,58 @@ Depth must buy ownership or build isolation, not aesthetic grouping.
 
 ## Header Files
 
-`*_header.mlua` is the system contract.  It may contain:
+`*_header.mld.lua` is the system contract.  It may contain DSL declarations:
 
-```moonlift
-struct
-union
-handle
-extern
-region ... end
-expr ... end
-func ... end
+```lua
+local dsl = require("moonlift.dsl")
+return module "Header" {
+  struct .Foo { x [i32] },
+  union .Bar { ok { v [i32] }, err },
+  handle .SessionRef { invalid = 0 },
+  extern .write { fd [i32], buf [ptr [u8]], count [index] } [index] { symbol = "write" },
+  region .scan { p [ptr [u8]], n [index] } { hit { pos [index] }, miss } { entry .start {} { jump .miss { pos = 0 } } },
+  fn .add { a [i32], b [i32] } [i32] { ret (a + b) },
+}
 ```
 
-It should not contain bodies:
-
-```moonlift
-entry
-block
-jump
-return
-```
+It should not contain bodies with entry/block/jump — those live in implementation files.
 
 Headers are allowed to be rich.  They should declare products, durable identity,
 access protocols, machines, and ABI seals before implementation exists.
 
-The usual header shape is:
+The usual header shape is a `.mld.lua` file returning a DSL chunk with
+public declarations table plus the compiled module:
 
 ```lua
+local dsl = require("moonlift.dsl")
+
+local chunk = dsl.loadfile("mwui_header.mld.lua")
+local module = chunk()  -- module value with :syntax(), :ast(), :typecheck(), :lower()
+
 local M = {
-    T = {},
-    R = {},
-    F = {},
+    T = {},   -- type declarations (structs, unions, handles)
+    R = {},   -- regions
+    F = {},   -- ABI functions / externs
+    _module = module,
 }
-
-local T = M.T
-local R = M.R
-local F = M.F
-
--- identity and stores
--- products
--- access protocols
--- machines
--- ABI seals
 
 return M
 ```
 
-For an LLPVM stack, the preferred contract may be one larger canonical machine
-definition file instead of a separate header.  This is appropriate when the
-same file owns the language declarations, type forest, worlds, machines, phase
-metadata, row profiles, constants, and public Moonlift `T/R/F` declarations.
-In that shape, the file should still expose the usual tables:
+Implementation files import the header and add region/function bodies via the
+same DSL:
 
 ```lua
-local M = {
-    T = {},
-    R = {},
-    F = {},
+local header = require("mwui_header")
+local dsl = require("moonlift.dsl")
+
+-- implement: add entry/block/jump bodies to region declarations
+local chunk = dsl.loadfile("mwui_component_store.mld.lua")
+local impl = chunk()
+
+return {
+    borrow_component = impl.borrow_component,
 }
-
-M.vm = ll.vm { ... }
--- LLPVM languages/worlds/machines/phases
--- Moonlift products/protocols/ABI seals
-
-return M
 ```
 
 LLPVM worlds should be named as domain states, not as implementation-shaped
@@ -152,39 +140,36 @@ phase_args
 args_world
 ```
 
-Keep compatibility headers thin and Moonlift-aware:
+Keep compatibility headers thin:
 
 ```lua
-local M = moon.require("mlui_stack")
+local M = require("mlui_stack")
 return { T = M.T, R = M.R, F = M.F, stack = M }
 ```
 
-Do not use plain Lua `dofile` to load `.mlua` modules that contain Moonlift
-declarations.  Use `moon.require`, `moon.loadfile`, or `moon.dofile`.
+Load DSL modules with `dsl.loadstring`, `dsl.loadfile`, or standard `require`.
 
 ## Implementation Files
 
-`<subsystem>_<machine>.mlua` imports the header and implements one semantic
+`<subsystem>_<machine>.mld.lua` imports the header and implements one semantic
 machine or a small family of adjacent machines.
 
 ```lua
-local H = moon.require("mwui_header")
-local T = H.T
-local R = H.R
-local F = H.F
+local header = require("mwui_header")
+local dsl = require("moonlift.dsl")
 
-local borrow_component = region @{R.borrow_component}
-entry start()
-    ...
-end
-end
-
-return {
-    borrow_component = borrow_component,
+return module "Impl" {
+  -- full region/fn with bodies go here
+  region .borrow_component
+    { ... }
+    { ... }
+    {
+      entry .start {} { ... },
+    },
 }
 ```
 
-Implementation files may define private helpers.  Public products, handles,
+Implementation files may define private Lua helpers.  Public products, handles,
 regions, and ABI functions belong in the header first.
 
 ## Group By Purpose
@@ -480,48 +465,41 @@ subsystem's blueprint.
 
 ## Lua And Moonlift Boundary
 
-Lua is the generation and policy layer.  Moonlift is the monomorphic native
-artifact.
+Lua is the authoring language and the metaprogramming layer.  Moonlift is the
+monomorphic native artifact.
 
-Use Lua for:
+Authoring uses the Lua-owned DSL (`require("moonlift.dsl")`).  Every declaration
+is a Lua value; every type is a Lua value; every statement is a Lua value.
+Lua parses mechanically; the DSL normalizes semantically; Moonlift ASDL carries
+the meaning.
 
-```text
-factories
-tables of generated declarations
-name resolution
-component authoring APIs
-platform selection
-code generation
-```
-
-Use Moonlift for:
+Use the DSL for:
 
 ```text
-products
-handles
-regions
-typed control
-memory contracts
-native bodies
-ABI seals
+products, handles, regions (typed control), memory contracts, ABI seals
+factories that generate declarations from parameters
+slice/fragment composition via product/stmts/decls
+named continuations with payload products
 ```
 
 Do not encode Moonlift semantics in Lua strings, callbacks, or side tables when
-an ASDL declaration can carry the meaning.
+a DSL value can carry the meaning.
 
 ## Grep Shape
 
-Conventions should make these queries complete:
+Conventions should make these queries complete against `.mld.lua` files:
 
 ```sh
-rg '^T\..* = handle'      # durable identity
-rg '^R\.borrow_'          # resolver regions
-rg '^R\.alloc_'           # allocation regions
-rg '^R\.retire_'          # retirement regions
-rg 'lease ptr'            # access grants
-rg 'invalidate .*ptr'     # mutation boundaries
-rg '^F\.'                 # ABI seals
+rg 'region\s+\.borrow_'     # resolver regions
+rg 'region\s+\.alloc_'      # allocation regions
+rg 'region\s+\.retire_'     # retirement regions
+rg 'region\s+\.'            # all regions
+rg '\blempty\b'             # empty continuations
+rg '\bstale\b'              # stale continuations
+rg '\blease\b'              # lease types and continuations
+rg 'handle\s+\.'            # durable identity
+rg 'fn\s+\.'                # ABI seals
 ```
 
 If an important architectural question cannot be answered with a simple search,
-the declarations probably need a better name or a stronger ASDL shape.
+the declarations probably need a better name or a stronger DSL shape.
