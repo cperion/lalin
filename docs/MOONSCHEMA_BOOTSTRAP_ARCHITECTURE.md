@@ -120,13 +120,13 @@ count [i64]
 ok [bool]
 index [index]
 bytes [view [u8]]
-ty [ty "MoonType.Type"]
-expr [ty "MoonTree.Expr"]
-origin [optional [ty "MoonSource.Range"]]
-items [many [ty "Item"]]
-owner [ref [ty "Module"]]
-binding_id [id [ty "MoonBind.Binding"]]
-by_name [map [str] [ty "Binding"]]
+ty [ty. MoonType.Type]
+expr [ty. MoonTree.Expr]
+origin [optional [ty. MoonSource.Range]]
+items [many [ty. Item]]
+owner [ref [ty. Module]]
+binding_id [id [ty. MoonBind.Binding]]
+by_name [map [str] [ty. Binding]]
 ```
 
 Schema-specific type wrappers are minimal and semantic:
@@ -570,12 +570,7 @@ return MoonTreePvm {
 Compiler phases are data.
 
 ```lua
-schema. MoonCompiler {
-  use. MoonTree,
-  use. MoonCode,
-  use. MoonBack,
-  use. MoonDiag,
-
+package "moonlift.compiler" {
   world. tree [MoonTree.Module]
   world. checked [MoonTree.TypecheckResult]
   world. code [MoonCode.CodeModule]
@@ -609,6 +604,11 @@ schema. MoonCompiler {
     deterministic true,
     machine. moon_lower_to_back,
   },
+
+  root. compile {
+    from. tree,
+    to. back,
+  },
 }
 ```
 
@@ -624,6 +624,49 @@ determinism contract
 machine binding
 process event contract
 ```
+
+A root has:
+
+```text
+name
+input world
+requested output world
+```
+
+The package is a graph of reusable phase capabilities. A root is not a hidden
+ordered script; it is a named request for a transformation from one typed world
+to another. Planning selects exactly one simple path through the phase graph.
+No path and multiple paths are both diagnostics.
+
+The planner returns schema data, not an ad-hoc Lua table:
+
+```text
+Plan {
+  root: RootId,
+  input: WorldId,
+  output: WorldId,
+  steps: PlanStep[],
+}
+
+PlanStep {
+  index
+  phase
+  machine
+  input
+  output
+  diagnostics
+  cache
+  deterministic
+  abi
+  impl
+  capabilities
+}
+```
+
+Execution consumes `Plan` through a registry-backed runtime boundary. Lua and
+Moonlift-hosted bindings may resolve through `require(module)[function]`; C,
+Cranelift, and external bindings are explicit registry entries. The call
+boundary is one input world value to one output world value per step.
 
 A phase run emits process events:
 
@@ -1159,6 +1202,10 @@ phase_diagnostics typecheck diag
 phase_cache typecheck identity
 phase_machine typecheck moon_typecheck
 phase_deterministic typecheck true
+
+root compile
+root_input_world compile tree
+root_output_world compile back
 ```
 
 The phase graph consumes machine ids and world ids. It does not depend on

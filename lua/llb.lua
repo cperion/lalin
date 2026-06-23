@@ -811,6 +811,9 @@ function Node:explain() return source.render_excerpt(self.origin, 2, self.tag or
 llb.Node = Node
 
 local function attach_node_meta(v, tag, meta)
+  if type(v) == "table" and getmetatable(v) ~= nil and rawget(v, "__llb_tag") == nil then
+    return v
+  end
   if type(v) ~= "table" then v = { value = v } end
   v.__llb_tag = v.__llb_tag or "Node"
   v.tag = v.tag or tag
@@ -2127,6 +2130,26 @@ function UseSession:auto_created() return map_names(self.auto_installed) end
 function UseSession:provides() return array_copy(self.provides_caps or {}) end
 function UseSession:requires() return array_copy(self.requires_caps or {}) end
 function UseSession:exports() return sorted_keys(self.env or {}) end
+function UseSession:loadstring(src, chunkname, opts)
+  opts = shallow_copy(opts or {})
+  chunkname = chunkname or (self.lang and self.lang.name) or "=(llb.use)"
+  source.register(chunkname, src)
+  local f, err = compile_lua(src, chunkname)
+  if not f then error(err, 2) end
+  setfenv0(f, self.env)
+  return f
+end
+function UseSession:loadfile(path, opts)
+  local f, err = io.open(path, "rb")
+  if not f then error(err, 2) end
+  local src = f:read("*a") or ""
+  f:close()
+  return self:loadstring(src, "@" .. path, opts)
+end
+function UseSession:dofile(path, ...)
+  local chunk = self:loadfile(path)
+  return chunk(...)
+end
 function UseSession:describe()
   return {
     tag = "UseSession",

@@ -101,7 +101,7 @@ function M.Define(T)
 
     local function atom(a)
         local cls = pvm.classof(a)
-        if cls == C.CBackendAtomLocal then return a["local"].text end
+        if cls == C.CBackendAtomLocal then return a.local_id.text end
         if cls == C.CBackendAtomGlobal then return a.global.text end
         if cls == C.CBackendAtomLiteral then return "(" .. emit_type(a.ty) .. ")" .. literal(a.literal) end
         if cls == C.CBackendAtomNull then return "NULL" end
@@ -111,7 +111,7 @@ function M.Define(T)
     local place
     place = function(p)
         local cls = pvm.classof(p)
-        if cls == C.CBackendPlaceLocal then return p["local"].text end
+        if cls == C.CBackendPlaceLocal then return p.local_id.text end
         if cls == C.CBackendPlaceGlobal then return p.global.text end
         if cls == C.CBackendPlaceDeref then return "(*(" .. emit_type(p.ty) .. "*)" .. atom(p.addr) .. ")" end
         if cls == C.CBackendPlaceField then return place(p.base) .. "." .. p.field.text end
@@ -463,9 +463,9 @@ function M.Define(T)
         for i = 1, #f.blocks do
             local b = f.blocks[i]
             for j = 1, #b.params do
-                local_types[b.params[j]["local"].text] = b.params[j].ty
+                local_types[b.params[j].local_id.text] = b.params[j].ty
                 local_types["__xfer_" .. b.label.text .. "_" .. tostring(j)] = b.params[j].ty
-                emit_local_decl(b.params[j]["local"].text, b.params[j].ty)
+                emit_local_decl(b.params[j].local_id.text, b.params[j].ty)
                 emit_local_decl("__xfer_" .. b.label.text .. "_" .. tostring(j), b.params[j].ty)
             end
         end
@@ -473,7 +473,7 @@ function M.Define(T)
             local b = f.blocks[i]
             out[#out + 1] = b.label.text .. ":"
             for j = 1, #b.params do
-                local dst = b.params[j]["local"].text
+                local dst = b.params[j].local_id.text
                 local src = "__xfer_" .. b.label.text .. "_" .. tostring(j)
                 if is_array_type(b.params[j].ty) then
                     emit_storage_copy(out, dst, src)

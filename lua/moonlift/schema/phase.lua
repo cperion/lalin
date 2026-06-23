@@ -2,47 +2,122 @@ local S = require("moonlift.schema.dsl")
 S.use()
 
 return schema. MoonPhase {
-  product. Package { interned, field "name" [str], units [many [ty "MoonPhase.PhaseUnit"]], },
-  product. PhaseUnit {
-    interned,
-    field "name" [str],
-    file [str],
-    uses [many [ty "MoonPhase.UnitUse"]],
-    phases [many [ty "MoonPhase.PhaseSpec"]],
-    exports [many [ty "MoonPhase.UnitExport"]],
-  },
-  product. UnitUse { interned, field "name" [str], },
-  product. UnitExport { interned, field "name" [str], },
+  product. WorldId { interned, text [str], },
+  product. PhaseId { interned, text [str], },
+  product. MachineId { interned, text [str], },
+  product. RootId { interned, text [str], },
+  product. PackageId { interned, text [str], },
+
   sum. TypeRef {
     TypeRef { variant_unique, module_name [str], type_name [str], },
     TypeRefAny,
-    TypeRefValue { variant_unique, field "name" [str], },
+    TypeRefValue { variant_unique, field. name [str], },
   },
-  sum. CachePolicy { CacheNode, CacheNodeArgsFull, CacheNodeArgsLast, CacheNone, },
-  sum. ResultShape {
-    ResultOne,
-    ResultOptional,
-    ResultMany,
-    ResultReport { variant_unique, report_ty [ty "MoonPhase.TypeRef"], },
-  },
-  product. PhaseSpec {
+
+  product. World {
     interned,
-    field "name" [str],
-    input [ty "MoonPhase.TypeRef"],
-    output [ty "MoonPhase.TypeRef"],
-    cache [ty "MoonPhase.CachePolicy"],
-    result [ty "MoonPhase.ResultShape"],
+    field. id [ty. MoonPhase.WorldId],
+    field. ty [ty. MoonPhase.TypeRef],
   },
-  sum. UnitPart {
-    UnitFile { variant_unique, module_name [str], },
-    UnitUses { variant_unique, uses [many [ty "MoonPhase.UnitUse"]], },
-    UnitExports { variant_unique, exports [many [ty "MoonPhase.UnitExport"]], },
-    UnitPhase { variant_unique, phase [ty "MoonPhase.PhaseSpec"], },
+
+  sum. CachePolicy {
+    CacheIdentity,
+    CacheNode,
+    CacheFull,
+    CacheNone,
   },
-  sum. PhasePart {
-    PhaseInput { variant_unique, input [ty "MoonPhase.TypeRef"], },
-    PhaseOutput { variant_unique, output [ty "MoonPhase.TypeRef"], },
-    PhaseCache { variant_unique, cache [ty "MoonPhase.CachePolicy"], },
-    PhaseResult { variant_unique, result [ty "MoonPhase.ResultShape"], },
+
+  sum. MachineAbi {
+    MachineAbiStatusReturning,
+    MachineAbiPure,
+    MachineAbiProcess,
+    MachineAbiC,
+    MachineAbiCranelift,
+  },
+
+  sum. MachineImpl {
+    ImplMoonlift {
+      variant_unique,
+      module_name [str],
+      function_name [str],
+    },
+    ImplLua {
+      variant_unique,
+      module_name [str],
+      function_name [str],
+    },
+    ImplC {
+      variant_unique,
+      symbol [str],
+    },
+    ImplCranelift {
+      variant_unique,
+      symbol [str],
+    },
+    ImplExternal {
+      variant_unique,
+      capability [str],
+    },
+  },
+
+  product. Machine {
+    interned,
+    field. id [ty. MoonPhase.MachineId],
+    input [ty. MoonPhase.WorldId],
+    output [ty. MoonPhase.WorldId],
+    diagnostics [optional [ty. MoonPhase.WorldId]],
+    abi [ty. MoonPhase.MachineAbi],
+    impl [ty. MoonPhase.MachineImpl],
+    capabilities [many [str]],
+  },
+
+  product. Phase {
+    interned,
+    field. id [ty. MoonPhase.PhaseId],
+    input [ty. MoonPhase.WorldId],
+    output [ty. MoonPhase.WorldId],
+    diagnostics [optional [ty. MoonPhase.WorldId]],
+    cache [ty. MoonPhase.CachePolicy],
+    deterministic [bool],
+    machine [ty. MoonPhase.MachineId],
+  },
+
+  product. Root {
+    interned,
+    field. id [ty. MoonPhase.RootId],
+    input [ty. MoonPhase.WorldId],
+    output [ty. MoonPhase.WorldId],
+  },
+
+  product. PlanStep {
+    interned,
+    field. index [number],
+    phase [ty. MoonPhase.PhaseId],
+    machine [ty. MoonPhase.MachineId],
+    input [ty. MoonPhase.WorldId],
+    output [ty. MoonPhase.WorldId],
+    diagnostics [optional [ty. MoonPhase.WorldId]],
+    cache [ty. MoonPhase.CachePolicy],
+    deterministic [bool],
+    abi [ty. MoonPhase.MachineAbi],
+    impl [ty. MoonPhase.MachineImpl],
+    capabilities [many [str]],
+  },
+
+  product. Plan {
+    interned,
+    root [ty. MoonPhase.RootId],
+    input [ty. MoonPhase.WorldId],
+    output [ty. MoonPhase.WorldId],
+    steps [many [ty. MoonPhase.PlanStep]],
+  },
+
+  product. Package {
+    interned,
+    field. id [ty. MoonPhase.PackageId],
+    worlds [many [ty. MoonPhase.World]],
+    machines [many [ty. MoonPhase.Machine]],
+    phases [many [ty. MoonPhase.Phase]],
+    roots [many [ty. MoonPhase.Root]],
   },
 }

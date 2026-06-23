@@ -4,7 +4,7 @@ local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.schema_projection")
 local ClosureConvert = require("moonlift.closure_convert")
-local Pipeline = require("moonlift.frontend_pipeline")
+local Driver = require("moonlift.compiler_driver")
 local Jit = require("moonlift.back_jit")
 
 local T = pvm.context()
@@ -70,10 +70,7 @@ local module = Tr.Module(Tr.ModuleSurface, {
 })
 
 local converted = ClosureConvert.Define(T).module(module)
-local result = Pipeline.Define(T).lower_module(converted, { site = "test_closure_escape" })
-local program = result.program
-local report = result.back_report
-assert(#report.issues == 0, tostring(report.issues[1]))
+local program = Driver.lower_module(converted, { site = "test_closure_escape", context = T })
 
 local artifact = Jit.Define(T).jit():compile(program)
 local store = ffi.cast("int32_t (*)()", artifact:getpointer(Back.BackFuncId("closure_store")))
@@ -91,7 +88,7 @@ local bad_capture_return = Tr.FuncExport("closure_bad_capture_return", {}, closu
 local bad_module = Tr.Module(Tr.ModuleSurface, { Tr.ItemFunc(bad_capture_return) })
 local bad_converted = ClosureConvert.Define(T).module(bad_module)
 local ok, err = pcall(function()
-    Pipeline.Define(T).lower_module(bad_converted, { site = "test_closure_escape:bad_capture_return" })
+    Driver.lower_module(bad_converted, { site = "test_closure_escape:bad_capture_return", context = T })
 end)
 assert(not ok and tostring(err):find("closure environment ownership model", 1, true), "captured closure returns must fail loudly")
 

@@ -145,7 +145,7 @@ function M.Define(T)
 
         local function atom_type(atom, locals)
             local cls = pvm.classof(atom)
-            if cls == C.CBackendAtomLocal then return locals[atom["local"].text] end
+            if cls == C.CBackendAtomLocal then return locals[atom.local_id.text] end
             if cls == C.CBackendAtomGlobal then local g = globals[atom.global.text]; return g and g.ty or nil end
             if cls == C.CBackendAtomLiteral or cls == C.CBackendAtomNull then return atom.ty end
             return nil
@@ -156,8 +156,8 @@ function M.Define(T)
         local function check_atom(atom, func, locals, initialized)
             local cls = pvm.classof(atom)
             if cls == C.CBackendAtomLocal then
-                if locals[atom["local"].text] == nil then add_issue(issues, collector, C.CBackendIssueMissingLocal(func.name, atom["local"]))
-                elseif initialized ~= nil and initialized[atom["local"].text] == false then add_issue(issues, collector, C.CBackendIssueUninitializedLocal(func.name, atom["local"])) end
+                if locals[atom.local_id.text] == nil then add_issue(issues, collector, C.CBackendIssueMissingLocal(func.name, atom.local_id))
+                elseif initialized ~= nil and initialized[atom.local_id.text] == false then add_issue(issues, collector, C.CBackendIssueUninitializedLocal(func.name, atom.local_id)) end
             elseif cls == C.CBackendAtomGlobal and globals[atom.global.text] == nil then add_issue(issues, collector, C.CBackendIssueMissingGlobal(atom.global)) end
         end
 
@@ -209,7 +209,7 @@ function M.Define(T)
         place_type = function(p, func, locals)
             local cls = pvm.classof(p)
             if cls == C.CBackendPlaceLocal then
-                if locals[p["local"].text] == nil then add_issue(issues, collector, C.CBackendIssueMissingLocal(func.name, p["local"])) end
+                if locals[p.local_id.text] == nil then add_issue(issues, collector, C.CBackendIssueMissingLocal(func.name, p.local_id)) end
                 return p.ty
             elseif cls == C.CBackendPlaceGlobal then
                 if globals[p.global.text] == nil then add_issue(issues, collector, C.CBackendIssueMissingGlobal(p.global)) end
@@ -287,7 +287,7 @@ function M.Define(T)
                 local b = func.blocks[j]
                 if labels[b.label.text] then add_issue(issues, collector, C.CBackendIssueDuplicateLabel(func.name, b.label)) end
                 labels[b.label.text] = b
-                for k = 1, #b.params do locals[b.params[k]["local"].text] = b.params[k].ty end
+                for k = 1, #b.params do locals[b.params[k].local_id.text] = b.params[k].ty end
             end
             local storage = storage_by_func[func.name.text] or {}
             for _, rec in pairs(storage) do
@@ -300,7 +300,7 @@ function M.Define(T)
                 local b = func.blocks[j]
                 local initialized = {}
                 for _, p in ipairs(func.params) do initialized[p.id.text] = true end
-                for _, bp in ipairs(b.params) do initialized[bp["local"].text] = true end
+                for _, bp in ipairs(b.params) do initialized[bp.local_id.text] = true end
                 for id, rec in pairs(storage) do
                     local icls = pvm.classof(rec.init_state)
                     initialized[id] = not (rec.init_state == C.CBackendLocalUninitialized or icls == C.CBackendLocalUninitialized)
@@ -351,21 +351,21 @@ function M.Define(T)
                         check_atom(s.value, func, locals, initialized)
                         local vty = atom_type(s.value, locals)
                         if pty ~= nil and vty ~= nil and not type_eq(pty, vty) then add_issue(issues, collector, C.CBackendIssuePlaceTypeMismatch("place-store", s.place, pty, vty)) end
-                        if pvm.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place["local"]) end
+                        if pvm.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place.local_id) end
                     elseif cls == C.CBackendZeroInit then
                         local pty = place_type(s.place, func, locals)
                         if pty ~= nil and not type_eq(pty, s.ty) then add_issue(issues, collector, C.CBackendIssuePlaceTypeMismatch("zero-init", s.place, s.ty, pty)) end
-                        if pvm.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place["local"]) end
+                        if pvm.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place.local_id) end
                     elseif cls == C.CBackendAggregateInit then
                         local pty = place_type(s.place, func, locals)
                         if pty ~= nil and not type_eq(pty, s.ty) then add_issue(issues, collector, C.CBackendIssuePlaceTypeMismatch("aggregate-init", s.place, s.ty, pty)) end
                         for a = 1, #s.fields do check_atom(s.fields[a].value, func, locals, initialized) end
-                        if pvm.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place["local"]) end
+                        if pvm.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place.local_id) end
                     elseif cls == C.CBackendArrayInit then
                         local pty = place_type(s.place, func, locals)
                         if pty ~= nil and not type_eq(pty, s.ty) then add_issue(issues, collector, C.CBackendIssuePlaceTypeMismatch("array-init", s.place, s.ty, pty)) end
                         for a = 1, #s.elems do if s.elems[a].index < 0 then add_issue(issues, collector, C.CBackendIssueLoadStoreTypeMismatch("array-init-index", C.CBackendIndex, C.CBackendVoid)) end; check_atom(s.elems[a].value, func, locals, initialized) end
-                        if pvm.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place["local"]) end
+                        if pvm.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place.local_id) end
                     elseif cls == C.CBackendCall then
                         for a = 1, #s.args do check_atom(s.args[a], func, locals, initialized) end
                         local tcls = pvm.classof(s.target)

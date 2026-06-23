@@ -37,8 +37,8 @@ return schema. MoonDemo {
 
     Add {
       variant_unique,
-      lhs [ty "MoonDemo.Expr"],
-      rhs [ty "MoonDemo.Expr"],
+      lhs [ty. MoonDemo.Expr],
+      rhs [ty. MoonDemo.Expr],
     },
   },
 }
@@ -54,23 +54,23 @@ schema. ModuleName { ... }
 product. Name { ... }
 sum. Name { ... }
 alias. Name [T]
-field "reserved_or_dynamic_name" [T]
+field. reserved_or_dynamic_name [T]
 ```
 
 Use bare field captures when the field name is a safe unbound identifier:
 
 ```lua
 text [str]
-items [many [ty "MoonDemo.Item"]]
+items [many [ty. MoonDemo.Item]]
 ```
 
 Use `field` when the field name collides with Lua, LLB, or MoonSchema globals:
 
 ```lua
-field "name" [str]
-field "id" [ty "MoonProject.TaskId"]
-field "value" [bool]
-field "local" [ty "MoonC.CBackendLocalId"]
+field. name [str]
+field. id [ty. MoonProject.TaskId]
+field. value [bool]
+field. local_id [ty. MoonC.CBackendLocalId]
 ```
 
 ## Type slots
@@ -90,9 +90,9 @@ nil_ty
 Schema references are explicit:
 
 ```lua
-ty "MoonCore.Name"
-ty "MoonType.Type"
-ty "MoonTree.Expr"
+ty. MoonCore.Name
+ty. MoonType.Type
+ty. MoonTree.Expr
 ```
 
 Wrappers:

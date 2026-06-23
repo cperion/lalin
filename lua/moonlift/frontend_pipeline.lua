@@ -48,6 +48,7 @@ local function assert_no_c_phase_unreachable(root, site)
 end
 
 function M.Define(T)
+    require("moonlift.compiler_model").Define(T)
     local OpenFacts = require("moonlift.open_facts").Define(T)
     local OpenValidate = require("moonlift.open_validate").Define(T)
     local OpenExpand = require("moonlift.open_expand").Define(T)
@@ -73,6 +74,77 @@ function M.Define(T)
     local CValidate = require("moonlift.c_validate").Define(T)
     local BackTarget = require("moonlift.back_target_model").Define(T)
     local Errors = require("moonlift.error")
+    local function lower_checked_to_back(checked, opts)
+        opts = opts or {}
+        local process_ctx = opts.process_ctx
+        local site = opts.site or "frontend"
+        local target_model = opts.target_model or opts.back_target_model or BackTarget.default_native()
+        local target = opts.target or BackTarget.host_target(target_model)
+
+        local analysis_ctx = opts.analysis_ctx or {}
+        local collector = opts.collector or Errors.ThrowingCollector(
+            Errors.SpanResolvers.RESOLVERS,
+            analysis_ctx,
+            Errors.Catalog,
+            Errors.Terminal.render
+        )
+
+        local layout_env = opts.layout_env
+        do
+            local ModuleType = require("moonlift.tree_module_type").Define(T)
+            local generated_env = ModuleType.env(checked.module, target)
+            if layout_env == nil then
+                layout_env = T.MoonSem.LayoutEnv(generated_env.layouts)
+            else
+                local merged, seen = {}, {}
+                local function key(layout)
+                    local cls = pvm.classof(layout)
+                    if cls == T.MoonSem.LayoutNamed then return "named\0" .. tostring(layout.module_name) .. "\0" .. tostring(layout.type_name) end
+                    if cls == T.MoonSem.LayoutLocal then return "local\0" .. tostring(layout.sym and layout.sym.name or layout) end
+                    return tostring(layout)
+                end
+                for _, layout in ipairs(layout_env.layouts or {}) do local k = key(layout); if not seen[k] then seen[k] = true; merged[#merged + 1] = layout end end
+                for _, layout in ipairs(generated_env.layouts or {}) do local k = key(layout); if not seen[k] then seen[k] = true; merged[#merged + 1] = layout end end
+                layout_env = T.MoonSem.LayoutEnv(merged)
+            end
+        end
+        progress(process_ctx, "layout_env", { layout_env = layout_env })
+        local resolved = Layout.module(checked.module, layout_env, target)
+        progress(process_ctx, "layout_resolve", { module = resolved })
+        local code_module, code_contracts = TreeToCode.module_with_contracts(resolved, { layout_env = layout_env, target = target, module_id = opts.module_id })
+        if code_module == nil then error(site .. " lowering failed: tree_to_code produced nil module", 2) end
+        progress(process_ctx, "tree_to_code", { code_module = code_module, code_contracts = code_contracts })
+        local code_report = CodeValidate.validate(code_module, collector)
+        progress(process_ctx, "code_validate", { report = code_report })
+        local graph = CodeGraph.graph(code_module)
+        progress(process_ctx, "code_graph", { graph = graph })
+        local flow_facts = CodeFlowFacts.facts(code_module, graph)
+        local flow_semantics = CodeFlowFacts.semantic_facts(code_module, graph, flow_facts)
+        progress(process_ctx, "flow_facts", { facts = flow_facts, semantics = flow_semantics })
+        local value_facts = CodeValueFacts.facts(code_module, graph, flow_facts)
+        progress(process_ctx, "value_facts", { facts = value_facts })
+        local mem_semantics = CodeMemFacts.semantic_facts(code_module, graph, flow_facts, value_facts, code_contracts)
+        local mem_facts = CodeMemFacts.facts(code_module, graph, flow_facts, value_facts, code_contracts)
+        progress(process_ctx, "memory_facts", { facts = mem_facts, semantics = mem_semantics })
+        local effect_facts = CodeEffectFacts.facts(code_module, graph, mem_semantics, code_contracts)
+        progress(process_ctx, "effect_facts", { facts = effect_facts })
+        local kernel_plan = CodeKernelPlan.plan(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts)
+        progress(process_ctx, "kernel_plan", { plan = kernel_plan })
+        local schedule_plan = CodeSchedulePlan.plan(code_module, kernel_plan, flow_facts, value_facts, mem_semantics, effect_facts, target_model)
+        progress(process_ctx, "schedule_plan", { plan = schedule_plan })
+        local lower_plan = CodeLowerPlan.plan(code_module, graph, kernel_plan, schedule_plan, T.MoonLower.LowerTargetBack)
+        progress(process_ctx, "lower_plan", { plan = lower_plan, target = "back" })
+        local kernel_report = KernelValidate.validate(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { collector = collector })
+        progress(process_ctx, "kernel_validate", { report = kernel_report })
+
+        local program = LowerToBack.module(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { layout_env = layout_env, target = target })
+        if program == nil then error(site .. " lowering failed: code_to_back produced nil program", 2) end
+        progress(process_ctx, "lower_to_back", { program = program })
+        local back_report = Validate.validate(program, collector)
+        progress(process_ctx, "back_validate", { report = back_report })
+        return { program = program, back_report = back_report, checked = checked, resolved = resolved, code_module = code_module, code_contracts = code_contracts, code_report = code_report, graph = graph, flow_facts = flow_facts, flow_semantics = flow_semantics, value_facts = value_facts, mem_facts = mem_facts, mem_semantics = mem_semantics, effect_facts = effect_facts, kernel_plan = kernel_plan, schedule_plan = schedule_plan, kernel_report = kernel_report, lower_plan = lower_plan }
+    end
+
     local function lower_module(module, opts)
         opts = opts or {}
         local process_ctx = opts.process_ctx
@@ -287,6 +359,326 @@ function M.Define(T)
         }
     end
 
+    local function lower_checked_to_c(checked, opts)
+        opts = opts or {}
+        local process_ctx = opts.process_ctx
+
+        local analysis_ctx = opts.analysis_ctx or {}
+        local collector = opts.collector or Errors.ThrowingCollector(
+            Errors.SpanResolvers.RESOLVERS,
+            analysis_ctx,
+            Errors.Catalog,
+            Errors.Terminal.render
+        )
+
+        local c_target = CodeType.default_target(opts.c_target or opts)
+        local c_opts = {}
+        for k, v in pairs(opts.c_opts or {}) do c_opts[k] = v end
+        for k, v in pairs(opts) do if c_opts[k] == nil then c_opts[k] = v end end
+        c_opts.target = c_target
+        c_opts.c_target = c_target
+
+        local layout_env = opts.layout_env
+        do
+            local ModuleType = require("moonlift.tree_module_type").Define(T)
+            local generated_env = ModuleType.env(checked.module, c_target)
+            if layout_env == nil then
+                layout_env = T.MoonSem.LayoutEnv(generated_env.layouts)
+            else
+                local merged, seen = {}, {}
+                local function key(layout)
+                    local cls = pvm.classof(layout)
+                    if cls == T.MoonSem.LayoutNamed then return "named\0" .. tostring(layout.module_name) .. "\0" .. tostring(layout.type_name) end
+                    if cls == T.MoonSem.LayoutLocal then return "local\0" .. tostring(layout.sym and layout.sym.name or layout) end
+                    return tostring(layout)
+                end
+                for _, layout in ipairs(layout_env.layouts or {}) do local k = key(layout); if not seen[k] then seen[k] = true; merged[#merged + 1] = layout end end
+                for _, layout in ipairs(generated_env.layouts or {}) do local k = key(layout); if not seen[k] then seen[k] = true; merged[#merged + 1] = layout end end
+                layout_env = T.MoonSem.LayoutEnv(merged)
+            end
+        end
+        c_opts.layout_env = layout_env
+        progress(process_ctx, "layout_env", { layout_env = layout_env, target = "c" })
+        local resolved = Layout.module(checked.module, layout_env, c_target)
+        progress(process_ctx, "layout_resolve", { module = resolved, target = "c" })
+        assert_no_c_phase_unreachable(resolved, opts.site or "C frontend")
+        local code_module, code_contracts = TreeToCode.module_with_contracts(resolved, { layout_env = layout_env, target = c_target, module_id = opts.module_id })
+        if code_module == nil then error((opts.site or "C frontend") .. " lowering failed: tree_to_code produced nil module", 2) end
+        progress(process_ctx, "tree_to_code", { code_module = code_module, code_contracts = code_contracts, target = "c" })
+        local code_report = CodeValidate.validate(code_module, collector)
+        progress(process_ctx, "code_validate", { report = code_report, target = "c" })
+        local graph = CodeGraph.graph(code_module)
+        progress(process_ctx, "code_graph", { graph = graph, target = "c" })
+        local flow_facts = CodeFlowFacts.facts(code_module, graph)
+        local flow_semantics = CodeFlowFacts.semantic_facts(code_module, graph, flow_facts)
+        progress(process_ctx, "flow_facts", { facts = flow_facts, semantics = flow_semantics, target = "c" })
+        local value_facts = CodeValueFacts.facts(code_module, graph, flow_facts)
+        progress(process_ctx, "value_facts", { facts = value_facts, target = "c" })
+        local mem_semantics = CodeMemFacts.semantic_facts(code_module, graph, flow_facts, value_facts, code_contracts)
+        local mem_facts = CodeMemFacts.facts(code_module, graph, flow_facts, value_facts, code_contracts)
+        progress(process_ctx, "memory_facts", { facts = mem_facts, semantics = mem_semantics, target = "c" })
+        local effect_facts = CodeEffectFacts.facts(code_module, graph, mem_semantics, code_contracts)
+        progress(process_ctx, "effect_facts", { facts = effect_facts, target = "c" })
+        local kernel_plan = CodeKernelPlan.plan(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts)
+        progress(process_ctx, "kernel_plan", { plan = kernel_plan, target = "c" })
+        local schedule_plan = CodeSchedulePlan.plan(code_module, kernel_plan, flow_facts, value_facts, mem_semantics, effect_facts, opts.target_model or opts.back_target_model)
+        progress(process_ctx, "schedule_plan", { plan = schedule_plan, target = "c" })
+        local lower_plan = CodeLowerPlan.plan(code_module, graph, kernel_plan, schedule_plan, T.MoonLower.LowerTargetC)
+        progress(process_ctx, "lower_plan", { plan = lower_plan, target = "c" })
+        local kernel_report = KernelValidate.validate(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { collector = collector })
+        progress(process_ctx, "kernel_validate", { report = kernel_report, target = "c" })
+        c_opts.validate = false
+        local c_unit = LowerToC.module(code_module, lower_plan, c_opts)
+        progress(process_ctx, "lower_to_c", { c_unit = c_unit, target = "c" })
+        local c_report = CValidate.validate(c_unit, collector)
+        progress(process_ctx, "c_validate", { report = c_report, target = "c" })
+        return { c_unit = c_unit, c_report = c_report, checked = checked, resolved = resolved, code_module = code_module, code_contracts = code_contracts, code_report = code_report, graph = graph, flow_facts = flow_facts, flow_semantics = flow_semantics, value_facts = value_facts, mem_facts = mem_facts, mem_semantics = mem_semantics, effect_facts = effect_facts, kernel_plan = kernel_plan, schedule_plan = schedule_plan, kernel_report = kernel_report, lower_plan = lower_plan }
+    end
+
+    local function checked_to_code_result(checked, opts)
+        opts = opts or {}
+        local process_ctx = opts.process_ctx
+        local is_c = opts.root == "emit_c" or opts.codegen == "c" or opts.backend == "c" or opts.c_target ~= nil
+        local target_model = opts.target_model or opts.back_target_model or BackTarget.default_native()
+        local target = is_c and CodeType.default_target(opts.c_target or opts) or (opts.target or BackTarget.host_target(target_model))
+        local analysis_ctx = opts.analysis_ctx or {}
+        local collector = opts.collector or Errors.ThrowingCollector(
+            Errors.SpanResolvers.RESOLVERS,
+            analysis_ctx,
+            Errors.Catalog,
+            Errors.Terminal.render
+        )
+        local layout_env = opts.layout_env
+        do
+            local ModuleType = require("moonlift.tree_module_type").Define(T)
+            local generated_env = ModuleType.env(checked.module, target)
+            if layout_env == nil then
+                layout_env = T.MoonSem.LayoutEnv(generated_env.layouts)
+            else
+                local merged, seen = {}, {}
+                local function key(layout)
+                    local cls = pvm.classof(layout)
+                    if cls == T.MoonSem.LayoutNamed then return "named\0" .. tostring(layout.module_name) .. "\0" .. tostring(layout.type_name) end
+                    if cls == T.MoonSem.LayoutLocal then return "local\0" .. tostring(layout.sym and layout.sym.name or layout) end
+                    return tostring(layout)
+                end
+                for _, layout in ipairs(layout_env.layouts or {}) do local k = key(layout); if not seen[k] then seen[k] = true; merged[#merged + 1] = layout end end
+                for _, layout in ipairs(generated_env.layouts or {}) do local k = key(layout); if not seen[k] then seen[k] = true; merged[#merged + 1] = layout end end
+                layout_env = T.MoonSem.LayoutEnv(merged)
+            end
+        end
+        progress(process_ctx, "layout_env", { layout_env = layout_env, target = is_c and "c" or "back" })
+        local resolved = Layout.module(checked.module, layout_env, target)
+        progress(process_ctx, "layout_resolve", { module = resolved, target = is_c and "c" or "back" })
+        if is_c then assert_no_c_phase_unreachable(resolved, opts.site or "C frontend") end
+        local code_module, code_contracts = TreeToCode.module_with_contracts(resolved, { layout_env = layout_env, target = target, module_id = opts.module_id })
+        if code_module == nil then error((opts.site or "frontend") .. " lowering failed: tree_to_code produced nil module", 2) end
+        progress(process_ctx, "tree_to_code", { code_module = code_module, code_contracts = code_contracts, target = is_c and "c" or "back" })
+        local code_report = CodeValidate.validate(code_module, collector)
+        progress(process_ctx, "code_validate", { report = code_report, target = is_c and "c" or "back" })
+        return T.MoonCompiler.CodeResult(code_module, code_contracts, layout_env)
+    end
+
+    local function code_result_to_back(code_result, opts)
+        opts = opts or {}
+        local process_ctx = opts.process_ctx
+        local target_model = opts.target_model or opts.back_target_model or BackTarget.default_native()
+        local target = opts.target or BackTarget.host_target(target_model)
+        local analysis_ctx = opts.analysis_ctx or {}
+        local collector = opts.collector or Errors.ThrowingCollector(
+            Errors.SpanResolvers.RESOLVERS,
+            analysis_ctx,
+            Errors.Catalog,
+            Errors.Terminal.render
+        )
+        local code_module, code_contracts = code_result.module, code_result.contracts
+        local graph = CodeGraph.graph(code_module)
+        progress(process_ctx, "code_graph", { graph = graph })
+        local flow_facts = CodeFlowFacts.facts(code_module, graph)
+        local flow_semantics = CodeFlowFacts.semantic_facts(code_module, graph, flow_facts)
+        progress(process_ctx, "flow_facts", { facts = flow_facts, semantics = flow_semantics })
+        local value_facts = CodeValueFacts.facts(code_module, graph, flow_facts)
+        progress(process_ctx, "value_facts", { facts = value_facts })
+        local mem_semantics = CodeMemFacts.semantic_facts(code_module, graph, flow_facts, value_facts, code_contracts)
+        local mem_facts = CodeMemFacts.facts(code_module, graph, flow_facts, value_facts, code_contracts)
+        progress(process_ctx, "memory_facts", { facts = mem_facts, semantics = mem_semantics })
+        local effect_facts = CodeEffectFacts.facts(code_module, graph, mem_semantics, code_contracts)
+        progress(process_ctx, "effect_facts", { facts = effect_facts })
+        local kernel_plan = CodeKernelPlan.plan(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts)
+        progress(process_ctx, "kernel_plan", { plan = kernel_plan })
+        local schedule_plan = CodeSchedulePlan.plan(code_module, kernel_plan, flow_facts, value_facts, mem_semantics, effect_facts, target_model)
+        progress(process_ctx, "schedule_plan", { plan = schedule_plan })
+        local lower_plan = CodeLowerPlan.plan(code_module, graph, kernel_plan, schedule_plan, T.MoonLower.LowerTargetBack)
+        progress(process_ctx, "lower_plan", { plan = lower_plan, target = "back" })
+        local kernel_report = KernelValidate.validate(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { collector = collector })
+        progress(process_ctx, "kernel_validate", { report = kernel_report })
+        local program = LowerToBack.module(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { layout_env = code_result.layout_env, target = target })
+        if program == nil then error((opts.site or "frontend") .. " lowering failed: code_to_back produced nil program", 2) end
+        progress(process_ctx, "lower_to_back", { program = program })
+        local back_report = Validate.validate(program, collector)
+        progress(process_ctx, "back_validate", { report = back_report })
+        return { program = program, back_report = back_report }
+    end
+
+    local function code_result_to_c(code_result, opts)
+        opts = opts or {}
+        local process_ctx = opts.process_ctx
+        local analysis_ctx = opts.analysis_ctx or {}
+        local collector = opts.collector or Errors.ThrowingCollector(
+            Errors.SpanResolvers.RESOLVERS,
+            analysis_ctx,
+            Errors.Catalog,
+            Errors.Terminal.render
+        )
+        local c_target = CodeType.default_target(opts.c_target or opts)
+        local c_opts = {}
+        for k, v in pairs(opts.c_opts or {}) do c_opts[k] = v end
+        for k, v in pairs(opts) do if c_opts[k] == nil then c_opts[k] = v end end
+        c_opts.target = c_target
+        c_opts.c_target = c_target
+        c_opts.layout_env = code_result.layout_env
+        local code_module, code_contracts = code_result.module, code_result.contracts
+        local graph = CodeGraph.graph(code_module)
+        progress(process_ctx, "code_graph", { graph = graph, target = "c" })
+        local flow_facts = CodeFlowFacts.facts(code_module, graph)
+        local flow_semantics = CodeFlowFacts.semantic_facts(code_module, graph, flow_facts)
+        progress(process_ctx, "flow_facts", { facts = flow_facts, semantics = flow_semantics, target = "c" })
+        local value_facts = CodeValueFacts.facts(code_module, graph, flow_facts)
+        progress(process_ctx, "value_facts", { facts = value_facts, target = "c" })
+        local mem_semantics = CodeMemFacts.semantic_facts(code_module, graph, flow_facts, value_facts, code_contracts)
+        local mem_facts = CodeMemFacts.facts(code_module, graph, flow_facts, value_facts, code_contracts)
+        progress(process_ctx, "memory_facts", { facts = mem_facts, semantics = mem_semantics, target = "c" })
+        local effect_facts = CodeEffectFacts.facts(code_module, graph, mem_semantics, code_contracts)
+        progress(process_ctx, "effect_facts", { facts = effect_facts, target = "c" })
+        local kernel_plan = CodeKernelPlan.plan(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts)
+        progress(process_ctx, "kernel_plan", { plan = kernel_plan, target = "c" })
+        local schedule_plan = CodeSchedulePlan.plan(code_module, kernel_plan, flow_facts, value_facts, mem_semantics, effect_facts, opts.target_model or opts.back_target_model)
+        progress(process_ctx, "schedule_plan", { plan = schedule_plan, target = "c" })
+        local lower_plan = CodeLowerPlan.plan(code_module, graph, kernel_plan, schedule_plan, T.MoonLower.LowerTargetC)
+        progress(process_ctx, "lower_plan", { plan = lower_plan, target = "c" })
+        local kernel_report = KernelValidate.validate(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { collector = collector })
+        progress(process_ctx, "kernel_validate", { report = kernel_report, target = "c" })
+        c_opts.validate = false
+        local c_unit = LowerToC.module(code_module, lower_plan, c_opts)
+        progress(process_ctx, "lower_to_c", { c_unit = c_unit, target = "c" })
+        local c_report = CValidate.validate(c_unit, collector)
+        progress(process_ctx, "c_validate", { report = c_report, target = "c" })
+        return { c_unit = c_unit, c_report = c_report }
+    end
+
+    local function typecheck_module(module, opts)
+        opts = opts or {}
+        local process_ctx = opts.process_ctx
+        local analysis_ctx = opts.analysis_ctx or {}
+        local collector = opts.collector or Errors.ThrowingCollector(
+            Errors.SpanResolvers.RESOLVERS,
+            analysis_ctx,
+            Errors.Catalog,
+            Errors.Terminal.render
+        )
+        local expanded = OpenExpand.module(module, opts.expand_env)
+        progress(process_ctx, "open_expand", { module = expanded })
+        local surfaced = SurfaceResolve.module(expanded)
+        progress(process_ctx, "surface_resolve", { module = surfaced })
+        local open_report = OpenValidate.validate(OpenFacts.facts_of_module(surfaced), collector)
+        progress(process_ctx, "open_validate", { report = open_report })
+        local closed = ClosureConvert.module(surfaced)
+        progress(process_ctx, "closure_convert", { module = closed })
+        local checked = Typecheck.check_module(closed, { collector = collector, layout_env = opts.layout_env, target = opts.target or opts.c_target })
+        progress(process_ctx, "typecheck", { result = checked, module = checked and checked.module })
+        return checked
+    end
+
+    local typecheck_module_process = llb.process. moonlift_typecheck_module (function(ctx, module, opts)
+        opts = opts or {}
+        local run_opts = {}
+        for k, v in pairs(opts) do run_opts[k] = v end
+        run_opts.process_ctx = ctx
+        ctx. start { target = "checked", site = run_opts.site or "frontend" }
+        local ok, result = pcall(typecheck_module, module, run_opts)
+        if not ok then
+            ctx. error { code = "E_MOONLIFT_TYPECHECK", message = tostring(result), target = "checked" }
+            return nil
+        end
+        ctx. done { target = "checked", result = result }
+        return result
+    end)
+
+    local checked_to_back_process = llb.process. moonlift_checked_to_back (function(ctx, checked, opts)
+        opts = opts or {}
+        local run_opts = {}
+        for k, v in pairs(opts) do run_opts[k] = v end
+        run_opts.process_ctx = ctx
+        ctx. start { target = "back", site = run_opts.site or "frontend" }
+        local ok, result = pcall(lower_checked_to_back, checked, run_opts)
+        if not ok then
+            ctx. error { code = "E_MOONLIFT_CHECKED_TO_BACK", message = tostring(result), target = "back" }
+            return nil
+        end
+        ctx. done { target = "back", result = result }
+        return result
+    end)
+
+    local checked_to_c_process = llb.process. moonlift_checked_to_c (function(ctx, checked, opts)
+        opts = opts or {}
+        local run_opts = {}
+        for k, v in pairs(opts) do run_opts[k] = v end
+        run_opts.process_ctx = ctx
+        ctx. start { target = "c", site = run_opts.site or "C frontend" }
+        local ok, result = pcall(lower_checked_to_c, checked, run_opts)
+        if not ok then
+            ctx. error { code = "E_MOONLIFT_CHECKED_TO_C", message = tostring(result), target = "c" }
+            return nil
+        end
+        ctx. done { target = "c", result = result }
+        return result
+    end)
+
+    local checked_to_code_process = llb.process. moonlift_checked_to_code (function(ctx, checked, opts)
+        opts = opts or {}
+        local run_opts = {}
+        for k, v in pairs(opts) do run_opts[k] = v end
+        run_opts.process_ctx = ctx
+        ctx. start { target = run_opts.root == "emit_c" and "c_code" or "back_code", site = run_opts.site or "frontend" }
+        local ok, result = pcall(checked_to_code_result, checked, run_opts)
+        if not ok then
+            ctx. error { code = "E_MOONLIFT_CHECKED_TO_CODE", message = tostring(result), target = run_opts.root == "emit_c" and "c_code" or "back_code" }
+            return nil
+        end
+        ctx. done { target = run_opts.root == "emit_c" and "c_code" or "back_code", result = result }
+        return result
+    end)
+
+    local code_to_back_process = llb.process. moonlift_code_to_back (function(ctx, code_result, opts)
+        opts = opts or {}
+        local run_opts = {}
+        for k, v in pairs(opts) do run_opts[k] = v end
+        run_opts.process_ctx = ctx
+        ctx. start { target = "back", site = run_opts.site or "frontend" }
+        local ok, result = pcall(code_result_to_back, code_result, run_opts)
+        if not ok then
+            ctx. error { code = "E_MOONLIFT_CODE_TO_BACK", message = tostring(result), target = "back" }
+            return nil
+        end
+        ctx. done { target = "back", result = result }
+        return result
+    end)
+
+    local code_to_c_process = llb.process. moonlift_code_to_c (function(ctx, code_result, opts)
+        opts = opts or {}
+        local run_opts = {}
+        for k, v in pairs(opts) do run_opts[k] = v end
+        run_opts.process_ctx = ctx
+        ctx. start { target = "c", site = run_opts.site or "C frontend" }
+        local ok, result = pcall(code_result_to_c, code_result, run_opts)
+        if not ok then
+            ctx. error { code = "E_MOONLIFT_CODE_TO_C", message = tostring(result), target = "c" }
+            return nil
+        end
+        ctx. done { target = "c", result = result }
+        return result
+    end)
+
     local lower_module_process = llb.process. moonlift_lower_module (function(ctx, module, opts)
         opts = opts or {}
         local run_opts = {}
@@ -326,10 +718,14 @@ function M.Define(T)
     end)
 
     return {
-        lower_module = lower_module,
-        lower_module_to_c = lower_module_to_c,
-        lower_module_process = lower_module_process,
-        lower_module_to_c_process = lower_module_to_c_process,
+        typecheck_module = typecheck_module,
+        checked_to_code_result = checked_to_code_result,
+        code_result_to_back = code_result_to_back,
+        code_result_to_c = code_result_to_c,
+        typecheck_module_process = typecheck_module_process,
+        checked_to_code_process = checked_to_code_process,
+        code_to_back_process = code_to_back_process,
+        code_to_c_process = code_to_c_process,
         assert_no_c_phase_unreachable = assert_no_c_phase_unreachable,
     }
 end

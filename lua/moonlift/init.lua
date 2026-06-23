@@ -25,10 +25,15 @@ M.schema = require("moonlift.schema")
 M.schema_projection = require("moonlift.schema_projection")
 M.context_define_schema = require("moonlift.context_define_schema")
 M.phase_model = require("moonlift.phase_model")
-M.phase_builder = require("moonlift.phase_builder")
+M.phase_dsl = require("moonlift.phase_dsl")
+M.phase_validate = require("moonlift.phase_validate")
+M.phase_plan = require("moonlift.phase_plan")
+M.phase_execute = require("moonlift.phase_execute")
+M.compiler_package = require("moonlift.compiler_package")
+M.compiler_model = require("moonlift.compiler_model")
+M.compiler_driver = require("moonlift.compiler_driver")
 M.ast = require("moonlift.ast")
 M.dsl = require("moonlift.dsl")
-M.frontend_pipeline = require("moonlift.frontend_pipeline")
 M.debugger_core = require("moonlift.debugger_core")
 M.back_program = require("moonlift.back_program")
 M.back_target_model = require("moonlift.back_target_model")
@@ -106,19 +111,15 @@ end
 function M.emit_object(decl, path, name)
     local pvm = require("moonlift.pvm")
     local A2 = require("moonlift.schema_projection")
-    local Pipeline = require("moonlift.frontend_pipeline")
+    local Driver = require("moonlift.compiler_driver")
     local Object = require("moonlift.back_object")
 
     local T = pvm.context(); A2.Define(T)
     local O = Object.Define(T)
     local module_ast = rawget(decl, "__module_ast") or decl
-    local pipe = Pipeline.Define(T)
-    local handle = pipe.lower_module_process:start(module_ast, { site = "emit_object" })
-    for _ in handle:events() do end
-    local result = handle:result()
-    if result == nil then error("emit_object lowering failed", 2) end
+    local program = Driver.lower_module(module_ast, { site = "emit_object", context = T })
     name = name or "moonlift_object"
-    local artifact = O.compile(result.program, { module_name = name })
+    local artifact = O.compile(program, { module_name = name })
     local bytes = artifact:bytes()
     if path then
         local f = assert(io.open(path, "wb"))
@@ -131,7 +132,7 @@ end
 function M.emit_shared(decl, path, name, opts)
     local pvm = require("moonlift.pvm")
     local A2 = require("moonlift.schema_projection")
-    local Pipeline = require("moonlift.frontend_pipeline")
+    local Driver = require("moonlift.compiler_driver")
     local Object = require("moonlift.back_object")
     local LinkTarget = require("moonlift.link_target_model")
     local LinkValidate = require("moonlift.link_plan_validate")
@@ -146,16 +147,12 @@ function M.emit_shared(decl, path, name, opts)
     local LC = LinkCommand.Define(T)
     local LE = LinkExecute.Define(T)
     local module_ast = rawget(decl, "__module_ast") or decl
-    local pipe = Pipeline.Define(T)
-    local handle = pipe.lower_module_process:start(module_ast, { site = "emit_shared" })
-    for _ in handle:events() do end
-    local result = handle:result()
-    if result == nil then error("emit_shared lowering failed", 2) end
+    local program = Driver.lower_module(module_ast, { site = "emit_shared", context = T })
 
     name = name or "moonlift_shared"
     local keep_object = opts and opts.keep_object
     local object_path = keep_object or (os.tmpname() .. ".o")
-    local object = O.compile(result.program, { module_name = name })
+    local object = O.compile(program, { module_name = name })
     object:write(object_path)
 
     local link_plan = Link.LinkPlan(
@@ -193,23 +190,14 @@ function M.emit_c_artifact(decl, path_or_opts, name, opts)
     opts = opts or {}
     local pvm = require("moonlift.pvm")
     local A2 = require("moonlift.schema_projection")
-    local Pipeline = require("moonlift.frontend_pipeline")
+    local Driver = require("moonlift.compiler_driver")
     local CEmit = require("moonlift.c_emit")
 
     local T = pvm.context(); A2.Define(T)
     local module_ast = rawget(decl, "__module_ast") or decl
-    local pipeline_opts = { site = "emit_c_artifact", c_opts = opts, c_target = opts.c_target, target = opts.target, name = name or opts.name }
-    local pipe = Pipeline.Define(T)
-    local handle = pipe.lower_module_to_c_process:start(module_ast, pipeline_opts)
-    for _ in handle:events() do end
-    local result = handle:result()
-    if result == nil then error("emit_c_artifact lowering failed", 2) end
-    if #result.c_report.issues ~= 0 then
-        local msgs = {}
-        for i = 1, #result.c_report.issues do msgs[#msgs + 1] = tostring(result.c_report.issues[i]) end
-        error("emit_c_artifact validation failed: " .. table.concat(msgs, "\n"), 2)
-    end
-    local artifact = CEmit.Define(T).emit_artifact(result.c_unit, opts)
+    local driver_opts = { site = "emit_c_artifact", root = "emit_c", context = T, c_opts = opts, c_target = opts.c_target, target = opts.target, name = name or opts.name }
+    local c_unit = Driver.lower_module(module_ast, driver_opts)
+    local artifact = CEmit.Define(T).emit_artifact(c_unit, opts)
     function artifact:write(write_opts)
         write_opts = write_opts or {}
         if type(write_opts) == "string" then write_opts = { c_path = write_opts } end

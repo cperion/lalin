@@ -4,13 +4,12 @@ local ffi = require("ffi")
 local pvm = require("moonlift.pvm")
 local A2 = require("moonlift.schema_projection")
 local J = require("moonlift.back_jit")
-local Pipeline = require("moonlift.frontend_pipeline")
+local Driver = require("moonlift.compiler_driver")
 local Typecheck = require("moonlift.tree_typecheck")
 
 local T = pvm.context()
 A2.Define(T)
 local jit_api = J.Define(T)
-local Frontend = Pipeline.Define(T)
 local TC = Typecheck.Define(T)
 
 local C = T.MoonCore
@@ -60,9 +59,7 @@ assert(typed_jump.h == Tr.StmtSurface)
 assert(pvm.classof(typed_jump.args[1].value.h) == Tr.ExprTyped)
 assert(pvm.classof(typed_region.entry.body[1].cond.h) == Tr.ExprTyped)
 
-local lowered = Frontend.lower_module(module, { site = "test_tree_typecheck" })
-local program = lowered.program
-assert(#lowered.back_report.issues == 0)
+local program = Driver.lower_module(module, { site = "test_tree_typecheck", context = T })
 local jit = jit_api.jit()
 local artifact = jit:compile(program)
 local f = ffi.cast("int32_t (*)(int32_t)", artifact:getpointer(B2.BackFuncId("sum_typechecked")))

@@ -47,7 +47,7 @@ local bad_local_func = C.CBackendFunc(C.CBackendName("badlocal"), "badlocal", Co
 assert(has_issue(Validate.validate(C.CBackendUnit("m", target, { sig }, {}, {}, {}, {}, { bad_local_func })), C.CBackendIssueMissingLocal), "missing local reported")
 
 local p = C.CBackendBlockParam(C.CBackendLocalId("p"), i32)
-local needs_arg = C.CBackendBlock(C.CBackendLabel("needs_arg"), { p }, {}, C.CBackendReturn(C.CBackendAtomLocal(p["local"])))
+local needs_arg = C.CBackendBlock(C.CBackendLabel("needs_arg"), { p }, {}, C.CBackendReturn(C.CBackendAtomLocal(p.local_id)))
 local bad_goto = C.CBackendBlock(C.CBackendLabel("entry"), {}, {}, C.CBackendGoto(C.CBackendLabel("needs_arg"), {}))
 local bad_goto_func = C.CBackendFunc(C.CBackendName("badgoto"), "badgoto", Core.VisibilityLocal, sig_id, { a, b }, {}, { bad_goto, needs_arg })
 assert(has_issue(Validate.validate(C.CBackendUnit("m", target, { sig }, {}, {}, {}, {}, { bad_goto_func })), C.CBackendIssueBlockArgCount), "bad block args reported")

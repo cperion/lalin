@@ -278,7 +278,7 @@ function M.Define(T)
 
             local function object_for_place(place)
                 local cls = pvm.classof(place)
-                if cls == Code.CodePlaceLocal then return local_object[place["local"].text], Mem.MemBaseLocal(place["local"]), Mem.MemIndexNone end
+                if cls == Code.CodePlaceLocal then return local_object[place.local_id.text], Mem.MemBaseLocal(place.local_id), Mem.MemIndexNone end
                 if cls == Code.CodePlaceGlobal then return module_objects.global[place.global.text], Mem.MemBaseGlobal(place.global), Mem.MemIndexNone end
                 if cls == Code.CodePlaceData then return module_objects.data[place.data.text], Mem.MemBaseData(place.data), Mem.MemIndexNone end
                 if cls == Code.CodePlaceDeref then return object_for_value(value_object, place.addr), Mem.MemBaseValue(place.addr), Mem.MemIndexNone end
@@ -361,9 +361,9 @@ function M.Define(T)
                         local stride = object_stride_const(value_object[k.view.text])
                         if stride ~= nil then consts[k.dst.text] = stride end
                     elseif cls == Code.CodeInstLoad then
-                        if pvm.classof(k.place) == Code.CodePlaceLocal and local_value_object[k.place["local"].text] then value_object[k.dst.text] = local_value_object[k.place["local"].text] end
+                        if pvm.classof(k.place) == Code.CodePlaceLocal and local_value_object[k.place.local_id.text] then value_object[k.dst.text] = local_value_object[k.place.local_id.text] end
                     elseif cls == Code.CodeInstStore then
-                        if pvm.classof(k.place) == Code.CodePlaceLocal then merge_local_value(k.place["local"], value_object[k.value.text]) end
+                        if pvm.classof(k.place) == Code.CodePlaceLocal then merge_local_value(k.place.local_id, value_object[k.value.text]) end
                     elseif cls == Code.CodeInstAlias then
                         value_object[k.dst.text] = value_object[k.src.text]
                         if consts[k.src.text] ~= nil then consts[k.dst.text] = consts[k.src.text] end

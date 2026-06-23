@@ -555,6 +555,7 @@ local function build_class(ctx, name, unique, fields)
         ctx._next_ref_class_id = ctx._next_ref_class_id + 1
     end
     class.__fields = fields
+    class.__context = ctx
     class.__index = class
     class.__class = class
     class.__cacheclass = false

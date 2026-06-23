@@ -76,6 +76,13 @@ end
 
 local function name_token(s, origin) return setmetatable({ name = ident(s, "name"), origin = origin }, Name) end
 
+local function symbol_text(v, site)
+    if llb.is(v, "Symbol") or llb.is(v, "Name") then return ident(v.text, site or "name") end
+    if is(v, Name) then return ident(v.name, site or "name") end
+    if type(v) == "string" then return ident(v, site or "name") end
+    return nil
+end
+
 local scalar = {
     void = C.ScalarVoid, bool = C.ScalarBool,
     i8 = C.ScalarI8, i16 = C.ScalarI16, i32 = C.ScalarI32, i64 = C.ScalarI64,
@@ -85,6 +92,7 @@ local scalar = {
 
 local function scalar_type(name) return Ty.TScalar(assert(scalar[name], "unknown scalar")) end
 local tree_expr
+local bin_op, cmp_op
 local merge_source_ctx
 local attach_source_context
 local build_source_context
@@ -155,6 +163,29 @@ end
 tree_expr = function(v)
     if is(v, Expr) then return v:tree() end
     if is_member(Tr.Expr, v) then return v end
+    if llb.is(v, "Symbol") then return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(ident(v.text, "name"))) end
+    if llb.is(v, "Expr") then
+        local bin_map = { ["+"] = "add", ["-"] = "sub", ["*"] = "mul", ["/"] = "div", ["%"] = "rem" }
+        local cmp_map = { ["=="] = "eq", ["~="] = "ne", ["<"] = "lt", ["<="] = "le", [">"] = "gt", [">="] = "ge" }
+        if v.kind == "binop" then
+            if bin_map[v.op] then return Tr.ExprBinary(Tr.ExprSurface, bin_op[bin_map[v.op]], tree_expr(v.a), tree_expr(v.b)) end
+            if cmp_map[v.op] then return Tr.ExprCompare(Tr.ExprSurface, cmp_op[cmp_map[v.op]], tree_expr(v.a), tree_expr(v.b)) end
+            die("unsupported LLB binary operator " .. tostring(v.op), 2)
+        end
+        if v.kind == "unop" then
+            if v.op == "-" then return Tr.ExprUnary(Tr.ExprSurface, C.UnaryNeg, tree_expr(v.a)) end
+            die("unsupported LLB unary operator " .. tostring(v.op), 2)
+        end
+        if v.kind == "field" then return Tr.ExprDot(Tr.ExprSurface, tree_expr(v.base), ident(v.field, "field")) end
+        if v.kind == "index" then return Tr.ExprIndex(Tr.ExprSurface, Tr.IndexBaseExpr(tree_expr(v.base)), tree_expr(v.index)) end
+        if v.kind == "call" then
+            local args, packed = {}, v.args or {}
+            local n = packed.n or #packed
+            for i = 1, n do args[i] = tree_expr(packed[i]) end
+            return Tr.ExprCall(Tr.ExprSurface, tree_expr(v.callee), args)
+        end
+        die("unsupported LLB expression kind " .. tostring(v.kind), 2)
+    end
     if is(v, Name) then return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(v.name)) end
     if is_array_lit_table(v) then
         local elems = {}
@@ -188,6 +219,20 @@ local function stmt_item(v)
     return Tr.StmtExpr(Tr.StmtSurface, tree_expr(v))
 end
 
+local function typed_name(v, site)
+    if is(v, TypedName) then return v end
+    if llb.is(v, "Capture") then
+        local name = symbol_text(v.subject, site or "name")
+        if name and is_member(Ty.Type, v.value) then
+            return setmetatable({ name = name, ty = v.value }, TypedName)
+        end
+    end
+    if type(v) == "table" and v.name ~= nil and (v.ty ~= nil or v.type ~= nil) then
+        return setmetatable({ name = ident(tostring(v.name), site or "name"), ty = v.ty or v.type, init = v.init }, TypedName)
+    end
+    return nil
+end
+
 function expand_array(t, role)
     local out = {}
     for i = 1, #(t or {}) do
@@ -214,7 +259,8 @@ end
 local function param_items(t, open)
     local out = {}
     for i, v in ipairs(expand_array(t or {}, "product")) do
-        if not is(v, TypedName) then die("parameter expects name [type]", 2) end
+        v = typed_name(v, "parameter")
+        if not v then die("parameter expects name [type]", 2) end
         out[i] = open and O.OpenParam("param:dsl:" .. v.name .. ":" .. tostring(i), v.name, concrete_type(v.ty))
             or Ty.Param(v.name, concrete_type(v.ty))
     end
@@ -224,7 +270,8 @@ end
 local function field_items(t)
     local out = {}
     for i, v in ipairs(expand_array(t or {}, "product")) do
-        if not is(v, TypedName) then die("field expects name [type]", 2) end
+        v = typed_name(v, "field")
+        if not v then die("field expects name [type]", 2) end
         out[i] = Ty.FieldDecl(v.name, concrete_type(v.ty))
     end
     return out
@@ -233,7 +280,8 @@ end
 local function block_param_items(t)
     local out = {}
     for i, v in ipairs(expand_array(t or {}, "product")) do
-        if not is(v, TypedName) then die("block parameter expects name [type]", 2) end
+        v = typed_name(v, "block parameter")
+        if not v then die("block parameter expects name [type]", 2) end
         out[i] = Tr.BlockParam(v.name, concrete_type(v.ty))
     end
     return out
@@ -242,7 +290,8 @@ end
 local function entry_param_items(t)
     local out = {}
     for i, v in ipairs(expand_array(t or {}, "product")) do
-        if not is(v, TypedName) then die("entry parameter expects name [type](init)", 2) end
+        v = typed_name(v, "entry parameter")
+        if not v then die("entry parameter expects name [type](init)", 2) end
         out[i] = Tr.EntryBlockParam(v.name, concrete_type(v.ty), tree_expr(v.init or 0))
     end
     return out
@@ -265,7 +314,8 @@ end
 local function tree_entry_params(t)
     local out = {}
     for i, v in ipairs(expand_array(t or {}, "product")) do
-        if not is(v, TypedName) then die("entry parameter expects name [type](init)", 2) end
+        v = typed_name(v, "entry parameter")
+        if not v then die("entry parameter expects name [type](init)", 2) end
         out[i] = Tr.EntryBlockParam(v.name, concrete_type(v.ty), tree_expr(v.init or 0))
     end
     return out
@@ -274,7 +324,8 @@ end
 local function tree_block_params(t)
     local out = {}
     for i, v in ipairs(expand_array(t or {}, "product")) do
-        if not is(v, TypedName) then die("block parameter expects name [type]", 2) end
+        v = typed_name(v, "block parameter")
+        if not v then die("block parameter expects name [type]", 2) end
         out[i] = Tr.BlockParam(v.name, concrete_type(v.ty))
     end
     return out
@@ -283,7 +334,8 @@ end
 local function tree_params(t)
     local out = {}
     for i, v in ipairs(expand_array(t or {}, "product")) do
-        if not is(v, TypedName) then die("parameter expects name [type]", 2) end
+        v = typed_name(v, "parameter")
+        if not v then die("parameter expects name [type]", 2) end
         out[i] = Ty.Param(v.name, concrete_type(v.ty))
     end
     return out
@@ -360,11 +412,11 @@ function TypedName:__call(init)
     return setmetatable({ name = self.name, ty = self.ty, init = init }, TypedName)
 end
 
-local bin_op = {
+bin_op = {
     add = C.BinAdd, sub = C.BinSub, mul = C.BinMul, div = C.BinDiv, rem = C.BinRem,
     band = C.BinBitAnd, bor = C.BinBitOr, bxor = C.BinBitXor, shl = C.BinShl, lshr = C.BinLShr, ashr = C.BinAShr,
 }
-local cmp_op = { eq = C.CmpEq, ne = C.CmpNe, lt = C.CmpLt, le = C.CmpLe, gt = C.CmpGt, ge = C.CmpGe }
+cmp_op = { eq = C.CmpEq, ne = C.CmpNe, lt = C.CmpLt, le = C.CmpLe, gt = C.CmpGt, ge = C.CmpGe }
 local logic_op = { ["and"] = C.LogicAnd, ["or"] = C.LogicOr }
 local atomic_rmw_op = {
     add = C.AtomicRmwAdd, sub = C.AtomicRmwSub,
@@ -860,27 +912,21 @@ end
 
 function Decl:lower(opts)
     opts = merge_source_ctx(opts, self)
-    local Pipeline = require("moonlift.frontend_pipeline").Define(T)
     opts.site = opts.site or "moonlift.dsl"
-    local handle = Pipeline.lower_module_process:start(module_ast_of(self), opts)
-    for _ in handle:events() do end
-    local result = handle:result()
-    if result == nil then error("moonlift.dsl lower failed", 2) end
-    return result
+    opts.context = opts.context or T
+    return require("moonlift.compiler_driver").lower_module(module_ast_of(self), opts)
 end
 
 function Decl:emit_c_artifact(opts)
     opts = merge_source_ctx(opts, self)
-    local Pipeline = require("moonlift.frontend_pipeline").Define(T)
     opts.site = opts.site or "moonlift.dsl c"
-    local handle = Pipeline.lower_module_to_c_process:start(module_ast_of(self), opts)
-    for _ in handle:events() do end
-    local result = handle:result()
-    if result == nil then error("moonlift.dsl C lower failed", 2) end
-    local artifact = require("moonlift.c_emit").Define(T).emit_artifact(result.c_unit, opts)
+    opts.context = opts.context or T
+    opts.root = "emit_c"
+    local c_unit = require("moonlift.compiler_driver").lower_module(module_ast_of(self), opts)
+    local artifact = require("moonlift.c_emit").Define(T).emit_artifact(c_unit, opts)
     artifact.dsl_module = self
     artifact.module = self
-    artifact.unit = result.c_unit
+    artifact.unit = c_unit
     if getmetatable(artifact) == nil then
         setmetatable(artifact, { __index = c_artifact_mt })
     end
@@ -890,10 +936,10 @@ end
 function Decl:compile(opts)
     opts = merge_source_ctx(opts, self)
     if opts.backend == "c" or opts.codegen == "c" then return self:emit_c_artifact(opts) end
-    local result = self:lower(opts)
+    local program = self:lower(opts)
     local jit = require("moonlift.back_jit").Define(T).jit()
     for name, ptr in pairs(opts.symbols or {}) do jit:symbol(name, ptr) end
-    return jit:compile(result.program)
+    return jit:compile(program)
 end
 
 function Decl:__tostring()
@@ -1034,6 +1080,7 @@ end
 
 local function llb_name_text(v, site)
     if llb.is(v, "Name") then return ident(v.text, site or "name") end
+    if llb.is(v, "Symbol") then return ident(v.text, site or "name") end
     if is(v, Name) then return ident(v.name, site or "name") end
     if type(v) == "string" then return ident(v, site or "name") end
     die((site or "name") .. " expects a name, got " .. llb.repr(v), 2)
@@ -1042,12 +1089,11 @@ end
 local function typed_items_from_llb(items)
     local out = {}
     for i, v in ipairs(items or {}) do
-        if is(v, TypedName) then
-            out[i] = v
-        elseif type(v) == "table" and v.name ~= nil and (v.ty ~= nil or v.type ~= nil) then
-            local init = v.init
+        local tv = typed_name(v, "field")
+        if tv then
+            local init = tv.init
             if init == llb.NIL or init == llb.ABSENT then init = nil end
-            out[i] = setmetatable({ name = ident(tostring(v.name), "field"), ty = v.ty or v.type, init = init }, TypedName)
+            out[i] = setmetatable({ name = tv.name, ty = tv.ty, init = init }, TypedName)
         else
             out[i] = v
         end
@@ -1405,7 +1451,7 @@ function M.use(opts)
     local exports = make_env(opts)
     local session = llb.use(MoonLLB, {
         scope = opts.scope or (opts.global == false and "env" or "permanent"),
-        target = opts.target or _G,
+        target = opts.target,
         base = exports,
         exports = exports,
         lang_exports = false,
@@ -1415,13 +1461,45 @@ function M.use(opts)
         strict_message = "unknown DSL global ",
         override = opts.override,
         auto_names = opts.auto_names ~= false,
-        auto_name = name_token,
         searcher = opts.searcher,
         mode = opts.mode,
         provides = opts.provides or { "moonlift.types", "moonlift.dsl" },
         requires = opts.requires,
     })
     if opts.searcher then M.install_searcher() end
+    function session:loadstring(src, chunk_name, load_opts)
+        load_opts = load_opts or {}
+        local loader = loadstring or load
+        local source_name = chunk_name or "=(moonlift.dsl.use)"
+        local source_ctx = build_source_context(source_name, src)
+        local fn, err
+        if loadstring then
+            fn, err = loader(src, source_name)
+            if not fn then die(err, 2) end
+            setfenv(fn, self.env)
+        else
+            fn, err = loader(src, source_name, "t", self.env)
+            if not fn then die(err, 2) end
+        end
+        return function(...)
+            local packed = { fn(...) }
+            for i = 1, #packed do
+                if type(packed[i]) == "table" then attach_source_context(packed[i], source_ctx) end
+            end
+            return unpack(packed)
+        end
+    end
+    function session:loadfile(path_, load_opts)
+        local f, err = io.open(path_, "rb")
+        if not f then die(err, 2) end
+        local src = f:read("*a")
+        f:close()
+        return self:loadstring(src, path_, load_opts)
+    end
+    function session:dofile(path_, ...)
+        local chunk = self:loadfile(path_)
+        return chunk(...)
+    end
     M._installed = true
     return session
 end

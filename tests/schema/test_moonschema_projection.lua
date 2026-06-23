@@ -12,9 +12,32 @@ Project.Define(T)
 local Ph = T.MoonPhase
 local P = T.MoonProject
 
-local spec = Ph.PhaseSpec("lower", Ph.TypeRef("MoonTree", "Module"), Ph.TypeRef("MoonCode", "CodeModule"), Ph.CacheNode, Ph.ResultOne)
-assert(spec.name == "lower")
-assert(spec.input.module_name == "MoonTree")
+local world = Ph.World(Ph.WorldId("tree"), Ph.TypeRef("MoonTree", "Module"))
+assert(world.id.text == "tree")
+assert(world.ty.type_name == "Module")
+
+local machine = Ph.Machine(
+    Ph.MachineId("typecheck"),
+    Ph.WorldId("tree"),
+    Ph.WorldId("checked"),
+    Ph.WorldId("diag"),
+    Ph.MachineAbiStatusReturning,
+    Ph.ImplLua("moonlift.tree_typecheck", "typecheck"),
+    { "diagnostics" }
+)
+assert(machine.input.text == "tree")
+assert(machine.impl.function_name == "typecheck")
+
+local phase = Ph.Phase(Ph.PhaseId("typecheck"), Ph.WorldId("tree"), Ph.WorldId("checked"), Ph.WorldId("diag"), Ph.CacheIdentity, true, Ph.MachineId("typecheck"))
+assert(phase.machine.text == "typecheck")
+
+local root = Ph.Root(Ph.RootId("compile"), Ph.WorldId("tree"), Ph.WorldId("checked"))
+assert(root.id.text == "compile")
+assert(root.output.text == "checked")
+
+local step = Ph.PlanStep(1, Ph.PhaseId("typecheck"), Ph.MachineId("typecheck"), Ph.WorldId("tree"), Ph.WorldId("checked"), Ph.WorldId("diag"), Ph.CacheIdentity, true, Ph.MachineAbiStatusReturning, Ph.ImplLua("moonlift.tree_typecheck", "typecheck"), { "diagnostics" })
+local plan = Ph.Plan(Ph.RootId("compile"), Ph.WorldId("tree"), Ph.WorldId("checked"), { step })
+assert(plan.steps[1].phase.text == "typecheck")
 
 local id = P.TaskId("schema")
 local task = P.Task(id, "schema projection", P.TaskDone, {})

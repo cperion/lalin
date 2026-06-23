@@ -28,6 +28,7 @@ local SCHEMA_MODULES = {
     "kernel",
     "schedule",
     "lower",
+    "compiler",
     "parse",
     "host",
     "source",

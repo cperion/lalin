@@ -158,7 +158,7 @@ function M.Define(T)
     place_to_c = function(ctx, place)
         local cls = pvm.classof(place)
         if cls == Code.CodePlaceLocal then
-            return C.CBackendPlaceLocal(c_local_id(place["local"]), c_ty(ctx, place.ty))
+            return C.CBackendPlaceLocal(c_local_id(place.local_id), c_ty(ctx, place.ty))
         elseif cls == Code.CodePlaceGlobal then
             return C.CBackendPlaceGlobal(c_global_id(place.global), c_ty(ctx, place.ty))
         elseif cls == Code.CodePlaceData then

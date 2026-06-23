@@ -6,7 +6,7 @@ local A2 = require("moonlift.schema_projection")
 local OpenFacts = require("moonlift.open_facts")
 local OpenValidate = require("moonlift.open_validate")
 local OpenExpand = require("moonlift.open_expand")
-local Pipeline = require("moonlift.frontend_pipeline")
+local Driver = require("moonlift.compiler_driver")
 local Jit = require("moonlift.back_jit")
 
 local T = pvm.context()
@@ -16,7 +16,6 @@ local C, Ty, B, O, Tr = T.MoonCore, T.MoonType, T.MoonBind, T.MoonOpen, T.MoonTr
 local OF = OpenFacts.Define(T)
 local OV = OpenValidate.Define(T)
 local OE = OpenExpand.Define(T)
-local P = Pipeline.Define(T)
 local jit_api = Jit.Define(T)
 
 local i32 = Ty.TScalar(C.ScalarI32)
@@ -72,11 +71,7 @@ assert(saw_cont_issue, "expected unfilled continuation slot issue")
 
 local filled = make_module({ O.ContBinding("hit", O.ContTargetLabel(Tr.BlockLabel("found"))) })
 local expanded = OE.module(filled, OE.env_with_frags({ region_frag }, {}))
-local result = P.lower_module(expanded, { site = "test_continuation_slot_expand" })
-local checked = result.checked
-local program = result.program
-local back_report = result.back_report
-assert(#back_report.issues == 0, tostring(back_report.issues[1]))
+local program = Driver.lower_module(expanded, { site = "test_continuation_slot_expand", context = T })
 local artifact = jit_api.jit():compile(program)
 local ptr = artifact:getpointer(T.MoonBack.BackFuncId("cont_slot_smoke"))
 local fn = ffi.cast("int32_t (*)(void)", ptr)

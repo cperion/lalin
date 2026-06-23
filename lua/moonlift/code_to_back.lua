@@ -337,16 +337,16 @@ function M.Define(T)
         elseif cls == Code.CodePlaceLocal then
             local ty_cls = pvm.classof(place.ty)
             if CodeAggregateAbi.is_view(place.ty) then
-                local stack = ctx.local_stack_slots and ctx.local_stack_slots[place["local"].text]
-                if stack == nil then error("code_to_back: view local has no materialized descriptor " .. place["local"].text, 3) end
+                local stack = ctx.local_stack_slots and ctx.local_stack_slots[place.local_id.text]
+                if stack == nil then error("code_to_back: view local has no materialized descriptor " .. place.local_id.text, 3) end
                 return Back.BackAddress(Back.BackAddrStack(stack.slot), zero(ctx), Back.BackProvStack(stack.slot), back_bounds(info))
             end
             if ty_cls == Code.CodeTyNamed or ty_cls == Code.CodeTyArray or ty_cls == Code.CodeTySlice or ty_cls == Code.CodeTyClosure then
-                local addr = ctx.aggregate_local_addr and ctx.aggregate_local_addr[place["local"].text]
-                if addr == nil then error("code_to_back: aggregate local has no materialized address " .. place["local"].text, 3) end
+                local addr = ctx.aggregate_local_addr and ctx.aggregate_local_addr[place.local_id.text]
+                if addr == nil then error("code_to_back: aggregate local has no materialized address " .. place.local_id.text, 3) end
                 return Back.BackAddress(Back.BackAddrValue(addr), zero(ctx), Back.BackProvUnknown, back_bounds(info))
             end
-            local stack = ctx.local_stack_slots and ctx.local_stack_slots[place["local"].text]
+            local stack = ctx.local_stack_slots and ctx.local_stack_slots[place.local_id.text]
             if stack ~= nil then
                 return Back.BackAddress(Back.BackAddrStack(stack.slot), zero(ctx), Back.BackProvStack(stack.slot), back_bounds(info))
             end
@@ -849,7 +849,7 @@ function M.Define(T)
         elseif cls == Code.CodeInstStore then
             if pvm.classof(k.place) == Code.CodePlaceLocal and is_byref_aggregate_ty(k.access.ty) then
                 ctx.aggregate_local_addr = ctx.aggregate_local_addr or {}
-                ctx.aggregate_local_addr[k.place["local"].text] = aggregate_addr_for_value(ctx, k.value, k.access.ty) or bid(k.value)
+                ctx.aggregate_local_addr[k.place.local_id.text] = aggregate_addr_for_value(ctx, k.value, k.access.ty) or bid(k.value)
                 note_value(ctx, inst_dst_type(ctx, k))
                 return
             end

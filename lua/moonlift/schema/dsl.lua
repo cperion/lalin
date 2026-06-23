@@ -60,6 +60,7 @@ end
 
 function M.type(name)
     if tag(name) == "Type" then return name end
+    if tag(name) == "TypeRef" then name = table.concat(name.path, ".") end
     if llb.is(name, "Symbol") then name = name.text end
     if llb.is(name, "Name") then name = name.text end
     if llb.is(name, "Type") then name = name.name end
@@ -236,8 +237,24 @@ end
 -- LLB authoring surface ------------------------------------------------------
 
 llb.register_type_like(function(v)
-    return tag(v) == "Type"
+    return tag(v) == "Type" or tag(v) == "TypeRef"
 end)
+
+local TypeRef = {}
+TypeRef.__index = function(self, key)
+    if type(key) ~= "string" then return rawget(TypeRef, key) end
+    local path = copy_array(rawget(self, "path"))
+    path[#path + 1] = key
+    return setmetatable({ __moonschema_tag = "TypeRef", path = path }, TypeRef)
+end
+
+local TypeHead = {}
+TypeHead.__index = function(_, key)
+    if type(key) ~= "string" then return nil end
+    return setmetatable({ __moonschema_tag = "TypeRef", path = { key } }, TypeRef)
+end
+
+local type_head = setmetatable({}, TypeHead)
 
 local TypeCtor = {}
 TypeCtor.__index = function(self, key)
@@ -364,10 +381,10 @@ local Lang = llb.define "MoonSchema" {
     },
 
     g.head .field {
-        g.slot .name [g.string],
+        g.slot .name [g.name],
         g.slot .target [g.schema_type] { channel = "index:type" },
         emit = function(n)
-            return M.field(n.name, n.target)
+            return M.field(n.name.text, n.target)
         end,
     },
 
@@ -375,7 +392,7 @@ local Lang = llb.define "MoonSchema" {
     g.helper .bool { value = M.type("boolean") },
     g.helper .number { value = M.type("number") },
     g.helper .any { value = M.type("any") },
-    g.helper .ty { value = M.type },
+    g.helper .ty { value = type_head },
     g.helper .table_ty { value = M.type("table") },
     g.helper .function_ty { value = M.type("function") },
     g.helper .nil_ty { value = M.type("nil") },
@@ -453,7 +470,7 @@ local function type_doc(ty, f)
         if ty.name == "nil" then return f:text("nil_ty") end
         return f:text(ty.name)
     elseif ty.kind == "name" then
-        return f:group { "ty ", quote(ty.name) }
+        return f:group { "ty. ", ty.name }
     elseif ty.kind == "many" or ty.kind == "optional" or ty.kind == "ref" or ty.kind == "id" then
         return f:group { ty.kind, " [", type_doc(ty.elem, f), "]" }
     elseif ty.kind == "map" then
@@ -463,8 +480,11 @@ local function type_doc(ty, f)
 end
 
 local function field_doc(field, f)
-    if not ident(field.name) or FIELD_CAPTURE_RESERVED[field.name] then
-        return f:group { "field ", quote(field.name), " [", type_doc(field.ty, f), "]" }
+    if not ident(field.name) then
+        error("moonschema: cannot format non-identifier field name " .. quote(field.name), 2)
+    end
+    if FIELD_CAPTURE_RESERVED[field.name] then
+        return f:group { "field. ", field.name, " [", type_doc(field.ty, f), "]" }
     end
     return f:group { field.name, " [", type_doc(field.ty, f), "]" }
 end

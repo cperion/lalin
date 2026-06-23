@@ -207,7 +207,7 @@ function M.Define(T)
     place_type = function(ctx, fctx, place, site)
         local cls = pvm.classof(place)
         if cls == Code.CodePlaceLocal then
-            local local_id = place["local"]
+            local local_id = place.local_id
             local local_ = fctx.locals[local_id.text]
             if local_ == nil then
                 add_issue(ctx, Code.CodeIssueUnsupportedSource(site, "missing local " .. local_id.text))
