@@ -84,15 +84,82 @@ return module "DslSmoke" {
         },
       },
     },
+
+  fn .atomic_ops
+    { p [ptr [i32]], v [i32] }
+    [i32]
+    {
+      let .a [i32] (aload(i32, p)),
+      astore(i32, p, v),
+      let .b [i32] (armw("xchg", i32, p, v)),
+      let .c [i32] (acas(i32, p, v, 0)),
+      afence(),
+      ret(a),
+    },
+
+  fn .contract_demo
+    { buf [ptr [u8]], count [index] }
+    [index]
+    {
+      requires {
+        bounds(buf, count),
+        noalias(buf),
+      },
+      ret(count),
+    },
+
+  fn .readonly_contract
+    { buf [ptr [u8]], count [index] }
+    [index]
+    {
+      requires {
+        bounds(buf, count),
+        readonly(buf),
+        writeonly(buf),
+      },
+      ret(count),
+    },
+
+  fn .use_switch
+    { x [i32] }
+    [i32]
+    {
+      switch(x) {
+        case_value(1) {
+          ret(1),
+        },
+
+        default {
+          ret(0),
+        },
+      },
+    },
+
+  fn .use_emit
+    { x [i32] }
+    [i32]
+    {
+      entry .start {} {
+        emit .scan { x } {
+          hit = done,
+          miss = done,
+        },
+      },
+
+      block .done { pos[i32] } {
+        ret(pos),
+      },
+    },
 }
 ]=]
 
 local module = dsl.loadstring(src, "dsl-smoke")()
-assert(module:syntax())
-assert(module:ast())
-assert(module:typecheck())
-assert(module:lower({ site = "test_dsl_lua_owned" }))
+assert(module:syntax(), "syntax() failed")
+assert(module:ast(), "ast() failed")
+assert(module:typecheck(), "typecheck() failed")
+assert(module:lower({ site = "test_dsl_lua_owned" }), "lower() failed")
 
+-- Test strict mode
 local strict_src = [=[
 accidental_global = 1
 return module "Strict" {}

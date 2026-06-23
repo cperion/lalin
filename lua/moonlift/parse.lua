@@ -42,7 +42,7 @@ local TK = {
     return_kw  = 134, region_kw  = 135, entry_kw   = 136, emit_kw    = 137,
     expr_kw    = 138, call_kw    = 139,
     true_kw    = 140, false_kw   = 141, nil_kw     = 142, and_kw     = 143,
-    or_kw      = 144, not_kw     = 145,
+    or_kw      = 144, not_kw     = 145, bang      = 146,
     view_kw    = 150, noalias_kw = 151, readonly_kw= 152, writeonly_kw=153,
     requires_kw= 154, bounds_kw  = 155, disjoint_kw= 156, len_kw     = 157,
     same_len_kw= 158, window_bounds_kw = 159, noescape_kw = 169,
@@ -137,6 +137,7 @@ local token_label = {
     [TK.pipe] = "'|'",
     [TK.caret] = "'^'",
     [TK.tilde] = "'~'",
+    [TK.bang] = "'!'",
     [TK.shl] = "'<<'",
     [TK.lshr] = "'>>>'",
     [TK.ashr] = "'>>'",
@@ -383,10 +384,10 @@ function M.lex(src)
             end
 
             -- Two-char
-            if i < n then
+    if i < n then
                 local s2 = sub(src, i, i + 1)
                 local k2 = ({ ["->"]=TK.arrow, ["=="]=TK.eqeq, ["~="]=TK.ne, ["<="]=TK.le,
-                              [">="]=TK.ge, ["<<"]=TK.shl, [">>"]=TK.ashr })[s2]
+                              [">="]=TK.ge, ["<<"]=TK.shl, [">>"]=TK.ashr, ["!="]=TK.ne })[s2]
                 if k2 then push_tok(t, k2, s2, i, i + 1, line, col); i = i + 2; col = col + 2; goto continue_lex end
             end
 
@@ -396,7 +397,7 @@ function M.lex(src)
                           ["."]=TK.dot, [";"]=TK.semi, ["+"]=TK.plus, ["-"]=TK.minus,
                           ["*"]=TK.star, ["/"]=TK.slash, ["%"]=TK.percent, ["="]=TK.eq,
                           ["<"]=TK.lt, [">"]=TK.gt, ["&"]=TK.amp, ["|"]=TK.pipe,
-                          ["^"]=TK.caret, ["~"]=TK.tilde })[ch]
+                          ["^"]=TK.caret, ["~"]=TK.tilde, ["!"]=TK.bang })[ch]
             if k1 then
                 push_tok(t, k1, ch, i, i, line, col)
             else
@@ -624,7 +625,7 @@ local expr_start = {
     [TK.sizeof_kw]=true, [TK.alignof_kw]=true, [TK.null_kw]=true,
     [TK.is_null_kw]=true,
     [TK.lparen]=true, [TK.minus]=true, [TK.not_kw]=true,
-    [TK.tilde]=true, [TK.star]=true, [TK.amp]=true,
+    [TK.tilde]=true, [TK.bang]=true, [TK.star]=true, [TK.amp]=true,
     [TK.lbrace]=true, [TK.lbrack]=true,
     [TK.switch_kw]=true, [TK.emit_kw]=true, [TK.block_kw]=true,
     [TK.region_kw]=true,
@@ -1354,6 +1355,7 @@ function Parser:nud()
     if k == TK.minus  then return Tr.ExprUnary(Tr.ExprSurface, C.UnaryNeg, self:parse_expr(80)) end
     if k == TK.not_kw then return Tr.ExprUnary(Tr.ExprSurface, C.UnaryNot, self:parse_expr(80)) end
     if k == TK.tilde  then return Tr.ExprUnary(Tr.ExprSurface, C.UnaryBitNot, self:parse_expr(80)) end
+    if k == TK.bang   then return Tr.ExprUnary(Tr.ExprSurface, C.UnaryNot, self:parse_expr(80)) end
     if k == TK.star   then return Tr.ExprDeref(Tr.ExprSurface, self:parse_expr(80)) end
     if k == TK.amp    then return Tr.ExprAddrOf(Tr.ExprSurface, self:expr_to_place(self:parse_expr(80))) end
     if k == TK.lbrace then

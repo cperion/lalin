@@ -37,6 +37,7 @@ local Fragment = class("Fragment")
 local Spread = class("Spread")
 local Case = class("Case")
 local Default = class("Default")
+local Requires = class("Requires")
 
 local function is(v, mt) return type(v) == "table" and getmetatable(v) == mt end
 
@@ -361,8 +362,7 @@ function Name:load() return M.deref(self) end
 Name.__index = function(self, k)
     if Name[k] then return Name[k] end
     if type(k) == "string" then return setmetatable({ kind = "dot", base = self, field = ident(k, "field") }, Expr) end
-    local k_class = pvm.classof(k)
-    if type(k_class) == "table" and tostring(k_class):match("^Class%(%s*MoonType%.") then
+    if is_member(Ty.Type, k) or is_member(S.Type, k) then
         return setmetatable({ name = self.name, ty = k }, TypedName)
     end
     return setmetatable({ kind = "index", base = self, index = k }, Expr)
@@ -378,6 +378,11 @@ local bin_op = {
 }
 local cmp_op = { eq = C.CmpEq, ne = C.CmpNe, lt = C.CmpLt, le = C.CmpLe, gt = C.CmpGt, ge = C.CmpGe }
 local logic_op = { ["and"] = C.LogicAnd, ["or"] = C.LogicOr }
+local atomic_rmw_op = {
+    add = C.AtomicRmwAdd, sub = C.AtomicRmwSub,
+    band = C.AtomicRmwAnd, bor = C.AtomicRmwOr, bxor = C.AtomicRmwXor,
+    xchg = C.AtomicRmwXchg,
+}
 
 function Expr:__add(r) return M.add(self, r) end
 function Expr:__sub(r) return M.sub(self, r) end
@@ -441,6 +446,9 @@ function Expr:tree()
     end
     if k == "emit_expr" then return lower.expr(S.SyntaxExprEmit(frag_ref(self.target, true), expr_items(self.args)), self.env) end
     if k == "select" then return Tr.ExprSelect(Tr.ExprSurface, tree_expr(self.cond), tree_expr(self.a), tree_expr(self.b)) end
+    if k == "atomic_load" then return Tr.ExprAtomicLoad(Tr.ExprSurface, concrete_type(self.ty), tree_expr(self.addr), C.AtomicSeqCst) end
+    if k == "atomic_rmw" then return Tr.ExprAtomicRmw(Tr.ExprSurface, assert(atomic_rmw_op[self.op], "unknown atomic rmw op: " .. tostring(self.op)), concrete_type(self.ty), tree_expr(self.addr), tree_expr(self.value), C.AtomicSeqCst) end
+    if k == "atomic_cas" then return Tr.ExprAtomicCas(Tr.ExprSurface, concrete_type(self.ty), tree_expr(self.addr), tree_expr(self.expected), tree_expr(self.replacement), C.AtomicSeqCst) end
     die("unsupported expression kind " .. tostring(k), 2)
 end
 
@@ -480,6 +488,20 @@ function M.sizeof(ty) return setmetatable({ kind = "sizeof", ty = ty }, Expr) en
 function M.alignof(ty) return setmetatable({ kind = "alignof", ty = ty }, Expr) end
 function M.is_null(v) return setmetatable({ kind = "is_null", value = v }, Expr) end
 
+-- Atomic expression constructors
+function M.aload(ty, addr) return setmetatable({ kind = "atomic_load", ty = ty, addr = addr }, Expr) end
+function M.armw(op, ty, addr, value) return setmetatable({ kind = "atomic_rmw", op = op, ty = ty, addr = addr, value = value }, Expr) end
+function M.acas(ty, addr, expected, replacement) return setmetatable({ kind = "atomic_cas", ty = ty, addr = addr, expected = expected, replacement = replacement }, Expr) end
+
+-- Variant constructor expression
+function M.ctor(type_name, variant_name, args) return setmetatable({ kind = "ctor", type_name = type_name, variant_name = variant_name, args = args or {} }, Expr) end
+
+-- Contract annotation constructors
+function M.bounds(base, len) return Tr.ContractBounds(tree_expr(base), tree_expr(len)) end
+function M.disjoint(a, b) return Tr.ContractDisjoint(tree_expr(a), tree_expr(b)) end
+function M.same_len(a, b) return Tr.ContractSameLen(tree_expr(a), tree_expr(b)) end
+function M.window_bounds(base, base_len, start, len) return Tr.ContractWindowBounds(tree_expr(base), tree_expr(base_len), tree_expr(start), tree_expr(len)) end
+
 local bind_seq = 0
 local function binding(name, ty, class)
     bind_seq = bind_seq + 1
@@ -513,6 +535,8 @@ function Stmt:syntax()
         return S.SyntaxStmtEmit(self.mode or Tr.RegionUseEmit, frag_ref(self.target, false), expr_items(self.args), self.conts or {})
     end
     if k == "switch" then return S.SyntaxStmtTree(Tr.StmtSwitch(Tr.StmtSurface, tree_expr(self.value), self.arms or {}, self.variant_arms or {}, tree_stmts(self.default_body or {}))) end
+    if k == "atomic_store" then return S.SyntaxStmtTree(Tr.StmtAtomicStore(Tr.StmtSurface, concrete_type(self.ty), tree_expr(self.addr), tree_expr(self.value), C.AtomicSeqCst)) end
+    if k == "atomic_fence" then return S.SyntaxStmtTree(Tr.StmtAtomicFence(Tr.StmtSurface, C.AtomicSeqCst)) end
     if k == "expr" then return S.SyntaxStmtExpr(syn_expr(self.expr)) end
     die("unsupported statement kind " .. tostring(k), 2)
 end
@@ -528,6 +552,8 @@ M.set = M.store
 function M.assert_(t) return setmetatable({ kind = "assert", cond = t }, Stmt) end
 function M.trap() return setmetatable({ kind = "trap" }, Stmt) end
 function M.assume(t) return setmetatable({ kind = "assume", cond = t }, Stmt) end
+function M.astore(ty, addr, value) return setmetatable({ kind = "atomic_store", ty = ty, addr = addr, value = value }, Stmt) end
+function M.afence() return setmetatable({ kind = "atomic_fence" }, Stmt) end
 
 local function handle_repr(repr)
     if repr == nil then return Ty.HandleReprScalar(C.ScalarU32) end
@@ -583,10 +609,20 @@ function Decl:syntax_item()
     if self.kind == "struct" then return S.SyntaxItemTypeDecl(type_decl(self.name, self.body, false)) end
     if self.kind == "union" then return S.SyntaxItemTypeDecl(type_decl(self.name, self.body, true)) end
     if self.kind == "fn" then
-        return S.SyntaxItemFunc(S.SyntaxFuncLocal(self.name, param_items(self.params), syn_type(self.result or scalar_type("void")), {}, function_body_items(self.name, self.body)))
+        local contracts, body = {}, {}
+        for i, v in ipairs(self.body or {}) do
+            if is(v, Requires) then for j = 1, #v.items do contracts[#contracts + 1] = v.items[j] end
+            else body[#body + 1] = v end
+        end
+        return S.SyntaxItemFunc(S.SyntaxFuncLocal(self.name, param_items(self.params), syn_type(self.result or scalar_type("void")), contracts, function_body_items(self.name, body)))
     end
     if self.kind == "export_fn" then
-        return S.SyntaxItemFunc(S.SyntaxFuncExport(self.name, param_items(self.params), syn_type(self.result or scalar_type("void")), {}, function_body_items(self.name, self.body)))
+        local contracts, body = {}, {}
+        for i, v in ipairs(self.body or {}) do
+            if is(v, Requires) then for j = 1, #v.items do contracts[#contracts + 1] = v.items[j] end
+            else body[#body + 1] = v end
+        end
+        return S.SyntaxItemFunc(S.SyntaxFuncExport(self.name, param_items(self.params), syn_type(self.result or scalar_type("void")), contracts, function_body_items(self.name, body)))
     end
     if self.kind == "extern" then
         return S.SyntaxItemTree(Tr.ItemExtern(Tr.ExternFunc(self.name, self.opts.symbol or self.name, tree_params(self.params), concrete_type(self.result or scalar_type("void")))))
@@ -935,10 +971,14 @@ function TypeCtor:__index(k)
 end
 
 function TypeCtor:__call(a, b)
-    if rawget(self, "name") == "lease" and b ~= nil then
+    local name = rawget(self, "name")
+    if name == "lease" and b ~= nil then
         return Ty.TLease(concrete_type(b), Ty.LeaseOriginParam(is(a, Name) and a.name or tostring(a)))
     end
-    die("type constructor `" .. tostring(rawget(self, "name")) .. "` uses [] syntax", 2)
+    if name == "noalias" then return Tr.ContractNoAlias(tree_expr(a)) end
+    if name == "readonly" then return Tr.ContractReadonly(tree_expr(a)) end
+    if name == "writeonly" then return Tr.ContractWriteonly(tree_expr(a)) end
+    die("type constructor `" .. tostring(name) .. "` uses [] syntax", 2)
 end
 
 function M.product(t) return setmetatable({ role = "product", items = t or {} }, Fragment) end
@@ -969,6 +1009,8 @@ function M.case(v)
 end
 
 function M.default(body) return setmetatable({ body = body or {} }, Default) end
+
+function M.requires(t) return setmetatable({ items = t or {} }, Requires) end
 
 function M.switch(t)
     return function(arms)
@@ -1019,6 +1061,9 @@ local function make_env(opts)
     env.ret, env.yield, env.when, env.If = M.ret, M.yield, M.when, M.If
     env.let, env.var = name_head_stmt("let"), name_head_stmt("var")
     env.store, env.set, env.trap, env.assume, env.assert_ = M.store, M.set, M.trap, M.assume, M.assert_
+    env.requires = M.requires
+    env.astore, env.afence = M.astore, M.afence
+    env.aload, env.armw, env.acas = M.aload, M.armw, M.acas
     env.switch, env.case, env.default = M.switch, head("case"), M.default
     env.case_value = M.case
     env.bit = {
@@ -1035,6 +1080,9 @@ local function make_env(opts)
     env.eq, env.ne, env.lt, env.le, env.gt, env.ge = M.eq, M.ne, M.lt, M.le, M.gt, M.ge
     env.And, env.Or, env.Not, env.len, env.select = M.And, M.Or, M.Not, M.len, M.select
     env.addr, env.deref, env.load, env.is_null = M.addr, M.deref, M.load, M.is_null
+    env.ctor = M.ctor
+    env.bounds, env.disjoint, env.same_len = M.bounds, M.disjoint, M.same_len
+    env.window_bounds = M.window_bounds
     env.as = setmetatable({}, { __index = function(_, ty) return M.as(ty) end })
     env.bitcast = setmetatable({}, { __index = function(_, ty) return M.bitcast(ty) end })
     env.null = setmetatable({}, { __index = function(_, ty) return M.null(ty) end })

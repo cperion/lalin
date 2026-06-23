@@ -26,6 +26,19 @@ function M.Define(T)
     local function reject_memory(reason) return Schedule.ScheduleRejectMemory(reason) end
     local function reject_algebra(reason) return Schedule.ScheduleRejectAlgebra(reason) end
     local function reject_profit(reason) return Schedule.ScheduleRejectProfit(reason) end
+    local function summarize_rejects(rejects)
+        if #rejects == 0 then return "no reject reasons" end
+        local out = {}
+        for i = 1, math.min(4, #rejects) do
+            local reject = rejects[i]
+            local msg = reject and (reject.reason or reject) or nil
+            out[#out + 1] = tostring(msg or reject)
+        end
+        if #rejects > #out then
+            out[#out + 1] = tostring(#rejects - #out) .. " additional reject(s)"
+        end
+        return table.concat(out, "; ")
+    end
 
     local function append(dst, src)
         for _, v in ipairs(src or {}) do dst[#dst + 1] = v end
@@ -327,7 +340,8 @@ function M.Define(T)
             executable = #rejects == 0,
             kind = kind_name,
             rejects = rejects,
-            reason = #rejects == 0 and "supported by current semantic emitters" or "unsupported by current semantic emitters",
+            reason = #rejects == 0 and "supported by current semantic emitters"
+                or ("unsupported by current semantic emitters: " .. summarize_rejects(rejects)),
         }
     end
 

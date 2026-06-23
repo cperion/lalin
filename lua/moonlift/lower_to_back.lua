@@ -623,7 +623,13 @@ function M.Define(T)
         if pvm.classof(kplan.subject) ~= Kernel.KernelSubjectLoop then error("lower_to_back: scalar kernel emitter supports loop subjects only", 2) end
         local loop = graph_loop_by_id(graph)[kplan.subject.loop.text]
         if loop == nil then error("lower_to_back: missing graph loop for scalar kernel", 2) end
-        if #(loop.latches or {}) ~= 1 or #(loop.exits or {}) ~= 1 then error("lower_to_back: scalar kernel supports exactly one latch and one exit", 2) end
+        local latch_count = #(loop.latches or {})
+        local exit_count = #(loop.exits or {})
+        local loop_id = loop.id and loop.id.text or "<unknown>"
+        if latch_count ~= 1 or exit_count ~= 1 then
+            error(("lower_to_back: scalar kernel supports exactly one latch and one exit "
+                .. "(loop %s has %d latch(es), %d exit(s))"):format(loop_id, latch_count, exit_count), 2)
+        end
         local edge_facts = edge_fact_by_key(flow)
         local body_set = {}
         for _, gb in ipairs(loop.body or {}) do body_set[gb.block.text] = true end

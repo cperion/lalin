@@ -504,6 +504,44 @@ fn .sum
   }
 ```
 
+### Contracts
+
+Functions may carry typed contract annotations via the `requires` keyword inside
+the function body. `requires` consumes a `{}` table of contract constructors:
+
+```lua
+fn .read
+  { buf [ptr [u8]], count [index] }
+  [index]
+  {
+    requires {
+      bounds(buf, count),
+      noalias(buf),
+    },
+    ret (count),
+  }
+```
+
+Available contract constructors:
+
+```lua
+bounds(base, len)              -- requires bounds(base, len)
+window_bounds(base, base_len, start, len)
+disjoint(a, b)                 -- requires disjoint(a, b)
+same_len(a, b)                 -- requires same_len(a, b)
+noalias(base)                  -- requires noalias(base)
+readonly(base)                 -- requires readonly(base)
+writeonly(base)                -- requires writeonly(base)
+```
+
+`noalias`, `readonly`, and `writeonly` act as both type wrappers
+(`noalias[ptr[u8]]`) and contract constructors (`noalias(buf)`) — the
+`[]` form produces a `Ty.TAccess` type, the `()` form produces a
+`Tr.Contract*` node.
+
+`requires` items are extracted from the function body during lowering — they
+are not statements and do not appear in the emitted code.
+
 ## Statements
 
 Return:
@@ -563,6 +601,13 @@ Trap and assumptions:
 trap ()
 assume (cond)
 assert_ (cond)
+```
+
+Atomic statements:
+
+```lua
+astore(i32, p, v)    -- atomic store
+afence()             -- atomic fence
 ```
 
 ## Switch
@@ -791,6 +836,26 @@ Select:
 select(cond, a, b)
 ```
 
+### Atomics
+
+```lua
+aload(i32, p)                    -- atomic load
+acas(i32, p, expected, replacement)  -- atomic compare-and-swap
+armw("add", i32, p, v)           -- atomic read-modify-write
+```
+
+RMW ops: `"add"`, `"sub"`, `"band"`, `"bor"`, `"bxor"`, `"xchg"`.
+
+### Variant constructor
+
+```lua
+ctor("Result", "ok", { 42 })
+ctor("Result", "err", { 7 })
+```
+
+Returns an `Expr` tree node. The type name and variant name are strings;
+payload arguments are an ordered table of expression values.
+
 ## Fragments And Spread
 
 Lua has no spread syntax, so the DSL uses `spread(value)`.
@@ -997,6 +1062,9 @@ return module "Name" {
     { param [T] }
     [Result]
     {
+      requires {
+        bounds(param, N.n),
+      },
       ret (expr),
     },
 
