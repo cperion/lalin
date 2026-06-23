@@ -70,12 +70,12 @@ Depth must buy ownership or build isolation, not aesthetic grouping.
 ```lua
 require("moonlift").use()
 return module "Header" {
-  struct .Foo { x [i32] },
-  union .Bar { ok { v [i32] }, err },
-  handle .SessionRef { invalid = 0 },
-  extern .write { fd [i32], buf [ptr [u8]], count [index] } [index] { symbol = "write" },
-  region .scan { p [ptr [u8]], n [index] } { hit { pos [index] }, miss } { entry .start {} { jump .miss { pos = 0 } } },
-  fn .add { a [i32], b [i32] } [i32] { ret (a + b) },
+  struct. Foo { x [i32] },
+  union. Bar { ok { v [i32] }, err },
+  handle. SessionRef { invalid = 0 },
+  extern. write { fd [i32], buf [ptr [u8]], count [index] } [index] { symbol = "write" },
+  region. scan { p [ptr [u8]], n [index] } { hit { pos [index] }, miss } { entry. start {} { jump. miss { pos = 0 } } },
+  fn. add { a [i32], b [i32] } [i32] { ret (a + b) },
 }
 ```
 
@@ -161,11 +161,11 @@ require("moonlift").use()
 
 return module "Impl" {
   -- full region/fn with bodies go here
-  region .borrow_component
+  region. borrow_component
     { ... }
     { ... }
     {
-      entry .start {} { ... },
+      entry. start {} { ... },
     },
 }
 ```
@@ -286,6 +286,24 @@ The weak form hides the type forest behind an erased helper name. If a subsystem
 is authoring a VM instruction language, use type tables and named constructors
 so `rg 'Node.Add'` finds the semantic operation directly.
 
+## Moonlift DSL Spacing
+
+Comparison methods are the default spelling for comparison-shaped Moonlift
+expressions. Lua comparison operators (`<`, `<=`, `==`, `>=`, `>`) evaluate to
+booleans, so they cannot carry Moonlift expression trees.
+
+Use spaced method syntax for comparisons so they read like operators:
+
+```lua
+i :lt (n)
+i :ge (len)
+value :eq (target)
+as [i32] (p[i]) :ne (sentinel)
+```
+
+Keep ordinary method calls unspaced unless they are comparison-style DSL
+operators.
+
 ## Continuations
 
 Keep the visual grammar meaningful: commas are for product-shaped lists, and
@@ -332,7 +350,7 @@ handle names in source instead of collapsing them to raw integers.
 Store-resolved handles declare their resolver facts:
 
 ```lua
-handle .ComponentRef {
+handle. ComponentRef {
     invalid = 0,
     domain = "Session",
     target = "Component",
@@ -346,7 +364,7 @@ successful resolver continuation.
 The resolver region grants the lease:
 
 ```lua
-region .borrow_component
+region. borrow_component
   { sess [readonly [ptr [Session]]], c [ComponentRef] }
   {
     borrowed { component [lease (sess, ptr [Component])] },
@@ -382,13 +400,13 @@ after a slot is retired and reused.  With a generation, the resolver can reject
 that old handle as `stale`.
 
 ```lua
-struct .ComponentSlot {
+struct. ComponentSlot {
     gen [u32],
     live [bool32],
     component [Component],
 }
 
-struct .ComponentStore {
+struct. ComponentStore {
     slots [ptr [ComponentSlot]],
     n [index],
     cap [index],
@@ -434,7 +452,7 @@ cleanup machine is a normal region, and the CFG checker must prove every path
 consumes or transfers the owned value.
 
 ```lua
-region .close_session
+region. close_session
   { app [ptr [App]], s [owned [SessionRef]] }
   { closed, missing { s [owned [SessionRef]] } }
 ```
@@ -442,7 +460,7 @@ region .close_session
 If an operation preserves the obligation, the continuation returns it:
 
 ```lua
-region .poll_task
+region. poll_task
   { task [owned [TaskRef]] }
   { pending { task [owned [TaskRef]] }, completed, failed { code [i32] } }
 ```
@@ -492,15 +510,15 @@ Conventions should make these queries complete against Moonlift-authored `.lua`
 files:
 
 ```sh
-rg 'region\s+\.borrow_'     # resolver regions
-rg 'region\s+\.alloc_'      # allocation regions
-rg 'region\s+\.retire_'     # retirement regions
-rg 'region\s+\.'            # all regions
+rg 'region\.\s+borrow_'     # resolver regions
+rg 'region\.\s+alloc_'      # allocation regions
+rg 'region\.\s+retire_'     # retirement regions
+rg 'region\.\s+'            # all regions
 rg '\blempty\b'             # empty continuations
 rg '\bstale\b'              # stale continuations
 rg '\blease\b'              # lease types and continuations
-rg 'handle\s+\.'            # durable identity
-rg 'fn\s+\.'                # ABI seals
+rg 'handle\.\s+'            # durable identity
+rg 'fn\.\s+'                # ABI seals
 ```
 
 If an important architectural question cannot be answered with a simple search,

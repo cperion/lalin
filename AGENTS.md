@@ -35,14 +35,14 @@ All scripts set `package.path` to include `./lua/?.lua`.
 # From Lua — with use() for global DSL names
 local moon = require("moonlift")
 moon.use()
-local add = fn .add { a = i32, b = i32 } [i32] { ret (a + b) }
+local add = fn. add { a [i32], b [i32] } [i32] { ret (a + b) }
 local compiled = add:compile()
 print(compiled(3, 4))  -- 7
 
 # Inline via loadstring (isolated env, no use() needed)
 local moon = require("moonlift")
 local add_val = moon.loadstring([[
-    local add = fn .add { a = i32, b = i32 } [i32] { ret (a + b) }
+    local add = fn. add { a [i32], b [i32] } [i32] { ret (a + b) }
     return add
 ]], "demo.lua")()
 local compiled = add_val:compile()
@@ -54,7 +54,7 @@ print(compiled(3, 4))  -- 7
 --   local header = require("math_header")
 -- math_header.lua:
 --   require("moonlift").use()
---   return { fn .add { a = i32, b = i32 } [i32] }
+--   return { fn. add { a [i32], b [i32] } [i32] }
 
 # LSP
 luajit lsp.lua
@@ -85,6 +85,8 @@ luajit benchmarks/bench_llpvm_image_load.lua          # LLPVM image loading
 
 - **`lua/moonlift/dsl/`** — DSL authoring surface: `fn`, `struct`, `region`, `emit`, `jump`,
   etc. as Lua heads. Normalizes Lua tables → MoonSyntax ASDL → MoonTree ASDL.
+- **`lua/llb.lua`** — standard Moonlift Lua Language Builder substrate: staged heads,
+  fragments, formatting, managed use sessions, origin threading, and fragment algebra.
 - **`lua/moonlift/`** — compiler pipeline: PVM/ASDL framework (~80+ modules),
   typechecker, lowering, validation, LSP, linker
 - **`lua/llpvm/`** — official Low-Level PVM API surface: no-parens Lua
@@ -109,16 +111,15 @@ back_validate → back_jit / back_object / back_object + link_target
 
 | Doc | Description |
 |-----|-------------|
-| `README.md` | Full project README with examples, benchmarks, philosophy |
-| `lua/moonlift/dsl/LANGUAGE_REFERENCE.md` | **Complete DSL reference** — types, modules, functions, control regions, fragments, host decls, memory/resource model, view ABI, vectorization, builder API, metaprogramming guide |
-| `OWNED_CFG_DESIGN.md` | Final `owned T` CFG resource discipline — handles, leases, emit transfer, disallowed aggregates, diagnostics |
-| `CONVENTIONS.md` | Naming, file organization, headers vs implementations, handles, generations, stores, protocol naming |
-| `SOURCE_GRAMMAR.md` | Jump-first source grammar contract |
-| `PROTOCOL_SYNTAX.md` | Named protocol exits (tagged-union region exit protocols) |
-| `PVM_GUIDE.md` | Complete PVM guide — ASDL contexts, structural update, triplets |
-| `LLPVM_GUIDE.md` | Complete LLPVM guide — bytecode-fed native VM substrate, direct borrowed images, streams, phases, recordings, C blob ABI |
-| `COMPILER_PATTERN.md` | Interactive software as compilers philosophy |
-| `THE_MOONLIFT_DESIGN_BIBLE.md` | Full design philosophy — dual trees, products/sums, DSL integration |
+| `README.md` | Full project README with examples, benchmarks, and repository layout |
+| `docs/LANGUAGE_REFERENCE.md` | Complete Lua-owned DSL reference — types, modules, functions, control regions, fragments, host decls, memory/resource model, view ABI, vectorization, builder API, metaprogramming guide |
+| `docs/THE_MOONLIFT_DESIGN_BIBLE.md` | Authoritative design bible — dual trees, products/sums, DSL integration, ASDL architecture |
+| `docs/LLB_GUIDE.md` | Standard LLB substrate guide — staged heads, fragments, formatting, use sessions, origins, fragment algebra |
+| `docs/LLPVM_GUIDE.md` | Complete LLPVM guide — bytecode-fed native VM substrate, direct borrowed images, streams, phases, recordings, C blob ABI |
+| `docs/PVM_GUIDE.md` | Complete PVM guide — ASDL contexts, structural update, triplets |
+| `docs/OWNED_CFG_DESIGN.md` | Final `owned T` CFG resource discipline — handles, leases, emit transfer, disallowed aggregates, diagnostics |
+| `docs/CONVENTIONS.md` | Naming, file organization, headers vs implementations, handles, generations, stores, protocol naming |
+| `docs/BACK_WIRE_FORMAT.md` | Flatline v4 binary wire format between Lua frontend and Rust Cranelift backend |
 
 ## Language cheatsheet
 
@@ -140,9 +141,7 @@ Closure:  closure_type({ i32 }, i32)
 ### Functions
 
 ```lua
-local add = fn("add", { a = i32, b = i32 }, i32)
-    return a + b
-end
+local add = fn. add { a [i32], b [i32] } [i32] { ret (a + b) }
 ```
 
 ### Regions
@@ -153,9 +152,9 @@ local scan = region("scan",
     { hit = { pos = i32 }, miss = { pos = i32 } }
 )
 entry("loop", { i = i32(0) })
-    if i >= n then jump .miss { pos = i } end
-    if as(i32, p[i]) == target then jump .hit { pos = i } end
-    jump .loop { i = i + 1 }
+    if i >= n then jump. miss { pos = i } end
+    if as(i32, p[i]) == target then jump. hit { pos = i } end
+    jump. loop { i = i + 1 }
 end
 end
 ```
@@ -169,13 +168,13 @@ emit scan(p, n, 65; hit = found, miss = not_found)
 ### Contracts
 
 ```lua
-local add_checked = fn("add_checked", { a = i32, b = i32 }, i32)
-    requires {
-        noalias(a),
-        noalias(b),
-    }
-    return a + b
-end
+local add_checked = fn. add_checked { a [i32], b [i32] } [i32] {
+  requires {
+    noalias(a),
+    noalias(b),
+  },
+  ret (a + b),
+}
 ```
 
 ## Design philosophy

@@ -18,14 +18,15 @@ This is the recommended path for new generated/metaprogrammed Moonlift code.
 Lua syntax -> Lua values -> LLB role normalization -> Moonlift ASDL
 ```
 
-For declaration/control heads, keep dotted names (`fn .add`, `region .scan`, etc.)
+For declaration/control heads, canonical formatting puts the dot on the keyword
+side (`fn. add`, `region. scan`, etc.)
 with a space before the name target:
 
 ```text
-fn .add
-region .scan
-jump .done
-emit .scan
+fn. add
+region. scan
+jump. done
+emit. scan
 ```
 
 For single-expression/condition keyword-style forms, use the canonical DSL forms
@@ -87,12 +88,13 @@ Concrete rules:
 | typed name | `x [i32]` | `x[i32]` |
 | type constructor | `ptr [u8]` | `ptr[u8]` |
 | cast | `as [i32] (x)` | `as[i32](x)` |
+| comparison method | `i :ge (n)` | `i:ge(n)` |
 | ret / yield | `ret (expr)` | `ret(expr)` |
 | when | `when (cond) { ... }` | `when(cond){...}` |
-| let / var | `let .x [i32] { 0 }` | `let.x[i32]{0}` |
+| let / var | `let. x [i32] { 0 }` | `let.x[i32]{0}` |
 | store / set | `store (place, value)` | `store(place,value)` |
-| jump | `jump .loop { i = i + 1 }` | `jump.loop{i=i+1}` |
-| emit | `emit .scan { args } { fills }` | `emit.scan{args}{fills}` |
+| jump | `jump. loop { i = i + 1 }` | `jump.loop{i=i+1}` |
+| emit | `emit. scan { args } { fills }` | `emit.scan{args}{fills}` |
 | switch | `switch (value) { ... }` | `switch(value){...}` |
 | trap / assert_ / assume | `trap ()` | `trap()` |
 | afence | `afence ()` | `afence()` |
@@ -128,7 +130,7 @@ Lua computation and language leaves use `()` when ordinary Lua syntax requires i
 Canonical examples:
 
 ```lua
-fn .add
+fn. add
   { a [i32], b [i32] }
   [i32]
   {
@@ -137,19 +139,19 @@ fn .add
 ```
 
 ```lua
-region .scan
+region. scan
   { p [ptr [u8]], n [index], target [i32] }
   {
     hit  { pos [index] },
     miss,
   }
   {
-    entry .loop { i [index](0) } {
-      when (i:ge(n)) {
-        jump .miss { pos = i },
+    entry. loop { i [index](0) } {
+      when (i :ge (n)) {
+        jump. miss { pos = i },
       },
 
-      jump .loop {
+      jump. loop {
         i = i + 1,
       },
     },
@@ -185,7 +187,7 @@ local moon = require("moonlift")
 moon.use()
 
 return module "Demo" {
-  fn .add { a [i32], b [i32] } [i32] { ret (a + b) },
+  fn. add { a [i32], b [i32] } [i32] { ret (a + b) },
 }
 ```
 
@@ -195,7 +197,7 @@ file:
 ```lua
 -- math_header.lua
 require("moonlift").use()
-return { fn .add { a [i32], b [i32] } [i32] }
+return { fn. add { a [i32], b [i32] } [i32] }
 
 -- math_impl.lua
 require("moonlift").use()
@@ -247,8 +249,8 @@ This enables header/impl split across files with zero ceremony:
 ```lua
 -- math_header.lua
 return {
-  fn .add { a [i32], b [i32] } [i32],
-  fn .sub { a [i32], b [i32] } [i32],
+  fn. add { a [i32], b [i32] } [i32],
+  fn. sub { a [i32], b [i32] } [i32],
 }
 
 -- math_impl.lua
@@ -291,11 +293,11 @@ fn
 export_fn
 region
 expr_frag
-spread(decls_fragment)
+_(decls_fragment)
 ```
 
 In this Lua-owned DSL, module composition is done by Lua `require` and value
-splicing (`[]` / `spread(...)`), not by a DSL `import` declaration.
+splicing (`[]` / `_(...)`), not by a DSL `import` declaration.
 
 ### Header / implementation split
 
@@ -304,7 +306,7 @@ params and result does not create the final declaration. It returns a
 **callable LLB stage** waiting for the body. This is the header.
 
 ```lua
-fn .add { a [i32], b [i32] } [i32]
+fn. add { a [i32], b [i32] } [i32]
 ```
 
 The line above does not produce a final declaration. It produces a callable Lua
@@ -312,7 +314,7 @@ stage table.
 Call it with a body table to produce the full declaration:
 
 ```lua
-fn .add { a [i32], b [i32] } [i32] {
+fn. add { a [i32], b [i32] } [i32] {
   ret (a + b),
 }
 ```
@@ -322,8 +324,8 @@ This means headers and implementations can live in separate files:
 ```lua
 -- math_header.lua
 return {
-  fn .add { a [i32], b [i32] } [i32],
-  fn .sub { a [i32], b [i32] } [i32],
+  fn. add { a [i32], b [i32] } [i32],
+  fn. sub { a [i32], b [i32] } [i32],
 }
 ```
 
@@ -341,8 +343,8 @@ The same pattern works for regions:
 ```lua
 -- io_header.lua
 return {
-  region .read { fd [i32], buf [ptr [u8]], count [index] } { ok{n[index]}, err{code[i32]} },
-  region .write { fd [i32], buf [ptr [u8]], count [index] } { ok{n[index]}, err{code[i32]} },
+  region. read { fd [i32], buf [ptr [u8]], count [index] } { ok{n[index]}, err{code[i32]} },
+  region. write { fd [i32], buf [ptr [u8]], count [index] } { ok{n[index]}, err{code[i32]} },
 }
 ```
 
@@ -360,10 +362,10 @@ No textual import directives. No parser. No antiquote.
 Fixed names use spaced-dot grammar:
 
 ```lua
-fn .add
-struct .Vec2
-region .scan
-jump .loop
+fn. add
+struct. Vec2
+region. scan
+jump. loop
 ```
 
 All declaration names (module items, regions, blocks, labels, and other header
@@ -393,8 +395,8 @@ for i = 1, 4 do
   fields[#fields + 1] = N["x" .. i] [f32]
 end
 
-struct .Vec4 {
-  spread(fields),
+struct. Vec4 {
+  _(fields),
 }
 ```
 
@@ -404,13 +406,13 @@ With dotted declaration names, grep can index DSL structure directly:
 
 ```text
 # Declaration headers
-rg '^\s*(fn|export_fn|struct|union|handle|extern|const|static|expr_frag|region)\s+\.[A-Za-z_][A-Za-z0-9_]*' path/to/dsl/*.md
+rg '^\s*(fn|export_fn|struct|union|handle|extern|const|static|expr_frag|region)\.\s+[A-Za-z_][A-Za-z0-9_]*' path/to/dsl/*.md
 
 # CFG structure (entry/block labels, jumps, emits)
-rg '\b(entry|block|jump|emit)\s+\.[A-Za-z_][A-Za-z0-9_]*' path/to/*.mlua path/to/*.lua
+rg '\b(entry|block|jump|emit)\.\s+[A-Za-z_][A-Za-z0-9_]*' path/to/*.lua
 
 # Dot-name declarations in the DSL test corpus
-rg '^\s*(fn|export_fn|struct|union|handle|extern|const|static|expr_frag|region|entry|block|jump|emit)\s+\.[A-Za-z_][A-Za-z0-9_]*' tests/frontend/test_dsl_lua_owned.lua
+rg '^\s*(fn|export_fn|struct|union|handle|extern|const|static|expr_frag|region|entry|block|jump|emit)\.\s+[A-Za-z_][A-Za-z0-9_]*' tests/frontend/test_dsl_lua_owned.lua
 ```
 
 I verified these against the DSL reference + `tests/frontend/test_dsl_lua_owned.lua`;
@@ -489,7 +491,7 @@ acc [i32](0)
 Used in entry block parameters:
 
 ```lua
-entry .loop { i [index](0), acc [i32](0) } {
+entry. loop { i [index](0), acc [i32](0) } {
   ...
 }
 ```
@@ -497,7 +499,7 @@ entry .loop { i [index](0), acc [i32](0) } {
 ## Structs
 
 ```lua
-struct .Vec2 {
+struct. Vec2 {
   x [f32],
   y [f32],
 }
@@ -511,8 +513,8 @@ local xy = product {
   y [f32],
 }
 
-struct .Point {
-  spread(xy),
+struct. Point {
+  _(xy),
   z [f32],
 }
 ```
@@ -520,7 +522,7 @@ struct .Point {
 ## Unions
 
 ```lua
-union .Result {
+union. Result {
   ok  { value [i32] },
   err { code [i32] },
   none,
@@ -533,7 +535,7 @@ payload table syntax. No-payload alternatives use bare name tokens.
 ## Handles
 
 ```lua
-handle .SessionRef {
+handle. SessionRef {
   invalid = 0,
 }
 ```
@@ -541,7 +543,7 @@ handle .SessionRef {
 With optional facts:
 
 ```lua
-handle .SessionRef {
+handle. SessionRef {
   invalid = 0,
   domain = "SessionStore",
   target = "SessionRecord",
@@ -551,7 +553,7 @@ handle .SessionRef {
 ## Externs
 
 ```lua
-extern .write
+extern. write
   { fd [i32], buf [ptr [u8]], count [index] }
   [index]
   {
@@ -562,7 +564,7 @@ extern .write
 Void extern:
 
 ```lua
-extern .trap
+extern. trap
   { code [i32] }
   {
     symbol = "moon_trap",
@@ -572,8 +574,8 @@ extern .trap
 ## Constants And Statics
 
 ```lua
-const .answer [i32] { 42 }
-static .zero [i32] { 0 }
+const. answer [i32] { 42 }
+static. zero [i32] { 0 }
 ```
 
 The type slot receives the actual Lua value `i32`.
@@ -581,7 +583,7 @@ The type slot receives the actual Lua value `i32`.
 ## Functions
 
 ```lua
-fn .add
+fn. add
   { a [i32], b [i32] }
   [i32]
   {
@@ -592,7 +594,7 @@ fn .add
 Exported function:
 
 ```lua
-export_fn .add
+export_fn. add
   { a [i32], b [i32] }
   [i32]
   {
@@ -603,7 +605,7 @@ export_fn .add
 Void function:
 
 ```lua
-fn .touch
+fn. touch
   { x [i32] }
   {
     ret (),
@@ -614,16 +616,16 @@ A function body may be a plain statement list or a control-region body with
 `entry` and `block` declarations:
 
 ```lua
-fn .sum
+fn. sum
   { n [i32] }
   [i32]
   {
-    entry .loop { i [i32](0), acc [i32](0) } {
-      when (i:ge(n)) {
+    entry. loop { i [i32](0), acc [i32](0) } {
+      when (i :ge (n)) {
         ret (acc),
       },
 
-      jump .loop {
+      jump. loop {
         i = i + 1,
         acc = acc + i,
       },
@@ -637,7 +639,7 @@ Functions may carry typed contract annotations via the `requires` keyword inside
 the function body. `requires` consumes a `{}` table of contract constructors:
 
 ```lua
-fn .read
+fn. read
   { buf [ptr [u8]], count [index] }
   [index]
   {
@@ -694,8 +696,8 @@ yield ()
 Local values:
 
 ```lua
-let .x [i32] { 1 }
-var .i [index] { 0 }
+let. x [i32] { 1 }
+var. i [index] { 0 }
 ```
 
 Assignment:
@@ -716,7 +718,7 @@ when (cond) {
 Jump:
 
 ```lua
-jump .loop {
+jump. loop {
   i = i + 1,
   acc = acc + x,
 }
@@ -757,7 +759,7 @@ Variant-oriented cases use name-token cases:
 
 ```lua
 switch (r) {
-  case .ok { value } {
+  case. ok { value } {
     ret (value),
   },
 
@@ -772,19 +774,19 @@ switch (r) {
 Regions are named control fragments:
 
 ```lua
-region .scan
+region. scan
   { p [ptr [u8]], n [index], target [i32] }
   {
     hit  { pos [index] },
     miss,
   }
   {
-    entry .loop { i [index](0) } {
-      when (i:ge(n)) {
-        jump .miss { pos = i },
+    entry. loop { i [index](0) } {
+      when (i :ge (n)) {
+        jump. miss { pos = i },
       },
 
-      jump .loop {
+      jump. loop {
         i = i + 1,
       },
     },
@@ -806,7 +808,7 @@ The body must contain one `entry` block and zero or more `block` declarations.
 Emit splices a region fragment into the current control flow:
 
 ```lua
-emit .scan { p, n, target } {
+emit. scan { p, n, target } {
   hit  = found,
   miss = failed,
 }
@@ -818,18 +820,18 @@ tokens.
 Example:
 
 ```lua
-fn .find
+fn. find
   { p [ptr [u8]], n [index] }
   [i32]
   {
-    entry .start {} {
-      emit .scan { p, n, 65 } {
+    entry. start {} {
+      emit. scan { p, n, 65 } {
         hit  = done,
         miss = done,
       },
     },
 
-    block .done { pos [i32] } {
+    block. done { pos [i32] } {
       ret (pos),
     },
   }
@@ -840,7 +842,7 @@ fn .find
 Expression fragments are reusable typed expression components:
 
 ```lua
-expr_frag .inc
+expr_frag. inc
   { x [i32] }
   [i32]
   {
@@ -869,8 +871,8 @@ Because these are Lua calls, the no-parens form only applies to Lua's special
 single-argument forms:
 
 ```lua
-  const .greeting [ptr [u8]] "hello, moonlift"
-  const .nums [array [i32] [3]] { 1, 2, 3 }
+  const. greeting [ptr [u8]] "hello, moonlift"
+  const. nums [array [i32] [3]] { 1, 2, 3 }
   ret "done"
   ret { 1, 2, 3 }
 ```
@@ -883,8 +885,8 @@ Returning function values is supported only via references or splice-built
 expressions (not inline Lua function syntax). For example:
 
 ```lua
-fn .foo { x [i32] } [i32] { ret (x) },
-fn .mk {} [fnptr[{ i32 }] [i32]] { ret (foo) },
+fn. foo { x [i32] } [i32] { ret (x) },
+fn. mk {} [fnptr[{ i32 }] [i32]] { ret (foo) },
 ```
 
 Aggregate literals (expression position):
@@ -913,11 +915,13 @@ a % b
 ```
 
 Comparisons use methods or constructors because Lua comparison operators cannot
-be overloaded into expression trees:
+be overloaded into expression trees. Default style puts spaces before the
+method colon and before the argument list so comparison methods read like
+Moonlift operators:
 
 ```lua
-i:ge(n)
-i:lt(n)
+i :ge (n)
+i :lt (n)
 eq(a, b)
 ne(a, b)
 ```
@@ -983,9 +987,11 @@ ctor("Result", "err", { 7 })
 Returns an `Expr` tree node. The type name and variant name are strings;
 payload arguments are an ordered table of expression values.
 
-## Fragments And Spread
+## Fragments And Splicing
 
-Lua has no spread syntax, so the DSL uses `spread(value)`.
+Lua has no spread syntax, so Moonlift uses `_ (value)` as the preferred splice
+marker. `spread(value)` remains available as the explicit fallback, especially
+in scopes where `_` is shadowed by a local variable.
 
 Product fragment:
 
@@ -995,8 +1001,8 @@ local xy = product {
   y [f32],
 }
 
-struct .Vec2 {
-  spread(xy),
+struct. Vec2 {
+  _(xy),
 }
 ```
 
@@ -1007,8 +1013,8 @@ local done = stmts {
   ret (0),
 }
 
-fn .f {} [i32] {
-  spread(done),
+fn. f {} [i32] {
+  _(done),
 }
 ```
 
@@ -1016,12 +1022,12 @@ Declaration fragment:
 
 ```lua
 local decls = decls {
-  struct .A { x [i32] },
-  struct .B { y [i32] },
+  struct. A { x [i32] },
+  struct. B { y [i32] },
 }
 
 return module "M" {
-  spread(decls),
+  _(decls),
 }
 ```
 
@@ -1040,7 +1046,7 @@ local function make_vec(n, T)
   end
 
   return struct["Vec" .. n] {
-    spread(fields),
+    _(fields),
   }
 end
 
@@ -1072,12 +1078,12 @@ local view_params = product {
 Use it in multiple declarations:
 
 ```lua
-struct .ViewU8 {
-  spread(view_params),
+struct. ViewU8 {
+  _(view_params),
 }
 
-fn .first
-  { spread(view_params) }
+fn. first
+  { _(view_params) }
   [u8]
   {
     ret (data[0]),
@@ -1088,16 +1094,16 @@ You can slice statement bodies:
 
 ```lua
 local bounds_check = stmts {
-  when (i:ge(len)) {
+  when (i :ge (len)) {
     trap (),
   },
 }
 
-fn .get
+fn. get
   { data [ptr [u8]], len [index], i [index] }
   [u8]
   {
-    spread(bounds_check),
+    _(bounds_check),
     ret (data[i]),
   }
 ```
@@ -1105,17 +1111,17 @@ fn .get
 You can slice control protocols:
 
 ```lua
-local hit_miss = {
-    hit  { pos [index] },
-  miss,
+local hit_miss = conts {
+  hit { pos [index] },
+  miss {},
 }
 
-region .scan_a
+region. scan_a
   { p [ptr [u8]], n [index] }
-  { spread(hit_miss) }
+  { _(hit_miss) }
   {
-    entry .start {} {
-      jump .miss {},
+    entry. start {} {
+      jump. miss {},
     },
   }
 ```
@@ -1176,16 +1182,16 @@ owned/lease violations
 
 ```lua
 return module "Name" {
-  struct .Name {
+  struct. Name {
     field [T],
   },
 
-  union .Name {
+  union. Name {
     variant { payload [T] },
     none,
   },
 
-  fn .name
+  fn. name
     { param [T] }
     [Result]
     {
@@ -1195,15 +1201,15 @@ return module "Name" {
       ret (expr),
     },
 
-  region .name
+  region. name
     { input [T] }
     {
       ok { value [T] },
       err,
     }
     {
-      entry .start {} {
-        jump .ok { value = input },
+      entry. start {} {
+        jump. ok { value = input },
       },
     },
 }
@@ -1222,3 +1228,330 @@ generation  -> ordinary Lua
 
 No parser is hiding behind the DSL. Lua is the parser; Moonlift owns the
 semantics.
+
+## Formatting
+
+Moonlift has semantic formatting for format-owned DSL files.
+
+A format-owned file is ordinary Lua whose meaningful output is the evaluated
+Moonlift value it returns. The formatter evaluates the file, formats the
+returned Moonlift/LLB value, and emits canonical DSL Lua. It is not a general
+Lua source formatter and does not preserve comments or arbitrary Lua
+metaprogramming shape.
+
+Canonical API:
+
+```lua
+local moon = require("moonlift")
+moon.use()
+
+local M = module "Demo" {
+  fn. add { a [i32], b [i32] } [i32] {
+    ret (a + b),
+  },
+}
+
+print(moon.format(M))
+```
+
+Format-owned file API:
+
+```lua
+local text = require("moonlift").format_file("demo.lua")
+require("moonlift").write_format_file("demo.lua")
+```
+
+CLI:
+
+```sh
+luajit scripts/moonfmt.lua demo.lua
+luajit scripts/moonfmt.lua --check demo.lua
+luajit scripts/moonfmt.lua --write demo.lua
+```
+
+Canonical output includes the Moonlift prelude:
+
+```lua
+local moon = require("moonlift")
+moon.use()
+
+return module "Demo" {
+  fn. add { a [i32], b [i32] } [i32] {
+    ret (a + b),
+  },
+}
+```
+
+Formatting defaults keep short function and region signatures on one line and
+break them by width. Predicate comparisons use method-style layout:
+
+```lua
+i :lt (n)
+value :eq (target)
+as [i32] (p[i]) :ne (sentinel)
+```
+
+Long predicates break at the operator:
+
+```lua
+as [i32] (buffer[index + offset])
+  :ne (sentinel)
+```
+
+Factories that generate Moonlift declarations should thread origins so
+diagnostics point to the abstraction call site:
+
+```lua
+local moon = require("moonlift")
+moon.use()
+
+local function checked_add(name, origin)
+  origin = origin or here("checked_add")
+  return fn:at(origin) [at_origin(origin, name)] {
+    a [i32],
+    b [i32],
+  } [i32] {
+    ret (a + b),
+  }
+end
+```
+
+## `moon.use()` sessions
+
+`moon.use()` is Moonlift's wrapper over `llb.use()`. Moonlift supplies the DSL
+exports (`fn`, `module`, `i32`, `ptr`, `ret`, etc.); LLB manages environment
+installation, auto-names, origin helpers, and cleanup.
+
+Most authoring files ignore the return value:
+
+```lua
+require("moonlift").use()
+
+return module "Demo" {
+  fn. add { a [i32], b [i32] } [i32] {
+    ret (a + b),
+  },
+}
+```
+
+When explicit access is useful, use the returned session:
+
+```lua
+local use = require("moonlift").use { scope = "env" }
+local env = use.env
+local add_head = env.fn
+```
+
+Scopes:
+
+```lua
+require("moonlift").use()                       -- permanent global install
+local s = require("moonlift").use { scope = "scoped" }
+s:close()                                      -- remove what this session installed
+local isolated = require("moonlift").use { scope = "env" }
+```
+
+Moonlift loaders and formatting use isolated `scope = "env"` sessions, so
+`moon.loadstring`, `moon.loadfile`, and `moon.format_file` do not mutate `_G`.
+
+`moon.use()` options are forwarded to LLB where possible:
+
+```lua
+require("moonlift").use {
+  scope = "permanent",
+  strict = false,
+  override = false,
+  auto_names = true,
+}
+```
+
+## Fragment algebra
+
+Moonlift uses LLB fragment algebra for reusable, checked composition of DSL
+structure.
+
+Products/lists compose with `..`:
+
+```lua
+local buffer_params = product {
+  p [ptr [u8]],
+  n [index],
+}
+
+local scan_params = buffer_params .. product {
+  target [i32],
+}
+```
+
+Protocols compose with `+`:
+
+```lua
+local success = conts {
+  hit { pos [index] },
+}
+
+local failure = conts {
+  miss { pos [index] },
+}
+
+local scan_exits = success + failure
+```
+
+A product can decorate every continuation alternative with `*`:
+
+```lua
+local at_pos = product {
+  pos [index],
+}
+
+local parse_errors = conts {
+  eof {},
+  bad_digit {},
+  overflow {},
+} * at_pos
+```
+
+Equivalent protocol:
+
+```lua
+conts {
+  eof { pos [index] },
+  bad_digit { pos [index] },
+  overflow { pos [index] },
+}
+```
+
+A region can use the composed fragments directly:
+
+```lua
+local parse_exits = conts {
+  ok { value [i32], pos [index] },
+} + (conts {
+  eof {},
+  bad_digit {},
+  overflow {},
+} * product {
+  pos [index],
+})
+
+region. parse_i32 { p [ptr [u8]], n [index] } parse_exits {
+  entry. start {} {
+    jump. eof { pos = 0 },
+  },
+}
+```
+
+Supported Moonlift fragment roles:
+
+```text
+product  -- product fields/params; `..` and `*`
+stmts    -- statement lists; `..`
+decls    -- declaration lists; `..`
+exprs    -- expression lists; `..`
+conts    -- continuation protocols; `+` and `*`
+variants -- union variants; `+` and `*`
+```
+
+Each role constructor can be called with no argument to create the identity
+fragment for that role:
+
+```lua
+local params = product()
+local body = stmts()
+local exits = conts()
+```
+
+This is the preferred pattern for conditional metaprogramming:
+
+```lua
+local function maybe_indexed(include_index)
+  local params = product {
+    p [ptr [u8]],
+  }
+
+  if include_index then
+    params = params .. product {
+      i [index],
+    }
+  end
+
+  return params
+end
+```
+
+For sum/protocol identities, use `+` to add alternatives:
+
+```lua
+local exits = conts()
+
+if want_ok then
+  exits = exits + conts {
+    ok {},
+  }
+end
+
+if want_error then
+  exits = exits + conts {
+    err { code [i32] },
+  }
+end
+```
+
+Bad algebra is rejected early. Examples:
+
+```lua
+product { a [i32] } + product { b [i32] } -- wrong operator
+product { a [i32] } .. conts { ok {} }    -- role mismatch
+conts { ok {} } + conts { ok {} }         -- duplicate alternative
+```
+
+### Preferred metaprogramming style
+
+Fragment algebra is the preferred way to metaprogram Moonlift DSL structure.
+Factories should return role-tagged fragments instead of raw Lua arrays when
+producing reusable pieces of declarations, parameters, statements, expressions,
+continuation protocols, or union variants.
+
+Prefer:
+
+```lua
+local function buffer_params()
+  return product {
+    p [ptr [u8]],
+    n [index],
+  }
+end
+
+local function positioned_errors()
+  return conts {
+    eof {},
+    bad_digit {},
+    overflow {},
+  } * product {
+    pos [index],
+  }
+end
+
+local params = buffer_params() .. product {
+  radix [i32],
+}
+
+local exits = conts {
+  ok { value [i32], pos [index] },
+} + positioned_errors()
+```
+
+Avoid raw table plumbing for reusable DSL pieces:
+
+```lua
+local out = {}
+out[#out + 1] = p [ptr [u8]]
+out[#out + 1] = n [index]
+return out
+```
+
+Raw Lua tables are still useful inside a factory, but the public result of a
+Moonlift metaprogramming helper should normally be a fragment with an explicit
+role. This preserves role information, enables early diagnostics, keeps
+composition readable, and lets formatting/rendering recover canonical DSL
+structure after evaluation.

@@ -31,8 +31,6 @@ local TypeCtor = class("TypeCtor")
 local Expr = class("Expr")
 local Stmt = class("Stmt")
 local Decl = class("Decl")
-local Fragment = class("Fragment")
-local Spread = class("Spread")
 local Case = class("Case")
 local Default = class("Default")
 local Requires = class("Requires")
@@ -76,7 +74,7 @@ if not llb._moonlift_asdl_type_like then
     end)
 end
 
-local function name_token(s) return setmetatable({ name = ident(s, "name") }, Name) end
+local function name_token(s, origin) return setmetatable({ name = ident(s, "name"), origin = origin }, Name) end
 
 local scalar = {
     void = C.ScalarVoid, bool = C.ScalarBool,
@@ -184,7 +182,7 @@ local function expr_items(t)
     return out
 end
 local function stmt_item(v)
-    if is(v, Spread) then die("statement spread needs a statement fragment", 2) end
+    if llb.is(v, "Spread") then die("statement spread needs a statement fragment", 2) end
     if is(v, Stmt) then return v:tree() end
     if is_member(Tr.Stmt, v) then return v end
     return Tr.StmtExpr(Tr.StmtSurface, tree_expr(v))
@@ -194,9 +192,9 @@ function expand_array(t, role)
     local out = {}
     for i = 1, #(t or {}) do
         local v = t[i]
-        if is(v, Spread) then
+        if llb.is(v, "Spread") then
             local frag = v.value
-            if is(frag, Fragment) then
+            if llb.is(frag, "Fragment") then
                 if frag.role ~= role then die("expected " .. role .. " fragment, got " .. tostring(frag.role), 2) end
                 for j = 1, #frag.items do out[#out + 1] = frag.items[j] end
             elseif type(frag) == "table" then
@@ -204,7 +202,7 @@ function expand_array(t, role)
             else
                 die("spread expects a fragment or array", 2)
             end
-        elseif is(v, Fragment) and v.role == role then
+        elseif llb.is(v, "Fragment") and v.role == role then
             for j = 1, #v.items do out[#out + 1] = v.items[j] end
         else
             out[#out + 1] = v
@@ -554,7 +552,7 @@ local function type_decl(name, body, union)
     if union then
         local vars = {}
         for i, v in ipairs(body or {}) do
-            if is(v, Payload) then vars[i] = Ty.VariantDecl(v.name, scalar_type("void"), field_items(v.payload))
+            if is(v, Payload) or (type(v) == "table" and v.name ~= nil and v.payload ~= nil) then vars[i] = Ty.VariantDecl(tostring(v.name), scalar_type("void"), field_items(v.payload))
             elseif is(v, Name) then vars[i] = Ty.VariantDecl(v.name, scalar_type("void"), {})
             else die("union expects alternatives", 2) end
         end
@@ -679,7 +677,7 @@ function Decl:syntax_item()
         local conts = {}
         local cont_by_name = {}
         for i, c in ipairs(self.conts or {}) do
-            if is(c, Payload) then conts[i] = O.ContSlot("cont:" .. self.name .. ":" .. c.name .. ":" .. tostring(i), c.name, block_param_items(c.payload))
+            if is(c, Payload) or (type(c) == "table" and c.name ~= nil and c.payload ~= nil) then conts[i] = O.ContSlot("cont:" .. self.name .. ":" .. tostring(c.name) .. ":" .. tostring(i), tostring(c.name), block_param_items(c.payload))
             elseif is(c, Name) then conts[i] = O.ContSlot("cont:" .. self.name .. ":" .. c.name .. ":" .. tostring(i), c.name, {})
             else die("region continuation expects named payload", 2) end
             cont_by_name[conts[i].pretty_name] = conts[i]
@@ -895,6 +893,33 @@ function Decl:__tostring()
     return "moonlift.dsl." .. tostring(self.kind) .. (self.name and "(" .. tostring(self.name) .. ")" or "")
 end
 
+local function llb_format(self, f)
+    return require("moonlift.dsl.format").doc(self, f)
+end
+
+Name.__llb_format = llb_format
+TypedName.__llb_format = llb_format
+Payload.__llb_format = llb_format
+TypeCtor.__llb_format = llb_format
+Expr.__llb_format = llb_format
+Stmt.__llb_format = llb_format
+Decl.__llb_format = llb_format
+Case.__llb_format = llb_format
+Default.__llb_format = llb_format
+Requires.__llb_format = llb_format
+
+function Decl:format(opts)
+    return require("moonlift.dsl.format").format(self, opts)
+end
+
+function Stmt:format(opts)
+    return require("moonlift.dsl.format").format(self, opts)
+end
+
+function Expr:format(opts)
+    return require("moonlift.dsl.format").format(self, opts)
+end
+
 local function ctor(name, fn)
     return setmetatable({ name = name, fn = fn }, TypeCtor)
 end
@@ -915,14 +940,21 @@ function TypeCtor:__call(a, b)
     die("type constructor `" .. tostring(name) .. "` uses [] syntax", 2)
 end
 
-function M.product(t) return setmetatable({ role = "product", items = t or {} }, Fragment) end
-function M.stmts(t) return setmetatable({ role = "stmt", items = t or {} }, Fragment) end
-function M.decls(t) return setmetatable({ role = "decl", items = t or {} }, Fragment) end
-function M.exprs(t) return setmetatable({ role = "expr", items = t or {} }, Fragment) end
-function M.spread(v) return setmetatable({ value = v }, Spread) end
+local function dsl_fragment(role, items, algebra, payload_role)
+    return llb.fragment(role, items or {}, llb.here(role, { skip = 2 }), {
+        algebra = algebra,
+        payload_role = payload_role,
+    })
+end
 
-function Fragment:__len() return #(self.items or {}) end
-function Fragment:__tostring() return "moonlift.dsl.fragment(" .. tostring(self.role) .. ", " .. tostring(#(self.items or {})) .. ")" end
+function M.product(t) return dsl_fragment("product", t, "product") end
+function M.stmts(t) return dsl_fragment("stmt", t, "list") end
+function M.decls(t) return dsl_fragment("decl", t, "list") end
+function M.exprs(t) return dsl_fragment("expr", t, "list") end
+function M.conts(t) return dsl_fragment("conts", t, "sum", "product") end
+function M.variants(t) return dsl_fragment("variants", t, "sum", "product") end
+M.spread = llb.spread
+M._ = llb.spread
 
 local function case_literal(v)
     return setmetatable({ key = v }, {
@@ -1031,7 +1063,7 @@ local MoonLLB = llb.define "MoonliftDSL" {
     g.role .decls  { kind = "array" },
     g.role .stmts  { kind = "array" },
     g.role .params { kind = "array" },
-    g.role .conts  { kind = "array" },
+    g.role .conts  { kind = "array", algebra = "sum", payload_role = "product" },
     g.role .value  { kind = "value" },
 
     g.head .module {
@@ -1218,7 +1250,8 @@ local function make_env(opts)
         rshift = M.shr,
         lshift = M.shl,
     }
-    env.product, env.stmts, env.decls, env.exprs, env.spread = M.product, M.stmts, M.decls, M.exprs, M.spread
+    env.product, env.stmts, env.decls, env.exprs, env.conts, env.variants, env.spread, env._ = M.product, M.stmts, M.decls, M.exprs, M.conts, M.variants, M.spread, M._
+    env.here, env.at_origin, env.with_origin = llb.here, llb.at, llb.with_origin
     env.eq, env.ne, env.lt, env.le, env.gt, env.ge = M.eq, M.ne, M.lt, M.le, M.gt, M.ge
     env.And, env.Or, env.Not, env.len, env.select = M.And, M.Or, M.Not, M.len, M.select
     env.addr, env.deref, env.load, env.is_null = M.addr, M.deref, M.load, M.is_null
@@ -1245,48 +1278,7 @@ local function make_env(opts)
     for name, access_kind in pairs(access) do
         env[name] = ctor(name, function(ty) return Ty.TAccess(access_kind, concrete_type(ty)) end)
     end
-    return setmetatable(env, {
-        __index = function(t, k)
-            local n = name_token(k)
-            rawset(t, k, n)
-            return n
-        end,
-        __newindex = function(t, k, v)
-            if opts.strict and rawget(t, k) == nil then die("assignment to unknown DSL global `" .. tostring(k) .. "`", 2) end
-            rawset(t, k, v)
-        end,
-    })
-end
-
-local _auto_name_generating = false
-
-local function enable_auto_names()
-    if _auto_name_generating then return end
-    _auto_name_generating = true
-    local existing_mt = getmetatable(_G)
-    local existing_index = existing_mt and existing_mt.__index
-    setmetatable(_G, {
-        __index = function(t, k)
-            -- If G already has an __index (e.g. from traceback module), try it first
-            if existing_index then
-                local v
-                if type(existing_index) == "function" then
-                    v = existing_index(t, k)
-                else
-                    v = existing_index[k]
-                end
-                if v ~= nil then return v end
-            end
-            -- Otherwise, auto-generate name tokens for unknown identifiers
-            if type(k) == "string" and k:match("^[_%a][_%w]*$") then
-                local n = name_token(k)
-                rawset(t, k, n)
-                return n
-            end
-        end,
-        __newindex = existing_mt and existing_mt.__newindex,
-        __metatable = existing_mt and existing_mt.__metatable or false,
-    })
+    return env
 end
 
 --- Install Moonlift DSL globals into _G so plain .lua files can use
@@ -1297,29 +1289,46 @@ end
 --
 --   require("moonlift").use()       -- or require("moonlift.dsl").use()
 --
--- Returns the filled environment table for explicit capture if desired:
+-- Returns a managed LLB UseSession for explicit capture if desired:
 --   local moon = require("moonlift").use()
---   moon.fn .add { ... }
+--   moon.env.fn. add { ... }
 --
--- opts.global (default true) — when false, skips _G injection and returns env.
+-- opts.scope = "permanent" (default) installs into _G until session:close().
+-- opts.scope = "scoped" installs into _G and is intended for explicit cleanup.
+-- opts.scope = "env" returns an isolated session.env and does not mutate _G.
 function M.use(opts)
     opts = opts or {}
-    local env = make_env(opts)
-    if opts.global ~= false then
-        for k, v in pairs(env) do
-            if _G[k] == nil then
-                _G[k] = v
-            end
-        end
-        enable_auto_names()
-    end
+    local exports = make_env(opts)
+    local session = llb.use(MoonLLB, {
+        scope = opts.scope or (opts.global == false and "env" or "permanent"),
+        target = opts.target or _G,
+        base = exports,
+        exports = exports,
+        helpers = false,
+        global = opts.global,
+        strict = opts.strict,
+        override = opts.override,
+        auto_names = opts.auto_names ~= false,
+        auto_name = name_token,
+        searcher = opts.searcher,
+    })
+    if opts.searcher then M.install_searcher() end
     M._installed = true
-    return env
+    return session
 end
 
 function M.loadstring(src, chunk_name, opts)
+    opts = opts or {}
     local loader = loadstring or load
-    local env = make_env(opts)
+    local session = M.use({
+        scope = "env",
+        global = false,
+        strict = opts.strict,
+        unsafe = opts.unsafe,
+        auto_names = opts.auto_names,
+        base = opts.base,
+    })
+    local env = session.env
     local fn, err
     local source_name = chunk_name or "=(moonlift.dsl)"
     local source_ctx = build_source_context(source_name, src)
@@ -1416,5 +1425,17 @@ end
 
 function M.make_env(opts) return make_env(opts) end
 M.T = T
+
+function M.format(value, opts)
+    return require("moonlift.dsl.format").format(value, opts)
+end
+
+function M.format_file(path, opts)
+    return require("moonlift.dsl.format").format_file(path, opts)
+end
+
+function M.write_format_file(path, opts)
+    return require("moonlift.dsl.format").write_format_file(path, opts)
+end
 
 return M

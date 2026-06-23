@@ -46,7 +46,7 @@ Minimal grammar example:
 User DSL:
 
   return module "Demo" {
-    fn .add { a [i32], b [i32] } [i32] { ret (a + b), },
+    fn. add { a [i32], b [i32] } [i32] { ret (a + b), },
   }
 ]]
 
@@ -222,6 +222,7 @@ end
 
 function source.capture(kind, opts)
   opts = opts or {}
+  if opts.origin then return opts.origin end
   local skip = opts.skip or 0
   local chosen, fallback
   for level = 2 + skip, 20 + skip do
@@ -253,6 +254,17 @@ function source.capture(kind, opts)
 end
 
 llb.origin = source.capture
+
+function llb.here(kind, opts)
+  opts = opts or {}
+  opts.skip = (opts.skip or 0) + 1
+  return source.capture(kind or "factory-call", opts)
+end
+
+function llb.with_origin(origin, fn, ...)
+  if type(fn) ~= "function" then llb.fail("with_origin expects a function", { primary = origin }) end
+  return fn(..., origin)
+end
 
 local function origin_label(origin)
   if not origin then return "<unknown>" end
@@ -462,6 +474,12 @@ function llb.is_type_like(v)
   if is_tag(v, "Type") then return true end
   for i = 1, #type_like_predicates do
     local ok, yes = pcall(type_like_predicates[i], v)
+    if not ok then
+      llb.fail("type-like predicate #" .. tostring(i) .. " failed: " .. tostring(yes), {
+        code = "E_TYPE_LIKE_PREDICATE",
+        primary = origin_of(v),
+      }, 2)
+    end
     if ok and yes then return true end
   end
   return false
@@ -535,8 +553,185 @@ function llb.type_ctor(name, spec)
 end
 
 local Fragment = {}; Fragment.__index = Fragment
-function llb.fragment(role, items, origin) return setmetatable({ __llb_tag = "Fragment", role = tostring(role), items = items or {}, origin = origin or source.capture("fragment", { hint = role }) }, Fragment) end
+
+local function fragment(role, items, origin, spec)
+  items = items or {}
+  local out = {
+    __llb_tag = "Fragment",
+    role = tostring(role),
+    items = items,
+    origin = origin or source.capture("fragment", { hint = role }),
+  }
+  for k, v in pairs(spec or {}) do out[k] = v end
+  for i = 1, #items do out[i] = items[i] end
+  return setmetatable(out, Fragment)
+end
+
+function llb.fragment(role, items, origin, spec) return fragment(role, items, origin, spec) end
 function llb.spread(value) return { __llb_tag = "Spread", value = value, origin = source.capture("spread", { hint = "spread" }) } end
+llb._ = llb.spread
+
+local function fragment_items(f)
+  if is_tag(f, "Fragment") then return f.items or {} end
+  return nil
+end
+
+local function fragment_algebra(f)
+  local a = rawget(f, "algebra")
+  if a then return a end
+  local spec = rawget(f, "role_spec") or rawget(f, "spec")
+  a = spec and spec.algebra
+  if a then return a end
+  local kind = (spec and spec.kind) or rawget(f, "kind") or rawget(f, "role")
+  if kind == "product" then return "product" end
+  if kind == "sum" or kind == "protocol" then return "sum" end
+  if kind == "array" or kind == "list" or kind == "decl" or kind == "stmt" or kind == "expr" then return "list" end
+  return "list"
+end
+
+local function fragment_like(f, items, origin)
+  return fragment(f.role, items, origin or f.origin, {
+    algebra = rawget(f, "algebra"),
+    role_spec = rawget(f, "role_spec"),
+    lang = rawget(f, "lang"),
+    payload_role = rawget(f, "payload_role"),
+  })
+end
+
+local function item_name(item)
+  if type(item) ~= "table" then return nil end
+  if rawget(item, "name") ~= nil then return tostring(item.name) end
+  if rawget(item, "field_name") ~= nil then return tostring(item.field_name) end
+  if rawget(item, "text") ~= nil then return tostring(item.text) end
+  return nil
+end
+
+local function variant_name(item)
+  if type(item) ~= "table" then return nil end
+  if rawget(item, "name") ~= nil then return tostring(item.name) end
+  if rawget(item, "text") ~= nil then return tostring(item.text) end
+  if rawget(item, "variant_name") ~= nil then return tostring(item.variant_name) end
+  return nil
+end
+
+local function check_unique(items, what, origin)
+  local seen = {}
+  for i = 1, #(items or {}) do
+    local name = what == "variant" and variant_name(items[i]) or item_name(items[i])
+    if name then
+      if seen[name] then
+        llb.fail("duplicate " .. what .. " '" .. tostring(name) .. "' in fragment algebra", {
+          code = what == "variant" and "E_DUPLICATE_VARIANT" or "E_DUPLICATE_FIELD",
+          primary = origin_of(items[i]) or origin,
+          labels = { { origin = origin_of(seen[name]) or origin, message = "first " .. what .. " is here" } },
+        }, 2)
+      end
+      seen[name] = items[i]
+    end
+  end
+end
+
+local function copy_item_with_payload(item, payload)
+  local out = shallow_copy(item)
+  out.payload = payload
+  if getmetatable(item) ~= nil then setmetatable(out, getmetatable(item)) end
+  return out
+end
+
+local function variant_payload(item)
+  if type(item) ~= "table" then return {} end
+  return rawget(item, "payload") or {}
+end
+
+local function decorate_variant(item, product)
+  local payload = array_copy(variant_payload(item))
+  append(payload, product.items or {})
+  check_unique(payload, "field", origin_of(item) or product.origin)
+  return copy_item_with_payload(item, payload)
+end
+
+local function assert_fragment(v, op)
+  if not is_tag(v, "Fragment") then
+    llb.fail("operator " .. op .. " expects LLB fragments, got " .. repr(v), {
+      code = "E_FRAGMENT_OPERATOR",
+      primary = origin_of(v),
+    }, 2)
+  end
+end
+
+function llb.concat(a, b)
+  assert_fragment(a, ".."); assert_fragment(b, "..")
+  if a.role ~= b.role then
+    llb.fail("cannot concatenate " .. tostring(a.role) .. " fragment with " .. tostring(b.role) .. " fragment", {
+      code = "E_CONCAT_ROLE_MISMATCH",
+      primary = origin_of(b) or b.origin,
+      labels = { { origin = origin_of(a) or a.origin, message = "left fragment role is " .. tostring(a.role) } },
+    }, 2)
+  end
+  local algebra = fragment_algebra(a)
+  if algebra ~= "product" and algebra ~= "list" and algebra ~= "array" then
+    llb.fail("operator .. is not valid for " .. tostring(algebra) .. " fragment role " .. tostring(a.role), {
+      code = "E_BAD_FRAGMENT_OPERATOR",
+      primary = origin_of(a) or a.origin,
+    }, 2)
+  end
+  local items = array_copy(a.items)
+  append(items, b.items)
+  if algebra == "product" then check_unique(items, "field", origin_of(b) or b.origin) end
+  return fragment_like(a, items, origin_of(a) or a.origin)
+end
+
+function llb.choice(a, b)
+  assert_fragment(a, "+"); assert_fragment(b, "+")
+  if a.role ~= b.role then
+    llb.fail("cannot compose " .. tostring(a.role) .. " alternatives with " .. tostring(b.role) .. " alternatives", {
+      code = "E_CHOICE_ROLE_MISMATCH",
+      primary = origin_of(b) or b.origin,
+      labels = { { origin = origin_of(a) or a.origin, message = "left fragment role is " .. tostring(a.role) } },
+    }, 2)
+  end
+  local algebra = fragment_algebra(a)
+  if algebra ~= "sum" and algebra ~= "protocol" then
+    llb.fail("operator + is only valid for sum/protocol fragments, got " .. tostring(algebra) .. " role " .. tostring(a.role), {
+      code = "E_BAD_FRAGMENT_OPERATOR",
+      primary = origin_of(a) or a.origin,
+    }, 2)
+  end
+  local items = array_copy(a.items)
+  append(items, b.items)
+  check_unique(items, "variant", origin_of(b) or b.origin)
+  return fragment_like(a, items, origin_of(a) or a.origin)
+end
+
+function llb.decorate(sum, product)
+  assert_fragment(sum, "*"); assert_fragment(product, "*")
+  local sa, pa = fragment_algebra(sum), fragment_algebra(product)
+  if not ((sa == "sum" or sa == "protocol") and pa == "product") then
+    llb.fail("operator * expects sum/protocol fragment and product fragment", {
+      code = "E_DECORATE_ROLE_MISMATCH",
+      primary = origin_of(product) or product.origin,
+      labels = { { origin = origin_of(sum) or sum.origin, message = "left algebra is " .. tostring(sa) } },
+    }, 2)
+  end
+  local items = {}
+  for i = 1, #(sum.items or {}) do items[i] = decorate_variant(sum.items[i], product) end
+  return fragment_like(sum, items, origin_of(sum) or sum.origin)
+end
+
+Fragment.__concat = function(a, b) return llb.concat(a, b) end
+Fragment.__add = function(a, b) return llb.choice(a, b) end
+Fragment.__mul = function(a, b)
+  assert_fragment(a, "*"); assert_fragment(b, "*")
+  local aa, ba = fragment_algebra(a), fragment_algebra(b)
+  if (aa == "sum" or aa == "protocol") and ba == "product" then return llb.decorate(a, b) end
+  if aa == "product" and (ba == "sum" or ba == "protocol") then return llb.decorate(b, a) end
+  llb.fail("operator * expects product * sum or sum * product fragments", {
+    code = "E_DECORATE_ROLE_MISMATCH",
+    primary = origin_of(b) or b.origin,
+  }, 2)
+end
+Fragment.__len = function(self) return #(self.items or {}) end
+Fragment.__tostring = function(self) return "llb.fragment(" .. tostring(self.role) .. ", " .. tostring(#(self.items or {})) .. ")" end
 
 local ExprCtor, ExprCtorStage = {}, {}
 ExprCtor.__index = function(self, key)
@@ -601,7 +796,7 @@ BootStage.__call = function(self, body)
       if not is_tag(body[i], "SlotDecl") then llb.fail("head bodies accept only slot declarations", { primary = origin_of(body[i]) or self.origin }) end
       slots[#slots + 1] = body[i]
     end
-    return boot_node("HeadDecl", { name = self.name, slots = slots, tag = body.tag or self.name, emit = body.emit or body.build, check = body.check, lower = body.lower, lsp = body.lsp, spec = body, origin = self.origin })
+    return boot_node("HeadDecl", { name = self.name, slots = slots, tag = body.tag or self.name, emit = body.emit or body.build, check = body.check, lower = body.lower, lsp = body.lsp, format = body.format, spec = body, origin = self.origin })
   elseif self.kind == "pass" then
     return boot_node("PassDecl", { name = self.name, run = body.run or body[1], spec = body, origin = self.origin })
   elseif self.kind == "lsp" then
@@ -820,6 +1015,39 @@ function llb.is_complete(v) return not is_tag(v, "Stage") or #stage_missing_slot
 
 local RuntimeHead, RuntimeStage = {}, {}
 local function role_kind(lang, role) local s = lang.roles[role]; return (s and s.kind) or role end
+local function slot_channel(lang, slot)
+  local k = role_kind(lang, slot.role)
+  if k == "name" then return "name" end
+  if k == "type" then return "index:type" end
+  if k == "string" then return "call:string" end
+  if k == "number" then return "call:number" end
+  if k == "boolean" then return "call:boolean" end
+  if k == "array" or k == "record" or k == "mixed" or k == "product" or k == "sum" or k == "protocol" then return "call:table" end
+  if k == "expr" or k == "value" or k == "identity" then return "call:any" end
+  return "call:any"
+end
+local function channels_overlap(a, b)
+  if a == b then return true end
+  if starts_with(a, "call:") and b == "call:any" then return true end
+  if starts_with(b, "call:") and a == "call:any" then return true end
+  return false
+end
+local function validate_slot_ambiguity(lang, head_name, slots)
+  for i = 1, #slots - 1 do
+    local a, b = slots[i], slots[i + 1]
+    if a.optional and b.optional then
+      local ca, cb = slot_channel(lang, a), slot_channel(lang, b)
+      if channels_overlap(ca, cb) then
+        llb.fail("ambiguous optional slot sequence in head " .. tostring(head_name) .. ": slot " .. tostring(a.name) .. " [" .. tostring(a.role) .. "] and slot " .. tostring(b.name) .. " [" .. tostring(b.role) .. "] can both consume " .. tostring(ca == cb and ca or "call") .. " input", {
+          code = "E_AMBIGUOUS_OPTIONAL_SLOTS",
+          primary = b.origin or a.origin,
+          labels = { { origin = a.origin, message = "first optional slot is here" } },
+          notes = { "LLB consumes slots greedily with no backtracking; adjacent optional slots must use disjoint syntactic channels." },
+        }, 2)
+      end
+    end
+  end
+end
 local function type_slot(lang, slot, value) return role_kind(lang, slot.role) == "type" and (llb.is_type_like(value) or is_tag(value, "Symbol") or type(value) == "string") end
 local function action_fits(lang, slot, action, value, argc)
   local k = role_kind(lang, slot.role)
@@ -833,6 +1061,29 @@ local function action_fits(lang, slot, action, value, argc)
   return action == "call"
 end
 local function remaining_optional(slots, i) for j = i, #slots do if not slots[j].optional then return false end end; return true end
+
+local function stage_origin_from_value(value, fallback)
+  if type(value) == "table" then
+    return rawget(value, "__llb_origin") or rawget(value, "origin") or origin_of(value) or fallback
+  end
+  return fallback
+end
+
+function llb.at(origin, value)
+  if type(value) == "table" then
+    rawset(value, "__llb_origin", origin)
+    if rawget(value, "origin") == nil then rawset(value, "origin", origin) end
+    local m = rawget(value, "__llb")
+    if m and m.origin == nil then m.origin = origin end
+    return value
+  end
+  return { __llb_tag = "OriginValue", value = value, __llb_origin = origin, origin = origin }
+end
+
+local function unwrap_origin_value(v)
+  if is_tag(v, "OriginValue") then return v.value, v.__llb_origin or v.origin end
+  return v, stage_origin_from_value(v)
+end
 
 local function normalize_stage_slots(stage)
   local fields, origins = {}, {}
@@ -860,26 +1111,41 @@ local function build_stage(stage)
 end
 local function maybe_finish(stage) if remaining_optional(stage.head.slots, stage.next_index) then return build_stage(stage) end; return stage end
 local function consume(stage, action, value, argc, origin)
+  local override_origin
+  value, override_origin = unwrap_origin_value(value)
+  origin = override_origin or origin
   local slots, i = stage.head.slots, stage.next_index
   while i <= #slots do
     local slot = slots[i]
     if action_fits(stage.lang, slot, action, value, argc or 0) then
       local ns = setmetatable({ __llb_tag = "Stage", lang = stage.lang, head = stage.head, raw = shallow_copy(stage.raw), origins = shallow_copy(stage.origins), seen = shallow_copy(stage.seen), next_index = i + 1, origin = stage.origin }, RuntimeStage)
-      ns.raw[slot.name], ns.origins[slot.name], ns.seen[slot.name] = value, origin, true
+      ns.raw[slot.name], ns.origins[slot.name], ns.seen[slot.name] = value, origin or stage.origin, true
       return maybe_finish(ns)
     elseif slot.optional then i = i + 1
     else llb.fail("expected slot " .. tostring(slot.name) .. " [" .. tostring(slot.role) .. "], got " .. action .. " " .. repr(value), { primary = origin or stage.origin, code = "E_BAD_SLOT" }) end
   end
   llb.fail("too many arguments for head " .. tostring(stage.head.name), { primary = origin or stage.origin, code = "E_TOO_MANY_ARGUMENTS" })
 end
-local function start_stage(h) return setmetatable({ __llb_tag = "Stage", lang = h.lang, head = h.spec, raw = {}, origins = {}, seen = {}, next_index = 1, origin = source.capture("head", { hint = h.spec.name }) }, RuntimeStage) end
+local function head_origin(h)
+  return h.origin or source.capture("head", { hint = h.spec.name })
+end
+local function start_stage(h) return setmetatable({ __llb_tag = "Stage", lang = h.lang, head = h.spec, raw = {}, origins = {}, seen = {}, next_index = 1, origin = head_origin(h) }, RuntimeStage) end
 RuntimeHead.__index = function(self, key)
   if RuntimeHead[key] then return RuntimeHead[key] end
   local o = source.capture("head-name", { hint = key })
-  return consume(start_stage(self), "name", llb.name(key, { origin = o }), 1, o)
+  local name_value, override_origin = unwrap_origin_value(key)
+  o = override_origin or o
+  if is_tag(name_value, "Name") then
+    return consume(start_stage(self), "name", name_value, 1, o)
+  end
+  if is_tag(name_value, "Symbol") then
+    return consume(start_stage(self), "name", llb.name(name_value.text, { origin = o }), 1, o)
+  end
+  return consume(start_stage(self), "name", llb.name(name_value, { origin = o }), 1, o)
 end
 RuntimeHead.__call = function(self, ...)
   local p, o = pack(...), source.capture("head-call", { hint = self.spec.name })
+  if p.n > 0 and is_tag(p[1], "OriginValue") then o = p[1].__llb_origin or p[1].origin or o end
   if p.n == 0 and #self.spec.slots == 0 then return build_stage(setmetatable({ __llb_tag = "Stage", lang = self.lang, head = self.spec, raw = {}, origins = {}, seen = {}, next_index = 1, origin = o }, RuntimeStage)) end
   local v = p.n == 0 and UNIT or p[1]
   if p.n == 1 and v == nil then v = NIL end
@@ -898,6 +1164,20 @@ RuntimeStage.__call = function(self, ...)
   if p.n <= 1 then return consume(self, "call", v, p.n, o) end
   return consume(self, "call", p, p.n, o)
 end
+local HeadAt = {}
+HeadAt.__index = function(self, key)
+  local h = setmetatable({ __llb_tag = "Head", lang = self.head.lang, spec = self.head.spec, origin = self.origin }, RuntimeHead)
+  return RuntimeHead.__index(h, key)
+end
+HeadAt.__call = function(self, ...)
+  local h = setmetatable({ __llb_tag = "Head", lang = self.head.lang, spec = self.head.spec, origin = self.origin }, RuntimeHead)
+  return RuntimeHead.__call(h, ...)
+end
+
+function RuntimeHead:at(origin)
+  return setmetatable({ __llb_tag = "HeadAt", head = self, origin = origin }, HeadAt)
+end
+
 local function runtime_head(lang, spec) return setmetatable({ __llb_tag = "Head", lang = lang, spec = spec }, RuntimeHead) end
 
 -- ---------------------------------------------------------------------------
@@ -971,17 +1251,187 @@ local BASE_ENV = { assert = assert, error = error, ipairs = ipairs, next = next,
 local function builtin_roles() return { name = { kind = "name" }, type = { kind = "type" }, expr = { kind = "expr" }, string = { kind = "string" }, number = { kind = "number" }, boolean = { kind = "boolean" }, value = { kind = "value" }, identity = { kind = "identity" } } end
 local function normalize_slot_decl(s) local spec = s.spec or {}; return { name = s.name, role = s.role, optional = spec.optional or s.optional or false, default = spec.default, origin = s.origin, spec = spec } end
 
-function Language:fragment(role, value) return llb.fragment(role, normalize_role({ lang = self, origin = source.capture("fragment-normalize") }, role, value), source.capture("fragment")) end
-function Language:env(opts)
-  opts = opts or {}; local env = {}
-  for k, v in pairs(BASE_ENV) do env[k] = v end
-  if opts.env then for k, v in pairs(opts.env) do env[k] = v end end
-  for k, v in pairs(self.exports) do env[k] = v end
+local PREV_NIL = {}
+local UseSession = {}
+UseSession.__index = UseSession
+llb.UseSession = UseSession
+
+local function is_identifier(s)
+  return type(s) == "string" and s:match("^[_%a][_%w]*$") ~= nil
+end
+
+local function copy_into(dst, src)
+  for k, v in pairs(src or {}) do dst[k] = v end
+  return dst
+end
+
+function llb.base_env(kind)
+  if type(kind) == "table" then return shallow_copy(kind) end
+  if kind == "inherit" then return shallow_copy(_G) end
+  return shallow_copy(BASE_ENV)
+end
+
+local function helper_exports()
+  return {
+    N = llb.N,
+    spread = llb.spread,
+    _ = llb.spread,
+    here = llb.here,
+    at_origin = llb.at,
+    with_origin = llb.with_origin,
+  }
+end
+
+local function old_index_value(old_index, target, key)
+  if old_index == nil then return nil end
+  if type(old_index) == "function" then return old_index(target, key) end
+  return old_index[key]
+end
+
+local function old_newindex_set(old_newindex, target, key, value)
+  if old_newindex == nil then rawset(target, key, value)
+  elseif type(old_newindex) == "function" then old_newindex(target, key, value)
+  else old_newindex[key] = value end
+end
+
+function llb.make_env(lang, opts)
+  opts = opts or {}
+  local env = llb.base_env(opts.base or "safe")
+  copy_into(env, lang and lang.exports or {})
+  if opts.helpers ~= false then copy_into(env, helper_exports()) end
+  copy_into(env, opts.exports)
   if opts.unsafe then env.io, env.os, env.debug, env.package = io, os, debug, package end
   env._G = env
-  setmetatable(env, { __index = function(_, key) return llb.symbol(key, { origin = source.capture("env-symbol", { hint = key }) }) end, __newindex = function(_, key, value) if opts.strict then error("strict LLB environment: assignment to unknown global " .. tostring(key), 2) end; rawset(env, key, value) end })
   return env
 end
+
+local function install_auto_names(target, session, opts)
+  if opts.auto_names == false then return end
+  local old_mt = getmetatable(target)
+  local old_index = old_mt and old_mt.__index
+  local old_newindex = old_mt and old_mt.__newindex
+  local mt = {}
+  if old_mt then for k, v in pairs(old_mt) do mt[k] = v end end
+  mt.__llb_session = session
+  mt.__index = function(t, key)
+    local old = old_index_value(old_index, t, key)
+    if old ~= nil then return old end
+    if is_identifier(key) then
+      local origin = source.capture("auto-name", { hint = key, skip = 1 })
+      local maker = opts.auto_name or (session.lang and session.lang.auto_name)
+      local value = maker and maker(key, origin) or llb.symbol(key, { origin = origin })
+      rawset(t, key, value)
+      session.auto_installed[key] = true
+      session.auto_values[key] = value
+      return value
+    end
+    return nil
+  end
+  mt.__newindex = function(t, key, value)
+    if opts.strict and rawget(t, key) == nil then error("strict LLB environment: assignment to unknown global " .. tostring(key), 2) end
+    old_newindex_set(old_newindex, t, key, value)
+  end
+  session.previous_mt = old_mt
+  session.metatable_installed = true
+  setmetatable(target, mt)
+end
+
+function llb.install_env(env, target, opts, session)
+  opts = opts or {}
+  target = target or _G
+  session = session or setmetatable({ __llb_tag = "UseSession", env = env, target = target, installed = {}, previous = {}, skipped = {}, active = true, auto_installed = {}, auto_values = {} }, UseSession)
+  for k, v in pairs(env or {}) do
+    if k ~= "_G" then
+      local cur = rawget(target, k)
+      if cur == nil or opts.override then
+        session.installed[k] = true
+        session.previous[k] = cur == nil and PREV_NIL or cur
+        rawset(target, k, v)
+      else
+        session.skipped[k] = true
+      end
+    end
+  end
+  install_auto_names(target, session, opts)
+  return session
+end
+
+function llb.use(lang, opts)
+  opts = opts or {}
+  local scope = opts.scope or (opts.global == false and "env" or "permanent")
+  local env = llb.make_env(lang, opts)
+  local target = opts.target or _G
+  local session = setmetatable({
+    __llb_tag = "UseSession",
+    lang = lang,
+    env = env,
+    target = target,
+    scope = scope,
+    installed = {},
+    previous = {},
+    skipped = {},
+    auto_installed = {},
+    auto_values = {},
+    active = true,
+  }, UseSession)
+  rawset(env, "__llb_session", session)
+  if scope == "env" then
+    install_auto_names(env, session, opts)
+  else
+    llb.install_env(env, target, opts, session)
+  end
+  if opts.searcher and lang and lang.install_searcher then lang:install_searcher(opts) end
+  return session
+end
+
+function UseSession:close()
+  if not self.active then return false end
+  self.active = false
+  local target = self.scope == "env" and self.env or self.target
+  for k, v in pairs(self.auto_values or {}) do
+    if rawget(target, k) == v then rawset(target, k, nil) end
+  end
+  if self.scope ~= "env" then
+    for k in pairs(self.installed or {}) do
+      local prev = self.previous[k]
+      if prev == PREV_NIL then rawset(target, k, nil)
+      elseif prev ~= nil then rawset(target, k, prev) end
+    end
+  end
+  local mt = getmetatable(target)
+  if mt and mt.__llb_session == self then setmetatable(target, self.previous_mt) end
+  return true
+end
+
+function llb.with_use(lang, opts, fn)
+  opts = shallow_copy(opts or {})
+  opts.scope = opts.scope or "scoped"
+  local session = llb.use(lang, opts)
+  local ok, a, b, c = pcall(fn, session.env, session)
+  session:close()
+  if not ok then error(a, 0) end
+  return a, b, c
+end
+
+function Language:fragment(role, value)
+  local spec = self.roles and self.roles[role] or {}
+  return llb.fragment(role, normalize_role({ lang = self, origin = source.capture("fragment-normalize") }, role, value), source.capture("fragment"), {
+    lang = self,
+    role_spec = spec,
+    algebra = spec.algebra,
+    payload_role = spec.payload_role or spec.payload,
+  })
+end
+function Language:env(opts)
+  opts = shallow_copy(opts or {})
+  if opts.env then opts.exports = opts.env end
+  opts.scope = opts.scope or "env"
+  opts.auto_names = opts.auto_names ~= false
+  local session = llb.use(self, opts)
+  return session.env
+end
+function Language:use(opts) return llb.use(self, opts) end
+function Language:with_use(opts, fn) return llb.with_use(self, opts, fn) end
 function Language:loadstring(src, chunkname, opts) chunkname = chunkname or self.name; source.register(chunkname, src); local f, err = compile_lua(src, chunkname); if not f then error(err, 2) end; setfenv0(f, self:env(opts)); return f end
 function Language:loadfile(path, opts) local f, err = io.open(path, "rb"); if not f then error(err, 2) end; local src = f:read("*a") or ""; f:close(); return self:loadstring(src, "@" .. path, opts) end
 function Language:analyze_string(src, chunkname, opts)
@@ -1004,6 +1454,37 @@ function Language:analyze_string(src, chunkname, opts)
 end
 function Language:analyze_file(path, opts) local f, err = io.open(path, "rb"); if not f then local bag = llb.diagnostics(); bag:error { code = "E_OPEN", message = tostring(err) }; return setmetatable({ __llb_tag = "Analysis", lang = self, ast = nil, diagnostics = bag }, Analysis) end; local src = f:read("*a") or ""; f:close(); return self:analyze_string(src, "@" .. path, opts) end
 
+function Language:install_searcher(opts)
+  opts = opts or {}
+  local searchers = package.searchers or package.loaders
+  if not searchers then return false end
+  if self._llb_searcher then
+    for _, s in ipairs(searchers) do if s == self._llb_searcher then return true end end
+  end
+  local paths = opts.search_paths or self.search_paths or { "./?.lua", "./?/init.lua", "lua/?.lua", "lua/?/init.lua" }
+  local lang = self
+  local function searcher(mod_name)
+    local tried = {}
+    for i = 1, #paths do
+      local path = paths[i]:gsub("%?", mod_name)
+      local f = io.open(path, "rb")
+      if f then
+        f:close()
+        return function()
+          local loader = opts.loader
+          local chunk = loader and loader(lang, path, opts) or lang:loadfile(path, opts.load_opts or opts)
+          return chunk()
+        end
+      end
+      tried[#tried + 1] = path
+    end
+    return "\n\tno file found (tried: " .. table.concat(tried, ", ") .. ")"
+  end
+  self._llb_searcher = searcher
+  table.insert(searchers, searcher)
+  return true
+end
+
 local function head_check_pass()
   return { name = "llb.head_checks", run = function(ctx, analysis)
     walk(analysis.ast, function(n)
@@ -1015,7 +1496,7 @@ local function head_check_pass()
 end
 
 local function define_language(name, decls)
-  local lang = setmetatable({ __llb_tag = "Language", name = tostring(name), roles = builtin_roles(), heads = {}, exports = { N = llb.N, spread = llb.spread }, passes = {}, lsp = {}, declarations = decls or {} }, Language)
+  local lang = setmetatable({ __llb_tag = "Language", name = tostring(name), roles = builtin_roles(), heads = {}, exports = { N = llb.N, spread = llb.spread, _ = llb.spread }, passes = {}, lsp = {}, declarations = decls or {} }, Language)
   for i = 1, #(decls or {}) do
     local d = decls[i]
     if is_tag(d, "RoleDecl") then local spec = shallow_copy(d.spec or {}); spec.kind = d.kind or spec.kind or "array"; spec.origin = d.origin; lang.roles[d.name] = spec
@@ -1042,7 +1523,8 @@ local function define_language(name, decls)
     local d = decls[i]
     if is_tag(d, "HeadDecl") then
       local slots = {}; for j = 1, #d.slots do slots[j] = normalize_slot_decl(d.slots[j]) end
-      local spec = { name = d.name, tag = d.tag or d.name, slots = slots, emit = d.emit, check = d.check, lower = d.lower, lsp = d.lsp, origin = d.origin, raw = d }
+      validate_slot_ambiguity(lang, d.name, slots)
+      local spec = { name = d.name, tag = d.tag or d.name, slots = slots, emit = d.emit, check = d.check, lower = d.lower, lsp = d.lsp, format = d.format, origin = d.origin, raw = d }
       lang.heads[d.name] = spec; lang.exports[d.name] = runtime_head(lang, spec)
     end
   end
@@ -1051,6 +1533,338 @@ local function define_language(name, decls)
 end
 function llb.define(name) return function(decls) return define_language(name, decls) end end
 llb.Language = Language
+
+-- ---------------------------------------------------------------------------
+-- Formatting
+-- ---------------------------------------------------------------------------
+
+local doc = {}
+llb.doc = doc
+
+local function is_doc(v)
+  return type(v) == "table" and rawget(v, "__llb_doc") ~= nil
+end
+
+local function doc_node(kind, fields)
+  fields = fields or {}
+  fields.__llb_doc = kind
+  return fields
+end
+
+local function docify(v)
+  if v == nil or v == ABSENT then return doc_node("nil") end
+  if is_doc(v) then return v end
+  if type(v) == "table" then
+    local parts = {}
+    for i = 1, #v do parts[i] = docify(v[i]) end
+    return doc_node("concat", { parts = parts })
+  end
+  return doc_node("text", { text = tostring(v) })
+end
+
+function doc.nil_doc() return doc_node("nil") end
+function doc.text(s) return doc_node("text", { text = tostring(s or "") }) end
+function doc.space() return doc_node("text", { text = " " }) end
+function doc.line() return doc_node("line") end
+function doc.softline() return doc_node("softline") end
+function doc.hardline() return doc_node("hardline") end
+function doc.concat(parts) return docify(parts or {}) end
+function doc.group(parts) return doc_node("group", { doc = docify(parts) }) end
+function doc.indent(parts, amount) return doc_node("indent", { amount = amount, doc = docify(parts) }) end
+doc.nest = doc.indent
+
+function doc.join(sep, parts)
+  parts = parts or {}
+  sep = docify(sep or "")
+  local out = {}
+  for i = 1, #parts do
+    if i > 1 then out[#out + 1] = sep end
+    out[#out + 1] = parts[i]
+  end
+  return doc.concat(out)
+end
+
+function doc.parens(parts) return doc.concat { "(", parts, ")" } end
+function doc.brackets(parts) return doc.concat { "[", parts, "]" } end
+function doc.braces(parts) return doc.concat { "{", parts, "}" } end
+
+local function flat_len(d)
+  d = docify(d)
+  local k = rawget(d, "__llb_doc")
+  if k == "nil" then return 0 end
+  if k == "text" then return #(d.text or "") end
+  if k == "line" or k == "softline" then return 1 end
+  if k == "hardline" then return math.huge end
+  if k == "indent" or k == "group" then return flat_len(d.doc) end
+  if k == "concat" then
+    local n = 0
+    for i = 1, #(d.parts or {}) do
+      local m = flat_len(d.parts[i])
+      if m == math.huge then return m end
+      n = n + m
+    end
+    return n
+  end
+  return 0
+end
+
+local function render_doc(d, state, flat)
+  d = docify(d)
+  local k = rawget(d, "__llb_doc")
+  if k == "nil" then
+    return
+  elseif k == "text" then
+    local s = d.text or ""
+    state.out[#state.out + 1] = s
+    state.col = state.col + #s
+  elseif k == "line" or k == "softline" then
+    if flat then
+      state.out[#state.out + 1] = " "
+      state.col = state.col + 1
+    else
+      state.out[#state.out + 1] = "\n" .. string.rep(" ", state.indent)
+      state.col = state.indent
+    end
+  elseif k == "hardline" then
+    state.out[#state.out + 1] = "\n" .. string.rep(" ", state.indent)
+    state.col = state.indent
+  elseif k == "concat" then
+    for i = 1, #(d.parts or {}) do render_doc(d.parts[i], state, flat) end
+  elseif k == "indent" then
+    local old = state.indent
+    state.indent = state.indent + (d.amount or state.indent_width)
+    render_doc(d.doc, state, flat)
+    state.indent = old
+  elseif k == "group" then
+    local next_flat = flat or (state.col + flat_len(d.doc) <= state.width)
+    render_doc(d.doc, state, next_flat)
+  end
+end
+
+function llb.render(d, opts)
+  opts = opts or {}
+  local state = {
+    out = {},
+    width = opts.width or 100,
+    indent = opts.base_indent or 0,
+    indent_width = opts.indent or 2,
+    col = opts.base_indent or 0,
+  }
+  render_doc(d, state, false)
+  return table.concat(state.out)
+end
+
+local FormatContext = {}
+FormatContext.__index = FormatContext
+llb.FormatContext = FormatContext
+
+local function format_context(opts)
+  opts = opts or {}
+  local f = setmetatable({
+    opts = opts,
+    lang = opts.lang,
+    width = opts.width or 100,
+    indent_width = opts.indent or 2,
+    seen = opts.seen or {},
+  }, FormatContext)
+  return f
+end
+
+function FormatContext:text(s) return doc.text(s) end
+function FormatContext:space() return doc.space() end
+function FormatContext:line() return doc.line() end
+function FormatContext:softline() return doc.softline() end
+function FormatContext:hardline() return doc.hardline() end
+function FormatContext:concat(parts) return doc.concat(parts) end
+function FormatContext:group(parts) return doc.group(parts) end
+function FormatContext:indent(parts, amount) return doc.indent(parts, amount or self.indent_width) end
+function FormatContext:join(sep, parts) return doc.join(sep, parts) end
+function FormatContext:parens(parts) return doc.parens(parts) end
+function FormatContext:brackets(parts) return doc.brackets(parts) end
+function FormatContext:braces(parts) return doc.braces(parts) end
+function FormatContext:format(v) return llb.to_doc(v, self) end
+
+function FormatContext:list(items, opts)
+  opts = opts or {}
+  local docs = {}
+  for i = 1, #(items or {}) do docs[i] = opts.format and opts.format(items[i], self, i) or self:format(items[i]) end
+  return doc.join(opts.sep or doc.concat { ",", doc.line() }, docs)
+end
+
+function FormatContext:braced_list(items, opts)
+  opts = opts or {}
+  if #(items or {}) == 0 then return doc.text("{}") end
+  return doc.group {
+    "{",
+    doc.indent({
+      doc.softline(),
+      self:list(items, opts),
+    }, opts.indent or self.indent_width),
+    doc.softline(),
+    "}",
+  }
+end
+
+function FormatContext:block(items, opts)
+  opts = opts or {}
+  if #(items or {}) == 0 then return doc.text("{}") end
+  local docs = {}
+  for i = 1, #items do
+    docs[#docs + 1] = opts.format and opts.format(items[i], self, i) or self:format(items[i])
+    docs[#docs + 1] = ","
+    if i < #items then docs[#docs + 1] = doc.line() end
+  end
+  return doc.concat {
+    "{",
+    doc.indent({ doc.line(), docs }, opts.indent or self.indent_width),
+    doc.line(),
+    "}",
+  }
+end
+
+function FormatContext:name(v)
+  if is_tag(v, "Name") or is_tag(v, "Symbol") then return doc.text(v.text) end
+  if type(v) == "table" and rawget(v, "name") then return doc.text(tostring(v.name)) end
+  return doc.text(tostring(v))
+end
+
+local function literal_doc(v)
+  if v == NIL then return doc.text("nil") end
+  if v == UNIT then return doc.text("()") end
+  if v == ABSENT then return doc.text("<absent>") end
+  local tv = type(v)
+  if tv == "string" then return doc.text(string.format("%q", v)) end
+  if tv == "number" or tv == "boolean" then return doc.text(tostring(v)) end
+  if tv == "nil" then return doc.text("nil") end
+  return nil
+end
+
+local function fallback_expr_doc(v, f)
+  if v.kind == "binop" then return doc.group { f:format(v.a), " ", tostring(v.op), " ", f:format(v.b) } end
+  if v.kind == "unop" then return doc.group { tostring(v.op), f:format(v.a) } end
+  if v.kind == "field" then return doc.group { f:format(v.base), ".", tostring(v.field) } end
+  if v.kind == "index" then return doc.group { f:format(v.base), "[", f:format(v.index), "]" } end
+  if v.kind == "call" then
+    local args = {}
+    local raw_args, n = v.args or {}, (v.args and (v.args.n or #v.args)) or 0
+    for i = 1, n do args[i] = raw_args[i] end
+    return doc.group { f:format(v.callee), doc.parens(f:list(args, { sep = doc.concat { ",", doc.line() } })) }
+  end
+  if v.kind == "ctor" then
+    local indexed = {}
+    for i = 1, #(v.indexed or {}) do indexed[i] = doc.brackets(f:format(v.indexed[i])) end
+    local args = {}
+    local raw_args, n = v.args or {}, (v.args and (v.args.n or #v.args)) or 0
+    for i = 1, n do args[i] = raw_args[i] end
+    return doc.group { tostring(v.name), indexed, doc.parens(f:list(args, { sep = doc.concat { ",", doc.line() } })) }
+  end
+  return nil
+end
+
+local function generic_table_doc(v, f)
+  local tag = tagof(v)
+  if tag == "Expr" then
+    local d = fallback_expr_doc(v, f)
+    if d then return d end
+  end
+  if tag == "Name" or tag == "Symbol" then return doc.text(v.text) end
+  if tag == "Type" then return doc.text(v.name) end
+  if tag == "Capture" then return doc.group { f:format(v.subject), " [", f:format(v.value), "]" } end
+  if tag == "CaptureInit" then return doc.group { f:format(v.capture), " (", f:format(v.init), ")" } end
+  if tag == "Fragment" then return f:braced_list(v.items or {}) end
+  if tag == "Node" then
+    local m = rawget(v, "__llb") or {}
+    return doc.group { tostring(m.head or v.tag or "node"), " ", f:braced_list(m.fields or v.fields or {}) }
+  end
+
+  local keys = {}
+  for k in pairs(v) do
+    if k ~= "__llb" and k ~= "__llb_tag" and k ~= "origin" then keys[#keys + 1] = k end
+  end
+  table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+  local items = {}
+  for i = 1, #keys do
+    local k = keys[i]
+    items[i] = doc.group { tostring(k), " = ", f:format(v[k]) }
+  end
+  return f:braced_list(items)
+end
+
+function llb.to_doc(v, ctx)
+  local f = getmetatable(ctx) == FormatContext and ctx or format_context(ctx or {})
+  local lit = literal_doc(v)
+  if lit then return lit end
+
+  local tv = type(v)
+  if tv ~= "table" then return doc.text(tostring(v)) end
+  if f.seen[v] then return doc.text("<cycle>") end
+  f.seen[v] = true
+
+  local mt = getmetatable(v)
+  local mt_format = mt and rawget(mt, "__llb_format")
+  if mt_format then
+    local out = mt_format(v, f)
+    f.seen[v] = nil
+    return docify(out)
+  end
+
+  local meta = rawget(v, "__llb") or {}
+  local hs = meta.head_spec
+  if hs and hs.format then
+    local out = hs.format(v, f, meta)
+    f.seen[v] = nil
+    return docify(out)
+  end
+
+  local lang = f.lang or meta.language
+  if type(lang) == "table" then
+    local formatters = lang.formatters or (lang.format and lang.format.formatters)
+    local key = meta.head or rawget(v, "tag") or tagof(v)
+    local hook = formatters and key and formatters[key]
+    if hook then
+      local out = hook(v, f, meta)
+      f.seen[v] = nil
+      return docify(out)
+    end
+  end
+
+  local out = generic_table_doc(v, f)
+  f.seen[v] = nil
+  return out
+end
+
+function llb.format_doc(value, opts)
+  return llb.to_doc(value, format_context(opts or {}))
+end
+
+function llb.format(value, opts)
+  opts = opts or {}
+  return llb.render(llb.format_doc(value, opts), opts)
+end
+
+function Language:format_doc(value, opts)
+  opts = shallow_copy(opts or {})
+  opts.lang = opts.lang or self
+  return llb.format_doc(value, opts)
+end
+
+function Language:format(value, opts)
+  opts = shallow_copy(opts or {})
+  opts.lang = opts.lang or self
+  return llb.format(value, opts)
+end
+
+function Analysis:format_doc(opts)
+  opts = shallow_copy(opts or {})
+  opts.lang = opts.lang or self.lang
+  return llb.format_doc(self.ast, opts)
+end
+
+function Analysis:format(opts)
+  opts = shallow_copy(opts or {})
+  opts.lang = opts.lang or self.lang
+  return llb.format(self.ast, opts)
+end
 
 -- ---------------------------------------------------------------------------
 -- Dumping and example language

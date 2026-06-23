@@ -61,7 +61,7 @@ Moonlift takes a different approach:
 | Concern | Moonlift's answer |
 |---|---|
 | **Metaprogramming** | LuaJIT Lua. Real genericity lives in Lua, not in template syntax. |
-| **Authoring** | Lua-owned DSL (`require("moonlift.dsl")`). Lua parses the shape, LLB hosts declaration/control heads, and Moonlift normalizes to ASDL. Header/impl split via callable stages. |
+| **Authoring** | Lua-owned DSL (`require("moonlift.dsl")`). Lua parses the shape, stdlib LLB hosts declaration/control heads, and Moonlift normalizes to ASDL. Header/impl split via callable stages. |
 | **Native performance** | Cranelift JIT + object emission. Same backend tier as wasmtime. |
 | **Control flow** | Typed blocks with explicit jump/yield/return. No hidden `next`, no implicit fallthrough. |
 | **Semantics** | Everything meaningful is represented as ASDL (Algebraic Semi-structured Data Language) values. No hidden state in strings, callbacks, or mutable tables. |
@@ -81,12 +81,12 @@ metaprogramming, and who believe semantics should be data, not strings.
 
 ```lua
 local moon = require("moonlift")
-moon.use()                         -- inject DSL globals into _G
+moon.use()                         -- inject DSL globals into _G through a managed use session
 
 local m = module "Demo" {
-  struct .Point { x [f32], y [f32] },
+  struct. Point { x [f32], y [f32] },
 
-  fn .add { a [i32], b [i32] } [i32] {
+  fn. add { a [i32], b [i32] } [i32] {
     ret (a + b),
   },
 }
@@ -103,8 +103,8 @@ m:emit_c_artifact()     -- C/header/support artifact
 -- math_header.lua — signatures, no bodies
 require("moonlift").use()
 return {
-  fn .add { a [i32], b [i32] } [i32],
-  fn .sub { a [i32], b [i32] } [i32],
+  fn. add { a [i32], b [i32] } [i32],
+  fn. sub { a [i32], b [i32] } [i32],
 }
 
 -- math_impl.lua — fill the bodies
@@ -127,10 +127,10 @@ local function expect_byte(tag, byte, err_code)
               { p [ptr [u8]], n [index], pos [index] }
               { ok { next [index] }, err { pos [index], code [i32] } }
               {
-                entry .start {} {
-                  when (pos:ge(n)) { jump .err { pos = pos, code = err_code } },
-                  when (as [i32] (p[pos]):eq(byte)) { jump .ok { next = pos + 1 } },
-                  jump .err { pos = pos, code = err_code },
+                entry. start {} {
+                  when (pos :ge (n)) { jump. err { pos = pos, code = err_code } },
+                  when (as [i32] (p[pos]) :eq (byte)) { jump. ok { next = pos + 1 } },
+                  jump. err { pos = pos, code = err_code },
                 },
               },
         }
@@ -166,7 +166,7 @@ just a Rust cdylib.
 local moon = require("moonlift")
 moon.use()
 local m = module "Demo" {
-  fn .add { a [i32], b [i32] } [i32] { ret (a + b) },
+  fn. add { a [i32], b [i32] } [i32] { ret (a + b) },
 }
 print(m:compile().add(3, 4))  -- 7, running as native machine code
 ```
@@ -219,8 +219,8 @@ No source-level generics. Lua generates monomorphic concrete types.
 Handles are nominal durable identities:
 
 ```lua
-handle .SessionRef { invalid = 0 }
-handle .VoiceRef { invalid = 0, domain = "VoiceStore", target = "VoiceState" }
+handle. SessionRef { invalid = 0 }
+handle. VoiceRef { invalid = 0, domain = "VoiceStore", target = "VoiceState" }
 ```
 
 `lease ptr(T)` and `lease view(T)` are temporary access facts granted by
@@ -250,9 +250,9 @@ or `return`. No implicit fallthrough.
 Regions are typed control components with named continuation exits:
 
 ```lua
-region .my_region { params ... } { exit_a { sig ... }, exit_b { sig ... } } {
-    entry .start {} {
-      emit .other_fragment { args ... } { out = exit_a }
+region. my_region { params ... } { exit_a { sig ... }, exit_b { sig ... } } {
+    entry. start {} {
+      emit. other_fragment { args ... } { out = exit_a }
     },
   }
 ```
@@ -264,12 +264,12 @@ returns ownership on a continuation, the filled target must declare a matching
 `owned` parameter:
 
 ```lua
-region .close_session
+region. close_session
   { app [ptr [App]], s [owned [SessionRef]] }
   { closed, missing { s [owned [SessionRef]] } }
 
-block .retry { s [owned [SessionRef]] } {
-    emit .close_session { app, s } { closed = done, missing = retry }
+block. retry { s [owned [SessionRef]] } {
+    emit. close_session { app, s } { closed = done, missing = retry }
 }
 ```
 
@@ -291,9 +291,9 @@ local int = C:seq({optional_sign, number})
 
 ```lua
 switch (tag) {
-    case (0) { jump .value { delta = 1 } },
-    case (1) { jump .value { delta = -1 } },
-    default { jump .value { delta = 0 } },
+    case (0) { jump. value { delta = 1 } },
+    case (1) { jump. value { delta = -1 } },
+    default { jump. value { delta = 0 } },
 }
 ```
 
@@ -304,8 +304,8 @@ No fallthrough. Explicit, verifiable control branches.
 Source-level extern declarations describe C-ABI imports:
 
 ```lua
-extern .write { fd [i32], buf [ptr [u8]], count [index] } [index] { symbol = "write" }
-extern .host_add7 { x [i32] } [i32] { symbol = "host_add7_impl" }
+extern. write { fd [i32], buf [ptr [u8]], count [index] } [index] { symbol = "write" }
+extern. host_add7 { x [i32] } [i32] { symbol = "host_add7_impl" }
 ```
 
 Moonlift code calls these names like ordinary functions. The Cranelift JIT
@@ -326,20 +326,20 @@ local moon = require("moonlift")
 moon.use()
 
 local m = module "Demo" {
-  struct .Point { x [f32], y [f32] },
+  struct. Point { x [f32], y [f32] },
 
-  fn .add { a [i32], b [i32] } [i32] {
+  fn. add { a [i32], b [i32] } [i32] {
     ret (a + b),
   },
 
-  region .scan
+  region. scan
     { p [ptr [u8]], n [i32], target [i32] }
     { hit { pos [i32] }, miss { pos [i32] } }
     {
-      entry .loop { i [i32] (0) } {
-        when (i:ge(n)) { jump .miss { pos = i } },
-        when (as [i32] (p[i]):eq(target)) { jump .hit { pos = i } },
-        jump .loop { i = i + 1 },
+      entry. loop { i [i32] (0) } {
+        when (i :ge (n)) { jump. miss { pos = i } },
+        when (as [i32] (p[i]) :eq (target)) { jump. hit { pos = i } },
+        jump. loop { i = i + 1 },
       },
     },
 }
@@ -372,8 +372,8 @@ in an implementation file:
 ```lua
 -- math_header.lua — declare signatures
 return {
-  fn .add { a [i32], b [i32] } [i32],
-  fn .sub { a [i32], b [i32] } [i32],
+  fn. add { a [i32], b [i32] } [i32],
+  fn. sub { a [i32], b [i32] } [i32],
 }
 
 -- math_impl.lua — fill bodies
@@ -384,7 +384,7 @@ return module "Math" {
 }
 ```
 
-### Composition — spread and fragments
+### Composition — fragments and `_`
 
 Program slicing is ordinary Lua table construction:
 
@@ -392,8 +392,8 @@ Program slicing is ordinary Lua table construction:
 local xy = product { x [f32], y [f32] }
 
 return module "M" {
-  struct .Point { spread(xy), z [f32] },
-  fn .tag_of { p [Point] } [u8] { ret (p.tag) },
+  struct. Point { _(xy), z [f32] },
+  fn. tag_of { p [Point] } [u8] { ret (p.tag) },
 }
 ```
 
@@ -402,7 +402,7 @@ return module "M" {
 Functions carry typed contract annotations via the `requires` keyword:
 
 ```lua
-fn .read
+fn. read
   { buf [ptr [u8]], count [index] }
   [index]
   {
@@ -414,9 +414,9 @@ fn .read
 ### Atomics
 
 ```lua
-let .a [i32] (aload (i32, p))
+let. a [i32] (aload (i32, p))
 astore (i32, p, v)
-let .b [i32] (armw ("xchg", i32, p, v))
+let. b [i32] (armw ("xchg", i32, p, v))
 afence ()
 ```
 
@@ -499,7 +499,7 @@ moon.use()
 
 -- Inline
 local m = module "Demo" {
-  fn .add { a [i32], b [i32] } [i32] { ret (a + b) },
+  fn. add { a [i32], b [i32] } [i32] { ret (a + b) },
 }
 
 -- From file
@@ -583,6 +583,7 @@ luajit benchmarks/bench_llpvm_image_load.lua          # LLPVM image loading benc
 
 ```
 moonlift/
+├── lua/llb.lua                  Standard Lua Language Builder DSL substrate
 ├── lua/moonlift/
 │   ├── dsl/                    DSL authoring surface
 │   ├── ast.lua                 Low-level ASDL node constructor API
@@ -611,14 +612,12 @@ moonlift/
 │   └── terra_vs_mlua/          Terra comparison
 ├── benchmarks/                 Performance benchmarks
 ├── tests/                      Lua test suite (~100+ tests)
-├── LANGUAGE_REFERENCE.md       Complete language reference
-├── OWNED_CFG_DESIGN.md         Linear owned/handle/lease design
-├── CONVENTIONS.md              Naming and file organization conventions
-├── PVM_GUIDE.md                PVM ASDL/phase framework guide
-├── LLPVM_GUIDE.md              Low-level PVM bytecode/native VM guide
-├── COMPILER_PATTERN.md         Interactive software as compilers
-├── BACK_WIRE_FORMAT.md         Flatline v4 binary wire format
-├── explicit_programming.md     Explicit programming philosophy
+├── docs/                       Canonical project documentation
+│   ├── LANGUAGE_REFERENCE.md   Complete Lua-owned DSL reference
+│   ├── THE_MOONLIFT_DESIGN_BIBLE.md
+│   ├── LLB_GUIDE.md
+│   ├── LLPVM_GUIDE.md
+│   └── BACK_WIRE_FORMAT.md
 └── README.md                   This file
 ```
 
@@ -628,15 +627,14 @@ moonlift/
 
 | Document | Description |
 |---|---|
-| [`LANGUAGE_REFERENCE.md`](LANGUAGE_REFERENCE.md) | **Complete DSL language reference.** Types, modules, functions, control regions, fragments, contracts, atomics, host declarations, view ABI, vectorization. |
-| [`lua/moonlift/dsl/LANGUAGE_REFERENCE.md`](lua/moonlift/dsl/LANGUAGE_REFERENCE.md) | **Lua-owned DSL reference.** Direct Lua-value authoring, structural `{}` products/protocols/bodies, no-antiquote metaprogramming, and natural program slicing without a second parser. |
-| [`OWNED_CFG_DESIGN.md`](OWNED_CFG_DESIGN.md) | **Owned CFG resource discipline.** Final rules for `owned T`, handles, leases, emit transfer, disallowed aggregates, and diagnostics. |
-| [`CONVENTIONS.md`](CONVENTIONS.md) | **Project conventions.** Naming, headers vs implementations, handles, generations, stores, and protocol naming. |
-| [`BACK_WIRE_FORMAT.md`](BACK_WIRE_FORMAT.md) | **Flatline v4 binary wire format.** The stable ABI between the Lua frontend and the Rust Cranelift backend. |
-| [`PVM_GUIDE.md`](PVM_GUIDE.md) | **Complete PVM guide.** ASDL contexts, structural update, recording-triplet phases, pull-driven evaluation, the triplet algebra. |
-| [`LLPVM_GUIDE.md`](LLPVM_GUIDE.md) | **Complete LLPVM guide.** Low-level PVM doctrine, direct borrowed bytecode images, native VM handles, C blob ABI, phases, streams, recordings, and cache discipline. |
-| [`COMPILER_PATTERN.md`](COMPILER_PATTERN.md) | **Interactive software as compilers.** The philosophy behind Moonlift's architecture: ASDL as the input language, live compilation, memoized phase boundaries. |
-| [`explicit_programming.md`](explicit_programming.md) | **Explicit programming philosophy.** A guide to designing systems with typed data types and typed control protocols. |
+| [`docs/LANGUAGE_REFERENCE.md`](docs/LANGUAGE_REFERENCE.md) | **Complete Lua-owned DSL language reference.** Types, modules, functions, control regions, fragments, contracts, host declarations, view ABI, vectorization, and metaprogramming. |
+| [`docs/THE_MOONLIFT_DESIGN_BIBLE.md`](docs/THE_MOONLIFT_DESIGN_BIBLE.md) | **Design bible.** The authoritative design philosophy and architecture narrative. |
+| [`docs/LLB_GUIDE.md`](docs/LLB_GUIDE.md) | **LLB guide.** The standard Moonlift Lua Language Builder substrate: staged heads, fragments, formatting, use sessions, origins, and fragment algebra. |
+| [`docs/LLPVM_GUIDE.md`](docs/LLPVM_GUIDE.md) | **Complete LLPVM guide.** Low-level PVM doctrine, direct borrowed bytecode images, native VM handles, C blob ABI, phases, streams, recordings, and cache discipline. |
+| [`docs/PVM_GUIDE.md`](docs/PVM_GUIDE.md) | **Complete PVM guide.** ASDL contexts, structural update, recording-triplet phases, pull-driven evaluation, and triplet algebra. |
+| [`docs/OWNED_CFG_DESIGN.md`](docs/OWNED_CFG_DESIGN.md) | **Owned CFG resource discipline.** Final rules for `owned T`, handles, leases, emit transfer, disallowed aggregates, and diagnostics. |
+| [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) | **Project conventions.** Naming, headers vs implementations, handles, generations, stores, and protocol naming. |
+| [`docs/BACK_WIRE_FORMAT.md`](docs/BACK_WIRE_FORMAT.md) | **Flatline v4 binary wire format.** The stable ABI between the Lua frontend and the Rust Cranelift backend. |
 
 ---
 

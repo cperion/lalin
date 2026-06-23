@@ -167,7 +167,7 @@ The exact representation should reuse existing language-level struct/union/varia
 Safe implementation areas:
 
 - `lua/moonlift/schema/tree.asdl`
-- `lua/moonlift/parse.lua`
+- `lua/moonlift/dsl/init.lua`
 - `lua/moonlift/open_expand.lua`
 - `lua/moonlift/region_normal_form.lua`
 - host/builder APIs that construct region uses
@@ -219,7 +219,7 @@ StmtUseRegionFrag(
 
 All existing `emit` sites construct `RegionUseEmit`.
 
-The parser constructs `RegionUseCall` for source `call`.
+DSL normalization constructs `RegionUseCall` for source `call`.
 
 ## Parser contract
 
@@ -380,7 +380,7 @@ Required tests:
    call scan(p; hit = found, miss = done)
    ```
 
-2. Existing `emit` parse/expansion behavior is unchanged.
+2. Existing `emit` normalization/expansion behavior is unchanged.
 
 3. Expansion removes all `RegionUseCall` before Code/backend lowering.
 

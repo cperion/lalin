@@ -65,7 +65,7 @@ region parse_number(p: ptr(u8), n: index, i: index;
 Lua-owned DSL equivalent:
 
 ```lua
-region .parse_number
+region. parse_number
   { p [ptr [u8]], n [index], i [index] }
   {
     ok { value [f64], next [index] },
@@ -84,7 +84,7 @@ every path must terminate explicitly — there is no fallthrough
 
 When both structures are typed, design changes character. The design is no longer a diagram beside the code, a spec above the code, or a convention around the code. **The design is the declaration graph itself** — the type forest plus the region tree — and the compiler checks the two against each other continuously. That is the thesis of this entire book, and everything else is consequences.
 
-There is a practical consequence. Because Moonlift is built on exactly two structures — products and sums — the authoring surface falls directly out of the host language. Lua arrays are products. Lua record tables are fill maps and continuation bindings. `[]` is the type slot. `.name` is the declaration target. The DSL is not a separate language with its own parser; it is Lua table shapes recognized as Moonlift semantics. The design discipline became the syntax.
+There is a practical consequence. Because Moonlift is built on exactly two structures — products and sums — the authoring surface falls directly out of the host language. Lua arrays are products. Lua record tables are fill maps and continuation bindings. `[]` is the type slot. `head. name` is the declaration target. The DSL is not a separate language with its own parser; it is Lua table shapes recognized as Moonlift semantics. The design discipline became the syntax.
 
 This includes memory. A region signature is not merely a control interface; it is the place where access facts become visible. A continuation can grant a lease, deny access, prove a buffer shape, or expose that a handle was stale. The declaration already tells the caller what may be touched and what must be handled before any body is read.
 
@@ -374,7 +374,7 @@ Lua-owned DSL equivalent (declarations):
 ```lua
 local dsl = require("moonlift.dsl")
 return module "Auth" {
-  region .authenticate
+  region. authenticate
     { creds [ptr [Credentials]] }
     {
       success { user_id [u64] },
@@ -383,7 +383,7 @@ return module "Auth" {
       rate_limited { retry_after [i32] },
     }
     {
-      entry .start {} {},
+      entry. start {} {},
     },
 }
 ```
@@ -412,16 +412,16 @@ Lua-owned DSL equivalent:
 
 ```lua
 return module "Positions" {
-  struct .Cursor {
+  struct. Cursor {
     byte [index],
     line [index],
     column [index],
   },
-  struct .Buffer {
+  struct. Buffer {
     data [ptr [u8]],
     len [index],
   },
-  struct .SourceSpan {
+  struct. SourceSpan {
     file_id [u32],
     start [index],
     len [index],
@@ -457,7 +457,7 @@ Lua-owned DSL equivalent:
 
 ```lua
 return module "ProtocolRecv" {
-  region .recv_i32
+  region. recv_i32
     { ch [ptr [Channel]] }
     {
       got { value [i32] },
@@ -466,7 +466,7 @@ return module "ProtocolRecv" {
       parked { waiter [ptr [Waiter]] },
     },
     {
-      entry .start {} {},
+      entry. start {} {},
     },
 }
 ```
@@ -484,11 +484,11 @@ emit recv_i32(ch;
 Lua-owned DSL equivalent (inside a function body):
 
 ```lua
-fn .consume_recv
+fn. consume_recv
   { ch [ptr [Channel]] }
   [void]
   {
-    emit .recv_i32 { ch } {
+    emit. recv_i32 { ch } {
       got    = handle_value,
       empty  = try_other_work,
       closed = stop_worker,
@@ -524,7 +524,7 @@ func add(a: i32, b: i32): i32         -- region add(a: i32, b: i32; return(resul
 Lua-owned DSL equivalent:
 
 ```lua
-fn .add
+fn. add
   { a [i32], b [i32] }
   [i32]
   {
@@ -561,14 +561,14 @@ local function expect_byte(tag, byte, err_code)
                     err { pos [index], code [i32] },
                   }
                   {
-                    entry .start {} {
+                    entry. start {} {
                       when (pos:ge(n)) {
-                        jump .err { pos = pos, code = code },
+                        jump. err { pos = pos, code = code },
                       },
                       when (as [i32] (p[pos]):eq(byte)) {
-                        jump .ok { next = pos + 1 },
+                        jump. ok { next = pos + 1 },
                       },
-                      jump .err { pos = pos, code = code },
+                      jump. err { pos = pos, code = code },
                     },
                   },
             }
@@ -641,21 +641,21 @@ end
 Lua-owned DSL equivalent:
 
 ```lua
-handle .LuaStateRef {
+handle. LuaStateRef {
   invalid = 0,
   target = "LuaStateRecord",
 }
 
-handle .LuaRef {
+handle. LuaRef {
   invalid = 0,
   target = "LuaRefRecord",
 }
 
-struct .LuaStackMark {
+struct. LuaStackMark {
   top [i32],
 }
 
-struct .LuaStackRange {
+struct. LuaStackRange {
   first [i32],
   count [i32],
 }
@@ -670,7 +670,7 @@ owned LuaRef
 Lua-owned DSL type:
 
 ```lua
-fn .consume_ref
+fn. consume_ref
   { ref [owned [LuaRef]] }
   [void]
   {
@@ -740,24 +740,24 @@ Lua-owned DSL equivalent:
 
 ```lua
 return module "ParserShapes" {
-  struct .ParseInput {
+  struct. ParseInput {
     p [ptr [u8]],
     n [index],
     i [index],
   },
-  union .ParseExit {
+  union. ParseExit {
     ok { value [f64], next [index] },
     syntax { pos [index], code [i32] },
     truncated { pos [index] },
   },
-  region .parse_number
+  region. parse_number
     { p [ptr [u8]], n [index], i [index] }
     {
       ok { value [f64], next [index] },
       syntax { pos [index], code [i32] },
       truncated { pos [index] },
     }
-    { entry .start {} {} },
+    { entry. start {} {} },
 }
 
 That last line is not a new abstraction layer. It is the same declaration graph
@@ -773,7 +773,7 @@ region parse_number(p: ptr(u8), n: index, i: index;
 Lua-owned DSL equivalent signature form:
 
 ```lua
-region .parse_number
+region. parse_number
   { p [ptr [u8]], n [index], i [index] }
   {
     ok { value [f64], next [index] },
@@ -874,7 +874,7 @@ region parse(...;
 Lua-owned DSL equivalent:
 
 ```lua
-region .parse
+region. parse
   { input [ptr [TokenStream]], next [index] }
   {
     ok { value [f64], next [index] },
@@ -902,22 +902,22 @@ Lua-owned DSL equivalent:
 
 ```lua
 return module "ExprVisitation" {
-  struct .ExprRef {
+  struct. ExprRef {
     kind [u8],
     index [u32],
   },
-  struct .IntLitExpr {
+  struct. IntLitExpr {
     value [i64],
   },
-  struct .NameExpr {
+  struct. NameExpr {
     symbol [u32],
   },
-  struct .CallExpr {
+  struct. CallExpr {
     fn [ExprRef],
     args_data [ptr [ExprRef]],
     args_len [index],
   },
-  region .visit_expr
+  region. visit_expr
     { ast [ptr [Ast]], e [ExprRef] }
     {
       int_lit { e [ptr [IntLitExpr]] },
@@ -925,7 +925,7 @@ return module "ExprVisitation" {
       call { e [ptr [CallExpr]] },
       invalid { code [i32] },
     }
-    { entry .start {} {} },
+    { entry. start {} {} },
 }
 ```
 
@@ -975,7 +975,7 @@ region parse_value(L: ptr(lua_State), p: ptr(u8), n: index, i: index;
 Lua-owned DSL equivalent:
 
 ```lua
-region .parse_value
+region. parse_value
   { L [ptr [lua_State]], p [ptr [u8]], n [index], i [index] }
   {
     ok { next [index] },
@@ -1048,7 +1048,7 @@ region reserve_bytes(arena: ptr(Arena), n: index;
 Lua-owned DSL equivalent:
 
 ```lua
-region .reserve_bytes
+region. reserve_bytes
   { arena [ptr [Arena]], n [index] }
   {
     ok { p [ptr [u8]], len [index] },
@@ -1262,22 +1262,22 @@ Lua-owned DSL equivalent:
 
 ```lua
 return module "ParseConfig" {
-  struct .Buffer {
+  struct. Buffer {
     data [ptr [u8]],
     len [index],
   },
-  struct .Setting {
+  struct. Setting {
     key_off [index],
     key_len [index],
     val_off [index],
     val_len [index],
   },
-  struct .Config {
+  struct. Config {
     items [ptr [Setting]],
     len [index],
     cap [index],
   },
-  region .parse_config
+  region. parse_config
     { buf [ptr [Buffer]], out [ptr [Config]] }
     {
       done { count [index] },
@@ -1285,7 +1285,7 @@ return module "ParseConfig" {
       empty,
       truncated { pos [index] },
     }
-    { entry .start {} {} },
+    { entry. start {} {} },
 }
 ```
 
@@ -1342,27 +1342,27 @@ Lua-owned DSL equivalent:
 
 ```lua
 return module "Shapes" {
-  struct .ShapeRef {
+  struct. ShapeRef {
     kind [u8],
     index [u32],
   },
-  struct .CircleData {
+  struct. CircleData {
     cx [f64],
     cy [f64],
     r [f64],
   },
-  struct .PolygonData {
+  struct. PolygonData {
     pts [ptr [Point]],
     len [index],
   },
-  region .visit_shape
+  region. visit_shape
     { shapes [ptr [ShapeStore]], s [ShapeRef] }
     {
       circle { c [ptr [CircleData]] },
       polygon { p [ptr [PolygonData]] },
       invalid { code [i32] },
     }
-    { entry .start {} {} },
+    { entry. start {} {} },
 }
 ```
 
@@ -1437,7 +1437,7 @@ region steal(s: ptr(Sched), self_id: i32;
 Lua-owned DSL equivalent:
 
 ```lua
-region .pop_local
+region. pop_local
   { d [ptr [Deque]] }
   {
     got { job [JobRef] },
@@ -1445,7 +1445,7 @@ region .pop_local
     stop,
   }
 
-region .steal
+region. steal
   { s [ptr [Sched]], self_id [i32] }
   {
     stole { job [JobRef], victim [i32] },
@@ -1462,12 +1462,12 @@ emit steal(s, id; stole = run_stolen, empty = park)
 Lua-owned DSL equivalent:
 
 ```lua
-emit .pop_local { d } {
+emit. pop_local { d } {
   got = run_it,
   empty = try_steal,
   stop = drain,
 }
-emit .steal { s, id } {
+emit. steal { s, id } {
   stole = run_stolen,
   empty = park,
 }
@@ -1528,7 +1528,7 @@ end
 Lua-owned DSL equivalent:
 
 ```lua
-region .job_lifecycle
+region. job_lifecycle
   { s [ptr [Sched]], job [JobRef] }
   {
     done { result [i64] },
@@ -1536,14 +1536,14 @@ region .job_lifecycle
     cancelled,
   }
   {
-    entry .start { s [ptr [Sched]], job [JobRef] } {
-      jump .pending { job = job },
+    entry. start { s [ptr [Sched]], job [JobRef] } {
+      jump. pending { job = job },
     },
-    block .pending { job [JobRef] } {
-      jump .running { job = job },
+    block. pending { job [JobRef] } {
+      jump. running { job = job },
     },
-    block .running { job [JobRef], started_at [i64], retries [i32] } {
-      jump .cancelled {},
+    block. running { job [JobRef], started_at [i64], retries [i32] } {
+      jump. cancelled {},
     },
   },
 }
@@ -1782,36 +1782,36 @@ Lua-owned DSL equivalent:
 
 ```lua
 return module "SchedulerModel" {
-  struct .Job {
+  struct. Job {
     fn [ptr [u8]],
     arg [ptr [u8]],
     state [u8],
     pad [u8],
     gen [u16],
   },
-  struct .JobPool {
+  struct. JobPool {
     items [ptr [Job]],
     cap [index],
     free_head [u32],
   },
-  struct .Deque {
+  struct. Deque {
     ring [ptr [u32]],
     cap [index],
     head [u64],
     tail [u64],
   },
-  struct .Worker {
+  struct. Worker {
     id [i32],
     deque [Deque],
     rng [u64],
   },
-  struct .Sched {
+  struct. Sched {
     pool [JobPool],
     workers [ptr [Worker]],
     n_workers [index],
     flags [u32],
   },
-  handle .JobRef {
+  handle. JobRef {
     invalid = 0,
     domain = "JobPool",
     target = "Job",
@@ -1856,7 +1856,7 @@ region worker_loop(w: ptr(Worker), s: ptr(Sched);
 Lua-owned DSL equivalent:
 
 ```lua
-region .submit
+region. submit
   { s [ptr [Sched]], fn [ptr [u8]], arg [ptr [u8]] }
   {
     accepted { job [JobRef] },
@@ -1864,7 +1864,7 @@ region .submit
     shutting_down,
   }
 
-region .borrow_job
+region. borrow_job
   { s [ptr [Sched]], job [JobRef] }
   {
     borrowed { slot [lease [ptr [Job]] },
@@ -1872,7 +1872,7 @@ region .borrow_job
     missing { job [JobRef] },
   }
 
-region .pop_local
+region. pop_local
   { w [ptr [Worker]], s [ptr [Sched]] }
   {
     got { job [JobRef] },
@@ -1880,14 +1880,14 @@ region .pop_local
     stop,
   }
 
-region .steal
+region. steal
   { s [ptr [Sched]], self_id [i32] }
   {
     stole { job [JobRef], victim [i32] },
     empty,
   }
 
-region .run_job
+region. run_job
   { s [ptr [Sched]], job [JobRef] }
   {
     done { result [i64] },
@@ -1895,7 +1895,7 @@ region .run_job
     cancelled,
   }
 
-region .worker_loop
+region. worker_loop
   { w [ptr [Worker]], s [ptr [Sched]] }
   {
     drained { ran [index] },
@@ -1933,41 +1933,41 @@ end
 Lua-owned DSL equivalent:
 
 ```lua
-region .worker_loop
+region. worker_loop
   { w [ptr [Worker]], s [ptr [Sched]] }
   {
     drained { ran [index] },
     aborted { code [i32] },
   }
   {
-    entry .start {} {
-      jump .idle {
+    entry. start {} {
+      jump. idle {
         ran = 0,
         spins = 0,
       },
     },
-    block .idle { ran [index], spins [index] } {
-      emit .pop_local { d = w.deque, s = s } {
+    block. idle { ran [index], spins [index] } {
+      emit. pop_local { d = w.deque, s = s } {
         got = work,
         empty = hungry,
         stop = finish,
       },
     },
-    block .hungry { ran [index], spins [index] } {
-      emit .steal { s = s, self_id = w.id } {
+    block. hungry { ran [index], spins [index] } {
+      emit. steal { s = s, self_id = w.id } {
         stole = work_stolen,
         empty = park,
       },
     },
-    block .work { ran [index], spins [index], job [JobRef] } {
-      emit .run_job { s = s, job = job } {
+    block. work { ran [index], spins [index], job [JobRef] } {
+      emit. run_job { s = s, job = job } {
         done = bookkeep,
         failed = bookkeep_failed,
         cancelled = bookkeep,
       },
     },
-    block .finish { ran [index], spins [index] } {
-      jump .drained { ran = ran },
+    block. finish { ran [index], spins [index] } {
+      jump. drained { ran = ran },
     },
   },
 }
@@ -1987,14 +1987,14 @@ func sched_worker_main(w: ptr(Worker), s: ptr(Sched)): i64         -- thread ent
 Lua-owned DSL equivalent:
 
 ```lua
-fn .sched_submit
+fn. sched_submit
   { s [ptr [Sched]], fn [ptr [u8]], arg [ptr [u8]] }
   [i32]
   {
     ret (0),
   },
 
-fn .sched_worker_main
+fn. sched_worker_main
   { w [ptr [Worker]], s [ptr [Sched]] }
   [i64]
   {
@@ -2230,13 +2230,13 @@ Lua-owned DSL equivalent:
 
 ```lua
 return module "AudioBufferModel" {
-  struct .AudioBufferStore {
+  struct. AudioBufferStore {
     records [ptr [AudioBufferRecord]],
     samples [ptr [f32]],
     capacity [index],
     generation [u64],
   },
-  handle .AudioBuffer {
+  handle. AudioBuffer {
     invalid = 0,
     domain = "AudioBufferStore",
     target = "AudioBufferRecord",
@@ -2284,7 +2284,7 @@ region borrow_audio_buffer(store: ptr(AudioBufferStore),
 Lua-owned DSL equivalent:
 
 ```lua
-region .borrow_audio_buffer
+region. borrow_audio_buffer
   { store [ptr [AudioBufferStore]], buffer [AudioBuffer] }
   {
     borrowed { samples [lease [view [f32]]] },
@@ -2353,7 +2353,7 @@ Lua-owned DSL equivalent:
 
 ```lua
 -- ABI-side bound contract
-fn .c_sum
+fn. c_sum
   { p [ptr [i32]], n [index] }
   [i32]
   {
@@ -2390,7 +2390,7 @@ Lua-owned DSL equivalent:
 
 ```lua
 -- invalidate store: consumes a live lease from VoiceStore if active
-fn .destroy_voice
+fn. destroy_voice
   { store [ptr [VoiceStore]], voice [Voice] }
   [void]
   {
@@ -2398,7 +2398,7 @@ fn .destroy_voice
   },
 
 -- readonly access to count_voices
-fn .count_voices
+fn. count_voices
   { store [ptr [VoiceStore]] }
   [index]
   {
@@ -2406,7 +2406,7 @@ fn .count_voices
   },
 
 -- lease-based state access
-fn .process_voice
+fn. process_voice
   { state [lease [ptr [VoiceState]]] }
   [void]
   {
@@ -2434,7 +2434,7 @@ region reset_render_scratch(scratch: ptr(RenderScratch), shape: BlockShape;
 Lua-owned DSL equivalent:
 
 ```lua
-region .reset_render_scratch
+region. reset_render_scratch
   { scratch [ptr [RenderScratch]], shape [BlockShape] }
   {
     reset,

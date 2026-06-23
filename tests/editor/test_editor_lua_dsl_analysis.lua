@@ -20,8 +20,8 @@ local good_doc = S.DocumentSnapshot(uri, S.DocVersion(1), S.LangLua, [[
 require("moonlift").use()
 
 return module "EditorSmoke" {
-  struct .Pair { a [i32], b [i32] },
-  fn .add { a [i32], b [i32] } [i32] {
+  struct. Pair { a [i32], b [i32] },
+  fn. add { a [i32], b [i32] } [i32] {
     ret (a + b),
   },
 }
@@ -47,7 +47,7 @@ local bad_doc = S.DocumentSnapshot(S.DocUri("file:///editor_lua_dsl_bad.lua"), S
 require("moonlift").use()
 
 return module "Bad" {
-  fn .bad {} [i32] {
+  fn. bad {} [i32] {
     ret true,
   },
 }

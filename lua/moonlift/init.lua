@@ -5,6 +5,8 @@
 --   moon.loadfile(path)            — compile DSL file and return a callable module
 --   moon.dofile(path, ...)         — load and immediately execute
 --   moon.eval(src, ...)            — loadstring + immediate call
+--   moon.format(value [, opts])    — canonical format for evaluated DSL values
+--   moon.format_file(path [, opts]) — evaluate a format-owned file and render it
 --
 -- Object emission (hosted pipeline):
 --   moon.emit_object(decl [, path [, name]])
@@ -62,9 +64,23 @@ M.lsp = require("moonlift.rpc_stdio_loop")
 -- Call this once at the top of any .lua file that authors Moonlift DSL.
 --
 --   require("moonlift").use()       -- injects DSL globals into _G
---   fn .add { a = i32, b = i32 } [i32] { ret (a + b) }
+--   fn. add { a [i32], b [i32] } [i32] { ret (a + b) }
 --   return add
 M.use = M.dsl.use
+
+--- Canonical formatting for evaluated Moonlift DSL values.
+
+function M.format(value, opts)
+    return M.dsl.format(value, opts)
+end
+
+function M.format_file(path, opts)
+    return M.dsl.format_file(path, opts)
+end
+
+function M.write_format_file(path, opts)
+    return M.dsl.write_format_file(path, opts)
+end
 
 --- Hosted load/compile via DSL.
 

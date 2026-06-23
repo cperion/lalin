@@ -6,7 +6,7 @@ end
 func tagged_pick(x: i32): i32
     let m = Maybe.some(x)
     return switch m do
-    case .some(v) then v + 1
+    case. some(v) then v + 1
     default then 0
     end
 end

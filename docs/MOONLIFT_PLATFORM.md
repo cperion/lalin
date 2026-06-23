@@ -307,8 +307,7 @@ The Moonlift compiler can itself be packaged with the application.
 
 A development mode might look like:
 
-```text
-.mlua source
+```text .lua DSL source
 LuaJIT host execution
 Moonlift compile/JIT
 call function pointers
@@ -316,8 +315,7 @@ call function pointers
 
 A release mode might look like:
 
-```text
-.mlua source
+```text .lua DSL source
 LuaJIT staging
 Moonlift object emission
 link object files
@@ -327,8 +325,7 @@ ship one executable
 
 A library mode might look like:
 
-```text
-.mlua source
+```text .lua DSL source
 Moonlift object/shared emission
 header or binding generation
 consumer links as ordinary C ABI artifact
@@ -339,7 +336,7 @@ A Luvi-style packaging mode could provide:
 ```text
 LuaJIT runtime
 embedded Moonlift compiler/runtime
-embedded .mlua modules
+embedded .lua DSL modules
 libuv/event APIs if desired
 native Moonlift artifacts
 single executable shell
@@ -953,7 +950,7 @@ The platform can support multiple packaging modes.
 ### 12.1 Development mode
 
 ```text
-load .mlua
+load .lua
 run Lua staging
 JIT Moonlift code
 call function pointers
@@ -963,8 +960,8 @@ iterate quickly
 ### 12.2 Library mode
 
 ```text
-load .mlua
-emit .o / .so / .dylib
+load .lua
+emit. o / .so / .dylib
 ship C ABI symbol
 consumer links normally
 ```
@@ -974,7 +971,7 @@ consumer links normally
 ```text
 embed LuaJIT
 embed Moonlift compiler/runtime
-embed .mlua modules or precompiled chunks
+embed .lua DSL modules or precompiled chunks
 embed or generate native artifacts
 ship one executable
 ```

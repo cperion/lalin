@@ -196,7 +196,7 @@ Moonlift type values. Write real Moonlift declarations via the DSL:
 local dsl = require("moonlift.dsl")
 local chunk = dsl.loadstring([[
 return module "LLPVMTypes" {
-  struct .Vec2 {
+  struct. Vec2 {
     x [f32],
     y [f32],
   },

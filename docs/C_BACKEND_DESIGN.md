@@ -22,7 +22,7 @@ Current checkpoint — 2026-06-15:
 The C backend is a PVM side projection.  The target architecture is:
 
 ```text
-source / .mlua
+Lua DSL value
   -> parse
   -> open_expand
   -> closure_convert
@@ -927,7 +927,7 @@ ABI signatures, and variant/tagged-union operations explicit once.
 The target pipeline is:
 
 ```text
-source / .mlua
+Lua DSL value
   -> parse
   -> open_expand
   -> closure_convert

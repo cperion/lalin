@@ -76,7 +76,7 @@ function M.compile_kernel(kernel, config)
     end
 
     local repo_root = util.abspath(config.repo_root or util.find_repo_root(".") or ".")
-    local emitter = config.emit_object or (repo_root .. "/emit_object.lua")
+    local emitter = config.emit_object or (repo_root .. "/scripts/emit_object.lua")
     local abs_obj = util.abspath(obj_path)
     local abs_src = util.abspath(kernel_src)
     local module_name = (config.module_name or kernel.id):gsub("[^%w_]", "_")

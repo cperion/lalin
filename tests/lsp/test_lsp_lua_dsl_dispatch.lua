@@ -18,7 +18,7 @@ local doc = S.DocumentSnapshot(uri, S.DocVersion(1), S.LangLua, [[
 require("moonlift").use()
 
 return module "LspSmoke" {
-  fn .add { a [i32], b [i32] } [i32] {
+  fn. add { a [i32], b [i32] } [i32] {
     ret (a + b),
   },
 }
@@ -43,7 +43,7 @@ local bad_doc = S.DocumentSnapshot(bad_uri, S.DocVersion(1), S.LangLua, [[
 require("moonlift").use()
 
 return module "Bad" {
-  fn .bad {} [i32] {
+  fn. bad {} [i32] {
     ret true,
   },
 }

@@ -4,75 +4,75 @@ local dsl = require("moonlift.dsl")
 
 local src = [=[
 return module "DslSmoke" {
-  struct .Vec2 {
+  struct. Vec2 {
     x [f32],
     y [f32],
   },
 
-  union .Result {
+  union. Result {
     ok { value [i32] },
     err { code [i32] },
     none,
   },
 
-  handle .SessionRef {
+  handle. SessionRef {
     invalid = 0,
   },
 
-  extern .host_add
+  extern. host_add
     { x [i32] }
     [i32]
     { symbol = "host_add" },
 
-  const .answer [i32] (42),
-  const .pi [f64] (3.14159),
-  const .truth [bool] (true),
-  static .zero [i32] (0),
+  const. answer [i32] (42),
+  const. pi [f64] (3.14159),
+  const. truth [bool] (true),
+  static. zero [i32] (0),
 
-  expr_frag .inc
+  expr_frag. inc
     ({ x [i32] })
     [i32]
     (x + 1),
 
-  fn .greeting
+  fn. greeting
     {}
     [ptr [u8]]
     {
       ret "hello, moonlift",
     },
 
-  fn .lit
+  fn. lit
     { x [i32] }
     [i32]
     {
-      let .xs [array [i32] [2]] ({ x, x + 1 }),
+      let. xs [array [i32] [2]] ({ x, x + 1 }),
       ret (xs[0]),
     },
 
-  region .scan
+  region. scan
     { x [i32] }
     {
       hit { pos [i32] },
       miss,
     }
     {
-      entry .start {} {
-        jump .hit { pos = x },
+      entry. start {} {
+        jump. hit { pos = x },
       },
     },
 
-  fn .choose
+  fn. choose
     { x [i32] }
     [i32]
     {
-      entry .start {} {
-        emit .scan { x } {
+      entry. start {} {
+        emit. scan { x } {
           hit = done,
           miss = done,
         },
       },
 
-      block .done { pos [i32] } {
+      block. done { pos [i32] } {
         switch (pos) {
           case (0) {
             ret (answer),
@@ -85,19 +85,19 @@ return module "DslSmoke" {
       },
     },
 
-  fn .atomic_ops
+  fn. atomic_ops
     { p [ptr [i32]], v [i32] }
     [i32]
     {
-      let .a [i32] (aload (i32, p)),
+      let. a [i32] (aload (i32, p)),
       astore (i32, p, v),
-      let .b [i32] (armw ("xchg", i32, p, v)),
-      let .c [i32] (acas (i32, p, v, 0)),
+      let. b [i32] (armw ("xchg", i32, p, v)),
+      let. c [i32] (acas (i32, p, v, 0)),
       afence (),
       ret (a),
     },
 
-  fn .contract_demo
+  fn. contract_demo
     { buf [ptr [u8]], count [index] }
     [index]
     {
@@ -108,7 +108,7 @@ return module "DslSmoke" {
       ret (count),
     },
 
-  fn .readonly_contract
+  fn. readonly_contract
     { buf [ptr [u8]], count [index] }
     [index]
     {
@@ -120,7 +120,7 @@ return module "DslSmoke" {
       ret (count),
     },
 
-  fn .use_switch
+  fn. use_switch
     { x [i32] }
     [i32]
     {
@@ -135,18 +135,18 @@ return module "DslSmoke" {
       },
     },
 
-  fn .use_emit
+  fn. use_emit
     { x [i32] }
     [i32]
     {
-      entry .start {} {
-        emit .scan { x } {
+      entry. start {} {
+        emit. scan { x } {
           hit = done,
           miss = done,
         },
       },
 
-      block .done { pos [i32] } {
+      block. done { pos [i32] } {
         ret (pos),
       },
     },
@@ -162,12 +162,12 @@ assert(module:lower({ site = "test_dsl_lua_owned" }), "lower() failed")
 -- Test header / implementation split pattern
 local header = dsl.loadstring([[
 return {
-  fn .add { a [i32], b [i32] } [i32],
-  fn .sub { a [i32], b [i32] } [i32],
+  fn. add { a [i32], b [i32] } [i32],
+  fn. sub { a [i32], b [i32] } [i32],
 }
 ]], "header")()
-assert(type(header[1]) == "table", "header fn .add did not produce callable stage")
-assert(type(header[2]) == "table", "header fn .sub did not produce callable stage")
+assert(type(header[1]) == "table", "header fn. add did not produce callable stage")
+assert(type(header[2]) == "table", "header fn. sub did not produce callable stage")
 
 local impl = dsl.loadstring([[
 local header = ...

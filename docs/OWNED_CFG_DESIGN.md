@@ -131,7 +131,7 @@ A binding enters `owned_live` when its type is `owned T`.
 Examples:
 
 ```lua
-fn .f { s [owned [SessionRef]] } {
+fn. f { s [owned [SessionRef]] } {
     ...
 }
 ```
@@ -139,7 +139,7 @@ fn .f { s [owned [SessionRef]] } {
 At function entry, `s` is live.
 
 ```lua
-let .s [owned [SessionRef]] { make () }
+let. s [owned [SessionRef]] { make () }
 ```
 
 After the `let`, `s` is live.
@@ -171,7 +171,7 @@ region that accepts the owner and returns it on every continuation that preserve
 the obligation:
 
 ```lua
-region .borrow_owned_session
+region. borrow_owned_session
   { app [readonly [ptr [App]]], s [owned [SessionRef]] }
   {
     borrowed { s [owned [SessionRef]], session [lease (app, ptr [Session])] },
@@ -185,7 +185,7 @@ continuations explicitly transfer the ownership obligation back to the caller.
 This is illegal:
 
 ```lua
-fn .bad { s [owned [SessionRef]] } [SessionRef] {
+fn. bad { s [owned [SessionRef]] } [SessionRef] {
     ret (s)
 }
 ```
@@ -193,7 +193,7 @@ fn .bad { s [owned [SessionRef]] } [SessionRef] {
 This is legal:
 
 ```lua
-fn .pass { s [owned [SessionRef]] } [owned [SessionRef]] {
+fn. pass { s [owned [SessionRef]] } [owned [SessionRef]] {
     ret (s)
 }
 ```
@@ -201,7 +201,7 @@ fn .pass { s [owned [SessionRef]] } [owned [SessionRef]] {
 This is illegal because `s` is used after move:
 
 ```lua
-fn .bad { app [ptr [App]], s [owned [SessionRef]] } {
+fn. bad { app [ptr [App]], s [owned [SessionRef]] } {
     close_session (app, s)
     close_session (app, s)
 }
@@ -214,9 +214,9 @@ fn .bad { app [ptr [App]], s [owned [SessionRef]] } {
 The checker rejects:
 
 ```lua
-let .a [owned [FileRef]] { open_file (...) }
-let .b [owned [FileRef]] { a }
-let .c [owned [FileRef]] { a }
+let. a [owned [FileRef]] { open_file (...) }
+let. b [owned [FileRef]] { a }
+let. c [owned [FileRef]] { a }
 ```
 
 The first assignment moves `a` into `b`; the second use of `a` is use-after-move.
@@ -229,7 +229,7 @@ different type.
 Functions can consume ownership by taking `owned` parameters:
 
 ```lua
-fn .destroy_buffer { buf [owned [BufferRef]] } {
+fn. destroy_buffer { buf [owned [BufferRef]] } {
     ...
 }
 ```
@@ -239,7 +239,7 @@ are moved into the callee and the result ownership is determined by the result
 type.  A function that preserves an owned obligation must return it explicitly.
 
 ```lua
-fn .transfer { s [owned [SessionRef]] } [owned [SessionRef]] {
+fn. transfer { s [owned [SessionRef]] } [owned [SessionRef]] {
     ret (s)
 }
 ```
@@ -254,7 +254,7 @@ Regions are the primary ownership protocol mechanism.
 Input ownership:
 
 ```lua
-region .close_session
+region. close_session
   { app [ptr [App]], s [owned [SessionRef]] }
   {
     closed,
@@ -278,7 +278,7 @@ per-continuation, not hidden effects.
 Preserving operations must return the owner:
 
 ```lua
-region .poll_task
+region. poll_task
   { task [owned [TaskRef]] }
   {
     pending { task [owned [TaskRef]] },
@@ -294,7 +294,7 @@ it.  If failure should remain caller-owned, the failure continuation must carry
 Another valid shape:
 
 ```lua
-region .retire_component { sess [ptr [Session]], c [owned [ComponentRef]] } { retired, stale, missing }
+region. retire_component { sess [ptr [Session]], c [owned [ComponentRef]] } { retired, stale, missing }
 ```
 
 Here every continuation consumes `c`.  Even failure means the retirement machine
@@ -303,7 +303,7 @@ has taken responsibility for the invalid handle.
 If the caller must keep responsibility on failure, the signature must say so:
 
 ```lua
-region .retire_component
+region. retire_component
   { sess [ptr [Session]], c [owned [ComponentRef]] }
   {
     retired,
@@ -318,12 +318,12 @@ region .retire_component
 parameters receive whatever ownership the selected continuation grants.
 
 ```lua
-emit .close_session { app, s } {
+emit. close_session { app, s } {
     closed = done,
     missing = retry,
 }
 
-block .retry { s [owned [SessionRef]] } {
+block. retry { s [owned [SessionRef]] } {
     ...
 }
 ```
@@ -355,8 +355,8 @@ authority.
 Block params may be owned:
 
 ```lua
-block .use { s [owned [SessionRef]] } {
-    jump .close { s = s }
+block. use { s [owned [SessionRef]] } {
+    jump. close { s = s }
 }
 ```
 
@@ -459,7 +459,7 @@ function call owned args
 `let` may bind owned values:
 
 ```lua
-let .f [owned [FileRef]] { ... }
+let. f [owned [FileRef]] { ... }
 ```
 
 `var owned T` is rejected.
@@ -473,7 +473,7 @@ parameters to thread changing ownership state.
 Durable fields of type `owned T` are rejected.
 
 ```lua
-struct .Bad { f [owned [FileRef]] }
+struct. Bad { f [owned [FileRef]] }
 ```
 
 Reason: Moonlift does not make products secretly linear.  If a product owns a
@@ -521,34 +521,34 @@ continuation that preserves the close/retire obligation.
 Common pattern:
 
 ```lua
-handle .SessionRef {
+handle. SessionRef {
     invalid = 0,
     domain = "App",
     target = "Session",
 }
 
-region .open_session
+region. open_session
   { app [ptr [App]] }
   {
     opened { s [owned [SessionRef]] },
     oom { needed [index] },
   }
 
-region .borrow_session
+region. borrow_session
   { app [readonly [ptr [App]]], s [SessionRef] }
   {
     borrowed { session [lease (app, ptr [Session])] },
     missing { s [SessionRef] },
   }
 
-region .borrow_owned_session
+region. borrow_owned_session
   { app [readonly [ptr [App]]], s [owned [SessionRef]] }
   {
     borrowed { s [owned [SessionRef]], session [lease (app, ptr [Session])] },
     missing { s [owned [SessionRef]] },
   }
 
-region .close_session
+region. close_session
   { app [ptr [App]], s [owned [SessionRef]] }
   {
     closed,
