@@ -2,7 +2,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local dsl = require("moonlift.dsl")
 
-local src = [[
+local src = [=[
 return module "DslSmoke" {
   struct .Vec2 {
     x[f32],
@@ -25,12 +25,29 @@ return module "DslSmoke" {
     { symbol = "host_add" },
 
   const .answer [i32] (42),
+  const .pi [f64] (3.14159),
+  const .truth [bool] (true),
   static .zero [i32] (0),
 
   expr_frag .inc
     ({ x[i32] })
     [i32]
     (x + 1),
+
+  fn .greeting
+    {}
+    [ptr [u8]]
+    {
+      ret("hello, moonlift"),
+    },
+
+  fn .lit
+    { x[i32] }
+    [i32]
+    {
+      let .xs [array [i32][2]] ({ x, x + 1 }),
+      ret(xs[0]),
+    },
 
   region .scan
     { x[i32] }
@@ -68,7 +85,7 @@ return module "DslSmoke" {
       },
     },
 }
-]]
+]=]
 
 local module = dsl.loadstring(src, "dsl-smoke")()
 assert(module:syntax())
@@ -76,10 +93,10 @@ assert(module:ast())
 assert(module:typecheck())
 assert(module:lower({ site = "test_dsl_lua_owned" }))
 
-local strict_src = [[
+local strict_src = [=[
 accidental_global = 1
 return module "Strict" {}
-]]
+]=]
 
 local ok, err = pcall(function()
     return dsl.loadstring(strict_src, "dsl-strict", { strict = true })()

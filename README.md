@@ -11,6 +11,8 @@ files where `@{...}` carrier closures resolve bindings automatically; or use
 and fill maps as table values. The compiler turns them into JIT-ed function
 pointers, relocatable `.o` files, or `.so`/`.dylib` shared libraries.
 
+Recommended for new code: Lua-owned DSL.
+
 The `moonlift` binary embeds the full compiler (Lua staging + Cranelift backend).
 Zero runtime dependencies — copy it anywhere.
 
@@ -166,11 +168,11 @@ return module "Demo" {
     }
     {
       entry .start {} {
-        when(pos:ge(n)) {
+        when (pos:ge(n)) {
           jump .err { pos = pos, code = 10 },
         },
 
-        when(eq(as [i32](p[pos]), 65)) {
+        when (eq(as [i32] (p[pos]), 65)) {
           jump .ok { next = pos + 1 },
         },
 
@@ -190,11 +192,11 @@ return module "Demo" {
       },
 
       block .got_byte { next [i32] } {
-        ret(2000),
+        ret (2000),
       },
 
       block .bad { pos [i32], code [i32] } {
-        ret(0 - code),
+        ret (0 - code),
       },
     },
 }
@@ -707,15 +709,15 @@ What stays:
 
 ## Lua-Owned DSL
 
-The Lua-owned DSL is the minimal authoring surface for generated Moonlift. It
-is a real alternative to `.mlua`: Lua parses the program shape, Moonlift
+The Lua-owned DSL is the recommended authoring surface for generated Moonlift.
+It is a real alternative to `.mlua`: Lua parses the program shape, Moonlift
 receives ASDL-backed values, and `[]` naturally evaluates to ordinary Lua
 values. There is no second parser pass for splicing and no textual antiquote
 carrier.
 
-Use `.mlua` when you want source-like Moonlift text. Use
+Use `.mlua` only when you need source-style Moonlift text islands. Use
 `require("moonlift.dsl")` when code is generated, assembled, or sliced by Lua
-data.
+data (recommended).
 
 ```lua
 local dsl = require("moonlift.dsl")
@@ -727,15 +729,15 @@ return module "Demo" {
     hit { pos [i32] } | miss { pos [i32] }
   } {
     entry .loop { i [i32] = 0 } {
-      when(i >= n) { jump .miss { pos = i } },
-      when(as(i32, p[i]) == target) { jump .hit { pos = i } },
+      when (i >= n) { jump .miss { pos = i } },
+      when (as(i32, p[i]) == target) { jump .hit { pos = i } },
       jump .loop { i = i + 1 },
     },
   },
 
   fn .find_A { p [ptr(u8)], n [i32] } [i32] {
-    block .found { pos [i32] } { ret(pos) },
-    block .not_found { pos [i32] } { ret(-1) },
+    block .found { pos [i32] } { ret (pos) },
+    block .not_found { pos [i32] } { ret (-1) },
     emit .scan { p, n, 65 } { hit = found, miss = not_found },
   },
 }
@@ -752,7 +754,7 @@ local fields = product { x [i32], y [i32], tag [u8] }
 return module "M" {
   struct .Point { spread(fields) },
   fn .tag_of { p [Point] } [u8] {
-    ret(p.tag),
+    ret (p.tag),
   },
 }
 ```
@@ -805,7 +807,7 @@ return module "Demo" {
     { spread(params) }
     [T]
     {
-      ret(a + b),
+      ret (a + b),
     },
 }
 ```
@@ -843,7 +845,7 @@ return module "DemoOps" {
 
   fn .read { p [ptr [u8]], n [i32] } [i32] {
     entry .start {} {
-      ret(as[i32](n)),
+      ret (as [i32] (n)),
     },
   },
 }

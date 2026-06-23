@@ -11,6 +11,7 @@ normalizes those values by role and emits explicit `MoonSyntax`, `MoonTree`,
 and `MoonOpen` ASDL.
 
 There is no second source parser in the normal authoring path.
+This is the recommended path for new generated/metaprogrammed Moonlift code.
 
 ```text
 Lua syntax -> Lua values -> DSL role normalization -> Moonlift ASDL
@@ -26,17 +27,27 @@ jump .done
 emit .scan
 ```
 
-For single-expression/condition keyword-style forms, prefer parenthesized argument
-syntax to keep intent obvious:
+For single-expression/condition keyword-style forms, use the canonical DSL forms
+below to keep intent obvious:
 
 ```text
-return (x)
-yield (x)
+ret (expr)      -- scalar / expression form
+yield (expr)    -- scalar / expression form
 when (cond) { ... }
 ```
 
+`ret` and `yield` scalar expressions are written with `()` unless the argument is
+a Lua syntax form that is already naturally paren-less (string/aggregate literals).
+`when` keeps the paren form for consistency.
+
 Lua tokenization does not treat this as semantic syntax, but the visual rule keeps
 declaration/control heads and statement forms distinct from ordinary function calls.
+
+Canonical argument rule:
+
+- `ret`/`yield`: parenthesized form for values generally, except string and aggregate literals that are naturally paren-less in Lua.
+- `when`: keep condition in `()`.
+- `jump`/`emit`: remain `(...)` (control invocation syntax still needs parens).
 
 This is the central rule:
 
@@ -59,8 +70,7 @@ carry actual Lua values, not textual splice holes.
 
 Moonlift structure uses `{}`.
 
-Lua computation and language leaves use `()` only when ordinary Lua syntax
-requires or benefits from it.
+Lua computation and language leaves use `()` when ordinary Lua syntax requires it.
 
 Canonical examples:
 
@@ -69,7 +79,7 @@ fn .add
   { a [i32], b [i32] }
   [i32]
   {
-    ret(a + b),
+    ret (a + b),
   }
 ```
 
@@ -82,7 +92,7 @@ region .scan
   }
   {
     entry .loop { i [index](0) } {
-      when(i:ge(n)) {
+      when (i:ge(n)) {
         jump .miss { pos = i },
       },
 
@@ -127,7 +137,7 @@ String loading:
 local chunk = dsl.loadstring([[
 return module "Demo" {
   fn .id { x [i32] } [i32] {
-    ret(x),
+    ret (x),
   },
 }
 ]], "demo")
@@ -183,8 +193,8 @@ return dsl.loadstring([[
 return {
   struct .Point { x [f32], y [f32] },
   union .Result {
-    ok { value[i32] },
-    err { code[i32] },
+    ok { value [i32] },
+    err { code [i32] },
   },
   const .Magic [u8] { 0x80 },
 }
@@ -205,7 +215,7 @@ return module "DemoOps" {
     },
 
     block .done { x [i32] } {
-      ret(x),
+      ret (x),
     },
   },
 }
@@ -243,7 +253,7 @@ struct["Vec" .. n]
 Name tokens in DSL environments are created on demand:
 
 ```lua
-ret(acc + x)
+ret (acc + x)
 ```
 
 Here `acc` and `x` are name tokens resolved later by Moonlift semantic phases.
@@ -448,7 +458,7 @@ fn .add
   { a [i32], b [i32] }
   [i32]
   {
-    ret(a + b),
+    ret (a + b),
   }
 ```
 
@@ -459,7 +469,7 @@ export_fn .add
   { a [i32], b [i32] }
   [i32]
   {
-    ret(a + b),
+    ret (a + b),
   }
 ```
 
@@ -469,7 +479,7 @@ Void function:
 fn .touch
   { x [i32] }
   {
-    ret(),
+    ret (),
   }
 ```
 
@@ -482,8 +492,8 @@ fn .sum
   [i32]
   {
     entry .loop { i [i32](0), acc [i32](0) } {
-      when(i:ge(n)) {
-        ret(acc),
+      when (i:ge(n)) {
+        ret (acc),
       },
 
       jump .loop {
@@ -499,15 +509,21 @@ fn .sum
 Return:
 
 ```lua
-ret(value)
-ret()
+ret (value)
+ret (1)
+ret "done"
+ret { 1, 2, 3 }
+ret ()
 ```
 
 Yield:
 
 ```lua
-yield(value)
-yield()
+yield (value)
+yield (1)
+yield "done"
+yield { 1, 2, 3 }
+yield ()
 ```
 
 Local values:
@@ -527,7 +543,7 @@ set(dst[i], value)
 Conditional:
 
 ```lua
-when(cond) {
+when (cond) {
   body...
 }
 ```
@@ -544,9 +560,9 @@ jump .loop {
 Trap and assumptions:
 
 ```lua
-trap()
-assume(cond)
-assert_(cond)
+trap ()
+assume (cond)
+assert_ (cond)
 ```
 
 ## Switch
@@ -554,13 +570,13 @@ assert_(cond)
 Literal cases:
 
 ```lua
-switch(x) {
+switch (x) {
   case_value(0) {
-    ret(1),
+    ret (1),
   },
 
   default {
-    ret(2),
+    ret (2),
   },
 }
 ```
@@ -568,13 +584,13 @@ switch(x) {
 Variant-oriented cases use name-token cases:
 
 ```lua
-switch(r) {
+switch (r) {
   case .ok { value } {
-    ret(value),
+    ret (value),
   },
 
   default {
-    ret(0),
+    ret (0),
   },
 }
 ```
@@ -592,7 +608,7 @@ region .scan
   }
   {
     entry .loop { i [index](0) } {
-      when(i:ge(n)) {
+      when (i:ge(n)) {
         jump .miss { pos = i },
       },
 
@@ -642,7 +658,7 @@ fn .find
     },
 
     block .done { pos [i32] } {
-      ret(pos),
+      ret (pos),
     },
   }
 ```
@@ -668,8 +684,42 @@ Literals:
 
 ```lua
 1
+1.5
 true
+nil
 "bytes"
+{ 1, 2, 3 }
+```
+
+Floating literals map to `f64` when present in `f64`-typed positions.
+Lua string literals are emitted as `LitString` and default-type to `ptr(u8)`.
+Because these are Lua calls, the no-parens form only applies to Lua's special
+single-argument forms:
+
+```lua
+const .greeting [ptr [u8]] "hello, moonlift"
+const .nums [array [i32][3]] { 1, 2, 3 }
+ret "done"
+ret { 1, 2, 3 }
+```
+
+Other literals (`1`, `true`, `nil`) are written with parentheses: `ret (1)`,
+`ret (true)`, `ret (nil)`.
+`ret` / `yield` scalar expressions follow the same rule.
+
+Returning function values is supported only via references or splice-built
+expressions (not inline Lua function syntax). For example:
+
+```lua
+fn .foo { x [i32] } [i32] { ret (x) },
+fn .mk {} [fnptr[{ i32 }] [i32]] { ret (foo) },
+```
+
+Aggregate literals (expression position):
+
+```lua
+{ x = 1, y = 2 }           -- struct literal, typed by context
+{ 1, 2, 3 }                -- array literal, typed by expected array type
 ```
 
 Name references:
@@ -762,7 +812,7 @@ Statement fragment:
 
 ```lua
 local done = stmts {
-  ret(0),
+  ret (0),
 }
 
 fn .f {} [i32] {
@@ -838,7 +888,7 @@ fn .first
   { spread(view_params) }
   [u8]
   {
-    ret(data[0]),
+    ret (data[0]),
   }
 ```
 
@@ -846,8 +896,8 @@ You can slice statement bodies:
 
 ```lua
 local bounds_check = stmts {
-  when(i:ge(len)) {
-    trap(),
+  when (i:ge(len)) {
+    trap (),
   },
 }
 
@@ -856,7 +906,7 @@ fn .get
   [u8]
   {
     spread(bounds_check),
-    ret(data[i]),
+    ret (data[i]),
   }
 ```
 
@@ -947,7 +997,7 @@ return module "Name" {
     { param [T] }
     [Result]
     {
-      ret(expr),
+      ret (expr),
     },
 
   region .name

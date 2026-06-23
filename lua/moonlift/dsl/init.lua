@@ -8,6 +8,8 @@
 local pvm = require("moonlift.pvm")
 local schema = require("moonlift.asdl")
 local SyntaxLower = require("moonlift.syntax_lower")
+local ErrorSpan = require("moonlift.error.span")
+local SourceAnalysis = require("moonlift.source_analysis")
 
 local M = {}
 
@@ -78,6 +80,10 @@ local scalar = {
 }
 
 local function scalar_type(name) return Ty.TScalar(assert(scalar[name], "unknown scalar")) end
+local tree_expr
+local merge_source_ctx
+local attach_source_context
+local build_source_context
 
 local function syn_name(v)
     if is(v, Name) then return S.SyntaxNameText(v.name) end
@@ -104,14 +110,66 @@ end
 
 local function concrete_type(v) return lower.type(syn_type(v)) end
 
-local function tree_expr(v)
+local function is_array_lit_table(v)
+    if type(v) ~= "table" then return false end
+    local n = #v
+    if n == 0 then return false end
+    for i = 1, n do
+        if v[i] == nil then return false end
+    end
+    for k in pairs(v) do
+        if type(k) ~= "number" or k < 1 or k > n or k % 1 ~= 0 then
+            return false
+        end
+    end
+    return true
+end
+
+local function is_record_lit_table(v)
+    if type(v) ~= "table" then return false end
+    for k in pairs(v) do
+        if type(k) ~= "string" then
+            return false
+        end
+    end
+    return true
+end
+
+local function field_inits_from_record(t)
+    local names = {}
+    local n = 0
+    for k in pairs(t) do
+        n = n + 1
+        names[n] = k
+    end
+    table.sort(names)
+    local fields = {}
+    for i = 1, n do
+        local name = names[i]
+        fields[i] = Tr.FieldInit(name, tree_expr(t[name]), 0)
+    end
+    return fields
+end
+
+tree_expr = function(v)
     if is(v, Expr) then return v:tree() end
     if is_member(Tr.Expr, v) then return v end
+    if is(v, Name) then return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(v.name)) end
+    if is_array_lit_table(v) then
+        local elems = {}
+        for i = 1, #v do elems[i] = tree_expr(v[i]) end
+        return Tr.ExprArray(Tr.ExprSurface, Ty.TScalar(C.ScalarVoid), elems)
+    end
+    if is_record_lit_table(v) then
+        return Tr.ExprAgg(Tr.ExprSurface, Ty.TScalar(C.ScalarVoid), field_inits_from_record(v))
+    end
     if v == nil then return Tr.ExprLit(Tr.ExprSurface, C.LitNil) end
-    if type(v) == "number" then return Tr.ExprLit(Tr.ExprSurface, C.LitInt(tostring(v))) end
+    if type(v) == "number" then
+        if v == v and v % 1 == 0 then return Tr.ExprLit(Tr.ExprSurface, C.LitInt(tostring(v))) end
+        return Tr.ExprLit(Tr.ExprSurface, C.LitFloat(tostring(v)))
+    end
     if type(v) == "boolean" then return Tr.ExprLit(Tr.ExprSurface, C.LitBool(v)) end
     if type(v) == "string" then return Tr.ExprLit(Tr.ExprSurface, C.LitString(v)) end
-    if is(v, Name) then return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(v.name)) end
     die("expected expression value, got " .. tostring(v), 2)
 end
 
@@ -516,7 +574,7 @@ local function module_ast_of(self)
 end
 
 function Decl:typecheck(opts)
-    opts = opts or {}
+    opts = merge_source_ctx(opts, self)
     local Typecheck = require("moonlift.tree_typecheck").Define(T)
     return Typecheck.check_module(module_ast_of(self), opts)
 end
@@ -596,15 +654,148 @@ function c_artifact_mt:source_text() return self.source end
 function c_artifact_mt:header_text() return self.header end
 function c_artifact_mt:combined_text() return self.combined end
 
-function Decl:lower(opts)
+local function add_lua_token_anchors(source, uri, anchors)
+    local keyword = {
+        ["module"] = true, ["struct"] = true, ["union"] = true, ["region"] = true,
+        ["expr"] = true, ["const"] = true, ["static"] = true, ["extern"] = true,
+        ["handle"] = true, ["let"] = true, ["var"] = true, ["return"] = true,
+        ["if"] = true, ["then"] = true, ["elseif"] = true, ["else"] = true,
+        ["switch"] = true, ["case"] = true, ["default"] = true, ["when"] = true,
+        ["yield"] = true, ["jump"] = true, ["emit"] = true, ["end"] = true,
+        ["do"] = true, ["while"] = true, ["for"] = true, ["in"] = true,
+        ["select"] = true, ["assert"] = true, ["and"] = true, ["or"] = true, ["not"] = true,
+        ["fn"] = true, ["export_fn"] = true, ["entry"] = true, ["block"] = true,
+    }
+
+    local function is_ident_start(b)
+        return (b >= 65 and b <= 90) or (b >= 97 and b <= 122) or b == 95
+    end
+    local function is_ident_part(b)
+        return is_ident_start(b) or (b >= 48 and b <= 57)
+    end
+
+    local len = #source
+    local i = 1
+    while i <= len do
+        local b = source:byte(i)
+
+        -- skip line comments
+        if b == 45 and source:byte(i + 1) == 45 then
+            i = i + 2
+            while i <= len and source:byte(i) ~= 10 do i = i + 1 end
+            if source:byte(i) == 10 then i = i + 1 end
+            goto continue
+        end
+
+        -- skip short strings
+        if b == 34 or b == 39 then
+            local quote = b
+            i = i + 1
+            while i <= len do
+                b = source:byte(i)
+                if b == 92 and i < len then
+                    i = i + 2
+                elseif b == quote then
+                    i = i + 1
+                    break
+                else
+                    i = i + 1
+                end
+            end
+            goto continue
+        end
+
+        -- skip long strings / long comments: [=[ ... ]=]
+        if b == 91 then
+            local j = i + 1
+            local n_eq = 0
+            while source:byte(j) == 61 do
+                n_eq = n_eq + 1
+                j = j + 1
+            end
+            if source:byte(j) == 91 then
+                local close = "]" .. string.rep("=", n_eq) .. "]"
+                local k = source:find(close, j + 1, true)
+                if k then
+                    i = k + #close
+                else
+                    i = len + 1
+                end
+                goto continue
+            end
+        end
+
+        if is_ident_start(b) then
+            local start = i
+            i = i + 1
+            while i <= len and is_ident_part(source:byte(i)) do i = i + 1 end
+            local stop = i
+            local token = source:sub(start, stop - 1)
+            local kind = keyword[token] and "AnchorKeyword" or "AnchorBindingUse"
+            local j = i
+            while source:byte(j) == 32 or source:byte(j) == 9 do j = j + 1 end
+            if source:byte(j) == 40 then kind = "AnchorFunctionUse" end
+            anchors[#anchors + 1] = {
+                kind = kind,
+                label = token,
+                range = ErrorSpan.from_source_text(uri, source, start - 1, stop - 1),
+            }
+            goto continue
+        end
+
+        i = i + 1
+        ::continue::
+    end
+end
+
+function build_source_context(uri, source)
+    local analysis = SourceAnalysis.build(T, nil, source, nil, { uri = uri })
+    if type(analysis.anchors) ~= "table" then analysis.anchors = {} end
+    add_lua_token_anchors(source, uri, analysis.anchors)
+    return analysis
+end
+
+function merge_source_ctx(opts, value)
     opts = opts or {}
+    local source_ctx = rawget(value, "_source_analysis")
+    if source_ctx then
+        local merged = SourceAnalysis.merge_into({}, source_ctx)
+        SourceAnalysis.merge_into(merged, opts.analysis_ctx)
+        opts.analysis_ctx = merged
+    end
+    return opts
+end
+
+function attach_source_context(value, source_ctx)
+    if type(value) ~= "table" then return end
+    if rawget(value, "_source_analysis") == nil then rawset(value, "_source_analysis", source_ctx) end
+    if type(value.body) == "table" then
+        for i = 1, #value.body do
+            local item = value.body[i]
+            if type(item) == "table" then
+                if rawget(item, "_source_analysis") == nil then rawset(item, "_source_analysis", source_ctx) end
+                if type(item.body) == "table" then
+                    for j = 1, #item.body do
+                        local nested = item.body[j]
+                        if type(nested) == "table" and rawget(nested, "_source_analysis") == nil then
+                            rawset(nested, "_source_analysis", source_ctx)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+function Decl:lower(opts)
+    opts = merge_source_ctx(opts, self)
     local Pipeline = require("moonlift.frontend_pipeline").Define(T)
     opts.site = opts.site or "moonlift.dsl"
     return Pipeline.lower_module(module_ast_of(self), opts)
 end
 
 function Decl:emit_c_artifact(opts)
-    opts = opts or {}
+    opts = merge_source_ctx(opts, self)
     local Pipeline = require("moonlift.frontend_pipeline").Define(T)
     opts.site = opts.site or "moonlift.dsl c"
     local result = Pipeline.lower_module_to_c(module_ast_of(self), opts)
@@ -619,7 +810,7 @@ function Decl:emit_c_artifact(opts)
 end
 
 function Decl:compile(opts)
-    opts = opts or {}
+    opts = merge_source_ctx(opts, self)
     if opts.backend == "c" or opts.codegen == "c" then return self:emit_c_artifact(opts) end
     local result = self:lower(opts)
     local jit = require("moonlift.back_jit").Define(T).jit()
@@ -881,15 +1072,28 @@ function M.loadstring(src, chunk_name, opts)
     local loader = loadstring or load
     local env = make_env(opts)
     local fn, err
+    local source_name = chunk_name or "=(moonlift.dsl)"
+    local source_ctx = build_source_context(source_name, src)
+    local function stamp(...)
+        local n = select("#", ...)
+        for i = 1, n do
+            local result = select(i, ...)
+            if type(result) == "table" then attach_source_context(result, source_ctx) end
+        end
+    end
     if loadstring then
-        fn, err = loader(src, chunk_name or "=(moonlift.dsl)")
+        fn, err = loader(src, source_name)
         if not fn then die(err, 2) end
         setfenv(fn, env)
     else
-        fn, err = loader(src, chunk_name or "=(moonlift.dsl)", "t", env)
+        fn, err = loader(src, source_name, "t", env)
         if not fn then die(err, 2) end
     end
-    return fn
+    return function(...)
+        local packed = { fn(...) }
+        stamp(unpack(packed))
+        return unpack(packed)
+    end
 end
 
 function M.loadfile(path_, opts)

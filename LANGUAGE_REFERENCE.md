@@ -20,11 +20,11 @@ dispatch-table construction live. Moonlift object code is the
 generated/authorable monomorphic language whose semantics are explicit in
 ASDL.
 
-The Lua-owned DSL (`require("moonlift.dsl")`) is a first-class alternative to
-`.mlua` hosted islands. It is the more solid and minimal surface when the code
-is primarily metaprogrammed: Lua itself parses products, protocols, bodies, and
-fill maps as values, so there is no textual antiquote carrier in the common
-path.
+The Lua-owned DSL (`require("moonlift.dsl")`) is the recommended entry surface for
+most generated-code workflows. It is a more solid and minimal surface than
+`.mlua` hosted islands for code that is primarily metaprogrammed: Lua itself
+parses products, protocols, bodies, and fill maps as values, so there is no
+textual antiquote carrier in the common path.
 
 ---
 
@@ -108,10 +108,10 @@ local dsl = require("moonlift.dsl")
 
 return module "Demo" {
   fn .add
-    { a[i32], b[i32] }
+    { a [i32], b [i32] }
     [i32]
     {
-      ret(a + b),
+      ret (a + b),
     },
 }
 ```
@@ -298,13 +298,13 @@ return module "Demo" {
     { a [i32], b [i32] }
     [i32]
     {
-      ret(a + b),
+      ret (a + b),
     },
 }
 ```
 
 The `.mlua` version uses hosted source islands. The DSL version uses Lua table
-shapes directly; `a[i32]` carries the actual Lua value `i32`.
+shapes directly; `a [i32]` carries the actual Lua value `i32`.
 
 ### 3.2 Lua-owned DSL files
 
@@ -333,7 +333,7 @@ return module "Demo" {
     { p [Pair] }
     [i32]
     {
-      ret(p.left + p.right),
+      ret (p.left + p.right),
     },
 }
 ```
@@ -1049,12 +1049,12 @@ end
 ```lua
 -- DSL equivalent
 fn .zero_buffer
-  { dst[ptr[u8]], n[index] }
+  { dst [ptr [u8]], n [index] }
   [void]
   {
-    block .loop { i[index](0) } {
-      when(i:ge(n)) {
-        ret(),
+    block .loop { i [index](0) } {
+      when (i:ge(n)) {
+        ret (),
       },
       jump .done {
       },
@@ -1129,13 +1129,13 @@ return union ok(i32) | err(i32) end
 ```lua
 -- DSL equivalents
 struct .Pair {
-  left[i32],
-  right[i32],
+  left [i32],
+  right [i32],
 }
 
 union .Result {
-  ok { code[i32] },
-  err { msg[ptr[u8]] },
+  ok { code [i32] },
+  err { msg [ptr [u8]] },
   none,
 }
 
@@ -1177,19 +1177,19 @@ region parse_point(p: ptr(u8), n: index; ParseExit)
 -- DSL equivalent
 return module "Demo" {
   struct .Point {
-    x[i32],
-    y[i32],
+    x [i32],
+    y [i32],
   },
   union .ParseExit {
-    ok { value[i32] },
-    err { code[i32] },
+    ok { value [i32] },
+    err { code [i32] },
   },
   region .parse_point {
-    { p[ptr[u8]], n[index] },
+    { p [ptr [u8]], n [index] },
     { ParseExit },
     {
-      entry .loop { i[index](0) } {
-        when(i:ge(n)) {
+      entry .loop { i [index](0) } {
+        when (i:ge(n)) {
           jump .err { code = -1 },
         },
 
@@ -1198,11 +1198,11 @@ return module "Demo" {
         },
       },
 
-      block .ok { value[index] } {
-        ret(value),
+      block .ok { value [index] } {
+        ret (value),
       },
-      block .err { code[index] } {
-        ret(code),
+      block .err { code [index] } {
+        ret (code),
       },
     },
   },
@@ -1404,7 +1404,7 @@ acc = acc + xs[i]
 ```lua
 -- DSL equivalent
 let x [i32] { 42 }
-let name [ptr[u8]] { &buffer[0] }
+let name [ptr [u8]] { &buffer[0] }
 let sum [f64] { as [f64] (a) + as [f64] (b) }
 
 var i [index] { 0 }
@@ -1554,10 +1554,10 @@ end
 -- DSL equivalent
 switch opcode {
   case_value(0) {
-    ret(0),
+    ret (0),
   },
   default {
-    ret(-1),
+    ret (-1),
   },
 }
 ```
@@ -1699,8 +1699,8 @@ yield expr      -- value yield
 
 ```lua
 -- DSL equivalent
-yield()
-yield(result)
+yield ()
+yield (result)
 ```
 
 ### 8.9 Return statement
@@ -1720,8 +1720,8 @@ the function.
 
 ```lua
 -- DSL equivalent
-ret()
-ret(result)
+ret ()
+ret (result)
 ```
 
 ### 8.10 Expression statement
@@ -2650,7 +2650,7 @@ return module "Demo" {
     { x[T] }
     [T]
     {
-      ret(x),
+      ret (x),
     },
 }
 ```
@@ -2784,9 +2784,9 @@ Equivalent Lua-owned DSL patterns:
 
 ```lua
 -- Spread generated params and body statements
-local params = product { a[i32], b[i32] }
+local params = product { a [i32], b [i32] }
 local body = stmts {
-  ret(a + b),
+  ret (a + b),
 }
 
 return module "Generated" {
@@ -2801,9 +2801,9 @@ return module "Generated" {
 
 ```lua
 -- Spread region params and continuations
-local rparams = product { n[i32] }
+local rparams = product { n [i32] }
 local exits = {
-  done { v[i32] },
+  done { v [i32] },
 }
 
 return module "GeneratedRegion" {
@@ -2891,8 +2891,9 @@ local body = moon.stmts [[ let y: i32 = x + 1; return y ]]
 ## 15. Lua-owned DSL
 
 The Lua-owned DSL is an authoring surface where ordinary Lua syntax constructs
-Moonlift ASDL directly. It is a first-class alternative to `.mlua` hosted
-islands and `moon.XXX[[]]` quotes.
+Moonlift ASDL directly. It is the recommended authoring path for most users.
+`.mlua` and `moon.XXX[[]]` are still supported and useful for source-style
+islands, but the DSL is the default path for new code.
 
 Use it when:
 
@@ -2922,21 +2923,28 @@ For declaration/control keyword heads, keep a space before the name target so th
 keyword form stays visually separate from ordinary Lua calls:
 `fn .add`, `region .scan`, `jump .done`, `struct .Point`, `emit .scan`.
 
-For single-expression/condition forms, prefer explicit parentheses to distinguish
-statement/keyword forms from plain calls and to keep control shape obvious:
-`return (x)`, `yield (x)`, `when (cond) { ... }`.
+For single-expression/condition forms, use explicit parentheses to distinguish
+statement/control forms from plain calls and to keep control shape obvious:
+
+- `.mlua`: `return (x)`, `yield (x)`, `when (cond) { ... }`
+- Lua-owned DSL: `ret (x)`, `yield (x)`, `when (cond) { ... }`
+
+For DSL literals:
+- `ret "done"` / `yield "done"` are valid without parentheses (Lua string literal form).
+- `ret {1, 2, 3}` / `yield {1, 2, 3}` are valid without parentheses.
+- Scalar literals remain parenthesized in DSL: `ret (1)`, `ret (true)`, `yield (nil)`.
 
 This project does not include a `while` keyword in the object-language; when
-modeling loop-like control, use a `when(...)` + `jump` sequence in the same style.
+modeling loop-like control, use a `when (...)` + `jump` sequence in the same style.
 
 Canonical style keeps `{}` for real structure:
 
 ```lua
 fn .add
-  { a[i32], b[i32] }  -- product
+  { a [i32], b [i32] }  -- product
   [i32]               -- evaluated type value
   {
-    ret(a + b),    -- statement body
+    ret (a + b),    -- statement body
   }
 ```
 
@@ -2945,29 +2953,29 @@ fn .add
 ```lua
 return module "DslDemo" {
   struct .Vec2 {
-    x[f32],
-    y[f32],
+    x [f32],
+    y [f32],
   },
 
   union .Result {
-    ok  { value[i32] },
-    err { code[i32] },
+    ok  { value [i32] },
+    err { code [i32] },
     none,
   },
 
   region .scan
-    { p[ptr[u8]], n[index], target[i32] }
+    { p [ptr [u8]], n [index], target [i32] }
     {
-      hit  { pos[index] },
+      hit  { pos [index] },
       miss,
     }
     {
-      entry .loop { i[index](0) } {
-        when(i:ge(n)) {
+      entry .loop { i [index](0) } {
+        when (i:ge(n)) {
           jump .miss { pos = i },
         },
 
-        when(eq(as[i32](p[i]), target)) {
+        when (eq(as [i32] (p[i]), target)) {
           jump .hit { pos = i },
         },
 
@@ -2978,7 +2986,7 @@ return module "DslDemo" {
     },
 
   fn .find_A
-    { p[ptr[u8]], n[index] }
+    { p [ptr [u8]], n [index] }
     [i32]
     {
       entry .start {} {
@@ -2988,8 +2996,8 @@ return module "DslDemo" {
         },
       },
 
-      block .done { pos[i32] } {
-        ret(pos),
+      block .done { pos [i32] } {
+        ret (pos),
       },
     },
 }
@@ -3002,14 +3010,14 @@ ordinary Lua value with a role.
 
 ```lua
 local view_params = product {
-  data[ptr[u8]],
-  len[index],
-  stride[index],
+  data [ptr [u8]],
+  len [index],
+  stride [index],
 }
 
 local bounds_check = stmts {
-  when(i:ge(len)) {
-    trap(),
+  when (i:ge(len)) {
+    trap (),
   },
 }
 
@@ -3019,11 +3027,11 @@ return module "Slices" {
   },
 
   fn .get
-    { spread(view_params), i[index] }
+    { spread(view_params), i [index] }
     [u8]
     {
       spread(bounds_check),
-      ret(data[i]),
+      ret (data[i]),
     },
 }
 ```

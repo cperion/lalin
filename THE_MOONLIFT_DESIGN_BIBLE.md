@@ -526,7 +526,7 @@ fn .add
   { a [i32], b [i32] }
   [i32]
   {
-    ret(a + b),
+    ret (a + b),
   }
 ```
 
@@ -654,7 +654,7 @@ fn .consume_ref
   { ref [owned [LuaRef]] }
   [void]
   {
-    ret(),
+    ret (),
   }
 ```
 
@@ -1971,14 +1971,14 @@ fn .sched_submit
   { s [ptr [Sched]], fn [ptr [u8]], arg [ptr [u8]] }
   [i32]
   {
-    ret(0),
+    ret (0),
   },
 
 fn .sched_worker_main
   { w [ptr [Worker]], s [ptr [Sched]] }
   [i64]
   {
-    ret(0),
+    ret (0),
   },
 ```
 
@@ -2337,7 +2337,7 @@ fn .c_sum
   { p [ptr [i32]], n [index] }
   [i32]
   {
-    ret(0),
+    ret (0),
   },
 ```
 
@@ -2374,7 +2374,7 @@ fn .destroy_voice
   { store [ptr [VoiceStore]], voice [Voice] }
   [void]
   {
-    ret(),
+    ret (),
   },
 
 -- readonly access to count_voices
@@ -2382,7 +2382,7 @@ fn .count_voices
   { store [ptr [VoiceStore]] }
   [index]
   {
-    ret(0),
+    ret (0),
   },
 
 -- lease-based state access
@@ -2390,7 +2390,7 @@ fn .process_voice
   { state [lease [ptr [VoiceState]]] }
   [void]
   {
-    ret(),
+    ret (),
   },
 ```
 
