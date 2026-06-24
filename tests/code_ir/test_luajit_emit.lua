@@ -18,6 +18,7 @@ local Value = T.MoonValue
 local CType = require("moonlift.luajit_ctype")(T)
 local Emit = require("moonlift.luajit_emit")(T)
 local StencilC = require("moonlift.stencil_c")(T)
+local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)
@@ -118,7 +119,7 @@ local stencil_artifact = StencilC.reduce_array_artifact(stencil_reduction, nil, 
     result_ty = i32,
     step_num = 1,
 })
-local stencil_build, stencil_build_err = StencilC.compile_artifacts({ stencil_artifact }, { stem = "test_luajit_emit_stencil" })
+local stencil_build, stencil_build_err = StencilBinary.compile(T, { stencil_artifact }, { stem = "test_luajit_emit_stencil" })
 assert(stencil_build ~= nil, tostring(stencil_build_err))
 local stencil_vec = LJ.LJMachine(
     vec_id,

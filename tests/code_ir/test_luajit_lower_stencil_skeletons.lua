@@ -17,6 +17,7 @@ local Value = T.MoonValue
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
 local StencilC = require("moonlift.stencil_c")(T)
+local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_stencil_skeletons")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -266,7 +267,7 @@ local function compile_with_kernel(module, graph, flow, value, mem, effect, kern
     })
     assert(#artifacts == 1, name .. " should select one skeleton artifact")
     assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, name .. " should lower to machine body")
-    local build, build_err, csrc = StencilC.compile_artifacts(artifacts, { stem = "test_luajit_lower_stencil_skeletons_" .. name })
+    local build, build_err, csrc = StencilBinary.compile(T, artifacts, { stem = "test_luajit_lower_stencil_skeletons_" .. name })
     assert(build ~= nil, tostring(build_err) .. "\n" .. tostring(csrc))
     local compiled, err, src = Emit.compile_module(lj_module, {
         chunk_name = "test_luajit_lower_stencil_skeletons_" .. name,
@@ -305,7 +306,7 @@ local function compile_auto_skeleton(module, contracts, name)
     end
     assert(#artifacts == 1, name .. " should select one skeleton artifact: " .. tostring(rejects[1] and rejects[1].reason) .. " planned=" .. planned_result)
     assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, name .. " should lower to machine body")
-    local build, build_err, csrc = StencilC.compile_artifacts(artifacts, { stem = "test_luajit_lower_stencil_skeletons_" .. name })
+    local build, build_err, csrc = StencilBinary.compile(T, artifacts, { stem = "test_luajit_lower_stencil_skeletons_" .. name })
     assert(build ~= nil, tostring(build_err) .. "\n" .. tostring(csrc))
     local compiled, err, src = Emit.compile_module(lj_module, {
         chunk_name = "test_luajit_lower_stencil_skeletons_" .. name,

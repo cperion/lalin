@@ -131,6 +131,13 @@ return schema. MoonStencil {
       variant_unique,
       stride [number],
     },
+    StencilTopologyFieldProjection {
+      variant_unique,
+      parent [MoonStencil.StencilAccessTopology],
+      record_ty [MoonCode.CodeType],
+      field_name [str],
+      field_offset [number],
+    },
     StencilTopologySliceDescriptor {
       variant_unique,
       slice [MoonCode.CodeValueId],

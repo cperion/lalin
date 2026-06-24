@@ -16,6 +16,7 @@ local Value = T.MoonValue
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
 local StencilC = require("moonlift.stencil_c")(T)
+local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_stencil_extended")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -73,7 +74,7 @@ local function compile_module(module, contracts, opts)
     assert(#artifacts == 1, opts.name .. " should select one artifact")
     assert(artifacts[1].instance.descriptor.vocab == opts.vocab, opts.name .. " selected wrong vocab")
     assert(pvm.classof(lj_module.funcs[1].machines[1].kind) == (opts.reduce and LJ.LJMachineStencilCall or LJ.LJMachineStencilEffect), opts.name .. " should lower through stencil machine")
-    local build, build_err, csrc = StencilC.compile_artifacts(artifacts, { stem = "test_luajit_lower_stencil_extended_" .. opts.name })
+    local build, build_err, csrc = StencilBinary.compile(T, artifacts, { stem = "test_luajit_lower_stencil_extended_" .. opts.name })
     assert(build ~= nil, tostring(build_err) .. "\n" .. tostring(csrc))
     local compiled, err, src = Emit.compile_module(lj_module, {
         chunk_name = "test_luajit_lower_stencil_extended_" .. opts.name,

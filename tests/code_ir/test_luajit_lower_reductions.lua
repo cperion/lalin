@@ -16,6 +16,7 @@ local Value = T.MoonValue
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
 local StencilC = require("moonlift.stencil_c")(T)
+local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_reductions")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -235,7 +236,7 @@ local function compile_with_stencil(case, values, ctype, stem)
     assert(#facts.value.reductions == 1 and facts.value.reductions[1].kind == case.reduction, case.name .. " should derive expected ReductionKind")
     assert(#artifacts == 1, case.name .. " should collect one stencil artifact")
     assert(pvm.classof(lj_module.funcs[1].machines[1].kind) == LJ.LJMachineStencilCall, case.name .. " should emit LJMachineStencilCall")
-    local build, build_err = StencilC.compile_artifacts(artifacts, { stem = stem or ("test_luajit_lower_reductions_" .. case.name) })
+    local build, build_err = StencilBinary.compile(T, artifacts, { stem = stem or ("test_luajit_lower_reductions_" .. case.name) })
     assert(build ~= nil, tostring(build_err))
     local compiled, err, src = Emit.compile_module(lj_module, {
         chunk_name = "test_luajit_lower_reductions_" .. case.name,

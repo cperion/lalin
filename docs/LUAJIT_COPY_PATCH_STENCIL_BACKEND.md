@@ -67,7 +67,8 @@ selected StencilArtifact
 ```
 
 The emitter should not know whether the pointer came from a development C build,
-a shared-symbol bank, or copied binary bytes.
+an embedded bank, or a cached binary bank file. It only receives already
+installed function pointers.
 
 ## Non-goals
 
@@ -80,7 +81,7 @@ a general object-file linker
 a runtime C compiler
 a runtime optimizing compiler
 a generic assembler
-a fallback interpreter
+an interpreter tier hidden behind stencil failure
 a second MoonCode lowering path
 ```
 
@@ -123,9 +124,10 @@ The copy-and-patch backend treats the selected artifact as immutable semantic
 input. It must not reinterpret MoonCode loops or rediscover map/reduce/copy
 semantics.
 
-## Realizers
+## Realizer
 
-There are three realization modes. They share the same input and output shape.
+There is one executable realization mode. It has a stable input and output
+shape.
 
 ```text
 input:
@@ -135,38 +137,7 @@ output:
   stencil_symbols: symbol -> ffi function pointer
 ```
 
-### CRealizer
-
-Development and bootstrap path.
-
-```text
-selected artifacts
-  -> StencilC.source
-  -> C compiler now
-  -> shared object
-  -> ffi.load symbol
-```
-
-This is simple and useful, but not the fast JIT backend because it invokes the C
-compiler during realization.
-
-### SymbolBankRealizer
-
-Transitional AOT path.
-
-```text
-selected artifacts
-  -> prebuilt shared-object bank
-  -> ffi.load symbol
-```
-
-This removes per-use C compilation and validates bank lookup, ABI compatibility,
-and emitter integration. It is not the final copy-and-patch path because it calls
-precompiled functions in place instead of copying and patching binary entries.
-
 ### BinaryBankRealizer
-
-Final fast JIT path.
 
 ```text
 selected artifacts
@@ -178,18 +149,20 @@ selected artifacts
 
 This is the canonical backend architecture.
 
+`StencilC` remains as the source generator used by binary-bank extraction. It is
+not an executable realization mode in the LuaJIT backend.
+
 ## Binary stencil entry
 
 A binary stencil entry is the executable realization unit.
 
 ```lua
-BinaryStencilEntry = {
-  kind = "BinaryStencilEntry",
+MoonLuaJIT.LJBinaryStencilEntry {
   symbol = "ml_stencil_zip_map_array_i32_add_to_i32_s1",
   section = ".text.ml_stencil_zip_map_array_i32_add_to_i32_s1",
   binary = <machine code bytes>,
   c_signature = "void (*)(int32_t *, const int32_t *, const int32_t *, int32_t, int32_t)",
-  patches = PatchRecord[],
+  patches = LJBinaryPatchRecord[],
   artifact = StencilArtifact,
 }
 ```
@@ -212,9 +185,10 @@ stencil descriptor params
 Patch records describe holes in `binary`.
 
 ```lua
-PatchRecord = {
+MoonLuaJIT.LJBinaryPatchRecord {
   offset = byte_offset,
-  kind = "abs32" | "abs64" | "symbol32" | "symbol64" | "pc32" | "rel32",
+  kind = LJPatchAbs32 | LJPatchAbs64 | LJPatchSymbol32
+       | LJPatchSymbol64 | LJPatchPc32 | LJPatchRel32,
   ordinal = optional_patch_ordinal,
   symbol = optional_symbol_name,
   addend = optional_addend,
@@ -249,9 +223,10 @@ install_binary_stencil(entry, {
 The runtime patcher is deliberately small:
 
 ```text
-allocate executable memory
+allocate writable memory
 memcpy binary bytes
 for patch in patches: apply scalar patch
+seal memory executable
 ffi.cast installed address to c_signature
 ```
 
@@ -319,9 +294,9 @@ Windows:
   VirtualAlloc / VirtualProtect
 ```
 
-The current implementation uses direct executable `mmap` for the prototype. A
-stricter W^X implementation can use writable allocation followed by executable
-protection without changing the higher-level model.
+The current POSIX install policy is W^X: allocate readable/writable memory,
+copy and patch bytes, then seal the allocation readable/executable with
+`mprotect`.
 
 ## LuaJIT wrapper shape
 
@@ -473,9 +448,15 @@ MoonCompiler:
     LuaJIT source artifact
 ```
 
-The implementation may keep the current Lua-table bank entries while the ASDL is
-being hardened, but the final schema should expose binary stencil entries and
-patch records explicitly.
+The implementation exposes binary bank records as `MoonLuaJIT` ASDL:
+
+```text
+LJBinaryTarget
+LJBinaryPatchKind
+LJBinaryPatchRecord
+LJBinaryStencilEntry
+LJBinaryStencilBank
+```
 
 ## Validation requirements
 
@@ -503,18 +484,10 @@ manual hole-bearing probe patches different values into same binary
 installed functions return different expected results
 ```
 
-Realization validation:
-
-```text
-CRealizer result == SymbolBankRealizer result == BinaryBankRealizer result
-```
-
 Runtime validation:
 
 ```text
 Lua loop baseline
-CRealizer whole island
-SymbolBank whole island
 BinaryBank whole island
 GPS chunk orchestration
 coroutine batch orchestration
@@ -523,22 +496,45 @@ coroutine batch orchestration
 Performance validation:
 
 ```text
-CRealizer includes C compiler cost
-SymbolBankRealizer removes C compiler cost
-BinaryBankRealizer removes C compiler cost and exercises copy/install
+BinaryBankRealizer does not invoke the C compiler on the hot realization path.
+Bank generation/extraction is a build/cache operation.
 ```
+
+API invariant:
+
+```text
+moonlift.luajit_backend.lower_module:
+  MoonCode -> LuaJIT module + selected StencilArtifact[]
+
+moonlift.luajit_backend.build_binary_bank:
+  selected StencilArtifact[] -> BinaryStencilBank
+  build/cache operation; may invoke the C toolchain
+
+moonlift.luajit_backend.compile_lj_module:
+  LuaJIT module + selected StencilArtifact[] + prebuilt BinaryStencilBank
+    -> callable LuaJIT module
+  fast realization path; must not invoke the C toolchain
+
+moonlift.luajit_backend.compile_module:
+  convenience path only when a prebuilt BinaryStencilBank is supplied
+
+moonlift.luajit_backend.emit_lua_artifact:
+  LuaJIT module + selected StencilArtifact[] + prebuilt BinaryStencilBank
+    -> canonical Lua source artifact with embedded bank bytes
+
+moonlift.luajit_backend.emit_module_artifact:
+  MoonCode + prebuilt BinaryStencilBank
+    -> canonical Lua source artifact package
+```
+
+The backend must fail loudly if asked to realize stencil artifacts without a
+prebuilt bank.
 
 Validated profile shape:
 
 ```text
-CRealizer realization:
-  about 100ms per selected stencil in the current surrogate
-
-SymbolBankRealizer realization:
-  about 0.1-0.3ms
-
 BinaryBankRealizer realization:
-  about 0.08-0.09ms in the current extracted-section prototype
+  about 0.08-0.09ms for extracted-section bank entries
 ```
 
 The exact numbers are not the spec. The invariant is:
@@ -553,24 +549,24 @@ Implemented:
 
 ```text
 existing MoonCode -> Llisle -> StencilArtifact selection
-CRealizer through StencilC.compile_artifacts
-SymbolBankRealizer through StencilBank.build_bank / realize_artifacts
+MoonLuaJIT ASDL for binary target, bank, entry, and patch records
 BinaryBankRealizer through StencilBank.build_binary_bank / realize_binary_artifacts
 generic install_binary_stencil patcher
 manual hole-bearing patch probe
 automatic section extraction for selected C stencil artifacts
-profile comparing C, symbol-bank, and binary-bank realization
+production moonlift.luajit_backend facade using binary-bank realization
+explicit prebuilt-bank requirement for realization
+canonical Lua source artifact emission through emit_lua_artifact
+W^X POSIX install policy through mmap + mprotect
+profile using binary-bank realization
 ```
 
 Still required for the full final backend:
 
 ```text
-first-class ASDL for BinaryStencilEntry and PatchRecord
 prebuilt bank generation as normal build artifact
-packaged Lua source artifact embedding resolved bytes
 hole-bearing stencil generators for literals, offsets, branch/call targets, and layout constants
 cross-target extraction backends beyond current x86-64 ELF path
-W^X production install policy
 ```
 
 These are implementation completions, not architecture changes.

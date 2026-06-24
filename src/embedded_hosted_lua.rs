@@ -129,6 +129,7 @@ pub fn embedded_modules() -> Vec<(&'static str, &'static [u8])> {
         ("moonlift.lsp_payload_adapt", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_lsp_payload_adapt.ljbc")).as_slice()),
         ("moonlift.lsp_uri", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_lsp_uri.ljbc")).as_slice()),
         ("moonlift.lsp_workspace", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_lsp_workspace.ljbc")).as_slice()),
+        ("moonlift.luajit_backend", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_luajit_backend.ljbc")).as_slice()),
         ("moonlift.luajit_ctype", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_luajit_ctype.ljbc")).as_slice()),
         ("moonlift.luajit_emit", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_luajit_emit.ljbc")).as_slice()),
         ("moonlift.luajit_expr", include_bytes!(concat!(env!("OUT_DIR"), "/embedded_lua_bytecode/moonlift_luajit_expr.ljbc")).as_slice()),

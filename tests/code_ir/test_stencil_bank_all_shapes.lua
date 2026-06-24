@@ -12,6 +12,7 @@ local Code = T.MoonCode
 local Value = T.MoonValue
 local Stencil = T.MoonStencil
 local StencilC = require("moonlift.stencil_c")(T)
+local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local f64 = Code.CodeTyFloat(64)
@@ -120,7 +121,7 @@ for _, artifact in ipairs(slice_artifacts) do
     artifacts[#artifacts + 1] = artifact
 end
 
-local build, err, src = StencilC.compile_artifacts(artifacts, { stem = "test_stencil_c_all_shapes" })
+local build, err, src = StencilBinary.compile(T, artifacts, { stem = "test_stencil_bank_all_shapes" })
 assert(build ~= nil, tostring(err) .. "\n" .. tostring(src))
 
 local xs = ffi.new("int32_t[5]", { 1, -2, 5, 0, 3 })
@@ -186,4 +187,4 @@ assert(sym(artifacts[16])(xs, 0, 5) == 3, "count")
 assert(sym(artifacts[17])(xs, 0, 5, 0) == -7, "map reduce")
 assert(sym(artifacts[18])(xs, ys, 0, 5, 0) == 157, "zip reduce")
 
-io.write("moonlift stencil_c all shapes ok\n")
+io.write("moonlift stencil_bank all shapes ok\n")

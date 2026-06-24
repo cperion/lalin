@@ -230,12 +230,21 @@ diagnostics, and measurement gate all agree.
                  data,len components, while memory facts keep the element
                  type fixed to u8 and the descriptor length as byte length.
 
-[ ] AoS / struct-field projections
+[x] AoS / struct-field projections
     domain:      range1d
-    topology:    field projection over contiguous records
-    skeletons:   apply, reduce, scan, find, partition where field access is pure
+    topology:    field projection over contiguous records, composed over parent
+                 topology
+    skeletons:   apply, reduce, find, compare, fill at the C vocabulary layer;
+                 map/reduce from MoonCode facts through LuaJIT lowering
     first proof:  map/reduce one field without materializing SoA
-    gate:        compare AoS field loop against hand-written C
+    gate:        schema constructs StencilTopologyFieldProjection; stencil_c
+                 compiles and executes reduce/map/find/compare/fill over
+                 Demo_Pair.right; Code IR lowering recognizes xs[i].right as
+                 a field-projected stream and executes lowered reduce/map.
+    status:      field projections are modeled as topology, not as a second
+                 product implementation; memory facts emit derived field
+                 objects with same-store parent relations so parent disjoint
+                 contracts prove projected-field loop independence.
 
 [ ] SoA / multi-buffer records
     domain:      range1d

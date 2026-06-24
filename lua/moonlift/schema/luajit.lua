@@ -11,6 +11,7 @@ return schema. MoonLuaJIT {
   product. LJHelperId { interned, text [str], },
   product. LJGlobalId { interned, text [str], },
   product. LJLocalId { interned, text [str], },
+  product. LJBinaryBankId { interned, text [str], },
 
   sum. LJCType {
     LJCTypeVoid,
@@ -574,5 +575,53 @@ return schema. MoonLuaJIT {
     sigs [many [MoonLuaJIT.LJFuncSig]],
     types [many [MoonLuaJIT.LJCDecl]],
     helpers [many [MoonLuaJIT.LJHelperId]],
+  },
+
+  product. LJBinaryTarget {
+    interned,
+    arch [str],
+    os [str],
+    abi [str],
+    pointer_bits [number],
+    endian [str],
+  },
+
+  sum. LJBinaryPatchKind {
+    LJPatchAbs32,
+    LJPatchAbs64,
+    LJPatchSymbol32,
+    LJPatchSymbol64,
+    LJPatchPc32,
+    LJPatchRel32,
+  },
+
+  product. LJBinaryPatchRecord {
+    interned,
+    offset [number],
+    kind [MoonLuaJIT.LJBinaryPatchKind],
+    reloc_type [optional [str]],
+    symbol [optional [str]],
+    ordinal [optional [number]],
+    addend [number],
+  },
+
+  product. LJBinaryStencilEntry {
+    symbol [str],
+    section [str],
+    binary [str],
+    c_signature [str],
+    patches [many [MoonLuaJIT.LJBinaryPatchRecord]],
+    artifact [MoonStencil.StencilArtifact],
+  },
+
+  product. LJBinaryStencilBank {
+    field. id [MoonLuaJIT.LJBinaryBankId],
+    target [MoonLuaJIT.LJBinaryTarget],
+    c_path [str],
+    o_path [str],
+    source [str],
+    command [str],
+    preamble [optional [str]],
+    entries [many [MoonLuaJIT.LJBinaryStencilEntry]],
   },
 }

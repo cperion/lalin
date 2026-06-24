@@ -12,6 +12,7 @@ local Flow = T.MoonFlow
 local Graph = T.MoonGraph
 local Value = T.MoonValue
 local Kernel = T.MoonKernel
+local Ty = T.MoonType
 local Stencil = T.MoonStencil
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -101,6 +102,13 @@ local view_topology = Stencil.StencilTopologyViewDescriptor(
     Code.CodeValueId("v:view_stride"),
     2
 )
+local pair_ty = Code.CodeTyNamed("Demo", "Pair", Ty.TNamed(Ty.TypeRefGlobal("Demo", "Pair")))
+local field_topology = Stencil.StencilTopologyFieldProjection(
+    Stencil.StencilTopologyContiguous(1),
+    pair_ty,
+    "right",
+    4
+)
 
 assert(op.op == Stencil.StencilUnaryNeg and op.result_ty == i32)
 assert(zip_op.op == Stencil.StencilBinaryAdd and zip_op.result_ty == i32)
@@ -111,6 +119,10 @@ assert(indexed.index_ty == i32)
 assert(slice_topology.len == Code.CodeValueId("v:slice_len"))
 assert(view_topology.stride == Code.CodeValueId("v:view_stride"))
 assert(view_topology.stride_const == 2)
+assert(field_topology.parent == Stencil.StencilTopologyContiguous(1))
+assert(field_topology.record_ty == pair_ty)
+assert(field_topology.field_name == "right")
+assert(field_topology.field_offset == 4)
 assert(pvm.classof(pred) == Stencil.StencilPredEqConst)
 
 io.write("moonlift schema_stencil ok\n")

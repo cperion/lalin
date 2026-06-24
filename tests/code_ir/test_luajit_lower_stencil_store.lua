@@ -15,6 +15,7 @@ local Stencil = T.MoonStencil
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
 local StencilC = require("moonlift.stencil_c")(T)
+local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_stencil_store")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -151,7 +152,7 @@ local function compile_case(case)
     assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, case.name .. " should lower to machine body")
     assert(pvm.classof(lj_module.funcs[1].machines[1].kind) == LJ.LJMachineStencilEffect, case.name .. " should lower to stencil effect")
 
-    local build, build_err, csrc = StencilC.compile_artifacts(artifacts, { stem = "test_luajit_lower_stencil_store_" .. case.name })
+    local build, build_err, csrc = StencilBinary.compile(T, artifacts, { stem = "test_luajit_lower_stencil_store_" .. case.name })
     assert(build ~= nil, tostring(build_err) .. "\n" .. tostring(csrc))
     local compiled, err, src = Emit.compile_module(lj_module, {
         chunk_name = "test_luajit_lower_stencil_store_" .. case.name,

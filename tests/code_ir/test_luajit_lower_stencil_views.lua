@@ -15,6 +15,7 @@ local Stencil = T.MoonStencil
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
 local StencilC = require("moonlift.stencil_c")(T)
+local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_stencil_views")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -131,7 +132,7 @@ assert(src_topology.len == n.value)
 assert(src_topology.stride == s.value)
 assert(src_topology.stride_const == nil)
 
-local build, build_err, csrc = StencilC.compile_artifacts(artifacts, { stem = "test_luajit_lower_stencil_views" })
+local build, build_err, csrc = StencilBinary.compile(T, artifacts, { stem = "test_luajit_lower_stencil_views" })
 assert(build ~= nil, tostring(build_err) .. "\n" .. tostring(csrc))
 local compiled, err, src_lua = Emit.compile_module(lj_module, {
     chunk_name = "test_luajit_lower_stencil_views",

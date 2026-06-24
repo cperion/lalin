@@ -334,7 +334,7 @@ the maximum amount of the completed array work:
 [x] descriptor-backed views
 [x] descriptor-backed slices
 [x] byte spans
-[ ] AoS / struct-field projections
+[x] AoS / struct-field projections
 [ ] SoA / multi-buffer records
 [ ] 2D row-major surfaces
 [ ] tiled domains
@@ -446,7 +446,8 @@ view copy, dynamic runtime stride, CodeInstViewMake + CodeInstViewData
 descriptor access keeps StencilTopologyViewDescriptor
 machine ABI receives the backing data pointer plus dynamic stride args
 test: tests/code_ir/test_luajit_lower_stencil_views.lua
-artifact matrix: tests/code_ir/test_stencil_c_all_shapes.lua compiles
+artifact matrix: tests/code_ir/test_stencil_bank_all_shapes.lua builds a
+                 binary stencil bank and executes installed entries
                  array + dynamic-view variants for all 18 vocabulary cells
 
 slice copy, CodeInstSliceMake + CodeInstSliceData
@@ -454,7 +455,8 @@ descriptor access keeps StencilTopologySliceDescriptor
 machine ABI receives the backing data pointer directly; no stride arg exists
 Back ABI lowers CodeTySlice as data,len components, matching LuaJIT physical type
 test: tests/code_ir/test_luajit_lower_stencil_slices.lua
-artifact matrix: tests/code_ir/test_stencil_c_all_shapes.lua compiles
+artifact matrix: tests/code_ir/test_stencil_bank_all_shapes.lua builds a
+                 binary stencil bank and executes installed entries
                  array + dynamic-view + dynamic-slice variants for all
                  18 vocabulary cells without symbol collisions
 
@@ -463,9 +465,24 @@ descriptor access keeps StencilTopologyByteSpanDescriptor
 machine ABI receives the backing byte pointer directly; no stride arg exists
 Back ABI lowers CodeTyByteSpan as data,len components, matching LuaJIT physical type
 test: tests/code_ir/test_luajit_lower_stencil_byte_spans.lua
-artifact subset: tests/code_ir/test_stencil_c_byte_spans.lua compiles and
-                 executes copy, memmove, fill, find/search, compare, and
-                 count over explicit byte-span topologies
+artifact subset: tests/code_ir/test_stencil_bank_byte_spans.lua builds a
+                 binary stencil bank and executes copy, memmove, fill,
+                 find/search, compare, and count over explicit byte-span
+                 topologies
+
+AoS field projection, CodePlaceField over indexed record access
+descriptor access keeps StencilTopologyFieldProjection(parent, record_ty,
+field_name, field_offset)
+machine ABI receives the parent record pointer; C emission uses
+records[i].field and keeps the access element type as the field type
+memory facts emit derived field objects with MemObjectSameStore to the parent,
+so disjoint/readonly/writeonly contracts on parent objects apply through the
+projection
+tests: tests/schema/test_schema_stencil.lua
+       tests/code_ir/test_stencil_bank_field_projection.lua
+       tests/code_ir/test_luajit_lower_stencil_fields.lua
+artifact subset: reduce, map, find, compare, and fill execute over
+                 Demo_Pair.right without materializing a separate SoA buffer
 ```
 
 ## Hard-Yank Rules

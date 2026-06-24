@@ -361,11 +361,16 @@ local function bind_context(T)
         return Stencil.StencilInstance(id, desc, abi, proofs or {})
     end
 
+    local function topology_has_dynamic_stride(topology)
+        local cls = pvm.classof(topology)
+        if cls == Stencil.StencilTopologyFieldProjection then return topology_has_dynamic_stride(topology.parent) end
+        return cls == Stencil.StencilTopologyViewDescriptor and topology.stride_const == nil
+    end
+
     local function dynamic_stride_accesses(desc)
         local out = {}
         for _, access in ipairs(desc.accesses or {}) do
-            local top = access.topology
-            if pvm.classof(top) == Stencil.StencilTopologyViewDescriptor and top.stride_const == nil then
+            if topology_has_dynamic_stride(access.topology) then
                 out[#out + 1] = access
             end
         end
@@ -376,8 +381,11 @@ local function bind_context(T)
         return sanitize(access.name) .. "_stride"
     end
 
+    local abi_params_with_topologies
+
     local function abi_with_dynamic_strides(desc, params, result)
         local out = {}
+        params = abi_params_with_topologies(desc, params)
         for i = 1, #(params or {}) do out[i] = params[i] end
         for _, _access in ipairs(dynamic_stride_accesses(desc)) do
             out[#out + 1] = i32_ty()
@@ -394,19 +402,72 @@ local function bind_context(T)
         return out
     end
 
-    local function topology_suffix(access)
+    local function field_topology(topology)
+        local cls = pvm.classof(topology)
+        if cls == Stencil.StencilTopologyFieldProjection then return topology end
+        return nil
+    end
+
+    local function pointer_accesses(desc)
+        local out = {}
+        for _, access in ipairs(desc and desc.accesses or {}) do
+            if pvm.classof(access.topology) ~= Stencil.StencilTopologyScalar then out[#out + 1] = access end
+        end
+        return out
+    end
+
+    local function param_decl_for_access(access, default)
+        local field = field_topology(access.topology)
+        if field == nil then return default end
+        local name = default:match("%*%s*([_%a][_%w]*)") or access.name
+        local is_const = default:match("^%s*const%s+") ~= nil
+        return (is_const and "const " or "") .. c_type(field.record_ty) .. " *" .. name
+    end
+
+    local function abi_param_type_for_access(access, default_ty)
+        local field = field_topology(access.topology)
+        if field == nil then return default_ty end
+        return Code.CodeTyDataPtr(field.record_ty)
+    end
+
+    abi_params_with_topologies = function(desc, params)
+        local out = {}
+        local accesses = pointer_accesses(desc)
+        local access_i = 1
+        for i = 1, #(params or {}) do
+            local p = params[i]
+            if pvm.classof(p) == Code.CodeTyDataPtr and accesses[access_i] ~= nil then
+                out[i] = abi_param_type_for_access(accesses[access_i], p)
+                access_i = access_i + 1
+            else
+                out[i] = p
+            end
+        end
+        return out
+    end
+
+    local function topology_suffix_for(access, topology)
         local top = access.topology
-        local cls = pvm.classof(top)
+        local cls = pvm.classof(topology)
         if cls == Stencil.StencilTopologyViewDescriptor then
-            return "_" .. sanitize(access.name) .. "_view_" .. (top.stride_const ~= nil and ("s" .. tostring(top.stride_const)) or "sdyn")
+            return "_view_" .. (topology.stride_const ~= nil and ("s" .. tostring(topology.stride_const)) or "sdyn")
+        end
+        if cls == Stencil.StencilTopologyFieldProjection then
+            return topology_suffix_for(access, topology.parent) .. "_field_" .. sanitize(topology.field_name) .. "_o" .. tostring(topology.field_offset or 0)
         end
         if cls == Stencil.StencilTopologySliceDescriptor then
-            return "_" .. sanitize(access.name) .. "_slice"
+            return "_slice"
         end
         if cls == Stencil.StencilTopologyByteSpanDescriptor then
-            return "_" .. sanitize(access.name) .. "_bytespan"
+            return "_bytespan"
         end
         return ""
+    end
+
+    local function topology_suffix(access)
+        local suffix = topology_suffix_for(access, access.topology)
+        if suffix == "" then return "" end
+        return "_" .. sanitize(access.name) .. suffix
     end
 
     local function descriptor_symbol_suffix(desc)
@@ -417,6 +478,8 @@ local function bind_context(T)
         end
         return table.concat(out)
     end
+
+    local source_params
 
     function artifact(instance, symbol, signature)
         local suffix = descriptor_symbol_suffix(instance.descriptor)
@@ -435,15 +498,15 @@ local function bind_context(T)
     end
 
     local function void_desc_decl(symbol, desc, args)
-        return void_decl(symbol, params_with_dynamic_strides(desc, args))
+        return void_decl(symbol, source_params({ instance = { descriptor = desc } }, args))
     end
 
     local function result_desc_decl(symbol, result_ty, desc, args)
-        return result_decl(symbol, result_ty, params_with_dynamic_strides(desc, args))
+        return result_decl(symbol, result_ty, source_params({ instance = { descriptor = desc } }, args))
     end
 
     local function int32_desc_decl(symbol, desc, args)
-        return int32_decl(symbol, params_with_dynamic_strides(desc, args))
+        return int32_decl(symbol, source_params({ instance = { descriptor = desc } }, args))
     end
 
     function api.reduce_array_artifact(reduction, plan, info)
@@ -1088,13 +1151,29 @@ local function bind_context(T)
         error("stencil_c: unsupported stencil descriptor", 3)
     end
 
-    local function source_params(artifact, params)
-        return params_with_dynamic_strides(artifact.instance.descriptor, params)
+    source_params = function(artifact, params)
+        local desc = artifact.instance.descriptor
+        local accesses = pointer_accesses(desc)
+        local access_i = 1
+        local out = {}
+        for i = 1, #(params or {}) do
+            local p = params[i]
+            if p:match("%*") and accesses[access_i] ~= nil then
+                out[i] = param_decl_for_access(accesses[access_i], p)
+                access_i = access_i + 1
+            else
+                out[i] = p
+            end
+        end
+        return params_with_dynamic_strides(desc, out)
     end
 
     local function access_offset(access, index)
         local top = access.topology
         local cls = pvm.classof(top)
+        if cls == Stencil.StencilTopologyFieldProjection then
+            return access_offset({ topology = top.parent }, index)
+        end
         if cls == Stencil.StencilTopologyViewDescriptor then
             local stride = top.stride_const or stride_param_name(access)
             if tonumber(stride) == 1 then return index end
@@ -1106,6 +1185,10 @@ local function bind_context(T)
     end
 
     local function access_ref(access, base, index)
+        local top = access.topology
+        if pvm.classof(top) == Stencil.StencilTopologyFieldProjection then
+            return base .. "[" .. access_offset({ topology = top.parent }, index) .. "]." .. sanitize(top.field_name)
+        end
         return base .. "[" .. access_offset(access, index) .. "]"
     end
 
@@ -1431,8 +1514,10 @@ local function bind_context(T)
         error("stencil_c: unsupported stencil shape", 3)
     end
 
-    function api.source(artifacts)
+    function api.source(artifacts, opts)
+        opts = opts or {}
         local out = { "#include <stdint.h>", "#include <stddef.h>", "#include <string.h>", "typedef intptr_t ml_index;" }
+        if opts.preamble ~= nil and opts.preamble ~= "" then out[#out + 1] = opts.preamble end
         local seen = {}
         for _, artifact in ipairs(artifacts or {}) do
             local key = artifact.symbol.text
@@ -1442,53 +1527,6 @@ local function bind_context(T)
             end
         end
         return table.concat(out, "\n\n") .. "\n"
-    end
-
-    local function shell_quote(s)
-        return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
-    end
-
-    local function write_file(path, source)
-        local f = assert(io.open(path, "wb"))
-        f:write(source)
-        f:close()
-    end
-
-    function api.compile_artifacts(artifacts, opts)
-        opts = opts or {}
-        local ffi = require("ffi")
-        local dir = opts.dir or "target/stencil"
-        os.execute("mkdir -p " .. shell_quote(dir))
-        local stem = opts.stem or ("moonlift_stencil_" .. tostring(os.time()) .. "_" .. sanitize(tostring(os.clock())))
-        local c_path = dir .. "/" .. stem .. ".c"
-        local so_path = dir .. "/" .. stem .. ".so"
-        local source = api.source(artifacts)
-        write_file(c_path, source)
-        local cc = opts.cc or os.getenv("CC") or "gcc"
-        local cflags = opts.cflags or "-std=c99 -O3 -march=native -fPIC -shared"
-        local cmd = table.concat({ shell_quote(cc), cflags, shell_quote(c_path), "-o", shell_quote(so_path) }, " ")
-        local ok = os.execute(cmd)
-        if not (ok == true or ok == 0) then return nil, "stencil_c: compile failed: " .. cmd, source end
-        local decls = {}
-        local seen = {}
-        for _, artifact in ipairs(artifacts or {}) do
-            if not seen[artifact.symbol.text] then
-                decls[#decls + 1] = artifact.c_signature
-                seen[artifact.symbol.text] = true
-            end
-        end
-        if #decls > 0 then ffi.cdef(table.concat(decls, "\n")) end
-        local lib = ffi.load(so_path)
-        local symbols = {}
-        for _, artifact in ipairs(artifacts or {}) do symbols[artifact.symbol.text] = lib[artifact.symbol.text] end
-        return {
-            c_path = c_path,
-            so_path = so_path,
-            source = source,
-            command = cmd,
-            lib = lib,
-            symbols = symbols,
-        }, nil, source
     end
 
     T._moonlift_api_cache.stencil_c = api

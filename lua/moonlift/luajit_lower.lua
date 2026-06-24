@@ -390,6 +390,10 @@ local function bind_context(T)
     local function stream_base_value(stream)
         local base = stream and stream.base or nil
         if pvm.classof(base) == Mem.MemBaseValue then return base.value end
+        if pvm.classof(base) == Mem.MemBaseProjection then
+            local inner = stream_base_value({ base = base.base })
+            if inner ~= nil then return inner end
+        end
         return nil
     end
 
@@ -412,11 +416,44 @@ local function bind_context(T)
         return nil
     end
 
+    local function field_name_from_stream(ctx, stream)
+        for _, access_id in ipairs(stream and stream.accesses or {}) do
+            local access = ctx.mem_accesses and ctx.mem_accesses[access_id.text] or nil
+            local place = access and access.place or nil
+            while place ~= nil do
+                local cls = pvm.classof(place)
+                if cls == Code.CodePlaceField then
+                    local field = place.field
+                    return field and field.field_name or ("field_" .. tostring(place.offset or 0))
+                elseif cls == Code.CodePlaceIndex then
+                    place = place.base
+                else
+                    place = nil
+                end
+            end
+        end
+        return nil
+    end
+
     local function stream_topology(ctx, stream)
         local object = ctx.mem_objects and stream and ctx.mem_objects[stream.object.text] or nil
         if object ~= nil then
             local provenance = object.provenance
             local pcls = pvm.classof(provenance)
+            if object.kind == Mem.MemObjectDerived and pcls == Mem.MemProvProjection and provenance.projection == Mem.MemProjectField then
+                local parent = ctx.mem_objects and ctx.mem_objects[provenance.parent.text] or nil
+                local parent_topology = stream_topology(ctx, {
+                    object = provenance.parent,
+                    base = stream and stream.base,
+                    pattern = stream and stream.pattern,
+                    accesses = stream and stream.accesses,
+                })
+                local record_ty = parent and parent.elem_ty or nil
+                local field_name = field_name_from_stream(ctx, stream)
+                if parent_topology ~= nil and record_ty ~= nil and field_name ~= nil then
+                    return Stencil.StencilTopologyFieldProjection(parent_topology, record_ty, field_name, provenance.byte_offset or 0)
+                end
+            end
             if object.kind == Mem.MemObjectView and pcls == Mem.MemProvView then
                 if provenance.stride == nil then return nil end
                 return Stencil.StencilTopologyViewDescriptor(
@@ -649,13 +686,20 @@ local function bind_context(T)
         return { selection = stencil_plan.selection }, nil
     end
 
+    local function dynamic_stride_topology(topology)
+        local cls = pvm.classof(topology)
+        if cls == Stencil.StencilTopologyFieldProjection then return dynamic_stride_topology(topology.parent) end
+        if cls == Stencil.StencilTopologyViewDescriptor and topology.stride_const == nil then return topology end
+        return nil
+    end
+
     local function stencil_args(ctx, artifact, args)
         local out = {}
         for i = 1, #(args or {}) do out[i] = args[i] end
         local desc = artifact and artifact.instance and artifact.instance.descriptor or nil
         for _, access in ipairs(desc and desc.accesses or {}) do
-            local top = access.topology
-            if pvm.classof(top) == Stencil.StencilTopologyViewDescriptor and top.stride_const == nil then
+            local top = dynamic_stride_topology(access.topology)
+            if top ~= nil then
                 out[#out + 1] = value_id_expr(ctx, top.stride)
             end
         end
@@ -990,6 +1034,7 @@ local function bind_context(T)
         local ctx = {
             code_sigs = module_ctx.code_sigs,
             mem_objects = module_ctx.mem_objects,
+            mem_accesses = module_ctx.mem_accesses,
             value_types = {},
             defs = value_defs(func),
         }
@@ -1071,7 +1116,7 @@ local function bind_context(T)
         local graph, flow, value, mem, effect, kernel = build_kernel(module, opts)
         local graph_loops, loop_func = graph_loop_index(graph)
         local flow_loops = flow_loop_index(flow)
-        local module_ctx = { code_sigs = code_sigs(module), mem_objects = mem_object_index(mem) }
+        local module_ctx = { code_sigs = code_sigs(module), mem_objects = mem_object_index(mem), mem_accesses = mem_access_index(mem) }
         local funcs = {}
         for i, func in ipairs(module.funcs or {}) do funcs[i] = lower_func(module_ctx, func, kernel, graph_loops, flow_loops, loop_func, opts) end
         return LJ.LJModule(module.id, funcs, {}, {}, {}), {

@@ -314,11 +314,15 @@ local function bind_context(T)
                     return parent, base or Mem.MemBaseUnknown("index base object is unknown"), Mem.MemIndexValue(place.index, place.elem_size, 0)
                 end
                 if cls == Code.CodePlaceField then
-                    local parent, base = object_for_place(place.base)
+                    local parent, base, index = object_for_place(place.base)
                     if parent ~= nil then
                         local id = object_id(func.name, "field", parent.text, tostring(place.offset or 0))
                         add_object(Mem.MemObjectFact(id, func.id, Mem.MemObjectDerived, Mem.MemProvProjection(parent, Mem.MemProjectField, place.offset or 0), place.ty, storage_extent(place.ty, place.size, "CodePlaceField projection"), Mem.MemStrideUnit))
-                        return id, Mem.MemBaseProjection(base or Mem.MemBaseUnknown("field base unknown"), Mem.MemProjectField, place.offset or 0), Mem.MemIndexNone
+                        local proof = Mem.MemProofObject(id, "CodePlaceField projection shares backing store with its parent object")
+                        proofs[#proofs + 1] = proof
+                        relations[#relations + 1] = Mem.MemObjectSameStore(id, parent, proof)
+                        mark_same_store(id, parent)
+                        return id, Mem.MemBaseProjection(base or Mem.MemBaseUnknown("field base unknown"), Mem.MemProjectField, place.offset or 0), index
                     end
                     return nil, Mem.MemBaseUnknown("field parent object is unknown"), Mem.MemIndexNone
                 end
@@ -327,6 +331,10 @@ local function bind_context(T)
                     if parent ~= nil then
                         local id = object_id(func.name, "bytes", parent.text, tostring(place.offset or 0))
                         add_object(Mem.MemObjectFact(id, func.id, Mem.MemObjectDerived, Mem.MemProvProjection(parent, Mem.MemProjectBytes, place.offset or 0), place.ty, Mem.MemExtentBytes(place.size or 0, "CodePlaceBytes projection"), Mem.MemStrideUnit))
+                        local proof = Mem.MemProofObject(id, "CodePlaceBytes projection shares backing store with its parent object")
+                        proofs[#proofs + 1] = proof
+                        relations[#relations + 1] = Mem.MemObjectSameStore(id, parent, proof)
+                        mark_same_store(id, parent)
                         return id, Mem.MemBaseProjection(Mem.MemBaseValue(place.base), Mem.MemProjectBytes, place.offset or 0), Mem.MemIndexNone
                     end
                     return nil, Mem.MemBaseValue(place.base), Mem.MemIndexNone
