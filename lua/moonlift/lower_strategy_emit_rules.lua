@@ -10,10 +10,9 @@ local function bind_context(T)
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
 
-    local LowerEmitCandidate = llb.symbol("LowerEmitCandidate")
+    local LowerEmitInput = llb.symbol("LowerEmitInput")
     local LowerEmitSelection = llb.symbol("LowerEmitSelection")
-    local candidate = llb.symbol("candidate")
-    local selection = llb.symbol("selection")
+        local selection = llb.symbol("selection")
     local lower_emit_selection = llb.symbol("lower_emit_selection")
 
     local code = llb.symbol("code")
@@ -30,7 +29,7 @@ local function bind_context(T)
   constructor. lower_emit_selection [build_selection],
 
   relation. select_lower_emit {
-    input { candidate [LowerEmitCandidate] },
+    input { emit [LowerEmitInput] },
     output { selection [LowerEmitSelection] },
     strategy {
       select. best_cost,
@@ -40,9 +39,9 @@ local function bind_context(T)
   },
 
   rule. emit_code {
-    llisle.select_lower_emit { candidate = P. candidate },
+    llisle.select_lower_emit { emit = P. emit },
     when {
-      P. candidate.strategy_code :eq (true),
+      P. emit.strategy_code :eq (true),
     },
     cost (0),
     run {
@@ -55,10 +54,10 @@ local function bind_context(T)
   },
 
   rule. emit_closed_form {
-    llisle.select_lower_emit { candidate = P. candidate },
+    llisle.select_lower_emit { emit = P. emit },
     when {
-      (P. candidate.strategy_code :eq (false))
-        * (P. candidate.strategy_closed_form :eq (true)),
+      (P. emit.strategy_code :eq (false))
+        * (P. emit.strategy_closed_form :eq (true)),
     },
     cost (0),
     run {
@@ -71,13 +70,13 @@ local function bind_context(T)
   },
 
   rule. emit_vector_kernel {
-    llisle.select_lower_emit { candidate = P. candidate },
+    llisle.select_lower_emit { emit = P. emit },
     when {
-      (P. candidate.strategy_code :eq (false))
-        * (P. candidate.strategy_closed_form :eq (false))
-        * (P. candidate.strategy_kernel :eq (true))
-        * (P. candidate.has_schedule :eq (true))
-        * (P. candidate.schedule_vector :eq (true)),
+      (P. emit.strategy_code :eq (false))
+        * (P. emit.strategy_closed_form :eq (false))
+        * (P. emit.strategy_kernel :eq (true))
+        * (P. emit.has_schedule :eq (true))
+        * (P. emit.schedule_vector :eq (true)),
     },
     cost (0),
     run {
@@ -90,13 +89,13 @@ local function bind_context(T)
   },
 
   rule. emit_scalar_kernel {
-    llisle.select_lower_emit { candidate = P. candidate },
+    llisle.select_lower_emit { emit = P. emit },
     when {
-      (P. candidate.strategy_code :eq (false))
-        * (P. candidate.strategy_closed_form :eq (false))
-        * (P. candidate.strategy_kernel :eq (true))
-        * (P. candidate.has_schedule :eq (true))
-        * (P. candidate.schedule_vector :eq (false)),
+      (P. emit.strategy_code :eq (false))
+        * (P. emit.strategy_closed_form :eq (false))
+        * (P. emit.strategy_kernel :eq (true))
+        * (P. emit.has_schedule :eq (true))
+        * (P. emit.schedule_vector :eq (false)),
     },
     cost (0),
     run {
@@ -109,37 +108,37 @@ local function bind_context(T)
   },
 
   rule. kernel_missing_schedule {
-    llisle.select_lower_emit { candidate = P. candidate },
+    llisle.select_lower_emit { emit = P. emit },
     when {
-      (P. candidate.strategy_code :eq (false))
-        * (P. candidate.strategy_closed_form :eq (false))
-        * (P. candidate.strategy_kernel :eq (true))
-        * (P. candidate.has_schedule :eq (false)),
+      (P. emit.strategy_code :eq (false))
+        * (P. emit.strategy_closed_form :eq (false))
+        * (P. emit.strategy_kernel :eq (true))
+        * (P. emit.has_schedule :eq (false)),
     },
     cost (0),
     run {
       ret {
         selection = lower_emit_selection {
           kind = missing_schedule,
-          reason = P. candidate.missing_schedule_reason,
+          reason = P. emit.missing_schedule_reason,
         },
       },
     },
   },
 
   rule. emit_unsupported {
-    llisle.select_lower_emit { candidate = P. candidate },
+    llisle.select_lower_emit { emit = P. emit },
     when {
-      (P. candidate.strategy_code :eq (false))
-        * (P. candidate.strategy_closed_form :eq (false))
-        * (P. candidate.strategy_kernel :eq (false)),
+      (P. emit.strategy_code :eq (false))
+        * (P. emit.strategy_closed_form :eq (false))
+        * (P. emit.strategy_kernel :eq (false)),
     },
     cost (0),
     run {
       ret {
         selection = lower_emit_selection {
           kind = unsupported,
-          reason = P. candidate.unsupported_reason,
+          reason = P. emit.unsupported_reason,
         },
       },
     },

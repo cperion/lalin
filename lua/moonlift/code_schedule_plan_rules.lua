@@ -9,10 +9,9 @@ local function bind_context(T)
     local env = moon.family.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
-    local KernelScheduleCandidate = llb.symbol("KernelScheduleCandidate")
+    local KernelScheduleInput = llb.symbol("KernelScheduleInput")
     local KernelScheduleSelection = llb.symbol("KernelScheduleSelection")
-    local candidate = llb.symbol("candidate")
-    local selection = llb.symbol("selection")
+        local selection = llb.symbol("selection")
     local kernel_schedule = llb.symbol("kernel_schedule")
     local planned = llb.symbol("planned")
     local no_plan = llb.symbol("no_plan")
@@ -23,7 +22,7 @@ local function bind_context(T)
   constructor. kernel_schedule [build_kernel_schedule],
 
   relation. select_kernel_schedule {
-    input { candidate [KernelScheduleCandidate] },
+    input { schedule [KernelScheduleInput] },
     output { selection [KernelScheduleSelection] },
     strategy {
       select. best_cost,
@@ -33,18 +32,18 @@ local function bind_context(T)
   },
 
   rule. vector_executable {
-    llisle.select_kernel_schedule { candidate = P. candidate },
+    llisle.select_kernel_schedule { schedule = P. schedule },
     when {
-      (P. candidate.has_vector_candidate :eq (true))
-        * (P. candidate.vector_executable :eq (true)),
+      (P. schedule.has_vector_candidate :eq (true))
+        * (P. schedule.vector_executable :eq (true)),
     },
     cost (0),
     run {
       ret {
         selection = kernel_schedule {
           kind = planned,
-          schedule_kind = P. candidate.vector_kind,
-          capability = P. candidate.vector_capability,
+          schedule_kind = P. schedule.vector_kind,
+          capability = P. schedule.vector_capability,
           rejected_alternatives = {},
         },
       },
@@ -52,38 +51,38 @@ local function bind_context(T)
   },
 
   rule. scalar_after_vector_reject {
-    llisle.select_kernel_schedule { candidate = P. candidate },
+    llisle.select_kernel_schedule { schedule = P. schedule },
     when {
-      (P. candidate.has_vector_candidate :eq (true))
-        * (P. candidate.vector_executable :eq (false))
-        * (P. candidate.scalar_executable :eq (true)),
+      (P. schedule.has_vector_candidate :eq (true))
+        * (P. schedule.vector_executable :eq (false))
+        * (P. schedule.scalar_executable :eq (true)),
     },
     cost (10),
     run {
       ret {
         selection = kernel_schedule {
           kind = planned,
-          schedule_kind = P. candidate.scalar_kind,
-          capability = P. candidate.scalar_capability,
-          rejected_alternatives = P. candidate.vector_rejects,
+          schedule_kind = P. schedule.scalar_kind,
+          capability = P. schedule.scalar_capability,
+          rejected_alternatives = P. schedule.vector_rejects,
         },
       },
     },
   },
 
   rule. scalar_without_vector {
-    llisle.select_kernel_schedule { candidate = P. candidate },
+    llisle.select_kernel_schedule { schedule = P. schedule },
     when {
-      (P. candidate.has_vector_candidate :eq (false))
-        * (P. candidate.scalar_executable :eq (true)),
+      (P. schedule.has_vector_candidate :eq (false))
+        * (P. schedule.scalar_executable :eq (true)),
     },
     cost (20),
     run {
       ret {
         selection = kernel_schedule {
           kind = planned,
-          schedule_kind = P. candidate.scalar_kind,
-          capability = P. candidate.scalar_capability,
+          schedule_kind = P. schedule.scalar_kind,
+          capability = P. schedule.scalar_capability,
           rejected_alternatives = {},
         },
       },
@@ -91,35 +90,35 @@ local function bind_context(T)
   },
 
   rule. no_executable_schedule_after_vector_reject {
-    llisle.select_kernel_schedule { candidate = P. candidate },
+    llisle.select_kernel_schedule { schedule = P. schedule },
     when {
-      (P. candidate.has_vector_candidate :eq (true))
-        * (P. candidate.vector_executable :eq (false))
-        * (P. candidate.scalar_executable :eq (false)),
+      (P. schedule.has_vector_candidate :eq (true))
+        * (P. schedule.vector_executable :eq (false))
+        * (P. schedule.scalar_executable :eq (false)),
     },
     cost (30),
     run {
       ret {
         selection = kernel_schedule {
           kind = no_plan,
-          rejects = P. candidate.scalar_rejects,
+          rejects = P. schedule.scalar_rejects,
         },
       },
     },
   },
 
   rule. no_executable_schedule_without_vector {
-    llisle.select_kernel_schedule { candidate = P. candidate },
+    llisle.select_kernel_schedule { schedule = P. schedule },
     when {
-      (P. candidate.has_vector_candidate :eq (false))
-        * (P. candidate.scalar_executable :eq (false)),
+      (P. schedule.has_vector_candidate :eq (false))
+        * (P. schedule.scalar_executable :eq (false)),
     },
     cost (40),
     run {
       ret {
         selection = kernel_schedule {
           kind = no_plan,
-          rejects = P. candidate.scalar_rejects,
+          rejects = P. schedule.scalar_rejects,
         },
       },
     },

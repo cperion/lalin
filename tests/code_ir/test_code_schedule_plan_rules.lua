@@ -31,7 +31,7 @@ do
     c.has_vector_candidate = true
     c.vector_executable = true
     c.vector_capability = cap(true)
-    local selection, err = Rules:run_candidate("select_kernel_schedule", c, "selection", "no Kernel schedule selected")
+    local selection, err = Rules:run("select_kernel_schedule", { schedule = c }, "selection", "no Kernel schedule selected")
     assert(selection ~= nil, tostring(err))
     assert(selection.kind == "planned", "executable vector candidate must plan")
     assert(selection.schedule_kind == "vector", "vector schedule must win")
@@ -43,7 +43,7 @@ do
     c.has_vector_candidate = true
     c.vector_executable = false
     c.scalar_executable = true
-    local selection, err = Rules:run_candidate("select_kernel_schedule", c, "selection", "no Kernel schedule selected")
+    local selection, err = Rules:run("select_kernel_schedule", { schedule = c }, "selection", "no Kernel schedule selected")
     assert(selection ~= nil, tostring(err))
     assert(selection.kind == "planned", "scalar must plan after vector rejection")
     assert(selection.schedule_kind == "scalar", "scalar schedule must be selected after vector rejection")
@@ -54,7 +54,7 @@ do
     local c = base()
     c.has_vector_candidate = false
     c.scalar_kind = "closed_form"
-    local selection, err = Rules:run_candidate("select_kernel_schedule", c, "selection", "no Kernel schedule selected")
+    local selection, err = Rules:run("select_kernel_schedule", { schedule = c }, "selection", "no Kernel schedule selected")
     assert(selection ~= nil, tostring(err))
     assert(selection.kind == "planned", "non-vector scalar/closed-form candidate must plan")
     assert(selection.schedule_kind == "closed_form", "closed-form schedule kind must be preserved")
@@ -67,7 +67,7 @@ do
     c.vector_executable = false
     c.scalar_executable = false
     c.scalar_rejects = { "scalar-reject" }
-    local selection, err = Rules:run_candidate("select_kernel_schedule", c, "selection", "no Kernel schedule selected")
+    local selection, err = Rules:run("select_kernel_schedule", { schedule = c }, "selection", "no Kernel schedule selected")
     assert(selection ~= nil, tostring(err))
     assert(selection.kind == "no_plan", "failed vector plus failed scalar must reject")
     assert(selection.rejects[1] == "scalar-reject", "no-plan rejects must come from executable fallback")
@@ -78,7 +78,7 @@ do
     c.has_vector_candidate = false
     c.scalar_executable = false
     c.scalar_rejects = { "closed-reject" }
-    local selection, err = Rules:run_candidate("select_kernel_schedule", c, "selection", "no Kernel schedule selected")
+    local selection, err = Rules:run("select_kernel_schedule", { schedule = c }, "selection", "no Kernel schedule selected")
     assert(selection ~= nil, tostring(err))
     assert(selection.kind == "no_plan", "failed scalar/closed-form candidate must reject")
     assert(selection.rejects[1] == "closed-reject", "scalar rejects must be preserved")

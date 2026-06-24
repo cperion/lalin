@@ -9,12 +9,11 @@ local function bind_context(T)
     local env = moon.family.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
-    local LuaJITKernelLoweringCandidate = llb.symbol("LuaJITKernelLoweringCandidate")
+    local LuaJITKernelLoweringInput = llb.symbol("LuaJITKernelLoweringInput")
     local LuaJITKernelLoweringSelection = llb.symbol("LuaJITKernelLoweringSelection")
-    local LuaJITSkeletonLoweringCandidate = llb.symbol("LuaJITSkeletonLoweringCandidate")
+    local LuaJITSkeletonLoweringInput = llb.symbol("LuaJITSkeletonLoweringInput")
     local LuaJITSkeletonLoweringSelection = llb.symbol("LuaJITSkeletonLoweringSelection")
-    local candidate = llb.symbol("candidate")
-    local selection = llb.symbol("selection")
+        local selection = llb.symbol("selection")
     local kernel_lowering = llb.symbol("kernel_lowering")
     local stencil_reduce = llb.symbol("stencil_reduce")
     local stencil_store = llb.symbol("stencil_store")
@@ -31,7 +30,7 @@ local function bind_context(T)
   constructor. kernel_lowering [build_kernel_lowering],
 
   relation. select_kernel_lowering {
-    input { candidate [LuaJITKernelLoweringCandidate] },
+    input { kernel [LuaJITKernelLoweringInput] },
     output { selection [LuaJITKernelLoweringSelection] },
     strategy {
       select. best_cost,
@@ -41,7 +40,7 @@ local function bind_context(T)
   },
 
   relation. select_skeleton_lowering {
-    input { candidate [LuaJITSkeletonLoweringCandidate] },
+    input { skeleton [LuaJITSkeletonLoweringInput] },
     output { selection [LuaJITSkeletonLoweringSelection] },
     strategy {
       select. best_cost,
@@ -51,17 +50,17 @@ local function bind_context(T)
   },
 
   rule. stencil_reduce {
-    llisle.select_kernel_lowering { candidate = P. candidate },
+    llisle.select_kernel_lowering { kernel = P. kernel },
     when {
-      (P. candidate.loop_plan :eq (true))
-        * (P. candidate.owns_loop :eq (true))
-        * (P. candidate.planned :eq (true))
-        * (P. candidate.has_reduce_provider :eq (true))
-        * (P. candidate.counted_positive :eq (true))
-        * (P. candidate.result_reduction :eq (true))
-        * (P. candidate.returns_reduction :eq (true))
-        * (P. candidate.stencil_skeleton_ready :eq (false))
-        * (P. candidate.stencil_reduce_ready :eq (true)),
+      (P. kernel.loop_plan :eq (true))
+        * (P. kernel.owns_loop :eq (true))
+        * (P. kernel.planned :eq (true))
+        * (P. kernel.has_reduce_provider :eq (true))
+        * (P. kernel.counted_positive :eq (true))
+        * (P. kernel.result_reduction :eq (true))
+        * (P. kernel.returns_reduction :eq (true))
+        * (P. kernel.stencil_skeleton_ready :eq (false))
+        * (P. kernel.stencil_reduce_ready :eq (true)),
     },
     cost (20),
     run {
@@ -70,14 +69,14 @@ local function bind_context(T)
   },
 
   rule. stencil_skeleton {
-    llisle.select_kernel_lowering { candidate = P. candidate },
+    llisle.select_kernel_lowering { kernel = P. kernel },
     when {
-      (P. candidate.loop_plan :eq (true))
-        * (P. candidate.owns_loop :eq (true))
-        * (P. candidate.planned :eq (true))
-        * (P. candidate.has_skeleton_provider :eq (true))
-        * (P. candidate.counted_positive :eq (true))
-        * (P. candidate.stencil_skeleton_ready :eq (true)),
+      (P. kernel.loop_plan :eq (true))
+        * (P. kernel.owns_loop :eq (true))
+        * (P. kernel.planned :eq (true))
+        * (P. kernel.has_skeleton_provider :eq (true))
+        * (P. kernel.counted_positive :eq (true))
+        * (P. kernel.stencil_skeleton_ready :eq (true)),
     },
     cost (30),
     run {
@@ -86,18 +85,18 @@ local function bind_context(T)
   },
 
   rule. stencil_store {
-    llisle.select_kernel_lowering { candidate = P. candidate },
+    llisle.select_kernel_lowering { kernel = P. kernel },
     when {
-      (P. candidate.loop_plan :eq (true))
-        * (P. candidate.owns_loop :eq (true))
-        * (P. candidate.planned :eq (true))
-        * (P. candidate.has_store_provider :eq (true))
-        * (P. candidate.counted_positive :eq (true))
-        * (P. candidate.returns_void :eq (true))
-        * (P. candidate.single_store :eq (true))
-        * (P. candidate.store_dst_base :eq (true))
-        * (P. candidate.stencil_skeleton_ready :eq (false))
-        * (P. candidate.stencil_store_ready :eq (true)),
+      (P. kernel.loop_plan :eq (true))
+        * (P. kernel.owns_loop :eq (true))
+        * (P. kernel.planned :eq (true))
+        * (P. kernel.has_store_provider :eq (true))
+        * (P. kernel.counted_positive :eq (true))
+        * (P. kernel.returns_void :eq (true))
+        * (P. kernel.single_store :eq (true))
+        * (P. kernel.store_dst_base :eq (true))
+        * (P. kernel.stencil_skeleton_ready :eq (false))
+        * (P. kernel.stencil_store_ready :eq (true)),
     },
     cost (10),
     run {
@@ -106,105 +105,105 @@ local function bind_context(T)
   },
 
   rule. no_kernel_lowering {
-    llisle.select_kernel_lowering { candidate = P. candidate },
+    llisle.select_kernel_lowering { kernel = P. kernel },
     when {
-      P. candidate.any_ready_lowering :eq (false),
+      P. kernel.any_ready_lowering :eq (false),
     },
     cost (100),
     run {
       ret {
         selection = kernel_lowering {
           kind = no_plan,
-          reason = P. candidate.reject_reason,
+          reason = P. kernel.reject_reason,
         },
       },
     },
   },
 
   rule. skeleton_scan {
-    llisle.select_skeleton_lowering { candidate = P. candidate },
+    llisle.select_skeleton_lowering { skeleton = P. skeleton },
     when {
-      P. candidate.scan_ready :eq (true),
+      P. skeleton.scan_ready :eq (true),
     },
     cost (0),
     run {
       ret {
         selection = kernel_lowering {
           kind = skeleton_scan,
-          planned = P. candidate.scan_plan,
+          planned = P. skeleton.scan_plan,
         },
       },
     },
   },
 
   rule. skeleton_find {
-    llisle.select_skeleton_lowering { candidate = P. candidate },
+    llisle.select_skeleton_lowering { skeleton = P. skeleton },
     when {
-      (P. candidate.scan_ready :eq (false))
-        * (P. candidate.find_ready :eq (true)),
+      (P. skeleton.scan_ready :eq (false))
+        * (P. skeleton.find_ready :eq (true)),
     },
     cost (10),
     run {
       ret {
         selection = kernel_lowering {
           kind = skeleton_find,
-          planned = P. candidate.find_plan,
+          planned = P. skeleton.find_plan,
         },
       },
     },
   },
 
   rule. skeleton_partition {
-    llisle.select_skeleton_lowering { candidate = P. candidate },
+    llisle.select_skeleton_lowering { skeleton = P. skeleton },
     when {
-      (P. candidate.scan_ready :eq (false))
-        * (P. candidate.find_ready :eq (false))
-        * (P. candidate.partition_ready :eq (true)),
+      (P. skeleton.scan_ready :eq (false))
+        * (P. skeleton.find_ready :eq (false))
+        * (P. skeleton.partition_ready :eq (true)),
     },
     cost (20),
     run {
       ret {
         selection = kernel_lowering {
           kind = skeleton_partition,
-          planned = P. candidate.partition_plan,
+          planned = P. skeleton.partition_plan,
         },
       },
     },
   },
 
   rule. skeleton_copy {
-    llisle.select_skeleton_lowering { candidate = P. candidate },
+    llisle.select_skeleton_lowering { skeleton = P. skeleton },
     when {
-      (P. candidate.scan_ready :eq (false))
-        * (P. candidate.find_ready :eq (false))
-        * (P. candidate.partition_ready :eq (false))
-        * (P. candidate.copy_ready :eq (true)),
+      (P. skeleton.scan_ready :eq (false))
+        * (P. skeleton.find_ready :eq (false))
+        * (P. skeleton.partition_ready :eq (false))
+        * (P. skeleton.copy_ready :eq (true)),
     },
     cost (30),
     run {
       ret {
         selection = kernel_lowering {
           kind = skeleton_copy,
-          planned = P. candidate.copy_plan,
+          planned = P. skeleton.copy_plan,
         },
       },
     },
   },
 
   rule. skeleton_no_plan {
-    llisle.select_skeleton_lowering { candidate = P. candidate },
+    llisle.select_skeleton_lowering { skeleton = P. skeleton },
     when {
-      (P. candidate.scan_ready :eq (false))
-        * (P. candidate.find_ready :eq (false))
-        * (P. candidate.partition_ready :eq (false))
-        * (P. candidate.copy_ready :eq (false)),
+      (P. skeleton.scan_ready :eq (false))
+        * (P. skeleton.find_ready :eq (false))
+        * (P. skeleton.partition_ready :eq (false))
+        * (P. skeleton.copy_ready :eq (false)),
     },
     cost (100),
     run {
       ret {
         selection = kernel_lowering {
           kind = no_plan,
-          reason = P. candidate.reject_reason,
+          reason = P. kernel.reject_reason,
         },
       },
     },

@@ -21,7 +21,7 @@ local function candidate(fields)
 end
 
 local function select(fields)
-    local selection, err = Rules:run_candidate("select_exec_fragment", candidate(fields), "selection", "no exec fragment selected")
+    local selection, err = Rules:run("select_exec_fragment", { fragment = candidate(fields) }, "selection", "no exec fragment selected")
     assert(selection ~= nil, tostring(err))
     return selection
 end

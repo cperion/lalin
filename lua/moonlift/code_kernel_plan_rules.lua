@@ -9,10 +9,9 @@ local function bind_context(T)
     local env = moon.family.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
-    local KernelLoopPlanCandidate = llb.symbol("KernelLoopPlanCandidate")
+    local KernelLoopPlanInput = llb.symbol("KernelLoopPlanInput")
     local KernelLoopPlanSelection = llb.symbol("KernelLoopPlanSelection")
-    local candidate = llb.symbol("candidate")
-    local selection = llb.symbol("selection")
+        local selection = llb.symbol("selection")
     local kernel_plan = llb.symbol("kernel_plan")
     local no_plan = llb.symbol("no_plan")
     local planned = llb.symbol("planned")
@@ -27,7 +26,7 @@ local function bind_context(T)
   constructor. kernel_plan [build_kernel_plan],
 
   relation. select_loop_kernel_plan {
-    input { candidate [KernelLoopPlanCandidate] },
+    input { loop [KernelLoopPlanInput] },
     output { selection [KernelLoopPlanSelection] },
     strategy {
       select. best_cost,
@@ -37,64 +36,64 @@ local function bind_context(T)
   },
 
   rule. no_counted_domain {
-    llisle.select_loop_kernel_plan { candidate = P. candidate },
+    llisle.select_loop_kernel_plan { loop = P. loop },
     when {
-      P. candidate.counted :eq (false),
+      P. loop.counted :eq (false),
     },
     cost (0),
     run {
       ret {
         selection = kernel_plan {
           kind = no_plan,
-          rejects = P. candidate.not_counted_rejects,
+          rejects = P. loop.not_counted_rejects,
         },
       },
     },
   },
 
   rule. no_graph_owner {
-    llisle.select_loop_kernel_plan { candidate = P. candidate },
+    llisle.select_loop_kernel_plan { loop = P. loop },
     when {
-      (P. candidate.counted :eq (true))
-        * (P. candidate.has_func_id :eq (false)),
+      (P. loop.counted :eq (true))
+        * (P. loop.has_func_id :eq (false)),
     },
     cost (0),
     run {
       ret {
         selection = kernel_plan {
           kind = no_plan,
-          rejects = P. candidate.no_owner_rejects,
+          rejects = P. loop.no_owner_rejects,
         },
       },
     },
   },
 
   rule. rejected_loop {
-    llisle.select_loop_kernel_plan { candidate = P. candidate },
+    llisle.select_loop_kernel_plan { loop = P. loop },
     when {
-      (P. candidate.counted :eq (true))
-        * (P. candidate.has_func_id :eq (true))
-        * (P. candidate.has_rejects :eq (true)),
+      (P. loop.counted :eq (true))
+        * (P. loop.has_func_id :eq (true))
+        * (P. loop.has_rejects :eq (true)),
     },
     cost (0),
     run {
       ret {
         selection = kernel_plan {
           kind = no_plan,
-          rejects = P. candidate.rejects,
+          rejects = P. loop.rejects,
         },
       },
     },
   },
 
   rule. planned_closed_form {
-    llisle.select_loop_kernel_plan { candidate = P. candidate },
+    llisle.select_loop_kernel_plan { loop = P. loop },
     when {
-      (P. candidate.counted :eq (true))
-        * (P. candidate.has_func_id :eq (true))
-        * (P. candidate.has_func :eq (true))
-        * (P. candidate.has_rejects :eq (false))
-        * (P. candidate.has_closed_form :eq (true)),
+      (P. loop.counted :eq (true))
+        * (P. loop.has_func_id :eq (true))
+        * (P. loop.has_func :eq (true))
+        * (P. loop.has_rejects :eq (false))
+        * (P. loop.has_closed_form :eq (true)),
     },
     cost (0),
     run {
@@ -102,22 +101,22 @@ local function bind_context(T)
         selection = kernel_plan {
           kind = planned,
           result_kind = closed_form,
-          closed_form = P. candidate.closed_form,
-          add_trip_unknown_proof = P. candidate.closed_form_trip_unknown,
+          closed_form = P. loop.closed_form,
+          add_trip_unknown_proof = P. loop.closed_form_trip_unknown,
         },
       },
     },
   },
 
   rule. planned_reduction {
-    llisle.select_loop_kernel_plan { candidate = P. candidate },
+    llisle.select_loop_kernel_plan { loop = P. loop },
     when {
-      (P. candidate.counted :eq (true))
-        * (P. candidate.has_func_id :eq (true))
-        * (P. candidate.has_func :eq (true))
-        * (P. candidate.has_rejects :eq (false))
-        * (P. candidate.has_closed_form :eq (false))
-        * (P. candidate.has_reduction :eq (true)),
+      (P. loop.counted :eq (true))
+        * (P. loop.has_func_id :eq (true))
+        * (P. loop.has_func :eq (true))
+        * (P. loop.has_rejects :eq (false))
+        * (P. loop.has_closed_form :eq (false))
+        * (P. loop.has_reduction :eq (true)),
     },
     cost (10),
     run {
@@ -125,7 +124,7 @@ local function bind_context(T)
         selection = kernel_plan {
           kind = planned,
           result_kind = reduction,
-          reduction = P. candidate.reduction,
+          reduction = P. loop.reduction,
           add_trip_unknown_proof = false,
         },
       },
@@ -133,15 +132,15 @@ local function bind_context(T)
   },
 
   rule. planned_skeleton_result {
-    llisle.select_loop_kernel_plan { candidate = P. candidate },
+    llisle.select_loop_kernel_plan { loop = P. loop },
     when {
-      (P. candidate.counted :eq (true))
-        * (P. candidate.has_func_id :eq (true))
-        * (P. candidate.has_func :eq (true))
-        * (P. candidate.has_rejects :eq (false))
-        * (P. candidate.has_closed_form :eq (false))
-        * (P. candidate.has_reduction :eq (false))
-        * (P. candidate.has_skeleton_result :eq (true)),
+      (P. loop.counted :eq (true))
+        * (P. loop.has_func_id :eq (true))
+        * (P. loop.has_func :eq (true))
+        * (P. loop.has_rejects :eq (false))
+        * (P. loop.has_closed_form :eq (false))
+        * (P. loop.has_reduction :eq (false))
+        * (P. loop.has_skeleton_result :eq (true)),
     },
     cost (15),
     run {
@@ -149,7 +148,7 @@ local function bind_context(T)
         selection = kernel_plan {
           kind = planned,
           result_kind = skeleton,
-          skeleton_result = P. candidate.skeleton_result,
+          skeleton_result = P. loop.skeleton_result,
           add_trip_unknown_proof = false,
         },
       },
@@ -157,15 +156,15 @@ local function bind_context(T)
   },
 
   rule. planned_original_control {
-    llisle.select_loop_kernel_plan { candidate = P. candidate },
+    llisle.select_loop_kernel_plan { loop = P. loop },
     when {
-      (P. candidate.counted :eq (true))
-        * (P. candidate.has_func_id :eq (true))
-        * (P. candidate.has_func :eq (true))
-        * (P. candidate.has_rejects :eq (false))
-        * (P. candidate.has_closed_form :eq (false))
-        * (P. candidate.has_reduction :eq (false))
-        * (P. candidate.has_skeleton_result :eq (false)),
+      (P. loop.counted :eq (true))
+        * (P. loop.has_func_id :eq (true))
+        * (P. loop.has_func :eq (true))
+        * (P. loop.has_rejects :eq (false))
+        * (P. loop.has_closed_form :eq (false))
+        * (P. loop.has_reduction :eq (false))
+        * (P. loop.has_skeleton_result :eq (false)),
     },
     cost (20),
     run {

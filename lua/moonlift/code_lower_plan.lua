@@ -180,7 +180,7 @@ local function bind_context(T)
                 local cover = Lower.LowerCoverLoop(loop.id)
                 local sched = kplan ~= nil and schedule_for_kernel[kplan.id.text] or nil
                 local no_plan = kernel_no_plan_for_loop[loop.id.text]
-                local selection, err = CodeLowerPlanRules:run_candidate("select_lower_fragment", lower_fragment_candidate(loop, kplan, no_plan, sched), "selection", "no lower fragment selected")
+                local selection, err = CodeLowerPlanRules:run("select_lower_fragment", { fragment = lower_fragment_candidate(loop, kplan, no_plan, sched) }, "selection", "no lower fragment selected")
                 if selection == nil then error("code_lower_plan: " .. tostring(err), 2) end
                 if selection.kind == CodeLowerPlanRules.kind.closed_form or selection.kind == CodeLowerPlanRules.kind.kernel then
                     add_loop_semantic_fragment(func, loop, cover, fragments, covered, kplan, sched, selection)

@@ -10,10 +10,9 @@ local function bind_context(T)
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
 
-    local ExecFragmentCandidate = llb.symbol("ExecFragmentCandidate")
+    local ExecFragmentInput = llb.symbol("ExecFragmentInput")
     local ExecFragmentSelection = llb.symbol("ExecFragmentSelection")
-    local candidate = llb.symbol("candidate")
-    local selection = llb.symbol("selection")
+        local selection = llb.symbol("selection")
     local exec_fragment_selection = llb.symbol("exec_fragment_selection")
 
     local stencil = llb.symbol("stencil")
@@ -26,7 +25,7 @@ local function bind_context(T)
   constructor. exec_fragment_selection [build_selection],
 
   relation. select_exec_fragment {
-    input { candidate [ExecFragmentCandidate] },
+    input { fragment [ExecFragmentInput] },
     output { selection [ExecFragmentSelection] },
     strategy {
       select. best_cost,
@@ -36,69 +35,69 @@ local function bind_context(T)
   },
 
   rule. selected_stencil_artifact {
-    llisle.select_exec_fragment { candidate = P. candidate },
+    llisle.select_exec_fragment { fragment = P. fragment },
     when {
-      (P. candidate.stencil_selected :eq (true))
-        * (P. candidate.has_artifact :eq (true))
-        * (P. candidate.has_func :eq (true)),
+      (P. fragment.stencil_selected :eq (true))
+        * (P. fragment.has_artifact :eq (true))
+        * (P. fragment.has_func :eq (true)),
     },
     cost (0),
     run {
       ret {
         selection = exec_fragment_selection {
           kind = stencil,
-          reason = P. candidate.selected_reason,
+          reason = P. fragment.selected_reason,
         },
       },
     },
   },
 
   rule. skip_unselected_stencil {
-    llisle.select_exec_fragment { candidate = P. candidate },
+    llisle.select_exec_fragment { fragment = P. fragment },
     when {
-      P. candidate.stencil_selected :eq (false),
+      P. fragment.stencil_selected :eq (false),
     },
     cost (0),
     run {
       ret {
         selection = exec_fragment_selection {
           kind = skip,
-          reason = P. candidate.unselected_reason,
+          reason = P. fragment.unselected_reason,
         },
       },
     },
   },
 
   rule. skip_missing_artifact {
-    llisle.select_exec_fragment { candidate = P. candidate },
+    llisle.select_exec_fragment { fragment = P. fragment },
     when {
-      (P. candidate.stencil_selected :eq (true))
-        * (P. candidate.has_artifact :eq (false)),
+      (P. fragment.stencil_selected :eq (true))
+        * (P. fragment.has_artifact :eq (false)),
     },
     cost (0),
     run {
       ret {
         selection = exec_fragment_selection {
           kind = skip,
-          reason = P. candidate.missing_artifact_reason,
+          reason = P. fragment.missing_artifact_reason,
         },
       },
     },
   },
 
   rule. skip_missing_function_owner {
-    llisle.select_exec_fragment { candidate = P. candidate },
+    llisle.select_exec_fragment { fragment = P. fragment },
     when {
-      (P. candidate.stencil_selected :eq (true))
-        * (P. candidate.has_artifact :eq (true))
-        * (P. candidate.has_func :eq (false)),
+      (P. fragment.stencil_selected :eq (true))
+        * (P. fragment.has_artifact :eq (true))
+        * (P. fragment.has_func :eq (false)),
     },
     cost (0),
     run {
       ret {
         selection = exec_fragment_selection {
           kind = skip,
-          reason = P. candidate.missing_func_reason,
+          reason = P. fragment.missing_func_reason,
         },
       },
     },

@@ -999,7 +999,7 @@ local function bind_context(T)
         local partition, partition_reason = skeleton_partition_plan(ctx, func, plan, graph_loop, loop_fact)
         local copy, copy_reason = skeleton_copy_plan(ctx, func, plan, graph_loop, loop_fact)
         local reject_reason = scan_reason or find_reason or partition_reason or copy_reason or "no stencil skeleton selected"
-        local selection, err = LowerRules:run_candidate("select_skeleton_lowering", {
+        local selection, err = LowerRules:run("select_skeleton_lowering", { skeleton = {
             scan_ready = scan ~= nil,
             scan_plan = scan,
             find_ready = find ~= nil,
@@ -1009,7 +1009,7 @@ local function bind_context(T)
             copy_ready = copy ~= nil,
             copy_plan = copy,
             reject_reason = reject_reason,
-        }, "selection", "no LuaJIT skeleton lowering selected")
+        } }, "selection", "no LuaJIT skeleton lowering selected")
         if selection == nil then return nil, err end
         if selection.kind == LowerRules.kind.no_plan then return nil, selection.reason end
         return selection.planned, nil
@@ -1167,7 +1167,7 @@ local function bind_context(T)
 
     local function select_kernel_machine(ctx, func, plan, graph_loop, loop_fact, owner, kernel, opts)
         local candidate = kernel_lowering_candidate(ctx, func, plan, graph_loop, loop_fact, owner, kernel, opts)
-        local selection, reason = LowerRules:run_candidate("select_kernel_lowering", candidate, "selection", "no LuaJIT kernel lowering selected")
+        local selection, reason = LowerRules:run("select_kernel_lowering", { kernel = candidate }, "selection", "no LuaJIT kernel lowering selected")
         if selection == nil then return nil, reason end
         if selection.kind == LowerRules.kind.no_plan then return nil, selection.reason end
         local planners = {

@@ -10,10 +10,9 @@ local function bind_context(T)
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
 
-    local LowerFragmentCandidate = llb.symbol("LowerFragmentCandidate")
+    local LowerFragmentInput = llb.symbol("LowerFragmentInput")
     local LowerFragmentSelection = llb.symbol("LowerFragmentSelection")
-    local candidate = llb.symbol("candidate")
-    local selection = llb.symbol("selection")
+        local selection = llb.symbol("selection")
     local lower_fragment_selection = llb.symbol("lower_fragment_selection")
 
     local closed_form = llb.symbol("closed_form")
@@ -28,7 +27,7 @@ local function bind_context(T)
   constructor. lower_fragment_selection [build_selection],
 
   relation. select_lower_fragment {
-    input { candidate [LowerFragmentCandidate] },
+    input { fragment [LowerFragmentInput] },
     output { selection [LowerFragmentSelection] },
     strategy {
       select. best_cost,
@@ -38,49 +37,49 @@ local function bind_context(T)
   },
 
   rule. planned_closed_form {
-    llisle.select_lower_fragment { candidate = P. candidate },
+    llisle.select_lower_fragment { fragment = P. fragment },
     when {
-      (P. candidate.has_kernel :eq (true))
-        * (P. candidate.schedule_planned :eq (true))
-        * (P. candidate.schedule_closed_form :eq (true))
-        * (P. candidate.has_closed_form :eq (true)),
+      (P. fragment.has_kernel :eq (true))
+        * (P. fragment.schedule_planned :eq (true))
+        * (P. fragment.schedule_closed_form :eq (true))
+        * (P. fragment.has_closed_form :eq (true)),
     },
     cost (0),
     run {
       ret {
         selection = lower_fragment_selection {
           kind = closed_form,
-          closed_form = P. candidate.closed_form,
+          closed_form = P. fragment.closed_form,
         },
       },
     },
   },
 
   rule. closed_form_schedule_without_fact {
-    llisle.select_lower_fragment { candidate = P. candidate },
+    llisle.select_lower_fragment { fragment = P. fragment },
     when {
-      (P. candidate.has_kernel :eq (true))
-        * (P. candidate.schedule_planned :eq (true))
-        * (P. candidate.schedule_closed_form :eq (true))
-        * (P. candidate.has_closed_form :eq (false)),
+      (P. fragment.has_kernel :eq (true))
+        * (P. fragment.schedule_planned :eq (true))
+        * (P. fragment.schedule_closed_form :eq (true))
+        * (P. fragment.has_closed_form :eq (false)),
     },
     cost (0),
     run {
       ret {
         selection = lower_fragment_selection {
           kind = fallback,
-          reason = P. candidate.closed_form_missing_reason,
+          reason = P. fragment.closed_form_missing_reason,
         },
       },
     },
   },
 
   rule. planned_kernel {
-    llisle.select_lower_fragment { candidate = P. candidate },
+    llisle.select_lower_fragment { fragment = P. fragment },
     when {
-      (P. candidate.has_kernel :eq (true))
-        * (P. candidate.schedule_planned :eq (true))
-        * (P. candidate.schedule_closed_form :eq (false)),
+      (P. fragment.has_kernel :eq (true))
+        * (P. fragment.schedule_planned :eq (true))
+        * (P. fragment.schedule_closed_form :eq (false)),
     },
     cost (0),
     run {
@@ -93,44 +92,44 @@ local function bind_context(T)
   },
 
   rule. planned_kernel_without_schedule {
-    llisle.select_lower_fragment { candidate = P. candidate },
+    llisle.select_lower_fragment { fragment = P. fragment },
     when {
-      (P. candidate.has_kernel :eq (true))
-        * (P. candidate.schedule_planned :eq (false)),
+      (P. fragment.has_kernel :eq (true))
+        * (P. fragment.schedule_planned :eq (false)),
     },
     cost (0),
     run {
       ret {
         selection = lower_fragment_selection {
           kind = fallback,
-          reason = P. candidate.no_schedule_reason,
+          reason = P. fragment.no_schedule_reason,
         },
       },
     },
   },
 
   rule. rejected_kernel {
-    llisle.select_lower_fragment { candidate = P. candidate },
+    llisle.select_lower_fragment { fragment = P. fragment },
     when {
-      (P. candidate.has_kernel :eq (false))
-        * (P. candidate.has_kernel_no_plan :eq (true)),
+      (P. fragment.has_kernel :eq (false))
+        * (P. fragment.has_kernel_no_plan :eq (true)),
     },
     cost (0),
     run {
       ret {
         selection = lower_fragment_selection {
           kind = fallback,
-          reason = P. candidate.kernel_no_plan_reason,
+          reason = P. fragment.kernel_no_plan_reason,
         },
       },
     },
   },
 
   rule. no_loop_kernel_decision {
-    llisle.select_lower_fragment { candidate = P. candidate },
+    llisle.select_lower_fragment { fragment = P. fragment },
     when {
-      (P. candidate.has_kernel :eq (false))
-        * (P. candidate.has_kernel_no_plan :eq (false)),
+      (P. fragment.has_kernel :eq (false))
+        * (P. fragment.has_kernel_no_plan :eq (false)),
     },
     cost (0),
     run {

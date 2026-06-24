@@ -802,7 +802,7 @@ local function bind_context(T)
             local subject = Kernel.KernelSubjectLoop(loop.loop)
             local func_id = loop_func[loop.loop.text]
             local function select(candidate)
-                local selection, err = CodeKernelPlanRules:run_candidate("select_loop_kernel_plan", candidate, "selection", "no Kernel loop plan selected")
+                local selection, err = CodeKernelPlanRules:run("select_loop_kernel_plan", { loop = candidate }, "selection", "no Kernel loop plan selected")
                 assert(selection ~= nil, tostring(err))
                 return selection
             end

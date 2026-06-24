@@ -988,7 +988,7 @@ local function bind_context(T)
         local schedules_by_id = schedule_by_id(schedules)
         for _, fragment in ipairs(ordered_fragments_for_func(code_func, func_plan, graph_loops)) do
             local cls = pvm.classof(fragment.strategy)
-            local selection, err = LowerStrategyEmitRules:run_candidate("select_lower_emit", lower_emit_candidate(fragment, cls, schedules_by_id), "selection", "no lower emission selected")
+            local selection, err = LowerStrategyEmitRules:run("select_lower_emit", { emit = lower_emit_candidate(fragment, cls, schedules_by_id) }, "selection", "no lower emission selected")
             if selection == nil then error("lower_to_c: " .. tostring(err), 2) end
             if selection.kind == LowerStrategyEmitRules.kind.code then
                 for _, b in ipairs(cover_blocks(fragment, code_func, graph_loops)) do ctx.blocks[#ctx.blocks + 1] = baseline_by_label[clabel(b.id).text] end
