@@ -80,10 +80,23 @@ local function bind_context(T)
         return tostring((opts or {}).stencil_provider or (opts or {}).provider or "c")
     end
 
+    local function is_luatrace_provider(provider)
+        return provider == "lua_trace" or provider == "luatrace" or provider == "gps"
+    end
+
+    local function luatrace_materializer(opts)
+        local materializer = tostring((opts or {}).luatrace_materializer or (opts or {}).stencil_materializer or (opts or {}).materializer or "source")
+        if materializer == "source" or materializer == "lua" then return "source" end
+        if materializer == "bytecode" or materializer == "bc" or materializer == "bc_copy_patch" or materializer == "bytecode_copy_patch" then
+            return "bytecode"
+        end
+        error("luajit_backend: unknown LuaTrace materializer " .. tostring(materializer), 3)
+    end
+
     local function artifact_with_provider(artifact, opts)
         local provider = provider_name(opts)
         if provider == "c" or provider == "copy_patch" or provider == "binary" then return artifact end
-        if provider == "lua_trace" or provider == "luatrace" or provider == "gps" then
+        if is_luatrace_provider(provider) then
             return StencilLuaJIT.lua_trace_artifact(artifact)
         end
         error("luajit_backend: unknown stencil provider " .. tostring(provider), 3)
@@ -160,7 +173,17 @@ local function bind_context(T)
             return { kind = "BinaryStencilBankRealization", symbols = {}, installed = {}, bank = nil }, nil
         end
         local provider = provider_name(opts)
-        if provider == "lua_trace" or provider == "luatrace" or provider == "gps" then
+        if is_luatrace_provider(provider) then
+            if luatrace_materializer(opts) == "bytecode" then
+                return StencilLuaJIT.realize_bytecode_artifacts(artifacts, {
+                    bank = opts.bytecode_bank or opts.bc_bank,
+                    stem = opts.stem,
+                    id = opts.bytecode_bank_id or opts.bc_bank_id,
+                    target = opts.bytecode_target or opts.bc_target,
+                    patch_bindings = opts.bytecode_patch_bindings or opts.patch_bindings,
+                    env = opts.bytecode_env,
+                })
+            end
             return StencilLuaJIT.realize_artifacts(artifacts), nil
         end
         local bank = opts.bank
@@ -176,6 +199,10 @@ local function bind_context(T)
 
     function api.build_binary_bank(artifacts, opts)
         return StencilBank.build_binary_bank(artifacts or {}, opts or {})
+    end
+
+    function api.build_bytecode_bank(artifacts, opts)
+        return StencilLuaJIT.build_bytecode_bank(artifacts or {}, opts or {})
     end
 
     function api.compile_lj_module(lj_module, artifacts, opts)
@@ -199,8 +226,23 @@ local function bind_context(T)
         opts = opts or {}
         local provider = provider_name(opts)
         local stencil_source
-        if provider == "lua_trace" or provider == "luatrace" or provider == "gps" then
-            stencil_source = StencilLuaJIT.emit_lua_source(artifacts or {})
+        local bytecode_bank
+        if is_luatrace_provider(provider) then
+            if luatrace_materializer(opts) == "bytecode" then
+                bytecode_bank = opts.bytecode_bank or opts.bc_bank
+                if bytecode_bank == nil then
+                    local bank_err
+                    bytecode_bank, bank_err = api.build_bytecode_bank(artifacts or {}, {
+                        stem = opts.stem,
+                        id = opts.bytecode_bank_id or opts.bc_bank_id,
+                        target = opts.bytecode_target or opts.bc_target,
+                    })
+                    if bytecode_bank == nil then return nil, bank_err end
+                end
+                stencil_source = StencilLuaJIT.emit_bytecode_bank_source(bytecode_bank, opts)
+            else
+                stencil_source = StencilLuaJIT.emit_lua_source(artifacts or {})
+            end
         else
             local bank = opts.bank
             if bank == nil and #(artifacts or {}) > 0 then
@@ -211,13 +253,18 @@ local function bind_context(T)
         local module_source = Emit.emit_module(lj_module, {
             chunk_name = opts.chunk_name or "moonlift_luajit_artifact",
         })
-        local is_luatrace = provider == "lua_trace" or provider == "luatrace" or provider == "gps"
+        local is_luatrace = is_luatrace_provider(provider)
+        local is_luatrace_bc = is_luatrace and luatrace_materializer(opts) == "bytecode"
         local source = table.concat({
             is_luatrace
-                and "-- Generated Moonlift LuaJIT LuaTrace artifact.\n"
+                and (is_luatrace_bc
+                    and "-- Generated Moonlift LuaJIT LuaTrace bytecode copy-patch artifact.\n"
+                    or "-- Generated Moonlift LuaJIT LuaTrace artifact.\n")
                 or "-- Generated Moonlift LuaJIT copy-and-patch artifact.\n",
             is_luatrace
-                and "-- Stencil descriptors are emitted below as traceable LuaJIT loops.\n"
+                and (is_luatrace_bc
+                    and "-- Stencil descriptors are emitted below as LuaJIT bytecode stencils.\n"
+                    or "-- Stencil descriptors are emitted below as traceable LuaJIT loops.\n")
                 or "-- Native stencil bytes are embedded below as data and installed before the runtime module loads.\n",
             stencil_source,
             module_source,

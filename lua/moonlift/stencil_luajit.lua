@@ -19,7 +19,9 @@ local function bind_context(T)
     local Code = T.MoonCode
     local Value = T.MoonValue
     local Stencil = T.MoonStencil
+    local LT = T.MoonLuaTrace
     local ArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
+    local BCBank = require("moonlift.luajit_bc_bank")(T)
 
     local api = {}
 
@@ -753,6 +755,159 @@ local function bind_context(T)
             out[#out + 1] = "do"
             out[#out + 1] = emit_lua_function(artifact)
             out[#out + 1] = "end"
+        end
+        return table.concat(out, "\n") .. "\n"
+    end
+
+    local function bytecode_stencil_source(artifact)
+        return table.concat({
+            "local __moonlift_luajit_stencil_symbols = {}",
+            "do",
+            emit_lua_function(artifact),
+            "end",
+            "return __moonlift_luajit_stencil_symbols[" .. lua_string(artifact.symbol.text) .. "]",
+        }, "\n") .. "\n"
+    end
+
+    function api.emit_bytecode_stencil_source(artifact)
+        return bytecode_stencil_source(artifact)
+    end
+
+    local function bytecode_env()
+        local bit = require("bit")
+        local ffi = require("ffi")
+        return {
+            bit = bit,
+            ffi = ffi,
+            require = require,
+            assert = assert,
+            tonumber = tonumber,
+            tostring = tostring,
+            type = type,
+            math = math,
+            __ml_tobit = bit.tobit,
+            __ml_band = bit.band,
+            __ml_bor = bit.bor,
+            __ml_bxor = bit.bxor,
+            __ml_bnot = bit.bnot,
+            __ml_rshift = bit.rshift,
+        }
+    end
+
+    function api.build_bytecode_bank(artifacts, opts)
+        opts = opts or {}
+        local entries = {}
+        for _, artifact in ipairs(artifacts or {}) do
+            local symbol = artifact.symbol.text
+            local entry, err = BCBank.compile_entry {
+                id = tostring(opts.stem or "ljbc") .. ":" .. tostring(symbol),
+                symbol = symbol,
+                chunk_name = "@moonlift_luajit_bc_stencil/" .. tostring(symbol),
+                source = bytecode_stencil_source(artifact),
+                holes = opts.holes,
+                artifact = artifact,
+            }
+            if entry == nil then return nil, err end
+            entries[#entries + 1] = entry
+        end
+        return BCBank.build_bank(entries, {
+            id = opts.id or ((opts.stem or "ljbc") .. ":bank"),
+            target = opts.target,
+        })
+    end
+
+    local function bindings_for_symbol(opts, symbol)
+        local bindings = opts and (opts.patch_bindings or opts.bytecode_patch_bindings) or nil
+        if bindings == nil then return nil end
+        return bindings[symbol] or bindings
+    end
+
+    function api.realize_bytecode_artifacts(artifacts, opts)
+        opts = opts or {}
+        artifacts = artifacts or {}
+        local bank = opts.bank
+        if bank == nil then
+            local err
+            bank, err = api.build_bytecode_bank(artifacts, opts)
+            if bank == nil then return nil, err end
+        end
+        local symbols = {}
+        local installed = {}
+        local env = opts.env or bytecode_env()
+        for _, artifact in ipairs(artifacts) do
+            local symbol = artifact.symbol.text
+            local fn, err = BCBank.load_symbol(bank, symbol, bindings_for_symbol(opts, symbol), {
+                chunk_name = "@moonlift_luajit_bc_stencil/load/" .. tostring(symbol),
+                env = env,
+            })
+            if fn == nil then return nil, err end
+            symbols[symbol] = fn
+            installed[#installed + 1] = {
+                symbol = symbol,
+                artifact = artifact,
+                provider = Stencil.StencilProviderLuaTrace,
+                materializer = "bytecode_copy_patch",
+            }
+        end
+        return {
+            kind = "LuaTraceBytecodeStencilRealization",
+            symbols = symbols,
+            installed = installed,
+            provider = Stencil.StencilProviderLuaTrace,
+            materializer = "bytecode_copy_patch",
+            bank = bank,
+        }
+    end
+
+    local function target_check_source(target)
+        local checks = {}
+        checks[#checks + 1] = "assert(jit and jit.version == " .. lua_string(target.luajit_version) .. ", 'LuaTrace bytecode bank LuaJIT version mismatch')"
+        checks[#checks + 1] = "assert(jit and jit.arch == " .. lua_string(target.arch) .. ", 'LuaTrace bytecode bank arch mismatch')"
+        checks[#checks + 1] = "assert(jit and jit.os == " .. lua_string(target.os) .. ", 'LuaTrace bytecode bank os mismatch')"
+        checks[#checks + 1] = "assert((ffi.abi('64bit') and 64 or 32) == " .. tostring(target.pointer_bits) .. ", 'LuaTrace bytecode bank pointer width mismatch')"
+        if target.endian == "little" then
+            checks[#checks + 1] = "assert(ffi.abi('le'), 'LuaTrace bytecode bank endian mismatch')"
+        elseif target.endian == "big" then
+            checks[#checks + 1] = "assert(ffi.abi('be'), 'LuaTrace bytecode bank endian mismatch')"
+        end
+        checks[#checks + 1] = "assert(ffi.abi('gc64') == " .. tostring(target.gc64) .. ", 'LuaTrace bytecode bank GC64 mismatch')"
+        checks[#checks + 1] = "assert(ffi.abi('dualnum') == " .. tostring(target.dualnum) .. ", 'LuaTrace bytecode bank dualnum mismatch')"
+        return table.concat(checks, "\n")
+    end
+
+    function api.emit_bytecode_bank_source(bank, opts)
+        opts = opts or {}
+        local out = {
+            "-- Generated Moonlift LuaTrace bytecode copy-patch bank.",
+            "local bit = require('bit')",
+            "local ffi = require('ffi')",
+            target_check_source(bank.target),
+            "local __moonlift_luajit_stencil_symbols = __moonlift_luajit_stencil_symbols or {}",
+            "local __ml_bc_env = {",
+            "  bit = bit,",
+            "  ffi = ffi,",
+            "  require = require,",
+            "  assert = assert,",
+            "  tonumber = tonumber,",
+            "  tostring = tostring,",
+            "  type = type,",
+            "  math = math,",
+            "  __ml_tobit = bit.tobit,",
+            "  __ml_band = bit.band,",
+            "  __ml_bor = bit.bor,",
+            "  __ml_bxor = bit.bxor,",
+            "  __ml_bnot = bit.bnot,",
+            "  __ml_rshift = bit.rshift,",
+            "}",
+            "local function __ml_load_bc(symbol, bytes, chunk_name)",
+            "  local fn, err = loadstring(bytes, chunk_name)",
+            "  if fn == nil then error(err, 2) end",
+            "  setfenv(fn, __ml_bc_env)",
+            "  __moonlift_luajit_stencil_symbols[symbol] = fn",
+            "end",
+        }
+        for _, entry in ipairs(bank.entries or {}) do
+            out[#out + 1] = "__ml_load_bc(" .. lua_string(entry.symbol) .. ", " .. lua_string(entry.bytecode) .. ", " .. lua_string(entry.chunk_name) .. ")"
         end
         return table.concat(out, "\n") .. "\n"
     end

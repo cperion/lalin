@@ -854,6 +854,13 @@ function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
     local function is_luatrace_provider(provider)
         return provider == "lua_trace" or provider == "luatrace" or provider == "gps"
     end
+    local function luatrace_materializer(o)
+        local materializer = tostring(o.luatrace_materializer or o.stencil_materializer or o.materializer or "source")
+        if materializer == "bytecode" or materializer == "bc" or materializer == "bc_copy_patch" or materializer == "bytecode_copy_patch" then
+            return "bytecode"
+        end
+        return "source"
+    end
     local checked = Pipeline.typecheck_module(module_ast, {
         context = T,
         site = "emit_luajit_artifact:typecheck",
@@ -887,6 +894,7 @@ function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
     end
 
     local bank = opts.bank
+    local bytecode_bank = opts.bytecode_bank or opts.bc_bank
     if bank == nil and #(artifacts or {}) > 0 and not is_luatrace_provider(stencil_provider) then
         local bank_opts = opts.bank_opts or {}
         bank_opts.stem = bank_opts.stem or opts.stem or sanitize(name)
@@ -901,14 +909,26 @@ function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
         bank_opts.endian = bank_opts.endian or opts.endian
         bank = assert(Backend.build_binary_bank(artifacts, bank_opts))
     end
+    if bytecode_bank == nil and #(artifacts or {}) > 0 and is_luatrace_provider(stencil_provider) and luatrace_materializer(opts) == "bytecode" then
+        bytecode_bank = assert(Backend.build_bytecode_bank(artifacts, {
+            stem = opts.stem or sanitize(name),
+            id = opts.bytecode_bank_id or opts.bc_bank_id,
+            target = opts.bytecode_target or opts.bc_target,
+        }))
+    end
 
     local source, err = Backend.emit_lua_artifact(lj_module, artifacts, {
         bank = bank,
+        bytecode_bank = bytecode_bank,
         path = path,
         chunk_name = opts.chunk_name or name,
         patch_values = opts.patch_values,
+        bytecode_patch_bindings = opts.bytecode_patch_bindings,
         stencil_provider = stencil_provider,
         provider = opts.provider,
+        luatrace_materializer = opts.luatrace_materializer,
+        stencil_materializer = opts.stencil_materializer,
+        materializer = opts.materializer,
     })
     if source == nil then error(err or "emit_luajit_artifact failed", 2) end
 
@@ -928,6 +948,7 @@ function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
         artifacts = artifacts,
         rejects = rejects,
         bank = bank,
+        bytecode_bank = bytecode_bank,
     }
     function artifact:write(write_path)
         write_path = write_path or self.path

@@ -474,6 +474,30 @@ local lua_realize_times = measure_times(materialize_samples, function()
     assert(realization.symbols[cases[1].artifact.symbol.text] ~= nil, "LuaTrace realization missing symbol")
 end)
 
+local lua_bc_build_times = {}
+local lua_bc_realize_times = {}
+local lua_bc_bank
+local lua_bc_realization
+for i = 1, materialize_samples do
+    collectgarbage()
+    debugf("luatrace bc build " .. tostring(i))
+    local t0 = Measure.now()
+    local bank, bank_err = StencilLuaJIT.build_bytecode_bank(lua_artifacts, {
+        stem = "bench_luajit_materializations_bc_" .. tostring(i),
+    })
+    lua_bc_build_times[i] = Measure.now() - t0
+    assert(bank ~= nil, tostring(bank_err))
+
+    collectgarbage()
+    debugf("luatrace bc realize " .. tostring(i))
+    local t1 = Measure.now()
+    local realization, realize_err = StencilLuaJIT.realize_bytecode_artifacts(lua_artifacts, { bank = bank })
+    lua_bc_realize_times[i] = Measure.now() - t1
+    assert(realization ~= nil, tostring(realize_err))
+    lua_bc_bank = bank
+    lua_bc_realization = realization
+end
+
 local bank_times = {}
 local install_times = {}
 local copy_realization
@@ -517,6 +541,8 @@ print(string.format(
 print("cc: " .. cc .. " " .. stencil_object_cflags())
 print(stats_line("luatrace emit source all", lua_emit_times))
 print(stats_line("luatrace emit+load all", lua_realize_times))
+print(stats_line("luatrace build bytecode bank all", lua_bc_build_times))
+print(stats_line("luatrace load bytecode bank all", lua_bc_realize_times))
 print(stats_line("copy-patch build bank all", bank_times))
 print(stats_line("copy-patch install bank all", install_times))
 
@@ -524,19 +550,28 @@ local runtime_cases = {}
 for _, case in ipairs(cases) do
     local symbol = case.artifact.symbol.text
     local lua_fn = assert(lua_realization.symbols[symbol], symbol)
+    local lua_bc_fn = assert(lua_bc_realization.symbols[symbol], symbol)
     local copy_fn = assert(copy_realization.symbols[symbol], symbol)
     debugf("validate luatrace " .. case.name)
     local lua_value = case.run(lua_fn, data)
+    debugf("validate luatrace bc " .. case.name)
+    local lua_bc_value = case.run(lua_bc_fn, data)
     debugf("validate copy-patch " .. case.name)
     local copy_value = case.run(copy_fn, data)
     if type(lua_value) == "number" and type(copy_value) == "number" then
         assert(math.abs(lua_value - copy_value) < 1e-6, case.name .. " result mismatch: " .. tostring(lua_value) .. " vs " .. tostring(copy_value))
+        assert(math.abs(lua_bc_value - copy_value) < 1e-6, case.name .. " bytecode result mismatch: " .. tostring(lua_bc_value) .. " vs " .. tostring(copy_value))
     else
         assert(lua_value == copy_value, case.name .. " result mismatch: " .. tostring(lua_value) .. " vs " .. tostring(copy_value))
+        assert(lua_bc_value == copy_value, case.name .. " bytecode result mismatch: " .. tostring(lua_bc_value) .. " vs " .. tostring(copy_value))
     end
     runtime_cases[#runtime_cases + 1] = {
         name = "lt " .. case.name,
         fn = function() return case.run(lua_fn, data) end,
+    }
+    runtime_cases[#runtime_cases + 1] = {
+        name = "ltbc " .. case.name,
+        fn = function() return case.run(lua_bc_fn, data) end,
     }
     runtime_cases[#runtime_cases + 1] = {
         name = "cp " .. case.name,

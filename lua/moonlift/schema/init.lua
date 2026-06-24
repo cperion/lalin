@@ -12,6 +12,7 @@ local SCHEMA_MODULES = {
     "back",
     "c",
     "luajit",
+    "luatrace",
     "c_ast",
     "dasm",
     "link",

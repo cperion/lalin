@@ -12,6 +12,8 @@ return schema. MoonLuaJIT {
   product. LJGlobalId { interned, text [str], },
   product. LJLocalId { interned, text [str], },
   product. LJBinaryBankId { interned, text [str], },
+  product. LJBCBankId { interned, text [str], },
+  product. LJBCStencilId { interned, text [str], },
 
   sum. LJCType {
     LJCTypeVoid,
@@ -643,5 +645,66 @@ return schema. MoonLuaJIT {
     command [str],
     preamble [optional [str]],
     entries [many [MoonLuaJIT.LJBinaryStencilEntry]],
+  },
+
+  product. LJBytecodeTarget {
+    interned,
+    luajit_version [str],
+    arch [str],
+    field. os [str],
+    pointer_bits [number],
+    endian [str],
+    gc64 [bool],
+    dualnum [bool],
+    ffi [bool],
+  },
+
+  sum. LJBCPatchKind {
+    LJBCPatchBytesExact,
+    LJBCPatchStringConstantExact,
+  },
+
+  sum. LJBCPatchValue {
+    LJBCPatchBytes {
+      variant_unique,
+      bytes [str],
+    },
+    LJBCPatchString {
+      variant_unique,
+      text [str],
+    },
+  },
+
+  product. LJBCPatchRecord {
+    interned,
+    field. name [str],
+    offset [number],
+    width [number],
+    kind [MoonLuaJIT.LJBCPatchKind],
+    expected [str],
+    reason [str],
+  },
+
+  product. LJBCPatchBinding {
+    interned,
+    field. name [str],
+    field. value [MoonLuaJIT.LJBCPatchValue],
+  },
+
+  product. LJBCStencilEntry {
+    field. id [MoonLuaJIT.LJBCStencilId],
+    symbol [str],
+    chunk_name [str],
+    source [str],
+    bytecode [str],
+    patches [many [MoonLuaJIT.LJBCPatchRecord]],
+    plan [optional [MoonLuaTrace.LTFunction]],
+    artifact [optional [MoonStencil.StencilArtifact]],
+  },
+
+  product. LJBCStencilBank {
+    field. id [MoonLuaJIT.LJBCBankId],
+    target [MoonLuaJIT.LJBytecodeTarget],
+    entries [many [MoonLuaJIT.LJBCStencilEntry]],
   },
 }

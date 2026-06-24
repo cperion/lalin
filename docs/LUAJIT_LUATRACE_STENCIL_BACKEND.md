@@ -9,12 +9,42 @@ The backend boundary is:
 ```text
 MoonStencil descriptor + schedule + vector facts
   -> LuaTrace provider-local trace plan
-  -> generated LuaJIT source
+  -> materializer
   -> named Lua functions in __moonlift_luajit_stencil_symbols
 ```
 
 LuaTrace does not rediscover loops from MoonCode. It receives already-selected
 stencil descriptors and must lower those descriptors honestly.
+
+## Materializers
+
+LuaTrace has more than one materialization strategy, but only one semantic
+lowering:
+
+```text
+source
+  emit readable Lua source and load it
+
+bytecode copy-patch
+  compile source stencils with LuaJIT, dump bytecode, patch declared holes, load
+  patched bytecode
+```
+
+The bytecode path is specified in
+`docs/LUAJIT_BYTECODE_COPY_PATCH_BACKEND.md`. It is a banked materializer under
+LuaTrace, not a second selector and not a hand-authored bytecode language.
+
+Select it explicitly:
+
+```lua
+Backend.compile_module(module, {
+  stencil_provider = "lua_trace",
+  luatrace_materializer = "bytecode",
+})
+```
+
+Source remains the default materializer because it is the readable diagnostic
+and golden-equivalence path.
 
 ## Trace Plan
 
