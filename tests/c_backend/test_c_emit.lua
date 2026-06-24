@@ -30,7 +30,11 @@ local entry = C.CBackendBlock(
     C.CBackendReturn(C.CBackendAtomLocal(r.id))
 )
 
-local func = C.CBackendFunc(C.CBackendName("add"), "add", Core.VisibilityExport, sig_id, { a, b }, { r }, { entry })
+local function blocks_body(blocks)
+    return C.CBackendBodyBlocks(blocks[1].label, blocks)
+end
+
+local func = C.CBackendFunc(C.CBackendName("add"), "add", Core.VisibilityExport, sig_id, { a, b }, { r }, blocks_body({ entry }))
 local glob = C.CBackendGlobal(
     C.CBackendGlobalId("blob"),
     C.CBackendName("blob"),
@@ -89,7 +93,7 @@ local entry2 = C.CBackendBlock(
     C.CBackendGoto(C.CBackendLabel("join"), { C.CBackendAtomLocal(out_local.id) })
 )
 local join = C.CBackendBlock(C.CBackendLabel("join"), { join_param }, {}, C.CBackendReturnVoid)
-local func2 = C.CBackendFunc(C.CBackendName("complex"), "complex", Core.VisibilityLocal, void_sig_id, {}, { pair_local, callee, out_local }, { entry2, join })
+local func2 = C.CBackendFunc(C.CBackendName("complex"), "complex", Core.VisibilityLocal, void_sig_id, {}, { pair_local, callee, out_local }, blocks_body({ entry2, join }))
 local scalar_glob = C.CBackendGlobal(C.CBackendGlobalId("counter"), C.CBackendName("counter"), Core.VisibilityLocal, i32, 4, 4, { C.CBackendDataScalar(0, i32, Core.LitInt("99")) })
 local reloc_glob = C.CBackendGlobal(C.CBackendGlobalId("rel"), C.CBackendName("rel"), Core.VisibilityLocal, C.CBackendDataPtr(nil), 8, 8, { C.CBackendDataReloc(0, C.CBackendRelocFunc(C.CBackendName("complex")), 0) })
 local access = C.CBackendMemoryAccess(i32, 4, C.CBackendMayTrap, false, Core.AtomicSeqCst)

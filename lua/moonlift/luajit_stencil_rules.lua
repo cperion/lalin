@@ -91,7 +91,15 @@ local function bind_context(T)
     end
     impl.type_class = function(fields) return fields end
     impl.load_class = function(fields) return with_class_kind("load", fields) end
-    impl.fill_class = function(fields) return with_class_kind("fill", fields) end
+    impl.fill_class = function(fields)
+        local value = fields.value
+        if pvm.classof(value) == Value.ValueExprConst
+            and pvm.classof(value.const) == Code.CodeConstLiteral
+            and pvm.classof(value.const.literal) == Core.LitInt then
+            fields.const_int = tonumber(value.const.literal.raw)
+        end
+        return with_class_kind("fill", fields)
+    end
     impl.map_class = function(fields) return with_class_kind("map", fields) end
     impl.cast_class = function(fields) return with_class_kind("cast", fields) end
     impl.zip_map_class = function(fields) return with_class_kind("zip_map", fields) end
@@ -241,6 +249,25 @@ local function bind_context(T)
     },
   },
 
+  rule. cast_compare {
+    llisle.classify_expr { expr = P. expr },
+    when { P. expr.kind :eq (cast) },
+    bind. inner {
+      llisle.classify_expr { expr = P. expr.value },
+    },
+    when { V. inner.class.kind :eq (compare) },
+    run {
+      ret {
+        class = compare_class {
+          pred = V. inner.class.pred,
+          stream = V. inner.class.stream,
+          index = V. inner.class.index,
+          result_ty = P. expr.result_ty,
+        },
+      },
+    },
+  },
+
   rule. zip_map {
     llisle.classify_expr { expr = P. expr },
     when {
@@ -263,6 +290,62 @@ local function bind_context(T)
         },
       },
     },
+  },
+
+  rule. binary_mul_identity_right {
+    llisle.classify_expr { expr = P. expr },
+    when {
+      (P. expr.kind :eq (binary))
+        * (P. expr.algebra :eq ("mul")),
+    },
+    bind. lhs { llisle.classify_expr { expr = P. expr.lhs } },
+    bind. rhs { llisle.classify_expr { expr = P. expr.rhs } },
+    when {
+      (V. rhs.class.kind :eq (fill)) * (V. rhs.class.const_int :eq (1)),
+    },
+    run { ret { class = V. lhs.class } },
+  },
+
+  rule. binary_mul_identity_left {
+    llisle.classify_expr { expr = P. expr },
+    when {
+      (P. expr.kind :eq (binary))
+        * (P. expr.algebra :eq ("mul")),
+    },
+    bind. lhs { llisle.classify_expr { expr = P. expr.lhs } },
+    bind. rhs { llisle.classify_expr { expr = P. expr.rhs } },
+    when {
+      (V. lhs.class.kind :eq (fill)) * (V. lhs.class.const_int :eq (1)),
+    },
+    run { ret { class = V. rhs.class } },
+  },
+
+  rule. binary_add_identity_right {
+    llisle.classify_expr { expr = P. expr },
+    when {
+      (P. expr.kind :eq (binary))
+        * (P. expr.algebra :eq ("add")),
+    },
+    bind. lhs { llisle.classify_expr { expr = P. expr.lhs } },
+    bind. rhs { llisle.classify_expr { expr = P. expr.rhs } },
+    when {
+      (V. rhs.class.kind :eq (fill)) * (V. rhs.class.const_int :eq (0)),
+    },
+    run { ret { class = V. lhs.class } },
+  },
+
+  rule. binary_add_identity_left {
+    llisle.classify_expr { expr = P. expr },
+    when {
+      (P. expr.kind :eq (binary))
+        * (P. expr.algebra :eq ("add")),
+    },
+    bind. lhs { llisle.classify_expr { expr = P. expr.lhs } },
+    bind. rhs { llisle.classify_expr { expr = P. expr.rhs } },
+    when {
+      (V. lhs.class.kind :eq (fill)) * (V. lhs.class.const_int :eq (0)),
+    },
+    run { ret { class = V. rhs.class } },
   },
 
   rule. compare_load_const {
@@ -344,6 +427,19 @@ local function bind_context(T)
   rule. index_stream_load {
     llisle.select_index_stream { class = P. class },
     when { P. class.kind :eq (load) },
+    run {
+      ret {
+        stream = index_stream {
+          stream = P. class.stream,
+          index = P. class.index,
+        },
+      },
+    },
+  },
+
+  rule. index_stream_cast_load {
+    llisle.select_index_stream { class = P. class },
+    when { P. class.kind :eq (cast) },
     run {
       ret {
         stream = index_stream {
@@ -1236,7 +1332,8 @@ local function bind_context(T)
                 local rhs, rhs_err = expr_fact(Kernel.KernelExprAlgebra(v.b), bindings, seen)
                 if rhs == nil then return nil, rhs_err end
                 local bop = vcls == Value.ValueExprAdd and Core.BinAdd or vcls == Value.ValueExprSub and Core.BinSub or Core.BinMul
-                return { kind = "binary", op = stencil_binary_op(bop), raw_op = bop, lhs = lhs, rhs = rhs, result_ty = v.ty }, nil
+                local algebra = vcls == Value.ValueExprAdd and "add" or vcls == Value.ValueExprSub and "sub" or "mul"
+                return { kind = "binary", algebra = algebra, op = stencil_binary_op(bop), raw_op = bop, lhs = lhs, rhs = rhs, result_ty = v.ty }, nil
             elseif vcls == Value.ValueExprCmp then
                 local lhs, lhs_err = expr_fact(Kernel.KernelExprAlgebra(v.a), bindings, seen)
                 if lhs == nil then return nil, lhs_err end

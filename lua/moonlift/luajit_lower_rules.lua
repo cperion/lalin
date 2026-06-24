@@ -44,7 +44,7 @@ local function bind_context(T)
         * (P. candidate.returns_reduction :eq (true))
         * (P. candidate.stencil_reduce_ready :eq (true)),
     },
-    cost (0),
+    cost (10),
     run {
       ret { selection = kernel_lowering { kind = stencil_reduce } },
     },
@@ -60,7 +60,7 @@ local function bind_context(T)
         * (P. candidate.counted_positive :eq (true))
         * (P. candidate.stencil_skeleton_ready :eq (true)),
     },
-    cost (15),
+    cost (0),
     run {
       ret { selection = kernel_lowering { kind = stencil_skeleton } },
     },

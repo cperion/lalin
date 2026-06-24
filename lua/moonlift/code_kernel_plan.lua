@@ -340,15 +340,49 @@ local function bind_context(T)
         return resolve_kernel_expr(binding.expr, bindings, seen)
     end
 
-    local function value_expr_is_value(expr, id)
-        return id ~= nil and pvm.classof(expr) == Value.ValueExprValue and expr.value == id
+    local function canonical_value(value, aliases)
+        local seen = {}
+        while value ~= nil and aliases ~= nil and aliases[value.text] ~= nil and not seen[value.text] do
+            seen[value.text] = true
+            value = aliases[value.text]
+        end
+        return value
     end
 
-    local function same_value_expr(a, b)
+    local function loop_body_aliases(graph_loop, flow)
+        local latch = graph_loop and graph_loop.latches and graph_loop.latches[1] or nil
+        local loop_blocks = {}
+        for _, block in ipairs(graph_loop and graph_loop.body or {}) do loop_blocks[block.block.text] = true end
+        local aliases = {}
+        local changed = true
+        while changed do
+            changed = false
+            for _, fact in ipairs(flow and flow.edges or {}) do
+                local edge = fact.edge
+                if edge ~= latch and loop_blocks[edge.from.block.text] and loop_blocks[edge.to.block.text] then
+                    for _, arg in ipairs(fact.args or {}) do
+                        local src = canonical_value(arg.src, aliases)
+                        if src ~= nil and src ~= arg.dst_param and aliases[arg.dst_param.text] == nil then
+                            aliases[arg.dst_param.text] = src
+                            changed = true
+                        end
+                    end
+                end
+            end
+        end
+        return aliases
+    end
+
+    local function value_expr_is_value(expr, id, aliases)
+        if id == nil or pvm.classof(expr) ~= Value.ValueExprValue then return false end
+        return canonical_value(expr.value, aliases) == canonical_value(id, aliases)
+    end
+
+    local function same_value_expr(a, b, aliases)
         if a == b then return true end
         local ac, bc = pvm.classof(a), pvm.classof(b)
         if ac ~= bc then return false end
-        if ac == Value.ValueExprValue then return a.value == b.value end
+        if ac == Value.ValueExprValue then return canonical_value(a.value, aliases) == canonical_value(b.value, aliases) end
         if ac == Value.ValueExprConst then return a.const == b.const end
         return false
     end
@@ -364,19 +398,19 @@ local function bind_context(T)
         return const_int_expr(expr) == -1
     end
 
-    local function reduction_update_matches(expr, reduction)
+    local function reduction_update_matches(expr, reduction, aliases)
         if pvm.classof(expr) ~= Kernel.KernelExprAlgebra then return false end
         local v = expr.expr
         local cls = pvm.classof(v)
         local acc = reduction.accumulator
         local contrib = reduction.contribution
         if reduction.kind == Value.ReductionAdd and cls == Value.ValueExprAdd then
-            return (value_expr_is_value(v.a, acc) and same_value_expr(v.b, contrib))
-                or (value_expr_is_value(v.b, acc) and same_value_expr(v.a, contrib))
+            return (value_expr_is_value(v.a, acc, aliases) and same_value_expr(v.b, contrib, aliases))
+                or (value_expr_is_value(v.b, acc, aliases) and same_value_expr(v.a, contrib, aliases))
         end
         if reduction.kind == Value.ReductionMul and cls == Value.ValueExprMul then
-            return (value_expr_is_value(v.a, acc) and same_value_expr(v.b, contrib))
-                or (value_expr_is_value(v.b, acc) and same_value_expr(v.a, contrib))
+            return (value_expr_is_value(v.a, acc, aliases) and same_value_expr(v.b, contrib, aliases))
+                or (value_expr_is_value(v.b, acc, aliases) and same_value_expr(v.a, contrib, aliases))
         end
         return false
     end
@@ -388,8 +422,8 @@ local function bind_context(T)
         return nil
     end
 
-    local function index_is_primary(index, loop)
-        return value_expr_is_value(index, loop_primary_induction(loop))
+    local function index_is_primary(index, loop, aliases)
+        return value_expr_is_value(index, loop_primary_induction(loop), aliases)
     end
 
     local function stream_has_access(stream, id)
@@ -512,12 +546,12 @@ local function bind_context(T)
         return nil
     end
 
-    local function infer_scan_skeleton(loop, effects, reductions, bindings, proofs)
+    local function infer_scan_skeleton(loop, effects, reductions, bindings, aliases, proofs)
         if #reductions ~= 1 then return nil end
         local store = first_effect(effects, Kernel.KernelEffectStore)
-        if store == nil or not index_is_primary(store.index, loop) then return nil end
+        if store == nil or not index_is_primary(store.index, loop, aliases) then return nil end
         local reduction = reductions[1]
-        if not reduction_update_matches(resolve_kernel_expr(store.value, bindings), reduction) then return nil end
+        if not reduction_update_matches(resolve_kernel_expr(store.value, bindings), reduction, aliases) then return nil end
         proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("store of loop-carried reduction update is a prefix scan")
         return {
             effects = {
@@ -528,12 +562,12 @@ local function bind_context(T)
         }
     end
 
-    local function infer_copy_skeleton(loop, effects, bindings, dependence_rejects, proofs)
+    local function infer_copy_skeleton(loop, effects, bindings, dependence_rejects, aliases, proofs)
         local store = first_effect(effects, Kernel.KernelEffectStore)
-        if store == nil or not index_is_primary(store.index, loop) then return nil end
+        if store == nil or not index_is_primary(store.index, loop, aliases) then return nil end
         local src = resolve_kernel_expr(store.value, bindings)
         if pvm.classof(src) ~= Kernel.KernelExprLoad then return nil end
-        if not index_is_primary(src.index, loop) then return nil end
+        if not index_is_primary(src.index, loop, aliases) then return nil end
         if store.dst.elem_ty ~= src.stream.elem_ty then return nil end
         local semantics, dep_reason = copy_dependence_semantics(store.dst, src.stream, dependence_rejects)
         if semantics == nil then return nil, dep_reason end
@@ -550,7 +584,7 @@ local function bind_context(T)
         }
     end
 
-    local function infer_find_skeleton(func, graph_loop, loop, body_bindings, value_index, proofs)
+    local function infer_find_skeleton(func, graph_loop, loop, body_bindings, value_index, aliases, proofs)
         if graph_loop == nil or #(graph_loop.exits or {}) ~= 2 then return nil end
         local primary = loop_primary_induction(loop)
         if primary == nil then return nil end
@@ -559,7 +593,7 @@ local function bind_context(T)
         local hit_src, hit_pred, not_found = nil, nil, nil
         for _, edge in ipairs(graph_loop.exits or {}) do
             local ret_expr, ret_value = edge_return_expr(blocks, edge, value_index)
-            if ret_expr ~= nil and (ret_value == primary or value_expr_is_value(ret_expr, primary)) then
+            if ret_expr ~= nil and (canonical_value(ret_value, aliases) == canonical_value(primary, aliases) or value_expr_is_value(ret_expr, primary, aliases)) then
                 local cond, polarity = edge_branch_polarity(blocks, edge)
                 local src, pred = find_predicate_from_cond(cond, polarity, bindings, value_index)
                 if src == nil or pred == nil then return nil end
@@ -571,7 +605,7 @@ local function bind_context(T)
             end
         end
         if hit_src == nil or hit_pred == nil or not_found == nil then return nil end
-        if pvm.classof(hit_src) ~= Kernel.KernelExprLoad or not index_is_primary(hit_src.index, loop) then return nil end
+        if pvm.classof(hit_src) ~= Kernel.KernelExprLoad or not index_is_primary(hit_src.index, loop, aliases) then return nil end
         proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("early-exit primary-index search is an array find skeleton")
         return {
             effects = {},
@@ -579,14 +613,14 @@ local function bind_context(T)
         }
     end
 
-    local function infer_loop_skeleton(func, graph_loop, loop, effects, reductions, body_bindings, dependence_rejects, value_index, proofs)
+    local function infer_loop_skeleton(func, graph_loop, loop, effects, reductions, body_bindings, dependence_rejects, value_index, aliases, proofs)
         local bindings = binding_index(body_bindings)
-        local scan = infer_scan_skeleton(loop, effects, reductions, bindings, proofs)
+        local scan = infer_scan_skeleton(loop, effects, reductions, bindings, aliases, proofs)
         if scan ~= nil then return scan end
         if #reductions == 0 then
-            local find = infer_find_skeleton(func, graph_loop, loop, body_bindings, value_index, proofs)
+            local find = infer_find_skeleton(func, graph_loop, loop, body_bindings, value_index, aliases, proofs)
             if find ~= nil then return find end
-            local copy = infer_copy_skeleton(loop, effects, bindings, dependence_rejects, proofs)
+            local copy = infer_copy_skeleton(loop, effects, bindings, dependence_rejects, aliases, proofs)
             if copy ~= nil then return copy end
         end
         return nil
@@ -753,7 +787,10 @@ local function bind_context(T)
                     body_bindings, body_effects = build_kernel_body(func, loop_blocks, value, mem, stream_by_access, reduction_backedges, rejects)
                 end
                 local skeleton = nil
-                if #rejects == 0 then skeleton = infer_loop_skeleton(func, graph_loop, loop, body_effects, reductions, body_bindings, dependence_rejects, value_index, proofs) end
+                if #rejects == 0 then
+                    local aliases = loop_body_aliases(graph_loop, flow)
+                    skeleton = infer_loop_skeleton(func, graph_loop, loop, body_effects, reductions, body_bindings, dependence_rejects, value_index, aliases, proofs)
+                end
                 if skeleton ~= nil then
                     for _, e in ipairs(skeleton.effects or {}) do effects[#effects + 1] = e end
                     if not skeleton.handles_dependences then

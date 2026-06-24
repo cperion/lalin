@@ -283,7 +283,7 @@ A generated artifact is a self-contained Lua source file.
 
 ```text
 -- Generated Moonlift LuaJIT copy-and-patch artifact.
--- Native stencil bytes are embedded below as data and installed before the residual module loads.
+-- Native stencil bytes are embedded below as data and installed before the runtime module loads.
 
 local ffi = require("ffi")
 local bit = require("bit")
@@ -301,7 +301,7 @@ return {
 }
 ```
 
-The artifact is source-first by design. It can be inspected, versioned, loaded with ordinary Lua mechanisms, and shipped as a single `.lua` file containing both residual Lua code and native machine-code byte strings.
+The artifact is source-first by design. It can be inspected, versioned, loaded with ordinary Lua mechanisms, and shipped as a single `.lua` file containing both LuaJIT runtime code and native machine-code byte strings.
 
 The artifact does not reference the build-time bank by path. It copies bytes from embedded strings and installs them into executable memory at load time.
 
@@ -321,7 +321,7 @@ for each entry:
 
 The runtime does not select stencils, lower loops, inspect MoonCode, or run fallback code. All semantic decisions have already been made by Moonlift and MoonStencil.
 
-The installed pointer table is the only dependency of the residual LuaJIT module:
+The installed pointer table is the only native-code dependency of the LuaJIT runtime module:
 
 ```lua
 __moonlift_luajit_stencil_symbols[artifact.symbol.text]

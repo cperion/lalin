@@ -448,6 +448,15 @@ without inventing a separate family.
 Current validated descriptor cuts:
 
 ```text
+real DSL artifact matrix, direct single-loop store/reduce families
+source-shaped Moonlift DSL reaches copy-patch LuaJIT artifacts for:
+  reduce, copy, fill, map, zip_map,
+  cast, compare, zip_compare,
+  gather, scatter, in_place_map,
+  count, map_reduce, zip_reduce
+each selected artifact carries an explicit StencilInstance.schedule
+test: tests/code_ir/test_luajit_artifact_from_dsl.lua
+
 view copy, dynamic runtime stride, CodeInstViewMake + CodeInstViewData
 descriptor access keeps StencilTopologyViewDescriptor
 machine ABI receives the backing data pointer plus dynamic stride args
@@ -489,6 +498,15 @@ tests: tests/schema/test_schema_stencil.lua
        tests/code_ir/test_luajit_lower_stencil_fields.lua
 artifact subset: reduce, map, find, compare, and fill execute over
                  Demo_Pair.right without materializing a separate SoA buffer
+```
+
+Remaining frontend-shaped skeleton coverage:
+
+```text
+[ ] scan source loop infers KernelEffectScan from a named reduction update
+[ ] find source loop infers KernelResultFind through frontend when/join CFG
+[ ] partition source function infers KernelEffectPartition from two-pass CFG
+[ ] memmove source loop proves/chooses StencilCopyMemMove semantics
 ```
 
 ## Hard-Yank Rules

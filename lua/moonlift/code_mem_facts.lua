@@ -15,6 +15,7 @@ local function bind_context(T)
     local Code = T.MoonCode
     local Graph = T.MoonGraph
     local Flow = T.MoonFlow
+    local Value = T.MoonValue
     local Mem = T.MoonMem
     local CodeGraph = require("moonlift.code_graph")(T)
     local CodeFlowFacts = require("moonlift.code_flow_facts")(T)
@@ -188,6 +189,32 @@ local function bind_context(T)
         return nil
     end
 
+    local function value_expr_key(expr, seen)
+        if expr == nil then return nil end
+        seen = seen or {}
+        if seen[expr] then return nil end
+        seen[expr] = true
+        local cls = pvm.classof(expr)
+        if cls == Value.ValueExprValue then return "value:" .. expr.value.text end
+        if cls == Value.ValueExprConst then return "const:" .. tostring(expr.const) end
+        if cls == Value.ValueExprCast then return "cast:" .. tostring(expr.op) .. ":" .. tostring(expr.from) .. ":" .. tostring(expr.to) .. "(" .. tostring(value_expr_key(expr.value, seen)) .. ")" end
+        if cls == Value.ValueExprUnary then return "unary:" .. tostring(expr.op) .. "(" .. tostring(value_expr_key(expr.value, seen)) .. ")" end
+        if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul then
+            return tostring(cls.__name) .. "(" .. tostring(value_expr_key(expr.a, seen)) .. "," .. tostring(value_expr_key(expr.b, seen)) .. ")"
+        end
+        return tostring(expr)
+    end
+
+    local function canonical_index_key(index, value_index)
+        local cls = pvm.classof(index)
+        if index == Mem.MemIndexNone then return "none" end
+        if cls == Mem.MemIndexValue then
+            local expr = value_index and value_index.expr_by_value and value_index.expr_by_value[index.value.text] or nil
+            return "value_expr:" .. tostring(value_expr_key(expr) or index.value.text) .. ":" .. tostring(index.elem_size) .. ":" .. tostring(index.const_offset or 0)
+        end
+        return index_key(index)
+    end
+
     local function semantic_facts(module, graph, flow, value, contracts)
         graph = graph or CodeGraph.graph(module)
         flow = flow or CodeFlowFacts.facts(module, graph)
@@ -256,6 +283,7 @@ local function bind_context(T)
             local access_records = {}
             local readonly_objects, writeonly_objects = {}, {}
             local consts = const_values(func)
+            local value_index = CodeValueFacts.expr_index(value)
             local scaled_index_stride = {}
             local same_store = {}
 
@@ -482,7 +510,7 @@ local function bind_context(T)
                         local loop_id = loops_by_func_block[func.id.text] and loops_by_func_block[func.id.text][block.id.text] or nil
                         local access_fact = Mem.MemAccessFact(id, func.id, Graph.GraphBlockId(func.id, block.id), inst.id, kind, place, k.access, base, index, pattern, align, bounds, trap)
                         accesses[#accesses + 1] = access_fact
-                        access_records[#access_records + 1] = { id = id, object = object, kind = kind, index = index, index_key = index_key(index), loop = loop_id, in_bounds = in_bounds, trap = trap, order = #access_records + 1 }
+                        access_records[#access_records + 1] = { id = id, object = object, kind = kind, index = index, index_key = canonical_index_key(index, value_index), loop = loop_id, in_bounds = in_bounds, trap = trap, order = #access_records + 1 }
 
                         local proof = Mem.MemProofBackend(id, "backend access info derived from structured MemAccessFact")
                         proofs[#proofs + 1] = proof

@@ -511,7 +511,15 @@ local function bind_context(T)
             blocks[i] = C.CBackendBlock(c_label(b.id), params_, stmts, term_to_c(ctx, b.term))
         end
         local visibility = (func.linkage == Code.CodeLinkageExport) and Core.VisibilityExport or Core.VisibilityLocal
-        return C.CBackendFunc(c_name(func.name), func.name, visibility, c_sig(ctx, func.sig), params, locals, blocks)
+        return C.CBackendFunc(
+            c_name(func.name),
+            func.name,
+            visibility,
+            c_sig(ctx, func.sig),
+            params,
+            locals,
+            C.CBackendBodyBlocks(blocks[1].label, blocks)
+        )
     end
 
     local function c_reloc_target(ref)

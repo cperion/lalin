@@ -28,6 +28,7 @@ local SCHEMA_MODULES = {
     "effect",
     "kernel",
     "stencil",
+    "exec",
     "schedule",
     "lower",
     "compiler",

@@ -590,6 +590,49 @@ return schema. MoonC {
     stmts [many [MoonC.CBackendStmt]],
     term [MoonC.CBackendTerminator],
   },
+  product. CBackendExecArg {
+    interned,
+    field. name [str],
+    field. atom [MoonC.CBackendAtom],
+    field. ty [MoonC.CBackendType],
+  },
+  sum. CBackendExecResult {
+    CBackendExecResultVoid,
+    CBackendExecResultLocal {
+      variant_unique,
+      dst [MoonC.CBackendLocalId],
+      field. ty [MoonC.CBackendType],
+    },
+  },
+  sum. CBackendExecEmission {
+    CBackendExecEmitInline,
+    CBackendExecEmitFunction,
+    CBackendExecEmitExternCall,
+  },
+  product. CBackendExecSite {
+    interned,
+    fragment [MoonExec.ExecFragment],
+    emission [MoonC.CBackendExecEmission],
+    args [many [MoonC.CBackendExecArg]],
+    result [MoonC.CBackendExecResult],
+  },
+  sum. CBackendFuncBody {
+    CBackendBodyBlocks {
+      variant_unique,
+      entry [MoonC.CBackendLabel],
+      blocks [many [MoonC.CBackendBlock]],
+    },
+    CBackendBodyExec {
+      variant_unique,
+      fragment [MoonC.CBackendExecSite],
+    },
+    CBackendBodyMixed {
+      variant_unique,
+      entry [MoonC.CBackendLabel],
+      blocks [many [MoonC.CBackendBlock]],
+      fragments [many [MoonC.CBackendExecSite]],
+    },
+  },
   product. CBackendFunc {
     interned,
     field. name [MoonC.CBackendName],
@@ -598,7 +641,7 @@ return schema. MoonC {
     sig [MoonC.CBackendFuncSigId],
     params [many [MoonC.CBackendLocal]],
     locals [many [MoonC.CBackendLocal]],
-    blocks [many [MoonC.CBackendBlock]],
+    body [MoonC.CBackendFuncBody],
   },
   product. CBackendUnit {
     interned,

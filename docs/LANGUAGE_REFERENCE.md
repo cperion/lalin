@@ -2827,7 +2827,7 @@ local artifact = moon.emit_luajit_artifact(sum_i32, {
 })
 ```
 
-The emitted `.lua` file contains residual LuaJIT wrapper code plus embedded native stencil byte strings. Loading the file checks the runtime target, copies the embedded stencil bytes to executable memory, patches relocation holes, casts the installed addresses to FFI function pointers, and returns the generated module table.
+The emitted `.lua` file contains LuaJIT runtime wrapper code plus embedded native stencil byte strings. Loading the file checks the runtime target, copies the embedded stencil bytes to executable memory, patches relocation holes, casts the installed addresses to FFI function pointers, and returns the generated module table.
 
 ```lua
 local mod = assert(loadfile("target/artifacts/sum_i32.lua"))()

@@ -176,6 +176,14 @@ local function bind_context(T)
         return out
     end
 
+    local function func_blocks(func)
+        local body = assert(func.body, "CBackendFunc requires body")
+        local cls = pvm.classof(body)
+        if cls == C.CBackendBodyBlocks or cls == C.CBackendBodyMixed then return body.blocks end
+        if cls == C.CBackendBodyExec then error("c_emit: CBackendBodyExec requires exec-fragment C projection", 2) end
+        error("c_emit: unknown CBackendFunc body", 2)
+    end
+
     local function collect_implicit_types(unit)
         local out, order, descriptors, descriptor_order = {}, {}, {}, {}
         local function add_descriptor(kind, ty)
@@ -201,8 +209,9 @@ local function bind_context(T)
         for i = 1, #(unit.funcs or {}) do
             for j = 1, #unit.funcs[i].params do visit_ty(unit.funcs[i].params[j].ty) end
             for j = 1, #unit.funcs[i].locals do visit_ty(unit.funcs[i].locals[j].ty) end
-            for j = 1, #unit.funcs[i].blocks do
-                for k = 1, #unit.funcs[i].blocks[j].params do visit_ty(unit.funcs[i].blocks[j].params[k].ty) end
+            local blocks = func_blocks(unit.funcs[i])
+            for j = 1, #blocks do
+                for k = 1, #blocks[j].params do visit_ty(blocks[j].params[k].ty) end
             end
         end
         for i = 1, #(unit.globals or {}) do visit_ty(unit.globals[i].ty) end
@@ -462,9 +471,10 @@ local function bind_context(T)
             local_types[f.locals[i].id.text] = f.locals[i].ty
             emit_local_decl(f.locals[i].id.text, f.locals[i].ty)
         end
-        local blocks = {}; for i = 1, #f.blocks do blocks[f.blocks[i].label.text] = f.blocks[i] end
-        for i = 1, #f.blocks do
-            local b = f.blocks[i]
+        local f_blocks = func_blocks(f)
+        local blocks = {}; for i = 1, #f_blocks do blocks[f_blocks[i].label.text] = f_blocks[i] end
+        for i = 1, #f_blocks do
+            local b = f_blocks[i]
             for j = 1, #b.params do
                 local_types[b.params[j].local_id.text] = b.params[j].ty
                 local_types["__xfer_" .. b.label.text .. "_" .. tostring(j)] = b.params[j].ty
@@ -472,8 +482,8 @@ local function bind_context(T)
                 emit_local_decl("__xfer_" .. b.label.text .. "_" .. tostring(j), b.params[j].ty)
             end
         end
-        for i = 1, #f.blocks do
-            local b = f.blocks[i]
+        for i = 1, #f_blocks do
+            local b = f_blocks[i]
             out[#out + 1] = b.label.text .. ":"
             for j = 1, #b.params do
                 local dst = b.params[j].local_id.text

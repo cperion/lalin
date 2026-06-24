@@ -214,7 +214,7 @@ local function bind_context(T)
                 if edge ~= latch and loop_blocks[edge.from.block.text] and loop_blocks[edge.to.block.text] then
                     for _, arg in ipairs(fact.args or {}) do
                         local src = canonical_value(arg.src, aliases)
-                        if src ~= nil and aliases[arg.dst_param.text] ~= src then
+                        if src ~= nil and src ~= arg.dst_param and aliases[arg.dst_param.text] == nil then
                             aliases[arg.dst_param.text] = src
                             changed = true
                         end

@@ -985,7 +985,15 @@ local function bind_context(T)
                 error("lower_to_c: unsupported LowerStrategy for C emission " .. class_name(fragment.strategy), 2)
             end
         end
-        return C.CBackendFunc(mutable_func.name, mutable_func.symbol, mutable_func.visibility, mutable_func.sig, mutable_func.params, mutable_func.locals, ctx.blocks)
+        return C.CBackendFunc(
+            mutable_func.name,
+            mutable_func.symbol,
+            mutable_func.visibility,
+            mutable_func.sig,
+            mutable_func.params,
+            mutable_func.locals,
+            C.CBackendBodyBlocks(clabel(code_func.blocks[1].id), ctx.blocks)
+        )
     end
 
     local function func_by_id(code_module)
@@ -1053,7 +1061,7 @@ local function bind_context(T)
             if fp ~= nil then
                 local semantic = false
                 for _, frag in ipairs(fp.fragments or {}) do if semantic_strategy(frag) then semantic = true end end
-                if semantic then cfuncs[#cfuncs + 1] = lower_semantic_func(ctx, graph, flow, kernels, schedules, code_func, base, fp, graph_loops, base.blocks)
+                if semantic then cfuncs[#cfuncs + 1] = lower_semantic_func(ctx, graph, flow, kernels, schedules, code_func, base, fp, graph_loops, base.body and base.body.blocks or {})
                 else cfuncs[#cfuncs + 1] = base end
             else
                 cfuncs[#cfuncs + 1] = base

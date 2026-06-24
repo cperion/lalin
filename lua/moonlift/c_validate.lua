@@ -141,6 +141,14 @@ local function bind_context(T)
             return sigs[func.sig.text]
         end
 
+        local function func_blocks(func)
+            local body = assert(func.body, "CBackendFunc requires body")
+            local cls = pvm.classof(body)
+            if cls == C.CBackendBodyBlocks or cls == C.CBackendBodyMixed then return body.blocks end
+            if cls == C.CBackendBodyExec then return {} end
+            error("c_validate: unknown CBackendFunc body", 2)
+        end
+
         local function atom_type(atom, locals)
             local cls = pvm.classof(atom)
             if cls == C.CBackendAtomLocal then return locals[atom.local_id.text] end
@@ -281,8 +289,9 @@ local function bind_context(T)
                 if locals[l.id.text] then add_issue(issues, collector, C.CBackendIssueDuplicateLocal(func.name, l.id)) end
                 locals[l.id.text] = l.ty
             end
-            for j = 1, #func.blocks do
-                local b = func.blocks[j]
+            local blocks = func_blocks(func)
+            for j = 1, #blocks do
+                local b = blocks[j]
                 if labels[b.label.text] then add_issue(issues, collector, C.CBackendIssueDuplicateLabel(func.name, b.label)) end
                 labels[b.label.text] = b
                 for k = 1, #b.params do locals[b.params[k].local_id.text] = b.params[k].ty end
@@ -294,8 +303,8 @@ local function bind_context(T)
                     add_issue(issues, collector, C.CBackendIssueUnmaterializedAddressTakenValue(func.name, rec.id))
                 end
             end
-            for j = 1, #func.blocks do
-                local b = func.blocks[j]
+            for j = 1, #blocks do
+                local b = blocks[j]
                 local initialized = {}
                 for _, p in ipairs(func.params) do initialized[p.id.text] = true end
                 for _, bp in ipairs(b.params) do initialized[bp.local_id.text] = true end
