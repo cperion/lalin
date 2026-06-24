@@ -490,7 +490,7 @@ local function bind_context(T)
   },
 
   relation. plan_store_stencil {
-    input { ctx [sym("StoreStencilPlanCandidate")] },
+    input { ctx [sym("StoreStencilPlanInput")] },
     output { plan [sym("StoreStencilPlan")] },
     strategy {
       select. best_cost,
@@ -1137,7 +1137,7 @@ local function bind_context(T)
   },
 
   relation. plan_reduce_stencil {
-    input { ctx [sym("ReduceStencilPlanCandidate")] },
+    input { ctx [sym("ReduceStencilPlanInput")] },
     output { plan [sym("ReduceStencilPlan")] },
     strategy {
       select. best_cost,
@@ -1434,30 +1434,30 @@ local function bind_context(T)
     end
 
     function api.plan_store(ctx)
-        local candidate = copy_fields(ctx)
-        candidate.plan_ready = candidate.planned == true
-            and candidate.returns_void == true
-            and candidate.counted_positive == true
-            and candidate.single_store == true
-            and candidate.dst_base_present == true
-            and candidate.class_ready == true
-        candidate.reject_reason = store_plan_reject_reason(candidate)
-        local plan, err = api:run("plan_store_stencil", { ctx = candidate }, "plan", "no matching plan")
-        if plan == nil then return nil, store_plan_reject_reason(candidate, err) end
+        local input = copy_fields(ctx)
+        input.plan_ready = input.planned == true
+            and input.returns_void == true
+            and input.counted_positive == true
+            and input.single_store == true
+            and input.dst_base_present == true
+            and input.class_ready == true
+        input.reject_reason = store_plan_reject_reason(input)
+        local plan, err = api:run("plan_store_stencil", { ctx = input }, "plan", "no matching plan")
+        if plan == nil then return nil, store_plan_reject_reason(input, err) end
         if plan.kind == "no_plan" then return nil, plan.reason end
         return plan, nil
     end
 
     function api.plan_reduce(ctx)
-        local candidate = copy_fields(ctx)
-        candidate.plan_ready = candidate.planned == true
-            and candidate.result_reduction == true
-            and candidate.returns_reduction == true
-            and candidate.counted_positive == true
-            and candidate.class_ready == true
-        candidate.reject_reason = reduce_plan_reject_reason(candidate)
-        local plan, err = api:run("plan_reduce_stencil", { ctx = candidate }, "plan", "no matching plan")
-        if plan == nil then return nil, reduce_plan_reject_reason(candidate, err) end
+        local input = copy_fields(ctx)
+        input.plan_ready = input.planned == true
+            and input.result_reduction == true
+            and input.returns_reduction == true
+            and input.counted_positive == true
+            and input.class_ready == true
+        input.reject_reason = reduce_plan_reject_reason(input)
+        local plan, err = api:run("plan_reduce_stencil", { ctx = input }, "plan", "no matching plan")
+        if plan == nil then return nil, reduce_plan_reject_reason(input, err) end
         if plan.kind == "no_plan" then return nil, plan.reason end
         return plan, nil
     end

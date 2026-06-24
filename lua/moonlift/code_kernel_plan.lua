@@ -801,8 +801,8 @@ local function bind_context(T)
         for _, loop in ipairs(flow and flow.loops or {}) do
             local subject = Kernel.KernelSubjectLoop(loop.loop)
             local func_id = loop_func[loop.loop.text]
-            local function select(candidate)
-                local selection, err = CodeKernelPlanRules:run("select_loop_kernel_plan", { loop = candidate }, "selection", "no Kernel loop plan selected")
+            local function select(loop_input)
+                local selection, err = CodeKernelPlanRules:run("select_loop_kernel_plan", { loop = loop_input }, "selection", "no Kernel loop plan selected")
                 assert(selection ~= nil, tostring(err))
                 return selection
             end

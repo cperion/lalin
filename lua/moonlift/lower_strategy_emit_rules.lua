@@ -12,7 +12,8 @@ local function bind_context(T)
 
     local LowerEmitInput = llb.symbol("LowerEmitInput")
     local LowerEmitSelection = llb.symbol("LowerEmitSelection")
-        local selection = llb.symbol("selection")
+    local emit = llb.symbol("emit")
+    local selection = llb.symbol("selection")
     local lower_emit_selection = llb.symbol("lower_emit_selection")
 
     local code = llb.symbol("code")

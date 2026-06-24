@@ -1186,7 +1186,7 @@ local function bind_context(T)
         return overrides
     end
 
-    local function lower_emit_candidate(ctx, fragment, cls)
+    local function lower_emit_input(ctx, fragment, cls)
         local sched = nil
         if cls == Lower.LowerStrategyKernel then sched = ctx.schedule_by_id and ctx.schedule_by_id[fragment.strategy.schedule.text] end
         return {
@@ -1203,8 +1203,8 @@ local function bind_context(T)
 
     local function emit_fragment(ctx, code_module, graph, flow, value, mem, effect, kernels, fragment)
         local cls = pvm.classof(fragment.strategy)
-        local candidate = lower_emit_candidate(ctx, fragment, cls)
-        local selection, err = LowerStrategyEmitRules:run("select_lower_emit", { emit = candidate }, "selection", "no lower emission selected")
+        local input = lower_emit_input(ctx, fragment, cls)
+        local selection, err = LowerStrategyEmitRules:run("select_lower_emit", { emit = input }, "selection", "no lower emission selected")
         if selection == nil then error("lower_to_back: " .. tostring(err), 2) end
         if selection.kind == LowerStrategyEmitRules.kind.code then
             local cmds = CodeToBack.fragment_commands(code_module, graph, flow, value, mem, effect, fragment.cover, { validate = false, emit_local_slots = false, layout_env = ctx.layout_env, target = ctx.target })

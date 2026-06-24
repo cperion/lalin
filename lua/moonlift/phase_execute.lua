@@ -149,7 +149,7 @@ local function execute_plan(ctx, executor, plan, input, opts)
 end
 
 M.process = llb.process.phase_execute {
-    run = function(ctx, executor, plan, input, opts)
+    stream = function(ctx, executor, plan, input, opts)
         return execute_plan(ctx, executor, plan, input, opts)
     end,
 }

@@ -228,7 +228,7 @@ local function validate_package(ctx, package)
 end
 
 M.process = llb.process.phase_validate {
-    run = function(ctx, package)
+    stream = function(ctx, package)
         return validate_package(ctx, package)
     end,
 }

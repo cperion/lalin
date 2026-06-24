@@ -3,24 +3,23 @@ package.path = "./lua/?.lua;./lua/?/init.lua;" .. package.path
 local llb = require("llb")
 
 local records = llb.process. records (function(ctx, bytes)
-  ctx. header {
-    magic = bytes:sub(1, 4),
-    size = #bytes,
-  }
-
-  local offset = 5
-  while offset <= #bytes do
-    ctx:consume(1)
-    ctx. record {
-      offset = offset,
-      byte = bytes:byte(offset),
-    }
-    offset = offset + 1
+  local function gen(param, state)
+    if state == 0 then
+      return 5, ctx:make_event("header", {
+        magic = param.bytes:sub(1, 4),
+        size = #param.bytes,
+      })
+    end
+    if state <= #param.bytes then
+      local offset = state
+      return state + 1, ctx:make_event("record", {
+        offset = offset,
+        byte = param.bytes:byte(offset),
+      })
+    end
+    return nil
   end
-
-  return {
-    bytes = #bytes,
-  }
+  return gen, { bytes = bytes }, 0
 end)
 
 local seen = {}
@@ -37,7 +36,6 @@ assert(h:status() == "ready", "handle starts ready")
 assert(h:resume().kind == "header", "handle resumes first event")
 assert(h:resume().kind == "record", "handle resumes second event")
 assert(h:resume() == nil and h:done(), "handle finishes after events")
-assert(h:result().bytes == 5, "handle stores result")
 
 local budgeted = records:start("LLPVxyz", llb.process_opts { budget = 1 })
 assert(budgeted:resume().kind == "header", "budgeted process first event")
@@ -45,15 +43,19 @@ assert(budgeted:resume().kind == "budget_exhausted", "budget exhaustion is an ev
 assert(budgeted:resume { budget = 10 }.kind == "record", "resume can refresh budget")
 
 local checked = llb.process. checked (function(ctx)
-  ctx. warning {
-    code = "W_TEST",
-    message = "warning event",
+  local events = {
+    ctx:diagnostic_event {
+      severity = "warning",
+      code = "W_TEST",
+      message = "warning event",
+    },
+    ctx:diagnostic_event {
+      severity = "error",
+      code = "E_TEST",
+      message = "error event",
+    },
   }
-  ctx. error {
-    code = "E_TEST",
-    message = "error event",
-  }
-  return true
+  return llb.stream.raw(llb.stream.from.array(events))
 end)
 local ch = checked:start()
 local w = ch:resume()

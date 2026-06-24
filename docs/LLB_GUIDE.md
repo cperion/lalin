@@ -86,6 +86,12 @@ Bad fits:
 LLB should stay generic. Moonlift-specific type rules, ownership, lowering, and
 backend behavior belong to Moonlift, not LLB.
 
+LLB's runtime compilation strategy is documented in
+[`LLB_CODEGEN_APPROACH.md`](LLB_CODEGEN_APPROACH.md). Codegen specializes the
+workbench machinery declared by LLB grammars: stream plans, role normalizers,
+future staged head machines, fragment expanders, family projectors, diagnostics,
+indexing, formatting, and environment installers.
+
 ## Surfaces
 
 LLB has three public surfaces.
@@ -588,7 +594,7 @@ llisle {
 The same rule applies to typed relation fields: `input { expr [Tr.Expr] }`
 splices the actual ASDL class value. Llisle `:is` guards understand those class
 values, so ASDL lowering rules can dispatch on `P.expr :is (Tr.ExprLit)` without
-inventing string-shaped candidate records.
+inventing string-shaped dispatch records.
 
 The same algebra is available inside roles:
 
@@ -805,15 +811,22 @@ value.field
 object.owner
 ```
 
-## Processes and coroutines
+## Processes And GPS
 
-LLB processes are coroutine-backed event streams.
+LLB processes are `gen,param,state` event streams.
 
 ```lua
 local records = llb.process. records (function(ctx, bytes)
-  ctx. header { bytes = #bytes }
-  ctx. record { index = 1 }
-  return { records = 1 }
+  local function gen(param, state)
+    if state == 0 then
+      return 1, ctx:make_event("header", { bytes = #param.bytes })
+    end
+    if state == 1 then
+      return 2, ctx:make_event("record", { index = 1 })
+    end
+    return nil
+  end
+  return gen, { bytes = bytes }, 0
 end)
 
 for ev in records(image) do
@@ -824,7 +837,7 @@ end
 A process is:
 
 ```text
-Lua coroutine
+gen,param,state machine
   + LLB event protocol
   + diagnostics bag
   + origin/provenance
@@ -832,7 +845,7 @@ Lua coroutine
   + resumable handle
 ```
 
-Each yielded value is a `ProcessEvent`:
+Each yielded payload becomes a `ProcessEvent`:
 
 ```text
 process  process name
@@ -894,7 +907,7 @@ require("moonlift.compiler_driver").lower_module(module, opts)
 Debugger.process(debugger, { "init", "start", "step" })
 ```
 
-LLB owns the coroutine/event mechanics. LLPVM owns typed process declarations and
+LLB owns GPS event mechanics. LLPVM owns typed process declarations and
 run records when the process becomes part of compiler/runtime architecture:
 
 ```lua
@@ -1002,11 +1015,11 @@ For long-running phase progress, expose a process:
 
 ```lua
 local analyze = llb.process. analyze (function(ctx, unit)
-  ctx. phase { name = "normalize" }
-  local normalized = normalize(unit)
-  ctx. phase { name = "bind" }
-  local bound = bind(normalized)
-  return bound
+  local events = {
+    ctx:make_event("phase", { name = "normalize" }),
+    ctx:make_event("phase", { name = "bind" }),
+  }
+  return llb.stream.raw(llb.stream.from.array(events))
 end)
 ```
 
@@ -1313,7 +1326,7 @@ hidden global dependency installation inside use()
 stringly typed semantics inside callbacks
 heads that duplicate role normalization rules
 formatters that guess from source text instead of evaluated values
-coroutines yielding arbitrary values instead of process events
+generators yielding arbitrary values instead of process events
 metatables mutated ad hoc instead of protocol-generated behavior
 factories that lose caller origin
 ```

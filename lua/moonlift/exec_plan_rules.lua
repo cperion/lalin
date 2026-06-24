@@ -12,7 +12,8 @@ local function bind_context(T)
 
     local ExecFragmentInput = llb.symbol("ExecFragmentInput")
     local ExecFragmentSelection = llb.symbol("ExecFragmentSelection")
-        local selection = llb.symbol("selection")
+    local fragment = llb.symbol("fragment")
+    local selection = llb.symbol("selection")
     local exec_fragment_selection = llb.symbol("exec_fragment_selection")
 
     local stencil = llb.symbol("stencil")

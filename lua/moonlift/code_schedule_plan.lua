@@ -73,7 +73,7 @@ local function bind_context(T)
         return nil
     end
 
-    local function vector_candidate_kind(plan, target)
+    local function vector_schedule_kind(plan, target)
         local body = plan.body
         if body == nil or #(body.streams or {}) == 0 then return nil end
         if pvm.classof(body.result) == Kernel.KernelResultClosedForm then return nil end
@@ -101,7 +101,7 @@ local function bind_context(T)
 
     local function schedule_for_plan(plan, target, flow)
         local kid = plan.id
-        local vector_kind = vector_candidate_kind(plan, target)
+        local vector_kind = vector_schedule_kind(plan, target)
         local vector_cap = nil
         if vector_kind ~= nil then
             vector_cap = KernelEmitSupport.classify(plan, vector_kind, target, flow)
@@ -109,7 +109,7 @@ local function bind_context(T)
         local scalar_kind = scalar_or_closed_kind_for(plan)
         local scalar_cap = vector_cap and vector_cap.executable and nil or KernelEmitSupport.classify(plan, scalar_kind, target, flow)
         local selection, err = CodeSchedulePlanRules:run("select_kernel_schedule", { schedule = {
-            has_vector_candidate = vector_kind ~= nil,
+            has_vector_schedule = vector_kind ~= nil,
             vector_executable = vector_cap ~= nil and vector_cap.executable or false,
             vector_kind = vector_kind,
             vector_capability = vector_cap,

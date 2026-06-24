@@ -11,7 +11,8 @@ local function bind_context(T)
     local llisle = env.llisle
     local KernelScheduleInput = llb.symbol("KernelScheduleInput")
     local KernelScheduleSelection = llb.symbol("KernelScheduleSelection")
-        local selection = llb.symbol("selection")
+    local schedule = llb.symbol("schedule")
+    local selection = llb.symbol("selection")
     local kernel_schedule = llb.symbol("kernel_schedule")
     local planned = llb.symbol("planned")
     local no_plan = llb.symbol("no_plan")
@@ -34,7 +35,7 @@ local function bind_context(T)
   rule. vector_executable {
     llisle.select_kernel_schedule { schedule = P. schedule },
     when {
-      (P. schedule.has_vector_candidate :eq (true))
+      (P. schedule.has_vector_schedule :eq (true))
         * (P. schedule.vector_executable :eq (true)),
     },
     cost (0),
@@ -53,7 +54,7 @@ local function bind_context(T)
   rule. scalar_after_vector_reject {
     llisle.select_kernel_schedule { schedule = P. schedule },
     when {
-      (P. schedule.has_vector_candidate :eq (true))
+      (P. schedule.has_vector_schedule :eq (true))
         * (P. schedule.vector_executable :eq (false))
         * (P. schedule.scalar_executable :eq (true)),
     },
@@ -73,7 +74,7 @@ local function bind_context(T)
   rule. scalar_without_vector {
     llisle.select_kernel_schedule { schedule = P. schedule },
     when {
-      (P. schedule.has_vector_candidate :eq (false))
+      (P. schedule.has_vector_schedule :eq (false))
         * (P. schedule.scalar_executable :eq (true)),
     },
     cost (20),
@@ -92,7 +93,7 @@ local function bind_context(T)
   rule. no_executable_schedule_after_vector_reject {
     llisle.select_kernel_schedule { schedule = P. schedule },
     when {
-      (P. schedule.has_vector_candidate :eq (true))
+      (P. schedule.has_vector_schedule :eq (true))
         * (P. schedule.vector_executable :eq (false))
         * (P. schedule.scalar_executable :eq (false)),
     },
@@ -110,7 +111,7 @@ local function bind_context(T)
   rule. no_executable_schedule_without_vector {
     llisle.select_kernel_schedule { schedule = P. schedule },
     when {
-      (P. schedule.has_vector_candidate :eq (false))
+      (P. schedule.has_vector_schedule :eq (false))
         * (P. schedule.scalar_executable :eq (false)),
     },
     cost (40),

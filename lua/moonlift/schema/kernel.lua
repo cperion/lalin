@@ -70,7 +70,7 @@ return schema. MoonKernel {
     KernelExprAlgebra { variant_unique, field. expr [MoonValue.ValueExpr], },
     KernelExprLoad {
       variant_unique,
-      stream [MoonKernel.KernelStream],
+      field. stream [MoonKernel.KernelStream],
       index [MoonValue.ValueExpr],
     },
     KernelExprKernelValue { variant_unique, field. value [MoonKernel.KernelValueId], },

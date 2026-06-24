@@ -222,7 +222,7 @@ member in the family owns.
 The family has one collision policy. Important choices:
 
 ```text
-process  belongs to LLB coroutine/process streams
+process  belongs to LLB GPS process streams
 task     belongs to LLPVM typed process/task declarations
 record   belongs to LLPVM stream records
 value    is not a reserved family keyword; it is available as a user field/name
@@ -466,7 +466,7 @@ value
 process as an LLPVM head
 ```
 
-`value` is ordinary user space. `process` is the LLB coroutine/process API, not
+`value` is ordinary user space. `process` is the LLB GPS process API, not
 an LLPVM declaration head.
 
 ## Reference Notation
@@ -728,7 +728,7 @@ Family methods are dot-only. Do not use colon syntax.
 
 | API | Meaning |
 |---|---|
-| `llb.process. name (function(ctx, ...) ... end)` | Define coroutine-backed event stream. |
+| `llb.process. name (function(ctx, ...) return gen, param, state end)` | Define GPS-backed event stream. |
 | `process:start(...)` | Start resumable process handle. |
 | `process(...)` | Iterate process events directly. |
 | `handle:events()` | Iterate emitted events. |
@@ -1306,7 +1306,7 @@ rule. expr_lit {
 }
 ```
 
-`Tr.Expr` and `Tr.ExprLit` are Lua ASDL class values, not strings. The built-in `:is` predicate recognizes ASDL class membership through the runtime schema identity, so rules do not need synthetic `{ kind = ... }` candidates for ordinary ASDL dispatch.
+`Tr.Expr` and `Tr.ExprLit` are Lua ASDL class values, not strings. The built-in `:is` predicate recognizes ASDL class membership through the runtime schema identity, so rules do not need synthetic `{ kind = ... }` dispatch records for ordinary ASDL dispatch.
 
 `P.*` binders capture matched inputs, `V.*` binders allocate stable fresh values
 inside one rule execution, and `T.*` is reserved for type-level binders. A
@@ -1354,7 +1354,7 @@ it does not own the stencil decision matrix.
 The next LuaJIT lowering layer is also Llisle-owned. `luajit_lower` adapts
 kernel plans, flow facts, provider availability, return-shape checks, counted
 loop facts, and scheduled stencil readiness into a
-`LuaJITKernelLoweringCandidate`. Llisle then selects the concrete lowering
+`LuaJITKernelLoweringInput`. Llisle then selects the concrete lowering
 strategy by cost across selected stencil reductions, skeletons, and stores. Lua
 builds only the selected machine; it no longer owns a procedural trial ladder
 or a separate vector-reduction path. Vectorization is carried by the selected
@@ -1382,7 +1382,7 @@ single-loop store; `code_kernel_plan` emits `KernelEffectPartition` for that
 shape. The lower stencil matrix covers all 18 vocabulary cells.
 
 Kernel planning uses the same split. `code_kernel_plan` assembles graph, flow,
-value, memory, and effect facts into a `KernelLoopPlanCandidate`; Llisle selects
+value, memory, and effect facts into a `KernelLoopPlanInput`; Llisle selects
 the semantic outcome. The rule layer owns no-plan rejection priority and kernel
 result priority: closed forms win over reductions, reductions win over skeleton
 results, skeleton results win over original control, and closed-form plans carry
@@ -1390,7 +1390,7 @@ the explicit unknown-trip proof bit when Flow cannot provide an exact trip
 count. Lua then constructs the selected MoonKernel ASDL value.
 
 Schedule planning is Llisle-owned at the strategy boundary. `code_schedule_plan`
-builds `KernelScheduleCandidate` values from planned kernels, target vector
+builds `KernelScheduleInput` values from planned kernels, target vector
 facts, and emitter capability checks. Llisle selects executable vectors first,
 falls back to scalar or closed-form schedules when vector support rejects, keeps
 those vector rejects as rejected alternatives, and emits `ScheduleNoPlan` only
@@ -1425,13 +1425,13 @@ The hard naming rule is:
 ```text
 record  is the LLPVM stream item head
 task    is the LLPVM typed process declaration head
-process is the LLB coroutine/process helper
+process is the LLB GPS process helper
 value   is ordinary user space
 ```
 
 Use `task. compile { ... }` when progress/event structure is part of the typed
-compiler/runtime model. Use `llb.process. name(function(ctx, ...) ... end)` for
-the coroutine that actually streams events.
+compiler/runtime model. Use `llb.process. name(function(ctx, ...) return gen, param, state end)` for
+the GPS stream that emits events.
 
 Moonlift phase execution reports expose `LlPvm.TaskRun` records, so compiler
 progress, validation, source analysis, LSP indexing, and debugger stepping can
@@ -1451,7 +1451,7 @@ _ / spread            structural splice markers
 origins/provenance    diagnostic blame across helpers/factories
 diagnostics           structured failures and notes
 formatting            semantic formatting of evaluated DSL values
-processes             coroutine-backed event streams
+processes             GPS-backed event streams
 families              dependency/collision/environment policy
 ```
 

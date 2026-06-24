@@ -13,7 +13,9 @@ local function bind_context(T)
     local LuaJITKernelLoweringSelection = llb.symbol("LuaJITKernelLoweringSelection")
     local LuaJITSkeletonLoweringInput = llb.symbol("LuaJITSkeletonLoweringInput")
     local LuaJITSkeletonLoweringSelection = llb.symbol("LuaJITSkeletonLoweringSelection")
-        local selection = llb.symbol("selection")
+    local kernel = llb.symbol("kernel")
+    local skeleton = llb.symbol("skeleton")
+    local selection = llb.symbol("selection")
     local kernel_lowering = llb.symbol("kernel_lowering")
     local stencil_reduce = llb.symbol("stencil_reduce")
     local stencil_store = llb.symbol("stencil_store")
@@ -203,7 +205,7 @@ local function bind_context(T)
       ret {
         selection = kernel_lowering {
           kind = no_plan,
-          reason = P. kernel.reject_reason,
+          reason = P. skeleton.reject_reason,
         },
       },
     },

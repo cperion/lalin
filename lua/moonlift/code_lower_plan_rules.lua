@@ -12,7 +12,8 @@ local function bind_context(T)
 
     local LowerFragmentInput = llb.symbol("LowerFragmentInput")
     local LowerFragmentSelection = llb.symbol("LowerFragmentSelection")
-        local selection = llb.symbol("selection")
+    local fragment = llb.symbol("fragment")
+    local selection = llb.symbol("selection")
     local lower_fragment_selection = llb.symbol("lower_fragment_selection")
 
     local closed_form = llb.symbol("closed_form")

@@ -71,6 +71,21 @@ local function path_parts(v)
     die("path expected, got " .. llb.repr(v), llb.origin_of(v))
 end
 
+local function expr_path_parts(v)
+    if llb.is(v, "Symbol") or llb.is(v, "Name") then return { v.text } end
+    if llb.is(v, "Expr") and v.kind == "field" then
+        local base = expr_path_parts(rawget(v, "base"))
+        base[#base + 1] = rawget(v, "field")
+        return base
+    end
+    return nil
+end
+
+local function expr_call_path(v)
+    if llb.is(v, "Expr") and v.kind == "call" then return expr_path_parts(rawget(v, "callee")), rawget(v, "args") or {} end
+    return nil, nil
+end
+
 Ident.__tostring = function(self) return self.name end
 Ident.__index = function(self, key)
     if Ident[key] then return Ident[key] end
@@ -197,12 +212,43 @@ local function role_list(label, allowed)
     }
 end
 
+local function normalize_stream_record_item(item)
+    if is(item, RecordSpec) then return item end
+    local parts, args = expr_call_path(item)
+    if parts and #parts == 3 then
+        return setmetatable({
+            name = tostring(parts[3]),
+            expr = setmetatable({
+                callee = make_path({ parts[1], parts[2] }),
+                args = { args[1] or {} },
+                origin = llb.origin_of(item),
+            }, Call),
+            origin = llb.origin_of(item),
+        }, RecordSpec)
+    end
+    return item
+end
+
 local LL = llb.define "LLPVMDsl" {
     g.role .decls (role_list("program", { LangSpec = true, WorldSpec = true, StreamSpec = true, MachineSpec = true, PhaseSpec = true, TaskSpec = true, RootSpec = true })),
     g.role .lang_body (role_list("language", { TypeSpec = true })),
     g.role .type_body (role_list("type", { OpSpec = true })),
     g.role .fields { kind = "array", algebra = "product", normalize = function(_, _, v) return fields_from_table(v) end },
-    g.role .stream_body (role_list("stream", { RecordSpec = true })),
+    g.role .stream_body {
+        kind = "array",
+        algebra = "list",
+        normalize = function(_, ctx, v)
+            local out = {}
+            for _, item in ipairs(array_items(v)) do
+                item = normalize_stream_record_item(item)
+                if not is(item, RecordSpec) then
+                    die("stream received invalid item " .. tostring(cls(item) or llb.tagof(item) or type(item)), llb.origin_of(item) or (ctx and ctx.origin))
+                end
+                out[#out + 1] = item
+            end
+            return out
+        end,
+    },
     g.role .phase_body (role_list("phase", { Directive = true, Stage = true })),
     g.role .task_body (role_list("task", { Directive = true, EventSpec = true })),
     g.role .root_body (role_list("root", nil)),
@@ -272,6 +318,15 @@ local function complete_machine_decl(self, item)
     if is(item, TypeSpec) then return nil end
     if is(item, LangSpec) or is(item, WorldSpec) then return item end
     if is(item, MachineSpec) or is(item, PhaseSpec) or is(item, StreamSpec) or is(item, RootSpec) then return item end
+    local parts, args = expr_call_path(item)
+    if parts and #parts == 2 then
+        return setmetatable({
+            name = tostring(parts[2]),
+            world = ident(parts[1], llb.origin_of(item)),
+            body = array_items(args[1] or {}),
+            origin = llb.origin_of(item),
+        }, StreamSpec)
+    end
     if llb.is_stage(item) and llb.stage_head(item) == "world" then
         return item[ident(self.name, item.origin)]
     end
@@ -338,6 +393,7 @@ function MachineLanguage:program(body)
     return setmetatable({
         name = self.name,
         body = decls,
+        extra_body = array_items(body or {}),
         origin = self.origin,
         language = self,
     }, ProgramSpec)
@@ -431,6 +487,7 @@ local function lower_new(spec, opts)
         languages = {},
         types = {},
         op_defs = {},
+        op_type_by_name = {},
         worlds = {},
         streams = {},
         values = {},
@@ -553,11 +610,27 @@ local function validate_scalar(field, value)
 end
 
 function Lower:constructor_call(expr, world)
-    local callee = is(expr, Call) and expr.callee or (llb.is(expr, "Expr") and expr.kind == "call" and expr.callee)
-    local args = is(expr, Call) and expr.args or (llb.is(expr, "Expr") and expr.kind == "call" and expr.args) or {}
-    local parts = path_parts(callee)
+    local args = is(expr, Call) and rawget(expr, "args") or (llb.is(expr, "Expr") and rawget(expr, "kind") == "call" and rawget(expr, "args")) or {}
+    local parts
+    if llb.is(expr, "Expr") and rawget(expr, "kind") == "call" then
+        parts = expr_path_parts(rawget(expr, "callee"))
+    end
+    if not parts then
+        local callee = is(expr, Call) and rawget(expr, "callee") or (llb.is(expr, "Expr") and rawget(expr, "kind") == "call" and rawget(expr, "callee"))
+        parts = path_parts(callee)
+    end
     local type_name, op_name
-    if #parts == 2 then type_name, op_name = parts[1], parts[2]
+    if #parts == 2 then
+        if world then
+            local exported_type = self.op_type_by_name[tostring(world.language) .. "." .. tostring(parts[1])]
+            if exported_type then
+                type_name, op_name = exported_type, parts[1]
+            else
+                type_name, op_name = parts[1], parts[2]
+            end
+        else
+            type_name, op_name = parts[1], parts[2]
+        end
     elseif #parts == 3 then
         if world and world.language ~= parts[1] then die("constructor " .. tostring(expr.callee) .. " is not in world language " .. world.language, expr.origin) end
         type_name, op_name = parts[2], parts[3]
@@ -625,6 +698,7 @@ function Lower:build_languages()
                     local id = self.builder:op_kind(q, field_ids)
                     op_kind_ids[#op_kind_ids + 1] = id
                     self.op_defs[decl.name .. "." .. q] = { name = op.name, qualified_name = q, fields = fields, id = id }
+                    self.op_type_by_name[decl.name .. "." .. op.name] = t.name
                 end
             end
             self.languages[decl.name].abi = self.builder:abi(decl.name, 1, op_kind_ids, 0)
@@ -686,6 +760,9 @@ function Lower:build_streams()
 end
 
 function Lower:root_stream(item)
+    if llb.is(item, "Head") and item.spec and item.spec.name then
+        item = ident(item.spec.name, llb.origin_of(item))
+    end
     if is(item, Ident) or llb.is(item, "Name") or llb.is(item, "Symbol") then
         local name = ident_text(item, "root reference")
         local s = self.streams[name]
@@ -716,6 +793,12 @@ function Lower:build_roots()
 end
 
 function ProgramSpec:lower(opts)
+    if self.language then
+        self.body = machine_decls(self.language)
+        for _, item in ipairs(array_items(rawget(self, "extra_body") or {})) do
+            self.body[#self.body + 1] = complete_machine_decl(self.language, item) or item
+        end
+    end
     local l = lower_new(self, opts)
     l:build_languages()
     l:build_worlds()

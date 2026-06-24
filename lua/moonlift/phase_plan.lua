@@ -205,7 +205,7 @@ local function plan_package(ctx, package, root_spec)
 end
 
 M.process = llb.process.phase_plan {
-    run = function(ctx, package, root_spec)
+    stream = function(ctx, package, root_spec)
         return plan_package(ctx, package, root_spec)
     end,
 }

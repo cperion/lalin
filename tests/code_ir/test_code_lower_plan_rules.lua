@@ -6,7 +6,7 @@ local T = pvm.context()
 Schema(T)
 local Rules = require("moonlift.code_lower_plan_rules")(T)
 
-local function candidate(fields)
+local function input(fields)
     local out = {
         has_kernel = false,
         has_kernel_no_plan = false,
@@ -23,7 +23,7 @@ local function candidate(fields)
 end
 
 local function select(fields)
-    local selection, err = Rules:run("select_lower_fragment", { fragment = candidate(fields) }, "selection", "no lower fragment selected")
+    local selection, err = Rules:run("select_lower_fragment", { fragment = input(fields) }, "selection", "no lower fragment selected")
     assert(selection ~= nil, err)
     return selection
 end

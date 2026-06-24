@@ -49,7 +49,7 @@ do
     c.rejects = { "memory-reject", "effect-reject" }
     local selection, err = Rules:run("select_loop_kernel_plan", { loop = c }, "selection", "no Kernel loop plan selected")
     assert(selection ~= nil, tostring(err))
-    assert(selection.kind == "no_plan", "candidate rejects must prevent planning")
+    assert(selection.kind == "no_plan", "loop rejects must prevent planning")
     assert(#selection.rejects == 2 and selection.rejects[2] == "effect-reject", "semantic rejects must be preserved")
 end
 
@@ -62,7 +62,7 @@ do
     c.closed_form_trip_unknown = true
     local selection, err = Rules:run("select_loop_kernel_plan", { loop = c }, "selection", "no Kernel loop plan selected")
     assert(selection ~= nil, tostring(err))
-    assert(selection.kind == "planned", "closed-form candidate must plan")
+    assert(selection.kind == "planned", "closed-form input must plan")
     assert(selection.result_kind == "closed_form", "closed form must win over reduction")
     assert(selection.closed_form == "closed-form", "closed-form fact must be returned")
     assert(selection.add_trip_unknown_proof == true, "trip-count proof bit must be carried")
@@ -74,7 +74,7 @@ do
     c.reduction = "reduction"
     local selection, err = Rules:run("select_loop_kernel_plan", { loop = c }, "selection", "no Kernel loop plan selected")
     assert(selection ~= nil, tostring(err))
-    assert(selection.kind == "planned", "reduction candidate must plan")
+    assert(selection.kind == "planned", "reduction input must plan")
     assert(selection.result_kind == "reduction", "reduction result must be selected")
     assert(selection.reduction == "reduction", "reduction fact must be returned")
 end
@@ -85,7 +85,7 @@ do
     c.skeleton_result = "void-copy"
     local selection, err = Rules:run("select_loop_kernel_plan", { loop = c }, "selection", "no Kernel loop plan selected")
     assert(selection ~= nil, tostring(err))
-    assert(selection.kind == "planned", "skeleton candidate must plan")
+    assert(selection.kind == "planned", "skeleton input must plan")
     assert(selection.result_kind == "skeleton", "skeleton result must be selected")
     assert(selection.skeleton_result == "void-copy", "skeleton result must be returned")
 end
@@ -94,7 +94,7 @@ do
     local c = base()
     local selection, err = Rules:run("select_loop_kernel_plan", { loop = c }, "selection", "no Kernel loop plan selected")
     assert(selection ~= nil, tostring(err))
-    assert(selection.kind == "planned", "plain counted candidate must plan")
+    assert(selection.kind == "planned", "plain counted input must plan")
     assert(selection.result_kind == "original_control", "original-control result must be the semantic default")
 end
 

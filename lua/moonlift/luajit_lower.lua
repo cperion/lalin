@@ -1040,7 +1040,7 @@ local function bind_context(T)
         return step_num ~= nil and step_num > 0
     end
 
-    local function kernel_lowering_candidate(ctx, func, plan, graph_loop, loop_fact, loop_owner, kernel, opts)
+    local function kernel_lowering_input(ctx, func, plan, graph_loop, loop_fact, loop_owner, kernel, opts)
         local subject = plan and plan.subject or nil
         local subject_cls = pvm.classof(subject)
         local loop_plan = subject_cls == Kernel.KernelSubjectLoop or subject_cls == Kernel.KernelSubjectFunction
@@ -1085,7 +1085,7 @@ local function bind_context(T)
             or (opts.stencil_store_artifact_for ~= nil and stencil_store_ready and not stencil_skeleton_ready)
         local reject_reason = "no LuaJIT stencil lowering matched"
         if not loop_plan then
-            reject_reason = "kernel subject is not a loop lowering candidate"
+            reject_reason = "kernel subject is not a loop lowering input"
         elseif not owns_loop then
             reject_reason = "kernel subject is not owned by the current function"
         elseif not planned then
@@ -1166,8 +1166,8 @@ local function bind_context(T)
     end
 
     local function select_kernel_machine(ctx, func, plan, graph_loop, loop_fact, owner, kernel, opts)
-        local candidate = kernel_lowering_candidate(ctx, func, plan, graph_loop, loop_fact, owner, kernel, opts)
-        local selection, reason = LowerRules:run("select_kernel_lowering", { kernel = candidate }, "selection", "no LuaJIT kernel lowering selected")
+        local input = kernel_lowering_input(ctx, func, plan, graph_loop, loop_fact, owner, kernel, opts)
+        local selection, reason = LowerRules:run("select_kernel_lowering", { kernel = input }, "selection", "no LuaJIT kernel lowering selected")
         if selection == nil then return nil, reason end
         if selection.kind == LowerRules.kind.no_plan then return nil, selection.reason end
         local planners = {

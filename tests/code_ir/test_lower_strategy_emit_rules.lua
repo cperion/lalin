@@ -6,7 +6,7 @@ local T = pvm.context()
 Schema(T)
 local Rules = require("moonlift.lower_strategy_emit_rules")(T)
 
-local function candidate(fields)
+local function input(fields)
     local out = {
         strategy_code = false,
         strategy_kernel = false,
@@ -21,7 +21,7 @@ local function candidate(fields)
 end
 
 local function select(fields)
-    local selection, err = Rules:run("select_lower_emit", { emit = candidate(fields) }, "selection", "no lower emission selected")
+    local selection, err = Rules:run("select_lower_emit", { emit = input(fields) }, "selection", "no lower emission selected")
     assert(selection ~= nil, tostring(err))
     return selection
 end

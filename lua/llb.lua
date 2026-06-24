@@ -1,6 +1,6 @@
 --[[
 LLB: Lua Language Builder
-Version: 0.4.0 atom/protocol model
+Version: 0.5.0 stream-vm atom/protocol model
 Target: LuaJIT / Lua 5.1
 
 LLB is a parserless language workbench:
@@ -61,7 +61,7 @@ User DSL:
 -- The implementation is organized from low-level atoms upward:
 --
 --   utilities/source/diagnostics
---   process/event streams
+--   stream VM/process event streams
 --   symbols/expressions/captures
 --   fragments/zones
 --   grammar declarations
@@ -69,7 +69,7 @@ User DSL:
 --   environments/families
 --   analysis/formatting
 
-local llb = { _VERSION = "llb-0.4.0", VERSION = "llb-0.4.0" }
+local llb = { _VERSION = "llb-0.5.0-streamvm", VERSION = "llb-0.5.0-streamvm" }
 
 local unpack = unpack or table.unpack
 local loadstring0 = loadstring or load
@@ -267,6 +267,95 @@ function source.register(name, text)
   local lines = split_lines(text)
   local aliases = source_aliases(tostring(name))
   for i = 1, #aliases do source.cache[aliases[i]] = lines end
+end
+
+-- ---------------------------------------------------------------------------
+-- Codegen registry and debug metadata
+-- ---------------------------------------------------------------------------
+--
+-- Generated workbench functions must stay explainable. The registry maps plain
+-- Lua functions back to the semantic LLB object that produced them. Source
+-- emitted generators additionally register their generated source text, so
+-- debug.getinfo(fn, "Sln") has a stable address that diagnostics can render.
+
+llb.codegen = {
+  registry = {
+    by_function = setmetatable({}, { __mode = "k" }),
+    by_chunk = {},
+    by_id = {},
+  },
+}
+
+function llb.codegen.register(fn, meta)
+  local tv = type(fn)
+  if tv ~= "function" and tv ~= "table" then return fn end
+  meta = shallow_copy(meta or {})
+  meta.fn = fn
+  if meta.source_name and meta.source_text then source.register(meta.source_name, meta.source_text) end
+  llb.codegen.registry.by_function[fn] = meta
+  if meta.source_name then llb.codegen.registry.by_chunk[meta.source_name] = meta end
+  if meta.id then llb.codegen.registry.by_id[meta.id] = meta end
+  return fn
+end
+
+function llb.codegen.metadata(fn)
+  local tv = type(fn)
+  if tv == "function" or tv == "table" then
+    local meta = llb.codegen.registry.by_function[fn]
+    if meta then return meta end
+    if tv == "function" and debug and debug.getinfo then
+      local info = debug.getinfo(fn, "S")
+      if info and info.source then return llb.codegen.registry.by_chunk[info.source] or llb.codegen.registry.by_chunk[source.clean(info.source)] end
+    end
+  end
+  return nil
+end
+
+function llb.codegen.source(fn)
+  local meta = llb.codegen.metadata(fn)
+  return meta and meta.source_text or nil, meta and meta.source_name or nil
+end
+
+function llb.codegen.describe(fn)
+  local meta = llb.codegen.metadata(fn)
+  if not meta then return nil end
+  return {
+    tag = "CodegenFunction",
+    id = meta.id,
+    kind = meta.kind,
+    language = meta.language,
+    family = meta.family,
+    role = meta.role,
+    head = meta.head,
+    slot = meta.slot,
+    process = meta.process,
+    mode = meta.mode,
+    source_name = meta.source_name,
+    origin = meta.origin,
+    generated = meta.generated and true or false,
+    reflective = type(meta.reflective) == "function",
+  }
+end
+
+function llb.codegen.explain_stack(level)
+  level = (level or 1) + 1
+  if not (debug and debug.getinfo) then return nil end
+  local info = debug.getinfo(level, "nSlu")
+  if not info then return nil end
+  local meta = nil
+  if info.func then meta = llb.codegen.metadata(info.func) end
+  if not meta and info.source then meta = llb.codegen.registry.by_chunk[info.source] or llb.codegen.registry.by_chunk[source.clean(info.source)] end
+  local line_meta = meta and meta.line_map and info.currentline and meta.line_map[info.currentline] or nil
+  return {
+    tag = "CodegenStackFrame",
+    name = info.name or info.namewhat,
+    source = info.source,
+    currentline = info.currentline,
+    linedefined = info.linedefined,
+    what = info.what,
+    metadata = meta,
+    line = line_meta,
+  }
 end
 
 function source.clean(src)
@@ -693,17 +782,757 @@ function llb.fail(message, spec, level)
   error(llb.diagnostic(spec), level or 0)
 end
 
+
+do
 -- ---------------------------------------------------------------------------
--- Processes: coroutine-backed resumable protocols
+-- Stream VM: LuaJIT gen,param,state substrate
 -- ---------------------------------------------------------------------------
 --
--- Processes are LLB's coroutine-shaped operation model. They turn long or
--- inspectable work into event streams: source loading, validation, indexing,
--- diagnostics, progress, bytecode inspection, debugger stepping, etc.
+-- This is the low-level LLB runtime shape extracted from Lua's generic-for
+-- protocol and from the design lessons of fun.lua. It is not a functional
+-- programming API. It is a tiny stream VM ABI:
 --
--- Inside a process, ctx. event_name { ... } yields a structured event. The
--- payload is flattened onto the event so consumers do not need to unwrap
--- nested tables for common fields.
+--   gen(param, state) -> nil
+--   gen(param, state) -> next_state, payload...
+--
+-- param is the machine closure: grammar constants, upstream generators,
+-- functions, immutable source references. state is the explicit continuation:
+-- cursor, counters, buffers, child states. payload is semantic data: events,
+-- diagnostics, nodes, tokens, index records, etc.
+--
+-- The public LLB process API is GPS-based: every process and compiled tooling
+-- pass runs as gen,param,state.
+
+local Stream, StreamPlan = {}, {}
+Stream.__index = Stream
+StreamPlan.__index = StreamPlan
+
+local stream = { __llb_tag = "StreamModule", VERSION = "llb-stream-0.5.0" }
+llb.stream = stream
+
+local function stream_is(v) return is_tag(v, "Stream") end
+local function stream_source_is(v) return is_tag(v, "StreamSource") end
+local function stream_op_is(v) return is_tag(v, "StreamOp") end
+local function stream_plan_is(v) return is_tag(v, "StreamPlan") end
+
+local function stream_unpack_payload(r, first)
+  return unpack(r, first or 2, r.n)
+end
+
+local function stream_repack_return(r)
+  return unpack(r, 1, r.n)
+end
+
+local function stream_as_state_table(state)
+  if type(state) == "table" then return state end
+  return { state }
+end
+
+local function stream_meta(meta)
+  meta = meta or {}
+  meta.origin = meta.origin or source.capture("stream")
+  return meta
+end
+
+function stream.wrap(gen, param, state, meta)
+  if type(gen) ~= "function" and not (type(gen) == "table" and getmetatable(gen) and getmetatable(gen).__call) then
+    llb.fail("stream.wrap expects a generator function/callable", {
+      code = "E_STREAM_GENERATOR",
+      primary = meta and meta.origin,
+      notes = { "A stream generator must implement gen(param, state) -> nil | next_state, payload..." },
+    }, 2)
+  end
+  local s0 = setmetatable({
+    __llb_tag = "Stream",
+    gen = gen,
+    param = param,
+    state = state,
+    meta = stream_meta(meta),
+  }, Stream)
+  return s0, param, state
+end
+
+function stream.unwrap(s0)
+  if stream_is(s0) then return s0.gen, s0.param, s0.state end
+  return stream.raw(s0)
+end
+
+local function stream_empty_gen(_param, _state)
+  return nil
+end
+
+local function stream_string_gen(param, state)
+  state = (state or 0) + 1
+  if state > #param then return nil end
+  return state, string.sub(param, state, state)
+end
+
+local function stream_array_gen(param, state)
+  state = (state or 0) + 1
+  if state > #param then return nil end
+  return state, param[state]
+end
+
+local function stream_record_gen(param, state)
+  local k, v = next(param, state)
+  if k == nil then return nil end
+  return k, k, v
+end
+
+local function stream_once_gen(param, state)
+  if state ~= nil then return nil end
+  return true, unpack(param, 1, param.n)
+end
+
+local function stream_range_gen(param, state)
+  local stop, step = param[2], param[3]
+  local next_state = state + step
+  if step > 0 then
+    if next_state > stop then return nil end
+  else
+    if next_state < stop then return nil end
+  end
+  return next_state, next_state
+end
+
+local function stream_source_to_raw(src)
+  if stream_source_is(src) then
+    local kind = src.kind
+    if kind == "empty" then return stream_empty_gen, nil, nil end
+    if kind == "array" then return stream_array_gen, src.value or {}, 0 end
+    if kind == "record" then return stream_record_gen, src.value or {}, nil end
+    if kind == "string" then
+      if src.value == nil or src.value == "" then return stream_empty_gen, nil, nil end
+      return stream_string_gen, src.value, 0
+    end
+    if kind == "once" then return stream_once_gen, src.values or pack(), nil end
+    if kind == "range" then
+      local start = src.start or 1
+      local stop = src.stop or 0
+      local step = src.step or (start <= stop and 1 or -1)
+      if step == 0 then llb.fail("stream range step must not be zero", { code = "E_STREAM_RANGE_STEP", primary = src.origin }, 2) end
+      return stream_range_gen, { start, stop, step }, start - step
+    end
+    if kind == "raw" then return stream.raw(src.gen, src.param, src.state) end
+    llb.fail("unknown stream source kind " .. tostring(kind), { code = "E_STREAM_SOURCE", primary = src.origin }, 2)
+  end
+  return nil
+end
+
+function stream.raw(obj, param, state)
+  local g, p0, s0 = stream_source_to_raw(obj)
+  if g then return g, p0, s0 end
+  if stream_plan_is(obj) then return stream.unwrap(stream.interpret(obj)) end
+  if stream_is(obj) then return obj.gen, obj.param, obj.state end
+  if obj == nil then return stream_empty_gen, nil, nil end
+  local tv = type(obj)
+  if tv == "function" or (tv == "table" and getmetatable(obj) and getmetatable(obj).__call) then
+    return obj, param, state
+  end
+  if tv == "string" then
+    if obj == "" then return stream_empty_gen, nil, nil end
+    return stream_string_gen, obj, 0
+  end
+  if tv == "table" then
+    local mt = getmetatable(obj)
+    if mt ~= nil then
+      if mt == Stream then return obj.gen, obj.param, obj.state end
+      if mt.__ipairs ~= nil then return mt.__ipairs(obj) end
+      if mt.__pairs ~= nil then return mt.__pairs(obj) end
+    end
+    if #obj > 0 then return stream_array_gen, obj, 0 end
+    return stream_record_gen, obj, nil
+  end
+  llb.fail("object " .. repr(obj) .. " of type " .. type(obj) .. " is not streamable", {
+    code = "E_STREAM_RAW",
+    primary = origin_of(obj),
+  }, 2)
+end
+
+function stream.iter(obj, param, state)
+  return stream.wrap(stream.raw(obj, param, state))
+end
+
+stream.from = {}
+
+function stream.empty()
+  return stream.wrap(stream_empty_gen, nil, nil, { kind = "empty" })
+end
+
+function stream.once(...)
+  return stream.wrap(stream_once_gen, pack(...), nil, { kind = "once" })
+end
+
+function stream.from.empty()
+  return stream.empty()
+end
+
+function stream.from.once(...)
+  return stream.once(...)
+end
+
+function stream.from.array(t)
+  return stream.wrap(stream_array_gen, t or {}, 0, { kind = "array" })
+end
+
+function stream.from.record(t)
+  return stream.wrap(stream_record_gen, t or {}, nil, { kind = "record" })
+end
+
+function stream.from.string(s0)
+  if s0 == nil or s0 == "" then return stream.empty() end
+  return stream.wrap(stream_string_gen, s0, 0, { kind = "string" })
+end
+
+function stream.from.range(start, stop, step)
+  if stop == nil then stop = start; start = stop > 0 and 1 or -1 end
+  step = step or (start <= stop and 1 or -1)
+  if step == 0 then llb.fail("stream range step must not be zero", { code = "E_STREAM_RANGE_STEP" }, 2) end
+  return stream.wrap(stream_range_gen, { start, stop, step }, start - step, { kind = "range" })
+end
+
+stream.spec = {}
+function stream.spec.empty() return { __llb_tag = "StreamSource", kind = "empty", origin = source.capture("stream-source", { hint = "empty" }) } end
+function stream.spec.array(t) return { __llb_tag = "StreamSource", kind = "array", value = t or {}, origin = source.capture("stream-source", { hint = "array" }) } end
+function stream.spec.record(t) return { __llb_tag = "StreamSource", kind = "record", value = t or {}, origin = source.capture("stream-source", { hint = "record" }) } end
+function stream.spec.string(s0) return { __llb_tag = "StreamSource", kind = "string", value = s0 or "", origin = source.capture("stream-source", { hint = "string" }) } end
+function stream.spec.once(...) return { __llb_tag = "StreamSource", kind = "once", values = pack(...), origin = source.capture("stream-source", { hint = "once" }) } end
+function stream.spec.range(start, stop, step) return { __llb_tag = "StreamSource", kind = "range", start = start, stop = stop, step = step, origin = source.capture("stream-source", { hint = "range" }) } end
+function stream.spec.raw(gen, param, state) return { __llb_tag = "StreamSource", kind = "raw", gen = gen, param = param, state = state, origin = source.capture("stream-source", { hint = "raw" }) } end
+function stream.spec.any(v, param, state)
+  local gen, p0, s0 = stream.raw(v, param, state)
+  return stream.spec.raw(gen, p0, s0)
+end
+
+local function stream_step(gen, param, state)
+  return gen(param, state)
+end
+stream.step = stream_step
+
+function stream.values(gen, param, state)
+  gen, param, state = stream.raw(gen, param, state)
+  return function()
+    local r = pack(gen(param, state))
+    if r[1] == nil then return nil end
+    state = r[1]
+    return unpack(r, 2, r.n)
+  end
+end
+
+function stream.each(fn, gen, param, state)
+  gen, param, state = stream.raw(gen, param, state)
+  while true do
+    local r = pack(gen(param, state))
+    if r[1] == nil then return nil end
+    state = r[1]
+    fn(unpack(r, 2, r.n))
+  end
+end
+
+local function stream_map_gen(param, state)
+  local r = pack(param[1](param[2], state))
+  if r[1] == nil then return nil end
+  return r[1], param[3](unpack(r, 2, r.n))
+end
+function stream.map(fn, gen, param, state)
+  gen, param, state = stream.raw(gen, param, state)
+  return stream.wrap(stream_map_gen, { gen, param, fn }, state, { kind = "map" })
+end
+
+local function stream_tap_gen(param, state)
+  local r = pack(param[1](param[2], state))
+  if r[1] == nil then return nil end
+  param[3](unpack(r, 2, r.n))
+  return stream_repack_return(r)
+end
+function stream.tap(fn, gen, param, state)
+  gen, param, state = stream.raw(gen, param, state)
+  return stream.wrap(stream_tap_gen, { gen, param, fn }, state, { kind = "tap" })
+end
+
+local function stream_filter_gen(param, state)
+  while true do
+    local r = pack(param[1](param[2], state))
+    if r[1] == nil then return nil end
+    state = r[1]
+    if param[3](unpack(r, 2, r.n)) then return stream_repack_return(r) end
+  end
+end
+function stream.filter(pred, gen, param, state)
+  gen, param, state = stream.raw(gen, param, state)
+  return stream.wrap(stream_filter_gen, { gen, param, pred }, state, { kind = "filter" })
+end
+
+local function stream_filter_map_gen(param, state)
+  while true do
+    local r = pack(param[1](param[2], state))
+    if r[1] == nil then return nil end
+    state = r[1]
+    local m = pack(param[3](unpack(r, 2, r.n)))
+    if m.n > 0 and m[1] ~= nil then return r[1], unpack(m, 1, m.n) end
+  end
+end
+function stream.filter_map(fn, gen, param, state)
+  gen, param, state = stream.raw(gen, param, state)
+  return stream.wrap(stream_filter_map_gen, { gen, param, fn }, state, { kind = "filter_map" })
+end
+
+local function stream_take_gen(param, state)
+  local i, inner_state = state[1], state[2]
+  if i >= param[1] then return nil end
+  local r = pack(param[2](param[3], inner_state))
+  if r[1] == nil then return nil end
+  return { i + 1, r[1] }, unpack(r, 2, r.n)
+end
+function stream.take(n, gen, param, state)
+  if type(n) ~= "number" or n < 0 then llb.fail("stream.take expects a non-negative number", { code = "E_STREAM_TAKE" }, 2) end
+  if n == 0 then return stream.empty() end
+  gen, param, state = stream.raw(gen, param, state)
+  return stream.wrap(stream_take_gen, { n, gen, param }, { 0, state }, { kind = "take" })
+end
+
+function stream.drop(n, gen, param, state)
+  if type(n) ~= "number" or n < 0 then llb.fail("stream.drop expects a non-negative number", { code = "E_STREAM_DROP" }, 2) end
+  gen, param, state = stream.raw(gen, param, state)
+  for _ = 1, n do
+    local next_state = gen(param, state)
+    if next_state == nil then return stream.empty() end
+    state = next_state
+  end
+  return stream.wrap(gen, param, state, { kind = "drop" })
+end
+
+local function stream_enumerate_gen(param, state)
+  local i, inner_state = state[1], state[2]
+  local r = pack(param[1](param[2], inner_state))
+  if r[1] == nil then return nil end
+  return { i + 1, r[1] }, i, unpack(r, 2, r.n)
+end
+function stream.enumerate(gen, param, state)
+  gen, param, state = stream.raw(gen, param, state)
+  return stream.wrap(stream_enumerate_gen, { gen, param }, { 1, state }, { kind = "enumerate" })
+end
+
+local function stream_flatmap_gen(param, state)
+  state = state or { outer = param[3] }
+  while true do
+    if state.inner_gen ~= nil then
+      local r = pack(state.inner_gen(state.inner_param, state.inner_state))
+      if r[1] ~= nil then
+        state.inner_state = r[1]
+        return { outer = state.outer, inner_gen = state.inner_gen, inner_param = state.inner_param, inner_state = state.inner_state }, unpack(r, 2, r.n)
+      end
+      state.inner_gen, state.inner_param, state.inner_state = nil, nil, nil
+    end
+    local outer = pack(param[1](param[2], state.outer))
+    if outer[1] == nil then return nil end
+    state.outer = outer[1]
+    local made = pack(param[4](unpack(outer, 2, outer.n)))
+    state.inner_gen, state.inner_param, state.inner_state = stream.raw(unpack(made, 1, made.n))
+  end
+end
+function stream.flatmap(fn, gen, param, state)
+  gen, param, state = stream.raw(gen, param, state)
+  return stream.wrap(stream_flatmap_gen, { gen, param, state, fn }, { outer = state }, { kind = "flatmap" })
+end
+
+local function stream_numargs(...)
+  local n = select("#", ...)
+  if n >= 3 then
+    local maybe_stream = select(n - 2, ...)
+    if stream_is(maybe_stream) and maybe_stream.param == select(n - 1, ...) and maybe_stream.state == select(n, ...) then
+      return n - 2
+    end
+  end
+  return n
+end
+
+local function stream_zip_gen(param, state)
+  local new_state, payload = {}, { n = 0 }
+  for i = 1, param.n do
+    local triple = param[i]
+    local r = pack(triple.gen(triple.param, state[i]))
+    if r[1] == nil then return nil end
+    new_state[i] = r[1]
+    for j = 2, r.n do payload.n = payload.n + 1; payload[payload.n] = r[j] end
+  end
+  return new_state, unpack(payload, 1, payload.n)
+end
+function stream.zip(...)
+  local n = stream_numargs(...)
+  if n == 0 then return stream.empty() end
+  local param, state = { n = n }, {}
+  for i = 1, n do
+    local elem = select(i, ...)
+    local g, p0, s0 = stream.raw(elem)
+    param[i] = { gen = g, param = p0 }
+    state[i] = s0
+  end
+  return stream.wrap(stream_zip_gen, param, state, { kind = "zip" })
+end
+
+local function stream_chain_gen(param, state)
+  local i, inner_state = state[1], state[2]
+  while i <= param.n do
+    local triple = param[i]
+    local r = pack(triple.gen(triple.param, inner_state))
+    if r[1] ~= nil then return { i, r[1] }, unpack(r, 2, r.n) end
+    i = i + 1
+    triple = param[i]
+    inner_state = triple and triple.state or nil
+  end
+  return nil
+end
+function stream.chain(...)
+  local n = stream_numargs(...)
+  if n == 0 then return stream.empty() end
+  local param = { n = n }
+  for i = 1, n do
+    local elem = select(i, ...)
+    local g, p0, s0 = stream.raw(elem)
+    param[i] = { gen = g, param = p0, state = s0 }
+  end
+  return stream.wrap(stream_chain_gen, param, { 1, param[1].state }, { kind = "chain" })
+end
+
+function stream.fold(fn, acc, gen, param, state)
+  gen, param, state = stream.raw(gen, param, state)
+  while true do
+    local r = pack(gen(param, state))
+    if r[1] == nil then return acc end
+    state = r[1]
+    acc = fn(acc, unpack(r, 2, r.n))
+  end
+end
+
+function stream.drain(fn, gen, param, state)
+  gen, param, state = stream.raw(gen, param, state)
+  while true do
+    local r = pack(gen(param, state))
+    if r[1] == nil then return nil end
+    state = r[1]
+    if fn then fn(unpack(r, 2, r.n)) end
+  end
+end
+
+function stream.collect_array(gen, param, state)
+  local out = {}
+  stream.each(function(v) out[#out + 1] = v end, gen, param, state)
+  return out
+end
+
+function stream.collect_map(gen, param, state)
+  local out = {}
+  stream.each(function(k, v) out[k] = v end, gen, param, state)
+  return out
+end
+
+stream.collect = {}
+function stream.collect.array(gen, param, state) return stream.collect_array(gen, param, state) end
+function stream.collect.map(gen, param, state) return stream.collect_map(gen, param, state) end
+
+stream.sink = {}
+function stream.sink.array() return { __llb_tag = "StreamSink", tag = "array" } end
+function stream.sink.map() return { __llb_tag = "StreamSink", tag = "map" } end
+function stream.sink.fold(fn, init) return { __llb_tag = "StreamSink", tag = "fold", fn = fn, init = init } end
+function stream.sink.drain(fn) return { __llb_tag = "StreamSink", tag = "drain", fn = fn } end
+
+local function stream_apply_sink(sink, gen, param, state)
+  if sink == nil then return stream.wrap(gen, param, state, { kind = "sink:none" }) end
+  local tag = type(sink) == "table" and sink.tag or nil
+  if tag == "array" then return stream.collect_array(gen, param, state) end
+  if tag == "map" then return stream.collect_map(gen, param, state) end
+  if tag == "fold" then return stream.fold(sink.fn, sink.init, gen, param, state) end
+  if tag == "drain" then return stream.drain(sink.fn, gen, param, state) end
+  if type(sink) == "function" then return sink(gen, param, state) end
+  llb.fail("unknown stream sink " .. tostring(tag), { code = "E_STREAM_SINK", primary = origin_of(sink) }, 2)
+end
+
+Stream.__call = function(self, param, state)
+  if param == nil then param = self.param end
+  if state == nil then state = self.state end
+  return self.gen(param, state)
+end
+Stream.__tostring = function(self)
+  local meta = rawget(self, "meta") or {}
+  return "<llb.stream:" .. tostring(meta.kind or "raw") .. ">"
+end
+function Stream:unwrap() return self.gen, self.param, self.state end
+function Stream:values() return stream.values(self.gen, self.param, self.state) end
+function Stream:each(fn) return stream.each(fn, self.gen, self.param, self.state) end
+function Stream:map(fn) return stream.map(fn, self.gen, self.param, self.state) end
+function Stream:tap(fn) return stream.tap(fn, self.gen, self.param, self.state) end
+function Stream:filter(fn) return stream.filter(fn, self.gen, self.param, self.state) end
+function Stream:filter_map(fn) return stream.filter_map(fn, self.gen, self.param, self.state) end
+function Stream:flatmap(fn) return stream.flatmap(fn, self.gen, self.param, self.state) end
+function Stream:take(n) return stream.take(n, self.gen, self.param, self.state) end
+function Stream:drop(n) return stream.drop(n, self.gen, self.param, self.state) end
+function Stream:enumerate() return stream.enumerate(self.gen, self.param, self.state) end
+function Stream:fold(fn, acc) return stream.fold(fn, acc, self.gen, self.param, self.state) end
+function Stream:collect_array() return stream.collect_array(self.gen, self.param, self.state) end
+function Stream:collect_map() return stream.collect_map(self.gen, self.param, self.state) end
+function Stream:to_array() return self:collect_array() end
+function Stream:to_map() return self:collect_map() end
+function Stream:totable() return self:collect_array() end
+function Stream:tomap() return self:collect_map() end
+function Stream:describe() return stream.describe(self) end
+
+stream.Stream = Stream
+
+stream.op = {}
+local function stream_op(tag, spec)
+  spec = shallow_copy(spec or {})
+  spec.__llb_tag = "StreamOp"
+  spec.tag = tag
+  spec.origin = spec.origin or source.capture("stream-op", { hint = tag })
+  return spec
+end
+function stream.op.map(fn) return stream_op("map", { fn = fn }) end
+function stream.op.tap(fn) return stream_op("tap", { fn = fn }) end
+function stream.op.filter(fn) return stream_op("filter", { fn = fn }) end
+function stream.op.filter_map(fn) return stream_op("filter_map", { fn = fn }) end
+function stream.op.flatmap(fn) return stream_op("flatmap", { fn = fn }) end
+function stream.op.take(n) return stream_op("take", { n = n }) end
+function stream.op.drop(n) return stream_op("drop", { n = n }) end
+function stream.op.enumerate() return stream_op("enumerate", {}) end
+function stream.op.chain(...) return stream_op("chain", { streams = pack(...) }) end
+function stream.op.zip(...) return stream_op("zip", { streams = pack(...) }) end
+
+local function stream_apply_op(op, gen, param, state)
+  if not stream_op_is(op) then llb.fail("stream plan expected StreamOp, got " .. repr(op), { code = "E_STREAM_PLAN_OP", primary = origin_of(op) }, 2) end
+  local tag = op.tag
+  if tag == "map" then return stream.raw(stream.map(op.fn, gen, param, state)) end
+  if tag == "tap" then return stream.raw(stream.tap(op.fn, gen, param, state)) end
+  if tag == "filter" then return stream.raw(stream.filter(op.fn, gen, param, state)) end
+  if tag == "filter_map" then return stream.raw(stream.filter_map(op.fn, gen, param, state)) end
+  if tag == "flatmap" then return stream.raw(stream.flatmap(op.fn, gen, param, state)) end
+  if tag == "take" then return stream.raw(stream.take(op.n, gen, param, state)) end
+  if tag == "drop" then return stream.raw(stream.drop(op.n, gen, param, state)) end
+  if tag == "enumerate" then return stream.raw(stream.enumerate(gen, param, state)) end
+  if tag == "chain" then
+    local cur = stream.wrap(gen, param, state)
+    local xs = { cur }
+    for i = 1, op.streams.n do xs[#xs + 1] = op.streams[i] end
+    return stream.raw(stream.chain(unpack(xs, 1, #xs)))
+  end
+  if tag == "zip" then
+    local cur = stream.wrap(gen, param, state)
+    local xs = { cur }
+    for i = 1, op.streams.n do xs[#xs + 1] = op.streams[i] end
+    return stream.raw(stream.zip(unpack(xs, 1, #xs)))
+  end
+  llb.fail("unknown stream op " .. tostring(tag), { code = "E_STREAM_OP", primary = op.origin }, 2)
+end
+
+function stream.plan(spec)
+  if stream_plan_is(spec) then return spec end
+  spec = spec or {}
+  local ops = {}
+  for i = 1, #(spec.ops or spec) do
+    local op = (spec.ops or spec)[i]
+    if not stream_op_is(op) then llb.fail("stream plan op #" .. tostring(i) .. " is not a StreamOp", { code = "E_STREAM_PLAN_OP", primary = origin_of(op) }, 2) end
+    ops[#ops + 1] = op
+  end
+  return setmetatable({
+    __llb_tag = "StreamPlan",
+    name = spec.name or "stream-plan",
+    source = spec.source or stream.spec.empty(),
+    ops = ops,
+    sink = spec.sink,
+    metadata = spec.metadata,
+    origin = spec.origin or source.capture("stream-plan", { hint = spec.name or "stream" }),
+  }, StreamPlan)
+end
+
+function stream.interpret(plan)
+  plan = stream.plan(plan)
+  local gen, param, state = stream.raw(plan.source)
+  for i = 1, #(plan.ops or {}) do
+    gen, param, state = stream_apply_op(plan.ops[i], gen, param, state)
+  end
+  return stream.wrap(gen, param, state, { kind = "plan", plan = plan, backend = "interpret" })
+end
+
+function stream.fuse(plan)
+  -- Reference fusion pass. It currently preserves semantics by interpreting the
+  -- plan graph through raw machine primitives. The explicit object exists so
+  -- future passes can collapse adjacent maps/filters without changing callers.
+  local s0 = stream.interpret(plan)
+  s0.meta.backend = "fuse"
+  return s0, s0.param, s0.state
+end
+
+local function stream_compile_array_plan(plan, opts)
+  opts = opts or {}
+  local src = plan.source
+  if not stream_source_is(src) or src.kind ~= "array" then return nil, "source is not a stream.spec.array spec" end
+  local ops = plan.ops or {}
+  for i = 1, #ops do
+    local tag = ops[i].tag
+    if tag ~= "map" and tag ~= "tap" and tag ~= "filter" and tag ~= "take" and tag ~= "drop" then
+      return nil, "op " .. tostring(tag) .. " is not supported by the array codegen backend"
+    end
+  end
+
+  local param = { src = src.value or {}, n = #(src.value or {}) }
+  local lines = {
+    "return function(p, state)",
+    "  local src = p.src",
+    "  local n = p.n",
+    "  local i = state[1] or 0",
+  }
+  local counter_count = 0
+  for i = 1, #ops do
+    local tag = ops[i].tag
+    if tag == "map" or tag == "filter" or tag == "tap" then
+      local fname = "fn" .. tostring(i)
+      param[fname] = ops[i].fn
+    elseif tag == "take" or tag == "drop" then
+      counter_count = counter_count + 1
+      local cname = "c" .. tostring(counter_count)
+      local kname = "k" .. tostring(counter_count)
+      param[kname] = ops[i].n
+      lines[#lines + 1] = "  local " .. cname .. " = state[" .. tostring(counter_count + 1) .. "] or 0"
+      ops[i].__llb_counter = counter_count
+    end
+  end
+  lines[#lines + 1] = "  while true do"
+  lines[#lines + 1] = "    i = i + 1"
+  lines[#lines + 1] = "    if i > n then return nil end"
+  lines[#lines + 1] = "    local v = src[i]"
+  lines[#lines + 1] = "    local alive = true"
+  for i = 1, #ops do
+    local op = ops[i]
+    local tag = op.tag
+    if tag == "map" then
+      lines[#lines + 1] = "    if alive then v = p.fn" .. tostring(i) .. "(v) end"
+    elseif tag == "tap" then
+      lines[#lines + 1] = "    if alive then p.fn" .. tostring(i) .. "(v) end"
+    elseif tag == "filter" then
+      lines[#lines + 1] = "    if alive and not p.fn" .. tostring(i) .. "(v) then alive = false end"
+    elseif tag == "drop" then
+      local idx = op.__llb_counter
+      lines[#lines + 1] = "    if alive then c" .. tostring(idx) .. " = c" .. tostring(idx) .. " + 1; if c" .. tostring(idx) .. " <= p.k" .. tostring(idx) .. " then alive = false end end"
+    elseif tag == "take" then
+      local idx = op.__llb_counter
+      lines[#lines + 1] = "    if alive then if c" .. tostring(idx) .. " >= p.k" .. tostring(idx) .. " then return nil end; c" .. tostring(idx) .. " = c" .. tostring(idx) .. " + 1 end"
+    end
+  end
+  local state_parts = { "i" }
+  for i = 1, counter_count do state_parts[#state_parts + 1] = "c" .. tostring(i) end
+  lines[#lines + 1] = "    if alive then return { " .. table.concat(state_parts, ", ") .. " }, v end"
+  lines[#lines + 1] = "  end"
+  lines[#lines + 1] = "end"
+  local src_code = table.concat(lines, "\n")
+  local source_name = "@llb.codegen/stream/" .. tostring(plan.name or "array")
+  local chunk, err = compile_lua(src_code, source_name)
+  if not chunk then return nil, err, src_code end
+  local ok, gen_or_err = pcall(chunk)
+  if not ok then return nil, gen_or_err, src_code end
+  llb.codegen.register(gen_or_err, {
+    id = "llb.stream." .. tostring(plan.name or "array"),
+    kind = "stream",
+    mode = "fast",
+    source_name = source_name,
+    source_text = src_code,
+    line_map = {
+      [1] = { kind = "stream-entry", plan = plan.name },
+      [3] = { kind = "stream-source", source = "array" },
+    },
+    origin = plan.origin,
+    generated = true,
+  })
+  local init_state = { 0 }
+  for i = 1, counter_count do init_state[i + 1] = 0 end
+  local s0 = stream.wrap(gen_or_err, param, init_state, { kind = "compiled-plan", plan = plan, backend = "array-codegen", source = src_code })
+  return s0
+end
+
+function stream.compile(plan, opts)
+  opts = opts or {}
+  plan = stream.plan(plan)
+  if opts.codegen == false then return stream.fuse(plan) end
+  local s0, err, src_code = stream_compile_array_plan(plan, opts)
+  if s0 then return s0, s0.param, s0.state end
+  if opts.strict then
+    llb.fail("stream plan " .. tostring(plan.name) .. " cannot be codegenerated: " .. tostring(err), {
+      code = "E_STREAM_CODEGEN",
+      primary = plan.origin,
+      notes = src_code and { src_code } or nil,
+    }, 2)
+  end
+  local fallback = stream.fuse(plan)
+  fallback.meta.backend = "fallback-fuse"
+  fallback.meta.codegen_error = err
+  return fallback, fallback.param, fallback.state
+end
+
+function stream.run(plan, opts)
+  plan = stream.plan(plan)
+  local s0 = stream.compile(plan, opts)
+  local gen, param, state = stream.raw(s0)
+  return stream_apply_sink(plan.sink, gen, param, state)
+end
+
+function StreamPlan:run(opts) return stream.run(self, opts) end
+function StreamPlan:interpret() return stream.interpret(self) end
+function StreamPlan:fuse() return stream.fuse(self) end
+function StreamPlan:compile(opts) return stream.compile(self, opts) end
+function StreamPlan:describe() return stream.describe(self) end
+
+function stream.describe(v)
+  if stream_is(v) then
+    return { tag = "Stream", kind = v.meta and v.meta.kind, backend = v.meta and v.meta.backend, origin = v.meta and v.meta.origin }
+  end
+  if stream_source_is(v) then
+    return { tag = "StreamSource", kind = v.kind, origin = v.origin }
+  end
+  if stream_op_is(v) then
+    return { tag = "StreamOp", op = v.tag, origin = v.origin }
+  end
+  if stream_plan_is(v) then
+    local ops = {}
+    for i = 1, #(v.ops or {}) do ops[i] = v.ops[i].tag end
+    return { tag = "StreamPlan", name = v.name, source = stream.describe(v.source), ops = ops, origin = v.origin }
+  end
+  return nil
+end
+
+stream.StreamPlan = StreamPlan
+
+-- Process adapters. These helpers are defined here, but the process section
+-- below installs the actual ProcessHandle implementation.
+function stream.process_events(gen, param, state)
+  gen, param, state = stream.raw(gen, param, state)
+  return function()
+    local r = pack(gen(param, state))
+    if r[1] == nil then return nil end
+    state = r[1]
+    return unpack(r, 2, r.n)
+  end
+end
+stream.events = stream.process_events
+
+
+stream._is_stream = stream_is
+stream._is_source = stream_source_is
+stream._is_op = stream_op_is
+stream._is_plan = stream_plan_is
+llb.Stream = Stream
+llb.StreamPlan = StreamPlan
+end
+
+do
+local stream = llb.stream
+local stream_plan_is = stream._is_plan
+
+-- ---------------------------------------------------------------------------
+-- Processes: GPS-backed resumable protocols
+-- ---------------------------------------------------------------------------
+--
+-- Processes are LLB's operation model. Every process handle runs as a
+-- gen,param,state machine. Process definitions provide a `stream` function or a
+-- stream plan; there is no coroutine execution path.
 
 local Process, ProcessStage, ProcessHandle, ProcessContext = {}, {}, {}, {}
 Process.__index = Process
@@ -726,6 +1555,17 @@ local function process_event(ctx, kind, payload, origin)
   return ev
 end
 
+local function process_payload_event(ctx, a, b, c, d, e)
+  if is_tag(a, "ProcessEvent") then return a end
+  if type(a) == "string" then
+    if b == nil then return process_event(ctx, a, nil, nil) end
+    if type(b) == "table" and c == nil then return process_event(ctx, a, b, origin_of(b)) end
+    return process_event(ctx, a, { value = b, extra = { c, d, e } }, origin_of(b))
+  end
+  if type(a) == "table" and rawget(a, "kind") then return process_event(ctx, a.kind, a, origin_of(a)) end
+  return process_event(ctx, "event", { value = a, extra = { b, c, d, e } }, origin_of(a))
+end
+
 local ProcessContextMethods = {}
 
 function ProcessContextMethods:yield(event)
@@ -733,18 +1573,33 @@ function ProcessContextMethods:yield(event)
     local kind = type(event) == "table" and event.kind or "event"
     event = process_event(self, kind, event, origin_of(event))
   end
-  return coroutine.yield(event)
+  return event
 end
+
+function ProcessContextMethods:make_event(kind, payload, origin)
+  return process_event(self, kind, payload, origin or origin_of(payload))
+end
+ProcessContextMethods.emit = ProcessContextMethods.make_event
 
 function ProcessContextMethods:event(kind, payload)
-  return self:yield(process_event(self, kind, payload, origin_of(payload)))
+  local ev = process_event(self, kind, payload, origin_of(payload))
+  self.pending = self.pending or {}
+  self.pending[#self.pending + 1] = ev
+  return ev
 end
 
-function ProcessContextMethods:diagnostic(spec)
+function ProcessContextMethods:diagnostic_event(spec)
   spec = spec or {}
   local d = llb.diagnostic(spec)
   if self.diagnostics then self.diagnostics:add(d) end
-  return self:event("diagnostic", { diagnostic = d, severity = d.severity, code = d.code, message = d.message })
+  return process_event(self, "diagnostic", { diagnostic = d, severity = d.severity, code = d.code, message = d.message }, d.primary)
+end
+
+function ProcessContextMethods:diagnostic(spec)
+  local ev = self:diagnostic_event(spec)
+  self.pending = self.pending or {}
+  self.pending[#self.pending + 1] = ev
+  return ev
 end
 
 function ProcessContextMethods:here(kind)
@@ -778,6 +1633,11 @@ function ProcessContextMethods:cancelled()
   return self.handle.cancelled and true or false
 end
 
+function ProcessContextMethods:stream(source0, ops)
+  local plan = stream_plan_is(source0) and source0 or stream.plan { source = source0, ops = ops or {} }
+  return stream.compile(plan)
+end
+
 ProcessContext.__index = function(ctx, key)
   if ProcessContextMethods[key] then return ProcessContextMethods[key] end
   return function(payload)
@@ -797,31 +1657,76 @@ local function process_context(handle)
     handle = handle,
     diagnostics = handle.diagnostics,
     seq = 0,
+    pending = {},
   }, ProcessContext)
 end
 
 local function normalize_process_spec(name, body, origin)
-  if type(body) == "function" then body = { run = body } end
-  if type(body) ~= "table" or type(body.run) ~= "function" then
-    llb.fail("process " .. tostring(name) .. " expects a run function", { code = "E_BAD_PROCESS", primary = origin })
+  if type(body) == "function" then body = { stream = body } end
+  local has_stream_plan = stream_plan_is(body)
+  if has_stream_plan then body = { plan = body } end
+  if type(body) ~= "table" then
+    llb.fail("process " .. tostring(name) .. " expects a stream function or stream plan", { code = "E_BAD_PROCESS", primary = origin })
+  end
+  local has_stream = type(body.stream) == "function" or stream_plan_is(body.plan) or body.plan ~= nil
+  if not has_stream then
+    llb.fail("process " .. tostring(name) .. " expects a stream function or stream plan", { code = "E_BAD_PROCESS", primary = origin })
   end
   return setmetatable({
     __llb_tag = "Process",
     name = tostring(name),
-    run = body.run,
+    stream = body.stream,
+    plan = body.plan,
+    backend = "gps",
     spec = body,
     origin = origin or source.capture("process", { hint = name }),
   }, Process)
 end
 
-function Process:start(...)
-  local args = pack(...)
+local function process_take_opts(args)
   local opts = {}
   if args.n > 0 and type(args[args.n]) == "table" and rawget(args[args.n], "__llb_process_opts") then
     opts = args[args.n]
     args[args.n] = nil
     args.n = args.n - 1
   end
+  return opts
+end
+
+local function process_stream_raw(h, ctx, opts)
+  local p = h.process
+  local made
+  if type(p.stream) == "function" then
+    made = pack(p.stream(ctx, unpack(h.args, 1, h.args.n)))
+  elseif stream_plan_is(p.plan) then
+    made = pack(p.plan)
+  elseif p.plan ~= nil then
+    made = pack(stream.plan(p.plan))
+  else
+    llb.fail("process " .. tostring(p.name) .. " has no stream backend", { code = "E_PROCESS_NO_STREAM", primary = p.origin }, 2)
+  end
+
+  local first = made[1]
+  local gen, param, state
+  if stream_plan_is(first) then
+    local compiled = (opts.codegen == false) and stream.fuse(first) or stream.compile(first, opts.stream or opts)
+    gen, param, state = stream.raw(compiled)
+  elseif type(first) ~= "function" and not is_tag(first, "Stream") and not stream._is_source(first) then
+    local events = {}
+    append(events, ctx.pending or {})
+    if first ~= nil then
+      events[#events + 1] = process_event(ctx, "result", { result = first }, origin_of(first))
+    end
+    gen, param, state = stream.raw(stream.from.array(events))
+  else
+    gen, param, state = stream.raw(unpack(made, 1, made.n))
+  end
+  return gen, param, state
+end
+
+function Process:start(...)
+  local args = pack(...)
+  local opts = process_take_opts(args)
   local h = setmetatable({
     __llb_tag = "ProcessHandle",
     process = self,
@@ -833,12 +1738,17 @@ function Process:start(...)
     result_value = nil,
     error_value = nil,
     cancelled = false,
+    backend = "gps",
   }, ProcessHandle)
   local ctx = process_context(h)
   h.context = ctx
-  h.co = coroutine.create(function()
-    return self.run(ctx, unpack(args, 1, args.n))
-  end)
+  local ok, g, p0, s0 = pcall(process_stream_raw, h, ctx, opts)
+  if not ok then
+    h.status_value = "failed"
+    h.error_value = g
+  else
+    h.stream_gen, h.stream_param, h.stream_state = g, p0, s0
+  end
   return h
 end
 
@@ -847,20 +1757,32 @@ function ProcessHandle:resume(opts)
   if opts.budget ~= nil then self.budget = opts.budget end
   if self.status_value == "done" then return nil end
   if self.status_value == "failed" then error(self.error_value, 2) end
+  if self.cancelled then self.status_value = "done"; return nil end
+
+  if self.budget ~= nil and self.budget <= 0 then
+    self.status_value = "suspended"
+    return process_event(self.context, "budget_exhausted", { budget = 0 }, self.origin)
+  end
+
   self.status_value = "running"
-  local ok, ev_or_result = coroutine.resume(self.co)
+  local ok, next_state, a, b, c, d, e = pcall(self.stream_gen, self.stream_param, self.stream_state)
   if not ok then
     self.status_value = "failed"
-    self.error_value = ev_or_result
-    error(ev_or_result, 2)
+    self.error_value = next_state
+    error(next_state, 2)
   end
-  if coroutine.status(self.co) == "dead" then
+  if next_state == nil then
     self.status_value = "done"
-    self.result_value = ev_or_result
     return nil
   end
+  self.stream_state = next_state
+  if self.budget ~= nil then self.budget = self.budget - 1 end
   self.status_value = "suspended"
-  return ev_or_result
+  local ev = process_payload_event(self.context, a, b, c, d, e)
+  if is_tag(ev, "ProcessEvent") and ev.kind == "result" then
+    self.result_value = ev.result ~= nil and ev.result or ev.value
+  end
+  return ev
 end
 
 function ProcessHandle:events()
@@ -877,6 +1799,14 @@ function ProcessHandle:failed() return self.status_value == "failed" end
 function ProcessHandle:error() return self.error_value end
 function ProcessHandle:result() return self.result_value end
 function ProcessHandle:cancel() self.cancelled = true end
+function ProcessHandle:stream()
+  local function gen(param, state)
+    local ev = param:resume()
+    if ev == nil then return nil end
+    return true, ev
+  end
+  return stream.wrap(gen, self, true, { kind = "process-handle", process = self.process.name })
+end
 
 function Process:each(...)
   local h = self:start(...)
@@ -913,7 +1843,8 @@ function llb.describe_process(process)
     tag = "Process",
     name = process.name,
     origin = process.origin,
-    has_run = type(process.run) == "function",
+    backend = process.backend,
+    has_stream = type(process.stream) == "function" or process.plan ~= nil,
   }
 end
 
@@ -921,6 +1852,8 @@ function llb.process_opts(opts)
   opts = opts or {}
   opts.__llb_process_opts = true
   return opts
+end
+
 end
 
 -- ---------------------------------------------------------------------------
@@ -1819,8 +2752,11 @@ end
 local function norm_array(ctx, role_name, spec, v)
   if type(v) ~= "table" then llb.fail("expected table for " .. role_name .. " role", { primary = ctx and ctx.origin, code = "E_EXPECTED_TABLE" }) end
   local out, item_role = {}, spec.item_role or spec.item
-  for i = 1, #v do
-    local item = v[i]
+  local gen, param, state = llb.stream.raw(llb.stream.from.array(v))
+  while true do
+    local next_state, item = gen(param, state)
+    if next_state == nil then break end
+    state = next_state
     if is_tag(item, "Spread") then expand_spread(ctx, role_name, out, item)
     elseif item_role then out[#out + 1] = normalize_role(ctx, item_role, item)
     else out[#out + 1] = item end
@@ -1831,7 +2767,13 @@ end
 local function norm_record(ctx, role_name, spec, v)
   if type(v) ~= "table" then llb.fail("expected record table", { primary = ctx and ctx.origin, code = "E_EXPECTED_RECORD" }) end
   local out, value_role = {}, spec.value_role or spec.value
-  for k, x in pairs(v) do if type(k) ~= "number" then out[k] = value_role and normalize_role(ctx, value_role, x) or x end end
+  local gen, param, state = llb.stream.raw(llb.stream.from.record(v))
+  while true do
+    local next_state, k, x = gen(param, state)
+    if next_state == nil then break end
+    state = next_state
+    if type(k) ~= "number" then out[k] = value_role and normalize_role(ctx, value_role, x) or x end
+  end
   return out
 end
 
@@ -1846,8 +2788,11 @@ local function norm_product(ctx, role_name, spec, v)
     end
     seen[f.name] = f; out[#out + 1] = f
   end
-  for i = 1, #v do
-    local item = v[i]
+  local gen, param, state = llb.stream.raw(llb.stream.from.array(v))
+  while true do
+    local next_state, item = gen(param, state)
+    if next_state == nil then break end
+    state = next_state
     if is_tag(item, "Spread") then
       local tmp = {}
       expand_spread(ctx, role_name, tmp, item)
@@ -1874,8 +2819,11 @@ local function norm_sum(ctx, role_name, spec, v)
     if seen[name] then llb.fail("duplicate variant '" .. tostring(name) .. "'", { code = "E_DUPLICATE_VARIANT", primary = origin, labels = { { origin = seen[name], message = "first variant is here" } } }) end
     seen[name] = origin; out[#out + 1] = { tag = "variant", name = name, payload = payload, origin = origin }
   end
-  for i = 1, #v do
-    local item = v[i]
+  local gen, param, state = llb.stream.raw(llb.stream.from.array(v))
+  while true do
+    local next_state, item = gen(param, state)
+    if next_state == nil then break end
+    state = next_state
     if is_tag(item, "Spread") then expand_spread(ctx, role_name, out, item)
     elseif is_tag(item, "Symbol") then add_variant(item.text, nil, item.origin)
     elseif is_tag(item, "Name") then add_variant(item.text, nil, item.origin)
@@ -1889,7 +2837,299 @@ local function norm_sum(ctx, role_name, spec, v)
   return out
 end
 
-normalize_role = function(ctx, role_name, v)
+local normalize_role_reflective
+
+local function compiled_role_context(ctx, role_name, spec)
+  local subctx = shallow_copy(ctx or {})
+  subctx.role = role_name
+  subctx.role_spec = spec
+  return subctx
+end
+
+local function compile_spread_expander(lang, role_name, spec)
+  spec = spec or {}
+  local fn = function(ctx, out, n, spread)
+    local subctx = compiled_role_context(ctx, role_name, spec)
+    local v = spread.value
+    if type(v) == "table" then
+      local tag = v.__llb_tag
+      if tag == "Fragment" then
+        if v.role ~= role_name then
+          llb.fail("cannot spread " .. tostring(v.role) .. " fragment into " .. tostring(role_name) .. " role", {
+            code = "E_SPREAD_ROLE", primary = spread.origin,
+            labels = { { origin = v.origin, message = "fragment created here as role " .. tostring(v.role) } },
+          })
+        end
+        local items = v.items or {}
+        for i = 1, #items do
+          n = n + 1
+          out[n] = items[i]
+        end
+        return n
+      end
+
+      local normalized = normalize_role(subctx, role_name, v)
+      for i = 1, #(normalized or {}) do
+        n = n + 1
+        out[n] = normalized[i]
+      end
+      return n
+    end
+    llb.fail("cannot spread value " .. repr(v), { primary = spread.origin, code = "E_BAD_SPREAD" })
+  end
+  return llb.codegen.register(fn, {
+    id = tostring(lang.name) .. ".spread." .. tostring(role_name),
+    kind = "spread",
+    language = lang.name,
+    role = role_name,
+    role_kind = spec.kind or role_name,
+    mode = "fast",
+    origin = spec.origin,
+    generated = false,
+  })
+end
+
+local function compile_role_normalizer_impl(lang, role_name, spec)
+  spec = spec or {}
+  local kind = spec.kind or role_name
+
+  if spec.normalize then
+    return function(ctx, v)
+      local subctx = compiled_role_context(ctx, role_name, spec)
+      local out = spec.normalize(lang, subctx, v)
+      if spec.check then spec.check(subctx, out, v) end
+      return out
+    end
+  end
+
+  if kind == "name" then
+    return function(ctx, v)
+      local subctx = compiled_role_context(ctx, role_name, spec)
+      local out = norm_name(subctx, v)
+      if spec.check then spec.check(subctx, out, v) end
+      return out
+    end
+  end
+
+  if kind == "type" then
+    return function(ctx, v)
+      local subctx = compiled_role_context(ctx, role_name, spec)
+      local out = norm_type(subctx, v)
+      if spec.check then spec.check(subctx, out, v) end
+      return out
+    end
+  end
+
+  if kind == "expr" then
+    return function(ctx, v)
+      local subctx = compiled_role_context(ctx, role_name, spec)
+      local out = normalize_expr(subctx, v)
+      if spec.check then spec.check(subctx, out, v) end
+      return out
+    end
+  end
+
+  if kind == "array" then
+    local item_role = spec.item_role or spec.item
+    local spread_expander = lang.compiled and lang.compiled.spreads and lang.compiled.spreads[role_name]
+    return function(ctx, v)
+      local subctx = compiled_role_context(ctx, role_name, spec)
+      if type(v) ~= "table" then llb.fail("expected table for " .. role_name .. " role", { primary = subctx.origin, code = "E_EXPECTED_TABLE" }) end
+      local out = {}
+      local n = 0
+      for i = 1, #v do
+        local item = v[i]
+        if is_tag(item, "Spread") then
+          n = spread_expander(subctx, out, n, item)
+        elseif item_role then
+          n = n + 1
+          out[n] = normalize_role(subctx, item_role, item)
+        else
+          n = n + 1
+          out[n] = item
+        end
+      end
+      if spec.check then spec.check(subctx, out, v) end
+      return out
+    end
+  end
+
+  if kind == "record" then
+    local value_role = spec.value_role or spec.value
+    return function(ctx, v)
+      local subctx = compiled_role_context(ctx, role_name, spec)
+      if type(v) ~= "table" then llb.fail("expected record table", { primary = subctx.origin, code = "E_EXPECTED_RECORD" }) end
+      local out = {}
+      for k, x in pairs(v) do
+        if type(k) ~= "number" then out[k] = value_role and normalize_role(subctx, value_role, x) or x end
+      end
+      if spec.check then spec.check(subctx, out, v) end
+      return out
+    end
+  end
+
+  if kind == "product" then
+    local type_role = spec.type_role or "type"
+    local unique = spec.unique_names
+    if unique == nil then unique = true end
+    local spread_expander = lang.compiled and lang.compiled.spreads and lang.compiled.spreads[role_name]
+    return function(ctx, v)
+      local subctx = compiled_role_context(ctx, role_name, spec)
+      if type(v) ~= "table" then llb.fail("expected product table", { primary = subctx.origin, code = "E_EXPECTED_PRODUCT" }) end
+      local out, seen, n = {}, {}, 0
+      local function add_field(f)
+        if unique and seen[f.name] then
+          llb.fail("duplicate product field '" .. tostring(f.name) .. "'", { code = "E_DUPLICATE_FIELD", primary = f.origin, labels = { { origin = seen[f.name].origin, message = "first field is here" } } })
+        end
+        seen[f.name] = f
+        n = n + 1
+        out[n] = f
+      end
+      for i = 1, #v do
+        local item = v[i]
+        if is_tag(item, "Spread") then
+          local tmp = {}
+          local tmp_n = spread_expander(subctx, tmp, 0, item)
+          for j = 1, tmp_n do add_field(tmp[j]) end
+        elseif is_tag(item, "Capture") then
+          if not is_tag(item.subject, "Symbol") then llb.fail("product capture subject must be a symbol", { primary = item.origin }) end
+          add_field({ tag = "field", name = item.subject.text, type = normalize_role(subctx, type_role, item.value), origin = item.origin })
+        elseif is_tag(item, "CaptureInit") then
+          local c = item.capture
+          if not is_tag(c.subject, "Symbol") then llb.fail("product initializer subject must be a symbol", { primary = item.origin }) end
+          add_field({ tag = "field", name = c.subject.text, type = normalize_role(subctx, type_role, c.value), init = normalize_expr(subctx, item.init), origin = item.origin })
+        else
+          llb.fail("product entries must be typed names or spreads, got " .. repr(item), { primary = origin_of(item) or subctx.origin, code = "E_BAD_PRODUCT_ENTRY", notes = { "write x [T] for a typed field" } })
+        end
+      end
+      if spec.check then spec.check(subctx, out, v) end
+      return out
+    end
+  end
+
+  if kind == "sum" or kind == "protocol" then
+    local payload_role = spec.payload_role or "product"
+    local spread_expander = lang.compiled and lang.compiled.spreads and lang.compiled.spreads[role_name]
+    return function(ctx, v)
+      local subctx = compiled_role_context(ctx, role_name, spec)
+      if type(v) ~= "table" then llb.fail("expected sum/protocol table", { primary = subctx.origin, code = "E_EXPECTED_SUM" }) end
+      local out, seen, n = {}, {}, 0
+      local function add_variant(name, payload, origin)
+        if seen[name] then llb.fail("duplicate variant '" .. tostring(name) .. "'", { code = "E_DUPLICATE_VARIANT", primary = origin, labels = { { origin = seen[name], message = "first variant is here" } } }) end
+        seen[name] = origin
+        n = n + 1
+        out[n] = { tag = "variant", name = name, payload = payload, origin = origin }
+      end
+      for i = 1, #v do
+        local item = v[i]
+        if is_tag(item, "Spread") then
+          n = spread_expander(subctx, out, n, item)
+        elseif is_tag(item, "Symbol") then
+          add_variant(item.text, nil, item.origin)
+        elseif is_tag(item, "Name") then
+          add_variant(item.text, nil, item.origin)
+        elseif is_tag(item, "Expr") and item.kind == "call" and is_tag(item.callee, "Symbol") then
+          if (item.args.n or #item.args) ~= 1 or type(item.args[1]) ~= "table" then llb.fail("variant payload must be a single product table", { primary = item.origin }) end
+          add_variant(item.callee.text, normalize_role(subctx, payload_role, item.args[1]), item.origin)
+        else
+          llb.fail("sum entries must be variants or spreads, got " .. repr(item), { primary = origin_of(item) or subctx.origin, code = "E_BAD_SUM_ENTRY" })
+        end
+      end
+      if spec.check then spec.check(subctx, out, v) end
+      return out
+    end
+  end
+
+  if kind == "mixed" then
+    return function(ctx, v)
+      local subctx = compiled_role_context(ctx, role_name, spec)
+      local out = { array = norm_array(subctx, role_name, spec, v), record = norm_record(subctx, role_name, spec, v) }
+      if spec.check then spec.check(subctx, out, v) end
+      return out
+    end
+  end
+
+  if kind == "string" then
+    return function(ctx, v)
+      local subctx = compiled_role_context(ctx, role_name, spec)
+      if type(v) ~= "string" then llb.fail("expected string", { primary = subctx.origin }) end
+      if spec.check then spec.check(subctx, v, v) end
+      return v
+    end
+  end
+
+  if kind == "number" then
+    return function(ctx, v)
+      local subctx = compiled_role_context(ctx, role_name, spec)
+      if type(v) ~= "number" then llb.fail("expected number", { primary = subctx.origin }) end
+      if spec.check then spec.check(subctx, v, v) end
+      return v
+    end
+  end
+
+  if kind == "boolean" then
+    return function(ctx, v)
+      local subctx = compiled_role_context(ctx, role_name, spec)
+      if type(v) ~= "boolean" then llb.fail("expected boolean", { primary = subctx.origin }) end
+      if spec.check then spec.check(subctx, v, v) end
+      return v
+    end
+  end
+
+  if kind == "value" or kind == "identity" then
+    return function(ctx, v)
+      local subctx = compiled_role_context(ctx, role_name, spec)
+      if spec.check then spec.check(subctx, v, v) end
+      return v
+    end
+  end
+
+  return function(ctx, v)
+    return normalize_role_reflective(ctx, role_name, v)
+  end
+end
+
+local function compile_role_normalizer(lang, role_name, spec)
+  spec = spec or {}
+  local fn = compile_role_normalizer_impl(lang, role_name, spec)
+  return llb.codegen.register(fn, {
+    id = tostring(lang.name) .. ".role." .. tostring(role_name),
+    kind = "role",
+    language = lang.name,
+    role = role_name,
+    role_kind = spec.kind or role_name,
+    mode = "fast",
+    origin = spec.origin,
+    reflective = normalize_role_reflective,
+    generated = false,
+  })
+end
+
+function llb.codegen.compile_language(lang, opts)
+  opts = opts or {}
+  local compiled = {
+    __llb_tag = "CompiledLanguageRuntime",
+    lang = lang,
+    mode = opts.mode or "fast",
+    roles = {},
+    spreads = {},
+    metadata = {
+      kind = "closure-codegen",
+      diagnostics = "reflective-replay",
+      source = "trusted-grammar",
+    },
+  }
+  for role_name, spec in pairs(lang.roles or {}) do
+    compiled.spreads[role_name] = compile_spread_expander(lang, role_name, spec)
+  end
+  lang.compiled = compiled
+  for role_name, spec in pairs(lang.roles or {}) do
+    compiled.roles[role_name] = compile_role_normalizer(lang, role_name, spec)
+  end
+  return compiled
+end
+
+normalize_role_reflective = function(ctx, role_name, v)
   ctx = ctx or {}
   local lang = ctx.lang
   local spec = (lang and lang.roles and lang.roles[role_name]) or {}
@@ -1912,6 +3152,17 @@ normalize_role = function(ctx, role_name, v)
   else llb.fail("unknown role kind " .. tostring(kind), { primary = ctx.origin, code = "E_UNKNOWN_ROLE_KIND" }) end
   if spec.check then spec.check(subctx, out, v) end
   return out
+end
+
+normalize_role = function(ctx, role_name, v)
+  ctx = ctx or {}
+  local lang = ctx.lang
+  local compiled = lang and lang.compiled
+  local role_fn = compiled and compiled.roles and compiled.roles[role_name]
+  if role_fn and ctx.codegen ~= false and ctx.reflective ~= true then
+    return role_fn(ctx, v)
+  end
+  return normalize_role_reflective(ctx, role_name, v)
 end
 llb.normalize_role, llb.normalize_expr = normalize_role, normalize_expr
 
@@ -2174,6 +3425,185 @@ function RuntimeHead:at(origin)
 end
 
 local function runtime_head(lang, spec) return setmetatable({ __llb_tag = "Head", lang = lang, spec = spec }, RuntimeHead) end
+
+local function install_head_codegen()
+local CompiledHead, CompiledStage = {}, {}
+
+local function compiled_stage_origin(h)
+  return rawget(h, "origin") or source.capture("head", { hint = h.spec.name })
+end
+
+local function compiled_build_stage(stage)
+  local fields, origins = {}, {}
+  for i = 1, #stage.head.slots do
+    local slot = stage.head.slots[i]
+    if stage.seen[slot.name] then
+      local raw = stage.raw[slot.name]
+      local event = stage.events and stage.events[slot.name]
+      origins[slot.name] = child_origin(stage.origins[slot.name], {
+        kind = "slot-consume",
+        consumed_by = {
+          head = stage.head.name,
+          slot = slot.name,
+          role = slot.role,
+          channel = event and event.channel or nil,
+        },
+      })
+      local role_fn = stage.compiled.roles and stage.compiled.roles[slot.role]
+      local ctx = { lang = stage.lang, head = stage.head.name, slot = slot, event = event, origin = origins[slot.name] }
+      fields[slot.name] = role_fn and role_fn(ctx, raw) or normalize_role(ctx, slot.role, raw)
+    elseif slot.optional then
+      fields[slot.name] = slot.default
+    else
+      llb.fail("missing slot " .. tostring(slot.name), { primary = stage.origin, code = "E_MISSING_SLOT" })
+    end
+  end
+  fields.origin = fields.origin or stage.origin
+  fields.slot_origins = origins
+  local out = stage.head.emit and stage.head.emit(fields, stage.lang, { head = stage.head, raw = stage.raw, origins = origins, events = stage.events, stage = stage }) or { tag = stage.head.tag or stage.head.name, fields = fields }
+  return attach_node_meta(out, stage.head.tag or stage.head.name, { language = stage.lang.name, head = stage.head.name, head_spec = stage.head, fields = fields, slot_origins = origins, raw = stage.raw, events = stage.events, origin = stage.origin })
+end
+
+local function compiled_maybe_finish(stage)
+  if remaining_optional(stage.head.slots, stage.next_index) then return compiled_build_stage(stage) end
+  return stage
+end
+
+local function compiled_replay_stage(stage, event)
+  return consume_event(setmetatable({
+    __llb_tag = "Stage",
+    lang = stage.lang,
+    head = stage.head,
+    raw = shallow_copy(stage.raw),
+    origins = shallow_copy(stage.origins),
+    events = shallow_copy(stage.events),
+    seen = shallow_copy(stage.seen),
+    next_index = stage.next_index,
+    origin = stage.origin,
+  }, RuntimeStage), event)
+end
+
+local function compiled_consume_event(stage, event)
+  local slots, i = stage.head.slots, stage.next_index
+  while i <= #slots do
+    local slot = slots[i]
+    if event_fits(stage.lang, slot, event) then
+      local ns = setmetatable({
+        __llb_tag = "Stage",
+        lang = stage.lang,
+        head = stage.head,
+        compiled = stage.compiled,
+        raw = shallow_copy(stage.raw),
+        origins = shallow_copy(stage.origins),
+        events = shallow_copy(stage.events),
+        seen = shallow_copy(stage.seen),
+        next_index = i + 1,
+        origin = stage.origin,
+      }, CompiledStage)
+      ns.raw[slot.name], ns.origins[slot.name], ns.events[slot.name], ns.seen[slot.name] = event.value, event.origin or stage.origin, event, true
+      return compiled_maybe_finish(ns)
+    elseif slot.optional then
+      i = i + 1
+    else
+      return compiled_replay_stage(stage, event)
+    end
+  end
+  return compiled_replay_stage(stage, event)
+end
+
+local function compiled_consume(stage, action, value, argc, origin)
+  local override_origin
+  value, override_origin = unwrap_origin_value(value)
+  origin = override_origin or origin
+  return compiled_consume_event(stage, llb.event(channel_for_action(action, value, argc or 0), value, {
+    action = action,
+    argc = argc or 0,
+    origin = origin or stage.origin,
+  }))
+end
+
+local function compiled_start_stage(h)
+  return setmetatable({
+    __llb_tag = "Stage",
+    lang = h.lang,
+    head = h.spec,
+    compiled = h.compiled,
+    raw = {},
+    origins = {},
+    events = {},
+    seen = {},
+    next_index = 1,
+    origin = compiled_stage_origin(h),
+  }, CompiledStage)
+end
+
+CompiledHead.__index = function(self, key)
+  if CompiledHead[key] then return CompiledHead[key] end
+  local o = source.capture("head-name", { hint = key })
+  local name_value, override_origin = unwrap_origin_value(key)
+  o = override_origin or o
+  if is_tag(name_value, "Name") then
+    return compiled_consume(compiled_start_stage(self), "name", name_value, 1, o)
+  end
+  if is_tag(name_value, "Symbol") then
+    return compiled_consume(compiled_start_stage(self), "name", llb.name(name_value.text, { origin = o }), 1, o)
+  end
+  return compiled_consume(compiled_start_stage(self), "name", llb.name(name_value, { origin = o }), 1, o)
+end
+
+CompiledHead.__call = function(self, ...)
+  local p, o = pack(...), source.capture("head-call", { hint = self.spec.name })
+  if p.n > 0 and is_tag(p[1], "OriginValue") then o = p[1].__llb_origin or p[1].origin or o end
+  if p.n == 0 and #self.spec.slots == 0 then return compiled_build_stage(setmetatable({ __llb_tag = "Stage", lang = self.lang, head = self.spec, compiled = self.compiled, raw = {}, origins = {}, events = {}, seen = {}, next_index = 1, origin = o }, CompiledStage)) end
+  local v = p.n == 0 and UNIT or p[1]
+  if p.n == 1 and v == nil then v = NIL end
+  if p.n <= 1 then return compiled_consume(compiled_start_stage(self), "call", v, p.n, o) end
+  return compiled_consume(compiled_start_stage(self), "call", p, p.n, o)
+end
+
+CompiledStage.__index = function(self, key)
+  if CompiledStage[key] then return CompiledStage[key] end
+  return compiled_consume(self, "index", key, 1, source.capture("slot-index"))
+end
+
+CompiledStage.__call = function(self, ...)
+  local p, o = pack(...), source.capture("slot-call")
+  local v = p.n == 0 and UNIT or p[1]
+  if p.n == 1 and v == nil then v = NIL end
+  if p.n <= 1 then return compiled_consume(self, "call", v, p.n, o) end
+  return compiled_consume(self, "call", p, p.n, o)
+end
+
+function CompiledHead:at(origin)
+  return setmetatable({ __llb_tag = "HeadAt", head = self, origin = origin }, HeadAt)
+end
+
+local function compiled_head(lang, spec, compiled)
+  local h = setmetatable({ __llb_tag = "Head", lang = lang, spec = spec, compiled = compiled, backend = "compiled" }, CompiledHead)
+  return llb.codegen.register(h, {
+    id = tostring(lang.name) .. ".head." .. tostring(spec.name),
+    kind = "head",
+    language = lang.name,
+    head = spec.name,
+    mode = "fast",
+    origin = spec.origin,
+    reflective = runtime_head(lang, spec),
+    generated = false,
+  })
+end
+
+function llb.codegen.compile_heads(lang, opts)
+  opts = opts or {}
+  local compiled = lang.compiled or llb.codegen.compile_language(lang, opts)
+  compiled.heads = compiled.heads or {}
+  for name, spec in pairs(lang.heads or {}) do
+    compiled.heads[name] = compiled_head(lang, spec, compiled)
+    if opts.install_exports ~= false then lang.exports[name] = compiled.heads[name] end
+  end
+  return compiled.heads
+end
+end
+install_head_codegen()
 
 -- ---------------------------------------------------------------------------
 -- Context, scopes, passes, analysis
@@ -2438,6 +3868,7 @@ local function llb_core_member()
         "fragments",
         "namespaces",
         "origins",
+        "stream-vm",
       },
     },
   }
@@ -3779,6 +5210,9 @@ function llb.describe(value)
   end
   if is_tag(value, "Event") then return llb.describe_event(value) end
   if is_tag(value, "Process") then return llb.describe_process(value) end
+  if is_tag(value, "Stream") and value.describe then return value:describe() end
+  if is_tag(value, "StreamPlan") and value.describe then return value:describe() end
+  if is_tag(value, "Stream") or is_tag(value, "StreamPlan") or is_tag(value, "StreamSource") or is_tag(value, "StreamOp") then return llb.stream.describe(value) end
   if is_tag(value, "ProcessEvent") then return { tag = "ProcessEvent", process = value.process, kind = value.kind, seq = value.seq, origin = value.origin } end
   if is_tag(value, "Fragment") then return llb.describe_fragment(value) end
   if is_tag(value, "Zone") then return llb.describe_zone(value) end
@@ -3896,6 +5330,8 @@ local function define_language(name, decls)
     end
   end
   table.insert(lang.passes, 1, head_check_pass())
+  llb.codegen.compile_language(lang, { mode = "fast" })
+  llb.codegen.compile_heads(lang, { mode = "fast" })
   lang.__llb_family = family_define(lang.name, { family_member_from_language(lang) })
   return lang
 end
@@ -4201,7 +5637,7 @@ function llb.to_doc(v, ctx)
 
   local lang = f.lang or meta.language
   if type(lang) == "table" then
-    local formatters = lang.formatters or (lang.format and lang.format.formatters)
+    local formatters = lang.formatters or (type(lang.format) == "table" and lang.format.formatters or nil)
     local key = meta.head or rawget(v, "tag") or tagof(v)
     local hook = formatters and key and formatters[key]
     if hook then
