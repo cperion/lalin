@@ -58,7 +58,7 @@ return {
 
       llpvm.world. raw [Demo],
 
-      llpvm.stream. raw_items [raw] {
+      llpvm.tape. raw_items [raw] {
         llpvm.record. one (Node.Int { value = 1 }),
       },
 

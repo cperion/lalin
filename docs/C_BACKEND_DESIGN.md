@@ -1064,7 +1064,7 @@ mechanism.  The intended flow is:
 ```text
 MoonCode
   -> CodeFlowFacts   -- CFG edges, counted-loop domains, inductions, exits
-  -> CodeMemFacts    -- memory bases, access streams, alignment/bounds/trap facts
+  -> CodeMemFacts    -- memory bases, access lanes, alignment/bounds/trap facts
   -> CodeKernelPlan  -- semantic KernelBody facts and safety/schedule choices
   -> CodeLowerPlan   -- choose Code projection or whole-function Kernel projection
   -> LowerToBack     -- Back projection from KernelBodyCounted or Code projection
@@ -1080,7 +1080,7 @@ MoonCode
 KernelBodyCounted(
   loop,        -- FlowLoopFacts / counted iteration domain
   counter,     -- executable counter policy
-  streams,     -- memory streams used by the body
+  streams,     -- memory lanes used by the body
   bindings,    -- named kernel-local expression equations (reserved for growth)
   effects,     -- stores and folds
   result,      -- function result semantics

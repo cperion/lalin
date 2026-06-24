@@ -46,7 +46,7 @@ return pvm. Demo {
     cache. full,
   },
 
-  stream. raw_items [raw] {
+  tape. raw_items [raw] {
     record. one (Node.Int { value = 1 }),
     record. two (Node.Int { value = 2 }),
     record. add_node (Node.Add { left = one, right = two }),
@@ -65,7 +65,7 @@ assert(getmetatable(spec) == ll.ProgramSpec, "load returns an LLPVM ProgramSpec"
 
 local program = spec:lower()
 assert(getmetatable(program) == ll.ProgramImage, "ProgramSpec lowers to ProgramImage")
-assert(#program.root_ids == 3, "root captures stream, value, and phase-map stream")
+assert(#program.root_ids == 3, "root captures tape, value, and phase-map tape")
 assert(#program.root_ops == 3, "first root records authored values for hot native imports")
 
 local lowering = program.lowering
@@ -83,16 +83,16 @@ assert(bytes == ll.bytecode(program), "facade bytecode helper accepts ProgramIma
 
 local desc = ll.describe(spec)
 assert(desc and desc.tag == "LLPVMProgram" and desc.name == "Demo", "program describes itself")
-local head = ll.describe_head("stream")
-assert(head and head.slots[2].channels[1] == "index:value", "internal stream world slot is explicit index:value")
+local head = ll.describe_head("tape")
+assert(head and head.slots[2].channels[1] == "index:value", "internal tape world slot is explicit index:value")
 local role = ll.describe_role("fields")
-assert(role and role.has_normalize, "field role owns normalization")
+assert(role and role.has_stream, "field role owns stream normalization")
 
 local ok_missing = pcall(function()
     return ll.load([[return pvm. Bad {
       lang. Expr { type. Node { op. Add { left [Node], right [Node] }, }, },
       world. raw [Expr],
-      stream. input [raw] { record. bad (Node.Add { left = missing }), },
+      tape. input [raw] { record. bad (Node.Add { left = missing }), },
       root { input },
     }]], "missing") :bytecode()
 end)
@@ -104,8 +104,8 @@ local ok_wrong_world = pcall(function()
       lang. B { type. Node { op. Use { other [A.Node] }, }, },
       world. a [A],
       world. b [B],
-      stream. sa [a] { record. one (Node.Int { value = 1 }), },
-      stream. sb [b] { record. bad (Node.Use { other = one }), },
+      tape. sa [a] { record. one (Node.Int { value = 1 }), },
+      tape. sb [b] { record. bad (Node.Use { other = one }), },
       root { sb },
     }]], "wrong-world") :bytecode()
 end)

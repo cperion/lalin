@@ -1,7 +1,7 @@
 -- Benchmark: LLPVM bytecode image load + native drain.
 --
 -- This exercises the real boundary:
---   Lua authoring API -> LLPV bytecode -> llpvm_load_program -> native stream
+--   Lua authoring API -> LLPV bytecode -> llpvm_load_program -> native tape
 --   -> llpvm_drain.
 --
 -- Run:
@@ -60,8 +60,8 @@ local function make_program(op_count)
             ops[i] = world.Node.Int { value = i }
         end
     end
-    local stream = world:seq(ops)
-    local program = vm.program { stream }
+    local tape = world:seq(ops)
+    local program = vm.program { tape }
     return program, ops
 end
 
@@ -95,7 +95,7 @@ print(string.format("%.3fs", now() - build_t0))
 
 print(string.format("llpvm image load benchmark mode=%s rounds=%d samples=%d", mode, rounds, samples_n))
 print("llpvm load borrows a caller-owned immutable byte buffer")
-print("drain-only preloads streams first, then measures native drain separately")
+print("drain-only preloads tapes first, then measures native drain separately")
 
 for _, op_count in ipairs(cases) do
     local program, authored_ops = make_program(op_count)
@@ -133,14 +133,14 @@ for _, op_count in ipairs(cases) do
         initial_world_cap = 8,
         initial_op_cap = op_count * rounds + 8,
         initial_buffer_cap = rounds * (samples_n * 3 + 2) + 16,
-        initial_stream_cap = rounds * (samples_n * 4 + 2) + 16,
+        initial_tape_cap = rounds * (samples_n * 4 + 2) + 16,
         initial_program_cap = rounds * (samples_n * 4 + 2) + 16,
         cache_bytes = 4096,
     }
 
-    local warm_st, warm_stream = vm:load_program_buffer(image_buf, #image)
+    local warm_st, warm_tape = vm:load_program_buffer(image_buf, #image)
     warm_st:assert("warm llpvm_load_program")
-    local warm_drain, warm_buffer = vm:drain(warm_stream)
+    local warm_drain, warm_buffer = vm:drain(warm_tape)
     warm_drain:assert("warm llpvm_drain")
     assert(warm_buffer ~= 0, "warm drain produced no buffer")
 
@@ -149,33 +149,33 @@ for _, op_count in ipairs(cases) do
     for sample = 1, samples_n do
         local t0 = now()
         for _ = 1, rounds do
-            local st, stream = vm:load_program_buffer(image_buf, #image)
+            local st, tape = vm:load_program_buffer(image_buf, #image)
             st:assert("raw llpvm_load_program")
-            local drain_st, buffer = vm:drain(stream)
+            local drain_st, buffer = vm:drain(tape)
             drain_st:assert("raw llpvm_drain")
-            checksum = checksum + stream + buffer
+            checksum = checksum + tape + buffer
         end
         raw_load_drain_samples[sample] = now() - t0
     end
 
     local load_only_samples = {}
-    local load_streams = ffi.new("uint32_t[?]", rounds)
+    local load_tapes = ffi.new("uint32_t[?]", rounds)
     for sample = 1, samples_n do
         local t0 = now()
         for i = 0, rounds - 1 do
-            local st, stream = vm:load_program_buffer(image_buf, #image)
+            local st, tape = vm:load_program_buffer(image_buf, #image)
             st:assert("load-only llpvm_load_program")
-            load_streams[i] = stream
-            checksum = checksum + stream
+            load_tapes[i] = tape
+            checksum = checksum + tape
         end
         load_only_samples[sample] = now() - t0
     end
 
     local preload = ffi.new("uint32_t[?]", rounds * samples_n)
     for i = 0, rounds * samples_n - 1 do
-        local st, stream = vm:load_program_buffer(image_buf, #image)
+        local st, tape = vm:load_program_buffer(image_buf, #image)
         st:assert("preload llpvm_load_program")
-        preload[i] = stream
+        preload[i] = tape
     end
 
     local drain_only_samples = {}

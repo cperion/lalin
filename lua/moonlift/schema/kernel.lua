@@ -4,7 +4,7 @@ S.use()
 return schema. MoonKernel {
   product. KernelId { interned, text [str], },
   product. KernelValueId { interned, text [str], },
-  product. KernelStreamId { interned, text [str], },
+  product. KernelLaneId { interned, text [str], },
   sum. KernelSubject {
     KernelSubjectFunction { variant_unique, func [MoonCode.CodeFuncId], },
     KernelSubjectLoop { variant_unique, loop [MoonGraph.GraphLoopId], },
@@ -55,9 +55,9 @@ return schema. MoonKernel {
       counter [optional [MoonCode.CodeValueId]],
     },
   },
-  product. KernelStream {
+  product. KernelLane {
     interned,
-    field. id [MoonKernel.KernelStreamId],
+    field. id [MoonKernel.KernelLaneId],
     object [MoonMem.MemObjectId],
     accesses [many [MoonMem.MemAccessId]],
     base [MoonMem.MemBase],
@@ -68,9 +68,9 @@ return schema. MoonKernel {
   sum. KernelExpr {
     KernelExprValue { variant_unique, field. value [MoonCode.CodeValueId], },
     KernelExprAlgebra { variant_unique, field. expr [MoonValue.ValueExpr], },
-    KernelExprLoad {
+    KernelExprLaneLoad {
       variant_unique,
-      field. stream [MoonKernel.KernelStream],
+      field. lane [MoonKernel.KernelLane],
       index [MoonValue.ValueExpr],
     },
     KernelExprKernelValue { variant_unique, field. value [MoonKernel.KernelValueId], },
@@ -84,27 +84,27 @@ return schema. MoonKernel {
   sum. KernelEffect {
     KernelEffectStore {
       variant_unique,
-      dst [MoonKernel.KernelStream],
+      dst [MoonKernel.KernelLane],
       index [MoonValue.ValueExpr],
       field. value [MoonKernel.KernelExpr],
     },
     KernelEffectScan {
       variant_unique,
-      dst [MoonKernel.KernelStream],
+      dst [MoonKernel.KernelLane],
       index [MoonValue.ValueExpr],
       reduction [MoonValue.ReductionFact],
       mode [MoonStencil.StencilScanMode],
     },
     KernelEffectPartition {
       variant_unique,
-      dst [MoonKernel.KernelStream],
+      dst [MoonKernel.KernelLane],
       src [MoonKernel.KernelExpr],
       pred [MoonStencil.StencilPredicate],
       semantics [MoonStencil.StencilPartitionSemantics],
     },
     KernelEffectCopy {
       variant_unique,
-      dst [MoonKernel.KernelStream],
+      dst [MoonKernel.KernelLane],
       src [MoonKernel.KernelExpr],
       semantics [MoonStencil.StencilCopySemantics],
     },
@@ -131,7 +131,7 @@ return schema. MoonKernel {
   product. KernelBody {
     interned,
     domain [MoonKernel.KernelDomain],
-    streams [many [MoonKernel.KernelStream]],
+    lanes [many [MoonKernel.KernelLane]],
     bindings [many [MoonKernel.KernelBinding]],
     effects [many [MoonKernel.KernelEffect]],
     result [MoonKernel.KernelResult],

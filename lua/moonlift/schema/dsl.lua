@@ -323,36 +323,52 @@ local function normalize_body(tbl, allow_variants)
     return { attrs = attrs, fields = fields, variants = variants, decls = decls }
 end
 
+local function decls_stream_gen(param, state)
+    state = (state or 0) + 1
+    while state <= #(param.value or {}) do
+        local item = param.value[state]
+        local indexed_field = field_from_index_expr(item)
+        if tag(item) == "Decl" then
+            return state, item
+        elseif tag(item) == "Attr" or tag(item) == "Field" or tag(item) == "Variant" then
+            -- Valid schema body context, but not a declaration payload.
+        elseif llb.is(item, "Capture") then
+            field_from_capture(item)
+        elseif indexed_field then
+            -- Valid schema body context, but not a declaration payload.
+        else
+            error("moonschema: unexpected body item " .. tostring(llb.repr and llb.repr(item) or item), 2)
+        end
+        state = state + 1
+    end
+    return nil
+end
+
+local function decls_stream(v)
+    return llb.stream.raw(llb.stream.wrap(decls_stream_gen, { value = v or {} }, 0, { kind = "moonschema:decls" }))
+end
+
 local g = llb.grammar
 
 local Lang = llb.define "MoonSchema" {
     g.role .decls {
         kind = "array",
-        normalize = function(_, _, v)
-            local body = normalize_body(v, false)
-            return body.decls
-        end,
+        stream = function(_, _, v) return decls_stream(v) end,
     },
 
     g.role .product_body {
-        kind = "array",
-        normalize = function(_, _, v)
-            return normalize_body(v, false)
-        end,
+        kind = "value",
+        stream = function(_, _, v) return llb.stream.raw(llb.stream.once(normalize_body(v, false))) end,
     },
 
     g.role .sum_body {
-        kind = "array",
-        normalize = function(_, _, v)
-            return normalize_body(v, true)
-        end,
+        kind = "value",
+        stream = function(_, _, v) return llb.stream.raw(llb.stream.once(normalize_body(v, true))) end,
     },
 
     g.role .schema_type {
         kind = "value",
-        normalize = function(_, _, v)
-            return type_value(v)
-        end,
+        stream = function(_, _, v) return llb.stream.raw(llb.stream.once(type_value(v))) end,
     },
 
     -- Declares a MoonSchema module: the root namespace for ASDL products, sums,

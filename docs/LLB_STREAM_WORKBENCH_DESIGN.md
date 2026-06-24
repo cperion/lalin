@@ -606,9 +606,16 @@ lang.compiled.roles[name].collect
 Canonical compiled heads:
 
 ```lua
-lang.compiled.heads[name].stream
+lang.compiled.heads[name].event_stream
+lang.compiled.heads[name].collect_events
 lang.compiled.heads[name].construct
+llb.head_event_stream(head, events)
+llb.collect_head_events(head, events)
 ```
+
+Heads deliberately do not expose a bare `.stream` method. `stream` is the LLB
+module vocabulary, and language heads may use `stream` as a semantic name or
+slot without colliding with workbench internals.
 
 ## Removed Model
 
@@ -640,9 +647,10 @@ reflective diagnostic replay
 - [x] All in-tree processes return explicit GPS streams.
 - [x] Byte inspection, validation, LSP document events, and debugger commands are pull-shaped.
 - [x] Monolithic compiler/phase boundaries are named materializing stream boundaries.
-- [ ] Role normalizers expose stream and collect forms.
-- [ ] Spread expanders expose stream splice forms.
-- [ ] Head machines expose stream and construct forms.
-- [ ] Family projectors are stream routers.
-- [ ] Diagnostics/index/format run as stream transducers.
-- [ ] Codegen emits registered GPS machines for hot paths.
+- [x] Role normalizers expose stream and collect forms.
+- [x] Spread expanders expose stream splice forms.
+- [x] Head machines expose event-stream and construct forms.
+- [x] Family projectors are stream routers.
+- [x] Diagnostics/index/format expose stream transducers and sinks.
+- [x] Codegen registers GPS machines for role/spread/head hot paths.
+- [ ] Source-generated role/head machines beyond closure-specialized machines.

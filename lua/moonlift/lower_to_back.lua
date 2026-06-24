@@ -467,22 +467,22 @@ local function bind_context(T)
             ctx.cmds[#ctx.cmds + 1] = Back.CmdPtrOffset(ptr, root, const_zero(ctx), 1, base.byte_offset or 0, Back.BackProvDerived("MemBaseProjection"), back_bounds(info))
             return Back.BackAddrValue(ptr)
         end
-        error("lower_to_back: unsupported KernelStream base " .. tostring(cls), 3)
+        error("lower_to_back: unsupported KernelLane base " .. tostring(cls), 3)
     end
 
-    local function first_access(ctx, stream, want_write)
-        for _, aid in ipairs(stream.accesses or {}) do
+    local function first_access(ctx, lane, want_write)
+        for _, aid in ipairs(lane.accesses or {}) do
             local access = ctx.mem_access_by_id and ctx.mem_access_by_id[aid.text]
             if access ~= nil and ((want_write and is_write_access(access.kind)) or ((not want_write) and is_read_access(access.kind))) then
                 return access, ctx.mem_backend_by_access and ctx.mem_backend_by_access[aid.text]
             end
         end
-        local aid = stream.accesses and stream.accesses[1]
+        local aid = lane.accesses and lane.accesses[1]
         if aid ~= nil then return ctx.mem_access_by_id[aid.text], ctx.mem_backend_by_access[aid.text] end
         return nil, nil
     end
 
-    local function address_for_access(ctx, stream, access, info, index_expr)
+    local function address_for_access(ctx, lane, access, info, index_expr)
         local index, index_ty = lower_value_expr(ctx, index_expr)
         if scalar(index_ty) ~= scalar(Code.CodeTyIndex) then
             ctx.next_tmp = (ctx.next_tmp or 0) + 1
@@ -497,8 +497,8 @@ local function bind_context(T)
             elem_size = access.index.elem_size or 1
             const_offset = access.index.const_offset or 0
         end
-        ctx.cmds[#ctx.cmds + 1] = Back.CmdPtrOffset(ptr, base_addr(ctx, stream.base, info), index, elem_size, const_offset, Back.BackProvDerived("KernelStream"), back_bounds(info))
-        return Back.BackAddress(Back.BackAddrValue(ptr), const_zero(ctx), Back.BackProvDerived("KernelStream"), back_bounds(info))
+        ctx.cmds[#ctx.cmds + 1] = Back.CmdPtrOffset(ptr, base_addr(ctx, lane.base, info), index, elem_size, const_offset, Back.BackProvDerived("KernelLane"), back_bounds(info))
+        return Back.BackAddress(Back.BackAddrValue(ptr), const_zero(ctx), Back.BackProvDerived("KernelLane"), back_bounds(info))
     end
 
     local function kernel_value_back(ctx, kid)
@@ -513,13 +513,13 @@ local function bind_context(T)
             return v, ctx.kernel_value_types and ctx.kernel_value_types[expr.value.text] or nil
         end
         if cls == Kernel.KernelExprAlgebra then return lower_value_expr(ctx, expr.expr) end
-        if cls == Kernel.KernelExprLoad then
-            local access, info = first_access(ctx, expr.stream, false)
-            local addr = address_for_access(ctx, expr.stream, access, info, expr.index)
+        if cls == Kernel.KernelExprLaneLoad then
+            local access, info = first_access(ctx, expr.lane, false)
+            local addr = address_for_access(ctx, expr.lane, access, info, expr.index)
             ctx.next_tmp = (ctx.next_tmp or 0) + 1
             local dst = Back.BackValId("semantic.load." .. tostring(ctx.next_tmp))
-            ctx.cmds[#ctx.cmds + 1] = Back.CmdLoadInfo(dst, shape(expr.stream.elem_ty), addr, memory_info_for(ctx, access, info, ":kernel_load"))
-            return dst, expr.stream.elem_ty
+            ctx.cmds[#ctx.cmds + 1] = Back.CmdLoadInfo(dst, shape(expr.lane.elem_ty), addr, memory_info_for(ctx, access, info, ":kernel_load"))
+            return dst, expr.lane.elem_ty
         end
         error("lower_to_back: unsupported KernelExpr in scalar emitter", 3)
     end
@@ -553,8 +553,8 @@ local function bind_context(T)
         local block = ctx.kernel_value_block and ctx.kernel_value_block[binding.id.text]
         if block ~= nil then return block end
         local ecls = pvm.classof(binding.expr)
-        if ecls == Kernel.KernelExprLoad then
-            local access = first_access(ctx, binding.expr.stream, false)
+        if ecls == Kernel.KernelExprLaneLoad then
+            local access = first_access(ctx, binding.expr.lane, false)
             return access and access.block and access.block.block
         elseif ecls == Kernel.KernelExprValue then
             return ctx.value_block and ctx.value_block[binding.expr.value.text]
@@ -808,10 +808,10 @@ local function bind_context(T)
             local code_id = ctx.kernel_value_code_id and ctx.kernel_value_code_id[expr.value.text]
             if code_id ~= nil then ctx.vector_value_by_code[code_id.text] = value end
             return value
-        elseif cls == Kernel.KernelExprLoad then
-            local access, info = first_access(ctx, expr.stream, false)
+        elseif cls == Kernel.KernelExprLaneLoad then
+            local access, info = first_access(ctx, expr.lane, false)
             local index_expr = ctx.vector_counter and Value.ValueExprValue(ctx.vector_counter) or expr.index
-            local addr = address_for_access(ctx, expr.stream, access, info, index_expr)
+            local addr = address_for_access(ctx, expr.lane, access, info, index_expr)
             ctx.next_tmp = (ctx.next_tmp or 0) + 1
             local dst = Back.BackValId("semantic.vec.load." .. tostring(ctx.next_tmp))
             ctx.cmds[#ctx.cmds + 1] = Back.CmdLoadInfo(dst, Back.BackShapeVec(vec), addr, memory_info_for(ctx, access, info, ":kernel_vec_load", (info.deref_bytes or 0) * vec.lanes))

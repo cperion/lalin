@@ -101,9 +101,9 @@ local function bind_context(T)
         return out
     end
 
-    local function streams_for_accesses(func_id, loop_id, loop_blocks, mem, rejects, proofs)
+    local function lanes_for_accesses(func_id, loop_id, loop_blocks, mem, rejects, proofs)
         local _, object_by_access, backend_by_access = access_indexes(mem)
-        local stream_by_access = {}
+        local lane_by_access = {}
         local grouped = {}
         local loop_accesses = {}
         for _, access in ipairs(mem and mem.accesses or {}) do
@@ -163,17 +163,17 @@ local function bind_context(T)
                 end
             end
         end
-        local streams = {}
+        local lanes = {}
         local keys = {}
         for key in pairs(grouped) do keys[#keys + 1] = key end
         table.sort(keys)
         for i, key in ipairs(keys) do
             local g = grouped[key]
-            local stream = Kernel.KernelStream(Kernel.KernelStreamId("stream:" .. sanitize(func_id.text) .. ":" .. sanitize(loop_id.text) .. ":" .. tostring(i)), g.object, g.accesses, g.base, g.elem_ty, g.pattern, g.backend)
-            streams[#streams + 1] = stream
-            for _, aid in ipairs(g.accesses or {}) do stream_by_access[aid.text] = stream end
+            local lane = Kernel.KernelLane(Kernel.KernelLaneId("lane:" .. sanitize(func_id.text) .. ":" .. sanitize(loop_id.text) .. ":" .. tostring(i)), g.object, g.accesses, g.base, g.elem_ty, g.pattern, g.backend)
+            lanes[#lanes + 1] = lane
+            for _, aid in ipairs(g.accesses or {}) do lane_by_access[aid.text] = lane end
         end
-        return streams, stream_by_access, dependence_rejects
+        return lanes, lane_by_access, dependence_rejects
     end
 
     local function reductions_for_domain(value, domain)
@@ -260,7 +260,7 @@ local function bind_context(T)
         return k.ty
     end
 
-    local function build_kernel_body(func, loop_blocks, value, mem, stream_by_access, reduction_backedges, rejects)
+    local function build_kernel_body(func, loop_blocks, value, mem, lane_by_access, reduction_backedges, rejects)
         local value_index = CodeValueFacts.expr_index(value)
         local access_by_id = {}
         for _, access in ipairs(mem and mem.accesses or {}) do access_by_id[access.id.text] = access end
@@ -278,18 +278,18 @@ local function bind_context(T)
                     local cls = pvm.classof(k)
                     if cls == Code.CodeInstLoad then
                         local aid = Mem.MemAccessId(access_id_text(func, block, inst))
-                        local stream = stream_by_access[aid.text]
+                        local lane = lane_by_access[aid.text]
                         local access = access_by_id[aid.text]
-                        if stream == nil or access == nil then rejects[#rejects + 1] = Kernel.KernelRejectUnsupportedMemory(aid, "load has no kernel stream")
-                        else add_binding(k.dst, k.access.ty, Kernel.KernelExprLoad(stream, index_expr(access.index))) end
+                        if lane == nil or access == nil then rejects[#rejects + 1] = Kernel.KernelRejectUnsupportedMemory(aid, "load has no kernel lane")
+                        else add_binding(k.dst, k.access.ty, Kernel.KernelExprLaneLoad(lane, index_expr(access.index))) end
                     elseif cls == Code.CodeInstStore then
                         local aid = Mem.MemAccessId(access_id_text(func, block, inst))
-                        local stream = stream_by_access[aid.text]
+                        local lane = lane_by_access[aid.text]
                         local access = access_by_id[aid.text]
                         local val = kernel_value_expr(value_index, bindings_by_value, k.value)
-                        if stream == nil or access == nil then rejects[#rejects + 1] = Kernel.KernelRejectUnsupportedMemory(aid, "store has no kernel stream")
+                        if lane == nil or access == nil then rejects[#rejects + 1] = Kernel.KernelRejectUnsupportedMemory(aid, "store has no kernel lane")
                         elseif val == nil then rejects[#rejects + 1] = Kernel.KernelRejectUnsupportedExpr(k.value, "store value cannot be represented as KernelExpr")
-                        else effects[#effects + 1] = Kernel.KernelEffectStore(stream, index_expr(access.index), val) end
+                        else effects[#effects + 1] = Kernel.KernelEffectStore(lane, index_expr(access.index), val) end
                     elseif cls == Code.CodeInstConst or cls == Code.CodeInstAlias or cls == Code.CodeInstUnary or cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary or cls == Code.CodeInstCompare or cls == Code.CodeInstSelect or cls == Code.CodeInstCast then
                         local dst = k.dst
                         if dst ~= nil then
@@ -457,9 +457,9 @@ local function bind_context(T)
         return expr_is_primary(index, loop, aliases, bindings)
     end
 
-    local function stream_has_access(stream, id)
-        if stream == nil or id == nil then return false end
-        for _, access in ipairs(stream.accesses or {}) do
+    local function lane_has_access(lane, id)
+        if lane == nil or id == nil then return false end
+        for _, access in ipairs(lane.accesses or {}) do
             if access.text == id.text then return true end
         end
         return false
@@ -468,8 +468,8 @@ local function bind_context(T)
     local function copy_dependence_semantics(dst, src, dependence_rejects)
         local needs_memmove = false
         for _, dep in ipairs(dependence_rejects or {}) do
-            local before_dst, before_src = stream_has_access(dst, dep.before), stream_has_access(src, dep.before)
-            local after_dst, after_src = stream_has_access(dst, dep.after), stream_has_access(src, dep.after)
+            local before_dst, before_src = lane_has_access(dst, dep.before), lane_has_access(src, dep.before)
+            local after_dst, after_src = lane_has_access(dst, dep.after), lane_has_access(src, dep.after)
             if (before_dst and after_src) or (before_src and after_dst) then
                 needs_memmove = true
             else
@@ -575,8 +575,8 @@ local function bind_context(T)
     end
 
     local function same_load_expr(a, b)
-        if pvm.classof(a) ~= Kernel.KernelExprLoad or pvm.classof(b) ~= Kernel.KernelExprLoad then return false end
-        return a.stream == b.stream and same_value_expr(a.index, b.index)
+        if pvm.classof(a) ~= Kernel.KernelExprLaneLoad or pvm.classof(b) ~= Kernel.KernelExprLaneLoad then return false end
+        return a.lane == b.lane and same_value_expr(a.index, b.index)
     end
 
     local function expr_as_kernel_value(expr, bindings)
@@ -592,10 +592,10 @@ local function bind_context(T)
         local a_kernel, b_kernel = expr_as_kernel_value(expr.a, bindings), expr_as_kernel_value(expr.b, bindings)
         local a_const = pvm.classof(expr.a) == Value.ValueExprConst and expr.a or nil
         local b_const = pvm.classof(expr.b) == Value.ValueExprConst and expr.b or nil
-        if a_kernel ~= nil and b_const ~= nil and pvm.classof(a_kernel) == Kernel.KernelExprLoad then
+        if a_kernel ~= nil and b_const ~= nil and pvm.classof(a_kernel) == Kernel.KernelExprLaneLoad then
             return a_kernel, pred_from_cmp(op, b_const)
         end
-        if b_kernel ~= nil and a_const ~= nil and pvm.classof(b_kernel) == Kernel.KernelExprLoad then
+        if b_kernel ~= nil and a_const ~= nil and pvm.classof(b_kernel) == Kernel.KernelExprLaneLoad then
             return b_kernel, pred_from_cmp(flip_cmp(op), a_const)
         end
         return nil
@@ -621,10 +621,10 @@ local function bind_context(T)
         local store = first_effect(effects, Kernel.KernelEffectStore)
         if store == nil or not index_is_primary(store.index, loop, aliases, bindings) then return nil end
         local src = resolve_kernel_expr(store.value, bindings)
-        if pvm.classof(src) ~= Kernel.KernelExprLoad then return nil end
+        if pvm.classof(src) ~= Kernel.KernelExprLaneLoad then return nil end
         if not index_is_primary(src.index, loop, aliases, bindings) then return nil end
-        if store.dst.elem_ty ~= src.stream.elem_ty then return nil end
-        local semantics, dep_reason = copy_dependence_semantics(store.dst, src.stream, dependence_rejects)
+        if store.dst.elem_ty ~= src.lane.elem_ty then return nil end
+        local semantics, dep_reason = copy_dependence_semantics(store.dst, src.lane, dependence_rejects)
         if semantics == nil then return nil, dep_reason end
         proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("primary-index load/store is an array copy skeleton")
         if semantics == Stencil.StencilCopyMemMove then
@@ -660,7 +660,7 @@ local function bind_context(T)
             end
         end
         if hit_src == nil or hit_pred == nil or not_found == nil then return nil end
-        if pvm.classof(hit_src) ~= Kernel.KernelExprLoad or not index_is_primary(hit_src.index, loop, aliases, bindings) then return nil end
+        if pvm.classof(hit_src) ~= Kernel.KernelExprLaneLoad or not index_is_primary(hit_src.index, loop, aliases, bindings) then return nil end
         proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("early-exit primary-index search is an array find skeleton")
         return {
             effects = {},
@@ -746,10 +746,10 @@ local function bind_context(T)
             local facts = flow_loops[graph_loop.id.text]
             if facts ~= nil then add_blocks_to_set(loop_blocks, facts.body_blocks or facts.body) end
         end
-        local streams, stream_by_access, dependence_rejects = streams_for_accesses(func.id, loop_a.loop, loop_blocks, mem, rejects, proofs)
+        local lanes, lane_by_access, dependence_rejects = lanes_for_accesses(func.id, loop_a.loop, loop_blocks, mem, rejects, proofs)
         if #rejects > 0 then return nil end
 
-        local body_bindings, body_effects = build_kernel_body(func, loop_blocks, value, mem, stream_by_access, {}, rejects)
+        local body_bindings, body_effects = build_kernel_body(func, loop_blocks, value, mem, lane_by_access, {}, rejects)
         if #rejects > 0 then return nil end
         local store = first_store_effect(body_effects)
         if store == nil then return nil end
@@ -761,7 +761,7 @@ local function bind_context(T)
                 local term = block.term and block.term.kind or nil
                 if pvm.classof(term) == Code.CodeTermBranch then
                     local candidate_src, candidate_pred = find_predicate_from_cond(term.cond, true, bindings, value_index)
-                    if candidate_src ~= nil and candidate_pred ~= nil and pvm.classof(candidate_src) == Kernel.KernelExprLoad then
+                    if candidate_src ~= nil and candidate_pred ~= nil and pvm.classof(candidate_src) == Kernel.KernelExprLaneLoad then
                         src, pred = candidate_src, candidate_pred
                         break
                     end
@@ -769,16 +769,16 @@ local function bind_context(T)
             end
         end
         if src == nil or pred == nil or not index_is_primary(src.index, loop_a, aliases, bindings) then return nil end
-        if store.dst.elem_ty ~= src.stream.elem_ty then return nil end
+        if store.dst.elem_ty ~= src.lane.elem_ty then return nil end
         for _, dep in ipairs(dependence_rejects or {}) do
-            local before_dst, before_src = stream_has_access(store.dst, dep.before), stream_has_access(src.stream, dep.before)
-            local after_dst, after_src = stream_has_access(store.dst, dep.after), stream_has_access(src.stream, dep.after)
+            local before_dst, before_src = lane_has_access(store.dst, dep.before), lane_has_access(src.lane, dep.before)
+            local after_dst, after_src = lane_has_access(store.dst, dep.after), lane_has_access(src.lane, dep.after)
             if not ((before_dst and after_src) or (before_src and after_dst) or (before_dst and after_dst)) then return nil end
         end
         proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("two-pass predicate-preserving copy is a stable partition skeleton")
         local body = Kernel.KernelBody(
             Kernel.KernelDomainFlow(domain, trip_counts[loop_a.loop.text] or Flow.FlowTripCountUnknown("no semantic trip-count fact"), loop_primary_induction(loop_a)),
-            streams,
+            lanes,
             body_bindings,
             { Kernel.KernelEffectPartition(store.dst, src, pred, Stencil.StencilPartitionStable) },
             Kernel.KernelResultValue(Kernel.KernelExprAlgebra(Value.ValueExprValue(loop_primary_induction(loop_a)))),
@@ -843,7 +843,7 @@ local function bind_context(T)
                 local proofs = { Kernel.KernelProofFlow(domain, "Flow counted-domain recognition") }
                 local loop_blocks = block_set(loop.body_blocks or loop.body)
                 if func == nil then rejects[#rejects + 1] = Kernel.KernelRejectNoFacts(subject, "graph loop owner function is missing from CodeModule") end
-                local streams, stream_by_access, dependence_rejects = streams_for_accesses(func_id, loop.loop, loop_blocks, mem, rejects, proofs)
+                local lanes, lane_by_access, dependence_rejects = lanes_for_accesses(func_id, loop.loop, loop_blocks, mem, rejects, proofs)
                 local effects = func and loop_effects(func, loop_blocks, effect, rejects, proofs) or {}
                 local reductions, closed_forms = reductions_for_domain(value, domain)
                 local reduction_backedges = {}
@@ -861,7 +861,7 @@ local function bind_context(T)
                 local body_bindings, body_effects = {}, {}
                 local value_index = CodeValueFacts.expr_index(value)
                 if func ~= nil then
-                    body_bindings, body_effects = build_kernel_body(func, loop_blocks, value, mem, stream_by_access, reduction_backedges, rejects)
+                    body_bindings, body_effects = build_kernel_body(func, loop_blocks, value, mem, lane_by_access, reduction_backedges, rejects)
                 end
                 local skeleton = nil
                 if #rejects == 0 then
@@ -926,7 +926,7 @@ local function bind_context(T)
                     local counter = loop.inductions and loop.inductions[1] and loop.inductions[1].value or nil
                     local body = Kernel.KernelBody(
                         Kernel.KernelDomainFlow(domain, trip, counter),
-                        streams,
+                        lanes,
                         body_bindings,
                         effects,
                         result,

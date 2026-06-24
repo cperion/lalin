@@ -305,8 +305,9 @@ incremental events without coroutine overhead in hot paths.
 
 Current implementation:
 
-- Formatting and indexing remain reflective.
-- The stream ABI is available for compiled process pipelines.
+- Family diagnostics and index are stream routers with materializing sinks.
+- LLB render/format expose stream forms; string formatting is the sink.
+- Deeper formatter/indexer codegen remains future work.
 
 ## Environment Installer Codegen
 
@@ -320,9 +321,9 @@ install_moon_family(env, opts)
 ```
 
 The installer should use direct assignments for known exports and explicit
-namespace tables for member languages. `llb.stream` remains an LLB module value;
-it is not ambiently exported as a bare `stream` family head because that collides
-with LLPVM's semantic `stream` language head.
+namespace tables for member languages. `stream` is reserved for the LLB module
+shape (`llb.stream`) and is not a family language head. LLPVM uses `tape` for
+its typed bytecode sequence vocabulary.
 
 ## Trust Boundary
 
@@ -349,8 +350,9 @@ the parameter object.
 - [x] Compiled role normalizers.
 - [x] Per-role compiled spread expanders for array/product/sum roles.
 - [x] Compiled staged head machines installed as language exports.
-- [ ] Compiled family projectors.
+- [x] Family projectors expose stream routers.
 - [ ] Lazy diagnostic replay thunks with ids.
-- [ ] Formatter/indexer stream codegen.
+- [x] Diagnostics/index/format expose stream surfaces and sinks.
+- [ ] Formatter/indexer source-generated stream codegen.
 - [ ] Generated environment installers.
 - [ ] Whole-language compiled runtime mode selection.

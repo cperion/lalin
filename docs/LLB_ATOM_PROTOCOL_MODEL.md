@@ -248,8 +248,8 @@ g.role. product {
   algebra = "product",
   unique_names = true,
 
-  normalize = function(ctx, value)
-    ...
+  stream = function(lang, ctx, value)
+    return gen, param, state
   end,
 
   check = function(ctx, fields)

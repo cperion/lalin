@@ -30,7 +30,7 @@ return pvm. Expr {
 
   world. raw [Expr],
 
-  stream. raw_items [raw] {
+  tape. raw_items [raw] {
     record. one (Node.Int { value = 1 }),
     record. two (Node.Int { value = 2 }),
     record. add_node (Node.Add { left = one, right = two }),
@@ -58,7 +58,7 @@ ll.load(src, name)        -- load and evaluate a DSL chunk
 ll.bytecode(value)        -- encode ProgramSpec/ProgramImage
 ll.bytebuffer(bytes)      -- copy a Lua string into uint8_t[] for FFI
 
-ll.records(bytes)         -- process stream over LLPV bytecode records
+ll.records(bytes)         -- process tape over LLPV bytecode records
 ll.validate(bytes)        -- validation/inspection process over records
 ll.inspect(bytes)         -- collect ll.validate(bytes) events into a table
 
@@ -72,7 +72,7 @@ ll.format_file(path)
 ll.write_format_file(path)
 
 ll.schema(items)          -- fragment helper for definition declarations
-ll.stream_items(items)    -- fragment helper for stream values
+ll.tape_items(items)    -- fragment helper for tape values
 ll._(fragment)            -- structural splice marker
 ll.spread(fragment)       -- explicit alias for ll._
 
@@ -88,7 +88,7 @@ vm.seq
 vm.phase
 vm.program
 mutation-style type construction
-proxy stream construction
+proxy tape construction
 bytecode assembly helpers as authoring syntax
 ```
 
@@ -125,7 +125,7 @@ lang
 type
 op
 world
-stream
+tape
 record
 machine
 phase
@@ -177,7 +177,7 @@ Generated language environments provide capability `llpvm.language.<Name>`.
 
 ## Definition body
 
-A program contains language schemas, worlds, streams, machines, phases, task
+A program contains language schemas, worlds, tapes, machines, phases, task
 specifications, and roots in one explicit body.
 
 ```lua
@@ -213,10 +213,10 @@ independent from declaration order.
 
 ## Program body
 
-Streams, records, and roots live in the same `pvm` body.
+Tapes, records, and roots live in the same `pvm` body.
 
 ```lua
-stream. raw_items [raw] {
+tape. raw_items [raw] {
   record. one (Node.Int { value = 1 }),
   record. two (Node.Int { value = 2 }),
   record. add_node (Node.Add { left = one, right = two }),
@@ -229,11 +229,11 @@ root {
 }
 ```
 
-`stream. name [world]` creates a stream in a world. `record. name (Type.Op { ...
+`tape. name [world]` creates a tape in a world. `record. name (Type.Op { ...
 })` records a named bytecode record. Record names are referenceable through LLB
 auto-names.
 
-Avoid using DSL keywords as stream or record names. For example, prefer
+Avoid using DSL keywords as tape or record names. For example, prefer
 `raw_items` over `input`, because `input` is also the task input directive.
 
 Reusable machine languages still support generated world/op heads after their
@@ -275,7 +275,7 @@ return pvm. Expr {
     type. Node { op. Int { value [i64] }, },
   },
   world. raw [Expr],
-  stream. raw_items [raw] {
+  tape. raw_items [raw] {
     record. one (Node.Int { value = 1 }),
   },
   root { raw_items, one },
@@ -392,7 +392,7 @@ lang. Back
 type. Node
 op. Int
 world. raw [Expr]
-stream. raw_items [raw]
+tape. raw_items [raw]
 record. one (Node.Int { ... })
 from. raw
 to. lowered

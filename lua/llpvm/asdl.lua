@@ -57,12 +57,12 @@ local definitions = {
 
     product(q("Args"), { f("values", q("ArgValue"), { list = true }) }),
 
-    sum(q("Stream"), {
+    sum(q("Tape"), {
         ctor(q("Empty"), { f("world", q("World")) }),
         ctor(q("Once"), { f("op", q("Op")) }),
         ctor(q("Seq"), { f("world", q("World")), f("ops", q("Op"), { list = true }) }),
-        ctor(q("Concat"), { f("streams", q("Stream"), { list = true }) }),
-        ctor(q("PhaseMap"), { f("phase", q("Phase")), f("input", q("Stream")), f("args", q("Args")) }),
+        ctor(q("Concat"), { f("tapes", q("Tape"), { list = true }) }),
+        ctor(q("PhaseMap"), { f("phase", q("Phase")), f("input", q("Tape")), f("args", q("Args")) }),
     }),
 
     sum(q("Machine"), {
@@ -80,7 +80,7 @@ local definitions = {
     product(q("TaskRunEvent"), { f("seq", "number"), f("kind", "string"), f("message", "string") }),
     product(q("TaskRun"), { f("task", q("Symbol")), f("status", "string"), f("events", q("TaskRunEvent"), { list = true }), f("steps", q("TaskStepRun"), { list = true }) }),
 
-    product(q("Program"), { f("abis", q("Abi"), { list = true }), f("worlds", q("World"), { list = true }), f("machines", q("Machine"), { list = true }), f("phases", q("Phase"), { list = true }), f("roots", q("Stream"), { list = true }) }),
+    product(q("Program"), { f("abis", q("Abi"), { list = true }), f("worlds", q("World"), { list = true }), f("machines", q("Machine"), { list = true }), f("phases", q("Phase"), { list = true }), f("roots", q("Tape"), { list = true }) }),
 }
 
 function M.Define(T)

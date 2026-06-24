@@ -76,9 +76,33 @@ assert(#sum_out.variants == 2, "compiled sum role should expand variant spreads"
 assert(sum_out.variants[1].name == "Some" and sum_out.variants[2].name == "None", "compiled sum role should preserve variant order")
 
 local compiled_items = Mini.compiled.roles.items
+assert(type(compiled_items.stream) == "function", "compiled role should expose stream form")
+assert(type(compiled_items.collect) == "function", "compiled role should expose collect sink")
 local reflected = llb.normalize_role({ lang = Mini, reflective = true }, "items", { "x" })
 local compiled = compiled_items({ lang = Mini }, { "x" })
 assert(reflected[1].text == compiled[1].text, "compiled role output should match reflective output")
+
+local streamed = {}
+llb.stream.each(function(item) streamed[#streamed + 1] = item end, compiled_items.stream({ lang = Mini }, { "s1", "s2" }))
+assert(#streamed == 2 and streamed[1].text == "s1" and streamed[2].text == "s2", "compiled role stream should emit normalized items")
+
+local spread_streamed = {}
+llb.stream.each(function(item) spread_streamed[#spread_streamed + 1] = item end, Mini.compiled.spreads.items.stream({ lang = Mini }, llb._(fragment)))
+assert(#spread_streamed == 2 and spread_streamed[1].text == "c" and spread_streamed[2].text == "d", "compiled spread stream should emit fragment items")
+
+local event_out = llb.collect_head_events(env.decl, {
+    llb.event(llb.channel.index_name, llb.name("evented"), { action = "name", argc = 1 }),
+    llb.event(llb.channel.call_table, { "q" }, { action = "call", argc = 1 }),
+})
+assert(event_out.tag == "decl" and event_out.name == "evented" and event_out.items[1].text == "q", "head event stream should construct through the same role sinks")
+
+local rendered_chunks = {}
+llb.stream.each(function(chunk) rendered_chunks[#rendered_chunks + 1] = chunk end, llb.render_stream(llb.doc.concat { "a", llb.doc.line(), "b" }, { width = 1 }))
+assert(table.concat(rendered_chunks) == "a\nb", "render_stream should emit render chunks")
+
+local formatted_chunks = {}
+llb.stream.each(function(chunk) formatted_chunks[#formatted_chunks + 1] = chunk end, llb.format_stream(llb.name("fmt")))
+assert(table.concat(formatted_chunks) == "fmt", "format_stream should be the primary formatting stream")
 
 local ok = pcall(function()
     llb.normalize_role({ lang = Mini, reflective = true }, "items", 1)

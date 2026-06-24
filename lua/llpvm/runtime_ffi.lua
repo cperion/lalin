@@ -35,7 +35,7 @@ typedef struct {
     ml_index initial_world_cap;
     ml_index initial_op_cap;
     ml_index initial_buffer_cap;
-    ml_index initial_stream_cap;
+    ml_index initial_tape_cap;
     ml_index initial_program_cap;
     ml_index initial_args_cap;
     ml_index initial_machine_cap;
@@ -51,7 +51,7 @@ typedef struct {
     ml_index worlds;
     ml_index ops;
     ml_index buffers;
-    ml_index streams;
+    ml_index tapes;
     ml_index machines;
     ml_index phases;
     ml_index recordings;
@@ -63,8 +63,8 @@ llpvm_runtime_LlStatus llpvm_open(void* config, void* out);
 llpvm_runtime_LlStatus llpvm_close(uint32_t vm);
 llpvm_runtime_LlStatus llpvm_load_program(uint32_t vm, void* bytes, ml_index len, void* out);
 llpvm_runtime_LlStatus llpvm_apply_phase(uint32_t vm, uint32_t phase, uint32_t input, uint32_t args, void* out);
-llpvm_runtime_LlStatus llpvm_drain(uint32_t vm, uint32_t stream, void* out);
-llpvm_runtime_LlStatus llpvm_drain_count(uint32_t vm, uint32_t stream, void* out);
+llpvm_runtime_LlStatus llpvm_drain(uint32_t vm, uint32_t tape, void* out);
+llpvm_runtime_LlStatus llpvm_drain_count(uint32_t vm, uint32_t tape, void* out);
 llpvm_runtime_LlStatus llpvm_report(uint32_t vm, void* out);
 ]]
     cdef_loaded = true
@@ -127,7 +127,7 @@ local function config_from(opts)
     cfg[0].initial_world_cap = opts.initial_world_cap or 0
     cfg[0].initial_op_cap = opts.initial_op_cap or 0
     cfg[0].initial_buffer_cap = opts.initial_buffer_cap or 0
-    cfg[0].initial_stream_cap = opts.initial_stream_cap or 0
+    cfg[0].initial_tape_cap = opts.initial_tape_cap or 0
     cfg[0].initial_program_cap = opts.initial_program_cap or 0
     cfg[0].initial_args_cap = opts.initial_args_cap or 0
     cfg[0].initial_machine_cap = opts.initial_machine_cap or 0
@@ -197,7 +197,7 @@ function Vm:report()
         worlds = tonumber(out[0].worlds),
         ops = tonumber(out[0].ops),
         buffers = tonumber(out[0].buffers),
-        streams = tonumber(out[0].streams),
+        tapes = tonumber(out[0].tapes),
         machines = tonumber(out[0].machines),
         phases = tonumber(out[0].phases),
         recordings = tonumber(out[0].recordings),
@@ -219,24 +219,24 @@ function Vm:apply_phase(phase, input, args)
     local st = wrap_status(self.runtime.lib.llpvm_apply_phase(
         self.ref,
         require_handle(phase, "phase"),
-        require_handle(input, "input stream"),
+        require_handle(input, "input tape"),
         require_handle(args, "args"),
         out
     ))
     return st, tonumber(out[0])
 end
 
-function Vm:drain(stream)
+function Vm:drain(tape)
     local out = self._u32
     out[0] = 0
-    local st = wrap_status(self.runtime.lib.llpvm_drain(self.ref, require_handle(stream, "stream"), out))
+    local st = wrap_status(self.runtime.lib.llpvm_drain(self.ref, require_handle(tape, "tape"), out))
     return st, tonumber(out[0])
 end
 
-function Vm:drain_count(stream)
+function Vm:drain_count(tape)
     local out = self._index
     out[0] = 0
-    local st = wrap_status(self.runtime.lib.llpvm_drain_count(self.ref, require_handle(stream, "stream"), out))
+    local st = wrap_status(self.runtime.lib.llpvm_drain_count(self.ref, require_handle(tape, "tape"), out))
     return st, tonumber(out[0])
 end
 

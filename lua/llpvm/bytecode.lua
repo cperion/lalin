@@ -34,11 +34,11 @@ M.TAG = {
     arg_string = 84,
     arg_ref = 85,
     args = 90,
-    stream_empty = 100,
-    stream_once = 101,
-    stream_seq = 102,
-    stream_concat = 103,
-    stream_phase_map = 104,
+    tape_empty = 100,
+    tape_once = 101,
+    tape_seq = 102,
+    tape_concat = 103,
+    tape_phase_map = 104,
     machine_region = 110,
     cache_none = 120,
     cache_full = 121,
@@ -97,7 +97,7 @@ local function read_u32_string(s, at)
     return b0 + b1 * 256 + b2 * 65536 + b3 * 16777216
 end
 
-local function find_stream_seq_ids(records, root_id)
+local function find_tape_seq_ids(records, root_id)
     local pos = 1
     while pos + 4 <= #records do
         local tag = records:byte(pos)
@@ -105,7 +105,7 @@ local function find_stream_seq_ids(records, root_id)
         local payload = pos + 5
         local next_pos = payload + size
         assert(next_pos - 1 <= #records, "malformed encoded LLPVM records")
-        if tag == M.TAG.stream_seq and size >= 12 then
+        if tag == M.TAG.tape_seq and size >= 12 then
             local id = read_u32_string(records, payload)
             if id == root_id then
                 local n = read_u32_string(records, payload + 8)
@@ -118,7 +118,7 @@ local function find_stream_seq_ids(records, root_id)
         end
         pos = next_pos
     end
-    error("LLPVM bytecode root stream is not a seq stream", 2)
+    error("LLPVM bytecode root tape is not a seq tape", 2)
 end
 
 local function put_i64(out, x)
@@ -291,26 +291,26 @@ function Encoder:emit_node(id, node)
 
     if cls == T.Empty then
         local world = self:id(node.world)
-        return record(self.out, M.TAG.stream_empty, function(out) put_u32(out, id); put_u32(out, world) end)
+        return record(self.out, M.TAG.tape_empty, function(out) put_u32(out, id); put_u32(out, world) end)
     end
     if cls == T.Once then
         local op = self:id(node.op)
-        return record(self.out, M.TAG.stream_once, function(out) put_u32(out, id); put_u32(out, op) end)
+        return record(self.out, M.TAG.tape_once, function(out) put_u32(out, id); put_u32(out, op) end)
     end
     if cls == T.Seq then
         local world = self:id(node.world)
         local ops = self:ids_of(node.ops)
-        return record(self.out, M.TAG.stream_seq, function(out) put_u32(out, id); put_u32(out, world); put_id_list(out, ops) end)
+        return record(self.out, M.TAG.tape_seq, function(out) put_u32(out, id); put_u32(out, world); put_id_list(out, ops) end)
     end
     if cls == T.Concat then
-        local streams = self:ids_of(node.streams)
-        return record(self.out, M.TAG.stream_concat, function(out) put_u32(out, id); put_id_list(out, streams) end)
+        local tapes = self:ids_of(node.tapes)
+        return record(self.out, M.TAG.tape_concat, function(out) put_u32(out, id); put_id_list(out, tapes) end)
     end
     if cls == T.PhaseMap then
         local phase = self:id(node.phase)
         local input = self:id(node.input)
         local args = self:id(node.args)
-        return record(self.out, M.TAG.stream_phase_map, function(out) put_u32(out, id); put_u32(out, phase); put_u32(out, input); put_u32(out, args) end)
+        return record(self.out, M.TAG.tape_phase_map, function(out) put_u32(out, id); put_u32(out, phase); put_u32(out, input); put_u32(out, args) end)
     end
 
     if cls == T.RegionMachine then
@@ -350,7 +350,7 @@ function M.encode_program(program)
     assert(#roots > 0, "LLPVM bytecode program requires at least one root")
     local records = table.concat(enc.out)
     local root_id = roots[1]
-    local root_ids = find_stream_seq_ids(records, root_id)
+    local root_ids = find_tape_seq_ids(records, root_id)
     local header = {}
     header[#header + 1] = M.MAGIC
     put_u32(header, M.VERSION)
@@ -601,7 +601,7 @@ end
 
 function Builder:empty(world_id)
     local id = self:alloc_id()
-    self:add(M.TAG.stream_empty, function(out)
+    self:add(M.TAG.tape_empty, function(out)
         put_u32(out, id)
         put_u32(out, world_id)
     end)
@@ -610,7 +610,7 @@ end
 
 function Builder:once(op_id)
     local id = self:alloc_id()
-    self:add(M.TAG.stream_once, function(out)
+    self:add(M.TAG.tape_once, function(out)
         put_u32(out, id)
         put_u32(out, op_id)
     end)
@@ -619,7 +619,7 @@ end
 
 function Builder:seq(world_id, op_ids)
     local id = self:alloc_id()
-    self:add(M.TAG.stream_seq, function(out)
+    self:add(M.TAG.tape_seq, function(out)
         put_u32(out, id)
         put_u32(out, world_id)
         put_id_list(out, op_ids or {})
@@ -627,18 +627,18 @@ function Builder:seq(world_id, op_ids)
     return id
 end
 
-function Builder:concat(stream_ids)
+function Builder:concat(tape_ids)
     local id = self:alloc_id()
-    self:add(M.TAG.stream_concat, function(out)
+    self:add(M.TAG.tape_concat, function(out)
         put_u32(out, id)
-        put_id_list(out, stream_ids or {})
+        put_id_list(out, tape_ids or {})
     end)
     return id
 end
 
 function Builder:phase_map(phase_id, input_id, args_id)
     local id = self:alloc_id()
-    self:add(M.TAG.stream_phase_map, function(out)
+    self:add(M.TAG.tape_phase_map, function(out)
         put_u32(out, id)
         put_u32(out, phase_id)
         put_u32(out, input_id)
@@ -684,15 +684,15 @@ function Builder:phase(name, input_id, output_id, machine_id, cache_id)
     return id
 end
 
-function Builder:finish(root_stream_ids, root_op_ids)
-    root_stream_ids = root_stream_ids or {}
+function Builder:finish(root_tape_ids, root_op_ids)
+    root_tape_ids = root_tape_ids or {}
     root_op_ids = root_op_ids or {}
-    assert(#root_stream_ids > 0, "LLPVM bytecode program requires at least one root")
-    assert(#root_op_ids > 0, "LLPVM bytecode root stream must contain at least one op")
+    assert(#root_tape_ids > 0, "LLPVM bytecode program requires at least one root")
+    assert(#root_op_ids > 0, "LLPVM bytecode root tape must contain at least one op")
     local header = {}
     header[#header + 1] = M.MAGIC
     put_u32(header, M.VERSION)
-    put_u32(header, root_stream_ids[1])
+    put_u32(header, root_tape_ids[1])
     put_u32(header, #root_op_ids)
     put_u32(header, 20)
     local root_table = {}

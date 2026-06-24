@@ -13,7 +13,7 @@ moonlift.dsl
   modules, diagnostics, formatting, LSP indexing, and compilation hooks.
 
 llpvm.dsl
-  Low-level PVM language heads for typed bytecode languages, worlds, streams,
+  Low-level PVM language heads for typed bytecode languages, worlds, tapes,
   records, machines, phases, tasks, and roots.
 
 llisle.dsl
@@ -176,7 +176,7 @@ moonschema.dsl  owns schema modules, product/sum schema, schema identity,
 moonlift.dsl    owns native programs, native control, native type values,
                 resource discipline, and native compilation
 
-llpvm.dsl       owns bytecode programs, bytecode streams, process/task specs,
+llpvm.dsl       owns bytecode programs, bytecode tapes, process/task specs,
                 and PVM images
 
 llisle.dsl      owns lowering rules, rewrite relations, and explicit
@@ -224,7 +224,7 @@ The family has one collision policy. Important choices:
 ```text
 process  belongs to LLB GPS process streams
 task     belongs to LLPVM typed process/task declarations
-record   belongs to LLPVM stream records
+record   belongs to LLPVM tape records
 value    is not a reserved family keyword; it is available as a user field/name
 moonlift is the long alias for ml
 schema   is the MoonSchema namespace, not LLPVM's internal schema directive
@@ -363,7 +363,7 @@ llpvm.lang
 llpvm.type
 llpvm.op
 llpvm.world
-llpvm.stream
+llpvm.tape
 llpvm.record
 llpvm.machine
 llpvm.phase
@@ -447,7 +447,7 @@ construction.
 Reserved by family policy:
 
 ```text
-pvm lang language type op world stream record machine phase task event
+pvm lang language type op world tape record machine phase task event
 input output root ml moonlift llpvm schema
 ```
 
@@ -637,8 +637,8 @@ LLPVM is the typed bytecode/program side of the family.
 | `type` | `type. Name { ops... }` | Operation sum/type family. |
 | `op` | `op. Name { fields... }` | Operation constructor payload shape. |
 | `world` | `world. name [Lang]` | Named world backed by a language/schema. |
-| `stream` | `stream. name [world] { records... }` | Named stream of bytecode records. |
-| `record` | `record. name (OpValue)` | Named stream item. |
+| `tape` | `tape. name [world] { records... }` | Named tape of bytecode records. |
+| `record` | `record. name (OpValue)` | Named tape item. |
 | `machine` | `machine. name { directives... }` | Execution machine declaration. |
 | `phase` | `phase. name { directives... }` | Compiler/runtime phase declaration. |
 | `task` | `task. name { directives/events... }` | Typed process/task declaration. |
@@ -649,7 +649,7 @@ LLPVM is the typed bytecode/program side of the family.
 | `to` | `to. world` | Phase output world. |
 | `entry` | `entry. symbol` | Machine/phase entry symbol. |
 | `cache` | `cache. mode` | Cache policy directive. |
-| `root` | `root { roots... }` | Program root stream/record/phase references. |
+| `root` | `root { roots... }` | Program root tape/record/phase references. |
 
 LLPVM records use generated language constructors:
 
@@ -670,7 +670,7 @@ task. compile {
 ```
 
 Task declarations and task runs lower to `LlPvm.TaskSpec` and
-`LlPvm.TaskRun`. Runtime streams still use LLB `process`.
+`LlPvm.TaskRun`. Runtime tapes still use LLB `process`.
 
 ## LLB Substrate Reference
 
@@ -1105,7 +1105,7 @@ llpvm.pvm. Expr {
 
   llpvm.world. raw [Expr],
 
-  llpvm.stream. raw_items [raw] {
+  llpvm.tape. raw_items [raw] {
     llpvm.record. one (Node.Int { value = 1 }),
     llpvm.record. two (Node.Int { value = 2 }),
     llpvm.record. add_node (Node.Add { left = one, right = two }),
@@ -1416,8 +1416,8 @@ language. Name { ... }     reusable generated LLPVM language object
 type. Name { ... }         sum/type family in a bytecode language
 op. Name { fields }        operation constructor payload shape
 world. name [Lang]         named operation world
-stream. name [world] { ... } bytecode record stream
-record. name (OpValue)     named stream record
+tape. name [world] { ... } bytecode record tape
+record. name (OpValue)     named tape record
 machine. name { ... }      execution machine declaration
 phase. name { ... }        phase declaration
 task. name { ... }         typed process/task declaration
@@ -1434,7 +1434,7 @@ root { ... }               program roots
 The hard naming rule is:
 
 ```text
-record  is the LLPVM stream item head
+record  is the LLPVM tape item head
 task    is the LLPVM typed process declaration head
 process is the LLB GPS process helper
 value   is ordinary user space

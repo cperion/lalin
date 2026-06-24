@@ -51,7 +51,7 @@ Runtime projection
   Generated MoonAsdl-backed classes, builders, interning, and structural update.
 
 LLPVM projection
-  Executable worlds, streams, phases, bytecode images, and process events.
+  Executable worlds, tapes, phases, bytecode images, and process events.
 
 Moonlift projection
   Native data declarations and phase-machine implementations.
@@ -1232,7 +1232,7 @@ llpvm_language
 llpvm_world
 llpvm_op_kind
 llpvm_field
-llpvm_stream
+llpvm_tape
 llpvm_value
 llpvm_payload
 llpvm_phase
@@ -1285,7 +1285,7 @@ values. tree {
 The image contains:
 
 ```text
-llpvm_stream tree world=values ops=[root]
+llpvm_tape tree world=values ops=[root]
 ```
 
 ### Machine records

@@ -352,8 +352,8 @@ local function bind_context(T)
         return pvm.classof(ret) == Code.CodeTermReturn and #(ret.values or {}) == 0 or reaches_void_return(blocks, exit)
     end
 
-    local function stream_base_value(stream)
-        local base = stream and stream.base or nil
+    local function stream_base_value(lane)
+        local base = lane and lane.base or nil
         if pvm.classof(base) == Mem.MemBaseValue then return base.value end
         if pvm.classof(base) == Mem.MemBaseProjection then
             local inner = stream_base_value({ base = base.base })
@@ -381,8 +381,8 @@ local function bind_context(T)
         return nil
     end
 
-    local function field_name_from_stream(ctx, stream)
-        for _, access_id in ipairs(stream and stream.accesses or {}) do
+    local function field_name_from_stream(ctx, lane)
+        for _, access_id in ipairs(lane and lane.accesses or {}) do
             local access = ctx.mem_accesses and ctx.mem_accesses[access_id.text] or nil
             local place = access and access.place or nil
             while place ~= nil do
@@ -400,9 +400,9 @@ local function bind_context(T)
         return nil
     end
 
-    local function stream_topology(ctx, stream)
-        local object = ctx.mem_objects and stream and ctx.mem_objects[stream.object.text] or nil
-        local base_value = stream_base_value(stream)
+    local function stream_topology(ctx, lane)
+        local object = ctx.mem_objects and lane and ctx.mem_objects[lane.object.text] or nil
+        local base_value = stream_base_value(lane)
         local soa_contract = base_value and ctx.soa_contracts and ctx.func_id and ctx.soa_contracts[ctx.func_id.text .. "\0" .. base_value.text] or nil
         local function wrap_soa(topology)
             if soa_contract == nil or topology == nil then return topology end
@@ -415,12 +415,12 @@ local function bind_context(T)
                 local parent = ctx.mem_objects and ctx.mem_objects[provenance.parent.text] or nil
                 local parent_topology = stream_topology(ctx, {
                     object = provenance.parent,
-                    base = stream and stream.base,
-                    pattern = stream and stream.pattern,
-                    accesses = stream and stream.accesses,
+                    base = lane and lane.base,
+                    pattern = lane and lane.pattern,
+                    accesses = lane and lane.accesses,
                 })
                 local record_ty = parent and parent.elem_ty or nil
-                local field_name = field_name_from_stream(ctx, stream)
+                local field_name = field_name_from_stream(ctx, lane)
                 if parent_topology ~= nil and record_ty ~= nil and field_name ~= nil then
                     return wrap_soa(Stencil.StencilTopologyFieldProjection(parent_topology, record_ty, field_name, provenance.byte_offset or 0))
                 end
@@ -450,7 +450,7 @@ local function bind_context(T)
                 ))
             end
         end
-        return wrap_soa(pattern_topology(stream and stream.pattern))
+        return wrap_soa(pattern_topology(lane and lane.pattern))
     end
 
     local function topology_data_value(topology)
@@ -606,44 +606,44 @@ local function bind_context(T)
         return store, nil
     end
 
-    local function index_stream_for(expr, bindings)
+    local function index_lane_for(expr, bindings)
         local class, class_err = StencilRules.classify_expr(Kernel.KernelExprAlgebra(expr), bindings)
         if class == nil then return nil, class_err end
-        return StencilRules:run("select_index_stream", { class = class }, "stream", "expression is not an index stream")
+        return StencilRules:run("select_index_lane", { class = class }, "lane", "expression is not an index lane")
     end
 
-    local function stream_selection_fact(ctx, stream)
-        local topology = stream_topology(ctx, stream)
+    local function lane_selection_fact(ctx, lane)
+        local topology = stream_topology(ctx, lane)
         if topology == nil then return nil end
-        local base = stream_base_value(stream)
+        local base = stream_base_value(lane)
         local tcls = pvm.classof(topology)
         base = topology_data_value(topology) or base
         if base == nil then return nil end
         return {
             base = base,
             base_expr = value_id_expr(ctx, base),
-            elem_ty = stream.elem_ty,
+            elem_ty = lane.elem_ty,
             topology = topology,
         }
     end
 
     local function enrich_stream_class(ctx, class, graph_loop, loop_fact, bindings, prefix)
-        local stream = class[prefix]
+        local lane = class[prefix]
         local index = class[prefix .. "_index"] or class.index
-        local fact = stream_selection_fact(ctx, stream)
-        if fact == nil then return nil, prefix .. " stream has no value base" end
-        if prefix == "stream" then
+        local fact = lane_selection_fact(ctx, lane)
+        if fact == nil then return nil, prefix .. " lane has no value base" end
+        if prefix == "lane" then
             class.src = fact.base
             class.src_expr = fact.base_expr
             class.elem_ty = fact.elem_ty
             class.src_topology = fact.topology
             class.index_primary = expr_is_primary(ctx, index, graph_loop, loop_fact, bindings)
             if not class.index_primary then
-                local idx = index_stream_for(index, bindings)
+                local idx = index_lane_for(index, bindings)
                 if idx ~= nil then
-                    local idx_fact = stream_selection_fact(ctx, idx.stream)
+                    local idx_fact = lane_selection_fact(ctx, idx.lane)
                     if idx_fact ~= nil then
-                        class.index_stream = {
+                        class.index_lane = {
                             base = idx_fact.base,
                             base_expr = idx_fact.base_expr,
                             elem_ty = idx_fact.elem_ty,
@@ -665,7 +665,7 @@ local function bind_context(T)
 
     local function enrich_stencil_class(ctx, class, graph_loop, loop_fact, bindings, dst_base, dst_ty)
         if class.kind == "load" or class.kind == "map" or class.kind == "cast" or class.kind == "compare" then
-            local ok, err = enrich_stream_class(ctx, class, graph_loop, loop_fact, bindings, "stream")
+            local ok, err = enrich_stream_class(ctx, class, graph_loop, loop_fact, bindings, "lane")
             if not ok then return nil, err end
             if class.kind == "map" then
                 class.same_src_dst_ty = class.src == dst_base and same_code_type(class.elem_ty, dst_ty)
@@ -687,10 +687,10 @@ local function bind_context(T)
         return enrich_stencil_class(ctx, classified, graph_loop, loop_fact, bindings, dst_base, dst_ty)
     end
 
-    local function index_stream_selection_fact(ctx, expr, graph_loop, loop_fact, bindings)
-        local idx = index_stream_for(expr, bindings)
+    local function index_lane_selection_fact(ctx, expr, graph_loop, loop_fact, bindings)
+        local idx = index_lane_for(expr, bindings)
         if idx == nil then return nil end
-        local fact = stream_selection_fact(ctx, idx.stream)
+        local fact = lane_selection_fact(ctx, idx.lane)
         if fact == nil then return nil end
         return {
             base = fact.base,
@@ -709,8 +709,8 @@ local function bind_context(T)
         local store, store_reason = single_store_effect(plan.body)
         if store == nil then return nil, store_reason end
         local dst_base = stream_base_value(store.dst)
-        if dst_base == nil then return nil, "store destination stream has no value base" end
-        local dst_fact = stream_selection_fact(ctx, store.dst)
+        if dst_base == nil then return nil, "store destination lane has no value base" end
+        local dst_fact = lane_selection_fact(ctx, store.dst)
         local bindings = binding_index(plan.body)
         local classified, reason = classify_store_expr(store.value, bindings)
         if classified == nil then return nil, reason end
@@ -730,7 +730,7 @@ local function bind_context(T)
             start_expr = start_expr,
             stop_expr = stop_expr,
             store_index_primary = store_index_is_primary,
-            store_index_stream = store_index_is_primary and nil or index_stream_selection_fact(ctx, store.index, graph_loop, loop_fact, bindings),
+            store_index_lane = store_index_is_primary and nil or index_lane_selection_fact(ctx, store.index, graph_loop, loop_fact, bindings),
             scatter_conflicts = Stencil.StencilScatterUniqueIndices,
             class = class,
         }
@@ -880,8 +880,8 @@ local function bind_context(T)
         if result.reduction ~= reduction then return nil, "scan result reduction does not match scan effect" end
         if not function_returns_reduction(func, graph_loop, reduction) then return nil, "function return is not the scan final value" end
         local dst_base = stream_base_value(effect.dst)
-        if dst_base == nil then return nil, "scan destination stream has no value base" end
-        local dst_fact = stream_selection_fact(ctx, effect.dst)
+        if dst_base == nil then return nil, "scan destination lane has no value base" end
+        local dst_fact = lane_selection_fact(ctx, effect.dst)
         local bindings = binding_index(plan.body)
         local class, class_reason = enriched_class_for_expr(ctx, Kernel.KernelExprAlgebra(reduction.contribution), graph_loop, loop_fact, bindings, dst_base, effect.dst.elem_ty)
         if class == nil then return nil, class_reason end
@@ -936,8 +936,8 @@ local function bind_context(T)
         local effect, effect_reason = single_effect(plan.body, Kernel.KernelEffectPartition)
         if effect == nil then return nil, effect_reason end
         local dst_base = stream_base_value(effect.dst)
-        if dst_base == nil then return nil, "partition destination stream has no value base" end
-        local dst_fact = stream_selection_fact(ctx, effect.dst)
+        if dst_base == nil then return nil, "partition destination lane has no value base" end
+        local dst_fact = lane_selection_fact(ctx, effect.dst)
         local bindings = binding_index(plan.body)
         local class, class_reason = enriched_class_for_expr(ctx, effect.src, graph_loop, loop_fact, bindings, dst_base, effect.dst.elem_ty)
         if class == nil then return nil, class_reason end
@@ -965,8 +965,8 @@ local function bind_context(T)
         local effect, effect_reason = single_effect(plan.body, Kernel.KernelEffectCopy)
         if effect == nil then return nil, effect_reason end
         local dst_base = stream_base_value(effect.dst)
-        if dst_base == nil then return nil, "copy destination stream has no value base" end
-        local dst_fact = stream_selection_fact(ctx, effect.dst)
+        if dst_base == nil then return nil, "copy destination lane has no value base" end
+        local dst_fact = lane_selection_fact(ctx, effect.dst)
         local bindings = binding_index(plan.body)
         local class, class_reason = enriched_class_for_expr(ctx, effect.src, graph_loop, loop_fact, bindings, dst_base, effect.dst.elem_ty)
         if class == nil then return nil, class_reason end

@@ -227,14 +227,14 @@ for _, ty in ipairs(scalar_tys) do
         src = "src",
         src_expr = fake_expr,
         elem_ty = ty,
-        index_stream = { base = "idx", base_expr = fake_expr, elem_ty = i32, index_primary = true },
+        index_lane = { base = "idx", base_expr = fake_expr, elem_ty = i32, index_primary = true },
     }
     cases[#cases + 1] = { ctx = gather, vocab = Stencil.StencilGather }
 
     local scatter = clone(store_base_ctx)
     scatter.dst_elem_ty = ty
     scatter.store_index_primary = false
-    scatter.store_index_stream = { base = "idx", base_expr = fake_expr, elem_ty = i32, index_primary = true }
+    scatter.store_index_lane = { base = "idx", base_expr = fake_expr, elem_ty = i32, index_primary = true }
     scatter.class = { kind = "load", index_primary = true, src = "src", src_expr = fake_expr, elem_ty = ty }
     cases[#cases + 1] = { ctx = scatter, vocab = Stencil.StencilScatter }
 

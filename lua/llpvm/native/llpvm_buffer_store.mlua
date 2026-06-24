@@ -1,4 +1,4 @@
--- llpvm_buffer_store.mlua -- Buffers, stream constructors, and pull terminals.
+-- llpvm_buffer_store.mlua -- Buffers, tape constructors, and pull terminals.
 
 local H = moon.require("llpvm_header")
 local T = H.T
@@ -14,7 +14,7 @@ local llpvm_buffer_index = func(ref: T.LlBufferRef): index
     return as(index, repr(ref) - 1)
 end
 
-local llpvm_stream_index = func(ref: T.LlStreamRef): index
+local llpvm_tape_index = func(ref: T.LlTapeRef): index
     return as(index, repr(ref) - 1)
 end
 
@@ -36,11 +36,11 @@ local llpvm_buffer_live = func(vm: ptr(T.LlVm), ref: T.LlBufferRef): bool
     return vm.buffers.slots[idx].live
 end
 
-local llpvm_stream_live = func(vm: ptr(T.LlVm), ref: T.LlStreamRef): bool
-    if ref == LlStreamRef.from_repr(0) then return false end
-    let idx: index = llpvm_stream_index(ref)
-    if idx >= vm.streams.n then return false end
-    return vm.streams.slots[idx].live
+local llpvm_tape_live = func(vm: ptr(T.LlVm), ref: T.LlTapeRef): bool
+    if ref == LlTapeRef.from_repr(0) then return false end
+    let idx: index = llpvm_tape_index(ref)
+    if idx >= vm.tapes.n then return false end
+    return vm.tapes.slots[idx].live
 end
 
 local llpvm_program_live = func(vm: ptr(T.LlVm), ref: T.LlProgramRef): bool
@@ -58,8 +58,8 @@ local llpvm_buffer_value = func(vm: ptr(T.LlVm), ref: T.LlBufferRef): T.LlBuffer
     return vm.buffers.slots[llpvm_buffer_index(ref)].value
 end
 
-local llpvm_stream_value = func(vm: ptr(T.LlVm), ref: T.LlStreamRef): T.LlStream
-    return vm.streams.slots[llpvm_stream_index(ref)].value
+local llpvm_tape_value = func(vm: ptr(T.LlVm), ref: T.LlTapeRef): T.LlTape
+    return vm.tapes.slots[llpvm_tape_index(ref)].value
 end
 
 local llpvm_program_value = func(vm: ptr(T.LlVm), ref: T.LlProgramRef): T.LlProgram
@@ -77,12 +77,12 @@ entry start()
 end
 end
 
-local llpvm_grow_stream_slots = region grow_stream_slots(vm: ptr(T.LlVm), needed: index;
+local llpvm_grow_tape_slots = region grow_tape_slots(vm: ptr(T.LlVm), needed: index;
     grown
   | oom(needed: index))
 entry start()
     let a: ptr(T.LlAllocator) = Mem.llpvm_get_alloc(vm)
-    emit @{Mem.llpvm_grow_elems}(a, &(vm.streams.n), &(vm.streams.cap), as(ptr(ptr(u8)), &(vm.streams.slots)), sizeof(T.LlStreamSlot), as(index, 8), needed;
+    emit @{Mem.llpvm_grow_elems}(a, &(vm.tapes.n), &(vm.tapes.cap), as(ptr(ptr(u8)), &(vm.tapes.slots)), sizeof(T.LlTapeSlot), as(index, 8), needed;
         grown = grown,
         oom = oom)
 end
@@ -100,21 +100,21 @@ entry start()
 end
 end
 
-local llpvm_make_stream = region make_stream(vm: ptr(T.LlVm), world: T.LlWorldRef, kind: u8, payload: u32;
-    stream(stream: T.LlStreamRef)
+local llpvm_make_tape = region make_tape(vm: ptr(T.LlVm), world: T.LlWorldRef, kind: u8, payload: u32;
+    tape(tape: T.LlTapeRef)
   | oom(needed: index))
 entry start()
-    emit @{llpvm_grow_stream_slots}(vm, as(index, 1);
+    emit @{llpvm_grow_tape_slots}(vm, as(index, 1);
         grown = insert,
         oom = oom)
 end
 block insert()
-    let idx: index = vm.streams.n
-    let value: T.LlStream = LlStream{ world = world, kind = kind, payload = payload, cursor = 0 }
-    vm.streams.slots[idx] = LlStreamSlot{ gen = as(u32, vm.streams.generation), live = true, value = value }
-    let p_n: ptr(index) = &(vm.streams.n)
+    let idx: index = vm.tapes.n
+    let value: T.LlTape = LlTape{ world = world, kind = kind, payload = payload, cursor = 0 }
+    vm.tapes.slots[idx] = LlTapeSlot{ gen = as(u32, vm.tapes.generation), live = true, value = value }
+    let p_n: ptr(index) = &(vm.tapes.n)
     p_n[0] = idx + 1
-    jump stream(stream = LlStreamRef.from_repr(as(u32, idx + 1)))
+    jump tape(tape = LlTapeRef.from_repr(as(u32, idx + 1)))
 end
 end
 
@@ -190,11 +190,11 @@ entry start()
 end
 end
 
-local ll_stream_empty = region @{R.ll_stream_empty}
+local ll_tape_empty = region @{R.ll_tape_empty}
 entry start()
     if not Schema.llpvm_world_live(vm, world) then jump invalid_world(world = world) end
-    emit @{llpvm_make_stream}(vm, world, as(u8, @{H.LL_STREAM_EMPTY}), 0;
-        stream = stream,
+    emit @{llpvm_make_tape}(vm, world, as(u8, @{H.LL_TAPE_EMPTY}), 0;
+        tape = tape,
         oom = oom)
 end
 block oom(needed: index)
@@ -202,12 +202,12 @@ block oom(needed: index)
 end
 end
 
-local ll_stream_once = region @{R.ll_stream_once}
+local ll_tape_once = region @{R.ll_tape_once}
 entry start()
     if not llpvm_op_live(vm, op) then jump invalid_op(op = op) end
     let o: T.LlOp = llpvm_op_value(vm, op)
-    emit @{llpvm_make_stream}(vm, o.world, as(u8, @{H.LL_STREAM_ONCE}), repr(op);
-        stream = stream,
+    emit @{llpvm_make_tape}(vm, o.world, as(u8, @{H.LL_TAPE_ONCE}), repr(op);
+        tape = tape,
         oom = oom)
 end
 block oom(needed: index)
@@ -215,12 +215,12 @@ block oom(needed: index)
 end
 end
 
-local ll_stream_seq = region @{R.ll_stream_seq}
+local ll_tape_seq = region @{R.ll_tape_seq}
 entry start()
     if not llpvm_buffer_live(vm, buffer) then jump invalid_buffer(buffer = buffer) end
     let b: T.LlBuffer = llpvm_buffer_value(vm, buffer)
-    emit @{llpvm_make_stream}(vm, b.world, as(u8, @{H.LL_STREAM_SEQ}), repr(buffer);
-        stream = stream,
+    emit @{llpvm_make_tape}(vm, b.world, as(u8, @{H.LL_TAPE_SEQ}), repr(buffer);
+        tape = tape,
         oom = oom)
 end
 block oom(needed: index)
@@ -228,25 +228,25 @@ block oom(needed: index)
 end
 end
 
-local ll_stream_concat = region @{R.ll_stream_concat}
+local ll_tape_concat = region @{R.ll_tape_concat}
 entry start()
     if len(parts) == 0 then jump empty end
-    let first: T.LlStreamRef = parts[0]
-    if not llpvm_stream_live(vm, first) then jump world_mismatch(expected = LlWorldRef.from_repr(0), got = LlWorldRef.from_repr(0)) end
-    let fw: T.LlWorldRef = llpvm_stream_value(vm, first).world
+    let first: T.LlTapeRef = parts[0]
+    if not llpvm_tape_live(vm, first) then jump world_mismatch(expected = LlWorldRef.from_repr(0), got = LlWorldRef.from_repr(0)) end
+    let fw: T.LlWorldRef = llpvm_tape_value(vm, first).world
     jump scan(i = 1, world = fw)
 end
 block scan(i: index, world: T.LlWorldRef)
     if i >= len(parts) then jump build(world = world) end
-    let s: T.LlStreamRef = parts[i]
-    if not llpvm_stream_live(vm, s) then jump world_mismatch(expected = world, got = LlWorldRef.from_repr(0)) end
-    let sw: T.LlWorldRef = llpvm_stream_value(vm, s).world
+    let s: T.LlTapeRef = parts[i]
+    if not llpvm_tape_live(vm, s) then jump world_mismatch(expected = world, got = LlWorldRef.from_repr(0)) end
+    let sw: T.LlWorldRef = llpvm_tape_value(vm, s).world
     if sw ~= world then jump world_mismatch(expected = world, got = sw) end
     jump scan(i = i + 1, world = world)
 end
 block build(world: T.LlWorldRef)
-    emit @{llpvm_make_stream}(vm, world, as(u8, @{H.LL_STREAM_CONCAT}), repr(parts[0]);
-        stream = stream,
+    emit @{llpvm_make_tape}(vm, world, as(u8, @{H.LL_TAPE_CONCAT}), repr(parts[0]);
+        tape = tape,
         oom = oom)
 end
 block oom(needed: index)
@@ -256,14 +256,14 @@ end
 
 local ll_next_op = region @{R.ll_next_op}
 entry start()
-    if not llpvm_stream_live(vm, stream) then jump done end
-    let idx: index = llpvm_stream_index(stream)
-    let s: T.LlStream = vm.streams.slots[idx].value
-    if s.kind == as(u8, @{H.LL_STREAM_EMPTY}) then jump done end
-    if s.kind == as(u8, @{H.LL_STREAM_ONCE}) then jump once(idx = idx, s = s) end
-    if s.kind == as(u8, @{H.LL_STREAM_SEQ}) then jump seq(idx = idx, s = s) end
-    if s.kind == as(u8, @{H.LL_STREAM_CONCAT}) then
-        let inner: T.LlStreamRef = LlStreamRef.from_repr(s.payload)
+    if not llpvm_tape_live(vm, tape) then jump done end
+    let idx: index = llpvm_tape_index(tape)
+    let s: T.LlTape = vm.tapes.slots[idx].value
+    if s.kind == as(u8, @{H.LL_TAPE_EMPTY}) then jump done end
+    if s.kind == as(u8, @{H.LL_TAPE_ONCE}) then jump once(idx = idx, s = s) end
+    if s.kind == as(u8, @{H.LL_TAPE_SEQ}) then jump seq(idx = idx, s = s) end
+    if s.kind == as(u8, @{H.LL_TAPE_CONCAT}) then
+        let inner: T.LlTapeRef = LlTapeRef.from_repr(s.payload)
         call ll_next_op(vm, inner; op = inner_op, done = inner_done, blocked = inner_blocked, failed = inner_failed)
     end
     jump done
@@ -280,48 +280,48 @@ end
 block inner_failed(diag: T.LlDiagnosticRef)
     jump failed(diag = diag)
 end
-block once(idx: index, s: T.LlStream)
+block once(idx: index, s: T.LlTape)
     if s.cursor > 0 then jump done end
-    let p_cursor: ptr(index) = &(vm.streams.slots[idx].value.cursor)
+    let p_cursor: ptr(index) = &(vm.tapes.slots[idx].value.cursor)
     p_cursor[0] = 1
     jump op(op = LlOpRef.from_repr(s.payload))
 end
-block seq(idx: index, s: T.LlStream)
+block seq(idx: index, s: T.LlTape)
     let b: T.LlBufferRef = LlBufferRef.from_repr(s.payload)
     if not llpvm_buffer_live(vm, b) then jump done end
     let bv: T.LlBuffer = llpvm_buffer_value(vm, b)
     if s.cursor >= bv.n then jump done end
     let next: T.LlOpRef = bv.ops[s.cursor]
-    let p_cursor: ptr(index) = &(vm.streams.slots[idx].value.cursor)
+    let p_cursor: ptr(index) = &(vm.tapes.slots[idx].value.cursor)
     p_cursor[0] = s.cursor + 1
     jump op(op = next)
 end
 end
 
-local llpvm_stream_estimate_count = func(vm: ptr(T.LlVm), stream: T.LlStreamRef): index
-    if not llpvm_stream_live(vm, stream) then return 0 end
-    let s: T.LlStream = llpvm_stream_value(vm, stream)
-    if s.kind == as(u8, @{H.LL_STREAM_EMPTY}) then return 0 end
-    if s.kind == as(u8, @{H.LL_STREAM_ONCE}) then return 1 end
-    if s.kind == as(u8, @{H.LL_STREAM_SEQ}) then
+local llpvm_tape_estimate_count = func(vm: ptr(T.LlVm), tape: T.LlTapeRef): index
+    if not llpvm_tape_live(vm, tape) then return 0 end
+    let s: T.LlTape = llpvm_tape_value(vm, tape)
+    if s.kind == as(u8, @{H.LL_TAPE_EMPTY}) then return 0 end
+    if s.kind == as(u8, @{H.LL_TAPE_ONCE}) then return 1 end
+    if s.kind == as(u8, @{H.LL_TAPE_SEQ}) then
         let seq_buffer: T.LlBufferRef = LlBufferRef.from_repr(s.payload)
         if not llpvm_buffer_live(vm, seq_buffer) then return 0 end
         let seq_value: T.LlBuffer = llpvm_buffer_value(vm, seq_buffer)
         return seq_value.n
     end
-    if s.kind == as(u8, @{H.LL_STREAM_GENERATED}) then
+    if s.kind == as(u8, @{H.LL_TAPE_GENERATED}) then
         let program_ref: T.LlProgramRef = LlProgramRef.from_repr(s.payload)
         if not llpvm_program_live(vm, program_ref) then return 0 end
         let program: T.LlProgram = llpvm_program_value(vm, program_ref)
         return program.root_count
     end
-    if s.kind == as(u8, @{H.LL_STREAM_CONCAT}) then
-        let inner: T.LlStreamRef = LlStreamRef.from_repr(s.payload)
-        if not llpvm_stream_live(vm, inner) then return 0 end
-        let inner_s: T.LlStream = llpvm_stream_value(vm, inner)
-        if inner_s.kind == as(u8, @{H.LL_STREAM_EMPTY}) then return 0 end
-        if inner_s.kind == as(u8, @{H.LL_STREAM_ONCE}) then return 1 end
-        if inner_s.kind == as(u8, @{H.LL_STREAM_SEQ}) then
+    if s.kind == as(u8, @{H.LL_TAPE_CONCAT}) then
+        let inner: T.LlTapeRef = LlTapeRef.from_repr(s.payload)
+        if not llpvm_tape_live(vm, inner) then return 0 end
+        let inner_s: T.LlTape = llpvm_tape_value(vm, inner)
+        if inner_s.kind == as(u8, @{H.LL_TAPE_EMPTY}) then return 0 end
+        if inner_s.kind == as(u8, @{H.LL_TAPE_ONCE}) then return 1 end
+        if inner_s.kind == as(u8, @{H.LL_TAPE_SEQ}) then
             let inner_buffer: T.LlBufferRef = LlBufferRef.from_repr(inner_s.payload)
             if not llpvm_buffer_live(vm, inner_buffer) then return 0 end
             let inner_value: T.LlBuffer = llpvm_buffer_value(vm, inner_buffer)
@@ -331,11 +331,11 @@ local llpvm_stream_estimate_count = func(vm: ptr(T.LlVm), stream: T.LlStreamRef)
     return 0
 end
 
-local ll_drain_stream = region @{R.ll_drain_stream}
+local ll_drain_tape = region @{R.ll_drain_tape}
 entry start()
-    if not llpvm_stream_live(vm, stream) then jump empty end
-    let s: T.LlStream = llpvm_stream_value(vm, stream)
-    var cap: index = llpvm_stream_estimate_count(vm, stream)
+    if not llpvm_tape_live(vm, tape) then jump empty end
+    let s: T.LlTape = llpvm_tape_value(vm, tape)
+    var cap: index = llpvm_tape_estimate_count(vm, tape)
     if cap < as(index, 8) then cap = as(index, 8) end
     emit @{ll_buffer_open}(vm, s.world, cap;
         buffer = drain_dispatch,
@@ -343,21 +343,21 @@ entry start()
         memory_exhausted = oom)
 end
 block drain_dispatch(buffer: T.LlBufferRef)
-    let s: T.LlStream = llpvm_stream_value(vm, stream)
-    if s.kind == as(u8, @{H.LL_STREAM_EMPTY}) then jump publish(buffer = buffer) end
-    if s.kind == as(u8, @{H.LL_STREAM_ONCE}) then jump drain_once(buffer = buffer, s = s) end
-    if s.kind == as(u8, @{H.LL_STREAM_SEQ}) then jump drain_seq(buffer = buffer, s = s, i = as(index, 0)) end
-    if s.kind == as(u8, @{H.LL_STREAM_GENERATED}) then jump drain_program(buffer = buffer, s = s, i = as(index, 0)) end
-    if s.kind == as(u8, @{H.LL_STREAM_CONCAT}) then
-        let inner: T.LlStreamRef = LlStreamRef.from_repr(s.payload)
-        if not llpvm_stream_live(vm, inner) then jump publish(buffer = buffer) end
-        let inner_s: T.LlStream = llpvm_stream_value(vm, inner)
-        if inner_s.kind == as(u8, @{H.LL_STREAM_SEQ}) then jump drain_seq(buffer = buffer, s = inner_s, i = as(index, 0)) end
-        if inner_s.kind == as(u8, @{H.LL_STREAM_ONCE}) then jump drain_once(buffer = buffer, s = inner_s) end
+    let s: T.LlTape = llpvm_tape_value(vm, tape)
+    if s.kind == as(u8, @{H.LL_TAPE_EMPTY}) then jump publish(buffer = buffer) end
+    if s.kind == as(u8, @{H.LL_TAPE_ONCE}) then jump drain_once(buffer = buffer, s = s) end
+    if s.kind == as(u8, @{H.LL_TAPE_SEQ}) then jump drain_seq(buffer = buffer, s = s, i = as(index, 0)) end
+    if s.kind == as(u8, @{H.LL_TAPE_GENERATED}) then jump drain_program(buffer = buffer, s = s, i = as(index, 0)) end
+    if s.kind == as(u8, @{H.LL_TAPE_CONCAT}) then
+        let inner: T.LlTapeRef = LlTapeRef.from_repr(s.payload)
+        if not llpvm_tape_live(vm, inner) then jump publish(buffer = buffer) end
+        let inner_s: T.LlTape = llpvm_tape_value(vm, inner)
+        if inner_s.kind == as(u8, @{H.LL_TAPE_SEQ}) then jump drain_seq(buffer = buffer, s = inner_s, i = as(index, 0)) end
+        if inner_s.kind == as(u8, @{H.LL_TAPE_ONCE}) then jump drain_once(buffer = buffer, s = inner_s) end
     end
     jump publish(buffer = buffer)
 end
-block drain_program(buffer: T.LlBufferRef, s: T.LlStream, i: index)
+block drain_program(buffer: T.LlBufferRef, s: T.LlTape, i: index)
     let program_ref: T.LlProgramRef = LlProgramRef.from_repr(s.payload)
     if not llpvm_program_live(vm, program_ref) then jump publish(buffer = buffer) end
     let program: T.LlProgram = llpvm_program_value(vm, program_ref)
@@ -379,7 +379,7 @@ block finish_program(buffer: T.LlBufferRef, dst_idx: index, dst_base: index, cou
     p_bytes[0] = total * sizeof(T.LlOpRef)
     jump publish(buffer = buffer)
 end
-block drain_once(buffer: T.LlBufferRef, s: T.LlStream)
+block drain_once(buffer: T.LlBufferRef, s: T.LlTape)
     let bidx: index = as(index, repr(buffer) - 1)
     vm.buffers.slots[bidx].value.ops[0] = LlOpRef.from_repr(s.payload)
     let p_n: ptr(index) = &(vm.buffers.slots[bidx].value.n)
@@ -388,7 +388,7 @@ block drain_once(buffer: T.LlBufferRef, s: T.LlStream)
     p_bytes[0] = sizeof(T.LlOpRef)
     jump publish(buffer = buffer)
 end
-block drain_seq(buffer: T.LlBufferRef, s: T.LlStream, i: index)
+block drain_seq(buffer: T.LlBufferRef, s: T.LlTape, i: index)
     let src: T.LlBufferRef = LlBufferRef.from_repr(s.payload)
     if not llpvm_buffer_live(vm, src) then jump publish(buffer = buffer) end
     let srcv: T.LlBuffer = llpvm_buffer_value(vm, src)
@@ -428,15 +428,15 @@ end
 
 local ll_one_op = region @{R.ll_one_op}
 entry start()
-    if not llpvm_stream_live(vm, stream) then jump failed(diag = LlDiagnosticRef.from_repr(0)) end
-    let s: T.LlStream = llpvm_stream_value(vm, stream)
-    if s.kind == as(u8, @{H.LL_STREAM_EMPTY}) then jump empty end
-    if s.kind == as(u8, @{H.LL_STREAM_ONCE}) then jump one(op = LlOpRef.from_repr(s.payload)) end
-    if s.kind == as(u8, @{H.LL_STREAM_SEQ}) then jump seq(s = s) end
-    if s.kind == as(u8, @{H.LL_STREAM_CONCAT}) then jump concat(s = s) end
+    if not llpvm_tape_live(vm, tape) then jump failed(diag = LlDiagnosticRef.from_repr(0)) end
+    let s: T.LlTape = llpvm_tape_value(vm, tape)
+    if s.kind == as(u8, @{H.LL_TAPE_EMPTY}) then jump empty end
+    if s.kind == as(u8, @{H.LL_TAPE_ONCE}) then jump one(op = LlOpRef.from_repr(s.payload)) end
+    if s.kind == as(u8, @{H.LL_TAPE_SEQ}) then jump seq(s = s) end
+    if s.kind == as(u8, @{H.LL_TAPE_CONCAT}) then jump concat(s = s) end
     jump failed(diag = LlDiagnosticRef.from_repr(0))
 end
-block seq(s: T.LlStream)
+block seq(s: T.LlTape)
     let buffer: T.LlBufferRef = LlBufferRef.from_repr(s.payload)
     if not llpvm_buffer_live(vm, buffer) then jump failed(diag = LlDiagnosticRef.from_repr(0)) end
     let b: T.LlBuffer = llpvm_buffer_value(vm, buffer)
@@ -444,13 +444,13 @@ block seq(s: T.LlStream)
     if b.n == 1 then jump one(op = b.ops[0]) end
     jump more_than_one
 end
-block concat(s: T.LlStream)
-    let inner: T.LlStreamRef = LlStreamRef.from_repr(s.payload)
-    if not llpvm_stream_live(vm, inner) then jump failed(diag = LlDiagnosticRef.from_repr(0)) end
-    let inner_s: T.LlStream = llpvm_stream_value(vm, inner)
-    if inner_s.kind == as(u8, @{H.LL_STREAM_EMPTY}) then jump empty end
-    if inner_s.kind == as(u8, @{H.LL_STREAM_ONCE}) then jump one(op = LlOpRef.from_repr(inner_s.payload)) end
-    if inner_s.kind == as(u8, @{H.LL_STREAM_SEQ}) then jump seq(s = inner_s) end
+block concat(s: T.LlTape)
+    let inner: T.LlTapeRef = LlTapeRef.from_repr(s.payload)
+    if not llpvm_tape_live(vm, inner) then jump failed(diag = LlDiagnosticRef.from_repr(0)) end
+    let inner_s: T.LlTape = llpvm_tape_value(vm, inner)
+    if inner_s.kind == as(u8, @{H.LL_TAPE_EMPTY}) then jump empty end
+    if inner_s.kind == as(u8, @{H.LL_TAPE_ONCE}) then jump one(op = LlOpRef.from_repr(inner_s.payload)) end
+    if inner_s.kind == as(u8, @{H.LL_TAPE_SEQ}) then jump seq(s = inner_s) end
     jump more_than_one
 end
 end
@@ -458,29 +458,29 @@ end
 return {
     llpvm_op_index = llpvm_op_index,
     llpvm_buffer_index = llpvm_buffer_index,
-    llpvm_stream_index = llpvm_stream_index,
+    llpvm_tape_index = llpvm_tape_index,
     llpvm_program_index = llpvm_program_index,
     llpvm_op_live = llpvm_op_live,
     llpvm_buffer_live = llpvm_buffer_live,
-    llpvm_stream_live = llpvm_stream_live,
+    llpvm_tape_live = llpvm_tape_live,
     llpvm_program_live = llpvm_program_live,
     llpvm_op_value = llpvm_op_value,
     llpvm_buffer_value = llpvm_buffer_value,
-    llpvm_stream_value = llpvm_stream_value,
+    llpvm_tape_value = llpvm_tape_value,
     llpvm_program_value = llpvm_program_value,
     llpvm_grow_buffer_slots = llpvm_grow_buffer_slots,
-    llpvm_grow_stream_slots = llpvm_grow_stream_slots,
+    llpvm_grow_tape_slots = llpvm_grow_tape_slots,
     llpvm_buffer_grow_ops = llpvm_buffer_grow_ops,
-    llpvm_make_stream = llpvm_make_stream,
-    llpvm_stream_estimate_count = llpvm_stream_estimate_count,
+    llpvm_make_tape = llpvm_make_tape,
+    llpvm_tape_estimate_count = llpvm_tape_estimate_count,
     ll_buffer_open = ll_buffer_open,
     ll_buffer_push = ll_buffer_push,
     ll_buffer_publish = ll_buffer_publish,
-    ll_stream_empty = ll_stream_empty,
-    ll_stream_once = ll_stream_once,
-    ll_stream_seq = ll_stream_seq,
-    ll_stream_concat = ll_stream_concat,
+    ll_tape_empty = ll_tape_empty,
+    ll_tape_once = ll_tape_once,
+    ll_tape_seq = ll_tape_seq,
+    ll_tape_concat = ll_tape_concat,
     ll_next_op = ll_next_op,
-    ll_drain_stream = ll_drain_stream,
+    ll_drain_tape = ll_drain_tape,
     ll_one_op = ll_one_op,
 }

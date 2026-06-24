@@ -88,11 +88,11 @@ local call = Effect.CallSummary(func_id, nil, { Effect.EffectRead(Effect.EffectO
 local effects = Effect.EffectFactSet(module.id, { call }, { Effect.InstEffect(inst_id, call.effects) }, { Effect.TermEffect(block_id, {}) })
 assert(effects.calls[1].effects[1].object.object == object.id)
 
-local stream = Kernel.KernelStream(Kernel.KernelStreamId("stream:ptr"), object.id, { mem_access.id }, mem_access.base, i32, mem_access.pattern, { backend })
-local kbody = Kernel.KernelBody(Kernel.KernelDomainFlow(domain, trip, induction.value), { stream }, { Kernel.KernelBinding(Kernel.KernelValueId("kv:i"), i32, Kernel.KernelExprAlgebra(expr_i)) }, { Kernel.KernelEffectFold(reduction), Kernel.KernelEffectCall(call) }, Kernel.KernelResultClosedForm(closed), Kernel.KernelEquivalenceProof({ Kernel.KernelProofFlow(domain, "counted") }))
+local lane = Kernel.KernelLane(Kernel.KernelLaneId("lane:ptr"), object.id, { mem_access.id }, mem_access.base, i32, mem_access.pattern, { backend })
+local kbody = Kernel.KernelBody(Kernel.KernelDomainFlow(domain, trip, induction.value), { lane }, { Kernel.KernelBinding(Kernel.KernelValueId("kv:i"), i32, Kernel.KernelExprAlgebra(expr_i)) }, { Kernel.KernelEffectFold(reduction), Kernel.KernelEffectCall(call) }, Kernel.KernelResultClosedForm(closed), Kernel.KernelEquivalenceProof({ Kernel.KernelProofFlow(domain, "counted") }))
 local kplan = Kernel.KernelPlanned(Kernel.KernelId("kernel:smoke"), Kernel.KernelSubjectLoop(loop_id), kbody)
 local kmod = Kernel.KernelModulePlan(module.id, flow, values, mem, effects, { kplan })
-assert(kmod.plans[1].body.result.closed_form == closed and kmod.plans[1].body.streams[1].backend_info[1] == backend)
+assert(kmod.plans[1].body.result.closed_form == closed and kmod.plans[1].body.lanes[1].backend_info[1] == backend)
 assert(Kernel["Kernel" .. "Schedule" .. "Vector"] == nil and Kernel["KernelFunc" .. "Plan"] == nil, "old Kernel schedule/function-plan shapes must be removed")
 
 local target = Schedule.ScheduleTarget(Back.BackTargetModel(Back.BackTargetNative, {}))

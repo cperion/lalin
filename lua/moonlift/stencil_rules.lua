@@ -19,7 +19,7 @@ local function bind_context(T)
     local function sym(name) return llb.symbol(name) end
     local StencilExprFact = sym("StencilExprFact")
     local StencilClassFact = sym("StencilClassFact")
-    local IndexStreamSelection = sym("IndexStreamSelection")
+    local IndexLaneSelection = sym("IndexLaneSelection")
     local CodeType = sym("CodeType")
     local StencilTypeFact = sym("StencilTypeFact")
     local StoreStencilFact = sym("StoreStencilFact")
@@ -28,7 +28,7 @@ local function bind_context(T)
     local ReduceStencilSelection = sym("ReduceStencilSelection")
     local expr = sym("expr")
     local class = sym("class")
-    local stream = sym("stream")
+    local lane = sym("lane")
     local ty = sym("ty")
     local ctx = sym("ctx")
     local selection = sym("selection")
@@ -55,7 +55,7 @@ local function bind_context(T)
     local compare_class = sym("compare_class")
     local pred_const = sym("pred_const")
     local zip_compare_class = sym("zip_compare_class")
-    local index_stream = sym("index_stream")
+    local index_lane = sym("index_lane")
     local type_class = sym("type_class")
     local store_fill = sym("store_fill")
     local store_copy = sym("store_copy")
@@ -107,7 +107,7 @@ local function bind_context(T)
     impl.compare_class = function(fields) return with_class_kind("compare", fields) end
     impl.zip_compare_class = function(fields) return with_class_kind("zip_compare", fields) end
     impl.pred_const = function(fields) return predicate_from_cmp_const(fields.op, fields.value, fields.const_on_left) end
-    impl.index_stream = function(fields) return fields end
+    impl.index_lane = function(fields) return fields end
     impl.store_fill = function(fields) return with_selection_kind("fill", Stencil.StencilFill, fields) end
     impl.store_copy = function(fields) return with_selection_kind("copy", Stencil.StencilCopy, fields) end
     impl.store_gather = function(fields) return with_selection_kind("gather", Stencil.StencilGather, fields) end
@@ -145,15 +145,15 @@ local function bind_context(T)
   predicate. cast_supported [impl.cast_supported] { input { sym("op") [Any], sym("src_ty") [Any], sym("dst_ty") [Any] }, pure },
 
   constructor. type_class [impl.type_class] { input { sym("kind") [Any], sym("ty") [CodeType] }, output { sym("class") [StencilTypeFact] } },
-  constructor. load_class [impl.load_class] { input { sym("stream") [Any], sym("index") [Any] }, output { sym("class") [StencilClassFact] } },
+  constructor. load_class [impl.load_class] { input { sym("lane") [Any], sym("index") [Any] }, output { sym("class") [StencilClassFact] } },
   constructor. fill_class [impl.fill_class] { input { sym("value") [Any] }, output { sym("class") [StencilClassFact] } },
-  constructor. map_class [impl.map_class] { input { sym("op") [Any], sym("stream") [Any], sym("index") [Any], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
-  constructor. cast_class [impl.cast_class] { input { sym("op") [Any], sym("stream") [Any], sym("index") [Any], sym("src_ty") [CodeType], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
+  constructor. map_class [impl.map_class] { input { sym("op") [Any], sym("lane") [Any], sym("index") [Any], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
+  constructor. cast_class [impl.cast_class] { input { sym("op") [Any], sym("lane") [Any], sym("index") [Any], sym("src_ty") [CodeType], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
   constructor. zip_map_class [impl.zip_map_class] { input { sym("op") [Any], sym("lhs") [Any], sym("rhs") [Any], sym("lhs_index") [Any], sym("rhs_index") [Any], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
-  constructor. compare_class [impl.compare_class] { input { sym("pred") [Any], sym("stream") [Any], sym("index") [Any], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
+  constructor. compare_class [impl.compare_class] { input { sym("pred") [Any], sym("lane") [Any], sym("index") [Any], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
   constructor. zip_compare_class [impl.zip_compare_class] { input { sym("cmp") [Any], sym("lhs") [Any], sym("rhs") [Any], sym("lhs_index") [Any], sym("rhs_index") [Any], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
   constructor. pred_const [impl.pred_const] { input { sym("op") [Any], sym("value") [Any], sym("const_on_left") [Any] }, output { sym("pred") [Any] } },
-  constructor. index_stream [impl.index_stream] { input { sym("stream") [Any], sym("index") [Any] }, output { sym("stream") [IndexStreamSelection] } },
+  constructor. index_lane [impl.index_lane] { input { sym("lane") [Any], sym("index") [Any] }, output { sym("lane") [IndexLaneSelection] } },
   constructor. store_fill [impl.store_fill] { input { sym("info") [sym("StoreFillInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
   constructor. store_copy [impl.store_copy] { input { sym("info") [sym("StoreCopyInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
   constructor. store_gather [impl.store_gather] { input { sym("info") [sym("StoreGatherInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
@@ -201,7 +201,7 @@ local function bind_context(T)
     llisle.classify_expr { expr = P. expr },
     when { P. expr.kind :eq (load) },
     run {
-      ret { class = load_class { stream = P. expr.stream, index = P. expr.index } },
+      ret { class = load_class { lane = P. expr.lane, index = P. expr.index } },
     },
   },
 
@@ -226,7 +226,7 @@ local function bind_context(T)
       ret {
         class = map_class {
           op = P. expr.op,
-          stream = V. inner.class.stream,
+          lane = V. inner.class.lane,
           index = V. inner.class.index,
           result_ty = P. expr.result_ty,
         },
@@ -245,7 +245,7 @@ local function bind_context(T)
       ret {
         class = cast_class {
           op = P. expr.op,
-          stream = V. inner.class.stream,
+          lane = V. inner.class.lane,
           index = V. inner.class.index,
           src_ty = P. expr.src_ty,
           result_ty = P. expr.result_ty,
@@ -265,7 +265,7 @@ local function bind_context(T)
       ret {
         class = compare_class {
           pred = V. inner.class.pred,
-          stream = V. inner.class.stream,
+          lane = V. inner.class.lane,
           index = V. inner.class.index,
           result_ty = P. expr.result_ty,
         },
@@ -287,8 +287,8 @@ local function bind_context(T)
       ret {
         class = zip_map_class {
           op = P. expr.op,
-          lhs = V. lhs.class.stream,
-          rhs = V. rhs.class.stream,
+          lhs = V. lhs.class.lane,
+          rhs = V. rhs.class.lane,
           lhs_index = V. lhs.class.index,
           rhs_index = V. rhs.class.index,
           result_ty = P. expr.result_ty,
@@ -367,7 +367,7 @@ local function bind_context(T)
       ret {
         class = compare_class {
           pred = pred_const { op = P. expr.op, value = V. rhs.class.value, const_on_left = false },
-          stream = V. lhs.class.stream,
+          lane = V. lhs.class.lane,
           index = V. lhs.class.index,
           result_ty = P. expr.result_ty,
         },
@@ -389,7 +389,7 @@ local function bind_context(T)
       ret {
         class = compare_class {
           pred = pred_const { op = P. expr.op, value = V. lhs.class.value, const_on_left = true },
-          stream = V. rhs.class.stream,
+          lane = V. rhs.class.lane,
           index = V. rhs.class.index,
           result_ty = P. expr.result_ty,
         },
@@ -409,8 +409,8 @@ local function bind_context(T)
       ret {
         class = zip_compare_class {
           cmp = P. expr.op,
-          lhs = V. lhs.class.stream,
-          rhs = V. rhs.class.stream,
+          lhs = V. lhs.class.lane,
+          rhs = V. rhs.class.lane,
           lhs_index = V. lhs.class.index,
           rhs_index = V. rhs.class.index,
           result_ty = P. expr.result_ty,
@@ -419,9 +419,9 @@ local function bind_context(T)
     },
   },
 
-  relation. select_index_stream {
+  relation. select_index_lane {
     input { class [StencilClassFact] },
-    output { stream [IndexStreamSelection] },
+    output { lane [IndexLaneSelection] },
     strategy {
       select. best_cost,
       ambiguity. error,
@@ -429,26 +429,26 @@ local function bind_context(T)
     },
   },
 
-  rule. index_stream_load {
-    llisle.select_index_stream { class = P. class },
+  rule. index_lane_load {
+    llisle.select_index_lane { class = P. class },
     when { P. class.kind :eq (load) },
     run {
       ret {
-        stream = index_stream {
-          stream = P. class.stream,
+        lane = index_lane {
+          lane = P. class.lane,
           index = P. class.index,
         },
       },
     },
   },
 
-  rule. index_stream_cast_load {
-    llisle.select_index_stream { class = P. class },
+  rule. index_lane_cast_load {
+    llisle.select_index_lane { class = P. class },
     when { P. class.kind :eq (cast) },
     run {
       ret {
-        stream = index_stream {
-          stream = P. class.stream,
+        lane = index_lane {
+          lane = P. class.lane,
           index = P. class.index,
         },
       },
@@ -724,13 +724,13 @@ local function bind_context(T)
     llisle.select_store_stencil { ctx = P. ctx },
     bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
     bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    bind. index_ty { llisle.classify_stencil_type { ty = P. ctx.class.index_stream.elem_ty } },
+    bind. index_ty { llisle.classify_stencil_type { ty = P. ctx.class.index_lane.elem_ty } },
     when {
       (P. ctx.class.kind :eq (load))
         * (P. ctx.store_index_primary :eq (true))
-        * (P. ctx.class.index_stream.index_primary :eq (true))
+        * (P. ctx.class.index_lane.index_primary :eq (true))
         * (P. ctx.class.elem_ty :same_type (P. ctx.dst_elem_ty))
-        * (P. ctx.class.index_stream.elem_ty :is_index_data_type ()),
+        * (P. ctx.class.index_lane.elem_ty :is_index_data_type ()),
     },
     run {
       ret {
@@ -743,13 +743,13 @@ local function bind_context(T)
             start = P. ctx.start,
             stop = P. ctx.stop,
             src = P. ctx.class.src,
-            index = P. ctx.class.index_stream.base,
-            index_ty = P. ctx.class.index_stream.elem_ty,
+            index = P. ctx.class.index_lane.base,
+            index_ty = P. ctx.class.index_lane.elem_ty,
             dst_topology = P. ctx.dst_topology,
             src_topology = P. ctx.class.src_topology,
-            index_topology = P. ctx.class.index_stream.topology,
+            index_topology = P. ctx.class.index_lane.topology,
           },
-          args = { P. ctx.dst_expr, P. ctx.class.src_expr, P. ctx.class.index_stream.base_expr, P. ctx.start_expr, P. ctx.stop_expr },
+          args = { P. ctx.dst_expr, P. ctx.class.src_expr, P. ctx.class.index_lane.base_expr, P. ctx.start_expr, P. ctx.stop_expr },
         },
       },
     },
@@ -759,13 +759,13 @@ local function bind_context(T)
     llisle.select_store_stencil { ctx = P. ctx },
     bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
     bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    bind. index_ty { llisle.classify_stencil_type { ty = P. ctx.store_index_stream.elem_ty } },
+    bind. index_ty { llisle.classify_stencil_type { ty = P. ctx.store_index_lane.elem_ty } },
     when {
       (P. ctx.class.kind :eq (load))
-        * (P. ctx.store_index_stream.index_primary :eq (true))
+        * (P. ctx.store_index_lane.index_primary :eq (true))
         * (P. ctx.class.index_primary :eq (true))
         * (P. ctx.class.elem_ty :same_type (P. ctx.dst_elem_ty))
-        * (P. ctx.store_index_stream.elem_ty :is_index_data_type ()),
+        * (P. ctx.store_index_lane.elem_ty :is_index_data_type ()),
     },
     run {
       ret {
@@ -778,14 +778,14 @@ local function bind_context(T)
             start = P. ctx.start,
             stop = P. ctx.stop,
             src = P. ctx.class.src,
-            index = P. ctx.store_index_stream.base,
-            index_ty = P. ctx.store_index_stream.elem_ty,
+            index = P. ctx.store_index_lane.base,
+            index_ty = P. ctx.store_index_lane.elem_ty,
             conflicts = P. ctx.scatter_conflicts,
             dst_topology = P. ctx.dst_topology,
             src_topology = P. ctx.class.src_topology,
-            index_topology = P. ctx.store_index_stream.topology,
+            index_topology = P. ctx.store_index_lane.topology,
           },
-          args = { P. ctx.dst_expr, P. ctx.class.src_expr, P. ctx.store_index_stream.base_expr, P. ctx.start_expr, P. ctx.stop_expr },
+          args = { P. ctx.dst_expr, P. ctx.class.src_expr, P. ctx.store_index_lane.base_expr, P. ctx.start_expr, P. ctx.stop_expr },
         },
       },
     },
@@ -1331,8 +1331,8 @@ local function bind_context(T)
             local fact, err = expr_fact(binding.expr, bindings, next_seen)
             if fact == nil then return nil, err end
             return { kind = "kernel_value", id = expr.value, binding = fact }, nil
-        elseif cls == Kernel.KernelExprLoad then
-            return { kind = "load", stream = expr.stream, index = expr.index }, nil
+        elseif cls == Kernel.KernelExprLaneLoad then
+            return { kind = "load", lane = expr.lane, index = expr.index }, nil
         elseif cls == Kernel.KernelExprAlgebra then
             local v = expr.expr
             local vcls = pvm.classof(v)

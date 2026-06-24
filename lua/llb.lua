@@ -2670,7 +2670,7 @@ llb.grammar = setmetatable({
 -- which channel they accept; roles decide how to interpret the value delivered
 -- through that channel. This is the central replacement for parser productions.
 
-local normalize_role, normalize_expr
+local normalize_role, normalize_expr, role_stream, collect_role, spread_stream
 
 local function norm_name(ctx, v)
   if is_tag(v, "Name") then return v end
@@ -2720,157 +2720,381 @@ normalize_expr = function(ctx, v)
   llb.fail("expected expression, got " .. repr(v), { primary = origin_of(v) or (ctx and ctx.origin), code = "E_EXPECTED_EXPR" })
 end
 
-local function expand_spread(ctx, role_name, out, spread)
-  local v = spread.value
-  if is_tag(v, "Fragment") then
-    if v.role ~= role_name then
-      llb.fail("cannot spread " .. tostring(v.role) .. " fragment into " .. tostring(role_name) .. " role", {
-        code = "E_SPREAD_ROLE", primary = spread.origin,
-        labels = { { origin = v.origin, message = "fragment created here as role " .. tostring(v.role) } },
-      })
-    end
-    for i = 1, #(v.items or {}) do out[#out + 1] = v.items[i] end
-    return
-  end
-  if type(v) == "table" then
-    local normalized = normalize_role(ctx, role_name, v)
-    for i = 1, #(normalized or {}) do out[#out + 1] = normalized[i] end
-    return
-  end
-  llb.fail("cannot spread value " .. repr(v), { primary = spread.origin, code = "E_BAD_SPREAD" })
-end
-
-local function norm_array(ctx, role_name, spec, v)
-  if type(v) ~= "table" then llb.fail("expected table for " .. role_name .. " role", { primary = ctx and ctx.origin, code = "E_EXPECTED_TABLE" }) end
-  local out, item_role = {}, spec.item_role or spec.item
-  local gen, param, state = llb.stream.raw(llb.stream.from.array(v))
-  while true do
-    local next_state, item = gen(param, state)
-    if next_state == nil then break end
-    state = next_state
-    if is_tag(item, "Spread") then expand_spread(ctx, role_name, out, item)
-    elseif item_role then out[#out + 1] = normalize_role(ctx, item_role, item)
-    else out[#out + 1] = item end
-  end
-  return out
-end
-
-local function norm_record(ctx, role_name, spec, v)
-  if type(v) ~= "table" then llb.fail("expected record table", { primary = ctx and ctx.origin, code = "E_EXPECTED_RECORD" }) end
-  local out, value_role = {}, spec.value_role or spec.value
-  local gen, param, state = llb.stream.raw(llb.stream.from.record(v))
-  while true do
-    local next_state, k, x = gen(param, state)
-    if next_state == nil then break end
-    state = next_state
-    if type(k) ~= "number" then out[k] = value_role and normalize_role(ctx, value_role, x) or x end
-  end
-  return out
-end
-
-local function norm_product(ctx, role_name, spec, v)
-  if type(v) ~= "table" then llb.fail("expected product table", { primary = ctx and ctx.origin, code = "E_EXPECTED_PRODUCT" }) end
-  local out, seen = {}, {}
-  local type_role = spec.type_role or "type"
-  local unique = spec.unique_names; if unique == nil then unique = true end
-  local function add_field(f)
-    if unique and seen[f.name] then
-      llb.fail("duplicate product field '" .. tostring(f.name) .. "'", { code = "E_DUPLICATE_FIELD", primary = f.origin, labels = { { origin = seen[f.name].origin, message = "first field is here" } } })
-    end
-    seen[f.name] = f; out[#out + 1] = f
-  end
-  local gen, param, state = llb.stream.raw(llb.stream.from.array(v))
-  while true do
-    local next_state, item = gen(param, state)
-    if next_state == nil then break end
-    state = next_state
-    if is_tag(item, "Spread") then
-      local tmp = {}
-      expand_spread(ctx, role_name, tmp, item)
-      for j = 1, #tmp do add_field(tmp[j]) end
-    elseif is_tag(item, "Capture") then
-      if not is_tag(item.subject, "Symbol") then llb.fail("product capture subject must be a symbol", { primary = item.origin }) end
-      add_field({ tag = "field", name = item.subject.text, type = normalize_role(ctx, type_role, item.value), origin = item.origin })
-    elseif is_tag(item, "CaptureInit") then
-      local c = item.capture
-      if not is_tag(c.subject, "Symbol") then llb.fail("product initializer subject must be a symbol", { primary = item.origin }) end
-      add_field({ tag = "field", name = c.subject.text, type = normalize_role(ctx, type_role, c.value), init = normalize_expr(ctx, item.init), origin = item.origin })
-    else
-      llb.fail("product entries must be typed names or spreads, got " .. repr(item), { primary = origin_of(item) or (ctx and ctx.origin), code = "E_BAD_PRODUCT_ENTRY", notes = { "write x [T] for a typed field" } })
-    end
-  end
-  return out
-end
-
-local function norm_sum(ctx, role_name, spec, v)
-  if type(v) ~= "table" then llb.fail("expected sum/protocol table", { primary = ctx and ctx.origin, code = "E_EXPECTED_SUM" }) end
-  local out, seen = {}, {}
-  local payload_role = spec.payload_role or "product"
-  local function add_variant(name, payload, origin)
-    if seen[name] then llb.fail("duplicate variant '" .. tostring(name) .. "'", { code = "E_DUPLICATE_VARIANT", primary = origin, labels = { { origin = seen[name], message = "first variant is here" } } }) end
-    seen[name] = origin; out[#out + 1] = { tag = "variant", name = name, payload = payload, origin = origin }
-  end
-  local gen, param, state = llb.stream.raw(llb.stream.from.array(v))
-  while true do
-    local next_state, item = gen(param, state)
-    if next_state == nil then break end
-    state = next_state
-    if is_tag(item, "Spread") then expand_spread(ctx, role_name, out, item)
-    elseif is_tag(item, "Symbol") then add_variant(item.text, nil, item.origin)
-    elseif is_tag(item, "Name") then add_variant(item.text, nil, item.origin)
-    elseif is_tag(item, "Expr") and item.kind == "call" and is_tag(item.callee, "Symbol") then
-      if (item.args.n or #item.args) ~= 1 or type(item.args[1]) ~= "table" then llb.fail("variant payload must be a single product table", { primary = item.origin }) end
-      add_variant(item.callee.text, normalize_role(ctx, payload_role, item.args[1]), item.origin)
-    else
-      llb.fail("sum entries must be variants or spreads, got " .. repr(item), { primary = origin_of(item) or (ctx and ctx.origin), code = "E_BAD_SUM_ENTRY" })
-    end
-  end
-  return out
-end
-
 local normalize_role_reflective
 
-local function compiled_role_context(ctx, role_name, spec)
+local role_ops = (function()
+local function role_context(ctx, role_name, spec)
   local subctx = shallow_copy(ctx or {})
   subctx.role = role_name
   subctx.role_spec = spec
   return subctx
 end
 
+local function stream_single_value(gen, param, state)
+  local r = pack(gen(param, state))
+  if r[1] == nil then return nil end
+  return r[2]
+end
+
+local function append_stream_payloads(out, n, gen, param, state)
+  gen, param, state = llb.stream.raw(gen, param, state)
+  while true do
+    local r = pack(gen(param, state))
+    if r[1] == nil then return n end
+    state = r[1]
+    n = n + 1
+    out[n] = r[2]
+  end
+end
+
+local function collect_role_stream(kind, gen, param, state)
+  if kind == "record" then return llb.stream.collect.map(gen, param, state) end
+  if kind == "array" or kind == "product" or kind == "sum" or kind == "protocol" then
+    return llb.stream.collect.array(gen, param, state)
+  end
+  return stream_single_value(gen, param, state)
+end
+
+local function ensure_table_for_role(ctx, role_name, code, label, v)
+  if type(v) ~= "table" then
+    llb.fail("expected " .. label, { primary = ctx and ctx.origin, code = code, role = role_name })
+  end
+end
+
+local function role_array_gen(param, state)
+  state = state or { upstream_state = param.upstream_state }
+  while true do
+    if state.inner_gen then
+      local r = pack(state.inner_gen(state.inner_param, state.inner_state))
+      if r[1] ~= nil then
+        state.inner_state = r[1]
+        return state, r[2]
+      end
+      state.inner_gen, state.inner_param, state.inner_state = nil, nil, nil
+    end
+
+    local next_state, item = param.upstream_gen(param.upstream_param, state.upstream_state)
+    if next_state == nil then return nil end
+    state.upstream_state = next_state
+    if is_tag(item, "Spread") then
+      state.inner_gen, state.inner_param, state.inner_state = spread_stream(param.ctx, param.role_name, item)
+    elseif param.item_role then
+      return state, collect_role(param.ctx, param.item_role, item)
+    else
+      return state, item
+    end
+  end
+end
+
+local function role_record_gen(param, state)
+  state = state or param.upstream_state
+  while true do
+    local next_state, k, v = param.upstream_gen(param.upstream_param, state)
+    if next_state == nil then return nil end
+    state = next_state
+    if type(k) ~= "number" then
+      return state, k, param.value_role and collect_role(param.ctx, param.value_role, v) or v
+    end
+  end
+end
+
+local function check_product_field_unique(param, seen, f)
+  if param.unique and seen[f.name] then
+    llb.fail("duplicate product field '" .. tostring(f.name) .. "'", {
+      code = "E_DUPLICATE_FIELD",
+      primary = f.origin,
+      labels = { { origin = seen[f.name].origin, message = "first field is here" } },
+    })
+  end
+  seen[f.name] = f
+end
+
+local function role_product_gen(param, state)
+  state = state or { upstream_state = param.upstream_state, seen = {} }
+  while true do
+    if state.inner_gen then
+      local r = pack(state.inner_gen(state.inner_param, state.inner_state))
+      if r[1] ~= nil then
+        state.inner_state = r[1]
+        local f = r[2]
+        check_product_field_unique(param, state.seen, f)
+        return state, f
+      end
+      state.inner_gen, state.inner_param, state.inner_state = nil, nil, nil
+    end
+
+    local next_state, item = param.upstream_gen(param.upstream_param, state.upstream_state)
+    if next_state == nil then return nil end
+    state.upstream_state = next_state
+    if is_tag(item, "Spread") then
+      state.inner_gen, state.inner_param, state.inner_state = spread_stream(param.ctx, param.role_name, item)
+    elseif is_tag(item, "Capture") then
+      if not is_tag(item.subject, "Symbol") then llb.fail("product capture subject must be a symbol", { primary = item.origin }) end
+      local f = { tag = "field", name = item.subject.text, type = collect_role(param.ctx, param.type_role, item.value), origin = item.origin }
+      check_product_field_unique(param, state.seen, f)
+      return state, f
+    elseif is_tag(item, "CaptureInit") then
+      local c = item.capture
+      if not is_tag(c.subject, "Symbol") then llb.fail("product initializer subject must be a symbol", { primary = item.origin }) end
+      local f = { tag = "field", name = c.subject.text, type = collect_role(param.ctx, param.type_role, c.value), init = normalize_expr(param.ctx, item.init), origin = item.origin }
+      check_product_field_unique(param, state.seen, f)
+      return state, f
+    else
+      llb.fail("product entries must be typed names or spreads, got " .. repr(item), {
+        primary = origin_of(item) or (param.ctx and param.ctx.origin),
+        code = "E_BAD_PRODUCT_ENTRY",
+        notes = { "write x [T] for a typed field" },
+      })
+    end
+  end
+end
+
+local function check_sum_variant_unique(seen, name, origin)
+  if seen[name] then
+    llb.fail("duplicate variant '" .. tostring(name) .. "'", {
+      code = "E_DUPLICATE_VARIANT",
+      primary = origin,
+      labels = { { origin = seen[name], message = "first variant is here" } },
+    })
+  end
+  seen[name] = origin
+end
+
+local function role_sum_gen(param, state)
+  state = state or { upstream_state = param.upstream_state, seen = {} }
+  while true do
+    if state.inner_gen then
+      local r = pack(state.inner_gen(state.inner_param, state.inner_state))
+      if r[1] ~= nil then
+        state.inner_state = r[1]
+        local variant = r[2]
+        check_sum_variant_unique(state.seen, variant.name, variant.origin)
+        return state, variant
+      end
+      state.inner_gen, state.inner_param, state.inner_state = nil, nil, nil
+    end
+
+    local next_state, item = param.upstream_gen(param.upstream_param, state.upstream_state)
+    if next_state == nil then return nil end
+    state.upstream_state = next_state
+    if is_tag(item, "Spread") then
+      state.inner_gen, state.inner_param, state.inner_state = spread_stream(param.ctx, param.role_name, item)
+    elseif is_tag(item, "Symbol") or is_tag(item, "Name") then
+      check_sum_variant_unique(state.seen, item.text, item.origin)
+      return state, { tag = "variant", name = item.text, payload = nil, origin = item.origin }
+    elseif is_tag(item, "Expr") and item.kind == "call" and is_tag(item.callee, "Symbol") then
+      if (item.args.n or #item.args) ~= 1 or type(item.args[1]) ~= "table" then
+        llb.fail("variant payload must be a single product table", { primary = item.origin })
+      end
+      check_sum_variant_unique(state.seen, item.callee.text, item.origin)
+      return state, { tag = "variant", name = item.callee.text, payload = collect_role(param.ctx, param.payload_role, item.args[1]), origin = item.origin }
+    else
+      llb.fail("sum entries must be variants or spreads, got " .. repr(item), {
+        primary = origin_of(item) or (param.ctx and param.ctx.origin),
+        code = "E_BAD_SUM_ENTRY",
+      })
+    end
+  end
+end
+
+local function array_role_stream(ctx, role_name, spec, v)
+  ensure_table_for_role(ctx, role_name, "E_EXPECTED_TABLE", "table for " .. role_name .. " role", v)
+  local gen, param, state = llb.stream.raw(llb.stream.from.array(v))
+  return llb.stream.raw(llb.stream.wrap(role_array_gen, {
+    ctx = ctx,
+    role_name = role_name,
+    item_role = spec.item_role or spec.item,
+    upstream_gen = gen,
+    upstream_param = param,
+    upstream_state = state,
+  }, nil, { kind = "role:array", role = role_name }))
+end
+
+local function record_role_stream(ctx, role_name, spec, v)
+  ensure_table_for_role(ctx, role_name, "E_EXPECTED_RECORD", "record table", v)
+  local gen, param, state = llb.stream.raw(llb.stream.from.record(v))
+  return llb.stream.raw(llb.stream.wrap(role_record_gen, {
+    ctx = ctx,
+    role_name = role_name,
+    value_role = spec.value_role or spec.value,
+    upstream_gen = gen,
+    upstream_param = param,
+    upstream_state = state,
+  }, nil, { kind = "role:record", role = role_name }))
+end
+
+local function product_role_stream(ctx, role_name, spec, v)
+  ensure_table_for_role(ctx, role_name, "E_EXPECTED_PRODUCT", "product table", v)
+  local unique = spec.unique_names
+  if unique == nil then unique = true end
+  local gen, param, state = llb.stream.raw(llb.stream.from.array(v))
+  return llb.stream.raw(llb.stream.wrap(role_product_gen, {
+    ctx = ctx,
+    role_name = role_name,
+    type_role = spec.type_role or "type",
+    unique = unique,
+    upstream_gen = gen,
+    upstream_param = param,
+    upstream_state = state,
+  }, nil, { kind = "role:product", role = role_name }))
+end
+
+local function sum_role_stream(ctx, role_name, spec, v)
+  ensure_table_for_role(ctx, role_name, "E_EXPECTED_SUM", "sum/protocol table", v)
+  local gen, param, state = llb.stream.raw(llb.stream.from.array(v))
+  return llb.stream.raw(llb.stream.wrap(role_sum_gen, {
+    ctx = ctx,
+    role_name = role_name,
+    payload_role = spec.payload_role or "product",
+    upstream_gen = gen,
+    upstream_param = param,
+    upstream_state = state,
+  }, nil, { kind = "role:sum", role = role_name }))
+end
+
+local function role_stream_by_spec(ctx, role_name, spec, v)
+  local kind = spec.kind or role_name
+  if spec.stream then return llb.stream.raw(spec.stream(ctx.lang, ctx, v)) end
+  if kind == "name" then return llb.stream.raw(llb.stream.once(norm_name(ctx, v))) end
+  if kind == "type" then return llb.stream.raw(llb.stream.once(norm_type(ctx, v))) end
+  if kind == "expr" then return llb.stream.raw(llb.stream.once(normalize_expr(ctx, v))) end
+  if kind == "array" then return array_role_stream(ctx, role_name, spec, v) end
+  if kind == "record" then return record_role_stream(ctx, role_name, spec, v) end
+  if kind == "product" then return product_role_stream(ctx, role_name, spec, v) end
+  if kind == "sum" or kind == "protocol" then return sum_role_stream(ctx, role_name, spec, v) end
+  if kind == "mixed" then return llb.stream.raw(llb.stream.once({
+    array = collect_role_stream("array", array_role_stream(ctx, role_name, spec, v)),
+    record = collect_role_stream("record", record_role_stream(ctx, role_name, spec, v)),
+  })) end
+  if kind == "string" then
+    if type(v) ~= "string" then llb.fail("expected string", { primary = ctx.origin }) end
+    return llb.stream.raw(llb.stream.once(v))
+  end
+  if kind == "number" then
+    if type(v) ~= "number" then llb.fail("expected number", { primary = ctx.origin }) end
+    return llb.stream.raw(llb.stream.once(v))
+  end
+  if kind == "boolean" then
+    if type(v) ~= "boolean" then llb.fail("expected boolean", { primary = ctx.origin }) end
+    return llb.stream.raw(llb.stream.once(v))
+  end
+  if kind == "value" or kind == "identity" then return llb.stream.raw(llb.stream.once(v)) end
+  llb.fail("unknown role kind " .. tostring(kind), { primary = ctx.origin, code = "E_UNKNOWN_ROLE_KIND" })
+end
+
+local function role_stream_reflective(ctx, role_name, v)
+  ctx = ctx or {}
+  local lang = ctx.lang
+  local spec = (lang and lang.roles and lang.roles[role_name]) or {}
+  return role_stream_by_spec(role_context(ctx, role_name, spec), role_name, spec, v)
+end
+
+local function collect_role_reflective(ctx, role_name, v)
+  ctx = ctx or {}
+  local lang = ctx.lang
+  local spec = (lang and lang.roles and lang.roles[role_name]) or {}
+  local kind = spec.kind or role_name
+  local subctx = role_context(ctx, role_name, spec)
+  local out
+  if kind == "mixed" and not spec.stream then
+    out = {
+      array = collect_role_stream("array", array_role_stream(subctx, role_name, spec, v)),
+      record = collect_role_stream("record", record_role_stream(subctx, role_name, spec, v)),
+    }
+  else
+    out = collect_role_stream(kind, role_stream_by_spec(subctx, role_name, spec, v))
+  end
+  if spec.check then spec.check(subctx, out, v) end
+  return out
+end
+
+spread_stream = function(ctx, role_name, spread)
+  if not is_tag(spread, "Spread") then
+    llb.fail("expected spread value", { primary = origin_of(spread) or (ctx and ctx.origin), code = "E_EXPECTED_SPREAD" })
+  end
+  local v = spread.value
+  if is_tag(v, "Fragment") then
+    if v.role ~= role_name then
+      llb.fail("cannot spread " .. tostring(v.role) .. " fragment into " .. tostring(role_name) .. " role", {
+        code = "E_SPREAD_ROLE",
+        primary = spread.origin,
+        labels = { { origin = v.origin, message = "fragment created here as role " .. tostring(v.role) } },
+      })
+    end
+    return llb.stream.raw(llb.stream.from.array(v.items or {}))
+  end
+  if type(v) == "table" then return role_stream(ctx, role_name, v) end
+  llb.fail("cannot spread value " .. repr(v), { primary = spread.origin, code = "E_BAD_SPREAD" })
+end
+
+local function expand_spread(ctx, role_name, out, spread)
+  append_stream_payloads(out, #(out or {}), spread_stream(ctx, role_name, spread))
+end
+
+local function norm_array(ctx, role_name, spec, v)
+  return collect_role_stream("array", array_role_stream(ctx, role_name, spec, v))
+end
+
+local function norm_record(ctx, role_name, spec, v)
+  return collect_role_stream("record", record_role_stream(ctx, role_name, spec, v))
+end
+
+local function norm_product(ctx, role_name, spec, v)
+  return collect_role_stream("product", product_role_stream(ctx, role_name, spec, v))
+end
+
+local function norm_sum(ctx, role_name, spec, v)
+  return collect_role_stream(spec.kind or role_name, sum_role_stream(ctx, role_name, spec, v))
+end
+
+local RoleMachine = {}
+RoleMachine.__index = RoleMachine
+RoleMachine.__call = function(self, ctx, value) return self.collect(ctx, value) end
+
+local SpreadMachine = {}
+SpreadMachine.__index = SpreadMachine
+SpreadMachine.__call = function(self, ctx, out, n, spread) return self.append(ctx, out, n, spread) end
+
 local function compile_spread_expander(lang, role_name, spec)
   spec = spec or {}
-  local fn = function(ctx, out, n, spread)
-    local subctx = compiled_role_context(ctx, role_name, spec)
-    local v = spread.value
-    if type(v) == "table" then
-      local tag = v.__llb_tag
-      if tag == "Fragment" then
-        if v.role ~= role_name then
-          llb.fail("cannot spread " .. tostring(v.role) .. " fragment into " .. tostring(role_name) .. " role", {
-            code = "E_SPREAD_ROLE", primary = spread.origin,
-            labels = { { origin = v.origin, message = "fragment created here as role " .. tostring(v.role) } },
-          })
-        end
-        local items = v.items or {}
-        for i = 1, #items do
-          n = n + 1
-          out[n] = items[i]
-        end
-        return n
-      end
-
-      local normalized = normalize_role(subctx, role_name, v)
-      for i = 1, #(normalized or {}) do
-        n = n + 1
-        out[n] = normalized[i]
-      end
-      return n
-    end
-    llb.fail("cannot spread value " .. repr(v), { primary = spread.origin, code = "E_BAD_SPREAD" })
+  local function stream_fn(ctx, spread)
+    return spread_stream(role_context(ctx, role_name, spec), role_name, spread)
   end
-  return llb.codegen.register(fn, {
+  local function append_fn(ctx, out, n, spread)
+    out = out or {}
+    n = n or #out
+    return append_stream_payloads(out, n, stream_fn(ctx, spread))
+  end
+  local machine = setmetatable({
+    __llb_tag = "SpreadMachine",
+    lang = lang,
+    role = role_name,
+    role_kind = spec.kind or role_name,
+    stream = llb.codegen.register(stream_fn, {
+      id = tostring(lang.name) .. ".spread." .. tostring(role_name) .. ".stream",
+      kind = "spread-stream",
+      language = lang.name,
+      role = role_name,
+      role_kind = spec.kind or role_name,
+      mode = "fast",
+      origin = spec.origin,
+      generated = false,
+    }),
+    append = llb.codegen.register(append_fn, {
+      id = tostring(lang.name) .. ".spread." .. tostring(role_name) .. ".append",
+      kind = "spread-sink",
+      language = lang.name,
+      role = role_name,
+      role_kind = spec.kind or role_name,
+      mode = "fast",
+      origin = spec.origin,
+      generated = false,
+    }),
+    meta = { language = lang.name, role = role_name, role_kind = spec.kind or role_name, origin = spec.origin },
+  }, SpreadMachine)
+  return llb.codegen.register(machine, {
     id = tostring(lang.name) .. ".spread." .. tostring(role_name),
-    kind = "spread",
+    kind = "spread-machine",
     language = lang.name,
     role = role_name,
     role_kind = spec.kind or role_name,
@@ -2880,212 +3104,71 @@ local function compile_spread_expander(lang, role_name, spec)
   })
 end
 
-local function compile_role_normalizer_impl(lang, role_name, spec)
+local function compile_role_streamer(lang, role_name, spec)
+  spec = spec or {}
+  return function(ctx, value)
+    local subctx = role_context(ctx, role_name, spec)
+    subctx.lang = subctx.lang or lang
+    return role_stream_by_spec(subctx, role_name, spec, value)
+  end
+end
+
+local function compile_role_collector(lang, role_name, spec, stream_fn)
   spec = spec or {}
   local kind = spec.kind or role_name
-
-  if spec.normalize then
-    return function(ctx, v)
-      local subctx = compiled_role_context(ctx, role_name, spec)
-      local out = spec.normalize(lang, subctx, v)
-      if spec.check then spec.check(subctx, out, v) end
-      return out
+  return function(ctx, value)
+    local subctx = role_context(ctx, role_name, spec)
+    subctx.lang = subctx.lang or lang
+    local out
+    if kind == "mixed" and not spec.stream then
+      out = {
+        array = collect_role_stream("array", array_role_stream(subctx, role_name, spec, value)),
+        record = collect_role_stream("record", record_role_stream(subctx, role_name, spec, value)),
+      }
+    else
+      out = collect_role_stream(kind, stream_fn(subctx, value))
     end
-  end
-
-  if kind == "name" then
-    return function(ctx, v)
-      local subctx = compiled_role_context(ctx, role_name, spec)
-      local out = norm_name(subctx, v)
-      if spec.check then spec.check(subctx, out, v) end
-      return out
-    end
-  end
-
-  if kind == "type" then
-    return function(ctx, v)
-      local subctx = compiled_role_context(ctx, role_name, spec)
-      local out = norm_type(subctx, v)
-      if spec.check then spec.check(subctx, out, v) end
-      return out
-    end
-  end
-
-  if kind == "expr" then
-    return function(ctx, v)
-      local subctx = compiled_role_context(ctx, role_name, spec)
-      local out = normalize_expr(subctx, v)
-      if spec.check then spec.check(subctx, out, v) end
-      return out
-    end
-  end
-
-  if kind == "array" then
-    local item_role = spec.item_role or spec.item
-    local spread_expander = lang.compiled and lang.compiled.spreads and lang.compiled.spreads[role_name]
-    return function(ctx, v)
-      local subctx = compiled_role_context(ctx, role_name, spec)
-      if type(v) ~= "table" then llb.fail("expected table for " .. role_name .. " role", { primary = subctx.origin, code = "E_EXPECTED_TABLE" }) end
-      local out = {}
-      local n = 0
-      for i = 1, #v do
-        local item = v[i]
-        if is_tag(item, "Spread") then
-          n = spread_expander(subctx, out, n, item)
-        elseif item_role then
-          n = n + 1
-          out[n] = normalize_role(subctx, item_role, item)
-        else
-          n = n + 1
-          out[n] = item
-        end
-      end
-      if spec.check then spec.check(subctx, out, v) end
-      return out
-    end
-  end
-
-  if kind == "record" then
-    local value_role = spec.value_role or spec.value
-    return function(ctx, v)
-      local subctx = compiled_role_context(ctx, role_name, spec)
-      if type(v) ~= "table" then llb.fail("expected record table", { primary = subctx.origin, code = "E_EXPECTED_RECORD" }) end
-      local out = {}
-      for k, x in pairs(v) do
-        if type(k) ~= "number" then out[k] = value_role and normalize_role(subctx, value_role, x) or x end
-      end
-      if spec.check then spec.check(subctx, out, v) end
-      return out
-    end
-  end
-
-  if kind == "product" then
-    local type_role = spec.type_role or "type"
-    local unique = spec.unique_names
-    if unique == nil then unique = true end
-    local spread_expander = lang.compiled and lang.compiled.spreads and lang.compiled.spreads[role_name]
-    return function(ctx, v)
-      local subctx = compiled_role_context(ctx, role_name, spec)
-      if type(v) ~= "table" then llb.fail("expected product table", { primary = subctx.origin, code = "E_EXPECTED_PRODUCT" }) end
-      local out, seen, n = {}, {}, 0
-      local function add_field(f)
-        if unique and seen[f.name] then
-          llb.fail("duplicate product field '" .. tostring(f.name) .. "'", { code = "E_DUPLICATE_FIELD", primary = f.origin, labels = { { origin = seen[f.name].origin, message = "first field is here" } } })
-        end
-        seen[f.name] = f
-        n = n + 1
-        out[n] = f
-      end
-      for i = 1, #v do
-        local item = v[i]
-        if is_tag(item, "Spread") then
-          local tmp = {}
-          local tmp_n = spread_expander(subctx, tmp, 0, item)
-          for j = 1, tmp_n do add_field(tmp[j]) end
-        elseif is_tag(item, "Capture") then
-          if not is_tag(item.subject, "Symbol") then llb.fail("product capture subject must be a symbol", { primary = item.origin }) end
-          add_field({ tag = "field", name = item.subject.text, type = normalize_role(subctx, type_role, item.value), origin = item.origin })
-        elseif is_tag(item, "CaptureInit") then
-          local c = item.capture
-          if not is_tag(c.subject, "Symbol") then llb.fail("product initializer subject must be a symbol", { primary = item.origin }) end
-          add_field({ tag = "field", name = c.subject.text, type = normalize_role(subctx, type_role, c.value), init = normalize_expr(subctx, item.init), origin = item.origin })
-        else
-          llb.fail("product entries must be typed names or spreads, got " .. repr(item), { primary = origin_of(item) or subctx.origin, code = "E_BAD_PRODUCT_ENTRY", notes = { "write x [T] for a typed field" } })
-        end
-      end
-      if spec.check then spec.check(subctx, out, v) end
-      return out
-    end
-  end
-
-  if kind == "sum" or kind == "protocol" then
-    local payload_role = spec.payload_role or "product"
-    local spread_expander = lang.compiled and lang.compiled.spreads and lang.compiled.spreads[role_name]
-    return function(ctx, v)
-      local subctx = compiled_role_context(ctx, role_name, spec)
-      if type(v) ~= "table" then llb.fail("expected sum/protocol table", { primary = subctx.origin, code = "E_EXPECTED_SUM" }) end
-      local out, seen, n = {}, {}, 0
-      local function add_variant(name, payload, origin)
-        if seen[name] then llb.fail("duplicate variant '" .. tostring(name) .. "'", { code = "E_DUPLICATE_VARIANT", primary = origin, labels = { { origin = seen[name], message = "first variant is here" } } }) end
-        seen[name] = origin
-        n = n + 1
-        out[n] = { tag = "variant", name = name, payload = payload, origin = origin }
-      end
-      for i = 1, #v do
-        local item = v[i]
-        if is_tag(item, "Spread") then
-          n = spread_expander(subctx, out, n, item)
-        elseif is_tag(item, "Symbol") then
-          add_variant(item.text, nil, item.origin)
-        elseif is_tag(item, "Name") then
-          add_variant(item.text, nil, item.origin)
-        elseif is_tag(item, "Expr") and item.kind == "call" and is_tag(item.callee, "Symbol") then
-          if (item.args.n or #item.args) ~= 1 or type(item.args[1]) ~= "table" then llb.fail("variant payload must be a single product table", { primary = item.origin }) end
-          add_variant(item.callee.text, normalize_role(subctx, payload_role, item.args[1]), item.origin)
-        else
-          llb.fail("sum entries must be variants or spreads, got " .. repr(item), { primary = origin_of(item) or subctx.origin, code = "E_BAD_SUM_ENTRY" })
-        end
-      end
-      if spec.check then spec.check(subctx, out, v) end
-      return out
-    end
-  end
-
-  if kind == "mixed" then
-    return function(ctx, v)
-      local subctx = compiled_role_context(ctx, role_name, spec)
-      local out = { array = norm_array(subctx, role_name, spec, v), record = norm_record(subctx, role_name, spec, v) }
-      if spec.check then spec.check(subctx, out, v) end
-      return out
-    end
-  end
-
-  if kind == "string" then
-    return function(ctx, v)
-      local subctx = compiled_role_context(ctx, role_name, spec)
-      if type(v) ~= "string" then llb.fail("expected string", { primary = subctx.origin }) end
-      if spec.check then spec.check(subctx, v, v) end
-      return v
-    end
-  end
-
-  if kind == "number" then
-    return function(ctx, v)
-      local subctx = compiled_role_context(ctx, role_name, spec)
-      if type(v) ~= "number" then llb.fail("expected number", { primary = subctx.origin }) end
-      if spec.check then spec.check(subctx, v, v) end
-      return v
-    end
-  end
-
-  if kind == "boolean" then
-    return function(ctx, v)
-      local subctx = compiled_role_context(ctx, role_name, spec)
-      if type(v) ~= "boolean" then llb.fail("expected boolean", { primary = subctx.origin }) end
-      if spec.check then spec.check(subctx, v, v) end
-      return v
-    end
-  end
-
-  if kind == "value" or kind == "identity" then
-    return function(ctx, v)
-      local subctx = compiled_role_context(ctx, role_name, spec)
-      if spec.check then spec.check(subctx, v, v) end
-      return v
-    end
-  end
-
-  return function(ctx, v)
-    return normalize_role_reflective(ctx, role_name, v)
+    if spec.check then spec.check(subctx, out, value) end
+    return out
   end
 end
 
 local function compile_role_normalizer(lang, role_name, spec)
   spec = spec or {}
-  local fn = compile_role_normalizer_impl(lang, role_name, spec)
-  return llb.codegen.register(fn, {
+  local stream_fn = compile_role_streamer(lang, role_name, spec)
+  local collect_fn = compile_role_collector(lang, role_name, spec, stream_fn)
+  local machine = setmetatable({
+    __llb_tag = "RoleMachine",
+    lang = lang,
+    role = role_name,
+    role_kind = spec.kind or role_name,
+    stream = llb.codegen.register(stream_fn, {
+      id = tostring(lang.name) .. ".role." .. tostring(role_name) .. ".stream",
+      kind = "role-stream",
+      language = lang.name,
+      role = role_name,
+      role_kind = spec.kind or role_name,
+      mode = "fast",
+      origin = spec.origin,
+      reflective = role_stream_reflective,
+      generated = false,
+    }),
+    collect = llb.codegen.register(collect_fn, {
+      id = tostring(lang.name) .. ".role." .. tostring(role_name) .. ".collect",
+      kind = "role-sink",
+      language = lang.name,
+      role = role_name,
+      role_kind = spec.kind or role_name,
+      mode = "fast",
+      origin = spec.origin,
+      reflective = normalize_role_reflective,
+      generated = false,
+    }),
+    meta = { language = lang.name, role = role_name, role_kind = spec.kind or role_name, origin = spec.origin },
+  }, RoleMachine)
+  return llb.codegen.register(machine, {
     id = tostring(lang.name) .. ".role." .. tostring(role_name),
-    kind = "role",
+    kind = "role-machine",
     language = lang.name,
     role = role_name,
     role_kind = spec.kind or role_name,
@@ -3096,6 +3179,17 @@ local function compile_role_normalizer(lang, role_name, spec)
   })
 end
 
+return {
+  compile_spread_expander = compile_spread_expander,
+  compile_role_normalizer = compile_role_normalizer,
+  role_stream_reflective = role_stream_reflective,
+  collect_role_reflective = collect_role_reflective,
+  spread_stream = spread_stream,
+}
+end)()
+
+spread_stream = role_ops.spread_stream
+
 function llb.codegen.compile_language(lang, opts)
   opts = opts or {}
   local compiled = {
@@ -3105,56 +3199,51 @@ function llb.codegen.compile_language(lang, opts)
     roles = {},
     spreads = {},
     metadata = {
-      kind = "closure-codegen",
+      kind = "stream-codegen",
       diagnostics = "reflective-replay",
       source = "trusted-grammar",
     },
   }
   for role_name, spec in pairs(lang.roles or {}) do
-    compiled.spreads[role_name] = compile_spread_expander(lang, role_name, spec)
+    compiled.spreads[role_name] = role_ops.compile_spread_expander(lang, role_name, spec)
   end
   lang.compiled = compiled
   for role_name, spec in pairs(lang.roles or {}) do
-    compiled.roles[role_name] = compile_role_normalizer(lang, role_name, spec)
+    compiled.roles[role_name] = role_ops.compile_role_normalizer(lang, role_name, spec)
   end
   return compiled
 end
 
 normalize_role_reflective = function(ctx, role_name, v)
-  ctx = ctx or {}
-  local lang = ctx.lang
-  local spec = (lang and lang.roles and lang.roles[role_name]) or {}
-  local kind = spec.kind or role_name
-  local subctx = shallow_copy(ctx); subctx.role = role_name; subctx.role_spec = spec
-  local out
-  if spec.normalize then out = spec.normalize(lang, subctx, v)
-  elseif kind == "name" then out = norm_name(subctx, v)
-  elseif kind == "type" then out = norm_type(subctx, v)
-  elseif kind == "expr" then out = normalize_expr(subctx, v)
-  elseif kind == "array" then out = norm_array(subctx, role_name, spec, v)
-  elseif kind == "record" then out = norm_record(subctx, role_name, spec, v)
-  elseif kind == "product" then out = norm_product(subctx, role_name, spec, v)
-  elseif kind == "sum" or kind == "protocol" then out = norm_sum(subctx, role_name, spec, v)
-  elseif kind == "mixed" then out = { array = norm_array(subctx, role_name, spec, v), record = norm_record(subctx, role_name, spec, v) }
-  elseif kind == "string" then if type(v) == "string" then out = v else llb.fail("expected string", { primary = ctx.origin }) end
-  elseif kind == "number" then if type(v) == "number" then out = v else llb.fail("expected number", { primary = ctx.origin }) end
-  elseif kind == "boolean" then if type(v) == "boolean" then out = v else llb.fail("expected boolean", { primary = ctx.origin }) end
-  elseif kind == "value" or kind == "identity" then out = v
-  else llb.fail("unknown role kind " .. tostring(kind), { primary = ctx.origin, code = "E_UNKNOWN_ROLE_KIND" }) end
-  if spec.check then spec.check(subctx, out, v) end
-  return out
+  return role_ops.collect_role_reflective(ctx, role_name, v)
 end
 
-normalize_role = function(ctx, role_name, v)
+role_stream = function(ctx, role_name, v)
   ctx = ctx or {}
   local lang = ctx.lang
   local compiled = lang and lang.compiled
-  local role_fn = compiled and compiled.roles and compiled.roles[role_name]
-  if role_fn and ctx.codegen ~= false and ctx.reflective ~= true then
-    return role_fn(ctx, v)
+  local role_machine = compiled and compiled.roles and compiled.roles[role_name]
+  if role_machine and role_machine.stream and ctx.codegen ~= false and ctx.reflective ~= true then
+    return role_machine.stream(ctx, v)
   end
-  return normalize_role_reflective(ctx, role_name, v)
+  return role_ops.role_stream_reflective(ctx, role_name, v)
 end
+
+collect_role = function(ctx, role_name, v)
+  ctx = ctx or {}
+  local lang = ctx.lang
+  local compiled = lang and lang.compiled
+  local role_machine = compiled and compiled.roles and compiled.roles[role_name]
+  if role_machine and role_machine.collect and ctx.codegen ~= false and ctx.reflective ~= true then
+    return role_machine.collect(ctx, v)
+  end
+  return role_ops.collect_role_reflective(ctx, role_name, v)
+end
+
+normalize_role = collect_role
+llb.role_stream = role_stream
+llb.collect_role = collect_role
+llb.spread_stream = spread_stream
 llb.normalize_role, llb.normalize_expr = normalize_role, normalize_expr
 
 local function stage_missing_slots(stage)
@@ -3311,7 +3400,7 @@ local function normalize_stage_slots(stage)
           channel = event and event.channel or nil,
         },
       })
-      fields[slot.name] = normalize_role({ lang = stage.lang, head = stage.head.name, slot = slot, event = event, origin = origins[slot.name] }, slot.role, raw)
+      fields[slot.name] = collect_role({ lang = stage.lang, head = stage.head.name, slot = slot, event = event, origin = origins[slot.name] }, slot.role, raw)
     elseif slot.optional then
       fields[slot.name] = slot.default
     else
@@ -3367,6 +3456,38 @@ local function head_origin(h)
   return rawget(h, "origin") or source.capture("head", { hint = h.spec.name })
 end
 local function start_stage(h) return setmetatable({ __llb_tag = "Stage", lang = h.lang, head = h.spec, raw = {}, origins = {}, events = {}, seen = {}, next_index = 1, origin = head_origin(h) }, RuntimeStage) end
+local function head_event_stream_gen(param, state)
+  state = state or { stage = param.start(), upstream_state = param.upstream_state }
+  if state.done then return nil end
+  while true do
+    local next_state, event = param.upstream_gen(param.upstream_param, state.upstream_state)
+    if next_state == nil then
+      local out = param.finish(state.stage)
+      state.done = true
+      return state, out
+    end
+    state.upstream_state = next_state
+    local out = param.consume(state.stage, event)
+    if is_tag(out, "Stage") then
+      state.stage = out
+    else
+      state.done = true
+      return state, out
+    end
+  end
+end
+local function head_event_stream(head, events, param, state, start_fn, consume_fn, finish_fn, kind)
+  local gen, p0, s0 = llb.stream.raw(events, param, state)
+  return llb.stream.raw(llb.stream.wrap(head_event_stream_gen, {
+    head = head,
+    upstream_gen = gen,
+    upstream_param = p0,
+    upstream_state = s0,
+    start = function() return start_fn(head) end,
+    consume = consume_fn,
+    finish = finish_fn,
+  }, nil, { kind = kind or "head:events", head = head.spec and head.spec.name }))
+end
 RuntimeHead.__index = function(self, key)
   if RuntimeHead[key] then return RuntimeHead[key] end
   local o = source.capture("head-name", { hint = key })
@@ -3415,6 +3536,31 @@ function RuntimeHead:at(origin)
   return setmetatable({ __llb_tag = "HeadAt", head = self, origin = origin }, HeadAt)
 end
 
+function RuntimeHead:event_stream(events, param, state)
+  return head_event_stream(self, events, param, state, start_stage, consume_event, build_stage, "head:reflective")
+end
+
+function RuntimeHead:collect_events(events, param, state)
+  local gen, p0, s0 = self:event_stream(events, param, state)
+  local next_state, value = gen(p0, s0)
+  if next_state == nil then return nil end
+  return value
+end
+
+function llb.head_event_stream(head, events, param, state)
+  if type(head) == "table" and type(head.event_stream) == "function" then
+    return head:event_stream(events, param, state)
+  end
+  llb.fail("llb.head_event_stream expects an LLB head", { primary = origin_of(head), code = "E_EXPECTED_HEAD" }, 2)
+end
+
+function llb.collect_head_events(head, events, param, state)
+  if type(head) == "table" and type(head.collect_events) == "function" then
+    return head:collect_events(events, param, state)
+  end
+  llb.fail("llb.collect_head_events expects an LLB head", { primary = origin_of(head), code = "E_EXPECTED_HEAD" }, 2)
+end
+
 local function runtime_head(lang, spec) return setmetatable({ __llb_tag = "Head", lang = lang, spec = spec }, RuntimeHead) end
 
 local function install_head_codegen()
@@ -3440,9 +3586,9 @@ local function compiled_build_stage(stage)
           channel = event and event.channel or nil,
         },
       })
-      local role_fn = stage.compiled.roles and stage.compiled.roles[slot.role]
+      local role_machine = stage.compiled.roles and stage.compiled.roles[slot.role]
       local ctx = { lang = stage.lang, head = stage.head.name, slot = slot, event = event, origin = origins[slot.name] }
-      fields[slot.name] = role_fn and role_fn(ctx, raw) or normalize_role(ctx, slot.role, raw)
+      fields[slot.name] = role_machine and role_machine.collect and role_machine.collect(ctx, raw) or collect_role(ctx, slot.role, raw)
     elseif slot.optional then
       fields[slot.name] = slot.default
     else
@@ -3528,6 +3674,17 @@ local function compiled_start_stage(h)
   }, CompiledStage)
 end
 
+function CompiledHead:event_stream(events, param, state)
+  return head_event_stream(self, events, param, state, compiled_start_stage, compiled_consume_event, compiled_build_stage, "head:compiled")
+end
+
+function CompiledHead:collect_events(events, param, state)
+  local gen, p0, s0 = self:event_stream(events, param, state)
+  local next_state, value = gen(p0, s0)
+  if next_state == nil then return nil end
+  return value
+end
+
 CompiledHead.__index = function(self, key)
   if CompiledHead[key] then return CompiledHead[key] end
   local o = source.capture("head-name", { hint = key })
@@ -3571,6 +3728,7 @@ end
 
 local function compiled_head(lang, spec, compiled)
   local h = setmetatable({ __llb_tag = "Head", lang = lang, spec = spec, compiled = compiled, backend = "compiled" }, CompiledHead)
+  h.construct = h
   return llb.codegen.register(h, {
     id = tostring(lang.name) .. ".head." .. tostring(spec.name),
     kind = "head",
@@ -4199,6 +4357,7 @@ local function family_define(name, spec)
   family.load = function(src, chunkname, opts) return Family.loadstring(family, src, chunkname, opts)() end
   family.loadfile = function(path, opts) return Family.loadfile(family, path, opts) end
   family.describe = function() return Family.describe(family) end
+  family.format_stream = function(value, opts) return Family.format_stream(family, value, opts) end
   family.format = function(value, opts) return Family.format(family, value, opts) end
   family.format_doc = function(value, opts) return Family.format_doc(family, value, opts) end
   family.diagnostics = function(value, opts) return Family.diagnostics(family, value, opts) end
@@ -4353,25 +4512,184 @@ local function is_array_table(t)
   return true
 end
 
+local family_stream_ops = (function()
+local function push_value(stack, value)
+  if value ~= nil then stack[#stack + 1] = value end
+end
+
+local function push_table_children(stack, value)
+  local record_values = {}
+  for k, v in pairs(value) do
+    if type(k) ~= "number" then record_values[#record_values + 1] = v end
+  end
+  for i = #record_values, 1, -1 do push_value(stack, record_values[i]) end
+  for i = #value, 1, -1 do push_value(stack, value[i]) end
+end
+
+local function zone_stream_gen(param, state)
+  state = state or { stack = { param.value } }
+  local stack = state.stack
+  while #stack > 0 do
+    local value = stack[#stack]
+    stack[#stack] = nil
+    if is_tag(value, "Zone") then
+      if param.member_name == nil or value.member == param.member_name or value.name == param.member_name then
+        return state, value
+      end
+    elseif is_tag(value, "FamilyBundle") then
+      local zones = value.zones or {}
+      for i = #zones, 1, -1 do push_value(stack, zones[i]) end
+    elseif type(value) == "table" then
+      push_table_children(stack, value)
+    end
+  end
+  return nil
+end
+
+local function zone_stream(family, value, member_name)
+  return llb.stream.raw(llb.stream.wrap(zone_stream_gen, {
+    family = family,
+    value = value,
+    member_name = member_name,
+  }, nil, { kind = "family:zones", family = family.name }))
+end
+
+local function push_diagnostic(buffer, d)
+  if is_tag(d, "Diagnostic") then buffer[#buffer + 1] = d end
+end
+
+local function push_diagnostic_result(buffer, result)
+  if is_tag(result, "Diagnostic") then push_diagnostic(buffer, result)
+  elseif is_tag(result, "DiagnosticBag") then
+    for i = 1, #(result.items or {}) do push_diagnostic(buffer, result.items[i]) end
+  elseif type(result) == "table" and result.items then
+    for i = 1, #(result.items or {}) do push_diagnostic(buffer, result.items[i]) end
+  end
+end
+
+local function diagnostic_stream_gen(param, state)
+  state = state or { member_index = 1, buffer = {}, buffer_index = 1 }
+  while true do
+    if state.buffer_index <= #state.buffer then
+      local d = state.buffer[state.buffer_index]
+      state.buffer_index = state.buffer_index + 1
+      return state, d
+    end
+    state.buffer, state.buffer_index = {}, 1
+    local member = (param.family.members or {})[state.member_index]
+    if member == nil then return nil end
+    state.member_index = state.member_index + 1
+    if type(member.diagnostics) == "function" then
+      local bag = llb.diagnostics()
+      local opts = shallow_copy(param.opts or {})
+      opts.diagnostics = bag
+      local ok, result = pcall(member.diagnostics, param.value, bag, opts, param.family)
+      if ok then
+        push_diagnostic_result(state.buffer, bag)
+        if result ~= bag then push_diagnostic_result(state.buffer, result) end
+      else
+        state.buffer[#state.buffer + 1] = llb.diagnostic {
+          code = "E_FAMILY_MEMBER_TOOL",
+          message = tostring(result),
+          primary = origin_of(param.value),
+          notes = { "while running family tooling for " .. family_member_name(member) },
+        }
+      end
+    end
+  end
+end
+
+local function diagnostic_stream(family, value, opts)
+  return llb.stream.raw(llb.stream.wrap(diagnostic_stream_gen, {
+    family = family,
+    value = value,
+    opts = opts or {},
+  }, nil, { kind = "family:diagnostics", family = family.name }))
+end
+
+local function push_index_result(buffer, result)
+  if type(result) ~= "table" then return end
+  for i = 1, #(result.symbols or {}) do buffer[#buffer + 1] = { kind = "symbol", value = result.symbols[i] } end
+  for i = 1, #(result.hovers or {}) do buffer[#buffer + 1] = { kind = "hover", value = result.hovers[i] } end
+  for i = 1, #(result.diagnostics or {}) do buffer[#buffer + 1] = { kind = "diagnostic", value = result.diagnostics[i] } end
+end
+
+local function index_stream_gen(param, state)
+  state = state or {
+    phase = "zones",
+    zone_gen = nil,
+    zone_param = nil,
+    zone_state = nil,
+    member_index = 1,
+    buffer = {},
+    buffer_index = 1,
+  }
+  if state.phase == "zones" and state.zone_gen == nil then
+    state.zone_gen, state.zone_param, state.zone_state = zone_stream(param.family, param.value)
+  end
+  while true do
+    if state.buffer_index <= #state.buffer then
+      local ev = state.buffer[state.buffer_index]
+      state.buffer_index = state.buffer_index + 1
+      return state, ev
+    end
+    state.buffer, state.buffer_index = {}, 1
+    if state.phase == "zones" then
+      local next_state, z = state.zone_gen(state.zone_param, state.zone_state)
+      if next_state ~= nil then
+        state.zone_state = next_state
+        return state, { kind = "zone", value = { name = z.name, member = z.member, role = z.role, count = #(z.items or {}) } }
+      end
+      state.phase = "members"
+    end
+    local member = (param.family.members or {})[state.member_index]
+    if member == nil then return nil end
+    state.member_index = state.member_index + 1
+    if type(member.index) == "function" then
+      local ok, result = pcall(member.index, param.value, param.opts or {}, param.family)
+      if ok then
+        push_index_result(state.buffer, result)
+      else
+        state.buffer[#state.buffer + 1] = {
+          kind = "diagnostic",
+          value = llb.diagnostic {
+            code = "E_FAMILY_INDEX",
+            message = tostring(result),
+            primary = origin_of(param.value),
+          },
+        }
+      end
+    end
+  end
+end
+
+local function index_stream(family, value, opts)
+  return llb.stream.raw(llb.stream.wrap(index_stream_gen, {
+    family = family,
+    value = value,
+    opts = opts or {},
+  }, nil, { kind = "family:index", family = family.name }))
+end
+
+return { zone_stream = zone_stream, diagnostic_stream = diagnostic_stream, index_stream = index_stream }
+end)()
+
+function Family:zone_stream(value, member_name)
+  return family_stream_ops.zone_stream(self, value, member_name)
+end
+
 function Family:owned_zones(value, member_name, out)
-  -- Walk a family value and collect zones. This accepts ordinary Lua tables,
-  -- explicit Zone values, and FamilyBundle values because family authoring is
-  -- intentionally value-shaped rather than syntax-shaped.
   out = out or {}
-  if value == nil then return out end
-  if is_tag(value, "Zone") then
-    if member_name == nil or value.member == member_name or value.name == member_name then out[#out + 1] = value end
-    return out
-  end
-  if is_tag(value, "FamilyBundle") then
-    for _, z in ipairs(value.zones or {}) do self:owned_zones(z, member_name, out) end
-    return out
-  end
-  if type(value) == "table" then
-    for i = 1, #value do self:owned_zones(value[i], member_name, out) end
-    for k, v in pairs(value) do if type(k) ~= "number" then self:owned_zones(v, member_name, out) end end
-  end
+  llb.stream.each(function(z) out[#out + 1] = z end, self:zone_stream(value, member_name))
   return out
+end
+
+function Family:diagnostic_stream(value, opts)
+  return family_stream_ops.diagnostic_stream(self, value, opts)
+end
+
+function Family:index_stream(value, opts)
+  return family_stream_ops.index_stream(self, value, opts)
 end
 
 local function indent_text(text, indent)
@@ -4428,49 +4746,38 @@ function Family:format_doc(value, opts)
   return llb.doc.text(Family.format(self, value, opts))
 end
 
-function Family:format(value, opts)
+local function family_format_stream_gen(param, state)
+  if state ~= nil then return nil end
+  local format_opts = shallow_copy(param.opts or {})
+  format_opts.__family_seen = nil
+  return true, family_format_value(param.family, param.value, format_opts)
+end
+
+function Family:format_stream(value, opts)
   -- Unified family formatting. The family walks the value and lets member
   -- languages format values they own. This keeps cross-language files coherent
   -- without forcing each language to know about every other language.
-  opts = opts or {}
-  local format_opts = shallow_copy(opts)
-  format_opts.__family_seen = nil
-  return family_format_value(self, value, format_opts)
+  return llb.stream.raw(llb.stream.wrap(family_format_stream_gen, {
+    family = self,
+    value = value,
+    opts = opts or {},
+  }, nil, { kind = "family:format", family = self.name }))
 end
 
-local function add_family_error(bag, err, value, member_name)
-  if is_tag(err, "Diagnostic") then return bag:add(err) end
-  return bag:error {
-    code = "E_FAMILY_MEMBER_TOOL",
-    message = tostring(err),
-    primary = origin_of(value),
-    notes = member_name and { "while running family tooling for " .. tostring(member_name) } or nil,
-  }
+function Family:format(value, opts)
+  local chunks = {}
+  llb.stream.each(function(chunk) chunks[#chunks + 1] = chunk end, Family.format_stream(self, value, opts))
+  return table.concat(chunks)
 end
 
 function Family:diagnostics(value, opts)
-  -- Unified family diagnostics. Each member may contribute a diagnostics hook;
-  -- the family owns aggregation and error isolation so one broken member hook
-  -- becomes a diagnostic instead of killing all tooling.
   opts = opts or {}
   local bag = opts.diagnostics or llb.diagnostics()
-  for _, member in ipairs(self.members or {}) do
-    if type(member.diagnostics) == "function" then
-      local ok, result = pcall(member.diagnostics, value, bag, opts, self)
-      if not ok then add_family_error(bag, result, value, family_member_name(member)) end
-      if ok and type(result) == "table" and result ~= bag then
-        if is_tag(result, "DiagnosticBag") then for _, d in ipairs(result.items or {}) do bag:add(d) end
-        elseif is_tag(result, "Diagnostic") then bag:add(result)
-        elseif result.items then for _, d in ipairs(result.items or {}) do if is_tag(d, "Diagnostic") then bag:add(d) end end end
-      end
-    end
-  end
+  llb.stream.each(function(d) bag:add(d) end, self:diagnostic_stream(value, opts))
   return bag
 end
 
 function Family:index(value, opts)
-  -- Unified family index. This is intentionally generic: zones are indexed at
-  -- the family layer, and member hooks contribute symbols/hovers/diagnostics.
   opts = opts or {}
   local index = {
     __llb_tag = "FamilyIndex",
@@ -4480,25 +4787,12 @@ function Family:index(value, opts)
     hovers = {},
     diagnostics = {},
   }
-  for _, z in ipairs(self:owned_zones(value)) do
-    index.zones[#index.zones + 1] = { name = z.name, member = z.member, role = z.role, count = #(z.items or {}) }
-  end
-  for _, member in ipairs(self.members or {}) do
-    if type(member.index) == "function" then
-      local ok, result = pcall(member.index, value, opts, self)
-      if ok and type(result) == "table" then
-        append(index.symbols, result.symbols or {})
-        append(index.hovers, result.hovers or {})
-        append(index.diagnostics, result.diagnostics or {})
-      elseif not ok then
-        index.diagnostics[#index.diagnostics + 1] = llb.diagnostic {
-          code = "E_FAMILY_INDEX",
-          message = tostring(result),
-          primary = origin_of(value),
-        }
-      end
-    end
-  end
+  llb.stream.each(function(ev)
+    if ev.kind == "zone" then index.zones[#index.zones + 1] = ev.value
+    elseif ev.kind == "symbol" then index.symbols[#index.symbols + 1] = ev.value
+    elseif ev.kind == "hover" then index.hovers[#index.hovers + 1] = ev.value
+    elseif ev.kind == "diagnostic" then index.diagnostics[#index.diagnostics + 1] = ev.value end
+  end, self:index_stream(value, opts))
   return index
 end
 
@@ -5081,7 +5375,7 @@ function llb.describe_role(lang, name)
       item_role = spec.item_role or spec.item,
       payload_role = spec.payload_role or spec.payload,
       unique_names = spec.unique_names,
-      has_normalize = type(spec.normalize) == "function",
+      has_stream = type(spec.stream) == "function",
       has_check = type(spec.check) == "function",
       has_format = type(spec.format) == "function",
       origin = spec.origin,
@@ -5442,17 +5736,79 @@ local function render_doc(d, state, flat)
   end
 end
 
+local function render_stream_push(stack, frame)
+  stack[#stack + 1] = frame
+end
+
+local function render_stream_gen(param, state)
+  state = state or {
+    stack = {
+      {
+        doc = docify(param.doc),
+        flat = false,
+        indent = param.base_indent,
+      },
+    },
+    col = param.base_indent,
+  }
+  local stack = state.stack
+  while #stack > 0 do
+    local frame = stack[#stack]
+    stack[#stack] = nil
+    local d = docify(frame.doc)
+    local k = rawget(d, "__llb_doc")
+    local indent = frame.indent or param.base_indent
+    local flat = frame.flat
+    if k == "nil" then
+      -- no payload
+    elseif k == "text" then
+      local s = d.text or ""
+      state.col = state.col + #s
+      return state, s
+    elseif k == "line" or k == "softline" then
+      if flat then
+        state.col = state.col + 1
+        return state, " "
+      end
+      state.col = indent
+      return state, "\n" .. string.rep(" ", indent)
+    elseif k == "hardline" then
+      state.col = indent
+      return state, "\n" .. string.rep(" ", indent)
+    elseif k == "concat" then
+      local parts = d.parts or {}
+      for i = #parts, 1, -1 do
+        render_stream_push(stack, { doc = parts[i], flat = flat, indent = indent })
+      end
+    elseif k == "indent" then
+      render_stream_push(stack, {
+        doc = d.doc,
+        flat = flat,
+        indent = indent + (d.amount or param.indent_width),
+      })
+    elseif k == "group" then
+      local next_flat = flat or (state.col + flat_len(d.doc) <= param.width)
+      render_stream_push(stack, { doc = d.doc, flat = next_flat, indent = indent })
+    end
+  end
+  return nil
+end
+
+function llb.render_stream(d, opts)
+  opts = opts or {}
+  return llb.stream.raw(llb.stream.wrap(render_stream_gen, {
+    doc = d,
+    width = opts.width or 100,
+    base_indent = opts.base_indent or 0,
+    indent_width = opts.indent or 2,
+  }, nil, { kind = "format:render" }))
+end
+
 function llb.render(d, opts)
   opts = opts or {}
-  local state = {
-    out = {},
-    width = opts.width or 100,
-    indent = opts.base_indent or 0,
-    indent_width = opts.indent or 2,
-    col = opts.base_indent or 0,
-  }
-  render_doc(d, state, false)
-  return table.concat(state.out)
+  local chunks = {}
+  llb.stream.each(function(chunk) chunks[#chunks + 1] = chunk end, llb.render_stream(d, opts))
+  return table.concat(chunks)
 end
 
 local FormatContext = {}
@@ -5647,15 +6003,28 @@ function llb.format_doc(value, opts)
   return llb.to_doc(value, format_context(opts or {}))
 end
 
+function llb.format_stream(value, opts)
+  opts = opts or {}
+  return llb.render_stream(llb.format_doc(value, opts), opts)
+end
+
 function llb.format(value, opts)
   opts = opts or {}
-  return llb.render(llb.format_doc(value, opts), opts)
+  local chunks = {}
+  llb.stream.each(function(chunk) chunks[#chunks + 1] = chunk end, llb.format_stream(value, opts))
+  return table.concat(chunks)
 end
 
 function Language:format_doc(value, opts)
   opts = shallow_copy(opts or {})
   opts.lang = opts.lang or self
   return llb.format_doc(value, opts)
+end
+
+function Language:format_stream(value, opts)
+  opts = shallow_copy(opts or {})
+  opts.lang = opts.lang or self
+  return llb.format_stream(value, opts)
 end
 
 function Language:format(value, opts)
@@ -5668,6 +6037,12 @@ function Analysis:format_doc(opts)
   opts = shallow_copy(opts or {})
   opts.lang = opts.lang or self.lang
   return llb.format_doc(self.ast, opts)
+end
+
+function Analysis:format_stream(opts)
+  opts = shallow_copy(opts or {})
+  opts.lang = opts.lang or self.lang
+  return llb.format_stream(self.ast, opts)
 end
 
 function Analysis:format(opts)

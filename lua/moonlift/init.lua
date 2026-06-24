@@ -446,7 +446,7 @@ M.family = llb.family. moonlift {
         pvm = "llpvm.dsl",
         record = "llpvm.dsl",
         root = "llpvm.dsl",
-        stream = "llpvm.dsl",
+        tape = "llpvm.dsl",
         task = "llpvm.dsl",
         to = "llpvm.dsl",
         type = "llpvm.dsl",
@@ -465,7 +465,7 @@ M.family = llb.family. moonlift {
         "type",
         "op",
         "world",
-        "stream",
+        "tape",
         "record",
         "machine",
         "phase",
@@ -560,7 +560,7 @@ M.family = llb.family. moonlift {
         semantics = {
             owns = {
                 "bytecode-program",
-                "bytecode-stream",
+                "bytecode-tape",
                 "process-task",
                 "pvm-image",
             },

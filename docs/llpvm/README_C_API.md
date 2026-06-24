@@ -39,11 +39,11 @@ Applications normally call only:
 llpvm_status llpvm_open(const llpvm_config *config, llpvm_vm_ref *out);
 llpvm_status llpvm_close(llpvm_vm_ref vm);
 llpvm_status llpvm_load_program(llpvm_vm_ref vm, const void *bytes,
-                                size_t len, llpvm_stream_ref *out_root);
+                                size_t len, llpvm_tape_ref *out_root);
 llpvm_status llpvm_apply_phase(llpvm_vm_ref vm, llpvm_phase_ref phase,
-                               llpvm_stream_ref input, llpvm_args_ref args,
-                               llpvm_stream_ref *out);
-llpvm_status llpvm_drain(llpvm_vm_ref vm, llpvm_stream_ref stream,
+                               llpvm_tape_ref input, llpvm_args_ref args,
+                               llpvm_tape_ref *out);
+llpvm_status llpvm_drain(llpvm_vm_ref vm, llpvm_tape_ref tape,
                          llpvm_buffer_ref *out);
 llpvm_status llpvm_report(llpvm_vm_ref vm, llpvm_vm_report *out);
 ```
@@ -52,7 +52,7 @@ No durable pointer identity crosses the API. Handles are opaque `uint32_t`
 values and stale VM handles are rejected by the support table.
 
 `llpvm_load_program` creates a VM view over caller-owned immutable image bytes.
-Those bytes must outlive all program streams derived from them. If a caller
+Those bytes must outlive all program tapes derived from them. If a caller
 needs copied ownership, it allocates/copies before calling this API and owns
 that allocation.
 

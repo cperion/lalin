@@ -94,27 +94,27 @@ local function bind_context(T)
         local cls = pvm.classof(expr)
         if cls == Kernel.KernelExprValue or cls == Kernel.KernelExprKernelValue then return true end
         if cls == Kernel.KernelExprAlgebra then return value_expr_supported(expr.expr) end
-        if cls == Kernel.KernelExprLoad then
-            if pvm.classof(expr.stream) ~= Kernel.KernelStream then return false, "KernelExprLoad has no concrete KernelStream" end
+        if cls == Kernel.KernelExprLaneLoad then
+            if pvm.classof(expr.lane) ~= Kernel.KernelLane then return false, "KernelExprLaneLoad has no concrete KernelLane" end
             local ok, reason = value_expr_supported(expr.index); if not ok then return false, reason end
-            if #(expr.stream.backend_info or {}) == 0 then return false, "KernelExprLoad stream lacks backend access info" end
+            if #(expr.lane.backend_info or {}) == 0 then return false, "KernelExprLaneLoad lane lacks backend access info" end
             return true
         end
         return false, "unsupported KernelExpr " .. class_name(expr)
     end
 
-    local function stream_supported(stream)
-        if pvm.classof(stream) ~= Kernel.KernelStream then return false, "not a KernelStream" end
-        if not is_scalar_code_ty(stream.elem_ty) then return false, "stream element type is not scalar-lowerable" end
-        local pat_cls = pvm.classof(stream.pattern)
-        if not (stream.pattern == Mem.MemAccessScalar or stream.pattern == Mem.MemAccessContiguous or pat_cls == Mem.MemAccessStrided) then
-            return false, "unsupported stream access pattern " .. class_name(stream.pattern)
+    local function stream_supported(lane)
+        if pvm.classof(lane) ~= Kernel.KernelLane then return false, "not a KernelLane" end
+        if not is_scalar_code_ty(lane.elem_ty) then return false, "lane element type is not scalar-lowerable" end
+        local pat_cls = pvm.classof(lane.pattern)
+        if not (lane.pattern == Mem.MemAccessScalar or lane.pattern == Mem.MemAccessContiguous or pat_cls == Mem.MemAccessStrided) then
+            return false, "unsupported lane access pattern " .. class_name(lane.pattern)
         end
-        if #(stream.backend_info or {}) == 0 then return false, "stream has no backend memory info" end
-        for _, info in ipairs(stream.backend_info or {}) do
-            if pvm.classof(info.trap) ~= Mem.MemNonTrapping then return false, "stream access may trap" end
-            if pvm.classof(info.bounds) == Mem.MemBoundsUnknown then return false, "stream access has unknown bounds" end
-            if info.deref_bytes == nil then return false, "stream access lacks dereference byte proof" end
+        if #(lane.backend_info or {}) == 0 then return false, "lane has no backend memory info" end
+        for _, info in ipairs(lane.backend_info or {}) do
+            if pvm.classof(info.trap) ~= Mem.MemNonTrapping then return false, "lane access may trap" end
+            if pvm.classof(info.bounds) == Mem.MemBoundsUnknown then return false, "lane access has unknown bounds" end
+            if info.deref_bytes == nil then return false, "lane access lacks dereference byte proof" end
         end
         return true
     end
@@ -164,8 +164,8 @@ local function bind_context(T)
             rejects[#rejects + 1] = reject_algebra("kernel lacks equivalence proof")
         end
         if pvm.classof(body.domain) ~= Kernel.KernelDomainFlow then rejects[#rejects + 1] = reject_target("kernel domain is not Flow-backed") end
-        for _, stream in ipairs(body.streams or {}) do
-            local ok, reason = stream_supported(stream)
+        for _, lane in ipairs(body.lanes or {}) do
+            local ok, reason = stream_supported(lane)
             if not ok then rejects[#rejects + 1] = reject_memory(reason) end
         end
         for _, binding in ipairs(body.bindings or {}) do
@@ -260,7 +260,7 @@ local function bind_context(T)
         if expr == nil then return false, "missing vector KernelExpr" end
         seen = seen or {}
         local cls = pvm.classof(expr)
-        if cls == Kernel.KernelExprLoad then return true end
+        if cls == Kernel.KernelExprLaneLoad then return true end
         if cls == Kernel.KernelExprAlgebra then return vector_value_expr_supported(expr.expr, binding_by_code, variant_by_code, seen) end
         if cls == Kernel.KernelExprKernelValue then
             local binding = binding_by_id[expr.value.text]
@@ -279,7 +279,7 @@ local function bind_context(T)
         local kind_name = schedule_kind_name(schedule_kind)
         if kind_name == nil then
             if pvm.classof(result) == Kernel.KernelResultClosedForm then kind_name = "closed_form"
-            elseif #(body and body.streams or {}) > 0 then kind_name = "scalar_index"
+            elseif #(body and body.lanes or {}) > 0 then kind_name = "scalar_index"
             else kind_name = "scalar_index" end
         end
         if kind_name == "closed_form" then
@@ -289,7 +289,7 @@ local function bind_context(T)
                 local ok, reason = value_expr_supported(result.closed_form.expr)
                 if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
             end
-            if #(body and body.streams or {}) > 0 then rejects[#rejects + 1] = reject_target("closed-form emitter only supports scalar control/result replacement, not stream stores") end
+            if #(body and body.lanes or {}) > 0 then rejects[#rejects + 1] = reject_target("closed-form emitter only supports scalar control/result replacement, not lane stores") end
         elseif kind_name == "scalar_index" or kind_name == "scalar_pointer" then
             if pvm.classof(result) == Kernel.KernelResultClosedForm then rejects[#rejects + 1] = reject_algebra("closed-form result must use ScheduleClosedForm") end
             if body and body.domain and body.domain.counter == nil then rejects[#rejects + 1] = reject_algebra("scalar kernel requires loop counter") end
@@ -301,8 +301,8 @@ local function bind_context(T)
             elseif not target_supports_vector(target, sk.lanes.elem_ty, sk.lanes.lanes) then
                 rejects[#rejects + 1] = reject_target("target lacks requested vector shape")
             end
-            for _, stream in ipairs(body and body.streams or {}) do
-                if stream.pattern ~= Mem.MemAccessContiguous then rejects[#rejects + 1] = reject_memory("vector emitter only supports contiguous streams") end
+            for _, lane in ipairs(body and body.lanes or {}) do
+                if lane.pattern ~= Mem.MemAccessContiguous then rejects[#rejects + 1] = reject_memory("vector emitter only supports contiguous lanes") end
             end
             if pvm.classof(result) == Kernel.KernelResultClosedForm then rejects[#rejects + 1] = reject_target("closed-form results must use ScheduleClosedForm") end
             if pvm.classof(result) == Kernel.KernelResultReduction then

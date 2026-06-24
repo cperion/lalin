@@ -225,7 +225,7 @@ local function planned_kernel(module, contracts, mutate)
     assert(base ~= nil, "expected planned kernel")
     local body = base.body
     local effects, result = mutate(body)
-    local custom_body = Kernel.KernelBody(body.domain, body.streams, body.bindings, effects, result, body.equivalence)
+    local custom_body = Kernel.KernelBody(body.domain, body.lanes, body.bindings, effects, result, body.equivalence)
     local custom_plan = Kernel.KernelPlanned(Kernel.KernelId(base.id.text .. ":skeleton"), base.subject, custom_body)
     return graph, flow, value, mem, effect, Kernel.KernelModulePlan(module.id, flow, value, mem, effect, { custom_plan })
 end
@@ -237,7 +237,7 @@ end
 
 local function first_load_expr(body)
     for _, binding in ipairs(body.bindings or {}) do
-        if pvm.classof(binding.expr) == Kernel.KernelExprLoad then return binding.expr end
+        if pvm.classof(binding.expr) == Kernel.KernelExprLaneLoad then return binding.expr end
     end
     error("missing load expression")
 end

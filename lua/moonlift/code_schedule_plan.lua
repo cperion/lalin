@@ -75,13 +75,13 @@ local function bind_context(T)
 
     local function vector_schedule_kind(plan, target)
         local body = plan.body
-        if body == nil or #(body.streams or {}) == 0 then return nil end
+        if body == nil or #(body.lanes or {}) == 0 then return nil end
         if pvm.classof(body.result) == Kernel.KernelResultClosedForm then return nil end
         local elem_ty = nil
-        for _, stream in ipairs(body.streams or {}) do
-            if stream.pattern ~= T.MoonMem.MemAccessContiguous then return nil end
-            elem_ty = elem_ty or stream.elem_ty
-            if scalar_for_code_ty(stream.elem_ty) ~= scalar_for_code_ty(elem_ty) then return nil end
+        for _, lane in ipairs(body.lanes or {}) do
+            if lane.pattern ~= T.MoonMem.MemAccessContiguous then return nil end
+            elem_ty = elem_ty or lane.elem_ty
+            if scalar_for_code_ty(lane.elem_ty) ~= scalar_for_code_ty(elem_ty) then return nil end
         end
         local elem = scalar_for_code_ty(elem_ty)
         if elem == nil then return nil end

@@ -1,7 +1,7 @@
 -- llpvm_header.mlua -- Low-Level PVM product/protocol contract.
 --
 -- LLPVM is the Moonlift-native substrate for small typed PicoVMs: worlds,
--- operation streams, machine phases, recordings, caches, and reports. This
+-- operation tapes, machine phases, recordings, caches, and reports. This
 -- header names the whole semantic surface. Implementation files own the region
 -- bodies one machine at a time.
 
@@ -32,18 +32,18 @@ M.LL_STATUS_OOM = 9
 M.LL_STATUS_FAILED = 10
 M.LL_STATUS_UNSUPPORTED_IMAGE = 11
 
-M.LL_STREAM_EMPTY = 0
-M.LL_STREAM_ONCE = 1
-M.LL_STREAM_SEQ = 2
-M.LL_STREAM_CONCAT = 3
-M.LL_STREAM_RECORDING = 4
-M.LL_STREAM_PHASE_MAP = 5
-M.LL_STREAM_GENERATED = 6
+M.LL_TAPE_EMPTY = 0
+M.LL_TAPE_ONCE = 1
+M.LL_TAPE_SEQ = 2
+M.LL_TAPE_CONCAT = 3
+M.LL_TAPE_RECORDING = 4
+M.LL_TAPE_PHASE_MAP = 5
+M.LL_TAPE_GENERATED = 6
 
 M.LL_MACHINE_REGION = 1
 M.LL_MACHINE_FUNCTION = 2
 M.LL_MACHINE_SPECIALIZED_INTERPRETER = 3
-M.LL_MACHINE_FUSED_STREAM_GRAPH = 4
+M.LL_MACHINE_FUSED_TAPE_GRAPH = 4
 M.LL_MACHINE_NATIVE_INTRINSIC = 5
 
 M.LL_CACHE_NONE = 0
@@ -103,9 +103,9 @@ T.LlBufferRef = handle LlBufferRef : u32 invalid 0
     target T.LlBuffer
 end
 
-T.LlStreamRef = handle LlStreamRef : u32 invalid 0
+T.LlTapeRef = handle LlTapeRef : u32 invalid 0
     domain T.LlVm
-    target T.LlStream
+    target T.LlTape
 end
 
 T.LlProgramRef = handle LlProgramRef : u32 invalid 0
@@ -159,7 +159,7 @@ T.LlVmConfig = struct
     initial_world_cap: index,
     initial_op_cap: index,
     initial_buffer_cap: index,
-    initial_stream_cap: index,
+    initial_tape_cap: index,
     initial_program_cap: index,
     initial_args_cap: index,
     initial_machine_cap: index,
@@ -257,7 +257,7 @@ T.LlBuffer = struct
     sealed: bool,
 end
 
-T.LlStream = struct
+T.LlTape = struct
     world: T.LlWorldRef,
     kind: u8,
     payload: u32,
@@ -331,7 +331,7 @@ end
 
 T.LlRecording = struct
     key: T.LlPhaseKey,
-    source: T.LlStreamRef,
+    source: T.LlTapeRef,
     buffer: T.LlBufferRef,
     produced: index,
     readers: index,
@@ -364,7 +364,7 @@ T.LlVmReport = struct
     worlds: index,
     ops: index,
     buffers: index,
-    streams: index,
+    tapes: index,
     machines: index,
     phases: index,
     recordings: index,
@@ -424,10 +424,10 @@ T.LlBufferSlot = struct
     value: T.LlBuffer,
 end
 
-T.LlStreamSlot = struct
+T.LlTapeSlot = struct
     gen: u32,
     live: bool,
-    value: T.LlStream,
+    value: T.LlTape,
 end
 
 T.LlProgramSlot = struct
@@ -530,8 +530,8 @@ T.LlBufferStore = struct
     generation: u64,
 end
 
-T.LlStreamStore = struct
-    slots: ptr(T.LlStreamSlot),
+T.LlTapeStore = struct
+    slots: ptr(T.LlTapeSlot),
     n: index,
     cap: index,
     free_head: u32,
@@ -604,7 +604,7 @@ T.LlVm = struct
     worlds: T.LlWorldStore,
     ops: T.LlOpStore,
     buffers: T.LlBufferStore,
-    streams: T.LlStreamStore,
+    tapes: T.LlTapeStore,
     programs: T.LlProgramStore,
     args: T.LlArgsStore,
     machines: T.LlMachineStore,
@@ -688,7 +688,7 @@ R.ll_make_op = region(
 end
 
 --------------------------------------------------------------------------------
--- Regions: buffers and streams.
+-- Regions: buffers and tapes.
 --------------------------------------------------------------------------------
 
 R.ll_buffer_open = region(vm: ptr(T.LlVm), world: T.LlWorldRef, capacity: index;
@@ -710,44 +710,44 @@ R.ll_buffer_publish = region(vm: ptr(T.LlVm), buffer: T.LlBufferRef;
   | invalid_buffer(buffer: T.LlBufferRef))
 end
 
-R.ll_stream_empty = region(vm: ptr(T.LlVm), world: T.LlWorldRef;
-    stream(stream: T.LlStreamRef)
+R.ll_tape_empty = region(vm: ptr(T.LlVm), world: T.LlWorldRef;
+    tape(tape: T.LlTapeRef)
   | invalid_world(world: T.LlWorldRef))
 end
 
-R.ll_stream_once = region(vm: ptr(T.LlVm), op: T.LlOpRef;
-    stream(stream: T.LlStreamRef)
+R.ll_tape_once = region(vm: ptr(T.LlVm), op: T.LlOpRef;
+    tape(tape: T.LlTapeRef)
   | invalid_op(op: T.LlOpRef)
   | memory_exhausted(needed: index))
 end
 
-R.ll_stream_seq = region(vm: ptr(T.LlVm), buffer: T.LlBufferRef;
-    stream(stream: T.LlStreamRef)
+R.ll_tape_seq = region(vm: ptr(T.LlVm), buffer: T.LlBufferRef;
+    tape(tape: T.LlTapeRef)
   | invalid_buffer(buffer: T.LlBufferRef))
 end
 
-R.ll_stream_concat = region(vm: ptr(T.LlVm), parts: readonly view(T.LlStreamRef);
-    stream(stream: T.LlStreamRef)
+R.ll_tape_concat = region(vm: ptr(T.LlVm), parts: readonly view(T.LlTapeRef);
+    tape(tape: T.LlTapeRef)
   | empty
   | world_mismatch(expected: T.LlWorldRef, got: T.LlWorldRef)
   | memory_exhausted(needed: index))
 end
 
-R.ll_next_op = region(vm: ptr(T.LlVm), stream: T.LlStreamRef;
+R.ll_next_op = region(vm: ptr(T.LlVm), tape: T.LlTapeRef;
     op(op: T.LlOpRef)
   | done
   | blocked
   | failed(diag: T.LlDiagnosticRef))
 end
 
-R.ll_drain_stream = region(vm: ptr(T.LlVm), stream: T.LlStreamRef;
+R.ll_drain_tape = region(vm: ptr(T.LlVm), tape: T.LlTapeRef;
     drained(buffer: T.LlBufferRef)
   | empty
   | failed(diag: T.LlDiagnosticRef)
   | memory_exhausted(needed: index))
 end
 
-R.ll_one_op = region(vm: ptr(T.LlVm), stream: T.LlStreamRef;
+R.ll_one_op = region(vm: ptr(T.LlVm), tape: T.LlTapeRef;
     one(op: T.LlOpRef)
   | empty
   | more_than_one
@@ -795,12 +795,12 @@ end
 R.ll_open_phase = region(
     vm: ptr(T.LlVm),
     phase: T.LlPhaseRef,
-    input: T.LlStreamRef,
+    input: T.LlTapeRef,
     args: T.LlArgsRef;
-    hit(stream: T.LlStreamRef)
-  | shared(stream: T.LlStreamRef, recording: T.LlRecordingRef)
-  | miss(stream: T.LlStreamRef, recording: T.LlRecordingRef)
-  | uncached(stream: T.LlStreamRef)
+    hit(tape: T.LlTapeRef)
+  | shared(tape: T.LlTapeRef, recording: T.LlRecordingRef)
+  | miss(tape: T.LlTapeRef, recording: T.LlRecordingRef)
+  | uncached(tape: T.LlTapeRef)
   | wrong_input_world(expected: T.LlWorldRef, got: T.LlWorldRef)
   | machine_failed(diag: T.LlDiagnosticRef)
   | memory_exhausted(needed: index))
@@ -809,9 +809,9 @@ end
 R.ll_run_machine = region(
     vm: ptr(T.LlVm),
     machine: T.LlMachineRef,
-    input: T.LlStreamRef,
+    input: T.LlTapeRef,
     args: T.LlArgsRef;
-    output(stream: T.LlStreamRef)
+    output(tape: T.LlTapeRef)
   | wrong_input_world(expected: T.LlWorldRef, got: T.LlWorldRef)
   | unsupported_machine(machine: T.LlMachineRef)
   | failed(diag: T.LlDiagnosticRef)
@@ -825,7 +825,7 @@ end
 R.ll_start_recording = region(
     vm: ptr(T.LlVm),
     key: T.LlPhaseKey,
-    source: T.LlStreamRef;
+    source: T.LlTapeRef;
     recording(recording: T.LlRecordingRef)
   | already_pending(recording: T.LlRecordingRef)
   | memory_exhausted(needed: index))
@@ -881,10 +881,10 @@ end
 
 F.llpvm_open = func(config: ptr(T.LlVmConfig), out: ptr(T.LlVmRef)): T.LlStatus end
 F.llpvm_close = func(vm: T.LlVmRef): T.LlStatus end
-F.llpvm_load_program = func(vm: T.LlVmRef, bytes: ptr(u8), len: index, out: ptr(T.LlStreamRef)): T.LlStatus end
-F.llpvm_apply_phase = func(vm: T.LlVmRef, phase: T.LlPhaseRef, input: T.LlStreamRef, args: T.LlArgsRef, out: ptr(T.LlStreamRef)): T.LlStatus end
-F.llpvm_drain = func(vm: T.LlVmRef, stream: T.LlStreamRef, out: ptr(T.LlBufferRef)): T.LlStatus end
-F.llpvm_drain_count = func(vm: T.LlVmRef, stream: T.LlStreamRef, out: ptr(index)): T.LlStatus end
+F.llpvm_load_program = func(vm: T.LlVmRef, bytes: ptr(u8), len: index, out: ptr(T.LlTapeRef)): T.LlStatus end
+F.llpvm_apply_phase = func(vm: T.LlVmRef, phase: T.LlPhaseRef, input: T.LlTapeRef, args: T.LlArgsRef, out: ptr(T.LlTapeRef)): T.LlStatus end
+F.llpvm_drain = func(vm: T.LlVmRef, tape: T.LlTapeRef, out: ptr(T.LlBufferRef)): T.LlStatus end
+F.llpvm_drain_count = func(vm: T.LlVmRef, tape: T.LlTapeRef, out: ptr(index)): T.LlStatus end
 F.llpvm_report = func(vm: T.LlVmRef, out: ptr(T.LlVmReport)): T.LlStatus end
 
 return M

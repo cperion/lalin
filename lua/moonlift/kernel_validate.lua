@@ -91,7 +91,7 @@ local function bind_context(T)
     local function kernel_expr_refs(expr, out)
         local cls = pvm.classof(expr)
         if cls == Kernel.KernelExprKernelValue then out[#out + 1] = expr.value.text end
-        if cls == Kernel.KernelExprLoad then return end
+        if cls == Kernel.KernelExprLaneLoad then return end
     end
 
     local function validate_kernel(ctx, graph_loops, mem_backend, value, kernels)
@@ -110,11 +110,11 @@ local function bind_context(T)
                     local refs = {}; kernel_expr_refs(binding.expr, refs)
                     for _, ref in ipairs(refs) do if not binding_ids[ref] then add(ctx, "dangling-kernel-binding", "KernelBinding references missing KernelValueId " .. ref) end end
                 end
-                for _, stream in ipairs(plan.body.streams or {}) do
-                    for _, info in ipairs(stream.backend_info or {}) do
+                for _, lane in ipairs(plan.body.lanes or {}) do
+                    for _, info in ipairs(lane.backend_info or {}) do
                         local canonical = mem_backend[info.access.text]
-                        if canonical == nil then add(ctx, "missing-backend-info", "kernel stream cites missing MemBackendAccessInfo " .. info.access.text)
-                        elseif not backend_safe(canonical) then add(ctx, "unsafe-backend-info", "kernel stream cites unsafe MemBackendAccessInfo " .. info.access.text) end
+                        if canonical == nil then add(ctx, "missing-backend-info", "kernel lane cites missing MemBackendAccessInfo " .. info.access.text)
+                        elseif not backend_safe(canonical) then add(ctx, "unsafe-backend-info", "kernel lane cites unsafe MemBackendAccessInfo " .. info.access.text) end
                     end
                 end
                 for _, effect in ipairs(plan.body.effects or {}) do

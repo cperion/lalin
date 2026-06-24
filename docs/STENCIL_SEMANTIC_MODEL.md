@@ -246,7 +246,7 @@ diagnostics, and measurement gate all agree.
                  stencil_artifact_plan constructs field-projected artifacts;
                  stencil_c compiles and executes reduce/map/find/compare/fill
                  over Demo_Pair.right; Code IR lowering recognizes xs[i].right
-                 as a field-projected stream and executes lowered reduce/map.
+                 as a field-projected lane and executes lowered reduce/map.
     status:      field projections are modeled as topology, not as a second
                  product implementation; memory facts emit derived field
                  objects with same-store parent relations so parent disjoint
@@ -260,7 +260,7 @@ diagnostics, and measurement gate all agree.
     first proof:  record-like zip semantics without inventing a second product model
     gate:        schema constructs StencilTopologySoAComponent; tree contracts
                  typecheck `soa_component(base, Record, field, index)` into
-                 CodeContractSoAComponent; LuaJIT lowering wraps stream
+                 CodeContractSoAComponent; LuaJIT lowering wraps lane
                  topology from those Code facts; stencil_artifact_plan
                  constructs SoA component artifacts; stencil_c compiles and
                  executes zip_map, zip_reduce, zip_compare, and partition over
@@ -301,7 +301,7 @@ diagnostics, and measurement gate all agree.
 
 [ ] masked domains
     domain:      range1d + mask or explicit masked domain
-    topology:    mask stream plus payload topology
+    topology:    mask lane plus payload topology
     skeletons:   apply, reduce, count, find, partition
     first proof:  mask is traversal/domain semantics, not a duplicate predicate op
     gate:        compare mask density cases against direct C
@@ -321,7 +321,7 @@ diagnostics, and measurement gate all agree.
     gate:        compare direct C window loops and boundary modes
 
 [ ] sparse indexed data
-    domain:      index stream or compressed segment domain
+    domain:      index lane or compressed segment domain
     topology:    gather/scatter over index/value buffers
     skeletons:   apply, reduce, scatter with conflict semantics
     first proof:  conflicts and ordering are memory semantics
@@ -627,7 +627,7 @@ scan_array
 
 ### `copy`
 
-`copy` moves one source stream to one destination stream over a domain.
+`copy` moves one source lane to one destination lane over a domain.
 
 MoonKernel representation:
 
@@ -711,8 +711,8 @@ The current semantic bridge from compiler facts to backend stencils is
 Important nodes:
 
 ```text
-KernelStream
-KernelExprLoad
+KernelLane
+KernelExprLaneLoad
 KernelExprAlgebra
 KernelBinding
 
@@ -864,7 +864,7 @@ op often identity
 skeleton = apply
 access = read_write
 op = unary
-source and destination are same stream
+source and destination are same lane
 ```
 
 ### `reduce`

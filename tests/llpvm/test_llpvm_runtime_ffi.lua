@@ -46,7 +46,7 @@ assert(len == #image, "bytebuffer reports exact image length")
 assert(buf ~= nil, "bytebuffer returns FFI buffer for Cranelift/runtime boundary")
 
 local lowered = spec:lower()
-assert(#lowered.root_ids == 2, "runtime image has explicit root streams")
+assert(#lowered.root_ids == 2, "runtime image has explicit root tapes")
 assert(#lowered.root_ops == 3, "runtime image exposes first-root op table")
 assert(lowered.lowering.phases.lower_expr ~= nil, "runtime image includes phase metadata")
 

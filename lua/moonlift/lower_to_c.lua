@@ -296,14 +296,14 @@ local function bind_context(T)
         return kind == Mem.MemLoad or kind == Mem.MemAtomicLoad or kind == Mem.MemAtomicRmw or kind == Mem.MemAtomicCas
     end
 
-    local function first_access(ctx, stream, want_write)
-        for _, aid in ipairs(stream.accesses or {}) do
+    local function first_access(ctx, lane, want_write)
+        for _, aid in ipairs(lane.accesses or {}) do
             local access = ctx.mem_access_by_id[aid.text]
             if access ~= nil and ((want_write and is_write_access(access.kind)) or ((not want_write) and is_read_access(access.kind))) then
                 return access, ctx.mem_backend_by_access[aid.text]
             end
         end
-        local aid = stream.accesses and stream.accesses[1]
+        local aid = lane.accesses and lane.accesses[1]
         if aid ~= nil then return ctx.mem_access_by_id[aid.text], ctx.mem_backend_by_access[aid.text] end
         return nil, nil
     end
@@ -320,7 +320,7 @@ local function bind_context(T)
             assign(ctx, dst, C.CBackendRPtrOffset(b, zero, 1, base.byte_offset or 0))
             return C.CBackendAtomLocal(dst)
         end
-        error("lower_to_c: unsupported KernelStream base " .. class_name(base), 3)
+        error("lower_to_c: unsupported KernelLane base " .. class_name(base), 3)
     end
 
     local function address_index_atom(ctx, index_expr)
@@ -329,8 +329,8 @@ local function bind_context(T)
         return idx
     end
 
-    local function place_for_stream(ctx, stream, want_write, index_expr)
-        local access = first_access(ctx, stream, want_write)
+    local function place_for_lane(ctx, lane, want_write, index_expr)
+        local access = first_access(ctx, lane, want_write)
         local elem_size = 1
         local const_offset = 0
         local icls = access and pvm.classof(access.index) or nil
@@ -338,15 +338,15 @@ local function bind_context(T)
             elem_size = access.index.elem_size or 1
             const_offset = access.index.const_offset or 0
         end
-        local base = base_atom(ctx, stream.base)
+        local base = base_atom(ctx, lane.base)
         local idx = address_index_atom(ctx, index_expr)
-        local base_place = C.CBackendPlaceDeref(base, c_ty(ctx, stream.elem_ty), nil)
+        local base_place = C.CBackendPlaceDeref(base, c_ty(ctx, lane.elem_ty), nil)
         if const_offset ~= 0 then
-            local ptr = tmp(ctx, "ptr_offset", Code.CodeTyDataPtr(stream.elem_ty))
+            local ptr = tmp(ctx, "ptr_offset", Code.CodeTyDataPtr(lane.elem_ty))
             assign(ctx, ptr, C.CBackendRPtrOffset(base, idx, elem_size, const_offset))
-            return C.CBackendPlaceDeref(C.CBackendAtomLocal(ptr), c_ty(ctx, stream.elem_ty), nil)
+            return C.CBackendPlaceDeref(C.CBackendAtomLocal(ptr), c_ty(ctx, lane.elem_ty), nil)
         end
-        return C.CBackendPlaceIndex(base_place, idx, c_ty(ctx, stream.elem_ty), elem_size)
+        return C.CBackendPlaceIndex(base_place, idx, c_ty(ctx, lane.elem_ty), elem_size)
     end
 
     local function kernel_value_atom(ctx, kid)
@@ -361,11 +361,11 @@ local function bind_context(T)
         if cls == Kernel.KernelExprValue then return atom(expr.value), value_ty(ctx, expr.value) end
         if cls == Kernel.KernelExprKernelValue then return kernel_value_atom(ctx, expr.value) end
         if cls == Kernel.KernelExprAlgebra then return lower_value_expr(ctx, expr.expr) end
-        if cls == Kernel.KernelExprLoad then
-            local dst = tmp(ctx, "load", expr.stream.elem_ty)
-            local place = place_for_stream(ctx, expr.stream, false, expr.index)
+        if cls == Kernel.KernelExprLaneLoad then
+            local dst = tmp(ctx, "load", expr.lane.elem_ty)
+            local place = place_for_lane(ctx, expr.lane, false, expr.index)
             ctx.stmts[#ctx.stmts + 1] = C.CBackendPlaceLoad(dst, place)
-            return C.CBackendAtomLocal(dst), expr.stream.elem_ty
+            return C.CBackendAtomLocal(dst), expr.lane.elem_ty
         end
         error("lower_to_c: unsupported KernelExpr " .. class_name(expr), 3)
     end
@@ -388,7 +388,7 @@ local function bind_context(T)
         if cls == Kernel.KernelEffectStore then
             local value, vty = lower_kernel_expr(ctx, effect.value)
             value = cast_to(ctx, value, vty, effect.dst.elem_ty, "store_cast")
-            local place = place_for_stream(ctx, effect.dst, true, effect.index)
+            local place = place_for_lane(ctx, effect.dst, true, effect.index)
             ctx.stmts[#ctx.stmts + 1] = C.CBackendPlaceStore(place, value)
         elseif cls == Kernel.KernelEffectFold then
             return
@@ -564,14 +564,14 @@ local function bind_context(T)
         return Value.ValueExprAdd(expr, Value.ValueExprConst(Code.CodeConstLiteral(ty, Core.LitInt(tostring(lane)))), ty, Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZero, Code.CodeShiftMaskCount))
     end
 
-    local function vector_lane_place(ctx, stream, want_write, lane, counter_ty)
+    local function vector_lane_place(ctx, lane, want_write, lane, counter_ty)
         local idx = atom(ctx.vector_counter)
         if lane ~= 0 then
             local dst = tmp(ctx, "vec_lane_index", counter_ty)
             ctx.stmts[#ctx.stmts + 1] = C.CBackendHelperCall(dst, binary_helper(ctx, Core.BinAdd, counter_ty, nil), { atom(ctx.vector_counter), C.CBackendAtomLiteral(c_ty(ctx, counter_ty), Core.LitInt(tostring(lane))) })
             idx = C.CBackendAtomLocal(dst)
         end
-        local access = first_access(ctx, stream, want_write)
+        local access = first_access(ctx, lane, want_write)
         local elem_size = 1
         local const_offset = 0
         local icls = access and pvm.classof(access.index) or nil
@@ -579,13 +579,13 @@ local function bind_context(T)
             elem_size = access.index.elem_size or 1
             const_offset = access.index.const_offset or 0
         end
-        local base = base_atom(ctx, stream.base)
+        local base = base_atom(ctx, lane.base)
         if const_offset ~= 0 then
-            local ptr = tmp(ctx, "vec_lane_ptr", Code.CodeTyDataPtr(stream.elem_ty))
+            local ptr = tmp(ctx, "vec_lane_ptr", Code.CodeTyDataPtr(lane.elem_ty))
             assign(ctx, ptr, C.CBackendRPtrOffset(base, idx, elem_size, const_offset))
-            return C.CBackendPlaceDeref(C.CBackendAtomLocal(ptr), c_ty(ctx, stream.elem_ty), nil)
+            return C.CBackendPlaceDeref(C.CBackendAtomLocal(ptr), c_ty(ctx, lane.elem_ty), nil)
         end
-        return C.CBackendPlaceIndex(C.CBackendPlaceDeref(base, c_ty(ctx, stream.elem_ty), nil), idx, c_ty(ctx, stream.elem_ty), elem_size)
+        return C.CBackendPlaceIndex(C.CBackendPlaceDeref(base, c_ty(ctx, lane.elem_ty), nil), idx, c_ty(ctx, lane.elem_ty), elem_size)
     end
 
     local lower_value_expr_lane, lower_kernel_expr_lane
@@ -668,11 +668,11 @@ local function bind_context(T)
             return v, ty
         elseif cls == Kernel.KernelExprAlgebra then
             return lower_value_expr_lane(ctx, expr.expr, lane, index_ty)
-        elseif cls == Kernel.KernelExprLoad then
-            local dst = tmp(ctx, "vec_lane_load", expr.stream.elem_ty)
-            local place = vector_lane_place(ctx, expr.stream, false, lane, index_ty)
+        elseif cls == Kernel.KernelExprLaneLoad then
+            local dst = tmp(ctx, "vec_lane_load", expr.lane.elem_ty)
+            local place = vector_lane_place(ctx, expr.lane, false, lane, index_ty)
             ctx.stmts[#ctx.stmts + 1] = C.CBackendPlaceLoad(dst, place)
-            return C.CBackendAtomLocal(dst), expr.stream.elem_ty
+            return C.CBackendAtomLocal(dst), expr.lane.elem_ty
         end
         error("lower_to_c: unsupported vector KernelExpr " .. class_name(expr), 3)
     end

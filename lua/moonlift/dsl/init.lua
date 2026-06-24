@@ -1209,10 +1209,55 @@ end
 local g = llb.grammar
 local ch = llb.channel
 
+local function push_items_reverse(stack, items)
+    for i = #(items or {}), 1, -1 do stack[#stack + 1] = items[i] end
+end
+
+local function role_array_gen(param, state)
+    state = state or { index = 0, stack = {} }
+    local stack = state.stack
+    while true do
+        if #stack > 0 then
+            local item = stack[#stack]
+            stack[#stack] = nil
+            return state, item
+        end
+        state.index = state.index + 1
+        local v = param.value[state.index]
+        if v == nil then return nil end
+        if llb.is(v, "Spread") then
+            local frag = v.value
+            if llb.is(frag, "Fragment") then
+                if frag.role ~= param.fragment_role then
+                    die("expected " .. param.fragment_role .. " fragment, got " .. tostring(frag.role), 2)
+                end
+                push_items_reverse(stack, frag.items)
+            elseif type(frag) == "table" then
+                push_items_reverse(stack, frag)
+            else
+                die("spread expects a fragment or array", 2)
+            end
+        elseif param.fragment_role == "decl" and is_moonlift_zone(v) then
+            push_items_reverse(stack, v.items)
+        elseif param.fragment_role == "decl" and llb.is(v, "FamilyBundle") then
+            for zi = #(v.zones or {}), 1, -1 do
+                local z = v.zones[zi]
+                if is_moonlift_zone(z) then push_items_reverse(stack, z.items) end
+            end
+        elseif param.fragment_role == "decl" and is_foreign_zone(v) then
+            -- ignored by Moonlift projection
+        elseif llb.is(v, "Fragment") and v.role == param.fragment_role then
+            push_items_reverse(stack, v.items)
+        else
+            return state, v
+        end
+    end
+end
+
 local function role_array(fragment_role, label)
     return {
         kind = "array",
-        normalize = function(_, ctx, v)
+        stream = function(_, ctx, v)
             if llb.is(v, "Fragment") then
                 if v.role ~= fragment_role then
                     llb.fail("expected " .. label .. " fragment, got " .. tostring(v.role), {
@@ -1220,7 +1265,7 @@ local function role_array(fragment_role, label)
                         primary = v.origin or (ctx and ctx.origin),
                     })
                 end
-                return v.items or {}
+                return llb.stream.raw(llb.stream.from.array(v.items or {}))
             end
             if type(v) ~= "table" then
                 llb.fail("expected " .. label .. " table", {
@@ -1228,7 +1273,10 @@ local function role_array(fragment_role, label)
                     primary = llb.origin_of(v) or (ctx and ctx.origin),
                 })
             end
-            return expand_array(v, fragment_role)
+            return llb.stream.raw(llb.stream.wrap(role_array_gen, {
+                value = v,
+                fragment_role = fragment_role,
+            }, nil, { kind = "moonlift:role-array", role = fragment_role }))
         end,
     }
 end

@@ -109,7 +109,7 @@ block insert()
         oom = oom)
 end
 block have_slot()
-    let s: T.LlStream = Buffers.llpvm_stream_value(vm, source)
+    let s: T.LlTape = Buffers.llpvm_tape_value(vm, source)
     emit @{Buffers.ll_buffer_open}(vm, s.world, as(index, 8);
         buffer = make_recording,
         invalid_world = bad_world,

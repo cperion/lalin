@@ -50,8 +50,8 @@ local llpvm_store_empty_buffers = func(): T.LlBufferStore
     return LlBufferStore{ slots = as(ptr(T.LlBufferSlot), 0), n = 0, cap = 0, free_head = 0, generation = 1 }
 end
 
-local llpvm_store_empty_streams = func(): T.LlStreamStore
-    return LlStreamStore{ slots = as(ptr(T.LlStreamSlot), 0), n = 0, cap = 0, free_head = 0, generation = 1 }
+local llpvm_store_empty_tapes = func(): T.LlTapeStore
+    return LlTapeStore{ slots = as(ptr(T.LlTapeSlot), 0), n = 0, cap = 0, free_head = 0, generation = 1 }
 end
 
 local llpvm_store_empty_programs = func(): T.LlProgramStore
@@ -90,7 +90,7 @@ local llpvm_init_empty_vm = func(vm: ptr(T.LlVm), config: T.LlVmConfig): void
         worlds = llpvm_store_empty_worlds(),
         ops = llpvm_store_empty_ops(),
         buffers = llpvm_store_empty_buffers(),
-        streams = llpvm_store_empty_streams(),
+        tapes = llpvm_store_empty_tapes(),
         programs = @{llpvm_store_empty_programs}(),
         args = llpvm_store_empty_args(),
         machines = llpvm_store_empty_machines(),
@@ -144,7 +144,7 @@ local llpvm_free_store_memory = func(vm: ptr(T.LlVm)): void
     Mem.llpvm_free_bytes(a, as(ptr(u8), vm.worlds.slots), vm.worlds.cap * sizeof(T.LlWorldSlot), as(index, 8))
     Mem.llpvm_free_bytes(a, as(ptr(u8), vm.ops.slots), vm.ops.cap * sizeof(T.LlOpSlot), as(index, 8))
     Mem.llpvm_free_bytes(a, as(ptr(u8), vm.buffers.slots), vm.buffers.cap * sizeof(T.LlBufferSlot), as(index, 8))
-    Mem.llpvm_free_bytes(a, as(ptr(u8), vm.streams.slots), vm.streams.cap * sizeof(T.LlStreamSlot), as(index, 8))
+    Mem.llpvm_free_bytes(a, as(ptr(u8), vm.tapes.slots), vm.tapes.cap * sizeof(T.LlTapeSlot), as(index, 8))
     Mem.llpvm_free_bytes(a, as(ptr(u8), vm.programs.slots), vm.programs.cap * sizeof(T.LlProgramSlot), as(index, 8))
     Mem.llpvm_free_bytes(a, as(ptr(u8), vm.args.slots), vm.args.cap * sizeof(T.LlArgsSlot), as(index, 8))
     Mem.llpvm_free_bytes(a, as(ptr(u8), vm.machines.slots), vm.machines.cap * sizeof(T.LlMachineSlot), as(index, 8))
@@ -172,13 +172,13 @@ local llpvm_reserve_image_load_stores = func(vm: ptr(T.LlVm), config: T.LlVmConf
         vm.worlds.slots = as(ptr(T.LlWorldSlot), world_raw)
         vm.worlds.cap = config.initial_world_cap
     end
-    if config.initial_stream_cap > 0 then
-        let stream_bytes: index = config.initial_stream_cap * sizeof(T.LlStreamSlot)
-        let stream_raw: ptr(u8) = Mem.llpvm_alloc_bytes(a, stream_bytes, as(index, 8))
-        if stream_raw == as(ptr(u8), 0) then return false end
-        Mem.llpvm_zero_bytes(stream_raw, stream_bytes)
-        vm.streams.slots = as(ptr(T.LlStreamSlot), stream_raw)
-        vm.streams.cap = config.initial_stream_cap
+    if config.initial_tape_cap > 0 then
+        let tape_bytes: index = config.initial_tape_cap * sizeof(T.LlTapeSlot)
+        let tape_raw: ptr(u8) = Mem.llpvm_alloc_bytes(a, tape_bytes, as(index, 8))
+        if tape_raw == as(ptr(u8), 0) then return false end
+        Mem.llpvm_zero_bytes(tape_raw, tape_bytes)
+        vm.tapes.slots = as(ptr(T.LlTapeSlot), tape_raw)
+        vm.tapes.cap = config.initial_tape_cap
     end
     if config.initial_program_cap > 0 then
         let program_bytes: index = config.initial_program_cap * sizeof(T.LlProgramSlot)
@@ -300,7 +300,7 @@ return {
     llpvm_store_empty_worlds = llpvm_store_empty_worlds,
     llpvm_store_empty_ops = llpvm_store_empty_ops,
     llpvm_store_empty_buffers = llpvm_store_empty_buffers,
-    llpvm_store_empty_streams = llpvm_store_empty_streams,
+    llpvm_store_empty_tapes = llpvm_store_empty_tapes,
     llpvm_store_empty_args = llpvm_store_empty_args,
     llpvm_store_empty_machines = llpvm_store_empty_machines,
     llpvm_store_empty_phases = llpvm_store_empty_phases,

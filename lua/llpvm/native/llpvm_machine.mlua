@@ -140,11 +140,11 @@ end
 local ll_run_machine = region @{R.ll_run_machine}
 entry start()
     if not llpvm_machine_live(vm, machine) then jump unsupported_machine(machine = machine) end
-    if not Buffers.llpvm_stream_live(vm, input) then jump wrong_input_world(expected = LlWorldRef.from_repr(0), got = LlWorldRef.from_repr(0)) end
+    if not Buffers.llpvm_tape_live(vm, input) then jump wrong_input_world(expected = LlWorldRef.from_repr(0), got = LlWorldRef.from_repr(0)) end
     let m: T.LlMachine = llpvm_machine_value(vm, machine)
-    let s: T.LlStream = Buffers.llpvm_stream_value(vm, input)
+    let s: T.LlTape = Buffers.llpvm_tape_value(vm, input)
     if s.world ~= m.input_world then jump wrong_input_world(expected = m.input_world, got = s.world) end
-    if m.input_world == m.output_world then jump output(stream = input) end
+    if m.input_world == m.output_world then jump output(tape = input) end
     jump unsupported_machine(machine = machine)
 end
 end
@@ -152,13 +152,13 @@ end
 local ll_open_phase = region @{R.ll_open_phase}
 entry start()
     if not llpvm_phase_live(vm, phase) then jump machine_failed(diag = LlDiagnosticRef.from_repr(0)) end
-    if not Buffers.llpvm_stream_live(vm, input) then jump wrong_input_world(expected = LlWorldRef.from_repr(0), got = LlWorldRef.from_repr(0)) end
+    if not Buffers.llpvm_tape_live(vm, input) then jump wrong_input_world(expected = LlWorldRef.from_repr(0), got = LlWorldRef.from_repr(0)) end
     if args ~= LlArgsRef.from_repr(0) then
         if not Args.llpvm_args_live(vm, args) then jump machine_failed(diag = LlDiagnosticRef.from_repr(0)) end
     end
     let pidx: index = llpvm_phase_index(phase)
     let ph: T.LlPhase = vm.phases.slots[pidx].value
-    let s: T.LlStream = Buffers.llpvm_stream_value(vm, input)
+    let s: T.LlTape = Buffers.llpvm_tape_value(vm, input)
     if s.world ~= ph.input_world then jump wrong_input_world(expected = ph.input_world, got = s.world) end
     let p_calls: ptr(u64) = &(vm.phases.slots[pidx].value.stats.calls)
     let p_misses: ptr(u64) = &(vm.phases.slots[pidx].value.stats.misses)
@@ -171,8 +171,8 @@ entry start()
         failed = run_failed,
         memory_exhausted = run_oom)
 end
-block run_output(stream: T.LlStreamRef)
-    jump uncached(stream = stream)
+block run_output(tape: T.LlTapeRef)
+    jump uncached(tape = tape)
 end
 block run_wrong_world(expected: T.LlWorldRef, got: T.LlWorldRef)
     jump wrong_input_world(expected = expected, got = got)

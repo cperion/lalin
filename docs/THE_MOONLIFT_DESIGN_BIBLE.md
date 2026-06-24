@@ -160,7 +160,7 @@ Can this stage run without the authoring language?
 
 This lens is why PVM works: it made compiler phases into lazy machines over
 MoonSchema-projected products. It is why LLPVM works: it makes that machine
-boundary concrete as borrowed bytecode images, native handles, streams, buffers,
+boundary concrete as borrowed bytecode images, native handles, tapes, buffers,
 recordings, and C ABI seals. It is why MLUI should remain a rich compiler while
 still emitting a dense borrowed image for the native UI VM.
 
@@ -183,7 +183,7 @@ instruction language before designing public APIs.
 Do not start with wrappers around objects. Find the VM stack first.
 
 Worlds are domain states, not phase plumbing. A phase consumes one world and
-produces one world. If a phase appears to need several streams, facts, stores,
+produces one world. If a phase appears to need several tapes, facts, stores,
 or arguments, the input world is probably named at the wrong semantic level.
 Create a domain world that contains the needed values instead of attaching a
 side table called "phase inputs".
@@ -2463,7 +2463,7 @@ region/function says what can happen, what access it invalidates, and whether an
 12. **Foreign runtimes get bridges.** LuaJIT stack slots, registry refs, borrowed strings, protected calls, and userdata proxies cross through LuaBridge protocols, not ad hoc raw externs.
 13. **Repeated systems are VMs.** If a subsystem has repeated execution, retained state, diagnostics, incremental invalidation, or a performance boundary, name its instruction language and VM stack before designing public APIs. Each phase should transform one semantic world into the next.
 14. **Worlds are reuse frontiers.** Choose world boundaries where a product becomes reusable and invalidation can be stated exactly. False invalidation means the world is too broad or too noisy; stale reuse means it is missing facts.
-15. **Bytecode is a boundary product.** Dense borrowed images, streams, command buffers, and IR rows are first-class products; wrapper APIs are authoring conveniences around them, not the architecture.
+15. **Bytecode is a boundary product.** Dense borrowed images, tapes, command buffers, and IR rows are first-class products; wrapper APIs are authoring conveniences around them, not the architecture.
 
 ---
 

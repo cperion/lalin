@@ -36,7 +36,7 @@ assert(events[1].kind == "header" and events[1].magic == "LLPV", "records proces
 assert(events[1].seq == 1, "validation process events carry seq")
 local saw_record = false
 for _, ev in ipairs(events) do
-    if ev.kind == "record" and ev.tag_name == "stream_seq" then saw_record = true end
+    if ev.kind == "record" and ev.tag_name == "tape_seq" then saw_record = true end
 end
 assert(saw_record, "records process emits decoded record metadata")
 
@@ -56,7 +56,7 @@ assert(disk == bytes, "ProgramImage:write writes bytecode image")
 
 local formatted = ll.format(spec)
 assert(formatted:match("language%. BytecodeDemo"), "formatter emits language head")
-assert(formatted:match("raw%. input"), "formatter emits generated world stream head")
+assert(formatted:match("raw%. input"), "formatter emits generated world tape head")
 assert(formatted:match("Int%. a"), "formatter emits generated op value heads")
 
 local tmp = os.tmpname() .. ".lua"

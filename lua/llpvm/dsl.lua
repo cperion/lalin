@@ -20,7 +20,7 @@ local LangSpec = class("LangSpec")
 local TypeSpec = class("TypeSpec")
 local OpSpec = class("OpSpec")
 local WorldSpec = class("WorldSpec")
-local StreamSpec = class("StreamSpec")
+local TapeSpec = class("TapeSpec")
 local RecordSpec = class("RecordSpec")
 local MachineSpec = class("MachineSpec")
 local PhaseSpec = class("PhaseSpec")
@@ -131,6 +131,43 @@ local function array_items(t)
     return out
 end
 
+local function push_items_reverse(stack, items)
+    for i = #(items or {}), 1, -1 do stack[#stack + 1] = items[i] end
+end
+
+local function array_items_gen(param, state)
+    state = state or { index = 0, stack = {} }
+    local stack = state.stack
+    while true do
+        if #stack > 0 then
+            local item = stack[#stack]
+            stack[#stack] = nil
+            return state, item
+        end
+        state.index = state.index + 1
+        local v = param.value[state.index]
+        if v == nil then return nil end
+        if llb.is(v, "Spread") then
+            local frag = v.value
+            if llb.is(frag, "Fragment") then
+                push_items_reverse(stack, frag.items)
+            elseif type(frag) == "table" then
+                push_items_reverse(stack, frag)
+            else
+                die("spread expects a fragment or array", v.origin)
+            end
+        elseif llb.is(v, "Fragment") then
+            push_items_reverse(stack, v.items)
+        else
+            return state, v
+        end
+    end
+end
+
+local function array_items_stream(t, kind)
+    return llb.stream.raw(llb.stream.wrap(array_items_gen, { value = t or {} }, nil, { kind = kind or "llpvm:items" }))
+end
+
 local function fields_from_table(t)
     local out = {}
     for _, v in ipairs(array_items(t or {})) do
@@ -151,12 +188,44 @@ local function fields_from_table(t)
     return out
 end
 
+local function field_from_item(v)
+    local raw_name = type(v) == "table" and rawget(v, "name") or nil
+    local raw_type = type(v) == "table" and rawget(v, "type") or nil
+    local raw_base = type(v) == "table" and rawget(v, "base") or nil
+    local raw_index = type(v) == "table" and rawget(v, "index") or nil
+    if is(v, Field) and raw_name ~= nil and raw_type ~= nil then return v
+    elseif is(v, Field) and raw_base ~= nil and raw_index ~= nil then
+        return setmetatable({ name = ident_text(raw_base, "field name"), type = raw_index, origin = rawget(v, "origin") }, Field)
+    elseif llb.is(v, "Capture") then
+        return setmetatable({ name = ident_text(v.subject, "field name"), type = v.value, origin = v.origin }, Field)
+    elseif llb.is(v, "Expr") and v.kind == "index" then
+        return setmetatable({ name = ident_text(v.base, "field name"), type = v.index, origin = v.origin }, Field)
+    elseif type(v) == "table" and v.name ~= nil and v.type ~= nil then return setmetatable(v, Field)
+    else die("field list expects entries like name [Type]", llb.origin_of(v)) end
+end
+
+local function fields_stream_gen(param, state)
+    state = state or param.upstream_state
+    local next_state, item = param.upstream_gen(param.upstream_param, state)
+    if next_state == nil then return nil end
+    return next_state, field_from_item(item)
+end
+
+local function fields_stream(t)
+    local gen, param, state = array_items_stream(t or {}, "llpvm:field-source")
+    return llb.stream.raw(llb.stream.wrap(fields_stream_gen, {
+        upstream_gen = gen,
+        upstream_param = param,
+        upstream_state = state,
+    }, nil, { kind = "llpvm:fields" }))
+end
+
 local function fragment(role, items)
     return llb.fragment(role, array_items(items or {}), llb.here("llpvm-fragment", { skip = 2 }), { algebra = "list" })
 end
 
 function M.schema(t) return fragment("llpvm_decl", t) end
-function M.stream_items(t) return fragment("llpvm_stream_item", t) end
+function M.tape_items(t) return fragment("llpvm_tape_item", t) end
 M._ = llb.spread
 M.spread = llb.spread
 M.llpvm = llb.zone_head {
@@ -199,20 +268,22 @@ local function role_list(label, allowed)
     return {
         kind = "array",
         algebra = "list",
-        normalize = function(_, ctx, v)
-            local out = {}
-            for _, item in ipairs(array_items(v)) do
+        stream = function(_, ctx, v)
+            local gen, param, state = array_items_stream(v or {}, "llpvm:" .. label)
+            local function checked_gen(p, s)
+                local next_state, item = p.gen(p.param, s)
+                if next_state == nil then return nil end
                 if allowed and not allowed[cls(item)] and not (llb.is(item, "Stage") and allowed.Stage) then
                     die(label .. " received invalid item " .. tostring(cls(item) or llb.tagof(item) or type(item)), llb.origin_of(item) or (ctx and ctx.origin))
                 end
-                out[#out + 1] = item
+                return next_state, item
             end
-            return out
+            return llb.stream.raw(llb.stream.wrap(checked_gen, { gen = gen, param = param }, state, { kind = "llpvm:role-list", role = label }))
         end,
     }
 end
 
-local function normalize_stream_record_item(item)
+local function normalize_tape_record_item(item)
     if is(item, RecordSpec) then return item end
     local parts, args = expr_call_path(item)
     if parts and #parts == 2 then
@@ -240,29 +311,48 @@ local function normalize_stream_record_item(item)
     return item
 end
 
-local function normalize_stream_body(t, origin)
+local function normalize_tape_body(t, origin)
     local out = {}
     for _, item in ipairs(array_items(t or {})) do
-        item = normalize_stream_record_item(item)
+        item = normalize_tape_record_item(item)
         if not is(item, RecordSpec) then
-            die("stream received invalid item " .. tostring(cls(item) or llb.tagof(item) or type(item)), llb.origin_of(item) or origin)
+            die("tape received invalid item " .. tostring(cls(item) or llb.tagof(item) or type(item)), llb.origin_of(item) or origin)
         end
         out[#out + 1] = item
     end
     return out
 end
 
+local function tape_body_stream_gen(param, state)
+    state = state or param.upstream_state
+    local next_state, item = param.upstream_gen(param.upstream_param, state)
+    if next_state == nil then return nil end
+    item = normalize_tape_record_item(item)
+    if not is(item, RecordSpec) then
+        die("tape received invalid item " .. tostring(cls(item) or llb.tagof(item) or type(item)), llb.origin_of(item) or param.origin)
+    end
+    return next_state, item
+end
+
+local function tape_body_stream(t, origin)
+    local gen, param, state = array_items_stream(t or {}, "llpvm:tape-source")
+    return llb.stream.raw(llb.stream.wrap(tape_body_stream_gen, {
+        upstream_gen = gen,
+        upstream_param = param,
+        upstream_state = state,
+        origin = origin,
+    }, nil, { kind = "llpvm:tape-body" }))
+end
+
 local LL = llb.define "LLPVMDsl" {
-    g.role .decls (role_list("program", { LangSpec = true, WorldSpec = true, StreamSpec = true, MachineSpec = true, PhaseSpec = true, TaskSpec = true, RootSpec = true })),
+    g.role .decls (role_list("program", { LangSpec = true, WorldSpec = true, TapeSpec = true, MachineSpec = true, PhaseSpec = true, TaskSpec = true, RootSpec = true })),
     g.role .lang_body (role_list("language", { TypeSpec = true })),
     g.role .type_body (role_list("type", { OpSpec = true })),
-    g.role .fields { kind = "array", algebra = "product", normalize = function(_, _, v) return fields_from_table(v) end },
-    g.role .stream_body {
+    g.role .fields { kind = "array", algebra = "product", stream = function(_, _, v) return fields_stream(v) end },
+    g.role .tape_body {
         kind = "array",
         algebra = "list",
-        normalize = function(_, ctx, v)
-            return normalize_stream_body(v, ctx and ctx.origin)
-        end,
+        stream = function(_, ctx, v) return tape_body_stream(v, ctx and ctx.origin) end,
     },
     g.role .phase_body (role_list("phase", { Directive = true, Stage = true })),
     g.role .task_body (role_list("task", { Directive = true, EventSpec = true })),
@@ -270,7 +360,7 @@ local LL = llb.define "LLPVMDsl" {
 
     g.trait .named { apply = function(_, head) head.lsp = head.lsp or { symbol = function(n) return { name = tostring(n.name), kind = head.name, origin = n.origin, node = n } end } end },
 
-    -- Declares an LLPVM program containing languages, worlds, streams, machines, phases, tasks, and roots.
+    -- Declares an LLPVM program containing languages, worlds, tapes, machines, phases, tasks, and roots.
     g.head .pvm { g.trait .named, slot_name(g.slot .name), slot_body(g.slot .body, g.decls), emit = function(n) return setmetatable({ name = ident_text(n.name, "program name"), body = n.body or {}, origin = n.origin }, ProgramSpec) end },
     -- Declares an operation language namespace containing typed operation definitions.
     g.head .lang { g.trait .named, slot_name(g.slot .name), slot_body(g.slot .body, g.lang_body), emit = function(n) return setmetatable({ name = ident_text(n.name, "language name"), body = n.body or {}, origin = n.origin }, LangSpec) end },
@@ -280,9 +370,9 @@ local LL = llb.define "LLPVMDsl" {
     g.head .op { g.trait .named, slot_name(g.slot .name), slot_body(g.slot .fields, g.fields), emit = function(n) return setmetatable({ name = ident_text(n.name, "op name"), fields = n.fields or {}, origin = n.origin }, OpSpec) end },
     -- Declares a named world over a language value.
     g.head .world { g.trait .named, slot_name(g.slot .name), slot_index_value(g.slot .language), emit = function(n) return setmetatable({ name = ident_text(n.name, "world name"), language = n.language, origin = n.origin }, WorldSpec) end },
-    -- Declares a bytecode or fact stream attached to a world.
-    g.head .stream { g.trait .named, slot_name(g.slot .name), slot_index_value(g.slot .world), slot_body(g.slot .body, g.stream_body), emit = function(n) return setmetatable({ name = ident_text(n.name, "stream name"), world = n.world, body = n.body or {}, origin = n.origin }, StreamSpec) end },
-    -- Declares a named stream record expression.
+    -- Declares a bytecode or fact tape attached to a world.
+    g.head .tape { g.trait .named, slot_name(g.slot .name), slot_index_value(g.slot .world), slot_body(g.slot .body, g.tape_body), emit = function(n) return setmetatable({ name = ident_text(n.name, "tape name"), world = n.world, body = n.body or {}, origin = n.origin }, TapeSpec) end },
+    -- Declares a named tape record expression.
     g.head .record { g.trait .named, slot_name(g.slot .name), slot_call_value(g.slot .expr), emit = function(n) return setmetatable({ name = ident_text(n.name, "record name"), expr = n.expr, origin = n.origin }, RecordSpec) end },
     -- Declares a reusable machine made from phase directives and stages.
     g.head .machine { g.trait .named, slot_name(g.slot .name), slot_body(g.slot .body, g.phase_body), emit = function(n) return setmetatable({ name = ident_text(n.name, "machine name"), body = n.body or {}, origin = n.origin }, MachineSpec) end },
@@ -292,13 +382,13 @@ local LL = llb.define "LLPVMDsl" {
     g.head .task { g.trait .named, slot_name(g.slot .name), slot_body(g.slot .body, g.task_body), emit = function(n) return setmetatable({ name = ident_text(n.name, "task name"), body = n.body or {}, origin = n.origin }, TaskSpec) end },
     -- Declares one task event and its payload type.
     g.head .event { g.trait .named, slot_name(g.slot .name), slot_index_value(g.slot .payload), emit = function(n) return setmetatable({ name = ident_text(n.name, "event name"), payload = n.payload, origin = n.origin }, EventSpec) end },
-    -- Marks the input world, value, or stream consumed by a phase or task.
+    -- Marks the input world, value, or tape consumed by a phase or task.
     g.head .input { slot_index_value(g.slot .value), emit = function(n) return setmetatable({ kind = "input", value = n.value, origin = n.origin }, Directive) end },
-    -- Marks the output world, value, or stream produced by a phase or task.
+    -- Marks the output world, value, or tape produced by a phase or task.
     g.head .output { slot_index_value(g.slot .value), emit = function(n) return setmetatable({ kind = "output", value = n.value, origin = n.origin }, Directive) end },
-    -- Names the source world or stream for a root or phase edge.
+    -- Names the source world or tape for a root or phase edge.
     g.head .from { slot_name(g.slot .value), emit = function(n) return setmetatable({ kind = "from", value = n.value, origin = n.origin }, Directive) end },
-    -- Names the destination world or stream for a root or phase edge.
+    -- Names the destination world or tape for a root or phase edge.
     g.head .to { slot_name(g.slot .value), emit = function(n) return setmetatable({ kind = "to", value = n.value, origin = n.origin }, Directive) end },
     -- Names the entry phase or machine for a root/task execution surface.
     g.head .entry { slot_name(g.slot .value), emit = function(n) return setmetatable({ kind = "entry", value = n.value, origin = n.origin }, Directive) end },
@@ -332,15 +422,15 @@ end
 local function complete_machine_decl(self, item)
     if is(item, TypeSpec) then return nil end
     if is(item, LangSpec) or is(item, WorldSpec) then return item end
-    if is(item, MachineSpec) or is(item, PhaseSpec) or is(item, StreamSpec) or is(item, RootSpec) then return item end
+    if is(item, MachineSpec) or is(item, PhaseSpec) or is(item, TapeSpec) or is(item, RootSpec) then return item end
     local parts, args = expr_call_path(item)
     if parts and #parts == 2 then
         return setmetatable({
             name = tostring(parts[2]),
             world = ident(parts[1], llb.origin_of(item)),
-            body = normalize_stream_body(args[1] or {}, llb.origin_of(item)),
+            body = normalize_tape_body(args[1] or {}, llb.origin_of(item)),
             origin = llb.origin_of(item),
-        }, StreamSpec)
+        }, TapeSpec)
     end
     if llb.is_stage(item) and llb.stage_head(item) == "world" then
         return item[ident(self.name, item.origin)]
@@ -381,14 +471,14 @@ end
 
 local function generated_world_head(world_name)
     local head = {}
-    head.__index = function(_, stream_name)
+    head.__index = function(_, tape_name)
         return function(body)
             return setmetatable({
-                name = tostring(stream_name),
+                name = tostring(tape_name),
                 world = ident(world_name),
                 body = array_items(body or {}),
-                origin = llb.here("llpvm-stream", { skip = 1 }),
-            }, StreamSpec)
+                origin = llb.here("llpvm-tape", { skip = 1 }),
+            }, TapeSpec)
         end
     end
     head.__call = function(_, body)
@@ -396,8 +486,8 @@ local function generated_world_head(world_name)
             name = tostring(world_name),
             world = ident(world_name),
             body = array_items(body or {}),
-            origin = llb.here("llpvm-stream", { skip = 1 }),
-        }, StreamSpec)
+            origin = llb.here("llpvm-tape", { skip = 1 }),
+        }, TapeSpec)
     end
     return setmetatable({}, head)
 end
@@ -504,7 +594,7 @@ local function lower_new(spec, opts)
         op_defs = {},
         op_type_by_name = {},
         worlds = {},
-        streams = {},
+        tapes = {},
         values = {},
         machines = {},
         phases = {},
@@ -651,7 +741,7 @@ function Lower:constructor_call(expr, world)
         type_name, op_name = parts[2], parts[3]
     else die("constructor path must be Type.Op or Lang.Type.Op", expr.origin) end
     world = world or self.current_world
-    if not world then die("constructor call requires a stream/world context", expr.origin) end
+    if not world then die("constructor call requires a tape/world context", expr.origin) end
     local type_def = self.types[world.language] and self.types[world.language][type_name]
     if not type_def then die("world " .. world.name .. " has no type " .. type_name, expr.origin) end
     local op = self.op_defs[world.language .. "." .. type_name .. "." .. op_name]
@@ -756,9 +846,9 @@ function Lower:build_machines_phases()
     end
 end
 
-function Lower:build_streams()
+function Lower:build_tapes()
     for _, decl in ipairs(self.spec.body or {}) do
-        if is(decl, StreamSpec) then
+        if is(decl, TapeSpec) then
             local world = self:resolve_world(decl.world)
             local old = self.current_world
             self.current_world = world
@@ -769,40 +859,40 @@ function Lower:build_streams()
                 values[i], ids[i] = val, val.id
             end
             self.current_world = old
-            self.streams[decl.name] = { name = decl.name, world = world, id = self.builder:seq(world.id, ids), ops = values }
+            self.tapes[decl.name] = { name = decl.name, world = world, id = self.builder:seq(world.id, ids), ops = values }
         end
     end
 end
 
-function Lower:root_stream(item)
+function Lower:root_tape(item)
     if llb.is(item, "Head") and item.spec and item.spec.name then
         item = ident(item.spec.name, llb.origin_of(item))
     end
     if is(item, Ident) or llb.is(item, "Name") or llb.is(item, "Symbol") then
         local name = ident_text(item, "root reference")
-        local s = self.streams[name]
+        local s = self.tapes[name]
         if s then return s end
         local v = self.values[name]
         if v then
             return { name = name, world = v.world, id = self.builder:seq(v.world.id, { v.id }), ops = { v } }
         end
-        die("unknown root stream or value " .. name, llb.origin_of(item))
+        die("unknown root tape or value " .. name, llb.origin_of(item))
     elseif is(item, Call) or (llb.is(item, "Expr") and item.kind == "call") then
         local callee = is(item, Call) and item.callee or item.callee
         local args = is(item, Call) and item.args or item.args
         local phase = self.phases[ident_text(callee, "phase reference")]
         if not phase then die("unknown phase " .. tostring(item.callee), item.origin) end
-        local input = self:root_stream(args[1])
-        assert(input.world == phase.input, "phase input stream has wrong world")
+        local input = self:root_tape(args[1])
+        assert(input.world == phase.input, "phase input tape has wrong world")
         local args_id = self.builder:args({})
-        return { name = phase.name .. "(" .. (input.name or "stream") .. ")", world = phase.output, id = self.builder:phase_map(phase.id, input.id, args_id), ops = {} }
+        return { name = phase.name .. "(" .. (input.name or "tape") .. ")", world = phase.output, id = self.builder:phase_map(phase.id, input.id, args_id), ops = {} }
     end
-    die("root expects stream or phase(stream)", llb.origin_of(item))
+    die("root expects tape or phase(tape)", llb.origin_of(item))
 end
 
 function Lower:build_roots()
     for _, decl in ipairs(self.spec.body or {}) do
-        if is(decl, RootSpec) then for _, item in ipairs(decl.body or {}) do self.roots[#self.roots + 1] = self:root_stream(item) end end
+        if is(decl, RootSpec) then for _, item in ipairs(decl.body or {}) do self.roots[#self.roots + 1] = self:root_tape(item) end end
     end
     if #self.roots == 0 then die("LLPVM program requires root { ... }", self.spec.origin) end
 end
@@ -818,7 +908,7 @@ function ProgramSpec:lower(opts)
     l:build_languages()
     l:build_worlds()
     l:build_machines_phases()
-    l:build_streams()
+    l:build_tapes()
     l:build_roots()
     local root_ids, root_ops = {}, {}
     for i, s in ipairs(l.roots) do root_ids[i] = s.id end
@@ -1004,7 +1094,7 @@ fmt_spec = function(v, f)
     if is(v, TypeSpec) then return doc.concat { "type. ", v.name, " ", block(v.body, f, fmt_spec) } end
     if is(v, OpSpec) then return doc.concat { "op. ", v.name, " ", block(v.fields or {}, f, fmt_value) } end
     if is(v, WorldSpec) then return doc.group { "world. ", v.name, " [", fmt_ref(v.language), "]" } end
-    if is(v, StreamSpec) then return doc.group { fmt_ref(v.world), ". ", v.name, " ", block(v.body, f, fmt_spec) } end
+    if is(v, TapeSpec) then return doc.group { fmt_ref(v.world), ". ", v.name, " ", block(v.body, f, fmt_spec) } end
     if is(v, RecordSpec) then
         if is(v.expr, Call) then
             local parts = path_parts(v.expr.callee)
@@ -1031,15 +1121,15 @@ function M.make_env(opts)
     local env = {}; for k, v in pairs(opts.base or opts.target or _G) do env[k] = v end
     env.llpvm = M.llpvm
     env.language = machine_language_factory
-    for _, name in ipairs({ "pvm", "lang", "type", "op", "world", "stream", "record", "machine", "phase", "task", "event", "input", "output", "from", "to", "entry", "cache", "root" }) do env[name] = LL.exports[name] end
-    env.schema, env.stream_items, env._, env.spread = M.schema, M.stream_items, llb.spread, llb.spread
+    for _, name in ipairs({ "pvm", "lang", "type", "op", "world", "tape", "record", "machine", "phase", "task", "event", "input", "output", "from", "to", "entry", "cache", "root" }) do env[name] = LL.exports[name] end
+    env.schema, env.tape_items, env._, env.spread = M.schema, M.tape_items, llb.spread, llb.spread
     return env
 end
 
 local LLPVM_NAMESPACE_KEYS = {
-    "language", "pvm", "lang", "type", "op", "world", "stream", "record",
+    "language", "pvm", "lang", "type", "op", "world", "tape", "record",
     "machine", "phase", "task", "event", "input", "output", "from", "to",
-    "entry", "cache", "root", "schema", "stream_items", "_", "spread",
+    "entry", "cache", "root", "schema", "tape_items", "_", "spread",
 }
 
 function M.namespace(opts)
@@ -1115,7 +1205,7 @@ M.records = llb.process. records (function(ctx, bytes)
             end
             local magic = bytes0:sub(1, 4)
             local version = u32(bytes0, 5)
-            local root_stream_id = u32(bytes0, 9)
+            local root_tape_id = u32(bytes0, 9)
             local root_op_count = u32(bytes0, 13)
             local root_op_table_offset = u32(bytes0, 17)
             return {
@@ -1130,7 +1220,7 @@ M.records = llb.process. records (function(ctx, bytes)
             }, param.ctx:make_event("header", {
                 magic = magic,
                 version = version,
-                root_stream_id = root_stream_id,
+                root_tape_id = root_tape_id,
                 root_op_count = root_op_count,
                 root_op_table_offset = root_op_table_offset,
                 bytes = #bytes0,

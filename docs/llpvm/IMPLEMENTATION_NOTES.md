@@ -33,7 +33,7 @@ Self-recursive region use cannot splice itself before the value exists. Use
 `call` as the recursion boundary:
 
 ```moonlift
-call ll_next_op(vm, stream; op = got, done = done, blocked = blocked, failed = failed)
+call ll_next_op(vm, tape; op = got, done = done, blocked = blocked, failed = failed)
 ```
 
 ## Views

@@ -22,7 +22,7 @@ LLPVM exists because Moonlift systems keep rediscovering the same shape:
 
 ```text
 ASDL products
-lazy streams
+lazy tapes
 phase boundaries
 memoized results
 diagnostics
@@ -41,14 +41,14 @@ LLPVM stores and runs meaning.
 Lua authors VM families.
 Moonlift executes VM instances.
 Phases are cache and recording boundaries.
-Streams are pull-based machines.
+Tapes are pull-based machines.
 Buffers are materialized facts.
 Diagnostics are values.
 No Lua callback is the canonical hot path.
 ```
 
 Raw execution tricks are allowed inside implementation files. They are not the
-design. The public design is worlds, ops, streams, machines, phases, recordings,
+design. The public design is worlds, ops, tapes, machines, phases, recordings,
 and reports.
 
 ## Position In Moonlift
@@ -61,7 +61,7 @@ Lua no-parens API
     -> PVM-style typed operation authoring
     -> direct LLPV bytecode image
     -> native Moonlift VM regions
-    -> handles / streams / buffers / diagnostics / C ABI
+    -> handles / tapes / buffers / diagnostics / C ABI
 ```
 
 It must not depend on `lua/ui`, MLUI, or the current Lua-hosted PVM triplet
@@ -77,7 +77,7 @@ specific recurring job:
 ```text
 define a typed instruction language
 define worlds over that language
-construct op streams with PVM-like builders
+construct op tapes with PVM-like builders
 load a borrowed image into a native VM
 apply phases and materialize buffers incrementally
 ```
@@ -100,7 +100,7 @@ LlPvm.World
 LlPvm.OpSchema
 LlPvm.Op
 LlPvm.Arg
-LlPvm.Stream
+LlPvm.Tape
 LlPvm.Machine
 LlPvm.Phase
 LlPvm.Cache
@@ -191,10 +191,10 @@ handle LlWorldRef : u32 invalid 0
 end
 ```
 
-Every stream, buffer, machine input, and machine output has a world. A phase
+Every tape, buffer, machine input, and machine output has a world. A phase
 consumes exactly one input world and produces exactly one output world.
 
-If a machine seems to need several streams, resource epochs, environment facts,
+If a machine seems to need several tapes, resource epochs, environment facts,
 or model facts, the input world is named at the wrong semantic level. Make those
 facts part of the consumed domain world instead of adding a side `phase_inputs`
 table. Good world names describe what domain state exists now:
@@ -252,23 +252,23 @@ end
 Buffers are immutable once published. A builder or recording may mutate a private
 buffer until it is sealed.
 
-### Streams
+### Tapes
 
-A stream is a lazy pull machine.
+A tape is a lazy pull machine.
 
 ```moonlift
-struct LlStream
+struct LlTape
     world: LlWorldRef
     kind: u8
     payload: u32
 end
 
-handle LlStreamRef : u32 invalid 0
-    target LlStream
+handle LlTapeRef : u32 invalid 0
+    target LlTape
 end
 ```
 
-Canonical stream kinds:
+Canonical tape kinds:
 
 ```text
 empty
@@ -280,7 +280,7 @@ phase_map
 generated
 ```
 
-There are no public triplets. The stream handle is the protocol object.
+There are no public triplets. The tape handle is the protocol object.
 
 ### Args
 
@@ -334,7 +334,7 @@ Canonical machine kinds:
 region
 function
 specialized_interpreter
-fused_stream_graph
+fused_tape_graph
 native_intrinsic
 ```
 
@@ -406,7 +406,7 @@ world facts that should have been modeled as typed input values.
 ```moonlift
 struct LlRecording
     key: LlPhaseKey
-    source: LlStreamRef
+    source: LlTapeRef
     buffer: LlBufferRef
     produced: index
     readers: index
@@ -461,7 +461,7 @@ struct LlVmReport
     worlds: index
     ops: index
     buffers: index
-    streams: index
+    tapes: index
     machines: index
     phases: index
     recordings: index
@@ -482,7 +482,7 @@ struct LlVm
     ops: LlOpStore
     buffers: LlBufferStore
     args: LlArgsStore
-    streams: LlStreamStore
+    tapes: LlTapeStore
     machines: LlMachineStore
     phases: LlPhaseStore
     recordings: LlRecordingStore
@@ -631,27 +631,27 @@ region ll_buffer_publish(vm: ptr(LlVm), buffer: LlBufferRef;
 end
 ```
 
-### Stream Construction
+### Tape Construction
 
 ```moonlift
-region ll_stream_empty(vm: ptr(LlVm), world: LlWorldRef;
-    stream(stream: LlStreamRef)
+region ll_tape_empty(vm: ptr(LlVm), world: LlWorldRef;
+    tape(tape: LlTapeRef)
   | invalid_world(world: LlWorldRef))
 end
 
-region ll_stream_once(vm: ptr(LlVm), op: LlOpRef;
-    stream(stream: LlStreamRef)
+region ll_tape_once(vm: ptr(LlVm), op: LlOpRef;
+    tape(tape: LlTapeRef)
   | invalid_op(op: LlOpRef)
   | memory_exhausted(needed: index))
 end
 
-region ll_stream_seq(vm: ptr(LlVm), buffer: LlBufferRef;
-    stream(stream: LlStreamRef)
+region ll_tape_seq(vm: ptr(LlVm), buffer: LlBufferRef;
+    tape(tape: LlTapeRef)
   | invalid_buffer(buffer: LlBufferRef))
 end
 
-region ll_stream_concat(vm: ptr(LlVm), parts: readonly view(LlStreamRef);
-    stream(stream: LlStreamRef)
+region ll_tape_concat(vm: ptr(LlVm), parts: readonly view(LlTapeRef);
+    tape(tape: LlTapeRef)
   | empty
   | world_mismatch(expected: LlWorldRef, got: LlWorldRef)
   | memory_exhausted(needed: index))
@@ -661,21 +661,21 @@ end
 ### Pull Protocol
 
 ```moonlift
-region ll_next_op(vm: ptr(LlVm), stream: LlStreamRef;
+region ll_next_op(vm: ptr(LlVm), tape: LlTapeRef;
     op(op: LlOpRef)
   | done
   | blocked
   | failed(diag: LlDiagnosticRef))
 end
 
-region ll_drain_stream(vm: ptr(LlVm), stream: LlStreamRef;
+region ll_drain_tape(vm: ptr(LlVm), tape: LlTapeRef;
     drained(buffer: LlBufferRef)
   | empty
   | failed(diag: LlDiagnosticRef)
   | memory_exhausted(needed: index))
 end
 
-region ll_one_op(vm: ptr(LlVm), stream: LlStreamRef;
+region ll_one_op(vm: ptr(LlVm), tape: LlTapeRef;
     one(op: LlOpRef)
   | empty
   | more_than_one
@@ -734,12 +734,12 @@ end
 region ll_open_phase(
     vm: ptr(LlVm),
     phase: LlPhaseRef,
-    input: LlStreamRef,
+    input: LlTapeRef,
     args: LlArgsRef;
-    hit(stream: LlStreamRef)
-  | shared(stream: LlStreamRef, recording: LlRecordingRef)
-  | miss(stream: LlStreamRef, recording: LlRecordingRef)
-  | uncached(stream: LlStreamRef)
+    hit(tape: LlTapeRef)
+  | shared(tape: LlTapeRef, recording: LlRecordingRef)
+  | miss(tape: LlTapeRef, recording: LlRecordingRef)
+  | uncached(tape: LlTapeRef)
   | wrong_input_world(expected: LlWorldRef, got: LlWorldRef)
   | machine_failed(diag: LlDiagnosticRef)
   | memory_exhausted(needed: index))
@@ -748,9 +748,9 @@ end
 region ll_run_machine(
     vm: ptr(LlVm),
     machine: LlMachineRef,
-    input: LlStreamRef,
+    input: LlTapeRef,
     args: LlArgsRef;
-    output(stream: LlStreamRef)
+    output(tape: LlTapeRef)
   | wrong_input_world(expected: LlWorldRef, got: LlWorldRef)
   | unsupported_machine(machine: LlMachineRef)
   | failed(diag: LlDiagnosticRef)
@@ -764,7 +764,7 @@ end
 region ll_start_recording(
     vm: ptr(LlVm),
     key: LlPhaseKey,
-    source: LlStreamRef;
+    source: LlTapeRef;
     recording(recording: LlRecordingRef)
   | already_pending(recording: LlRecordingRef)
   | memory_exhausted(needed: index))
@@ -855,11 +855,11 @@ Suggested public functions:
 llpvm_status llpvm_open(const llpvm_config *config, llpvm_vm_ref *out);
 llpvm_status llpvm_close(llpvm_vm_ref vm);
 llpvm_status llpvm_load_program(llpvm_vm_ref vm, const void *bytes,
-                                size_t len, llpvm_stream_ref *out_root);
+                                size_t len, llpvm_tape_ref *out_root);
 llpvm_status llpvm_apply_phase(llpvm_vm_ref vm, llpvm_phase_ref phase,
-                               llpvm_stream_ref input, llpvm_args_ref args,
-                               llpvm_stream_ref *out);
-llpvm_status llpvm_drain(llpvm_vm_ref vm, llpvm_stream_ref stream,
+                               llpvm_tape_ref input, llpvm_args_ref args,
+                               llpvm_tape_ref *out);
+llpvm_status llpvm_drain(llpvm_vm_ref vm, llpvm_tape_ref tape,
                          llpvm_buffer_ref *out);
 llpvm_status llpvm_report(llpvm_vm_ref vm, llpvm_vm_report *out);
 ```
@@ -890,7 +890,7 @@ The bytecode image starts with:
 ```text
 u8[4]   magic = "LLPV"
 u32     version = 2
-u32     root_stream_id
+u32     root_tape_id
 u32     root_op_count
 u32     root_op_table_offset
 u32[]   root_op_ids
@@ -906,7 +906,7 @@ u8[]    payload
 ```
 
 The Lua image builder assigns dense image-local ids to every symbol, type, ABI,
-world, op, stream, machine, phase, args product, and root. Records reference each
+world, op, tape, machine, phase, args product, and root. Records reference each
 other by those ids. The native importer resolves ids into validated stores and
 returns native handles. No authored Lua proxy is a native handle.
 
@@ -917,19 +917,19 @@ llpvm_status llpvm_load_program(
     llpvm_vm_ref vm,
     const uint8_t *bytes,
     ml_index len,
-    llpvm_stream_ref *out_root);
+    llpvm_tape_ref *out_root);
 ```
 
 After this boundary, Lua should talk in native handles:
 
 ```text
 PhaseRef
-StreamRef
+TapeRef
 ArgsRef
 BufferRef
 ```
 
-Trying to pass an authored Lua stream directly to `llpvm_drain` is a design
+Trying to pass an authored Lua tape directly to `llpvm_drain` is a design
 error. It must fail loudly until the program image has been loaded.
 
 ## Lua API
@@ -997,10 +997,10 @@ local targeted_input = TargetedWorld:seq {
     TargetedWorld.Root.Program { target = TARGET_NATIVE, opt = 3, expr = sum },
 }
 
-local output_stream = lower_targeted(targeted_input)
+local output_tape = lower_targeted(targeted_input)
 ```
 
-Lua constructs operation schemas, worlds, op constructors, streams, and machine
+Lua constructs operation schemas, worlds, op constructors, tapes, and machine
 families. The native VM owns execution, buffers, cache, and diagnostics.
 
 ### Implemented Lua Authoring Surface
@@ -1073,7 +1073,7 @@ vm.language "Name"
 World:empty()
 World:once(Value)
 World:seq { Value, Value }
-vm.concat { Stream, Stream }
+vm.concat { Tape, Tape }
 vm.machine "name" { from = InWorld, to = OutWorld, entry = "region_symbol" }
 vm.phase "name" {
     from = InWorld,
@@ -1082,7 +1082,7 @@ vm.phase "name" {
     entry = "region_symbol", -- optional when machine omitted
     cache = "full"
 }
-vm.program { RootStream, OtherRootStream }
+vm.program { RootTape, OtherRootTape }
 ```
 
 Most phases can rely on phase-local machine creation:
@@ -1102,12 +1102,12 @@ Phase values are callable:
 local output = lower(input)
 ```
 
-Stream proxies expose host-side inspection helpers for locally knowable streams:
+Tape proxies expose host-side inspection helpers for locally knowable tapes:
 
 ```lua
-stream:drain() -- returns materialized authored Lua op proxies when locally knowable
-stream:one()   -- exactly one authored op proxy
-stream:each(function(op, i) ... end)
+tape:drain() -- returns materialized authored Lua op proxies when locally knowable
+tape:one()   -- exactly one authored op proxy
+tape:each(function(op, i) ... end)
 ```
 
 These helpers are authoring/inspection conveniences. The canonical runtime
@@ -1117,14 +1117,14 @@ execution protocol is:
 local program = vm.program { root }
 local bytes = program:bytecode()
 local image = ll.bytebuffer(bytes)
-local status, root_stream = runtime_vm:load_program_buffer(image, #bytes)
+local status, root_tape = runtime_vm:load_program_buffer(image, #bytes)
 status:assert("llpvm_load_program")
-local drain_status, buffer = runtime_vm:drain(root_stream)
+local drain_status, buffer = runtime_vm:drain(root_tape)
 ```
 
 The runtime API rejects authored Lua proxies. `load_program` is the boundary that
 turns caller-owned immutable bytecode image views into numeric native handles
-owned by the VM. The image buffer must outlive streams derived from it.
+owned by the VM. The image buffer must outlive tapes derived from it.
 
 ### Retained Vs Rebuild
 
@@ -1144,7 +1144,7 @@ end)
 Retained values are not hidden runtime ownership. They are host authoring facts:
 the retained object can seed a later ASDL rebuild, while `unwrap(retained)` still
 lowers to the underlying ASDL product when another LLPVM helper consumes it.
-Use retained values for stable authored subgraphs, schemas, worlds, and streams
+Use retained values for stable authored subgraphs, schemas, worlds, and tapes
 that should not be rebuilt from scratch when only nearby Lua inputs change. Use
 plain rebuilds when the value is cheap or intentionally regenerated.
 
@@ -1189,7 +1189,7 @@ No untyped status codes except ABI shell functions.
 Every store has slot/generation validation.
 Every borrowed pointer is a lease.
 Every owned handle is discharged by CFG.
-Every stream consumer is pull-based.
+Every tape consumer is pull-based.
 ```
 
 ## Backend Expectations
@@ -1205,7 +1205,7 @@ literal constructors
 C backend emission
 object emission
 Cranelift execution
-C output suitable for downstream toolchains
+C output suitable for downtape toolchains
 ```
 
 If the compiler hits parser, source-span, memory, duplicate-code, or backend
@@ -1231,7 +1231,7 @@ MoonSchema/LLB define each operation language.
 Worlds carry semantic layers.
 Machines are Moonlift regions.
 Phases are cache boundaries.
-Streams are pull-based.
+Tapes are pull-based.
 Buffers are facts.
 Recordings make lazy work shareable.
 Cache entries are explicit owned products.

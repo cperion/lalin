@@ -45,7 +45,7 @@ entry start()
         worlds = vm.worlds.n,
         ops = vm.ops.n,
         buffers = vm.buffers.n,
-        streams = vm.streams.n,
+        tapes = vm.tapes.n,
         machines = vm.machines.n,
         phases = vm.phases.n,
         recordings = vm.recordings.n,

@@ -69,7 +69,7 @@ return llisle {
     llisle.classify_expr { expr = P. expr },
     when { P. expr.kind :eq (load) },
     run {
-      ret { class = load_class { stream = P. expr.stream, index = P. expr.index } },
+      ret { class = load_class { lane = P. expr.lane, index = P. expr.index } },
     },
   },
 
@@ -84,7 +84,7 @@ return llisle {
       ret {
         class = map_class {
           op = P. expr.op,
-          stream = V. inner.class.stream,
+          lane = V. inner.class.lane,
           index = V. inner.class.index,
         },
       },
@@ -166,11 +166,11 @@ local classified = assert(engine:run("classify_expr", {
   expr = rec {
     kind = "unary",
     op = "neg",
-    value = rec { kind = "load", stream = "xs", index = "i" },
+    value = rec { kind = "load", lane = "xs", index = "i" },
   },
 }))
 assert(classified.output.class.kind == "map_class", "bind before guard enables recursive Llisle classification")
-assert(classified.output.class.stream == "xs" and classified.output.class.index == "i", "classifier preserves child output fields")
+assert(classified.output.class.lane == "xs" and classified.output.class.index == "i", "classifier preserves child output fields")
 
 local formatted = moon.family.format(zone, { width = 100 })
 assert(formatted:match("ret%s*{") and formatted:match("value%s*="), "formatter preserves ret record payload")

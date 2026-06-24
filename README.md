@@ -604,7 +604,7 @@ lua/llpvm/    official Low-Level PVM API for typed instruction languages
 | Unit | Description |
 |---|---|
 | `region_compose.lua` | **Region composition algebra.** PEG-style combinators (`seq`, `choice`, `star`, `plus`, `opt`, `pred`, `not_pred`) that generate native jump-first regions at Lua generation time. Exposed as `moonlift.region_compose` |
-| `llpvm` | **Low-Level PVM.** PVM-style type authoring for operation worlds plus direct borrowed bytecode images, native handles, streams, phases, recordings, cache, C blob/header emission, and LuaJIT FFI runtime loading. |
+| `llpvm` | **Low-Level PVM.** PVM-style type authoring for operation worlds plus direct borrowed bytecode images, native handles, tapes, phases, recordings, cache, C blob/header emission, and LuaJIT FFI runtime loading. |
 
 Free-form Moonlift source is still the language: write `struct`, `handle`,
 `region`, and `func` directly for bespoke kernels and system internals. LLPVM is
@@ -677,7 +677,7 @@ moonlift/
 | [`docs/LLB_ATOM_PROTOCOL_MODEL.md`](docs/LLB_ATOM_PROTOCOL_MODEL.md) | **LLB atom/protocol model.** Definitive conceptual model for shape, channel, event, role, slot, head, fragment, origin, diagnostics, formatting, environment, phase, trait, and protocol atoms. |
 | [`docs/LLB_STREAM_WORKBENCH_DESIGN.md`](docs/LLB_STREAM_WORKBENCH_DESIGN.md) | **LLB stream workbench design.** The canonical GPS/demand-boundary architecture: streams first, explicit materializing sinks only when a consumer needs arrays, reports, indexes, diagnostics, or backend buffers. |
 | [`docs/LLB_CODEGEN_APPROACH.md`](docs/LLB_CODEGEN_APPROACH.md) | **LLB codegen approach.** How LLB compiles its own workbench machinery: streams, roles, head machines, spread expanders, family projectors, diagnostics, indexing, formatting, and environment installers. |
-| [`docs/LLPVM_GUIDE.md`](docs/LLPVM_GUIDE.md) | **Complete LLPVM guide.** Low-level PVM doctrine, direct borrowed bytecode images, native VM handles, C blob ABI, phases, streams, recordings, and cache discipline. |
+| [`docs/LLPVM_GUIDE.md`](docs/LLPVM_GUIDE.md) | **Complete LLPVM guide.** Low-level PVM doctrine, direct borrowed bytecode images, native VM handles, C blob ABI, phases, tapes, recordings, and cache discipline. |
 | [`docs/PVM_GUIDE.md`](docs/PVM_GUIDE.md) | **Complete PVM guide.** ASDL contexts, structural update, recording-triplet phases, pull-driven evaluation, and triplet algebra. |
 | [`docs/OWNED_CFG_DESIGN.md`](docs/OWNED_CFG_DESIGN.md) | **Owned CFG resource discipline.** Final rules for `owned T`, handles, leases, emit transfer, disallowed aggregates, and diagnostics. |
 | [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) | **Project conventions.** Naming, headers vs implementations, handles, generations, stores, and protocol naming. |
@@ -753,7 +753,7 @@ battle-tested path from source to machine code.
 
 ### 2. MoonSchema is the architecture
 
-If a distinction matters to compilation, it is represented as a MoonSchema-projected runtime value: interned, immutable, and structurally typed. MoonAsdl remains the internal projection vocabulary, not the source language. Meaning must not hide in strings, callbacks, mutable side tables, or backend-only IR. Everything downstream consumes explicit facts.
+If a distinction matters to compilation, it is represented as a MoonSchema-projected runtime value: interned, immutable, and structurally typed. MoonAsdl remains the internal projection vocabulary, not the source language. Meaning must not hide in strings, callbacks, mutable side tables, or backend-only IR. Everything downtape consumes explicit facts.
 
 ### 3. Lua is the metaprogramming language
 
@@ -777,12 +777,12 @@ tools and LSP features — not format strings rediscovered from raw text.
 ### 5.5. Typed instruction languages use LLPVM
 
 Free-form Moonlift remains the base layer for native kernels. When the design
-task is "define a small typed operation language, stream it, phase it, cache it,
+task is "define a small typed operation language, tape it, phase it, cache it,
 and run it through a portable runtime", the standard answer is LLPVM:
 
 ```text
 PVM-style authoring
-    -> operation worlds and streams
+    -> operation worlds and tapes
     -> borrowed bytecode image
     -> native VM / C blob
 ```

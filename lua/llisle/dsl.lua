@@ -75,6 +75,43 @@ local function array_items(t)
     return out
 end
 
+local function push_items_reverse(stack, items)
+    for i = #(items or {}), 1, -1 do stack[#stack + 1] = items[i] end
+end
+
+local function array_items_gen(param, state)
+    state = state or { index = 0, stack = {} }
+    local stack = state.stack
+    while true do
+        if #stack > 0 then
+            local item = stack[#stack]
+            stack[#stack] = nil
+            return state, item
+        end
+        state.index = state.index + 1
+        local v = param.value[state.index]
+        if v == nil then return nil end
+        if llb.is(v, "Spread") then
+            local frag = v.value
+            if llb.is(frag, "Fragment") then
+                push_items_reverse(stack, frag.items)
+            elseif type(frag) == "table" then
+                push_items_reverse(stack, frag)
+            else
+                die("spread expects a fragment or array", v.origin)
+            end
+        elseif llb.is(v, "Fragment") then
+            push_items_reverse(stack, v.items)
+        else
+            return state, v
+        end
+    end
+end
+
+local function array_items_stream(t, kind)
+    return llb.stream.raw(llb.stream.wrap(array_items_gen, { value = t or {} }, nil, { kind = kind or "llisle:items" }))
+end
+
 local function has_record_fields(t)
     if type(t) ~= "table" then return false end
     for k in pairs(t) do if type(k) ~= "number" then return true end end
@@ -102,6 +139,35 @@ local function fields_from_table(t)
         end
     end
     return out
+end
+
+local function fields_stream_gen(param, state)
+    state = state or param.upstream_state
+    while true do
+        local next_state, v = param.upstream_gen(param.upstream_param, state)
+        if next_state == nil then return nil end
+        state = next_state
+        if is(v, Field) then
+            return state, v
+        elseif llb.is(v, "Capture") then
+            return state, setmetatable({ name = ident_text(v.subject, "field name"), type = v.value, origin = v.origin }, Field)
+        elseif llb.is(v, "Expr") and v.kind == "index" then
+            return state, setmetatable({ name = ident_text(v.base, "field name"), type = v.index, origin = v.origin }, Field)
+        elseif type(v) == "table" and rawget(v, "name") ~= nil and rawget(v, "type") ~= nil then
+            return state, setmetatable(v, Field)
+        else
+            die("field product expects entries like name [Type]", llb.origin_of(v))
+        end
+    end
+end
+
+local function fields_stream(t)
+    local gen, param, state = array_items_stream(t or {}, "llisle:field-source")
+    return llb.stream.raw(llb.stream.wrap(fields_stream_gen, {
+        upstream_gen = gen,
+        upstream_param = param,
+        upstream_state = state,
+    }, nil, { kind = "llisle:fields" }))
 end
 
 local binder_predicates = {
@@ -160,16 +226,18 @@ local function role_list(label, allowed)
     return {
         kind = "array",
         algebra = "list",
-        normalize = function(_, ctx, v)
-            local out = {}
-            for _, item in ipairs(array_items(v)) do
+        stream = function(_, ctx, v)
+            local gen, param, state = array_items_stream(v or {}, "llisle:" .. label)
+            local function checked_gen(p, s)
+                local next_state, item = p.gen(p.param, s)
+                if next_state == nil then return nil end
                 local c = cls(item)
                 if allowed and not allowed[c] and not (llb.is(item, "Fragment") and allowed.Fragment) then
                     die(label .. " received invalid item " .. tostring(c or llb.tagof(item) or type(item)), llb.origin_of(item) or (ctx and ctx.origin))
                 end
-                out[#out + 1] = item
+                return next_state, item
             end
-            return out
+            return llb.stream.raw(llb.stream.wrap(checked_gen, { gen = gen, param = param }, state, { kind = "llisle:role-list", role = label }))
         end,
     }
 end
@@ -229,11 +297,11 @@ local L = llb.define "LlisleDsl" {
     g.role .relation_body (role_list("relation", { ProductSpec = true, StrategySpec = true, Directive = true })),
     g.role .predicate_body (role_list("predicate", { ProductSpec = true, Directive = true })),
     g.role .constructor_body (role_list("constructor", { ProductSpec = true, Directive = true })),
-    g.role .fields { kind = "array", algebra = "product", normalize = function(_, _, v) return fields_from_table(v) end },
+    g.role .fields { kind = "array", algebra = "product", stream = function(_, _, v) return fields_stream(v) end },
     g.role .strategy_body (role_list("strategy", { Directive = true })),
     g.role .rule_body (role_list("rule", { RelationCall = true, GuardSpec = true, BindSpec = true, RunSpec = true, ChooseSpec = true, Directive = true })),
-    g.role .guard_body { kind = "array", algebra = "product", normalize = function(_, _, v) return array_items(v or {}) end },
-    g.role .payload_body { kind = "array", algebra = "product", normalize = function(_, _, v) return process_payload(v or {}) end },
+    g.role .guard_body { kind = "array", algebra = "product", stream = function(_, _, v) return array_items_stream(v or {}, "llisle:guard") end },
+    g.role .payload_body { kind = "value", algebra = "product", stream = function(_, _, v) return llb.stream.raw(llb.stream.once(process_payload(v or {}))) end },
     g.role .run_body (role_list("run", { BindSpec = true, EmitSpec = true, RetSpec = true, FailSpec = true, ChooseSpec = true, RelationCall = true })),
     g.role .choose_body (role_list("choose", { AltSpec = true })),
     g.role .alt_body (role_list("alt", { GuardSpec = true, BindSpec = true, RunSpec = true, Directive = true })),

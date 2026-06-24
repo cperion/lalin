@@ -454,7 +454,7 @@ module MoonKernel {
                                     MoonFlow.FlowTripCount trip_count,
                                     MoonCode.CodeValueId? counter) unique
 
-    KernelStream = (MoonKernel.KernelStreamId id,
+    KernelLane = (MoonKernel.KernelLaneId id,
                     MoonMem.MemObjectId object,
                     MoonMem.MemAccessId* accesses,
                     MoonMem.MemBase base,
@@ -464,15 +464,15 @@ module MoonKernel {
 
     KernelExpr = KernelExprValue(MoonCode.CodeValueId value) unique
         | KernelExprAlgebra(MoonValue.ValueExpr expr) unique
-        | KernelExprLoad(MoonKernel.KernelStream stream, MoonValue.ValueExpr index) unique
+        | KernelExprLaneLoad(MoonKernel.KernelLane lane, MoonValue.ValueExpr index) unique
         | KernelExprKernelValue(MoonKernel.KernelValueId value) unique
 
     KernelBinding = (MoonKernel.KernelValueId id, MoonCode.CodeType ty, MoonKernel.KernelExpr expr) unique
 
-    KernelEffect = KernelEffectStore(MoonKernel.KernelStream dst, MoonValue.ValueExpr index, MoonKernel.KernelExpr value) unique
-        | KernelEffectScan(MoonKernel.KernelStream dst, MoonValue.ValueExpr index, MoonValue.ReductionFact reduction, MoonStencil.StencilScanMode mode) unique
-        | KernelEffectPartition(MoonKernel.KernelStream dst, MoonKernel.KernelExpr src, MoonStencil.StencilPredicate pred, MoonStencil.StencilPartitionSemantics semantics) unique
-        | KernelEffectCopy(MoonKernel.KernelStream dst, MoonKernel.KernelExpr src, MoonStencil.StencilCopySemantics semantics) unique
+    KernelEffect = KernelEffectStore(MoonKernel.KernelLane dst, MoonValue.ValueExpr index, MoonKernel.KernelExpr value) unique
+        | KernelEffectScan(MoonKernel.KernelLane dst, MoonValue.ValueExpr index, MoonValue.ReductionFact reduction, MoonStencil.StencilScanMode mode) unique
+        | KernelEffectPartition(MoonKernel.KernelLane dst, MoonKernel.KernelExpr src, MoonStencil.StencilPredicate pred, MoonStencil.StencilPartitionSemantics semantics) unique
+        | KernelEffectCopy(MoonKernel.KernelLane dst, MoonKernel.KernelExpr src, MoonStencil.StencilCopySemantics semantics) unique
         | KernelEffectFold(MoonValue.ReductionFact reduction) unique
         | KernelEffectCall(MoonEffect.CallSummary call) unique
 
@@ -487,7 +487,7 @@ module MoonKernel {
         | KernelEquivalenceRejected(MoonKernel.KernelReject* rejects) unique
 
     KernelBody = (MoonKernel.KernelDomain domain,
-                  MoonKernel.KernelStream* streams,
+                  MoonKernel.KernelLane* lanes,
                   MoonKernel.KernelBinding* bindings,
                   MoonKernel.KernelEffect* effects,
                   MoonKernel.KernelResult result,

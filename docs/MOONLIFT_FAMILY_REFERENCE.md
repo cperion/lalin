@@ -80,7 +80,7 @@ There is no parser, tokenizer, antiquote layer, or string language hidden here. 
 - `rules`
 - `run`
 - `schema`
-- `stream`
+- `tape`
 - `task`
 - `type`
 - `when`
@@ -94,7 +94,7 @@ A reduced family has one owner for each semantic primitive. Other members reuse 
 
 - `authoring-substrate`: `llb`
 - `bytecode-program`: `llpvm.dsl`
-- `bytecode-stream`: `llpvm.dsl`
+- `bytecode-tape`: `llpvm.dsl`
 - `diagnostics`: `llb`
 - `family-composition`: `llb`
 - `fragments`: `llb`
@@ -153,7 +153,7 @@ member. moonschema.dsl {
 member. llpvm.dsl {
   provides { llpvm.dsl }
   requires { moonlift.types, moonlift.schema }
-  owns { bytecode-program, bytecode-stream, process-task, pvm-image }
+  owns { bytecode-program, bytecode-tape, process-task, pvm-image }
   uses { authoring-substrate, diagnostics, family-composition, fragments, namespaces, origins, native-type-values, type-family }
   tooling { format, diagnostics, index, markdown, match }
 }
@@ -815,8 +815,8 @@ llpvm {
 - `select`
 - `sizeof`
 - `spread`
-- `stream`
-- `stream_body`
+- `tape`
+- `tape_body`
 - `string`
 - `task`
 - `task_body`
@@ -839,7 +839,7 @@ role. name { kind = "name" }
 role. number { kind = "number" }
 role. phase_body { kind = "array", algebra = "list" }
 role. root_body { kind = "array", algebra = "list" }
-role. stream_body { kind = "array", algebra = "list" }
+role. tape_body { kind = "array", algebra = "list" }
 role. string { kind = "string" }
 role. task_body { kind = "array", algebra = "list" }
 role. type { kind = "type" }
@@ -857,7 +857,7 @@ role. value { kind = "value" }
 - `number` — kind=number
 - `phase_body` — kind=array, algebra=list
 - `root_body` — kind=array, algebra=list
-- `stream_body` — kind=array, algebra=list
+- `tape_body` — kind=array, algebra=list
 - `string` — kind=string
 - `task_body` — kind=array, algebra=list
 - `type` — kind=type
@@ -907,7 +907,7 @@ Traits: `named`
 
 #### `from`
 
-Names the source world or stream for a root or phase edge.
+Names the source world or tape for a root or phase edge.
 
 ```lua
 from. name
@@ -919,7 +919,7 @@ Slots:
 
 #### `input`
 
-Marks the input world, value, or stream consumed by a phase or task.
+Marks the input world, value, or tape consumed by a phase or task.
 
 ```lua
 input. name
@@ -976,7 +976,7 @@ Traits: `named`
 
 #### `output`
 
-Marks the output world, value, or stream produced by a phase or task.
+Marks the output world, value, or tape produced by a phase or task.
 
 ```lua
 output. name
@@ -1003,7 +1003,7 @@ Traits: `named`
 
 #### `pvm`
 
-Declares an LLPVM program containing languages, worlds, streams, machines, phases, tasks, and roots.
+Declares an LLPVM program containing languages, worlds, tapes, machines, phases, tasks, and roots.
 
 ```lua
 pvm. name { decl, ... }
@@ -1018,7 +1018,7 @@ Traits: `named`
 
 #### `record`
 
-Declares a named stream record expression.
+Declares a named tape record expression.
 
 ```lua
 record. name { ... }
@@ -1043,19 +1043,19 @@ Slots:
 
 - ` { ... }` -> `body` role=`root_body` channel=`call:table`
 
-#### `stream`
+#### `tape`
 
-Declares a bytecode or fact stream attached to a world.
+Declares a bytecode or fact tape attached to a world.
 
 ```lua
-stream. name. name { ... }
+tape. name. name { ... }
 ```
 
 Slots:
 
 - `. name` -> `name` role=`name` channel=`index:name`
 - `. name` -> `world` role=`value` channel=`index:value,index:name,index:type`
-- ` { ... }` -> `body` role=`stream_body` channel=`call:table`
+- ` { ... }` -> `body` role=`tape_body` channel=`call:table`
 
 Traits: `named`
 
@@ -1076,7 +1076,7 @@ Traits: `named`
 
 #### `to`
 
-Names the destination world or stream for a root or phase edge.
+Names the destination world or tape for a root or phase edge.
 
 ```lua
 to. name
