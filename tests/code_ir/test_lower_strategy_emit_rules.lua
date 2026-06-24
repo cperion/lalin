@@ -21,7 +21,7 @@ local function candidate(fields)
 end
 
 local function select(fields)
-    local selection, err = Rules.select(candidate(fields))
+    local selection, err = Rules:run_candidate("select_lower_emit", candidate(fields), "selection", "no lower emission selected")
     assert(selection ~= nil, tostring(err))
     return selection
 end

@@ -85,19 +85,19 @@ local function bind_context(T)
     local function cstr_ty() return Ty.TPtr(Ty.TScalar(C.ScalarU8)) end
 
     local function select_stmt_typecheck(stmt)
-        local selection, err = TypecheckRules.select_stmt(stmt)
+        local selection, err = TypecheckRules:run("select_stmt_typecheck", { stmt = stmt }, "selection", "no tree typecheck statement dispatch")
         if selection == nil then error("phase moonlift_tree_typecheck_stmt: " .. tostring(err), 2) end
         return selection.kind
     end
 
     local function select_expr_typecheck(expr)
-        local selection, err = TypecheckRules.select_expr(expr)
+        local selection, err = TypecheckRules:run("select_expr_typecheck", { expr = expr }, "selection", "no tree typecheck expression dispatch")
         if selection == nil then error("phase moonlift_tree_typecheck_expr: " .. tostring(err), 2) end
         return selection.kind
     end
 
-    local function select_typecheck(kind, node, selector)
-        local selection, err = selector(node)
+    local function select_typecheck(kind, relation, node)
+        local selection, err = TypecheckRules:run(relation, { [kind] = node }, "selection", "no tree typecheck " .. kind .. " dispatch")
         if selection == nil then error("phase moonlift_tree_typecheck_" .. kind .. ": " .. tostring(err), 2) end
         return selection.kind
     end
@@ -916,7 +916,7 @@ local function bind_context(T)
     end
 
     function type_view(node, ...)
-        local action = select_typecheck("view", node, TypecheckRules.select_view)
+        local action = select_typecheck("view", "select_view_typecheck", node)
         if action == "from_expr" then
             return (function(self, ctx)
 
@@ -1011,7 +1011,7 @@ local function bind_context(T)
     end
 
     function type_index_base(node, ...)
-        local action = select_typecheck("index_base", node, TypecheckRules.select_index_base)
+        local action = select_typecheck("index_base", "select_index_base_typecheck", node)
         if action == "expr" then
             return (function(self, ctx)
 
@@ -1050,7 +1050,7 @@ local function bind_context(T)
     end
 
     function type_place(node, ...)
-        local action = select_typecheck("place", node, TypecheckRules.select_place)
+        local action = select_typecheck("place", "select_place_typecheck", node)
         if action == "ref" then
             return (function(self, ctx)
 
@@ -2141,7 +2141,7 @@ local function bind_context(T)
     end
 
     function type_control_stmt_region(node, ...)
-        local action = select_typecheck("control_stmt_region", node, TypecheckRules.select_control_stmt_region)
+        local action = select_typecheck("control_stmt_region", "select_control_stmt_region_typecheck", node)
         if action == "stmt_region" then
             return (function(self, ctx)
 
@@ -2158,7 +2158,7 @@ local function bind_context(T)
     end
 
     function type_control_expr_region(node, ...)
-        local action = select_typecheck("control_expr_region", node, TypecheckRules.select_control_expr_region)
+        local action = select_typecheck("control_expr_region", "select_control_expr_region_typecheck", node)
         if action == "expr_region" then
             return (function(self, ctx)
 
@@ -2313,7 +2313,7 @@ local function bind_context(T)
     end
 
     function type_func(node, ...)
-        local action = select_typecheck("func", node, TypecheckRules.select_func)
+        local action = select_typecheck("func", "select_func_typecheck", node)
         if action == "local" then
             return (function(self, module_env, region_frags)
  return single(type_plain_func(self, module_env, region_frags))
@@ -2340,7 +2340,7 @@ local function bind_context(T)
     end
 
     function type_item(node, ...)
-        local action = select_typecheck("item", node, TypecheckRules.select_item)
+        local action = select_typecheck("item", "select_item_typecheck", node)
         if action == "func" then
             return (function(self, module_env, region_frags)
  local r = only(type_func(self.func, module_env, region_frags or {})); return single(Tr.TypeItemResult({ Tr.ItemFunc(r.func) }, r.issues))
@@ -2544,7 +2544,7 @@ local function bind_context(T)
     end
 
     function type_module(node, ...)
-        local action = select_typecheck("module", node, TypecheckRules.select_module)
+        local action = select_typecheck("module", "select_module_typecheck", node)
         if action == "module" then
             return (function(module)
 

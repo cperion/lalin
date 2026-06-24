@@ -1,7 +1,7 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local ll = require("llpvm")
-local pvm = require("pvm")
+local pvm = require("moonlift.pvm")
 
 local env = {}
 require("moonlift").use { scope = "env", target = env, global = false, searcher = false }

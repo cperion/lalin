@@ -5,6 +5,7 @@ local function bind_context(T)
     local moon = require("moonlift")
     local llb = require("llb")
     local Llisle = require("llisle")
+    local RuleApi = require("moonlift.llisle_rule_api")
     local env = moon.family.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
@@ -108,20 +109,12 @@ local function bind_context(T)
     local rules = build_rules()
     local engine = Llisle.compile(rules)
 
-    local api = {}
-
-    function api.select(candidate)
-        local result, err = engine:run("select_exec_fragment", { candidate = candidate })
-        if result == nil then return nil, err and err.message or "no exec fragment selected" end
-        return result.output.selection, nil
-    end
-
-    api.kind = {
+    local api = RuleApi.new(rules, engine, {
+      kind = {
         stencil = "stencil",
         skip = "skip",
-    }
-    api.rules = rules
-    api.engine = engine
+      },
+    })
 
     T._moonlift_api_cache.exec_plan_rules = api
     return api

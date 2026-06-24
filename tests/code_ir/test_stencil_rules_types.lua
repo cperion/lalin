@@ -145,7 +145,7 @@ local float_types = { Code.CodeTyFloat(32), Code.CodeTyFloat(64) }
 local supported = 0
 for _, ty in ipairs(int_types) do
     for _, reduction in ipairs(reductions) do
-        local selection, err = Rules.select_reduce(reduce_ctx(reduction, ty))
+        local selection, err = Rules:run("select_reduce_stencil", { ctx = reduce_ctx(reduction, ty) }, "selection", "unsupported reduction stencil contribution")
         assert(selection ~= nil, "expected integer reduction selection: " .. tostring(err))
         assert(selection.vocab == Stencil.StencilReduce, "expected reduce-array stencil")
         supported = supported + 1
@@ -154,13 +154,13 @@ end
 
 for _, ty in ipairs(float_types) do
     for _, reduction in ipairs({ Value.ReductionAdd, Value.ReductionMul, Value.ReductionMin, Value.ReductionMax }) do
-        local selection, err = Rules.select_reduce(reduce_ctx(reduction, ty))
+        local selection, err = Rules:run("select_reduce_stencil", { ctx = reduce_ctx(reduction, ty) }, "selection", "unsupported reduction stencil contribution")
         assert(selection ~= nil, "expected float reduction selection: " .. tostring(err))
         assert(selection.vocab == Stencil.StencilReduce, "expected reduce-array stencil")
         supported = supported + 1
     end
     for _, reduction in ipairs({ Value.ReductionAnd, Value.ReductionOr, Value.ReductionXor }) do
-        local selection = Rules.select_reduce(reduce_ctx(reduction, ty))
+        local selection = Rules:run("select_reduce_stencil", { ctx = reduce_ctx(reduction, ty) }, "selection", "unsupported reduction stencil contribution")
         assert(selection == nil, "float bitwise reduction must not be selected")
     end
 end
@@ -325,7 +325,7 @@ for _, ty in ipairs(scalar_tys) do
     cases[#cases + 1] = { ctx = zip_compare, vocab = Stencil.StencilZipCompare }
 
     for _, case in ipairs(cases) do
-        local selection, err = Rules.select_store(case.ctx)
+        local selection, err = Rules:run("select_store_stencil", { ctx = case.ctx }, "selection", "unsupported store stencil shape")
         assert(selection ~= nil, "expected store stencil selection: " .. tostring(err))
         assert(selection.vocab == case.vocab, "store selected wrong stencil vocab")
         store_shape_cells = store_shape_cells + 1
@@ -344,7 +344,7 @@ do
     scan.init_expr = fake_expr
     scan.mode = Stencil.StencilScanInclusive
     scan.class = { kind = "load", index_primary = true, src = "src", src_expr = fake_expr, elem_ty = i32 }
-    local selection, err = Rules.select_scan(scan)
+    local selection, err = Rules:run("select_scan_stencil", { ctx = scan }, "selection", "unsupported scan stencil shape")
     assert(selection ~= nil, "expected scan stencil selection: " .. tostring(err))
     assert(selection.vocab == Stencil.StencilScan, "expected scan-array stencil")
 end
@@ -354,7 +354,7 @@ do
     find.pred = Stencil.StencilPredNonZero
     find.not_found_minus_one = true
     find.class = { kind = "load", index_primary = true, src = "src", src_expr = fake_expr, elem_ty = i32 }
-    local selection, err = Rules.select_find(find)
+    local selection, err = Rules:run("select_find_stencil", { ctx = find }, "selection", "unsupported find stencil shape")
     assert(selection ~= nil, "expected find stencil selection: " .. tostring(err))
     assert(selection.vocab == Stencil.StencilFind, "expected find-array stencil")
 end
@@ -365,7 +365,7 @@ do
     partition.pred = Stencil.StencilPredNonZero
     partition.semantics = Stencil.StencilPartitionStable
     partition.class = { kind = "load", index_primary = true, src = "src", src_expr = fake_expr, elem_ty = i32 }
-    local selection, err = Rules.select_partition(partition)
+    local selection, err = Rules:run("select_partition_stencil", { ctx = partition }, "selection", "unsupported partition stencil shape")
     assert(selection ~= nil, "expected partition stencil selection: " .. tostring(err))
     assert(selection.vocab == Stencil.StencilPartition, "expected partition-array stencil")
 end
@@ -380,7 +380,7 @@ pointer_copy.class = {
     src_expr = fake_expr,
     elem_ty = ptr_i32,
 }
-assert(Rules.select_store(pointer_copy) == nil, "pointer element copy must not select a stencil")
+assert(Rules:run("select_store_stencil", { ctx = pointer_copy }, "selection", "unsupported store stencil shape") == nil, "pointer element copy must not select a stencil")
 
 do
     local ready_store = {}
@@ -427,7 +427,7 @@ mismatch_zip.class = {
     result_ty = i32,
     op = Stencil.StencilBinaryAdd,
 }
-assert(Rules.select_store(mismatch_zip) == nil, "mismatched zip-map operand types must not select a stencil")
+assert(Rules:run("select_store_stencil", { ctx = mismatch_zip }, "selection", "unsupported store stencil shape") == nil, "mismatched zip-map operand types must not select a stencil")
 
 local higher_reduce_shape_cells = 0
 for _, ty in ipairs(int_types) do
@@ -442,7 +442,7 @@ for _, ty in ipairs(int_types) do
             result_ty = ty,
             op = Stencil.StencilUnaryIdentity,
         }
-        local map_selection, map_err = Rules.select_reduce(map_ctx)
+        local map_selection, map_err = Rules:run("select_reduce_stencil", { ctx = map_ctx }, "selection", "unsupported reduction stencil contribution")
         assert(map_selection ~= nil, "expected integer map-reduce selection: " .. tostring(map_err))
         assert(map_selection.vocab == Stencil.StencilMapReduce, "expected map-reduce stencil")
         higher_reduce_shape_cells = higher_reduce_shape_cells + 1
@@ -461,7 +461,7 @@ for _, ty in ipairs(int_types) do
             result_ty = ty,
             op = Stencil.StencilBinaryAdd,
         }
-        local zip_selection, zip_err = Rules.select_reduce(zip_ctx)
+        local zip_selection, zip_err = Rules:run("select_reduce_stencil", { ctx = zip_ctx }, "selection", "unsupported reduction stencil contribution")
         assert(zip_selection ~= nil, "expected integer zip-reduce selection: " .. tostring(zip_err))
         assert(zip_selection.vocab == Stencil.StencilZipReduce, "expected zip-reduce stencil")
         higher_reduce_shape_cells = higher_reduce_shape_cells + 1
@@ -480,7 +480,7 @@ for _, ty in ipairs(float_types) do
             result_ty = ty,
             op = Stencil.StencilUnaryIdentity,
         }
-        local map_selection, map_err = Rules.select_reduce(map_ctx)
+        local map_selection, map_err = Rules:run("select_reduce_stencil", { ctx = map_ctx }, "selection", "unsupported reduction stencil contribution")
         assert(map_selection ~= nil, "expected float map-reduce selection: " .. tostring(map_err))
         assert(map_selection.vocab == Stencil.StencilMapReduce, "expected map-reduce stencil")
         higher_reduce_shape_cells = higher_reduce_shape_cells + 1
@@ -499,7 +499,7 @@ for _, ty in ipairs(float_types) do
             result_ty = ty,
             op = Stencil.StencilBinaryAdd,
         }
-        local zip_selection, zip_err = Rules.select_reduce(zip_ctx)
+        local zip_selection, zip_err = Rules:run("select_reduce_stencil", { ctx = zip_ctx }, "selection", "unsupported reduction stencil contribution")
         assert(zip_selection ~= nil, "expected float zip-reduce selection: " .. tostring(zip_err))
         assert(zip_selection.vocab == Stencil.StencilZipReduce, "expected zip-reduce stencil")
         higher_reduce_shape_cells = higher_reduce_shape_cells + 1
@@ -519,7 +519,7 @@ for _, ty in ipairs(scalar_tys) do
         result_ty = Code.CodeTyBool8,
         pred = Stencil.StencilPredNonZero,
     }
-    local selection, err = Rules.select_reduce(count_ctx)
+    local selection, err = Rules:run("select_reduce_stencil", { ctx = count_ctx }, "selection", "unsupported reduction stencil contribution")
     assert(selection ~= nil, "expected count selection: " .. tostring(err))
     assert(selection.vocab == Stencil.StencilCount, "expected count stencil")
 end

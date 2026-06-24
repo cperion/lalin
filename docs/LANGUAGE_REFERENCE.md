@@ -1291,6 +1291,23 @@ local result = assert(engine:run("lower_expr", {
 
 The engine is deliberately Lua-integrated, but not registry-defined. Llisle owns relation structure, projection structure, predicate declarations, constructor declarations, pattern binding, guard order, local `choose` alternatives, costs, effects, and returns. Lua implementations are explicit values spliced through `[]` on `predicate.` and `constructor.` declarations. There is no `host.` directive, no `predicates` compile registry, and no `builders` compile registry.
 
+Relation field types are also evaluated Lua values. Use real family type values there, including MoonSchema/ASDL runtime classes:
+
+```lua
+relation. select_expr_lowering {
+  input { expr [Tr.Expr] },
+  output { selection [Selection] },
+}
+
+rule. expr_lit {
+  llisle.select_expr_lowering { expr = P. expr },
+  when { P. expr :is (Tr.ExprLit) },
+  run { ret { selection = dispatch_selection { kind = "lit" } } },
+}
+```
+
+`Tr.Expr` and `Tr.ExprLit` are Lua ASDL class values, not strings. The built-in `:is` predicate recognizes ASDL class membership through the runtime schema identity, so rules do not need synthetic `{ kind = ... }` candidates for ordinary ASDL dispatch.
+
 `P.*` binders capture matched inputs, `V.*` binders allocate stable fresh values
 inside one rule execution, and `T.*` is reserved for type-level binders. A
 successful run returns `{ output, effects, rule, alt, cost, bindings }`; failure

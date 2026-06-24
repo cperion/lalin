@@ -15,22 +15,23 @@ local typed_i32 = Tr.ExprTyped(Ty.TScalar(Core.ScalarI32))
 local typed_place_i32 = Tr.PlaceTyped(Ty.TScalar(Core.ScalarI32))
 local binding = Bind.Binding(Core.Id("b:x"), "x", Ty.TScalar(Core.ScalarI32), Bind.BindingClassLocalValue)
 
-local function assert_select(selector, node, family, kind)
-    local selection, err = selector(node)
+local function assert_select(relation, node, family, kind)
+    local input_name = relation:match("^select_(.-)_lowering$")
+    local selection, err = Rules:run(relation, { [input_name] = node }, "selection")
     assert(selection ~= nil, tostring(err))
     assert(selection.kind == kind, "expected " .. family .. " dispatch " .. kind .. ", got " .. tostring(selection.kind))
 end
 
 local function assert_expr(expr, kind)
-    assert_select(Rules.select_expr, expr, "expr", kind)
+    assert_select("select_expr_lowering", expr, "expr", kind)
 end
 
 local function assert_place(place, kind)
-    assert_select(Rules.select_place, place, "place", kind)
+    assert_select("select_place_lowering", place, "place", kind)
 end
 
 local function assert_stmt(stmt, kind)
-    assert_select(Rules.select_stmt, stmt, "stmt", kind)
+    assert_select("select_stmt_lowering", stmt, "stmt", kind)
 end
 
 assert_expr(Tr.ExprLit(typed_i32, Core.LitInt("1")), "lit")
@@ -46,11 +47,11 @@ assert_stmt(Tr.StmtLet(Tr.StmtSurface, binding, Tr.ExprLit(typed_i32, Core.LitIn
 assert_stmt(Tr.StmtExpr(Tr.StmtSurface, Tr.ExprRef(typed_i32, Bind.ValueRefBinding(binding))), "expr")
 assert_stmt(Tr.StmtReturnVoid(Tr.StmtSurface), "return_void")
 
-assert_select(Rules.select_func, Tr.FuncLocal("f", {}, Ty.TScalar(Core.ScalarI32), {}), "func", "local")
-assert_select(Rules.select_func, Tr.FuncExport("f", {}, Ty.TScalar(Core.ScalarI32), {}), "func", "export")
-assert_select(Rules.select_item, Tr.ItemFunc(Tr.FuncLocal("f", {}, Ty.TScalar(Core.ScalarI32), {})), "item", "func")
-assert_select(Rules.select_item, Tr.ItemConst(Tr.ConstItem("k", Ty.TScalar(Core.ScalarI32), Tr.ExprLit(typed_i32, Core.LitInt("1")))), "item", "const")
-assert_select(Rules.select_contract_fact, Tr.ContractFactBounds(binding, binding), "contract_fact", "bounds")
-assert_select(Rules.select_contract_fact, Tr.ContractFactNoAlias(binding), "contract_fact", "noalias")
+assert_select("select_func_lowering", Tr.FuncLocal("f", {}, Ty.TScalar(Core.ScalarI32), {}), "func", "local")
+assert_select("select_func_lowering", Tr.FuncExport("f", {}, Ty.TScalar(Core.ScalarI32), {}), "func", "export")
+assert_select("select_item_lowering", Tr.ItemFunc(Tr.FuncLocal("f", {}, Ty.TScalar(Core.ScalarI32), {})), "item", "func")
+assert_select("select_item_lowering", Tr.ItemConst(Tr.ConstItem("k", Ty.TScalar(Core.ScalarI32), Tr.ExprLit(typed_i32, Core.LitInt("1")))), "item", "const")
+assert_select("select_contract_fact_lowering", Tr.ContractFactBounds(binding, binding), "contract_fact", "bounds")
+assert_select("select_contract_fact_lowering", Tr.ContractFactNoAlias(binding), "contract_fact", "noalias")
 
 io.write("moonlift tree_to_code_rules ok\n")

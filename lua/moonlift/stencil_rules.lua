@@ -7,6 +7,7 @@ local function bind_context(T)
     local moon = require("moonlift")
     local llb = require("llb")
     local Llisle = require("llisle")
+    local RuleApi = require("moonlift.llisle_rule_api")
     local env = moon.family.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
@@ -1391,56 +1392,16 @@ local function bind_context(T)
     local rules = build_rules()
     local engine = Llisle.compile(rules)
 
-    local api = {}
+    local api = RuleApi.new(rules, engine)
 
     function api.classify_expr(expr, bindings)
         local fact, err = expr_fact(expr, bindings or {})
         if fact == nil then return nil, err end
-        local result, run_err = engine:run("classify_expr", { expr = fact })
-        if result == nil then
-            return nil, run_err and run_err.message or "unsupported store stencil expression"
-        end
-        return result.output.class, nil
-    end
-
-    function api.select_index_stream(expr, bindings)
-        local class, class_err = api.classify_expr(expr, bindings or {})
-        if class == nil then return nil, class_err end
-        local result, run_err = engine:run("select_index_stream", { class = class })
-        if result == nil then
-            return nil, run_err and run_err.message or "expression is not an index stream"
-        end
-        return result.output.stream, nil
+        return api:run("classify_expr", { expr = fact }, "class", "unsupported store stencil expression")
     end
 
     function api.classify_type(ty)
-        local result, err = engine:run("classify_stencil_type", { ty = ty })
-        if result == nil then return nil, err and err.message or "unsupported stencil type" end
-        return result.output.class, nil
-    end
-
-    function api.select_store(ctx)
-        local result, err = engine:run("select_store_stencil", { ctx = ctx })
-        if result == nil then return nil, err and err.message or "unsupported store stencil shape" end
-        return result.output.selection, nil
-    end
-
-    function api.select_scan(ctx)
-        local result, err = engine:run("select_scan_stencil", { ctx = ctx })
-        if result == nil then return nil, err and err.message or "unsupported scan stencil shape" end
-        return result.output.selection, nil
-    end
-
-    function api.select_find(ctx)
-        local result, err = engine:run("select_find_stencil", { ctx = ctx })
-        if result == nil then return nil, err and err.message or "unsupported find stencil shape" end
-        return result.output.selection, nil
-    end
-
-    function api.select_partition(ctx)
-        local result, err = engine:run("select_partition_stencil", { ctx = ctx })
-        if result == nil then return nil, err and err.message or "unsupported partition stencil shape" end
-        return result.output.selection, nil
+        return api:run("classify_stencil_type", { ty = ty }, "class", "unsupported stencil type")
     end
 
     local function store_plan_reject_reason(ctx, suffix)
@@ -1481,16 +1442,10 @@ local function bind_context(T)
             and candidate.dst_base_present == true
             and candidate.class_ready == true
         candidate.reject_reason = store_plan_reject_reason(candidate)
-        local result, err = engine:run("plan_store_stencil", { ctx = candidate })
-        if result == nil then return nil, store_plan_reject_reason(candidate, err and err.message or "no matching plan") end
-        if result.output.plan.kind == "no_plan" then return nil, result.output.plan.reason end
-        return result.output.plan, nil
-    end
-
-    function api.select_reduce(ctx)
-        local result, err = engine:run("select_reduce_stencil", { ctx = ctx })
-        if result == nil then return nil, err and err.message or "unsupported reduction stencil contribution" end
-        return result.output.selection, nil
+        local plan, err = api:run("plan_store_stencil", { ctx = candidate }, "plan", "no matching plan")
+        if plan == nil then return nil, store_plan_reject_reason(candidate, err) end
+        if plan.kind == "no_plan" then return nil, plan.reason end
+        return plan, nil
     end
 
     function api.plan_reduce(ctx)
@@ -1501,10 +1456,10 @@ local function bind_context(T)
             and candidate.counted_positive == true
             and candidate.class_ready == true
         candidate.reject_reason = reduce_plan_reject_reason(candidate)
-        local result, err = engine:run("plan_reduce_stencil", { ctx = candidate })
-        if result == nil then return nil, reduce_plan_reject_reason(candidate, err and err.message or "no matching plan") end
-        if result.output.plan.kind == "no_plan" then return nil, result.output.plan.reason end
-        return result.output.plan, nil
+        local plan, err = api:run("plan_reduce_stencil", { ctx = candidate }, "plan", "no matching plan")
+        if plan == nil then return nil, reduce_plan_reject_reason(candidate, err) end
+        if plan.kind == "no_plan" then return nil, plan.reason end
+        return plan, nil
     end
 
     local function product_fields(decl, kind)

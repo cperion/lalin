@@ -129,7 +129,7 @@ local function bind_context(T)
             local artifact = selected and by_instance[selection.instance.id.text] or nil
             local kernel_plan = by_kernel[entry.kernel.text]
             local func_id = kernel_func_id(kernel_plan, loop_to_func)
-            local rule_selection, err = ExecPlanRules.select({
+            local rule_selection, err = ExecPlanRules:run_candidate("select_exec_fragment", {
                 stencil_selected = selected,
                 has_artifact = artifact ~= nil,
                 has_func = func_id ~= nil,
@@ -137,7 +137,7 @@ local function bind_context(T)
                 unselected_reason = "stencil plan entry did not select an artifact",
                 missing_artifact_reason = selected and ("selected stencil instance has no artifact " .. selection.instance.id.text) or "selected stencil instance has no artifact",
                 missing_func_reason = "selected stencil kernel has no owning Code function",
-            })
+            }, "selection", "no exec fragment selected")
             if rule_selection == nil then error("exec_plan: " .. tostring(err), 2) end
             if rule_selection.kind == ExecPlanRules.kind.stencil then
                 local blocks = kernel_blocks(kernel_plan, loop_by_id)

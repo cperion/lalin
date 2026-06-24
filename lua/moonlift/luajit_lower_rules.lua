@@ -5,6 +5,7 @@ local function bind_context(T)
     local moon = require("moonlift")
     local llb = require("llb")
     local Llisle = require("llisle")
+    local RuleApi = require("moonlift.llisle_rule_api")
     local env = moon.family.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
@@ -215,23 +216,8 @@ local function bind_context(T)
 
     local engine = Llisle.compile(rules)
 
-    local api = {}
-
-    function api.select(candidate)
-        local result, err = engine:run("select_kernel_lowering", { candidate = candidate })
-        if result == nil then return nil, err and err.message or "no LuaJIT kernel lowering selected" end
-        return result.output.selection, nil
-    end
-
-    function api.select_skeleton(candidate)
-        local result, err = engine:run("select_skeleton_lowering", { candidate = candidate })
-        if result == nil then return nil, err and err.message or "no LuaJIT skeleton lowering selected" end
-        return result.output.selection, nil
-    end
-
-    api.rules = rules
-    api.engine = engine
-    api.kind = {
+    local api = RuleApi.new(rules, engine, {
+      kind = {
         stencil_reduce = "stencil_reduce",
         stencil_store = "stencil_store",
         stencil_skeleton = "stencil_skeleton",
@@ -240,7 +226,8 @@ local function bind_context(T)
         skeleton_find = "skeleton_find",
         skeleton_partition = "skeleton_partition",
         skeleton_copy = "skeleton_copy",
-    }
+      },
+    })
 
     T._moonlift_api_cache.luajit_lower_rules = api
     return api

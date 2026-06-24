@@ -115,6 +115,15 @@ local function node_name(v)
     return rawget(v, "kind") or rawget(v, "tag") or rawget(v, "name") or rawget(v, "op") or symbol_name(v)
 end
 
+local function class_matches(expected, actual)
+    if expected == actual then return true end
+    if type(expected) ~= "table" then return false end
+    local isclassof = rawget(expected, "isclassof")
+    if type(isclassof) ~= "function" then return false end
+    local ok, matched = pcall(isclassof, expected, actual)
+    return ok and matched and true or false
+end
+
 local function relation_call_of(rule)
     local found
     for _, item in ipairs(rule.body or {}) do
@@ -378,7 +387,8 @@ local function eval_predicate(state, pred)
     local host = decl and decl.impl or nil
     if host then return host(subject, unpack(args, 1, #args)) and true or false end
     local eq = state.engine.equal or default_equal
-    if pred.predicate == "is" or pred.predicate == "eq" then return eq(subject, args[1]) end
+    if pred.predicate == "is" then return class_matches(args[1], subject) or eq(subject, args[1]) end
+    if pred.predicate == "eq" then return eq(subject, args[1]) end
     if pred.predicate == "ne" then return not eq(subject, args[1]) end
     if pred.predicate == "lt" then return subject < args[1] end
     if pred.predicate == "le" then return subject <= args[1] end

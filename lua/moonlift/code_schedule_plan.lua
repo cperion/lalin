@@ -108,7 +108,7 @@ local function bind_context(T)
         end
         local scalar_kind = scalar_or_closed_kind_for(plan)
         local scalar_cap = vector_cap and vector_cap.executable and nil or KernelEmitSupport.classify(plan, scalar_kind, target, flow)
-        local selection, err = CodeSchedulePlanRules.select({
+        local selection, err = CodeSchedulePlanRules:run_candidate("select_kernel_schedule", {
             has_vector_candidate = vector_kind ~= nil,
             vector_executable = vector_cap ~= nil and vector_cap.executable or false,
             vector_kind = vector_kind,
@@ -118,7 +118,7 @@ local function bind_context(T)
             scalar_kind = scalar_kind,
             scalar_capability = scalar_cap,
             scalar_rejects = scalar_cap and scalar_cap.rejects or {},
-        })
+        }, "selection", "no Kernel schedule selected")
         assert(selection ~= nil, tostring(err))
         if selection.kind == "no_plan" then return Schedule.ScheduleNoPlan(kid, selection.rejects) end
         local capability = assert(selection.capability, "planned schedule selection has no emitter capability")

@@ -585,6 +585,11 @@ llisle {
 
 `predicate` and `constructor` declarations are the public semantics. The `[]` slot carries the Lua implementation value directly, so there is no host side-table registry and no string reconnection seam. That keeps lowerings inspectable, documentable, diagnosable, and available to family tooling.
 
+The same rule applies to typed relation fields: `input { expr [Tr.Expr] }`
+splices the actual ASDL class value. Llisle `:is` guards understand those class
+values, so ASDL lowering rules can dispatch on `P.expr :is (Tr.ExprLit)` without
+inventing string-shaped candidate records.
+
 The same algebra is available inside roles:
 
 ```text

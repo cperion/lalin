@@ -607,7 +607,9 @@ local function bind_context(T)
     end
 
     local function index_stream_for(expr, bindings)
-        return StencilRules.select_index_stream(Kernel.KernelExprAlgebra(expr), bindings)
+        local class, class_err = StencilRules.classify_expr(Kernel.KernelExprAlgebra(expr), bindings)
+        if class == nil then return nil, class_err end
+        return StencilRules:run("select_index_stream", { class = class }, "stream", "expression is not an index stream")
     end
 
     local function stream_selection_fact(ctx, stream)
@@ -865,6 +867,10 @@ local function bind_context(T)
         return nil
     end
 
+    local function run_stencil_selection(relation, fields, missing)
+        return StencilRules:run(relation, { ctx = fields }, "selection", missing)
+    end
+
     local function skeleton_scan_plan(ctx, func, plan, graph_loop, loop_fact)
         local effect, effect_reason = single_effect(plan.body, Kernel.KernelEffectScan)
         if effect == nil then return nil, effect_reason end
@@ -881,7 +887,7 @@ local function bind_context(T)
         if class == nil then return nil, class_reason end
         local start_expr, stop_expr = value_id_expr(ctx, loop_fact.counted.start), value_id_expr(ctx, loop_fact.counted.stop)
         local step_num = const_int_value(ctx, loop_fact.counted.step)
-        local selection, select_reason = StencilRules.select_scan {
+        local selection, select_reason = run_stencil_selection("select_scan_stencil", {
             step_num = step_num,
             dst_elem_ty = effect.dst.elem_ty,
             result_ty = reduction.ty,
@@ -899,7 +905,7 @@ local function bind_context(T)
             init_expr = value_expr(ctx, reduction.init),
             mode = effect.mode,
             class = class,
-        }
+        }, "unsupported scan stencil shape")
         if selection == nil then return nil, select_reason end
         return { kind = "scan", selection = selection, reduction = reduction, result_ty = reduction.ty }, nil
     end
@@ -912,7 +918,7 @@ local function bind_context(T)
         local class, class_reason = enriched_class_for_expr(ctx, result.src, graph_loop, loop_fact, bindings, nil, nil)
         if class == nil then return nil, class_reason end
         local step_num = const_int_value(ctx, loop_fact.counted.step)
-        local selection, select_reason = StencilRules.select_find {
+        local selection, select_reason = run_stencil_selection("select_find_stencil", {
             step_num = step_num,
             start = loop_fact.counted.start,
             stop = loop_fact.counted.stop,
@@ -921,7 +927,7 @@ local function bind_context(T)
             pred = result.pred,
             not_found_minus_one = is_minus_one_const(result.not_found),
             class = class,
-        }
+        }, "unsupported find stencil shape")
         if selection == nil then return nil, select_reason end
         return { kind = "find", selection = selection, result_ty = Code.CodeTyInt(32, Code.CodeSigned) }, nil
     end
@@ -936,7 +942,7 @@ local function bind_context(T)
         local class, class_reason = enriched_class_for_expr(ctx, effect.src, graph_loop, loop_fact, bindings, dst_base, effect.dst.elem_ty)
         if class == nil then return nil, class_reason end
         local step_num = const_int_value(ctx, loop_fact.counted.step)
-        local selection, select_reason = StencilRules.select_partition {
+        local selection, select_reason = run_stencil_selection("select_partition_stencil", {
             step_num = step_num,
             dst_elem_ty = effect.dst.elem_ty,
             dst = dst_base,
@@ -950,7 +956,7 @@ local function bind_context(T)
             pred = effect.pred,
             semantics = effect.semantics,
             class = class,
-        }
+        }, "unsupported partition stencil shape")
         if selection == nil then return nil, select_reason end
         return { kind = "partition", selection = selection, result_ty = Code.CodeTyInt(32, Code.CodeSigned) }, nil
     end
@@ -965,7 +971,7 @@ local function bind_context(T)
         local class, class_reason = enriched_class_for_expr(ctx, effect.src, graph_loop, loop_fact, bindings, dst_base, effect.dst.elem_ty)
         if class == nil then return nil, class_reason end
         local step_num = const_int_value(ctx, loop_fact.counted.step)
-        local selection, select_reason = StencilRules.select_store {
+        local selection, select_reason = run_stencil_selection("select_store_stencil", {
             step_num = step_num,
             dst_elem_ty = effect.dst.elem_ty,
             dst = dst_base,
@@ -978,7 +984,7 @@ local function bind_context(T)
             store_index_primary = true,
             copy_semantics = effect.semantics,
             class = class,
-        }
+        }, "unsupported store stencil shape")
         if selection == nil then return nil, select_reason end
         return { kind = "copy", selection = selection, result_ty = nil }, nil
     end
@@ -993,7 +999,7 @@ local function bind_context(T)
         local partition, partition_reason = skeleton_partition_plan(ctx, func, plan, graph_loop, loop_fact)
         local copy, copy_reason = skeleton_copy_plan(ctx, func, plan, graph_loop, loop_fact)
         local reject_reason = scan_reason or find_reason or partition_reason or copy_reason or "no stencil skeleton selected"
-        local selection, err = LowerRules.select_skeleton {
+        local selection, err = LowerRules:run_candidate("select_skeleton_lowering", {
             scan_ready = scan ~= nil,
             scan_plan = scan,
             find_ready = find ~= nil,
@@ -1003,7 +1009,7 @@ local function bind_context(T)
             copy_ready = copy ~= nil,
             copy_plan = copy,
             reject_reason = reject_reason,
-        }
+        }, "selection", "no LuaJIT skeleton lowering selected")
         if selection == nil then return nil, err end
         if selection.kind == LowerRules.kind.no_plan then return nil, selection.reason end
         return selection.planned, nil
@@ -1161,7 +1167,7 @@ local function bind_context(T)
 
     local function select_kernel_machine(ctx, func, plan, graph_loop, loop_fact, owner, kernel, opts)
         local candidate = kernel_lowering_candidate(ctx, func, plan, graph_loop, loop_fact, owner, kernel, opts)
-        local selection, reason = LowerRules.select(candidate)
+        local selection, reason = LowerRules:run_candidate("select_kernel_lowering", candidate, "selection", "no LuaJIT kernel lowering selected")
         if selection == nil then return nil, reason end
         if selection.kind == LowerRules.kind.no_plan then return nil, selection.reason end
         local planners = {

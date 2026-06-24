@@ -1454,6 +1454,12 @@ Declares the input product of a relation.
 input { name [Type], ... }
 ```
 
+`Type` is the already evaluated Lua value inside `[]`. For compiler-family
+relations this should normally be the real ASDL class value, for example
+`input { expr [Tr.Expr] }`. Guards may then dispatch with `P.expr :is
+(Tr.ExprLit)`, which uses ASDL runtime class identity instead of string
+candidate records.
+
 Slots:
 
 - ` { name [Type], ... }` -> `fields` role=`fields` channel=`call:table`

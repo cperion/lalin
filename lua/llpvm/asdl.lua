@@ -1,4 +1,4 @@
-local pvm = require("pvm")
+local pvm = require("moonlift.pvm")
 local schema_context = require("moonlift.schema_context")
 
 local M = {}

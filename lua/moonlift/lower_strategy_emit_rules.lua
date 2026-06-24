@@ -5,6 +5,7 @@ local function bind_context(T)
     local moon = require("moonlift")
     local llb = require("llb")
     local Llisle = require("llisle")
+    local RuleApi = require("moonlift.llisle_rule_api")
     local env = moon.family.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
@@ -149,24 +150,16 @@ local function bind_context(T)
     local rules = build_rules()
     local engine = Llisle.compile(rules)
 
-    local api = {}
-
-    function api.select(candidate)
-        local result, err = engine:run("select_lower_emit", { candidate = candidate })
-        if result == nil then return nil, err and err.message or "no lower emission selected" end
-        return result.output.selection, nil
-    end
-
-    api.kind = {
+    local api = RuleApi.new(rules, engine, {
+      kind = {
         code = "code",
         closed_form = "closed_form",
         scalar_kernel = "scalar_kernel",
         vector_kernel = "vector_kernel",
         missing_schedule = "missing_schedule",
         unsupported = "unsupported",
-    }
-    api.rules = rules
-    api.engine = engine
+      },
+    })
 
     T._moonlift_api_cache.lower_strategy_emit_rules = api
     return api

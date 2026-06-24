@@ -23,7 +23,7 @@ local function candidate(fields)
 end
 
 local function select(fields)
-    local selection, err = Rules.select(candidate(fields))
+    local selection, err = Rules:run_candidate("select_lower_fragment", candidate(fields), "selection", "no lower fragment selected")
     assert(selection ~= nil, err)
     return selection
 end

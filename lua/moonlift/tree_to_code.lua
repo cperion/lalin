@@ -38,39 +38,10 @@ local function bind_context(T)
         error("tree_to_code unsupported lowering: " .. tostring(what or class_name(node)) .. " in " .. site, 3)
     end
 
-    local function select_expr_lowering(ctx, expr)
-        local selection, err = TreeToCodeRules.select_expr(expr)
-        if selection == nil then unsupported(ctx, expr, err) end
-        return selection.kind
-    end
-
-    local function select_place_lowering(ctx, place)
-        local selection, err = TreeToCodeRules.select_place(place)
-        if selection == nil then unsupported(ctx, place, err) end
-        return selection.kind
-    end
-
-    local function select_stmt_lowering(ctx, stmt)
-        local selection, err = TreeToCodeRules.select_stmt(stmt)
-        if selection == nil then unsupported(ctx, stmt, err) end
-        return selection.kind
-    end
-
-    local function select_func_lowering(ctx, func)
-        local selection, err = TreeToCodeRules.select_func(func)
-        if selection == nil then unsupported(ctx, func, err) end
-        return selection.kind
-    end
-
-    local function select_item_lowering(ctx, item)
-        local selection, err = TreeToCodeRules.select_item(item)
-        if selection == nil then unsupported(ctx, item, err) end
-        return selection.kind
-    end
-
-    local function select_contract_fact_lowering(ctx, fact)
-        local selection, err = TreeToCodeRules.select_contract_fact(fact)
-        if selection == nil then unsupported(ctx, fact, err) end
+    local function select_lowering(ctx, relation, node)
+        local field = relation:match("^select_(.-)_lowering$")
+        local selection, err = TreeToCodeRules:run(relation, { [field] = node }, "selection", "no tree_to_code dispatch")
+        if selection == nil then unsupported(ctx, node, err) end
         return selection.kind
     end
 
@@ -818,7 +789,7 @@ local function bind_context(T)
     end
 
     lower_place = function(ctx, place)
-        local action = select_place_lowering(ctx, place)
+        local action = select_lowering(ctx, "select_place_lowering", place)
         if action == "ref" then
             local binding, key = lookup_binding(ctx, place.ref)
             local bcls = pvm.classof(binding.class)
@@ -869,7 +840,7 @@ local function bind_context(T)
     end
 
     lower_expr = function(ctx, expr)
-        local action = select_expr_lowering(ctx, expr)
+        local action = select_lowering(ctx, "select_expr_lowering", expr)
         if action == "lit" then
             local ty = code_ty(ctx, expr_type(expr))
             if pvm.classof(expr.value) == Core.LitString then
@@ -1444,7 +1415,7 @@ local function bind_context(T)
 
     lower_stmt = function(ctx, stmt)
         if ctx.current_block == nil then return end
-        local action = select_stmt_lowering(ctx, stmt)
+        local action = select_lowering(ctx, "select_stmt_lowering", stmt)
         if action == "let" then
             local src, ty = lower_expr(ctx, stmt.init)
             declare_fresh_binding_key(ctx, stmt.binding)
@@ -1523,7 +1494,7 @@ local function bind_context(T)
     end
 
     local function func_parts(func)
-        local action = select_func_lowering(nil, func)
+        local action = select_lowering(nil, "select_func_lowering", func)
         if action == "local" then return func.name, Code.CodeLinkageLocal, func.params, func.result, func.body end
         if action == "export" then return func.name, Code.CodeLinkageExport, func.params, func.result, func.body end
         if action == "local_contract" then return func.name, Code.CodeLinkageLocal, func.params, func.result, func.body end
@@ -1587,7 +1558,7 @@ local function bind_context(T)
 
     local function code_contract_fact(module_ctx, func_name, func_id, fact)
         local ctx = { module_ctx = module_ctx, layout_env = module_ctx.layout_env, target = module_ctx.target, func_name = func_name }
-        local action = select_contract_fact_lowering(ctx, fact)
+        local action = select_lowering(ctx, "select_contract_fact_lowering", fact)
         if action == "bounds" then
             return Code.CodeFuncContractFact(func_id, Code.CodeContractBounds(
                 contract_value_for_binding(func_name, fact.base),
@@ -1662,7 +1633,7 @@ local function bind_context(T)
         local externs = {}
         for i = 1, #(module.items or {}) do
             local item = module.items[i]
-            local action = select_item_lowering({ func_name = module_ctx.module_name }, item)
+            local action = select_lowering({ func_name = module_ctx.module_name }, "select_item_lowering", item)
             if action == "func" then
                 local name, _, params, result_ty = func_parts(item.func)
                 local sig = CodeType.ensure_type_sig(module_ctx, param_types(params), result_ty)
@@ -1688,7 +1659,7 @@ local function bind_context(T)
         local facts = {}
         for i = 1, #(module.items or {}) do
             local item = module.items[i]
-            if select_item_lowering({ func_name = module_ctx.module_name }, item) == "func" then
+            if select_lowering({ func_name = module_ctx.module_name }, "select_item_lowering", item) == "func" then
                 local name = func_parts(item.func)
                 local func_id = code_func_id(name)
                 local tree_facts = TreeContractFacts.facts(item.func)
@@ -1765,7 +1736,7 @@ local function bind_context(T)
         local globals = {}
         for i = 1, #(module.items or {}) do
             local item = module.items[i]
-            local action = select_item_lowering({ func_name = mod_name }, item)
+            local action = select_lowering({ func_name = mod_name }, "select_item_lowering", item)
             if action == "func" then
                 funcs[#funcs + 1] = lower_func(module_ctx, item.func)
             elseif action == "data" then
