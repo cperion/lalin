@@ -17,7 +17,7 @@ local LJ = T.MoonLuaJIT
 local Value = T.MoonValue
 local CType = require("moonlift.luajit_ctype")(T)
 local Emit = require("moonlift.luajit_emit")(T)
-local StencilC = require("moonlift.stencil_c")(T)
+local StencilArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
 local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -87,7 +87,7 @@ local stencil_reduction = Value.ReductionFact(
     nil,
     Value.AlgebraProofIdentity("test stencil reduction")
 )
-local stencil_artifact = StencilC.reduce_array_artifact(stencil_reduction, nil, {
+local stencil_artifact = StencilArtifactPlan.reduce_array_artifact(stencil_reduction, nil, {
     elem_ty = i32,
     result_ty = i32,
     step_num = 1,

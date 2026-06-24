@@ -21,6 +21,7 @@ local function bind_context(T)
     local CodeEffectFacts = require("moonlift.code_effect_facts")(T)
     local CodeKernelPlan = require("moonlift.code_kernel_plan")(T)
     local CodeSchedulePlan = require("moonlift.code_schedule_plan")(T)
+    local CodeLowerPlanRules = require("moonlift.code_lower_plan_rules")(T)
 
     local api = {}
 
@@ -99,6 +100,31 @@ local function bind_context(T)
         return "schedule selected"
     end
 
+    local function lower_fragment_candidate(loop, kplan, no_plan, sched)
+        local schedule_planned = sched ~= nil and pvm.classof(sched) == Schedule.SchedulePlanned
+        local cf = loop_result_closed_form(kplan)
+        local skipped
+        if cf ~= nil then
+            skipped = "closed-form fact " .. tostring(cf.id and cf.id.text or cf)
+        elseif kplan ~= nil then
+            skipped = "kernel " .. kplan.id.text
+        else
+            skipped = "loop " .. loop.id.text
+        end
+
+        return {
+            has_kernel = kplan ~= nil,
+            has_kernel_no_plan = no_plan ~= nil,
+            schedule_planned = schedule_planned,
+            schedule_closed_form = schedule_planned and sched.kind == Schedule.ScheduleClosedForm or false,
+            has_closed_form = cf ~= nil,
+            closed_form = cf,
+            closed_form_missing_reason = "explicit Code fallback because ScheduleClosedForm has no ClosedFormFact",
+            no_schedule_reason = "explicit Code fallback for " .. skipped .. ": " .. schedule_summary(sched),
+            kernel_no_plan_reason = no_plan ~= nil and ("explicit Code fallback because KernelNoPlan rejected loop: " .. reject_summary(no_plan.rejects)) or "",
+        }
+    end
+
     local function add_loop_code_fallback(func, loop, cover, fragments, covered, issues, reason)
         local issue = Lower.LowerIssueFallback(cover, reason)
         issues[#issues + 1] = issue
@@ -108,6 +134,34 @@ local function bind_context(T)
             Lower.LowerStrategyCode(reason),
             { Lower.LowerProofFallback(reason) },
             { issue }
+        )
+        for block in pairs(block_set_for(loop)) do covered[block] = true end
+    end
+
+    local function add_loop_semantic_fragment(func, loop, cover, fragments, covered, kplan, sched, selection)
+        local strategy, proofs
+        if selection.kind == CodeLowerPlanRules.kind.closed_form then
+            strategy = Lower.LowerStrategyClosedForm(kplan.id, selection.closed_form)
+            proofs = {
+                Lower.LowerProofKernel(kplan.id, "planned semantic closed-form kernel"),
+                Lower.LowerProofSchedule(sched.id, "closed-form schedule has a semantic lowering emitter"),
+            }
+        elseif selection.kind == CodeLowerPlanRules.kind.kernel then
+            strategy = Lower.LowerStrategyKernel(kplan.id, sched.id)
+            proofs = {
+                Lower.LowerProofKernel(kplan.id, "planned semantic kernel"),
+                Lower.LowerProofSchedule(sched.id, "kernel schedule has a semantic lowering emitter"),
+            }
+        else
+            error("code_lower_plan: unsupported semantic selection " .. tostring(selection.kind), 2)
+        end
+
+        fragments[#fragments + 1] = Lower.LowerFragment(
+            Lower.LowerFragmentId("frag:" .. sanitize(func.id.text) .. ":semantic:" .. sanitize(loop.id.text)),
+            cover,
+            strategy,
+            proofs,
+            {}
         )
         for block in pairs(block_set_for(loop)) do covered[block] = true end
     end
@@ -124,42 +178,16 @@ local function bind_context(T)
             if can_claim_loop(loop, covered) then
                 local kplan = kernel_for_loop[loop.id.text]
                 local cover = Lower.LowerCoverLoop(loop.id)
-                if kplan ~= nil then
-                    local sched = schedule_for_kernel[kplan.id.text]
-                    if sched ~= nil and pvm.classof(sched) == Schedule.SchedulePlanned then
-                        local strategy, proofs
-                        local cf = loop_result_closed_form(kplan)
-                        if sched.kind == Schedule.ScheduleClosedForm then
-                            if cf == nil then
-                                add_loop_code_fallback(func, loop, cover, fragments, covered, issues, "explicit Code fallback because ScheduleClosedForm has no ClosedFormFact")
-                            else
-                                strategy = Lower.LowerStrategyClosedForm(kplan.id, cf)
-                                proofs = { Lower.LowerProofKernel(kplan.id, "planned semantic closed-form kernel"), Lower.LowerProofSchedule(sched.id, "closed-form schedule has a semantic lowering emitter") }
-                            end
-                        else
-                            strategy = Lower.LowerStrategyKernel(kplan.id, sched.id)
-                            proofs = { Lower.LowerProofKernel(kplan.id, "planned semantic kernel"), Lower.LowerProofSchedule(sched.id, "kernel schedule has a semantic lowering emitter") }
-                        end
-                        if strategy ~= nil then
-                            add(Lower.LowerFragment(
-                                Lower.LowerFragmentId("frag:" .. sanitize(func.id.text) .. ":semantic:" .. sanitize(loop.id.text)),
-                                cover,
-                                strategy,
-                                proofs,
-                                {}
-                            ))
-                            for block in pairs(block_set_for(loop)) do covered[block] = true end
-                        end
-                    else
-                        local cf = loop_result_closed_form(kplan)
-                        local skipped = cf and ("closed-form fact " .. tostring(cf.id and cf.id.text or cf)) or ("kernel " .. kplan.id.text)
-                        add_loop_code_fallback(func, loop, cover, fragments, covered, issues, "explicit Code fallback for " .. skipped .. ": " .. schedule_summary(sched))
-                    end
-                else
-                    local no_plan = kernel_no_plan_for_loop[loop.id.text]
-                    if no_plan ~= nil then
-                        add_loop_code_fallback(func, loop, cover, fragments, covered, issues, "explicit Code fallback because KernelNoPlan rejected loop: " .. reject_summary(no_plan.rejects))
-                    end
+                local sched = kplan ~= nil and schedule_for_kernel[kplan.id.text] or nil
+                local no_plan = kernel_no_plan_for_loop[loop.id.text]
+                local selection, err = CodeLowerPlanRules.select(lower_fragment_candidate(loop, kplan, no_plan, sched))
+                if selection == nil then error("code_lower_plan: " .. tostring(err), 2) end
+                if selection.kind == CodeLowerPlanRules.kind.closed_form or selection.kind == CodeLowerPlanRules.kind.kernel then
+                    add_loop_semantic_fragment(func, loop, cover, fragments, covered, kplan, sched, selection)
+                elseif selection.kind == CodeLowerPlanRules.kind.fallback then
+                    add_loop_code_fallback(func, loop, cover, fragments, covered, issues, selection.reason)
+                elseif selection.kind ~= CodeLowerPlanRules.kind.none then
+                    error("code_lower_plan: unsupported lower fragment selection " .. tostring(selection.kind), 2)
                 end
             end
         end

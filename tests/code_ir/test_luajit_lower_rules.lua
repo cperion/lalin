@@ -25,6 +25,8 @@ local function base()
         store_dst_base = false,
         stencil_store_ready = false,
         stencil_skeleton_ready = false,
+        any_ready_lowering = false,
+        reject_reason = "no lowering",
     }
 end
 
@@ -34,6 +36,7 @@ do
     c.result_reduction = true
     c.returns_reduction = true
     c.stencil_reduce_ready = true
+    c.any_ready_lowering = true
     local selection, err = Rules.select(c)
     assert(selection ~= nil, tostring(err))
     assert(selection.kind == "stencil_reduce", "stencil reduce is the canonical reduction lowering")
@@ -48,6 +51,7 @@ do
     c.single_store = true
     c.store_dst_base = true
     c.stencil_store_ready = true
+    c.any_ready_lowering = true
     local selection, err = Rules.select(c)
     assert(selection ~= nil, tostring(err))
     assert(selection.kind == "stencil_skeleton", "skeleton stencil should win over generic store stencil")
@@ -60,6 +64,7 @@ do
     c.single_store = true
     c.store_dst_base = true
     c.stencil_store_ready = true
+    c.any_ready_lowering = true
     local selection, err = Rules.select(c)
     assert(selection ~= nil, tostring(err))
     assert(selection.kind == "stencil_store", "store stencil should select from store-ready facts")
@@ -71,8 +76,86 @@ do
     c.result_reduction = true
     c.returns_reduction = true
     c.stencil_reduce_ready = false
-    local selection = Rules.select(c)
-    assert(selection == nil, "no strategy should select when no ready lowering fact is present")
+    c.reject_reason = "reduction rejected"
+    local selection, err = Rules.select(c)
+    assert(selection ~= nil, tostring(err))
+    assert(selection.kind == "no_plan", "no ready lowering fact should produce explicit no_plan")
+    assert(selection.reason == "reduction rejected", "no_plan should preserve reject reason")
+end
+
+do
+    local selection, err = Rules.select_skeleton {
+        scan_ready = true,
+        scan_plan = "scan",
+        find_ready = true,
+        find_plan = "find",
+        partition_ready = true,
+        partition_plan = "partition",
+        copy_ready = true,
+        copy_plan = "copy",
+        reject_reason = "none",
+    }
+    assert(selection ~= nil, tostring(err))
+    assert(selection.kind == "skeleton_scan", "scan skeleton should have first priority")
+    assert(selection.planned == "scan", "scan skeleton should return scan plan")
+end
+
+do
+    local selection, err = Rules.select_skeleton {
+        scan_ready = false,
+        find_ready = true,
+        find_plan = "find",
+        partition_ready = true,
+        partition_plan = "partition",
+        copy_ready = true,
+        copy_plan = "copy",
+        reject_reason = "none",
+    }
+    assert(selection ~= nil, tostring(err))
+    assert(selection.kind == "skeleton_find", "find skeleton should win after scan rejection")
+    assert(selection.planned == "find", "find skeleton should return find plan")
+end
+
+do
+    local selection, err = Rules.select_skeleton {
+        scan_ready = false,
+        find_ready = false,
+        partition_ready = true,
+        partition_plan = "partition",
+        copy_ready = true,
+        copy_plan = "copy",
+        reject_reason = "none",
+    }
+    assert(selection ~= nil, tostring(err))
+    assert(selection.kind == "skeleton_partition", "partition skeleton should win after scan/find rejection")
+    assert(selection.planned == "partition", "partition skeleton should return partition plan")
+end
+
+do
+    local selection, err = Rules.select_skeleton {
+        scan_ready = false,
+        find_ready = false,
+        partition_ready = false,
+        copy_ready = true,
+        copy_plan = "copy",
+        reject_reason = "none",
+    }
+    assert(selection ~= nil, tostring(err))
+    assert(selection.kind == "skeleton_copy", "copy skeleton should win after other skeletons reject")
+    assert(selection.planned == "copy", "copy skeleton should return copy plan")
+end
+
+do
+    local selection, err = Rules.select_skeleton {
+        scan_ready = false,
+        find_ready = false,
+        partition_ready = false,
+        copy_ready = false,
+        reject_reason = "no skeleton",
+    }
+    assert(selection ~= nil, tostring(err))
+    assert(selection.kind == "no_plan", "no skeleton should produce explicit no_plan")
+    assert(selection.reason == "no skeleton", "skeleton no_plan should preserve reject reason")
 end
 
 io.write("moonlift luajit_lower_rules ok\n")

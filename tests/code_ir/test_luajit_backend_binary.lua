@@ -10,7 +10,9 @@ Schema(T)
 
 local Core = T.MoonCore
 local Code = T.MoonCode
+local LJ = T.MoonLuaJIT
 local Stencil = T.MoonStencil
+local Exec = T.MoonExec
 local Backend = require("moonlift.luajit_backend")(T)
 
 local origin = Code.CodeOriginGenerated("test_luajit_backend_binary")
@@ -83,6 +85,13 @@ result.artifacts = artifacts
 result.facts = facts
 assert(#artifacts == 1, "expected one selected stencil artifact")
 assert(artifacts[1].instance.descriptor.vocab == Stencil.StencilReduce, "expected reduce stencil")
+assert(pvm.classof(facts.luajit_stencil_machines) == LJ.LJStencilMachineModulePlan, "expected ASDL LuaJIT stencil machine plan")
+assert(#facts.luajit_stencil_machines.machines == 1, "expected one planned LuaJIT stencil machine")
+assert(facts.luajit_stencil_machines.machines[1].artifact == artifacts[1], "planned LuaJIT stencil machine should reference selected artifact")
+assert(pvm.classof(facts.exec_plan) == Exec.ExecModulePlan, "expected ASDL exec plan")
+assert(#facts.exec_plan.entries == 1, "expected one exec stencil decision")
+assert(pvm.classof(facts.exec_plan.entries[1].decision) == Exec.ExecMaterializeStencil, "selected artifact should materialize an exec stencil fragment")
+assert(facts.exec_plan.entries[1].decision.fragment.kind.artifact == artifacts[1], "exec materialization should reference selected artifact")
 assert(result.realization.kind == "BinaryStencilBankRealization", "expected binary bank realization")
 assert(#result.realization.installed == 1, "expected one installed binary stencil")
 

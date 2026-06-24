@@ -16,7 +16,7 @@ local Value = T.MoonValue
 
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
-local StencilC = require("moonlift.stencil_c")(T)
+local StencilArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
 local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_reductions")
@@ -228,7 +228,7 @@ local function compile_with_stencil(case, values, ctype, stem, expected_values)
         contracts = contracts,
         collect_rejects = rejects,
         stencil_reduce_artifact_for = function(func, vocab, op, reduction, plan, info)
-            local artifact = StencilC.reduce_array_artifact(reduction, plan, info)
+            local artifact = StencilArtifactPlan.reduce_array_artifact(reduction, plan, info)
             artifacts[#artifacts + 1] = artifact
             return artifact
         end,

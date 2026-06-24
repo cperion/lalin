@@ -144,6 +144,12 @@ local field_topology = Stencil.StencilTopologyFieldProjection(
     "right",
     4
 )
+local soa_topology = Stencil.StencilTopologySoAComponent(
+    Stencil.StencilTopologyContiguous(1),
+    pair_ty,
+    "right",
+    1
+)
 
 assert(op.op == Stencil.StencilUnaryNeg and op.result_ty == i32)
 assert(zip_op.op == Stencil.StencilBinaryAdd and zip_op.result_ty == i32)
@@ -158,6 +164,10 @@ assert(field_topology.parent == Stencil.StencilTopologyContiguous(1))
 assert(field_topology.record_ty == pair_ty)
 assert(field_topology.field_name == "right")
 assert(field_topology.field_offset == 4)
+assert(pvm.classof(soa_topology.parent) == Stencil.StencilTopologyContiguous)
+assert(soa_topology.record_ty == pair_ty)
+assert(soa_topology.field_name == "right")
+assert(soa_topology.component_index == 1)
 assert(pvm.classof(pred) == Stencil.StencilPredEqConst)
 
 io.write("moonlift schema_stencil ok\n")

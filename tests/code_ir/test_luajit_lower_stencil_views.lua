@@ -14,7 +14,7 @@ local Stencil = T.MoonStencil
 
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
-local StencilC = require("moonlift.stencil_c")(T)
+local StencilArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
 local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_stencil_views")
@@ -93,13 +93,13 @@ local lj_module, facts = Lower.lower_module(module, {
     collect_rejects = rejects,
     stencil_store_artifact_for = function(func_, vocab, op, plan, info)
         assert(vocab == Stencil.StencilCopy)
-        local artifact = StencilC.copy_array_artifact(info)
+        local artifact = StencilArtifactPlan.copy_array_artifact(info)
         artifacts[#artifacts + 1] = artifact
         return artifact
     end,
     stencil_skeleton_artifact_for = function(func_, vocab, op, reduction, plan, info)
         assert(vocab == Stencil.StencilCopy)
-        local artifact = StencilC.copy_array_artifact(info)
+        local artifact = StencilArtifactPlan.copy_array_artifact(info)
         artifacts[#artifacts + 1] = artifact
         return artifact
     end,

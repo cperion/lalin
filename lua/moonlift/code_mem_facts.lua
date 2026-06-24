@@ -98,7 +98,7 @@ local function bind_context(T)
     end
 
     local function contract_index(contracts)
-        local idx = { bounds = {}, window = {}, same_len = {}, disjoint = {}, noalias = {}, readonly = {}, writeonly = {}, by_func = {} }
+        local idx = { bounds = {}, window = {}, same_len = {}, disjoint = {}, soa = {}, noalias = {}, readonly = {}, writeonly = {}, by_func = {} }
         for _, f in ipairs(contract_facts(contracts)) do
             idx.by_func[f.func.text] = idx.by_func[f.func.text] or {}
             idx.by_func[f.func.text][#idx.by_func[f.func.text] + 1] = f
@@ -108,6 +108,7 @@ local function bind_context(T)
             elseif cls == Code.CodeContractWindowBounds then idx.window[f.func.text .. "\0" .. k.base.text] = f
             elseif cls == Code.CodeContractSameLen then idx.same_len[#idx.same_len + 1] = f
             elseif cls == Code.CodeContractDisjoint then idx.disjoint[#idx.disjoint + 1] = f
+            elseif cls == Code.CodeContractSoAComponent then idx.soa[f.func.text .. "\0" .. k.base.text] = f
             elseif cls == Code.CodeContractNoAlias then idx.noalias[f.func.text .. "\0" .. k.base.text] = f
             elseif cls == Code.CodeContractReadonly then idx.readonly[f.func.text .. "\0" .. k.base.text] = f
             elseif cls == Code.CodeContractWriteonly then idx.writeonly[f.func.text .. "\0" .. k.base.text] = f end

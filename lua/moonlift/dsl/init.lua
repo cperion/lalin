@@ -574,6 +574,9 @@ function M.bounds(base, len) return Tr.ContractBounds(tree_expr(base), tree_expr
 function M.disjoint(a, b) return Tr.ContractDisjoint(tree_expr(a), tree_expr(b)) end
 function M.same_len(a, b) return Tr.ContractSameLen(tree_expr(a), tree_expr(b)) end
 function M.window_bounds(base, base_len, start, len) return Tr.ContractWindowBounds(tree_expr(base), tree_expr(base_len), tree_expr(start), tree_expr(len)) end
+function M.soa_component(base, record_ty, field_name, component_index)
+    return Tr.ContractSoAComponent(tree_expr(base), concrete_type(record_ty), tostring(field_name), tonumber(component_index))
+end
 
 local bind_seq = 0
 local function binding(name, ty, class)
@@ -1544,6 +1547,7 @@ local function make_env(opts)
     env.ctor = M.ctor
     env.bounds, env.disjoint, env.same_len = M.bounds, M.disjoint, M.same_len
     env.window_bounds = M.window_bounds
+    env.soa_component = M.soa_component
     env.as = setmetatable({}, { __index = function(_, ty) return M.as(ty) end })
     env.bitcast = setmetatable({}, { __index = function(_, ty) return M.bitcast(ty) end })
     env.null = setmetatable({}, { __index = function(_, ty) return M.null(ty) end })
@@ -1578,8 +1582,8 @@ local MOONLIFT_NAMESPACE_KEYS = {
     "stmts", "decls", "exprs", "conts", "variants", "spread", "_", "process",
     "process_opts", "here", "at_origin", "with_origin", "eq", "ne", "lt", "le",
     "gt", "ge", "And", "Or", "Not", "len", "select", "addr", "deref", "load",
-    "is_null", "ctor", "bounds", "disjoint", "same_len", "window_bounds", "as",
-    "bitcast", "null", "sizeof", "alignof", "N", "ptr", "view", "slice",
+    "is_null", "ctor", "bounds", "disjoint", "same_len", "window_bounds",
+    "soa_component", "as", "bitcast", "null", "sizeof", "alignof", "N", "ptr", "view", "slice",
     "array", "fnptr", "func_type", "closure", "closure_type", "lease", "owned",
 }
 

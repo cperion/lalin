@@ -138,6 +138,13 @@ return schema. MoonStencil {
       field_name [str],
       field_offset [number],
     },
+    StencilTopologySoAComponent {
+      variant_unique,
+      parent [MoonStencil.StencilAccessTopology],
+      record_ty [MoonCode.CodeType],
+      field_name [str],
+      component_index [number],
+    },
     StencilTopologySliceDescriptor {
       variant_unique,
       slice [MoonCode.CodeValueId],
@@ -317,6 +324,53 @@ return schema. MoonStencil {
     arithmetic [MoonStencil.StencilArithmeticVectorFact],
   },
 
+  sum. StencilVectorFeatureRequirement {
+    StencilVectorFeatureNative,
+    StencilVectorFeatureSSE2,
+    StencilVectorFeatureAVX2,
+    StencilVectorFeatureAVX512F,
+    StencilVectorFeatureNamed {
+      variant_unique,
+      field. name [str],
+    },
+  },
+
+  sum. StencilLanePolicy {
+    StencilLaneFromTarget,
+    StencilLaneNative,
+    StencilLaneFixed {
+      variant_unique,
+      lanes [number],
+    },
+  },
+
+  sum. StencilVectorAlignmentPolicy {
+    StencilVectorAlignmentUnknown,
+    StencilVectorUnaligned,
+    StencilVectorAligned {
+      variant_unique,
+      bytes [number],
+    },
+  },
+
+  sum. StencilVectorTailPolicy {
+    StencilVectorScalarTail,
+    StencilVectorMaskTail,
+    StencilVectorOverreadProvenSafe,
+  },
+
+  sum. StencilVectorReductionStrategy {
+    StencilVectorReductionTree,
+    StencilVectorReductionHorizontal,
+    StencilVectorReductionScalarFinish,
+  },
+
+  sum. StencilVectorCompilerPolicy {
+    StencilVectorCompilerGccAutovec,
+    StencilVectorCompilerHandwritten,
+    StencilVectorCompilerCopyPatchStencil,
+  },
+
   sum. StencilSchedule {
     StencilScheduleScalar {
       variant_unique,
@@ -330,6 +384,19 @@ return schema. MoonStencil {
     StencilScheduleUnrolled {
       variant_unique,
       factor [number],
+      compiler [MoonStencil.StencilCompilerPolicy],
+      facts [MoonStencil.StencilVectorizationFacts],
+    },
+    StencilScheduleVector {
+      variant_unique,
+      feature [MoonStencil.StencilVectorFeatureRequirement],
+      lane_policy [MoonStencil.StencilLanePolicy],
+      alignment [MoonStencil.StencilVectorAlignmentPolicy],
+      tail [MoonStencil.StencilVectorTailPolicy],
+      reduction [MoonStencil.StencilVectorReductionStrategy],
+      vector_compiler [MoonStencil.StencilVectorCompilerPolicy],
+      lanes [number],
+      unroll [number],
       compiler [MoonStencil.StencilCompilerPolicy],
       facts [MoonStencil.StencilVectorizationFacts],
     },
@@ -440,6 +507,12 @@ return schema. MoonStencil {
     },
   },
 
+  product. StencilPlanEntry {
+    interned,
+    kernel [MoonKernel.KernelId],
+    selection [MoonStencil.StencilSelection],
+  },
+
   product. StencilArtifact {
     interned,
     instance [MoonStencil.StencilInstance],
@@ -452,6 +525,6 @@ return schema. MoonStencil {
     interned,
     field. module [MoonCode.CodeModuleId],
     kernel [MoonKernel.KernelModulePlan],
-    selections [many [MoonStencil.StencilSelection]],
+    selections [many [MoonStencil.StencilPlanEntry]],
   },
 }

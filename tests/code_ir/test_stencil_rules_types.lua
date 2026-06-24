@@ -10,7 +10,7 @@ local Code = T.MoonCode
 local Core = T.MoonCore
 local Value = T.MoonValue
 local Stencil = T.MoonStencil
-local Rules = require("moonlift.luajit_stencil_rules")(T)
+local Rules = require("moonlift.stencil_rules")(T)
 
 local function same_list(actual, expected)
     if #actual ~= #expected then return false end
@@ -55,7 +55,9 @@ assert_constructor_contract("scan_array", { "reduction", "info", "args" }, { "se
 assert_constructor_contract("find_array", { "op", "info", "args" }, { "selection" })
 assert_constructor_contract("partition_array", { "op", "info", "args" }, { "selection" })
 assert_constructor_contract("store_stencil_plan", { "selection" }, { "plan" })
+assert_constructor_contract("store_stencil_no_plan", { "reason" }, { "plan" })
 assert_constructor_contract("reduce_stencil_plan", { "reduction", "selection" }, { "plan" })
+assert_constructor_contract("reduce_stencil_no_plan", { "reason" }, { "plan" })
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local fake_expr = { kind = "fake_expr" }
@@ -176,6 +178,31 @@ local store_base_ctx = {
     store_index_primary = true,
     scatter_conflicts = Stencil.StencilScatterUniqueIndices,
 }
+
+do
+    local plan, reason = Rules.plan_store {
+        planned = false,
+        returns_void = false,
+        counted_positive = false,
+        single_store = false,
+        dst_base_present = false,
+        class_ready = false,
+    }
+    assert(plan == nil, "not-ready store plan must reject")
+    assert(tostring(reason):match("store stencil is not ready"), "store no-plan should preserve readiness reason")
+end
+
+do
+    local plan, reason = Rules.plan_reduce {
+        planned = false,
+        result_reduction = false,
+        returns_reduction = false,
+        counted_positive = false,
+        class_ready = false,
+    }
+    assert(plan == nil, "not-ready reduce plan must reject")
+    assert(tostring(reason):match("reduction stencil is not ready"), "reduce no-plan should preserve readiness reason")
+end
 
 local store_shape_cells = 0
 for _, ty in ipairs(scalar_tys) do
@@ -524,4 +551,4 @@ do
     assert(rejected == nil, "reduce plan must reject non-positive counted loops")
 end
 
-io.write("moonlift luajit_stencil_rules_types ok\n")
+io.write("moonlift stencil_rules_types ok\n")

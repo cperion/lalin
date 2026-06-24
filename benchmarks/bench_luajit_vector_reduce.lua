@@ -1,4 +1,4 @@
--- Benchmark explicit MoonLuaJIT vector-reduce semantics.
+-- Benchmark scheduled LuaJIT stencil reduction semantics.
 
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
@@ -15,10 +15,13 @@ local Core = T.MoonCore
 local Code = T.MoonCode
 local Flow = T.MoonFlow
 local LJ = T.MoonLuaJIT
+local Schedule = T.MoonSchedule
 local Value = T.MoonValue
+local Stencil = T.MoonStencil
 local CType = require("moonlift.luajit_ctype")(T)
 local Emit = require("moonlift.luajit_emit")(T)
-local StencilC = require("moonlift.stencil_c")(T)
+local StencilArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
+local StencilBank = require("moonlift.stencil_bank")(T)
 
 local mode = arg and arg[1] or "quick"
 local full = mode == "full"
@@ -28,6 +31,26 @@ local rounds = tonumber(os.getenv("MOONLIFT_LJ_VEC_BENCH_ROUNDS") or "1")
 local cc = os.getenv("MOONLIFT_LJ_VEC_BENCH_CC") or os.getenv("CC") or "gcc"
 local cflags = os.getenv("MOONLIFT_LJ_VEC_BENCH_CFLAGS") or "-std=c99 -O3 -march=native"
 local with_gcc = os.getenv("MOONLIFT_LJ_VEC_BENCH_GCC") ~= "0"
+
+local function stencil_object_cflags()
+    return cflags .. " -ffunction-sections -fno-pic -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -c"
+end
+
+local function compile_artifacts(artifacts, opts)
+    opts = opts or {}
+    opts.cc = opts.cc or cc
+    opts.cflags = opts.cflags or stencil_object_cflags()
+    local bank, bank_err, source = StencilBank.build_binary_bank(artifacts, opts)
+    if bank == nil then return nil, bank_err, source end
+    local realization, realize_err = StencilBank.realize_binary_artifacts(artifacts, {
+        bank = bank,
+        preamble = opts.preamble,
+        ffi_preamble = opts.ffi_preamble,
+        patch_values = opts.patch_values,
+    })
+    if realization == nil then return nil, realize_err, source end
+    return { kind = "BinaryStencilBenchmarkBuild", bank = bank, realization = realization, symbols = realization.symbols, source = source }, nil, source
+end
 
 local function shell_quote(s)
     return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
@@ -61,9 +84,10 @@ static int cmp_double(const void *a, const void *b) {
     return (da > db) - (da < db);
 }
 
-static int32_t sum_i32(const int32_t *xs, int n) {
-    uint32_t acc = 0;
-    for (int i = 0; i < n; i++) acc += (uint32_t)xs[i];
+__attribute__((noinline))
+static int32_t sum_i32(const int32_t *xs, int32_t start, int32_t stop, int32_t init) {
+    uint32_t acc = (uint32_t)init;
+    for (int32_t i = start; i < stop; i++) acc += (uint32_t)xs[i];
     return (int32_t)acc;
 }
 
@@ -75,11 +99,14 @@ int main(int argc, char **argv) {
     double *times = (double *)calloc((size_t)samples, sizeof(double));
     if (!xs || !times) abort();
     for (int i = 0; i < n; i++) xs[i] = (int32_t)(i * 17 + 11);
+    volatile int32_t vstart = 0;
+    volatile int32_t vstop = (int32_t)n;
+    volatile int32_t vinit = 0;
     int32_t first = 0;
     for (int s = 0; s < samples; s++) {
         double t0 = now_s();
         int32_t value = 0;
-        for (int r = 0; r < rounds; r++) value = sum_i32(xs, n);
+        for (int r = 0; r < rounds; r++) value = sum_i32(xs, vstart, vstop, vinit);
         times[s] = now_s() - t0;
         if (s == 0) first = value;
         if (value != first) abort();
@@ -118,7 +145,6 @@ local item_id = LJ.LJValueId("item")
 local acc_id = LJ.LJValueId("acc")
 local source_id = LJ.LJMachineId("source")
 local fold_id = LJ.LJMachineId("fold")
-local vec_id = LJ.LJMachineId("vec")
 local stencil_id = LJ.LJMachineId("stencil_vec")
 local zero = LJ.LJExprLiteral(Core.LitInt("0"), i32_phys)
 
@@ -158,27 +184,6 @@ local function scalar_fold_func()
     )
 end
 
-local function vector_func(name, machine_id)
-    local vec = LJ.LJMachine(
-        machine_id,
-        LJ.LJMachineVectorReduceArray(xs_id, zero, LJ.LJExprValue(n_id), LJ.LJExprLiteral(Core.LitInt("1"), i32_phys), i32_phys, i32_phys, Value.ReductionAdd, sem, zero, 8, 1),
-        i32_phys,
-        LJ.LJStateScalar,
-        LJ.LJTraceHot
-    )
-    return LJ.LJFunc(
-        LJ.LJFuncId(name),
-        nil,
-        name,
-        LJ.LJFuncSigId("sig:" .. name),
-        params(),
-        {},
-        { vec },
-        LJ.LJBodyMachine(machine_id, LJ.LJTerminalFirst(nil)),
-        LJ.LJTraceHot
-    )
-end
-
 local stencil_reduction = Value.ReductionFact(
     Value.AlgebraFactId("reduction:bench:sum_i32"),
     Flow.FlowDomainFunction(Code.CodeFuncId("fn:sum_i32_stencil")),
@@ -191,15 +196,17 @@ local stencil_reduction = Value.ReductionFact(
     nil,
     Value.AlgebraProofIdentity("benchmark stencil reduction")
 )
-local stencil_artifact = StencilC.reduce_array_artifact(stencil_reduction, nil, {
+local stencil_artifact = StencilArtifactPlan.reduce_array_artifact(stencil_reduction, nil, {
     elem_ty = i32,
     result_ty = i32,
     step_num = 1,
+    schedule = Schedule.ScheduleVector(Schedule.LaneVector(i32, 16), 1, 1, Schedule.TailScalar),
 })
-local stencil_build, stencil_build_err = StencilC.compile_artifacts({ stencil_artifact }, {
+assert(pvm.classof(stencil_artifact.instance.schedule) == Stencil.StencilScheduleVector, "vector reduce benchmark must build a vector stencil artifact")
+local stencil_build, stencil_build_err = compile_artifacts({ stencil_artifact }, {
     stem = "bench_luajit_vector_reduce_stencil",
     cc = cc,
-    cflags = cflags .. " -fPIC -shared",
+    cflags = stencil_object_cflags(),
 })
 if stencil_build == nil then io.stderr:write("skipping stencil C artifact; " .. tostring(stencil_build_err) .. "\n") end
 
@@ -227,7 +234,6 @@ end
 local artifacts = with_gcc and compile_c_artifacts() or nil
 local funcs = {
     scalar_fold_func(),
-    vector_func("sum_i32_vec_fallback", vec_id),
 }
 if stencil_build ~= nil then funcs[#funcs + 1] = stencil_func() end
 
@@ -250,14 +256,12 @@ end
 
 local expected = handwritten_sum()
 assert(compiled.sum_i32_fold(xs, n) == expected)
-assert(compiled.sum_i32_vec_fallback(xs, n) == expected)
 if compiled.sum_i32_vec_stencil then assert(compiled.sum_i32_vec_stencil(xs, n) == expected) end
 
-print(string.format("MoonLuaJIT vector reduce benchmark mode=%s n=%d samples=%d rounds=%d", mode, n, samples, rounds))
+print(string.format("MoonLuaJIT stencil reduce benchmark mode=%s n=%d samples=%d rounds=%d", mode, n, samples, rounds))
 print("emitted source bytes " .. tostring(#src))
 local cases = {
     { name = "emitted fold i32", fn = function() return compiled.sum_i32_fold(xs, n) end },
-    { name = "vector fallback i32", fn = function() return compiled.sum_i32_vec_fallback(xs, n) end },
     { name = "handwritten i32", fn = handwritten_sum },
 }
 if compiled.sum_i32_vec_stencil then
@@ -277,7 +281,7 @@ for i = 1, #results do print(Measure.format_result(results[i])) end
 if artifacts and artifacts.baseline_ok then
     local pipe = io.popen(table.concat({ shell_quote(artifacts.baseline_exe), tostring(n), tostring(samples), tostring(rounds) }, " "), "r")
     if pipe ~= nil then
-        if stencil_build then io.write("\nStencil C command: " .. stencil_build.command .. "\n") end
+        if stencil_build and stencil_build.bank then io.write("\nStencil C command: " .. stencil_build.bank.command .. "\n") end
         io.write("GCC baseline command: " .. artifacts.baseline_cmd .. "\n")
         io.write(pipe:read("*a"))
         pipe:close()

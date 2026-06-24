@@ -61,6 +61,7 @@ local function bind_context(T)
 
     local module_type_api = require("moonlift.tree_module_type")(T)
     local control_api = require("moonlift.tree_control_facts")(T)
+    local TypecheckRules = require("moonlift.tree_typecheck_rules")(T)
 
     local type_view
     local type_index_base
@@ -82,6 +83,24 @@ local function bind_context(T)
     local function index_ty() return Ty.TScalar(C.ScalarIndex) end
     local function f64_ty() return Ty.TScalar(C.ScalarF64) end
     local function cstr_ty() return Ty.TPtr(Ty.TScalar(C.ScalarU8)) end
+
+    local function select_stmt_typecheck(stmt)
+        local selection, err = TypecheckRules.select_stmt(stmt)
+        if selection == nil then error("phase moonlift_tree_typecheck_stmt: " .. tostring(err), 2) end
+        return selection.kind
+    end
+
+    local function select_expr_typecheck(expr)
+        local selection, err = TypecheckRules.select_expr(expr)
+        if selection == nil then error("phase moonlift_tree_typecheck_expr: " .. tostring(err), 2) end
+        return selection.kind
+    end
+
+    local function select_typecheck(kind, node, selector)
+        local selection, err = selector(node)
+        if selection == nil then error("phase moonlift_tree_typecheck_" .. kind .. ": " .. tostring(err), 2) end
+        return selection.kind
+    end
 
     local function view_elem(view)
         local cls = schema.classof(view)
@@ -897,8 +916,8 @@ local function bind_context(T)
     end
 
     function type_view(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ViewFromExpr) then
+        local action = select_typecheck("view", node, TypecheckRules.select_view)
+        if action == "from_expr" then
             return (function(self, ctx)
 
             local base = only(type_expr(self.base, ctx))
@@ -908,7 +927,7 @@ local function bind_context(T)
             if schema.classof(base_access) == Ty.TView then elem = base_access.elem elseif schema.classof(base_access) == Ty.TPtr then elem = base_access.elem end
             return single(Tr.TypeViewResult(schema.with(self, { base = base.expr, elem = elem }), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ViewContiguous) then
+        elseif action == "contiguous" then
             return (function(self, ctx)
 
             local data = only(type_expr(self.data, ctx)); local len = type_expr_expect(self.len, ctx, index_ty())
@@ -921,7 +940,7 @@ local function bind_context(T)
             if not is_integer_scalar(len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view len", index_ty(), len.ty) end
             return single(Tr.TypeViewResult(schema.with(self, { data = data.expr, elem = elem, len = len.expr }), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ViewStrided) then
+        elseif action == "strided" then
             return (function(self, ctx)
 
             local data = only(type_expr(self.data, ctx)); local len = type_expr_expect(self.len, ctx, index_ty()); local stride = type_expr_expect(self.stride, ctx, index_ty())
@@ -935,7 +954,7 @@ local function bind_context(T)
             if not is_integer_scalar(stride.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view stride", index_ty(), stride.ty) end
             return single(Tr.TypeViewResult(schema.with(self, { data = data.expr, elem = elem, len = len.expr, stride = stride.expr }), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ViewRestrided) then
+        elseif action == "restrided" then
             return (function(self, ctx)
 
             local base = only(type_view(self.base, ctx)); local stride = type_expr_expect(self.stride, ctx, index_ty())
@@ -943,7 +962,7 @@ local function bind_context(T)
             if not is_integer_scalar(stride.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view stride", index_ty(), stride.ty) end
             return single(Tr.TypeViewResult(schema.with(self, { base = base.view, stride = stride.expr }), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ViewWindow) then
+        elseif action == "window" then
             return (function(self, ctx)
 
             local base = only(type_view(self.base, ctx)); local start = type_expr_expect(self.start, ctx, index_ty()); local len = type_expr_expect(self.len, ctx, index_ty())
@@ -952,7 +971,7 @@ local function bind_context(T)
             if not is_integer_scalar(len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view window len", index_ty(), len.ty) end
             return single(Tr.TypeViewResult(schema.with(self, { base = base.view, start = start.expr, len = len.expr }), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ViewRowBase) then
+        elseif action == "row_base" then
             return (function(self, ctx)
 
             local base = only(type_view(self.base, ctx)); local row_offset = type_expr_expect(self.row_offset, ctx, index_ty())
@@ -960,7 +979,7 @@ local function bind_context(T)
             if not is_integer_scalar(row_offset.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view row offset", index_ty(), row_offset.ty) end
             return single(Tr.TypeViewResult(schema.with(self, { base = base.view, row_offset = row_offset.expr }), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ViewInterleaved) then
+        elseif action == "interleaved" then
             return (function(self, ctx)
 
             local data = only(type_expr(self.data, ctx)); local len = type_expr_expect(self.len, ctx, index_ty()); local stride = type_expr_expect(self.stride, ctx, index_ty()); local lane = type_expr_expect(self.lane, ctx, index_ty())
@@ -970,7 +989,7 @@ local function bind_context(T)
             if not is_integer_scalar(lane.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view lane", index_ty(), lane.ty) end
             return single(Tr.TypeViewResult(schema.with(self, { data = data.expr, len = len.expr, stride = stride.expr, lane = lane.expr }), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ViewInterleavedView) then
+        elseif action == "interleaved_view" then
             return (function(self, ctx)
 
             local base = only(type_view(self.base, ctx)); local stride = type_expr_expect(self.stride, ctx, index_ty()); local lane = type_expr_expect(self.lane, ctx, index_ty())
@@ -980,7 +999,7 @@ local function bind_context(T)
             return single(Tr.TypeViewResult(schema.with(self, { base = base.view, stride = stride.expr, lane = lane.expr }), issues))
             end)(node, ...)
         else
-            error("phase moonlift_tree_typecheck_view: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
+            error("phase moonlift_tree_typecheck_view: no handler for " .. tostring(action), 2)
         end
     end
 
@@ -992,8 +1011,8 @@ local function bind_context(T)
     end
 
     function type_index_base(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.IndexBaseExpr) then
+        local action = select_typecheck("index_base", node, TypecheckRules.select_index_base)
+        if action == "expr" then
             return (function(self, ctx)
 
             local base = only(type_expr(self.base, ctx))
@@ -1012,13 +1031,13 @@ local function bind_context(T)
             issues[#issues + 1] = Tr.TypeIssueNotIndexable(base.ty)
             return single(Tr.TypeIndexBaseResult(Tr.IndexBaseView(Tr.ViewFromExpr(base.expr, void_ty())), void_ty(), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.IndexBaseView) then
+        elseif action == "view" then
             return (function(self, ctx)
 
             local view = only(type_view(self.view, ctx))
             return single(Tr.TypeIndexBaseResult(schema.with(self, { view = view.view }), view_elem(view.view), view.issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.IndexBasePlace) then
+        elseif action == "place" then
             return (function(self, ctx)
 
             local base = only(type_place(self.base, ctx))
@@ -1026,19 +1045,19 @@ local function bind_context(T)
             return single(Tr.TypeIndexBaseResult(schema.with(self, { base = base.place }), self.elem, issues))
             end)(node, ...)
         else
-            error("phase moonlift_tree_typecheck_index_base: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
+            error("phase moonlift_tree_typecheck_index_base: no handler for " .. tostring(action), 2)
         end
     end
 
     function type_place(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.PlaceRef) then
+        local action = select_typecheck("place", node, TypecheckRules.select_place)
+        if action == "ref" then
             return (function(self, ctx)
 
             local ty, ref, issues = ref_type(self.ref, ctx.env)
             return single(result_place(Tr.PlaceRef(Tr.PlaceTyped(ty), ref), ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.PlaceDeref) then
+        elseif action == "deref" then
             return (function(self, ctx)
 
             local base = only(type_expr(self.base, ctx))
@@ -1048,7 +1067,7 @@ local function bind_context(T)
             if schema.classof(base_access) == Ty.TPtr then ty = base_access.elem else issues[#issues + 1] = Tr.TypeIssueNotPointer(base.ty) end
             return single(result_place(Tr.PlaceDeref(Tr.PlaceTyped(ty), base.expr), ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.PlaceDot) then
+        elseif action == "dot" then
             return (function(self, ctx)
 
             local base = only(type_place(self.base, ctx)); local issues = {}; append_all(issues, base.issues)
@@ -1061,13 +1080,13 @@ local function bind_context(T)
             local preserved_ty = typed_place_header_ty(self.h) or base.ty
             return single(result_place(Tr.PlaceDot(Tr.PlaceTyped(preserved_ty), base.place, self.name), preserved_ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.PlaceField) then
+        elseif action == "field" then
             return (function(self, ctx)
 
             local base = only(type_place(self.base, ctx)); local issues = {}; append_all(issues, base.issues)
             return single(result_place(Tr.PlaceField(Tr.PlaceTyped(self.field.ty), base.place, self.field), self.field.ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.PlaceIndex) then
+        elseif action == "index" then
             return (function(self, ctx)
 
             local base = only(type_index_base(self.base, ctx)); local index = type_expr_expect(self.index, ctx, Ty.TScalar(C.ScalarIndex))
@@ -1075,18 +1094,18 @@ local function bind_context(T)
             if not is_integer_scalar(index.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("index", Ty.TScalar(C.ScalarIndex), index.ty) end
             return single(result_place(Tr.PlaceIndex(Tr.PlaceTyped(base.elem), base.base, index.expr), base.elem, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.PlaceSlotValue) then
+        elseif action == "slot_value" then
             return (function(self, ctx)
  return single(result_place(Tr.PlaceSlotValue(Tr.PlaceTyped(self.slot.ty), self.slot), self.slot.ty, {}))
             end)(node, ...)
         else
-            error("phase moonlift_tree_typecheck_place: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
+            error("phase moonlift_tree_typecheck_place: no handler for " .. tostring(action), 2)
         end
     end
 
     function type_expr(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ExprLit) then
+        local action = select_expr_typecheck(node)
+        if action == "lit" then
             return (function(self, ctx)
 
             local cls = schema.classof(self.value)
@@ -1094,13 +1113,13 @@ local function bind_context(T)
             if cls == C.LitInt then ty = i32_ty() elseif cls == C.LitFloat then ty = f64_ty() elseif cls == C.LitBool then ty = bool_ty() elseif cls == C.LitString then ty = cstr_ty() end
             return single(result_expr(Tr.ExprLit(Tr.ExprTyped(ty), self.value), ty, {}))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprRef) then
+        elseif action == "ref" then
             return (function(self, ctx)
 
             local ty, ref, issues = ref_type(self.ref, ctx.env)
             return single(result_expr(Tr.ExprRef(Tr.ExprTyped(ty), ref), ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprUnary) then
+        elseif action == "unary" then
             return (function(self, ctx)
 
             local value = only(type_expr(self.value, ctx)); local issues = {}; append_all(issues, value.issues)
@@ -1108,7 +1127,7 @@ local function bind_context(T)
             if not is_numeric_scalar(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(tostring(self.op), value.ty) end
             return single(result_expr(Tr.ExprUnary(Tr.ExprTyped(value.ty), self.op, value.expr), value.ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprBinary) then
+        elseif action == "binary" then
             return (function(self, ctx)
 
             local lhs = only(type_expr(self.lhs, ctx)); local issues = {}
@@ -1125,14 +1144,14 @@ local function bind_context(T)
             local ty = type_binary_op(self.op, lhs.ty, rhs.ty, issues)
             return single(result_expr(Tr.ExprBinary(Tr.ExprTyped(ty), self.op, lhs.expr, rhs.expr), ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprCompare) then
+        elseif action == "compare" then
             return (function(self, ctx)
 
             local lhs = only(type_expr(self.lhs, ctx)); local rhs = type_expr_expect(self.rhs, ctx, lhs.ty); local issues = {}
             append_all(issues, lhs.issues); append_all(issues, rhs.issues); type_compare_op(self.op, lhs.ty, rhs.ty, issues)
             return single(result_expr(Tr.ExprCompare(Tr.ExprTyped(bool_ty()), self.op, lhs.expr, rhs.expr), bool_ty(), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprLogic) then
+        elseif action == "logic" then
             return (function(self, ctx)
 
             local lhs = only(type_expr(self.lhs, ctx)); local rhs = only(type_expr(self.rhs, ctx)); local issues = {}
@@ -1140,7 +1159,7 @@ local function bind_context(T)
             if not is_bool(lhs.ty) or not is_bool(rhs.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidLogic(tostring(self.op), lhs.ty, rhs.ty) end
             return single(result_expr(Tr.ExprLogic(Tr.ExprTyped(bool_ty()), self.op, lhs.expr, rhs.expr), bool_ty(), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprCast) then
+        elseif action == "cast" then
             return (function(self, ctx)
 
             local dst_ty = canonical_type(ctx.env, self.ty)
@@ -1152,11 +1171,11 @@ local function bind_context(T)
             local op = surface_cast_to_machine_op(self.op, value.ty, dst_ty)
             return single(result_expr(Tr.ExprMachineCast(Tr.ExprTyped(dst_ty), op, dst_ty, value.expr), dst_ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprMachineCast) then
+        elseif action == "machine_cast" then
             return (function(self, ctx)
  local value = only(type_expr(self.value, ctx)); local issues = {}; append_all(issues, value.issues); check_type_policy(self.ty, issues, "machine cast"); return single(result_expr(Tr.ExprMachineCast(Tr.ExprTyped(self.ty), self.op, self.ty, value.expr), self.ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprLen) then
+        elseif action == "len" then
             return (function(self, ctx)
 
             local value = only(type_expr(self.value, ctx)); local issues = {}; append_all(issues, value.issues)
@@ -1164,7 +1183,7 @@ local function bind_context(T)
             if schema.classof(value_access) ~= Ty.TView and schema.classof(value_access) ~= Ty.TArray then issues[#issues + 1] = Tr.TypeIssueExpected("len", Ty.TView(void_ty()), value.ty) end
             return single(result_expr(Tr.ExprLen(Tr.ExprTyped(index_ty()), value.expr), index_ty(), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprCall) then
+        elseif action == "call" then
             return (function(self, ctx)
 
             local issues = {}; local typed_args = {}
@@ -1216,43 +1235,43 @@ local function bind_context(T)
             if invalidated_lease ~= nil then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease invalidating call", invalidated_lease) end
             return single(result_expr(Tr.ExprCall(Tr.ExprTyped(result_ty), callee_r.expr, typed_args), result_ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprField) then
+        elseif action == "field" then
             return (function(self, ctx)
  local base = only(type_expr(self.base, ctx)); local issues = {}; append_all(issues, base.issues); return single(result_expr(Tr.ExprField(Tr.ExprTyped(self.field.ty), base.expr, self.field), self.field.ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprIndex) then
+        elseif action == "index" then
             return (function(self, ctx)
 
             local base = only(type_index_base(self.base, ctx)); local index = type_expr_expect(self.index, ctx, Ty.TScalar(C.ScalarIndex)); local issues = {}
             append_all(issues, base.issues); append_all(issues, index.issues); if not is_integer_scalar(index.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("index", Ty.TScalar(C.ScalarIndex), index.ty) end
             return single(result_expr(Tr.ExprIndex(Tr.ExprTyped(base.elem), base.base, index.expr), base.elem, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprIf) then
+        elseif action == "if" then
             return (function(self, ctx)
 
             local cond = only(type_expr(self.cond, ctx)); local a = only(type_expr(self.then_expr, ctx)); local b = only(type_expr(self.else_expr, ctx)); local issues = {}
             append_all(issues, cond.issues); append_all(issues, a.issues); append_all(issues, b.issues); check_expected("if cond", bool_ty(), cond.ty, issues); check_expected("if branches", a.ty, b.ty, issues)
             return single(result_expr(Tr.ExprIf(Tr.ExprTyped(a.ty), cond.expr, a.expr, b.expr), a.ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprSelect) then
+        elseif action == "select" then
             return (function(self, ctx)
 
             local cond = only(type_expr(self.cond, ctx)); local a = only(type_expr(self.then_expr, ctx)); local b = only(type_expr(self.else_expr, ctx)); local issues = {}
             append_all(issues, cond.issues); append_all(issues, a.issues); append_all(issues, b.issues); check_expected("select cond", bool_ty(), cond.ty, issues); check_expected("select branches", a.ty, b.ty, issues)
             return single(result_expr(Tr.ExprSelect(Tr.ExprTyped(a.ty), cond.expr, a.expr, b.expr), a.ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprControl) then
+        elseif action == "control" then
             return (function(self, ctx)
 
             local region = only(type_control_expr_region(self.region, ctx)); return single(result_expr(Tr.ExprControl(Tr.ExprTyped(region.region.result_ty), region.region), region.region.result_ty, region.issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprBlock) then
+        elseif action == "block" then
             return (function(self, ctx)
 
             local body = type_stmt_body(self.stmts, ctx); local result = only(type_expr(self.result, body.env)); local issues = {}; append_all(issues, body.issues); append_all(issues, result.issues)
             return single(result_expr(Tr.ExprBlock(Tr.ExprTyped(result.ty), body.stmts, result.expr), result.ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprArray) then
+        elseif action == "array" then
             return (function(self, ctx)
 
             local elems = {}; local issues = {}
@@ -1260,7 +1279,7 @@ local function bind_context(T)
             local ty = Ty.TArray(Ty.ArrayLenConst(#elems), self.elem_ty)
             return single(result_expr(Tr.ExprArray(Tr.ExprTyped(ty), self.elem_ty, elems), ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprAgg) then
+        elseif action == "agg" then
             return (function(self, ctx)
 
             local issues = {}
@@ -1317,50 +1336,29 @@ local function bind_context(T)
             end
             return single(result_expr(schema.with(self, { h = Tr.ExprTyped(self.ty) }), self.ty, {}))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprArray) then
-            return (function(self, ctx)
-
-            if #self.elems == 0 then
-                local ty = Ty.TArray(Ty.ArrayLenConst(0), self.elem_ty)
-                return single(result_expr(Tr.ExprArray(Tr.ExprTyped(ty), self.elem_ty, {}), ty, { Tr.TypeIssueExpected("empty array literal", ty, void_ty()) }))
-            end
-            local issues = {}
-            local first_ty = only(type_expr(self.elems[1], ctx)).ty
-            local elem_ty = first_ty
-            local checked = {}
-            for i = 1, #self.elems do
-                local ev = type_expr_expect(self.elems[i], ctx, elem_ty)
-                append_all(issues, ev.issues)
-                check_expected("array elem", elem_ty, ev.ty, issues)
-                if type_contains_owned(ev.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned captured in aggregate", ev.ty) end
-                checked[i] = ev.expr
-            end
-            local ty = Ty.TArray(Ty.ArrayLenConst(#self.elems), elem_ty)
-            return single(result_expr(Tr.ExprArray(Tr.ExprTyped(ty), elem_ty, checked), ty, issues))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprView) then
+        elseif action == "view" then
             return (function(self, ctx)
  local view = only(type_view(self.view, ctx)); local ty = Ty.TView(view_elem(view.view)); return single(result_expr(Tr.ExprView(Tr.ExprTyped(ty), view.view), ty, view.issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprLoad) then
+        elseif action == "load" then
             return (function(self, ctx)
  local addr = only(type_expr(self.addr, ctx)); return single(result_expr(Tr.ExprLoad(Tr.ExprTyped(self.ty), self.ty, addr.expr), self.ty, addr.issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprAtomicLoad) then
+        elseif action == "atomic_load" then
             return (function(self, ctx)
 
             local addr = type_expr_expect(self.addr, ctx, Ty.TPtr(self.ty)); local issues = {}; append_all(issues, addr.issues)
             check_expected("atomic_load addr", Ty.TPtr(self.ty), addr.ty, issues); check_atomic_value_type("atomic_load", self.ty, issues)
             return single(result_expr(Tr.ExprAtomicLoad(Tr.ExprTyped(self.ty), self.ty, addr.expr, self.ordering), self.ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprAtomicRmw) then
+        elseif action == "atomic_rmw" then
             return (function(self, ctx)
 
             local addr = type_expr_expect(self.addr, ctx, Ty.TPtr(self.ty)); local value = type_expr_expect(self.value, ctx, self.ty); local issues = {}; append_all(issues, addr.issues); append_all(issues, value.issues)
             check_expected("atomic_rmw addr", Ty.TPtr(self.ty), addr.ty, issues); check_expected("atomic_rmw value", self.ty, value.ty, issues); check_atomic_rmw_value_type(self.op, self.ty, issues)
             return single(result_expr(Tr.ExprAtomicRmw(Tr.ExprTyped(self.ty), self.op, self.ty, addr.expr, value.expr, self.ordering), self.ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprAtomicCas) then
+        elseif action == "atomic_cas" then
             return (function(self, ctx)
 
             local addr = type_expr_expect(self.addr, ctx, Ty.TPtr(self.ty)); local expected = type_expr_expect(self.expected, ctx, self.ty); local replacement = type_expr_expect(self.replacement, ctx, self.ty); local issues = {}
@@ -1368,7 +1366,7 @@ local function bind_context(T)
             check_expected("atomic_cas addr", Ty.TPtr(self.ty), addr.ty, issues); check_expected("atomic_cas expected", self.ty, expected.ty, issues); check_expected("atomic_cas replacement", self.ty, replacement.ty, issues); check_atomic_value_type("atomic_cas", self.ty, issues)
             return single(result_expr(Tr.ExprAtomicCas(Tr.ExprTyped(self.ty), self.ty, addr.expr, expected.expr, replacement.expr, self.ordering), self.ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprDot) then
+        elseif action == "dot" then
             return (function(self, ctx)
 
             if self.name == "invalid" and schema.classof(self.base) == Tr.ExprRef and schema.classof(self.base.ref) == B.ValueRefName then
@@ -1392,7 +1390,7 @@ local function bind_context(T)
             local preserved_ty = typed_expr_header_ty(self.h) or base.ty
             return single(result_expr(Tr.ExprDot(Tr.ExprTyped(preserved_ty), base.expr, self.name), preserved_ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprIntrinsic) then
+        elseif action == "intrinsic" then
             return (function(self, ctx)
 
             local issues = {}; local args = {}
@@ -1406,15 +1404,15 @@ local function bind_context(T)
             if self.op == C.IntrinsicTrap or self.op == C.IntrinsicAssume then ty = void_ty() end
             return single(result_expr(Tr.ExprIntrinsic(Tr.ExprTyped(ty), self.op, args), ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprAddrOf) then
+        elseif action == "addr_of" then
             return (function(self, ctx)
  local place = only(type_place(self.place, ctx)); local ty = Ty.TPtr(place.ty); return single(result_expr(Tr.ExprAddrOf(Tr.ExprTyped(ty), place.place), ty, place.issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprDeref) then
+        elseif action == "deref" then
             return (function(self, ctx)
  local value = only(type_expr(self.value, ctx)); local issues = {}; append_all(issues, value.issues); local ty = void_ty(); local access = lease_access_base(value.ty); if schema.classof(access) == Ty.TPtr then ty = access.elem else issues[#issues + 1] = Tr.TypeIssueNotPointer(value.ty) end; return single(result_expr(Tr.ExprDeref(Tr.ExprTyped(ty), value.expr), ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprSwitch) then
+        elseif action == "switch" then
             return (function(self, ctx)
 
             local value = only(type_expr(self.value, ctx))
@@ -1445,11 +1443,11 @@ local function bind_context(T)
             end
             return single(result_expr(Tr.ExprSwitch(Tr.ExprTyped(default.ty), value.expr, arms, var_arms, default_body.stmts, default.expr), default.ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprClosure) then
+        elseif action == "closure" then
             return (function(self, ctx)
  local ty = Ty.TClosure(self.params, self.result); return single(result_expr(schema.with(self, { h = Tr.ExprTyped(ty) }), ty, {}))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprCtor) then
+        elseif action == "ctor" then
             return (function(self, ctx)
 
             local def, variant = find_variant(ctx, self.type_name, self.variant_name)
@@ -1477,7 +1475,7 @@ local function bind_context(T)
             end
             return single(result_expr(Tr.ExprCtor(Tr.ExprTyped(ty), self.type_name, self.variant_name, args), ty, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprNull) then
+        elseif action == "null" then
             return (function(self, ctx)
 
             local issues = {}
@@ -1486,19 +1484,19 @@ local function bind_context(T)
             end
             return single(result_expr(Tr.ExprNull(Tr.ExprTyped(self.elem), self.elem), self.elem, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprSizeOf) then
+        elseif action == "sizeof" then
             return (function(self, ctx)
 
             local issues = {}; check_type_policy(self.ty, issues, "sizeof")
             return single(result_expr(Tr.ExprSizeOf(Tr.ExprTyped(index_ty()), self.ty), index_ty(), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprAlignOf) then
+        elseif action == "alignof" then
             return (function(self, ctx)
 
             local issues = {}; check_type_policy(self.ty, issues, "alignof")
             return single(result_expr(Tr.ExprAlignOf(Tr.ExprTyped(index_ty()), self.ty), index_ty(), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprIsNull) then
+        elseif action == "is_null" then
             return (function(self, ctx)
 
             local value = only(type_expr(self.value, ctx))
@@ -1508,16 +1506,16 @@ local function bind_context(T)
             end
             return single(result_expr(Tr.ExprIsNull(Tr.ExprTyped(bool_ty()), value.expr), bool_ty(), issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprSlotValue) then
+        elseif action == "slot_value" then
             return (function(self, ctx)
  return single(result_expr(Tr.ExprSlotValue(Tr.ExprTyped(self.slot.ty), self.slot), self.slot.ty, {}))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprUseExprFrag) then
+        elseif action == "use_expr_frag" then
             return (function(self, ctx)
  local ty = void_ty(); return single(result_expr(schema.with(self, { h = Tr.ExprTyped(ty) }), ty, {}))
             end)(node, ...)
         else
-            error("phase moonlift_tree_typecheck_expr: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
+            error("phase moonlift_tree_typecheck_expr: no handler for " .. tostring(action), 2)
         end
     end
 
@@ -1570,8 +1568,8 @@ local function bind_context(T)
     end
 
     function type_stmt(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.StmtLet) then
+        local action = select_stmt_typecheck(node)
+        if action == "let" then
             return (function(self, ctx)
 
             local binding_ty = canonical_type(ctx.env, self.binding.ty)
@@ -1584,7 +1582,7 @@ local function bind_context(T)
             local env = env_add_value(ctx.env, B.ValueEntry(binding.name, binding))
             return single(Tr.TypeStmtResult(ctx_with_env(ctx, env), { Tr.StmtLet(Tr.StmtSurface, binding, init.expr) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtVar) then
+        elseif action == "var" then
             return (function(self, ctx)
 
             local binding_ty = canonical_type(ctx.env, self.binding.ty)
@@ -1597,61 +1595,61 @@ local function bind_context(T)
             local env = env_add_value(ctx.env, B.ValueEntry(binding.name, binding))
             return single(Tr.TypeStmtResult(ctx_with_env(ctx, env), { Tr.StmtVar(Tr.StmtSurface, binding, init.expr) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtSet) then
+        elseif action == "set" then
             return (function(self, ctx)
  local place = only(type_place(self.place, ctx)); local value = type_expr_expect(self.value, ctx, place.ty); local issues = {}; append_all(issues, place.issues); append_all(issues, value.issues); check_expected("set", place.ty, value.ty, issues); if type_contains_lease(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape store", value.ty) end; if type_contains_owned(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", value.ty) end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtSet(Tr.StmtSurface, place.place, value.expr) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtAtomicStore) then
+        elseif action == "atomic_store" then
             return (function(self, ctx)
 
             local addr = type_expr_expect(self.addr, ctx, Ty.TPtr(self.ty)); local value = type_expr_expect(self.value, ctx, self.ty); local issues = {}; append_all(issues, addr.issues); append_all(issues, value.issues)
             check_expected("atomic_store addr", Ty.TPtr(self.ty), addr.ty, issues); check_expected("atomic_store value", self.ty, value.ty, issues); check_atomic_value_type("atomic_store", self.ty, issues)
             return single(Tr.TypeStmtResult(ctx, { Tr.StmtAtomicStore(Tr.StmtSurface, self.ty, addr.expr, value.expr, self.ordering) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtAtomicFence) then
+        elseif action == "atomic_fence" then
             return (function(self, ctx)
  return single(Tr.TypeStmtResult(ctx, { Tr.StmtAtomicFence(Tr.StmtSurface, self.ordering) }, {}))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtExpr) then
+        elseif action == "expr" then
             return (function(self, ctx)
  local expr = only(type_expr(self.expr, ctx)); return single(Tr.TypeStmtResult(ctx, { Tr.StmtExpr(Tr.StmtSurface, expr.expr) }, expr.issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtAssert) then
+        elseif action == "assert" then
             return (function(self, ctx)
  local cond = type_expr_expect(self.cond, ctx, bool_ty()); local issues = {}; append_all(issues, cond.issues); check_expected("assert", bool_ty(), cond.ty, issues); return single(Tr.TypeStmtResult(ctx, { Tr.StmtAssert(Tr.StmtSurface, cond.expr) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtReturnVoid) then
+        elseif action == "return_void" then
             return (function(self, ctx)
  local issues = {}; check_expected("return", void_ty(), ctx.return_ty, issues); return single(Tr.TypeStmtResult(ctx, { Tr.StmtReturnVoid(Tr.StmtSurface) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtReturnValue) then
+        elseif action == "return_value" then
             return (function(self, ctx)
  local value = type_expr_expect(self.value, ctx, ctx.return_ty); local issues = {}; append_all(issues, value.issues); check_expected("return", ctx.return_ty, value.ty, issues); if type_contains_lease(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape return", value.ty) end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtReturnValue(Tr.StmtSurface, value.expr) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtYieldVoid) then
+        elseif action == "yield_void" then
             return (function(self, ctx)
  local issues = {}; if ctx.yield ~= Tr.TypeYieldVoid then issues[#issues + 1] = Tr.TypeIssueUnexpectedYield("yield") end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtYieldVoid(Tr.StmtSurface) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtYieldValue) then
+        elseif action == "yield_value" then
             return (function(self, ctx)
  local expected = schema.classof(ctx.yield) == Tr.TypeYieldValue and ctx.yield.ty or nil; local value = type_expr_expect(self.value, ctx, expected); local issues = {}; append_all(issues, value.issues); if schema.classof(ctx.yield) == Tr.TypeYieldValue then check_expected("yield", ctx.yield.ty, value.ty, issues) else issues[#issues + 1] = Tr.TypeIssueUnexpectedYield("yield value") end; if type_contains_lease(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape yield", value.ty) end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtYieldValue(Tr.StmtSurface, value.expr) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtIf) then
+        elseif action == "if" then
             return (function(self, ctx)
 
             local cond = type_expr_expect(self.cond, ctx, bool_ty()); local then_r = type_stmt_body(self.then_body, ctx); local else_r = type_stmt_body(self.else_body, ctx); local issues = {}
             append_all(issues, cond.issues); append_all(issues, then_r.issues); append_all(issues, else_r.issues); check_expected("if cond", bool_ty(), cond.ty, issues)
             return single(Tr.TypeStmtResult(ctx, { Tr.StmtIf(Tr.StmtSurface, cond.expr, then_r.stmts, else_r.stmts) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtJump) then
+        elseif action == "jump" then
             return (function(self, ctx)
  local args = {}; local issues = {}; for i = 1, #self.args do local value = only(type_expr(self.args[i].value, ctx)); args[#args + 1] = Tr.JumpArg(self.args[i].name, value.expr); append_all(issues, value.issues) end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtJump(Tr.StmtSurface, self.target, args) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtJumpCont) then
+        elseif action == "jump_cont" then
             return (function(self, ctx)
  local args = {}; local issues = {}; for i = 1, #self.args do local value = only(type_expr(self.args[i].value, ctx)); args[#args + 1] = Tr.JumpArg(self.args[i].name, value.expr); append_all(issues, value.issues) end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtJumpCont(Tr.StmtSurface, self.slot, args) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtSwitch) then
+        elseif action == "switch" then
             return (function(self, ctx)
 
             local value = only(type_expr(self.value, ctx))
@@ -1678,20 +1676,20 @@ local function bind_context(T)
             append_all(issues, default.issues)
             return single(Tr.TypeStmtResult(ctx, { Tr.StmtSwitch(Tr.StmtSurface, value.expr, arms, variant_arms, default.stmts) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtControl) then
+        elseif action == "control" then
             return (function(self, ctx)
  local region = only(type_control_stmt_region(self.region, ctx)); return single(Tr.TypeStmtResult(ctx, { Tr.StmtControl(Tr.StmtSurface, region.region) }, region.issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtTrap) then
+        elseif action == "trap" then
             return (function(self, ctx)
 
             return single(Tr.TypeStmtResult(ctx, { Tr.StmtTrap(Tr.StmtSurface) }, {}))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionSlot) then
+        elseif action == "use_region_slot" then
             return (function(self, ctx)
  return single(Tr.TypeStmtResult(ctx, { schema.with(self, { h = Tr.StmtSurface }) }, {}))
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionFrag) then
+        elseif action == "use_region_frag" then
             return (function(self, ctx)
 
             local frag = lookup_region_frag(ctx, self.frag)
@@ -1718,9 +1716,8 @@ local function bind_context(T)
             end
             return single(Tr.TypeStmtResult(ctx, { schema.with(self, { h = Tr.StmtSurface, args = args }) }, issues))
             end)(node, ...)
-        else
-            error("phase moonlift_tree_typecheck_stmt: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
+        error("phase moonlift_tree_typecheck_stmt: no handler for " .. tostring(action), 2)
     end
 
     type_stmt_body = function(stmts, ctx)
@@ -2144,8 +2141,8 @@ local function bind_context(T)
     end
 
     function type_control_stmt_region(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ControlStmtRegion) then
+        local action = select_typecheck("control_stmt_region", node, TypecheckRules.select_control_stmt_region)
+        if action == "stmt_region" then
             return (function(self, ctx)
 
             local entry, issues = type_entry_block(self.region_id, self.entry, ctx, Tr.TypeYieldVoid)
@@ -2156,13 +2153,13 @@ local function bind_context(T)
             return single(Tr.TypeControlStmtRegionResult(region, issues))
             end)(node, ...)
         else
-            error("phase moonlift_tree_typecheck_control_stmt_region: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
+            error("phase moonlift_tree_typecheck_control_stmt_region: no handler for " .. tostring(action), 2)
         end
     end
 
     function type_control_expr_region(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ControlExprRegion) then
+        local action = select_typecheck("control_expr_region", node, TypecheckRules.select_control_expr_region)
+        if action == "expr_region" then
             return (function(self, ctx)
 
             local result_ty = canonical_type(ctx.env, self.result_ty)
@@ -2174,7 +2171,7 @@ local function bind_context(T)
             return single(Tr.TypeControlExprRegionResult(region, issues))
             end)(node, ...)
         else
-            error("phase moonlift_tree_typecheck_control_expr_region: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
+            error("phase moonlift_tree_typecheck_control_expr_region: no handler for " .. tostring(action), 2)
         end
     end
 
@@ -2220,6 +2217,14 @@ local function bind_context(T)
             if schema.classof(a_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("same_len lhs", Ty.TView(void_ty()), a.ty) end
             if schema.classof(b_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("same_len rhs", Ty.TView(void_ty()), b.ty) end
             return Tr.ContractSameLen(a.expr, b.expr), issues
+        elseif cls == Tr.ContractSoAComponent then
+            local base = only(type_expr(contract.base, ctx))
+            append_all(issues, base.issues)
+            local base_access = lease_access_base(base.ty)
+            if schema.classof(base_access) ~= Ty.TPtr and schema.classof(base_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("soa_component base", Ty.TScalar(C.ScalarRawPtr), base.ty) end
+            local record_ty = canonical_type(ctx.env, contract.record_ty)
+            if field_layout_for(ctx.env, record_ty, contract.field_name) == nil then issues[#issues + 1] = Tr.TypeIssueUnresolvedValue(contract.field_name) end
+            return Tr.ContractSoAComponent(base.expr, record_ty, contract.field_name, contract.component_index), issues
         elseif cls == Tr.ContractNoAlias or cls == Tr.ContractReadonly or cls == Tr.ContractWriteonly or cls == Tr.ContractInvalidate or cls == Tr.ContractPreserve then
             local base = only(type_expr(contract.base, ctx)); append_all(issues, base.issues)
             local base_access = lease_access_base(base.ty)
@@ -2308,39 +2313,39 @@ local function bind_context(T)
     end
 
     function type_func(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.FuncLocal) then
+        local action = select_typecheck("func", node, TypecheckRules.select_func)
+        if action == "local" then
             return (function(self, module_env, region_frags)
  return single(type_plain_func(self, module_env, region_frags))
             end)(node, ...)
-        elseif schema.isa(node, Tr.FuncExport) then
+        elseif action == "export" then
             return (function(self, module_env, region_frags)
  return single(type_plain_func(self, module_env, region_frags))
             end)(node, ...)
-        elseif schema.isa(node, Tr.FuncLocalContract) then
+        elseif action == "local_contract" then
             return (function(self, module_env, region_frags)
  return single(type_contract_func(self, module_env, region_frags))
             end)(node, ...)
-        elseif schema.isa(node, Tr.FuncExportContract) then
+        elseif action == "export_contract" then
             return (function(self, module_env, region_frags)
  return single(type_contract_func(self, module_env, region_frags))
             end)(node, ...)
-        elseif schema.isa(node, Tr.FuncOpen) then
+        elseif action == "open" then
             return (function(self, module_env, region_frags)
  local ctx = Tr.TypeCheckEnv(module_env, self.result, Tr.TypeYieldNone, region_frags or {}); local body = type_stmt_body(self.body, ctx); local issues = {}; append_all(issues, body.issues); check_owned_function("<open>", {}, body.stmts, issues, ctx.region_frags); return single(Tr.TypeFuncResult(schema.with(self, { body = body.stmts }), issues))
             end)(node, ...)
         else
-            error("phase moonlift_tree_typecheck_func: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
+            error("phase moonlift_tree_typecheck_func: no handler for " .. tostring(action), 2)
         end
     end
 
     function type_item(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ItemFunc) then
+        local action = select_typecheck("item", node, TypecheckRules.select_item)
+        if action == "func" then
             return (function(self, module_env, region_frags)
  local r = only(type_func(self.func, module_env, region_frags or {})); return single(Tr.TypeItemResult({ Tr.ItemFunc(r.func) }, r.issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemConst) then
+        elseif action == "const" then
             return (function(self, module_env, region_frags)
 
             local ty = canonical_type(module_env, self.c.ty)
@@ -2351,7 +2356,7 @@ local function bind_context(T)
             if type_contains_owned(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", ty) end
             return single(Tr.TypeItemResult({ Tr.ItemConst(schema.with(self.c, { ty = ty, value = value.expr })) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemStatic) then
+        elseif action == "static" then
             return (function(self, module_env, region_frags)
 
             local ty = canonical_type(module_env, self.s.ty)
@@ -2362,15 +2367,15 @@ local function bind_context(T)
             if type_contains_owned(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", ty) end
             return single(Tr.TypeItemResult({ Tr.ItemStatic(schema.with(self.s, { ty = ty, value = value.expr })) }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemExtern) then
+        elseif action == "extern" then
             return (function(self)
  local issues = {}; check_func_types(self.func, issues); return single(Tr.TypeItemResult({ self }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemImport) then
+        elseif action == "import" then
             return (function(self)
  return single(Tr.TypeItemResult({ self }, {}))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemType) then
+        elseif action == "type" then
             return (function(self)
 
             local issues = {}
@@ -2414,15 +2419,15 @@ local function bind_context(T)
             end
             return single(Tr.TypeItemResult({ self }, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseTypeDeclSlot) then
+        elseif action == "use_type_decl_slot" then
             return (function(self)
  return single(Tr.TypeItemResult({ self }, {}))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseItemsSlot) then
+        elseif action == "use_items_slot" then
             return (function(self)
  return single(Tr.TypeItemResult({ self }, {}))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemRegionFrag) then
+        elseif action == "region_frag" then
             return (function(self, module_env, region_frags)
 
             local issues = {}
@@ -2460,22 +2465,22 @@ local function bind_context(T)
             check_owned_control_region(typed_region, issues, region_frags or {}, runtime_bindings, cont_targets)
             return single(Tr.TypeItemResult({}, issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemExprFrag) then
+        elseif action == "expr_frag" then
             return (function()
  return single(Tr.TypeItemResult({}, {}))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseModule) then
+        elseif action == "use_module" then
             return (function(self)
 
             local r = only(type_module(self.module))
             return single(Tr.TypeItemResult({ schema.with(self, { module = r.module }) }, r.issues))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseModuleSlot) then
+        elseif action == "use_module_slot" then
             return (function(self)
  return single(Tr.TypeItemResult({ self }, {}))
             end)(node, ...)
         else
-            error("phase moonlift_tree_typecheck_item: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
+            error("phase moonlift_tree_typecheck_item: no handler for " .. tostring(action), 2)
         end
     end
 
@@ -2539,14 +2544,14 @@ local function bind_context(T)
     end
 
     function type_module(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.Module) then
+        local action = select_typecheck("module", node, TypecheckRules.select_module)
+        if action == "module" then
             return (function(module)
 
             return single(type_module_with_layout_env(module, nil, nil))
             end)(node, ...)
         else
-            error("phase moonlift_tree_typecheck_module: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
+            error("phase moonlift_tree_typecheck_module: no handler for " .. tostring(action), 2)
         end
     end
 

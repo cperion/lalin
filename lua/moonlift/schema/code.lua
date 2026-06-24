@@ -579,6 +579,13 @@ return schema. MoonCode {
       a [MoonCode.CodeValueId],
       b [MoonCode.CodeValueId],
     },
+    CodeContractSoAComponent {
+      variant_unique,
+      base [MoonCode.CodeValueId],
+      record_ty [MoonCode.CodeType],
+      field_name [str],
+      component_index [number],
+    },
     CodeContractNoAlias { variant_unique, base [MoonCode.CodeValueId], },
     CodeContractReadonly { variant_unique, base [MoonCode.CodeValueId], },
     CodeContractWriteonly { variant_unique, base [MoonCode.CodeValueId], },

@@ -16,7 +16,7 @@ local Value = T.MoonValue
 
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
-local StencilC = require("moonlift.stencil_c")(T)
+local StencilArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
 local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_stencil_skeletons")
@@ -243,10 +243,10 @@ local function first_load_expr(body)
 end
 
 local function provider(func, vocab, op, reduction, plan, info)
-    if vocab == Stencil.StencilScan then return StencilC.scan_array_artifact(reduction, plan, info) end
-    if vocab == Stencil.StencilFind then return StencilC.find_array_artifact(op, info) end
-    if vocab == Stencil.StencilPartition then return StencilC.partition_array_artifact(op, info) end
-    if vocab == Stencil.StencilCopy then return StencilC.copy_array_artifact(info) end
+    if vocab == Stencil.StencilScan then return StencilArtifactPlan.scan_array_artifact(reduction, plan, info) end
+    if vocab == Stencil.StencilFind then return StencilArtifactPlan.find_array_artifact(op, info) end
+    if vocab == Stencil.StencilPartition then return StencilArtifactPlan.partition_array_artifact(op, info) end
+    if vocab == Stencil.StencilCopy then return StencilArtifactPlan.copy_array_artifact(info) end
     error("unexpected skeleton vocab " .. tostring(vocab))
 end
 

@@ -433,6 +433,21 @@ return schema. MoonLuaJIT {
     trace [MoonLuaJIT.LJTraceHint],
   },
 
+  product. LJStencilMachinePlan {
+    interned,
+    func [MoonCode.CodeFuncId],
+    kernel [MoonKernel.KernelId],
+    machine [MoonLuaJIT.LJMachine],
+    artifact [MoonStencil.StencilArtifact],
+  },
+
+  product. LJStencilMachineModulePlan {
+    interned,
+    field. module [MoonCode.CodeModuleId],
+    stencil [MoonStencil.StencilModulePlan],
+    machines [many [MoonLuaJIT.LJStencilMachinePlan]],
+  },
+
   sum. LJStmt {
     LJStmtLet {
       variant_unique,
@@ -572,6 +587,22 @@ return schema. MoonLuaJIT {
     endian [str],
   },
 
+  sum. LJBinaryAddressPolicy {
+    LJInstallAnyAddress,
+    LJInstallLow32Address,
+  },
+
+  sum. LJBinaryProtectionPolicy {
+    LJInstallWriteThenExec,
+    LJInstallReadWriteExec,
+  },
+
+  product. LJBinaryInstallPolicy {
+    interned,
+    address [MoonLuaJIT.LJBinaryAddressPolicy],
+    protection [MoonLuaJIT.LJBinaryProtectionPolicy],
+  },
+
   sum. LJBinaryPatchKind {
     LJPatchAbs32,
     LJPatchAbs64,
@@ -579,6 +610,8 @@ return schema. MoonLuaJIT {
     LJPatchSymbol64,
     LJPatchPc32,
     LJPatchRel32,
+    LJPatchLocalAbs32,
+    LJPatchLocalAbs64,
   },
 
   product. LJBinaryPatchRecord {
@@ -603,6 +636,7 @@ return schema. MoonLuaJIT {
   product. LJBinaryStencilBank {
     field. id [MoonLuaJIT.LJBinaryBankId],
     target [MoonLuaJIT.LJBinaryTarget],
+    install [MoonLuaJIT.LJBinaryInstallPolicy],
     c_path [str],
     o_path [str],
     source [str],

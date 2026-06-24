@@ -60,6 +60,32 @@ return unit. CopyPatchRegression {
     },
   },
 
+  fn. copy_i32_memmove { dst [ptr [i32]], src [ptr [i32]], n [i32] } [void] {
+    requires {
+      bounds(dst, n), writeonly(dst),
+      bounds(src, n), readonly(src),
+    },
+
+    entry. start {} { jump. loop { i = 0 }, },
+
+    block. loop { i [i32] } {
+      when (i :lt (n)) {
+        jump. body { i = i },
+      },
+
+      jump. done {},
+    },
+
+    block. body { i [i32] } {
+      store (dst[i], src[i]),
+      jump. loop { i = i + 1 },
+    },
+
+    block. done {} {
+      ret (),
+    },
+  },
+
   fn. fill_i32 { dst [ptr [i32]], n [i32], value [i32] } [void] {
     requires { bounds(dst, n), writeonly(dst) },
 
@@ -397,6 +423,80 @@ return unit. CopyPatchRegression {
     },
   },
 
+  fn. find_gt_zero_i32 { xs [ptr [i32]], n [i32] } [i32] {
+    requires { bounds(xs, n), readonly(xs) },
+
+    entry. start {} { jump. loop { i = 0 }, },
+
+    block. loop { i [i32] } {
+      when (i :lt (n)) {
+        jump. body { i = i },
+      },
+
+      jump. done { pos = -1 },
+    },
+
+    block. body { i [i32] } {
+      when (xs[i] :gt (0)) {
+        jump. done { pos = i },
+      },
+
+      jump. loop { i = i + 1 },
+    },
+
+    block. done { pos [i32] } {
+      ret (pos),
+    },
+  },
+
+  fn. partition_gt_zero_i32 { dst [ptr [i32]], xs [ptr [i32]], n [i32] } [i32] {
+    requires {
+      bounds(dst, n), writeonly(dst),
+      bounds(xs, n), readonly(xs),
+      disjoint(dst, xs),
+    },
+
+    entry. start {} { jump. pos_loop { i = 0, out = 0 }, },
+
+    block. pos_loop { i [i32], out [i32] } {
+      when (i :lt (n)) {
+        jump. pos_body { i = i, out = out },
+      },
+
+      jump. neg_loop { j = 0, out = out },
+    },
+
+    block. pos_body { i [i32], out [i32] } {
+      when (xs[i] :gt (0)) {
+        store (dst[out], xs[i]),
+        jump. pos_loop { i = i + 1, out = out + 1 },
+      },
+
+      jump. pos_loop { i = i + 1, out = out },
+    },
+
+    block. neg_loop { j [i32], out [i32] } {
+      when (j :lt (n)) {
+        jump. neg_body { j = j, out = out },
+      },
+
+      jump. done { split = out },
+    },
+
+    block. neg_body { j [i32], out [i32] } {
+      when (xs[j] :gt (0)) {
+        jump. neg_loop { j = j + 1, out = out },
+      },
+
+      store (dst[out], xs[j]),
+      jump. neg_loop { j = j + 1, out = out + 1 },
+    },
+
+    block. done { split [i32] } {
+      ret (split),
+    },
+  },
+
 }
 ]=]
 
@@ -409,7 +509,7 @@ local artifact = moon.emit_luajit_artifact(decl, {
 })
 
 assert(artifact.kind == 'LuaJITSourceArtifact')
-assert(#artifact.artifacts == 15, 'expected selected stencil artifact for each DSL loop')
+assert(#artifact.artifacts == 18, 'expected selected stencil artifact for each DSL loop')
 assert(artifact.source:match('__ml_check_stencil_target'), 'expected generated target guard')
 
 local expected_vocab = {
@@ -428,17 +528,50 @@ local expected_vocab = {
     ['MoonStencil.StencilMapReduce'] = 'map_reduce',
     ['MoonStencil.StencilZipReduce'] = 'zip_reduce',
     ['MoonStencil.StencilScan'] = 'scan',
+    ['MoonStencil.StencilFind'] = 'find',
+    ['MoonStencil.StencilPartition'] = 'partition',
 }
+local expected_labels = {
+    reduce = true,
+    copy = true,
+    copy_memmove = true,
+    fill = true,
+    map = true,
+    zip_map = true,
+    cast = true,
+    compare = true,
+    zip_compare = true,
+    gather = true,
+    scatter = true,
+    in_place_map = true,
+    count = true,
+    map_reduce = true,
+    zip_reduce = true,
+    scan = true,
+    find = true,
+    partition = true,
+}
+local function selected_label(descriptor)
+    if tostring(descriptor.vocab) == 'MoonStencil.StencilCopy' then
+        if tostring(descriptor.skeleton):match('StencilCopyMemMove') then return 'copy_memmove' end
+        return 'copy'
+    end
+    return expected_vocab[tostring(descriptor.vocab)]
+end
 local seen = {}
 for _, selected in ipairs(artifact.artifacts) do
     local descriptor = selected.instance.descriptor
-    local label = expected_vocab[tostring(descriptor.vocab)]
+    local label = selected_label(descriptor)
     assert(label ~= nil, 'unexpected selected stencil vocab ' .. tostring(descriptor.vocab))
     assert(seen[label] == nil, 'duplicate selected stencil artifact for ' .. label)
-    assert(tostring(selected.instance.schedule):match('StencilScheduleAutoVector'), label .. ' should carry an auto-vector stencil schedule')
+    if label == 'find' or label == 'partition' then
+        assert(tostring(selected.instance.schedule):match('StencilScheduleScalar'), label .. ' should carry a scalar ordered-control stencil schedule')
+    else
+        assert(tostring(selected.instance.schedule):match('StencilScheduleAutoVector'), label .. ' should carry an auto-vector stencil schedule')
+    end
     seen[label] = true
 end
-for _, label in pairs(expected_vocab) do assert(seen[label], 'missing selected stencil artifact for ' .. label) end
+for label in pairs(expected_labels) do assert(seen[label], 'missing selected stencil artifact for ' .. label) end
 
 local loaded = assert(loadfile(artifact.path))()
 local arr = ffi.new('int32_t[6]', { 1, 2, 3, 4, 5, 6 })
@@ -453,6 +586,13 @@ local out_f64 = ffi.new('double[6]')
 
 loaded.copy_i32(out, src, 6)
 for i = 0, 5 do assert(out[i] == src[i], 'copy mismatch at ' .. tostring(i)) end
+
+local move = ffi.new('int32_t[7]', { 1, 2, 3, 4, 5, 6, 0 })
+loaded.copy_i32_memmove(move + 1, move, 6)
+for i = 0, 6 do
+    local expect = ({ 1, 1, 2, 3, 4, 5, 6 })[i + 1]
+    assert(move[i] == expect, 'memmove copy mismatch at ' .. tostring(i))
+end
 
 loaded.fill_i32(out, 6, 77)
 for i = 0, 5 do assert(out[i] == 77, 'fill mismatch at ' .. tostring(i)) end
@@ -498,5 +638,11 @@ for i = 0, 5 do
     assert(out[i] == running, 'scan mismatch at ' .. tostring(i))
 end
 assert(running == 21, 'scan final mismatch')
+
+assert(loaded.find_gt_zero_i32(src, 6) == 0, 'find mismatch')
+
+local part = ffi.new('int32_t[6]')
+assert(loaded.partition_gt_zero_i32(part, src, 6) == 4, 'partition split mismatch')
+assert(part[0] == 5 and part[1] == 8 and part[2] == 9 and part[3] == 2 and part[4] == -3 and part[5] == 0, 'partition order mismatch')
 
 io.write('test_luajit_artifact_from_dsl: ok\n')

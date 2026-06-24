@@ -21,7 +21,8 @@ local Value = T.MoonValue
 
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
-local StencilC = require("moonlift.stencil_c")(T)
+local StencilArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
+local StencilBank = require("moonlift.stencil_bank")(T)
 
 local mode = arg and arg[1] or "quick"
 local full = mode == "full"
@@ -30,6 +31,26 @@ local samples = tonumber(os.getenv("MOONLIFT_LJ_FIELD_STENCIL_BENCH_SAMPLES") or
 local rounds = tonumber(os.getenv("MOONLIFT_LJ_FIELD_STENCIL_BENCH_ROUNDS") or (full and "3" or "2"))
 local cc = os.getenv("MOONLIFT_LJ_FIELD_STENCIL_BENCH_CC") or os.getenv("CC") or "gcc"
 local cflags = os.getenv("MOONLIFT_LJ_FIELD_STENCIL_BENCH_CFLAGS") or "-std=c99 -O3 -march=native"
+
+local function stencil_object_cflags()
+    return cflags .. " -ffunction-sections -fno-pic -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -c"
+end
+
+local function compile_artifacts(artifacts, opts)
+    opts = opts or {}
+    opts.cc = opts.cc or cc
+    opts.cflags = opts.cflags or stencil_object_cflags()
+    local bank, bank_err, source = StencilBank.build_binary_bank(artifacts, opts)
+    if bank == nil then return nil, bank_err, source end
+    local realization, realize_err = StencilBank.realize_binary_artifacts(artifacts, {
+        bank = bank,
+        preamble = opts.preamble,
+        ffi_preamble = opts.ffi_preamble,
+        patch_values = opts.patch_values,
+    })
+    if realization == nil then return nil, realize_err, source end
+    return { kind = "BinaryStencilBenchmarkBuild", bank = bank, realization = realization, symbols = realization.symbols, source = source }, nil, source
+end
 
 local origin = Code.CodeOriginGenerated("bench_luajit_stencil_fields")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -186,13 +207,13 @@ local function build_lowered_module()
     return module, contracts
 end
 
-local raw_reduce = StencilC.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, {
+local raw_reduce = StencilArtifactPlan.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, {
     elem_ty = i32,
     result_ty = i32,
     step_num = 1,
     array_topology = field_topology(),
 })
-local raw_map = StencilC.map_array_artifact(Stencil.StencilUnaryNeg, {
+local raw_map = StencilArtifactPlan.map_array_artifact(Stencil.StencilUnaryNeg, {
     elem_ty = i32,
     result_ty = i32,
     step_num = 1,
@@ -205,13 +226,13 @@ local lj_module = Lower.lower_module(module, {
     contracts = contracts,
     stencil_reduce_artifact_for = function(_func, vocab, _op, reduction_, plan, info)
         assert(vocab == Stencil.StencilReduce)
-        local artifact = StencilC.reduce_array_artifact(reduction_, plan, info)
+        local artifact = StencilArtifactPlan.reduce_array_artifact(reduction_, plan, info)
         lowered_artifacts[#lowered_artifacts + 1] = artifact
         return artifact
     end,
     stencil_store_artifact_for = function(_func, vocab, op, _plan, info)
         assert(vocab == Stencil.StencilMap)
-        local artifact = StencilC.map_array_artifact(op, info)
+        local artifact = StencilArtifactPlan.map_array_artifact(op, info)
         lowered_artifacts[#lowered_artifacts + 1] = artifact
         return artifact
     end,
@@ -219,7 +240,7 @@ local lj_module = Lower.lower_module(module, {
 assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine)
 assert(pvm.classof(lj_module.funcs[2].body) == LJ.LJBodyMachine)
 
-local artifact_build, artifact_err, artifact_src = StencilC.compile_artifacts({
+local artifact_build, artifact_err, artifact_src = compile_artifacts({
     raw_reduce,
     raw_map,
     lowered_artifacts[1],
@@ -228,7 +249,7 @@ local artifact_build, artifact_err, artifact_src = StencilC.compile_artifacts({
     stem = "bench_luajit_stencil_fields",
     preamble = preamble,
     cc = cc,
-    cflags = cflags .. " -fPIC -shared",
+    cflags = stencil_object_cflags(),
 })
 assert(artifact_build ~= nil, tostring(artifact_err) .. "\n" .. tostring(artifact_src))
 

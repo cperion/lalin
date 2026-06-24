@@ -15,7 +15,7 @@ local Value = T.MoonValue
 
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
-local StencilC = require("moonlift.stencil_c")(T)
+local StencilArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
 local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_stencil_extended")
@@ -37,20 +37,20 @@ local function term(id, kind) return Code.CodeTerm(Code.CodeTermId("term:" .. id
 local function place(base, index, ty) return Code.CodePlaceIndex(Code.CodePlaceDeref(base, ty, bytes(ty)), index, ty, bytes(ty)) end
 
 local function store_provider(func, vocab, op, plan, info)
-    if vocab == Stencil.StencilCast then return StencilC.cast_array_artifact(op, info) end
-    if vocab == Stencil.StencilCompare then return StencilC.compare_array_artifact(op, info) end
-    if vocab == Stencil.StencilZipCompare then return StencilC.zip_compare_array_artifact(op, info) end
-    if vocab == Stencil.StencilGather then return StencilC.gather_array_artifact(info) end
-    if vocab == Stencil.StencilScatter then return StencilC.scatter_array_artifact(info) end
-    if vocab == Stencil.StencilInPlaceMap then return StencilC.in_place_map_array_artifact(op, info) end
+    if vocab == Stencil.StencilCast then return StencilArtifactPlan.cast_array_artifact(op, info) end
+    if vocab == Stencil.StencilCompare then return StencilArtifactPlan.compare_array_artifact(op, info) end
+    if vocab == Stencil.StencilZipCompare then return StencilArtifactPlan.zip_compare_array_artifact(op, info) end
+    if vocab == Stencil.StencilGather then return StencilArtifactPlan.gather_array_artifact(info) end
+    if vocab == Stencil.StencilScatter then return StencilArtifactPlan.scatter_array_artifact(info) end
+    if vocab == Stencil.StencilInPlaceMap then return StencilArtifactPlan.in_place_map_array_artifact(op, info) end
     error("unexpected store stencil vocab " .. tostring(vocab))
 end
 
 local function reduce_provider(func, vocab, op, reduction, plan, info)
-    if vocab == Stencil.StencilCount then return StencilC.count_array_artifact(op, info) end
-    if vocab == Stencil.StencilMapReduce then return StencilC.map_reduce_array_artifact(op, reduction, plan, info) end
-    if vocab == Stencil.StencilZipReduce then return StencilC.zip_reduce_array_artifact(op, reduction, plan, info) end
-    if vocab == Stencil.StencilReduce then return StencilC.reduce_array_artifact(reduction, plan, info) end
+    if vocab == Stencil.StencilCount then return StencilArtifactPlan.count_array_artifact(op, info) end
+    if vocab == Stencil.StencilMapReduce then return StencilArtifactPlan.map_reduce_array_artifact(op, reduction, plan, info) end
+    if vocab == Stencil.StencilZipReduce then return StencilArtifactPlan.zip_reduce_array_artifact(op, reduction, plan, info) end
+    if vocab == Stencil.StencilReduce then return StencilArtifactPlan.reduce_array_artifact(reduction, plan, info) end
     error("unexpected reduction stencil vocab " .. tostring(vocab))
 end
 

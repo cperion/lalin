@@ -93,7 +93,9 @@ Important properties of the completed reference:
 - `StencilShape*` is not schema API anymore.
 - The C emitter may use private Lua records as an implementation convenience,
   but the ASDL contract is the descriptor.
-- `stencil_c.lua` constructs `StencilDescriptor` for every artifact.
+- `stencil_artifact_plan.lua` constructs `StencilDescriptor` and
+  `StencilArtifact` records for every selected stencil.
+- `stencil_c.lua` realizes planned artifacts as C source only.
 - The selected schedule is the concrete machine-facing vectorization policy;
   descriptors stay semantic.
 - Lowering coverage is measured as a whole vocabulary, not isolated examples.
@@ -238,7 +240,7 @@ Do not route selection through a side registry that hides semantics from ASDL.
 Relevant files today:
 
 ```text
-lua/moonlift/luajit_stencil_rules.lua
+lua/moonlift/stencil_rules.lua
 lua/moonlift/luajit_lower.lua
 lua/moonlift/code_kernel_plan.lua
 lua/moonlift/code_kernel_plan_rules.lua
@@ -248,14 +250,21 @@ lua/moonlift/code_kernel_plan_rules.lua
 
 Artifact generation consumes `StencilDescriptor`.
 
-For the current C stencil backend, the main file is:
+For the current C stencil backend, descriptor and artifact planning lives in:
+
+```text
+lua/moonlift/stencil_artifact_plan.lua
+```
+
+C source realization lives in:
 
 ```text
 lua/moonlift/stencil_c.lua
 ```
 
-The implementation may derive private local records from descriptors to keep
-emission code compact. That private projection must not become schema API.
+The C implementation may derive private local records from descriptors to keep
+emission code compact. That private projection must not become schema API, and
+it must not own descriptor construction.
 
 Required artifact properties:
 
@@ -341,7 +350,7 @@ the maximum amount of the completed array work:
 [x] descriptor-backed slices
 [x] byte spans
 [x] AoS / struct-field projections
-[ ] SoA / multi-buffer records
+[x] SoA / multi-buffer records
 [ ] 2D row-major surfaces
 [ ] tiled domains
 [ ] segmented domains
@@ -448,12 +457,14 @@ without inventing a separate family.
 Current validated descriptor cuts:
 
 ```text
-real DSL artifact matrix, direct single-loop store/reduce families
+real DSL artifact matrix, direct single-loop store/reduce families plus
+frontend-shaped skeleton families
 source-shaped Moonlift DSL reaches copy-patch LuaJIT artifacts for:
-  reduce, copy, fill, map, zip_map,
+  reduce, copy, copy_memmove, fill, map, zip_map,
   cast, compare, zip_compare,
   gather, scatter, in_place_map,
-  count, map_reduce, zip_reduce
+  count, map_reduce, zip_reduce,
+  scan, find, partition
 each selected artifact carries an explicit StencilInstance.schedule
 test: tests/code_ir/test_luajit_artifact_from_dsl.lua
 
@@ -498,15 +509,39 @@ tests: tests/schema/test_schema_stencil.lua
        tests/code_ir/test_luajit_lower_stencil_fields.lua
 artifact subset: reduce, map, find, compare, and fill execute over
                  Demo_Pair.right without materializing a separate SoA buffer
+
+SoA / multi-buffer records, explicit component contracts
+descriptor access keeps StencilTopologySoAComponent(parent, record_ty,
+field_name, component_index)
+Tree contracts use soa_component(base, RecordTy, "field", component_index);
+tree typechecking canonicalizes RecordTy and verifies that the named field
+exists before tree_to_code lowers it to CodeContractSoAComponent
+LuaJIT lowering indexes those Code facts by function and base value, then wraps
+the stream's normal parent topology, so SoA composes with contiguous, view,
+slice, and byte-span storage
+machine ABI receives component buffers directly; C emission uses base[i] for
+component buffers, never record[i].field
+tests: tests/schema/test_schema_stencil.lua
+       tests/code_ir/test_stencil_bank_soa_components.lua
+       tests/code_ir/test_luajit_lower_stencil_soa.lua
+       tests/code_ir/test_luajit_artifact_soa_from_dsl.lua
+       benchmarks/bench_luajit_stencil_soa.lua quick
+artifact subset: zip_map, zip_reduce, zip_compare, and partition execute over
+                 component buffers; real DSL source emits and executes SoA
+                 zip_map and zip_reduce through the copy-patch LuaJIT artifact
+measurement: quick benchmark compares lowered SoA zip_map/zip_reduce against
+             direct GCC loops over the same component buffers. Vectorized
+             copy-patch objects with local constant-pool sections are covered by
+             tests/code_ir/test_stencil_bank_vector_local_reloc.lua.
 ```
 
-Remaining frontend-shaped skeleton coverage:
+Validated frontend-shaped skeleton coverage:
 
 ```text
-[ ] scan source loop infers KernelEffectScan from a named reduction update
-[ ] find source loop infers KernelResultFind through frontend when/join CFG
-[ ] partition source function infers KernelEffectPartition from two-pass CFG
-[ ] memmove source loop proves/chooses StencilCopyMemMove semantics
+[x] scan source loop infers KernelEffectScan from a named reduction update
+[x] find source loop infers KernelResultFind through frontend when/join CFG
+[x] partition source function infers KernelEffectPartition from two-pass CFG
+[x] memmove source loop proves/chooses StencilCopyMemMove semantics
 ```
 
 ## Hard-Yank Rules

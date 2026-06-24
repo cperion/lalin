@@ -58,12 +58,22 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, intptr_t offs
 int mprotect(void *addr, size_t len, int prot);
 ]])
     local PROT_READ, PROT_WRITE, PROT_EXEC = 1, 2, 4
-    local MAP_PRIVATE, MAP_ANON = 2, 32
+    local MAP_PRIVATE, MAP_ANON, MAP_32BIT = 2, 32, 64
     local MAP_FAILED = ffi.cast("void *", -1)
-    local policy = opts.install_policy or "write_exec"
-    local prot = policy == "rwx" and bit.bor(PROT_READ, PROT_WRITE, PROT_EXEC) or bit.bor(PROT_READ, PROT_WRITE)
-    local mem = ffi.C.mmap(nil, #bytes, prot, bit.bor(MAP_PRIVATE, MAP_ANON), -1, 0)
+    local install = opts.install or {}
+    local low32 = install.low32 == true
+    if low32 and not (ffi.os == "Linux" and ffi.arch == "x64") then
+        error("stencil_bank: low32 binary stencil installation requires Linux/x64", 3)
+    end
+    local policy = install.rwx and "rwx" or "write_exec"
+    local prot = install.rwx and bit.bor(PROT_READ, PROT_WRITE, PROT_EXEC) or bit.bor(PROT_READ, PROT_WRITE)
+    local flags = bit.bor(MAP_PRIVATE, MAP_ANON, low32 and MAP_32BIT or 0)
+    local mem = ffi.C.mmap(nil, #bytes, prot, flags, -1, 0)
     if mem == MAP_FAILED then error("stencil_bank: mmap failed while installing binary stencil", 3) end
+    local base_addr = tonumber(ffi.cast("uintptr_t", mem))
+    if low32 and base_addr + #bytes - 1 > 2147483647 then
+        error("stencil_bank: low32 binary stencil installation returned out-of-range address", 3)
+    end
     ffi.copy(mem, bytes, #bytes)
     return mem, ffi.cast("uint8_t *", mem), policy
 end
@@ -73,9 +83,19 @@ local function lua_string(s)
 end
 
 local function bytes_literal(bytes)
+    if #bytes == 0 then return "\"\"" end
     local out = {}
-    for i = 1, #bytes do out[#out + 1] = tostring(bytes:byte(i)) end
-    return "string.char(" .. table.concat(out, ",") .. ")"
+    local chunk = {}
+    for i = 1, #bytes do
+        chunk[#chunk + 1] = tostring(bytes:byte(i))
+        if #chunk == 128 then
+            out[#out + 1] = "string.char(" .. table.concat(chunk, ",") .. ")"
+            chunk = {}
+        end
+    end
+    if #chunk > 0 then out[#out + 1] = "string.char(" .. table.concat(chunk, ",") .. ")" end
+    if #out == 1 then return out[1] end
+    return table.concat(out, " .. ")
 end
 
 local function number_map_literal(values)
@@ -178,6 +198,15 @@ local function parse_int(s)
     return sign * tonumber(s)
 end
 
+local function parse_reloc_addend(s)
+    if s == nil then return 0 end
+    s = tostring(s)
+    local sign = 1
+    if s:sub(1, 1) == "-" then sign = -1; s = s:sub(2) end
+    if s:match("^0x") or s:match("^0X") then return sign * tonumber(s) end
+    return sign * (tonumber(s, 16) or tonumber(s) or 0)
+end
+
 local function map_reloc_type(typ, symbol)
     if typ == "R_X86_64_64" then return "symbol64" end
     if typ == "R_X86_64_32" or typ == "R_X86_64_32S" then return "symbol32" end
@@ -215,7 +244,7 @@ local function parse_relocations(readelf_output)
                     local last = fields[#fields]
                     local before = fields[#fields - 1]
                     if before == "+" or before == "-" then
-                        addend = (before == "-" and -1 or 1) * parse_int(last)
+                        addend = (before == "-" and -1 or 1) * parse_reloc_addend(last)
                         symbol = fields[#fields - 2]
                     else
                         symbol = before
@@ -240,6 +269,75 @@ local function parse_relocations(readelf_output)
     return by_section
 end
 
+local function parse_sections(readelf_output)
+    local by_index = {}
+    local by_name = {}
+    for line in tostring(readelf_output or ""):gmatch("[^\n]+") do
+        local idx, name, typ, _addr, _off, size, _es, flags, _link, _info, align =
+            line:match("^%s*%[%s*(%d+)%]%s+(%S+)%s+(%S+)%s+([0-9a-fA-F]+)%s+([0-9a-fA-F]+)%s+([0-9a-fA-F]+)%s+([0-9a-fA-F]+)%s+(%S*)%s+(%d+)%s+(%d+)%s+(%d+)%s*$")
+        if idx ~= nil and name ~= "" then
+            local section = {
+                index = tonumber(idx),
+                name = name,
+                typ = typ,
+                size = tonumber(size, 16) or 0,
+                flags = flags or "",
+                align = tonumber(align) or 1,
+            }
+            by_index[section.index] = section
+            by_name[section.name] = section
+        end
+    end
+    return by_index, by_name
+end
+
+local function parse_symbols(readelf_output, sections)
+    local by_name = {}
+    for line in tostring(readelf_output or ""):gmatch("[^\n]+") do
+        local _num, value, size, typ, bind, _vis, ndx, name =
+            line:match("^%s*(%d+):%s+([0-9a-fA-F]+)%s+(%d+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(.+)%s*$")
+        if name ~= nil and name ~= "" and ndx:match("^%d+$") then
+            local section = sections[tonumber(ndx)]
+            by_name[name] = {
+                name = name,
+                value = tonumber(value, 16) or 0,
+                size = tonumber(size) or 0,
+                typ = typ,
+                bind = bind,
+                section_index = tonumber(ndx),
+                section = section and section.name or nil,
+                section_flags = section and section.flags or "",
+                section_align = section and section.align or 1,
+            }
+        end
+    end
+    return by_name
+end
+
+local function align_up(n, align)
+    align = tonumber(align) or 1
+    if align <= 1 then return n end
+    local rem = n % align
+    if rem == 0 then return n end
+    return n + align - rem
+end
+
+local function patch_u32le(bytes, offset, value)
+    if value < -2147483648 or value > 4294967295 then
+        error("stencil_bank: local relocation value out of 32-bit range: " .. tostring(value), 3)
+    end
+    if value < 0 then value = 4294967296 + value end
+    local b0 = value % 256
+    value = math.floor(value / 256)
+    local b1 = value % 256
+    value = math.floor(value / 256)
+    local b2 = value % 256
+    value = math.floor(value / 256)
+    local b3 = value % 256
+    local i = offset + 1
+    return bytes:sub(1, i - 1) .. string.char(b0, b1, b2, b3) .. bytes:sub(i + 4)
+end
+
 local function bind_context(T)
     T._moonlift_api_cache = T._moonlift_api_cache or {}
     if T._moonlift_api_cache.stencil_bank ~= nil then return T._moonlift_api_cache.stencil_bank end
@@ -257,6 +355,8 @@ local function bind_context(T)
         if kind == LJ.LJPatchSymbol64 then return "symbol64" end
         if kind == LJ.LJPatchPc32 then return "pc32" end
         if kind == LJ.LJPatchRel32 then return "rel32" end
+        if kind == LJ.LJPatchLocalAbs32 then return "local_abs32" end
+        if kind == LJ.LJPatchLocalAbs64 then return "local_abs64" end
         return tostring(kind)
     end
 
@@ -267,7 +367,30 @@ local function bind_context(T)
         if kind == "symbol64" then return LJ.LJPatchSymbol64 end
         if kind == "pc32" then return LJ.LJPatchPc32 end
         if kind == "rel32" then return LJ.LJPatchRel32 end
+        if kind == "local_abs32" then return LJ.LJPatchLocalAbs32 end
+        if kind == "local_abs64" then return LJ.LJPatchLocalAbs64 end
         error("stencil_bank: unknown binary patch kind " .. tostring(kind), 3)
+    end
+
+    local function install_policy(opts, low32)
+        opts = opts or {}
+        local protection = opts.install_policy == "rwx" and LJ.LJInstallReadWriteExec or LJ.LJInstallWriteThenExec
+        local address = (low32 or opts.low32 == true) and LJ.LJInstallLow32Address or LJ.LJInstallAnyAddress
+        return LJ.LJBinaryInstallPolicy(address, protection)
+    end
+
+    local function install_opts(policy)
+        policy = policy or install_policy()
+        return {
+            low32 = policy.address == LJ.LJInstallLow32Address,
+            rwx = policy.protection == LJ.LJInstallReadWriteExec,
+        }
+    end
+
+    local function requested_install(opts, bank)
+        if opts and opts.install then return opts.install end
+        if opts and opts.install_policy ~= nil then return install_policy(opts, bank and bank.install and bank.install.address == LJ.LJInstallLow32Address) end
+        return bank and bank.install or install_policy()
     end
 
     local function target_for(opts)
@@ -342,7 +465,113 @@ local function bind_context(T)
         local reloc_out, reloc_err = capture("readelf -Wr " .. shell_quote(o_path))
         if reloc_out == nil then return nil, "stencil_bank: readelf relocations failed: " .. tostring(reloc_err), source end
         local relocs = parse_relocations(reloc_out)
+        local section_out, section_err = capture("readelf -SW " .. shell_quote(o_path))
+        if section_out == nil then return nil, "stencil_bank: readelf sections failed: " .. tostring(section_err), source end
+        local sections, sections_by_name = parse_sections(section_out)
+        local symbol_out, symbol_err = capture("readelf -Ws " .. shell_quote(o_path))
+        if symbol_out == nil then return nil, "stencil_bank: readelf symbols failed: " .. tostring(symbol_err), source end
+        local symbols = parse_symbols(symbol_out, sections)
+        local dumped_sections = {}
+
+        local function dump_section(section)
+            local cached = dumped_sections[section]
+            if cached ~= nil then return cached end
+            local path = dir .. "/" .. stem .. "." .. sanitize(section) .. ".section.bin"
+            local dump_cmd = "objcopy --dump-section " .. shell_quote(section .. "=" .. path) .. " " .. shell_quote(o_path)
+            local dump_ok = os.execute(dump_cmd)
+            if not (dump_ok == true or dump_ok == 0) then error("stencil_bank: failed to dump local section " .. section, 3) end
+            cached = read_file(path)
+            dumped_sections[section] = cached
+            return cached
+        end
+
+        local function local_symbol_target(symbol)
+            if symbol == nil then return nil end
+            local sym = symbols[symbol]
+            if sym ~= nil and sym.section ~= nil and sym.section ~= "UND" then
+                return { section = sym.section, offset = sym.value or 0, align = sym.section_align or 1 }
+            end
+            local sec = sections_by_name[symbol]
+            if sec ~= nil then return { section = sec.name, offset = 0, align = sec.align or 1 } end
+            return nil
+        end
+
+        local function materialize_local_sections(text_section, binary, patches)
+            local blob = binary
+            local kept = {}
+            local local_offsets = { [text_section] = { offset = 0, align = 1 } }
+            local needs_low32 = false
+            local processing = {}
+
+            local function section_offset(section, align)
+                local existing = local_offsets[section]
+                if existing ~= nil then return existing.offset end
+                local aligned = align_up(#blob, align)
+                if aligned > #blob then blob = blob .. string.rep("\0", aligned - #blob) end
+                local offset = #blob
+                blob = blob .. dump_section(section)
+                local_offsets[section] = { offset = offset, align = align or 1 }
+                return offset
+            end
+
+            local function process_patches(section, section_patches)
+                local section_base = section_offset(section, 1)
+                for _, patch in ipairs(section_patches or {}) do
+                    local site = section_base + patch.offset
+                    local target = local_symbol_target(patch.symbol)
+                    if target ~= nil then
+                        local base = section_offset(target.section, target.align)
+                        local target_addr = base + target.offset
+                        if target.section ~= section and not processing[target.section] then
+                            processing[target.section] = true
+                            process_patches(target.section, relocs[".rela" .. target.section] or relocs[".rel" .. target.section] or {})
+                            processing[target.section] = nil
+                        end
+                        if patch.kind == "rel32" then
+                            blob = patch_u32le(blob, site, target_addr + (patch.addend or 0) - site)
+                        elseif patch.kind == "symbol32" or patch.kind == "abs32" then
+                            needs_low32 = true
+                            kept[#kept + 1] = {
+                                offset = site,
+                                kind = "local_abs32",
+                                reloc_type = patch.reloc_type,
+                                symbol = nil,
+                                ordinal = nil,
+                                addend = target_addr + (patch.addend or 0),
+                            }
+                        elseif patch.kind == "symbol64" or patch.kind == "abs64" then
+                            kept[#kept + 1] = {
+                                offset = site,
+                                kind = "local_abs64",
+                                reloc_type = patch.reloc_type,
+                                symbol = nil,
+                                ordinal = nil,
+                                addend = target_addr + (patch.addend or 0),
+                            }
+                        else
+                            error("stencil_bank: unsupported local relocation " .. tostring(patch.reloc_type) .. " to " .. tostring(patch.symbol), 3)
+                        end
+                    else
+                        kept[#kept + 1] = {
+                            offset = site,
+                            kind = patch.kind,
+                            reloc_type = patch.reloc_type,
+                            symbol = patch.symbol,
+                            ordinal = patch.ordinal,
+                            addend = patch.addend or 0,
+                        }
+                    end
+                end
+            end
+
+            processing[text_section] = true
+            process_patches(text_section, patches)
+            processing[text_section] = nil
+            return blob, kept, needs_low32
+        end
+
         local entries = {}
+        local needs_low32 = false
         for _, artifact in ipairs(artifacts) do
             local symbol = artifact_symbol(artifact)
             local section = ".text." .. symbol
@@ -353,12 +582,16 @@ local function bind_context(T)
                 return nil, "stencil_bank: failed to dump section " .. section .. " for " .. symbol, source
             end
             local binary = read_file(bin_path)
+            local raw_patches = relocs[".rela" .. section] or relocs[".rel" .. section] or {}
+            local entry_needs_low32
+            binary, raw_patches, entry_needs_low32 = materialize_local_sections(section, binary, raw_patches)
+            needs_low32 = needs_low32 or entry_needs_low32
             local raw_entry = {
                 symbol = symbol,
                 section = section,
                 binary = binary,
                 c_signature = function_pointer_signature(artifact_signature(artifact), symbol),
-                patches = relocs[".rela" .. section] or relocs[".rel" .. section] or {},
+                patches = raw_patches,
                 artifact = artifact,
             }
             local patches = {}
@@ -375,6 +608,7 @@ local function bind_context(T)
         return LJ.LJBinaryStencilBank(
             bank_id(stem),
             target_for(opts),
+            install_policy(opts, needs_low32),
             c_path,
             o_path,
             source,
@@ -416,8 +650,17 @@ local function bind_context(T)
                 p[0] = p[0] - base_addr + addend
             elseif kind == "rel32" then
                 local p = ffi.cast("int32_t *", base + offset)
-                local at = base_addr + offset + 4
+                local at = base_addr + offset
                 p[0] = value + addend - at
+            elseif kind == "local_abs32" then
+                local target = base_addr + addend
+                if record.reloc_type == "R_X86_64_32S" and target > 2147483647 then
+                    error("stencil_bank: local_abs32 target out of signed 32-bit range", 3)
+                end
+                if target > 4294967295 then error("stencil_bank: local_abs32 target out of 32-bit range", 3) end
+                ffi.cast("uint32_t *", base + offset)[0] = target
+            elseif kind == "local_abs64" then
+                ffi.cast("uint64_t *", base + offset)[0] = ffi.cast("uint64_t", base_addr + addend)
             else
                 error("stencil_bank: unknown patch kind " .. tostring(kind), 3)
             end
@@ -445,7 +688,7 @@ local function bind_context(T)
             if entry == nil then return nil, "stencil_bank: missing binary stencil entry " .. symbol end
             local values = opts.patch_values and (opts.patch_values[symbol] or opts.patch_values[artifact]) or nil
             local inst = api.install_binary_stencil(entry, values or {}, {
-                install_policy = opts.install_policy,
+                install = install_opts(requested_install(opts, bank)),
             })
             installed[#installed + 1] = inst
             symbols[symbol] = inst.fn
@@ -487,14 +730,20 @@ local function bind_context(T)
         out[#out + 1] = "  return tonumber(ffi.cast('uintptr_t', fn))"
         out[#out + 1] = "end"
         out[#out + 1] = "local PROT_READ, PROT_WRITE, PROT_EXEC = 1, 2, 4"
-        out[#out + 1] = "local MAP_PRIVATE, MAP_ANON = 2, 32"
+        out[#out + 1] = "local MAP_PRIVATE, MAP_ANON, MAP_32BIT = 2, 32, 64"
         out[#out + 1] = "local MAP_FAILED = ffi.cast('void *', -1)"
+        local install = install_opts(bank.install)
+        out[#out + 1] = "local __ml_install_policy = { low32 = " .. tostring(install.low32) .. ", rwx = " .. tostring(install.rwx) .. " }"
         out[#out + 1] = "local function __ml_install(entry, values)"
-        out[#out + 1] = "  local mem = ffi.C.mmap(nil, #entry.binary, bit.bor(PROT_READ, PROT_WRITE), bit.bor(MAP_PRIVATE, MAP_ANON), -1, 0)"
+        out[#out + 1] = "  if __ml_install_policy.low32 and not (ffi.os == 'Linux' and ffi.arch == 'x64') then error('moonlift artifact: low32 stencil installation requires Linux/x64') end"
+        out[#out + 1] = "  local prot = __ml_install_policy.rwx and bit.bor(PROT_READ, PROT_WRITE, PROT_EXEC) or bit.bor(PROT_READ, PROT_WRITE)"
+        out[#out + 1] = "  local flags = bit.bor(MAP_PRIVATE, MAP_ANON, __ml_install_policy.low32 and MAP_32BIT or 0)"
+        out[#out + 1] = "  local mem = ffi.C.mmap(nil, #entry.binary, prot, flags, -1, 0)"
         out[#out + 1] = "  if mem == MAP_FAILED then error('moonlift artifact: mmap failed while installing stencil') end"
         out[#out + 1] = "  ffi.copy(mem, entry.binary, #entry.binary)"
         out[#out + 1] = "  local base = ffi.cast('uint8_t *', mem)"
         out[#out + 1] = "  local base_addr = tonumber(ffi.cast('uintptr_t', mem))"
+        out[#out + 1] = "  if __ml_install_policy.low32 and base_addr + #entry.binary - 1 > 2147483647 then error('moonlift artifact: low32 stencil installation returned out-of-range address') end"
         out[#out + 1] = "  values = values or {}"
         out[#out + 1] = "  for _, r in ipairs(entry.patches or {}) do"
         out[#out + 1] = "    local v = r.value"
@@ -507,10 +756,12 @@ local function bind_context(T)
         out[#out + 1] = "    if r.kind == 'abs32' or r.kind == 'symbol32' then ffi.cast('uint32_t *', base + r.offset)[0] = ffi.cast('uint32_t *', base + r.offset)[0] + v + addend"
         out[#out + 1] = "    elseif r.kind == 'abs64' or r.kind == 'symbol64' then ffi.cast('uint64_t *', base + r.offset)[0] = ffi.cast('uint64_t', v + addend)"
         out[#out + 1] = "    elseif r.kind == 'pc32' then ffi.cast('uint32_t *', base + r.offset)[0] = ffi.cast('uint32_t *', base + r.offset)[0] - base_addr + addend"
-        out[#out + 1] = "    elseif r.kind == 'rel32' then ffi.cast('int32_t *', base + r.offset)[0] = v + addend - (base_addr + r.offset + 4)"
+        out[#out + 1] = "    elseif r.kind == 'rel32' then ffi.cast('int32_t *', base + r.offset)[0] = v + addend - (base_addr + r.offset)"
+        out[#out + 1] = "    elseif r.kind == 'local_abs32' then local target = base_addr + addend; if r.reloc_type == 'R_X86_64_32S' and target > 2147483647 then error('moonlift artifact: local_abs32 target out of signed 32-bit range') end; if target > 4294967295 then error('moonlift artifact: local_abs32 target out of 32-bit range') end; ffi.cast('uint32_t *', base + r.offset)[0] = target"
+        out[#out + 1] = "    elseif r.kind == 'local_abs64' then ffi.cast('uint64_t *', base + r.offset)[0] = ffi.cast('uint64_t', base_addr + addend)"
         out[#out + 1] = "    else error('moonlift artifact: unknown patch kind '..tostring(r.kind)) end"
         out[#out + 1] = "  end"
-        out[#out + 1] = "  if ffi.C.mprotect(mem, #entry.binary, bit.bor(PROT_READ, PROT_EXEC)) ~= 0 then error('moonlift artifact: mprotect failed while sealing stencil') end"
+        out[#out + 1] = "  if not __ml_install_policy.rwx and ffi.C.mprotect(mem, #entry.binary, bit.bor(PROT_READ, PROT_EXEC)) ~= 0 then error('moonlift artifact: mprotect failed while sealing stencil') end"
         out[#out + 1] = "  return ffi.cast(entry.c_signature, mem)"
         out[#out + 1] = "end"
         out[#out + 1] = "local __moonlift_luajit_stencil_symbols = {}"

@@ -65,11 +65,29 @@ local function bind_context(T)
         return by
     end
 
+    local function scalar_size(s)
+        if s == T.MoonCore.ScalarBool or s == T.MoonCore.ScalarI8 or s == T.MoonCore.ScalarU8 then return 1 end
+        if s == T.MoonCore.ScalarI16 or s == T.MoonCore.ScalarU16 then return 2 end
+        if s == T.MoonCore.ScalarI32 or s == T.MoonCore.ScalarU32 or s == T.MoonCore.ScalarF32 then return 4 end
+        if s == T.MoonCore.ScalarI64 or s == T.MoonCore.ScalarU64 or s == T.MoonCore.ScalarF64 then return 8 end
+        if s == T.MoonCore.ScalarIndex or s == T.MoonCore.ScalarRawPtr then return 8 end
+        return 0
+    end
+
+    local function type_size(ty)
+        local cls = pvm.classof(ty)
+        if ty == C.CBackendBool8 or cls == C.CBackendBool8 then return 1 end
+        if ty == C.CBackendIndex or cls == C.CBackendIndex then return 8 end
+        if cls == C.CBackendScalar then return scalar_size(ty.scalar) end
+        if cls == C.CBackendDataPtr or cls == C.CBackendCodePtr or cls == C.CBackendImportedCodePtr then return 8 end
+        return 0
+    end
+
     local function data_init_size(init)
         local cls = pvm.classof(init)
         if cls == C.CBackendDataZero then return init.size end
         if cls == C.CBackendDataBytes then return #init.bytes end
-        if cls == C.CBackendDataScalar then return 8 end
+        if cls == C.CBackendDataScalar then return type_size(init.ty) end
         if cls == C.CBackendDataReloc then return 8 end
         return 0
     end
@@ -208,6 +226,34 @@ local function bind_context(T)
             end
         end
 
+        local function check_exec_site(func, sig, locals, initialized, site)
+            for a = 1, #(site.args or {}) do
+                local arg = site.args[a]
+                check_atom(arg.atom, func, locals, initialized)
+                local aty = atom_type(arg.atom, locals)
+                if aty ~= nil and not type_eq(aty, arg.ty) then
+                    add_issue(issues, collector, C.CBackendIssueCallArgType("exec:" .. tostring(arg.name), sig and sig.id or C.CBackendFuncSigId("<exec>"), a, arg.ty, aty))
+                end
+            end
+            local rcls = pvm.classof(site.result)
+            if rcls == C.CBackendExecResultLocal then
+                local dty = locals[site.result.dst.text]
+                if dty == nil then
+                    add_issue(issues, collector, C.CBackendIssueMissingLocal(func.name, site.result.dst))
+                else
+                    if not type_eq(dty, site.result.ty) then
+                        add_issue(issues, collector, C.CBackendIssueCallResultType("exec:" .. func.name.text, sig and sig.id or C.CBackendFuncSigId("<exec>"), site.result.ty, dty))
+                    end
+                    if sig ~= nil and not type_eq(sig.result, dty) then
+                        add_issue(issues, collector, C.CBackendIssueCallResultType("exec-return:" .. func.name.text, sig.id, sig.result, dty))
+                    end
+                end
+                initialized[site.result.dst.text] = true
+            elseif sig ~= nil and not type_eq(sig.result, C.CBackendVoid) then
+                add_issue(issues, collector, C.CBackendIssueCallResultType("exec-return:" .. func.name.text, sig.id, sig.result, C.CBackendVoid))
+            end
+        end
+
         local function check_access(site, access)
             if access and not align_ok(access.align) then add_issue(issues, collector, C.CBackendIssueInvalidAlignment(site, access.align)) end
         end
@@ -288,6 +334,18 @@ local function bind_context(T)
                 local l = func.locals[j]
                 if locals[l.id.text] then add_issue(issues, collector, C.CBackendIssueDuplicateLocal(func.name, l.id)) end
                 locals[l.id.text] = l.ty
+            end
+            local body_cls = pvm.classof(func.body)
+            if body_cls == C.CBackendBodyMixed and #(func.body.fragments or {}) > 0 then
+                error("c_validate: CBackendBodyMixed fragments must be projected into explicit C blocks", 2)
+            elseif body_cls == C.CBackendBodyExec then
+                local initialized = {}
+                for _, p in ipairs(func.params) do initialized[p.id.text] = true end
+                for id, rec in pairs(storage_by_func[func.name.text] or {}) do
+                    local icls = pvm.classof(rec.init_state)
+                    initialized[id] = not (rec.init_state == C.CBackendLocalUninitialized or icls == C.CBackendLocalUninitialized)
+                end
+                check_exec_site(func, sig, locals, initialized, func.body.fragment)
             end
             local blocks = func_blocks(func)
             for j = 1, #blocks do

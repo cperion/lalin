@@ -14,63 +14,129 @@ local function bind_context(T)
     if T._moonlift_api_cache.luajit_backend ~= nil then return T._moonlift_api_cache.luajit_backend end
 
     local Stencil = T.MoonStencil
+    local LJ = T.MoonLuaJIT
     local Lower = require("moonlift.luajit_lower")(T)
     local Emit = require("moonlift.luajit_emit")(T)
-    local StencilC = require("moonlift.stencil_c")(T)
+    local StencilArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
     local StencilBank = require("moonlift.stencil_bank")(T)
+    local ExecPlan = require("moonlift.exec_plan")(T)
+    local CodeSchedulePlan = require("moonlift.code_schedule_plan")(T)
+    local BackTargetModel = require("moonlift.back_target_model")(T)
 
     local api = {}
 
+    local function default_target_model()
+        local Back = T.MoonBack
+        local native = BackTargetModel.default_native()
+        return Back.BackTargetModel(Back.BackTargetDynasmJit, native.facts)
+    end
+
+    local function target_model(opts)
+        return opts.target_model or opts.back_target_model or opts.target or default_target_model()
+    end
+
+    local function schedule_index(schedule_plan)
+        local Schedule = T.MoonSchedule
+        local by_kernel = {}
+        for _, sched in ipairs(schedule_plan and schedule_plan.schedules or {}) do
+            if pvm.classof(sched) == Schedule.SchedulePlanned then by_kernel[sched.kernel.text] = sched end
+        end
+        return by_kernel
+    end
+
+    local function attach_schedule(info, kernel_plan, schedules)
+        info = info or {}
+        local sched = kernel_plan and schedules[kernel_plan.id.text] or nil
+        if sched ~= nil then
+            info.kernel_schedule = sched
+            info.schedule = sched.kind
+        end
+        return info
+    end
+
     local function artifact_for(vocab, op, reduction, plan, info)
-        if vocab == Stencil.StencilCopy then return StencilC.copy_array_artifact(info) end
-        if vocab == Stencil.StencilFill then return StencilC.fill_array_artifact(info) end
-        if vocab == Stencil.StencilMap then return StencilC.map_array_artifact(op, info) end
-        if vocab == Stencil.StencilZipMap then return StencilC.zip_map_array_artifact(op, info) end
-        if vocab == Stencil.StencilCast then return StencilC.cast_array_artifact(op, info) end
-        if vocab == Stencil.StencilCompare then return StencilC.compare_array_artifact(op, info) end
-        if vocab == Stencil.StencilZipCompare then return StencilC.zip_compare_array_artifact(op, info) end
-        if vocab == Stencil.StencilGather then return StencilC.gather_array_artifact(info) end
-        if vocab == Stencil.StencilScatter then return StencilC.scatter_array_artifact(info) end
-        if vocab == Stencil.StencilInPlaceMap then return StencilC.in_place_map_array_artifact(op, info) end
-        if vocab == Stencil.StencilScan then return StencilC.scan_array_artifact(reduction, plan, info) end
-        if vocab == Stencil.StencilFind then return StencilC.find_array_artifact(op, info) end
-        if vocab == Stencil.StencilPartition then return StencilC.partition_array_artifact(op, info) end
-        if vocab == Stencil.StencilReduce then return StencilC.reduce_array_artifact(reduction, plan, info) end
-        if vocab == Stencil.StencilCount then return StencilC.count_array_artifact(op, info) end
-        if vocab == Stencil.StencilMapReduce then return StencilC.map_reduce_array_artifact(op, reduction, plan, info) end
-        if vocab == Stencil.StencilZipReduce then return StencilC.zip_reduce_array_artifact(op, reduction, plan, info) end
+        if vocab == Stencil.StencilCopy then return StencilArtifactPlan.copy_array_artifact(info) end
+        if vocab == Stencil.StencilFill then return StencilArtifactPlan.fill_array_artifact(info) end
+        if vocab == Stencil.StencilMap then return StencilArtifactPlan.map_array_artifact(op, info) end
+        if vocab == Stencil.StencilZipMap then return StencilArtifactPlan.zip_map_array_artifact(op, info) end
+        if vocab == Stencil.StencilCast then return StencilArtifactPlan.cast_array_artifact(op, info) end
+        if vocab == Stencil.StencilCompare then return StencilArtifactPlan.compare_array_artifact(op, info) end
+        if vocab == Stencil.StencilZipCompare then return StencilArtifactPlan.zip_compare_array_artifact(op, info) end
+        if vocab == Stencil.StencilGather then return StencilArtifactPlan.gather_array_artifact(info) end
+        if vocab == Stencil.StencilScatter then return StencilArtifactPlan.scatter_array_artifact(info) end
+        if vocab == Stencil.StencilInPlaceMap then return StencilArtifactPlan.in_place_map_array_artifact(op, info) end
+        if vocab == Stencil.StencilScan then return StencilArtifactPlan.scan_array_artifact(reduction, plan, info) end
+        if vocab == Stencil.StencilFind then return StencilArtifactPlan.find_array_artifact(op, info) end
+        if vocab == Stencil.StencilPartition then return StencilArtifactPlan.partition_array_artifact(op, info) end
+        if vocab == Stencil.StencilReduce then return StencilArtifactPlan.reduce_array_artifact(reduction, plan, info) end
+        if vocab == Stencil.StencilCount then return StencilArtifactPlan.count_array_artifact(op, info) end
+        if vocab == Stencil.StencilMapReduce then return StencilArtifactPlan.map_reduce_array_artifact(op, reduction, plan, info) end
+        if vocab == Stencil.StencilZipReduce then return StencilArtifactPlan.zip_reduce_array_artifact(op, reduction, plan, info) end
         error("luajit_backend: unsupported selected stencil vocab " .. tostring(vocab), 3)
     end
 
-    local function collect_artifact(artifacts, vocab, op, reduction, plan, info)
+    local function collect_artifact(artifacts, selections, vocab, op, reduction, plan, info)
+        info = info or {}
         local artifact = artifact_for(vocab, op, reduction, plan, info)
         artifacts[#artifacts + 1] = artifact
+        selections[#selections + 1] = Stencil.StencilPlanEntry(plan.id, Stencil.StencilSelected(artifact.instance))
         return artifact
     end
 
     function api.lower_module(module, opts)
         opts = opts or {}
         local artifacts = {}
+        local selections = {}
         local rejects = opts.collect_rejects or {}
-        local lj_module, facts = Lower.lower_module(module, {
+        local graph, flow, value, mem, effect, kernel = Lower.build_kernel(module, opts)
+        local schedule_plan = opts.schedule_plan or opts.schedule or CodeSchedulePlan.plan(module, kernel, flow, value, mem, effect, target_model(opts))
+        local schedules = schedule_index(schedule_plan)
+        local stencil_machines = Lower.plan_stencil_machines(module, {
             contracts = opts.contracts,
-            graph = opts.graph,
-            flow = opts.flow,
-            value = opts.value,
-            mem = opts.mem,
-            effect = opts.effect,
-            kernel = opts.kernel,
-            collect_rejects = rejects,
+            graph = graph,
+            flow = flow,
+            value = value,
+            mem = mem,
+            effect = effect,
+            kernel = kernel,
             stencil_store_artifact_for = function(_func, vocab, op, plan, info)
-                return collect_artifact(artifacts, vocab, op, nil, plan, info)
+                return collect_artifact(artifacts, selections, vocab, op, nil, plan, attach_schedule(info, plan, schedules))
             end,
             stencil_reduce_artifact_for = function(_func, vocab, op, reduction, plan, info)
-                return collect_artifact(artifacts, vocab, op, reduction, plan, info)
+                return collect_artifact(artifacts, selections, vocab, op, reduction, plan, attach_schedule(info, plan, schedules))
             end,
             stencil_skeleton_artifact_for = function(_func, vocab, op, reduction, plan, info)
-                return collect_artifact(artifacts, vocab, op, reduction, plan, info)
+                return collect_artifact(artifacts, selections, vocab, op, reduction, plan, attach_schedule(info, plan, schedules))
             end,
         })
+        for _, reject in ipairs(stencil_machines.rejects or {}) do rejects[#rejects + 1] = reject end
+        local lj_module, facts = Lower.lower_module(module, {
+            contracts = opts.contracts,
+            graph = graph,
+            flow = flow,
+            value = value,
+            mem = mem,
+            effect = effect,
+            kernel = kernel,
+            stencil_machines_by_func = stencil_machines.machines_by_func,
+        })
+        facts.schedule = schedule_plan
+        facts.schedule_plan = schedule_plan
+        facts.stencil = Stencil.StencilModulePlan(module.id, facts.kernel, selections)
+        facts.stencil_plan = facts.stencil
+        facts.luajit_stencil_machines = LJ.LJStencilMachineModulePlan(module.id, facts.stencil, stencil_machines.machine_plans or {})
+        facts.exec = ExecPlan.plan(module, {
+            graph = facts.graph,
+            flow = facts.flow,
+            value = facts.value,
+            mem = facts.mem,
+            effect = facts.effect,
+            kernels = facts.kernel,
+            stencil = facts.stencil,
+            artifacts = artifacts,
+            contracts = opts.contracts,
+        })
+        facts.exec_plan = facts.exec
         return lj_module, facts, artifacts, rejects
     end
 
@@ -123,7 +189,7 @@ local function bind_context(T)
         })
         local source = table.concat({
             "-- Generated Moonlift LuaJIT copy-and-patch artifact.\n",
-            "-- Native stencil bytes are embedded below as data and installed before the residual module loads.\n",
+            "-- Native stencil bytes are embedded below as data and installed before the runtime module loads.\n",
             bank_source,
             module_source,
         })
@@ -149,6 +215,9 @@ local function bind_context(T)
             source = source,
             lj_module = lj_module,
             facts = facts,
+            stencil_plan = facts.stencil,
+            luajit_stencil_machines = facts.luajit_stencil_machines,
+            exec_plan = facts.exec,
             artifacts = artifacts,
             rejects = rejects,
             bank = opts.bank,
@@ -164,6 +233,9 @@ local function bind_context(T)
         local result, err, source = api.compile_lj_module(lj_module, artifacts, opts)
         if result == nil then return nil, err, source end
         result.facts = facts
+        result.stencil_plan = facts.stencil
+        result.luajit_stencil_machines = facts.luajit_stencil_machines
+        result.exec_plan = facts.exec
         result.artifacts = artifacts
         result.rejects = rejects
         return result

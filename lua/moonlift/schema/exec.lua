@@ -83,6 +83,24 @@ return schema. MoonExec {
     kind [MoonExec.ExecFragmentKind],
   },
 
+  sum. ExecStencilDecision {
+    ExecMaterializeStencil {
+      variant_unique,
+      fragment [MoonExec.ExecFragment],
+      reason [str],
+    },
+    ExecSkipStencil {
+      variant_unique,
+      reason [str],
+    },
+  },
+
+  product. ExecPlanEntry {
+    interned,
+    kernel [MoonKernel.KernelId],
+    decision [MoonExec.ExecStencilDecision],
+  },
+
   product. ExecFuncPlan {
     interned,
     func [MoonCode.CodeFuncId],
@@ -93,6 +111,7 @@ return schema. MoonExec {
     interned,
     field. module [MoonCode.CodeModuleId],
     stencil [MoonStencil.StencilModulePlan],
+    entries [many [MoonExec.ExecPlanEntry]],
     funcs [many [MoonExec.ExecFuncPlan]],
   },
 }

@@ -29,12 +29,49 @@ local function bind_context(T)
     local ModuleType = require("moonlift.tree_module_type")(T)
     local ConstEval = require("moonlift.sem_const_eval")(T)
     local TreeContractFacts = require("moonlift.tree_contract_facts")(T)
+    local TreeToCodeRules = require("moonlift.tree_to_code_rules")(T)
 
     local api = {}
 
     local function unsupported(ctx, node, what)
         local site = ctx and ctx.func_name or "module"
         error("tree_to_code unsupported lowering: " .. tostring(what or class_name(node)) .. " in " .. site, 3)
+    end
+
+    local function select_expr_lowering(ctx, expr)
+        local selection, err = TreeToCodeRules.select_expr(expr)
+        if selection == nil then unsupported(ctx, expr, err) end
+        return selection.kind
+    end
+
+    local function select_place_lowering(ctx, place)
+        local selection, err = TreeToCodeRules.select_place(place)
+        if selection == nil then unsupported(ctx, place, err) end
+        return selection.kind
+    end
+
+    local function select_stmt_lowering(ctx, stmt)
+        local selection, err = TreeToCodeRules.select_stmt(stmt)
+        if selection == nil then unsupported(ctx, stmt, err) end
+        return selection.kind
+    end
+
+    local function select_func_lowering(ctx, func)
+        local selection, err = TreeToCodeRules.select_func(func)
+        if selection == nil then unsupported(ctx, func, err) end
+        return selection.kind
+    end
+
+    local function select_item_lowering(ctx, item)
+        local selection, err = TreeToCodeRules.select_item(item)
+        if selection == nil then unsupported(ctx, item, err) end
+        return selection.kind
+    end
+
+    local function select_contract_fact_lowering(ctx, fact)
+        local selection, err = TreeToCodeRules.select_contract_fact(fact)
+        if selection == nil then unsupported(ctx, fact, err) end
+        return selection.kind
     end
 
     local function module_name(module)
@@ -781,8 +818,8 @@ local function bind_context(T)
     end
 
     lower_place = function(ctx, place)
-        local cls = pvm.classof(place)
-        if cls == Tr.PlaceRef then
+        local action = select_place_lowering(ctx, place)
+        if action == "ref" then
             local binding, key = lookup_binding(ctx, place.ref)
             local bcls = pvm.classof(binding.class)
             if bcls == Bind.BindingClassGlobalConst or bcls == Bind.BindingClassGlobalStatic then
@@ -798,11 +835,11 @@ local function bind_context(T)
                 end
             end
             return Code.CodePlaceLocal(local_info.id, local_info.ty)
-        elseif cls == Tr.PlaceDeref then
+        elseif action == "deref" then
             local addr = lower_expr(ctx, place.base)
             local ty = place_type(place)
             return Code.CodePlaceDeref(addr, code_ty(ctx, ty), align_of(ctx, ty))
-        elseif cls == Tr.PlaceField then
+        elseif action == "field" then
             if pvm.classof(place.field) ~= Sem.FieldByOffset then unsupported(ctx, place, "field place before sem_layout_resolve") end
             local base_ty = source_access_base(place_type(place.base))
             local base_place
@@ -814,9 +851,9 @@ local function bind_context(T)
             end
             local field_layout = layout_of(ctx, place.field.ty)
             return Code.CodePlaceField(base_place, place.field, code_ty(ctx, place.field.ty), place.field.offset, field_layout and field_layout.size or nil, field_layout and field_layout.align or nil)
-        elseif cls == Tr.PlaceIndex then
+        elseif action == "index" then
             return lower_index_place(ctx, place.base, place.index, place_type(place))
-        elseif cls == Tr.PlaceDot then
+        elseif action == "dot" then
             unsupported(ctx, place, "dot place before sem_layout_resolve")
         end
         unsupported(ctx, place, "place " .. class_name(place))
@@ -832,8 +869,8 @@ local function bind_context(T)
     end
 
     lower_expr = function(ctx, expr)
-        local cls = pvm.classof(expr)
-        if cls == Tr.ExprLit then
+        local action = select_expr_lowering(ctx, expr)
+        if action == "lit" then
             local ty = code_ty(ctx, expr_type(expr))
             if pvm.classof(expr.value) == Core.LitString then
                 local dst = new_temp(ctx, "str")
@@ -844,15 +881,15 @@ local function bind_context(T)
             local dst = new_temp(ctx, "lit")
             append_inst(ctx, Code.CodeInstConst(dst, Code.CodeConstLiteral(ty, expr.value)), origin_generated("literal"))
             return dst, ty
-        elseif cls == Tr.ExprRef then
+        elseif action == "ref" then
             return lookup_value(ctx, expr.ref)
-        elseif cls == Tr.ExprUnary then
+        elseif action == "unary" then
             local value = lower_expr(ctx, expr.value)
             local ty = code_ty(ctx, expr_type(expr))
             local dst = new_temp(ctx, "unary")
             append_inst(ctx, Code.CodeInstUnary(dst, expr.op, ty, value), origin_generated("unary"))
             return dst, ty
-        elseif cls == Tr.ExprBinary then
+        elseif action == "binary" then
             local lhs, lhs_ty = lower_expr(ctx, expr.lhs)
             local rhs, rhs_ty = lower_expr(ctx, expr.rhs)
             local ty = code_ty(ctx, expr_type(expr))
@@ -888,37 +925,37 @@ local function bind_context(T)
                 end
             end
             return dst, ty
-        elseif cls == Tr.ExprCompare then
+        elseif action == "compare" then
             local lhs = lower_expr(ctx, expr.lhs)
             local rhs = lower_expr(ctx, expr.rhs)
             local operand_ty = code_ty(ctx, expr_type(expr.lhs))
             local dst = new_temp(ctx, "cmp")
             append_inst(ctx, Code.CodeInstCompare(dst, expr.op, operand_ty, lhs, rhs), origin_generated("compare"))
             return dst, Code.CodeTyBool8
-        elseif cls == Tr.ExprLogic then
+        elseif action == "logic" then
             return lower_expr_logic(ctx, expr)
-        elseif cls == Tr.ExprIf then
+        elseif action == "if" then
             return lower_expr_if(ctx, expr)
-        elseif cls == Tr.ExprSwitch then
+        elseif action == "switch" then
             return lower_expr_switch(ctx, expr)
-        elseif cls == Tr.ExprControl then
+        elseif action == "control" then
             return lower_control_region(ctx, expr.region, true)
-        elseif cls == Tr.ExprBlock then
+        elseif action == "block" then
             local saved = save_bindings(ctx)
             lower_stmt_body(ctx, expr.stmts or {})
             if ctx.current_block == nil then unsupported(ctx, expr, "expression block body terminated before result") end
             local value, ty = lower_expr(ctx, expr.result)
             restore_bindings(ctx, saved)
             return value, ty
-        elseif cls == Tr.ExprMachineCast then
+        elseif action == "machine_cast" then
             local value, from = lower_expr(ctx, expr.value)
             local to = code_ty(ctx, expr.ty or expr_type(expr))
             local dst = new_temp(ctx, "cast")
             append_inst(ctx, Code.CodeInstCast(dst, expr.op, from, to, value), origin_generated("cast"))
             return dst, to
-        elseif cls == Tr.ExprCast then
+        elseif action == "surface_cast" then
             unsupported(ctx, expr, "surface cast after typechecking")
-        elseif cls == Tr.ExprSelect then
+        elseif action == "select" then
             local cond = lower_expr(ctx, expr.cond)
             local then_value = lower_expr(ctx, expr.then_expr)
             local else_value = lower_expr(ctx, expr.else_expr)
@@ -926,20 +963,20 @@ local function bind_context(T)
             local dst = new_temp(ctx, "select")
             append_inst(ctx, Code.CodeInstSelect(dst, ty, cond, then_value, else_value), origin_generated("select"))
             return dst, ty
-        elseif cls == Tr.ExprAddrOf then
+        elseif action == "addr_of" then
             local place = lower_place(ctx, expr.place)
             local ptr_ty = code_ty(ctx, expr_type(expr))
             local dst = new_temp(ctx, "addr")
             append_inst(ctx, Code.CodeInstAddrOf(dst, ptr_ty, place), origin_generated("address of"))
             return dst, ptr_ty
-        elseif cls == Tr.ExprIntrinsic then
+        elseif action == "intrinsic" then
             local args = {}
             for i = 1, #(expr.args or {}) do args[i] = lower_expr(ctx, expr.args[i]) end
             local ty = code_ty(ctx, expr_type(expr))
             local dst = ty ~= Code.CodeTyVoid and new_temp(ctx, "intrin") or nil
             append_inst(ctx, Code.CodeInstIntrinsic(dst, expr.op, ty, args), origin_generated("intrinsic"))
             return dst, ty
-        elseif cls == Tr.ExprAgg then
+        elseif action == "agg" then
             local ty = code_ty(ctx, expr.ty or expr_type(expr))
             local fields = {}
             for i = 1, #(expr.fields or {}) do
@@ -950,20 +987,20 @@ local function bind_context(T)
             local dst = new_temp(ctx, "agg")
             append_inst(ctx, Code.CodeInstAggregate(dst, ty, fields), origin_generated("aggregate"))
             return dst, ty
-        elseif cls == Tr.ExprArray then
+        elseif action == "array" then
             local ty = code_ty(ctx, expr_type(expr))
             local elems = {}
             for i = 1, #(expr.elems or {}) do elems[#elems + 1] = Code.CodeArrayValue(i - 1, lower_expr(ctx, expr.elems[i])) end
             local dst = new_temp(ctx, "array")
             append_inst(ctx, Code.CodeInstArray(dst, ty, elems), origin_generated("array"))
             return dst, ty
-        elseif cls == Tr.ExprView then
+        elseif action == "view" then
             local data, len, stride = lower_view_parts(ctx, expr.view)
             local ty = code_ty(ctx, expr_type(expr))
             local dst = new_temp(ctx, "view")
             append_inst(ctx, Code.CodeInstViewMake(dst, ty.elem, data, len, stride), origin_generated("view"))
             return dst, ty
-        elseif cls == Tr.ExprLen then
+        elseif action == "len" then
             local vty = source_access_base(expr_type(expr.value))
             if pvm.classof(vty) == Ty.TArray and pvm.classof(vty.count) == Ty.ArrayLenConst then
                 return const_index(ctx, vty.count.count, "array_len")
@@ -974,45 +1011,45 @@ local function bind_context(T)
                 return dst, Code.CodeTyIndex
             end
             unsupported(ctx, expr, "len of non-array/view")
-        elseif cls == Tr.ExprSizeOf then
+        elseif action == "sizeof" then
             local n = size_of(ctx, expr.ty)
             if n == nil then unsupported(ctx, expr, "sizeof type without known layout") end
             return const_index(ctx, n, "sizeof")
-        elseif cls == Tr.ExprAlignOf then
+        elseif action == "alignof" then
             return const_index(ctx, align_of(ctx, expr.ty), "alignof")
-        elseif cls == Tr.ExprIsNull then
+        elseif action == "is_null" then
             local value, ty = lower_expr(ctx, expr.value)
             local null_value = new_temp(ctx, "null_cmp")
             append_inst(ctx, Code.CodeInstConst(null_value, Code.CodeConstNull(ty)), origin_generated("null compare literal"))
             local dst = new_temp(ctx, "is_null")
             append_inst(ctx, Code.CodeInstCompare(dst, Core.CmpEq, ty, value, null_value), origin_generated("is null"))
             return dst, Code.CodeTyBool8
-        elseif cls == Tr.ExprCall then
+        elseif action == "call" then
             return lower_call(ctx, expr)
-        elseif cls == Tr.ExprDeref then
+        elseif action == "deref" then
             local place = Code.CodePlaceDeref(lower_expr(ctx, expr.value), code_ty(ctx, expr_type(expr)), align_of(ctx, expr_type(expr)))
             return load_place(ctx, place, expr_type(expr), "deref")
-        elseif cls == Tr.ExprField then
+        elseif action == "field" then
             return load_place(ctx, lower_field_place(ctx, expr.base, expr.field), expr_type(expr), "field")
-        elseif cls == Tr.ExprIndex then
+        elseif action == "index" then
             return load_place(ctx, lower_index_place(ctx, expr.base, expr.index, expr_type(expr)), expr_type(expr), "index")
-        elseif cls == Tr.ExprLoad then
+        elseif action == "load" then
             local place = Code.CodePlaceDeref(lower_expr(ctx, expr.addr), code_ty(ctx, expr.ty or expr_type(expr)), align_of(ctx, expr.ty or expr_type(expr)))
             return load_place(ctx, place, expr.ty or expr_type(expr), "load")
-        elseif cls == Tr.ExprAtomicLoad then
+        elseif action == "atomic_load" then
             local ty = expr.ty or expr_type(expr)
             local place = Code.CodePlaceDeref(lower_expr(ctx, expr.addr), code_ty(ctx, ty), align_of(ctx, ty))
             local dst = new_temp(ctx, "atomic_load")
             append_inst(ctx, Code.CodeInstAtomicLoad(dst, place, atomic_access(ctx, Code.CodeMemoryRead, ty, expr.ordering), expr.ordering), origin_generated("atomic load"))
             return dst, code_ty(ctx, ty)
-        elseif cls == Tr.ExprAtomicRmw then
+        elseif action == "atomic_rmw" then
             local ty = expr.ty or expr_type(expr)
             local place = Code.CodePlaceDeref(lower_expr(ctx, expr.addr), code_ty(ctx, ty), align_of(ctx, ty))
             local value = lower_expr(ctx, expr.value)
             local dst = new_temp(ctx, "atomic_rmw")
             append_inst(ctx, Code.CodeInstAtomicRmw(dst, expr.op, place, value, atomic_access(ctx, Code.CodeMemoryReadWrite, ty, expr.ordering), expr.ordering), origin_generated("atomic rmw"))
             return dst, code_ty(ctx, ty)
-        elseif cls == Tr.ExprAtomicCas then
+        elseif action == "atomic_cas" then
             local ty = expr.ty or expr_type(expr)
             local place = Code.CodePlaceDeref(lower_expr(ctx, expr.addr), code_ty(ctx, ty), align_of(ctx, ty))
             local expected = lower_expr(ctx, expr.expected)
@@ -1020,7 +1057,7 @@ local function bind_context(T)
             local dst = new_temp(ctx, "atomic_cas")
             append_inst(ctx, Code.CodeInstAtomicCas(dst, place, expected, replacement, atomic_access(ctx, Code.CodeMemoryReadWrite, ty, expr.ordering), expr.ordering), origin_generated("atomic cas"))
             return dst, code_ty(ctx, ty)
-        elseif cls == Tr.ExprCtor then
+        elseif action == "ctor" then
             if #(expr.args or {}) > 1 then unsupported(ctx, expr, "multi-argument variant constructor `" .. tostring(expr.type_name) .. "." .. tostring(expr.variant_name) .. "`") end
             local def = variant_def(ctx, expr.type_name)
             local variant = def and def.variants[expr.variant_name] or nil
@@ -1031,7 +1068,7 @@ local function bind_context(T)
             local dst = new_temp(ctx, "variant_ctor")
             append_inst(ctx, Code.CodeInstVariantCtor(dst, code_ty(ctx, owner_ty), variant_ref(ctx, owner_ty, variant), payload), origin_generated("variant constructor"))
             return dst, code_ty(ctx, owner_ty)
-        elseif cls == Tr.ExprNull then
+        elseif action == "null" then
             local ty = code_ty(ctx, expr_type(expr))
             local dst = new_temp(ctx, "null")
             append_inst(ctx, Code.CodeInstConst(dst, Code.CodeConstNull(ty)), origin_generated("null"))
@@ -1407,34 +1444,34 @@ local function bind_context(T)
 
     lower_stmt = function(ctx, stmt)
         if ctx.current_block == nil then return end
-        local cls = pvm.classof(stmt)
-        if cls == Tr.StmtLet then
+        local action = select_stmt_lowering(ctx, stmt)
+        if action == "let" then
             local src, ty = lower_expr(ctx, stmt.init)
             declare_fresh_binding_key(ctx, stmt.binding)
             if binding_is_addressed(ctx, stmt.binding) or (is_aggregate_code_ty(ty) and not is_view_code_ty(ty)) then bind_local_init(ctx, stmt.binding, src, stmt.binding.ty, false)
             else bind_alias(ctx, stmt.binding, src, ty) end
-        elseif cls == Tr.StmtVar then
+        elseif action == "var" then
             local src = lower_expr(ctx, stmt.init)
             ctx.mutable[declare_fresh_binding_key(ctx, stmt.binding)] = true
             bind_local_init(ctx, stmt.binding, src, stmt.binding.ty, true)
-        elseif cls == Tr.StmtSet then
+        elseif action == "set" then
             local value = lower_expr(ctx, stmt.value)
             store_place(ctx, lower_place(ctx, stmt.place), place_type(stmt.place), value, origin_generated("set"))
-        elseif cls == Tr.StmtAtomicStore then
+        elseif action == "atomic_store" then
             local value = lower_expr(ctx, stmt.value)
             local place = Code.CodePlaceDeref(lower_expr(ctx, stmt.addr), code_ty(ctx, stmt.ty), align_of(ctx, stmt.ty))
             append_inst(ctx, Code.CodeInstAtomicStore(place, value, atomic_access(ctx, Code.CodeMemoryWrite, stmt.ty, stmt.ordering), stmt.ordering), origin_generated("atomic store"))
-        elseif cls == Tr.StmtAtomicFence then
+        elseif action == "atomic_fence" then
             append_inst(ctx, Code.CodeInstAtomicFence(stmt.ordering), origin_generated("atomic fence"))
-        elseif cls == Tr.StmtExpr then
+        elseif action == "expr" then
             lower_expr(ctx, stmt.expr)
-        elseif cls == Tr.StmtIf then
+        elseif action == "if" then
             lower_stmt_if(ctx, stmt)
-        elseif cls == Tr.StmtSwitch then
+        elseif action == "switch" then
             lower_stmt_switch(ctx, stmt)
-        elseif cls == Tr.StmtControl then
+        elseif action == "control" then
             lower_control_region(ctx, stmt.region, false)
-        elseif cls == Tr.StmtJump then
+        elseif action == "jump" then
             local region = ctx.control_region
             if region == nil then unsupported(ctx, stmt, "jump outside control region") end
             local target = region.labels[label_key(stmt.target)]
@@ -1445,27 +1482,27 @@ local function bind_context(T)
                 args[#args + 1] = lower_expr(ctx, arg.value)
             end
             terminate(ctx, Code.CodeTermJump(target.id, args), origin_generated("control jump"))
-        elseif cls == Tr.StmtJumpCont then
+        elseif action == "jump_cont" then
             unsupported(ctx, stmt, "continuation slot jump after open expansion")
-        elseif cls == Tr.StmtYieldValue then
+        elseif action == "yield_value" then
             local region = ctx.control_region
             if region == nil or not region.is_expr then unsupported(ctx, stmt, "value yield outside expression control region") end
             local value = lower_expr(ctx, stmt.value)
             region.has_exit = true
             terminate(ctx, Code.CodeTermJump(region.exit_id, { value }), origin_generated("control yield value"))
-        elseif cls == Tr.StmtYieldVoid then
+        elseif action == "yield_void" then
             local region = ctx.control_region
             if region == nil or region.is_expr then unsupported(ctx, stmt, "void yield outside statement control region") end
             region.has_exit = true
             terminate(ctx, Code.CodeTermJump(region.exit_id, {}), origin_generated("control yield"))
-        elseif cls == Tr.StmtReturnValue then
+        elseif action == "return_value" then
             local value = lower_expr(ctx, stmt.value)
             terminate(ctx, Code.CodeTermReturn({ value }), origin_generated("return"))
-        elseif cls == Tr.StmtReturnVoid then
+        elseif action == "return_void" then
             terminate(ctx, Code.CodeTermReturn({}), origin_generated("return"))
-        elseif cls == Tr.StmtTrap then
+        elseif action == "trap" then
             terminate(ctx, Code.CodeTermTrap("source trap"), origin_generated("trap"))
-        elseif cls == Tr.StmtAssert then
+        elseif action == "assert" then
             local cond = lower_expr(ctx, stmt.cond)
             local ok_id = new_block_id(ctx, "assert_ok")
             local trap_id = new_block_id(ctx, "assert_trap")
@@ -1486,11 +1523,11 @@ local function bind_context(T)
     end
 
     local function func_parts(func)
-        local cls = pvm.classof(func)
-        if cls == Tr.FuncLocal then return func.name, Code.CodeLinkageLocal, func.params, func.result, func.body end
-        if cls == Tr.FuncExport then return func.name, Code.CodeLinkageExport, func.params, func.result, func.body end
-        if cls == Tr.FuncLocalContract then return func.name, Code.CodeLinkageLocal, func.params, func.result, func.body end
-        if cls == Tr.FuncExportContract then return func.name, Code.CodeLinkageExport, func.params, func.result, func.body end
+        local action = select_func_lowering(nil, func)
+        if action == "local" then return func.name, Code.CodeLinkageLocal, func.params, func.result, func.body end
+        if action == "export" then return func.name, Code.CodeLinkageExport, func.params, func.result, func.body end
+        if action == "local_contract" then return func.name, Code.CodeLinkageLocal, func.params, func.result, func.body end
+        if action == "export_contract" then return func.name, Code.CodeLinkageExport, func.params, func.result, func.body end
         unsupported(nil, func, "function " .. class_name(func))
     end
 
@@ -1548,14 +1585,15 @@ local function bind_context(T)
         return table.concat(out, "; ")
     end
 
-    local function code_contract_fact(func_name, func_id, fact)
-        local cls = pvm.classof(fact)
-        if cls == Tr.ContractFactBounds then
+    local function code_contract_fact(module_ctx, func_name, func_id, fact)
+        local ctx = { module_ctx = module_ctx, layout_env = module_ctx.layout_env, target = module_ctx.target, func_name = func_name }
+        local action = select_contract_fact_lowering(ctx, fact)
+        if action == "bounds" then
             return Code.CodeFuncContractFact(func_id, Code.CodeContractBounds(
                 contract_value_for_binding(func_name, fact.base),
                 contract_value_for_binding(func_name, fact.len)
             ), origin_binding(fact.base))
-        elseif cls == Tr.ContractFactWindowBounds then
+        elseif action == "window_bounds" then
             local base = contract_value_for_binding(func_name, fact.base)
             local base_len, base_len_err = contract_value_for_expr(func_name, fact.base_len)
             local start, start_err = contract_value_for_expr(func_name, fact.start)
@@ -1564,54 +1602,98 @@ local function bind_context(T)
                 return code_contract_reject(func_id, join_reasons(base_len_err, start_err, len_err))
             end
             return Code.CodeFuncContractFact(func_id, Code.CodeContractWindowBounds(base, base_len, start, len), origin_binding(fact.base))
-        elseif cls == Tr.ContractFactDisjoint then
+        elseif action == "disjoint" then
             return Code.CodeFuncContractFact(func_id, Code.CodeContractDisjoint(
                 contract_value_for_binding(func_name, fact.a),
                 contract_value_for_binding(func_name, fact.b)
             ), origin_binding(fact.a))
-        elseif cls == Tr.ContractFactSameLen then
+        elseif action == "same_len" then
             return Code.CodeFuncContractFact(func_id, Code.CodeContractSameLen(
                 contract_value_for_binding(func_name, fact.a),
                 contract_value_for_binding(func_name, fact.b)
             ), origin_binding(fact.a))
-        elseif cls == Tr.ContractFactNoAlias then
+        elseif action == "soa_component" then
+            return Code.CodeFuncContractFact(func_id, Code.CodeContractSoAComponent(
+                contract_value_for_binding(func_name, fact.base),
+                code_ty(ctx, fact.record_ty),
+                fact.field_name,
+                fact.component_index
+            ), origin_binding(fact.base))
+        elseif action == "noalias" then
             return Code.CodeFuncContractFact(func_id, Code.CodeContractNoAlias(
                 contract_value_for_binding(func_name, fact.base)
             ), origin_binding(fact.base))
-        elseif cls == Tr.ContractFactReadonly then
+        elseif action == "readonly" then
             return Code.CodeFuncContractFact(func_id, Code.CodeContractReadonly(
                 contract_value_for_binding(func_name, fact.base)
             ), origin_binding(fact.base))
-        elseif cls == Tr.ContractFactWriteonly then
+        elseif action == "writeonly" then
             return Code.CodeFuncContractFact(func_id, Code.CodeContractWriteonly(
                 contract_value_for_binding(func_name, fact.base)
             ), origin_binding(fact.base))
-        elseif cls == Tr.ContractFactInvalidate then
+        elseif action == "invalidate" then
             return Code.CodeFuncContractFact(func_id, Code.CodeContractInvalidate(
                 contract_value_for_binding(func_name, fact.base)
             ), origin_binding(fact.base))
-        elseif cls == Tr.ContractFactPreserve then
+        elseif action == "preserve" then
             return Code.CodeFuncContractFact(func_id, Code.CodeContractPreserve(
                 contract_value_for_binding(func_name, fact.base)
             ), origin_binding(fact.base))
-        elseif cls == Tr.ContractFactRejected then
+        elseif action == "rejected" then
             return code_contract_reject(func_id, "tree contract rejected: " .. class_name(fact.issue))
         end
         return code_contract_reject(func_id, "unsupported tree contract fact: " .. class_name(fact))
     end
 
+    local function build_module_ctx(module, opts)
+        opts = opts or {}
+        local layout_env = opts.layout_env
+        if layout_env == nil then layout_env = T.MoonSem.LayoutEnv(ModuleType.env(module, opts.target).layouts) end
+        local mod_name = module_name(module)
+        local const_entries = {}
+        for i = 1, #(module.items or {}) do
+            local item = module.items[i]
+            if pvm.classof(item) == Tr.ItemConst then
+                local c = item.c
+                if pvm.classof(c) == Tr.ConstItem then const_entries[#const_entries + 1] = Bind.ConstEntry(mod_name, c.name, c.ty, c.value) end
+            end
+        end
+        local module_ctx = { code_sigs = {}, code_sig_order = {}, layout_env = layout_env, target = opts.target, module_name = mod_name, funcs = {}, externs = {}, variant_defs = build_variant_defs(module, mod_name), const_env = Bind.ConstEnv(const_entries), generated_data = {}, next_string_data = 0 }
+        local externs = {}
+        for i = 1, #(module.items or {}) do
+            local item = module.items[i]
+            local action = select_item_lowering({ func_name = module_ctx.module_name }, item)
+            if action == "func" then
+                local name, _, params, result_ty = func_parts(item.func)
+                local sig = CodeType.ensure_type_sig(module_ctx, param_types(params), result_ty)
+                module_ctx.funcs[func_key(module_ctx.module_name, name)] = { id = code_func_id(name), sig = sig }
+            elseif action == "extern" then
+                local f = item.func
+                if pvm.classof(f) ~= Tr.ExternFunc then unsupported({ func_name = module_ctx.module_name }, f, "open extern after expansion") end
+                local param_tys = {}
+                for j = 1, #(f.params or {}) do param_tys[j] = f.params[j].ty end
+                local sig = CodeType.ensure_type_sig(module_ctx, param_tys, f.result)
+                local ex = Code.CodeExtern(code_extern_id(f.name), f.name, f.symbol, sig, origin_generated("extern " .. f.name))
+                module_ctx.externs[f.name] = ex
+                externs[#externs + 1] = ex
+            end
+        end
+        return module_ctx, externs
+    end
+
     local function lower_contracts(module, opts)
         opts = opts or {}
+        local module_ctx = build_module_ctx(module, opts)
         local mod_id = Code.CodeModuleId("module:" .. sanitize(opts.module_id or module_name(module)))
         local facts = {}
         for i = 1, #(module.items or {}) do
             local item = module.items[i]
-            if pvm.classof(item) == Tr.ItemFunc then
+            if select_item_lowering({ func_name = module_ctx.module_name }, item) == "func" then
                 local name = func_parts(item.func)
                 local func_id = code_func_id(name)
                 local tree_facts = TreeContractFacts.facts(item.func)
                 for j = 1, #(tree_facts.facts or {}) do
-                    facts[#facts + 1] = code_contract_fact(name, func_id, tree_facts.facts[j])
+                    facts[#facts + 1] = code_contract_fact(module_ctx, name, func_id, tree_facts.facts[j])
                 end
             end
         end
@@ -1676,56 +1758,27 @@ local function bind_context(T)
 
     local function lower_module(module, opts)
         opts = opts or {}
-        local layout_env = opts.layout_env
-        if layout_env == nil then layout_env = T.MoonSem.LayoutEnv(ModuleType.env(module, opts.target).layouts) end
         local mod_name = module_name(module)
-        local const_entries = {}
-        for i = 1, #(module.items or {}) do
-            local item = module.items[i]
-            if pvm.classof(item) == Tr.ItemConst then
-                local c = item.c
-                if pvm.classof(c) == Tr.ConstItem then const_entries[#const_entries + 1] = Bind.ConstEntry(mod_name, c.name, c.ty, c.value) end
-            end
-        end
-        local module_ctx = { code_sigs = {}, code_sig_order = {}, layout_env = layout_env, target = opts.target, module_name = mod_name, funcs = {}, externs = {}, variant_defs = build_variant_defs(module, mod_name), const_env = Bind.ConstEnv(const_entries), generated_data = {}, next_string_data = 0 }
-        local externs = {}
-        for i = 1, #(module.items or {}) do
-            local item = module.items[i]
-            local cls = pvm.classof(item)
-            if cls == Tr.ItemFunc then
-                local name, _, params, result_ty = func_parts(item.func)
-                local sig = CodeType.ensure_type_sig(module_ctx, param_types(params), result_ty)
-                module_ctx.funcs[func_key(module_ctx.module_name, name)] = { id = code_func_id(name), sig = sig }
-            elseif cls == Tr.ItemExtern then
-                local f = item.func
-                if pvm.classof(f) ~= Tr.ExternFunc then unsupported({ func_name = module_ctx.module_name }, f, "open extern after expansion") end
-                local param_tys = {}
-                for j = 1, #(f.params or {}) do param_tys[j] = f.params[j].ty end
-                local sig = CodeType.ensure_type_sig(module_ctx, param_tys, f.result)
-                local ex = Code.CodeExtern(code_extern_id(f.name), f.name, f.symbol, sig, origin_generated("extern " .. f.name))
-                module_ctx.externs[f.name] = ex
-                externs[#externs + 1] = ex
-            end
-        end
+        local module_ctx, externs = build_module_ctx(module, opts)
         local funcs = {}
         local data = {}
         local globals = {}
         for i = 1, #(module.items or {}) do
             local item = module.items[i]
-            local cls = pvm.classof(item)
-            if cls == Tr.ItemFunc then
+            local action = select_item_lowering({ func_name = mod_name }, item)
+            if action == "func" then
                 funcs[#funcs + 1] = lower_func(module_ctx, item.func)
-            elseif cls == Tr.ItemData then
+            elseif action == "data" then
                 data[#data + 1] = Code.CodeData(code_data_id(item.data.id), item.data.id.text, Code.CodeLinkageLocal, item.data.size, item.data.align, { Code.CodeDataBytes(0, item.data.bytes) }, origin_generated("data " .. tostring(item.data.id.text)))
-            elseif cls == Tr.ItemConst then
+            elseif action == "const" then
                 if pvm.classof(item.c) ~= Tr.ConstItem then unsupported({ func_name = mod_name }, item, "open const item after expansion") end
                 globals[#globals + 1] = lower_global(module_ctx, item.c.name, item.c.ty, item.c.value)
-            elseif cls == Tr.ItemStatic then
+            elseif action == "static" then
                 if pvm.classof(item.s) ~= Tr.StaticItem then unsupported({ func_name = mod_name }, item, "open static item after expansion") end
                 globals[#globals + 1] = lower_global(module_ctx, item.s.name, item.s.ty, item.s.value)
-            elseif cls == Tr.ItemExtern or cls == Tr.ItemType or cls == Tr.ItemImport then
+            elseif action == "extern" or action == "type" or action == "import" then
                 -- Declarations do not produce executable MoonCode blocks.
-            elseif cls == Tr.ItemRegionFrag or cls == Tr.ItemExprFrag then
+            elseif action == "region_frag" or action == "expr_frag" then
                 unsupported({ func_name = mod_name }, item, "fragment item leaked past frontend expansion/typecheck")
             else
                 unsupported({ func_name = module_name(module) }, item, "module item " .. class_name(item))

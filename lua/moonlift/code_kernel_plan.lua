@@ -422,8 +422,39 @@ local function bind_context(T)
         return nil
     end
 
-    local function index_is_primary(index, loop, aliases)
-        return value_expr_is_value(index, loop_primary_induction(loop), aliases)
+    local function value_expr_binding(value, bindings)
+        if value == nil or bindings == nil then return nil end
+        local binding = bindings["kval:" .. value.text]
+        if binding == nil then return nil end
+        local expr = resolve_kernel_expr(binding.expr, bindings)
+        if pvm.classof(expr) == Kernel.KernelExprAlgebra then return expr.expr end
+        return nil
+    end
+
+    local function expr_is_primary(expr, loop, aliases, bindings, seen)
+        if expr == nil then return false end
+        if value_expr_is_value(expr, loop_primary_induction(loop), aliases) then return true end
+        local cls = pvm.classof(expr)
+        if cls == Value.ValueExprValue then
+            seen = seen or {}
+            if seen[expr.value.text] then return false end
+            seen[expr.value.text] = true
+            return expr_is_primary(value_expr_binding(expr.value, bindings), loop, aliases, bindings, seen)
+        end
+        if cls == Value.ValueExprCast then return expr_is_primary(expr.value, loop, aliases, bindings, seen) end
+        if cls == Value.ValueExprMul then
+            if const_int_expr(expr.a) == 1 then return expr_is_primary(expr.b, loop, aliases, bindings, seen) end
+            if const_int_expr(expr.b) == 1 then return expr_is_primary(expr.a, loop, aliases, bindings, seen) end
+        end
+        if cls == Value.ValueExprAdd then
+            if const_int_expr(expr.a) == 0 then return expr_is_primary(expr.b, loop, aliases, bindings, seen) end
+            if const_int_expr(expr.b) == 0 then return expr_is_primary(expr.a, loop, aliases, bindings, seen) end
+        end
+        return false
+    end
+
+    local function index_is_primary(index, loop, aliases, bindings)
+        return expr_is_primary(index, loop, aliases, bindings)
     end
 
     local function stream_has_access(stream, id)
@@ -466,20 +497,44 @@ local function bind_context(T)
         return nil
     end
 
-    local function edge_return_expr(blocks, edge, value_index)
-        local from, to = blocks[edge.from.block.text], blocks[edge.to.block.text]
-        local ret = to and to.term and to.term.kind or nil
-        if from == nil or pvm.classof(ret) ~= Code.CodeTermReturn or #(ret.values or {}) ~= 1 then return nil end
-        local value = ret.values[1]
-        for i, param in ipairs(to.params or {}) do
-            if value == param.value then
-                local args = term_args_to_dest(from.term, to.id)
-                value = args and args[i] or nil
-                break
-            end
+    local function substitute_value(value, env)
+        local seen = {}
+        while value ~= nil and env ~= nil and env[value.text] ~= nil and not seen[value.text] do
+            seen[value.text] = true
+            value = env[value.text]
         end
-        if value == nil then return nil end
-        return value_index.expr_by_value[value.text] or Value.ValueExprValue(value), value
+        return value
+    end
+
+    local function edge_return_expr(blocks, edge, value_index)
+        local from, block = blocks[edge.from.block.text], blocks[edge.to.block.text]
+        if from == nil or block == nil then return nil end
+        local env = {}
+        local args = term_args_to_dest(from.term, block.id)
+        for i, param in ipairs(block.params or {}) do
+            if args and args[i] then env[param.value.text] = substitute_value(args[i], env) end
+        end
+        local seen = {}
+        while block ~= nil and not seen[block.id.text] do
+            seen[block.id.text] = true
+            local term = block.term and block.term.kind or nil
+            local cls = pvm.classof(term)
+            if cls == Code.CodeTermReturn then
+                if #(term.values or {}) ~= 1 then return nil end
+                local value = substitute_value(term.values[1], env)
+                if value == nil then return nil end
+                return value_index.expr_by_value[value.text] or Value.ValueExprValue(value), value
+            end
+            if cls ~= Code.CodeTermJump then return nil end
+            local dest = blocks[term.dest.text]
+            if dest == nil then return nil end
+            local next_env = {}
+            for i, param in ipairs(dest.params or {}) do
+                if term.args and term.args[i] then next_env[param.value.text] = substitute_value(term.args[i], env) end
+            end
+            block, env = dest, next_env
+        end
+        return nil
     end
 
     local function edge_branch_polarity(blocks, edge)
@@ -549,7 +604,7 @@ local function bind_context(T)
     local function infer_scan_skeleton(loop, effects, reductions, bindings, aliases, proofs)
         if #reductions ~= 1 then return nil end
         local store = first_effect(effects, Kernel.KernelEffectStore)
-        if store == nil or not index_is_primary(store.index, loop, aliases) then return nil end
+        if store == nil or not index_is_primary(store.index, loop, aliases, bindings) then return nil end
         local reduction = reductions[1]
         if not reduction_update_matches(resolve_kernel_expr(store.value, bindings), reduction, aliases) then return nil end
         proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("store of loop-carried reduction update is a prefix scan")
@@ -564,10 +619,10 @@ local function bind_context(T)
 
     local function infer_copy_skeleton(loop, effects, bindings, dependence_rejects, aliases, proofs)
         local store = first_effect(effects, Kernel.KernelEffectStore)
-        if store == nil or not index_is_primary(store.index, loop, aliases) then return nil end
+        if store == nil or not index_is_primary(store.index, loop, aliases, bindings) then return nil end
         local src = resolve_kernel_expr(store.value, bindings)
         if pvm.classof(src) ~= Kernel.KernelExprLoad then return nil end
-        if not index_is_primary(src.index, loop, aliases) then return nil end
+        if not index_is_primary(src.index, loop, aliases, bindings) then return nil end
         if store.dst.elem_ty ~= src.stream.elem_ty then return nil end
         local semantics, dep_reason = copy_dependence_semantics(store.dst, src.stream, dependence_rejects)
         if semantics == nil then return nil, dep_reason end
@@ -605,7 +660,7 @@ local function bind_context(T)
             end
         end
         if hit_src == nil or hit_pred == nil or not_found == nil then return nil end
-        if pvm.classof(hit_src) ~= Kernel.KernelExprLoad or not index_is_primary(hit_src.index, loop, aliases) then return nil end
+        if pvm.classof(hit_src) ~= Kernel.KernelExprLoad or not index_is_primary(hit_src.index, loop, aliases, bindings) then return nil end
         proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("early-exit primary-index search is an array find skeleton")
         return {
             effects = {},
@@ -626,8 +681,30 @@ local function bind_context(T)
         return nil
     end
 
-    local function same_counted_domain(a, b)
-        return a ~= nil and b ~= nil and a.start == b.start and a.stop == b.stop and a.step == b.step and a.stop_exclusive == b.stop_exclusive
+    local function same_code_const(a, b)
+        if a == b then return true end
+        if pvm.classof(a) ~= Code.CodeConstLiteral or pvm.classof(b) ~= Code.CodeConstLiteral then return false end
+        if a.ty ~= b.ty then return false end
+        local al, bl = a.literal, b.literal
+        local alc, blc = pvm.classof(al), pvm.classof(bl)
+        if alc ~= blc then return false end
+        return al ~= nil and bl ~= nil and al.raw == bl.raw
+    end
+
+    local function same_value_id_semantic(a, b, value_index)
+        if a == b then return true end
+        local ae = a and value_index and value_index.expr_by_value[a.text] or nil
+        local be = b and value_index and value_index.expr_by_value[b.text] or nil
+        if pvm.classof(ae) == Value.ValueExprConst and pvm.classof(be) == Value.ValueExprConst then return same_code_const(ae.const, be.const) end
+        return false
+    end
+
+    local function same_counted_domain(a, b, value_index)
+        return a ~= nil and b ~= nil
+            and same_value_id_semantic(a.start, b.start, value_index)
+            and same_value_id_semantic(a.stop, b.stop, value_index)
+            and same_value_id_semantic(a.step, b.step, value_index)
+            and a.stop_exclusive == b.stop_exclusive
     end
 
     local function first_store_effect(effects)
@@ -637,7 +714,7 @@ local function bind_context(T)
         return nil
     end
 
-    local function infer_partition_skeleton(func, graph_func, flow_loops, value, mem, trip_counts)
+    local function infer_partition_skeleton(func, graph_func, flow, flow_loops, value, mem, trip_counts)
         if graph_func == nil then return nil end
         local grouped, order = {}, {}
         for _, graph_loop in ipairs(graph_func.loops or {}) do
@@ -649,11 +726,11 @@ local function bind_context(T)
             grouped[key][#grouped[key] + 1] = graph_loop
         end
         if #order ~= 2 then return nil end
-        table.sort(order)
         local group_a, group_b = grouped[order[1]], grouped[order[2]]
         local loop_a = flow_loops[group_a[1].id.text]
         local loop_b = flow_loops[group_b[1].id.text]
-        if loop_a == nil or loop_b == nil or not same_counted_domain(loop_a.counted, loop_b.counted) then return nil end
+        local value_index = CodeValueFacts.expr_index(value)
+        if loop_a == nil or loop_b == nil or not same_counted_domain(loop_a.counted, loop_b.counted, value_index) then return nil end
         if loop_primary_induction(loop_a) == nil or loop_primary_induction(loop_b) == nil then return nil end
 
         local subject = Kernel.KernelSubjectFunction(func.id)
@@ -676,8 +753,8 @@ local function bind_context(T)
         if #rejects > 0 then return nil end
         local store = first_store_effect(body_effects)
         if store == nil then return nil end
-        local value_index = CodeValueFacts.expr_index(value)
         local bindings = binding_index(body_bindings)
+        local aliases = loop_body_aliases(group_a[1], flow)
         local src, pred = nil, nil
         for _, block in ipairs(func.blocks or {}) do
             if loop_blocks[block.id.text] then
@@ -691,7 +768,7 @@ local function bind_context(T)
                 end
             end
         end
-        if src == nil or pred == nil or not index_is_primary(src.index, loop_a) then return nil end
+        if src == nil or pred == nil or not index_is_primary(src.index, loop_a, aliases, bindings) then return nil end
         if store.dst.elem_ty ~= src.stream.elem_ty then return nil end
         for _, dep in ipairs(dependence_rejects or {}) do
             local before_dst, before_src = stream_has_access(store.dst, dep.before), stream_has_access(src.stream, dep.before)
@@ -861,7 +938,7 @@ local function bind_context(T)
         end
 
         for _, func in ipairs(module.funcs or {}) do
-            local partition = infer_partition_skeleton(func, graph_funcs[func.id.text], flow_loops, value, mem, trip_counts)
+            local partition = infer_partition_skeleton(func, graph_funcs[func.id.text], flow, flow_loops, value, mem, trip_counts)
             if partition ~= nil then
                 plans[#plans + 1] = partition
             else

@@ -16,7 +16,8 @@ local Code = T.MoonCode
 local Value = T.MoonValue
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
-local StencilC = require("moonlift.stencil_c")(T)
+local StencilArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
+local StencilBank = require("moonlift.stencil_bank")(T)
 
 local mode = arg and arg[1] or "quick"
 local full = mode == "full"
@@ -26,6 +27,26 @@ local rounds = tonumber(os.getenv("MOONLIFT_LJ_REDUCE_BENCH_ROUNDS") or (full an
 local cc = os.getenv("MOONLIFT_LJ_REDUCE_BENCH_CC") or os.getenv("CC") or "gcc"
 local cflags = os.getenv("MOONLIFT_LJ_REDUCE_BENCH_CFLAGS") or "-std=c99 -O3 -march=native"
 local with_gcc = os.getenv("MOONLIFT_LJ_REDUCE_BENCH_GCC") ~= "0"
+
+local function stencil_object_cflags()
+    return cflags .. " -ffunction-sections -fno-pic -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -c"
+end
+
+local function compile_artifacts(artifacts, opts)
+    opts = opts or {}
+    opts.cc = opts.cc or cc
+    opts.cflags = opts.cflags or stencil_object_cflags()
+    local bank, bank_err, source = StencilBank.build_binary_bank(artifacts, opts)
+    if bank == nil then return nil, bank_err, source end
+    local realization, realize_err = StencilBank.realize_binary_artifacts(artifacts, {
+        bank = bank,
+        preamble = opts.preamble,
+        ffi_preamble = opts.ffi_preamble,
+        patch_values = opts.patch_values,
+    })
+    if realization == nil then return nil, realize_err, source end
+    return { kind = "BinaryStencilBenchmarkBuild", bank = bank, realization = realization, symbols = realization.symbols, source = source }, nil, source
+end
 
 local origin = Code.CodeOriginGenerated("bench_luajit_lower_reductions")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -178,17 +199,17 @@ local function compile_case(case)
         contracts = contracts,
         collect_rejects = rejects,
         stencil_reduce_artifact_for = function(func, vocab, op, reduction, plan, info)
-            local artifact = StencilC.reduce_array_artifact(reduction, plan, info)
+            local artifact = StencilArtifactPlan.reduce_array_artifact(reduction, plan, info)
             artifacts[#artifacts + 1] = artifact
             return artifact
         end,
     })
     assert(#rejects == 0, case.name .. " rejected: " .. tostring(rejects[1] and rejects[1].reason))
     assert(#facts.value.reductions == 1 and facts.value.reductions[1].kind == case.reduction, case.name .. " should derive expected ReductionKind")
-    local stencil_build, stencil_err = StencilC.compile_artifacts(artifacts, {
+    local stencil_build, stencil_err = compile_artifacts(artifacts, {
         stem = "bench_luajit_lower_reductions_" .. sanitize(case.name),
         cc = cc,
-        cflags = cflags .. " -fPIC -shared",
+        cflags = stencil_object_cflags(),
     })
     assert(stencil_build ~= nil, tostring(stencil_err))
     local compiled, err, src = Emit.compile_module(lj_module, {

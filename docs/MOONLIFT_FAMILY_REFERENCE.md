@@ -1175,7 +1175,7 @@ llisle {
 }
 ```
 
-LuaJIT stencil lowering is split into Llisle plan and selector relations.
+Stencil descriptor planning is split into Llisle plan and selector relations.
 `plan_store_stencil` and `plan_reduce_stencil` own readiness gates over planned
 kernels, counted positive loops, return shape, single-store or reduction shape,
 and enriched class availability. `select_store_stencil` and
@@ -1192,7 +1192,7 @@ run at raw-stencil speed for the vocabulary represented by the current kernel
 plan.
 Non-store/non-reduction array skeletons are explicit MoonKernel semantics:
 `KernelEffectScan`, `KernelEffectPartition`, `KernelEffectCopy`, and
-`KernelResultFind`. Llisle owns their LuaJIT stencil selection through
+`KernelResultFind`. Llisle owns their stencil descriptor selection through
 `scan_array`, `partition_array`, overlap-aware `copy_array`, and `find_array`
 constructors.
 The counted-loop kernel planner currently infers prefix scan and copy skeletons

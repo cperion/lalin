@@ -88,6 +88,9 @@ The returned value is a `LuaJITSourceArtifact` table:
   code_result = codegen_result,
   lj_module = luajit_module_asdl,
   facts = lowering_facts,
+  stencil_plan = MoonStencil.StencilModulePlan,
+  luajit_stencil_machines = MoonLuaJIT.LJStencilMachineModulePlan,
+  exec_plan = MoonExec.ExecModulePlan,
   artifacts = selected_stencil_artifacts,
   rejects = stencil_rejects,
   bank = binary_stencil_bank,
@@ -106,12 +109,79 @@ The lower-level backend API remains available to compiler code:
 local Backend = require("moonlift.luajit_backend")(T)
 
 local lj_module, facts, artifacts, rejects = Backend.lower_module(code_module, opts)
+local stencil_plan = facts.stencil_plan
+local luajit_stencil_machines = facts.luajit_stencil_machines
+local exec_plan = facts.exec_plan
 local bank = Backend.build_binary_bank(artifacts, opts)
 local source = Backend.emit_lua_artifact(lj_module, artifacts, { bank = bank })
 local compiled = Backend.compile_lj_module(lj_module, artifacts, { bank = bank })
 ```
 
 The lower-level API deliberately requires an explicit `BinaryStencilBank` for realization. This keeps the internal seam honest: selected artifacts are not executable until a target-specific bank has been built or supplied.
+
+## Executable plan seam
+
+The backend publishes inspectable plans before artifact realization:
+
+```text
+MoonStencil.StencilModulePlan:
+  module
+  kernel
+  selections = StencilPlanEntry[]
+
+MoonStencil.StencilPlanEntry:
+  kernel: KernelId
+  selection: StencilSelection
+
+MoonExec.ExecModulePlan:
+  module
+  stencil
+  entries = ExecPlanEntry[]
+  funcs = ExecFuncPlan[]
+
+MoonExec.ExecPlanEntry:
+  kernel: KernelId
+  decision: ExecMaterializeStencil | ExecSkipStencil
+
+MoonLuaJIT.LJStencilMachineModulePlan:
+  module
+  stencil
+  machines = LJStencilMachinePlan[]
+
+MoonLuaJIT.LJStencilMachinePlan:
+  func
+  kernel
+  machine
+  artifact
+```
+
+`StencilPlanEntry` is keyed by `KernelId`; selection order is not semantic. This is required because rejected kernels, function-level kernels, and loop kernels do not form a stable positional table.
+
+`MoonExec` is the target-neutral executable-fragment view. It records an
+inspectable per-kernel exec decision for each stencil selection, then groups
+materialized stencil artifacts and scalar Code block fragments per function
+before any C, LuaJIT, Cranelift, or object-code projection. Skipped stencil
+entries stay visible as `ExecSkipStencil` decisions instead of disappearing
+into Lua control flow.
+
+`LJStencilMachineModulePlan` is the LuaJIT-specific projection plan. It is built
+after semantic stencil selection and scheduling, before LuaJIT wrapper lowering.
+LuaJIT function lowering consumes those planned machines; it does not call
+artifact providers while walking Code blocks.
+
+```text
+MoonCode
+  -> facts
+  -> MoonKernel
+  -> MoonStencil.StencilModulePlan
+  -> MoonExec.ExecModulePlan
+  -> MoonLuaJIT.LJStencilMachineModulePlan
+  -> target projection
+```
+
+The LuaJIT backend still emits `MoonLuaJIT` wrapper ASDL, but selected stencil,
+scheduled artifact, and planned machine facts are no longer hidden as callback
+side effects.
 
 ## MoonStencil contract
 
@@ -211,6 +281,17 @@ MoonLuaJIT.LJBinaryStencilEntry {
 
 The entry key is the artifact symbol. The semantic identity is still carried through `artifact`; the executable lookup is by stable symbol because the selected artifact already embodies descriptor, schedule, target, and policy decisions.
 
+The bank carries an installation policy:
+
+```lua
+MoonLuaJIT.LJBinaryInstallPolicy {
+  address = LJInstallAnyAddress | LJInstallLow32Address,
+  protection = LJInstallWriteThenExec | LJInstallReadWriteExec,
+}
+```
+
+`LJInstallAnyAddress` is the normal W^X path. `LJInstallLow32Address` is selected only when the object contains local absolute 32-bit relocations, such as GCC switch/jump-table references emitted as `R_X86_64_32S`. On Linux/x64 the installer uses `MAP_32BIT` and then verifies the installed blob fits the signed 32-bit address range. Other targets reject this policy loudly.
+
 ## Patch records
 
 Patch records describe holes in copied machine code.
@@ -219,7 +300,8 @@ Patch records describe holes in copied machine code.
 MoonLuaJIT.LJBinaryPatchRecord {
   offset = byte_offset,
   kind = LJPatchAbs32 | LJPatchAbs64 | LJPatchSymbol32
-       | LJPatchSymbol64 | LJPatchPc32 | LJPatchRel32,
+       | LJPatchSymbol64 | LJPatchPc32 | LJPatchRel32
+       | LJPatchLocalAbs32 | LJPatchLocalAbs64,
   ordinal = optional_patch_ordinal,
   symbol = optional_symbol_name,
   addend = optional_addend,
@@ -241,6 +323,13 @@ pc32:
 
 rel32:
   write a direct 32-bit relative branch/call displacement
+
+local_abs32:
+  write installed_base + blob_local_addend into a 32-bit slot;
+  R_X86_64_32S additionally requires the target to fit signed 32-bit
+
+local_abs64:
+  write installed_base + blob_local_addend into a 64-bit slot
 ```
 
 Patch values may be supplied by ordinal, by symbol name, or by built-in runtime symbol resolution for known C runtime calls such as `memmove`, `memcpy`, and `memset`.
@@ -266,14 +355,19 @@ Current ELF x86-64 relocation mapping:
 ```text
 R_X86_64_64:
   symbol64
+  local_abs64 when the target is a materialized local section or local text symbol
 
 R_X86_64_32 / R_X86_64_32S:
   symbol32
+  local_abs32 when the target is a materialized local section or local text symbol;
+  local_abs32 promotes the bank address policy to LJInstallLow32Address
 
 R_X86_64_PC32 / R_X86_64_PLT32:
   rel32 when the relocation targets a symbol
   pc32 when the relocation only needs installed-base adjustment
 ```
+
+Local `rel32` relocations are resolved while building the blob because they are independent of the eventual `mmap` base. Local absolute relocations are left as runtime patches because they need the installed base address. This lets GCC-generated constant pools and switch/jump tables use the same copy-patch artifact model.
 
 The extraction contract is intentionally narrow: compiler-generated stencil C is the input, not arbitrary C object files.
 
@@ -311,7 +405,7 @@ Runtime installation is semantics-blind:
 
 ```text
 for each entry:
-  mmap writable memory
+  mmap writable memory according to the bank install policy
   ffi.copy entry.binary
   apply scalar patches
   mprotect read+execute
@@ -364,6 +458,7 @@ No runtime C compiler path is used by LuaJIT realization.
 No copy-and-patch component duplicates stencil selection.
 Every executable stencil comes from a selected StencilArtifact.
 Every StencilInstance owns its schedule.
+Every LuaJIT stencil machine comes from LJStencilMachineModulePlan.
 Every embedded bank has a target guard.
 Every generated artifact is self-contained Lua source.
 Every native pointer visible to luajit_emit comes from BinaryStencilBank realization.

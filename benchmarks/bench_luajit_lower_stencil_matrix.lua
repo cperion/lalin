@@ -1,4 +1,4 @@
--- Benchmark MoonCode -> luajit_lower stencil selection against direct StencilC calls.
+-- Benchmark MoonCode -> luajit_lower stencil selection against direct binary stencil calls.
 
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
@@ -18,7 +18,8 @@ local Value = T.MoonValue
 
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
-local StencilC = require("moonlift.stencil_c")(T)
+local StencilArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
+local StencilBank = require("moonlift.stencil_bank")(T)
 
 local mode = arg and arg[1] or "quick"
 local full = mode == "full"
@@ -27,6 +28,26 @@ local samples = tonumber(os.getenv("MOONLIFT_LJ_LOWER_STENCIL_BENCH_SAMPLES") or
 local rounds = tonumber(os.getenv("MOONLIFT_LJ_LOWER_STENCIL_BENCH_ROUNDS") or (full and "3" or "2"))
 local cc = os.getenv("MOONLIFT_LJ_LOWER_STENCIL_BENCH_CC") or os.getenv("CC") or "gcc"
 local cflags = os.getenv("MOONLIFT_LJ_LOWER_STENCIL_BENCH_CFLAGS") or "-std=c99 -O3 -march=native"
+
+local function stencil_object_cflags()
+    return cflags .. " -ffunction-sections -fno-pic -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -c"
+end
+
+local function compile_artifacts(artifacts, opts)
+    opts = opts or {}
+    opts.cc = opts.cc or cc
+    opts.cflags = opts.cflags or stencil_object_cflags()
+    local bank, bank_err, source = StencilBank.build_binary_bank(artifacts, opts)
+    if bank == nil then return nil, bank_err, source end
+    local realization, realize_err = StencilBank.realize_binary_artifacts(artifacts, {
+        bank = bank,
+        preamble = opts.preamble,
+        ffi_preamble = opts.ffi_preamble,
+        patch_values = opts.patch_values,
+    })
+    if realization == nil then return nil, realize_err, source end
+    return { kind = "BinaryStencilBenchmarkBuild", bank = bank, realization = realization, symbols = realization.symbols, source = source }, nil, source
+end
 
 local origin = Code.CodeOriginGenerated("bench_luajit_lower_stencil_matrix")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -53,23 +74,23 @@ local function sanitize(s)
 end
 
 local function artifact_for(vocab, op, reduction, info)
-    if vocab == Stencil.StencilCopy then return StencilC.copy_array_artifact(info) end
-    if vocab == Stencil.StencilFill then return StencilC.fill_array_artifact(info) end
-    if vocab == Stencil.StencilMap then return StencilC.map_array_artifact(op, info) end
-    if vocab == Stencil.StencilZipMap then return StencilC.zip_map_array_artifact(op, info) end
-    if vocab == Stencil.StencilCast then return StencilC.cast_array_artifact(op, info) end
-    if vocab == Stencil.StencilCompare then return StencilC.compare_array_artifact(op, info) end
-    if vocab == Stencil.StencilZipCompare then return StencilC.zip_compare_array_artifact(op, info) end
-    if vocab == Stencil.StencilGather then return StencilC.gather_array_artifact(info) end
-    if vocab == Stencil.StencilScatter then return StencilC.scatter_array_artifact(info) end
-    if vocab == Stencil.StencilInPlaceMap then return StencilC.in_place_map_array_artifact(op, info) end
-    if vocab == Stencil.StencilScan then return StencilC.scan_array_artifact(reduction, nil, info) end
-    if vocab == Stencil.StencilFind then return StencilC.find_array_artifact(op, info) end
-    if vocab == Stencil.StencilPartition then return StencilC.partition_array_artifact(op, info) end
-    if vocab == Stencil.StencilReduce then return StencilC.reduce_array_artifact(reduction, nil, info) end
-    if vocab == Stencil.StencilCount then return StencilC.count_array_artifact(op, info) end
-    if vocab == Stencil.StencilMapReduce then return StencilC.map_reduce_array_artifact(op, reduction, nil, info) end
-    if vocab == Stencil.StencilZipReduce then return StencilC.zip_reduce_array_artifact(op, reduction, nil, info) end
+    if vocab == Stencil.StencilCopy then return StencilArtifactPlan.copy_array_artifact(info) end
+    if vocab == Stencil.StencilFill then return StencilArtifactPlan.fill_array_artifact(info) end
+    if vocab == Stencil.StencilMap then return StencilArtifactPlan.map_array_artifact(op, info) end
+    if vocab == Stencil.StencilZipMap then return StencilArtifactPlan.zip_map_array_artifact(op, info) end
+    if vocab == Stencil.StencilCast then return StencilArtifactPlan.cast_array_artifact(op, info) end
+    if vocab == Stencil.StencilCompare then return StencilArtifactPlan.compare_array_artifact(op, info) end
+    if vocab == Stencil.StencilZipCompare then return StencilArtifactPlan.zip_compare_array_artifact(op, info) end
+    if vocab == Stencil.StencilGather then return StencilArtifactPlan.gather_array_artifact(info) end
+    if vocab == Stencil.StencilScatter then return StencilArtifactPlan.scatter_array_artifact(info) end
+    if vocab == Stencil.StencilInPlaceMap then return StencilArtifactPlan.in_place_map_array_artifact(op, info) end
+    if vocab == Stencil.StencilScan then return StencilArtifactPlan.scan_array_artifact(reduction, nil, info) end
+    if vocab == Stencil.StencilFind then return StencilArtifactPlan.find_array_artifact(op, info) end
+    if vocab == Stencil.StencilPartition then return StencilArtifactPlan.partition_array_artifact(op, info) end
+    if vocab == Stencil.StencilReduce then return StencilArtifactPlan.reduce_array_artifact(reduction, nil, info) end
+    if vocab == Stencil.StencilCount then return StencilArtifactPlan.count_array_artifact(op, info) end
+    if vocab == Stencil.StencilMapReduce then return StencilArtifactPlan.map_reduce_array_artifact(op, reduction, nil, info) end
+    if vocab == Stencil.StencilZipReduce then return StencilArtifactPlan.zip_reduce_array_artifact(op, reduction, nil, info) end
     error("unsupported benchmark vocab " .. tostring(vocab), 3)
 end
 
@@ -407,10 +428,10 @@ local function compile_case(kind, is_reduce, dst_ty)
     assert(#artifacts == 1, name .. " should select one stencil artifact; rejects: " .. table.concat(reject_msg, " | "))
     local machine_kind = pvm.classof(lj_module.funcs[1].machines[1].kind)
     assert(machine_kind == ((is_reduce or is_scan or is_find or is_partition) and LJ.LJMachineStencilCall or LJ.LJMachineStencilEffect), name .. " should lower through stencil machine")
-    local build, build_err, csrc = StencilC.compile_artifacts(artifacts, {
+    local build, build_err, csrc = compile_artifacts(artifacts, {
         stem = "bench_luajit_lower_stencil_matrix_" .. sanitize(name),
         cc = cc,
-        cflags = cflags .. " -fPIC -shared",
+        cflags = stencil_object_cflags(),
     })
     assert(build ~= nil, tostring(build_err) .. "\n" .. tostring(csrc))
     local compiled, err, src = Emit.compile_module(lj_module, {

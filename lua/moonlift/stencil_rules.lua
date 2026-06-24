@@ -2,7 +2,7 @@ local pvm = require("moonlift.pvm")
 
 local function bind_context(T)
     T._moonlift_api_cache = T._moonlift_api_cache or {}
-    if T._moonlift_api_cache.luajit_stencil_rules ~= nil then return T._moonlift_api_cache.luajit_stencil_rules end
+    if T._moonlift_api_cache.stencil_rules ~= nil then return T._moonlift_api_cache.stencil_rules end
 
     local moon = require("moonlift")
     local llb = require("llb")
@@ -126,6 +126,8 @@ local function bind_context(T)
     impl.reduce_count = function(fields) return with_selection_kind("count", Stencil.StencilCount, fields) end
     impl.store_stencil_plan = function(fields) return fields end
     impl.reduce_stencil_plan = function(fields) return fields end
+    impl.store_stencil_no_plan = function(fields) fields.kind = "no_plan"; return fields end
+    impl.reduce_stencil_no_plan = function(fields) fields.kind = "no_plan"; return fields end
 
     local function build_rules()
     return llisle {
@@ -169,7 +171,9 @@ local function bind_context(T)
   constructor. reduce_zip [impl.reduce_zip] { input { sym("op") [Any], sym("info") [sym("ZipReduceInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [ReduceStencilSelection] } },
   constructor. reduce_count [impl.reduce_count] { input { sym("op") [Any], sym("info") [sym("CountInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [ReduceStencilSelection] } },
   constructor. store_stencil_plan [impl.store_stencil_plan] { input { sym("selection") [StoreStencilSelection] }, output { sym("plan") [sym("StoreStencilPlan")] } },
+  constructor. store_stencil_no_plan [impl.store_stencil_no_plan] { input { sym("reason") [str] }, output { sym("plan") [sym("StoreStencilPlan")] } },
   constructor. reduce_stencil_plan [impl.reduce_stencil_plan] { input { sym("reduction") [Any], sym("selection") [ReduceStencilSelection] }, output { sym("plan") [sym("ReduceStencilPlan")] } },
+  constructor. reduce_stencil_no_plan [impl.reduce_stencil_no_plan] { input { sym("reason") [str] }, output { sym("plan") [sym("ReduceStencilPlan")] } },
 
   relation. classify_expr {
     input { expr [StencilExprFact] },
@@ -511,6 +515,20 @@ local function bind_context(T)
       ret {
         plan = sym("store_stencil_plan") {
           selection = V. selected.selection,
+        },
+      },
+    },
+  },
+
+  rule. store_plan_not_ready {
+    llisle.plan_store_stencil { ctx = P. ctx },
+    when {
+      P. ctx.plan_ready :eq (false),
+    },
+    run {
+      ret {
+        plan = store_stencil_no_plan {
+          reason = P. ctx.reject_reason,
         },
       },
     },
@@ -1148,6 +1166,20 @@ local function bind_context(T)
       },
     },
   },
+
+  rule. reduce_plan_not_ready {
+    llisle.plan_reduce_stencil { ctx = P. ctx },
+    when {
+      P. ctx.plan_ready :eq (false),
+    },
+    run {
+      ret {
+        plan = reduce_stencil_no_plan {
+          reason = P. ctx.reject_reason,
+        },
+      },
+    },
+  },
 }
     end
     if setfenv then setfenv(build_rules, env) end
@@ -1411,19 +1443,47 @@ local function bind_context(T)
         return result.output.selection, nil
     end
 
+    local function store_plan_reject_reason(ctx, suffix)
+        return ("store stencil is not ready: planned=%s returns_void=%s counted_positive=%s single_store=%s dst_base_present=%s class_ready=%s (%s)"):format(
+            tostring(ctx and ctx.planned),
+            tostring(ctx and ctx.returns_void),
+            tostring(ctx and ctx.counted_positive),
+            tostring(ctx and ctx.single_store),
+            tostring(ctx and ctx.dst_base_present),
+            tostring(ctx and ctx.class_ready),
+            tostring(suffix or "no matching plan")
+        )
+    end
+
+    local function reduce_plan_reject_reason(ctx, suffix)
+        return ("reduction stencil is not ready: planned=%s result_reduction=%s returns_reduction=%s counted_positive=%s class_ready=%s (%s)"):format(
+            tostring(ctx and ctx.planned),
+            tostring(ctx and ctx.result_reduction),
+            tostring(ctx and ctx.returns_reduction),
+            tostring(ctx and ctx.counted_positive),
+            tostring(ctx and ctx.class_ready),
+            tostring(suffix or "no matching plan")
+        )
+    end
+
+    local function copy_fields(ctx)
+        local out = {}
+        for k, v in pairs(ctx or {}) do out[k] = v end
+        return out
+    end
+
     function api.plan_store(ctx)
-        local result, err = engine:run("plan_store_stencil", { ctx = ctx })
-        if result == nil then
-            return nil, ("store stencil is not ready: planned=%s returns_void=%s counted_positive=%s single_store=%s dst_base_present=%s class_ready=%s (%s)"):format(
-                tostring(ctx and ctx.planned),
-                tostring(ctx and ctx.returns_void),
-                tostring(ctx and ctx.counted_positive),
-                tostring(ctx and ctx.single_store),
-                tostring(ctx and ctx.dst_base_present),
-                tostring(ctx and ctx.class_ready),
-                tostring(err and err.message or "no matching plan")
-            )
-        end
+        local candidate = copy_fields(ctx)
+        candidate.plan_ready = candidate.planned == true
+            and candidate.returns_void == true
+            and candidate.counted_positive == true
+            and candidate.single_store == true
+            and candidate.dst_base_present == true
+            and candidate.class_ready == true
+        candidate.reject_reason = store_plan_reject_reason(candidate)
+        local result, err = engine:run("plan_store_stencil", { ctx = candidate })
+        if result == nil then return nil, store_plan_reject_reason(candidate, err and err.message or "no matching plan") end
+        if result.output.plan.kind == "no_plan" then return nil, result.output.plan.reason end
         return result.output.plan, nil
     end
 
@@ -1434,17 +1494,16 @@ local function bind_context(T)
     end
 
     function api.plan_reduce(ctx)
-        local result, err = engine:run("plan_reduce_stencil", { ctx = ctx })
-        if result == nil then
-            return nil, ("reduction stencil is not ready: planned=%s result_reduction=%s returns_reduction=%s counted_positive=%s class_ready=%s (%s)"):format(
-                tostring(ctx and ctx.planned),
-                tostring(ctx and ctx.result_reduction),
-                tostring(ctx and ctx.returns_reduction),
-                tostring(ctx and ctx.counted_positive),
-                tostring(ctx and ctx.class_ready),
-                tostring(err and err.message or "no matching plan")
-            )
-        end
+        local candidate = copy_fields(ctx)
+        candidate.plan_ready = candidate.planned == true
+            and candidate.result_reduction == true
+            and candidate.returns_reduction == true
+            and candidate.counted_positive == true
+            and candidate.class_ready == true
+        candidate.reject_reason = reduce_plan_reject_reason(candidate)
+        local result, err = engine:run("plan_reduce_stencil", { ctx = candidate })
+        if result == nil then return nil, reduce_plan_reject_reason(candidate, err and err.message or "no matching plan") end
+        if result.output.plan.kind == "no_plan" then return nil, result.output.plan.reason end
         return result.output.plan, nil
     end
 
@@ -1480,7 +1539,7 @@ local function bind_context(T)
     api.engine = engine
     api.expr_fact = expr_fact
 
-    T._moonlift_api_cache.luajit_stencil_rules = api
+    T._moonlift_api_cache.stencil_rules = api
     return api
 end
 

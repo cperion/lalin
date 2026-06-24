@@ -1815,6 +1815,7 @@ bounds(base, len)              -- requires bounds(base, len)
 window_bounds(base, base_len, start, len)
 disjoint(a, b)                 -- requires disjoint(a, b)
 same_len(a, b)                 -- requires same_len(a, b)
+soa_component(base, RecordTy, "field", component_index)
 noalias(base)                  -- requires noalias(base)
 readonly(base)                 -- requires readonly(base)
 writeonly(base)                -- requires writeonly(base)
@@ -1827,6 +1828,31 @@ writeonly(base)                -- requires writeonly(base)
 
 `requires` items are extracted from the function body during lowering — they
 are not statements and do not appear in the emitted code.
+
+`soa_component` states that a pointer or view is one component buffer of a
+logical record type. It is used by the stencil backend to keep
+structure-of-arrays layouts typed without inventing a second product model:
+
+```lua
+struct. PairSoA {
+  left [i32],
+  right [i32],
+  total [i32],
+}
+
+fn. add_pairs
+  { total [ptr [i32]], left [ptr [i32]], right [ptr [i32]], n [i32] }
+  [void]
+  {
+    requires {
+      bounds(total, n), writeonly(total), soa_component(total, PairSoA, "total", 2),
+      bounds(left, n), readonly(left), soa_component(left, PairSoA, "left", 0),
+      bounds(right, n), readonly(right), soa_component(right, PairSoA, "right", 1),
+      disjoint(total, left), disjoint(total, right), disjoint(left, right),
+    },
+    -- jump-first body omitted
+  }
+```
 
 ## Statements
 
@@ -2834,4 +2860,4 @@ local mod = assert(loadfile("target/artifacts/sum_i32.lua"))()
 print(mod.sum_i32(xs, n))
 ```
 
-This path uses the same Moonlift frontend and MoonStencil schedule/artifact selection as the normal compiler. The LuaJIT copy-and-patch backend only realizes already-selected `StencilArtifact` values; it does not re-lower loops or keep a separate vector/reduction machine.
+This path uses the same Moonlift frontend and MoonStencil schedule/artifact selection as the normal compiler. Selected stencils are recorded as `StencilPlanEntry` values keyed by `KernelId`, converted into target-neutral `MoonExec.ExecPlanEntry` materialize/skip decisions, grouped into `MoonExec.ExecModulePlan`, and projected into `MoonLuaJIT.LJStencilMachineModulePlan` before LuaJIT wrapper lowering. The LuaJIT copy-and-patch backend realizes those already-selected `StencilArtifact` values; it does not re-lower loops or keep a separate vector/reduction machine.

@@ -12,7 +12,7 @@ local Code = T.MoonCode
 local Ty = T.MoonType
 local Value = T.MoonValue
 local Stencil = T.MoonStencil
-local StencilC = require("moonlift.stencil_c")(T)
+local StencilArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
 local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -43,30 +43,30 @@ local function field_topology()
 end
 
 local artifacts = {
-    StencilC.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, {
+    StencilArtifactPlan.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, {
         elem_ty = i32,
         result_ty = i32,
         step_num = 1,
         array_topology = field_topology(),
     }),
-    StencilC.map_array_artifact(Stencil.StencilUnaryNeg, {
+    StencilArtifactPlan.map_array_artifact(Stencil.StencilUnaryNeg, {
         elem_ty = i32,
         result_ty = i32,
         step_num = 1,
         src_topology = field_topology(),
     }),
-    StencilC.find_array_artifact(Stencil.StencilPredEqConst(iconst(20)), {
+    StencilArtifactPlan.find_array_artifact(Stencil.StencilPredEqConst(iconst(20)), {
         elem_ty = i32,
         step_num = 1,
         array_topology = field_topology(),
     }),
-    StencilC.compare_array_artifact(Stencil.StencilPredGtConst(iconst(10)), {
+    StencilArtifactPlan.compare_array_artifact(Stencil.StencilPredGtConst(iconst(10)), {
         elem_ty = i32,
         result_ty = bool8,
         step_num = 1,
         src_topology = field_topology(),
     }),
-    StencilC.fill_array_artifact({
+    StencilArtifactPlan.fill_array_artifact({
         elem_ty = i32,
         value = iconst(99),
         step_num = 1,

@@ -9,6 +9,9 @@ Schema(T)
 local Core = T.MoonCore
 local Code = T.MoonCode
 local Back = T.MoonBack
+local Value = T.MoonValue
+local Kernel = T.MoonKernel
+local Stencil = T.MoonStencil
 local LJ = T.MoonLuaJIT
 
 assert(LJ ~= nil, "MoonLuaJIT namespace should be installed")
@@ -104,5 +107,56 @@ assert(module.funcs[1].machines[4].kind.input == filter_id, "fold should consume
 assert(module.funcs[1].body.machine == fold_id, "function body should expose terminal machine")
 assert(module.funcs[1].cdefs[1].ty == i32_c, "cdefs should carry FFI C physical type")
 assert(void_c == LJ.LJCTypeVoid, "void C type singleton should be available")
+
+local init = Value.ValueExprConst(Code.CodeConstLiteral(Code.CodeTyInt(32, Code.CodeSigned), Core.LitInt("0")))
+local descriptor = Stencil.StencilDescriptor(
+    Stencil.StencilReduce,
+    Stencil.StencilDomainRange1D(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilDomainForward),
+    {
+        Stencil.StencilAccess("xs", Stencil.StencilAccessRead, Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilTopologyContiguous(1)),
+        Stencil.StencilAccess("acc", Stencil.StencilAccessReduce, Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilTopologyScalar(init)),
+    },
+    nil,
+    Stencil.StencilReducer(Value.ReductionAdd, Code.CodeTyInt(32, Code.CodeSigned), init, nil, nil),
+    Stencil.StencilSkeletonReduce,
+    Stencil.StencilMemorySemantics(nil, nil, nil),
+    Code.CodeTyInt(32, Code.CodeSigned),
+    {}
+)
+local artifact = Stencil.StencilArtifact(
+    Stencil.StencilInstance(
+        Stencil.StencilInstanceId("stencil:test"),
+        descriptor,
+        Stencil.StencilScheduleScalar(Stencil.StencilCompilerPolicy(Stencil.StencilCompilerGcc, Stencil.StencilOptO3, Stencil.StencilMachineNative, {})),
+        Stencil.StencilAbi({ Code.CodeTyDataPtr(Code.CodeTyInt(32, Code.CodeSigned)), Code.CodeTyInt(32, Code.CodeSigned) }, Code.CodeTyInt(32, Code.CodeSigned)),
+        {}
+    ),
+    Stencil.StencilProviderC,
+    Stencil.StencilSymbolId("ml_stencil_test"),
+    "int32_t ml_stencil_test(const int32_t*, int32_t);"
+)
+local stencil_machine = LJ.LJMachine(
+    LJ.LJMachineId("m:stencil"),
+    LJ.LJMachineStencilCall(artifact, { LJ.LJExprValue(items), LJ.LJExprValue(n) }, i32_ty),
+    i32_ty,
+    LJ.LJStateScalar,
+    LJ.LJTraceHot
+)
+local stencil_machine_plan = LJ.LJStencilMachinePlan(
+    Code.CodeFuncId("fn:sum_positive_i32"),
+    Kernel.KernelId("kernel:sum_positive_i32"),
+    stencil_machine,
+    artifact
+)
+assert(stencil_machine_plan.machine == stencil_machine, "stencil machine plan should carry the projected machine")
+assert(stencil_machine_plan.artifact == artifact, "stencil machine plan should carry the selected artifact")
+
+local install = LJ.LJBinaryInstallPolicy(LJ.LJInstallLow32Address, LJ.LJInstallWriteThenExec)
+assert(install.address == LJ.LJInstallLow32Address, "binary bank install policy should carry address constraints")
+assert(install.protection == LJ.LJInstallWriteThenExec, "binary bank install policy should carry W^X policy")
+local local_abs = LJ.LJBinaryPatchRecord(4, LJ.LJPatchLocalAbs32, "R_X86_64_32S", nil, nil, 16)
+assert(local_abs.kind == LJ.LJPatchLocalAbs32, "binary patch records should represent local absolute32 relocations")
+local local_abs64 = LJ.LJBinaryPatchRecord(8, LJ.LJPatchLocalAbs64, "R_X86_64_64", nil, nil, 24)
+assert(local_abs64.kind == LJ.LJPatchLocalAbs64, "binary patch records should represent local absolute64 relocations")
 
 io.write("moonlift schema_luajit ok\n")

@@ -83,6 +83,13 @@ local function bind_context(T)
             if a == nil or b == nil then return single(reject("same_len")) end
             return single(Tr.ContractFactSameLen(a, b))
             end)(node, ...)
+        elseif schema.isa(node, Tr.ContractSoAComponent) then
+            return (function(self)
+
+            local base = expr_binding(self.base)
+            if base == nil then return single(reject("soa_component")) end
+            return single(Tr.ContractFactSoAComponent(base, self.record_ty, self.field_name, self.component_index))
+            end)(node, ...)
         elseif schema.isa(node, Tr.ContractNoAlias) then
             return (function(self)
 

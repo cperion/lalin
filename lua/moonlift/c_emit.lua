@@ -6,6 +6,7 @@ local function bind_context(T)
 
     local Core = T.MoonCore
     local C = T.MoonC
+    local Exec = T.MoonExec
     local Helpers = require("moonlift.c_helpers")(T)
 
     local function append_all(out, xs) for i = 1, #(xs or {}) do out[#out + 1] = xs[i] end end
@@ -60,7 +61,7 @@ local function bind_context(T)
         if ty == C.CBackendBool8 or cls == C.CBackendBool8 then return "uint8_t" end
         if cls == C.CBackendScalar then return scalar_name(ty.scalar) end
         if ty == C.CBackendIndex or cls == C.CBackendIndex then return "ml_index" end
-        if cls == C.CBackendDataPtr then return "void*" end
+        if cls == C.CBackendDataPtr then return ty.pointee and (emit_type(ty.pointee) .. "*") or "void*" end
         if cls == C.CBackendCodePtr then return ty.sig.text end
         if cls == C.CBackendImportedCodePtr then return "void (*)(void)" end
         if cls == C.CBackendNamed then return (ty.id.module_name .. "_" .. ty.id.spelling):gsub("[^%w_]", "_") end
@@ -180,8 +181,13 @@ local function bind_context(T)
         local body = assert(func.body, "CBackendFunc requires body")
         local cls = pvm.classof(body)
         if cls == C.CBackendBodyBlocks or cls == C.CBackendBodyMixed then return body.blocks end
-        if cls == C.CBackendBodyExec then error("c_emit: CBackendBodyExec requires exec-fragment C projection", 2) end
+        if cls == C.CBackendBodyExec then return {} end
         error("c_emit: unknown CBackendFunc body", 2)
+    end
+
+    local function visit_exec_site_types(site, visit_ty)
+        for i = 1, #(site.args or {}) do visit_ty(site.args[i].ty) end
+        if pvm.classof(site.result) == C.CBackendExecResultLocal then visit_ty(site.result.ty) end
     end
 
     local function collect_implicit_types(unit)
@@ -209,6 +215,12 @@ local function bind_context(T)
         for i = 1, #(unit.funcs or {}) do
             for j = 1, #unit.funcs[i].params do visit_ty(unit.funcs[i].params[j].ty) end
             for j = 1, #unit.funcs[i].locals do visit_ty(unit.funcs[i].locals[j].ty) end
+            local body = unit.funcs[i].body
+            if pvm.classof(body) == C.CBackendBodyExec then
+                visit_exec_site_types(body.fragment, visit_ty)
+            elseif pvm.classof(body) == C.CBackendBodyMixed then
+                for j = 1, #(body.fragments or {}) do visit_exec_site_types(body.fragments[j], visit_ty) end
+            end
             local blocks = func_blocks(unit.funcs[i])
             for j = 1, #blocks do
                 for k = 1, #blocks[j].params do visit_ty(blocks[j].params[k].ty) end
@@ -331,13 +343,25 @@ local function bind_context(T)
         return "{ " .. table.concat(entries, ", ") .. " }"
     end
 
+    local function scalar_init_literal(g)
+        if #(g.inits or {}) ~= 1 then return nil end
+        local init = g.inits[1]
+        if pvm.classof(init) ~= C.CBackendDataScalar or (init.offset or 0) ~= 0 then return nil end
+        local gty = pvm.classof(g.ty)
+        if g.ty ~= C.CBackendBool8 and gty ~= C.CBackendBool8 and g.ty ~= C.CBackendIndex and gty ~= C.CBackendIndex and gty ~= C.CBackendScalar then return nil end
+        return literal(init.literal)
+    end
+
     local function emit_globals(unit, out)
         for i = 1, #unit.globals do
             local g = unit.globals[i]
             local gcls = pvm.classof(g.ty)
             local byte_global = (gcls == C.CBackendDataPtr) or (#g.inits > 0 and pvm.classof(g.inits[1]) == C.CBackendDataBytes)
+            local scalar_init = scalar_init_literal(g)
             if byte_global then
                 out[#out + 1] = "static unsigned char " .. g.name.text .. "[" .. tostring(g.size) .. "] = " .. byte_init_list(g) .. ";"
+            elseif scalar_init ~= nil then
+                out[#out + 1] = "static " .. decl(g.ty, g.name.text) .. " = " .. scalar_init .. ";"
             else
                 out[#out + 1] = "static " .. decl(g.ty, g.name.text) .. ";"
             end
@@ -432,9 +456,13 @@ local function bind_context(T)
         if cls == C.CBackendGoto then emit_transfer(out, blocks[t.dest.text], t.args)
         elseif cls == C.CBackendIfGoto then
             out[#out + 1] = "    if (" .. atom(t.cond) .. ") {"
-            emit_transfer(out, blocks[t.then_dest.text], t.then_args)
+            local nested = {}
+            emit_transfer(nested, blocks[t.then_dest.text], t.then_args)
+            for i = 1, #nested do out[#out + 1] = "    " .. nested[i] end
             out[#out + 1] = "    } else {"
-            emit_transfer(out, blocks[t.else_dest.text], t.else_args)
+            nested = {}
+            emit_transfer(nested, blocks[t.else_dest.text], t.else_args)
+            for i = 1, #nested do out[#out + 1] = "    " .. nested[i] end
             out[#out + 1] = "    }"
         elseif cls == C.CBackendSwitchGoto then
             out[#out + 1] = "    switch (" .. atom(t.value) .. ") {"
@@ -449,6 +477,31 @@ local function bind_context(T)
         elseif cls == C.CBackendReturn then out[#out + 1] = "    return " .. atom(t.value) .. ";"
         elseif t == C.CBackendTrap or cls == C.CBackendTrap then out[#out + 1] = "    abort();"
         end
+    end
+
+    local function exec_fragment_symbol(fragment)
+        local kind = fragment and fragment.kind or nil
+        local cls = pvm.classof(kind)
+        if cls == Exec.ExecFragmentStencil then return kind.artifact.symbol.text end
+        if cls == Exec.ExecFragmentCall then error("c_emit: ExecFragmentCall requires C symbol projection before emission", 3) end
+        error("c_emit: unsupported exec fragment kind " .. class_name(kind), 3)
+    end
+
+    local function emit_exec_site(site, out)
+        local ecls = pvm.classof(site.emission)
+        if ecls == C.CBackendExecEmitInline or site.emission == C.CBackendExecEmitInline then
+            error("c_emit: inline exec fragments must be lowered to C blocks before emission", 3)
+        end
+        local args = {}
+        for i = 1, #(site.args or {}) do args[i] = atom(site.args[i].atom) end
+        local call = exec_fragment_symbol(site.fragment) .. "(" .. table.concat(args, ", ") .. ")"
+        local rcls = pvm.classof(site.result)
+        if rcls == C.CBackendExecResultLocal then
+            out[#out + 1] = "    " .. site.result.dst.text .. " = " .. call .. ";"
+            return site.result.dst
+        end
+        out[#out + 1] = "    " .. call .. ";"
+        return nil
     end
 
     local function emit_func(f, sigs, out)
@@ -470,6 +523,21 @@ local function bind_context(T)
         for i = 1, #f.locals do
             local_types[f.locals[i].id.text] = f.locals[i].ty
             emit_local_decl(f.locals[i].id.text, f.locals[i].ty)
+        end
+        local body_cls = pvm.classof(f.body)
+        if body_cls == C.CBackendBodyExec then
+            local result = emit_exec_site(f.body.fragment, out)
+            if sig.result == C.CBackendVoid or pvm.classof(sig.result) == C.CBackendVoid then
+                out[#out + 1] = "    return;"
+            elseif result ~= nil then
+                out[#out + 1] = "    return " .. result.text .. ";"
+            else
+                error("c_emit: non-void exec function has no exec result", 2)
+            end
+            out[#out + 1] = "}"
+            return
+        elseif body_cls == C.CBackendBodyMixed and #(f.body.fragments or {}) > 0 then
+            error("c_emit: CBackendBodyMixed fragments must be projected into explicit C blocks", 2)
         end
         local f_blocks = func_blocks(f)
         local blocks = {}; for i = 1, #f_blocks do blocks[f_blocks[i].label.text] = f_blocks[i] end
@@ -555,6 +623,34 @@ local function bind_context(T)
         end
     end
 
+    local function collect_exec_sites(unit)
+        local out = {}
+        for i = 1, #(unit.funcs or {}) do
+            local body = unit.funcs[i].body
+            local cls = pvm.classof(body)
+            if cls == C.CBackendBodyExec then
+                out[#out + 1] = body.fragment
+            elseif cls == C.CBackendBodyMixed then
+                for j = 1, #(body.fragments or {}) do out[#out + 1] = body.fragments[j] end
+            end
+        end
+        return out
+    end
+
+    local function emit_exec_prototypes(unit, out)
+        local seen = {}
+        for _, site in ipairs(collect_exec_sites(unit)) do
+            local kind = site.fragment and site.fragment.kind or nil
+            if pvm.classof(kind) == Exec.ExecFragmentStencil then
+                local decl = kind.artifact.c_signature
+                if decl ~= nil and decl ~= "" and not seen[decl] then
+                    seen[decl] = true
+                    out[#out + 1] = decl:match(";%s*$") and decl or (decl .. ";")
+                end
+            end
+        end
+    end
+
     local function emit_func_prototypes(unit, sigs, out, opts)
         opts = opts or {}
         local CoreVisibilityExport = Core.VisibilityExport
@@ -615,6 +711,7 @@ local function bind_context(T)
         local sigs = sig_by_id(unit)
         out[#out + 1] = "/* externs */"
         emit_extern_prototypes(unit, sigs, out)
+        emit_exec_prototypes(unit, out)
         out[#out + 1] = ""
 
         out[#out + 1] = "/* globals */"
@@ -637,7 +734,8 @@ local function bind_context(T)
     local function emit_header(unit, opts)
         opts = opts or {}
         local out = {}
-        local guard = sanitize((opts.guard or ((unit.module_name or "moonlift") .. "_h"))):upper()
+        local guard_base = opts.guard or opts.name or unit.module_name or "moonlift"
+        local guard = sanitize(guard_base .. "_h"):upper()
         out[#out + 1] = "/* generated by moonlift C backend */"
         out[#out + 1] = "#ifndef " .. guard
         out[#out + 1] = "#define " .. guard

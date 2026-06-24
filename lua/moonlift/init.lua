@@ -55,6 +55,9 @@ M.code_validate = require("moonlift.code_validate")
 M.tree_to_code = require("moonlift.tree_to_code")
 M.code_to_c = require("moonlift.code_to_c")
 M.code_to_back = require("moonlift.code_to_back")
+M.exec_plan = require("moonlift.exec_plan")
+M.stencil_rules = require("moonlift.stencil_rules")
+M.stencil_artifact_plan = require("moonlift.stencil_artifact_plan")
 M.c_validate = require("moonlift.c_validate")
 M.c_emit = require("moonlift.c_emit")
 M.c_helpers = require("moonlift.c_helpers")
@@ -857,6 +860,11 @@ function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
         mem = opts.mem,
         effect = opts.effect,
         kernel = opts.kernel,
+        target_model = opts.target_model,
+        back_target_model = opts.back_target_model,
+        target = opts.target,
+        schedule = opts.schedule,
+        schedule_plan = opts.schedule_plan,
         collect_rejects = opts.collect_rejects,
     })
     if opts.reject_on_stencil_rejects ~= false and rejects and #rejects > 0 then
@@ -897,6 +905,9 @@ function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
         code_result = code_result,
         lj_module = lj_module,
         facts = facts,
+        stencil_plan = facts.stencil_plan or facts.stencil,
+        luajit_stencil_machines = facts.luajit_stencil_machines,
+        exec_plan = facts.exec_plan or facts.exec,
         artifacts = artifacts,
         rejects = rejects,
         bank = bank,

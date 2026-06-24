@@ -31,6 +31,7 @@ local function bind_context(T)
     local CodeLowerPlan = require("moonlift.code_lower_plan")(T)
     local CodeAggregateAbi = require("moonlift.code_aggregate_abi")(T)
     local ReductionAlgebra = require("moonlift.reduction_algebra")(T)
+    local LowerStrategyEmitRules = require("moonlift.lower_strategy_emit_rules")(T)
 
     local api = {}
 
@@ -1185,19 +1186,36 @@ local function bind_context(T)
         return overrides
     end
 
+    local function lower_emit_candidate(ctx, fragment, cls)
+        local sched = nil
+        if cls == Lower.LowerStrategyKernel then sched = ctx.schedule_by_id and ctx.schedule_by_id[fragment.strategy.schedule.text] end
+        return {
+            strategy_code = cls == Lower.LowerStrategyCode,
+            strategy_kernel = cls == Lower.LowerStrategyKernel,
+            strategy_closed_form = cls == Lower.LowerStrategyClosedForm,
+            has_schedule = sched ~= nil,
+            schedule_vector = sched ~= nil and pvm.classof(sched.kind) == Schedule.ScheduleVector or false,
+            schedule = sched,
+            missing_schedule_reason = cls == Lower.LowerStrategyKernel and ("kernel strategy references missing schedule " .. fragment.strategy.schedule.text) or "",
+            unsupported_reason = "unsupported LowerStrategy for Back emission",
+        }
+    end
+
     local function emit_fragment(ctx, code_module, graph, flow, value, mem, effect, kernels, fragment)
         local cls = pvm.classof(fragment.strategy)
-        if cls == Lower.LowerStrategyCode then
+        local candidate = lower_emit_candidate(ctx, fragment, cls)
+        local selection, err = LowerStrategyEmitRules.select(candidate)
+        if selection == nil then error("lower_to_back: " .. tostring(err), 2) end
+        if selection.kind == LowerStrategyEmitRules.kind.code then
             local cmds = CodeToBack.fragment_commands(code_module, graph, flow, value, mem, effect, fragment.cover, { validate = false, emit_local_slots = false, layout_env = ctx.layout_env, target = ctx.target })
             for _, cmd in ipairs(cmds or {}) do ctx.cmds[#ctx.cmds + 1] = cmd end
             return
         end
-        if cls == Lower.LowerStrategyKernel then
+        if selection.kind == LowerStrategyEmitRules.kind.scalar_kernel or selection.kind == LowerStrategyEmitRules.kind.vector_kernel then
             local old_overrides = ctx.semantic_fragment_overrides
             ctx.semantic_fragment_overrides = semantic_fragment_overrides(ctx, graph, fragment)
             with_value_overrides(ctx, ctx.semantic_fragment_overrides, function()
-                local sched = ctx.schedule_by_id and ctx.schedule_by_id[fragment.strategy.schedule.text]
-                if sched ~= nil and pvm.classof(sched.kind) == Schedule.ScheduleVector then
+                if selection.kind == LowerStrategyEmitRules.kind.vector_kernel then
                     emit_vector_kernel_fragment(ctx, code_module, graph, flow, ctx.schedules, kernels, fragment)
                 else
                     emit_scalar_kernel_fragment(ctx, code_module, graph, flow, ctx.schedules, kernels, fragment)
@@ -1205,13 +1223,17 @@ local function bind_context(T)
             end)
             ctx.semantic_fragment_overrides = old_overrides
             return
-        elseif cls == Lower.LowerStrategyClosedForm then
+        elseif selection.kind == LowerStrategyEmitRules.kind.closed_form then
             with_value_overrides(ctx, semantic_fragment_overrides(ctx, graph, fragment), function()
                 emit_closed_form_fragment(ctx, code_module, graph, flow, kernels, fragment)
             end)
             return
+        elseif selection.kind == LowerStrategyEmitRules.kind.missing_schedule then
+            error("lower_to_back: " .. tostring(selection.reason), 2)
+        elseif selection.kind == LowerStrategyEmitRules.kind.unsupported then
+            error("lower_to_back: " .. tostring(selection.reason), 2)
         end
-        error("lower_to_back: unsupported LowerStrategy for Back emission", 2)
+        error("lower_to_back: unsupported lower emission selection " .. tostring(selection.kind), 2)
     end
 
     local function emit_func(ctx, code_module, graph, flow, value, mem, effect, func, func_plan, graph_loops)

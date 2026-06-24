@@ -509,8 +509,8 @@ Decisions:
 
 - `KernelEffectScan`, `KernelEffectPartition`, `KernelEffectCopy`, and
   `KernelResultFind` are first-class array skeleton semantics. They are not
-  encoded as callback names or stencil strings; LuaJIT stencil lowering is one
-  backend consumer of those meanings.
+  encoded as callback names or stencil strings; stencil descriptor planning is
+  one backend consumer of those meanings.
 - The counted-loop kernel planner rewrites ordinary prefix-scan and primary
   index copy loops into `KernelEffectScan` and `KernelEffectCopy`. That keeps
   copy and scan ownership in the kernel semantic layer, not in a backend store
@@ -527,7 +527,7 @@ Decisions:
   candidate facts and final MoonKernel values; `code_kernel_plan_rules` owns
   no-plan rejection priority, result priority, and the proof bit for
   closed-form plans whose Flow trip count is unknown.
-- LuaJIT stencil lowering is split into Llisle plan and selector relations.
+- Stencil descriptor planning is split into Llisle plan and selector relations.
   `plan_store_stencil` / `plan_reduce_stencil` own readiness gates over planned
   kernels, counted loops, return shape, single-store or reduction shape, and
   enriched class availability. `select_store_stencil` / `select_reduce_stencil`

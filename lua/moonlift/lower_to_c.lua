@@ -30,6 +30,8 @@ local function bind_context(T)
     local CodeKernelPlan = require("moonlift.code_kernel_plan")(T)
     local CodeSchedulePlan = require("moonlift.code_schedule_plan")(T)
     local CodeLowerPlan = require("moonlift.code_lower_plan")(T)
+    local ExecPlan = require("moonlift.exec_plan")(T)
+    local LowerStrategyEmitRules = require("moonlift.lower_strategy_emit_rules")(T)
 
     local api = {}
 
@@ -907,6 +909,20 @@ local function bind_context(T)
         return cls == Lower.LowerStrategyKernel or cls == Lower.LowerStrategyClosedForm
     end
 
+    local function lower_emit_candidate(fragment, cls, schedules_by_id)
+        local sched = nil
+        if cls == Lower.LowerStrategyKernel then sched = schedules_by_id[fragment.strategy.schedule.text] end
+        return {
+            strategy_code = cls == Lower.LowerStrategyCode,
+            strategy_kernel = cls == Lower.LowerStrategyKernel,
+            strategy_closed_form = cls == Lower.LowerStrategyClosedForm,
+            has_schedule = sched ~= nil,
+            schedule_vector = sched ~= nil and pvm.classof(sched.kind) == Schedule.ScheduleVector or false,
+            missing_schedule_reason = cls == Lower.LowerStrategyKernel and ("kernel strategy references missing schedule " .. fragment.strategy.schedule.text) or "",
+            unsupported_reason = "unsupported LowerStrategy for C emission " .. class_name(fragment.strategy),
+        }
+    end
+
     local function prepare_func_ctx(ctx, code_func, c_func)
         ctx.code_func = code_func
         ctx.func = c_func
@@ -972,17 +988,21 @@ local function bind_context(T)
         local schedules_by_id = schedule_by_id(schedules)
         for _, fragment in ipairs(ordered_fragments_for_func(code_func, func_plan, graph_loops)) do
             local cls = pvm.classof(fragment.strategy)
-            if cls == Lower.LowerStrategyCode then
+            local selection, err = LowerStrategyEmitRules.select(lower_emit_candidate(fragment, cls, schedules_by_id))
+            if selection == nil then error("lower_to_c: " .. tostring(err), 2) end
+            if selection.kind == LowerStrategyEmitRules.kind.code then
                 for _, b in ipairs(cover_blocks(fragment, code_func, graph_loops)) do ctx.blocks[#ctx.blocks + 1] = baseline_by_label[clabel(b.id).text] end
-            elseif cls == Lower.LowerStrategyClosedForm then
+            elseif selection.kind == LowerStrategyEmitRules.kind.closed_form then
                 emit_closed_form_fragment(ctx, graph, flow, kernels, fragment)
-            elseif cls == Lower.LowerStrategyKernel then
-                local sched = schedules_by_id[fragment.strategy.schedule.text]
-                if sched == nil then error("lower_to_c: kernel strategy references missing schedule " .. fragment.strategy.schedule.text, 2) end
-                if pvm.classof(sched.kind) == Schedule.ScheduleVector then emit_vector_kernel_fragment(ctx, graph, flow, kernels, schedules, fragment)
+            elseif selection.kind == LowerStrategyEmitRules.kind.scalar_kernel or selection.kind == LowerStrategyEmitRules.kind.vector_kernel then
+                if selection.kind == LowerStrategyEmitRules.kind.vector_kernel then emit_vector_kernel_fragment(ctx, graph, flow, kernels, schedules, fragment)
                 else emit_scalar_kernel_fragment(ctx, graph, flow, kernels, fragment) end
+            elseif selection.kind == LowerStrategyEmitRules.kind.missing_schedule then
+                error("lower_to_c: " .. tostring(selection.reason), 2)
+            elseif selection.kind == LowerStrategyEmitRules.kind.unsupported then
+                error("lower_to_c: " .. tostring(selection.reason), 2)
             else
-                error("lower_to_c: unsupported LowerStrategy for C emission " .. class_name(fragment.strategy), 2)
+                error("lower_to_c: unsupported lower emission selection " .. tostring(selection.kind), 2)
             end
         end
         return C.CBackendFunc(
@@ -998,6 +1018,12 @@ local function bind_context(T)
 
     local function func_by_id(code_module)
         local out = {}; for _, f in ipairs(code_module.funcs or {}) do out[f.id.text] = f end; return out
+    end
+
+    local function c_block_body(func)
+        local body = assert(func and func.body, "lower_to_c: expected C function with body")
+        if pvm.classof(body) ~= C.CBackendBodyBlocks then error("lower_to_c: semantic lowering requires canonical C block body", 3) end
+        return body.blocks
     end
 
     local function graph_indexes(graph)
@@ -1061,7 +1087,7 @@ local function bind_context(T)
             if fp ~= nil then
                 local semantic = false
                 for _, frag in ipairs(fp.fragments or {}) do if semantic_strategy(frag) then semantic = true end end
-                if semantic then cfuncs[#cfuncs + 1] = lower_semantic_func(ctx, graph, flow, kernels, schedules, code_func, base, fp, graph_loops, base.body and base.body.blocks or {})
+                if semantic then cfuncs[#cfuncs + 1] = lower_semantic_func(ctx, graph, flow, kernels, schedules, code_func, base, fp, graph_loops, c_block_body(base))
                 else cfuncs[#cfuncs + 1] = base end
             else
                 cfuncs[#cfuncs + 1] = base
@@ -1070,8 +1096,27 @@ local function bind_context(T)
         return C.CBackendUnit(unit.module_name, unit.target, unit.sigs, unit.types, unit.globals, unit.externs, unit.helpers, cfuncs)
     end
 
+    local function exec_plan(code_module, lower_module, opts)
+        local graph, flow, value, mem, effect, kernels
+        graph, flow, value, mem, effect, kernels, _, _, opts = normalize_args(code_module, lower_module, opts)
+        opts = opts or {}
+        return ExecPlan.plan(code_module, {
+            graph = graph,
+            flow = flow,
+            value = value,
+            mem = mem,
+            effect = effect,
+            kernels = kernels,
+            stencil = opts.stencil,
+            artifacts = opts.artifacts,
+            contracts = opts.contracts,
+        })
+    end
+
     api.module = module
     api.unit = module
+    api.exec_plan = exec_plan
+    api.exec = exec_plan
 
     T._moonlift_api_cache.lower_to_c = api
     return api

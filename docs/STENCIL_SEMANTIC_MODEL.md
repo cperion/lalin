@@ -80,7 +80,8 @@ MoonCode loops/fragments
   -> graph/flow/value/memory/effect facts
   -> MoonKernel semantic skeletons
   -> Llisle stencil selection
-  -> StencilC artifact
+  -> stencil_artifact_plan descriptor-backed artifact
+  -> stencil_c source realization
   -> LuaJIT machine call/effect
 ```
 
@@ -157,6 +158,7 @@ views/slices       = range1d domain + descriptor-backed strided topology
 byte spans         = range1d domain + byte-addressed topology + cast/reinterpret operator
 2D tiles/images    = tile2d domain + row/column/tiled topology
 AoS field arrays   = range1d domain + field-projection topology
+SoA record arrays   = range1d domain + synchronized component-buffer topology
 segmented data     = segmented domain + existing apply/reduce/scan skeletons
 masked data        = masked domain + existing access roles and predicates
 ```
@@ -193,7 +195,8 @@ diagnostics, and measurement gate all agree.
     skeletons:   apply, copy, reduce, scan, find, partition
     first proof:  same skeletons as arrays with non-unit stride and view bounds
     gate:        code_ir view copy proves dynamic runtime stride lowering;
-                 stencil_c all-shapes compiles array + dynamic-view variants
+                 stencil_artifact_plan all-shapes constructs array +
+                 dynamic-view variants; stencil_c compiles those artifacts
                  for the full 18-cell vocabulary without symbol collisions;
                  array quick matrix remains 18/18 measured.
     status:      view descriptor topology is typed and carried through
@@ -208,9 +211,10 @@ diagnostics, and measurement gate all agree.
     first proof:  first-class Code IR slice projection, not reuse of view
     gate:        code_ir slice copy proves CodeInstSliceMake +
                  CodeInstSliceData lowering into StencilTopologySliceDescriptor;
-                 stencil_c all-shapes compiles array + dynamic-view +
-                 dynamic-slice variants for the full 18-cell vocabulary
-                 without symbol collisions.
+                 stencil_artifact_plan all-shapes constructs array +
+                 dynamic-view + dynamic-slice variants; stencil_c compiles
+                 those artifacts for the full 18-cell vocabulary without
+                 symbol collisions.
     status:      slice descriptors are typed as data,len across LuaJIT
                  physical types and Back ABI components; CodeInstSliceMake
                  emits MemObjectSameStore for its backing data.
@@ -222,9 +226,10 @@ diagnostics, and measurement gate all agree.
     first proof:  memcpy/memmove/fill/search over u8-compatible spans
     gate:        code_ir byte span copy proves CodeInstByteSpanMake +
                  CodeInstByteSpanData lowering into
-                 StencilTopologyByteSpanDescriptor; stencil_c byte-span
-                 artifacts compile and execute copy, memmove, fill, find,
-                 compare, and count over u8-compatible spans.
+                 StencilTopologyByteSpanDescriptor; stencil_artifact_plan
+                 constructs byte-span artifacts; stencil_c compiles and
+                 executes copy, memmove, fill, find, compare, and count over
+                 u8-compatible spans.
     status:      byte spans are explicit Code/Mem/Stencil descriptors,
                  not slice[u8] aliases; Back and LuaJIT ABI lower them as
                  data,len components, while memory facts keep the element
@@ -237,21 +242,41 @@ diagnostics, and measurement gate all agree.
     skeletons:   apply, reduce, find, compare, fill at the C vocabulary layer;
                  map/reduce from MoonCode facts through LuaJIT lowering
     first proof:  map/reduce one field without materializing SoA
-    gate:        schema constructs StencilTopologyFieldProjection; stencil_c
-                 compiles and executes reduce/map/find/compare/fill over
-                 Demo_Pair.right; Code IR lowering recognizes xs[i].right as
-                 a field-projected stream and executes lowered reduce/map.
+    gate:        schema constructs StencilTopologyFieldProjection;
+                 stencil_artifact_plan constructs field-projected artifacts;
+                 stencil_c compiles and executes reduce/map/find/compare/fill
+                 over Demo_Pair.right; Code IR lowering recognizes xs[i].right
+                 as a field-projected stream and executes lowered reduce/map.
     status:      field projections are modeled as topology, not as a second
                  product implementation; memory facts emit derived field
                  objects with same-store parent relations so parent disjoint
                  contracts prove projected-field loop independence.
 
-[ ] SoA / multi-buffer records
+[x] SoA / multi-buffer records
     domain:      range1d
-    topology:    synchronized named component buffers
-    skeletons:   zip_map, zip_reduce, compare, partition
+    topology:    named component buffer over a parent topology
+    skeletons:   zip_map and zip_reduce from real DSL lowering; zip_compare and
+                 partition at the artifact vocabulary layer
     first proof:  record-like zip semantics without inventing a second product model
-    gate:        compare multi-buffer lowering against hand-written C
+    gate:        schema constructs StencilTopologySoAComponent; tree contracts
+                 typecheck `soa_component(base, Record, field, index)` into
+                 CodeContractSoAComponent; LuaJIT lowering wraps stream
+                 topology from those Code facts; stencil_artifact_plan
+                 constructs SoA component artifacts; stencil_c compiles and
+                 executes zip_map, zip_reduce, zip_compare, and partition over
+                 component buffers; real DSL source emits and executes a
+                 LuaJIT copy-patch artifact for SoA zip_map and zip_reduce;
+                 bench_luajit_stencil_soa.lua quick compares that lowered
+                 artifact against direct GCC loops.
+    status:      SoA is topology plus typed contracts, not a second product
+                 implementation. Component pointers keep their scalar ABI,
+                 while descriptors carry the logical record type, field name,
+                 component index, and parent storage topology. Vectorized
+                 copy-patch objects can carry local constant-pool and jump-table
+                 sections such as .rodata.cst16 and .rodata; the stencil bank
+                 materializes those sections into the installed blob, resolves
+                 local rel32 relocations, and promotes local absolute32
+                 relocations to the low32 install policy.
 
 [ ] 2D row-major surfaces
     domain:      tile2d or range2d
@@ -310,7 +335,7 @@ minimum completion gate for each family is:
 1. ASDL descriptor shape exists.
 2. Kernel/MoonCode facts can express the family without backend guessing.
 3. Llisle selector classifies the family from facts.
-4. StencilC or copy-patch artifact generation consumes the descriptor.
+4. stencil_artifact_plan or copy-patch artifact generation consumes the descriptor.
 5. Diagnostics explain rejection in terms of the normalized axes.
 6. Benchmarks compare lowered output against direct C/GCC baselines.
 ```
@@ -724,15 +749,14 @@ Llisle owns stencil selection decisions.
 The split is:
 
 ```text
-luajit_lower
-  adapts facts into candidates
-  asks Llisle which lowering strategy to use
-  builds the selected machine
-
-luajit_stencil_rules
+stencil_rules
   classifies expression/access shapes
   selects concrete stencil vocabulary
   builds provider info and argument ordering
+
+luajit_lower
+  consumes preplanned stencil machines
+  projects planned machines or scalar Code blocks into MoonLuaJIT
 ```
 
 This keeps the decision matrix inspectable as family data instead of hiding it

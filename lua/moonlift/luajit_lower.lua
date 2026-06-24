@@ -33,7 +33,7 @@ local function bind_context(T)
     local CodeMemFacts = require("moonlift.code_mem_facts")(T)
     local CodeEffectFacts = require("moonlift.code_effect_facts")(T)
     local CodeKernelPlan = require("moonlift.code_kernel_plan")(T)
-    local StencilRules = require("moonlift.luajit_stencil_rules")(T)
+    local StencilRules = require("moonlift.stencil_rules")(T)
     local LowerRules = require("moonlift.luajit_lower_rules")(T)
 
     local api = {}
@@ -54,6 +54,23 @@ local function bind_context(T)
     local function code_sigs(module)
         local out = {}
         for _, sig in ipairs(module.sigs or {}) do out[sig.id.text] = sig end
+        return out
+    end
+
+    local function contract_facts(contracts)
+        if contracts == nil then return {} end
+        if pvm.classof(contracts) == Code.CodeContractFactSet then return contracts.facts or {} end
+        return contracts
+    end
+
+    local function soa_contract_index(contracts)
+        local out = {}
+        for _, fact in ipairs(contract_facts(contracts)) do
+            local k = fact.fact
+            if pvm.classof(k) == Code.CodeContractSoAComponent then
+                out[fact.func.text .. "\0" .. k.base.text] = k
+            end
+        end
         return out
     end
 
@@ -385,6 +402,12 @@ local function bind_context(T)
 
     local function stream_topology(ctx, stream)
         local object = ctx.mem_objects and stream and ctx.mem_objects[stream.object.text] or nil
+        local base_value = stream_base_value(stream)
+        local soa_contract = base_value and ctx.soa_contracts and ctx.func_id and ctx.soa_contracts[ctx.func_id.text .. "\0" .. base_value.text] or nil
+        local function wrap_soa(topology)
+            if soa_contract == nil or topology == nil then return topology end
+            return Stencil.StencilTopologySoAComponent(topology, soa_contract.record_ty, soa_contract.field_name, soa_contract.component_index)
+        end
         if object ~= nil then
             local provenance = object.provenance
             local pcls = pvm.classof(provenance)
@@ -399,35 +422,42 @@ local function bind_context(T)
                 local record_ty = parent and parent.elem_ty or nil
                 local field_name = field_name_from_stream(ctx, stream)
                 if parent_topology ~= nil and record_ty ~= nil and field_name ~= nil then
-                    return Stencil.StencilTopologyFieldProjection(parent_topology, record_ty, field_name, provenance.byte_offset or 0)
+                    return wrap_soa(Stencil.StencilTopologyFieldProjection(parent_topology, record_ty, field_name, provenance.byte_offset or 0))
                 end
             end
             if object.kind == Mem.MemObjectView and pcls == Mem.MemProvView then
                 if provenance.stride == nil then return nil end
-                return Stencil.StencilTopologyViewDescriptor(
+                return wrap_soa(Stencil.StencilTopologyViewDescriptor(
                     provenance.view,
                     provenance.data,
                     extent_len(object.extent) or provenance.len,
                     provenance.stride,
                     mem_stride_const(object.stride)
-                )
+                ))
             end
             if object.kind == Mem.MemObjectSlice and pcls == Mem.MemProvSlice then
-                return Stencil.StencilTopologySliceDescriptor(
+                return wrap_soa(Stencil.StencilTopologySliceDescriptor(
                     provenance.slice,
                     provenance.data,
                     extent_len(object.extent) or provenance.len
-                )
+                ))
             end
             if object.kind == Mem.MemObjectByteSpan and pcls == Mem.MemProvByteSpan then
-                return Stencil.StencilTopologyByteSpanDescriptor(
+                return wrap_soa(Stencil.StencilTopologyByteSpanDescriptor(
                     provenance.span,
                     provenance.data,
                     extent_len(object.extent) or provenance.len
-                )
+                ))
             end
         end
-        return pattern_topology(stream and stream.pattern)
+        return wrap_soa(pattern_topology(stream and stream.pattern))
+    end
+
+    local function topology_data_value(topology)
+        local cls = pvm.classof(topology)
+        if cls == Stencil.StencilTopologySoAComponent or cls == Stencil.StencilTopologyFieldProjection then return topology_data_value(topology.parent) end
+        if cls == Stencil.StencilTopologyViewDescriptor or cls == Stencil.StencilTopologySliceDescriptor or cls == Stencil.StencilTopologyByteSpanDescriptor then return topology.data end
+        return nil
     end
 
     local function binding_index(body)
@@ -585,9 +615,7 @@ local function bind_context(T)
         if topology == nil then return nil end
         local base = stream_base_value(stream)
         local tcls = pvm.classof(topology)
-        if tcls == Stencil.StencilTopologyViewDescriptor or tcls == Stencil.StencilTopologySliceDescriptor or tcls == Stencil.StencilTopologyByteSpanDescriptor then
-            base = topology.data
-        end
+        base = topology_data_value(topology) or base
         if base == nil then return nil end
         return {
             base = base,
@@ -720,6 +748,7 @@ local function bind_context(T)
     local function dynamic_stride_topology(topology)
         local cls = pvm.classof(topology)
         if cls == Stencil.StencilTopologyFieldProjection then return dynamic_stride_topology(topology.parent) end
+        if cls == Stencil.StencilTopologySoAComponent then return dynamic_stride_topology(topology.parent) end
         if cls == Stencil.StencilTopologyViewDescriptor and topology.stride_const == nil then return topology end
         return nil
     end
@@ -746,6 +775,10 @@ local function bind_context(T)
         if artifact == nil then return nil, "store stencil artifact provider did not select an artifact" end
         local id = LJ.LJMachineId("machine:" .. sanitize(func.name) .. ":stencil_store:" .. sanitize(loop_fact.loop.text))
         return LJ.LJMachine(id, LJ.LJMachineStencilEffect(artifact, stencil_args(ctx, artifact, selection.args)), nil, LJ.LJStateScalar, LJ.LJTraceHot), nil
+    end
+
+    local function plan_kernel_stencil_store(ctx, func, plan, graph_loop, loop_fact, opts)
+        return lower_kernel_stencil_store(ctx, func, plan, graph_loop, loop_fact, opts)
     end
 
     local function select_reduction_artifact(opts, func, vocab, op, reduction, plan, info)
@@ -806,6 +839,10 @@ local function bind_context(T)
         if artifact == nil then return nil, "reduction stencil artifact provider did not select an artifact" end
         local id = LJ.LJMachineId("machine:" .. sanitize(func.name) .. ":stencil_reduce:" .. sanitize(loop_fact.loop.text))
         return LJ.LJMachine(id, LJ.LJMachineStencilCall(artifact, stencil_args(ctx, artifact, selection.args), physical(ctx, reduction.ty)), physical(ctx, reduction.ty), LJ.LJStateScalar, LJ.LJTraceHot), nil
+    end
+
+    local function plan_kernel_stencil_reduce(ctx, func, plan, graph_loop, loop_fact, opts)
+        return lower_kernel_stencil_reduce(ctx, func, plan, graph_loop, loop_fact, opts)
     end
 
     local function single_effect(body, wanted)
@@ -951,15 +988,25 @@ local function bind_context(T)
         if loop_fact == nil or loop_fact.counted == nil then return nil, "stencil skeleton requires counted loop" end
         local step_num = const_int_value(ctx, loop_fact.counted.step)
         if step_num == nil or step_num <= 0 then return nil, "stencil skeleton requires a positive constant step" end
-        local planned, reason = skeleton_scan_plan(ctx, func, plan, graph_loop, loop_fact)
-        if planned ~= nil then return planned, nil end
-        planned, reason = skeleton_find_plan(ctx, func, plan, graph_loop, loop_fact)
-        if planned ~= nil then return planned, nil end
-        planned, reason = skeleton_partition_plan(ctx, func, plan, graph_loop, loop_fact)
-        if planned ~= nil then return planned, nil end
-        planned, reason = skeleton_copy_plan(ctx, func, plan, graph_loop, loop_fact)
-        if planned ~= nil then return planned, nil end
-        return nil, reason or "no stencil skeleton selected"
+        local scan, scan_reason = skeleton_scan_plan(ctx, func, plan, graph_loop, loop_fact)
+        local find, find_reason = skeleton_find_plan(ctx, func, plan, graph_loop, loop_fact)
+        local partition, partition_reason = skeleton_partition_plan(ctx, func, plan, graph_loop, loop_fact)
+        local copy, copy_reason = skeleton_copy_plan(ctx, func, plan, graph_loop, loop_fact)
+        local reject_reason = scan_reason or find_reason or partition_reason or copy_reason or "no stencil skeleton selected"
+        local selection, err = LowerRules.select_skeleton {
+            scan_ready = scan ~= nil,
+            scan_plan = scan,
+            find_ready = find ~= nil,
+            find_plan = find,
+            partition_ready = partition ~= nil,
+            partition_plan = partition,
+            copy_ready = copy ~= nil,
+            copy_plan = copy,
+            reject_reason = reject_reason,
+        }
+        if selection == nil then return nil, err end
+        if selection.kind == LowerRules.kind.no_plan then return nil, selection.reason end
+        return selection.planned, nil
     end
 
     local function lower_kernel_stencil_skeleton(ctx, func, plan, graph_loop, loop_fact, opts)
@@ -975,6 +1022,10 @@ local function bind_context(T)
             return LJ.LJMachine(id, LJ.LJMachineStencilCall(artifact, stencil_args(ctx, artifact, selection.args), result_ty), result_ty, LJ.LJStateScalar, LJ.LJTraceHot), nil
         end
         return LJ.LJMachine(id, LJ.LJMachineStencilEffect(artifact, stencil_args(ctx, artifact, selection.args)), nil, LJ.LJStateScalar, LJ.LJTraceHot), nil
+    end
+
+    local function plan_kernel_stencil_skeleton(ctx, func, plan, graph_loop, loop_fact, opts)
+        return lower_kernel_stencil_skeleton(ctx, func, plan, graph_loop, loop_fact, opts)
     end
 
     local function counted_positive(ctx, loop_fact)
@@ -1023,6 +1074,25 @@ local function bind_context(T)
             single_store = store ~= nil
             store_dst_base = store ~= nil and stream_base_value(store.dst) ~= nil
         end
+        local any_ready_lowering = (opts.stencil_skeleton_artifact_for ~= nil and stencil_skeleton_ready)
+            or (opts.stencil_reduce_artifact_for ~= nil and result_reduction and stencil_reduce_ready and not stencil_skeleton_ready)
+            or (opts.stencil_store_artifact_for ~= nil and stencil_store_ready and not stencil_skeleton_ready)
+        local reject_reason = "no LuaJIT stencil lowering matched"
+        if not loop_plan then
+            reject_reason = "kernel subject is not a loop lowering candidate"
+        elseif not owns_loop then
+            reject_reason = "kernel subject is not owned by the current function"
+        elseif not planned then
+            reject_reason = "kernel is not planned"
+        elseif result_reduction and not stencil_skeleton_ready then
+            reject_reason = stencil_reduce_reason or reject_reason
+        elseif stencil_skeleton_reason ~= nil then
+            reject_reason = stencil_skeleton_reason
+        elseif single_store then
+            reject_reason = stencil_store_reason or store_reason or reject_reason
+        elseif store_reason ~= nil then
+            reject_reason = store_reason
+        end
         return {
             loop_plan = loop_plan,
             owns_loop = loop_plan and owns_loop,
@@ -1043,6 +1113,8 @@ local function bind_context(T)
             stencil_skeleton_ready = stencil_skeleton_ready,
             stencil_skeleton_reject = stencil_skeleton_reason,
             store_reject = store_reason,
+            any_ready_lowering = any_ready_lowering,
+            reject_reason = reject_reason,
         }
     end
 
@@ -1052,25 +1124,61 @@ local function bind_context(T)
         return {}, LJ.LJBodyBlocks(bid(func.entry), blocks)
     end
 
-    local function lower_func(module_ctx, func, kernel, graph_loops, flow_loops, loop_func, opts)
+    local build_kernel
+
+    local function module_ctx_for(module, flow, mem, contracts)
+        return {
+            code_sigs = code_sigs(module),
+            mem_objects = mem_object_index(mem),
+            mem_accesses = mem_access_index(mem),
+            soa_contracts = soa_contract_index(contracts),
+            flow = flow,
+        }
+    end
+
+    local function func_lower_ctx(module_ctx, func)
         local ctx = {
             code_sigs = module_ctx.code_sigs,
             mem_objects = module_ctx.mem_objects,
             mem_accesses = module_ctx.mem_accesses,
+            soa_contracts = module_ctx.soa_contracts,
+            func_id = func.id,
             flow = module_ctx.flow,
             value_types = {},
             defs = value_defs(func),
         }
         note_params(ctx, func.params)
         for _, block in ipairs(func.blocks or {}) do note_params(ctx, block.params) end
-        local params = lower_params(ctx, func.params)
-        local machines, body = nil, nil
-        local function plan_domain_loop(plan)
-            local body = plan and plan.body or nil
-            local domain = body and body.domain and body.domain.domain or nil
-            if pvm.classof(domain) == Flow.FlowDomainLoop then return domain.loop end
-            return nil
+        return ctx
+    end
+
+    local function plan_domain_loop(plan)
+        local body = plan and plan.body or nil
+        local domain = body and body.domain and body.domain.domain or nil
+        if pvm.classof(domain) == Flow.FlowDomainLoop then return domain.loop end
+        return nil
+    end
+
+    local function select_kernel_machine(ctx, func, plan, graph_loop, loop_fact, owner, kernel, opts)
+        local candidate = kernel_lowering_candidate(ctx, func, plan, graph_loop, loop_fact, owner, kernel, opts)
+        local selection, reason = LowerRules.select(candidate)
+        if selection == nil then return nil, reason end
+        if selection.kind == LowerRules.kind.no_plan then return nil, selection.reason end
+        local planners = {
+            [LowerRules.kind.stencil_reduce] = plan_kernel_stencil_reduce,
+            [LowerRules.kind.stencil_store] = plan_kernel_stencil_store,
+            [LowerRules.kind.stencil_skeleton] = plan_kernel_stencil_skeleton,
+        }
+        local planner = planners[selection.kind]
+        if planner ~= nil then
+            return planner(ctx, func, plan, graph_loop, loop_fact, opts)
         end
+        return nil, "unknown LuaJIT lowering strategy " .. tostring(selection.kind)
+    end
+
+    local function plan_func_stencil_machine(module_ctx, func, kernel, graph_loops, flow_loops, loop_func, opts)
+        local ctx = func_lower_ctx(module_ctx, func)
+        local pending_rejects = {}
         for _, plan in ipairs(kernel.plans or {}) do
             local subject = plan.subject
             local subject_cls = pvm.classof(subject)
@@ -1086,43 +1194,62 @@ local function bind_context(T)
             if loop_id ~= nil then
                 local graph_loop = graph_loops[loop_id.text]
                 local loop_fact = flow_loops[loop_id.text]
-                local candidate = kernel_lowering_candidate(ctx, func, plan, graph_loop, loop_fact, owner, kernel, opts)
-                local selection, reason = LowerRules.select(candidate)
-                if selection == nil then
-                    if candidate.result_reduction then
-                        reason = candidate.stencil_reduce_reject or reason
-                    elseif candidate.stencil_skeleton_reject then
-                        reason = candidate.stencil_skeleton_reject
-                    elseif candidate.single_store then
-                        reason = candidate.stencil_store_reject or candidate.store_reject or reason
-                    end
-                end
-                local machine = nil
-                if selection ~= nil then
-                    if selection.kind == "stencil_reduce" then
-                        machine, reason = lower_kernel_stencil_reduce(ctx, func, plan, graph_loop, loop_fact, opts)
-                    elseif selection.kind == "stencil_store" then
-                        machine, reason = lower_kernel_stencil_store(ctx, func, plan, graph_loop, loop_fact, opts)
-                    elseif selection.kind == "stencil_skeleton" then
-                        machine, reason = lower_kernel_stencil_skeleton(ctx, func, plan, graph_loop, loop_fact, opts)
-                    else
-                        reason = "unknown LuaJIT lowering strategy " .. tostring(selection.kind)
-                    end
-                end
+                local machine, reason = select_kernel_machine(ctx, func, plan, graph_loop, loop_fact, owner, kernel, opts)
                 if machine ~= nil then
-                    machines = { machine }
-                    body = LJ.LJBodyMachine(machine.id, LJ.LJTerminalFirst(nil))
-                    break
-                elseif opts.collect_rejects ~= nil then
-                    opts.collect_rejects[#opts.collect_rejects + 1] = { func = func.id, loop = subject.loop, reason = reason }
+                    local artifact = machine.kind and machine.kind.artifact or nil
+                    return LJ.LJStencilMachinePlan(func.id, plan.id, machine, artifact), pending_rejects
                 end
+                pending_rejects[#pending_rejects + 1] = { func = func.id, loop = loop_id, reason = reason }
             end
+        end
+        return nil, pending_rejects
+    end
+
+    local function plan_stencil_machines(module, opts)
+        opts = opts or {}
+        local graph, flow, value, mem, effect, kernel = build_kernel(module, opts)
+        local graph_loops, loop_func = graph_loop_index(graph)
+        local flow_loops = flow_loop_index(flow)
+        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts)
+        local by_func, plans, rejects = {}, {}, {}
+        for _, func in ipairs(module.funcs or {}) do
+            local plan, pending = plan_func_stencil_machine(module_ctx, func, kernel, graph_loops, flow_loops, loop_func, opts)
+            if plan ~= nil then
+                plans[#plans + 1] = plan
+                by_func[func.id.text] = plan.machine
+            else
+                for _, reject in ipairs(pending or {}) do rejects[#rejects + 1] = reject end
+            end
+        end
+        return {
+            graph = graph,
+            flow = flow,
+            value = value,
+            mem = mem,
+            effect = effect,
+            kernel = kernel,
+            plan = LJ.LJStencilMachineModulePlan(module.id, opts.stencil_plan or T.MoonStencil.StencilModulePlan(module.id, kernel, {}), plans),
+            machine_plans = plans,
+            machines_by_func = by_func,
+            rejects = rejects,
+        }
+    end
+
+    local function lower_func(module_ctx, func, kernel, graph_loops, flow_loops, loop_func, opts)
+        local ctx = func_lower_ctx(module_ctx, func)
+        local params = lower_params(ctx, func.params)
+        local machines, body = nil, nil
+        local planned_machine = opts.stencil_machines_by_func and opts.stencil_machines_by_func[func.id.text] or nil
+        if planned_machine ~= nil then
+            machines = { planned_machine }
+            body = LJ.LJBodyMachine(planned_machine.id, LJ.LJTerminalFirst(nil))
+            return LJ.LJFunc(fid(func.id), func.id, func.name, sigid(func.sig), params, {}, machines, body, LJ.LJTraceHot)
         end
         if body == nil then machines, body = lower_blocks_func(ctx, func) end
         return LJ.LJFunc(fid(func.id), func.id, func.name, sigid(func.sig), params, {}, machines, body, LJ.LJTraceHot)
     end
 
-    local function build_kernel(module, opts)
+    build_kernel = function(module, opts)
         local graph = opts.graph or CodeGraph.graph(module)
         local flow = opts.flow or CodeFlowFacts.facts(module, graph)
         local value = opts.value or CodeValueFacts.facts(module, graph, flow)
@@ -1135,9 +1262,45 @@ local function bind_context(T)
     local function lower_module(module, opts)
         opts = opts or {}
         local graph, flow, value, mem, effect, kernel = build_kernel(module, opts)
+        local has_stencil_provider = opts.stencil_store_artifact_for ~= nil
+            or opts.stencil_reduce_artifact_for ~= nil
+            or opts.stencil_skeleton_artifact_for ~= nil
+        if opts.stencil_machines_by_func == nil and has_stencil_provider then
+            local planned = plan_stencil_machines(module, opts)
+            opts.stencil_machines_by_func = planned.machines_by_func
+            opts.luajit_stencil_machine_plan = planned.plan
+            if opts.collect_rejects ~= nil then
+                for _, reject in ipairs(planned.rejects or {}) do opts.collect_rejects[#opts.collect_rejects + 1] = reject end
+            end
+        elseif opts.collect_rejects ~= nil and opts.stencil_machines_by_func == nil then
+            for _, plan in ipairs(kernel.plans or {}) do
+                if pvm.classof(plan) == Kernel.KernelPlanned then
+                    local result = plan.body and plan.body.result or nil
+                    local stencil_shaped = pvm.classof(result) == Kernel.KernelResultReduction
+                        or pvm.classof(result) == Kernel.KernelResultFind
+                    for _, eff in ipairs(plan.body and plan.body.effects or {}) do
+                        local ecls = pvm.classof(eff)
+                        if ecls == Kernel.KernelEffectStore
+                            or ecls == Kernel.KernelEffectScan
+                            or ecls == Kernel.KernelEffectPartition
+                            or ecls == Kernel.KernelEffectCopy then
+                            stencil_shaped = true
+                            break
+                        end
+                    end
+                    if stencil_shaped then
+                        opts.collect_rejects[#opts.collect_rejects + 1] = {
+                            func = nil,
+                            loop = nil,
+                            reason = "missing preplanned stencil machine; run stencil planning with an artifact provider before LuaJIT projection",
+                        }
+                    end
+                end
+            end
+        end
         local graph_loops, loop_func = graph_loop_index(graph)
         local flow_loops = flow_loop_index(flow)
-        local module_ctx = { code_sigs = code_sigs(module), mem_objects = mem_object_index(mem), mem_accesses = mem_access_index(mem), flow = flow }
+        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts)
         local funcs = {}
         for i, func in ipairs(module.funcs or {}) do funcs[i] = lower_func(module_ctx, func, kernel, graph_loops, flow_loops, loop_func, opts) end
         return LJ.LJModule(module.id, funcs, {}, {}, {}), {
@@ -1153,6 +1316,7 @@ local function bind_context(T)
     api.lower_module = lower_module
     api.module = lower_module
     api.build_kernel = build_kernel
+    api.plan_stencil_machines = plan_stencil_machines
 
     T._moonlift_api_cache.luajit_lower = api
     return api

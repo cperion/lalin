@@ -14,7 +14,8 @@ local Core = T.MoonCore
 local Code = T.MoonCode
 local Value = T.MoonValue
 local Stencil = T.MoonStencil
-local StencilC = require("moonlift.stencil_c")(T)
+local StencilArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
+local StencilBank = require("moonlift.stencil_bank")(T)
 
 local mode = arg and arg[1] or "quick"
 local full = mode == "full"
@@ -24,6 +25,26 @@ local rounds = tonumber(os.getenv("MOONLIFT_LJ_STENCIL_BENCH_ROUNDS") or (full a
 local cc = os.getenv("MOONLIFT_LJ_STENCIL_BENCH_CC") or os.getenv("CC") or "gcc"
 local cflags = os.getenv("MOONLIFT_LJ_STENCIL_BENCH_CFLAGS") or "-std=c99 -O3 -march=native"
 local with_gcc = os.getenv("MOONLIFT_LJ_STENCIL_BENCH_GCC") ~= "0"
+
+local function stencil_object_cflags()
+    return cflags .. " -ffunction-sections -fno-pic -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -c"
+end
+
+local function compile_artifacts(artifacts, opts)
+    opts = opts or {}
+    opts.cc = opts.cc or cc
+    opts.cflags = opts.cflags or stencil_object_cflags()
+    local bank, bank_err, source = StencilBank.build_binary_bank(artifacts, opts)
+    if bank == nil then return nil, bank_err, source end
+    local realization, realize_err = StencilBank.realize_binary_artifacts(artifacts, {
+        bank = bank,
+        preamble = opts.preamble,
+        ffi_preamble = opts.ffi_preamble,
+        patch_values = opts.patch_values,
+    })
+    if realization == nil then return nil, realize_err, source end
+    return { kind = "BinaryStencilBenchmarkBuild", bank = bank, realization = realization, symbols = realization.symbols, source = source }, nil, source
+end
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local f64 = Code.CodeTyFloat(64)
@@ -46,33 +67,33 @@ end
 local reduce_add = reduction(Value.ReductionAdd, 0)
 local gt0 = Stencil.StencilPredGtConst(iconst(0))
 local artifacts = {
-    reduce_array = StencilC.reduce_array_artifact(reduce_add, nil, { elem_ty = i32, result_ty = i32, step_num = 1 }),
-    map_array = StencilC.map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, result_ty = i32, step_num = 1 }),
-    zip_map_array = StencilC.zip_map_array_artifact(Stencil.StencilBinaryAdd, { lhs_ty = i32, rhs_ty = i32, result_ty = i32, step_num = 1 }),
-    scan_array = StencilC.scan_array_artifact(reduce_add, nil, { elem_ty = i32, result_ty = i32, step_num = 1 }),
-    copy_array = StencilC.copy_array_artifact({ elem_ty = i32, step_num = 1 }),
-    copy_array_memmove = StencilC.copy_array_artifact({ elem_ty = i32, semantics = Stencil.StencilCopyMemMove, step_num = 1 }),
-    fill_array = StencilC.fill_array_artifact({ elem_ty = i32, value = iconst(7), step_num = 1 }),
-    find_array = StencilC.find_array_artifact(gt0, { elem_ty = i32, step_num = 1 }),
-    partition_array = StencilC.partition_array_artifact(gt0, { elem_ty = i32, step_num = 1 }),
-    cast_array = StencilC.cast_array_artifact(Core.MachineCastSToF, { src_ty = i32, dst_ty = f64, step_num = 1 }),
-    compare_array = StencilC.compare_array_artifact(gt0, { elem_ty = i32, result_ty = bool8, step_num = 1 }),
-    zip_compare_array = StencilC.zip_compare_array_artifact(Core.CmpLt, { lhs_ty = i32, rhs_ty = i32, result_ty = bool8, step_num = 1 }),
-    gather_array = StencilC.gather_array_artifact({ elem_ty = i32, index_ty = i32, step_num = 1 }),
-    scatter_array = StencilC.scatter_array_artifact({ elem_ty = i32, index_ty = i32, conflicts = Stencil.StencilScatterUniqueIndices, step_num = 1 }),
-    in_place_map_array = StencilC.in_place_map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, step_num = 1 }),
-    count_array = StencilC.count_array_artifact(gt0, { elem_ty = i32, step_num = 1 }),
-    map_reduce_array = StencilC.map_reduce_array_artifact(Stencil.StencilUnaryNeg, reduce_add, nil, { elem_ty = i32, mapped_ty = i32, result_ty = i32, step_num = 1 }),
-    zip_reduce_array = StencilC.zip_reduce_array_artifact(Stencil.StencilBinaryAdd, reduce_add, nil, { lhs_ty = i32, rhs_ty = i32, mapped_ty = i32, result_ty = i32, step_num = 1 }),
+    reduce_array = StencilArtifactPlan.reduce_array_artifact(reduce_add, nil, { elem_ty = i32, result_ty = i32, step_num = 1 }),
+    map_array = StencilArtifactPlan.map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, result_ty = i32, step_num = 1 }),
+    zip_map_array = StencilArtifactPlan.zip_map_array_artifact(Stencil.StencilBinaryAdd, { lhs_ty = i32, rhs_ty = i32, result_ty = i32, step_num = 1 }),
+    scan_array = StencilArtifactPlan.scan_array_artifact(reduce_add, nil, { elem_ty = i32, result_ty = i32, step_num = 1 }),
+    copy_array = StencilArtifactPlan.copy_array_artifact({ elem_ty = i32, step_num = 1 }),
+    copy_array_memmove = StencilArtifactPlan.copy_array_artifact({ elem_ty = i32, semantics = Stencil.StencilCopyMemMove, step_num = 1 }),
+    fill_array = StencilArtifactPlan.fill_array_artifact({ elem_ty = i32, value = iconst(7), step_num = 1 }),
+    find_array = StencilArtifactPlan.find_array_artifact(gt0, { elem_ty = i32, step_num = 1 }),
+    partition_array = StencilArtifactPlan.partition_array_artifact(gt0, { elem_ty = i32, step_num = 1 }),
+    cast_array = StencilArtifactPlan.cast_array_artifact(Core.MachineCastSToF, { src_ty = i32, dst_ty = f64, step_num = 1 }),
+    compare_array = StencilArtifactPlan.compare_array_artifact(gt0, { elem_ty = i32, result_ty = bool8, step_num = 1 }),
+    zip_compare_array = StencilArtifactPlan.zip_compare_array_artifact(Core.CmpLt, { lhs_ty = i32, rhs_ty = i32, result_ty = bool8, step_num = 1 }),
+    gather_array = StencilArtifactPlan.gather_array_artifact({ elem_ty = i32, index_ty = i32, step_num = 1 }),
+    scatter_array = StencilArtifactPlan.scatter_array_artifact({ elem_ty = i32, index_ty = i32, conflicts = Stencil.StencilScatterUniqueIndices, step_num = 1 }),
+    in_place_map_array = StencilArtifactPlan.in_place_map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, step_num = 1 }),
+    count_array = StencilArtifactPlan.count_array_artifact(gt0, { elem_ty = i32, step_num = 1 }),
+    map_reduce_array = StencilArtifactPlan.map_reduce_array_artifact(Stencil.StencilUnaryNeg, reduce_add, nil, { elem_ty = i32, mapped_ty = i32, result_ty = i32, step_num = 1 }),
+    zip_reduce_array = StencilArtifactPlan.zip_reduce_array_artifact(Stencil.StencilBinaryAdd, reduce_add, nil, { lhs_ty = i32, rhs_ty = i32, mapped_ty = i32, result_ty = i32, step_num = 1 }),
 }
 
 local artifact_list = {}
 for _, artifact in pairs(artifacts) do artifact_list[#artifact_list + 1] = artifact end
 
-local build, err, src = StencilC.compile_artifacts(artifact_list, {
+local build, err, src = compile_artifacts(artifact_list, {
     stem = "bench_luajit_stencil_matrix",
     cc = cc,
-    cflags = cflags .. " -fPIC -shared",
+    cflags = stencil_object_cflags(),
 })
 assert(build ~= nil, tostring(err) .. "\n" .. tostring(src))
 

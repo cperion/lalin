@@ -16,6 +16,7 @@ local function bind_context(T)
     local Value = T.MoonValue
     local Kernel = T.MoonKernel
     local Stencil = T.MoonStencil
+    local Schedule = T.MoonSchedule
     local CodeType = require("moonlift.code_type")(T)
     local CEmit = require("moonlift.c_emit")(T)
 
@@ -282,973 +283,21 @@ local function bind_context(T)
         error("stencil_c: unsupported binary op " .. binary_name(op), 3)
     end
 
-    function api.reduce_array_supported(reduction, info)
-        local elem_ty = info and info.elem_ty or nil
-        local result_ty = info and info.result_ty or nil
-        if elem_ty == nil or result_ty == nil then return false, "reduce_array stencil requires elem_ty and result_ty" end
-        if not same_type(elem_ty, result_ty) then return false, "reduce_array stencil currently requires matching element/result types" end
-        local ok_type, err = pcall(function() c_type(elem_ty); c_type(result_ty) end)
-        if not ok_type then return false, tostring(err) end
-        local kind = reduction.kind
-        if is_int(result_ty) then
-            if kind == Value.ReductionAdd or kind == Value.ReductionMul
-                or kind == Value.ReductionAnd or kind == Value.ReductionOr or kind == Value.ReductionXor
-                or kind == Value.ReductionMin or kind == Value.ReductionMax then
-                return true
-            end
-            return false, "unsupported integer reduction"
-        end
-        if is_float(result_ty) then
-            if kind == Value.ReductionAdd or kind == Value.ReductionMul
-                or kind == Value.ReductionMin or kind == Value.ReductionMax then
-                return true
-            end
-            return false, "float reduce_array stencil only supports add/mul/min/max"
-        end
-        return false, "reduce_array stencil only supports integer and float scalar types"
-    end
-
-    local function binary_supported(op, ty)
-        if op == Stencil.StencilBinaryAnd or op == Stencil.StencilBinaryOr or op == Stencil.StencilBinaryXor then return supports_bitwise_ty(ty) end
-        return is_scalar(ty)
-    end
-
-    local function unary_supported(op, ty)
-        if op == Stencil.StencilUnaryBitNot then return supports_bitwise_ty(ty) end
-        return is_scalar(ty)
-    end
-
-    local artifact
-
-    local function i32_ty()
-        return Code.CodeTyInt(32, Code.CodeSigned)
-    end
-
-    local function domain(stride)
-        return Stencil.StencilDomainRange1D(Code.CodeTyIndex, nil, nil, tonumber(stride) or 1, Stencil.StencilDomainForward)
-    end
-
-    local function memory(opts)
-        opts = opts or {}
-        return Stencil.StencilMemorySemantics(opts.copy, opts.partition, opts.scatter)
-    end
-
-    local function contig(name, role, ty, stride)
-        return Stencil.StencilAccess(name, role, ty, Stencil.StencilTopologyContiguous(tonumber(stride) or 1))
-    end
-
-    local function shaped(name, role, ty, topology, stride)
-        return Stencil.StencilAccess(name, role, ty, topology or Stencil.StencilTopologyContiguous(1))
-    end
-
-    local function indexed(name, role, ty, index_ty, stride)
-        return Stencil.StencilAccess(name, role, ty, Stencil.StencilTopologyIndexed(index_ty, tonumber(stride) or 1))
-    end
-
-    local function scalar(name, role, ty, value)
-        return Stencil.StencilAccess(name, role, ty, Stencil.StencilTopologyScalar(value))
-    end
-
-    local function reducer_desc(reduction, result_ty)
-        return Stencil.StencilReducer(reduction.kind, result_ty, reduction.init, reduction.int_semantics, reduction.float_mode)
-    end
-
-    local function descriptor(vocab, stride, accesses, operator, reducer, skeleton, mem, result_ty, params)
-        return Stencil.StencilDescriptor(vocab, domain(stride), accesses, operator, reducer, skeleton, mem or memory(), result_ty, params or {})
-    end
-
-    local function default_compiler_policy()
-        return Stencil.StencilCompilerPolicy(Stencil.StencilCompilerGcc, Stencil.StencilOptO3, Stencil.StencilMachineNative, {})
-    end
-
-    local function topology_unit_stride(topology)
-        local cls = pvm.classof(topology)
-        if cls == Stencil.StencilTopologyFieldProjection then return topology_unit_stride(topology.parent) end
-        if cls == Stencil.StencilTopologyContiguous or cls == Stencil.StencilTopologyIndexed or cls == Stencil.StencilTopologyInPlace then return tonumber(topology.stride) == 1 end
-        if cls == Stencil.StencilTopologySliceDescriptor or cls == Stencil.StencilTopologyByteSpanDescriptor then return true end
-        if cls == Stencil.StencilTopologyViewDescriptor then return topology.stride_const == 1 end
-        return false
-    end
-
-    local function access_vector_fact(access)
-        return Stencil.StencilAccessVectorFact(
-            access.name,
-            Stencil.StencilAliasUnknown,
-            Stencil.StencilAlignmentUnknown,
-            access.role == Stencil.StencilAccessRead,
-            topology_unit_stride(access.topology)
-        )
-    end
-
-    local function reduction_reassociable(reducer)
-        if reducer == nil then return true end
-        if reducer.float_mode == Code.CodeFloatStrict then return false end
-        if reducer.float_mode ~= nil then return true end
-        return true
-    end
-
-    local function vectorization_facts(desc)
-        local access_facts = {}
-        for i, access in ipairs(desc.accesses or {}) do access_facts[i] = access_vector_fact(access) end
-        local reducer = desc.reducer
-        return Stencil.StencilVectorizationFacts(
-            access_facts,
-            Stencil.StencilTripCountDynamic,
-            Stencil.StencilArithmeticVectorFact(
-                reduction_reassociable(reducer),
-                reducer and reducer.int_semantics or nil,
-                reducer and reducer.float_mode or nil
-            )
-        )
-    end
-
-    local function auto_vector_vocab(vocab)
-        return vocab == Stencil.StencilReduce
-            or vocab == Stencil.StencilMap
-            or vocab == Stencil.StencilZipMap
-            or vocab == Stencil.StencilScan
-            or vocab == Stencil.StencilCopy
-            or vocab == Stencil.StencilFill
-            or vocab == Stencil.StencilCast
-            or vocab == Stencil.StencilCompare
-            or vocab == Stencil.StencilZipCompare
-            or vocab == Stencil.StencilGather
-            or vocab == Stencil.StencilScatter
-            or vocab == Stencil.StencilInPlaceMap
-            or vocab == Stencil.StencilCount
-            or vocab == Stencil.StencilMapReduce
-            or vocab == Stencil.StencilZipReduce
-    end
-
-    local function schedule_for_descriptor(desc)
-        local policy = default_compiler_policy()
-        if auto_vector_vocab(desc.vocab) then return Stencil.StencilScheduleAutoVector(policy, vectorization_facts(desc)) end
-        return Stencil.StencilScheduleScalar(policy)
-    end
-
-    local function instance(id, desc, abi, proofs)
-        return Stencil.StencilInstance(id, desc, schedule_for_descriptor(desc), abi, proofs or {})
-    end
-
-    local function topology_has_dynamic_stride(topology)
-        local cls = pvm.classof(topology)
-        if cls == Stencil.StencilTopologyFieldProjection then return topology_has_dynamic_stride(topology.parent) end
-        return cls == Stencil.StencilTopologyViewDescriptor and topology.stride_const == nil
-    end
-
-    local function dynamic_stride_accesses(desc)
-        local out = {}
-        for _, access in ipairs(desc.accesses or {}) do
-            if topology_has_dynamic_stride(access.topology) then
-                out[#out + 1] = access
-            end
-        end
-        return out
-    end
-
-    local function stride_param_name(access)
-        return sanitize(access.name) .. "_stride"
-    end
-
-    local abi_params_with_topologies
-
-    local function abi_with_dynamic_strides(desc, params, result)
-        local out = {}
-        params = abi_params_with_topologies(desc, params)
-        for i = 1, #(params or {}) do out[i] = params[i] end
-        for _, _access in ipairs(dynamic_stride_accesses(desc)) do
-            out[#out + 1] = i32_ty()
-        end
-        return Stencil.StencilAbi(out, result)
-    end
-
-    local function params_with_dynamic_strides(desc, params)
-        local out = {}
-        for i = 1, #(params or {}) do out[i] = params[i] end
-        for _, access in ipairs(dynamic_stride_accesses(desc)) do
-            out[#out + 1] = "int32_t " .. stride_param_name(access)
-        end
-        return out
-    end
-
-    local function field_topology(topology)
-        local cls = pvm.classof(topology)
-        if cls == Stencil.StencilTopologyFieldProjection then return topology end
-        return nil
-    end
-
-    local function pointer_accesses(desc)
-        local out = {}
-        for _, access in ipairs(desc and desc.accesses or {}) do
-            if pvm.classof(access.topology) ~= Stencil.StencilTopologyScalar then out[#out + 1] = access end
-        end
-        return out
-    end
-
-    local function param_decl_for_access(access, default)
-        local field = field_topology(access.topology)
-        if field == nil then return default end
-        local name = default:match("%*%s*([_%a][_%w]*)") or access.name
-        local is_const = default:match("^%s*const%s+") ~= nil
-        return (is_const and "const " or "") .. c_type(field.record_ty) .. " *" .. name
-    end
-
-    local function abi_param_type_for_access(access, default_ty)
-        local field = field_topology(access.topology)
-        if field == nil then return default_ty end
-        return Code.CodeTyDataPtr(field.record_ty)
-    end
-
-    abi_params_with_topologies = function(desc, params)
-        local out = {}
-        local accesses = pointer_accesses(desc)
-        local access_i = 1
-        for i = 1, #(params or {}) do
-            local p = params[i]
-            if pvm.classof(p) == Code.CodeTyDataPtr and accesses[access_i] ~= nil then
-                out[i] = abi_param_type_for_access(accesses[access_i], p)
-                access_i = access_i + 1
-            else
-                out[i] = p
-            end
-        end
-        return out
-    end
-
-    local function topology_suffix_for(access, topology)
-        local top = access.topology
-        local cls = pvm.classof(topology)
-        if cls == Stencil.StencilTopologyViewDescriptor then
-            return "_view_" .. (topology.stride_const ~= nil and ("s" .. tostring(topology.stride_const)) or "sdyn")
-        end
-        if cls == Stencil.StencilTopologyFieldProjection then
-            return topology_suffix_for(access, topology.parent) .. "_field_" .. sanitize(topology.field_name) .. "_o" .. tostring(topology.field_offset or 0)
-        end
-        if cls == Stencil.StencilTopologySliceDescriptor then
-            return "_slice"
-        end
-        if cls == Stencil.StencilTopologyByteSpanDescriptor then
-            return "_bytespan"
-        end
-        return ""
-    end
-
-    local function topology_suffix(access)
-        local suffix = topology_suffix_for(access, access.topology)
-        if suffix == "" then return "" end
-        return "_" .. sanitize(access.name) .. suffix
-    end
-
-    local function descriptor_symbol_suffix(desc)
-        local out = {}
-        for _, access in ipairs(desc.accesses or {}) do
-            local suffix = topology_suffix(access)
-            if suffix ~= "" then out[#out + 1] = suffix end
-        end
-        return table.concat(out)
-    end
-
-    local source_params
-
-    function artifact(instance, symbol, signature)
-        local suffix = descriptor_symbol_suffix(instance.descriptor)
-        if suffix ~= "" then
-            local old_symbol = symbol.text
-            symbol = Stencil.StencilSymbolId(old_symbol .. suffix)
-            signature = signature:gsub(old_symbol, symbol.text, 1)
-            instance = Stencil.StencilInstance(
-                Stencil.StencilInstanceId(instance.id.text .. suffix),
-                instance.descriptor,
-                instance.schedule,
-                instance.abi,
-                instance.proofs
-            )
-        end
-        return Stencil.StencilArtifact(instance, Stencil.StencilProviderC, symbol, signature)
-    end
-
-    local function void_desc_decl(symbol, desc, args)
-        return void_decl(symbol, source_params({ instance = { descriptor = desc } }, args))
-    end
-
-    local function result_desc_decl(symbol, result_ty, desc, args)
-        return result_decl(symbol, result_ty, source_params({ instance = { descriptor = desc } }, args))
-    end
-
-    local function int32_desc_decl(symbol, desc, args)
-        return int32_decl(symbol, source_params({ instance = { descriptor = desc } }, args))
-    end
-
-    function api.reduce_array_artifact(reduction, plan, info)
-        local elem_ty = assert(info.elem_ty, "stencil_c.reduce_array_artifact requires elem_ty")
-        local result_ty = assert(info.result_ty, "stencil_c.reduce_array_artifact requires result_ty")
-        local stride = assert(info.step_num, "stencil_c.reduce_array_artifact requires step_num")
-        local supported, reason = api.reduce_array_supported(reduction, info)
-        if not supported then error("stencil_c: unsupported reduce_array artifact: " .. tostring(reason), 2) end
-        local id = reduce_instance_id(elem_ty, result_ty, reduction.kind, stride)
-        local symbol = reduce_symbol_id(elem_ty, result_ty, reduction.kind, stride)
-        local params = {
-            Stencil.StencilParamType("elem_ty", elem_ty),
-            Stencil.StencilParamType("result_ty", result_ty),
-            Stencil.StencilParamReduction("reduction", reduction.kind),
-            Stencil.StencilParamNumber("stride", stride),
-            Stencil.StencilParamValueExpr("init", reduction.init),
-        }
-        local desc = descriptor(
-            Stencil.StencilReduce,
-            stride,
-            {
-                shaped("xs", Stencil.StencilAccessRead, elem_ty, info.array_topology, stride),
-                scalar("acc", Stencil.StencilAccessReduce, result_ty, reduction.init),
-            },
-            nil,
-            reducer_desc(reduction, result_ty),
-            Stencil.StencilSkeletonReduce,
-            memory(),
-            result_ty,
-            params
-        )
-        local inst = instance(
-            id,
-            desc,
-            abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty(), result_ty }, result_ty),
-            proof_list(plan)
-        )
-        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, { "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop", c_type(result_ty) .. " init" }))
-    end
-
-    function api.map_array_artifact(op, info)
-        local elem_ty, result_ty, stride = assert(info.elem_ty), assert(info.result_ty), assert(info.step_num or info.stride or 1)
-        if not unary_supported(op, elem_ty) then error("stencil_c: unsupported map_array op/type", 2) end
-        local id = Stencil.StencilInstanceId("stencil:map_array:" .. type_name(elem_ty) .. ":" .. unary_name(op) .. ":to:" .. type_name(result_ty) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_map_array_" .. type_name(elem_ty) .. "_" .. unary_name(op) .. "_to_" .. type_name(result_ty) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("elem_ty", elem_ty),
-            Stencil.StencilParamType("result_ty", result_ty),
-            Stencil.StencilParamText("op", unary_name(op)),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilMap,
-            stride,
-            {
-                shaped("dst", Stencil.StencilAccessWrite, result_ty, info.dst_topology, stride),
-                shaped("xs", Stencil.StencilAccessRead, elem_ty, info.src_topology or info.array_topology, stride),
-            },
-            Stencil.StencilOpUnary(op, result_ty),
-            nil,
-            Stencil.StencilSkeletonApply,
-            memory(),
-            nil,
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, nil), {})
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop" }))
-    end
-
-    function api.zip_map_array_artifact(op, info)
-        local lhs_ty, rhs_ty, result_ty, stride = assert(info.lhs_ty), assert(info.rhs_ty), assert(info.result_ty), assert(info.step_num or info.stride or 1)
-        if not same_type(lhs_ty, rhs_ty) or not same_type(lhs_ty, result_ty) then error("stencil_c: zip_map_array currently requires matching lhs/rhs/result types", 2) end
-        if not binary_supported(op, result_ty) then error("stencil_c: unsupported zip_map_array op/type", 2) end
-        local id = Stencil.StencilInstanceId("stencil:zip_map_array:" .. type_name(lhs_ty) .. ":" .. binary_name(op) .. ":to:" .. type_name(result_ty) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_zip_map_array_" .. type_name(lhs_ty) .. "_" .. binary_name(op) .. "_to_" .. type_name(result_ty) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("lhs_ty", lhs_ty),
-            Stencil.StencilParamType("rhs_ty", rhs_ty),
-            Stencil.StencilParamType("result_ty", result_ty),
-            Stencil.StencilParamText("op", binary_name(op)),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilZipMap,
-            stride,
-            {
-                shaped("dst", Stencil.StencilAccessWrite, result_ty, info.dst_topology, stride),
-                shaped("lhs", Stencil.StencilAccessRead, lhs_ty, info.lhs_topology, stride),
-                shaped("rhs", Stencil.StencilAccessRead, rhs_ty, info.rhs_topology, stride),
-            },
-            Stencil.StencilOpBinary(op, result_ty),
-            nil,
-            Stencil.StencilSkeletonApply,
-            memory(),
-            nil,
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(lhs_ty), Code.CodeTyDataPtr(rhs_ty), i32_ty(), i32_ty() }, nil), {})
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", "const " .. c_type(lhs_ty) .. " *lhs", "const " .. c_type(rhs_ty) .. " *rhs", "int32_t start", "int32_t stop" }))
-    end
-
-    function api.scan_array_artifact(reduction, plan, info)
-        local elem_ty, result_ty, stride = assert(info.elem_ty), assert(info.result_ty), assert(info.step_num or info.stride or 1)
-        local mode = info.mode or Stencil.StencilScanInclusive
-        local ok, reason = api.reduce_array_supported(reduction, { elem_ty = elem_ty, result_ty = result_ty })
-        if not ok then error("stencil_c: unsupported scan_array artifact: " .. tostring(reason), 2) end
-        local id = Stencil.StencilInstanceId("stencil:scan_array:" .. type_name(elem_ty) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":" .. scan_mode_name(mode) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_scan_array_" .. type_name(elem_ty) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_" .. scan_mode_name(mode) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("elem_ty", elem_ty),
-            Stencil.StencilParamType("result_ty", result_ty),
-            Stencil.StencilParamReduction("reduction", reduction.kind),
-            Stencil.StencilParamText("mode", scan_mode_name(mode)),
-            Stencil.StencilParamNumber("stride", stride),
-            Stencil.StencilParamValueExpr("init", reduction.init),
-        }
-        local desc = descriptor(
-            Stencil.StencilScan,
-            stride,
-            {
-                shaped("dst", Stencil.StencilAccessWrite, result_ty, info.dst_topology, stride),
-                shaped("xs", Stencil.StencilAccessRead, elem_ty, info.array_topology or info.src_topology, stride),
-                scalar("acc", Stencil.StencilAccessReduce, result_ty, reduction.init),
-            },
-            nil,
-            reducer_desc(reduction, result_ty),
-            Stencil.StencilSkeletonScan(mode),
-            memory(),
-            result_ty,
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty(), result_ty }, result_ty), proof_list(plan))
-        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, { c_type(result_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop", c_type(result_ty) .. " init" }))
-    end
-
-    function api.copy_array_artifact(info)
-        local elem_ty, stride = assert(info.elem_ty), assert(info.step_num or info.stride or 1)
-        local semantics = info.semantics or Stencil.StencilCopyNoOverlap
-        local id = Stencil.StencilInstanceId("stencil:copy_array:" .. type_name(elem_ty) .. ":" .. copy_semantics_name(semantics) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_copy_array_" .. type_name(elem_ty) .. "_" .. copy_semantics_name(semantics) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("elem_ty", elem_ty),
-            Stencil.StencilParamText("semantics", copy_semantics_name(semantics)),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilCopy,
-            stride,
-            {
-                shaped("dst", Stencil.StencilAccessWrite, elem_ty, info.dst_topology, stride),
-                shaped("src", Stencil.StencilAccessRead, elem_ty, info.src_topology, stride),
-            },
-            Stencil.StencilOpIdentity,
-            nil,
-            Stencil.StencilSkeletonCopy(semantics),
-            memory({ copy = semantics }),
-            nil,
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, nil), {})
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *src", "int32_t start", "int32_t stop" }))
-    end
-
-    function api.fill_array_artifact(info)
-        local elem_ty, stride, value = assert(info.elem_ty), assert(info.step_num or info.stride or 1), assert(info.value)
-        local id = Stencil.StencilInstanceId("stencil:fill_array:" .. type_name(elem_ty) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_fill_array_" .. type_name(elem_ty) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("elem_ty", elem_ty),
-            Stencil.StencilParamValueExpr("value", value),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilFill,
-            stride,
-            { shaped("dst", Stencil.StencilAccessWrite, elem_ty, info.dst_topology, stride) },
-            Stencil.StencilOpFill(value),
-            nil,
-            Stencil.StencilSkeletonApply,
-            memory(),
-            nil,
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty(), elem_ty }, nil), {})
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", "int32_t start", "int32_t stop", scalar_param_ty(elem_ty) .. " value" }))
-    end
-
-    function api.find_array_artifact(pred, info)
-        local elem_ty, stride = assert(info.elem_ty), assert(info.step_num or info.stride or 1)
-        local id = Stencil.StencilInstanceId("stencil:find_array:" .. type_name(elem_ty) .. ":" .. pred_name(pred) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_find_array_" .. type_name(elem_ty) .. "_" .. pred_name(pred) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("elem_ty", elem_ty),
-            Stencil.StencilParamText("pred", pred_name(pred)),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local not_found = Value.ValueExprConst(Code.CodeConstLiteral(i32_ty(), Core.LitInt("-1")))
-        local desc = descriptor(
-            Stencil.StencilFind,
-            stride,
-            {
-                shaped("xs", Stencil.StencilAccessRead, elem_ty, info.array_topology or info.src_topology, stride),
-                scalar("index", Stencil.StencilAccessControlResult, i32_ty(), not_found),
-            },
-            Stencil.StencilOpPredicate(pred, i32_ty()),
-            nil,
-            Stencil.StencilSkeletonFind(not_found),
-            memory(),
-            i32_ty(),
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, i32_ty()), {})
-        return artifact(inst, symbol, int32_desc_decl(symbol, desc, { "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop" }))
-    end
-
-    function api.partition_array_artifact(pred, info)
-        local elem_ty, stride = assert(info.elem_ty), assert(info.step_num or info.stride or 1)
-        local semantics = info.semantics or Stencil.StencilPartitionStable
-        local id = Stencil.StencilInstanceId("stencil:partition_array:" .. type_name(elem_ty) .. ":" .. pred_name(pred) .. ":" .. partition_semantics_name(semantics) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_partition_array_" .. type_name(elem_ty) .. "_" .. pred_name(pred) .. "_" .. partition_semantics_name(semantics) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("elem_ty", elem_ty),
-            Stencil.StencilParamText("pred", pred_name(pred)),
-            Stencil.StencilParamText("semantics", partition_semantics_name(semantics)),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilPartition,
-            stride,
-            {
-                shaped("dst", Stencil.StencilAccessWrite, elem_ty, info.dst_topology, stride),
-                shaped("xs", Stencil.StencilAccessRead, elem_ty, info.array_topology or info.src_topology, stride),
-                scalar("split", Stencil.StencilAccessControlResult, i32_ty(), nil),
-            },
-            Stencil.StencilOpPredicate(pred, i32_ty()),
-            nil,
-            Stencil.StencilSkeletonPartition(semantics),
-            memory({ partition = semantics }),
-            i32_ty(),
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, i32_ty()), {})
-        return artifact(inst, symbol, int32_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop" }))
-    end
-
-    function api.cast_array_artifact(op, info)
-        local src_ty, dst_ty, stride = assert(info.src_ty), assert(info.dst_ty), assert(info.step_num or info.stride or 1)
-        local id = Stencil.StencilInstanceId("stencil:cast_array:" .. type_name(src_ty) .. ":" .. cast_name(op) .. ":to:" .. type_name(dst_ty) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_cast_array_" .. type_name(src_ty) .. "_" .. cast_name(op) .. "_to_" .. type_name(dst_ty) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("src_ty", src_ty),
-            Stencil.StencilParamType("dst_ty", dst_ty),
-            Stencil.StencilParamText("op", cast_name(op)),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilCast,
-            stride,
-            {
-                shaped("dst", Stencil.StencilAccessWrite, dst_ty, info.dst_topology, stride),
-                shaped("xs", Stencil.StencilAccessRead, src_ty, info.src_topology or info.array_topology, stride),
-            },
-            Stencil.StencilOpCast(op, src_ty, dst_ty),
-            nil,
-            Stencil.StencilSkeletonApply,
-            memory(),
-            nil,
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(dst_ty), Code.CodeTyDataPtr(src_ty), i32_ty(), i32_ty() }, nil), {})
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(dst_ty) .. " *dst", "const " .. c_type(src_ty) .. " *xs", "int32_t start", "int32_t stop" }))
-    end
-
-    function api.compare_array_artifact(pred, info)
-        local elem_ty, result_ty, stride = assert(info.elem_ty), assert(info.result_ty), assert(info.step_num or info.stride or 1)
-        local id = Stencil.StencilInstanceId("stencil:compare_array:" .. type_name(elem_ty) .. ":" .. pred_name(pred) .. ":to:" .. type_name(result_ty) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_compare_array_" .. type_name(elem_ty) .. "_" .. pred_name(pred) .. "_to_" .. type_name(result_ty) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("elem_ty", elem_ty),
-            Stencil.StencilParamType("result_ty", result_ty),
-            Stencil.StencilParamText("pred", pred_name(pred)),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilCompare,
-            stride,
-            {
-                shaped("dst", Stencil.StencilAccessWrite, result_ty, info.dst_topology, stride),
-                shaped("xs", Stencil.StencilAccessRead, elem_ty, info.src_topology or info.array_topology, stride),
-            },
-            Stencil.StencilOpPredicate(pred, result_ty),
-            nil,
-            Stencil.StencilSkeletonApply,
-            memory(),
-            nil,
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, nil), {})
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop" }))
-    end
-
-    function api.zip_compare_array_artifact(cmp, info)
-        local lhs_ty, rhs_ty, result_ty, stride = assert(info.lhs_ty), assert(info.rhs_ty), assert(info.result_ty), assert(info.step_num or info.stride or 1)
-        if not same_type(lhs_ty, rhs_ty) then error("stencil_c: zip_compare_array currently requires matching lhs/rhs types", 2) end
-        local id = Stencil.StencilInstanceId("stencil:zip_compare_array:" .. type_name(lhs_ty) .. ":" .. cmp_name(cmp) .. ":to:" .. type_name(result_ty) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_zip_compare_array_" .. type_name(lhs_ty) .. "_" .. cmp_name(cmp) .. "_to_" .. type_name(result_ty) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("lhs_ty", lhs_ty),
-            Stencil.StencilParamType("rhs_ty", rhs_ty),
-            Stencil.StencilParamType("result_ty", result_ty),
-            Stencil.StencilParamText("cmp", cmp_name(cmp)),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilZipCompare,
-            stride,
-            {
-                shaped("dst", Stencil.StencilAccessWrite, result_ty, info.dst_topology, stride),
-                shaped("lhs", Stencil.StencilAccessRead, lhs_ty, info.lhs_topology, stride),
-                shaped("rhs", Stencil.StencilAccessRead, rhs_ty, info.rhs_topology, stride),
-            },
-            Stencil.StencilOpCompare(cmp, result_ty),
-            nil,
-            Stencil.StencilSkeletonApply,
-            memory(),
-            nil,
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(lhs_ty), Code.CodeTyDataPtr(rhs_ty), i32_ty(), i32_ty() }, nil), {})
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", "const " .. c_type(lhs_ty) .. " *lhs", "const " .. c_type(rhs_ty) .. " *rhs", "int32_t start", "int32_t stop" }))
-    end
-
-    function api.gather_array_artifact(info)
-        local elem_ty, index_ty, stride = assert(info.elem_ty), assert(info.index_ty), assert(info.step_num or info.stride or 1)
-        local id = Stencil.StencilInstanceId("stencil:gather_array:" .. type_name(elem_ty) .. ":index:" .. type_name(index_ty) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_gather_array_" .. type_name(elem_ty) .. "_idx_" .. type_name(index_ty) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("elem_ty", elem_ty),
-            Stencil.StencilParamType("index_ty", index_ty),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilGather,
-            stride,
-            {
-                shaped("dst", Stencil.StencilAccessWrite, elem_ty, info.dst_topology, stride),
-                indexed("src", Stencil.StencilAccessRead, elem_ty, index_ty, stride),
-                shaped("idx", Stencil.StencilAccessRead, index_ty, info.index_topology, stride),
-            },
-            Stencil.StencilOpIdentity,
-            nil,
-            Stencil.StencilSkeletonApply,
-            memory(),
-            nil,
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(index_ty), i32_ty(), i32_ty() }, nil), {})
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *src", "const " .. c_type(index_ty) .. " *idx", "int32_t start", "int32_t stop" }))
-    end
-
-    function api.scatter_array_artifact(info)
-        local elem_ty, index_ty, stride = assert(info.elem_ty), assert(info.index_ty), assert(info.step_num or info.stride or 1)
-        local conflicts = info.conflicts or Stencil.StencilScatterUniqueIndices
-        local id = Stencil.StencilInstanceId("stencil:scatter_array:" .. type_name(elem_ty) .. ":index:" .. type_name(index_ty) .. ":" .. scatter_conflict_name(conflicts) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_scatter_array_" .. type_name(elem_ty) .. "_idx_" .. type_name(index_ty) .. "_" .. scatter_conflict_name(conflicts) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("elem_ty", elem_ty),
-            Stencil.StencilParamType("index_ty", index_ty),
-            Stencil.StencilParamText("conflicts", scatter_conflict_name(conflicts)),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilScatter,
-            stride,
-            {
-                indexed("dst", Stencil.StencilAccessWrite, elem_ty, index_ty, stride),
-                shaped("src", Stencil.StencilAccessRead, elem_ty, info.src_topology, stride),
-                shaped("idx", Stencil.StencilAccessRead, index_ty, info.index_topology, stride),
-            },
-            Stencil.StencilOpIdentity,
-            nil,
-            Stencil.StencilSkeletonApply,
-            memory({ scatter = conflicts }),
-            nil,
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(index_ty), i32_ty(), i32_ty() }, nil), {})
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *src", "const " .. c_type(index_ty) .. " *idx", "int32_t start", "int32_t stop" }))
-    end
-
-    function api.in_place_map_array_artifact(op, info)
-        local elem_ty, stride = assert(info.elem_ty), assert(info.step_num or info.stride or 1)
-        if not unary_supported(op, elem_ty) then error("stencil_c: unsupported in_place_map_array op/type", 2) end
-        local id = Stencil.StencilInstanceId("stencil:in_place_map_array:" .. type_name(elem_ty) .. ":" .. unary_name(op) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_in_place_map_array_" .. type_name(elem_ty) .. "_" .. unary_name(op) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("elem_ty", elem_ty),
-            Stencil.StencilParamText("op", unary_name(op)),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilInPlaceMap,
-            stride,
-            { Stencil.StencilAccess("xs", Stencil.StencilAccessReadWrite, elem_ty, info.src_topology or info.dst_topology or Stencil.StencilTopologyInPlace(stride)) },
-            Stencil.StencilOpUnary(op, elem_ty),
-            nil,
-            Stencil.StencilSkeletonApply,
-            memory(),
-            nil,
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, nil), {})
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop" }))
-    end
-
-    function api.count_array_artifact(pred, info)
-        local elem_ty, stride = assert(info.elem_ty), assert(info.step_num or info.stride or 1)
-        local id = Stencil.StencilInstanceId("stencil:count_array:" .. type_name(elem_ty) .. ":" .. pred_name(pred) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_count_array_" .. type_name(elem_ty) .. "_" .. pred_name(pred) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("elem_ty", elem_ty),
-            Stencil.StencilParamText("pred", pred_name(pred)),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilCount,
-            stride,
-            {
-                shaped("xs", Stencil.StencilAccessRead, elem_ty, info.array_topology or info.src_topology, stride),
-                scalar("count", Stencil.StencilAccessReduce, i32_ty(), nil),
-            },
-            Stencil.StencilOpPredicate(pred, i32_ty()),
-            nil,
-            Stencil.StencilSkeletonReduce,
-            memory(),
-            i32_ty(),
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, i32_ty()), {})
-        return artifact(inst, symbol, int32_desc_decl(symbol, desc, { "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop" }))
-    end
-
-    function api.map_reduce_array_artifact(op, reduction, plan, info)
-        local elem_ty, mapped_ty, result_ty, stride = assert(info.elem_ty), assert(info.mapped_ty), assert(info.result_ty), assert(info.step_num or info.stride or 1)
-        if not unary_supported(op, elem_ty) then error("stencil_c: unsupported map_reduce_array op/type", 2) end
-        local ok, reason = api.reduce_array_supported(reduction, { elem_ty = mapped_ty, result_ty = result_ty })
-        if not ok then error("stencil_c: unsupported map_reduce_array reduction: " .. tostring(reason), 2) end
-        local id = Stencil.StencilInstanceId("stencil:map_reduce_array:" .. type_name(elem_ty) .. ":" .. unary_name(op) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_map_reduce_array_" .. type_name(elem_ty) .. "_" .. unary_name(op) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("elem_ty", elem_ty),
-            Stencil.StencilParamType("mapped_ty", mapped_ty),
-            Stencil.StencilParamType("result_ty", result_ty),
-            Stencil.StencilParamText("op", unary_name(op)),
-            Stencil.StencilParamReduction("reduction", reduction.kind),
-            Stencil.StencilParamValueExpr("init", reduction.init),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilMapReduce,
-            stride,
-            {
-                shaped("xs", Stencil.StencilAccessRead, elem_ty, info.array_topology or info.src_topology, stride),
-                scalar("acc", Stencil.StencilAccessReduce, result_ty, reduction.init),
-            },
-            Stencil.StencilOpUnary(op, mapped_ty),
-            reducer_desc(reduction, result_ty),
-            Stencil.StencilSkeletonReduce,
-            memory(),
-            result_ty,
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty(), result_ty }, result_ty), proof_list(plan))
-        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, { "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop", c_type(result_ty) .. " init" }))
-    end
-
-    function api.zip_reduce_array_artifact(op, reduction, plan, info)
-        local lhs_ty, rhs_ty, mapped_ty, result_ty, stride = assert(info.lhs_ty), assert(info.rhs_ty), assert(info.mapped_ty), assert(info.result_ty), assert(info.step_num or info.stride or 1)
-        if not same_type(lhs_ty, rhs_ty) or not same_type(lhs_ty, mapped_ty) then error("stencil_c: zip_reduce_array currently requires matching lhs/rhs/mapped types", 2) end
-        if not binary_supported(op, mapped_ty) then error("stencil_c: unsupported zip_reduce_array op/type", 2) end
-        local ok, reason = api.reduce_array_supported(reduction, { elem_ty = mapped_ty, result_ty = result_ty })
-        if not ok then error("stencil_c: unsupported zip_reduce_array reduction: " .. tostring(reason), 2) end
-        local id = Stencil.StencilInstanceId("stencil:zip_reduce_array:" .. type_name(lhs_ty) .. ":" .. binary_name(op) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_zip_reduce_array_" .. type_name(lhs_ty) .. "_" .. binary_name(op) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_s" .. tostring(stride))
-        local params = {
-            Stencil.StencilParamType("lhs_ty", lhs_ty),
-            Stencil.StencilParamType("rhs_ty", rhs_ty),
-            Stencil.StencilParamType("mapped_ty", mapped_ty),
-            Stencil.StencilParamType("result_ty", result_ty),
-            Stencil.StencilParamText("op", binary_name(op)),
-            Stencil.StencilParamReduction("reduction", reduction.kind),
-            Stencil.StencilParamValueExpr("init", reduction.init),
-            Stencil.StencilParamNumber("stride", stride),
-        }
-        local desc = descriptor(
-            Stencil.StencilZipReduce,
-            stride,
-            {
-                shaped("lhs", Stencil.StencilAccessRead, lhs_ty, info.lhs_topology, stride),
-                shaped("rhs", Stencil.StencilAccessRead, rhs_ty, info.rhs_topology, stride),
-                scalar("acc", Stencil.StencilAccessReduce, result_ty, reduction.init),
-            },
-            Stencil.StencilOpBinary(op, mapped_ty),
-            reducer_desc(reduction, result_ty),
-            Stencil.StencilSkeletonReduce,
-            memory(),
-            result_ty,
-            params
-        )
-        local inst = instance(id, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(lhs_ty), Code.CodeTyDataPtr(rhs_ty), i32_ty(), i32_ty(), result_ty }, result_ty), proof_list(plan))
-        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, { "const " .. c_type(lhs_ty) .. " *lhs", "const " .. c_type(rhs_ty) .. " *rhs", "int32_t start", "int32_t stop", c_type(result_ty) .. " init" }))
-    end
-
-    local function access_named(desc, name)
-        for _, a in ipairs(desc.accesses or {}) do
-            if a.name == name then return a end
-        end
-        error("stencil_c: descriptor missing access " .. tostring(name), 3)
-    end
-
-    local function topology_stride(access)
-        local top = access.topology
-        if top.stride ~= nil then return top.stride end
-        return 1
-    end
-
-    local function domain_stride(desc)
-        local dom = desc and desc.domain
-        if pvm.classof(dom) == Stencil.StencilDomainRange1D then return tonumber(dom.step) or 1 end
-        return 1
-    end
-
-    local function indexed_ty(access)
-        local top = access.topology
-        if pvm.classof(top) ~= Stencil.StencilTopologyIndexed then
-            error("stencil_c: descriptor access is not indexed: " .. tostring(access.name), 3)
-        end
-        return top.index_ty
-    end
-
-    local function expect_operator(desc, cls)
-        local op = desc.operator
-        if pvm.classof(op) ~= cls then error("stencil_c: descriptor operator mismatch", 3) end
-        return op
-    end
-
-    local function expect_skeleton(desc, cls)
-        local sk = desc.skeleton
-        if pvm.classof(sk) ~= cls then error("stencil_c: descriptor skeleton mismatch", 3) end
-        return sk
-    end
-
-    local function local_shape(kind, fields)
-        fields.kind = kind
-        return fields
-    end
-
-    local function artifact_shape(artifact)
-        local desc = artifact.instance.descriptor
-        local vocab = desc.vocab
-        if vocab == Stencil.StencilReduce then
-            local xs = access_named(desc, "xs")
-            local red = assert(desc.reducer, "stencil_c: reduce descriptor missing reducer")
-            return local_shape("reduce_array", { elem_ty = xs.ty, result_ty = red.result_ty, reduction = red.reduction, int_semantics = red.int_semantics, float_mode = red.float_mode, init = red.init, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilMap then
-            local dst, xs = access_named(desc, "dst"), access_named(desc, "xs")
-            local op = expect_operator(desc, Stencil.StencilOpUnary)
-            return local_shape("map_array", { elem_ty = xs.ty, result_ty = dst.ty, op = op.op, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilZipMap then
-            local dst, lhs, rhs = access_named(desc, "dst"), access_named(desc, "lhs"), access_named(desc, "rhs")
-            local op = expect_operator(desc, Stencil.StencilOpBinary)
-            return local_shape("zip_map_array", { lhs_ty = lhs.ty, rhs_ty = rhs.ty, result_ty = dst.ty, op = op.op, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilScan then
-            local dst, xs = access_named(desc, "dst"), access_named(desc, "xs")
-            local red = assert(desc.reducer, "stencil_c: scan descriptor missing reducer")
-            local sk = expect_skeleton(desc, Stencil.StencilSkeletonScan)
-            return local_shape("scan_array", { elem_ty = xs.ty, result_ty = dst.ty, reduction = red.reduction, int_semantics = red.int_semantics, float_mode = red.float_mode, init = red.init, mode = sk.mode, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilCopy then
-            local src = access_named(desc, "src")
-            local sk = expect_skeleton(desc, Stencil.StencilSkeletonCopy)
-            return local_shape("copy_array", { elem_ty = src.ty, semantics = sk.semantics, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilFill then
-            local dst = access_named(desc, "dst")
-            local op = expect_operator(desc, Stencil.StencilOpFill)
-            return local_shape("fill_array", { elem_ty = dst.ty, value = op.value, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilFind then
-            local xs = access_named(desc, "xs")
-            local op = expect_operator(desc, Stencil.StencilOpPredicate)
-            return local_shape("find_array", { elem_ty = xs.ty, pred = op.pred, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilPartition then
-            local xs = access_named(desc, "xs")
-            local op = expect_operator(desc, Stencil.StencilOpPredicate)
-            local sk = expect_skeleton(desc, Stencil.StencilSkeletonPartition)
-            return local_shape("partition_array", { elem_ty = xs.ty, pred = op.pred, semantics = sk.semantics, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilCast then
-            local xs = access_named(desc, "xs")
-            local op = expect_operator(desc, Stencil.StencilOpCast)
-            return local_shape("cast_array", { src_ty = op.from, dst_ty = op.to, op = op.op, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilCompare then
-            local xs = access_named(desc, "xs")
-            local op = expect_operator(desc, Stencil.StencilOpPredicate)
-            return local_shape("compare_array", { elem_ty = xs.ty, result_ty = op.result_ty, pred = op.pred, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilZipCompare then
-            local lhs, rhs = access_named(desc, "lhs"), access_named(desc, "rhs")
-            local op = expect_operator(desc, Stencil.StencilOpCompare)
-            return local_shape("zip_compare_array", { lhs_ty = lhs.ty, rhs_ty = rhs.ty, result_ty = op.result_ty, cmp = op.cmp, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilGather then
-            local src = access_named(desc, "src")
-            return local_shape("gather_array", { elem_ty = src.ty, index_ty = indexed_ty(src), stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilScatter then
-            local dst = access_named(desc, "dst")
-            return local_shape("scatter_array", { elem_ty = dst.ty, index_ty = indexed_ty(dst), conflicts = desc.memory.scatter, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilInPlaceMap then
-            local xs = access_named(desc, "xs")
-            local op = expect_operator(desc, Stencil.StencilOpUnary)
-            return local_shape("in_place_map_array", { elem_ty = xs.ty, op = op.op, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilCount then
-            local xs = access_named(desc, "xs")
-            local op = expect_operator(desc, Stencil.StencilOpPredicate)
-            return local_shape("count_array", { elem_ty = xs.ty, pred = op.pred, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilMapReduce then
-            local xs = access_named(desc, "xs")
-            local op = expect_operator(desc, Stencil.StencilOpUnary)
-            local red = assert(desc.reducer, "stencil_c: map_reduce descriptor missing reducer")
-            return local_shape("map_reduce_array", { elem_ty = xs.ty, mapped_ty = op.result_ty, result_ty = red.result_ty, op = op.op, reduction = red.reduction, int_semantics = red.int_semantics, float_mode = red.float_mode, init = red.init, stride = domain_stride(desc) })
-        end
-        if vocab == Stencil.StencilZipReduce then
-            local lhs, rhs = access_named(desc, "lhs"), access_named(desc, "rhs")
-            local op = expect_operator(desc, Stencil.StencilOpBinary)
-            local red = assert(desc.reducer, "stencil_c: zip_reduce descriptor missing reducer")
-            return local_shape("zip_reduce_array", { lhs_ty = lhs.ty, rhs_ty = rhs.ty, mapped_ty = op.result_ty, result_ty = red.result_ty, op = op.op, reduction = red.reduction, int_semantics = red.int_semantics, float_mode = red.float_mode, init = red.init, stride = domain_stride(desc) })
-        end
-        error("stencil_c: unsupported stencil descriptor", 3)
-    end
-
-    source_params = function(artifact, params)
-        local desc = artifact.instance.descriptor
-        local accesses = pointer_accesses(desc)
-        local access_i = 1
-        local out = {}
-        for i = 1, #(params or {}) do
-            local p = params[i]
-            if p:match("%*") and accesses[access_i] ~= nil then
-                out[i] = param_decl_for_access(accesses[access_i], p)
-                access_i = access_i + 1
-            else
-                out[i] = p
-            end
-        end
-        return params_with_dynamic_strides(desc, out)
-    end
+    local ArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
+    local artifact_shape = ArtifactPlan.artifact_shape
+    local source_params = ArtifactPlan.source_params
+    local access_named = ArtifactPlan.access_named
+    local stride_param_name = ArtifactPlan.stride_param_name
+    local dynamic_stride_accesses = ArtifactPlan.dynamic_stride_accesses
 
     local function access_offset(access, index)
         local top = access.topology
         local cls = pvm.classof(top)
         if cls == Stencil.StencilTopologyFieldProjection then
             return access_offset({ topology = top.parent }, index)
+        end
+        if cls == Stencil.StencilTopologySoAComponent then
+            return access_offset({ topology = top.parent, name = access.name }, index)
         end
         if cls == Stencil.StencilTopologyViewDescriptor then
             local stride = top.stride_const or stride_param_name(access)
@@ -1265,7 +314,65 @@ local function bind_context(T)
         if pvm.classof(top) == Stencil.StencilTopologyFieldProjection then
             return base .. "[" .. access_offset({ topology = top.parent }, index) .. "]." .. sanitize(top.field_name)
         end
+        if pvm.classof(top) == Stencil.StencilTopologySoAComponent then
+            return base .. "[" .. access_offset({ topology = top.parent, name = access.name }, index) .. "]"
+        end
         return base .. "[" .. access_offset(access, index) .. "]"
+    end
+
+    local function is_i32(ty)
+        return pvm.classof(ty) == Code.CodeTyInt and ty.bits == 32 and ty.signedness == Code.CodeSigned
+    end
+
+    local function is_plain_linear_access(access)
+        local cls = pvm.classof(access.topology)
+        return cls == Stencil.StencilTopologyContiguous
+            or cls == Stencil.StencilTopologySliceDescriptor
+            or cls == Stencil.StencilTopologyByteSpanDescriptor
+    end
+
+    local function vector_reduction_source(artifact, shape, xs_access, schedule, ct, et)
+        local stride = tonumber(shape.stride) or 1
+        if stride ~= 1 then return nil end
+        if shape.reduction ~= Value.ReductionAdd then return nil end
+        if not is_i32(shape.elem_ty) or not is_i32(shape.result_ty) then return nil end
+        local top = pvm.classof(xs_access.topology)
+        if top ~= Stencil.StencilTopologyContiguous and top ~= Stencil.StencilTopologySliceDescriptor then return nil end
+        local lanes = math.max(2, math.floor(tonumber(schedule.lanes) or 4))
+        local unroll = math.max(1, math.floor(tonumber(schedule.unroll) or 1))
+        local vec_ty = "ml_vec_u32x" .. tostring(lanes)
+        local vec_bytes = lanes * 4
+        local lines = {}
+        lines[#lines + 1] = ct .. " " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { "const " .. et .. " *xs", "int32_t start", "int32_t stop", ct .. " init" }), ", ") .. ") {"
+        lines[#lines + 1] = "    typedef uint32_t " .. vec_ty .. " __attribute__((vector_size(" .. tostring(vec_bytes) .. ")));"
+        lines[#lines + 1] = "    int32_t i = start;"
+        lines[#lines + 1] = "    int32_t span = stop - start;"
+        lines[#lines + 1] = "    if (span <= 0) return init;"
+        lines[#lines + 1] = "    int32_t step = " .. tostring(lanes * unroll) .. ";"
+        lines[#lines + 1] = "    int32_t stop_vec = stop - (span & (step - 1));"
+        for lane = 0, unroll - 1 do lines[#lines + 1] = "    " .. vec_ty .. " vacc" .. tostring(lane) .. " = (" .. vec_ty .. "){0};" end
+        lines[#lines + 1] = "    for (; i < stop_vec; i += step) {"
+        for lane = 0, unroll - 1 do
+            local off = lane * lanes
+            lines[#lines + 1] = "        " .. vec_ty .. " chunk" .. tostring(lane) .. ";"
+            lines[#lines + 1] = "        __builtin_memcpy(&chunk" .. tostring(lane) .. ", xs + i" .. (off == 0 and "" or (" + " .. tostring(off))) .. ", sizeof(chunk" .. tostring(lane) .. "));"
+            lines[#lines + 1] = "        vacc" .. tostring(lane) .. " += chunk" .. tostring(lane) .. ";"
+        end
+        lines[#lines + 1] = "    }"
+        for lane = 1, unroll - 1 do lines[#lines + 1] = "    vacc0 += vacc" .. tostring(lane) .. ";" end
+        lines[#lines + 1] = "    uint32_t partial[" .. tostring(lanes) .. "];"
+        lines[#lines + 1] = "    __builtin_memcpy(partial, &vacc0, sizeof(partial));"
+        lines[#lines + 1] = "    uint32_t acc = (uint32_t)init;"
+        lines[#lines + 1] = "    for (int32_t lane = 0; lane < " .. tostring(lanes) .. "; lane++) acc += partial[lane];"
+        lines[#lines + 1] = "    switch (stop - i) {"
+        for tail = (lanes * unroll) - 1, 1, -1 do
+            lines[#lines + 1] = "    case " .. tostring(tail) .. ": acc = (uint32_t)(acc + (uint32_t)" .. access_ref(xs_access, "xs", "i + " .. tostring(tail - 1)) .. ");"
+        end
+        lines[#lines + 1] = "    default: break;"
+        lines[#lines + 1] = "    }"
+        lines[#lines + 1] = "    return (" .. ct .. ")acc;"
+        lines[#lines + 1] = "}"
+        return table.concat(lines, "\n")
     end
 
     local function reduce_array_source(artifact)
@@ -1276,30 +383,39 @@ local function bind_context(T)
         local et = c_type(elem_ty)
         local acc_ty = (shape.reduction == Value.ReductionMin or shape.reduction == Value.ReductionMax) and ct or unsigned_c_type(result_ty)
         local stride = tonumber(shape.stride) or 1
+        local schedule = artifact.instance.schedule
+        if pvm.classof(schedule) == Stencil.StencilScheduleVector then
+            local vector_source = vector_reduction_source(artifact, shape, xs_access, schedule, ct, et)
+            if vector_source ~= nil then return vector_source end
+        end
+        local unroll = pvm.classof(schedule) == Stencil.StencilScheduleUnrolled and tonumber(schedule.factor) or 1
+        unroll = math.max(1, math.floor(unroll or 1))
         local lines = {}
         lines[#lines + 1] = ct .. " " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { "const " .. et .. " *xs", "int32_t start", "int32_t stop", ct .. " init" }), ", ") .. ") {"
-        lines[#lines + 1] = "    " .. acc_ty .. " acc = (" .. acc_ty .. ")init;"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
-        local x = access_ref(xs_access, "xs", "i")
-        if shape.reduction == Value.ReductionAdd then
-            lines[#lines + 1] = "        acc = (" .. acc_ty .. ")(acc + (" .. acc_ty .. ")" .. x .. ");"
-        elseif shape.reduction == Value.ReductionMul then
-            lines[#lines + 1] = "        acc = (" .. acc_ty .. ")(acc * (" .. acc_ty .. ")" .. x .. ");"
-        elseif shape.reduction == Value.ReductionAnd then
-            lines[#lines + 1] = "        acc = (" .. acc_ty .. ")(acc & (" .. acc_ty .. ")" .. x .. ");"
-        elseif shape.reduction == Value.ReductionOr then
-            lines[#lines + 1] = "        acc = (" .. acc_ty .. ")(acc | (" .. acc_ty .. ")" .. x .. ");"
-        elseif shape.reduction == Value.ReductionXor then
-            lines[#lines + 1] = "        acc = (" .. acc_ty .. ")(acc ^ (" .. acc_ty .. ")" .. x .. ");"
-        elseif shape.reduction == Value.ReductionMin then
-            lines[#lines + 1] = "        if (" .. x .. " < acc) acc = " .. x .. ";"
-        elseif shape.reduction == Value.ReductionMax then
-            lines[#lines + 1] = "        if (" .. x .. " > acc) acc = " .. x .. ";"
+        if unroll > 1 and stride == 1 then
+            lines[#lines + 1] = "    " .. acc_ty .. " acc0 = (" .. acc_ty .. ")init;"
+            for lane = 1, unroll - 1 do lines[#lines + 1] = "    " .. acc_ty .. " acc" .. tostring(lane) .. " = (" .. acc_ty .. ")0;" end
+            lines[#lines + 1] = "    int32_t i = start;"
+            lines[#lines + 1] = "    int32_t stop_unrolled = start + ((stop - start) / " .. tostring(unroll) .. ") * " .. tostring(unroll) .. ";"
+            lines[#lines + 1] = "    for (; i < stop_unrolled; i += " .. tostring(unroll) .. ") {"
+            for lane = 0, unroll - 1 do
+                lines[#lines + 1] = "        acc" .. tostring(lane) .. " = " .. reduction_update_expr(shape.reduction, "acc" .. tostring(lane), access_ref(xs_access, "xs", "i + " .. tostring(lane)), shape.result_ty) .. ";"
+            end
+            lines[#lines + 1] = "    }"
+            for lane = 1, unroll - 1 do
+                lines[#lines + 1] = "    acc0 = " .. reduction_update_expr(shape.reduction, "acc0", "acc" .. tostring(lane), shape.result_ty) .. ";"
+            end
+            lines[#lines + 1] = "    for (; i < stop; i++) {"
+            lines[#lines + 1] = "        acc0 = " .. reduction_update_expr(shape.reduction, "acc0", access_ref(xs_access, "xs", "i"), shape.result_ty) .. ";"
+            lines[#lines + 1] = "    }"
+            lines[#lines + 1] = "    return (" .. ct .. ")acc0;"
         else
-            error("stencil_c: unsupported reduce_array reduction " .. reduction_name(shape.reduction), 3)
+            lines[#lines + 1] = "    " .. acc_ty .. " acc = (" .. acc_ty .. ")init;"
+            lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
+            lines[#lines + 1] = "        acc = " .. reduction_update_expr(shape.reduction, "acc", access_ref(xs_access, "xs", "i"), shape.result_ty) .. ";"
+            lines[#lines + 1] = "    }"
+            lines[#lines + 1] = "    return (" .. ct .. ")acc;"
         end
-        lines[#lines + 1] = "    }"
-        lines[#lines + 1] = "    return (" .. ct .. ")acc;"
         lines[#lines + 1] = "}"
         return table.concat(lines, "\n")
     end
@@ -1372,13 +488,21 @@ local function bind_context(T)
         if shape.semantics == Stencil.StencilCopyMayOverlapBackward then
             lines[#lines + 1] = "    for (int32_t i = stop - 1; i >= start; i -= " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = " .. access_ref(src_access, "src", "i") .. ";"
         elseif shape.semantics == Stencil.StencilCopyMemMove then
-            lines[#lines + 1] = "    if ((uintptr_t)dst <= (uintptr_t)src) {"
-            lines[#lines + 1] = "        for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = " .. access_ref(src_access, "src", "i") .. ";"
-            lines[#lines + 1] = "    } else {"
-            lines[#lines + 1] = "        for (int32_t i = stop - 1; i >= start; i -= " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = " .. access_ref(src_access, "src", "i") .. ";"
-            lines[#lines + 1] = "    }"
+            if stride == 1 and has_dynamic_stride == false and is_plain_linear_access(dst_access) and is_plain_linear_access(src_access) then
+                lines[#lines + 1] = "    if (stop > start) memmove(dst + start, src + start, (size_t)(stop - start) * sizeof(*dst));"
+            else
+                lines[#lines + 1] = "    if ((uintptr_t)dst <= (uintptr_t)src) {"
+                lines[#lines + 1] = "        for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = " .. access_ref(src_access, "src", "i") .. ";"
+                lines[#lines + 1] = "    } else {"
+                lines[#lines + 1] = "        for (int32_t i = stop - 1; i >= start; i -= " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = " .. access_ref(src_access, "src", "i") .. ";"
+                lines[#lines + 1] = "    }"
+            end
         else
-            lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = " .. access_ref(src_access, "src", "i") .. ";"
+            if stride == 1 and has_dynamic_stride == false and is_plain_linear_access(dst_access) and is_plain_linear_access(src_access) then
+                lines[#lines + 1] = "    if (stop > start) memcpy(dst + start, src + start, (size_t)(stop - start) * sizeof(*dst));"
+            else
+                lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = " .. access_ref(src_access, "src", "i") .. ";"
+            end
         end
         lines[#lines + 1] = "}"
         return table.concat(lines, "\n")
@@ -1484,7 +608,7 @@ local function bind_context(T)
         local stride = tonumber(shape.stride) or 1
         local lines = {}
         lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { et .. " *dst", "const " .. et .. " *src", "const " .. it .. " *idx", "int32_t start", "int32_t stop" }), ", ") .. ") {"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = src[(intptr_t)" .. access_ref(idx_access, "idx", "i") .. "];"
+        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = src[" .. access_ref(idx_access, "idx", "i") .. "];"
         lines[#lines + 1] = "}"
         return table.concat(lines, "\n")
     end
@@ -1497,7 +621,7 @@ local function bind_context(T)
         local stride = tonumber(shape.stride) or 1
         local lines = {}
         lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { et .. " *dst", "const " .. et .. " *src", "const " .. it .. " *idx", "int32_t start", "int32_t stop" }), ", ") .. ") {"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") dst[(intptr_t)" .. access_ref(idx_access, "idx", "i") .. "] = " .. access_ref(src_access, "src", "i") .. ";"
+        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") dst[" .. access_ref(idx_access, "idx", "i") .. "] = " .. access_ref(src_access, "src", "i") .. ";"
         lines[#lines + 1] = "}"
         return table.concat(lines, "\n")
     end
@@ -1539,8 +663,7 @@ local function bind_context(T)
         lines[#lines + 1] = rt .. " " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { "const " .. et .. " *xs", "int32_t start", "int32_t stop", rt .. " init" }), ", ") .. ") {"
         lines[#lines + 1] = "    " .. acc_ty .. " acc = (" .. acc_ty .. ")init;"
         lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
-        lines[#lines + 1] = "        " .. mt .. " mapped = " .. unary_expr(shape.op, access_ref(xs_access, "xs", "i"), shape.mapped_ty) .. ";"
-        lines[#lines + 1] = "        acc = " .. reduction_update_expr(shape.reduction, "acc", "mapped", shape.result_ty) .. ";"
+        lines[#lines + 1] = "        acc = " .. reduction_update_expr(shape.reduction, "acc", unary_expr(shape.op, access_ref(xs_access, "xs", "i"), shape.mapped_ty), shape.result_ty) .. ";"
         lines[#lines + 1] = "    }"
         lines[#lines + 1] = "    return (" .. rt .. ")acc;"
         lines[#lines + 1] = "}"
@@ -1551,15 +674,14 @@ local function bind_context(T)
         local shape = artifact_shape(artifact)
         local desc = artifact.instance.descriptor
         local lhs_access, rhs_access = access_named(desc, "lhs"), access_named(desc, "rhs")
-        local lt, rt, mt = c_type(shape.lhs_ty), c_type(shape.result_ty), c_type(shape.mapped_ty)
+        local lt, rt = c_type(shape.lhs_ty), c_type(shape.result_ty)
         local acc_ty = (shape.reduction == Value.ReductionMin or shape.reduction == Value.ReductionMax) and rt or unsigned_c_type(shape.result_ty)
         local stride = tonumber(shape.stride) or 1
         local lines = {}
         lines[#lines + 1] = rt .. " " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { "const " .. lt .. " *lhs", "const " .. lt .. " *rhs", "int32_t start", "int32_t stop", rt .. " init" }), ", ") .. ") {"
         lines[#lines + 1] = "    " .. acc_ty .. " acc = (" .. acc_ty .. ")init;"
         lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
-        lines[#lines + 1] = "        " .. mt .. " mapped = " .. binary_expr(shape.op, access_ref(lhs_access, "lhs", "i"), access_ref(rhs_access, "rhs", "i"), shape.mapped_ty) .. ";"
-        lines[#lines + 1] = "        acc = " .. reduction_update_expr(shape.reduction, "acc", "mapped", shape.result_ty) .. ";"
+        lines[#lines + 1] = "        acc = " .. reduction_update_expr(shape.reduction, "acc", binary_expr(shape.op, access_ref(lhs_access, "lhs", "i"), access_ref(rhs_access, "rhs", "i"), shape.mapped_ty), shape.result_ty) .. ";"
         lines[#lines + 1] = "    }"
         lines[#lines + 1] = "    return (" .. rt .. ")acc;"
         lines[#lines + 1] = "}"

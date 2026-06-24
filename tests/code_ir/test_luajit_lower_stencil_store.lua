@@ -14,7 +14,7 @@ local Stencil = T.MoonStencil
 
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
-local StencilC = require("moonlift.stencil_c")(T)
+local StencilArtifactPlan = require("moonlift.stencil_artifact_plan")(T)
 local StencilBinary = require("tests.code_ir.stencil_binary_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_stencil_store")
@@ -123,10 +123,10 @@ local function build_case(case)
 end
 
 local function select_artifact(func, vocab, op, plan, info)
-    if vocab == Stencil.StencilCopy then return StencilC.copy_array_artifact(info) end
-    if vocab == Stencil.StencilFill then return StencilC.fill_array_artifact(info) end
-    if vocab == Stencil.StencilMap then return StencilC.map_array_artifact(op, info) end
-    if vocab == Stencil.StencilZipMap then return StencilC.zip_map_array_artifact(op, info) end
+    if vocab == Stencil.StencilCopy then return StencilArtifactPlan.copy_array_artifact(info) end
+    if vocab == Stencil.StencilFill then return StencilArtifactPlan.fill_array_artifact(info) end
+    if vocab == Stencil.StencilMap then return StencilArtifactPlan.map_array_artifact(op, info) end
+    if vocab == Stencil.StencilZipMap then return StencilArtifactPlan.zip_map_array_artifact(op, info) end
     error("unexpected store stencil vocab " .. tostring(vocab))
 end
 
