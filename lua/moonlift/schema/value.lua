@@ -7,6 +7,19 @@ return schema. MoonValue {
   sum. ValueExpr {
     ValueExprConst { variant_unique, const [MoonCode.CodeConst], },
     ValueExprValue { variant_unique, field. value [MoonCode.CodeValueId], },
+    ValueExprUnary {
+      variant_unique,
+      op [MoonCore.UnaryOp],
+      field. value [MoonValue.ValueExpr],
+      field. ty [MoonCode.CodeType],
+    },
+    ValueExprCast {
+      variant_unique,
+      op [MoonCore.MachineCastOp],
+      from [MoonCode.CodeType],
+      to [MoonCode.CodeType],
+      field. value [MoonValue.ValueExpr],
+    },
     ValueExprAdd {
       variant_unique,
       a [MoonValue.ValueExpr],

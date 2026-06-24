@@ -48,6 +48,8 @@ local function bind_context(T)
         out[#out + 1] = indent(n) .. text
     end
 
+    local is_cdata_reg
+
     local function literal(lit)
         local cls = pvm.classof(lit)
         if cls == Core.LitInt or cls == Core.LitFloat then return tostring(lit.raw) end
@@ -55,6 +57,16 @@ local function bind_context(T)
         if lit == Core.LitNil or cls == Core.LitNil then return "nil" end
         if cls == Core.LitString then return lua_string(lit.bytes) end
         unsupported(lit, "literal")
+    end
+
+    local function literal_expr(e)
+        local cls = pvm.classof(e.literal)
+        if cls == Core.LitInt and is_cdata_reg(e.ty) and pvm.classof(e.ty.storage) == LJ.LJCTypeScalar then
+            local scalar = e.ty.storage.scalar
+            if scalar == Back.BackI64 then return tostring(e.literal.raw) .. "LL" end
+            if scalar == Back.BackU64 then return tostring(e.literal.raw) .. "ULL" end
+        end
+        return literal(e.literal)
     end
 
     local function ctype_spelling(ty)
@@ -110,7 +122,7 @@ local function bind_context(T)
         return pvm.classof(phys and phys.register) == LJ.LJRegTraceInt32
     end
 
-    local function is_cdata_reg(phys)
+    function is_cdata_reg(phys)
         return pvm.classof(phys and phys.register) == LJ.LJRegCData
     end
 
@@ -189,7 +201,7 @@ local function bind_context(T)
     expr = function(e)
         local cls = pvm.classof(e)
         if cls == LJ.LJExprValue then return id_name(e.value) end
-        if cls == LJ.LJExprLiteral then return literal(e.literal) end
+        if cls == LJ.LJExprLiteral then return literal_expr(e) end
         if cls == LJ.LJExprUnary then
             if e.op == Core.UnaryNeg then return "(-(" .. expr(e.value) .. "))" end
             if e.op == Core.UnaryNot then return "(not (" .. expr(e.value) .. "))" end
@@ -542,6 +554,13 @@ local function bind_context(T)
             local args = {}
             for i = 1, #k.args do args[i] = expr(k.args[i]) end
             body_cb(n, "__moonlift_luajit_stencil_symbols[" .. lua_string(symbol) .. "](" .. table.concat(args, ", ") .. ")")
+        elseif cls == LJ.LJMachineStencilEffect then
+            local symbol = k.artifact.symbol.text
+            line(out, n, "if __moonlift_luajit_stencil_symbols[" .. lua_string(symbol) .. "] == nil then error(" .. lua_string("missing MoonStencil symbol " .. symbol) .. ", 0) end")
+            local args = {}
+            for i = 1, #k.args do args[i] = expr(k.args[i]) end
+            line(out, n, "__moonlift_luajit_stencil_symbols[" .. lua_string(symbol) .. "](" .. table.concat(args, ", ") .. ")")
+            body_cb(n, "nil")
         else
             unsupported(k, "machine")
         end
@@ -568,6 +587,11 @@ local function bind_context(T)
         elseif tcls == LJ.LJTerminalFirst then
             local m = machines[body.machine.text]
             local mcls = m ~= nil and pvm.classof(m.kind) or nil
+            if m ~= nil and mcls == LJ.LJMachineStencilEffect and term.default == nil then
+                emit_machine_loop(out, n, machines, body.machine, "__terminal_item", function() end)
+                line(out, n, "return")
+                return
+            end
             if m ~= nil and (mcls == LJ.LJMachineFold or mcls == LJ.LJMachineVectorReduceArray) and term.default == nil then
                 emit_machine_loop(out, n, machines, body.machine, "__terminal_item", function(inner_n, item)
                     line(out, inner_n, "return " .. item)

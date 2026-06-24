@@ -89,7 +89,7 @@ local function bind_context(T)
         local k = def.kind
         local cls = pvm.classof(k)
         if cls == Code.CodeInstConst then return k.const.ty end
-        if cls == Code.CodeInstAlias or cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary or cls == Code.CodeInstSelect or cls == Code.CodeInstAggregate or cls == Code.CodeInstArray then return k.ty end
+        if cls == Code.CodeInstAlias or cls == Code.CodeInstUnary or cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary or cls == Code.CodeInstSelect or cls == Code.CodeInstAggregate or cls == Code.CodeInstArray then return k.ty end
         if cls == Code.CodeInstCompare then return Code.CodeTyBool8 end
         if cls == Code.CodeInstCast then return k.to end
         if cls == Code.CodeInstLoad then return k.access.ty end
@@ -117,6 +117,10 @@ local function bind_context(T)
             return Expr.const_expr(ctx, expr.const)
         elseif cls == Value.ValueExprValue then
             return value_id_expr(ctx, expr.value)
+        elseif cls == Value.ValueExprUnary then
+            return LJ.LJExprUnary(expr.op, physical(ctx, expr.ty), value_expr(ctx, expr.value))
+        elseif cls == Value.ValueExprCast then
+            return LJ.LJExprCast(expr.op, physical(ctx, expr.from), physical(ctx, expr.to), value_expr(ctx, expr.value))
         elseif cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv then
             local op = (cls == Value.ValueExprAdd and Core.BinAdd)
                 or (cls == Value.ValueExprSub and Core.BinSub)
@@ -215,6 +219,13 @@ local function bind_context(T)
             or kind == Value.ReductionMax
     end
 
+    local function is_float_stencil_reduction(kind)
+        return kind == Value.ReductionAdd
+            or kind == Value.ReductionMul
+            or kind == Value.ReductionMin
+            or kind == Value.ReductionMax
+    end
+
     local function const_int_value(ctx, id)
         local def = ctx.defs and id and ctx.defs[id.text] or nil
         local k = def and def.kind
@@ -295,8 +306,12 @@ local function bind_context(T)
         if not function_returns_reduction(func, graph_loop, reduction) then return nil, "function return is not the kernel reduction" end
         if not is_luajit_scalar_reduction(reduction.kind) then return nil, "LuaJIT vector reduce currently supports add/mul/min/max/bitwise reductions only" end
         local ty_cls = pvm.classof(reduction.ty)
-        if ty_cls ~= Code.CodeTyInt or (reduction.ty.bits ~= 8 and reduction.ty.bits ~= 16 and reduction.ty.bits ~= 32) then return nil, "LuaJIT vector reduce scalar fallback currently supports 8/16/32-bit integer reductions only" end
-        if (reduction.kind == Value.ReductionAdd or reduction.kind == Value.ReductionMul) and (reduction.int_semantics == nil or reduction.int_semantics.overflow ~= Code.CodeIntWrap) then
+        local fallback_supported = ty_cls == Code.CodeTyInt and (reduction.ty.bits == 8 or reduction.ty.bits == 16 or reduction.ty.bits == 32)
+        local stencil_requested = opts.stencil_artifact_for ~= nil
+        if ty_cls ~= Code.CodeTyInt and ty_cls ~= Code.CodeTyFloat then return nil, "LuaJIT vector reduce supports scalar integer/float reductions only" end
+        if ty_cls == Code.CodeTyFloat and not is_float_stencil_reduction(reduction.kind) then return nil, "LuaJIT float vector reduce supports add/mul/min/max only" end
+        if not fallback_supported and not stencil_requested then return nil, "LuaJIT vector reduce scalar fallback currently supports 8/16/32-bit integer reductions only" end
+        if ty_cls == Code.CodeTyInt and (reduction.kind == Value.ReductionAdd or reduction.kind == Value.ReductionMul) and (reduction.int_semantics == nil or reduction.int_semantics.overflow ~= Code.CodeIntWrap) then
             return nil, "LuaJIT vector reduce add/mul requires wrapping integer semantics"
         end
         local contrib = reduction.contribution
@@ -348,6 +363,7 @@ local function bind_context(T)
                 LJ.LJTraceHot
             ), nil
         end
+        if not fallback_supported then return nil, "LuaJIT vector reduce requires a stencil artifact for this scalar type" end
         return LJ.LJMachine(
             id,
             LJ.LJMachineVectorReduceArray(
@@ -369,6 +385,381 @@ local function bind_context(T)
         ), nil
     end
 
+    local function function_returns_void_from_loop(func, graph_loop)
+        if graph_loop == nil or #(graph_loop.exits or {}) ~= 1 then return false end
+        local blocks = block_index(func)
+        local exit = blocks[graph_loop.exits[1].to.block.text]
+        local ret = exit and exit.term and exit.term.kind or nil
+        return pvm.classof(ret) == Code.CodeTermReturn and #(ret.values or {}) == 0
+    end
+
+    local function stream_base_value(stream)
+        local base = stream and stream.base or nil
+        if pvm.classof(base) == Mem.MemBaseValue then return base.value end
+        return nil
+    end
+
+    local function binding_index(body)
+        local out = {}
+        for _, binding in ipairs(body and body.bindings or {}) do out[binding.id.text] = binding end
+        return out
+    end
+
+    local function stencil_unary_op(op)
+        if op == Core.UnaryNeg then return Stencil.StencilUnaryNeg end
+        if op == Core.UnaryBitNot then return Stencil.StencilUnaryBitNot end
+        if op == Core.UnaryNot then return Stencil.StencilUnaryBoolNot end
+        return nil
+    end
+
+    local function stencil_binary_op(op)
+        if op == Core.BinAdd then return Stencil.StencilBinaryAdd end
+        if op == Core.BinSub then return Stencil.StencilBinarySub end
+        if op == Core.BinMul then return Stencil.StencilBinaryMul end
+        if op == Core.BinBitAnd then return Stencil.StencilBinaryAnd end
+        if op == Core.BinBitOr then return Stencil.StencilBinaryOr end
+        if op == Core.BinBitXor then return Stencil.StencilBinaryXor end
+        return nil
+    end
+
+    local function same_code_type(a, b)
+        if a == b then return true end
+        local ac, bc = pvm.classof(a), pvm.classof(b)
+        if ac ~= bc then return false end
+        if ac == Code.CodeTyInt then return a.bits == b.bits and a.signedness == b.signedness end
+        if ac == Code.CodeTyFloat then return a.bits == b.bits end
+        return false
+    end
+
+    local function primary_induction(loop_fact)
+        for _, induction in ipairs(loop_fact and loop_fact.inductions or {}) do
+            if induction.kind == Flow.FlowPrimaryInduction then return induction.value end
+        end
+        return nil
+    end
+
+    local function expr_is_value(expr, id)
+        return id ~= nil and pvm.classof(expr) == Value.ValueExprValue and expr.value == id
+    end
+
+    local function expr_is_primary(expr, loop_fact)
+        return expr_is_value(expr, primary_induction(loop_fact))
+    end
+
+    local function is_zero_const(expr)
+        return pvm.classof(expr) == Value.ValueExprConst
+            and pvm.classof(expr.const) == Code.CodeConstLiteral
+            and pvm.classof(expr.const.literal) == Core.LitInt
+            and tonumber(expr.const.literal.raw) == 0
+    end
+
+    local function predicate_from_cmp_const(op, cexpr, const_on_left)
+        if pvm.classof(cexpr) ~= Value.ValueExprConst then return nil end
+        if const_on_left then
+            if op == Core.CmpLt then op = Core.CmpGt
+            elseif op == Core.CmpLe then op = Core.CmpGe
+            elseif op == Core.CmpGt then op = Core.CmpLt
+            elseif op == Core.CmpGe then op = Core.CmpLe end
+        end
+        if op == Core.CmpEq then return Stencil.StencilPredEqConst(cexpr) end
+        if op == Core.CmpNe then return Stencil.StencilPredNeConst(cexpr) end
+        if op == Core.CmpLt then return Stencil.StencilPredLtConst(cexpr) end
+        if op == Core.CmpLe then return Stencil.StencilPredLeConst(cexpr) end
+        if op == Core.CmpGt then return Stencil.StencilPredGtConst(cexpr) end
+        if op == Core.CmpGe then return Stencil.StencilPredGeConst(cexpr) end
+        return nil
+    end
+
+    local function classify_store_expr(expr, bindings, seen)
+        if expr == nil then return nil, "missing store value" end
+        seen = seen or {}
+        local cls = pvm.classof(expr)
+        if cls == Kernel.KernelExprKernelValue then
+            if seen[expr.value.text] then return nil, "cyclic kernel binding" end
+            seen[expr.value.text] = true
+            local binding = bindings[expr.value.text]
+            if binding == nil then return nil, "missing kernel binding " .. expr.value.text end
+            return classify_store_expr(binding.expr, bindings, seen)
+        elseif cls == Kernel.KernelExprLoad then
+            return { kind = "load", stream = expr.stream, index = expr.index }, nil
+        elseif cls == Kernel.KernelExprAlgebra then
+            local v = expr.expr
+            local vcls = pvm.classof(v)
+            if vcls == Value.ValueExprConst then
+                return { kind = "fill", value = v }, nil
+            elseif vcls == Value.ValueExprValue then
+                local kid = Kernel.KernelValueId("kval:" .. v.value.text)
+                local binding = bindings[kid.text]
+                if binding ~= nil then
+                    if seen[kid.text] then return nil, "cyclic kernel binding" end
+                    seen[kid.text] = true
+                    return classify_store_expr(binding.expr, bindings, seen)
+                end
+                return { kind = "fill", value = v }, nil
+            elseif vcls == Value.ValueExprUnary then
+                local inner, reason = classify_store_expr(Kernel.KernelExprAlgebra(v.value), bindings, seen)
+                if inner == nil then return nil, reason end
+                if inner.kind ~= "load" then return nil, "unary map operand is not a load" end
+                local op = stencil_unary_op(v.op)
+                if op == nil then return nil, "unsupported unary map op" end
+                return { kind = "map", op = op, stream = inner.stream, index = inner.index, result_ty = v.ty }, nil
+            elseif vcls == Value.ValueExprCast then
+                local inner, reason = classify_store_expr(Kernel.KernelExprAlgebra(v.value), bindings, seen)
+                if inner == nil then return nil, reason end
+                if inner.kind ~= "load" then return nil, "cast map operand is not a load" end
+                return { kind = "cast", op = v.op, stream = inner.stream, index = inner.index, src_ty = v.from, result_ty = v.to }, nil
+            elseif vcls == Value.ValueExprAdd or vcls == Value.ValueExprSub or vcls == Value.ValueExprMul then
+                local lhs, lhs_reason = classify_store_expr(Kernel.KernelExprAlgebra(v.a), bindings, seen)
+                if lhs == nil then return nil, lhs_reason end
+                local rhs, rhs_reason = classify_store_expr(Kernel.KernelExprAlgebra(v.b), bindings, seen)
+                if rhs == nil then return nil, rhs_reason end
+                if lhs.kind ~= "load" or rhs.kind ~= "load" then return nil, "zip map operands must be loads" end
+                local bop = vcls == Value.ValueExprAdd and Core.BinAdd or vcls == Value.ValueExprSub and Core.BinSub or Core.BinMul
+                local op = stencil_binary_op(bop)
+                if op == nil then return nil, "unsupported zip map op" end
+                return { kind = "zip_map", op = op, lhs = lhs.stream, rhs = rhs.stream, lhs_index = lhs.index, rhs_index = rhs.index, result_ty = v.ty }, nil
+            elseif vcls == Value.ValueExprCmp then
+                local lhs, lhs_reason = classify_store_expr(Kernel.KernelExprAlgebra(v.a), bindings, seen)
+                if lhs == nil then return nil, lhs_reason end
+                local rhs, rhs_reason = classify_store_expr(Kernel.KernelExprAlgebra(v.b), bindings, seen)
+                if rhs == nil then return nil, rhs_reason end
+                if lhs.kind == "load" and rhs.kind == "fill" then
+                    local pred = predicate_from_cmp_const(v.op, rhs.value, false)
+                    if pred == nil then return nil, "compare map predicate is not a supported constant predicate" end
+                    return { kind = "compare", pred = pred, stream = lhs.stream, index = lhs.index, result_ty = Code.CodeTyBool8 }, nil
+                elseif lhs.kind == "fill" and rhs.kind == "load" then
+                    local pred = predicate_from_cmp_const(v.op, lhs.value, true)
+                    if pred == nil then return nil, "compare map predicate is not a supported constant predicate" end
+                    return { kind = "compare", pred = pred, stream = rhs.stream, index = rhs.index, result_ty = Code.CodeTyBool8 }, nil
+                elseif lhs.kind == "load" and rhs.kind == "load" then
+                    return { kind = "zip_compare", cmp = v.op, lhs = lhs.stream, rhs = rhs.stream, lhs_index = lhs.index, rhs_index = rhs.index, result_ty = Code.CodeTyBool8 }, nil
+                end
+                return nil, "compare operands are not stencil loads/constants"
+            end
+        end
+        return nil, "unsupported store stencil expression"
+    end
+
+    local function single_store_effect(body)
+        local store = nil
+        for _, effect in ipairs(body and body.effects or {}) do
+            local cls = pvm.classof(effect)
+            if cls == Kernel.KernelEffectStore then
+                if store ~= nil then return nil, "multiple stores in kernel" end
+                store = effect
+            elseif cls ~= Kernel.KernelEffectFold then
+                return nil, "non-store effect in kernel"
+            end
+        end
+        if store == nil then return nil, "kernel has no store effect" end
+        return store, nil
+    end
+
+    local function index_stream_for(expr, bindings)
+        local classified = classify_store_expr(Kernel.KernelExprAlgebra(expr), bindings)
+        if classified ~= nil and classified.kind == "load" then return classified end
+        return nil
+    end
+
+    local function lower_kernel_stencil_store(ctx, func, plan, graph_loop, loop_fact, opts)
+        if opts.stencil_store_artifact_for == nil then return nil, "no store stencil artifact provider" end
+        if pvm.classof(plan) ~= Kernel.KernelPlanned then return nil, "kernel is not planned" end
+        if not function_returns_void_from_loop(func, graph_loop) then return nil, "store stencil requires loop exit to return void" end
+        if loop_fact == nil or loop_fact.counted == nil then return nil, "store stencil requires counted loop" end
+        local step_num = const_int_value(ctx, loop_fact.counted.step)
+        if step_num == nil or step_num <= 0 then return nil, "store stencil requires a positive constant step" end
+        local store, store_reason = single_store_effect(plan.body)
+        if store == nil then return nil, store_reason end
+        local dst_base = stream_base_value(store.dst)
+        if dst_base == nil then return nil, "store destination stream has no value base" end
+        local bindings = binding_index(plan.body)
+        local classified, reason = classify_store_expr(store.value, bindings)
+        if classified == nil then return nil, reason end
+        local start_expr, stop_expr = value_id_expr(ctx, loop_fact.counted.start), value_id_expr(ctx, loop_fact.counted.stop)
+        local dst_expr = value_id_expr(ctx, dst_base)
+        local store_index_is_primary = expr_is_primary(store.index, loop_fact)
+        local store_index_stream = store_index_is_primary and nil or index_stream_for(store.index, bindings)
+        local info = {
+            step_num = step_num,
+            elem_ty = store.dst.elem_ty,
+            result_ty = store.dst.elem_ty,
+            dst = dst_base,
+            start = loop_fact.counted.start,
+            stop = loop_fact.counted.stop,
+        }
+        local artifact, args
+        if classified.kind == "fill" then
+            info.value = classified.value
+            if not store_index_is_primary then return nil, "fill store index is not primary induction" end
+            artifact = opts.stencil_store_artifact_for(func, Stencil.StencilFillArray, nil, plan, info)
+            args = { dst_expr, start_expr, stop_expr, value_expr(ctx, classified.value) }
+        elseif classified.kind == "load" then
+            local src = stream_base_value(classified.stream)
+            if src == nil then return nil, "copy source stream has no value base" end
+            if store_index_is_primary and expr_is_primary(classified.index, loop_fact) then
+                info.src = src
+                info.elem_ty = classified.stream.elem_ty
+                artifact = opts.stencil_store_artifact_for(func, Stencil.StencilCopyArray, nil, plan, info)
+                args = { dst_expr, value_id_expr(ctx, src), start_expr, stop_expr }
+            elseif store_index_is_primary then
+                local idx = index_stream_for(classified.index, bindings)
+                if idx == nil or not expr_is_primary(idx.index, loop_fact) then return nil, "gather index is not a primary-indexed stream load" end
+                local idx_base = stream_base_value(idx.stream)
+                if idx_base == nil then return nil, "gather index stream has no value base" end
+                info.src = src
+                info.index = idx_base
+                info.elem_ty = classified.stream.elem_ty
+                info.index_ty = idx.stream.elem_ty
+                artifact = opts.stencil_store_artifact_for(func, Stencil.StencilGatherArray, nil, plan, info)
+                args = { dst_expr, value_id_expr(ctx, src), value_id_expr(ctx, idx_base), start_expr, stop_expr }
+            elseif store_index_stream ~= nil and expr_is_primary(store_index_stream.index, loop_fact) and expr_is_primary(classified.index, loop_fact) then
+                local idx_base = stream_base_value(store_index_stream.stream)
+                if idx_base == nil then return nil, "scatter index stream has no value base" end
+                info.src = src
+                info.index = idx_base
+                info.elem_ty = classified.stream.elem_ty
+                info.index_ty = store_index_stream.stream.elem_ty
+                info.conflicts = Stencil.StencilScatterUniqueIndices
+                artifact = opts.stencil_store_artifact_for(func, Stencil.StencilScatterArray, nil, plan, info)
+                args = { dst_expr, value_id_expr(ctx, src), value_id_expr(ctx, idx_base), start_expr, stop_expr }
+            else
+                return nil, "load store indexes do not match copy/gather/scatter stencil shape"
+            end
+        elseif classified.kind == "map" then
+            local src = stream_base_value(classified.stream)
+            if src == nil then return nil, "map source stream has no value base" end
+            if not store_index_is_primary or not expr_is_primary(classified.index, loop_fact) then return nil, "map indexes are not primary induction" end
+            info.src = src
+            info.elem_ty = classified.stream.elem_ty
+            info.result_ty = classified.result_ty
+            if src == dst_base and same_code_type(info.elem_ty, store.dst.elem_ty) then
+                artifact = opts.stencil_store_artifact_for(func, Stencil.StencilInPlaceMapArray, classified.op, plan, info)
+                args = { dst_expr, start_expr, stop_expr }
+            else
+                artifact = opts.stencil_store_artifact_for(func, Stencil.StencilMapArray, classified.op, plan, info)
+                args = { dst_expr, value_id_expr(ctx, src), start_expr, stop_expr }
+            end
+        elseif classified.kind == "cast" then
+            local src = stream_base_value(classified.stream)
+            if src == nil then return nil, "cast source stream has no value base" end
+            if not store_index_is_primary or not expr_is_primary(classified.index, loop_fact) then return nil, "cast indexes are not primary induction" end
+            info.src = src
+            info.src_ty = classified.src_ty
+            info.dst_ty = classified.result_ty
+            artifact = opts.stencil_store_artifact_for(func, Stencil.StencilCastArray, classified.op, plan, info)
+            args = { dst_expr, value_id_expr(ctx, src), start_expr, stop_expr }
+        elseif classified.kind == "compare" then
+            local src = stream_base_value(classified.stream)
+            if src == nil then return nil, "compare source stream has no value base" end
+            if not store_index_is_primary or not expr_is_primary(classified.index, loop_fact) then return nil, "compare indexes are not primary induction" end
+            info.src = src
+            info.elem_ty = classified.stream.elem_ty
+            info.result_ty = store.dst.elem_ty
+            info.pred = classified.pred
+            artifact = opts.stencil_store_artifact_for(func, Stencil.StencilCompareArray, classified.pred, plan, info)
+            args = { dst_expr, value_id_expr(ctx, src), start_expr, stop_expr }
+        elseif classified.kind == "zip_map" then
+            local lhs, rhs = stream_base_value(classified.lhs), stream_base_value(classified.rhs)
+            if lhs == nil or rhs == nil then return nil, "zip map source stream has no value base" end
+            if not store_index_is_primary or not expr_is_primary(classified.lhs_index, loop_fact) or not expr_is_primary(classified.rhs_index, loop_fact) then return nil, "zip map indexes are not primary induction" end
+            info.lhs = lhs
+            info.rhs = rhs
+            info.lhs_ty = classified.lhs.elem_ty
+            info.rhs_ty = classified.rhs.elem_ty
+            info.result_ty = classified.result_ty
+            artifact = opts.stencil_store_artifact_for(func, Stencil.StencilZipMapArray, classified.op, plan, info)
+            args = { dst_expr, value_id_expr(ctx, lhs), value_id_expr(ctx, rhs), start_expr, stop_expr }
+        elseif classified.kind == "zip_compare" then
+            local lhs, rhs = stream_base_value(classified.lhs), stream_base_value(classified.rhs)
+            if lhs == nil or rhs == nil then return nil, "zip compare source stream has no value base" end
+            if not store_index_is_primary or not expr_is_primary(classified.lhs_index, loop_fact) or not expr_is_primary(classified.rhs_index, loop_fact) then return nil, "zip compare indexes are not primary induction" end
+            info.lhs = lhs
+            info.rhs = rhs
+            info.lhs_ty = classified.lhs.elem_ty
+            info.rhs_ty = classified.rhs.elem_ty
+            info.result_ty = store.dst.elem_ty
+            artifact = opts.stencil_store_artifact_for(func, Stencil.StencilZipCompareArray, classified.cmp, plan, info)
+            args = { dst_expr, value_id_expr(ctx, lhs), value_id_expr(ctx, rhs), start_expr, stop_expr }
+        end
+        if artifact == nil then return nil, "store stencil artifact provider did not select an artifact" end
+        local id = LJ.LJMachineId("machine:" .. sanitize(func.name) .. ":stencil_store:" .. sanitize(loop_fact.loop.text))
+        return LJ.LJMachine(id, LJ.LJMachineStencilEffect(artifact, args), nil, LJ.LJStateScalar, LJ.LJTraceHot), nil
+    end
+
+    local function select_reduction_artifact(opts, func, vocab, op, reduction, plan, info)
+        if opts.stencil_reduce_artifact_for ~= nil then return opts.stencil_reduce_artifact_for(func, vocab, op, reduction, plan, info) end
+        if vocab == Stencil.StencilReduceArray and opts.stencil_artifact_for ~= nil then return opts.stencil_artifact_for(func, reduction, plan, info) end
+        return nil
+    end
+
+    local function lower_kernel_stencil_reduce(ctx, func, plan, graph_loop, loop_fact, opts)
+        if opts.stencil_reduce_artifact_for == nil and opts.stencil_artifact_for == nil then return nil, "no reduction stencil artifact provider" end
+        if pvm.classof(plan) ~= Kernel.KernelPlanned then return nil, "kernel is not planned" end
+        local result = plan.body.result
+        if pvm.classof(result) ~= Kernel.KernelResultReduction then return nil, "kernel result is not a reduction" end
+        local reduction = result.reduction
+        if not function_returns_reduction(func, graph_loop, reduction) then return nil, "function return is not the kernel reduction" end
+        if loop_fact == nil or loop_fact.counted == nil then return nil, "reduction stencil requires counted loop" end
+        local step_num = const_int_value(ctx, loop_fact.counted.step)
+        if step_num == nil or step_num <= 0 then return nil, "reduction stencil requires a positive constant step" end
+        local classified, reason = classify_store_expr(Kernel.KernelExprAlgebra(reduction.contribution), binding_index(plan.body))
+        if classified == nil then return nil, reason end
+        local start_expr, stop_expr = value_id_expr(ctx, loop_fact.counted.start), value_id_expr(ctx, loop_fact.counted.stop)
+        local init_expr = value_expr(ctx, reduction.init)
+        local id = LJ.LJMachineId("machine:" .. sanitize(func.name) .. ":stencil_reduce:" .. sanitize(loop_fact.loop.text))
+        local info = {
+            step_num = step_num,
+            result_ty = reduction.ty,
+            init = reduction.init,
+        }
+        local artifact, args
+        if classified.kind == "load" then
+            if not expr_is_primary(classified.index, loop_fact) then return nil, "reduce load index is not primary induction" end
+            local src = stream_base_value(classified.stream)
+            if src == nil then return nil, "reduce source stream has no value base" end
+            info.array = src
+            info.elem_ty = classified.stream.elem_ty
+            artifact = select_reduction_artifact(opts, func, Stencil.StencilReduceArray, nil, reduction, plan, info)
+            args = { value_id_expr(ctx, src), start_expr, stop_expr, init_expr }
+        elseif classified.kind == "map" then
+            if not expr_is_primary(classified.index, loop_fact) then return nil, "map-reduce source index is not primary induction" end
+            local src = stream_base_value(classified.stream)
+            if src == nil then return nil, "map-reduce source stream has no value base" end
+            info.array = src
+            info.elem_ty = classified.stream.elem_ty
+            info.mapped_ty = classified.result_ty
+            artifact = select_reduction_artifact(opts, func, Stencil.StencilMapReduceArray, classified.op, reduction, plan, info)
+            args = { value_id_expr(ctx, src), start_expr, stop_expr, init_expr }
+        elseif classified.kind == "zip_map" then
+            if not expr_is_primary(classified.lhs_index, loop_fact) or not expr_is_primary(classified.rhs_index, loop_fact) then return nil, "zip-reduce source indexes are not primary induction" end
+            local lhs, rhs = stream_base_value(classified.lhs), stream_base_value(classified.rhs)
+            if lhs == nil or rhs == nil then return nil, "zip-reduce source stream has no value base" end
+            info.lhs = lhs
+            info.rhs = rhs
+            info.lhs_ty = classified.lhs.elem_ty
+            info.rhs_ty = classified.rhs.elem_ty
+            info.mapped_ty = classified.result_ty
+            artifact = select_reduction_artifact(opts, func, Stencil.StencilZipReduceArray, classified.op, reduction, plan, info)
+            args = { value_id_expr(ctx, lhs), value_id_expr(ctx, rhs), start_expr, stop_expr, init_expr }
+        elseif classified.kind == "compare" then
+            if reduction.kind ~= Value.ReductionAdd or not is_zero_const(reduction.init) then return nil, "count stencil requires add reduction with zero init" end
+            local i32 = Code.CodeTyInt(32, Code.CodeSigned)
+            if not same_code_type(reduction.ty, i32) then return nil, "count stencil currently returns i32" end
+            if not expr_is_primary(classified.index, loop_fact) then return nil, "count source index is not primary induction" end
+            local src = stream_base_value(classified.stream)
+            if src == nil then return nil, "count source stream has no value base" end
+            info.array = src
+            info.elem_ty = classified.stream.elem_ty
+            info.pred = classified.pred
+            artifact = select_reduction_artifact(opts, func, Stencil.StencilCountArray, classified.pred, reduction, plan, info)
+            args = { value_id_expr(ctx, src), start_expr, stop_expr }
+        else
+            return nil, "unsupported reduction stencil contribution"
+        end
+        if artifact == nil then return nil, "reduction stencil artifact provider did not select an artifact" end
+        return LJ.LJMachine(id, LJ.LJMachineStencilCall(artifact, args, physical(ctx, reduction.ty)), physical(ctx, reduction.ty), LJ.LJStateScalar, LJ.LJTraceHot), nil
+    end
+
     local function lower_blocks_func(ctx, func)
         local blocks = {}
         for i, block in ipairs(func.blocks or {}) do blocks[i] = lower_block(ctx, block) end
@@ -388,7 +779,13 @@ local function bind_context(T)
         for _, plan in ipairs(kernel.plans or {}) do
             local subject = plan.subject
             if pvm.classof(subject) == Kernel.KernelSubjectLoop and loop_func[subject.loop.text] == func.id then
-                local machine, reason = lower_kernel_vector_reduce(ctx, func, plan, graph_loops[subject.loop.text], flow_loops[subject.loop.text], kernel, opts)
+                local machine, reason = lower_kernel_stencil_reduce(ctx, func, plan, graph_loops[subject.loop.text], flow_loops[subject.loop.text], opts)
+                if machine == nil then
+                    machine, reason = lower_kernel_vector_reduce(ctx, func, plan, graph_loops[subject.loop.text], flow_loops[subject.loop.text], kernel, opts)
+                end
+                if machine == nil and opts.stencil_store_artifact_for ~= nil then
+                    machine, reason = lower_kernel_stencil_store(ctx, func, plan, graph_loops[subject.loop.text], flow_loops[subject.loop.text], opts)
+                end
                 if machine ~= nil then
                     machines = { machine }
                     body = LJ.LJBodyMachine(machine.id, LJ.LJTerminalFirst(nil))

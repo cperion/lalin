@@ -38,11 +38,13 @@ There is no parser, tokenizer, antiquote layer, or string language hidden here. 
 - `moonschema.dsl`
 - `moonlift.schema`
 - `llpvm.dsl`
+- `llisle.dsl`
 
 ### Requires
 
 - `moonlift.types`
 - `moonlift.schema`
+- `llb.core`
 
 ### Shared names
 
@@ -54,9 +56,15 @@ There is no parser, tokenizer, antiquote layer, or string language hidden here. 
 
 ### Reserved names
 
+- `alt`
+- `bind`
+- `choose`
+- `cost`
 - `event`
+- `fail`
 - `input`
 - `lang`
+- `llisle`
 - `llpvm`
 - `machine`
 - `ml`
@@ -66,11 +74,16 @@ There is no parser, tokenizer, antiquote layer, or string language hidden here. 
 - `phase`
 - `pvm`
 - `record`
+- `relation`
 - `root`
+- `rule`
+- `rules`
+- `run`
 - `schema`
 - `stream`
 - `task`
 - `type`
+- `when`
 - `world`
 
 ## Reduced Family
@@ -85,6 +98,7 @@ A reduced family has one owner for each semantic primitive. Other members reuse 
 - `diagnostics`: `llb`
 - `family-composition`: `llb`
 - `fragments`: `llb`
+- `lowering-rules`: `llisle.dsl`
 - `namespaces`: `llb`
 - `native-compilation`: `moonlift.dsl`
 - `native-control`: `moonlift.dsl`
@@ -95,20 +109,22 @@ A reduced family has one owner for each semantic primitive. Other members reuse 
 - `product-sum-schema`: `moonschema.dsl`
 - `pvm-image`: `llpvm.dsl`
 - `resource-discipline`: `moonlift.dsl`
+- `rewrite-relations`: `llisle.dsl`
 - `schema-identity`: `moonschema.dsl`
 - `schema-modules`: `moonschema.dsl`
+- `sum-elimination`: `llisle.dsl`
 - `type-family`: `moonschema.dsl`
 
 ### Semantic reuse
 
-- `authoring-substrate` is used by `moonlift.dsl`, `moonschema.dsl`, `llpvm.dsl`
-- `diagnostics` is used by `moonlift.dsl`, `moonschema.dsl`, `llpvm.dsl`
-- `family-composition` is used by `moonlift.dsl`, `moonschema.dsl`, `llpvm.dsl`
-- `fragments` is used by `moonlift.dsl`, `moonschema.dsl`, `llpvm.dsl`
-- `namespaces` is used by `moonlift.dsl`, `moonschema.dsl`, `llpvm.dsl`
-- `native-type-values` is used by `llpvm.dsl`
-- `origins` is used by `moonlift.dsl`, `moonschema.dsl`, `llpvm.dsl`
-- `type-family` is used by `moonlift.dsl`, `llpvm.dsl`
+- `authoring-substrate` is used by `moonlift.dsl`, `moonschema.dsl`, `llpvm.dsl`, `llisle.dsl`
+- `diagnostics` is used by `moonlift.dsl`, `moonschema.dsl`, `llpvm.dsl`, `llisle.dsl`
+- `family-composition` is used by `moonlift.dsl`, `moonschema.dsl`, `llpvm.dsl`, `llisle.dsl`
+- `fragments` is used by `moonlift.dsl`, `moonschema.dsl`, `llpvm.dsl`, `llisle.dsl`
+- `namespaces` is used by `moonlift.dsl`, `moonschema.dsl`, `llpvm.dsl`, `llisle.dsl`
+- `native-type-values` is used by `llpvm.dsl`, `llisle.dsl`
+- `origins` is used by `moonlift.dsl`, `moonschema.dsl`, `llpvm.dsl`, `llisle.dsl`
+- `type-family` is used by `moonlift.dsl`, `llpvm.dsl`, `llisle.dsl`
 
 ### Reduction audit
 
@@ -139,6 +155,13 @@ member. llpvm.dsl {
   requires { moonlift.types, moonlift.schema }
   owns { bytecode-program, bytecode-stream, process-task, pvm-image }
   uses { authoring-substrate, diagnostics, family-composition, fragments, namespaces, origins, native-type-values, type-family }
+  tooling { format, diagnostics, index, markdown, match }
+}
+member. llisle.dsl {
+  provides { llisle.dsl }
+  requires { llb.core }
+  owns { lowering-rules, rewrite-relations, sum-elimination }
+  uses { authoring-substrate, diagnostics, family-composition, fragments, namespaces, native-type-values, origins, type-family }
   tooling { format, diagnostics, index, markdown, match }
 }
 ```
@@ -1092,6 +1115,388 @@ Slots:
 - `. name` -> `language` role=`value` channel=`index:value,index:name,index:type`
 
 Traits: `named`
+
+### Passes
+
+- `llb.head_checks`
+
+## llisle.dsl
+
+Llisle is the lowering/rewrite/selection rule member of the Moonlift family. It expresses compiler choices as typed relations, product-shaped patterns, sum alternatives, and process-shaped rule bodies.
+
+Family source uses the `llisle` namespace value. Call `llisle { ... }` when a family value carries rule systems next to Moonlift declarations, MoonSchema types, or LLPVM machines.
+
+```lua
+llisle {
+  llisle.relation. lower_expr {
+    llisle.input { expr [MoonExpr], ctx [LowerCtx] },
+    llisle.output { value [BackValue] },
+    llisle.strategy {
+      llisle.select. best_cost,
+      llisle.ambiguity. error,
+      llisle.coverage. complete,
+    },
+  },
+
+  llisle.rule. add_i32 {
+    llisle.lower_expr {
+      expr = add { lhs = llisle.P. lhs, rhs = llisle.P. rhs } [ml.i32],
+      ctx = llisle.P. ctx,
+    },
+
+    llisle.when {
+      llisle.P. lhs :has_type (ml.i32),
+      llisle.P. rhs :has_type (ml.i32),
+    },
+
+    llisle.run {
+      llisle.emit. cmd { add_i32 { dst = llisle.V. out, lhs = llisle.P. lhs, rhs = llisle.P. rhs } },
+      llisle.ret { value = llisle.V. out },
+    },
+  },
+}
+```
+
+### Llisle LLB Surface
+
+### Exports
+
+- `And`
+- `N`
+- `Not`
+- `Or`
+- `_`
+- `alignof`
+- `alt`
+- `alt_body`
+- `ambiguity`
+- `as`
+- `bind`
+- `bitcast`
+- `boolean`
+- `choose`
+- `choose_body`
+- `cost`
+- `coverage`
+- `decls`
+- `effects`
+- `emit`
+- `eq`
+- `expr`
+- `fail`
+- `fields`
+- `guard_body`
+- `identity`
+- `input`
+- `name`
+- `ne`
+- `null`
+- `number`
+- `output`
+- `relation`
+- `relation_body`
+- `ret`
+- `rule`
+- `rule_body`
+- `rules`
+- `rules_body`
+- `run`
+- `run_body`
+- `select`
+- `sizeof`
+- `spread`
+- `strategy`
+- `strategy_body`
+- `string`
+- `type`
+- `value`
+- `when`
+
+### Roles
+
+```lua
+role. alt_body { kind = "array", algebra = "list" }
+role. boolean { kind = "boolean" }
+role. choose_body { kind = "array", algebra = "list" }
+role. decls { kind = "array", algebra = "list" }
+role. expr { kind = "expr" }
+role. fields { kind = "array", algebra = "product" }
+role. guard_body { kind = "array", algebra = "product" }
+role. identity { kind = "identity" }
+role. name { kind = "name" }
+role. number { kind = "number" }
+role. relation_body { kind = "array", algebra = "list" }
+role. rule_body { kind = "array", algebra = "list" }
+role. rules_body { kind = "array", algebra = "list" }
+role. run_body { kind = "array", algebra = "list" }
+role. strategy_body { kind = "array", algebra = "list" }
+role. string { kind = "string" }
+role. type { kind = "type" }
+role. value { kind = "value" }
+```
+
+- `alt_body` — kind=array, algebra=list
+- `boolean` — kind=boolean
+- `choose_body` — kind=array, algebra=list
+- `decls` — kind=array, algebra=list
+- `expr` — kind=expr
+- `fields` — kind=array, algebra=product
+- `guard_body` — kind=array, algebra=product
+- `identity` — kind=identity
+- `name` — kind=name
+- `number` — kind=number
+- `relation_body` — kind=array, algebra=list
+- `rule_body` — kind=array, algebra=list
+- `rules_body` — kind=array, algebra=list
+- `run_body` — kind=array, algebra=list
+- `strategy_body` — kind=array, algebra=list
+- `string` — kind=string
+- `type` — kind=type
+- `value` — kind=value
+
+### Heads
+
+#### `alt`
+
+Declares one alternative inside choose.
+
+```lua
+alt. name { ... }
+```
+
+Slots:
+
+- `. name` -> `name` role=`name` channel=`index:name`
+- ` { ... }` -> `body` role=`alt_body` channel=`call:table`
+
+Traits: `named`
+
+#### `ambiguity`
+
+Selects ambiguity behavior.
+
+```lua
+ambiguity. name
+```
+
+Slots:
+
+- `. name` -> `value` role=`name` channel=`index:name`
+
+#### `bind`
+
+Binds a produced local value from a relation call or expression.
+
+```lua
+bind. name { ... }
+```
+
+Slots:
+
+- `. name` -> `name` role=`name` channel=`index:name`
+- ` { ... }` -> `body` role=`guard_body` channel=`call:table`
+
+Traits: `named`
+
+#### `choose`
+
+Declares a local sum elimination inside a rule body.
+
+```lua
+choose { ... }
+```
+
+Slots:
+
+- ` { ... }` -> `body` role=`choose_body` channel=`call:table`
+
+#### `cost`
+
+Assigns cost metadata used by best-cost selection.
+
+```lua
+cost { ... }
+```
+
+Slots:
+
+- ` { ... }` -> `value` role=`value` channel=`call:none,call:value,call:table,call:many`
+
+#### `coverage`
+
+Selects coverage behavior.
+
+```lua
+coverage. name
+```
+
+Slots:
+
+- `. name` -> `value` role=`name` channel=`index:name`
+
+#### `effects`
+
+Declares process effects yielded by a relation.
+
+```lua
+effects { name [Type], ... }
+```
+
+Slots:
+
+- ` { name [Type], ... }` -> `fields` role=`fields` channel=`call:table`
+
+#### `emit`
+
+Emits one process event/effect.
+
+```lua
+emit. name { ... }
+```
+
+Slots:
+
+- `. name` -> `channel` role=`name` channel=`index:name`
+- ` { ... }` -> `body` role=`guard_body` channel=`call:table`
+
+#### `fail`
+
+Fails the current rule or alternative with a diagnostic reason.
+
+```lua
+fail. name { ... }
+```
+
+Slots:
+
+- `. name` -> `reason` role=`name` channel=`index:name`
+- ` { ... }` -> `body` role=`guard_body` channel=`call:table`
+
+#### `input`
+
+Declares the input product of a relation.
+
+```lua
+input { name [Type], ... }
+```
+
+Slots:
+
+- ` { name [Type], ... }` -> `fields` role=`fields` channel=`call:table`
+
+#### `output`
+
+Declares the output product of a relation.
+
+```lua
+output { name [Type], ... }
+```
+
+Slots:
+
+- ` { name [Type], ... }` -> `fields` role=`fields` channel=`call:table`
+
+#### `relation`
+
+Declares a typed product-to-product relation. Rules satisfy relations.
+
+```lua
+relation. name { ... }
+```
+
+Slots:
+
+- `. name` -> `name` role=`name` channel=`index:name`
+- ` { ... }` -> `body` role=`relation_body` channel=`call:table`
+
+Traits: `named`
+
+#### `ret`
+
+Returns the output product of a relation.
+
+```lua
+ret { ... }
+```
+
+Slots:
+
+- ` { ... }` -> `body` role=`guard_body` channel=`call:table`
+
+#### `rule`
+
+Declares one rule: a relation pattern, guards, and a process body.
+
+```lua
+rule. name { ... }
+```
+
+Slots:
+
+- `. name` -> `name` role=`name` channel=`index:name`
+- ` { ... }` -> `body` role=`rule_body` channel=`call:table`
+
+Traits: `named`
+
+#### `rules`
+
+Groups rule alternatives as a reusable fragment.
+
+```lua
+rules { ... }
+```
+
+Slots:
+
+- ` { ... }` -> `body` role=`rules_body` channel=`call:table`
+
+#### `run`
+
+Declares the selected process-shaped body of a rule or alternative.
+
+```lua
+run { ... }
+```
+
+Slots:
+
+- ` { ... }` -> `body` role=`run_body` channel=`call:table`
+
+#### `select`
+
+Selects the rule/alternative selection policy.
+
+```lua
+select. name
+```
+
+Slots:
+
+- `. name` -> `value` role=`name` channel=`index:name`
+
+#### `strategy`
+
+Declares sum-elimination policy for relation or choice alternatives.
+
+```lua
+strategy { ... }
+```
+
+Slots:
+
+- ` { ... }` -> `body` role=`strategy_body` channel=`call:table`
+
+#### `when`
+
+Declares guard predicates for a rule or alternative.
+
+```lua
+when { ... }
+```
+
+Slots:
+
+- ` { ... }` -> `body` role=`guard_body` channel=`call:table`
 
 ### Passes
 

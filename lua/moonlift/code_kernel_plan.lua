@@ -224,7 +224,7 @@ local function bind_context(T)
         local cls = pvm.classof(k)
         if cls == Code.CodeInstConst then return k.const.ty end
         if cls == Code.CodeInstAlias then return k.ty end
-        if cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary or cls == Code.CodeInstSelect then return k.ty end
+        if cls == Code.CodeInstUnary or cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary or cls == Code.CodeInstSelect then return k.ty end
         if cls == Code.CodeInstCompare then return Code.CodeTyBool8 end
         if cls == Code.CodeInstCast then return k.to end
         return k.ty
@@ -260,7 +260,7 @@ local function bind_context(T)
                         if stream == nil or access == nil then rejects[#rejects + 1] = Kernel.KernelRejectUnsupportedMemory(aid, "store has no kernel stream")
                         elseif val == nil then rejects[#rejects + 1] = Kernel.KernelRejectUnsupportedExpr(k.value, "store value cannot be represented as KernelExpr")
                         else effects[#effects + 1] = Kernel.KernelEffectStore(stream, index_expr(access.index), val) end
-                    elseif cls == Code.CodeInstConst or cls == Code.CodeInstAlias or cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary or cls == Code.CodeInstCompare or cls == Code.CodeInstSelect or cls == Code.CodeInstCast then
+                    elseif cls == Code.CodeInstConst or cls == Code.CodeInstAlias or cls == Code.CodeInstUnary or cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary or cls == Code.CodeInstCompare or cls == Code.CodeInstSelect or cls == Code.CodeInstCast then
                         local dst = k.dst
                         if dst ~= nil then
                             local expr = value_index.expr_by_value[dst.text]

@@ -12,10 +12,12 @@ Schema(T)
 local Core = T.MoonCore
 local Code = T.MoonCode
 local Back = T.MoonBack
+local Flow = T.MoonFlow
 local LJ = T.MoonLuaJIT
 local Value = T.MoonValue
 local CType = require("moonlift.luajit_ctype")(T)
 local Emit = require("moonlift.luajit_emit")(T)
+local StencilC = require("moonlift.stencil_c")(T)
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)
@@ -75,7 +77,7 @@ assert(src:match("bit%.tobit"), "emitted i32 lowering should keep trace-int arit
 local vec_id = LJ.LJMachineId("vec")
 local vec = LJ.LJMachine(
     vec_id,
-    LJ.LJMachineVectorReduceArray(xs_id, LJ.LJExprLiteral(Core.LitInt("0"), i32_phys), LJ.LJExprValue(n_id), LJ.LJExprLiteral(Core.LitInt("1"), i32_phys), i32_phys, i32_phys, Value.ReductionAdd, sem, LJ.LJExprLiteral(Core.LitInt("0"), i32_phys), 8, 1, nil),
+    LJ.LJMachineVectorReduceArray(xs_id, LJ.LJExprLiteral(Core.LitInt("0"), i32_phys), LJ.LJExprValue(n_id), LJ.LJExprLiteral(Core.LitInt("1"), i32_phys), i32_phys, i32_phys, Value.ReductionAdd, sem, LJ.LJExprLiteral(Core.LitInt("0"), i32_phys), 8, 1),
     i32_phys,
     LJ.LJStateScalar,
     LJ.LJTraceHot
@@ -99,42 +101,60 @@ assert(vec_compiled ~= nil, tostring(vec_err) .. "\n" .. tostring(vec_src))
 assert(vec_compiled.sum_i32_vec(xs, n) == expected)
 assert(vec_src:match("__vreduce_vec"), "vector reduce fallback should emit explicit reduce locals")
 
-local helper_id = LJ.LJHelperId("helper:sum_i32_vec")
-local native_vec = LJ.LJMachine(
+local stencil_reduction = Value.ReductionFact(
+    Value.AlgebraFactId("reduction:test:sum_i32"),
+    Flow.FlowDomainFunction(Code.CodeFuncId("fn:sum_i32_stencil")),
+    Code.CodeValueId("v:acc"),
+    Value.ReductionAdd,
+    Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("0"))),
+    Value.ValueExprValue(Code.CodeValueId("v:item")),
+    i32,
+    sem,
+    nil,
+    Value.AlgebraProofIdentity("test stencil reduction")
+)
+local stencil_artifact = StencilC.reduce_array_artifact(stencil_reduction, nil, {
+    elem_ty = i32,
+    result_ty = i32,
+    step_num = 1,
+})
+local stencil_build, stencil_build_err = StencilC.compile_artifacts({ stencil_artifact }, { stem = "test_luajit_emit_stencil" })
+assert(stencil_build ~= nil, tostring(stencil_build_err))
+local stencil_vec = LJ.LJMachine(
     vec_id,
-    LJ.LJMachineVectorReduceArray(xs_id, LJ.LJExprLiteral(Core.LitInt("0"), i32_phys), LJ.LJExprValue(n_id), LJ.LJExprLiteral(Core.LitInt("1"), i32_phys), i32_phys, i32_phys, Value.ReductionAdd, sem, LJ.LJExprLiteral(Core.LitInt("0"), i32_phys), 8, 1, helper_id),
+    LJ.LJMachineStencilCall(
+        stencil_artifact,
+        {
+            LJ.LJExprValue(xs_id),
+            LJ.LJExprLiteral(Core.LitInt("0"), i32_phys),
+            LJ.LJExprValue(n_id),
+            LJ.LJExprLiteral(Core.LitInt("0"), i32_phys),
+        },
+        i32_phys
+    ),
     i32_phys,
     LJ.LJStateScalar,
     LJ.LJTraceHot
 )
-local native_fn = LJ.LJFunc(
-    LJ.LJFuncId("sum_i32_native_vec"),
+local stencil_fn = LJ.LJFunc(
+    LJ.LJFuncId("sum_i32_stencil_vec"),
     nil,
-    "sum_i32_native_vec",
-    LJ.LJFuncSigId("sig:sum_i32_native_vec"),
+    "sum_i32_stencil_vec",
+    LJ.LJFuncSigId("sig:sum_i32_stencil_vec"),
     {
         LJ.LJParam(xs_id, "xs", ptr_i32_phys),
         LJ.LJParam(n_id, "n", i32_phys),
     },
     {},
-    { native_vec },
+    { stencil_vec },
     LJ.LJBodyMachine(vec_id, LJ.LJTerminalFirst(nil)),
     LJ.LJTraceHot
 )
-local native_calls = 0
-local native_compiled, native_err, native_src = Emit.compile_module(LJ.LJModule(nil, { native_fn }, {}, {}, {}), {
-    native_helpers = {
-        [helper_id.text] = function(ptr, len)
-            native_calls = native_calls + 1
-            local acc = 0
-            for i = 0, len - 1 do acc = bit.tobit(acc + ptr[i]) end
-            return acc
-        end,
-    },
+local stencil_compiled, stencil_err, stencil_src = Emit.compile_module(LJ.LJModule(nil, { stencil_fn }, {}, {}, {}), {
+    stencil_symbols = stencil_build.symbols,
 })
-assert(native_compiled ~= nil, tostring(native_err) .. "\n" .. tostring(native_src))
-assert(native_compiled.sum_i32_native_vec(xs, n) == expected)
-assert(native_calls == 1, "native vector reduce helper should be called once")
+assert(stencil_compiled ~= nil, tostring(stencil_err) .. "\n" .. tostring(stencil_src))
+assert(stencil_compiled.sum_i32_stencil_vec(xs, n) == expected)
 
 local function vector_reduce_func(name, reduction, init_raw)
     local machine_id = LJ.LJMachineId("vec:" .. name)
@@ -151,8 +171,7 @@ local function vector_reduce_func(name, reduction, init_raw)
             sem,
             LJ.LJExprLiteral(Core.LitInt(init_raw), i32_phys),
             8,
-            1,
-            nil
+            1
         ),
         i32_phys,
         LJ.LJStateScalar,
@@ -202,7 +221,7 @@ local u32_phys = CType.physical_type(u32, {})
 local ptr_u32_phys = CType.physical_type(Code.CodeTyDataPtr(u32), {})
 local u32_vec = LJ.LJMachine(
     LJ.LJMachineId("vec:u32"),
-    LJ.LJMachineVectorReduceArray(xs_id, LJ.LJExprLiteral(Core.LitInt("0"), i32_phys), LJ.LJExprValue(n_id), LJ.LJExprLiteral(Core.LitInt("1"), i32_phys), u32_phys, u32_phys, Value.ReductionAdd, sem, LJ.LJExprLiteral(Core.LitInt("0"), u32_phys), 8, 1, nil),
+    LJ.LJMachineVectorReduceArray(xs_id, LJ.LJExprLiteral(Core.LitInt("0"), i32_phys), LJ.LJExprValue(n_id), LJ.LJExprLiteral(Core.LitInt("1"), i32_phys), u32_phys, u32_phys, Value.ReductionAdd, sem, LJ.LJExprLiteral(Core.LitInt("0"), u32_phys), 8, 1),
     u32_phys,
     LJ.LJStateScalar,
     LJ.LJTraceHot

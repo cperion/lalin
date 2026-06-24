@@ -497,6 +497,14 @@ local Family = llb.family. moonlift {
     requires = { "moonlift.types" },
     provides = { "llpvm.dsl" },
   },
+
+  {
+    name = "llisle.dsl",
+    lang = Llisle,
+    exports = llisle_exports,
+    requires = { "llb.core" },
+    provides = { "llisle.dsl" },
+  },
 }
 ```
 
@@ -540,9 +548,14 @@ family.only { "moonlift.types" }
 family.subtract "llpvm.dsl"
 ```
 
-The Moonlift family installs Moonlift DSL values and LLPVM DSL values together.
-Each member language consumes generic LLB symbols through its roles. That avoids
-order-dependent metatable stacking.
+The Moonlift family installs Moonlift, MoonSchema, LLPVM, and Llisle namespace
+values together. Each member language consumes generic LLB symbols through its
+roles. That avoids order-dependent metatable stacking.
+
+Llisle is the rule/rewrite/selection member. It reuses existing family algebra:
+relations are typed product-to-product questions, rules and choices are sum
+arms, patterns are product-shaped values, and rule bodies are process-shaped
+construction bodies.
 
 Family algebra composes authoring universes:
 
@@ -551,6 +564,7 @@ local Full = MoonFamily .. LLPVMFamily
 local AlsoFull = MoonFamily + LLPVMFamily
 local Tooling = Full.prefer {
   task = "llpvm.dsl",
+  rule = "llisle.dsl",
 }
 local TypesOnly = Full.only { "moonlift.types" }
 local NoLLPVM = Full - "llpvm.dsl"

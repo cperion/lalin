@@ -13,10 +13,12 @@ Schema(T)
 
 local Core = T.MoonCore
 local Code = T.MoonCode
+local Flow = T.MoonFlow
 local LJ = T.MoonLuaJIT
 local Value = T.MoonValue
 local CType = require("moonlift.luajit_ctype")(T)
 local Emit = require("moonlift.luajit_emit")(T)
+local StencilC = require("moonlift.stencil_c")(T)
 
 local mode = arg and arg[1] or "quick"
 local full = mode == "full"
@@ -35,18 +37,6 @@ local function write_file(path, source_text)
     local f = assert(io.open(path, "wb"))
     f:write(source_text)
     f:close()
-end
-
-local function helper_source()
-    return [[
-#include <stdint.h>
-
-int32_t ml_lj_sum_i32_vec(const int32_t *xs, int32_t n) {
-    uint32_t acc = 0;
-    for (int32_t i = 0; i < n; i++) acc += (uint32_t)xs[i];
-    return (int32_t)acc;
-}
-]]
 end
 
 local function baseline_source()
@@ -105,22 +95,14 @@ end
 
 local function compile_c_artifacts()
     os.execute("mkdir -p target/luajit_bench")
-    local helper_c = "target/luajit_bench/vector_reduce_helper.c"
-    local helper_so = "target/luajit_bench/vector_reduce_helper.so"
     local baseline_c = "target/luajit_bench/vector_reduce_baseline.c"
     local baseline_exe = "target/luajit_bench/vector_reduce_baseline"
-    write_file(helper_c, helper_source())
     write_file(baseline_c, baseline_source())
-    local shared_cmd = table.concat({ shell_quote(cc), cflags, "-fPIC -shared", shell_quote(helper_c), "-o", shell_quote(helper_so) }, " ")
     local baseline_cmd = table.concat({ shell_quote(cc), cflags, shell_quote(baseline_c), "-o", shell_quote(baseline_exe) }, " ")
-    local shared_ok = os.execute(shared_cmd)
     local baseline_ok = os.execute(baseline_cmd)
     return {
-        helper_so = helper_so,
         baseline_exe = baseline_exe,
-        shared_cmd = shared_cmd,
         baseline_cmd = baseline_cmd,
-        shared_ok = shared_ok == true or shared_ok == 0,
         baseline_ok = baseline_ok == true or baseline_ok == 0,
     }
 end
@@ -137,8 +119,7 @@ local acc_id = LJ.LJValueId("acc")
 local source_id = LJ.LJMachineId("source")
 local fold_id = LJ.LJMachineId("fold")
 local vec_id = LJ.LJMachineId("vec")
-local native_id = LJ.LJMachineId("native_vec")
-local helper_id = LJ.LJHelperId("helper:sum_i32_vec")
+local stencil_id = LJ.LJMachineId("stencil_vec")
 local zero = LJ.LJExprLiteral(Core.LitInt("0"), i32_phys)
 
 local function params()
@@ -177,10 +158,10 @@ local function scalar_fold_func()
     )
 end
 
-local function vector_func(name, machine_id, helper)
+local function vector_func(name, machine_id)
     local vec = LJ.LJMachine(
         machine_id,
-        LJ.LJMachineVectorReduceArray(xs_id, zero, LJ.LJExprValue(n_id), LJ.LJExprLiteral(Core.LitInt("1"), i32_phys), i32_phys, i32_phys, Value.ReductionAdd, sem, zero, 8, 1, helper),
+        LJ.LJMachineVectorReduceArray(xs_id, zero, LJ.LJExprValue(n_id), LJ.LJExprLiteral(Core.LitInt("1"), i32_phys), i32_phys, i32_phys, Value.ReductionAdd, sem, zero, 8, 1),
         i32_phys,
         LJ.LJStateScalar,
         LJ.LJTraceHot
@@ -198,24 +179,61 @@ local function vector_func(name, machine_id, helper)
     )
 end
 
-local artifacts = with_gcc and compile_c_artifacts() or nil
-local native_helpers = {}
-if artifacts and artifacts.shared_ok then
-    ffi.cdef("int32_t ml_lj_sum_i32_vec(const int32_t *xs, int32_t n);")
-    native_helpers[helper_id.text] = ffi.load(artifacts.helper_so).ml_lj_sum_i32_vec
+local stencil_reduction = Value.ReductionFact(
+    Value.AlgebraFactId("reduction:bench:sum_i32"),
+    Flow.FlowDomainFunction(Code.CodeFuncId("fn:sum_i32_stencil")),
+    Code.CodeValueId("v:acc"),
+    Value.ReductionAdd,
+    Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("0"))),
+    Value.ValueExprValue(Code.CodeValueId("v:item")),
+    i32,
+    sem,
+    nil,
+    Value.AlgebraProofIdentity("benchmark stencil reduction")
+)
+local stencil_artifact = StencilC.reduce_array_artifact(stencil_reduction, nil, {
+    elem_ty = i32,
+    result_ty = i32,
+    step_num = 1,
+})
+local stencil_build, stencil_build_err = StencilC.compile_artifacts({ stencil_artifact }, {
+    stem = "bench_luajit_vector_reduce_stencil",
+    cc = cc,
+    cflags = cflags .. " -fPIC -shared",
+})
+if stencil_build == nil then io.stderr:write("skipping stencil C artifact; " .. tostring(stencil_build_err) .. "\n") end
+
+local function stencil_func()
+    local machine = LJ.LJMachine(
+        stencil_id,
+        LJ.LJMachineStencilCall(stencil_artifact, { LJ.LJExprValue(xs_id), zero, LJ.LJExprValue(n_id), zero }, i32_phys),
+        i32_phys,
+        LJ.LJStateScalar,
+        LJ.LJTraceHot
+    )
+    return LJ.LJFunc(
+        LJ.LJFuncId("sum_i32_vec_stencil"),
+        nil,
+        "sum_i32_vec_stencil",
+        LJ.LJFuncSigId("sig:sum_i32_vec_stencil"),
+        params(),
+        {},
+        { machine },
+        LJ.LJBodyMachine(stencil_id, LJ.LJTerminalFirst(nil)),
+        LJ.LJTraceHot
+    )
 end
 
+local artifacts = with_gcc and compile_c_artifacts() or nil
 local funcs = {
     scalar_fold_func(),
-    vector_func("sum_i32_vec_fallback", vec_id, nil),
+    vector_func("sum_i32_vec_fallback", vec_id),
 }
-if native_helpers[helper_id.text] ~= nil then
-    funcs[#funcs + 1] = vector_func("sum_i32_vec_native", native_id, helper_id)
-end
+if stencil_build ~= nil then funcs[#funcs + 1] = stencil_func() end
 
 local compiled, err, src = Emit.compile_module(LJ.LJModule(nil, funcs, {}, {}, {}), {
     chunk_name = "bench_luajit_vector_reduce",
-    native_helpers = native_helpers,
+    stencil_symbols = stencil_build and stencil_build.symbols or {},
 })
 assert(compiled ~= nil, tostring(err) .. "\n" .. tostring(src))
 
@@ -233,7 +251,7 @@ end
 local expected = handwritten_sum()
 assert(compiled.sum_i32_fold(xs, n) == expected)
 assert(compiled.sum_i32_vec_fallback(xs, n) == expected)
-if compiled.sum_i32_vec_native then assert(compiled.sum_i32_vec_native(xs, n) == expected) end
+if compiled.sum_i32_vec_stencil then assert(compiled.sum_i32_vec_stencil(xs, n) == expected) end
 
 print(string.format("MoonLuaJIT vector reduce benchmark mode=%s n=%d samples=%d rounds=%d", mode, n, samples, rounds))
 print("emitted source bytes " .. tostring(#src))
@@ -242,10 +260,10 @@ local cases = {
     { name = "vector fallback i32", fn = function() return compiled.sum_i32_vec_fallback(xs, n) end },
     { name = "handwritten i32", fn = handwritten_sum },
 }
-if compiled.sum_i32_vec_native then
-    cases[#cases + 1] = { name = "vector native i32", fn = function() return compiled.sum_i32_vec_native(xs, n) end }
+if compiled.sum_i32_vec_stencil then
+    cases[#cases + 1] = { name = "vector stencil i32", fn = function() return compiled.sum_i32_vec_stencil(xs, n) end }
 else
-    io.stderr:write("skipping native helper; shared helper compile failed\n")
+    io.stderr:write("skipping stencil C artifact; compile failed\n")
 end
 
 local results = Measure.measure(cases, {
@@ -259,7 +277,7 @@ for i = 1, #results do print(Measure.format_result(results[i])) end
 if artifacts and artifacts.baseline_ok then
     local pipe = io.popen(table.concat({ shell_quote(artifacts.baseline_exe), tostring(n), tostring(samples), tostring(rounds) }, " "), "r")
     if pipe ~= nil then
-        io.write("\nGCC shared helper command: " .. artifacts.shared_cmd .. "\n")
+        if stencil_build then io.write("\nStencil C command: " .. stencil_build.command .. "\n") end
         io.write("GCC baseline command: " .. artifacts.baseline_cmd .. "\n")
         io.write(pipe:read("*a"))
         pipe:close()

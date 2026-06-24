@@ -63,6 +63,7 @@ M.lsp = require("moonlift.rpc_stdio_loop")
 
 local llb = require("llb")
 local llpvm_dsl = require("llpvm.dsl")
+local llisle_dsl = require("llisle.dsl")
 local schema_dsl = require("moonlift.schema.dsl")
 M.schema_dsl = schema_dsl
 M.schema_namespace = schema_dsl.namespace()
@@ -88,6 +89,10 @@ end
 
 local function is_schema_value(value)
     return schema_dsl.is_schema_value(value)
+end
+
+local function is_llisle_value(value)
+    return llisle_dsl.is_llisle_value(value)
 end
 
 local function collect_schema_values(out, value, seen)
@@ -243,6 +248,14 @@ local function llpvm_index(value, opts, family)
     return out
 end
 
+local function llisle_diagnostics(value, bag, opts, family)
+    return llisle_dsl.diagnostics(value, bag)
+end
+
+local function llisle_index(value, opts, family)
+    return llisle_dsl.index(value)
+end
+
 local function schema_diagnostics(value, bag, opts, family)
     local targets = collect_schema_values({}, value)
     if #targets == 0 then return bag end
@@ -327,6 +340,49 @@ local function llpvm_markdown(member, opts, family)
     }, "\n")
 end
 
+local function llisle_markdown(member, opts, family)
+    return table.concat({
+        "## llisle.dsl",
+        "",
+        "Llisle is the lowering/rewrite/selection rule member of the Moonlift family. It expresses compiler choices as typed relations, product-shaped patterns, sum alternatives, and process-shaped rule bodies.",
+        "",
+        "Family source uses the `llisle` namespace value. Call `llisle { ... }` when a family value carries rule systems next to Moonlift declarations, MoonSchema types, or LLPVM machines.",
+        "",
+        "```lua",
+        "llisle {",
+        "  llisle.relation. lower_expr {",
+        "    llisle.input { expr [MoonExpr], ctx [LowerCtx] },",
+        "    llisle.output { value [BackValue] },",
+        "    llisle.strategy {",
+        "      llisle.select. best_cost,",
+        "      llisle.ambiguity. error,",
+        "      llisle.coverage. complete,",
+        "    },",
+        "  },",
+        "",
+        "  llisle.rule. add_i32 {",
+        "    llisle.lower_expr {",
+        "      expr = add { lhs = llisle.P. lhs, rhs = llisle.P. rhs } [ml.i32],",
+        "      ctx = llisle.P. ctx,",
+        "    },",
+        "",
+        "    llisle.when {",
+        "      llisle.P. lhs :has_type (ml.i32),",
+        "      llisle.P. rhs :has_type (ml.i32),",
+        "    },",
+        "",
+        "    llisle.run {",
+        "      llisle.emit. cmd { add_i32 { dst = llisle.V. out, lhs = llisle.P. lhs, rhs = llisle.P. rhs } },",
+        "      llisle.ret { value = llisle.V. out },",
+        "    },",
+        "  },",
+        "}",
+        "```",
+        "",
+        llb.markdown_language(member.lang, { level = 3, title = "Llisle LLB Surface" }),
+    }, "\n")
+end
+
 local function schema_markdown(member, opts, family)
     return table.concat({
         "## moonschema.dsl",
@@ -357,6 +413,7 @@ M.family = llb.family. moonlift {
         lang = "llpvm.dsl",
         language = "llpvm.dsl",
         llpvm = "llpvm.dsl",
+        llisle = "llisle.dsl",
         ml = "moonlift.dsl",
         machine = "llpvm.dsl",
         moonlift = "moonlift.dsl",
@@ -398,7 +455,18 @@ M.family = llb.family. moonlift {
         "ml",
         "moonlift",
         "llpvm",
+        "llisle",
         "schema",
+        "relation",
+        "rules",
+        "rule",
+        "when",
+        "run",
+        "choose",
+        "alt",
+        "cost",
+        "bind",
+        "fail",
     },
     {
         name = "moonlift.dsl",
@@ -482,6 +550,35 @@ M.family = llb.family. moonlift {
                 "namespaces",
                 "origins",
                 "native-type-values",
+                "type-family",
+            },
+        },
+    },
+    {
+        name = "llisle.dsl",
+        lang = llisle_dsl.language,
+        exports = function(opts) return llisle_dsl.make_family_env(opts) end,
+        match = is_llisle_value,
+        format = function(value, opts) return llisle_dsl.format(value, opts) end,
+        diagnostics = llisle_diagnostics,
+        index = llisle_index,
+        markdown = llisle_markdown,
+        requires = { "llb.core" },
+        provides = { "llisle.dsl" },
+        semantics = {
+            owns = {
+                "lowering-rules",
+                "rewrite-relations",
+                "sum-elimination",
+            },
+            uses = {
+                "authoring-substrate",
+                "diagnostics",
+                "family-composition",
+                "fragments",
+                "namespaces",
+                "native-type-values",
+                "origins",
                 "type-family",
             },
         },

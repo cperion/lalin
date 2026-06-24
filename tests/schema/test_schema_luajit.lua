@@ -111,7 +111,7 @@ local func = LJ.LJFunc(
 local module = LJ.LJModule(nil, { func }, { sig }, {}, {})
 
 assert(module.funcs[1].machines[4].kind.input == filter_id, "fold should consume filter machine")
-assert(module.funcs[1].machines[5].kind.native_helper.text == "helper:sum_i32_vec", "vector reduce may name a native helper")
+assert(module.funcs[1].machines[5].kind.reduction == Value.ReductionAdd, "vector reduce carries reduction semantics for trace fallback")
 assert(module.funcs[1].body.machine == fold_id, "function body should expose terminal machine")
 assert(module.funcs[1].cdefs[1].ty == i32_c, "cdefs should carry FFI C physical type")
 assert(void_c == LJ.LJCTypeVoid, "void C type singleton should be available")

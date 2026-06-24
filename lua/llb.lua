@@ -1310,7 +1310,15 @@ local function zone_items(value)
   if value == nil then return {} end
   if is_tag(value, "Fragment") then return array_copy(value.items or {}) end
   if is_tag(value, "Spread") then return zone_items(value.value) end
-  if type(value) == "table" then return array_copy(value) end
+  if type(value) == "table" then
+    local out = {}
+    for i = 1, #value do
+      local item = value[i]
+      if is_tag(item, "Fragment") or is_tag(item, "Spread") then append(out, zone_items(item))
+      else out[#out + 1] = item end
+    end
+    return out
+  end
   return { value }
 end
 

@@ -425,6 +425,11 @@ return schema. MoonLuaJIT {
       args [many [MoonLuaJIT.LJExpr]],
       result_ty [MoonLuaJIT.LJPhysicalType],
     },
+    LJMachineStencilEffect {
+      variant_unique,
+      artifact [MoonStencil.StencilArtifact],
+      args [many [MoonLuaJIT.LJExpr]],
+    },
     LJMachinePhaseCall {
       variant_unique,
       phase [str],

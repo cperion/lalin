@@ -16,6 +16,7 @@ local Code = T.MoonCode
 local Value = T.MoonValue
 local Lower = require("moonlift.luajit_lower")(T)
 local Emit = require("moonlift.luajit_emit")(T)
+local StencilC = require("moonlift.stencil_c")(T)
 
 local mode = arg and arg[1] or "quick"
 local full = mode == "full"
@@ -31,12 +32,16 @@ local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)
 
 local type_cases = {
-    { suffix = "i8", bits = 8, signed = true, ctype = "int8_t", fill = "((i * 17 + 11) & 255) - 128" },
+    { suffix = "i8", bits = 8, signed = true, ctype = "int8_t", fill = "(i * 17 + 11) & 255" },
     { suffix = "u8", bits = 8, signed = false, ctype = "uint8_t", fill = "(i * 17 + 11) & 255" },
-    { suffix = "i16", bits = 16, signed = true, ctype = "int16_t", fill = "((i * 17 + 11) & 65535) - 32768" },
+    { suffix = "i16", bits = 16, signed = true, ctype = "int16_t", fill = "(i * 17 + 11) & 65535" },
     { suffix = "u16", bits = 16, signed = false, ctype = "uint16_t", fill = "(i * 17 + 11) & 65535" },
     { suffix = "i32", bits = 32, signed = true, ctype = "int32_t", fill = "i * 17 + 11" },
     { suffix = "u32", bits = 32, signed = false, ctype = "uint32_t", fill = "i * 17u + 11u" },
+    { suffix = "i64", bits = 64, signed = true, ctype = "int64_t", fill = "i * 17 + 11" },
+    { suffix = "u64", bits = 64, signed = false, ctype = "uint64_t", fill = "i * 17ull + 11ull" },
+    { suffix = "f32", bits = 32, signed = true, float = true, ctype = "float", fill = "((float)((i % 97) - 48) * 0.25f)" },
+    { suffix = "f64", bits = 64, signed = true, float = true, ctype = "double", fill = "((double)((i % 97) - 48) * 0.25)" },
 }
 
 local reductions = {
@@ -50,20 +55,25 @@ local reductions = {
 }
 
 local function min_init(t)
+    if t.float then return "1.0e30" end
     if t.signed then
         if t.bits == 8 then return "127" end
         if t.bits == 16 then return "32767" end
+        if t.bits == 64 then return "9223372036854775807" end
         return "2147483647"
     end
     if t.bits == 8 then return "255" end
     if t.bits == 16 then return "65535" end
+    if t.bits == 64 then return "18446744073709551615" end
     return "4294967295"
 end
 
 local function max_init(t)
+    if t.float then return "-1.0e30" end
     if t.signed then
         if t.bits == 8 then return "-128" end
         if t.bits == 16 then return "-32768" end
+        if t.bits == 64 then return "-9223372036854775807" end
         return "-2147483648"
     end
     return "0"
@@ -79,6 +89,34 @@ local function param(name, ty) return Code.CodeParam(Code.CodeValueId("v:" .. na
 local function inst(id, kind) return Code.CodeInst(Code.CodeInstId("inst:" .. id), kind, origin) end
 local function term(id, kind) return Code.CodeTerm(Code.CodeTermId("term:" .. id), kind, origin) end
 local function shell_quote(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
+local function sanitize(s)
+    s = tostring(s or "x"):gsub("[^%w_]", "_")
+    if s == "" then s = "x" end
+    if s:match("^%d") then s = "_" .. s end
+    return s
+end
+
+local function ty_for_case(t)
+    if t.float then return Code.CodeTyFloat(t.bits) end
+    return Code.CodeTyInt(t.bits, t.signed and Code.CodeSigned or Code.CodeUnsigned)
+end
+
+local function literal_for(case, raw)
+    if case.type_case.float then return Core.LitFloat(tostring(raw)) end
+    return Core.LitInt(tostring(raw))
+end
+
+local function reductions_for(t)
+    if not t.float then return reductions end
+    local out = {}
+    for _, r in ipairs(reductions) do
+        if r.reduction == Value.ReductionAdd or r.reduction == Value.ReductionMul
+            or r.reduction == Value.ReductionMin or r.reduction == Value.ReductionMax then
+            out[#out + 1] = r
+        end
+    end
+    return out
+end
 
 local function build_module(case)
     local ty = case.ty
@@ -98,7 +136,7 @@ local function build_module(case)
 
     local entry = Code.CodeBlock(entry_id, "entry", {}, {
         inst(case.name .. ":zero", Code.CodeInstConst(zero, Code.CodeConstLiteral(i32, Core.LitInt("0")))),
-        inst(case.name .. ":init", Code.CodeInstConst(init, Code.CodeConstLiteral(ty, Core.LitInt(case.init)))),
+        inst(case.name .. ":init", Code.CodeInstConst(init, Code.CodeConstLiteral(ty, literal_for(case, case.init)))),
         inst(case.name .. ":one", Code.CodeInstConst(one, Code.CodeConstLiteral(i32, Core.LitInt("1")))),
     }, term(case.name .. ":entry", Code.CodeTermJump(header_id, { zero, init })), origin)
     local header = Code.CodeBlock(header_id, "header", {
@@ -115,7 +153,11 @@ local function build_module(case)
         body_insts[#body_insts + 1] = inst(case.name .. ":sel_cond", Code.CodeInstCompare(sel_cond, cmp, ty, acc, item))
         body_insts[#body_insts + 1] = inst(case.name .. ":reduce", Code.CodeInstSelect(next_acc, ty, sel_cond, acc, item))
     else
-        body_insts[#body_insts + 1] = inst(case.name .. ":reduce", Code.CodeInstBinary(next_acc, case.op, ty, sem, acc, item))
+        if case.type_case.float then
+            body_insts[#body_insts + 1] = inst(case.name .. ":reduce", Code.CodeInstFloatBinary(next_acc, case.op, ty, Code.CodeFloatStrict, acc, item))
+        else
+            body_insts[#body_insts + 1] = inst(case.name .. ":reduce", Code.CodeInstBinary(next_acc, case.op, ty, sem, acc, item))
+        end
     end
     body_insts[#body_insts + 1] = inst(case.name .. ":inc", Code.CodeInstBinary(next_i, Core.BinAdd, i32, sem, i, one))
     local body = Code.CodeBlock(body_id, "body", {}, body_insts, term(case.name .. ":body", Code.CodeTermJump(header_id, { next_i, next_acc })), origin)
@@ -131,15 +173,34 @@ end
 local function compile_case(case)
     local module, contracts = build_module(case)
     local rejects = {}
-    local lj_module, facts = Lower.lower_module(module, { contracts = contracts, collect_rejects = rejects })
+    local artifacts = {}
+    local lj_module, facts = Lower.lower_module(module, {
+        contracts = contracts,
+        collect_rejects = rejects,
+        stencil_artifact_for = function(func, reduction, plan, info)
+            local artifact = StencilC.reduce_array_artifact(reduction, plan, info)
+            artifacts[#artifacts + 1] = artifact
+            return artifact
+        end,
+    })
     assert(#rejects == 0, case.name .. " rejected: " .. tostring(rejects[1] and rejects[1].reason))
     assert(#facts.value.reductions == 1 and facts.value.reductions[1].kind == case.reduction, case.name .. " should derive expected ReductionKind")
-    local compiled, err, src = Emit.compile_module(lj_module, { chunk_name = "bench_luajit_lower_reductions_" .. case.name })
+    local stencil_build, stencil_err = StencilC.compile_artifacts(artifacts, {
+        stem = "bench_luajit_lower_reductions_" .. sanitize(case.name),
+        cc = cc,
+        cflags = cflags .. " -fPIC -shared",
+    })
+    assert(stencil_build ~= nil, tostring(stencil_err))
+    local compiled, err, src = Emit.compile_module(lj_module, {
+        chunk_name = "bench_luajit_lower_reductions_" .. case.name,
+        stencil_symbols = stencil_build.symbols,
+    })
     assert(compiled ~= nil, tostring(err) .. "\n" .. tostring(src))
-    return compiled[case.name], src
+    return compiled[case.name], src, artifacts, stencil_build
 end
 
 local function lua_fill_expr(t, i)
+    if t.float then return ((i % 97) - 48) * 0.25 end
     local x = i * 17 + 11
     if t.bits == 8 then x = bit.band(x, 255); if t.signed and x >= 128 then x = x - 256 end
     elseif t.bits == 16 then x = bit.band(x, 65535); if t.signed and x >= 32768 then x = x - 65536 end
@@ -147,14 +208,14 @@ local function lua_fill_expr(t, i)
     return x
 end
 
-local bench_cases, compiled_cases, arrays = {}, {}, {}
+local bench_cases, compiled_cases, arrays, stencil_builds = {}, {}, {}, {}
 local total_source_bytes = 0
 for _, t in ipairs(type_cases) do
-    local ty = Code.CodeTyInt(t.bits, t.signed and Code.CodeSigned or Code.CodeUnsigned)
+    local ty = ty_for_case(t)
     local xs = ffi.new(t.ctype .. "[?]", n)
     for i = 0, n - 1 do xs[i] = lua_fill_expr(t, i) end
     arrays[t.suffix] = xs
-    for _, r in ipairs(reductions) do
+    for _, r in ipairs(reductions_for(t)) do
         local case = {
             name = r.suffix .. "_" .. t.suffix,
             ty = ty,
@@ -166,9 +227,10 @@ for _, t in ipairs(type_cases) do
             type_case = t,
             red_case = r,
         }
-        local lowered, src = compile_case(case)
+        local lowered, src, _, stencil_build = compile_case(case)
         total_source_bytes = total_source_bytes + #src
         compiled_cases[#compiled_cases + 1] = case
+        stencil_builds[#stencil_builds + 1] = stencil_build
         bench_cases[#bench_cases + 1] = { name = "lowered " .. case.name, fn = function() return lowered(xs, n) end }
     end
 end
@@ -191,15 +253,17 @@ end
 local function c_unsigned(t)
     if t.bits == 8 then return "uint8_t" end
     if t.bits == 16 then return "uint16_t" end
+    if t.bits == 64 then return "uint64_t" end
     return "uint32_t"
 end
 
 local function c_func(case)
     local t, r = case.type_case, case.red_case
     local ct, ut = t.ctype, c_unsigned(t)
-    local acc_ty = (r.cop == "min" or r.cop == "max") and ct or ut
+    local acc_ty = (t.float or r.cop == "min" or r.cop == "max") and ct or ut
     local init = case.init
-    if r.cop == "and" then init = "(" .. acc_ty .. ")~0u" end
+    if r.cop == "and" then init = "((" .. acc_ty .. ")~(" .. acc_ty .. ")0)" end
+    if r.cop == "min" and t.bits == 64 and not t.signed and not t.float then init = "UINT64_MAX" end
     local out = {}
     out[#out + 1] = "static " .. ct .. " " .. case.name .. "(const " .. ct .. " *xs, int n) {"
     out[#out + 1] = "    " .. acc_ty .. " acc = (" .. acc_ty .. ")(" .. init .. ");"
@@ -258,7 +322,11 @@ static int cmp_double(const void *a, const void *b) {
         c[#c + 1] = "        for (int r = 0; r < rounds; r++) value = " .. case.name .. "(xs_" .. t.suffix .. ", n);"
         c[#c + 1] = "        times[s] = now_s() - t0; if (s == 0) first = value; if (value != first) abort(); }"
         c[#c + 1] = "      qsort(times, (size_t)samples, sizeof(double), cmp_double);"
-        c[#c + 1] = "      printf(\"%-28s median=%8.3fms result=%lld\\n\", \"gcc " .. case.name .. "\", times[samples / 2] * 1000.0, (long long)first); }"
+        if t.float then
+            c[#c + 1] = "      printf(\"%-28s median=%8.3fms result=%.9g\\n\", \"gcc " .. case.name .. "\", times[samples / 2] * 1000.0, (double)first); }"
+        else
+            c[#c + 1] = "      printf(\"%-28s median=%8.3fms result=%lld\\n\", \"gcc " .. case.name .. "\", times[samples / 2] * 1000.0, (long long)first); }"
+        end
     end
     c[#c + 1] = "    return 0;"
     c[#c + 1] = "}"

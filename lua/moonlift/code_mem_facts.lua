@@ -469,7 +469,7 @@ local function bind_context(T)
 
             local function object_pair_safe(a, b)
                 if a.object == nil or b.object == nil then return false, nil end
-                if a.object == b.object and a.index_key ~= nil and a.index_key == b.index_key and (not is_write_kind(a.kind)) and (not is_write_kind(b.kind)) then return true, "same object and same per-iteration read index" end
+                if a.object == b.object and a.index_key ~= nil and a.index_key == b.index_key then return true, "same object and same per-iteration index do not carry dependence across iterations" end
                 if a.object ~= b.object and disjoint[a.object.text .. "\0" .. b.object.text] then return true, "objects are disjoint by contract" end
                 if a.object ~= b.object and (noalias_objects[a.object.text] or noalias_objects[b.object.text]) then return true, "noalias contract separates one object from the other" end
                 if a.object ~= b.object and readonly_objects[a.object.text] and readonly_objects[b.object.text] then return true, "read-only objects do not create loop-carried dependence" end

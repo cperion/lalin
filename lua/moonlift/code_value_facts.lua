@@ -98,6 +98,8 @@ local function bind_context(T)
                     add_expr_fact(out_values, exprs, k.dst, Value.ValueExprConst(k.const), identity("Code constant"))
                 elseif cls == Code.CodeInstAlias then
                     add_expr_fact(out_values, exprs, k.dst, expr_for(exprs, k.src), identity("Code alias"))
+                elseif cls == Code.CodeInstUnary then
+                    add_expr_fact(out_values, exprs, k.dst, Value.ValueExprUnary(k.op, expr_for(exprs, k.value), k.ty), identity("Code unary expression"))
                 elseif cls == Code.CodeInstBinary then
                     local expr = binary_expr(k, exprs)
                     if expr ~= nil then add_expr_fact(out_values, exprs, k.dst, expr, identity("Code integer binary expression")) end
@@ -113,7 +115,7 @@ local function bind_context(T)
                 elseif cls == Code.CodeInstSelect then
                     add_expr_fact(out_values, exprs, k.dst, Value.ValueExprSelect(expr_for(exprs, k.cond), expr_for(exprs, k.then_value), expr_for(exprs, k.else_value)), identity("Code select expression"))
                 elseif cls == Code.CodeInstCast then
-                    add_expr_fact(out_values, exprs, k.dst, expr_for(exprs, k.value), identity("Code cast value alias for algebra facts"))
+                    add_expr_fact(out_values, exprs, k.dst, Value.ValueExprCast(k.op, k.from, k.to, expr_for(exprs, k.value)), identity("Code cast expression"))
                 end
             end
         end
@@ -313,6 +315,8 @@ local function bind_context(T)
         seen[expr] = true
         local cls = pvm.classof(expr)
         if cls == Value.ValueExprConst or cls == Value.ValueExprValue or cls == Value.ValueExprAffine then return true end
+        if cls == Value.ValueExprUnary then return lowerable_expr(expr.value, seen) end
+        if cls == Value.ValueExprCast then return lowerable_expr(expr.value, seen) end
         if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul then
             local ok, reason = lowerable_expr(expr.a, seen); if not ok then return false, reason end
             return lowerable_expr(expr.b, seen)

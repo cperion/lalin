@@ -16,6 +16,10 @@ llpvm.dsl
   Low-level PVM language heads for typed bytecode languages, worlds, streams,
   records, machines, phases, tasks, and roots.
 
+llisle.dsl
+  Rule/rewrite/selection heads for lowering relations, product-shaped patterns,
+  sum alternatives, strategy metadata, and process-shaped rule bodies.
+
 llb
   The shared language-workbench substrate: symbols, fragments, origins,
   diagnostics, formatting, use sessions, language families, and processes.
@@ -62,6 +66,9 @@ LLPVM:
 MoonSchema:
   schema
 
+Llisle:
+  llisle
+
 LLB:
   _
   spread
@@ -93,6 +100,11 @@ ml.fn. add { a [ml.i32], b [ml.i32] } [ml.i32] {
 llpvm.task. compile {
   llpvm.input [ml.i32],
   llpvm.output [ml.i32],
+}
+
+llisle.relation. lower_expr {
+  llisle.input { expr [MoonExpr], ctx [LowerCtx] },
+  llisle.output { value [BackValue] },
 }
 
 schema. MoonEditor {
@@ -127,6 +139,13 @@ return {
       schema.product. Pair { left [MoonType.Type], right [MoonType.Type] },
     },
   },
+
+  llisle {
+    llisle.rule. lower_add_i32 {
+      llisle.lower_expr { expr = add { lhs = llisle.P. lhs, rhs = llisle.P. rhs } [ml.i32] },
+      llisle.run { llisle.ret { value = llisle.V. out } },
+    },
+  },
 }
 ```
 
@@ -157,6 +176,9 @@ moonlift.dsl    owns native programs, native control, native type values,
 
 llpvm.dsl       owns bytecode programs, bytecode streams, process/task specs,
                 and PVM images
+
+llisle.dsl      owns lowering rules, rewrite relations, and explicit
+                sum-elimination semantics
 ```
 
 Current semantic reuse:
@@ -169,6 +191,10 @@ moonschema.dsl  uses LLB authoring/provenance/diagnostics
 
 llpvm.dsl       uses LLB authoring/provenance/diagnostics, Moonlift native type
                 values, and MoonSchema type-family semantics
+
+llisle.dsl      uses LLB authoring/provenance/diagnostics, fragments,
+                Moonlift native type values, and MoonSchema type-family
+                semantics
 ```
 
 This is why `schema.product` / `schema.sum` are the family source of product and
@@ -1082,6 +1108,93 @@ llpvm.pvm. Expr {
     raw_items,
     add_node,
   },
+}
+```
+
+## Llisle Family Surface
+
+Llisle is the family rule language for compiler lowering, rewriting, and
+backend selection. It does not introduce a parser or a callback registry.
+It maps directly onto existing family algebra:
+
+```text
+relation      typed product-to-product question
+rule          sum arm that may satisfy a relation
+relation call product-shaped pattern
+when          product of guards
+choose        local sum elimination
+alt           local sum arm
+run           process-shaped construction body
+emit          process effect
+ret           output product
+```
+
+Canonical family shape:
+
+```lua
+llisle {
+  llisle.relation. lower_expr {
+    llisle.input { expr [MoonExpr], ctx [LowerCtx] },
+    llisle.output { value [BackValue] },
+    llisle.effects { cmd [BackCmd], diagnostic [Diagnostic] },
+    llisle.strategy {
+      llisle.select. best_cost,
+      llisle.ambiguity. error,
+      llisle.coverage. complete,
+    },
+  },
+
+  llisle.rule. add_i32 {
+    llisle.lower_expr {
+      expr = add { lhs = llisle.P. lhs, rhs = llisle.P. rhs } [ml.i32],
+      ctx = llisle.P. ctx,
+    },
+
+    llisle.when {
+      llisle.P. lhs :has_type (ml.i32),
+      llisle.P. rhs :has_type (ml.i32),
+    },
+
+    llisle.choose {
+      llisle.alt. imm {
+        llisle.when { llisle.P. rhs :fits_imm32 () },
+        llisle.cost (1),
+        llisle.run {
+          llisle.emit. cmd {
+            add_i32_imm { dst = llisle.V. out, lhs = llisle.P. lhs, imm = llisle.P. rhs },
+          },
+          llisle.ret { value = llisle.V. out },
+        },
+      },
+
+      llisle.alt. reg {
+        llisle.cost (2),
+        llisle.run {
+          llisle.emit. cmd {
+            add_i32 { dst = llisle.V. out, lhs = llisle.P. lhs, rhs = llisle.P. rhs },
+          },
+          llisle.ret { value = llisle.V. out },
+        },
+      },
+    },
+  },
+}
+```
+
+Rules compose as normal LLB fragments:
+
+```lua
+local scalar_rules = llisle.rules {
+  llisle.rule. lower_const_i32 { ... },
+}
+
+local arith_rules = llisle.rules {
+  llisle.rule. lower_add_i32 { ... },
+}
+
+return llisle {
+  llisle.relation. lower_expr { ... },
+  _(scalar_rules .. arith_rules),
 }
 ```
 
@@ -2134,9 +2247,9 @@ moon.write_markdown("docs/MOONLIFT_FAMILY_REFERENCE.md")
 ```
 
 `moon.markdown` delegates to the Moonlift family. The family writes the common
-reference frame, then delegates to each language member. Moonlift and LLPVM own
-their semantic sections; plain LLB language metadata fills in the generated
-head, role, export, and pass tables.
+reference frame, then delegates to each language member. Moonlift, MoonSchema,
+LLPVM, and Llisle own their semantic sections; plain LLB language metadata
+fills in the generated head, role, export, and pass tables.
 
 The generated reference always starts with the shared LLB syntax model. This is
 intentional: Moonlift-family languages all use the same Lua mechanics for dot
