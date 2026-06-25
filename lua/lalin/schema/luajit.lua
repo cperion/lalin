@@ -551,11 +551,6 @@ return schema. LalinLuaJIT {
       entry [LalinLuaJIT.LJBlockId],
       blocks [many [LalinLuaJIT.LJBlock]],
     },
-    LJBodySource {
-      variant_unique,
-      source [str],
-      reason [str],
-    },
   },
 
   product. LJFunc {

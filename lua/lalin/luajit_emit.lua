@@ -717,9 +717,7 @@ local function bind_context(T)
         for i = 1, #func.params do params[i] = id_name(func.params[i].value) end
         line(out, n, func_name(func.name) .. " = function(" .. table.concat(params, ", ") .. ")")
         local body_cls = pvm.classof(func.body)
-        if body_cls == LJ.LJBodySource then
-            line(out, n + 1, func.body.source)
-        elseif body_cls == LJ.LJBodyBlocks then
+        if body_cls == LJ.LJBodyBlocks then
             emit_blocks_body(out, n + 1, func.body)
         elseif body_cls == LJ.LJBodyMachine then
             emit_machine_body(out, n + 1, func, func.body)
