@@ -155,11 +155,33 @@ local function bind_context(T)
         type_uses_code_sig(access.ty, ctx)
     end
 
+    local function scalar_size(bits)
+        if bits == 1 or bits == 8 then return 1 end
+        if bits == 16 then return 2 end
+        if bits == 32 then return 4 end
+        if bits == 64 then return 8 end
+        return nil
+    end
+
+    local function type_size(ty)
+        local cls = pvm.classof(ty)
+        if ty == Code.CodeTyBool8 then return 1 end
+        if ty == Code.CodeTyIndex then return 8 end
+        if cls == Code.CodeTyInt or cls == Code.CodeTyFloat then return scalar_size(ty.bits) end
+        if cls == Code.CodeTyDataPtr or cls == Code.CodeTyCodePtr or cls == Code.CodeTyClosure or cls == Code.CodeTyImportedCFuncPtr then return 8 end
+        if cls == Code.CodeTyArray then
+            local elem_size = type_size(ty.elem)
+            if elem_size ~= nil and type(ty.count) == "number" then return elem_size * ty.count end
+        end
+        if cls == Code.CodeTyHandle or cls == Code.CodeTyLease then return type_size(ty.repr or ty.base) end
+        return nil
+    end
+
     local function data_init_extent(init)
         local cls = pvm.classof(init)
         if cls == Code.CodeDataZero then return init.offset, init.size end
         if cls == Code.CodeDataBytes then return init.offset, #init.bytes end
-        if cls == Code.CodeDataScalar then return init.offset, 1 end
+        if cls == Code.CodeDataScalar then return init.offset, type_size(init.ty) or 0 end
         if cls == Code.CodeDataReloc then return init.reloc.offset, 8 end
         return 0, 0
     end

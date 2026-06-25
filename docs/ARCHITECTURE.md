@@ -2,12 +2,13 @@
 
 Lalin is a LuaJIT-hosted language family built around LLB.
 
-LLB is the central engineering artifact. It is the workbench that gives Lua
-values language meaning: heads, roles, fragments, namespaces, origins,
-diagnostics, formatting, indexing, regions, protocols, processes, and family
-composition. Lalin is the compiled member of that family. It consumes LLB
-regions and typed values, checks native semantics, and lowers the resulting
-program into LuaTrace and LuaJIT bytecode copy-patch artifacts.
+LLB is the central engineering artifact: the language-family workbench and the
+bootstrap language used to define member dialects. It gives Lua values dialect
+meaning through heads, roles, fragments, namespaces, origins, diagnostics,
+formatting, indexing, regions, protocols, processes, and family composition.
+Lalin is the compiled dialect in that family. It consumes LLB regions and typed
+values, checks native semantics, and lowers the resulting program into LuaJIT
+copy-patch artifacts.
 
 The main path is intentionally small:
 
@@ -19,19 +20,18 @@ Lua source
   -> typecheck
   -> LalinCode facts
   -> kernel and schedule facts
-  -> LuaTrace stencil plans
-  -> LuaJIT bytecode bank
+  -> LuaTrace stencil plans or C stencil plans
+  -> LuaJIT copy-patch bank
   -> loaded LuaJIT module
 ```
 
 There is no Cranelift/Rust runtime path in the active architecture. C emission
-and native binary stencil banks remain engineering tools for validation,
-benchmarking, and optional artifact generation. They are not the default
-runtime contract.
+and native copy-patch MC banks are the fast artifact path and remain useful for
+validation, benchmarking, and optional artifact generation.
 
 ## Family Layers
 
-LLB owns the language-workbench substrate. This is the center of the
+LLB owns the language-family workbench substrate. This is the center of the
 architecture:
 
 - symbols and namespace values
@@ -135,15 +135,16 @@ reductions, alias facts, or safety conditions.
 
 ## Backend Model
 
-The active backend is LuaTrace bytecode copy-patch.
+The active backend architecture is copy-patch. Emitted LuaJIT artifacts default
+to `copy_patch_mc`; `lalin.compile` defaults to `copy_patch_bc`.
 
 LuaTrace lowering emits trusted LuaJIT-shaped templates from typed stencil
-plans. LuaJIT compiles those templates into bytecode. The bytecode bank stores
+plans. LuaJIT compiles those templates into bytecode. The BC bank stores
 compiled prototypes plus patch metadata. At materialization time, Lalin patches
 declared holes and loads the resulting module.
 
 Native binary copy-patch stencils are a parallel materialization strategy for
-C-compiled stencil banks. They use the same descriptor and schedule semantics
+C-compiled copy-patch MC banks. They use the same descriptor and schedule semantics
 but a different artifact installer.
 
 The backend must consume semantic facts honestly:
@@ -163,7 +164,7 @@ ASDL, the schema is incomplete and must be fixed before lowering is extended.
 The C path is an optional projection and measurement tool. It is useful for:
 
 - checking semantic equivalence against a simple generated target
-- generating native stencil banks ahead of time
+- generating native copy-patch MC banks ahead of time
 - comparing LuaJIT and C compiler performance
 - making target ABI decisions explicit
 
@@ -193,8 +194,8 @@ lua/lalin/schema/            ASDL/schema modules
 lua/lalin/frontend_pipeline.lua
                              DSL/tree/typecheck/code pipeline
 lua/lalin/luajit_backend.lua LuaTrace/LuaJIT backend facade
-lua/lalin/stencil_luajit.lua LuaTrace stencil lowering
-lua/lalin/luajit_bc_bank.lua LuaJIT bytecode bank
+lua/lalin/copy_patch_luatrace.lua LuaTrace stencil lowering
+lua/lalin/copy_patch_bc.lua LuaJIT BC bank
 lua/llpvm/                   LLPVM family member
 lua/llisle/                  Llisle rule language
 lua/ui/                      UI kernel and widgets

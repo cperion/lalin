@@ -141,20 +141,20 @@ longer), but our execution performance is an order of magnitude faster. Compared
 our implementation compiles two orders of magnitude faster and generates code that performs
 on average 14% better. Therefore, we conclude that copy-and-patch renders both interpreters and
 LLVM -O0 compilation obsolete in this use case.
-At a high level, copy-and-patch works by having a pre-built library of composable and parametrizable binary code snippets that we call binary stencils.1 At runtime, optimization and code generation
+At a high level, copy-and-patch works by having a pre-built library of composable and parametrizable binary code snippets that we call mc stencils.1 At runtime, optimization and code generation
 become the simple task of looking up a data table to select the appropriate stencil, and instantiate
 it to the desired position by copying it and patching in the missing values. Our contributions are:
-(1) The concept of a binary stencil, which is a pre-built implementation of an AST node or
+(1) The concept of a mc stencil, which is a pre-built implementation of an AST node or
 bytecode opcode with missing values (immediate literals, stack variable offsets, and branch
 and call targets) to be patched in at runtime.
-(2) An algorithm that uses a library with many binary stencil variants to emit optimized machine
+(2) An algorithm that uses a library with many mc stencil variants to emit optimized machine
 code. There are two types of variants: one that enumerates different parameter configurations
 (whether they are literals, in different registers, or on the stack) and one that enumerates
 different code patterns (a single AST node/bytecode or a supernode of a common AST
 subtree/bytecode sequence).
 (3) An algorithm that linearizes high-level language constructs like if-statements and loops, and
-generates machine code by composing multiple binary stencil fragments.
-(4) A system called MetaVar for generating binary stencils, which allows the user to systematically generate the binary stencil variants in clean and pure C++, and leverages the
+generates machine code by composing multiple mc stencil fragments.
+(4) A system called MetaVar for generating mc stencils, which allows the user to systematically generate the mc stencil variants in clean and pure C++, and leverages the
 Clang+LLVM compiler infrastructure to hide all platform-specific low-level detail.
 We evaluate our algorithm by evaluating the copy-and-patch-based compilers we built for WebAssembly and our high-level language.2 We compare the WebAssembly compiler to six industrial
 WebAssembly compilers, including those from Google Chrome and Wasmer. Our results show
@@ -178,7 +178,7 @@ MetaVar
 Binary
 code
 Fig. 4. The copy-and-patch system compiles a high-level language AST or a bytecode sequence to binary
-code. It consists of the MetaVar compiler, which compiles stencil generators to binary stencils, and the
+code. It consists of the MetaVar compiler, which compiles stencil generators to mc stencils, and the
 Copy-and-Patch code generator, which generates the executable code for an AST or a bytecode sequence by
 copying and patching stencils.
 different optimization levels, showing that our technique compiles two orders of magnitude faster
@@ -192,10 +192,10 @@ copy-and-patch algorithm and its surrounding ecosystem of tools and then give an
 two compilers.
 2.1 Copy-and-Patch and MetaVar Systems
 The copy-and-patch system consists of two components: the MetaVar compiler and the copy-andpatch code generator. Figure 4 shows their relationship. The key to the copy-and-patch algorithm is
-the concept of a binary stencil, which is a partial binary implementation of a bytecode instruction
-or an AST node of a high-level language. The MetaVar compiler generates many binary stencils
+the concept of a mc stencil, which is a partial binary implementation of a bytecode instruction
+or an AST node of a high-level language. The MetaVar compiler generates many mc stencils
 that implement different optimization cases for every bytecode or AST node. The MetaVar compiler
-takes as input bytecode/AST stencil generators and produces a library of binary stencils at library
+takes as input bytecode/AST stencil generators and produces a library of mc stencils at library
 installation time. The stencil library becomes an input to the copy-and-patch code generator,
 together with a bytecode sequence or an AST that implements a function. The code generator then
 produces binary code that implements the function, by copying and patching together stencils that
@@ -294,7 +294,7 @@ Our WebAssembly implementation contains 1666 stencils, taking 35 kB of memory. O
 language implementation is larger because it includes many supernodes and contains 98,831 stencils,
 taking 17.5 MB of memory. Although we believe these library sizes are practical for our respective
 use cases, there are too many stencils for it to be practical to write them by hand.
-A binary stencil is a binary code function that implements a computation logic fragment, where
+A mc stencil is a binary code function that implements a computation logic fragment, where
 literals, jump addresses, and stack offsets are missing. Each computation logic fragment implements
 the semantics of one AST node or bytecode, or a commonly-used shape of an AST subtree or
 bytecode sequence (we call such stencils supernodes). Supernodes allow optimizations across node
@@ -304,7 +304,7 @@ inserted. For example, if an instruction uses a literal then the value is filled
 instruction to the next operation then the address is inserted.
 (a + b) == c
 Fig. 7. CPS
-The binary stencils use continuation-passing style (CPS) [Steele 1977]
+The mc stencils use continuation-passing style (CPS) [Steele 1977]
 to pass control to the next stencil. With continuation-passing, control
 is passed directly to the next operation instead of being returned to
 the parent operation. Figure 7 shows how continuation-passing control
@@ -443,7 +443,7 @@ void Stencil::copyPatch(uintptr_t dst, uint64_t* patches) {
  for (auto p : symbol64Patches)
  *(uint64_t*)(dst + p.binaryOffset) += patches[p.ord];
 }
-Fig. 9. The data structure that stores a binary stencil and
+Fig. 9. The data structure that stores a mc stencil and
 the method that materializes it at a given address. The
 struct includes the binary code and the locations of missing
 values to patch in during copy-and-patch code generation.
@@ -454,7 +454,7 @@ leave missing values to be filled in by the
 copy-and-patch algorithm. Figure 10 shows
 conceptual C++ code for four stencils, replacing the missing values with blue numbered boxes. We show the implementations
 of these boxes in Figure 13. The C++ stencils are compiled by MetaVar at compiler
-installation time to produce binary stencils,
+installation time to produce mc stencils,
 as described in Section 5.2. Figures 10a–10c
 show three of the stencils that implement
 equality expressions. Figure 10a takes the
@@ -478,7 +478,7 @@ at function entry are unchanged when the continuation is called. This encourages
 other available registers in the function body. When the available registers are insufficient to hold
 a temporary value for its lifetime, the copy-and-patch algorithm composes a variant that spills it to
 the stack with a variant that uses the spilled value.
-The MetaVar system compiles C++ stencils to binary stencils that contain binary code and
+The MetaVar system compiles C++ stencils to mc stencils that contain binary code and
 information about where the missing values are located. Figure 9 shows the Stencil struct that
 stores a stencil. The binaryCode array contains the binary code, followed by three arrays that store
 the locations of the stencil’s missing values, so that they can be patched in by the patching phase
@@ -488,7 +488,7 @@ The stencil library maps stencil configurations that identify each stencil to th
 The configurations contain what AST node type the stencil implements, what types it operates on,
 whether it operates on constants, registers, or stack locations, and so forth. The stencil library is
 generated by the MetaVar system at installation time, as described in Section 5.2. The library is
-then used by the copy-and-patch algorithm in Section 4, which weaves together the binary stencils
+then used by the copy-and-patch algorithm in Section 4, which weaves together the mc stencils
 for the AST nodes to create the generated function.
 4 COPY-AND-PATCH CODE GENERATION
 The copy-and-patch algorithm can be used to compile both bytecode and high-level languages. We
@@ -693,7 +693,7 @@ is added to the CPS call graph and a call edge is set to point to the next node 
 traversal. Figure 11b shows the call graph for Fibonacci. Most calls are tail calls (solid arrows),
 which the stencil compiler turns into jump instructions. Only two true calls are left: the two call
 expressions in the AST.
-The CPS call graph is then lowered to binary code by copying the binary stencil code of each
+The CPS call graph is then lowered to binary code by copying the mc stencil code of each
 node to contiguous memory. The copy step traverses the CPS call graph in depth-first order starting
 at any node that has no predecessors. At each call graph node, it retrieves the stencil corresponding
 to the node’s configuration from the stencil library. It then copies the stencil’s binary code into the
@@ -739,7 +739,7 @@ template meta-variables to express variants, and uses special macros to express 
 to be patched at runtime. The MetaVar compiler then iterates at compile-time over the values of
 the meta-variables and instantiates the template for every valid combination. The instantiated
 templates are compiled by the Clang C++ compiler to object code. The stencil library builder then
-parses the object code to retrieve the stencil configurations and binary stencils, which are used to
+parses the object code to retrieve the stencil configurations and mc stencils, which are used to
 build the stencil library that is linked to the copy-and-patch runtime.
 5.1 Stencil Generators
 Stencil generators are templated C++ functions whose template instantiations produce stencils.
@@ -872,7 +872,7 @@ Fig. 14. MetaVar compiles stencil generators to a library that is linked to the 
 type it implements and whether it spills the result, while the stencil consists of binary code and
 the locations of missing values. Figure 14 shows the stages of the MetaVar system as arrows, with
 boxes showing inputs and outputs. MetaVar leverages both C++ template metaprogramming and
-the Clang+LLVM compiler infrastructure to generate the binary stencils, avoiding the need to
+the Clang+LLVM compiler infrastructure to generate the mc stencils, avoiding the need to
 implement an optimizing compiler. The result is a concise system that can generate code for any
 platform that LLVM supports.
 The first stage of the MetaVar system, stencil generation, converts stencil generators to stencils.
@@ -1555,7 +1555,7 @@ allows copy-and-patch to not only generate higher-quality code by selecting the 
 variant (e.g., adding a value in register with a constant), but also perform optimizations like register
 allocation and super-instructions, thus improving execution performance further. Third, all above
 papers target low-level bytecode assembling. In contrast, the use of a CPS call graph, and the
-flexibility of the binary stencils allow copy-and-patch to be used not only for low-level bytecode
+flexibility of the mc stencils allow copy-and-patch to be used not only for low-level bytecode
 assembling, but also for high-level language compilation.
 Assembler-Based Baseline Compilers
 Using a machine code assembler to generate code is another approach to baseline compilers. The

@@ -8,6 +8,8 @@ Schema(T)
 
 local Code = T.LalinCode
 local Core = T.LalinCore
+local C = T.LalinC
+local Ty = T.LalinType
 local Value = T.LalinValue
 local Stencil = T.LalinStencil
 local Rules = require("lalin.stencil_rules")(T)
@@ -60,6 +62,7 @@ assert_constructor_contract("reduce_stencil_plan", { "reduction", "selection" },
 assert_constructor_contract("reduce_stencil_no_plan", { "reason" }, { "plan" })
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
+local u8 = Code.CodeTyInt(8, Code.CodeUnsigned)
 local fake_expr = { kind = "fake_expr" }
 local fake_value = Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("0")))
 
@@ -85,8 +88,29 @@ for _, case in ipairs(scalar_types) do
 end
 
 local ptr_i32 = Code.CodeTyDataPtr(i32)
-local ptr_class = Rules.classify_type(ptr_i32)
-assert(ptr_class == nil, "pointers are not stencil scalar element types")
+local sig_id = Code.CodeSigId("codesig_i32_to_i32")
+local named_ty = Code.CodeTyNamed("Demo", "Pair", Ty.TNamed(Ty.TypeRefGlobal("Demo", "Pair")))
+local non_scalar_types = {
+    { ty = ptr_i32, kind = "pointer" },
+    { ty = Code.CodeTyCodePtr(sig_id), kind = "code_pointer" },
+    { ty = named_ty, kind = "named" },
+    { ty = Code.CodeTyArray(i32, 4), kind = "array" },
+    { ty = Code.CodeTySlice(i32), kind = "slice" },
+    { ty = Code.CodeTyView(i32), kind = "view" },
+    { ty = Code.CodeTyByteSpan, kind = "byte_span" },
+    { ty = Code.CodeTyHandle(i32, Ty.TScalar(Core.ScalarI32)), kind = "handle" },
+    { ty = Code.CodeTyLease(Code.CodeTySlice(i32), Ty.TSlice(Ty.TScalar(Core.ScalarI32))), kind = "lease" },
+    { ty = Code.CodeTyClosure(sig_id), kind = "closure" },
+    { ty = Code.CodeTyImportedC(C.CTypeId("host", "uint128_t")), kind = "imported_c" },
+    { ty = Code.CodeTyImportedCFuncPtr(C.CFuncSigId("host_callback")), kind = "imported_c_func_pointer" },
+    { ty = Code.CodeTyVector(i32, 4), kind = "vector" },
+}
+
+for _, case in ipairs(non_scalar_types) do
+    local class, err = Rules.classify_type(case.ty)
+    assert(class ~= nil, "expected non-scalar stencil type class: " .. tostring(err))
+    assert(class.kind == case.kind, "wrong non-scalar stencil type kind")
+end
 
 local function clone(t)
     local out = {}
@@ -334,6 +358,75 @@ end
 
 assert(store_shape_cells == #scalar_tys * 10, "expected every store stencil shape across scalar types")
 
+local non_scalar_store_cells = 0
+for _, case in ipairs(non_scalar_types) do
+    local ty = case.ty
+    local copy = clone(store_base_ctx)
+    copy.dst_elem_ty = ty
+    copy.class = { kind = "load", index_primary = true, src = "src", src_expr = fake_expr, elem_ty = ty }
+    copy.copy_semantics = Stencil.StencilCopyMemMove
+    local copy_selection, copy_err = Rules:run("select_store_stencil", { ctx = copy }, "selection", "unsupported store stencil shape")
+    assert(copy_selection ~= nil, "expected non-scalar copy selection for " .. case.kind .. ": " .. tostring(copy_err))
+    assert(copy_selection.vocab == Stencil.StencilCopy, "expected non-scalar copy stencil for " .. case.kind)
+    non_scalar_store_cells = non_scalar_store_cells + 1
+
+    local gather = clone(store_base_ctx)
+    gather.dst_elem_ty = ty
+    gather.class = {
+        kind = "load",
+        index_primary = false,
+        src = "src",
+        src_expr = fake_expr,
+        elem_ty = ty,
+        index_lane = { base = "idx", base_expr = fake_expr, elem_ty = i32, index_primary = true },
+    }
+    local gather_selection, gather_err = Rules:run("select_store_stencil", { ctx = gather }, "selection", "unsupported store stencil shape")
+    assert(gather_selection ~= nil, "expected non-scalar gather selection for " .. case.kind .. ": " .. tostring(gather_err))
+    assert(gather_selection.vocab == Stencil.StencilGather, "expected non-scalar gather stencil for " .. case.kind)
+    non_scalar_store_cells = non_scalar_store_cells + 1
+
+    local scatter = clone(store_base_ctx)
+    scatter.dst_elem_ty = ty
+    scatter.store_index_primary = false
+    scatter.store_index_lane = { base = "idx", base_expr = fake_expr, elem_ty = i32, index_primary = true }
+    scatter.class = { kind = "load", index_primary = true, src = "src", src_expr = fake_expr, elem_ty = ty }
+    local scatter_selection, scatter_err = Rules:run("select_store_stencil", { ctx = scatter }, "selection", "unsupported store stencil shape")
+    assert(scatter_selection ~= nil, "expected non-scalar scatter selection for " .. case.kind .. ": " .. tostring(scatter_err))
+    assert(scatter_selection.vocab == Stencil.StencilScatter, "expected non-scalar scatter stencil for " .. case.kind)
+    non_scalar_store_cells = non_scalar_store_cells + 1
+
+    local map = clone(store_base_ctx)
+    map.dst_elem_ty = ty
+    map.class = {
+        kind = "map",
+        index_primary = true,
+        src = "src",
+        src_expr = fake_expr,
+        elem_ty = ty,
+        result_ty = ty,
+        op = Stencil.StencilUnaryIdentity,
+    }
+    local map_selection, map_err = Rules:run("select_store_stencil", { ctx = map }, "selection", "unsupported store stencil shape")
+    assert(map_selection ~= nil, "expected non-scalar identity-map selection for " .. case.kind .. ": " .. tostring(map_err))
+    assert(map_selection.vocab == Stencil.StencilMap, "expected non-scalar identity-map stencil for " .. case.kind)
+    non_scalar_store_cells = non_scalar_store_cells + 1
+
+    local neg = clone(store_base_ctx)
+    neg.dst_elem_ty = ty
+    neg.class = {
+        kind = "map",
+        index_primary = true,
+        src = "src",
+        src_expr = fake_expr,
+        elem_ty = ty,
+        result_ty = ty,
+        op = Stencil.StencilUnaryNeg,
+    }
+    assert(Rules:run("select_store_stencil", { ctx = neg }, "selection", "unsupported store stencil shape") == nil, "non-scalar arithmetic map must not select for " .. case.kind)
+end
+
+assert(non_scalar_store_cells == #non_scalar_types * 4, "expected copy/gather/scatter/identity-map coverage for all non-scalar type families")
+
 do
     local scan = clone(store_base_ctx)
     scan.dst_elem_ty = i32
@@ -369,18 +462,6 @@ do
     assert(selection ~= nil, "expected partition stencil selection: " .. tostring(err))
     assert(selection.vocab == Stencil.StencilPartition, "expected partition-array stencil")
 end
-
-local pointer_copy = {}
-for k, v in pairs(store_base_ctx) do pointer_copy[k] = v end
-pointer_copy.dst_elem_ty = ptr_i32
-pointer_copy.class = {
-    kind = "load",
-    index_primary = true,
-    src = "src",
-    src_expr = fake_expr,
-    elem_ty = ptr_i32,
-}
-assert(Rules:run("select_store_stencil", { ctx = pointer_copy }, "selection", "unsupported store stencil shape") == nil, "pointer element copy must not select a stencil")
 
 do
     local ready_store = {}

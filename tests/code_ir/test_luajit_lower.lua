@@ -141,10 +141,10 @@ assert(pvm.classof(fn.body) == LJ.LJBodyMachine, "kernel reduction should lower 
 assert(pvm.classof(fn.machines[1].kind) == LJ.LJMachineStencilCall, "planned reduction should lower to a stencil call")
 assert(#artifacts == 1, "planned reduction should produce one C stencil artifact")
 
-local bank, bank_err = Backend.build_binary_bank(artifacts, { stem = "test_luajit_lower" })
+local bank, bank_err = Backend.build_mc_bank(artifacts, { stem = "test_luajit_lower" })
 assert(bank ~= nil, tostring(bank_err))
 local compiled_result, compile_err, compile_src = Backend.compile_lj_module(lj_module, artifacts, {
-    bank = bank,
+    mc_bank = bank,
     chunk_name = "test_luajit_lower",
 })
 assert(compiled_result ~= nil, tostring(compile_err) .. "\n" .. tostring(compile_src))

@@ -175,7 +175,7 @@ local binder_predicates = {
     has_type = true, is_const = true, fits_imm32 = true, fits_imm64 = true,
     has_const_pred = true,
     is_int_type = true, is_float_type = true, is_index_type = true, is_bool8_type = true,
-    is_index_data_type = true, same_type = true,
+    is_type_family = true, is_index_data_type = true, same_type = true,
     unary_supported = true, binary_supported = true, reduction_supported = true, cast_supported = true,
     is = true, eq = true, ne = true, lt = true, le = true, gt = true, ge = true,
     matches = true, present = true, absent = true,
@@ -298,7 +298,7 @@ RelationCallFactory.__index = function(_, key)
 end
 M.relation_call = setmetatable({}, RelationCallFactory)
 
-local L = llb.define "LlisleDsl" {
+local L = llb.dialect "LlisleDsl" {
     g.role .decls (role_list("llisle", { RelationSpec = true, RuleSpec = true, PredicateDecl = true, ConstructorDecl = true, Fragment = true })),
     g.role .relation_body (role_list("relation", { ProductSpec = true, StrategySpec = true, Directive = true })),
     g.role .predicate_body (role_list("predicate", { ProductSpec = true, Directive = true })),
@@ -643,7 +643,7 @@ function M.use(opts)
         target = opts.target or _G,
         base = exports,
         exports = exports,
-        lang_exports = false,
+        dialect_exports = false,
         helpers = false,
         strict = opts.strict,
         strict_message = "unknown Llisle DSL global ",

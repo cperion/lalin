@@ -3,7 +3,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local llb = require("llb")
 local g = llb.grammar
 
-local Mini = llb.define "CodegenMini" {
+local Mini = llb.dialect "CodegenMini" {
     g.role. items { kind = "array", item = "name" },
     g.role. fields { kind = "product" },
     g.role. variants { kind = "sum", payload_role = "fields" },
@@ -42,13 +42,13 @@ local Mini = llb.define "CodegenMini" {
     },
 }
 
-assert(Mini.compiled ~= nil, "llb.define should compile a language runtime")
+assert(Mini.compiled ~= nil, "llb.dialect should compile a dialect runtime")
 assert(Mini.compiled.roles.items ~= nil, "compiled runtime should include role normalizers")
 assert(Mini.compiled.spreads.items ~= nil, "compiled runtime should include role spread expanders")
 
 local session = llb.use(Mini, { scope = "env" })
 local env = session.env
-assert(rawget(env.decl, "backend") == "compiled", "language environment should install compiled head machines")
+assert(rawget(env.decl, "backend") == "compiled", "dialect environment should install compiled head machines")
 local out = env.decl. demo { "a", "b" }
 assert(out.tag == "decl", "compiled role path should preserve head emission")
 assert(out.name == "demo", "compiled role path should normalize name slots")
@@ -78,16 +78,16 @@ assert(sum_out.variants[1].name == "Some" and sum_out.variants[2].name == "None"
 local compiled_items = Mini.compiled.roles.items
 assert(type(compiled_items.region) == "function", "compiled role should expose region form")
 assert(type(compiled_items.collect) == "function", "compiled role should expose collect materializer")
-local reflected = llb.normalize_role({ lang = Mini, reflective = true }, "items", { "x" })
-local compiled = compiled_items({ lang = Mini }, { "x" })
+local reflected = llb.normalize_role({ dialect = Mini, reflective = true }, "items", { "x" })
+local compiled = compiled_items({ dialect = Mini }, { "x" })
 assert(reflected[1].text == compiled[1].text, "compiled role output should match reflective output")
 
 local regioned = {}
-llb.gps.each(function(item) regioned[#regioned + 1] = item end, compiled_items.region({ lang = Mini }, { "s1", "s2" }))
+llb.gps.each(function(item) regioned[#regioned + 1] = item end, compiled_items.region({ dialect = Mini }, { "s1", "s2" }))
 assert(#regioned == 2 and regioned[1].text == "s1" and regioned[2].text == "s2", "compiled role region should emit normalized items")
 
 local spread_regioned = {}
-llb.gps.each(function(item) spread_regioned[#spread_regioned + 1] = item end, Mini.compiled.spreads.items.region({ lang = Mini }, llb._(fragment)))
+llb.gps.each(function(item) spread_regioned[#spread_regioned + 1] = item end, Mini.compiled.spreads.items.region({ dialect = Mini }, llb._(fragment)))
 assert(#spread_regioned == 2 and spread_regioned[1].text == "c" and spread_regioned[2].text == "d", "compiled spread region should emit fragment items")
 
 local event_out = llb.collect_head_events(env.decl, {
@@ -105,7 +105,7 @@ llb.gps.each(function(chunk) formatted_chunks[#formatted_chunks + 1] = chunk end
 assert(table.concat(formatted_chunks) == "fmt", "format_region should be the primary formatting region")
 
 local ok = pcall(function()
-    llb.normalize_role({ lang = Mini, reflective = true }, "items", 1)
+    llb.normalize_role({ dialect = Mini, reflective = true }, "items", 1)
 end)
 assert(ok == false, "reflective role fallback should still report bad input")
 

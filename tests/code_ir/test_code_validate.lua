@@ -175,6 +175,21 @@ bad.data = { Code.CodeData(Code.CodeDataId("data:rel"), "rel", Code.CodeLinkageL
 report = Validate.validate(bad)
 assert(has_issue(report, Code.CodeIssueMissingFunc))
 
+bad = valid_module()
+bad.data = {
+    Code.CodeData(
+        Code.CodeDataId("data:scalar_oob"),
+        "scalar_oob",
+        Code.CodeLinkageLocal,
+        4,
+        4,
+        { Code.CodeDataScalar(1, i32, Core.LitInt("7")) },
+        origin
+    )
+}
+report = Validate.validate(bad)
+assert(has_issue(report, Code.CodeIssueUnsupportedSource), "scalar data init uses the scalar byte width for bounds")
+
 assert(package.loaded["lalin.tree_to_c"] == nil)
 assert(package.loaded["lalin.type_to_c"] == nil)
 io.write("lalin code_validate ok\n")

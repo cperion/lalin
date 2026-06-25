@@ -13,7 +13,7 @@ local Ty = T.LalinType
 local Value = T.LalinValue
 local Stencil = T.LalinStencil
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBinary = require("tests.code_ir.stencil_binary_helper")
+local StencilBinary = require("tests.code_ir.copy_patch_mc_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local bool8 = Code.CodeTyBool8
@@ -96,7 +96,7 @@ for _, artifact in ipairs(artifacts) do
 end
 
 local build, err, src = StencilBinary.compile(T, artifacts, {
-    stem = "test_stencil_bank_soa_components",
+    stem = "test_copy_patch_mc_soa_components",
 })
 assert(build ~= nil, tostring(err) .. "\n" .. tostring(src))
 assert(src:match("_soa_left_c0"), src)
@@ -126,4 +126,4 @@ assert(out[0] == 1 and out[1] == 5 and out[2] == 3 and out[3] == -2 and out[4] =
 
 assert(access_named(artifacts[1].instance.descriptor, "lhs").topology.field_name == "left")
 
-io.write("lalin stencil_bank SoA components ok\n")
+io.write("lalin copy_patch_mc SoA components ok\n")

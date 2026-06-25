@@ -2,7 +2,7 @@ local pvm = require("lalin.pvm")
 
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
-    if T._lalin_api_cache.luajit_bc_bank ~= nil then return T._lalin_api_cache.luajit_bc_bank end
+    if T._lalin_api_cache.copy_patch_bc ~= nil then return T._lalin_api_cache.copy_patch_bc end
 
     local LJ = T.LalinLuaJIT
 
@@ -27,7 +27,7 @@ local function bind_context(T)
     end
 
     function api.runtime_target()
-        return LJ.LJBytecodeTarget(
+        return LJ.LJBCTarget(
             tostring(jit and jit.version or "unknown"),
             tostring(jit and jit.arch or "unknown"),
             tostring(jit and jit.os or "unknown"),
@@ -53,14 +53,14 @@ local function bind_context(T)
     end
 
     local function find_exact_once(blob, needle, label)
-        if needle == "" then return nil, "luajit_bc_bank: empty patch hole " .. tostring(label) end
+        if needle == "" then return nil, "copy_patch_bc: empty patch hole " .. tostring(label) end
         local first = blob:find(needle, 1, true)
         if first == nil then
-            return nil, "luajit_bc_bank: patch hole not found: " .. tostring(label)
+            return nil, "copy_patch_bc: patch hole not found: " .. tostring(label)
         end
         local second = blob:find(needle, first + 1, true)
         if second ~= nil then
-            return nil, "luajit_bc_bank: patch hole is not unique: " .. tostring(label)
+            return nil, "copy_patch_bc: patch hole is not unique: " .. tostring(label)
         end
         return first
     end
@@ -72,23 +72,23 @@ local function bind_context(T)
         if kind == "bytes" or kind == LJ.LJBCPatchBytesExact then
             return LJ.LJBCPatchBytesExact
         end
-        error("luajit_bc_bank: unknown patch kind " .. tostring(kind), 3)
+        error("copy_patch_bc: unknown patch kind " .. tostring(kind), 3)
     end
 
     local function patch_value_bytes(value)
         if type(value) == "string" then return value end
         if type(value) ~= "table" then
-            error("luajit_bc_bank: patch value must be string or LJBCPatchValue", 3)
+            error("copy_patch_bc: patch value must be string or LJBCPatchValue", 3)
         end
         if value == LJ.LJBCPatchBytesExact then
-            error("luajit_bc_bank: patch value cannot be a patch kind", 3)
+            error("copy_patch_bc: patch value cannot be a patch kind", 3)
         end
         local cls = pvm.classof(value)
         if cls == LJ.LJBCPatchBytes then return value.bytes end
         if cls == LJ.LJBCPatchString then return value.text end
         if value.bytes ~= nil then return value.bytes end
         if value.text ~= nil then return value.text end
-        error("luajit_bc_bank: unsupported patch value", 3)
+        error("copy_patch_bc: unsupported patch value", 3)
     end
 
     local function normalize_bindings(bindings)
@@ -99,7 +99,7 @@ local function bind_context(T)
             elseif type(binding) == "table" then
                 for k, v in pairs(binding) do by_name[k] = patch_value_bytes(v) end
             else
-                error("luajit_bc_bank: invalid patch binding", 3)
+                error("copy_patch_bc: invalid patch binding", 3)
             end
         end
         return by_name
@@ -107,7 +107,7 @@ local function bind_context(T)
 
     function api.compile_entry(opts)
         opts = opts or {}
-        local source = assert(opts.source, "luajit_bc_bank.compile_entry requires source")
+        local source = assert(opts.source, "copy_patch_bc.compile_entry requires source")
         local chunk_name = opts.chunk_name or ("@llb.codegen/luajit-bc/" .. tostring(opts.symbol or "stencil"))
         local loader, load_err = loadstring(source, chunk_name)
         if loader == nil then return nil, load_err end
@@ -115,13 +115,13 @@ local function bind_context(T)
         local ok, fn_or_err = pcall(loader)
         if not ok then return nil, fn_or_err end
         if type(fn_or_err) ~= "function" then
-            return nil, "luajit_bc_bank: bytecode stencil source must return a function"
+            return nil, "copy_patch_bc: BC stencil source must return a function"
         end
         local bytecode = string.dump(fn_or_err)
         local patches = {}
         for _, hole in ipairs(opts.holes or {}) do
-            local name = assert(hole.name, "luajit_bc_bank: patch hole requires name")
-            local expected = assert(hole.expected, "luajit_bc_bank: patch hole requires expected")
+            local name = assert(hole.name, "copy_patch_bc: patch hole requires name")
+            local expected = assert(hole.expected, "copy_patch_bc: patch hole requires expected")
             local pos, err = find_exact_once(bytecode, expected, name)
             if pos == nil then return nil, err end
             patches[#patches + 1] = LJ.LJBCPatchRecord(
@@ -130,7 +130,7 @@ local function bind_context(T)
                 #expected,
                 patch_kind(hole.kind),
                 expected,
-                tostring(hole.reason or "bytecode copy-patch hole")
+                tostring(hole.reason or "BC copy-patch hole")
             )
         end
         return LJ.LJBCStencilEntry(
@@ -175,14 +175,14 @@ local function bind_context(T)
             local stop = start + patch.width - 1
             local expected = patch.expected
             if bytecode:sub(start, stop) ~= expected then
-                return nil, "luajit_bc_bank: bytecode patch preimage mismatch for " .. tostring(patch.name)
+                return nil, "copy_patch_bc: bytecode patch preimage mismatch for " .. tostring(patch.name)
             end
             local replacement = by_name[patch.name]
             if replacement == nil then
                 replacement = expected
             end
             if #replacement ~= patch.width then
-                return nil, "luajit_bc_bank: replacement width mismatch for " .. tostring(patch.name)
+                return nil, "copy_patch_bc: replacement width mismatch for " .. tostring(patch.name)
             end
             out[#out + 1] = bytecode:sub(cursor, start - 1)
             out[#out + 1] = replacement
@@ -205,14 +205,14 @@ local function bind_context(T)
 
     function api.load_symbol(bank, symbol, bindings, opts)
         if not api.target_matches(bank.target) then
-            return nil, "luajit_bc_bank: bytecode bank target does not match current LuaJIT runtime"
+            return nil, "copy_patch_bc: LuaJIT BC bank target does not match current LuaJIT runtime"
         end
         local entry = entry_by_symbol(bank, symbol)
-        if entry == nil then return nil, "luajit_bc_bank: unknown bytecode stencil symbol " .. tostring(symbol) end
+        if entry == nil then return nil, "copy_patch_bc: unknown BC stencil symbol " .. tostring(symbol) end
         return api.load_entry(entry, bindings, opts)
     end
 
-    T._lalin_api_cache.luajit_bc_bank = api
+    T._lalin_api_cache.copy_patch_bc = api
     return api
 end
 

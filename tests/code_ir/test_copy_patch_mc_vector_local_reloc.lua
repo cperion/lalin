@@ -74,20 +74,20 @@ return unit. VectorRelocRegression {
 ]=]
 
 local session = lalin.use { scope = 'env' }
-local decl = assert(session:loadstring(source, 'test_stencil_bank_vector_local_reloc.lua'))()
+local decl = assert(session:loadstring(source, 'test_copy_patch_mc_vector_local_reloc.lua'))()
 local artifact = lalin.emit_luajit_artifact(decl, {
-    path = 'target/test_artifacts/test_stencil_bank_vector_local_reloc.lua',
+    path = 'target/test_artifacts/test_copy_patch_mc_vector_local_reloc.lua',
     name = 'VectorRelocRegression',
-    stem = 'test_stencil_bank_vector_local_reloc',
+    stem = 'test_copy_patch_mc_vector_local_reloc',
     cflags = '-std=c99 -O3 -march=native -ffunction-sections -fno-pic -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -c',
 })
 
-assert(artifact.bank ~= nil, 'expected emitted artifact to keep binary stencil bank')
-assert(#artifact.bank.entries == 2, 'expected zip_map and zip_reduce bank entries')
+assert(artifact.mc_bank ~= nil, 'expected emitted artifact to keep MC stencil bank')
+assert(#artifact.mc_bank.entries == 2, 'expected zip_map and zip_reduce bank entries')
 
 local local_const_pool = string.char(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
 local saw_materialized_local = false
-for _, entry in ipairs(artifact.bank.entries or {}) do
+for _, entry in ipairs(artifact.mc_bank.entries or {}) do
     if entry.binary:find(local_const_pool, 1, true) then saw_materialized_local = true end
     for _, patch in ipairs(entry.patches or {}) do
         assert(not tostring(patch.symbol or ''):match('^%.LC'), 'local constant-pool relocation should be materialized into the binary blob, not left as runtime patch')
@@ -119,4 +119,4 @@ if saw_materialized_local then
     assert(artifact.source:match('string%.char'), 'emitted Lua artifact should contain embedded local section bytes')
 end
 
-io.write('lalin stencil_bank vector local reloc ok\n')
+io.write('lalin copy_patch_mc vector local reloc ok\n')

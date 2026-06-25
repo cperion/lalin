@@ -350,7 +350,7 @@ local function tape_body_region(t, origin)
     }, nil, { kind = "llpvm:tape-body" }))
 end
 
-local LL = llb.define "LLPVMDsl" {
+local LL = llb.dialect "LLPVMDsl" {
     g.role .decls (role_list("program", { LangSpec = true, WorldSpec = true, TapeSpec = true, MachineSpec = true, PhaseSpec = true, TaskSpec = true, RootSpec = true })),
     g.role .lang_body (role_list("language", { TypeSpec = true })),
     g.role .type_body (role_list("type", { OpSpec = true })),
@@ -537,7 +537,7 @@ function MachineLanguage:use(opts)
         target = opts.target or _G,
         base = exports,
         exports = exports,
-        lang_exports = false,
+        dialect_exports = false,
         helpers = false,
         strict = opts.strict,
         strict_message = "unknown LLPVM machine DSL global ",
@@ -1157,7 +1157,7 @@ end
 
 function M.use(opts)
     opts = opts or {}; local exports = M.make_env(opts)
-    return llb.use(LL, { scope = opts.scope or (opts.global == false and "env" or "permanent"), target = opts.target or _G, base = exports, exports = exports, lang_exports = false, helpers = false, strict = opts.strict, strict_message = "unknown LLPVM DSL global ", override = opts.override ~= false, auto_names = opts.auto_names ~= false, mode = opts.mode, requires = opts.requires or { "lalin.types" }, provides = opts.provides or { "llpvm.dsl" } })
+    return llb.use(LL, { scope = opts.scope or (opts.global == false and "env" or "permanent"), target = opts.target or _G, base = exports, exports = exports, dialect_exports = false, helpers = false, strict = opts.strict, strict_message = "unknown LLPVM DSL global ", override = opts.override ~= false, auto_names = opts.auto_names ~= false, mode = opts.mode, requires = opts.requires or { "lalin.types" }, provides = opts.provides or { "llpvm.dsl" } })
 end
 function M.loadstring(src, name, opts)
     opts = opts or {}

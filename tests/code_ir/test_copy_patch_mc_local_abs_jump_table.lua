@@ -16,7 +16,7 @@ local Value = T.LalinValue
 local LJ = T.LalinLuaJIT
 
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBank = require("lalin.stencil_bank")(T)
+local StencilBank = require("lalin.copy_patch_mc")(T)
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)
@@ -41,8 +41,8 @@ local artifact = StencilArtifactPlan.reduce_array_artifact(reduction, nil, {
     schedule = Schedule.ScheduleVector(Schedule.LaneVector(i32, 16), 1, 1, Schedule.TailScalar),
 })
 
-local bank, err = StencilBank.build_binary_bank({ artifact }, {
-    stem = "test_stencil_bank_local_abs_jump_table",
+local bank, err = StencilBank.build_mc_bank({ artifact }, {
+    stem = "test_copy_patch_mc_local_abs_jump_table",
     cflags = "-std=c99 -O3 -march=native -ffunction-sections -fno-pic -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -c",
 })
 assert(bank ~= nil, tostring(err))
@@ -51,21 +51,21 @@ local saw_local_abs32 = false
 local saw_local_abs64 = false
 for _, entry in ipairs(bank.entries or {}) do
     for _, patch in ipairs(entry.patches or {}) do
-        saw_local_abs32 = saw_local_abs32 or patch.kind == LJ.LJPatchLocalAbs32
-        saw_local_abs64 = saw_local_abs64 or patch.kind == LJ.LJPatchLocalAbs64
+        saw_local_abs32 = saw_local_abs32 or patch.kind == LJ.LJMCPatchLocalAbs32
+        saw_local_abs64 = saw_local_abs64 or patch.kind == LJ.LJMCPatchLocalAbs64
     end
 end
 
 -- Some compilers may lower this tail without a jump table, but GCC -O3 on x64
 -- emits R_X86_64_32S to .rodata plus R_X86_64_64 table entries.
 if saw_local_abs32 then
-    assert(bank.install.address == LJ.LJInstallLow32Address, "local absolute32 relocations require low32 installation")
+    assert(bank.install.address == LJ.LJMCInstallLow32Address, "local absolute32 relocations require low32 installation")
 end
 if saw_local_abs64 then
     assert(#bank.entries[1].binary > 256, "local absolute64 jump-table section should be materialized into the blob")
 end
 
-local realization, realize_err = StencilBank.realize_binary_artifacts({ artifact }, { bank = bank })
+local realization, realize_err = StencilBank.realize_mc_artifacts({ artifact }, { mc_bank = bank })
 assert(realization ~= nil, tostring(realize_err))
 
 local fn = assert(realization.symbols[artifact.symbol.text])
@@ -78,4 +78,4 @@ for i = 0, n - 1 do
 end
 assert(fn(xs, 0, n, 0) == expected, "local absolute jump-table stencil produced wrong sum")
 
-io.write("lalin stencil_bank local abs jump table ok\n")
+io.write("lalin copy_patch_mc local abs jump table ok\n")

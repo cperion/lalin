@@ -128,14 +128,40 @@ do
     print("  sizeof lowering: PASS")
 end
 
--- Test: parsed C compound literals are not silently lowered to a fake scalar.
+-- Test: parsed C compound literals lower to explicit aggregate expressions.
 do
-    local ok, err = pcall(function()
-        full_pipeline([[int bad(void) { return (int){1}; }]])
-    end)
-    assert(not ok, "compound literal importer lowering must reject until storage lowering is implemented")
-    assert(tostring(err):match("compound literal"), "expected compound literal diagnostic, got " .. tostring(err))
-    print("  compound literal lowering rejection: PASS")
+    local lalin_module, _, _, issues = full_pipeline([[int first(void) { return ((int[]){1, 2, 3})[0]; }]])
+    assert(#issues == 0)
+    local ret
+    for _, item in ipairs(lalin_module.items) do
+        if pvm.classof(item) == Tr.ItemFunc and item.func.name == "first" then
+            ret = item.func.body[1]
+        end
+    end
+    assert(ret and pvm.classof(ret) == Tr.StmtReturnValue)
+    assert(pvm.classof(ret.value) == Tr.ExprIndex)
+    local base = ret.value.base.base
+    assert(pvm.classof(base) == Tr.ExprArray, "compound literal should lower to ExprArray")
+    assert(#base.elems == 3)
+    print("  compound literal lowering: PASS")
+end
+
+-- Test: local initializer lists lower to aggregate expressions instead of reject paths.
+do
+    local lalin_module, _, _, issues = full_pipeline([[int first(void) { int xs[3] = {1, 2, 3}; return xs[1]; }]])
+    assert(#issues == 0)
+    local found_array_init = false
+    for _, item in ipairs(lalin_module.items) do
+        if pvm.classof(item) == Tr.ItemFunc and item.func.name == "first" then
+            for _, stmt in ipairs(item.func.body or {}) do
+                if pvm.classof(stmt) == Tr.StmtLet or pvm.classof(stmt) == Tr.StmtVar then
+                    if pvm.classof(stmt.init) == Tr.ExprArray then found_array_init = true end
+                end
+            end
+        end
+    end
+    assert(found_array_init, "initializer list should lower to ExprArray")
+    print("  initializer list lowering: PASS")
 end
 
 print("lalin test_c_end_to_end ok")

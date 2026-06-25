@@ -355,7 +355,7 @@ local function role_region(name, protocol, fn)
     return role_region_head("LalinSchema.role." .. tostring(name))[protocol or "role_value"] (fn)
 end
 
-local Lang = llb.define "LalinSchema" {
+local Lang = llb.dialect "LalinSchema" {
     g.role .decls {
         kind = "array",
         region = role_region("decls", "role_items", function(_, _, v) return decls_region(v) end),
@@ -458,7 +458,7 @@ function M.loadfile(path, opts)
     return Lang:loadfile(path, opts)
 end
 
-M.Language = Lang
+M.Dialect = Lang
 M.tag = tag
 M.lalinschema = llb.zone_head { family = "lalin", member = "lalinschema.dsl", name = "schema", role = "decls" }
 

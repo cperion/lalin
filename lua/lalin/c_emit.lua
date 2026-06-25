@@ -479,19 +479,25 @@ local function bind_context(T)
         end
     end
 
+    local function code_symbol_from_id(id)
+        local text = tostring(id and id.text or "exec")
+        text = text:gsub("^fn:", ""):gsub("^func:", ""):gsub("^function:", "")
+        text = text:gsub("[^%w_]", "_")
+        if text:match("^%d") then text = "_" .. text end
+        if text == "" then text = "exec" end
+        return text
+    end
+
     local function exec_fragment_symbol(fragment)
         local kind = fragment and fragment.kind or nil
         local cls = pvm.classof(kind)
         if cls == Exec.ExecFragmentStencil then return kind.artifact.symbol.text end
-        if cls == Exec.ExecFragmentCall then error("c_emit: ExecFragmentCall requires C symbol projection before emission", 3) end
+        if cls == Exec.ExecFragmentCall then return code_symbol_from_id(kind.callee) end
         error("c_emit: unsupported exec fragment kind " .. class_name(kind), 3)
     end
 
     local function emit_exec_site(site, out)
         local ecls = pvm.classof(site.emission)
-        if ecls == C.CBackendExecEmitInline or site.emission == C.CBackendExecEmitInline then
-            error("c_emit: inline exec fragments must be lowered to C blocks before emission", 3)
-        end
         local args = {}
         for i = 1, #(site.args or {}) do args[i] = atom(site.args[i].atom) end
         local call = exec_fragment_symbol(site.fragment) .. "(" .. table.concat(args, ", ") .. ")"
@@ -537,7 +543,7 @@ local function bind_context(T)
             out[#out + 1] = "}"
             return
         elseif body_cls == C.CBackendBodyMixed and #(f.body.fragments or {}) > 0 then
-            error("c_emit: CBackendBodyMixed fragments must be projected into explicit C blocks", 2)
+            for i = 1, #f.body.fragments do emit_exec_site(f.body.fragments[i], out) end
         end
         local f_blocks = func_blocks(f)
         local blocks = {}; for i = 1, #f_blocks do blocks[f_blocks[i].label.text] = f_blocks[i] end

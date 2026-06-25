@@ -267,7 +267,7 @@ local function bind_context(T)
             local helper = add_helper(ctx, binary_helper_kind(ctx, k))
             return { C.CBackendHelperCall(c_local_id(k.dst), helper, { atom(k.lhs), atom(k.rhs) }) }
         elseif cls == Code.CodeInstFloatBinary then
-            local helper = add_helper(ctx, C.CBackendHelperIntBinary(k.op, c_ty(ctx, k.ty), C.CBackendIntWrap))
+            local helper = add_helper(ctx, C.CBackendHelperFloatBinary(k.op, c_ty(ctx, k.ty)))
             return { C.CBackendHelperCall(c_local_id(k.dst), helper, { atom(k.lhs), atom(k.rhs) }) }
         elseif cls == Code.CodeInstCompare then
             return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRCompare(k.op, c_ty(ctx, k.operand_ty), atom(k.lhs), atom(k.rhs))) }

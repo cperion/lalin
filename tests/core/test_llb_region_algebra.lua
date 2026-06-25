@@ -49,7 +49,7 @@ local process_desc = llb.describe_process("region_probe")
 assert(process_desc.region.protocol == "process", "processes expose process protocol regions")
 
 local g = llb.grammar
-local Mini = llb.define "RegionMini" {
+local Mini = llb.dialect "RegionMini" {
   g.role .items { kind = "array", item = "string" },
   g.head .box { g.slot .items [g.items] },
 }

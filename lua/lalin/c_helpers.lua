@@ -111,6 +111,8 @@ local function bind_context(T)
             return C.CBackendHelperId("ml_ptroff_" .. type_suffix(kind.pointee) .. "_" .. tostring(kind.elem_size) .. (kind.checked and "_checked" or ""))
         elseif cls == C.CBackendHelperIntBinary then
             return C.CBackendHelperId("ml_" .. type_suffix(kind.ty) .. "_" .. op_suffix(kind.op) .. "_" .. mode_suffix(kind.overflow))
+        elseif cls == C.CBackendHelperFloatBinary then
+            return C.CBackendHelperId("ml_" .. type_suffix(kind.ty) .. "_" .. op_suffix(kind.op))
         elseif cls == C.CBackendHelperDivRem then
             return C.CBackendHelperId("ml_" .. type_suffix(kind.ty) .. "_" .. op_suffix(kind.op) .. "_" .. mode_suffix(kind.mode))
         elseif cls == C.CBackendHelperShift then
@@ -180,7 +182,7 @@ local function bind_context(T)
             return { params = { kind.from }, result = kind.to }
         elseif cls == C.CBackendHelperPtrOffset then
             return { params = { ptr, index }, result = ptr }
-        elseif cls == C.CBackendHelperIntBinary or cls == C.CBackendHelperDivRem or cls == C.CBackendHelperShift then
+        elseif cls == C.CBackendHelperIntBinary or cls == C.CBackendHelperFloatBinary or cls == C.CBackendHelperDivRem or cls == C.CBackendHelperShift then
             return { params = { kind.ty, kind.ty }, result = kind.ty }
         elseif cls == C.CBackendHelperIntrinsic then
             if kind.intrinsic == Core.IntrinsicTrap then return { params = {}, result = void } end
@@ -404,6 +406,12 @@ local function bind_context(T)
             elseif kind.op == Core.BinSub then lines[#lines + 1] = "    return (" .. ret .. ")((" .. uret .. ")a1 - (" .. uret .. ")a2);"
             elseif kind.op == Core.BinMul then lines[#lines + 1] = "    return (" .. ret .. ")((" .. uret .. ")a1 * (" .. uret .. ")a2);"
             else lines[#lines + 1] = "    return (" .. ret .. ")(" .. binary_expr(kind.op):gsub("a", "a1"):gsub("b", "a2") .. ");" end
+        elseif cls == C.CBackendHelperFloatBinary then
+            if kind.op == Core.BinAdd then lines[#lines + 1] = "    return (" .. ret .. ")(a1 + a2);"
+            elseif kind.op == Core.BinSub then lines[#lines + 1] = "    return (" .. ret .. ")(a1 - a2);"
+            elseif kind.op == Core.BinMul then lines[#lines + 1] = "    return (" .. ret .. ")(a1 * a2);"
+            elseif kind.op == Core.BinDiv then lines[#lines + 1] = "    return (" .. ret .. ")(a1 / a2);"
+            else lines[#lines + 1] = "    return (" .. ret .. ")(a1 + a2);" end
         else
             lines[#lines + 1] = "    /* helper kind has no side effects */"
         end

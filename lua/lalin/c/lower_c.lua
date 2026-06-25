@@ -893,7 +893,32 @@ local function bind_context(T)
     -- Expression lowering: CAst.Expr → LalinTree.Expr
     --------------------------------------------------------------------------
     local lower_expr_to_place
-    local function lower_expr(c_expr, ctx)
+    local lower_initializer
+    local lower_expr
+
+    local function initializer_elem_type_from_decl(spec, decltor, ctx)
+        return c_type_spec_to_lalin_type(spec, ctx)
+    end
+
+    local function lower_init_expr(init, ctx)
+        if init._variant == "CInitExpr" then return lower_expr(init.expr, ctx) end
+        return lower_initializer(init, nil, ctx)
+    end
+
+    lower_initializer = function(init, elem_ty, ctx)
+        if init._variant == "CInitExpr" then return lower_expr(init.expr, ctx) end
+        if init._variant ~= "CInitList" then unsupported_c_init(init) end
+        local elems = {}
+        for i, item in ipairs(init.items or {}) do
+            if item.designator ~= nil and #item.designator > 0 then
+                unsupported_c_init(init, "designated initializer lowering needs field/index storage mapping")
+            end
+            elems[#elems + 1] = lower_init_expr(item.value, ctx)
+        end
+        return Tr.ExprArray(Tr.ExprSurface, elem_ty or Ty.TScalar(C.ScalarI32), elems)
+    end
+
+    lower_expr = function(c_expr, ctx)
 
         -- Literals
         local tag = c_expr._variant
@@ -1123,7 +1148,9 @@ local function bind_context(T)
         end
 
         if tag == "CECompoundLit" then
-            unsupported_c_expr(c_expr, "compound literal requires explicit temporary storage lowering")
+            local tn = c_expr.type_name
+            local elem_ty = initializer_elem_type_from_decl(tn.type_spec, { derived = tn.derived or {} }, ctx)
+            return lower_initializer(c_expr.initializer, elem_ty, ctx)
         end
 
         -- Statement expression
@@ -1208,7 +1235,7 @@ local function bind_context(T)
                     if decltor.initializer._variant == "CInitExpr" then
                         init = lower_expr(decltor.initializer.expr, ctx)
                     else
-                        unsupported_c_init(decltor.initializer, "declaration initializer list needs aggregate storage lowering")
+                        init = lower_initializer(decltor.initializer, initializer_elem_type_from_decl(decl.type_spec, decltor, ctx), ctx)
                     end
                 end
                 ctx.locals[name] = { binding = bind, is_var = is_var, init = init, c_desc = c_desc_from_spec_decl(decl.type_spec, decltor, ctx) }
@@ -1573,7 +1600,7 @@ local function bind_context(T)
                             if decltor.initializer._variant == "CInitExpr" then
                                 init = lower_expr(decltor.initializer.expr, ctx)
                             else
-                                unsupported_c_init(decltor.initializer, "for-init declaration list needs aggregate storage lowering")
+                                init = lower_initializer(decltor.initializer, initializer_elem_type_from_decl(c_stmt.init.decl.type_spec, decltor, ctx), ctx)
                             end
                         end
                         if is_var then
@@ -2039,7 +2066,7 @@ local function bind_context(T)
                                     if decltor.initializer._variant == "CInitExpr" then
                                         init = lower_expr(decltor.initializer.expr, ctx)
                                     else
-                                        unsupported_c_init(decltor.initializer, "top-level declaration list needs aggregate storage lowering")
+                                        init = lower_initializer(decltor.initializer, initializer_elem_type_from_decl(item.decl.type_spec, decltor, ctx), ctx)
                                     end
                                 end
                                 if is_static then

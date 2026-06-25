@@ -101,7 +101,7 @@ local function make_context(opts)
     opts = opts or {}
     local ctx = llb.FormatContext and setmetatable({
         opts = opts,
-        lang = opts.lang,
+        dialect = opts.dialect,
         width = opts.width or 100,
         indent_width = opts.indent or 2,
         seen = opts.seen or {},

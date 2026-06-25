@@ -451,7 +451,7 @@ local artifact = lalin.emit_luajit_artifact(decls, {
 artifact:write()
 ```
 
-The artifact path uses the LuaTrace bytecode copy-patch backend described in
+The artifact path uses the LuaTrace BC copy-patch backend described in
 `docs/ARCHITECTURE.md`.
 
 ## Non-Negotiable Rules

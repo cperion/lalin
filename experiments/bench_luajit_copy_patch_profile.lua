@@ -1,7 +1,7 @@
 -- EXPERIMENTAL BINARY BACKEND PROFILE ONLY.
 --
 -- Canonical path tested here:
---   LalinCode -> Llisle stencil selection -> BinaryStencilBank extraction
+--   LalinCode -> Llisle stencil selection -> MC stencil bank extraction
 --     -> copy + patch + install -> luajit_emit wrapper
 --
 -- No shared-object realization path is used here.
@@ -82,14 +82,14 @@ local lj_module, facts, artifacts, rejects = Backend.lower_module(module, { cont
 assert(#rejects == 0, rejects[1] and rejects[1].reason or "unexpected backend reject")
 local lower_time = Measure.now() - t0
 local t1 = Measure.now()
-local bank, bank_err, bank_src = Backend.build_binary_bank(artifacts, { stem = "bench_luajit_copy_patch_profile" })
+local bank, bank_err, bank_src = Backend.build_mc_bank(artifacts, { stem = "bench_luajit_copy_patch_profile" })
 local bank_time = Measure.now() - t1
 assert(bank ~= nil, tostring(bank_err) .. "\n" .. tostring(bank_src))
 local t2 = Measure.now()
 local result, err, src = Backend.compile_lj_module(lj_module, artifacts, { bank = bank, chunk_name = "bench_luajit_copy_patch_profile" })
 local realize_emit_time = Measure.now() - t2
 assert(result ~= nil, tostring(err) .. "\n" .. tostring(src))
-assert(result.realization.kind == "BinaryStencilBankRealization")
+assert(result.realization.kind == "MCStencilBankRealization")
 assert(artifacts[1].instance.descriptor.vocab == Stencil.StencilReduce)
 
 local arr = ffi.new("int32_t[?]", n)

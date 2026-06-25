@@ -12,7 +12,7 @@ local Code = T.LalinCode
 local Value = T.LalinValue
 local Stencil = T.LalinStencil
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBinary = require("tests.code_ir.stencil_binary_helper")
+local StencilBinary = require("tests.code_ir.copy_patch_mc_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local f64 = Code.CodeTyFloat(64)
@@ -31,6 +31,8 @@ local function reduction(kind, init)
         float_mode = nil,
     }
 end
+
+local noalias_gather = StencilArtifactPlan.gather_array_artifact({ elem_ty = i32, index_ty = i32, step_num = 1, unroll = 3, noalias = true, alignment = 16 })
 
 local function view_topology(name)
     return Stencil.StencilTopologyViewDescriptor(
@@ -69,6 +71,7 @@ local artifacts = {
     StencilArtifactPlan.count_array_artifact(Stencil.StencilPredGtConst(iconst(0)), { elem_ty = i32, step_num = 1 }),
     StencilArtifactPlan.map_reduce_array_artifact(Stencil.StencilUnaryNeg, reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, mapped_ty = i32, result_ty = i32, step_num = 1 }),
     StencilArtifactPlan.zip_reduce_array_artifact(Stencil.StencilBinaryAdd, reduction(Value.ReductionAdd, 0), nil, { lhs_ty = i32, rhs_ty = i32, mapped_ty = i32, result_ty = i32, step_num = 1 }),
+    noalias_gather,
 }
 
 local view_artifacts = {
@@ -122,9 +125,11 @@ for _, artifact in ipairs(slice_artifacts) do
     artifacts[#artifacts + 1] = artifact
 end
 
-local build, err, src = StencilBinary.compile(T, artifacts, { stem = "test_stencil_bank_all_shapes" })
+local build, err, src = StencilBinary.compile(T, artifacts, { stem = "test_copy_patch_mc_all_shapes" })
 assert(build ~= nil, tostring(err) .. "\n" .. tostring(src))
 assert(src:match("xs%[%(%(i %+ 1%) %* xs_stride%)%]"), "unrolled dynamic view access must parenthesize the lane index")
+assert(src:match("ml_stencil_gather_array_i32_idx_i32_s1_u3%([^%)]*int32_t %*__restrict dst[^%)]*int32_t const %*__restrict src[^%)]*int32_t const %*__restrict idx"), "noalias gather facts must materialize restrict parameters")
+assert(src:match("dst = __builtin_assume_aligned%(dst, 16%)"), "known alignment facts must materialize alignment assumptions")
 
 local xs = ffi.new("int32_t[5]", { 1, -2, 5, 0, 3 })
 local ys = ffi.new("int32_t[5]", { 10, 20, 30, 40, 50 })
@@ -189,4 +194,4 @@ assert(sym(artifacts[16])(xs, 0, 5) == 3, "count")
 assert(sym(artifacts[17])(xs, 0, 5, 0) == -7, "map reduce")
 assert(sym(artifacts[18])(xs, ys, 0, 5, 0) == 157, "zip reduce")
 
-io.write("lalin stencil_bank all shapes ok\n")
+io.write("lalin copy_patch_mc all shapes ok\n")

@@ -313,7 +313,7 @@ local function lalin_markdown(member, opts, family)
         "}",
         "```",
         "",
-        llb.markdown_language(member.lang, { level = 3, title = "Lalin LLB Surface" }),
+        llb.markdown_dialect(member.dialect, { level = 3, title = "Lalin LLB Surface" }),
     }, "\n")
 end
 
@@ -335,7 +335,7 @@ local function llpvm_markdown(member, opts, family)
         "}",
         "```",
         "",
-        llb.markdown_language(member.lang, { level = 3, title = "LLPVM LLB Surface" }),
+        llb.markdown_dialect(member.dialect, { level = 3, title = "LLPVM LLB Surface" }),
     }, "\n")
 end
 
@@ -396,7 +396,7 @@ local function llisle_markdown(member, opts, family)
         "}",
         "```",
         "",
-        llb.markdown_language(member.lang, { level = 3, title = "Llisle LLB Surface" }),
+        llb.markdown_dialect(member.dialect, { level = 3, title = "Llisle LLB Surface" }),
     }, "\n")
 end
 
@@ -416,7 +416,7 @@ local function schema_markdown(member, opts, family)
         "}",
         "```",
         "",
-        llb.markdown_language(member.lang, { level = 3, title = "LalinSchema LLB Surface" }),
+        llb.markdown_dialect(member.dialect, { level = 3, title = "LalinSchema LLB Surface" }),
     }, "\n")
 end
 
@@ -488,7 +488,7 @@ M.family = llb.family. lalin {
     },
     {
         name = "lalin.dsl",
-        lang = M.dsl.language,
+        dialect = M.dsl.language,
         exports = function(opts) return M.dsl.make_family_env(opts) end,
         match = is_lalin_decl,
         format = function(value, opts) return M.dsl.format(value, opts) end,
@@ -518,7 +518,7 @@ M.family = llb.family. lalin {
     },
     {
         name = "lalinschema.dsl",
-        lang = schema_dsl.Language,
+        dialect = schema_dsl.Dialect,
         exports = function(opts) return schema_dsl.make_family_env(opts) end,
         match = is_schema_value,
         format = function(value, opts) return schema_dsl.format(value, opts) end,
@@ -545,7 +545,7 @@ M.family = llb.family. lalin {
     },
     {
         name = "llpvm.dsl",
-        lang = llpvm_dsl.meta_language,
+        dialect = llpvm_dsl.meta_language,
         exports = function(opts) return llpvm_dsl.make_family_env(opts) end,
         match = is_llpvm_value,
         format = function(value, opts) return llpvm_dsl.format(value, opts) end,
@@ -575,7 +575,7 @@ M.family = llb.family. lalin {
     },
     {
         name = "llisle.dsl",
-        lang = llisle_dsl.language,
+        dialect = llisle_dsl.language,
         exports = function(opts) return llisle_dsl.make_family_env(opts) end,
         match = is_llisle_value,
         format = function(value, opts) return llisle_dsl.format(value, opts) end,
@@ -695,8 +695,7 @@ function M.compile(name_or_decls, decls_or_opts, maybe_opts)
         name = opts.name or "Unit"
     end
     opts.name = opts.name or name
-    opts.stencil_provider = opts.stencil_provider or opts.provider or "lua_trace"
-    opts.luatrace_materializer = "bytecode"
+    opts.copy_patch = "bc"
     local artifact = M.emit_luajit_artifact(decls, opts)
     local loader = loadstring or load
     local chunk, err = loader(artifact.source, "@" .. tostring(opts.name or name) .. ".luajit.lua")
@@ -729,7 +728,12 @@ function M.emit_c_artifact(decl, path_or_opts, name, opts)
     function artifact:write(write_opts)
         write_opts = write_opts or {}
         if type(write_opts) == "string" then write_opts = { c_path = write_opts } end
+        local function mkdir_parent(path)
+            local dir = tostring(path):match("^(.*)/[^/]+$")
+            if dir ~= nil and dir ~= "" then os.execute("mkdir -p '" .. dir:gsub("'", "'\\''") .. "'") end
+        end
         local function write(path, text)
+            mkdir_parent(path)
             local f = assert(io.open(path, "wb"))
             f:write(text or "")
             f:close()
@@ -772,16 +776,9 @@ function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
 
     local Pipeline = require("lalin.frontend_pipeline")(T)
     local Backend = require("lalin.luajit_backend")(T)
-    local stencil_provider = opts.stencil_provider or opts.provider
-    local function is_luatrace_provider(provider)
-        return provider == "lua_trace" or provider == "luatrace" or provider == "gps"
-    end
-    local function luatrace_materializer(o)
-        local materializer = tostring(o.luatrace_materializer or o.stencil_materializer or o.materializer or "bytecode")
-        if materializer == "bytecode" or materializer == "bc" or materializer == "bc_copy_patch" or materializer == "bytecode_copy_patch" then
-            return "bytecode"
-        end
-        error("emit_luajit_artifact: unsupported LuaTrace materializer " .. tostring(materializer), 2)
+    local copy_patch = tostring(opts.copy_patch or "mc")
+    if copy_patch ~= "mc" and copy_patch ~= "bc" then
+        error("emit_luajit_artifact: unknown copy_patch materializer " .. copy_patch, 2)
     end
     local checked = Pipeline.typecheck_module(module_ast, {
         context = T,
@@ -808,19 +805,18 @@ function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
         schedule = opts.schedule,
         schedule_plan = opts.schedule_plan,
         collect_rejects = opts.collect_rejects,
-        stencil_provider = stencil_provider,
-        provider = opts.provider,
+        copy_patch = copy_patch,
     })
     if opts.reject_on_stencil_rejects ~= false and rejects and #rejects > 0 then
         error("emit_luajit_artifact rejected module: " .. tostring(rejects[1].reason or rejects[1]), 2)
     end
 
-    local bank = opts.bank
-    local bytecode_bank = opts.bytecode_bank or opts.bc_bank
-    if bank == nil and #(artifacts or {}) > 0 and not is_luatrace_provider(stencil_provider) then
-        local bank_opts = opts.bank_opts or {}
+    local mc_bank = opts.mc_bank
+    local bc_bank = opts.bc_bank
+    if mc_bank == nil and #(artifacts or {}) > 0 and copy_patch == "mc" then
+        local bank_opts = opts.mc_bank_opts or {}
         bank_opts.stem = bank_opts.stem or opts.stem or sanitize(name)
-        bank_opts.dir = bank_opts.dir or opts.bank_dir
+        bank_opts.dir = bank_opts.dir or opts.mc_bank_dir
         bank_opts.preamble = bank_opts.preamble or opts.preamble
         bank_opts.cc = bank_opts.cc or opts.cc
         bank_opts.cflags = bank_opts.cflags or opts.cflags
@@ -829,28 +825,24 @@ function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
         bank_opts.abi = bank_opts.abi or opts.abi
         bank_opts.pointer_bits = bank_opts.pointer_bits or opts.pointer_bits
         bank_opts.endian = bank_opts.endian or opts.endian
-        bank = assert(Backend.build_binary_bank(artifacts, bank_opts))
+        mc_bank = assert(Backend.build_mc_bank(artifacts, bank_opts))
     end
-    if bytecode_bank == nil and #(artifacts or {}) > 0 and is_luatrace_provider(stencil_provider) and luatrace_materializer(opts) == "bytecode" then
-        bytecode_bank = assert(Backend.build_bytecode_bank(artifacts, {
+    if bc_bank == nil and #(artifacts or {}) > 0 and copy_patch == "bc" then
+        bc_bank = assert(Backend.build_bc_bank(artifacts, {
             stem = opts.stem or sanitize(name),
-            id = opts.bytecode_bank_id or opts.bc_bank_id,
-            target = opts.bytecode_target or opts.bc_target,
+            id = opts.bc_bank_id,
+            target = opts.bc_target,
         }))
     end
 
     local source, err = Backend.emit_lua_artifact(lj_module, artifacts, {
-        bank = bank,
-        bytecode_bank = bytecode_bank,
+        mc_bank = mc_bank,
+        bc_bank = bc_bank,
         path = path,
         chunk_name = opts.chunk_name or name,
         patch_values = opts.patch_values,
-        bytecode_patch_bindings = opts.bytecode_patch_bindings,
-        stencil_provider = stencil_provider,
-        provider = opts.provider,
-        luatrace_materializer = opts.luatrace_materializer,
-        stencil_materializer = opts.stencil_materializer,
-        materializer = opts.materializer,
+        bc_patch_bindings = opts.bc_patch_bindings,
+        copy_patch = copy_patch,
     })
     if source == nil then error(err or "emit_luajit_artifact failed", 2) end
 
@@ -869,8 +861,8 @@ function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
         exec_plan = facts.exec_plan or facts.exec,
         artifacts = artifacts,
         rejects = rejects,
-        bank = bank,
-        bytecode_bank = bytecode_bank,
+        mc_bank = mc_bank,
+        bc_bank = bc_bank,
     }
     function artifact:write(write_path)
         write_path = write_path or self.path
@@ -885,6 +877,7 @@ function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
     end
     return artifact
 end
+
 
 function M.compile_c(decl, opts)
     opts = opts or {}

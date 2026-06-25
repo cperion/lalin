@@ -13,7 +13,7 @@ local Ty = T.LalinType
 local Value = T.LalinValue
 local Stencil = T.LalinStencil
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBinary = require("tests.code_ir.stencil_binary_helper")
+local StencilBinary = require("tests.code_ir.copy_patch_mc_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local bool8 = Code.CodeTyBool8
@@ -76,11 +76,11 @@ local artifacts = {
 
 local preamble = "typedef struct { int32_t left; int32_t right; } Demo_Pair;"
 local build, err, src = StencilBinary.compile(T, artifacts, {
-    stem = "test_stencil_bank_field_projection",
+    stem = "test_copy_patch_mc_field_projection",
     preamble = preamble,
 })
 assert(build ~= nil, tostring(err) .. "\n" .. tostring(src))
-assert(src:match("const Demo_Pair %*xs"), src)
+assert(src:match("Demo_Pair const %*xs"), src)
 assert(src:match("Demo_Pair %*dst"), src)
 assert(src:match("xs%[i%]%.right"), src)
 assert(src:match("dst%[i%]%.right"), src)
@@ -111,4 +111,4 @@ assert(mask[0] == 0 and mask[1] == 1 and mask[2] == 0 and mask[3] == 0, "field c
 sym(artifacts[5])(xs, 1, 3, 99)
 assert(xs[0].right == 10 and xs[1].right == 99 and xs[2].right == 99 and xs[3].right == 7, "field fill")
 
-io.write("lalin stencil_bank field projection ok\n")
+io.write("lalin copy_patch_mc field projection ok\n")

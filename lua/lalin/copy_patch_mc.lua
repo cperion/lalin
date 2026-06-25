@@ -63,16 +63,16 @@ int mprotect(void *addr, size_t len, int prot);
     local install = opts.install or {}
     local low32 = install.low32 == true
     if low32 and not (ffi.os == "Linux" and ffi.arch == "x64") then
-        error("stencil_bank: low32 binary stencil installation requires Linux/x64", 3)
+        error("copy_patch_mc: low32 mc stencil installation requires Linux/x64", 3)
     end
     local policy = install.rwx and "rwx" or "write_exec"
     local prot = install.rwx and bit.bor(PROT_READ, PROT_WRITE, PROT_EXEC) or bit.bor(PROT_READ, PROT_WRITE)
     local flags = bit.bor(MAP_PRIVATE, MAP_ANON, low32 and MAP_32BIT or 0)
     local mem = ffi.C.mmap(nil, #bytes, prot, flags, -1, 0)
-    if mem == MAP_FAILED then error("stencil_bank: mmap failed while installing binary stencil", 3) end
+    if mem == MAP_FAILED then error("copy_patch_mc: mmap failed while installing mc stencil", 3) end
     local base_addr = tonumber(ffi.cast("uintptr_t", mem))
     if low32 and base_addr + #bytes - 1 > 2147483647 then
-        error("stencil_bank: low32 binary stencil installation returned out-of-range address", 3)
+        error("copy_patch_mc: low32 mc stencil installation returned out-of-range address", 3)
     end
     ffi.copy(mem, bytes, #bytes)
     return mem, ffi.cast("uint8_t *", mem), policy
@@ -174,7 +174,7 @@ local function patch_value(record, values)
     if record.value ~= nil then return record.value end
     if record.ordinal ~= nil then
         local v = values and values[record.ordinal]
-        if v == nil then error("stencil_bank: missing patch ordinal " .. tostring(record.ordinal), 4) end
+        if v == nil then error("copy_patch_mc: missing patch ordinal " .. tostring(record.ordinal), 4) end
         return v
     end
     if record.symbol ~= nil and values ~= nil and values[record.symbol] ~= nil then return values[record.symbol] end
@@ -183,7 +183,7 @@ local function patch_value(record, values)
         if value ~= nil then return value end
     end
     if record.symbol ~= nil then
-        error("stencil_bank: missing patch symbol " .. tostring(record.symbol), 4)
+        error("copy_patch_mc: missing patch symbol " .. tostring(record.symbol), 4)
     end
     return 0
 end
@@ -222,7 +222,7 @@ local function function_pointer_signature(decl, symbol)
     decl = tostring(decl or ""):gsub("\n", " ")
     symbol = tostring(symbol or "")
     local ret, args = decl:match("^%s*(.-)%s+" .. pattern_escape(symbol) .. "%s*%((.*)%)%s*;?%s*$")
-    if ret == nil then error("stencil_bank: cannot derive function pointer signature for " .. symbol .. " from " .. decl, 3) end
+    if ret == nil then error("copy_patch_mc: cannot derive function pointer signature for " .. symbol .. " from " .. decl, 3) end
     return ret .. " (*)(" .. args .. ")"
 end
 
@@ -324,7 +324,7 @@ end
 
 local function patch_u32le(bytes, offset, value)
     if value < -2147483648 or value > 4294967295 then
-        error("stencil_bank: local relocation value out of 32-bit range: " .. tostring(value), 3)
+        error("copy_patch_mc: local relocation value out of 32-bit range: " .. tostring(value), 3)
     end
     if value < 0 then value = 4294967296 + value end
     local b0 = value % 256
@@ -340,7 +340,7 @@ end
 
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
-    if T._lalin_api_cache.stencil_bank ~= nil then return T._lalin_api_cache.stencil_bank end
+    if T._lalin_api_cache.copy_patch_mc ~= nil then return T._lalin_api_cache.copy_patch_mc end
 
     local StencilC = require("lalin.stencil_c")(T)
     local LJ = T.LalinLuaJIT
@@ -349,54 +349,54 @@ local function bind_context(T)
     local ffi_preambles = {}
 
     local function patch_kind_name(kind)
-        if kind == LJ.LJPatchAbs32 then return "abs32" end
-        if kind == LJ.LJPatchAbs64 then return "abs64" end
-        if kind == LJ.LJPatchSymbol32 then return "symbol32" end
-        if kind == LJ.LJPatchSymbol64 then return "symbol64" end
-        if kind == LJ.LJPatchPc32 then return "pc32" end
-        if kind == LJ.LJPatchRel32 then return "rel32" end
-        if kind == LJ.LJPatchLocalAbs32 then return "local_abs32" end
-        if kind == LJ.LJPatchLocalAbs64 then return "local_abs64" end
+        if kind == LJ.LJMCPatchAbs32 then return "abs32" end
+        if kind == LJ.LJMCPatchAbs64 then return "abs64" end
+        if kind == LJ.LJMCPatchSymbol32 then return "symbol32" end
+        if kind == LJ.LJMCPatchSymbol64 then return "symbol64" end
+        if kind == LJ.LJMCPatchPc32 then return "pc32" end
+        if kind == LJ.LJMCPatchRel32 then return "rel32" end
+        if kind == LJ.LJMCPatchLocalAbs32 then return "local_abs32" end
+        if kind == LJ.LJMCPatchLocalAbs64 then return "local_abs64" end
         return tostring(kind)
     end
 
     local function patch_kind(kind)
-        if kind == "abs32" then return LJ.LJPatchAbs32 end
-        if kind == "abs64" then return LJ.LJPatchAbs64 end
-        if kind == "symbol32" then return LJ.LJPatchSymbol32 end
-        if kind == "symbol64" then return LJ.LJPatchSymbol64 end
-        if kind == "pc32" then return LJ.LJPatchPc32 end
-        if kind == "rel32" then return LJ.LJPatchRel32 end
-        if kind == "local_abs32" then return LJ.LJPatchLocalAbs32 end
-        if kind == "local_abs64" then return LJ.LJPatchLocalAbs64 end
-        error("stencil_bank: unknown binary patch kind " .. tostring(kind), 3)
+        if kind == "abs32" then return LJ.LJMCPatchAbs32 end
+        if kind == "abs64" then return LJ.LJMCPatchAbs64 end
+        if kind == "symbol32" then return LJ.LJMCPatchSymbol32 end
+        if kind == "symbol64" then return LJ.LJMCPatchSymbol64 end
+        if kind == "pc32" then return LJ.LJMCPatchPc32 end
+        if kind == "rel32" then return LJ.LJMCPatchRel32 end
+        if kind == "local_abs32" then return LJ.LJMCPatchLocalAbs32 end
+        if kind == "local_abs64" then return LJ.LJMCPatchLocalAbs64 end
+        error("copy_patch_mc: unknown binary patch kind " .. tostring(kind), 3)
     end
 
     local function install_policy(opts, low32)
         opts = opts or {}
-        local protection = opts.install_policy == "rwx" and LJ.LJInstallReadWriteExec or LJ.LJInstallWriteThenExec
-        local address = (low32 or opts.low32 == true) and LJ.LJInstallLow32Address or LJ.LJInstallAnyAddress
-        return LJ.LJBinaryInstallPolicy(address, protection)
+        local protection = opts.install_policy == "rwx" and LJ.LJMCInstallReadWriteExec or LJ.LJMCInstallWriteThenExec
+        local address = (low32 or opts.low32 == true) and LJ.LJMCInstallLow32Address or LJ.LJMCInstallAnyAddress
+        return LJ.LJMCInstallPolicy(address, protection)
     end
 
     local function install_opts(policy)
         policy = policy or install_policy()
         return {
-            low32 = policy.address == LJ.LJInstallLow32Address,
-            rwx = policy.protection == LJ.LJInstallReadWriteExec,
+            low32 = policy.address == LJ.LJMCInstallLow32Address,
+            rwx = policy.protection == LJ.LJMCInstallReadWriteExec,
         }
     end
 
     local function requested_install(opts, bank)
         if opts and opts.install then return opts.install end
-        if opts and opts.install_policy ~= nil then return install_policy(opts, bank and bank.install and bank.install.address == LJ.LJInstallLow32Address) end
+        if opts and opts.install_policy ~= nil then return install_policy(opts, bank and bank.install and bank.install.address == LJ.LJMCInstallLow32Address) end
         return bank and bank.install or install_policy()
     end
 
     local function target_for(opts)
         opts = opts or {}
         local ffi = require("ffi")
-        return LJ.LJBinaryTarget(
+        return LJ.LJMCTarget(
             opts.arch or ffi.arch,
             opts.os or ffi.os,
             opts.abi or "c",
@@ -406,12 +406,12 @@ local function bind_context(T)
     end
 
     local function bank_id(stem)
-        return LJ.LJBinaryBankId("ljbank:" .. tostring(stem))
+        return LJ.LJMCBankId("ljbank:" .. tostring(stem))
     end
 
     local function as_patch_record(record)
-        if pvm.classof(record) == LJ.LJBinaryPatchRecord then return record end
-        return LJ.LJBinaryPatchRecord(
+        if pvm.classof(record) == LJ.LJMCPatchRecord then return record end
+        return LJ.LJMCPatchRecord(
             assert(record.offset, "patch record requires offset"),
             patch_kind(assert(record.kind, "patch record requires kind")),
             record.reloc_type,
@@ -426,12 +426,12 @@ local function bind_context(T)
     end
 
     local function artifact_symbol(artifact)
-        assert(artifact and artifact.symbol and artifact.symbol.text, "stencil_bank: artifact missing symbol")
+        assert(artifact and artifact.symbol and artifact.symbol.text, "copy_patch_mc: artifact missing symbol")
         return artifact.symbol.text
     end
 
     local function artifact_signature(artifact)
-        assert(artifact and artifact.c_signature, "stencil_bank: artifact missing C signature")
+        assert(artifact and artifact.c_signature, "copy_patch_mc: artifact missing C signature")
         return artifact.c_signature
     end
 
@@ -447,12 +447,12 @@ local function bind_context(T)
         return out
     end
 
-    function api.build_binary_bank(artifacts, opts)
+    function api.build_mc_bank(artifacts, opts)
         opts = opts or {}
         artifacts = unique_artifacts(artifacts)
-        local dir = opts.dir or "target/stencil_bank"
+        local dir = opts.dir or "target/copy_patch_mc"
         os.execute("mkdir -p " .. shell_quote(dir))
-        local stem = opts.stem or ("lalin_stencil_binary_bank_" .. tostring(os.time()) .. "_" .. sanitize(tostring(os.clock())))
+        local stem = opts.stem or ("lalin_stencil_mc_bank_" .. tostring(os.time()) .. "_" .. sanitize(tostring(os.clock())))
         local c_path = dir .. "/" .. stem .. ".c"
         local o_path = dir .. "/" .. stem .. ".o"
         local source = StencilC.source(artifacts, { preamble = opts.preamble })
@@ -461,15 +461,15 @@ local function bind_context(T)
         local cflags = opts.cflags or "-std=c99 -O3 -march=native -fno-tree-vectorize -fno-builtin -fno-builtin-memmove -fno-builtin-memcpy -fno-builtin-memset -ffunction-sections -fno-pic -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -c"
         local cmd = table.concat({ shell_quote(cc), cflags, shell_quote(c_path), "-o", shell_quote(o_path) }, " ")
         local ok = os.execute(cmd)
-        if not (ok == true or ok == 0) then return nil, "stencil_bank: binary bank object build failed: " .. cmd, source end
+        if not (ok == true or ok == 0) then return nil, "copy_patch_mc: MC bank object build failed: " .. cmd, source end
         local reloc_out, reloc_err = capture("readelf -Wr " .. shell_quote(o_path))
-        if reloc_out == nil then return nil, "stencil_bank: readelf relocations failed: " .. tostring(reloc_err), source end
+        if reloc_out == nil then return nil, "copy_patch_mc: readelf relocations failed: " .. tostring(reloc_err), source end
         local relocs = parse_relocations(reloc_out)
         local section_out, section_err = capture("readelf -SW " .. shell_quote(o_path))
-        if section_out == nil then return nil, "stencil_bank: readelf sections failed: " .. tostring(section_err), source end
+        if section_out == nil then return nil, "copy_patch_mc: readelf sections failed: " .. tostring(section_err), source end
         local sections, sections_by_name = parse_sections(section_out)
         local symbol_out, symbol_err = capture("readelf -Ws " .. shell_quote(o_path))
-        if symbol_out == nil then return nil, "stencil_bank: readelf symbols failed: " .. tostring(symbol_err), source end
+        if symbol_out == nil then return nil, "copy_patch_mc: readelf symbols failed: " .. tostring(symbol_err), source end
         local symbols = parse_symbols(symbol_out, sections)
         local dumped_sections = {}
 
@@ -479,7 +479,7 @@ local function bind_context(T)
             local path = dir .. "/" .. stem .. "." .. sanitize(section) .. ".section.bin"
             local dump_cmd = "objcopy --dump-section " .. shell_quote(section .. "=" .. path) .. " " .. shell_quote(o_path)
             local dump_ok = os.execute(dump_cmd)
-            if not (dump_ok == true or dump_ok == 0) then error("stencil_bank: failed to dump local section " .. section, 3) end
+            if not (dump_ok == true or dump_ok == 0) then error("copy_patch_mc: failed to dump local section " .. section, 3) end
             cached = read_file(path)
             dumped_sections[section] = cached
             return cached
@@ -549,7 +549,7 @@ local function bind_context(T)
                                 addend = target_addr + (patch.addend or 0),
                             }
                         else
-                            error("stencil_bank: unsupported local relocation " .. tostring(patch.reloc_type) .. " to " .. tostring(patch.symbol), 3)
+                            error("copy_patch_mc: unsupported local relocation " .. tostring(patch.reloc_type) .. " to " .. tostring(patch.symbol), 3)
                         end
                     else
                         kept[#kept + 1] = {
@@ -579,7 +579,7 @@ local function bind_context(T)
             local dump_cmd = "objcopy --dump-section " .. shell_quote(section .. "=" .. bin_path) .. " " .. shell_quote(o_path)
             local dump_ok = os.execute(dump_cmd)
             if not (dump_ok == true or dump_ok == 0) then
-                return nil, "stencil_bank: failed to dump section " .. section .. " for " .. symbol, source
+                return nil, "copy_patch_mc: failed to dump section " .. section .. " for " .. symbol, source
             end
             local binary = read_file(bin_path)
             local raw_patches = relocs[".rela" .. section] or relocs[".rel" .. section] or {}
@@ -596,7 +596,7 @@ local function bind_context(T)
             }
             local patches = {}
             for i, patch in ipairs(raw_entry.patches) do patches[i] = as_patch_record(patch) end
-            entries[#entries + 1] = LJ.LJBinaryStencilEntry(
+            entries[#entries + 1] = LJ.LJMCStencilEntry(
                 raw_entry.symbol,
                 raw_entry.section,
                 raw_entry.binary,
@@ -605,7 +605,7 @@ local function bind_context(T)
                 raw_entry.artifact
             )
         end
-        return LJ.LJBinaryStencilBank(
+        return LJ.LJMCStencilBank(
             bank_id(stem),
             target_for(opts),
             install_policy(opts, needs_low32),
@@ -626,11 +626,11 @@ local function bind_context(T)
         return nil
     end
 
-    function api.install_binary_stencil(entry, values, opts)
+    function api.install_mc_stencil(entry, values, opts)
         opts = opts or {}
-        assert(type(entry) == "table", "stencil_bank.install_binary_stencil expects an entry")
-        assert(type(entry.binary) == "string", "binary stencil entry requires binary bytes")
-        assert(type(entry.c_signature) == "string", "binary stencil entry requires c_signature")
+        assert(type(entry) == "table", "copy_patch_mc.install_mc_stencil expects an entry")
+        assert(type(entry.binary) == "string", "mc stencil entry requires binary bytes")
+        assert(type(entry.c_signature) == "string", "mc stencil entry requires c_signature")
         local ffi = require("ffi")
         local mem, base, policy = mmap_install(entry.binary, opts)
         local base_addr = tonumber(ffi.cast("uintptr_t", mem))
@@ -653,34 +653,35 @@ local function bind_context(T)
                 local at = base_addr + offset
                 local rel = value + addend - at
                 if rel < -2147483648 or rel > 2147483647 then
-                    error("stencil_bank: rel32 patch target out of range for " .. tostring(record.symbol or record.target or "patch"), 3)
+                    error("copy_patch_mc: rel32 patch target out of range for " .. tostring(record.symbol or record.target or "patch"), 3)
                 end
                 p[0] = rel
             elseif kind == "local_abs32" then
                 local target = base_addr + addend
                 if record.reloc_type == "R_X86_64_32S" and target > 2147483647 then
-                    error("stencil_bank: local_abs32 target out of signed 32-bit range", 3)
+                    error("copy_patch_mc: local_abs32 target out of signed 32-bit range", 3)
                 end
-                if target > 4294967295 then error("stencil_bank: local_abs32 target out of 32-bit range", 3) end
+                if target > 4294967295 then error("copy_patch_mc: local_abs32 target out of 32-bit range", 3) end
                 ffi.cast("uint32_t *", base + offset)[0] = target
             elseif kind == "local_abs64" then
                 ffi.cast("uint64_t *", base + offset)[0] = ffi.cast("uint64_t", base_addr + addend)
             else
-                error("stencil_bank: unknown patch kind " .. tostring(kind), 3)
+                error("copy_patch_mc: unknown patch kind " .. tostring(kind), 3)
             end
         end
         if policy ~= "rwx" then
             local ok = ffi.C.mprotect(mem, #entry.binary, 5)
-            if ok ~= 0 then error("stencil_bank: mprotect failed while sealing binary stencil", 3) end
+            if ok ~= 0 then error("copy_patch_mc: mprotect failed while sealing mc stencil", 3) end
         end
         local fn = ffi.cast(entry.c_signature, mem)
-        return { kind = "InstalledBinaryStencil", entry = entry, memory = mem, code = base, size = #entry.binary, fn = fn }
+        return { kind = "InstalledMCStencil", entry = entry, memory = mem, code = base, size = #entry.binary, fn = fn }
     end
 
-    function api.realize_binary_artifacts(artifacts, opts)
+    function api.realize_mc_artifacts(artifacts, opts)
         opts = opts or {}
-        local bank = assert(opts.bank, "stencil_bank.realize_binary_artifacts requires opts.bank")
+        local bank = assert(opts.mc_bank, "copy_patch_mc.realize_mc_artifacts requires opts.mc_bank")
         local ffi_preamble = opts.ffi_preamble or opts.preamble or bank.preamble
+        if type(ffi_preamble) ~= "string" then ffi_preamble = nil end
         if ffi_preamble ~= nil and ffi_preamble ~= "" and not ffi_preambles[ffi_preamble] then
             require("ffi").cdef(ffi_preamble)
             ffi_preambles[ffi_preamble] = true
@@ -689,18 +690,18 @@ local function bind_context(T)
         for _, artifact in ipairs(artifacts or {}) do
             local symbol = artifact_symbol(artifact)
             local entry = api.entry_for(bank, symbol)
-            if entry == nil then return nil, "stencil_bank: missing binary stencil entry " .. symbol end
+            if entry == nil then return nil, "copy_patch_mc: missing mc stencil entry " .. symbol end
             local values = opts.patch_values and (opts.patch_values[symbol] or opts.patch_values[artifact]) or nil
-            local inst = api.install_binary_stencil(entry, values or {}, {
+            local inst = api.install_mc_stencil(entry, values or {}, {
                 install = install_opts(requested_install(opts, bank)),
             })
             installed[#installed + 1] = inst
             symbols[symbol] = inst.fn
         end
-        return { kind = "BinaryStencilBankRealization", bank = bank, symbols = symbols, installed = installed }
+        return { kind = "MCStencilBankRealization", mc_bank = bank, symbols = symbols, installed = installed }
     end
 
-    function api.emit_lua_bank_source(bank, opts)
+    function api.emit_mc_bank_source(bank, opts)
         opts = opts or {}
         local out = {}
         out[#out + 1] = "local ffi = require('ffi')"
@@ -790,13 +791,13 @@ local function bind_context(T)
     end
 
     function api.write_lua_bank(bank, path, opts)
-        local source = api.emit_lua_bank_source(bank, opts or {})
+        local source = api.emit_mc_bank_source(bank, opts or {})
         mkdir_parent(path)
         write_file(path, source)
         return source
     end
 
-    T._lalin_api_cache.stencil_bank = api
+    T._lalin_api_cache.copy_patch_mc = api
     return api
 end
 

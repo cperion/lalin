@@ -7,7 +7,7 @@ local T = pvm.context()
 Schema(T)
 
 local LJ = T.LalinLuaJIT
-local BC = require("lalin.luajit_bc_bank")(T)
+local BC = require("lalin.copy_patch_bc")(T)
 
 local source = [[
 return function(x)
@@ -22,14 +22,14 @@ end
 local entry, err = BC.compile_entry {
     id = "test:add_mode",
     symbol = "add_mode",
-    chunk_name = "@test/luajit_bc_bank/add_mode",
+    chunk_name = "@test/copy_patch_bc/add_mode",
     source = source,
     holes = {
         {
             name = "mode",
             expected = "MLBC_PATCH_A",
             kind = LJ.LJBCPatchStringConstantExact,
-            reason = "select bytecode stencil branch mode",
+            reason = "select mc stencil branch mode",
         },
     },
 }
@@ -58,4 +58,4 @@ local bad, bad_err = BC.load_symbol(bank, "add_mode", {
 assert(bad == nil, "width-mismatched patch must fail")
 assert(tostring(bad_err):match("replacement width mismatch"), bad_err)
 
-io.write("luajit_bc_bank ok\n")
+io.write("copy_patch_bc ok\n")

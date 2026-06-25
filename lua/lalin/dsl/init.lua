@@ -1040,8 +1040,7 @@ function Decl:compile(opts)
     opts = merge_source_ctx(opts, self)
     if opts.backend == "c" or opts.codegen == "c" then return self:emit_c_artifact(opts) end
     opts.name = opts.name or self.name or "lalin_luajit"
-    opts.stencil_provider = opts.stencil_provider or opts.provider or "lua_trace"
-    opts.luatrace_materializer = "bytecode"
+    opts.copy_patch = opts.copy_patch or "bc"
     return require("lalin").compile(self, opts)
 end
 
@@ -1329,7 +1328,7 @@ local variants_role = role_array("variants", "variant")
 variants_role.algebra = "sum"
 variants_role.payload_role = "product"
 
-local LalinLLB = llb.define "LalinDSL" {
+local LalinLLB = llb.dialect "LalinDSL" {
     g.role .decls  (role_array("decl", "declaration")),
     g.role .stmts  (role_array("stmt", "statement")),
     g.role .params (role_array("product", "product")),
@@ -1697,7 +1696,7 @@ function M.use(opts)
         target = opts.target,
         base = exports,
         exports = exports,
-        lang_exports = false,
+        dialect_exports = false,
         helpers = false,
         global = opts.global,
         strict = opts.strict,

@@ -19,8 +19,8 @@ local Stencil = T.LalinStencil
 local Ty = T.LalinType
 local Value = T.LalinValue
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBank = require("lalin.stencil_bank")(T)
-local StencilLuaJIT = require("lalin.stencil_luajit")(T)
+local CopyPatchMC = require("lalin.copy_patch_mc")(T)
+local CopyPatchLuaTrace = require("lalin.copy_patch_luatrace")(T)
 
 local mode = arg and arg[1] or "quick"
 local full = mode == "full"
@@ -405,7 +405,7 @@ local artifacts = {}
 local lua_artifacts = {}
 for i = 1, #cases do
     artifacts[i] = cases[i].artifact
-    lua_artifacts[i] = StencilLuaJIT.lua_trace_artifact(cases[i].artifact)
+    lua_artifacts[i] = CopyPatchLuaTrace.bc_artifact(cases[i].artifact)
 end
 
 local function make_data(n_)
@@ -470,7 +470,7 @@ for i = 1, materialize_samples do
     collectgarbage()
     debugf("luatrace bc build " .. tostring(i))
     local t0 = Measure.now()
-    local bank, bank_err = StencilLuaJIT.build_bytecode_bank(lua_artifacts, {
+    local bank, bank_err = CopyPatchLuaTrace.build_bc_bank(lua_artifacts, {
         stem = "bench_luajit_materializations_bc_" .. tostring(i),
     })
     lua_bc_build_times[i] = Measure.now() - t0
@@ -479,7 +479,7 @@ for i = 1, materialize_samples do
     collectgarbage()
     debugf("luatrace bc realize " .. tostring(i))
     local t1 = Measure.now()
-    local realization, realize_err = StencilLuaJIT.realize_bytecode_artifacts(lua_artifacts, { bank = bank })
+    local realization, realize_err = CopyPatchLuaTrace.realize_bc_artifacts(lua_artifacts, { bank = bank })
     lua_bc_realize_times[i] = Measure.now() - t1
     assert(realization ~= nil, tostring(realize_err))
     lua_bc_bank = bank
@@ -493,7 +493,7 @@ for i = 1, materialize_samples do
     collectgarbage()
     debugf("copy build " .. tostring(i))
     local t0 = Measure.now()
-    local bank, bank_err = StencilBank.build_binary_bank(artifacts, {
+    local bank, bank_err = CopyPatchMC.build_mc_bank(artifacts, {
         stem = "bench_luajit_materializations_matrix_" .. tostring(i),
         cc = cc,
         cflags = stencil_object_cflags(),
@@ -505,7 +505,7 @@ for i = 1, materialize_samples do
     collectgarbage()
     debugf("copy install " .. tostring(i))
     local t1 = Measure.now()
-    local realization, realize_err = StencilBank.realize_binary_artifacts(artifacts, { bank = bank, preamble = ffi_preamble })
+    local realization, realize_err = CopyPatchMC.realize_mc_artifacts(artifacts, { mc_bank = bank, preamble = ffi_preamble })
     install_times[i] = Measure.now() - t1
     assert(realization ~= nil, tostring(realize_err))
     copy_realization = realization

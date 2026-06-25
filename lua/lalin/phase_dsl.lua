@@ -111,7 +111,7 @@ end
 
 local g = llb.grammar
 
-local Lang = llb.define "LalinPhaseDsl" {
+local Lang = llb.dialect "LalinPhaseDsl" {
     g.role .package_body { kind = "array" },
     g.role .machine_body { kind = "array" },
     g.role .phase_body { kind = "array" },
@@ -281,7 +281,7 @@ function M.env(opts) return Lang:env(opts) end
 function M.loadstring(src, chunkname, opts) return Lang:loadstring(src, chunkname, opts) end
 function M.loadfile(path, opts) return Lang:loadfile(path, opts) end
 
-M.Language = Lang
+M.Dialect = Lang
 M.T = T
 M.P = P
 

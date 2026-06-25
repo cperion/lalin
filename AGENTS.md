@@ -1,13 +1,16 @@
 # Lalin - Agent Guidance
 
 Lalin is a LuaJIT-hosted language family built around LLB. Lua is the
-metaprogramming layer. LLB is the central workbench: heads, roles, fragments,
-namespaces, origins, diagnostics, formatting, indexing, and generic regions.
-Lalin is the compiled family member that lowers typed programs through LuaTrace
-into LuaJIT bytecode copy-patch artifacts.
+metaprogramming layer. LLB is the central language-family workbench and
+bootstrap language: heads, roles, fragments, namespaces, origins, diagnostics,
+formatting, indexing, families, and generic regions. Lalin is the compiled
+family dialect that lowers typed programs into LuaJIT copy-patch artifacts.
 
-The active runtime backend is LuaTrace bytecode copy-patch. The old
-Cranelift/Rust runtime path is not part of the current architecture.
+The active copy-patch backends are `copy_patch_mc` for fast C-stencil machine
+code artifacts and `copy_patch_bc` for LuaTrace/LuaJIT bytecode artifacts.
+`lalin.compile` currently defaults to bytecode copy-patch; emitted LuaJIT
+artifacts default to machine-code copy-patch. The old Cranelift/Rust runtime
+path is not part of the current architecture.
 
 ## Build
 
@@ -65,9 +68,9 @@ luajit tests/run.lua llpvm
 Useful focused checks:
 
 ```sh
-luajit tests/code_ir/test_luajit_bc_bank.lua
-luajit tests/code_ir/test_luajit_backend_luatrace.lua
-luajit tests/code_ir/test_stencil_luajit_provider.lua
+luajit tests/code_ir/test_copy_patch_bc.lua
+luajit tests/code_ir/test_luajit_backend_bc.lua
+luajit tests/code_ir/test_copy_patch_luatrace.lua
 luajit tests/pvm/test_compiler_driver.lua
 ```
 
@@ -81,21 +84,21 @@ Lua source
   -> typecheck
   -> LalinCode facts
   -> kernel and schedule facts
-  -> LuaTrace stencil plans
-  -> LuaJIT bytecode bank
+  -> LuaTrace stencil plans or C stencil plans
+  -> LuaJIT copy-patch bank
   -> loaded LuaJIT module
 ```
 
 Key files:
 
 ```text
-lua/llb.lua                  LLB language-workbench substrate
+lua/llb.lua                  LLB language-family workbench substrate
 lua/lalin/dsl/               Lalin authoring heads
 lua/lalin/schema/            ASDL/schema definitions
 lua/lalin/frontend_pipeline.lua
                              DSL/tree/typecheck/code pipeline
 lua/lalin/luajit_backend.lua LuaTrace/LuaJIT backend facade
-lua/lalin/luajit_bc_bank.lua LuaJIT bytecode bank
+lua/lalin/copy_patch_bc.lua LuaJIT BC bank
 lua/llpvm/                   LLPVM member
 lua/llisle/                  Llisle rule language
 ```

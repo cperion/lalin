@@ -336,9 +336,7 @@ local function bind_context(T)
                 locals[l.id.text] = l.ty
             end
             local body_cls = pvm.classof(func.body)
-            if body_cls == C.CBackendBodyMixed and #(func.body.fragments or {}) > 0 then
-                error("c_validate: CBackendBodyMixed fragments must be projected into explicit C blocks", 2)
-            elseif body_cls == C.CBackendBodyExec then
+            if body_cls == C.CBackendBodyExec then
                 local initialized = {}
                 for _, p in ipairs(func.params) do initialized[p.id.text] = true end
                 for id, rec in pairs(storage_by_func[func.name.text] or {}) do
@@ -346,6 +344,16 @@ local function bind_context(T)
                     initialized[id] = not (rec.init_state == C.CBackendLocalUninitialized or icls == C.CBackendLocalUninitialized)
                 end
                 check_exec_site(func, sig, locals, initialized, func.body.fragment)
+            elseif body_cls == C.CBackendBodyMixed then
+                local initialized = {}
+                for _, p in ipairs(func.params) do initialized[p.id.text] = true end
+                for id, rec in pairs(storage_by_func[func.name.text] or {}) do
+                    local icls = pvm.classof(rec.init_state)
+                    initialized[id] = not (rec.init_state == C.CBackendLocalUninitialized or icls == C.CBackendLocalUninitialized)
+                end
+                for _, site in ipairs(func.body.fragments or {}) do
+                    check_exec_site(func, nil, locals, initialized, site)
+                end
             end
             local blocks = func_blocks(func)
             for j = 1, #blocks do

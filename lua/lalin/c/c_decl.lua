@@ -776,6 +776,7 @@ local function bind_context(T)
     function M.parse_initializer(p)
         skip_newlines(p)
         if tok_punct(p, "{") then
+            advance(p)
             return M.parse_init_list(p)
         end
         -- Use assign_expr, NOT comma_expr: commas in a declaration separate

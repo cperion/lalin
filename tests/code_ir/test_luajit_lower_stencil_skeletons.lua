@@ -17,7 +17,7 @@ local Value = T.LalinValue
 local Lower = require("lalin.luajit_lower")(T)
 local Emit = require("lalin.luajit_emit")(T)
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBinary = require("tests.code_ir.stencil_binary_helper")
+local StencilBinary = require("tests.code_ir.copy_patch_mc_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_stencil_skeletons")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)

@@ -65,7 +65,7 @@ end
 local module, contracts = build_reduce_module()
 local lj_module, facts, artifacts, rejects = Backend.lower_module(module, { contracts = contracts })
 assert(#rejects == 0, rejects[1] and rejects[1].reason or "unexpected reject")
-local bank = assert(Backend.build_binary_bank(artifacts, { stem = "generated_copy_patch_artifact" }))
+local bank = assert(Backend.build_mc_bank(artifacts, { stem = "generated_copy_patch_artifact" }))
 local path = arg[1] or "target/artifacts/sum_i32_copy_patch_artifact.lua"
 assert(Backend.emit_lua_artifact(lj_module, artifacts, {
   bank = bank,

@@ -25,6 +25,10 @@ assert(#ctx.helper_order == 1, "helper register deduplicates")
 local add_src = table.concat(H.emit_helper(ctx.helper_order[1]), "\n")
 assert(add_src:match("ml_i32_add_intwrap"))
 assert(add_src:match("uint32_t"), "wrapping add uses same-width unsigned arithmetic")
+local float_add_src = table.concat(H.emit_helper(C.CBackendHelperFloatBinary(Core.BinAdd, f64)), "\n")
+assert(float_add_src:match("ml_f64_add"))
+assert(float_add_src:match("a1 %-") == nil and float_add_src:match("uint64_t") == nil, "float add keeps float arithmetic")
+assert(float_add_src:match("a1 %+ a2"), "float add emits direct C addition")
 
 local binary_ops = {
     Core.BinAdd, Core.BinSub, Core.BinMul, Core.BinDiv, Core.BinRem,

@@ -47,6 +47,21 @@ local function bind_context(T)
     local float = sym("float")
     local index = sym("index")
     local bool8 = sym("bool8")
+    env.type_families = {
+        pointer = sym("pointer"),
+        code_pointer = sym("code_pointer"),
+        named = sym("named"),
+        array = sym("array"),
+        slice = sym("slice"),
+        view = sym("view"),
+        byte_span = sym("byte_span"),
+        handle = sym("handle"),
+        lease = sym("lease"),
+        closure = sym("closure"),
+        imported_c = sym("imported_c"),
+        imported_c_func_pointer = sym("imported_c_func_pointer"),
+        vector = sym("vector"),
+    }
     local load_class = sym("load_class")
     local fill_class = sym("fill_class")
     local map_class = sym("map_class")
@@ -75,6 +90,7 @@ local function bind_context(T)
     local reduce_zip = sym("reduce_zip")
     local reduce_count = sym("reduce_count")
     local is_int_type, is_float_type, is_index_type, is_bool8_type, is_index_data_type
+    local is_type_family
     local same_type, unary_supported, binary_supported, reduction_supported, cast_supported
     local predicate_from_cmp_const
     local impl = {}
@@ -137,6 +153,7 @@ local function bind_context(T)
   predicate. is_float_type [impl.is_float_type] { input { sym("ty") [Any] }, pure },
   predicate. is_index_type [impl.is_index_type] { input { sym("ty") [Any] }, pure },
   predicate. is_bool8_type [impl.is_bool8_type] { input { sym("ty") [Any] }, pure },
+  predicate. is_type_family [impl.is_type_family] { input { sym("ty") [Any], sym("family") [Any] }, pure },
   predicate. is_index_data_type [impl.is_index_data_type] { input { sym("ty") [Any] }, pure },
   predicate. same_type [impl.same_type] { input { sym("a") [Any], sym("b") [Any] }, pure },
   predicate. unary_supported [impl.unary_supported] { input { sym("op") [Any], sym("ty") [Any] }, pure },
@@ -487,6 +504,84 @@ local function bind_context(T)
     llisle.classify_stencil_type { ty = P. ty },
     when { P. ty :is_bool8_type () },
     run { ret { class = type_class { kind = bool8, ty = P. ty } } },
+  },
+
+  rule. stencil_type_pointer {
+    llisle.classify_stencil_type { ty = P. ty },
+    when { P. ty :is_type_family (type_families.pointer) },
+    run { ret { class = type_class { kind = "pointer", ty = P. ty } } },
+  },
+
+  rule. stencil_type_code_pointer {
+    llisle.classify_stencil_type { ty = P. ty },
+    when { P. ty :is_type_family (type_families.code_pointer) },
+    run { ret { class = type_class { kind = "code_pointer", ty = P. ty } } },
+  },
+
+  rule. stencil_type_named {
+    llisle.classify_stencil_type { ty = P. ty },
+    when { P. ty :is_type_family (type_families.named) },
+    run { ret { class = type_class { kind = "named", ty = P. ty } } },
+  },
+
+  rule. stencil_type_array {
+    llisle.classify_stencil_type { ty = P. ty },
+    when { P. ty :is_type_family (type_families.array) },
+    run { ret { class = type_class { kind = "array", ty = P. ty } } },
+  },
+
+  rule. stencil_type_slice {
+    llisle.classify_stencil_type { ty = P. ty },
+    when { P. ty :is_type_family (type_families.slice) },
+    run { ret { class = type_class { kind = "slice", ty = P. ty } } },
+  },
+
+  rule. stencil_type_view {
+    llisle.classify_stencil_type { ty = P. ty },
+    when { P. ty :is_type_family (type_families.view) },
+    run { ret { class = type_class { kind = "view", ty = P. ty } } },
+  },
+
+  rule. stencil_type_byte_span {
+    llisle.classify_stencil_type { ty = P. ty },
+    when { P. ty :is_type_family (type_families.byte_span) },
+    run { ret { class = type_class { kind = "byte_span", ty = P. ty } } },
+  },
+
+  rule. stencil_type_handle {
+    llisle.classify_stencil_type { ty = P. ty },
+    when { P. ty :is_type_family (type_families.handle) },
+    run { ret { class = type_class { kind = "handle", ty = P. ty } } },
+  },
+
+  rule. stencil_type_lease {
+    llisle.classify_stencil_type { ty = P. ty },
+    when { P. ty :is_type_family (type_families.lease) },
+    run { ret { class = type_class { kind = "lease", ty = P. ty } } },
+  },
+
+  rule. stencil_type_closure {
+    llisle.classify_stencil_type { ty = P. ty },
+    when { P. ty :is_type_family (type_families.closure) },
+    run { ret { class = type_class { kind = "closure", ty = P. ty } } },
+  },
+
+  rule. stencil_type_imported_c {
+    llisle.classify_stencil_type { ty = P. ty },
+    when { P. ty :is_type_family (type_families.imported_c) },
+    run { ret { class = type_class { kind = "imported_c", ty = P. ty } } },
+  },
+
+  rule. stencil_type_imported_c_func_pointer {
+    llisle.classify_stencil_type { ty = P. ty },
+    when { P. ty :is_type_family (type_families.imported_c_func_pointer) },
+    run { ret { class = type_class { kind = "imported_c_func_pointer", ty = P. ty } } },
+  },
+
+  rule. stencil_type_vector {
+    llisle.classify_stencil_type { ty = P. ty },
+    when { P. ty :is_type_family (type_families.vector) },
+    run { ret { class = type_class { kind = "vector", ty = P. ty } } },
   },
 
   relation. plan_store_stencil {
@@ -1218,8 +1313,33 @@ local function bind_context(T)
         return ty == Code.CodeTyBool8
     end
 
+    is_type_family = function(ty, family)
+        family = tostring(family)
+        local cls = pvm.classof(ty)
+        if family == "pointer" then return cls == Code.CodeTyDataPtr end
+        if family == "code_pointer" then return cls == Code.CodeTyCodePtr end
+        if family == "named" then return cls == Code.CodeTyNamed end
+        if family == "array" then return cls == Code.CodeTyArray end
+        if family == "slice" then return cls == Code.CodeTySlice end
+        if family == "view" then return cls == Code.CodeTyView end
+        if family == "byte_span" then return ty == Code.CodeTyByteSpan or cls == Code.CodeTyByteSpan end
+        if family == "handle" then return cls == Code.CodeTyHandle end
+        if family == "lease" then return cls == Code.CodeTyLease end
+        if family == "closure" then return cls == Code.CodeTyClosure end
+        if family == "imported_c" then return cls == Code.CodeTyImportedC end
+        if family == "imported_c_func_pointer" then return cls == Code.CodeTyImportedCFuncPtr end
+        if family == "vector" then return cls == Code.CodeTyVector end
+        return false
+    end
+
     local function is_scalar_type(ty)
         return is_int_type(ty) or is_float_type(ty) or is_index_type(ty) or is_bool8_type(ty)
+    end
+
+    local function same_source_type(a, b)
+        if a == b then return true end
+        if a == nil or b == nil then return false end
+        return tostring(a) == tostring(b)
     end
 
     same_type = function(a, b)
@@ -1228,6 +1348,20 @@ local function bind_context(T)
         if ac ~= bc then return false end
         if ac == Code.CodeTyInt then return a.bits == b.bits and a.signedness == b.signedness end
         if ac == Code.CodeTyFloat then return a.bits == b.bits end
+        if ac == Code.CodeTyDataPtr then
+            if a.pointee == nil or b.pointee == nil then return a.pointee == b.pointee end
+            return same_type(a.pointee, b.pointee)
+        end
+        if ac == Code.CodeTyCodePtr then return a.sig == b.sig end
+        if ac == Code.CodeTyNamed then return a.module_name == b.module_name and a.type_name == b.type_name end
+        if ac == Code.CodeTyArray then return a.count == b.count and same_type(a.elem, b.elem) end
+        if ac == Code.CodeTySlice or ac == Code.CodeTyView then return same_type(a.elem, b.elem) end
+        if ac == Code.CodeTyHandle then return same_type(a.repr, b.repr) and same_source_type(a.source_ty, b.source_ty) end
+        if ac == Code.CodeTyLease then return same_type(a.base, b.base) and same_source_type(a.source_ty, b.source_ty) end
+        if ac == Code.CodeTyClosure then return a.sig == b.sig end
+        if ac == Code.CodeTyImportedC then return a.id == b.id or (a.id.module_name == b.id.module_name and a.id.spelling == b.id.spelling) end
+        if ac == Code.CodeTyImportedCFuncPtr then return a.sig == b.sig end
+        if ac == Code.CodeTyVector then return a.lanes == b.lanes and same_type(a.elem, b.elem) end
         return false
     end
 
@@ -1240,9 +1374,10 @@ local function bind_context(T)
     end
 
     unary_supported = function(op, ty)
+        if op == Stencil.StencilUnaryIdentity then return ty ~= Code.CodeTyVoid end
         if not is_scalar_type(ty) then return false end
         if op == Stencil.StencilUnaryBitNot then return supports_bitwise_ty(ty) end
-        if op == Stencil.StencilUnaryIdentity or op == Stencil.StencilUnaryNeg or op == Stencil.StencilUnaryBoolNot then return true end
+        if op == Stencil.StencilUnaryNeg or op == Stencil.StencilUnaryBoolNot then return true end
         return false
     end
 
@@ -1382,6 +1517,7 @@ local function bind_context(T)
     impl.is_float_type = is_float_type
     impl.is_index_type = is_index_type
     impl.is_bool8_type = is_bool8_type
+    impl.is_type_family = is_type_family
     impl.is_index_data_type = is_index_data_type
     impl.same_type = same_type
     impl.unary_supported = unary_supported

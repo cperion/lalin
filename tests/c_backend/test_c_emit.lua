@@ -5,6 +5,8 @@ local Schema = require("lalin.schema")
 local T = pvm.context(); Schema(T)
 
 local Core = T.LalinCore
+local Code = T.LalinCode
+local Exec = T.LalinExec
 local C = T.LalinC
 local Emit = require("lalin.c_emit")(T)
 local Validate = require("lalin.c_validate")(T)
@@ -12,6 +14,7 @@ local Helpers = require("lalin.c_helpers")(T)
 local CodeType = require("lalin.code_type")(T)
 
 local i32 = C.CBackendScalar(Core.ScalarI32)
+local code_i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local target = CodeType.default_target({})
 local sig_id = C.CBackendFuncSigId("sig_i32_i32_i32")
 local sig = C.CBackendFuncSig(sig_id, { i32, i32 }, i32)
@@ -32,6 +35,13 @@ local entry = C.CBackendBlock(
 
 local function blocks_body(blocks)
     return C.CBackendBodyBlocks(blocks[1].label, blocks)
+end
+
+local function assert_no_issues(report, label)
+    if #report.issues == 0 then return end
+    local names = {}
+    for i = 1, #report.issues do names[i] = tostring(pvm.classof(report.issues[i])) end
+    error(label .. ": " .. table.concat(names, ", "), 2)
 end
 
 local func = C.CBackendFunc(C.CBackendName("add"), "add", Core.VisibilityExport, sig_id, { a, b }, { r }, blocks_body({ entry }))
@@ -112,6 +122,64 @@ assert(complex_src:match("callee%("), "indirect call syntax")
 assert(complex_src:match("__xfer_join_1"), "transfer temp emitted")
 assert(complex_src:match("atomic_load_explicit"), "atomic helper emitted")
 assert_order(complex_src, "/* typedefs */", "/* signatures */", "/* type declarations", "/* globals */", "/* helpers */", "/* prototypes */", "/* bodies */")
+
+local exec_fragment = Exec.ExecFragment(
+    Exec.ExecFragmentId("exec:add"),
+    Code.CodeFuncId("fn:exec_add"),
+    {},
+    Exec.ExecFragmentCall(
+        Code.CodeFuncId("fn:add"),
+        {},
+        Exec.ExecResultValue(code_i32, Code.CodeValueId("v:exec_result"))
+    )
+)
+local exec_site = C.CBackendExecSite(
+    exec_fragment,
+    C.CBackendExecEmitFunction,
+    {
+        C.CBackendExecArg("a", C.CBackendAtomLocal(a.id), i32),
+        C.CBackendExecArg("b", C.CBackendAtomLocal(b.id), i32),
+    },
+    C.CBackendExecResultLocal(r.id, i32)
+)
+local exec_func = C.CBackendFunc(C.CBackendName("exec_add"), "exec_add", Core.VisibilityExport, sig_id, { a, b }, { r }, C.CBackendBodyExec(exec_site))
+local exec_unit = C.CBackendUnit("exec", target, { sig }, {}, {}, {}, { helper }, { func, exec_func })
+local exec_report = Validate.validate(exec_unit)
+assert_no_issues(exec_report, "exec body should validate")
+local exec_src = Emit.emit_artifact(exec_unit).source
+assert(exec_src:match("int32_t exec_add%(int32_t a, int32_t b%)"), "exec function emitted")
+assert(exec_src:match("r = add%(a, b%);"), "ExecFragmentCall projects to C function call")
+assert(exec_src:match("return r;"), "exec result returned")
+
+local mixed_void_sig_id = C.CBackendFuncSigId("sig_mixed_void")
+local mixed_void_sig = C.CBackendFuncSig(mixed_void_sig_id, { i32, i32 }, C.CBackendVoid)
+local mixed_entry = C.CBackendBlock(C.CBackendLabel("entry"), {}, {}, C.CBackendReturnVoid)
+local mixed_site = C.CBackendExecSite(
+    exec_fragment,
+    C.CBackendExecEmitInline,
+    {
+        C.CBackendExecArg("a", C.CBackendAtomLocal(a.id), i32),
+        C.CBackendExecArg("b", C.CBackendAtomLocal(b.id), i32),
+    },
+    C.CBackendExecResultLocal(r.id, i32)
+)
+local mixed_func = C.CBackendFunc(
+    C.CBackendName("mixed_exec"),
+    "mixed_exec",
+    Core.VisibilityExport,
+    mixed_void_sig_id,
+    { a, b },
+    { r },
+    C.CBackendBodyMixed(C.CBackendLabel("entry"), { mixed_entry }, { mixed_site })
+)
+local mixed_unit = C.CBackendUnit("mixed", target, { sig, mixed_void_sig }, {}, {}, {}, { helper }, { func, mixed_func })
+local mixed_report = Validate.validate(mixed_unit)
+assert_no_issues(mixed_report, "mixed exec body should validate")
+local mixed_src = Emit.emit_artifact(mixed_unit).source
+assert(mixed_src:match("void mixed_exec%(int32_t a, int32_t b%)"), "mixed function emitted")
+assert(mixed_src:match("r = add%(a, b%);"), "mixed exec prelude projected to call")
+local mixed_start = assert(mixed_src:find("void mixed_exec(int32_t a, int32_t b) {", 1, true))
+assert(assert(mixed_src:find("r = add(a, b);", mixed_start, true)) < assert(mixed_src:find("entry:", mixed_start, true)), "mixed exec prelude emits before block body")
 
 local freestanding_src = Emit.emit_artifact(C.CBackendUnit("free", CodeType.default_target({ platform = "freestanding", dialect = "c99" }), {}, {}, {}, {}, { atomic_helper }, {})).source
 assert(freestanding_src:match("atomics require C11"), "non-C11/freestanding atomic diagnostic comment")

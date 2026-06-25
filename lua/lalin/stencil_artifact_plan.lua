@@ -28,7 +28,7 @@ local function bind_context(T)
         if cls == Code.CodeTyFloat then return "f" .. tostring(ty.bits) end
         if ty == Code.CodeTyIndex then return "index" end
         if ty == Code.CodeTyBool8 then return "bool8" end
-        return "ty"
+        return sanitize(CodeType.code_type_key(ty))
     end
 
     local function c_type(ty)
@@ -148,6 +148,10 @@ local function bind_context(T)
         return c_type(ty)
     end
 
+    local function const_elem_ptr_decl(ty, name)
+        return c_type(ty) .. " const *" .. name
+    end
+
     local function void_decl(symbol, args)
         return "void " .. symbol.text .. "(" .. table.concat(args, ", ") .. ");"
     end
@@ -168,12 +172,32 @@ local function bind_context(T)
         return pvm.classof(ty) == Code.CodeTyFloat
     end
 
+    local function same_source_type(a, b)
+        if a == b then return true end
+        if a == nil or b == nil then return false end
+        return tostring(a) == tostring(b)
+    end
+
     local function same_type(a, b)
         if a == b then return true end
         local ac, bc = pvm.classof(a), pvm.classof(b)
         if ac ~= bc then return false end
         if ac == Code.CodeTyInt then return a.bits == b.bits and a.signedness == b.signedness end
         if ac == Code.CodeTyFloat then return a.bits == b.bits end
+        if ac == Code.CodeTyDataPtr then
+            if a.pointee == nil or b.pointee == nil then return a.pointee == b.pointee end
+            return same_type(a.pointee, b.pointee)
+        end
+        if ac == Code.CodeTyCodePtr then return a.sig == b.sig end
+        if ac == Code.CodeTyNamed then return a.module_name == b.module_name and a.type_name == b.type_name end
+        if ac == Code.CodeTyArray then return a.count == b.count and same_type(a.elem, b.elem) end
+        if ac == Code.CodeTySlice or ac == Code.CodeTyView then return same_type(a.elem, b.elem) end
+        if ac == Code.CodeTyHandle then return same_type(a.repr, b.repr) and same_source_type(a.source_ty, b.source_ty) end
+        if ac == Code.CodeTyLease then return same_type(a.base, b.base) and same_source_type(a.source_ty, b.source_ty) end
+        if ac == Code.CodeTyClosure then return a.sig == b.sig end
+        if ac == Code.CodeTyImportedC then return a.id == b.id or (a.id.module_name == b.id.module_name and a.id.spelling == b.id.spelling) end
+        if ac == Code.CodeTyImportedCFuncPtr then return a.sig == b.sig end
+        if ac == Code.CodeTyVector then return a.lanes == b.lanes and same_type(a.elem, b.elem) end
         return false
     end
 
@@ -218,6 +242,7 @@ local function bind_context(T)
     end
 
     local function unary_supported(op, ty)
+        if op == Stencil.StencilUnaryIdentity then return ty ~= Code.CodeTyVoid end
         if op == Stencil.StencilUnaryBitNot then return supports_bitwise_ty(ty) end
         return is_scalar(ty)
     end
@@ -275,11 +300,34 @@ local function bind_context(T)
         return false
     end
 
-    local function access_vector_fact(access)
+    local function access_info_fact(info, access)
+        if info == nil then return nil end
+        local facts = info.access_facts or info.vector_facts
+        if type(facts) ~= "table" then return nil end
+        return facts[access.name]
+    end
+
+    local function access_alias_fact(info, access)
+        local fact = access_info_fact(info, access)
+        if fact ~= nil and fact.alias ~= nil then return fact.alias end
+        if info ~= nil and info.noalias == true then return Stencil.StencilAliasNoAlias end
+        return Stencil.StencilAliasUnknown
+    end
+
+    local function access_alignment_fact(info, access)
+        local fact = access_info_fact(info, access)
+        local alignment = fact and (fact.alignment or fact.align)
+        if alignment == nil and info ~= nil then alignment = info.alignment or info.align end
+        if type(alignment) == "number" and alignment > 0 then return Stencil.StencilAlignmentKnown(alignment) end
+        if alignment ~= nil then return alignment end
+        return Stencil.StencilAlignmentUnknown
+    end
+
+    local function access_vector_fact(access, info)
         return Stencil.StencilAccessVectorFact(
             access.name,
-            Stencil.StencilAliasUnknown,
-            Stencil.StencilAlignmentUnknown,
+            access_alias_fact(info, access),
+            access_alignment_fact(info, access),
             access.role == Stencil.StencilAccessRead,
             topology_unit_stride(access.topology)
         )
@@ -292,9 +340,9 @@ local function bind_context(T)
         return true
     end
 
-    local function vectorization_facts(desc)
+    local function vectorization_facts(desc, info)
         local access_facts = {}
-        for i, access in ipairs(desc.accesses or {}) do access_facts[i] = access_vector_fact(access) end
+        for i, access in ipairs(desc.accesses or {}) do access_facts[i] = access_vector_fact(access, info) end
         local reducer = desc.reducer
         return Stencil.StencilVectorizationFacts(
             access_facts,
@@ -356,15 +404,15 @@ local function bind_context(T)
                     tonumber(sched.unroll) or 1,
                     tonumber(sched.interleave) or 1,
                     policy,
-                    vectorization_facts(desc)
+                    vectorization_facts(desc, info)
                 )
             end
         elseif Schedule ~= nil and (sched == Schedule.ScheduleScalarIndex or sched == Schedule.ScheduleScalarPointer or sched == Schedule.ScheduleClosedForm) then
             return Stencil.StencilScheduleScalar(policy)
         end
         local unroll = unroll_factor(info)
-        if unroll > 1 and auto_vector_vocab(desc.vocab) then return Stencil.StencilScheduleUnrolled(unroll, policy, vectorization_facts(desc)) end
-        if auto_vector_vocab(desc.vocab) then return Stencil.StencilScheduleAutoVector(policy, vectorization_facts(desc)) end
+        if unroll > 1 and auto_vector_vocab(desc.vocab) then return Stencil.StencilScheduleUnrolled(unroll, policy, vectorization_facts(desc, info)) end
+        if auto_vector_vocab(desc.vocab) then return Stencil.StencilScheduleAutoVector(policy, vectorization_facts(desc, info)) end
         return Stencil.StencilScheduleScalar(policy)
     end
 
@@ -446,8 +494,8 @@ local function bind_context(T)
         local field = field_topology(access.topology)
         if field == nil then return default end
         local name = default:match("%*%s*([_%a][_%w]*)") or access.name
-        local is_const = default:match("^%s*const%s+") ~= nil
-        return (is_const and "const " or "") .. c_type(field.record_ty) .. " *" .. name
+        local is_const = default:match("%f[%w]const%f[%W]") ~= nil
+        return c_type(field.record_ty) .. (is_const and " const *" or " *") .. name
     end
 
     local function abi_param_type_for_access(access, default_ty)
@@ -585,7 +633,7 @@ local function bind_context(T)
             proof_list(plan),
             { schedule = info and info.schedule, unroll = info and info.unroll, unroll_factor = info and info.unroll_factor }
         )
-        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, { "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop", c_type(result_ty) .. " init" }))
+        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, { const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop", c_type(result_ty) .. " init" }))
     end
 
     function api.map_array_artifact(op, info)
@@ -615,7 +663,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop" }))
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop" }))
     end
 
     function api.zip_map_array_artifact(op, info)
@@ -648,7 +696,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(lhs_ty), Code.CodeTyDataPtr(rhs_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", "const " .. c_type(lhs_ty) .. " *lhs", "const " .. c_type(rhs_ty) .. " *rhs", "int32_t start", "int32_t stop" }))
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", const_elem_ptr_decl(lhs_ty, "lhs"), const_elem_ptr_decl(rhs_ty, "rhs"), "int32_t start", "int32_t stop" }))
     end
 
     function api.scan_array_artifact(reduction, plan, info)
@@ -683,7 +731,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty(), result_ty }, result_ty), proof_list(plan), info)
-        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, { c_type(result_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop", c_type(result_ty) .. " init" }))
+        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, { c_type(result_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop", c_type(result_ty) .. " init" }))
     end
 
     function api.copy_array_artifact(info)
@@ -712,7 +760,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *src", "int32_t start", "int32_t stop" }))
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "src"), "int32_t start", "int32_t stop" }))
     end
 
     function api.fill_array_artifact(info)
@@ -766,7 +814,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, i32_ty()), {}, info)
-        return artifact(inst, symbol, int32_desc_decl(symbol, desc, { "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop" }))
+        return artifact(inst, symbol, int32_desc_decl(symbol, desc, { const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop" }))
     end
 
     function api.partition_array_artifact(pred, info)
@@ -797,7 +845,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, i32_ty()), {}, info)
-        return artifact(inst, symbol, int32_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop" }))
+        return artifact(inst, symbol, int32_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop" }))
     end
 
     function api.cast_array_artifact(op, info)
@@ -826,7 +874,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(dst_ty), Code.CodeTyDataPtr(src_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(dst_ty) .. " *dst", "const " .. c_type(src_ty) .. " *xs", "int32_t start", "int32_t stop" }))
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(dst_ty) .. " *dst", const_elem_ptr_decl(src_ty, "xs"), "int32_t start", "int32_t stop" }))
     end
 
     function api.compare_array_artifact(pred, info)
@@ -855,7 +903,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop" }))
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop" }))
     end
 
     function api.zip_compare_array_artifact(cmp, info)
@@ -887,7 +935,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(lhs_ty), Code.CodeTyDataPtr(rhs_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", "const " .. c_type(lhs_ty) .. " *lhs", "const " .. c_type(rhs_ty) .. " *rhs", "int32_t start", "int32_t stop" }))
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", const_elem_ptr_decl(lhs_ty, "lhs"), const_elem_ptr_decl(rhs_ty, "rhs"), "int32_t start", "int32_t stop" }))
     end
 
     function api.gather_array_artifact(info)
@@ -916,7 +964,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(index_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *src", "const " .. c_type(index_ty) .. " *idx", "int32_t start", "int32_t stop" }))
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "src"), const_elem_ptr_decl(index_ty, "idx"), "int32_t start", "int32_t stop" }))
     end
 
     function api.scatter_array_artifact(info)
@@ -947,7 +995,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(index_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", "const " .. c_type(elem_ty) .. " *src", "const " .. c_type(index_ty) .. " *idx", "int32_t start", "int32_t stop" }))
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "src"), const_elem_ptr_decl(index_ty, "idx"), "int32_t start", "int32_t stop" }))
     end
 
     function api.in_place_map_array_artifact(op, info)
@@ -1001,7 +1049,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, i32_ty()), {}, info)
-        return artifact(inst, symbol, int32_desc_decl(symbol, desc, { "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop" }))
+        return artifact(inst, symbol, int32_desc_decl(symbol, desc, { const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop" }))
     end
 
     function api.map_reduce_array_artifact(op, reduction, plan, info)
@@ -1036,7 +1084,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty(), result_ty }, result_ty), proof_list(plan), info)
-        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, { "const " .. c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop", c_type(result_ty) .. " init" }))
+        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, { const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop", c_type(result_ty) .. " init" }))
     end
 
     function api.zip_reduce_array_artifact(op, reduction, plan, info)
@@ -1074,7 +1122,7 @@ local function bind_context(T)
         )
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(lhs_ty), Code.CodeTyDataPtr(rhs_ty), i32_ty(), i32_ty(), result_ty }, result_ty), proof_list(plan), info)
-        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, { "const " .. c_type(lhs_ty) .. " *lhs", "const " .. c_type(rhs_ty) .. " *rhs", "int32_t start", "int32_t stop", c_type(result_ty) .. " init" }))
+        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, { const_elem_ptr_decl(lhs_ty, "lhs"), const_elem_ptr_decl(rhs_ty, "rhs"), "int32_t start", "int32_t stop", c_type(result_ty) .. " init" }))
     end
 
     local function access_named(desc, name)

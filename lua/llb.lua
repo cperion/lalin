@@ -3,7 +3,7 @@ LLB: Lua Language Builder
 Version: 0.5.0 gps-vm atom/protocol model
 Target: LuaJIT / Lua 5.1
 
-LLB is a parserless language workbench:
+LLB is a parserless language-family workbench:
 
   Lua syntax -> Lua values -> LLB captures -> role normalization -> AST/IR
 
@@ -16,7 +16,7 @@ Minimal grammar example:
   local llb = require("llb")
   local g = llb.grammar
 
-  local Mini = llb.define "Mini" {
+  local Mini = llb.dialect "Mini" {
     g.role .decls   { kind = "array" },
     g.role .body    { kind = "array" },
     g.role .product { kind = "product" },
@@ -323,7 +323,7 @@ function llb.codegen.describe(fn)
     tag = "CodegenFunction",
     id = meta.id,
     kind = meta.kind,
-    language = meta.language,
+    dialect = meta.dialect,
     family = meta.family,
     role = meta.role,
     head = meta.head,
@@ -793,7 +793,7 @@ do
 --
 -- Lalin native regions, LLPVM phases, process machines, parsers, and GPS
 -- streams are lowerings/projections of this shared shape. LLB owns the
--- semantics and the bare `region.` head; member languages consume or lower
+-- semantics and the bare `region.` head; member dialects consume or lower
 -- region descriptors through their own typed backends.
 
 local Exit, Protocol, Region, RegionLowering, RegionMaterializer = {}, {}, {}, {}, {}
@@ -2566,7 +2566,7 @@ end
 --
 -- Generic nodes are the default normalized AST form for languages that do not
 -- provide their own ASDL layer. Lalin uses richer ASDL values, but the LLB
--- core keeps this small node model for language authors and examples.
+-- core keeps this small node model for dialect authors and examples.
 
 local Node = {}
 Node.__index = Node
@@ -2864,7 +2864,7 @@ local function fragment_like(f, items, origin)
   return fragment(f.role, items, origin or f.origin, {
     algebra = rawget(f, "algebra"),
     role_spec = rawget(f, "role_spec"),
-    lang = rawget(f, "lang"),
+    dialect = rawget(f, "dialect"),
     payload_role = rawget(f, "payload_role"),
   })
 end
@@ -3011,7 +3011,7 @@ local FamilyBundle = {}; FamilyBundle.__index = FamilyBundle
 
 -- Zones are semantic partitions inside a family value. They are not scopes and
 -- do not mutate environments. They answer: "these items belong to this family
--- member language."
+-- member dialect."
 --
 --   lalin { ... }  -> Zone(member="lalin.dsl")
 --   llpvm    { ... }  -> Zone(member="llpvm.dsl")
@@ -3040,12 +3040,12 @@ function llb.zone(spec)
   local z = {
     __llb_tag = "Zone",
     family = tostring(spec.family or ""),
-    member = tostring(spec.member or spec.lang or spec.name or ""),
-    name = tostring(spec.name or spec.member or spec.lang or ""),
+    member = tostring(spec.member or spec.dialect or spec.name or ""),
+    name = tostring(spec.name or spec.member or spec.dialect or ""),
     role = tostring(spec.role or "items"),
     items = items,
     metadata = spec.metadata,
-    origin = spec.origin or source.capture("zone", { hint = spec.name or spec.member or spec.lang }),
+    origin = spec.origin or source.capture("zone", { hint = spec.name or spec.member or spec.dialect }),
   }
   for i = 1, #items do z[i] = items[i] end
   return setmetatable(z, Zone)
@@ -3058,11 +3058,11 @@ function llb.zone_head(spec)
   return setmetatable({
     __llb_tag = "ZoneHead",
     family = tostring(spec.family or ""),
-    member = tostring(spec.member or spec.lang or spec.name or ""),
-    name = tostring(spec.name or spec.member or spec.lang or ""),
+    member = tostring(spec.member or spec.dialect or spec.name or ""),
+    name = tostring(spec.name or spec.member or spec.dialect or ""),
     role = tostring(spec.role or "items"),
     metadata = spec.metadata,
-    origin = spec.origin or source.capture("zone-head", { hint = spec.name or spec.member or spec.lang }),
+    origin = spec.origin or source.capture("zone-head", { hint = spec.name or spec.member or spec.dialect }),
   }, ZoneHead)
 end
 
@@ -3199,7 +3199,7 @@ local DEFAULT_EXPORTS = {
 --   g.role .decls { kind = "array" }
 --   g.head .fn { g.slot .name [g.name], ... }
 --
--- The declarations are later compiled by llb.define into runtime heads.
+-- The declarations are later compiled by llb.dialect into runtime heads.
 
 local boot_node
 local RoleRef = {}; RoleRef.__index = RoleRef
@@ -3290,7 +3290,7 @@ llb.grammar = setmetatable({
 -- Normalization
 -- ---------------------------------------------------------------------------
 --
--- Normalization is where raw Lua values become language meaning. Slots decide
+-- Normalization is where raw Lua values become dialect meaning. Slots decide
 -- which channel they accept; roles decide how to interpret the value delivered
 -- through that channel. This is the central replacement for parser productions.
 
@@ -3579,7 +3579,7 @@ end
 local function role_region_by_spec(ctx, role_name, spec, v)
   local kind = spec.kind or role_name
   if spec.region then
-    if is_tag(spec.region, "Region") then return spec.region:gps(ctx.lang, ctx, v) end
+    if is_tag(spec.region, "Region") then return spec.region:gps(ctx.dialect, ctx, v) end
     llb.fail("role " .. tostring(role_name) .. " custom region must be an LLB Region descriptor", {
       code = "E_ROLE_REGION_DESCRIPTOR",
       primary = spec.origin or origin_of(spec.region),
@@ -3614,14 +3614,14 @@ end
 
 local function role_region_reflective(ctx, role_name, v)
   ctx = ctx or {}
-  local lang = ctx.lang
+  local lang = ctx.dialect
   local spec = (lang and lang.roles and lang.roles[role_name]) or {}
   return role_region_by_spec(role_context(ctx, role_name, spec), role_name, spec, v)
 end
 
 local function collect_role_reflective(ctx, role_name, v)
   ctx = ctx or {}
-  local lang = ctx.lang
+  local lang = ctx.dialect
   local spec = (lang and lang.roles and lang.roles[role_name]) or {}
   local kind = spec.kind or role_name
   local subctx = role_context(ctx, role_name, spec)
@@ -3711,14 +3711,14 @@ local function compile_spread_expander(lang, role_name, spec)
   end
   local machine = setmetatable({
     __llb_tag = "SpreadMachine",
-    lang = lang,
+    dialect = lang,
     role = role_name,
     role_kind = spec.kind or role_name,
     descriptor = descriptor,
     region = llb.codegen.register(region_fn, {
       id = tostring(lang.name) .. ".spread." .. tostring(role_name) .. ".region",
       kind = "spread-region",
-      language = lang.name,
+      dialect = lang.name,
       role = role_name,
       role_kind = spec.kind or role_name,
       mode = "fast",
@@ -3728,19 +3728,19 @@ local function compile_spread_expander(lang, role_name, spec)
     append = llb.codegen.register(append_fn, {
       id = tostring(lang.name) .. ".spread." .. tostring(role_name) .. ".append",
       kind = "spread-materializer",
-      language = lang.name,
+      dialect = lang.name,
       role = role_name,
       role_kind = spec.kind or role_name,
       mode = "fast",
       origin = spec.origin,
       generated = false,
     }),
-    meta = { language = lang.name, role = role_name, role_kind = spec.kind or role_name, origin = spec.origin },
+    meta = { dialect = lang.name, role = role_name, role_kind = spec.kind or role_name, origin = spec.origin },
   }, SpreadMachine)
   return llb.codegen.register(machine, {
     id = tostring(lang.name) .. ".spread." .. tostring(role_name),
     kind = "spread-machine",
-    language = lang.name,
+    dialect = lang.name,
     role = role_name,
     role_kind = spec.kind or role_name,
     mode = "fast",
@@ -3753,7 +3753,7 @@ local function compile_role_region(lang, role_name, spec)
   spec = spec or {}
   return function(ctx, value)
     local subctx = role_context(ctx, role_name, spec)
-    subctx.lang = subctx.lang or lang
+    subctx.dialect = subctx.dialect or lang
     return role_region_by_spec(subctx, role_name, spec, value)
   end
 end
@@ -3763,7 +3763,7 @@ local function compile_role_collector(lang, role_name, spec, region_fn)
   local kind = spec.kind or role_name
   return function(ctx, value)
     local subctx = role_context(ctx, role_name, spec)
-    subctx.lang = subctx.lang or lang
+    subctx.dialect = subctx.dialect or lang
     local out
     if kind == "mixed" and not spec.region then
       out = {
@@ -3801,14 +3801,14 @@ local function compile_role_normalizer(lang, role_name, spec)
   end
   local machine = setmetatable({
     __llb_tag = "RoleMachine",
-    lang = lang,
+    dialect = lang,
     role = role_name,
     role_kind = role_kind_name,
     descriptor = descriptor,
     region = llb.codegen.register(region_fn, {
       id = tostring(lang.name) .. ".role." .. tostring(role_name) .. ".region",
       kind = "role-region",
-      language = lang.name,
+      dialect = lang.name,
       role = role_name,
       role_kind = role_kind_name,
       mode = "fast",
@@ -3819,7 +3819,7 @@ local function compile_role_normalizer(lang, role_name, spec)
     collect = llb.codegen.register(collect_fn, {
       id = tostring(lang.name) .. ".role." .. tostring(role_name) .. ".collect",
       kind = "role-materializer",
-      language = lang.name,
+      dialect = lang.name,
       role = role_name,
       role_kind = role_kind_name,
       mode = "fast",
@@ -3827,12 +3827,12 @@ local function compile_role_normalizer(lang, role_name, spec)
       reflective = normalize_role_reflective,
       generated = false,
     }),
-    meta = { language = lang.name, role = role_name, role_kind = role_kind_name, origin = spec.origin },
+    meta = { dialect = lang.name, role = role_name, role_kind = role_kind_name, origin = spec.origin },
   }, RoleMachine)
   return llb.codegen.register(machine, {
     id = tostring(lang.name) .. ".role." .. tostring(role_name),
     kind = "role-machine",
-    language = lang.name,
+    dialect = lang.name,
     role = role_name,
     role_kind = spec.kind or role_name,
     mode = "fast",
@@ -3853,11 +3853,11 @@ end)()
 
 spread_region = role_ops.spread_region
 
-function llb.codegen.compile_language(lang, opts)
+function llb.codegen.compile_dialect(lang, opts)
   opts = opts or {}
   local compiled = {
-    __llb_tag = "CompiledLanguageRuntime",
-    lang = lang,
+    __llb_tag = "CompiledDialectRuntime",
+    dialect = lang,
     mode = opts.mode or "fast",
     roles = {},
     spreads = {},
@@ -3883,7 +3883,7 @@ end
 
 role_region = function(ctx, role_name, v)
   ctx = ctx or {}
-  local lang = ctx.lang
+  local lang = ctx.dialect
   local compiled = lang and lang.compiled
   local role_machine = compiled and compiled.roles and compiled.roles[role_name]
   if role_machine and role_machine.region and ctx.codegen ~= false and ctx.reflective ~= true then
@@ -3894,7 +3894,7 @@ end
 
 collect_role = function(ctx, role_name, v)
   ctx = ctx or {}
-  local lang = ctx.lang
+  local lang = ctx.dialect
   local compiled = lang and lang.compiled
   local role_machine = compiled and compiled.roles and compiled.roles[role_name]
   if role_machine and role_machine.collect and ctx.codegen ~= false and ctx.reflective ~= true then
@@ -3938,7 +3938,7 @@ function llb.is_complete(v) return not is_tag(v, "Stage") or #stage_missing_slot
 --   { ... }      -> call:table
 --   [i32]        -> index:type
 --
--- When all required slots are filled, the head emits the normalized language
+-- When all required slots are filled, the head emits the normalized dialect
 -- value. If optional slots remain, the incomplete stage is intentionally useful
 -- for headers and progressive object construction.
 
@@ -4063,7 +4063,7 @@ local function normalize_stage_slots(stage)
           channel = event and event.channel or nil,
         },
       })
-      fields[slot.name] = collect_role({ lang = stage.lang, head = stage.head.name, slot = slot, event = event, origin = origins[slot.name] }, slot.role, raw)
+      fields[slot.name] = collect_role({ dialect = stage.dialect, head = stage.head.name, slot = slot, event = event, origin = origins[slot.name] }, slot.role, raw)
     elseif slot.optional then
       fields[slot.name] = slot.default
     else
@@ -4077,8 +4077,8 @@ local function build_stage(stage)
   local fields, origins = normalize_stage_slots(stage)
   fields.origin = fields.origin or stage.origin
   fields.slot_origins = origins
-  local out = stage.head.emit and stage.head.emit(fields, stage.lang, { head = stage.head, raw = stage.raw, origins = origins, events = stage.events, stage = stage }) or { tag = stage.head.tag or stage.head.name, fields = fields }
-  return attach_node_meta(out, stage.head.tag or stage.head.name, { language = stage.lang.name, head = stage.head.name, head_spec = stage.head, fields = fields, slot_origins = origins, raw = stage.raw, events = stage.events, origin = stage.origin })
+  local out = stage.head.emit and stage.head.emit(fields, stage.dialect, { head = stage.head, raw = stage.raw, origins = origins, events = stage.events, stage = stage }) or { tag = stage.head.tag or stage.head.name, fields = fields }
+  return attach_node_meta(out, stage.head.tag or stage.head.name, { dialect = stage.dialect.name, head = stage.head.name, head_spec = stage.head, fields = fields, slot_origins = origins, raw = stage.raw, events = stage.events, origin = stage.origin })
 end
 local function maybe_finish(stage) if remaining_optional(stage.head.slots, stage.next_index) then return build_stage(stage) end; return stage end
 local function consume_event(stage, event)
@@ -4087,13 +4087,13 @@ local function consume_event(stage, event)
   local slots, i = stage.head.slots, stage.next_index
   while i <= #slots do
     local slot = slots[i]
-    if event_fits(stage.lang, slot, event) then
-      local ns = setmetatable({ __llb_tag = "Stage", lang = stage.lang, head = stage.head, raw = shallow_copy(stage.raw), origins = shallow_copy(stage.origins), events = shallow_copy(stage.events), seen = shallow_copy(stage.seen), next_index = i + 1, origin = stage.origin }, RuntimeStage)
+    if event_fits(stage.dialect, slot, event) then
+      local ns = setmetatable({ __llb_tag = "Stage", dialect = stage.dialect, head = stage.head, raw = shallow_copy(stage.raw), origins = shallow_copy(stage.origins), events = shallow_copy(stage.events), seen = shallow_copy(stage.seen), next_index = i + 1, origin = stage.origin }, RuntimeStage)
       ns.raw[slot.name], ns.origins[slot.name], ns.events[slot.name], ns.seen[slot.name] = value, origin or stage.origin, event, true
       return maybe_finish(ns)
     elseif slot.optional then i = i + 1
     else
-      llb.fail("expected slot " .. tostring(slot.name) .. " [" .. tostring(slot.role) .. "] via " .. slot_channel_label(stage.lang, slot) .. ", got " .. event_label(event), {
+      llb.fail("expected slot " .. tostring(slot.name) .. " [" .. tostring(slot.role) .. "] via " .. slot_channel_label(stage.dialect, slot) .. ", got " .. event_label(event), {
         primary = origin or stage.origin,
         code = "E_BAD_SLOT",
         event = event,
@@ -4118,7 +4118,7 @@ end
 local function head_origin(h)
   return rawget(h, "origin") or source.capture("head", { hint = h.spec.name })
 end
-local function start_stage(h) return setmetatable({ __llb_tag = "Stage", lang = h.lang, head = h.spec, raw = {}, origins = {}, events = {}, seen = {}, next_index = 1, origin = head_origin(h) }, RuntimeStage) end
+local function start_stage(h) return setmetatable({ __llb_tag = "Stage", dialect = h.dialect, head = h.spec, raw = {}, origins = {}, events = {}, seen = {}, next_index = 1, origin = head_origin(h) }, RuntimeStage) end
 local function head_event_region_gen(param, state)
   state = state or { stage = param.start(), source_state = param.source_state }
   if state.done then return nil end
@@ -4167,7 +4167,7 @@ end
 RuntimeHead.__call = function(self, ...)
   local p, o = pack(...), source.capture("head-call", { hint = self.spec.name })
   if p.n > 0 and is_tag(p[1], "OriginValue") then o = p[1].__llb_origin or p[1].origin or o end
-  if p.n == 0 and #self.spec.slots == 0 then return build_stage(setmetatable({ __llb_tag = "Stage", lang = self.lang, head = self.spec, raw = {}, origins = {}, events = {}, seen = {}, next_index = 1, origin = o }, RuntimeStage)) end
+  if p.n == 0 and #self.spec.slots == 0 then return build_stage(setmetatable({ __llb_tag = "Stage", dialect = self.dialect, head = self.spec, raw = {}, origins = {}, events = {}, seen = {}, next_index = 1, origin = o }, RuntimeStage)) end
   local v = p.n == 0 and UNIT or p[1]
   if p.n == 1 and v == nil then v = NIL end
   if p.n <= 1 then return consume(start_stage(self), "call", v, p.n, o) end
@@ -4187,11 +4187,11 @@ RuntimeStage.__call = function(self, ...)
 end
 local HeadAt = {}
 HeadAt.__index = function(self, key)
-  local h = setmetatable({ __llb_tag = "Head", lang = self.head.lang, spec = self.head.spec, origin = self.origin }, RuntimeHead)
+  local h = setmetatable({ __llb_tag = "Head", dialect = self.head.dialect, spec = self.head.spec, origin = self.origin }, RuntimeHead)
   return RuntimeHead.__index(h, key)
 end
 HeadAt.__call = function(self, ...)
-  local h = setmetatable({ __llb_tag = "Head", lang = self.head.lang, spec = self.head.spec, origin = self.origin }, RuntimeHead)
+  local h = setmetatable({ __llb_tag = "Head", dialect = self.head.dialect, spec = self.head.spec, origin = self.origin }, RuntimeHead)
   return RuntimeHead.__call(h, ...)
 end
 
@@ -4224,7 +4224,7 @@ function llb.collect_head_events(head, events, param, state)
   llb.fail("llb.collect_head_events expects an LLB head", { primary = origin_of(head), code = "E_EXPECTED_HEAD" }, 2)
 end
 
-local function runtime_head(lang, spec) return setmetatable({ __llb_tag = "Head", lang = lang, spec = spec }, RuntimeHead) end
+local function runtime_head(lang, spec) return setmetatable({ __llb_tag = "Head", dialect = lang, spec = spec }, RuntimeHead) end
 
 local function install_head_codegen()
 local CompiledHead, CompiledStage = {}, {}
@@ -4250,7 +4250,7 @@ local function compiled_build_stage(stage)
         },
       })
       local role_machine = stage.compiled.roles and stage.compiled.roles[slot.role]
-      local ctx = { lang = stage.lang, head = stage.head.name, slot = slot, event = event, origin = origins[slot.name] }
+      local ctx = { dialect = stage.dialect, head = stage.head.name, slot = slot, event = event, origin = origins[slot.name] }
       fields[slot.name] = role_machine and role_machine.collect and role_machine.collect(ctx, raw) or collect_role(ctx, slot.role, raw)
     elseif slot.optional then
       fields[slot.name] = slot.default
@@ -4260,8 +4260,8 @@ local function compiled_build_stage(stage)
   end
   fields.origin = fields.origin or stage.origin
   fields.slot_origins = origins
-  local out = stage.head.emit and stage.head.emit(fields, stage.lang, { head = stage.head, raw = stage.raw, origins = origins, events = stage.events, stage = stage }) or { tag = stage.head.tag or stage.head.name, fields = fields }
-  return attach_node_meta(out, stage.head.tag or stage.head.name, { language = stage.lang.name, head = stage.head.name, head_spec = stage.head, fields = fields, slot_origins = origins, raw = stage.raw, events = stage.events, origin = stage.origin })
+  local out = stage.head.emit and stage.head.emit(fields, stage.dialect, { head = stage.head, raw = stage.raw, origins = origins, events = stage.events, stage = stage }) or { tag = stage.head.tag or stage.head.name, fields = fields }
+  return attach_node_meta(out, stage.head.tag or stage.head.name, { dialect = stage.dialect.name, head = stage.head.name, head_spec = stage.head, fields = fields, slot_origins = origins, raw = stage.raw, events = stage.events, origin = stage.origin })
 end
 
 local function compiled_maybe_finish(stage)
@@ -4272,7 +4272,7 @@ end
 local function compiled_replay_stage(stage, event)
   return consume_event(setmetatable({
     __llb_tag = "Stage",
-    lang = stage.lang,
+    dialect = stage.dialect,
     head = stage.head,
     raw = shallow_copy(stage.raw),
     origins = shallow_copy(stage.origins),
@@ -4287,10 +4287,10 @@ local function compiled_consume_event(stage, event)
   local slots, i = stage.head.slots, stage.next_index
   while i <= #slots do
     local slot = slots[i]
-    if event_fits(stage.lang, slot, event) then
+    if event_fits(stage.dialect, slot, event) then
       local ns = setmetatable({
         __llb_tag = "Stage",
-        lang = stage.lang,
+        dialect = stage.dialect,
         head = stage.head,
         compiled = stage.compiled,
         raw = shallow_copy(stage.raw),
@@ -4325,7 +4325,7 @@ end
 local function compiled_start_stage(h)
   return setmetatable({
     __llb_tag = "Stage",
-    lang = h.lang,
+    dialect = h.dialect,
     head = h.spec,
     compiled = h.compiled,
     raw = {},
@@ -4365,7 +4365,7 @@ end
 CompiledHead.__call = function(self, ...)
   local p, o = pack(...), source.capture("head-call", { hint = self.spec.name })
   if p.n > 0 and is_tag(p[1], "OriginValue") then o = p[1].__llb_origin or p[1].origin or o end
-  if p.n == 0 and #self.spec.slots == 0 then return compiled_build_stage(setmetatable({ __llb_tag = "Stage", lang = self.lang, head = self.spec, compiled = self.compiled, raw = {}, origins = {}, events = {}, seen = {}, next_index = 1, origin = o }, CompiledStage)) end
+  if p.n == 0 and #self.spec.slots == 0 then return compiled_build_stage(setmetatable({ __llb_tag = "Stage", dialect = self.dialect, head = self.spec, compiled = self.compiled, raw = {}, origins = {}, events = {}, seen = {}, next_index = 1, origin = o }, CompiledStage)) end
   local v = p.n == 0 and UNIT or p[1]
   if p.n == 1 and v == nil then v = NIL end
   if p.n <= 1 then return compiled_consume(compiled_start_stage(self), "call", v, p.n, o) end
@@ -4390,12 +4390,12 @@ function CompiledHead:at(origin)
 end
 
 local function compiled_head(lang, spec, compiled)
-  local h = setmetatable({ __llb_tag = "Head", lang = lang, spec = spec, compiled = compiled, backend = "compiled" }, CompiledHead)
+  local h = setmetatable({ __llb_tag = "Head", dialect = lang, spec = spec, compiled = compiled, backend = "compiled" }, CompiledHead)
   h.construct = h
   return llb.codegen.register(h, {
     id = tostring(lang.name) .. ".head." .. tostring(spec.name),
     kind = "head",
-    language = lang.name,
+    dialect = lang.name,
     head = spec.name,
     mode = "fast",
     origin = spec.origin,
@@ -4406,7 +4406,7 @@ end
 
 function llb.codegen.compile_heads(lang, opts)
   opts = opts or {}
-  local compiled = lang.compiled or llb.codegen.compile_language(lang, opts)
+  local compiled = lang.compiled or llb.codegen.compile_dialect(lang, opts)
   compiled.heads = compiled.heads or {}
   for name, spec in pairs(lang.heads or {}) do
     compiled.heads[name] = compiled_head(lang, spec, compiled)
@@ -4423,13 +4423,13 @@ install_head_codegen()
 --
 -- Context is the common object passed to checks and phases. It owns diagnostic
 -- collection, lexical scopes, symbol indexing, type hooks, and arbitrary phase
--- data. Language-specific compilers can extend behavior through hooks instead
+-- data. Dialect-specific compilers can extend behavior through hooks instead
 -- of side channels.
 
 local Context = {}; Context.__index = Context
 function llb.context(lang, opts)
   opts = opts or {}
-  return setmetatable({ __llb_tag = "Context", lang = lang, opts = opts, mode = opts.mode or "fast", diagnostics = opts.diagnostics or llb.diagnostics(), scopes = { {} }, current = {}, data = {}, fatal = opts.fatal }, Context)
+  return setmetatable({ __llb_tag = "Context", dialect = lang, opts = opts, mode = opts.mode or "fast", diagnostics = opts.diagnostics or llb.diagnostics(), scopes = { {} }, current = {}, data = {}, fatal = opts.fatal }, Context)
 end
 function Context:error(spec) spec = spec or {}; spec.severity = "error"; local d = self.diagnostics:add(llb.diagnostic(spec)); if self.fatal then error(d:render(), 2) end; return d end
 function Context:warn(spec) spec = spec or {}; spec.severity = "warning"; return self.diagnostics:add(llb.diagnostic(spec)) end
@@ -4464,9 +4464,9 @@ function Context:emit(kind, value)
   self.emitted[#self.emitted + 1] = entry
   return entry
 end
-function Context:typeof(e, expected) local ts = self.lang and self.lang.type_system; return ts and ts.typeof and ts.typeof(self, e, expected) or nil end
-function Context:assignable(got, expected, origin) local ts = self.lang and self.lang.type_system; if ts and ts.assignable then return ts.assignable(self, got, expected, origin) end; return got == expected end
-function Context:format_type(T) local ts = self.lang and self.lang.type_system; if ts and ts.format then return ts.format(T) end; return is_tag(T, "Type") and T.name or tostring(T) end
+function Context:typeof(e, expected) local ts = self.dialect and self.dialect.type_system; return ts and ts.typeof and ts.typeof(self, e, expected) or nil end
+function Context:assignable(got, expected, origin) local ts = self.dialect and self.dialect.type_system; if ts and ts.assignable then return ts.assignable(self, got, expected, origin) end; return got == expected end
+function Context:format_type(T) local ts = self.dialect and self.dialect.type_system; if ts and ts.format then return ts.format(T) end; return is_tag(T, "Type") and T.name or tostring(T) end
 llb.Context = Context
 
 local function walk(v, fn, parent, key, seen)
@@ -4489,8 +4489,8 @@ function Analysis:lsp_index()
     local m = n.__llb or {}; local hs = m.head_spec
     if hs and hs.lsp and hs.lsp.symbol then
       local sym = hs.lsp.symbol(n, m, self); if sym then idx.symbols[#idx.symbols + 1] = sym end
-    elseif self.lang and self.lang.lsp and self.lang.lsp.symbols and self.lang.lsp.symbols[n.tag] then
-      local sym = self.lang.lsp.symbols[n.tag](n, m, self); if sym then idx.symbols[#idx.symbols + 1] = sym end
+    elseif self.dialect and self.dialect.lsp and self.dialect.lsp.symbols and self.dialect.lsp.symbols[n.tag] then
+      local sym = self.dialect.lsp.symbols[n.tag](n, m, self); if sym then idx.symbols[#idx.symbols + 1] = sym end
     elseif m.fields and m.fields.name then
       local name = type(m.fields.name) == "table" and m.fields.name.text or m.fields.name
       if name then idx.symbols[#idx.symbols + 1] = { name = tostring(name), kind = m.head or "Object", origin = origin_of(m.fields.name) or n.origin, node = n } end
@@ -4501,19 +4501,19 @@ end
 llb.Analysis = Analysis
 
 -- ---------------------------------------------------------------------------
--- Language definition and loading
+-- Dialect definition and loading
 -- ---------------------------------------------------------------------------
 --
 -- Important doctrine:
 --
---   A Language is a grammar object.
+--   A Dialect is a grammar object.
 --   A Family is the authoring/runtime environment.
 --
--- Even "one language" is used through a singleton family: llb + language. The
+-- Even one dialect is used through a singleton family: llb + dialect. The
 -- llb singleton is always present, which makes symbols, origins, fragments,
 -- process helpers, and spread semantics shared across all family members.
 
-local Language = {}; Language.__index = Language
+local Dialect = {}; Dialect.__index = Dialect
 local BASE_ENV = { assert = assert, error = error, ipairs = ipairs, next = next, pairs = pairs, pcall = pcall, xpcall = xpcall, print = print, select = select, tonumber = tonumber, tostring = tostring, type = type, unpack = unpack, math = math, string = string, table = table, coroutine = coroutine, require = require }
 local function builtin_roles() return { name = { kind = "name" }, type = { kind = "type" }, expr = { kind = "expr" }, string = { kind = "string" }, number = { kind = "number" }, boolean = { kind = "boolean" }, value = { kind = "value" }, identity = { kind = "identity" } } end
 local function normalize_channels(spec)
@@ -4584,7 +4584,7 @@ local function check_requires(target, requires, origin)
       llb.fail("missing required LLB scope capability " .. cap, {
         code = "E_MISSING_USE_SCOPE",
         primary = origin,
-        notes = { "Install the required language scope before this use() call." },
+        notes = { "Install the required dialect scope before this use() call." },
       }, 2)
     end
   end
@@ -4635,8 +4635,8 @@ function llb.namespace(spec)
   local exports = shallow_copy(spec.exports or spec.items or {})
   exports.__llb_tag = "Namespace"
   exports.family = tostring(spec.family or "")
-  exports.member = tostring(spec.member or spec.lang or "")
-  exports.name = tostring(spec.name or spec.member or spec.lang or "namespace")
+  exports.member = tostring(spec.member or spec.dialect or "")
+  exports.name = tostring(spec.name or spec.member or spec.dialect or "namespace")
   exports.origin = spec.origin or source.capture("namespace", { hint = exports.name })
   exports.metadata = spec.metadata
   exports.zone = spec.zone
@@ -4661,7 +4661,7 @@ local llb_core_markdown
 
 -- The root family member. It is intentionally small: expose the llb singleton
 -- and the shared authoring substrate, but avoid stealing generic names such as
--- "symbol" from member languages.
+-- "symbol" from member dialects.
 local function llb_core_exports()
   local exports = helper_exports()
   exports.llb = llb
@@ -4703,11 +4703,11 @@ end
 
 function llb.make_env(lang, opts)
   opts = opts or {}
-  if is_tag(lang, "Language") then
+  if is_tag(lang, "Dialect") then
     return lang:family():env(opts)
   end
   local env = llb.base_env(opts.base or "safe")
-  if opts.lang_exports ~= false then copy_into(env, lang and lang.exports or {}) end
+  if opts.dialect_exports ~= false then copy_into(env, lang and lang.exports or {}) end
   if opts.helpers ~= false then copy_into(env, helper_exports()) end
   copy_into(env, opts.exports)
   if opts.unsafe then env.io, env.os, env.debug, env.package = io, os, debug, package end
@@ -4772,13 +4772,12 @@ function llb.install_env(env, target, opts, session)
 end
 
 function llb.use(lang, opts)
-  -- Direct llb.use(Language, ...) is accepted, but it is not a language-only
-  -- path. It delegates to the language's family so the llb root member is
+  -- Direct llb.use(Dialect, ...) delegates to the dialect's family so the llb root member is
   -- always installed and symbol sharing remains coherent.
   opts = opts or {}
-  if is_tag(lang, "Language") then
+  if is_tag(lang, "Dialect") then
     local family_opts = opts
-    if opts.lang_exports == false and opts.exports ~= nil then
+    if opts.dialect_exports == false and opts.exports ~= nil then
       family_opts = shallow_copy(opts)
       family_opts.member_exports = shallow_copy(opts.member_exports or {})
       family_opts.member_exports[tostring(lang.name)] = opts.exports
@@ -4795,7 +4794,7 @@ function llb.use(lang, opts)
   check_requires(target, requires, lang and lang.origin)
   local session = setmetatable({
     __llb_tag = "UseSession",
-    lang = lang,
+    dialect = lang,
     env = env,
     target = target,
     scope = scope,
@@ -4833,7 +4832,7 @@ function llb.use(lang, opts)
   end
   local stack = scope_stack(target)
   local rec = {
-    lang = lang and lang.name or nil,
+    dialect = lang and lang.name or nil,
     session = session,
     requires = array_copy(requires),
     provides = array_copy(provides),
@@ -4891,7 +4890,7 @@ function UseSession:requires() return array_copy(self.requires_caps or {}) end
 function UseSession:exports() return sorted_keys(self.env or {}) end
 function UseSession:loadstring(src, chunkname, opts)
   opts = shallow_copy(opts or {})
-  chunkname = chunkname or (self.lang and self.lang.name) or "=(llb.use)"
+  chunkname = chunkname or (self.dialect and self.dialect.name) or "=(llb.use)"
   source.register(chunkname, src)
   local f, err = compile_lua(src, chunkname)
   if not f then error(err, 2) end
@@ -4912,7 +4911,7 @@ end
 function UseSession:describe()
   return {
     tag = "UseSession",
-    lang = self.lang and self.lang.name or nil,
+    dialect = self.dialect and self.dialect.name or nil,
     scope = self.scope,
     mode = self.mode,
     active = self.active,
@@ -4936,20 +4935,20 @@ function llb.with_use(lang, opts, fn)
 end
 
 local function family_member_exports(member, opts)
-  local member_name = tostring(member.name or (member.lang and member.lang.name) or "?")
+  local member_name = tostring(member.name or (member.dialect and member.dialect.name) or "?")
   if opts and opts.member_exports and opts.member_exports[member_name] ~= nil then
     return shallow_copy(opts.member_exports[member_name])
   end
   local exports = member.exports
   if type(exports) == "function" then return exports(opts or {}) end
   if type(exports) == "table" then return shallow_copy(exports) end
-  return shallow_copy(member.lang and member.lang.exports or {})
+  return shallow_copy(member.dialect and member.dialect.exports or {})
 end
 
-local function family_member_from_language(lang)
+local function family_member_from_dialect(lang)
   return {
     name = lang.name,
-    lang = lang,
+    dialect = lang,
     exports = function() return lang.exports end,
     provides = { lang.name },
   }
@@ -4957,8 +4956,8 @@ end
 
 local function family_of(value)
   if is_tag(value, "Family") then return value end
-  if is_tag(value, "Language") then return value.__llb_family or llb.family(tostring(value.name), { family_member_from_language(value) }) end
-  llb.fail("family algebra expects a Family or Language, got " .. repr(value), { code = "E_FAMILY_OPERAND" }, 2)
+  if is_tag(value, "Dialect") then return value.__llb_family or llb.family(tostring(value.name), { family_member_from_dialect(value) }) end
+  llb.fail("family algebra expects a Family or Dialect, got " .. repr(value), { code = "E_FAMILY_OPERAND" }, 2)
 end
 
 local function family_spec_from(base, patch)
@@ -4985,7 +4984,7 @@ local function family_define(name, spec)
   end
   local members, seen = {}, {}
   local function member_name(member)
-    return tostring(member.name or (member.lang and member.lang.name) or "?")
+    return tostring(member.name or (member.dialect and member.dialect.name) or "?")
   end
   local function add_member(member)
     local n = member_name(member)
@@ -5003,8 +5002,8 @@ local function family_define(name, spec)
   local provides = {}
   local requires = {}
   for _, member in ipairs(members) do
-    append(provides, member.provides or (member.lang and member.lang.provides) or {})
-    append(requires, member.requires or (member.lang and member.lang.requires) or {})
+    append(provides, member.provides or (member.dialect and member.dialect.provides) or {})
+    append(requires, member.requires or (member.dialect and member.dialect.requires) or {})
   end
   local family = setmetatable({
     __llb_tag = "Family",
@@ -5062,12 +5061,12 @@ function Family:compose_env(opts)
       if not provided[tostring(cap)] then
         llb.fail("family " .. self.name .. " member " .. tostring(member.name or "?") .. " requires missing capability " .. tostring(cap), {
           code = "E_FAMILY_MISSING_MEMBER_CAPABILITY",
-          notes = { "Declare the required language earlier in the family or remove the incompatible member." },
+          notes = { "Declare the required dialect earlier in the family or remove the incompatible member." },
         }, 2)
       end
     end
     local exports = family_member_exports(member, opts)
-    local member_name = tostring(member.name or (member.lang and member.lang.name) or "?")
+    local member_name = tostring(member.name or (member.dialect and member.dialect.name) or "?")
     member_caps[#member_caps + 1] = {
       name = member_name,
       provides = array_copy(member.provides or {}),
@@ -5115,7 +5114,7 @@ function Family:use(opts)
     target = opts.target,
     base = exports,
     exports = exports,
-    lang_exports = false,
+    dialect_exports = false,
     helpers = false,
     global = opts.global,
     strict = opts.strict,
@@ -5153,7 +5152,7 @@ function Family:loadfile(path, opts)
 end
 
 local function family_member_name(member)
-  return tostring(member.name or (member.lang and member.lang.name) or "?")
+  return tostring(member.name or (member.dialect and member.dialect.name) or "?")
 end
 
 function Family:member(name)
@@ -5421,8 +5420,8 @@ end
 
 function Family:format_region(value, opts)
   -- Unified family formatting. The family walks the value and lets member
-  -- languages format values they own. This keeps cross-language files coherent
-  -- without forcing each language to know about every other language.
+  -- Dialects format values they own. This keeps cross-dialect files coherent
+  -- without forcing each dialect to know about every other dialect.
   return llb.gps.raw(llb.gps.wrap(family_format_region_gen, {
     family = self,
     value = value,
@@ -5614,7 +5613,7 @@ function llb_core_markdown(_, opts)
   out[#out + 1] = ""
   out[#out + 1] = "- `llb`: the singleton workbench API for origins, diagnostics, fragments, families, formatting, and markdown."
   out[#out + 1] = "- `_` / `spread`: splice a role-shaped fragment into a surrounding role."
-  out[#out + 1] = "- `region`: generic LLB control-machine descriptor head; member languages consume/lower it."
+  out[#out + 1] = "- `region`: generic LLB control-machine descriptor head; member dialects consume/lower it."
   out[#out + 1] = "- `N`: explicit generated-name factory for metaprogrammed symbols."
   out[#out + 1] = "- `here`, `at_origin`, `with_origin`: provenance helpers for Lua factories."
   out[#out + 1] = ""
@@ -5624,11 +5623,11 @@ function llb_core_markdown(_, opts)
   out[#out + 1] = "- `llb.grammar.head`: declares a staged constructor head made from slots and traits."
   out[#out + 1] = "- `llb.grammar.slot`: declares one consumed input position for a head."
   out[#out + 1] = "- `llb.grammar.trait`: declares reusable behavior applied to heads."
-  out[#out + 1] = "- `llb.grammar.protocol`: declares a named protocol surface for language authors."
+  out[#out + 1] = "- `llb.grammar.protocol`: declares a named protocol surface for dialect authors."
   out[#out + 1] = "- `llb.grammar.scalar` and `llb.grammar.type_ctor`: declare type-like exports."
-  out[#out + 1] = "- `llb.grammar.helper`: exposes a named Lua helper into a language environment."
+  out[#out + 1] = "- `llb.grammar.helper`: exposes a named Lua helper into a dialect environment."
   out[#out + 1] = "- `llb.grammar.pass` / `llb.grammar.phase`: declares semantic analysis passes."
-  out[#out + 1] = "- `llb.grammar.lsp`: declares language-server integration hooks."
+  out[#out + 1] = "- `llb.grammar.lsp`: declares dialect language-server integration hooks."
   out[#out + 1] = ""
   return table.concat(out, "\n")
 end
@@ -5687,13 +5686,13 @@ local function slot_fact(slot)
   return text
 end
 
-function llb.markdown_language(lang, opts)
+function llb.markdown_dialect(lang, opts)
   opts = opts or {}
   local out = {}
-  out[#out + 1] = md_header(opts.level or 2, opts.title or (lang and lang.name or "Language"))
+  out[#out + 1] = md_header(opts.level or 2, opts.title or (lang and lang.name or "Dialect"))
   out[#out + 1] = ""
-  if not is_tag(lang, "Language") then
-    out[#out + 1] = "No LLB language metadata is available."
+  if not is_tag(lang, "Dialect") then
+    out[#out + 1] = "No LLB dialect metadata is available."
     out[#out + 1] = ""
     return table.concat(out, "\n")
   end
@@ -5770,7 +5769,7 @@ end
 function llb.markdown(value, opts)
   opts = opts or {}
   if is_tag(value, "Family") then return Family.markdown(value, opts) end
-  if is_tag(value, "Language") then return llb.markdown_language(value, opts) end
+  if is_tag(value, "Dialect") then return llb.markdown_dialect(value, opts) end
   local desc = llb.describe(value)
   return "```lua\n" .. repr(desc or value) .. "\n```\n"
 end
@@ -5786,7 +5785,7 @@ end
 local function append_llb_syntax_primer(out)
   out[#out + 1] = "## LLB Syntax Model"
   out[#out + 1] = ""
-  out[#out + 1] = "All languages in this family are ordinary Lua values built through the shared LLB substrate. Lua provides the syntax; LLB gives that syntax language meaning through heads, roles, slots, fragments, origins, environments, and family zones."
+  out[#out + 1] = "All dialects in this family are ordinary Lua values built through the shared LLB substrate. Lua provides the syntax; LLB gives that syntax dialect meaning through heads, roles, slots, fragments, origins, environments, and family zones."
   out[#out + 1] = ""
   out[#out + 1] = "Core forms:"
   out[#out + 1] = ""
@@ -5797,14 +5796,14 @@ local function append_llb_syntax_primer(out)
   out[#out + 1] = "- `_ (fragment)` splices a role-shaped fragment into the surrounding role."
   out[#out + 1] = "- `left .. right` concatenates compatible product/list fragments or family zones."
   out[#out + 1] = "- `left + right` composes compatible sum/protocol alternatives."
-  out[#out + 1] = "- `left * right` decorates sum/protocol alternatives with product-shaped payloads when the language role supports it."
-  out[#out + 1] = "- `lalin { ... }`, `llpvm { ... }`, `asdl { ... }`, and similar forms call LLB namespace values to create family zones: explicit language scopes inside one Lua value."
+  out[#out + 1] = "- `left * right` decorates sum/protocol alternatives with product-shaped payloads when the dialect role supports it."
+  out[#out + 1] = "- `lalin { ... }`, `llpvm { ... }`, `asdl { ... }`, and similar forms call LLB namespace values to create family zones: explicit dialect scopes inside one Lua value."
   out[#out + 1] = ""
   out[#out + 1] = "In family environments, member DSLs are exposed through LLB namespace values. The namespace is a semantic owner, not just a Lua table: tools can describe it, document it, and use its call form for zones."
   out[#out + 1] = ""
   out[#out + 1] = "The dot belongs visually to the keyword side. Canonical LLB style is `lalin.fn. add`, not `lalin.fn .add`: the keyword/head is the syntactic operator, while the name stays clean."
   out[#out + 1] = ""
-  out[#out + 1] = "There is no parser, tokenizer, antiquote layer, or string language hidden here. A source file evaluates as Lua; the resulting values already contain enough LLB metadata for diagnostics, formatting, indexing, documentation, and language-specific lowering."
+  out[#out + 1] = "There is no parser, tokenizer, antiquote layer, or string dialect hidden here. A source file evaluates as Lua; the resulting values already contain enough LLB metadata for diagnostics, formatting, indexing, documentation, and dialect-specific lowering."
   out[#out + 1] = ""
 end
 
@@ -5872,12 +5871,12 @@ function Family:markdown(opts)
         out[#out + 1] = ""
         out[#out + 1] = "Documentation hook failed: `" .. md_escape(text) .. "`"
       end
-    elseif member.lang then
-      out[#out + 1] = llb.markdown_language(member.lang, { level = 2, title = family_member_name(member) })
+    elseif member.dialect then
+      out[#out + 1] = llb.markdown_dialect(member.dialect, { level = 2, title = family_member_name(member) })
     else
       out[#out + 1] = md_header(2, family_member_name(member))
       out[#out + 1] = ""
-      out[#out + 1] = "No language metadata is available."
+      out[#out + 1] = "No dialect metadata is available."
       out[#out + 1] = ""
     end
   end
@@ -5896,7 +5895,7 @@ function Family:describe()
   local members = {}
   for i, member in ipairs(self.members or {}) do
     members[i] = {
-      name = member.name or (member.lang and member.lang.name),
+      name = member.name or (member.dialect and member.dialect.name),
       provides = array_copy(member.provides or {}),
       requires = array_copy(member.requires or {}),
       semantics = {
@@ -5934,15 +5933,15 @@ function Family:subtract(member_or_name, opts)
   opts = opts or {}
   local remove = {}
   if is_tag(member_or_name, "Family") then
-    for _, member in ipairs(member_or_name.members or {}) do remove[tostring(member.name or (member.lang and member.lang.name))] = true end
-  elseif is_tag(member_or_name, "Language") then
+    for _, member in ipairs(member_or_name.members or {}) do remove[tostring(member.name or (member.dialect and member.dialect.name))] = true end
+  elseif is_tag(member_or_name, "Dialect") then
     remove[tostring(member_or_name.name)] = true
   else
     remove[tostring(member_or_name)] = true
   end
   local members = {}
   for _, member in ipairs(self.members or {}) do
-    local name = tostring(member.name or (member.lang and member.lang.name))
+    local name = tostring(member.name or (member.dialect and member.dialect.name))
     if not remove[name] then members[#members + 1] = member end
   end
   return family_define(opts.name or (self.name .. "-projected"), family_spec_from(self, { members = members }))
@@ -5953,7 +5952,7 @@ function Family:only(names, opts)
   local keep = list_to_set(names or {})
   local members = {}
   for _, member in ipairs(self.members or {}) do
-    local name = tostring(member.name or (member.lang and member.lang.name))
+    local name = tostring(member.name or (member.dialect and member.dialect.name))
     local yes = keep[name]
     if not yes then
       for _, cap in ipairs(member.provides or {}) do if keep[tostring(cap)] then yes = true end end
@@ -5971,20 +5970,20 @@ end
 Family.__concat = function(a, b) return Family.compose(family_of(a), b) end
 Family.__add = Family.__concat
 Family.__sub = function(a, b) return Family.subtract(family_of(a), b) end
-Language.__concat = function(a, b) return Family.compose(family_of(a), b) end
-Language.__add = Language.__concat
-Language.__sub = function(a, b) return Family.subtract(family_of(a), b) end
+Dialect.__concat = function(a, b) return Family.compose(family_of(a), b) end
+Dialect.__add = Dialect.__concat
+Dialect.__sub = function(a, b) return Family.subtract(family_of(a), b) end
 
-function Language:fragment(role, value)
+function Dialect:fragment(role, value)
   local spec = self.roles and self.roles[role] or {}
-  return llb.fragment(role, normalize_role({ lang = self, origin = source.capture("fragment-normalize") }, role, value), source.capture("fragment"), {
-    lang = self,
+  return llb.fragment(role, normalize_role({ dialect = self, origin = source.capture("fragment-normalize") }, role, value), source.capture("fragment"), {
+    dialect = self,
     role_spec = spec,
     algebra = spec.algebra,
     payload_role = spec.payload_role or spec.payload,
   })
 end
-function Language:env(opts)
+function Dialect:env(opts)
   opts = shallow_copy(opts or {})
   if opts.env then opts.exports = opts.env end
   opts.scope = opts.scope or "env"
@@ -5992,14 +5991,14 @@ function Language:env(opts)
   local session = Family.use(self:family(), opts)
   return session.env
 end
-function Language:family()
-  -- A language's family is not optional. It is the singleton family containing
-  -- the llb root member plus this language member.
-  if not self.__llb_family then self.__llb_family = family_define(self.name, { family_member_from_language(self) }) end
+function Dialect:family()
+  -- A dialect's family is not optional. It is the singleton family containing
+  -- the llb root member plus this dialect member.
+  if not self.__llb_family then self.__llb_family = family_define(self.name, { family_member_from_dialect(self) }) end
   return self.__llb_family
 end
-function Language:use(opts) return Family.use(self:family(), opts or {}) end
-function Language:with_use(opts, fn)
+function Dialect:use(opts) return Family.use(self:family(), opts or {}) end
+function Dialect:with_use(opts, fn)
   opts = shallow_copy(opts or {})
   opts.scope = opts.scope or "scoped"
   local session = self:use(opts)
@@ -6008,19 +6007,19 @@ function Language:with_use(opts, fn)
   if not ok then error(a, 0) end
   return a, b, c
 end
-function Language:loadstring(src, chunkname, opts) return Family.loadstring(self:family(), src, chunkname or self.name, opts) end
-function Language:loadfile(path, opts) local f, err = io.open(path, "rb"); if not f then error(err, 2) end; local src = f:read("*a") or ""; f:close(); return self:loadstring(src, "@" .. path, opts) end
-function Language:analyze_string(src, chunkname, opts)
+function Dialect:loadstring(src, chunkname, opts) return Family.loadstring(self:family(), src, chunkname or self.name, opts) end
+function Dialect:loadfile(path, opts) local f, err = io.open(path, "rb"); if not f then error(err, 2) end; local src = f:read("*a") or ""; f:close(); return self:loadstring(src, "@" .. path, opts) end
+function Dialect:analyze_string(src, chunkname, opts)
   opts = opts or {}; local bag = llb.diagnostics(); source.register(chunkname or self.name, src)
   local f, err = compile_lua(src, chunkname or self.name)
-  if not f then bag:error { code = "E_LUA_PARSE", message = tostring(err) }; return setmetatable({ __llb_tag = "Analysis", lang = self, ast = nil, diagnostics = bag, source = src, chunkname = chunkname }, Analysis) end
+  if not f then bag:error { code = "E_LUA_PARSE", message = tostring(err) }; return setmetatable({ __llb_tag = "Analysis", dialect = self, ast = nil, diagnostics = bag, source = src, chunkname = chunkname }, Analysis) end
   setfenv0(f, self:env(opts)); local ok, ast = pcall(f)
   if not ok then
     if is_tag(ast, "Diagnostic") then bag:add(ast)
     else bag:error { code = "E_DSL_EXEC", message = tostring(ast) } end
-    return setmetatable({ __llb_tag = "Analysis", lang = self, ast = nil, diagnostics = bag, source = src, chunkname = chunkname }, Analysis)
+    return setmetatable({ __llb_tag = "Analysis", dialect = self, ast = nil, diagnostics = bag, source = src, chunkname = chunkname }, Analysis)
   end
-  local analysis = setmetatable({ __llb_tag = "Analysis", lang = self, ast = ast, diagnostics = bag, source = src, chunkname = chunkname }, Analysis)
+  local analysis = setmetatable({ __llb_tag = "Analysis", dialect = self, ast = ast, diagnostics = bag, source = src, chunkname = chunkname }, Analysis)
   local ctx = llb.context(self, { diagnostics = bag, fatal = false, mode = opts.mode })
   for i = 1, #self.passes do
     local pass = self.passes[i]
@@ -6028,10 +6027,10 @@ function Language:analyze_string(src, chunkname, opts)
   end
   return analysis
 end
-function Language:analyze_file(path, opts) local f, err = io.open(path, "rb"); if not f then local bag = llb.diagnostics(); bag:error { code = "E_OPEN", message = tostring(err) }; return setmetatable({ __llb_tag = "Analysis", lang = self, ast = nil, diagnostics = bag }, Analysis) end; local src = f:read("*a") or ""; f:close(); return self:analyze_string(src, "@" .. path, opts) end
+function Dialect:analyze_file(path, opts) local f, err = io.open(path, "rb"); if not f then local bag = llb.diagnostics(); bag:error { code = "E_OPEN", message = tostring(err) }; return setmetatable({ __llb_tag = "Analysis", dialect = self, ast = nil, diagnostics = bag }, Analysis) end; local src = f:read("*a") or ""; f:close(); return self:analyze_string(src, "@" .. path, opts) end
 
 function llb.describe_role(lang, name)
-  if is_tag(lang, "Language") then
+  if is_tag(lang, "Dialect") then
     local spec = lang.roles and lang.roles[name]
     if not spec then return nil end
     return {
@@ -6053,7 +6052,7 @@ function llb.describe_role(lang, name)
 end
 
 function llb.describe_head(lang, name)
-  if is_tag(lang, "Language") then
+  if is_tag(lang, "Dialect") then
     local spec = lang.heads and lang.heads[name]
     if not spec then return nil end
     local slots = {}
@@ -6151,7 +6150,7 @@ function llb.describe_namespace(ns)
 end
 
 function llb.describe(value)
-  if is_tag(value, "Language") then
+  if is_tag(value, "Dialect") then
     local roles, heads, traits, protocols, passes = {}, {}, {}, {}, {}
     for name in pairs(value.roles or {}) do roles[#roles + 1] = name end
     for name in pairs(value.heads or {}) do heads[#heads + 1] = name end
@@ -6159,7 +6158,7 @@ function llb.describe(value)
     for name in pairs(value.protocols or {}) do protocols[#protocols + 1] = name end
     for i = 1, #(value.passes or {}) do passes[i] = value.passes[i].name end
     table.sort(roles); table.sort(heads); table.sort(traits); table.sort(protocols)
-    return { tag = "Language", name = value.name, roles = roles, heads = heads, traits = traits, protocols = protocols, passes = passes }
+    return { tag = "Dialect", name = value.name, roles = roles, heads = heads, traits = traits, protocols = protocols, passes = passes }
   end
   if is_tag(value, "Event") then return llb.describe_event(value) end
   if is_tag(value, "Process") then return llb.describe_process(value) end
@@ -6175,14 +6174,14 @@ function llb.describe(value)
   if is_tag(value, "Protocol") then return llb.describe_protocol(value) end
   if is_tag(value, "Region") then return llb.describe_region(value) end
   if is_tag(value, "UseSession") and value.describe then return value:describe() end
-  if is_tag(value, "Head") then return llb.describe_head(value.lang, value.spec and value.spec.name) end
+  if is_tag(value, "Head") then return llb.describe_head(value.dialect, value.spec and value.spec.name) end
   if is_tag(value, "Node") then
     local meta = rawget(value, "__llb") or {}
     return {
       tag = "Node",
       node_tag = value.tag,
       head = meta.head,
-      language = meta.language,
+      dialect = meta.dialect,
       fields = meta.fields or value.fields,
       events = meta.events,
       origin = value.origin,
@@ -6201,11 +6200,11 @@ function llb.describe(value)
   return llb.describe_shape(value)
 end
 
-function Language:describe() return llb.describe(self) end
-function Language:describe_head(name) return llb.describe_head(self, name) end
-function Language:describe_role(name) return llb.describe_role(self, name) end
+function Dialect:describe() return llb.describe(self) end
+function Dialect:describe_head(name) return llb.describe_head(self, name) end
+function Dialect:describe_role(name) return llb.describe_role(self, name) end
 
-function Language:install_searcher(opts)
+function Dialect:install_searcher(opts)
   opts = opts or {}
   local searchers = package.searchers or package.loaders
   if not searchers then return false end
@@ -6250,11 +6249,11 @@ local function trait_name(t)
   return is_tag(t, "TraitRef") and t.name or (is_tag(t, "TraitDecl") and t.name or tostring(t))
 end
 
-local function define_language(name, decls)
-  -- llb.define compiles declarative grammar objects into a runtime Language.
+local function define_dialect(name, decls)
+  -- llb.dialect compiles declarative grammar objects into a runtime Dialect.
   -- Runtime heads are ordinary Lua values with metatables that consume
   -- dot/index/call/table shapes through the slot machine above.
-  local lang = setmetatable({ __llb_tag = "Language", name = tostring(name), roles = builtin_roles(), heads = {}, traits = {}, protocols = {}, exports = { N = llb.N, spread = llb.spread, _ = llb.spread }, passes = {}, lsp = {}, declarations = decls or {} }, Language)
+  local lang = setmetatable({ __llb_tag = "Dialect", name = tostring(name), roles = builtin_roles(), heads = {}, traits = {}, protocols = {}, exports = { N = llb.N, spread = llb.spread, _ = llb.spread }, passes = {}, lsp = {}, declarations = decls or {} }, Dialect)
   for i = 1, #(decls or {}) do
     local d = decls[i]
     if is_tag(d, "RoleDecl") then local spec = shallow_copy(d.spec or {}); spec.kind = d.kind or spec.kind or "array"; spec.origin = d.origin; lang.roles[d.name] = spec
@@ -6285,22 +6284,24 @@ local function define_language(name, decls)
     end
   end
   table.insert(lang.passes, 1, head_check_pass())
-  llb.codegen.compile_language(lang, { mode = "fast" })
+  llb.codegen.compile_dialect(lang, { mode = "fast" })
   llb.codegen.compile_heads(lang, { mode = "fast" })
-  lang.__llb_family = family_define(lang.name, { family_member_from_language(lang) })
+  llb.dialects = llb.dialects or {}
+  llb.dialects[lang.name] = lang
+  lang.__llb_family = family_define(lang.name, { family_member_from_dialect(lang) })
   return lang
 end
-function llb.define(name) return function(decls) return define_language(name, decls) end end
-llb.Language = Language
+function llb.dialect(name) return function(decls) return define_dialect(name, decls) end end
+llb.Dialect = Dialect
 
 -- ---------------------------------------------------------------------------
 -- Formatting
 -- ---------------------------------------------------------------------------
 --
 -- Formatting is semantic, not source-preserving. LLB formats evaluated values:
--- fragments, heads, expressions, tables, and language-specific nodes through
+-- fragments, heads, expressions, tables, and dialect-specific nodes through
 -- hooks. Origin-leading comments may be surfaced as documentation, but exact
--- original token layout is outside this layer; language formatters can add
+-- original token layout is outside this layer; dialect formatters can add
 -- richer behavior on top.
 
 local doc = {}
@@ -6489,7 +6490,7 @@ local function format_context(opts)
   opts = opts or {}
   local f = setmetatable({
     opts = opts,
-    lang = opts.lang,
+    dialect = opts.dialect,
     width = opts.width or 100,
     indent_width = opts.indent or 2,
     seen = opts.seen or {},
@@ -6588,6 +6589,123 @@ local function fallback_expr_doc(v, f)
   return nil
 end
 
+local function dialect_format_spec(lang)
+  if type(lang) ~= "table" then return nil end
+  if type(lang.format) == "table" then return lang.format end
+  return nil
+end
+
+local function formatting_dialect(f, meta)
+  if type(f.dialect) == "table" then return f.dialect end
+  local name = meta and meta.dialect
+  return name and llb.dialects and llb.dialects[name] or nil
+end
+
+local function dialect_namespace(lang, meta)
+  local fmt = dialect_format_spec(lang)
+  if fmt and fmt.namespace then return tostring(fmt.namespace) end
+  local name = (type(lang) == "table" and lang.name) or (meta and meta.dialect) or "llb"
+  name = tostring(name)
+  return name:match("([^.]+)$") or name
+end
+
+local function dialect_slot_formatter(lang, meta, slot)
+  local fmt = dialect_format_spec(lang)
+  if not fmt then return nil end
+  local by_head = fmt.head_slot_formatters and meta and meta.head and fmt.head_slot_formatters[meta.head]
+  if by_head and by_head[slot.name] then return by_head[slot.name] end
+  return fmt.slot_formatters and fmt.slot_formatters[slot.role] or nil
+end
+
+local function head_slot_value(meta, slot)
+  local raw = meta.raw or {}
+  local fields = meta.fields or {}
+  if slot.role == "identity" or slot.role == "value" then return raw[slot.name] end
+  return fields[slot.name]
+end
+
+local function default_slot_doc(f, slot, value, event)
+  local action = event and event.action
+  local role = slot.role
+  if action == "index" then return doc.group { " [", f:format(value), "]" } end
+  if action == "call" then
+    if (event.argc or 0) == 0 then return doc.text("()") end
+    if role == "string" then return doc.group { " ", f:format(value) } end
+    if event.channel == llb.channel.call_table then return doc.group { " ", f:format(value) } end
+    return doc.group { " (", f:format(value), ")" }
+  end
+  return doc.group { " ", f:format(value) }
+end
+
+local function generic_head_doc(v, f, meta)
+  local hs = meta and meta.head_spec
+  if not hs then return nil end
+  local lang = formatting_dialect(f, meta)
+  local ns = dialect_namespace(lang, meta)
+  local raw, events = meta.raw or {}, meta.events or {}
+  local slots = hs.slots or {}
+  local parts = { ns, ".", tostring(hs.name) }
+  local skip = {}
+
+  for i = 1, #slots do
+    local slot = slots[i]
+    if slot.name == "name" and raw[slot.name] ~= nil then
+      skip[slot.name] = true
+      local event = events[slot.name] or {}
+      if event.action == "index" then
+        parts[#parts + 1] = " ["
+        parts[#parts + 1] = f:format(raw[slot.name])
+        parts[#parts + 1] = "]"
+      else
+        parts[#parts + 1] = ". "
+        parts[#parts + 1] = f:name(raw[slot.name])
+      end
+      break
+    end
+  end
+
+  for i = 1, #slots do
+    local slot = slots[i]
+    if not skip[slot.name] then
+      local event = events[slot.name]
+      local value = head_slot_value(meta, slot)
+      if value ~= nil then
+        local hook = dialect_slot_formatter(lang, meta, slot)
+        local rendered = hook and hook(value, f, slot, meta)
+        rendered = rendered and docify(rendered) or f:format(value)
+        if event and event.action == "index" then
+          parts[#parts + 1] = " ["
+          parts[#parts + 1] = rendered
+          parts[#parts + 1] = "]"
+        elseif event and event.action == "call" then
+          if (event.argc or 0) == 0 then
+            parts[#parts + 1] = "()"
+          elseif slot.role == "string" or event.channel == llb.channel.call_table then
+            parts[#parts + 1] = " "
+            parts[#parts + 1] = rendered
+          else
+            parts[#parts + 1] = " ("
+            parts[#parts + 1] = rendered
+            parts[#parts + 1] = ")"
+          end
+        else
+          parts[#parts + 1] = default_slot_doc(f, slot, rendered, event)
+        end
+      end
+    end
+  end
+  return doc.group(parts)
+end
+
+local function dialect_role_doc(v, f, meta)
+  local fmt = dialect_format_spec(formatting_dialect(f, meta))
+  if not fmt or not fmt.role_of or not fmt.role_formatters then return nil end
+  local role_name = fmt.role_of(v, f, meta)
+  local hook = role_name and fmt.role_formatters[role_name]
+  if hook then return hook(v, f, meta) end
+  return nil
+end
+
 local function generic_table_doc(v, f)
   local tag = tagof(v)
   if tag == "Expr" then
@@ -6601,6 +6719,8 @@ local function generic_table_doc(v, f)
   if tag == "Fragment" then return f:braced_list(v.items or {}) end
   if tag == "Node" then
     local m = rawget(v, "__llb") or {}
+    local d = generic_head_doc(v, f, m)
+    if d then return d end
     return doc.group { tostring(m.head or v.tag or "node"), " ", f:braced_list(m.fields or v.fields or {}) }
   end
 
@@ -6643,6 +6763,14 @@ function llb.to_doc(v, ctx)
     return docify(out)
   end
 
+  if hs then
+    local out = generic_head_doc(v, f, meta)
+    if out then
+      f.seen[v] = nil
+      return docify(out)
+    end
+  end
+
   if tagof(v) == "Fragment" then
     local rs = rawget(v, "role_spec")
     if rs and rs.format then
@@ -6652,7 +6780,15 @@ function llb.to_doc(v, ctx)
     end
   end
 
-  local lang = f.lang or meta.language
+  do
+    local out = dialect_role_doc(v, f, meta)
+    if out then
+      f.seen[v] = nil
+      return docify(out)
+    end
+  end
+
+  local lang = f.dialect or meta.dialect
   if type(lang) == "table" then
     local formatters = lang.formatters or (type(lang.format) == "table" and lang.format.formatters or nil)
     local key = meta.head or rawget(v, "tag") or tagof(v)
@@ -6685,44 +6821,44 @@ function llb.format(value, opts)
   return table.concat(chunks)
 end
 
-function Language:format_doc(value, opts)
+function Dialect:format_doc(value, opts)
   opts = shallow_copy(opts or {})
-  opts.lang = opts.lang or self
+  opts.dialect = opts.dialect or self
   return llb.format_doc(value, opts)
 end
 
-function Language:format_region(value, opts)
+function Dialect:format_region(value, opts)
   opts = shallow_copy(opts or {})
-  opts.lang = opts.lang or self
+  opts.dialect = opts.dialect or self
   return llb.format_region(value, opts)
 end
 
-function Language:format(value, opts)
+function Dialect:format(value, opts)
   opts = shallow_copy(opts or {})
-  opts.lang = opts.lang or self
+  opts.dialect = opts.dialect or self
   return llb.format(value, opts)
 end
 
 function Analysis:format_doc(opts)
   opts = shallow_copy(opts or {})
-  opts.lang = opts.lang or self.lang
+  opts.dialect = opts.dialect or self.dialect
   return llb.format_doc(self.ast, opts)
 end
 
 function Analysis:format_region(opts)
   opts = shallow_copy(opts or {})
-  opts.lang = opts.lang or self.lang
+  opts.dialect = opts.dialect or self.dialect
   return llb.format_region(self.ast, opts)
 end
 
 function Analysis:format(opts)
   opts = shallow_copy(opts or {})
-  opts.lang = opts.lang or self.lang
+  opts.dialect = opts.dialect or self.dialect
   return llb.format(self.ast, opts)
 end
 
 -- ---------------------------------------------------------------------------
--- Dumping and example language
+-- Dumping and example dialect
 -- ---------------------------------------------------------------------------
 
 local function dump_value(v, indent, seen)
@@ -6741,7 +6877,7 @@ function llb.dump(v) return dump_value(v) end
 
 function llb.example_language()
   local g = llb.grammar
-  return llb.define "Mini" {
+  return llb.dialect "Mini" {
     g.role .decls { kind = "array" },
     g.role .body { kind = "array" },
     g.role .product { kind = "product" },

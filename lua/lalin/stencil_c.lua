@@ -19,6 +19,10 @@ local function bind_context(T)
     local Schedule = T.LalinSchedule
     local CodeType = require("lalin.code_type")(T)
     local CEmit = require("lalin.c_emit")(T)
+    local C = require("llb.c")
+    local LLB = require("llb")
+    local _ = LLB.spread
+    local source_params
 
     local api = {}
 
@@ -33,6 +37,87 @@ local function bind_context(T)
 
     local function c_type(ty)
         return CEmit.emit_type(CodeType.code_type_to_c(ty, {}))
+    end
+
+    local function const_elem_ptr_decl(ty, name)
+        return c_type(ty) .. " const *" .. name
+    end
+
+    local function access_vector_fact(artifact, name)
+        local schedule = artifact.instance and artifact.instance.schedule
+        local facts = schedule and schedule.facts and schedule.facts.access_facts or {}
+        for _, fact in ipairs(facts or {}) do
+            if fact.access_name == name then return fact end
+        end
+        return nil
+    end
+
+    local function access_noalias(artifact, name)
+        local fact = access_vector_fact(artifact, name)
+        return fact ~= nil and fact.alias == Stencil.StencilAliasNoAlias
+    end
+
+    local function access_alignment_bytes(artifact, name)
+        local fact = access_vector_fact(artifact, name)
+        if fact == nil then return nil end
+        if pvm.classof(fact.alignment) == Stencil.StencilAlignmentKnown then return tonumber(fact.alignment.bytes) end
+        return nil
+    end
+
+    local function assume_aligned_lines(artifact, names)
+        local lines = {}
+        for _, name in ipairs(names) do
+            local bytes = access_alignment_bytes(artifact, name)
+            if bytes ~= nil and bytes > 0 then
+                lines[#lines + 1] = "    " .. name .. " = __builtin_assume_aligned(" .. name .. ", " .. tostring(bytes) .. ");"
+            end
+        end
+        return lines
+    end
+
+    local function ptr_decl(ty, name, opts)
+        opts = opts or {}
+        local q = opts.const and " const" or ""
+        local r = opts.restrict and " *__restrict " or " *"
+        return c_type(ty) .. q .. r .. name
+    end
+
+    local function source_param_fragments(artifact, params)
+        local raw = source_params(artifact, params)
+        local out = {}
+        for i = 1, #raw do out[i] = C.raw_param(raw[i]) end
+        return out
+    end
+
+    local function emit_c_fn(artifact, result_ty, params, body)
+        local name = LLB.N[artifact.symbol.text]
+        return C.emit_decl(C.fn[name] { _(source_param_fragments(artifact, params)) } [C.type[result_ty]] {
+            _(body),
+        })
+    end
+
+    local function emit_void_fn(artifact, params, body)
+        local name = LLB.N[artifact.symbol.text]
+        return C.emit_decl(C.fn[name] { _(source_param_fragments(artifact, params)) } [C.void] {
+            _(body),
+        })
+    end
+
+    local function loop_i(stride, body)
+        return C.for_ { "int32_t i = start", C.raw_expr("i < stop"), "i += " .. tostring(stride) } {
+            _(body),
+        }
+    end
+
+    local function assume_aligned_stmts(artifact, names)
+        local stmts = {}
+        for _, name in ipairs(names) do
+            local bytes = access_alignment_bytes(artifact, name)
+            if bytes ~= nil and bytes > 0 then
+                stmts[#stmts + 1] = C.assign(C.raw_expr(name), C.builtin.assume_aligned { C.raw_expr(name), C.raw_expr(tostring(bytes)) })
+            end
+        end
+        return stmts
     end
 
     local function unsigned_c_type(ty)
@@ -285,7 +370,7 @@ local function bind_context(T)
 
     local ArtifactPlan = require("lalin.stencil_artifact_plan")(T)
     local artifact_shape = ArtifactPlan.artifact_shape
-    local source_params = ArtifactPlan.source_params
+    source_params = ArtifactPlan.source_params
     local access_named = ArtifactPlan.access_named
     local stride_param_name = ArtifactPlan.stride_param_name
     local dynamic_stride_accesses = ArtifactPlan.dynamic_stride_accesses
@@ -343,7 +428,7 @@ local function bind_context(T)
         local vec_ty = "ml_vec_u32x" .. tostring(lanes)
         local vec_bytes = lanes * 4
         local lines = {}
-        lines[#lines + 1] = ct .. " " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { "const " .. et .. " *xs", "int32_t start", "int32_t stop", ct .. " init" }), ", ") .. ") {"
+        lines[#lines + 1] = ct .. " " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { const_elem_ptr_decl(shape.elem_ty, "xs"), "int32_t start", "int32_t stop", ct .. " init" }), ", ") .. ") {"
         lines[#lines + 1] = "    typedef uint32_t " .. vec_ty .. " __attribute__((vector_size(" .. tostring(vec_bytes) .. ")));"
         lines[#lines + 1] = "    int32_t i = start;"
         lines[#lines + 1] = "    int32_t span = stop - start;"
@@ -364,12 +449,7 @@ local function bind_context(T)
         lines[#lines + 1] = "    __builtin_memcpy(partial, &vacc0, sizeof(partial));"
         lines[#lines + 1] = "    uint32_t acc = (uint32_t)init;"
         lines[#lines + 1] = "    for (int32_t lane = 0; lane < " .. tostring(lanes) .. "; lane++) acc += partial[lane];"
-        lines[#lines + 1] = "    switch (stop - i) {"
-        for tail = (lanes * unroll) - 1, 1, -1 do
-            lines[#lines + 1] = "    case " .. tostring(tail) .. ": acc = (uint32_t)(acc + (uint32_t)" .. access_ref(xs_access, "xs", "i + " .. tostring(tail - 1)) .. ");"
-        end
-        lines[#lines + 1] = "    default: break;"
-        lines[#lines + 1] = "    }"
+        lines[#lines + 1] = "    for (; i < stop; i++) acc = " .. reduction_update_expr(shape.reduction, "acc", access_ref(xs_access, "xs", "i"), shape.result_ty) .. ";"
         lines[#lines + 1] = "    return (" .. ct .. ")acc;"
         lines[#lines + 1] = "}"
         return table.concat(lines, "\n")
@@ -391,7 +471,7 @@ local function bind_context(T)
         local unroll = pvm.classof(schedule) == Stencil.StencilScheduleUnrolled and tonumber(schedule.factor) or 1
         unroll = math.max(1, math.floor(unroll or 1))
         local lines = {}
-        lines[#lines + 1] = ct .. " " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { "const " .. et .. " *xs", "int32_t start", "int32_t stop", ct .. " init" }), ", ") .. ") {"
+        lines[#lines + 1] = ct .. " " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop", ct .. " init" }), ", ") .. ") {"
         if unroll > 1 and stride == 1 then
             lines[#lines + 1] = "    " .. acc_ty .. " acc0 = (" .. acc_ty .. ")init;"
             for lane = 1, unroll - 1 do lines[#lines + 1] = "    " .. acc_ty .. " acc" .. tostring(lane) .. " = (" .. acc_ty .. ")0;" end
@@ -427,10 +507,18 @@ local function bind_context(T)
         local et, rt = c_type(shape.elem_ty), c_type(shape.result_ty)
         local stride = tonumber(shape.stride) or 1
         local lines = {}
-        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { rt .. " *dst", "const " .. et .. " *xs", "int32_t start", "int32_t stop" }), ", ") .. ") {"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
-        lines[#lines + 1] = "        " .. access_ref(dst_access, "dst", "i") .. " = " .. unary_expr(shape.op, access_ref(xs_access, "xs", "i"), shape.result_ty) .. ";"
-        lines[#lines + 1] = "    }"
+        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { rt .. " *dst", const_elem_ptr_decl(shape.elem_ty, "xs"), "int32_t start", "int32_t stop" }), ", ") .. ") {"
+        if shape.op == Stencil.StencilUnaryIdentity
+            and stride == 1
+            and et == rt
+            and is_plain_linear_access(dst_access)
+            and is_plain_linear_access(xs_access) then
+            lines[#lines + 1] = "    if (stop > start) memmove(dst + start, xs + start, (size_t)(stop - start) * sizeof(dst[0]));"
+        else
+            lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
+            lines[#lines + 1] = "        " .. access_ref(dst_access, "dst", "i") .. " = " .. unary_expr(shape.op, access_ref(xs_access, "xs", "i"), shape.result_ty) .. ";"
+            lines[#lines + 1] = "    }"
+        end
         lines[#lines + 1] = "}"
         return table.concat(lines, "\n")
     end
@@ -442,7 +530,7 @@ local function bind_context(T)
         local lt, rt = c_type(shape.lhs_ty), c_type(shape.result_ty)
         local stride = tonumber(shape.stride) or 1
         local lines = {}
-        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { rt .. " *dst", "const " .. lt .. " *lhs", "const " .. lt .. " *rhs", "int32_t start", "int32_t stop" }), ", ") .. ") {"
+        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { rt .. " *dst", const_elem_ptr_decl(shape.lhs_ty, "lhs"), const_elem_ptr_decl(shape.rhs_ty, "rhs"), "int32_t start", "int32_t stop" }), ", ") .. ") {"
         lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
         lines[#lines + 1] = "        " .. access_ref(dst_access, "dst", "i") .. " = " .. binary_expr(shape.op, access_ref(lhs_access, "lhs", "i"), access_ref(rhs_access, "rhs", "i"), shape.result_ty) .. ";"
         lines[#lines + 1] = "    }"
@@ -458,7 +546,7 @@ local function bind_context(T)
         local acc_ty = (shape.reduction == Value.ReductionMin or shape.reduction == Value.ReductionMax) and rt or unsigned_c_type(shape.result_ty)
         local stride = tonumber(shape.stride) or 1
         local lines = {}
-        lines[#lines + 1] = rt .. " " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { rt .. " *dst", "const " .. et .. " *xs", "int32_t start", "int32_t stop", rt .. " init" }), ", ") .. ") {"
+        lines[#lines + 1] = rt .. " " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { rt .. " *dst", const_elem_ptr_decl(shape.elem_ty, "xs"), "int32_t start", "int32_t stop", rt .. " init" }), ", ") .. ") {"
         lines[#lines + 1] = "    " .. acc_ty .. " acc = (" .. acc_ty .. ")init;"
         lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
         local x = access_ref(xs_access, "xs", "i")
@@ -482,15 +570,20 @@ local function bind_context(T)
         local dst_access, src_access = access_named(desc, "dst"), access_named(desc, "src")
         local et = c_type(shape.elem_ty)
         local stride = tonumber(shape.stride) or 1
-        local lines = {}
         local dst_param = et .. " *dst"
-        local src_param = "const " .. et .. " *src"
+        local src_param = const_elem_ptr_decl(shape.elem_ty, "src")
         if shape.semantics ~= Stencil.StencilCopyMemMove and shape.semantics ~= Stencil.StencilCopyMayOverlapBackward then
             dst_param = et .. " *__restrict dst"
-            src_param = "const " .. et .. " *__restrict src"
+            src_param = c_type(shape.elem_ty) .. " const *__restrict src"
         end
+        local plain_bulk = stride == 1 and is_plain_linear_access(dst_access) and is_plain_linear_access(src_access)
+        local lines = {}
         lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { dst_param, src_param, "int32_t start", "int32_t stop" }), ", ") .. ") {"
-        if shape.semantics == Stencil.StencilCopyMayOverlapBackward then
+        if plain_bulk and shape.semantics == Stencil.StencilCopyNoOverlap then
+            lines[#lines + 1] = "    if (stop > start) memcpy(dst + start, src + start, (size_t)(stop - start) * sizeof(dst[0]));"
+        elseif plain_bulk and shape.semantics == Stencil.StencilCopyMemMove then
+            lines[#lines + 1] = "    if (stop > start) memmove(dst + start, src + start, (size_t)(stop - start) * sizeof(dst[0]));"
+        elseif shape.semantics == Stencil.StencilCopyMayOverlapBackward then
             lines[#lines + 1] = "    for (int32_t i = stop - 1; i >= start; i -= " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = " .. access_ref(src_access, "src", "i") .. ";"
         elseif shape.semantics == Stencil.StencilCopyMemMove then
             lines[#lines + 1] = "    if ((uintptr_t)dst <= (uintptr_t)src) {"
@@ -512,7 +605,9 @@ local function bind_context(T)
         local stride = tonumber(shape.stride) or 1
         local lines = {}
         lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { et .. " *dst", "int32_t start", "int32_t stop", et .. " value" }), ", ") .. ") {"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = value;"
+        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
+        lines[#lines + 1] = "        " .. access_ref(dst_access, "dst", "i") .. " = value;"
+        lines[#lines + 1] = "    }"
         lines[#lines + 1] = "}"
         return table.concat(lines, "\n")
     end
@@ -523,7 +618,7 @@ local function bind_context(T)
         local et = c_type(shape.elem_ty)
         local stride = tonumber(shape.stride) or 1
         local lines = {}
-        lines[#lines + 1] = "int32_t " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { "const " .. et .. " *xs", "int32_t start", "int32_t stop" }), ", ") .. ") {"
+        lines[#lines + 1] = "int32_t " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { const_elem_ptr_decl(shape.elem_ty, "xs"), "int32_t start", "int32_t stop" }), ", ") .. ") {"
         lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
         lines[#lines + 1] = "        if " .. predicate_expr(shape.pred, access_ref(xs_access, "xs", "i"), shape.elem_ty) .. " return i;"
         lines[#lines + 1] = "    }"
@@ -538,12 +633,13 @@ local function bind_context(T)
         local dst_access, xs_access = access_named(desc, "dst"), access_named(desc, "xs")
         local et = c_type(shape.elem_ty)
         local stride = tonumber(shape.stride) or 1
+        local pred = predicate_expr(shape.pred, access_ref(xs_access, "xs", "i"), shape.elem_ty)
         local lines = {}
-        lines[#lines + 1] = "int32_t " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { et .. " *dst", "const " .. et .. " *xs", "int32_t start", "int32_t stop" }), ", ") .. ") {"
+        lines[#lines + 1] = "int32_t " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { et .. " *dst", const_elem_ptr_decl(shape.elem_ty, "xs"), "int32_t start", "int32_t stop" }), ", ") .. ") {"
         lines[#lines + 1] = "    int32_t out = start;"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") { if " .. predicate_expr(shape.pred, access_ref(xs_access, "xs", "i"), shape.elem_ty) .. " " .. access_ref(dst_access, "dst", "out++") .. " = " .. access_ref(xs_access, "xs", "i") .. "; }"
+        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") { if " .. pred .. " " .. access_ref(dst_access, "dst", "out++") .. " = " .. access_ref(xs_access, "xs", "i") .. "; }"
         lines[#lines + 1] = "    int32_t split = out;"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") { if (!" .. predicate_expr(shape.pred, access_ref(xs_access, "xs", "i"), shape.elem_ty) .. ") " .. access_ref(dst_access, "dst", "out++") .. " = " .. access_ref(xs_access, "xs", "i") .. "; }"
+        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") { if (!" .. pred .. ") " .. access_ref(dst_access, "dst", "out++") .. " = " .. access_ref(xs_access, "xs", "i") .. "; }"
         lines[#lines + 1] = "    return split;"
         lines[#lines + 1] = "}"
         return table.concat(lines, "\n")
@@ -555,11 +651,11 @@ local function bind_context(T)
         local dst_access, xs_access = access_named(desc, "dst"), access_named(desc, "xs")
         local st, dt = c_type(shape.src_ty), c_type(shape.dst_ty)
         local stride = tonumber(shape.stride) or 1
-        local lines = {}
-        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { dt .. " *dst", "const " .. st .. " *xs", "int32_t start", "int32_t stop" }), ", ") .. ") {"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
         local dst = access_ref(dst_access, "dst", "i")
         local x = access_ref(xs_access, "xs", "i")
+        local lines = {}
+        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { dt .. " *dst", const_elem_ptr_decl(shape.src_ty, "xs"), "int32_t start", "int32_t stop" }), ", ") .. ") {"
+        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
         if shape.op == Core.MachineCastBitcast then
             lines[#lines + 1] = "        memset(&" .. dst .. ", 0, sizeof(" .. dst .. "));"
             lines[#lines + 1] = "        memcpy(&" .. dst .. ", &" .. x .. ", sizeof(" .. dst .. ") < sizeof(" .. x .. ") ? sizeof(" .. dst .. ") : sizeof(" .. x .. "));"
@@ -578,7 +674,7 @@ local function bind_context(T)
         local et, rt = c_type(shape.elem_ty), c_type(shape.result_ty)
         local stride = tonumber(shape.stride) or 1
         local lines = {}
-        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { rt .. " *dst", "const " .. et .. " *xs", "int32_t start", "int32_t stop" }), ", ") .. ") {"
+        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { rt .. " *dst", const_elem_ptr_decl(shape.elem_ty, "xs"), "int32_t start", "int32_t stop" }), ", ") .. ") {"
         lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = " .. bool_result_expr(predicate_expr(shape.pred, access_ref(xs_access, "xs", "i"), shape.elem_ty), shape.result_ty) .. ";"
         lines[#lines + 1] = "}"
         return table.concat(lines, "\n")
@@ -591,7 +687,7 @@ local function bind_context(T)
         local lt, rt = c_type(shape.lhs_ty), c_type(shape.result_ty)
         local stride = tonumber(shape.stride) or 1
         local lines = {}
-        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { rt .. " *dst", "const " .. lt .. " *lhs", "const " .. lt .. " *rhs", "int32_t start", "int32_t stop" }), ", ") .. ") {"
+        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { rt .. " *dst", const_elem_ptr_decl(shape.lhs_ty, "lhs"), const_elem_ptr_decl(shape.rhs_ty, "rhs"), "int32_t start", "int32_t stop" }), ", ") .. ") {"
         lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = " .. bool_result_expr(compare_expr(shape.cmp, access_ref(lhs_access, "lhs", "i"), access_ref(rhs_access, "rhs", "i")), shape.result_ty) .. ";"
         lines[#lines + 1] = "}"
         return table.concat(lines, "\n")
@@ -601,26 +697,74 @@ local function bind_context(T)
         local shape = artifact_shape(artifact)
         local desc = artifact.instance.descriptor
         local dst_access, idx_access = access_named(desc, "dst"), access_named(desc, "idx")
-        local et, it = c_type(shape.elem_ty), c_type(shape.index_ty)
         local stride = tonumber(shape.stride) or 1
-        local lines = {}
-        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { et .. " *dst", "const " .. et .. " *src", "const " .. it .. " *idx", "int32_t start", "int32_t stop" }), ", ") .. ") {"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") " .. access_ref(dst_access, "dst", "i") .. " = src[" .. access_ref(idx_access, "idx", "i") .. "];"
-        lines[#lines + 1] = "}"
-        return table.concat(lines, "\n")
+        local schedule = artifact.instance.schedule
+        local unroll = pvm.classof(schedule) == Stencil.StencilScheduleUnrolled and tonumber(schedule.factor) or 1
+        unroll = math.max(1, math.floor(unroll or 1))
+        local body = assume_aligned_stmts(artifact, { "dst", "src", "idx" })
+        if unroll > 1 and stride == 1 then
+            body[#body + 1] = C.decl. i[C.i32](C.raw_expr("start"))
+            body[#body + 1] = C.decl. stop_unrolled[C.i32](C.raw_expr("start + ((stop - start) / " .. tostring(unroll) .. ") * " .. tostring(unroll)))
+            local unrolled_body = {}
+            for lane = 0, unroll - 1 do
+                local ix = lane == 0 and "i" or ("i + " .. tostring(lane))
+                unrolled_body[#unrolled_body + 1] = C.assign(C.raw_expr(access_ref(dst_access, "dst", ix)), C.raw_expr("src[" .. access_ref(idx_access, "idx", ix) .. "]"))
+            end
+            body[#body + 1] = C.for_ { "", C.raw_expr("i < stop_unrolled"), "i += " .. tostring(unroll) } {
+                _(unrolled_body),
+            }
+            body[#body + 1] = C.for_ { "", C.raw_expr("i < stop"), "i++" } {
+                C.assign(C.raw_expr(access_ref(dst_access, "dst", "i")), C.raw_expr("src[" .. access_ref(idx_access, "idx", "i") .. "]")),
+            }
+        else
+            body[#body + 1] = loop_i(stride, {
+                C.assign(C.raw_expr(access_ref(dst_access, "dst", "i")), C.raw_expr("src[" .. access_ref(idx_access, "idx", "i") .. "]")),
+            })
+        end
+        return emit_void_fn(artifact, {
+            ptr_decl(shape.elem_ty, "dst", { restrict = access_noalias(artifact, "dst") }),
+            ptr_decl(shape.elem_ty, "src", { const = true, restrict = access_noalias(artifact, "src") }),
+            ptr_decl(shape.index_ty, "idx", { const = true, restrict = access_noalias(artifact, "idx") }),
+            "int32_t start",
+            "int32_t stop",
+        }, body)
     end
 
     local function scatter_array_source(artifact)
         local shape = artifact_shape(artifact)
         local desc = artifact.instance.descriptor
         local src_access, idx_access = access_named(desc, "src"), access_named(desc, "idx")
-        local et, it = c_type(shape.elem_ty), c_type(shape.index_ty)
         local stride = tonumber(shape.stride) or 1
-        local lines = {}
-        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { et .. " *dst", "const " .. et .. " *src", "const " .. it .. " *idx", "int32_t start", "int32_t stop" }), ", ") .. ") {"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") dst[" .. access_ref(idx_access, "idx", "i") .. "] = " .. access_ref(src_access, "src", "i") .. ";"
-        lines[#lines + 1] = "}"
-        return table.concat(lines, "\n")
+        local schedule = artifact.instance.schedule
+        local unroll = pvm.classof(schedule) == Stencil.StencilScheduleUnrolled and tonumber(schedule.factor) or 1
+        unroll = math.max(1, math.floor(unroll or 1))
+        local body = assume_aligned_stmts(artifact, { "dst", "src", "idx" })
+        if unroll > 1 and stride == 1 then
+            body[#body + 1] = C.decl. i[C.i32](C.raw_expr("start"))
+            body[#body + 1] = C.decl. stop_unrolled[C.i32](C.raw_expr("start + ((stop - start) / " .. tostring(unroll) .. ") * " .. tostring(unroll)))
+            local unrolled_body = {}
+            for lane = 0, unroll - 1 do
+                local ix = lane == 0 and "i" or ("i + " .. tostring(lane))
+                unrolled_body[#unrolled_body + 1] = C.assign(C.raw_expr("dst[" .. access_ref(idx_access, "idx", ix) .. "]"), C.raw_expr(access_ref(src_access, "src", ix)))
+            end
+            body[#body + 1] = C.for_ { "", C.raw_expr("i < stop_unrolled"), "i += " .. tostring(unroll) } {
+                _(unrolled_body),
+            }
+            body[#body + 1] = C.for_ { "", C.raw_expr("i < stop"), "i++" } {
+                C.assign(C.raw_expr("dst[" .. access_ref(idx_access, "idx", "i") .. "]"), C.raw_expr(access_ref(src_access, "src", "i"))),
+            }
+        else
+            body[#body + 1] = loop_i(stride, {
+                C.assign(C.raw_expr("dst[" .. access_ref(idx_access, "idx", "i") .. "]"), C.raw_expr(access_ref(src_access, "src", "i"))),
+            })
+        end
+        return emit_void_fn(artifact, {
+            ptr_decl(shape.elem_ty, "dst", { restrict = access_noalias(artifact, "dst") }),
+            ptr_decl(shape.elem_ty, "src", { const = true, restrict = access_noalias(artifact, "src") }),
+            ptr_decl(shape.index_ty, "idx", { const = true, restrict = access_noalias(artifact, "idx") }),
+            "int32_t start",
+            "int32_t stop",
+        }, body)
     end
 
     local function in_place_map_array_source(artifact)
@@ -628,12 +772,12 @@ local function bind_context(T)
         local xs_access = access_named(artifact.instance.descriptor, "xs")
         local et = c_type(shape.elem_ty)
         local stride = tonumber(shape.stride) or 1
-        local lines = {}
-        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { et .. " *xs", "int32_t start", "int32_t stop" }), ", ") .. ") {"
         local x = access_ref(xs_access, "xs", "i")
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") " .. x .. " = " .. unary_expr(shape.op, x, shape.elem_ty) .. ";"
-        lines[#lines + 1] = "}"
-        return table.concat(lines, "\n")
+        return emit_void_fn(artifact, { et .. " *xs", "int32_t start", "int32_t stop" }, {
+            loop_i(stride, {
+                C.assign(C.raw_expr(x), C.raw_expr(unary_expr(shape.op, x, shape.elem_ty))),
+            }),
+        })
     end
 
     local function count_array_source(artifact)
@@ -641,13 +785,15 @@ local function bind_context(T)
         local xs_access = access_named(artifact.instance.descriptor, "xs")
         local et = c_type(shape.elem_ty)
         local stride = tonumber(shape.stride) or 1
-        local lines = {}
-        lines[#lines + 1] = "int32_t " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { "const " .. et .. " *xs", "int32_t start", "int32_t stop" }), ", ") .. ") {"
-        lines[#lines + 1] = "    int32_t count = 0;"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") if " .. predicate_expr(shape.pred, access_ref(xs_access, "xs", "i"), shape.elem_ty) .. " count++;"
-        lines[#lines + 1] = "    return count;"
-        lines[#lines + 1] = "}"
-        return table.concat(lines, "\n")
+        return emit_c_fn(artifact, "int32_t", { const_elem_ptr_decl(shape.elem_ty, "xs"), "int32_t start", "int32_t stop" }, {
+            C.decl. count[C.i32](0),
+            loop_i(stride, {
+                C.if_(C.raw_expr(predicate_expr(shape.pred, access_ref(xs_access, "xs", "i"), shape.elem_ty))) {
+                    C.assign(C.raw_expr("count"), C.raw_expr("count + 1")),
+                },
+            }),
+            C.return_(C.raw_expr("count")),
+        })
     end
 
     local function map_reduce_array_source(artifact)
@@ -656,15 +802,13 @@ local function bind_context(T)
         local et, mt, rt = c_type(shape.elem_ty), c_type(shape.mapped_ty), c_type(shape.result_ty)
         local acc_ty = (shape.reduction == Value.ReductionMin or shape.reduction == Value.ReductionMax) and rt or unsigned_c_type(shape.result_ty)
         local stride = tonumber(shape.stride) or 1
-        local lines = {}
-        lines[#lines + 1] = rt .. " " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { "const " .. et .. " *xs", "int32_t start", "int32_t stop", rt .. " init" }), ", ") .. ") {"
-        lines[#lines + 1] = "    " .. acc_ty .. " acc = (" .. acc_ty .. ")init;"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
-        lines[#lines + 1] = "        acc = " .. reduction_update_expr(shape.reduction, "acc", unary_expr(shape.op, access_ref(xs_access, "xs", "i"), shape.mapped_ty), shape.result_ty) .. ";"
-        lines[#lines + 1] = "    }"
-        lines[#lines + 1] = "    return (" .. rt .. ")acc;"
-        lines[#lines + 1] = "}"
-        return table.concat(lines, "\n")
+        return emit_c_fn(artifact, rt, { const_elem_ptr_decl(shape.elem_ty, "xs"), "int32_t start", "int32_t stop", rt .. " init" }, {
+            C.decl. acc[C.type[acc_ty]](C.raw_expr("(" .. acc_ty .. ")init")),
+            loop_i(stride, {
+                C.assign(C.raw_expr("acc"), C.raw_expr(reduction_update_expr(shape.reduction, "acc", unary_expr(shape.op, access_ref(xs_access, "xs", "i"), shape.mapped_ty), shape.result_ty))),
+            }),
+            C.return_(C.raw_expr("(" .. rt .. ")acc")),
+        })
     end
 
     local function zip_reduce_array_source(artifact)
@@ -674,15 +818,13 @@ local function bind_context(T)
         local lt, rt = c_type(shape.lhs_ty), c_type(shape.result_ty)
         local acc_ty = (shape.reduction == Value.ReductionMin or shape.reduction == Value.ReductionMax) and rt or unsigned_c_type(shape.result_ty)
         local stride = tonumber(shape.stride) or 1
-        local lines = {}
-        lines[#lines + 1] = rt .. " " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { "const " .. lt .. " *lhs", "const " .. lt .. " *rhs", "int32_t start", "int32_t stop", rt .. " init" }), ", ") .. ") {"
-        lines[#lines + 1] = "    " .. acc_ty .. " acc = (" .. acc_ty .. ")init;"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
-        lines[#lines + 1] = "        acc = " .. reduction_update_expr(shape.reduction, "acc", binary_expr(shape.op, access_ref(lhs_access, "lhs", "i"), access_ref(rhs_access, "rhs", "i"), shape.mapped_ty), shape.result_ty) .. ";"
-        lines[#lines + 1] = "    }"
-        lines[#lines + 1] = "    return (" .. rt .. ")acc;"
-        lines[#lines + 1] = "}"
-        return table.concat(lines, "\n")
+        return emit_c_fn(artifact, rt, { const_elem_ptr_decl(shape.lhs_ty, "lhs"), const_elem_ptr_decl(shape.rhs_ty, "rhs"), "int32_t start", "int32_t stop", rt .. " init" }, {
+            C.decl. acc[C.type[acc_ty]](C.raw_expr("(" .. acc_ty .. ")init")),
+            loop_i(stride, {
+                C.assign(C.raw_expr("acc"), C.raw_expr(reduction_update_expr(shape.reduction, "acc", binary_expr(shape.op, access_ref(lhs_access, "lhs", "i"), access_ref(rhs_access, "rhs", "i"), shape.mapped_ty), shape.result_ty))),
+            }),
+            C.return_(C.raw_expr("(" .. rt .. ")acc")),
+        })
     end
 
     local function artifact_source(artifact)

@@ -116,7 +116,8 @@ If lowering needs a fact, represent it in schema first.
 
 ## Backends
 
-The active runtime backend is LuaTrace bytecode copy-patch.
+The active backend architecture is copy-patch. Use `copy_patch_mc` for emitted
+fast LuaJIT artifacts and `copy_patch_bc` for the default `lalin.compile` path.
 
 Backend code should consume typed facts:
 

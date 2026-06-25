@@ -2,12 +2,12 @@
 
 Lalin is a LuaJIT-hosted language family built around LLB.
 
-LLB is the center of the system: it turns evaluated Lua values into language
-objects with heads, roles, fragments, namespaces, origins, diagnostics,
+LLB is the center of the system: the language-family workbench and bootstrap
+language for defining member dialects. It turns evaluated Lua values into
+dialect objects with heads, roles, fragments, namespaces, origins, diagnostics,
 formatting, indexing, and generic regions. Region is the shared control algebra
-that composes the family. Lalin is the compiled member: it consumes LLB regions
-and typed values, checks them, and lowers them through LuaTrace into LuaJIT
-bytecode copy-patch artifacts.
+that composes the family. Lalin is the compiled dialect: it consumes LLB regions
+and typed values, checks them, and lowers them into LuaJIT copy-patch artifacts.
 
 ```text
 Lua source
@@ -16,8 +16,8 @@ Lua source
   -> Lalin ASDL
   -> typecheck
   -> LalinCode facts
-  -> LuaTrace stencil plans
-  -> LuaJIT bytecode bank
+  -> LuaTrace stencil plans or C stencil plans
+  -> LuaJIT copy-patch bank
   -> loaded module
 ```
 
@@ -66,7 +66,7 @@ git submodule update --init --recursive
 make libtcc
 ```
 
-The default LuaTrace bytecode backend does not require Cargo, Rust, Cranelift,
+The default compile path uses LuaTrace bytecode copy-patch and does not require Cargo, Rust, Cranelift,
 or a system C compiler.
 
 ## Test
@@ -88,20 +88,20 @@ luajit tests/run.lua ui
 Useful backend checks:
 
 ```sh
-luajit tests/code_ir/test_luajit_bc_bank.lua
-luajit tests/code_ir/test_luajit_backend_luatrace.lua
-luajit tests/code_ir/test_stencil_luajit_provider.lua
+luajit tests/code_ir/test_copy_patch_bc.lua
+luajit tests/code_ir/test_luajit_backend_bc.lua
+luajit tests/code_ir/test_copy_patch_luatrace.lua
 ```
 
 ## Repository Map
 
 ```text
-lua/llb.lua                  LLB language-workbench substrate
+lua/llb.lua                  LLB language-family workbench substrate
 lua/lalin/                   Lalin compiler, schemas, DSL, and backend
 lua/lalin/dsl/               authoring heads and namespace surface
 lua/lalin/schema/            ASDL/schema definitions
-lua/llpvm/                   low-level VM/task language member
-lua/llisle/                  lowering/rewrite rule language
+lua/llpvm/                   low-level VM/task dialect member
+lua/llisle/                  lowering/rewrite rule dialect
 lua/ui/                      UI kernel and widgets
 tests/                       standalone LuaJIT tests
 benchmarks/                  measurement scripts

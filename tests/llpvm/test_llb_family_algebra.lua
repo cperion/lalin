@@ -3,14 +3,14 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local llb = require("llb")
 local g = llb.grammar
 
-local A = llb.define "FamilyA" {
+local A = llb.dialect "FamilyA" {
   -- Creates the A family head.
   g.head. a {
     emit = function() return "a" end,
   },
 }
 
-local B = llb.define "FamilyB" {
+local B = llb.dialect "FamilyB" {
   g.head. b {
     emit = function() return "b" end,
   },
@@ -19,11 +19,11 @@ local B = llb.define "FamilyB" {
 assert(A:family():describe().tag == "Family", "language has singleton family")
 assert(#llb.core_family():describe().members == 1, "llb is the smallest singleton family")
 assert(llb.core_family():describe().members[1].name == "llb", "llb singleton contains the llb member")
-assert(#A:family():describe().members == 2, "language family includes llb plus the language")
+assert(#A:family():describe().members == 2, "dialect family includes llb plus the dialect")
 
 local env = A:env()
 assert(env.a ~= nil, "language env delegates through singleton family")
-assert(env.llb == llb and env.N == llb.N, "language family installs shared llb substrate")
+assert(env.llb == llb and env.N == llb.N, "dialect family installs shared llb substrate")
 assert(llb.is(env.unknown_name, "Symbol"), "singleton family auto-names are generic symbols")
 
 local a_head = A:describe_head("a")
@@ -42,7 +42,7 @@ assert(stacked_diag:match("Outer generated context%."), "diagnostic rendering in
 assert(stacked_diag:match("Inner generated context%."), "diagnostic rendering includes child origin context")
 
 local direct = llb.use(A, { scope = "env" })
-assert(direct.family == A:family(), "llb.use(Language) delegates to the language family")
+assert(direct.family == A:family(), "llb.use(Dialect) delegates to the dialect family")
 assert(direct.env.llb == llb and direct.env.a ~= nil, "direct language use still installs the family substrate")
 
 local AB = (A:family() .. B:family()).prefer {

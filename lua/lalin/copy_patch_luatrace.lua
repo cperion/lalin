@@ -1,4 +1,6 @@
 local pvm = require("lalin.pvm")
+local ok_ffi, ffi = pcall(require, "ffi")
+if not ok_ffi then ffi = nil end
 
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -13,7 +15,7 @@ end
 
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
-    if T._lalin_api_cache.stencil_luajit ~= nil then return T._lalin_api_cache.stencil_luajit end
+    if T._lalin_api_cache.copy_patch_luatrace ~= nil then return T._lalin_api_cache.copy_patch_luatrace end
 
     local Core = T.LalinCore
     local Code = T.LalinCode
@@ -21,7 +23,7 @@ local function bind_context(T)
     local Stencil = T.LalinStencil
     local LT = T.LalinLuaTrace
     local ArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-    local BCBank = require("lalin.luajit_bc_bank")(T)
+    local BCBank = require("lalin.copy_patch_bc")(T)
 
     local api = {}
 
@@ -35,6 +37,9 @@ local function bind_context(T)
         if ty == Code.CodeTyIndex then return nil end
         if cls == Code.CodeTyInt or cls == Code.CodeTyFloat then
             return math.floor((tonumber(ty.bits) or 0) / 8)
+        end
+        if cls == Code.CodeTyDataPtr or cls == Code.CodeTyCodePtr or cls == Code.CodeTyImportedCFuncPtr then
+            return ffi and ffi.abi("64bit") and 8 or 4
         end
         return nil
     end
@@ -55,7 +60,7 @@ local function bind_context(T)
                 if pvm.classof(lit) == Core.LitBool then return lit.value and 1 or 0 end
             end
         end
-        error("stencil_luajit: unsupported constant expression", 3)
+        error("copy_patch_luatrace: unsupported constant expression", 3)
     end
 
     local function fact_map(facts)
@@ -184,7 +189,7 @@ local function bind_context(T)
         if op == Stencil.StencilUnaryNeg then return "(-" .. v .. ")" end
         if op == Stencil.StencilUnaryBitNot then return "__ml_bnot(" .. v .. ")" end
         if op == Stencil.StencilUnaryBoolNot then return "((" .. v .. ") == 0 and 1 or 0)" end
-        error("stencil_luajit: unsupported unary op", 3)
+        error("copy_patch_luatrace: unsupported unary op", 3)
     end
 
     local function lua_binary_expr(op, a, b, ty)
@@ -196,7 +201,7 @@ local function bind_context(T)
         if op == Stencil.StencilBinaryXor then return "__ml_bxor(" .. a .. ", " .. b .. ")" end
         if op == Stencil.StencilBinaryMin then return "((" .. a .. ") < (" .. b .. ") and (" .. a .. ") or (" .. b .. "))" end
         if op == Stencil.StencilBinaryMax then return "((" .. a .. ") > (" .. b .. ") and (" .. a .. ") or (" .. b .. "))" end
-        error("stencil_luajit: unsupported binary op", 3)
+        error("copy_patch_luatrace: unsupported binary op", 3)
     end
 
     local function lua_reduce_expr(kind, acc, item, ty)
@@ -207,7 +212,7 @@ local function bind_context(T)
         if kind == Value.ReductionXor then return "__ml_bxor(" .. acc .. ", " .. item .. ")" end
         if kind == Value.ReductionMin then return "((" .. item .. ") < (" .. acc .. ") and (" .. item .. ") or (" .. acc .. "))" end
         if kind == Value.ReductionMax then return "((" .. item .. ") > (" .. acc .. ") and (" .. item .. ") or (" .. acc .. "))" end
-        error("stencil_luajit: unsupported reduction", 3)
+        error("copy_patch_luatrace: unsupported reduction", 3)
     end
 
     local function lua_pred_expr(p, v)
@@ -220,7 +225,7 @@ local function bind_context(T)
         if cls == Stencil.StencilPredLeConst then return "(" .. v .. " <= " .. c .. ")" end
         if cls == Stencil.StencilPredGtConst then return "(" .. v .. " > " .. c .. ")" end
         if cls == Stencil.StencilPredGeConst then return "(" .. v .. " >= " .. c .. ")" end
-        error("stencil_luajit: unsupported predicate", 3)
+        error("copy_patch_luatrace: unsupported predicate", 3)
     end
 
     local function lua_cmp_expr(op, a, b)
@@ -230,7 +235,7 @@ local function bind_context(T)
         if op == Core.CmpLe then return "(" .. a .. " <= " .. b .. ")" end
         if op == Core.CmpGt then return "(" .. a .. " > " .. b .. ")" end
         if op == Core.CmpGe then return "(" .. a .. " >= " .. b .. ")" end
-        error("stencil_luajit: unsupported compare op", 3)
+        error("copy_patch_luatrace: unsupported compare op", 3)
     end
 
     local function is_i32_signed(ty)
@@ -722,7 +727,7 @@ local function bind_context(T)
             end)
             out[#out + 1] = "    return acc"
         else
-            error("stencil_luajit: unsupported stencil shape " .. tostring(kind), 3)
+            error("copy_patch_luatrace: unsupported stencil shape " .. tostring(kind), 3)
         end
 
         out[#out + 1] = "end"
@@ -730,7 +735,7 @@ local function bind_context(T)
         return table.concat(out, "\n")
     end
 
-    function api.lua_trace_artifact(artifact)
+    function api.bc_artifact(artifact)
         return Stencil.StencilArtifact(artifact.instance, Stencil.StencilProviderLuaTrace, artifact.symbol, artifact.c_signature)
     end
 
@@ -738,7 +743,7 @@ local function bind_context(T)
         return build_artifact_plan(artifact)
     end
 
-    local function bytecode_stencil_source(artifact)
+    local function bc_stencil_source(artifact)
         return table.concat({
             "local __lalin_luajit_stencil_symbols = {}",
             "do",
@@ -748,11 +753,11 @@ local function bind_context(T)
         }, "\n") .. "\n"
     end
 
-    function api.emit_bytecode_stencil_source(artifact)
-        return bytecode_stencil_source(artifact)
+    function api.emit_mc_stencil_source(artifact)
+        return bc_stencil_source(artifact)
     end
 
-    local function bytecode_env()
+    local function bc_env()
         local bit = require("bit")
         local ffi = require("ffi")
         return {
@@ -773,7 +778,7 @@ local function bind_context(T)
         }
     end
 
-    function api.build_bytecode_bank(artifacts, opts)
+    function api.build_bc_bank(artifacts, opts)
         opts = opts or {}
         local entries = {}
         for _, artifact in ipairs(artifacts or {}) do
@@ -782,7 +787,7 @@ local function bind_context(T)
                 id = tostring(opts.stem or "ljbc") .. ":" .. tostring(symbol),
                 symbol = symbol,
                 chunk_name = "@lalin_luajit_bc_stencil/" .. tostring(symbol),
-                source = bytecode_stencil_source(artifact),
+                source = bc_stencil_source(artifact),
                 holes = opts.holes,
                 artifact = artifact,
             }
@@ -796,23 +801,23 @@ local function bind_context(T)
     end
 
     local function bindings_for_symbol(opts, symbol)
-        local bindings = opts and (opts.patch_bindings or opts.bytecode_patch_bindings) or nil
+        local bindings = opts and (opts.patch_bindings or opts.bc_patch_bindings) or nil
         if bindings == nil then return nil end
         return bindings[symbol] or bindings
     end
 
-    function api.realize_bytecode_artifacts(artifacts, opts)
+    function api.realize_bc_artifacts(artifacts, opts)
         opts = opts or {}
         artifacts = artifacts or {}
         local bank = opts.bank
         if bank == nil then
             local err
-            bank, err = api.build_bytecode_bank(artifacts, opts)
+            bank, err = api.build_bc_bank(artifacts, opts)
             if bank == nil then return nil, err end
         end
         local symbols = {}
         local installed = {}
-        local env = opts.env or bytecode_env()
+        local env = opts.env or bc_env()
         for _, artifact in ipairs(artifacts) do
             local symbol = artifact.symbol.text
             local fn, err = BCBank.load_symbol(bank, symbol, bindings_for_symbol(opts, symbol), {
@@ -825,39 +830,39 @@ local function bind_context(T)
                 symbol = symbol,
                 artifact = artifact,
                 provider = Stencil.StencilProviderLuaTrace,
-                materializer = "bytecode_copy_patch",
+                materializer = "bc",
             }
         end
         return {
-            kind = "LuaTraceBytecodeStencilRealization",
+            kind = "BCStencilBankRealization",
             symbols = symbols,
             installed = installed,
             provider = Stencil.StencilProviderLuaTrace,
-            materializer = "bytecode_copy_patch",
-            bank = bank,
+            materializer = "bc",
+            bc_bank = bank,
         }
     end
 
     local function target_check_source(target)
         local checks = {}
-        checks[#checks + 1] = "assert(jit and jit.version == " .. lua_string(target.luajit_version) .. ", 'LuaTrace bytecode bank LuaJIT version mismatch')"
-        checks[#checks + 1] = "assert(jit and jit.arch == " .. lua_string(target.arch) .. ", 'LuaTrace bytecode bank arch mismatch')"
-        checks[#checks + 1] = "assert(jit and jit.os == " .. lua_string(target.os) .. ", 'LuaTrace bytecode bank os mismatch')"
-        checks[#checks + 1] = "assert((ffi.abi('64bit') and 64 or 32) == " .. tostring(target.pointer_bits) .. ", 'LuaTrace bytecode bank pointer width mismatch')"
+        checks[#checks + 1] = "assert(jit and jit.version == " .. lua_string(target.luajit_version) .. ", 'LuaTrace BC bank LuaJIT version mismatch')"
+        checks[#checks + 1] = "assert(jit and jit.arch == " .. lua_string(target.arch) .. ", 'LuaTrace BC bank arch mismatch')"
+        checks[#checks + 1] = "assert(jit and jit.os == " .. lua_string(target.os) .. ", 'LuaTrace BC bank os mismatch')"
+        checks[#checks + 1] = "assert((ffi.abi('64bit') and 64 or 32) == " .. tostring(target.pointer_bits) .. ", 'LuaTrace BC bank pointer width mismatch')"
         if target.endian == "little" then
-            checks[#checks + 1] = "assert(ffi.abi('le'), 'LuaTrace bytecode bank endian mismatch')"
+            checks[#checks + 1] = "assert(ffi.abi('le'), 'LuaTrace BC bank endian mismatch')"
         elseif target.endian == "big" then
-            checks[#checks + 1] = "assert(ffi.abi('be'), 'LuaTrace bytecode bank endian mismatch')"
+            checks[#checks + 1] = "assert(ffi.abi('be'), 'LuaTrace BC bank endian mismatch')"
         end
-        checks[#checks + 1] = "assert(ffi.abi('gc64') == " .. tostring(target.gc64) .. ", 'LuaTrace bytecode bank GC64 mismatch')"
-        checks[#checks + 1] = "assert(ffi.abi('dualnum') == " .. tostring(target.dualnum) .. ", 'LuaTrace bytecode bank dualnum mismatch')"
+        checks[#checks + 1] = "assert(ffi.abi('gc64') == " .. tostring(target.gc64) .. ", 'LuaTrace BC bank GC64 mismatch')"
+        checks[#checks + 1] = "assert(ffi.abi('dualnum') == " .. tostring(target.dualnum) .. ", 'LuaTrace BC bank dualnum mismatch')"
         return table.concat(checks, "\n")
     end
 
-    function api.emit_bytecode_bank_source(bank, opts)
+    function api.emit_bc_bank_source(bank, opts)
         opts = opts or {}
         local out = {
-            "-- Generated Lalin LuaTrace bytecode copy-patch bank.",
+            "-- Generated Lalin LuaTrace BC copy-patch bank.",
             "local bit = require('bit')",
             "local ffi = require('ffi')",
             target_check_source(bank.target),
@@ -892,7 +897,7 @@ local function bind_context(T)
     end
 
     function api.compile_artifact(artifact)
-        local realization, err = api.realize_bytecode_artifacts({ artifact }, {
+        local realization, err = api.realize_bc_artifacts({ artifact }, {
             stem = "compile_artifact",
         })
         if realization == nil then error(tostring(err), 2) end
@@ -900,10 +905,10 @@ local function bind_context(T)
     end
 
     function api.realize_artifacts(artifacts)
-        return assert(api.realize_bytecode_artifacts(artifacts), "LuaTrace bytecode realization failed")
+        return assert(api.realize_bc_artifacts(artifacts), "LuaTrace bytecode realization failed")
     end
 
-    T._lalin_api_cache.stencil_luajit = api
+    T._lalin_api_cache.copy_patch_luatrace = api
     return api
 end
 

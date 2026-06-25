@@ -1,11 +1,12 @@
 # LLB Guide
 
-LLB is the Lua Language Builder workbench in `lua/llb.lua`. It is the center of
-the Lalin family.
+LLB is the Lua Language Builder family workbench in `lua/llb.lua`. It is the
+center of the Lalin family and the bootstrap language used to define the other
+family dialects.
 
 It lets ordinary Lua syntax act as a structured language surface without adding
 a parser, but that is only the first layer. LLB also owns the machinery that
-makes family languages compose: namespaces, roles, staged heads, fragments,
+makes family dialects compose: namespaces, roles, staged heads, fragments,
 origins, diagnostics, formatting, indexing, generic regions, protocols,
 processes, GPS lowering, and managed environments.
 
@@ -13,13 +14,15 @@ processes, GPS lowering, and managed environments.
 Lua syntax
   -> Lua values
   -> LLB events, roles, heads, fragments, origins
-  -> member-language values
+  -> member-dialect values
   -> diagnostics, formatting, indexing, compilation
 ```
 
-LLB is generic. Lalin-specific types, ownership, native CFG checking, and
-backend behavior belong to Lalin. The generic region algebra belongs to LLB;
-Lalin consumes it.
+LLB is generic. It owns the shared metaprogramming language: heads, roles,
+namespaces, origins, diagnostics, formatting, indexing, families, and generic
+regions. Lalin-specific types, ownership, native CFG checking, and backend
+behavior belong to the Lalin dialect. The generic region algebra belongs to
+LLB; Lalin consumes it.
 
 ## Core Atoms
 
@@ -35,7 +38,7 @@ head        staged constructor
 fragment    role-tagged reusable value
 origin      source/provenance handle
 diagnostic  structured failure report
-namespace   owned language surface
+namespace   owned dialect surface
 zone        family partition
 protocol    named behavior contract
 region      generic control machine
@@ -50,14 +53,14 @@ ll.fn. add { a [ll.i32], b [ll.i32] } [ll.i32] {
 }
 ```
 
-A language author defines roles and heads:
+A dialect author defines roles and heads:
 
 ```lua
 local llb = require("llb")
 local g = llb.grammar
 local ch = llb.channel
 
-local Mini = llb.define "Mini" {
+local Mini = llb.dialect "Mini" {
   g.role. fields { kind = "product", unique_names = true },
   g.role. body   { kind = "array", algebra = "list" },
 
@@ -253,6 +256,19 @@ failure path:
 
 LLB formatting is semantic. It formats evaluated values through role/head/member
 hooks. It is not a lossless Lua source formatter.
+
+LLB owns the generic surface grammar for formatted head applications:
+
+```lua
+dialect.head. literal_name
+dialect.head [dynamic_name]
+```
+
+The spaced dot means "the next token is the object-language name introduced by
+this head". Member dialects should provide role/slot formatters for their
+semantic payloads, such as types, fields, statements, or expressions. They
+should not duplicate the generic head/name spacing rule. Raw Lua token
+formatting is deliberately outside LLB; use a Lua formatter for source text.
 
 Indexing should be process-shaped so tools can consume only the events they
 need:

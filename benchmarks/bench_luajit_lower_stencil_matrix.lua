@@ -19,7 +19,7 @@ local Value = T.LalinValue
 local Lower = require("lalin.luajit_lower")(T)
 local Emit = require("lalin.luajit_emit")(T)
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBank = require("lalin.stencil_bank")(T)
+local CopyPatchMC = require("lalin.copy_patch_mc")(T)
 
 local mode = arg and arg[1] or "quick"
 local full = mode == "full"
@@ -37,16 +37,16 @@ local function compile_artifacts(artifacts, opts)
     opts = opts or {}
     opts.cc = opts.cc or cc
     opts.cflags = opts.cflags or stencil_object_cflags()
-    local bank, bank_err, source = StencilBank.build_binary_bank(artifacts, opts)
+    local bank, bank_err, source = CopyPatchMC.build_mc_bank(artifacts, opts)
     if bank == nil then return nil, bank_err, source end
-    local realization, realize_err = StencilBank.realize_binary_artifacts(artifacts, {
-        bank = bank,
+    local realization, realize_err = CopyPatchMC.realize_mc_artifacts(artifacts, {
+        mc_bank = bank,
         preamble = opts.preamble,
         ffi_preamble = opts.ffi_preamble,
         patch_values = opts.patch_values,
     })
     if realization == nil then return nil, realize_err, source end
-    return { kind = "BinaryStencilBenchmarkBuild", bank = bank, realization = realization, symbols = realization.symbols, source = source }, nil, source
+    return { kind = "MCStencilBenchmarkBuild", bank = bank, realization = realization, symbols = realization.symbols, source = source }, nil, source
 end
 
 local origin = Code.CodeOriginGenerated("bench_luajit_lower_stencil_matrix")

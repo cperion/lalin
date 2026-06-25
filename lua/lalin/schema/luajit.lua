@@ -11,7 +11,7 @@ return schema. LalinLuaJIT {
   product. LJHelperId { interned, text [str], },
   product. LJGlobalId { interned, text [str], },
   product. LJLocalId { interned, text [str], },
-  product. LJBinaryBankId { interned, text [str], },
+  product. LJMCBankId { interned, text [str], },
   product. LJBCBankId { interned, text [str], },
   product. LJBCStencilId { interned, text [str], },
 
@@ -575,7 +575,7 @@ return schema. LalinLuaJIT {
     helpers [many [LalinLuaJIT.LJHelperId]],
   },
 
-  product. LJBinaryTarget {
+  product. LJMCTarget {
     interned,
     arch [str],
     field. os [str],
@@ -584,65 +584,65 @@ return schema. LalinLuaJIT {
     endian [str],
   },
 
-  sum. LJBinaryAddressPolicy {
-    LJInstallAnyAddress,
-    LJInstallLow32Address,
+  sum. LJMCAddressPolicy {
+    LJMCInstallAnyAddress,
+    LJMCInstallLow32Address,
   },
 
-  sum. LJBinaryProtectionPolicy {
-    LJInstallWriteThenExec,
-    LJInstallReadWriteExec,
+  sum. LJMCProtectionPolicy {
+    LJMCInstallWriteThenExec,
+    LJMCInstallReadWriteExec,
   },
 
-  product. LJBinaryInstallPolicy {
+  product. LJMCInstallPolicy {
     interned,
-    address [LalinLuaJIT.LJBinaryAddressPolicy],
-    protection [LalinLuaJIT.LJBinaryProtectionPolicy],
+    address [LalinLuaJIT.LJMCAddressPolicy],
+    protection [LalinLuaJIT.LJMCProtectionPolicy],
   },
 
-  sum. LJBinaryPatchKind {
-    LJPatchAbs32,
-    LJPatchAbs64,
-    LJPatchSymbol32,
-    LJPatchSymbol64,
-    LJPatchPc32,
-    LJPatchRel32,
-    LJPatchLocalAbs32,
-    LJPatchLocalAbs64,
+  sum. LJMCPatchKind {
+    LJMCPatchAbs32,
+    LJMCPatchAbs64,
+    LJMCPatchSymbol32,
+    LJMCPatchSymbol64,
+    LJMCPatchPc32,
+    LJMCPatchRel32,
+    LJMCPatchLocalAbs32,
+    LJMCPatchLocalAbs64,
   },
 
-  product. LJBinaryPatchRecord {
+  product. LJMCPatchRecord {
     interned,
     offset [number],
-    kind [LalinLuaJIT.LJBinaryPatchKind],
+    kind [LalinLuaJIT.LJMCPatchKind],
     reloc_type [optional [str]],
     symbol [optional [str]],
     ordinal [optional [number]],
     addend [number],
   },
 
-  product. LJBinaryStencilEntry {
+  product. LJMCStencilEntry {
     symbol [str],
     section [str],
     binary [str],
     c_signature [str],
-    patches [many [LalinLuaJIT.LJBinaryPatchRecord]],
+    patches [many [LalinLuaJIT.LJMCPatchRecord]],
     artifact [LalinStencil.StencilArtifact],
   },
 
-  product. LJBinaryStencilBank {
-    field. id [LalinLuaJIT.LJBinaryBankId],
-    target [LalinLuaJIT.LJBinaryTarget],
-    install [LalinLuaJIT.LJBinaryInstallPolicy],
+  product. LJMCStencilBank {
+    field. id [LalinLuaJIT.LJMCBankId],
+    target [LalinLuaJIT.LJMCTarget],
+    install [LalinLuaJIT.LJMCInstallPolicy],
     c_path [str],
     o_path [str],
     source [str],
     command [str],
     preamble [optional [str]],
-    entries [many [LalinLuaJIT.LJBinaryStencilEntry]],
+    entries [many [LalinLuaJIT.LJMCStencilEntry]],
   },
 
-  product. LJBytecodeTarget {
+  product. LJBCTarget {
     interned,
     luajit_version [str],
     arch [str],
@@ -699,7 +699,7 @@ return schema. LalinLuaJIT {
 
   product. LJBCStencilBank {
     field. id [LalinLuaJIT.LJBCBankId],
-    target [LalinLuaJIT.LJBytecodeTarget],
+    target [LalinLuaJIT.LJBCTarget],
     entries [many [LalinLuaJIT.LJBCStencilEntry]],
   },
 }

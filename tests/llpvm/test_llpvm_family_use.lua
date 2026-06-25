@@ -6,7 +6,7 @@ local LLPVM = require("llpvm")
 local env = {}
 local session = lalin.family.use { scope = "env", target = env, global = false }
 local desc = session:describe()
-assert(desc.lang == "lalin", "family session is named")
+assert(desc.dialect == "lalin", "family session is named")
 assert(env.ll and env.lalin and env.llpvm and env.schema, "family installs member namespaces")
 assert(env.ll == env.lalin, "ll should be the short alias for the Lalin namespace")
 assert(env.region == require("llb").region, "family installs generic LLB region as the bare region head")

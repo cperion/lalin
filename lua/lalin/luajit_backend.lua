@@ -18,8 +18,8 @@ local function bind_context(T)
     local Lower = require("lalin.luajit_lower")(T)
     local Emit = require("lalin.luajit_emit")(T)
     local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-    local StencilBank = require("lalin.stencil_bank")(T)
-    local StencilLuaJIT = require("lalin.stencil_luajit")(T)
+    local StencilBank = require("lalin.copy_patch_mc")(T)
+    local CopyPatchLuaTrace = require("lalin.copy_patch_luatrace")(T)
     local ExecPlan = require("lalin.exec_plan")(T)
     local CodeSchedulePlan = require("lalin.code_schedule_plan")(T)
     local BackTargetModel = require("lalin.back_target_model")(T)
@@ -76,29 +76,17 @@ local function bind_context(T)
         error("luajit_backend: unsupported selected stencil vocab " .. tostring(vocab), 3)
     end
 
-    local function provider_name(opts)
-        return tostring((opts or {}).stencil_provider or (opts or {}).provider or "c")
-    end
-
-    local function is_luatrace_provider(provider)
-        return provider == "lua_trace" or provider == "luatrace" or provider == "gps"
-    end
-
-    local function luatrace_materializer(opts)
-        local materializer = tostring((opts or {}).luatrace_materializer or (opts or {}).stencil_materializer or (opts or {}).materializer or "bytecode")
-        if materializer == "bytecode" or materializer == "bc" or materializer == "bc_copy_patch" or materializer == "bytecode_copy_patch" then
-            return "bytecode"
-        end
-        error("luajit_backend: unknown LuaTrace materializer " .. tostring(materializer), 3)
+    local function copy_patch_mode(opts)
+        local mode = tostring((opts or {}).copy_patch or "mc")
+        if mode == "mc" or mode == "bc" then return mode end
+        error("luajit_backend: unknown copy_patch materializer " .. mode, 3)
     end
 
     local function artifact_with_provider(artifact, opts)
-        local provider = provider_name(opts)
-        if provider == "c" or provider == "copy_patch" or provider == "binary" then return artifact end
-        if is_luatrace_provider(provider) then
-            return StencilLuaJIT.lua_trace_artifact(artifact)
+        if copy_patch_mode(opts) == "bc" then
+            return CopyPatchLuaTrace.bc_artifact(artifact)
         end
-        error("luajit_backend: unknown stencil provider " .. tostring(provider), 3)
+        return artifact
     end
 
     local function collect_artifact(artifacts, selections, vocab, op, reduction, plan, info, opts)
@@ -169,37 +157,35 @@ local function bind_context(T)
     function api.realize_artifacts(artifacts, opts)
         opts = opts or {}
         if #artifacts == 0 then
-            return { kind = "BinaryStencilBankRealization", symbols = {}, installed = {}, bank = nil }, nil
+            return { kind = "MCStencilBankRealization", symbols = {}, installed = {}, bank = nil }, nil
         end
-        local provider = provider_name(opts)
-        if is_luatrace_provider(provider) then
-            luatrace_materializer(opts)
-            return StencilLuaJIT.realize_bytecode_artifacts(artifacts, {
-                bank = opts.bytecode_bank or opts.bc_bank,
+        if copy_patch_mode(opts) == "bc" then
+            return CopyPatchLuaTrace.realize_bc_artifacts(artifacts, {
+                bank = opts.bc_bank,
                 stem = opts.stem,
-                id = opts.bytecode_bank_id or opts.bc_bank_id,
-                target = opts.bytecode_target or opts.bc_target,
-                patch_bindings = opts.bytecode_patch_bindings or opts.patch_bindings,
-                env = opts.bytecode_env,
+                id = opts.bc_bank_id,
+                target = opts.bc_target,
+                patch_bindings = opts.bc_patch_bindings,
+                env = opts.bc_env,
             })
         end
-        local bank = opts.bank
-        if bank == nil then
-            return nil, "luajit_backend: binary realization requires a prebuilt BinaryStencilBank"
+        local mc_bank = opts.mc_bank
+        if mc_bank == nil then
+            return nil, "luajit_backend: mc realization requires a prebuilt MCStencilBank"
         end
-        return StencilBank.realize_binary_artifacts(artifacts, {
-            bank = bank,
+        return StencilBank.realize_mc_artifacts(artifacts, {
+            mc_bank = mc_bank,
             patch_values = opts.patch_values,
             install_policy = opts.install_policy,
         })
     end
 
-    function api.build_binary_bank(artifacts, opts)
-        return StencilBank.build_binary_bank(artifacts or {}, opts or {})
+    function api.build_mc_bank(artifacts, opts)
+        return StencilBank.build_mc_bank(artifacts or {}, opts or {})
     end
 
-    function api.build_bytecode_bank(artifacts, opts)
-        return StencilLuaJIT.build_bytecode_bank(artifacts or {}, opts or {})
+    function api.build_bc_bank(artifacts, opts)
+        return CopyPatchLuaTrace.build_bc_bank(artifacts or {}, opts or {})
     end
 
     function api.compile_lj_module(lj_module, artifacts, opts)
@@ -221,40 +207,38 @@ local function bind_context(T)
 
     function api.emit_lua_artifact(lj_module, artifacts, opts)
         opts = opts or {}
-        local provider = provider_name(opts)
         local stencil_source
-        local bytecode_bank
-        if is_luatrace_provider(provider) then
-            luatrace_materializer(opts)
-            bytecode_bank = opts.bytecode_bank or opts.bc_bank
-            if bytecode_bank == nil then
+        local bc_bank
+        local mode = copy_patch_mode(opts)
+        if mode == "bc" then
+            bc_bank = opts.bc_bank
+            if bc_bank == nil then
                 local bank_err
-                bytecode_bank, bank_err = api.build_bytecode_bank(artifacts or {}, {
+                bc_bank, bank_err = api.build_bc_bank(artifacts or {}, {
                     stem = opts.stem,
-                    id = opts.bytecode_bank_id or opts.bc_bank_id,
-                    target = opts.bytecode_target or opts.bc_target,
+                    id = opts.bc_bank_id,
+                    target = opts.bc_target,
                 })
-                if bytecode_bank == nil then return nil, bank_err end
+                if bc_bank == nil then return nil, bank_err end
             end
-            stencil_source = StencilLuaJIT.emit_bytecode_bank_source(bytecode_bank, opts)
+            stencil_source = CopyPatchLuaTrace.emit_bc_bank_source(bc_bank, opts)
         else
-            local bank = opts.bank
-            if bank == nil and #(artifacts or {}) > 0 then
-                return nil, "luajit_backend.emit_lua_artifact requires a prebuilt BinaryStencilBank"
+            local mc_bank = opts.mc_bank
+            if mc_bank == nil and #(artifacts or {}) > 0 then
+                return nil, "luajit_backend.emit_lua_artifact requires a prebuilt MCStencilBank"
             end
-            stencil_source = bank and StencilBank.emit_lua_bank_source(bank, opts) or "local __lalin_luajit_stencil_symbols = {}\n"
+            stencil_source = mc_bank and StencilBank.emit_mc_bank_source(mc_bank, opts) or "local __lalin_luajit_stencil_symbols = {}\n"
         end
         local module_source = Emit.emit_module(lj_module, {
             chunk_name = opts.chunk_name or "lalin_luajit_artifact",
         })
-        local is_luatrace = is_luatrace_provider(provider)
         local source = table.concat({
-            is_luatrace
-                and "-- Generated Lalin LuaJIT LuaTrace bytecode copy-patch artifact.\n"
-                or "-- Generated Lalin LuaJIT copy-and-patch artifact.\n",
-            is_luatrace
-                and "-- Stencil descriptors are emitted below as LuaJIT bytecode stencils.\n"
-                or "-- Native stencil bytes are embedded below as data and installed before the runtime module loads.\n",
+            mode == "bc"
+                and "-- Generated Lalin LuaJIT LuaTrace BC copy-patch artifact.\n"
+                or "-- Generated Lalin LuaJIT MC copy-patch artifact.\n",
+            mode == "bc"
+                and "-- Stencil descriptors are emitted below as LuaJIT BC stencils.\n"
+                or "-- Native MC stencil bytes are embedded below as data and installed before the runtime module loads.\n",
             stencil_source,
             module_source,
         })
@@ -285,7 +269,7 @@ local function bind_context(T)
             exec_plan = facts.exec,
             artifacts = artifacts,
             rejects = rejects,
-            bank = opts.bank,
+            mc_bank = opts.mc_bank,
         }
     end
 
