@@ -572,6 +572,9 @@ local function bind_context(T)
     local function build_artifact_plan(artifact)
         local desc = artifact.instance.descriptor
         local shape = ArtifactPlan.artifact_shape(artifact)
+        if shape.producer ~= nil and shape.producer.kind ~= "range1d" then
+            error("copy_patch_luatrace: producer " .. tostring(shape.producer.kind) .. " is not materialized by the LuaTrace bytecode path yet", 3)
+        end
         local schedule = artifact.instance.schedule
         local facts = schedule_facts(schedule)
         local access_plans, access_by_name = build_access_plans(desc, facts)

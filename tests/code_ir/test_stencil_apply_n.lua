@@ -22,6 +22,15 @@ local function iconst(raw)
     return Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt(tostring(raw))))
 end
 
+local function reduction(kind, init)
+    return {
+        kind = kind,
+        init = iconst(init),
+        int_semantics = sem,
+        float_mode = nil,
+    }
+end
+
 local function input(name)
     return Plan.input_expr(name)
 end
@@ -30,6 +39,15 @@ local function inputs(n)
     local out = {}
     for i = 1, n do out[i] = { name = "x" .. tostring(i), ty = i32 } end
     return out
+end
+
+local function range_nd_producer(...)
+    local extents = { ... }
+    local axes = {}
+    for i = 1, #extents do
+        axes[i] = Stencil.StencilProducerAxis(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilProducerForward)
+    end
+    return Stencil.StencilProducer(nil, Stencil.StencilProduceRangeND(axes))
 end
 
 local artifacts = {
@@ -82,6 +100,32 @@ for i, artifact in ipairs(artifacts) do
     assert(#shape.inputs == i - 1, "artifact " .. tostring(i) .. " should have saturated arity " .. tostring(i - 1))
 end
 
+local nd_artifact = Plan.apply_n_array_artifact({
+    tag = "range_nd2_add",
+    result_ty = i32,
+    inputs = inputs(2),
+    expr = Plan.apply_binary_expr(Stencil.StencilBinaryAdd, input("x1"), input("x2"), i32, { int_semantics = sem }),
+    producer = range_nd_producer(2, 3),
+})
+
+local nd_reduce_artifact = Plan.reduce_n_array_artifact(reduction(Value.ReductionAdd, 0), nil, {
+    tag = "range_nd2_sum",
+    result_ty = i32,
+    item_ty = i32,
+    inputs = inputs(2),
+    expr = Plan.apply_binary_expr(Stencil.StencilBinaryAdd, input("x1"), input("x2"), i32, { int_semantics = sem }),
+    producer = range_nd_producer(2, 3),
+})
+
+do
+    local shape = Plan.artifact_shape(nd_artifact)
+    assert(shape.producer.kind == "range_nd", "RangeND ApplyN should carry a producer execution plan")
+    assert(shape.producer.rank == 2, "RangeND ApplyN should preserve rank")
+    local reduce_shape = Plan.artifact_shape(nd_reduce_artifact)
+    assert(reduce_shape.producer.kind == "range_nd", "RangeND ReduceN should carry a producer execution plan")
+    assert(reduce_shape.producer.rank == 2, "RangeND ReduceN should preserve rank")
+end
+
 local function exercise(symbols, label)
     local out = ffi.new("int32_t[5]")
     local x1 = ffi.new("int32_t[5]", { 1, 0, -3, 4, 5 })
@@ -108,6 +152,25 @@ end
 local mc, mc_err, mc_src = MC.compile(T, artifacts, { stem = "test_stencil_apply_n" })
 assert(mc ~= nil, tostring(mc_err) .. "\n" .. tostring(mc_src))
 exercise(mc.symbols, "mc")
+
+local mc_nd, mc_nd_err, mc_nd_src = MC.compile(T, { nd_artifact, nd_reduce_artifact }, { stem = "test_stencil_apply_n_range_nd" })
+assert(mc_nd ~= nil, tostring(mc_nd_err) .. "\n" .. tostring(mc_nd_src))
+do
+    local out = ffi.new("int32_t[6]")
+    local x1 = ffi.new("int32_t[6]", { 1, 2, 3, 4, 5, 6 })
+    local x2 = ffi.new("int32_t[6]", { 10, 20, 30, 40, 50, 60 })
+    assert(mc_nd.symbols[nd_artifact.symbol.text], "mc missing RangeND ApplyN")(out, x1, x2, 0, 2, 0, 3)
+    for i = 0, 5 do
+        assert(out[i] == x1[i] + x2[i], "RangeND ApplyN row-major element " .. tostring(i))
+    end
+    local sum = assert(mc_nd.symbols[nd_reduce_artifact.symbol.text], "mc missing RangeND ReduceN")(x1, x2, 0, 2, 0, 3, 0)
+    assert(sum == 231, "RangeND ReduceN row-major sum")
+end
+
+local bc_nd_ok, bc_nd_err = pcall(function()
+    CopyPatchLuaTrace.realize_artifacts({ nd_artifact, nd_reduce_artifact }, { stem = "test_stencil_apply_n_range_nd_bc" })
+end)
+assert(not bc_nd_ok and tostring(bc_nd_err):find("range_nd", 1, true) ~= nil, "LuaTrace should reject RangeND until its producer loop exists")
 
 local bc = assert(CopyPatchLuaTrace.realize_artifacts(artifacts, { stem = "test_stencil_apply_n_bc" }))
 exercise(bc.symbols, "bc")

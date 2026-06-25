@@ -133,19 +133,19 @@ local function bind_context(T)
         return ports
     end
 
-    local function append_same_domain_fact_or_reject(facts, rejects, wire0, nodes_by_id)
+    local function append_same_producer_fact_or_reject(facts, rejects, wire0, nodes_by_id)
         local src_node = wire0.src.node and nodes_by_id[wire0.src.node.text] or nil
         local dst_node = wire0.dst.node and nodes_by_id[wire0.dst.node.text] or nil
         if src_node == nil or dst_node == nil or src_node == dst_node then return end
-        local src_domain = Plan.descriptor_domain(src_node.artifact.instance.descriptor)
-        local dst_domain = Plan.descriptor_domain(dst_node.artifact.instance.descriptor)
-        if same_value(src_domain, dst_domain) then
-            facts[#facts + 1] = Stencil.StencilFusionSameDomain(src_node.id, dst_node.id)
+        local src_producer = Plan.descriptor_producer(src_node.artifact.instance.descriptor)
+        local dst_producer = Plan.descriptor_producer(dst_node.artifact.instance.descriptor)
+        if same_value(src_producer, dst_producer) then
+            facts[#facts + 1] = Stencil.StencilFusionSameProducer(src_node.id, dst_node.id)
         else
             rejects[#rejects + 1] = Stencil.StencilFusionRejectUnsupportedComposition(
                 src_node.id,
                 dst_node.id,
-                "fused stencil nodes must share the same iteration domain"
+                "fused stencil nodes must share the same producer"
             )
         end
     end
@@ -206,7 +206,7 @@ local function bind_context(T)
                 else
                     rejects[#rejects + 1] = Stencil.StencilFusionRejectTypeMismatch(wire0.id, src.ty, dst.ty)
                 end
-                append_same_domain_fact_or_reject(facts, rejects, wire0, nodes_by_id)
+                append_same_producer_fact_or_reject(facts, rejects, wire0, nodes_by_id)
             end
         end
         append_cycle_rejects(rejects, wires, nodes)
@@ -355,13 +355,13 @@ local function bind_context(T)
     end
 
     local function node_is_apply(node)
-        return pvm.classof(node.artifact.instance.descriptor) == Stencil.StencilDescriptorApply
+        return pvm.classof(node.artifact.instance.descriptor.sink) == Stencil.StencilSinkEmitArray
     end
 
     local function node_is_reduce_fold(node)
         local d = node.artifact.instance.descriptor
-        return pvm.classof(d) == Stencil.StencilDescriptorReduce
-            and pvm.classof(d.mode) == Stencil.StencilReduceFold
+        return pvm.classof(d.sink) == Stencil.StencilSinkReduce
+            and pvm.classof(d.sink.mode) == Stencil.StencilReduceFold
     end
 
     local function cover_tag(desc)
@@ -396,7 +396,7 @@ local function bind_context(T)
                 inputs[#inputs + 1] = { name = access.name, ty = access.ty, topology = access.topology }
             end
         end
-        local reducer = reduce_desc.mode.reducer
+        local reducer = reduce_desc.sink.mode.reducer
         local apply_shape = Plan.artifact_shape(apply_node.artifact)
         return Plan.reduce_n_array_artifact({
             kind = reducer.reduction,
@@ -407,7 +407,7 @@ local function bind_context(T)
             item_ty = out_access.ty,
             result_ty = reducer.result_ty,
             inputs = inputs,
-            expr = apply_desc.expr,
+            expr = apply_desc.body.expr,
             step_num = apply_shape.stride or 1,
         })
     end

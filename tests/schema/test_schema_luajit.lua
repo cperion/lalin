@@ -110,15 +110,14 @@ assert(void_c == LJ.LJCTypeVoid, "void C type singleton should be available")
 
 local init = Value.ValueExprConst(Code.CodeConstLiteral(Code.CodeTyInt(32, Code.CodeSigned), Core.LitInt("0")))
 local reducer = Stencil.StencilReducer(Value.ReductionAdd, Code.CodeTyInt(32, Code.CodeSigned), init, nil, nil)
-local descriptor = Stencil.StencilDescriptorReduce(
-    Stencil.StencilDomainRange1D(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilDomainForward),
+local descriptor = Stencil.StencilDescriptor(
+    Stencil.StencilProducer(nil, Stencil.StencilProduceRange1D(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilProducerForward)),
     {
         Stencil.StencilAccess("xs", Stencil.StencilAccessRead, Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilTopologyContiguous(1)),
         Stencil.StencilAccess("acc", Stencil.StencilAccessReduce, Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilTopologyScalar(init)),
     },
-    Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs")),
-    Code.CodeTyInt(32, Code.CodeSigned),
-    Stencil.StencilReduceFold(reducer)
+    Stencil.StencilBodyApply(Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs"))),
+    Stencil.StencilSinkReduce(Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilReduceFold(reducer))
 )
 local artifact = Stencil.StencilArtifact(
     Stencil.StencilInstance(

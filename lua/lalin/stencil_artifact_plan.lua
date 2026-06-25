@@ -396,8 +396,16 @@ local function bind_context(T)
         return Code.CodeTyInt(32, Code.CodeSigned)
     end
 
-    local function domain(stride)
-        return Stencil.StencilDomainRange1D(Code.CodeTyIndex, nil, nil, tonumber(stride) or 1, Stencil.StencilDomainForward)
+    local function range1d_producer(stride, origin)
+        return Stencil.StencilProducer(
+            origin,
+            Stencil.StencilProduceRange1D(Code.CodeTyIndex, nil, nil, tonumber(stride) or 1, Stencil.StencilProducerForward)
+        )
+    end
+
+    local function producer_from_attrs(stride, attrs)
+        attrs = attrs or {}
+        return attrs.producer or range1d_producer(stride, attrs.origin)
     end
 
     local function memory(opts)
@@ -438,79 +446,173 @@ local function bind_context(T)
 
     local function descriptor(vocab, stride, accesses, expr, reducer, attrs, mem, result_ty)
         attrs = attrs or {}
-        local dom = domain(stride)
+        local producer = producer_from_attrs(stride, attrs)
+        local body = Stencil.StencilBodyApply(expr or input_expr("xs"))
         if vocab == "reduce" then
-            return Stencil.StencilDescriptorReduce(dom, accesses, expr or input_expr("xs"), assert(result_ty, "reduce descriptor requires result type"), Stencil.StencilReduceFold(assert(reducer, "reduce descriptor requires reducer")))
+            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkReduce(assert(result_ty, "reduce descriptor requires result type"), Stencil.StencilReduceFold(assert(reducer, "reduce descriptor requires reducer"))))
         end
-        if vocab == "apply" then return Stencil.StencilDescriptorApply(dom, accesses, assert(expr, "apply descriptor requires expr"), attrs.apply_mode or Stencil.StencilApplyElementwise) end
+        if vocab == "apply" then
+            body = Stencil.StencilBodyApply(assert(expr, "apply descriptor requires expr"))
+            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkEmitArray(Stencil.StencilAccessRef("dst"), attrs.apply_mode or Stencil.StencilApplyElementwise))
+        end
         if vocab == "scan" then
-            return Stencil.StencilDescriptorScan(dom, accesses, assert(reducer, "scan descriptor requires reducer"), assert(attrs.mode, "scan descriptor requires mode"), assert(result_ty, "scan descriptor requires result type"))
+            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkScan(Stencil.StencilAccessRef("dst"), assert(reducer, "scan descriptor requires reducer"), assert(attrs.mode, "scan descriptor requires mode"), assert(result_ty, "scan descriptor requires result type")))
         end
         if vocab == "find" then
             expr = assert(expr, "find descriptor requires predicate expr")
-            return Stencil.StencilDescriptorReduce(dom, accesses, expr, assert(result_ty, "find descriptor requires result type"), Stencil.StencilReduceFind(predicate_expr_pred(expr), assert(attrs.not_found, "find descriptor requires not_found")))
+            body = Stencil.StencilBodyApply(expr)
+            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkReduce(assert(result_ty, "find descriptor requires result type"), Stencil.StencilReduceFind(predicate_expr_pred(expr), assert(attrs.not_found, "find descriptor requires not_found"))))
         end
         if vocab == "partition" then
-            return Stencil.StencilDescriptorApply(dom, accesses, assert(expr, "partition descriptor requires predicate expr"), Stencil.StencilApplyPartition(assert(attrs.semantics, "partition descriptor requires semantics")))
+            body = Stencil.StencilBodyApply(assert(expr, "partition descriptor requires predicate expr"))
+            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkEmitArray(Stencil.StencilAccessRef("dst"), Stencil.StencilApplyPartition(assert(attrs.semantics, "partition descriptor requires semantics"))))
         end
         if vocab == "count" then
             expr = assert(expr, "count descriptor requires predicate expr")
-            return Stencil.StencilDescriptorReduce(dom, accesses, expr, assert(result_ty, "count descriptor requires result type"), Stencil.StencilReduceCount(predicate_expr_pred(expr)))
+            body = Stencil.StencilBodyApply(expr)
+            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkReduce(assert(result_ty, "count descriptor requires result type"), Stencil.StencilReduceCount(predicate_expr_pred(expr))))
         end
         error("stencil_artifact_plan: unsupported descriptor vocab", 3)
     end
 
     local function descriptor_vocab(desc)
-        local cls = pvm.classof(desc)
-        if cls == Stencil.StencilDescriptorApply then return Stencil.StencilApply end
-        if cls == Stencil.StencilDescriptorReduce then return Stencil.StencilReduce end
-        if cls == Stencil.StencilDescriptorScan then return Stencil.StencilScan end
+        local sink_cls = desc and desc.sink and pvm.classof(desc.sink) or nil
+        if sink_cls == Stencil.StencilSinkEmitArray then return Stencil.StencilApply end
+        if sink_cls == Stencil.StencilSinkReduce then return Stencil.StencilReduce end
+        if sink_cls == Stencil.StencilSinkScan then return Stencil.StencilScan end
         return nil
     end
 
     local function descriptor_reduce_mode(desc)
-        if pvm.classof(desc) ~= Stencil.StencilDescriptorReduce then return nil end
-        return desc.mode
+        if desc == nil or pvm.classof(desc.sink) ~= Stencil.StencilSinkReduce then return nil end
+        return desc.sink.mode
     end
 
     local function descriptor_reducer(desc)
-        local cls = pvm.classof(desc)
-        if cls == Stencil.StencilDescriptorScan then return desc.reducer end
-        if cls == Stencil.StencilDescriptorReduce and pvm.classof(desc.mode) == Stencil.StencilReduceFold then return desc.mode.reducer end
+        if desc == nil then return nil end
+        local sink_cls = pvm.classof(desc.sink)
+        if sink_cls == Stencil.StencilSinkScan then return desc.sink.reducer end
+        if sink_cls == Stencil.StencilSinkReduce and pvm.classof(desc.sink.mode) == Stencil.StencilReduceFold then return desc.sink.mode.reducer end
         return nil
+    end
+
+    local function descriptor_expr(desc)
+        if desc == nil or pvm.classof(desc.body) ~= Stencil.StencilBodyApply then
+            error("stencil_artifact_plan: descriptor body is not an apply expression", 3)
+        end
+        return desc.body.expr
     end
 
     local function descriptor_accesses(desc)
         return desc and desc.accesses or {}
     end
 
-    local function descriptor_domain(desc)
-        return desc and desc.domain or nil
+    local function descriptor_producer(desc)
+        return desc and desc.producer or nil
     end
 
-    local function domain_supported(domain0)
-        return pvm.classof(domain0) == Stencil.StencilDomainRange1D
-            and (tonumber(domain0.step) or 0) > 0
-            and domain0.order == Stencil.StencilDomainForward
+    local function producer_shape(producer)
+        if producer == nil then return nil end
+        if pvm.classof(producer) == Stencil.StencilProducer then return producer.shape end
+        return producer
     end
 
-    local function domain_reject_reason(domain0)
-        local cls = pvm.classof(domain0)
-        if cls == Stencil.StencilDomainRange1D then
-            if domain0.order ~= Stencil.StencilDomainForward then return "backward 1D domains are represented but not materialized by current stencil backends" end
-            if (tonumber(domain0.step) or 0) <= 0 then return "1D stencil domain step must be a positive compile-time constant" end
+    local function producer_axis_count(producer)
+        local shape = producer_shape(producer)
+        local cls = pvm.classof(shape)
+        if cls == Stencil.StencilProduceRange1D then return 1 end
+        if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then return #(shape.axes or {}) end
+        return 0
+    end
+
+    local function producer_axis_invalid_reason(axis, index)
+        if axis == nil then return "producer axis " .. tostring(index) .. " is missing" end
+        if (tonumber(axis.step) or 0) <= 0 then return "producer axis " .. tostring(index) .. " step must be a positive compile-time constant" end
+        return nil
+    end
+
+    local function producer_window_invalid_reason(window, index)
+        if window == nil then return "producer window " .. tostring(index) .. " is missing" end
+        if (tonumber(window.before) or -1) < 0 then return "producer window " .. tostring(index) .. " before extent must be nonnegative" end
+        if (tonumber(window.after) or -1) < 0 then return "producer window " .. tostring(index) .. " after extent must be nonnegative" end
+        return nil
+    end
+
+    local function producer_shape_reject_reason(producer)
+        local shape = producer_shape(producer)
+        local cls = pvm.classof(shape)
+        if cls == Stencil.StencilProduceRange1D then
+            if (tonumber(shape.step) or 0) <= 0 then return "1D stencil producer step must be a positive compile-time constant" end
             return nil
         end
-        if cls == Stencil.StencilDomainRangeND then return "ND range domains are represented but not materialized by the current 1D stencil backends" end
-        if cls == Stencil.StencilDomainWindowND then return "windowed stencil domains are represented but not materialized by the current 1D stencil backends" end
-        if cls == Stencil.StencilDomainTiledND then return "tiled ND domains are represented but not materialized by the current 1D stencil backends" end
-        return "unknown stencil domain kind"
+        if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then
+            if #(shape.axes or {}) == 0 then return "ND stencil producer requires at least one axis" end
+            for i, axis in ipairs(shape.axes or {}) do
+                local reason = producer_axis_invalid_reason(axis, i)
+                if reason ~= nil then return reason end
+            end
+            if cls == Stencil.StencilProduceWindowND and #(shape.windows or {}) ~= #(shape.axes or {}) then
+                return "windowed stencil producer requires one window per axis"
+            end
+            if cls == Stencil.StencilProduceWindowND then
+                for i, window in ipairs(shape.windows or {}) do
+                    local reason = producer_window_invalid_reason(window, i)
+                    if reason ~= nil then return reason end
+                end
+            end
+            if cls == Stencil.StencilProduceTiledND then
+                if #(shape.tile_sizes or {}) ~= #(shape.axes or {}) then return "tiled stencil producer requires one tile size per axis" end
+                for i, tile in ipairs(shape.tile_sizes or {}) do
+                    if (tonumber(tile) or 0) <= 0 then return "tiled stencil producer tile size " .. tostring(i) .. " must be positive" end
+                end
+            end
+            return nil
+        end
+        return "unknown stencil producer kind"
     end
 
-    local function unsupported_domain_reject(domain0)
-        local reason = domain_reject_reason(domain0)
+    local function producer_shape_supported(producer)
+        return producer_shape_reject_reason(producer) == nil
+    end
+
+    local function producer_axes_forward(axes)
+        for _, axis in ipairs(axes or {}) do
+            if axis.order ~= Stencil.StencilProducerForward then return false end
+        end
+        return true
+    end
+
+    local function producer_materialized(producer)
+        local shape = producer_shape(producer)
+        if not producer_shape_supported(producer) then return false end
+        local cls = pvm.classof(shape)
+        if cls == Stencil.StencilProduceRange1D then return shape.order == Stencil.StencilProducerForward end
+        if cls == Stencil.StencilProduceRangeND then return producer_axes_forward(shape.axes) end
+        return false
+    end
+
+    local function producer_materializer_reject_reason(producer)
+        local shape = producer_shape(producer)
+        local shape_reason = producer_shape_reject_reason(producer)
+        if shape_reason ~= nil then return shape_reason end
+        local cls = pvm.classof(shape)
+        if cls == Stencil.StencilProduceRange1D then
+            if shape.order ~= Stencil.StencilProducerForward then return "backward Range1D producers are represented but not materialized by current linear producer materializers" end
+            return nil
+        end
+        if cls == Stencil.StencilProduceRangeND then
+            if not producer_axes_forward(shape.axes) then return "backward ND range axes are represented but not materialized yet" end
+            return nil
+        end
+        if cls == Stencil.StencilProduceWindowND then return "windowed stencil producers are shape-supported but not materialized by current linear producer materializers" end
+        if cls == Stencil.StencilProduceTiledND then return "tiled ND producers are shape-supported but not materialized by current linear producer materializers" end
+        return "unknown stencil producer kind"
+    end
+
+    local function unsupported_producer_reject(producer)
+        local reason = producer_materializer_reject_reason(producer)
         if reason == nil then return nil end
-        return Stencil.StencilRejectUnsupportedDomain(domain0, reason)
+        return Stencil.StencilRejectUnsupportedProducer(producer, reason)
     end
 
     local function schedule_lane_count(schedule)
@@ -904,13 +1006,13 @@ local function bind_context(T)
     end
 
     local function auto_vector_descriptor(desc)
-        local cls = pvm.classof(desc)
-        if cls == Stencil.StencilDescriptorScan then return true end
-        if cls == Stencil.StencilDescriptorApply then
-            return pvm.classof(desc.mode) ~= Stencil.StencilApplyPartition
+        local sink_cls = desc and desc.sink and pvm.classof(desc.sink) or nil
+        if sink_cls == Stencil.StencilSinkScan then return true end
+        if sink_cls == Stencil.StencilSinkEmitArray then
+            return pvm.classof(desc.sink.mode) ~= Stencil.StencilApplyPartition
         end
-        if cls == Stencil.StencilDescriptorReduce then
-            return pvm.classof(desc.mode) ~= Stencil.StencilReduceFind
+        if sink_cls == Stencil.StencilSinkReduce then
+            return pvm.classof(desc.sink.mode) ~= Stencil.StencilReduceFind
         end
         return false
     end
@@ -1615,7 +1717,44 @@ local function bind_context(T)
         return artifact(inst, symbol, int32_desc_decl(symbol, desc, { const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop" }))
     end
 
-    local function apply_n_inputs(info, stride)
+    local function producer_param_name(axis_index, suffix)
+        return "axis" .. tostring(axis_index) .. "_" .. suffix
+    end
+
+    local function producer_tag(producer)
+        local shape = producer_shape(producer)
+        local cls = pvm.classof(shape)
+        if cls == Stencil.StencilProduceRange1D then return "s" .. tostring(shape.step) end
+        if cls == Stencil.StencilProduceRangeND then return "range_nd" .. tostring(#(shape.axes or {})) end
+        if cls == Stencil.StencilProduceWindowND then return "window_nd" .. tostring(#(shape.axes or {})) end
+        if cls == Stencil.StencilProduceTiledND then return "tiled_nd" .. tostring(#(shape.axes or {})) end
+        return "producer"
+    end
+
+    local function append_producer_params(producer, abi, args)
+        local shape = producer_shape(producer)
+        local cls = pvm.classof(shape)
+        if cls == Stencil.StencilProduceRange1D then
+            abi[#abi + 1] = i32_ty()
+            abi[#abi + 1] = i32_ty()
+            args[#args + 1] = "int32_t start"
+            args[#args + 1] = "int32_t stop"
+            return
+        end
+        if cls == Stencil.StencilProduceRangeND then
+            for axis_index = 1, #(shape.axes or {}) do
+                abi[#abi + 1] = i32_ty()
+                abi[#abi + 1] = i32_ty()
+                args[#args + 1] = "int32_t " .. producer_param_name(axis_index, "start")
+                args[#args + 1] = "int32_t " .. producer_param_name(axis_index, "stop")
+            end
+            return
+        end
+        local reason = producer_materializer_reject_reason(producer)
+        error("stencil_artifact_plan: unsupported producer ABI: " .. tostring(reason), 3)
+    end
+
+    local function apply_n_inputs(info, stride, producer)
         local inputs = assert(info.inputs, "stencil_artifact_plan.apply_n_array_artifact requires inputs")
         if #inputs > 4 then error("stencil_artifact_plan: apply_n_array arity is capped at 4", 3) end
         local accesses = { shaped("dst", Stencil.StencilAccessWrite, assert(info.result_ty), info.dst_topology, stride) }
@@ -1628,21 +1767,22 @@ local function bind_context(T)
             abi[#abi + 1] = Code.CodeTyDataPtr(ty)
             args[#args + 1] = const_elem_ptr_decl(ty, name)
         end
-        abi[#abi + 1] = i32_ty()
-        abi[#abi + 1] = i32_ty()
-        args[#args + 1] = "int32_t start"
-        args[#args + 1] = "int32_t stop"
+        append_producer_params(producer, abi, args)
         return inputs, accesses, abi, args
     end
 
     function api.apply_n_array_artifact(info)
         local result_ty, stride = assert(info.result_ty, "stencil_artifact_plan.apply_n_array_artifact requires result_ty"), assert(info.step_num or info.stride or 1)
         local expr = assert(info.expr, "stencil_artifact_plan.apply_n_array_artifact requires expr")
-        local inputs, accesses, abi, args = apply_n_inputs(info, stride)
+        local producer = producer_from_attrs(stride, info)
+        local producer_reason = producer_materializer_reject_reason(producer)
+        if producer_reason ~= nil then error("stencil_artifact_plan: unsupported apply_n_array producer: " .. tostring(producer_reason), 2) end
+        local inputs, accesses, abi, args = apply_n_inputs(info, stride, producer)
         local tag = sanitize(info.tag or ("arity" .. tostring(#inputs)))
-        local id = Stencil.StencilInstanceId("stencil:apply_n_array:" .. type_name(result_ty) .. ":" .. tag .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_apply_n_array_" .. type_name(result_ty) .. "_" .. tag .. "_s" .. tostring(stride))
-        local desc = descriptor("apply", stride, accesses, expr, nil, nil, memory(), nil)
+        local ptag = producer_tag(producer)
+        local id = Stencil.StencilInstanceId("stencil:apply_n_array:" .. type_name(result_ty) .. ":" .. tag .. ":" .. ptag)
+        local symbol = Stencil.StencilSymbolId("ml_stencil_apply_n_array_" .. type_name(result_ty) .. "_" .. tag .. "_" .. ptag)
+        local desc = descriptor("apply", stride, accesses, expr, nil, { producer = producer }, memory(), nil)
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
         return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
@@ -1651,6 +1791,9 @@ local function bind_context(T)
     function api.reduce_n_array_artifact(reduction, plan, info)
         local result_ty, item_ty, stride = assert(info.result_ty, "stencil_artifact_plan.reduce_n_array_artifact requires result_ty"), assert(info.item_ty or info.mapped_ty or info.result_ty, "stencil_artifact_plan.reduce_n_array_artifact requires item_ty"), assert(info.step_num or info.stride or 1)
         local expr = assert(info.expr, "stencil_artifact_plan.reduce_n_array_artifact requires expr")
+        local producer = producer_from_attrs(stride, info)
+        local producer_reason = producer_materializer_reject_reason(producer)
+        if producer_reason ~= nil then error("stencil_artifact_plan: unsupported reduce_n_array producer: " .. tostring(producer_reason), 2) end
         local ok, reason = api.reduce_array_supported(reduction, { elem_ty = item_ty, result_ty = result_ty })
         if not ok then error("stencil_artifact_plan: unsupported reduce_n_array reduction: " .. tostring(reason), 2) end
         local inputs = assert(info.inputs, "stencil_artifact_plan.reduce_n_array_artifact requires inputs")
@@ -1666,16 +1809,14 @@ local function bind_context(T)
             args[#args + 1] = const_elem_ptr_decl(ty, name)
         end
         accesses[#accesses + 1] = scalar("acc", Stencil.StencilAccessReduce, result_ty, reducer_identity(reduction, result_ty))
-        abi[#abi + 1] = i32_ty()
-        abi[#abi + 1] = i32_ty()
+        append_producer_params(producer, abi, args)
         abi[#abi + 1] = result_ty
-        args[#args + 1] = "int32_t start"
-        args[#args + 1] = "int32_t stop"
         args[#args + 1] = c_type(result_ty) .. " init"
         local tag = sanitize(info.tag or ("arity" .. tostring(#inputs)))
-        local id = Stencil.StencilInstanceId("stencil:reduce_n_array:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":" .. tag .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_reduce_n_array_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_" .. tag .. "_s" .. tostring(stride))
-        local desc = descriptor("reduce", stride, accesses, expr, reducer_desc(reduction, result_ty), nil, memory(), result_ty)
+        local ptag = producer_tag(producer)
+        local id = Stencil.StencilInstanceId("stencil:reduce_n_array:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":" .. tag .. ":" .. ptag)
+        local symbol = Stencil.StencilSymbolId("ml_stencil_reduce_n_array_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_" .. tag .. "_" .. ptag)
+        local desc = descriptor("reduce", stride, accesses, expr, reducer_desc(reduction, result_ty), { producer = producer }, memory(), result_ty)
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, result_ty), proof_list(plan), info)
         return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, args))
@@ -1694,11 +1835,43 @@ local function bind_context(T)
         return 1
     end
 
-    local function domain_stride(desc)
-        local dom = descriptor_domain(desc)
-        if domain_supported(dom) then return tonumber(dom.step) or 1 end
-        local reason = domain_reject_reason(dom)
-        error("stencil_artifact_plan: unsupported stencil domain for artifact shape: " .. tostring(reason), 3)
+    local function producer_stride(desc)
+        local producer = descriptor_producer(desc)
+        local shape = producer_shape(producer)
+        if pvm.classof(shape) == Stencil.StencilProduceRange1D and producer_materialized(producer) then return tonumber(shape.step) or 1 end
+        local reason = producer_materializer_reject_reason(producer)
+        error("stencil_artifact_plan: unsupported stencil producer for artifact shape: " .. tostring(reason), 3)
+    end
+
+    local function producer_execution_plan(desc)
+        local producer = descriptor_producer(desc)
+        local reason = producer_materializer_reject_reason(producer)
+        if reason ~= nil then error("stencil_artifact_plan: unsupported stencil producer for artifact shape: " .. tostring(reason), 3) end
+        local shape = producer_shape(producer)
+        local cls = pvm.classof(shape)
+        if cls == Stencil.StencilProduceRange1D then
+            return {
+                kind = "range1d",
+                stride = tonumber(shape.step) or 1,
+            }
+        end
+        if cls == Stencil.StencilProduceRangeND then
+            local axes = {}
+            for i, axis in ipairs(shape.axes or {}) do
+                axes[#axes + 1] = {
+                    index_ty = axis.index_ty,
+                    step = tonumber(axis.step) or 1,
+                    start_param = producer_param_name(i, "start"),
+                    stop_param = producer_param_name(i, "stop"),
+                }
+            end
+            return {
+                kind = "range_nd",
+                rank = #axes,
+                axes = axes,
+            }
+        end
+        error("stencil_artifact_plan: unsupported producer execution plan", 3)
     end
 
     local function indexed_ty(access)
@@ -1763,68 +1936,72 @@ local function bind_context(T)
     end
 
     local function apply_n_shape(desc, result_ty)
-        local inputs = expr_inputs_for_shape(desc, desc.expr)
+        local expr = descriptor_expr(desc)
+        local inputs = expr_inputs_for_shape(desc, expr)
         if #inputs > 4 then error("stencil_artifact_plan: apply_n descriptor exceeds arity cap 4", 3) end
-        return local_shape("apply_n_array", { inputs = inputs, result_ty = result_ty, expr = desc.expr, stride = domain_stride(desc) })
+        local producer = producer_execution_plan(desc)
+        return local_shape("apply_n_array", { inputs = inputs, result_ty = result_ty, expr = expr, producer = producer, stride = producer.kind == "range1d" and producer.stride or nil })
     end
 
     local function reduce_n_shape(desc, red)
-        local inputs = expr_inputs_for_shape(desc, desc.expr)
+        local expr = descriptor_expr(desc)
+        local inputs = expr_inputs_for_shape(desc, expr)
         if #inputs > 4 then error("stencil_artifact_plan: reduce_n descriptor exceeds arity cap 4", 3) end
+        local producer = producer_execution_plan(desc)
         return local_shape("reduce_n_array", {
             inputs = inputs,
-            expr = desc.expr,
-            item_ty = desc.result_ty,
+            expr = expr,
+            item_ty = desc.sink.result_ty,
             result_ty = red.result_ty,
             reduction = red.reduction,
             int_semantics = red.int_semantics,
             float_mode = red.float_mode,
             identity = red.identity,
-            stride = domain_stride(desc),
+            producer = producer,
+            stride = producer.kind == "range1d" and producer.stride or nil,
         })
     end
 
     local function artifact_shape(artifact)
         local desc = artifact.instance.descriptor
-        local cls = pvm.classof(desc)
-        if cls == Stencil.StencilDescriptorReduce then
-            local mode = desc.mode
+        local sink = desc.sink
+        local sink_cls = pvm.classof(sink)
+        local expr = descriptor_expr(desc)
+        local expr_cls = pvm.classof(expr)
+        if sink_cls == Stencil.StencilSinkReduce then
+            local mode = sink.mode
             local mode_cls = pvm.classof(mode)
             if mode_cls == Stencil.StencilReduceCount then
                 local xs = access_named(desc, "xs")
-                return local_shape("count_array", { elem_ty = xs.ty, pred = mode.pred, stride = domain_stride(desc) })
+                return local_shape("count_array", { elem_ty = xs.ty, pred = mode.pred, stride = producer_stride(desc) })
             end
             if mode_cls == Stencil.StencilReduceFind then
                 local xs = access_named(desc, "xs")
-                return local_shape("find_array", { elem_ty = xs.ty, pred = mode.pred, stride = domain_stride(desc) })
+                return local_shape("find_array", { elem_ty = xs.ty, pred = mode.pred, stride = producer_stride(desc) })
             end
             if mode_cls == Stencil.StencilReduceFold then
                 local red = mode.reducer
-                local expr = desc.expr
-                local expr_cls = pvm.classof(expr)
                 if expr_is_input(expr, "xs") then
                     local xs = access_named(desc, "xs")
-                    return local_shape("reduce_array", { elem_ty = xs.ty, result_ty = red.result_ty, reduction = red.reduction, int_semantics = red.int_semantics, float_mode = red.float_mode, identity = red.identity, stride = domain_stride(desc) })
+                    return local_shape("reduce_array", { elem_ty = xs.ty, result_ty = red.result_ty, reduction = red.reduction, int_semantics = red.int_semantics, float_mode = red.float_mode, identity = red.identity, stride = producer_stride(desc) })
                 end
                 return reduce_n_shape(desc, red)
             end
-            error("stencil_artifact_plan: unsupported reduce descriptor mode/operator", 3)
+            error("stencil_artifact_plan: unsupported reduce sink mode/operator", 3)
         end
-        if cls == Stencil.StencilDescriptorApply then
-            local mode_cls = pvm.classof(desc.mode)
-            local expr = desc.expr
-            local expr_cls = pvm.classof(expr)
+        if sink_cls == Stencil.StencilSinkEmitArray then
+            local mode_cls = pvm.classof(sink.mode)
             if mode_cls == Stencil.StencilApplyCopy then
                 local src = access_named(desc, "src")
-                return local_shape("copy_array", { elem_ty = src.ty, semantics = desc.mode.semantics, stride = domain_stride(desc) })
+                return local_shape("copy_array", { elem_ty = src.ty, semantics = sink.mode.semantics, stride = producer_stride(desc) })
             end
             if mode_cls == Stencil.StencilApplyScatter then
                 local dst = access_named(desc, "dst")
-                return local_shape("scatter_array", { elem_ty = dst.ty, index_ty = indexed_ty(dst), conflicts = desc.mode.conflicts, stride = domain_stride(desc) })
+                return local_shape("scatter_array", { elem_ty = dst.ty, index_ty = indexed_ty(dst), conflicts = sink.mode.conflicts, stride = producer_stride(desc) })
             end
             if mode_cls == Stencil.StencilApplyPartition then
                 local xs = access_named(desc, "xs")
-                return local_shape("partition_array", { elem_ty = xs.ty, pred = predicate_expr_pred(expr), semantics = desc.mode.semantics, stride = domain_stride(desc) })
+                return local_shape("partition_array", { elem_ty = xs.ty, pred = predicate_expr_pred(expr), semantics = sink.mode.semantics, stride = producer_stride(desc) })
             end
             if expr_cls == Stencil.StencilApplyInput then
                 local src
@@ -1837,43 +2014,43 @@ local function bind_context(T)
                 if src == nil then src = access_named(desc, "src") end
                 if pvm.classof(src.topology) == Stencil.StencilTopologyScalar then
                     local dst = access_named(desc, "dst")
-                    return local_shape("fill_array", { elem_ty = dst.ty, value = src.topology.value, stride = domain_stride(desc) })
+                    return local_shape("fill_array", { elem_ty = dst.ty, value = src.topology.value, stride = producer_stride(desc) })
                 end
                 if src.name ~= "src" and src.name ~= "xs" then
                     return apply_n_shape(desc, access_named(desc, "dst").ty)
                 end
                 if pvm.classof(src.topology) == Stencil.StencilTopologyIndexed then
-                    return local_shape("gather_array", { elem_ty = src.ty, index_ty = indexed_ty(src), stride = domain_stride(desc) })
+                    return local_shape("gather_array", { elem_ty = src.ty, index_ty = indexed_ty(src), stride = producer_stride(desc) })
                 end
                 local dst = access_named(desc, "dst")
-                return local_shape("map_array", { elem_ty = src.ty, result_ty = dst.ty, op = Stencil.StencilUnaryIdentity, stride = domain_stride(desc) })
+                return local_shape("map_array", { elem_ty = src.ty, result_ty = dst.ty, op = Stencil.StencilUnaryIdentity, stride = producer_stride(desc) })
             end
             if expr_cls == Stencil.StencilApplyConst then
                 local dst = access_named(desc, "dst")
-                return local_shape("apply_n_array", { inputs = {}, result_ty = dst.ty, expr = expr, stride = domain_stride(desc) })
+                return local_shape("apply_n_array", { inputs = {}, result_ty = dst.ty, expr = expr, stride = producer_stride(desc) })
             end
             if expr_cls == Stencil.StencilApplyUnary and expr_is_input(expr.arg, "xs") then
                 local xs = access_named(desc, "xs")
                 if xs.role == Stencil.StencilAccessReadWrite then
-                    return local_shape("in_place_map_array", { elem_ty = xs.ty, op = expr.op, int_semantics = expr.int_semantics, float_mode = expr.float_mode, stride = domain_stride(desc) })
+                    return local_shape("in_place_map_array", { elem_ty = xs.ty, op = expr.op, int_semantics = expr.int_semantics, float_mode = expr.float_mode, stride = producer_stride(desc) })
                 end
                 local dst = access_named(desc, "dst")
-                return local_shape("map_array", { elem_ty = xs.ty, result_ty = dst.ty, op = expr.op, int_semantics = expr.int_semantics, float_mode = expr.float_mode, stride = domain_stride(desc) })
+                return local_shape("map_array", { elem_ty = xs.ty, result_ty = dst.ty, op = expr.op, int_semantics = expr.int_semantics, float_mode = expr.float_mode, stride = producer_stride(desc) })
             end
             if expr_cls == Stencil.StencilApplyBinary and expr_is_input(expr.left, "lhs") and expr_is_input(expr.right, "rhs") then
                 local dst, lhs, rhs = access_named(desc, "dst"), access_named(desc, "lhs"), access_named(desc, "rhs")
-                return local_shape("zip_map_array", { lhs_ty = lhs.ty, rhs_ty = rhs.ty, result_ty = dst.ty, op = expr.op, int_semantics = expr.int_semantics, float_mode = expr.float_mode, stride = domain_stride(desc) })
+                return local_shape("zip_map_array", { lhs_ty = lhs.ty, rhs_ty = rhs.ty, result_ty = dst.ty, op = expr.op, int_semantics = expr.int_semantics, float_mode = expr.float_mode, stride = producer_stride(desc) })
             end
             if expr_cls == Stencil.StencilApplyCast and expr_is_input(expr.arg, "xs") then
-                return local_shape("cast_array", { src_ty = expr.from, dst_ty = expr.to, op = expr.op, stride = domain_stride(desc) })
+                return local_shape("cast_array", { src_ty = expr.from, dst_ty = expr.to, op = expr.op, stride = producer_stride(desc) })
             end
             if expr_cls == Stencil.StencilApplyPredicate and expr_is_input(expr.arg, "xs") then
                 local xs = access_named(desc, "xs")
-                return local_shape("compare_array", { elem_ty = xs.ty, result_ty = expr.result_ty, pred = expr.pred, stride = domain_stride(desc) })
+                return local_shape("compare_array", { elem_ty = xs.ty, result_ty = expr.result_ty, pred = expr.pred, stride = producer_stride(desc) })
             end
             if expr_cls == Stencil.StencilApplyCompare and expr_is_input(expr.left, "lhs") and expr_is_input(expr.right, "rhs") then
                 local lhs, rhs = access_named(desc, "lhs"), access_named(desc, "rhs")
-                return local_shape("zip_compare_array", { lhs_ty = lhs.ty, rhs_ty = rhs.ty, result_ty = expr.result_ty, cmp = expr.cmp, stride = domain_stride(desc) })
+                return local_shape("zip_compare_array", { lhs_ty = lhs.ty, rhs_ty = rhs.ty, result_ty = expr.result_ty, cmp = expr.cmp, stride = producer_stride(desc) })
             end
             if expr_cls == Stencil.StencilApplySelect
                 and expr_is_input(expr.cond, "cond")
@@ -1882,14 +2059,14 @@ local function bind_context(T)
                 local cond = access_named(desc, "cond")
                 local then_xs = access_named(desc, "then_xs")
                 local else_xs = access_named(desc, "else_xs")
-                return local_shape("select_array", { cond_ty = cond.ty, then_ty = then_xs.ty, else_ty = else_xs.ty, result_ty = expr.result_ty, pred = expr.pred, stride = domain_stride(desc) })
+                return local_shape("select_array", { cond_ty = cond.ty, then_ty = then_xs.ty, else_ty = else_xs.ty, result_ty = expr.result_ty, pred = expr.pred, stride = producer_stride(desc) })
             end
             return apply_n_shape(desc, access_named(desc, "dst").ty)
         end
-        if cls == Stencil.StencilDescriptorScan then
+        if sink_cls == Stencil.StencilSinkScan then
             local dst, xs = access_named(desc, "dst"), access_named(desc, "xs")
-            local red = desc.reducer
-            return local_shape("scan_array", { elem_ty = xs.ty, result_ty = dst.ty, reduction = red.reduction, int_semantics = red.int_semantics, float_mode = red.float_mode, identity = red.identity, mode = desc.mode, stride = domain_stride(desc) })
+            local red = sink.reducer
+            return local_shape("scan_array", { elem_ty = xs.ty, result_ty = dst.ty, reduction = red.reduction, int_semantics = red.int_semantics, float_mode = red.float_mode, identity = red.identity, mode = sink.mode, stride = producer_stride(desc) })
         end
         error("stencil_artifact_plan: unsupported stencil descriptor", 3)
     end
@@ -1925,9 +2102,14 @@ local function bind_context(T)
     api.apply_select_expr = apply_select_expr
     api.descriptor_vocab = descriptor_vocab
     api.descriptor_accesses = descriptor_accesses
-    api.descriptor_domain = descriptor_domain
-    api.domain_supported = domain_supported
-    api.unsupported_domain_reject = unsupported_domain_reject
+    api.descriptor_producer = descriptor_producer
+    api.producer_shape = producer_shape
+    api.producer_axis_count = producer_axis_count
+    api.producer_shape_reject_reason = producer_shape_reject_reason
+    api.producer_shape_supported = producer_shape_supported
+    api.producer_materialized = producer_materialized
+    api.producer_materializer_reject_reason = producer_materializer_reject_reason
+    api.unsupported_producer_reject = unsupported_producer_reject
     api.schedule_lane_count = schedule_lane_count
     api.selection_provenance_for_artifact = selection_provenance_for_artifact
     api.no_selection_provenance = no_selection_provenance

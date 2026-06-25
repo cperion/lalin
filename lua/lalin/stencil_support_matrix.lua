@@ -49,11 +49,11 @@ local function bind_context(T)
         StencilTopologyViewDescriptor = { status = "supported", scope = "current i32 scalar matrix with dynamic stride" },
     }
 
-    M.domains = {
-        StencilDomainRange1D = { status = "supported", scope = "only materialized stencil iteration domain today" },
-        StencilDomainRangeND = { status = "future", scope = "represented for ND iteration, rejected by current 1D materializers" },
-        StencilDomainWindowND = { status = "future", scope = "represented for neighborhood/windowed stencil kernels, rejected by current 1D materializers" },
-        StencilDomainTiledND = { status = "future", scope = "represented for blocked/tiled ND iteration, rejected by current 1D materializers" },
+    M.producers = {
+        StencilProduceRange1D = { status = "supported", scope = "shape-supported; positive forward ranges are materialized today" },
+        StencilProduceRangeND = { status = "supported", scope = "shape-supported; forward ND ranges materialize in copy_patch_mc generic ApplyN/ReduceN" },
+        StencilProduceWindowND = { status = "supported", scope = "shape-supported for neighborhood/windowed stencil kernels; rejected by current linear producer materializers" },
+        StencilProduceTiledND = { status = "supported", scope = "shape-supported for blocked/tiled ND iteration; rejected by current linear producer materializers" },
     }
 
     M.predicates = {

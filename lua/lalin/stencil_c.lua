@@ -156,6 +156,82 @@ local function bind_context(T)
         }
     end
 
+    local function producer_param_structs(producer)
+        if producer == nil or producer.kind == "range1d" then
+            return {
+                structured_param("start", C.i32),
+                structured_param("stop", C.i32),
+            }
+        end
+        if producer.kind == "range_nd" then
+            local params = {}
+            for _, axis in ipairs(producer.axes or {}) do
+                params[#params + 1] = structured_param(axis.start_param, C.i32)
+                params[#params + 1] = structured_param(axis.stop_param, C.i32)
+            end
+            return params
+        end
+        error("stencil_c: unsupported producer plan " .. tostring(producer.kind), 3)
+    end
+
+    local function append_producer_param_structs(params, producer)
+        local producer_params = producer_param_structs(producer)
+        for i = 1, #producer_params do params[#params + 1] = producer_params[i] end
+    end
+
+    local function range_nd_linear_index(producer)
+        local linear = nil
+        for axis_index, axis in ipairs(producer.axes or {}) do
+            local iv = cn("__ml_axis" .. tostring(axis_index))
+            local offset = iv - cn(axis.start_param)
+            local step = tonumber(axis.step) or 1
+            if step ~= 1 then offset = offset / step end
+            if linear == nil then
+                linear = offset
+            else
+                linear = linear * cn("__ml_extent" .. tostring(axis_index)) + offset
+            end
+        end
+        return linear or 0
+    end
+
+    local function producer_loop(producer, body_for_index)
+        if producer == nil or producer.kind == "range1d" then
+            return { loop_i(producer and producer.stride or 1, body_for_index(cn("i"))) }
+        end
+        if producer.kind ~= "range_nd" then error("stencil_c: unsupported producer loop " .. tostring(producer.kind), 3) end
+        local axes = producer.axes or {}
+        local stmts = {}
+        for axis_index, axis in ipairs(axes) do
+            local step = tonumber(axis.step) or 1
+            local span = cn(axis.stop_param) - cn(axis.start_param)
+            local extent = step == 1 and span or ((span + (step - 1)) / step)
+            stmts[#stmts + 1] = C.decl[LLBL.N["__ml_extent" .. tostring(axis_index)]][C.i32](extent)
+        end
+        local function nest(axis_index)
+            if axis_index > #axes then
+                return {
+                    C.decl. __ml_i[C.i32](range_nd_linear_index(producer)),
+                    _(body_for_index(cn("__ml_i"))),
+                }
+            end
+            local axis = axes[axis_index]
+            local iv = LLBL.N["__ml_axis" .. tostring(axis_index)]
+            return {
+                C.for_ {
+                    C.decl[iv][C.i32](cn(axis.start_param)),
+                    C.lt(cn(iv), cn(axis.stop_param)),
+                    C.assign(cn(iv), cn(iv) + (tonumber(axis.step) or 1))
+                } {
+                    _(nest(axis_index + 1)),
+                },
+            }
+        end
+        local loop_body = nest(1)
+        for i = 1, #loop_body do stmts[#stmts + 1] = loop_body[i] end
+        return stmts
+    end
+
     local function assume_aligned_stmts(artifact, names)
         local stmts = {}
         for _, name in ipairs(names) do
@@ -1129,20 +1205,20 @@ local function bind_context(T)
                 params[#params + 1] = structured_param(access.name, C.ptr[C.const[c_type_node(access.ty)]])
             end
         end
-        params[#params + 1] = structured_param("start", C.i32)
-        params[#params + 1] = structured_param("stop", C.i32)
+        append_producer_param_structs(params, shape.producer)
         for _, access in ipairs(dynamic_stride_accesses(desc)) do
             params[#params + 1] = structured_param(stride_param_name(access), C.i32)
         end
-        local i = cn("i")
         local name = LLBL.N[artifact.symbol.text]
         return C.emit_decl(C.fn[name] { _(param_fragment(params)) } [C.void] {
-            loop_i(shape.stride, {
-                C.assign(
-                    access_c_expr(dst_access, "dst", i),
-                    c_apply_expr(shape.expr, desc, access_by_name, i)
-                ),
-            }),
+            _(producer_loop(shape.producer, function(i)
+                return {
+                    C.assign(
+                        access_c_expr(dst_access, "dst", i),
+                        c_apply_expr(shape.expr, desc, access_by_name, i)
+                    ),
+                }
+            end)),
         })
     end
 
@@ -1264,27 +1340,27 @@ local function bind_context(T)
                 params[#params + 1] = structured_param(access.name, C.ptr[C.const[c_type_node(access.ty)]])
             end
         end
-        params[#params + 1] = structured_param("start", C.i32)
-        params[#params + 1] = structured_param("stop", C.i32)
+        append_producer_param_structs(params, shape.producer)
         params[#params + 1] = structured_param("init", c_type_node(shape.result_ty))
         for _, access in ipairs(dynamic_stride_accesses(desc)) do
             params[#params + 1] = structured_param(stride_param_name(access), C.i32)
         end
-        local i = cn("i")
         local name = LLBL.N[artifact.symbol.text]
         return C.emit_decl(C.fn[name] { _(param_fragment(params)) } [C.type[result_ty]] {
             C.decl. acc[acc_type_node](C.cast[acc_type_node](cn("init"))),
-            loop_i(shape.stride, {
-                C.assign(
-                    cn("acc"),
-                    c_reduction_update_expr(
-                        shape.reduction,
+            _(producer_loop(shape.producer, function(i)
+                return {
+                    C.assign(
                         cn("acc"),
-                        c_apply_expr(shape.expr, desc, access_by_name, i),
-                        shape.result_ty
-                    )
-                ),
-            }),
+                        c_reduction_update_expr(
+                            shape.reduction,
+                            cn("acc"),
+                            c_apply_expr(shape.expr, desc, access_by_name, i),
+                            shape.result_ty
+                        )
+                    ),
+                }
+            end)),
             C.return_(c_cast(shape.result_ty, cn("acc"))),
         })
     end

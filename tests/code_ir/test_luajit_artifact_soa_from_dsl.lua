@@ -103,13 +103,13 @@ end
 
 for _, selected in ipairs(artifact.artifacts) do
     local desc = selected.instance.descriptor
-    local descriptor_kind = tostring(pvm.classof(desc)):match('Class%((.-)%)')
-    local expr_kind = tostring(pvm.classof(desc.expr)):match('Class%((.-)%)')
-    if descriptor_kind == 'LalinStencil.StencilDescriptorApply' and expr_kind == 'LalinStencil.StencilApplyBinary' then
+    local sink_kind = tostring(pvm.classof(desc.sink)):match('Class%((.-)%)')
+    local expr_kind = tostring(pvm.classof(desc.body.expr)):match('Class%((.-)%)')
+    if sink_kind == 'LalinStencil.StencilSinkEmitArray' and expr_kind == 'LalinStencil.StencilApplyBinary' then
         assert_soa(access_named(desc, 'dst'), 'total', 2)
         assert_soa(access_named(desc, 'lhs'), 'left', 0)
         assert_soa(access_named(desc, 'rhs'), 'right', 1)
-    elseif descriptor_kind == 'LalinStencil.StencilDescriptorReduce' and expr_kind == 'LalinStencil.StencilApplyBinary' then
+    elseif sink_kind == 'LalinStencil.StencilSinkReduce' and expr_kind == 'LalinStencil.StencilApplyBinary' then
         assert_soa(access_named(desc, 'lhs'), 'left', 0)
         assert_soa(access_named(desc, 'rhs'), 'right', 1)
     else

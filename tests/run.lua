@@ -51,16 +51,26 @@ if #tests == 0 then
 end
 
 local passed, skipped, failed = 0, 0, 0
+local run_slow = os.getenv("LALIN_RUN_SLOW") == "1" or os.getenv("LALIN_RUN_SLOW") == "true"
+local slow_tests = {
+    ["tests/code_ir/test_lalin_binary.lua"] = "builds and links the full embedded single binary",
+    ["tests/code_ir/test_luajit_embedded_mc_coverage.lua"] = "builds the full embedded MC intern bank",
+}
 for i = 1, #tests do
     local path = tests[i]
-    io.write("RUN  ", path, "\n")
-    io.flush()
-    local ok = os.execute("luajit " .. shell_quote(path))
-    if ok == true or ok == 0 then
-        passed = passed + 1
+    if slow_tests[path] ~= nil and not run_slow then
+        io.write("SKIP ", path, " (slow: ", slow_tests[path], "; set LALIN_RUN_SLOW=1 to run)\n")
+        skipped = skipped + 1
     else
-        failed = failed + 1
-        io.stderr:write("FAIL ", path, "\n")
+        io.write("RUN  ", path, "\n")
+        io.flush()
+        local ok = os.execute("luajit " .. shell_quote(path))
+        if ok == true or ok == 0 then
+            passed = passed + 1
+        else
+            failed = failed + 1
+            io.stderr:write("FAIL ", path, "\n")
+        end
     end
 end
 

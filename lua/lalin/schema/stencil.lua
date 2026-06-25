@@ -72,14 +72,14 @@ return schema. LalinStencil {
     StencilScatterLastWriteWins,
     StencilScatterConflictUndefined,
   },
-  sum. StencilDomainOrder { StencilDomainForward, StencilDomainBackward, },
-  product. StencilDomainAxis {
+  sum. StencilProducerOrder { StencilProducerForward, StencilProducerBackward, },
+  product. StencilProducerAxis {
     interned,
     index_ty [LalinCode.CodeType],
     start [optional [LalinValue.ValueExpr]],
     stop [optional [LalinValue.ValueExpr]],
     step [number],
-    order [LalinStencil.StencilDomainOrder],
+    order [LalinStencil.StencilProducerOrder],
   },
   sum. StencilWindowBoundary {
     StencilWindowBoundaryReject,
@@ -93,26 +93,31 @@ return schema. LalinStencil {
     after [number],
     boundary [LalinStencil.StencilWindowBoundary],
   },
-  sum. StencilDomain {
-    StencilDomainRange1D {
+  sum. StencilProducerShape {
+    StencilProduceRange1D {
       variant_unique,
       index_ty [LalinCode.CodeType],
       start [optional [LalinValue.ValueExpr]],
       stop [optional [LalinValue.ValueExpr]],
       step [number],
-      order [LalinStencil.StencilDomainOrder],
+      order [LalinStencil.StencilProducerOrder],
     },
-    StencilDomainRangeND { variant_unique, axes [many [LalinStencil.StencilDomainAxis]], },
-    StencilDomainWindowND {
+    StencilProduceRangeND { variant_unique, axes [many [LalinStencil.StencilProducerAxis]], },
+    StencilProduceWindowND {
       variant_unique,
-      axes [many [LalinStencil.StencilDomainAxis]],
+      axes [many [LalinStencil.StencilProducerAxis]],
       windows [many [LalinStencil.StencilWindowAxis]],
     },
-    StencilDomainTiledND {
+    StencilProduceTiledND {
       variant_unique,
-      axes [many [LalinStencil.StencilDomainAxis]],
+      axes [many [LalinStencil.StencilProducerAxis]],
       tile_sizes [many [number]],
     },
+  },
+  product. StencilProducer {
+    interned,
+    origin [optional [LalinFlow.FlowDomain]],
+    shape [LalinStencil.StencilProducerShape],
   },
   sum. StencilAccessRole {
     StencilAccessRead,
@@ -458,30 +463,37 @@ return schema. LalinStencil {
       facts [LalinStencil.StencilVectorizationFacts],
     },
   },
-  sum. StencilDescriptor {
-    StencilDescriptorApply {
+  sum. StencilBody {
+    StencilBodyApply {
       variant_unique,
-      domain [LalinStencil.StencilDomain],
-      accesses [many [LalinStencil.StencilAccess]],
       field. expr [LalinStencil.StencilApplyExpr],
+    },
+  },
+  sum. StencilSink {
+    StencilSinkEmitArray {
+      variant_unique,
+      dst [LalinStencil.StencilAccessRef],
       mode [LalinStencil.StencilApplyMode],
     },
-    StencilDescriptorReduce {
+    StencilSinkReduce {
       variant_unique,
-      domain [LalinStencil.StencilDomain],
-      accesses [many [LalinStencil.StencilAccess]],
-      field. expr [LalinStencil.StencilApplyExpr],
       result_ty [LalinCode.CodeType],
       mode [LalinStencil.StencilReduceMode],
     },
-    StencilDescriptorScan {
+    StencilSinkScan {
       variant_unique,
-      domain [LalinStencil.StencilDomain],
-      accesses [many [LalinStencil.StencilAccess]],
+      dst [LalinStencil.StencilAccessRef],
       reducer [LalinStencil.StencilReducer],
       mode [LalinStencil.StencilScanMode],
       result_ty [LalinCode.CodeType],
     },
+  },
+  product. StencilDescriptor {
+    interned,
+    producer [LalinStencil.StencilProducer],
+    accesses [many [LalinStencil.StencilAccess]],
+    body [LalinStencil.StencilBody],
+    sink [LalinStencil.StencilSink],
   },
   product. StencilAbi {
     interned,
@@ -508,9 +520,9 @@ return schema. LalinStencil {
       reduction [LalinValue.ReductionKind],
       reason [str],
     },
-    StencilRejectUnsupportedDomain {
+    StencilRejectUnsupportedProducer {
       variant_unique,
-      domain [LalinStencil.StencilDomain],
+      producer [LalinStencil.StencilProducer],
       reason [str],
     },
     StencilRejectMissingProof {
@@ -623,7 +635,7 @@ return schema. LalinStencil {
     ty [LalinCode.CodeType],
   },
   sum. StencilFusionLegalityFact {
-    StencilFusionSameDomain {
+    StencilFusionSameProducer {
       variant_unique,
       left [LalinStencil.StencilMetastencilNodeId],
       right [LalinStencil.StencilMetastencilNodeId],

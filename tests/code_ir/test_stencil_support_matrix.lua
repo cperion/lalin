@@ -66,7 +66,7 @@ local code_schema = "lua/lalin/schema/code.lua"
 
 assert_matrix_covers("vocabs", variants(stencil_schema, "StencilVocab"))
 assert_matrix_covers("topologies", variants(stencil_schema, "StencilAccessTopology"))
-assert_matrix_covers("domains", variants(stencil_schema, "StencilDomain"))
+assert_matrix_covers("producers", variants(stencil_schema, "StencilProducerShape"))
 assert_matrix_covers("predicates", variants(stencil_schema, "StencilPredicate"))
 assert_matrix_covers("type_families", variants(code_schema, "CodeType"))
 

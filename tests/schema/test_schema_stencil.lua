@@ -88,8 +88,9 @@ local vector_facts = Stencil.StencilVectorizationFacts(
     }
 )
 local schedule = Stencil.StencilScheduleAutoVector(compiler, vector_facts)
-local descriptor = Stencil.StencilDescriptorReduce(
-    Stencil.StencilDomainRange1D(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilDomainForward),
+local producer = Stencil.StencilProducer(nil, Stencil.StencilProduceRange1D(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilProducerForward))
+local descriptor = Stencil.StencilDescriptor(
+    producer,
     {
         Stencil.StencilAccess(
             "xs",
@@ -104,9 +105,8 @@ local descriptor = Stencil.StencilDescriptorReduce(
             Stencil.StencilTopologyScalar(init)
         ),
     },
-    Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs")),
-    i32,
-    Stencil.StencilReduceFold(Stencil.StencilReducer(Value.ReductionAdd, i32, init, sem, nil))
+    Stencil.StencilBodyApply(Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs"))),
+    Stencil.StencilSinkReduce(i32, Stencil.StencilReduceFold(Stencil.StencilReducer(Value.ReductionAdd, i32, init, sem, nil)))
 )
 local instance = Stencil.StencilInstance(
     Stencil.StencilInstanceId("stencil:reduce_array:i32:add"),
@@ -127,12 +127,13 @@ local artifact = Stencil.StencilArtifact(
 )
 
 assert(StencilArtifactPlan.descriptor_vocab(instance.descriptor) == Stencil.StencilReduce)
-assert(pvm.classof(StencilArtifactPlan.descriptor_domain(instance.descriptor)) == Stencil.StencilDomainRange1D)
+assert(pvm.classof(StencilArtifactPlan.descriptor_producer(instance.descriptor).shape) == Stencil.StencilProduceRange1D)
 assert(StencilArtifactPlan.descriptor_accesses(instance.descriptor)[1].role == Stencil.StencilAccessRead)
 assert(StencilArtifactPlan.descriptor_accesses(instance.descriptor)[2].role == Stencil.StencilAccessReduce)
-assert(pvm.classof(instance.descriptor.mode) == Stencil.StencilReduceFold)
-assert(pvm.classof(instance.descriptor.mode.reducer) == Stencil.StencilReducer)
-assert(instance.descriptor.mode.reducer.identity == init)
+assert(pvm.classof(instance.descriptor.body) == Stencil.StencilBodyApply)
+assert(pvm.classof(instance.descriptor.sink.mode) == Stencil.StencilReduceFold)
+assert(pvm.classof(instance.descriptor.sink.mode.reducer) == Stencil.StencilReducer)
+assert(instance.descriptor.sink.mode.reducer.identity == init)
 assert(pvm.classof(instance.schedule) == Stencil.StencilScheduleAutoVector)
 assert(instance.schedule.compiler.compiler == Stencil.StencilCompilerGcc)
 assert(instance.schedule.compiler.opt_level == Stencil.StencilOptO3)
@@ -223,39 +224,65 @@ assert(pvm.classof(meta_descriptor.legality.facts[1]) == Stencil.StencilFusionCo
 assert(pvm.classof(meta_selection.candidate) == Stencil.StencilMetastencilCandidate)
 assert(meta_selection.provenance.winner == "meta:reduce")
 
-local axis_x = Stencil.StencilDomainAxis(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilDomainForward)
-local axis_y = Stencil.StencilDomainAxis(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilDomainForward)
-local nd_domain = Stencil.StencilDomainRangeND({ axis_x, axis_y })
-local window_domain = Stencil.StencilDomainWindowND({ axis_x, axis_y }, {
+local axis_x = Stencil.StencilProducerAxis(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilProducerForward)
+local axis_y = Stencil.StencilProducerAxis(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilProducerForward)
+local nd_producer = Stencil.StencilProducer(nil, Stencil.StencilProduceRangeND({ axis_x, axis_y }))
+local window_producer = Stencil.StencilProducer(nil, Stencil.StencilProduceWindowND({ axis_x, axis_y }, {
     Stencil.StencilWindowAxis(1, 1, Stencil.StencilWindowBoundaryClamp),
     Stencil.StencilWindowAxis(1, 1, Stencil.StencilWindowBoundaryReject),
-})
-local tiled_domain = Stencil.StencilDomainTiledND({ axis_x, axis_y }, { 16, 16 })
-local backward_domain = Stencil.StencilDomainRange1D(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilDomainBackward)
-local zero_step_domain = Stencil.StencilDomainRange1D(Code.CodeTyIndex, nil, nil, 0, Stencil.StencilDomainForward)
-assert(not StencilArtifactPlan.domain_supported(nd_domain))
-assert(not StencilArtifactPlan.domain_supported(window_domain))
-assert(not StencilArtifactPlan.domain_supported(tiled_domain))
-assert(not StencilArtifactPlan.domain_supported(backward_domain))
-assert(not StencilArtifactPlan.domain_supported(zero_step_domain))
-local nd_reject = StencilArtifactPlan.unsupported_domain_reject(nd_domain)
-assert(pvm.classof(nd_reject) == Stencil.StencilRejectUnsupportedDomain)
-assert(nd_reject.domain == nd_domain)
-assert(StencilArtifactPlan.unsupported_domain_reject(backward_domain).reason:find("backward", 1, true) ~= nil)
-assert(StencilArtifactPlan.unsupported_domain_reject(zero_step_domain).reason:find("positive compile-time", 1, true) ~= nil)
-local nd_descriptor = Stencil.StencilDescriptorApply(
-    nd_domain,
+}))
+local tiled_producer = Stencil.StencilProducer(nil, Stencil.StencilProduceTiledND({ axis_x, axis_y }, { 16, 16 }))
+local backward_producer = Stencil.StencilProducer(nil, Stencil.StencilProduceRange1D(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilProducerBackward))
+local zero_step_producer = Stencil.StencilProducer(nil, Stencil.StencilProduceRange1D(Code.CodeTyIndex, nil, nil, 0, Stencil.StencilProducerForward))
+assert(StencilArtifactPlan.producer_axis_count(nd_producer) == 2)
+assert(StencilArtifactPlan.producer_axis_count(window_producer) == 2)
+assert(StencilArtifactPlan.producer_axis_count(tiled_producer) == 2)
+assert(StencilArtifactPlan.producer_shape_supported(nd_producer))
+assert(StencilArtifactPlan.producer_shape_supported(window_producer))
+assert(StencilArtifactPlan.producer_shape_supported(tiled_producer))
+assert(StencilArtifactPlan.producer_shape_supported(backward_producer))
+assert(not StencilArtifactPlan.producer_shape_supported(zero_step_producer))
+assert(StencilArtifactPlan.producer_materialized(nd_producer))
+assert(not StencilArtifactPlan.producer_materialized(window_producer))
+assert(not StencilArtifactPlan.producer_materialized(tiled_producer))
+assert(not StencilArtifactPlan.producer_materialized(backward_producer))
+assert(not StencilArtifactPlan.producer_materialized(zero_step_producer))
+assert(StencilArtifactPlan.unsupported_producer_reject(nd_producer) == nil)
+local window_reject = StencilArtifactPlan.unsupported_producer_reject(window_producer)
+assert(pvm.classof(window_reject) == Stencil.StencilRejectUnsupportedProducer)
+assert(window_reject.producer == window_producer)
+assert(window_reject.reason:find("shape-supported", 1, true) ~= nil)
+assert(StencilArtifactPlan.unsupported_producer_reject(backward_producer).reason:find("backward", 1, true) ~= nil)
+assert(StencilArtifactPlan.unsupported_producer_reject(zero_step_producer).reason:find("positive compile-time", 1, true) ~= nil)
+local bad_window_producer = Stencil.StencilProducer(nil, Stencil.StencilProduceWindowND({ axis_x, axis_y }, {
+    Stencil.StencilWindowAxis(1, 1, Stencil.StencilWindowBoundaryClamp),
+}))
+local bad_window_extent_producer = Stencil.StencilProducer(nil, Stencil.StencilProduceWindowND({ axis_x, axis_y }, {
+    Stencil.StencilWindowAxis(-1, 1, Stencil.StencilWindowBoundaryClamp),
+    Stencil.StencilWindowAxis(1, 1, Stencil.StencilWindowBoundaryReject),
+}))
+local bad_tiled_producer = Stencil.StencilProducer(nil, Stencil.StencilProduceTiledND({ axis_x, axis_y }, { 16, 0 }))
+assert(not StencilArtifactPlan.producer_shape_supported(bad_window_producer))
+assert(not StencilArtifactPlan.producer_shape_supported(bad_window_extent_producer))
+assert(not StencilArtifactPlan.producer_shape_supported(bad_tiled_producer))
+assert(StencilArtifactPlan.producer_shape_reject_reason(nd_producer) == nil)
+assert(StencilArtifactPlan.producer_materializer_reject_reason(nd_producer) == nil)
+assert(StencilArtifactPlan.unsupported_producer_reject(bad_window_producer).reason:find("one window per axis", 1, true) ~= nil)
+assert(StencilArtifactPlan.unsupported_producer_reject(bad_window_extent_producer).reason:find("before extent", 1, true) ~= nil)
+assert(StencilArtifactPlan.unsupported_producer_reject(bad_tiled_producer).reason:find("tile size 2", 1, true) ~= nil)
+local nd_descriptor = Stencil.StencilDescriptor(
+    nd_producer,
     {
         Stencil.StencilAccess("dst", Stencil.StencilAccessWrite, i32, Stencil.StencilTopologyContiguous(1)),
         Stencil.StencilAccess("xs", Stencil.StencilAccessRead, i32, Stencil.StencilTopologyContiguous(1)),
     },
-    Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs")),
-    Stencil.StencilApplyElementwise
+    Stencil.StencilBodyApply(Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs"))),
+    Stencil.StencilSinkEmitArray(Stencil.StencilAccessRef("dst"), Stencil.StencilApplyElementwise)
 )
 local nd_instance = Stencil.StencilInstance(instance.id, nd_descriptor, instance.schedule, instance.abi, instance.proofs)
 local nd_artifact = Stencil.StencilArtifact(nd_instance, artifact.provider, artifact.symbol, artifact.c_signature, artifact.fingerprint, nil, {}, {})
 local ok, err = pcall(function() return StencilArtifactPlan.artifact_shape(nd_artifact) end)
-assert(not ok and tostring(err):find("unsupported stencil domain", 1, true) ~= nil)
+assert(not ok and tostring(err):find("unsupported stencil producer", 1, true) ~= nil)
 
 local bad_vector_schedule = Stencil.StencilScheduleVector(
     Stencil.StencilVectorFeatureNative,

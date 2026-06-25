@@ -78,18 +78,18 @@ Severity tags:
 
 ### Representable Illegal States
 
-- [x] `B1` `[T]` Replace optional-bag `StencilDescriptor` with a
-  skeleton-keyed descriptor sum. The current product permits invalid
+- [x] `B1` `[T]` Replace optional-bag `StencilDescriptor` with an honest
+  `producer + body + sink` product. The old product permitted invalid
   combinations such as reduce skeleton without reducer, map vocab with reduce
-  skeleton, or extra operators on copy. Each descriptor variant should own the
-  mandatory fields for its skeleton and make forbidden fields unrepresentable.
+  skeleton, or extra operators on copy. Sink/body variants now own the mandatory
+  fields for their shape and make forbidden fields unrepresentable.
 - [x] `B2` `[T]` Remove the unconstrained duplicate operation axis between
   `StencilVocab` and `StencilSkeleton`. `StencilSkeleton` was deleted; scan
   mode, copy semantics, find `not_found`, and partition semantics now live only
-  on their descriptor variants. The remaining operation vocabulary is derived
-  from descriptor class where needed.
+  on the sink/body variants that consume them. The remaining operation
+  vocabulary is derived from sink/body shape where needed.
 - [x] `B3` `[T]` Give memory semantics a single owner. Copy, partition, and
-  scatter semantics now live on the descriptor variant that needs them; the
+  scatter semantics now live on the sink/body shape that needs them; the
   duplicate `StencilMemorySemantics` schema product was removed.
 - [x] `B4` `[T]` Remove schedule double-encoding. `StencilScheduleVector`
   no longer stores a bare lane count; requested lanes derive from
@@ -116,9 +116,9 @@ Severity tags:
   `obligation [StencilProofObligationKind]`, so missing-proof rejects identify
   the exact required proof.
 - [x] `C3` `[K]` Rework `StencilParam` as a typed parameter product or boundary
-  metadata. `StencilParam` was removed instead: descriptor variants already own
-  the typed semantic fields, and `StencilAbi` owns call ABI. There is no longer
-  a name-keyed descriptor metadata bag.
+  metadata. `StencilParam` was removed instead: descriptor sink/body/access
+  fields already own the typed semantic fields, and `StencilAbi` owns call ABI.
+  There is no longer a name-keyed descriptor metadata bag.
 
 ### Schema Completeness Gaps
 
@@ -136,12 +136,15 @@ Severity tags:
   `else_xs` accesses, plus `StencilOpSelect` in the element-operator surface.
   Artifact planning, support-matrix coverage, LuaTrace BC, and MC emission all
   materialize predicate-controlled select/blend arrays.
-- [x] `D3` `[C]` State the 1D-only domain scope and future ND/windowed stencil
-  direction. `StencilDomain` now represents `Range1D`, `RangeND`, `WindowND`,
-  and `TiledND`; the support matrix marks only `Range1D` as materialized today,
-  and artifact-shape extraction rejects future domains through typed
-  `StencilRejectUnsupportedDomain` facts instead of silently treating them as
-  stride-1 linear loops.
+- [x] `D3` `[C]` Complete the represented producer/unfold shape layer beyond
+  1D. `StencilProducerShape` now represents and shape-validates `Range1D`,
+  `RangeND`, `WindowND`, and `TiledND`; the support matrix marks the shape
+  layer as covered. `copy_patch_mc` now materializes forward `RangeND` producers
+  for generic `ApplyN`/`ReduceN` through nested LLBL.C producer loops; the
+  LuaTrace bytecode path and the older fixed-shape C stencils still accept only
+  positive forward `Range1D`. Windowed and tiled producers reach typed
+  `StencilRejectUnsupportedProducer` facts at the materializer boundary instead
+  of silently degrading to stride-1 linear loops.
 - [x] `D4` `[C]` Add range, compound, and float-class predicates, or document
   their rejection. `StencilPredicate` now includes typed range predicates,
   compound `and`/`or`/`not`, and float `isnan`/`isinf`/`isfinite` predicates.
@@ -186,12 +189,13 @@ Severity tags:
   document that every provider seals through a C ABI. Decision: every current
   stencil artifact provider seals through the same C-callable ABI surface, so
   `c_signature` remains mandatory for both `copy_patch_bc` and `copy_patch_mc`.
-- [x] `E4` `[M]` Decide whether domain step is compile-time only. Domain step is
-  intentionally a positive compile-time constant for currently materialized
-  1D stencil domains; runtime stride belongs to `StencilTopologyViewDescriptor`,
-  not `StencilDomain`. Backward and nonpositive 1D domains are represented but
-  rejected with typed unsupported-domain reasons, and copy overlap direction
-  remains owned by `StencilCopySemantics`.
+- [x] `E4` `[M]` Decide whether producer step is compile-time only. Producer
+  step is intentionally a positive compile-time constant for currently
+  materialized 1D range producers; runtime stride belongs to
+  `StencilTopologyViewDescriptor`, not `StencilProducerShape`. Backward and
+  nonpositive 1D producers are represented but rejected with typed
+  unsupported-producer reasons, and copy overlap direction remains owned by
+  `StencilCopySemantics`.
 - [x] `E5` `[M]` Add an index access role. `StencilAccessIndex` now separates
   gather/scatter index streams from ordinary data reads, the planner marks
   those accesses readonly for vector facts, and support-matrix tests assert
@@ -315,11 +319,86 @@ Open gate question:
 - [ ] Add tests that descriptor data/len/stride extraction survives frontend
   lowering into stencil topology facts.
 
-## Domain And Scheduling Gaps
+## Producer And Scheduling Gaps
 
-- [ ] Add support or explicit rejection for backward domains.
-- [ ] Add support or explicit rejection for non-unit positive domain steps across
-  every vocab.
+Producer-shape completion is the current gate before returning to the other
+open backend checkboxes. The goal is not "a 1D backend"; the backends remain
+`copy_patch_bc`, `copy_patch_mc`, and the emitted bank/binary path. The gate is
+to make every represented producer shape either fully executable across the
+appropriate materializers or rejected with typed, stable facts at the exact
+unsupported boundary.
+
+Gate closure means: `Range1D`, `RangeND`, `TiledND`, and `WindowND` are all
+represented, lowered or explicitly rejected per materializer, covered by focused
+runtime tests, reflected in the support matrix, considered by the bank generator,
+and benchmarked where they produce executable MC code.
+
+### Producer Shape Completion Gate
+
+- [x] Replace the old domain axis with `StencilProducer` /
+  `StencilProducerShape` in the schema.
+- [x] Represent `Range1D`, `RangeND`, `WindowND`, and `TiledND` as first-class
+  producer shapes.
+- [x] Split shape validation from materializer support:
+  `producer_shape_supported` answers whether the shape is well-formed, while
+  `producer_materialized` answers whether a materializer can execute it.
+- [x] Validate producer axes, positive steps, window counts, window extents, and
+  tile sizes before materialization.
+- [x] Preserve typed unsupported-producer facts instead of falling back to an
+  accidental stride-1 loop.
+- [x] Keep positive forward `Range1D` working across existing BC, MC, and bank
+  paths.
+- [x] Materialize forward `RangeND` in `copy_patch_mc` for generic `ApplyN` and
+  `ReduceN` through nested LLBL.C producer loops.
+- [x] Guard `copy_patch_bc` so non-`Range1D` producer plans cannot silently
+  execute as linear `start/stop` loops.
+- [ ] Add a shared producer execution-plan object to artifact shapes so every
+  materializer consumes `producer`, not a loose `stride` field.
+- [ ] Convert fixed `copy_patch_mc` stencil shapes to consume producer plans:
+  `map`, `zip_map`, `select`, `compare`, `zip_compare`, `cast`, `copy`, `fill`,
+  `gather`, `scatter`, `in_place_map`, `count`, `find`, `partition`, `scan`, and
+  plain `reduce`.
+- [ ] Add forward `RangeND` runtime tests for every fixed `copy_patch_mc` shape
+  that can be expressed over row-major linear storage.
+- [ ] Add forward `RangeND` lowering to `copy_patch_bc` or keep each unsupported
+  cell as a typed BC reject with tests.
+- [ ] Add non-unit positive producer-step tests for `Range1D` and `RangeND`
+  across generic and fixed shapes.
+- [ ] Decide and implement backward producer semantics: materialize backward
+  loops where legal, normalize to forward where equivalent, or reject with
+  typed facts where unsafe.
+- [ ] Design `TiledND` execution semantics:
+  tile extents, edge tiles, loop order, row-major linearization, and interaction
+  with schedules/unroll/vectorization.
+- [ ] Materialize `TiledND` in `copy_patch_mc` for generic `ApplyN` and
+  `ReduceN`.
+- [ ] Extend `TiledND` to fixed `copy_patch_mc` shapes where the access semantics
+  remain elementwise.
+- [ ] Decide whether `TiledND` belongs in `copy_patch_bc`; implement it or add
+  typed BC rejects and tests.
+- [ ] Design `WindowND` access semantics:
+  neighborhood coordinates, boundary policy lowering (`reject`, `clamp`, `wrap`,
+  `zero`), and how window operands appear in `StencilApplyExpr`.
+- [ ] Materialize `WindowND` in `copy_patch_mc` for the generic expression path.
+- [ ] Add `WindowND` tests for every boundary policy and for zero-sized /
+  edge-only windows.
+- [ ] Decide whether `WindowND` belongs in `copy_patch_bc`; implement it or add
+  typed BC rejects and tests.
+- [ ] Update `copy_patch_mc_intern_set` so the bank generator can include
+  producer-shape cells intentionally, not only the current linear `Range1D`
+  bank.
+- [ ] Add emitted-bank/single-binary tests for `RangeND` cells and for
+  materializer-pending `TiledND`/`WindowND` rejection cells.
+- [ ] Update the support matrix so producer rows distinguish shape support,
+  BC materialization, MC materialization, and emitted-bank coverage.
+- [ ] Feed producer shapes from the frontend/lowering pipeline instead of only
+  hand-built test descriptors.
+- [ ] Add benchmarks comparing `Range1D`, `RangeND`, and `TiledND` MC
+  materialization against handwritten C + `gcc -O3`.
+- [ ] Only after the producer-shape gate is closed, resume the remaining
+  topology, scheduling, bank, metastencil, frontend, and benchmark checkboxes
+  below.
+
 - [ ] Add schedule coverage for scalar, unrolled, autovector, and fixed-vector
   schedules across every supported vocab.
 - [ ] Add masked-tail vs scalar-tail runtime tests.
@@ -400,13 +479,22 @@ optimization only happens if the compiler receives the fused source.
   `ZipCompare`, `Gather`, and plain `Scatter` are `Apply` configurations;
   `Count`, `Find`, `MapReduce`, and `ZipReduce` are `Apply + Reduce`;
   `Filter` and `Partition` are `Apply + Scan + Scatter`.
-- [x] Refactor the descriptor/support-matrix vocabulary so `Apply`, `Reduce`,
-  and `Scan` are the real generator constructors, and the old operation names
-  become derived plan labels or aliases with no separate skeleton authority.
-  `StencilDescriptor` now has only `Apply`, `Reduce`, and `Scan` variants;
-  generated artifact shapes are recovered from descriptor mode/expression/access
-  facts, and the support matrix tracks primitive vocabs separately from
+- [x] Refactor the descriptor/support-matrix vocabulary so the real physical
+  shape is `producer + body + sink`, and the old operation names become derived
+  plan labels or aliases with no separate skeleton authority.
+  `StencilDescriptor` is now one structural product: `StencilProducer`
+  plus typed accesses, a `StencilBody`, and a `StencilSink`. `Apply`, `Reduce`,
+  and `Scan` are recovered from sink/body combinations rather than descriptor
+  variants, while the support matrix tracks primitive vocabs separately from
   derived plans.
+- [x] Make the hidden unfold explicit. `StencilProducer` owns the physical
+  iteration/control generator and carries optional `FlowDomain` provenance only
+  as a proof/source anchor; compiled bank identity remains structural through
+  descriptor fingerprints, not a separate producer id. The shape layer accepts
+  `Range1D`, `RangeND`, `WindowND`, and `TiledND`; `copy_patch_mc` generic
+  `ApplyN`/`ReduceN` now consumes forward `RangeND`, while LuaTrace and the
+  fixed-shape stencil materializers reject the still-pending producer shapes
+  with typed facts.
 - [ ] Replace handwritten non-basis metastencils in production paths with
   generated metastencils from the primitive fragments; keep handwritten versions
   only as benchmarks, regression fixtures, or temporary scaffolding until the
@@ -433,6 +521,11 @@ optimization only happens if the compiler receives the fused source.
   cells with an estimated 15,238,950-byte payload. Actual sharded generation
   completed in 41.41 seconds with 16 jobs: 71,831 entries, 5,727,864 payload
   bytes, 10 patches, and 330 MiB max RSS.
+- [ ] Replace the current linear-producer-only embedded bank shape with the final
+  producer/body/sink bank once the represented producer surface is materialized.
+  The current bank is intentionally a bounded `Range1D` bank over the available
+  scalar Apply/Reduce surface; it is not the final "right bank" for ND, tiled,
+  windowed, indexed, worklist, or state-machine producers.
 - [x] Add typed metastencil descriptors and selection facts. A metastencil is now
   a typed DAG of artifact nodes, external/node ports, wires, fusion legality
   facts/rejects, ABI, fingerprint, cover candidates, and deterministic longest
@@ -602,8 +695,8 @@ means the fact is preserved for audit but does not yet drive lowering.
 
 | Schema surface | `copy_patch_bc` | `copy_patch_mc` | emitted bank / binary | Remaining work |
 | --- | --- | --- | --- | --- |
-| Descriptor variant / vocab | consume all supported shapes | consume all supported C stencil shapes | record/intern selected shapes | [x] Generate MC intern set from the support matrix, not hand enumeration. |
-| Domain | consume positive `Range1D`; reject represented ND/window/tiled domains | consume positive `Range1D`; reject represented ND/window/tiled domains | record current interned `Range1D` set | [ ] Add single-binary tests for rejected/future domain cells. |
+| Descriptor producer/body/sink / vocab | consume all shape-supported producers; materialize current subset | consume all shape-supported C stencil shapes; materialize current subset | record/intern selected shapes | [x] Generate MC intern set from the support matrix, not hand enumeration. |
+| Producer | materialize positive `Range1D`; reject represented ND/window/tiled producers | materialize positive `Range1D` everywhere; materialize forward `RangeND` for generic `ApplyN`/`ReduceN`; reject window/tiled producers | record current interned `Range1D` set | [ ] Add single-binary tests for RangeND and rejected/materializer-pending producer cells. |
 | Topology | consume contiguous, view, slice, byte-span, field, SoA, indexed, scalar | consume same through C access expressions | partial dynamic-descriptor coverage | [ ] Add embedded-bank tests for view/slice/byte-span/field/SoA descriptors. |
 | Access roles | consume read/write/readwrite/reduce/index in access plans | consume read/write/readwrite/reduce/index in generated C signatures/accesses | record through artifacts | [ ] Add index-role bounds/alias tests for gather/scatter in both banks. |
 | Alias facts | consume noalias for BC copy primitive legality | consume noalias as C `restrict` where legal | record through artifact fingerprint | [ ] Benchmark alias-driven gather/scatter/copy materialization against handwritten C. |
@@ -629,6 +722,11 @@ means the fact is preserved for audit but does not yet drive lowering.
 - [ ] Treat the emitted C/single-binary bank path as the deployment probe: it
   must intern the intended BC and MC banks, preserve artifact identity, and make
   missing or stale materialization visible.
+- [x] Keep full embedded-bank build/link tests out of the default `code_ir`
+  runner. `tests/run.lua` now skips `test_lalin_binary.lua` and
+  `test_luajit_embedded_mc_coverage.lua` unless `LALIN_RUN_SLOW=1`, because
+  those tests build or link the full embedded MC bank and can dominate memory
+  and wall time on normal test runs.
 - [ ] Update the benchmark corpus so it covers each newly expressible stencil
   family and topology, including negative/control cases where a materializer
   should reject.
