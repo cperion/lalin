@@ -3,23 +3,23 @@ local function bind_context(T)
     if T._lalin_api_cache.code_lower_plan_rules ~= nil then return T._lalin_api_cache.code_lower_plan_rules end
 
     local lalin = require("lalin")
-    local llb = require("llb")
+    local llbl = require("llbl")
     local Llisle = require("llisle")
     local RuleApi = require("lalin.llisle_rule_api")
-    local env = lalin.family.env { scope = "env", base = _G }
+    local env = lalin.language.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
 
-    local LowerFragmentInput = llb.symbol("LowerFragmentInput")
-    local LowerFragmentSelection = llb.symbol("LowerFragmentSelection")
-    local fragment = llb.symbol("fragment")
-    local selection = llb.symbol("selection")
-    local lower_fragment_selection = llb.symbol("lower_fragment_selection")
+    local LowerFragmentInput = llbl.shared.symbols.source("LowerFragmentInput")
+    local LowerFragmentSelection = llbl.shared.symbols.source("LowerFragmentSelection")
+    local fragment = llbl.shared.symbols.source("fragment")
+    local selection = llbl.shared.symbols.source("selection")
+    local lower_fragment_selection = llbl.shared.symbols.source("lower_fragment_selection")
 
-    local closed_form = llb.symbol("closed_form")
-    local kernel = llb.symbol("kernel")
-    local fallback = llb.symbol("fallback")
-    local none = llb.symbol("none")
+    local closed_form = llbl.shared.symbols.source("closed_form")
+    local kernel = llbl.shared.symbols.source("kernel")
+    local fallback = llbl.shared.symbols.source("fallback")
+    local none = llbl.shared.symbols.source("none")
 
     local function build_selection(fields) return fields end
 

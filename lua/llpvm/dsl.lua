@@ -1,5 +1,5 @@
-local llb = require("llb")
-local role_region_head = llb.role_region
+local llbl = require("llbl")
+local role_region_head = llbl.role_region
 local bytecode = require("llpvm.bytecode")
 local ffi = require("ffi")
 
@@ -39,42 +39,42 @@ end
 local function is(v, mt) return type(v) == "table" and getmetatable(v) == mt end
 
 local function die(msg, origin)
-    llb.fail("llpvm.dsl: " .. msg, { primary = origin })
+    llbl.fail("llpvm.dsl: " .. msg, { primary = origin })
 end
 
 local function ident(name, origin)
-    return setmetatable({ name = tostring(name), origin = origin or llb.here("llpvm-ident", { skip = 1 }) }, Ident)
+    return setmetatable({ name = tostring(name), origin = origin or llbl.here("llpvm-ident", { skip = 1 }) }, Ident)
 end
 
 local function ident_text(v, what)
     what = what or "name"
     if is(v, Ident) then return v.name end
     if is(v, Path) and #v.parts == 1 then return v.parts[1] end
-    if llb.is(v, "Name") or llb.is(v, "Symbol") then return v.text end
+    if llbl.is(v, "Name") or llbl.is(v, "Symbol") then return v.text end
     if type(v) == "string" then return v end
-    die(what .. " expected, got " .. llb.repr(v), llb.origin_of(v))
+    die(what .. " expected, got " .. llbl.repr(v), llbl.origin_of(v))
 end
 
 local function make_path(parts, origin)
-    return setmetatable({ parts = parts, origin = origin or llb.here("llpvm-path", { skip = 1 }) }, Path)
+    return setmetatable({ parts = parts, origin = origin or llbl.here("llpvm-path", { skip = 1 }) }, Path)
 end
 
 local function path_parts(v)
     if is(v, Ident) then return { v.name } end
     if is(v, Path) then return v.parts end
-    if llb.is(v, "Name") or llb.is(v, "Symbol") then return { v.text } end
-    if llb.is(v, "Expr") and v.kind == "field" then
+    if llbl.is(v, "Name") or llbl.is(v, "Symbol") then return { v.text } end
+    if llbl.is(v, "Expr") and v.kind == "field" then
         local parts = path_parts(v.base)
         parts[#parts + 1] = v.field
         return parts
     end
     if type(v) == "string" then return { v } end
-    die("path expected, got " .. llb.repr(v), llb.origin_of(v))
+    die("path expected, got " .. llbl.repr(v), llbl.origin_of(v))
 end
 
 local function expr_path_parts(v)
-    if llb.is(v, "Symbol") or llb.is(v, "Name") then return { v.text } end
-    if llb.is(v, "Expr") and v.kind == "field" then
+    if llbl.is(v, "Symbol") or llbl.is(v, "Name") then return { v.text } end
+    if llbl.is(v, "Expr") and v.kind == "field" then
         local base = expr_path_parts(rawget(v, "base"))
         base[#base + 1] = rawget(v, "field")
         return base
@@ -83,7 +83,7 @@ local function expr_path_parts(v)
 end
 
 local function expr_call_path(v)
-    if llb.is(v, "Expr") and v.kind == "call" then return expr_path_parts(rawget(v, "callee")), rawget(v, "args") or {} end
+    if llbl.is(v, "Expr") and v.kind == "call" then return expr_path_parts(rawget(v, "callee")), rawget(v, "args") or {} end
     return nil, nil
 end
 
@@ -91,10 +91,10 @@ Ident.__tostring = function(self) return self.name end
 Ident.__index = function(self, key)
     if Ident[key] then return Ident[key] end
     if type(key) == "string" then return make_path({ self.name, key }, self.origin) end
-    return setmetatable({ name = self.name, type = key, origin = llb.here("llpvm-field", { skip = 1 }) }, Field)
+    return setmetatable({ name = self.name, type = key, origin = llbl.here("llpvm-field", { skip = 1 }) }, Field)
 end
 Ident.__call = function(self, ...)
-    return setmetatable({ callee = self, args = { ... }, origin = llb.here("llpvm-call", { skip = 1 }) }, Call)
+    return setmetatable({ callee = self, args = { ... }, origin = llbl.here("llpvm-call", { skip = 1 }) }, Call)
 end
 
 Path.__tostring = function(self) return table.concat(self.parts, ".") end
@@ -107,23 +107,23 @@ Path.__index = function(self, key)
     return make_path(parts, self.origin)
 end
 Path.__call = function(self, ...)
-    return setmetatable({ callee = self, args = { ... }, origin = llb.here("llpvm-call", { skip = 1 }) }, Call)
+    return setmetatable({ callee = self, args = { ... }, origin = llbl.here("llpvm-call", { skip = 1 }) }, Call)
 end
 
 local function array_items(t)
     local out = {}
     for i = 1, #(t or {}) do
         local v = t[i]
-        if llb.is(v, "Spread") then
+        if llbl.is(v, "Spread") then
             local frag = v.value
-            if llb.is(frag, "Fragment") then
+            if llbl.is(frag, "Fragment") then
                 for j = 1, #(frag.items or {}) do out[#out + 1] = frag.items[j] end
             elseif type(frag) == "table" then
                 for j = 1, #frag do out[#out + 1] = frag[j] end
             else
                 die("spread expects a fragment or array", v.origin)
             end
-        elseif llb.is(v, "Fragment") then
+        elseif llbl.is(v, "Fragment") then
             for j = 1, #(v.items or {}) do out[#out + 1] = v.items[j] end
         else
             out[#out + 1] = v
@@ -148,16 +148,16 @@ local function array_items_gen(param, state)
         state.index = state.index + 1
         local v = param.value[state.index]
         if v == nil then return nil end
-        if llb.is(v, "Spread") then
+        if llbl.is(v, "Spread") then
             local frag = v.value
-            if llb.is(frag, "Fragment") then
+            if llbl.is(frag, "Fragment") then
                 push_items_reverse(stack, frag.items)
             elseif type(frag) == "table" then
                 push_items_reverse(stack, frag)
             else
                 die("spread expects a fragment or array", v.origin)
             end
-        elseif llb.is(v, "Fragment") then
+        elseif llbl.is(v, "Fragment") then
             push_items_reverse(stack, v.items)
         else
             return state, v
@@ -166,7 +166,7 @@ local function array_items_gen(param, state)
 end
 
 local function array_items_region(t, kind)
-    return llb.gps.raw(llb.gps.wrap(array_items_gen, { value = t or {} }, nil, { kind = kind or "llpvm:items" }))
+    return llbl.gps.raw(llbl.gps.wrap(array_items_gen, { value = t or {} }, nil, { kind = kind or "llpvm:items" }))
 end
 
 local function fields_from_table(t)
@@ -179,12 +179,12 @@ local function fields_from_table(t)
         if is(v, Field) and raw_name ~= nil and raw_type ~= nil then out[#out + 1] = v
         elseif is(v, Field) and raw_base ~= nil and raw_index ~= nil then
             out[#out + 1] = setmetatable({ name = ident_text(raw_base, "field name"), type = raw_index, origin = rawget(v, "origin") }, Field)
-        elseif llb.is(v, "Capture") then
+        elseif llbl.is(v, "Capture") then
             out[#out + 1] = setmetatable({ name = ident_text(v.subject, "field name"), type = v.value, origin = v.origin }, Field)
-        elseif llb.is(v, "Expr") and v.kind == "index" then
+        elseif llbl.is(v, "Expr") and v.kind == "index" then
             out[#out + 1] = setmetatable({ name = ident_text(v.base, "field name"), type = v.index, origin = v.origin }, Field)
         elseif type(v) == "table" and v.name ~= nil and v.type ~= nil then out[#out + 1] = setmetatable(v, Field)
-        else die("field list expects entries like name [Type]", llb.origin_of(v)) end
+        else die("field list expects entries like name [Type]", llbl.origin_of(v)) end
     end
     return out
 end
@@ -197,12 +197,12 @@ local function field_from_item(v)
     if is(v, Field) and raw_name ~= nil and raw_type ~= nil then return v
     elseif is(v, Field) and raw_base ~= nil and raw_index ~= nil then
         return setmetatable({ name = ident_text(raw_base, "field name"), type = raw_index, origin = rawget(v, "origin") }, Field)
-    elseif llb.is(v, "Capture") then
+    elseif llbl.is(v, "Capture") then
         return setmetatable({ name = ident_text(v.subject, "field name"), type = v.value, origin = v.origin }, Field)
-    elseif llb.is(v, "Expr") and v.kind == "index" then
+    elseif llbl.is(v, "Expr") and v.kind == "index" then
         return setmetatable({ name = ident_text(v.base, "field name"), type = v.index, origin = v.origin }, Field)
     elseif type(v) == "table" and v.name ~= nil and v.type ~= nil then return setmetatable(v, Field)
-    else die("field list expects entries like name [Type]", llb.origin_of(v)) end
+    else die("field list expects entries like name [Type]", llbl.origin_of(v)) end
 end
 
 local function fields_region_gen(param, state)
@@ -214,7 +214,7 @@ end
 
 local function fields_region(t)
     local gen, param, state = array_items_region(t or {}, "llpvm:field-source")
-    return llb.gps.raw(llb.gps.wrap(fields_region_gen, {
+    return llbl.gps.raw(llbl.gps.wrap(fields_region_gen, {
         source_gen = gen,
         source_param = param,
         source_state = state,
@@ -222,29 +222,29 @@ local function fields_region(t)
 end
 
 local function fragment(role, items)
-    return llb.fragment(role, array_items(items or {}), llb.here("llpvm-fragment", { skip = 2 }), { algebra = "list" })
+    return llbl.fragment(role, array_items(items or {}), llbl.here("llpvm-fragment", { skip = 2 }), { algebra = "list" })
 end
 
 function M.schema(t) return fragment("llpvm_decl", t) end
 function M.tape_items(t) return fragment("llpvm_tape_item", t) end
-M._ = llb.spread
-M.spread = llb.spread
-M.llpvm = llb.zone_head {
-    family = "lalin",
+M._ = llbl.spread
+M.spread = llbl.spread
+M.llpvm = llbl.zone_head {
+    language = "lalin",
     member = "llpvm.dsl",
     name = "llpvm",
     role = "programs",
 }
 
 local function is_llpvm_zone(v)
-    return llb.is(v, "Zone") and (v.member == "llpvm.dsl" or v.name == "llpvm" or v.role == "llpvm")
+    return llbl.is(v, "Zone") and (v.member == "llpvm.dsl" or v.name == "llpvm" or v.role == "llpvm")
 end
 
 local MachineLanguageFactory = {}
 local MachineLanguageStage = {}
 
 MachineLanguageFactory.__index = function(_, key)
-    return setmetatable({ name = tostring(key), origin = llb.here("llpvm-language", { skip = 1 }) }, MachineLanguageStage)
+    return setmetatable({ name = tostring(key), origin = llbl.here("llpvm-language", { skip = 1 }) }, MachineLanguageStage)
 end
 
 MachineLanguageStage.__call = function(self, body)
@@ -258,8 +258,8 @@ end
 
 local machine_language_factory = setmetatable({}, MachineLanguageFactory)
 
-local g = llb.grammar
-local ch = llb.channel
+local g = llbl.grammar
+local ch = llbl.channel
 local function slot_name(slot) return slot[g.name] { channel = ch.index_name } end
 local function slot_body(slot, role) return slot[role] { channel = ch.call_table } end
 local function slot_index_value(slot) return slot[g.value] { channels = { ch.index_value, ch.index_name, ch.index_type } } end
@@ -275,12 +275,12 @@ local function role_list(label, allowed)
         local function checked_gen(p, s)
             local next_state, item = p.gen(p.param, s)
             if next_state == nil then return nil end
-            if allowed and not allowed[cls(item)] and not (llb.is(item, "Stage") and allowed.Stage) then
-                die(label .. " received invalid item " .. tostring(cls(item) or llb.tagof(item) or type(item)), llb.origin_of(item) or (ctx and ctx.origin))
+            if allowed and not allowed[cls(item)] and not (llbl.is(item, "Stage") and allowed.Stage) then
+                die(label .. " received invalid item " .. tostring(cls(item) or llbl.tagof(item) or type(item)), llbl.origin_of(item) or (ctx and ctx.origin))
             end
             return next_state, item
         end
-        return llb.gps.raw(llb.gps.wrap(checked_gen, { gen = gen, param = param }, state, { kind = "llpvm:role-list", role = label }))
+        return llbl.gps.raw(llbl.gps.wrap(checked_gen, { gen = gen, param = param }, state, { kind = "llpvm:role-list", role = label }))
     end
     return {
         kind = "array",
@@ -298,9 +298,9 @@ local function normalize_tape_record_item(item)
             expr = setmetatable({
                 callee = make_path({ parts[1], parts[2] }),
                 args = { args[1] or {} },
-                origin = llb.origin_of(item),
+                origin = llbl.origin_of(item),
             }, Call),
-            origin = llb.origin_of(item),
+            origin = llbl.origin_of(item),
         }, RecordSpec)
     end
     if parts and #parts == 3 then
@@ -309,9 +309,9 @@ local function normalize_tape_record_item(item)
             expr = setmetatable({
                 callee = make_path({ parts[1], parts[2] }),
                 args = { args[1] or {} },
-                origin = llb.origin_of(item),
+                origin = llbl.origin_of(item),
             }, Call),
-            origin = llb.origin_of(item),
+            origin = llbl.origin_of(item),
         }, RecordSpec)
     end
     return item
@@ -322,7 +322,7 @@ local function normalize_tape_body(t, origin)
     for _, item in ipairs(array_items(t or {})) do
         item = normalize_tape_record_item(item)
         if not is(item, RecordSpec) then
-            die("tape received invalid item " .. tostring(cls(item) or llb.tagof(item) or type(item)), llb.origin_of(item) or origin)
+            die("tape received invalid item " .. tostring(cls(item) or llbl.tagof(item) or type(item)), llbl.origin_of(item) or origin)
         end
         out[#out + 1] = item
     end
@@ -335,14 +335,14 @@ local function tape_body_region_gen(param, state)
     if next_state == nil then return nil end
     item = normalize_tape_record_item(item)
     if not is(item, RecordSpec) then
-        die("tape received invalid item " .. tostring(cls(item) or llb.tagof(item) or type(item)), llb.origin_of(item) or param.origin)
+        die("tape received invalid item " .. tostring(cls(item) or llbl.tagof(item) or type(item)), llbl.origin_of(item) or param.origin)
     end
     return next_state, item
 end
 
 local function tape_body_region(t, origin)
     local gen, param, state = array_items_region(t or {}, "llpvm:tape-source")
-    return llb.gps.raw(llb.gps.wrap(tape_body_region_gen, {
+    return llbl.gps.raw(llbl.gps.wrap(tape_body_region_gen, {
         source_gen = gen,
         source_param = param,
         source_state = state,
@@ -350,7 +350,7 @@ local function tape_body_region(t, origin)
     }, nil, { kind = "llpvm:tape-body" }))
 end
 
-local LL = llb.dialect "LLPVMDsl" {
+local LL = llbl.dialect "LLPVMDsl" {
     g.role .decls (role_list("program", { LangSpec = true, WorldSpec = true, TapeSpec = true, MachineSpec = true, PhaseSpec = true, TaskSpec = true, RootSpec = true })),
     g.role .lang_body (role_list("language", { TypeSpec = true })),
     g.role .type_body (role_list("type", { OpSpec = true })),
@@ -370,7 +370,7 @@ local LL = llb.dialect "LLPVMDsl" {
     g.head .pvm { g.trait .named, slot_name(g.slot .name), slot_body(g.slot .body, g.decls), emit = function(n) return setmetatable({ name = ident_text(n.name, "program name"), body = n.body or {}, origin = n.origin }, ProgramSpec) end },
     -- Declares an operation language namespace containing typed operation definitions.
     g.head .lang { g.trait .named, slot_name(g.slot .name), slot_body(g.slot .body, g.lang_body), emit = function(n) return setmetatable({ name = ident_text(n.name, "language name"), body = n.body or {}, origin = n.origin }, LangSpec) end },
-    -- Declares a named LLPVM type family containing operation constructors.
+    -- Declares a named LLPVM type language containing operation constructors.
     g.head .type { g.trait .named, slot_name(g.slot .name), slot_body(g.slot .body, g.type_body), emit = function(n) return setmetatable({ name = ident_text(n.name, "type name"), body = n.body or {}, origin = n.origin }, TypeSpec) end },
     -- Declares one operation constructor with product-shaped fields.
     g.head .op { g.trait .named, slot_name(g.slot .name), slot_body(g.slot .fields, g.fields), emit = function(n) return setmetatable({ name = ident_text(n.name, "op name"), fields = n.fields or {}, origin = n.origin }, OpSpec) end },
@@ -433,15 +433,15 @@ local function complete_machine_decl(self, item)
     if parts and #parts == 2 then
         return setmetatable({
             name = tostring(parts[2]),
-            world = ident(parts[1], llb.origin_of(item)),
-            body = normalize_tape_body(args[1] or {}, llb.origin_of(item)),
-            origin = llb.origin_of(item),
+            world = ident(parts[1], llbl.origin_of(item)),
+            body = normalize_tape_body(args[1] or {}, llbl.origin_of(item)),
+            origin = llbl.origin_of(item),
         }, TapeSpec)
     end
-    if llb.is_stage(item) and llb.stage_head(item) == "world" then
+    if llbl.is_stage(item) and llbl.stage_head(item) == "world" then
         return item[ident(self.name, item.origin)]
     end
-    die("LLPVM language body expects type/world/machine/phase declarations", llb.origin_of(item) or self.origin)
+    die("LLPVM language body expects type/world/machine/phase declarations", llbl.origin_of(item) or self.origin)
 end
 
 local function machine_decls(self)
@@ -466,9 +466,9 @@ local function generated_value_head(type_name, op_name)
                 expr = setmetatable({
                     callee = make_path({ type_name, op_name }),
                     args = { payload or {} },
-                    origin = llb.here("llpvm-value", { skip = 1 }),
+                    origin = llbl.here("llpvm-value", { skip = 1 }),
                 }, Call),
-                origin = llb.here("llpvm-value", { skip = 1 }),
+                origin = llbl.here("llpvm-value", { skip = 1 }),
             }, RecordSpec)
         end
     end
@@ -483,7 +483,7 @@ local function generated_world_head(world_name)
                 name = tostring(tape_name),
                 world = ident(world_name),
                 body = array_items(body or {}),
-                origin = llb.here("llpvm-tape", { skip = 1 }),
+                origin = llbl.here("llpvm-tape", { skip = 1 }),
             }, TapeSpec)
         end
     end
@@ -492,7 +492,7 @@ local function generated_world_head(world_name)
             name = tostring(world_name),
             world = ident(world_name),
             body = array_items(body or {}),
-            origin = llb.here("llpvm-tape", { skip = 1 }),
+            origin = llbl.here("llpvm-tape", { skip = 1 }),
         }, TapeSpec)
     end
     return setmetatable({}, head)
@@ -532,7 +532,7 @@ end
 function MachineLanguage:use(opts)
     opts = opts or {}
     local exports = self:make_env(opts)
-    return llb.use(LL, {
+    return llbl.use(LL, {
         scope = opts.scope or (opts.global == false and "env" or "permanent"),
         target = opts.target or _G,
         base = exports,
@@ -629,12 +629,12 @@ local function lalin_type_value(v)
 end
 
 function Lower:resolve_type(ref, current_lang)
-    if is(ref, Ident) or llb.is(ref, "Name") or llb.is(ref, "Symbol") then
+    if is(ref, Ident) or llbl.is(ref, "Name") or llbl.is(ref, "Symbol") then
         local name = ident_text(ref, "type reference")
         local by_lang = current_lang and self.types[current_lang]
         if by_lang and by_lang[name] then return by_lang[name] end
         for _, types in pairs(self.types) do if types[name] then return types[name] end end
-        die("unknown LLPVM type " .. name, llb.origin_of(ref))
+        die("unknown LLPVM type " .. name, llbl.origin_of(ref))
     elseif is(ref, Path) then
         if #ref.parts == 2 and self.types[ref.parts[1]] and self.types[ref.parts[1]][ref.parts[2]] then return self.types[ref.parts[1]][ref.parts[2]] end
         die("unknown LLPVM type path " .. tostring(ref), ref.origin)
@@ -659,15 +659,15 @@ function Lower:resolve_type(ref, current_lang)
         if cls == "Class(LalinType.TView)" then local elem = self:resolve_type(ty.elem, current_lang); return { kind = "view", id = self.builder:view(elem.id), elem = elem } end
         if cls == "Class(LalinType.TNamed)" or cls == "Class(LalinType.THandle)" then return self:handle_type(tostring(ref.name or ref.type_name or ref)) end
     end
-    die("LLPVM type expected", llb.origin_of(ref))
+    die("LLPVM type expected", llbl.origin_of(ref))
 end
 
 local function directive(item)
     if is(item, Directive) then return item end
-    if llb.is(item, "Stage") and item.head and item.head.name == "machine" and item.raw then
+    if llbl.is(item, "Stage") and item.head and item.head.name == "machine" and item.raw then
         return setmetatable({ kind = "machine", value = item.raw.name, origin = item.origin }, Directive)
     end
-    die("phase/machine body expects from/to/entry/cache/machine directives", llb.origin_of(item))
+    die("phase/machine body expects from/to/entry/cache/machine directives", llbl.origin_of(item))
 end
 
 local function directives(items)
@@ -679,14 +679,14 @@ end
 function Lower:resolve_language(ref)
     local name = ident_text(ref, "language reference")
     local lang = self.languages[name]
-    if not lang then die("unknown LLPVM language " .. name, llb.origin_of(ref)) end
+    if not lang then die("unknown LLPVM language " .. name, llbl.origin_of(ref)) end
     return lang
 end
 
 function Lower:resolve_world(ref)
     local name = ident_text(ref, "world reference")
     local w = self.worlds[name]
-    if not w then die("unknown LLPVM world " .. name, llb.origin_of(ref)) end
+    if not w then die("unknown LLPVM world " .. name, llbl.origin_of(ref)) end
     return w
 end
 
@@ -695,16 +695,16 @@ function Lower:payload_value(v)
         local val = self.values[v.name]
         if not val then die("unknown LLPVM value " .. v.name, v.origin) end
         return self.builder:ref_payload(val.id)
-    elseif llb.is(v, "Name") or llb.is(v, "Symbol") then
+    elseif llbl.is(v, "Name") or llbl.is(v, "Symbol") then
         local name = ident_text(v, "value reference")
         local val = self.values[name]
-        if not val then die("unknown LLPVM value " .. name, llb.origin_of(v)) end
+        if not val then die("unknown LLPVM value " .. name, llbl.origin_of(v)) end
         return self.builder:ref_payload(val.id)
     end
     if is(v, Call) then
         local val = self:constructor_call(v, self.current_world)
         return self.builder:ref_payload(val.id)
-    elseif llb.is(v, "Expr") and v.kind == "call" then
+    elseif llbl.is(v, "Expr") and v.kind == "call" then
         local val = self:constructor_call(v, self.current_world)
         return self.builder:ref_payload(val.id)
     end
@@ -721,13 +721,13 @@ local function validate_scalar(field, value)
 end
 
 function Lower:constructor_call(expr, world)
-    local args = is(expr, Call) and rawget(expr, "args") or (llb.is(expr, "Expr") and rawget(expr, "kind") == "call" and rawget(expr, "args")) or {}
+    local args = is(expr, Call) and rawget(expr, "args") or (llbl.is(expr, "Expr") and rawget(expr, "kind") == "call" and rawget(expr, "args")) or {}
     local parts
-    if llb.is(expr, "Expr") and rawget(expr, "kind") == "call" then
+    if llbl.is(expr, "Expr") and rawget(expr, "kind") == "call" then
         parts = expr_path_parts(rawget(expr, "callee"))
     end
     if not parts then
-        local callee = is(expr, Call) and rawget(expr, "callee") or (llb.is(expr, "Expr") and rawget(expr, "kind") == "call" and rawget(expr, "callee"))
+        local callee = is(expr, Call) and rawget(expr, "callee") or (llbl.is(expr, "Expr") and rawget(expr, "kind") == "call" and rawget(expr, "callee"))
         parts = path_parts(callee)
     end
     local type_name, op_name
@@ -871,10 +871,10 @@ function Lower:build_tapes()
 end
 
 function Lower:root_tape(item)
-    if llb.is(item, "Head") and item.spec and item.spec.name then
-        item = ident(item.spec.name, llb.origin_of(item))
+    if llbl.is(item, "Head") and item.spec and item.spec.name then
+        item = ident(item.spec.name, llbl.origin_of(item))
     end
-    if is(item, Ident) or llb.is(item, "Name") or llb.is(item, "Symbol") then
+    if is(item, Ident) or llbl.is(item, "Name") or llbl.is(item, "Symbol") then
         local name = ident_text(item, "root reference")
         local s = self.tapes[name]
         if s then return s end
@@ -882,8 +882,8 @@ function Lower:root_tape(item)
         if v then
             return { name = name, world = v.world, id = self.builder:seq(v.world.id, { v.id }), ops = { v } }
         end
-        die("unknown root tape or value " .. name, llb.origin_of(item))
-    elseif is(item, Call) or (llb.is(item, "Expr") and item.kind == "call") then
+        die("unknown root tape or value " .. name, llbl.origin_of(item))
+    elseif is(item, Call) or (llbl.is(item, "Expr") and item.kind == "call") then
         local callee = is(item, Call) and item.callee or item.callee
         local args = is(item, Call) and item.args or item.args
         local phase = self.phases[ident_text(callee, "phase reference")]
@@ -893,7 +893,7 @@ function Lower:root_tape(item)
         local args_id = self.builder:args({})
         return { name = phase.name .. "(" .. (input.name or "tape") .. ")", world = phase.output, id = self.builder:phase_map(phase.id, input.id, args_id), ops = {} }
     end
-    die("root expects tape or phase(tape)", llb.origin_of(item))
+    die("root expects tape or phase(tape)", llbl.origin_of(item))
 end
 
 function Lower:build_roots()
@@ -934,8 +934,8 @@ local function collect_programs(out, value)
         out[#out + 1] = value
         return out
     end
-    if llb.is(value, "Spread") then return collect_programs(out, value.value) end
-    if llb.is(value, "Fragment") then
+    if llbl.is(value, "Spread") then return collect_programs(out, value.value) end
+    if llbl.is(value, "Fragment") then
         for i = 1, #(value.items or {}) do collect_programs(out, value.items[i]) end
         return out
     end
@@ -943,8 +943,8 @@ local function collect_programs(out, value)
         for i = 1, #(value.items or {}) do collect_programs(out, value.items[i]) end
         return out
     end
-    if llb.is(value, "Zone") then return out end
-    if llb.is(value, "FamilyBundle") then
+    if llbl.is(value, "Zone") then return out end
+    if llbl.is(value, "LanguageBundle") then
         for _, z in ipairs(value.zones or {}) do collect_programs(out, z) end
         return out
     end
@@ -954,7 +954,7 @@ local function collect_programs(out, value)
         for i = 1, #value do collect_programs(out, value[i]) end
         for k, v in pairs(value) do
             if type(k) ~= "number" then
-                if is(v, ProgramSpec) or is(v, ProgramImage) or is_llpvm_zone(v) or llb.is(v, "FamilyBundle") or llb.is(v, "Spread") then
+                if is(v, ProgramSpec) or is(v, ProgramImage) or is_llpvm_zone(v) or llbl.is(v, "LanguageBundle") or llbl.is(v, "Spread") then
                     collect_programs(out, v)
                 end
             end
@@ -968,7 +968,7 @@ function M.to_program(value)
     if is(value, ProgramSpec) or is(value, ProgramImage) then return value end
     local programs = collect_programs({}, value)
     if #programs == 0 then return nil end
-    if #programs > 1 then die("LLPVM projection expected one program value, got " .. tostring(#programs), llb.origin_of(value)) end
+    if #programs > 1 then die("LLPVM projection expected one program value, got " .. tostring(#programs), llbl.origin_of(value)) end
     return programs[1]
 end
 
@@ -1018,12 +1018,12 @@ function TaskSpec:asdl()
     return T.TaskSpec(T.Symbol(self.name), assert(input, "task requires input [T]"), assert(output, "task requires output [T]"), events)
 end
 
-local doc = llb.doc
-local function fmt_ref(v) if is(v, Ident) or is(v, Path) then return tostring(v) end; if llb.is(v, "Name") or llb.is(v, "Symbol") then return v.text end; return tostring(v) end
+local doc = llbl.doc
+local function fmt_ref(v) if is(v, Ident) or is(v, Path) then return tostring(v) end; if llbl.is(v, "Name") or llbl.is(v, "Symbol") then return v.text end; return tostring(v) end
 local block
 local function fmt_type_ref(v)
     if is(v, Ident) or is(v, Path) then return tostring(v) end
-    if llb.is(v, "Name") or llb.is(v, "Symbol") then
+    if llbl.is(v, "Name") or llbl.is(v, "Symbol") then
         for fq, scalar_name in pairs(scalar_type_names) do
             if tostring(v.text):find(fq, 1, true) then return scalar_name end
         end
@@ -1043,8 +1043,8 @@ local function fmt_value(v, f)
     if is(v, Ident) or is(v, Path) then return doc.text(tostring(v)) end
     if is(v, Field) then return doc.group { v.name, " [", fmt_type_ref(v.type), "]" } end
     if is(v, Call) then return doc.group { fmt_value(v.callee, f), " ", block(v.args or {}, f, fmt_value) } end
-    if llb.is(v, "Name") or llb.is(v, "Symbol") then return doc.text(v.text) end
-    if llb.is(v, "Head") and v.spec and v.spec.name then return doc.text(v.spec.name) end
+    if llbl.is(v, "Name") or llbl.is(v, "Symbol") then return doc.text(v.text) end
+    if llbl.is(v, "Head") and v.spec and v.spec.name then return doc.text(v.spec.name) end
     if type(v) == "table" then
         local ok, c = pcall(function() return tostring(require("lalin.pvm").classof(v)) end)
         if ok and c and c:match("^Class%(LalinType%.") then return doc.text(fmt_type_ref(v)) end
@@ -1055,7 +1055,7 @@ local function fmt_value(v, f)
         f.seen[v] = true
         local keys, items = {}, {}
         for k in pairs(v) do
-            if type(k) ~= "number" and k ~= "origin" and k ~= "__llb_tag" then keys[#keys + 1] = k end
+            if type(k) ~= "number" and k ~= "origin" and k ~= "__llbl_tag" then keys[#keys + 1] = k end
         end
         table.sort(keys)
         for i, k in ipairs(keys) do items[i] = doc.group { tostring(k), " = ", fmt_value(v[k], f) } end
@@ -1118,8 +1118,8 @@ fmt_spec = function(v, f)
     if is(v, RootSpec) then return doc.group { "root ", block(v.body, f, fmt_value) } end
     return fmt_value(v, f)
 end
-function M.doc(value, opts) return fmt_spec(value, setmetatable({ opts = opts or {}, width = opts and opts.width or 100, indent_width = opts and opts.indent or 2, seen = {} }, llb.FormatContext)) end
-function M.format(value, opts) return llb.render(M.doc(value, opts or {}), opts or {}) end
+function M.doc(value, opts) return fmt_spec(value, setmetatable({ opts = opts or {}, width = opts and opts.width or 100, indent_width = opts and opts.indent or 2, seen = {} }, llbl.FormatContext)) end
+function M.format(value, opts) return llbl.render(M.doc(value, opts or {}), opts or {}) end
 function M.file_text(value, opts) return table.concat({ 'local ll = require("llpvm")', 'll.use()', '', 'return ' .. M.format(value, opts), '' }, "\n") end
 
 function M.make_env(opts)
@@ -1128,7 +1128,7 @@ function M.make_env(opts)
     env.llpvm = M.llpvm
     env.language = machine_language_factory
     for _, name in ipairs({ "pvm", "lang", "type", "op", "world", "tape", "record", "machine", "phase", "task", "event", "input", "output", "from", "to", "entry", "cache", "root" }) do env[name] = LL.exports[name] end
-    env.schema, env.tape_items, env._, env.spread = M.schema, M.tape_items, llb.spread, llb.spread
+    env.schema, env.tape_items, env._, env.spread = M.schema, M.tape_items, llbl.spread, llbl.spread
     return env
 end
 
@@ -1142,8 +1142,8 @@ function M.namespace(opts)
     local env = M.make_env { base = opts and opts.base or {} }
     local exports = {}
     for _, name in ipairs(LLPVM_NAMESPACE_KEYS) do exports[name] = env[name] end
-    return llb.namespace {
-        family = "lalin",
+    return llbl.namespace {
+        language = "lalin",
         member = "llpvm.dsl",
         name = "llpvm",
         exports = exports,
@@ -1151,13 +1151,13 @@ function M.namespace(opts)
     }
 end
 
-function M.make_family_env(opts)
+function M.make_language_env(opts)
     return { llpvm = M.namespace(opts) }
 end
 
 function M.use(opts)
     opts = opts or {}; local exports = M.make_env(opts)
-    return llb.use(LL, { scope = opts.scope or (opts.global == false and "env" or "permanent"), target = opts.target or _G, base = exports, exports = exports, dialect_exports = false, helpers = false, strict = opts.strict, strict_message = "unknown LLPVM DSL global ", override = opts.override ~= false, auto_names = opts.auto_names ~= false, mode = opts.mode, requires = opts.requires or { "lalin.types" }, provides = opts.provides or { "llpvm.dsl" } })
+    return llbl.use(LL, { scope = opts.scope or (opts.global == false and "env" or "permanent"), target = opts.target or _G, base = exports, exports = exports, dialect_exports = false, helpers = false, strict = opts.strict, strict_message = "unknown LLPVM DSL global ", override = opts.override ~= false, auto_names = opts.auto_names ~= false, mode = opts.mode, requires = opts.requires or { "lalin.types" }, provides = opts.provides or { "llpvm.dsl" } })
 end
 function M.loadstring(src, name, opts)
     opts = opts or {}
@@ -1173,7 +1173,7 @@ function M.describe(value)
     if is(value, ProgramSpec) then return { tag = "LLPVMProgram", name = value.name, declarations = #(value.body or {}) } end
     if is(value, LangSpec) then return { tag = "LLPVMLanguage", name = value.name, types = #(value.body or {}) } end
     if is(value, TaskSpec) then return { tag = "LLPVMTask", name = value.name, body = #(value.body or {}) } end
-    return llb.describe(value or LL)
+    return llbl.describe(value or LL)
 end
 function M.describe_head(name) return LL:describe_head(name) end
 function M.describe_role(name) return LL:describe_role(name) end
@@ -1302,19 +1302,19 @@ local function records_process_body(ctx, bytes)
     return gen, { ctx = ctx, bytes = bytes }, { phase = "start" }
 end
 
-M.records = llb.process. records { "bytes" } (records_process_body)
+M.records = llbl.process. records { "bytes" } (records_process_body)
 
 local function clean_event_payload(ev)
     local out = {}
     for k, v in pairs(ev or {}) do
-        if k ~= "__llb_tag" and k ~= "process" and k ~= "seq" and k ~= "kind" and k ~= "origin" then out[k] = v end
+        if k ~= "__llbl_tag" and k ~= "process" and k ~= "seq" and k ~= "kind" and k ~= "origin" then out[k] = v end
     end
     return out
 end
 
 local function validate_process_body(ctx, bytes)
     local handle = M.records:start(bytes)
-    local record_gen, record_param, record_state = llb.gps.raw(handle:gps())
+    local record_gen, record_param, record_state = llbl.gps.raw(handle:gps())
     local function gen(param, state)
         if state.done then return nil end
         local r = { record_gen(record_param, state.record_state) }
@@ -1349,7 +1349,7 @@ local function validate_process_body(ctx, bytes)
     return gen, { ctx = ctx, bytes = bytes }, { record_state = record_state, valid = true, records = 0, root_ops = 0 }
 end
 
-M.validate = llb.process. validate { "bytes" } (validate_process_body)
+M.validate = llbl.process. validate { "bytes" } (validate_process_body)
 
 function M.inspect(bytes)
     local out = {}

@@ -34,6 +34,7 @@ local function bind_context(T)
     local CodeEffectFacts = require("lalin.code_effect_facts")(T)
     local CodeKernelPlan = require("lalin.code_kernel_plan")(T)
     local StencilRules = require("lalin.stencil_rules")(T)
+    local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
     local LowerRules = require("lalin.luajit_lower_rules")(T)
 
     local api = {}
@@ -772,7 +773,7 @@ local function bind_context(T)
         local out = {}
         for i = 1, #(args or {}) do out[i] = args[i] end
         local desc = artifact and artifact.instance and artifact.instance.descriptor or nil
-        for _, access in ipairs(desc and desc.accesses or {}) do
+        for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(desc)) do
             local top = dynamic_stride_topology(access.topology)
             if top ~= nil then
                 out[#out + 1] = value_id_expr(ctx, top.stride)

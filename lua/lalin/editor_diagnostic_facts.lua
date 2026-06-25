@@ -34,7 +34,7 @@ local function flat_map(fn, values, n)
     for i = 1, n do append_all(out, fn(values[i])) end
     return out
 end
-local llb = require("llb")
+local llbl = require("llbl")
 local PositionIndex = require("lalin.source_position_index")
 local AnalysisStore = require("lalin.mlua_document_analysis")
 local Errors = require("lalin.error")
@@ -88,8 +88,8 @@ local function bind_context(T)
     local function comment_for_line(doc, line)
         if type(line) ~= "number" then return nil end
         local source_name = doc.uri and doc.uri.text or "=(lalin.lua)"
-        llb.source.register(source_name, doc.text or "")
-        return llb.source.leading_comment {
+        llbl.source.register(source_name, doc.text or "")
+        return llbl.source.leading_comment {
             source = source_name,
             file = source_name,
             line = line + 1,

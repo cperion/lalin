@@ -1,10 +1,10 @@
 -- Canonical formatter for evaluated Lalin DSL values.
 --
 -- This is deliberately semantic formatting: it prints Lalin values produced
--- by evaluating Lua/LLB DSL code. It is not a Lua token formatter and does not
+-- by evaluating Lua/LLBL DSL code. It is not a Lua token formatter and does not
 -- promise comment or metaprogram source preservation.
 
-local llb = require("llb")
+local llbl = require("llbl")
 local pvm = require("lalin.pvm")
 local schema = require("lalin.schema_projection")
 
@@ -14,7 +14,7 @@ local T = pvm.context()
 schema(T)
 
 local C, Ty = T.LalinCore, T.LalinType
-local d = llb.doc
+local d = llbl.doc
 
 local scalar_labels = {
     ScalarVoid = "void", ScalarBool = "bool",
@@ -97,15 +97,15 @@ local function array_len_text(len)
 end
 
 local function make_context(opts)
-    if getmetatable(opts) == llb.FormatContext then return opts end
+    if getmetatable(opts) == llbl.FormatContext then return opts end
     opts = opts or {}
-    local ctx = llb.FormatContext and setmetatable({
+    local ctx = llbl.FormatContext and setmetatable({
         opts = opts,
         dialect = opts.dialect,
         width = opts.width or 100,
         indent_width = opts.indent or 2,
         seen = opts.seen or {},
-    }, llb.FormatContext)
+    }, llbl.FormatContext)
     return ctx
 end
 
@@ -380,8 +380,8 @@ fmt_value = function(v, f)
     if c == "Expr" or c == "Name" then return fmt_expr(v, f) end
     if c == "TypedName" then return typed_name(v, f) end
     if c == "Payload" then return payload(v, f) end
-    if c == "Fragment" or llb.is(v, "Fragment") then return braced_product(v.items or {}, f, fmt_value) end
-    if llb.is(v, "Spread") then return d.group { "_(", fmt_value(v.value, f), ")" } end
+    if c == "Fragment" or llbl.is(v, "Fragment") then return braced_product(v.items or {}, f, fmt_value) end
+    if llbl.is(v, "Spread") then return d.group { "_(", fmt_value(v.value, f), ")" } end
     local k = cls_kind(v)
     if k and k:match("^Expr") then return fmt_tree_expr(v, f) end
     if k and k:match("^Stmt") then return fmt_tree_stmt(v, f) end
@@ -539,7 +539,7 @@ end
 
 function M.format(value, opts)
     opts = opts or {}
-    return llb.render(M.doc(value, opts), opts)
+    return llbl.render(M.doc(value, opts), opts)
 end
 
 function M.file_text(value, opts)
@@ -547,7 +547,7 @@ function M.file_text(value, opts)
     local text = M.format(value, opts)
     return table.concat({
         "local lalin = require(\"lalin\")",
-        "lalin.family.use()",
+        "lalin.language.use()",
         "",
         "return " .. text,
         "",

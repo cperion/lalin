@@ -46,6 +46,9 @@ local bank, err = StencilBank.build_mc_bank({ artifact }, {
     cflags = "-std=c99 -O3 -march=native -ffunction-sections -fno-pic -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -c",
 })
 assert(bank ~= nil, tostring(err))
+assert(pvm.classof(bank.entries[1].artifact.realized) == Stencil.StencilRealizedVector, "explicit MC vector stencil should record vector realization")
+assert(bank.entries[1].artifact.realized.lanes == 16, "realized MC vector stencil should record lane count")
+assert(#bank.entries[1].artifact.schedule_rejects == 0, "matching explicit MC vector stencil should not record schedule rejects")
 
 local saw_local_abs32 = false
 local saw_local_abs64 = false

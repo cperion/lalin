@@ -7,12 +7,12 @@
 
 local pvm = require("lalin.pvm")
 local schema = require("lalin.schema_projection")
-local llb = require("llb")
+local llbl = require("llbl")
 local ErrorSpan = require("lalin.error.span")
 local SourceAnalysis = require("lalin.source_analysis")
 
 local M = {}
-local role_region_head = llb.role_region
+local role_region_head = llbl.role_region
 
 local T = pvm.context()
 schema(T)
@@ -68,9 +68,9 @@ local function is_member(sum, v)
     return cls == sum or (sum and sum.members and sum.members[cls]) or false
 end
 
-if not llb._lalin_asdl_type_like then
-    llb._lalin_asdl_type_like = true
-    llb.register_type_like(function(v)
+if not llbl._lalin_asdl_type_like then
+    llbl._lalin_asdl_type_like = true
+    llbl.register_type_like(function(v)
         return is_member(Ty.Type, v)
     end)
 end
@@ -78,7 +78,7 @@ end
 local function name_token(s, origin) return setmetatable({ name = ident(s, "name"), origin = origin }, Name) end
 
 local function symbol_text(v, site)
-    if llb.is(v, "Symbol") or llb.is(v, "Name") then return ident(v.text, site or "name") end
+    if llbl.is(v, "Symbol") or llbl.is(v, "Name") then return ident(v.text, site or "name") end
     if is(v, Name) then return ident(v.name, site or "name") end
     if type(v) == "string" then return ident(v, site or "name") end
     return nil
@@ -165,18 +165,18 @@ end
 tree_expr = function(v)
     if is(v, Expr) then return v:tree() end
     if is_member(Tr.Expr, v) then return v end
-    if llb.is(v, "Symbol") or llb.is(v, "Name") then return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(ident(v.text, "name"))) end
-    if llb.is(v, "Expr") then
+    if llbl.is(v, "Symbol") or llbl.is(v, "Name") then return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(ident(v.text, "name"))) end
+    if llbl.is(v, "Expr") then
         local bin_map = { ["+"] = "add", ["-"] = "sub", ["*"] = "mul", ["/"] = "div", ["%"] = "rem" }
         local cmp_map = { ["=="] = "eq", ["~="] = "ne", ["<"] = "lt", ["<="] = "le", [">"] = "gt", [">="] = "ge" }
         if v.kind == "binop" then
             if bin_map[v.op] then return Tr.ExprBinary(Tr.ExprSurface, bin_op[bin_map[v.op]], tree_expr(v.a), tree_expr(v.b)) end
             if cmp_map[v.op] then return Tr.ExprCompare(Tr.ExprSurface, cmp_op[cmp_map[v.op]], tree_expr(v.a), tree_expr(v.b)) end
-            die("unsupported LLB binary operator " .. tostring(v.op), 2)
+            die("unsupported LLBL binary operator " .. tostring(v.op), 2)
         end
         if v.kind == "unop" then
             if v.op == "-" then return Tr.ExprUnary(Tr.ExprSurface, C.UnaryNeg, tree_expr(v.a)) end
-            die("unsupported LLB unary operator " .. tostring(v.op), 2)
+            die("unsupported LLBL unary operator " .. tostring(v.op), 2)
         end
         if v.kind == "field" then return Tr.ExprDot(Tr.ExprSurface, tree_expr(v.base), ident(v.field, "field")) end
         if v.kind == "index" then return Tr.ExprIndex(Tr.ExprSurface, Tr.IndexBaseExpr(tree_expr(v.base)), tree_expr(v.index)) end
@@ -186,7 +186,7 @@ tree_expr = function(v)
             for i = 1, n do args[i] = tree_expr(packed[i]) end
             return Tr.ExprCall(Tr.ExprSurface, tree_expr(v.callee), args)
         end
-        die("unsupported LLB expression kind " .. tostring(v.kind), 2)
+        die("unsupported LLBL expression kind " .. tostring(v.kind), 2)
     end
     if is(v, Name) then return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(v.name)) end
     if is_array_lit_table(v) then
@@ -215,23 +215,23 @@ local function expr_items(t)
     return out
 end
 local function stmt_item(v)
-    if llb.is(v, "Spread") then die("statement spread needs a statement fragment", 2) end
+    if llbl.is(v, "Spread") then die("statement spread needs a statement fragment", 2) end
     if is(v, Stmt) then return v:tree() end
     if is_member(Tr.Stmt, v) then return v end
     return Tr.StmtExpr(Tr.StmtSurface, tree_expr(v))
 end
 
 local function is_lalin_zone(v)
-    return llb.is(v, "Zone") and (v.member == "lalin.dsl" or v.name == "lalin" or v.role == "lalin")
+    return llbl.is(v, "Zone") and (v.member == "lalin.dsl" or v.name == "lalin" or v.role == "lalin")
 end
 
 local function is_foreign_zone(v)
-    return llb.is(v, "Zone") and not is_lalin_zone(v)
+    return llbl.is(v, "Zone") and not is_lalin_zone(v)
 end
 
 local function typed_name(v, site)
     if is(v, TypedName) then return v end
-    if llb.is(v, "Capture") then
+    if llbl.is(v, "Capture") then
         local name = symbol_text(v.subject, site or "name")
         if name and is_member(Ty.Type, v.value) then
             return setmetatable({ name = name, ty = v.value }, TypedName)
@@ -250,7 +250,7 @@ local function payload_like(v, site)
     local raw_name = type(v) == "table" and rawget(v, "name") or nil
     local raw_payload = type(v) == "table" and rawget(v, "payload") or nil
     if raw_name ~= nil and raw_payload ~= nil then return tostring(raw_name), raw_payload end
-    if llb.is(v, "Expr") and v.kind == "call" then
+    if llbl.is(v, "Expr") and v.kind == "call" then
         local name = symbol_text(v.callee, site or "payload name")
         local args = v.args or {}
         local payload = args[1]
@@ -263,9 +263,9 @@ function expand_array(t, role)
     local out = {}
     for i = 1, #(t or {}) do
         local v = t[i]
-        if llb.is(v, "Spread") then
+        if llbl.is(v, "Spread") then
             local frag = v.value
-            if llb.is(frag, "Fragment") then
+            if llbl.is(frag, "Fragment") then
                 if frag.role ~= role then die("expected " .. role .. " fragment, got " .. tostring(frag.role), 2) end
                 for j = 1, #frag.items do out[#out + 1] = frag.items[j] end
             elseif type(frag) == "table" then
@@ -275,16 +275,16 @@ function expand_array(t, role)
             end
         elseif role == "decl" and is_lalin_zone(v) then
             for j = 1, #(v.items or {}) do out[#out + 1] = v.items[j] end
-        elseif role == "decl" and llb.is(v, "FamilyBundle") then
+        elseif role == "decl" and llbl.is(v, "LanguageBundle") then
             for _, z in ipairs(v.zones or {}) do
                 if is_lalin_zone(z) then
                     for j = 1, #(z.items or {}) do out[#out + 1] = z.items[j] end
                 end
             end
         elseif role == "decl" and is_foreign_zone(v) then
-            -- Family zones are semantic partitions. Lalin projection ignores
+            -- Language zones are semantic partitions. Lalin projection ignores
             -- non-Lalin zones instead of accepting their values by accident.
-        elseif llb.is(v, "Fragment") and v.role == role then
+        elseif llbl.is(v, "Fragment") and v.role == role then
             for j = 1, #v.items do out[#out + 1] = v.items[j] end
         else
             out[#out + 1] = v
@@ -380,9 +380,9 @@ end
 
 local function tree_place(v)
     if is_member(Tr.Place, v) then return v end
-    if llb.is(v, "Symbol") or llb.is(v, "Name") then return Tr.PlaceRef(Tr.PlaceSurface, B.ValueRefName(ident(v.text, "name"))) end
-    if llb.is(v, "Expr") and v.kind == "field" then return Tr.PlaceDot(Tr.PlaceSurface, tree_place(v.base), ident(v.field, "field")) end
-    if llb.is(v, "Expr") and v.kind == "index" then return Tr.PlaceIndex(Tr.PlaceSurface, Tr.IndexBaseExpr(tree_expr(v.base)), tree_expr(v.index)) end
+    if llbl.is(v, "Symbol") or llbl.is(v, "Name") then return Tr.PlaceRef(Tr.PlaceSurface, B.ValueRefName(ident(v.text, "name"))) end
+    if llbl.is(v, "Expr") and v.kind == "field" then return Tr.PlaceDot(Tr.PlaceSurface, tree_place(v.base), ident(v.field, "field")) end
+    if llbl.is(v, "Expr") and v.kind == "index" then return Tr.PlaceIndex(Tr.PlaceSurface, Tr.IndexBaseExpr(tree_expr(v.base)), tree_expr(v.index)) end
     if is(v, Name) then return Tr.PlaceRef(Tr.PlaceSurface, B.ValueRefName(v.name)) end
     if is(v, Expr) and v.kind == "dot" then return Tr.PlaceDot(Tr.PlaceSurface, tree_place(v.base), v.field) end
     if is(v, Expr) and v.kind == "index" then return Tr.PlaceIndex(Tr.PlaceSurface, Tr.IndexBaseExpr(tree_expr(v.base)), tree_expr(v.index)) end
@@ -657,12 +657,12 @@ local function type_decl(name, body, union)
     return Tr.TypeDeclStruct(name, field_items(body))
 end
 
-local llb_region_decl
+local llbl_region_decl
 
 local function collect_decls(out, value)
     if value == nil then return out end
-    if llb.is(value, "Spread") then return collect_decls(out, value.value) end
-    if llb.is(value, "Fragment") then
+    if llbl.is(value, "Spread") then return collect_decls(out, value.value) end
+    if llbl.is(value, "Fragment") then
         if value.role ~= "decl" then die("expected declaration fragment, got " .. tostring(value.role), 2) end
         for i = 1, #(value.items or {}) do collect_decls(out, value.items[i]) end
         return out
@@ -672,12 +672,12 @@ local function collect_decls(out, value)
         return out
     end
     if is_foreign_zone(value) then return out end
-    if llb.is(value, "FamilyBundle") then
+    if llbl.is(value, "LanguageBundle") then
         for _, z in ipairs(value.zones or {}) do collect_decls(out, z) end
         return out
     end
-    if llb.is(value, "Region") then
-        out[#out + 1] = llb_region_decl(value)
+    if llbl.is(value, "Region") then
+        out[#out + 1] = llbl_region_decl(value)
         return out
     end
     if is(value, Decl) and value.kind == "unit" then
@@ -699,9 +699,9 @@ local function collect_decls(out, value)
         for k, v in pairs(value) do
             if type(k) ~= "number" then
                 if is(v, Decl) or is_member(Tr.Item, v) or is_member(Tr.Module, v)
-                    or is_lalin_zone(v) or llb.is(v, "FamilyBundle")
-                    or (llb.is(v, "Fragment") and v.role == "decl")
-                    or llb.is(v, "Spread")
+                    or is_lalin_zone(v) or llbl.is(v, "LanguageBundle")
+                    or (llbl.is(v, "Fragment") and v.role == "decl")
+                    or llbl.is(v, "Spread")
                 then
                     collect_decls(out, v)
                 end
@@ -1048,20 +1048,20 @@ function Decl:__tostring()
     return "lalin.dsl." .. tostring(self.kind) .. (self.name and "(" .. tostring(self.name) .. ")" or "")
 end
 
-local function llb_format(self, f)
+local function llbl_format(self, f)
     return require("lalin.dsl.format").doc(self, f)
 end
 
-Name.__llb_format = llb_format
-TypedName.__llb_format = llb_format
-Payload.__llb_format = llb_format
-TypeCtor.__llb_format = llb_format
-Expr.__llb_format = llb_format
-Stmt.__llb_format = llb_format
-Decl.__llb_format = llb_format
-Case.__llb_format = llb_format
-Default.__llb_format = llb_format
-Requires.__llb_format = llb_format
+Name.__llbl_format = llbl_format
+TypedName.__llbl_format = llbl_format
+Payload.__llbl_format = llbl_format
+TypeCtor.__llbl_format = llbl_format
+Expr.__llbl_format = llbl_format
+Stmt.__llbl_format = llbl_format
+Decl.__llbl_format = llbl_format
+Case.__llbl_format = llbl_format
+Default.__llbl_format = llbl_format
+Requires.__llbl_format = llbl_format
 
 function Decl:format(opts)
     return require("lalin.dsl.format").format(self, opts)
@@ -1096,7 +1096,7 @@ function TypeCtor:__call(a, b)
 end
 
 local function dsl_fragment(role, items, algebra, payload_role)
-    return llb.fragment(role, items or {}, llb.here(role, { skip = 2 }), {
+    return llbl.fragment(role, items or {}, llbl.here(role, { skip = 2 }), {
         algebra = algebra,
         payload_role = payload_role,
     })
@@ -1108,8 +1108,8 @@ function M.decls(t) return dsl_fragment("decl", t, "list") end
 function M.exprs(t) return dsl_fragment("expr", t, "list") end
 function M.conts(t) return dsl_fragment("conts", t, "sum", "product") end
 function M.variants(t) return dsl_fragment("variants", t, "sum", "product") end
-M.spread = llb.spread
-M._ = llb.spread
+M.spread = llbl.spread
+M._ = llbl.spread
 
 local function case_literal(v)
     return setmetatable({ key = v }, {
@@ -1181,12 +1181,12 @@ local function type_list(xs)
     return out
 end
 
-local function llb_name_text(v, site)
-    if llb.is(v, "Name") then return ident(v.text, site or "name") end
-    if llb.is(v, "Symbol") then return ident(v.text, site or "name") end
+local function llbl_name_text(v, site)
+    if llbl.is(v, "Name") then return ident(v.text, site or "name") end
+    if llbl.is(v, "Symbol") then return ident(v.text, site or "name") end
     if is(v, Name) then return ident(v.name, site or "name") end
     if type(v) == "string" then return ident(v, site or "name") end
-    die((site or "name") .. " expects a name, got " .. llb.repr(v), 2)
+    die((site or "name") .. " expects a name, got " .. llbl.repr(v), 2)
 end
 
 local function typed_items_from_llb(items)
@@ -1195,7 +1195,7 @@ local function typed_items_from_llb(items)
         local tv = typed_name(v, "field")
         if tv then
             local init = tv.init
-            if init == llb.NIL or init == llb.ABSENT then init = nil end
+            if init == llbl.NIL or init == llbl.ABSENT then init = nil end
             out[i] = setmetatable({ name = tv.name, ty = tv.ty, init = init }, TypedName)
         else
             out[i] = v
@@ -1214,7 +1214,7 @@ local function region_decl(name, params_, conts, body)
     return setmetatable({ kind = "region", name = name, params = typed_items_from_llb(params_ or {}), conts = conts or {}, entry = entry, blocks = blocks }, Decl)
 end
 
-llb_region_decl = function(region)
+llbl_region_decl = function(region)
     local spec = region.spec or {}
     local params = region.input or spec.input or spec.params or {}
     local conts = spec.exits or spec.conts or {}
@@ -1222,8 +1222,8 @@ llb_region_decl = function(region)
     return region_decl(region.name, params, conts, body)
 end
 
-local g = llb.grammar
-local ch = llb.channel
+local g = llbl.grammar
+local ch = llbl.channel
 
 local function push_items_reverse(stack, items)
     for i = #(items or {}), 1, -1 do stack[#stack + 1] = items[i] end
@@ -1241,9 +1241,9 @@ local function role_array_gen(param, state)
         state.index = state.index + 1
         local v = param.value[state.index]
         if v == nil then return nil end
-        if llb.is(v, "Spread") then
+        if llbl.is(v, "Spread") then
             local frag = v.value
-            if llb.is(frag, "Fragment") then
+            if llbl.is(frag, "Fragment") then
                 if frag.role ~= param.fragment_role then
                     die("expected " .. param.fragment_role .. " fragment, got " .. tostring(frag.role), 2)
                 end
@@ -1255,14 +1255,14 @@ local function role_array_gen(param, state)
             end
         elseif param.fragment_role == "decl" and is_lalin_zone(v) then
             push_items_reverse(stack, v.items)
-        elseif param.fragment_role == "decl" and llb.is(v, "FamilyBundle") then
+        elseif param.fragment_role == "decl" and llbl.is(v, "LanguageBundle") then
             for zi = #(v.zones or {}), 1, -1 do
                 local z = v.zones[zi]
                 if is_lalin_zone(z) then push_items_reverse(stack, z.items) end
             end
         elseif param.fragment_role == "decl" and is_foreign_zone(v) then
             -- ignored by Lalin projection
-        elseif llb.is(v, "Fragment") and v.role == param.fragment_role then
+        elseif llbl.is(v, "Fragment") and v.role == param.fragment_role then
             push_items_reverse(stack, v.items)
         else
             return state, v
@@ -1272,22 +1272,22 @@ end
 
 local function role_array(fragment_role, label)
     local function role_body(_, ctx, v)
-        if llb.is(v, "Fragment") then
+        if llbl.is(v, "Fragment") then
             if v.role ~= fragment_role then
-                llb.fail("expected " .. label .. " fragment, got " .. tostring(v.role), {
+                llbl.fail("expected " .. label .. " fragment, got " .. tostring(v.role), {
                     code = "E_LALIN_FRAGMENT_ROLE",
                     primary = v.origin or (ctx and ctx.origin),
                 })
             end
-            return llb.gps.raw(llb.gps.from.array(v.items or {}))
+            return llbl.gps.raw(llbl.gps.from.array(v.items or {}))
         end
         if type(v) ~= "table" then
-            llb.fail("expected " .. label .. " table", {
+            llbl.fail("expected " .. label .. " table", {
                 code = "E_LALIN_EXPECTED_TABLE",
-                primary = llb.origin_of(v) or (ctx and ctx.origin),
+                primary = llbl.origin_of(v) or (ctx and ctx.origin),
             })
         end
-        return llb.gps.raw(llb.gps.wrap(role_array_gen, {
+        return llbl.gps.raw(llbl.gps.wrap(role_array_gen, {
             value = v,
             fragment_role = fragment_role,
         }, nil, { kind = "lalin:role-array", role = fragment_role }))
@@ -1328,7 +1328,7 @@ local variants_role = role_array("variants", "variant")
 variants_role.algebra = "sum"
 variants_role.payload_role = "product"
 
-local LalinLLB = llb.dialect "LalinDSL" {
+local LalinLLB = llbl.dialect "LalinDSL" {
     g.role .decls  (role_array("decl", "declaration")),
     g.role .stmts  (role_array("stmt", "statement")),
     g.role .params (role_array("product", "product")),
@@ -1361,7 +1361,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         g.trait .declaration,
         slot_name(g.slot .name),
         slot_decls(g.slot .body),
-        emit = function(n) return setmetatable({ kind = "unit", name = llb_name_text(n.name, "unit name"), body = n.body or {} }, Decl) end,
+        emit = function(n) return setmetatable({ kind = "unit", name = llbl_name_text(n.name, "unit name"), body = n.body or {} }, Decl) end,
     },
 
     -- Declares a product type with named, typed fields and stable field order.
@@ -1370,7 +1370,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         slot_name(g.slot .name),
         slot_params(g.slot .fields),
         emit = function(n)
-            local name = llb_name_text(n.name, "struct name")
+            local name = llbl_name_text(n.name, "struct name")
             return setmetatable({ kind = "struct", name = name, type_name = name, body = typed_items_from_llb(n.fields or {}) }, Decl)
         end,
     },
@@ -1381,7 +1381,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         slot_name(g.slot .name),
         slot_variants(g.slot .variants),
         emit = function(n)
-            local name = llb_name_text(n.name, "union name")
+            local name = llbl_name_text(n.name, "union name")
             return setmetatable({ kind = "union", name = name, type_name = name, body = n.variants or {} }, Decl)
         end,
     },
@@ -1394,7 +1394,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         slot_type(g.slot .result) { optional = true },
         slot_stmts(g.slot .body),
         emit = function(n)
-            return setmetatable({ kind = "fn", name = llb_name_text(n.name, "function name"), params = typed_items_from_llb(n.params or {}), result = n.result, body = n.body or {} }, Decl)
+            return setmetatable({ kind = "fn", name = llbl_name_text(n.name, "function name"), params = typed_items_from_llb(n.params or {}), result = n.result, body = n.body or {} }, Decl)
         end,
     },
 
@@ -1406,7 +1406,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         slot_type(g.slot .result) { optional = true },
         slot_stmts(g.slot .body),
         emit = function(n)
-            return setmetatable({ kind = "export_fn", name = llb_name_text(n.name, "function name"), params = typed_items_from_llb(n.params or {}), result = n.result, body = n.body or {} }, Decl)
+            return setmetatable({ kind = "export_fn", name = llbl_name_text(n.name, "function name"), params = typed_items_from_llb(n.params or {}), result = n.result, body = n.body or {} }, Decl)
         end,
     },
 
@@ -1418,7 +1418,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         slot_type(g.slot .result) { optional = true },
         slot_table_value(g.slot .opts),
         emit = function(n)
-            return setmetatable({ kind = "extern", name = llb_name_text(n.name, "extern name"), params = typed_items_from_llb(n.params or {}), result = n.result, opts = n.opts or {} }, Decl)
+            return setmetatable({ kind = "extern", name = llbl_name_text(n.name, "extern name"), params = typed_items_from_llb(n.params or {}), result = n.result, opts = n.opts or {} }, Decl)
         end,
     },
 
@@ -1427,7 +1427,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         g.trait .declaration,
         slot_name(g.slot .name),
         slot_table_value(g.slot .opts),
-        emit = function(n) return setmetatable({ kind = "handle", name = llb_name_text(n.name, "handle name"), opts = n.opts or {} }, Decl) end,
+        emit = function(n) return setmetatable({ kind = "handle", name = llbl_name_text(n.name, "handle name"), opts = n.opts or {} }, Decl) end,
     },
 
     -- Declares a typed compile-time constant value.
@@ -1436,7 +1436,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         slot_name(g.slot .name),
         slot_type(g.slot .ty),
         slot_value(g.slot .value),
-        emit = function(n) return setmetatable({ kind = "const", name = llb_name_text(n.name, "const name"), ty = n.ty, value = n.value }, Decl) end,
+        emit = function(n) return setmetatable({ kind = "const", name = llbl_name_text(n.name, "const name"), ty = n.ty, value = n.value }, Decl) end,
     },
 
     -- Declares a typed static data item emitted with the module.
@@ -1445,7 +1445,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         slot_name(g.slot .name),
         slot_type(g.slot .ty),
         slot_value(g.slot .value),
-        emit = function(n) return setmetatable({ kind = "static", name = llb_name_text(n.name, "static name"), ty = n.ty, value = n.value }, Decl) end,
+        emit = function(n) return setmetatable({ kind = "static", name = llbl_name_text(n.name, "static name"), ty = n.ty, value = n.value }, Decl) end,
     },
 
     -- Imports declarations or fragments produced by another Lua module or factory.
@@ -1463,7 +1463,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         slot_type(g.slot .result),
         slot_value(g.slot .body),
         emit = function(n)
-            return setmetatable({ kind = "expr_frag", name = llb_name_text(n.name, "expr fragment name"), params = typed_items_from_llb(n.params or {}), result = n.result, body = n.body }, Decl)
+            return setmetatable({ kind = "expr_frag", name = llbl_name_text(n.name, "expr fragment name"), params = typed_items_from_llb(n.params or {}), result = n.result, body = n.body }, Decl)
         end,
     },
 
@@ -1474,7 +1474,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         slot_params(g.slot .params),
         slot_conts(g.slot .conts),
         slot_stmts(g.slot .body),
-        emit = function(n) return region_decl(llb_name_text(n.name, "region name"), n.params, n.conts, n.body) end,
+        emit = function(n) return region_decl(llbl_name_text(n.name, "region name"), n.params, n.conts, n.body) end,
     },
 
     -- Declares a region entry block with typed block parameters and terminating statements.
@@ -1483,7 +1483,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         slot_name(g.slot .name),
         slot_params(g.slot .params),
         slot_stmts(g.slot .body),
-        emit = function(n) return { kind = "entry_decl", name = llb_name_text(n.name, "entry name"), params = typed_items_from_llb(n.params or {}), body = n.body or {} } end,
+        emit = function(n) return { kind = "entry_decl", name = llbl_name_text(n.name, "entry name"), params = typed_items_from_llb(n.params or {}), body = n.body or {} } end,
     },
 
     -- Declares an internal region block with typed parameters and terminating statements.
@@ -1492,7 +1492,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         slot_name(g.slot .name),
         slot_params(g.slot .params),
         slot_stmts(g.slot .body),
-        emit = function(n) return { kind = "block_decl", name = llb_name_text(n.name, "block name"), params = typed_items_from_llb(n.params or {}), body = n.body or {} } end,
+        emit = function(n) return { kind = "block_decl", name = llbl_name_text(n.name, "block name"), params = typed_items_from_llb(n.params or {}), body = n.body or {} } end,
     },
 
     -- Transfers control to a named entry, block, or continuation with explicit argument fills.
@@ -1500,7 +1500,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         g.trait .statement,
         slot_name(g.slot .target),
         slot_table_value(g.slot .args),
-        emit = function(n) return setmetatable({ kind = "jump", target = llb_name_text(n.target, "jump target"), args = n.args or {} }, Stmt) end,
+        emit = function(n) return setmetatable({ kind = "jump", target = llbl_name_text(n.target, "jump target"), args = n.args or {} }, Stmt) end,
     },
 
     -- Splices a region into the current CFG and binds its continuation exits to local targets.
@@ -1514,7 +1514,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
             for cname, target in pairs(n.fills or {}) do
                 conts[#conts + 1] = O.ContBinding(cname, O.ContTargetLabel(Tr.BlockLabel(symbol_text(target, "emit continuation target") or tostring(target))))
             end
-            return setmetatable({ kind = "emit", target = llb_name_text(n.target, "emit target"), args = n.args or {}, conts = conts }, Stmt)
+            return setmetatable({ kind = "emit", target = llbl_name_text(n.target, "emit target"), args = n.args or {}, conts = conts }, Stmt)
         end,
     },
 
@@ -1524,7 +1524,7 @@ local LalinLLB = llb.dialect "LalinDSL" {
         slot_name(g.slot .name),
         slot_type(g.slot .ty),
         slot_value(g.slot .init),
-        emit = function(n) return setmetatable({ kind = "let", name = llb_name_text(n.name, "let name"), ty = n.ty, init = n.init }, Stmt) end,
+        emit = function(n) return setmetatable({ kind = "let", name = llbl_name_text(n.name, "let name"), ty = n.ty, init = n.init }, Stmt) end,
     },
 
     -- Binds a mutable typed local storage slot initialized by an expression.
@@ -1533,15 +1533,15 @@ local LalinLLB = llb.dialect "LalinDSL" {
         slot_name(g.slot .name),
         slot_type(g.slot .ty),
         slot_value(g.slot .init),
-        emit = function(n) return setmetatable({ kind = "var", name = llb_name_text(n.name, "var name"), ty = n.ty, init = n.init }, Stmt) end,
+        emit = function(n) return setmetatable({ kind = "var", name = llbl_name_text(n.name, "var name"), ty = n.ty, init = n.init }, Stmt) end,
     },
 }
 
-M.llb = llb
+M.llbl = llbl
 M.language = LalinLLB
-M.process = llb.process
-M.lalin = llb.zone_head {
-    family = "lalin",
+M.process = llbl.process
+M.lalin = llbl.zone_head {
+    language = "lalin",
     member = "lalin.dsl",
     name = "lalin",
     role = "decls",
@@ -1549,7 +1549,7 @@ M.lalin = llb.zone_head {
 
 function M.unit(name, decls)
     if is(name, Decl) and name.kind == "unit" and decls == nil then return name end
-    return setmetatable({ kind = "unit", name = llb_name_text(name or "Unit", "unit name"), body = collect_decls({}, decls or {}) }, Decl)
+    return setmetatable({ kind = "unit", name = llbl_name_text(name or "Unit", "unit name"), body = collect_decls({}, decls or {}) }, Decl)
 end
 
 function M.to_unit(name, value)
@@ -1584,7 +1584,7 @@ local function make_env(opts)
     env.unit, env.fn, env.export_fn = LalinLLB.exports.unit, LalinLLB.exports.fn, LalinLLB.exports.export_fn
     env.extern, env.handle, env.const, env.static = LalinLLB.exports.extern, LalinLLB.exports.handle, LalinLLB.exports.const, LalinLLB.exports.static
     env.import, env.expr_frag = LalinLLB.exports.import, LalinLLB.exports.expr_frag
-    env.struct, env.union, env.region = LalinLLB.exports.struct, LalinLLB.exports.union, llb.region
+    env.struct, env.union, env.region = LalinLLB.exports.struct, LalinLLB.exports.union, llbl.region
     env.entry, env.block, env.jump, env.emit = LalinLLB.exports.entry, LalinLLB.exports.block, LalinLLB.exports.jump, LalinLLB.exports.emit
     env.ret, env.yield, env.when, env.If = M.ret, M.yield, M.when, M.If
     env.let, env.var = LalinLLB.exports.let, LalinLLB.exports.var
@@ -1604,8 +1604,8 @@ local function make_env(opts)
         lshift = M.shl,
     }
     env.product, env.stmts, env.decls, env.exprs, env.conts, env.variants, env.spread, env._ = M.product, M.stmts, M.decls, M.exprs, M.conts, M.variants, M.spread, M._
-    env.process, env.process_opts = llb.process, llb.process_opts
-    env.here, env.at_origin, env.with_origin = llb.here, llb.at, llb.with_origin
+    env.process, env.process_opts = llbl.process, llbl.process_opts
+    env.here, env.at_origin, env.with_origin = llbl.here, llbl.at, llbl.with_origin
     env.eq, env.ne, env.lt, env.le, env.gt, env.ge = M.eq, M.ne, M.lt, M.le, M.gt, M.ge
     env.And, env.Or, env.Not, env.len, env.select = M.And, M.Or, M.Not, M.len, M.select
     env.addr, env.deref, env.load, env.is_null = M.addr, M.deref, M.load, M.is_null
@@ -1618,7 +1618,7 @@ local function make_env(opts)
     env.null = setmetatable({}, { __index = function(_, ty) return M.null(ty) end })
     env.sizeof = setmetatable({}, { __index = function(_, ty) return M.sizeof(ty) end })
     env.alignof = setmetatable({}, { __index = function(_, ty) return M.alignof(ty) end })
-    env.N = llb.N
+    env.N = llbl.N
     for n in pairs(scalar) do env[n] = scalar_type(n) end
     env.ptr = ctor("ptr", function(ty) return Ty.TPtr(concrete_type(ty)) end)
     env.view = ctor("view", function(ty) return Ty.TView(concrete_type(ty)) end)
@@ -1659,8 +1659,8 @@ function M.namespace(opts)
     for _, name in ipairs(LALIN_NAMESPACE_KEYS) do exports[name] = env[name] end
     for n in pairs(scalar) do exports[n] = env[n] end
     for name in pairs(access) do exports[name] = env[name] end
-    return llb.namespace {
-        family = "lalin",
+    return llbl.namespace {
+        language = "lalin",
         member = "lalin.dsl",
         name = opts.name or "lalin",
         exports = exports,
@@ -1668,20 +1668,20 @@ function M.namespace(opts)
     }
 end
 
-function M.make_family_env(opts)
-    local ns = M.namespace { name = "ll", base = opts and opts.base or nil }
-    return { ll = ns, lalin = ns }
+function M.make_language_env(opts)
+    local ns = M.namespace { name = "lln", base = opts and opts.base or nil }
+    return { lln = ns, lalin = ns }
 end
 
 --- Install Lalin DSL globals into _G so plain .lua files can use
 -- fn, i32, unit, struct, region, etc. as unqualified names.
--- Also enables generic LLB symbol generation for unknown identifiers (a, b, pos, etc.),
+-- Also enables generic LLBL symbol generation for unknown identifiers (a, b, pos, etc.),
 -- which is the same behavior as the dsl.loadstring() isolated environment.
 -- Call this once at the top of any .lua file that authors Lalin DSL.
 --
 --   require("lalin").use()       -- or require("lalin.dsl").use()
 --
--- Returns a managed LLB UseSession for explicit capture if desired:
+-- Returns a managed LLBL UseSession for explicit capture if desired:
 --   local lalin = require("lalin").use()
 --   lalin.env.fn. add { ... }
 --
@@ -1691,7 +1691,7 @@ end
 function M.use(opts)
     opts = opts or {}
     local exports = make_env(opts)
-    local session = llb.use(LalinLLB, {
+    local session = llbl.use(LalinLLB, {
         scope = opts.scope or (opts.global == false and "env" or "permanent"),
         target = opts.target,
         base = exports,
@@ -1835,7 +1835,7 @@ local function source_process_body(ctx, src, chunk_name, opts)
     if opts.eval then
         local args = opts.args or {}
         chunk(unpack(args, 1, args.n or #args))
-        return llb.gps.raw(llb.gps.from.array(events))
+        return llbl.gps.raw(llbl.gps.from.array(events))
     end
     events[#events + 1] = ctx:make_event("result", { result = {
         chunk = chunk,
@@ -1843,10 +1843,10 @@ local function source_process_body(ctx, src, chunk_name, opts)
         source = meta.source,
         name = meta.chunk,
     } })
-    return llb.gps.raw(llb.gps.from.array(events))
+    return llbl.gps.raw(llbl.gps.from.array(events))
 end
 
-M.source = llb.process. source { "src", "chunk_name", "opts" } (source_process_body)
+M.source = llbl.process. source { "src", "chunk_name", "opts" } (source_process_body)
 
 function M.loadstring(src, chunk_name, opts)
     local chunk = compile_source_chunk(src, chunk_name, opts, nil)
@@ -1923,7 +1923,7 @@ function M.install_searcher()
 end
 
 function M.make_env(opts) return make_env(opts) end
-function M.describe(value) return llb.describe(value or LalinLLB) end
+function M.describe(value) return llbl.describe(value or LalinLLB) end
 function M.describe_head(name) return LalinLLB:describe_head(name) end
 function M.describe_role(name) return LalinLLB:describe_role(name) end
 M.T = T

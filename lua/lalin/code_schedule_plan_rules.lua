@@ -3,19 +3,19 @@ local function bind_context(T)
     if T._lalin_api_cache.code_schedule_plan_rules ~= nil then return T._lalin_api_cache.code_schedule_plan_rules end
 
     local lalin = require("lalin")
-    local llb = require("llb")
+    local llbl = require("llbl")
     local Llisle = require("llisle")
     local RuleApi = require("lalin.llisle_rule_api")
-    local env = lalin.family.env { scope = "env", base = _G }
+    local env = lalin.language.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
-    local KernelScheduleInput = llb.symbol("KernelScheduleInput")
-    local KernelScheduleSelection = llb.symbol("KernelScheduleSelection")
-    local schedule = llb.symbol("schedule")
-    local selection = llb.symbol("selection")
-    local kernel_schedule = llb.symbol("kernel_schedule")
-    local planned = llb.symbol("planned")
-    local no_plan = llb.symbol("no_plan")
+    local KernelScheduleInput = llbl.shared.symbols.source("KernelScheduleInput")
+    local KernelScheduleSelection = llbl.shared.symbols.source("KernelScheduleSelection")
+    local schedule = llbl.shared.symbols.source("schedule")
+    local selection = llbl.shared.symbols.source("selection")
+    local kernel_schedule = llbl.shared.symbols.source("kernel_schedule")
+    local planned = llbl.shared.symbols.source("planned")
+    local no_plan = llbl.shared.symbols.source("no_plan")
     local function build_kernel_schedule(fields) return fields end
 
     local function build_rules()

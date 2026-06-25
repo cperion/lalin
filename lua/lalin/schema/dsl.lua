@@ -1,10 +1,10 @@
 -- LalinSchema authoring DSL.
 --
--- Schema source is Lua data authored through LLB.  Runtime ASDL classes are a
+-- Schema source is Lua data authored through LLBL.  Runtime ASDL classes are a
 -- projection of these values, not the source of truth.
 
-local llb = require("llb")
-local role_region_head = llb.role_region
+local llbl = require("llbl")
+local role_region_head = llbl.role_region
 local Model = require("lalin.schema_projection_model")
 local SchemaInstall = require("lalin.context_define_schema")
 local pvm = require("lalin.pvm")
@@ -30,10 +30,10 @@ local function tag(v)
     return type(v) == "table" and rawget(v, "__lalinschema_tag") or nil
 end
 
-local function llb_path(v)
-    if llb.is(v, "Symbol") or llb.is(v, "Name") then return { v.text } end
-    if llb.is(v, "Expr") and v.kind == "field" and type(v.field) == "string" then
-        local path = llb_path(v.base)
+local function llbl_path(v)
+    if llbl.is(v, "Symbol") or llbl.is(v, "Name") then return { v.text } end
+    if llbl.is(v, "Expr") and v.kind == "field" and type(v.field) == "string" then
+        local path = llbl_path(v.base)
         if path then
             path[#path + 1] = v.field
             return path
@@ -52,7 +52,7 @@ local function schema_format(value, f)
     return M.format_doc(value, f)
 end
 
-local VALUE_MT = { __llb_format = schema_format }
+local VALUE_MT = { __llbl_format = schema_format }
 
 local function node(kind, spec)
     spec = spec or {}
@@ -73,11 +73,11 @@ end
 
 function M.type(name)
     if tag(name) == "Type" then return name end
-    local path = llb_path(name)
+    local path = llbl_path(name)
     if path then name = table.concat(path, ".") end
-    if llb.is(name, "Symbol") then name = name.text end
-    if llb.is(name, "Name") then name = name.text end
-    if llb.is(name, "Type") then name = name.name end
+    if llbl.is(name, "Symbol") then name = name.text end
+    if llbl.is(name, "Name") then name = name.text end
+    if llbl.is(name, "Type") then name = name.name end
     if type(name) ~= "string" or name == "" then error("lalinschema: expected type name", 2) end
     name = BUILTIN_ALIASES[name] or name
     return node("Type", { kind = BUILTINS[name] and "builtin" or "name", name = name })
@@ -245,12 +245,12 @@ function M.describe(value)
     elseif tag(value) == "Type" then
         return { tag = "LalinSchema.Type", kind = value.kind, name = value.name }
     end
-    return llb.describe and llb.describe(value) or { tag = type(value) }
+    return llbl.describe and llbl.describe(value) or { tag = type(value) }
 end
 
--- LLB authoring surface ------------------------------------------------------
+-- LLBL authoring surface ------------------------------------------------------
 
-llb.register_type_like(function(v)
+llbl.register_type_like(function(v)
     return tag(v) == "Type"
 end)
 
@@ -279,15 +279,15 @@ local function type_value(v)
 end
 
 local function field_from_capture(item)
-    if llb.is(item, "Capture") then
-        if not llb.is(item.subject, "Symbol") then error("lalinschema: field subject must be a symbol", 2) end
+    if llbl.is(item, "Capture") then
+        if not llbl.is(item.subject, "Symbol") then error("lalinschema: field subject must be a symbol", 2) end
         return M.field(item.subject.text, type_value(item.value))
     end
     error("lalinschema: expected field capture", 2)
 end
 
 local function field_from_index_expr(item)
-    if llb.is(item, "Expr") and item.kind == "index" and llb.is(item.base, "Symbol") and llb_path(item.index) then
+    if llbl.is(item, "Expr") and item.kind == "index" and llbl.is(item.base, "Symbol") and llbl_path(item.index) then
         return M.field(item.base.text, type_value(item.index))
     end
     return nil
@@ -306,19 +306,19 @@ local function normalize_body(tbl, allow_variants)
             variants[#variants + 1] = item
         elseif tag(item) == "Decl" then
             decls[#decls + 1] = item
-        elseif llb.is(item, "Capture") then
+        elseif llbl.is(item, "Capture") then
             fields[#fields + 1] = field_from_capture(item)
         elseif indexed_field then
             fields[#fields + 1] = indexed_field
-        elseif allow_variants and llb.is(item, "Symbol") then
+        elseif allow_variants and llbl.is(item, "Symbol") then
             variants[#variants + 1] = M.variant(item.text, {})
-        elseif allow_variants and llb.is(item, "Expr") and item.kind == "call" and llb.is(item.callee, "Symbol") then
+        elseif allow_variants and llbl.is(item, "Expr") and item.kind == "call" and llbl.is(item.callee, "Symbol") then
             local args = item.args or {}
             if (args.n or #args) ~= 1 or type(args[1]) ~= "table" then error("lalinschema: variant payload must be one table", 2) end
             local body = normalize_body(args[1], false)
             variants[#variants + 1] = M.variant(item.callee.text, body.fields, body.attrs)
         else
-            error("lalinschema: unexpected body item " .. tostring(llb.repr and llb.repr(item) or item), 2)
+            error("lalinschema: unexpected body item " .. tostring(llbl.repr and llbl.repr(item) or item), 2)
         end
     end
     return { attrs = attrs, fields = fields, variants = variants, decls = decls }
@@ -333,12 +333,12 @@ local function decls_region_gen(param, state)
             return state, item
         elseif tag(item) == "Attr" or tag(item) == "Field" or tag(item) == "Variant" then
             -- Valid schema body context, but not a declaration payload.
-        elseif llb.is(item, "Capture") then
+        elseif llbl.is(item, "Capture") then
             field_from_capture(item)
         elseif indexed_field then
             -- Valid schema body context, but not a declaration payload.
         else
-            error("lalinschema: unexpected body item " .. tostring(llb.repr and llb.repr(item) or item), 2)
+            error("lalinschema: unexpected body item " .. tostring(llbl.repr and llbl.repr(item) or item), 2)
         end
         state = state + 1
     end
@@ -346,16 +346,16 @@ local function decls_region_gen(param, state)
 end
 
 local function decls_region(v)
-    return llb.gps.raw(llb.gps.wrap(decls_region_gen, { value = v or {} }, 0, { kind = "lalinschema:decls" }))
+    return llbl.gps.raw(llbl.gps.wrap(decls_region_gen, { value = v or {} }, 0, { kind = "lalinschema:decls" }))
 end
 
-local g = llb.grammar
+local g = llbl.grammar
 
 local function role_region(name, protocol, fn)
     return role_region_head("LalinSchema.role." .. tostring(name))[protocol or "role_value"] (fn)
 end
 
-local Lang = llb.dialect "LalinSchema" {
+local Lang = llbl.dialect "LalinSchema" {
     g.role .decls {
         kind = "array",
         region = role_region("decls", "role_items", function(_, _, v) return decls_region(v) end),
@@ -363,17 +363,17 @@ local Lang = llb.dialect "LalinSchema" {
 
     g.role .product_body {
         kind = "value",
-        region = role_region("product_body", "role_value", function(_, _, v) return llb.gps.raw(llb.gps.once(normalize_body(v, false))) end),
+        region = role_region("product_body", "role_value", function(_, _, v) return llbl.gps.raw(llbl.gps.once(normalize_body(v, false))) end),
     },
 
     g.role .sum_body {
         kind = "value",
-        region = role_region("sum_body", "role_value", function(_, _, v) return llb.gps.raw(llb.gps.once(normalize_body(v, true))) end),
+        region = role_region("sum_body", "role_value", function(_, _, v) return llbl.gps.raw(llbl.gps.once(normalize_body(v, true))) end),
     },
 
     g.role .schema_type {
         kind = "value",
-        region = role_region("schema_type", "role_value", function(_, _, v) return llb.gps.raw(llb.gps.once(type_value(v))) end),
+        region = role_region("schema_type", "role_value", function(_, _, v) return llbl.gps.raw(llbl.gps.once(type_value(v))) end),
     },
 
     -- Declares a LalinSchema module: the root namespace for ASDL products, sums,
@@ -460,12 +460,12 @@ end
 
 M.Dialect = Lang
 M.tag = tag
-M.lalinschema = llb.zone_head { family = "lalin", member = "lalinschema.dsl", name = "schema", role = "decls" }
+M.lalinschema = llbl.zone_head { language = "lalin", member = "lalinschema.dsl", name = "schema", role = "decls" }
 
 function M.namespace(opts)
     local env = Lang:env { base = opts and opts.base or nil }
-    return llb.namespace {
-        family = "lalin",
+    return llbl.namespace {
+        language = "lalin",
         member = "lalinschema.dsl",
         name = "schema",
         zone = M.lalinschema,
@@ -495,7 +495,7 @@ function M.namespace(opts)
     }
 end
 
-function M.make_family_env(opts)
+function M.make_language_env(opts)
     return {
         schema = M.namespace(opts),
     }
@@ -513,7 +513,7 @@ local FIELD_CAPTURE_RESERVED = {
     table_ty = true, function_ty = true, nil_ty = true,
     interned = true, unique = true, variant_unique = true,
     many = true, optional = true, ref = true, id = true, map = true,
-    llb = true, N = true, spread = true, _ = true, process = true, process_opts = true,
+    llbl = true, N = true, spread = true, _ = true, process = true, process_opts = true,
     here = true, at_origin = true, with_origin = true,
     decls = true, product_body = true, sum_body = true, schema_type = true,
     name = true, expr = true, boolean = true, identity = true, module = true,
@@ -601,9 +601,9 @@ function decl_doc(decl, f)
 end
 
 function M.format_doc(value, f)
-    f = getmetatable(f) == llb.FormatContext and f or llb.FormatContext and f or nil
+    f = getmetatable(f) == llbl.FormatContext and f or llbl.FormatContext and f or nil
     if not f or not f.text then
-        return llb.format_doc(value)
+        return llbl.format_doc(value)
     end
     local t = tag(value)
     if t == "Module" then
@@ -621,7 +621,7 @@ end
 
 function M.format(value, opts)
     opts = opts or {}
-    return llb.format(value, opts)
+    return llbl.format(value, opts)
 end
 
 function M.file_text(module_value, opts)

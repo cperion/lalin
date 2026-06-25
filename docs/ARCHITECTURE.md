@@ -1,12 +1,12 @@
 # Lalin Architecture
 
-Lalin is a LuaJIT-hosted language family built around LLB.
+Lalin is a LuaJIT-hosted dialect of the LLBL language.
 
-LLB is the central engineering artifact: the language-family workbench and the
+LLBL is the central engineering artifact: the extensible language workbench and the
 bootstrap language used to define member dialects. It gives Lua values dialect
 meaning through heads, roles, fragments, namespaces, origins, diagnostics,
-formatting, indexing, regions, protocols, processes, and family composition.
-Lalin is the compiled dialect in that family. It consumes LLB regions and typed
+formatting, indexing, regions, protocols, processes, and language composition.
+Lalin is the compiled dialect in that language. It consumes LLBL regions and typed
 values, checks native semantics, and lowers the resulting program into LuaJIT
 copy-patch artifacts.
 
@@ -15,7 +15,7 @@ The main path is intentionally small:
 ```text
 Lua source
   -> Lua values
-  -> LLB family capture
+  -> LLBL language capture
   -> Lalin syntax/tree ASDL
   -> typecheck
   -> LalinCode facts
@@ -29,9 +29,9 @@ There is no Cranelift/Rust runtime path in the active architecture. C emission
 and native copy-patch MC banks are the fast artifact path and remain useful for
 validation, benchmarking, and optional artifact generation.
 
-## Family Layers
+## Language Layers
 
-LLB owns the language-family workbench substrate. This is the center of the
+LLBL owns the extensible language substrate. This is the center of the
 architecture:
 
 - symbols and namespace values
@@ -39,7 +39,59 @@ architecture:
 - fragments and spread expansion
 - origins, comments, diagnostics, formatting, and indexing hooks
 - generic regions, protocols, GPS lowering, and process events
-- family composition and managed `use()` sessions
+- language composition and managed `use()` sessions
+
+The `llbl` member is the identity element of language composition. Composing a
+language with `llbl.core_language()` returns the other language when no rename or
+preference override is requested. Every language therefore shares the same bare
+substrate by default: symbol creation, source/generated symbol provenance,
+origin tracking, diagnostics, fragments, GPS regions, the formatting document
+model, and language export ownership.
+
+The identity-owned service surface is:
+
+```text
+llbl.shared.symbols
+llbl.shared.origins
+llbl.shared.diagnostics
+llbl.shared.fragments
+llbl.shared.regions
+llbl.shared.formatting
+llbl.shared.languages
+```
+
+Symbol resolution is shared, but symbol meaning is not. LLBL resolves a symbol
+to a language binding:
+
+```lua
+local binding = language:resolve_symbol(sym)
+```
+
+The binding says which language member exported the name, whether the source was
+generated, and whether the symbol is unresolved. Lalin, LLPVM, Llisle, and other
+dialects decide what that binding means semantically.
+
+The language audit records more than ownership. It records:
+
+```text
+owns / uses
+resolves / formats / indexes / lowers / materializes
+```
+
+Those capability axes are the review surface for existing dialects.
+
+LLBL bootstraps itself in two stages:
+
+- `llbl.kernel`: the small Lua stage-0 substrate that owns primitive values,
+  origins, diagnostics, GPS, regions, stage-0 grammar records, and the dialect
+  compiler.
+- `llbl.self`: the stage-1 `llbl` dialect, built by `lua/llbl/bootstrap.lua` using
+  the stage-0 substrate.
+- `llbl.grammar`: the public grammar facade backed by `llbl.self`; it emits the
+  same declaration records expected by the dialect compiler, but the facade
+  itself is now an LLBL dialect surface.
+- `llbl.bootstrap.machines`: region-backed bootstrap machines for work such as
+  role normalization and doc rendering.
 
 Lalin is the compiled member. It owns native language semantics:
 
@@ -49,7 +101,7 @@ Lalin is the compiled member. It owns native language semantics:
 - resource and ownership checking
 - typecheck, lowering, and backend projection
 
-LalinSchema owns schema/type-family semantics:
+LalinSchema owns schema/type-language semantics:
 
 - product and sum schema declarations
 - typed ASDL constructor families
@@ -74,8 +126,8 @@ implementations are a design bug, not a feature.
 
 ## Region Model
 
-`region.` is the generic LLB control-machine head. This is one of the main
-reasons LLB composes the whole family: the same control algebra can describe
+`region.` is the generic LLBL control-machine head. This is one of the main
+reasons LLBL composes the whole language: the same control algebra can describe
 native CFG, processes, parser steps, scheduler steps, LLPVM tasks, and backend
 pull machines. A region is:
 
@@ -98,7 +150,7 @@ region itself.
 
 Lalin consumes generic region descriptors when the body uses native Lalin
 `entry`, `block`, `jump`, and `emit` vocabulary. LLPVM consumes region-shaped
-work as phase/task machines. LLB processes lower event protocols to GPS.
+work as phase/task machines. LLBL processes lower event protocols to GPS.
 
 Region composition has two runtime shapes:
 
@@ -188,7 +240,7 @@ needed.
 ## File Map
 
 ```text
-lua/llb.lua                  LLB substrate
+lua/llbl.lua                  LLBL substrate
 lua/lalin/dsl/               Lalin authoring surface
 lua/lalin/schema/            ASDL/schema modules
 lua/lalin/frontend_pipeline.lua
@@ -196,13 +248,13 @@ lua/lalin/frontend_pipeline.lua
 lua/lalin/luajit_backend.lua LuaTrace/LuaJIT backend facade
 lua/lalin/copy_patch_luatrace.lua LuaTrace stencil lowering
 lua/lalin/copy_patch_bc.lua LuaJIT BC bank
-lua/llpvm/                   LLPVM family member
+lua/llpvm/                   LLPVM language member
 lua/llisle/                  Llisle rule language
 lua/ui/                      UI kernel and widgets
 ```
 
 ## Completion Law
 
-A lowering is complete only when its full semantic family is represented,
+A lowering is complete only when its full semantic language is represented,
 validated, measured, and wired through the backend. Do not move upward to a
 higher lowering while the lower layer still has known semantic gaps.

@@ -1,27 +1,27 @@
 # Lalin Language Reference
 
-This is the public reference for the Lalin family exposed by:
+This is the public reference for the Lalin language exposed by:
 
 ```lua
 local lalin = require("lalin")
 ```
 
-Lalin source is ordinary Lua shaped by LLB. Lua parses and evaluates the file.
-LLB captures the resulting values through staged heads, typed slots, fragments,
+Lalin source is ordinary Lua shaped by LLBL. Lua parses and evaluates the file.
+LLBL captures the resulting values through staged heads, typed slots, fragments,
 namespaces, origins, diagnostics, and generic regions. Lalin is the compiled
-family member that normalizes those values into explicit ASDL.
+language member that normalizes those values into explicit ASDL.
 
 ## Loading
 
-Use a managed family environment for normal authoring files:
+Use a managed language environment for normal authoring files:
 
 ```lua
 local lalin = require("lalin")
-lalin.family.use()
+lalin.language.use()
 
 return {
-  ll.fn. add { a [ll.i32], b [ll.i32] } [ll.i32] {
-    ll.ret (a + b),
+  lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
+    lln.ret (a + b),
   },
 }
 ```
@@ -33,8 +33,8 @@ local lalin = require("lalin")
 
 local unit = lalin.loadstring([[
   return {
-    ll.fn. add { a [ll.i32], b [ll.i32] } [ll.i32] {
-      ll.ret (a + b),
+    lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
+      lln.ret (a + b),
     },
   }
 ]], "demo.lua")()
@@ -55,36 +55,36 @@ lalin.format_file(path [, opts])
 lalin.write_format_file(path [, opts])
 ```
 
-## Family Namespaces
+## Language Namespaces
 
-The family environment installs namespace values:
+The language environment installs namespace values:
 
 ```text
-ll / lalin  Lalin native language
+lln / lalin  Lalin native language
 schema      LalinSchema
 llpvm       LLPVM
 llisle      Llisle
-region      generic LLB region head
+region      generic LLBL region head
 _           splice marker
 spread      explicit splice marker
 ```
 
-Prefer `ll` for Lalin code. `lalin` is the long alias.
+Prefer `lln` for Lalin code. `lalin` is the long alias.
 
-Namespaces are also family zones:
+Namespaces are also language zones:
 
 ```lua
 return {
-  ll {
-    ll.fn. add { a [ll.i32], b [ll.i32] } [ll.i32] {
-      ll.ret (a + b),
+  lln {
+    lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
+      lln.ret (a + b),
     },
   },
 
   llpvm {
     llpvm.task. compile {
-      llpvm.input [ll.i32],
-      llpvm.output [ll.i32],
+      llpvm.input [lln.i32],
+      llpvm.output [lln.i32],
     },
   },
 
@@ -107,32 +107,32 @@ The namespace prefix remains the ownership marker.
 Scalar types:
 
 ```lua
-ll.void
-ll.bool
-ll.i8   ll.i16   ll.i32   ll.i64
-ll.u8   ll.u16   ll.u32   ll.u64
-ll.f32  ll.f64
-ll.index
+lln.void
+lln.bool
+lln.i8   lln.i16   lln.i32   lln.i64
+lln.u8   lln.u16   lln.u32   lln.u64
+lln.f32  lln.f64
+lln.index
 ```
 
 Compound type constructors:
 
 ```lua
-ll.ptr [T]
-ll.view [T]
-ll.lease [ll.ptr [T]]
-ll.owned [Handle]
-ll.handle. Name [ll.u64]
-ll.func_type { ll.i32, ll.i32 } [ll.i32]
-ll.closure_type { ll.i32 } [ll.i32]
+lln.ptr [T]
+lln.view [T]
+lln.lease [lln.ptr [T]]
+lln.owned [Handle]
+lln.handle. Name [lln.u64]
+lln.func_type { lln.i32, lln.i32 } [lln.i32]
+lln.closure_type { lln.i32 } [lln.i32]
 ```
 
 Type slots use `[]` because the content is evaluated Lua. Types are Lua values,
 not strings.
 
 ```lua
-a [ll.i32]
-p [ll.ptr [ll.u8]]
+a [lln.i32]
+p [lln.ptr [lln.u8]]
 ```
 
 ## Declarations
@@ -140,40 +140,40 @@ p [ll.ptr [ll.u8]]
 Functions:
 
 ```lua
-ll.fn. add { a [ll.i32], b [ll.i32] } [ll.i32] {
-  ll.ret (a + b),
+lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
+  lln.ret (a + b),
 }
 ```
 
 Structs:
 
 ```lua
-ll.struct. Vec2 {
-  x [ll.f32],
-  y [ll.f32],
+lln.struct. Vec2 {
+  x [lln.f32],
+  y [lln.f32],
 }
 ```
 
 Unions:
 
 ```lua
-ll.union. Result {
-  ok { value [ll.i32] },
-  err { code [ll.i32] },
+lln.union. Result {
+  ok { value [lln.i32] },
+  err { code [lln.i32] },
 }
 ```
 
 Externs:
 
 ```lua
-ll.extern. puts { s [ll.ptr [ll.u8]] } [ll.i32]
+lln.extern. puts { s [lln.ptr [lln.u8]] } [lln.i32]
 ```
 
 Constants and statics:
 
 ```lua
-ll.const. answer [ll.i32] (42)
-ll.static. counter [ll.i32] (0)
+lln.const. answer [lln.i32] (42)
+lln.static. counter [lln.i32] (0)
 ```
 
 ## Products And Fragments
@@ -181,19 +181,19 @@ ll.static. counter [ll.i32] (0)
 Product-shaped lists are ordinary Lua tables of typed names:
 
 ```lua
-{ a [ll.i32], b [ll.i32] }
+{ a [lln.i32], b [lln.i32] }
 ```
 
 Reusable pieces should be fragments, not raw arrays:
 
 ```lua
-local buffer = ll.product {
-  p [ll.ptr [ll.u8]],
-  n [ll.index],
+local buffer = lln.product {
+  p [lln.ptr [lln.u8]],
+  n [lln.index],
 }
 
-ll.fn. first { _(buffer) } [ll.u8] {
-  ll.ret (p[0]),
+lln.fn. first { _(buffer) } [lln.u8] {
+  lln.ret (p[0]),
 }
 ```
 
@@ -224,28 +224,28 @@ fallback.
 Common statements:
 
 ```lua
-ll.let. x [ll.i32] (1)
-ll.var. acc [ll.i32] (0)
-ll.set (acc) (acc + x)
-ll.ret (acc)
-ll.trap ()
+lln.let. x [lln.i32] (1)
+lln.var. acc [lln.i32] (0)
+lln.set (acc) (acc + x)
+lln.ret (acc)
+lln.trap ()
 ```
 
 Conditional statement:
 
 ```lua
-ll.when (n :eq (0)) {
-  ll.ret (0),
+lln.when (n :eq (0)) {
+  lln.ret (0),
 }
 ```
 
 Switches require a default arm and have no fallthrough:
 
 ```lua
-ll.switch (tag) {
-  ll.case (0) { ll.ret (10) },
-  ll.case (1) { ll.ret (20) },
-  ll.default { ll.ret (-1) },
+lln.switch (tag) {
+  lln.case (0) { lln.ret (10) },
+  lln.case (1) { lln.ret (20) },
+  lln.default { lln.ret (-1) },
 }
 ```
 
@@ -254,27 +254,27 @@ is jump-first.
 
 ## Regions
 
-`region.` is the generic LLB control-machine head. Lalin consumes it as native
+`region.` is the generic LLBL control-machine head. Lalin consumes it as native
 typed control when the body uses Lalin block vocabulary.
 
 ```lua
 region. scan
-  { p [ll.ptr [ll.u8]], n [ll.index], target [ll.u8] }
+  { p [lln.ptr [lln.u8]], n [lln.index], target [lln.u8] }
   {
-    hit { pos [ll.index] },
-    miss { pos [ll.index] },
+    hit { pos [lln.index] },
+    miss { pos [lln.index] },
   }
   {
-    ll.entry. loop { i [ll.index] } {
-      ll.when (i :ge (n)) {
-        ll.jump. miss { pos = i },
+    lln.entry. loop { i [lln.index] } {
+      lln.when (i :ge (n)) {
+        lln.jump. miss { pos = i },
       },
 
-      ll.when (p[i] :eq (target)) {
-        ll.jump. hit { pos = i },
+      lln.when (p[i] :eq (target)) {
+        lln.jump. hit { pos = i },
       },
 
-      ll.jump. loop { i = i + 1 },
+      lln.jump. loop { i = i + 1 },
     },
   }
 ```
@@ -293,9 +293,9 @@ control. Use functions for raw product-return ABI boundaries.
 `emit` composes regions by wiring every callee exit to local behavior.
 
 ```lua
-ll.emit scan(p, n, target; {
-  hit = ll.block. found,
-  miss = ll.block. not_found,
+lln.emit scan(p, n, target; {
+  hit = lln.block. found,
+  miss = lln.block. not_found,
 })
 ```
 
@@ -353,7 +353,7 @@ i :gt (n)
 Conversions:
 
 ```lua
-ll.as [ll.i32] (x)
+lln.as [lln.i32] (x)
 ```
 
 Do not use angle-bracket type arguments.
@@ -363,10 +363,10 @@ Do not use angle-bracket type arguments.
 Contracts are semantic facts, not comments.
 
 ```lua
-ll.fn. sum { xs [ll.ptr [ll.i32]], n [ll.index] } [ll.i32] {
-  ll.requires {
-    ll.bounds(xs, n),
-    ll.readonly(xs),
+lln.fn. sum { xs [lln.ptr [lln.i32]], n [lln.index] } [lln.i32] {
+  lln.requires {
+    lln.bounds(xs, n),
+    lln.readonly(xs),
   },
 
   -- body
@@ -391,7 +391,7 @@ Important rules:
 
 ## Formatting
 
-Lalin formatting is semantic. It formats evaluated Lalin/LLB values, not
+Lalin formatting is semantic. It formats evaluated Lalin/LLBL values, not
 arbitrary Lua text.
 
 ```sh
@@ -432,8 +432,8 @@ Compile a declaration list:
 
 ```lua
 local module = lalin.compile("demo", {
-  ll.fn. add { a [ll.i32], b [ll.i32] } [ll.i32] {
-    ll.ret (a + b),
+  lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
+    lln.ret (a + b),
   },
 })
 

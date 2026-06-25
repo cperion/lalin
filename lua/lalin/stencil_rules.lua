@@ -5,10 +5,10 @@ local function bind_context(T)
     if T._lalin_api_cache.stencil_rules ~= nil then return T._lalin_api_cache.stencil_rules end
 
     local lalin = require("lalin")
-    local llb = require("llb")
+    local llbl = require("llbl")
     local Llisle = require("llisle")
     local RuleApi = require("lalin.llisle_rule_api")
-    local env = lalin.family.env { scope = "env", base = _G }
+    local env = lalin.language.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
     local Core = T.LalinCore
@@ -16,7 +16,7 @@ local function bind_context(T)
     local Kernel = T.LalinKernel
     local Stencil = T.LalinStencil
     local Value = T.LalinValue
-    local function sym(name) return llb.symbol(name) end
+    local function sym(name) return llbl.shared.symbols.source(name) end
     local StencilExprFact = sym("StencilExprFact")
     local StencilClassFact = sym("StencilClassFact")
     local IndexLaneSelection = sym("IndexLaneSelection")
@@ -103,8 +103,8 @@ local function bind_context(T)
         fields.vocab = vocab
         return fields
     end
-    impl.has_const_pred = function(op, value, const_on_left)
-        return predicate_from_cmp_const(op, value, const_on_left) ~= nil
+    impl.has_const_pred = function(op, operand_ty, value, const_on_left)
+        return predicate_from_cmp_const(op, operand_ty, value, const_on_left) ~= nil
     end
     impl.type_class = function(fields) return fields end
     impl.load_class = function(fields) return with_class_kind("load", fields) end
@@ -122,7 +122,7 @@ local function bind_context(T)
     impl.zip_map_class = function(fields) return with_class_kind("zip_map", fields) end
     impl.compare_class = function(fields) return with_class_kind("compare", fields) end
     impl.zip_compare_class = function(fields) return with_class_kind("zip_compare", fields) end
-    impl.pred_const = function(fields) return predicate_from_cmp_const(fields.op, fields.value, fields.const_on_left) end
+    impl.pred_const = function(fields) return predicate_from_cmp_const(fields.op, fields.operand_ty, fields.value, fields.const_on_left) end
     impl.index_lane = function(fields) return fields end
     impl.store_fill = function(fields) return with_selection_kind("fill", Stencil.StencilFill, fields) end
     impl.store_copy = function(fields) return with_selection_kind("copy", Stencil.StencilCopy, fields) end
@@ -148,12 +148,12 @@ local function bind_context(T)
 
     local function build_rules()
     return llisle {
-  predicate. has_const_pred [impl.has_const_pred] { input { sym("op") [Any], sym("value") [Any], sym("const_on_left") [Any] }, pure },
+  predicate. has_const_pred [impl.has_const_pred] { input { sym("op") [Any], sym("operand_ty") [Any], sym("value") [Any], sym("const_on_left") [Any] }, pure },
   predicate. is_int_type [impl.is_int_type] { input { sym("ty") [Any] }, pure },
   predicate. is_float_type [impl.is_float_type] { input { sym("ty") [Any] }, pure },
   predicate. is_index_type [impl.is_index_type] { input { sym("ty") [Any] }, pure },
   predicate. is_bool8_type [impl.is_bool8_type] { input { sym("ty") [Any] }, pure },
-  predicate. is_type_family [impl.is_type_family] { input { sym("ty") [Any], sym("family") [Any] }, pure },
+  predicate. is_type_family [impl.is_type_family] { input { sym("ty") [Any], sym("language") [Any] }, pure },
   predicate. is_index_data_type [impl.is_index_data_type] { input { sym("ty") [Any] }, pure },
   predicate. same_type [impl.same_type] { input { sym("a") [Any], sym("b") [Any] }, pure },
   predicate. unary_supported [impl.unary_supported] { input { sym("op") [Any], sym("ty") [Any] }, pure },
@@ -169,7 +169,7 @@ local function bind_context(T)
   constructor. zip_map_class [impl.zip_map_class] { input { sym("op") [Any], sym("lhs") [Any], sym("rhs") [Any], sym("lhs_index") [Any], sym("rhs_index") [Any], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
   constructor. compare_class [impl.compare_class] { input { sym("pred") [Any], sym("lane") [Any], sym("index") [Any], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
   constructor. zip_compare_class [impl.zip_compare_class] { input { sym("cmp") [Any], sym("lhs") [Any], sym("rhs") [Any], sym("lhs_index") [Any], sym("rhs_index") [Any], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
-  constructor. pred_const [impl.pred_const] { input { sym("op") [Any], sym("value") [Any], sym("const_on_left") [Any] }, output { sym("pred") [Any] } },
+  constructor. pred_const [impl.pred_const] { input { sym("op") [Any], sym("operand_ty") [Any], sym("value") [Any], sym("const_on_left") [Any] }, output { sym("pred") [Any] } },
   constructor. index_lane [impl.index_lane] { input { sym("lane") [Any], sym("index") [Any] }, output { sym("lane") [IndexLaneSelection] } },
   constructor. store_fill [impl.store_fill] { input { sym("info") [sym("StoreFillInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
   constructor. store_copy [impl.store_copy] { input { sym("info") [sym("StoreCopyInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
@@ -378,12 +378,12 @@ local function bind_context(T)
     when {
       (V. lhs.class.kind :eq (load))
         * (V. rhs.class.kind :eq (fill))
-        * (P. expr.op :has_const_pred (V. rhs.class.value, false)),
+        * (P. expr.op :has_const_pred (V. lhs.class.lane.elem_ty, V. rhs.class.value, false)),
     },
     run {
       ret {
         class = compare_class {
-          pred = pred_const { op = P. expr.op, value = V. rhs.class.value, const_on_left = false },
+          pred = pred_const { op = P. expr.op, operand_ty = V. lhs.class.lane.elem_ty, value = V. rhs.class.value, const_on_left = false },
           lane = V. lhs.class.lane,
           index = V. lhs.class.index,
           result_ty = P. expr.result_ty,
@@ -400,12 +400,12 @@ local function bind_context(T)
     when {
       (V. lhs.class.kind :eq (fill))
         * (V. rhs.class.kind :eq (load))
-        * (P. expr.op :has_const_pred (V. lhs.class.value, true)),
+        * (P. expr.op :has_const_pred (V. rhs.class.lane.elem_ty, V. lhs.class.value, true)),
     },
     run {
       ret {
         class = compare_class {
-          pred = pred_const { op = P. expr.op, value = V. lhs.class.value, const_on_left = true },
+          pred = pred_const { op = P. expr.op, operand_ty = V. rhs.class.lane.elem_ty, value = V. lhs.class.value, const_on_left = true },
           lane = V. rhs.class.lane,
           index = V. rhs.class.index,
           result_ty = P. expr.result_ty,
@@ -1291,9 +1291,14 @@ local function bind_context(T)
         if op == Core.BinAdd then return Stencil.StencilBinaryAdd end
         if op == Core.BinSub then return Stencil.StencilBinarySub end
         if op == Core.BinMul then return Stencil.StencilBinaryMul end
+        if op == Core.BinDiv then return Stencil.StencilBinaryDiv end
+        if op == Core.BinRem then return Stencil.StencilBinaryMod end
         if op == Core.BinBitAnd then return Stencil.StencilBinaryAnd end
         if op == Core.BinBitOr then return Stencil.StencilBinaryOr end
         if op == Core.BinBitXor then return Stencil.StencilBinaryXor end
+        if op == Core.BinShl then return Stencil.StencilBinaryShl end
+        if op == Core.BinLShr then return Stencil.StencilBinaryLShr end
+        if op == Core.BinAShr then return Stencil.StencilBinaryAShr end
         return nil
     end
 
@@ -1313,22 +1318,22 @@ local function bind_context(T)
         return ty == Code.CodeTyBool8
     end
 
-    is_type_family = function(ty, family)
-        family = tostring(family)
+    is_type_family = function(ty, language)
+        language = tostring(language)
         local cls = pvm.classof(ty)
-        if family == "pointer" then return cls == Code.CodeTyDataPtr end
-        if family == "code_pointer" then return cls == Code.CodeTyCodePtr end
-        if family == "named" then return cls == Code.CodeTyNamed end
-        if family == "array" then return cls == Code.CodeTyArray end
-        if family == "slice" then return cls == Code.CodeTySlice end
-        if family == "view" then return cls == Code.CodeTyView end
-        if family == "byte_span" then return ty == Code.CodeTyByteSpan or cls == Code.CodeTyByteSpan end
-        if family == "handle" then return cls == Code.CodeTyHandle end
-        if family == "lease" then return cls == Code.CodeTyLease end
-        if family == "closure" then return cls == Code.CodeTyClosure end
-        if family == "imported_c" then return cls == Code.CodeTyImportedC end
-        if family == "imported_c_func_pointer" then return cls == Code.CodeTyImportedCFuncPtr end
-        if family == "vector" then return cls == Code.CodeTyVector end
+        if language == "pointer" then return cls == Code.CodeTyDataPtr end
+        if language == "code_pointer" then return cls == Code.CodeTyCodePtr end
+        if language == "named" then return cls == Code.CodeTyNamed end
+        if language == "array" then return cls == Code.CodeTyArray end
+        if language == "slice" then return cls == Code.CodeTySlice end
+        if language == "view" then return cls == Code.CodeTyView end
+        if language == "byte_span" then return ty == Code.CodeTyByteSpan or cls == Code.CodeTyByteSpan end
+        if language == "handle" then return cls == Code.CodeTyHandle end
+        if language == "lease" then return cls == Code.CodeTyLease end
+        if language == "closure" then return cls == Code.CodeTyClosure end
+        if language == "imported_c" then return cls == Code.CodeTyImportedC end
+        if language == "imported_c_func_pointer" then return cls == Code.CodeTyImportedCFuncPtr end
+        if language == "vector" then return cls == Code.CodeTyVector end
         return false
     end
 
@@ -1373,6 +1378,14 @@ local function bind_context(T)
         return is_int_type(ty) or is_bool8_type(ty)
     end
 
+    local function supports_div_ty(ty)
+        return is_int_type(ty) or is_float_type(ty) or is_index_type(ty)
+    end
+
+    local function supports_integer_arithmetic_ty(ty)
+        return is_int_type(ty) or is_index_type(ty)
+    end
+
     unary_supported = function(op, ty)
         if op == Stencil.StencilUnaryIdentity then return ty ~= Code.CodeTyVoid end
         if not is_scalar_type(ty) then return false end
@@ -1384,6 +1397,9 @@ local function bind_context(T)
     binary_supported = function(op, ty)
         if not is_scalar_type(ty) then return false end
         if op == Stencil.StencilBinaryAnd or op == Stencil.StencilBinaryOr or op == Stencil.StencilBinaryXor then return supports_bitwise_ty(ty) end
+        if op == Stencil.StencilBinaryDiv then return supports_div_ty(ty) end
+        if op == Stencil.StencilBinaryMod then return supports_integer_arithmetic_ty(ty) end
+        if op == Stencil.StencilBinaryShl or op == Stencil.StencilBinaryLShr or op == Stencil.StencilBinaryAShr then return supports_bitwise_ty(ty) end
         if op == Stencil.StencilBinaryAdd or op == Stencil.StencilBinarySub or op == Stencil.StencilBinaryMul
             or op == Stencil.StencilBinaryMin or op == Stencil.StencilBinaryMax then
             return true
@@ -1434,7 +1450,7 @@ local function bind_context(T)
         return false
     end
 
-    predicate_from_cmp_const = function(op, cexpr, const_on_left)
+    predicate_from_cmp_const = function(op, operand_ty, cexpr, const_on_left)
         if pvm.classof(cexpr) ~= Value.ValueExprConst then return nil end
         if const_on_left then
             if op == Core.CmpLt then op = Core.CmpGt
@@ -1442,12 +1458,9 @@ local function bind_context(T)
             elseif op == Core.CmpGt then op = Core.CmpLt
             elseif op == Core.CmpGe then op = Core.CmpLe end
         end
-        if op == Core.CmpEq then return Stencil.StencilPredEqConst(cexpr) end
-        if op == Core.CmpNe then return Stencil.StencilPredNeConst(cexpr) end
-        if op == Core.CmpLt then return Stencil.StencilPredLtConst(cexpr) end
-        if op == Core.CmpLe then return Stencil.StencilPredLeConst(cexpr) end
-        if op == Core.CmpGt then return Stencil.StencilPredGtConst(cexpr) end
-        if op == Core.CmpGe then return Stencil.StencilPredGeConst(cexpr) end
+        if op == Core.CmpEq or op == Core.CmpNe or op == Core.CmpLt or op == Core.CmpLe or op == Core.CmpGt or op == Core.CmpGe then
+            return Stencil.StencilPredCompareConst(op, operand_ty, cexpr)
+        end
         return nil
     end
 

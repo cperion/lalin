@@ -30,7 +30,7 @@ local function term(id, kind) return Code.CodeTerm(Code.CodeTermId("term:" .. id
 local function place(base, index) return Code.CodePlaceIndex(Code.CodePlaceDeref(base, i32, 4), index, i32, 4) end
 
 local function access_named(desc, name)
-    for _, access in ipairs(desc.accesses or {}) do
+    for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(desc)) do
         if access.name == name then return access end
     end
     error("missing descriptor access " .. tostring(name))

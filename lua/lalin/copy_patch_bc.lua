@@ -108,7 +108,7 @@ local function bind_context(T)
     function api.compile_entry(opts)
         opts = opts or {}
         local source = assert(opts.source, "copy_patch_bc.compile_entry requires source")
-        local chunk_name = opts.chunk_name or ("@llb.codegen/luajit-bc/" .. tostring(opts.symbol or "stencil"))
+        local chunk_name = opts.chunk_name or ("@llbl.codegen/luajit-bc/" .. tostring(opts.symbol or "stencil"))
         local loader, load_err = loadstring(source, chunk_name)
         if loader == nil then return nil, load_err end
         if opts.env ~= nil then setfenv(loader, opts.env) end
@@ -160,6 +160,8 @@ local function bind_context(T)
         end
         return nil
     end
+
+    api.entry_by_symbol = entry_by_symbol
 
     function api.patch_bytecode(entry, bindings)
         local by_name = normalize_bindings(bindings)

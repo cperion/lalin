@@ -84,7 +84,8 @@ assert(result ~= nil, tostring(err) .. "\n" .. tostring(src))
 result.artifacts = artifacts
 result.facts = facts
 assert(#artifacts == 1, "expected one selected stencil artifact")
-assert(artifacts[1].instance.descriptor.vocab == Stencil.StencilReduce, "expected reduce stencil")
+local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
+assert(StencilArtifactPlan.descriptor_vocab(artifacts[1].instance.descriptor) == Stencil.StencilReduce, "expected reduce stencil")
 assert(pvm.classof(facts.luajit_stencil_machines) == LJ.LJStencilMachineModulePlan, "expected ASDL LuaJIT stencil machine plan")
 assert(#facts.luajit_stencil_machines.machines == 1, "expected one planned LuaJIT stencil machine")
 assert(facts.luajit_stencil_machines.machines[1].artifact == artifacts[1], "planned LuaJIT stencil machine should reference selected artifact")

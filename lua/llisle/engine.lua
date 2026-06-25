@@ -1,4 +1,4 @@
-local llb = require("llb")
+local llbl = require("llbl")
 local dsl = require("llisle.dsl")
 
 local M = {}
@@ -12,8 +12,8 @@ local function path_name(path, i) return tostring((path or {})[i] or "") end
 local function root_key(b) return path_name(b.path, 1) end
 
 local SKIP_FIELDS = {
-    __llb = true,
-    __llb_tag = true,
+    __llbl = true,
+    __llbl_tag = true,
     origin = true,
     n = true,
 }
@@ -70,7 +70,7 @@ local function default_equal(a, b, seen)
     seen[a] = seen[a] or {}
     if seen[a][b] then return true end
     seen[a][b] = true
-    if llb.tagof(a) ~= llb.tagof(b) then return false end
+    if llbl.tagof(a) ~= llbl.tagof(b) then return false end
     local ak, bk = table_keys(a), table_keys(b)
     if #ak ~= #bk then return false end
     for i = 1, #ak do
@@ -81,13 +81,13 @@ local function default_equal(a, b, seen)
 end
 
 local function symbol_name(v)
-    if llb.is(v, "Symbol") or llb.is(v, "Name") then return tostring(v.text) end
+    if llbl.is(v, "Symbol") or llbl.is(v, "Name") then return tostring(v.text) end
     if type(v) == "string" then return v end
     return nil
 end
 
 local function semantic_key_text(k)
-    if llb.is(k, "Symbol") or llb.is(k, "Name") then return tostring(k.text) end
+    if llbl.is(k, "Symbol") or llbl.is(k, "Name") then return tostring(k.text) end
     if type(k) == "table" then
         local text = rawget(k, "text") or rawget(k, "name") or rawget(k, "field")
         if text ~= nil then return tostring(text) end
@@ -207,7 +207,7 @@ end
 
 local function match_expr_pattern(state, pattern, actual)
     if pattern.kind == "index" then
-        if llb.is(actual, "Expr") and actual.kind == "index" then
+        if llbl.is(actual, "Expr") and actual.kind == "index" then
             return match_pattern(state, pattern.base, actual.base) and match_pattern(state, pattern.index, actual.index)
         end
         if type(actual) == "table" and (rawget(actual, "ty") ~= nil or rawget(actual, "type") ~= nil) then
@@ -218,7 +218,7 @@ local function match_expr_pattern(state, pattern, actual)
 
     if pattern.kind == "call" then
         local callee = symbol_name(pattern.callee)
-        if callee ~= nil and not llb.is(actual, "Expr") then
+        if callee ~= nil and not llbl.is(actual, "Expr") then
             if semantic_key_text(node_name(actual)) ~= callee then return false end
             local record = first_arg_record(pattern)
             if record then return match_record_fields(state, record, actual) end
@@ -227,7 +227,7 @@ local function match_expr_pattern(state, pattern, actual)
 
     if pattern.kind == "ctor" then
         local name = tostring(pattern.name)
-        if not llb.is(actual, "Expr") then
+        if not llbl.is(actual, "Expr") then
             if semantic_key_text(node_name(actual)) ~= name then return false end
             local args = pattern.args or {}
             local n = args.n or #args
@@ -235,14 +235,14 @@ local function match_expr_pattern(state, pattern, actual)
         end
     end
 
-    if not llb.is(actual, "Expr") or pattern.kind ~= actual.kind then return false end
+    if not llbl.is(actual, "Expr") or pattern.kind ~= actual.kind then return false end
     return match_record_fields(state, pattern, actual)
 end
 
 match_pattern = function(state, pattern, actual)
     if is_binder(pattern) then return bind_pattern(state, pattern, actual) end
-    if llb.is(pattern, "Expr") then return match_expr_pattern(state, pattern, actual) end
-    if llb.is(pattern, "Symbol") or llb.is(pattern, "Name") then
+    if llbl.is(pattern, "Expr") then return match_expr_pattern(state, pattern, actual) end
+    if llbl.is(pattern, "Symbol") or llbl.is(pattern, "Name") then
         local name = symbol_name(pattern)
         return semantic_key_text(actual) == name or semantic_key_text(node_name(actual)) == name
     end
@@ -345,11 +345,11 @@ end
 
 eval_value = function(state, value)
     if is_binder(value) then return resolve_binder(state, value) end
-    if llb.is(value, "Symbol") or llb.is(value, "Name") then
+    if llbl.is(value, "Symbol") or llbl.is(value, "Name") then
         local name = symbol_name(value)
         return (state.engine.symbols and state.engine.symbols[name]) or name
     end
-    if llb.is(value, "Expr") then return eval_expr(state, value) end
+    if llbl.is(value, "Expr") then return eval_expr(state, value) end
     if is_cls(value, "RelationCall") then
         local fields = eval_record(state, value.fields or {})
         local result, err = state.engine:run(value.name, fields)
@@ -403,7 +403,7 @@ end
 
 local function eval_guard_item(state, item)
     if is_cls(item, "PredicateSpec") then return eval_predicate(state, item) end
-    if llb.is_algebra(item) then
+    if llbl.is_algebra(item) then
         if item.op == "sum" then
             for _, child in ipairs(item.items or {}) do
                 if eval_guard_item(state, child) then return true end

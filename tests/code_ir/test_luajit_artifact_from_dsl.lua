@@ -7,6 +7,7 @@ package.path = table.concat({
 }, ';')
 
 local ffi = require('ffi')
+local pvm = require('lalin.pvm')
 local lalin = require('lalin')
 
 local source = [=[
@@ -513,23 +514,23 @@ assert(#artifact.artifacts == 18, 'expected selected stencil artifact for each D
 assert(artifact.source:match('__ml_check_stencil_target'), 'expected generated target guard')
 
 local expected_vocab = {
-    ['LalinStencil.StencilReduce'] = 'reduce',
-    ['LalinStencil.StencilCopy'] = 'copy',
-    ['LalinStencil.StencilFill'] = 'fill',
-    ['LalinStencil.StencilMap'] = 'map',
-    ['LalinStencil.StencilZipMap'] = 'zip_map',
-    ['LalinStencil.StencilCast'] = 'cast',
-    ['LalinStencil.StencilCompare'] = 'compare',
-    ['LalinStencil.StencilZipCompare'] = 'zip_compare',
-    ['LalinStencil.StencilGather'] = 'gather',
-    ['LalinStencil.StencilScatter'] = 'scatter',
-    ['LalinStencil.StencilInPlaceMap'] = 'in_place_map',
-    ['LalinStencil.StencilCount'] = 'count',
-    ['LalinStencil.StencilMapReduce'] = 'map_reduce',
-    ['LalinStencil.StencilZipReduce'] = 'zip_reduce',
-    ['LalinStencil.StencilScan'] = 'scan',
-    ['LalinStencil.StencilFind'] = 'find',
-    ['LalinStencil.StencilPartition'] = 'partition',
+    ['LalinStencil.StencilDescriptorReduce'] = 'reduce',
+    ['LalinStencil.StencilDescriptorCopy'] = 'copy',
+    ['LalinStencil.StencilDescriptorFill'] = 'fill',
+    ['LalinStencil.StencilDescriptorMap'] = 'map',
+    ['LalinStencil.StencilDescriptorZipMap'] = 'zip_map',
+    ['LalinStencil.StencilDescriptorCast'] = 'cast',
+    ['LalinStencil.StencilDescriptorCompare'] = 'compare',
+    ['LalinStencil.StencilDescriptorZipCompare'] = 'zip_compare',
+    ['LalinStencil.StencilDescriptorGather'] = 'gather',
+    ['LalinStencil.StencilDescriptorScatter'] = 'scatter',
+    ['LalinStencil.StencilDescriptorInPlaceMap'] = 'in_place_map',
+    ['LalinStencil.StencilDescriptorCount'] = 'count',
+    ['LalinStencil.StencilDescriptorMapReduce'] = 'map_reduce',
+    ['LalinStencil.StencilDescriptorZipReduce'] = 'zip_reduce',
+    ['LalinStencil.StencilDescriptorScan'] = 'scan',
+    ['LalinStencil.StencilDescriptorFind'] = 'find',
+    ['LalinStencil.StencilDescriptorPartition'] = 'partition',
 }
 local expected_labels = {
     reduce = true,
@@ -552,17 +553,18 @@ local expected_labels = {
     partition = true,
 }
 local function selected_label(descriptor)
-    if tostring(descriptor.vocab) == 'LalinStencil.StencilCopy' then
-        if tostring(descriptor.skeleton):match('StencilCopyMemMove') then return 'copy_memmove' end
+    local descriptor_kind = tostring(pvm.classof(descriptor)):match('Class%((.-)%)')
+    if descriptor_kind == 'LalinStencil.StencilDescriptorCopy' then
+        if tostring(descriptor.semantics):match('StencilCopyMemMove') then return 'copy_memmove' end
         return 'copy'
     end
-    return expected_vocab[tostring(descriptor.vocab)]
+    return expected_vocab[descriptor_kind]
 end
 local seen = {}
 for _, selected in ipairs(artifact.artifacts) do
     local descriptor = selected.instance.descriptor
     local label = selected_label(descriptor)
-    assert(label ~= nil, 'unexpected selected stencil vocab ' .. tostring(descriptor.vocab))
+    assert(label ~= nil, 'unexpected selected stencil descriptor ' .. tostring(pvm.classof(descriptor)))
     assert(seen[label] == nil, 'duplicate selected stencil artifact for ' .. label)
     if label == 'find' or label == 'partition' then
         assert(tostring(selected.instance.schedule):match('StencilScheduleScalar'), label .. ' should carry a scalar ordered-control stencil schedule')

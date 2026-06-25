@@ -564,13 +564,10 @@ local function bind_context(T)
         return nil
     end
 
-    local function pred_from_cmp(op, cexpr)
-        if op == Core.CmpEq then return Stencil.StencilPredEqConst(cexpr) end
-        if op == Core.CmpNe then return Stencil.StencilPredNeConst(cexpr) end
-        if op == Core.CmpLt then return Stencil.StencilPredLtConst(cexpr) end
-        if op == Core.CmpLe then return Stencil.StencilPredLeConst(cexpr) end
-        if op == Core.CmpGt then return Stencil.StencilPredGtConst(cexpr) end
-        if op == Core.CmpGe then return Stencil.StencilPredGeConst(cexpr) end
+    local function pred_from_cmp(op, operand_ty, cexpr)
+        if op == Core.CmpEq or op == Core.CmpNe or op == Core.CmpLt or op == Core.CmpLe or op == Core.CmpGt or op == Core.CmpGe then
+            return Stencil.StencilPredCompareConst(op, operand_ty, cexpr)
+        end
         return nil
     end
 
@@ -593,10 +590,10 @@ local function bind_context(T)
         local a_const = pvm.classof(expr.a) == Value.ValueExprConst and expr.a or nil
         local b_const = pvm.classof(expr.b) == Value.ValueExprConst and expr.b or nil
         if a_kernel ~= nil and b_const ~= nil and pvm.classof(a_kernel) == Kernel.KernelExprLaneLoad then
-            return a_kernel, pred_from_cmp(op, b_const)
+            return a_kernel, pred_from_cmp(op, a_kernel.lane.elem_ty, b_const)
         end
         if b_kernel ~= nil and a_const ~= nil and pvm.classof(b_kernel) == Kernel.KernelExprLaneLoad then
-            return b_kernel, pred_from_cmp(flip_cmp(op), a_const)
+            return b_kernel, pred_from_cmp(flip_cmp(op), b_kernel.lane.elem_ty, a_const)
         end
         return nil
     end

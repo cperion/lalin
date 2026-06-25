@@ -1,6 +1,6 @@
--- LLB surface for complete LalinPhase compiler-package graph values.
+-- LLBL surface for complete LalinPhase compiler-package graph values.
 
-local llb = require("llb")
+local llbl = require("llbl")
 local pvm = require("lalin.pvm")
 local PhaseModel = require("lalin.phase_model")
 local PhaseValidate = require("lalin.phase_validate")
@@ -19,15 +19,15 @@ local function type_ref(spec)
     if type(spec) == "table" then
         local cls = pvm.classof(spec)
         if cls == P.TypeRef or spec == P.TypeRefAny or cls == P.TypeRefValue then return spec end
-        if llb.is(spec, "Capture") and llb.is(spec.subject, "Symbol") then
+        if llbl.is(spec, "Capture") and llbl.is(spec.subject, "Symbol") then
             local module_name = spec.subject.text
             local type_name = spec.value
-            if llb.is(type_name, "Symbol") or llb.is(type_name, "Name") then type_name = type_name.text end
+            if llbl.is(type_name, "Symbol") or llbl.is(type_name, "Name") then type_name = type_name.text end
             if type(module_name) == "string" and type(type_name) == "string" then
                 return P.TypeRef(module_name, type_name)
             end
         end
-        if llb.is(spec, "Expr") and spec.kind == "field" and llb.is(spec.base, "Symbol") and type(spec.field) == "string" then
+        if llbl.is(spec, "Expr") and spec.kind == "field" and llbl.is(spec.base, "Symbol") and type(spec.field) == "string" then
             return P.TypeRef(spec.base.text, spec.field)
         end
     end
@@ -35,11 +35,11 @@ local function type_ref(spec)
     if type(spec) == "string" then
         error("phase_dsl: world type refs use structured names, write world. name [LalinTree.Module], not world. name [\"LalinTree.Module\"]", 3)
     end
-    error("phase_dsl: type ref must be a structured LalinPhase.TypeRef or dotted LLB symbol like LalinTree.Module", 3)
+    error("phase_dsl: type ref must be a structured LalinPhase.TypeRef or dotted LLBL symbol like LalinTree.Module", 3)
 end
 
 local function ident_text(v, what)
-    if llb.is(v, "Name") or llb.is(v, "Symbol") then return v.text end
+    if llbl.is(v, "Name") or llbl.is(v, "Symbol") then return v.text end
     if type(v) == "string" then return v end
     error("phase_dsl: expected " .. what, 3)
 end
@@ -86,7 +86,7 @@ local function unwrap(v)
 end
 
 local function stage_machine_ref(v)
-    if llb.is_stage(v) and llb.stage_head(v) == "machine" and v.raw and v.raw.name then
+    if llbl.is_stage(v) and llbl.stage_head(v) == "machine" and v.raw and v.raw.name then
         return machine_id(v.raw.name)
     end
     return nil
@@ -109,9 +109,9 @@ local function impl_from(kind, spec)
     error("phase_dsl: unknown impl kind " .. tostring(kind), 3)
 end
 
-local g = llb.grammar
+local g = llbl.grammar
 
-local Lang = llb.dialect "LalinPhaseDsl" {
+local Lang = llbl.dialect "LalinPhaseDsl" {
     g.role .package_body { kind = "array" },
     g.role .machine_body { kind = "array" },
     g.role .phase_body { kind = "array" },
@@ -287,7 +287,7 @@ M.P = P
 
 -- Formatting ----------------------------------------------------------------
 
-local doc = llb.doc
+local doc = llbl.doc
 
 local function id_text(v)
     if type(v) == "table" and v.value ~= nil then return tostring(v.value) end
@@ -344,7 +344,7 @@ local function body_block(items, f)
 end
 
 function M.format_doc(value, f)
-    f = getmetatable(f) == llb.FormatContext and f or setmetatable({ indent_width = 2, seen = {} }, llb.FormatContext)
+    f = getmetatable(f) == llbl.FormatContext and f or setmetatable({ indent_width = 2, seen = {} }, llbl.FormatContext)
     local cls = type(value) == "table" and pvm.classof(value) or nil
     if cls == P.Package then
         local items = {}
@@ -399,7 +399,7 @@ function M.format_doc(value, f)
 end
 
 function M.format(value, opts)
-    return llb.render(M.format_doc(value, setmetatable({ indent_width = opts and opts.indent or 2, seen = {} }, llb.FormatContext)), opts or {})
+    return llbl.render(M.format_doc(value, setmetatable({ indent_width = opts and opts.indent or 2, seen = {} }, llbl.FormatContext)), opts or {})
 end
 
 function M.file_text(value, opts)

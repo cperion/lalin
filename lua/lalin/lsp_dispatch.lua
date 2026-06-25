@@ -1,5 +1,5 @@
 local schema = require("lalin.schema_runtime")
-local llb = require("llb")
+local llbl = require("llbl")
 local AnalysisMod = require("lalin.mlua_document_analysis")
 local WorkspaceMod = require("lalin.lsp_workspace")
 local Symbols = require("lalin.editor_symbol_facts")
@@ -210,7 +210,7 @@ local function bind_context(T)
         return gen, { ctx = ctx, doc = doc, opts = opts, mode = opts.mode or "light" }, { phase = "load" }
     end
 
-    local document_events_process = llb.process. lsp_document { "doc", "opts" } (lsp_document_process_body)
+    local document_events_process = llbl.process. lsp_document { "doc", "opts" } (lsp_document_process_body)
 
     local function collect_document_events(doc, opts)
         local out = {}

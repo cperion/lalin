@@ -79,6 +79,10 @@ local function iconst(raw)
     return Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt(tostring(raw))))
 end
 
+local function pred(cmp, ty, value)
+    return Stencil.StencilPredCompareConst(cmp, ty, value)
+end
+
 local function reduction(kind, init)
     return {
         kind = kind,
@@ -108,19 +112,22 @@ local artifact_samples = {
         return Plan.fill_array_artifact({ elem_ty = i32, value = iconst(7), step_num = 1 })
     end,
     StencilFind = function()
-        return Plan.find_array_artifact(Stencil.StencilPredEqConst(iconst(5)), { elem_ty = i32, step_num = 1 })
+        return Plan.find_array_artifact(pred(Core.CmpEq, i32, iconst(5)), { elem_ty = i32, step_num = 1 })
     end,
     StencilPartition = function()
-        return Plan.partition_array_artifact(Stencil.StencilPredGtConst(iconst(0)), { elem_ty = i32, step_num = 1 })
+        return Plan.partition_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1 })
     end,
     StencilCast = function()
         return Plan.cast_array_artifact(Core.MachineCastSToF, { src_ty = i32, dst_ty = f64, step_num = 1 })
     end,
     StencilCompare = function()
-        return Plan.compare_array_artifact(Stencil.StencilPredGtConst(iconst(0)), { elem_ty = i32, result_ty = bool8, step_num = 1 })
+        return Plan.compare_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, result_ty = bool8, step_num = 1 })
     end,
     StencilZipCompare = function()
         return Plan.zip_compare_array_artifact(Core.CmpLt, { lhs_ty = i32, rhs_ty = i32, result_ty = bool8, step_num = 1 })
+    end,
+    StencilSelect = function()
+        return Plan.select_array_artifact(Stencil.StencilPredNonZero, { cond_ty = bool8, elem_ty = i32, result_ty = i32, step_num = 1 })
     end,
     StencilGather = function()
         return Plan.gather_array_artifact({ elem_ty = i32, index_ty = i32, step_num = 1 })
@@ -132,7 +139,7 @@ local artifact_samples = {
         return Plan.in_place_map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, step_num = 1 })
     end,
     StencilCount = function()
-        return Plan.count_array_artifact(Stencil.StencilPredGtConst(iconst(0)), { elem_ty = i32, step_num = 1 })
+        return Plan.count_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1 })
     end,
     StencilMapReduce = function()
         return Plan.map_reduce_array_artifact(Stencil.StencilUnaryNeg, reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, mapped_ty = i32, result_ty = i32, step_num = 1 })
@@ -163,7 +170,7 @@ for vocab, entry in pairs(Matrix.vocabs) do
         local sample = artifact_samples[vocab]
         assert(sample ~= nil, "supported vocab " .. vocab .. " needs an artifact sample")
         local artifact = sample()
-        assert(artifact.instance.descriptor.vocab == Stencil[vocab], "artifact sample for " .. vocab .. " emitted the wrong descriptor vocab")
+        assert(Plan.descriptor_vocab(artifact.instance.descriptor) == Stencil[vocab], "artifact sample for " .. vocab .. " emitted the wrong descriptor vocab")
     end
 end
 

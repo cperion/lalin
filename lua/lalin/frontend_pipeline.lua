@@ -3,7 +3,7 @@
 -- The DSL produces closed LalinTree directly; no parse or open-module phase needed.
 
 local pvm = require("lalin.pvm")
-local llb = require("llb")
+local llbl = require("llbl")
 
 local function progress(ctx, name, payload)
     if not ctx then return end
@@ -253,13 +253,13 @@ local function bind_context(T)
             local ev = ctx:diagnostic_event { severity = "error", code = "E_LALIN_TYPECHECK", message = tostring(result), target = "checked" }
             ev.target = "checked"
             events[#events + 1] = ev
-            return llb.gps.raw(llb.gps.from.array(events))
+            return llbl.gps.raw(llbl.gps.from.array(events))
         end
         events[#events + 1] = ctx:make_event("done", { target = "checked", result = result })
         events[#events + 1] = ctx:make_event("result", { result = result })
-        return llb.gps.raw(llb.gps.from.array(events))
+        return llbl.gps.raw(llbl.gps.from.array(events))
     end
-    local typecheck_module_process = llb.process. lalin_typecheck_module { "module", "opts" } (typecheck_module_process_body)
+    local typecheck_module_process = llbl.process. lalin_typecheck_module { "module", "opts" } (typecheck_module_process_body)
 
     local function checked_to_code_process_body(ctx, checked, opts)
         opts = opts or {}
@@ -274,13 +274,13 @@ local function bind_context(T)
             local ev = ctx:diagnostic_event { severity = "error", code = "E_LALIN_CHECKED_TO_CODE", message = tostring(result), target = target }
             ev.target = target
             events[#events + 1] = ev
-            return llb.gps.raw(llb.gps.from.array(events))
+            return llbl.gps.raw(llbl.gps.from.array(events))
         end
         events[#events + 1] = ctx:make_event("done", { target = target, result = result })
         events[#events + 1] = ctx:make_event("result", { result = result })
-        return llb.gps.raw(llb.gps.from.array(events))
+        return llbl.gps.raw(llbl.gps.from.array(events))
     end
-    local checked_to_code_process = llb.process. lalin_checked_to_code { "checked", "opts" } (checked_to_code_process_body)
+    local checked_to_code_process = llbl.process. lalin_checked_to_code { "checked", "opts" } (checked_to_code_process_body)
 
     local function code_to_back_process_body(ctx, code_result, opts)
         opts = opts or {}
@@ -294,13 +294,13 @@ local function bind_context(T)
             local ev = ctx:diagnostic_event { severity = "error", code = "E_LALIN_CODE_TO_BACK", message = tostring(result), target = "back" }
             ev.target = "back"
             events[#events + 1] = ev
-            return llb.gps.raw(llb.gps.from.array(events))
+            return llbl.gps.raw(llbl.gps.from.array(events))
         end
         events[#events + 1] = ctx:make_event("done", { target = "back", result = result })
         events[#events + 1] = ctx:make_event("result", { result = result })
-        return llb.gps.raw(llb.gps.from.array(events))
+        return llbl.gps.raw(llbl.gps.from.array(events))
     end
-    local code_to_back_process = llb.process. lalin_code_to_back { "code_result", "opts" } (code_to_back_process_body)
+    local code_to_back_process = llbl.process. lalin_code_to_back { "code_result", "opts" } (code_to_back_process_body)
 
     local function code_to_c_process_body(ctx, code_result, opts)
         opts = opts or {}
@@ -314,13 +314,13 @@ local function bind_context(T)
             local ev = ctx:diagnostic_event { severity = "error", code = "E_LALIN_CODE_TO_C", message = tostring(result), target = "c" }
             ev.target = "c"
             events[#events + 1] = ev
-            return llb.gps.raw(llb.gps.from.array(events))
+            return llbl.gps.raw(llbl.gps.from.array(events))
         end
         events[#events + 1] = ctx:make_event("done", { target = "c", result = result })
         events[#events + 1] = ctx:make_event("result", { result = result })
-        return llb.gps.raw(llb.gps.from.array(events))
+        return llbl.gps.raw(llbl.gps.from.array(events))
     end
-    local code_to_c_process = llb.process. lalin_code_to_c { "code_result", "opts" } (code_to_c_process_body)
+    local code_to_c_process = llbl.process. lalin_code_to_c { "code_result", "opts" } (code_to_c_process_body)
 
 
     return {

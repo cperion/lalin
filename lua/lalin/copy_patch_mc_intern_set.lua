@@ -24,6 +24,10 @@ local function bind_context(T)
         return Value.ValueExprConst(Code.CodeConstLiteral(u8, Core.LitInt(tostring(raw))))
     end
 
+    local function pred(cmp, ty, value)
+        return Stencil.StencilPredCompareConst(cmp, ty, value)
+    end
+
     local function reduction(kind, init)
         return {
             kind = kind,
@@ -92,15 +96,15 @@ local function bind_context(T)
             Plan.copy_array_artifact({ elem_ty = i32, step_num = 1, dst_topology = top("copy_dst"), src_topology = top("copy_src") }),
             Plan.copy_array_artifact({ elem_ty = i32, semantics = Stencil.StencilCopyMemMove, step_num = 1, dst_topology = top("copy_move_dst"), src_topology = top("copy_move_src") }),
             Plan.fill_array_artifact({ elem_ty = i32, value = iconst(7), step_num = 1, dst_topology = top("fill_dst") }),
-            Plan.find_array_artifact(Stencil.StencilPredEqConst(iconst(5)), { elem_ty = i32, step_num = 1, array_topology = top("find_xs") }),
-            Plan.partition_array_artifact(Stencil.StencilPredGtConst(iconst(0)), { elem_ty = i32, step_num = 1, dst_topology = top("partition_dst"), array_topology = top("partition_xs") }),
+            Plan.find_array_artifact(pred(Core.CmpEq, i32, iconst(5)), { elem_ty = i32, step_num = 1, array_topology = top("find_xs") }),
+            Plan.partition_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1, dst_topology = top("partition_dst"), array_topology = top("partition_xs") }),
             Plan.cast_array_artifact(Core.MachineCastSToF, { src_ty = i32, dst_ty = f64, step_num = 1, dst_topology = top("cast_dst"), src_topology = top("cast_xs") }),
-            Plan.compare_array_artifact(Stencil.StencilPredGtConst(iconst(0)), { elem_ty = i32, result_ty = bool8, step_num = 1, dst_topology = top("compare_dst"), src_topology = top("compare_xs") }),
+            Plan.compare_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, result_ty = bool8, step_num = 1, dst_topology = top("compare_dst"), src_topology = top("compare_xs") }),
             Plan.zip_compare_array_artifact(Core.CmpLt, { lhs_ty = i32, rhs_ty = i32, result_ty = bool8, step_num = 1, dst_topology = top("zip_compare_dst"), lhs_topology = top("zip_compare_lhs"), rhs_topology = top("zip_compare_rhs") }),
             Plan.gather_array_artifact({ elem_ty = i32, index_ty = i32, step_num = 1, dst_topology = top("gather_dst"), index_topology = top("gather_idx") }),
             Plan.scatter_array_artifact({ elem_ty = i32, index_ty = i32, conflicts = Stencil.StencilScatterUniqueIndices, step_num = 1, src_topology = top("scatter_src"), index_topology = top("scatter_idx") }),
             Plan.in_place_map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, step_num = 1, src_topology = top("in_place_xs") }),
-            Plan.count_array_artifact(Stencil.StencilPredGtConst(iconst(0)), { elem_ty = i32, step_num = 1, array_topology = top("count_xs") }),
+            Plan.count_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1, array_topology = top("count_xs") }),
             Plan.map_reduce_array_artifact(Stencil.StencilUnaryNeg, reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, mapped_ty = i32, result_ty = i32, step_num = 1, array_topology = top("map_reduce_xs") }),
             Plan.zip_reduce_array_artifact(Stencil.StencilBinaryAdd, reduction(Value.ReductionAdd, 0), nil, { lhs_ty = i32, rhs_ty = i32, mapped_ty = i32, result_ty = i32, step_num = 1, lhs_topology = top("zip_reduce_lhs"), rhs_topology = top("zip_reduce_rhs") }),
         }
@@ -115,18 +119,18 @@ local function bind_context(T)
             Plan.copy_array_artifact({ elem_ty = u8, step_num = 1, dst_topology = bytespan_topology("copy_dst"), src_topology = bytespan_topology("copy_src") }),
             Plan.copy_array_artifact({ elem_ty = u8, semantics = Stencil.StencilCopyMemMove, step_num = 1, dst_topology = bytespan_topology("move_dst"), src_topology = bytespan_topology("move_src") }),
             Plan.fill_array_artifact({ elem_ty = u8, value = u8const(127), step_num = 1, dst_topology = bytespan_topology("fill_dst") }),
-            Plan.find_array_artifact(Stencil.StencilPredEqConst(u8const(13)), { elem_ty = u8, step_num = 1, array_topology = bytespan_topology("find_xs") }),
-            Plan.compare_array_artifact(Stencil.StencilPredGtConst(u8const(9)), { elem_ty = u8, result_ty = bool8, step_num = 1, dst_topology = bytespan_topology("compare_dst"), src_topology = bytespan_topology("compare_xs") }),
-            Plan.count_array_artifact(Stencil.StencilPredGtConst(u8const(9)), { elem_ty = u8, step_num = 1, array_topology = bytespan_topology("count_xs") }),
+            Plan.find_array_artifact(pred(Core.CmpEq, u8, u8const(13)), { elem_ty = u8, step_num = 1, array_topology = bytespan_topology("find_xs") }),
+            Plan.compare_array_artifact(pred(Core.CmpGt, u8, u8const(9)), { elem_ty = u8, result_ty = bool8, step_num = 1, dst_topology = bytespan_topology("compare_dst"), src_topology = bytespan_topology("compare_xs") }),
+            Plan.count_array_artifact(pred(Core.CmpGt, u8, u8const(9)), { elem_ty = u8, step_num = 1, array_topology = bytespan_topology("count_xs") }),
             Plan.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, result_ty = i32, step_num = 1, array_topology = field_topology() }),
             Plan.map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, result_ty = i32, step_num = 1, src_topology = field_topology() }),
-            Plan.find_array_artifact(Stencil.StencilPredEqConst(iconst(20)), { elem_ty = i32, step_num = 1, array_topology = field_topology() }),
-            Plan.compare_array_artifact(Stencil.StencilPredGtConst(iconst(10)), { elem_ty = i32, result_ty = bool8, step_num = 1, src_topology = field_topology() }),
+            Plan.find_array_artifact(pred(Core.CmpEq, i32, iconst(20)), { elem_ty = i32, step_num = 1, array_topology = field_topology() }),
+            Plan.compare_array_artifact(pred(Core.CmpGt, i32, iconst(10)), { elem_ty = i32, result_ty = bool8, step_num = 1, src_topology = field_topology() }),
             Plan.fill_array_artifact({ elem_ty = i32, value = iconst(99), step_num = 1, dst_topology = field_topology() }),
             Plan.zip_map_array_artifact(Stencil.StencilBinaryAdd, { lhs_ty = i32, rhs_ty = i32, result_ty = i32, step_num = 1, dst_topology = soa_component("sum", 2), lhs_topology = soa_component("left", 0), rhs_topology = soa_component("right", 1) }),
             Plan.zip_reduce_array_artifact(Stencil.StencilBinaryAdd, reduction(Value.ReductionAdd, 0), nil, { lhs_ty = i32, rhs_ty = i32, mapped_ty = i32, result_ty = i32, step_num = 1, lhs_topology = soa_component("left", 0), rhs_topology = soa_component("right", 1) }),
             Plan.zip_compare_array_artifact(Core.CmpLt, { lhs_ty = i32, rhs_ty = i32, result_ty = bool8, step_num = 1, dst_topology = soa_component("lt", 2), lhs_topology = soa_component("left", 0), rhs_topology = soa_component("right", 1) }),
-            Plan.partition_array_artifact(Stencil.StencilPredGtConst(iconst(0)), { elem_ty = i32, step_num = 1, dst_topology = soa_component("positive_then_rest", 1), array_topology = soa_component("left", 0) }),
+            Plan.partition_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1, dst_topology = soa_component("positive_then_rest", 1), array_topology = soa_component("left", 0) }),
         })
         return out
     end

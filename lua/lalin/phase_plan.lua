@@ -5,7 +5,7 @@
 -- exactly one simple path through the phase graph and expands it into machine
 -- call steps.
 
-local llb = require("llb")
+local llbl = require("llbl")
 local pvm = require("lalin.pvm")
 local PhaseModel = require("lalin.phase_model")
 local PhaseValidate = require("lalin.phase_validate")
@@ -252,7 +252,7 @@ local function phase_plan_process_body(ctx, package, root_spec)
         end)
 end
 
-M.process = llb.process.phase_plan { "package", "root_spec" } (phase_plan_process_body)
+M.process = llbl.process.phase_plan { "package", "root_spec" } (phase_plan_process_body)
 
 function M.plan(package, root_spec)
     local handle = M.process:start(package, root_spec)

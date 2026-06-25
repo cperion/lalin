@@ -1,6 +1,6 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local c = require("llb.c")
+local c = require("llbl.c")
 c.use()
 
 local function exec_ok(cmd)
@@ -17,11 +17,11 @@ end
 local function compile_run(source, std)
     if not exec_ok("command -v cc >/dev/null 2>&1") then return "skip" end
     os.execute("mkdir -p target/c_backend")
-    local c_path = "target/c_backend/test_llb_c_generated.c"
-    local exe = "target/c_backend/test_llb_c_generated"
+    local c_path = "target/c_backend/test_llbl_c_generated.c"
+    local exe = "target/c_backend/test_llbl_c_generated"
     write_file(c_path, source)
-    assert(exec_ok("cc -std=" .. (std or "gnu99") .. " -Wall -Wextra " .. c_path .. " -o " .. exe), "generated llb.c source must compile")
-    assert(exec_ok(exe), "generated llb.c executable must pass")
+    assert(exec_ok("cc -std=" .. (std or "gnu99") .. " -Wall -Wextra " .. c_path .. " -o " .. exe), "generated llbl.c source must compile")
+    assert(exec_ok(exe), "generated llbl.c executable must pass")
 end
 
 local Pair = c.type.Pair
@@ -91,10 +91,10 @@ local unit = c.unit. demo {
 
 local src = c.emit_unit(unit)
 local formatted = c.format(unit, { width = 80 })
-assert(formatted:match("c%.unit%. demo"), "llb.c formatter should render spaced-dot unit names")
-assert(formatted:match("c%.fn%. main"), "llb.c formatter should render spaced-dot function names")
-assert(formatted:match("c%.decl%. acc"), "llb.c formatter should render spaced-dot declaration names")
-assert(not formatted:match("c%.fn%.main"), "llb.c formatter must not collapse head/name spacing")
+assert(formatted:match("c%.unit%. demo"), "llbl.c formatter should render spaced-dot unit names")
+assert(formatted:match("c%.fn%. main"), "llbl.c formatter should render spaced-dot function names")
+assert(formatted:match("c%.decl%. acc"), "llbl.c formatter should render spaced-dot declaration names")
+assert(not formatted:match("c%.fn%.main"), "llbl.c formatter must not collapse head/name spacing")
 
 local expected = [[#include <stdint.h>
 
@@ -161,7 +161,7 @@ int32_t main(void) {
     }
     return 0;
 }]]
-assert(src == expected, "llb.c emitted shape changed:\n" .. src)
+assert(src == expected, "llbl.c emitted shape changed:\n" .. src)
 compile_run(src, "gnu99")
 
 local portable = c.unit. portable {
@@ -204,4 +204,4 @@ ok, err = pcall(function()
 end)
 assert(not ok and tostring(err):match("product entries must be typed names or spreads"), "role mismatch should reject statement as field")
 
-io.write("llb.c ok\n")
+io.write("llbl.c ok\n")

@@ -3,21 +3,21 @@ local function bind_context(T)
     if T._lalin_api_cache.exec_plan_rules ~= nil then return T._lalin_api_cache.exec_plan_rules end
 
     local lalin = require("lalin")
-    local llb = require("llb")
+    local llbl = require("llbl")
     local Llisle = require("llisle")
     local RuleApi = require("lalin.llisle_rule_api")
-    local env = lalin.family.env { scope = "env", base = _G }
+    local env = lalin.language.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
 
-    local ExecFragmentInput = llb.symbol("ExecFragmentInput")
-    local ExecFragmentSelection = llb.symbol("ExecFragmentSelection")
-    local fragment = llb.symbol("fragment")
-    local selection = llb.symbol("selection")
-    local exec_fragment_selection = llb.symbol("exec_fragment_selection")
+    local ExecFragmentInput = llbl.shared.symbols.source("ExecFragmentInput")
+    local ExecFragmentSelection = llbl.shared.symbols.source("ExecFragmentSelection")
+    local fragment = llbl.shared.symbols.source("fragment")
+    local selection = llbl.shared.symbols.source("selection")
+    local exec_fragment_selection = llbl.shared.symbols.source("exec_fragment_selection")
 
-    local stencil = llb.symbol("stencil")
-    local skip = llb.symbol("skip")
+    local stencil = llbl.shared.symbols.source("stencil")
+    local skip = llbl.shared.symbols.source("skip")
 
     local function build_selection(fields) return fields end
 

@@ -3,26 +3,26 @@ local function bind_context(T)
     if T._lalin_api_cache.tree_typecheck_rules ~= nil then return T._lalin_api_cache.tree_typecheck_rules end
 
     local lalin = require("lalin")
-    local llb = require("llb")
+    local llbl = require("llbl")
     local Llisle = require("llisle")
     local RuleApi = require("lalin.llisle_rule_api")
-    local env = lalin.family.env { scope = "env", base = _G }
+    local env = lalin.language.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
     local Tr = T.LalinTree
 
-    local Selection = llb.symbol("TreeTypecheckDispatchSelection")
-    local dispatch_selection = llb.symbol("dispatch_selection")
-    local stmt = llb.symbol("stmt")
-    local expr = llb.symbol("expr")
-    local view = llb.symbol("view")
-    local index_base = llb.symbol("index_base")
-    local place = llb.symbol("place")
-    local control_stmt_region = llb.symbol("control_stmt_region")
-    local control_expr_region = llb.symbol("control_expr_region")
-    local func = llb.symbol("func")
-    local item = llb.symbol("item")
-    local module = llb.symbol("module")
+    local Selection = llbl.shared.symbols.source("TreeTypecheckDispatchSelection")
+    local dispatch_selection = llbl.shared.symbols.source("dispatch_selection")
+    local stmt = llbl.shared.symbols.source("stmt")
+    local expr = llbl.shared.symbols.source("expr")
+    local view = llbl.shared.symbols.source("view")
+    local index_base = llbl.shared.symbols.source("index_base")
+    local place = llbl.shared.symbols.source("place")
+    local control_stmt_region = llbl.shared.symbols.source("control_stmt_region")
+    local control_expr_region = llbl.shared.symbols.source("control_expr_region")
+    local func = llbl.shared.symbols.source("func")
+    local item = llbl.shared.symbols.source("item")
+    local module = llbl.shared.symbols.source("module")
 
     local function build_selection(fields) return fields end
 

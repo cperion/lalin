@@ -109,19 +109,14 @@ assert(module.funcs[1].cdefs[1].ty == i32_c, "cdefs should carry FFI C physical 
 assert(void_c == LJ.LJCTypeVoid, "void C type singleton should be available")
 
 local init = Value.ValueExprConst(Code.CodeConstLiteral(Code.CodeTyInt(32, Code.CodeSigned), Core.LitInt("0")))
-local descriptor = Stencil.StencilDescriptor(
-    Stencil.StencilReduce,
+local descriptor = Stencil.StencilDescriptorReduce(
     Stencil.StencilDomainRange1D(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilDomainForward),
     {
         Stencil.StencilAccess("xs", Stencil.StencilAccessRead, Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilTopologyContiguous(1)),
         Stencil.StencilAccess("acc", Stencil.StencilAccessReduce, Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilTopologyScalar(init)),
     },
-    nil,
     Stencil.StencilReducer(Value.ReductionAdd, Code.CodeTyInt(32, Code.CodeSigned), init, nil, nil),
-    Stencil.StencilSkeletonReduce,
-    Stencil.StencilMemorySemantics(nil, nil, nil),
-    Code.CodeTyInt(32, Code.CodeSigned),
-    {}
+    Code.CodeTyInt(32, Code.CodeSigned)
 )
 local artifact = Stencil.StencilArtifact(
     Stencil.StencilInstance(
@@ -133,7 +128,9 @@ local artifact = Stencil.StencilArtifact(
     ),
     Stencil.StencilProviderC,
     Stencil.StencilSymbolId("ml_stencil_test"),
-    "int32_t ml_stencil_test(const int32_t*, int32_t);"
+    "int32_t ml_stencil_test(const int32_t*, int32_t);",
+    nil,
+    {}
 )
 local stencil_machine = LJ.LJMachine(
     LJ.LJMachineId("m:stencil"),

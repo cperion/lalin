@@ -1,27 +1,27 @@
 # Lalin Conventions
 
-These conventions keep the repository grepable and keep the language family
-reduced.
+These conventions keep the repository grepable and keep the extensible language
+auditable.
 
 ## Names
 
-Use `Lalin` for the project and native language family.
+Use `Lalin` for the project and native compiled dialect.
 
 Use `lalin` for package names, module names, file stems, CLI names, and local
 variables that hold the public module.
 
-Use `ll` as the short authoring namespace inside family DSL code:
+Use `lln` as the short authoring namespace inside LLBL-authored code:
 
 ```lua
-ll.fn. add { a [ll.i32], b [ll.i32] } [ll.i32] {
-  ll.ret (a + b),
+lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
+  lln.ret (a + b),
 }
 ```
 
 Use exact subsystem prefixes:
 
 ```text
-llb_      LLB substrate concepts
+llbl_      LLBL substrate concepts
 llpvm_    LLPVM concepts
 llisle_   Llisle concepts
 luajit_   LuaJIT backend concepts
@@ -63,8 +63,8 @@ about `use()` globals.
 Preferred:
 
 ```lua
-ll.fn. add { a [ll.i32], b [ll.i32] } [ll.i32] {
-  ll.ret (a + b),
+lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
+  lln.ret (a + b),
 }
 ```
 
@@ -73,7 +73,7 @@ Spacing:
 ```lua
 i :lt (n)
 value :eq (target)
-as [ll.i32] (x)
+as [lln.i32] (x)
 ```
 
 Keep the space after the receiver and before the call parentheses. The method
@@ -86,9 +86,9 @@ Reusable DSL pieces should return role-tagged fragments:
 
 ```lua
 local function buffer_params()
-  return ll.product {
-    p [ll.ptr [ll.u8]],
-    n [ll.index],
+  return lln.product {
+    p [lln.ptr [lln.u8]],
+    n [lln.index],
   }
 end
 ```
@@ -101,7 +101,7 @@ Use regions for control machines. Prefer `emit` for local composition. Use
 region `call` when the region needs a frame for recursion, profiling, debugging,
 or instrumentation. Functions are the sealed product-return ABI substrate.
 
-`region.` is LLB-owned. Lalin consumes it; Lalin does not own the generic region
+`region.` is LLBL-owned. Lalin consumes it; Lalin does not own the generic region
 concept.
 
 Do not introduce semantic APIs named `stream`. Pull-shaped behavior is a region

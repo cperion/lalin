@@ -343,6 +343,10 @@ local function bind_context(T)
     if T._lalin_api_cache.copy_patch_mc ~= nil then return T._lalin_api_cache.copy_patch_mc end
 
     local StencilC = require("lalin.stencil_c")(T)
+    local ArtifactPlan = require("lalin.stencil_artifact_plan")(T)
+    local Code = T.LalinCode
+    local Value = T.LalinValue
+    local Stencil = T.LalinStencil
     local LJ = T.LalinLuaJIT
 
     local api = {}
@@ -433,6 +437,48 @@ local function bind_context(T)
     local function artifact_signature(artifact)
         assert(artifact and artifact.c_signature, "copy_patch_mc: artifact missing C signature")
         return artifact.c_signature
+    end
+
+    local function is_i32(ty)
+        return pvm.classof(ty) == Code.CodeTyInt and tonumber(ty.bits) == 32 and ty.signedness == Code.CodeSigned
+    end
+
+    local function explicit_vector_mc_path(artifact)
+        local schedule = artifact.instance and artifact.instance.schedule
+        if pvm.classof(schedule) ~= Stencil.StencilScheduleVector then return false end
+        local shape = ArtifactPlan.artifact_shape(artifact)
+        if shape.kind ~= "reduce_array" then return false end
+        if shape.reduction ~= Value.ReductionAdd then return false end
+        if not is_i32(shape.elem_ty) or not is_i32(shape.result_ty) then return false end
+        if tonumber(shape.stride) ~= 1 then return false end
+        local xs = ArtifactPlan.access_named(artifact.instance.descriptor, "xs")
+        local top = pvm.classof(xs.topology)
+        return top == Stencil.StencilTopologyContiguous or top == Stencil.StencilTopologySliceDescriptor
+    end
+
+    local function realized_mc_schedule(artifact, cflags)
+        local schedule = artifact.instance and artifact.instance.schedule
+        local evidence = {
+            Stencil.StencilRealizedByConstruction("MC copy-patch materializer built object code"),
+        }
+        if cflags ~= nil and cflags ~= "" then
+            evidence[#evidence + 1] = Stencil.StencilRealizedCompilerRemark("cflags: " .. tostring(cflags))
+        end
+        if explicit_vector_mc_path(artifact) then
+            return Stencil.StencilRealizedVector(
+                schedule.feature,
+                schedule.lanes,
+                schedule.unroll,
+                schedule.interleave,
+                schedule.tail,
+                Stencil.StencilMaterializerCopyPatchMC,
+                evidence
+            )
+        end
+        if pvm.classof(schedule) == Stencil.StencilScheduleUnrolled then
+            return Stencil.StencilRealizedUnrolled(schedule.factor, Stencil.StencilMaterializerCopyPatchMC, evidence)
+        end
+        return Stencil.StencilRealizedScalar(Stencil.StencilMaterializerCopyPatchMC, evidence)
     end
 
     local function unique_artifacts(artifacts)
@@ -586,13 +632,14 @@ local function bind_context(T)
             local entry_needs_low32
             binary, raw_patches, entry_needs_low32 = materialize_local_sections(section, binary, raw_patches)
             needs_low32 = needs_low32 or entry_needs_low32
+            local realized_artifact = ArtifactPlan.artifact_with_realized(artifact, Stencil.StencilProviderC, realized_mc_schedule(artifact, cflags))
             local raw_entry = {
                 symbol = symbol,
                 section = section,
                 binary = binary,
                 c_signature = function_pointer_signature(artifact_signature(artifact), symbol),
                 patches = raw_patches,
-                artifact = artifact,
+                artifact = realized_artifact,
             }
             local patches = {}
             for i, patch in ipairs(raw_entry.patches) do patches[i] = as_patch_record(patch) end

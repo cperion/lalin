@@ -1,5 +1,5 @@
 local schema = require("lalin.schema_runtime")
-local llb = require("llb")
+local llbl = require("llbl")
 local SubjectAt = require("lalin.editor_subject_at")
 local Format = require("lalin.error.format")
 
@@ -195,8 +195,8 @@ local function bind_context(T)
         if not anchor.range or not anchor.range.start then return nil end
         local doc = analysis.parse.parts.document
         local source_name = doc.uri and doc.uri.text or "=(lalin.lua)"
-        llb.source.register(source_name, doc.text or "")
-        return llb.source.leading_comment {
+        llbl.source.register(source_name, doc.text or "")
+        return llbl.source.leading_comment {
             source = source_name,
             file = source_name,
             line = anchor.range.start.line + 1,

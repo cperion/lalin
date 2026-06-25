@@ -3,7 +3,7 @@
 -- variable inspection, and coordination between the interpreter and DAP server.
 
 local pvm = require("lalin.pvm")
-local llb = require("llb")
+local llbl = require("llbl")
 local Interpreter = require("lalin.debug_interpreter")
 
 local M = {}
@@ -424,6 +424,6 @@ local function debugger_process_body(ctx, debugger, commands)
     return gen, { ctx = ctx, debugger = debugger, commands = commands }, { phase = "state", index = 1 }
 end
 
-M.process = llb.process. debugger { "debugger", "commands" } (debugger_process_body)
+M.process = llbl.process. debugger { "debugger", "commands" } (debugger_process_body)
 
 return M

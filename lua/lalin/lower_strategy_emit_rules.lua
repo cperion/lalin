@@ -3,25 +3,25 @@ local function bind_context(T)
     if T._lalin_api_cache.lower_strategy_emit_rules ~= nil then return T._lalin_api_cache.lower_strategy_emit_rules end
 
     local lalin = require("lalin")
-    local llb = require("llb")
+    local llbl = require("llbl")
     local Llisle = require("llisle")
     local RuleApi = require("lalin.llisle_rule_api")
-    local env = lalin.family.env { scope = "env", base = _G }
+    local env = lalin.language.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
 
-    local LowerEmitInput = llb.symbol("LowerEmitInput")
-    local LowerEmitSelection = llb.symbol("LowerEmitSelection")
-    local emit = llb.symbol("emit")
-    local selection = llb.symbol("selection")
-    local lower_emit_selection = llb.symbol("lower_emit_selection")
+    local LowerEmitInput = llbl.shared.symbols.source("LowerEmitInput")
+    local LowerEmitSelection = llbl.shared.symbols.source("LowerEmitSelection")
+    local emit = llbl.shared.symbols.source("emit")
+    local selection = llbl.shared.symbols.source("selection")
+    local lower_emit_selection = llbl.shared.symbols.source("lower_emit_selection")
 
-    local code = llb.symbol("code")
-    local closed_form = llb.symbol("closed_form")
-    local scalar_kernel = llb.symbol("scalar_kernel")
-    local vector_kernel = llb.symbol("vector_kernel")
-    local missing_schedule = llb.symbol("missing_schedule")
-    local unsupported = llb.symbol("unsupported")
+    local code = llbl.shared.symbols.source("code")
+    local closed_form = llbl.shared.symbols.source("closed_form")
+    local scalar_kernel = llbl.shared.symbols.source("scalar_kernel")
+    local vector_kernel = llbl.shared.symbols.source("vector_kernel")
+    local missing_schedule = llbl.shared.symbols.source("missing_schedule")
+    local unsupported = llbl.shared.symbols.source("unsupported")
 
     local function build_selection(fields) return fields end
 

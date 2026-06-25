@@ -35,7 +35,7 @@ M.flatline = require("lalin.flatline")
 M.ast = require("lalin.ast")
 M.dsl = require("lalin.dsl")
 M.lalin = M.dsl.namespace()
-M.ll = M.dsl.namespace { name = "ll" }
+M.lln = M.dsl.namespace { name = "lln" }
 M.debugger_core = require("lalin.debugger_core")
 M.back_program = require("lalin.back_program")
 M.back_target_model = require("lalin.back_target_model")
@@ -60,7 +60,7 @@ M.c_tcc = require("lalin.c_tcc")
 
 M.lsp = require("lalin.rpc_stdio_loop")
 
-local llb = require("llb")
+local llbl = require("llbl")
 local llpvm_dsl = require("llpvm.dsl")
 local llisle_dsl = require("llisle.dsl")
 local schema_dsl = require("lalin.schema.dsl")
@@ -68,11 +68,11 @@ M.schema_dsl = schema_dsl
 M.schema_namespace = schema_dsl.namespace()
 
 local function family_add_error(bag, err, value, code)
-    if llb.is(err, "Diagnostic") then return bag:add(err) end
+    if llbl.is(err, "Diagnostic") then return bag:add(err) end
     return bag:error {
         code = code or "E_FAMILY_TOOL",
         message = tostring(err),
-        primary = llb.origin_of(value),
+        primary = llbl.origin_of(value),
     }
 end
 
@@ -103,13 +103,13 @@ local function collect_schema_values(out, value, seen)
         out[#out + 1] = value
         return out
     end
-    if llb.is(value, "Zone") then
+    if llbl.is(value, "Zone") then
         if value.member == "lalinschema.dsl" or value.name == "schema" or value.name == "lalinschema" then
             for _, item in ipairs(value.items or {}) do collect_schema_values(out, item, seen) end
         end
         return out
     end
-    if llb.is(value, "FamilyBundle") then
+    if llbl.is(value, "LanguageBundle") then
         for _, z in ipairs(value.zones or {}) do collect_schema_values(out, z, seen) end
         return out
     end
@@ -127,13 +127,13 @@ local function collect_llpvm_values(out, value, seen)
         out[#out + 1] = value
         return out
     end
-    if llb.is(value, "Zone") then
+    if llbl.is(value, "Zone") then
         if value.member == "llpvm.dsl" or value.name == "llpvm" then
             for _, item in ipairs(value.items or {}) do collect_llpvm_values(out, item, seen) end
         end
         return out
     end
-    if llb.is(value, "FamilyBundle") then
+    if llbl.is(value, "LanguageBundle") then
         for _, z in ipairs(value.zones or {}) do collect_llpvm_values(out, z, seen) end
         return out
     end
@@ -142,8 +142,8 @@ local function collect_llpvm_values(out, value, seen)
     return out
 end
 
-local function lalin_diagnostics(value, bag, opts, family)
-    local zones = family:owned_zones(value, "lalin.dsl")
+local function lalin_diagnostics(value, bag, opts, language)
+    local zones = language:owned_zones(value, "lalin.dsl")
     local targets = #zones > 0 and zones or { value }
     for _, target in ipairs(targets) do
         local ok, unit = pcall(M.dsl.to_unit, opts and opts.name or "FamilyDiagnostics", target)
@@ -162,7 +162,7 @@ local function lalin_diagnostics(value, bag, opts, family)
                         bag:error {
                             code = "E_LALIN_TYPECHECK",
                             message = tostring(report.issues[i].message or report.issues[i]),
-                            primary = llb.origin_of(target),
+                            primary = llbl.origin_of(target),
                         }
                     end
                 end
@@ -172,9 +172,9 @@ local function lalin_diagnostics(value, bag, opts, family)
     return bag
 end
 
-local function lalin_index(value, opts, family)
+local function lalin_index(value, opts, language)
     local out = { symbols = {}, hovers = {}, diagnostics = {} }
-    local zones = family:owned_zones(value, "lalin.dsl")
+    local zones = language:owned_zones(value, "lalin.dsl")
     local targets = #zones > 0 and zones or { value }
     for _, target in ipairs(targets) do
         local ok, unit = pcall(M.dsl.to_unit, opts and opts.name or "FamilyIndex", target)
@@ -185,22 +185,22 @@ local function lalin_index(value, opts, family)
                         name = tostring(decl.name),
                         kind = decl.kind or "lalin",
                         member = "lalin.dsl",
-                        origin = llb.origin_of(decl),
+                        origin = llbl.origin_of(decl),
                     }
                 end
             end
         else
-            out.diagnostics[#out.diagnostics + 1] = llb.diagnostic {
+            out.diagnostics[#out.diagnostics + 1] = llbl.diagnostic {
                 code = "E_LALIN_INDEX",
                 message = tostring(unit),
-                primary = llb.origin_of(target),
+                primary = llbl.origin_of(target),
             }
         end
     end
     return out
 end
 
-local function llpvm_diagnostics(value, bag, opts, family)
+local function llpvm_diagnostics(value, bag, opts, language)
     local targets = collect_llpvm_values({}, value)
     for _, target in ipairs(targets) do
         local ok, projected = pcall(llpvm_dsl.to_program, target)
@@ -215,7 +215,7 @@ local function llpvm_diagnostics(value, bag, opts, family)
                 else
                     for ev in llpvm_dsl.validate(bytes_or_err) do
                         if ev.kind == "diagnostic" then
-                            bag:add(ev.diagnostic or llb.diagnostic { code = ev.code, message = ev.message, primary = llb.origin_of(target) })
+                            bag:add(ev.diagnostic or llbl.diagnostic { code = ev.code, message = ev.message, primary = llbl.origin_of(target) })
                         end
                     end
                 end
@@ -228,7 +228,7 @@ local function llpvm_diagnostics(value, bag, opts, family)
     return bag
 end
 
-local function llpvm_index(value, opts, family)
+local function llpvm_index(value, opts, language)
     local out = { symbols = {}, hovers = {}, diagnostics = {} }
     local function visit(item)
         if type(item) == "table" and item.name then
@@ -236,7 +236,7 @@ local function llpvm_index(value, opts, family)
                 name = tostring(item.name),
                 kind = "llpvm",
                 member = "llpvm.dsl",
-                origin = llb.origin_of(item),
+                origin = llbl.origin_of(item),
             }
         end
         if type(item) == "table" then
@@ -247,15 +247,15 @@ local function llpvm_index(value, opts, family)
     return out
 end
 
-local function llisle_diagnostics(value, bag, opts, family)
+local function llisle_diagnostics(value, bag, opts, language)
     return llisle_dsl.diagnostics(value, bag)
 end
 
-local function llisle_index(value, opts, family)
+local function llisle_index(value, opts, language)
     return llisle_dsl.index(value)
 end
 
-local function schema_diagnostics(value, bag, opts, family)
+local function schema_diagnostics(value, bag, opts, language)
     local targets = collect_schema_values({}, value)
     if #targets == 0 then return bag end
     local modules = {}
@@ -272,7 +272,7 @@ local function schema_diagnostics(value, bag, opts, family)
     return bag
 end
 
-local function schema_index(value, opts, family)
+local function schema_index(value, opts, language)
     local out = { symbols = {}, hovers = {}, diagnostics = {} }
     local function visit(item, parent)
         if schema_dsl.is_schema_value(item, "Module") then
@@ -280,7 +280,7 @@ local function schema_index(value, opts, family)
                 name = tostring(item.name),
                 kind = "schema",
                 member = "lalinschema.dsl",
-                origin = llb.origin_of(item),
+                origin = llbl.origin_of(item),
             }
             for _, decl in ipairs(item.decls or {}) do visit(decl, item.name) end
         elseif schema_dsl.is_schema_value(item, "Decl") then
@@ -288,7 +288,7 @@ local function schema_index(value, opts, family)
                 name = tostring(item.name),
                 kind = tostring(item.kind or "schema"),
                 member = "lalinschema.dsl",
-                origin = llb.origin_of(item),
+                origin = llbl.origin_of(item),
                 parent = parent,
             }
         end
@@ -297,57 +297,57 @@ local function schema_index(value, opts, family)
     return out
 end
 
-local function lalin_markdown(member, opts, family)
+local function lalin_markdown(member, opts, language)
     return table.concat({
         "## lalin.dsl",
         "",
-        "Lalin is the typed native language member of the family. It owns functions, regions, types, resources, and native compilation projection.",
+        "Lalin is the typed native language member of the language. It owns functions, regions, types, resources, and native compilation projection.",
         "",
-        "Family source uses the `ll` namespace value for Lalin. `lalin` is the long alias. Call `ll { ... }` when a family value contains Lalin declarations.",
+        "Language source uses the `lln` namespace value for Lalin. `lalin` is the long alias. Call `lln { ... }` when a language value contains Lalin declarations.",
         "",
         "```lua",
-        "ll {",
-        "  ll.fn. add { a [ll.i32], b [ll.i32] } [ll.i32] {",
-        "    ll.ret (a + b),",
+        "lln {",
+        "  lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {",
+        "    lln.ret (a + b),",
         "  },",
         "}",
         "```",
         "",
-        llb.markdown_dialect(member.dialect, { level = 3, title = "Lalin LLB Surface" }),
+        llbl.markdown_dialect(member.dialect, { level = 3, title = "Lalin LLBL Surface" }),
     }, "\n")
 end
 
-local function llpvm_markdown(member, opts, family)
+local function llpvm_markdown(member, opts, language)
     return table.concat({
         "## llpvm.dsl",
         "",
-        "LLPVM is the low-level process/bytecode VM member of the Lalin family. It owns bytecode programs, task/process specs, validation, and inspection.",
+        "LLPVM is the low-level process/bytecode VM member of the Lalin language. It owns bytecode programs, task/process specs, validation, and inspection.",
         "",
-        "Family source uses the `llpvm` namespace value. Call `llpvm { ... }` when a family value carries LLPVM programs next to Lalin declarations.",
+        "Language source uses the `llpvm` namespace value. Call `llpvm { ... }` when a language value carries LLPVM programs next to Lalin declarations.",
         "",
         "```lua",
         "llpvm {",
         "  llpvm.task. compile {",
-        "    llpvm.input [ll.i32],",
-        "    llpvm.output [ll.i32],",
-        "    llpvm.event. progress [ll.i32],",
+        "    llpvm.input [lln.i32],",
+        "    llpvm.output [lln.i32],",
+        "    llpvm.event. progress [lln.i32],",
         "  },",
         "}",
         "```",
         "",
-        llb.markdown_dialect(member.dialect, { level = 3, title = "LLPVM LLB Surface" }),
+        llbl.markdown_dialect(member.dialect, { level = 3, title = "LLPVM LLBL Surface" }),
     }, "\n")
 end
 
-local function llisle_markdown(member, opts, family)
+local function llisle_markdown(member, opts, language)
     return table.concat({
         "## llisle.dsl",
         "",
-        "Llisle is the lowering/rewrite/selection rule member of the Lalin family. It expresses compiler choices as typed relations, projection/classification relations, declared predicates, declared constructors, product-shaped patterns, sum alternatives, and process-shaped rule bodies.",
+        "Llisle is the lowering/rewrite/selection rule member of the Lalin language. It expresses compiler choices as typed relations, projection/classification relations, declared predicates, declared constructors, product-shaped patterns, sum alternatives, and process-shaped rule bodies.",
         "",
         "Lua implementations are explicit values spliced through `[]` on `predicate.` and `constructor.` declarations. Llisle owns the semantic names; Lua supplies implementation values without a side-table registry.",
         "",
-        "Canonical Llisle source is normally authored as a Llisle island: install the Llisle member into the authoring environment, use `llisle { ... }` as the zone/container, and write the body with bare Llisle heads. Use `llisle.*` prefixes only when crossing a mixed-family boundary without installing the member island.",
+        "Canonical Llisle source is normally authored as a Llisle island: install the Llisle member into the authoring environment, use `llisle { ... }` as the zone/container, and write the body with bare Llisle heads. Use `llisle.*` prefixes only when crossing a mixed-language boundary without installing the member island.",
         "",
         "```lua",
         "llisle {",
@@ -380,12 +380,12 @@ local function llisle_markdown(member, opts, family)
         "",
         "  rule. add_i32 {",
         "    llisle.lower_expr {",
-        "      expr = add { lhs = P. lhs, rhs = P. rhs } [ll.i32],",
+        "      expr = add { lhs = P. lhs, rhs = P. rhs } [lln.i32],",
         "      ctx = P. ctx,",
         "    },",
         "",
         "    when {",
-        "      (P. lhs :has_type (ll.i32)) * (P. rhs :has_type (ll.i32)),",
+        "      (P. lhs :has_type (lln.i32)) * (P. rhs :has_type (lln.i32)),",
         "    },",
         "",
         "    run {",
@@ -396,17 +396,17 @@ local function llisle_markdown(member, opts, family)
         "}",
         "```",
         "",
-        llb.markdown_dialect(member.dialect, { level = 3, title = "Llisle LLB Surface" }),
+        llbl.markdown_dialect(member.dialect, { level = 3, title = "Llisle LLBL Surface" }),
     }, "\n")
 end
 
-local function schema_markdown(member, opts, family)
+local function schema_markdown(member, opts, language)
     return table.concat({
         "## lalinschema.dsl",
         "",
-        "LalinSchema is the ASDL/schema member of the Lalin family. It owns typed schema declarations used to define the compiler family itself.",
+        "LalinSchema is the ASDL/schema member of the Lalin language. It owns typed schema declarations used to define the compiler language itself.",
         "",
-        "In the full Lalin family, LalinSchema is exposed through the `schema` namespace value. Use `schema. Name { ... }` for modules, `schema.product`, `schema.sum`, `schema.alias`, `schema.field`, and schema helpers such as `schema.many`.",
+        "In the full Lalin language, LalinSchema is exposed through the `schema` namespace value. Use `schema. Name { ... }` for modules, `schema.product`, `schema.sum`, `schema.alias`, `schema.field`, and schema helpers such as `schema.many`.",
         "",
         "```lua",
         "schema {",
@@ -416,11 +416,11 @@ local function schema_markdown(member, opts, family)
         "}",
         "```",
         "",
-        llb.markdown_dialect(member.dialect, { level = 3, title = "LalinSchema LLB Surface" }),
+        llbl.markdown_dialect(member.dialect, { level = 3, title = "LalinSchema LLBL Surface" }),
     }, "\n")
 end
 
-M.family = llb.family. lalin {
+M.language = llbl.language. lalin {
     prefer = {
         cache = "llpvm.dsl",
         entry = "llpvm.dsl",
@@ -431,7 +431,7 @@ M.family = llb.family. lalin {
         language = "llpvm.dsl",
         llpvm = "llpvm.dsl",
         llisle = "llisle.dsl",
-        ll = "lalin.dsl",
+        lln = "lalin.dsl",
         machine = "llpvm.dsl",
         lalin = "lalin.dsl",
         schema = "lalinschema.dsl",
@@ -470,7 +470,7 @@ M.family = llb.family. lalin {
         "input",
         "output",
         "root",
-        "ll",
+        "lln",
         "lalin",
         "llpvm",
         "llisle",
@@ -489,7 +489,7 @@ M.family = llb.family. lalin {
     {
         name = "lalin.dsl",
         dialect = M.dsl.language,
-        exports = function(opts) return M.dsl.make_family_env(opts) end,
+        exports = function(opts) return M.dsl.make_language_env(opts) end,
         match = is_lalin_decl,
         format = function(value, opts) return M.dsl.format(value, opts) end,
         diagnostics = lalin_diagnostics,
@@ -507,19 +507,19 @@ M.family = llb.family. lalin {
             uses = {
                 "authoring-substrate",
                 "diagnostics",
-                "family-composition",
+                "language-composition",
                 "fragments",
                 "generic-region",
                 "namespaces",
                 "origins",
-                "type-family",
+                "type-language",
             },
         },
     },
     {
         name = "lalinschema.dsl",
         dialect = schema_dsl.Dialect,
-        exports = function(opts) return schema_dsl.make_family_env(opts) end,
+        exports = function(opts) return schema_dsl.make_language_env(opts) end,
         match = is_schema_value,
         format = function(value, opts) return schema_dsl.format(value, opts) end,
         diagnostics = schema_diagnostics,
@@ -529,14 +529,14 @@ M.family = llb.family. lalin {
         semantics = {
             owns = {
                 "schema-modules",
-                "type-family",
+                "type-language",
                 "product-sum-schema",
                 "schema-identity",
             },
             uses = {
                 "authoring-substrate",
                 "diagnostics",
-                "family-composition",
+                "language-composition",
                 "fragments",
                 "namespaces",
                 "origins",
@@ -546,7 +546,7 @@ M.family = llb.family. lalin {
     {
         name = "llpvm.dsl",
         dialect = llpvm_dsl.meta_language,
-        exports = function(opts) return llpvm_dsl.make_family_env(opts) end,
+        exports = function(opts) return llpvm_dsl.make_language_env(opts) end,
         match = is_llpvm_value,
         format = function(value, opts) return llpvm_dsl.format(value, opts) end,
         diagnostics = llpvm_diagnostics,
@@ -564,25 +564,25 @@ M.family = llb.family. lalin {
             uses = {
                 "authoring-substrate",
                 "diagnostics",
-                "family-composition",
+                "language-composition",
                 "fragments",
                 "namespaces",
                 "origins",
                 "native-type-values",
-                "type-family",
+                "type-language",
             },
         },
     },
     {
         name = "llisle.dsl",
         dialect = llisle_dsl.language,
-        exports = function(opts) return llisle_dsl.make_family_env(opts) end,
+        exports = function(opts) return llisle_dsl.make_language_env(opts) end,
         match = is_llisle_value,
         format = function(value, opts) return llisle_dsl.format(value, opts) end,
         diagnostics = llisle_diagnostics,
         index = llisle_index,
         markdown = llisle_markdown,
-        requires = { "llb.core" },
+        requires = { "llbl.core" },
         provides = { "llisle.dsl" },
         semantics = {
             owns = {
@@ -593,12 +593,12 @@ M.family = llb.family. lalin {
             uses = {
                 "authoring-substrate",
                 "diagnostics",
-                "family-composition",
+                "language-composition",
                 "fragments",
                 "namespaces",
                 "native-type-values",
                 "origins",
-                "type-family",
+                "type-language",
             },
         },
     },
@@ -616,11 +616,11 @@ M.process = M.dsl.process
 M.source = M.dsl.source
 
 function M.markdown(opts)
-    return M.family.markdown(opts)
+    return M.language.markdown(opts)
 end
 
 function M.write_markdown(path, opts)
-    return M.family.write_markdown(path, opts)
+    return M.language.write_markdown(path, opts)
 end
 
 --- Canonical formatting for evaluated Lalin DSL values.

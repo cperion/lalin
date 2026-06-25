@@ -16,7 +16,7 @@ assert(Dispatch.document_events_process, "LSP exposes document process")
 
 local uri = S.DocUri("file:///lsp_lua_dsl_test.lua")
 local doc = S.DocumentSnapshot(uri, S.DocVersion(1), S.LangLua, [[
-require("lalin").family.use { scope = "env", target = getfenv(1), global = false, override = true }
+require("lalin").language.use { scope = "env", target = getfenv(1), global = false, override = true }
 
 return lalin.unit. LspSmoke {
   lalin.fn. add { a [lalin.i32], b [lalin.i32] } [lalin.i32] {
@@ -52,7 +52,7 @@ assert(saw_index and saw_symbol, "LSP document process yields index and symbol e
 
 local bad_uri = S.DocUri("file:///lsp_lua_dsl_bad.lua")
 local bad_doc = S.DocumentSnapshot(bad_uri, S.DocVersion(1), S.LangLua, [[
-require("lalin").family.use { scope = "env", target = getfenv(1), global = false, override = true }
+require("lalin").language.use { scope = "env", target = getfenv(1), global = false, override = true }
 
 return lalin.unit. Bad {
   lalin.fn. bad {} [lalin.i32] {

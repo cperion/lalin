@@ -1,4 +1,4 @@
--- Public LLPVM facade — LLB DSL-first, no legacy mutation authoring surface.
+-- Public LLPVM facade — LLBL DSL-first, no legacy mutation authoring surface.
 
 local dsl = require("llpvm.dsl")
 local bytecode = require("llpvm.bytecode")

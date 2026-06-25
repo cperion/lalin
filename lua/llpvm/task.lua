@@ -1,6 +1,6 @@
 -- LLPVM task declarations and run records.
 
-local llb = require("llb")
+local llbl = require("llbl")
 local asdl = require("llpvm.asdl")
 
 local M = {}
@@ -48,13 +48,13 @@ function M.describe_run(run)
     }
 end
 
-function M.from_llb_handle(handle, name)
+function M.from_llbl_handle(handle, name)
     local result, run = M.record_handle(name or (handle.task and handle.task.name) or "task", handle)
     return { output = result, run = run }
 end
 
 M.T = asdl.T
 M.B = asdl.B.LlPvm
-M.llb_process = llb.process
+M.llbl_process = llbl.process
 
 return M

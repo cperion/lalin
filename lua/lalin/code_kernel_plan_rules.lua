@@ -3,23 +3,23 @@ local function bind_context(T)
     if T._lalin_api_cache.code_kernel_plan_rules ~= nil then return T._lalin_api_cache.code_kernel_plan_rules end
 
     local lalin = require("lalin")
-    local llb = require("llb")
+    local llbl = require("llbl")
     local Llisle = require("llisle")
     local RuleApi = require("lalin.llisle_rule_api")
-    local env = lalin.family.env { scope = "env", base = _G }
+    local env = lalin.language.env { scope = "env", base = _G }
     Llisle.use { scope = "env", target = env, base = env, global = false }
     local llisle = env.llisle
-    local KernelLoopPlanInput = llb.symbol("KernelLoopPlanInput")
-    local KernelLoopPlanSelection = llb.symbol("KernelLoopPlanSelection")
-    local loop = llb.symbol("loop")
-    local selection = llb.symbol("selection")
-    local kernel_plan = llb.symbol("kernel_plan")
-    local no_plan = llb.symbol("no_plan")
-    local planned = llb.symbol("planned")
-    local closed_form = llb.symbol("closed_form")
-    local reduction = llb.symbol("reduction")
-    local skeleton = llb.symbol("skeleton")
-    local original_control = llb.symbol("original_control")
+    local KernelLoopPlanInput = llbl.shared.symbols.source("KernelLoopPlanInput")
+    local KernelLoopPlanSelection = llbl.shared.symbols.source("KernelLoopPlanSelection")
+    local loop = llbl.shared.symbols.source("loop")
+    local selection = llbl.shared.symbols.source("selection")
+    local kernel_plan = llbl.shared.symbols.source("kernel_plan")
+    local no_plan = llbl.shared.symbols.source("no_plan")
+    local planned = llbl.shared.symbols.source("planned")
+    local closed_form = llbl.shared.symbols.source("closed_form")
+    local reduction = llbl.shared.symbols.source("reduction")
+    local skeleton = llbl.shared.symbols.source("skeleton")
+    local original_control = llbl.shared.symbols.source("original_control")
     local function build_kernel_plan(fields) return fields end
 
     local function build_rules()

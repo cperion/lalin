@@ -4,7 +4,7 @@
 -- machines, phases, and roots. This module validates that graph as a first
 -- class process so tooling can consume the same event gps as batch callers.
 
-local llb = require("llb")
+local llbl = require("llbl")
 local pvm = require("lalin.pvm")
 
 local M = {}
@@ -274,7 +274,7 @@ local function phase_validate_process_body(ctx, package)
         end)
 end
 
-M.process = llb.process.phase_validate { "package" } (phase_validate_process_body)
+M.process = llbl.process.phase_validate { "package" } (phase_validate_process_body)
 
 function M.validate(package)
     local handle = M.process:start(package)

@@ -1,11 +1,11 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local llb = require("llb")
-local gps = llb.gps
+local llbl = require("llbl")
+local gps = llbl.gps
 
-local env = llb.core_family():env().env
-assert(rawget(env, "gps") == nil, "LLB family env should expose GPS through llb.gps, not as a bare family binding")
-assert(llb.gps == gps, "LLB gps API is available through llb.gps")
+local env = llbl.core_language():env().env
+assert(rawget(env, "gps") == nil, "LLBL language env should expose GPS through llbl.gps, not as a bare language binding")
+assert(llbl.gps == gps, "LLBL gps API is available through llbl.gps")
 
 local mapped = gps.from.array({ 1, 2, 3 })
     :map(function(v) return v * 2 end)
@@ -52,4 +52,4 @@ local materialized_result = gps.run(gps.plan {
 assert(materialized_result == nil, "drain materializer should return nil")
 assert(#seen == 2 and seen[1] == "x" and seen[2] == "y", "drain materializer should consume gps")
 
-io.write("llb gps ok\n")
+io.write("llbl gps ok\n")

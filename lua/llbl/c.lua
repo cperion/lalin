@@ -1,34 +1,34 @@
-local llb = require("llb")
-local g, ch = llb.grammar, llb.channel
+local llbl = require("llbl")
+local g, ch = llbl.grammar, llbl.channel
 local lua_type = type
 
 local M = {}
 
 local function cnode(role, kind, fields)
     fields = fields or {}
-    fields.__llb_c = role
+    fields.__llbl_c = role
     fields.kind = kind
-    fields.origin = fields.origin or llb.here("llb.c." .. tostring(kind), { skip = 3 })
+    fields.origin = fields.origin or llbl.here("llbl.c." .. tostring(kind), { skip = 3 })
     return fields
 end
 
-local function role(v) return lua_type(v) == "table" and rawget(v, "__llb_c") or nil end
+local function role(v) return lua_type(v) == "table" and rawget(v, "__llbl_c") or nil end
 local function is_type(v) return role(v) == "type" end
-llb.register_type_like(is_type)
+llbl.register_type_like(is_type)
 
 local function fail(msg, origin, level)
-    error("llb.c: " .. msg, (level or 1) + 1)
+    error("llbl.c: " .. msg, (level or 1) + 1)
 end
 
 local function is_unit(v)
-    if v == nil or v == llb.UNIT then return true end
+    if v == nil or v == llbl.UNIT then return true end
     if lua_type(v) ~= "table" then return false end
-    return rawget(v, "__llb_tag") == "Sentinel"
+    return rawget(v, "__llbl_tag") == "Sentinel"
 end
 
 local function cname(v, site)
     if lua_type(v) == "table" then
-        if llb.is(v, "Name") or llb.is(v, "Symbol") then v = v.text end
+        if llbl.is(v, "Name") or llbl.is(v, "Symbol") then v = v.text end
         if role(v) == "expr" and v.kind == "name" then v = v.name end
     end
     local s = tostring(v or "")
@@ -48,7 +48,7 @@ local function named_type(name) return ctype("name", { name = tostring(name) }) 
 
 local function type_any(v)
     if role(v) == "type" then return v end
-    if lua_type(v) == "table" and (llb.is(v, "Name") or llb.is(v, "Symbol")) then return named_type(v.text) end
+    if lua_type(v) == "table" and (llbl.is(v, "Name") or llbl.is(v, "Symbol")) then return named_type(v.text) end
     return named_type(v)
 end
 
@@ -58,7 +58,7 @@ local function expr(kind, fields) return setmetatable(cnode("expr", kind, fields
 local to_expr
 local function bin(op, a, b) return expr("bin", { op = op, lhs = to_expr(a), rhs = to_expr(b) }) end
 local function plain_list(v)
-    return lua_type(v) == "table" and role(v) == nil and not llb.is(v, "Expr") and not llb.is(v, "Symbol") and not llb.is(v, "Name")
+    return lua_type(v) == "table" and role(v) == nil and not llbl.is(v, "Expr") and not llbl.is(v, "Symbol") and not llbl.is(v, "Name")
 end
 
 Expr.__add = function(a, b) return bin("+", a, b) end
@@ -74,13 +74,13 @@ Expr.__call = function(self, args)
 end
 Expr.__index = function(self, key)
     if Expr[key] then return Expr[key] end
-    if lua_type(key) == "number" or role(key) == "expr" or (lua_type(key) == "table" and llb.is(key, "Symbol")) then
+    if lua_type(key) == "number" or role(key) == "expr" or (lua_type(key) == "table" and llbl.is(key, "Symbol")) then
         return expr("index", { base = self, index = to_expr(key) })
     end
     return expr("field", { base = self, field = cname(key, "field") })
 end
 
-local function llb_expr(v)
+local function llbl_expr(v)
     local k = v.kind
     if k == "binop" then return bin(v.op, v.a, v.b) end
     if k == "unop" then return expr("un", { op = v.op, value = to_expr(v.a) }) end
@@ -93,23 +93,23 @@ local function llb_expr(v)
         for i = 1, n do args[i] = to_expr(raw[i]) end
         return expr("call", { callee = to_expr(v.callee), args = args })
     end
-    fail("unsupported LLB expression kind " .. tostring(k), v.origin, 2)
+    fail("unsupported LLBL expression kind " .. tostring(k), v.origin, 2)
 end
 
 to_expr = function(v)
-    if v == nil or v == llb.NIL then return expr("null", {}) end
-    if lua_type(v) == "table" and rawget(v, "__llb_tag") == "Sentinel" then return expr("unit", {}) end
+    if v == nil or v == llbl.NIL then return expr("null", {}) end
+    if lua_type(v) == "table" and rawget(v, "__llbl_tag") == "Sentinel" then return expr("unit", {}) end
     if role(v) == "expr" then return v end
     if lua_type(v) == "table" then
-        if llb.is(v, "Symbol") or llb.is(v, "Name") then return expr("name", { name = cname(v, "symbol") }) end
-        if llb.is(v, "Expr") then return llb_expr(v) end
+        if llbl.is(v, "Symbol") or llbl.is(v, "Name") then return expr("name", { name = cname(v, "symbol") }) end
+        if llbl.is(v, "Expr") then return llbl_expr(v) end
     end
     if lua_type(v) == "number" then return expr("number", { value = v }) end
     if lua_type(v) == "string" then return expr("string", { value = v }) end
     if lua_type(v) == "boolean" then return expr("number", { value = v and 1 or 0 }) end
     local detail = role(v) or lua_type(v)
     if lua_type(v) == "table" then
-        detail = tostring(detail) .. " tag=" .. tostring(rawget(v, "__llb_tag")) .. " kind=" .. tostring(rawget(v, "kind")) .. " name=" .. tostring(rawget(v, "name"))
+        detail = tostring(detail) .. " tag=" .. tostring(rawget(v, "__llbl_tag")) .. " kind=" .. tostring(rawget(v, "kind")) .. " name=" .. tostring(rawget(v, "name"))
     end
     fail("expected C expression, got " .. detail, lua_type(v) == "table" and v.origin or nil, 2)
 end
@@ -132,7 +132,7 @@ end
 
 local function c_name_slot(v) return cname(v, "name") end
 
-local C = llb.dialect "llb.c" {
+local C = llbl.dialect "llbl.c" {
     g.role. decl  { kind = "identity" },
     g.role. stmt  { kind = "identity" },
     g.role. decls { kind = "array", item = "decl" },
@@ -256,7 +256,7 @@ E.type = setmetatable({}, {
 })
 
 E.void, E.bool, E.char = named_type("void"), named_type("_Bool"), named_type("char")
-E.int, E.i32, E.u32 = named_type("int"), named_type("int32_t"), named_type("uint32_t")
+E.int, E.uint, E.i32, E.u32 = named_type("int"), named_type("unsigned int"), named_type("int32_t"), named_type("uint32_t")
 E.i8, E.u8, E.i16, E.u16 = named_type("int8_t"), named_type("uint8_t"), named_type("int16_t"), named_type("uint16_t")
 E.i64, E.u64, E.f32, E.f64 = named_type("int64_t"), named_type("uint64_t"), named_type("float"), named_type("double")
 E.size_t, E.uintptr_t, E.intptr_t = named_type("size_t"), named_type("uintptr_t"), named_type("intptr_t")
@@ -302,15 +302,19 @@ E.builtin = setmetatable({}, {
 E.lt, E.le, E.gt, E.ge = function(a, b) return bin("<", a, b) end, function(a, b) return bin("<=", a, b) end, function(a, b) return bin(">", a, b) end, function(a, b) return bin(">=", a, b) end
 E.eq, E.ne = function(a, b) return bin("==", a, b) end, function(a, b) return bin("!=", a, b) end
 E.land, E.lor = function(a, b) return bin("&&", a, b) end, function(a, b) return bin("||", a, b) end
+E.band, E.bor, E.bxor = function(a, b) return bin("&", a, b) end, function(a, b) return bin("|", a, b) end, function(a, b) return bin("^", a, b) end
+E.shl, E.shr = function(a, b) return bin("<<", a, b) end, function(a, b) return bin(">>", a, b) end
+E.select = function(cond, then_value, else_value) return expr("select", { cond = to_expr(cond), then_value = to_expr(then_value), else_value = to_expr(else_value) }) end
 E.addr = function(v) return expr("un", { op = "&", value = to_expr(v) }) end
 E.deref = function(v) return expr("un", { op = "*", value = to_expr(v) }) end
 E.not_ = function(v) return expr("un", { op = "!", value = to_expr(v) }) end
+E.bnot = function(v) return expr("un", { op = "~", value = to_expr(v) }) end
 E.raw_expr = function(text) return expr("raw", { text = tostring(text) }) end
 E.raw_stmt = function(text) return stmt("raw", { text = tostring(text) }) end
 E.raw_decl = function(text) return decl("raw", { text = tostring(text) }) end
 E.raw_param = function(text)
     text = tostring(text)
-    return llb.spread(llb.fragment("params", { { name = "__raw_param_" .. private_name(text), raw = text } }))
+    return llbl.spread(llbl.fragment("params", { { name = "__raw_param_" .. private_name(text), raw = text } }))
 end
 
 local function emit_context(opts)
@@ -345,7 +349,7 @@ local function declarator(t, name, ctx)
     return s .. (s:match("[%*%s]$") and "" or " ") .. cname(name, "declarator")
 end
 
-local prec = { raw = 100, name = 100, number = 100, string = 100, null = 100, call = 90, index = 90, field = 90, un = 80, ["*"] = 70, ["/"] = 70, ["%"] = 70, ["+"] = 60, ["-"] = 60, ["<"] = 50, ["<="] = 50, [">"] = 50, [">="] = 50, ["=="] = 45, ["!="] = 45, ["&&"] = 30, ["||"] = 20 }
+local prec = { raw = 100, name = 100, number = 100, string = 100, null = 100, call = 90, index = 90, field = 90, un = 80, ["*"] = 70, ["/"] = 70, ["%"] = 70, ["+"] = 60, ["-"] = 60, ["<<"] = 55, [">>"] = 55, ["<"] = 50, ["<="] = 50, [">"] = 50, [">="] = 50, ["=="] = 45, ["!="] = 45, ["&"] = 42, ["^"] = 41, ["|"] = 40, ["&&"] = 30, ["||"] = 20, select = 15 }
 local function par(e, parent, ctx)
     local s = expr_s(e, ctx)
     return (prec[e.kind == "bin" and e.op or e.kind] or 0) < (prec[parent] or 0) and ("(" .. s .. ")") or s
@@ -359,6 +363,7 @@ expr_s = function(e, ctx)
     if e.kind == "null" then return "NULL" end
     if e.kind == "bin" then return par(e.lhs, e.op, ctx) .. " " .. e.op .. " " .. par(e.rhs, e.op, ctx) end
     if e.kind == "un" then return e.op .. par(e.value, "un", ctx) end
+    if e.kind == "select" then return par(e.cond, "select", ctx) .. " ? " .. par(e.then_value, "select", ctx) .. " : " .. par(e.else_value, "select", ctx) end
     if e.kind == "index" then return par(e.base, "index", ctx) .. "[" .. expr_s(e.index, ctx) .. "]" end
     if e.kind == "field" then return par(e.base, "field", ctx) .. "." .. e.field end
     if e.kind == "cast" then return "(" .. type_s(e.ty, ctx) .. ")(" .. expr_s(e.value, ctx) .. ")" end
@@ -453,7 +458,7 @@ function M.type_spelling(t, opts) return type_s(t, emit_context(opts)) end
 function M.expr_spelling(e, opts) return expr_s(e, emit_context(opts)) end
 function M.role(v) return role(v) end
 
-local d = llb.doc
+local d = llbl.doc
 
 local function quote(v) return string.format("%q", tostring(v)) end
 local function head_name(head, name) return d.concat { "c.", head, ". ", tostring(name) } end
@@ -484,7 +489,7 @@ local function block_doc(items, f, item_fmt)
 end
 
 local primitive_type_names = {
-    void = "void", ["_Bool"] = "bool", char = "char", int = "int",
+    void = "void", ["_Bool"] = "bool", char = "char", int = "int", ["unsigned int"] = "uint",
     int8_t = "i8", uint8_t = "u8", int16_t = "i16", uint16_t = "u16",
     int32_t = "i32", uint32_t = "u32", int64_t = "i64", uint64_t = "u64",
     float = "f32", double = "f64", size_t = "size_t", uintptr_t = "uintptr_t", intptr_t = "intptr_t",
@@ -525,9 +530,10 @@ format_expr_doc = function(e, f)
     if e.kind == "name" then return d.text(e.name) end
     if e.kind == "number" then return d.text(tostring(e.value)) end
     if e.kind == "string" then return d.text(quote(e.value)) end
-    if e.kind == "null" then return d.text(e.ty and ("c.null [" .. llb.render(format_type_doc(e.ty, f)) .. "]") or "nil") end
+    if e.kind == "null" then return d.text(e.ty and ("c.null [" .. llbl.render(format_type_doc(e.ty, f)) .. "]") or "nil") end
     if e.kind == "bin" then return d.group { format_expr_doc(e.lhs, f), " ", e.op, " ", format_expr_doc(e.rhs, f) } end
     if e.kind == "un" then return d.group { e.op, format_expr_doc(e.value, f) } end
+    if e.kind == "select" then return d.group { "c.select(", format_expr_doc(e.cond, f), ", ", format_expr_doc(e.then_value, f), ", ", format_expr_doc(e.else_value, f), ")" } end
     if e.kind == "index" then return d.group { format_expr_doc(e.base, f), "[", format_expr_doc(e.index, f), "]" } end
     if e.kind == "field" then return d.group { format_expr_doc(e.base, f), ".", e.field } end
     if e.kind == "cast" then return d.group { "c.cast [", format_type_doc(e.ty, f), "] (", format_expr_doc(e.value, f), ")" } end
@@ -648,14 +654,14 @@ local function with_c_lang(opts)
     return opts
 end
 
-function M.format(value, opts) return llb.format(value, with_c_lang(opts)) end
-function M.format_doc(value, opts) return llb.format_doc(value, with_c_lang(opts)) end
-function M.format_region(value, opts) return llb.format_region(value, with_c_lang(opts)) end
+function M.format(value, opts) return llbl.format(value, with_c_lang(opts)) end
+function M.format_doc(value, opts) return llbl.format_doc(value, with_c_lang(opts)) end
+function M.format_region(value, opts) return llbl.format_region(value, with_c_lang(opts)) end
 
 function M.use(env)
     env = env or _G
     env.c = E
-    env._ = llb.spread
+    env._ = llbl.spread
     local mt, old = getmetatable(env) or {}, getmetatable(env) and getmetatable(env).__index
     mt.__index = function(t, key)
         local v = E[key]
@@ -664,7 +670,7 @@ function M.use(env)
             local ov = lua_type(old) == "function" and old(t, key) or old[key]
             if ov ~= nil then return ov end
         end
-        local s = llb.symbol(key)
+        local s = llbl.shared.symbols.source(key)
         rawset(t, key, s)
         return s
     end

@@ -17,7 +17,7 @@ local Diagnostics = require("lalin.editor_diagnostic_facts")(T)
 local uri = S.DocUri("file:///editor_lua_dsl_test.lua")
 
 local good_doc = S.DocumentSnapshot(uri, S.DocVersion(1), S.LangLua, [[
-require("lalin").family.use { scope = "env", target = getfenv(1), global = false, override = true }
+require("lalin").language.use { scope = "env", target = getfenv(1), global = false, override = true }
 
 return lalin.unit. EditorSmoke {
   lalin.struct. Pair { a [lalin.i32], b [lalin.i32] },
@@ -44,7 +44,7 @@ assert(saw_struct, "document symbols should include struct")
 assert(saw_func, "document symbols should include function")
 
 local bad_doc = S.DocumentSnapshot(S.DocUri("file:///editor_lua_dsl_bad.lua"), S.DocVersion(1), S.LangLua, [[
-require("lalin").family.use { scope = "env", target = getfenv(1), global = false, override = true }
+require("lalin").language.use { scope = "env", target = getfenv(1), global = false, override = true }
 
 -- Outer unit diagnostic context.
 return lalin.unit. Bad {

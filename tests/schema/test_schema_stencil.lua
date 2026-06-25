@@ -14,6 +14,7 @@ local Value = T.LalinValue
 local Kernel = T.LalinKernel
 local Ty = T.LalinType
 local Stencil = T.LalinStencil
+local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)
@@ -42,26 +43,52 @@ local compiler = Stencil.StencilCompilerPolicy(
 local vector_facts = Stencil.StencilVectorizationFacts(
     {
         Stencil.StencilAccessVectorFact(
-            "xs",
-            Stencil.StencilAliasUnknown,
+            Stencil.StencilAccessRef("xs"),
             Stencil.StencilAlignmentKnown(4),
             true,
             true
         ),
         Stencil.StencilAccessVectorFact(
-            "acc",
-            Stencil.StencilAliasNoAlias,
+            Stencil.StencilAccessRef("acc"),
             Stencil.StencilAlignmentUnknown,
             false,
             false
         ),
     },
+    {
+        Stencil.StencilAccessAliasFact(
+            Stencil.StencilAccessRef("xs"),
+            Stencil.StencilAccessRef("acc"),
+            Stencil.StencilAliasNoAlias
+        ),
+    },
     Stencil.StencilTripCountDynamic,
-    Stencil.StencilArithmeticVectorFact(true, sem, nil)
+    Stencil.StencilArithmeticVectorFact(true, sem, nil),
+    {
+        Stencil.StencilProofObligation(
+            Stencil.StencilProofUnitStride(Stencil.StencilAccessRef("xs")),
+            Stencil.StencilProofCheckerDerived,
+            nil
+        ),
+        Stencil.StencilProofObligation(
+            Stencil.StencilProofAlignment(Stencil.StencilAccessRef("xs"), Stencil.StencilAlignmentKnown(4)),
+            Stencil.StencilProofBoundaryContract,
+            nil
+        ),
+        Stencil.StencilProofObligation(
+            Stencil.StencilProofNoAlias(Stencil.StencilAccessRef("xs"), Stencil.StencilAccessRef("acc")),
+            Stencil.StencilProofAuthorAsserted,
+            nil
+        ),
+        Stencil.StencilProofObligation(
+            Stencil.StencilProofReductionReassociable,
+            Stencil.StencilProofCheckerDerived,
+            proof
+        ),
+    }
 )
 local schedule = Stencil.StencilScheduleAutoVector(compiler, vector_facts)
-local descriptor = Stencil.StencilDescriptor(
-    Stencil.StencilReduce,
+local descriptor = Stencil.StencilDescriptorReduce(
     Stencil.StencilDomainRange1D(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilDomainForward),
     {
         Stencil.StencilAccess(
@@ -77,16 +104,8 @@ local descriptor = Stencil.StencilDescriptor(
             Stencil.StencilTopologyScalar(init)
         ),
     },
-    nil,
     Stencil.StencilReducer(Value.ReductionAdd, i32, init, sem, nil),
-    Stencil.StencilSkeletonReduce,
-    Stencil.StencilMemorySemantics(nil, nil, nil),
-    i32,
-    {
-        Stencil.StencilParamType("elem_ty", i32),
-        Stencil.StencilParamReduction("reduction", Value.ReductionAdd),
-        Stencil.StencilParamNumber("stride", 1),
-    }
+    i32
 )
 local instance = Stencil.StencilInstance(
     Stencil.StencilInstanceId("stencil:reduce_array:i32:add"),
@@ -99,28 +118,58 @@ local artifact = Stencil.StencilArtifact(
     instance,
     Stencil.StencilProviderC,
     Stencil.StencilSymbolId("ml_stencil_reduce_array_i32_add_s1"),
-    "int32_t ml_stencil_reduce_array_i32_add_s1(const int32_t *, int32_t, int32_t, int32_t);"
+    "int32_t ml_stencil_reduce_array_i32_add_s1(const int32_t *, int32_t, int32_t, int32_t);",
+    nil,
+    {}
 )
 
-assert(instance.descriptor.vocab == Stencil.StencilReduce)
-assert(pvm.classof(instance.descriptor.domain) == Stencil.StencilDomainRange1D)
-assert(instance.descriptor.accesses[1].role == Stencil.StencilAccessRead)
-assert(instance.descriptor.accesses[2].role == Stencil.StencilAccessReduce)
+assert(StencilArtifactPlan.descriptor_vocab(instance.descriptor) == Stencil.StencilReduce)
+assert(pvm.classof(StencilArtifactPlan.descriptor_domain(instance.descriptor)) == Stencil.StencilDomainRange1D)
+assert(StencilArtifactPlan.descriptor_accesses(instance.descriptor)[1].role == Stencil.StencilAccessRead)
+assert(StencilArtifactPlan.descriptor_accesses(instance.descriptor)[2].role == Stencil.StencilAccessReduce)
 assert(pvm.classof(instance.descriptor.reducer) == Stencil.StencilReducer)
-assert(instance.descriptor.skeleton == Stencil.StencilSkeletonReduce)
+assert(StencilArtifactPlan.descriptor_skeleton(instance.descriptor) == Stencil.StencilSkeletonReduce)
 assert(pvm.classof(instance.schedule) == Stencil.StencilScheduleAutoVector)
 assert(instance.schedule.compiler.compiler == Stencil.StencilCompilerGcc)
 assert(instance.schedule.compiler.opt_level == Stencil.StencilOptO3)
 assert(instance.schedule.compiler.machine == Stencil.StencilMachineNative)
-assert(instance.schedule.facts.access_facts[1].access_name == "xs")
+assert(instance.schedule.facts.access_facts[1].access.name == "xs")
+assert(instance.schedule.facts.alias_facts[1].left.name == "xs")
+assert(instance.schedule.facts.alias_facts[1].right.name == "acc")
+assert(instance.schedule.facts.alias_facts[1].relation == Stencil.StencilAliasNoAlias)
 assert(pvm.classof(instance.schedule.facts.access_facts[1].alignment) == Stencil.StencilAlignmentKnown)
 assert(instance.schedule.facts.arithmetic.int_semantics == sem)
+assert(#instance.schedule.facts.proof_obligations == 4)
+assert(pvm.classof(instance.schedule.facts.proof_obligations[1].kind) == Stencil.StencilProofUnitStride)
+assert(pvm.classof(instance.schedule.facts.proof_obligations[2].kind) == Stencil.StencilProofAlignment)
+assert(instance.schedule.facts.proof_obligations[2].origin == Stencil.StencilProofBoundaryContract)
+assert(pvm.classof(instance.schedule.facts.proof_obligations[3].kind) == Stencil.StencilProofNoAlias)
+assert(instance.schedule.facts.proof_obligations[3].origin == Stencil.StencilProofAuthorAsserted)
+assert(instance.schedule.facts.proof_obligations[4].kind == Stencil.StencilProofReductionReassociable)
+assert(instance.schedule.facts.proof_obligations[4].proof == proof)
 assert(artifact.provider == Stencil.StencilProviderC)
 assert(artifact.instance == instance)
+assert(artifact.realized == nil)
+assert(#artifact.schedule_rejects == 0)
 
-local pred = Stencil.StencilPredEqConst(init)
-local op = Stencil.StencilOpUnary(Stencil.StencilUnaryNeg, i32)
-local zip_op = Stencil.StencilOpBinary(Stencil.StencilBinaryAdd, i32)
+local realized = Stencil.StencilRealizedVector(
+    Stencil.StencilVectorFeatureNative,
+    4,
+    2,
+    1,
+    Stencil.StencilVectorScalarTail,
+    Stencil.StencilMaterializerCopyPatchMC,
+    { Stencil.StencilRealizedByConstruction("schema smoke") }
+)
+local schedule_reject = Stencil.StencilRejectSchedule(Stencil.StencilScheduleRejectRequestedRealizedMismatch(schedule, realized, "schema smoke mismatch"))
+local missing_proof = Stencil.StencilRejectMissingProof(Stencil.StencilProofTripCount(Stencil.StencilTripCountMultipleOf(4)))
+assert(realized.lanes == 4)
+assert(pvm.classof(schedule_reject.reject) == Stencil.StencilScheduleRejectRequestedRealizedMismatch)
+assert(pvm.classof(missing_proof.obligation) == Stencil.StencilProofTripCount)
+
+local pred = Stencil.StencilPredCompareConst(Core.CmpEq, i32, init)
+local op = Stencil.StencilOpUnary(Stencil.StencilUnaryNeg, i32, sem, nil)
+local zip_op = Stencil.StencilOpBinary(Stencil.StencilBinaryAdd, i32, sem, nil)
 local cast_op = Stencil.StencilOpCast(Core.MachineCastSToF, i32, Code.CodeTyFloat(64))
 local pred_op = Stencil.StencilOpPredicate(pred, Code.CodeTyBool8)
 local cmp_op = Stencil.StencilOpCompare(Core.CmpLt, Code.CodeTyBool8)
@@ -168,6 +217,8 @@ assert(pvm.classof(soa_topology.parent) == Stencil.StencilTopologyContiguous)
 assert(soa_topology.record_ty == pair_ty)
 assert(soa_topology.field_name == "right")
 assert(soa_topology.component_index == 1)
-assert(pvm.classof(pred) == Stencil.StencilPredEqConst)
+assert(pvm.classof(pred) == Stencil.StencilPredCompareConst)
+assert(pred.cmp == Core.CmpEq)
+assert(pred.operand_ty == i32)
 
 io.write("lalin schema_stencil ok\n")

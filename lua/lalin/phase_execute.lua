@@ -5,7 +5,7 @@
 -- resolve through a registry key, with Lua/Lalin allowed to fall back to
 -- require(module)[function] for hosted compiler code.
 
-local llb = require("llb")
+local llbl = require("llbl")
 local pvm = require("lalin.pvm")
 local LlTask = require("llpvm.task")
 
@@ -191,7 +191,7 @@ local function phase_execute_process_body(ctx, executor, plan, input, opts)
         end)
 end
 
-M.process = llb.process.phase_execute { "executor", "plan", "input", "opts" } (phase_execute_process_body)
+M.process = llbl.process.phase_execute { "executor", "plan", "input", "opts" } (phase_execute_process_body)
 
 function Executor:run(plan, input, opts)
     local handle = M.process:start(self, plan, input, opts)

@@ -30,6 +30,7 @@ local function inst(id, kind) return Code.CodeInst(Code.CodeInstId("inst:" .. id
 local function term(id, kind) return Code.CodeTerm(Code.CodeTermId("term:" .. id), kind, origin) end
 local function place(base, index) return Code.CodePlaceIndex(Code.CodePlaceDeref(base, i32, 4), index, i32, 4) end
 local function iconst(raw) return Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt(tostring(raw)))) end
+local function cmp_pred(cmp, ty, value) return Stencil.StencilPredCompareConst(cmp, ty, value) end
 
 local function build_loop_case(name, opts)
     local dst = opts.dst and param(name .. "_dst", Code.CodeTyDataPtr(i32)) or nil
@@ -319,7 +320,7 @@ end
 local n = 5
 local xs = ffi.new("int32_t[5]", { 1, -2, 5, 0, 3 })
 local out = ffi.new("int32_t[5]")
-local pred = Stencil.StencilPredGtConst(iconst(0))
+local pred = cmp_pred(Core.CmpGt, i32, iconst(0))
 
 do
     local module, contracts, name = build_loop_case("skeleton_scan", { dst = true, reduce = true, returns_i32 = true })

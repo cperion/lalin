@@ -24,6 +24,10 @@ local function iconst(raw)
     return Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt(tostring(raw))))
 end
 
+local function pred(cmp, ty, value)
+    return Stencil.StencilPredCompareConst(cmp, ty, value)
+end
+
 local function reduction(kind, init)
     return {
         kind = kind,
@@ -43,7 +47,7 @@ local function soa_component(field_name, component_index)
 end
 
 local function access_named(desc, name)
-    for _, access in ipairs(desc.accesses or {}) do
+    for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(desc)) do
         if access.name == name then return access end
     end
     error("missing descriptor access " .. tostring(name))
@@ -77,7 +81,7 @@ local artifacts = {
         lhs_topology = soa_component("left", 0),
         rhs_topology = soa_component("right", 1),
     }),
-    StencilArtifactPlan.partition_array_artifact(Stencil.StencilPredGtConst(iconst(0)), {
+    StencilArtifactPlan.partition_array_artifact(pred(Core.CmpGt, i32, iconst(0)), {
         elem_ty = i32,
         step_num = 1,
         dst_topology = soa_component("positive_then_rest", 1),
@@ -86,7 +90,7 @@ local artifacts = {
 }
 
 for _, artifact in ipairs(artifacts) do
-    for _, access in ipairs(artifact.instance.descriptor.accesses or {}) do
+    for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(artifact.instance.descriptor)) do
         local top = access.topology
         if pvm.classof(top) ~= Stencil.StencilTopologyScalar then
             assert(pvm.classof(top) == Stencil.StencilTopologySoAComponent, "access should keep SoA component topology")

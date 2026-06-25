@@ -43,7 +43,7 @@ Every program — every program, in every language, since the beginning — is t
 
 For sixty years, languages gave us a type system for the first structure and nothing for the second. We typed our data — `int`, `struct`, `List<T>` — and left our control flow untyped: `goto`, `break`, `return`, exceptions, callbacks. Then we spent decades inventing crutches to win back the lost safety: monads to type effects, `Result<T,E>` to type failure, async/await to type suspension, state-machine compilers to type protocols. Every crutch encodes control *as data*, ships the data somewhere, and decodes it back *into control* — paying in allocations, dispatch, and obscurity at every step.
 
-The Lalin family gets that second type system from LLB. LLB is the workbench:
+The Lalin family gets that second type system from LLBL. LLBL is the workbench:
 it owns the generic region algebra, protocols, fragments, origins, diagnostics,
 and family composition. Lalin is the compiled member that consumes this algebra
 and gives it native typed CFG checking and executable lowering.

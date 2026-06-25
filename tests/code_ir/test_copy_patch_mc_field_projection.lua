@@ -24,6 +24,10 @@ local function iconst(raw)
     return Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt(tostring(raw))))
 end
 
+local function pred(cmp, ty, value)
+    return Stencil.StencilPredCompareConst(cmp, ty, value)
+end
+
 local function reduction(kind, init)
     return {
         kind = kind,
@@ -55,12 +59,12 @@ local artifacts = {
         step_num = 1,
         src_topology = field_topology(),
     }),
-    StencilArtifactPlan.find_array_artifact(Stencil.StencilPredEqConst(iconst(20)), {
+    StencilArtifactPlan.find_array_artifact(pred(Core.CmpEq, i32, iconst(20)), {
         elem_ty = i32,
         step_num = 1,
         array_topology = field_topology(),
     }),
-    StencilArtifactPlan.compare_array_artifact(Stencil.StencilPredGtConst(iconst(10)), {
+    StencilArtifactPlan.compare_array_artifact(pred(Core.CmpGt, i32, iconst(10)), {
         elem_ty = i32,
         result_ty = bool8,
         step_num = 1,

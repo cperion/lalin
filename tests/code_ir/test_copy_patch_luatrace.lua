@@ -33,6 +33,10 @@ local function fconst(raw)
     return Value.ValueExprConst(Code.CodeConstLiteral(f64, Core.LitFloat(tostring(raw))))
 end
 
+local function pred(cmp, ty, value)
+    return Stencil.StencilPredCompareConst(cmp, ty, value)
+end
+
 local function reduction(kind, init)
     return {
         kind = kind,
@@ -60,36 +64,64 @@ local artifacts = {
     StencilArtifactPlan.copy_array_artifact({ elem_ty = i32, step_num = 1 }),
     StencilArtifactPlan.copy_array_artifact({ elem_ty = i32, semantics = Stencil.StencilCopyMemMove, step_num = 1 }),
     StencilArtifactPlan.fill_array_artifact({ elem_ty = i32, value = iconst(7), step_num = 1 }),
-    StencilArtifactPlan.find_array_artifact(Stencil.StencilPredEqConst(iconst(5)), { elem_ty = i32, step_num = 1 }),
-    StencilArtifactPlan.partition_array_artifact(Stencil.StencilPredGtConst(iconst(0)), { elem_ty = i32, step_num = 1 }),
+    StencilArtifactPlan.find_array_artifact(pred(Core.CmpEq, i32, iconst(5)), { elem_ty = i32, step_num = 1 }),
+    StencilArtifactPlan.partition_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1 }),
     StencilArtifactPlan.cast_array_artifact(Core.MachineCastSToF, { src_ty = i32, dst_ty = f64, step_num = 1 }),
-    StencilArtifactPlan.compare_array_artifact(Stencil.StencilPredGtConst(iconst(0)), { elem_ty = i32, result_ty = bool8, step_num = 1 }),
+    StencilArtifactPlan.compare_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, result_ty = bool8, step_num = 1 }),
     StencilArtifactPlan.zip_compare_array_artifact(Core.CmpLt, { lhs_ty = i32, rhs_ty = i32, result_ty = bool8, step_num = 1 }),
     StencilArtifactPlan.gather_array_artifact({ elem_ty = i32, index_ty = i32, step_num = 1 }),
     StencilArtifactPlan.scatter_array_artifact({ elem_ty = i32, index_ty = i32, conflicts = Stencil.StencilScatterUniqueIndices, step_num = 1 }),
     StencilArtifactPlan.in_place_map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, step_num = 1 }),
-    StencilArtifactPlan.count_array_artifact(Stencil.StencilPredGtConst(iconst(0)), { elem_ty = i32, step_num = 1 }),
+    StencilArtifactPlan.count_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1 }),
     StencilArtifactPlan.map_reduce_array_artifact(Stencil.StencilUnaryNeg, reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, mapped_ty = i32, result_ty = i32, step_num = 1 }),
     StencilArtifactPlan.zip_reduce_array_artifact(Stencil.StencilBinaryAdd, reduction(Value.ReductionAdd, 0), nil, { lhs_ty = i32, rhs_ty = i32, mapped_ty = i32, result_ty = i32, step_num = 1 }),
+    StencilArtifactPlan.select_array_artifact(Stencil.StencilPredNonZero, { cond_ty = bool8, elem_ty = i32, result_ty = i32, step_num = 1 }),
 }
 
 local realization = CopyPatchLuaTrace.realize_artifacts(artifacts)
 assert(realization.kind == "BCStencilBankRealization", "expected BC copy-patch realization")
 assert(#realization.installed == #artifacts, "all artifacts installed")
+assert(pvm.classof(realization.installed[1].artifact.realized) == Stencil.StencilRealizedUnrolled, "BC autovector trace grouping should record unrolled realization")
+assert(pvm.classof(realization.installed[1].artifact.schedule_rejects[1]) == Stencil.StencilScheduleRejectRequestedRealizedMismatch, "BC autovector trace grouping should record requested/realized mismatch")
 
 local reduce_template = CopyPatchLuaTrace.emit_mc_stencil_source(artifacts[1])
 assert(reduce_template:match("local function ml_stencil_reduce_array_i32_add_to_i32_s1"), "expected reduce bytecode template")
 local partition_template = CopyPatchLuaTrace.emit_mc_stencil_source(artifacts[9])
 assert(partition_template:match("local function ml_stencil_partition_array_i32_gt_stable_s1"), "expected partition bytecode template")
 
-local function artifact_with_facts(artifact, rewrite_fact)
+local function access_ref(name)
+    return Stencil.StencilAccessRef(name)
+end
+
+local function noalias_pair(left, right)
+    return Stencil.StencilAccessAliasFact(access_ref(left), access_ref(right), Stencil.StencilAliasNoAlias)
+end
+
+local function noalias_obligation(pair)
+    return Stencil.StencilProofObligation(
+        Stencil.StencilProofNoAlias(pair.left, pair.right),
+        Stencil.StencilProofAuthorAsserted,
+        nil
+    )
+end
+
+local function artifact_with_facts(artifact, rewrite_fact, alias_facts)
     local schedule = artifact.instance.schedule
     local facts = schedule.facts
     local access_facts = {}
     for i, fact in ipairs(facts.access_facts or {}) do
         access_facts[i] = rewrite_fact(fact)
     end
-    local next_facts = Stencil.StencilVectorizationFacts(access_facts, facts.trip_count, facts.arithmetic)
+    local proof_obligations = facts.proof_obligations or {}
+    if alias_facts ~= nil then
+        proof_obligations = {}
+        for _, pair in ipairs(alias_facts) do
+            if pair.relation == Stencil.StencilAliasNoAlias then
+                proof_obligations[#proof_obligations + 1] = noalias_obligation(pair)
+            end
+        end
+    end
+    local next_facts = Stencil.StencilVectorizationFacts(access_facts, alias_facts or facts.alias_facts or {}, facts.trip_count, facts.arithmetic, proof_obligations)
     local next_schedule
     local schedule_cls = pvm.classof(schedule)
     if schedule_cls == Stencil.StencilScheduleAutoVector then
@@ -120,7 +152,7 @@ local function artifact_with_facts(artifact, rewrite_fact)
         artifact.instance.abi,
         artifact.instance.proofs
     )
-    return Stencil.StencilArtifact(next_instance, artifact.provider, artifact.symbol, artifact.c_signature)
+    return Stencil.StencilArtifact(next_instance, artifact.provider, artifact.symbol, artifact.c_signature, artifact.realized, artifact.schedule_rejects or {})
 end
 
 local first_plan = CopyPatchLuaTrace.plan_artifact(artifacts[1])
@@ -134,14 +166,14 @@ assert(CopyPatchLuaTrace.plan_artifact(artifacts[5]).kernel_plan.primitive_plan.
 assert(CopyPatchLuaTrace.plan_artifact(artifacts[6]).kernel_plan.primitive_plan == nil, "memmove copy must not use ffi.copy primitive")
 assert(CopyPatchLuaTrace.plan_artifact(artifacts[7]).kernel_plan.primitive_plan == nil, "i32 fill should stay loop-shaped")
 local noalias_memmove = artifact_with_facts(artifacts[6], function(fact)
-    return Stencil.StencilAccessVectorFact(fact.access_name, Stencil.StencilAliasNoAlias, fact.alignment, fact.readonly, fact.unit_stride)
-end)
+    return Stencil.StencilAccessVectorFact(fact.access, fact.alignment, fact.readonly, fact.unit_stride)
+end, { noalias_pair("dst", "src") })
 local noalias_memmove_primitive = CopyPatchLuaTrace.plan_artifact(noalias_memmove).kernel_plan.primitive_plan
 assert(noalias_memmove_primitive.kind == "ffi_copy", "noalias facts should allow memmove-shaped copy to use ffi.copy")
 assert(noalias_memmove_primitive.no_overlap_source == "noalias_facts", "copy primitive should record noalias legality source")
 local readonly_dst_copy = artifact_with_facts(artifacts[5], function(fact)
-    local readonly = fact.access_name == "dst" and true or fact.readonly
-    return Stencil.StencilAccessVectorFact(fact.access_name, fact.alias, fact.alignment, readonly, fact.unit_stride)
+    local readonly = fact.access.name == "dst" and true or fact.readonly
+    return Stencil.StencilAccessVectorFact(fact.access, fact.alignment, readonly, fact.unit_stride)
 end)
 assert(CopyPatchLuaTrace.plan_artifact(readonly_dst_copy).kernel_plan.primitive_plan == nil, "readonly destination must block ffi.copy primitive")
 assert(CopyPatchLuaTrace.plan_artifact(artifacts[11]).kernel_plan.predicate_plan.kind == "numeric_store", "compare should use measured inline numeric predicate policy")
@@ -184,10 +216,19 @@ assert(reduce_template:match("luatrace plan: autovector_trace_group"), "LuaTrace
 
 local vector_schedule = vector_artifact.instance.schedule
 local vector_facts = vector_schedule.facts
+local multiple_obligations = {}
+for i, obligation in ipairs(vector_facts.proof_obligations or {}) do multiple_obligations[i] = obligation end
+multiple_obligations[#multiple_obligations + 1] = Stencil.StencilProofObligation(
+    Stencil.StencilProofTripCount(Stencil.StencilTripCountMultipleOf(16)),
+    Stencil.StencilProofAuthorAsserted,
+    nil
+)
 local multiple_facts = Stencil.StencilVectorizationFacts(
     vector_facts.access_facts,
+    vector_facts.alias_facts,
     Stencil.StencilTripCountMultipleOf(16),
-    vector_facts.arithmetic
+    vector_facts.arithmetic,
+    multiple_obligations
 )
 local multiple_schedule = Stencil.StencilScheduleVector(
     vector_schedule.feature,
@@ -213,7 +254,9 @@ local multiple_artifact = Stencil.StencilArtifact(
     multiple_instance,
     vector_artifact.provider,
     vector_artifact.symbol,
-    vector_artifact.c_signature
+    vector_artifact.c_signature,
+    vector_artifact.realized,
+    vector_artifact.schedule_rejects or {}
 )
 local multiple_plan = CopyPatchLuaTrace.plan_artifact(multiple_artifact)
 assert(multiple_plan.loop_plan.tail_strategy == "no_tail_trip_count_multiple", "trip-count multiple should remove generic tail")
@@ -312,6 +355,9 @@ local function exercise(symbols)
     assert(sym(artifacts[16])(xs, 0, 5) == 3, "count")
     assert(sym(artifacts[17])(xs, 0, 5, 0) == -7, "map reduce")
     assert(sym(artifacts[18])(xs, ys, 0, 5, 0) == 157, "zip reduce")
+    local select_mask = ffi.new("uint8_t[5]", { 1, 0, 1, 0, 1 })
+    sym(artifacts[19])(out, select_mask, xs, ys, 0, 5)
+    assert(out[0] == 1 and out[1] == 20 and out[2] == 5 and out[3] == 40 and out[4] == 3, "select")
 end
 
 exercise(realization.symbols)

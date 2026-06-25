@@ -103,16 +103,16 @@ end
 
 for _, selected in ipairs(artifact.artifacts) do
     local desc = selected.instance.descriptor
-    local vocab = tostring(desc.vocab)
-    if vocab == 'LalinStencil.StencilZipMap' then
+    local descriptor_kind = tostring(pvm.classof(desc)):match('Class%((.-)%)')
+    if descriptor_kind == 'LalinStencil.StencilDescriptorZipMap' then
         assert_soa(access_named(desc, 'dst'), 'total', 2)
         assert_soa(access_named(desc, 'lhs'), 'left', 0)
         assert_soa(access_named(desc, 'rhs'), 'right', 1)
-    elseif vocab == 'LalinStencil.StencilZipReduce' then
+    elseif descriptor_kind == 'LalinStencil.StencilDescriptorZipReduce' then
         assert_soa(access_named(desc, 'lhs'), 'left', 0)
         assert_soa(access_named(desc, 'rhs'), 'right', 1)
     else
-        error('unexpected SoA artifact vocab ' .. vocab)
+        error('unexpected SoA artifact descriptor ' .. tostring(pvm.classof(desc)))
     end
 end
 

@@ -1,18 +1,18 @@
 # Lalin
 
-Lalin is a LuaJIT-hosted language family built around LLB.
+Lalin is a LuaJIT-hosted dialect of the LLBL language.
 
-LLB is the center of the system: the language-family workbench and bootstrap
+LLBL is the center of the system: the extensible language workbench and bootstrap
 language for defining member dialects. It turns evaluated Lua values into
 dialect objects with heads, roles, fragments, namespaces, origins, diagnostics,
 formatting, indexing, and generic regions. Region is the shared control algebra
-that composes the family. Lalin is the compiled dialect: it consumes LLB regions
+that composes the language. Lalin is the compiled dialect: it consumes LLBL regions
 and typed values, checks them, and lowers them into LuaJIT copy-patch artifacts.
 
 ```text
 Lua source
   -> Lua values
-  -> LLB family capture
+  -> LLBL language capture
   -> Lalin ASDL
   -> typecheck
   -> LalinCode facts
@@ -23,14 +23,24 @@ Lua source
 
 There is no Cranelift/Rust runtime path in the active architecture.
 
+LLBL bootstraps itself in plain Lua: `lua/llbl.lua` is the small stage-0 kernel,
+`lua/llbl/bootstrap.lua` defines the stage-1 `llbl` dialect, and public
+`llbl.grammar` is the bootstrapped grammar facade. The preserved kernel grammar
+is available as `llbl.kernel.grammar`.
+
+The bare `llbl` member is the identity of language composition. It provides shared
+mechanics such as source/generated symbols, origins, diagnostics, fragments,
+regions, formatting docs, and language-level symbol bindings. Dialects own the
+semantic meaning of those bindings.
+
 ## Quick Start
 
 ```lua
 local lalin = require("lalin")
-lalin.family.use()
+lalin.language.use()
 
-local add = ll.fn. add { a [ll.i32], b [ll.i32] } [ll.i32] {
-  ll.ret (a + b),
+local add = lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
+  lln.ret (a + b),
 }
 
 local module = lalin.compile("demo", { add })
@@ -44,8 +54,8 @@ local lalin = require("lalin")
 
 local unit = lalin.loadstring([[
   return {
-    ll.fn. add { a [ll.i32], b [ll.i32] } [ll.i32] {
-      ll.ret (a + b),
+    lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
+      lln.ret (a + b),
     },
   }
 ]], "demo.lua")()
@@ -96,7 +106,7 @@ luajit tests/code_ir/test_copy_patch_luatrace.lua
 ## Repository Map
 
 ```text
-lua/llb.lua                  LLB language-family workbench substrate
+lua/llbl.lua                  LLBL extensible language workbench substrate
 lua/lalin/                   Lalin compiler, schemas, DSL, and backend
 lua/lalin/dsl/               authoring heads and namespace surface
 lua/lalin/schema/            ASDL/schema definitions
@@ -115,27 +125,27 @@ control outcomes.
 
 ```lua
 region. scan
-  { p [ll.ptr [ll.u8]], n [ll.index], target [ll.u8] }
+  { p [lln.ptr [lln.u8]], n [lln.index], target [lln.u8] }
   {
-    hit { pos [ll.index] },
-    miss { pos [ll.index] },
+    hit { pos [lln.index] },
+    miss { pos [lln.index] },
   }
   {
-    ll.entry. loop { i [ll.index] } {
-      ll.when (i :ge (n)) {
-        ll.jump. miss { pos = i },
+    lln.entry. loop { i [lln.index] } {
+      lln.when (i :ge (n)) {
+        lln.jump. miss { pos = i },
       },
 
-      ll.when (p[i] :eq (target)) {
-        ll.jump. hit { pos = i },
+      lln.when (p[i] :eq (target)) {
+        lln.jump. hit { pos = i },
       },
 
-      ll.jump. loop { i = i + 1 },
+      lln.jump. loop { i = i + 1 },
     },
   }
 ```
 
-`region.` is the generic LLB control-machine head. Lalin consumes generic
+`region.` is the generic LLBL control-machine head. Lalin consumes generic
 regions as native typed CFG when the body uses Lalin block/jump vocabulary.
 
 Internal composition normally uses `emit`, which splices a callee region into
@@ -147,9 +157,9 @@ an encoded exit union and dispatch back to named exits.
 
 The docs are intentionally small:
 
-- `docs/LLB_GUIDE.md` - central LLB workbench and region guide
-- `docs/LANGUAGE_REFERENCE.md` - public Lalin family language reference
-- `docs/ARCHITECTURE.md` - family, compiler, backend, and lowering architecture
+- `docs/LLBL_GUIDE.md` - central LLBL workbench and region guide
+- `docs/LANGUAGE_REFERENCE.md` - public Lalin language reference
+- `docs/ARCHITECTURE.md` - language, compiler, backend, and lowering architecture
 - `docs/LLPVM_GUIDE.md` - low-level VM/task language member
 - `docs/UI_GUIDE.md` - UI package guide
 - `docs/CONVENTIONS.md` - naming, style, and repository conventions
@@ -158,7 +168,7 @@ The docs are intentionally small:
 ## Design Rules
 
 - Lua owns genericity; Lalin receives monomorphic values.
-- LLB is the workbench; Lalin is the compiled family member.
+- LLBL is the workbench; Lalin is the compiled language member.
 - Types are evaluated Lua values in `[]`.
 - Heads are syntax; roles own normalization.
 - Fragments are role-tagged reusable values.

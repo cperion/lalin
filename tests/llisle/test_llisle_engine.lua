@@ -1,15 +1,15 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local lalin = require("lalin")
-local llb = require("llb")
+local llbl = require("llbl")
 local llisle = require("llisle")
 
-local env = lalin.family.env { scope = "env", base = {} }
+local env = lalin.language.env { scope = "env", base = {} }
 llisle.use { scope = "env", target = env, base = env, global = false }
 local chunk = assert(loadstring([[
 return llisle {
   relation. lower_expr {
-    input { expr [ll.i32], ctx [LowerCtx] },
+    input { expr [lln.i32], ctx [LowerCtx] },
     output { value [BackValue] },
     effects { cmd [BackCmd] },
     strategy {
@@ -35,8 +35,8 @@ return llisle {
 
     when {
       (P. expr.kind :eq (add))
-        * (P. expr.lhs.ty :eq (ll.i32))
-        * (P. expr.rhs.ty :eq (ll.i32)),
+        * (P. expr.lhs.ty :eq (lln.i32))
+        * (P. expr.rhs.ty :eq (lln.i32)),
     },
 
     choose {
@@ -93,14 +93,14 @@ return llisle {
 }
 ]], "llisle_engine.lua"))
 
-local i32 = env.ll.i32
+local i32 = env.lln.i32
 local S = {
-  kind = llb.symbol("kind"),
-  ty = llb.symbol("ty"),
-  lhs = llb.symbol("lhs"),
-  rhs = llb.symbol("rhs"),
-  value = llb.symbol("value"),
-  name = llb.symbol("name"),
+  kind = llbl.shared.symbols.source("kind"),
+  ty = llbl.shared.symbols.source("ty"),
+  lhs = llbl.shared.symbols.source("lhs"),
+  rhs = llbl.shared.symbols.source("rhs"),
+  value = llbl.shared.symbols.source("value"),
+  name = llbl.shared.symbols.source("name"),
 }
 local function rec(fields)
   local out = {}
@@ -172,7 +172,7 @@ local classified = assert(engine:run("classify_expr", {
 assert(classified.output.class.kind == "map_class", "bind before guard enables recursive Llisle classification")
 assert(classified.output.class.lane == "xs" and classified.output.class.index == "i", "classifier preserves child output fields")
 
-local formatted = lalin.family.format(zone, { width = 100 })
+local formatted = lalin.language.format(zone, { width = 100 })
 assert(formatted:match("ret%s*{") and formatted:match("value%s*="), "formatter preserves ret record payload")
 
 io.write("llisle engine ok\n")

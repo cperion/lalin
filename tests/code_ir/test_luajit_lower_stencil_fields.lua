@@ -46,7 +46,7 @@ local function i32_place(base, index)
 end
 
 local function access_named(desc, name)
-    for _, access in ipairs(desc.accesses or {}) do
+    for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(desc)) do
         if access.name == name then return access end
     end
     error("missing descriptor access " .. tostring(name))

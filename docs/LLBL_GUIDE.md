@@ -1,32 +1,123 @@
-# LLB Guide
+# LLBL Guide
 
-LLB is the Lua Language Builder family workbench in `lua/llb.lua`. It is the
-center of the Lalin family and the bootstrap language used to define the other
-family dialects.
+LLBL is the Lua Language Builder language workbench in `lua/llbl.lua`. It is the
+center of the Lalin language and the bootstrap language used to define the other
+language dialects.
 
 It lets ordinary Lua syntax act as a structured language surface without adding
-a parser, but that is only the first layer. LLB also owns the machinery that
-makes family dialects compose: namespaces, roles, staged heads, fragments,
+a parser, but that is only the first layer. LLBL also owns the machinery that
+makes language dialects compose: namespaces, roles, staged heads, fragments,
 origins, diagnostics, formatting, indexing, generic regions, protocols,
 processes, GPS lowering, and managed environments.
 
 ```text
 Lua syntax
   -> Lua values
-  -> LLB events, roles, heads, fragments, origins
+  -> LLBL events, roles, heads, fragments, origins
   -> member-dialect values
   -> diagnostics, formatting, indexing, compilation
 ```
 
-LLB is generic. It owns the shared metaprogramming language: heads, roles,
-namespaces, origins, diagnostics, formatting, indexing, families, and generic
+LLBL is generic. It owns the shared metaprogramming language: heads, roles,
+namespaces, origins, diagnostics, formatting, indexing, dialect extension, and generic
 regions. Lalin-specific types, ownership, native CFG checking, and backend
 behavior belong to the Lalin dialect. The generic region algebra belongs to
-LLB; Lalin consumes it.
+LLBL; Lalin consumes it.
+
+## Bootstrap Shape
+
+LLBL now has an explicit two-stage bootstrap.
+
+```text
+stage 0: lua/llbl.lua kernel
+  primitive Lua values, origins, diagnostics, GPS, generic regions,
+  stage-0 grammar declaration records, and the dialect compiler
+
+stage 1: lua/llbl/bootstrap.lua
+  the `llbl` dialect, authored with the stage-0 grammar and installed as the
+  public grammar facade
+
+public facade
+  llbl.grammar        stage-1 grammar facade
+  llbl.self           the bootstrapped `llbl` dialect value
+  llbl.bootstrap      bootstrap descriptor and region machines
+  llbl.kernel.grammar preserved stage-0 grammar
+```
+
+This keeps `require("llbl")` as a plain Lua library while making the public LLBL
+definition an ordinary LLBL dialect. The stage-0 kernel is intentionally small
+and boring; the stage-1 facade is where grammar heads, role declarations,
+formatting ownership, and bootstrap machines become inspectable LLBL values.
+
+## Shared Substrate
+
+`llbl` is the identity element of language composition. Every language is really:
+
+```text
+llbl + dialects
+```
+
+The bare `llbl` member owns shared mechanics, not dialect meaning:
+
+```text
+shared mechanics       owned by llbl
+  symbol creation
+  generated-name marking through N
+  source origins and provenance
+  diagnostics
+  fragments and spread
+  generic regions/GPS
+  formatting document model
+  language composition and export ownership
+
+dialect meaning        owned by member dialects
+  what a symbol denotes
+  type/value/field/constructor meaning
+  semantic binding rules
+  lowering and backend interpretation
+```
+
+Unknown globals create source symbols through `llbl.shared.symbols.source`.
+`N.name` and `N["dynamic"]` create generated symbols. Language-level symbol
+resolution is available through:
+
+```lua
+local binding = language:resolve_symbol(sym)
+-- or
+local binding = llbl.shared.symbols.resolve(language, sym)
+```
+
+The result is a binding record: export owner, value, language, and source/generated
+provenance, or an unresolved binding. It deliberately does not decide whether a
+symbol is a type, variable, constructor, predicate, or field; that is dialect
+semantics layered on top of the shared LLBL resolver.
+
+The shared substrate surface is explicit:
+
+```text
+llbl.shared.symbols       source/generated symbols, scopes, language resolution
+llbl.shared.origins       origin capture, origin lookup, provenance rendering
+llbl.shared.diagnostics   diagnostic values, bags, and failure transport
+llbl.shared.fragments     fragments and spread
+llbl.shared.regions       generic region definition, GPS, lowering, materializers
+llbl.shared.formatting    doc algebra, rendering, semantic formatting
+llbl.shared.languages     identity, composition, language symbol resolution
+```
+
+The language audit also records capability axes:
+
+```text
+owns / uses
+resolves / formats / indexes / lowers / materializes
+```
+
+Those axes are the checklist for dialect review. A dialect should declare what
+it owns and which shared LLBL service it uses, not carry a private duplicate of
+LLBL substrate behavior.
 
 ## Core Atoms
 
-LLB code is built from a small set of atoms:
+LLBL code is built from a small set of atoms:
 
 ```text
 shape       the Lua value shape
@@ -39,7 +130,7 @@ fragment    role-tagged reusable value
 origin      source/provenance handle
 diagnostic  structured failure report
 namespace   owned dialect surface
-zone        family partition
+zone        language partition
 protocol    named behavior contract
 region      generic control machine
 process     event-protocol region
@@ -48,19 +139,19 @@ process     event-protocol region
 A normal user writes:
 
 ```lua
-ll.fn. add { a [ll.i32], b [ll.i32] } [ll.i32] {
-  ll.ret (a + b),
+lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
+  lln.ret (a + b),
 }
 ```
 
 A dialect author defines roles and heads:
 
 ```lua
-local llb = require("llb")
-local g = llb.grammar
-local ch = llb.channel
+local llbl = require("llbl")
+local g = llbl.grammar
+local ch = llbl.channel
 
-local Mini = llb.dialect "Mini" {
+local Mini = llbl.dialect "Mini" {
   g.role. fields { kind = "product", unique_names = true },
   g.role. body   { kind = "array", algebra = "list" },
 
@@ -128,7 +219,7 @@ A head is a staged constructor. It consumes slots in order. Each slot names:
 - optionality
 - diagnostics label
 
-LLB supports incomplete stages intentionally, because Lua dot/index/call syntax
+LLBL supports incomplete stages intentionally, because Lua dot/index/call syntax
 arrives one step at a time.
 
 Fast/generated heads may specialize this state machine, but reflective heads
@@ -172,17 +263,17 @@ A namespace is a Lua table-shaped language surface with semantic ownership
 metadata. It is not just a conflict-avoidance trick.
 
 ```lua
-ll.fn. add ...
+lln.fn. add ...
 schema.product. Pair ...
 llpvm.task. compile ...
 llisle.rule. lower ...
 ```
 
-Family zones use callable namespaces:
+Language zones use callable namespaces:
 
 ```lua
 return {
-  ll { ... },
+  lln { ... },
   llpvm { ... },
   schema { ... },
 }
@@ -193,8 +284,8 @@ composable without hiding ownership.
 
 ## Region And GPS
 
-LLB owns generic `region.`. Region is the shared control algebra that lets the
-family compose. A region is:
+LLBL owns generic `region.`. Region is the shared control algebra that lets the
+language compose. A region is:
 
 ```text
 input product + state product + named exit protocol + transition body
@@ -226,7 +317,7 @@ local function body(ctx, source)
   return gen, { source = source }, 0
 end
 
-local load = llb.process. load { "source" } (body)
+local load = llbl.process. load { "source" } (body)
 
 for ev in load(src) do
   print(ev.seq, ev.kind)
@@ -254,10 +345,10 @@ failure path:
 
 ## Formatting And Indexing
 
-LLB formatting is semantic. It formats evaluated values through role/head/member
+LLBL formatting is semantic. It formats evaluated values through role/head/member
 hooks. It is not a lossless Lua source formatter.
 
-LLB owns the generic surface grammar for formatted head applications:
+LLBL owns the generic surface grammar for formatted head applications:
 
 ```lua
 dialect.head. literal_name
@@ -268,7 +359,7 @@ The spaced dot means "the next token is the object-language name introduced by
 this head". Member dialects should provide role/slot formatters for their
 semantic payloads, such as types, fields, statements, or expressions. They
 should not duplicate the generic head/name spacing rule. Raw Lua token
-formatting is deliberately outside LLB; use a Lua formatter for source text.
+formatting is deliberately outside LLBL; use a Lua formatter for source text.
 
 Indexing should be process-shaped so tools can consume only the events they
 need:
@@ -286,13 +377,13 @@ definition
 
 ## Codegen
 
-LLB can compile its own workbench machinery:
+LLBL can compile its own workbench machinery:
 
 ```text
 role normalizers
 fragment expanders
 staged head machines
-family projectors
+language projectors
 process/event regions
 format/index walkers
 environment installers

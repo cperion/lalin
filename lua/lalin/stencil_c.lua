@@ -19,10 +19,12 @@ local function bind_context(T)
     local Schedule = T.LalinSchedule
     local CodeType = require("lalin.code_type")(T)
     local CEmit = require("lalin.c_emit")(T)
-    local C = require("llb.c")
-    local LLB = require("llb")
-    local _ = LLB.spread
+    local C = require("llbl.c")
+    local LLBL = require("llbl")
+    local _ = LLBL.spread
+    local cn
     local source_params
+    local descriptor_accesses
 
     local api = {}
 
@@ -36,6 +38,11 @@ local function bind_context(T)
     end
 
     local function c_type(ty)
+        local cls = pvm.classof(ty)
+        if cls == Code.CodeTyArray then return "ml_array_" .. tostring(ty.count) .. "_" .. sanitize(CodeType.code_type_key(ty.elem)) end
+        if cls == Code.CodeTyClosure then return "ml_closure_" .. sanitize(ty.sig.text) end
+        if cls == Code.CodeTyVector then return "ml_vector_" .. tostring(ty.lanes) .. "_" .. sanitize(CodeType.code_type_key(ty.elem)) end
+        if cls == Code.CodeTyImportedCFuncPtr then return "ml_cfuncptr_" .. sanitize(ty.sig.text) end
         return CEmit.emit_type(CodeType.code_type_to_c(ty, {}))
     end
 
@@ -43,18 +50,50 @@ local function bind_context(T)
         return c_type(ty) .. " const *" .. name
     end
 
+    local function access_ref_name(ref)
+        return ref and ref.name or nil
+    end
+
     local function access_vector_fact(artifact, name)
         local schedule = artifact.instance and artifact.instance.schedule
         local facts = schedule and schedule.facts and schedule.facts.access_facts or {}
         for _, fact in ipairs(facts or {}) do
-            if fact.access_name == name then return fact end
+            if access_ref_name(fact.access) == name then return fact end
         end
         return nil
     end
 
+    local function alias_relation(artifact, left, right)
+        if left == right then return Stencil.StencilAliasNoAlias end
+        local schedule = artifact.instance and artifact.instance.schedule
+        local facts = schedule and schedule.facts and schedule.facts.alias_facts or {}
+        for _, fact in ipairs(facts or {}) do
+            local a = access_ref_name(fact.left)
+            local b = access_ref_name(fact.right)
+            if (a == left and b == right) or (a == right and b == left) then return fact.relation end
+        end
+        return Stencil.StencilAliasUnknown
+    end
+
+    local function pointer_access_names(artifact)
+        local out = {}
+        local desc = artifact.instance and artifact.instance.descriptor
+        for _, access in ipairs(descriptor_accesses(desc)) do
+            if pvm.classof(access.topology) ~= Stencil.StencilTopologyScalar then out[#out + 1] = access.name end
+        end
+        return out
+    end
+
     local function access_noalias(artifact, name)
-        local fact = access_vector_fact(artifact, name)
-        return fact ~= nil and fact.alias == Stencil.StencilAliasNoAlias
+        local saw = false
+        for _, other in ipairs(pointer_access_names(artifact)) do
+            if other == name then
+                saw = true
+            elseif alias_relation(artifact, name, other) ~= Stencil.StencilAliasNoAlias then
+                return false
+            end
+        end
+        return saw
     end
 
     local function access_alignment_bytes(artifact, name)
@@ -90,21 +129,21 @@ local function bind_context(T)
     end
 
     local function emit_c_fn(artifact, result_ty, params, body)
-        local name = LLB.N[artifact.symbol.text]
+        local name = LLBL.N[artifact.symbol.text]
         return C.emit_decl(C.fn[name] { _(source_param_fragments(artifact, params)) } [C.type[result_ty]] {
             _(body),
         })
     end
 
     local function emit_void_fn(artifact, params, body)
-        local name = LLB.N[artifact.symbol.text]
+        local name = LLBL.N[artifact.symbol.text]
         return C.emit_decl(C.fn[name] { _(source_param_fragments(artifact, params)) } [C.void] {
             _(body),
         })
     end
 
     local function loop_i(stride, body)
-        return C.for_ { "int32_t i = start", C.raw_expr("i < stop"), "i += " .. tostring(stride) } {
+        return C.for_ { C.decl. i[C.i32](cn("start")), C.lt(cn("i"), cn("stop")), C.assign(cn("i"), cn("i") + (tonumber(stride) or 1)) } {
             _(body),
         }
     end
@@ -149,24 +188,17 @@ local function bind_context(T)
         if op == Stencil.StencilBinaryAdd then return "add" end
         if op == Stencil.StencilBinarySub then return "sub" end
         if op == Stencil.StencilBinaryMul then return "mul" end
+        if op == Stencil.StencilBinaryDiv then return "div" end
+        if op == Stencil.StencilBinaryMod then return "mod" end
         if op == Stencil.StencilBinaryAnd then return "and" end
         if op == Stencil.StencilBinaryOr then return "or" end
         if op == Stencil.StencilBinaryXor then return "xor" end
+        if op == Stencil.StencilBinaryShl then return "shl" end
+        if op == Stencil.StencilBinaryLShr then return "lshr" end
+        if op == Stencil.StencilBinaryAShr then return "ashr" end
         if op == Stencil.StencilBinaryMin then return "min" end
         if op == Stencil.StencilBinaryMax then return "max" end
         return "binary"
-    end
-
-    local function pred_name(pred)
-        local cls = pvm.classof(pred)
-        if pred == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return "nonzero" end
-        if cls == Stencil.StencilPredEqConst then return "eq" end
-        if cls == Stencil.StencilPredNeConst then return "ne" end
-        if cls == Stencil.StencilPredLtConst then return "lt" end
-        if cls == Stencil.StencilPredLeConst then return "le" end
-        if cls == Stencil.StencilPredGtConst then return "gt" end
-        if cls == Stencil.StencilPredGeConst then return "ge" end
-        return "pred"
     end
 
     local function cmp_name(op)
@@ -177,6 +209,13 @@ local function bind_context(T)
         if op == Core.CmpGt then return "gt" end
         if op == Core.CmpGe then return "ge" end
         return "cmp"
+    end
+
+    local function pred_name(pred)
+        local cls = pvm.classof(pred)
+        if pred == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return "nonzero" end
+        if cls == Stencil.StencilPredCompareConst then return cmp_name(pred.cmp) end
+        return "pred"
     end
 
     local function cast_name(op)
@@ -305,20 +344,21 @@ local function bind_context(T)
         error("stencil_c: unsupported literal for C stencil", 3)
     end
 
+    local compare_expr
+
     local function predicate_expr(pred, item, ty)
         local cls = pvm.classof(pred)
         if pred == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return "(" .. item .. " != 0)" end
-        local c = "(" .. c_type(ty) .. ")(" .. const_literal_source(pred.value, ty) .. ")"
-        if cls == Stencil.StencilPredEqConst then return "(" .. item .. " == " .. c .. ")" end
-        if cls == Stencil.StencilPredNeConst then return "(" .. item .. " != " .. c .. ")" end
-        if cls == Stencil.StencilPredLtConst then return "(" .. item .. " < " .. c .. ")" end
-        if cls == Stencil.StencilPredLeConst then return "(" .. item .. " <= " .. c .. ")" end
-        if cls == Stencil.StencilPredGtConst then return "(" .. item .. " > " .. c .. ")" end
-        if cls == Stencil.StencilPredGeConst then return "(" .. item .. " >= " .. c .. ")" end
+        if cls == Stencil.StencilPredCompareConst then
+            local ct = c_type(pred.operand_ty)
+            local lhs = "(" .. ct .. ")(" .. item .. ")"
+            local rhs = "(" .. ct .. ")(" .. const_literal_source(pred.value, pred.operand_ty) .. ")"
+            return compare_expr(pred.cmp, lhs, rhs)
+        end
         error("stencil_c: unsupported predicate " .. pred_name(pred), 3)
     end
 
-    local function compare_expr(cmp, lhs, rhs)
+    compare_expr = function(cmp, lhs, rhs)
         if cmp == Core.CmpEq then return "(" .. lhs .. " == " .. rhs .. ")" end
         if cmp == Core.CmpNe then return "(" .. lhs .. " != " .. rhs .. ")" end
         if cmp == Core.CmpLt then return "(" .. lhs .. " < " .. rhs .. ")" end
@@ -345,16 +385,35 @@ local function bind_context(T)
         error("stencil_c: unsupported reduction " .. reduction_name(kind), 3)
     end
 
-    local function unary_expr(op, value, result_ty)
+    local function int_wrap_semantics(sem)
+        return sem ~= nil and sem.overflow == Code.CodeIntWrap
+    end
+
+    local function is_int_like(ty)
+        local cls = pvm.classof(ty)
+        return cls == Code.CodeTyInt or ty == Code.CodeTyIndex or ty == Code.CodeTyBool8
+    end
+
+    local function is_signed_int(ty)
+        return pvm.classof(ty) == Code.CodeTyInt and ty.signedness == Code.CodeSigned
+    end
+
+    local function unary_expr(op, value, result_ty, int_semantics, float_mode)
         local ct = c_type(result_ty)
         if op == Stencil.StencilUnaryIdentity then return "(" .. ct .. ")(" .. value .. ")" end
-        if op == Stencil.StencilUnaryNeg then return "(" .. ct .. ")(-(" .. value .. "))" end
+        if op == Stencil.StencilUnaryNeg then
+            if int_wrap_semantics(int_semantics) then
+                local ut = unsigned_c_type(result_ty)
+                return "(" .. ct .. ")((((" .. ut .. ")0) - (" .. ut .. ")(" .. value .. ")))"
+            end
+            return "(" .. ct .. ")(-(" .. value .. "))"
+        end
         if op == Stencil.StencilUnaryBitNot then return "(" .. ct .. ")(~(" .. unsigned_c_type(result_ty) .. ")(" .. value .. "))" end
         if op == Stencil.StencilUnaryBoolNot then return "(" .. ct .. ")(!(" .. value .. "))" end
         error("stencil_c: unsupported unary op " .. unary_name(op), 3)
     end
 
-    local function binary_expr(op, lhs, rhs, result_ty)
+    local function binary_expr(op, lhs, rhs, result_ty, int_semantics, float_mode)
         local ct = c_type(result_ty)
         local ut = unsigned_c_type(result_ty)
         if op == Stencil.StencilBinaryAdd then return "(" .. ct .. ")((" .. ut .. ")(" .. lhs .. ") + (" .. ut .. ")(" .. rhs .. "))" end
@@ -371,6 +430,7 @@ local function bind_context(T)
     local ArtifactPlan = require("lalin.stencil_artifact_plan")(T)
     local artifact_shape = ArtifactPlan.artifact_shape
     source_params = ArtifactPlan.source_params
+    descriptor_accesses = ArtifactPlan.descriptor_accesses
     local access_named = ArtifactPlan.access_named
     local stride_param_name = ArtifactPlan.stride_param_name
     local dynamic_stride_accesses = ArtifactPlan.dynamic_stride_accesses
@@ -403,6 +463,184 @@ local function bind_context(T)
             return base .. "[" .. access_offset({ topology = top.parent, name = access.name }, index) .. "]"
         end
         return base .. "[" .. access_offset(access, index) .. "]"
+    end
+
+    function cn(name)
+        return LLBL.N[tostring(name)]
+    end
+
+    local function c_type_node(ty)
+        local cls = pvm.classof(ty)
+        if cls == Code.CodeTyInt then
+            if ty.bits == 8 then return ty.signedness == Code.CodeSigned and C.i8 or C.u8 end
+            if ty.bits == 16 then return ty.signedness == Code.CodeSigned and C.i16 or C.u16 end
+            if ty.bits == 32 then return ty.signedness == Code.CodeSigned and C.i32 or C.u32 end
+            if ty.bits == 64 then return ty.signedness == Code.CodeSigned and C.i64 or C.u64 end
+        end
+        if cls == Code.CodeTyFloat then
+            if ty.bits == 32 then return C.f32 end
+            if ty.bits == 64 then return C.f64 end
+        end
+        if ty == Code.CodeTyIndex then return C.intptr_t end
+        if ty == Code.CodeTyBool8 then return C.u8 end
+        return C.type[c_type(ty)]
+    end
+
+    local function c_unsigned_type_node(ty)
+        local cls = pvm.classof(ty)
+        if cls == Code.CodeTyInt then
+            if ty.bits == 8 then return C.u8 end
+            if ty.bits == 16 then return C.u16 end
+            if ty.bits == 32 then return C.u32 end
+            if ty.bits == 64 then return C.u64 end
+        end
+        if ty == Code.CodeTyIndex then return C.uintptr_t end
+        if ty == Code.CodeTyBool8 then return C.u8 end
+        return c_type_node(ty)
+    end
+
+    local function access_offset_c_expr(access, index)
+        local top = access.topology
+        local cls = pvm.classof(top)
+        if cls == Stencil.StencilTopologyFieldProjection then
+            return access_offset_c_expr({ topology = top.parent }, index)
+        end
+        if cls == Stencil.StencilTopologySoAComponent then
+            return access_offset_c_expr({ topology = top.parent, name = access.name }, index)
+        end
+        if cls == Stencil.StencilTopologyViewDescriptor then
+            local stride = top.stride_const or cn(stride_param_name(access))
+            if tonumber(stride) == 1 then return index end
+            return index * stride
+        end
+        return index
+    end
+
+    local function access_c_expr(access, base, index)
+        local base_expr = cn(base)
+        local top = access.topology
+        if pvm.classof(top) == Stencil.StencilTopologyFieldProjection then
+            return base_expr[access_offset_c_expr({ topology = top.parent }, index)][sanitize(top.field_name)]
+        end
+        return base_expr[access_offset_c_expr(access, index)]
+    end
+
+    local function c_cast(ty, value)
+        return C.cast[c_type_node(ty)](value)
+    end
+
+    local function c_unsigned_cast(ty, value)
+        return C.cast[c_unsigned_type_node(ty)](value)
+    end
+
+    local function const_literal_value(expr)
+        local cls = pvm.classof(expr)
+        if cls ~= Value.ValueExprConst or pvm.classof(expr.const) ~= Code.CodeConstLiteral then
+            error("stencil_c: select predicate const must be a literal ValueExprConst", 3)
+        end
+        local lit = expr.const.literal
+        local lcls = pvm.classof(lit)
+        if lcls == Core.LitInt or lcls == Core.LitFloat then return tonumber(lit.raw) end
+        if lcls == Core.LitBool then return lit.value and 1 or 0 end
+        error("stencil_c: unsupported select predicate literal", 3)
+    end
+
+    local function c_compare_expr(cmp, lhs, rhs)
+        if cmp == Core.CmpEq then return C.eq(lhs, rhs) end
+        if cmp == Core.CmpNe then return C.ne(lhs, rhs) end
+        if cmp == Core.CmpLt then return C.lt(lhs, rhs) end
+        if cmp == Core.CmpLe then return C.le(lhs, rhs) end
+        if cmp == Core.CmpGt then return C.gt(lhs, rhs) end
+        if cmp == Core.CmpGe then return C.ge(lhs, rhs) end
+        error("stencil_c: unsupported compare op " .. cmp_name(cmp), 3)
+    end
+
+    local function c_predicate_expr(pred, value)
+        local cls = pvm.classof(pred)
+        if pred == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return C.ne(value, 0) end
+        if cls == Stencil.StencilPredCompareConst then
+            return c_compare_expr(
+                pred.cmp,
+                c_cast(pred.operand_ty, value),
+                c_cast(pred.operand_ty, const_literal_value(pred.value))
+            )
+        end
+        error("stencil_c: unsupported predicate " .. pred_name(pred), 3)
+    end
+
+    local function c_divrem_expr(op, lhs, rhs, result_ty)
+        if not is_int_like(result_ty) then
+            if op == Stencil.StencilBinaryDiv then return c_cast(result_ty, lhs / rhs) end
+            error("stencil_c: modulo requires an integer result type", 3)
+        end
+        local a, b = cn("__ml_a"), cn("__ml_b")
+        local body = {
+            C.decl. __ml_a[c_type_node(result_ty)](c_cast(result_ty, lhs)),
+            C.decl. __ml_b[c_type_node(result_ty)](c_cast(result_ty, rhs)),
+            C.if_(C.eq(b, 0)) {
+                C.expr(C.builtin.trap {}),
+            },
+        }
+        if is_signed_int(result_ty) then
+            local min_value = c_cast(result_ty, C.shl(C.cast[c_unsigned_type_node(result_ty)](1), (tonumber(result_ty.bits) or 32) - 1))
+            body[#body + 1] = C.if_(C.land(C.eq(b, c_cast(result_ty, -1)), C.eq(a, min_value))) {
+                C.expr(C.builtin.trap {}),
+            }
+        end
+        body[#body + 1] = C.expr(c_cast(result_ty, op == Stencil.StencilBinaryDiv and (a / b) or (a % b)))
+        return C.stmt_expr(body)
+    end
+
+    local function c_shift_expr(op, lhs, rhs, result_ty)
+        if not is_int_like(result_ty) then error("stencil_c: shift requires an integer result type", 3) end
+        local bits = pvm.classof(result_ty) == Code.CodeTyInt and tonumber(result_ty.bits) or 8
+        local a, s, x, mask = cn("__ml_a"), cn("__ml_s"), cn("__ml_x"), cn("__ml_mask")
+        local body = {
+            C.decl. __ml_a[c_type_node(result_ty)](c_cast(result_ty, lhs)),
+            C.decl. __ml_s[C.uint](C.band(C.cast[C.uint](rhs), bits - 1)),
+        }
+        if op == Stencil.StencilBinaryShl then
+            body[#body + 1] = C.expr(c_cast(result_ty, C.shl(c_unsigned_cast(result_ty, a), s)))
+            return C.stmt_expr(body)
+        end
+        if op == Stencil.StencilBinaryLShr or not is_signed_int(result_ty) then
+            body[#body + 1] = C.expr(c_cast(result_ty, C.shr(c_unsigned_cast(result_ty, a), s)))
+            return C.stmt_expr(body)
+        end
+        body[#body + 1] = C.decl. __ml_mask[c_unsigned_type_node(result_ty)](C.bnot(C.cast[c_unsigned_type_node(result_ty)](0)))
+        body[#body + 1] = C.decl. __ml_x[c_unsigned_type_node(result_ty)](C.band(c_unsigned_cast(result_ty, a), mask))
+        body[#body + 1] = C.if_(C.land(C.ne(s, 0), C.lt(a, 0))) {
+            C.assign(x, C.bor(C.shr(x, s), C.shl(mask, bits - s))),
+        } {
+            C.assign(x, C.shr(x, s)),
+        }
+        body[#body + 1] = C.expr(c_cast(result_ty, C.band(x, mask)))
+        return C.stmt_expr(body)
+    end
+
+    local function c_binary_expr(op, lhs, rhs, result_ty, int_semantics, float_mode)
+        if op == Stencil.StencilBinaryAdd then return c_cast(result_ty, c_unsigned_cast(result_ty, lhs) + c_unsigned_cast(result_ty, rhs)) end
+        if op == Stencil.StencilBinarySub then return c_cast(result_ty, c_unsigned_cast(result_ty, lhs) - c_unsigned_cast(result_ty, rhs)) end
+        if op == Stencil.StencilBinaryMul then return c_cast(result_ty, c_unsigned_cast(result_ty, lhs) * c_unsigned_cast(result_ty, rhs)) end
+        if op == Stencil.StencilBinaryDiv or op == Stencil.StencilBinaryMod then return c_divrem_expr(op, lhs, rhs, result_ty) end
+        if op == Stencil.StencilBinaryAnd then return c_cast(result_ty, C.band(c_unsigned_cast(result_ty, lhs), c_unsigned_cast(result_ty, rhs))) end
+        if op == Stencil.StencilBinaryOr then return c_cast(result_ty, C.bor(c_unsigned_cast(result_ty, lhs), c_unsigned_cast(result_ty, rhs))) end
+        if op == Stencil.StencilBinaryXor then return c_cast(result_ty, C.bxor(c_unsigned_cast(result_ty, lhs), c_unsigned_cast(result_ty, rhs))) end
+        if op == Stencil.StencilBinaryShl or op == Stencil.StencilBinaryLShr or op == Stencil.StencilBinaryAShr then return c_shift_expr(op, lhs, rhs, result_ty) end
+        if op == Stencil.StencilBinaryMin then return C.select(C.lt(lhs, rhs), lhs, rhs) end
+        if op == Stencil.StencilBinaryMax then return C.select(C.gt(lhs, rhs), lhs, rhs) end
+        error("stencil_c: unsupported binary op " .. binary_name(op), 3)
+    end
+
+    local function c_reduction_update_expr(kind, acc, item, ty)
+        if kind == Value.ReductionAdd then return c_cast(ty, c_unsigned_cast(ty, acc) + c_unsigned_cast(ty, item)) end
+        if kind == Value.ReductionMul then return c_cast(ty, c_unsigned_cast(ty, acc) * c_unsigned_cast(ty, item)) end
+        if kind == Value.ReductionAnd then return c_cast(ty, C.band(c_unsigned_cast(ty, acc), c_unsigned_cast(ty, item))) end
+        if kind == Value.ReductionOr then return c_cast(ty, C.bor(c_unsigned_cast(ty, acc), c_unsigned_cast(ty, item))) end
+        if kind == Value.ReductionXor then return c_cast(ty, C.bxor(c_unsigned_cast(ty, acc), c_unsigned_cast(ty, item))) end
+        if kind == Value.ReductionMin then return C.select(C.lt(item, acc), item, acc) end
+        if kind == Value.ReductionMax then return C.select(C.gt(item, acc), item, acc) end
+        error("stencil_c: unsupported reduction " .. reduction_name(kind), 3)
     end
 
     local function is_i32(ty)
@@ -516,7 +754,7 @@ local function bind_context(T)
             lines[#lines + 1] = "    if (stop > start) memmove(dst + start, xs + start, (size_t)(stop - start) * sizeof(dst[0]));"
         else
             lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
-            lines[#lines + 1] = "        " .. access_ref(dst_access, "dst", "i") .. " = " .. unary_expr(shape.op, access_ref(xs_access, "xs", "i"), shape.result_ty) .. ";"
+            lines[#lines + 1] = "        " .. access_ref(dst_access, "dst", "i") .. " = " .. unary_expr(shape.op, access_ref(xs_access, "xs", "i"), shape.result_ty, shape.int_semantics, shape.float_mode) .. ";"
             lines[#lines + 1] = "    }"
         end
         lines[#lines + 1] = "}"
@@ -529,13 +767,22 @@ local function bind_context(T)
         local dst_access, lhs_access, rhs_access = access_named(desc, "dst"), access_named(desc, "lhs"), access_named(desc, "rhs")
         local lt, rt = c_type(shape.lhs_ty), c_type(shape.result_ty)
         local stride = tonumber(shape.stride) or 1
-        local lines = {}
-        lines[#lines + 1] = "void " .. artifact.symbol.text .. "(" .. table.concat(source_params(artifact, { rt .. " *dst", const_elem_ptr_decl(shape.lhs_ty, "lhs"), const_elem_ptr_decl(shape.rhs_ty, "rhs"), "int32_t start", "int32_t stop" }), ", ") .. ") {"
-        lines[#lines + 1] = "    for (int32_t i = start; i < stop; i += " .. tostring(stride) .. ") {"
-        lines[#lines + 1] = "        " .. access_ref(dst_access, "dst", "i") .. " = " .. binary_expr(shape.op, access_ref(lhs_access, "lhs", "i"), access_ref(rhs_access, "rhs", "i"), shape.result_ty) .. ";"
-        lines[#lines + 1] = "    }"
-        lines[#lines + 1] = "}"
-        return table.concat(lines, "\n")
+        local i = cn("i")
+        return emit_void_fn(artifact, { rt .. " *dst", const_elem_ptr_decl(shape.lhs_ty, "lhs"), const_elem_ptr_decl(shape.rhs_ty, "rhs"), "int32_t start", "int32_t stop" }, {
+            loop_i(stride, {
+                C.assign(
+                    access_c_expr(dst_access, "dst", i),
+                    c_binary_expr(
+                        shape.op,
+                        access_c_expr(lhs_access, "lhs", i),
+                        access_c_expr(rhs_access, "rhs", i),
+                        shape.result_ty,
+                        shape.int_semantics,
+                        shape.float_mode
+                    )
+                ),
+            }),
+        })
     end
 
     local function scan_array_source(artifact)
@@ -693,6 +940,30 @@ local function bind_context(T)
         return table.concat(lines, "\n")
     end
 
+    local function select_array_source(artifact)
+        local shape = artifact_shape(artifact)
+        local desc = artifact.instance.descriptor
+        local dst_access = access_named(desc, "dst")
+        local cond_access = access_named(desc, "cond")
+        local then_access = access_named(desc, "then_xs")
+        local else_access = access_named(desc, "else_xs")
+        local rt = c_type(shape.result_ty)
+        local stride = tonumber(shape.stride) or 1
+        local i = cn("i")
+        return emit_void_fn(artifact, { rt .. " *dst", const_elem_ptr_decl(shape.cond_ty, "cond"), const_elem_ptr_decl(shape.then_ty, "then_xs"), const_elem_ptr_decl(shape.else_ty, "else_xs"), "int32_t start", "int32_t stop" }, {
+            loop_i(stride, {
+                C.assign(
+                    access_c_expr(dst_access, "dst", i),
+                    C.select(
+                        c_predicate_expr(shape.pred, access_c_expr(cond_access, "cond", i)),
+                        access_c_expr(then_access, "then_xs", i),
+                        access_c_expr(else_access, "else_xs", i)
+                    )
+                ),
+            }),
+        })
+    end
+
     local function gather_array_source(artifact)
         local shape = artifact_shape(artifact)
         local desc = artifact.instance.descriptor
@@ -775,7 +1046,7 @@ local function bind_context(T)
         local x = access_ref(xs_access, "xs", "i")
         return emit_void_fn(artifact, { et .. " *xs", "int32_t start", "int32_t stop" }, {
             loop_i(stride, {
-                C.assign(C.raw_expr(x), C.raw_expr(unary_expr(shape.op, x, shape.elem_ty))),
+                C.assign(C.raw_expr(x), C.raw_expr(unary_expr(shape.op, x, shape.elem_ty, shape.int_semantics, shape.float_mode))),
             }),
         })
     end
@@ -805,7 +1076,7 @@ local function bind_context(T)
         return emit_c_fn(artifact, rt, { const_elem_ptr_decl(shape.elem_ty, "xs"), "int32_t start", "int32_t stop", rt .. " init" }, {
             C.decl. acc[C.type[acc_ty]](C.raw_expr("(" .. acc_ty .. ")init")),
             loop_i(stride, {
-                C.assign(C.raw_expr("acc"), C.raw_expr(reduction_update_expr(shape.reduction, "acc", unary_expr(shape.op, access_ref(xs_access, "xs", "i"), shape.mapped_ty), shape.result_ty))),
+                C.assign(C.raw_expr("acc"), C.raw_expr(reduction_update_expr(shape.reduction, "acc", unary_expr(shape.op, access_ref(xs_access, "xs", "i"), shape.mapped_ty, shape.op_int_semantics, shape.op_float_mode), shape.result_ty))),
             }),
             C.return_(C.raw_expr("(" .. rt .. ")acc")),
         })
@@ -816,14 +1087,30 @@ local function bind_context(T)
         local desc = artifact.instance.descriptor
         local lhs_access, rhs_access = access_named(desc, "lhs"), access_named(desc, "rhs")
         local lt, rt = c_type(shape.lhs_ty), c_type(shape.result_ty)
-        local acc_ty = (shape.reduction == Value.ReductionMin or shape.reduction == Value.ReductionMax) and rt or unsigned_c_type(shape.result_ty)
+        local acc_type_node = (shape.reduction == Value.ReductionMin or shape.reduction == Value.ReductionMax) and c_type_node(shape.result_ty) or c_unsigned_type_node(shape.result_ty)
         local stride = tonumber(shape.stride) or 1
+        local i = cn("i")
         return emit_c_fn(artifact, rt, { const_elem_ptr_decl(shape.lhs_ty, "lhs"), const_elem_ptr_decl(shape.rhs_ty, "rhs"), "int32_t start", "int32_t stop", rt .. " init" }, {
-            C.decl. acc[C.type[acc_ty]](C.raw_expr("(" .. acc_ty .. ")init")),
+            C.decl. acc[acc_type_node](C.cast[acc_type_node](cn("init"))),
             loop_i(stride, {
-                C.assign(C.raw_expr("acc"), C.raw_expr(reduction_update_expr(shape.reduction, "acc", binary_expr(shape.op, access_ref(lhs_access, "lhs", "i"), access_ref(rhs_access, "rhs", "i"), shape.mapped_ty), shape.result_ty))),
+                C.assign(
+                    cn("acc"),
+                    c_reduction_update_expr(
+                        shape.reduction,
+                        cn("acc"),
+                        c_binary_expr(
+                            shape.op,
+                            access_c_expr(lhs_access, "lhs", i),
+                            access_c_expr(rhs_access, "rhs", i),
+                            shape.mapped_ty,
+                            shape.op_int_semantics,
+                            shape.op_float_mode
+                        ),
+                        shape.result_ty
+                    )
+                ),
             }),
-            C.return_(C.raw_expr("(" .. rt .. ")acc")),
+            C.return_(c_cast(shape.result_ty, cn("acc"))),
         })
     end
 
@@ -840,6 +1127,7 @@ local function bind_context(T)
         if kind == "cast_array" then return cast_array_source(artifact) end
         if kind == "compare_array" then return compare_array_source(artifact) end
         if kind == "zip_compare_array" then return zip_compare_array_source(artifact) end
+        if kind == "select_array" then return select_array_source(artifact) end
         if kind == "gather_array" then return gather_array_source(artifact) end
         if kind == "scatter_array" then return scatter_array_source(artifact) end
         if kind == "in_place_map_array" then return in_place_map_array_source(artifact) end

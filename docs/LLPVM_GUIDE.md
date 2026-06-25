@@ -1,6 +1,6 @@
 # LLPVM Guide
 
-LLPVM is the low-level VM/task member of the Lalin family. It is not a second
+LLPVM is the low-level VM/task member of the Lalin language. It is not a second
 compiler architecture. It owns bytecode images, worlds, tapes, machines,
 phases, task specs, and run records.
 
@@ -13,17 +13,17 @@ native Lalin function.
 local llpvm = require("llpvm")
 ```
 
-In the Lalin family environment:
+In the Lalin language environment:
 
 ```lua
 local lalin = require("lalin")
-lalin.family.use()
+lalin.language.use()
 
 return llpvm {
   llpvm.task. compile {
-    llpvm.input [ll.i32],
-    llpvm.output [ll.i32],
-    llpvm.event. progress [ll.i32],
+    llpvm.input [lln.i32],
+    llpvm.output [lln.i32],
+    llpvm.event. progress [lln.i32],
   },
 }
 ```
@@ -36,8 +36,8 @@ World:
 llpvm.world. Demo {
   llpvm.symbol. add,
   llpvm.record. Pair {
-    left [ll.i32],
-    right [ll.i32],
+    left [lln.i32],
+    right [lln.i32],
   },
 }
 ```
@@ -77,7 +77,7 @@ LLPVM owns:
 
 LLPVM reuses:
 
-- LLB namespaces, fragments, origins, diagnostics, processes, and regions
+- LLBL namespaces, fragments, origins, diagnostics, processes, and regions
 - Lalin type values where native type interop is required
 - LalinSchema product/sum semantics where schema-level structure is needed
 
@@ -112,7 +112,7 @@ be visible to the task/run model.
 
 The older PVM machinery remains an implementation substrate for schema values,
 interning, phase triplets, and cache boundaries. LLPVM is the public low-level
-VM language. New docs and public APIs should describe LLPVM and LLB region/GPS
+VM language. New docs and public APIs should describe LLPVM and LLBL region/GPS
 machinery, not a separate public PVM doctrine.
 
 ## Tests
@@ -121,7 +121,7 @@ Useful checks:
 
 ```sh
 luajit tests/run.lua llpvm
-luajit tests/llpvm/test_llpvm_family_use.lua
+luajit tests/llpvm/test_llpvm_language_use.lua
 luajit tests/llpvm/test_llpvm_task_dsl.lua
 luajit tests/llpvm/test_llpvm_bytecode.lua
 ```
@@ -132,4 +132,4 @@ luajit tests/llpvm/test_llpvm_bytecode.lua
 2. Validation is process-shaped.
 3. Task runs expose typed events.
 4. Borrowed buffers must have explicit lifetime and length.
-5. Product/sum semantics are reused from the family instead of reinvented.
+5. Product/sum semantics are reused from the language instead of reinvented.

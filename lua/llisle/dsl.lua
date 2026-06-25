@@ -1,5 +1,5 @@
-local llb = require("llb")
-local role_region_head = llb.role_region
+local llbl = require("llbl")
+local role_region_head = llbl.role_region
 
 local M = {}
 
@@ -38,36 +38,36 @@ local function is(v, mt) return type(v) == "table" and getmetatable(v) == mt end
 
 function M.is_llisle_value(v)
     if cls(v) ~= nil then return true end
-    return llb.is(v, "Fragment") and tostring(v.role) == "llisle_rule"
+    return llbl.is(v, "Fragment") and tostring(v.role) == "llisle_rule"
 end
 
 local function die(msg, origin)
-    llb.fail("llisle.dsl: " .. msg, { primary = origin })
+    llbl.fail("llisle.dsl: " .. msg, { primary = origin })
 end
 
 local function ident_text(v, what)
     what = what or "name"
     if is(v, Binder) then return table.concat(v.path, ".") end
-    if llb.is(v, "Name") or llb.is(v, "Symbol") then return tostring(v.text) end
+    if llbl.is(v, "Name") or llbl.is(v, "Symbol") then return tostring(v.text) end
     if type(v) == "table" and rawget(v, "name") ~= nil then return tostring(rawget(v, "name")) end
     if type(v) == "string" or type(v) == "number" then return tostring(v) end
-    die(what .. " expected, got " .. llb.repr(v), llb.origin_of(v))
+    die(what .. " expected, got " .. llbl.repr(v), llbl.origin_of(v))
 end
 
 local function array_items(t)
     local out = {}
     for i = 1, #(t or {}) do
         local v = t[i]
-        if llb.is(v, "Spread") then
+        if llbl.is(v, "Spread") then
             local frag = v.value
-            if llb.is(frag, "Fragment") then
+            if llbl.is(frag, "Fragment") then
                 for j = 1, #(frag.items or {}) do out[#out + 1] = frag.items[j] end
             elseif type(frag) == "table" then
                 for j = 1, #frag do out[#out + 1] = frag[j] end
             else
                 die("spread expects a fragment or array", v.origin)
             end
-        elseif llb.is(v, "Fragment") then
+        elseif llbl.is(v, "Fragment") then
             for j = 1, #(v.items or {}) do out[#out + 1] = v.items[j] end
         else
             out[#out + 1] = v
@@ -92,16 +92,16 @@ local function array_items_gen(param, state)
         state.index = state.index + 1
         local v = param.value[state.index]
         if v == nil then return nil end
-        if llb.is(v, "Spread") then
+        if llbl.is(v, "Spread") then
             local frag = v.value
-            if llb.is(frag, "Fragment") then
+            if llbl.is(frag, "Fragment") then
                 push_items_reverse(stack, frag.items)
             elseif type(frag) == "table" then
                 push_items_reverse(stack, frag)
             else
                 die("spread expects a fragment or array", v.origin)
             end
-        elseif llb.is(v, "Fragment") then
+        elseif llbl.is(v, "Fragment") then
             push_items_reverse(stack, v.items)
         else
             return state, v
@@ -110,7 +110,7 @@ local function array_items_gen(param, state)
 end
 
 local function array_items_region(t, kind)
-    return llb.gps.raw(llb.gps.wrap(array_items_gen, { value = t or {} }, nil, { kind = kind or "llisle:items" }))
+    return llbl.gps.raw(llbl.gps.wrap(array_items_gen, { value = t or {} }, nil, { kind = kind or "llisle:items" }))
 end
 
 local function has_record_fields(t)
@@ -129,14 +129,14 @@ local function fields_from_table(t)
     for _, v in ipairs(array_items(t or {})) do
         if is(v, Field) then
             out[#out + 1] = v
-        elseif llb.is(v, "Capture") then
+        elseif llbl.is(v, "Capture") then
             out[#out + 1] = setmetatable({ name = ident_text(v.subject, "field name"), type = v.value, origin = v.origin }, Field)
-        elseif llb.is(v, "Expr") and v.kind == "index" then
+        elseif llbl.is(v, "Expr") and v.kind == "index" then
             out[#out + 1] = setmetatable({ name = ident_text(v.base, "field name"), type = v.index, origin = v.origin }, Field)
         elseif type(v) == "table" and rawget(v, "name") ~= nil and rawget(v, "type") ~= nil then
             out[#out + 1] = setmetatable(v, Field)
         else
-            die("field product expects entries like name [Type]", llb.origin_of(v))
+            die("field product expects entries like name [Type]", llbl.origin_of(v))
         end
     end
     return out
@@ -150,21 +150,21 @@ local function fields_region_gen(param, state)
         state = next_state
         if is(v, Field) then
             return state, v
-        elseif llb.is(v, "Capture") then
+        elseif llbl.is(v, "Capture") then
             return state, setmetatable({ name = ident_text(v.subject, "field name"), type = v.value, origin = v.origin }, Field)
-        elseif llb.is(v, "Expr") and v.kind == "index" then
+        elseif llbl.is(v, "Expr") and v.kind == "index" then
             return state, setmetatable({ name = ident_text(v.base, "field name"), type = v.index, origin = v.origin }, Field)
         elseif type(v) == "table" and rawget(v, "name") ~= nil and rawget(v, "type") ~= nil then
             return state, setmetatable(v, Field)
         else
-            die("field product expects entries like name [Type]", llb.origin_of(v))
+            die("field product expects entries like name [Type]", llbl.origin_of(v))
         end
     end
 end
 
 local function fields_region(t)
     local gen, param, state = array_items_region(t or {}, "llisle:field-source")
-    return llb.gps.raw(llb.gps.wrap(fields_region_gen, {
+    return llbl.gps.raw(llbl.gps.wrap(fields_region_gen, {
         source_gen = gen,
         source_param = param,
         source_state = state,
@@ -182,14 +182,14 @@ local binder_predicates = {
 }
 
 local function binder(space, path, origin)
-    return setmetatable({ space = space, path = path, origin = origin or llb.here("llisle-binder", { skip = 2 }) }, Binder)
+    return setmetatable({ space = space, path = path, origin = origin or llbl.here("llisle-binder", { skip = 2 }) }, Binder)
 end
 
 Binder.__index = function(self, key)
     if Binder[key] then return Binder[key] end
     if binder_predicates[key] then
         return function(receiver, ...)
-            return setmetatable({ predicate = tostring(key), subject = receiver, args = { ... }, origin = llb.here("llisle-predicate", { skip = 1 }) }, PredicateSpec)
+            return setmetatable({ predicate = tostring(key), subject = receiver, args = { ... }, origin = llbl.here("llisle-predicate", { skip = 1 }) }, PredicateSpec)
         end
     end
     local path = {}
@@ -199,16 +199,16 @@ Binder.__index = function(self, key)
 end
 
 Binder.__call = function(self, ...)
-    return setmetatable({ predicate = "call", subject = self, args = { ... }, origin = llb.here("llisle-predicate", { skip = 1 }) }, PredicateSpec)
+    return setmetatable({ predicate = "call", subject = self, args = { ... }, origin = llbl.here("llisle-predicate", { skip = 1 }) }, PredicateSpec)
 end
 Binder.__tostring = function(self) return self.space .. ". " .. table.concat(self.path, ".") end
-llb.enable_algebra(Binder)
-llb.enable_algebra(PredicateSpec)
+llbl.enable_algebra(Binder)
+llbl.enable_algebra(PredicateSpec)
 
 local function binder_space(name)
     return setmetatable({ __lisle_binder_space = name }, {
-        __index = function(_, key) return binder(name, { tostring(key) }, llb.here("llisle-binder", { hint = key, skip = 1 })) end,
-        __call = function(_, key) return binder(name, { tostring(key) }, llb.here("llisle-binder", { hint = key, skip = 1 })) end,
+        __index = function(_, key) return binder(name, { tostring(key) }, llbl.here("llisle-binder", { hint = key, skip = 1 })) end,
+        __call = function(_, key) return binder(name, { tostring(key) }, llbl.here("llisle-binder", { hint = key, skip = 1 })) end,
     })
 end
 
@@ -216,8 +216,8 @@ M.P = binder_space("P")
 M.V = binder_space("V")
 M.T = binder_space("T")
 
-local g = llb.grammar
-local ch = llb.channel
+local g = llbl.grammar
+local ch = llbl.channel
 local function slot_name(slot) return slot[g.name] { channel = ch.index_name } end
 local function slot_body(slot, role) return slot[role] { channel = ch.call_table } end
 local function slot_index_impl(slot) return slot[g.value] { channel = ch.index_value } end
@@ -234,12 +234,12 @@ local function role_list(label, allowed)
             local next_state, item = p.gen(p.param, s)
             if next_state == nil then return nil end
             local c = cls(item)
-            if allowed and not allowed[c] and not (llb.is(item, "Fragment") and allowed.Fragment) then
-                die(label .. " received invalid item " .. tostring(c or llb.tagof(item) or type(item)), llb.origin_of(item) or (ctx and ctx.origin))
+            if allowed and not allowed[c] and not (llbl.is(item, "Fragment") and allowed.Fragment) then
+                die(label .. " received invalid item " .. tostring(c or llbl.tagof(item) or type(item)), llbl.origin_of(item) or (ctx and ctx.origin))
             end
             return next_state, item
         end
-        return llb.gps.raw(llb.gps.wrap(checked_gen, { gen = gen, param = param }, state, { kind = "llisle:role-list", role = label }))
+        return llbl.gps.raw(llbl.gps.wrap(checked_gen, { gen = gen, param = param }, state, { kind = "llisle:role-list", role = label }))
     end
     return {
         kind = "array",
@@ -261,7 +261,7 @@ local function constructor_body_items(v)
     for _, item in ipairs(array_items(v or {})) do
         local c = cls(item)
         if c ~= "ProductSpec" and c ~= "Directive" then
-            die("constructor received invalid item " .. tostring(c or llb.tagof(item) or type(item)), llb.origin_of(item))
+            die("constructor received invalid item " .. tostring(c or llbl.tagof(item) or type(item)), llbl.origin_of(item))
         end
         out[#out + 1] = item
     end
@@ -273,12 +273,12 @@ function ConstructorDecl:__call(body)
         name = self.name,
         impl = self.impl,
         body = constructor_body_items(body or {}),
-        origin = llb.origin_of(body) or self.origin,
+        origin = llbl.origin_of(body) or self.origin,
     }, ConstructorDecl)
 end
 
 local function relation_call(name, fields, origin)
-    return setmetatable({ name = tostring(name), fields = fields or {}, origin = origin or llb.here("llisle-relation-call", { hint = name, skip = 2 }) }, RelationCall)
+    return setmetatable({ name = tostring(name), fields = fields or {}, origin = origin or llbl.here("llisle-relation-call", { hint = name, skip = 2 }) }, RelationCall)
 end
 
 local function record_fields(t)
@@ -292,13 +292,13 @@ end
 
 local RelationCallFactory = {}
 RelationCallFactory.__index = function(_, key)
-    return setmetatable({ name = tostring(key), origin = llb.here("llisle-relation-call", { hint = key, skip = 1 }) }, {
+    return setmetatable({ name = tostring(key), origin = llbl.here("llisle-relation-call", { hint = key, skip = 1 }) }, {
         __call = function(self, fields) return relation_call(self.name, fields or {}, self.origin) end,
     })
 end
 M.relation_call = setmetatable({}, RelationCallFactory)
 
-local L = llb.dialect "LlisleDsl" {
+local L = llbl.dialect "LlisleDsl" {
     g.role .decls (role_list("llisle", { RelationSpec = true, RuleSpec = true, PredicateDecl = true, ConstructorDecl = true, Fragment = true })),
     g.role .relation_body (role_list("relation", { ProductSpec = true, StrategySpec = true, Directive = true })),
     g.role .predicate_body (role_list("predicate", { ProductSpec = true, Directive = true })),
@@ -307,7 +307,7 @@ local L = llb.dialect "LlisleDsl" {
     g.role .strategy_body (role_list("strategy", { Directive = true })),
     g.role .rule_body (role_list("rule", { RelationCall = true, GuardSpec = true, BindSpec = true, RunSpec = true, ChooseSpec = true, Directive = true })),
     g.role .guard_body { kind = "array", algebra = "product", region = role_region("guard_body", "role_items", function(_, _, v) return array_items_region(v or {}, "llisle:guard") end) },
-    g.role .payload_body { kind = "value", algebra = "product", region = role_region("payload_body", "role_value", function(_, _, v) return llb.gps.raw(llb.gps.once(process_payload(v or {}))) end) },
+    g.role .payload_body { kind = "value", algebra = "product", region = role_region("payload_body", "role_value", function(_, _, v) return llbl.gps.raw(llbl.gps.once(process_payload(v or {}))) end) },
     g.role .run_body (role_list("run", { BindSpec = true, EmitSpec = true, RetSpec = true, FailSpec = true, ChooseSpec = true, RelationCall = true })),
     g.role .choose_body (role_list("choose", { AltSpec = true })),
     g.role .alt_body (role_list("alt", { GuardSpec = true, BindSpec = true, RunSpec = true, Directive = true })),
@@ -317,7 +317,7 @@ local L = llb.dialect "LlisleDsl" {
 
     -- Declares a typed product-to-product relation. Rules satisfy relations.
     g.head .relation { g.trait .named, slot_name(g.slot .name), slot_body(g.slot .body, g.relation_body), emit = function(n) return setmetatable({ kind = "relation", name = ident_text(n.name, "relation name"), body = n.body or {}, origin = n.origin }, RelationSpec) end },
-    -- Declares a projection relation. Projection turns family values into LalinSchema-backed facts.
+    -- Declares a projection relation. Projection turns language values into LalinSchema-backed facts.
     g.head .project { g.trait .named, slot_name(g.slot .name), slot_body(g.slot .body, g.relation_body), emit = function(n) return setmetatable({ kind = "project", name = ident_text(n.name, "project name"), body = n.body or {}, origin = n.origin }, RelationSpec) end },
     -- Declares a semantic predicate used by guards. The optional [] slot carries the Lua implementation value.
     g.head .predicate { g.trait .named, slot_name(g.slot .name), slot_index_impl(g.slot .impl), slot_body(g.slot .body, g.predicate_body), emit = function(n) return setmetatable({ name = ident_text(n.name, "predicate name"), impl = n.impl, body = n.body or {}, origin = n.origin }, PredicateDecl) end },
@@ -340,7 +340,7 @@ local L = llb.dialect "LlisleDsl" {
     -- Marks a predicate as pure.
     g.head .pure { emit = function(n) return directive("pure", true, n.origin) end },
     -- Groups rule alternatives as a reusable fragment.
-    g.head .rules { slot_body(g.slot .body, g.rules_body), emit = function(n) return llb.fragment("llisle_rule", n.body or {}, n.origin, { algebra = "list" }) end },
+    g.head .rules { slot_body(g.slot .body, g.rules_body), emit = function(n) return llbl.fragment("llisle_rule", n.body or {}, n.origin, { algebra = "list" }) end },
     -- Declares one rule: a relation pattern, guards, and a process body.
     g.head .rule { g.trait .named, slot_name(g.slot .name), slot_body(g.slot .body, g.rule_body), emit = function(n) return setmetatable({ name = ident_text(n.name, "rule name"), body = n.body or {}, origin = n.origin }, RuleSpec) end },
     -- Declares guard predicates for a rule or alternative.
@@ -364,12 +364,12 @@ local L = llb.dialect "LlisleDsl" {
 }
 
 M.language = L
-M._ = llb.spread
-M.spread = llb.spread
-M.llisle = llb.zone_head { family = "lalin", member = "llisle.dsl", name = "llisle", role = "rules" }
+M._ = llbl.spread
+M.spread = llbl.spread
+M.llisle = llbl.zone_head { language = "lalin", member = "llisle.dsl", name = "llisle", role = "rules" }
 
 local function is_llisle_zone(v)
-    return llb.is(v, "Zone") and (v.member == "llisle.dsl" or v.name == "llisle")
+    return llbl.is(v, "Zone") and (v.member == "llisle.dsl" or v.name == "llisle")
 end
 
 function M.collect(out, value, seen)
@@ -381,7 +381,7 @@ function M.collect(out, value, seen)
     seen[value] = true
     if M.is_llisle_value(value) then
         out[#out + 1] = value
-        if llb.is(value, "Fragment") then
+        if llbl.is(value, "Fragment") then
             for _, item in ipairs(value.items or {}) do M.collect(out, item, seen) end
         else
             for _, item in ipairs(rawget(value, "body") or {}) do M.collect(out, item, seen) end
@@ -393,18 +393,18 @@ function M.collect(out, value, seen)
         for _, item in ipairs(value.items or {}) do M.collect(out, item, seen) end
         return out
     end
-    if llb.is(value, "FamilyBundle") then
+    if llbl.is(value, "LanguageBundle") then
         for _, z in ipairs(value.zones or {}) do M.collect(out, z, seen) end
         return out
     end
-    if not llb.is(value, "Zone") then
+    if not llbl.is(value, "Zone") then
         for i = 1, #value do M.collect(out, value[i], seen) end
         for k, v in pairs(value) do if type(k) ~= "number" then M.collect(out, v, seen) end end
     end
     return out
 end
 
-local doc = llb.doc
+local doc = llbl.doc
 local function block(items, f, fmt)
     if #(items or {}) == 0 then return doc.text("{}") end
     local parts = {}
@@ -424,12 +424,12 @@ local function algebra_symbol(op)
     return tostring(op)
 end
 
-local function fmt_llb_value(v, f)
-    if llb.is(v, "Name") or llb.is(v, "Symbol") then return doc.text(v.text) end
-    if llb.is(v, "Type") then return doc.text(v.name) end
-    if llb.is(v, "Capture") then return doc.group { fmt_any(v.subject, f), " [", fmt_any(v.value, f), "]" } end
-    if llb.is(v, "CaptureInit") then return doc.group { fmt_any(v.capture, f), " (", fmt_any(v.init, f), ")" } end
-    if llb.is(v, "Expr") then
+local function fmt_llbl_value(v, f)
+    if llbl.is(v, "Name") or llbl.is(v, "Symbol") then return doc.text(v.text) end
+    if llbl.is(v, "Type") then return doc.text(v.name) end
+    if llbl.is(v, "Capture") then return doc.group { fmt_any(v.subject, f), " [", fmt_any(v.value, f), "]" } end
+    if llbl.is(v, "CaptureInit") then return doc.group { fmt_any(v.capture, f), " (", fmt_any(v.init, f), ")" } end
+    if llbl.is(v, "Expr") then
         if v.kind == "binop" then return doc.group { fmt_any(v.a, f), " ", tostring(v.op), " ", fmt_any(v.b, f) } end
         if v.kind == "unop" then return doc.group { tostring(v.op), fmt_any(v.a, f) } end
         if v.kind == "field" then return doc.group { fmt_any(v.base, f), ".", tostring(v.field) } end
@@ -441,7 +441,7 @@ local function fmt_llb_value(v, f)
             return doc.group { fmt_any(v.callee, f), " ", block(args, f, function(x) return x end) }
         end
     end
-    if llb.is_algebra(v) then
+    if llbl.is_algebra(v) then
         local parts = {}
         local sep = doc.concat { doc.line(), algebra_symbol(v.op), " " }
         for i, item in ipairs(v.items or {}) do parts[i] = fmt_any(item, f) end
@@ -458,9 +458,9 @@ fmt_any = function(v, f)
         return doc.group { fmt_any(v.subject, f), " :", v.predicate, " (", f:join(doc.concat { ",", doc.line() }, args), ")" }
     end
     if M.is_llisle_value(v) then return fmt_spec(v, f) end
-    local llb_doc = fmt_llb_value(v, f)
-    if llb_doc then return llb_doc end
-    if type(v) == "table" and not llb.is(v, "Expr") and not llb.is(v, "Symbol") and not llb.is(v, "Name") and not llb.is(v, "Capture") then
+    local llbl_doc = fmt_llbl_value(v, f)
+    if llbl_doc then return llbl_doc end
+    if type(v) == "table" and not llbl.is(v, "Expr") and not llbl.is(v, "Symbol") and not llbl.is(v, "Name") and not llbl.is(v, "Capture") then
         local fields = record_fields(v)
         if #fields > 0 then
             local items = {}
@@ -518,15 +518,15 @@ fmt_spec = function(v, f)
     if is(v, EmitSpec) then return doc.concat { "emit. ", v.channel, " ", fmt_payload(v.body, f) } end
     if is(v, RetSpec) then return doc.concat { "ret ", fmt_payload(v.body, f) } end
     if is(v, FailSpec) then return doc.concat { "fail. ", v.reason, " ", fmt_payload(v.body, f) } end
-    if llb.is(v, "Fragment") and tostring(v.role) == "llisle_rule" then return doc.concat { "rules ", fmt_body(v.items or {}, f) } end
+    if llbl.is(v, "Fragment") and tostring(v.role) == "llisle_rule" then return doc.concat { "rules ", fmt_body(v.items or {}, f) } end
     return f:format(v)
 end
 
 function M.doc(value, opts)
-    return fmt_spec(value, setmetatable({ opts = opts or {}, width = opts and opts.width or 100, indent_width = opts and opts.indent or 2, seen = {} }, llb.FormatContext))
+    return fmt_spec(value, setmetatable({ opts = opts or {}, width = opts and opts.width or 100, indent_width = opts and opts.indent or 2, seen = {} }, llbl.FormatContext))
 end
 
-function M.format(value, opts) return llb.render(M.doc(value, opts or {}), opts or {}) end
+function M.format(value, opts) return llbl.render(M.doc(value, opts or {}), opts or {}) end
 
 local function product_kind(spec, kind)
     for _, item in ipairs(spec.body or {}) do if cls(item) == "ProductSpec" and item.kind == kind then return item end end
@@ -550,7 +550,7 @@ local function has_run(items)
 end
 
 function M.diagnostics(value, bag)
-    bag = bag or llb.diagnostics()
+    bag = bag or llbl.diagnostics()
     local rels, rules, predicates, constructors = {}, {}, {}, {}
     for _, item in ipairs(M.collect({}, value)) do
         if cls(item) == "RelationSpec" then
@@ -618,13 +618,13 @@ function M.make_env(opts)
 end
 
 function M.namespace(opts)
-    local exports = { P = M.P, V = M.V, T = M.T, _ = llb.spread, spread = llb.spread }
+    local exports = { P = M.P, V = M.V, T = M.T, _ = llbl.spread, spread = llbl.spread }
     for name, value in pairs(L.exports or {}) do exports[name] = value end
-    exports.pure = directive("pure", true, llb.here("llisle-pure"))
+    exports.pure = directive("pure", true, llbl.here("llisle-pure"))
     if M.compile ~= nil then exports.compile = M.compile end
     if M.engine ~= nil then exports.engine = M.engine end
-    return llb.namespace {
-        family = "lalin",
+    return llbl.namespace {
+        language = "lalin",
         member = "llisle.dsl",
         name = "llisle",
         exports = exports,
@@ -633,12 +633,12 @@ function M.namespace(opts)
     }
 end
 
-function M.make_family_env(opts) return { llisle = M.namespace(opts) } end
+function M.make_language_env(opts) return { llisle = M.namespace(opts) } end
 
 function M.use(opts)
     opts = opts or {}
     local exports = M.make_env(opts)
-    return llb.use(L, {
+    return llbl.use(L, {
         scope = opts.scope or (opts.global == false and "env" or "permanent"),
         target = opts.target or _G,
         base = exports,
@@ -650,7 +650,7 @@ function M.use(opts)
         override = opts.override ~= false,
         auto_names = opts.auto_names ~= false,
         mode = opts.mode,
-        requires = opts.requires or { "llb.core" },
+        requires = opts.requires or { "llbl.core" },
         provides = opts.provides or { "llisle.dsl" },
     })
 end
