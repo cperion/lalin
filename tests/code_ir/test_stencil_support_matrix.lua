@@ -176,6 +176,17 @@ local artifact_samples = {
     scatter = function()
         return Plan.scatter_array_artifact({ elem_ty = i32, index_ty = i32, conflicts = Stencil.StencilScatterUniqueIndices, step_num = 1 })
     end,
+    scatter_reduce = function()
+        return Plan.scatter_reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, {
+            tag = "matrix",
+            result_ty = i32,
+            item_ty = i32,
+            index_ty = i32,
+            inputs = { { name = "xs", ty = i32 } },
+            expr = Plan.input_expr("xs"),
+            step_num = 1,
+        })
+    end,
     in_place_map = function()
         return Plan.in_place_map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, step_num = 1 })
     end,
@@ -239,5 +250,8 @@ local gather = artifact_samples.gather()
 assert(Plan.access_named(gather.instance.descriptor, "idx").role == Stencil.StencilAccessIndex, "gather index stream must use index access role")
 local scatter = artifact_samples.scatter()
 assert(Plan.access_named(scatter.instance.descriptor, "idx").role == Stencil.StencilAccessIndex, "scatter index stream must use index access role")
+local scatter_reduce = artifact_samples.scatter_reduce()
+assert(Plan.access_named(scatter_reduce.instance.descriptor, "idx").role == Stencil.StencilAccessIndex, "scatter-reduce index stream must use index access role")
+assert(Plan.access_named(scatter_reduce.instance.descriptor, "dst").role == Stencil.StencilAccessReadWrite, "scatter-reduce destination must be readwrite")
 
 io.write("lalin stencil_support_matrix ok\n")

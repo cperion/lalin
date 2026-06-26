@@ -18,6 +18,8 @@ local Value = T.LalinValue
 
 local Lower = require("lalin.luajit_lower")(T)
 local Emit = require("lalin.luajit_emit")(T)
+local CodeGraph = require("lalin.code_graph")(T)
+local CodeFlowFacts = require("lalin.code_flow_facts")(T)
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
 local StencilBinary = require("tests.code_ir.copy_patch_mc_helper")
 
@@ -88,7 +90,7 @@ local function compile_module(module, contracts, opts)
     local artifacts, rejects = {}, {}
     local lj_module = Lower.lower_module(module, {
         contracts = contracts,
-        domain_shapes = opts.domain_shapes,
+        flow = opts.flow,
         collect_rejects = rejects,
         stencil_store_artifact_for = opts.store and function(func, vocab, op, plan, info)
             local artifact = store_provider(func, vocab, op, plan, info)
@@ -255,23 +257,33 @@ do
     local zero = Code.CodeValueId("v:" .. name .. ":zero")
     local one = Code.CodeValueId("v:" .. name .. ":one")
     local n_value = module.funcs[1].params[5].value
-    local domain_shapes = Kernel.KernelDomainShapeFactSet(module.id, {
-        Kernel.KernelDomainShapeFact(
-            domain,
-            Flow.FlowDomainShapeRangeND({
-                Flow.FlowDomainAxis(Code.CodeTyIndex, Value.ValueExprValue(zero), Value.ValueExprValue(n_value), 1, Flow.FlowDomainForward),
-                Flow.FlowDomainAxis(Code.CodeTyIndex, Value.ValueExprValue(zero), Value.ValueExprValue(one), 1, Flow.FlowDomainForward),
-            }),
-            { Kernel.KernelProofFlow(domain, "test frontend fact maps loop domain to RangeND producer") },
-            Kernel.KernelDomainShapeFrontendFact("test domain shape fact")
-        ),
-    })
+    local graph = CodeGraph.graph(module)
+    local base_flow = CodeFlowFacts.facts(module, graph)
+    local shape_fact = Flow.FlowDomainShapeFact(
+        domain,
+        Flow.FlowDomainShapeRangeND({
+            Flow.FlowDomainAxis(Code.CodeTyIndex, Value.ValueExprValue(zero), Value.ValueExprValue(n_value), 1, Flow.FlowDomainForward),
+            Flow.FlowDomainAxis(Code.CodeTyIndex, Value.ValueExprValue(zero), Value.ValueExprValue(one), 1, Flow.FlowDomainForward),
+        }),
+        { Flow.FlowProofDomain(domain, "test frontend fact maps loop domain to RangeND producer") },
+        Flow.FlowFactFrontendFact("test domain shape fact")
+    )
+    local flow = Flow.FlowFactSet(
+        base_flow.module,
+        base_flow.domains,
+        base_flow.edges,
+        base_flow.loops,
+        base_flow.ranges,
+        { shape_fact },
+        base_flow.domain_intents or {},
+        base_flow.rejects
+    )
     compile_module(module, contracts, {
         name = name,
         store = true,
         basis = Stencil.StencilApply,
         producer = Stencil.StencilProduceRangeND,
-        domain_shapes = domain_shapes,
+        flow = flow,
     })(out_bool, xs, ys, idx, n)
     assert(out_bool[0] == 1 and out_bool[1] == 0 and out_bool[2] == 1 and out_bool[3] == 0 and out_bool[4] == 1, "lower compare with RangeND producer fact")
 end

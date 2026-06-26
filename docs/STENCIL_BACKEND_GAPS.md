@@ -260,8 +260,12 @@ Open gate question:
 
 ## Stencil Vocab Gaps
 
-- [ ] Treat "fold" as an architecture decision: either make it an alias of
-  reduce/scan/map-reduce/zip-reduce, or add a first-class `StencilFold` vocab.
+- [x] Treat "fold" as an architecture decision. Decision:
+  `fold` is source/kernel vocabulary for loop-local accumulation, lowering
+  through `KernelEffectFold` to `StencilSinkReduce(..., StencilReduceFold(...))`.
+  Do not add a first-class `StencilFold` vocab unless a future semantic
+  distinction cannot be represented by the current reduce sink. See
+  `docs/LALIN_NATIVE_LOOP_ARCHITECTURE.md`.
 - [ ] Add complete tests for every `StencilVocab` constructor in
   `schema/stencil.lua` against selection, artifact planning, LuaTrace emission,
   and MC materialization.
@@ -324,8 +328,10 @@ Open gate question:
 - [ ] Add constant-stride view runtime tests for every vocab that accepts view
   descriptors.
 - [ ] Add zero-length descriptor tests for slice/view/byte-span.
-- [ ] Add negative-stride or backward-domain decision: support, reject, or
-  normalize.
+- [x] Add negative-stride or backward-domain decision: backward Range1D is
+  represented as positive descriptor step plus backward producer order and is
+  materialized for primary-index store/copy, fold, and scan loops. Reverse-affine
+  1D destination indexes are represented as explicit affine access layouts.
 - [ ] Add descriptor aliasing tests for copy, map, in-place map, partition, and
   scatter.
 - [ ] Add tests that descriptor lengths dominate loop bounds where applicable.
@@ -365,8 +371,10 @@ and benchmarked where they produce executable MC code.
   tile sizes before materialization.
 - [x] Preserve typed unsupported-producer facts instead of falling back to an
   accidental stride-1 loop.
-- [x] Keep positive forward `Range1D` working across existing BC, MC, and bank
-  paths.
+- [x] Keep forward `Range1D` working across existing BC, MC, and bank paths;
+  backward `Range1D` now works in the LuaJIT MC/native artifact path for
+  primary-index store/copy, fold, and scan materialization, plus reverse-affine
+  1D store/copy and scan destination layouts.
 - [x] Materialize forward `RangeND` in `copy_patch_mc` for generic `ApplyN`,
   domain/axis `ReduceN`, and axis-aware `ScanN` through nested LLBL.C producer
   loops.
@@ -399,8 +407,10 @@ and benchmarked where they produce executable MC code.
   `ApplyN`, domain-scope `ReduceN`, axis `ReduceN`, and axis `ScanN`.
 - [x] Keep non-`Range1D` producers as typed BC rejects with focused tests.
 - [x] Add non-unit positive producer-step tests for `RangeND` generic shapes.
-- [x] Decide backward producer semantics: represented but rejected with typed
-  producer facts until a backward execution contract is added.
+- [x] Decide backward producer semantics: `Range1D` backward producers execute
+  the authored descending interval (`start > stop`) with positive descriptor
+  step and `StencilProducerBackward` order. Backward ND/window/tiled axes remain
+  represented but rejected at materializer boundaries.
 - [x] Design and implement `TiledND` execution semantics for generic MC:
   tile-major outer loops, clipped edge tiles, row-major linearization inside the
   compact logical iteration space, and scalar/vector schedule preservation at
@@ -455,8 +465,8 @@ and benchmarked where they produce executable MC code.
   that producer into descriptor construction.
 - [x] Add a typed domain-scoped frontend/lowering producer fact.
   `FlowDomainShape` is the neutral shape vocabulary and
-  `KernelDomainShapeFactSet` is the frontend/lowering fact keyed by
-  `FlowDomain`, with proofs and provenance. LuaJIT lowering projects those facts
+  `FlowDomainShapeFact` is the frontend/lowering fact keyed by `FlowDomain`,
+  with proofs and provenance. LuaJIT lowering projects those facts
   into backend-owned `StencilProducerFactSet` values at the stencil boundary.
   Lowering derives machine-call producer arguments from the descriptor shape, so
   named array helpers and generic N-ary helpers share the same producer ABI.
@@ -549,15 +559,17 @@ combined body, not to concatenate already compiled machine-code bytes. Cross-op
 optimization only happens if the compiler receives the fused source.
 
 - [x] Record the primitive-basis decision: the production hand-coded stencil
-  family should collapse to perfect `Apply`, `Reduce`, and `Scan` primitives,
-  with `ScatterReduce` reserved as the likely fourth primitive only when
-  collision-combine / histogram semantics enter scope.
+  family collapses to four primitives: `Apply`, `Reduce`, `Scan`, and
+  `ScatterReduce`. Plain `Scatter` remains `Apply` with indexed write layout
+  and conflict semantics; `ScatterReduce` owns collision-combine / histogram /
+  reduce-by-index semantics.
 - [x] Record the derivation rule: non-basis vocabulary is generated from the
   primitive basis, not maintained as independent handwritten production
   lowerings. `Map`, `ZipMap`, `InPlaceMap`, `Copy`, `Fill`, `Cast`, `Compare`,
   `ZipCompare`, `Gather`, and plain `Scatter` are `Apply` configurations;
   `Count`, `Find`, `MapReduce`, and `ZipReduce` are `Apply + Reduce`;
-  `Filter` and `Partition` are `Apply + Scan + Scatter`.
+  `Filter` and `Partition` are `Apply + Scan + Scatter`; histogram and
+  reduce-by-index families are `ScatterReduce`.
 - [x] Refactor the descriptor/support-matrix vocabulary so the real physical
   shape is `producer + body + sink`, and the old operation names become derived
   plan labels or aliases with no separate skeleton authority.
@@ -603,7 +615,9 @@ optimization only happens if the compiler receives the fused source.
 - [x] Replace the old linear-producer-only embedded bank shape with the
   represented producer/body/sink bank. The current bounded default includes
   `Range1D`, `RangeND`, `TiledND`, and `WindowND` producer cells over the
-  available scalar Apply/Reduce/Scan surface.
+  available scalar Apply/Reduce/Scan surface; `ScatterReduce` currently
+  materializes through selected scalar MC artifacts and is not part of the
+  default generated bank envelope.
 - [x] Add typed metastencil descriptors and selection facts. A metastencil is now
   a typed DAG of artifact nodes, external/node ports, wires, fusion legality
   facts/rejects, ABI, fingerprint, cover candidates, and deterministic longest
@@ -630,9 +644,9 @@ optimization only happens if the compiler receives the fused source.
   0.064 ms, handwritten `gcc -O3` median 0.066 ms for 120k elements.
 - [ ] Optional future budget expansion: extend fused-cover materialization beyond
   the current bounded `Apply -> Reduce` bank family to `Apply -> Apply`,
-  `Apply -> Scan`, `Apply -> Scan -> Scatter`, and future
-  `ScatterReduce`/collision-combine families when bank size/compile budget can
-  carry them.
+  `Apply -> Scan`, `Apply -> Scan -> Scatter`, and composed
+  `Apply -> ScatterReduce` families when bank size/compile budget can carry
+  them.
 - [x] Remove the default compiled-payload frontier and the eager-enumerator
   guards. A real unbounded SOAC order-3/input-count-3 profile run was attempted
   and failed before producing a count: LuaJIT reported `not enough memory` after
@@ -708,6 +722,30 @@ optimization only happens if the compiler receives the fused source.
 
 ## Frontend-To-Stencil Lowering Gaps
 
+- [ ] Implement the full native-loop architecture from
+  `docs/LALIN_NATIVE_LOOP_ARCHITECTURE.md`: source native loops author typed
+  `Code`/`Flow`/`Kernel` facts, and stencil descriptors are produced only by the
+  existing kernel-to-stencil projection.
+  - [x] Assignment/apply milestone: `lln.loop` + positive Range1D `lln.range`
+    lowers to ordinary typed CFG, authors `FlowDomainShapeFact` and
+    `FlowDomainIntentNativeLoop`, and reuses the existing store stencil path.
+  - [x] Add source syntax and typed lowering for `lln.fold`.
+  - [x] Add source syntax and typed lowering for `lln.scan`.
+  - [x] Add negative-step Range1D authoring and materialization; Flow records
+    `FlowDomainBackward`, descriptors preserve `StencilProducerBackward`, and
+    primary-index store/copy, fold, and scan loops emit backward Range1D
+    artifacts. Reverse-affine 1D destination indexes such as
+    `dst[(n - 1) - i]` emit through `StencilLayoutAffine1D`.
+  - [x] Support the current reducer vocabulary in `lln.fold`/`lln.scan`:
+    add, mul, bit-and, bit-or, bit-xor, min, and max.
+  - [x] Add `lln.range_nd` parsing as the explicit multi-axis syntax trigger.
+  - [x] Add executable `lln.range_nd` lowering for zero-based forward domains:
+    the CFG uses a flat induction with generated coordinate bindings, Flow
+    records `FlowDomainShapeRangeND`, and the exact 2D row-major `i * w + j`
+    form normalizes to the primary induction for store stencil selection.
+  - [ ] Generalize ND affine index recognition beyond the current zero-based
+    2D row-major normalization.
+  - [ ] Add tiled and windowed multi-index authoring sugar.
 - [ ] Add end-to-end DSL tests for every supported vocab, not only direct
   artifact-plan tests.
 - [ ] Add end-to-end DSL tests for view, slice, byte-span, field projection, and
@@ -774,7 +812,7 @@ means the fact is preserved for audit but does not yet drive lowering.
 | Schema surface | `copy_patch_bc` | `copy_patch_mc` | emitted bank / binary | Remaining work |
 | --- | --- | --- | --- | --- |
 | Descriptor producer/body/sink / vocab | validate all represented producer/body/sink descriptors; materialize current BC subset and typed-reject missing semantic cells | consume all shape-supported C stencil shapes; materialize current fast subset | record/intern selected shapes | [x] Generate MC intern set from the support matrix, not hand enumeration. |
-| Producer | materialize positive `Range1D`; reject represented ND/window/tiled producers with typed facts | materialize positive `Range1D`, forward `RangeND`, center-domain `WindowND`, and forward `TiledND` for generic `ApplyN`, domain/axis `ReduceN`, and axis `ScanN` | intern producer cells for generated SOAC combinations plus deliberate rank-aware cells | [x] Add deliberate emitted-bank cells for axis/window reduce and window-neighbor apply. |
+| Producer | materialize forward/backward `Range1D`; reject represented ND/window/tiled producers with typed facts | materialize forward/backward `Range1D`, forward `RangeND`, center-domain `WindowND`, and forward `TiledND` for generic `ApplyN`, domain/axis `ReduceN`, and axis `ScanN` | intern producer cells for generated SOAC combinations plus deliberate rank-aware cells | [x] Add deliberate emitted-bank cells for axis/window reduce and window-neighbor apply. |
 | Sink rank/scope | materialize domain reduce and `Range1D` axis-1 scan; reject non-`Range1D` producers | materialize domain reduce, axis/partial reduce, window-local reduce, and rank-N axis scan | bank records domain reduce, generated rank-N scan, and deliberate axis/window reduce cells | [x] Add emitted-bank coverage for axis/window reduce cells. |
 | Window body offsets | represented as `StencilApplyWindowInput`; BC rejects non-`Range1D` producer shapes | MC consumes boundary-aware window-relative access expressions | bank includes deliberate window-neighbor apply cell | [x] Add emitted-bank cells and BC typed-reject tests for window-relative bodies. |
 | Layout | consume contiguous, view, slice, byte-span, field, SoA, indexed, scalar | consume same through C access expressions | partial dynamic-descriptor coverage | [ ] Add embedded-bank tests for view/slice/byte-span/field/SoA descriptors. |

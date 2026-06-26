@@ -82,12 +82,6 @@ local function bind_context(T)
         return tostring(domain)
     end
 
-    local function domain_shape_facts(facts)
-        if facts == nil then return {} end
-        if pvm.classof(facts) == Kernel.KernelDomainShapeFactSet then return facts.facts or {} end
-        return facts
-    end
-
     local function stencil_order(order)
         if order == Flow.FlowDomainBackward then return Stencil.StencilProducerBackward end
         return Stencil.StencilProducerForward
@@ -130,20 +124,31 @@ local function bind_context(T)
 
     local function stencil_producer_origin(origin)
         local cls = pvm.classof(origin)
-        if origin == Kernel.KernelDomainShapeCheckerDerived then return Stencil.StencilProducerCheckerDerived end
-        if cls == Kernel.KernelDomainShapeAuthorAsserted then return Stencil.StencilProducerAuthorAsserted(origin.reason) end
-        if cls == Kernel.KernelDomainShapeFrontendFact then return Stencil.StencilProducerFrontendFact(origin.reason) end
+        if origin == Flow.FlowFactCheckerDerived then return Stencil.StencilProducerCheckerDerived end
+        if cls == Flow.FlowFactAuthorAsserted then return Stencil.StencilProducerAuthorAsserted(origin.reason) end
+        if cls == Flow.FlowFactFrontendFact then return Stencil.StencilProducerFrontendFact(origin.reason) end
         return Stencil.StencilProducerCheckerDerived
+    end
+
+    local function kernel_proof_from_flow_proof(domain, proof)
+        local cls = pvm.classof(proof)
+        if cls == Flow.FlowProofDomain then return Kernel.KernelProofFlow(proof.domain, proof.reason) end
+        if cls == Flow.FlowProofMemory then return Kernel.KernelProofMemory(proof.proof, proof.reason) end
+        if cls == Flow.FlowProofAuthorAsserted then return Kernel.KernelProofFlow(domain, proof.reason) end
+        if cls == Flow.FlowProofFrontendFact then return Kernel.KernelProofFlow(domain, proof.reason) end
+        return Kernel.KernelProofFlow(domain, "unknown FlowProof")
     end
 
     local function producer_fact_from_domain_shape(fact)
         local producer = Stencil.StencilProducer(fact.domain, stencil_producer_shape(fact.shape))
-        return Stencil.StencilProducerFact(fact.domain, producer, fact.proofs or {}, stencil_producer_origin(fact.origin))
+        local proofs = {}
+        for i, proof in ipairs(fact.proofs or {}) do proofs[i] = kernel_proof_from_flow_proof(fact.domain, proof) end
+        return Stencil.StencilProducerFact(fact.domain, producer, proofs, stencil_producer_origin(fact.origin))
     end
 
-    local function producer_fact_index(domain_shapes)
+    local function producer_fact_index(flow)
         local out = {}
-        for _, shape_fact in ipairs(domain_shape_facts(domain_shapes)) do
+        for _, shape_fact in ipairs(flow and flow.domain_shapes or {}) do
             local fact = producer_fact_from_domain_shape(shape_fact)
             out[flow_domain_key(fact.domain)] = fact
         end
@@ -240,6 +245,32 @@ local function bind_context(T)
         error("luajit_lower: unsupported ValueExpr " .. class_name(expr), 3)
     end
 
+    local producer_value_expr
+    local function producer_value_id_expr(ctx, id, seen)
+        local def = ctx.defs and id and ctx.defs[id.text] or nil
+        local k = def and def.kind
+        local cls = pvm.classof(k)
+        if cls == Code.CodeInstConst and pvm.classof(k.const) == Code.CodeConstLiteral then
+            return Expr.const_expr(ctx, k.const)
+        end
+        seen = seen or {}
+        if id ~= nil and seen[id.text] then return value_id_expr(ctx, id) end
+        if id ~= nil then seen[id.text] = true end
+        if cls == Code.CodeInstAlias then return producer_value_id_expr(ctx, k.src, seen) end
+        if cls == Code.CodeInstCast then
+            return LJ.LJExprCast(k.op, physical(ctx, k.from), physical(ctx, k.to), producer_value_id_expr(ctx, k.value, seen))
+        end
+        if cls == Code.CodeInstBinary then
+            return LJ.LJExprIntBinary(k.op, physical(ctx, k.ty), k.semantics, producer_value_id_expr(ctx, k.lhs, seen), producer_value_id_expr(ctx, k.rhs, seen))
+        end
+        return value_id_expr(ctx, id)
+    end
+
+    producer_value_expr = function(ctx, expr)
+        if pvm.classof(expr) == Value.ValueExprValue then return producer_value_id_expr(ctx, expr.value) end
+        return value_expr(ctx, expr)
+    end
+
     local function note_params(ctx, params)
         for _, param in ipairs(params or {}) do
             ctx.value_types[param.value.text] = param.ty
@@ -329,11 +360,26 @@ local function bind_context(T)
         return out
     end
 
-    local function const_int_value(ctx, id)
+    local function const_int_value(ctx, id, seen)
         local def = ctx.defs and id and ctx.defs[id.text] or nil
         local k = def and def.kind
-        if pvm.classof(k) ~= Code.CodeInstConst or pvm.classof(k.const) ~= Code.CodeConstLiteral or pvm.classof(k.const.literal) ~= Core.LitInt then return nil end
-        return tonumber(k.const.literal.raw)
+        local cls = pvm.classof(k)
+        if cls == Code.CodeInstConst and pvm.classof(k.const) == Code.CodeConstLiteral and pvm.classof(k.const.literal) == Core.LitInt then
+            return tonumber(k.const.literal.raw)
+        end
+        if cls == Code.CodeInstCast then
+            seen = seen or {}
+            if id ~= nil and seen[id.text] then return nil end
+            if id ~= nil then seen[id.text] = true end
+            return const_int_value(ctx, k.value, seen)
+        end
+        if cls == Code.CodeInstAlias then
+            seen = seen or {}
+            if id ~= nil and seen[id.text] then return nil end
+            if id ~= nil then seen[id.text] = true end
+            return const_int_value(ctx, k.src, seen)
+        end
+        return nil
     end
 
     local function term_args_to_dest(term, dest)
@@ -544,6 +590,7 @@ local function bind_context(T)
 
     local function layout_data_value(layout)
         local cls = pvm.classof(layout)
+        if cls == Stencil.StencilLayoutAffine1D then return layout_data_value(layout.parent) end
         if cls == Stencil.StencilLayoutSoAComponent or cls == Stencil.StencilLayoutFieldProjection then return layout_data_value(layout.parent) end
         if cls == Stencil.StencilLayoutViewDescriptor or cls == Stencil.StencilLayoutSliceDescriptor or cls == Stencil.StencilLayoutByteSpanDescriptor then return layout.data end
         return nil
@@ -636,6 +683,59 @@ local function bind_context(T)
         return nil
     end
 
+    local function value_expr_from_code(ctx, value, seen)
+        if value == nil then return nil end
+        seen = seen or {}
+        if seen[value.text] then return Value.ValueExprValue(value) end
+        seen[value.text] = true
+        local def = ctx.defs and ctx.defs[value.text] or nil
+        local k = def and def.kind or nil
+        local cls = pvm.classof(k)
+        if cls == Code.CodeInstConst then return Value.ValueExprConst(k.const) end
+        if cls == Code.CodeInstAlias then return value_expr_from_code(ctx, k.src, seen) end
+        if cls == Code.CodeInstCast then return Value.ValueExprCast(k.op, k.from, k.to, value_expr_from_code(ctx, k.value, seen)) end
+        if cls == Code.CodeInstBinary then
+            local a, b = value_expr_from_code(ctx, k.lhs, seen), value_expr_from_code(ctx, k.rhs, seen)
+            if k.op == Core.BinAdd then return Value.ValueExprAdd(a, b, k.ty, k.semantics) end
+            if k.op == Core.BinSub then return Value.ValueExprSub(a, b, k.ty, k.semantics) end
+            if k.op == Core.BinMul then return Value.ValueExprMul(a, b, k.ty, k.semantics) end
+            if k.op == Core.BinDiv or k.op == Core.BinRem then return Value.ValueExprDiv(a, b, k.ty, k.semantics) end
+        end
+        return Value.ValueExprValue(value)
+    end
+
+    local function resolved_algebra_expr(ctx, expr, bindings, seen)
+        if expr == nil then return nil end
+        local cls = pvm.classof(expr)
+        if cls == Value.ValueExprValue then
+            seen = seen or {}
+            if seen[expr.value.text] then return expr end
+            seen[expr.value.text] = true
+            return resolved_algebra_expr(ctx, bound_algebra_expr(bindings, expr.value) or value_expr_from_code(ctx, expr.value), bindings, seen)
+        end
+        return expr
+    end
+
+    local function value_expr_key(ctx, graph_loop, expr, bindings, seen)
+        expr = resolved_algebra_expr(ctx, expr, bindings)
+        if expr == nil then return "nil" end
+        local cls = pvm.classof(expr)
+        if cls == Value.ValueExprConst and pvm.classof(expr.const) == Code.CodeConstLiteral then
+            local lit = expr.const.literal
+            return "const:" .. tostring(pvm.classof(lit)) .. ":" .. tostring(lit and (lit.raw or lit.value))
+        end
+        if cls == Value.ValueExprValue then
+            local v = canonical_loop_value(ctx, graph_loop, expr.value)
+            return "value:" .. tostring(v and v.text)
+        end
+        if cls == Value.ValueExprCast then return value_expr_key(ctx, graph_loop, expr.value, bindings, seen) end
+        if cls == Value.ValueExprUnary then return "unary:" .. tostring(expr.op) .. "(" .. value_expr_key(ctx, graph_loop, expr.value, bindings, seen) .. ")" end
+        if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv then
+            return tostring(cls) .. "(" .. value_expr_key(ctx, graph_loop, expr.a, bindings, seen) .. "," .. value_expr_key(ctx, graph_loop, expr.b, bindings, seen) .. ")"
+        end
+        return tostring(expr)
+    end
+
     local expr_is_primary
     expr_is_primary = function(ctx, expr, graph_loop, loop_fact, bindings, seen)
         local primary = primary_induction(loop_fact)
@@ -660,6 +760,30 @@ local function bind_context(T)
                 or (expr_is_int_const(expr.b, 0) and expr_is_primary(ctx, expr.a, graph_loop, loop_fact, bindings, seen))
         end
         return false
+    end
+
+    local function reverse_affine_offset(ctx, expr, graph_loop, loop_fact, bindings)
+        local counted = loop_fact and loop_fact.counted or nil
+        if counted == nil then return nil end
+        local function strip_casts(v)
+            v = resolved_algebra_expr(ctx, v, bindings)
+            while v ~= nil and pvm.classof(v) == Value.ValueExprCast do
+                v = resolved_algebra_expr(ctx, v.value, bindings)
+            end
+            return v
+        end
+        expr = strip_casts(expr)
+        if expr == nil then return nil end
+        if pvm.classof(expr) == Value.ValueExprMul then
+            if expr_is_int_const(expr.a, 1) then expr = strip_casts(expr.b) end
+            if expr_is_int_const(expr.b, 1) then expr = strip_casts(expr.a) end
+        end
+        if expr == nil then return nil end
+        if pvm.classof(expr) ~= Value.ValueExprSub then return nil end
+        if not expr_is_primary(ctx, expr.b, graph_loop, loop_fact, bindings) then return nil end
+        local start_expr = value_expr_from_code(ctx, counted.start)
+        if value_expr_key(ctx, graph_loop, expr.a, bindings) ~= value_expr_key(ctx, graph_loop, start_expr, bindings) then return nil end
+        return expr.a
     end
 
     local function is_zero_const(expr)
@@ -811,7 +935,8 @@ local function bind_context(T)
         if not function_returns_void_from_loop(func, graph_loop) then return nil, "store stencil requires loop exit to return void" end
         if loop_fact == nil or loop_fact.counted == nil then return nil, "store stencil requires counted loop" end
         local step_num = const_int_value(ctx, loop_fact.counted.step)
-        if step_num == nil or step_num <= 0 then return nil, "store stencil requires a positive constant step" end
+        if step_num == nil or step_num == 0 then return nil, "store stencil requires a non-zero constant step" end
+        local descriptor_step = math.abs(step_num)
         local store, store_reason = single_store_effect(plan.body)
         if store == nil then return nil, store_reason end
         local dst_base = lane_base_value(store.dst)
@@ -823,15 +948,23 @@ local function bind_context(T)
         local start_expr, stop_expr = value_id_expr(ctx, loop_fact.counted.start), value_id_expr(ctx, loop_fact.counted.stop)
         local dst_expr = value_id_expr(ctx, dst_base)
         local store_index_is_primary = expr_is_primary(ctx, store.index, graph_loop, loop_fact, bindings)
+        local dst_layout = dst_fact and dst_fact.layout or nil
+        if not store_index_is_primary and dst_layout ~= nil then
+            local offset = reverse_affine_offset(ctx, store.index, graph_loop, loop_fact, bindings)
+            if offset ~= nil then
+                dst_layout = Stencil.StencilLayoutAffine1D(dst_layout, -1, offset)
+                store_index_is_primary = true
+            end
+        end
         local class, class_reason = enrich_stencil_class(ctx, classified, graph_loop, loop_fact, bindings, dst_base, store.dst.elem_ty)
         if class == nil then return nil, class_reason end
         local selection_ctx = {
-            step_num = step_num,
-            producer = producer_from_loop(ctx, loop_fact, step_num),
+            producer = producer_from_loop(ctx, loop_fact, descriptor_step),
+            step_num = descriptor_step,
             dst_elem_ty = store.dst.elem_ty,
             dst = dst_base,
             dst_expr = dst_expr,
-            dst_layout = dst_fact and dst_fact.layout or nil,
+            dst_layout = dst_layout,
             start = loop_fact.counted.start,
             stop = loop_fact.counted.stop,
             start_expr = start_expr,
@@ -844,7 +977,7 @@ local function bind_context(T)
         local stencil_plan, select_reason = StencilRules.plan_store {
             planned = pvm.classof(plan) == Kernel.KernelPlanned,
             returns_void = function_returns_void_from_loop(func, graph_loop),
-            counted_positive = step_num ~= nil and step_num > 0,
+            counted_positive = step_num ~= nil and step_num ~= 0,
             single_store = store ~= nil,
             dst_base_present = dst_base ~= nil,
             class_ready = class ~= nil,
@@ -858,7 +991,17 @@ local function bind_context(T)
         local cls = pvm.classof(layout)
         if cls == Stencil.StencilLayoutFieldProjection then return dynamic_stride_layout(layout.parent) end
         if cls == Stencil.StencilLayoutSoAComponent then return dynamic_stride_layout(layout.parent) end
+        if cls == Stencil.StencilLayoutAffine1D then return dynamic_stride_layout(layout.parent) end
         if cls == Stencil.StencilLayoutViewDescriptor and layout.stride_const == nil then return layout end
+        return nil
+    end
+
+    local function dynamic_affine_offset_layout(layout)
+        local cls = pvm.classof(layout)
+        if cls == Stencil.StencilLayoutFieldProjection then return dynamic_affine_offset_layout(layout.parent) end
+        if cls == Stencil.StencilLayoutSoAComponent then return dynamic_affine_offset_layout(layout.parent) end
+        if cls == Stencil.StencilLayoutIndexed then return dynamic_affine_offset_layout(layout.parent) end
+        if cls == Stencil.StencilLayoutAffine1D and layout.offset ~= nil then return layout end
         return nil
     end
 
@@ -892,14 +1035,14 @@ local function bind_context(T)
         local shape = StencilArtifactPlan.producer_shape(producer)
         local cls = pvm.classof(shape)
         if cls == Stencil.StencilProduceRange1D then
-            out[#out + 1] = shape.start and value_expr(ctx, shape.start) or assert(fallback and fallback.start_expr, "Range1D producer call is missing start")
-            out[#out + 1] = shape.stop and value_expr(ctx, shape.stop) or assert(fallback and fallback.stop_expr, "Range1D producer call is missing stop")
+            out[#out + 1] = shape.start and producer_value_expr(ctx, shape.start) or assert(fallback and fallback.start_expr, "Range1D producer call is missing start")
+            out[#out + 1] = shape.stop and producer_value_expr(ctx, shape.stop) or assert(fallback and fallback.stop_expr, "Range1D producer call is missing stop")
             return
         end
         if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then
             for _, axis in ipairs(shape.axes or {}) do
-                out[#out + 1] = assert(axis.start and value_expr(ctx, axis.start), "ND producer call is missing axis start")
-                out[#out + 1] = assert(axis.stop and value_expr(ctx, axis.stop), "ND producer call is missing axis stop")
+                out[#out + 1] = assert(axis.start and producer_value_expr(ctx, axis.start), "ND producer call is missing axis start")
+                out[#out + 1] = assert(axis.stop and producer_value_expr(ctx, axis.stop), "ND producer call is missing axis stop")
             end
             return
         end
@@ -945,6 +1088,12 @@ local function bind_context(T)
                 out[#out + 1] = value_id_expr(ctx, top.stride)
             end
         end
+        for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(desc)) do
+            local top = dynamic_affine_offset_layout(access.layout)
+            if top ~= nil then
+                out[#out + 1] = producer_value_expr(ctx, top.offset)
+            end
+        end
         return out
     end
 
@@ -976,7 +1125,8 @@ local function bind_context(T)
         if not function_returns_reduction(func, graph_loop, reduction) then return nil, "function return is not the kernel reduction" end
         if loop_fact == nil or loop_fact.counted == nil then return nil, "reduction stencil requires counted loop" end
         local step_num = const_int_value(ctx, loop_fact.counted.step)
-        if step_num == nil or step_num <= 0 then return nil, "reduction stencil requires a positive constant step" end
+        if step_num == nil or step_num == 0 then return nil, "reduction stencil requires a non-zero constant step" end
+        local descriptor_step = math.abs(step_num)
         local classified, reason = classify_store_expr(Kernel.KernelExprAlgebra(reduction.contribution), binding_index(plan.body))
         if classified == nil then return nil, reason end
         local start_expr, stop_expr = value_id_expr(ctx, loop_fact.counted.start), value_id_expr(ctx, loop_fact.counted.stop)
@@ -985,8 +1135,8 @@ local function bind_context(T)
         if class == nil then return nil, class_reason end
         local i32 = Code.CodeTyInt(32, Code.CodeSigned)
         local selection_ctx = {
-            step_num = step_num,
-            producer = producer_from_loop(ctx, loop_fact, step_num),
+            step_num = descriptor_step,
+            producer = producer_from_loop(ctx, loop_fact, descriptor_step),
             result_ty = reduction.ty,
             init = reduction.init,
             init_expr = init_expr,
@@ -1004,7 +1154,7 @@ local function bind_context(T)
             planned = pvm.classof(plan) == Kernel.KernelPlanned,
             result_reduction = pvm.classof(result) == Kernel.KernelResultReduction,
             returns_reduction = function_returns_reduction(func, graph_loop, reduction),
-            counted_positive = step_num ~= nil and step_num > 0,
+            counted_positive = step_num ~= nil and step_num ~= 0,
             class_ready = class ~= nil,
             reduction = reduction,
             selection_ctx = selection_ctx,
@@ -1056,7 +1206,8 @@ local function bind_context(T)
             if cls == Kernel.KernelEffectStore
                 or cls == Kernel.KernelEffectScan
                 or cls == Kernel.KernelEffectPartition
-                or cls == Kernel.KernelEffectCopy then
+                or cls == Kernel.KernelEffectCopy
+                or cls == Kernel.KernelEffectScatterReduce then
                 return true
             end
         end
@@ -1079,7 +1230,8 @@ local function bind_context(T)
         if pvm.classof(result) ~= Kernel.KernelResultReduction then return nil, "scan skeleton requires reduction result" end
         local reduction = effect.reduction
         if result.reduction ~= reduction then return nil, "scan result reduction does not match scan effect" end
-        if not function_returns_reduction(func, graph_loop, reduction) then return nil, "function return is not the scan final value" end
+        local returns_reduction = function_returns_reduction(func, graph_loop, reduction)
+        if not returns_reduction and not function_returns_void_from_loop(func, graph_loop) then return nil, "scan loop exits as neither final value nor void effect" end
         local dst_base = lane_base_value(effect.dst)
         if dst_base == nil then return nil, "scan destination lane has no value base" end
         local dst_fact = lane_selection_fact(ctx, effect.dst)
@@ -1088,19 +1240,30 @@ local function bind_context(T)
         if class == nil then return nil, class_reason end
         local start_expr, stop_expr = value_id_expr(ctx, loop_fact.counted.start), value_id_expr(ctx, loop_fact.counted.stop)
         local step_num = const_int_value(ctx, loop_fact.counted.step)
+        if step_num == nil or step_num == 0 then return nil, "scan stencil requires a non-zero constant step" end
+        local descriptor_step = math.abs(step_num)
+        local dst_layout = dst_fact and dst_fact.layout or nil
+        local store_index_is_primary = expr_is_primary(ctx, effect.index, graph_loop, loop_fact, bindings)
+        if not store_index_is_primary and dst_layout ~= nil then
+            local offset = reverse_affine_offset(ctx, effect.index, graph_loop, loop_fact, bindings)
+            if offset ~= nil then
+                dst_layout = Stencil.StencilLayoutAffine1D(dst_layout, -1, offset)
+                store_index_is_primary = true
+            end
+        end
         local selection, select_reason = run_stencil_selection("select_scan_stencil", {
-            step_num = step_num,
-            producer = producer_from_loop(ctx, loop_fact, step_num),
+            step_num = descriptor_step,
+            producer = producer_from_loop(ctx, loop_fact, descriptor_step),
             dst_elem_ty = effect.dst.elem_ty,
             result_ty = reduction.ty,
             dst = dst_base,
             dst_expr = value_id_expr(ctx, dst_base),
-            dst_layout = dst_fact and dst_fact.layout or nil,
+            dst_layout = dst_layout,
             start = loop_fact.counted.start,
             stop = loop_fact.counted.stop,
             start_expr = start_expr,
             stop_expr = stop_expr,
-            store_index_primary = expr_is_primary(ctx, effect.index, graph_loop, loop_fact, bindings),
+            store_index_primary = store_index_is_primary,
             reduction = reduction,
             reduction_kind = reduction.kind,
             init = reduction.init,
@@ -1109,7 +1272,7 @@ local function bind_context(T)
             class = class,
         }, "unsupported scan stencil shape")
         if selection == nil then return nil, select_reason end
-        return { kind = "scan", selection = selection, reduction = reduction, result_ty = reduction.ty }, nil
+        return { kind = "scan", selection = selection, reduction = reduction, result_ty = returns_reduction and reduction.ty or nil }, nil
     end
 
     local function skeleton_find_plan(ctx, func, plan, graph_loop, loop_fact)
@@ -1175,9 +1338,11 @@ local function bind_context(T)
         local class, class_reason = enriched_class_for_expr(ctx, effect.src, graph_loop, loop_fact, bindings, dst_base, effect.dst.elem_ty)
         if class == nil then return nil, class_reason end
         local step_num = const_int_value(ctx, loop_fact.counted.step)
+        if step_num == nil or step_num == 0 then return nil, "copy skeleton requires a non-zero constant step" end
+        local descriptor_step = math.abs(step_num)
         local selection, select_reason = run_stencil_selection("select_store_stencil", {
-            step_num = step_num,
-            producer = producer_from_loop(ctx, loop_fact, step_num),
+            step_num = descriptor_step,
+            producer = producer_from_loop(ctx, loop_fact, descriptor_step),
             dst_elem_ty = effect.dst.elem_ty,
             dst = dst_base,
             dst_expr = value_id_expr(ctx, dst_base),
@@ -1194,16 +1359,79 @@ local function bind_context(T)
         return { kind = "copy", selection = selection, result_ty = nil }, nil
     end
 
+    local function skeleton_scatter_reduce_plan(ctx, func, plan, graph_loop, loop_fact)
+        local effect, effect_reason = single_effect(plan.body, Kernel.KernelEffectScatterReduce)
+        if effect == nil then return nil, effect_reason end
+        if not function_returns_void_from_loop(func, graph_loop) then return nil, "scatter-reduce loop exits as neither final value nor void effect" end
+        local dst_base = lane_base_value(effect.dst)
+        if dst_base == nil then return nil, "scatter-reduce destination lane has no value base" end
+        local dst_fact = lane_selection_fact(ctx, effect.dst)
+        if dst_fact == nil then return nil, "scatter-reduce destination lane has no layout fact" end
+        local bindings = binding_index(plan.body)
+        local class, class_reason = enriched_class_for_expr(ctx, effect.value, graph_loop, loop_fact, bindings, dst_base, effect.dst.elem_ty)
+        if class == nil then return nil, class_reason end
+        if class.kind ~= "load" then return nil, "scatter-reduce currently requires a lane-load contribution" end
+        if not class.index_primary then return nil, "scatter-reduce contribution must be primary-indexed" end
+        local index_lane = index_lane_selection_fact(ctx, effect.index, graph_loop, loop_fact, bindings)
+        if index_lane == nil then return nil, "scatter-reduce destination index must come from an index lane" end
+        if not index_lane.index_primary then return nil, "scatter-reduce index lane must be primary-indexed" end
+        local step_num = const_int_value(ctx, loop_fact.counted.step)
+        if step_num == nil or step_num == 0 then return nil, "scatter-reduce stencil requires a non-zero constant step" end
+        local descriptor_step = math.abs(step_num)
+        return {
+            kind = "scatter_reduce",
+            selection = {
+                kind = "scatter_reduce",
+                info = {
+                    step_num = descriptor_step,
+                    producer = producer_from_loop(ctx, loop_fact, descriptor_step),
+                    result_ty = effect.reducer.result_ty,
+                    item_ty = class.elem_ty,
+                    index_ty = index_lane.elem_ty,
+                    dst = dst_base,
+                    dst_name = "dst",
+                    dst_layout = Stencil.StencilLayoutIndexed(
+                        dst_fact.layout,
+                        Stencil.StencilAccessRef("idx"),
+                        index_lane.elem_ty,
+                        descriptor_step
+                    ),
+                    src = class.src,
+                    index = index_lane.base,
+                    index_name = "idx",
+                    index_layout = index_lane.layout,
+                    inputs = {
+                        { name = "xs", ty = class.elem_ty, layout = class.src_layout },
+                    },
+                },
+                args = {
+                    value_id_expr(ctx, dst_base),
+                    class.src_expr,
+                    index_lane.base_expr,
+                    value_id_expr(ctx, loop_fact.counted.start),
+                    value_id_expr(ctx, loop_fact.counted.stop),
+                },
+            },
+            reduction = {
+                kind = effect.reducer.reduction,
+                int_semantics = effect.reducer.int_semantics,
+                float_mode = effect.reducer.float_mode,
+            },
+            result_ty = nil,
+        }, nil
+    end
+
     local function stencil_skeleton_plan(ctx, func, plan, graph_loop, loop_fact)
         if pvm.classof(plan) ~= Kernel.KernelPlanned then return nil, "kernel is not planned" end
         if loop_fact == nil or loop_fact.counted == nil then return nil, "stencil skeleton requires counted loop" end
         local step_num = const_int_value(ctx, loop_fact.counted.step)
-        if step_num == nil or step_num <= 0 then return nil, "stencil skeleton requires a positive constant step" end
+        if step_num == nil or step_num == 0 then return nil, "stencil skeleton requires a non-zero constant step" end
         local scan, scan_reason = skeleton_scan_plan(ctx, func, plan, graph_loop, loop_fact)
         local find, find_reason = skeleton_find_plan(ctx, func, plan, graph_loop, loop_fact)
         local partition, partition_reason = skeleton_partition_plan(ctx, func, plan, graph_loop, loop_fact)
         local copy, copy_reason = skeleton_copy_plan(ctx, func, plan, graph_loop, loop_fact)
-        local reject_reason = scan_reason or find_reason or partition_reason or copy_reason or "no stencil skeleton selected"
+        local scatter_reduce, scatter_reduce_reason = skeleton_scatter_reduce_plan(ctx, func, plan, graph_loop, loop_fact)
+        local reject_reason = scan_reason or find_reason or partition_reason or copy_reason or scatter_reduce_reason or "no stencil skeleton selected"
         local selection, err = LowerRules:run("select_skeleton_lowering", { skeleton = {
             scan_ready = scan ~= nil,
             scan_plan = scan,
@@ -1213,6 +1441,8 @@ local function bind_context(T)
             partition_plan = partition,
             copy_ready = copy ~= nil,
             copy_plan = copy,
+            scatter_reduce_ready = scatter_reduce ~= nil,
+            scatter_reduce_plan = scatter_reduce,
             reject_reason = reject_reason,
         } }, "selection", "no LuaJIT skeleton lowering selected")
         if selection == nil then return nil, err end
@@ -1242,7 +1472,7 @@ local function bind_context(T)
     local function counted_positive(ctx, loop_fact)
         if loop_fact == nil or loop_fact.counted == nil then return false end
         local step_num = const_int_value(ctx, loop_fact.counted.step)
-        return step_num ~= nil and step_num > 0
+        return step_num ~= nil and step_num ~= 0
     end
 
     local function kernel_lowering_input(ctx, func, plan, graph_loop, loop_fact, loop_owner, kernel, opts)
@@ -1337,13 +1567,13 @@ local function bind_context(T)
 
     local build_kernel
 
-    local function module_ctx_for(module, flow, mem, contracts, domain_shapes)
+    local function module_ctx_for(module, flow, mem, contracts)
         return {
             code_sigs = code_sigs(module),
             mem_objects = mem_object_index(mem),
             mem_accesses = mem_access_index(mem),
             soa_contracts = soa_contract_index(contracts),
-            producer_facts = producer_fact_index(domain_shapes),
+            producer_facts = producer_fact_index(flow),
             flow = flow,
         }
     end
@@ -1425,7 +1655,7 @@ local function bind_context(T)
         local graph, flow, value, mem, effect, kernel = build_kernel(module, opts)
         local graph_loops, loop_func = graph_loop_index(graph)
         local flow_loops = flow_loop_index(flow)
-        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts, opts.domain_shapes)
+        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts)
         local by_func, plans, rejects = {}, {}, {}
         for _, func in ipairs(module.funcs or {}) do
             local plan, pending = plan_func_stencil_machine(module_ctx, func, kernel, graph_loops, flow_loops, loop_func, opts)
@@ -1500,7 +1730,7 @@ local function bind_context(T)
         end
         local graph_loops, loop_func = graph_loop_index(graph)
         local flow_loops = flow_loop_index(flow)
-        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts, opts.domain_shapes)
+        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts)
         local funcs = {}
         for i, func in ipairs(module.funcs or {}) do funcs[i] = lower_func(module_ctx, func, kernel, graph_loops, flow_loops, loop_func, opts) end
         return LJ.LJModule(module.id, funcs, {}, {}, {}), {

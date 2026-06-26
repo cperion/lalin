@@ -490,6 +490,10 @@ local function bind_context(T)
         attrs = attrs or {}
         local producer = producer_from_attrs(stride, attrs)
         local body = Stencil.StencilBodyApply(expr or input_expr("xs"))
+        if vocab == "scatter_reduce" then
+            body = Stencil.StencilBodyApply(assert(expr, "scatter_reduce descriptor requires expr"))
+            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkScatterReduce(Stencil.StencilAccessRef(attrs.store_dst or "dst"), assert(reducer, "scatter_reduce descriptor requires reducer"), assert(result_ty, "scatter_reduce descriptor requires result type")))
+        end
         if vocab == "reduce" then
             return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkReduce(assert(result_ty, "reduce descriptor requires result type"), reduce_scope_from_attrs(attrs), Stencil.StencilReduceFold(assert(reducer, "reduce descriptor requires reducer"))))
         end
@@ -522,6 +526,7 @@ local function bind_context(T)
         if sink_cls == Stencil.StencilSinkStore then return Stencil.StencilApply end
         if sink_cls == Stencil.StencilSinkReduce then return Stencil.StencilReduce end
         if sink_cls == Stencil.StencilSinkScan then return Stencil.StencilScan end
+        if sink_cls == Stencil.StencilSinkScatterReduce then return Stencil.StencilScatterReduce end
         return nil
     end
 
@@ -534,6 +539,7 @@ local function bind_context(T)
         if desc == nil then return nil end
         local sink_cls = pvm.classof(desc.sink)
         if sink_cls == Stencil.StencilSinkScan then return desc.sink.reducer end
+        if sink_cls == Stencil.StencilSinkScatterReduce then return desc.sink.reducer end
         if sink_cls == Stencil.StencilSinkReduce and pvm.classof(desc.sink.mode) == Stencil.StencilReduceFold then return desc.sink.mode.reducer end
         return nil
     end
@@ -649,7 +655,7 @@ local function bind_context(T)
         local shape = producer_shape(producer)
         if not producer_shape_supported(producer) then return false end
         local cls = pvm.classof(shape)
-        if cls == Stencil.StencilProduceRange1D then return shape.order == Stencil.StencilProducerForward end
+        if cls == Stencil.StencilProduceRange1D then return true end
         if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then
             return producer_axes_forward(shape.axes)
         end
@@ -662,7 +668,6 @@ local function bind_context(T)
         if shape_reason ~= nil then return shape_reason end
         local cls = pvm.classof(shape)
         if cls == Stencil.StencilProduceRange1D then
-            if shape.order ~= Stencil.StencilProducerForward then return "backward Range1D producers are represented but not materialized by current linear producer materializers" end
             return nil
         end
         if cls == Stencil.StencilProduceRangeND then
@@ -746,6 +751,7 @@ local function bind_context(T)
             return nil
         end
         if sink_cls == Stencil.StencilSinkStore then return nil end
+        if sink_cls == Stencil.StencilSinkScatterReduce then return nil end
         return "unknown stencil sink"
     end
 
@@ -937,6 +943,7 @@ local function bind_context(T)
         local cls = pvm.classof(layout)
         if cls == Stencil.StencilLayoutFieldProjection then return layout_unit_stride(layout.parent) end
         if cls == Stencil.StencilLayoutSoAComponent then return layout_unit_stride(layout.parent) end
+        if cls == Stencil.StencilLayoutAffine1D then return math.abs(tonumber(layout.scale) or 0) == 1 and layout_unit_stride(layout.parent) end
         if cls == Stencil.StencilLayoutContiguous or cls == Stencil.StencilLayoutIndexed then return tonumber(layout.stride) == 1 end
         if cls == Stencil.StencilLayoutSliceDescriptor or cls == Stencil.StencilLayoutByteSpanDescriptor then return true end
         if cls == Stencil.StencilLayoutViewDescriptor then return layout.stride_const == 1 end
@@ -1148,6 +1155,7 @@ local function bind_context(T)
     local function auto_vector_descriptor(desc)
         local sink_cls = desc and desc.sink and pvm.classof(desc.sink) or nil
         if sink_cls == Stencil.StencilSinkScan then return true end
+        if sink_cls == Stencil.StencilSinkScatterReduce then return false end
         if sink_cls == Stencil.StencilSinkStore then
             return pvm.classof(desc.sink.mode) ~= Stencil.StencilStorePartition
         end
@@ -1306,8 +1314,18 @@ local function bind_context(T)
         local cls = pvm.classof(layout)
         if cls == Stencil.StencilLayoutFieldProjection then return layout_has_dynamic_stride(layout.parent) end
         if cls == Stencil.StencilLayoutSoAComponent then return layout_has_dynamic_stride(layout.parent) end
+        if cls == Stencil.StencilLayoutAffine1D then return layout_has_dynamic_stride(layout.parent) end
         if cls == Stencil.StencilLayoutIndexed then return layout_has_dynamic_stride(layout.parent) end
         return cls == Stencil.StencilLayoutViewDescriptor and layout.stride_const == nil
+    end
+
+    local function layout_has_affine_offset(layout)
+        local cls = pvm.classof(layout)
+        if cls == Stencil.StencilLayoutFieldProjection then return layout_has_affine_offset(layout.parent) end
+        if cls == Stencil.StencilLayoutSoAComponent then return layout_has_affine_offset(layout.parent) end
+        if cls == Stencil.StencilLayoutIndexed then return layout_has_affine_offset(layout.parent) end
+        if cls == Stencil.StencilLayoutAffine1D then return layout.offset ~= nil or layout_has_affine_offset(layout.parent) end
+        return false
     end
 
     local function dynamic_stride_accesses(desc)
@@ -1320,8 +1338,22 @@ local function bind_context(T)
         return out
     end
 
+    local function dynamic_affine_offset_accesses(desc)
+        local out = {}
+        for _, access in ipairs(descriptor_accesses(desc)) do
+            if layout_has_affine_offset(access.layout) then
+                out[#out + 1] = access
+            end
+        end
+        return out
+    end
+
     local function stride_param_name(access)
         return sanitize(access.name) .. "_stride"
+    end
+
+    local function affine_offset_param_name(access)
+        return sanitize(access.name) .. "_affine_offset"
     end
 
     local abi_params_with_layouts
@@ -1333,6 +1365,9 @@ local function bind_context(T)
         for _, _access in ipairs(dynamic_stride_accesses(desc)) do
             out[#out + 1] = i32_ty()
         end
+        for _, _access in ipairs(dynamic_affine_offset_accesses(desc)) do
+            out[#out + 1] = i32_ty()
+        end
         return Stencil.StencilAbi(out, result)
     end
 
@@ -1342,12 +1377,16 @@ local function bind_context(T)
         for _, access in ipairs(dynamic_stride_accesses(desc)) do
             out[#out + 1] = "int32_t " .. stride_param_name(access)
         end
+        for _, access in ipairs(dynamic_affine_offset_accesses(desc)) do
+            out[#out + 1] = "int32_t " .. affine_offset_param_name(access)
+        end
         return out
     end
 
     local function field_layout(layout)
         local cls = pvm.classof(layout)
         if cls == Stencil.StencilLayoutFieldProjection then return layout end
+        if cls == Stencil.StencilLayoutAffine1D then return field_layout(layout.parent) end
         return nil
     end
 
@@ -1400,6 +1439,12 @@ local function bind_context(T)
         end
         if cls == Stencil.StencilLayoutSoAComponent then
             return layout_suffix_for(access, layout.parent) .. "_soa_" .. sanitize(layout.field_name) .. "_c" .. tostring(layout.component_index or 0)
+        end
+        if cls == Stencil.StencilLayoutAffine1D then
+            local scale = tonumber(layout.scale) or 1
+            local scale_tag = scale < 0 and ("m" .. tostring(math.abs(scale))) or ("p" .. tostring(scale))
+            local offset_tag = layout.offset ~= nil and "odyn" or "o0"
+            return layout_suffix_for(access, layout.parent) .. "_aff1d_" .. scale_tag .. "_" .. offset_tag
         end
         if cls == Stencil.StencilLayoutSliceDescriptor then
             return "_slice"
@@ -1601,8 +1646,12 @@ local function bind_context(T)
     function api.copy_array_artifact(info)
         local elem_ty, stride = assert(info.elem_ty), assert(info.step_num or info.stride or 1)
         local semantics = info.semantics or Stencil.StencilCopyNoOverlap
-        local id = Stencil.StencilInstanceId("stencil:copy_array:" .. type_name(elem_ty) .. ":" .. copy_semantics_name(semantics) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_copy_array_" .. type_name(elem_ty) .. "_" .. copy_semantics_name(semantics) .. "_s" .. tostring(stride))
+        local producer = producer_from_attrs(stride, info)
+        local producer_reason = producer_materializer_reject_reason(producer)
+        if producer_reason ~= nil then error("stencil_artifact_plan: unsupported copy_array producer: " .. tostring(producer_reason), 2) end
+        local ptag = producer_tag(producer)
+        local id = Stencil.StencilInstanceId("stencil:copy_array:" .. type_name(elem_ty) .. ":" .. copy_semantics_name(semantics) .. ":" .. ptag)
+        local symbol = Stencil.StencilSymbolId("ml_stencil_copy_array_" .. type_name(elem_ty) .. "_" .. copy_semantics_name(semantics) .. "_" .. ptag)
         local desc = descriptor(
             "apply",
             stride,
@@ -1612,7 +1661,7 @@ local function bind_context(T)
             },
             input_expr("src"),
             nil,
-            attrs(info, { apply_mode = Stencil.StencilStoreCopy(semantics) }),
+            attrs(info, { apply_mode = Stencil.StencilStoreCopy(semantics), producer = producer }),
             memory({ copy = semantics }),
             nil
         )
@@ -1844,6 +1893,42 @@ local function bind_context(T)
         return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
+    function api.scatter_reduce_n_artifact(reduction, plan, info)
+        local result_ty = assert(info.result_ty or info.elem_ty, "stencil_artifact_plan.scatter_reduce_n_artifact requires result_ty")
+        local item_ty = assert(info.item_ty or info.elem_ty or result_ty, "stencil_artifact_plan.scatter_reduce_n_artifact requires item_ty")
+        local index_ty = assert(info.index_ty, "stencil_artifact_plan.scatter_reduce_n_artifact requires index_ty")
+        local stride = assert(info.step_num or info.stride or 1)
+        local inputs = assert(info.inputs, "stencil_artifact_plan.scatter_reduce_n_artifact requires inputs")
+        local expr = info.expr or input_expr(inputs[1] and (inputs[1].name or "x1") or "xs")
+        local producer = producer_from_attrs(stride, info)
+        local producer_reason = producer_materializer_reject_reason(producer)
+        if producer_reason ~= nil then error("stencil_artifact_plan: unsupported scatter_reduce_n producer: " .. tostring(producer_reason), 2) end
+        local ok, reason = api.reduce_array_supported(reduction, { elem_ty = item_ty, result_ty = result_ty })
+        if not ok then error("stencil_artifact_plan: unsupported scatter_reduce_n reduction: " .. tostring(reason), 2) end
+        local dst_name = info.dst_name or "dst"
+        local idx_name = info.index_name or "idx"
+        local accesses = {
+            shaped(dst_name, Stencil.StencilAccessReadWrite, result_ty, info.dst_layout or Stencil.StencilLayoutIndexed(Stencil.StencilLayoutContiguous(1), Stencil.StencilAccessRef(idx_name), index_ty, stride), stride),
+        }
+        for i, input in ipairs(inputs) do
+            local name = input.name or ("x" .. tostring(i))
+            accesses[#accesses + 1] = shaped(name, Stencil.StencilAccessRead, assert(input.ty, "scatter_reduce_n input requires ty"), input.layout, stride)
+        end
+        accesses[#accesses + 1] = shaped(idx_name, Stencil.StencilAccessIndex, index_ty, info.index_layout, stride)
+        local tag = sanitize(info.tag or ("arity" .. tostring(#inputs)))
+        local ptag = producer_tag(producer)
+        local id = Stencil.StencilInstanceId("stencil:scatter_reduce_n:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":" .. tag .. ":" .. ptag)
+        local symbol = Stencil.StencilSymbolId("ml_stencil_scatter_reduce_n_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_" .. tag .. "_" .. ptag)
+        local reducer = reducer_desc(reduction, result_ty)
+        local desc = descriptor("scatter_reduce", stride, accesses, expr, reducer, { producer = producer, store_dst = dst_name }, memory({ scatter_reduce = true }), result_ty)
+        local sink_reason = sink_materializer_reject_reason(desc)
+        if sink_reason ~= nil then error("stencil_artifact_plan: unsupported scatter_reduce_n sink/body: " .. tostring(sink_reason), 2) end
+        local abi, args = descriptor_abi_args(desc)
+        local inst
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), proof_list(plan), info)
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
+    end
+
     function api.in_place_map_array_artifact(op, info)
         local elem_ty, stride = assert(info.elem_ty), assert(info.step_num or info.stride or 1)
         if not unary_supported(op, elem_ty) then error("stencil_artifact_plan: unsupported in_place_map_array op/type", 2) end
@@ -1895,7 +1980,9 @@ local function bind_context(T)
     function producer_tag(producer)
         local shape = producer_shape(producer)
         local cls = pvm.classof(shape)
-        if cls == Stencil.StencilProduceRange1D then return "s" .. tostring(shape.step) end
+        if cls == Stencil.StencilProduceRange1D then
+            return (shape.order == Stencil.StencilProducerBackward and "b" or "f") .. "s" .. tostring(shape.step)
+        end
         if cls == Stencil.StencilProduceRangeND then return "range_nd" .. tostring(#(shape.axes or {})) end
         if cls == Stencil.StencilProduceWindowND then return "window_nd" .. tostring(#(shape.axes or {})) end
         if cls == Stencil.StencilProduceTiledND then return "tiled_nd" .. tostring(#(shape.axes or {})) end
@@ -2098,6 +2185,7 @@ local function bind_context(T)
             return {
                 kind = "range1d",
                 stride = tonumber(shape.step) or 1,
+                order = shape.order == Stencil.StencilProducerBackward and "backward" or "forward",
             }
         end
         if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then
@@ -2307,6 +2395,25 @@ local function bind_context(T)
         })
     end
 
+    local function scatter_reduce_n_shape(desc, sink)
+        local expr = descriptor_expr(desc)
+        local inputs = expr_inputs_for_shape(desc, expr)
+        local producer = producer_execution_plan(desc)
+        local red = sink.reducer
+        return local_shape("scatter_reduce_n", {
+            inputs = inputs,
+            expr = expr,
+            result_ty = sink.result_ty,
+            reduction = red.reduction,
+            int_semantics = red.int_semantics,
+            float_mode = red.float_mode,
+            identity = red.identity,
+            dst_name = sink.dst.name,
+            producer = producer,
+            stride = producer.kind == "range1d" and producer.stride or nil,
+        })
+    end
+
     local function artifact_shape(artifact)
         local desc = artifact.instance.descriptor
         local sink_reason = sink_materializer_reject_reason(desc)
@@ -2335,6 +2442,9 @@ local function bind_context(T)
         end
         if sink_cls == Stencil.StencilSinkScan then
             return scan_n_shape(desc, sink)
+        end
+        if sink_cls == Stencil.StencilSinkScatterReduce then
+            return scatter_reduce_n_shape(desc, sink)
         end
         error("stencil_artifact_plan: unsupported stencil descriptor", 3)
     end
@@ -2389,6 +2499,8 @@ local function bind_context(T)
     api.artifact_with_realized = artifact_with_realized
     api.stride_param_name = stride_param_name
     api.dynamic_stride_accesses = dynamic_stride_accesses
+    api.affine_offset_param_name = affine_offset_param_name
+    api.dynamic_affine_offset_accesses = dynamic_affine_offset_accesses
 
     T._lalin_api_cache.stencil_artifact_plan = api
     return api

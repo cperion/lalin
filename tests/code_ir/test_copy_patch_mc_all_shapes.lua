@@ -127,6 +127,15 @@ local artifacts = {
     reduce_unary_artifact(),
     reduce_binary_artifact(),
     StencilArtifactPlan.select_array_artifact(Stencil.StencilPredNonZero, { cond_ty = bool8, elem_ty = i32, result_ty = i32, step_num = 1 }),
+    StencilArtifactPlan.scatter_reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, {
+        tag = "values",
+        result_ty = i32,
+        item_ty = i32,
+        index_ty = i32,
+        inputs = { { name = "xs", ty = i32 } },
+        expr = StencilArtifactPlan.input_expr("xs"),
+        step_num = 1,
+    }),
     noalias_gather,
     partial_noalias_gather,
 }
@@ -268,5 +277,9 @@ assert(sym(artifacts[18])(xs, ys, 0, 5, 0) == 157, "zip reduce")
 local select_mask = ffi.new("uint8_t[5]", { 1, 0, 1, 0, 1 })
 sym(artifacts[19])(out, select_mask, xs, ys, 0, 5)
 assert(out[0] == 1 and out[1] == 20 and out[2] == 5 and out[3] == 40 and out[4] == 3, "select")
+for i = 0, 4 do out[i] = 0 end
+local dup_idx = ffi.new("int32_t[5]", { 0, 2, 0, 2, 2 })
+sym(artifacts[20])(out, xs, dup_idx, 0, 5)
+assert(out[0] == 6 and out[1] == 0 and out[2] == 1 and out[3] == 0 and out[4] == 0, "scatter reduce")
 
 io.write("lalin copy_patch_mc all shapes ok\n")

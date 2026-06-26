@@ -36,7 +36,7 @@ return unit. VectorRelocRegression {
     },
 
     block. body { i [i32] } {
-      store (total[i], left[i] + right[i]),
+      set (total[i], left[i] + right[i]),
       jump. loop { i = i + 1 },
     },
 

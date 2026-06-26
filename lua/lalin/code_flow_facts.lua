@@ -13,6 +13,7 @@ local function bind_context(T)
     local Code = T.LalinCode
     local Graph = T.LalinGraph
     local Flow = T.LalinFlow
+    local Value = T.LalinValue
     local CodeGraph = require("lalin.code_graph")(T)
 
     local api = {}
@@ -283,12 +284,115 @@ local function bind_context(T)
         return Flow.FlowLoopFacts(graph_loop.id, Flow.FlowDomainLoop(graph_loop.id), counted, graph_loop.body or {}, inductions, exits, rejects)
     end
 
+    local function is_native_loop_header(block_by_id, graph_loop)
+        local header = graph_loop and graph_loop.header and block_by_id[graph_loop.header.block.text]
+        return type(header and header.name) == "string" and header.name:match("^ctl%.lln_loop_") ~= nil
+    end
+
+    local function primary_induction(loop_fact)
+        for _, induction in ipairs(loop_fact and loop_fact.inductions or {}) do
+            if induction.kind == Flow.FlowPrimaryInduction then return induction end
+        end
+        return nil
+    end
+
+    local function numeric_const(value, defs, consts, seen)
+        if value == nil then return nil end
+        if consts[value.text] ~= nil then return consts[value.text] end
+        seen = seen or {}
+        if seen[value.text] then return nil end
+        seen[value.text] = true
+        local def = defs[value.text]
+        if def ~= nil and def.cls == Code.CodeInstCast then return numeric_const(def.value, defs, consts, seen) end
+        if def ~= nil and def.cls == Code.CodeInstAlias then return numeric_const(def.src, defs, consts, seen) end
+        return nil
+    end
+
+    local function native_nd_axis_facts(header_block, edge_facts, graph_loop)
+        if type(header_block and header_block.name) ~= "string" or header_block.name:match("^ctl%.lln_loop_nd_") == nil then return nil end
+        local latch = graph_loop and graph_loop.latches and graph_loop.latches[1] or nil
+        local skip_from = latch and latch.from and latch.from.block or nil
+        local grouped = {}
+        for _, param in ipairs(header_block.params or {}) do
+            local axis_i, field, step, order = tostring(param.name or ""):match("^__lln_axis_[^_]+_(%d+)_(%a+)_step_(%d+)_order_(%a+)$")
+            if axis_i ~= nil and (field == "start" or field == "stop" or field == "trip") then
+                axis_i = tonumber(axis_i)
+                grouped[axis_i] = grouped[axis_i] or { step = tonumber(step), order = order, ty = param.ty }
+                grouped[axis_i][field] = incoming_arg_for(edge_facts, graph_loop.header.block, param, skip_from)
+                grouped[axis_i].ty = grouped[axis_i].ty or param.ty
+            end
+        end
+        local axes = {}
+        local i = 1
+        while grouped[i] ~= nil do
+            local axis = grouped[i]
+            if axis.start == nil or axis.stop == nil or axis.step == nil then return nil end
+            axes[#axes + 1] = Flow.FlowDomainAxis(
+                axis.ty or Code.CodeTyIndex,
+                Value.ValueExprValue(axis.start),
+                Value.ValueExprValue(axis.stop),
+                axis.step,
+                axis.order == "backward" and Flow.FlowDomainBackward or Flow.FlowDomainForward
+            )
+            i = i + 1
+        end
+        if #axes < 2 then return nil end
+        return axes
+    end
+
+    local function append_native_loop_domain_facts(domain_shapes, domain_intents, loop_fact, defs, consts, header_block, edge_facts, graph_loop)
+        local domain = loop_fact and loop_fact.domain
+        local nd_axes = native_nd_axis_facts(header_block, edge_facts, graph_loop)
+        if nd_axes ~= nil then
+            local proof = Flow.FlowProofDomain(domain, "lln.loop authored an explicit multi-axis range")
+            domain_shapes[#domain_shapes + 1] = Flow.FlowDomainShapeFact(
+                domain,
+                Flow.FlowDomainShapeRangeND(nd_axes),
+                { proof },
+                Flow.FlowFactFrontendFact("lln.range_nd")
+            )
+            domain_intents[#domain_intents + 1] = Flow.FlowDomainIntentFact(
+                domain,
+                Flow.FlowDomainIntentNativeLoop("lln.loop"),
+                { Flow.FlowProofFrontendFact("lln.loop authored this loop domain") },
+                Flow.FlowFactFrontendFact("lln.loop")
+            )
+            return
+        end
+
+        local counted = loop_fact and loop_fact.counted
+        local primary = primary_induction(loop_fact)
+        if counted == nil or primary == nil then return end
+        local step_num = numeric_const(counted.step, defs, consts)
+        if step_num == nil or step_num == 0 then return end
+        local order = step_num < 0 and Flow.FlowDomainBackward or Flow.FlowDomainForward
+        local proof = Flow.FlowProofDomain(domain, "lln.loop authored a regular counted range")
+        domain_shapes[#domain_shapes + 1] = Flow.FlowDomainShapeFact(
+            domain,
+            Flow.FlowDomainShapeRange1D(
+                primary.ty or Code.CodeTyIndex,
+                Value.ValueExprValue(counted.start),
+                Value.ValueExprValue(counted.stop),
+                math.abs(step_num),
+                order
+            ),
+            { proof },
+            Flow.FlowFactFrontendFact("lln.range")
+        )
+        domain_intents[#domain_intents + 1] = Flow.FlowDomainIntentFact(
+            domain,
+            Flow.FlowDomainIntentNativeLoop("lln.loop"),
+            { Flow.FlowProofFrontendFact("lln.loop authored this loop domain") },
+            Flow.FlowFactFrontendFact("lln.loop")
+        )
+    end
+
     local function facts(module, graph)
         graph = graph or CodeGraph.graph(module)
         local graph_by_func = {}
         for _, fg in ipairs(graph.funcs or {}) do graph_by_func[fg.func.text] = fg end
 
-        local domains, edge_facts, loops, ranges, rejects = {}, {}, {}, {}, {}
+        local domains, edge_facts, loops, ranges, domain_shapes, domain_intents, rejects = {}, {}, {}, {}, {}, {}, {}
         for _, func in ipairs(module.funcs or {}) do
             local graph_func = graph_by_func[func.id.text]
             if graph_func ~= nil then
@@ -305,11 +409,14 @@ local function bind_context(T)
                     domains[#domains + 1] = Flow.FlowDomainLoop(graph_loop.id)
                     local lf = analyze_loop(func, block_by_id, graph_loop, func_edge_facts, defs, types, consts)
                     loops[#loops + 1] = lf
+                    if is_native_loop_header(block_by_id, graph_loop) then
+                        append_native_loop_domain_facts(domain_shapes, domain_intents, lf, defs, consts, block_by_id[graph_loop.header.block.text], func_edge_facts, graph_loop)
+                    end
                     for _, reject in ipairs(lf.rejects or {}) do rejects[#rejects + 1] = reject end
                 end
             end
         end
-        return Flow.FlowFactSet(module.id, domains, edge_facts, loops, ranges, rejects)
+        return Flow.FlowFactSet(module.id, domains, edge_facts, loops, ranges, domain_shapes, domain_intents, rejects)
     end
 
     local function is_primary_induction(induction)

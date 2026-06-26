@@ -35,6 +35,8 @@ local Decl = class("Decl")
 local Case = class("Case")
 local Default = class("Default")
 local Requires = class("Requires")
+local NativeRange = class("NativeRange")
+local NativeRangeND = class("NativeRangeND")
 
 local function is(v, mt) return type(v) == "table" and getmetatable(v) == mt end
 
@@ -378,6 +380,8 @@ local function tree_params(t)
     return out
 end
 
+local binding
+
 local function tree_place(v)
     if is_member(Tr.Place, v) then return v end
     if llbl.is(v, "Symbol") or llbl.is(v, "Name") then return Tr.PlaceRef(Tr.PlaceSurface, B.ValueRefName(ident(v.text, "name"))) end
@@ -387,6 +391,480 @@ local function tree_place(v)
     if is(v, Expr) and v.kind == "dot" then return Tr.PlaceDot(Tr.PlaceSurface, tree_place(v.base), v.field) end
     if is(v, Expr) and v.kind == "index" then return Tr.PlaceIndex(Tr.PlaceSurface, Tr.IndexBaseExpr(tree_expr(v.base)), tree_expr(v.index)) end
     die("expected place", 2)
+end
+
+local native_loop_seq = 0
+
+local function native_range(v)
+    if is(v, NativeRange) then return v end
+    die("lln.loop expects lln.range { start, stop } as its producer", 2)
+end
+
+local native_range_from_spec
+
+local function native_axis_from_spec(spec, ty)
+    if is(spec, NativeRange) then
+        return {
+            ty = spec.ty,
+            start = spec.start,
+            stop = spec.stop,
+            step = math.abs(spec.step),
+            order = spec.step < 0 and "backward" or "forward",
+        }
+    end
+    if type(spec) ~= "table" then die("lln.range_nd axes expect { start, stop } ranges", 2) end
+    local axis = native_range_from_spec(spec, ty)
+    return {
+        ty = axis.ty,
+        start = axis.start,
+        stop = axis.stop,
+        step = math.abs(axis.step),
+        order = axis.step < 0 and "backward" or "forward",
+    }
+end
+
+function native_range_from_spec(spec, ty)
+    if type(spec) ~= "table" then die("lln.range expects { start, stop }", 2) end
+    local start = spec.start or spec[1] or 0
+    local stop = spec.stop or spec[2]
+    if stop == nil then die("lln.range expects a stop bound", 2) end
+    local step = spec.step or spec[3] or 1
+    if type(step) ~= "number" then die("lln.range step must be a numeric literal for now", 2) end
+    if step == 0 then die("lln.range step must be non-zero", 2) end
+    local default_ty = step < 0 and scalar_type("i32") or scalar_type("index")
+    return setmetatable({ ty = concrete_type(ty or spec.ty or default_ty), start = start, stop = stop, step = step }, NativeRange)
+end
+
+local function native_range_nd_from_spec(spec)
+    if type(spec) ~= "table" then die("lln.range_nd expects an axis table", 2) end
+    local axes_src = spec.axes or spec
+    local axes = {}
+    for i = 1, #axes_src do axes[i] = native_axis_from_spec(axes_src[i], spec.ty) end
+    if #axes == 0 then die("lln.range_nd expects at least one axis", 2) end
+    return setmetatable({ axes = axes }, NativeRangeND)
+end
+
+local function native_domain(v)
+    if is(v, NativeRange) or is(v, NativeRangeND) then return v end
+    die("lln.loop expects lln.range or lln.range_nd as its producer", 2)
+end
+
+local function native_sink_kind(v)
+    return is(v, Stmt) and (v.kind == "native_fold" or v.kind == "native_scan") and v.kind or nil
+end
+
+local function native_loop_body(loop)
+    local body, sink = {}, nil
+    for _, item in ipairs(expand_array(loop.body or {}, "stmt")) do
+        local kind = native_sink_kind(item)
+        if kind ~= nil then
+            if sink ~= nil then die("lln.loop accepts only one fold or scan sink", 2) end
+            sink = item
+        else
+            body[#body + 1] = item
+        end
+    end
+    return body, sink
+end
+
+local function native_reducer_expr(by, acc, step)
+    if by == nil or by == M.add or by == "add" then
+        return Tr.ExprBinary(Tr.ExprSurface, C.BinAdd, acc, tree_expr(step))
+    end
+    if by == M.mul or by == "mul" then
+        return Tr.ExprBinary(Tr.ExprSurface, C.BinMul, acc, tree_expr(step))
+    end
+    if by == M.band or by == "band" or by == "and" then
+        return Tr.ExprBinary(Tr.ExprSurface, C.BinBitAnd, acc, tree_expr(step))
+    end
+    if by == M.bor or by == "bor" or by == "or" then
+        return Tr.ExprBinary(Tr.ExprSurface, C.BinBitOr, acc, tree_expr(step))
+    end
+    if by == M.bxor or by == "bxor" or by == "xor" then
+        return Tr.ExprBinary(Tr.ExprSurface, C.BinBitXor, acc, tree_expr(step))
+    end
+    if by == M.min or by == "min" then
+        local rhs = tree_expr(step)
+        return Tr.ExprSelect(Tr.ExprSurface, Tr.ExprCompare(Tr.ExprSurface, C.CmpLe, acc, rhs), acc, rhs)
+    end
+    if by == M.max or by == "max" then
+        local rhs = tree_expr(step)
+        return Tr.ExprSelect(Tr.ExprSurface, Tr.ExprCompare(Tr.ExprSurface, C.CmpGe, acc, rhs), acc, rhs)
+    end
+    die("lln.fold/lln.scan reducer must be one of lln.add, lln.mul, lln.band, lln.bor, lln.bxor, lln.min, lln.max", 2)
+end
+
+local function native_loop_nd_stmt_tree(loop, domain)
+    local axis_count = #(domain.axes or {})
+    local index_count = #(loop.indexes or {})
+    if index_count ~= axis_count then
+        die("lln.loop range_nd expects one index name per axis", 2)
+    end
+    if axis_count < 1 then die("lln.loop range_nd expects at least one axis", 2) end
+    for i, axis in ipairs(domain.axes or {}) do
+        if axis.order ~= "forward" then die("lln.range_nd executable lowering currently expects forward axes", 2) end
+        if axis.step <= 0 then die("lln.range_nd axis step must be positive", 2) end
+        ident(loop.indexes[i], "lln.loop range_nd index")
+    end
+
+    local body_items, sink = native_loop_body(loop)
+    if loop.result ~= nil and sink == nil then die("lln.loop result type requires lln.fold or lln.scan", 2) end
+    if sink ~= nil and sink.kind == "native_fold" and loop.result == nil then die("lln.fold requires an lln.loop result type", 2) end
+
+    local tag = tostring(loop.id or "0")
+    local entry_label = Tr.BlockLabel("lln_entry_" .. tag)
+    local loop_label = Tr.BlockLabel("lln_loop_nd_" .. tag)
+    local body_label = Tr.BlockLabel("lln_body_nd_" .. tag)
+    local done_label = Tr.BlockLabel("lln_done_nd_" .. tag)
+    local flat_name = "__lln_flat_" .. tag
+    local flat_ty = scalar_type("index")
+    local flat_ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(flat_name))
+
+    local function ref(name)
+        return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(name))
+    end
+    local function lit(n)
+        return Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, flat_ty, tree_expr(n))
+    end
+    local function bin(op, a, b)
+        return Tr.ExprBinary(Tr.ExprSurface, op, a, b)
+    end
+    local function range_expr(axis, value)
+        return Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, concrete_type(axis.ty), tree_expr(value))
+    end
+    local function axis_param_name(axis_i, field, step, order)
+        return "__lln_axis_" .. tag .. "_" .. tostring(axis_i) .. "_" .. field .. "_step_" .. tostring(step) .. "_order_" .. order
+    end
+
+    local axis_specs, loop_params, body_params = {}, { Tr.BlockParam(flat_name, flat_ty) }, { Tr.BlockParam(flat_name, flat_ty) }
+    local entry_args = { Tr.JumpArg(flat_name, lit(0)) }
+    for i, axis in ipairs(domain.axes or {}) do
+        local ty = concrete_type(axis.ty)
+        local start_name = axis_param_name(i, "start", axis.step, axis.order)
+        local stop_name = axis_param_name(i, "stop", axis.step, axis.order)
+        local trip_name = axis_param_name(i, "trip", axis.step, axis.order)
+        local start_init = range_expr(axis, axis.start)
+        local stop_init = range_expr(axis, axis.stop)
+        local diff = bin(C.BinSub, stop_init, start_init)
+        local trip = diff
+        if axis.step ~= 1 then
+            trip = bin(C.BinDiv, bin(C.BinAdd, diff, range_expr(axis, axis.step - 1)), range_expr(axis, axis.step))
+        end
+        loop_params[#loop_params + 1] = Tr.BlockParam(start_name, ty)
+        loop_params[#loop_params + 1] = Tr.BlockParam(stop_name, ty)
+        loop_params[#loop_params + 1] = Tr.BlockParam(trip_name, ty)
+        body_params[#body_params + 1] = Tr.BlockParam(start_name, ty)
+        body_params[#body_params + 1] = Tr.BlockParam(stop_name, ty)
+        body_params[#body_params + 1] = Tr.BlockParam(trip_name, ty)
+        entry_args[#entry_args + 1] = Tr.JumpArg(start_name, start_init)
+        entry_args[#entry_args + 1] = Tr.JumpArg(stop_name, stop_init)
+        entry_args[#entry_args + 1] = Tr.JumpArg(trip_name, trip)
+        axis_specs[#axis_specs + 1] = {
+            index = ident(loop.indexes[i], "lln.loop range_nd index"),
+            ty = ty,
+            start_name = start_name,
+            stop_name = stop_name,
+            trip_name = trip_name,
+            step = axis.step,
+        }
+    end
+
+    local function invariant_jump_args()
+        local out = {}
+        for _, axis in ipairs(axis_specs) do
+            out[#out + 1] = Tr.JumpArg(axis.start_name, ref(axis.start_name))
+            out[#out + 1] = Tr.JumpArg(axis.stop_name, ref(axis.stop_name))
+            out[#out + 1] = Tr.JumpArg(axis.trip_name, ref(axis.trip_name))
+        end
+        return out
+    end
+    local function loop_jump_args(flat_value, acc_name, acc_value)
+        local out = { Tr.JumpArg(flat_name, flat_value) }
+        for _, arg in ipairs(invariant_jump_args()) do out[#out + 1] = arg end
+        if acc_name ~= nil then out[#out + 1] = Tr.JumpArg(acc_name, acc_value) end
+        return out
+    end
+
+    local total = ref(axis_specs[axis_count].trip_name)
+    for i = axis_count - 1, 1, -1 do
+        total = bin(C.BinMul, ref(axis_specs[i].trip_name), total)
+    end
+    local cond = Tr.ExprCompare(Tr.ExprSurface, C.CmpLt, flat_ref, total)
+    local next_flat = bin(C.BinAdd, flat_ref, lit(1))
+
+    local coord_stmts = {}
+    local stride = lit(1)
+    for i = axis_count, 1, -1 do
+        local axis = axis_specs[i]
+        local lane = flat_ref
+        if i < axis_count then lane = bin(C.BinDiv, flat_ref, stride) end
+        lane = bin(C.BinRem, lane, ref(axis.trip_name))
+        local coord = lane
+        if axis.step ~= 1 then coord = bin(C.BinMul, coord, Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, axis.ty, tree_expr(axis.step))) end
+        coord = bin(C.BinAdd, ref(axis.start_name), coord)
+        coord_stmts[i] = Tr.StmtLet(Tr.StmtSurface, binding(axis.index, axis.ty, B.BindingClassLocalValue), coord)
+        stride = bin(C.BinMul, stride, ref(axis.trip_name))
+    end
+
+    local function source_zero(v) return v == 0 end
+    local normalize_row_major = axis_count == 2
+        and domain.axes[1].step == 1 and domain.axes[2].step == 1
+        and source_zero(domain.axes[1].start) and source_zero(domain.axes[2].start)
+    local extent2_key
+    local function expr_ref_name(expr)
+        if pvm.classof(expr) ~= Tr.ExprRef then return nil end
+        local r = expr.ref
+        if pvm.classof(r) == B.ValueRefName then return r.name end
+        return nil
+    end
+    local function expr_lit_int(expr)
+        if pvm.classof(expr) ~= Tr.ExprLit then return nil end
+        local lit = expr.value
+        if pvm.classof(lit) == C.LitInt then return tostring(lit.raw) end
+        return nil
+    end
+    local function expr_key(expr)
+        local cls = pvm.classof(expr)
+        if cls == Tr.ExprRef then return "ref:" .. tostring(expr_ref_name(expr)) end
+        if cls == Tr.ExprLit then return "int:" .. tostring(expr_lit_int(expr)) end
+        if cls == Tr.ExprBinary then return "bin:" .. tostring(expr.op) .. "(" .. tostring(expr_key(expr.lhs)) .. "," .. tostring(expr_key(expr.rhs)) .. ")" end
+        return nil
+    end
+    if normalize_row_major then extent2_key = expr_key(tree_expr(domain.axes[2].stop)) end
+    local function is_ref(expr, name)
+        return expr_ref_name(expr) == name
+    end
+    local function is_extent2(expr)
+        return extent2_key ~= nil and expr_key(expr) == extent2_key
+    end
+    local function is_i_times_extent(expr)
+        return pvm.classof(expr) == Tr.ExprBinary
+            and expr.op == C.BinMul
+            and ((is_ref(expr.lhs, axis_specs[1].index) and is_extent2(expr.rhs))
+                or (is_ref(expr.rhs, axis_specs[1].index) and is_extent2(expr.lhs)))
+    end
+    local function is_row_major2(expr)
+        return normalize_row_major
+            and pvm.classof(expr) == Tr.ExprBinary
+            and expr.op == C.BinAdd
+            and ((is_i_times_extent(expr.lhs) and is_ref(expr.rhs, axis_specs[2].index))
+                or (is_i_times_extent(expr.rhs) and is_ref(expr.lhs, axis_specs[2].index)))
+    end
+    local rewrite_expr, rewrite_place, rewrite_index_base
+    rewrite_expr = function(expr)
+        local cls = pvm.classof(expr)
+        if is_row_major2(expr) then return flat_ref end
+        if cls == Tr.ExprBinary then return Tr.ExprBinary(expr.h, expr.op, rewrite_expr(expr.lhs), rewrite_expr(expr.rhs)) end
+        if cls == Tr.ExprCompare then return Tr.ExprCompare(expr.h, expr.op, rewrite_expr(expr.lhs), rewrite_expr(expr.rhs)) end
+        if cls == Tr.ExprLogic then return Tr.ExprLogic(expr.h, expr.op, rewrite_expr(expr.lhs), rewrite_expr(expr.rhs)) end
+        if cls == Tr.ExprUnary then return Tr.ExprUnary(expr.h, expr.op, rewrite_expr(expr.value)) end
+        if cls == Tr.ExprCast then return Tr.ExprCast(expr.h, expr.op, expr.ty, rewrite_expr(expr.value)) end
+        if cls == Tr.ExprMachineCast then return Tr.ExprMachineCast(expr.h, expr.op, expr.ty, rewrite_expr(expr.value)) end
+        if cls == Tr.ExprIndex then return Tr.ExprIndex(expr.h, rewrite_index_base(expr.base), rewrite_expr(expr.index)) end
+        if cls == Tr.ExprAddrOf then return Tr.ExprAddrOf(expr.h, rewrite_place(expr.place)) end
+        if cls == Tr.ExprDeref then return Tr.ExprDeref(expr.h, rewrite_expr(expr.value)) end
+        if cls == Tr.ExprCall then
+            local args = {}
+            for i, arg in ipairs(expr.args or {}) do args[i] = rewrite_expr(arg) end
+            return Tr.ExprCall(expr.h, rewrite_expr(expr.callee), args)
+        end
+        return expr
+    end
+    rewrite_place = function(place)
+        local cls = pvm.classof(place)
+        if cls == Tr.PlaceIndex then return Tr.PlaceIndex(place.h, rewrite_index_base(place.base), rewrite_expr(place.index)) end
+        if cls == Tr.PlaceDot then return Tr.PlaceDot(place.h, rewrite_place(place.base), place.name) end
+        return place
+    end
+    rewrite_index_base = function(base)
+        local cls = pvm.classof(base)
+        if cls == Tr.IndexBaseExpr then return Tr.IndexBaseExpr(rewrite_expr(base.base)) end
+        if cls == Tr.IndexBasePlace then return Tr.IndexBasePlace(rewrite_place(base.base), base.elem) end
+        return base
+    end
+    local function rewrite_stmt(stmt)
+        local cls = pvm.classof(stmt)
+        if cls == Tr.StmtSet then return Tr.StmtSet(stmt.h, rewrite_place(stmt.place), rewrite_expr(stmt.value)) end
+        if cls == Tr.StmtLet then return Tr.StmtLet(stmt.h, stmt.binding, rewrite_expr(stmt.init)) end
+        if cls == Tr.StmtVar then return Tr.StmtVar(stmt.h, stmt.binding, rewrite_expr(stmt.init)) end
+        if cls == Tr.StmtExpr then return Tr.StmtExpr(stmt.h, rewrite_expr(stmt.expr)) end
+        if cls == Tr.StmtAssert then return Tr.StmtAssert(stmt.h, rewrite_expr(stmt.cond)) end
+        if cls == Tr.StmtIf then
+            local then_body, else_body = {}, {}
+            for i, child in ipairs(stmt.then_body or {}) do then_body[i] = rewrite_stmt(child) end
+            for i, child in ipairs(stmt.else_body or {}) do else_body[i] = rewrite_stmt(child) end
+            return Tr.StmtIf(stmt.h, rewrite_expr(stmt.cond), then_body, else_body)
+        end
+        return stmt
+    end
+
+    local body_stmts = {}
+    for i = 1, #coord_stmts do body_stmts[#body_stmts + 1] = coord_stmts[i] end
+    for _, stmt in ipairs(tree_stmts(body_items)) do body_stmts[#body_stmts + 1] = rewrite_stmt(stmt) end
+
+    if sink == nil then
+        body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, loop_jump_args(next_flat))
+        return Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion(
+            "dsl.lln.loop.nd." .. tag,
+            Tr.EntryControlBlock(entry_label, {}, { Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args) }),
+            {
+                Tr.ControlBlock(loop_label, loop_params, {
+                    Tr.StmtIf(Tr.StmtSurface, cond, {
+                        Tr.StmtJump(Tr.StmtSurface, body_label, loop_jump_args(flat_ref)),
+                    }, {}),
+                    Tr.StmtJump(Tr.StmtSurface, done_label, {}),
+                }),
+                Tr.ControlBlock(body_label, body_params, body_stmts),
+                Tr.ControlBlock(done_label, {}, { Tr.StmtYieldVoid(Tr.StmtSurface) }),
+            }
+        ))
+    end
+
+    local acc = ident(sink.name, "lln.fold/lln.scan accumulator")
+    local acc_ty = concrete_type(sink.ty)
+    local acc_expr = ref(acc)
+    loop_params[#loop_params + 1] = Tr.BlockParam(acc, acc_ty)
+    body_params[#body_params + 1] = Tr.BlockParam(acc, acc_ty)
+    entry_args[#entry_args + 1] = Tr.JumpArg(acc, Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, acc_ty, tree_expr(sink.init)))
+
+    local step_name = "__lln_step_" .. tag
+    body_stmts[#body_stmts + 1] = Tr.StmtLet(Tr.StmtSurface, binding(step_name, acc_ty, B.BindingClassLocalValue), tree_expr(sink.step))
+    local next_acc = native_reducer_expr(sink.by, acc_expr, ref(step_name))
+    if sink.kind == "native_scan" then
+        local next_name = "__lln_scan_" .. tag
+        body_stmts[#body_stmts + 1] = Tr.StmtLet(Tr.StmtSurface, binding(next_name, acc_ty, B.BindingClassLocalValue), next_acc)
+        body_stmts[#body_stmts + 1] = Tr.StmtSet(Tr.StmtSurface, tree_place(sink.into), ref(next_name))
+        body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, loop_jump_args(next_flat, acc, ref(next_name)))
+    else
+        body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, loop_jump_args(next_flat, acc, next_acc))
+    end
+
+    local loop_block = Tr.ControlBlock(loop_label, loop_params, {
+        Tr.StmtIf(Tr.StmtSurface, cond, {
+            Tr.StmtJump(Tr.StmtSurface, body_label, loop_jump_args(flat_ref, acc, acc_expr)),
+        }, {}),
+        Tr.StmtJump(Tr.StmtSurface, done_label, { Tr.JumpArg(acc, acc_expr) }),
+    })
+    local body_block = Tr.ControlBlock(body_label, body_params, body_stmts)
+    local done_block = Tr.ControlBlock(done_label, { Tr.BlockParam(acc, acc_ty) }, {
+        loop.result ~= nil and Tr.StmtYieldValue(Tr.StmtSurface, acc_expr) or Tr.StmtYieldVoid(Tr.StmtSurface),
+    })
+    if loop.result ~= nil then
+        return Tr.StmtReturnValue(Tr.StmtSurface, Tr.ExprControl(Tr.ExprSurface, Tr.ControlExprRegion(
+            "dsl.lln.loop.nd." .. tag,
+            concrete_type(loop.result),
+            Tr.EntryControlBlock(entry_label, {}, { Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args) }),
+            { loop_block, body_block, done_block }
+        )))
+    end
+    return Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion(
+        "dsl.lln.loop.nd." .. tag,
+        Tr.EntryControlBlock(entry_label, {}, { Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args) }),
+        { loop_block, body_block, done_block }
+    ))
+end
+
+local function native_loop_stmt_tree(loop)
+    local domain = native_domain(loop.range)
+    if is(domain, NativeRangeND) then
+        return native_loop_nd_stmt_tree(loop, domain)
+    end
+    local range = native_range(domain)
+    local index = ident(loop.index, "lln.loop index")
+    local body_items, sink = native_loop_body(loop)
+    if loop.result ~= nil and sink == nil then die("lln.loop result type requires lln.fold or lln.scan", 2) end
+    if sink ~= nil and sink.kind == "native_fold" and loop.result == nil then die("lln.fold requires an lln.loop result type", 2) end
+    local tag = tostring(loop.id or "0")
+    local entry_label = Tr.BlockLabel("lln_entry_" .. tag)
+    local loop_label = Tr.BlockLabel("lln_loop_" .. tag)
+    local body_label = Tr.BlockLabel("lln_body_" .. tag)
+    local done_label = Tr.BlockLabel("lln_done_" .. tag)
+    local index_expr = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(index))
+    local function range_expr(value)
+        return Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, range.ty, tree_expr(value))
+    end
+    local start = range_expr(range.start)
+    local stop = range_expr(range.stop)
+    local step = range_expr(range.step)
+    local next_index = Tr.ExprBinary(Tr.ExprSurface, C.BinAdd, index_expr, step)
+    local cond = Tr.ExprCompare(Tr.ExprSurface, range.step < 0 and C.CmpGt or C.CmpLt, index_expr, stop)
+    local body_stmts = tree_stmts(body_items)
+
+    if sink == nil then
+        local function jump_arg(value)
+            return { Tr.JumpArg(index, value) }
+        end
+        body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, jump_arg(next_index))
+        return Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion(
+            "dsl.lln.loop." .. tag,
+            Tr.EntryControlBlock(entry_label, {}, {
+                Tr.StmtJump(Tr.StmtSurface, loop_label, jump_arg(start)),
+            }),
+            {
+                Tr.ControlBlock(loop_label, { Tr.BlockParam(index, range.ty) }, {
+                    Tr.StmtIf(Tr.StmtSurface, cond, {
+                        Tr.StmtJump(Tr.StmtSurface, body_label, jump_arg(index_expr)),
+                    }, {}),
+                    Tr.StmtJump(Tr.StmtSurface, done_label, {}),
+                }),
+                Tr.ControlBlock(body_label, { Tr.BlockParam(index, range.ty) }, body_stmts),
+                Tr.ControlBlock(done_label, {}, {
+                    Tr.StmtYieldVoid(Tr.StmtSurface),
+                }),
+            }
+        ))
+    end
+
+    local acc = ident(sink.name, "lln.fold/lln.scan accumulator")
+    local acc_ty = concrete_type(sink.ty)
+    local acc_expr = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(acc))
+    local step_name = "__lln_step_" .. tag
+    local step_binding = binding(step_name, acc_ty, B.BindingClassLocalValue)
+    local step_ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(step_name))
+    body_stmts[#body_stmts + 1] = Tr.StmtLet(Tr.StmtSurface, step_binding, tree_expr(sink.step))
+    local next_acc = native_reducer_expr(sink.by, acc_expr, step_ref)
+    local entry_args = {
+        Tr.JumpArg(index, start),
+        Tr.JumpArg(acc, Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, acc_ty, tree_expr(sink.init))),
+    }
+    local function jump_args(i_value, acc_value)
+        return { Tr.JumpArg(index, i_value), Tr.JumpArg(acc, acc_value) }
+    end
+    if sink.kind == "native_scan" then
+        local next_name = "__lln_scan_" .. tag
+        local next_binding = binding(next_name, acc_ty, B.BindingClassLocalValue)
+        local next_ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(next_name))
+        body_stmts[#body_stmts + 1] = Tr.StmtLet(Tr.StmtSurface, next_binding, next_acc)
+        body_stmts[#body_stmts + 1] = Tr.StmtSet(Tr.StmtSurface, tree_place(sink.into), next_ref)
+        body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, jump_args(next_index, next_ref))
+    else
+        body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, jump_args(next_index, next_acc))
+    end
+
+    local loop_block = Tr.ControlBlock(loop_label, { Tr.BlockParam(index, range.ty), Tr.BlockParam(acc, acc_ty) }, {
+        Tr.StmtIf(Tr.StmtSurface, cond, {
+            Tr.StmtJump(Tr.StmtSurface, body_label, jump_args(index_expr, acc_expr)),
+        }, {}),
+        Tr.StmtJump(Tr.StmtSurface, done_label, { Tr.JumpArg(acc, acc_expr) }),
+    })
+    local body_block = Tr.ControlBlock(body_label, { Tr.BlockParam(index, range.ty), Tr.BlockParam(acc, acc_ty) }, body_stmts)
+    local done_block = Tr.ControlBlock(done_label, { Tr.BlockParam(acc, acc_ty) }, {
+        loop.result ~= nil and Tr.StmtYieldValue(Tr.StmtSurface, acc_expr) or Tr.StmtYieldVoid(Tr.StmtSurface),
+    })
+    if loop.result ~= nil then
+        local region = Tr.ControlExprRegion(
+            "dsl.lln.loop." .. tag,
+            concrete_type(loop.result),
+            Tr.EntryControlBlock(entry_label, {}, { Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args) }),
+            { loop_block, body_block, done_block }
+        )
+        return Tr.StmtReturnValue(Tr.StmtSurface, Tr.ExprControl(Tr.ExprSurface, region))
+    end
+    return Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion(
+        "dsl.lln.loop." .. tag,
+        Tr.EntryControlBlock(entry_label, {}, { Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args) }),
+        { loop_block, body_block, done_block }
+    ))
 end
 
 local function function_body_items(name, body)
@@ -545,6 +1023,8 @@ end
 M.add, M.sub, M.mul, M.div, M.rem = bin("add"), bin("sub"), bin("mul"), bin("div"), bin("rem")
 M.band, M.bor, M.bxor, M.shl, M.shr = bin("band"), bin("bor"), bin("bxor"), bin("shl"), bin("lshr")
 M.eq, M.ne, M.lt, M.le, M.gt, M.ge = cmp("eq"), cmp("ne"), cmp("lt"), cmp("le"), cmp("gt"), cmp("ge")
+function M.min(a, b) return setmetatable({ kind = "select", cond = M.le(a, b), a = a, b = b }, Expr) end
+function M.max(a, b) return setmetatable({ kind = "select", cond = M.ge(a, b), a = a, b = b }, Expr) end
 function M.neg(v) return setmetatable({ kind = "neg", value = v }, Expr) end
 function M.And(a, b) return setmetatable({ kind = "logic", op = "and", lhs = a, rhs = b }, Expr) end
 function M.Or(a, b) return setmetatable({ kind = "logic", op = "or", lhs = a, rhs = b }, Expr) end
@@ -580,7 +1060,7 @@ function M.soa_component(base, record_ty, field_name, component_index)
 end
 
 local bind_seq = 0
-local function binding(name, ty, class)
+function binding(name, ty, class)
     bind_seq = bind_seq + 1
     return B.Binding(C.Id("dsl:" .. name .. ":" .. bind_seq), name, concrete_type(ty), class)
 end
@@ -612,6 +1092,9 @@ function Stmt:tree()
         local ref, name = frag_ref(self.target, false)
         return Tr.StmtUseRegionFrag(Tr.StmtSurface, self.mode or Tr.RegionUseEmit, "emit." .. name, ref, expr_items(self.args), {}, self.conts or {})
     end
+    if k == "native_loop" then return native_loop_stmt_tree(self) end
+    if k == "native_fold" then die("lln.fold may only appear directly inside lln.loop", 2) end
+    if k == "native_scan" then die("lln.scan may only appear directly inside lln.loop", 2) end
     if k == "switch" then return Tr.StmtSwitch(Tr.StmtSurface, tree_expr(self.value), self.arms or {}, self.variant_arms or {}, tree_stmts(self.default_body or {})) end
     if k == "atomic_store" then return Tr.StmtAtomicStore(Tr.StmtSurface, concrete_type(self.ty), tree_expr(self.addr), tree_expr(self.value), C.AtomicSeqCst) end
     if k == "atomic_fence" then return Tr.StmtAtomicFence(Tr.StmtSurface, C.AtomicSeqCst) end
@@ -623,8 +1106,7 @@ function M.ret(t) return setmetatable({ kind = "ret", value = t }, Stmt) end
 function M.yield(t) return setmetatable({ kind = "yield", value = t }, Stmt) end
 function M.when(t) return function(b) return setmetatable({ kind = "when", cond = t, body = b or {} }, Stmt) end end
 function M.If(t) return function(b) return setmetatable({ kind = "if", cond = t, then_body = b or {} }, { __call = function(self, else_body) self.else_body = else_body or {}; return self end, __index = Stmt }) end end
-function M.store(place, value) return setmetatable({ kind = "set", place = place, value = value }, Stmt) end
-M.set = M.store
+function M.set(place, value) return setmetatable({ kind = "set", place = place, value = value }, Stmt) end
 function M.assert_(t) return setmetatable({ kind = "assert", cond = t }, Stmt) end
 function M.trap() return setmetatable({ kind = "trap" }, Stmt) end
 function M.assume(t) return setmetatable({ kind = "assume", cond = t }, Stmt) end
@@ -1062,6 +1544,8 @@ Decl.__llbl_format = llbl_format
 Case.__llbl_format = llbl_format
 Default.__llbl_format = llbl_format
 Requires.__llbl_format = llbl_format
+NativeRange.__llbl_format = llbl_format
+NativeRangeND.__llbl_format = llbl_format
 
 function Decl:format(opts)
     return require("lalin.dsl.format").format(self, opts)
@@ -1204,6 +1688,15 @@ local function typed_items_from_llb(items)
     return out
 end
 
+local function native_loop_indexes_from_llb(value)
+    if type(value) == "table" and not llbl.is(value, "Name") and not llbl.is(value, "Symbol") and not is(value, Name) then
+        local out = {}
+        for i = 1, #value do out[i] = llbl_name_text(value[i], "lln.loop index") end
+        if #out > 0 then return out end
+    end
+    return { llbl_name_text(value, "lln.loop index") }
+end
+
 local function region_decl(name, params_, conts, body)
     local entry, blocks = nil, {}
     for _, item in ipairs(body or {}) do
@@ -1319,6 +1812,8 @@ local function slot_value(slot)
     return slot[g.value] { channels = { ch.call_none, ch.call_value, ch.call_table, ch.call_many } }
 end
 local function slot_table_value(slot) return slot[g.value] { channel = ch.call_table } end
+local function slot_index_value(slot) return slot[g.value] { channel = ch.index_value } end
+local function slot_loop_index(slot) return slot[g.value] { channels = { ch.index_name, ch.call_table } } end
 
 local conts_role = role_array("conts", "continuation")
 conts_role.algebra = "sum"
@@ -1477,6 +1972,85 @@ local LalinLLB = llbl.dialect "LalinDSL" {
         emit = function(n) return region_decl(llbl_name_text(n.name, "region name"), n.params, n.conts, n.body) end,
     },
 
+    -- Authors a native regular loop. This lowers to ordinary typed CFG; Flow
+    -- later recognizes the generated loop labels and records domain facts.
+    g.head .loop {
+        g.trait .statement,
+        slot_loop_index(g.slot .index),
+        slot_index_value(g.slot .range),
+        slot_type(g.slot .result) { optional = true },
+        slot_stmts(g.slot .body),
+        emit = function(n)
+            local indexes = native_loop_indexes_from_llb(n.index)
+            native_loop_seq = native_loop_seq + 1
+            return setmetatable({
+                kind = "native_loop",
+                id = native_loop_seq,
+                index = indexes[1],
+                indexes = indexes,
+                range = n.range,
+                result = n.result,
+                body = n.body or {},
+            }, Stmt)
+        end,
+    },
+
+    -- Produces the regular one-dimensional domain consumed by lln.loop.
+    g.head .range {
+        slot_table_value(g.slot .spec),
+        emit = function(n) return native_range_from_spec(n.spec or {}, nil) end,
+    },
+
+    -- Authors an explicit multi-axis producer consumed by lln.loop.
+    g.head .range_nd {
+        slot_table_value(g.slot .spec),
+        emit = function(n) return native_range_nd_from_spec(n.spec or {}) end,
+    },
+
+    -- Declares the single reduction sink inside an lln.loop result region.
+    g.head .fold {
+        g.trait .statement,
+        slot_name(g.slot .name),
+        slot_type(g.slot .ty),
+        slot_table_value(g.slot .spec),
+        emit = function(n)
+            local spec = n.spec or {}
+            if spec.init == nil then die("lln.fold requires init", 2) end
+            if spec.step == nil then die("lln.fold requires step", 2) end
+            return setmetatable({
+                kind = "native_fold",
+                name = llbl_name_text(n.name, "lln.fold accumulator"),
+                ty = n.ty,
+                init = spec.init,
+                by = spec.by,
+                step = spec.step,
+            }, Stmt)
+        end,
+    },
+
+    -- Declares the single inclusive prefix-scan sink inside an lln.loop.
+    g.head .scan {
+        g.trait .statement,
+        slot_name(g.slot .name),
+        slot_type(g.slot .ty),
+        slot_table_value(g.slot .spec),
+        emit = function(n)
+            local spec = n.spec or {}
+            if spec.init == nil then die("lln.scan requires init", 2) end
+            if spec.step == nil then die("lln.scan requires step", 2) end
+            if spec.into == nil then die("lln.scan requires into", 2) end
+            return setmetatable({
+                kind = "native_scan",
+                name = llbl_name_text(n.name, "lln.scan accumulator"),
+                ty = n.ty,
+                init = spec.init,
+                by = spec.by,
+                step = spec.step,
+                into = spec.into,
+            }, Stmt)
+        end,
+    },
+
     -- Declares a region entry block with typed block parameters and terminating statements.
     g.head .entry {
         g.trait .control_block,
@@ -1585,10 +2159,12 @@ local function make_env(opts)
     env.extern, env.handle, env.const, env.static = LalinLLB.exports.extern, LalinLLB.exports.handle, LalinLLB.exports.const, LalinLLB.exports.static
     env.import, env.expr_frag = LalinLLB.exports.import, LalinLLB.exports.expr_frag
     env.struct, env.union, env.region = LalinLLB.exports.struct, LalinLLB.exports.union, llbl.region
+    env.loop, env.range, env.range_nd = LalinLLB.exports.loop, LalinLLB.exports.range, LalinLLB.exports.range_nd
+    env.fold, env.scan = LalinLLB.exports.fold, LalinLLB.exports.scan
     env.entry, env.block, env.jump, env.emit = LalinLLB.exports.entry, LalinLLB.exports.block, LalinLLB.exports.jump, LalinLLB.exports.emit
     env.ret, env.yield, env.when, env.If = M.ret, M.yield, M.when, M.If
     env.let, env.var = LalinLLB.exports.let, LalinLLB.exports.var
-    env.store, env.set, env.trap, env.assume, env.assert_ = M.store, M.set, M.trap, M.assume, M.assert_
+    env.set, env.trap, env.assume, env.assert_ = M.set, M.trap, M.assume, M.assert_
     env.requires = M.requires
     env.astore, env.afence = M.astore, M.afence
     env.aload, env.armw, env.acas = M.aload, M.armw, M.acas
@@ -1607,6 +2183,8 @@ local function make_env(opts)
     env.process, env.process_opts = llbl.process, llbl.process_opts
     env.here, env.at_origin, env.with_origin = llbl.here, llbl.at, llbl.with_origin
     env.eq, env.ne, env.lt, env.le, env.gt, env.ge = M.eq, M.ne, M.lt, M.le, M.gt, M.ge
+    env.add, env.sub, env.mul, env.div, env.rem = M.add, M.sub, M.mul, M.div, M.rem
+    env.band, env.bor, env.bxor, env.min, env.max = M.band, M.bor, M.bxor, M.min, M.max
     env.And, env.Or, env.Not, env.len, env.select = M.And, M.Or, M.Not, M.len, M.select
     env.addr, env.deref, env.load, env.is_null = M.addr, M.deref, M.load, M.is_null
     env.ctor = M.ctor
@@ -1633,6 +2211,9 @@ local function make_env(opts)
     for name, access_kind in pairs(access) do
         env[name] = ctor(name, function(ty) return Ty.TAccess(access_kind, concrete_type(ty)) end)
     end
+    if not opts.no_namespaces and M.namespace ~= nil then
+        env.lln = M.namespace { name = "lln", no_namespaces = true }
+    end
     return env
 end
 
@@ -1641,12 +2222,13 @@ M.make_env = make_env
 local LALIN_NAMESPACE_KEYS = {
     "unit", "fn", "export_fn", "extern", "handle", "const", "static",
     "import", "expr_frag", "struct", "union", "region", "entry", "block",
-    "jump", "emit", "ret", "yield", "when", "If", "let", "var", "store",
+    "loop", "range", "range_nd", "fold", "scan", "jump", "emit", "ret", "yield", "when", "If", "let", "var",
     "set", "trap", "assume", "assert_", "requires", "astore", "afence",
     "aload", "armw", "acas", "switch", "case", "default", "bit", "product",
     "stmts", "decls", "exprs", "conts", "variants", "spread", "_", "process",
     "process_opts", "here", "at_origin", "with_origin", "eq", "ne", "lt", "le",
     "gt", "ge", "And", "Or", "Not", "len", "select", "addr", "deref", "load",
+    "add", "sub", "mul", "div", "rem", "band", "bor", "bxor", "min", "max",
     "is_null", "ctor", "bounds", "disjoint", "same_len", "window_bounds",
     "soa_component", "as", "bitcast", "null", "sizeof", "alignof", "N", "ptr", "view", "slice",
     "array", "fnptr", "func_type", "closure", "closure_type", "lease", "owned",
@@ -1654,7 +2236,10 @@ local LALIN_NAMESPACE_KEYS = {
 
 function M.namespace(opts)
     opts = opts or {}
-    local env = make_env(opts)
+    local env_opts = {}
+    for k, v in pairs(opts) do env_opts[k] = v end
+    env_opts.no_namespaces = true
+    local env = make_env(env_opts)
     local exports = {}
     for _, name in ipairs(LALIN_NAMESPACE_KEYS) do exports[name] = env[name] end
     for n in pairs(scalar) do exports[n] = env[n] end

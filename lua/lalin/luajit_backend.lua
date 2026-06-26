@@ -65,6 +65,7 @@ local function bind_context(T)
         if kind == "zip_compare" then return StencilArtifactPlan.zip_compare_array_artifact(op, info) end
         if kind == "gather" then return StencilArtifactPlan.gather_array_artifact(info) end
         if kind == "scatter" then return StencilArtifactPlan.scatter_array_artifact(info) end
+        if kind == "scatter_reduce" then return StencilArtifactPlan.scatter_reduce_n_artifact(reduction, plan, info) end
         if kind == "in_place_map" then return StencilArtifactPlan.in_place_map_array_artifact(op, info) end
         if kind == "scan" then return StencilArtifactPlan.scan_array_artifact(reduction, plan, info) end
         if kind == "find" then return StencilArtifactPlan.find_array_artifact(op, info) end
@@ -146,7 +147,6 @@ local function bind_context(T)
         local schedules = schedule_index(schedule_plan)
         local stencil_machines = Lower.plan_stencil_machines(module, {
             contracts = opts.contracts,
-            domain_shapes = opts.domain_shapes,
             graph = graph,
             flow = flow,
             value = value,
@@ -166,7 +166,6 @@ local function bind_context(T)
         for _, reject in ipairs(stencil_machines.rejects or {}) do rejects[#rejects + 1] = reject end
         local lj_module, facts = Lower.lower_module(module, {
             contracts = opts.contracts,
-            domain_shapes = opts.domain_shapes,
             graph = graph,
             flow = flow,
             value = value,

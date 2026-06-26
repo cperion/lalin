@@ -52,7 +52,7 @@ return unit. CopyPatchRegression {
     },
 
     block. body { i [i32] } {
-      store (dst[i], src[i]),
+      set (dst[i], src[i]),
       jump. loop { i = i + 1 },
     },
 
@@ -78,7 +78,7 @@ return unit. CopyPatchRegression {
     },
 
     block. body { i [i32] } {
-      store (dst[i], src[i]),
+      set (dst[i], src[i]),
       jump. loop { i = i + 1 },
     },
 
@@ -101,7 +101,7 @@ return unit. CopyPatchRegression {
     },
 
     block. body { i [i32] } {
-      store (dst[i], value),
+      set (dst[i], value),
       jump. loop { i = i + 1 },
     },
 
@@ -128,7 +128,7 @@ return unit. CopyPatchRegression {
     },
 
     block. body { i [i32] } {
-      store (dst[i], -src[i]),
+      set (dst[i], -src[i]),
       jump. loop { i = i + 1 },
     },
 
@@ -156,7 +156,7 @@ return unit. CopyPatchRegression {
     },
 
     block. body { i [i32] } {
-      store (dst[i], lhs[i] + rhs[i]),
+      set (dst[i], lhs[i] + rhs[i]),
       jump. loop { i = i + 1 },
     },
 
@@ -183,7 +183,7 @@ return unit. CopyPatchRegression {
     },
 
     block. body { i [i32] } {
-      store (dst[i], as [f64] (src[i])),
+      set (dst[i], as [f64] (src[i])),
       jump. loop { i = i + 1 },
     },
 
@@ -210,7 +210,7 @@ return unit. CopyPatchRegression {
     },
 
     block. body { i [i32] } {
-      store (dst[i], src[i] :gt (0)),
+      set (dst[i], src[i] :gt (0)),
       jump. loop { i = i + 1 },
     },
 
@@ -238,7 +238,7 @@ return unit. CopyPatchRegression {
     },
 
     block. body { i [i32] } {
-      store (dst[i], lhs[i] :lt (rhs[i])),
+      set (dst[i], lhs[i] :lt (rhs[i])),
       jump. loop { i = i + 1 },
     },
 
@@ -266,7 +266,7 @@ return unit. CopyPatchRegression {
     },
 
     block. body { i [i32] } {
-      store (dst[i], src[idx[i]]),
+      set (dst[i], src[idx[i]]),
       jump. loop { i = i + 1 },
     },
 
@@ -294,7 +294,35 @@ return unit. CopyPatchRegression {
     },
 
     block. body { i [i32] } {
-      store (dst[idx[i]], src[i]),
+      set (dst[idx[i]], src[i]),
+      jump. loop { i = i + 1 },
+    },
+
+    block. done {} {
+      ret (),
+    },
+  },
+
+  fn. scatter_reduce_add_i32 { dst [ptr [i32]], src [ptr [i32]], idx [ptr [i32]], n [i32] } [void] {
+    requires {
+      bounds(dst, n),
+      bounds(src, n), readonly(src),
+      bounds(idx, n), readonly(idx),
+      disjoint(dst, src), disjoint(dst, idx), disjoint(src, idx),
+    },
+
+    entry. start {} { jump. loop { i = 0 }, },
+
+    block. loop { i [i32] } {
+      when (i :lt (n)) {
+        jump. body { i = i },
+      },
+
+      jump. done {},
+    },
+
+    block. body { i [i32] } {
+      set (dst[idx[i]], dst[idx[i]] + src[i]),
       jump. loop { i = i + 1 },
     },
 
@@ -317,7 +345,7 @@ return unit. CopyPatchRegression {
     },
 
     block. body { i [i32] } {
-      store (dst[i], -dst[i]),
+      set (dst[i], -dst[i]),
       jump. loop { i = i + 1 },
     },
 
@@ -415,7 +443,7 @@ return unit. CopyPatchRegression {
 
     block. body { i [i32], acc [i32] } {
       let. nxt [i32] (acc + xs[i]),
-      store (dst[i], nxt),
+      set (dst[i], nxt),
       jump. loop { i = i + 1, acc = nxt },
     },
 
@@ -469,7 +497,7 @@ return unit. CopyPatchRegression {
 
     block. pos_body { i [i32], out [i32] } {
       when (xs[i] :gt (0)) {
-        store (dst[out], xs[i]),
+        set (dst[out], xs[i]),
         jump. pos_loop { i = i + 1, out = out + 1 },
       },
 
@@ -489,7 +517,7 @@ return unit. CopyPatchRegression {
         jump. neg_loop { j = j + 1, out = out },
       },
 
-      store (dst[out], xs[j]),
+      set (dst[out], xs[j]),
       jump. neg_loop { j = j + 1, out = out + 1 },
     },
 
@@ -510,7 +538,7 @@ local artifact = lalin.emit_luajit_artifact(decl, {
 })
 
 assert(artifact.kind == 'LuaJITSourceArtifact')
-assert(#artifact.artifacts == 18, 'expected selected stencil artifact for each DSL loop')
+assert(#artifact.artifacts == 19, 'expected selected stencil artifact for each DSL loop')
 assert(artifact.source:match('__ml_check_stencil_target'), 'expected generated target guard')
 
 local expected_labels = {
@@ -525,6 +553,7 @@ local expected_labels = {
     zip_compare = true,
     gather = true,
     scatter = true,
+    scatter_reduce = true,
     in_place_map = true,
     count = true,
     map_reduce = true,
@@ -547,6 +576,7 @@ local function selected_label(descriptor)
     local expr = descriptor.body.expr
     local expr_kind = class_name(expr)
     if sink_kind == 'LalinStencil.StencilSinkScan' then return 'scan' end
+    if sink_kind == 'LalinStencil.StencilSinkScatterReduce' then return 'scatter_reduce' end
     if sink_kind == 'LalinStencil.StencilSinkReduce' then
         local mode_kind = class_name(descriptor.sink.mode)
         if mode_kind == 'LalinStencil.StencilReduceCount' then return 'count' end
@@ -588,7 +618,7 @@ for _, selected in ipairs(artifact.artifacts) do
     local label = selected_label(descriptor)
     assert(label ~= nil, 'unexpected selected stencil descriptor ' .. tostring(pvm.classof(descriptor)))
     assert(seen[label] == nil, 'duplicate selected stencil artifact for ' .. label)
-    if label == 'find' or label == 'partition' then
+    if label == 'find' or label == 'partition' or label == 'scatter_reduce' then
         assert(tostring(selected.instance.schedule):match('StencilScheduleScalar'), label .. ' should carry a scalar ordered-control stencil schedule')
     else
         assert(tostring(selected.instance.schedule):match('StencilScheduleAutoVector'), label .. ' should carry an auto-vector stencil schedule')
@@ -646,6 +676,10 @@ for i = 0, 5 do
     for j = 0, 5 do if idx[j] == i then found = out[i] == src[j] end end
     assert(found, 'scatter mismatch at ' .. tostring(i))
 end
+for i = 0, 5 do out[i] = 0 end
+local dup_idx = ffi.new('int32_t[6]', { 0, 2, 0, 2, 2, 5 })
+loaded.scatter_reduce_add_i32(out, src, dup_idx, 6)
+assert(out[0] == 13 and out[1] == 0 and out[2] == 6 and out[3] == 0 and out[4] == 0 and out[5] == 2, 'scatter-reduce add mismatch')
 
 local inplace = ffi.new('int32_t[6]', { 5, -3, 8, 0, 9, 2 })
 loaded.in_place_neg_i32(inplace, 6)

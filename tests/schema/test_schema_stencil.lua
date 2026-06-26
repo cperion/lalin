@@ -256,12 +256,12 @@ assert(not StencilArtifactPlan.producer_shape_supported(zero_step_producer))
 assert(StencilArtifactPlan.producer_materialized(nd_producer))
 assert(StencilArtifactPlan.producer_materialized(window_producer))
 assert(StencilArtifactPlan.producer_materialized(tiled_producer))
-assert(not StencilArtifactPlan.producer_materialized(backward_producer))
+assert(StencilArtifactPlan.producer_materialized(backward_producer))
 assert(not StencilArtifactPlan.producer_materialized(zero_step_producer))
 assert(StencilArtifactPlan.unsupported_producer_reject(nd_producer) == nil)
 assert(StencilArtifactPlan.unsupported_producer_reject(window_producer) == nil)
 assert(StencilArtifactPlan.unsupported_producer_reject(tiled_producer) == nil)
-assert(StencilArtifactPlan.unsupported_producer_reject(backward_producer).reason:find("backward", 1, true) ~= nil)
+assert(StencilArtifactPlan.unsupported_producer_reject(backward_producer) == nil)
 assert(StencilArtifactPlan.unsupported_producer_reject(zero_step_producer).reason:find("positive compile-time", 1, true) ~= nil)
 local bad_window_producer = Stencil.StencilProducer(nil, Stencil.StencilProduceWindowND({ axis_x, axis_y }, {
     Stencil.StencilWindowAxis(1, 1, Stencil.StencilWindowBoundaryClamp),
@@ -345,6 +345,7 @@ local cast_op = Stencil.StencilApplyCast(Core.MachineCastSToF, input_xs, i32, Co
 local pred_op = Stencil.StencilApplyPredicate(pred, input_xs, Code.CodeTyBool8)
 local cmp_op = Stencil.StencilApplyCompare(Core.CmpLt, input_lhs, input_rhs, Code.CodeTyBool8)
 local indexed = Stencil.StencilLayoutIndexed(Stencil.StencilLayoutContiguous(1), Stencil.StencilAccessRef("idx"), i32, 1)
+local affine_layout = Stencil.StencilLayoutAffine1D(Stencil.StencilLayoutContiguous(1), -1, init)
 local slice_layout = Stencil.StencilLayoutSliceDescriptor(
     Code.CodeValueId("v:slice"),
     Code.CodeValueId("v:slice_data"),
@@ -377,6 +378,8 @@ assert(cast_op.op == Core.MachineCastSToF)
 assert(pred_op.result_ty == Code.CodeTyBool8)
 assert(cmp_op.cmp == Core.CmpLt)
 assert(indexed.index_ty == i32)
+assert(affine_layout.scale == -1)
+assert(affine_layout.offset == init)
 assert(slice_layout.len == Code.CodeValueId("v:slice_len"))
 assert(view_layout.stride == Code.CodeValueId("v:view_stride"))
 assert(view_layout.stride_const == 2)

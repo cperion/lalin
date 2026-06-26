@@ -89,6 +89,12 @@ local function bind_context(T)
             layout = "StencilLayoutContiguous",
             access_layout = function() return nil end,
         },
+        affine = {
+            layout = "StencilLayoutAffine1D",
+            access_layout = function()
+                return Stencil.StencilLayoutAffine1D(Stencil.StencilLayoutContiguous(1), -1, nil)
+            end,
+        },
         view = {
             layout = "StencilLayoutViewDescriptor",
             access_layout = view_layout,
@@ -221,6 +227,7 @@ local function bind_context(T)
     }
     local layout_group_order = {
         "contiguous",
+        "affine",
         "view",
         "slice",
         "bytespan",
@@ -358,9 +365,16 @@ local function bind_context(T)
     end
 
     local function cells_estimated_bytes(cells)
+        if type(cells) ~= "table" then return 0 end
         local total = 0
         for _, cell in ipairs(cells or {}) do total = total + cell_estimated_bytes(cell) end
         return total
+    end
+
+    local function append_output(out, cell)
+        if type(out) == "function" then return out(cell) end
+        out[#out + 1] = cell
+        return true
     end
 
     local function check_cell(cell)
@@ -392,6 +406,12 @@ local function bind_context(T)
             or opts.input_count ~= nil
             or os.getenv("LALIN_MC_BANK_SOAC_ORDER") ~= nil
             or os.getenv("LALIN_MC_BANK_INPUT_COUNT") ~= nil
+    end
+
+    local function exact_shape(opts)
+        opts = opts or {}
+        local raw = opts.exact_shape or os.getenv("LALIN_MC_BANK_EXACT_SHAPE")
+        return raw == true or raw == 1 or raw == "1" or raw == "true" or raw == "yes"
     end
 
     local function input(name)
@@ -671,7 +691,9 @@ local function bind_context(T)
                                 return serial, estimated_total, false
                             end
                             serial = serial + 1
-                            out[#out + 1] = soac_cell(kind, group_name, producer_group_name, schedule_variant, spec, serial)
+                            if append_output(out, soac_cell(kind, group_name, producer_group_name, schedule_variant, spec, serial)) == false then
+                                return serial, estimated_total, false
+                            end
                             estimated_total = estimated_total + estimated
                         end
                     end
@@ -735,20 +757,23 @@ local function bind_context(T)
     local function append_soac_cells(out, opts)
         opts = opts or {}
         local max_order = requested_soac_order(opts)
-        if max_order < 1 then return end
+        if max_order < 1 then return cells_estimated_bytes(out) end
         local target = target_bytes(opts)
         local target_limit = target and target > 0 and target or nil
         local serial = 0
         local estimated_total = cells_estimated_bytes(out)
         local max_input_count = requested_input_count(opts, max_order)
-        if max_input_count < 1 then return end
-        for order = 1, max_order do
-            for input_count = 1, max_input_count do
+        if max_input_count < 1 then return estimated_total end
+        local min_order = exact_shape(opts) and max_order or 1
+        local min_input_count = exact_shape(opts) and max_input_count or 1
+        for order = min_order, max_order do
+            for input_count = min_input_count, max_input_count do
                 local keep_going
                 serial, estimated_total, keep_going = append_soac_order_stream(out, input_count, order, serial, target_limit, estimated_total)
-                if keep_going == false then return end
+                if keep_going == false then return estimated_total end
             end
         end
+        return estimated_total
     end
 
     local function append_default_soac_cells(out, opts)
@@ -766,22 +791,6 @@ local function bind_context(T)
             serial, estimated_total, keep_going = append_sink_after_apply_stream(out, input_count, serial, target_limit, estimated_total)
             if keep_going == false then return end
         end
-    end
-
-    local function shard_cells(cells, opts)
-        opts = opts or {}
-        local shard_count = tonumber(opts.shard_count or os.getenv("LALIN_MC_BANK_SHARD_COUNT"))
-        local shard_index = tonumber(opts.shard_index or os.getenv("LALIN_MC_BANK_SHARD_INDEX"))
-        if shard_count == nil and shard_index == nil then return cells end
-        assert(shard_count ~= nil and shard_count >= 1, "copy_patch_mc_intern_set: shard_count must be >= 1")
-        assert(shard_index ~= nil and shard_index >= 1 and shard_index <= shard_count, "copy_patch_mc_intern_set: shard_index must be in 1..shard_count")
-        local out = {}
-        for i, cell in ipairs(cells) do
-            if ((i - 1) % shard_count) + 1 == shard_index then
-                out[#out + 1] = cell
-            end
-        end
-        return out
     end
 
     local function append_rank_aware_coverage_cells(out)
@@ -844,23 +853,66 @@ local function bind_context(T)
                 estimated_bytes = estimated_bytes_for_soac({ kind = "apply_n", input_count = 1, order = 1 }),
                 serial = "rank_window_neighbor",
             },
+            {
+                name = "rank.range1d.indexed.scatter_reduce_n.add",
+                vocab = "StencilScatterReduce",
+                layout = "StencilLayoutIndexed",
+                kind = "scatter_reduce_n",
+                derived = "scatter_reduce",
+                group = "indexed_write",
+                producer_group = "range1d",
+                input_count = 1,
+                order = 1,
+                apply_stage_count = 0,
+                expr_name = "scatter_add_x1",
+                expr = input("x1"),
+                result_ty = i32,
+                item_ty = i32,
+                index_ty = i32,
+                estimated_bytes = estimated_bytes_for_soac({ kind = "apply_n", input_count = 1, order = 1 }),
+                serial = "rank_scatter_reduce",
+            },
         }
         for i = 1, #cells do
             check_cell(cells[i])
-            out[#out + 1] = cells[i]
+            if append_output(out, cells[i]) == false then return false end
+        end
+        return true
+    end
+
+    local function shard_filter(opts, emit)
+        opts = opts or {}
+        local shard_count = tonumber(opts.shard_count or os.getenv("LALIN_MC_BANK_SHARD_COUNT"))
+        local shard_index = tonumber(opts.shard_index or os.getenv("LALIN_MC_BANK_SHARD_INDEX"))
+        if shard_count == nil and shard_index == nil then return emit end
+        assert(shard_count ~= nil and shard_count >= 1, "copy_patch_mc_intern_set: shard_count must be >= 1")
+        assert(shard_index ~= nil and shard_index >= 1 and shard_index <= shard_count, "copy_patch_mc_intern_set: shard_index must be in 1..shard_count")
+        local ordinal = 0
+        return function(cell)
+            ordinal = ordinal + 1
+            if ((ordinal - 1) % shard_count) + 1 ~= shard_index then return true end
+            return emit(cell)
         end
     end
 
-    function M.cells(opts)
+    function M.each_cell(opts, emit)
         opts = opts or {}
-        local out = {}
+        emit = shard_filter(opts, assert(emit, "copy_patch_mc_intern_set.each_cell requires an emit callback"))
         if explicit_rectangular_shape(opts) then
-            append_soac_cells(out, opts)
+            append_soac_cells(emit, opts)
         else
-            append_default_soac_cells(out, opts)
+            append_default_soac_cells(emit, opts)
         end
-        append_rank_aware_coverage_cells(out)
-        return shard_cells(out, opts)
+        append_rank_aware_coverage_cells(emit)
+    end
+
+    function M.cells(opts)
+        local out = {}
+        M.each_cell(opts, function(cell)
+            out[#out + 1] = cell
+            return true
+        end)
+        return out
     end
 
     local function profile_soac_cells(opts, cells, estimated)
@@ -871,8 +923,10 @@ local function bind_context(T)
         local target_limit = target and target > 0 and target or nil
         local max_input_count = requested_input_count(opts, max_order)
         if max_input_count < 1 then return cells, estimated end
-        for order = 1, max_order do
-            for input_count = 1, max_input_count do
+        local min_order = exact_shape(opts) and max_order or 1
+        local min_input_count = exact_shape(opts) and max_input_count or 1
+        for order = min_order, max_order do
+            for input_count = min_input_count, max_input_count do
                 local keep_going = true
                 stream_stage_specs(input_count, order - 1, function(spec)
                     if same_ty(spec.result_ty, i32) then
@@ -977,10 +1031,17 @@ local function bind_context(T)
         opts = opts or {}
         local cells = 0
         local estimated = 0
-        if explicit_rectangular_shape(opts) then
+        local explicit = explicit_rectangular_shape(opts)
+        if explicit then
             cells, estimated = profile_soac_cells(opts, cells, estimated)
         else
             cells, estimated = profile_default_soac_cells(opts, cells, estimated)
+        end
+        local second_soac_order, second_input_count, second_family
+        if not explicit then
+            second_soac_order = default_second_soac_order
+            second_input_count = default_second_input_count
+            second_family = default_second_family
         end
         return {
             cells = cells,
@@ -988,9 +1049,10 @@ local function bind_context(T)
             estimated_bytes_per_cell = estimated_bytes_per_cell(),
             soac_order = requested_soac_order(opts),
             input_count = requested_input_count(opts, requested_soac_order(opts)),
-            second_soac_order = explicit_rectangular_shape(opts) and nil or default_second_soac_order,
-            second_input_count = explicit_rectangular_shape(opts) and nil or default_second_input_count,
-            second_family = explicit_rectangular_shape(opts) and nil or default_second_family,
+            second_soac_order = second_soac_order,
+            second_input_count = second_input_count,
+            second_family = second_family,
+            exact_shape = exact_shape(opts),
             target_bytes = target_bytes(opts),
         }
     end
@@ -1097,6 +1159,26 @@ local function bind_context(T)
         }))
     end
 
+    function builders.scatter_reduce_n(cell)
+        local input_count = assert(cell.input_count, "scatter_reduce_n cell requires input_count")
+        local inputs = {}
+        for i = 1, input_count do
+            local name = "x" .. tostring(i)
+            inputs[i] = { name = name, ty = i32, layout = input_layout(cell, name) }
+        end
+        append_extra_inputs(inputs, cell, input_count)
+        return Plan.scatter_reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, with_producer(cell, {
+            tag = "bank_o" .. tostring(cell.order) .. "_in" .. tostring(cell.input_count) .. "_s" .. tostring(cell.apply_stage_count) .. "_" .. tostring(cell.expr_name) .. "_" .. tostring(cell.serial),
+            inputs = inputs,
+            expr = assert(cell.expr, "scatter_reduce_n cell requires generated expression"),
+            item_ty = cell.item_ty or cell.result_ty or i32,
+            result_ty = cell.result_ty or i32,
+            index_ty = cell.index_ty or i32,
+            step_num = 1,
+            dst_layout = dst_layout(cell),
+        }))
+    end
+
     function M.artifact_for_cell(cell)
         local build = assert(builders[cell.kind], "copy_patch_mc_intern_set: no builder for cell kind " .. tostring(cell.kind))
         local artifact = build(cell)
@@ -1104,21 +1186,59 @@ local function bind_context(T)
         return artifact
     end
 
+    function M.each_artifact(opts, emit)
+        emit = assert(emit, "copy_patch_mc_intern_set.each_artifact requires an emit callback")
+        return M.each_cell(opts, function(cell)
+            return emit(M.artifact_for_cell(cell), cell)
+        end)
+    end
+
+    function M.artifact_batches(opts, emit)
+        opts = opts or {}
+        emit = assert(emit, "copy_patch_mc_intern_set.artifact_batches requires an emit callback")
+        local batch_size = tonumber(opts.batch_size or os.getenv("LALIN_MC_BANK_BATCH_SIZE")) or 1024
+        if batch_size < 1 then batch_size = 1 end
+        batch_size = math.floor(batch_size)
+        local batch = {}
+        local batch_index = 0
+        local keep_going = true
+        local function flush()
+            if #batch == 0 then return true end
+            batch_index = batch_index + 1
+            local current = batch
+            batch = {}
+            return emit(current, batch_index)
+        end
+        M.each_artifact(opts, function(artifact)
+            batch[#batch + 1] = artifact
+            if #batch >= batch_size then
+                keep_going = flush()
+                return keep_going
+            end
+            return true
+        end)
+        if keep_going ~= false then flush() end
+    end
+
     function M.artifacts(opts)
         local out = {}
-        for _, cell in ipairs(M.cells(opts)) do out[#out + 1] = M.artifact_for_cell(cell) end
+        M.each_artifact(opts, function(artifact)
+            out[#out + 1] = artifact
+            return true
+        end)
         return out
     end
 
     function M.expected_symbols(opts)
         local out, seen = {}, {}
-        for _, artifact in ipairs(M.artifacts(opts)) do
+        M.each_artifact(opts, function(artifact)
             local symbol = artifact.symbol.text
             if not seen[symbol] then
                 out[#out + 1] = symbol
                 seen[symbol] = true
             end
-        end
+            return true
+        end)
         table.sort(out)
         return out
     end

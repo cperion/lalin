@@ -25,6 +25,7 @@ local function bind_context(T)
     local skeleton_find = llbl.shared.symbols.source("skeleton_find")
     local skeleton_partition = llbl.shared.symbols.source("skeleton_partition")
     local skeleton_copy = llbl.shared.symbols.source("skeleton_copy")
+    local skeleton_scatter_reduce = llbl.shared.symbols.source("skeleton_scatter_reduce")
     local function build_kernel_lowering(fields) return fields end
 
     local function build_rules()
@@ -192,13 +193,34 @@ local function bind_context(T)
     },
   },
 
+  rule. skeleton_scatter_reduce {
+    llisle.select_skeleton_lowering { skeleton = P. skeleton },
+    when {
+      (P. skeleton.scan_ready :eq (false))
+        * (P. skeleton.find_ready :eq (false))
+        * (P. skeleton.partition_ready :eq (false))
+        * (P. skeleton.copy_ready :eq (false))
+        * (P. skeleton.scatter_reduce_ready :eq (true)),
+    },
+    cost (40),
+    run {
+      ret {
+        selection = kernel_lowering {
+          kind = skeleton_scatter_reduce,
+          planned = P. skeleton.scatter_reduce_plan,
+        },
+      },
+    },
+  },
+
   rule. skeleton_no_plan {
     llisle.select_skeleton_lowering { skeleton = P. skeleton },
     when {
       (P. skeleton.scan_ready :eq (false))
         * (P. skeleton.find_ready :eq (false))
         * (P. skeleton.partition_ready :eq (false))
-        * (P. skeleton.copy_ready :eq (false)),
+        * (P. skeleton.copy_ready :eq (false))
+        * (P. skeleton.scatter_reduce_ready :eq (false)),
     },
     cost (100),
     run {
@@ -227,6 +249,7 @@ local function bind_context(T)
         skeleton_find = "skeleton_find",
         skeleton_partition = "skeleton_partition",
         skeleton_copy = "skeleton_copy",
+        skeleton_scatter_reduce = "skeleton_scatter_reduce",
       },
     })
 

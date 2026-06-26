@@ -55,6 +55,35 @@ return schema. LalinFlow {
       tile_sizes [many [number]],
     },
   },
+  sum. FlowProof {
+    FlowProofDomain { variant_unique, domain [LalinFlow.FlowDomain], reason [str], },
+    FlowProofMemory { variant_unique, proof [LalinMem.MemProof], reason [str], },
+    FlowProofAuthorAsserted { variant_unique, reason [str], },
+    FlowProofFrontendFact { variant_unique, reason [str], },
+  },
+  sum. FlowFactOrigin {
+    FlowFactCheckerDerived,
+    FlowFactAuthorAsserted { variant_unique, reason [str], },
+    FlowFactFrontendFact { variant_unique, reason [str], },
+  },
+  product. FlowDomainShapeFact {
+    interned,
+    domain [LalinFlow.FlowDomain],
+    shape [LalinFlow.FlowDomainShape],
+    proofs [many [LalinFlow.FlowProof]],
+    origin [LalinFlow.FlowFactOrigin],
+  },
+  sum. FlowDomainIntent {
+    FlowDomainIntentGeneric,
+    FlowDomainIntentNativeLoop { variant_unique, reason [str], },
+  },
+  product. FlowDomainIntentFact {
+    interned,
+    domain [LalinFlow.FlowDomain],
+    intent [LalinFlow.FlowDomainIntent],
+    proofs [many [LalinFlow.FlowProof]],
+    origin [LalinFlow.FlowFactOrigin],
+  },
   sum. FlowTripCount {
     FlowTripCountExact {
       variant_unique,
@@ -206,6 +235,8 @@ return schema. LalinFlow {
     edges [many [LalinFlow.FlowEdgeFact]],
     loops [many [LalinFlow.FlowLoopFacts]],
     ranges [many [LalinFlow.FlowValueRange]],
+    domain_shapes [many [LalinFlow.FlowDomainShapeFact]],
+    domain_intents [many [LalinFlow.FlowDomainIntentFact]],
     rejects [many [LalinFlow.FlowReject]],
   },
 }

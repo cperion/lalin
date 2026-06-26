@@ -93,6 +93,8 @@ do
         partition_plan = "partition",
         copy_ready = true,
         copy_plan = "copy",
+        scatter_reduce_ready = true,
+        scatter_reduce_plan = "scatter_reduce",
         reject_reason = "none",
     } }, "selection", "no LuaJIT skeleton lowering selected")
     assert(selection ~= nil, tostring(err))
@@ -109,6 +111,8 @@ do
         partition_plan = "partition",
         copy_ready = true,
         copy_plan = "copy",
+        scatter_reduce_ready = true,
+        scatter_reduce_plan = "scatter_reduce",
         reject_reason = "none",
     } }, "selection", "no LuaJIT skeleton lowering selected")
     assert(selection ~= nil, tostring(err))
@@ -124,6 +128,8 @@ do
         partition_plan = "partition",
         copy_ready = true,
         copy_plan = "copy",
+        scatter_reduce_ready = true,
+        scatter_reduce_plan = "scatter_reduce",
         reject_reason = "none",
     } }, "selection", "no LuaJIT skeleton lowering selected")
     assert(selection ~= nil, tostring(err))
@@ -138,6 +144,8 @@ do
         partition_ready = false,
         copy_ready = true,
         copy_plan = "copy",
+        scatter_reduce_ready = true,
+        scatter_reduce_plan = "scatter_reduce",
         reject_reason = "none",
     } }, "selection", "no LuaJIT skeleton lowering selected")
     assert(selection ~= nil, tostring(err))
@@ -151,6 +159,22 @@ do
         find_ready = false,
         partition_ready = false,
         copy_ready = false,
+        scatter_reduce_ready = true,
+        scatter_reduce_plan = "scatter_reduce",
+        reject_reason = "none",
+    } }, "selection", "no LuaJIT skeleton lowering selected")
+    assert(selection ~= nil, tostring(err))
+    assert(selection.kind == "skeleton_scatter_reduce", "scatter-reduce skeleton should win after copy rejects")
+    assert(selection.planned == "scatter_reduce", "scatter-reduce skeleton should return scatter-reduce plan")
+end
+
+do
+    local selection, err = Rules:run("select_skeleton_lowering", { skeleton = {
+        scan_ready = false,
+        find_ready = false,
+        partition_ready = false,
+        copy_ready = false,
+        scatter_reduce_ready = false,
         reject_reason = "no skeleton",
     } }, "selection", "no LuaJIT skeleton lowering selected")
     assert(selection ~= nil, tostring(err))

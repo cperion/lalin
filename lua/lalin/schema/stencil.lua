@@ -14,7 +14,7 @@ return schema. LalinStencil {
       field. name [str],
     },
   },
-  sum. StencilVocab { StencilApply, StencilReduce, StencilScan, },
+  sum. StencilVocab { StencilApply, StencilReduce, StencilScan, StencilScatterReduce, },
   sum. StencilUnaryOp {
     StencilUnaryIdentity,
     StencilUnaryNeg,
@@ -159,6 +159,12 @@ return schema. LalinStencil {
       index [LalinStencil.StencilAccessRef],
       index_ty [LalinCode.CodeType],
       stride [number],
+    },
+    StencilLayoutAffine1D {
+      variant_unique,
+      parent [LalinStencil.StencilAccessLayout],
+      scale [number],
+      offset [optional [LalinValue.ValueExpr]],
     },
     StencilLayoutFieldProjection {
       variant_unique,
@@ -533,6 +539,12 @@ return schema. LalinStencil {
       axis [LalinStencil.StencilAxisRef],
       reducer [LalinStencil.StencilReducer],
       mode [LalinStencil.StencilScanMode],
+      result_ty [LalinCode.CodeType],
+    },
+    StencilSinkScatterReduce {
+      variant_unique,
+      dst [LalinStencil.StencilAccessRef],
+      reducer [LalinStencil.StencilReducer],
       result_ty [LalinCode.CodeType],
     },
   },

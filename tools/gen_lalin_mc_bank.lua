@@ -38,6 +38,13 @@ local function write_file(path, text)
     f:close()
 end
 
+local function append_text(path, text)
+    mkdir_parent(path)
+    local f = assert(io.open(path, "ab"))
+    f:write(text)
+    f:close()
+end
+
 local function append_file(dst, src_path)
     local src = assert(io.open(src_path, "rb"))
     while true do
@@ -53,13 +60,6 @@ local function read_file(path)
     local s = f:read("*a")
     f:close()
     return s
-end
-
-local function file_exists(path)
-    local f = io.open(path, "rb")
-    if f == nil then return false end
-    f:close()
-    return true
 end
 
 local function basename(path)
@@ -229,85 +229,77 @@ local function shard_source_path(i)
     return output_c_stem() .. "_shard_" .. tostring(i) .. ".c"
 end
 
-local function run_worker()
-    local shard_index = assert(tonumber(os.getenv("LALIN_MC_BANK_SHARD_INDEX")), "worker missing LALIN_MC_BANK_SHARD_INDEX")
-    local shard_count = assert(tonumber(os.getenv("LALIN_MC_BANK_SHARD_COUNT")), "worker missing LALIN_MC_BANK_SHARD_COUNT")
-    local prefix = assert(os.getenv("LALIN_MC_BANK_SHARD_PREFIX"), "worker missing LALIN_MC_BANK_SHARD_PREFIX")
-    local artifacts = InternSet.artifacts({
+local function build_shard_fragments(shard_index, shard_count, prefix)
+    local arrays_path = prefix .. ".arrays.cfrag"
+    local entries_path = prefix .. ".entries.cfrag"
+    write_file(arrays_path, "")
+    write_file(entries_path, "")
+    local total = 0
+    local payload_bytes = 0
+    local patch_count = 0
+    InternSet.artifact_batches({
         shard_index = shard_index,
         shard_count = shard_count,
-    })
-    local mc_bank = build_bank(
-        artifacts,
-        "lalin_embedded_mc_bank_shard_" .. tostring(shard_index),
-        prefix .. ".build"
-    )
-    local arrays, entries, count, payload_bytes, patch_count = bank_fragments(mc_bank)
-    write_file(prefix .. ".arrays.cfrag", arrays)
-    write_file(prefix .. ".entries.cfrag", entries)
-    write_file(prefix .. ".count", tostring(count) .. "\n")
+    }, function(artifacts, batch_index)
+        local mc_bank = build_bank(
+            artifacts,
+            "lalin_embedded_mc_bank_shard_" .. tostring(shard_index) .. "_batch_" .. tostring(batch_index),
+            prefix .. ".build/batch_" .. tostring(batch_index)
+        )
+        local arrays, entries, count, batch_payload_bytes, batch_patch_count = bank_fragments(mc_bank)
+        append_text(arrays_path, arrays)
+        append_text(arrays_path, "\n")
+        append_text(entries_path, entries)
+        append_text(entries_path, "\n")
+        total = total + count
+        payload_bytes = payload_bytes + batch_payload_bytes
+        patch_count = patch_count + batch_patch_count
+        collectgarbage("collect")
+        return true
+    end)
+    write_file(prefix .. ".count", tostring(total) .. "\n")
     write_file(prefix .. ".payload_bytes", tostring(payload_bytes) .. "\n")
     write_file(prefix .. ".patch_count", tostring(patch_count) .. "\n")
     io.stderr:write(
         "embedded shard ", tostring(shard_index), "/", tostring(shard_count),
-        ": ", tostring(count), " Lalin MC bank entries, ",
+        ": ", tostring(total), " Lalin MC bank entries, ",
         tostring(payload_bytes), " payload bytes, ",
         tostring(patch_count), " patches\n"
     )
+    return {
+        prefix = prefix,
+        arrays_path = arrays_path,
+        entries_path = entries_path,
+        count = total,
+        payload_bytes = payload_bytes,
+        patch_count = patch_count,
+    }
 end
 
-local function worker_command(i, jobs, prefix)
-    local luajit = arg[-1] or "luajit"
-    local script = arg[0] or "tools/gen_lalin_mc_bank.lua"
-    local shard_prefix = prefix .. ".shard_" .. tostring(i)
-    local env = table.concat({
-        "LALIN_MC_BANK_WORKER=1",
-        "LALIN_MC_BANK_SHARD_INDEX=" .. tostring(i),
-        "LALIN_MC_BANK_SHARD_COUNT=" .. tostring(jobs),
-        "LALIN_MC_BANK_SHARD_PREFIX=" .. shell_quote(shard_prefix),
-    }, " ")
-    return "(" .. env .. " " .. shell_quote(luajit) .. " " .. shell_quote(script)
-        .. " " .. shell_quote(out_c) .. " " .. shell_quote(out_h)
-        .. " > " .. shell_quote(shard_prefix .. ".log") .. " 2>&1; echo $? > "
-        .. shell_quote(shard_prefix .. ".status") .. ") &"
+local function run_worker()
+    local shard_index = assert(tonumber(os.getenv("LALIN_MC_BANK_SHARD_INDEX")), "worker missing LALIN_MC_BANK_SHARD_INDEX")
+    local shard_count = assert(tonumber(os.getenv("LALIN_MC_BANK_SHARD_COUNT")), "worker missing LALIN_MC_BANK_SHARD_COUNT")
+    local prefix = assert(os.getenv("LALIN_MC_BANK_SHARD_PREFIX"), "worker missing LALIN_MC_BANK_SHARD_PREFIX")
+    build_shard_fragments(shard_index, shard_count, prefix)
 end
 
 local function build_sharded(jobs)
     local prefix = shard_prefix_base()
     mkdir_parent(prefix .. ".sentinel")
     os.execute("rm -f " .. shell_quote(prefix) .. ".shard_" .. "*.cfrag " .. shell_quote(prefix) .. ".shard_" .. "*.count " .. shell_quote(prefix) .. ".shard_" .. "*.status " .. shell_quote(prefix) .. ".shard_" .. "*.log")
-    local cmds = {}
-    for i = 1, jobs do cmds[#cmds + 1] = worker_command(i, jobs, prefix) end
-    cmds[#cmds + 1] = "wait"
-    os.execute(table.concat(cmds, "\n"))
-
     local total = 0
     local payload_bytes = 0
     local patch_count = 0
-    local failures = {}
     local shard_prefixes = {}
     for i = 1, jobs do
         local shard_prefix = prefix .. ".shard_" .. tostring(i)
         shard_prefixes[#shard_prefixes + 1] = shard_prefix
-        local status_path = shard_prefix .. ".status"
-        local status = file_exists(status_path) and tonumber((read_file(status_path):match("%d+"))) or nil
-        if status ~= 0 then
-            local log = file_exists(shard_prefix .. ".log") and bounded_text(read_file(shard_prefix .. ".log")) or "missing worker log"
-            failures[#failures + 1] = "shard " .. tostring(i) .. " failed with status " .. tostring(status) .. "\n" .. log
-        else
-            total = total + tonumber(read_file(shard_prefix .. ".count"):match("%d+"))
-            payload_bytes = payload_bytes + tonumber(read_file(shard_prefix .. ".payload_bytes"):match("%d+"))
-            patch_count = patch_count + tonumber(read_file(shard_prefix .. ".patch_count"):match("%d+"))
-        end
+        local shard = build_shard_fragments(i, jobs, shard_prefix)
+        total = total + shard.count
+        payload_bytes = payload_bytes + shard.payload_bytes
+        patch_count = patch_count + shard.patch_count
     end
-    if #failures > 0 then error(table.concat(failures, "\n\n"), 0) end
     return shard_prefixes, total, payload_bytes, patch_count
-end
-
-local function build_single()
-    local artifacts = InternSet.artifacts()
-    local mc_bank = build_bank(artifacts, "lalin_embedded_mc_bank", "target/lalin_binary/mc_bank_build")
-    return bank_fragments(mc_bank)
 end
 
 local function detected_jobs()
@@ -320,13 +312,15 @@ local function detected_jobs()
     return 1
 end
 
-local function write_shard_source(path, index, arrays, entries, count)
+local function write_shard_source(path, index, arrays_path, entries_path, count)
     mkdir_parent(path)
     local f = assert(io.open(path, "wb"))
     f:write("#include <stddef.h>\n#include \"lua.h\"\n#include \"", basename(out_h), "\"\n\n")
-    f:write(arrays or "", "\n")
+    append_file(f, arrays_path)
+    f:write("\n")
     f:write("static const LalinEmbeddedMCEntry lalin_mc_shard_", tostring(index), "_entries[] = {\n")
-    f:write(entries or "", "\n")
+    append_file(f, entries_path)
+    f:write("\n")
     f:write("  { NULL, NULL, NULL, 0, NULL, 0 },\n};\n\n")
     f:write("const LalinEmbeddedMCEntry *lalin_embedded_mc_bank_shard_", tostring(index), "(void) {\n")
     f:write("  return lalin_mc_shard_", tostring(index), "_entries;\n}\n\n")
@@ -365,18 +359,13 @@ local function write_index_source(path, shard_count)
     f:close()
 end
 
-local function write_source_from_strings(path, arrays, entries, count)
-    write_shard_source(shard_source_path(1), 1, arrays, entries, count)
-    write_index_source(path, 1)
-end
-
 local function write_source_from_shards(path, shard_prefixes)
     for i, shard_prefix in ipairs(shard_prefixes or {}) do
         write_shard_source(
             shard_source_path(i),
             i,
-            read_file(shard_prefix .. ".arrays.cfrag"),
-            read_file(shard_prefix .. ".entries.cfrag"),
+            shard_prefix .. ".arrays.cfrag",
+            shard_prefix .. ".entries.cfrag",
             tonumber(read_file(shard_prefix .. ".count"):match("%d+")) or 0
         )
     end
@@ -393,19 +382,10 @@ if jobs < 1 then jobs = 1 end
 jobs = math.floor(jobs)
 os.execute("rm -f " .. shell_quote(output_c_stem()) .. "_shard_" .. "*.c")
 
-local arrays, entries, count, payload_bytes, patch_count, shard_prefixes
-if jobs == 1 then
-    arrays, entries, count, payload_bytes, patch_count = build_single()
-else
-    shard_prefixes, count, payload_bytes, patch_count = build_sharded(jobs)
-end
+local shard_prefixes, count, payload_bytes, patch_count = build_sharded(jobs)
 
 write_file(out_h, emit_header())
-if shard_prefixes ~= nil then
-    write_source_from_shards(out_c, shard_prefixes)
-else
-    write_source_from_strings(out_c, arrays, entries, count)
-end
+write_source_from_shards(out_c, shard_prefixes)
 io.stderr:write(
     "embedded ", tostring(count), " Lalin MC bank entries, ",
     tostring(payload_bytes or 0), " payload bytes, ",

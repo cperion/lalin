@@ -26,6 +26,7 @@ local function bind_context(T)
     local CodeMemFacts = require("lalin.code_mem_facts")(T)
     local CodeEffectFacts = require("lalin.code_effect_facts")(T)
     local CodeKernelPlanRules = require("lalin.code_kernel_plan_rules")(T)
+    local ReductionAlgebra = require("lalin.reduction_algebra")(T)
 
     local api = {}
 
@@ -601,7 +602,7 @@ local function bind_context(T)
     local function infer_scan_skeleton(loop, effects, reductions, bindings, aliases, proofs)
         if #reductions ~= 1 then return nil end
         local store = first_effect(effects, Kernel.KernelEffectStore)
-        if store == nil or not index_is_primary(store.index, loop, aliases, bindings) then return nil end
+        if store == nil then return nil end
         local reduction = reductions[1]
         if not reduction_update_matches(resolve_kernel_expr(store.value, bindings), reduction, aliases) then return nil end
         proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("store of loop-carried reduction update is a prefix scan")
@@ -630,6 +631,87 @@ local function bind_context(T)
         return {
             effects = {
                 Kernel.KernelEffectCopy(store.dst, src, semantics),
+            },
+            result = Kernel.KernelResultVoid,
+            handles_dependences = true,
+        }
+    end
+
+    local function scatter_reduce_kind(expr)
+        local cls = pvm.classof(expr)
+        if cls == Value.ValueExprAdd then return Value.ReductionAdd, expr.a, expr.b, expr.ty, expr.sem end
+        if cls == Value.ValueExprMul then return Value.ReductionMul, expr.a, expr.b, expr.ty, expr.sem end
+        return nil
+    end
+
+    local function resolved_value_expr(expr, bindings, seen)
+        if expr == nil then return nil end
+        if pvm.classof(expr) ~= Value.ValueExprValue then return expr end
+        seen = seen or {}
+        if seen[expr.value.text] then return expr end
+        seen[expr.value.text] = true
+        return resolved_value_expr(value_expr_binding(expr.value, bindings) or expr, bindings, seen)
+    end
+
+    local function value_expr_key(expr, bindings, aliases)
+        expr = resolved_value_expr(expr, bindings)
+        if expr == nil then return "nil" end
+        local cls = pvm.classof(expr)
+        if cls == Value.ValueExprConst and pvm.classof(expr.const) == Code.CodeConstLiteral then
+            local lit = expr.const.literal
+            return "const:" .. tostring(pvm.classof(lit)) .. ":" .. tostring(lit and (lit.raw or lit.value))
+        end
+        if cls == Value.ValueExprValue then
+            local binding = bindings and bindings["kval:" .. expr.value.text] or nil
+            if binding ~= nil and pvm.classof(binding.expr) == Kernel.KernelExprLaneLoad then
+                return "load:" .. tostring(binding.expr.lane.id.text) .. ":" .. value_expr_key(binding.expr.index, bindings, aliases)
+            end
+            local v = canonical_value(expr.value, aliases)
+            return "value:" .. tostring(v and v.text)
+        end
+        if cls == Value.ValueExprCast then return value_expr_key(expr.value, bindings, aliases) end
+        if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv then
+            return tostring(cls) .. "(" .. value_expr_key(expr.a, bindings, aliases) .. "," .. value_expr_key(expr.b, bindings, aliases) .. ")"
+        end
+        return tostring(expr)
+    end
+
+    local function same_index_expr(a, b, bindings, aliases)
+        return value_expr_key(a, bindings, aliases) == value_expr_key(b, bindings, aliases)
+    end
+
+    local function scatter_reduce_contribution(store, a, b, bindings, aliases)
+        local ka = expr_as_kernel_value(a, bindings)
+        local kb = expr_as_kernel_value(b, bindings)
+        if pvm.classof(ka) == Kernel.KernelExprLaneLoad
+            and ka.lane == store.dst
+            and same_index_expr(ka.index, store.index, bindings, aliases) then
+            return kb or Kernel.KernelExprAlgebra(b)
+        end
+        if pvm.classof(kb) == Kernel.KernelExprLaneLoad
+            and kb.lane == store.dst
+            and same_index_expr(kb.index, store.index, bindings, aliases) then
+            return ka or Kernel.KernelExprAlgebra(a)
+        end
+        return nil
+    end
+
+    local function infer_scatter_reduce_skeleton(loop, effects, bindings, aliases, proofs)
+        local store = first_effect(effects, Kernel.KernelEffectStore)
+        if store == nil then return nil end
+        local value = resolve_kernel_expr(store.value, bindings)
+        if pvm.classof(value) ~= Kernel.KernelExprAlgebra then return nil end
+        local kind, a, b, ty, sem = scatter_reduce_kind(value.expr)
+        if kind == nil then return nil end
+        local contribution = scatter_reduce_contribution(store, a, b, bindings, aliases)
+        if contribution == nil then return nil end
+        local identity, reason = ReductionAlgebra.identity_expr(kind, store.dst.elem_ty)
+        if identity == nil then return nil, reason end
+        local reducer = Stencil.StencilReducer(kind, store.dst.elem_ty, identity, sem, nil)
+        proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("indexed read-modify-write store is a scatter-reduce skeleton")
+        return {
+            effects = {
+                Kernel.KernelEffectScatterReduce(store.dst, store.index, contribution, reducer),
             },
             result = Kernel.KernelResultVoid,
             handles_dependences = true,
@@ -670,6 +752,8 @@ local function bind_context(T)
         local scan = infer_scan_skeleton(loop, effects, reductions, bindings, aliases, proofs)
         if scan ~= nil then return scan end
         if #reductions == 0 then
+            local scatter_reduce = infer_scatter_reduce_skeleton(loop, effects, bindings, aliases, proofs)
+            if scatter_reduce ~= nil then return scatter_reduce end
             local find = infer_find_skeleton(func, graph_loop, loop, body_bindings, value_index, aliases, proofs)
             if find ~= nil then return find end
             local copy = infer_copy_skeleton(loop, effects, bindings, dependence_rejects, aliases, proofs)

@@ -60,23 +60,28 @@ local counted = Flow.FlowCountedDomain(Code.CodeValueId("v:i0"), n, Code.CodeVal
 local induction = Flow.FlowInduction(Code.CodeValueId("v:i"), i32, counted.start, counted.step, Flow.FlowPrimaryInduction, Flow.FlowRangeDerived(Code.CodeValueId("v:i"), Flow.FlowBoundConst("0"), Flow.FlowBoundValue(n), "smoke"))
 local flow_loop = Flow.FlowLoopFacts(loop_id, domain, counted, { gb }, { induction }, {}, {})
 local flow_edge = Flow.FlowEdgeFact(gedge, { Flow.FlowEdgeArg(counted.step, induction.value) })
-local flow = Flow.FlowFactSet(module.id, { domain }, { flow_edge }, { flow_loop }, { induction.range }, {})
-local trip = Flow.FlowTripCountUnknown("no explicit trip count value")
-local flow_sem = Flow.FlowSemanticFactSet(module.id, { Flow.FlowLoopNormalizedCounted(loop_id, counted, Flow.FlowLoopIncreasing, trip) })
-assert(flow.loops[1].loop == loop_id and flow_sem.facts[1].trip_count == trip)
-
 local domain_shape = Flow.FlowDomainShapeRangeND({
     Flow.FlowDomainAxis(Code.CodeTyIndex, Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("0"))), Value.ValueExprValue(n), 1, Flow.FlowDomainForward),
     Flow.FlowDomainAxis(Code.CodeTyIndex, Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("0"))), Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("1"))), 1, Flow.FlowDomainForward),
 })
-local shape_fact = Kernel.KernelDomainShapeFact(
+local shape_fact = Flow.FlowDomainShapeFact(
     domain,
     domain_shape,
-    { Kernel.KernelProofFlow(domain, "shape fact smoke") },
-    Kernel.KernelDomainShapeFrontendFact("frontend shape")
+    { Flow.FlowProofDomain(domain, "shape fact smoke") },
+    Flow.FlowFactFrontendFact("frontend shape")
 )
-local shape_facts = Kernel.KernelDomainShapeFactSet(module.id, { shape_fact })
-assert(shape_facts.facts[1].shape == domain_shape and pvm.classof(shape_facts.facts[1].origin) == Kernel.KernelDomainShapeFrontendFact)
+local intent_fact = Flow.FlowDomainIntentFact(
+    domain,
+    Flow.FlowDomainIntentNativeLoop("explicit native-loop authoring smoke"),
+    { Flow.FlowProofFrontendFact("native-loop intent smoke") },
+    Flow.FlowFactFrontendFact("frontend intent")
+)
+local flow = Flow.FlowFactSet(module.id, { domain }, { flow_edge }, { flow_loop }, { induction.range }, { shape_fact }, { intent_fact }, {})
+local trip = Flow.FlowTripCountUnknown("no explicit trip count value")
+local flow_sem = Flow.FlowSemanticFactSet(module.id, { Flow.FlowLoopNormalizedCounted(loop_id, counted, Flow.FlowLoopIncreasing, trip) })
+assert(flow.loops[1].loop == loop_id and flow_sem.facts[1].trip_count == trip)
+assert(flow.domain_shapes[1].shape == domain_shape and pvm.classof(flow.domain_shapes[1].origin) == Flow.FlowFactFrontendFact)
+assert(pvm.classof(flow.domain_intents[1].intent) == Flow.FlowDomainIntentNativeLoop)
 
 local proof = Value.AlgebraProofFlow(domain, "flow proof")
 local expr_i = Value.ValueExprValue(induction.value)

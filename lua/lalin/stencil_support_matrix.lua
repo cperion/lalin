@@ -28,6 +28,7 @@ local function bind_context(T)
         StencilApply = { status = "supported", scope = "primitive generator for elementwise, copy/fill/cast/compare/select, gather/scatter, and current generated partition artifacts" },
         StencilReduce = { status = "supported", scope = "primitive generator for folds plus generated count/find and generic reduce_n fusion artifacts" },
         StencilScan = { status = "supported", scope = "primitive generator for axis-aware prefix reductions; copy_patch_mc materializes rank-N axis scans, LuaTrace materializes Range1D only" },
+        StencilScatterReduce = { status = "supported", scope = "primitive generator for indexed accumulation/reduce_by_index over an externally initialized destination" },
     }
 
     M.derived_plans = {
@@ -43,6 +44,7 @@ local function bind_context(T)
         apply_n = { status = "supported", basis = "StencilApply", scope = "generic expression-backed ApplyN with arity capped at 4" },
         gather = { status = "supported", basis = "StencilApply", scope = "identity apply with indexed read layout" },
         scatter = { status = "supported", basis = "StencilApply", scope = "identity apply with indexed write layout and conflict contract" },
+        scatter_reduce = { status = "supported", basis = "StencilScatterReduce", scope = "indexed accumulation with reducer over readwrite destination layout" },
         in_place_map = { status = "supported", basis = "StencilApply", scope = "unary apply over readwrite lane" },
         partition = { status = "supported", basis = "StencilApply", scope = "current generated partition artifact; target derivation is apply + scan + scatter" },
         reduce = { status = "supported", basis = "StencilReduce", scope = "plain fold" },
@@ -57,6 +59,7 @@ local function bind_context(T)
         StencilLayoutScalar = { status = "supported", scope = "reduction accumulators/control values, not memory lanes" },
         StencilLayoutContiguous = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout" },
         StencilLayoutIndexed = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout with explicit index access reference" },
+        StencilLayoutAffine1D = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN/ScatterReduceN basis layout for affine 1D access remapping" },
         StencilLayoutFieldProjection = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout with record-pointer ABI projection" },
         StencilLayoutSoAComponent = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout over component buffers" },
         StencilLayoutSliceDescriptor = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout" },
@@ -190,6 +193,7 @@ local function bind_context(T)
         apply_n = "apply_n_artifact",
         gather = "gather_array_artifact",
         scatter = "scatter_array_artifact",
+        scatter_reduce = "scatter_reduce_n_artifact",
         in_place_map = "in_place_map_array_artifact",
         reduce = "reduce_array_artifact",
         count = "count_array_artifact",

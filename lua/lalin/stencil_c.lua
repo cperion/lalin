@@ -123,6 +123,13 @@ local function bind_context(T)
         }
     end
 
+    local function descending_loop_i(stride, body_for_index)
+        stride = tonumber(stride) or 1
+        return C.for_ { C.decl. i[C.i32](cn("start")), C.gt(cn("i"), cn("stop")), C.assign(cn("i"), cn("i") - stride) } {
+            _(body_for_index(cn("i"))),
+        }
+    end
+
     local function producer_param_structs(producer)
         if producer == nil or producer.kind == "range1d" then
             return {
@@ -270,7 +277,11 @@ local function bind_context(T)
 
     local function producer_loop(producer, body_for_index)
         if producer == nil or producer.kind == "range1d" then
-            return { loop_i(producer and producer.stride or 1, body_for_index(cn("i"), loop_ctx(producer or { kind = "range1d" }, cn("i"), { cn("i") }))) }
+            local p = producer or { kind = "range1d", order = "forward" }
+            if p.order == "backward" then
+                return { descending_loop_i(p.stride or 1, function(i) return body_for_index(i, loop_ctx(p, i, { i })) end) }
+            end
+            return { loop_i(p.stride or 1, body_for_index(cn("i"), loop_ctx(p, cn("i"), { cn("i") }))) }
         end
         if producer.kind == "range_nd" or producer.kind == "window_nd" then return range_nd_loop(producer, body_for_index) end
         if producer.kind == "tiled_nd" then return tiled_nd_loop(producer, body_for_index) end
@@ -533,6 +544,8 @@ local function bind_context(T)
     local access_named = ArtifactPlan.access_named
     local stride_param_name = ArtifactPlan.stride_param_name
     local dynamic_stride_accesses = ArtifactPlan.dynamic_stride_accesses
+    local affine_offset_param_name = ArtifactPlan.affine_offset_param_name
+    local dynamic_affine_offset_accesses = ArtifactPlan.dynamic_affine_offset_accesses
 
     function cn(name)
         return LLBL.N[tostring(name)]
@@ -590,6 +603,12 @@ local function bind_context(T)
             local logical = stride == 1 and idx or idx * stride
             return access_offset_c_expr({ layout = top.parent, name = access.name }, logical, access_by_name)
         end
+        if cls == Stencil.StencilLayoutAffine1D then
+            local scale = tonumber(top.scale) or 1
+            local offset = top.offset ~= nil and cn(affine_offset_param_name(access)) or 0
+            local logical = scale == 1 and (offset + index) or (offset + index * scale)
+            return access_offset_c_expr({ layout = top.parent, name = access.name }, logical, access_by_name)
+        end
         if cls == Stencil.StencilLayoutViewDescriptor then
             local stride = top.stride_const or cn(stride_param_name(access))
             if tonumber(stride) == 1 then return index end
@@ -611,6 +630,7 @@ local function bind_context(T)
         local cls = pvm.classof(layout)
         if cls == Stencil.StencilLayoutFieldProjection then return layout end
         if cls == Stencil.StencilLayoutIndexed then return field_layout_for_param(layout.parent) end
+        if cls == Stencil.StencilLayoutAffine1D then return field_layout_for_param(layout.parent) end
         return nil
     end
 
@@ -931,6 +951,9 @@ local function bind_context(T)
         for _, access in ipairs(dynamic_stride_accesses(desc)) do
             params[#params + 1] = structured_param(stride_param_name(access), C.i32)
         end
+        for _, access in ipairs(dynamic_affine_offset_accesses(desc)) do
+            params[#params + 1] = structured_param(affine_offset_param_name(access), C.i32)
+        end
         local function assign_stmts(i, ctx)
             return {
                 C.assign(
@@ -993,6 +1016,9 @@ local function bind_context(T)
         end
         for _, access in ipairs(dynamic_stride_accesses(desc)) do
             params[#params + 1] = structured_param(stride_param_name(access), C.i32)
+        end
+        for _, access in ipairs(dynamic_affine_offset_accesses(desc)) do
+            params[#params + 1] = structured_param(affine_offset_param_name(access), C.i32)
         end
         local name = LLBL.N[artifact.symbol.text]
         if shape.scope_kind == "axes" then
@@ -1107,6 +1133,9 @@ local function bind_context(T)
         for _, access in ipairs(dynamic_stride_accesses(desc)) do
             params[#params + 1] = structured_param(stride_param_name(access), C.i32)
         end
+        for _, access in ipairs(dynamic_affine_offset_accesses(desc)) do
+            params[#params + 1] = structured_param(affine_offset_param_name(access), C.i32)
+        end
         local name = LLBL.N[artifact.symbol.text]
         if shape.producer.kind ~= "range1d" then
             local scan_axis = tonumber(shape.axis.index)
@@ -1162,6 +1191,48 @@ local function bind_context(T)
         }
     end
 
+    local function scatter_reduce_n_decl(artifact)
+        local shape = artifact_shape(artifact)
+        local desc = artifact.instance.descriptor
+        local dst_name = shape.dst_name or "dst"
+        local dst_access = access_named(desc, dst_name)
+        local access_by_name = {}
+        for _, access in ipairs(descriptor_accesses(desc)) do access_by_name[access.name] = access end
+        local params = {
+            structured_param(dst_name, c_access_param_type_node(dst_access, true, artifact)),
+        }
+        for _, access in ipairs(descriptor_accesses(desc)) do
+            if access.name ~= dst_name and pvm.classof(access.layout) ~= Stencil.StencilLayoutScalar then
+                params[#params + 1] = structured_param(access.name, c_access_param_type_node(access, false, artifact))
+            end
+        end
+        append_producer_param_structs(params, shape.producer)
+        for _, access in ipairs(dynamic_stride_accesses(desc)) do
+            params[#params + 1] = structured_param(stride_param_name(access), C.i32)
+        end
+        for _, access in ipairs(dynamic_affine_offset_accesses(desc)) do
+            params[#params + 1] = structured_param(affine_offset_param_name(access), C.i32)
+        end
+        local name = LLBL.N[artifact.symbol.text]
+        return C.fn[name] { _(param_fragment(params)) } [C.void] {
+            _(assume_aligned_stmts(artifact, pointer_access_names(artifact))),
+            _(producer_loop(shape.producer, function(i, ctx)
+                local slot = access_c_expr(dst_access, dst_name, i, access_by_name)
+                return {
+                    C.assign(
+                        slot,
+                        c_reduction_update_expr(
+                            shape.reduction,
+                            slot,
+                            c_apply_expr(shape.expr, desc, access_by_name, i, ctx),
+                            shape.result_ty
+                        )
+                    ),
+                }
+            end)),
+        }
+    end
+
     local function find_n_decl(artifact)
         local shape = artifact_shape(artifact)
         local desc = artifact.instance.descriptor
@@ -1174,6 +1245,9 @@ local function bind_context(T)
         append_producer_param_structs(params, shape.producer)
         for _, access in ipairs(dynamic_stride_accesses(desc)) do
             params[#params + 1] = structured_param(stride_param_name(access), C.i32)
+        end
+        for _, access in ipairs(dynamic_affine_offset_accesses(desc)) do
+            params[#params + 1] = structured_param(affine_offset_param_name(access), C.i32)
         end
         local name = LLBL.N[artifact.symbol.text]
         return C.fn[name] { _(param_fragment(params)) } [c_type_node(shape.result_ty)] {
@@ -1209,6 +1283,9 @@ local function bind_context(T)
         for _, access in ipairs(dynamic_stride_accesses(desc)) do
             params[#params + 1] = structured_param(stride_param_name(access), C.i32)
         end
+        for _, access in ipairs(dynamic_affine_offset_accesses(desc)) do
+            params[#params + 1] = structured_param(affine_offset_param_name(access), C.i32)
+        end
         local out_init = shape.producer.kind == "range1d" and cn("start") or 0
         local name = LLBL.N[artifact.symbol.text]
         return C.fn[name] { _(param_fragment(params)) } [C.i32] {
@@ -1240,6 +1317,7 @@ local function bind_context(T)
         if kind == "apply_n" then return apply_n_decl(artifact) end
         if kind == "reduce_n" then return reduce_n_decl(artifact) end
         if kind == "scan_n" then return scan_n_decl(artifact) end
+        if kind == "scatter_reduce_n" then return scatter_reduce_n_decl(artifact) end
         if kind == "find_n" then return find_n_decl(artifact) end
         if kind == "partition_n" then return partition_n_decl(artifact) end
         error("stencil_c: unsupported stencil shape", 3)

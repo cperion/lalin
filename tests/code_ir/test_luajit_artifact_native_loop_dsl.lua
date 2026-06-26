@@ -1,0 +1,311 @@
+package.path = table.concat({
+    './?.lua',
+    './?/init.lua',
+    './lua/?.lua',
+    './lua/?/init.lua',
+    package.path,
+}, ';')
+
+local ffi = require('ffi')
+local pvm = require('lalin.pvm')
+local lalin = require('lalin')
+
+local source = [=[
+return unit. NativeLoopDSL {
+  fn. native_zip_add { dst [ptr [i32]], lhs [ptr [i32]], rhs [ptr [i32]], n [index] } [void] {
+    requires {
+      bounds(dst, n), writeonly(dst),
+      bounds(lhs, n), readonly(lhs),
+      bounds(rhs, n), readonly(rhs),
+      disjoint(dst, lhs), disjoint(dst, rhs), disjoint(lhs, rhs),
+    },
+
+    lln.loop. i [lln.range { 0, n }] {
+      set (dst[i], lhs[i] + rhs[i]),
+    },
+  },
+
+  fn. native_dot { lhs [ptr [i32]], rhs [ptr [i32]], n [index] } [i32] {
+    requires {
+      bounds(lhs, n), readonly(lhs),
+      bounds(rhs, n), readonly(rhs),
+    },
+
+    lln.loop. i [lln.range { 0, n }] [lln.i32] {
+      lln.fold. acc [lln.i32] {
+        init = 0,
+        by = lln.add,
+        step = lhs[i] * rhs[i],
+      },
+    },
+  },
+
+  fn. native_product { xs [ptr [i32]], n [index] } [i32] {
+    requires {
+      bounds(xs, n), readonly(xs),
+    },
+
+    lln.loop. i [lln.range { 0, n }] [lln.i32] {
+      lln.fold. acc [lln.i32] {
+        init = 1,
+        by = lln.mul,
+        step = xs[i],
+      },
+    },
+  },
+
+  fn. native_min { xs [ptr [i32]], n [index] } [i32] {
+    requires {
+      bounds(xs, n), readonly(xs),
+    },
+
+    lln.loop. i [lln.range { 0, n }] [lln.i32] {
+      lln.fold. acc [lln.i32] {
+        init = 2147483647,
+        by = lln.min,
+        step = xs[i],
+      },
+    },
+  },
+
+  fn. native_scan { dst [ptr [i32]], xs [ptr [i32]], n [index] } [void] {
+    requires {
+      bounds(dst, n), writeonly(dst),
+      bounds(xs, n), readonly(xs),
+      disjoint(dst, xs),
+    },
+
+    lln.loop. i [lln.range { 0, n }] {
+      lln.scan. acc [lln.i32] {
+        init = 0,
+        by = lln.add,
+        step = xs[i],
+        into = dst[i],
+      },
+    },
+  },
+
+  fn. native_scan_product { dst [ptr [i32]], xs [ptr [i32]], n [index] } [void] {
+    requires {
+      bounds(dst, n), writeonly(dst),
+      bounds(xs, n), readonly(xs),
+      disjoint(dst, xs),
+    },
+
+    lln.loop. i [lln.range { 0, n }] {
+      lln.scan. acc [lln.i32] {
+        init = 1,
+        by = lln.mul,
+        step = xs[i],
+        into = dst[i],
+      },
+    },
+  },
+}
+]=]
+
+local session = lalin.use { scope = 'env' }
+local decl = assert(session:loadstring(source, 'test_luajit_artifact_native_loop_dsl.lua'))()
+local artifact = lalin.emit_luajit_artifact(decl, {
+    path = 'target/test_artifacts/test_luajit_artifact_native_loop_dsl.lua',
+    name = 'NativeLoopDSL',
+    stem = 'test_luajit_artifact_native_loop_dsl',
+})
+
+assert(artifact.kind == 'LuaJITSourceArtifact')
+assert(#artifact.artifacts == 6, 'native lln.loop should select store, fold, and scan stencil artifacts')
+
+local sinks = {}
+for _, item in ipairs(artifact.artifacts) do
+    local desc = item.instance.descriptor
+    assert(tostring(pvm.classof(desc.producer.shape)):match('StencilProduceRange1D'), 'lln.range should project to a Range1D producer')
+    sinks[tostring(pvm.classof(desc.sink))] = true
+end
+assert(sinks['Class(LalinStencil.StencilSinkStore)'], 'native store loop should project to a store sink')
+assert(sinks['Class(LalinStencil.StencilSinkReduce)'], 'native fold loop should project to a reduce sink')
+assert(sinks['Class(LalinStencil.StencilSinkScan)'], 'native scan loop should project to a scan sink')
+
+local loaded = assert(loadfile(artifact.path))()
+local lhs = ffi.new('int32_t[5]', { 1, -2, 5, 0, 3 })
+local rhs = ffi.new('int32_t[5]', { 10, 20, -5, 7, 4 })
+local out = ffi.new('int32_t[5]')
+
+loaded.native_zip_add(out, lhs, rhs, 5)
+assert(out[0] == 11 and out[1] == 18 and out[2] == 0 and out[3] == 7 and out[4] == 7, 'native lln.loop zip add')
+
+local dot = loaded.native_dot(lhs, rhs, 5)
+assert(dot == -43, 'native lln.fold dot result')
+
+local product_xs = ffi.new('int32_t[4]', { 2, -3, 4, 5 })
+assert(loaded.native_product(product_xs, 4) == -120, 'native lln.fold product result')
+assert(loaded.native_min(product_xs, 4) == -3, 'native lln.fold min result')
+
+local xs = ffi.new('int32_t[5]', { 1, -2, 5, 0, 3 })
+local scan_out = ffi.new('int32_t[5]')
+loaded.native_scan(scan_out, xs, 5)
+assert(scan_out[0] == 1 and scan_out[1] == -1 and scan_out[2] == 4 and scan_out[3] == 4 and scan_out[4] == 7, 'native lln.scan output')
+
+local scan_product_xs = ffi.new('int32_t[4]', { 2, 3, 4, 5 })
+local scan_product_out = ffi.new('int32_t[4]')
+loaded.native_scan_product(scan_product_out, scan_product_xs, 4)
+assert(scan_product_out[0] == 2 and scan_product_out[1] == 6 and scan_product_out[2] == 24 and scan_product_out[3] == 120, 'native lln.scan product output')
+
+local reverse_source = [=[
+return unit. NativeReverseLoopDSL {
+  fn. backward_copy { dst [ptr [i32]], src [ptr [i32]], n [i32] } [void] {
+    requires {
+      bounds(dst, n), writeonly(dst),
+      bounds(src, n), readonly(src),
+      disjoint(dst, src),
+    },
+
+    lln.loop. i [lln.range { n - 1, -1, -1, ty = lln.i32 }] {
+      set (dst[i], src[i]),
+    },
+  },
+
+  fn. reverse_affine_copy { dst [ptr [i32]], src [ptr [i32]], n [i32] } [void] {
+    requires {
+      bounds(dst, n), writeonly(dst),
+      bounds(src, n), readonly(src),
+      disjoint(dst, src),
+    },
+
+    lln.loop. i [lln.range { n - 1, -1, -1, ty = lln.i32 }] {
+      set (dst[(n - 1) - i], src[i]),
+    },
+  },
+
+  fn. backward_sum { xs [ptr [i32]], n [i32] } [i32] {
+    requires {
+      bounds(xs, n), readonly(xs),
+    },
+
+    lln.loop. i [lln.range { n - 1, -1, -1, ty = lln.i32 }] [lln.i32] {
+      lln.fold. acc [lln.i32] {
+        init = 0,
+        by = lln.add,
+        step = xs[i],
+      },
+    },
+  },
+
+  fn. backward_scan { dst [ptr [i32]], xs [ptr [i32]], n [i32] } [void] {
+    requires {
+      bounds(dst, n), writeonly(dst),
+      bounds(xs, n), readonly(xs),
+      disjoint(dst, xs),
+    },
+
+    lln.loop. i [lln.range { n - 1, -1, -1, ty = lln.i32 }] {
+      lln.scan. acc [lln.i32] {
+        init = 0,
+        by = lln.add,
+        step = xs[i],
+        into = dst[i],
+      },
+    },
+  },
+
+  fn. reverse_affine_scan { dst [ptr [i32]], xs [ptr [i32]], n [i32] } [void] {
+    requires {
+      bounds(dst, n), writeonly(dst),
+      bounds(xs, n), readonly(xs),
+      disjoint(dst, xs),
+    },
+
+    lln.loop. i [lln.range { n - 1, -1, -1, ty = lln.i32 }] {
+      lln.scan. acc [lln.i32] {
+        init = 0,
+        by = lln.add,
+        step = xs[i],
+        into = dst[(n - 1) - i],
+      },
+    },
+  },
+}
+]=]
+
+local reverse_decl = assert(session:loadstring(reverse_source, 'test_luajit_artifact_native_reverse_loop_dsl.lua'))()
+local reverse_artifact = lalin.emit_luajit_artifact(reverse_decl, {
+    path = 'target/test_artifacts/test_luajit_artifact_native_reverse_loop_dsl.lua',
+    name = 'NativeReverseLoopDSL',
+    stem = 'test_luajit_artifact_native_reverse_loop_dsl',
+})
+assert(#reverse_artifact.artifacts == 5, 'negative-step lln.range should select backward Range1D stencil artifacts for copy, reverse-affine copy, fold, scan, and reverse-affine scan')
+local saw_backward_range = false
+for _, fact in ipairs(reverse_artifact.facts.flow.domain_shapes or {}) do
+    if tostring(pvm.classof(fact.shape)):match('FlowDomainShapeRange1D') then
+        saw_backward_range = tostring(pvm.classof(fact.shape.order)):match('FlowDomainBackward') ~= nil
+            and fact.shape.step == 1
+            and tostring(pvm.classof(fact.origin)):match('FlowFactFrontendFact') ~= nil
+    end
+end
+assert(saw_backward_range, 'negative-step lln.range should author a backward Range1D Flow domain fact')
+local saw_backward_artifact = false
+local saw_reverse_affine_layout = false
+for _, item in ipairs(reverse_artifact.artifacts) do
+    local shape = item.instance.descriptor.producer.shape
+    assert(tostring(pvm.classof(shape)):match('StencilProduceRange1D'), 'negative-step lln.range should project to a Range1D producer')
+    assert(tostring(pvm.classof(shape.order)):match('StencilProducerBackward'), 'negative-step lln.range should preserve backward producer order')
+    if item.symbol.text:match('_bs1$') then saw_backward_artifact = true end
+    for _, access in ipairs(item.instance.descriptor.accesses or {}) do
+        if tostring(pvm.classof(access.role)):match('StencilAccessWrite')
+            and tostring(pvm.classof(access.layout)):match('StencilLayoutAffine1D') then
+            saw_reverse_affine_layout = true
+        end
+    end
+end
+assert(saw_backward_artifact, 'backward Range1D artifact symbol should include backward producer tag')
+assert(saw_reverse_affine_layout, 'reverse-affine destination index should be represented as StencilLayoutAffine1D')
+local reverse_loaded = assert(loadfile(reverse_artifact.path))()
+local reverse_src = ffi.new('int32_t[5]', { 9, 8, 7, 6, 5 })
+local reverse_dst = ffi.new('int32_t[5]')
+reverse_loaded.backward_copy(reverse_dst, reverse_src, 5)
+assert(reverse_dst[0] == 9 and reverse_dst[1] == 8 and reverse_dst[2] == 7 and reverse_dst[3] == 6 and reverse_dst[4] == 5, 'native negative-step lln.range copy output')
+local reverse_affine_src = ffi.new('int32_t[5]', { 1, 2, 3, 4, 5 })
+local reverse_affine_dst = ffi.new('int32_t[5]')
+reverse_loaded.reverse_affine_copy(reverse_affine_dst, reverse_affine_src, 5)
+assert(reverse_affine_dst[0] == 5 and reverse_affine_dst[1] == 4 and reverse_affine_dst[2] == 3 and reverse_affine_dst[3] == 2 and reverse_affine_dst[4] == 1, 'native negative-step lln.range reverse-affine copy output')
+assert(reverse_loaded.backward_sum(reverse_src, 5) == 35, 'native negative-step lln.fold output')
+local reverse_scan_src = ffi.new('int32_t[5]', { 1, 2, 3, 4, 5 })
+local reverse_scan_dst = ffi.new('int32_t[5]')
+reverse_loaded.backward_scan(reverse_scan_dst, reverse_scan_src, 5)
+assert(reverse_scan_dst[0] == 15 and reverse_scan_dst[1] == 14 and reverse_scan_dst[2] == 12 and reverse_scan_dst[3] == 9 and reverse_scan_dst[4] == 5, 'native negative-step lln.scan output')
+local reverse_affine_scan_dst = ffi.new('int32_t[5]')
+reverse_loaded.reverse_affine_scan(reverse_affine_scan_dst, reverse_scan_src, 5)
+assert(reverse_affine_scan_dst[0] == 5 and reverse_affine_scan_dst[1] == 9 and reverse_affine_scan_dst[2] == 12 and reverse_affine_scan_dst[3] == 14 and reverse_affine_scan_dst[4] == 15, 'native negative-step lln.scan reverse-affine output')
+
+local nd_source = [=[
+return unit. NativeNDLoopDSL {
+  fn. nd_shape { dst [ptr [i32]], src [ptr [i32]], h [index], w [index], n [index] } [void] {
+    requires {
+      bounds(dst, n), writeonly(dst),
+      bounds(src, n), readonly(src),
+      disjoint(dst, src),
+    },
+
+    lln.loop { i, j } [lln.range_nd { { 0, h }, { 0, w } }] {
+      set (dst[i * w + j], src[i * w + j]),
+    },
+  },
+}
+]=]
+
+local nd_decl = assert(session:loadstring(nd_source, 'test_luajit_artifact_native_nd_loop_dsl.lua'))()
+local nd_artifact = lalin.emit_luajit_artifact(nd_decl, {
+    path = 'target/test_artifacts/test_luajit_artifact_native_nd_loop_dsl.lua',
+    name = 'NativeNDLoopDSL',
+    stem = 'test_luajit_artifact_native_nd_loop_dsl',
+})
+assert(#nd_artifact.artifacts == 1, 'range_nd copy should select one native stencil artifact')
+local nd_desc = nd_artifact.artifacts[1].instance.descriptor
+assert(tostring(pvm.classof(nd_desc.producer.shape)):match('StencilProduceRangeND'), 'lln.range_nd should project to a RangeND producer')
+assert(tostring(pvm.classof(nd_desc.sink)):match('StencilSinkStore'), 'lln.range_nd copy should project to a store sink')
+local nd_loaded = assert(loadfile(nd_artifact.path))()
+local nd_src = ffi.new('int32_t[6]', { 1, 2, 3, 4, 5, 6 })
+local nd_dst = ffi.new('int32_t[6]')
+nd_loaded.nd_shape(nd_dst, nd_src, 2, 3, 6)
+assert(nd_dst[0] == 1 and nd_dst[1] == 2 and nd_dst[2] == 3 and nd_dst[3] == 4 and nd_dst[4] == 5 and nd_dst[5] == 6, 'native lln.range_nd copy output')
+
+io.write('test_luajit_artifact_native_loop_dsl: ok\n')

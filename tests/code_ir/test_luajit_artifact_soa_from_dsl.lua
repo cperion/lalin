@@ -37,7 +37,7 @@ return unit. SoARegression {
     },
 
     block. body { i [i32] } {
-      store (dst[i], left[i] + right[i]),
+      set (dst[i], left[i] + right[i]),
       jump. loop { i = i + 1 },
     },
 
