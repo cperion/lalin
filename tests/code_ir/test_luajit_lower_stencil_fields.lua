@@ -52,14 +52,14 @@ local function access_named(desc, name)
     error("missing descriptor access " .. tostring(name))
 end
 
-local function assert_field_topology(artifact, access_name)
+local function assert_field_layout(artifact, access_name)
     local access = access_named(artifact.instance.descriptor, access_name)
-    local topology = access.topology
-    assert(pvm.classof(topology) == Stencil.StencilTopologyFieldProjection, access_name .. " should be field topology")
-    assert(topology.record_ty == pair_ty, access_name .. " should keep record type")
-    assert(topology.field_name == "right", access_name .. " should keep field name")
-    assert(topology.field_offset == 4, access_name .. " should keep field offset")
-    assert(pvm.classof(topology.parent) == Stencil.StencilTopologyContiguous, access_name .. " should keep parent topology")
+    local layout = access.layout
+    assert(pvm.classof(layout) == Stencil.StencilLayoutFieldProjection, access_name .. " should be field layout")
+    assert(layout.record_ty == pair_ty, access_name .. " should keep record type")
+    assert(layout.field_name == "right", access_name .. " should keep field name")
+    assert(layout.field_offset == 4, access_name .. " should keep field offset")
+    assert(pvm.classof(layout.parent) == Stencil.StencilLayoutContiguous, access_name .. " should keep parent layout")
     return access
 end
 
@@ -197,8 +197,8 @@ assert(#artifacts == 2, "field lowering should select reduce and map artifacts")
 assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, "sum should lower to machine body")
 assert(pvm.classof(lj_module.funcs[2].body) == LJ.LJBodyMachine, "map should lower to machine body")
 
-local reduce_access = assert_field_topology(artifacts[1], "xs")
-local map_access = assert_field_topology(artifacts[2], "xs")
+local reduce_access = assert_field_layout(artifacts[1], "xs")
+local map_access = assert_field_layout(artifacts[2], "xs")
 assert(reduce_access.ty == i32 and map_access.ty == i32, "field accesses should expose field element type")
 
 local preamble = "typedef struct { int32_t left; int32_t right; } Demo_Pair;"

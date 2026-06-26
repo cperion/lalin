@@ -19,9 +19,10 @@ useful scalar subset, but not for the full schema space.
 - [x] Reduction-family selection for float add/mul/min/max.
 - [x] Higher reduction selection for map-reduce and zip-reduce over the
   currently supported scalar reduction cells.
-- [x] Descriptor/topology representation for contiguous, indexed, in-place,
+- [x] Descriptor/layout representation for contiguous, indexed, scalar,
   field projection, SoA component, slice descriptor, byte-span descriptor, and
-  view descriptor.
+  view descriptor. In-place is represented by `StencilAccessReadWrite`, not by
+  a layout variant.
 - [x] LuaTrace emission for the current stencil shape set: reduce, map,
   zip-map, scan, copy, fill, find, partition, cast, compare, zip-compare,
   gather, scatter, in-place map, count, map-reduce, and zip-reduce.
@@ -139,12 +140,12 @@ Severity tags:
 - [x] `D3` `[C]` Complete the represented producer/unfold shape layer beyond
   1D. `StencilProducerShape` now represents and shape-validates `Range1D`,
   `RangeND`, `WindowND`, and `TiledND`; the support matrix marks the shape
-  layer as covered. `copy_patch_mc` now materializes forward `RangeND` producers
-  for generic `ApplyN`/`ReduceN` through nested LLBL.C producer loops; the
-  LuaTrace bytecode path and the older fixed-shape C stencils still accept only
-  positive forward `Range1D`. Windowed and tiled producers reach typed
-  `StencilRejectUnsupportedProducer` facts at the materializer boundary instead
-  of silently degrading to stride-1 linear loops.
+  layer as covered. `copy_patch_mc` now materializes forward `RangeND`,
+  center-domain `WindowND`, and forward `TiledND` producers for generic
+  `ApplyN`/`ReduceN`/`ScanN` through LLBL.C producer loops; the LuaTrace
+  bytecode path accepts positive forward `Range1D` and rejects non-`Range1D`
+  producers with typed `StencilRejectUnsupportedProducer` facts instead of
+  silently degrading to stride-1 linear loops.
 - [x] `D4` `[C]` Add range, compound, and float-class predicates, or document
   their rejection. `StencilPredicate` now includes typed range predicates,
   compound `and`/`or`/`not`, and float `isnan`/`isinf`/`isfinite` predicates.
@@ -192,7 +193,7 @@ Severity tags:
 - [x] `E4` `[M]` Decide whether producer step is compile-time only. Producer
   step is intentionally a positive compile-time constant for currently
   materialized 1D range producers; runtime stride belongs to
-  `StencilTopologyViewDescriptor`, not `StencilProducerShape`. Backward and
+  `StencilLayoutViewDescriptor`, not `StencilProducerShape`. Backward and
   nonpositive 1D producers are represented but rejected with typed
   unsupported-producer reasons, and copy overlap direction remains owned by
   `StencilCopySemantics`.
@@ -290,22 +291,33 @@ Open gate question:
 - [ ] Add predicate coverage for all predicate constructors:
   nonzero, eq/ne/lt/le/gt/ge const.
 
-## Descriptor And Topology Gaps
+## Descriptor And Layout Gaps
 
-- [ ] Build a vocab-by-topology matrix and decide which cells are supported,
-  rejected, or intentionally unreachable.
-- [ ] Complete contiguous topology coverage for every supported vocab.
-- [ ] Complete indexed topology coverage for every supported vocab.
-- [ ] Complete in-place topology coverage beyond in-place map where meaningful.
-- [ ] Complete view descriptor coverage for every supported vocab.
-- [ ] Complete slice descriptor coverage for every supported vocab.
-- [ ] Complete byte-span descriptor coverage beyond u8 copy/fill/find/compare/count.
-- [ ] Complete field-projection coverage beyond the current reduce/map/find/
-  compare/fill subset.
-- [ ] Complete SoA component coverage beyond zip-map/zip-reduce/zip-compare/
-  partition.
-- [ ] Add nested topology coverage:
-  field projection over view/slice, SoA over view/slice, indexed over descriptor.
+- [x] Build a vocab-by-layout matrix and decide which cells are supported,
+  rejected, or intentionally unreachable. The matrix is now basis-shaped:
+  `ApplyN`, `ReduceN`, and `ScanN` are the supported generated consumers;
+  old fixed vocab names are frontend/optimization rewrites, not materializer
+  shapes.
+- [x] Complete contiguous layout coverage for every supported generated basis
+  consumer.
+- [x] Complete indexed layout coverage for every supported generated basis
+  consumer. Indexed layouts now carry a typed `StencilAccessRef` to the index
+  stream instead of a string-side-table convention.
+- [x] Remove in-place as a layout axis. In-place behavior is represented by
+  `StencilAccessReadWrite`; layouts describe address formation only.
+- [x] Complete view descriptor coverage for every supported generated basis
+  consumer.
+- [x] Complete slice descriptor coverage for every supported generated basis
+  consumer.
+- [x] Complete byte-span descriptor coverage for every supported generated
+  basis consumer.
+- [x] Complete field-projection coverage for every supported generated basis
+  consumer through record-pointer ABI projection.
+- [x] Complete SoA component coverage for every supported generated basis
+  consumer through component-buffer ABI projection.
+- [x] Add nested layout coverage for every supported generated basis consumer:
+  field projection over view/slice, SoA over view/slice, and indexed read/write
+  over view/slice/byte-span descriptor parents.
 - [ ] Add dynamic-stride runtime tests for every vocab that accepts view
   descriptors.
 - [ ] Add constant-stride view runtime tests for every vocab that accepts view
@@ -317,7 +329,7 @@ Open gate question:
   scatter.
 - [ ] Add tests that descriptor lengths dominate loop bounds where applicable.
 - [ ] Add tests that descriptor data/len/stride extraction survives frontend
-  lowering into stencil topology facts.
+  lowering into stencil layout facts.
 
 ## Producer And Scheduling Gaps
 
@@ -337,6 +349,12 @@ and benchmarked where they produce executable MC code.
 
 - [x] Replace the old domain axis with `StencilProducer` /
   `StencilProducerShape` in the schema.
+- [x] Rename the remaining array/topology-biased ASDL surface:
+  `StencilSinkEmitArray` became `StencilSinkStore`,
+  `StencilApplyMode` became `StencilStoreMode`, and
+  `StencilAccessTopology` became `StencilAccessLayout` with the access field
+  renamed from `topology` to `layout`. Arrays are now one layout/ABI case, not
+  the descriptor's default meaning.
 - [x] Represent `Range1D`, `RangeND`, `WindowND`, and `TiledND` as first-class
   producer shapes.
 - [x] Split shape validation from materializer support:
@@ -348,55 +366,94 @@ and benchmarked where they produce executable MC code.
   accidental stride-1 loop.
 - [x] Keep positive forward `Range1D` working across existing BC, MC, and bank
   paths.
-- [x] Materialize forward `RangeND` in `copy_patch_mc` for generic `ApplyN` and
-  `ReduceN` through nested LLBL.C producer loops.
+- [x] Materialize forward `RangeND` in `copy_patch_mc` for generic `ApplyN`,
+  `ReduceN`, and `ScanN` through nested LLBL.C producer loops.
+- [x] Add generic `ScanN` as the third SOAC-basis materializer. `Scan` now
+  lowers through `scan_n`; MC uses the shared producer loop, and BC
+  handles `Range1D` ScanN.
 - [x] Guard `copy_patch_bc` so non-`Range1D` producer plans cannot silently
   execute as linear `start/stop` loops.
-- [ ] Add a shared producer execution-plan object to artifact shapes so every
-  materializer consumes `producer`, not a loose `stride` field.
-- [ ] Convert fixed `copy_patch_mc` stencil shapes to consume producer plans:
-  `map`, `zip_map`, `select`, `compare`, `zip_compare`, `cast`, `copy`, `fill`,
-  `gather`, `scatter`, `in_place_map`, `count`, `find`, `partition`, `scan`, and
-  plain `reduce`.
-- [ ] Add forward `RangeND` runtime tests for every fixed `copy_patch_mc` shape
-  that can be expressed over row-major linear storage.
-- [ ] Add forward `RangeND` lowering to `copy_patch_bc` or keep each unsupported
-  cell as a typed BC reject with tests.
-- [ ] Add non-unit positive producer-step tests for `Range1D` and `RangeND`
-  across generic and fixed shapes.
-- [ ] Decide and implement backward producer semantics: materialize backward
-  loops where legal, normalize to forward where equivalent, or reject with
-  typed facts where unsafe.
-- [ ] Design `TiledND` execution semantics:
-  tile extents, edge tiles, loop order, row-major linearization, and interaction
-  with schedules/unroll/vectorization.
-- [ ] Materialize `TiledND` in `copy_patch_mc` for generic `ApplyN` and
-  `ReduceN`.
-- [ ] Extend `TiledND` to fixed `copy_patch_mc` shapes where the access semantics
-  remain elementwise.
-- [ ] Decide whether `TiledND` belongs in `copy_patch_bc`; implement it or add
-  typed BC rejects and tests.
-- [ ] Design `WindowND` access semantics:
-  neighborhood coordinates, boundary policy lowering (`reject`, `clamp`, `wrap`,
-  `zero`), and how window operands appear in `StencilApplyExpr`.
-- [ ] Materialize `WindowND` in `copy_patch_mc` for the generic expression path.
-- [ ] Add `WindowND` tests for every boundary policy and for zero-sized /
-  edge-only windows.
-- [ ] Decide whether `WindowND` belongs in `copy_patch_bc`; implement it or add
-  typed BC rejects and tests.
-- [ ] Update `copy_patch_mc_intern_set` so the bank generator can include
-  producer-shape cells intentionally, not only the current linear `Range1D`
-  bank.
-- [ ] Add emitted-bank/single-binary tests for `RangeND` cells and for
-  materializer-pending `TiledND`/`WindowND` rejection cells.
-- [ ] Update the support matrix so producer rows distinguish shape support,
+- [x] Add a shared producer execution-plan object to artifact shapes so every
+  generic materializer consumes `producer`, not a loose `stride` field.
+- [x] Remove/demote fixed `copy_patch_mc` stencil shapes as semantic
+  materializers. `map`, `zip_map`, `select`, `compare`, `zip_compare`, `cast`,
+  `copy`, `fill`, `gather`, `scatter`, `in_place_map`, `count`, `find`,
+  `partition`, and plain `reduce` must become generated `ApplyN`/`ReduceN`/
+  `ScanN` cells or explicit optimization rewrites after the generic descriptor
+  exists. The MC intern bank is now generated-only; `artifact_shape` projects
+  descriptor bodies to `apply_n`, `reduce_n`, or `scan_n`
+  instead of selecting fixed materializer shapes.
+- [x] Close the represented sink modes in the generic MC materializer.
+  `StoreElementwise`, `StoreCopy`, `StoreScatter`, and read/write in-place
+  stores lower through `apply_n`; `ReduceFold` lowers through `reduce_n`;
+  `ReduceCount` lowers through `reduce_n` with an internal zero identity;
+  `ReduceFind` lowers through `find_n`; `StorePartition` lowers through
+  `partition_n`; and `Scan` lowers through `scan_n`.
+- [x] Remove legacy string-concat C emitters from `stencil_c.lua`. C stencil
+  materialization is now authored through the `llbl.c` dialect nodes for
+  functions, params, loops, branches, expressions, and statements.
+- [x] Add forward `RangeND` runtime tests for every basis-backed shape that can
+  be expressed over row-major linear storage: `ApplyN`, `ReduceN`, and `ScanN`.
+- [x] Keep non-`Range1D` producers as typed BC rejects with focused tests.
+- [x] Add non-unit positive producer-step tests for `RangeND` generic shapes.
+- [x] Decide backward producer semantics: represented but rejected with typed
+  producer facts until a backward execution contract is added.
+- [x] Design and implement `TiledND` execution semantics for generic MC:
+  tile-major outer loops, clipped edge tiles, row-major linearization inside the
+  compact logical iteration space, and scalar/vector schedule preservation at
+  the body level.
+- [x] Materialize `TiledND` in `copy_patch_mc` for generic `ApplyN`, `ReduceN`,
+  and `ScanN`.
+- [x] Remove fixed `copy_patch_mc` shapes from the producer gate; fixed shape
+  names are no longer semantic materializers.
+- [x] Keep `TiledND` as a typed BC reject with tests.
+- [x] Define current `WindowND` execution semantics: it is an executable
+  center-domain producer with validated window metadata and boundary tags.
+  Neighbor/window operands remain a future body-expression extension, not a
+  producer-shape gap.
+- [x] Materialize `WindowND` in `copy_patch_mc` for the generic expression path.
+- [x] Add `WindowND` tests for every boundary policy and zero/edge-only window
+  extents.
+- [x] Keep `WindowND` as a typed BC reject with tests.
+- [x] Update `copy_patch_mc_intern_set` so the bank generator intentionally
+  includes `Range1D`, `RangeND`, `TiledND`, and `WindowND` producer-shape cells.
+- [x] Add emitted-bank tests proving `RangeND`, `TiledND`, and `WindowND`
+  producer cells compile into the generated MC bank.
+- [x] Update the support matrix so producer rows distinguish shape support,
   BC materialization, MC materialization, and emitted-bank coverage.
+- [ ] Make reduce and scan sinks rank-aware. `StencilSinkReduce` currently
+  names only `result_ty` and `mode`, and `StencilSinkScan` names only
+  `dst`, `reducer`, `mode`, and `result_ty`; over `RangeND`, `TiledND`, and
+  `WindowND` this is not enough. Add a typed axis selector/scope surface so
+  a descriptor can distinguish full-domain reduction, axis/partial reduction,
+  and window-local reduction/pooling, and so `ScanN` records the scanned axis
+  rather than silently treating the producer as a flattened 1D stream.
+- [ ] Define reduce sink scope semantics explicitly:
+  global/domain-collapse produces a scalar/control result; axis reduction
+  produces a rank-lowered output; window-local reduction produces one output
+  per producer center/window. These must be separate typed cases or a sum with
+  mandatory fields, not prose attached to `WindowND`.
+- [ ] Add typed rejects for unsupported sink scopes/axis sets. Until partial
+  reduce, window-local reduce, and axis scan materializers exist, the planner
+  must reject them with stable facts instead of flattening the producer and
+  accidentally changing rank semantics.
+- [ ] Add `WindowND` body-relative access semantics. `StencilApplyInput` only
+  names an access today, so a windowed producer can iterate centers but the body
+  cannot yet say `x[i + offset]` / neighbor access for convolution, pooling, or
+  finite differences. Add a typed window/axis offset expression or access
+  projection and consume it in MC/BC/materializer planning.
+- [ ] Decide whether `StencilBody` remains a one-variant wrapper or becomes
+  the owner of body families. If `StencilBodyApply` is still the only body kind,
+  flatten it into the descriptor; if window/body protocols are coming, add the
+  planned body variants and make their semantics explicit.
 - [ ] Feed producer shapes from the frontend/lowering pipeline instead of only
   hand-built test descriptors.
-- [ ] Add benchmarks comparing `Range1D`, `RangeND`, and `TiledND` MC
-  materialization against handwritten C + `gcc -O3`.
-- [ ] Only after the producer-shape gate is closed, resume the remaining
-  topology, scheduling, bank, metastencil, frontend, and benchmark checkboxes
+- [x] Move producer performance benchmarking out of the shape-completeness gate
+  and into the materializer-quality pass: compare `Range1D`, `RangeND`, and
+  `TiledND` MC materialization against handwritten C + `gcc -O3` after the
+  executable shape surface is stable.
+- [x] Producer-shape gate is closed; resume the remaining
+  layout, scheduling, bank, metastencil, frontend, and benchmark checkboxes
   below.
 
 - [ ] Add schedule coverage for scalar, unrolled, autovector, and fixed-vector
@@ -414,11 +471,11 @@ and benchmarked where they produce executable MC code.
 
 - [x] Make the MC intern set generated from an explicit matrix table instead of
   ad hoc hand-enumerated artifact construction. `copy_patch_mc_intern_set` now
-  declares explicit vocab/topology cells and generates artifacts from those
+  declares explicit vocab/layout cells and generates artifacts from those
   rows.
 - [x] Add a test that compares the declared support matrix against the embedded
   MC intern set. `test_copy_patch_mc_intern_set` checks every intern row against
-  supported matrix vocab/topology entries and verifies the built bank symbols
+  supported matrix vocab/layout entries and verifies the built bank symbols
   exactly match the intern matrix.
 - [x] Add a test that every artifact selected by the default lowering path can
   be found in the embedded MC bank, or is deliberately routed to BC fallback.
@@ -492,22 +549,22 @@ optimization only happens if the compiler receives the fused source.
   as a proof/source anchor; compiled bank identity remains structural through
   descriptor fingerprints, not a separate producer id. The shape layer accepts
   `Range1D`, `RangeND`, `WindowND`, and `TiledND`; `copy_patch_mc` generic
-  `ApplyN`/`ReduceN` now consumes forward `RangeND`, while LuaTrace and the
-  fixed-shape stencil materializers reject the still-pending producer shapes
-  with typed facts.
+  `ApplyN`/`ReduceN`/`ScanN` now consumes forward `RangeND`, center-domain
+  `WindowND`, and forward `TiledND`, while LuaTrace rejects non-`Range1D`
+  producer shapes with typed facts.
 - [ ] Replace handwritten non-basis metastencils in production paths with
   generated metastencils from the primitive fragments; keep handwritten versions
   only as benchmarks, regression fixtures, or temporary scaffolding until the
   generated artifacts match or beat them.
 - [x] Add expression-backed `ApplyN` descriptors/materializers with input-count
   capped at 4. The current `StencilApplyExpr` tree covers const/input/unary/binary/
-  cast/predicate/compare/select expressions, and `apply_n_array` is tested on
+  cast/predicate/compare/select expressions, and `apply_n` is tested on
   input counts 0 through 4 through both BC and MC.
 - [x] Generate MC bank candidates by SOAC order, not by the old scalar
-  depth/input-arity grid. Order `1` emits primitive `Apply` and `Reduce`; order
-  `2` emits `Apply -> Apply` and `Apply -> Reduce`; order `3` extends the Apply
-  chain one stage before either array output or reduction. Input count is a
-  separate coverage axis.
+  depth/input-arity grid. Order `1` emits primitive `Apply`, `Reduce`, and
+  `Scan`; order `2` emits `Apply -> Apply`, `Apply -> Reduce`, and
+  `Apply -> Scan`; order `3` extends the Apply chain one stage before either
+  array output or sink. Input count is a separate coverage axis.
 - [x] Stream the actual `StencilApplyExpr` grammar in constructor order, not by
   hand-picked templates.
   The stream covers input, const, unary, binary, predicate, compare, cast, and
@@ -515,17 +572,16 @@ optimization only happens if the compiler receives the fused source.
   compiled-payload targets remain available only as caller-selected probes.
 - [x] Set the default generated MC bank shape to saturated SOAC order
   `1`/input-count `4`, plus the saturated SOAC order-2
-  `Apply -> Reduce` subset through input-count `4`. This gives a full scalar
-  expression layer plus the high-value transform-and-reduce family without the
-  full `Apply -> Apply` order-2 explosion. The profile for this shape is 71,831
-  cells with an estimated 15,238,950-byte payload. Actual sharded generation
-  completed in 41.41 seconds with 16 jobs: 71,831 entries, 5,727,864 payload
-  bytes, 10 patches, and 330 MiB max RSS.
-- [ ] Replace the current linear-producer-only embedded bank shape with the final
-  producer/body/sink bank once the represented producer surface is materialized.
-  The current bank is intentionally a bounded `Range1D` bank over the available
-  scalar Apply/Reduce surface; it is not the final "right bank" for ND, tiled,
-  windowed, indexed, worklist, or state-machine producers.
+  `Apply -> Reduce` and `Apply -> Scan` sink subset through input-count `4`.
+  This gives a full scalar expression layer plus the high-value
+  transform-and-sink family without the full `Apply -> Apply` order-2
+  explosion. The targeted 1 MiB profile is 5,344 generated cells with an
+  estimated 1,037,312-byte payload. Actual sharded generation completed with
+  4 jobs: 5,403 embedded entries and 914,410 payload bytes.
+- [x] Replace the old linear-producer-only embedded bank shape with the
+  represented producer/body/sink bank. The current bounded default includes
+  `Range1D`, `RangeND`, `TiledND`, and `WindowND` producer cells over the
+  available scalar Apply/Reduce/Scan surface.
 - [x] Add typed metastencil descriptors and selection facts. A metastencil is now
   a typed DAG of artifact nodes, external/node ports, wires, fusion legality
   facts/rejects, ABI, fingerprint, cover candidates, and deterministic longest
@@ -540,13 +596,13 @@ optimization only happens if the compiler receives the fused source.
   bank family, selected `Apply -> Reduce` covers lower to one fused artifact and
   preserve the selected cover metadata through realization.
 - [x] Lower selected `Apply -> Reduce` metastencil covers to one fused executable
-  artifact. The selected cover now becomes a single `reduce_n_array` artifact
+  artifact. The selected cover now becomes a single `reduce_n` artifact
   whose body is emitted through `llbl.c` nodes, so GCC sees the composed
   expression and reduction in one function.
 - [x] Add a focused materializer benchmark against handwritten C:
   `benchmarks/bench_luajit_metastencil_fused_reduce.lua` builds a width-4
   typed `Apply -> Reduce` cover, verifies it materializes as one fused
-  `reduce_n_array` MC entry, compares it with direct `reduce_n_array`, and
+  `reduce_n` MC entry, compares it with direct `reduce_n`, and
   compiles the handwritten baseline from `llbl.c`. Quick probe on 2026-06-25:
   `mc fused Apply->Reduce` median 0.069 ms, `mc direct reduce_n` median
   0.064 ms, handwritten `gcc -O3` median 0.066 ms for 120k elements.
@@ -579,7 +635,7 @@ optimization only happens if the compiler receives the fused source.
   lazy metastencil enumerator if unbounded SOAC order-3/input-count-3 must
   complete without a caller-provided payload target.
 - [ ] Extend grammar-stream saturation beyond the current consumable scalar
-  surface: all supported type families, topology/fact/schedule variants,
+  surface: all supported type families, layout/fact/schedule variants,
   gather/scatter/indexed expression forms, and realized-materializer coverage
   checks for every generated constructor family.
 - [x] Record the design direction: metastencils are composed source artifacts
@@ -588,11 +644,11 @@ optimization only happens if the compiler receives the fused source.
 - [ ] Add a typed metastencil descriptor for small op sequences or DAGs,
   including primitive descriptors, typed wire map, control/loop composition,
   result ABI, and structural identity.
-- [ ] Add fusion legality facts for composed aliasing, topology, trip count,
+- [ ] Add fusion legality facts for composed aliasing, layout, trip count,
   alignment, integer/float semantics, reduction legality, and proof
   obligations.
 - [ ] Extend the support matrix with fusion cells:
-  `(producer op, consumer op, type/topology/schedule/facts) ->
+  `(producer op, consumer op, type/layout/schedule/facts) ->
   supported/rejected/future`.
 - [ ] Add a fusion materializer that emits one LLB.C/GCC source unit from
   primitive descriptor fragments, then interns the compiled machine-code
@@ -651,7 +707,7 @@ optimization only happens if the compiler receives the fused source.
 - [ ] Replace stringly reject reasons with ASDL reject facts for stencil
   selection, artifact planning, LuaTrace emission, and MC bank lookup.
 - [x] Add a single support matrix file that declares supported, rejected, and
-  future cells across type family, vocab, topology, schedule, and materializer.
+  future cells across type family, vocab, layout, schedule, and materializer.
 - [x] Add a test that the support matrix and artifact planner agree.
 - [x] Add a test that schema additions fail until the support matrix is updated.
 - [ ] Drain every `future`/temporary `rejected` support-matrix cell: either
@@ -676,7 +732,7 @@ into smaller tracked tasks as the concrete failures become visible.
 ### 1. Consume the schema richness in every materializer
 
 - [ ] Audit all three materialization paths and confirm every new stencil fact,
-  descriptor field, topology, predicate, operator, schedule fact, proof
+  descriptor field, layout, predicate, operator, schedule fact, proof
   obligation, realized schedule fact, and reject fact is either consumed in the
   best available way or deliberately rejected with a typed reason.
 - [x] Add a materializer fact-consumption matrix that maps every
@@ -696,8 +752,10 @@ means the fact is preserved for audit but does not yet drive lowering.
 | Schema surface | `copy_patch_bc` | `copy_patch_mc` | emitted bank / binary | Remaining work |
 | --- | --- | --- | --- | --- |
 | Descriptor producer/body/sink / vocab | consume all shape-supported producers; materialize current subset | consume all shape-supported C stencil shapes; materialize current subset | record/intern selected shapes | [x] Generate MC intern set from the support matrix, not hand enumeration. |
-| Producer | materialize positive `Range1D`; reject represented ND/window/tiled producers | materialize positive `Range1D` everywhere; materialize forward `RangeND` for generic `ApplyN`/`ReduceN`; reject window/tiled producers | record current interned `Range1D` set | [ ] Add single-binary tests for RangeND and rejected/materializer-pending producer cells. |
-| Topology | consume contiguous, view, slice, byte-span, field, SoA, indexed, scalar | consume same through C access expressions | partial dynamic-descriptor coverage | [ ] Add embedded-bank tests for view/slice/byte-span/field/SoA descriptors. |
+| Producer | materialize positive `Range1D`; reject represented ND/window/tiled producers with typed facts | materialize positive `Range1D`, forward `RangeND`, center-domain `WindowND`, and forward `TiledND` for generic `ApplyN`/`ReduceN`/`ScanN` | intern `Range1D`, `RangeND`, `WindowND`, and `TiledND` producer cells | [x] Add emitted-bank tests for all represented producer groups. |
+| Sink rank/scope | currently flattened/global-only for reduce/scan except 1D scan | currently flattened/global-only for reduce/scan over producer loops | not represented as a bank axis yet | [ ] Add axis/scope typed sink cases and rejects before claiming tensor/pooling coverage. |
+| Window body offsets | not represented; window producers are BC rejects | producer center loops exist, but body cannot address neighbors | not represented as a bank axis yet | [ ] Add typed window-relative access/body expressions and materializer tests. |
+| Layout | consume contiguous, view, slice, byte-span, field, SoA, indexed, scalar | consume same through C access expressions | partial dynamic-descriptor coverage | [ ] Add embedded-bank tests for view/slice/byte-span/field/SoA descriptors. |
 | Access roles | consume read/write/readwrite/reduce/index in access plans | consume read/write/readwrite/reduce/index in generated C signatures/accesses | record through artifacts | [ ] Add index-role bounds/alias tests for gather/scatter in both banks. |
 | Alias facts | consume noalias for BC copy primitive legality | consume noalias as C `restrict` where legal | record through artifact fingerprint | [ ] Benchmark alias-driven gather/scatter/copy materialization against handwritten C. |
 | Alignment facts | record in BC plan; used for fingerprint/proof obligations | consume as C alignment assumptions where emitted | record through artifact fingerprint | [ ] Add runtime/disassembly checks that alignment facts affect MC codegen. |
@@ -728,7 +786,7 @@ means the fact is preserved for audit but does not yet drive lowering.
   those tests build or link the full embedded MC bank and can dominate memory
   and wall time on normal test runs.
 - [ ] Update the benchmark corpus so it covers each newly expressible stencil
-  family and topology, including negative/control cases where a materializer
+  family and layout, including negative/control cases where a materializer
   should reject.
 - [x] Add the first focused materializer-consumption probe for the current
   bounded metastencil family: width-4 `Apply -> Reduce` fused MC versus direct
@@ -744,7 +802,7 @@ means the fact is preserved for audit but does not yet drive lowering.
 
 - [ ] Audit frontend lowering to check whether source programs provide every
   fact the stencil schema can now represent: alias relations, access roles,
-  topology, index streams, predicate semantics, integer/float semantics,
+  layout, index streams, predicate semantics, integer/float semantics,
   reduction identity/proofs, trip-count facts, schedule hints, and boundary
   contracts.
 - [ ] Add end-to-end DSL tests proving those facts survive from source program

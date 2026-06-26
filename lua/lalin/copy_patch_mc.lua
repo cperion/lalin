@@ -454,8 +454,8 @@ local function bind_context(T)
         if not is_i32(shape.elem_ty) or not is_i32(shape.result_ty) then return false end
         if tonumber(shape.stride) ~= 1 then return false end
         local xs = ArtifactPlan.access_named(artifact.instance.descriptor, "xs")
-        local top = pvm.classof(xs.topology)
-        return top == Stencil.StencilTopologyContiguous or top == Stencil.StencilTopologySliceDescriptor
+        local top = pvm.classof(xs.layout)
+        return top == Stencil.StencilLayoutContiguous or top == Stencil.StencilLayoutSliceDescriptor
     end
 
     local function realized_mc_schedule(artifact, cflags)

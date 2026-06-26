@@ -72,9 +72,9 @@ local function bind_context(T)
         if kind == "reduce" then return StencilArtifactPlan.reduce_array_artifact(reduction, plan, info) end
         if kind == "count" then return StencilArtifactPlan.count_array_artifact(op, info) end
         if kind == "map_reduce" then
-            return StencilArtifactPlan.reduce_n_array_artifact(reduction, plan, {
+            return StencilArtifactPlan.reduce_n_artifact(reduction, plan, {
                 tag = "map_" .. tostring(op),
-                inputs = { { name = "xs", ty = assert(info.elem_ty), topology = info.array_topology or info.src_topology } },
+                inputs = { { name = "xs", ty = assert(info.elem_ty), layout = info.array_layout or info.src_layout } },
                 expr = StencilArtifactPlan.apply_unary_expr(op, StencilArtifactPlan.input_expr("xs"), assert(info.mapped_ty), info),
                 item_ty = info.mapped_ty,
                 result_ty = info.result_ty,
@@ -87,11 +87,11 @@ local function bind_context(T)
             })
         end
         if kind == "zip_reduce" then
-            return StencilArtifactPlan.reduce_n_array_artifact(reduction, plan, {
+            return StencilArtifactPlan.reduce_n_artifact(reduction, plan, {
                 tag = "zip_" .. tostring(op),
                 inputs = {
-                    { name = "lhs", ty = assert(info.lhs_ty), topology = info.lhs_topology },
-                    { name = "rhs", ty = assert(info.rhs_ty), topology = info.rhs_topology },
+                    { name = "lhs", ty = assert(info.lhs_ty), layout = info.lhs_layout },
+                    { name = "rhs", ty = assert(info.rhs_ty), layout = info.rhs_layout },
                 },
                 expr = StencilArtifactPlan.apply_binary_expr(op, StencilArtifactPlan.input_expr("lhs"), StencilArtifactPlan.input_expr("rhs"), assert(info.mapped_ty), info),
                 item_ty = info.mapped_ty,

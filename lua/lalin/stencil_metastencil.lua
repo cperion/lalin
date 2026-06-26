@@ -355,7 +355,7 @@ local function bind_context(T)
     end
 
     local function node_is_apply(node)
-        return pvm.classof(node.artifact.instance.descriptor.sink) == Stencil.StencilSinkEmitArray
+        return pvm.classof(node.artifact.instance.descriptor.sink) == Stencil.StencilSinkStore
     end
 
     local function node_is_reduce_fold(node)
@@ -393,12 +393,12 @@ local function bind_context(T)
         local inputs = {}
         for _, access in ipairs(Plan.descriptor_accesses(apply_desc)) do
             if access.name ~= apply_out and access.role ~= Stencil.StencilAccessWrite then
-                inputs[#inputs + 1] = { name = access.name, ty = access.ty, topology = access.topology }
+                inputs[#inputs + 1] = { name = access.name, ty = access.ty, layout = access.layout }
             end
         end
         local reducer = reduce_desc.sink.mode.reducer
         local apply_shape = Plan.artifact_shape(apply_node.artifact)
-        return Plan.reduce_n_array_artifact({
+        return Plan.reduce_n_artifact({
             kind = reducer.reduction,
             int_semantics = reducer.int_semantics,
             float_mode = reducer.float_mode,

@@ -25,8 +25,8 @@ local function pred(cmp, ty, value)
     return Stencil.StencilPredCompareConst(cmp, ty, value)
 end
 
-local function bytespan_topology(name)
-    return Stencil.StencilTopologyByteSpanDescriptor(
+local function bytespan_layout(name)
+    return Stencil.StencilLayoutByteSpanDescriptor(
         Code.CodeValueId("v:bytespan:" .. name),
         Code.CodeValueId("v:data:" .. name),
         Code.CodeValueId("v:len:" .. name)
@@ -34,12 +34,12 @@ local function bytespan_topology(name)
 end
 
 local artifacts = {
-    StencilArtifactPlan.copy_array_artifact({ elem_ty = u8, step_num = 1, dst_topology = bytespan_topology("copy_dst"), src_topology = bytespan_topology("copy_src") }),
-    StencilArtifactPlan.copy_array_artifact({ elem_ty = u8, semantics = Stencil.StencilCopyMemMove, step_num = 1, dst_topology = bytespan_topology("move_dst"), src_topology = bytespan_topology("move_src") }),
-    StencilArtifactPlan.fill_array_artifact({ elem_ty = u8, value = u8const(127), step_num = 1, dst_topology = bytespan_topology("fill_dst") }),
-    StencilArtifactPlan.find_array_artifact(pred(Core.CmpEq, u8, u8const(13)), { elem_ty = u8, step_num = 1, array_topology = bytespan_topology("find_xs") }),
-    StencilArtifactPlan.compare_array_artifact(pred(Core.CmpGt, u8, u8const(9)), { elem_ty = u8, result_ty = bool8, step_num = 1, dst_topology = bytespan_topology("compare_dst"), src_topology = bytespan_topology("compare_xs") }),
-    StencilArtifactPlan.count_array_artifact(pred(Core.CmpGt, u8, u8const(9)), { elem_ty = u8, step_num = 1, array_topology = bytespan_topology("count_xs") }),
+    StencilArtifactPlan.copy_array_artifact({ elem_ty = u8, step_num = 1, dst_layout = bytespan_layout("copy_dst"), src_layout = bytespan_layout("copy_src") }),
+    StencilArtifactPlan.copy_array_artifact({ elem_ty = u8, semantics = Stencil.StencilCopyMemMove, step_num = 1, dst_layout = bytespan_layout("move_dst"), src_layout = bytespan_layout("move_src") }),
+    StencilArtifactPlan.fill_array_artifact({ elem_ty = u8, value = u8const(127), step_num = 1, dst_layout = bytespan_layout("fill_dst") }),
+    StencilArtifactPlan.find_array_artifact(pred(Core.CmpEq, u8, u8const(13)), { elem_ty = u8, step_num = 1, array_layout = bytespan_layout("find_xs") }),
+    StencilArtifactPlan.compare_array_artifact(pred(Core.CmpGt, u8, u8const(9)), { elem_ty = u8, result_ty = bool8, step_num = 1, dst_layout = bytespan_layout("compare_dst"), src_layout = bytespan_layout("compare_xs") }),
+    StencilArtifactPlan.count_array_artifact(pred(Core.CmpGt, u8, u8const(9)), { elem_ty = u8, step_num = 1, array_layout = bytespan_layout("count_xs") }),
 }
 
 local build, err, src = StencilBinary.compile(T, artifacts, { stem = "test_copy_patch_mc_byte_spans" })

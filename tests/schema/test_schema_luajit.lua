@@ -113,8 +113,8 @@ local reducer = Stencil.StencilReducer(Value.ReductionAdd, Code.CodeTyInt(32, Co
 local descriptor = Stencil.StencilDescriptor(
     Stencil.StencilProducer(nil, Stencil.StencilProduceRange1D(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilProducerForward)),
     {
-        Stencil.StencilAccess("xs", Stencil.StencilAccessRead, Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilTopologyContiguous(1)),
-        Stencil.StencilAccess("acc", Stencil.StencilAccessReduce, Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilTopologyScalar(init)),
+        Stencil.StencilAccess("xs", Stencil.StencilAccessRead, Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilLayoutContiguous(1)),
+        Stencil.StencilAccess("acc", Stencil.StencilAccessReduce, Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilLayoutScalar(init)),
     },
     Stencil.StencilBodyApply(Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs"))),
     Stencil.StencilSinkReduce(Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilReduceFold(reducer))

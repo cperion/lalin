@@ -46,10 +46,10 @@ local function reduction(kind, init)
     }
 end
 
-local function reduce_unary_artifact(topology)
-    return StencilArtifactPlan.reduce_n_array_artifact(reduction(Value.ReductionAdd, 0), nil, {
+local function reduce_unary_artifact(layout)
+    return StencilArtifactPlan.reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, {
         tag = "unary_neg",
-        inputs = { { name = "xs", ty = i32, topology = topology } },
+        inputs = { { name = "xs", ty = i32, layout = layout } },
         expr = StencilArtifactPlan.apply_unary_expr(Stencil.StencilUnaryNeg, StencilArtifactPlan.input_expr("xs"), i32, { int_semantics = sem }),
         item_ty = i32,
         result_ty = i32,
@@ -57,12 +57,12 @@ local function reduce_unary_artifact(topology)
     })
 end
 
-local function reduce_binary_artifact(lhs_topology, rhs_topology)
-    return StencilArtifactPlan.reduce_n_array_artifact(reduction(Value.ReductionAdd, 0), nil, {
+local function reduce_binary_artifact(lhs_layout, rhs_layout)
+    return StencilArtifactPlan.reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, {
         tag = "binary_add",
         inputs = {
-            { name = "lhs", ty = i32, topology = lhs_topology },
-            { name = "rhs", ty = i32, topology = rhs_topology },
+            { name = "lhs", ty = i32, layout = lhs_layout },
+            { name = "rhs", ty = i32, layout = rhs_layout },
         },
         expr = StencilArtifactPlan.apply_binary_expr(Stencil.StencilBinaryAdd, StencilArtifactPlan.input_expr("lhs"), StencilArtifactPlan.input_expr("rhs"), i32, { int_semantics = sem }),
         item_ty = i32,
@@ -71,8 +71,8 @@ local function reduce_binary_artifact(lhs_topology, rhs_topology)
     })
 end
 
-local function view_topology(name, stride_const)
-    return Stencil.StencilTopologyViewDescriptor(
+local function view_layout(name, stride_const)
+    return Stencil.StencilLayoutViewDescriptor(
         Code.CodeValueId("v:view:" .. name),
         Code.CodeValueId("v:data:" .. name),
         Code.CodeValueId("v:len:" .. name),
@@ -196,7 +196,7 @@ local first_plan = CopyPatchLuaTrace.plan_artifact(artifacts[1])
 assert(first_plan.kind == "LuaTraceArtifactPlan", "expected inspectable LuaTrace artifact plan")
 assert(first_plan.access_by_name.xs.kind == "contiguous", "expected contiguous access plan")
 assert(first_plan.loop_plan.loop_shape == "grouped_while", "AutoVector reduce should use grouped loop plan")
-assert(first_plan.kernel_plan.kind == "reduce_array", "expected reduce kernel plan")
+assert(first_plan.kernel_plan.kind == "reduce_n", "expected generic reduce kernel plan")
 assert(first_plan.kernel_plan.reduction_plan.kind == "ordered_single_accumulator", "LuaTrace reductions should expose ordered accumulator policy")
 assert(first_plan.kernel_plan.reduction_plan.reassociation_required == false, "ordered LuaTrace reduction must not require reassociation")
 assert(CopyPatchLuaTrace.plan_artifact(artifacts[5]).kernel_plan.primitive_plan.kind == "ffi_copy", "no-overlap copy should use ffi.copy primitive")
@@ -323,7 +323,7 @@ local view_vector_artifact = StencilArtifactPlan.reduce_array_artifact(reduction
     result_ty = i32,
     step_num = 1,
     schedule = Schedule.ScheduleVector(Schedule.LaneVector(i32, 4), 2, 1, Schedule.TailScalar),
-    array_topology = view_topology("strided_xs"),
+    array_layout = view_layout("strided_xs"),
 })
 local view_vector_plan = CopyPatchLuaTrace.plan_artifact(view_vector_artifact)
 assert(view_vector_plan.access_by_name.xs.kind == "view_dynamic_stride", "expected dynamic view access plan")

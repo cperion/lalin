@@ -37,9 +37,9 @@ local function reduction(kind, init)
     }
 end
 
-local function field_topology()
-    return Stencil.StencilTopologyFieldProjection(
-        Stencil.StencilTopologyContiguous(1),
+local function field_layout()
+    return Stencil.StencilLayoutFieldProjection(
+        Stencil.StencilLayoutContiguous(1),
         pair_ty,
         "right",
         4
@@ -51,30 +51,30 @@ local artifacts = {
         elem_ty = i32,
         result_ty = i32,
         step_num = 1,
-        array_topology = field_topology(),
+        array_layout = field_layout(),
     }),
     StencilArtifactPlan.map_array_artifact(Stencil.StencilUnaryNeg, {
         elem_ty = i32,
         result_ty = i32,
         step_num = 1,
-        src_topology = field_topology(),
+        src_layout = field_layout(),
     }),
     StencilArtifactPlan.find_array_artifact(pred(Core.CmpEq, i32, iconst(20)), {
         elem_ty = i32,
         step_num = 1,
-        array_topology = field_topology(),
+        array_layout = field_layout(),
     }),
     StencilArtifactPlan.compare_array_artifact(pred(Core.CmpGt, i32, iconst(10)), {
         elem_ty = i32,
         result_ty = bool8,
         step_num = 1,
-        src_topology = field_topology(),
+        src_layout = field_layout(),
     }),
     StencilArtifactPlan.fill_array_artifact({
         elem_ty = i32,
         value = iconst(99),
         step_num = 1,
-        dst_topology = field_topology(),
+        dst_layout = field_layout(),
     }),
 }
 
@@ -84,8 +84,8 @@ local build, err, src = StencilBinary.compile(T, artifacts, {
     preamble = preamble,
 })
 assert(build ~= nil, tostring(err) .. "\n" .. tostring(src))
-assert(src:match("Demo_Pair const %*xs"), src)
-assert(src:match("Demo_Pair %*dst"), src)
+assert(src:match("Demo_Pair const %*%s*__restrict%s*xs"), src)
+assert(src:match("Demo_Pair %*%s*__restrict%s*dst"), src)
 assert(src:match("xs%[i%]%.right"), src)
 assert(src:match("dst%[i%]%.right"), src)
 

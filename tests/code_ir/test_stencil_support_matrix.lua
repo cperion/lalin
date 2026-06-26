@@ -65,7 +65,7 @@ local stencil_schema = "lua/lalin/schema/stencil.lua"
 local code_schema = "lua/lalin/schema/code.lua"
 
 assert_matrix_covers("vocabs", variants(stencil_schema, "StencilVocab"))
-assert_matrix_covers("topologies", variants(stencil_schema, "StencilAccessTopology"))
+assert_matrix_covers("layouts", variants(stencil_schema, "StencilAccessLayout"))
 assert_matrix_covers("producers", variants(stencil_schema, "StencilProducerShape"))
 assert_matrix_covers("predicates", variants(stencil_schema, "StencilPredicate"))
 assert_matrix_covers("type_families", variants(code_schema, "CodeType"))
@@ -135,7 +135,7 @@ local artifact_samples = {
         return Plan.select_array_artifact(Stencil.StencilPredNonZero, { cond_ty = bool8, elem_ty = i32, result_ty = i32, step_num = 1 })
     end,
     apply_n = function()
-        return Plan.apply_n_array_artifact({
+        return Plan.apply_n_artifact({
             tag = "matrix",
             result_ty = i32,
             inputs = { { name = "x1", ty = i32 }, { name = "x2", ty = i32 }, { name = "x3", ty = i32 } },
@@ -156,7 +156,17 @@ local artifact_samples = {
         return Plan.count_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1 })
     end,
     reduce_n = function()
-        return Plan.reduce_n_array_artifact(reduction(Value.ReductionAdd, 0), nil, {
+        return Plan.reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, {
+            tag = "matrix",
+            inputs = { { name = "lhs", ty = i32 }, { name = "rhs", ty = i32 } },
+            expr = Plan.apply_binary_expr(Stencil.StencilBinaryAdd, Plan.input_expr("lhs"), Plan.input_expr("rhs"), i32, { int_semantics = int_semantics }),
+            item_ty = i32,
+            result_ty = i32,
+            step_num = 1,
+        })
+    end,
+    scan_n = function()
+        return Plan.scan_n_artifact(reduction(Value.ReductionAdd, 0), nil, {
             tag = "matrix",
             inputs = { { name = "lhs", ty = i32 }, { name = "rhs", ty = i32 } },
             expr = Plan.apply_binary_expr(Stencil.StencilBinaryAdd, Plan.input_expr("lhs"), Plan.input_expr("rhs"), i32, { int_semantics = int_semantics }),

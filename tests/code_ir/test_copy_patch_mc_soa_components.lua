@@ -38,8 +38,8 @@ local function reduction(kind, init)
 end
 
 local function soa_component(field_name, component_index)
-    return Stencil.StencilTopologySoAComponent(
-        Stencil.StencilTopologyContiguous(1),
+    return Stencil.StencilLayoutSoAComponent(
+        Stencil.StencilLayoutContiguous(1),
         pair_ty,
         field_name,
         component_index
@@ -59,15 +59,15 @@ local artifacts = {
         rhs_ty = i32,
         result_ty = i32,
         step_num = 1,
-        dst_topology = soa_component("sum", 2),
-        lhs_topology = soa_component("left", 0),
-        rhs_topology = soa_component("right", 1),
+        dst_layout = soa_component("sum", 2),
+        lhs_layout = soa_component("left", 0),
+        rhs_layout = soa_component("right", 1),
     }),
-    StencilArtifactPlan.reduce_n_array_artifact(reduction(Value.ReductionAdd, 0), nil, {
+    StencilArtifactPlan.reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, {
         tag = "soa_binary_add",
         inputs = {
-            { name = "lhs", ty = i32, topology = soa_component("left", 0) },
-            { name = "rhs", ty = i32, topology = soa_component("right", 1) },
+            { name = "lhs", ty = i32, layout = soa_component("left", 0) },
+            { name = "rhs", ty = i32, layout = soa_component("right", 1) },
         },
         expr = StencilArtifactPlan.apply_binary_expr(Stencil.StencilBinaryAdd, StencilArtifactPlan.input_expr("lhs"), StencilArtifactPlan.input_expr("rhs"), i32, { int_semantics = sem }),
         item_ty = i32,
@@ -79,23 +79,23 @@ local artifacts = {
         rhs_ty = i32,
         result_ty = bool8,
         step_num = 1,
-        dst_topology = soa_component("lt", 2),
-        lhs_topology = soa_component("left", 0),
-        rhs_topology = soa_component("right", 1),
+        dst_layout = soa_component("lt", 2),
+        lhs_layout = soa_component("left", 0),
+        rhs_layout = soa_component("right", 1),
     }),
     StencilArtifactPlan.partition_array_artifact(pred(Core.CmpGt, i32, iconst(0)), {
         elem_ty = i32,
         step_num = 1,
-        dst_topology = soa_component("positive_then_rest", 1),
-        array_topology = soa_component("left", 0),
+        dst_layout = soa_component("positive_then_rest", 1),
+        array_layout = soa_component("left", 0),
     }),
 }
 
 for _, artifact in ipairs(artifacts) do
     for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(artifact.instance.descriptor)) do
-        local top = access.topology
-        if pvm.classof(top) ~= Stencil.StencilTopologyScalar then
-            assert(pvm.classof(top) == Stencil.StencilTopologySoAComponent, "access should keep SoA component topology")
+        local top = access.layout
+        if pvm.classof(top) ~= Stencil.StencilLayoutScalar then
+            assert(pvm.classof(top) == Stencil.StencilLayoutSoAComponent, "access should keep SoA component layout")
             assert(top.record_ty == pair_ty, "SoA component should keep record type")
         end
     end
@@ -130,6 +130,6 @@ assert(mask[0] == 1 and mask[1] == 1 and mask[2] == 0 and mask[3] == 1 and mask[
 assert(sym(artifacts[4])(out, left, 0, 5) == 3, "SoA partition split")
 assert(out[0] == 1 and out[1] == 5 and out[2] == 3 and out[3] == -2 and out[4] == 0, "SoA partition order")
 
-assert(access_named(artifacts[1].instance.descriptor, "lhs").topology.field_name == "left")
+assert(access_named(artifacts[1].instance.descriptor, "lhs").layout.field_name == "left")
 
 io.write("lalin copy_patch_mc SoA components ok\n")

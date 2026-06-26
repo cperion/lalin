@@ -36,10 +36,10 @@ local function reduction(kind, init)
     }
 end
 
-local function reduce_unary_artifact(topology)
-    return StencilArtifactPlan.reduce_n_array_artifact(reduction(Value.ReductionAdd, 0), nil, {
+local function reduce_unary_artifact(layout)
+    return StencilArtifactPlan.reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, {
         tag = "unary_neg",
-        inputs = { { name = "xs", ty = i32, topology = topology } },
+        inputs = { { name = "xs", ty = i32, layout = layout } },
         expr = StencilArtifactPlan.apply_unary_expr(Stencil.StencilUnaryNeg, StencilArtifactPlan.input_expr("xs"), i32, { int_semantics = sem }),
         item_ty = i32,
         result_ty = i32,
@@ -47,12 +47,12 @@ local function reduce_unary_artifact(topology)
     })
 end
 
-local function reduce_binary_artifact(lhs_topology, rhs_topology)
-    return StencilArtifactPlan.reduce_n_array_artifact(reduction(Value.ReductionAdd, 0), nil, {
+local function reduce_binary_artifact(lhs_layout, rhs_layout)
+    return StencilArtifactPlan.reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, {
         tag = "binary_add",
         inputs = {
-            { name = "lhs", ty = i32, topology = lhs_topology },
-            { name = "rhs", ty = i32, topology = rhs_topology },
+            { name = "lhs", ty = i32, layout = lhs_layout },
+            { name = "rhs", ty = i32, layout = rhs_layout },
         },
         expr = StencilArtifactPlan.apply_binary_expr(Stencil.StencilBinaryAdd, StencilArtifactPlan.input_expr("lhs"), StencilArtifactPlan.input_expr("rhs"), i32, { int_semantics = sem }),
         item_ty = i32,
@@ -89,8 +89,8 @@ assert(count_obligations(noalias_facts, Stencil.StencilProofNoAlias, Stencil.Ste
 local partial_noalias_facts = partial_noalias_gather.instance.schedule.facts
 assert(count_obligations(partial_noalias_facts, Stencil.StencilProofNoAlias, Stencil.StencilProofAuthorAsserted) == 2, "partial noalias should create only the requested pairwise obligations")
 
-local function view_topology(name)
-    return Stencil.StencilTopologyViewDescriptor(
+local function view_layout(name)
+    return Stencil.StencilLayoutViewDescriptor(
         Code.CodeValueId("v:view:" .. name),
         Code.CodeValueId("v:data:" .. name),
         Code.CodeValueId("v:len:" .. name),
@@ -99,8 +99,8 @@ local function view_topology(name)
     )
 end
 
-local function slice_topology(name)
-    return Stencil.StencilTopologySliceDescriptor(
+local function slice_layout(name)
+    return Stencil.StencilLayoutSliceDescriptor(
         Code.CodeValueId("v:slice:" .. name),
         Code.CodeValueId("v:data:" .. name),
         Code.CodeValueId("v:len:" .. name)
@@ -132,25 +132,25 @@ local artifacts = {
 }
 
 local view_artifacts = {
-    StencilArtifactPlan.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, result_ty = i32, step_num = 1, array_topology = view_topology("reduce_xs") }),
-    StencilArtifactPlan.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, result_ty = i32, step_num = 1, unroll = 2, array_topology = view_topology("reduce_unrolled_xs") }),
-    StencilArtifactPlan.map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, result_ty = i32, step_num = 1, dst_topology = view_topology("map_dst"), src_topology = view_topology("map_xs") }),
-    StencilArtifactPlan.zip_map_array_artifact(Stencil.StencilBinaryAdd, { lhs_ty = i32, rhs_ty = i32, result_ty = i32, step_num = 1, dst_topology = view_topology("zip_map_dst"), lhs_topology = view_topology("zip_map_lhs"), rhs_topology = view_topology("zip_map_rhs") }),
-    StencilArtifactPlan.scan_array_artifact(reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, result_ty = i32, step_num = 1, dst_topology = view_topology("scan_dst"), array_topology = view_topology("scan_xs") }),
-    StencilArtifactPlan.copy_array_artifact({ elem_ty = i32, step_num = 1, dst_topology = view_topology("copy_dst"), src_topology = view_topology("copy_src") }),
-    StencilArtifactPlan.copy_array_artifact({ elem_ty = i32, semantics = Stencil.StencilCopyMemMove, step_num = 1, dst_topology = view_topology("copy_move_dst"), src_topology = view_topology("copy_move_src") }),
-    StencilArtifactPlan.fill_array_artifact({ elem_ty = i32, value = iconst(7), step_num = 1, dst_topology = view_topology("fill_dst") }),
-    StencilArtifactPlan.find_array_artifact(pred(Core.CmpEq, i32, iconst(5)), { elem_ty = i32, step_num = 1, array_topology = view_topology("find_xs") }),
-    StencilArtifactPlan.partition_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1, dst_topology = view_topology("partition_dst"), array_topology = view_topology("partition_xs") }),
-    StencilArtifactPlan.cast_array_artifact(Core.MachineCastSToF, { src_ty = i32, dst_ty = f64, step_num = 1, dst_topology = view_topology("cast_dst"), src_topology = view_topology("cast_xs") }),
-    StencilArtifactPlan.compare_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, result_ty = bool8, step_num = 1, dst_topology = view_topology("compare_dst"), src_topology = view_topology("compare_xs") }),
-    StencilArtifactPlan.zip_compare_array_artifact(Core.CmpLt, { lhs_ty = i32, rhs_ty = i32, result_ty = bool8, step_num = 1, dst_topology = view_topology("zip_compare_dst"), lhs_topology = view_topology("zip_compare_lhs"), rhs_topology = view_topology("zip_compare_rhs") }),
-    StencilArtifactPlan.gather_array_artifact({ elem_ty = i32, index_ty = i32, step_num = 1, dst_topology = view_topology("gather_dst"), index_topology = view_topology("gather_idx") }),
-    StencilArtifactPlan.scatter_array_artifact({ elem_ty = i32, index_ty = i32, conflicts = Stencil.StencilScatterUniqueIndices, step_num = 1, src_topology = view_topology("scatter_src"), index_topology = view_topology("scatter_idx") }),
-    StencilArtifactPlan.in_place_map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, step_num = 1, src_topology = view_topology("in_place_xs") }),
-    StencilArtifactPlan.count_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1, array_topology = view_topology("count_xs") }),
-    reduce_unary_artifact(view_topology("reduce_n_xs")),
-    reduce_binary_artifact(view_topology("reduce_n_lhs"), view_topology("reduce_n_rhs")),
+    StencilArtifactPlan.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, result_ty = i32, step_num = 1, array_layout = view_layout("reduce_xs") }),
+    StencilArtifactPlan.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, result_ty = i32, step_num = 1, unroll = 2, array_layout = view_layout("reduce_unrolled_xs") }),
+    StencilArtifactPlan.map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, result_ty = i32, step_num = 1, dst_layout = view_layout("map_dst"), src_layout = view_layout("map_xs") }),
+    StencilArtifactPlan.zip_map_array_artifact(Stencil.StencilBinaryAdd, { lhs_ty = i32, rhs_ty = i32, result_ty = i32, step_num = 1, dst_layout = view_layout("zip_map_dst"), lhs_layout = view_layout("zip_map_lhs"), rhs_layout = view_layout("zip_map_rhs") }),
+    StencilArtifactPlan.scan_array_artifact(reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, result_ty = i32, step_num = 1, dst_layout = view_layout("scan_dst"), array_layout = view_layout("scan_xs") }),
+    StencilArtifactPlan.copy_array_artifact({ elem_ty = i32, step_num = 1, dst_layout = view_layout("copy_dst"), src_layout = view_layout("copy_src") }),
+    StencilArtifactPlan.copy_array_artifact({ elem_ty = i32, semantics = Stencil.StencilCopyMemMove, step_num = 1, dst_layout = view_layout("copy_move_dst"), src_layout = view_layout("copy_move_src") }),
+    StencilArtifactPlan.fill_array_artifact({ elem_ty = i32, value = iconst(7), step_num = 1, dst_layout = view_layout("fill_dst") }),
+    StencilArtifactPlan.find_array_artifact(pred(Core.CmpEq, i32, iconst(5)), { elem_ty = i32, step_num = 1, array_layout = view_layout("find_xs") }),
+    StencilArtifactPlan.partition_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1, dst_layout = view_layout("partition_dst"), array_layout = view_layout("partition_xs") }),
+    StencilArtifactPlan.cast_array_artifact(Core.MachineCastSToF, { src_ty = i32, dst_ty = f64, step_num = 1, dst_layout = view_layout("cast_dst"), src_layout = view_layout("cast_xs") }),
+    StencilArtifactPlan.compare_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, result_ty = bool8, step_num = 1, dst_layout = view_layout("compare_dst"), src_layout = view_layout("compare_xs") }),
+    StencilArtifactPlan.zip_compare_array_artifact(Core.CmpLt, { lhs_ty = i32, rhs_ty = i32, result_ty = bool8, step_num = 1, dst_layout = view_layout("zip_compare_dst"), lhs_layout = view_layout("zip_compare_lhs"), rhs_layout = view_layout("zip_compare_rhs") }),
+    StencilArtifactPlan.gather_array_artifact({ elem_ty = i32, index_ty = i32, step_num = 1, dst_layout = view_layout("gather_dst"), index_layout = view_layout("gather_idx") }),
+    StencilArtifactPlan.scatter_array_artifact({ elem_ty = i32, index_ty = i32, conflicts = Stencil.StencilScatterUniqueIndices, step_num = 1, src_layout = view_layout("scatter_src"), index_layout = view_layout("scatter_idx") }),
+    StencilArtifactPlan.in_place_map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, step_num = 1, src_layout = view_layout("in_place_xs") }),
+    StencilArtifactPlan.count_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1, array_layout = view_layout("count_xs") }),
+    reduce_unary_artifact(view_layout("reduce_n_xs")),
+    reduce_binary_artifact(view_layout("reduce_n_lhs"), view_layout("reduce_n_rhs")),
 }
 
 for _, artifact in ipairs(view_artifacts) do
@@ -158,24 +158,24 @@ for _, artifact in ipairs(view_artifacts) do
 end
 
 local slice_artifacts = {
-    StencilArtifactPlan.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, result_ty = i32, step_num = 1, array_topology = slice_topology("reduce_xs") }),
-    StencilArtifactPlan.map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, result_ty = i32, step_num = 1, dst_topology = slice_topology("map_dst"), src_topology = slice_topology("map_xs") }),
-    StencilArtifactPlan.zip_map_array_artifact(Stencil.StencilBinaryAdd, { lhs_ty = i32, rhs_ty = i32, result_ty = i32, step_num = 1, dst_topology = slice_topology("zip_map_dst"), lhs_topology = slice_topology("zip_map_lhs"), rhs_topology = slice_topology("zip_map_rhs") }),
-    StencilArtifactPlan.scan_array_artifact(reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, result_ty = i32, step_num = 1, dst_topology = slice_topology("scan_dst"), array_topology = slice_topology("scan_xs") }),
-    StencilArtifactPlan.copy_array_artifact({ elem_ty = i32, step_num = 1, dst_topology = slice_topology("copy_dst"), src_topology = slice_topology("copy_src") }),
-    StencilArtifactPlan.copy_array_artifact({ elem_ty = i32, semantics = Stencil.StencilCopyMemMove, step_num = 1, dst_topology = slice_topology("copy_move_dst"), src_topology = slice_topology("copy_move_src") }),
-    StencilArtifactPlan.fill_array_artifact({ elem_ty = i32, value = iconst(7), step_num = 1, dst_topology = slice_topology("fill_dst") }),
-    StencilArtifactPlan.find_array_artifact(pred(Core.CmpEq, i32, iconst(5)), { elem_ty = i32, step_num = 1, array_topology = slice_topology("find_xs") }),
-    StencilArtifactPlan.partition_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1, dst_topology = slice_topology("partition_dst"), array_topology = slice_topology("partition_xs") }),
-    StencilArtifactPlan.cast_array_artifact(Core.MachineCastSToF, { src_ty = i32, dst_ty = f64, step_num = 1, dst_topology = slice_topology("cast_dst"), src_topology = slice_topology("cast_xs") }),
-    StencilArtifactPlan.compare_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, result_ty = bool8, step_num = 1, dst_topology = slice_topology("compare_dst"), src_topology = slice_topology("compare_xs") }),
-    StencilArtifactPlan.zip_compare_array_artifact(Core.CmpLt, { lhs_ty = i32, rhs_ty = i32, result_ty = bool8, step_num = 1, dst_topology = slice_topology("zip_compare_dst"), lhs_topology = slice_topology("zip_compare_lhs"), rhs_topology = slice_topology("zip_compare_rhs") }),
-    StencilArtifactPlan.gather_array_artifact({ elem_ty = i32, index_ty = i32, step_num = 1, dst_topology = slice_topology("gather_dst"), index_topology = slice_topology("gather_idx") }),
-    StencilArtifactPlan.scatter_array_artifact({ elem_ty = i32, index_ty = i32, conflicts = Stencil.StencilScatterUniqueIndices, step_num = 1, src_topology = slice_topology("scatter_src"), index_topology = slice_topology("scatter_idx") }),
-    StencilArtifactPlan.in_place_map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, step_num = 1, src_topology = slice_topology("in_place_xs") }),
-    StencilArtifactPlan.count_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1, array_topology = slice_topology("count_xs") }),
-    reduce_unary_artifact(slice_topology("reduce_n_xs")),
-    reduce_binary_artifact(slice_topology("reduce_n_lhs"), slice_topology("reduce_n_rhs")),
+    StencilArtifactPlan.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, result_ty = i32, step_num = 1, array_layout = slice_layout("reduce_xs") }),
+    StencilArtifactPlan.map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, result_ty = i32, step_num = 1, dst_layout = slice_layout("map_dst"), src_layout = slice_layout("map_xs") }),
+    StencilArtifactPlan.zip_map_array_artifact(Stencil.StencilBinaryAdd, { lhs_ty = i32, rhs_ty = i32, result_ty = i32, step_num = 1, dst_layout = slice_layout("zip_map_dst"), lhs_layout = slice_layout("zip_map_lhs"), rhs_layout = slice_layout("zip_map_rhs") }),
+    StencilArtifactPlan.scan_array_artifact(reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, result_ty = i32, step_num = 1, dst_layout = slice_layout("scan_dst"), array_layout = slice_layout("scan_xs") }),
+    StencilArtifactPlan.copy_array_artifact({ elem_ty = i32, step_num = 1, dst_layout = slice_layout("copy_dst"), src_layout = slice_layout("copy_src") }),
+    StencilArtifactPlan.copy_array_artifact({ elem_ty = i32, semantics = Stencil.StencilCopyMemMove, step_num = 1, dst_layout = slice_layout("copy_move_dst"), src_layout = slice_layout("copy_move_src") }),
+    StencilArtifactPlan.fill_array_artifact({ elem_ty = i32, value = iconst(7), step_num = 1, dst_layout = slice_layout("fill_dst") }),
+    StencilArtifactPlan.find_array_artifact(pred(Core.CmpEq, i32, iconst(5)), { elem_ty = i32, step_num = 1, array_layout = slice_layout("find_xs") }),
+    StencilArtifactPlan.partition_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1, dst_layout = slice_layout("partition_dst"), array_layout = slice_layout("partition_xs") }),
+    StencilArtifactPlan.cast_array_artifact(Core.MachineCastSToF, { src_ty = i32, dst_ty = f64, step_num = 1, dst_layout = slice_layout("cast_dst"), src_layout = slice_layout("cast_xs") }),
+    StencilArtifactPlan.compare_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, result_ty = bool8, step_num = 1, dst_layout = slice_layout("compare_dst"), src_layout = slice_layout("compare_xs") }),
+    StencilArtifactPlan.zip_compare_array_artifact(Core.CmpLt, { lhs_ty = i32, rhs_ty = i32, result_ty = bool8, step_num = 1, dst_layout = slice_layout("zip_compare_dst"), lhs_layout = slice_layout("zip_compare_lhs"), rhs_layout = slice_layout("zip_compare_rhs") }),
+    StencilArtifactPlan.gather_array_artifact({ elem_ty = i32, index_ty = i32, step_num = 1, dst_layout = slice_layout("gather_dst"), index_layout = slice_layout("gather_idx") }),
+    StencilArtifactPlan.scatter_array_artifact({ elem_ty = i32, index_ty = i32, conflicts = Stencil.StencilScatterUniqueIndices, step_num = 1, src_layout = slice_layout("scatter_src"), index_layout = slice_layout("scatter_idx") }),
+    StencilArtifactPlan.in_place_map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, step_num = 1, src_layout = slice_layout("in_place_xs") }),
+    StencilArtifactPlan.count_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1, array_layout = slice_layout("count_xs") }),
+    reduce_unary_artifact(slice_layout("reduce_n_xs")),
+    reduce_binary_artifact(slice_layout("reduce_n_lhs"), slice_layout("reduce_n_rhs")),
 }
 
 for _, artifact in ipairs(slice_artifacts) do
@@ -197,9 +197,8 @@ local noalias_entry = bank_entry(noalias_gather)
 assert(pvm.classof(noalias_entry.artifact.realized) == Stencil.StencilRealizedUnrolled, "unrolled MC gather should record unrolled realization")
 assert(noalias_entry.artifact.realized.factor == 3, "unrolled MC gather should record realized factor")
 assert(#noalias_entry.artifact.schedule_rejects == 0, "matching unrolled MC gather should not record schedule rejects")
-assert(src:match("xs%[%(%(i %+ 1%) %* xs_stride%)%]"), "unrolled dynamic view access must parenthesize the lane index")
-assert(src:match("ml_stencil_gather_array_i32_idx_i32_s1_u3%([^%)]*int32_t %*__restrict dst[^%)]*int32_t const %*__restrict src[^%)]*int32_t const %*__restrict idx"), "noalias gather facts must materialize restrict parameters")
-assert(src:match("ml_stencil_gather_array_i32_idx_i32_s1_u2%([^%)]*int32_t %*dst[^%)]*int32_t const %*src[^%)]*int32_t const %*__restrict idx"), "partial noalias facts must restrict only fully disjoint parameters")
+assert(src:match("ml_stencil_gather_array_i32_idx_i32_s1_u3%([^%)]*int32_t %*%s*__restrict dst[^%)]*int32_t const %*%s*__restrict src[^%)]*int32_t const %*%s*__restrict idx"), "noalias gather facts must materialize restrict parameters")
+assert(src:match("ml_stencil_gather_array_i32_idx_i32_s1_u2%([^%)]*int32_t %*dst[^%)]*int32_t const %*src[^%)]*int32_t const %*%s*__restrict idx"), "partial noalias facts must restrict only fully disjoint parameters")
 assert(not src:match("ml_stencil_gather_array_i32_idx_i32_s1_u2%([^%)]*__restrict dst"), "partial noalias must not mark dst restrict while dst/src may alias")
 assert(not src:match("ml_stencil_gather_array_i32_idx_i32_s1_u2%([^%)]*__restrict src"), "partial noalias must not mark src restrict while dst/src may alias")
 assert(src:match("dst = __builtin_assume_aligned%(dst, 16%)"), "known alignment facts must materialize alignment assumptions")

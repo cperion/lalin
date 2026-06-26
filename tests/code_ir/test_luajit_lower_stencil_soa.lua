@@ -166,11 +166,11 @@ local lj_module, facts = Lower.lower_module(module, {
     end,
     stencil_reduce_artifact_for = function(func, vocab, op, reduction, plan, info)
         assert(vocab == "zip_reduce", "expected SoA zip_reduce lowering")
-        local artifact = StencilArtifactPlan.reduce_n_array_artifact(reduction, plan, {
+        local artifact = StencilArtifactPlan.reduce_n_artifact(reduction, plan, {
             tag = "soa_zip",
             inputs = {
-                { name = "lhs", ty = info.lhs_ty, topology = info.lhs_topology },
-                { name = "rhs", ty = info.rhs_ty, topology = info.rhs_topology },
+                { name = "lhs", ty = info.lhs_ty, layout = info.lhs_layout },
+                { name = "rhs", ty = info.rhs_ty, layout = info.rhs_layout },
             },
             expr = StencilArtifactPlan.apply_binary_expr(op, StencilArtifactPlan.input_expr("lhs"), StencilArtifactPlan.input_expr("rhs"), info.mapped_ty, { int_semantics = sem }),
             item_ty = info.mapped_ty,
@@ -190,8 +190,8 @@ assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, "zip_map should
 assert(pvm.classof(lj_module.funcs[2].body) == LJ.LJBodyMachine, "zip_reduce should lower to machine body")
 
 local function assert_soa(access, field_name, component_index)
-    local top = access.topology
-    assert(pvm.classof(top) == Stencil.StencilTopologySoAComponent, access.name .. " should keep SoA topology")
+    local top = access.layout
+    assert(pvm.classof(top) == Stencil.StencilLayoutSoAComponent, access.name .. " should keep SoA layout")
     assert(top.record_ty == record_ty, access.name .. " should keep record type")
     assert(top.field_name == field_name, access.name .. " should keep field name")
     assert(top.component_index == component_index, access.name .. " should keep component index")

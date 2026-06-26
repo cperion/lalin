@@ -23,7 +23,7 @@ local function sorted_keys(t)
     return out
 end
 
-local smoke_opts = { soac_order = 1, input_count = 1 }
+local smoke_opts = { soac_order = 1, input_count = 1, target_bytes = 250000 }
 local cells = InternSet.cells(smoke_opts)
 assert(#cells > 0, "MC intern matrix must not be empty")
 
@@ -32,26 +32,66 @@ assert(default_profile.soac_order == 1, "default MC intern matrix should saturat
 assert(default_profile.input_count == 4, "default MC intern matrix should saturate Apply input count 4")
 assert(default_profile.second_soac_order == 2, "default MC intern matrix should add SOAC order 2")
 assert(default_profile.second_input_count == 4, "default MC intern matrix should saturate the order-2 subset to input count 4")
-assert(default_profile.second_family == "reduce_after_apply", "default MC intern matrix should use the reduce-after-apply order-2 subset")
+assert(default_profile.second_family == "sink_after_apply", "default MC intern matrix should use the sink-after-apply order-2 subset")
 assert(default_profile.target_bytes == 1024 * 1024, "explicit MC intern target should be reported")
 assert(default_profile.cells > #cells, "default targeted profile should be larger than the order-1 smoke matrix")
 
 local covered_vocabs = {}
+local covered_layouts = {}
+local covered_groups = {}
+local covered_producers = {}
 for _, cell in ipairs(cells) do
     assert(type(cell.name) == "string" and cell.name ~= "", "MC intern cell needs a stable name")
     local vocab = Matrix.vocabs[cell.vocab]
     assert(vocab ~= nil, "MC intern cell uses unknown vocab " .. tostring(cell.vocab))
     assert(vocab.status == Matrix.status.supported, "MC intern cell uses unsupported vocab " .. tostring(cell.vocab))
-    local topology = Matrix.topologies[cell.topology]
-    assert(topology ~= nil, "MC intern cell uses unknown topology " .. tostring(cell.topology))
-    assert(topology.status == Matrix.status.supported, "MC intern cell uses unsupported topology " .. tostring(cell.topology))
+    local layout = Matrix.layouts[cell.layout]
+    assert(layout ~= nil, "MC intern cell uses unknown layout " .. tostring(cell.layout))
+    assert(layout.status == Matrix.status.supported, "MC intern cell uses unsupported layout " .. tostring(cell.layout))
     covered_vocabs[cell.vocab] = true
+    covered_layouts[cell.layout] = true
+    covered_groups[cell.group] = true
+    covered_producers[cell.producer_group] = true
 end
 
 for vocab, entry in pairs(Matrix.vocabs) do
     if entry.status == Matrix.status.supported then
         assert(covered_vocabs[vocab], "supported vocab missing from MC intern matrix: " .. vocab)
     end
+end
+
+for layout, entry in pairs(Matrix.layouts) do
+    if entry.status == Matrix.status.supported then
+        assert(covered_layouts[layout], "supported layout missing from MC intern matrix: " .. layout)
+    end
+end
+
+for _, group in ipairs({
+    "contiguous",
+    "view",
+    "slice",
+    "bytespan",
+    "field",
+    "field_view",
+    "field_slice",
+    "soa",
+    "soa_view",
+    "soa_slice",
+    "indexed_read",
+    "indexed_view_read",
+    "indexed_slice_read",
+    "indexed_bytespan_read",
+    "indexed_write",
+    "indexed_view_write",
+    "indexed_slice_write",
+    "indexed_bytespan_write",
+    "scalar_input",
+}) do
+    assert(covered_groups[group], "generated MC intern matrix missing layout group: " .. group)
+end
+
+for _, producer_group in ipairs({ "range1d", "range_nd2", "tiled_nd2", "window_nd1" }) do
+    assert(covered_producers[producer_group], "generated MC intern matrix missing producer group: " .. producer_group)
 end
 
 local artifacts = InternSet.artifacts(smoke_opts)

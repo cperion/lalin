@@ -94,8 +94,8 @@ local function access_named(desc, name)
 end
 
 local function assert_soa(access, field_name, component_index)
-    local top = access.topology
-    assert(tostring(pvm.classof(top)) == 'Class(LalinStencil.StencilTopologySoAComponent)', access.name .. ' should use SoA topology')
+    local top = access.layout
+    assert(tostring(pvm.classof(top)) == 'Class(LalinStencil.StencilLayoutSoAComponent)', access.name .. ' should use SoA layout')
     assert(top.field_name == field_name, access.name .. ' should keep SoA field')
     assert(top.component_index == component_index, access.name .. ' should keep SoA component index')
     assert(tostring(top.record_ty):match('PairSoA'), access.name .. ' should keep logical record type')
@@ -105,7 +105,7 @@ for _, selected in ipairs(artifact.artifacts) do
     local desc = selected.instance.descriptor
     local sink_kind = tostring(pvm.classof(desc.sink)):match('Class%((.-)%)')
     local expr_kind = tostring(pvm.classof(desc.body.expr)):match('Class%((.-)%)')
-    if sink_kind == 'LalinStencil.StencilSinkEmitArray' and expr_kind == 'LalinStencil.StencilApplyBinary' then
+    if sink_kind == 'LalinStencil.StencilSinkStore' and expr_kind == 'LalinStencil.StencilApplyBinary' then
         assert_soa(access_named(desc, 'dst'), 'total', 2)
         assert_soa(access_named(desc, 'lhs'), 'left', 0)
         assert_soa(access_named(desc, 'rhs'), 'right', 1)

@@ -109,11 +109,11 @@ assert(#rejects == 0, "byte span copy rejected: " .. tostring(rejects[1] and rej
 assert(#artifacts == 1, "byte span copy should select one stencil artifact")
 assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, "byte span copy should lower to a stencil machine")
 
-local src_topology = access_named(artifacts[1].instance.descriptor, "src").topology
-assert(pvm.classof(src_topology) == Stencil.StencilTopologyByteSpanDescriptor, "source access should keep byte span topology")
-assert(src_topology.span == span)
-assert(src_topology.data == src.value)
-assert(src_topology.len == n.value)
+local src_layout = access_named(artifacts[1].instance.descriptor, "src").layout
+assert(pvm.classof(src_layout) == Stencil.StencilLayoutByteSpanDescriptor, "source access should keep byte span layout")
+assert(src_layout.span == span)
+assert(src_layout.data == src.value)
+assert(src_layout.len == n.value)
 
 local build, build_err, csrc = StencilBinary.compile(T, artifacts, { stem = "test_luajit_lower_stencil_byte_spans" })
 assert(build ~= nil, tostring(build_err) .. "\n" .. tostring(csrc))

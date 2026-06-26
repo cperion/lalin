@@ -555,18 +555,18 @@ local function selected_label(descriptor)
         if expr_kind == 'LalinStencil.StencilApplyBinary' then return 'zip_reduce' end
         return 'reduce'
     end
-    if sink_kind == 'LalinStencil.StencilSinkEmitArray' then
+    if sink_kind == 'LalinStencil.StencilSinkStore' then
         local mode_kind = class_name(descriptor.sink.mode)
-        if mode_kind == 'LalinStencil.StencilApplyCopy' then
+        if mode_kind == 'LalinStencil.StencilStoreCopy' then
             if tostring(descriptor.sink.mode.semantics):match('StencilCopyMemMove') then return 'copy_memmove' end
             return 'copy'
         end
-        if mode_kind == 'LalinStencil.StencilApplyScatter' then return 'scatter' end
-        if mode_kind == 'LalinStencil.StencilApplyPartition' then return 'partition' end
+        if mode_kind == 'LalinStencil.StencilStoreScatter' then return 'scatter' end
+        if mode_kind == 'LalinStencil.StencilStorePartition' then return 'partition' end
         if expr_kind == 'LalinStencil.StencilApplyInput' then
             local access = access_named(expr.access.name)
-            if access and class_name(access.topology) == 'LalinStencil.StencilTopologyScalar' then return 'fill' end
-            if access and class_name(access.topology) == 'LalinStencil.StencilTopologyIndexed' then return 'gather' end
+            if access and class_name(access.layout) == 'LalinStencil.StencilLayoutScalar' then return 'fill' end
+            if access and class_name(access.layout) == 'LalinStencil.StencilLayoutIndexed' then return 'gather' end
             return 'map'
         end
         if expr_kind == 'LalinStencil.StencilApplyUnary' then

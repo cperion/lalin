@@ -42,7 +42,7 @@ local function reduction(kind, init)
     )
 end
 
-local add2 = Plan.apply_n_array_artifact({
+local add2 = Plan.apply_n_artifact({
     tag = "meta_add2",
     result_ty = i32,
     inputs = {
@@ -151,7 +151,7 @@ assert(#mc.realization.metastencil_covers == 1, "MC realization should preserve 
 assert(mc.realization.metastencil_covers[1].descriptor.id.text == "meta:add_then_sum")
 assert(#mc.mc_bank.entries == 1, "MC selected cover should materialize as one fused artifact")
 local mc_fused_symbol = mc.mc_bank.entries[1].artifact.symbol.text
-assert(Plan.artifact_shape(mc.mc_bank.entries[1].artifact).kind == "reduce_n_array", "MC fused cover should lower to reduce_n_array")
+assert(Plan.artifact_shape(mc.mc_bank.entries[1].artifact).kind == "reduce_n", "MC fused cover should lower to reduce_n")
 assert(mc.symbols[mc_fused_symbol], "MC selected cover should install fused artifact")
 
 local bc = assert(CopyPatchLuaTrace.realize_artifacts({ selection }, { stem = "test_stencil_metastencil_cover_bc" }))
@@ -161,7 +161,7 @@ assert(#bc.metastencil_covers == 1, "BC realization should preserve selected cov
 assert(bc.metastencil_covers[1].descriptor.id.text == "meta:add_then_sum")
 assert(#bc.bc_bank.entries == 1, "BC selected cover should materialize as one fused artifact")
 local bc_fused_symbol = bc.bc_bank.entries[1].artifact.symbol.text
-assert(Plan.artifact_shape(bc.bc_bank.entries[1].artifact).kind == "reduce_n_array", "BC fused cover should lower to reduce_n_array")
+assert(Plan.artifact_shape(bc.bc_bank.entries[1].artifact).kind == "reduce_n", "BC fused cover should lower to reduce_n")
 assert(bc.symbols[bc_fused_symbol], "BC selected cover should install fused artifact")
 
 local x1v = ffi.new("int32_t[5]", { 1, 2, 3, 4, 5 })

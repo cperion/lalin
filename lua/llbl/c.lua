@@ -152,6 +152,12 @@ local C = llbl.dialect "llbl.c" {
         emit = function(n, _, meta) return decl("typedef_struct", { name = c_name_slot(meta.raw.name), fields = product_items(n.fields) }) end,
     },
 
+    g.head. typedef {
+        g.slot. name [g.identity] { channels = { ch.index_name, ch.index_value } },
+        g.slot. type [g.type],
+        emit = function(n, _, meta) return decl("typedef", { name = c_name_slot(meta.raw.name), ty = type_any(n.type) }) end,
+    },
+
     g.head. fn {
         g.slot. name [g.identity] { channels = { ch.index_name, ch.index_value } },
         g.slot. params [g.params],
@@ -434,6 +440,8 @@ local function emit_decl(d, out, ctx)
     if d.kind == "include" then out[#out + 1] = "#include <" .. d.header .. ">"
     elseif d.kind == "define" then out[#out + 1] = "#define " .. d.name .. " " .. tostring(d.value)
     elseif d.kind == "raw" then out[#out + 1] = d.text
+    elseif d.kind == "typedef" then
+        out[#out + 1] = "typedef " .. declarator(d.ty, d.name, ctx) .. ";"
     elseif d.kind == "typedef_struct" then
         out[#out + 1] = "typedef struct " .. d.name .. " {"
         for i = 1, #d.fields do local f = d.fields[i]; out[#out + 1] = "    " .. declarator(f.ty, f.name, ctx) .. ";" end
@@ -601,6 +609,7 @@ format_decl_doc = function(x, f)
     if x.kind == "raw" then return d.text("c.raw_decl(" .. quote(x.text) .. ")") end
     if x.kind == "include" then return d.text("c.include " .. quote(x.header)) end
     if x.kind == "define" then return d.group { head_name("define", x.name), "(", f:format(x.value), ")" } end
+    if x.kind == "typedef" then return d.group { head_name("typedef", x.name), " [", format_type_doc(x.ty, f), "]" } end
     if x.kind == "typedef_struct" then return d.group { head_name("typedef_struct", x.name), " ", product_doc(x.fields, f) } end
     if x.kind == "fn" then
         local head = x.storage == "static inline" and "static_inline_fn" or (x.storage == "static" and "static_fn" or "fn")

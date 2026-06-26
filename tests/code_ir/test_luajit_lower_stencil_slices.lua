@@ -123,11 +123,11 @@ assert(#artifacts == 1, "slice copy should select one stencil artifact")
 assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, "slice copy should lower to a stencil machine")
 
 local src_access = access_named(artifacts[1].instance.descriptor, "src")
-local src_topology = src_access.topology
-assert(pvm.classof(src_topology) == Stencil.StencilTopologySliceDescriptor, "source access should keep slice descriptor topology")
-assert(src_topology.slice == slice)
-assert(src_topology.data == src.value)
-assert(src_topology.len == n.value)
+local src_layout = src_access.layout
+assert(pvm.classof(src_layout) == Stencil.StencilLayoutSliceDescriptor, "source access should keep slice descriptor layout")
+assert(src_layout.slice == slice)
+assert(src_layout.data == src.value)
+assert(src_layout.len == n.value)
 
 local build, build_err, csrc = StencilBinary.compile(T, artifacts, { stem = "test_luajit_lower_stencil_slices" })
 assert(build ~= nil, tostring(build_err) .. "\n" .. tostring(csrc))

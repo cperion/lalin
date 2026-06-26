@@ -388,10 +388,10 @@ local function bind_context(T)
         return nil
     end
 
-    local function pattern_topology(pattern)
+    local function pattern_layout(pattern)
         local cls = pvm.classof(pattern)
-        if pattern == Mem.MemAccessContiguous then return Stencil.StencilTopologyContiguous(1) end
-        if cls == Mem.MemAccessStrided then return Stencil.StencilTopologyContiguous(pattern.stride_elems) end
+        if pattern == Mem.MemAccessContiguous then return Stencil.StencilLayoutContiguous(1) end
+        if cls == Mem.MemAccessStrided then return Stencil.StencilLayoutContiguous(pattern.stride_elems) end
         return nil
     end
 
@@ -414,20 +414,20 @@ local function bind_context(T)
         return nil
     end
 
-    local function lane_topology(ctx, lane)
+    local function lane_layout(ctx, lane)
         local object = ctx.mem_objects and lane and ctx.mem_objects[lane.object.text] or nil
         local base_value = lane_base_value(lane)
         local soa_contract = base_value and ctx.soa_contracts and ctx.func_id and ctx.soa_contracts[ctx.func_id.text .. "\0" .. base_value.text] or nil
-        local function wrap_soa(topology)
-            if soa_contract == nil or topology == nil then return topology end
-            return Stencil.StencilTopologySoAComponent(topology, soa_contract.record_ty, soa_contract.field_name, soa_contract.component_index)
+        local function wrap_soa(layout)
+            if soa_contract == nil or layout == nil then return layout end
+            return Stencil.StencilLayoutSoAComponent(layout, soa_contract.record_ty, soa_contract.field_name, soa_contract.component_index)
         end
         if object ~= nil then
             local provenance = object.provenance
             local pcls = pvm.classof(provenance)
             if object.kind == Mem.MemObjectDerived and pcls == Mem.MemProvProjection and provenance.projection == Mem.MemProjectField then
                 local parent = ctx.mem_objects and ctx.mem_objects[provenance.parent.text] or nil
-                local parent_topology = lane_topology(ctx, {
+                local parent_layout = lane_layout(ctx, {
                     object = provenance.parent,
                     base = lane and lane.base,
                     pattern = lane and lane.pattern,
@@ -435,13 +435,13 @@ local function bind_context(T)
                 })
                 local record_ty = parent and parent.elem_ty or nil
                 local field_name = field_name_from_lane(ctx, lane)
-                if parent_topology ~= nil and record_ty ~= nil and field_name ~= nil then
-                    return wrap_soa(Stencil.StencilTopologyFieldProjection(parent_topology, record_ty, field_name, provenance.byte_offset or 0))
+                if parent_layout ~= nil and record_ty ~= nil and field_name ~= nil then
+                    return wrap_soa(Stencil.StencilLayoutFieldProjection(parent_layout, record_ty, field_name, provenance.byte_offset or 0))
                 end
             end
             if object.kind == Mem.MemObjectView and pcls == Mem.MemProvView then
                 if provenance.stride == nil then return nil end
-                return wrap_soa(Stencil.StencilTopologyViewDescriptor(
+                return wrap_soa(Stencil.StencilLayoutViewDescriptor(
                     provenance.view,
                     provenance.data,
                     extent_len(object.extent) or provenance.len,
@@ -450,27 +450,27 @@ local function bind_context(T)
                 ))
             end
             if object.kind == Mem.MemObjectSlice and pcls == Mem.MemProvSlice then
-                return wrap_soa(Stencil.StencilTopologySliceDescriptor(
+                return wrap_soa(Stencil.StencilLayoutSliceDescriptor(
                     provenance.slice,
                     provenance.data,
                     extent_len(object.extent) or provenance.len
                 ))
             end
             if object.kind == Mem.MemObjectByteSpan and pcls == Mem.MemProvByteSpan then
-                return wrap_soa(Stencil.StencilTopologyByteSpanDescriptor(
+                return wrap_soa(Stencil.StencilLayoutByteSpanDescriptor(
                     provenance.span,
                     provenance.data,
                     extent_len(object.extent) or provenance.len
                 ))
             end
         end
-        return wrap_soa(pattern_topology(lane and lane.pattern))
+        return wrap_soa(pattern_layout(lane and lane.pattern))
     end
 
-    local function topology_data_value(topology)
-        local cls = pvm.classof(topology)
-        if cls == Stencil.StencilTopologySoAComponent or cls == Stencil.StencilTopologyFieldProjection then return topology_data_value(topology.parent) end
-        if cls == Stencil.StencilTopologyViewDescriptor or cls == Stencil.StencilTopologySliceDescriptor or cls == Stencil.StencilTopologyByteSpanDescriptor then return topology.data end
+    local function layout_data_value(layout)
+        local cls = pvm.classof(layout)
+        if cls == Stencil.StencilLayoutSoAComponent or cls == Stencil.StencilLayoutFieldProjection then return layout_data_value(layout.parent) end
+        if cls == Stencil.StencilLayoutViewDescriptor or cls == Stencil.StencilLayoutSliceDescriptor or cls == Stencil.StencilLayoutByteSpanDescriptor then return layout.data end
         return nil
     end
 
@@ -627,17 +627,17 @@ local function bind_context(T)
     end
 
     local function lane_selection_fact(ctx, lane)
-        local topology = lane_topology(ctx, lane)
-        if topology == nil then return nil end
+        local layout = lane_layout(ctx, lane)
+        if layout == nil then return nil end
         local base = lane_base_value(lane)
-        local tcls = pvm.classof(topology)
-        base = topology_data_value(topology) or base
+        local tcls = pvm.classof(layout)
+        base = layout_data_value(layout) or base
         if base == nil then return nil end
         return {
             base = base,
             base_expr = value_id_expr(ctx, base),
             elem_ty = lane.elem_ty,
-            topology = topology,
+            layout = layout,
         }
     end
 
@@ -650,7 +650,7 @@ local function bind_context(T)
             class.src = fact.base
             class.src_expr = fact.base_expr
             class.elem_ty = fact.elem_ty
-            class.src_topology = fact.topology
+            class.src_layout = fact.layout
             class.index_primary = expr_is_primary(ctx, index, graph_loop, loop_fact, bindings)
             if not class.index_primary then
                 local idx = index_lane_for(index, bindings)
@@ -661,7 +661,7 @@ local function bind_context(T)
                             base = idx_fact.base,
                             base_expr = idx_fact.base_expr,
                             elem_ty = idx_fact.elem_ty,
-                            topology = idx_fact.topology,
+                            layout = idx_fact.layout,
                             index_primary = expr_is_primary(ctx, idx.index, graph_loop, loop_fact, bindings),
                         }
                     end
@@ -671,7 +671,7 @@ local function bind_context(T)
             class[prefix .. "_base"] = fact.base
             class[prefix .. "_expr"] = fact.base_expr
             class[prefix .. "_ty"] = fact.elem_ty
-            class[prefix .. "_topology"] = fact.topology
+            class[prefix .. "_layout"] = fact.layout
             class[prefix .. "_index_primary"] = expr_is_primary(ctx, index, graph_loop, loop_fact, bindings)
         end
         return class
@@ -738,7 +738,7 @@ local function bind_context(T)
             dst_elem_ty = store.dst.elem_ty,
             dst = dst_base,
             dst_expr = dst_expr,
-            dst_topology = dst_fact and dst_fact.topology or nil,
+            dst_layout = dst_fact and dst_fact.layout or nil,
             start = loop_fact.counted.start,
             stop = loop_fact.counted.stop,
             start_expr = start_expr,
@@ -761,11 +761,11 @@ local function bind_context(T)
         return { selection = stencil_plan.selection }, nil
     end
 
-    local function dynamic_stride_topology(topology)
-        local cls = pvm.classof(topology)
-        if cls == Stencil.StencilTopologyFieldProjection then return dynamic_stride_topology(topology.parent) end
-        if cls == Stencil.StencilTopologySoAComponent then return dynamic_stride_topology(topology.parent) end
-        if cls == Stencil.StencilTopologyViewDescriptor and topology.stride_const == nil then return topology end
+    local function dynamic_stride_layout(layout)
+        local cls = pvm.classof(layout)
+        if cls == Stencil.StencilLayoutFieldProjection then return dynamic_stride_layout(layout.parent) end
+        if cls == Stencil.StencilLayoutSoAComponent then return dynamic_stride_layout(layout.parent) end
+        if cls == Stencil.StencilLayoutViewDescriptor and layout.stride_const == nil then return layout end
         return nil
     end
 
@@ -774,7 +774,7 @@ local function bind_context(T)
         for i = 1, #(args or {}) do out[i] = args[i] end
         local desc = artifact and artifact.instance and artifact.instance.descriptor or nil
         for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(desc)) do
-            local top = dynamic_stride_topology(access.topology)
+            local top = dynamic_stride_layout(access.layout)
             if top ~= nil then
                 out[#out + 1] = value_id_expr(ctx, top.stride)
             end
@@ -927,7 +927,7 @@ local function bind_context(T)
             result_ty = reduction.ty,
             dst = dst_base,
             dst_expr = value_id_expr(ctx, dst_base),
-            dst_topology = dst_fact and dst_fact.topology or nil,
+            dst_layout = dst_fact and dst_fact.layout or nil,
             start = loop_fact.counted.start,
             stop = loop_fact.counted.stop,
             start_expr = start_expr,
@@ -981,7 +981,7 @@ local function bind_context(T)
             dst_elem_ty = effect.dst.elem_ty,
             dst = dst_base,
             dst_expr = value_id_expr(ctx, dst_base),
-            dst_topology = dst_fact and dst_fact.topology or nil,
+            dst_layout = dst_fact and dst_fact.layout or nil,
             start = loop_fact.counted.start,
             stop = loop_fact.counted.stop,
             start_expr = value_id_expr(ctx, loop_fact.counted.start),
@@ -1010,7 +1010,7 @@ local function bind_context(T)
             dst_elem_ty = effect.dst.elem_ty,
             dst = dst_base,
             dst_expr = value_id_expr(ctx, dst_base),
-            dst_topology = dst_fact and dst_fact.topology or nil,
+            dst_layout = dst_fact and dst_fact.layout or nil,
             start = loop_fact.counted.start,
             stop = loop_fact.counted.stop,
             start_expr = value_id_expr(ctx, loop_fact.counted.start),

@@ -127,38 +127,43 @@ return schema. LalinStencil {
     StencilAccessReduce,
     StencilAccessControlResult,
   },
-  sum. StencilAccessTopology {
-    StencilTopologyScalar { variant_unique, field. value [optional [LalinValue.ValueExpr]], },
-    StencilTopologyContiguous { variant_unique, stride [number], },
-    StencilTopologyIndexed { variant_unique, index_ty [LalinCode.CodeType], stride [number], },
-    StencilTopologyInPlace { variant_unique, stride [number], },
-    StencilTopologyFieldProjection {
+  sum. StencilAccessLayout {
+    StencilLayoutScalar { variant_unique, field. value [optional [LalinValue.ValueExpr]], },
+    StencilLayoutContiguous { variant_unique, stride [number], },
+    StencilLayoutIndexed {
       variant_unique,
-      parent [LalinStencil.StencilAccessTopology],
+      parent [LalinStencil.StencilAccessLayout],
+      index [LalinStencil.StencilAccessRef],
+      index_ty [LalinCode.CodeType],
+      stride [number],
+    },
+    StencilLayoutFieldProjection {
+      variant_unique,
+      parent [LalinStencil.StencilAccessLayout],
       record_ty [LalinCode.CodeType],
       field_name [str],
       field_offset [number],
     },
-    StencilTopologySoAComponent {
+    StencilLayoutSoAComponent {
       variant_unique,
-      parent [LalinStencil.StencilAccessTopology],
+      parent [LalinStencil.StencilAccessLayout],
       record_ty [LalinCode.CodeType],
       field_name [str],
       component_index [number],
     },
-    StencilTopologySliceDescriptor {
+    StencilLayoutSliceDescriptor {
       variant_unique,
       slice [LalinCode.CodeValueId],
       data [LalinCode.CodeValueId],
       len [LalinCode.CodeValueId],
     },
-    StencilTopologyByteSpanDescriptor {
+    StencilLayoutByteSpanDescriptor {
       variant_unique,
       span [LalinCode.CodeValueId],
       data [LalinCode.CodeValueId],
       len [LalinCode.CodeValueId],
     },
-    StencilTopologyViewDescriptor {
+    StencilLayoutViewDescriptor {
       variant_unique,
       view [LalinCode.CodeValueId],
       data [LalinCode.CodeValueId],
@@ -172,7 +177,7 @@ return schema. LalinStencil {
     field. name [str],
     role [LalinStencil.StencilAccessRole],
     ty [LalinCode.CodeType],
-    topology [LalinStencil.StencilAccessTopology],
+    layout [LalinStencil.StencilAccessLayout],
   },
   product. StencilAccessRef { interned, field. name [str], },
   sum. StencilApplyExpr {
@@ -236,14 +241,14 @@ return schema. LalinStencil {
     int_semantics [optional [LalinCode.CodeIntSemantics]],
     float_mode [optional [LalinCode.CodeFloatMode]],
   },
-  sum. StencilApplyMode {
-    StencilApplyElementwise,
-    StencilApplyCopy { variant_unique, semantics [LalinStencil.StencilCopySemantics], },
-    StencilApplyScatter {
+  sum. StencilStoreMode {
+    StencilStoreElementwise,
+    StencilStoreCopy { variant_unique, semantics [LalinStencil.StencilCopySemantics], },
+    StencilStoreScatter {
       variant_unique,
       conflicts [LalinStencil.StencilScatterConflictSemantics],
     },
-    StencilApplyPartition { variant_unique, semantics [LalinStencil.StencilPartitionSemantics], },
+    StencilStorePartition { variant_unique, semantics [LalinStencil.StencilPartitionSemantics], },
   },
   sum. StencilReduceMode {
     StencilReduceFold { variant_unique, reducer [LalinStencil.StencilReducer], },
@@ -470,10 +475,10 @@ return schema. LalinStencil {
     },
   },
   sum. StencilSink {
-    StencilSinkEmitArray {
+    StencilSinkStore {
       variant_unique,
       dst [LalinStencil.StencilAccessRef],
-      mode [LalinStencil.StencilApplyMode],
+      mode [LalinStencil.StencilStoreMode],
     },
     StencilSinkReduce {
       variant_unique,

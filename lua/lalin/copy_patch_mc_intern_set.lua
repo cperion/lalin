@@ -11,23 +11,14 @@ local function bind_context(T)
     local M = {}
 
     local i32 = Code.CodeTyInt(32, Code.CodeSigned)
-    local u8 = Code.CodeTyInt(8, Code.CodeUnsigned)
     local f64 = Code.CodeTyFloat(64)
     local bool8 = Code.CodeTyBool8
-    local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)
     local pair_ty = Code.CodeTyNamed("Demo", "Pair", Ty.TNamed(Ty.TypeRefGlobal("Demo", "Pair")))
     local pair_soa_ty = Code.CodeTyNamed("Demo", "PairSoA", Ty.TNamed(Ty.TypeRefGlobal("Demo", "PairSoA")))
+    local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)
 
     local function iconst(raw)
         return Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt(tostring(raw))))
-    end
-
-    local function u8const(raw)
-        return Value.ValueExprConst(Code.CodeConstLiteral(u8, Core.LitInt(tostring(raw))))
-    end
-
-    local function pred(cmp, ty, value)
-        return Stencil.StencilPredCompareConst(cmp, ty, value)
     end
 
     local function reduction(kind, init)
@@ -39,8 +30,8 @@ local function bind_context(T)
         }
     end
 
-    local function view_topology(name)
-        return Stencil.StencilTopologyViewDescriptor(
+    local function view_layout(name)
+        return Stencil.StencilLayoutViewDescriptor(
             Code.CodeValueId("v:view:" .. name),
             Code.CodeValueId("v:data:" .. name),
             Code.CodeValueId("v:len:" .. name),
@@ -49,76 +40,205 @@ local function bind_context(T)
         )
     end
 
-    local function slice_topology(name)
-        return Stencil.StencilTopologySliceDescriptor(
+    local function slice_layout(name)
+        return Stencil.StencilLayoutSliceDescriptor(
             Code.CodeValueId("v:slice:" .. name),
             Code.CodeValueId("v:data:" .. name),
             Code.CodeValueId("v:len:" .. name)
         )
     end
 
-    local function bytespan_topology(name)
-        return Stencil.StencilTopologyByteSpanDescriptor(
+    local function bytespan_layout(name)
+        return Stencil.StencilLayoutByteSpanDescriptor(
             Code.CodeValueId("v:bytespan:" .. name),
             Code.CodeValueId("v:data:" .. name),
             Code.CodeValueId("v:len:" .. name)
         )
     end
 
-    local function field_topology()
-        return Stencil.StencilTopologyFieldProjection(
-            Stencil.StencilTopologyContiguous(1),
+    local function field_layout(parent)
+        return Stencil.StencilLayoutFieldProjection(
+            parent or Stencil.StencilLayoutContiguous(1),
             pair_ty,
             "right",
             4
         )
     end
 
-    local function soa_component(field_name, component_index)
-        return Stencil.StencilTopologySoAComponent(
-            Stencil.StencilTopologyContiguous(1),
+    local function soa_layout(access_name, parent)
+        local component = tonumber(tostring(access_name):match("(%d+)$")) or 0
+        return Stencil.StencilLayoutSoAComponent(
+            parent or Stencil.StencilLayoutContiguous(1),
             pair_soa_ty,
-            field_name,
-            component_index
+            tostring(access_name),
+            component
         )
     end
 
-    local topology_groups = {
+    local function indexed_layout(access_name, parent)
+        return Stencil.StencilLayoutIndexed(
+            parent or Stencil.StencilLayoutContiguous(1),
+            Stencil.StencilAccessRef("idx_" .. tostring(access_name)),
+            i32,
+            1
+        )
+    end
+
+    local layout_groups = {
         contiguous = {
-            topology = "StencilTopologyContiguous",
-            top = function() return nil end,
+            layout = "StencilLayoutContiguous",
+            access_layout = function() return nil end,
         },
         view = {
-            topology = "StencilTopologyViewDescriptor",
-            top = view_topology,
+            layout = "StencilLayoutViewDescriptor",
+            access_layout = view_layout,
         },
         slice = {
-            topology = "StencilTopologySliceDescriptor",
-            top = slice_topology,
+            layout = "StencilLayoutSliceDescriptor",
+            access_layout = slice_layout,
+        },
+        bytespan = {
+            layout = "StencilLayoutByteSpanDescriptor",
+            access_layout = bytespan_layout,
+        },
+        field = {
+            layout = "StencilLayoutFieldProjection",
+            access_layout = function() return field_layout() end,
+        },
+        field_view = {
+            layout = "StencilLayoutFieldProjection",
+            access_layout = function(name) return field_layout(view_layout(name)) end,
+        },
+        field_slice = {
+            layout = "StencilLayoutFieldProjection",
+            access_layout = function(name) return field_layout(slice_layout(name)) end,
+        },
+        soa = {
+            layout = "StencilLayoutSoAComponent",
+            access_layout = soa_layout,
+        },
+        soa_view = {
+            layout = "StencilLayoutSoAComponent",
+            access_layout = function(name) return soa_layout(name, view_layout(name)) end,
+        },
+        soa_slice = {
+            layout = "StencilLayoutSoAComponent",
+            access_layout = function(name) return soa_layout(name, slice_layout(name)) end,
+        },
+        indexed_read = {
+            layout = "StencilLayoutIndexed",
+            dst_layout = function() return nil end,
+            input_layout = indexed_layout,
+            extra_inputs = function(input_count)
+                local out = {}
+                for i = 1, input_count do
+                    local name = "idx_x" .. tostring(i)
+                    out[#out + 1] = { name = name, ty = i32, layout = nil }
+                end
+                return out
+            end,
+        },
+        indexed_view_read = {
+            layout = "StencilLayoutIndexed",
+            dst_layout = function() return nil end,
+            input_layout = function(name) return indexed_layout(name, view_layout(name)) end,
+            extra_inputs = function(input_count)
+                local out = {}
+                for i = 1, input_count do
+                    local name = "idx_x" .. tostring(i)
+                    out[#out + 1] = { name = name, ty = i32, layout = nil }
+                end
+                return out
+            end,
+        },
+        indexed_slice_read = {
+            layout = "StencilLayoutIndexed",
+            dst_layout = function() return nil end,
+            input_layout = function(name) return indexed_layout(name, slice_layout(name)) end,
+            extra_inputs = function(input_count)
+                local out = {}
+                for i = 1, input_count do
+                    local name = "idx_x" .. tostring(i)
+                    out[#out + 1] = { name = name, ty = i32, layout = nil }
+                end
+                return out
+            end,
+        },
+        indexed_bytespan_read = {
+            layout = "StencilLayoutIndexed",
+            dst_layout = function() return nil end,
+            input_layout = function(name) return indexed_layout(name, bytespan_layout(name)) end,
+            extra_inputs = function(input_count)
+                local out = {}
+                for i = 1, input_count do
+                    local name = "idx_x" .. tostring(i)
+                    out[#out + 1] = { name = name, ty = i32, layout = nil }
+                end
+                return out
+            end,
+        },
+        indexed_write = {
+            layout = "StencilLayoutIndexed",
+            supports = function(kind) return kind == "apply_n" or kind == "scan_n" end,
+            dst_layout = function() return indexed_layout("dst") end,
+            input_layout = function() return nil end,
+            extra_inputs = function()
+                return { { name = "idx_dst", ty = i32, layout = nil } }
+            end,
+        },
+        indexed_view_write = {
+            layout = "StencilLayoutIndexed",
+            supports = function(kind) return kind == "apply_n" or kind == "scan_n" end,
+            dst_layout = function() return indexed_layout("dst", view_layout("dst")) end,
+            input_layout = function() return nil end,
+            extra_inputs = function()
+                return { { name = "idx_dst", ty = i32, layout = nil } }
+            end,
+        },
+        indexed_slice_write = {
+            layout = "StencilLayoutIndexed",
+            supports = function(kind) return kind == "apply_n" or kind == "scan_n" end,
+            dst_layout = function() return indexed_layout("dst", slice_layout("dst")) end,
+            input_layout = function() return nil end,
+            extra_inputs = function()
+                return { { name = "idx_dst", ty = i32, layout = nil } }
+            end,
+        },
+        indexed_bytespan_write = {
+            layout = "StencilLayoutIndexed",
+            supports = function(kind) return kind == "apply_n" or kind == "scan_n" end,
+            dst_layout = function() return indexed_layout("dst", bytespan_layout("dst")) end,
+            input_layout = function() return nil end,
+            extra_inputs = function()
+                return { { name = "idx_dst", ty = i32, layout = nil } }
+            end,
+        },
+        scalar_input = {
+            layout = "StencilLayoutScalar",
+            dst_layout = function() return nil end,
+            input_layout = function() return Stencil.StencilLayoutScalar(nil) end,
         },
     }
-    local topology_group_order = { "contiguous", "view", "slice" }
-
-    local base_rows = {
-        { kind = "reduce", vocab = "StencilReduce" },
-        { kind = "map", vocab = "StencilApply" },
-        { kind = "zip_map", vocab = "StencilApply" },
-        { kind = "scan", vocab = "StencilScan" },
-        { kind = "copy", vocab = "StencilApply" },
-        { kind = "copy_memmove", vocab = "StencilApply" },
-        { kind = "fill", vocab = "StencilApply" },
-        { kind = "find", vocab = "StencilReduce" },
-        { kind = "partition", vocab = "StencilApply" },
-        { kind = "cast", vocab = "StencilApply" },
-        { kind = "compare", vocab = "StencilApply" },
-        { kind = "zip_compare", vocab = "StencilApply" },
-        { kind = "select", vocab = "StencilApply" },
-        { kind = "gather", vocab = "StencilApply" },
-        { kind = "scatter", vocab = "StencilApply" },
-        { kind = "in_place_map", vocab = "StencilApply" },
-        { kind = "count", vocab = "StencilReduce" },
-        { kind = "reduce_n_unary", vocab = "StencilReduce", derived = "reduce_n" },
-        { kind = "reduce_n_binary", vocab = "StencilReduce", derived = "reduce_n" },
+    local layout_group_order = {
+        "contiguous",
+        "view",
+        "slice",
+        "bytespan",
+        "field",
+        "field_view",
+        "field_slice",
+        "soa",
+        "soa_view",
+        "soa_slice",
+        "indexed_read",
+        "indexed_view_read",
+        "indexed_slice_read",
+        "indexed_bytespan_read",
+        "indexed_write",
+        "indexed_view_write",
+        "indexed_slice_write",
+        "indexed_bytespan_write",
+        "scalar_input",
     }
 
     local schedule_variants = {
@@ -131,25 +251,37 @@ local function bind_context(T)
         },
     }
 
-    local extra_cells = {
-        { name = "byte_span.copy.u8", vocab = "StencilApply", topology = "StencilTopologyByteSpanDescriptor", kind = "byte_copy", derived = "copy" },
-        { name = "byte_span.copy_memmove.u8", vocab = "StencilApply", topology = "StencilTopologyByteSpanDescriptor", kind = "byte_copy_memmove", derived = "copy_memmove" },
-        { name = "byte_span.fill.u8", vocab = "StencilApply", topology = "StencilTopologyByteSpanDescriptor", kind = "byte_fill", derived = "fill" },
-        { name = "byte_span.find.u8", vocab = "StencilReduce", topology = "StencilTopologyByteSpanDescriptor", kind = "byte_find", derived = "find" },
-        { name = "byte_span.compare.u8", vocab = "StencilApply", topology = "StencilTopologyByteSpanDescriptor", kind = "byte_compare", derived = "compare" },
-        { name = "byte_span.count.u8", vocab = "StencilReduce", topology = "StencilTopologyByteSpanDescriptor", kind = "byte_count", derived = "count" },
-        { name = "view.src_copy.i32.scalar", vocab = "StencilApply", topology = "StencilTopologyViewDescriptor", kind = "view_src_copy", derived = "copy" },
-        { name = "view.src_copy.i32.v4", vocab = "StencilApply", topology = "StencilTopologyViewDescriptor", kind = "view_src_copy_v4", derived = "copy" },
-        { name = "field.reduce.i32", vocab = "StencilReduce", topology = "StencilTopologyFieldProjection", kind = "field_reduce", derived = "reduce" },
-        { name = "field.map.i32", vocab = "StencilApply", topology = "StencilTopologyFieldProjection", kind = "field_map", derived = "map" },
-        { name = "field.find.i32", vocab = "StencilReduce", topology = "StencilTopologyFieldProjection", kind = "field_find", derived = "find" },
-        { name = "field.compare.i32", vocab = "StencilApply", topology = "StencilTopologyFieldProjection", kind = "field_compare", derived = "compare" },
-        { name = "field.fill.i32", vocab = "StencilApply", topology = "StencilTopologyFieldProjection", kind = "field_fill", derived = "fill" },
-        { name = "soa.zip_map.i32", vocab = "StencilApply", topology = "StencilTopologySoAComponent", kind = "soa_zip_map", derived = "zip_map" },
-        { name = "soa.reduce_n.binary.i32", vocab = "StencilReduce", topology = "StencilTopologySoAComponent", kind = "soa_reduce_n_binary", derived = "reduce_n" },
-        { name = "soa.zip_compare.i32", vocab = "StencilApply", topology = "StencilTopologySoAComponent", kind = "soa_zip_compare", derived = "zip_compare" },
-        { name = "soa.partition.i32", vocab = "StencilApply", topology = "StencilTopologySoAComponent", kind = "soa_partition", derived = "partition" },
+    local function producer_axis(step)
+        return Stencil.StencilProducerAxis(Code.CodeTyIndex, nil, nil, step or 1, Stencil.StencilProducerForward)
+    end
+
+    local producer_groups = {
+        range1d = {
+            name = "range1d",
+            producer = nil,
+        },
+        range_nd2 = {
+            name = "range_nd2",
+            producer = function()
+                return Stencil.StencilProducer(nil, Stencil.StencilProduceRangeND({ producer_axis(1), producer_axis(1) }))
+            end,
+        },
+        tiled_nd2 = {
+            name = "tiled_nd2",
+            producer = function()
+                return Stencil.StencilProducer(nil, Stencil.StencilProduceTiledND({ producer_axis(1), producer_axis(1) }, { 2, 2 }))
+            end,
+        },
+        window_nd1 = {
+            name = "window_nd1",
+            producer = function()
+                return Stencil.StencilProducer(nil, Stencil.StencilProduceWindowND({ producer_axis(1) }, {
+                    Stencil.StencilWindowAxis(1, 1, Stencil.StencilWindowBoundaryClamp),
+                }))
+            end,
+        },
     }
+    local producer_group_order = { "range1d", "range_nd2", "tiled_nd2", "window_nd1" }
 
     local unary_ops = {
         { name = "identity", op = Stencil.StencilUnaryIdentity },
@@ -193,7 +325,7 @@ local function bind_context(T)
     local default_input_count = 4
     local default_second_soac_order = 2
     local default_second_input_count = 4
-    local default_second_family = "reduce_after_apply"
+    local default_second_family = "sink_after_apply"
 
     local function target_bytes(opts)
         opts = opts or {}
@@ -212,8 +344,9 @@ local function bind_context(T)
         if os.getenv("LALIN_MC_BANK_ESTIMATED_BYTES_PER_CELL") ~= nil then return estimated_bytes_per_cell() end
         local input_count = tonumber(cell and cell.input_count) or 1
         local order = tonumber(cell and cell.order) or 1
-        local base = cell and cell.kind == "reduce_n" and 145 or 125
-        return base + math.max(0, input_count - 1) * 30 + math.max(0, order - 1) * 45
+        local base = cell and (cell.kind == "reduce_n" or cell.kind == "scan_n") and 145 or 125
+        local scalar_estimate = base + math.max(0, input_count - 1) * 30 + math.max(0, order - 1) * 45
+        return math.ceil(scalar_estimate * 1.5)
     end
 
     local function cell_estimated_bytes(cell)
@@ -232,23 +365,8 @@ local function bind_context(T)
         local derived = Matrix.derived_plans[cell.derived or cell.kind]
         assert(derived and derived.status == Matrix.status.supported, "copy_patch_mc_intern_set: unsupported derived plan cell " .. tostring(cell.derived or cell.kind))
         assert(derived.basis == cell.vocab, "copy_patch_mc_intern_set: derived plan " .. tostring(cell.derived or cell.kind) .. " belongs to " .. tostring(derived.basis) .. ", not " .. tostring(cell.vocab))
-        local topology = Matrix.topologies[cell.topology]
-        assert(topology and topology.status == Matrix.status.supported, "copy_patch_mc_intern_set: unsupported topology cell " .. tostring(cell.topology))
-    end
-
-    local function base_cell(row, group_name, schedule_variant)
-        local group = assert(topology_groups[group_name], group_name)
-        local cell = {
-            name = group_name .. "." .. row.kind .. ".i32." .. schedule_variant.name,
-            vocab = row.vocab,
-            topology = group.topology,
-            kind = row.kind,
-            derived = row.derived,
-            group = group_name,
-            schedule = schedule_variant.schedule and schedule_variant.schedule() or nil,
-        }
-        check_cell(cell)
-        return cell
+        local layout = Matrix.layouts[cell.layout]
+        assert(layout and layout.status == Matrix.status.supported, "copy_patch_mc_intern_set: unsupported layout cell " .. tostring(cell.layout))
     end
 
     local function requested_soac_order(opts)
@@ -376,15 +494,23 @@ local function bind_context(T)
         return {}
     end
 
-    local function soac_cell(kind, group_name, schedule_variant, spec, serial)
-        local group = assert(topology_groups[group_name], group_name)
+    local function soac_vocab(kind)
+        if kind == "reduce_n" then return "StencilReduce" end
+        if kind == "scan_n" then return "StencilScan" end
+        return "StencilApply"
+    end
+
+    local function soac_cell(kind, group_name, producer_group_name, schedule_variant, spec, serial)
+        local group = assert(layout_groups[group_name], group_name)
+        local producer_group = assert(producer_groups[producer_group_name], producer_group_name)
         local cell = {
-            name = group_name .. "." .. kind .. ".o" .. tostring(spec.order) .. ".in" .. tostring(spec.input_count) .. ".s" .. tostring(spec.apply_stage_count) .. "." .. tostring(spec.name) .. "." .. schedule_variant.name .. "." .. tostring(serial),
-            vocab = kind == "reduce_n" and "StencilReduce" or "StencilApply",
-            topology = group.topology,
+            name = producer_group.name .. "." .. group_name .. "." .. kind .. ".o" .. tostring(spec.order) .. ".in" .. tostring(spec.input_count) .. ".s" .. tostring(spec.apply_stage_count) .. "." .. tostring(spec.name) .. "." .. schedule_variant.name .. "." .. tostring(serial),
+            vocab = soac_vocab(kind),
+            layout = group.layout,
             kind = kind,
             derived = kind,
             group = group_name,
+            producer_group = producer_group_name,
             schedule = schedule_variant.schedule and schedule_variant.schedule() or nil,
             input_count = spec.input_count,
             order = spec.order,
@@ -530,46 +656,66 @@ local function bind_context(T)
     end
 
     local function append_soac_spec(out, kind, spec, serial, target, estimated_total)
-        for _, group_name in ipairs(topology_group_order) do
-            for _, schedule_variant in ipairs(schedule_variants) do
-                local estimated = estimated_bytes_for_soac({ kind = kind, input_count = spec.input_count, order = spec.order })
-                if target ~= nil and estimated_total + estimated > target then
-                    return serial, estimated_total, false
+        for _, group_name in ipairs(layout_group_order) do
+            local group = assert(layout_groups[group_name], group_name)
+            if group.supports == nil or group.supports(kind, spec) then
+                for _, producer_group_name in ipairs(producer_group_order) do
+                    for _, schedule_variant in ipairs(schedule_variants) do
+                        local estimated = estimated_bytes_for_soac({ kind = kind, input_count = spec.input_count, order = spec.order })
+                        if target ~= nil and estimated_total + estimated > target then
+                            return serial, estimated_total, false
+                        end
+                        serial = serial + 1
+                        out[#out + 1] = soac_cell(kind, group_name, producer_group_name, schedule_variant, spec, serial)
+                        estimated_total = estimated_total + estimated
+                    end
                 end
-                serial = serial + 1
-                out[#out + 1] = soac_cell(kind, group_name, schedule_variant, spec, serial)
-                estimated_total = estimated_total + estimated
             end
         end
         return serial, estimated_total, true
     end
 
+    local function active_layout_count(kind, spec)
+        local count = 0
+        for _, group_name in ipairs(layout_group_order) do
+            local group = assert(layout_groups[group_name], group_name)
+            if group.supports == nil or group.supports(kind, spec) then count = count + #producer_group_order end
+        end
+        return count
+    end
+
     local function append_soac_order_stream(out, input_count, order, serial, target, estimated_total)
         estimated_total = estimated_total or cells_estimated_bytes(out)
         local keep_going = true
+        stream_stage_specs(input_count, order - 1, function(spec)
+            if same_ty(spec.result_ty, i32) then
+                spec.order = order
+                serial, estimated_total, keep_going = append_soac_spec(out, "reduce_n", spec, serial, target, estimated_total)
+                if keep_going then
+                    serial, estimated_total, keep_going = append_soac_spec(out, "scan_n", spec, serial, target, estimated_total)
+                end
+            end
+            return keep_going
+        end)
+        if keep_going == false then return serial, estimated_total, false end
         stream_stage_specs(input_count, order, function(spec)
             spec.order = order
             serial, estimated_total, keep_going = append_soac_spec(out, "apply_n", spec, serial, target, estimated_total)
             return keep_going
         end)
-        if keep_going == false then return serial, estimated_total, false end
-        stream_stage_specs(input_count, order - 1, function(spec)
-            if same_ty(spec.result_ty, i32) then
-                spec.order = order
-                serial, estimated_total, keep_going = append_soac_spec(out, "reduce_n", spec, serial, target, estimated_total)
-            end
-            return keep_going
-        end)
         return serial, estimated_total, keep_going
     end
 
-    local function append_reduce_after_apply_stream(out, input_count, serial, target, estimated_total)
+    local function append_sink_after_apply_stream(out, input_count, serial, target, estimated_total)
         estimated_total = estimated_total or cells_estimated_bytes(out)
         local keep_going = true
         stream_stage_specs(input_count, 1, function(spec)
             if same_ty(spec.result_ty, i32) then
                 spec.order = default_second_soac_order
                 serial, estimated_total, keep_going = append_soac_spec(out, "reduce_n", spec, serial, target, estimated_total)
+                if keep_going then
+                    serial, estimated_total, keep_going = append_soac_spec(out, "scan_n", spec, serial, target, estimated_total)
+                end
             end
             return keep_going
         end)
@@ -607,7 +753,7 @@ local function bind_context(T)
             if keep_going == false then return end
         end
         for input_count = 1, default_second_input_count do
-            serial, estimated_total, keep_going = append_reduce_after_apply_stream(out, input_count, serial, target_limit, estimated_total)
+            serial, estimated_total, keep_going = append_sink_after_apply_stream(out, input_count, serial, target_limit, estimated_total)
             if keep_going == false then return end
         end
     end
@@ -631,17 +777,6 @@ local function bind_context(T)
     function M.cells(opts)
         opts = opts or {}
         local out = {}
-        for _, group_name in ipairs(topology_group_order) do
-            for _, row in ipairs(base_rows) do
-                for _, schedule_variant in ipairs(schedule_variants) do
-                    out[#out + 1] = base_cell(row, group_name, schedule_variant)
-                end
-            end
-        end
-        for _, cell in ipairs(extra_cells) do
-            check_cell(cell)
-            out[#out + 1] = cell
-        end
         if explicit_rectangular_shape(opts) then
             append_soac_cells(out, opts)
         else
@@ -661,25 +796,30 @@ local function bind_context(T)
         for order = 1, max_order do
             for input_count = 1, max_input_count do
                 local keep_going = true
-                stream_stage_specs(input_count, order, function(spec)
-                    spec.order = order
-                    local per_cell = estimated_bytes_for_soac({ kind = "apply_n", input_count = spec.input_count, order = spec.order })
-                    local total = per_cell * #topology_group_order * #schedule_variants
-                    if target_limit ~= nil and estimated + total > target_limit then keep_going = false; return false end
-                    cells = cells + #topology_group_order * #schedule_variants
-                    estimated = estimated + total
-                    return true
-                end)
-                if keep_going == false then return cells, estimated end
                 stream_stage_specs(input_count, order - 1, function(spec)
                     if same_ty(spec.result_ty, i32) then
                         spec.order = order
                         local per_cell = estimated_bytes_for_soac({ kind = "reduce_n", input_count = spec.input_count, order = spec.order })
-                        local total = per_cell * #topology_group_order * #schedule_variants
+                        local total = per_cell * active_layout_count("reduce_n", spec) * #schedule_variants
                         if target_limit ~= nil and estimated + total > target_limit then keep_going = false; return false end
-                        cells = cells + #topology_group_order * #schedule_variants
+                        cells = cells + active_layout_count("reduce_n", spec) * #schedule_variants
+                        estimated = estimated + total
+                        per_cell = estimated_bytes_for_soac({ kind = "scan_n", input_count = spec.input_count, order = spec.order })
+                        total = per_cell * active_layout_count("scan_n", spec) * #schedule_variants
+                        if target_limit ~= nil and estimated + total > target_limit then keep_going = false; return false end
+                        cells = cells + active_layout_count("scan_n", spec) * #schedule_variants
                         estimated = estimated + total
                     end
+                    return true
+                end)
+                if keep_going == false then return cells, estimated end
+                stream_stage_specs(input_count, order, function(spec)
+                    spec.order = order
+                    local per_cell = estimated_bytes_for_soac({ kind = "apply_n", input_count = spec.input_count, order = spec.order })
+                    local total = per_cell * active_layout_count("apply_n", spec) * #schedule_variants
+                    if target_limit ~= nil and estimated + total > target_limit then keep_going = false; return false end
+                    cells = cells + active_layout_count("apply_n", spec) * #schedule_variants
+                    estimated = estimated + total
                     return true
                 end)
                 if keep_going == false then return cells, estimated end
@@ -690,39 +830,49 @@ local function bind_context(T)
 
     local function profile_soac_order_stream(input_count, order, target_limit, cells, estimated)
         local keep_going = true
-        stream_stage_specs(input_count, order, function(spec)
-            spec.order = order
-            local per_cell = estimated_bytes_for_soac({ kind = "apply_n", input_count = spec.input_count, order = spec.order })
-            local total = per_cell * #topology_group_order * #schedule_variants
-            if target_limit ~= nil and estimated + total > target_limit then keep_going = false; return false end
-            cells = cells + #topology_group_order * #schedule_variants
-            estimated = estimated + total
-            return true
-        end)
-        if keep_going == false then return cells, estimated, false end
         stream_stage_specs(input_count, order - 1, function(spec)
             if same_ty(spec.result_ty, i32) then
                 spec.order = order
                 local per_cell = estimated_bytes_for_soac({ kind = "reduce_n", input_count = spec.input_count, order = spec.order })
-                local total = per_cell * #topology_group_order * #schedule_variants
+                local total = per_cell * active_layout_count("reduce_n", spec) * #schedule_variants
                 if target_limit ~= nil and estimated + total > target_limit then keep_going = false; return false end
-                cells = cells + #topology_group_order * #schedule_variants
+                cells = cells + active_layout_count("reduce_n", spec) * #schedule_variants
+                estimated = estimated + total
+                per_cell = estimated_bytes_for_soac({ kind = "scan_n", input_count = spec.input_count, order = spec.order })
+                total = per_cell * active_layout_count("scan_n", spec) * #schedule_variants
+                if target_limit ~= nil and estimated + total > target_limit then keep_going = false; return false end
+                cells = cells + active_layout_count("scan_n", spec) * #schedule_variants
                 estimated = estimated + total
             end
+            return true
+        end)
+        if keep_going == false then return cells, estimated, false end
+        stream_stage_specs(input_count, order, function(spec)
+            spec.order = order
+            local per_cell = estimated_bytes_for_soac({ kind = "apply_n", input_count = spec.input_count, order = spec.order })
+            local total = per_cell * active_layout_count("apply_n", spec) * #schedule_variants
+            if target_limit ~= nil and estimated + total > target_limit then keep_going = false; return false end
+            cells = cells + active_layout_count("apply_n", spec) * #schedule_variants
+            estimated = estimated + total
             return true
         end)
         return cells, estimated, keep_going
     end
 
-    local function profile_reduce_after_apply_stream(input_count, target_limit, cells, estimated)
+    local function profile_sink_after_apply_stream(input_count, target_limit, cells, estimated)
         local keep_going = true
         stream_stage_specs(input_count, 1, function(spec)
             if same_ty(spec.result_ty, i32) then
                 spec.order = default_second_soac_order
                 local per_cell = estimated_bytes_for_soac({ kind = "reduce_n", input_count = spec.input_count, order = spec.order })
-                local total = per_cell * #topology_group_order * #schedule_variants
+                local total = per_cell * active_layout_count("reduce_n", spec) * #schedule_variants
                 if target_limit ~= nil and estimated + total > target_limit then keep_going = false; return false end
-                cells = cells + #topology_group_order * #schedule_variants
+                cells = cells + active_layout_count("reduce_n", spec) * #schedule_variants
+                estimated = estimated + total
+                per_cell = estimated_bytes_for_soac({ kind = "scan_n", input_count = spec.input_count, order = spec.order })
+                total = per_cell * active_layout_count("scan_n", spec) * #schedule_variants
+                if target_limit ~= nil and estimated + total > target_limit then keep_going = false; return false end
+                cells = cells + active_layout_count("scan_n", spec) * #schedule_variants
                 estimated = estimated + total
             end
             return true
@@ -739,7 +889,7 @@ local function bind_context(T)
             if keep_going == false then return cells, estimated end
         end
         for input_count = 1, default_second_input_count do
-            cells, estimated, keep_going = profile_reduce_after_apply_stream(input_count, target_limit, cells, estimated)
+            cells, estimated, keep_going = profile_sink_after_apply_stream(input_count, target_limit, cells, estimated)
             if keep_going == false then return cells, estimated end
         end
         return cells, estimated
@@ -747,9 +897,8 @@ local function bind_context(T)
 
     function M.bank_profile(opts)
         opts = opts or {}
-        local cells = #topology_group_order * #base_rows * #schedule_variants + #extra_cells
-        local estimated = #topology_group_order * #base_rows * #schedule_variants * estimated_bytes_per_cell()
-        for _, cell in ipairs(extra_cells) do estimated = estimated + cell_estimated_bytes(cell) end
+        local cells = 0
+        local estimated = 0
         if explicit_rectangular_shape(opts) then
             cells, estimated = profile_soac_cells(opts, cells, estimated)
         else
@@ -774,120 +923,59 @@ local function bind_context(T)
         return info
     end
 
-    local function base_top(cell, name)
-        local group = assert(topology_groups[cell.group], cell.group)
-        return group.top(name)
+    local function with_producer(cell, info)
+        info = with_schedule(cell, info)
+        local producer_group = assert(producer_groups[cell.producer_group or "range1d"], cell.producer_group or "range1d")
+        if producer_group.producer ~= nil then info.producer = producer_group.producer() end
+        return info
+    end
+
+    local function base_layout(cell, name)
+        local group = assert(layout_groups[cell.group], cell.group)
+        return group.access_layout and group.access_layout(name) or nil
+    end
+
+    local function input_layout(cell, name)
+        local group = assert(layout_groups[cell.group], cell.group)
+        if group.input_layout ~= nil then return group.input_layout(name) end
+        return base_layout(cell, name)
+    end
+
+    local function dst_layout(cell)
+        local group = assert(layout_groups[cell.group], cell.group)
+        if group.dst_layout ~= nil then return group.dst_layout() end
+        return base_layout(cell, "dst")
+    end
+
+    local function extra_inputs(cell, input_count)
+        local group = assert(layout_groups[cell.group], cell.group)
+        if group.extra_inputs == nil then return {} end
+        return group.extra_inputs(input_count) or {}
+    end
+
+    local function append_extra_inputs(inputs, cell, input_count)
+        local extras = extra_inputs(cell, input_count)
+        for i = 1, #extras do inputs[#inputs + 1] = extras[i] end
+        return inputs
     end
 
     local builders = {}
-
-    function builders.reduce(cell)
-        return Plan.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, with_schedule(cell, { elem_ty = i32, result_ty = i32, step_num = 1, array_topology = base_top(cell, "reduce_xs") }))
-    end
-
-    function builders.map(cell)
-        return Plan.map_array_artifact(Stencil.StencilUnaryNeg, with_schedule(cell, { elem_ty = i32, result_ty = i32, step_num = 1, dst_topology = base_top(cell, "map_dst"), src_topology = base_top(cell, "map_xs") }))
-    end
-
-    function builders.zip_map(cell)
-        return Plan.zip_map_array_artifact(Stencil.StencilBinaryAdd, with_schedule(cell, { lhs_ty = i32, rhs_ty = i32, result_ty = i32, step_num = 1, dst_topology = base_top(cell, "zip_map_dst"), lhs_topology = base_top(cell, "zip_map_lhs"), rhs_topology = base_top(cell, "zip_map_rhs") }))
-    end
-
-    function builders.scan(cell)
-        return Plan.scan_array_artifact(reduction(Value.ReductionAdd, 0), nil, with_schedule(cell, { elem_ty = i32, result_ty = i32, step_num = 1, dst_topology = base_top(cell, "scan_dst"), array_topology = base_top(cell, "scan_xs") }))
-    end
-
-    function builders.copy(cell)
-        return Plan.copy_array_artifact(with_schedule(cell, { elem_ty = i32, step_num = 1, dst_topology = base_top(cell, "copy_dst"), src_topology = base_top(cell, "copy_src") }))
-    end
-
-    function builders.copy_memmove(cell)
-        return Plan.copy_array_artifact(with_schedule(cell, { elem_ty = i32, semantics = Stencil.StencilCopyMemMove, step_num = 1, dst_topology = base_top(cell, "copy_move_dst"), src_topology = base_top(cell, "copy_move_src") }))
-    end
-
-    function builders.fill(cell)
-        return Plan.fill_array_artifact(with_schedule(cell, { elem_ty = i32, value = iconst(7), step_num = 1, dst_topology = base_top(cell, "fill_dst") }))
-    end
-
-    function builders.find(cell)
-        return Plan.find_array_artifact(pred(Core.CmpEq, i32, iconst(5)), with_schedule(cell, { elem_ty = i32, step_num = 1, array_topology = base_top(cell, "find_xs") }))
-    end
-
-    function builders.partition(cell)
-        return Plan.partition_array_artifact(pred(Core.CmpGt, i32, iconst(0)), with_schedule(cell, { elem_ty = i32, step_num = 1, dst_topology = base_top(cell, "partition_dst"), array_topology = base_top(cell, "partition_xs") }))
-    end
-
-    function builders.cast(cell)
-        return Plan.cast_array_artifact(Core.MachineCastSToF, with_schedule(cell, { src_ty = i32, dst_ty = f64, step_num = 1, dst_topology = base_top(cell, "cast_dst"), src_topology = base_top(cell, "cast_xs") }))
-    end
-
-    function builders.compare(cell)
-        return Plan.compare_array_artifact(pred(Core.CmpGt, i32, iconst(0)), with_schedule(cell, { elem_ty = i32, result_ty = bool8, step_num = 1, dst_topology = base_top(cell, "compare_dst"), src_topology = base_top(cell, "compare_xs") }))
-    end
-
-    function builders.zip_compare(cell)
-        return Plan.zip_compare_array_artifact(Core.CmpLt, with_schedule(cell, { lhs_ty = i32, rhs_ty = i32, result_ty = bool8, step_num = 1, dst_topology = base_top(cell, "zip_compare_dst"), lhs_topology = base_top(cell, "zip_compare_lhs"), rhs_topology = base_top(cell, "zip_compare_rhs") }))
-    end
-
-    function builders.select(cell)
-        return Plan.select_array_artifact(Stencil.StencilPredNonZero, with_schedule(cell, { cond_ty = bool8, elem_ty = i32, result_ty = i32, step_num = 1, dst_topology = base_top(cell, "select_dst"), cond_topology = base_top(cell, "select_cond"), then_topology = base_top(cell, "select_then"), else_topology = base_top(cell, "select_else") }))
-    end
-
-    function builders.gather(cell)
-        return Plan.gather_array_artifact(with_schedule(cell, { elem_ty = i32, index_ty = i32, step_num = 1, dst_topology = base_top(cell, "gather_dst"), index_topology = base_top(cell, "gather_idx") }))
-    end
-
-    function builders.scatter(cell)
-        return Plan.scatter_array_artifact(with_schedule(cell, { elem_ty = i32, index_ty = i32, conflicts = Stencil.StencilScatterUniqueIndices, step_num = 1, src_topology = base_top(cell, "scatter_src"), index_topology = base_top(cell, "scatter_idx") }))
-    end
-
-    function builders.in_place_map(cell)
-        return Plan.in_place_map_array_artifact(Stencil.StencilUnaryNeg, with_schedule(cell, { elem_ty = i32, step_num = 1, src_topology = base_top(cell, "in_place_xs") }))
-    end
-
-    function builders.count(cell)
-        return Plan.count_array_artifact(pred(Core.CmpGt, i32, iconst(0)), with_schedule(cell, { elem_ty = i32, step_num = 1, array_topology = base_top(cell, "count_xs") }))
-    end
-
-    function builders.reduce_n_unary(cell)
-        return Plan.reduce_n_array_artifact(reduction(Value.ReductionAdd, 0), nil, with_schedule(cell, {
-            tag = "bank_unary_neg",
-            inputs = { { name = "xs", ty = i32, topology = base_top(cell, "reduce_n_xs") } },
-            expr = Plan.apply_unary_expr(Stencil.StencilUnaryNeg, Plan.input_expr("xs"), i32, { int_semantics = sem }),
-            item_ty = i32,
-            result_ty = i32,
-            step_num = 1,
-        }))
-    end
-
-    function builders.reduce_n_binary(cell)
-        return Plan.reduce_n_array_artifact(reduction(Value.ReductionAdd, 0), nil, with_schedule(cell, {
-            tag = "bank_binary_add",
-            inputs = {
-                { name = "lhs", ty = i32, topology = base_top(cell, "reduce_n_lhs") },
-                { name = "rhs", ty = i32, topology = base_top(cell, "reduce_n_rhs") },
-            },
-            expr = Plan.apply_binary_expr(Stencil.StencilBinaryAdd, Plan.input_expr("lhs"), Plan.input_expr("rhs"), i32, { int_semantics = sem }),
-            item_ty = i32,
-            result_ty = i32,
-            step_num = 1,
-        }))
-    end
 
     function builders.apply_n(cell)
         local input_count = assert(cell.input_count, "apply_n cell requires input_count")
         local inputs = {}
         for i = 1, input_count do
             local name = "x" .. tostring(i)
-            inputs[i] = { name = name, ty = i32, topology = base_top(cell, "apply_n_" .. name) }
+            inputs[i] = { name = name, ty = i32, layout = input_layout(cell, name) }
         end
-        return Plan.apply_n_array_artifact(with_schedule(cell, {
+        append_extra_inputs(inputs, cell, input_count)
+        return Plan.apply_n_artifact(with_producer(cell, {
             tag = "bank_o" .. tostring(cell.order) .. "_in" .. tostring(cell.input_count) .. "_" .. tostring(cell.expr_name) .. "_" .. tostring(cell.serial),
             result_ty = cell.result_ty or i32,
             inputs = inputs,
             expr = assert(cell.expr, "apply_n cell requires generated expression"),
             step_num = 1,
-            dst_topology = base_top(cell, "apply_n_dst"),
+            dst_layout = dst_layout(cell),
         }))
     end
 
@@ -896,9 +984,10 @@ local function bind_context(T)
         local inputs = {}
         for i = 1, input_count do
             local name = "x" .. tostring(i)
-            inputs[i] = { name = name, ty = i32, topology = base_top(cell, "reduce_n_" .. name) }
+            inputs[i] = { name = name, ty = i32, layout = input_layout(cell, name) }
         end
-        return Plan.reduce_n_array_artifact(reduction(Value.ReductionAdd, 0), nil, with_schedule(cell, {
+        append_extra_inputs(inputs, cell, input_count)
+        return Plan.reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, with_producer(cell, {
             tag = "bank_o" .. tostring(cell.order) .. "_in" .. tostring(cell.input_count) .. "_s" .. tostring(cell.apply_stage_count) .. "_" .. tostring(cell.expr_name) .. "_" .. tostring(cell.serial),
             inputs = inputs,
             expr = assert(cell.expr, "reduce_n cell requires generated expression"),
@@ -908,91 +997,23 @@ local function bind_context(T)
         }))
     end
 
-    function builders.byte_copy()
-        return Plan.copy_array_artifact({ elem_ty = u8, step_num = 1, dst_topology = bytespan_topology("copy_dst"), src_topology = bytespan_topology("copy_src") })
-    end
-
-    function builders.byte_copy_memmove()
-        return Plan.copy_array_artifact({ elem_ty = u8, semantics = Stencil.StencilCopyMemMove, step_num = 1, dst_topology = bytespan_topology("move_dst"), src_topology = bytespan_topology("move_src") })
-    end
-
-    function builders.byte_fill()
-        return Plan.fill_array_artifact({ elem_ty = u8, value = u8const(127), step_num = 1, dst_topology = bytespan_topology("fill_dst") })
-    end
-
-    function builders.byte_find()
-        return Plan.find_array_artifact(pred(Core.CmpEq, u8, u8const(13)), { elem_ty = u8, step_num = 1, array_topology = bytespan_topology("find_xs") })
-    end
-
-    function builders.byte_compare()
-        return Plan.compare_array_artifact(pred(Core.CmpGt, u8, u8const(9)), { elem_ty = u8, result_ty = bool8, step_num = 1, dst_topology = bytespan_topology("compare_dst"), src_topology = bytespan_topology("compare_xs") })
-    end
-
-    function builders.byte_count()
-        return Plan.count_array_artifact(pred(Core.CmpGt, u8, u8const(9)), { elem_ty = u8, step_num = 1, array_topology = bytespan_topology("count_xs") })
-    end
-
-    function builders.view_src_copy_v4()
-        return Plan.copy_array_artifact({
-            elem_ty = i32,
-            step_num = 1,
-            src_topology = view_topology("src"),
-            schedule = schedule_variants[2].schedule(),
-        })
-    end
-
-    function builders.view_src_copy()
-        return Plan.copy_array_artifact({
-            elem_ty = i32,
-            step_num = 1,
-            src_topology = view_topology("src"),
-        })
-    end
-
-    function builders.field_reduce()
-        return Plan.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, { elem_ty = i32, result_ty = i32, step_num = 1, array_topology = field_topology() })
-    end
-
-    function builders.field_map()
-        return Plan.map_array_artifact(Stencil.StencilUnaryNeg, { elem_ty = i32, result_ty = i32, step_num = 1, src_topology = field_topology() })
-    end
-
-    function builders.field_find()
-        return Plan.find_array_artifact(pred(Core.CmpEq, i32, iconst(20)), { elem_ty = i32, step_num = 1, array_topology = field_topology() })
-    end
-
-    function builders.field_compare()
-        return Plan.compare_array_artifact(pred(Core.CmpGt, i32, iconst(10)), { elem_ty = i32, result_ty = bool8, step_num = 1, src_topology = field_topology() })
-    end
-
-    function builders.field_fill()
-        return Plan.fill_array_artifact({ elem_ty = i32, value = iconst(99), step_num = 1, dst_topology = field_topology() })
-    end
-
-    function builders.soa_zip_map()
-        return Plan.zip_map_array_artifact(Stencil.StencilBinaryAdd, { lhs_ty = i32, rhs_ty = i32, result_ty = i32, step_num = 1, dst_topology = soa_component("sum", 2), lhs_topology = soa_component("left", 0), rhs_topology = soa_component("right", 1) })
-    end
-
-    function builders.soa_reduce_n_binary()
-        return Plan.reduce_n_array_artifact(reduction(Value.ReductionAdd, 0), nil, {
-            tag = "soa_binary_add",
-            inputs = {
-                { name = "lhs", ty = i32, topology = soa_component("left", 0) },
-                { name = "rhs", ty = i32, topology = soa_component("right", 1) },
-            },
-            expr = Plan.apply_binary_expr(Stencil.StencilBinaryAdd, Plan.input_expr("lhs"), Plan.input_expr("rhs"), i32, { int_semantics = sem }),
-            item_ty = i32,
+    function builders.scan_n(cell)
+        local input_count = assert(cell.input_count, "scan_n cell requires input_count")
+        local inputs = {}
+        for i = 1, input_count do
+            local name = "x" .. tostring(i)
+            inputs[i] = { name = name, ty = i32, layout = input_layout(cell, name) }
+        end
+        append_extra_inputs(inputs, cell, input_count)
+        return Plan.scan_n_artifact(reduction(Value.ReductionAdd, 0), nil, with_producer(cell, {
+            tag = "bank_o" .. tostring(cell.order) .. "_in" .. tostring(cell.input_count) .. "_s" .. tostring(cell.apply_stage_count) .. "_" .. tostring(cell.expr_name) .. "_" .. tostring(cell.serial),
+            inputs = inputs,
+            expr = assert(cell.expr, "scan_n cell requires generated expression"),
+            item_ty = cell.item_ty or cell.result_ty or i32,
             result_ty = i32,
             step_num = 1,
-        })
-    end
-
-    function builders.soa_zip_compare()
-        return Plan.zip_compare_array_artifact(Core.CmpLt, { lhs_ty = i32, rhs_ty = i32, result_ty = bool8, step_num = 1, dst_topology = soa_component("lt", 2), lhs_topology = soa_component("left", 0), rhs_topology = soa_component("right", 1) })
-    end
-
-    function builders.soa_partition()
-        return Plan.partition_array_artifact(pred(Core.CmpGt, i32, iconst(0)), { elem_ty = i32, step_num = 1, dst_topology = soa_component("positive_then_rest", 1), array_topology = soa_component("left", 0) })
+            dst_layout = dst_layout(cell),
+        }))
     end
 
     function M.artifact_for_cell(cell)

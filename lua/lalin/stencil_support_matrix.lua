@@ -26,8 +26,8 @@ local function bind_context(T)
         zip_compare = { status = "supported", basis = "StencilApply", scope = "comparison apply over two input lanes" },
         select = { status = "supported", basis = "StencilApply", scope = "predicate-controlled blend apply" },
         apply_n = { status = "supported", basis = "StencilApply", scope = "generic expression-backed ApplyN with arity capped at 4" },
-        gather = { status = "supported", basis = "StencilApply", scope = "identity apply with indexed read topology" },
-        scatter = { status = "supported", basis = "StencilApply", scope = "identity apply with indexed write topology and conflict contract" },
+        gather = { status = "supported", basis = "StencilApply", scope = "identity apply with indexed read layout" },
+        scatter = { status = "supported", basis = "StencilApply", scope = "identity apply with indexed write layout and conflict contract" },
         in_place_map = { status = "supported", basis = "StencilApply", scope = "unary apply over readwrite lane" },
         partition = { status = "supported", basis = "StencilApply", scope = "current generated partition artifact; target derivation is apply + scan + scatter" },
         reduce = { status = "supported", basis = "StencilReduce", scope = "plain fold" },
@@ -35,25 +35,53 @@ local function bind_context(T)
         find = { status = "supported", basis = "StencilReduce", scope = "predicate apply fused into min-index/not-found reduction" },
         reduce_n = { status = "supported", basis = "StencilReduce", scope = "generic expression-backed ApplyN fused into fold with arity capped at 4" },
         scan = { status = "supported", basis = "StencilScan", scope = "prefix fold" },
+        scan_n = { status = "supported", basis = "StencilScan", scope = "generic expression-backed ApplyN fused into prefix fold with arity capped at 4" },
     }
 
-    M.topologies = {
-        StencilTopologyScalar = { status = "supported", scope = "reduction accumulators/control values, not memory lanes" },
-        StencilTopologyContiguous = { status = "supported", scope = "primary scalar array topology" },
-        StencilTopologyIndexed = { status = "supported", scope = "gather/scatter index lanes" },
-        StencilTopologyInPlace = { status = "supported", scope = "in-place map source/destination" },
-        StencilTopologyFieldProjection = { status = "supported", scope = "partial vocab matrix" },
-        StencilTopologySoAComponent = { status = "supported", scope = "partial vocab matrix" },
-        StencilTopologySliceDescriptor = { status = "supported", scope = "current i32 scalar matrix" },
-        StencilTopologyByteSpanDescriptor = { status = "supported", scope = "u8 byte operation subset" },
-        StencilTopologyViewDescriptor = { status = "supported", scope = "current i32 scalar matrix with dynamic stride" },
+    M.layouts = {
+        StencilLayoutScalar = { status = "supported", scope = "reduction accumulators/control values, not memory lanes" },
+        StencilLayoutContiguous = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout" },
+        StencilLayoutIndexed = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout with explicit index access reference" },
+        StencilLayoutFieldProjection = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout with record-pointer ABI projection" },
+        StencilLayoutSoAComponent = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout over component buffers" },
+        StencilLayoutSliceDescriptor = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout" },
+        StencilLayoutByteSpanDescriptor = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout" },
+        StencilLayoutViewDescriptor = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout with dynamic stride parameterization" },
     }
 
     M.producers = {
-        StencilProduceRange1D = { status = "supported", scope = "shape-supported; positive forward ranges are materialized today" },
-        StencilProduceRangeND = { status = "supported", scope = "shape-supported; forward ND ranges materialize in copy_patch_mc generic ApplyN/ReduceN" },
-        StencilProduceWindowND = { status = "supported", scope = "shape-supported for neighborhood/windowed stencil kernels; rejected by current linear producer materializers" },
-        StencilProduceTiledND = { status = "supported", scope = "shape-supported for blocked/tiled ND iteration; rejected by current linear producer materializers" },
+        StencilProduceRange1D = {
+            status = "supported",
+            scope = "shape-supported; positive forward ranges materialize in BC, MC, and emitted-bank cells",
+            shape = "supported",
+            copy_patch_bc = "materialized",
+            copy_patch_mc = "materialized",
+            bank = "covered",
+        },
+        StencilProduceRangeND = {
+            status = "supported",
+            scope = "shape-supported; forward ND ranges materialize in copy_patch_mc generic ApplyN/ReduceN/ScanN and emitted-bank cells; BC rejects with typed producer facts",
+            shape = "supported",
+            copy_patch_bc = "typed_reject",
+            copy_patch_mc = "materialized",
+            bank = "covered",
+        },
+        StencilProduceWindowND = {
+            status = "supported",
+            scope = "shape-supported; center-domain WindowND materializes in copy_patch_mc generic ApplyN/ReduceN/ScanN and emitted-bank cells; window-neighbor operands are a body-expression extension, not a producer gap; BC rejects with typed producer facts",
+            shape = "supported",
+            copy_patch_bc = "typed_reject",
+            copy_patch_mc = "materialized_center_domain",
+            bank = "covered",
+        },
+        StencilProduceTiledND = {
+            status = "supported",
+            scope = "shape-supported; forward tiled ND loops materialize in copy_patch_mc generic ApplyN/ReduceN/ScanN and emitted-bank cells; BC rejects with typed producer facts",
+            shape = "supported",
+            copy_patch_bc = "typed_reject",
+            copy_patch_mc = "materialized",
+            bank = "covered",
+        },
     }
 
     M.predicates = {
@@ -113,13 +141,14 @@ local function bind_context(T)
         compare = "compare_array_artifact",
         zip_compare = "zip_compare_array_artifact",
         select = "select_array_artifact",
-        apply_n = "apply_n_array_artifact",
+        apply_n = "apply_n_artifact",
         gather = "gather_array_artifact",
         scatter = "scatter_array_artifact",
         in_place_map = "in_place_map_array_artifact",
         reduce = "reduce_array_artifact",
         count = "count_array_artifact",
-        reduce_n = "reduce_n_array_artifact",
+        reduce_n = "reduce_n_artifact",
+        scan_n = "scan_n_artifact",
     }
 
     function M.type_family_for(ty)

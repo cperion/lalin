@@ -86,35 +86,33 @@ local function bind_context(T)
         return Stencil.StencilAliasUnknown
     end
 
-    local function access_kind(topology)
-        local cls = pvm.classof(topology)
-        if cls == Stencil.StencilTopologyContiguous then return "contiguous" end
-        if cls == Stencil.StencilTopologyIndexed then return "indexed" end
-        if cls == Stencil.StencilTopologyInPlace then return "in_place" end
-        if cls == Stencil.StencilTopologyFieldProjection then return "field_projection" end
-        if cls == Stencil.StencilTopologySoAComponent then return "soa_component" end
-        if cls == Stencil.StencilTopologySliceDescriptor then return "slice_descriptor" end
-        if cls == Stencil.StencilTopologyByteSpanDescriptor then return "byte_span_descriptor" end
-        if cls == Stencil.StencilTopologyViewDescriptor then
-            return topology.stride_const ~= nil and "view_const_stride" or "view_dynamic_stride"
+    local function access_kind(layout)
+        local cls = pvm.classof(layout)
+        if cls == Stencil.StencilLayoutContiguous then return "contiguous" end
+        if cls == Stencil.StencilLayoutIndexed then return "indexed" end
+        if cls == Stencil.StencilLayoutFieldProjection then return "field_projection" end
+        if cls == Stencil.StencilLayoutSoAComponent then return "soa_component" end
+        if cls == Stencil.StencilLayoutSliceDescriptor then return "slice_descriptor" end
+        if cls == Stencil.StencilLayoutByteSpanDescriptor then return "byte_span_descriptor" end
+        if cls == Stencil.StencilLayoutViewDescriptor then
+            return layout.stride_const ~= nil and "view_const_stride" or "view_dynamic_stride"
         end
-        if cls == Stencil.StencilTopologyScalar then return "scalar" end
+        if cls == Stencil.StencilLayoutScalar then return "scalar" end
         return "unknown"
     end
 
-    local function plain_bulk_access(topology)
-        local cls = pvm.classof(topology)
-        if cls == Stencil.StencilTopologyContiguous then return tonumber(topology.stride) == 1 end
-        if cls == Stencil.StencilTopologyInPlace then return tonumber(topology.stride) == 1 end
-        if cls == Stencil.StencilTopologySliceDescriptor then return true end
-        if cls == Stencil.StencilTopologyByteSpanDescriptor then return true end
-        if cls == Stencil.StencilTopologyViewDescriptor then return tonumber(topology.stride_const) == 1 end
+    local function plain_bulk_access(layout)
+        local cls = pvm.classof(layout)
+        if cls == Stencil.StencilLayoutContiguous then return tonumber(layout.stride) == 1 end
+        if cls == Stencil.StencilLayoutSliceDescriptor then return true end
+        if cls == Stencil.StencilLayoutByteSpanDescriptor then return true end
+        if cls == Stencil.StencilLayoutViewDescriptor then return tonumber(layout.stride_const) == 1 end
         return false
     end
 
     local function build_access_plan(access, facts_by_name)
         local fact = facts_by_name and facts_by_name[access.name] or nil
-        local top = access.topology
+        local top = access.layout
         local cls = pvm.classof(top)
         local plan = {
             kind = access_kind(top),
@@ -122,7 +120,7 @@ local function bind_context(T)
             safe_name = sanitize(access.name),
             role = access.role,
             ty = access.ty,
-            topology = top,
+            layout = top,
             readonly = fact ~= nil and fact.readonly or access.role == Stencil.StencilAccessRead,
             readwrite = access.role == Stencil.StencilAccessReadWrite,
             alignment_fact = fact and fact.alignment or Stencil.StencilAlignmentUnknown,
@@ -133,6 +131,9 @@ local function bind_context(T)
             field_offset = nil,
             component_index = nil,
             parent = nil,
+            index_name = nil,
+            index_plan = nil,
+            index_stride = nil,
             can_pointer_bump = false,
             can_bulk_copy = false,
             can_bulk_fill = false,
@@ -142,15 +143,19 @@ local function bind_context(T)
             plan.can_bulk_copy = true
             plan.can_bulk_fill = plan.element_bytes == 1
         end
-        if cls == Stencil.StencilTopologyFieldProjection then
+        if cls == Stencil.StencilLayoutFieldProjection then
             plan.field_name = top.field_name
             plan.field_offset = top.field_offset
-            plan.parent = build_access_plan({ name = access.name, role = access.role, ty = access.ty, topology = top.parent }, facts_by_name)
-        elseif cls == Stencil.StencilTopologySoAComponent then
+            plan.parent = build_access_plan({ name = access.name, role = access.role, ty = access.ty, layout = top.parent }, facts_by_name)
+        elseif cls == Stencil.StencilLayoutSoAComponent then
             plan.field_name = top.field_name
             plan.component_index = top.component_index
-            plan.parent = build_access_plan({ name = access.name, role = access.role, ty = access.ty, topology = top.parent }, facts_by_name)
-        elseif cls == Stencil.StencilTopologyViewDescriptor then
+            plan.parent = build_access_plan({ name = access.name, role = access.role, ty = access.ty, layout = top.parent }, facts_by_name)
+        elseif cls == Stencil.StencilLayoutIndexed then
+            plan.index_name = tostring(top.index.name)
+            plan.index_stride = top.stride
+            plan.parent = build_access_plan({ name = access.name, role = access.role, ty = access.ty, layout = top.parent }, facts_by_name)
+        elseif cls == Stencil.StencilLayoutViewDescriptor then
             plan.stride_const = top.stride_const
             plan.dynamic_stride_arg = top.stride_const == nil and (sanitize(access.name) .. "_stride") or nil
         end
@@ -166,19 +171,31 @@ local function bind_context(T)
             list[#list + 1] = plan
             by_name[access.name] = plan
         end
+        for _, plan in ipairs(list) do
+            if plan.index_name ~= nil then plan.index_plan = by_name[plan.index_name] end
+        end
         return list, by_name
     end
 
     local function lua_access_offset(plan, index)
-        local top = plan.topology
+        index = tostring(index)
+        local top = plan.layout
         local cls = pvm.classof(top)
-        if cls == Stencil.StencilTopologyFieldProjection then
+        if cls == Stencil.StencilLayoutFieldProjection then
             return lua_access_offset(plan.parent, index)
         end
-        if cls == Stencil.StencilTopologySoAComponent then
+        if cls == Stencil.StencilLayoutSoAComponent then
             return lua_access_offset(plan.parent, index)
         end
-        if cls == Stencil.StencilTopologyViewDescriptor then
+        if cls == Stencil.StencilLayoutIndexed then
+            local index_plan = assert(plan.index_plan, "copy_patch_luatrace: indexed layout missing index access plan")
+            local indexed = table.concat({ tostring(plan.index_name), "[", lua_access_offset(index_plan, index), "]" })
+            if tonumber(plan.index_stride) ~= nil and tonumber(plan.index_stride) ~= 1 then
+                indexed = "((" .. indexed .. ") * " .. tostring(plan.index_stride) .. ")"
+            end
+            return lua_access_offset(plan.parent, indexed)
+        end
+        if cls == Stencil.StencilLayoutViewDescriptor then
             local stride = plan.stride_const or plan.dynamic_stride_arg
             if tonumber(stride) == 1 then return index end
             return "((" .. index .. ") * " .. tostring(stride) .. ")"
@@ -187,12 +204,14 @@ local function bind_context(T)
     end
 
     local function lua_access_ref(plan, base, index)
-        local top = plan.topology
+        base = tostring(base)
+        index = tostring(index)
+        local top = plan.layout
         local cls = pvm.classof(top)
-        if cls == Stencil.StencilTopologyFieldProjection then
+        if cls == Stencil.StencilLayoutFieldProjection then
             return base .. "[" .. lua_access_offset(plan.parent, index) .. "]." .. sanitize(top.field_name)
         end
-        if cls == Stencil.StencilTopologySoAComponent then
+        if cls == Stencil.StencilLayoutSoAComponent then
             return base .. "[" .. lua_access_offset(plan.parent, index) .. "]"
         end
         return base .. "[" .. lua_access_offset(plan, index) .. "]"
@@ -354,7 +373,7 @@ local function bind_context(T)
         local facts_by_name = fact_map(facts)
         local saw_memory_access = false
         for _, access in ipairs(ArtifactPlan.descriptor_accesses(desc)) do
-            if pvm.classof(access.topology) ~= Stencil.StencilTopologyScalar then
+            if pvm.classof(access.layout) ~= Stencil.StencilLayoutScalar then
                 local fact = facts_by_name[access.name]
                 if fact == nil or not fact.unit_stride then return false end
                 saw_memory_access = true
@@ -365,9 +384,15 @@ local function bind_context(T)
 
     local function kind_group_cap(shape)
         local kind = shape.kind
-        if kind == "reduce_array" or kind == "scan_array" then return 16 end
-        if kind == "map_array" or kind == "zip_map_array" or kind == "select_array" or kind == "apply_n_array" or kind == "copy_array" or kind == "fill_array" or kind == "cast_array" then return 8 end
-        if kind == "in_place_map_array" or kind == "reduce_n_array" then return 8 end
+        if kind == "apply_n" and pvm.classof(shape.store_mode) == Stencil.StencilStoreScatter then
+            return shape.store_mode.conflicts == Stencil.StencilScatterUniqueIndices and 4 or 1
+        end
+        if kind == "reduce_array" or kind == "scan_array" or kind == "scan_n" then return 16 end
+        if kind == "map_array" or kind == "zip_map_array" or kind == "select_array" or kind == "apply_n" or kind == "copy_array" or kind == "fill_array" or kind == "cast_array" then
+            return 8
+        end
+        if kind == "in_place_map_array" then return 8 end
+        if kind == "reduce_n" then return shape.external_init == false and 4 or 8 end
         if kind == "compare_array" or kind == "zip_compare_array" or kind == "count_array" then return 4 end
         if kind == "scatter_array" and shape.conflicts == Stencil.StencilScatterUniqueIndices then return 4 end
         return 1
@@ -415,7 +440,21 @@ local function bind_context(T)
     end
 
     local function build_predicate_plan(shape, access_by_name, loop_plan)
+        local expr_cls = pvm.classof(shape.expr)
         if shape.kind == "count_array" then
+            if loop_plan ~= nil and loop_plan.group > 1 then
+                return {
+                    kind = "multi_counter_branch",
+                    counters = loop_plan.group,
+                    rejected = "numeric_count_measured_slower",
+                }
+            end
+            return {
+                kind = "branch",
+                rejected = "numeric_count_measured_slower",
+            }
+        end
+        if shape.kind == "reduce_n" and shape.external_init == false then
             if loop_plan ~= nil and loop_plan.group > 1 then
                 return {
                     kind = "multi_counter_branch",
@@ -436,9 +475,29 @@ local function bind_context(T)
                 rejected = numeric and "helper_branchless_measured_slower" or "numeric_predicate_unavailable",
             }
         end
+        if shape.kind == "apply_n" and expr_cls == Stencil.StencilApplyPredicate then
+            local arg_cls = pvm.classof(shape.expr.arg)
+            local input = arg_cls == Stencil.StencilApplyInput and access_by_name[shape.expr.arg.access.name] or nil
+            local numeric = input ~= nil and lua_numeric_pred_expr(shape.expr.pred, "__ml_x", input.ty) ~= nil
+            return {
+                kind = numeric and "numeric_store" or "lua_select",
+                rejected = numeric and "helper_branchless_measured_slower" or "numeric_predicate_unavailable",
+            }
+        end
         if shape.kind == "zip_compare_array" then
             local lhs, rhs = access_by_name.lhs, access_by_name.rhs
             local numeric = lhs ~= nil and rhs ~= nil and lua_numeric_cmp_expr(shape.cmp, "__ml_a", "__ml_b", lhs.ty, rhs.ty) ~= nil
+            return {
+                kind = numeric and "numeric_store" or "lua_select",
+                rejected = numeric and "helper_branchless_measured_slower" or "numeric_compare_unavailable",
+            }
+        end
+        if shape.kind == "apply_n" and expr_cls == Stencil.StencilApplyCompare then
+            local left_cls = pvm.classof(shape.expr.left)
+            local right_cls = pvm.classof(shape.expr.right)
+            local lhs = left_cls == Stencil.StencilApplyInput and access_by_name[shape.expr.left.access.name] or nil
+            local rhs = right_cls == Stencil.StencilApplyInput and access_by_name[shape.expr.right.access.name] or nil
+            local numeric = lhs ~= nil and rhs ~= nil and lua_numeric_cmp_expr(shape.expr.cmp, "__ml_a", "__ml_b", lhs.ty, rhs.ty) ~= nil
             return {
                 kind = numeric and "numeric_store" or "lua_select",
                 rejected = numeric and "helper_branchless_measured_slower" or "numeric_compare_unavailable",
@@ -450,10 +509,23 @@ local function bind_context(T)
                 rejected = "branchless_numeric_select_not_measured",
             }
         end
+        if shape.kind == "apply_n" and expr_cls == Stencil.StencilApplySelect then
+            return {
+                kind = "lua_select",
+                rejected = "branchless_numeric_select_not_measured",
+            }
+        end
         return { kind = "none" }
     end
 
     local function build_scatter_plan(shape)
+        if shape.kind == "apply_n" and pvm.classof(shape.store_mode) == Stencil.StencilStoreScatter then
+            local conflicts = shape.store_mode.conflicts
+            if conflicts == Stencil.StencilScatterUniqueIndices then return { kind = "unique_indices", may_group = true } end
+            if conflicts == Stencil.StencilScatterLastWriteWins then return { kind = "ordered_last_write", may_group = false } end
+            if conflicts == Stencil.StencilScatterConflictUndefined then return { kind = "conflict_undefined", may_group = false } end
+            return { kind = "unknown_conflicts", may_group = false }
+        end
         if shape.kind ~= "scatter_array" then return nil end
         if shape.conflicts == Stencil.StencilScatterUniqueIndices then
             return { kind = "unique_indices", may_group = true }
@@ -469,7 +541,7 @@ local function bind_context(T)
 
     local function build_reduction_plan(shape, facts)
         if shape.kind ~= "reduce_array" and shape.kind ~= "scan_array"
-            and shape.kind ~= "reduce_n_array" then
+            and shape.kind ~= "reduce_n" and shape.kind ~= "scan_n" then
             return nil
         end
         local arithmetic = facts and facts.arithmetic or nil
@@ -489,10 +561,19 @@ local function bind_context(T)
 
     local function build_kernel_plan(shape, access_by_name, facts, loop_plan)
         local primitive_plan = nil
-        if shape.kind == "copy_array" then
-            local dst, src = access_by_name.dst, access_by_name.src
-            local no_overlap = shape.semantics == Stencil.StencilCopyNoOverlap
-                or (dst ~= nil and src ~= nil and alias_relation(facts, "dst", "src") == Stencil.StencilAliasNoAlias)
+        local copy_src_name
+        if shape.kind == "apply_n"
+            and pvm.classof(shape.store_mode) == Stencil.StencilStoreCopy
+            and pvm.classof(shape.expr) == Stencil.StencilApplyInput then
+            copy_src_name = shape.expr.access.name
+        end
+        if shape.kind == "copy_array" or copy_src_name ~= nil then
+            local dst_name = shape.dst_name or "dst"
+            local src_name = copy_src_name or "src"
+            local dst, src = access_by_name[dst_name], access_by_name[src_name]
+            local semantics = shape.semantics or (shape.store_mode and shape.store_mode.semantics)
+            local no_overlap = semantics == Stencil.StencilCopyNoOverlap
+                or (dst ~= nil and src ~= nil and alias_relation(facts, dst_name, src_name) == Stencil.StencilAliasNoAlias)
             if no_overlap
                 and dst ~= nil and src ~= nil
                 and not dst.readonly and src.readonly
@@ -501,7 +582,25 @@ local function bind_context(T)
                 primitive_plan = {
                     kind = "ffi_copy",
                     bytes_per_element = dst.element_bytes,
-                    no_overlap_source = shape.semantics == Stencil.StencilCopyNoOverlap and "copy_semantics" or "noalias_facts",
+                    dst_name = dst_name,
+                    src_name = src_name,
+                    no_overlap_source = semantics == Stencil.StencilCopyNoOverlap and "copy_semantics" or "noalias_facts",
+                }
+            end
+        elseif shape.kind == "apply_n"
+            and (shape.store_mode == Stencil.StencilStoreElementwise or pvm.classof(shape.store_mode) == Stencil.StencilStoreElementwise)
+            and pvm.classof(shape.expr) == Stencil.StencilApplyInput then
+            local dst_name = shape.dst_name or "dst"
+            local value_name = shape.expr.access.name
+            local dst, value_access = access_by_name[dst_name], access_by_name[value_name]
+            if dst ~= nil and value_access ~= nil
+                and pvm.classof(value_access.layout) == Stencil.StencilLayoutScalar
+                and not dst.readonly and dst.can_bulk_fill then
+                primitive_plan = {
+                    kind = "ffi_fill",
+                    bytes_per_element = dst.element_bytes,
+                    dst_name = dst_name,
+                    value_name = value_name,
                 }
             end
         elseif shape.kind == "fill_array" then
@@ -525,9 +624,9 @@ local function bind_context(T)
     local function lua_apply_expr(expr, desc, access_by_name, index)
         local cls = pvm.classof(expr)
         if cls == Stencil.StencilApplyInput then
-            local name = expr.access.name
+            local name = tostring(expr.access.name)
             local access = assert(access_by_name[name], "copy_patch_luatrace: missing apply input access " .. tostring(name))
-            if pvm.classof(access.topology) == Stencil.StencilTopologyScalar then return name end
+            if pvm.classof(access.layout) == Stencil.StencilLayoutScalar then return name end
             return lua_access_ref(access, name, index)
         end
         if cls == Stencil.StencilApplyConst then return tostring(iconst(expr.value)) end
@@ -781,19 +880,68 @@ local function bind_context(T)
                     .. " or "
                     .. lua_access_ref(else_access, "else_xs", i)
             end)
-        elseif kind == "apply_n_array" then
-            local dst_access = assert(access.dst, "missing dst access plan")
-            local params = { "dst" }
+        elseif kind == "apply_n" then
+            local dst_name = shape.dst_name or "dst"
+            local dst_access = assert(access[dst_name], "missing destination access plan")
+            local params = { dst_name }
+            local scalar_params = {}
             for _, input in ipairs(shape.inputs or {}) do params[#params + 1] = input.name end
+            local input_params = {}
+            for _, input in ipairs(shape.inputs or {}) do
+                if input.name ~= dst_name then
+                    if pvm.classof(input.layout) == Stencil.StencilLayoutScalar then
+                        scalar_params[#scalar_params + 1] = input.name
+                    else
+                        input_params[#input_params + 1] = input.name
+                    end
+                end
+            end
+            params = { dst_name }
+            for i = 1, #input_params do params[#params + 1] = input_params[i] end
             params[#params + 1] = "start"
             params[#params + 1] = "stop"
+            for i = 1, #scalar_params do params[#params + 1] = scalar_params[i] end
             out[#out + 1] = fn_header(artifact, params)
-            emit_forward_loop(out, artifact_plan, function(i, indent)
-                out[#out + 1] = indent
-                    .. lua_access_ref(dst_access, "dst", i)
-                    .. " = "
-                    .. lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i)
-            end)
+            if kernel_plan.primitive_plan and kernel_plan.primitive_plan.kind == "ffi_copy" then
+                local src_name = kernel_plan.primitive_plan.src_name
+                out[#out + 1] = "    local __ml_n = stop - start"
+                out[#out + 1] = "    if __ml_n > 0 then ffi.copy(" .. dst_name .. " + start, " .. src_name .. " + start, __ml_n * " .. tostring(kernel_plan.primitive_plan.bytes_per_element) .. ") end"
+            elseif kernel_plan.primitive_plan and kernel_plan.primitive_plan.kind == "ffi_fill" then
+                local value_name = kernel_plan.primitive_plan.value_name
+                out[#out + 1] = "    local __ml_n = stop - start"
+                out[#out + 1] = "    if __ml_n > 0 then ffi.fill(" .. dst_name .. " + start, __ml_n, " .. value_name .. ") end"
+            elseif pvm.classof(shape.store_mode) == Stencil.StencilStoreCopy
+                and pvm.classof(shape.expr) == Stencil.StencilApplyInput
+                and (shape.store_mode.semantics == Stencil.StencilCopyMemMove or shape.store_mode.semantics == Stencil.StencilCopyMayOverlapBackward) then
+                local src_name = shape.expr.access.name
+                local function emit_copy_loop(reverse)
+                    if reverse then
+                        out[#out + 1] = "        for i = stop - 1, start, -" .. tostring(stride) .. " do"
+                    else
+                        out[#out + 1] = "        for i = start, stop - 1, " .. tostring(stride) .. " do"
+                    end
+                    out[#out + 1] = "            " .. lua_access_ref(dst_access, dst_name, "i") .. " = " .. lua_apply_expr(shape.expr, artifact_plan.descriptor, access, "i")
+                    out[#out + 1] = "        end"
+                end
+                if shape.store_mode.semantics == Stencil.StencilCopyMayOverlapBackward then
+                    out[#out + 1] = "    do"
+                    emit_copy_loop(true)
+                    out[#out + 1] = "    end"
+                else
+                    out[#out + 1] = "    if " .. dst_name .. " < " .. src_name .. " then"
+                    emit_copy_loop(false)
+                    out[#out + 1] = "    else"
+                    emit_copy_loop(true)
+                    out[#out + 1] = "    end"
+                end
+            else
+                emit_forward_loop(out, artifact_plan, function(i, indent)
+                    out[#out + 1] = indent
+                        .. lua_access_ref(dst_access, dst_name, i)
+                        .. " = "
+                        .. lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i)
+                end)
+            end
         elseif kind == "gather_array" then
             local dst_access, idx_access = assert(access.dst, "missing dst access plan"), assert(access.idx, "missing idx access plan")
             out[#out + 1] = fn_header(artifact, { "dst", "src", "idx", "start", "stop" })
@@ -857,8 +1005,53 @@ local function bind_context(T)
                 end)
                 out[#out + 1] = "    return n"
             end
-        elseif kind == "reduce_n_array" then
+        elseif kind == "reduce_n" then
             local params = {}
+            for _, input in ipairs(shape.inputs or {}) do params[#params + 1] = input.name end
+            params[#params + 1] = "start"
+            params[#params + 1] = "stop"
+            if shape.external_init ~= false then params[#params + 1] = "init" end
+            out[#out + 1] = fn_header(artifact, params)
+            out[#out + 1] = "    local acc = " .. (shape.external_init == false and tostring(iconst(shape.identity)) or "init")
+            emit_forward_loop(out, artifact_plan, function(i, indent)
+                out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
+            end)
+            out[#out + 1] = "    return acc"
+        elseif kind == "find_n" then
+            local params = {}
+            for _, input in ipairs(shape.inputs or {}) do params[#params + 1] = input.name end
+            params[#params + 1] = "start"
+            params[#params + 1] = "stop"
+            out[#out + 1] = fn_header(artifact, params)
+            emit_forward_loop(out, artifact_plan, function(i, indent)
+                out[#out + 1] = indent .. "if " .. lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i) .. " ~= 0 then return " .. i .. " end"
+            end)
+            out[#out + 1] = "    return " .. tostring(iconst(shape.not_found))
+        elseif kind == "partition_n" then
+            local dst_name = shape.dst_name or "dst"
+            local dst_access = assert(access[dst_name], "missing destination access plan")
+            local xs_access = assert(access.xs, "missing xs access plan")
+            local params = { dst_name }
+            for _, input in ipairs(shape.inputs or {}) do
+                if input.name ~= dst_name then params[#params + 1] = input.name end
+            end
+            params[#params + 1] = "start"
+            params[#params + 1] = "stop"
+            out[#out + 1] = fn_header(artifact, params)
+            out[#out + 1] = "    local out_i = start"
+            emit_forward_loop(out, artifact_plan, function(i, indent)
+                local x = lua_access_ref(xs_access, "xs", i)
+                out[#out + 1] = indent .. "if " .. lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i) .. " ~= 0 then " .. lua_access_ref(dst_access, dst_name, "out_i") .. " = " .. x .. "; out_i = out_i + 1 end"
+            end)
+            out[#out + 1] = "    local split = out_i"
+            emit_forward_loop(out, artifact_plan, function(i, indent)
+                local x = lua_access_ref(xs_access, "xs", i)
+                out[#out + 1] = indent .. "if " .. lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i) .. " == 0 then " .. lua_access_ref(dst_access, dst_name, "out_i") .. " = " .. x .. "; out_i = out_i + 1 end"
+            end)
+            out[#out + 1] = "    return split"
+        elseif kind == "scan_n" then
+            local dst_access = assert(access.dst, "missing dst access plan")
+            local params = { "dst" }
             for _, input in ipairs(shape.inputs or {}) do params[#params + 1] = input.name end
             params[#params + 1] = "start"
             params[#params + 1] = "stop"
@@ -866,7 +1059,13 @@ local function bind_context(T)
             out[#out + 1] = fn_header(artifact, params)
             out[#out + 1] = "    local acc = init"
             emit_forward_loop(out, artifact_plan, function(i, indent)
-                out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
+                if shape.mode == Stencil.StencilScanExclusive then
+                    out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = acc"
+                    out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
+                else
+                    out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
+                    out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = acc"
+                end
             end)
             out[#out + 1] = "    return acc"
         else
@@ -875,6 +1074,13 @@ local function bind_context(T)
 
         out[#out + 1] = "end"
         out[#out + 1] = "__lalin_luajit_stencil_symbols[" .. lua_string(artifact.symbol.text) .. "] = " .. sanitize(artifact.symbol.text)
+        for i = 1, #out do
+            if type(out[i]) ~= "string" then
+                local detail = {}
+                for k, v in pairs(out[i]) do detail[#detail + 1] = tostring(k) .. "=" .. tostring(v) end
+                error("copy_patch_luatrace: emitted non-string fragment " .. tostring(i) .. " for " .. tostring(artifact.symbol.text) .. ": " .. tostring(out[i]) .. " {" .. table.concat(detail, ",") .. "}", 3)
+            end
+        end
         return table.concat(out, "\n")
     end
 
@@ -1096,7 +1302,8 @@ local function bind_context(T)
     end
 
     function api.realize_artifacts(artifacts)
-        return assert(api.realize_bc_artifacts(artifacts), "LuaTrace bytecode realization failed")
+        local realization, err = api.realize_bc_artifacts(artifacts)
+        return assert(realization, err or "LuaTrace bytecode realization failed")
     end
 
     T._lalin_api_cache.copy_patch_luatrace = api

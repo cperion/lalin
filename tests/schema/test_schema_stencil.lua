@@ -96,13 +96,13 @@ local descriptor = Stencil.StencilDescriptor(
             "xs",
             Stencil.StencilAccessRead,
             i32,
-            Stencil.StencilTopologyContiguous(1)
+            Stencil.StencilLayoutContiguous(1)
         ),
         Stencil.StencilAccess(
             "acc",
             Stencil.StencilAccessReduce,
             i32,
-            Stencil.StencilTopologyScalar(init)
+            Stencil.StencilLayoutScalar(init)
         ),
     },
     Stencil.StencilBodyApply(Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs"))),
@@ -243,15 +243,13 @@ assert(StencilArtifactPlan.producer_shape_supported(tiled_producer))
 assert(StencilArtifactPlan.producer_shape_supported(backward_producer))
 assert(not StencilArtifactPlan.producer_shape_supported(zero_step_producer))
 assert(StencilArtifactPlan.producer_materialized(nd_producer))
-assert(not StencilArtifactPlan.producer_materialized(window_producer))
-assert(not StencilArtifactPlan.producer_materialized(tiled_producer))
+assert(StencilArtifactPlan.producer_materialized(window_producer))
+assert(StencilArtifactPlan.producer_materialized(tiled_producer))
 assert(not StencilArtifactPlan.producer_materialized(backward_producer))
 assert(not StencilArtifactPlan.producer_materialized(zero_step_producer))
 assert(StencilArtifactPlan.unsupported_producer_reject(nd_producer) == nil)
-local window_reject = StencilArtifactPlan.unsupported_producer_reject(window_producer)
-assert(pvm.classof(window_reject) == Stencil.StencilRejectUnsupportedProducer)
-assert(window_reject.producer == window_producer)
-assert(window_reject.reason:find("shape-supported", 1, true) ~= nil)
+assert(StencilArtifactPlan.unsupported_producer_reject(window_producer) == nil)
+assert(StencilArtifactPlan.unsupported_producer_reject(tiled_producer) == nil)
 assert(StencilArtifactPlan.unsupported_producer_reject(backward_producer).reason:find("backward", 1, true) ~= nil)
 assert(StencilArtifactPlan.unsupported_producer_reject(zero_step_producer).reason:find("positive compile-time", 1, true) ~= nil)
 local bad_window_producer = Stencil.StencilProducer(nil, Stencil.StencilProduceWindowND({ axis_x, axis_y }, {
@@ -273,16 +271,18 @@ assert(StencilArtifactPlan.unsupported_producer_reject(bad_tiled_producer).reaso
 local nd_descriptor = Stencil.StencilDescriptor(
     nd_producer,
     {
-        Stencil.StencilAccess("dst", Stencil.StencilAccessWrite, i32, Stencil.StencilTopologyContiguous(1)),
-        Stencil.StencilAccess("xs", Stencil.StencilAccessRead, i32, Stencil.StencilTopologyContiguous(1)),
+        Stencil.StencilAccess("dst", Stencil.StencilAccessWrite, i32, Stencil.StencilLayoutContiguous(1)),
+        Stencil.StencilAccess("xs", Stencil.StencilAccessRead, i32, Stencil.StencilLayoutContiguous(1)),
     },
     Stencil.StencilBodyApply(Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs"))),
-    Stencil.StencilSinkEmitArray(Stencil.StencilAccessRef("dst"), Stencil.StencilApplyElementwise)
+    Stencil.StencilSinkStore(Stencil.StencilAccessRef("dst"), Stencil.StencilStoreElementwise)
 )
 local nd_instance = Stencil.StencilInstance(instance.id, nd_descriptor, instance.schedule, instance.abi, instance.proofs)
 local nd_artifact = Stencil.StencilArtifact(nd_instance, artifact.provider, artifact.symbol, artifact.c_signature, artifact.fingerprint, nil, {}, {})
-local ok, err = pcall(function() return StencilArtifactPlan.artifact_shape(nd_artifact) end)
-assert(not ok and tostring(err):find("unsupported stencil producer", 1, true) ~= nil)
+local nd_shape = StencilArtifactPlan.artifact_shape(nd_artifact)
+assert(nd_shape.kind == "apply_n")
+assert(nd_shape.producer.kind == "range_nd")
+assert(nd_shape.producer.rank == 2)
 
 local bad_vector_schedule = Stencil.StencilScheduleVector(
     Stencil.StencilVectorFeatureNative,
@@ -326,13 +326,13 @@ local zip_op = Stencil.StencilApplyBinary(Stencil.StencilBinaryAdd, input_lhs, i
 local cast_op = Stencil.StencilApplyCast(Core.MachineCastSToF, input_xs, i32, Code.CodeTyFloat(64))
 local pred_op = Stencil.StencilApplyPredicate(pred, input_xs, Code.CodeTyBool8)
 local cmp_op = Stencil.StencilApplyCompare(Core.CmpLt, input_lhs, input_rhs, Code.CodeTyBool8)
-local indexed = Stencil.StencilTopologyIndexed(i32, 1)
-local slice_topology = Stencil.StencilTopologySliceDescriptor(
+local indexed = Stencil.StencilLayoutIndexed(Stencil.StencilLayoutContiguous(1), Stencil.StencilAccessRef("idx"), i32, 1)
+local slice_layout = Stencil.StencilLayoutSliceDescriptor(
     Code.CodeValueId("v:slice"),
     Code.CodeValueId("v:slice_data"),
     Code.CodeValueId("v:slice_len")
 )
-local view_topology = Stencil.StencilTopologyViewDescriptor(
+local view_layout = Stencil.StencilLayoutViewDescriptor(
     Code.CodeValueId("v:view"),
     Code.CodeValueId("v:view_data"),
     Code.CodeValueId("v:view_len"),
@@ -340,14 +340,14 @@ local view_topology = Stencil.StencilTopologyViewDescriptor(
     2
 )
 local pair_ty = Code.CodeTyNamed("Demo", "Pair", Ty.TNamed(Ty.TypeRefGlobal("Demo", "Pair")))
-local field_topology = Stencil.StencilTopologyFieldProjection(
-    Stencil.StencilTopologyContiguous(1),
+local field_layout = Stencil.StencilLayoutFieldProjection(
+    Stencil.StencilLayoutContiguous(1),
     pair_ty,
     "right",
     4
 )
-local soa_topology = Stencil.StencilTopologySoAComponent(
-    Stencil.StencilTopologyContiguous(1),
+local soa_layout = Stencil.StencilLayoutSoAComponent(
+    Stencil.StencilLayoutContiguous(1),
     pair_ty,
     "right",
     1
@@ -359,17 +359,17 @@ assert(cast_op.op == Core.MachineCastSToF)
 assert(pred_op.result_ty == Code.CodeTyBool8)
 assert(cmp_op.cmp == Core.CmpLt)
 assert(indexed.index_ty == i32)
-assert(slice_topology.len == Code.CodeValueId("v:slice_len"))
-assert(view_topology.stride == Code.CodeValueId("v:view_stride"))
-assert(view_topology.stride_const == 2)
-assert(field_topology.parent == Stencil.StencilTopologyContiguous(1))
-assert(field_topology.record_ty == pair_ty)
-assert(field_topology.field_name == "right")
-assert(field_topology.field_offset == 4)
-assert(pvm.classof(soa_topology.parent) == Stencil.StencilTopologyContiguous)
-assert(soa_topology.record_ty == pair_ty)
-assert(soa_topology.field_name == "right")
-assert(soa_topology.component_index == 1)
+assert(slice_layout.len == Code.CodeValueId("v:slice_len"))
+assert(view_layout.stride == Code.CodeValueId("v:view_stride"))
+assert(view_layout.stride_const == 2)
+assert(field_layout.parent == Stencil.StencilLayoutContiguous(1))
+assert(field_layout.record_ty == pair_ty)
+assert(field_layout.field_name == "right")
+assert(field_layout.field_offset == 4)
+assert(pvm.classof(soa_layout.parent) == Stencil.StencilLayoutContiguous)
+assert(soa_layout.record_ty == pair_ty)
+assert(soa_layout.field_name == "right")
+assert(soa_layout.component_index == 1)
 assert(pvm.classof(pred) == Stencil.StencilPredCompareConst)
 assert(pred.cmp == Core.CmpEq)
 assert(pred.operand_ty == i32)
