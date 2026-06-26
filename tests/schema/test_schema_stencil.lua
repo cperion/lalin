@@ -106,7 +106,7 @@ local descriptor = Stencil.StencilDescriptor(
         ),
     },
     Stencil.StencilBodyApply(Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs"))),
-    Stencil.StencilSinkReduce(i32, Stencil.StencilReduceFold(Stencil.StencilReducer(Value.ReductionAdd, i32, init, sem, nil)))
+    Stencil.StencilSinkReduce(i32, Stencil.StencilReduceScopeDomain, Stencil.StencilReduceFold(Stencil.StencilReducer(Value.ReductionAdd, i32, init, sem, nil)))
 )
 local instance = Stencil.StencilInstance(
     Stencil.StencilInstanceId("stencil:reduce_array:i32:add"),
@@ -132,6 +132,7 @@ assert(StencilArtifactPlan.descriptor_accesses(instance.descriptor)[1].role == S
 assert(StencilArtifactPlan.descriptor_accesses(instance.descriptor)[2].role == Stencil.StencilAccessReduce)
 assert(pvm.classof(instance.descriptor.body) == Stencil.StencilBodyApply)
 assert(pvm.classof(instance.descriptor.sink.mode) == Stencil.StencilReduceFold)
+assert(instance.descriptor.sink.scope == Stencil.StencilReduceScopeDomain)
 assert(pvm.classof(instance.descriptor.sink.mode.reducer) == Stencil.StencilReducer)
 assert(instance.descriptor.sink.mode.reducer.identity == init)
 assert(pvm.classof(instance.schedule) == Stencil.StencilScheduleAutoVector)
@@ -227,6 +228,16 @@ assert(meta_selection.provenance.winner == "meta:reduce")
 local axis_x = Stencil.StencilProducerAxis(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilProducerForward)
 local axis_y = Stencil.StencilProducerAxis(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilProducerForward)
 local nd_producer = Stencil.StencilProducer(nil, Stencil.StencilProduceRangeND({ axis_x, axis_y }))
+local producer_fact = Stencil.StencilProducerFact(
+    domain,
+    nd_producer,
+    { Kernel.KernelProofFlow(domain, "schema producer fact smoke") },
+    Stencil.StencilProducerCheckerDerived
+)
+local producer_facts = Stencil.StencilProducerFactSet(Code.CodeModuleId("module:producer_fact"), { producer_fact })
+assert(producer_facts.facts[1].domain == domain)
+assert(producer_facts.facts[1].producer == nd_producer)
+assert(producer_facts.facts[1].origin == Stencil.StencilProducerCheckerDerived)
 local window_producer = Stencil.StencilProducer(nil, Stencil.StencilProduceWindowND({ axis_x, axis_y }, {
     Stencil.StencilWindowAxis(1, 1, Stencil.StencilWindowBoundaryClamp),
     Stencil.StencilWindowAxis(1, 1, Stencil.StencilWindowBoundaryReject),
@@ -321,6 +332,13 @@ local pred = Stencil.StencilPredCompareConst(Core.CmpEq, i32, init)
 local input_xs = Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs"))
 local input_lhs = Stencil.StencilApplyInput(Stencil.StencilAccessRef("lhs"))
 local input_rhs = Stencil.StencilApplyInput(Stencil.StencilAccessRef("rhs"))
+local window_input = Stencil.StencilApplyWindowInput(
+    Stencil.StencilAccessRef("xs"),
+    { Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), -1) }
+)
+assert(pvm.classof(window_input) == Stencil.StencilApplyWindowInput)
+assert(window_input.offsets[1].axis.index == 1)
+assert(window_input.offsets[1].offset == -1)
 local op = Stencil.StencilApplyUnary(Stencil.StencilUnaryNeg, input_xs, i32, sem, nil)
 local zip_op = Stencil.StencilApplyBinary(Stencil.StencilBinaryAdd, input_lhs, input_rhs, i32, sem, nil)
 local cast_op = Stencil.StencilApplyCast(Core.MachineCastSToF, input_xs, i32, Code.CodeTyFloat(64))

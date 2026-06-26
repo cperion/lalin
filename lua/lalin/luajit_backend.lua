@@ -79,6 +79,7 @@ local function bind_context(T)
                 item_ty = info.mapped_ty,
                 result_ty = info.result_ty,
                 step_num = info.step_num or info.stride,
+                producer = info.producer,
                 schedule = info.schedule,
                 noalias = info.noalias,
                 noalias_pairs = info.noalias_pairs,
@@ -97,6 +98,7 @@ local function bind_context(T)
                 item_ty = info.mapped_ty,
                 result_ty = info.result_ty,
                 step_num = info.step_num or info.stride,
+                producer = info.producer,
                 schedule = info.schedule,
                 noalias = info.noalias,
                 noalias_pairs = info.noalias_pairs,
@@ -144,6 +146,7 @@ local function bind_context(T)
         local schedules = schedule_index(schedule_plan)
         local stencil_machines = Lower.plan_stencil_machines(module, {
             contracts = opts.contracts,
+            domain_shapes = opts.domain_shapes,
             graph = graph,
             flow = flow,
             value = value,
@@ -163,6 +166,7 @@ local function bind_context(T)
         for _, reject in ipairs(stencil_machines.rejects or {}) do rejects[#rejects + 1] = reject end
         local lj_module, facts = Lower.lower_module(module, {
             contracts = opts.contracts,
+            domain_shapes = opts.domain_shapes,
             graph = graph,
             flow = flow,
             value = value,
@@ -196,8 +200,8 @@ local function bind_context(T)
         if #artifacts == 0 then
             return { kind = "MCStencilBankRealization", symbols = {}, installed = {}, bank = nil }, nil
         end
-        if copy_patch_mode(opts) == "bc" then
-            return CopyPatchLuaTrace.realize_bc_artifacts(artifacts, {
+        local function realize_bc(fallback_reason)
+            local realized, err, source = CopyPatchLuaTrace.realize_bc_artifacts(artifacts, {
                 bank = opts.bc_bank,
                 stem = opts.stem,
                 id = opts.bc_bank_id,
@@ -205,16 +209,28 @@ local function bind_context(T)
                 patch_bindings = opts.bc_patch_bindings,
                 env = opts.bc_env,
             })
+            if realized ~= nil and fallback_reason ~= nil then
+                realized.fallback_from = "copy_patch_mc"
+                realized.fallback_reason = fallback_reason
+            end
+            return realized, err, source
+        end
+        if copy_patch_mode(opts) == "bc" then
+            return realize_bc(nil)
         end
         local mc_bank = opts.mc_bank
         if mc_bank == nil then
-            return nil, "luajit_backend: mc realization requires a prebuilt MCStencilBank"
+            local err = "luajit_backend: mc realization requires a prebuilt MCStencilBank"
+            if opts.allow_bc_fallback then return realize_bc(err) end
+            return nil, err
         end
-        return StencilBank.realize_mc_artifacts(artifacts, {
+        local realized, err, source = StencilBank.realize_mc_artifacts(artifacts, {
             mc_bank = mc_bank,
             patch_values = opts.patch_values,
             install_policy = opts.install_policy,
         })
+        if realized == nil and opts.allow_bc_fallback then return realize_bc(err) end
+        return realized, err, source
     end
 
     function api.build_mc_bank(artifacts, opts)

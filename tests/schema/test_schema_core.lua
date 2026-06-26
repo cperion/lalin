@@ -65,6 +65,19 @@ local trip = Flow.FlowTripCountUnknown("no explicit trip count value")
 local flow_sem = Flow.FlowSemanticFactSet(module.id, { Flow.FlowLoopNormalizedCounted(loop_id, counted, Flow.FlowLoopIncreasing, trip) })
 assert(flow.loops[1].loop == loop_id and flow_sem.facts[1].trip_count == trip)
 
+local domain_shape = Flow.FlowDomainShapeRangeND({
+    Flow.FlowDomainAxis(Code.CodeTyIndex, Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("0"))), Value.ValueExprValue(n), 1, Flow.FlowDomainForward),
+    Flow.FlowDomainAxis(Code.CodeTyIndex, Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("0"))), Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("1"))), 1, Flow.FlowDomainForward),
+})
+local shape_fact = Kernel.KernelDomainShapeFact(
+    domain,
+    domain_shape,
+    { Kernel.KernelProofFlow(domain, "shape fact smoke") },
+    Kernel.KernelDomainShapeFrontendFact("frontend shape")
+)
+local shape_facts = Kernel.KernelDomainShapeFactSet(module.id, { shape_fact })
+assert(shape_facts.facts[1].shape == domain_shape and pvm.classof(shape_facts.facts[1].origin) == Kernel.KernelDomainShapeFrontendFact)
+
 local proof = Value.AlgebraProofFlow(domain, "flow proof")
 local expr_i = Value.ValueExprValue(induction.value)
 local affine = Value.ValueExprAffine(Value.AffineExpr("0", { Value.AffineTerm(induction.value, "1") }, i32, nil))

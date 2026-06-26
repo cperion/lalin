@@ -13,6 +13,48 @@ return schema. LalinFlow {
     },
     FlowDomainFunction { variant_unique, func [LalinCode.CodeFuncId], },
   },
+  sum. FlowDomainOrder { FlowDomainForward, FlowDomainBackward, },
+  product. FlowDomainAxis {
+    interned,
+    index_ty [LalinCode.CodeType],
+    start [optional [LalinValue.ValueExpr]],
+    stop [optional [LalinValue.ValueExpr]],
+    step [number],
+    order [LalinFlow.FlowDomainOrder],
+  },
+  sum. FlowWindowBoundary {
+    FlowWindowBoundaryReject,
+    FlowWindowBoundaryClamp,
+    FlowWindowBoundaryWrap,
+    FlowWindowBoundaryZero,
+  },
+  product. FlowWindowAxis {
+    interned,
+    before [number],
+    after [number],
+    boundary [LalinFlow.FlowWindowBoundary],
+  },
+  sum. FlowDomainShape {
+    FlowDomainShapeRange1D {
+      variant_unique,
+      index_ty [LalinCode.CodeType],
+      start [optional [LalinValue.ValueExpr]],
+      stop [optional [LalinValue.ValueExpr]],
+      step [number],
+      order [LalinFlow.FlowDomainOrder],
+    },
+    FlowDomainShapeRangeND { variant_unique, axes [many [LalinFlow.FlowDomainAxis]], },
+    FlowDomainShapeWindowND {
+      variant_unique,
+      axes [many [LalinFlow.FlowDomainAxis]],
+      windows [many [LalinFlow.FlowWindowAxis]],
+    },
+    FlowDomainShapeTiledND {
+      variant_unique,
+      axes [many [LalinFlow.FlowDomainAxis]],
+      tile_sizes [many [number]],
+    },
+  },
   sum. FlowTripCount {
     FlowTripCountExact {
       variant_unique,

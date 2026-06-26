@@ -152,6 +152,17 @@ local nd_scan_artifact = Plan.scan_array_artifact(reduction(Value.ReductionAdd, 
     elem_ty = i32,
     result_ty = i32,
     producer = range_nd_producer(2, 3),
+    axis = Stencil.StencilAxisRef(2),
+})
+
+local nd_axis_reduce_artifact = Plan.reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, {
+    tag = "range_nd2_axis2_sum",
+    result_ty = i32,
+    item_ty = i32,
+    inputs = inputs(1),
+    expr = input("x1"),
+    producer = range_nd_producer(2, 3),
+    scope = Stencil.StencilReduceScopeAxes({ Stencil.StencilAxisRef(2) }, Stencil.StencilAccessRef("dst")),
 })
 
 local nd_step_artifact = Plan.apply_n_artifact({
@@ -183,6 +194,7 @@ local tiled_scan_artifact = Plan.scan_array_artifact(reduction(Value.ReductionAd
     elem_ty = i32,
     result_ty = i32,
     producer = tiled_nd_producer({ 2, 2 }, axis(1), axis(1)),
+    axis = Stencil.StencilAxisRef(2),
 })
 
 local window_artifacts = {
@@ -216,6 +228,46 @@ local window_artifacts = {
     }),
 }
 
+local window_neighbor_artifacts = {
+    Plan.apply_n_artifact({
+        tag = "window_neighbor_clamp",
+        result_ty = i32,
+        inputs = inputs(1),
+        expr = Stencil.StencilApplyWindowInput(Stencil.StencilAccessRef("x1"), {
+            Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), -1),
+        }),
+        producer = window_nd_producer(Stencil.StencilWindowBoundaryClamp, 1, 1),
+    }),
+    Plan.apply_n_artifact({
+        tag = "window_neighbor_wrap",
+        result_ty = i32,
+        inputs = inputs(1),
+        expr = Stencil.StencilApplyWindowInput(Stencil.StencilAccessRef("x1"), {
+            Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), -1),
+        }),
+        producer = window_nd_producer(Stencil.StencilWindowBoundaryWrap, 1, 1),
+    }),
+    Plan.apply_n_artifact({
+        tag = "window_neighbor_zero",
+        result_ty = i32,
+        inputs = inputs(1),
+        expr = Stencil.StencilApplyWindowInput(Stencil.StencilAccessRef("x1"), {
+            Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), -1),
+        }),
+        producer = window_nd_producer(Stencil.StencilWindowBoundaryZero, 1, 1),
+    }),
+}
+
+local window_reduce_artifact = Plan.reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, {
+    tag = "window_sum_clamp",
+    result_ty = i32,
+    item_ty = i32,
+    inputs = inputs(1),
+    expr = input("x1"),
+    producer = window_nd_producer(Stencil.StencilWindowBoundaryClamp, 1, 1),
+    scope = Stencil.StencilReduceScopeWindow({ Stencil.StencilAxisRef(1) }, Stencil.StencilAccessRef("dst")),
+})
+
 do
     local shape = Plan.artifact_shape(nd_artifact)
     assert(shape.producer.kind == "range_nd", "RangeND ApplyN should carry a producer execution plan")
@@ -225,6 +277,8 @@ do
     assert(reduce_shape.producer.rank == 2, "RangeND ReduceN should preserve rank")
     assert(Plan.artifact_shape(scan_artifact).kind == "scan_n", "scan should lower through ScanN")
     assert(Plan.artifact_shape(nd_scan_artifact).producer.kind == "range_nd", "RangeND ScanN should carry a producer execution plan")
+    assert(Plan.artifact_shape(nd_scan_artifact).axis.index == 2, "RangeND ScanN should preserve scan axis")
+    assert(Plan.artifact_shape(nd_axis_reduce_artifact).scope_kind == "axes", "RangeND axis reduce should preserve reduce scope")
     assert(Plan.artifact_shape(nd_step_artifact).producer.kind == "range_nd", "non-unit RangeND should carry a producer execution plan")
     assert(Plan.artifact_shape(tiled_artifact).producer.kind == "tiled_nd", "TiledND ApplyN should carry a producer execution plan")
     assert(Plan.artifact_shape(tiled_reduce_artifact).producer.kind == "tiled_nd", "TiledND ReduceN should carry a producer execution plan")
@@ -261,8 +315,10 @@ local mc, mc_err, mc_src = MC.compile(T, artifacts, { stem = "test_stencil_apply
 assert(mc ~= nil, tostring(mc_err) .. "\n" .. tostring(mc_src))
 exercise(mc.symbols, "mc")
 
-local producer_artifacts = { nd_artifact, nd_reduce_artifact, nd_scan_artifact, nd_step_artifact, tiled_artifact, tiled_reduce_artifact, tiled_scan_artifact }
+local producer_artifacts = { nd_artifact, nd_reduce_artifact, nd_scan_artifact, nd_axis_reduce_artifact, nd_step_artifact, tiled_artifact, tiled_reduce_artifact, tiled_scan_artifact }
 for _, artifact in ipairs(window_artifacts) do producer_artifacts[#producer_artifacts + 1] = artifact end
+for _, artifact in ipairs(window_neighbor_artifacts) do producer_artifacts[#producer_artifacts + 1] = artifact end
+producer_artifacts[#producer_artifacts + 1] = window_reduce_artifact
 
 local mc_nd, mc_nd_err, mc_nd_src = MC.compile(T, producer_artifacts, { stem = "test_stencil_apply_n_producers" })
 assert(mc_nd ~= nil, tostring(mc_nd_err) .. "\n" .. tostring(mc_nd_src))
@@ -276,10 +332,11 @@ do
     end
     local sum = assert(mc_nd.symbols[nd_reduce_artifact.symbol.text], "mc missing RangeND ReduceN")(x1, x2, 0, 2, 0, 3, 0)
     assert(sum == 231, "RangeND ReduceN row-major sum")
-    local final = assert(mc_nd.symbols[nd_scan_artifact.symbol.text], "mc missing RangeND ScanN")(out, x1, 0, 2, 0, 3, 0)
-    assert(final == 21, "RangeND ScanN final value")
-    assert(out[0] == 1 and out[1] == 3 and out[2] == 6 and out[3] == 10 and out[4] == 15 and out[5] == 21, "RangeND ScanN row-major prefix")
-
+    assert(mc_nd.symbols[nd_scan_artifact.symbol.text], "mc missing RangeND axis ScanN")(out, x1, 0, 2, 0, 3, 0)
+    assert(out[0] == 1 and out[1] == 3 and out[2] == 6 and out[3] == 4 and out[4] == 9 and out[5] == 15, "RangeND axis-2 ScanN row prefixes")
+    local reduced = ffi.new("int32_t[2]")
+    assert(mc_nd.symbols[nd_axis_reduce_artifact.symbol.text], "mc missing RangeND axis ReduceN")(reduced, x1, 0, 2, 0, 3)
+    assert(reduced[0] == 6 and reduced[1] == 15, "RangeND axis-2 ReduceN row sums")
     assert(mc_nd.symbols[nd_step_artifact.symbol.text], "mc missing stepped RangeND ApplyN")(out, x1, x2, 0, 4, 0, 6)
     for i = 0, 5 do
         assert(out[i] == x1[i] + x2[i], "stepped RangeND compact row-major element " .. tostring(i))
@@ -291,8 +348,8 @@ do
     end
     sum = assert(mc_nd.symbols[tiled_reduce_artifact.symbol.text], "mc missing TiledND ReduceN")(x1, 0, 2, 0, 3, 0)
     assert(sum == 21, "TiledND ReduceN sum")
-    final = assert(mc_nd.symbols[tiled_scan_artifact.symbol.text], "mc missing TiledND ScanN")(out, x1, 0, 2, 0, 3, 0)
-    assert(final == 21, "TiledND ScanN final value")
+    assert(mc_nd.symbols[tiled_scan_artifact.symbol.text], "mc missing TiledND axis ScanN")(out, x1, 0, 2, 0, 3, 0)
+    assert(out[0] == 1 and out[1] == 3 and out[2] == 6 and out[3] == 4 and out[4] == 9 and out[5] == 15, "TiledND axis-2 ScanN row prefixes")
 
     for _, artifact in ipairs(window_artifacts) do
         assert(mc_nd.symbols[artifact.symbol.text], "mc missing WindowND ApplyN")(out, x1, 0, 6)
@@ -300,12 +357,24 @@ do
             assert(out[i] == x1[i], "WindowND center iteration element " .. tostring(i))
         end
     end
+    assert(mc_nd.symbols[window_neighbor_artifacts[1].symbol.text], "mc missing WindowND clamp neighbor")(out, x1, 0, 6)
+    assert(out[0] == 1 and out[1] == 1 and out[2] == 2 and out[3] == 3 and out[4] == 4 and out[5] == 5, "WindowND clamp neighbor")
+    assert(mc_nd.symbols[window_neighbor_artifacts[2].symbol.text], "mc missing WindowND wrap neighbor")(out, x1, 0, 6)
+    assert(out[0] == 6 and out[1] == 1 and out[2] == 2 and out[3] == 3 and out[4] == 4 and out[5] == 5, "WindowND wrap neighbor")
+    assert(mc_nd.symbols[window_neighbor_artifacts[3].symbol.text], "mc missing WindowND zero neighbor")(out, x1, 0, 6)
+    assert(out[0] == 0 and out[1] == 1 and out[2] == 2 and out[3] == 3 and out[4] == 4 and out[5] == 5, "WindowND zero neighbor")
+    assert(mc_nd.symbols[window_reduce_artifact.symbol.text], "mc missing WindowND local ReduceN")(out, x1, 0, 6)
+    assert(out[0] == 4 and out[1] == 6 and out[2] == 9 and out[3] == 12 and out[4] == 15 and out[5] == 17, "WindowND local clamp sum")
 end
 
 local bc_nd_ok, bc_nd_err = pcall(function()
     CopyPatchLuaTrace.realize_artifacts({ nd_artifact, nd_reduce_artifact, tiled_artifact, window_artifacts[1] }, { stem = "test_stencil_apply_n_non_range1d_bc" })
 end)
 assert(not bc_nd_ok and tostring(bc_nd_err):find("range_nd", 1, true) ~= nil, "LuaTrace should reject non-Range1D producers until its producer loop exists")
+local bc_window_ok, bc_window_err = pcall(function()
+    CopyPatchLuaTrace.realize_artifacts({ window_neighbor_artifacts[1], window_reduce_artifact }, { stem = "test_stencil_apply_n_window_bc" })
+end)
+assert(not bc_window_ok and tostring(bc_window_err):find("window_nd", 1, true) ~= nil, "LuaTrace should reject WindowND window-relative consumers with a producer-shaped error")
 
 local bc = assert(CopyPatchLuaTrace.realize_artifacts(artifacts, { stem = "test_stencil_apply_n_bc" }))
 exercise(bc.symbols, "bc")

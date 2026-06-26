@@ -81,6 +81,7 @@ return schema. LalinStencil {
     step [number],
     order [LalinStencil.StencilProducerOrder],
   },
+  product. StencilAxisRef { interned, index [number], },
   sum. StencilWindowBoundary {
     StencilWindowBoundaryReject,
     StencilWindowBoundaryClamp,
@@ -92,6 +93,11 @@ return schema. LalinStencil {
     before [number],
     after [number],
     boundary [LalinStencil.StencilWindowBoundary],
+  },
+  product. StencilWindowOffset {
+    interned,
+    axis [LalinStencil.StencilAxisRef],
+    offset [number],
   },
   sum. StencilProducerShape {
     StencilProduceRange1D {
@@ -118,6 +124,23 @@ return schema. LalinStencil {
     interned,
     origin [optional [LalinFlow.FlowDomain]],
     shape [LalinStencil.StencilProducerShape],
+  },
+  sum. StencilProducerFactOrigin {
+    StencilProducerCheckerDerived,
+    StencilProducerAuthorAsserted { variant_unique, reason [str], },
+    StencilProducerFrontendFact { variant_unique, reason [str], },
+  },
+  product. StencilProducerFact {
+    interned,
+    domain [LalinFlow.FlowDomain],
+    producer [LalinStencil.StencilProducer],
+    proofs [many [LalinKernel.KernelProof]],
+    origin [LalinStencil.StencilProducerFactOrigin],
+  },
+  product. StencilProducerFactSet {
+    interned,
+    field. module [LalinCode.CodeModuleId],
+    facts [many [LalinStencil.StencilProducerFact]],
   },
   sum. StencilAccessRole {
     StencilAccessRead,
@@ -182,6 +205,11 @@ return schema. LalinStencil {
   product. StencilAccessRef { interned, field. name [str], },
   sum. StencilApplyExpr {
     StencilApplyInput { variant_unique, access [LalinStencil.StencilAccessRef], },
+    StencilApplyWindowInput {
+      variant_unique,
+      access [LalinStencil.StencilAccessRef],
+      offsets [many [LalinStencil.StencilWindowOffset]],
+    },
     StencilApplyConst {
       variant_unique,
       field. value [LalinValue.ValueExpr],
@@ -257,6 +285,19 @@ return schema. LalinStencil {
       variant_unique,
       pred [LalinStencil.StencilPredicate],
       not_found [LalinValue.ValueExpr],
+    },
+  },
+  sum. StencilReduceScope {
+    StencilReduceScopeDomain,
+    StencilReduceScopeAxes {
+      variant_unique,
+      axes [many [LalinStencil.StencilAxisRef]],
+      dst [LalinStencil.StencilAccessRef],
+    },
+    StencilReduceScopeWindow {
+      variant_unique,
+      axes [many [LalinStencil.StencilAxisRef]],
+      dst [LalinStencil.StencilAccessRef],
     },
   },
   sum. StencilCompiler { StencilCompilerGcc, StencilCompilerClang, StencilCompilerSystemC, },
@@ -483,11 +524,13 @@ return schema. LalinStencil {
     StencilSinkReduce {
       variant_unique,
       result_ty [LalinCode.CodeType],
+      scope [LalinStencil.StencilReduceScope],
       mode [LalinStencil.StencilReduceMode],
     },
     StencilSinkScan {
       variant_unique,
       dst [LalinStencil.StencilAccessRef],
+      axis [LalinStencil.StencilAxisRef],
       reducer [LalinStencil.StencilReducer],
       mode [LalinStencil.StencilScanMode],
       result_ty [LalinCode.CodeType],
@@ -528,6 +571,11 @@ return schema. LalinStencil {
     StencilRejectUnsupportedProducer {
       variant_unique,
       producer [LalinStencil.StencilProducer],
+      reason [str],
+    },
+    StencilRejectUnsupportedSink {
+      variant_unique,
+      sink [LalinStencil.StencilSink],
       reason [str],
     },
     StencilRejectMissingProof {

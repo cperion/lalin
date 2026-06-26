@@ -283,6 +283,10 @@ local function bind_context(T)
     }
     local producer_group_order = { "range1d", "range_nd2", "tiled_nd2", "window_nd1" }
 
+    local function producer_group_supports(kind, producer_group_name)
+        return true
+    end
+
     local unary_ops = {
         { name = "identity", op = Stencil.StencilUnaryIdentity },
         { name = "neg", op = Stencil.StencilUnaryNeg },
@@ -660,14 +664,16 @@ local function bind_context(T)
             local group = assert(layout_groups[group_name], group_name)
             if group.supports == nil or group.supports(kind, spec) then
                 for _, producer_group_name in ipairs(producer_group_order) do
-                    for _, schedule_variant in ipairs(schedule_variants) do
-                        local estimated = estimated_bytes_for_soac({ kind = kind, input_count = spec.input_count, order = spec.order })
-                        if target ~= nil and estimated_total + estimated > target then
-                            return serial, estimated_total, false
+                    if producer_group_supports(kind, producer_group_name) then
+                        for _, schedule_variant in ipairs(schedule_variants) do
+                            local estimated = estimated_bytes_for_soac({ kind = kind, input_count = spec.input_count, order = spec.order })
+                            if target ~= nil and estimated_total + estimated > target then
+                                return serial, estimated_total, false
+                            end
+                            serial = serial + 1
+                            out[#out + 1] = soac_cell(kind, group_name, producer_group_name, schedule_variant, spec, serial)
+                            estimated_total = estimated_total + estimated
                         end
-                        serial = serial + 1
-                        out[#out + 1] = soac_cell(kind, group_name, producer_group_name, schedule_variant, spec, serial)
-                        estimated_total = estimated_total + estimated
                     end
                 end
             end
@@ -679,7 +685,11 @@ local function bind_context(T)
         local count = 0
         for _, group_name in ipairs(layout_group_order) do
             local group = assert(layout_groups[group_name], group_name)
-            if group.supports == nil or group.supports(kind, spec) then count = count + #producer_group_order end
+            if group.supports == nil or group.supports(kind, spec) then
+                for _, producer_group_name in ipairs(producer_group_order) do
+                    if producer_group_supports(kind, producer_group_name) then count = count + 1 end
+                end
+            end
         end
         return count
     end
@@ -774,6 +784,73 @@ local function bind_context(T)
         return out
     end
 
+    local function append_rank_aware_coverage_cells(out)
+        local cells = {
+            {
+                name = "rank.range_nd2.contiguous.reduce_n.axis2.sum",
+                vocab = "StencilReduce",
+                layout = "StencilLayoutContiguous",
+                kind = "reduce_n",
+                derived = "reduce_n",
+                group = "contiguous",
+                producer_group = "range_nd2",
+                input_count = 1,
+                order = 1,
+                apply_stage_count = 0,
+                expr_name = "axis2_sum_x1",
+                expr = input("x1"),
+                result_ty = i32,
+                item_ty = i32,
+                scope = Stencil.StencilReduceScopeAxes({ Stencil.StencilAxisRef(2) }, Stencil.StencilAccessRef("dst")),
+                estimated_bytes = estimated_bytes_for_soac({ kind = "reduce_n", input_count = 1, order = 1 }),
+                serial = "rank_axis_reduce",
+            },
+            {
+                name = "rank.window_nd1.contiguous.reduce_n.window.sum",
+                vocab = "StencilReduce",
+                layout = "StencilLayoutContiguous",
+                kind = "reduce_n",
+                derived = "reduce_n",
+                group = "contiguous",
+                producer_group = "window_nd1",
+                input_count = 1,
+                order = 1,
+                apply_stage_count = 0,
+                expr_name = "window_sum_x1",
+                expr = input("x1"),
+                result_ty = i32,
+                item_ty = i32,
+                scope = Stencil.StencilReduceScopeWindow({ Stencil.StencilAxisRef(1) }, Stencil.StencilAccessRef("dst")),
+                estimated_bytes = estimated_bytes_for_soac({ kind = "reduce_n", input_count = 1, order = 1 }),
+                serial = "rank_window_reduce",
+            },
+            {
+                name = "rank.window_nd1.contiguous.apply_n.neighbor_minus1",
+                vocab = "StencilApply",
+                layout = "StencilLayoutContiguous",
+                kind = "apply_n",
+                derived = "apply_n",
+                group = "contiguous",
+                producer_group = "window_nd1",
+                input_count = 1,
+                order = 1,
+                apply_stage_count = 0,
+                expr_name = "window_neighbor_minus1",
+                expr = Stencil.StencilApplyWindowInput(Stencil.StencilAccessRef("x1"), {
+                    Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), -1),
+                }),
+                result_ty = i32,
+                item_ty = i32,
+                estimated_bytes = estimated_bytes_for_soac({ kind = "apply_n", input_count = 1, order = 1 }),
+                serial = "rank_window_neighbor",
+            },
+        }
+        for i = 1, #cells do
+            check_cell(cells[i])
+            out[#out + 1] = cells[i]
+        end
+    end
+
     function M.cells(opts)
         opts = opts or {}
         local out = {}
@@ -782,6 +859,7 @@ local function bind_context(T)
         else
             append_default_soac_cells(out, opts)
         end
+        append_rank_aware_coverage_cells(out)
         return shard_cells(out, opts)
     end
 
@@ -994,6 +1072,8 @@ local function bind_context(T)
             item_ty = cell.item_ty or cell.result_ty or i32,
             result_ty = i32,
             step_num = 1,
+            scope = cell.scope,
+            dst_layout = dst_layout(cell),
         }))
     end
 
@@ -1013,6 +1093,7 @@ local function bind_context(T)
             result_ty = i32,
             step_num = 1,
             dst_layout = dst_layout(cell),
+            axis = cell.axis,
         }))
     end
 

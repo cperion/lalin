@@ -176,6 +176,7 @@ local lj_module, facts = Lower.lower_module(module, {
             item_ty = info.mapped_ty,
             result_ty = info.result_ty,
             step_num = info.step_num or info.stride,
+            producer = info.producer,
             schedule = info.schedule,
             noalias_pairs = info.noalias_pairs,
         })

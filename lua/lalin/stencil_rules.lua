@@ -658,6 +658,7 @@ local function bind_context(T)
         selection = store_fill {
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             elem_ty = P. ctx.dst_elem_ty,
             result_ty = P. ctx.dst_elem_ty,
             dst = P. ctx.dst,
@@ -687,6 +688,7 @@ local function bind_context(T)
         selection = store_copy {
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             elem_ty = P. ctx.class.elem_ty,
             result_ty = P. ctx.dst_elem_ty,
             dst = P. ctx.dst,
@@ -731,6 +733,7 @@ local function bind_context(T)
           reduction = P. ctx.reduction,
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             elem_ty = P. ctx.class.elem_ty,
             result_ty = P. ctx.result_ty,
             init = P. ctx.init,
@@ -770,6 +773,7 @@ local function bind_context(T)
           op = P. ctx.pred,
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             elem_ty = P. ctx.class.elem_ty,
             array = P. ctx.class.src,
             pred = P. ctx.pred,
@@ -807,6 +811,7 @@ local function bind_context(T)
           op = P. ctx.pred,
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             elem_ty = P. ctx.class.elem_ty,
             dst = P. ctx.dst,
             array = P. ctx.class.src,
@@ -838,6 +843,7 @@ local function bind_context(T)
         selection = store_gather {
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             elem_ty = P. ctx.class.elem_ty,
             result_ty = P. ctx.dst_elem_ty,
             dst = P. ctx.dst,
@@ -873,6 +879,7 @@ local function bind_context(T)
         selection = store_scatter {
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             elem_ty = P. ctx.class.elem_ty,
             result_ty = P. ctx.dst_elem_ty,
             dst = P. ctx.dst,
@@ -910,6 +917,7 @@ local function bind_context(T)
           op = P. ctx.class.op,
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             elem_ty = P. ctx.class.elem_ty,
             result_ty = P. ctx.class.result_ty,
             dst = P. ctx.dst,
@@ -943,6 +951,7 @@ local function bind_context(T)
           op = P. ctx.class.op,
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             elem_ty = P. ctx.class.elem_ty,
             result_ty = P. ctx.class.result_ty,
             dst = P. ctx.dst,
@@ -975,6 +984,7 @@ local function bind_context(T)
           op = P. ctx.class.op,
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             elem_ty = P. ctx.dst_elem_ty,
             result_ty = P. ctx.dst_elem_ty,
             dst = P. ctx.dst,
@@ -1009,6 +1019,7 @@ local function bind_context(T)
           op = P. ctx.class.pred,
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             elem_ty = P. ctx.class.elem_ty,
             result_ty = P. ctx.dst_elem_ty,
             dst = P. ctx.dst,
@@ -1047,6 +1058,7 @@ local function bind_context(T)
           op = P. ctx.class.op,
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             elem_ty = P. ctx.dst_elem_ty,
             result_ty = P. ctx.class.result_ty,
             dst = P. ctx.dst,
@@ -1085,6 +1097,7 @@ local function bind_context(T)
           op = P. ctx.class.cmp,
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             elem_ty = P. ctx.dst_elem_ty,
             result_ty = P. ctx.dst_elem_ty,
             dst = P. ctx.dst,
@@ -1128,6 +1141,7 @@ local function bind_context(T)
         selection = reduce_array {
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             result_ty = P. ctx.result_ty,
             init = P. ctx.init,
             array = P. ctx.class.src,
@@ -1157,6 +1171,7 @@ local function bind_context(T)
           op = P. ctx.class.op,
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             result_ty = P. ctx.result_ty,
             init = P. ctx.init,
             array = P. ctx.class.src,
@@ -1191,6 +1206,7 @@ local function bind_context(T)
           op = P. ctx.class.op,
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             result_ty = P. ctx.result_ty,
             init = P. ctx.init,
             lhs = P. ctx.class.lhs_base,
@@ -1224,6 +1240,7 @@ local function bind_context(T)
           op = P. ctx.class.pred,
           info = {
             step_num = P. ctx.step_num,
+            producer = P. ctx.producer,
             result_ty = P. ctx.result_ty,
             init = P. ctx.init,
             array = P. ctx.class.src,

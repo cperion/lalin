@@ -142,7 +142,8 @@ Severity tags:
   `RangeND`, `WindowND`, and `TiledND`; the support matrix marks the shape
   layer as covered. `copy_patch_mc` now materializes forward `RangeND`,
   center-domain `WindowND`, and forward `TiledND` producers for generic
-  `ApplyN`/`ReduceN`/`ScanN` through LLBL.C producer loops; the LuaTrace
+  `ApplyN`, domain/axis `ReduceN`, and axis-aware `ScanN` through LLBL.C
+  producer loops. The LuaTrace
   bytecode path accepts positive forward `Range1D` and rejects non-`Range1D`
   producers with typed `StencilRejectUnsupportedProducer` facts instead of
   silently degrading to stride-1 linear loops.
@@ -367,10 +368,11 @@ and benchmarked where they produce executable MC code.
 - [x] Keep positive forward `Range1D` working across existing BC, MC, and bank
   paths.
 - [x] Materialize forward `RangeND` in `copy_patch_mc` for generic `ApplyN`,
-  `ReduceN`, and `ScanN` through nested LLBL.C producer loops.
-- [x] Add generic `ScanN` as the third SOAC-basis materializer. `Scan` now
-  lowers through `scan_n`; MC uses the shared producer loop, and BC
-  handles `Range1D` ScanN.
+  domain/axis `ReduceN`, and axis-aware `ScanN` through nested LLBL.C producer
+  loops.
+- [x] Add generic `ScanN` as the third SOAC-basis materializer. `ScanN` carries
+  a typed axis; MC materializes rank-N axis scans and BC materializes positive
+  `Range1D` axis 1.
 - [x] Guard `copy_patch_bc` so non-`Range1D` producer plans cannot silently
   execute as linear `start/stop` loops.
 - [x] Add a shared producer execution-plan object to artifact shapes so every
@@ -392,8 +394,9 @@ and benchmarked where they produce executable MC code.
 - [x] Remove legacy string-concat C emitters from `stencil_c.lua`. C stencil
   materialization is now authored through the `llbl.c` dialect nodes for
   functions, params, loops, branches, expressions, and statements.
-- [x] Add forward `RangeND` runtime tests for every basis-backed shape that can
-  be expressed over row-major linear storage: `ApplyN`, `ReduceN`, and `ScanN`.
+- [x] Add forward `RangeND` runtime tests for every currently materialized
+  basis-backed shape that can be expressed over row-major linear storage:
+  `ApplyN`, domain-scope `ReduceN`, axis `ReduceN`, and axis `ScanN`.
 - [x] Keep non-`Range1D` producers as typed BC rejects with focused tests.
 - [x] Add non-unit positive producer-step tests for `RangeND` generic shapes.
 - [x] Decide backward producer semantics: represented but rejected with typed
@@ -402,8 +405,8 @@ and benchmarked where they produce executable MC code.
   tile-major outer loops, clipped edge tiles, row-major linearization inside the
   compact logical iteration space, and scalar/vector schedule preservation at
   the body level.
-- [x] Materialize `TiledND` in `copy_patch_mc` for generic `ApplyN`, `ReduceN`,
-  and `ScanN`.
+- [x] Materialize `TiledND` in `copy_patch_mc` for generic `ApplyN` and
+  domain-scope `ReduceN`.
 - [x] Remove fixed `copy_patch_mc` shapes from the producer gate; fixed shape
   names are no longer semantic materializers.
 - [x] Keep `TiledND` as a typed BC reject with tests.
@@ -421,33 +424,44 @@ and benchmarked where they produce executable MC code.
   producer cells compile into the generated MC bank.
 - [x] Update the support matrix so producer rows distinguish shape support,
   BC materialization, MC materialization, and emitted-bank coverage.
-- [ ] Make reduce and scan sinks rank-aware. `StencilSinkReduce` currently
-  names only `result_ty` and `mode`, and `StencilSinkScan` names only
-  `dst`, `reducer`, `mode`, and `result_ty`; over `RangeND`, `TiledND`, and
-  `WindowND` this is not enough. Add a typed axis selector/scope surface so
-  a descriptor can distinguish full-domain reduction, axis/partial reduction,
-  and window-local reduction/pooling, and so `ScanN` records the scanned axis
-  rather than silently treating the producer as a flattened 1D stream.
-- [ ] Define reduce sink scope semantics explicitly:
-  global/domain-collapse produces a scalar/control result; axis reduction
-  produces a rank-lowered output; window-local reduction produces one output
-  per producer center/window. These must be separate typed cases or a sum with
-  mandatory fields, not prose attached to `WindowND`.
-- [ ] Add typed rejects for unsupported sink scopes/axis sets. Until partial
-  reduce, window-local reduce, and axis scan materializers exist, the planner
-  must reject them with stable facts instead of flattening the producer and
-  accidentally changing rank semantics.
-- [ ] Add `WindowND` body-relative access semantics. `StencilApplyInput` only
-  names an access today, so a windowed producer can iterate centers but the body
-  cannot yet say `x[i + offset]` / neighbor access for convolution, pooling, or
-  finite differences. Add a typed window/axis offset expression or access
-  projection and consume it in MC/BC/materializer planning.
-- [ ] Decide whether `StencilBody` remains a one-variant wrapper or becomes
-  the owner of body families. If `StencilBodyApply` is still the only body kind,
-  flatten it into the descriptor; if window/body protocols are coming, add the
-  planned body variants and make their semantics explicit.
-- [ ] Feed producer shapes from the frontend/lowering pipeline instead of only
-  hand-built test descriptors.
+- [x] Make reduce and scan sinks rank-aware. `StencilSinkReduce` now carries a
+  typed `StencilReduceScope`, and `StencilSinkScan` now carries a typed
+  `StencilAxisRef`; rank-N scan is no longer silently treated as a flattened
+  stream.
+- [x] Define reduce sink scope semantics explicitly in the schema:
+  `StencilReduceScopeDomain` is a scalar/control-result full collapse,
+  `StencilReduceScopeAxes` is rank-lowering partial reduction with a destination
+  access, and `StencilReduceScopeWindow` is window-local pooling with a
+  destination access.
+- [x] Add typed rejects for unsupported sink scopes/axis sets. Invalid axis
+  sets and unsupported materializer/provider combinations now reject through
+  `StencilRejectUnsupportedSink` / constructor checks instead of flattening the
+  producer.
+- [x] Add represented `WindowND` body-relative access semantics.
+  `StencilApplyWindowInput` plus `StencilWindowOffset` now names neighbor
+  access explicitly; MC materializes boundary-aware neighbor addressing for
+  clamp, wrap, zero, and reject policies.
+- [x] Materialize rank-aware consumers in MC: axis/partial reduce, window-local
+  reduce/pooling, rank-N axis scan, and boundary-aware window-relative input
+  access.
+- [x] Extend BC and emitted-bank coverage for the new rank-aware consumers.
+  BC preserves typed non-`Range1D` producer rejects for window/rank consumers;
+  the emitted bank includes deliberate axis-reduce, window-reduce, and
+  window-neighbor apply cells in addition to generic producer cells.
+- [x] Feed producer shapes from the frontend/lowering pipeline instead of only
+  hand-built test descriptors. Lowering now turns counted loops into explicit
+  `StencilProducer(StencilProduceRange1D)` descriptors with preserved loop
+  bounds; named array helpers and generic N-ary artifact builders both carry
+  that producer into descriptor construction.
+- [x] Add a typed domain-scoped frontend/lowering producer fact.
+  `FlowDomainShape` is the neutral shape vocabulary and
+  `KernelDomainShapeFactSet` is the frontend/lowering fact keyed by
+  `FlowDomain`, with proofs and provenance. LuaJIT lowering projects those facts
+  into backend-owned `StencilProducerFactSet` values at the stencil boundary.
+  Lowering derives machine-call producer arguments from the descriptor shape, so
+  named array helpers and generic N-ary helpers share the same producer ABI.
+  Surface DSL sugar for authoring domain-shape facts is now a language
+  ergonomics task, not a producer backend gap.
 - [x] Move producer performance benchmarking out of the shape-completeness gate
   and into the materializer-quality pass: compare `Range1D`, `RangeND`, and
   `TiledND` MC materialization against handwritten C + `gcc -O3` after the
@@ -497,8 +511,16 @@ and benchmarked where they produce executable MC code.
   every interned cell expanded the default payload from about 5.7 MiB to about
   59.7 MiB; explicit materializer/probe builds can use the performance-oriented
   MC default.
-- [ ] Decide whether BC and MC banks must have identical logical coverage or
-  whether BC is the semantic superset and MC is the fast subset.
+- [x] Decide whether BC and MC banks must have identical logical coverage or
+  whether BC is the semantic superset and MC is the fast subset. They must not
+  have identical compiled-bank coverage: `copy_patch_bc` is the semantic
+  coverage probe and must either materialize a supported schema cell or expose
+  the exact typed unsupported cell; `copy_patch_mc` is the fast subset and falls
+  back to BC only through an explicit fallback path when a legal cell has no
+  fast compiled artifact; the emitted bank is the deployment subset with
+  explicit missing/stale-entry diagnostics. The support matrix now encodes those
+  roles and makes current BC semantic producer gaps visible instead of implying
+  parity.
 - [x] Add artifact-shape hashing/versioning so stale bank entries cannot
   silently satisfy changed descriptors. `StencilArtifactFingerprint` now hashes
   structural descriptor/schedule/ABI/proof inputs, and BC/MC realization rejects
@@ -549,9 +571,9 @@ optimization only happens if the compiler receives the fused source.
   as a proof/source anchor; compiled bank identity remains structural through
   descriptor fingerprints, not a separate producer id. The shape layer accepts
   `Range1D`, `RangeND`, `WindowND`, and `TiledND`; `copy_patch_mc` generic
-  `ApplyN`/`ReduceN`/`ScanN` now consumes forward `RangeND`, center-domain
-  `WindowND`, and forward `TiledND`, while LuaTrace rejects non-`Range1D`
-  producer shapes with typed facts.
+  `ApplyN`, domain/axis `ReduceN`, and axis-aware `ScanN` now consume forward
+  `RangeND`, center-domain `WindowND`, and forward `TiledND`, while LuaTrace
+  rejects non-`Range1D` producer shapes with typed facts.
 - [ ] Replace handwritten non-basis metastencils in production paths with
   generated metastencils from the primitive fragments; keep handwritten versions
   only as benchmarks, regression fixtures, or temporary scaffolding until the
@@ -751,10 +773,10 @@ means the fact is preserved for audit but does not yet drive lowering.
 
 | Schema surface | `copy_patch_bc` | `copy_patch_mc` | emitted bank / binary | Remaining work |
 | --- | --- | --- | --- | --- |
-| Descriptor producer/body/sink / vocab | consume all shape-supported producers; materialize current subset | consume all shape-supported C stencil shapes; materialize current subset | record/intern selected shapes | [x] Generate MC intern set from the support matrix, not hand enumeration. |
-| Producer | materialize positive `Range1D`; reject represented ND/window/tiled producers with typed facts | materialize positive `Range1D`, forward `RangeND`, center-domain `WindowND`, and forward `TiledND` for generic `ApplyN`/`ReduceN`/`ScanN` | intern `Range1D`, `RangeND`, `WindowND`, and `TiledND` producer cells | [x] Add emitted-bank tests for all represented producer groups. |
-| Sink rank/scope | currently flattened/global-only for reduce/scan except 1D scan | currently flattened/global-only for reduce/scan over producer loops | not represented as a bank axis yet | [ ] Add axis/scope typed sink cases and rejects before claiming tensor/pooling coverage. |
-| Window body offsets | not represented; window producers are BC rejects | producer center loops exist, but body cannot address neighbors | not represented as a bank axis yet | [ ] Add typed window-relative access/body expressions and materializer tests. |
+| Descriptor producer/body/sink / vocab | validate all represented producer/body/sink descriptors; materialize current BC subset and typed-reject missing semantic cells | consume all shape-supported C stencil shapes; materialize current fast subset | record/intern selected shapes | [x] Generate MC intern set from the support matrix, not hand enumeration. |
+| Producer | materialize positive `Range1D`; reject represented ND/window/tiled producers with typed facts | materialize positive `Range1D`, forward `RangeND`, center-domain `WindowND`, and forward `TiledND` for generic `ApplyN`, domain/axis `ReduceN`, and axis `ScanN` | intern producer cells for generated SOAC combinations plus deliberate rank-aware cells | [x] Add deliberate emitted-bank cells for axis/window reduce and window-neighbor apply. |
+| Sink rank/scope | materialize domain reduce and `Range1D` axis-1 scan; reject non-`Range1D` producers | materialize domain reduce, axis/partial reduce, window-local reduce, and rank-N axis scan | bank records domain reduce, generated rank-N scan, and deliberate axis/window reduce cells | [x] Add emitted-bank coverage for axis/window reduce cells. |
+| Window body offsets | represented as `StencilApplyWindowInput`; BC rejects non-`Range1D` producer shapes | MC consumes boundary-aware window-relative access expressions | bank includes deliberate window-neighbor apply cell | [x] Add emitted-bank cells and BC typed-reject tests for window-relative bodies. |
 | Layout | consume contiguous, view, slice, byte-span, field, SoA, indexed, scalar | consume same through C access expressions | partial dynamic-descriptor coverage | [ ] Add embedded-bank tests for view/slice/byte-span/field/SoA descriptors. |
 | Access roles | consume read/write/readwrite/reduce/index in access plans | consume read/write/readwrite/reduce/index in generated C signatures/accesses | record through artifacts | [ ] Add index-role bounds/alias tests for gather/scatter in both banks. |
 | Alias facts | consume noalias for BC copy primitive legality | consume noalias as C `restrict` where legal | record through artifact fingerprint | [ ] Benchmark alias-driven gather/scatter/copy materialization against handwritten C. |
@@ -772,7 +794,9 @@ means the fact is preserved for audit but does not yet drive lowering.
 
 - [ ] Treat `copy_patch_bc` as the semantic coverage probe: it should either
   materialize the full supported schema surface or expose the exact missing
-  materialization cell.
+  materialization cell. The support matrix now names this as the policy and
+  records the current producer gaps: `RangeND`, `WindowND`, and `TiledND`
+  are represented schema cells that BC still typed-rejects.
 - [ ] Treat `copy_patch_mc` as the fast-path probe: it should exploit the new
   facts for scheduling, aliasing, alignment, vectorization, gather/scatter,
   select/blend, reductions, and descriptor-aware access patterns where doing so

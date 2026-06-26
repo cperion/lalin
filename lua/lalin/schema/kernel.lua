@@ -47,6 +47,23 @@ return schema. LalinKernel {
     KernelProofEffect { variant_unique, effect [LalinEffect.OpEffect], reason [str], },
     KernelProofFunctionEquivalence { variant_unique, reason [str], },
   },
+  sum. KernelDomainShapeOrigin {
+    KernelDomainShapeCheckerDerived,
+    KernelDomainShapeAuthorAsserted { variant_unique, reason [str], },
+    KernelDomainShapeFrontendFact { variant_unique, reason [str], },
+  },
+  product. KernelDomainShapeFact {
+    interned,
+    domain [LalinFlow.FlowDomain],
+    shape [LalinFlow.FlowDomainShape],
+    proofs [many [LalinKernel.KernelProof]],
+    origin [LalinKernel.KernelDomainShapeOrigin],
+  },
+  product. KernelDomainShapeFactSet {
+    interned,
+    field. module [LalinCode.CodeModuleId],
+    facts [many [LalinKernel.KernelDomainShapeFact]],
+  },
   sum. KernelDomain {
     KernelDomainFlow {
       variant_unique,

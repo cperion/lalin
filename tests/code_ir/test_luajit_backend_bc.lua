@@ -99,6 +99,17 @@ for j = 0, count - 1 do
 end
 assert(result.module.sum_i32(arr, count) == expected)
 
+local fallback_result, fallback_err, fallback_src = Backend.compile_module(module, {
+    contracts = contracts,
+    allow_bc_fallback = true,
+    chunk_name = "test_luajit_backend_bc_fallback",
+})
+assert(fallback_result ~= nil, tostring(fallback_err) .. "\n" .. tostring(fallback_src))
+assert(fallback_result.realization.kind == "BCStencilBankRealization", "missing MC bank should realize through explicit BC fallback")
+assert(fallback_result.realization.fallback_from == "copy_patch_mc", "BC fallback should record source materializer")
+assert(tostring(fallback_result.realization.fallback_reason):match("prebuilt MCStencilBank"), "BC fallback should preserve missing-MC reason")
+assert(fallback_result.module.sum_i32(arr, count) == expected)
+
 local loader = loadstring or load
 local artifact_chunk, load_err = loader(artifact_source, "@test_luajit_backend_bc_artifact")
 assert(artifact_chunk ~= nil, tostring(load_err) .. "\n" .. artifact_source)

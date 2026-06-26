@@ -75,6 +75,81 @@ local function bind_context(T)
         return out
     end
 
+    local function flow_domain_key(domain)
+        local cls = pvm.classof(domain)
+        if cls == Flow.FlowDomainLoop then return "loop:" .. domain.loop.text end
+        if cls == Flow.FlowDomainFunction then return "func:" .. domain.func.text end
+        return tostring(domain)
+    end
+
+    local function domain_shape_facts(facts)
+        if facts == nil then return {} end
+        if pvm.classof(facts) == Kernel.KernelDomainShapeFactSet then return facts.facts or {} end
+        return facts
+    end
+
+    local function stencil_order(order)
+        if order == Flow.FlowDomainBackward then return Stencil.StencilProducerBackward end
+        return Stencil.StencilProducerForward
+    end
+
+    local function stencil_axis(axis)
+        return Stencil.StencilProducerAxis(axis.index_ty, axis.start, axis.stop, axis.step, stencil_order(axis.order))
+    end
+
+    local function stencil_boundary(boundary)
+        if boundary == Flow.FlowWindowBoundaryClamp then return Stencil.StencilWindowBoundaryClamp end
+        if boundary == Flow.FlowWindowBoundaryWrap then return Stencil.StencilWindowBoundaryWrap end
+        if boundary == Flow.FlowWindowBoundaryZero then return Stencil.StencilWindowBoundaryZero end
+        return Stencil.StencilWindowBoundaryReject
+    end
+
+    local function stencil_window_axis(axis)
+        return Stencil.StencilWindowAxis(axis.before, axis.after, stencil_boundary(axis.boundary))
+    end
+
+    local function map_list(xs, f)
+        local out = {}
+        for i, x in ipairs(xs or {}) do out[i] = f(x) end
+        return out
+    end
+
+    local function stencil_producer_shape(shape)
+        local cls = pvm.classof(shape)
+        if cls == Flow.FlowDomainShapeRange1D then
+            return Stencil.StencilProduceRange1D(shape.index_ty, shape.start, shape.stop, shape.step, stencil_order(shape.order))
+        elseif cls == Flow.FlowDomainShapeRangeND then
+            return Stencil.StencilProduceRangeND(map_list(shape.axes, stencil_axis))
+        elseif cls == Flow.FlowDomainShapeWindowND then
+            return Stencil.StencilProduceWindowND(map_list(shape.axes, stencil_axis), map_list(shape.windows, stencil_window_axis))
+        elseif cls == Flow.FlowDomainShapeTiledND then
+            return Stencil.StencilProduceTiledND(map_list(shape.axes, stencil_axis), shape.tile_sizes or {})
+        end
+        error("luajit_lower: unsupported FlowDomainShape " .. class_name(shape), 3)
+    end
+
+    local function stencil_producer_origin(origin)
+        local cls = pvm.classof(origin)
+        if origin == Kernel.KernelDomainShapeCheckerDerived then return Stencil.StencilProducerCheckerDerived end
+        if cls == Kernel.KernelDomainShapeAuthorAsserted then return Stencil.StencilProducerAuthorAsserted(origin.reason) end
+        if cls == Kernel.KernelDomainShapeFrontendFact then return Stencil.StencilProducerFrontendFact(origin.reason) end
+        return Stencil.StencilProducerCheckerDerived
+    end
+
+    local function producer_fact_from_domain_shape(fact)
+        local producer = Stencil.StencilProducer(fact.domain, stencil_producer_shape(fact.shape))
+        return Stencil.StencilProducerFact(fact.domain, producer, fact.proofs or {}, stencil_producer_origin(fact.origin))
+    end
+
+    local function producer_fact_index(domain_shapes)
+        local out = {}
+        for _, shape_fact in ipairs(domain_shape_facts(domain_shapes)) do
+            local fact = producer_fact_from_domain_shape(shape_fact)
+            out[flow_domain_key(fact.domain)] = fact
+        end
+        return out
+    end
+
     local function block_index(func)
         local out = {}
         for _, block in ipairs(func.blocks or {}) do out[block.id.text] = block end
@@ -714,6 +789,23 @@ local function bind_context(T)
         }
     end
 
+    local function producer_from_loop(ctx, loop_fact, step_num)
+        local counted = loop_fact and loop_fact.counted or nil
+        if counted == nil then return nil end
+        local producer_fact = ctx and ctx.producer_facts and ctx.producer_facts[flow_domain_key(loop_fact.domain)] or nil
+        if producer_fact ~= nil then return producer_fact.producer end
+        return Stencil.StencilProducer(
+            loop_fact.domain,
+            Stencil.StencilProduceRange1D(
+                Code.CodeTyIndex,
+                Value.ValueExprValue(counted.start),
+                Value.ValueExprValue(counted.stop),
+                step_num,
+                Stencil.StencilProducerForward
+            )
+        )
+    end
+
     local function stencil_store_plan(ctx, func, plan, graph_loop, loop_fact)
         if pvm.classof(plan) ~= Kernel.KernelPlanned then return nil, "kernel is not planned" end
         if not function_returns_void_from_loop(func, graph_loop) then return nil, "store stencil requires loop exit to return void" end
@@ -735,6 +827,7 @@ local function bind_context(T)
         if class == nil then return nil, class_reason end
         local selection_ctx = {
             step_num = step_num,
+            producer = producer_from_loop(ctx, loop_fact, step_num),
             dst_elem_ty = store.dst.elem_ty,
             dst = dst_base,
             dst_expr = dst_expr,
@@ -769,10 +862,83 @@ local function bind_context(T)
         return nil
     end
 
-    local function stencil_args(ctx, artifact, args)
+    local function access_arg_value(info, name)
+        if info == nil or name == nil then return nil end
+        if name == "dst" then return info.dst end
+        if name == "xs" then return info.array or info.src or info.xs end
+        if name == "src" then return info.src or info.array end
+        if name == "lhs" then return info.lhs end
+        if name == "rhs" then return info.rhs end
+        if name == "idx" then return info.index or info.idx end
+        if name == "cond" then return info.cond end
+        if name == "then_xs" then return info.then_xs or info.then_base end
+        if name == "else_xs" then return info.else_xs or info.else_base end
+        return info[name]
+    end
+
+    local function append_access_args(ctx, desc, info, out)
+        for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(desc)) do
+            if pvm.classof(access.layout) ~= Stencil.StencilLayoutScalar then
+                local role = access.role
+                if role == Stencil.StencilAccessRead or role == Stencil.StencilAccessWrite or role == Stencil.StencilAccessReadWrite or role == Stencil.StencilAccessIndex then
+                    local id = access_arg_value(info, access.name)
+                    if id ~= nil then out[#out + 1] = value_id_expr(ctx, id) end
+                end
+            end
+        end
+    end
+
+    local function append_producer_args(ctx, producer, out, fallback)
+        local shape = StencilArtifactPlan.producer_shape(producer)
+        local cls = pvm.classof(shape)
+        if cls == Stencil.StencilProduceRange1D then
+            out[#out + 1] = shape.start and value_expr(ctx, shape.start) or assert(fallback and fallback.start_expr, "Range1D producer call is missing start")
+            out[#out + 1] = shape.stop and value_expr(ctx, shape.stop) or assert(fallback and fallback.stop_expr, "Range1D producer call is missing stop")
+            return
+        end
+        if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then
+            for _, axis in ipairs(shape.axes or {}) do
+                out[#out + 1] = assert(axis.start and value_expr(ctx, axis.start), "ND producer call is missing axis start")
+                out[#out + 1] = assert(axis.stop and value_expr(ctx, axis.stop), "ND producer call is missing axis stop")
+            end
+            return
+        end
+        error("luajit_lower: unsupported stencil producer call shape " .. class_name(shape), 3)
+    end
+
+    local function append_trailing_scalar_args(ctx, desc, info, out)
+        for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(desc)) do
+            if pvm.classof(access.layout) == Stencil.StencilLayoutScalar and access.role == Stencil.StencilAccessRead then
+                local init = access.layout.value or (info and info.value)
+                if init ~= nil then out[#out + 1] = value_expr(ctx, init) end
+            end
+        end
+        local sink = desc.sink
+        local sink_cls = pvm.classof(sink)
+        if sink_cls == Stencil.StencilSinkScan then
+            out[#out + 1] = value_expr(ctx, assert(info and info.init, "scan stencil call is missing init"))
+        elseif sink_cls == Stencil.StencilSinkReduce then
+            local scope = sink.scope
+            local scope_cls = pvm.classof(scope)
+            local domain_scope = scope == Stencil.StencilReduceScopeDomain or scope_cls == Stencil.StencilReduceScopeDomain
+            if domain_scope and pvm.classof(sink.mode) == Stencil.StencilReduceFold then
+                out[#out + 1] = value_expr(ctx, assert(info and info.init, "reduce stencil call is missing init"))
+            end
+        end
+    end
+
+    local function stencil_args(ctx, artifact, selection)
         local out = {}
-        for i = 1, #(args or {}) do out[i] = args[i] end
         local desc = artifact and artifact.instance and artifact.instance.descriptor or nil
+        local info = selection and selection.info or nil
+        if desc ~= nil and info ~= nil then
+            append_access_args(ctx, desc, info, out)
+            append_producer_args(ctx, desc.producer, out, info)
+            append_trailing_scalar_args(ctx, desc, info, out)
+        else
+            local args = selection and selection.args or selection
+            for i = 1, #(args or {}) do out[i] = args[i] end
+        end
         for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(desc)) do
             local top = dynamic_stride_layout(access.layout)
             if top ~= nil then
@@ -790,7 +956,7 @@ local function bind_context(T)
         local artifact = opts.stencil_store_artifact_for(func, selection.kind or selection.vocab, selection.op, plan, selection.info)
         if artifact == nil then return nil, "store stencil artifact provider did not select an artifact" end
         local id = LJ.LJMachineId("machine:" .. sanitize(func.name) .. ":stencil_store:" .. sanitize(loop_fact.loop.text))
-        return LJ.LJMachine(id, LJ.LJMachineStencilEffect(artifact, stencil_args(ctx, artifact, selection.args)), nil, LJ.LJStateScalar, LJ.LJTraceHot), nil
+        return LJ.LJMachine(id, LJ.LJMachineStencilEffect(artifact, stencil_args(ctx, artifact, selection)), nil, LJ.LJStateScalar, LJ.LJTraceHot), nil
     end
 
     local function plan_kernel_stencil_store(ctx, func, plan, graph_loop, loop_fact, opts)
@@ -820,6 +986,7 @@ local function bind_context(T)
         local i32 = Code.CodeTyInt(32, Code.CodeSigned)
         local selection_ctx = {
             step_num = step_num,
+            producer = producer_from_loop(ctx, loop_fact, step_num),
             result_ty = reduction.ty,
             init = reduction.init,
             init_expr = init_expr,
@@ -854,7 +1021,7 @@ local function bind_context(T)
         local artifact = select_reduction_artifact(opts, func, selection.kind or selection.vocab, selection.op, reduction, plan, selection.info)
         if artifact == nil then return nil, "reduction stencil artifact provider did not select an artifact" end
         local id = LJ.LJMachineId("machine:" .. sanitize(func.name) .. ":stencil_reduce:" .. sanitize(loop_fact.loop.text))
-        return LJ.LJMachine(id, LJ.LJMachineStencilCall(artifact, stencil_args(ctx, artifact, selection.args), physical(ctx, reduction.ty)), physical(ctx, reduction.ty), LJ.LJStateScalar, LJ.LJTraceHot), nil
+        return LJ.LJMachine(id, LJ.LJMachineStencilCall(artifact, stencil_args(ctx, artifact, selection), physical(ctx, reduction.ty)), physical(ctx, reduction.ty), LJ.LJStateScalar, LJ.LJTraceHot), nil
     end
 
     local function plan_kernel_stencil_reduce(ctx, func, plan, graph_loop, loop_fact, opts)
@@ -923,6 +1090,7 @@ local function bind_context(T)
         local step_num = const_int_value(ctx, loop_fact.counted.step)
         local selection, select_reason = run_stencil_selection("select_scan_stencil", {
             step_num = step_num,
+            producer = producer_from_loop(ctx, loop_fact, step_num),
             dst_elem_ty = effect.dst.elem_ty,
             result_ty = reduction.ty,
             dst = dst_base,
@@ -954,6 +1122,7 @@ local function bind_context(T)
         local step_num = const_int_value(ctx, loop_fact.counted.step)
         local selection, select_reason = run_stencil_selection("select_find_stencil", {
             step_num = step_num,
+            producer = producer_from_loop(ctx, loop_fact, step_num),
             start = loop_fact.counted.start,
             stop = loop_fact.counted.stop,
             start_expr = value_id_expr(ctx, loop_fact.counted.start),
@@ -978,6 +1147,7 @@ local function bind_context(T)
         local step_num = const_int_value(ctx, loop_fact.counted.step)
         local selection, select_reason = run_stencil_selection("select_partition_stencil", {
             step_num = step_num,
+            producer = producer_from_loop(ctx, loop_fact, step_num),
             dst_elem_ty = effect.dst.elem_ty,
             dst = dst_base,
             dst_expr = value_id_expr(ctx, dst_base),
@@ -1007,6 +1177,7 @@ local function bind_context(T)
         local step_num = const_int_value(ctx, loop_fact.counted.step)
         local selection, select_reason = run_stencil_selection("select_store_stencil", {
             step_num = step_num,
+            producer = producer_from_loop(ctx, loop_fact, step_num),
             dst_elem_ty = effect.dst.elem_ty,
             dst = dst_base,
             dst_expr = value_id_expr(ctx, dst_base),
@@ -1059,9 +1230,9 @@ local function bind_context(T)
         local id = LJ.LJMachineId("machine:" .. sanitize(func.name) .. ":stencil_skeleton:" .. sanitize(loop_fact.loop.text))
         if planned.result_ty ~= nil then
             local result_ty = physical(ctx, planned.result_ty)
-            return LJ.LJMachine(id, LJ.LJMachineStencilCall(artifact, stencil_args(ctx, artifact, selection.args), result_ty), result_ty, LJ.LJStateScalar, LJ.LJTraceHot), nil
+            return LJ.LJMachine(id, LJ.LJMachineStencilCall(artifact, stencil_args(ctx, artifact, selection), result_ty), result_ty, LJ.LJStateScalar, LJ.LJTraceHot), nil
         end
-        return LJ.LJMachine(id, LJ.LJMachineStencilEffect(artifact, stencil_args(ctx, artifact, selection.args)), nil, LJ.LJStateScalar, LJ.LJTraceHot), nil
+        return LJ.LJMachine(id, LJ.LJMachineStencilEffect(artifact, stencil_args(ctx, artifact, selection)), nil, LJ.LJStateScalar, LJ.LJTraceHot), nil
     end
 
     local function plan_kernel_stencil_skeleton(ctx, func, plan, graph_loop, loop_fact, opts)
@@ -1166,12 +1337,13 @@ local function bind_context(T)
 
     local build_kernel
 
-    local function module_ctx_for(module, flow, mem, contracts)
+    local function module_ctx_for(module, flow, mem, contracts, domain_shapes)
         return {
             code_sigs = code_sigs(module),
             mem_objects = mem_object_index(mem),
             mem_accesses = mem_access_index(mem),
             soa_contracts = soa_contract_index(contracts),
+            producer_facts = producer_fact_index(domain_shapes),
             flow = flow,
         }
     end
@@ -1182,6 +1354,7 @@ local function bind_context(T)
             mem_objects = module_ctx.mem_objects,
             mem_accesses = module_ctx.mem_accesses,
             soa_contracts = module_ctx.soa_contracts,
+            producer_facts = module_ctx.producer_facts,
             func_id = func.id,
             flow = module_ctx.flow,
             value_types = {},
@@ -1252,7 +1425,7 @@ local function bind_context(T)
         local graph, flow, value, mem, effect, kernel = build_kernel(module, opts)
         local graph_loops, loop_func = graph_loop_index(graph)
         local flow_loops = flow_loop_index(flow)
-        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts)
+        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts, opts.domain_shapes)
         local by_func, plans, rejects = {}, {}, {}
         for _, func in ipairs(module.funcs or {}) do
             local plan, pending = plan_func_stencil_machine(module_ctx, func, kernel, graph_loops, flow_loops, loop_func, opts)
@@ -1327,7 +1500,7 @@ local function bind_context(T)
         end
         local graph_loops, loop_func = graph_loop_index(graph)
         local flow_loops = flow_loop_index(flow)
-        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts)
+        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts, opts.domain_shapes)
         local funcs = {}
         for i, func in ipairs(module.funcs or {}) do funcs[i] = lower_func(module_ctx, func, kernel, graph_loops, flow_loops, loop_func, opts) end
         return LJ.LJModule(module.id, funcs, {}, {}, {}), {

@@ -299,6 +299,25 @@ local function bind_context(T)
         return Stencil.StencilApplyInput(Stencil.StencilAccessRef(name))
     end
 
+    local function axis_ref(index)
+        index = tonumber(index or 1) or 1
+        return Stencil.StencilAxisRef(index)
+    end
+
+    local function domain_reduce_scope()
+        return Stencil.StencilReduceScopeDomain
+    end
+
+    local function reduce_scope_from_attrs(attrs)
+        attrs = attrs or {}
+        return attrs.reduce_scope or attrs.scope or domain_reduce_scope()
+    end
+
+    local function scan_axis_from_attrs(attrs)
+        attrs = attrs or {}
+        return attrs.scan_axis or attrs.axis or axis_ref(1)
+    end
+
     local function const_expr(value, ty)
         return Stencil.StencilApplyConst(value, ty)
     end
@@ -423,6 +442,13 @@ local function bind_context(T)
         return opts or {}
     end
 
+    local function attrs(info, extra)
+        local out = {}
+        for k, v in pairs(info or {}) do out[k] = v end
+        for k, v in pairs(extra or {}) do out[k] = v end
+        return out
+    end
+
     local function contig(name, role, ty, stride)
         return Stencil.StencilAccess(name, role, ty, Stencil.StencilLayoutContiguous(tonumber(stride) or 1))
     end
@@ -465,19 +491,19 @@ local function bind_context(T)
         local producer = producer_from_attrs(stride, attrs)
         local body = Stencil.StencilBodyApply(expr or input_expr("xs"))
         if vocab == "reduce" then
-            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkReduce(assert(result_ty, "reduce descriptor requires result type"), Stencil.StencilReduceFold(assert(reducer, "reduce descriptor requires reducer"))))
+            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkReduce(assert(result_ty, "reduce descriptor requires result type"), reduce_scope_from_attrs(attrs), Stencil.StencilReduceFold(assert(reducer, "reduce descriptor requires reducer"))))
         end
         if vocab == "apply" then
             body = Stencil.StencilBodyApply(assert(expr, "apply descriptor requires expr"))
             return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkStore(Stencil.StencilAccessRef(attrs.store_dst or "dst"), attrs.apply_mode or Stencil.StencilStoreElementwise))
         end
         if vocab == "scan" then
-            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkScan(Stencil.StencilAccessRef("dst"), assert(reducer, "scan descriptor requires reducer"), assert(attrs.mode, "scan descriptor requires mode"), assert(result_ty, "scan descriptor requires result type")))
+            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkScan(Stencil.StencilAccessRef("dst"), scan_axis_from_attrs(attrs), assert(reducer, "scan descriptor requires reducer"), assert(attrs.mode, "scan descriptor requires mode"), assert(result_ty, "scan descriptor requires result type")))
         end
         if vocab == "find" then
             expr = assert(expr, "find descriptor requires predicate expr")
             body = Stencil.StencilBodyApply(expr)
-            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkReduce(assert(result_ty, "find descriptor requires result type"), Stencil.StencilReduceFind(predicate_expr_pred(expr), assert(attrs.not_found, "find descriptor requires not_found"))))
+            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkReduce(assert(result_ty, "find descriptor requires result type"), reduce_scope_from_attrs(attrs), Stencil.StencilReduceFind(predicate_expr_pred(expr), assert(attrs.not_found, "find descriptor requires not_found"))))
         end
         if vocab == "partition" then
             body = Stencil.StencilBodyApply(assert(expr, "partition descriptor requires predicate expr"))
@@ -486,7 +512,7 @@ local function bind_context(T)
         if vocab == "count" then
             expr = assert(expr, "count descriptor requires predicate expr")
             body = Stencil.StencilBodyApply(expr)
-            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkReduce(assert(result_ty, "count descriptor requires result type"), Stencil.StencilReduceCount(predicate_expr_pred(expr))))
+            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkReduce(assert(result_ty, "count descriptor requires result type"), reduce_scope_from_attrs(attrs), Stencil.StencilReduceCount(predicate_expr_pred(expr))))
         end
         error("stencil_artifact_plan: unsupported descriptor vocab", 3)
     end
@@ -539,6 +565,27 @@ local function bind_context(T)
         if cls == Stencil.StencilProduceRange1D then return 1 end
         if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then return #(shape.axes or {}) end
         return 0
+    end
+
+    local function axis_ref_invalid_reason(axis, producer, site)
+        site = site or "stencil axis"
+        local idx = tonumber(axis and axis.index)
+        if idx == nil or idx < 1 or math.floor(idx) ~= idx then return site .. " must be a positive integer axis index" end
+        local rank = producer_axis_count(producer)
+        if idx > rank then return site .. " " .. tostring(idx) .. " is outside producer rank " .. tostring(rank) end
+        return nil
+    end
+
+    local function axis_set_invalid_reason(axes, producer, site)
+        if #(axes or {}) == 0 then return (site or "axis set") .. " requires at least one axis" end
+        local seen = {}
+        for i, axis in ipairs(axes or {}) do
+            local reason = axis_ref_invalid_reason(axis, producer, (site or "axis set") .. " axis " .. tostring(i))
+            if reason ~= nil then return reason end
+            if seen[axis.index] then return (site or "axis set") .. " repeats axis " .. tostring(axis.index) end
+            seen[axis.index] = true
+        end
+        return nil
     end
 
     local function producer_axis_invalid_reason(axis, index)
@@ -637,6 +684,75 @@ local function bind_context(T)
         local reason = producer_materializer_reject_reason(producer)
         if reason == nil then return nil end
         return Stencil.StencilRejectUnsupportedProducer(producer, reason)
+    end
+
+    local function expr_window_input_reason(expr, producer)
+        local cls = pvm.classof(expr)
+        if cls == Stencil.StencilApplyWindowInput then
+            local shape = producer_shape(producer)
+            if pvm.classof(shape) ~= Stencil.StencilProduceWindowND then return "window-relative apply input requires a WindowND producer" end
+            local seen = {}
+            for i, offset in ipairs(expr.offsets or {}) do
+                local reason = axis_ref_invalid_reason(offset.axis, producer, "window input offset " .. tostring(i))
+                if reason ~= nil then return reason end
+                if seen[offset.axis.index] then return "window input repeats axis " .. tostring(offset.axis.index) end
+                seen[offset.axis.index] = true
+            end
+            return nil
+        end
+        if cls == Stencil.StencilApplyUnary or cls == Stencil.StencilApplyCast or cls == Stencil.StencilApplyPredicate then
+            return expr_window_input_reason(expr.arg, producer)
+        end
+        if cls == Stencil.StencilApplyBinary or cls == Stencil.StencilApplyCompare then
+            return expr_window_input_reason(expr.left, producer) or expr_window_input_reason(expr.right, producer)
+        end
+        if cls == Stencil.StencilApplySelect then
+            return expr_window_input_reason(expr.cond, producer) or expr_window_input_reason(expr.then_expr, producer) or expr_window_input_reason(expr.else_expr, producer)
+        end
+        return nil
+    end
+
+    local function reduce_scope_materializer_reject_reason(scope, producer)
+        local cls = pvm.classof(scope)
+        if scope == Stencil.StencilReduceScopeDomain or cls == Stencil.StencilReduceScopeDomain then return nil end
+        if cls == Stencil.StencilReduceScopeAxes then
+            local reason = axis_set_invalid_reason(scope.axes, producer, "reduce axis scope")
+            if reason ~= nil then return reason end
+            return nil
+        end
+        if cls == Stencil.StencilReduceScopeWindow then
+            local shape = producer_shape(producer)
+            if pvm.classof(shape) ~= Stencil.StencilProduceWindowND then return "window-local reduction requires a WindowND producer" end
+            local reason = axis_set_invalid_reason(scope.axes, producer, "window reduction scope")
+            if reason ~= nil then return reason end
+            return nil
+        end
+        return "unknown reduce sink scope"
+    end
+
+    local function sink_materializer_reject_reason(desc)
+        if desc == nil or desc.sink == nil then return "missing stencil sink" end
+        local producer = descriptor_producer(desc)
+        local body_reason = expr_window_input_reason(descriptor_expr(desc), producer)
+        if body_reason ~= nil then return body_reason end
+        local sink = desc.sink
+        local sink_cls = pvm.classof(sink)
+        if sink_cls == Stencil.StencilSinkReduce then
+            return reduce_scope_materializer_reject_reason(sink.scope, producer)
+        end
+        if sink_cls == Stencil.StencilSinkScan then
+            local reason = axis_ref_invalid_reason(sink.axis, producer, "scan axis")
+            if reason ~= nil then return reason end
+            return nil
+        end
+        if sink_cls == Stencil.StencilSinkStore then return nil end
+        return "unknown stencil sink"
+    end
+
+    local function unsupported_sink_reject(desc)
+        local reason = sink_materializer_reject_reason(desc)
+        if reason == nil then return nil end
+        return Stencil.StencilRejectUnsupportedSink(desc.sink, reason)
     end
 
     local function schedule_lane_count(schedule)
@@ -1359,6 +1475,7 @@ local function bind_context(T)
 
     local producer_tag
     local append_producer_params
+    local descriptor_abi_args
 
     function api.reduce_array_artifact(reduction, plan, info)
         local elem_ty = assert(info.elem_ty, "stencil_artifact_plan.reduce_array_artifact requires elem_ty")
@@ -1375,7 +1492,7 @@ local function bind_context(T)
             },
             nil,
             reducer_desc(reduction, result_ty),
-            nil,
+            info,
             memory(),
             result_ty
         )
@@ -1383,14 +1500,15 @@ local function bind_context(T)
         local suffix, symbol_suffix = schedule_suffix(selected_schedule)
         local id = Stencil.StencilInstanceId(reduce_instance_id(elem_ty, result_ty, reduction.kind, stride).text .. suffix)
         local symbol = Stencil.StencilSymbolId(reduce_symbol_id(elem_ty, result_ty, reduction.kind, stride).text .. symbol_suffix)
+        local abi, args = descriptor_abi_args(desc, { { ty = result_ty, decl = c_type(result_ty) .. " init" } })
         local inst = instance(
             id,
             desc,
-            abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty(), result_ty }, result_ty),
+            abi_with_dynamic_strides(desc, abi, result_ty),
             proof_list(plan),
             info
         )
-        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, { const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop", c_type(result_ty) .. " init" }))
+        return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, args))
     end
 
     function api.map_array_artifact(op, info)
@@ -1407,13 +1525,14 @@ local function bind_context(T)
             },
             apply_unary_expr(op, input_expr("xs"), result_ty, info),
             nil,
-            nil,
+            info,
             memory(),
             nil
         )
+        local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
     function api.zip_map_array_artifact(op, info)
@@ -1432,13 +1551,14 @@ local function bind_context(T)
             },
             apply_binary_expr(op, input_expr("lhs"), input_expr("rhs"), result_ty, info),
             nil,
-            nil,
+            info,
             memory(),
             nil
         )
+        local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(lhs_ty), Code.CodeTyDataPtr(rhs_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", const_elem_ptr_decl(lhs_ty, "lhs"), const_elem_ptr_decl(rhs_ty, "rhs"), "int32_t start", "int32_t stop" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
     function api.scan_array_artifact(reduction, plan, info)
@@ -1462,10 +1582,12 @@ local function bind_context(T)
             },
             nil,
             reducer_desc(reduction, result_ty),
-            { mode = mode, producer = producer },
+            { mode = mode, producer = producer, axis = info.axis or info.scan_axis },
             memory(),
             result_ty
         )
+        local sink_reason = sink_materializer_reject_reason(desc)
+        if sink_reason ~= nil then error("stencil_artifact_plan: unsupported scan_array sink/body: " .. tostring(sink_reason), 2) end
         local abi = { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(elem_ty) }
         local args = { c_type(result_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "xs") }
         append_producer_params(producer, abi, args)
@@ -1490,13 +1612,14 @@ local function bind_context(T)
             },
             input_expr("src"),
             nil,
-            { apply_mode = Stencil.StencilStoreCopy(semantics) },
+            attrs(info, { apply_mode = Stencil.StencilStoreCopy(semantics) }),
             memory({ copy = semantics }),
             nil
         )
+        local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "src"), "int32_t start", "int32_t stop" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
     function api.fill_array_artifact(info)
@@ -1512,13 +1635,14 @@ local function bind_context(T)
             },
             input_expr("value"),
             nil,
-            nil,
+            info,
             memory(),
             nil
         )
+        local abi, args = descriptor_abi_args(desc, { { ty = elem_ty, decl = scalar_param_ty(elem_ty) .. " value" } })
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty(), elem_ty }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", "int32_t start", "int32_t stop", scalar_param_ty(elem_ty) .. " value" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
     function api.find_array_artifact(pred, info)
@@ -1534,13 +1658,14 @@ local function bind_context(T)
             },
             apply_predicate_expr(predicate_checked(pred, elem_ty), input_expr("xs"), i32_ty()),
             nil,
-            { not_found = not_found },
+            attrs(info, { not_found = not_found }),
             memory(),
             i32_ty()
         )
+        local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, i32_ty()), {}, info)
-        return artifact(inst, symbol, int32_desc_decl(symbol, desc, { const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, i32_ty()), {}, info)
+        return artifact(inst, symbol, int32_desc_decl(symbol, desc, args))
     end
 
     function api.partition_array_artifact(pred, info)
@@ -1558,13 +1683,14 @@ local function bind_context(T)
             },
             apply_predicate_expr(predicate_checked(pred, elem_ty), input_expr("xs"), i32_ty()),
             nil,
-            { semantics = semantics },
+            attrs(info, { semantics = semantics }),
             memory({ partition = semantics }),
             i32_ty()
         )
+        local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, i32_ty()), {}, info)
-        return artifact(inst, symbol, int32_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, i32_ty()), {}, info)
+        return artifact(inst, symbol, int32_desc_decl(symbol, desc, args))
     end
 
     function api.cast_array_artifact(op, info)
@@ -1580,13 +1706,14 @@ local function bind_context(T)
             },
             apply_cast_expr(op, input_expr("xs"), src_ty, dst_ty),
             nil,
-            nil,
+            info,
             memory(),
             nil
         )
+        local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(dst_ty), Code.CodeTyDataPtr(src_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(dst_ty) .. " *dst", const_elem_ptr_decl(src_ty, "xs"), "int32_t start", "int32_t stop" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
     function api.compare_array_artifact(pred, info)
@@ -1602,13 +1729,14 @@ local function bind_context(T)
             },
             apply_predicate_expr(predicate_checked(pred, elem_ty), input_expr("xs"), result_ty),
             nil,
-            nil,
+            info,
             memory(),
             nil
         )
+        local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
     function api.zip_compare_array_artifact(cmp, info)
@@ -1626,13 +1754,14 @@ local function bind_context(T)
             },
             apply_compare_expr(cmp, input_expr("lhs"), input_expr("rhs"), result_ty),
             nil,
-            nil,
+            info,
             memory(),
             nil
         )
+        local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(lhs_ty), Code.CodeTyDataPtr(rhs_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", const_elem_ptr_decl(lhs_ty, "lhs"), const_elem_ptr_decl(rhs_ty, "rhs"), "int32_t start", "int32_t stop" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
     function api.select_array_artifact(pred, info)
@@ -1656,13 +1785,14 @@ local function bind_context(T)
             },
             apply_select_expr(pred, input_expr("cond"), input_expr("then_xs"), input_expr("else_xs"), result_ty),
             nil,
-            nil,
+            info,
             memory(),
             nil
         )
+        local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(result_ty), Code.CodeTyDataPtr(cond_ty), Code.CodeTyDataPtr(then_ty), Code.CodeTyDataPtr(else_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(result_ty) .. " *dst", const_elem_ptr_decl(cond_ty, "cond"), const_elem_ptr_decl(then_ty, "then_xs"), const_elem_ptr_decl(else_ty, "else_xs"), "int32_t start", "int32_t stop" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
     function api.gather_array_artifact(info)
@@ -1679,13 +1809,14 @@ local function bind_context(T)
             },
             input_expr("src"),
             nil,
-            nil,
+            info,
             memory(),
             nil
         )
+        local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(index_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "src"), const_elem_ptr_decl(index_ty, "idx"), "int32_t start", "int32_t stop" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
     function api.scatter_array_artifact(info)
@@ -1703,13 +1834,14 @@ local function bind_context(T)
             },
             input_expr("src"),
             nil,
-            { apply_mode = Stencil.StencilStoreScatter(conflicts) },
+            attrs(info, { apply_mode = Stencil.StencilStoreScatter(conflicts) }),
             memory({ scatter = conflicts }),
             nil
         )
+        local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(elem_ty), Code.CodeTyDataPtr(index_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *dst", const_elem_ptr_decl(elem_ty, "src"), const_elem_ptr_decl(index_ty, "idx"), "int32_t start", "int32_t stop" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
     function api.in_place_map_array_artifact(op, info)
@@ -1723,13 +1855,14 @@ local function bind_context(T)
             { Stencil.StencilAccess("xs", Stencil.StencilAccessReadWrite, elem_ty, info.src_layout or info.dst_layout or Stencil.StencilLayoutContiguous(stride)) },
             apply_unary_expr(op, input_expr("xs"), elem_ty, info),
             nil,
-            { store_dst = "xs" },
+            attrs(info, { store_dst = "xs" }),
             memory(),
             nil
         )
+        local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, nil), {}, info)
-        return artifact(inst, symbol, void_desc_decl(symbol, desc, { c_type(elem_ty) .. " *xs", "int32_t start", "int32_t stop" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
+        return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
     function api.count_array_artifact(pred, info)
@@ -1745,13 +1878,14 @@ local function bind_context(T)
             },
             apply_predicate_expr(predicate_checked(pred, elem_ty), input_expr("xs"), i32_ty()),
             nil,
-            nil,
+            info,
             memory(),
             i32_ty()
         )
+        local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, { Code.CodeTyDataPtr(elem_ty), i32_ty(), i32_ty() }, i32_ty()), {}, info)
-        return artifact(inst, symbol, int32_desc_decl(symbol, desc, { const_elem_ptr_decl(elem_ty, "xs"), "int32_t start", "int32_t stop" }))
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, i32_ty()), {}, info)
+        return artifact(inst, symbol, int32_desc_decl(symbol, desc, args))
     end
 
     local function producer_param_name(axis_index, suffix)
@@ -1791,6 +1925,25 @@ local function bind_context(T)
         error("stencil_artifact_plan: unsupported producer ABI: " .. tostring(reason), 3)
     end
 
+    function descriptor_abi_args(desc, trailing)
+        local abi, args = {}, {}
+        for _, access in ipairs(descriptor_accesses(desc)) do
+            if pvm.classof(access.layout) ~= Stencil.StencilLayoutScalar then
+                local role = access.role
+                if role == Stencil.StencilAccessRead or role == Stencil.StencilAccessWrite or role == Stencil.StencilAccessReadWrite or role == Stencil.StencilAccessIndex then
+                    abi[#abi + 1] = access_abi_ty(access)
+                    args[#args + 1] = access_arg_decl(access, role == Stencil.StencilAccessWrite or role == Stencil.StencilAccessReadWrite)
+                end
+            end
+        end
+        append_producer_params(desc.producer, abi, args)
+        for _, item in ipairs(trailing or {}) do
+            abi[#abi + 1] = item.ty
+            args[#args + 1] = item.decl
+        end
+        return abi, args
+    end
+
     local function apply_n_inputs(info, stride, producer)
         local inputs = assert(info.inputs, "stencil_artifact_plan.apply_n_artifact requires inputs")
         local accesses = { shaped("dst", Stencil.StencilAccessWrite, assert(info.result_ty), info.dst_layout, stride) }
@@ -1820,6 +1973,8 @@ local function bind_context(T)
         local id = Stencil.StencilInstanceId("stencil:apply_n:" .. type_name(result_ty) .. ":" .. tag .. ":" .. ptag)
         local symbol = Stencil.StencilSymbolId("ml_stencil_apply_n_" .. type_name(result_ty) .. "_" .. tag .. "_" .. ptag)
         local desc = descriptor("apply", stride, accesses, expr, nil, { producer = producer }, memory(), nil)
+        local sink_reason = sink_materializer_reject_reason(desc)
+        if sink_reason ~= nil then error("stencil_artifact_plan: unsupported apply_n sink/body: " .. tostring(sink_reason), 2) end
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
         return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
@@ -1834,9 +1989,19 @@ local function bind_context(T)
         local ok, reason = api.reduce_array_supported(reduction, { elem_ty = item_ty, result_ty = result_ty })
         if not ok then error("stencil_artifact_plan: unsupported reduce_n reduction: " .. tostring(reason), 2) end
         local inputs = assert(info.inputs, "stencil_artifact_plan.reduce_n_artifact requires inputs")
+        local scope = info.scope or info.reduce_scope or domain_reduce_scope()
+        local scope_cls = pvm.classof(scope)
+        local scoped_output = not (scope == Stencil.StencilReduceScopeDomain or scope_cls == Stencil.StencilReduceScopeDomain)
         local accesses = {}
         local abi = {}
         local args = {}
+        if scoped_output then
+            local dst_name = assert(scope.dst and scope.dst.name, "stencil_artifact_plan.reduce_n scoped output requires scope dst")
+            accesses[#accesses + 1] = shaped(dst_name, Stencil.StencilAccessWrite, result_ty, info.dst_layout, stride)
+            local access = accesses[#accesses]
+            abi[#abi + 1] = access_abi_ty(access)
+            args[#args + 1] = access_arg_decl(access, true)
+        end
         for i, input in ipairs(inputs) do
             local name = input.name or ("x" .. tostring(i))
             local ty = assert(input.ty, "stencil_artifact_plan.reduce_n input requires ty")
@@ -1847,15 +2012,20 @@ local function bind_context(T)
         end
         accesses[#accesses + 1] = scalar("acc", Stencil.StencilAccessReduce, result_ty, reducer_identity(reduction, result_ty))
         append_producer_params(producer, abi, args)
-        abi[#abi + 1] = result_ty
-        args[#args + 1] = c_type(result_ty) .. " init"
+        if not scoped_output then
+            abi[#abi + 1] = result_ty
+            args[#args + 1] = c_type(result_ty) .. " init"
+        end
         local tag = sanitize(info.tag or ("arity" .. tostring(#inputs)))
         local ptag = producer_tag(producer)
         local id = Stencil.StencilInstanceId("stencil:reduce_n:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":" .. tag .. ":" .. ptag)
         local symbol = Stencil.StencilSymbolId("ml_stencil_reduce_n_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_" .. tag .. "_" .. ptag)
-        local desc = descriptor("reduce", stride, accesses, expr, reducer_desc(reduction, result_ty), { producer = producer }, memory(), result_ty)
+        local desc = descriptor("reduce", stride, accesses, expr, reducer_desc(reduction, result_ty), { producer = producer, reduce_scope = scope }, memory(), result_ty)
+        local sink_reason = sink_materializer_reject_reason(desc)
+        if sink_reason ~= nil then error("stencil_artifact_plan: unsupported reduce_n sink/body: " .. tostring(sink_reason), 2) end
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, result_ty), proof_list(plan), info)
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, scoped_output and nil or result_ty), proof_list(plan), info)
+        if scoped_output then return artifact(inst, symbol, void_desc_decl(symbol, desc, args)) end
         return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, args))
     end
 
@@ -1889,7 +2059,9 @@ local function bind_context(T)
         local id = Stencil.StencilInstanceId("stencil:scan_n:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":" .. scan_mode_name(mode) .. ":" .. tag .. ":" .. ptag)
         local symbol = Stencil.StencilSymbolId("ml_stencil_scan_n_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_" .. scan_mode_name(mode) .. "_" .. tag .. "_" .. ptag)
         local reducer = reducer_desc(reduction, result_ty)
-        local desc = descriptor("scan", stride, accesses, expr, reducer, { mode = mode, producer = producer }, memory(), result_ty)
+        local desc = descriptor("scan", stride, accesses, expr, reducer, { mode = mode, producer = producer, axis = info.axis or info.scan_axis }, memory(), result_ty)
+        local sink_reason = sink_materializer_reject_reason(desc)
+        if sink_reason ~= nil then error("stencil_artifact_plan: unsupported scan_n sink/body: " .. tostring(sink_reason), 2) end
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), proof_list(plan), info)
         return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
@@ -1985,7 +2157,7 @@ local function bind_context(T)
         seen = seen or {}
         out = out or {}
         local cls = pvm.classof(expr)
-        if cls == Stencil.StencilApplyInput then
+        if cls == Stencil.StencilApplyInput or cls == Stencil.StencilApplyWindowInput then
             local name = expr.access.name
             if not seen[name] then
                 seen[name] = true
@@ -2049,6 +2221,10 @@ local function bind_context(T)
         local expr = descriptor_expr(desc)
         local inputs = expr_inputs_for_shape(desc, expr)
         local producer = producer_execution_plan(desc)
+        local scope = desc.sink.scope
+        local scope_cls = pvm.classof(scope)
+        local scope_kind = (scope == Stencil.StencilReduceScopeDomain or scope_cls == Stencil.StencilReduceScopeDomain) and "domain"
+            or (scope_cls == Stencil.StencilReduceScopeAxes and "axes" or "window")
         return local_shape("reduce_n", {
             inputs = inputs,
             expr = expr,
@@ -2058,6 +2234,11 @@ local function bind_context(T)
             int_semantics = red.int_semantics,
             float_mode = red.float_mode,
             identity = red.identity,
+            scope = scope,
+            scope_kind = scope_kind,
+            dst_name = scope_kind ~= "domain" and scope.dst.name or nil,
+            axes = scope_kind ~= "domain" and scope.axes or nil,
+            external_init = scope_kind == "domain",
             producer = producer,
             stride = producer.kind == "range1d" and producer.stride or nil,
         })
@@ -2120,6 +2301,7 @@ local function bind_context(T)
             float_mode = red.float_mode,
             identity = red.identity,
             mode = sink.mode,
+            axis = sink.axis,
             producer = producer,
             stride = producer.kind == "range1d" and producer.stride or nil,
         })
@@ -2127,6 +2309,8 @@ local function bind_context(T)
 
     local function artifact_shape(artifact)
         local desc = artifact.instance.descriptor
+        local sink_reason = sink_materializer_reject_reason(desc)
+        if sink_reason ~= nil then error("stencil_artifact_plan: unsupported stencil sink: " .. tostring(sink_reason), 3) end
         local sink = desc.sink
         local sink_cls = pvm.classof(sink)
         if sink_cls == Stencil.StencilSinkReduce then
@@ -2194,6 +2378,10 @@ local function bind_context(T)
     api.producer_materialized = producer_materialized
     api.producer_materializer_reject_reason = producer_materializer_reject_reason
     api.unsupported_producer_reject = unsupported_producer_reject
+    api.sink_materializer_reject_reason = sink_materializer_reject_reason
+    api.unsupported_sink_reject = unsupported_sink_reject
+    api.axis_ref = axis_ref
+    api.domain_reduce_scope = domain_reduce_scope
     api.schedule_lane_count = schedule_lane_count
     api.selection_provenance_for_artifact = selection_provenance_for_artifact
     api.no_selection_provenance = no_selection_provenance

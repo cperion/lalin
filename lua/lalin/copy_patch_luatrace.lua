@@ -629,6 +629,9 @@ local function bind_context(T)
             if pvm.classof(access.layout) == Stencil.StencilLayoutScalar then return name end
             return lua_access_ref(access, name, index)
         end
+        if cls == Stencil.StencilApplyWindowInput then
+            error("copy_patch_luatrace: window-relative apply inputs are not materialized by LuaTrace", 3)
+        end
         if cls == Stencil.StencilApplyConst then return tostring(iconst(expr.value)) end
         if cls == Stencil.StencilApplyUnary then
             return lua_unary_expr(expr.op, lua_apply_expr(expr.arg, desc, access_by_name, index), expr.result_ty, expr.int_semantics, expr.float_mode)

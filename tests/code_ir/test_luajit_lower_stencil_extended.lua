@@ -9,6 +9,9 @@ Schema(T)
 
 local Core = T.LalinCore
 local Code = T.LalinCode
+local Flow = T.LalinFlow
+local Graph = T.LalinGraph
+local Kernel = T.LalinKernel
 local LJ = T.LalinLuaJIT
 local Stencil = T.LalinStencil
 local Value = T.LalinValue
@@ -56,6 +59,7 @@ local function reduce_provider(func, vocab, op, reduction, plan, info)
             item_ty = info.mapped_ty,
             result_ty = info.result_ty,
             step_num = info.step_num or info.stride,
+            producer = info.producer,
             schedule = info.schedule,
             noalias_pairs = info.noalias_pairs,
         })
@@ -71,6 +75,7 @@ local function reduce_provider(func, vocab, op, reduction, plan, info)
             item_ty = info.mapped_ty,
             result_ty = info.result_ty,
             step_num = info.step_num or info.stride,
+            producer = info.producer,
             schedule = info.schedule,
             noalias_pairs = info.noalias_pairs,
         })
@@ -83,6 +88,7 @@ local function compile_module(module, contracts, opts)
     local artifacts, rejects = {}, {}
     local lj_module = Lower.lower_module(module, {
         contracts = contracts,
+        domain_shapes = opts.domain_shapes,
         collect_rejects = rejects,
         stencil_store_artifact_for = opts.store and function(func, vocab, op, plan, info)
             local artifact = store_provider(func, vocab, op, plan, info)
@@ -98,6 +104,13 @@ local function compile_module(module, contracts, opts)
     assert(#rejects == 0, opts.name .. " rejected: " .. tostring(rejects[1] and rejects[1].reason))
     assert(#artifacts == 1, opts.name .. " should select one artifact")
     assert(StencilArtifactPlan.descriptor_vocab(artifacts[1].instance.descriptor) == opts.basis, opts.name .. " selected wrong basis vocab")
+    local producer = StencilArtifactPlan.descriptor_producer(artifacts[1].instance.descriptor)
+    local shape = StencilArtifactPlan.producer_shape(producer)
+    local expected_producer = opts.producer or Stencil.StencilProduceRange1D
+    assert(pvm.classof(shape) == expected_producer, opts.name .. " should feed the expected typed producer from lowering")
+    if expected_producer == Stencil.StencilProduceRange1D then
+        assert(shape.start ~= nil and shape.stop ~= nil, opts.name .. " producer should preserve counted loop bounds")
+    end
     assert(pvm.classof(lj_module.funcs[1].machines[1].kind) == (opts.reduce and LJ.LJMachineStencilCall or LJ.LJMachineStencilEffect), opts.name .. " should lower through stencil machine")
     local build, build_err, csrc = StencilBinary.compile(T, artifacts, { stem = "test_luajit_lower_stencil_extended_" .. opts.name })
     assert(build ~= nil, tostring(build_err) .. "\n" .. tostring(csrc))
@@ -233,6 +246,34 @@ do
     local module, contracts, name = store_case("compare", bool8)
     compile_module(module, contracts, { name = name, store = true, basis = Stencil.StencilApply })(out_bool, xs, ys, idx, n)
     assert(out_bool[0] == 1 and out_bool[1] == 0 and out_bool[2] == 1 and out_bool[3] == 0 and out_bool[4] == 1, "lower compare")
+end
+
+do
+    local module, contracts, name = store_case("compare", bool8)
+    local loop_id = Graph.GraphLoopId("loop:" .. name .. ":block_" .. name .. "_header:block_" .. name .. "_body")
+    local domain = Flow.FlowDomainLoop(loop_id)
+    local zero = Code.CodeValueId("v:" .. name .. ":zero")
+    local one = Code.CodeValueId("v:" .. name .. ":one")
+    local n_value = module.funcs[1].params[5].value
+    local domain_shapes = Kernel.KernelDomainShapeFactSet(module.id, {
+        Kernel.KernelDomainShapeFact(
+            domain,
+            Flow.FlowDomainShapeRangeND({
+                Flow.FlowDomainAxis(Code.CodeTyIndex, Value.ValueExprValue(zero), Value.ValueExprValue(n_value), 1, Flow.FlowDomainForward),
+                Flow.FlowDomainAxis(Code.CodeTyIndex, Value.ValueExprValue(zero), Value.ValueExprValue(one), 1, Flow.FlowDomainForward),
+            }),
+            { Kernel.KernelProofFlow(domain, "test frontend fact maps loop domain to RangeND producer") },
+            Kernel.KernelDomainShapeFrontendFact("test domain shape fact")
+        ),
+    })
+    compile_module(module, contracts, {
+        name = name,
+        store = true,
+        basis = Stencil.StencilApply,
+        producer = Stencil.StencilProduceRangeND,
+        domain_shapes = domain_shapes,
+    })(out_bool, xs, ys, idx, n)
+    assert(out_bool[0] == 1 and out_bool[1] == 0 and out_bool[2] == 1 and out_bool[3] == 0 and out_bool[4] == 1, "lower compare with RangeND producer fact")
 end
 
 do

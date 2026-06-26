@@ -117,7 +117,7 @@ local descriptor = Stencil.StencilDescriptor(
         Stencil.StencilAccess("acc", Stencil.StencilAccessReduce, Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilLayoutScalar(init)),
     },
     Stencil.StencilBodyApply(Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs"))),
-    Stencil.StencilSinkReduce(Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilReduceFold(reducer))
+    Stencil.StencilSinkReduce(Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilReduceScopeDomain, Stencil.StencilReduceFold(reducer))
 )
 local artifact = Stencil.StencilArtifact(
     Stencil.StencilInstance(
