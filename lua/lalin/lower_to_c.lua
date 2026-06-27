@@ -168,7 +168,7 @@ local function bind_context(T)
     local function is_raw(raw, want) return raw ~= nil and tostring(raw) == tostring(want) end
     simplify_value_expr = function(expr)
         local cls = pvm.classof(expr)
-        if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv then
+        if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
             local a = simplify_value_expr(expr.a)
             local b = simplify_value_expr(expr.b)
             local ar = literal_int_raw(a)
@@ -182,7 +182,7 @@ local function bind_context(T)
                 if is_raw(ar, "0") or is_raw(br, "0") then return int_const(expr.ty, "0") end
                 if is_raw(ar, "1") then return b end
                 if is_raw(br, "1") then return a end
-            elseif cls == Value.ValueExprDiv then
+            elseif cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
                 if is_raw(br, "1") then return a end
             end
             if ar ~= nil and br ~= nil then
@@ -192,12 +192,16 @@ local function bind_context(T)
                     if cls == Value.ValueExprSub then return int_const(expr.ty, av - bv) end
                     if cls == Value.ValueExprMul then return int_const(expr.ty, av * bv) end
                     if cls == Value.ValueExprDiv and bv ~= 0 then return int_const(expr.ty, math.floor(av / bv)) end
+                    if cls == Value.ValueExprRem and bv ~= 0 then return int_const(expr.ty, av % bv) end
                 end
             end
             if cls == Value.ValueExprAdd then return Value.ValueExprAdd(a, b, expr.ty, expr.sem) end
             if cls == Value.ValueExprSub then return Value.ValueExprSub(a, b, expr.ty, expr.sem) end
             if cls == Value.ValueExprMul then return Value.ValueExprMul(a, b, expr.ty, expr.sem) end
-            return Value.ValueExprDiv(a, b, expr.ty, expr.sem)
+            if cls == Value.ValueExprDiv then return Value.ValueExprDiv(a, b, expr.ty, expr.sem) end
+            return Value.ValueExprRem(a, b, expr.ty, expr.sem)
+        elseif cls == Value.ValueExprBinary then
+            return Value.ValueExprBinary(expr.op, simplify_value_expr(expr.a), simplify_value_expr(expr.b), expr.ty, expr.sem)
         elseif cls == Value.ValueExprCmp then
             local a = simplify_value_expr(expr.a)
             local b = simplify_value_expr(expr.b)
@@ -237,14 +241,22 @@ local function bind_context(T)
             local ty = value_ty(ctx, expr.value)
             if ty == nil then error("lower_to_c: semantic expression references unknown value " .. expr.value.text, 3) end
             return atom(expr.value), ty
-        elseif cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv then
+        elseif cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
             local a, aty = lower_value_expr(ctx, expr.a)
             local b, bty = lower_value_expr(ctx, expr.b)
             a = cast_to(ctx, a, aty, expr.ty, "bin_lhs")
             b = cast_to(ctx, b, bty, expr.ty, "bin_rhs")
             local dst = tmp(ctx, "bin", expr.ty)
-            local op = (cls == Value.ValueExprAdd and Core.BinAdd) or (cls == Value.ValueExprSub and Core.BinSub) or (cls == Value.ValueExprMul and Core.BinMul) or Core.BinDiv
+            local op = (cls == Value.ValueExprAdd and Core.BinAdd) or (cls == Value.ValueExprSub and Core.BinSub) or (cls == Value.ValueExprMul and Core.BinMul) or (cls == Value.ValueExprRem and Core.BinRem) or Core.BinDiv
             ctx.stmts[#ctx.stmts + 1] = C.CBackendHelperCall(dst, binary_helper(ctx, op, expr.ty, expr.sem), { a, b })
+            return C.CBackendAtomLocal(dst), expr.ty
+        elseif cls == Value.ValueExprBinary then
+            local a, aty = lower_value_expr(ctx, expr.a)
+            local b, bty = lower_value_expr(ctx, expr.b)
+            a = cast_to(ctx, a, aty, expr.ty, "bin_lhs")
+            b = cast_to(ctx, b, bty, expr.ty, "bin_rhs")
+            local dst = tmp(ctx, "bin", expr.ty)
+            ctx.stmts[#ctx.stmts + 1] = C.CBackendHelperCall(dst, binary_helper(ctx, expr.op, expr.ty, expr.sem), { a, b })
             return C.CBackendAtomLocal(dst), expr.ty
         elseif cls == Value.ValueExprCmp then
             local a, aty = lower_value_expr(ctx, expr.a)
@@ -598,14 +610,22 @@ local function bind_context(T)
             return lower_value_expr(ctx, expr)
         elseif cls == Value.ValueExprConst then
             return const_atom(ctx, expr.const)
-        elseif cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv then
+        elseif cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
             local a, aty = lower_value_expr_lane(ctx, expr.a, lane, index_ty)
             local b, bty = lower_value_expr_lane(ctx, expr.b, lane, index_ty)
             a = cast_to(ctx, a, aty, expr.ty, "vec_bin_lhs")
             b = cast_to(ctx, b, bty, expr.ty, "vec_bin_rhs")
             local dst = tmp(ctx, "vec_bin", expr.ty)
-            local op = (cls == Value.ValueExprAdd and Core.BinAdd) or (cls == Value.ValueExprSub and Core.BinSub) or (cls == Value.ValueExprMul and Core.BinMul) or Core.BinDiv
+            local op = (cls == Value.ValueExprAdd and Core.BinAdd) or (cls == Value.ValueExprSub and Core.BinSub) or (cls == Value.ValueExprMul and Core.BinMul) or (cls == Value.ValueExprRem and Core.BinRem) or Core.BinDiv
             ctx.stmts[#ctx.stmts + 1] = C.CBackendHelperCall(dst, binary_helper(ctx, op, expr.ty, expr.sem), { a, b })
+            return C.CBackendAtomLocal(dst), expr.ty
+        elseif cls == Value.ValueExprBinary then
+            local a, aty = lower_value_expr_lane(ctx, expr.a, lane, index_ty)
+            local b, bty = lower_value_expr_lane(ctx, expr.b, lane, index_ty)
+            a = cast_to(ctx, a, aty, expr.ty, "vec_bin_lhs")
+            b = cast_to(ctx, b, bty, expr.ty, "vec_bin_rhs")
+            local dst = tmp(ctx, "vec_bin", expr.ty)
+            ctx.stmts[#ctx.stmts + 1] = C.CBackendHelperCall(dst, binary_helper(ctx, expr.op, expr.ty, expr.sem), { a, b })
             return C.CBackendAtomLocal(dst), expr.ty
         elseif cls == Value.ValueExprCmp then
             local a, aty = lower_value_expr_lane(ctx, expr.a, lane, index_ty)

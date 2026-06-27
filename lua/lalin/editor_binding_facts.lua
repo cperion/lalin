@@ -71,10 +71,8 @@ local function subject_key(pvm, E, subject)
     if cls == E.SubjectHostField then return "host.field." .. subject.owner.name .. "." .. subject.field.name end
     if cls == E.SubjectHostExpose then return "host.expose." .. subject.decl.public_name end
     if cls == E.SubjectHostAccessor then return "host.accessor." .. subject.decl.owner_name .. "." .. subject.decl.name end
-    if cls == E.SubjectTreeFunc then return "tree.func." .. ((subject.func and subject.func.name) or (subject.func and subject.func.sym and subject.func.sym.name) or "unknown") end
-    if cls == E.SubjectTreeExtern then return "tree.extern." .. ((subject.func and subject.func.name) or (subject.func and subject.func.sym and subject.func.sym.name) or "unknown") end
-    if cls == E.SubjectRegionFrag then return "open.region." .. tostring(subject.frag) end
-    if cls == E.SubjectExprFrag then return "open.expr." .. tostring(subject.frag) end
+    if cls == E.SubjectTreeFunc then return "tree.func." .. ((subject.func and subject.func.name) or "unknown") end
+    if cls == E.SubjectTreeExtern then return "tree.extern." .. ((subject.func and subject.func.name) or "unknown") end
     if cls == E.SubjectScalar then return "scalar." .. tostring(subject.scalar) end
     if cls == E.SubjectContinuation then return "control.label." .. subject.scope.text .. "." .. subject.label.name end
     if cls == E.SubjectBinding then return "binding." .. subject.binding.id.text end
@@ -142,14 +140,12 @@ local function bind_context(T)
 
     local function tree_func_name(func)
         local cls = schema.classof(func)
-        if cls == Tr.FuncOpen then return func.sym.name end
         if cls == Tr.FuncLocal or cls == Tr.FuncExport or cls == Tr.FuncLocalContract or cls == Tr.FuncExportContract or cls == Tr.FuncDecl then return func.name end
         return nil
     end
 
     local function extern_func_name(func)
         local cls = schema.classof(func)
-        if cls == Tr.ExternFuncOpen then return func.sym.name end
         if cls == Tr.ExternFunc then return func.name end
         return nil
     end
@@ -206,14 +202,6 @@ local function bind_context(T)
             end
         end
         return nil
-    end
-
-    local function find_region_frag(analysis, label)
-        return fragment_for_label(analysis, S.AnchorRegionName, analysis.parse.combined.region_frags, label)
-    end
-
-    local function find_expr_frag(analysis, label)
-        return fragment_for_label(analysis, S.AnchorExprName, analysis.parse.combined.expr_frags, label)
     end
 
     local function enclosing_island(analysis, anchor)
@@ -398,23 +386,15 @@ local function bind_context(T)
                 if ac then
                     facts[#facts + 1] = E.BindingFact(E.SymbolId("host.accessor." .. ac.owner_name .. "." .. ac.name), E.BindingCall, E.SubjectHostAccessor(ac), a)
                 else
-                    local region_frag = find_region_frag(analysis, a.label)
-                    local expr_frag = find_expr_frag(analysis, a.label)
-                    if region_frag then
-                        facts[#facts + 1] = E.BindingFact(E.SymbolId(subject_key(pvm, E, E.SubjectRegionFrag(region_frag))), E.BindingCall, E.SubjectRegionFrag(region_frag), a)
-                    elseif expr_frag then
-                        facts[#facts + 1] = E.BindingFact(E.SymbolId(subject_key(pvm, E, E.SubjectExprFrag(expr_frag))), E.BindingCall, E.SubjectExprFrag(expr_frag), a)
+                    local fn = find_func(analysis, a.label)
+                    if fn then
+                        local name = tree_func_name(fn) or a.label
+                        facts[#facts + 1] = E.BindingFact(E.SymbolId("tree.func." .. name), E.BindingCall, E.SubjectTreeFunc(fn), a)
                     else
-                        local fn = find_func(analysis, a.label)
-                        if fn then
-                            local name = tree_func_name(fn) or a.label
-                            facts[#facts + 1] = E.BindingFact(E.SymbolId("tree.func." .. name), E.BindingCall, E.SubjectTreeFunc(fn), a)
-                        else
-                            local ex = find_extern(analysis, a.label)
-                            if ex then
-                                local name = extern_func_name(ex) or a.label
-                                facts[#facts + 1] = E.BindingFact(E.SymbolId("tree.extern." .. name), E.BindingCall, E.SubjectTreeExtern(ex), a)
-                            end
+                        local ex = find_extern(analysis, a.label)
+                        if ex then
+                            local name = extern_func_name(ex) or a.label
+                            facts[#facts + 1] = E.BindingFact(E.SymbolId("tree.extern." .. name), E.BindingCall, E.SubjectTreeExtern(ex), a)
                         end
                     end
                 end

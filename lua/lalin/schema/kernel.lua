@@ -94,6 +94,7 @@ return schema. LalinKernel {
       index [LalinValue.ValueExpr],
       reduction [LalinValue.ReductionFact],
       mode [LalinStencil.StencilScanMode],
+      axis [optional [LalinStencil.StencilAxisRef]],
     },
     KernelEffectPartition {
       variant_unique,

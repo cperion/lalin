@@ -19,10 +19,10 @@ return unit. VectorRelocRegression {
 
   fn. soa_zip_add { total [ptr [i32]], left [ptr [i32]], right [ptr [i32]], n [i32] } [void] {
     requires {
-      bounds(total, n), writeonly(total), soa_component(total, PairSoA, "total", 2),
-      bounds(left, n), readonly(left), soa_component(left, PairSoA, "left", 0),
-      bounds(right, n), readonly(right), soa_component(right, PairSoA, "right", 1),
-      disjoint(total, left), disjoint(total, right), disjoint(left, right),
+      bounds (total)(n), writeonly(total), soa_component (total)(PairSoA)("total")(2),
+      bounds (left)(n), readonly(left), soa_component (left)(PairSoA)("left")(0),
+      bounds (right)(n), readonly(right), soa_component (right)(PairSoA)("right")(1),
+      disjoint (total)(left), disjoint (total)(right), disjoint (left)(right),
     },
 
     entry. start {} { jump. loop { i = 0 }, },
@@ -36,7 +36,7 @@ return unit. VectorRelocRegression {
     },
 
     block. body { i [i32] } {
-      set (total[i], left[i] + right[i]),
+      set (total[i])(left[i] + right[i]),
       jump. loop { i = i + 1 },
     },
 
@@ -47,9 +47,9 @@ return unit. VectorRelocRegression {
 
   fn. soa_zip_sum { left [ptr [i32]], right [ptr [i32]], n [i32] } [i32] {
     requires {
-      bounds(left, n), readonly(left), soa_component(left, PairSoA, "left", 0),
-      bounds(right, n), readonly(right), soa_component(right, PairSoA, "right", 1),
-      disjoint(left, right),
+      bounds (left)(n), readonly(left), soa_component (left)(PairSoA)("left")(0),
+      bounds (right)(n), readonly(right), soa_component (right)(PairSoA)("right")(1),
+      disjoint (left)(right),
     },
 
     entry. start {} { jump. loop { i = 0, acc = 0 }, },

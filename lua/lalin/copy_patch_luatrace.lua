@@ -404,6 +404,15 @@ local function bind_context(T)
     end
 
     local function build_loop_plan(desc, schedule, shape)
+        if shape.producer ~= nil and shape.producer.kind ~= "range1d" then
+            return {
+                domain_stride = 1,
+                group = 1,
+                reason = tostring(shape.producer.kind) .. "_producer_scalar",
+                tail_strategy = "producer_loop",
+                loop_shape = tostring(shape.producer.kind),
+            }
+        end
         local stride = tonumber(shape.stride) or 1
         local group, reason = 1, "scalar"
         if stride ~= 1 then
@@ -561,6 +570,8 @@ local function bind_context(T)
 
     local function build_kernel_plan(shape, access_by_name, facts, loop_plan)
         local primitive_plan = nil
+        local producer = shape.producer
+        local can_use_linear_range_primitive = producer == nil or producer.kind == "range1d"
         local copy_src_name
         if shape.kind == "apply_n"
             and pvm.classof(shape.store_mode) == Stencil.StencilStoreCopy
@@ -574,7 +585,8 @@ local function bind_context(T)
             local semantics = shape.semantics or (shape.store_mode and shape.store_mode.semantics)
             local no_overlap = semantics == Stencil.StencilCopyNoOverlap
                 or (dst ~= nil and src ~= nil and alias_relation(facts, dst_name, src_name) == Stencil.StencilAliasNoAlias)
-            if no_overlap
+            if can_use_linear_range_primitive
+                and no_overlap
                 and dst ~= nil and src ~= nil
                 and not dst.readonly and src.readonly
                 and dst.can_bulk_copy and src.can_bulk_copy
@@ -593,7 +605,8 @@ local function bind_context(T)
             local dst_name = shape.dst_name or "dst"
             local value_name = shape.expr.access.name
             local dst, value_access = access_by_name[dst_name], access_by_name[value_name]
-            if dst ~= nil and value_access ~= nil
+            if can_use_linear_range_primitive
+                and dst ~= nil and value_access ~= nil
                 and pvm.classof(value_access.layout) == Stencil.StencilLayoutScalar
                 and not dst.readonly and dst.can_bulk_fill then
                 primitive_plan = {
@@ -605,7 +618,7 @@ local function bind_context(T)
             end
         elseif shape.kind == "fill_array" then
             local dst = access_by_name.dst
-            if dst ~= nil and not dst.readonly and dst.can_bulk_fill then
+            if can_use_linear_range_primitive and dst ~= nil and not dst.readonly and dst.can_bulk_fill then
                 primitive_plan = {
                     kind = "ffi_fill",
                     bytes_per_element = dst.element_bytes,
@@ -671,11 +684,33 @@ local function bind_context(T)
         error("copy_patch_luatrace: unsupported apply expression", 3)
     end
 
+    local function luatrace_producer_reject_reason(shape)
+        local producer = shape.producer
+        if producer == nil or producer.kind == "range1d" then return nil end
+        if producer.kind == "range_nd" then
+            if shape.kind == "apply_n"
+                and pvm.classof(shape.store_mode) == Stencil.StencilStoreCopy
+                and (shape.store_mode.semantics == Stencil.StencilCopyMemMove
+                    or shape.store_mode.semantics == Stencil.StencilCopyMayOverlapBackward) then
+                return "RangeND copy with overlapping memmove semantics is not materialized by LuaTrace yet"
+            end
+            if shape.kind == "apply_n" or shape.kind == "reduce_n" or shape.kind == "scan_n" or shape.kind == "find_n" or shape.kind == "scatter_reduce_n" then
+                if shape.kind == "reduce_n" and shape.scope_kind == "window" then
+                    return "RangeND window-local reduction needs WindowND producer semantics"
+                end
+                return nil
+            end
+            return "RangeND producer is only materialized for generic ApplyN/ReduceN/ScanN/FindN/ScatterReduceN in LuaTrace"
+        end
+        return "producer " .. tostring(producer.kind) .. " is not materialized by the LuaTrace bytecode path yet"
+    end
+
     local function build_artifact_plan(artifact)
         local desc = artifact.instance.descriptor
         local shape = ArtifactPlan.artifact_shape(artifact)
-        if shape.producer ~= nil and shape.producer.kind ~= "range1d" then
-            error("copy_patch_luatrace: producer " .. tostring(shape.producer.kind) .. " is not materialized by the LuaTrace bytecode path yet", 3)
+        local producer_reject = luatrace_producer_reject_reason(shape)
+        if producer_reject ~= nil then
+            error("copy_patch_luatrace: " .. tostring(producer_reject), 3)
         end
         local schedule = artifact.instance.schedule
         local facts = schedule_facts(schedule)
@@ -718,7 +753,133 @@ local function bind_context(T)
             or conflicts == Stencil.StencilScatterReduceUniqueIndices
     end
 
+    local function producer_params(producer)
+        if producer == nil or producer.kind == "range1d" then return { "start", "stop" } end
+        if producer.kind == "range_nd" then
+            local params = {}
+            for _, axis in ipairs(producer.axes or {}) do
+                params[#params + 1] = axis.start_param
+                params[#params + 1] = axis.stop_param
+            end
+            return params
+        end
+        error("copy_patch_luatrace: unsupported producer params for " .. tostring(producer.kind), 3)
+    end
+
+    local function append_producer_params(params, producer)
+        local p = producer_params(producer)
+        for i = 1, #p do params[#params + 1] = p[i] end
+    end
+
+    local function range_nd_extent_expr(axis)
+        local step = tonumber(axis.step) or 1
+        local span = tostring(axis.stop_param) .. " - " .. tostring(axis.start_param)
+        if step == 1 then return "(" .. span .. ")" end
+        return "math.floor((" .. span .. " + " .. tostring(step - 1) .. ") / " .. tostring(step) .. ")"
+    end
+
+    local function range_nd_axis_offset_expr(axis_index, axis)
+        local step = tonumber(axis.step) or 1
+        local offset = "(__ml_axis" .. tostring(axis_index) .. " - " .. tostring(axis.start_param) .. ")"
+        if step == 1 then return offset end
+        return "math.floor(" .. offset .. " / " .. tostring(step) .. ")"
+    end
+
+    local function range_nd_linear_index_expr(producer)
+        local linear = nil
+        for axis_index, axis in ipairs(producer.axes or {}) do
+            local offset = range_nd_axis_offset_expr(axis_index, axis)
+            if linear == nil then
+                linear = offset
+            else
+                linear = "((" .. linear .. ") * __ml_extent" .. tostring(axis_index) .. " + " .. offset .. ")"
+            end
+        end
+        return linear or "0"
+    end
+
+    local function range_nd_projected_index_expr(producer, keep_axes)
+        local linear = nil
+        for axis_index, axis in ipairs(producer.axes or {}) do
+            if keep_axes[axis_index] then
+                local offset = range_nd_axis_offset_expr(axis_index, axis)
+                if linear == nil then
+                    linear = offset
+                else
+                    linear = "((" .. linear .. ") * __ml_extent" .. tostring(axis_index) .. " + " .. offset .. ")"
+                end
+            end
+        end
+        return linear or "0"
+    end
+
+    local function emit_range_nd_extents(out, producer, indent)
+        for axis_index, axis in ipairs(producer.axes or {}) do
+            out[#out + 1] = indent .. "local __ml_extent" .. tostring(axis_index) .. " = " .. range_nd_extent_expr(axis)
+        end
+    end
+
+    local function emit_range_nd_axis_loops(out, producer, axis_indices, indent, body)
+        local function nest(pos, current_indent)
+            if pos > #axis_indices then
+                body(current_indent)
+                return
+            end
+            local axis_index = axis_indices[pos]
+            local axis = producer.axes[axis_index]
+            out[#out + 1] = current_indent
+                .. "for __ml_axis" .. tostring(axis_index)
+                .. " = " .. tostring(axis.start_param)
+                .. ", " .. tostring(axis.stop_param) .. " - 1"
+                .. ", " .. tostring(tonumber(axis.step) or 1) .. " do"
+            nest(pos + 1, current_indent .. "    ")
+            out[#out + 1] = current_indent .. "end"
+        end
+        nest(1, indent)
+    end
+
+    local function range_nd_all_axes(producer)
+        local axes = {}
+        for axis_index = 1, #(producer.axes or {}) do axes[#axes + 1] = axis_index end
+        return axes
+    end
+
+    local function axis_ref_set(axes)
+        local set = {}
+        for _, axis in ipairs(axes or {}) do set[tonumber(axis.index)] = true end
+        return set
+    end
+
+    local function complement_axis_list(producer, selected)
+        local out = {}
+        for axis_index = 1, #(producer.axes or {}) do
+            if not selected[axis_index] then out[#out + 1] = axis_index end
+        end
+        return out
+    end
+
+    local function selected_axis_list(producer, selected)
+        local out = {}
+        for axis_index = 1, #(producer.axes or {}) do
+            if selected[axis_index] then out[#out + 1] = axis_index end
+        end
+        return out
+    end
+
+    local function emit_range_nd_loop(out, producer, body)
+        emit_range_nd_extents(out, producer, "    ")
+        emit_range_nd_axis_loops(out, producer, range_nd_all_axes(producer), "    ", function(indent)
+            out[#out + 1] = indent .. "local __ml_i = " .. range_nd_linear_index_expr(producer)
+            body("__ml_i", indent)
+        end)
+    end
+
     local function emit_forward_loop(out, artifact_plan, body)
+        local producer = artifact_plan.shape.producer
+        if producer ~= nil and producer.kind == "range_nd" then
+            emit_range_nd_loop(out, producer, body)
+            return
+        end
         local plan = artifact_plan.loop_plan
         local stride, group, reason = plan.domain_stride, plan.group, plan.reason
         if group <= 1 then
@@ -745,6 +906,52 @@ local function bind_context(T)
             body("i", "        ")
             out[#out + 1] = "    end"
         end
+    end
+
+    local function emit_range_nd_axis_reduce(out, artifact_plan, body_expr)
+        local shape = artifact_plan.shape
+        local producer = shape.producer
+        local dst_name = assert(shape.dst_name, "copy_patch_luatrace: axis reduce needs destination")
+        local dst_access = assert(artifact_plan.access_by_name[dst_name], "missing axis reduce destination access plan")
+        local reduce_axes = axis_ref_set(shape.axes)
+        local keep_axes = {}
+        for axis_index = 1, #(producer.axes or {}) do keep_axes[axis_index] = not reduce_axes[axis_index] end
+        local outer_axes = complement_axis_list(producer, reduce_axes)
+        local inner_axes = selected_axis_list(producer, reduce_axes)
+        emit_range_nd_extents(out, producer, "    ")
+        emit_range_nd_axis_loops(out, producer, outer_axes, "    ", function(outer_indent)
+            out[#out + 1] = outer_indent .. "local acc = " .. tostring(iconst(shape.identity))
+            emit_range_nd_axis_loops(out, producer, inner_axes, outer_indent, function(inner_indent)
+                local i = range_nd_linear_index_expr(producer)
+                out[#out + 1] = inner_indent .. "local __ml_i = " .. i
+                out[#out + 1] = inner_indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", body_expr("__ml_i"), shape.result_ty)
+            end)
+            local out_i = range_nd_projected_index_expr(producer, keep_axes)
+            out[#out + 1] = outer_indent .. lua_access_ref(dst_access, dst_name, out_i) .. " = acc"
+        end)
+    end
+
+    local function emit_range_nd_axis_scan(out, artifact_plan, body_expr)
+        local shape = artifact_plan.shape
+        local producer = shape.producer
+        local axis_index = tonumber(shape.axis and shape.axis.index) or 1
+        local scan_axes = { [axis_index] = true }
+        local outer_axes = complement_axis_list(producer, scan_axes)
+        local dst_access = assert(artifact_plan.access_by_name.dst, "missing scan destination access plan")
+        emit_range_nd_extents(out, producer, "    ")
+        emit_range_nd_axis_loops(out, producer, outer_axes, "    ", function(outer_indent)
+            out[#out + 1] = outer_indent .. "local acc = init"
+            emit_range_nd_axis_loops(out, producer, { axis_index }, outer_indent, function(inner_indent)
+                out[#out + 1] = inner_indent .. "local __ml_i = " .. range_nd_linear_index_expr(producer)
+                if shape.mode == Stencil.StencilScanExclusive then
+                    out[#out + 1] = inner_indent .. lua_access_ref(dst_access, "dst", "__ml_i") .. " = acc"
+                    out[#out + 1] = inner_indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", body_expr("__ml_i"), shape.result_ty)
+                else
+                    out[#out + 1] = inner_indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", body_expr("__ml_i"), shape.result_ty)
+                    out[#out + 1] = inner_indent .. lua_access_ref(dst_access, "dst", "__ml_i") .. " = acc"
+                end
+            end)
+        end)
     end
 
     local function emit_lua_function(artifact)
@@ -907,8 +1114,7 @@ local function bind_context(T)
             end
             params = { dst_name }
             for i = 1, #input_params do params[#params + 1] = input_params[i] end
-            params[#params + 1] = "start"
-            params[#params + 1] = "stop"
+            append_producer_params(params, shape.producer)
             for i = 1, #scalar_params do params[#params + 1] = scalar_params[i] end
             out[#out + 1] = fn_header(artifact, params)
             if kernel_plan.primitive_plan and kernel_plan.primitive_plan.kind == "ffi_copy" then
@@ -921,6 +1127,7 @@ local function bind_context(T)
                 out[#out + 1] = "    if __ml_n > 0 then ffi.fill(" .. dst_name .. " + start, __ml_n, " .. value_name .. ") end"
             elseif pvm.classof(shape.store_mode) == Stencil.StencilStoreCopy
                 and pvm.classof(shape.expr) == Stencil.StencilApplyInput
+                and (shape.producer == nil or shape.producer.kind == "range1d")
                 and (shape.store_mode.semantics == Stencil.StencilCopyMemMove or shape.store_mode.semantics == Stencil.StencilCopyMayOverlapBackward) then
                 local src_name = shape.expr.access.name
                 local function emit_copy_loop(reverse)
@@ -1016,21 +1223,26 @@ local function bind_context(T)
             end
         elseif kind == "reduce_n" then
             local params = {}
+            if shape.dst_name ~= nil then params[#params + 1] = shape.dst_name end
             for _, input in ipairs(shape.inputs or {}) do params[#params + 1] = input.name end
-            params[#params + 1] = "start"
-            params[#params + 1] = "stop"
+            append_producer_params(params, shape.producer)
             if shape.external_init ~= false then params[#params + 1] = "init" end
             out[#out + 1] = fn_header(artifact, params)
-            out[#out + 1] = "    local acc = " .. (shape.external_init == false and tostring(iconst(shape.identity)) or "init")
-            emit_forward_loop(out, artifact_plan, function(i, indent)
-                out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
-            end)
-            out[#out + 1] = "    return acc"
+            if shape.producer ~= nil and shape.producer.kind == "range_nd" and shape.scope_kind == "axes" then
+                emit_range_nd_axis_reduce(out, artifact_plan, function(i)
+                    return lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i)
+                end)
+            else
+                out[#out + 1] = "    local acc = " .. (shape.external_init == false and tostring(iconst(shape.identity)) or "init")
+                emit_forward_loop(out, artifact_plan, function(i, indent)
+                    out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
+                end)
+                out[#out + 1] = "    return acc"
+            end
         elseif kind == "find_n" then
             local params = {}
             for _, input in ipairs(shape.inputs or {}) do params[#params + 1] = input.name end
-            params[#params + 1] = "start"
-            params[#params + 1] = "stop"
+            append_producer_params(params, shape.producer)
             out[#out + 1] = fn_header(artifact, params)
             emit_forward_loop(out, artifact_plan, function(i, indent)
                 out[#out + 1] = indent .. "if " .. lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i) .. " ~= 0 then return " .. i .. " end"
@@ -1062,21 +1274,26 @@ local function bind_context(T)
             local dst_access = assert(access.dst, "missing dst access plan")
             local params = { "dst" }
             for _, input in ipairs(shape.inputs or {}) do params[#params + 1] = input.name end
-            params[#params + 1] = "start"
-            params[#params + 1] = "stop"
+            append_producer_params(params, shape.producer)
             params[#params + 1] = "init"
             out[#out + 1] = fn_header(artifact, params)
-            out[#out + 1] = "    local acc = init"
-            emit_forward_loop(out, artifact_plan, function(i, indent)
-                if shape.mode == Stencil.StencilScanExclusive then
-                    out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = acc"
-                    out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
-                else
-                    out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
-                    out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = acc"
-                end
-            end)
-            out[#out + 1] = "    return acc"
+            if shape.producer ~= nil and shape.producer.kind == "range_nd" then
+                emit_range_nd_axis_scan(out, artifact_plan, function(i)
+                    return lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i)
+                end)
+            else
+                out[#out + 1] = "    local acc = init"
+                emit_forward_loop(out, artifact_plan, function(i, indent)
+                    if shape.mode == Stencil.StencilScanExclusive then
+                        out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = acc"
+                        out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
+                    else
+                        out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
+                        out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = acc"
+                    end
+                end)
+                out[#out + 1] = "    return acc"
+            end
         elseif kind == "scatter_reduce_n" then
             if not scatter_reduce_conflicts_materialized(shape.conflicts) then
                 error("copy_patch_luatrace: unsupported scatter-reduce conflict semantics", 3)
@@ -1089,8 +1306,7 @@ local function bind_context(T)
                     params[#params + 1] = a.name
                 end
             end
-            params[#params + 1] = "start"
-            params[#params + 1] = "stop"
+            append_producer_params(params, shape.producer)
             out[#out + 1] = fn_header(artifact, params)
             emit_forward_loop(out, artifact_plan, function(i, indent)
                 local slot = lua_access_ref(dst_access, dst_name, i)

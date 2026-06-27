@@ -127,6 +127,18 @@ local function call_args(args, f)
     return d.group { "(", d.indent({ d.softline(), d.join(d.concat { ",", d.line() }, docs) }, f.indent_width), d.softline(), ")" }
 end
 
+local function curried_args(args, f)
+    args = args or {}
+    if #args == 0 then return d.text("()") end
+    local docs = {}
+    for i = 1, #args do
+        docs[#docs + 1] = i == 1 and " (" or ")("
+        docs[#docs + 1] = fmt_value(args[i], f)
+    end
+    docs[#docs + 1] = ")"
+    return d.group(docs)
+end
+
 local function braced_product(items, f, item_fmt)
     items = items or {}
     if #items == 0 then return d.text("{}") end
@@ -159,7 +171,6 @@ end
 local function cont_target_doc(target)
     local k = cls_kind(target)
     if k == "ContTargetLabel" and target.label then return d.text(target.label.name) end
-    if k == "ContTargetSlot" and target.slot then return d.text(target.slot.pretty_name) end
     return d.text(tostring(target))
 end
 
@@ -269,7 +280,6 @@ local function value_ref(ref)
     if k == "ValueRefName" then return d.text(ref.name) end
     if k == "ValueRefPath" then return d.text(path_text(ref.path)) end
     if k == "ValueRefBinding" then return d.text(ref.binding.name) end
-    if k == "ValueRefHole" then return d.text(ref.slot.pretty_name) end
     return d.text(tostring(ref))
 end
 
@@ -312,7 +322,7 @@ fmt_tree_expr = function(e, f)
         local base_doc = bk == "IndexBaseExpr" and fmt_tree_expr(base.base, f) or bk == "IndexBasePlace" and fmt_place(base.base, f) or d.text(tostring(base))
         return d.group { base_doc, "[", fmt_tree_expr(e.index, f), "]" }
     end
-    if k == "ExprSelect" then return d.group { "select ", call_args({ e.cond, e.then_expr, e.else_expr }, f) } end
+    if k == "ExprSelect" then return d.group { "select", curried_args({ e.cond, e.then_expr, e.else_expr }, f) } end
     if k == "ExprNull" then return d.group { "null [", fmt_type(e.elem, f), "]" } end
     if k == "ExprSizeOf" then return d.group { "sizeof [", fmt_type(e.ty, f), "]" } end
     if k == "ExprAlignOf" then return d.group { "alignof [", fmt_type(e.ty, f), "]" } end
@@ -355,10 +365,10 @@ fmt_expr = function(v, f)
         if k == "intrinsic" then return d.group { tostring(v.op), " ", call_args(v.args or {}, f) } end
         if k == "ctor" then return d.group { "ctor ", string.format("%q", tostring(v.type_name)), " ", string.format("%q", tostring(v.variant_name)), " ", call_args(v.args or {}, f) } end
         if k == "emit_expr" then return d.group { "emit_expr ", fmt_value(v.target, f), " ", call_args(v.args or {}, f) } end
-        if k == "select" then return d.group { "select ", call_args({ v.cond, v.a, v.b }, f) } end
-        if k == "atomic_load" then return d.group { "aload [", fmt_type(v.ty, f), "] (", fmt_expr(v.addr, f), ")" } end
-        if k == "atomic_rmw" then return d.group { "armw ", string.format("%q", tostring(v.op)), " [", fmt_type(v.ty, f), "] ", call_args({ v.addr, v.value }, f) } end
-        if k == "atomic_cas" then return d.group { "acas [", fmt_type(v.ty, f), "] ", call_args({ v.addr, v.expected, v.replacement }, f) } end
+        if k == "select" then return d.group { "select", curried_args({ v.cond, v.a, v.b }, f) } end
+        if k == "atomic_load" then return d.group { "aload (", fmt_type(v.ty, f), ")(", fmt_expr(v.addr, f), ")" } end
+        if k == "atomic_rmw" then return d.group { "armw (", string.format("%q", tostring(v.op)), ")(", fmt_type(v.ty, f), ")(", fmt_expr(v.addr, f), ")(", fmt_expr(v.value, f), ")" } end
+        if k == "atomic_cas" then return d.group { "acas (", fmt_type(v.ty, f), ")(", fmt_expr(v.addr, f), ")(", fmt_expr(v.expected, f), ")(", fmt_expr(v.replacement, f), ")" } end
     end
 
     local tk = cls_kind(v)
@@ -422,14 +432,13 @@ fmt_tree_stmt = function(s, f)
     if k == "StmtTrap" then return d.text("trap ()") end
     if k == "StmtAssert" then return d.group { "assert_ (", fmt_tree_expr(s.cond, f), ")" } end
     if k == "StmtJump" then return d.group { "jump", dot_name(s.target.name), " ", jump_args_record(s.args, f) } end
-    if k == "StmtJumpCont" then return d.group { "jump", dot_name(s.slot.pretty_name), " ", jump_args_record(s.args, f) } end
+    if k == "StmtJumpCont" then return d.group { "jump", dot_name(s.cont.name), " ", jump_args_record(s.args, f) } end
     if k == "StmtLet" then return d.group { "let", dot_name(s.binding.name), " [", fmt_type(s.binding.ty, f), "] (", fmt_tree_expr(s.init, f), ")" } end
     if k == "StmtVar" then return d.group { "var", dot_name(s.binding.name), " [", fmt_type(s.binding.ty, f), "] (", fmt_tree_expr(s.init, f), ")" } end
-    if k == "StmtSet" then return d.group { "set (", fmt_place(s.place, f), ", ", fmt_tree_expr(s.value, f), ")" } end
+    if k == "StmtSet" then return d.group { "set (", fmt_place(s.place, f), ")(", fmt_tree_expr(s.value, f), ")" } end
     if k == "StmtIf" then return d.group { "If (", fmt_tree_expr(s.cond, f), ") ", block(s.then_body or {}, f, fmt_tree_stmt), " ", block(s.else_body or {}, f, fmt_tree_stmt) } end
-    if k == "StmtAtomicStore" then return d.group { "astore [", fmt_type(s.ty, f), "] ", call_args({ s.addr, s.value }, f) } end
+    if k == "StmtAtomicStore" then return d.group { "astore (", fmt_type(s.ty, f), ")(", fmt_tree_expr(s.addr, f), ")(", fmt_tree_expr(s.value, f), ")" } end
     if k == "StmtAtomicFence" then return d.text("afence ()") end
-    if k == "StmtUseRegionFrag" then return d.group { "emit ", tostring(s.use_id), " ", call_args(s.args or {}, f) } end
     return d.text("<" .. tostring(k or "stmt") .. ">")
 end
 
@@ -471,14 +480,14 @@ fmt_stmt = function(s, f)
     if k == "let" or k == "var" then return d.group { k, dot_name(s.name), " [", fmt_type(s.ty, f), "] (", fmt_expr(s.init, f), ")" } end
     if k == "when" then return d.group { "when ", paren_expr(s.cond, f), " ", block(s.body or {}, f, fmt_stmt) } end
     if k == "if" then return d.group { "If ", paren_expr(s.cond, f), " ", block(s.then_body or {}, f, fmt_stmt), " ", block(s.else_body or {}, f, fmt_stmt) } end
-    if k == "set" then return d.group { "set (", fmt_expr(s.place, f), ", ", fmt_expr(s.value, f), ")" } end
+    if k == "set" then return d.group { "set (", fmt_expr(s.place, f), ")(", fmt_expr(s.value, f), ")" } end
     if k == "assert" then return d.group { "assert_ ", paren_expr(s.cond, f) } end
     if k == "trap" then return d.text("trap ()") end
     if k == "assume" then return d.group { "assume ", paren_expr(s.cond, f) } end
     if k == "jump" then return d.group { "jump", dot_name(s.target), " ", braced_record(s.args or {}, f) } end
     if k == "emit" then return d.group { "emit", dot_name(s.target), " ", braced_product(s.args or {}, f, fmt_expr), " ", cont_bindings_record(s.conts or {}, f) } end
     if k == "switch" then return d.group { "switch ", paren_expr(s.value, f), " ", switch_block(s, f) } end
-    if k == "atomic_store" then return d.group { "astore [", fmt_type(s.ty, f), "] ", call_args({ s.addr, s.value }, f) } end
+    if k == "atomic_store" then return d.group { "astore (", fmt_type(s.ty, f), ")(", fmt_expr(s.addr, f), ")(", fmt_expr(s.value, f), ")" } end
     if k == "atomic_fence" then return d.text("afence ()") end
     if k == "expr" then return fmt_expr(s.expr, f) end
     return d.text("<stmt:" .. tostring(k) .. ">")
@@ -513,9 +522,6 @@ fmt_decl = function(x, f)
     if k == "const" then return d.group { "const", dot_name(x.name), " [", fmt_type(x.ty, f), "] (", fmt_expr(x.value, f), ")" } end
     if k == "static" then return d.group { "static", dot_name(x.name), " [", fmt_type(x.ty, f), "] (", fmt_expr(x.value, f), ")" } end
     if k == "import" then return d.group { "import (", fmt_value(x.name, f), ")" } end
-    if k == "expr_frag" then
-        return d.group { "expr_frag", dot_name(x.name), " ", braced_product(x.params or {}, f, typed_name), " [", fmt_type(x.result, f), "] (", fmt_expr(x.body, f), ")" }
-    end
     if k == "region" then
         local body = {}
         if x.entry then body[#body + 1] = x.entry end

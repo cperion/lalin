@@ -193,7 +193,24 @@ local function bind_context(T)
             if ty == Code.CodeTyIndex or (cls == Code.CodeTyInt and ty.signedness == Code.CodeUnsigned) then return Back.BackIntUDiv end
             return Back.BackIntSDiv
         end
+        if op == "rem" then
+            local cls = pvm.classof(ty)
+            if ty == Code.CodeTyIndex or (cls == Code.CodeTyInt and ty.signedness == Code.CodeUnsigned) then return Back.BackIntURem end
+            return Back.BackIntSRem
+        end
         error("lower_to_back: unsupported closed-form integer op " .. tostring(op), 3)
+    end
+    local function bit_op(op)
+        if op == Core.BinBitAnd then return Back.BackBitAnd end
+        if op == Core.BinBitOr then return Back.BackBitOr end
+        if op == Core.BinBitXor then return Back.BackBitXor end
+        return nil
+    end
+    local function shift_op(op)
+        if op == Core.BinShl then return Back.BackShiftLeft end
+        if op == Core.BinLShr then return Back.BackShiftLogicalRight end
+        if op == Core.BinAShr then return Back.BackShiftArithmeticRight end
+        return nil
     end
 
     local function int_sem(expr)
@@ -332,7 +349,7 @@ local function bind_context(T)
             local v, ty = code_value(ctx, expr.value)
             if ty == nil then error("lower_to_back: semantic expression references unknown value " .. expr.value.text, 3) end
             return v, ty
-        elseif cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv then
+        elseif cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
             local av, aty = lower_value_expr(ctx, expr.a)
             local bv, bty = lower_value_expr(ctx, expr.b)
             ctx.next_tmp = (ctx.next_tmp or 0) + 1
@@ -341,9 +358,29 @@ local function bind_context(T)
             local rhs = bv
             if scalar(bty) ~= scalar(expr.ty) then rhs = ensure_value_ty(ctx, Back.BackValId("semantic.cast." .. tostring(ctx.next_tmp) .. ".rhs"), expr.ty, bv, bty) end
             local dst = Back.BackValId("semantic.tmp." .. tostring(ctx.next_tmp))
-            local op = (cls == Value.ValueExprAdd and "add") or (cls == Value.ValueExprSub and "sub") or (cls == Value.ValueExprMul and "mul") or "div"
+            local op = (cls == Value.ValueExprAdd and "add") or (cls == Value.ValueExprSub and "sub") or (cls == Value.ValueExprMul and "mul") or (cls == Value.ValueExprRem and "rem") or "div"
             ctx.cmds[#ctx.cmds + 1] = Back.CmdIntBinary(dst, int_op(op, expr.ty), scalar(expr.ty), int_sem(expr), lhs, rhs)
             return dst, expr.ty
+        elseif cls == Value.ValueExprBinary then
+            local av, aty = lower_value_expr(ctx, expr.a)
+            local bv, bty = lower_value_expr(ctx, expr.b)
+            ctx.next_tmp = (ctx.next_tmp or 0) + 1
+            local lhs = av
+            if scalar(aty) ~= scalar(expr.ty) then lhs = ensure_value_ty(ctx, Back.BackValId("semantic.cast." .. tostring(ctx.next_tmp) .. ".bin_lhs"), expr.ty, av, aty) end
+            local dst = Back.BackValId("semantic.tmp." .. tostring(ctx.next_tmp))
+            local bop = bit_op(expr.op)
+            if bop ~= nil then
+                local rhs = bv
+                if scalar(bty) ~= scalar(expr.ty) then rhs = ensure_value_ty(ctx, Back.BackValId("semantic.cast." .. tostring(ctx.next_tmp) .. ".bin_rhs"), expr.ty, bv, bty) end
+                ctx.cmds[#ctx.cmds + 1] = Back.CmdBitBinary(dst, bop, scalar(expr.ty), lhs, rhs)
+                return dst, expr.ty
+            end
+            local sop = shift_op(expr.op)
+            if sop ~= nil then
+                ctx.cmds[#ctx.cmds + 1] = Back.CmdShift(dst, sop, scalar(expr.ty), lhs, bv)
+                return dst, expr.ty
+            end
+            error("lower_to_back: unsupported binary ValueExpr op " .. tostring(expr.op), 3)
         elseif cls == Value.ValueExprCmp then
             local av, aty = lower_value_expr(ctx, expr.a)
             local bv, bty = lower_value_expr(ctx, expr.b)
@@ -536,7 +573,7 @@ local function bind_context(T)
     local function value_expr_block(ctx, expr)
         local cls = pvm.classof(expr)
         if cls == Value.ValueExprValue then return ctx.value_block and ctx.value_block[expr.value.text] end
-        if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv or cls == Value.ValueExprCmp then
+        if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv or cls == Value.ValueExprRem or cls == Value.ValueExprBinary or cls == Value.ValueExprCmp then
             return value_expr_block(ctx, expr.a) or value_expr_block(ctx, expr.b)
         end
         if cls == Value.ValueExprSelect then return value_expr_block(ctx, expr.cond) or value_expr_block(ctx, expr.t) or value_expr_block(ctx, expr.f) end

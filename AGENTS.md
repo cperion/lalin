@@ -110,7 +110,6 @@ lua/lalin/frontend_pipeline.lua
 lua/lalin/luajit_backend.lua LuaTrace/LuaJIT backend facade
 lua/lalin/copy_patch_bc.lua LuaJIT BC bank
 lua/llpvm/                   LLPVM member
-lua/llisle/                  Llisle rule language
 ```
 
 ## Key Docs

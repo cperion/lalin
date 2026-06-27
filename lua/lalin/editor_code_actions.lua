@@ -280,7 +280,7 @@ local function bind_context(T)
 
     local function origin_issue(origin)
         local cls = schema.classof(origin)
-        if cls == E.DiagFromHost or cls == E.DiagFromType or cls == E.DiagFromParse or cls == E.DiagFromOpen or cls == E.DiagFromBack or cls == E.DiagFromSource then
+        if cls == E.DiagFromHost or cls == E.DiagFromType or cls == E.DiagFromParse or cls == E.DiagFromBack or cls == E.DiagFromSource then
             return origin.issue
         elseif cls == E.DiagFromBindingResolution then
             return origin.resolution

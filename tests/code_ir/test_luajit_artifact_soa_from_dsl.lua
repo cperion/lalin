@@ -20,10 +20,10 @@ return unit. SoARegression {
 
   fn. soa_zip_add { dst [ptr [i32]], left [ptr [i32]], right [ptr [i32]], n [i32] } [void] {
     requires {
-      bounds(dst, n), writeonly(dst), soa_component(dst, PairSoA, "total", 2),
-      bounds(left, n), readonly(left), soa_component(left, PairSoA, "left", 0),
-      bounds(right, n), readonly(right), soa_component(right, PairSoA, "right", 1),
-      disjoint(dst, left), disjoint(dst, right), disjoint(left, right),
+      bounds (dst)(n), writeonly(dst), soa_component (dst)(PairSoA)("total")(2),
+      bounds (left)(n), readonly(left), soa_component (left)(PairSoA)("left")(0),
+      bounds (right)(n), readonly(right), soa_component (right)(PairSoA)("right")(1),
+      disjoint (dst)(left), disjoint (dst)(right), disjoint (left)(right),
     },
 
     entry. start {} { jump. loop { i = 0 }, },
@@ -37,7 +37,7 @@ return unit. SoARegression {
     },
 
     block. body { i [i32] } {
-      set (dst[i], left[i] + right[i]),
+      set (dst[i])(left[i] + right[i]),
       jump. loop { i = i + 1 },
     },
 
@@ -48,9 +48,9 @@ return unit. SoARegression {
 
   fn. soa_zip_sum { left [ptr [i32]], right [ptr [i32]], n [i32] } [i32] {
     requires {
-      bounds(left, n), readonly(left), soa_component(left, PairSoA, "left", 0),
-      bounds(right, n), readonly(right), soa_component(right, PairSoA, "right", 1),
-      disjoint(left, right),
+      bounds (left)(n), readonly(left), soa_component (left)(PairSoA)("left")(0),
+      bounds (right)(n), readonly(right), soa_component (right)(PairSoA)("right")(1),
+      disjoint (left)(right),
     },
 
     entry. start {} { jump. loop { i = 0, acc = 0 }, },
@@ -93,6 +93,16 @@ local function access_named(desc, name)
     error('missing descriptor access ' .. tostring(name))
 end
 
+local function soa_access(desc, field_name)
+    for _, access in ipairs(desc.accesses or {}) do
+        local top = access.layout
+        if tostring(pvm.classof(top)) == 'Class(LalinStencil.StencilLayoutSoAComponent)' and top.field_name == field_name then
+            return access
+        end
+    end
+    error('missing SoA descriptor access for field ' .. tostring(field_name))
+end
+
 local function assert_soa(access, field_name, component_index)
     local top = access.layout
     assert(tostring(pvm.classof(top)) == 'Class(LalinStencil.StencilLayoutSoAComponent)', access.name .. ' should use SoA layout')
@@ -107,11 +117,11 @@ for _, selected in ipairs(artifact.artifacts) do
     local expr_kind = tostring(pvm.classof(desc.body.expr)):match('Class%((.-)%)')
     if sink_kind == 'LalinStencil.StencilSinkStore' and expr_kind == 'LalinStencil.StencilApplyBinary' then
         assert_soa(access_named(desc, 'dst'), 'total', 2)
-        assert_soa(access_named(desc, 'lhs'), 'left', 0)
-        assert_soa(access_named(desc, 'rhs'), 'right', 1)
+        assert_soa(soa_access(desc, 'left'), 'left', 0)
+        assert_soa(soa_access(desc, 'right'), 'right', 1)
     elseif sink_kind == 'LalinStencil.StencilSinkReduce' and expr_kind == 'LalinStencil.StencilApplyBinary' then
-        assert_soa(access_named(desc, 'lhs'), 'left', 0)
-        assert_soa(access_named(desc, 'rhs'), 'right', 1)
+        assert_soa(soa_access(desc, 'left'), 'left', 0)
+        assert_soa(soa_access(desc, 'right'), 'right', 1)
     else
         error('unexpected SoA artifact descriptor ' .. tostring(pvm.classof(desc)))
     end

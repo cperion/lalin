@@ -81,7 +81,13 @@ local function bind_context(T)
         if k.op == Core.BinAdd then return Value.ValueExprAdd(a, b, k.ty, k.semantics) end
         if k.op == Core.BinSub then return Value.ValueExprSub(a, b, k.ty, k.semantics) end
         if k.op == Core.BinMul then return Value.ValueExprMul(a, b, k.ty, k.semantics) end
-        if k.op == Core.BinDiv or k.op == Core.BinRem then return Value.ValueExprDiv(a, b, k.ty, k.semantics) end
+        if k.op == Core.BinDiv then return Value.ValueExprDiv(a, b, k.ty, k.semantics) end
+        if k.op == Core.BinRem then return Value.ValueExprRem(a, b, k.ty, k.semantics) end
+        local op = k.op
+        if op == Core.BinBitAnd or op == Core.BinBitOr or op == Core.BinBitXor
+            or op == Core.BinShl or op == Core.BinLShr or op == Core.BinAShr then
+            return Value.ValueExprBinary(op, a, b, k.ty, k.semantics)
+        end
         return nil
     end
 
@@ -359,8 +365,12 @@ local function bind_context(T)
             local ok, reason = lowerable_expr(expr.a, seen); if not ok then return false, reason end
             return lowerable_expr(expr.b, seen)
         end
-        if cls == Value.ValueExprDiv then
-            if expr.sem == nil then return false, "division expression lacks exact CodeIntSemantics" end
+        if cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
+            if expr.sem == nil then return false, "div/rem expression lacks exact CodeIntSemantics" end
+            local ok, reason = lowerable_expr(expr.a, seen); if not ok then return false, reason end
+            return lowerable_expr(expr.b, seen)
+        end
+        if cls == Value.ValueExprBinary then
             local ok, reason = lowerable_expr(expr.a, seen); if not ok then return false, reason end
             return lowerable_expr(expr.b, seen)
         end

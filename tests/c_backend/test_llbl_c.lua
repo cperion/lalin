@@ -61,7 +61,7 @@ local unit = c.unit. demo {
         }),
         c.assign(out[0], sum_pair { p }),
         c.assign(out[1], c.cast [c.i32] (p.items[2])),
-        c.if_ (c.gt(out[0], 10)) {
+        c.if_ (c.gt (out[0])(10)) {
             c.assign(out[2], 9),
         },
         c.auto. aligned(c.cast [c.ptr [c.i32]] (c.builtin.assume_aligned { out, 4 })),
@@ -72,7 +72,7 @@ local unit = c.unit. demo {
             c.decl. tmp [c.typeof [c.i32]] (out[2] + aligned[3]),
             c.expr(tmp),
         }),
-        c.for_ { c.decl. i [c.i32] (0), c.lt(i, 4), c.assign(i, i + 1) } {
+        c.for_ { c.decl. i [c.i32] (0), c.lt (i)(4), c.assign(i, i + 1) } {
             c.assign(out[3], out[3] + i),
         },
         c.return_ (out[0]),
@@ -80,11 +80,11 @@ local unit = c.unit. demo {
 
     c.fn. main {} [c.i32] {
         c.decl. out [c.array [c.i32] [4]] (c.list { 0, 0, 0, 0 }),
-        c.if_ (c.ne(feature_probe { 5, out }, 12)) { c.return_(1) },
-        c.if_ (c.ne(out[1], 3)) { c.return_(2) },
-        c.if_ (c.ne(out[2], 13)) { c.return_(3) },
-        c.if_ (c.ne(out[3], 10)) { c.return_(4) },
-        c.if_ (c.ne(generated_sum {}, 6)) { c.return_(5) },
+        c.if_ (c.ne (feature_probe { 5, out })(12)) { c.return_(1) },
+        c.if_ (c.ne (out[1])(3)) { c.return_(2) },
+        c.if_ (c.ne (out[2])(13)) { c.return_(3) },
+        c.if_ (c.ne (out[3])(10)) { c.return_(4) },
+        c.if_ (c.ne (generated_sum {})(6)) { c.return_(5) },
         c.return_(0),
     },
 }
@@ -175,7 +175,7 @@ local portable = c.unit. portable {
         n [c.i32],
     } [c.i32] {
         c.decl. acc [c.i32] (0),
-        c.for_ { c.decl. i [c.i32] (0), c.lt(i, n), c.assign(i, i + 1) } {
+        c.for_ { c.decl. i [c.i32] (0), c.lt (i)(n), c.assign(i, i + 1) } {
             c.assign(acc, acc + ppairs[i].left),
             c.assign(acc, acc + ppairs[i].right),
         },
@@ -183,7 +183,7 @@ local portable = c.unit. portable {
     },
     c.fn. main {} [c.i32] {
         c.decl. ppairs [c.array [c.type.PortablePair] [2]] (c.list { c.list { 1, 2 }, c.list { 3, 4 } }),
-        c.return_(c.ne(portable_sum { ppairs, 2 }, 10)),
+        c.return_(c.ne (portable_sum { ppairs, 2 })(10)),
     },
 }
 

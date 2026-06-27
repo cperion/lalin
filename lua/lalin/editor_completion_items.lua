@@ -70,23 +70,6 @@ local function bind_context(T)
         end
     end
 
-    local function region_frag_names(analysis)
-        local out = {}
-        for i = 1, #analysis.anchors.anchors do
-            local a = analysis.anchors.anchors[i]
-            if a.kind == S.AnchorRegionName then out[#out + 1] = a.label end
-        end
-        return out
-    end
-
-    local function region_frag_by_name(analysis, name)
-        local names = region_frag_names(analysis)
-        for i = 1, #names do
-            if names[i] == name then return analysis.parse.combined.region_frags[i] end
-        end
-        return nil
-    end
-
     local function completion_prefix(query, analysis)
         local doc = analysis.parse.parts.document
         local hit = P.source_pos_to_offset(P.build_index(doc), query.position.pos)
@@ -103,17 +86,6 @@ local function bind_context(T)
                 add(items, E, a.label, E.CompletionEvent, "control label", "Jump target")
             end
         end
-    end
-
-    local function add_emit_routes(items, analysis, prefix)
-        local name = prefix:match("%f[%w_]emit%f[^%w_]%s+([_%a][_%w]*)%s*%(")
-        local frag = name and region_frag_by_name(analysis, name)
-        if not frag then return false end
-        for i = 1, #(frag.conts or {}) do
-            local cont = frag.conts[i]
-            add(items, E, cont.pretty_name, E.CompletionEvent, "region exit", "Route continuation exit", cont.pretty_name .. " = ${1:block}")
-        end
-        return true
     end
 
     local function items_phase(node, ...)
@@ -180,10 +152,7 @@ local function bind_context(T)
             add(items, E, "return", E.CompletionKeyword, "return", "Return from a function")
             add(items, E, "call", E.CompletionKeyword, "region call", "Call a region through a generated function/result boundary")
         elseif context == E.CompletionContinuationArgs then
-            local prefix = completion_prefix(query, analysis)
-            if not add_emit_routes(items, analysis, prefix) then
-                add_jump_targets(items, analysis)
-            end
+            add_jump_targets(items, analysis)
         end
         return as_list(items)
             end)(node, ...)

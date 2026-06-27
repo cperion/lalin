@@ -11,7 +11,6 @@ local C = T.LalinCore
 local Ty = T.LalinType
 local B = T.LalinBack
 local Sem = T.LalinSem
-local O = T.LalinOpen
 
 local i32 = Ty.TScalar(C.ScalarI32)
 local void = Ty.TScalar(C.ScalarVoid)
@@ -37,10 +36,5 @@ assert(L.decide(view) == Ty.AbiDecision(view, Ty.AbiDescriptor(Sem.MemLayout(24,
 assert(L.decide(closure) == Ty.AbiDecision(closure, Ty.AbiDescriptor(Sem.MemLayout(16, 8))))
 assert(L.decide(array) == Ty.AbiDecision(array, Ty.AbiIndirect(Sem.MemLayout(16, 4))))
 assert(L.decide(pair, env) == Ty.AbiDecision(pair, Ty.AbiIndirect(Sem.MemLayout(8, 4))))
-
-local unknown = Ty.TSlot(O.TypeSlot("T", "T"))
-local decision = L.decide(unknown)
-assert(decision.ty == unknown)
-assert(pvm.classof(decision.class) == Ty.AbiUnknown)
 
 print("lalin type_abi_classify ok")

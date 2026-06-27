@@ -1,6 +1,7 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local ffi = require("ffi")
+local bit = require("bit")
 local pvm = require("lalin.pvm")
 local Schema = require("lalin.schema")
 
@@ -173,6 +174,22 @@ local nd_step_artifact = Plan.apply_n_artifact({
     producer = range_nd_axes(axis(2), axis(2)),
 })
 
+local nd_find_artifact = Plan.find_array_artifact(Stencil.StencilPredCompareConst(Core.CmpGt, i32, iconst(4)), {
+    elem_ty = i32,
+    not_found = iconst(-1),
+    producer = range_nd_producer(2, 3),
+})
+
+local nd_scatter_reduce_artifact = Plan.scatter_reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, {
+    tag = "range_nd2_scatter_sum",
+    result_ty = i32,
+    item_ty = i32,
+    index_ty = i32,
+    inputs = inputs(1),
+    expr = input("x1"),
+    producer = range_nd_producer(2, 3),
+})
+
 local tiled_artifact = Plan.apply_n_artifact({
     tag = "tiled_nd2_add",
     result_ty = i32,
@@ -280,6 +297,8 @@ do
     assert(Plan.artifact_shape(nd_scan_artifact).axis.index == 2, "RangeND ScanN should preserve scan axis")
     assert(Plan.artifact_shape(nd_axis_reduce_artifact).scope_kind == "axes", "RangeND axis reduce should preserve reduce scope")
     assert(Plan.artifact_shape(nd_step_artifact).producer.kind == "range_nd", "non-unit RangeND should carry a producer execution plan")
+    assert(Plan.artifact_shape(nd_find_artifact).producer.kind == "range_nd", "RangeND FindN should carry a producer execution plan")
+    assert(Plan.artifact_shape(nd_scatter_reduce_artifact).producer.kind == "range_nd", "RangeND ScatterReduceN should carry a producer execution plan")
     assert(Plan.artifact_shape(tiled_artifact).producer.kind == "tiled_nd", "TiledND ApplyN should carry a producer execution plan")
     assert(Plan.artifact_shape(tiled_reduce_artifact).producer.kind == "tiled_nd", "TiledND ReduceN should carry a producer execution plan")
     assert(Plan.artifact_shape(tiled_scan_artifact).producer.kind == "tiled_nd", "TiledND ScanN should carry a producer execution plan")
@@ -315,7 +334,7 @@ local mc, mc_err, mc_src = MC.compile(T, artifacts, { stem = "test_stencil_apply
 assert(mc ~= nil, tostring(mc_err) .. "\n" .. tostring(mc_src))
 exercise(mc.symbols, "mc")
 
-local producer_artifacts = { nd_artifact, nd_reduce_artifact, nd_scan_artifact, nd_axis_reduce_artifact, nd_step_artifact, tiled_artifact, tiled_reduce_artifact, tiled_scan_artifact }
+local producer_artifacts = { nd_artifact, nd_reduce_artifact, nd_scan_artifact, nd_axis_reduce_artifact, nd_step_artifact, nd_find_artifact, nd_scatter_reduce_artifact, tiled_artifact, tiled_reduce_artifact, tiled_scan_artifact }
 for _, artifact in ipairs(window_artifacts) do producer_artifacts[#producer_artifacts + 1] = artifact end
 for _, artifact in ipairs(window_neighbor_artifacts) do producer_artifacts[#producer_artifacts + 1] = artifact end
 producer_artifacts[#producer_artifacts + 1] = window_reduce_artifact
@@ -341,6 +360,12 @@ do
     for i = 0, 5 do
         assert(out[i] == x1[i] + x2[i], "stepped RangeND compact row-major element " .. tostring(i))
     end
+    local found = assert(mc_nd.symbols[nd_find_artifact.symbol.text], "mc missing RangeND FindN")(x1, 0, 2, 0, 3)
+    assert(found == 4, "RangeND FindN returns compact row-major index")
+    local bins = ffi.new("int32_t[2]", { 0, 0 })
+    local idx = ffi.new("int32_t[6]", { 0, 1, 0, 1, 0, 1 })
+    assert(mc_nd.symbols[nd_scatter_reduce_artifact.symbol.text], "mc missing RangeND ScatterReduceN")(bins, x1, idx, 0, 2, 0, 3)
+    assert(bins[0] == 9 and bins[1] == 12, "RangeND ScatterReduceN indexed sums")
 
     assert(mc_nd.symbols[tiled_artifact.symbol.text], "mc missing TiledND ApplyN")(out, x1, x2, 0, 2, 0, 3)
     for i = 0, 5 do
@@ -367,10 +392,45 @@ do
     assert(out[0] == 4 and out[1] == 6 and out[2] == 9 and out[3] == 12 and out[4] == 15 and out[5] == 17, "WindowND local clamp sum")
 end
 
-local bc_nd_ok, bc_nd_err = pcall(function()
-    CopyPatchLuaTrace.realize_artifacts({ nd_artifact, nd_reduce_artifact, tiled_artifact, window_artifacts[1] }, { stem = "test_stencil_apply_n_non_range1d_bc" })
+local bc_nd = assert(CopyPatchLuaTrace.realize_artifacts({
+    nd_artifact,
+    nd_reduce_artifact,
+    nd_scan_artifact,
+    nd_axis_reduce_artifact,
+    nd_step_artifact,
+    nd_find_artifact,
+    nd_scatter_reduce_artifact,
+}, { stem = "test_stencil_apply_n_range_nd_bc" }))
+do
+    local out = ffi.new("int32_t[6]")
+    local x1 = ffi.new("int32_t[6]", { 1, 2, 3, 4, 5, 6 })
+    local x2 = ffi.new("int32_t[6]", { 10, 20, 30, 40, 50, 60 })
+    assert(bc_nd.symbols[nd_artifact.symbol.text], "bc missing RangeND ApplyN")(out, x1, x2, 0, 2, 0, 3)
+    for i = 0, 5 do
+        assert(out[i] == x1[i] + x2[i], "BC RangeND ApplyN row-major element " .. tostring(i))
+    end
+    local sum = assert(bc_nd.symbols[nd_reduce_artifact.symbol.text], "bc missing RangeND ReduceN")(x1, x2, 0, 2, 0, 3, 0)
+    assert(sum == 231, "BC RangeND ReduceN row-major sum")
+    assert(bc_nd.symbols[nd_scan_artifact.symbol.text], "bc missing RangeND axis ScanN")(out, x1, 0, 2, 0, 3, 0)
+    assert(out[0] == 1 and out[1] == 3 and out[2] == 6 and out[3] == 4 and out[4] == 9 and out[5] == 15, "BC RangeND axis-2 ScanN row prefixes")
+    local reduced = ffi.new("int32_t[2]")
+    assert(bc_nd.symbols[nd_axis_reduce_artifact.symbol.text], "bc missing RangeND axis ReduceN")(reduced, x1, 0, 2, 0, 3)
+    assert(reduced[0] == 6 and reduced[1] == 15, "BC RangeND axis-2 ReduceN row sums")
+    assert(bc_nd.symbols[nd_step_artifact.symbol.text], "bc missing stepped RangeND ApplyN")(out, x1, x2, 0, 4, 0, 6)
+    for i = 0, 5 do
+        assert(out[i] == x1[i] + x2[i], "BC stepped RangeND compact row-major element " .. tostring(i))
+    end
+    local found = assert(bc_nd.symbols[nd_find_artifact.symbol.text], "bc missing RangeND FindN")(x1, 0, 2, 0, 3)
+    assert(found == 4, "BC RangeND FindN returns compact row-major index")
+    local bins = ffi.new("int32_t[2]", { 0, 0 })
+    local idx = ffi.new("int32_t[6]", { 0, 1, 0, 1, 0, 1 })
+    assert(bc_nd.symbols[nd_scatter_reduce_artifact.symbol.text], "bc missing RangeND ScatterReduceN")(bins, x1, idx, 0, 2, 0, 3)
+    assert(bins[0] == 9 and bins[1] == 12, "BC RangeND ScatterReduceN indexed sums")
+end
+local bc_tiled_ok, bc_tiled_err = pcall(function()
+    CopyPatchLuaTrace.realize_artifacts({ tiled_artifact }, { stem = "test_stencil_apply_n_tiled_bc" })
 end)
-assert(not bc_nd_ok and tostring(bc_nd_err):find("range_nd", 1, true) ~= nil, "LuaTrace should reject non-Range1D producers until its producer loop exists")
+assert(not bc_tiled_ok and tostring(bc_tiled_err):find("tiled_nd", 1, true) ~= nil, "LuaTrace should still reject TiledND producers until its producer loop exists")
 local bc_window_ok, bc_window_err = pcall(function()
     CopyPatchLuaTrace.realize_artifacts({ window_neighbor_artifacts[1], window_reduce_artifact }, { stem = "test_stencil_apply_n_window_bc" })
 end)
@@ -395,6 +455,122 @@ do
     end
     exercise_scan(scan_build.symbols, "mc")
     exercise_scan(scan_bc.symbols, "bc")
+end
+
+do
+    local function unary_artifact(tag, op)
+        return Plan.apply_n_artifact({
+            tag = "bc_unary_" .. tag,
+            result_ty = i32,
+            inputs = inputs(1),
+            expr = Plan.apply_unary_expr(op, input("x1"), i32, { int_semantics = sem }),
+            step_num = 1,
+        })
+    end
+
+    local cases = {
+        { "identity", Stencil.StencilUnaryIdentity, function(a) return a end },
+        { "neg", Stencil.StencilUnaryNeg, function(a) return bit.tobit(-a) end },
+        { "bitnot", Stencil.StencilUnaryBitNot, function(a) return bit.bnot(a) end },
+        { "boolnot", Stencil.StencilUnaryBoolNot, function(a) return a == 0 and 1 or 0 end },
+    }
+    local unary_artifacts = {}
+    for _, case in ipairs(cases) do unary_artifacts[#unary_artifacts + 1] = unary_artifact(case[1], case[2]) end
+
+    local bc_unary = assert(CopyPatchLuaTrace.realize_artifacts(unary_artifacts, { stem = "test_stencil_apply_n_unary_bc" }))
+    local out = ffi.new("int32_t[5]")
+    local x1 = ffi.new("int32_t[5]", { 8, 0, -16, 31, -42 })
+    for i, case in ipairs(cases) do
+        local fn = assert(bc_unary.symbols[unary_artifacts[i].symbol.text], "bc missing unary op " .. case[1])
+        fn(out, x1, 0, 5)
+        for j = 0, 4 do
+            assert(out[j] == case[3](x1[j]), "BC unary " .. case[1] .. " mismatch at " .. tostring(j))
+        end
+    end
+end
+
+do
+    local function binary_artifact(tag, op)
+        return Plan.apply_n_artifact({
+            tag = "bc_binary_" .. tag,
+            result_ty = i32,
+            inputs = inputs(2),
+            expr = Plan.apply_binary_expr(op, input("x1"), input("x2"), i32, { int_semantics = sem }),
+            step_num = 1,
+        })
+    end
+
+    local cases = {
+        { "add", Stencil.StencilBinaryAdd, function(a, b) return bit.tobit(a + b) end },
+        { "sub", Stencil.StencilBinarySub, function(a, b) return bit.tobit(a - b) end },
+        { "mul", Stencil.StencilBinaryMul, function(a, b) return bit.tobit(a * b) end },
+        { "div", Stencil.StencilBinaryDiv, function(a, b) return math.floor(a / b) end },
+        { "mod", Stencil.StencilBinaryMod, function(a, b) return a % b end },
+        { "and", Stencil.StencilBinaryAnd, function(a, b) return bit.band(a, b) end },
+        { "or", Stencil.StencilBinaryOr, function(a, b) return bit.bor(a, b) end },
+        { "xor", Stencil.StencilBinaryXor, function(a, b) return bit.bxor(a, b) end },
+        { "shl", Stencil.StencilBinaryShl, function(a, b) return bit.tobit(bit.lshift(a, bit.band(b, 31))) end },
+        { "lshr", Stencil.StencilBinaryLShr, function(a, b) return bit.tobit(bit.rshift(a, bit.band(b, 31))) end },
+        { "ashr", Stencil.StencilBinaryAShr, function(a, b) return bit.tobit(bit.arshift(a, bit.band(b, 31))) end },
+        { "min", Stencil.StencilBinaryMin, function(a, b) return a < b and a or b end },
+        { "max", Stencil.StencilBinaryMax, function(a, b) return a > b and a or b end },
+    }
+    local binary_artifacts = {}
+    for _, case in ipairs(cases) do binary_artifacts[#binary_artifacts + 1] = binary_artifact(case[1], case[2]) end
+
+    local bc_binary = assert(CopyPatchLuaTrace.realize_artifacts(binary_artifacts, { stem = "test_stencil_apply_n_binary_bc" }))
+    local out = ffi.new("int32_t[5]")
+    local x1 = ffi.new("int32_t[5]", { 8, 9, 16, 31, 42 })
+    local x2 = ffi.new("int32_t[5]", { 2, 3, 4, 5, 6 })
+    for i, case in ipairs(cases) do
+        local fn = assert(bc_binary.symbols[binary_artifacts[i].symbol.text], "bc missing binary op " .. case[1])
+        fn(out, x1, x2, 0, 5)
+        for j = 0, 4 do
+            assert(out[j] == case[3](x1[j], x2[j]), "BC binary " .. case[1] .. " mismatch at " .. tostring(j))
+        end
+    end
+end
+
+do
+    local function reduce_artifact(tag, kind, init)
+        local red = reduction(kind, init)
+        return Plan.reduce_n_artifact(red, nil, {
+            tag = "bc_reduce_" .. tag,
+            result_ty = i32,
+            item_ty = i32,
+            inputs = inputs(1),
+            expr = input("x1"),
+            step_num = 1,
+        }), red
+    end
+
+    local function fold(init, xs, f)
+        local acc = init
+        for i = 0, 4 do acc = f(acc, xs[i]) end
+        return acc
+    end
+
+    local cases = {
+        { "add", Value.ReductionAdd, 0, function(init, xs) return fold(init, xs, function(a, b) return bit.tobit(a + b) end) end },
+        { "mul", Value.ReductionMul, 1, function(init, xs) return fold(init, xs, function(a, b) return bit.tobit(a * b) end) end },
+        { "and", Value.ReductionAnd, -1, function(init, xs) return fold(init, xs, function(a, b) return bit.band(a, b) end) end },
+        { "or", Value.ReductionOr, 0, function(init, xs) return fold(init, xs, function(a, b) return bit.bor(a, b) end) end },
+        { "xor", Value.ReductionXor, 0, function(init, xs) return fold(init, xs, function(a, b) return bit.bxor(a, b) end) end },
+        { "min", Value.ReductionMin, 100, function(init, xs) return fold(init, xs, function(a, b) return a < b and a or b end) end },
+        { "max", Value.ReductionMax, -100, function(init, xs) return fold(init, xs, function(a, b) return a > b and a or b end) end },
+    }
+    local reduce_artifacts = {}
+    for _, case in ipairs(cases) do
+        reduce_artifacts[#reduce_artifacts + 1] = reduce_artifact(case[1], case[2], case[3])
+    end
+
+    local bc_reduce = assert(CopyPatchLuaTrace.realize_artifacts(reduce_artifacts, { stem = "test_stencil_apply_n_reduce_bc" }))
+    local x1 = ffi.new("int32_t[5]", { 1, 2, 3, 4, 5 })
+    for i, case in ipairs(cases) do
+        local fn = assert(bc_reduce.symbols[reduce_artifacts[i].symbol.text], "bc missing reduction " .. case[1])
+        local got = fn(x1, 0, 5, case[3])
+        assert(got == case[4](case[3], x1), "BC reduction " .. case[1] .. " mismatch")
+    end
 end
 
 io.write("stencil apply_n ok\n")

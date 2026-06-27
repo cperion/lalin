@@ -18,10 +18,6 @@ return schema. LalinBind {
     BindingClassGlobalConst { variant_unique, module_name [str], item_name [str], },
     BindingClassGlobalStatic { variant_unique, module_name [str], item_name [str], },
     BindingClassExtern { variant_unique, symbol [str], },
-    BindingClassOpenParam { variant_unique, param [LalinOpen.OpenParam], },
-    BindingClassImport { variant_unique, import [LalinOpen.ValueImport], },
-    BindingClassOpenSym { variant_unique, sym [LalinCore.OpenSym], },
-    BindingClassOpenSlot { variant_unique, slot [LalinOpen.Slot], },
   },
   product. Binding {
     interned,
@@ -65,7 +61,6 @@ return schema. LalinBind {
     ValueRefName { variant_unique, field. name [str], },
     ValueRefPath { variant_unique, path [LalinCore.Path], },
     ValueRefBinding { variant_unique, binding [LalinBind.Binding], },
-    ValueRefHole { variant_unique, slot [LalinOpen.Slot], },
   },
   product. ValueEntry { interned, field. name [str], binding [LalinBind.Binding], },
   product. TypeEntry { interned, field. name [str], field. ty [LalinType.Type], },

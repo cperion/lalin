@@ -346,25 +346,12 @@ local function bind_context(T)
         { name = "c_0", value = 0 },
         { name = "c_1", value = 1 },
     }
-
-    local default_soac_order = 1
-    local default_input_count = 1
-
-    local function target_bytes(opts)
-        opts = opts or {}
-        local direct = opts.target_bytes or os.getenv("LALIN_MC_BANK_TARGET_BYTES")
-        if direct ~= nil then return tonumber(direct) end
-        local mb = opts.target_mb or os.getenv("LALIN_MC_BANK_TARGET_MB")
-        if mb ~= nil then return math.floor((tonumber(mb) or 0) * 1024 * 1024) end
-        return nil
-    end
-
-    local function estimated_bytes_per_cell()
-        return tonumber(os.getenv("LALIN_MC_BANK_ESTIMATED_BYTES_PER_CELL")) or 90
-    end
+    local fixed_soac_order = 1
+    local fixed_input_count = 1
+    local fixed_sink_apply_stage_count = 0
+    local fixed_apply_stage_count = 1
 
     local function estimated_bytes_for_soac(cell)
-        if os.getenv("LALIN_MC_BANK_ESTIMATED_BYTES_PER_CELL") ~= nil then return estimated_bytes_per_cell() end
         local input_count = tonumber(cell and cell.input_count) or 1
         local order = tonumber(cell and cell.order) or 1
         local base = cell and (cell.kind == "reduce_n" or cell.kind == "scan_n") and 145 or 125
@@ -373,7 +360,7 @@ local function bind_context(T)
     end
 
     local function cell_estimated_bytes(cell)
-        return tonumber(cell and cell.estimated_bytes) or estimated_bytes_per_cell()
+        return tonumber(cell and cell.estimated_bytes) or estimated_bytes_for_soac(cell)
     end
 
     local function cells_estimated_bytes(cells)
@@ -397,33 +384,6 @@ local function bind_context(T)
         assert(derived.basis == cell.vocab, "copy_patch_mc_intern_set: derived plan " .. tostring(cell.derived or cell.kind) .. " belongs to " .. tostring(derived.basis) .. ", not " .. tostring(cell.vocab))
         local layout = Matrix.layouts[cell.layout]
         assert(layout and layout.status == Matrix.status.supported, "copy_patch_mc_intern_set: unsupported layout cell " .. tostring(cell.layout))
-    end
-
-    local function requested_soac_order(opts)
-        opts = opts or {}
-        local order = tonumber(opts.soac_order or os.getenv("LALIN_MC_BANK_SOAC_ORDER")) or default_soac_order
-        return order
-    end
-
-    local function requested_input_count(opts, order)
-        opts = opts or {}
-        local direct = opts.input_count or os.getenv("LALIN_MC_BANK_INPUT_COUNT")
-        if direct ~= nil then return tonumber(direct) or 1 end
-        return default_input_count
-    end
-
-    local function explicit_rectangular_shape(opts)
-        opts = opts or {}
-        return opts.soac_order ~= nil
-            or opts.input_count ~= nil
-            or os.getenv("LALIN_MC_BANK_SOAC_ORDER") ~= nil
-            or os.getenv("LALIN_MC_BANK_INPUT_COUNT") ~= nil
-    end
-
-    local function exact_shape(opts)
-        opts = opts or {}
-        local raw = opts.exact_shape or os.getenv("LALIN_MC_BANK_EXACT_SHAPE")
-        return raw == true or raw == 1 or raw == "1" or raw == "true" or raw == "yes"
     end
 
     local function input(name)
@@ -697,7 +657,7 @@ local function bind_context(T)
         end)
     end
 
-    local function append_soac_spec(out, kind, spec, serial, target, estimated_total)
+    local function append_soac_spec(out, kind, spec, serial, estimated_total)
         for _, group_name in ipairs(layout_group_order) do
             local group = assert(layout_groups[group_name], group_name)
             if layout_group_supports_kind(group, kind, spec) then
@@ -705,9 +665,6 @@ local function bind_context(T)
                     if producer_group_supports(kind, producer_group_name) then
                         for _, schedule_variant in ipairs(schedule_variants_for_kind(kind)) do
                             local estimated = estimated_bytes_for_soac({ kind = kind, input_count = spec.input_count, order = spec.order })
-                            if target ~= nil and estimated_total + estimated > target then
-                                return serial, estimated_total, false
-                            end
                             serial = serial + 1
                             if append_output(out, soac_cell(kind, group_name, producer_group_name, schedule_variant, spec, serial)) == false then
                                 return serial, estimated_total, false
@@ -735,74 +692,39 @@ local function bind_context(T)
         return count
     end
 
-    local function profile_sink_kind(kind, spec, target_limit, cells, estimated)
+    local function profile_sink_kind(kind, spec, cells, estimated)
         local per_cell = estimated_bytes_for_soac({ kind = kind, input_count = spec.input_count, order = spec.order })
         local total = per_cell * active_layout_count(kind, spec)
-        if target_limit ~= nil and estimated + total > target_limit then return cells, estimated, false end
-        return cells + active_layout_count(kind, spec), estimated + total, true
+        return cells + active_layout_count(kind, spec), estimated + total
     end
 
-    local function append_soac_order_stream(out, input_count, order, serial, target, estimated_total)
-        estimated_total = estimated_total or cells_estimated_bytes(out)
+    local function append_fixed_1x1_cells(out)
+        local serial = 0
+        local estimated_total = cells_estimated_bytes(out)
         local keep_going = true
-        stream_stage_specs(input_count, order - 1, function(spec)
+        stream_stage_specs(fixed_input_count, fixed_sink_apply_stage_count, function(spec)
             if same_ty(spec.result_ty, i32) then
-                spec.order = order
-                serial, estimated_total, keep_going = append_soac_spec(out, "reduce_n", spec, serial, target, estimated_total)
+                spec.order = fixed_soac_order
+                serial, estimated_total, keep_going = append_soac_spec(out, "reduce_n", spec, serial, estimated_total)
                 if keep_going then
-                    serial, estimated_total, keep_going = append_soac_spec(out, "scan_n", spec, serial, target, estimated_total)
+                    serial, estimated_total, keep_going = append_soac_spec(out, "scan_n", spec, serial, estimated_total)
                 end
                 if keep_going then
-                    serial, estimated_total, keep_going = append_soac_spec(out, "scatter_reduce_n", spec, serial, target, estimated_total)
+                    serial, estimated_total, keep_going = append_soac_spec(out, "scatter_reduce_n", spec, serial, estimated_total)
                 end
             end
             return keep_going
         end)
-        if keep_going == false then return serial, estimated_total, false end
-        stream_stage_specs(input_count, order, function(spec)
-            spec.order = order
-            serial, estimated_total, keep_going = append_soac_spec(out, "apply_n", spec, serial, target, estimated_total)
+        if keep_going == false then return estimated_total, false end
+        stream_stage_specs(fixed_input_count, fixed_apply_stage_count, function(spec)
+            spec.order = fixed_soac_order
+            serial, estimated_total, keep_going = append_soac_spec(out, "apply_n", spec, serial, estimated_total)
             return keep_going
         end)
-        return serial, estimated_total, keep_going
+        return estimated_total, keep_going
     end
 
-    local function append_soac_cells(out, opts)
-        opts = opts or {}
-        local max_order = requested_soac_order(opts)
-        if max_order < 1 then return cells_estimated_bytes(out) end
-        local target = target_bytes(opts)
-        local target_limit = target and target > 0 and target or nil
-        local serial = 0
-        local estimated_total = cells_estimated_bytes(out)
-        local max_input_count = requested_input_count(opts, max_order)
-        if max_input_count < 1 then return estimated_total end
-        local min_order = exact_shape(opts) and max_order or 1
-        local min_input_count = exact_shape(opts) and max_input_count or 1
-        for order = min_order, max_order do
-            for input_count = min_input_count, max_input_count do
-                local keep_going
-                serial, estimated_total, keep_going = append_soac_order_stream(out, input_count, order, serial, target_limit, estimated_total)
-                if keep_going == false then return estimated_total end
-            end
-        end
-        return estimated_total
-    end
-
-    local function append_default_soac_cells(out, opts)
-        opts = opts or {}
-        local target = target_bytes(opts)
-        local target_limit = target and target > 0 and target or nil
-        local serial = 0
-        local estimated_total = cells_estimated_bytes(out)
-        local keep_going
-        for input_count = 1, default_input_count do
-            serial, estimated_total, keep_going = append_soac_order_stream(out, input_count, default_soac_order, serial, target_limit, estimated_total)
-            if keep_going == false then return end
-        end
-    end
-
-    local function append_rank_aware_coverage_cells(out)
+    local function append_rank_scope_window_probe_cells(out)
         local cells = {
             {
                 name = "rank.range_nd2.contiguous.reduce_n.axis2.sum",
@@ -888,12 +810,8 @@ local function bind_context(T)
     function M.each_cell(opts, emit)
         opts = opts or {}
         emit = shard_filter(opts, assert(emit, "copy_patch_mc_intern_set.each_cell requires an emit callback"))
-        if explicit_rectangular_shape(opts) then
-            append_soac_cells(emit, opts)
-        else
-            append_default_soac_cells(emit, opts)
-        end
-        append_rank_aware_coverage_cells(emit)
+        append_fixed_1x1_cells(emit)
+        append_rank_scope_window_probe_cells(emit)
     end
 
     function M.cells(opts)
@@ -905,73 +823,26 @@ local function bind_context(T)
         return out
     end
 
-    local function profile_soac_cells(opts, cells, estimated)
-        opts = opts or {}
-        local max_order = requested_soac_order(opts)
-        if max_order < 1 then return cells, estimated end
-        local target = target_bytes(opts)
-        local target_limit = target and target > 0 and target or nil
-        local max_input_count = requested_input_count(opts, max_order)
-        if max_input_count < 1 then return cells, estimated end
-        local min_order = exact_shape(opts) and max_order or 1
-        local min_input_count = exact_shape(opts) and max_input_count or 1
-        for order = min_order, max_order do
-            for input_count = min_input_count, max_input_count do
-                local keep_going = true
-                stream_stage_specs(input_count, order - 1, function(spec)
-                    if same_ty(spec.result_ty, i32) then
-                        spec.order = order
-                        cells, estimated, keep_going = profile_sink_kind("reduce_n", spec, target_limit, cells, estimated)
-                        if keep_going then cells, estimated, keep_going = profile_sink_kind("scan_n", spec, target_limit, cells, estimated) end
-                        if keep_going then cells, estimated, keep_going = profile_sink_kind("scatter_reduce_n", spec, target_limit, cells, estimated) end
-                    end
-                    return keep_going
-                end)
-                if keep_going == false then return cells, estimated end
-                stream_stage_specs(input_count, order, function(spec)
-                    spec.order = order
-                    cells, estimated, keep_going = profile_sink_kind("apply_n", spec, target_limit, cells, estimated)
-                    return keep_going
-                end)
-                if keep_going == false then return cells, estimated end
-            end
-        end
-        return cells, estimated
-    end
-
-    local function profile_soac_order_stream(input_count, order, target_limit, cells, estimated)
-        local keep_going = true
-        stream_stage_specs(input_count, order - 1, function(spec)
+    local function profile_fixed_1x1_cells(cells, estimated)
+        stream_stage_specs(fixed_input_count, fixed_sink_apply_stage_count, function(spec)
             if same_ty(spec.result_ty, i32) then
-                spec.order = order
-                cells, estimated, keep_going = profile_sink_kind("reduce_n", spec, target_limit, cells, estimated)
-                if keep_going then cells, estimated, keep_going = profile_sink_kind("scan_n", spec, target_limit, cells, estimated) end
-                if keep_going then cells, estimated, keep_going = profile_sink_kind("scatter_reduce_n", spec, target_limit, cells, estimated) end
+                spec.order = fixed_soac_order
+                cells, estimated = profile_sink_kind("reduce_n", spec, cells, estimated)
+                cells, estimated = profile_sink_kind("scan_n", spec, cells, estimated)
+                cells, estimated = profile_sink_kind("scatter_reduce_n", spec, cells, estimated)
             end
-            return keep_going
+            return true
         end)
-        if keep_going == false then return cells, estimated, false end
-        stream_stage_specs(input_count, order, function(spec)
-            spec.order = order
-            cells, estimated, keep_going = profile_sink_kind("apply_n", spec, target_limit, cells, estimated)
-            return keep_going
+        stream_stage_specs(fixed_input_count, fixed_apply_stage_count, function(spec)
+            spec.order = fixed_soac_order
+            cells, estimated = profile_sink_kind("apply_n", spec, cells, estimated)
+            return true
         end)
-        return cells, estimated, keep_going
-    end
-
-    local function profile_default_soac_cells(opts, cells, estimated)
-        local target = target_bytes(opts)
-        local target_limit = target and target > 0 and target or nil
-        local keep_going
-        for input_count = 1, default_input_count do
-            cells, estimated, keep_going = profile_soac_order_stream(input_count, default_soac_order, target_limit, cells, estimated)
-            if keep_going == false then return cells, estimated end
-        end
         return cells, estimated
     end
 
-    local function profile_rank_aware_coverage_cells(cells, estimated)
-        append_rank_aware_coverage_cells(function(cell)
+    local function profile_rank_scope_window_probe_cells(cells, estimated)
+        append_rank_scope_window_probe_cells(function(cell)
             cells = cells + 1
             estimated = estimated + cell_estimated_bytes(cell)
             return true
@@ -980,24 +851,16 @@ local function bind_context(T)
     end
 
     function M.bank_profile(opts)
-        opts = opts or {}
         local cells = 0
         local estimated = 0
-        local explicit = explicit_rectangular_shape(opts)
-        if explicit then
-            cells, estimated = profile_soac_cells(opts, cells, estimated)
-        else
-            cells, estimated = profile_default_soac_cells(opts, cells, estimated)
-        end
-        cells, estimated = profile_rank_aware_coverage_cells(cells, estimated)
+        cells, estimated = profile_fixed_1x1_cells(cells, estimated)
+        cells, estimated = profile_rank_scope_window_probe_cells(cells, estimated)
         return {
             cells = cells,
             estimated_embedded_bytes = estimated,
-            estimated_bytes_per_cell = estimated_bytes_per_cell(),
-            soac_order = requested_soac_order(opts),
-            input_count = requested_input_count(opts, requested_soac_order(opts)),
-            exact_shape = exact_shape(opts),
-            target_bytes = target_bytes(opts),
+            shape = "fixed_1x1",
+            soac_order = fixed_soac_order,
+            input_count = fixed_input_count,
         }
     end
 

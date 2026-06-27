@@ -27,14 +27,12 @@ local tables = {
     ["LalinType.TypeRef"] = {
         TypeRefPath = supported("C_BACKEND_DESIGN.md §6", "Named type paths are accepted only when the semantic layout environment resolves them exactly."),
         TypeRefGlobal = supported("C_BACKEND_DESIGN.md §6", "Global named types project to layout-backed CBackendNamed declarations."),
-        TypeRefLocal = supported("C_BACKEND_DESIGN.md §6", "Local/open-expanded named types project through their resolved layout entries."),
-        TypeRefSlot = phase_unreachable("C_BACKEND_DESIGN.md §6", "Open type slots must be expanded before tree_to_code lowering."),
+        TypeRefLocal = supported("C_BACKEND_DESIGN.md §6", "Local named types project through their resolved layout entries."),
     },
 
     ["LalinType.ArrayLen"] = {
         ArrayLenExpr = language_rejected("C_BACKEND_DESIGN.md §6", "Dynamic array lengths are rejected during typechecking; C storage arrays require ArrayLenConst before tree_to_code/code_to_c lowering."),
         ArrayLenConst = supported("C_BACKEND_DESIGN.md §6", "Constant array lengths lower to fixed CBackendArray storage types."),
-        ArrayLenSlot = phase_unreachable("C_BACKEND_DESIGN.md §6", "Open expression slots in type positions must be expanded before tree_to_code lowering."),
     },
 
     ["LalinType.Type"] = {
@@ -50,7 +48,6 @@ local tables = {
         TLease = supported("C_BACKEND_DESIGN.md §6", "Leases lower through their base type after ownership/borrow discipline is enforced before backend projection."),
         TOwned = supported("OWNED_CFG_DESIGN.md", "Owned obligations lower through their base type after linear CFG discharge checking."),
         TAccess = supported("C_BACKEND_DESIGN.md §6", "Access-qualified types lower through their base type after frontend access facts are preserved in ASDL."),
-        TSlot = phase_unreachable("C_BACKEND_DESIGN.md §6", "Open type slots are invalid after open expansion and typechecking."),
         TCType = supported("C_BACKEND_DESIGN.md §6", "Imported C type ids are preserved as exact CBackend named/imported types."),
         TCFuncPtr = supported("C_BACKEND_DESIGN.md §6", "Imported C function pointer signatures are preserved exactly as code pointers."),
     },
@@ -73,7 +70,6 @@ local tables = {
         DomainValue = supported("C_BACKEND_DESIGN.md §10", "Single-value domains are represented explicitly."),
         DomainView = supported("C_BACKEND_DESIGN.md §10", "View domains lower through the complete View table."),
         DomainZipEqViews = supported("C_BACKEND_DESIGN.md §10", "Zip-equal view domains lower through descriptor facts."),
-        DomainSlotValue = phase_unreachable("C_BACKEND_DESIGN.md §10", "Open domain slots must be expanded before tree_to_code lowering."),
     },
 
     ["LalinTree.IndexBase"] = {
@@ -88,7 +84,6 @@ local tables = {
         PlaceDot = phase_unreachable("C_BACKEND_DESIGN.md §9", "Raw field names must be resolved to PlaceField before tree_to_code lowering."),
         PlaceField = supported("C_BACKEND_DESIGN.md §9", "Resolved semantic field refs lower by layout offset and field type."),
         PlaceIndex = supported("C_BACKEND_DESIGN.md §9", "Array/pointer/view indexing lowers with target-aware element-size calculation."),
-        PlaceSlotValue = phase_unreachable("C_BACKEND_DESIGN.md §9", "Open place slots must be expanded before tree_to_code lowering."),
     },
 
     ["LalinTree.Expr"] = {
@@ -121,8 +116,6 @@ local tables = {
         ExprAtomicLoad = supported("C_BACKEND_DESIGN.md §14", "Atomic loads lower through C11/runtime helpers with target feature checks."),
         ExprAtomicRmw = supported("C_BACKEND_DESIGN.md §14", "Atomic read-modify-write lowers through explicit operation/order helpers."),
         ExprAtomicCas = supported("C_BACKEND_DESIGN.md §14", "Compare-exchange lowers with exact expected/replacement/result semantics."),
-        ExprSlotValue = phase_unreachable("C_BACKEND_DESIGN.md §8", "Open expression slots must be expanded before tree_to_code lowering."),
-        ExprUseExprFrag = phase_unreachable("C_BACKEND_DESIGN.md §8", "Expression fragments must be expanded/spliced before tree_to_code lowering."),
         ExprCtor = supported("C_BACKEND_DESIGN.md §12", "Tagged-union constructors lower through shared tag/payload layout in native and C backends."),
         ExprNull = supported("C_BACKEND_DESIGN.md §8", "Null pointer expressions lower to typed data/code nulls."),
         ExprSizeOf = supported("C_BACKEND_DESIGN.md §7", "Sizeof lowers from target-aware semantic layout facts or prior integer literal rewrite."),
@@ -141,14 +134,12 @@ local tables = {
         StmtIf = supported("C_BACKEND_DESIGN.md §13", "Statement if lowers through CFG branch/join construction."),
         StmtSwitch = supported("C_BACKEND_DESIGN.md §13", "Scalar switch statements lower to switch/goto CFG; variant arms are tracked separately."),
         StmtJump = supported("C_BACKEND_DESIGN.md §13", "Block jumps lower to parallel block-parameter transfers and goto."),
-        StmtJumpCont = phase_unreachable("C_BACKEND_DESIGN.md §13", "Continuation slots must be resolved by region expansion before tree_to_code lowering."),
+        StmtJumpCont = phase_unreachable("C_BACKEND_DESIGN.md §13", "Continuation jumps are region-internal control and must not escape to final C lowering."),
         StmtYieldVoid = supported("C_BACKEND_DESIGN.md §13", "Void region yields lower to the region join/exit label."),
         StmtYieldValue = supported("C_BACKEND_DESIGN.md §13", "Value region yields assign the result temp and branch to the join label."),
         StmtReturnVoid = supported("C_BACKEND_DESIGN.md §15", "Void returns lower to CBackend return terminators."),
         StmtReturnValue = supported("C_BACKEND_DESIGN.md §15", "Value returns lower through ABI-aware return handling."),
         StmtControl = supported("C_BACKEND_DESIGN.md §13", "Statement control regions lower inline to labels/gotos."),
-        StmtUseRegionSlot = phase_unreachable("C_BACKEND_DESIGN.md §13", "Open region slots must be expanded before tree_to_code lowering."),
-        StmtUseRegionFrag = phase_unreachable("C_BACKEND_DESIGN.md §13", "Region fragments must be expanded/spliced before tree_to_code lowering."),
         StmtTrap = supported("C_BACKEND_DESIGN.md §15", "Traps lower to trap terminators/helpers."),
     },
 
@@ -158,22 +149,18 @@ local tables = {
         FuncLocalContract = supported("C_BACKEND_DESIGN.md §11", "Local contract functions lower as functions after contract facts/diagnostics are handled."),
         FuncExportContract = supported("C_BACKEND_DESIGN.md §11", "Export contract functions lower as exports after contract facts/diagnostics are handled."),
         FuncDecl = supported("C_BACKEND_DESIGN.md §11", "Function declarations lower to prototypes/signature entries without bodies."),
-        FuncOpen = phase_unreachable("C_BACKEND_DESIGN.md §11", "Open functions must be expanded before tree_to_code lowering."),
     },
 
     ["LalinTree.ExternFunc"] = {
         ExternFunc = supported("C_BACKEND_DESIGN.md §11", "Extern functions lower to exact symbol/header/signature declarations."),
-        ExternFuncOpen = phase_unreachable("C_BACKEND_DESIGN.md §11", "Open extern functions must be expanded before tree_to_code lowering."),
     },
 
     ["LalinTree.ConstItem"] = {
         ConstItem = supported("C_BACKEND_DESIGN.md §16", "Typed constants lower to compile-time values or exact static data as required."),
-        ConstItemOpen = phase_unreachable("C_BACKEND_DESIGN.md §16", "Open constants must be expanded before tree_to_code lowering."),
     },
 
     ["LalinTree.StaticItem"] = {
         StaticItem = supported("C_BACKEND_DESIGN.md §16", "Static items lower to exact typed globals/data initializers."),
-        StaticItemOpen = phase_unreachable("C_BACKEND_DESIGN.md §16", "Open statics must be expanded before tree_to_code lowering."),
     },
 
     ["LalinTree.TypeDecl"] = {
@@ -182,8 +169,6 @@ local tables = {
         TypeDeclEnumSugar = supported("C_BACKEND_DESIGN.md §12", "Enum sugar lowers through resolved __tag layout facts shared by native and C backends."),
         TypeDeclTaggedUnionSugar = supported("C_BACKEND_DESIGN.md §12", "Tagged-union sugar lowers through shared __tag/__payload layout, constructors, and variant switches."),
         TypeDeclHandle = supported("C_BACKEND_DESIGN.md §7", "Handle declarations lower through their explicit representation field and layout assertions."),
-        TypeDeclOpenStruct = phase_unreachable("C_BACKEND_DESIGN.md §7", "Open struct declarations must be expanded before tree_to_code lowering."),
-        TypeDeclOpenUnion = phase_unreachable("C_BACKEND_DESIGN.md §7", "Open union declarations must be expanded before tree_to_code lowering."),
     },
 
     ["LalinTree.Item"] = {
@@ -193,12 +178,7 @@ local tables = {
         ItemStatic = supported("C_BACKEND_DESIGN.md §17", "Static items lower through exact data/global lowering."),
         ItemImport = phase_unreachable("C_BACKEND_DESIGN.md §17", "Unresolved imports must not reach tree_to_code/code_to_c lowering; the pipeline reports them explicitly."),
         ItemType = supported("C_BACKEND_DESIGN.md §17", "Type items lower through layout-backed C declarations."),
-        ItemRegionFrag = phase_unreachable("C_BACKEND_DESIGN.md §17", "Region fragments are frontend templates and must be expanded or stripped before tree_to_code lowering."),
-        ItemExprFrag = phase_unreachable("C_BACKEND_DESIGN.md §17", "Expression fragments are frontend templates and must be expanded or stripped before tree_to_code lowering."),
-        ItemUseTypeDeclSlot = phase_unreachable("C_BACKEND_DESIGN.md §17", "Open type-declaration slots must be expanded before tree_to_code lowering."),
-        ItemUseItemsSlot = phase_unreachable("C_BACKEND_DESIGN.md §17", "Open items slots must be expanded before tree_to_code lowering."),
-        ItemUseModule = supported("C_BACKEND_DESIGN.md §17", "Nested module uses lower recursively after fills are resolved."),
-        ItemUseModuleSlot = phase_unreachable("C_BACKEND_DESIGN.md §17", "Open module slots must be expanded before tree_to_code lowering."),
+        ItemRegion = phase_unreachable("C_BACKEND_DESIGN.md §17", "Closed region declarations are typechecked/frontend control artifacts and do not lower as module items."),
         ItemData = supported("C_BACKEND_DESIGN.md §16", "Data items lower to exact byte/global initializers."),
     },
 

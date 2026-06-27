@@ -21,7 +21,6 @@ Directories:
 - `runtime/` - language-level execution and semantic behavior
 - `schema/` - schema smoke tests
 - `editor/` and `lsp/` - editor facts and LSP integration
-- `llisle/` - Llisle rule/rewrite language tests
 - `pvm/` - PVM phase tests
 - `core/` - core operators, types, source utilities, std facade
 - `tooling/` - reports, explainer coverage, link planning

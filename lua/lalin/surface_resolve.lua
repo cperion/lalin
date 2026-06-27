@@ -10,9 +10,6 @@ local function bind_context(T)
         if cls == Tr.ModuleTyped or cls == Tr.ModuleSem or cls == Tr.ModuleCode then
             return h.module_name
         end
-        if cls == Tr.ModuleOpen and h.name ~= T.LalinOpen.ModuleNameOpen then
-            return h.name.module_name
-        end
         return ""
     end
 

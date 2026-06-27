@@ -7,7 +7,6 @@ local T = pvm.context(); Schema(T)
 local Core = T.LalinCore
 local Ty = T.LalinType
 local Tr = T.LalinTree
-local Open = T.LalinOpen
 local Bn = T.LalinBind
 local C = T.LalinC
 local CodeType = require("lalin.code_type")(T)
@@ -23,10 +22,6 @@ local function must_fail(label, fn, pattern)
     err = tostring(err)
     if pattern then assert(err:match(pattern), label .. " error did not match " .. pattern .. ": " .. err) end
 end
-
-must_fail("TSlot projection", function()
-    CodeType.type_to_code(Ty.TSlot(Open.TypeSlot("T", "T")), cctx)
-end, "slot")
 
 local i32 = C.CBackendScalar(Core.ScalarI32)
 local access = C.CBackendMemoryAccess(i32, 4, C.CBackendMayTrap, true, Core.AtomicSeqCst)

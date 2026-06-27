@@ -3,7 +3,7 @@
 -- This surface does not treat [] as textual splice syntax. Lua evaluates the
 -- bracket expression before this module sees it, so x[T] carries the actual
 -- Lua value T. Normalization then consumes those already-resolved values by
--- role and emits LalinTree/LalinOpen ASDL directly.
+-- role and emits closed LalinTree ASDL directly.
 
 local pvm = require("lalin.pvm")
 local schema = require("lalin.schema_projection")
@@ -17,7 +17,7 @@ local role_region_head = llbl.role_region
 local T = pvm.context()
 schema(T)
 
-local C, Ty, B, Tr, O = T.LalinCore, T.LalinType, T.LalinBind, T.LalinTree, T.LalinOpen
+local C, Ty, B, Tr = T.LalinCore, T.LalinType, T.LalinBind, T.LalinTree
 
 local function class(name)
     local mt = { __dsl_class = name }
@@ -99,20 +99,6 @@ local bin_op, cmp_op
 local merge_source_ctx
 local attach_source_context
 local build_source_context
-
-local function frag_ref(v, expr)
-    local name
-    if symbol_text(v, "fragment reference") then name = symbol_text(v, "fragment reference")
-    elseif type(v) == "string" then name = v
-    elseif is(v, Decl) and (v.kind == "region" or v.kind == "expr_frag") then name = v.name
-    else name = tostring(v) end
-    name = table.concat((function(p)
-        local out = {}
-        for i = 1, #p.parts do out[i] = p.parts[i].text end
-        return out
-    end)(path(name)), ".")
-    return expr and O.ExprFragRefName(name) or O.RegionFragRefName(name), name
-end
 
 local function concrete_type(v)
     if is_member(Ty.Type, v) then return v end
@@ -435,18 +421,63 @@ function native_range_from_spec(spec, ty)
     return setmetatable({ ty = concrete_type(ty or spec.ty or default_ty), start = start, stop = stop, step = step }, NativeRange)
 end
 
-local function native_range_nd_from_spec(spec)
-    if type(spec) ~= "table" then die("lln.range_nd expects an axis table", 2) end
+local function native_range_nd_axes_from_spec(spec, head)
+    if type(spec) ~= "table" then die(head .. " expects an axis table", 2) end
     local axes_src = spec.axes or spec
     local axes = {}
     for i = 1, #axes_src do axes[i] = native_axis_from_spec(axes_src[i], spec.ty) end
-    if #axes == 0 then die("lln.range_nd expects at least one axis", 2) end
-    return setmetatable({ axes = axes }, NativeRangeND)
+    if #axes == 0 then die(head .. " expects at least one axis", 2) end
+    return axes
+end
+
+local function native_range_nd_from_spec(spec)
+    return setmetatable({ kind = "range_nd", axes = native_range_nd_axes_from_spec(spec, "lln.range_nd") }, NativeRangeND)
+end
+
+local function native_tiled_nd_from_spec(spec)
+    if type(spec) ~= "table" then die("lln.tiled_nd expects { axes = ..., tiles = ... }", 2) end
+    local axes = native_range_nd_axes_from_spec(spec, "lln.tiled_nd")
+    local tiles = spec.tiles or spec.tile_sizes or spec.tile
+    if type(tiles) ~= "table" then die("lln.tiled_nd expects tile sizes in `tiles`", 2) end
+    if #tiles ~= #axes then die("lln.tiled_nd expects one tile size per axis", 2) end
+    local out = {}
+    for i = 1, #tiles do
+        local n = tonumber(tiles[i])
+        if n == nil or math.floor(n) ~= n or n <= 0 then die("lln.tiled_nd tile sizes must be positive integer literals", 2) end
+        out[i] = n
+    end
+    return setmetatable({ kind = "tiled_nd", axes = axes, tile_sizes = out }, NativeRangeND)
+end
+
+local function native_window_boundary(v)
+    if v == nil or v == "reject" then return "reject" end
+    if v == "clamp" or v == "wrap" or v == "zero" then return v end
+    die("lln.window_nd boundary must be reject, clamp, wrap, or zero", 2)
+end
+
+local function native_window_nd_from_spec(spec)
+    if type(spec) ~= "table" then die("lln.window_nd expects { axes = ..., windows = ... }", 2) end
+    local axes = native_range_nd_axes_from_spec(spec, "lln.window_nd")
+    local windows_src = spec.windows or spec.window
+    if type(windows_src) ~= "table" then die("lln.window_nd expects window metadata in `windows`", 2) end
+    if #windows_src ~= #axes then die("lln.window_nd expects one window per axis", 2) end
+    local windows = {}
+    for i = 1, #windows_src do
+        local w = windows_src[i]
+        if type(w) ~= "table" then die("lln.window_nd window entries expect tables", 2) end
+        local before = tonumber(w.before or w[1] or 0)
+        local after = tonumber(w.after or w[2] or 0)
+        if before == nil or after == nil or math.floor(before) ~= before or math.floor(after) ~= after or before < 0 or after < 0 then
+            die("lln.window_nd window extents must be non-negative integer literals", 2)
+        end
+        windows[i] = { before = before, after = after, boundary = native_window_boundary(w.boundary or w[3]) }
+    end
+    return setmetatable({ kind = "window_nd", axes = axes, windows = windows }, NativeRangeND)
 end
 
 local function native_domain(v)
     if is(v, NativeRange) or is(v, NativeRangeND) then return v end
-    die("lln.loop expects lln.range or lln.range_nd as its producer", 2)
+    die("lln.loop expects lln.range, lln.range_nd, lln.tiled_nd, or lln.window_nd as its producer", 2)
 end
 
 local function native_sink_kind(v)
@@ -512,10 +543,6 @@ local function native_loop_nd_stmt_tree(loop, domain)
     if sink ~= nil and sink.kind == "native_fold" and loop.result == nil then die("lln.fold requires an lln.loop result type", 2) end
 
     local tag = tostring(loop.id or "0")
-    local entry_label = Tr.BlockLabel("lln_entry_" .. tag)
-    local loop_label = Tr.BlockLabel("lln_loop_nd_" .. tag)
-    local body_label = Tr.BlockLabel("lln_body_nd_" .. tag)
-    local done_label = Tr.BlockLabel("lln_done_nd_" .. tag)
     local flat_name = "__lln_flat_" .. tag
     local flat_ty = scalar_type("index")
     local flat_ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(flat_name))
@@ -569,6 +596,51 @@ local function native_loop_nd_stmt_tree(loop, domain)
         }
     end
 
+    local function scan_axis_name(v)
+        if type(v) == "string" then return v end
+        if llbl.is(v, "Symbol") or llbl.is(v, "Name") then return v.text end
+        if is(v, Name) then return v.name end
+        return nil
+    end
+    local function resolve_scan_axis()
+        if sink == nil or sink.kind ~= "native_scan" then return nil end
+        local axis = sink.axis
+        if axis == nil then die("lln.scan over lln.range_nd requires axis", 2) end
+        local idx = tonumber(axis)
+        if idx == nil then
+            local name = scan_axis_name(axis)
+            if name ~= nil then
+                for i, spec in ipairs(axis_specs) do
+                    if spec.index == name then idx = i; break end
+                end
+            end
+        end
+        if idx == nil or idx < 1 or idx > axis_count or math.floor(idx) ~= idx then
+            die("lln.scan range_nd axis must be an axis index or index name in this lln.loop", 2)
+        end
+        return idx
+    end
+
+    local scan_axis = resolve_scan_axis()
+    if scan_axis ~= nil and domain.kind == "tiled_nd" then
+        die("lln.scan over lln.tiled_nd is not source-semantic yet; use lln.range_nd for scans", 2)
+    end
+    local scan_axis_suffix = scan_axis ~= nil and ("_scan_axis_" .. tostring(scan_axis)) or ""
+    local producer_suffix = ""
+    if domain.kind == "tiled_nd" then
+        producer_suffix = "_tiled_" .. table.concat(domain.tile_sizes or {}, "x")
+    elseif domain.kind == "window_nd" then
+        local parts = {}
+        for i, w in ipairs(domain.windows or {}) do
+            parts[i] = tostring(w.boundary) .. "_" .. tostring(w.before) .. "_" .. tostring(w.after)
+        end
+        producer_suffix = "_window_" .. table.concat(parts, "__")
+    end
+    local entry_label = Tr.BlockLabel("lln_entry_" .. tag .. scan_axis_suffix)
+    local loop_label = Tr.BlockLabel("lln_loop_nd_" .. tag .. producer_suffix .. scan_axis_suffix)
+    local body_label = Tr.BlockLabel("lln_body_nd_" .. tag .. scan_axis_suffix)
+    local done_label = Tr.BlockLabel("lln_done_nd_" .. tag .. scan_axis_suffix)
+
     local function invariant_jump_args()
         local out = {}
         for _, axis in ipairs(axis_specs) do
@@ -606,11 +678,6 @@ local function native_loop_nd_stmt_tree(loop, domain)
         stride = bin(C.BinMul, stride, ref(axis.trip_name))
     end
 
-    local function source_zero(v) return v == 0 end
-    local normalize_row_major = axis_count == 2
-        and domain.axes[1].step == 1 and domain.axes[2].step == 1
-        and source_zero(domain.axes[1].start) and source_zero(domain.axes[2].start)
-    local extent2_key
     local function expr_ref_name(expr)
         if pvm.classof(expr) ~= Tr.ExprRef then return nil end
         local r = expr.ref
@@ -630,30 +697,41 @@ local function native_loop_nd_stmt_tree(loop, domain)
         if cls == Tr.ExprBinary then return "bin:" .. tostring(expr.op) .. "(" .. tostring(expr_key(expr.lhs)) .. "," .. tostring(expr_key(expr.rhs)) .. ")" end
         return nil
     end
-    if normalize_row_major then extent2_key = expr_key(tree_expr(domain.axes[2].stop)) end
+    local function source_zero(v) return v == 0 end
+    local normalize_row_major = axis_count >= 1
+    local extent_keys = {}
+    for i = 1, axis_count do
+        if domain.axes[i].step ~= 1 or not source_zero(domain.axes[i].start) then normalize_row_major = false end
+        extent_keys[i] = expr_key(tree_expr(domain.axes[i].stop))
+    end
     local function is_ref(expr, name)
         return expr_ref_name(expr) == name
     end
-    local function is_extent2(expr)
-        return extent2_key ~= nil and expr_key(expr) == extent2_key
+    local function is_extent(expr, axis_i)
+        return extent_keys[axis_i] ~= nil and expr_key(expr) == extent_keys[axis_i]
     end
-    local function is_i_times_extent(expr)
+    local is_row_major_prefix
+    local function is_mul_prefix_extent(expr, prefix_axis)
         return pvm.classof(expr) == Tr.ExprBinary
             and expr.op == C.BinMul
-            and ((is_ref(expr.lhs, axis_specs[1].index) and is_extent2(expr.rhs))
-                or (is_ref(expr.rhs, axis_specs[1].index) and is_extent2(expr.lhs)))
+            and ((is_row_major_prefix(expr.lhs, prefix_axis) and is_extent(expr.rhs, prefix_axis + 1))
+                or (is_row_major_prefix(expr.rhs, prefix_axis) and is_extent(expr.lhs, prefix_axis + 1)))
     end
-    local function is_row_major2(expr)
-        return normalize_row_major
-            and pvm.classof(expr) == Tr.ExprBinary
+    is_row_major_prefix = function(expr, axis_i)
+        if not normalize_row_major then return false end
+        if axis_i == 1 then return is_ref(expr, axis_specs[1].index) end
+        return pvm.classof(expr) == Tr.ExprBinary
             and expr.op == C.BinAdd
-            and ((is_i_times_extent(expr.lhs) and is_ref(expr.rhs, axis_specs[2].index))
-                or (is_i_times_extent(expr.rhs) and is_ref(expr.lhs, axis_specs[2].index)))
+            and ((is_mul_prefix_extent(expr.lhs, axis_i - 1) and is_ref(expr.rhs, axis_specs[axis_i].index))
+                or (is_mul_prefix_extent(expr.rhs, axis_i - 1) and is_ref(expr.lhs, axis_specs[axis_i].index)))
+    end
+    local function is_row_major_nd(expr)
+        return is_row_major_prefix(expr, axis_count)
     end
     local rewrite_expr, rewrite_place, rewrite_index_base
     rewrite_expr = function(expr)
         local cls = pvm.classof(expr)
-        if is_row_major2(expr) then return flat_ref end
+        if is_row_major_nd(expr) then return flat_ref end
         if cls == Tr.ExprBinary then return Tr.ExprBinary(expr.h, expr.op, rewrite_expr(expr.lhs), rewrite_expr(expr.rhs)) end
         if cls == Tr.ExprCompare then return Tr.ExprCompare(expr.h, expr.op, rewrite_expr(expr.lhs), rewrite_expr(expr.rhs)) end
         if cls == Tr.ExprLogic then return Tr.ExprLogic(expr.h, expr.op, rewrite_expr(expr.lhs), rewrite_expr(expr.rhs)) end
@@ -728,12 +806,12 @@ local function native_loop_nd_stmt_tree(loop, domain)
     entry_args[#entry_args + 1] = Tr.JumpArg(acc, Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, acc_ty, tree_expr(sink.init)))
 
     local step_name = "__lln_step_" .. tag
-    body_stmts[#body_stmts + 1] = Tr.StmtLet(Tr.StmtSurface, binding(step_name, acc_ty, B.BindingClassLocalValue), tree_expr(sink.step))
+    body_stmts[#body_stmts + 1] = Tr.StmtLet(Tr.StmtSurface, binding(step_name, acc_ty, B.BindingClassLocalValue), rewrite_expr(tree_expr(sink.step)))
     local next_acc = native_reducer_expr(sink.by, acc_expr, ref(step_name))
     if sink.kind == "native_scan" then
         local next_name = "__lln_scan_" .. tag
         body_stmts[#body_stmts + 1] = Tr.StmtLet(Tr.StmtSurface, binding(next_name, acc_ty, B.BindingClassLocalValue), next_acc)
-        body_stmts[#body_stmts + 1] = Tr.StmtSet(Tr.StmtSurface, tree_place(sink.into), ref(next_name))
+        body_stmts[#body_stmts + 1] = Tr.StmtSet(Tr.StmtSurface, rewrite_place(tree_place(sink.into)), ref(next_name))
         body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, loop_jump_args(next_flat, acc, ref(next_name)))
     else
         body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, loop_jump_args(next_flat, acc, next_acc))
@@ -899,20 +977,20 @@ function Name:__call(payload)
     if type(payload) == "table" then return setmetatable({ name = self.name, payload = payload }, Payload) end
     return setmetatable({ kind = "call", callee = self, args = { payload } }, Expr)
 end
-function Name:__add(r) return M.add(self, r) end
-function Name:__sub(r) return M.sub(self, r) end
-function Name:__mul(r) return M.mul(self, r) end
-function Name:__div(r) return M.div(self, r) end
-function Name:__mod(r) return M.rem(self, r) end
+function Name:__add(r) return M.add(self)(r) end
+function Name:__sub(r) return M.sub(self)(r) end
+function Name:__mul(r) return M.mul(self)(r) end
+function Name:__div(r) return M.div(self)(r) end
+function Name:__mod(r) return M.rem(self)(r) end
 function Name:__unm() return M.neg(self) end
-function Name:ge(r) return M.ge(self, r) end
-function Name:gt(r) return M.gt(self, r) end
-function Name:le(r) return M.le(self, r) end
-function Name:lt(r) return M.lt(self, r) end
-function Name:eq(r) return M.eq(self, r) end
-function Name:ne(r) return M.ne(self, r) end
-function Name:land(r) return M.And(self, r) end
-function Name:lor(r) return M.Or(self, r) end
+function Name:ge(r) return M.ge(self)(r) end
+function Name:gt(r) return M.gt(self)(r) end
+function Name:le(r) return M.le(self)(r) end
+function Name:lt(r) return M.lt(self)(r) end
+function Name:eq(r) return M.eq(self)(r) end
+function Name:ne(r) return M.ne(self)(r) end
+function Name:land(r) return M.And(self)(r) end
+function Name:lor(r) return M.Or(self)(r) end
 function Name:lnot() return M.Not(self) end
 function Name:addr() return M.addr(self) end
 function Name:deref() return M.deref(self) end
@@ -942,21 +1020,21 @@ local atomic_rmw_op = {
     xchg = C.AtomicRmwXchg,
 }
 
-function Expr:__add(r) return M.add(self, r) end
-function Expr:__sub(r) return M.sub(self, r) end
-function Expr:__mul(r) return M.mul(self, r) end
-function Expr:__div(r) return M.div(self, r) end
-function Expr:__mod(r) return M.rem(self, r) end
+function Expr:__add(r) return M.add(self)(r) end
+function Expr:__sub(r) return M.sub(self)(r) end
+function Expr:__mul(r) return M.mul(self)(r) end
+function Expr:__div(r) return M.div(self)(r) end
+function Expr:__mod(r) return M.rem(self)(r) end
 function Expr:__unm() return M.neg(self) end
 function Expr:__call(...) return setmetatable({ kind = "call", callee = self, args = { ... } }, Expr) end
-function Expr:ge(r) return M.ge(self, r) end
-function Expr:gt(r) return M.gt(self, r) end
-function Expr:le(r) return M.le(self, r) end
-function Expr:lt(r) return M.lt(self, r) end
-function Expr:eq(r) return M.eq(self, r) end
-function Expr:ne(r) return M.ne(self, r) end
-function Expr:land(r) return M.And(self, r) end
-function Expr:lor(r) return M.Or(self, r) end
+function Expr:ge(r) return M.ge(self)(r) end
+function Expr:gt(r) return M.gt(self)(r) end
+function Expr:le(r) return M.le(self)(r) end
+function Expr:lt(r) return M.lt(self)(r) end
+function Expr:eq(r) return M.eq(self)(r) end
+function Expr:ne(r) return M.ne(self)(r) end
+function Expr:land(r) return M.And(self)(r) end
+function Expr:lor(r) return M.Or(self)(r) end
 function Expr:lnot() return M.Not(self) end
 function Expr:addr() return M.addr(self) end
 function Expr:deref() return M.deref(self) end
@@ -1002,10 +1080,6 @@ function Expr:tree()
         for i = 1, #(self.args or {}) do args[i] = tree_expr(self.args[i]) end
         return Tr.ExprCtor(Tr.ExprSurface, self.type_name, self.variant_name, args)
     end
-    if k == "emit_expr" then
-        local ref, name = frag_ref(self.target, true)
-        return Tr.ExprUseExprFrag(Tr.ExprSurface, "emit.expr." .. name, ref, expr_items(self.args), {})
-    end
     if k == "select" then return Tr.ExprSelect(Tr.ExprSurface, tree_expr(self.cond), tree_expr(self.a), tree_expr(self.b)) end
     if k == "atomic_load" then return Tr.ExprAtomicLoad(Tr.ExprSurface, concrete_type(self.ty), tree_expr(self.addr), C.AtomicSeqCst) end
     if k == "atomic_rmw" then return Tr.ExprAtomicRmw(Tr.ExprSurface, assert(atomic_rmw_op[self.op], "unknown atomic rmw op: " .. tostring(self.op)), concrete_type(self.ty), tree_expr(self.addr), tree_expr(self.value), C.AtomicSeqCst) end
@@ -1013,51 +1087,76 @@ function Expr:tree()
     die("unsupported expression kind " .. tostring(k), 2)
 end
 
-local function bin(name)
-    return function(a, b) return setmetatable({ kind = "binary", op = name, lhs = a, rhs = b }, Expr) end
+local function raw_bin(name, a, b)
+    return setmetatable({ kind = "binary", op = name, lhs = a, rhs = b }, Expr)
 end
-local function cmp(name)
-    return function(a, b) return setmetatable({ kind = "cmp", op = name, lhs = a, rhs = b }, Expr) end
+local function raw_cmp(name, a, b)
+    return setmetatable({ kind = "cmp", op = name, lhs = a, rhs = b }, Expr)
 end
+local function raw_logic(name, a, b)
+    return setmetatable({ kind = "logic", op = name, lhs = a, rhs = b }, Expr)
+end
+local function curried2(name, fn) return llbl.curried(name, 2, fn) end
+local function curried3(name, fn) return llbl.curried(name, 3, fn) end
+local function curried4(name, fn) return llbl.curried(name, 4, fn) end
 
-M.add, M.sub, M.mul, M.div, M.rem = bin("add"), bin("sub"), bin("mul"), bin("div"), bin("rem")
-M.band, M.bor, M.bxor, M.shl, M.shr = bin("band"), bin("bor"), bin("bxor"), bin("shl"), bin("lshr")
-M.eq, M.ne, M.lt, M.le, M.gt, M.ge = cmp("eq"), cmp("ne"), cmp("lt"), cmp("le"), cmp("gt"), cmp("ge")
-function M.min(a, b) return setmetatable({ kind = "select", cond = M.le(a, b), a = a, b = b }, Expr) end
-function M.max(a, b) return setmetatable({ kind = "select", cond = M.ge(a, b), a = a, b = b }, Expr) end
-function M.neg(v) return setmetatable({ kind = "neg", value = v }, Expr) end
-function M.And(a, b) return setmetatable({ kind = "logic", op = "and", lhs = a, rhs = b }, Expr) end
-function M.Or(a, b) return setmetatable({ kind = "logic", op = "or", lhs = a, rhs = b }, Expr) end
-function M.Not(v) return setmetatable({ kind = "not", value = v }, Expr) end
-function M.bnot(v) return setmetatable({ kind = "bitnot", value = v }, Expr) end
-function M.len(v) return setmetatable({ kind = "len", value = v }, Expr) end
-function M.select(c, a, b) return setmetatable({ kind = "select", cond = c, a = a, b = b }, Expr) end
-function M.as(ty) return function(v) return setmetatable({ kind = "cast", cast = C.SurfaceCast, ty = ty, value = v }, Expr) end end
-function M.bitcast(ty) return function(v) return setmetatable({ kind = "cast", cast = C.SurfaceBitcast, ty = ty, value = v }, Expr) end end
-function M.addr(v) return setmetatable({ kind = "addr", value = v }, Expr) end
-function M.deref(v) return setmetatable({ kind = "deref", value = v }, Expr) end
-function M.load(v) return setmetatable({ kind = "load", value = v }, Expr) end
-function M.null(ty) return setmetatable({ kind = "null", ty = ty }, Expr) end
-function M.sizeof(ty) return setmetatable({ kind = "sizeof", ty = ty }, Expr) end
-function M.alignof(ty) return setmetatable({ kind = "alignof", ty = ty }, Expr) end
-function M.is_null(v) return setmetatable({ kind = "is_null", value = v }, Expr) end
+M.add, M.sub, M.mul, M.div, M.rem = curried2("add", function(a, b) return raw_bin("add", a, b) end), curried2("sub", function(a, b) return raw_bin("sub", a, b) end), curried2("mul", function(a, b) return raw_bin("mul", a, b) end), curried2("div", function(a, b) return raw_bin("div", a, b) end), curried2("rem", function(a, b) return raw_bin("rem", a, b) end)
+M.band, M.bor, M.bxor, M.shl, M.shr = curried2("band", function(a, b) return raw_bin("band", a, b) end), curried2("bor", function(a, b) return raw_bin("bor", a, b) end), curried2("bxor", function(a, b) return raw_bin("bxor", a, b) end), curried2("shl", function(a, b) return raw_bin("shl", a, b) end), curried2("shr", function(a, b) return raw_bin("lshr", a, b) end)
+M.eq, M.ne, M.lt, M.le, M.gt, M.ge = curried2("eq", function(a, b) return raw_cmp("eq", a, b) end), curried2("ne", function(a, b) return raw_cmp("ne", a, b) end), curried2("lt", function(a, b) return raw_cmp("lt", a, b) end), curried2("le", function(a, b) return raw_cmp("le", a, b) end), curried2("gt", function(a, b) return raw_cmp("gt", a, b) end), curried2("ge", function(a, b) return raw_cmp("ge", a, b) end)
+M.min = curried2("min", function(a, b) return setmetatable({ kind = "select", cond = raw_cmp("le", a, b), a = a, b = b }, Expr) end)
+M.max = curried2("max", function(a, b) return setmetatable({ kind = "select", cond = raw_cmp("ge", a, b), a = a, b = b }, Expr) end)
+M.neg = llbl.curried("neg", 1, function(v) return setmetatable({ kind = "neg", value = v }, Expr) end)
+M.And = curried2("And", function(a, b) return raw_logic("and", a, b) end)
+M.Or = curried2("Or", function(a, b) return raw_logic("or", a, b) end)
+M.land = M.And
+M.lor = M.Or
+M.Not = llbl.curried("Not", 1, function(v) return setmetatable({ kind = "not", value = v }, Expr) end)
+M.bnot = llbl.curried("bnot", 1, function(v) return setmetatable({ kind = "bitnot", value = v }, Expr) end)
+M.len = llbl.curried("len", 1, function(v) return setmetatable({ kind = "len", value = v }, Expr) end)
+M.select = curried3("select", function(c, a, b) return setmetatable({ kind = "select", cond = c, a = a, b = b }, Expr) end)
+local function type_form(name, build)
+    local function specialize(ty)
+        return llbl.curried(name, 1, function(v) return build(ty, v) end)
+    end
+    return setmetatable({ __llbl_tag = "TypeForm", name = name }, {
+        __index = function(_, ty) return specialize(ty) end,
+        __call = function(_, ty) return specialize(ty) end,
+    })
+end
+local function type_value(name, build)
+    return setmetatable({ __llbl_tag = "TypeValue", name = name }, {
+        __index = function(_, ty) return build(ty) end,
+        __call = function(_, ty) return build(ty) end,
+    })
+end
+M.as = type_form("as", function(ty, v) return setmetatable({ kind = "cast", cast = C.SurfaceCast, ty = ty, value = v }, Expr) end)
+M.bitcast = type_form("bitcast", function(ty, v) return setmetatable({ kind = "cast", cast = C.SurfaceBitcast, ty = ty, value = v }, Expr) end)
+M.addr = llbl.curried("addr", 1, function(v) return setmetatable({ kind = "addr", value = v }, Expr) end)
+M.deref = llbl.curried("deref", 1, function(v) return setmetatable({ kind = "deref", value = v }, Expr) end)
+local load_expr = llbl.curried("load", 1, function(v) return setmetatable({ kind = "load", value = v }, Expr) end)
+M.load = load_expr
+M.load_expr = load_expr
+M.null = type_value("null", function(ty) return setmetatable({ kind = "null", ty = ty }, Expr) end)
+M.sizeof = type_value("sizeof", function(ty) return setmetatable({ kind = "sizeof", ty = ty }, Expr) end)
+M.alignof = type_value("alignof", function(ty) return setmetatable({ kind = "alignof", ty = ty }, Expr) end)
+M.is_null = llbl.curried("is_null", 1, function(v) return setmetatable({ kind = "is_null", value = v }, Expr) end)
 
 -- Atomic expression constructors
-function M.aload(ty, addr) return setmetatable({ kind = "atomic_load", ty = ty, addr = addr }, Expr) end
-function M.armw(op, ty, addr, value) return setmetatable({ kind = "atomic_rmw", op = op, ty = ty, addr = addr, value = value }, Expr) end
-function M.acas(ty, addr, expected, replacement) return setmetatable({ kind = "atomic_cas", ty = ty, addr = addr, expected = expected, replacement = replacement }, Expr) end
+M.aload = type_form("aload", function(ty, addr) return setmetatable({ kind = "atomic_load", ty = ty, addr = addr }, Expr) end)
+M.armw = curried4("armw", function(op, ty, addr, value) return setmetatable({ kind = "atomic_rmw", op = op, ty = ty, addr = addr, value = value }, Expr) end)
+M.acas = curried4("acas", function(ty, addr, expected, replacement) return setmetatable({ kind = "atomic_cas", ty = ty, addr = addr, expected = expected, replacement = replacement }, Expr) end)
 
 -- Variant constructor expression
-function M.ctor(type_name, variant_name, args) return setmetatable({ kind = "ctor", type_name = type_name, variant_name = variant_name, args = args or {} }, Expr) end
+M.ctor = curried3("ctor", function(type_name, variant_name, args) return setmetatable({ kind = "ctor", type_name = type_name, variant_name = variant_name, args = args or {} }, Expr) end)
 
 -- Contract annotation constructors
-function M.bounds(base, len) return Tr.ContractBounds(tree_expr(base), tree_expr(len)) end
-function M.disjoint(a, b) return Tr.ContractDisjoint(tree_expr(a), tree_expr(b)) end
-function M.same_len(a, b) return Tr.ContractSameLen(tree_expr(a), tree_expr(b)) end
-function M.window_bounds(base, base_len, start, len) return Tr.ContractWindowBounds(tree_expr(base), tree_expr(base_len), tree_expr(start), tree_expr(len)) end
-function M.soa_component(base, record_ty, field_name, component_index)
+M.bounds = curried2("bounds", function(base, len) return Tr.ContractBounds(tree_expr(base), tree_expr(len)) end)
+M.disjoint = curried2("disjoint", function(a, b) return Tr.ContractDisjoint(tree_expr(a), tree_expr(b)) end)
+M.same_len = curried2("same_len", function(a, b) return Tr.ContractSameLen(tree_expr(a), tree_expr(b)) end)
+M.window_bounds = curried4("window_bounds", function(base, base_len, start, len) return Tr.ContractWindowBounds(tree_expr(base), tree_expr(base_len), tree_expr(start), tree_expr(len)) end)
+M.soa_component = curried4("soa_component", function(base, record_ty, field_name, component_index)
     return Tr.ContractSoAComponent(tree_expr(base), concrete_type(record_ty), tostring(field_name), tonumber(component_index))
-end
+end)
 
 local bind_seq = 0
 function binding(name, ty, class)
@@ -1088,10 +1187,6 @@ function Stmt:tree()
         for name, value in pairs(self.args or {}) do args[#args + 1] = Tr.JumpArg(name, tree_expr(value)) end
         return Tr.StmtJump(Tr.StmtSurface, Tr.BlockLabel(self.target), args)
     end
-    if k == "emit" then
-        local ref, name = frag_ref(self.target, false)
-        return Tr.StmtUseRegionFrag(Tr.StmtSurface, self.mode or Tr.RegionUseEmit, "emit." .. name, ref, expr_items(self.args), {}, self.conts or {})
-    end
     if k == "native_loop" then return native_loop_stmt_tree(self) end
     if k == "native_fold" then die("lln.fold may only appear directly inside lln.loop", 2) end
     if k == "native_scan" then die("lln.scan may only appear directly inside lln.loop", 2) end
@@ -1102,16 +1197,41 @@ function Stmt:tree()
     die("unsupported statement kind " .. tostring(k), 2)
 end
 
-function M.ret(t) return setmetatable({ kind = "ret", value = t }, Stmt) end
-function M.yield(t) return setmetatable({ kind = "yield", value = t }, Stmt) end
-function M.when(t) return function(b) return setmetatable({ kind = "when", cond = t, body = b or {} }, Stmt) end end
-function M.If(t) return function(b) return setmetatable({ kind = "if", cond = t, then_body = b or {} }, { __call = function(self, else_body) self.else_body = else_body or {}; return self end, __index = Stmt }) end end
-function M.set(place, value) return setmetatable({ kind = "set", place = place, value = value }, Stmt) end
-function M.assert_(t) return setmetatable({ kind = "assert", cond = t }, Stmt) end
-function M.trap() return setmetatable({ kind = "trap" }, Stmt) end
-function M.assume(t) return setmetatable({ kind = "assume", cond = t }, Stmt) end
-function M.astore(ty, addr, value) return setmetatable({ kind = "atomic_store", ty = ty, addr = addr, value = value }, Stmt) end
-function M.afence() return setmetatable({ kind = "atomic_fence" }, Stmt) end
+local function optional_value_form(name, build)
+    return setmetatable({ __llbl_tag = "OptionalValueForm", name = name }, {
+        __call = function(_, ...)
+            local n = select("#", ...)
+            if n > 1 then die(name .. " expects at most one argument", 2) end
+            return build(n == 0 and nil or (...))
+        end,
+    })
+end
+local function nullary_form(name, build)
+    return setmetatable({ __llbl_tag = "NullaryForm", name = name }, {
+        __call = function(_, ...)
+            if select("#", ...) ~= 0 then die(name .. " expects no arguments", 2) end
+            return build()
+        end,
+    })
+end
+local function block_form(name, build)
+    return llbl.curried(name, 1, function(value)
+        return setmetatable({ value = value }, {
+            __call = function(self, body) return build(self.value, body or {}) end,
+        })
+    end)
+end
+
+M.ret = optional_value_form("ret", function(t) return setmetatable({ kind = "ret", value = t }, Stmt) end)
+M.yield = optional_value_form("yield", function(t) return setmetatable({ kind = "yield", value = t }, Stmt) end)
+M.when = block_form("when", function(t, b) return setmetatable({ kind = "when", cond = t, body = b }, Stmt) end)
+M.If = block_form("If", function(t, b) return setmetatable({ kind = "if", cond = t, then_body = b }, { __call = function(self, else_body) self.else_body = else_body or {}; return self end, __index = Stmt }) end)
+M.set = curried2("set", function(place, value) return setmetatable({ kind = "set", place = place, value = value }, Stmt) end)
+M.assert_ = llbl.curried("assert_", 1, function(t) return setmetatable({ kind = "assert", cond = t }, Stmt) end)
+M.trap = nullary_form("trap", function() return setmetatable({ kind = "trap" }, Stmt) end)
+M.assume = llbl.curried("assume", 1, function(t) return setmetatable({ kind = "assume", cond = t }, Stmt) end)
+M.astore = curried3("astore", function(ty, addr, value) return setmetatable({ kind = "atomic_store", ty = ty, addr = addr, value = value }, Stmt) end)
+M.afence = nullary_form("afence", function() return setmetatable({ kind = "atomic_fence" }, Stmt) end)
 
 local function handle_repr(repr)
     if repr == nil then return Ty.HandleReprScalar(C.ScalarU32) end
@@ -1299,9 +1419,6 @@ function Decl:syntax_item()
     if self.kind == "import" then
         return Tr.ItemImport(Tr.ImportItem(path(self.name)))
     end
-    if self.kind == "expr_frag" then
-        return Tr.ItemExprFrag(O.ExprFrag(O.NameRefText(self.name), param_items(self.params, true), O.OpenSet({}, {}, {}, {}), tree_expr(self.body), concrete_type(self.result)))
-    end
     if self.kind == "region" then
         local entry = self.entry or { name = "entry", params = {}, body = {} }
         local blocks = {}
@@ -1312,22 +1429,21 @@ function Decl:syntax_item()
         local cont_by_name = {}
         for i, c in ipairs(self.conts or {}) do
             local pname, payload = payload_like(c, "continuation name")
-            if pname then conts[i] = O.ContSlot("cont:" .. self.name .. ":" .. pname .. ":" .. tostring(i), pname, block_param_items(payload))
+            if pname then conts[i] = Tr.RegionCont("cont:" .. self.name .. ":" .. pname .. ":" .. tostring(i), pname, block_param_items(payload))
             elseif symbol_text(c, "continuation name") then
                 local cname = symbol_text(c, "continuation name")
-                conts[i] = O.ContSlot("cont:" .. self.name .. ":" .. cname .. ":" .. tostring(i), cname, {})
+                conts[i] = Tr.RegionCont("cont:" .. self.name .. ":" .. cname .. ":" .. tostring(i), cname, {})
             else die("region continuation expects named payload", 2) end
-            cont_by_name[conts[i].pretty_name] = conts[i]
+            cont_by_name[conts[i].name] = conts[i]
         end
         local retargeted_blocks = {}
         for i = 1, #blocks do
             retargeted_blocks[i] = pvm.with(blocks[i], { body = retarget_cont_jumps_stmts(blocks[i].body, cont_by_name) })
         end
-        return Tr.ItemRegionFrag(O.RegionFrag(
-            O.NameRefText(self.name),
+        return Tr.ItemRegion(Tr.Region(
+            self.name,
             param_items(self.params, true),
             conts,
-            O.OpenSet({}, {}, {}, {}),
             Tr.EntryControlBlock(Tr.BlockLabel(entry.name), entry_param_items(entry.params), retarget_cont_jumps_stmts(stmt_items(entry.body), cont_by_name)),
             retargeted_blocks))
     end
@@ -1369,7 +1485,7 @@ local function add_lua_token_anchors(source, uri, anchors)
         ["handle"] = true, ["let"] = true, ["var"] = true, ["return"] = true,
         ["if"] = true, ["then"] = true, ["elseif"] = true, ["else"] = true,
         ["switch"] = true, ["case"] = true, ["default"] = true, ["when"] = true,
-        ["yield"] = true, ["jump"] = true, ["emit"] = true, ["end"] = true,
+        ["yield"] = true, ["jump"] = true, ["end"] = true,
         ["do"] = true, ["while"] = true, ["for"] = true, ["in"] = true,
         ["select"] = true, ["assert"] = true, ["and"] = true, ["or"] = true, ["not"] = true,
         ["fn"] = true, ["export_fn"] = true, ["entry"] = true, ["block"] = true,
@@ -1593,7 +1709,7 @@ function M.exprs(t) return dsl_fragment("expr", t, "list") end
 function M.conts(t) return dsl_fragment("conts", t, "sum", "product") end
 function M.variants(t) return dsl_fragment("variants", t, "sum", "product") end
 M.spread = llbl.spread
-M._ = llbl.spread
+M._ = llbl._
 
 local function case_literal(v)
     return setmetatable({ key = v }, {
@@ -1623,12 +1739,13 @@ M.case = setmetatable({}, {
     end,
 })
 
-function M.default(body) return setmetatable({ body = body or {} }, Default) end
+M.default = optional_value_form("default", function(body) return setmetatable({ body = body or {} }, Default) end)
 
-function M.requires(t) return setmetatable({ items = t or {} }, Requires) end
+M.requires = optional_value_form("requires", function(t) return setmetatable({ items = t or {} }, Requires) end)
 
-function M.switch(t)
-    return function(arms)
+M.switch = llbl.curried("switch", 1, function(t)
+    return setmetatable({ value = t }, {
+        __call = function(self, arms)
         local stmt_arms, variant_arms, default_body = {}, {}, {}
         for _, arm in ipairs(arms or {}) do
             if is(arm, Case) then
@@ -1644,9 +1761,10 @@ function M.switch(t)
                 die("switch expects case/default arms", 2)
             end
         end
-        return setmetatable({ kind = "switch", value = t, arms = stmt_arms, variant_arms = variant_arms, default_body = default_body }, Stmt)
-    end
-end
+        return setmetatable({ kind = "switch", value = self.value, arms = stmt_arms, variant_arms = variant_arms, default_body = default_body }, Stmt)
+        end,
+    })
+end)
 
 local access = {
     ro = Ty.TypeAccessReadonly,
@@ -1950,18 +2068,6 @@ local LalinLLB = llbl.dialect "LalinDSL" {
         emit = function(n) return setmetatable({ kind = "import", name = n.target }, Decl) end,
     },
 
-    -- Declares a reusable expression fragment sealed by a result type.
-    g.head .expr_frag {
-        g.trait .declaration,
-        slot_name(g.slot .name),
-        slot_params(g.slot .params),
-        slot_type(g.slot .result),
-        slot_value(g.slot .body),
-        emit = function(n)
-            return setmetatable({ kind = "expr_frag", name = llbl_name_text(n.name, "expr fragment name"), params = typed_items_from_llb(n.params or {}), result = n.result, body = n.body }, Decl)
-        end,
-    },
-
     -- Declares a typed control region whose exits are named continuation alternatives.
     g.head .region {
         g.trait .declaration,
@@ -2007,6 +2113,18 @@ local LalinLLB = llbl.dialect "LalinDSL" {
         emit = function(n) return native_range_nd_from_spec(n.spec or {}) end,
     },
 
+    -- Authors an explicit tiled multi-axis producer consumed by lln.loop.
+    g.head .tiled_nd {
+        slot_table_value(g.slot .spec),
+        emit = function(n) return native_tiled_nd_from_spec(n.spec or {}) end,
+    },
+
+    -- Authors an explicit windowed multi-axis producer consumed by lln.loop.
+    g.head .window_nd {
+        slot_table_value(g.slot .spec),
+        emit = function(n) return native_window_nd_from_spec(n.spec or {}) end,
+    },
+
     -- Declares the single reduction sink inside an lln.loop result region.
     g.head .fold {
         g.trait .statement,
@@ -2047,6 +2165,7 @@ local LalinLLB = llbl.dialect "LalinDSL" {
                 by = spec.by,
                 step = spec.step,
                 into = spec.into,
+                axis = spec.axis,
             }, Stmt)
         end,
     },
@@ -2075,21 +2194,6 @@ local LalinLLB = llbl.dialect "LalinDSL" {
         slot_name(g.slot .target),
         slot_table_value(g.slot .args),
         emit = function(n) return setmetatable({ kind = "jump", target = llbl_name_text(n.target, "jump target"), args = n.args or {} }, Stmt) end,
-    },
-
-    -- Splices a region into the current CFG and binds its continuation exits to local targets.
-    g.head .emit {
-        g.trait .statement,
-        slot_name(g.slot .target),
-        slot_table_value(g.slot .args),
-        slot_table_value(g.slot .fills),
-        emit = function(n)
-            local conts = {}
-            for cname, target in pairs(n.fills or {}) do
-                conts[#conts + 1] = O.ContBinding(cname, O.ContTargetLabel(Tr.BlockLabel(symbol_text(target, "emit continuation target") or tostring(target))))
-            end
-            return setmetatable({ kind = "emit", target = llbl_name_text(n.target, "emit target"), args = n.args or {}, conts = conts }, Stmt)
-        end,
     },
 
     -- Binds an immutable typed local value initialized by an expression.
@@ -2157,11 +2261,12 @@ local function make_env(opts)
     env.lalin = M.lalin
     env.unit, env.fn, env.export_fn = LalinLLB.exports.unit, LalinLLB.exports.fn, LalinLLB.exports.export_fn
     env.extern, env.handle, env.const, env.static = LalinLLB.exports.extern, LalinLLB.exports.handle, LalinLLB.exports.const, LalinLLB.exports.static
-    env.import, env.expr_frag = LalinLLB.exports.import, LalinLLB.exports.expr_frag
+    env.import = LalinLLB.exports.import
     env.struct, env.union, env.region = LalinLLB.exports.struct, LalinLLB.exports.union, llbl.region
     env.loop, env.range, env.range_nd = LalinLLB.exports.loop, LalinLLB.exports.range, LalinLLB.exports.range_nd
+    env.tiled_nd, env.window_nd = LalinLLB.exports.tiled_nd, LalinLLB.exports.window_nd
     env.fold, env.scan = LalinLLB.exports.fold, LalinLLB.exports.scan
-    env.entry, env.block, env.jump, env.emit = LalinLLB.exports.entry, LalinLLB.exports.block, LalinLLB.exports.jump, LalinLLB.exports.emit
+    env.entry, env.block, env.jump = LalinLLB.exports.entry, LalinLLB.exports.block, LalinLLB.exports.jump
     env.ret, env.yield, env.when, env.If = M.ret, M.yield, M.when, M.If
     env.let, env.var = LalinLLB.exports.let, LalinLLB.exports.var
     env.set, env.trap, env.assume, env.assert_ = M.set, M.trap, M.assume, M.assert_
@@ -2184,18 +2289,14 @@ local function make_env(opts)
     env.here, env.at_origin, env.with_origin = llbl.here, llbl.at, llbl.with_origin
     env.eq, env.ne, env.lt, env.le, env.gt, env.ge = M.eq, M.ne, M.lt, M.le, M.gt, M.ge
     env.add, env.sub, env.mul, env.div, env.rem = M.add, M.sub, M.mul, M.div, M.rem
-    env.band, env.bor, env.bxor, env.min, env.max = M.band, M.bor, M.bxor, M.min, M.max
-    env.And, env.Or, env.Not, env.len, env.select = M.And, M.Or, M.Not, M.len, M.select
-    env.addr, env.deref, env.load, env.is_null = M.addr, M.deref, M.load, M.is_null
+    env.band, env.bor, env.bxor, env.shl, env.shr, env.min, env.max = M.band, M.bor, M.bxor, M.shl, M.shr, M.min, M.max
+    env.And, env.Or, env.land, env.lor, env.Not, env.len, env.select = M.And, M.Or, M.land, M.lor, M.Not, M.len, M.select
+    env.addr, env.deref, env.load, env.is_null = M.addr, M.deref, load_expr, M.is_null
     env.ctor = M.ctor
     env.bounds, env.disjoint, env.same_len = M.bounds, M.disjoint, M.same_len
     env.window_bounds = M.window_bounds
     env.soa_component = M.soa_component
-    env.as = setmetatable({}, { __index = function(_, ty) return M.as(ty) end })
-    env.bitcast = setmetatable({}, { __index = function(_, ty) return M.bitcast(ty) end })
-    env.null = setmetatable({}, { __index = function(_, ty) return M.null(ty) end })
-    env.sizeof = setmetatable({}, { __index = function(_, ty) return M.sizeof(ty) end })
-    env.alignof = setmetatable({}, { __index = function(_, ty) return M.alignof(ty) end })
+    env.as, env.bitcast, env.null, env.sizeof, env.alignof = M.as, M.bitcast, M.null, M.sizeof, M.alignof
     env.N = llbl.N
     for n in pairs(scalar) do env[n] = scalar_type(n) end
     env.ptr = ctor("ptr", function(ty) return Ty.TPtr(concrete_type(ty)) end)
@@ -2221,8 +2322,8 @@ M.make_env = make_env
 
 local LALIN_NAMESPACE_KEYS = {
     "unit", "fn", "export_fn", "extern", "handle", "const", "static",
-    "import", "expr_frag", "struct", "union", "region", "entry", "block",
-    "loop", "range", "range_nd", "fold", "scan", "jump", "emit", "ret", "yield", "when", "If", "let", "var",
+    "import", "struct", "union", "region", "entry", "block",
+    "loop", "range", "range_nd", "tiled_nd", "window_nd", "fold", "scan", "jump", "ret", "yield", "when", "If", "let", "var",
     "set", "trap", "assume", "assert_", "requires", "astore", "afence",
     "aload", "armw", "acas", "switch", "case", "default", "bit", "product",
     "stmts", "decls", "exprs", "conts", "variants", "spread", "_", "process",

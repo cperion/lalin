@@ -143,10 +143,10 @@ Severity tags:
   layer as covered. `copy_patch_mc` now materializes forward `RangeND`,
   center-domain `WindowND`, and forward `TiledND` producers for generic
   `ApplyN`, domain/axis `ReduceN`, and axis-aware `ScanN` through LLBL.C
-  producer loops. The LuaTrace
-  bytecode path accepts positive forward `Range1D` and rejects non-`Range1D`
-  producers with typed `StencilRejectUnsupportedProducer` facts instead of
-  silently degrading to stride-1 linear loops.
+  producer loops. The LuaTrace bytecode path materializes positive forward
+  `Range1D` and forward `RangeND` for generic `ApplyN`, domain/axis `ReduceN`,
+  axis-aware `ScanN`, `FindN`, and sequential/unique `ScatterReduceN`, while
+  still rejecting `WindowND` and `TiledND` with typed producer facts.
 - [x] `D4` `[C]` Add range, compound, and float-class predicates, or document
   their rejection. `StencilPredicate` now includes typed range predicates,
   compound `and`/`or`/`not`, and float `isnan`/`isinf`/`isfinite` predicates.
@@ -375,13 +375,13 @@ and benchmarked where they produce executable MC code.
   backward `Range1D` now works in the LuaJIT MC/native artifact path for
   primary-index store/copy, fold, and scan materialization, plus reverse-affine
   1D store/copy and scan destination layouts.
-- [x] Materialize forward `RangeND` in `copy_patch_mc` for generic `ApplyN`,
-  domain/axis `ReduceN`, and axis-aware `ScanN` through nested LLBL.C producer
-  loops.
+- [x] Materialize forward `RangeND` in `copy_patch_mc` and LuaTrace BC for
+  generic `ApplyN`, domain/axis `ReduceN`, and axis-aware `ScanN` through
+  nested producer loops.
 - [x] Add generic `ScanN` as the third SOAC-basis materializer. `ScanN` carries
-  a typed axis; MC materializes rank-N axis scans and BC materializes positive
-  `Range1D` axis 1.
-- [x] Guard `copy_patch_bc` so non-`Range1D` producer plans cannot silently
+  a typed axis; MC and BC both materialize `Range1D` axis 1 and forward
+  `RangeND` rank-N axis scans.
+- [x] Guard `copy_patch_bc` so unsupported producer plans cannot silently
   execute as linear `start/stop` loops.
 - [x] Add a shared producer execution-plan object to artifact shapes so every
   generic materializer consumes `producer`, not a loose `stride` field.
@@ -405,7 +405,8 @@ and benchmarked where they produce executable MC code.
 - [x] Add forward `RangeND` runtime tests for every currently materialized
   basis-backed shape that can be expressed over row-major linear storage:
   `ApplyN`, domain-scope `ReduceN`, axis `ReduceN`, and axis `ScanN`.
-- [x] Keep non-`Range1D` producers as typed BC rejects with focused tests.
+- [x] Keep `TiledND` and `WindowND` producers as typed BC rejects with focused
+  tests until their BC loops/window-relative bodies are implemented.
 - [x] Add non-unit positive producer-step tests for `RangeND` generic shapes.
 - [x] Decide backward producer semantics: `Range1D` backward producers execute
   the authored descending interval (`start > stop`) with positive descriptor
@@ -434,8 +435,8 @@ and benchmarked where they produce executable MC code.
   producer cells compile into the generated MC bank.
 - [x] Update the support matrix so producer rows distinguish shape support,
   BC materialization, MC materialization, and emitted-bank coverage.
-- [x] Make reduce and scan sinks rank-aware. `StencilSinkReduce` now carries a
-  typed `StencilReduceScope`, and `StencilSinkScan` now carries a typed
+- [x] Make reduce and scan sinks rank/scope explicit. `StencilSinkReduce` now
+  carries a typed `StencilReduceScope`, and `StencilSinkScan` now carries a typed
   `StencilAxisRef`; rank-N scan is no longer silently treated as a flattened
   stream.
 - [x] Define reduce sink scope semantics explicitly in the schema:
@@ -451,12 +452,13 @@ and benchmarked where they produce executable MC code.
   `StencilApplyWindowInput` plus `StencilWindowOffset` now names neighbor
   access explicitly; MC materializes boundary-aware neighbor addressing for
   clamp, wrap, zero, and reject policies.
-- [x] Materialize rank-aware consumers in MC: axis/partial reduce, window-local
-  reduce/pooling, rank-N axis scan, and boundary-aware window-relative input
-  access.
-- [x] Extend BC and emitted-bank coverage for the new rank-aware consumers.
-  BC preserves typed non-`Range1D` producer rejects for window/rank consumers;
-  the emitted bank includes deliberate axis-reduce, window-reduce, and
+- [x] Materialize rank/scope/window consumers in MC: axis/partial reduce,
+  window-local reduce/pooling, rank-N axis scan, and boundary-aware
+  window-relative input access.
+- [x] Extend BC and emitted-bank coverage for the new rank/scope/window
+  consumers. BC now materializes `RangeND` axis reduce and axis scan while
+  preserving typed rejects for `WindowND` window consumers and `TiledND`; the
+  emitted bank includes deliberate axis-reduce, window-reduce, and
   window-neighbor apply cells in addition to generic producer cells.
 - [x] Feed producer shapes from the frontend/lowering pipeline instead of only
   hand-built test descriptors. Lowering now turns counted loops into explicit
@@ -508,18 +510,12 @@ and benchmarked where they produce executable MC code.
   scheduled `_v4` intern rows and reusable fingerprint normalization for
   frontend-local `CodeValueId`s.
 - [x] Add sharded MC bank generation so larger intern sets are a build
-  knob instead of a one-object bottleneck. `tools/gen_lalin_mc_bank.lua` now
-  honors `LALIN_MC_BANK_SOAC_ORDER`, `LALIN_MC_BANK_INPUT_COUNT`,
-  `LALIN_MC_BANK_TARGET_BYTES` / `LALIN_MC_BANK_TARGET_MB`,
-  `LALIN_MC_BANK_CFLAGS`, and `LALIN_MC_BANK_JOBS`; the parent process shards
-  the intern set, builds shards in parallel, emits one C translation unit per
-  shard plus a small index C file, and links the same embedded-bank C ABI. If an
-  explicit target is provided, it is a compiled MC payload cap, not an emitted C
-  source-size cap. The binary build compiles generated bank C files to objects
-  in bounded `MAXPROCS` batches before one final link. The embedded bank default
-  CFLAGS are performance-oriented (`-O3 -march=native`) and leave GCC
-  vectorization enabled; size-oriented scalar probes must opt in explicitly with
-  `LALIN_MC_BANK_CFLAGS` if needed.
+  bottleneck. `tools/gen_lalin_mc_bank.lua` now builds the fixed 1x1 intern set,
+  shards it with `LALIN_MC_BANK_JOBS`, and honors `LALIN_MC_BANK_CFLAGS`; the
+  parent process builds shards in parallel, emits one C translation unit per
+  shard plus a small index C file, and links the same embedded-bank C ABI. The
+  old SOAC-order/input-count/target-byte generator knobs were hard-yanked:
+  default bank shape is an architectural choice, not a build-time search.
 - [x] Decide whether BC and MC banks must have identical logical coverage or
   whether BC is the semantic superset and MC is the fast subset. They must not
   have identical compiled-bank coverage: `copy_patch_bc` is the semantic
@@ -584,7 +580,8 @@ optimization only happens if the compiler receives the fused source.
   `Range1D`, `RangeND`, `WindowND`, and `TiledND`; `copy_patch_mc` generic
   `ApplyN`, domain/axis `ReduceN`, and axis-aware `ScanN` now consume forward
   `RangeND`, center-domain `WindowND`, and forward `TiledND`, while LuaTrace
-  rejects non-`Range1D` producer shapes with typed facts.
+  consumes `RangeND` for the same generic rank/scope cases and rejects the
+  remaining unsupported producer shapes with typed facts.
 - [ ] Replace handwritten non-basis metastencils in production paths with
   generated metastencils from the primitive fragments; keep handwritten versions
   only as benchmarks, regression fixtures, or temporary scaffolding until the
@@ -603,14 +600,19 @@ optimization only happens if the compiler receives the fused source.
   The stream covers input, const, unary, binary, predicate, compare, cast, and
   select expressions over the currently consumable scalar surface. Explicit
   compiled-payload targets remain available only as caller-selected probes.
-- [x] Set the default generated MC bank shape to saturated SOAC order
-  `1`/input-count `1`. Fusion and wider input banks are explicit probe/expansion
-  knobs, not part of the simple default bank. The current unbounded 1x1 profile
-  reports 129,219 generated entries after `ScatterReduce` saturation. The last
-  full vectorized 1x1 run before that saturation completed with 16 worker
-  shards: 129,156 embedded entries, 86,844,681 compiled payload bytes with GCC
-  vectorization enabled, and 0 patches. A fresh measured payload should be
-  recorded after the next full-bank build.
+- [x] Let `ScatterReduce` consume a generic `ApplyN` contribution body instead
+  of only a single lane-load contribution. The frontend regression now covers
+  `dst[idx[i]] += src[i] + rhs[i]`, proving the scatter-reduce sink receives a
+  typed binary `StencilApplyExpr` with two read accesses.
+- [x] Set the generated MC bank shape to the fixed saturated 1x1 surface. There
+  is no default growth generator anymore: SOAC order is 1, input width is 1, and
+  wider/fused banks are deferred architecture work rather than hidden build
+  knobs. The current fixed profile reports 129,219 entries after
+  `ScatterReduce` saturation. The last full vectorized 1x1 run before that
+  saturation completed with 16 worker shards: 129,156 embedded entries,
+  86,844,681 compiled payload bytes with GCC vectorization enabled, and 0
+  patches. A fresh measured payload should be recorded after the next full-bank
+  build.
 - [x] Replace the old linear-producer-only embedded bank shape with the
   represented producer/body/sink bank. The current bounded default includes
   `Range1D`, `RangeND`, `TiledND`, and `WindowND` producer cells over the
@@ -706,18 +708,37 @@ optimization only happens if the compiler receives the fused source.
 
 - [ ] Replace unsupported-expression errors in LuaTrace constant lowering with
   structured rejects.
-- [ ] Add runtime tests for all supported unary operators in LuaTrace output.
-- [ ] Add runtime tests for all supported binary operators in LuaTrace output.
-- [ ] Add runtime tests for all supported reductions in LuaTrace output.
-- [ ] Add runtime tests for all supported predicates and comparisons in LuaTrace
-  output.
-- [ ] Add byte-exact tests for byte-span copy/fill/count/find/compare.
-- [ ] Add tests for dynamic stride parameter ordering in emitted LuaTrace
-  functions.
-- [ ] Add tests for field-projection source and destination access in LuaTrace.
-- [ ] Add tests for SoA component source and destination access in LuaTrace.
-- [ ] Add tests for primitive plans: `ffi.copy`, `ffi.fill`, branch predicates,
+- [x] Add runtime tests for all supported unary operators in LuaTrace output.
+  `test_stencil_apply_n` now realizes BC `ApplyN` artifacts for identity,
+  negation, bit-not, and bool-not.
+- [x] Add runtime tests for all supported binary operators in LuaTrace output.
+  `test_stencil_apply_n` now realizes BC `ApplyN` artifacts for add, sub, mul,
+  div, mod, bit-and/or/xor, left/logical-right/arithmetic-right shift, min, and
+  max.
+- [x] Add runtime tests for all supported reductions in LuaTrace output.
+  `test_stencil_apply_n` now realizes BC `ReduceN` artifacts for add, mul,
+  bit-and/or/xor, min, and max.
+- [x] Add runtime tests for all supported predicates and comparisons in LuaTrace
+  output. `test_stencil_predicates_d4` now realizes BC predicate artifacts for
+  nonzero, compare-const, range, compound and/or/not, float isnan/isinf/isfinite,
+  and all six zip-compare operators.
+- [x] Add byte-exact tests for byte-span copy/fill/count/find/compare.
+  `test_copy_patch_luatrace` now realizes byte-span layout artifacts for all
+  five shapes and checks the exact `uint8_t` results.
+- [x] Add tests for dynamic stride parameter ordering in emitted LuaTrace
+  functions. `test_copy_patch_luatrace` now checks the generated multi-access
+  dynamic-stride ABI order and executes a strided zip-map with distinct
+  dst/lhs/rhs stride parameters.
+- [x] Add tests for field-projection source and destination access in LuaTrace.
+  `test_copy_patch_luatrace` now realizes an AoS field-projection map that
+  reads `src[i].left` and writes `dst[i].sum`.
+- [x] Add tests for SoA component source and destination access in LuaTrace.
+  `test_copy_patch_luatrace` now realizes a SoA zip-map that reads two component
+  buffers and writes the destination component buffer.
+- [x] Add tests for primitive plans: `ffi.copy`, `ffi.fill`, branch predicates,
   numeric predicate fast paths, scatter plans, and reduction plans.
+  `test_copy_patch_luatrace` asserts the inspectable LuaTrace plans for copy,
+  fill, count, numeric compare, scatter conflict modes, and ordered reductions.
 - [ ] Add tests for grouped/unrolled loops with tails for every supported shape.
 
 ## Frontend-To-Stencil Lowering Gaps
@@ -742,10 +763,50 @@ optimization only happens if the compiler receives the fused source.
   - [x] Add executable `lln.range_nd` lowering for zero-based forward domains:
     the CFG uses a flat induction with generated coordinate bindings, Flow
     records `FlowDomainShapeRangeND`, and the exact 2D row-major `i * w + j`
-    form normalizes to the primary induction for store stencil selection.
-  - [ ] Generalize ND affine index recognition beyond the current zero-based
-    2D row-major normalization.
-  - [ ] Add tiled and windowed multi-index authoring sugar.
+    form normalizes to the primary induction for store and full-domain fold
+    stencil selection.
+  - [x] Add explicit `lln.scan` axis syntax for `lln.range_nd`; missing axes
+    reject at the frontend, and generated scan loop headers feed a typed
+    `StencilAxisRef` through `KernelEffectScan` into `StencilSinkScan`.
+  - [x] Generalize zero-based, unit-step ND primary-index recognition beyond the
+    old 2D-only row-major normalization. Source `lln.range_nd` now recognizes
+    compact row-major expressions at rank 1 and higher, so rank-3 forms like
+    `((i * b + j) * c) + k` feed the primary producer path.
+  - [ ] Generalize ND affine index recognition for non-zero starts, non-unit
+    producer steps, and non-row-major layout expressions.
+  - [x] Add tiled and windowed multi-index authoring sugar. `lln.tiled_nd` and
+    `lln.window_nd` are public producer heads; lowering records typed
+    `FlowDomainShapeTiledND` / `FlowDomainShapeWindowND` facts and projects them
+    into stencil producers.
+- [ ] Reconcile the remaining frontend-to-rich-backend gaps against the current
+  backend surface:
+  - [ ] ND affine indexing beyond compact zero-based row-major: non-zero starts,
+    non-unit producer steps, column-major/non-row-major expressions, and general
+    affine layout recognition.
+  - [ ] Source-level window-neighbor syntax that lowers to typed
+    `StencilApplyWindowInput` instead of only testing direct descriptors.
+  - [ ] Decide and implement source semantics for `lln.scan` over `lln.tiled_nd`;
+    it is still deliberately rejected.
+  - [x] Feed source-level select/blend bodies into generic `ApplyN`.
+    `test_luajit_artifact_from_dsl` now lowers `select (lhs[i] :gt (0))(lhs[i])(rhs[i])`
+    to a `StencilApplySelect` descriptor and executes it.
+  - [x] Feed source-level bitwise/remainder/shift/min/max and deeper mixed
+    expression bodies through generic `ApplyN` coverage tests.
+    `ValueExprRem` now preserves remainder separately from division,
+    bitwise/shift expressions flow through `ValueExprBinary`, and
+    `test_luajit_artifact_from_dsl` executes authored `%`, `shl`, `band`,
+    `bor`, `bxor`, `min`, and `max` loops selected as generic `ApplyN`.
+  - [ ] Predicate composition from source: backend predicates support
+    range/and/or/not/float-class, but source short-circuit `and`/`or` lowers as
+    control flow and needs a pure-predicate normalization/design before it can
+    become `StencilPredAnd`/`StencilPredOr`.
+  - [x] Scatter-reduce can consume generic `ApplyN` contribution bodies from
+    source for the covered `add` RMW family; `dst[idx[i]] += src[i] + rhs[i]`
+    is now selected and executed.
+  - [ ] Generalize source scatter-reduce recognition beyond add/mul-style RMW
+    and lane-load-shaped destination recurrence.
+  - [ ] Feed the full schedule/proof surface from source contracts: alignment,
+    exact/multiple trip count, vector schedule hints, and proof-origin controls.
 - [ ] Add end-to-end DSL tests for every supported vocab, not only direct
   artifact-plan tests.
 - [ ] Add end-to-end DSL tests for view, slice, byte-span, field projection, and
@@ -812,9 +873,9 @@ means the fact is preserved for audit but does not yet drive lowering.
 | Schema surface | `copy_patch_bc` | `copy_patch_mc` | emitted bank / binary | Remaining work |
 | --- | --- | --- | --- | --- |
 | Descriptor producer/body/sink / vocab | validate all represented producer/body/sink descriptors; materialize current BC subset and typed-reject missing semantic cells | consume all shape-supported C stencil shapes; materialize current fast subset | record/intern selected shapes | [x] Generate MC intern set from the support matrix, not hand enumeration. |
-| Producer | materialize forward/backward `Range1D`; reject represented ND/window/tiled producers with typed facts | materialize forward/backward `Range1D`, forward `RangeND`, center-domain `WindowND`, and forward `TiledND` for generic `ApplyN`, domain/axis `ReduceN`, and axis `ScanN` | intern producer cells for generated SOAC combinations plus deliberate rank-specific probe cells for axis/window behavior | [x] Add deliberate emitted-bank cells for axis/window reduce and window-neighbor apply. |
-| Sink rank/scope | materialize domain reduce and `Range1D` axis-1 scan; reject non-`Range1D` producers | materialize domain reduce, axis/partial reduce, window-local reduce, and rank-N axis scan | bank records domain reduce, generated rank-N scan, and deliberate axis/window reduce cells | [x] Add emitted-bank coverage for axis/window reduce cells. |
-| Window body offsets | represented as `StencilApplyWindowInput`; BC rejects non-`Range1D` producer shapes | MC consumes boundary-aware window-relative access expressions | bank includes deliberate window-neighbor apply cell | [x] Add emitted-bank cells and BC typed-reject tests for window-relative bodies. |
+| Producer | materialize forward/backward `Range1D` plus forward `RangeND`; reject represented window/tiled producers with typed facts | materialize forward/backward `Range1D`, forward `RangeND`, center-domain `WindowND`, and forward `TiledND` for generic `ApplyN`, domain/axis `ReduceN`, and axis `ScanN` | intern producer cells for generated SOAC combinations plus deliberate rank-specific probe cells for axis/window behavior | [x] Add deliberate emitted-bank cells for axis/window reduce and window-neighbor apply. |
+| Sink rank/scope | materialize domain reduce, `Range1D` axis-1 scan, and `RangeND` axis reduce/scan; reject window/tiled producers | materialize domain reduce, axis/partial reduce, window-local reduce, and rank-N axis scan | bank records domain reduce, generated rank-N scan, and deliberate axis/window reduce cells | [x] Add emitted-bank coverage for axis/window reduce cells. |
+| Window body offsets | represented as `StencilApplyWindowInput`; BC rejects `WindowND` producer shapes | MC consumes boundary-aware window-relative access expressions | bank includes deliberate window-neighbor apply cell | [x] Add emitted-bank cells and BC typed-reject tests for window-relative bodies. |
 | Layout | consume contiguous, view, slice, byte-span, field, SoA, indexed, scalar | consume same through C access expressions | partial dynamic-descriptor coverage | [ ] Add embedded-bank tests for view/slice/byte-span/field/SoA descriptors. |
 | Access roles | consume read/write/readwrite/reduce/index in access plans | consume read/write/readwrite/reduce/index in generated C signatures/accesses | record through artifacts | [ ] Add index-role bounds/alias tests for gather/scatter in both banks. |
 | Alias facts | consume noalias for BC copy primitive legality | consume noalias as C `restrict` where legal | record through artifact fingerprint | [ ] Benchmark alias-driven gather/scatter/copy materialization against handwritten C. |
@@ -838,13 +899,14 @@ means the fact is preserved for audit but does not yet drive lowering.
 - [ ] Treat `copy_patch_bc` as the semantic coverage probe: it should either
   materialize the full supported schema surface or expose the exact missing
   materialization cell. The support matrix now names this as the policy and
-  records the current producer gaps: `RangeND`, `WindowND`, and `TiledND`
-  are represented schema cells that BC still typed-rejects.
+  records the current producer gaps: `WindowND` and `TiledND` are represented
+  schema cells that BC still typed-rejects.
 - [x] Add LuaTrace/BC materialization or a typed unsupported-cell reject for
   `scatter_reduce_n`. LuaTrace now materializes sequential/unique
-  `scatter_reduce_n` for `Range1D`, matching the MC/C emitter. Atomic and
-  privatized scatter-reduce modes are represented in ASDL but reject before
-  emission until real atomic RMW or private-bin merge lowering exists.
+  `scatter_reduce_n` for `Range1D` and forward `RangeND`, matching the MC/C
+  emitter. Atomic and privatized scatter-reduce modes are represented in ASDL
+  but reject before emission until real atomic RMW or private-bin merge lowering
+  exists.
 - [ ] Treat `copy_patch_mc` as the fast-path probe: it should exploit the new
   facts for scheduling, aliasing, alignment, vectorization, gather/scatter,
   select/blend, reductions, and descriptor-aware access patterns where doing so

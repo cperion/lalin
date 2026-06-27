@@ -235,13 +235,12 @@ end
 -------------------------------------------------------------------------------
 
 local explainers = {}
-local REQUIRED_PHASES = {"parse","host","open","binding","typecheck","backend","link","vec","source"}
+local REQUIRED_PHASES = {"parse","host","binding","typecheck","backend","link","vec","source"}
 
 local function ensure_explainers()
     if explainers.parse then return end
     explainers.parse = function(issue, analysis) return { kind = "ParseIssue", primary = issue.message or "parse error" } end
     explainers.host = function(issue, analysis) return { kind = "HostIssue", primary = issue.message or "host error" } end
-    explainers.open = require("lalin.open_validate").explain_open_issue
     explainers.binding = require("lalin.editor_binding_facts").explain_binding_issue
     explainers.typecheck = require("lalin.tree_typecheck").explain_type_issue
     explainers.backend = require("lalin.back_validate").explain_back_issue

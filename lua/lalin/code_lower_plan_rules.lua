@@ -2,159 +2,40 @@ local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
     if T._lalin_api_cache.code_lower_plan_rules ~= nil then return T._lalin_api_cache.code_lower_plan_rules end
 
-    local lalin = require("lalin")
-    local llbl = require("llbl")
-    local Llisle = require("llisle")
-    local RuleApi = require("lalin.llisle_rule_api")
-    local env = lalin.language.env { scope = "env", base = _G }
-    Llisle.use { scope = "env", target = env, base = env, global = false }
-    local llisle = env.llisle
-
-    local LowerFragmentInput = llbl.shared.symbols.source("LowerFragmentInput")
-    local LowerFragmentSelection = llbl.shared.symbols.source("LowerFragmentSelection")
-    local fragment = llbl.shared.symbols.source("fragment")
-    local selection = llbl.shared.symbols.source("selection")
-    local lower_fragment_selection = llbl.shared.symbols.source("lower_fragment_selection")
-
-    local closed_form = llbl.shared.symbols.source("closed_form")
-    local kernel = llbl.shared.symbols.source("kernel")
-    local fallback = llbl.shared.symbols.source("fallback")
-    local none = llbl.shared.symbols.source("none")
-
-    local function build_selection(fields) return fields end
-
-    local function build_rules()
-    return llisle {
-  constructor. lower_fragment_selection [build_selection],
-
-  relation. select_lower_fragment {
-    input { fragment [LowerFragmentInput] },
-    output { selection [LowerFragmentSelection] },
-    strategy {
-      select. best_cost,
-      ambiguity. error,
-      coverage. complete,
-    },
-  },
-
-  rule. planned_closed_form {
-    llisle.select_lower_fragment { fragment = P. fragment },
-    when {
-      (P. fragment.has_kernel :eq (true))
-        * (P. fragment.schedule_planned :eq (true))
-        * (P. fragment.schedule_closed_form :eq (true))
-        * (P. fragment.has_closed_form :eq (true)),
-    },
-    cost (0),
-    run {
-      ret {
-        selection = lower_fragment_selection {
-          kind = closed_form,
-          closed_form = P. fragment.closed_form,
+    local api = {
+        kind = {
+            closed_form = "closed_form",
+            kernel = "kernel",
+            fallback = "fallback",
+            none = "none",
         },
-      },
-    },
-  },
+    }
 
-  rule. closed_form_schedule_without_fact {
-    llisle.select_lower_fragment { fragment = P. fragment },
-    when {
-      (P. fragment.has_kernel :eq (true))
-        * (P. fragment.schedule_planned :eq (true))
-        * (P. fragment.schedule_closed_form :eq (true))
-        * (P. fragment.has_closed_form :eq (false)),
-    },
-    cost (0),
-    run {
-      ret {
-        selection = lower_fragment_selection {
-          kind = fallback,
-          reason = P. fragment.closed_form_missing_reason,
-        },
-      },
-    },
-  },
-
-  rule. planned_kernel {
-    llisle.select_lower_fragment { fragment = P. fragment },
-    when {
-      (P. fragment.has_kernel :eq (true))
-        * (P. fragment.schedule_planned :eq (true))
-        * (P. fragment.schedule_closed_form :eq (false)),
-    },
-    cost (0),
-    run {
-      ret {
-        selection = lower_fragment_selection {
-          kind = kernel,
-        },
-      },
-    },
-  },
-
-  rule. planned_kernel_without_schedule {
-    llisle.select_lower_fragment { fragment = P. fragment },
-    when {
-      (P. fragment.has_kernel :eq (true))
-        * (P. fragment.schedule_planned :eq (false)),
-    },
-    cost (0),
-    run {
-      ret {
-        selection = lower_fragment_selection {
-          kind = fallback,
-          reason = P. fragment.no_schedule_reason,
-        },
-      },
-    },
-  },
-
-  rule. rejected_kernel {
-    llisle.select_lower_fragment { fragment = P. fragment },
-    when {
-      (P. fragment.has_kernel :eq (false))
-        * (P. fragment.has_kernel_no_plan :eq (true)),
-    },
-    cost (0),
-    run {
-      ret {
-        selection = lower_fragment_selection {
-          kind = fallback,
-          reason = P. fragment.kernel_no_plan_reason,
-        },
-      },
-    },
-  },
-
-  rule. no_loop_kernel_decision {
-    llisle.select_lower_fragment { fragment = P. fragment },
-    when {
-      (P. fragment.has_kernel :eq (false))
-        * (P. fragment.has_kernel_no_plan :eq (false)),
-    },
-    cost (0),
-    run {
-      ret {
-        selection = lower_fragment_selection {
-          kind = none,
-        },
-      },
-    },
-  },
-}
+    local function select_lower_fragment(fragment)
+        if fragment.has_kernel then
+            if fragment.schedule_planned then
+                if fragment.schedule_closed_form then
+                    if fragment.has_closed_form then
+                        return { kind = api.kind.closed_form, closed_form = fragment.closed_form }
+                    end
+                    return { kind = api.kind.fallback, reason = fragment.closed_form_missing_reason }
+                end
+                return { kind = api.kind.kernel }
+            end
+            return { kind = api.kind.fallback, reason = fragment.no_schedule_reason }
+        end
+        if fragment.has_kernel_no_plan then
+            return { kind = api.kind.fallback, reason = fragment.kernel_no_plan_reason }
+        end
+        return { kind = api.kind.none }
     end
-    if setfenv then setfenv(build_rules, env) end
-    local rules = build_rules()
-    local engine = Llisle.compile(rules)
 
-    local api = RuleApi.new(rules, engine, {
-      kind = {
-        closed_form = "closed_form",
-        kernel = "kernel",
-        fallback = "fallback",
-        none = "none",
-      },
-    })
+    function api:run(relation, input, _output_key, missing)
+        if relation ~= "select_lower_fragment" then return nil, missing or ("unknown lower-plan relation " .. tostring(relation)) end
+        local fragment = input and input.fragment
+        if fragment == nil then return nil, missing or "missing lower-plan fragment input" end
+        return select_lower_fragment(fragment)
+    end
 
     T._lalin_api_cache.code_lower_plan_rules = api
     return api

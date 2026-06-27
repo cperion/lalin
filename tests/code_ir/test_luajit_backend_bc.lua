@@ -118,7 +118,7 @@ assert(artifact_module.sum_i32(arr, count) == expected)
 
 local dsl_sum = lalin.loadstring([=[
 return fn. sum_i32 { xs [ptr [i32]], n [i32] } [i32] {
-  requires { bounds(xs, n), readonly(xs) },
+  requires { bounds (xs)(n), readonly(xs) },
 
   entry. start {} { jump. loop { i = 0, acc = 0 }, },
 

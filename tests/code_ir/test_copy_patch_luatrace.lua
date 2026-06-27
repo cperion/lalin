@@ -9,6 +9,7 @@ Schema(T)
 
 local Core = T.LalinCore
 local Code = T.LalinCode
+local Ty = T.LalinType
 local Value = T.LalinValue
 local Schedule = T.LalinSchedule
 local Stencil = T.LalinStencil
@@ -19,6 +20,7 @@ local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local u8 = Code.CodeTyInt(8, Code.CodeUnsigned)
 local f64 = Code.CodeTyFloat(64)
 local bool8 = Code.CodeTyBool8
+local pair_ty = Code.CodeTyNamed("Demo", "TracePair", Ty.TNamed(Ty.TypeRefGlobal("Demo", "TracePair")))
 local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)
 
 local function iconst(raw)
@@ -78,6 +80,32 @@ local function view_layout(name, stride_const)
         Code.CodeValueId("v:len:" .. name),
         Code.CodeValueId("v:stride:" .. name),
         stride_const
+    )
+end
+
+local function byte_span_layout(name)
+    return Stencil.StencilLayoutByteSpanDescriptor(
+        Code.CodeValueId("v:byte_span:" .. name),
+        Code.CodeValueId("v:byte_data:" .. name),
+        Code.CodeValueId("v:byte_len:" .. name)
+    )
+end
+
+local function field_layout(field_name, field_offset)
+    return Stencil.StencilLayoutFieldProjection(
+        Stencil.StencilLayoutContiguous(1),
+        pair_ty,
+        field_name,
+        field_offset
+    )
+end
+
+local function soa_component(field_name, component_index)
+    return Stencil.StencilLayoutSoAComponent(
+        Stencil.StencilLayoutContiguous(1),
+        pair_ty,
+        field_name,
+        component_index
     )
 end
 
@@ -331,6 +359,18 @@ assert(view_vector_plan.access_by_name.xs.dynamic_stride_arg == "xs_stride", "ex
 local view_vector_template = CopyPatchLuaTrace.emit_mc_stencil_source(view_vector_artifact)
 assert(view_vector_template:match("xs%[%(%(__ml_i %+ 1%) %* xs_stride%)%]"), "grouped dynamic view access must parenthesize the lane index")
 
+local view_zip_artifact = StencilArtifactPlan.zip_map_array_artifact(Stencil.StencilBinaryAdd, {
+    lhs_ty = i32,
+    rhs_ty = i32,
+    result_ty = i32,
+    step_num = 1,
+    dst_layout = view_layout("zip_dst"),
+    lhs_layout = view_layout("zip_lhs"),
+    rhs_layout = view_layout("zip_rhs"),
+})
+local view_zip_template = CopyPatchLuaTrace.emit_mc_stencil_source(view_zip_artifact)
+assert(view_zip_template:match("%(dst, lhs, rhs, start, stop, dst_stride, lhs_stride, rhs_stride%)"), "dynamic stride ABI should preserve descriptor access order")
+
 local function exercise(symbols)
     local function sym(artifact)
         return assert(symbols[artifact.symbol.text], artifact.symbol.text)
@@ -401,6 +441,104 @@ end
 exercise(realization.symbols)
 
 do
+    ffi.cdef[[
+        typedef struct { int32_t left; int32_t right; int32_t sum; } lalin_trace_pair;
+    ]]
+
+    local layout_artifacts = {
+        StencilArtifactPlan.map_array_artifact(Stencil.StencilUnaryNeg, {
+            elem_ty = i32,
+            result_ty = i32,
+            step_num = 1,
+            dst_layout = field_layout("sum", 8),
+            src_layout = field_layout("left", 0),
+        }),
+        StencilArtifactPlan.zip_map_array_artifact(Stencil.StencilBinaryAdd, {
+            lhs_ty = i32,
+            rhs_ty = i32,
+            result_ty = i32,
+            step_num = 1,
+            dst_layout = soa_component("sum", 2),
+            lhs_layout = soa_component("left", 0),
+            rhs_layout = soa_component("right", 1),
+        }),
+    }
+    local layout_realization = assert(CopyPatchLuaTrace.realize_artifacts(layout_artifacts, { stem = "test_copy_patch_luatrace_layouts" }))
+    local function layout_sym(artifact)
+        return assert(layout_realization.symbols[artifact.symbol.text], artifact.symbol.text)
+    end
+
+    local src_pairs = ffi.new("lalin_trace_pair[5]", {
+        { left = 1, right = 10, sum = 0 },
+        { left = -2, right = 20, sum = 0 },
+        { left = 5, right = -5, sum = 0 },
+        { left = 0, right = 7, sum = 0 },
+        { left = 3, right = 4, sum = 0 },
+    })
+    local dst_pairs = ffi.new("lalin_trace_pair[5]")
+    layout_sym(layout_artifacts[1])(dst_pairs, src_pairs, 0, 5)
+    assert(dst_pairs[0].sum == -1 and dst_pairs[1].sum == 2 and dst_pairs[2].sum == -5 and dst_pairs[3].sum == 0 and dst_pairs[4].sum == -3, "field-projection map source/destination")
+
+    local left = ffi.new("int32_t[5]", { 1, -2, 5, 0, 3 })
+    local right = ffi.new("int32_t[5]", { 10, 20, -5, 7, 4 })
+    local out = ffi.new("int32_t[5]")
+    layout_sym(layout_artifacts[2])(out, left, right, 0, 5)
+    assert(out[0] == 11 and out[1] == 18 and out[2] == 0 and out[3] == 7 and out[4] == 7, "SoA component zip-map source/destination")
+end
+
+do
+    local byte_artifacts = {
+        StencilArtifactPlan.copy_array_artifact({
+            elem_ty = u8,
+            step_num = 1,
+            dst_layout = byte_span_layout("copy_dst"),
+            src_layout = byte_span_layout("copy_src"),
+        }),
+        StencilArtifactPlan.fill_array_artifact({
+            elem_ty = u8,
+            value = u8const(127),
+            step_num = 1,
+            dst_layout = byte_span_layout("fill_dst"),
+        }),
+        StencilArtifactPlan.count_array_artifact(pred(Core.CmpGt, u8, u8const(127)), {
+            elem_ty = u8,
+            step_num = 1,
+            array_layout = byte_span_layout("count_xs"),
+        }),
+        StencilArtifactPlan.find_array_artifact(pred(Core.CmpEq, u8, u8const(255)), {
+            elem_ty = u8,
+            step_num = 1,
+            array_layout = byte_span_layout("find_xs"),
+        }),
+        StencilArtifactPlan.compare_array_artifact(pred(Core.CmpGt, u8, u8const(127)), {
+            elem_ty = u8,
+            result_ty = bool8,
+            step_num = 1,
+            dst_layout = byte_span_layout("compare_dst"),
+            src_layout = byte_span_layout("compare_xs"),
+        }),
+    }
+    local byte_realization = assert(CopyPatchLuaTrace.realize_artifacts(byte_artifacts, { stem = "test_copy_patch_luatrace_byte_span" }))
+    local function byte_sym(artifact)
+        return assert(byte_realization.symbols[artifact.symbol.text], artifact.symbol.text)
+    end
+
+    local src = ffi.new("uint8_t[6]", { 0, 1, 127, 128, 200, 255 })
+    local out = ffi.new("uint8_t[6]")
+    byte_sym(byte_artifacts[1])(out, src, 0, 6)
+    for i = 0, 5 do assert(out[i] == src[i], "byte-span copy at " .. tostring(i)) end
+
+    byte_sym(byte_artifacts[2])(out, 0, 6, 127)
+    for i = 0, 5 do assert(out[i] == 127, "byte-span fill at " .. tostring(i)) end
+
+    assert(byte_sym(byte_artifacts[3])(src, 0, 6) == 3, "byte-span count")
+    assert(byte_sym(byte_artifacts[4])(src, 0, 6) == 5, "byte-span find")
+
+    byte_sym(byte_artifacts[5])(out, src, 0, 6)
+    assert(out[0] == 0 and out[1] == 0 and out[2] == 0 and out[3] == 1 and out[4] == 1 and out[5] == 1, "byte-span compare")
+end
+
+do
     local xs = ffi.new("int32_t[17]", { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 })
     local vf = CopyPatchLuaTrace.compile_artifact(vector_artifact)
     assert(vf(xs, 0, 17, 0) == 153, "vector-as-trace-group reduce")
@@ -414,6 +552,21 @@ do
     end
     local vf = CopyPatchLuaTrace.compile_artifact(view_vector_artifact)
     assert(vf(xs, 0, 17, 0, 2) == 153, "grouped dynamic view reduce")
+end
+
+do
+    local out = ffi.new("int32_t[10]")
+    local lhs = ffi.new("int32_t[10]")
+    local rhs = ffi.new("int32_t[10]")
+    for i = 0, 4 do
+        lhs[i * 2] = i + 1
+        rhs[i * 2] = (i + 1) * 10
+    end
+    local vf = CopyPatchLuaTrace.compile_artifact(view_zip_artifact)
+    vf(out, lhs, rhs, 0, 5, 2, 2, 2)
+    for i = 0, 4 do
+        assert(out[i * 2] == lhs[i * 2] + rhs[i * 2], "dynamic stride zip-map argument ordering at " .. tostring(i))
+    end
 end
 
 io.write("lalin copy_patch_luatrace ok\n")

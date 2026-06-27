@@ -5,19 +5,15 @@ return schema. LalinTree {
   sum. ExprHeader {
     ExprSurface,
     ExprTyped { variant_unique, field. ty [LalinType.Type], },
-    ExprOpen { variant_unique, field. ty [LalinType.Type], open [LalinOpen.OpenSet], },
   },
   sum. PlaceHeader {
     PlaceSurface,
     PlaceTyped { variant_unique, field. ty [LalinType.Type], },
-    PlaceOpen { variant_unique, field. ty [LalinType.Type], open [LalinOpen.OpenSet], },
   },
   sum. StmtHeader {
     StmtSurface,
-    StmtOpen { variant_unique, open [LalinOpen.OpenSet], },
     StmtFlow { variant_unique, flow [LalinSem.FlowClass], },
   },
-  sum. RegionUseMode { RegionUseEmit, RegionUseCall, },
   product. FieldInit {
     interned,
     field. name [str],
@@ -101,7 +97,6 @@ return schema. LalinTree {
     DomainValue { variant_unique, field. value [LalinTree.Expr], },
     DomainView { variant_unique, view [LalinTree.View], },
     DomainZipEqViews { variant_unique, views [many [LalinTree.View]], },
-    DomainSlotValue { variant_unique, slot [LalinOpen.DomainSlot], },
   },
   sum. IndexBase {
     IndexBaseExpr { variant_unique, base [LalinTree.Expr], },
@@ -133,12 +128,8 @@ return schema. LalinTree {
       base [LalinTree.IndexBase],
       index [LalinTree.Expr],
     },
-    PlaceSlotValue {
-      variant_unique,
-      h [LalinTree.PlaceHeader],
-      slot [LalinOpen.PlaceSlot],
-    },
   },
+  product. RegionCont { interned, key [str], field. name [str], params [many [LalinTree.BlockParam]], },
   product. BlockLabel { interned, field. name [str], },
   product. BlockParam { interned, field. name [str], field. ty [LalinType.Type], },
   product. EntryBlockParam {
@@ -224,6 +215,14 @@ return schema. LalinTree {
     interned,
     region_id [str],
     result_ty [LalinType.Type],
+    entry [LalinTree.EntryControlBlock],
+    blocks [many [LalinTree.ControlBlock]],
+  },
+  product. Region {
+    interned,
+    field. name [str],
+    params [many [LalinType.Param]],
+    conts [many [LalinTree.RegionCont]],
     entry [LalinTree.EntryControlBlock],
     blocks [many [LalinTree.ControlBlock]],
   },
@@ -513,15 +512,6 @@ return schema. LalinTree {
       replacement [LalinTree.Expr],
       ordering [LalinCore.AtomicOrdering],
     },
-    ExprSlotValue { variant_unique, h [LalinTree.ExprHeader], slot [LalinOpen.ExprSlot], },
-    ExprUseExprFrag {
-      variant_unique,
-      h [LalinTree.ExprHeader],
-      use_id [str],
-      frag [LalinOpen.ExprFragRef],
-      args [many [LalinTree.Expr]],
-      fills [many [LalinOpen.SlotBinding]],
-    },
     ExprCtor {
       variant_unique,
       h [LalinTree.ExprHeader],
@@ -592,7 +582,7 @@ return schema. LalinTree {
     StmtJumpCont {
       variant_unique,
       h [LalinTree.StmtHeader],
-      slot [LalinOpen.ContSlot],
+      cont [LalinTree.RegionCont],
       args [many [LalinTree.JumpArg]],
     },
     StmtYieldVoid { variant_unique, h [LalinTree.StmtHeader], },
@@ -611,21 +601,6 @@ return schema. LalinTree {
       variant_unique,
       h [LalinTree.StmtHeader],
       region [LalinTree.ControlStmtRegion],
-    },
-    StmtUseRegionSlot {
-      variant_unique,
-      h [LalinTree.StmtHeader],
-      slot [LalinOpen.RegionSlot],
-    },
-    StmtUseRegionFrag {
-      variant_unique,
-      h [LalinTree.StmtHeader],
-      mode [LalinTree.RegionUseMode],
-      use_id [str],
-      frag [LalinOpen.RegionFragRef],
-      args [many [LalinTree.Expr]],
-      fills [many [LalinOpen.SlotBinding]],
-      cont_fills [many [LalinOpen.ContBinding]],
     },
     StmtTrap { variant_unique, h [LalinTree.StmtHeader], },
   },
@@ -666,15 +641,6 @@ return schema. LalinTree {
       params [many [LalinType.Param]],
       result [LalinType.Type],
     },
-    FuncOpen {
-      variant_unique,
-      sym [LalinCore.FuncSym],
-      visibility [LalinCore.Visibility],
-      params [many [LalinOpen.OpenParam]],
-      open [LalinOpen.OpenSet],
-      result [LalinType.Type],
-      body [many [LalinTree.Stmt]],
-    },
   },
   sum. ExternFunc {
     ExternFunc {
@@ -682,12 +648,6 @@ return schema. LalinTree {
       field. name [str],
       symbol [str],
       params [many [LalinType.Param]],
-      result [LalinType.Type],
-    },
-    ExternFuncOpen {
-      variant_unique,
-      sym [LalinCore.ExternSym],
-      params [many [LalinOpen.OpenParam]],
       result [LalinType.Type],
     },
   },
@@ -698,25 +658,11 @@ return schema. LalinTree {
       field. ty [LalinType.Type],
       field. value [LalinTree.Expr],
     },
-    ConstItemOpen {
-      variant_unique,
-      sym [LalinCore.ConstSym],
-      open [LalinOpen.OpenSet],
-      field. ty [LalinType.Type],
-      field. value [LalinTree.Expr],
-    },
   },
   sum. StaticItem {
     StaticItem {
       variant_unique,
       field. name [str],
-      field. ty [LalinType.Type],
-      field. value [LalinTree.Expr],
-    },
-    StaticItemOpen {
-      variant_unique,
-      sym [LalinCore.StaticSym],
-      open [LalinOpen.OpenSet],
       field. ty [LalinType.Type],
       field. value [LalinTree.Expr],
     },
@@ -738,16 +684,6 @@ return schema. LalinTree {
       invalid [LalinType.HandleInvalid],
       facts [many [LalinType.HandleFact]],
     },
-    TypeDeclOpenStruct {
-      variant_unique,
-      sym [LalinCore.TypeSym],
-      fields [many [LalinType.FieldDecl]],
-    },
-    TypeDeclOpenUnion {
-      variant_unique,
-      sym [LalinCore.TypeSym],
-      fields [many [LalinType.FieldDecl]],
-    },
   },
   sum. Item {
     ItemFunc { variant_unique, func [LalinTree.Func], },
@@ -756,22 +692,7 @@ return schema. LalinTree {
     ItemStatic { variant_unique, s [LalinTree.StaticItem], },
     ItemImport { variant_unique, imp [LalinTree.ImportItem], },
     ItemType { variant_unique, t [LalinTree.TypeDecl], },
-    ItemRegionFrag { variant_unique, frag [LalinOpen.RegionFrag], },
-    ItemExprFrag { variant_unique, frag [LalinOpen.ExprFrag], },
-    ItemUseTypeDeclSlot { variant_unique, slot [LalinOpen.TypeDeclSlot], },
-    ItemUseItemsSlot { variant_unique, slot [LalinOpen.ItemsSlot], },
-    ItemUseModule {
-      variant_unique,
-      use_id [str],
-      field. module [LalinTree.Module],
-      fills [many [LalinOpen.SlotBinding]],
-    },
-    ItemUseModuleSlot {
-      variant_unique,
-      use_id [str],
-      slot [LalinOpen.ModuleSlot],
-      fills [many [LalinOpen.SlotBinding]],
-    },
+    ItemRegion { variant_unique, region [LalinTree.Region], },
     ItemData { variant_unique, data [LalinTree.DataItem], },
   },
   product. DataItem {
@@ -784,11 +705,6 @@ return schema. LalinTree {
   sum. ModuleHeader {
     ModuleSurface,
     ModuleTyped { variant_unique, module_name [str], },
-    ModuleOpen {
-      variant_unique,
-      field. name [LalinOpen.ModuleNameFacet],
-      open [LalinOpen.OpenSet],
-    },
     ModuleSem { variant_unique, module_name [str], },
     ModuleCode { variant_unique, module_name [str], },
   },
@@ -874,7 +790,6 @@ return schema. LalinTree {
     env [LalinBind.Env],
     return_ty [LalinType.Type],
     yield [LalinTree.TypeYieldMode],
-    region_frags [many [LalinOpen.RegionFrag]],
   },
   sum. TypeViewResult {
     TypeViewResult {

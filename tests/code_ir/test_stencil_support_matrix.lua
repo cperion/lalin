@@ -76,7 +76,6 @@ assert(Matrix.materializers.copy_patch_mc.fallback == "copy_patch_bc", "copy_pat
 assert(Matrix.materializers.emitted_bank.policy == Matrix.coverage_policy.deployment_bank, "emitted bank must be the deployment coverage probe")
 
 local known_bc_producer_gaps = {
-    StencilProduceRangeND = true,
     StencilProduceWindowND = true,
     StencilProduceTiledND = true,
 }

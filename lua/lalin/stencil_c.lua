@@ -108,16 +108,16 @@ local function bind_context(T)
     end
 
     local function loop_i(stride, body)
-        return C.for_ { C.decl. i[C.i32](cn("start")), C.lt(cn("i"), cn("stop")), C.assign(cn("i"), cn("i") + (tonumber(stride) or 1)) } {
+        return C.for_ { C.decl. i[C.i32](cn("start")), C.lt (cn("i"))(cn("stop")), C.assign(cn("i"), cn("i") + (tonumber(stride) or 1)) } {
             _(body),
         }
     end
 
     local function reverse_loop_i(stride, body_for_index)
         stride = tonumber(stride) or 1
-        return C.if_(C.gt(cn("stop"), cn("start"))) {
+        return C.if_(C.gt (cn("stop"))(cn("start"))) {
             C.decl. __ml_last[C.i32](cn("start") + (((cn("stop") - cn("start")) - 1) / stride) * stride),
-            C.for_ { C.decl. i[C.i32](cn("__ml_last")), C.ge(cn("i"), cn("start")), C.assign(cn("i"), cn("i") - stride) } {
+            C.for_ { C.decl. i[C.i32](cn("__ml_last")), C.ge (cn("i"))(cn("start")), C.assign(cn("i"), cn("i") - stride) } {
                 _(body_for_index(cn("i"))),
             },
         }
@@ -125,7 +125,7 @@ local function bind_context(T)
 
     local function descending_loop_i(stride, body_for_index)
         stride = tonumber(stride) or 1
-        return C.for_ { C.decl. i[C.i32](cn("start")), C.gt(cn("i"), cn("stop")), C.assign(cn("i"), cn("i") - stride) } {
+        return C.for_ { C.decl. i[C.i32](cn("start")), C.gt (cn("i"))(cn("stop")), C.assign(cn("i"), cn("i") - stride) } {
             _(body_for_index(cn("i"))),
         }
     end
@@ -209,7 +209,7 @@ local function bind_context(T)
             return {
                 C.for_ {
                     C.decl[iv][C.i32](cn(axis.start_param)),
-                    C.lt(cn(iv), cn(axis.stop_param)),
+                    C.lt (cn(iv))(cn(axis.stop_param)),
                     C.assign(cn(iv), cn(iv) + (tonumber(axis.step) or 1))
                 } {
                     _(nest(axis_index + 1)),
@@ -239,15 +239,11 @@ local function bind_context(T)
                     local tile_end = cn("__ml_tile_end" .. tostring(point_axis))
                     return {
                         C.decl[LLBL.N["__ml_tile_end" .. tostring(point_axis)]][C.i32](
-                            C.select(
-                                C.lt(tile_iv + tonumber(producer.tile_sizes[point_axis] or 1), cn(axis.stop_param)),
-                                tile_iv + tonumber(producer.tile_sizes[point_axis] or 1),
-                                cn(axis.stop_param)
-                            )
+                            C.select (C.lt (tile_iv + tonumber(producer.tile_sizes[point_axis] or 1))(cn(axis.stop_param)))(tile_iv + tonumber(producer.tile_sizes[point_axis] or 1))(cn(axis.stop_param))
                         ),
                         C.for_ {
                             C.decl[iv][C.i32](tile_iv),
-                            C.lt(cn(iv), tile_end),
+                            C.lt (cn(iv))(tile_end),
                             C.assign(cn(iv), cn(iv) + (tonumber(axis.step) or 1))
                         } {
                             _(point_nest(point_axis + 1)),
@@ -263,7 +259,7 @@ local function bind_context(T)
             return {
                 C.for_ {
                     C.decl[iv][C.i32](cn(axis.start_param)),
-                    C.lt(cn(iv), cn(axis.stop_param)),
+                    C.lt (cn(iv))(cn(axis.stop_param)),
                     C.assign(cn(iv), cn(iv) + tile_step)
                 } {
                     _(tile_nest(axis_index + 1)),
@@ -299,7 +295,7 @@ local function bind_context(T)
         local iv = LLBL.N["__ml_axis" .. tostring(axis_index)]
         return C.for_ {
             C.decl[iv][C.i32](cn(axis.start_param)),
-            C.lt(cn(iv), cn(axis.stop_param)),
+            C.lt (cn(iv))(cn(axis.stop_param)),
             C.assign(cn(iv), cn(iv) + (tonumber(axis.step) or 1))
         } {
             _(body),
@@ -370,7 +366,7 @@ local function bind_context(T)
         return {
             C.for_ {
                 C.decl[iv][C.i32](-(tonumber(window.before) or 0)),
-                C.le(iv_expr, tonumber(window.after) or 0),
+                C.le (iv_expr)(tonumber(window.after) or 0),
                 C.assign(iv_expr, iv_expr + 1)
             } {
                 _(nest_window_offset_loops(producer, axes, body_fn, setmetatable({ [axis_index] = iv_expr }, { __index = offsets }), pos + 1)),
@@ -670,32 +666,32 @@ local function bind_context(T)
     end
 
     local function c_compare_expr(cmp, lhs, rhs)
-        if cmp == Core.CmpEq then return C.eq(lhs, rhs) end
-        if cmp == Core.CmpNe then return C.ne(lhs, rhs) end
-        if cmp == Core.CmpLt then return C.lt(lhs, rhs) end
-        if cmp == Core.CmpLe then return C.le(lhs, rhs) end
-        if cmp == Core.CmpGt then return C.gt(lhs, rhs) end
-        if cmp == Core.CmpGe then return C.ge(lhs, rhs) end
+        if cmp == Core.CmpEq then return C.eq (lhs)(rhs) end
+        if cmp == Core.CmpNe then return C.ne (lhs)(rhs) end
+        if cmp == Core.CmpLt then return C.lt (lhs)(rhs) end
+        if cmp == Core.CmpLe then return C.le (lhs)(rhs) end
+        if cmp == Core.CmpGt then return C.gt (lhs)(rhs) end
+        if cmp == Core.CmpGe then return C.ge (lhs)(rhs) end
         error("stencil_c: unsupported compare op " .. cmp_name(cmp), 3)
     end
 
     local function all_c_node(terms)
         if #terms == 0 then return 1 end
         local out = terms[1]
-        for i = 2, #terms do out = C.land(out, terms[i]) end
+        for i = 2, #terms do out = C.land (out)(terms[i]) end
         return out
     end
 
     local function any_c_node(terms)
         if #terms == 0 then return 0 end
         local out = terms[1]
-        for i = 2, #terms do out = C.lor(out, terms[i]) end
+        for i = 2, #terms do out = C.lor (out)(terms[i]) end
         return out
     end
 
     local function c_predicate_expr(pred, value)
         local cls = pvm.classof(pred)
-        if pred == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return C.ne(value, 0) end
+        if pred == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return C.ne (value)(0) end
         if cls == Stencil.StencilPredCompareConst then
             return c_compare_expr(
                 pred.cmp,
@@ -705,10 +701,7 @@ local function bind_context(T)
         end
         if cls == Stencil.StencilPredRange then
             local lhs = c_cast(pred.operand_ty, value)
-            return C.land(
-                c_compare_expr(pred.lower_cmp, lhs, c_cast(pred.operand_ty, const_literal_value(pred.lower))),
-                c_compare_expr(pred.upper_cmp, lhs, c_cast(pred.operand_ty, const_literal_value(pred.upper)))
-            )
+            return C.land (c_compare_expr(pred.lower_cmp, lhs, c_cast(pred.operand_ty, const_literal_value(pred.lower))))(c_compare_expr(pred.upper_cmp, lhs, c_cast(pred.operand_ty, const_literal_value(pred.upper))))
         end
         if cls == Stencil.StencilPredAnd then
             local terms = {}
@@ -743,9 +736,9 @@ local function bind_context(T)
         local window = producer.windows[axis_index]
         local step = tonumber(axis.step) or 1
         local raw = base_coord + offset * step
-        local in_bounds = C.land(C.ge(raw, cn(axis.start_param)), C.lt(raw, cn(axis.stop_param)))
+        local in_bounds = C.land (C.ge (raw)(cn(axis.start_param)))(C.lt (raw)(cn(axis.stop_param)))
         if window.boundary == Stencil.StencilWindowBoundaryClamp then
-            return C.select(C.lt(raw, cn(axis.start_param)), cn(axis.start_param), C.select(C.ge(raw, cn(axis.stop_param)), axis_last_coord(axis), raw)), nil
+            return C.select (C.lt (raw)(cn(axis.start_param)))(cn(axis.start_param))(C.select (C.ge (raw)(cn(axis.stop_param)))(axis_last_coord(axis))(raw)), nil
         end
         if window.boundary == Stencil.StencilWindowBoundaryWrap then
             local extent = cn("__ml_extent" .. tostring(axis_index))
@@ -780,7 +773,7 @@ local function bind_context(T)
             has_zero = has_zero or window.boundary == Stencil.StencilWindowBoundaryZero
             has_reject = has_reject or window.boundary == Stencil.StencilWindowBoundaryReject
         end
-        if has_zero then return C.select(in_bounds, value, c_cast(access.ty, 0)) end
+        if has_zero then return C.select (in_bounds)(value)(c_cast(access.ty, 0)) end
         if has_reject then
             return C.stmt_expr {
                 C.if_(C.not_(in_bounds)) {
@@ -801,13 +794,13 @@ local function bind_context(T)
         local body = {
             C.decl. __ml_a[c_type_node(result_ty)](c_cast(result_ty, lhs)),
             C.decl. __ml_b[c_type_node(result_ty)](c_cast(result_ty, rhs)),
-            C.if_(C.eq(b, 0)) {
+            C.if_(C.eq (b)(0)) {
                 C.expr(C.builtin.trap {}),
             },
         }
         if is_signed_int(result_ty) then
-            local min_value = c_cast(result_ty, C.shl(C.cast[c_unsigned_type_node(result_ty)](1), (tonumber(result_ty.bits) or 32) - 1))
-            body[#body + 1] = C.if_(C.land(C.eq(b, c_cast(result_ty, -1)), C.eq(a, min_value))) {
+            local min_value = c_cast(result_ty, C.shl (C.cast[c_unsigned_type_node(result_ty)](1))((tonumber(result_ty.bits) or 32) - 1))
+            body[#body + 1] = C.if_(C.land (C.eq (b)(c_cast(result_ty, -1)))(C.eq (a)(min_value))) {
                 C.expr(C.builtin.trap {}),
             }
         end
@@ -821,24 +814,24 @@ local function bind_context(T)
         local a, s, x, mask = cn("__ml_a"), cn("__ml_s"), cn("__ml_x"), cn("__ml_mask")
         local body = {
             C.decl. __ml_a[c_type_node(result_ty)](c_cast(result_ty, lhs)),
-            C.decl. __ml_s[C.uint](C.band(C.cast[C.uint](rhs), bits - 1)),
+            C.decl. __ml_s[C.uint](C.band (C.cast[C.uint](rhs))(bits - 1)),
         }
         if op == Stencil.StencilBinaryShl then
-            body[#body + 1] = C.expr(c_cast(result_ty, C.shl(c_unsigned_cast(result_ty, a), s)))
+            body[#body + 1] = C.expr(c_cast(result_ty, C.shl (c_unsigned_cast(result_ty, a))(s)))
             return C.stmt_expr(body)
         end
         if op == Stencil.StencilBinaryLShr or not is_signed_int(result_ty) then
-            body[#body + 1] = C.expr(c_cast(result_ty, C.shr(c_unsigned_cast(result_ty, a), s)))
+            body[#body + 1] = C.expr(c_cast(result_ty, C.shr (c_unsigned_cast(result_ty, a))(s)))
             return C.stmt_expr(body)
         end
         body[#body + 1] = C.decl. __ml_mask[c_unsigned_type_node(result_ty)](C.bnot(C.cast[c_unsigned_type_node(result_ty)](0)))
-        body[#body + 1] = C.decl. __ml_x[c_unsigned_type_node(result_ty)](C.band(c_unsigned_cast(result_ty, a), mask))
-        body[#body + 1] = C.if_(C.land(C.ne(s, 0), C.lt(a, 0))) {
-            C.assign(x, C.bor(C.shr(x, s), C.shl(mask, bits - s))),
+        body[#body + 1] = C.decl. __ml_x[c_unsigned_type_node(result_ty)](C.band (c_unsigned_cast(result_ty, a))(mask))
+        body[#body + 1] = C.if_(C.land (C.ne (s)(0))(C.lt (a)(0))) {
+            C.assign(x, C.bor (C.shr (x)(s))(C.shl (mask)(bits - s))),
         } {
-            C.assign(x, C.shr(x, s)),
+            C.assign(x, C.shr (x)(s)),
         }
-        body[#body + 1] = C.expr(c_cast(result_ty, C.band(x, mask)))
+        body[#body + 1] = C.expr(c_cast(result_ty, C.band (x)(mask)))
         return C.stmt_expr(body)
     end
 
@@ -847,12 +840,12 @@ local function bind_context(T)
         if op == Stencil.StencilBinarySub then return c_cast(result_ty, c_unsigned_cast(result_ty, lhs) - c_unsigned_cast(result_ty, rhs)) end
         if op == Stencil.StencilBinaryMul then return c_cast(result_ty, c_unsigned_cast(result_ty, lhs) * c_unsigned_cast(result_ty, rhs)) end
         if op == Stencil.StencilBinaryDiv or op == Stencil.StencilBinaryMod then return c_divrem_expr(op, lhs, rhs, result_ty) end
-        if op == Stencil.StencilBinaryAnd then return c_cast(result_ty, C.band(c_unsigned_cast(result_ty, lhs), c_unsigned_cast(result_ty, rhs))) end
-        if op == Stencil.StencilBinaryOr then return c_cast(result_ty, C.bor(c_unsigned_cast(result_ty, lhs), c_unsigned_cast(result_ty, rhs))) end
-        if op == Stencil.StencilBinaryXor then return c_cast(result_ty, C.bxor(c_unsigned_cast(result_ty, lhs), c_unsigned_cast(result_ty, rhs))) end
+        if op == Stencil.StencilBinaryAnd then return c_cast(result_ty, C.band (c_unsigned_cast(result_ty, lhs))(c_unsigned_cast(result_ty, rhs))) end
+        if op == Stencil.StencilBinaryOr then return c_cast(result_ty, C.bor (c_unsigned_cast(result_ty, lhs))(c_unsigned_cast(result_ty, rhs))) end
+        if op == Stencil.StencilBinaryXor then return c_cast(result_ty, C.bxor (c_unsigned_cast(result_ty, lhs))(c_unsigned_cast(result_ty, rhs))) end
         if op == Stencil.StencilBinaryShl or op == Stencil.StencilBinaryLShr or op == Stencil.StencilBinaryAShr then return c_shift_expr(op, lhs, rhs, result_ty) end
-        if op == Stencil.StencilBinaryMin then return C.select(C.lt(lhs, rhs), lhs, rhs) end
-        if op == Stencil.StencilBinaryMax then return C.select(C.gt(lhs, rhs), lhs, rhs) end
+        if op == Stencil.StencilBinaryMin then return C.select (C.lt (lhs)(rhs))(lhs)(rhs) end
+        if op == Stencil.StencilBinaryMax then return C.select (C.gt (lhs)(rhs))(lhs)(rhs) end
         error("stencil_c: unsupported binary op " .. binary_name(op), 3)
     end
 
@@ -911,11 +904,7 @@ local function bind_context(T)
         if cls == Stencil.StencilApplySelect then
             return c_cast(
                 expr.result_ty,
-                C.select(
-                    c_predicate_expr(expr.pred, c_apply_expr(expr.cond, desc, access_by_name, index, ctx)),
-                    c_apply_expr(expr.then_expr, desc, access_by_name, index, ctx),
-                    c_apply_expr(expr.else_expr, desc, access_by_name, index, ctx)
-                )
+                C.select (c_predicate_expr(expr.pred, c_apply_expr(expr.cond, desc, access_by_name, index, ctx)))(c_apply_expr(expr.then_expr, desc, access_by_name, index, ctx))(c_apply_expr(expr.else_expr, desc, access_by_name, index, ctx))
             )
         end
         error("stencil_c: unsupported generic apply expression", 3)
@@ -924,11 +913,11 @@ local function bind_context(T)
     local function c_reduction_update_expr(kind, acc, item, ty)
         if kind == Value.ReductionAdd then return c_cast(ty, c_unsigned_cast(ty, acc) + c_unsigned_cast(ty, item)) end
         if kind == Value.ReductionMul then return c_cast(ty, c_unsigned_cast(ty, acc) * c_unsigned_cast(ty, item)) end
-        if kind == Value.ReductionAnd then return c_cast(ty, C.band(c_unsigned_cast(ty, acc), c_unsigned_cast(ty, item))) end
-        if kind == Value.ReductionOr then return c_cast(ty, C.bor(c_unsigned_cast(ty, acc), c_unsigned_cast(ty, item))) end
-        if kind == Value.ReductionXor then return c_cast(ty, C.bxor(c_unsigned_cast(ty, acc), c_unsigned_cast(ty, item))) end
-        if kind == Value.ReductionMin then return C.select(C.lt(item, acc), item, acc) end
-        if kind == Value.ReductionMax then return C.select(C.gt(item, acc), item, acc) end
+        if kind == Value.ReductionAnd then return c_cast(ty, C.band (c_unsigned_cast(ty, acc))(c_unsigned_cast(ty, item))) end
+        if kind == Value.ReductionOr then return c_cast(ty, C.bor (c_unsigned_cast(ty, acc))(c_unsigned_cast(ty, item))) end
+        if kind == Value.ReductionXor then return c_cast(ty, C.bxor (c_unsigned_cast(ty, acc))(c_unsigned_cast(ty, item))) end
+        if kind == Value.ReductionMin then return C.select (C.lt (item)(acc))(item)(acc) end
+        if kind == Value.ReductionMax then return C.select (C.gt (item)(acc))(item)(acc) end
         error("stencil_c: unsupported reduction " .. reduction_name(kind), 3)
     end
 
@@ -984,7 +973,7 @@ local function bind_context(T)
             return C.fn[name] { _(param_fragment(params)) } [C.void] {
                 _(assume_aligned_stmts(artifact, pointer_access_names(artifact))),
                 _(copy_semantics == Stencil.StencilCopyMayOverlapBackward and backward_body or {
-                    C.if_(C.lt(cn(dst_name), cn(copy_src_name))) {
+                    C.if_(C.lt (cn(dst_name))(cn(copy_src_name))) {
                         _(forward_body),
                     } {
                         _(backward_body),
@@ -1075,7 +1064,7 @@ local function bind_context(T)
                 local prefix = {}
                 if #bounds > 0 then
                     local in_bounds = all_c_node(bounds)
-                    if has_zero then item = C.select(in_bounds, item, c_cast(shape.result_ty, 0)) end
+                    if has_zero then item = C.select (in_bounds)(item)(c_cast(shape.result_ty, 0)) end
                     if has_reject then
                         prefix[#prefix + 1] = C.if_(C.not_(in_bounds)) {
                             C.expr(C.builtin.trap {}),
@@ -1263,7 +1252,7 @@ local function bind_context(T)
             _(assume_aligned_stmts(artifact, pointer_access_names(artifact))),
             _(producer_loop(shape.producer, function(i, ctx)
                 return {
-                    C.if_(C.ne(c_apply_expr(shape.expr, desc, access_by_name, i, ctx), 0)) {
+                    C.if_(C.ne (c_apply_expr(shape.expr, desc, access_by_name, i, ctx))(0)) {
                         C.return_(c_cast(shape.result_ty, i)),
                     },
                 }
@@ -1302,7 +1291,7 @@ local function bind_context(T)
             C.decl. out[C.i32](out_init),
             _(producer_loop(shape.producer, function(i, ctx)
                 return {
-                    C.if_(C.ne(c_apply_expr(shape.expr, desc, access_by_name, i, ctx), 0)) {
+                    C.if_(C.ne (c_apply_expr(shape.expr, desc, access_by_name, i, ctx))(0)) {
                         C.assign(access_c_expr(dst_access, dst_name, cn("out"), access_by_name), access_c_expr(src_access, "xs", i, access_by_name)),
                         C.assign(cn("out"), cn("out") + 1),
                     },
@@ -1311,7 +1300,7 @@ local function bind_context(T)
             C.decl. split[C.i32](cn("out")),
             _(producer_loop(shape.producer, function(i, ctx)
                 return {
-                    C.if_(C.eq(c_apply_expr(shape.expr, desc, access_by_name, i, ctx), 0)) {
+                    C.if_(C.eq (c_apply_expr(shape.expr, desc, access_by_name, i, ctx))(0)) {
                         C.assign(access_c_expr(dst_access, dst_name, cn("out"), access_by_name), access_c_expr(src_access, "xs", i, access_by_name)),
                         C.assign(cn("out"), cn("out") + 1),
                     },

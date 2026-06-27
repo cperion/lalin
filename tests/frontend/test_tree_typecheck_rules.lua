@@ -9,7 +9,6 @@ local Core = T.LalinCore
 local Tr = T.LalinTree
 local Ty = T.LalinType
 local Bind = T.LalinBind
-local Open = T.LalinOpen
 local Rules = require("lalin.tree_typecheck_rules")(T)
 
 local i32 = Ty.TScalar(Core.ScalarI32)
@@ -62,9 +61,7 @@ assert_select("select_place_typecheck", Tr.PlaceDeref(Tr.PlaceSurface, expr), "p
 assert_select("select_control_stmt_region_typecheck", Tr.ControlStmtRegion("r", Tr.EntryControlBlock(Tr.BlockLabel("entry"), {}, {}), {}), "control_stmt_region", "stmt_region")
 assert_select("select_control_expr_region_typecheck", Tr.ControlExprRegion("r", i32, Tr.EntryControlBlock(Tr.BlockLabel("entry"), {}, {}), {}), "control_expr_region", "expr_region")
 assert_select("select_func_typecheck", Tr.FuncLocal("f", {}, i32, {}), "func", "local")
-assert_select("select_func_typecheck", Tr.FuncOpen(Core.FuncSym("f", "f"), Core.VisibilityLocal, {}, Open.OpenSet({}, {}, {}, {}), i32, {}), "func", "open")
 assert_select("select_item_typecheck", Tr.ItemFunc(Tr.FuncLocal("f", {}, i32, {})), "item", "func")
-assert_select("select_item_typecheck", Tr.ItemUseItemsSlot(Open.ItemsSlot("items", "items")), "item", "use_items_slot")
 assert_select("select_module_typecheck", Tr.Module(Tr.ModuleSurface, {}), "module", "module")
 
 io.write("lalin tree_typecheck_rules ok\n")

@@ -309,7 +309,6 @@ local function bind_context(T)
         if cls == Tr.ExprLoad or cls == Tr.ExprAtomicLoad then return pvm.with(expr, { addr = rewrite_expr(expr.addr) }) end
         if cls == Tr.ExprAtomicRmw then return pvm.with(expr, { addr = rewrite_expr(expr.addr), value = rewrite_expr(expr.value) }) end
         if cls == Tr.ExprAtomicCas then return pvm.with(expr, { addr = rewrite_expr(expr.addr), expected = rewrite_expr(expr.expected), replacement = rewrite_expr(expr.replacement) }) end
-        if cls == Tr.ExprUseExprFrag then return pvm.with(expr, { args = rewrite_exprs(expr.args) }) end
         return expr
     end
 
@@ -348,7 +347,6 @@ local function bind_context(T)
         if cls == Tr.StmtYieldValue then return pvm.with(stmt, { value = rewrite_expr(stmt.value) }) end
         if cls == Tr.StmtReturnValue then return pvm.with(stmt, { value = rewrite_expr(stmt.value) }) end
         if cls == Tr.StmtControl then return pvm.with(stmt, { region = rewrite_control_stmt_region(stmt.region) }) end
-        if cls == Tr.StmtUseRegionFrag then return pvm.with(stmt, { args = rewrite_exprs(stmt.args) }) end
         return stmt
     end
 
@@ -356,7 +354,6 @@ local function bind_context(T)
         local old_owner = state.owner
         local cls = pvm.classof(func)
         if cls == Tr.FuncLocal or cls == Tr.FuncExport or cls == Tr.FuncLocalContract or cls == Tr.FuncExportContract then state.owner = func.name end
-        if cls == Tr.FuncOpen then state.owner = func.sym.name end
         push_scope(params_scope(func.params or {}))
         local out = pvm.with(func, { body = rewrite_stmts(func.body) })
         pop_scope()
@@ -369,7 +366,6 @@ local function bind_context(T)
         if cls == Tr.ItemFunc then return pvm.with(item, { func = rewrite_func(item.func) }) end
         if cls == Tr.ItemConst then return pvm.with(item, { c = pvm.with(item.c, { value = rewrite_expr(item.c.value) }) }) end
         if cls == Tr.ItemStatic then return pvm.with(item, { s = pvm.with(item.s, { value = rewrite_expr(item.s.value) }) }) end
-        if cls == Tr.ItemUseModule then return pvm.with(item, { module = rewrite_module(item.module) }) end
         return item
     end
 
@@ -377,7 +373,6 @@ local function bind_context(T)
         local h = module.h
         local cls = pvm.classof(h)
         if cls == Tr.ModuleTyped or cls == Tr.ModuleSem or cls == Tr.ModuleCode then return h.module_name end
-        if cls == Tr.ModuleOpen and h.name ~= T.LalinOpen.ModuleNameOpen then return h.name.module_name end
         return ""
     end
 

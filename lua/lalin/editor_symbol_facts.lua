@@ -51,20 +51,14 @@ local function find_anchor(anchor_set, kind, label)
 end
 
 local function func_name(pvm, Tr, func)
-    local cls = schema.classof(func)
-    if cls == Tr.FuncOpen then return func.sym.name end
     return func.name
 end
 
 local function type_decl_name(pvm, Tr, decl)
-    local cls = schema.classof(decl)
-    if cls == Tr.TypeDeclOpenStruct or cls == Tr.TypeDeclOpenUnion then return decl.sym.name end
     return decl.name
 end
 
 local function const_name(pvm, Tr, item)
-    local cls = schema.classof(item)
-    if cls == Tr.ConstItemOpen or cls == Tr.StaticItemOpen then return item.sym.name end
     return item.name
 end
 
@@ -171,26 +165,6 @@ local function bind_context(T)
                     local name = type_decl_name(pvm, Tr, item.t)
                     local range = range_for(analysis, S.AnchorStructName, name)
                     emit("tree.type." .. name, ROOT, name, E.SymStruct, "type", range, range, E.SubjectTreeModule(analysis.parse.combined.module))
-                end
-            end
-
-            local region_ordinal = 0
-            for i = 1, #analysis.anchors.anchors do
-                local a = analysis.anchors.anchors[i]
-                if a.kind == S.AnchorRegionName then
-                    region_ordinal = region_ordinal + 1
-                    local frag = analysis.parse.combined.region_frags[region_ordinal]
-                    if frag then emit("open.region." .. tostring(frag), ROOT, a.label, E.SymFunction, "region fragment", a.range, a.range, E.SubjectRegionFrag(frag)) end
-                end
-            end
-
-            local expr_ordinal = 0
-            for i = 1, #analysis.anchors.anchors do
-                local a = analysis.anchors.anchors[i]
-                if a.kind == S.AnchorExprName then
-                    expr_ordinal = expr_ordinal + 1
-                    local frag = analysis.parse.combined.expr_frags[expr_ordinal]
-                    if frag then emit("open.expr." .. tostring(frag), ROOT, a.label, E.SymFunction, "expr fragment", a.range, a.range, E.SubjectExprFrag(frag)) end
                 end
             end
 

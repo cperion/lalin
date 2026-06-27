@@ -49,6 +49,8 @@ assert(Mini.compiled.spreads.items ~= nil, "compiled runtime should include role
 local session = llbl.use(Mini, { scope = "env" })
 local env = session.env
 assert(rawget(env.decl, "backend") == "compiled", "dialect environment should install compiled head machines")
+assert(llbl.is_curried(env.lt) and llbl.is_curried(env.ge), "default comparison exports should be curried")
+assert(llbl.is_curried(env.land) and llbl.is_curried(env.lor), "default predicate composition exports should be curried")
 local out = env.decl. demo { "a", "b" }
 assert(out.tag == "decl", "compiled role path should preserve head emission")
 assert(out.name == "demo", "compiled role path should normalize name slots")
@@ -89,6 +91,21 @@ assert(#regioned == 2 and regioned[1].text == "s1" and regioned[2].text == "s2",
 local spread_regioned = {}
 llbl.gps.each(function(item) spread_regioned[#spread_regioned + 1] = item end, Mini.compiled.spreads.items.region({ dialect = Mini }, llbl._(fragment)))
 assert(#spread_regioned == 2 and spread_regioned[1].text == "c" and spread_regioned[2].text == "d", "compiled spread region should emit fragment items")
+
+local function pred_node(op, a, b) return { op = op, a = a, b = b } end
+local gt = llbl.curried("test.gt", 2, function(a, b) return pred_node("gt", a, b) end)
+local lt = llbl.curried("test.lt", 2, function(a, b) return pred_node("lt", a, b) end)
+local both = llbl.curried("test.both", 2, function(a, b)
+    return llbl.curried("test.both.apply", 1, function(v)
+        return pred_node("and", a(v), b(v))
+    end)
+end)
+local between = both(gt(llbl._)(10))(lt(llbl._)(20))
+local pred = between("x")
+assert(pred.op == "and" and pred.a.a == "x" and pred.a.b == 10 and pred.b.a == "x" and pred.b.b == 20, "curried holes should support predicate composition")
+assert(llbl.describe(gt(llbl._)(10)).holes == true, "curried descriptions should report partial holes")
+local unary_ok = pcall(function() return gt(1, 2) end)
+assert(unary_ok == false, "curried forms should stay unary callable tables")
 
 local event_out = llbl.collect_head_events(env.decl, {
     llbl.event(llbl.channel.index_name, llbl.name("evented"), { action = "name", argc = 1 }),

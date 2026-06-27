@@ -17,7 +17,6 @@ local SCHEMA_MODULES = {
     "dasm",
     "link",
     "type",
-    "open",
     "bind",
     "sem",
     "tree",

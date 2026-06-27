@@ -68,8 +68,8 @@ local binding = language:resolve_symbol(sym)
 ```
 
 The binding says which language member exported the name, whether the source was
-generated, and whether the symbol is unresolved. Lalin, LLPVM, Llisle, and other
-dialects decide what that binding means semantically.
+generated, and whether the symbol is unresolved. Lalin, LLPVM, LalinSchema, and
+other dialects decide what that binding means semantically.
 
 The language audit records more than ownership. It records:
 
@@ -112,13 +112,6 @@ LLPVM owns low-level VM/task semantics:
 - bytecode images and borrowed buffers
 - worlds, tapes, machines, phases, tasks, and run records
 - process-shaped validation and inspection
-
-Llisle owns compiler rule semantics:
-
-- lowering relations
-- declared predicates and constructors
-- product-shaped patterns and sum alternatives
-- explicit rule bodies
 
 The reduction rule is strict: if two members can express the same semantic
 primitive, one member owns it and the other projects to it. Overlapping
@@ -249,7 +242,6 @@ lua/lalin/luajit_backend.lua LuaTrace/LuaJIT backend facade
 lua/lalin/copy_patch_luatrace.lua LuaTrace stencil lowering
 lua/lalin/copy_patch_bc.lua LuaJIT BC bank
 lua/llpvm/                   LLPVM language member
-lua/llisle/                  Llisle rule language
 lua/ui/                      UI kernel and widgets
 ```
 

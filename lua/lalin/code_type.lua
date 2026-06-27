@@ -263,8 +263,6 @@ local function bind_context(T)
             return Code.CodeTyImportedC(ty.id)
         elseif cls == Ty.TCFuncPtr then
             return Code.CodeTyImportedCFuncPtr(ty.sig)
-        elseif cls == Ty.TSlot then
-            error("code_type: open type slot cannot be projected to LalinCode", 2)
         end
         error("code_type: unsupported LalinType " .. class_name(ty), 2)
     end

@@ -312,16 +312,23 @@ E.builtin = setmetatable({}, {
         end
     end,
 })
-E.lt, E.le, E.gt, E.ge = function(a, b) return bin("<", a, b) end, function(a, b) return bin("<=", a, b) end, function(a, b) return bin(">", a, b) end, function(a, b) return bin(">=", a, b) end
-E.eq, E.ne = function(a, b) return bin("==", a, b) end, function(a, b) return bin("!=", a, b) end
-E.land, E.lor = function(a, b) return bin("&&", a, b) end, function(a, b) return bin("||", a, b) end
-E.band, E.bor, E.bxor = function(a, b) return bin("&", a, b) end, function(a, b) return bin("|", a, b) end, function(a, b) return bin("^", a, b) end
-E.shl, E.shr = function(a, b) return bin("<<", a, b) end, function(a, b) return bin(">>", a, b) end
-E.select = function(cond, then_value, else_value) return expr("select", { cond = to_expr(cond), then_value = to_expr(then_value), else_value = to_expr(else_value) }) end
-E.addr = function(v) return expr("un", { op = "&", value = to_expr(v) }) end
-E.deref = function(v) return expr("un", { op = "*", value = to_expr(v) }) end
-E.not_ = function(v) return expr("un", { op = "!", value = to_expr(v) }) end
-E.bnot = function(v) return expr("un", { op = "~", value = to_expr(v) }) end
+local function ccurried2(name, op)
+    return llbl.curried("c." .. name, 2, function(a, b) return bin(op, a, b) end)
+end
+local function ccurried1(name, op)
+    return llbl.curried("c." .. name, 1, function(v) return expr("un", { op = op, value = to_expr(v) }) end)
+end
+
+E.lt, E.le, E.gt, E.ge = ccurried2("lt", "<"), ccurried2("le", "<="), ccurried2("gt", ">"), ccurried2("ge", ">=")
+E.eq, E.ne = ccurried2("eq", "=="), ccurried2("ne", "!=")
+E.land, E.lor = ccurried2("land", "&&"), ccurried2("lor", "||")
+E.band, E.bor, E.bxor = ccurried2("band", "&"), ccurried2("bor", "|"), ccurried2("bxor", "^")
+E.shl, E.shr = ccurried2("shl", "<<"), ccurried2("shr", ">>")
+E.select = llbl.curried("c.select", 3, function(cond, then_value, else_value) return expr("select", { cond = to_expr(cond), then_value = to_expr(then_value), else_value = to_expr(else_value) }) end)
+E.addr = ccurried1("addr", "&")
+E.deref = ccurried1("deref", "*")
+E.not_ = ccurried1("not_", "!")
+E.bnot = ccurried1("bnot", "~")
 E.raw_expr = function(text) return expr("raw", { text = tostring(text) }) end
 E.raw_stmt = function(text) return stmt("raw", { text = tostring(text) }) end
 E.raw_decl = function(text) return decl("raw", { text = tostring(text) }) end
@@ -560,7 +567,7 @@ format_expr_doc = function(e, f)
     if e.kind == "null" then return d.text(e.ty and ("c.null [" .. llbl.render(format_type_doc(e.ty, f)) .. "]") or "nil") end
     if e.kind == "bin" then return d.group { format_expr_doc(e.lhs, f), " ", e.op, " ", format_expr_doc(e.rhs, f) } end
     if e.kind == "un" then return d.group { e.op, format_expr_doc(e.value, f) } end
-    if e.kind == "select" then return d.group { "c.select(", format_expr_doc(e.cond, f), ", ", format_expr_doc(e.then_value, f), ", ", format_expr_doc(e.else_value, f), ")" } end
+    if e.kind == "select" then return d.group { "c.select (", format_expr_doc(e.cond, f), ")(", format_expr_doc(e.then_value, f), ")(", format_expr_doc(e.else_value, f), ")" } end
     if e.kind == "index" then return d.group { format_expr_doc(e.base, f), "[", format_expr_doc(e.index, f), "]" } end
     if e.kind == "field" then return d.group { format_expr_doc(e.base, f), ".", e.field } end
     if e.kind == "cast" then return d.group { "c.cast [", format_type_doc(e.ty, f), "] (", format_expr_doc(e.value, f), ")" } end
@@ -689,7 +696,7 @@ function M.format_region(value, opts) return llbl.format_region(value, with_c_la
 function M.use(env)
     env = env or _G
     env.c = E
-    env._ = llbl.spread
+    env._ = llbl._
     local mt, old = getmetatable(env) or {}, getmetatable(env) and getmetatable(env).__index
     mt.__index = function(t, key)
         local v = E[key]

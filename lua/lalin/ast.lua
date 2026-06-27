@@ -34,8 +34,6 @@ local M = {}
 ---@alias lalin.ast.FieldInit LalinTree.FieldInit
 ---@alias lalin.ast.FuncContract LalinTree.FuncContract
 ---@alias lalin.ast.TypeDecl LalinTree.TypeDecl
----@alias lalin.ast.RegionFrag LalinOpen.RegionFrag
----@alias lalin.ast.ExprFrag LalinOpen.ExprFrag
 ---@alias lalin.ast.View LalinTree.View
 ---@alias lalin.ast.Domain LalinTree.Domain
 
@@ -295,14 +293,14 @@ local function install(api, T)
     function api.ptr(elem) return Ty.TPtr(as_type(elem, "ptr element type")) end
 
     ---Array type.
-    ---@param count number|LalinTree.Expr|LalinOpen.ExprSlot Constant count, source length expression, or open length slot.
+    ---@param count number|LalinTree.Expr Constant count or source length expression.
     ---@param elem lalin.ast.Type Element type.
     ---@return lalin.ast.Type
     function api.array(count, elem)
         local c
         if type(count) == "number" then c = Ty.ArrayLenConst(count)
         elseif is_a(Tr.Expr, count) then c = Ty.ArrayLenExpr(count)
-        else c = Ty.ArrayLenSlot(count) end
+        else error("array count expects a number or LalinTree.Expr", 2) end
         return Ty.TArray(c, as_type(elem, "array element type"))
     end
 
@@ -1062,8 +1060,7 @@ local function install(api, T)
         if is_a(Tr.StaticItem, v) then return Tr.ItemStatic(v) end
         if cls == Tr.ImportItem then return Tr.ItemImport(v) end
         if is_a(Tr.TypeDecl, v) then return Tr.ItemType(v) end
-        if is_a(api.T.LalinOpen.RegionFrag, v) then return Tr.ItemRegionFrag(v) end
-        if is_a(api.T.LalinOpen.ExprFrag, v) then return Tr.ItemExprFrag(v) end
+        if cls == Tr.Region then return Tr.ItemRegion(v) end
         error("item expects a LalinTree item payload", 2)
     end
 

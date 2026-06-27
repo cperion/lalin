@@ -11,7 +11,6 @@ local S = Switch(T)
 local CallD = Call(T)
 local C = T.LalinCore
 local Ty = T.LalinType
-local O = T.LalinOpen
 local B = T.LalinBind
 local Sem = T.LalinSem
 local Tr = T.LalinTree
@@ -48,11 +47,6 @@ local extern_binding = B.Binding(C.Id("puts"), "puts", fn_ty, B.BindingClassExte
 local extern_expr = Tr.ExprRef(Tr.ExprTyped(fn_ty), B.ValueRefBinding(extern_binding))
 local r2 = CallD.decide(extern_expr, fn_ty)
 assert_call_equal(r2, { kind = "extern", symbol = "puts", fn_ty = fn_ty })
-
-local import_binding = B.Binding(C.Id("imp"), "imp", fn_ty, B.BindingClassImport(O.ImportGlobalFunc("imp", "Other", "g", fn_ty)))
-local import_expr = Tr.ExprRef(Tr.ExprTyped(fn_ty), B.ValueRefBinding(import_binding))
-local r3 = CallD.decide(import_expr, fn_ty)
-assert_call_equal(r3, { kind = "direct", module_name = "Other", item_name = "g", fn_ty = fn_ty })
 
 local local_binding = B.Binding(C.Id("fp"), "fp", fn_ty, B.BindingClassLocalValue)
 local local_expr = Tr.ExprRef(Tr.ExprTyped(fn_ty), B.ValueRefBinding(local_binding))

@@ -111,7 +111,6 @@ lua/lalin/                   Lalin compiler, schemas, DSL, and backend
 lua/lalin/dsl/               authoring heads and namespace surface
 lua/lalin/schema/            ASDL/schema definitions
 lua/llpvm/                   low-level VM/task dialect member
-lua/llisle/                  lowering/rewrite rule dialect
 lua/ui/                      UI kernel and widgets
 tests/                       standalone LuaJIT tests
 benchmarks/                  measurement scripts

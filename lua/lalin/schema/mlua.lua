@@ -41,8 +41,6 @@ return schema. LalinMlua {
     island [LalinMlua.IslandText],
     field. decls [LalinHost.HostDeclSet],
     field. module [LalinTree.Module],
-    region_frags [many [LalinOpen.RegionFrag]],
-    expr_frags [many [LalinOpen.ExprFrag]],
     issues [many [LalinParse.ParseIssue]],
     anchors [LalinSource.AnchorSet],
   },
@@ -55,7 +53,6 @@ return schema. LalinMlua {
   product. DocumentAnalysis {
     parse [LalinMlua.DocumentParse],
     host [LalinHost.MluaHostPipelineResult],
-    open_report [LalinOpen.ValidationReport],
     type_issues [many [LalinTree.TypeIssue]],
     control_facts [many [LalinTree.ControlFact]],
     back_report [LalinBack.BackValidationReport],

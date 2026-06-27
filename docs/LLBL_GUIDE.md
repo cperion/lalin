@@ -66,6 +66,7 @@ shared mechanics       owned by llbl
   source origins and provenance
   diagnostics
   fragments and spread
+  curried unary forms and holes
   generic regions/GPS
   formatting document model
   language composition and export ownership
@@ -127,6 +128,8 @@ role        normalization rule for a semantic position
 slot        one staged head position
 head        staged constructor
 fragment    role-tagged reusable value
+curried     unary callable table with staged operands
+hole        placeholder operand for partial application
 origin      source/provenance handle
 diagnostic  structured failure report
 namespace   owned dialect surface
@@ -176,7 +179,7 @@ index:value      head [computed]
 call:none        ret ()
 call:value       ret (x)
 call:table       { ... }
-call:many        f(a, b, c)
+call:many        f(a, b, c), mostly for foreign/plain Lua APIs
 operator:concat  ..
 operator:choice  +
 operator:decorate *
@@ -184,7 +187,9 @@ env:lookup       unknown global as symbol
 ```
 
 Choose channels deliberately. Diagnostics are only as good as the slot/channel
-model.
+model. Public LLBL and member-dialect helpers should prefer unary calls. If a
+helper has several operands, expose it as a curried callable table and let each
+Lua call deliver one operand.
 
 ## Roles
 
@@ -257,6 +262,96 @@ Operators:
 `_(fragment)` is the preferred splice marker. `spread(fragment)` is the
 explicit spelling.
 
+## Curried Forms, Holes, And Loadstrings
+
+LLBL forms exported to user DSLs should normally be unary callable tables. This
+is not just style. It gives every form the same shape, keeps diagnostics local
+to one consumed operand, and gives Lua code a first-class way to partially apply
+object-language operations.
+
+When a form needs more than one operand, make it curried instead of accepting
+`call:many`:
+
+```lua
+set (place)(value)
+bounds (xs)(n)
+lt (i)(n)
+select (flag)(yes)(no)
+```
+
+For boolean composition, use callable names such as `land`, `lor`, `And`, and
+`Or`; raw `and` and `or` are Lua keywords and cannot be used as function-valued
+forms.
+
+The style rule is precise:
+
+```text
+form (first)(second)(third)
+```
+
+There is one visual break between the form and its operands. Following curried
+calls stay tight. This makes the operator stand apart without making
+two-operand forms longer than `form(a, b)`.
+
+The `_` value is deliberately dual-use:
+
+```lua
+_(fragment)        -- splice a fragment
+lt (_)(limit)      -- leave a curried operand hole
+```
+
+As a value, `_` marks a hole in a curried form. As a call, `_ (...)` is the
+short spelling for `spread(...)`. The same sentinel therefore covers the two
+places where Lua authoring needs an escape hatch:
+
+```lua
+fn. generated { _(params_fragment) } [i32] {
+  _(body_fragment),
+}
+
+local less_than_n = lt (_)(n)
+```
+
+This is especially powerful inside `loadstring`-authored DSL chunks. The chunk
+is still plain Lua, so it can build ordinary Lua functions around curried
+object-language predicates:
+
+```lua
+local positive = gt (_)(0)
+local small = lt (_)(10)
+
+local function both(a, b)
+  return function(x)
+    return land (a(x))(b(x))
+  end
+end
+
+local in_range = both(positive, small)
+
+when (in_range(x)) {
+  ret (x),
+}
+```
+
+`positive` and `small` are not syntax trees waiting for a special predicate
+engine. They are Lua values that still know how to consume their missing
+operand. `both` is also just Lua: it receives two predicate-like values and
+returns a predicate-like closure. The final `in_range(x)` call emits the actual
+object-language boolean expression.
+
+This is the useful pattern:
+
+```text
+curried object-language form
+  + `_` holes
+  + ordinary Lua closures
+  -> reusable predicates, contracts, and partial evaluators
+```
+
+Dialect authors should lean into this for comparisons, boolean composition,
+contracts, statement-like helpers, and constructors. Avoid adding a new special
+composition surface until ordinary curried forms and Lua closures are not enough.
+
 ## Namespaces And Families
 
 A namespace is a Lua table-shaped language surface with semantic ownership
@@ -266,7 +361,7 @@ metadata. It is not just a conflict-avoidance trick.
 lln.fn. add ...
 schema.product. Pair ...
 llpvm.task. compile ...
-llisle.rule. lower ...
+region. pull ...
 ```
 
 Language zones use callable namespaces:
@@ -410,6 +505,8 @@ Before a language is complete, answer:
 - Which heads are thin constructors over those roles?
 - Which namespace owns each semantic primitive?
 - Which reusable pieces are fragments?
+- Which multi-operand helpers are curried forms, and where can `_` holes improve
+  composition?
 - Which long operations are process/region-shaped?
 - Which materializers are explicit?
 - How are origins preserved?

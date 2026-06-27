@@ -66,11 +66,13 @@ local function bind_context(T)
         if kind == "gather" then return StencilArtifactPlan.gather_array_artifact(info) end
         if kind == "scatter" then return StencilArtifactPlan.scatter_array_artifact(info) end
         if kind == "scatter_reduce" then return StencilArtifactPlan.scatter_reduce_n_artifact(reduction, plan, info) end
+        if kind == "apply_n" then return StencilArtifactPlan.apply_n_artifact(info) end
         if kind == "in_place_map" then return StencilArtifactPlan.in_place_map_array_artifact(op, info) end
         if kind == "scan" then return StencilArtifactPlan.scan_array_artifact(reduction, plan, info) end
         if kind == "find" then return StencilArtifactPlan.find_array_artifact(op, info) end
         if kind == "partition" then return StencilArtifactPlan.partition_array_artifact(op, info) end
         if kind == "reduce" then return StencilArtifactPlan.reduce_array_artifact(reduction, plan, info) end
+        if kind == "reduce_n" then return StencilArtifactPlan.reduce_n_artifact(reduction, plan, info) end
         if kind == "count" then return StencilArtifactPlan.count_array_artifact(op, info) end
         if kind == "map_reduce" then
             return StencilArtifactPlan.reduce_n_artifact(reduction, plan, {

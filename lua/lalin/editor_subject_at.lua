@@ -93,7 +93,7 @@ local function bind_context(T)
             for i = 1, #(module and module.items or {}) do
                 local item = module.items[i]
                 if schema.classof(item) == Tr.ItemFunc then
-                    local name = schema.classof(item.func) == Tr.FuncOpen and item.func.sym.name or item.func.name
+                    local name = item.func.name
                     if name == label or name == normalized then return item.func end
                 end
             end
@@ -114,7 +114,7 @@ local function bind_context(T)
             for i = 1, #(module and module.items or {}) do
                 local item = module.items[i]
                 if schema.classof(item) == Tr.ItemExtern then
-                    local name = schema.classof(item.func) == Tr.ExternFuncOpen and item.func.sym.name or item.func.name
+                    local name = item.func.name
                     if name == label or name == normalized then return item.func end
                 end
             end
@@ -139,14 +139,6 @@ local function bind_context(T)
             end
         end
         return nil
-    end
-
-    local function find_region_frag(analysis, label)
-        return fragment_for_label(analysis, S.AnchorRegionName, analysis.parse.combined.region_frags, label)
-    end
-
-    local function find_expr_frag(analysis, label)
-        return fragment_for_label(analysis, S.AnchorExprName, analysis.parse.combined.expr_frags, label)
     end
 
     local function diagnostic_at(analysis, offset)
@@ -247,10 +239,6 @@ local function bind_context(T)
         elseif anchor.kind == S.AnchorFunctionName or anchor.kind == S.AnchorMethodName or anchor.kind == S.AnchorFunctionUse then
             local ac = find_accessor(analysis, anchor.label)
             if ac then return E.SubjectHostAccessor(ac) end
-            local region_frag = find_region_frag(analysis, anchor.label)
-            if region_frag then return E.SubjectRegionFrag(region_frag) end
-            local expr_frag = find_expr_frag(analysis, anchor.label)
-            if expr_frag then return E.SubjectExprFrag(expr_frag) end
             local fn = find_func(analysis, anchor.label)
             if fn then return E.SubjectTreeFunc(fn) end
             local ex = find_extern(analysis, anchor.label)
@@ -259,12 +247,6 @@ local function bind_context(T)
                 return E.SubjectBuiltin("function " .. anchor.label)
             end
             return E.SubjectMissing("unresolved function " .. anchor.label)
-        elseif anchor.kind == S.AnchorRegionName then
-            local frag = find_region_frag(analysis, anchor.label)
-            if frag then return E.SubjectRegionFrag(frag) end
-        elseif anchor.kind == S.AnchorExprName then
-            local frag = find_expr_frag(analysis, anchor.label)
-            if frag then return E.SubjectExprFrag(frag) end
         elseif anchor.kind == S.AnchorParamName or anchor.kind == S.AnchorLocalName then
             return fact_subject_for_anchor(analysis, anchor, function(candidate)
                 return schema.classof(candidate) == E.SubjectBinding

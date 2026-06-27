@@ -58,7 +58,6 @@ local function bind_context(T)
     local Pm = T.LalinParse
     local Mlua = T.LalinMlua
     local H = T.LalinHost
-    local O = T.LalinOpen
     local Tr = T.LalinTree
     local B = T.LalinBack
     local PositionIndex = require("lalin.source_position_index")(T)
@@ -140,22 +139,10 @@ local function bind_context(T)
         add_dot_head_anchors(out, index, text, "struct", S.AnchorStructName)
         add_dot_head_anchors(out, index, text, "union", S.AnchorStructName)
         add_dot_head_anchors(out, index, text, "region", S.AnchorRegionName)
-        add_dot_head_anchors(out, index, text, "expr_frag", S.AnchorExprName)
         add_dot_head_anchors(out, index, text, "entry", S.AnchorContinuationName)
         add_dot_head_anchors(out, index, text, "block", S.AnchorContinuationName)
 
         return S.AnchorSet(out)
-    end
-
-    local function fragment_lists(module)
-        local region_frags, expr_frags = {}, {}
-        for i = 1, #(module and module.items or {}) do
-            local item = module.items[i]
-            local cls = pvm.classof(item)
-            if cls == Tr.ItemRegionFrag then region_frags[#region_frags + 1] = item.frag
-            elseif cls == Tr.ItemExprFrag then expr_frags[#expr_frags + 1] = item.frag end
-        end
-        return region_frags, expr_frags
     end
 
     local function parse_document(doc)
@@ -178,10 +165,9 @@ local function bind_context(T)
         end
 
         local module = Tr.Module(Tr.ModuleSurface, items)
-        local region_frags, expr_frags = fragment_lists(module)
         local anchors = anchors_for_document(doc, source_ctx)
         local parts = Mlua.DocumentParts(doc, {}, anchors)
-        local combined = H.MluaParseResult(H.HostDeclSet({}), module, region_frags, expr_frags, issues)
+        local combined = H.MluaParseResult(H.HostDeclSet({}), module, issues)
         local parse = Mlua.DocumentParse(parts, combined, {}, anchors)
         return parse
     end
@@ -189,7 +175,6 @@ local function bind_context(T)
     local function analyze(doc, full)
         local parse = parse_document(doc)
         local host = H.MluaHostPipelineResult(parse.combined, H.HostReport({}), H.HostLayoutEnv({}))
-        local open_report = O.ValidationReport({})
         local back_report = B.BackValidationReport({})
         local type_issues = {}
 
@@ -210,7 +195,7 @@ local function bind_context(T)
             end
         end
 
-        local analysis = Mlua.DocumentAnalysis(parse, host, open_report, type_issues, {}, back_report, parse.anchors)
+        local analysis = Mlua.DocumentAnalysis(parse, host, type_issues, {}, back_report, parse.anchors)
         resolved_cache[analysis] = {}
         return analysis
     end

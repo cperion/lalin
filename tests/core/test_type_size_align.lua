@@ -10,7 +10,6 @@ local L = Size(T)
 local C = T.LalinCore
 local Ty = T.LalinType
 local Sem = T.LalinSem
-local O = T.LalinOpen
 
 local function known(ty, size, align, env)
     local result = L.result(ty, env)
@@ -54,7 +53,5 @@ local pair_env = Sem.LayoutEnv({
 })
 known(Ty.TNamed(Ty.TypeRefGlobal("Demo", "Pair")), 8, 4, pair_env)
 unknown(Ty.TNamed(Ty.TypeRefGlobal("Demo", "Missing")), pair_env)
-unknown(Ty.TArray(Ty.ArrayLenSlot(O.ExprSlot("n", "n", i32)), i32))
-unknown(Ty.TSlot(O.TypeSlot("T", "T")))
 
 print("lalin type_size_align ok")

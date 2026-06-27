@@ -122,8 +122,6 @@ return schema. LalinHost {
     interned,
     field. decls [LalinHost.HostDeclSet],
     field. module [LalinTree.Module],
-    region_frags [many [LalinOpen.RegionFrag]],
-    expr_frags [many [LalinOpen.ExprFrag]],
     issues [many [LalinParse.ParseIssue]],
   },
   product. MluaHostPipelineResult {
@@ -134,8 +132,6 @@ return schema. LalinHost {
   },
   product. HostValueId { interned, key [str], pretty [str], },
   sum. HostValueKind {
-    HostValueRegionFrag,
-    HostValueExprFrag,
     HostValueType,
     HostValueDecl,
     HostValueModule,
@@ -151,23 +147,6 @@ return schema. LalinHost {
     interned,
     field. name [str],
     roles [many [LalinHost.ProtocolRole]],
-  },
-  product. FragmentDeps {
-    interned,
-    region_frags [many [LalinOpen.RegionFrag]],
-    expr_frags [many [LalinOpen.ExprFrag]],
-  },
-  product. RegionFragMeta {
-    interned,
-    field. name [str],
-    frag [LalinOpen.RegionFrag],
-    protocol [optional [LalinHost.RegionProtocol]],
-    deps [LalinHost.FragmentDeps],
-  },
-  product. MluaRegionTypeResult {
-    interned,
-    frag [LalinOpen.RegionFrag],
-    issues [many [LalinTree.TypeIssue]],
   },
   product. MluaLoopExpandResult {
     interned,

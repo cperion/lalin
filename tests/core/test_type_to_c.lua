@@ -8,7 +8,6 @@ local T = pvm.context(); Schema(T)
 
 local Core = T.LalinCore
 local Ty = T.LalinType
-local Open = T.LalinOpen
 local C = T.LalinC
 local Code = T.LalinCode
 local api = require("lalin.code_type")(T)
@@ -72,9 +71,6 @@ assert(pvm.classof(ctype) == C.CBackendNamed and ctype.id.module_name == "host" 
 
 local ok_arr, err_arr = pcall(function() api.type_to_c(Ty.TArray(Ty.ArrayLenExpr(T.LalinTree.ExprLit(T.LalinTree.ExprTyped(i32), Core.LitInt("3"))), i32), {}) end)
 assert(not ok_arr and tostring(err_arr):match("typechecking must reject ArrayLenExpr"))
-
-local ok_slot, err_slot = pcall(function() api.type_to_c(Ty.TSlot(Open.TypeSlot("T", "T")), {}) end)
-assert(not ok_slot and tostring(err_slot):match("open type slot"))
 
 local target = api.default_target({ pointer_bits = 32, endian = "big" })
 assert(target.pointer_bits == 32 and target.index_bits == 32)

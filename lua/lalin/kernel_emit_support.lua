@@ -68,9 +68,14 @@ local function bind_context(T)
             local ok, reason = value_expr_supported(expr.a, seen); if not ok then return false, reason end
             return value_expr_supported(expr.b, seen)
         end
-        if cls == Value.ValueExprDiv then
-            if not is_scalar_code_ty(expr.ty) then return false, "non-scalar division type" end
-            if expr.sem == nil then return false, "division expression lacks exactness/semantics proof" end
+        if cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
+            if not is_scalar_code_ty(expr.ty) then return false, "non-scalar div/rem type" end
+            if expr.sem == nil then return false, "div/rem expression lacks exactness/semantics proof" end
+            local ok, reason = value_expr_supported(expr.a, seen); if not ok then return false, reason end
+            return value_expr_supported(expr.b, seen)
+        end
+        if cls == Value.ValueExprBinary then
+            if not is_scalar_code_ty(expr.ty) then return false, "non-scalar binary type in " .. class_name(expr) end
             local ok, reason = value_expr_supported(expr.a, seen); if not ok then return false, reason end
             return value_expr_supported(expr.b, seen)
         end
@@ -241,6 +246,9 @@ local function bind_context(T)
         if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul then
             local ok, reason = vector_value_expr_supported(expr.a, binding_by_code, variant_by_code, seen); if not ok then return false, reason end
             return vector_value_expr_supported(expr.b, binding_by_code, variant_by_code, seen)
+        end
+        if cls == Value.ValueExprBinary then
+            return false, "Back vector emission does not support generic binary expression " .. tostring(expr.op)
         end
         if cls == Value.ValueExprCmp then
             local info = ReductionAlgebra.type_info(expr.ty)

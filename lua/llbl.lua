@@ -2796,7 +2796,8 @@ end
 --   product { a [i32] } .. product { b [i32] }  -- append product/list roles
 --   conts { ok {} } + conts { err {} }          -- compose sum/protocol roles
 --
--- The short splice marker _(...) is just llbl.spread(...).
+-- The short splice marker _(...) is a callable hole sentinel. As a value, `_`
+-- marks a curried-form hole. As a call, `_(fragment)` is just llbl.spread(...).
 
 local Type = {}; Type.__index = Type; Type.__tostring = function(self) return self.name or "<type>" end
 function llbl.type(name, fields)
@@ -2845,13 +2846,117 @@ end
 
 function llbl.fragment(role, items, origin, spec) return fragment(role, items, origin, spec) end
 function llbl.spread(value) return { __llbl_tag = "Spread", value = value, origin = source.capture("spread", { hint = "spread" }) } end
-llbl._ = llbl.spread
+function llbl._install_curried_primitives()
+  local Hole = {}
+  Hole.__index = Hole
+  Hole.__call = function(_, value) return llbl.spread(value) end
+  Hole.__tostring = function(self) return tostring(rawget(self, "name") or "_") end
+  llbl._ = setmetatable({ __llbl_tag = "Hole", name = "_" }, Hole)
+  function llbl.hole(name) return setmetatable({ __llbl_tag = "Hole", name = tostring(name or "_"), origin = source.capture("hole", { hint = name or "_" }) }, Hole) end
+  function llbl.is_hole(v) return is_tag(v, "Hole") end
+  function llbl._curried_first_hole(args)
+    for i = 1, #(args or {}) do if llbl.is_hole(args[i]) then return i end end
+    return nil
+  end
+
+  local Curried = {}
+  local function curried_finish(form, args)
+    local arity = rawget(form, "arity") or 0
+    if #args < arity or llbl._curried_first_hole(args) ~= nil then
+      return setmetatable({
+        __llbl_tag = "Curried",
+        name = rawget(form, "name"),
+        arity = arity,
+        args = args,
+        static = array_copy(rawget(form, "static") or {}),
+        emit = rawget(form, "emit"),
+        emit_meta = rawget(form, "emit_meta"),
+        origin = rawget(form, "origin"),
+      }, Curried)
+    end
+    local emit = rawget(form, "emit")
+    if type(emit) ~= "function" then
+      llbl.fail("curried form " .. tostring(rawget(form, "name")) .. " has no emitter", {
+        code = "E_CURRIED_EMIT",
+        primary = rawget(form, "origin"),
+      }, 2)
+    end
+    if rawget(form, "emit_meta") then
+      return emit(args, { name = rawget(form, "name"), arity = arity, static = array_copy(rawget(form, "static") or {}), origin = rawget(form, "origin") })
+    end
+    return emit(unpack(args, 1, arity))
+  end
+
+  Curried.__index = function(self, key)
+    if Curried[key] then return Curried[key] end
+    local static = array_copy(rawget(self, "static") or {})
+    static[#static + 1] = key
+    return setmetatable({
+      __llbl_tag = "Curried",
+      name = rawget(self, "name"),
+      arity = rawget(self, "arity"),
+      args = array_copy(rawget(self, "args") or {}),
+      static = static,
+      emit = rawget(self, "emit"),
+      emit_meta = rawget(self, "emit_meta"),
+      origin = rawget(self, "origin"),
+    }, Curried)
+  end
+  Curried.__call = function(self, ...)
+    local p = pack(...)
+    if p.n ~= 1 then
+      llbl.fail("curried form " .. tostring(rawget(self, "name")) .. " expects exactly one argument per call, got " .. tostring(p.n), {
+        code = "E_CURRIED_UNARY_CALL",
+        primary = rawget(self, "origin"),
+      }, 2)
+    end
+    local args = array_copy(rawget(self, "args") or {})
+    local arity = rawget(self, "arity") or 0
+    if #args >= arity then
+      local hole_i = llbl._curried_first_hole(args)
+      if hole_i == nil then
+        llbl.fail("too many arguments for curried form " .. tostring(rawget(self, "name")), {
+          code = "E_CURRIED_TOO_MANY_ARGUMENTS",
+          primary = rawget(self, "origin"),
+        }, 2)
+      end
+      args[hole_i] = p[1]
+    else
+      args[#args + 1] = p[1]
+    end
+    return curried_finish(self, args)
+  end
+  Curried.__tostring = function(self)
+    return "llbl.curried(" .. tostring(rawget(self, "name")) .. ", " .. tostring(#(rawget(self, "args") or {})) .. "/" .. tostring(rawget(self, "arity") or 0) .. ")"
+  end
+  function Curried:describe() return llbl.describe_curried(self) end
+
+  function llbl.curried(name, arity, emit, opts)
+    if type(arity) == "function" then opts, emit, arity = emit or {}, arity, nil end
+    opts = opts or {}
+    return curried_finish(setmetatable({
+      __llbl_tag = "Curried",
+      name = tostring(name or "form"),
+      arity = arity or opts.arity or 1,
+      args = {},
+      static = {},
+      emit = emit,
+      emit_meta = opts.emit_meta,
+      origin = opts.origin or source.capture("curried", { hint = name }),
+    }, Curried), {})
+  end
+  llbl.curry = llbl.curried
+  function llbl.is_curried(v) return is_tag(v, "Curried") end
+end
+llbl._install_curried_primitives()
+llbl._install_curried_primitives = nil
 llbl.shared.fragments = llbl.shared.fragments or {
   fragment = llbl.fragment,
   spread = llbl.spread,
-  _ = llbl.spread,
+  _ = llbl._,
   is_fragment = function(v) return is_tag(v, "Fragment") end,
   is_spread = function(v) return is_tag(v, "Spread") end,
+  is_hole = llbl.is_hole,
 }
 
 -- Algebra nodes are the generic operator protocol for parserless DSL values.
@@ -3264,18 +3369,24 @@ function llbl.expr_ctor(name)
 end
 
 local DEFAULT_EXPORTS = {
-  eq = function(a, b) return expr("binop", { op = "==", a = a, b = b }) end,
-  ne = function(a, b) return expr("binop", { op = "~=", a = a, b = b }) end,
-  And = function(a, b) return call_expr(llbl.symbol("And"), pack(a, b)) end,
-  Or = function(a, b) return call_expr(llbl.symbol("Or"), pack(a, b)) end,
-  Not = function(a) return call_expr(llbl.symbol("Not"), pack(a)) end,
-  select = function(c, a, b) return call_expr(llbl.symbol("select"), pack(c, a, b)) end,
+  eq = llbl.curried("eq", 2, function(a, b) return expr("binop", { op = "==", a = a, b = b }) end),
+  ne = llbl.curried("ne", 2, function(a, b) return expr("binop", { op = "~=", a = a, b = b }) end),
+  lt = llbl.curried("lt", 2, function(a, b) return expr("binop", { op = "<", a = a, b = b }) end),
+  le = llbl.curried("le", 2, function(a, b) return expr("binop", { op = "<=", a = a, b = b }) end),
+  gt = llbl.curried("gt", 2, function(a, b) return expr("binop", { op = ">", a = a, b = b }) end),
+  ge = llbl.curried("ge", 2, function(a, b) return expr("binop", { op = ">=", a = a, b = b }) end),
+  And = llbl.curried("And", 2, function(a, b) return call_expr(llbl.symbol("And"), pack(a, b)) end),
+  Or = llbl.curried("Or", 2, function(a, b) return call_expr(llbl.symbol("Or"), pack(a, b)) end),
+  Not = llbl.curried("Not", 1, function(a) return call_expr(llbl.symbol("Not"), pack(a)) end),
+  select = llbl.curried("select", 3, function(c, a, b) return call_expr(llbl.symbol("select"), pack(c, a, b)) end),
   as = llbl.expr_ctor("as"),
   bitcast = llbl.expr_ctor("bitcast"),
   null = llbl.expr_ctor("null"),
   sizeof = llbl.expr_ctor("sizeof"),
   alignof = llbl.expr_ctor("alignof"),
 }
+DEFAULT_EXPORTS.land = DEFAULT_EXPORTS.And
+DEFAULT_EXPORTS.lor = DEFAULT_EXPORTS.Or
 
 -- ---------------------------------------------------------------------------
 -- Grammar bootstrap DSL
@@ -4696,7 +4807,10 @@ local function helper_exports()
   return {
     N = llbl.N,
     spread = llbl.spread,
-    _ = llbl.spread,
+    _ = llbl._,
+    hole = llbl.hole,
+    curried = llbl.curried,
+    curry = llbl.curried,
     region = llbl.region,
     role_region = llbl.role_region,
     process = llbl.process,
@@ -6319,6 +6433,21 @@ function llbl.describe_fragment(fragment_value)
   }
 end
 
+function llbl.describe_curried(form)
+  if not is_tag(form, "Curried") then return nil end
+  local args = array_copy(form.args or {})
+  return {
+    tag = "Curried",
+    name = form.name,
+    arity = form.arity,
+    applied = #args,
+    holes = llbl._curried_first_hole(args) ~= nil,
+    args = args,
+    static = array_copy(form.static or {}),
+    origin = form.origin,
+  }
+end
+
 function llbl.describe_zone(zone)
   if not is_tag(zone, "Zone") then return nil end
   return {
@@ -6387,6 +6516,7 @@ function llbl.describe(value)
   if is_tag(value, "Gps") or is_tag(value, "GpsPlan") or is_tag(value, "GpsSource") or is_tag(value, "GpsOp") then return llbl.gps.describe(value) end
   if is_tag(value, "ProcessEvent") then return { tag = "ProcessEvent", process = value.process, kind = value.kind, seq = value.seq, origin = value.origin } end
   if is_tag(value, "Fragment") then return llbl.describe_fragment(value) end
+  if is_tag(value, "Curried") then return llbl.describe_curried(value) end
   if is_tag(value, "Binding") then
     return {
       tag = "Binding",
@@ -6485,7 +6615,7 @@ local function define_dialect(name, decls)
   -- llbl.dialect compiles declarative grammar objects into a runtime Dialect.
   -- Runtime heads are ordinary Lua values with metatables that consume
   -- dot/index/call/table shapes through the slot machine above.
-  local lang = setmetatable({ __llbl_tag = "Dialect", name = tostring(name), roles = builtin_roles(), heads = {}, traits = {}, protocols = {}, exports = { N = llbl.N, spread = llbl.spread, _ = llbl.spread }, passes = {}, lsp = {}, declarations = decls or {} }, Dialect)
+  local lang = setmetatable({ __llbl_tag = "Dialect", name = tostring(name), roles = builtin_roles(), heads = {}, traits = {}, protocols = {}, exports = { N = llbl.N, spread = llbl.spread, _ = llbl._, hole = llbl.hole, curried = llbl.curried, curry = llbl.curried }, passes = {}, lsp = {}, declarations = decls or {} }, Dialect)
   for i = 1, #(decls or {}) do
     local d = decls[i]
     if is_tag(d, "RoleDecl") then local spec = shallow_copy(d.spec or {}); spec.kind = d.kind or spec.kind or "array"; spec.origin = d.origin; lang.roles[d.name] = spec

@@ -1,7 +1,7 @@
 -- EXPERIMENTAL BINARY BACKEND PROFILE ONLY.
 --
 -- Canonical path tested here:
---   LalinCode -> Llisle stencil selection -> MC stencil bank extraction
+--   LalinCode -> stencil selection -> MC stencil bank extraction
 --     -> copy + patch + install -> luajit_emit wrapper
 --
 -- No shared-object realization path is used here.

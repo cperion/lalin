@@ -57,11 +57,6 @@ local function bind_context(T)
 
             return {}
             end)(node, ...)
-        elseif schema.isa(node, Ty.ArrayLenSlot) then
-            return (function()
-
-            return {}
-            end)(node, ...)
         else
             error("phase lalin_type_array_len_count: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -80,11 +75,6 @@ local function bind_context(T)
             return single(Ty.TypeClassUnknown)
             end)(node, ...)
         elseif schema.isa(node, Ty.TypeRefLocal) then
-            return (function()
-
-            return single(Ty.TypeClassUnknown)
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TypeRefSlot) then
             return (function()
 
             return single(Ty.TypeClassUnknown)
@@ -159,11 +149,6 @@ local function bind_context(T)
             return (function(self)
 
             return classify_type_ref(self.ref)
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TSlot) then
-            return (function()
-
-            return single(Ty.TypeClassUnknown)
             end)(node, ...)
         elseif schema.isa(node, Ty.TCType) then
             return (function()

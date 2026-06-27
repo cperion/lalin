@@ -49,12 +49,12 @@ lln.scan   scan sink authoring helper
 ```
 
 Assignments inside the loop use the normal assignment primitive. In the
-Lua-owned DSL that primitive is `set(place, value)`; a future source spelling
+Lua-owned DSL that primitive is `set (place)(value)`; a future source spelling
 can surface the same `StmtSet` as `place = value`.
 
 ```lua
 lln.loop. i [lln.range { 0, n }] {
-  set(out[i], a[i] + b[i]),
+  set (out[i])(a[i] + b[i]),
 }
 ```
 
@@ -92,7 +92,7 @@ ND loop intent:
 
 ```lua
 lln.loop { i, j } [lln.range_nd { { 0, h }, { 0, w } }] {
-  set(out[i * w + j], a[i * w + j] + b[i * w + j]),
+  set (out[i * w + j])(a[i * w + j] + b[i * w + j]),
 }
 ```
 
@@ -247,7 +247,7 @@ scan families, including positive and negative constant steps:
 
 ```lua
 lln.loop. i [lln.range { 0, n }] {
-  set(out[i], a[i] + b[i]),
+  set (out[i])(a[i] + b[i]),
 }
 
 lln.loop. i [lln.range { 0, n }] [lln.i32] {
@@ -292,7 +292,7 @@ Current behavior:
 Still future work:
 
 - Assignment sugar in the Lua-owned DSL. Lua table constructors cannot carry
-  `out[i] = expr` as a value, so the current Lua DSL uses `set(out[i], expr)`.
+  `out[i] = expr` as a value, so the current Lua DSL uses `set (out[i])(expr)`.
 - `range_nd` executable lowering covers zero-based forward RangeND loops and
   normalizes the exact 2D row-major `i * w + j` index form to the generated flat
   induction for native store stencils.

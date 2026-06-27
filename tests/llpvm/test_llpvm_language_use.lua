@@ -11,7 +11,7 @@ assert(env.lln and env.lalin and env.llpvm and env.schema, "language installs me
 assert(env.lln == env.lalin, "lln should be the short alias for the Lalin namespace")
 assert(env.region == require("llbl").region, "language installs generic LLBL region as the bare region head")
 assert(env.lln.set and env.lln.store == nil, "Lalin namespace exposes set, not a store alias")
-assert(env.lln.loop and env.lln.range and env.lln.range_nd, "Lalin namespace exposes native-loop producer heads")
+assert(env.lln.loop and env.lln.range and env.lln.range_nd and env.lln.tiled_nd and env.lln.window_nd, "Lalin namespace exposes native-loop producer heads")
 assert(rawget(env, "fn") == nil and rawget(env, "pvm") == nil and rawget(env, "i32") == nil and rawget(env, "task") == nil, "language does not leak member heads as bare globals")
 assert(env.schema.product and env.schema.module and env.schema.LanguageProbe, "language installs LalinSchema through the schema namespace")
 assert(require("llbl").describe(env.lalin).tag == "Namespace", "Lalin language export should be an LLBL namespace")

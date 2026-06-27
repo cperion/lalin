@@ -1,6 +1,12 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local dsl = require("lalin.dsl")
+local llbl = require("llbl")
+
+local env = dsl.make_env()
+assert(llbl.is_curried(env.lt) and llbl.is_curried(env.ge), "comparison helpers should be curried")
+assert(llbl.is_curried(env.land) and llbl.is_curried(env.lor), "predicate composition helpers should be curried")
+assert(env.land(env.gt(llbl._)(0))(env.lt(llbl._)(10)).kind == "logic", "curried predicate composition should emit logic expressions")
 
 local src = [=[
 return {
@@ -29,11 +35,6 @@ return {
   const. truth [bool] (true),
   static. zero [i32] (0),
 
-  expr_frag. inc
-    ({ x [i32] })
-    [i32]
-    (x + 1),
-
   fn. greeting
     {}
     [ptr [u8]]
@@ -49,50 +50,14 @@ return {
       ret (xs[0]),
     },
 
-  region. scan
-    { x [i32] }
-    {
-      hit { pos [i32] },
-      miss,
-    }
-    {
-      entry. start {} {
-        jump. hit { pos = x },
-      },
-    },
-
-  fn. choose
-    { x [i32] }
-    [i32]
-    {
-      entry. start {} {
-        emit. scan { x } {
-          hit = done,
-          miss = done,
-        },
-      },
-
-      block. done { pos [i32] } {
-        switch (pos) {
-          case (0) {
-            ret (answer),
-          },
-
-          default {
-            ret (as [i32] (pos)),
-          },
-        },
-      },
-    },
-
   fn. atomic_ops
     { p [ptr [i32]], v [i32] }
     [i32]
     {
-      let. a [i32] (aload (i32, p)),
-      astore (i32, p, v),
-      let. b [i32] (armw ("xchg", i32, p, v)),
-      let. c [i32] (acas (i32, p, v, 0)),
+      let. a [i32] (aload (i32)(p)),
+      astore (i32)(p)(v),
+      let. b [i32] (armw ("xchg")(i32)(p)(v)),
+      let. c [i32] (acas (i32)(p)(v)(0)),
       afence (),
       ret (a),
     },
@@ -102,7 +67,7 @@ return {
     [index]
     {
       requires {
-        bounds (buf, count),
+        bounds (buf)(count),
         noalias (buf),
       },
       ret (count),
@@ -113,7 +78,7 @@ return {
     [index]
     {
       requires {
-        bounds (buf, count),
+        bounds (buf)(count),
         readonly (buf),
         writeonly (buf),
       },
@@ -135,21 +100,6 @@ return {
       },
     },
 
-  fn. use_emit
-    { x [i32] }
-    [i32]
-    {
-      entry. start {} {
-        emit. scan { x } {
-          hit = done,
-          miss = done,
-        },
-      },
-
-      block. done { pos [i32] } {
-        ret (pos),
-      },
-    },
 }
 ]=]
 

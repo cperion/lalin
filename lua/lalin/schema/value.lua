@@ -48,6 +48,21 @@ return schema. LalinValue {
       field. ty [LalinCode.CodeType],
       sem [optional [LalinCode.CodeIntSemantics]],
     },
+    ValueExprRem {
+      variant_unique,
+      a [LalinValue.ValueExpr],
+      b [LalinValue.ValueExpr],
+      field. ty [LalinCode.CodeType],
+      sem [optional [LalinCode.CodeIntSemantics]],
+    },
+    ValueExprBinary {
+      variant_unique,
+      op [LalinCore.BinaryOp],
+      a [LalinValue.ValueExpr],
+      b [LalinValue.ValueExpr],
+      field. ty [LalinCode.CodeType],
+      sem [optional [LalinCode.CodeIntSemantics]],
+    },
     ValueExprSelect {
       variant_unique,
       cond [LalinValue.ValueExpr],

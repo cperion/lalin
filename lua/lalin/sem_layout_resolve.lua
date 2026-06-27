@@ -135,10 +135,6 @@ local function bind_context(T)
             end
             return {}
             end)(node, ...)
-        elseif schema.isa(node, Ty.TypeRefSlot) then
-            return (function()
- return {}
-            end)(node, ...)
         else
             error("phase lalin_sem_type_ref_layout: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -191,10 +187,6 @@ local function bind_context(T)
  return {}
             end)(node, ...)
         elseif schema.isa(node, Ty.TClosure) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TSlot) then
             return (function()
  return {}
             end)(node, ...)
@@ -277,7 +269,7 @@ local function bind_context(T)
     local function type_of_place(place)
         local h = place.h
         local cls = schema.classof(h)
-        if cls == Tr.PlaceTyped or cls == Tr.PlaceOpen then return h.ty end
+        if cls == Tr.PlaceTyped then return h.ty end
         return nil
     end
 
@@ -337,10 +329,6 @@ local function bind_context(T)
         elseif schema.isa(node, Tr.PlaceIndex) then
             return (function(self, env, target)
  return single(schema.with(self, { base = one(resolve_index_base, self.base, env, target), index = one(resolve_expr, self.index, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.PlaceSlotValue) then
-            return (function(self)
- return single(self)
             end)(node, ...)
         else
             error("phase lalin_sem_layout_place: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
@@ -412,10 +400,6 @@ local function bind_context(T)
             return (function(self, env, target)
  local views = {}; for i = 1, #self.views do views[#views + 1] = one(resolve_view, self.views[i], env, target) end; return single(schema.with(self, { views = views }))
             end)(node, ...)
-        elseif schema.isa(node, Tr.DomainSlotValue) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
         else
             error("phase lalin_sem_layout_domain: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -438,7 +422,7 @@ local function bind_context(T)
             local h = base.h
             local base_ty = nil
             local h_cls = schema.classof(h)
-            if h_cls == Tr.ExprTyped or h_cls == Tr.ExprOpen then base_ty = h.ty end
+            if h_cls == Tr.ExprTyped then base_ty = h.ty end
             local lookup_ty = access_base_type(base_ty)
             if lookup_ty ~= nil and schema.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
             if lookup_ty ~= nil then
@@ -498,7 +482,7 @@ local function bind_context(T)
             local h = base.h
             local base_ty = nil
             local h_cls = schema.classof(h)
-            if h_cls == Tr.ExprTyped or h_cls == Tr.ExprOpen then base_ty = h.ty end
+            if h_cls == Tr.ExprTyped then base_ty = h.ty end
             base_ty = access_base_type(base_ty)
             if base_ty ~= nil and schema.classof(base_ty) == Ty.TPtr then base_ty = base_ty.elem end
             local field = self.field
@@ -590,14 +574,6 @@ local function bind_context(T)
         elseif schema.isa(node, Tr.ExprIsNull) then
             return (function(self, env, target)
  return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprSlotValue) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprUseExprFrag) then
-            return (function(self, env, target)
- return single(schema.with(self, { args = map_exprs(self.args, env, target) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprCtor) then
             return (function(self, env, target)
@@ -716,14 +692,6 @@ local function bind_context(T)
             return (function(self)
  return single(self)
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionSlot) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionFrag) then
-            return (function(self, env, target)
- return single(schema.with(self, { args = map_exprs(self.args, env, target) }))
-            end)(node, ...)
         else
             error("phase lalin_sem_layout_stmt: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -747,10 +715,6 @@ local function bind_context(T)
             return (function(self, env, target)
  return single(schema.with(self, { body = map_stmts(self.body, env, target) }))
             end)(node, ...)
-        elseif schema.isa(node, Tr.FuncOpen) then
-            return (function(self, env, target)
- return single(schema.with(self, { body = map_stmts(self.body, env, target) }))
-            end)(node, ...)
         else
             error("phase lalin_sem_layout_func: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -762,10 +726,6 @@ local function bind_context(T)
             return (function(self, env, target)
  return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ConstItemOpen) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
         else
             error("phase lalin_sem_layout_const: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -774,10 +734,6 @@ local function bind_context(T)
     function resolve_static(node, ...)
         local cls = schema.classof(node)
         if schema.isa(node, Tr.StaticItem) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StaticItemOpen) then
             return (function(self, env, target)
  return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
             end)(node, ...)
@@ -805,14 +761,6 @@ local function bind_context(T)
  return single(self)
             end)(node, ...)
         elseif schema.isa(node, Tr.TypeDeclHandle) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.TypeDeclOpenStruct) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.TypeDeclOpenUnion) then
             return (function(self)
  return single(self)
             end)(node, ...)
@@ -847,27 +795,7 @@ local function bind_context(T)
             return (function(self, env, target)
  return single(schema.with(self, { t = one(resolve_type_decl, self.t, env, target) }))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemRegionFrag) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemExprFrag) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseTypeDeclSlot) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseItemsSlot) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseModule) then
-            return (function(self, env, target)
- return single(schema.with(self, { module = one(resolve_module, self.module, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseModuleSlot) then
+        elseif schema.isa(node, Tr.ItemRegion) then
             return (function(self)
  return single(self)
             end)(node, ...)

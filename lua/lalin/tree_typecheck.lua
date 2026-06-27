@@ -55,7 +55,6 @@ local function bind_context(T)
     local C = T.LalinCore
     local Ty = T.LalinType
     local B = T.LalinBind
-    local O = T.LalinOpen
     local Sem = T.LalinSem
     local Tr = T.LalinTree
 
@@ -127,11 +126,11 @@ local function bind_context(T)
     end
 
     local function ctx_with_env(ctx, env)
-        return Tr.TypeCheckEnv(env, ctx.return_ty, ctx.yield, ctx.region_frags)
+        return Tr.TypeCheckEnv(env, ctx.return_ty, ctx.yield)
     end
 
     local function ctx_with_yield(ctx, yield)
-        return Tr.TypeCheckEnv(ctx.env, ctx.return_ty, yield, ctx.region_frags)
+        return Tr.TypeCheckEnv(ctx.env, ctx.return_ty, yield)
     end
 
     local function env_lookup_value(env, name)
@@ -376,13 +375,13 @@ local function bind_context(T)
 
     local function typed_expr_header_ty(h)
         local cls = schema.classof(h)
-        if cls == Tr.ExprTyped or cls == Tr.ExprOpen then return h.ty end
+        if cls == Tr.ExprTyped then return h.ty end
         return nil
     end
 
     local function typed_place_header_ty(h)
         local cls = schema.classof(h)
-        if cls == Tr.PlaceTyped or cls == Tr.PlaceOpen then return h.ty end
+        if cls == Tr.PlaceTyped then return h.ty end
         return nil
     end
 
@@ -455,28 +454,6 @@ local function bind_context(T)
         return nil
     end
 
-    local function region_frag_name_text(frag)
-        if frag == nil then return nil end
-        local cls = schema.classof(frag.name)
-        if cls == O.NameRefText then return frag.name.text end
-        return nil
-    end
-
-    local function lookup_region_frag_in_list(region_frags, ref)
-        if ref == nil then return nil end
-        local cls = schema.classof(ref)
-        if cls ~= O.RegionFragRefName then return nil end
-        for i = 1, #(region_frags or {}) do
-            local frag = region_frags[i]
-            if region_frag_name_text(frag) == ref.name then return frag end
-        end
-        return nil
-    end
-
-    local function lookup_region_frag(ctx, ref)
-        return lookup_region_frag_in_list(ctx.region_frags, ref)
-    end
-
     local function type_ref_leaf(ref)
         local text = type_ref_text(ref)
         if text == nil then return nil end
@@ -540,11 +517,7 @@ local function bind_context(T)
         for i = 1, #module.items do
             local item = module.items[i]
             local cls = schema.classof(item)
-            if cls == Tr.ItemType then add_type_decl(item.t, module_name)
-            elseif cls == Tr.ItemUseModule then
-                local nested = build_variant_defs(item.module, module_name)
-                for k, v in pairs(nested) do defs[k] = v end
-            end
+            if cls == Tr.ItemType then add_type_decl(item.t, module_name) end
         end
         return defs
     end
@@ -566,11 +539,7 @@ local function bind_context(T)
         for i = 1, #module.items do
             local item = module.items[i]
             local cls = schema.classof(item)
-            if cls == Tr.ItemType then add_type_decl(item.t, module_name)
-            elseif cls == Tr.ItemUseModule then
-                local nested = build_handle_defs(item.module, module_name)
-                for k, v in pairs(nested) do defs[k] = v end
-            end
+            if cls == Tr.ItemType then add_type_decl(item.t, module_name) end
         end
         return defs
     end
@@ -613,9 +582,6 @@ local function bind_context(T)
                 if schema.classof(item.func) == Tr.ExternFunc then
                     defs[item.func.name] = { params = item.func.params or {}, readonly = {}, preserve = {}, invalidate = {} }
                 end
-            elseif cls == Tr.ItemUseModule then
-                local nested = build_func_effect_defs(item.module)
-                for k, v in pairs(nested) do defs[k] = v end
             end
         end
         return defs
@@ -860,13 +826,6 @@ local function bind_context(T)
     local function ref_type(ref, env)
         local cls = schema.classof(ref)
         if cls == B.ValueRefBinding then return ref.binding.ty, ref, {} end
-        if cls == B.ValueRefHole then
-            local slot_cls = schema.classof(ref.slot)
-            if slot_cls == O.SlotFunc then return ref.slot.slot.fn_ty, ref, {} end
-            if slot_cls == O.SlotValue or slot_cls == O.SlotConst or slot_cls == O.SlotStatic then return ref.slot.slot.ty, ref, {} end
-            if slot_cls == O.SlotExpr or slot_cls == O.SlotPlace then return ref.slot.slot.ty or void_ty(), ref, {} end
-            return void_ty(), ref, {}
-        end
         if cls == B.ValueRefName then
             local binding = env_lookup_value(env, ref.name)
             if binding ~= nil then return binding.ty, B.ValueRefBinding(binding), {} end
@@ -1093,10 +1052,6 @@ local function bind_context(T)
             local issues = {}; append_all(issues, base.issues); append_all(issues, index.issues)
             if not is_integer_scalar(index.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("index", Ty.TScalar(C.ScalarIndex), index.ty) end
             return single(result_place(Tr.PlaceIndex(Tr.PlaceTyped(base.elem), base.base, index.expr), base.elem, issues))
-            end)(node, ...)
-        elseif action == "slot_value" then
-            return (function(self, ctx)
- return single(result_place(Tr.PlaceSlotValue(Tr.PlaceTyped(self.slot.ty), self.slot), self.slot.ty, {}))
             end)(node, ...)
         else
             error("phase lalin_tree_typecheck_place: no handler for " .. tostring(action), 2)
@@ -1397,7 +1352,7 @@ local function bind_context(T)
             for i = 1, #self.args do local a = only(type_expr(self.args[i], ctx)); args[#args + 1] = a.expr; append_all(issues, a.issues) end
             local h_cls = schema.classof(self.h)
             local ty = nil
-            if h_cls == Tr.ExprTyped or h_cls == Tr.ExprOpen then ty = self.h.ty end
+            if h_cls == Tr.ExprTyped then ty = self.h.ty end
             if ty == nil or (schema.classof(ty) == Ty.TScalar and ty.scalar == C.ScalarVoid and self.op ~= C.IntrinsicTrap and self.op ~= C.IntrinsicAssume) then
                 ty = (#self.args > 0) and only(type_expr(self.args[1], ctx)).ty or void_ty()
             end
@@ -1505,14 +1460,6 @@ local function bind_context(T)
                 issues[#issues + 1] = Tr.TypeIssueNotPointer(value.ty)
             end
             return single(result_expr(Tr.ExprIsNull(Tr.ExprTyped(bool_ty()), value.expr), bool_ty(), issues))
-            end)(node, ...)
-        elseif action == "slot_value" then
-            return (function(self, ctx)
- return single(result_expr(Tr.ExprSlotValue(Tr.ExprTyped(self.slot.ty), self.slot), self.slot.ty, {}))
-            end)(node, ...)
-        elseif action == "use_expr_frag" then
-            return (function(self, ctx)
- local ty = void_ty(); return single(result_expr(schema.with(self, { h = Tr.ExprTyped(ty) }), ty, {}))
             end)(node, ...)
         else
             error("phase lalin_tree_typecheck_expr: no handler for " .. tostring(action), 2)
@@ -1647,7 +1594,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif action == "jump_cont" then
             return (function(self, ctx)
- local args = {}; local issues = {}; for i = 1, #self.args do local value = only(type_expr(self.args[i].value, ctx)); args[#args + 1] = Tr.JumpArg(self.args[i].name, value.expr); append_all(issues, value.issues) end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtJumpCont(Tr.StmtSurface, self.slot, args) }, issues))
+ local args = {}; local issues = {}; for i = 1, #self.args do local value = only(type_expr(self.args[i].value, ctx)); args[#args + 1] = Tr.JumpArg(self.args[i].name, value.expr); append_all(issues, value.issues) end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtJumpCont(Tr.StmtSurface, self.cont, args) }, issues))
             end)(node, ...)
         elseif action == "switch" then
             return (function(self, ctx)
@@ -1685,37 +1632,6 @@ local function bind_context(T)
 
             return single(Tr.TypeStmtResult(ctx, { Tr.StmtTrap(Tr.StmtSurface) }, {}))
             end)(node, ...)
-        elseif action == "use_region_slot" then
-            return (function(self, ctx)
- return single(Tr.TypeStmtResult(ctx, { schema.with(self, { h = Tr.StmtSurface }) }, {}))
-            end)(node, ...)
-        elseif action == "use_region_frag" then
-            return (function(self, ctx)
-
-            local frag = lookup_region_frag(ctx, self.frag)
-            local issues, args = {}, {}
-            for i = 1, #(self.args or {}) do
-                local p = frag and frag.params and frag.params[i] or nil
-                local expected = p and p.ty or nil
-                local value = expected and type_expr_expect(self.args[i], ctx, expected) or only(type_expr(self.args[i], ctx))
-                args[#args + 1] = value.expr
-                append_all(issues, value.issues)
-                if expected ~= nil and not arg_matches_param(ctx.env, expected, value.ty) then check_expected("emit arg", expected, value.ty, issues) end
-                if expected ~= nil and type_contains_lease(value.ty) and not type_contains_lease(expected) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape call", value.ty) end
-                if expected ~= nil and type_contains_owned(value.ty) and not type_contains_owned(expected) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned passed to non-owned parameter", value.ty) end
-            end
-            if frag ~= nil and self.mode == Tr.RegionUseCall then
-                for i = 1, #(frag.conts or {}) do
-                    local cont = frag.conts[i]
-                    for j = 1, #(cont.params or {}) do
-                        local ty = cont.params[j].ty
-                        if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("region call lease payload", ty) end
-                        if type_contains_owned(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned region call payload", ty) end
-                    end
-                end
-            end
-            return single(Tr.TypeStmtResult(ctx, { schema.with(self, { h = Tr.StmtSurface, args = args }) }, issues))
-            end)(node, ...)
         end
         error("phase lalin_tree_typecheck_stmt: no handler for " .. tostring(action), 2)
     end
@@ -1749,8 +1665,8 @@ local function bind_context(T)
         return place and typed_place_header_ty(place.h) or void_ty()
     end
 
-    local function state_new(bindings, region_frags)
-        local state = { live = {}, reachable = true, region_frags = region_frags or {} }
+    local function state_new(bindings)
+        local state = { live = {}, reachable = true }
         for i = 1, #(bindings or {}) do
             local b = bindings[i].binding or bindings[i]
             if is_owned_type(b.ty) then
@@ -1764,7 +1680,7 @@ local function bind_context(T)
     local function state_clone(state)
         local live = {}
         for k, v in pairs(state.live or {}) do live[k] = v end
-        return { live = live, reachable = state.reachable, region_frags = state.region_frags }
+        return { live = live, reachable = state.reachable }
     end
 
     local function state_report_live(state, issues, op)
@@ -1884,7 +1800,6 @@ local function bind_context(T)
         elseif cls == Tr.ExprLoad or cls == Tr.ExprAtomicLoad then check_owned_expr(expr.addr, state, issues, "observe")
         elseif cls == Tr.ExprAtomicRmw then check_owned_expr(expr.addr, state, issues, "observe"); check_owned_expr(expr.value, state, issues, "observe")
         elseif cls == Tr.ExprAtomicCas then check_owned_expr(expr.addr, state, issues, "observe"); check_owned_expr(expr.expected, state, issues, "observe"); check_owned_expr(expr.replacement, state, issues, "observe")
-        elseif cls == Tr.ExprUseExprFrag then check_owned_exprs(expr.args, state, issues, "observe")
         end
         if is_owned_type(ty) and mode ~= "consume" then owned_issue(issues, "owned dropped", ty) end
     end
@@ -1930,38 +1845,6 @@ local function bind_context(T)
         return out
     end
 
-    local function cont_fill_target(stmt, name)
-        for i = 1, #(stmt.cont_fills or {}) do
-            if stmt.cont_fills[i].name == name then return stmt.cont_fills[i].target end
-        end
-        return nil
-    end
-
-    local function target_param_map(target, block_targets)
-        if target == nil then return nil end
-        local cls = schema.classof(target)
-        if cls == O.ContTargetLabel then return block_targets and block_targets[target.label.name] end
-        if cls == O.ContTargetSlot then return target_params(target.slot.params) end
-        return nil
-    end
-
-    local function check_emit_owned_continuations(stmt, frag, block_targets, issues)
-        for i = 1, #(frag.conts or {}) do
-            local cont = frag.conts[i]
-            local target = cont_fill_target(stmt, cont.pretty_name)
-            local target_params_by_name = target_param_map(target, block_targets)
-            for j = 1, #(cont.params or {}) do
-                local param = cont.params[j]
-                if is_owned_type(param.ty) then
-                    local target_ty = target_params_by_name and target_params_by_name[param.name] or nil
-                    if target_ty == nil or not type_eq(target_ty, param.ty) then
-                        owned_issue(issues, "owned emit target mismatch", param.ty)
-                    end
-                end
-            end
-        end
-    end
-
     local function check_owned_stmt(stmt, state, issues, block_targets, cont_targets)
         if not state.reachable then return state end
         local cls = schema.classof(stmt)
@@ -2004,7 +1887,7 @@ local function bind_context(T)
         elseif cls == Tr.StmtJump then
             check_jump_args(stmt.args, block_targets and block_targets[stmt.target.name], state, issues, cont_targets and cont_targets[stmt.target.name] == true)
         elseif cls == Tr.StmtJumpCont then
-            check_jump_args(stmt.args, target_params(stmt.slot.params), state, issues, true)
+            check_jump_args(stmt.args, target_params(stmt.cont.params), state, issues, true)
         elseif cls == Tr.StmtYieldVoid or cls == Tr.StmtReturnVoid or cls == Tr.StmtTrap then
             state_report_live(state, issues, "owned dropped")
             state.live = {}
@@ -2021,31 +1904,6 @@ local function bind_context(T)
                 else check_owned_expr(p.init, state, issues, "observe") end
             end
             -- Nested control ownership is checked on the typed region.
-        elseif cls == Tr.StmtUseRegionFrag then
-            local frag = lookup_region_frag_in_list(state.region_frags, stmt.frag)
-            for i = 1, #(stmt.args or {}) do
-                local p = frag and frag.params and frag.params[i] or nil
-                if p ~= nil and is_owned_type(p.ty) then
-                    check_owned_expr(stmt.args[i], state, issues, "consume")
-                else
-                    if type_contains_owned(expr_ty(stmt.args[i])) then owned_issue(issues, "owned region call payload", expr_ty(stmt.args[i])) end
-                    check_owned_expr(stmt.args[i], state, issues, "observe")
-                end
-            end
-            if frag ~= nil then
-                if stmt.mode == Tr.RegionUseCall then
-                    for i = 1, #(frag.conts or {}) do
-                        for j = 1, #(frag.conts[i].params or {}) do
-                            if type_contains_owned(frag.conts[i].params[j].ty) then owned_issue(issues, "owned region call payload", frag.conts[i].params[j].ty) end
-                        end
-                    end
-                else
-                    check_emit_owned_continuations(stmt, frag, block_targets, issues)
-                end
-            end
-            state_report_live(state, issues, "owned dropped")
-            state.live = {}
-            state.reachable = false
         end
         return state
     end
@@ -2055,10 +1913,10 @@ local function bind_context(T)
         return state
     end
 
-    local function check_owned_function(func_name, params, body, issues, region_frags)
+    local function check_owned_function(func_name, params, body, issues)
         local bindings = {}
         for i = 1, #(params or {}) do bindings[#bindings + 1] = B.Binding(C.Id("arg:" .. tostring(func_name) .. ":" .. tostring(params[i].name)), params[i].name, params[i].ty, B.BindingClassArg(i - 1)) end
-        local state = check_owned_stmt_body(body or {}, state_new(bindings, region_frags), issues, nil, nil)
+        local state = check_owned_stmt_body(body or {}, state_new(bindings), issues, nil, nil)
         if state.reachable then state_report_live(state, issues, "owned dropped") end
     end
 
@@ -2068,14 +1926,14 @@ local function bind_context(T)
         return map
     end
 
-    local function check_owned_control_region(region, issues, region_frags, entry_extra_bindings, cont_targets)
+    local function check_owned_control_region(region, issues, entry_extra_bindings, cont_targets)
         local block_targets = {}
         block_targets[region.entry.label.name] = block_param_target(region.entry.params)
         for i = 1, #(region.blocks or {}) do block_targets[region.blocks[i].label.name] = block_param_target(region.blocks[i].params) end
         local function check_block(block, is_entry)
             local bindings = block_param_bindings(region.region_id, block.label, block.params, is_entry)
             if is_entry then append_all(bindings, entry_extra_bindings or {}) end
-            local state = check_owned_stmt_body(block.body or {}, state_new(bindings, region_frags), issues, block_targets, cont_targets)
+            local state = check_owned_stmt_body(block.body or {}, state_new(bindings), issues, block_targets, cont_targets)
             if state.reachable then state_report_live(state, issues, "owned dropped") end
         end
         check_block(region.entry, true)
@@ -2119,7 +1977,6 @@ local function bind_context(T)
         for i = 1, #(stmts or {}) do
             local stmt = stmts[i]
             local cls = schema.classof(stmt)
-            if cls == Tr.StmtUseRegionFrag then return true end
             if cls == Tr.StmtIf and (body_has_region_use(stmt.then_body) or body_has_region_use(stmt.else_body)) then return true end
             if cls == Tr.StmtSwitch then
                 for j = 1, #(stmt.arms or {}) do if body_has_region_use(stmt.arms[j].body) then return true end end
@@ -2149,7 +2006,7 @@ local function bind_context(T)
             local blocks = {}
             for i = 1, #self.blocks do local b, bi = type_control_block(self.region_id, self.blocks[i], ctx, Tr.TypeYieldVoid); blocks[#blocks + 1] = b; append_all(issues, bi) end
             local region = Tr.ControlStmtRegion(self.region_id, entry, blocks); if not region_has_region_use(region) then append_all(issues, validate_control(region)) end
-            check_owned_control_region(region, issues, ctx.region_frags)
+            check_owned_control_region(region, issues)
             return single(Tr.TypeControlStmtRegionResult(region, issues))
             end)(node, ...)
         else
@@ -2167,7 +2024,7 @@ local function bind_context(T)
             local blocks = {}
             for i = 1, #self.blocks do local b, bi = type_control_block(self.region_id, self.blocks[i], ctx, Tr.TypeYieldValue(result_ty)); blocks[#blocks + 1] = b; append_all(issues, bi) end
             local region = Tr.ControlExprRegion(self.region_id, result_ty, entry, blocks); if not region_has_region_use(region) then append_all(issues, validate_control(region)) end
-            check_owned_control_region(region, issues, ctx.region_frags)
+            check_owned_control_region(region, issues)
             return single(Tr.TypeControlExprRegionResult(region, issues))
             end)(node, ...)
         else
@@ -2250,18 +2107,18 @@ local function bind_context(T)
         if type_contains_lease(func.result) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape result", func.result) end
     end
 
-    local function check_region_frag_signature(frag, module_env, issues)
-        local ctx = Tr.TypeCheckEnv(module_env, Ty.TScalar(C.ScalarVoid), Tr.TypeYieldNone, {})
-        for i = 1, #(frag.params or {}) do
-            check_type_policy(frag.params[i].ty, issues, "region param " .. tostring(frag.params[i].name))
+    local function check_region_signature(region, module_env, issues)
+        local ctx = Tr.TypeCheckEnv(module_env, Ty.TScalar(C.ScalarVoid), Tr.TypeYieldNone)
+        for i = 1, #(region.params or {}) do
+            check_type_policy(region.params[i].ty, issues, "region param " .. tostring(region.params[i].name))
         end
-        for i = 1, #(frag.conts or {}) do
-            local cont = frag.conts[i]
+        for i = 1, #(region.conts or {}) do
+            local cont = region.conts[i]
             for j = 1, #(cont.params or {}) do
                 local param = cont.params[j]
-                check_type_policy(param.ty, issues, "continuation " .. tostring(cont.pretty_name) .. " param " .. tostring(param.name))
+                check_type_policy(param.ty, issues, "continuation " .. tostring(cont.name) .. " param " .. tostring(param.name))
             end
-            check_handle_resolution_signature(ctx, frag.params, cont.params, issues, "region " .. tostring(cont.pretty_name))
+            check_handle_resolution_signature(ctx, region.params, cont.params, issues, "region " .. tostring(cont.name))
         end
     end
 
@@ -2281,58 +2138,53 @@ local function bind_context(T)
         return out
     end
 
-    local function canonical_region_frag(module_env, frag)
-        local params = {}
-        for i = 1, #(frag.params or {}) do params[i] = schema.with(frag.params[i], { ty = canonical_type(module_env, frag.params[i].ty) }) end
+    local function canonical_region(module_env, region)
+        local params = canonical_params(module_env, region.params or {})
         local conts = {}
-        for i = 1, #(frag.conts or {}) do conts[i] = schema.with(frag.conts[i], { params = canonical_block_params(module_env, frag.conts[i].params) }) end
-        local entry = schema.with(frag.entry, { params = canonical_entry_params(module_env, frag.entry.params) })
+        for i = 1, #(region.conts or {}) do conts[i] = schema.with(region.conts[i], { params = canonical_block_params(module_env, region.conts[i].params) }) end
+        local entry = schema.with(region.entry, { params = canonical_entry_params(module_env, region.entry.params) })
         local blocks = {}
-        for i = 1, #(frag.blocks or {}) do blocks[i] = schema.with(frag.blocks[i], { params = canonical_block_params(module_env, frag.blocks[i].params) }) end
-        return schema.with(frag, { params = params, conts = conts, entry = entry, blocks = blocks })
+        for i = 1, #(region.blocks or {}) do blocks[i] = schema.with(region.blocks[i], { params = canonical_block_params(module_env, region.blocks[i].params) }) end
+        return schema.with(region, { params = params, conts = conts, entry = entry, blocks = blocks })
     end
 
-    local function type_plain_func(self, module_env, region_frags)
+    local function type_plain_func(self, module_env)
         local func = canonical_func(self, module_env)
-        local ctx = Tr.TypeCheckEnv(env_with_params(module_env, func.name, func.params), func.result, Tr.TypeYieldNone, region_frags or {})
+        local ctx = Tr.TypeCheckEnv(env_with_params(module_env, func.name, func.params), func.result, Tr.TypeYieldNone)
         local body = type_stmt_body(func.body, ctx)
         local issues = {}; check_func_types(func, issues); append_all(issues, body.issues)
-        check_owned_function(func.name, func.params, body.stmts, issues, ctx.region_frags)
+        check_owned_function(func.name, func.params, body.stmts, issues)
         return Tr.TypeFuncResult(schema.with(func, { body = body.stmts }), issues)
     end
 
-    local function type_contract_func(self, module_env, region_frags)
+    local function type_contract_func(self, module_env)
         local func = canonical_func(self, module_env)
-        local ctx = Tr.TypeCheckEnv(env_with_params(module_env, func.name, func.params), func.result, Tr.TypeYieldNone, region_frags or {})
+        local ctx = Tr.TypeCheckEnv(env_with_params(module_env, func.name, func.params), func.result, Tr.TypeYieldNone)
         local contracts, issues = type_contracts(func.contracts, ctx)
         check_func_types(func, issues)
         local body = type_stmt_body(func.body, ctx)
         append_all(issues, body.issues)
-        check_owned_function(func.name, func.params, body.stmts, issues, ctx.region_frags)
+        check_owned_function(func.name, func.params, body.stmts, issues)
         return Tr.TypeFuncResult(schema.with(func, { contracts = contracts, body = body.stmts }), issues)
     end
 
     function type_func(node, ...)
         local action = select_typecheck("func", "select_func_typecheck", node)
         if action == "local" then
-            return (function(self, module_env, region_frags)
- return single(type_plain_func(self, module_env, region_frags))
+            return (function(self, module_env)
+ return single(type_plain_func(self, module_env))
             end)(node, ...)
         elseif action == "export" then
-            return (function(self, module_env, region_frags)
- return single(type_plain_func(self, module_env, region_frags))
+            return (function(self, module_env)
+ return single(type_plain_func(self, module_env))
             end)(node, ...)
         elseif action == "local_contract" then
-            return (function(self, module_env, region_frags)
- return single(type_contract_func(self, module_env, region_frags))
+            return (function(self, module_env)
+ return single(type_contract_func(self, module_env))
             end)(node, ...)
         elseif action == "export_contract" then
-            return (function(self, module_env, region_frags)
- return single(type_contract_func(self, module_env, region_frags))
-            end)(node, ...)
-        elseif action == "open" then
-            return (function(self, module_env, region_frags)
- local ctx = Tr.TypeCheckEnv(module_env, self.result, Tr.TypeYieldNone, region_frags or {}); local body = type_stmt_body(self.body, ctx); local issues = {}; append_all(issues, body.issues); check_owned_function("<open>", {}, body.stmts, issues, ctx.region_frags); return single(Tr.TypeFuncResult(schema.with(self, { body = body.stmts }), issues))
+            return (function(self, module_env)
+ return single(type_contract_func(self, module_env))
             end)(node, ...)
         else
             error("phase lalin_tree_typecheck_func: no handler for " .. tostring(action), 2)
@@ -2342,14 +2194,14 @@ local function bind_context(T)
     function type_item(node, ...)
         local action = select_typecheck("item", "select_item_typecheck", node)
         if action == "func" then
-            return (function(self, module_env, region_frags)
- local r = only(type_func(self.func, module_env, region_frags or {})); return single(Tr.TypeItemResult({ Tr.ItemFunc(r.func) }, r.issues))
+            return (function(self, module_env)
+ local r = only(type_func(self.func, module_env)); return single(Tr.TypeItemResult({ Tr.ItemFunc(r.func) }, r.issues))
             end)(node, ...)
         elseif action == "const" then
-            return (function(self, module_env, region_frags)
+            return (function(self, module_env)
 
             local ty = canonical_type(module_env, self.c.ty)
-            local ctx = Tr.TypeCheckEnv(module_env, ty, Tr.TypeYieldNone, region_frags or {})
+            local ctx = Tr.TypeCheckEnv(module_env, ty, Tr.TypeYieldNone)
             local value = only(type_expr(self.c.value, ctx))
             local issues = {}; check_type_policy(ty, issues, "const"); append_all(issues, value.issues); check_expected("const", ty, value.ty, issues)
             if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape const", ty) end
@@ -2357,10 +2209,10 @@ local function bind_context(T)
             return single(Tr.TypeItemResult({ Tr.ItemConst(schema.with(self.c, { ty = ty, value = value.expr })) }, issues))
             end)(node, ...)
         elseif action == "static" then
-            return (function(self, module_env, region_frags)
+            return (function(self, module_env)
 
             local ty = canonical_type(module_env, self.s.ty)
-            local ctx = Tr.TypeCheckEnv(module_env, ty, Tr.TypeYieldNone, region_frags or {})
+            local ctx = Tr.TypeCheckEnv(module_env, ty, Tr.TypeYieldNone)
             local value = only(type_expr(self.s.value, ctx))
             local issues = {}; check_type_policy(ty, issues, "static"); append_all(issues, value.issues); check_expected("static", ty, value.ty, issues)
             if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape static", ty) end
@@ -2419,65 +2271,32 @@ local function bind_context(T)
             end
             return single(Tr.TypeItemResult({ self }, issues))
             end)(node, ...)
-        elseif action == "use_type_decl_slot" then
-            return (function(self)
- return single(Tr.TypeItemResult({ self }, {}))
-            end)(node, ...)
-        elseif action == "use_items_slot" then
-            return (function(self)
- return single(Tr.TypeItemResult({ self }, {}))
-            end)(node, ...)
-        elseif action == "region_frag" then
-            return (function(self, module_env, region_frags)
+        elseif action == "region" then
+            return (function(self, module_env)
 
+            local region = canonical_region(module_env, self.region)
             local issues = {}
-            check_region_frag_signature(self.frag, module_env, issues)
-            local params = {}
-            for i = 1, #(self.frag.params or {}) do params[i] = Ty.Param(self.frag.params[i].name, canonical_type(module_env, self.frag.params[i].ty)) end
-            local ctx = Tr.TypeCheckEnv(env_with_params(module_env, "region:" .. tostring(region_frag_name_text(self.frag) or "?"), params), Ty.TScalar(C.ScalarVoid), Tr.TypeYieldNone, region_frags or {})
-            local entry = schema.with(self.frag.entry, {
-                params = (function()
-                    local out = {}
-                    for i = 1, #(self.frag.entry.params or {}) do out[i] = schema.with(self.frag.entry.params[i], { ty = canonical_type(module_env, self.frag.entry.params[i].ty) }) end
-                    return out
-                end)()
-            })
-            local runtime_bindings = {}
-            for i = 1, #params do
-                local frag_name = tostring(region_frag_name_text(self.frag) or "?")
-                local open_param = self.frag.params and self.frag.params[i] or nil
-                local class = open_param and B.BindingClassOpenParam(schema.with(open_param, { ty = params[i].ty })) or B.BindingClassArg(i - 1)
-                local b = B.Binding(C.Id("open-param:" .. frag_name .. ":" .. params[i].name), params[i].name, params[i].ty, class)
-                runtime_bindings[#runtime_bindings + 1] = B.ValueEntry(params[i].name, b)
-            end
-            local region_id = "region-frag:" .. tostring(region_frag_name_text(self.frag) or "?")
-            local typed_entry, entry_issues = type_entry_block(region_id, entry, ctx, Tr.TypeYieldVoid)
+            check_region_signature(region, module_env, issues)
+            local ctx = Tr.TypeCheckEnv(env_with_params(module_env, "region:" .. tostring(region.name), region.params), Ty.TScalar(C.ScalarVoid), Tr.TypeYieldNone)
+            local region_id = "region:" .. tostring(region.name)
+            local typed_entry, entry_issues = type_entry_block(region_id, region.entry, ctx, Tr.TypeYieldVoid)
             append_all(issues, entry_issues)
             local typed_blocks = {}
-            for i = 1, #(self.frag.blocks or {}) do
-                local b, bi = type_control_block(region_id, self.frag.blocks[i], ctx, Tr.TypeYieldVoid)
+            for i = 1, #(region.blocks or {}) do
+                local b, bi = type_control_block(region_id, region.blocks[i], ctx, Tr.TypeYieldVoid)
                 typed_blocks[#typed_blocks + 1] = b
                 append_all(issues, bi)
             end
-            local typed_region = Tr.ControlStmtRegion(region_id, typed_entry, typed_blocks)
+            local runtime_bindings = {}
+            for i = 1, #region.params do
+                local p = region.params[i]
+                local b = B.Binding(C.Id("region-param:" .. region.name .. ":" .. p.name), p.name, p.ty, B.BindingClassArg(i - 1))
+                runtime_bindings[#runtime_bindings + 1] = B.ValueEntry(p.name, b)
+            end
             local cont_targets = {}
-            for i = 1, #(self.frag.conts or {}) do cont_targets[self.frag.conts[i].pretty_name] = true end
-            check_owned_control_region(typed_region, issues, region_frags or {}, runtime_bindings, cont_targets)
+            for i = 1, #(region.conts or {}) do cont_targets[region.conts[i].name] = true end
+            check_owned_control_region(Tr.ControlStmtRegion(region_id, typed_entry, typed_blocks), issues, runtime_bindings, cont_targets)
             return single(Tr.TypeItemResult({}, issues))
-            end)(node, ...)
-        elseif action == "expr_frag" then
-            return (function()
- return single(Tr.TypeItemResult({}, {}))
-            end)(node, ...)
-        elseif action == "use_module" then
-            return (function(self)
-
-            local r = only(type_module(self.module))
-            return single(Tr.TypeItemResult({ schema.with(self, { module = r.module }) }, r.issues))
-            end)(node, ...)
-        elseif action == "use_module_slot" then
-            return (function(self)
- return single(Tr.TypeItemResult({ self }, {}))
             end)(node, ...)
         else
             error("phase lalin_tree_typecheck_item: no handler for " .. tostring(action), 2)
@@ -2487,16 +2306,7 @@ local function bind_context(T)
     local function item_diagnostic_name(item)
         local cls = schema.classof(item)
         if cls == Tr.ItemFunc and item.func then return item.func.name end
-        if cls == Tr.ItemRegionFrag and item.frag then
-            local name = item.frag.name
-            if type(name) == "table" then return name.text or name.name end
-            return name
-        end
-        if cls == Tr.ItemExprFrag and item.frag then
-            local name = item.frag.name
-            if type(name) == "table" then return name.text or name.name end
-            return name
-        end
+        if cls == Tr.ItemRegion and item.region then return item.region.name end
         if cls == Tr.ItemType and item.t then return item.t.name end
         if cls == Tr.ItemExtern and item.func then return item.func.name end
         if cls == Tr.ItemConst and item.c then return item.c.name end
@@ -2527,15 +2337,11 @@ local function bind_context(T)
         local base_env = module_type_api.env(module, target)
         attach_semantic_defs(base_env, build_variant_defs(module, base_env.module_name), build_handle_defs(module, base_env.module_name), build_func_effect_defs(module))
         local module_env = merge_env_layouts(base_env, extra_layout_env)
-        local region_frags = {}
-        for i = 1, #(module.items or {}) do
-            if schema.classof(module.items[i]) == Tr.ItemRegionFrag then region_frags[#region_frags + 1] = canonical_region_frag(module_env, module.items[i].frag) end
-        end
         local items = {}
         local issues = {}
         for i = 1, #module.items do
             local item = module.items[i]
-            local r = only(type_item(item, module_env, region_frags))
+            local r = only(type_item(item, module_env))
             append_all(items, r.items)
             append_all(issues, r.issues)
             emit_item_issues(collector, analysis_ctx or {}, item, r.issues)

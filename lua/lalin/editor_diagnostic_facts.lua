@@ -52,7 +52,6 @@ local function bind_context(T)
     local S = T.LalinSource
     local E = T.LalinEditor
     local H = T.LalinHost
-    local O = T.LalinOpen
     local Tr = T.LalinTree
     local B = T.LalinBack
     local Pm = T.LalinParse
@@ -267,7 +266,6 @@ local function bind_context(T)
         if cls == Tr.TypeIssueInvalidBinary then return "type.invalidBinary" end
         if cls == Tr.TypeIssueExpected then return "type.expected" end
         if cls == B.BackIssueMissingFinalize or kind == "BackIssueMissingFinalize" then return "back.missingFinalize" end
-        if cls == O.IssueOpenModuleName or kind == "IssueOpenModuleName" then return "open.moduleName" end
         return fallback or "E"
     end
 
@@ -276,7 +274,6 @@ local function bind_context(T)
         if cls == Tr.TypeIssueUnresolvedValue and bind_unresolved then return binding_unresolved_origin(analysis, issue, range) end
         if phase == "parse" or cls == Pm.ParseIssue then return E.DiagFromParse(issue) end
         if phase == "host" or (cls and tostring(cls.kind or ""):match("^HostIssue")) then return E.DiagFromHost(issue) end
-        if phase == "open" or (cls and tostring(cls.kind or ""):match("^Issue")) then return E.DiagFromOpen(issue) end
         if phase == "typecheck" or (cls and tostring(cls.kind or ""):match("^TypeIssue")) then return E.DiagFromType(issue) end
         if phase == "backend" or (cls and tostring(cls.kind or ""):match("^BackIssue")) then return E.DiagFromBack(issue) end
         return E.DiagFromTransport(diagnostic_code(issue, "E"), tostring(issue))
@@ -345,7 +342,6 @@ local function bind_context(T)
             end
             append_fallback(out, analysis, analysis.parse.combined.issues, "parse")
             append_fallback(out, analysis, analysis.host.report.issues, "host")
-            append_fallback(out, analysis, analysis.open_report.issues, "open")
             append_fallback(out, analysis, analysis.type_issues, "typecheck")
             append_fallback(out, analysis, analysis.back_report.issues, "backend")
             return as_list(out)

@@ -14,21 +14,21 @@ local source = [=[
 return unit. NativeLoopDSL {
   fn. native_zip_add { dst [ptr [i32]], lhs [ptr [i32]], rhs [ptr [i32]], n [index] } [void] {
     requires {
-      bounds(dst, n), writeonly(dst),
-      bounds(lhs, n), readonly(lhs),
-      bounds(rhs, n), readonly(rhs),
-      disjoint(dst, lhs), disjoint(dst, rhs), disjoint(lhs, rhs),
+      bounds (dst)(n), writeonly(dst),
+      bounds (lhs)(n), readonly(lhs),
+      bounds (rhs)(n), readonly(rhs),
+      disjoint (dst)(lhs), disjoint (dst)(rhs), disjoint (lhs)(rhs),
     },
 
     lln.loop. i [lln.range { 0, n }] {
-      set (dst[i], lhs[i] + rhs[i]),
+      set (dst[i])(lhs[i] + rhs[i]),
     },
   },
 
   fn. native_dot { lhs [ptr [i32]], rhs [ptr [i32]], n [index] } [i32] {
     requires {
-      bounds(lhs, n), readonly(lhs),
-      bounds(rhs, n), readonly(rhs),
+      bounds (lhs)(n), readonly(lhs),
+      bounds (rhs)(n), readonly(rhs),
     },
 
     lln.loop. i [lln.range { 0, n }] [lln.i32] {
@@ -42,7 +42,7 @@ return unit. NativeLoopDSL {
 
   fn. native_product { xs [ptr [i32]], n [index] } [i32] {
     requires {
-      bounds(xs, n), readonly(xs),
+      bounds (xs)(n), readonly(xs),
     },
 
     lln.loop. i [lln.range { 0, n }] [lln.i32] {
@@ -56,7 +56,7 @@ return unit. NativeLoopDSL {
 
   fn. native_min { xs [ptr [i32]], n [index] } [i32] {
     requires {
-      bounds(xs, n), readonly(xs),
+      bounds (xs)(n), readonly(xs),
     },
 
     lln.loop. i [lln.range { 0, n }] [lln.i32] {
@@ -70,9 +70,9 @@ return unit. NativeLoopDSL {
 
   fn. native_scan { dst [ptr [i32]], xs [ptr [i32]], n [index] } [void] {
     requires {
-      bounds(dst, n), writeonly(dst),
-      bounds(xs, n), readonly(xs),
-      disjoint(dst, xs),
+      bounds (dst)(n), writeonly(dst),
+      bounds (xs)(n), readonly(xs),
+      disjoint (dst)(xs),
     },
 
     lln.loop. i [lln.range { 0, n }] {
@@ -87,9 +87,9 @@ return unit. NativeLoopDSL {
 
   fn. native_scan_product { dst [ptr [i32]], xs [ptr [i32]], n [index] } [void] {
     requires {
-      bounds(dst, n), writeonly(dst),
-      bounds(xs, n), readonly(xs),
-      disjoint(dst, xs),
+      bounds (dst)(n), writeonly(dst),
+      bounds (xs)(n), readonly(xs),
+      disjoint (dst)(xs),
     },
 
     lln.loop. i [lln.range { 0, n }] {
@@ -154,31 +154,31 @@ local reverse_source = [=[
 return unit. NativeReverseLoopDSL {
   fn. backward_copy { dst [ptr [i32]], src [ptr [i32]], n [i32] } [void] {
     requires {
-      bounds(dst, n), writeonly(dst),
-      bounds(src, n), readonly(src),
-      disjoint(dst, src),
+      bounds (dst)(n), writeonly(dst),
+      bounds (src)(n), readonly(src),
+      disjoint (dst)(src),
     },
 
     lln.loop. i [lln.range { n - 1, -1, -1, ty = lln.i32 }] {
-      set (dst[i], src[i]),
+      set (dst[i])(src[i]),
     },
   },
 
   fn. reverse_affine_copy { dst [ptr [i32]], src [ptr [i32]], n [i32] } [void] {
     requires {
-      bounds(dst, n), writeonly(dst),
-      bounds(src, n), readonly(src),
-      disjoint(dst, src),
+      bounds (dst)(n), writeonly(dst),
+      bounds (src)(n), readonly(src),
+      disjoint (dst)(src),
     },
 
     lln.loop. i [lln.range { n - 1, -1, -1, ty = lln.i32 }] {
-      set (dst[(n - 1) - i], src[i]),
+      set (dst[(n - 1) - i])(src[i]),
     },
   },
 
   fn. backward_sum { xs [ptr [i32]], n [i32] } [i32] {
     requires {
-      bounds(xs, n), readonly(xs),
+      bounds (xs)(n), readonly(xs),
     },
 
     lln.loop. i [lln.range { n - 1, -1, -1, ty = lln.i32 }] [lln.i32] {
@@ -192,9 +192,9 @@ return unit. NativeReverseLoopDSL {
 
   fn. backward_scan { dst [ptr [i32]], xs [ptr [i32]], n [i32] } [void] {
     requires {
-      bounds(dst, n), writeonly(dst),
-      bounds(xs, n), readonly(xs),
-      disjoint(dst, xs),
+      bounds (dst)(n), writeonly(dst),
+      bounds (xs)(n), readonly(xs),
+      disjoint (dst)(xs),
     },
 
     lln.loop. i [lln.range { n - 1, -1, -1, ty = lln.i32 }] {
@@ -209,9 +209,9 @@ return unit. NativeReverseLoopDSL {
 
   fn. reverse_affine_scan { dst [ptr [i32]], xs [ptr [i32]], n [i32] } [void] {
     requires {
-      bounds(dst, n), writeonly(dst),
-      bounds(xs, n), readonly(xs),
-      disjoint(dst, xs),
+      bounds (dst)(n), writeonly(dst),
+      bounds (xs)(n), readonly(xs),
+      disjoint (dst)(xs),
     },
 
     lln.loop. i [lln.range { n - 1, -1, -1, ty = lln.i32 }] {
@@ -280,16 +280,60 @@ local nd_source = [=[
 return unit. NativeNDLoopDSL {
   fn. nd_shape { dst [ptr [i32]], src [ptr [i32]], h [index], w [index], n [index] } [void] {
     requires {
-      bounds(dst, n), writeonly(dst),
-      bounds(src, n), readonly(src),
-      disjoint(dst, src),
+      bounds (dst)(n), writeonly(dst),
+      bounds (src)(n), readonly(src),
+      disjoint (dst)(src),
     },
 
     lln.loop { i, j } [lln.range_nd { { 0, h }, { 0, w } }] {
-      set (dst[i * w + j], src[i * w + j]),
+      set (dst[i * w + j])(src[i * w + j]),
     },
   },
-}
+
+  fn. nd_sum { xs [ptr [i32]], h [index], w [index], n [index] } [i32] {
+    requires {
+      bounds (xs)(n), readonly(xs),
+    },
+
+    lln.loop { i, j } [lln.range_nd { { 0, h }, { 0, w } }] [lln.i32] {
+      lln.fold. acc [lln.i32] {
+        init = 0,
+        by = lln.add,
+        step = xs[i * w + j],
+      },
+    },
+  },
+
+	  fn. nd_scan_rows { dst [ptr [i32]], xs [ptr [i32]], h [index], w [index], n [index] } [void] {
+    requires {
+      bounds (dst)(n), writeonly(dst),
+      bounds (xs)(n), readonly(xs),
+      disjoint (dst)(xs),
+    },
+
+    lln.loop { i, j } [lln.range_nd { { 0, h }, { 0, w } }] {
+      lln.scan. acc [lln.i32] {
+        init = 0,
+        by = lln.add,
+        axis = 2,
+        step = xs[i * w + j],
+        into = dst[i * w + j],
+	      },
+	    },
+	  },
+
+	  fn. nd3_shape { dst [ptr [i32]], src [ptr [i32]], a [index], b [index], c [index], n [index] } [void] {
+	    requires {
+	      bounds (dst)(n), writeonly(dst),
+	      bounds (src)(n), readonly(src),
+	      disjoint (dst)(src),
+	    },
+
+	    lln.loop { i, j, k } [lln.range_nd { { 0, a }, { 0, b }, { 0, c } }] {
+	      set (dst[((i * b + j) * c) + k])(src[((i * b + j) * c) + k]),
+	    },
+	  },
+	}
 ]=]
 
 local nd_decl = assert(session:loadstring(nd_source, 'test_luajit_artifact_native_nd_loop_dsl.lua'))()
@@ -298,14 +342,123 @@ local nd_artifact = lalin.emit_luajit_artifact(nd_decl, {
     name = 'NativeNDLoopDSL',
     stem = 'test_luajit_artifact_native_nd_loop_dsl',
 })
-assert(#nd_artifact.artifacts == 1, 'range_nd copy should select one native stencil artifact')
-local nd_desc = nd_artifact.artifacts[1].instance.descriptor
-assert(tostring(pvm.classof(nd_desc.producer.shape)):match('StencilProduceRangeND'), 'lln.range_nd should project to a RangeND producer')
-assert(tostring(pvm.classof(nd_desc.sink)):match('StencilSinkStore'), 'lln.range_nd copy should project to a store sink')
+assert(#nd_artifact.artifacts == 4, 'range_nd copy, fold, axis scan, and rank-3 copy should select native stencil artifacts')
+local nd_sinks = {}
+local saw_axis_scan = false
+for _, item in ipairs(nd_artifact.artifacts) do
+    local desc = item.instance.descriptor
+    assert(tostring(pvm.classof(desc.producer.shape)):match('StencilProduceRangeND'), 'lln.range_nd should project to a RangeND producer')
+    nd_sinks[tostring(pvm.classof(desc.sink))] = true
+    if tostring(pvm.classof(desc.sink)):match('StencilSinkScan') then
+        saw_axis_scan = desc.sink.axis and desc.sink.axis.index == 2
+    end
+end
+assert(nd_sinks['Class(LalinStencil.StencilSinkStore)'], 'lln.range_nd copy should project to a store sink')
+assert(nd_sinks['Class(LalinStencil.StencilSinkReduce)'], 'lln.range_nd fold should project to a reduce sink')
+assert(nd_sinks['Class(LalinStencil.StencilSinkScan)'], 'lln.range_nd scan should project to a scan sink')
+assert(saw_axis_scan, 'lln.range_nd scan should preserve explicit scan axis')
 local nd_loaded = assert(loadfile(nd_artifact.path))()
 local nd_src = ffi.new('int32_t[6]', { 1, 2, 3, 4, 5, 6 })
 local nd_dst = ffi.new('int32_t[6]')
 nd_loaded.nd_shape(nd_dst, nd_src, 2, 3, 6)
 assert(nd_dst[0] == 1 and nd_dst[1] == 2 and nd_dst[2] == 3 and nd_dst[3] == 4 and nd_dst[4] == 5 and nd_dst[5] == 6, 'native lln.range_nd copy output')
+assert(nd_loaded.nd_sum(nd_src, 2, 3, 6) == 21, 'native lln.range_nd fold output')
+local nd_scan_dst = ffi.new('int32_t[6]')
+nd_loaded.nd_scan_rows(nd_scan_dst, nd_src, 2, 3, 6)
+assert(nd_scan_dst[0] == 1 and nd_scan_dst[1] == 3 and nd_scan_dst[2] == 6 and nd_scan_dst[3] == 4 and nd_scan_dst[4] == 9 and nd_scan_dst[5] == 15, 'native lln.range_nd axis scan output')
+local nd3_src = ffi.new('int32_t[12]', { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 })
+local nd3_dst = ffi.new('int32_t[12]')
+nd_loaded.nd3_shape(nd3_dst, nd3_src, 2, 3, 2, 12)
+assert(nd3_dst[0] == 1 and nd3_dst[5] == 6 and nd3_dst[11] == 12, 'native rank-3 lln.range_nd copy output')
+
+local producer_head_source = [=[
+return unit. NativeProducerHeadDSL {
+  fn. tiled_copy { dst [ptr [i32]], src [ptr [i32]], h [index], w [index], n [index] } [void] {
+    requires {
+      bounds (dst)(n), writeonly(dst),
+      bounds (src)(n), readonly(src),
+      disjoint (dst)(src),
+    },
+
+    lln.loop { i, j } [lln.tiled_nd { axes = { { 0, h }, { 0, w } }, tiles = { 2, 2 } }] {
+      set (dst[i * w + j])(src[i * w + j]),
+    },
+  },
+
+  fn. window_copy { dst [ptr [i32]], src [ptr [i32]], n [index] } [void] {
+    requires {
+      bounds (dst)(n), writeonly(dst),
+      bounds (src)(n), readonly(src),
+      disjoint (dst)(src),
+    },
+
+    lln.loop { i } [lln.window_nd { axes = { { 0, n } }, windows = { { 1, 1, boundary = "clamp" } } }] {
+      set (dst[i])(src[i]),
+    },
+  },
+}
+]=]
+
+local producer_head_decl = assert(session:loadstring(producer_head_source, 'test_luajit_artifact_native_producer_heads.lua'))()
+local producer_head_artifact = lalin.emit_luajit_artifact(producer_head_decl, {
+    path = 'target/test_artifacts/test_luajit_artifact_native_producer_heads.lua',
+    name = 'NativeProducerHeadDSL',
+    stem = 'test_luajit_artifact_native_producer_heads',
+})
+assert(#producer_head_artifact.artifacts == 2, 'tiled_nd and window_nd source heads should select stencil artifacts')
+local saw_tiled_flow, saw_window_flow = false, false
+for _, fact in ipairs(producer_head_artifact.facts.flow.domain_shapes or {}) do
+    local name = tostring(pvm.classof(fact.shape))
+    saw_tiled_flow = saw_tiled_flow or name:match('FlowDomainShapeTiledND') ~= nil
+    saw_window_flow = saw_window_flow or name:match('FlowDomainShapeWindowND') ~= nil
+end
+assert(saw_tiled_flow, 'lln.tiled_nd should author a TiledND Flow domain fact')
+assert(saw_window_flow, 'lln.window_nd should author a WindowND Flow domain fact')
+local saw_tiled_stencil, saw_window_stencil = false, false
+for _, item in ipairs(producer_head_artifact.artifacts) do
+    local name = tostring(pvm.classof(item.instance.descriptor.producer.shape))
+    saw_tiled_stencil = saw_tiled_stencil or name:match('StencilProduceTiledND') ~= nil
+    saw_window_stencil = saw_window_stencil or name:match('StencilProduceWindowND') ~= nil
+end
+assert(saw_tiled_stencil, 'lln.tiled_nd should project to a TiledND stencil producer')
+assert(saw_window_stencil, 'lln.window_nd should project to a WindowND stencil producer')
+local producer_loaded = assert(loadfile(producer_head_artifact.path))()
+local producer_src = ffi.new('int32_t[6]', { 1, 2, 3, 4, 5, 6 })
+local producer_dst = ffi.new('int32_t[6]')
+producer_loaded.tiled_copy(producer_dst, producer_src, 2, 3, 6)
+assert(producer_dst[0] == 1 and producer_dst[3] == 4 and producer_dst[5] == 6, 'native lln.tiled_nd copy output')
+local window_dst = ffi.new('int32_t[6]')
+producer_loaded.window_copy(window_dst, producer_src, 6)
+assert(window_dst[0] == 1 and window_dst[3] == 4 and window_dst[5] == 6, 'native lln.window_nd center copy output')
+
+local nd_scan_source = [=[
+return unit. NativeNDScanMissingAxisDSL {
+  fn. nd_scan { dst [ptr [i32]], xs [ptr [i32]], h [index], w [index], n [index] } [void] {
+    requires {
+      bounds (dst)(n), writeonly(dst),
+      bounds (xs)(n), readonly(xs),
+      disjoint (dst)(xs),
+    },
+
+    lln.loop { i, j } [lln.range_nd { { 0, h }, { 0, w } }] {
+      lln.scan. acc [lln.i32] {
+        init = 0,
+        by = lln.add,
+        step = xs[i * w + j],
+        into = dst[i * w + j],
+      },
+    },
+  },
+}
+]=]
+local nd_scan_ok, nd_scan_err = pcall(function()
+    local scan_decl = assert(session:loadstring(nd_scan_source, 'test_luajit_artifact_native_nd_scan_missing_axis.lua'))()
+    return lalin.emit_luajit_artifact(scan_decl, {
+        path = 'target/test_artifacts/test_luajit_artifact_native_nd_scan_missing_axis.lua',
+        name = 'NativeNDScanMissingAxisDSL',
+        stem = 'test_luajit_artifact_native_nd_scan_missing_axis',
+    })
+end)
+assert(not nd_scan_ok and tostring(nd_scan_err):match('requires axis'), 'lln.range_nd scan should reject without explicit axis')
 
 io.write('test_luajit_artifact_native_loop_dsl: ok\n')

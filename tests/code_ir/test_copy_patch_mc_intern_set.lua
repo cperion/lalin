@@ -23,20 +23,17 @@ local function sorted_keys(t)
     return out
 end
 
-local smoke_opts = { soac_order = 1, input_count = 1, target_bytes = 250000 }
+local smoke_opts = { shard_count = 1024, shard_index = 1 }
 local smoke_cells = InternSet.cells(smoke_opts)
 assert(#smoke_cells > 0, "MC intern smoke matrix must not be empty")
-local coverage_cells = InternSet.cells({ soac_order = 1, input_count = 1 })
-assert(#coverage_cells > #smoke_cells, "unbounded MC intern matrix must be larger than the bounded smoke matrix")
+local coverage_cells = InternSet.cells()
+assert(#coverage_cells > #smoke_cells, "fixed MC intern matrix must be larger than one smoke shard")
 
-local default_profile = InternSet.bank_profile({ target_bytes = 1024 * 1024 })
-assert(default_profile.soac_order == 1, "default MC intern matrix should saturate SOAC order 1")
-assert(default_profile.input_count == 1, "default MC intern matrix should use the simple width-1 bank")
-assert(default_profile.second_soac_order == nil, "default MC intern matrix should not add implicit SOAC order 2")
-assert(default_profile.second_input_count == nil, "default MC intern matrix should not add an implicit second width")
-assert(default_profile.second_family == nil, "default MC intern matrix should not add an implicit fusion family")
-assert(default_profile.target_bytes == 1024 * 1024, "explicit MC intern target should be reported")
-assert(default_profile.cells > #smoke_cells, "default targeted profile should be larger than the order-1 smoke matrix")
+local default_profile = InternSet.bank_profile()
+assert(default_profile.shape == "fixed_1x1", "default MC intern matrix should be the fixed 1x1 bank")
+assert(default_profile.soac_order == 1, "fixed MC intern matrix should saturate SOAC order 1")
+assert(default_profile.input_count == 1, "fixed MC intern matrix should use width 1")
+assert(default_profile.cells == #coverage_cells, "fixed MC intern profile should match the emitted matrix")
 
 local covered_vocabs = {}
 local covered_layouts = {}

@@ -44,7 +44,6 @@ M.link_target_model = require("lalin.link_target_model")
 M.link_plan_validate = require("lalin.link_plan_validate")
 M.link_command_plan = require("lalin.link_command_plan")
 M.link_execute = require("lalin.link_execute")
-M.region_compose = require("lalin.region_compose")
 M.code_type = require("lalin.code_type")
 M.code_validate = require("lalin.code_validate")
 M.tree_to_code = require("lalin.tree_to_code")
@@ -62,7 +61,6 @@ M.lsp = require("lalin.rpc_stdio_loop")
 
 local llbl = require("llbl")
 local llpvm_dsl = require("llpvm.dsl")
-local llisle_dsl = require("llisle.dsl")
 local schema_dsl = require("lalin.schema.dsl")
 M.schema_dsl = schema_dsl
 M.schema_namespace = schema_dsl.namespace()
@@ -88,10 +86,6 @@ end
 
 local function is_schema_value(value)
     return schema_dsl.is_schema_value(value)
-end
-
-local function is_llisle_value(value)
-    return llisle_dsl.is_llisle_value(value)
 end
 
 local function collect_schema_values(out, value, seen)
@@ -247,14 +241,6 @@ local function llpvm_index(value, opts, language)
     return out
 end
 
-local function llisle_diagnostics(value, bag, opts, language)
-    return llisle_dsl.diagnostics(value, bag)
-end
-
-local function llisle_index(value, opts, language)
-    return llisle_dsl.index(value)
-end
-
 local function schema_diagnostics(value, bag, opts, language)
     local targets = collect_schema_values({}, value)
     if #targets == 0 then return bag end
@@ -339,67 +325,6 @@ local function llpvm_markdown(member, opts, language)
     }, "\n")
 end
 
-local function llisle_markdown(member, opts, language)
-    return table.concat({
-        "## llisle.dsl",
-        "",
-        "Llisle is the lowering/rewrite/selection rule member of the Lalin language. It expresses compiler choices as typed relations, projection/classification relations, declared predicates, declared constructors, product-shaped patterns, sum alternatives, and process-shaped rule bodies.",
-        "",
-        "Lua implementations are explicit values spliced through `[]` on `predicate.` and `constructor.` declarations. Llisle owns the semantic names; Lua supplies implementation values without a side-table registry.",
-        "",
-        "Canonical Llisle source is normally authored as a Llisle island: install the Llisle member into the authoring environment, use `llisle { ... }` as the zone/container, and write the body with bare Llisle heads. Use `llisle.*` prefixes only when crossing a mixed-language boundary without installing the member island.",
-        "",
-        "```lua",
-        "llisle {",
-        "  project. classify_expr {",
-        "    input { expr [LalinExpr] },",
-        "    output { class [ExprClassFact] },",
-        "    strategy {",
-        "      select. best_cost,",
-        "      ambiguity. error,",
-        "      coverage. complete,",
-        "    },",
-        "  },",
-        "",
-        "  relation. lower_expr {",
-        "    input { expr [LalinExpr], ctx [LowerCtx] },",
-        "    output { value [BackValue] },",
-        "    strategy {",
-        "      select. best_cost,",
-        "      ambiguity. error,",
-        "      coverage. complete,",
-        "    },",
-        "  },",
-        "",
-        "  predicate. has_type [has_type_impl] {",
-        "    input { value [Any], ty [Any] },",
-        "    pure,",
-        "  },",
-        "",
-        "  constructor. add_i32 [build_add_i32],",
-        "",
-        "  rule. add_i32 {",
-        "    llisle.lower_expr {",
-        "      expr = add { lhs = P. lhs, rhs = P. rhs } [lln.i32],",
-        "      ctx = P. ctx,",
-        "    },",
-        "",
-        "    when {",
-        "      (P. lhs :has_type (lln.i32)) * (P. rhs :has_type (lln.i32)),",
-        "    },",
-        "",
-        "    run {",
-        "      emit. cmd { add_i32 { dst = V. out, lhs = P. lhs, rhs = P. rhs } },",
-        "      ret { value = V. out },",
-        "    },",
-        "  },",
-        "}",
-        "```",
-        "",
-        llbl.markdown_dialect(member.dialect, { level = 3, title = "Llisle LLBL Surface" }),
-    }, "\n")
-end
-
 local function schema_markdown(member, opts, language)
     return table.concat({
         "## lalinschema.dsl",
@@ -430,7 +355,6 @@ M.language = llbl.language. lalin {
         lang = "llpvm.dsl",
         language = "llpvm.dsl",
         llpvm = "llpvm.dsl",
-        llisle = "llisle.dsl",
         lln = "lalin.dsl",
         machine = "llpvm.dsl",
         lalin = "lalin.dsl",
@@ -473,18 +397,7 @@ M.language = llbl.language. lalin {
         "lln",
         "lalin",
         "llpvm",
-        "llisle",
         "schema",
-        "relation",
-        "rules",
-        "rule",
-        "when",
-        "run",
-        "choose",
-        "alt",
-        "cost",
-        "bind",
-        "fail",
     },
     {
         name = "lalin.dsl",
@@ -569,35 +482,6 @@ M.language = llbl.language. lalin {
                 "namespaces",
                 "origins",
                 "native-type-values",
-                "type-language",
-            },
-        },
-    },
-    {
-        name = "llisle.dsl",
-        dialect = llisle_dsl.language,
-        exports = function(opts) return llisle_dsl.make_language_env(opts) end,
-        match = is_llisle_value,
-        format = function(value, opts) return llisle_dsl.format(value, opts) end,
-        diagnostics = llisle_diagnostics,
-        index = llisle_index,
-        markdown = llisle_markdown,
-        requires = { "llbl.core" },
-        provides = { "llisle.dsl" },
-        semantics = {
-            owns = {
-                "lowering-rules",
-                "rewrite-relations",
-                "sum-elimination",
-            },
-            uses = {
-                "authoring-substrate",
-                "diagnostics",
-                "language-composition",
-                "fragments",
-                "namespaces",
-                "native-type-values",
-                "origins",
                 "type-language",
             },
         },

@@ -63,7 +63,6 @@ The language environment installs namespace values:
 lln / lalin  Lalin native language
 schema      LalinSchema
 llpvm       LLPVM
-llisle      Llisle
 region      generic LLBL region head
 _           splice marker
 spread      explicit splice marker
@@ -226,7 +225,7 @@ Common statements:
 ```lua
 lln.let. x [lln.i32] (1)
 lln.var. acc [lln.i32] (0)
-lln.set (acc) (acc + x)
+lln.set (acc)(acc + x)
 lln.ret (acc)
 lln.trap ()
 ```
@@ -287,20 +286,6 @@ input product + state product + named exit protocol + transition body
 
 Functions are sealed regions with one return product. Use regions for internal
 control. Use functions for raw product-return ABI boundaries.
-
-## Emit
-
-`emit` composes regions by wiring every callee exit to local behavior.
-
-```lua
-lln.emit scan(p, n, target; {
-  hit = lln.block. found,
-  miss = lln.block. not_found,
-})
-```
-
-Every exit must be handled. If filling a continuation feels annoying, the
-protocol is telling you about an unhandled case.
 
 ## Region Call
 
@@ -365,7 +350,7 @@ Contracts are semantic facts, not comments.
 ```lua
 lln.fn. sum { xs [lln.ptr [lln.i32]], n [lln.index] } [lln.i32] {
   lln.requires {
-    lln.bounds(xs, n),
+    lln.bounds (xs)(n),
     lln.readonly(xs),
   },
 

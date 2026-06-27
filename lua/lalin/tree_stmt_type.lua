@@ -103,14 +103,6 @@ local function bind_context(T)
             return (function()
  return single(B.StmtEnvNoBinding)
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionSlot) then
-            return (function()
- return single(B.StmtEnvNoBinding)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionFrag) then
-            return (function()
- return single(B.StmtEnvNoBinding)
-            end)(node, ...)
         else
             error("phase lalin_tree_stmt_env_effect: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end

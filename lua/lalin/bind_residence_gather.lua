@@ -95,10 +95,6 @@ local function bind_context(T)
             return (function()
  return {}
             end)(node, ...)
-        elseif schema.isa(node, B.ValueRefHole) then
-            return (function()
- return {}
-            end)(node, ...)
         else
             error("phase lalin_bind_residence_value_ref_facts: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -130,10 +126,6 @@ local function bind_context(T)
             return (function(self)
  return cat({ pack(index_base_facts(self.base)), pack(expr_facts(self.index)) })
             end)(node, ...)
-        elseif schema.isa(node, Tr.PlaceSlotValue) then
-            return (function()
- return {}
-            end)(node, ...)
         else
             error("phase lalin_bind_residence_place_address_facts: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -160,10 +152,6 @@ local function bind_context(T)
         elseif schema.isa(node, Tr.PlaceIndex) then
             return (function(self)
  return cat({ pack(index_base_facts(self.base)), pack(expr_facts(self.index)) })
-            end)(node, ...)
-        elseif schema.isa(node, Tr.PlaceSlotValue) then
-            return (function()
- return {}
             end)(node, ...)
         else
             error("phase lalin_bind_residence_place_facts: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
@@ -234,10 +222,6 @@ local function bind_context(T)
         elseif schema.isa(node, Tr.DomainZipEqViews) then
             return (function(self)
  return each(view_facts, self.views)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.DomainSlotValue) then
-            return (function()
- return {}
             end)(node, ...)
         else
             error("phase lalin_bind_residence_domain_facts: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
@@ -438,14 +422,6 @@ local function bind_context(T)
             return (function(self)
  return cat({ pack(expr_facts(self.addr)), pack(expr_facts(self.expected)), pack(expr_facts(self.replacement)) })
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprSlotValue) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprUseExprFrag) then
-            return (function(self)
- return each(expr_facts, self.args)
-            end)(node, ...)
         else
             error("phase lalin_bind_residence_expr_facts: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -527,14 +503,6 @@ local function bind_context(T)
             return (function(self)
  return control_stmt_region_facts(self.region)
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionSlot) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionFrag) then
-            return (function(self)
- return each(expr_facts, self.args)
-            end)(node, ...)
         else
             error("phase lalin_bind_residence_stmt_facts: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -558,10 +526,6 @@ local function bind_context(T)
             return (function(self)
  return each(stmt_facts, self.body)
             end)(node, ...)
-        elseif schema.isa(node, Tr.FuncOpen) then
-            return (function(self)
- return each(stmt_facts, self.body)
-            end)(node, ...)
         else
             error("phase lalin_bind_residence_func_facts: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -570,10 +534,6 @@ local function bind_context(T)
     function extern_facts(node, ...)
         local cls = schema.classof(node)
         if schema.isa(node, Tr.ExternFunc) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExternFuncOpen) then
             return (function()
  return {}
             end)(node, ...)
@@ -588,10 +548,6 @@ local function bind_context(T)
             return (function(self)
  return expr_facts(self.value)
             end)(node, ...)
-        elseif schema.isa(node, Tr.ConstItemOpen) then
-            return (function(self)
- return expr_facts(self.value)
-            end)(node, ...)
         else
             error("phase lalin_bind_residence_const_facts: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -600,10 +556,6 @@ local function bind_context(T)
     function static_facts(node, ...)
         local cls = schema.classof(node)
         if schema.isa(node, Tr.StaticItem) then
-            return (function(self)
- return expr_facts(self.value)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StaticItemOpen) then
             return (function(self)
  return expr_facts(self.value)
             end)(node, ...)
@@ -638,27 +590,7 @@ local function bind_context(T)
             return (function()
  return {}
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemRegionFrag) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemExprFrag) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseTypeDeclSlot) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseItemsSlot) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseModule) then
-            return (function(self)
- return module_facts(self.module)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseModuleSlot) then
+        elseif schema.isa(node, Tr.ItemRegion) then
             return (function()
  return {}
             end)(node, ...)

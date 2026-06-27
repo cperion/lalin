@@ -14,7 +14,6 @@ local M = Machine(T)
 local C = T.LalinCore
 local Ty = T.LalinType
 local B = T.LalinBind
-local O = T.LalinOpen
 local Tr = T.LalinTree
 
 local i32 = Ty.TScalar(C.ScalarI32)
@@ -29,14 +28,6 @@ local function has(xs, needle)
     return false
 end
 
-local open_param = O.OpenParam("P", "p", i32)
-local import_value = O.ImportValue("iv", "iv", i32)
-local import_func = O.ImportGlobalFunc("if", "Imported", "f", fn_ty)
-local func_slot = O.FuncSlot("fs", "fs", fn_ty)
-local const_slot = O.ConstSlot("cs", "cs", i32)
-local static_slot = O.StaticSlot("ss", "ss", i32)
-local value_slot = O.ValueSlot("vs", "vs", i32)
-
 local bindings = {
     binding("local.value", "local_value", i32, B.BindingClassLocalValue),
     binding("local.cell", "local_cell", i32, B.BindingClassLocalCell),
@@ -47,17 +38,6 @@ local bindings = {
     binding("global.const", "gc", i32, B.BindingClassGlobalConst("M", "gc")),
     binding("global.static", "gs", i32, B.BindingClassGlobalStatic("M", "gs")),
     binding("extern", "ex", fn_ty, B.BindingClassExtern("puts")),
-    binding("open.param", "p", i32, B.BindingClassOpenParam(open_param)),
-    binding("import.value", "iv", i32, B.BindingClassImport(import_value)),
-    binding("import.func", "if", fn_ty, B.BindingClassImport(import_func)),
-    binding("func.sym", "fsym", fn_ty, B.BindingClassOpenSym(C.OpenSym(C.SymKindFunc, "fk", "fsym", ""))),
-    binding("extern.sym", "esym", fn_ty, B.BindingClassOpenSym(C.OpenSym(C.SymKindExtern, "ek", "esym", "c_esym"))),
-    binding("const.sym", "csym", i32, B.BindingClassOpenSym(C.OpenSym(C.SymKindConst, "ck", "csym", ""))),
-    binding("static.sym", "ssym", i32, B.BindingClassOpenSym(C.OpenSym(C.SymKindStatic, "sk", "ssym", ""))),
-    binding("func.slot", "fslot", fn_ty, B.BindingClassOpenSlot(O.SlotFunc(func_slot))),
-    binding("const.slot", "cslot", i32, B.BindingClassOpenSlot(O.SlotConst(const_slot))),
-    binding("static.slot", "sslot", i32, B.BindingClassOpenSlot(O.SlotStatic(static_slot))),
-    binding("value.slot", "vslot", i32, B.BindingClassOpenSlot(O.SlotValue(value_slot))),
 }
 
 local stmts = {

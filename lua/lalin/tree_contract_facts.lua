@@ -154,10 +154,6 @@ local function bind_context(T)
             return (function(self)
  return single(facts_from_contracts(self.contracts))
             end)(node, ...)
-        elseif schema.isa(node, Tr.FuncOpen) then
-            return (function()
- return single(Tr.ContractFactSet({}))
-            end)(node, ...)
         else
             error("phase lalin_tree_func_contract_facts: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end

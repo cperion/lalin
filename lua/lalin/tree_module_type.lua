@@ -70,12 +70,6 @@ local function bind_context(T)
             return (function(self)
  return single(self.module_name)
             end)(node, ...)
-        elseif schema.isa(node, Tr.ModuleOpen) then
-            return (function(self)
-
-            if self.name ~= T.LalinOpen.ModuleNameOpen then return single(self.name.module_name) end
-            return single("")
-            end)(node, ...)
         elseif schema.isa(node, Tr.ModuleSurface) then
             return (function()
  return single("")
@@ -109,10 +103,6 @@ local function bind_context(T)
             return (function(self, mod_name)
  return single(B.ValueEntry(self.name, B.Binding(C.Id("func:" .. mod_name .. ":" .. self.name), self.name, params_type(self.params, self.result), B.BindingClassGlobalFunc(mod_name, self.name))))
             end)(node, ...)
-        elseif schema.isa(node, Tr.FuncOpen) then
-            return (function(self, mod_name)
- return single(B.ValueEntry(self.sym.name, B.Binding(C.Id("func:" .. self.sym.key), self.sym.name, Ty.TFunc({}, self.result), B.BindingClassOpenSym(C.OpenSym(C.SymKindFunc, self.sym.key, self.sym.name, "")))))
-            end)(node, ...)
         else
             error("phase lalin_tree_func_value_entry: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -123,10 +113,6 @@ local function bind_context(T)
         if schema.isa(node, Tr.ExternFunc) then
             return (function(self)
  return single(B.ValueEntry(self.name, B.Binding(C.Id("extern:" .. self.name), self.name, params_type(self.params, self.result), B.BindingClassExtern(self.symbol))))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExternFuncOpen) then
-            return (function(self)
- return single(B.ValueEntry(self.sym.name, B.Binding(C.Id("extern:" .. self.sym.key), self.sym.name, Ty.TFunc({}, self.result), B.BindingClassOpenSym(C.OpenSym(C.SymKindExtern, self.sym.key, self.sym.name, self.sym.symbol)))))
             end)(node, ...)
         else
             error("phase lalin_tree_extern_value_entry: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
@@ -139,10 +125,6 @@ local function bind_context(T)
             return (function(self, mod_name)
  return single(B.ValueEntry(self.name, B.Binding(C.Id("const:" .. mod_name .. ":" .. self.name), self.name, self.ty, B.BindingClassGlobalConst(mod_name, self.name))))
             end)(node, ...)
-        elseif schema.isa(node, Tr.ConstItemOpen) then
-            return (function(self)
- return single(B.ValueEntry(self.sym.name, B.Binding(C.Id("const:" .. self.sym.key), self.sym.name, self.ty, B.BindingClassOpenSym(C.OpenSym(C.SymKindConst, self.sym.key, self.sym.name, "")))))
-            end)(node, ...)
         else
             error("phase lalin_tree_const_value_entry: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -153,10 +135,6 @@ local function bind_context(T)
         if schema.isa(node, Tr.StaticItem) then
             return (function(self, mod_name)
  return single(B.ValueEntry(self.name, B.Binding(C.Id("static:" .. mod_name .. ":" .. self.name), self.name, self.ty, B.BindingClassGlobalStatic(mod_name, self.name))))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StaticItemOpen) then
-            return (function(self)
- return single(B.ValueEntry(self.sym.name, B.Binding(C.Id("static:" .. self.sym.key), self.sym.name, self.ty, B.BindingClassOpenSym(C.OpenSym(C.SymKindStatic, self.sym.key, self.sym.name, "")))))
             end)(node, ...)
         else
             error("phase lalin_tree_static_value_entry: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
@@ -184,14 +162,6 @@ local function bind_context(T)
         elseif schema.isa(node, Tr.TypeDeclHandle) then
             return (function(self, mod_name)
  return single(B.TypeEntry(self.name, Ty.THandle(Ty.TypeRefGlobal(mod_name, self.name), self.repr)))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.TypeDeclOpenStruct) then
-            return (function(self)
- return single(B.TypeEntry(self.sym.name, Ty.TNamed(Ty.TypeRefLocal(self.sym))))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.TypeDeclOpenUnion) then
-            return (function(self)
- return single(B.TypeEntry(self.sym.name, Ty.TNamed(Ty.TypeRefLocal(self.sym))))
             end)(node, ...)
         else
             error("phase lalin_tree_type_entry: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
@@ -237,10 +207,6 @@ local function bind_context(T)
             if cls == Tr.TypeDeclStruct or cls == Tr.TypeDeclUnion then
                 local fields, size, align = field_layout(t.fields, env, cls == Tr.TypeDeclUnion, target)
                 return single(Sem.LayoutNamed(mod_name, t.name, fields, size, align))
-            end
-            if cls == Tr.TypeDeclOpenStruct or cls == Tr.TypeDeclOpenUnion then
-                local fields, size, align = field_layout(t.fields, env, cls == Tr.TypeDeclOpenUnion, target)
-                return single(Sem.LayoutLocal(t.sym, fields, size, align))
             end
             if cls == Tr.TypeDeclEnumSugar then
                 local tag_layout = layout_api.result(tag_ty(), env, target).layout
@@ -300,29 +266,7 @@ local function bind_context(T)
             return (function()
  return {}
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemRegionFrag) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemExprFrag) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseTypeDeclSlot) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseItemsSlot) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseModule) then
-            return (function(self, _, env, target)
-
-            local use_mod_name = only(module_name(self.module.h))
-            return flat_map(function(item) return item_layout(item, use_mod_name, env, target) end, self.module.items)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseModuleSlot) then
+        elseif schema.isa(node, Tr.ItemRegion) then
             return (function()
  return {}
             end)(node, ...)
@@ -357,29 +301,7 @@ local function bind_context(T)
             return (function()
  return {}
             end)(node, ...)
-        elseif schema.isa(node, Tr.ItemRegionFrag) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemExprFrag) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseTypeDeclSlot) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseItemsSlot) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseModule) then
-            return (function(self)
-
-            local use_mod_name = only(module_name(self.module.h))
-            return flat_map(function(item) return item_env_entries(item, use_mod_name) end, self.module.items)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemUseModuleSlot) then
+        elseif schema.isa(node, Tr.ItemRegion) then
             return (function()
  return {}
             end)(node, ...)

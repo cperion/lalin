@@ -88,10 +88,6 @@ local function bind_context(T, opts)
             return (function(self)
  return single(self.ty)
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprOpen) then
-            return (function(self)
- return single(self.ty)
-            end)(node, ...)
         elseif schema.isa(node, Tr.ExprSurface) then
             return (function()
  return {}
@@ -204,14 +200,6 @@ local function bind_context(T, opts)
             return (function()
  return {}
             end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionSlot) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionFrag) then
-            return (function()
- return {}
-            end)(node, ...)
         elseif schema.isa(node, Tr.StmtTrap) then
             return (function()
  return {}
@@ -292,14 +280,6 @@ local function bind_context(T, opts)
  return single(false)
             end)(node, ...)
         elseif schema.isa(node, Tr.StmtControl) then
-            return (function()
- return single(false)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionSlot) then
-            return (function()
- return single(false)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionFrag) then
             return (function()
  return single(false)
             end)(node, ...)

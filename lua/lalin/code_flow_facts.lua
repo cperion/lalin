@@ -308,6 +308,32 @@ local function bind_context(T)
         return nil
     end
 
+    local function native_window_boundary(name)
+        if name == "clamp" then return Flow.FlowWindowBoundaryClamp end
+        if name == "wrap" then return Flow.FlowWindowBoundaryWrap end
+        if name == "zero" then return Flow.FlowWindowBoundaryZero end
+        return Flow.FlowWindowBoundaryReject
+    end
+
+    local function native_nd_shape_from_header(header_name, axes)
+        local stem = tostring(header_name or ""):gsub("_scan_axis_%d+$", "")
+        local tiled = stem:match("_tiled_([%dx]+)$")
+        if tiled ~= nil then
+            local tile_sizes = {}
+            for raw in tiled:gmatch("%d+") do tile_sizes[#tile_sizes + 1] = tonumber(raw) end
+            if #tile_sizes == #axes then return Flow.FlowDomainShapeTiledND(axes, tile_sizes) end
+        end
+        local window = stem:match("_window_(.+)$")
+        if window ~= nil then
+            local windows = {}
+            for boundary, before, after in window:gmatch("([a-z]+)_(%d+)_(%d+)") do
+                windows[#windows + 1] = Flow.FlowWindowAxis(tonumber(before), tonumber(after), native_window_boundary(boundary))
+            end
+            if #windows == #axes then return Flow.FlowDomainShapeWindowND(axes, windows) end
+        end
+        return Flow.FlowDomainShapeRangeND(axes)
+    end
+
     local function native_nd_axis_facts(header_block, edge_facts, graph_loop)
         if type(header_block and header_block.name) ~= "string" or header_block.name:match("^ctl%.lln_loop_nd_") == nil then return nil end
         local latch = graph_loop and graph_loop.latches and graph_loop.latches[1] or nil
@@ -336,20 +362,20 @@ local function bind_context(T)
             )
             i = i + 1
         end
-        if #axes < 2 then return nil end
-        return axes
+        if #axes < 1 then return nil end
+        return native_nd_shape_from_header(header_block.name, axes)
     end
 
     local function append_native_loop_domain_facts(domain_shapes, domain_intents, loop_fact, defs, consts, header_block, edge_facts, graph_loop)
         local domain = loop_fact and loop_fact.domain
-        local nd_axes = native_nd_axis_facts(header_block, edge_facts, graph_loop)
-        if nd_axes ~= nil then
-            local proof = Flow.FlowProofDomain(domain, "lln.loop authored an explicit multi-axis range")
+        local nd_shape = native_nd_axis_facts(header_block, edge_facts, graph_loop)
+        if nd_shape ~= nil then
+            local proof = Flow.FlowProofDomain(domain, "lln.loop authored an explicit multi-axis producer")
             domain_shapes[#domain_shapes + 1] = Flow.FlowDomainShapeFact(
                 domain,
-                Flow.FlowDomainShapeRangeND(nd_axes),
+                nd_shape,
                 { proof },
-                Flow.FlowFactFrontendFact("lln.range_nd")
+                Flow.FlowFactFrontendFact("lln.nd_producer")
             )
             domain_intents[#domain_intents + 1] = Flow.FlowDomainIntentFact(
                 domain,

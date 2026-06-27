@@ -42,7 +42,6 @@ local function bind_context(T)
     local C = T.LalinCore
     local Ty = T.LalinType
     local B = T.LalinBind
-    local O = T.LalinOpen
     local Sem = T.LalinSem
     local Tr = T.LalinTree
 
@@ -74,10 +73,6 @@ local function bind_context(T)
             return (function(self)
  return single(self.ty)
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprOpen) then
-            return (function(self)
- return single(self.ty)
-            end)(node, ...)
         else
             error("phase lalin_tree_expr_header_type: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -88,15 +83,6 @@ local function bind_context(T)
         if schema.isa(node, B.ValueRefBinding) then
             return (function(self)
  return single(self.binding.ty)
-            end)(node, ...)
-        elseif schema.isa(node, B.ValueRefHole) then
-            return (function(self)
-
-            local slot_cls = schema.classof(self.slot)
-            if slot_cls == O.SlotFunc then return single(self.slot.slot.fn_ty) end
-            if slot_cls == O.SlotValue or slot_cls == O.SlotConst or slot_cls == O.SlotStatic then return single(self.slot.slot.ty) end
-            if slot_cls == O.SlotExpr or slot_cls == O.SlotPlace then return single(self.slot.slot.ty or nil) end
-            return {}
             end)(node, ...)
         elseif schema.isa(node, B.ValueRefName) then
             return (function()
@@ -258,14 +244,6 @@ local function bind_context(T)
         elseif schema.isa(node, Tr.ExprAtomicCas) then
             return (function(self)
  return single(self.ty)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprSlotValue) then
-            return (function(self)
- return header_or(self.h, self.slot.ty)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprUseExprFrag) then
-            return (function(self)
- return header_or(self.h)
             end)(node, ...)
         else
             error("phase lalin_tree_expr_type: no handler for " .. tostring(cls and cls.kind or type(node)), 2)

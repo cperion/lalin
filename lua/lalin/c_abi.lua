@@ -130,8 +130,6 @@ local function bind_context(T)
             return C.CBackendNamed(ty.id)
         elseif cls == Ty.TCFuncPtr then
             return C.CBackendImportedCodePtr(ty.sig)
-        elseif cls == Ty.TSlot then
-            error("c_abi: open type slot cannot be projected to C ABI", 3)
         end
         error("c_abi: unsupported type " .. class_name(ty), 3)
     end
@@ -201,10 +199,6 @@ local function bind_context(T)
         local name = param.name or ("arg" .. tostring(#out + 1))
         local ty = param.ty or param
         local cls = pvm.classof(ty)
-        if cls == Ty.TSlot then
-            issues[#issues + 1] = issue(sig_id, func_name .. ":" .. name, "open type slot has no C ABI")
-            return
-        end
         local source = project_type(ty, ctx)
         if cls == Ty.TView then
             out[#out + 1] = C.CBackendAbiParam(C.CBackendName(sanitize(name) .. "_data"), source, C.CBackendDataPtr(project_type(ty.elem, ctx)), C.CBackendAbiParamDescriptor)
@@ -225,10 +219,6 @@ local function bind_context(T)
 
     local function lower_result(ctx, func_name, result_ty, sig_id, out_params, issues)
         local cls = pvm.classof(result_ty)
-        if cls == Ty.TSlot then
-            issues[#issues + 1] = issue(sig_id, func_name .. ":return", "open type slot has no C ABI")
-            return C.CBackendAbiResult(C.CBackendVoid, C.CBackendVoid, C.CBackendAbiResultVoid), C.CBackendVoid
-        end
         local source = project_type(result_ty, ctx)
         if is_void_type(result_ty) then return C.CBackendAbiResult(source, C.CBackendVoid, C.CBackendAbiResultVoid), C.CBackendVoid end
         if cls == Ty.TView then

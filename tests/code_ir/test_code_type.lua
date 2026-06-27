@@ -16,7 +16,6 @@ local Core = T.LalinCore
 local Ty = T.LalinType
 local Code = T.LalinCode
 local C = T.LalinC
-local Open = T.LalinOpen
 local Tree = T.LalinTree
 
 local i32 = Ty.TScalar(Core.ScalarI32)
@@ -96,10 +95,5 @@ local ok_arr, err_arr = pcall(function()
     CodeType.type_to_code(Ty.TArray(Ty.ArrayLenExpr(Tree.ExprLit(Tree.ExprTyped(i32), Core.LitInt("3"))), i32), {})
 end)
 assert(not ok_arr and tostring(err_arr):match("dynamic array length"))
-
-local ok_slot, err_slot = pcall(function()
-    CodeType.type_to_code(Ty.TSlot(Open.TypeSlot("T", "T")), {})
-end)
-assert(not ok_slot and tostring(err_slot):match("open type slot"))
 
 io.write("lalin code_type ok\n")

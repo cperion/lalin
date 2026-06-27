@@ -27,7 +27,7 @@ local function bind_context(T)
     M.vocabs = {
         StencilApply = { status = "supported", scope = "primitive generator for elementwise, copy/fill/cast/compare/select, gather/scatter, and current generated partition artifacts" },
         StencilReduce = { status = "supported", scope = "primitive generator for folds plus generated count/find and generic reduce_n fusion artifacts" },
-        StencilScan = { status = "supported", scope = "primitive generator for axis-aware prefix reductions; copy_patch_mc materializes rank-N axis scans, LuaTrace materializes Range1D only" },
+        StencilScan = { status = "supported", scope = "primitive generator for axis-aware prefix reductions; copy_patch_mc and LuaTrace materialize Range1D and RangeND axis scans" },
         StencilScatterReduce = { status = "supported", scope = "primitive generator for indexed accumulation/reduce_by_index over an externally initialized destination" },
     }
 
@@ -52,7 +52,7 @@ local function bind_context(T)
         find = { status = "supported", basis = "StencilReduce", scope = "predicate apply fused into min-index/not-found reduction" },
         reduce_n = { status = "supported", basis = "StencilReduce", scope = "generic expression-backed ApplyN fused into fold with arity capped at 4" },
         scan = { status = "supported", basis = "StencilScan", scope = "prefix fold" },
-        scan_n = { status = "supported", basis = "StencilScan", scope = "generic expression-backed ApplyN fused into prefix fold with arity capped at 4; MC supports rank-N axis scan, BC supports Range1D" },
+        scan_n = { status = "supported", basis = "StencilScan", scope = "generic expression-backed ApplyN fused into prefix fold with arity capped at 4; MC and BC support Range1D plus RangeND axis scan" },
     }
 
     M.layouts = {
@@ -78,10 +78,9 @@ local function bind_context(T)
         },
         StencilProduceRangeND = {
             status = "supported",
-            scope = "shape-supported; forward ND ranges materialize in copy_patch_mc generic ApplyN/domain-ReduceN/axis-ScanN and emitted-bank cells; BC rejects with typed producer facts",
+            scope = "shape-supported; forward ND ranges materialize in copy_patch_bc and copy_patch_mc generic ApplyN/domain-ReduceN/axis-ReduceN/axis-ScanN plus emitted-bank cells",
             shape = "supported",
-            copy_patch_bc = "typed_reject",
-            copy_patch_bc_gap = "semantic BC producer materializer does not yet execute RangeND loops",
+            copy_patch_bc = "materialized",
             copy_patch_mc = "materialized",
             bank = "covered",
         },

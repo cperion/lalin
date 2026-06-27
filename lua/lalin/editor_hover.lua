@@ -45,7 +45,6 @@ local function type_ref_name(pvm, ref)
         for i = 1, #(ref.path.parts or {}) do parts[i] = ref.path.parts[i].text end
         return table.concat(parts, ".")
     end
-    if cls.kind == "TypeRefSlot" then return ref.slot.pretty_name end
     return cls.kind
 end
 
@@ -77,21 +76,8 @@ local function params_text(params)
     return table.concat(out, ", ")
 end
 
-local function open_params_text(params)
-    local out = {}
-    for i = 1, #(params or {}) do out[i] = params[i].name .. ": " .. Format.type_name(params[i].ty) end
-    return table.concat(out, ", ")
-end
-
 local function cont_text(cont)
-    return cont.pretty_name .. "(" .. params_text(cont.params) .. ")"
-end
-
-local function name_ref_text(pvm, O, ref)
-    local cls = schema.classof(ref)
-    if cls == O.NameRefText then return ref.text end
-    if cls == O.NameRefSlot then return ref.slot.pretty_name end
-    return tostring(ref)
+    return cont.name .. "(" .. params_text(cont.params) .. ")"
 end
 
 local function func_name_and_parts(pvm, Tr, Ty, C, func)
@@ -100,8 +86,6 @@ local function func_name_and_parts(pvm, Tr, Ty, C, func)
         return func.name, func.params, func.result
     elseif cls == Tr.FuncDecl then
         return func.name, func.params, func.result
-    elseif cls == Tr.FuncOpen then
-        return func.sym.name, func.params, func.result
     end
     return "function", {}, Ty.TScalar(C.ScalarVoid)
 end
@@ -109,7 +93,6 @@ end
 local function extern_name_and_parts(pvm, Tr, Ty, C, func)
     local cls = schema.classof(func)
     if cls == Tr.ExternFunc then return func.name, func.symbol, func.params, func.result end
-    if cls == Tr.ExternFuncOpen then return func.sym.name, func.sym.symbol, func.params, func.result end
     return "extern", "extern", {}, Ty.TScalar(C.ScalarVoid)
 end
 
@@ -185,7 +168,6 @@ local function bind_context(T)
     local C = T.LalinCore
     local Ty = T.LalinType
     local Tr = T.LalinTree
-    local O = T.LalinOpen
     local H = T.LalinHost
     local Subject = SubjectAt(T)
 
@@ -269,14 +251,6 @@ local function bind_context(T)
             local f = subject.func
             local name, symbol, params, result = extern_name_and_parts(pvm, Tr, Ty, C, f)
             return E.HoverInfo(E.MarkupMarkdown, doc("extern " .. name .. "(" .. params_text(params) .. "): " .. Format.type_name(result), { "- params: " .. tostring(#params), "- symbol: " .. tostring(symbol), "- boundary: imported C/host function" }), range)
-        elseif cls == E.SubjectRegionFrag then
-            local frag = subject.frag
-            local conts = {}
-            for i = 1, #(frag.conts or {}) do conts[#conts + 1] = cont_text(frag.conts[i]) end
-            return E.HoverInfo(E.MarkupMarkdown, doc("region " .. name_ref_text(pvm, O, frag.name) .. "(" .. open_params_text(frag.params) .. ")", { "- region fragment", "- runtime params: " .. tostring(#frag.params), "- exits: " .. (#conts > 0 and table.concat(conts, " | ") or "none"), "- composition: emit splices CFG; call seals through a result boundary" }), range)
-        elseif cls == E.SubjectExprFrag then
-            local frag = subject.frag
-            return E.HoverInfo(E.MarkupMarkdown, doc("expr " .. name_ref_text(pvm, O, frag.name) .. "(" .. open_params_text(frag.params) .. "): " .. Format.type_name(frag.result), { "- expr fragment", "- composition: emit in expression position" }), range)
         elseif cls == E.SubjectBinding then
             local binding = subject.binding
             return E.HoverInfo(E.MarkupMarkdown, doc(binding.name .. ": " .. Format.type_name(binding.ty), { "- " .. binding_class_text(pvm, binding) }), range)
@@ -286,12 +260,6 @@ local function bind_context(T)
             for i = 1, #analysis.anchors.anchors do
                 local a = analysis.anchors.anchors[i]
                 if a.kind == T.LalinSource.AnchorContinuationName and a.label == label then
-                    for j = 1, #(analysis.parse.combined.region_frags or {}) do
-                        local frag = analysis.parse.combined.region_frags[j]
-                        for k = 1, #(frag.conts or {}) do
-                            if frag.conts[k].pretty_name == label then signature = cont_text(frag.conts[k]) end
-                        end
-                    end
                 end
             end
             return E.HoverInfo(E.MarkupMarkdown, doc(signature, { "- continuation label / CFG target" }), range)

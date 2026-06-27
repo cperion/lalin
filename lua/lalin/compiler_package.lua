@@ -25,7 +25,7 @@ return package "lalin.compiler" {
         diagnostics. diag,
         abi. process,
         impl. lua { module = "lalin.compiler_machines", func = "typecheck_module" },
-        capabilities { "diagnostics", "source_index", "open_expand", "closure_convert" },
+        capabilities { "diagnostics", "source_index", "surface_resolve", "closure_convert" },
     },
 
     machine. hosted_checked_to_c_code {

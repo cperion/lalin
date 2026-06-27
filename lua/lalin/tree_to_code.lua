@@ -49,10 +49,6 @@ local function bind_context(T)
         local h = module and module.h
         local cls = pvm.classof(h)
         if cls == Tr.ModuleTyped or cls == Tr.ModuleSem or cls == Tr.ModuleCode then return h.module_name end
-        if cls == Tr.ModuleOpen then
-            local nh = pvm.classof(h.name)
-            if nh and h.name.name then return h.name.name end
-        end
         return "module"
     end
 
@@ -148,9 +144,6 @@ local function bind_context(T)
             local item = module.items[i]
             local cls = pvm.classof(item)
             if cls == Tr.ItemType then add_type_decl(item.t, module_name)
-            elseif cls == Tr.ItemUseModule then
-                local nested = build_variant_defs(item.module, module_name)
-                for k, v in pairs(nested) do defs[k] = v end
             end
         end
         return defs
@@ -228,14 +221,14 @@ local function bind_context(T)
     local function expr_type(expr)
         local h = expr and expr.h
         local cls = pvm.classof(h)
-        if cls == Tr.ExprTyped or cls == Tr.ExprOpen then return h.ty end
+        if cls == Tr.ExprTyped then return h.ty end
         unsupported(nil, expr, "untyped expression " .. class_name(expr))
     end
 
     local function place_type(place)
         local h = place and place.h
         local cls = pvm.classof(h)
-        if cls == Tr.PlaceTyped or cls == Tr.PlaceOpen then return h.ty end
+        if cls == Tr.PlaceTyped then return h.ty end
         unsupported(nil, place, "untyped place " .. class_name(place))
     end
 

@@ -1,6 +1,7 @@
 -- lalin/frontend_pipeline.lua
 -- Compilation pipeline: typechecks, lowers, and validates a LalinTree module.
--- The DSL produces closed LalinTree directly; no parse or open-module phase needed.
+-- The DSL produces closed LalinTree directly; no parse/open-module phase is part
+-- of the normal compiler path.
 
 local pvm = require("lalin.pvm")
 local llbl = require("llbl")
@@ -47,9 +48,6 @@ end
 
 local function bind_context(T)
     require("lalin.compiler_model")(T)
-    local OpenFacts = require("lalin.open_facts")(T)
-    local OpenValidate = require("lalin.open_validate")(T)
-    local OpenExpand = require("lalin.open_expand")(T)
     local SurfaceResolve = require("lalin.surface_resolve")(T)
     local ClosureConvert = require("lalin.closure_convert")(T)
     local Typecheck = require("lalin.tree_typecheck")(T)
@@ -218,12 +216,8 @@ local function bind_context(T)
             Errors.Catalog,
             Errors.Terminal.render
         )
-        local expanded = OpenExpand.module(module, opts.expand_env)
-        progress(process_ctx, "open_expand", { module = expanded })
-        local surfaced = SurfaceResolve.module(expanded)
+        local surfaced = SurfaceResolve.module(module)
         progress(process_ctx, "surface_resolve", { module = surfaced })
-        local open_report = OpenValidate.validate(OpenFacts.facts_of_module(surfaced), collector)
-        progress(process_ctx, "open_validate", { report = open_report })
         local closed = ClosureConvert.module(surfaced)
         progress(process_ctx, "closure_convert", { module = closed })
         local checked = Typecheck.check_module(closed, { collector = collector, layout_env = opts.layout_env, target = opts.target or opts.c_target })

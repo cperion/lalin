@@ -599,7 +599,21 @@ local function bind_context(T)
         return nil
     end
 
-    local function infer_scan_skeleton(loop, effects, reductions, bindings, aliases, proofs)
+    local function scan_axis_from_header(func, graph_loop)
+        local header_id = graph_loop and graph_loop.header and graph_loop.header.block
+        if header_id == nil then return nil end
+        for _, block in ipairs(func and func.blocks or {}) do
+            if block.id ~= nil and block.id.text == header_id.text then
+                local axis = tostring(block.name or ""):match("^ctl%.lln_loop_nd_.*_scan_axis_(%d+)$")
+                axis = tonumber(axis)
+                if axis ~= nil then return Stencil.StencilAxisRef(axis) end
+                return nil
+            end
+        end
+        return nil
+    end
+
+    local function infer_scan_skeleton(func, graph_loop, loop, effects, reductions, bindings, aliases, proofs)
         if #reductions ~= 1 then return nil end
         local store = first_effect(effects, Kernel.KernelEffectStore)
         if store == nil then return nil end
@@ -608,7 +622,7 @@ local function bind_context(T)
         proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("store of loop-carried reduction update is a prefix scan")
         return {
             effects = {
-                Kernel.KernelEffectScan(store.dst, store.index, reduction, Stencil.StencilScanInclusive),
+                Kernel.KernelEffectScan(store.dst, store.index, reduction, Stencil.StencilScanInclusive, scan_axis_from_header(func, graph_loop)),
                 Kernel.KernelEffectFold(reduction),
             },
             result = Kernel.KernelResultReduction(reduction),
@@ -670,8 +684,11 @@ local function bind_context(T)
             return "value:" .. tostring(v and v.text)
         end
         if cls == Value.ValueExprCast then return value_expr_key(expr.value, bindings, aliases) end
-        if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv then
+        if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
             return tostring(cls) .. "(" .. value_expr_key(expr.a, bindings, aliases) .. "," .. value_expr_key(expr.b, bindings, aliases) .. ")"
+        end
+        if cls == Value.ValueExprBinary then
+            return "binary:" .. tostring(expr.op) .. "(" .. value_expr_key(expr.a, bindings, aliases) .. "," .. value_expr_key(expr.b, bindings, aliases) .. ")"
         end
         return tostring(expr)
     end
@@ -749,7 +766,7 @@ local function bind_context(T)
 
     local function infer_loop_skeleton(func, graph_loop, loop, effects, reductions, body_bindings, dependence_rejects, value_index, aliases, proofs)
         local bindings = binding_index(body_bindings)
-        local scan = infer_scan_skeleton(loop, effects, reductions, bindings, aliases, proofs)
+        local scan = infer_scan_skeleton(func, graph_loop, loop, effects, reductions, bindings, aliases, proofs)
         if scan ~= nil then return scan end
         if #reductions == 0 then
             local scatter_reduce = infer_scatter_reduce_skeleton(loop, effects, bindings, aliases, proofs)

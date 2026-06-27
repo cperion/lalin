@@ -227,7 +227,7 @@ end
 
 function M.schema(t) return fragment("llpvm_decl", t) end
 function M.tape_items(t) return fragment("llpvm_tape_item", t) end
-M._ = llbl.spread
+M._ = llbl._
 M.spread = llbl.spread
 M.llpvm = llbl.zone_head {
     language = "lalin",
@@ -1128,7 +1128,7 @@ function M.make_env(opts)
     env.llpvm = M.llpvm
     env.language = machine_language_factory
     for _, name in ipairs({ "pvm", "lang", "type", "op", "world", "tape", "record", "machine", "phase", "task", "event", "input", "output", "from", "to", "entry", "cache", "root" }) do env[name] = LL.exports[name] end
-    env.schema, env.tape_items, env._, env.spread = M.schema, M.tape_items, llbl.spread, llbl.spread
+    env.schema, env.tape_items, env._, env.spread = M.schema, M.tape_items, llbl._, llbl.spread
     return env
 end
 

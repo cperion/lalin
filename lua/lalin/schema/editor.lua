@@ -116,7 +116,6 @@ return schema. LalinEditor {
   sum. DiagnosticOrigin {
     DiagFromParse { variant_unique, issue [LalinParse.ParseIssue], },
     DiagFromHost { variant_unique, issue [LalinHost.HostIssue], },
-    DiagFromOpen { variant_unique, issue [LalinOpen.ValidationIssue], },
     DiagFromType { variant_unique, issue [LalinTree.TypeIssue], },
     DiagFromBack { variant_unique, issue [LalinBack.BackValidationIssue], },
     DiagFromBindingResolution { variant_unique, resolution [LalinEditor.BindingResolution], },
@@ -152,8 +151,6 @@ return schema. LalinEditor {
     SubjectTreeFunc { variant_unique, func [LalinTree.Func], },
     SubjectTreeExtern { variant_unique, func [LalinTree.ExternFunc], },
     SubjectTreeModule { variant_unique, field. module [LalinTree.Module], },
-    SubjectRegionFrag { variant_unique, frag [LalinOpen.RegionFrag], },
-    SubjectExprFrag { variant_unique, frag [LalinOpen.ExprFrag], },
     SubjectBinding { variant_unique, binding [LalinBind.Binding], },
     SubjectContinuation {
       variant_unique,

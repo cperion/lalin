@@ -4,1304 +4,44 @@ local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
     if T._lalin_api_cache.stencil_rules ~= nil then return T._lalin_api_cache.stencil_rules end
 
-    local lalin = require("lalin")
-    local llbl = require("llbl")
-    local Llisle = require("llisle")
-    local RuleApi = require("lalin.llisle_rule_api")
-    local env = lalin.language.env { scope = "env", base = _G }
-    Llisle.use { scope = "env", target = env, base = env, global = false }
-    local llisle = env.llisle
     local Core = T.LalinCore
     local Code = T.LalinCode
     local Kernel = T.LalinKernel
     local Stencil = T.LalinStencil
     local Value = T.LalinValue
-    local function sym(name) return llbl.shared.symbols.source(name) end
-    local StencilExprFact = sym("StencilExprFact")
-    local StencilClassFact = sym("StencilClassFact")
-    local IndexLaneSelection = sym("IndexLaneSelection")
-    local CodeType = sym("CodeType")
-    local StencilTypeFact = sym("StencilTypeFact")
-    local StoreStencilFact = sym("StoreStencilFact")
-    local StoreStencilSelection = sym("StoreStencilSelection")
-    local ReduceStencilFact = sym("ReduceStencilFact")
-    local ReduceStencilSelection = sym("ReduceStencilSelection")
-    local expr = sym("expr")
-    local class = sym("class")
-    local lane = sym("lane")
-    local ty = sym("ty")
-    local ctx = sym("ctx")
-    local selection = sym("selection")
-    local kernel_value = sym("kernel_value")
-    local load = sym("load")
-    local fill = sym("fill")
-    local unary = sym("unary")
-    local cast = sym("cast")
-    local binary = sym("binary")
-    local cmp = sym("cmp")
-    local map = sym("map")
-    local compare = sym("compare")
-    local zip_map = sym("zip_map")
-    local zip_compare = sym("zip_compare")
-    local int = sym("int")
-    local float = sym("float")
-    local index = sym("index")
-    local bool8 = sym("bool8")
-    env.type_families = {
-        pointer = sym("pointer"),
-        code_pointer = sym("code_pointer"),
-        named = sym("named"),
-        array = sym("array"),
-        slice = sym("slice"),
-        view = sym("view"),
-        byte_span = sym("byte_span"),
-        handle = sym("handle"),
-        lease = sym("lease"),
-        closure = sym("closure"),
-        imported_c = sym("imported_c"),
-        imported_c_func_pointer = sym("imported_c_func_pointer"),
-        vector = sym("vector"),
-    }
-    local load_class = sym("load_class")
-    local fill_class = sym("fill_class")
-    local map_class = sym("map_class")
-    local cast_class = sym("cast_class")
-    local zip_map_class = sym("zip_map_class")
-    local compare_class = sym("compare_class")
-    local pred_const = sym("pred_const")
-    local zip_compare_class = sym("zip_compare_class")
-    local index_lane = sym("index_lane")
-    local type_class = sym("type_class")
-    local store_fill = sym("store_fill")
-    local store_copy = sym("store_copy")
-    local store_gather = sym("store_gather")
-    local store_scatter = sym("store_scatter")
-    local store_in_place_map = sym("store_in_place_map")
-    local store_map = sym("store_map")
-    local store_cast = sym("store_cast")
-    local store_compare = sym("store_compare")
-    local store_zip_map = sym("store_zip_map")
-    local store_zip_compare = sym("store_zip_compare")
-    local scan_array = sym("scan_array")
-    local find_array = sym("find_array")
-    local partition_array = sym("partition_array")
-    local reduce_array = sym("reduce_array")
-    local reduce_map = sym("reduce_map")
-    local reduce_zip = sym("reduce_zip")
-    local reduce_count = sym("reduce_count")
-    local is_int_type, is_float_type, is_index_type, is_bool8_type, is_index_data_type
-    local is_type_family
-    local same_type, unary_supported, binary_supported, reduction_supported, cast_supported
-    local predicate_from_cmp_const
-    local impl = {}
-    local function with_class_kind(kind, fields)
-        fields.kind = kind
-        return fields
-    end
+
     local function basis_vocab_for_kind(kind)
-        if kind == "reduce" or kind == "count" or kind == "find" or kind == "map_reduce" or kind == "zip_reduce" then return Stencil.StencilReduce end
+        if kind == "reduce" or kind == "reduce_n" or kind == "count" or kind == "find" or kind == "map_reduce" or kind == "zip_reduce" then return Stencil.StencilReduce end
         if kind == "scan" then return Stencil.StencilScan end
         return Stencil.StencilApply
     end
 
-    local function with_selection_kind(kind, _vocab, fields)
+    local function selection(kind, fields)
+        fields = fields or {}
         fields.kind = kind
         fields.vocab = basis_vocab_for_kind(kind)
         return fields
     end
-    impl.has_const_pred = function(op, operand_ty, value, const_on_left)
-        return predicate_from_cmp_const(op, operand_ty, value, const_on_left) ~= nil
+
+    local function with_class(kind, fields)
+        fields = fields or {}
+        fields.kind = kind
+        return fields
     end
-    impl.type_class = function(fields) return fields end
-    impl.load_class = function(fields) return with_class_kind("load", fields) end
-    impl.fill_class = function(fields)
-        local value = fields.value
+
+    local function const_int_value(value)
         if pvm.classof(value) == Value.ValueExprConst
             and pvm.classof(value.const) == Code.CodeConstLiteral
             and pvm.classof(value.const.literal) == Core.LitInt then
-            fields.const_int = tonumber(value.const.literal.raw)
+            return tonumber(value.const.literal.raw)
         end
-        return with_class_kind("fill", fields)
+        return nil
     end
-    impl.map_class = function(fields) return with_class_kind("map", fields) end
-    impl.cast_class = function(fields) return with_class_kind("cast", fields) end
-    impl.zip_map_class = function(fields) return with_class_kind("zip_map", fields) end
-    impl.compare_class = function(fields) return with_class_kind("compare", fields) end
-    impl.zip_compare_class = function(fields) return with_class_kind("zip_compare", fields) end
-    impl.pred_const = function(fields) return predicate_from_cmp_const(fields.op, fields.operand_ty, fields.value, fields.const_on_left) end
-    impl.index_lane = function(fields) return fields end
-    impl.store_fill = function(fields) return with_selection_kind("fill", nil, fields) end
-    impl.store_copy = function(fields) return with_selection_kind("copy", nil, fields) end
-    impl.store_gather = function(fields) return with_selection_kind("gather", nil, fields) end
-    impl.store_scatter = function(fields) return with_selection_kind("scatter", nil, fields) end
-    impl.store_in_place_map = function(fields) return with_selection_kind("in_place_map", nil, fields) end
-    impl.store_map = function(fields) return with_selection_kind("map", nil, fields) end
-    impl.store_cast = function(fields) return with_selection_kind("cast", nil, fields) end
-    impl.store_compare = function(fields) return with_selection_kind("compare", nil, fields) end
-    impl.store_zip_map = function(fields) return with_selection_kind("zip_map", nil, fields) end
-    impl.store_zip_compare = function(fields) return with_selection_kind("zip_compare", nil, fields) end
-    impl.scan_array = function(fields) return with_selection_kind("scan", nil, fields) end
-    impl.find_array = function(fields) return with_selection_kind("find", nil, fields) end
-    impl.partition_array = function(fields) return with_selection_kind("partition", nil, fields) end
-    impl.reduce_array = function(fields) return with_selection_kind("reduce", nil, fields) end
-    impl.reduce_map = function(fields) return with_selection_kind("map_reduce", nil, fields) end
-    impl.reduce_zip = function(fields) return with_selection_kind("zip_reduce", nil, fields) end
-    impl.reduce_count = function(fields) return with_selection_kind("count", nil, fields) end
-    impl.store_stencil_plan = function(fields) return fields end
-    impl.reduce_stencil_plan = function(fields) return fields end
-    impl.store_stencil_no_plan = function(fields) fields.kind = "no_plan"; return fields end
-    impl.reduce_stencil_no_plan = function(fields) fields.kind = "no_plan"; return fields end
 
-    local function build_rules()
-    return llisle {
-  predicate. has_const_pred [impl.has_const_pred] { input { sym("op") [Any], sym("operand_ty") [Any], sym("value") [Any], sym("const_on_left") [Any] }, pure },
-  predicate. is_int_type [impl.is_int_type] { input { sym("ty") [Any] }, pure },
-  predicate. is_float_type [impl.is_float_type] { input { sym("ty") [Any] }, pure },
-  predicate. is_index_type [impl.is_index_type] { input { sym("ty") [Any] }, pure },
-  predicate. is_bool8_type [impl.is_bool8_type] { input { sym("ty") [Any] }, pure },
-  predicate. is_type_family [impl.is_type_family] { input { sym("ty") [Any], sym("language") [Any] }, pure },
-  predicate. is_index_data_type [impl.is_index_data_type] { input { sym("ty") [Any] }, pure },
-  predicate. same_type [impl.same_type] { input { sym("a") [Any], sym("b") [Any] }, pure },
-  predicate. unary_supported [impl.unary_supported] { input { sym("op") [Any], sym("ty") [Any] }, pure },
-  predicate. binary_supported [impl.binary_supported] { input { sym("op") [Any], sym("ty") [Any] }, pure },
-  predicate. reduction_supported [impl.reduction_supported] { input { sym("reduction") [Any], sym("elem_ty") [Any], sym("result_ty") [Any] }, pure },
-  predicate. cast_supported [impl.cast_supported] { input { sym("op") [Any], sym("src_ty") [Any], sym("dst_ty") [Any] }, pure },
-
-  constructor. type_class [impl.type_class] { input { sym("kind") [Any], sym("ty") [CodeType] }, output { sym("class") [StencilTypeFact] } },
-  constructor. load_class [impl.load_class] { input { sym("lane") [Any], sym("index") [Any] }, output { sym("class") [StencilClassFact] } },
-  constructor. fill_class [impl.fill_class] { input { sym("value") [Any] }, output { sym("class") [StencilClassFact] } },
-  constructor. map_class [impl.map_class] { input { sym("op") [Any], sym("lane") [Any], sym("index") [Any], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
-  constructor. cast_class [impl.cast_class] { input { sym("op") [Any], sym("lane") [Any], sym("index") [Any], sym("src_ty") [CodeType], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
-  constructor. zip_map_class [impl.zip_map_class] { input { sym("op") [Any], sym("lhs") [Any], sym("rhs") [Any], sym("lhs_index") [Any], sym("rhs_index") [Any], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
-  constructor. compare_class [impl.compare_class] { input { sym("pred") [Any], sym("lane") [Any], sym("index") [Any], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
-  constructor. zip_compare_class [impl.zip_compare_class] { input { sym("cmp") [Any], sym("lhs") [Any], sym("rhs") [Any], sym("lhs_index") [Any], sym("rhs_index") [Any], sym("result_ty") [CodeType] }, output { sym("class") [StencilClassFact] } },
-  constructor. pred_const [impl.pred_const] { input { sym("op") [Any], sym("operand_ty") [Any], sym("value") [Any], sym("const_on_left") [Any] }, output { sym("pred") [Any] } },
-  constructor. index_lane [impl.index_lane] { input { sym("lane") [Any], sym("index") [Any] }, output { sym("lane") [IndexLaneSelection] } },
-  constructor. store_fill [impl.store_fill] { input { sym("info") [sym("StoreFillInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
-  constructor. store_copy [impl.store_copy] { input { sym("info") [sym("StoreCopyInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
-  constructor. store_gather [impl.store_gather] { input { sym("info") [sym("StoreGatherInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
-  constructor. store_scatter [impl.store_scatter] { input { sym("info") [sym("StoreScatterInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
-  constructor. store_in_place_map [impl.store_in_place_map] { input { sym("op") [Any], sym("info") [sym("StoreInPlaceMapInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
-  constructor. store_map [impl.store_map] { input { sym("op") [Any], sym("info") [sym("StoreMapInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
-  constructor. store_cast [impl.store_cast] { input { sym("op") [Any], sym("info") [sym("StoreCastInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
-  constructor. store_compare [impl.store_compare] { input { sym("op") [Any], sym("info") [sym("StoreCompareInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
-  constructor. store_zip_map [impl.store_zip_map] { input { sym("op") [Any], sym("info") [sym("StoreZipMapInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
-  constructor. store_zip_compare [impl.store_zip_compare] { input { sym("op") [Any], sym("info") [sym("StoreZipCompareInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [StoreStencilSelection] } },
-  constructor. scan_array [impl.scan_array] { input { sym("reduction") [Any], sym("info") [sym("ScanArrayInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [sym("ScanStencilSelection")] } },
-  constructor. find_array [impl.find_array] { input { sym("op") [Any], sym("info") [sym("FindArrayInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [sym("FindStencilSelection")] } },
-  constructor. partition_array [impl.partition_array] { input { sym("op") [Any], sym("info") [sym("PartitionArrayInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [sym("PartitionStencilSelection")] } },
-  constructor. reduce_array [impl.reduce_array] { input { sym("info") [sym("ReduceArrayInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [ReduceStencilSelection] } },
-  constructor. reduce_map [impl.reduce_map] { input { sym("op") [Any], sym("info") [sym("MapReduceInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [ReduceStencilSelection] } },
-  constructor. reduce_zip [impl.reduce_zip] { input { sym("op") [Any], sym("info") [sym("ZipReduceInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [ReduceStencilSelection] } },
-  constructor. reduce_count [impl.reduce_count] { input { sym("op") [Any], sym("info") [sym("CountInfo")], sym("args") [sym("StencilArgList")] }, output { sym("selection") [ReduceStencilSelection] } },
-  constructor. store_stencil_plan [impl.store_stencil_plan] { input { sym("selection") [StoreStencilSelection] }, output { sym("plan") [sym("StoreStencilPlan")] } },
-  constructor. store_stencil_no_plan [impl.store_stencil_no_plan] { input { sym("reason") [str] }, output { sym("plan") [sym("StoreStencilPlan")] } },
-  constructor. reduce_stencil_plan [impl.reduce_stencil_plan] { input { sym("reduction") [Any], sym("selection") [ReduceStencilSelection] }, output { sym("plan") [sym("ReduceStencilPlan")] } },
-  constructor. reduce_stencil_no_plan [impl.reduce_stencil_no_plan] { input { sym("reason") [str] }, output { sym("plan") [sym("ReduceStencilPlan")] } },
-
-  relation. classify_expr {
-    input { expr [StencilExprFact] },
-    output { class [StencilClassFact] },
-    strategy {
-      select. best_cost,
-      ambiguity. error,
-      coverage. complete,
-    },
-  },
-
-  rule. kernel_value {
-    llisle.classify_expr { expr = P. expr },
-    when {
-      (P. expr.kind :eq (kernel_value)) * (P. expr.binding :present ()),
-    },
-    bind. inner {
-      llisle.classify_expr { expr = P. expr.binding },
-    },
-    run { ret { class = V. inner.class } },
-  },
-
-  rule. load {
-    llisle.classify_expr { expr = P. expr },
-    when { P. expr.kind :eq (load) },
-    run {
-      ret { class = load_class { lane = P. expr.lane, index = P. expr.index } },
-    },
-  },
-
-  rule. fill {
-    llisle.classify_expr { expr = P. expr },
-    when { P. expr.kind :eq (fill) },
-    run {
-      ret { class = fill_class { value = P. expr.value } },
-    },
-  },
-
-  rule. unary_map {
-    llisle.classify_expr { expr = P. expr },
-    when {
-      (P. expr.kind :eq (unary)) * (P. expr.op :present ()),
-    },
-    bind. inner {
-      llisle.classify_expr { expr = P. expr.value },
-    },
-    when { V. inner.class.kind :eq (load) },
-    run {
-      ret {
-        class = map_class {
-          op = P. expr.op,
-          lane = V. inner.class.lane,
-          index = V. inner.class.index,
-          result_ty = P. expr.result_ty,
-        },
-      },
-    },
-  },
-
-  rule. cast_map {
-    llisle.classify_expr { expr = P. expr },
-    when { P. expr.kind :eq (cast) },
-    bind. inner {
-      llisle.classify_expr { expr = P. expr.value },
-    },
-    when { V. inner.class.kind :eq (load) },
-    run {
-      ret {
-        class = cast_class {
-          op = P. expr.op,
-          lane = V. inner.class.lane,
-          index = V. inner.class.index,
-          src_ty = P. expr.src_ty,
-          result_ty = P. expr.result_ty,
-        },
-      },
-    },
-  },
-
-  rule. cast_compare {
-    llisle.classify_expr { expr = P. expr },
-    when { P. expr.kind :eq (cast) },
-    bind. inner {
-      llisle.classify_expr { expr = P. expr.value },
-    },
-    when { V. inner.class.kind :eq (compare) },
-    run {
-      ret {
-        class = compare_class {
-          pred = V. inner.class.pred,
-          lane = V. inner.class.lane,
-          index = V. inner.class.index,
-          result_ty = P. expr.result_ty,
-        },
-      },
-    },
-  },
-
-  rule. zip_map {
-    llisle.classify_expr { expr = P. expr },
-    when {
-      (P. expr.kind :eq (binary)) * (P. expr.op :present ()),
-    },
-    bind. lhs { llisle.classify_expr { expr = P. expr.lhs } },
-    bind. rhs { llisle.classify_expr { expr = P. expr.rhs } },
-    when {
-      (V. lhs.class.kind :eq (load)) * (V. rhs.class.kind :eq (load)),
-    },
-    run {
-      ret {
-        class = zip_map_class {
-          op = P. expr.op,
-          lhs = V. lhs.class.lane,
-          rhs = V. rhs.class.lane,
-          lhs_index = V. lhs.class.index,
-          rhs_index = V. rhs.class.index,
-          result_ty = P. expr.result_ty,
-        },
-      },
-    },
-  },
-
-  rule. binary_mul_identity_right {
-    llisle.classify_expr { expr = P. expr },
-    when {
-      (P. expr.kind :eq (binary))
-        * (P. expr.algebra :eq ("mul")),
-    },
-    bind. lhs { llisle.classify_expr { expr = P. expr.lhs } },
-    bind. rhs { llisle.classify_expr { expr = P. expr.rhs } },
-    when {
-      (V. rhs.class.kind :eq (fill)) * (V. rhs.class.const_int :eq (1)),
-    },
-    run { ret { class = V. lhs.class } },
-  },
-
-  rule. binary_mul_identity_left {
-    llisle.classify_expr { expr = P. expr },
-    when {
-      (P. expr.kind :eq (binary))
-        * (P. expr.algebra :eq ("mul")),
-    },
-    bind. lhs { llisle.classify_expr { expr = P. expr.lhs } },
-    bind. rhs { llisle.classify_expr { expr = P. expr.rhs } },
-    when {
-      (V. lhs.class.kind :eq (fill)) * (V. lhs.class.const_int :eq (1)),
-    },
-    run { ret { class = V. rhs.class } },
-  },
-
-  rule. binary_add_identity_right {
-    llisle.classify_expr { expr = P. expr },
-    when {
-      (P. expr.kind :eq (binary))
-        * (P. expr.algebra :eq ("add")),
-    },
-    bind. lhs { llisle.classify_expr { expr = P. expr.lhs } },
-    bind. rhs { llisle.classify_expr { expr = P. expr.rhs } },
-    when {
-      (V. rhs.class.kind :eq (fill)) * (V. rhs.class.const_int :eq (0)),
-    },
-    run { ret { class = V. lhs.class } },
-  },
-
-  rule. binary_add_identity_left {
-    llisle.classify_expr { expr = P. expr },
-    when {
-      (P. expr.kind :eq (binary))
-        * (P. expr.algebra :eq ("add")),
-    },
-    bind. lhs { llisle.classify_expr { expr = P. expr.lhs } },
-    bind. rhs { llisle.classify_expr { expr = P. expr.rhs } },
-    when {
-      (V. lhs.class.kind :eq (fill)) * (V. lhs.class.const_int :eq (0)),
-    },
-    run { ret { class = V. rhs.class } },
-  },
-
-  rule. compare_load_const {
-    llisle.classify_expr { expr = P. expr },
-    when { P. expr.kind :eq (cmp) },
-    bind. lhs { llisle.classify_expr { expr = P. expr.lhs } },
-    bind. rhs { llisle.classify_expr { expr = P. expr.rhs } },
-    when {
-      (V. lhs.class.kind :eq (load))
-        * (V. rhs.class.kind :eq (fill))
-        * (P. expr.op :has_const_pred (V. lhs.class.lane.elem_ty, V. rhs.class.value, false)),
-    },
-    run {
-      ret {
-        class = compare_class {
-          pred = pred_const { op = P. expr.op, operand_ty = V. lhs.class.lane.elem_ty, value = V. rhs.class.value, const_on_left = false },
-          lane = V. lhs.class.lane,
-          index = V. lhs.class.index,
-          result_ty = P. expr.result_ty,
-        },
-      },
-    },
-  },
-
-  rule. compare_const_load {
-    llisle.classify_expr { expr = P. expr },
-    when { P. expr.kind :eq (cmp) },
-    bind. lhs { llisle.classify_expr { expr = P. expr.lhs } },
-    bind. rhs { llisle.classify_expr { expr = P. expr.rhs } },
-    when {
-      (V. lhs.class.kind :eq (fill))
-        * (V. rhs.class.kind :eq (load))
-        * (P. expr.op :has_const_pred (V. rhs.class.lane.elem_ty, V. lhs.class.value, true)),
-    },
-    run {
-      ret {
-        class = compare_class {
-          pred = pred_const { op = P. expr.op, operand_ty = V. rhs.class.lane.elem_ty, value = V. lhs.class.value, const_on_left = true },
-          lane = V. rhs.class.lane,
-          index = V. rhs.class.index,
-          result_ty = P. expr.result_ty,
-        },
-      },
-    },
-  },
-
-  rule. zip_compare {
-    llisle.classify_expr { expr = P. expr },
-    when { P. expr.kind :eq (cmp) },
-    bind. lhs { llisle.classify_expr { expr = P. expr.lhs } },
-    bind. rhs { llisle.classify_expr { expr = P. expr.rhs } },
-    when {
-      (V. lhs.class.kind :eq (load)) * (V. rhs.class.kind :eq (load)),
-    },
-    run {
-      ret {
-        class = zip_compare_class {
-          cmp = P. expr.op,
-          lhs = V. lhs.class.lane,
-          rhs = V. rhs.class.lane,
-          lhs_index = V. lhs.class.index,
-          rhs_index = V. rhs.class.index,
-          result_ty = P. expr.result_ty,
-        },
-      },
-    },
-  },
-
-  relation. select_index_lane {
-    input { class [StencilClassFact] },
-    output { lane [IndexLaneSelection] },
-    strategy {
-      select. best_cost,
-      ambiguity. error,
-      coverage. complete,
-    },
-  },
-
-  rule. index_lane_load {
-    llisle.select_index_lane { class = P. class },
-    when { P. class.kind :eq (load) },
-    run {
-      ret {
-        lane = index_lane {
-          lane = P. class.lane,
-          index = P. class.index,
-        },
-      },
-    },
-  },
-
-  rule. index_lane_cast_load {
-    llisle.select_index_lane { class = P. class },
-    when { P. class.kind :eq (cast) },
-    run {
-      ret {
-        lane = index_lane {
-          lane = P. class.lane,
-          index = P. class.index,
-        },
-      },
-    },
-  },
-
-  relation. classify_stencil_type {
-    input { ty [CodeType] },
-    output { class [StencilTypeFact] },
-    strategy {
-      select. best_cost,
-      ambiguity. error,
-      coverage. complete,
-    },
-  },
-
-  rule. stencil_type_int {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_int_type () },
-    run { ret { class = type_class { kind = int, ty = P. ty } } },
-  },
-
-  rule. stencil_type_float {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_float_type () },
-    run { ret { class = type_class { kind = float, ty = P. ty } } },
-  },
-
-  rule. stencil_type_index {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_index_type () },
-    run { ret { class = type_class { kind = index, ty = P. ty } } },
-  },
-
-  rule. stencil_type_bool8 {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_bool8_type () },
-    run { ret { class = type_class { kind = bool8, ty = P. ty } } },
-  },
-
-  rule. stencil_type_pointer {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_type_family (type_families.pointer) },
-    run { ret { class = type_class { kind = "pointer", ty = P. ty } } },
-  },
-
-  rule. stencil_type_code_pointer {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_type_family (type_families.code_pointer) },
-    run { ret { class = type_class { kind = "code_pointer", ty = P. ty } } },
-  },
-
-  rule. stencil_type_named {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_type_family (type_families.named) },
-    run { ret { class = type_class { kind = "named", ty = P. ty } } },
-  },
-
-  rule. stencil_type_array {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_type_family (type_families.array) },
-    run { ret { class = type_class { kind = "array", ty = P. ty } } },
-  },
-
-  rule. stencil_type_slice {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_type_family (type_families.slice) },
-    run { ret { class = type_class { kind = "slice", ty = P. ty } } },
-  },
-
-  rule. stencil_type_view {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_type_family (type_families.view) },
-    run { ret { class = type_class { kind = "view", ty = P. ty } } },
-  },
-
-  rule. stencil_type_byte_span {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_type_family (type_families.byte_span) },
-    run { ret { class = type_class { kind = "byte_span", ty = P. ty } } },
-  },
-
-  rule. stencil_type_handle {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_type_family (type_families.handle) },
-    run { ret { class = type_class { kind = "handle", ty = P. ty } } },
-  },
-
-  rule. stencil_type_lease {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_type_family (type_families.lease) },
-    run { ret { class = type_class { kind = "lease", ty = P. ty } } },
-  },
-
-  rule. stencil_type_closure {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_type_family (type_families.closure) },
-    run { ret { class = type_class { kind = "closure", ty = P. ty } } },
-  },
-
-  rule. stencil_type_imported_c {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_type_family (type_families.imported_c) },
-    run { ret { class = type_class { kind = "imported_c", ty = P. ty } } },
-  },
-
-  rule. stencil_type_imported_c_func_pointer {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_type_family (type_families.imported_c_func_pointer) },
-    run { ret { class = type_class { kind = "imported_c_func_pointer", ty = P. ty } } },
-  },
-
-  rule. stencil_type_vector {
-    llisle.classify_stencil_type { ty = P. ty },
-    when { P. ty :is_type_family (type_families.vector) },
-    run { ret { class = type_class { kind = "vector", ty = P. ty } } },
-  },
-
-  relation. plan_store_stencil {
-    input { ctx [sym("StoreStencilPlanInput")] },
-    output { plan [sym("StoreStencilPlan")] },
-    strategy {
-      select. best_cost,
-      ambiguity. error,
-      coverage. complete,
-    },
-  },
-
-  rule. store_plan_ready {
-    llisle.plan_store_stencil { ctx = P. ctx },
-    when {
-      (P. ctx.planned :eq (true))
-        * (P. ctx.returns_void :eq (true))
-        * (P. ctx.counted_positive :eq (true))
-        * (P. ctx.single_store :eq (true))
-        * (P. ctx.dst_base_present :eq (true))
-        * (P. ctx.class_ready :eq (true)),
-    },
-    bind. selected {
-      llisle.select_store_stencil { ctx = P. ctx.selection_ctx },
-    },
-    run {
-      ret {
-        plan = sym("store_stencil_plan") {
-          selection = V. selected.selection,
-        },
-      },
-    },
-  },
-
-  rule. store_plan_not_ready {
-    llisle.plan_store_stencil { ctx = P. ctx },
-    when {
-      P. ctx.plan_ready :eq (false),
-    },
-    run {
-      ret {
-        plan = store_stencil_no_plan {
-          reason = P. ctx.reject_reason,
-        },
-      },
-    },
-  },
-
-  relation. select_store_stencil {
-    input { ctx [StoreStencilFact] },
-    output { selection [StoreStencilSelection] },
-    strategy {
-      select. best_cost,
-      ambiguity. error,
-      coverage. complete,
-    },
-  },
-
-  rule. store_fill {
-    llisle.select_store_stencil { ctx = P. ctx },
-    bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    when {
-      (P. ctx.class.kind :eq (fill))
-        * (P. ctx.store_index_primary :eq (true)),
-    },
-    run {
-      ret {
-        selection = store_fill {
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            elem_ty = P. ctx.dst_elem_ty,
-            result_ty = P. ctx.dst_elem_ty,
-            dst = P. ctx.dst,
-            start = P. ctx.start,
-            stop = P. ctx.stop,
-            value = P. ctx.class.value,
-            dst_layout = P. ctx.dst_layout,
-          },
-          args = { P. ctx.dst_expr, P. ctx.start_expr, P. ctx.stop_expr, P. ctx.class.value_expr },
-        },
-      },
-    },
-  },
-
-  rule. store_copy {
-    llisle.select_store_stencil { ctx = P. ctx },
-    bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
-    bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    when {
-      (P. ctx.class.kind :eq (load))
-        * (P. ctx.store_index_primary :eq (true))
-        * (P. ctx.class.index_primary :eq (true))
-        * (P. ctx.class.elem_ty :same_type (P. ctx.dst_elem_ty)),
-    },
-    run {
-      ret {
-        selection = store_copy {
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            elem_ty = P. ctx.class.elem_ty,
-            result_ty = P. ctx.dst_elem_ty,
-            dst = P. ctx.dst,
-            start = P. ctx.start,
-            stop = P. ctx.stop,
-            src = P. ctx.class.src,
-            semantics = P. ctx.copy_semantics,
-            dst_layout = P. ctx.dst_layout,
-            src_layout = P. ctx.class.src_layout,
-          },
-          args = { P. ctx.dst_expr, P. ctx.class.src_expr, P. ctx.start_expr, P. ctx.stop_expr },
-        },
-      },
-    },
-  },
-
-  relation. select_scan_stencil {
-    input { ctx [sym("ScanStencilFact")] },
-    output { selection [sym("ScanStencilSelection")] },
-    strategy {
-      select. best_cost,
-      ambiguity. error,
-      coverage. complete,
-    },
-  },
-
-  rule. scan_array {
-    llisle.select_scan_stencil { ctx = P. ctx },
-    bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
-    bind. result_ty { llisle.classify_stencil_type { ty = P. ctx.result_ty } },
-    bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    when {
-      (P. ctx.class.kind :eq (load))
-        * (P. ctx.store_index_primary :eq (true))
-        * (P. ctx.class.index_primary :eq (true))
-        * (P. ctx.result_ty :same_type (P. ctx.dst_elem_ty))
-        * (P. ctx.reduction_kind :reduction_supported (P. ctx.class.elem_ty, P. ctx.result_ty)),
-    },
-    run {
-      ret {
-        selection = scan_array {
-          reduction = P. ctx.reduction,
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            elem_ty = P. ctx.class.elem_ty,
-            result_ty = P. ctx.result_ty,
-            init = P. ctx.init,
-            mode = P. ctx.mode,
-            dst = P. ctx.dst,
-            array = P. ctx.class.src,
-            dst_layout = P. ctx.dst_layout,
-            array_layout = P. ctx.class.src_layout,
-          },
-          args = { P. ctx.dst_expr, P. ctx.class.src_expr, P. ctx.start_expr, P. ctx.stop_expr, P. ctx.init_expr },
-        },
-      },
-    },
-  },
-
-  relation. select_find_stencil {
-    input { ctx [sym("FindStencilFact")] },
-    output { selection [sym("FindStencilSelection")] },
-    strategy {
-      select. best_cost,
-      ambiguity. error,
-      coverage. complete,
-    },
-  },
-
-  rule. find_array {
-    llisle.select_find_stencil { ctx = P. ctx },
-    bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
-    when {
-      (P. ctx.class.kind :eq (load))
-        * (P. ctx.class.index_primary :eq (true))
-        * (P. ctx.not_found_minus_one :eq (true)),
-    },
-    run {
-      ret {
-        selection = find_array {
-          op = P. ctx.pred,
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            elem_ty = P. ctx.class.elem_ty,
-            array = P. ctx.class.src,
-            pred = P. ctx.pred,
-            array_layout = P. ctx.class.src_layout,
-          },
-          args = { P. ctx.class.src_expr, P. ctx.start_expr, P. ctx.stop_expr },
-        },
-      },
-    },
-  },
-
-  relation. select_partition_stencil {
-    input { ctx [sym("PartitionStencilFact")] },
-    output { selection [sym("PartitionStencilSelection")] },
-    strategy {
-      select. best_cost,
-      ambiguity. error,
-      coverage. complete,
-    },
-  },
-
-  rule. partition_array {
-    llisle.select_partition_stencil { ctx = P. ctx },
-    bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
-    bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    when {
-      (P. ctx.class.kind :eq (load))
-        * (P. ctx.store_index_primary :eq (true))
-        * (P. ctx.class.index_primary :eq (true))
-        * (P. ctx.class.elem_ty :same_type (P. ctx.dst_elem_ty)),
-    },
-    run {
-      ret {
-        selection = partition_array {
-          op = P. ctx.pred,
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            elem_ty = P. ctx.class.elem_ty,
-            dst = P. ctx.dst,
-            array = P. ctx.class.src,
-            pred = P. ctx.pred,
-            semantics = P. ctx.semantics,
-            dst_layout = P. ctx.dst_layout,
-            array_layout = P. ctx.class.src_layout,
-          },
-          args = { P. ctx.dst_expr, P. ctx.class.src_expr, P. ctx.start_expr, P. ctx.stop_expr },
-        },
-      },
-    },
-  },
-
-  rule. store_gather {
-    llisle.select_store_stencil { ctx = P. ctx },
-    bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
-    bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    bind. index_ty { llisle.classify_stencil_type { ty = P. ctx.class.index_lane.elem_ty } },
-    when {
-      (P. ctx.class.kind :eq (load))
-        * (P. ctx.store_index_primary :eq (true))
-        * (P. ctx.class.index_lane.index_primary :eq (true))
-        * (P. ctx.class.elem_ty :same_type (P. ctx.dst_elem_ty))
-        * (P. ctx.class.index_lane.elem_ty :is_index_data_type ()),
-    },
-    run {
-      ret {
-        selection = store_gather {
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            elem_ty = P. ctx.class.elem_ty,
-            result_ty = P. ctx.dst_elem_ty,
-            dst = P. ctx.dst,
-            start = P. ctx.start,
-            stop = P. ctx.stop,
-            src = P. ctx.class.src,
-            index = P. ctx.class.index_lane.base,
-            index_ty = P. ctx.class.index_lane.elem_ty,
-            dst_layout = P. ctx.dst_layout,
-            src_layout = P. ctx.class.src_layout,
-            index_layout = P. ctx.class.index_lane.layout,
-          },
-          args = { P. ctx.dst_expr, P. ctx.class.src_expr, P. ctx.class.index_lane.base_expr, P. ctx.start_expr, P. ctx.stop_expr },
-        },
-      },
-    },
-  },
-
-  rule. store_scatter {
-    llisle.select_store_stencil { ctx = P. ctx },
-    bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
-    bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    bind. index_ty { llisle.classify_stencil_type { ty = P. ctx.store_index_lane.elem_ty } },
-    when {
-      (P. ctx.class.kind :eq (load))
-        * (P. ctx.store_index_lane.index_primary :eq (true))
-        * (P. ctx.class.index_primary :eq (true))
-        * (P. ctx.class.elem_ty :same_type (P. ctx.dst_elem_ty))
-        * (P. ctx.store_index_lane.elem_ty :is_index_data_type ()),
-    },
-    run {
-      ret {
-        selection = store_scatter {
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            elem_ty = P. ctx.class.elem_ty,
-            result_ty = P. ctx.dst_elem_ty,
-            dst = P. ctx.dst,
-            start = P. ctx.start,
-            stop = P. ctx.stop,
-            src = P. ctx.class.src,
-            index = P. ctx.store_index_lane.base,
-            index_ty = P. ctx.store_index_lane.elem_ty,
-            conflicts = P. ctx.scatter_conflicts,
-            dst_layout = P. ctx.dst_layout,
-            src_layout = P. ctx.class.src_layout,
-            index_layout = P. ctx.store_index_lane.layout,
-          },
-          args = { P. ctx.dst_expr, P. ctx.class.src_expr, P. ctx.store_index_lane.base_expr, P. ctx.start_expr, P. ctx.stop_expr },
-        },
-      },
-    },
-  },
-
-  rule. store_in_place_map {
-    llisle.select_store_stencil { ctx = P. ctx },
-    bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
-    bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    when {
-      (P. ctx.class.kind :eq (map))
-        * (P. ctx.store_index_primary :eq (true))
-        * (P. ctx.class.index_primary :eq (true))
-        * (P. ctx.class.same_src_dst_ty :eq (true))
-        * (P. ctx.class.op :unary_supported (P. ctx.class.elem_ty))
-        * (P. ctx.class.result_ty :same_type (P. ctx.class.elem_ty)),
-    },
-    run {
-      ret {
-        selection = store_in_place_map {
-          op = P. ctx.class.op,
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            elem_ty = P. ctx.class.elem_ty,
-            result_ty = P. ctx.class.result_ty,
-            dst = P. ctx.dst,
-            start = P. ctx.start,
-            stop = P. ctx.stop,
-            src = P. ctx.class.src,
-            dst_layout = P. ctx.dst_layout,
-            src_layout = P. ctx.class.src_layout,
-          },
-          args = { P. ctx.dst_expr, P. ctx.start_expr, P. ctx.stop_expr },
-        },
-      },
-    },
-  },
-
-  rule. store_map {
-    llisle.select_store_stencil { ctx = P. ctx },
-    bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
-    bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    bind. result_ty { llisle.classify_stencil_type { ty = P. ctx.class.result_ty } },
-    when {
-      (P. ctx.class.kind :eq (map))
-        * (P. ctx.store_index_primary :eq (true))
-        * (P. ctx.class.index_primary :eq (true))
-        * (P. ctx.class.op :unary_supported (P. ctx.class.elem_ty))
-        * (P. ctx.class.result_ty :same_type (P. ctx.dst_elem_ty)),
-    },
-    run {
-      ret {
-        selection = store_map {
-          op = P. ctx.class.op,
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            elem_ty = P. ctx.class.elem_ty,
-            result_ty = P. ctx.class.result_ty,
-            dst = P. ctx.dst,
-            start = P. ctx.start,
-            stop = P. ctx.stop,
-            src = P. ctx.class.src,
-            dst_layout = P. ctx.dst_layout,
-            src_layout = P. ctx.class.src_layout,
-          },
-          args = { P. ctx.dst_expr, P. ctx.class.src_expr, P. ctx.start_expr, P. ctx.stop_expr },
-        },
-      },
-    },
-  },
-
-  rule. store_cast {
-    llisle.select_store_stencil { ctx = P. ctx },
-    bind. src_ty { llisle.classify_stencil_type { ty = P. ctx.class.src_ty } },
-    bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    when {
-      (P. ctx.class.kind :eq (cast))
-        * (P. ctx.store_index_primary :eq (true))
-        * (P. ctx.class.index_primary :eq (true))
-        * (P. ctx.class.result_ty :same_type (P. ctx.dst_elem_ty))
-        * (P. ctx.class.op :cast_supported (P. ctx.class.src_ty, P. ctx.class.result_ty)),
-    },
-    run {
-      ret {
-        selection = store_cast {
-          op = P. ctx.class.op,
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            elem_ty = P. ctx.dst_elem_ty,
-            result_ty = P. ctx.dst_elem_ty,
-            dst = P. ctx.dst,
-            start = P. ctx.start,
-            stop = P. ctx.stop,
-            src = P. ctx.class.src,
-            src_ty = P. ctx.class.src_ty,
-            dst_ty = P. ctx.class.result_ty,
-            dst_layout = P. ctx.dst_layout,
-            src_layout = P. ctx.class.src_layout,
-          },
-          args = { P. ctx.dst_expr, P. ctx.class.src_expr, P. ctx.start_expr, P. ctx.stop_expr },
-        },
-      },
-    },
-  },
-
-  rule. store_compare {
-    llisle.select_store_stencil { ctx = P. ctx },
-    bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
-    bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    when {
-      (P. ctx.class.kind :eq (compare))
-        * (P. ctx.store_index_primary :eq (true))
-        * (P. ctx.class.index_primary :eq (true))
-        * (P. ctx.dst_elem_ty :is_bool8_type ())
-        * (P. ctx.class.result_ty :same_type (P. ctx.dst_elem_ty)),
-    },
-    run {
-      ret {
-        selection = store_compare {
-          op = P. ctx.class.pred,
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            elem_ty = P. ctx.class.elem_ty,
-            result_ty = P. ctx.dst_elem_ty,
-            dst = P. ctx.dst,
-            start = P. ctx.start,
-            stop = P. ctx.stop,
-            src = P. ctx.class.src,
-            pred = P. ctx.class.pred,
-            dst_layout = P. ctx.dst_layout,
-            src_layout = P. ctx.class.src_layout,
-          },
-          args = { P. ctx.dst_expr, P. ctx.class.src_expr, P. ctx.start_expr, P. ctx.stop_expr },
-        },
-      },
-    },
-  },
-
-  rule. store_zip_map {
-    llisle.select_store_stencil { ctx = P. ctx },
-    bind. lhs_ty { llisle.classify_stencil_type { ty = P. ctx.class.lhs_ty } },
-    bind. rhs_ty { llisle.classify_stencil_type { ty = P. ctx.class.rhs_ty } },
-    bind. result_ty { llisle.classify_stencil_type { ty = P. ctx.class.result_ty } },
-    bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    when {
-      (P. ctx.class.kind :eq (zip_map))
-        * (P. ctx.store_index_primary :eq (true))
-        * (P. ctx.class.lhs_index_primary :eq (true))
-        * (P. ctx.class.rhs_index_primary :eq (true))
-        * (P. ctx.class.lhs_ty :same_type (P. ctx.class.rhs_ty))
-        * (P. ctx.class.lhs_ty :same_type (P. ctx.class.result_ty))
-        * (P. ctx.class.result_ty :same_type (P. ctx.dst_elem_ty))
-        * (P. ctx.class.op :binary_supported (P. ctx.class.result_ty)),
-    },
-    run {
-      ret {
-        selection = store_zip_map {
-          op = P. ctx.class.op,
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            elem_ty = P. ctx.dst_elem_ty,
-            result_ty = P. ctx.class.result_ty,
-            dst = P. ctx.dst,
-            start = P. ctx.start,
-            stop = P. ctx.stop,
-            lhs = P. ctx.class.lhs_base,
-            rhs = P. ctx.class.rhs_base,
-            lhs_ty = P. ctx.class.lhs_ty,
-            rhs_ty = P. ctx.class.rhs_ty,
-            dst_layout = P. ctx.dst_layout,
-            lhs_layout = P. ctx.class.lhs_layout,
-            rhs_layout = P. ctx.class.rhs_layout,
-          },
-          args = { P. ctx.dst_expr, P. ctx.class.lhs_expr, P. ctx.class.rhs_expr, P. ctx.start_expr, P. ctx.stop_expr },
-        },
-      },
-    },
-  },
-
-  rule. store_zip_compare {
-    llisle.select_store_stencil { ctx = P. ctx },
-    bind. lhs_ty { llisle.classify_stencil_type { ty = P. ctx.class.lhs_ty } },
-    bind. rhs_ty { llisle.classify_stencil_type { ty = P. ctx.class.rhs_ty } },
-    bind. dst_ty { llisle.classify_stencil_type { ty = P. ctx.dst_elem_ty } },
-    when {
-      (P. ctx.class.kind :eq (zip_compare))
-        * (P. ctx.store_index_primary :eq (true))
-        * (P. ctx.class.lhs_index_primary :eq (true))
-        * (P. ctx.class.rhs_index_primary :eq (true))
-        * (P. ctx.class.lhs_ty :same_type (P. ctx.class.rhs_ty))
-        * (P. ctx.dst_elem_ty :is_bool8_type ()),
-    },
-    run {
-      ret {
-        selection = store_zip_compare {
-          op = P. ctx.class.cmp,
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            elem_ty = P. ctx.dst_elem_ty,
-            result_ty = P. ctx.dst_elem_ty,
-            dst = P. ctx.dst,
-            start = P. ctx.start,
-            stop = P. ctx.stop,
-            lhs = P. ctx.class.lhs_base,
-            rhs = P. ctx.class.rhs_base,
-            lhs_ty = P. ctx.class.lhs_ty,
-            rhs_ty = P. ctx.class.rhs_ty,
-            dst_layout = P. ctx.dst_layout,
-            lhs_layout = P. ctx.class.lhs_layout,
-            rhs_layout = P. ctx.class.rhs_layout,
-          },
-          args = { P. ctx.dst_expr, P. ctx.class.lhs_expr, P. ctx.class.rhs_expr, P. ctx.start_expr, P. ctx.stop_expr },
-        },
-      },
-    },
-  },
-
-  relation. select_reduce_stencil {
-    input { ctx [ReduceStencilFact] },
-    output { selection [ReduceStencilSelection] },
-    strategy {
-      select. best_cost,
-      ambiguity. error,
-      coverage. complete,
-    },
-  },
-
-  rule. reduce_array {
-    llisle.select_reduce_stencil { ctx = P. ctx },
-    bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
-    bind. result_ty { llisle.classify_stencil_type { ty = P. ctx.result_ty } },
-    when {
-      (P. ctx.class.kind :eq (load))
-        * (P. ctx.class.index_primary :eq (true))
-        * (P. ctx.reduction_kind :reduction_supported (P. ctx.class.elem_ty, P. ctx.result_ty)),
-    },
-    run {
-      ret {
-        selection = reduce_array {
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            result_ty = P. ctx.result_ty,
-            init = P. ctx.init,
-            array = P. ctx.class.src,
-            elem_ty = P. ctx.class.elem_ty,
-            array_layout = P. ctx.class.src_layout,
-          },
-          args = { P. ctx.class.src_expr, P. ctx.start_expr, P. ctx.stop_expr, P. ctx.init_expr },
-        },
-      },
-    },
-  },
-
-  rule. reduce_map {
-    llisle.select_reduce_stencil { ctx = P. ctx },
-    bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
-    bind. mapped_ty { llisle.classify_stencil_type { ty = P. ctx.class.result_ty } },
-    bind. result_ty { llisle.classify_stencil_type { ty = P. ctx.result_ty } },
-    when {
-      (P. ctx.class.kind :eq (map))
-        * (P. ctx.class.index_primary :eq (true))
-        * (P. ctx.class.op :unary_supported (P. ctx.class.elem_ty))
-        * (P. ctx.reduction_kind :reduction_supported (P. ctx.class.result_ty, P. ctx.result_ty)),
-    },
-    run {
-      ret {
-        selection = reduce_map {
-          op = P. ctx.class.op,
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            result_ty = P. ctx.result_ty,
-            init = P. ctx.init,
-            array = P. ctx.class.src,
-            elem_ty = P. ctx.class.elem_ty,
-            mapped_ty = P. ctx.class.result_ty,
-            array_layout = P. ctx.class.src_layout,
-          },
-          args = { P. ctx.class.src_expr, P. ctx.start_expr, P. ctx.stop_expr, P. ctx.init_expr },
-        },
-      },
-    },
-  },
-
-  rule. reduce_zip {
-    llisle.select_reduce_stencil { ctx = P. ctx },
-    bind. lhs_ty { llisle.classify_stencil_type { ty = P. ctx.class.lhs_ty } },
-    bind. rhs_ty { llisle.classify_stencil_type { ty = P. ctx.class.rhs_ty } },
-    bind. mapped_ty { llisle.classify_stencil_type { ty = P. ctx.class.result_ty } },
-    bind. result_ty { llisle.classify_stencil_type { ty = P. ctx.result_ty } },
-    when {
-      (P. ctx.class.kind :eq (zip_map))
-        * (P. ctx.class.lhs_index_primary :eq (true))
-        * (P. ctx.class.rhs_index_primary :eq (true))
-        * (P. ctx.class.lhs_ty :same_type (P. ctx.class.rhs_ty))
-        * (P. ctx.class.lhs_ty :same_type (P. ctx.class.result_ty))
-        * (P. ctx.class.op :binary_supported (P. ctx.class.result_ty))
-        * (P. ctx.reduction_kind :reduction_supported (P. ctx.class.result_ty, P. ctx.result_ty)),
-    },
-    run {
-      ret {
-        selection = reduce_zip {
-          op = P. ctx.class.op,
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            result_ty = P. ctx.result_ty,
-            init = P. ctx.init,
-            lhs = P. ctx.class.lhs_base,
-            rhs = P. ctx.class.rhs_base,
-            lhs_ty = P. ctx.class.lhs_ty,
-            rhs_ty = P. ctx.class.rhs_ty,
-            mapped_ty = P. ctx.class.result_ty,
-            lhs_layout = P. ctx.class.lhs_layout,
-            rhs_layout = P. ctx.class.rhs_layout,
-          },
-          args = { P. ctx.class.lhs_expr, P. ctx.class.rhs_expr, P. ctx.start_expr, P. ctx.stop_expr, P. ctx.init_expr },
-        },
-      },
-    },
-  },
-
-  rule. reduce_count {
-    llisle.select_reduce_stencil { ctx = P. ctx },
-    bind. elem_ty { llisle.classify_stencil_type { ty = P. ctx.class.elem_ty } },
-    bind. result_ty { llisle.classify_stencil_type { ty = P. ctx.result_ty } },
-    when {
-      (P. ctx.class.kind :eq (compare))
-        * (P. ctx.class.index_primary :eq (true))
-        * (P. ctx.reduction_add :eq (true))
-        * (P. ctx.init_zero :eq (true))
-        * (P. ctx.result_i32 :eq (true)),
-    },
-    run {
-      ret {
-        selection = reduce_count {
-          op = P. ctx.class.pred,
-          info = {
-            step_num = P. ctx.step_num,
-            producer = P. ctx.producer,
-            result_ty = P. ctx.result_ty,
-            init = P. ctx.init,
-            array = P. ctx.class.src,
-            elem_ty = P. ctx.class.elem_ty,
-            pred = P. ctx.class.pred,
-            array_layout = P. ctx.class.src_layout,
-          },
-          args = { P. ctx.class.src_expr, P. ctx.start_expr, P. ctx.stop_expr },
-        },
-      },
-    },
-  },
-
-  relation. plan_reduce_stencil {
-    input { ctx [sym("ReduceStencilPlanInput")] },
-    output { plan [sym("ReduceStencilPlan")] },
-    strategy {
-      select. best_cost,
-      ambiguity. error,
-      coverage. complete,
-    },
-  },
-
-  rule. reduce_plan_ready {
-    llisle.plan_reduce_stencil { ctx = P. ctx },
-    when {
-      (P. ctx.planned :eq (true))
-        * (P. ctx.result_reduction :eq (true))
-        * (P. ctx.returns_reduction :eq (true))
-        * (P. ctx.counted_positive :eq (true))
-        * (P. ctx.class_ready :eq (true)),
-    },
-    bind. selected {
-      llisle.select_reduce_stencil { ctx = P. ctx.selection_ctx },
-    },
-    run {
-      ret {
-        plan = sym("reduce_stencil_plan") {
-          reduction = P. ctx.reduction,
-          selection = V. selected.selection,
-        },
-      },
-    },
-  },
-
-  rule. reduce_plan_not_ready {
-    llisle.plan_reduce_stencil { ctx = P. ctx },
-    when {
-      P. ctx.plan_ready :eq (false),
-    },
-    run {
-      ret {
-        plan = reduce_stencil_no_plan {
-          reason = P. ctx.reject_reason,
-        },
-      },
-    },
-  },
-}
+    local function const_ty(value)
+        if pvm.classof(value) == Value.ValueExprConst and value.const ~= nil then return value.const.ty end
+        return nil
     end
-    if setfenv then setfenv(build_rules, env) end
 
     local function stencil_unary_op(op)
         if op == Core.UnaryNeg then return Stencil.StencilUnaryNeg end
@@ -1325,38 +65,27 @@ local function bind_context(T)
         return nil
     end
 
-    is_int_type = function(ty)
-        return pvm.classof(ty) == Code.CodeTyInt
-    end
+    local function is_int_type(ty) return pvm.classof(ty) == Code.CodeTyInt end
+    local function is_float_type(ty) return pvm.classof(ty) == Code.CodeTyFloat end
+    local function is_index_type(ty) return ty == Code.CodeTyIndex end
+    local function is_bool8_type(ty) return ty == Code.CodeTyBool8 end
 
-    is_float_type = function(ty)
-        return pvm.classof(ty) == Code.CodeTyFloat
-    end
-
-    is_index_type = function(ty)
-        return ty == Code.CodeTyIndex
-    end
-
-    is_bool8_type = function(ty)
-        return ty == Code.CodeTyBool8
-    end
-
-    is_type_family = function(ty, language)
-        language = tostring(language)
+    local function is_type_family(ty, family)
+        family = tostring(family)
         local cls = pvm.classof(ty)
-        if language == "pointer" then return cls == Code.CodeTyDataPtr end
-        if language == "code_pointer" then return cls == Code.CodeTyCodePtr end
-        if language == "named" then return cls == Code.CodeTyNamed end
-        if language == "array" then return cls == Code.CodeTyArray end
-        if language == "slice" then return cls == Code.CodeTySlice end
-        if language == "view" then return cls == Code.CodeTyView end
-        if language == "byte_span" then return ty == Code.CodeTyByteSpan or cls == Code.CodeTyByteSpan end
-        if language == "handle" then return cls == Code.CodeTyHandle end
-        if language == "lease" then return cls == Code.CodeTyLease end
-        if language == "closure" then return cls == Code.CodeTyClosure end
-        if language == "imported_c" then return cls == Code.CodeTyImportedC end
-        if language == "imported_c_func_pointer" then return cls == Code.CodeTyImportedCFuncPtr end
-        if language == "vector" then return cls == Code.CodeTyVector end
+        if family == "pointer" then return cls == Code.CodeTyDataPtr end
+        if family == "code_pointer" then return cls == Code.CodeTyCodePtr end
+        if family == "named" then return cls == Code.CodeTyNamed end
+        if family == "array" then return cls == Code.CodeTyArray end
+        if family == "slice" then return cls == Code.CodeTySlice end
+        if family == "view" then return cls == Code.CodeTyView end
+        if family == "byte_span" then return ty == Code.CodeTyByteSpan or cls == Code.CodeTyByteSpan end
+        if family == "handle" then return cls == Code.CodeTyHandle end
+        if family == "lease" then return cls == Code.CodeTyLease end
+        if family == "closure" then return cls == Code.CodeTyClosure end
+        if family == "imported_c" then return cls == Code.CodeTyImportedC end
+        if family == "imported_c_func_pointer" then return cls == Code.CodeTyImportedCFuncPtr end
+        if family == "vector" then return cls == Code.CodeTyVector end
         return false
     end
 
@@ -1370,6 +99,7 @@ local function bind_context(T)
         return tostring(a) == tostring(b)
     end
 
+    local same_type
     same_type = function(a, b)
         if a == b then return true end
         local ac, bc = pvm.classof(a), pvm.classof(b)
@@ -1393,23 +123,12 @@ local function bind_context(T)
         return false
     end
 
-    is_index_data_type = function(ty)
-        return is_int_type(ty) or is_index_type(ty)
-    end
+    local function is_index_data_type(ty) return is_int_type(ty) or is_index_type(ty) end
+    local function supports_bitwise_ty(ty) return is_int_type(ty) or is_bool8_type(ty) end
+    local function supports_div_ty(ty) return is_int_type(ty) or is_float_type(ty) or is_index_type(ty) end
+    local function supports_integer_arithmetic_ty(ty) return is_int_type(ty) or is_index_type(ty) end
 
-    local function supports_bitwise_ty(ty)
-        return is_int_type(ty) or is_bool8_type(ty)
-    end
-
-    local function supports_div_ty(ty)
-        return is_int_type(ty) or is_float_type(ty) or is_index_type(ty)
-    end
-
-    local function supports_integer_arithmetic_ty(ty)
-        return is_int_type(ty) or is_index_type(ty)
-    end
-
-    unary_supported = function(op, ty)
+    local function unary_supported(op, ty)
         if op == Stencil.StencilUnaryIdentity then return ty ~= Code.CodeTyVoid end
         if not is_scalar_type(ty) then return false end
         if op == Stencil.StencilUnaryBitNot then return supports_bitwise_ty(ty) end
@@ -1417,7 +136,7 @@ local function bind_context(T)
         return false
     end
 
-    binary_supported = function(op, ty)
+    local function binary_supported(op, ty)
         if not is_scalar_type(ty) then return false end
         if op == Stencil.StencilBinaryAnd or op == Stencil.StencilBinaryOr or op == Stencil.StencilBinaryXor then return supports_bitwise_ty(ty) end
         if op == Stencil.StencilBinaryDiv then return supports_div_ty(ty) end
@@ -1430,7 +149,7 @@ local function bind_context(T)
         return false
     end
 
-    reduction_supported = function(kind, elem_ty, result_ty)
+    local function reduction_supported(kind, elem_ty, result_ty)
         if not same_type(elem_ty, result_ty) then return false end
         if is_int_type(result_ty) then
             return kind == Value.ReductionAdd or kind == Value.ReductionMul
@@ -1450,15 +169,10 @@ local function bind_context(T)
         return nil
     end
 
-    local function is_signed_int_type(ty)
-        return is_int_type(ty) and ty.signedness == Code.CodeSigned
-    end
+    local function is_signed_int_type(ty) return is_int_type(ty) and ty.signedness == Code.CodeSigned end
+    local function is_unsigned_int_type(ty) return is_int_type(ty) and ty.signedness == Code.CodeUnsigned end
 
-    local function is_unsigned_int_type(ty)
-        return is_int_type(ty) and ty.signedness == Code.CodeUnsigned
-    end
-
-    cast_supported = function(op, src_ty, dst_ty)
+    local function cast_supported(op, src_ty, dst_ty)
         if not is_scalar_type(src_ty) or not is_scalar_type(dst_ty) then return false end
         if op == Core.MachineCastIdentity then return same_type(src_ty, dst_ty) end
         if op == Core.MachineCastBitcast then return type_bits(src_ty) ~= nil and type_bits(src_ty) == type_bits(dst_ty) end
@@ -1473,7 +187,7 @@ local function bind_context(T)
         return false
     end
 
-    predicate_from_cmp_const = function(op, operand_ty, cexpr, const_on_left)
+    local function predicate_from_cmp_const(op, operand_ty, cexpr, const_on_left)
         if pvm.classof(cexpr) ~= Value.ValueExprConst then return nil end
         if const_on_left then
             if op == Core.CmpLt then op = Core.CmpGt
@@ -1485,6 +199,54 @@ local function bind_context(T)
             return Stencil.StencilPredCompareConst(op, operand_ty, cexpr)
         end
         return nil
+    end
+
+    local function access_ref(name)
+        return Stencil.StencilAccessRef(name)
+    end
+
+    local function input_expr(name)
+        return Stencil.StencilApplyInput(access_ref(name))
+    end
+
+    local function const_expr(value, ty)
+        return Stencil.StencilApplyConst(value, ty)
+    end
+
+    local function apply_unary_expr(op, arg, result_ty)
+        return Stencil.StencilApplyUnary(op, arg, result_ty, nil, nil)
+    end
+
+    local function apply_binary_expr(op, left, right, result_ty, int_semantics)
+        return Stencil.StencilApplyBinary(op, left, right, result_ty, int_semantics, nil)
+    end
+
+    local function apply_cast_expr(op, arg, from, to)
+        return Stencil.StencilApplyCast(op, arg, from, to)
+    end
+
+    local function apply_predicate_expr(pred, arg, result_ty)
+        return Stencil.StencilApplyPredicate(pred, arg, result_ty)
+    end
+
+    local function apply_compare_expr(cmp, left, right, result_ty)
+        return Stencil.StencilApplyCompare(cmp, left, right, result_ty)
+    end
+
+    local function apply_select_expr(cond, then_expr, else_expr, result_ty)
+        return Stencil.StencilApplySelect(Stencil.StencilPredNonZero, cond, then_expr, else_expr, result_ty)
+    end
+
+    local function scalar_input_expr(value, state)
+        local name = "x" .. tostring(#state.inputs + 1)
+        state.inputs[#state.inputs + 1] = {
+            name = name,
+            scalar_value = value,
+            layout = Stencil.StencilLayoutScalar(value),
+            role = Stencil.StencilAccessRead,
+            index_primary = true,
+        }
+        return input_expr(name)
     end
 
     local expr_fact
@@ -1530,72 +292,675 @@ local function bind_context(T)
                 local fact, err = expr_fact(Kernel.KernelExprAlgebra(v.value), bindings, seen)
                 if fact == nil then return nil, err end
                 return { kind = "cast", op = v.op, value = fact, src_ty = v.from, result_ty = v.to }, nil
-            elseif vcls == Value.ValueExprAdd or vcls == Value.ValueExprSub or vcls == Value.ValueExprMul then
+            elseif vcls == Value.ValueExprAdd or vcls == Value.ValueExprSub or vcls == Value.ValueExprMul or vcls == Value.ValueExprDiv or vcls == Value.ValueExprRem then
                 local lhs, lhs_err = expr_fact(Kernel.KernelExprAlgebra(v.a), bindings, seen)
                 if lhs == nil then return nil, lhs_err end
                 local rhs, rhs_err = expr_fact(Kernel.KernelExprAlgebra(v.b), bindings, seen)
                 if rhs == nil then return nil, rhs_err end
-                local bop = vcls == Value.ValueExprAdd and Core.BinAdd or vcls == Value.ValueExprSub and Core.BinSub or Core.BinMul
-                local algebra = vcls == Value.ValueExprAdd and "add" or vcls == Value.ValueExprSub and "sub" or "mul"
-                return { kind = "binary", algebra = algebra, op = stencil_binary_op(bop), raw_op = bop, lhs = lhs, rhs = rhs, result_ty = v.ty }, nil
+                local bop = vcls == Value.ValueExprAdd and Core.BinAdd
+                    or vcls == Value.ValueExprSub and Core.BinSub
+                    or vcls == Value.ValueExprMul and Core.BinMul
+                    or vcls == Value.ValueExprRem and Core.BinRem
+                    or Core.BinDiv
+                local algebra = vcls == Value.ValueExprAdd and "add"
+                    or vcls == Value.ValueExprSub and "sub"
+                    or vcls == Value.ValueExprMul and "mul"
+                    or vcls == Value.ValueExprRem and "rem"
+                    or "div"
+                return { kind = "binary", algebra = algebra, op = stencil_binary_op(bop), raw_op = bop, lhs = lhs, rhs = rhs, result_ty = v.ty, int_semantics = v.sem }, nil
+            elseif vcls == Value.ValueExprBinary then
+                local lhs, lhs_err = expr_fact(Kernel.KernelExprAlgebra(v.a), bindings, seen)
+                if lhs == nil then return nil, lhs_err end
+                local rhs, rhs_err = expr_fact(Kernel.KernelExprAlgebra(v.b), bindings, seen)
+                if rhs == nil then return nil, rhs_err end
+                local op = stencil_binary_op(v.op)
+                if op == nil then return nil, "unsupported binary value expression" end
+                return { kind = "binary", algebra = tostring(v.op), op = op, raw_op = v.op, lhs = lhs, rhs = rhs, result_ty = v.ty, int_semantics = v.sem }, nil
             elseif vcls == Value.ValueExprCmp then
                 local lhs, lhs_err = expr_fact(Kernel.KernelExprAlgebra(v.a), bindings, seen)
                 if lhs == nil then return nil, lhs_err end
                 local rhs, rhs_err = expr_fact(Kernel.KernelExprAlgebra(v.b), bindings, seen)
                 if rhs == nil then return nil, rhs_err end
                 return { kind = "cmp", op = v.op, lhs = lhs, rhs = rhs, result_ty = Code.CodeTyBool8 }, nil
+            elseif vcls == Value.ValueExprSelect then
+                local cond, cond_err = expr_fact(Kernel.KernelExprAlgebra(v.cond), bindings, seen)
+                if cond == nil then return nil, cond_err end
+                local t, t_err = expr_fact(Kernel.KernelExprAlgebra(v.t), bindings, seen)
+                if t == nil then return nil, t_err end
+                local f, f_err = expr_fact(Kernel.KernelExprAlgebra(v.f), bindings, seen)
+                if f == nil then return nil, f_err end
+                return { kind = "select", cond = cond, t = t, f = f }, nil
             end
         end
         return nil, "unsupported store stencil expression"
     end
 
-    impl.is_int_type = is_int_type
-    impl.is_float_type = is_float_type
-    impl.is_index_type = is_index_type
-    impl.is_bool8_type = is_bool8_type
-    impl.is_type_family = is_type_family
-    impl.is_index_data_type = is_index_data_type
-    impl.same_type = same_type
-    impl.unary_supported = unary_supported
-    impl.binary_supported = binary_supported
-    impl.reduction_supported = reduction_supported
-    impl.cast_supported = cast_supported
-
-    local rules = build_rules()
-    local engine = Llisle.compile(rules)
-
-    local api = RuleApi.new(rules, engine)
-
-    function api.classify_expr(expr, bindings)
-        local fact, err = expr_fact(expr, bindings or {})
-        if fact == nil then return nil, err end
-        return api:run("classify_expr", { expr = fact }, "class", "unsupported store stencil expression")
+    local function lane_key(lane, index)
+        local id = lane and lane.id and lane.id.text or tostring(lane)
+        return id .. "@" .. tostring(index)
     end
 
-    function api.classify_type(ty)
-        return api:run("classify_stencil_type", { ty = ty }, "class", "unsupported stencil type")
+    local function input_by_name(class, name)
+        for _, input in ipairs(class.inputs or {}) do
+            if input.name == name then return input end
+        end
+        return nil
     end
+
+    local function single_input(class)
+        if class == nil or #(class.inputs or {}) ~= 1 then return nil end
+        return class.inputs[1]
+    end
+
+    local function single_input_expr(class)
+        if class == nil or pvm.classof(class.expr) ~= Stencil.StencilApplyInput then return nil end
+        return input_by_name(class, class.expr.access.name)
+    end
+
+    local function apply_const_int(expr)
+        if pvm.classof(expr) ~= Stencil.StencilApplyConst then return nil end
+        return const_int_value(expr.value)
+    end
+
+    local function index_input_from_apply_expr(class, expr)
+        local cls = pvm.classof(expr)
+        if cls == Stencil.StencilApplyInput then return input_by_name(class, expr.access.name) end
+        if cls == Stencil.StencilApplyCast then return index_input_from_apply_expr(class, expr.arg) end
+        if cls == Stencil.StencilApplyBinary then
+            local lc, rc = apply_const_int(expr.left), apply_const_int(expr.right)
+            if (expr.op == Stencil.StencilBinaryMul and rc == 1)
+                or (expr.op == Stencil.StencilBinaryAdd and rc == 0)
+                or (expr.op == Stencil.StencilBinarySub and rc == 0) then
+                return index_input_from_apply_expr(class, expr.left)
+            end
+            if (expr.op == Stencil.StencilBinaryMul and lc == 1)
+                or (expr.op == Stencil.StencilBinaryAdd and lc == 0) then
+                return index_input_from_apply_expr(class, expr.right)
+            end
+        end
+        return nil
+    end
+
+    local function apply_input_for_load(expr, state)
+        local key = lane_key(expr.lane, expr.index)
+        local existing = state.by_key[key]
+        if existing ~= nil then return input_expr(existing.name), existing.ty end
+        local name = "x" .. tostring(#state.inputs + 1)
+        local input = {
+            name = name,
+            lane = expr.lane,
+            index = expr.index,
+            ty = expr.lane.elem_ty,
+        }
+        state.by_key[key] = input
+        state.inputs[#state.inputs + 1] = input
+        return input_expr(name), input.ty
+    end
+
+    local fact_to_apply_expr
+    fact_to_apply_expr = function(expr, state)
+        if expr.kind == "kernel_value" and expr.binding ~= nil then return fact_to_apply_expr(expr.binding, state) end
+        if expr.kind == "load" then return apply_input_for_load(expr, state) end
+        if expr.kind == "fill" then
+            local ty = const_ty(expr.value)
+            if ty == nil then return scalar_input_expr(expr.value, state), nil end
+            return const_expr(expr.value, ty), ty
+        end
+        if expr.kind == "unary" then
+            if expr.op == nil then return nil, nil, "unsupported unary stencil operator" end
+            local arg, _, err = fact_to_apply_expr(expr.value, state)
+            if arg == nil then return nil, nil, err end
+            return apply_unary_expr(expr.op, arg, expr.result_ty), expr.result_ty
+        end
+        if expr.kind == "cast" then
+            local arg, _, err = fact_to_apply_expr(expr.value, state)
+            if arg == nil then return nil, nil, err end
+            return apply_cast_expr(expr.op, arg, expr.src_ty, expr.result_ty), expr.result_ty
+        end
+        if expr.kind == "binary" then
+            if expr.op == nil then return nil, nil, "unsupported binary stencil operator" end
+            local lhs, _, lhs_err = fact_to_apply_expr(expr.lhs, state)
+            if lhs == nil then return nil, nil, lhs_err end
+            local rhs, _, rhs_err = fact_to_apply_expr(expr.rhs, state)
+            if rhs == nil then return nil, nil, rhs_err end
+            return apply_binary_expr(expr.op, lhs, rhs, expr.result_ty, expr.int_semantics), expr.result_ty
+        end
+        if expr.kind == "cmp" then
+            local lhs, lhs_ty, lhs_err = fact_to_apply_expr(expr.lhs, state)
+            if lhs == nil then return nil, nil, lhs_err end
+            local rhs, rhs_ty, rhs_err = fact_to_apply_expr(expr.rhs, state)
+            if rhs == nil then return nil, nil, rhs_err end
+            if expr.lhs.kind == "load" and expr.rhs.kind == "fill" then
+                local pred = predicate_from_cmp_const(expr.op, lhs_ty, expr.rhs.value, false)
+                if pred ~= nil then return apply_predicate_expr(pred, lhs, expr.result_ty), expr.result_ty end
+            end
+            if expr.lhs.kind == "fill" and expr.rhs.kind == "load" then
+                local pred = predicate_from_cmp_const(expr.op, rhs_ty, expr.lhs.value, true)
+                if pred ~= nil then return apply_predicate_expr(pred, rhs, expr.result_ty), expr.result_ty end
+            end
+            return apply_compare_expr(expr.op, lhs, rhs, expr.result_ty), expr.result_ty
+        end
+        if expr.kind == "select" then
+            local cond, _, cond_err = fact_to_apply_expr(expr.cond, state)
+            if cond == nil then return nil, nil, cond_err end
+            local t, result_ty, t_err = fact_to_apply_expr(expr.t, state)
+            if t == nil then return nil, nil, t_err end
+            local f, _, f_err = fact_to_apply_expr(expr.f, state)
+            if f == nil then return nil, nil, f_err end
+            return apply_select_expr(cond, t, f, result_ty), result_ty
+        end
+        return nil, nil, "unsupported store stencil expression"
+    end
+
+    local function classify_expr(expr)
+        local state = { inputs = {}, by_key = {} }
+        local apply_expr, result_ty, err = fact_to_apply_expr(expr, state)
+        if apply_expr == nil then return nil, err end
+        return with_class("apply_n", {
+            expr = apply_expr,
+            inputs = state.inputs,
+            result_ty = result_ty,
+            const_int = expr.kind == "fill" and const_int_value(expr.value) or nil,
+        })
+    end
+
+    local function classify_type(ty)
+        if is_int_type(ty) then return { kind = "int", ty = ty } end
+        if is_float_type(ty) then return { kind = "float", ty = ty } end
+        if is_index_type(ty) then return { kind = "index", ty = ty } end
+        if is_bool8_type(ty) then return { kind = "bool8", ty = ty } end
+        for _, family in ipairs({
+            "pointer", "code_pointer", "named", "array", "slice", "view",
+            "byte_span", "handle", "lease", "closure", "imported_c",
+            "imported_c_func_pointer", "vector",
+        }) do
+            if is_type_family(ty, family) then return { kind = family, ty = ty } end
+        end
+        return nil, "unsupported stencil type"
+    end
+
+    local function type_ok(ty) return classify_type(ty) ~= nil end
+
+    local function select_index_lane(class)
+        if class.kind == "load" or class.kind == "cast" then return { lane = class.lane, index = class.index } end
+        if class.kind == "apply_n" then
+            local input = index_input_from_apply_expr(class, class.expr)
+            if input ~= nil then return { lane = input.lane, index = input.index } end
+        end
+        return nil
+    end
+
+    local function append_info_inputs(info, inputs)
+        for _, input in ipairs(inputs or {}) do info[input.name] = input.base end
+        return info
+    end
+
+    local function all_apply_inputs_primary(class)
+        for _, input in ipairs(class.inputs or {}) do
+            if input.index_primary ~= true then return false end
+        end
+        return true
+    end
+
+    local function copy_inputs(inputs)
+        local out = {}
+        for i, input in ipairs(inputs or {}) do
+            local item = {}
+            for k, v in pairs(input) do item[k] = v end
+            out[i] = item
+        end
+        return out
+    end
+
+    local function append_input_once(inputs, input)
+        for _, existing in ipairs(inputs or {}) do
+            if existing.name == input.name then return inputs end
+        end
+        inputs[#inputs + 1] = input
+        return inputs
+    end
+
+    local function specialize_scalar_inputs(inputs, ty)
+        for _, input in ipairs(inputs or {}) do
+            if input.scalar_value ~= nil and input.ty == nil then input.ty = ty end
+        end
+        return inputs
+    end
+
+    local function apply_n_info(ctx, class, extra)
+        local inputs = extra and extra.inputs or class.inputs
+        local info = {
+            step_num = ctx.step_num,
+            producer = ctx.producer,
+            result_ty = class.result_ty or ctx.dst_elem_ty,
+            dst = ctx.dst,
+            dst_layout = extra and extra.dst_layout or ctx.dst_layout,
+            inputs = specialize_scalar_inputs(inputs, class.result_ty or ctx.dst_elem_ty),
+            expr = class.expr,
+            start = ctx.start,
+            stop = ctx.stop,
+            tag = "expr" .. tostring(#(inputs or {})),
+        }
+        for k, v in pairs(extra or {}) do
+            if k ~= "inputs" and k ~= "dst_layout" then info[k] = v end
+        end
+        return append_info_inputs(info, info.inputs)
+    end
+
+    local function predicate_expr_operand(class)
+        if class == nil then return nil, nil end
+        local cls = pvm.classof(class.expr)
+        if cls ~= Stencil.StencilApplyPredicate then return nil, nil end
+        if pvm.classof(class.expr.arg) ~= Stencil.StencilApplyInput then return nil, nil end
+        local input = input_by_name(class, class.expr.arg.access.name)
+        return input, class.expr.pred
+    end
+
+    local function indexed_layout(parent, idx, step_num)
+        return Stencil.StencilLayoutIndexed(parent, access_ref(idx.name), idx.ty or idx.elem_ty, step_num or 1)
+    end
+
+    local function select_store(ctx)
+        local class = ctx.class or {}
+        local copy_input = class.kind == "apply_n" and single_input_expr(class) or nil
+        if copy_input ~= nil and ctx.copy_semantics ~= nil and ctx.store_index_primary == true and copy_input.index_primary == true
+            and same_type(copy_input.ty, ctx.dst_elem_ty) and type_ok(copy_input.ty) and type_ok(ctx.dst_elem_ty) then
+            return selection("copy", {
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = copy_input.ty, result_ty = ctx.dst_elem_ty,
+                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = copy_input.base, semantics = ctx.copy_semantics,
+                    dst_layout = ctx.dst_layout, src_layout = copy_input.layout,
+                },
+                args = { ctx.dst_expr, copy_input.base_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        if class.kind == "apply_n" and ctx.store_index_primary == true and (class.result_ty == nil or same_type(class.result_ty, ctx.dst_elem_ty))
+            and all_apply_inputs_primary(class) and type_ok(class.result_ty or ctx.dst_elem_ty) and type_ok(ctx.dst_elem_ty) then
+            return selection("apply_n", {
+                info = apply_n_info(ctx, class),
+                args = {},
+            })
+        end
+        if class.kind == "apply_n" and ctx.store_index_primary == true and (class.result_ty == nil or same_type(class.result_ty, ctx.dst_elem_ty))
+            and type_ok(class.result_ty or ctx.dst_elem_ty) and type_ok(ctx.dst_elem_ty) then
+            local inputs, ok = copy_inputs(class.inputs), true
+            for _, input in ipairs(inputs) do
+                if input.index_primary ~= true then
+                    local idx = input.index_lane
+                    if idx == nil or not is_index_data_type(idx.ty) then ok = false; break end
+                    input.layout = indexed_layout(input.layout, idx, ctx.step_num)
+                    append_input_once(inputs, idx)
+                end
+            end
+            if ok then
+                return selection("apply_n", {
+                    info = apply_n_info(ctx, class, {
+                        inputs = inputs,
+                    }),
+                    args = {},
+                })
+            end
+        end
+        if class.kind == "apply_n" and ctx.store_index_lane ~= nil
+            and (class.result_ty == nil or same_type(class.result_ty, ctx.dst_elem_ty)) and all_apply_inputs_primary(class)
+            and is_index_data_type(ctx.store_index_lane.elem_ty) and type_ok(class.result_ty or ctx.dst_elem_ty) and type_ok(ctx.dst_elem_ty) then
+            local idx = {
+                name = "dst_idx",
+                base = ctx.store_index_lane.base,
+                base_expr = ctx.store_index_lane.base_expr,
+                ty = ctx.store_index_lane.elem_ty,
+                elem_ty = ctx.store_index_lane.elem_ty,
+                layout = ctx.store_index_lane.layout,
+                role = Stencil.StencilAccessIndex,
+                index_primary = true,
+            }
+            local inputs = copy_inputs(class.inputs)
+            append_input_once(inputs, idx)
+            return selection("apply_n", {
+                info = apply_n_info(ctx, class, {
+                    inputs = inputs,
+                    dst_layout = indexed_layout(ctx.dst_layout, idx, ctx.step_num),
+                    apply_mode = Stencil.StencilStoreScatter(ctx.scatter_conflicts or Stencil.StencilScatterUniqueIndices),
+                }),
+                args = {},
+            })
+        end
+        if class.kind == "fill" and ctx.store_index_primary == true and type_ok(ctx.dst_elem_ty) then
+            return selection("fill", {
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = ctx.dst_elem_ty, result_ty = ctx.dst_elem_ty,
+                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, value = class.value, dst_layout = ctx.dst_layout,
+                },
+                args = { ctx.dst_expr, ctx.start_expr, ctx.stop_expr, class.value_expr },
+            })
+        end
+        if class.kind == "load" and ctx.store_index_primary == true and class.index_primary == true
+            and same_type(class.elem_ty, ctx.dst_elem_ty) and type_ok(class.elem_ty) and type_ok(ctx.dst_elem_ty) then
+            return selection("copy", {
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = ctx.dst_elem_ty,
+                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, semantics = ctx.copy_semantics,
+                    dst_layout = ctx.dst_layout, src_layout = class.src_layout,
+                },
+                args = { ctx.dst_expr, class.src_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        if class.kind == "load" and ctx.store_index_primary == true and class.index_lane ~= nil
+            and class.index_lane.index_primary == true and same_type(class.elem_ty, ctx.dst_elem_ty)
+            and is_index_data_type(class.index_lane.elem_ty) and type_ok(class.elem_ty) and type_ok(ctx.dst_elem_ty) then
+            return selection("gather", {
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = ctx.dst_elem_ty,
+                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, index = class.index_lane.base,
+                    index_ty = class.index_lane.elem_ty, dst_layout = ctx.dst_layout, src_layout = class.src_layout,
+                    index_layout = class.index_lane.layout,
+                },
+                args = { ctx.dst_expr, class.src_expr, class.index_lane.base_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        if class.kind == "load" and ctx.store_index_lane ~= nil and ctx.store_index_lane.index_primary == true
+            and class.index_primary == true and same_type(class.elem_ty, ctx.dst_elem_ty)
+            and is_index_data_type(ctx.store_index_lane.elem_ty) and type_ok(class.elem_ty) and type_ok(ctx.dst_elem_ty) then
+            return selection("scatter", {
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = ctx.dst_elem_ty,
+                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, index = ctx.store_index_lane.base,
+                    index_ty = ctx.store_index_lane.elem_ty, conflicts = ctx.scatter_conflicts, dst_layout = ctx.dst_layout,
+                    src_layout = class.src_layout, index_layout = ctx.store_index_lane.layout,
+                },
+                args = { ctx.dst_expr, class.src_expr, ctx.store_index_lane.base_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        if class.kind == "map" and ctx.store_index_primary == true and class.index_primary == true
+            and class.same_src_dst_ty == true and unary_supported(class.op, class.elem_ty)
+            and same_type(class.result_ty, class.elem_ty) and type_ok(class.elem_ty) then
+            return selection("in_place_map", {
+                op = class.op,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = class.result_ty,
+                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, dst_layout = ctx.dst_layout,
+                    src_layout = class.src_layout,
+                },
+                args = { ctx.dst_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        if class.kind == "map" and ctx.store_index_primary == true and class.index_primary == true
+            and unary_supported(class.op, class.elem_ty) and same_type(class.result_ty, ctx.dst_elem_ty)
+            and type_ok(class.elem_ty) and type_ok(ctx.dst_elem_ty) and type_ok(class.result_ty) then
+            return selection("map", {
+                op = class.op,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = class.result_ty,
+                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, dst_layout = ctx.dst_layout,
+                    src_layout = class.src_layout,
+                },
+                args = { ctx.dst_expr, class.src_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        if class.kind == "cast" and ctx.store_index_primary == true and class.index_primary == true
+            and same_type(class.result_ty, ctx.dst_elem_ty) and cast_supported(class.op, class.src_ty, class.result_ty)
+            and type_ok(class.src_ty) and type_ok(ctx.dst_elem_ty) then
+            return selection("cast", {
+                op = class.op,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = ctx.dst_elem_ty, result_ty = ctx.dst_elem_ty,
+                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, src_ty = class.src_ty,
+                    dst_ty = class.result_ty, dst_layout = ctx.dst_layout, src_layout = class.src_layout,
+                },
+                args = { ctx.dst_expr, class.src_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        if class.kind == "compare" and ctx.store_index_primary == true and class.index_primary == true
+            and is_bool8_type(ctx.dst_elem_ty) and same_type(class.result_ty, ctx.dst_elem_ty) and type_ok(class.elem_ty) then
+            return selection("compare", {
+                op = class.pred,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = ctx.dst_elem_ty,
+                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, pred = class.pred,
+                    dst_layout = ctx.dst_layout, src_layout = class.src_layout,
+                },
+                args = { ctx.dst_expr, class.src_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        if class.kind == "zip_map" and ctx.store_index_primary == true and class.lhs_index_primary == true
+            and class.rhs_index_primary == true and same_type(class.lhs_ty, class.rhs_ty)
+            and same_type(class.lhs_ty, class.result_ty) and same_type(class.result_ty, ctx.dst_elem_ty)
+            and binary_supported(class.op, class.result_ty) and type_ok(class.result_ty) and type_ok(ctx.dst_elem_ty) then
+            return selection("zip_map", {
+                op = class.op,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = ctx.dst_elem_ty, result_ty = class.result_ty,
+                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, lhs = class.lhs_base, rhs = class.rhs_base,
+                    lhs_ty = class.lhs_ty, rhs_ty = class.rhs_ty, dst_layout = ctx.dst_layout,
+                    lhs_layout = class.lhs_layout, rhs_layout = class.rhs_layout,
+                },
+                args = { ctx.dst_expr, class.lhs_expr, class.rhs_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        if class.kind == "zip_compare" and ctx.store_index_primary == true and class.lhs_index_primary == true
+            and class.rhs_index_primary == true and same_type(class.lhs_ty, class.rhs_ty) and is_bool8_type(ctx.dst_elem_ty)
+            and type_ok(class.lhs_ty) and type_ok(ctx.dst_elem_ty) then
+            return selection("zip_compare", {
+                op = class.cmp,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = ctx.dst_elem_ty, result_ty = ctx.dst_elem_ty,
+                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, lhs = class.lhs_base, rhs = class.rhs_base,
+                    lhs_ty = class.lhs_ty, rhs_ty = class.rhs_ty, dst_layout = ctx.dst_layout,
+                    lhs_layout = class.lhs_layout, rhs_layout = class.rhs_layout,
+                },
+                args = { ctx.dst_expr, class.lhs_expr, class.rhs_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        return nil
+    end
+
+    local function select_scan(ctx)
+        local class = ctx.class or {}
+        local input = class.kind == "apply_n" and single_input_expr(class) or nil
+        if input ~= nil and ctx.store_index_primary == true and input.index_primary == true
+            and same_type(ctx.result_ty, ctx.dst_elem_ty)
+            and reduction_supported(ctx.reduction_kind, input.ty, ctx.result_ty) then
+            return selection("scan", {
+                reduction = ctx.reduction,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = input.ty, result_ty = ctx.result_ty,
+                    init = ctx.init, mode = ctx.mode, axis = ctx.axis, dst = ctx.dst, array = input.base,
+                    dst_layout = ctx.dst_layout, array_layout = input.layout,
+                },
+                args = { ctx.dst_expr, input.base_expr, ctx.start_expr, ctx.stop_expr, ctx.init_expr },
+            })
+        end
+        if class.kind == "load" and ctx.store_index_primary == true and class.index_primary == true
+            and same_type(ctx.result_ty, ctx.dst_elem_ty)
+            and reduction_supported(ctx.reduction_kind, class.elem_ty, ctx.result_ty) then
+            return selection("scan", {
+                reduction = ctx.reduction,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = ctx.result_ty,
+                    init = ctx.init, mode = ctx.mode, axis = ctx.axis, dst = ctx.dst, array = class.src,
+                    dst_layout = ctx.dst_layout, array_layout = class.src_layout,
+                },
+                args = { ctx.dst_expr, class.src_expr, ctx.start_expr, ctx.stop_expr, ctx.init_expr },
+            })
+        end
+        return nil
+    end
+
+    local function select_find(ctx)
+        local class = ctx.class or {}
+        local input = class.kind == "apply_n" and single_input_expr(class) or nil
+        if input ~= nil and input.index_primary == true and ctx.not_found_minus_one == true and type_ok(input.ty) then
+            return selection("find", {
+                op = ctx.pred,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = input.ty,
+                    array = input.base, pred = ctx.pred, array_layout = input.layout,
+                },
+                args = { input.base_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        if class.kind == "load" and class.index_primary == true and ctx.not_found_minus_one == true and type_ok(class.elem_ty) then
+            return selection("find", {
+                op = ctx.pred,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty,
+                    array = class.src, pred = ctx.pred, array_layout = class.src_layout,
+                },
+                args = { class.src_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        return nil
+    end
+
+    local function select_partition(ctx)
+        local class = ctx.class or {}
+        local input = class.kind == "apply_n" and single_input_expr(class) or nil
+        if input ~= nil and ctx.store_index_primary == true and input.index_primary == true
+            and same_type(input.ty, ctx.dst_elem_ty) and type_ok(input.ty) and type_ok(ctx.dst_elem_ty) then
+            return selection("partition", {
+                op = ctx.pred,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = input.ty,
+                    dst = ctx.dst, array = input.base, pred = ctx.pred, semantics = ctx.semantics,
+                    dst_layout = ctx.dst_layout, array_layout = input.layout,
+                },
+                args = { ctx.dst_expr, input.base_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        if class.kind == "load" and ctx.store_index_primary == true and class.index_primary == true
+            and same_type(class.elem_ty, ctx.dst_elem_ty) and type_ok(class.elem_ty) and type_ok(ctx.dst_elem_ty) then
+            return selection("partition", {
+                op = ctx.pred,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty,
+                    dst = ctx.dst, array = class.src, pred = ctx.pred, semantics = ctx.semantics,
+                    dst_layout = ctx.dst_layout, array_layout = class.src_layout,
+                },
+                args = { ctx.dst_expr, class.src_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        return nil
+    end
+
+    local function select_reduce(ctx)
+        local class = ctx.class or {}
+        if class.kind == "apply_n" and all_apply_inputs_primary(class)
+            and reduction_supported(ctx.reduction_kind, class.result_ty, ctx.result_ty) then
+            return selection("reduce_n", {
+                info = append_info_inputs({
+                    step_num = ctx.step_num,
+                    producer = ctx.producer,
+                    result_ty = ctx.result_ty,
+                    init = ctx.init,
+                    inputs = class.inputs,
+                    expr = class.expr,
+                    item_ty = class.result_ty,
+                    tag = "expr" .. tostring(#(class.inputs or {})),
+                }, class.inputs),
+                args = {},
+            })
+        end
+        local pred_input, pred = predicate_expr_operand(class)
+        if pred_input ~= nil and pred_input.index_primary == true and ctx.reduction_add == true
+            and ctx.init_zero == true and ctx.result_i32 == true then
+            return selection("count", {
+                op = pred,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, result_ty = ctx.result_ty,
+                    init = ctx.init, array = pred_input.base, elem_ty = pred_input.ty, pred = pred,
+                    array_layout = pred_input.layout,
+                },
+                args = { pred_input.base_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        if class.kind == "load" and class.index_primary == true
+            and reduction_supported(ctx.reduction_kind, class.elem_ty, ctx.result_ty) then
+            return selection("reduce", {
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, result_ty = ctx.result_ty,
+                    init = ctx.init, array = class.src, elem_ty = class.elem_ty, array_layout = class.src_layout,
+                },
+                args = { class.src_expr, ctx.start_expr, ctx.stop_expr, ctx.init_expr },
+            })
+        end
+        if class.kind == "map" and class.index_primary == true and unary_supported(class.op, class.elem_ty)
+            and reduction_supported(ctx.reduction_kind, class.result_ty, ctx.result_ty) then
+            return selection("map_reduce", {
+                op = class.op,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, result_ty = ctx.result_ty,
+                    init = ctx.init, array = class.src, elem_ty = class.elem_ty, mapped_ty = class.result_ty,
+                    array_layout = class.src_layout,
+                },
+                args = { class.src_expr, ctx.start_expr, ctx.stop_expr, ctx.init_expr },
+            })
+        end
+        if class.kind == "zip_map" and class.lhs_index_primary == true and class.rhs_index_primary == true
+            and same_type(class.lhs_ty, class.rhs_ty) and same_type(class.lhs_ty, class.result_ty)
+            and binary_supported(class.op, class.result_ty)
+            and reduction_supported(ctx.reduction_kind, class.result_ty, ctx.result_ty) then
+            return selection("zip_reduce", {
+                op = class.op,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, result_ty = ctx.result_ty,
+                    init = ctx.init, lhs = class.lhs_base, rhs = class.rhs_base, lhs_ty = class.lhs_ty,
+                    rhs_ty = class.rhs_ty, mapped_ty = class.result_ty, lhs_layout = class.lhs_layout,
+                    rhs_layout = class.rhs_layout,
+                },
+                args = { class.lhs_expr, class.rhs_expr, ctx.start_expr, ctx.stop_expr, ctx.init_expr },
+            })
+        end
+        if class.kind == "compare" and class.index_primary == true and ctx.reduction_add == true
+            and ctx.init_zero == true and ctx.result_i32 == true then
+            return selection("count", {
+                op = class.pred,
+                info = {
+                    step_num = ctx.step_num, producer = ctx.producer, result_ty = ctx.result_ty,
+                    init = ctx.init, array = class.src, elem_ty = class.elem_ty, pred = class.pred,
+                    array_layout = class.src_layout,
+                },
+                args = { class.src_expr, ctx.start_expr, ctx.stop_expr },
+            })
+        end
+        return nil
+    end
+
+    local constructors = {
+        store_fill = { input = { "info", "args" }, output = { "selection" } },
+        store_copy = { input = { "info", "args" }, output = { "selection" } },
+        store_gather = { input = { "info", "args" }, output = { "selection" } },
+        store_scatter = { input = { "info", "args" }, output = { "selection" } },
+        store_in_place_map = { input = { "op", "info", "args" }, output = { "selection" } },
+        store_map = { input = { "op", "info", "args" }, output = { "selection" } },
+        store_cast = { input = { "op", "info", "args" }, output = { "selection" } },
+        store_compare = { input = { "op", "info", "args" }, output = { "selection" } },
+        store_zip_map = { input = { "op", "info", "args" }, output = { "selection" } },
+        store_zip_compare = { input = { "op", "info", "args" }, output = { "selection" } },
+        reduce_array = { input = { "info", "args" }, output = { "selection" } },
+        scan_array = { input = { "reduction", "info", "args" }, output = { "selection" } },
+        find_array = { input = { "op", "info", "args" }, output = { "selection" } },
+        partition_array = { input = { "op", "info", "args" }, output = { "selection" } },
+        reduce_map = { input = { "op", "info", "args" }, output = { "selection" } },
+        reduce_zip = { input = { "op", "info", "args" }, output = { "selection" } },
+        reduce_count = { input = { "op", "info", "args" }, output = { "selection" } },
+        store_stencil_plan = { input = { "selection" }, output = { "plan" } },
+        store_stencil_no_plan = { input = { "reason" }, output = { "plan" } },
+        reduce_stencil_plan = { input = { "reduction", "selection" }, output = { "plan" } },
+        reduce_stencil_no_plan = { input = { "reason" }, output = { "plan" } },
+    }
 
     local function store_plan_reject_reason(ctx, suffix)
         return ("store stencil is not ready: planned=%s returns_void=%s counted_positive=%s single_store=%s dst_base_present=%s class_ready=%s (%s)"):format(
-            tostring(ctx and ctx.planned),
-            tostring(ctx and ctx.returns_void),
-            tostring(ctx and ctx.counted_positive),
-            tostring(ctx and ctx.single_store),
-            tostring(ctx and ctx.dst_base_present),
-            tostring(ctx and ctx.class_ready),
+            tostring(ctx and ctx.planned), tostring(ctx and ctx.returns_void), tostring(ctx and ctx.counted_positive),
+            tostring(ctx and ctx.single_store), tostring(ctx and ctx.dst_base_present), tostring(ctx and ctx.class_ready),
             tostring(suffix or "no matching plan")
         )
     end
 
     local function reduce_plan_reject_reason(ctx, suffix)
         return ("reduction stencil is not ready: planned=%s result_reduction=%s returns_reduction=%s counted_positive=%s class_ready=%s (%s)"):format(
-            tostring(ctx and ctx.planned),
-            tostring(ctx and ctx.result_reduction),
-            tostring(ctx and ctx.returns_reduction),
-            tostring(ctx and ctx.counted_positive),
-            tostring(ctx and ctx.class_ready),
-            tostring(suffix or "no matching plan")
+            tostring(ctx and ctx.planned), tostring(ctx and ctx.result_reduction), tostring(ctx and ctx.returns_reduction),
+            tostring(ctx and ctx.counted_positive), tostring(ctx and ctx.class_ready), tostring(suffix or "no matching plan")
         )
     end
 
@@ -1604,6 +969,48 @@ local function bind_context(T)
         for k, v in pairs(ctx or {}) do out[k] = v end
         return out
     end
+
+    local api = {}
+
+    function api:run(relation, input, _output_key, missing)
+        local ctx = input and input.ctx
+        if relation == "classify_expr" then
+            local class = input and input.expr and classify_expr(input.expr)
+            return class or nil, class == nil and (missing or "unsupported store stencil expression") or nil
+        elseif relation == "classify_stencil_type" then
+            local class = input and classify_type(input.ty)
+            return class or nil, class == nil and (missing or "unsupported stencil type") or nil
+        elseif relation == "select_index_lane" then
+            local lane = input and input.class and select_index_lane(input.class)
+            return lane or nil, lane == nil and (missing or "expression is not an index lane") or nil
+        elseif relation == "select_store_stencil" then
+            local selected = ctx and select_store(ctx)
+            return selected or nil, selected == nil and (missing or "unsupported store stencil shape") or nil
+        elseif relation == "select_scan_stencil" then
+            local selected = ctx and select_scan(ctx)
+            return selected or nil, selected == nil and (missing or "unsupported scan stencil shape") or nil
+        elseif relation == "select_find_stencil" then
+            local selected = ctx and select_find(ctx)
+            return selected or nil, selected == nil and (missing or "unsupported find stencil shape") or nil
+        elseif relation == "select_partition_stencil" then
+            local selected = ctx and select_partition(ctx)
+            return selected or nil, selected == nil and (missing or "unsupported partition stencil shape") or nil
+        elseif relation == "select_reduce_stencil" then
+            local selected = ctx and select_reduce(ctx)
+            return selected or nil, selected == nil and (missing or "unsupported reduction stencil contribution") or nil
+        end
+        return nil, missing or ("unknown stencil selector relation " .. tostring(relation))
+    end
+
+    function api.classify_expr(expr, bindings)
+        local fact, err = expr_fact(expr, bindings or {})
+        if fact == nil then return nil, err end
+        local class = classify_expr(fact)
+        if class == nil then return nil, "unsupported store stencil expression" end
+        return class
+    end
+
+    function api.classify_type(ty) return classify_type(ty) end
 
     function api.plan_store(ctx)
         local input = copy_fields(ctx)
@@ -1614,10 +1021,10 @@ local function bind_context(T)
             and input.dst_base_present == true
             and input.class_ready == true
         input.reject_reason = store_plan_reject_reason(input)
-        local plan, err = api:run("plan_store_stencil", { ctx = input }, "plan", "no matching plan")
-        if plan == nil then return nil, store_plan_reject_reason(input, err) end
-        if plan.kind == "no_plan" then return nil, plan.reason end
-        return plan, nil
+        if not input.plan_ready then return nil, input.reject_reason end
+        local selected, err = api:run("select_store_stencil", { ctx = input.selection_ctx }, "selection", "no matching plan")
+        if selected == nil then return nil, store_plan_reject_reason(input, err) end
+        return { selection = selected }, nil
     end
 
     function api.plan_reduce(ctx)
@@ -1628,42 +1035,20 @@ local function bind_context(T)
             and input.counted_positive == true
             and input.class_ready == true
         input.reject_reason = reduce_plan_reject_reason(input)
-        local plan, err = api:run("plan_reduce_stencil", { ctx = input }, "plan", "no matching plan")
-        if plan == nil then return nil, reduce_plan_reject_reason(input, err) end
-        if plan.kind == "no_plan" then return nil, plan.reason end
-        return plan, nil
+        if not input.plan_ready then return nil, input.reject_reason end
+        local selected, err = api:run("select_reduce_stencil", { ctx = input.selection_ctx }, "selection", "no matching plan")
+        if selected == nil then return nil, reduce_plan_reject_reason(input, err) end
+        return { reduction = input.reduction, selection = selected }, nil
     end
 
-    local function product_fields(decl, kind)
-        for _, item in ipairs(decl and decl.body or {}) do
-            if Llisle.cls(item) == "ProductSpec" and item.kind == kind then return item.fields or {} end
-        end
-        return nil
-    end
-
-    local function field_names(fields)
-        local out = {}
-        for i, field in ipairs(fields or {}) do out[i] = field.name end
-        return out
-    end
-
-    function api.constructor(name)
-        return engine.constructors[name]
-    end
+    function api.constructor(name) return constructors[name] end
 
     function api.constructor_contract(name)
-        local decl = engine.constructors[name]
-        if decl == nil then return nil end
-        return {
-            name = decl.name,
-            input = field_names(product_fields(decl, "input")),
-            output = field_names(product_fields(decl, "output")),
-            decl = decl,
-        }
+        local contract = constructors[name]
+        if contract == nil then return nil end
+        return { name = name, input = contract.input, output = contract.output, decl = contract }
     end
 
-    api.rules = rules
-    api.engine = engine
     api.expr_fact = expr_fact
 
     T._lalin_api_cache.stencil_rules = api

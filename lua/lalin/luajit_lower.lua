@@ -235,12 +235,15 @@ local function bind_context(T)
             return LJ.LJExprUnary(expr.op, physical(ctx, expr.ty), value_expr(ctx, expr.value))
         elseif cls == Value.ValueExprCast then
             return LJ.LJExprCast(expr.op, physical(ctx, expr.from), physical(ctx, expr.to), value_expr(ctx, expr.value))
-        elseif cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv then
+        elseif cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
             local op = (cls == Value.ValueExprAdd and Core.BinAdd)
                 or (cls == Value.ValueExprSub and Core.BinSub)
                 or (cls == Value.ValueExprMul and Core.BinMul)
+                or (cls == Value.ValueExprRem and Core.BinRem)
                 or Core.BinDiv
             return LJ.LJExprIntBinary(op, physical(ctx, expr.ty), expr.sem, value_expr(ctx, expr.a), value_expr(ctx, expr.b))
+        elseif cls == Value.ValueExprBinary then
+            return LJ.LJExprIntBinary(expr.op, physical(ctx, expr.ty), expr.sem, value_expr(ctx, expr.a), value_expr(ctx, expr.b))
         end
         error("luajit_lower: unsupported ValueExpr " .. class_name(expr), 3)
     end
@@ -693,13 +696,25 @@ local function bind_context(T)
         local cls = pvm.classof(k)
         if cls == Code.CodeInstConst then return Value.ValueExprConst(k.const) end
         if cls == Code.CodeInstAlias then return value_expr_from_code(ctx, k.src, seen) end
+        if cls == Code.CodeInstUnary then return Value.ValueExprUnary(k.op, value_expr_from_code(ctx, k.value, seen), k.ty) end
         if cls == Code.CodeInstCast then return Value.ValueExprCast(k.op, k.from, k.to, value_expr_from_code(ctx, k.value, seen)) end
         if cls == Code.CodeInstBinary then
             local a, b = value_expr_from_code(ctx, k.lhs, seen), value_expr_from_code(ctx, k.rhs, seen)
             if k.op == Core.BinAdd then return Value.ValueExprAdd(a, b, k.ty, k.semantics) end
             if k.op == Core.BinSub then return Value.ValueExprSub(a, b, k.ty, k.semantics) end
             if k.op == Core.BinMul then return Value.ValueExprMul(a, b, k.ty, k.semantics) end
-            if k.op == Core.BinDiv or k.op == Core.BinRem then return Value.ValueExprDiv(a, b, k.ty, k.semantics) end
+            if k.op == Core.BinDiv then return Value.ValueExprDiv(a, b, k.ty, k.semantics) end
+            if k.op == Core.BinRem then return Value.ValueExprRem(a, b, k.ty, k.semantics) end
+            if k.op == Core.BinBitAnd or k.op == Core.BinBitOr or k.op == Core.BinBitXor
+                or k.op == Core.BinShl or k.op == Core.BinLShr or k.op == Core.BinAShr then
+                return Value.ValueExprBinary(k.op, a, b, k.ty, k.semantics)
+            end
+        end
+        if cls == Code.CodeInstCompare then
+            return Value.ValueExprCmp(k.op, k.operand_ty, value_expr_from_code(ctx, k.lhs, seen), value_expr_from_code(ctx, k.rhs, seen))
+        end
+        if cls == Code.CodeInstSelect then
+            return Value.ValueExprSelect(value_expr_from_code(ctx, k.cond, seen), value_expr_from_code(ctx, k.then_value, seen), value_expr_from_code(ctx, k.else_value, seen))
         end
         return Value.ValueExprValue(value)
     end
@@ -730,8 +745,19 @@ local function bind_context(T)
         end
         if cls == Value.ValueExprCast then return value_expr_key(ctx, graph_loop, expr.value, bindings, seen) end
         if cls == Value.ValueExprUnary then return "unary:" .. tostring(expr.op) .. "(" .. value_expr_key(ctx, graph_loop, expr.value, bindings, seen) .. ")" end
-        if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv then
+        if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
             return tostring(cls) .. "(" .. value_expr_key(ctx, graph_loop, expr.a, bindings, seen) .. "," .. value_expr_key(ctx, graph_loop, expr.b, bindings, seen) .. ")"
+        end
+        if cls == Value.ValueExprBinary then
+            return "binary:" .. tostring(expr.op) .. "(" .. value_expr_key(ctx, graph_loop, expr.a, bindings, seen) .. "," .. value_expr_key(ctx, graph_loop, expr.b, bindings, seen) .. ")"
+        end
+        if cls == Value.ValueExprCmp then
+            return "cmp:" .. tostring(expr.op) .. ":" .. value_expr_key(ctx, graph_loop, expr.a, bindings, seen) .. "," .. value_expr_key(ctx, graph_loop, expr.b, bindings, seen)
+        end
+        if cls == Value.ValueExprSelect then
+            return "select:" .. value_expr_key(ctx, graph_loop, expr.cond, bindings, seen) .. "?"
+                .. value_expr_key(ctx, graph_loop, expr.t, bindings, seen) .. ":"
+                .. value_expr_key(ctx, graph_loop, expr.f, bindings, seen)
         end
         return tostring(expr)
     end
@@ -876,8 +902,46 @@ local function bind_context(T)
         return class
     end
 
+    local function enrich_apply_n_class(ctx, class, graph_loop, loop_fact, bindings)
+        for _, input in ipairs(class.inputs or {}) do
+            if input.scalar_value ~= nil then
+                input.index_primary = true
+            else
+                local fact = lane_selection_fact(ctx, input.lane)
+                if fact == nil then return nil, input.name .. " lane has no value base" end
+                input.base = fact.base
+                input.base_expr = fact.base_expr
+                input.ty = fact.elem_ty
+                input.layout = fact.layout
+                input.index_primary = expr_is_primary(ctx, input.index, graph_loop, loop_fact, bindings)
+                if not input.index_primary then
+                    local idx = index_lane_for(input.index, bindings)
+                    if idx ~= nil then
+                        local idx_fact = lane_selection_fact(ctx, idx.lane)
+                        if idx_fact ~= nil then
+                            input.index_lane = {
+                                name = input.name .. "_idx",
+                                base = idx_fact.base,
+                                base_expr = idx_fact.base_expr,
+                                elem_ty = idx_fact.elem_ty,
+                                ty = idx_fact.elem_ty,
+                                layout = idx_fact.layout,
+                                role = Stencil.StencilAccessIndex,
+                                index_primary = expr_is_primary(ctx, idx.index, graph_loop, loop_fact, bindings),
+                            }
+                        end
+                    end
+                end
+            end
+        end
+        return class
+    end
+
     local function enrich_stencil_class(ctx, class, graph_loop, loop_fact, bindings, dst_base, dst_ty)
-        if class.kind == "load" or class.kind == "map" or class.kind == "cast" or class.kind == "compare" then
+        if class.kind == "apply_n" then
+            local ok, err = enrich_apply_n_class(ctx, class, graph_loop, loop_fact, bindings)
+            if not ok then return nil, err end
+        elseif class.kind == "load" or class.kind == "map" or class.kind == "cast" or class.kind == "compare" then
             local ok, err = enrich_lane_class(ctx, class, graph_loop, loop_fact, bindings, "lane")
             if not ok then return nil, err end
             if class.kind == "map" then
@@ -928,6 +992,23 @@ local function bind_context(T)
                 Stencil.StencilProducerForward
             )
         )
+    end
+
+    local function same_value_expr_value(expr, value)
+        return pvm.classof(expr) == Value.ValueExprValue and value ~= nil and expr.value.text == value.text
+    end
+
+    local function scan_axis_from_loop(ctx, loop_fact, producer)
+        if producer == nil or loop_fact == nil or loop_fact.counted == nil then return nil end
+        local shape = StencilArtifactPlan.producer_shape(producer)
+        if pvm.classof(shape) ~= Stencil.StencilProduceRangeND then return nil end
+        local counted = loop_fact.counted
+        for axis_index, axis in ipairs(shape.axes or {}) do
+            if same_value_expr_value(axis.start, counted.start) and same_value_expr_value(axis.stop, counted.stop) then
+                return Stencil.StencilAxisRef(axis_index)
+            end
+        end
+        return nil
     end
 
     local function stencil_store_plan(ctx, func, plan, graph_loop, loop_fact)
@@ -1016,6 +1097,9 @@ local function bind_context(T)
         if name == "cond" then return info.cond end
         if name == "then_xs" then return info.then_xs or info.then_base end
         if name == "else_xs" then return info.else_xs or info.else_base end
+        for _, input in ipairs(info.inputs or {}) do
+            if input.name == name then return input.base end
+        end
         return info[name]
     end
 
@@ -1251,9 +1335,10 @@ local function bind_context(T)
                 store_index_is_primary = true
             end
         end
+        local producer = producer_from_loop(ctx, loop_fact, descriptor_step)
         local selection, select_reason = run_stencil_selection("select_scan_stencil", {
             step_num = descriptor_step,
-            producer = producer_from_loop(ctx, loop_fact, descriptor_step),
+            producer = producer,
             dst_elem_ty = effect.dst.elem_ty,
             result_ty = reduction.ty,
             dst = dst_base,
@@ -1269,6 +1354,7 @@ local function bind_context(T)
             init = reduction.init,
             init_expr = value_expr(ctx, reduction.init),
             mode = effect.mode,
+            axis = effect.axis or scan_axis_from_loop(ctx, loop_fact, producer),
             class = class,
         }, "unsupported scan stencil shape")
         if selection == nil then return nil, select_reason end
@@ -1370,8 +1456,34 @@ local function bind_context(T)
         local bindings = binding_index(plan.body)
         local class, class_reason = enriched_class_for_expr(ctx, effect.value, graph_loop, loop_fact, bindings, dst_base, effect.dst.elem_ty)
         if class == nil then return nil, class_reason end
-        if class.kind ~= "load" then return nil, "scatter-reduce currently requires a lane-load contribution" end
-        if not class.index_primary then return nil, "scatter-reduce contribution must be primary-indexed" end
+        local contribution = nil
+        if class.kind == "apply_n" then
+            for _, input in ipairs(class.inputs or {}) do
+                if input.index_primary ~= true then return nil, "scatter-reduce contribution inputs must be primary-indexed" end
+            end
+            contribution = {
+                ty = class.result_ty,
+                expr = class.expr,
+                inputs = class.inputs,
+            }
+        elseif class.kind == "load" then
+            contribution = {
+                ty = class.elem_ty,
+                expr = Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs")),
+                inputs = {
+                    {
+                        name = "xs",
+                        base = class.src,
+                        base_expr = class.src_expr,
+                        ty = class.elem_ty,
+                        layout = class.src_layout,
+                        index_primary = class.index_primary,
+                    },
+                },
+            }
+            if not class.index_primary then return nil, "scatter-reduce contribution must be primary-indexed" end
+        end
+        if contribution == nil then return nil, "scatter-reduce requires an ApplyN contribution" end
         local index_lane = index_lane_selection_fact(ctx, effect.index, graph_loop, loop_fact, bindings)
         if index_lane == nil then return nil, "scatter-reduce destination index must come from an index lane" end
         if not index_lane.index_primary then return nil, "scatter-reduce index lane must be primary-indexed" end
@@ -1386,7 +1498,7 @@ local function bind_context(T)
                     step_num = descriptor_step,
                     producer = producer_from_loop(ctx, loop_fact, descriptor_step),
                     result_ty = effect.reducer.result_ty,
-                    item_ty = class.elem_ty,
+                    item_ty = contribution.ty,
                     index_ty = index_lane.elem_ty,
                     dst = dst_base,
                     dst_name = "dst",
@@ -1396,17 +1508,14 @@ local function bind_context(T)
                         index_lane.elem_ty,
                         descriptor_step
                     ),
-                    src = class.src,
                     index = index_lane.base,
                     index_name = "idx",
                     index_layout = index_lane.layout,
-                    inputs = {
-                        { name = "xs", ty = class.elem_ty, layout = class.src_layout },
-                    },
+                    inputs = contribution.inputs,
+                    expr = contribution.expr,
                 },
                 args = {
                     value_id_expr(ctx, dst_base),
-                    class.src_expr,
                     index_lane.base_expr,
                     value_id_expr(ctx, loop_fact.counted.start),
                     value_id_expr(ctx, loop_fact.counted.stop),
@@ -1525,12 +1634,12 @@ local function bind_context(T)
             reject_reason = "kernel subject is not owned by the current function"
         elseif not planned then
             reject_reason = "kernel is not planned"
+        elseif single_store then
+            reject_reason = stencil_store_reason or store_reason or reject_reason
         elseif result_reduction and not stencil_skeleton_ready then
             reject_reason = stencil_reduce_reason or reject_reason
         elseif stencil_skeleton_reason ~= nil then
             reject_reason = stencil_skeleton_reason
-        elseif single_store then
-            reject_reason = stencil_store_reason or store_reason or reject_reason
         elseif store_reason ~= nil then
             reject_reason = store_reason
         end

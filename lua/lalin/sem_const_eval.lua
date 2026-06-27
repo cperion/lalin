@@ -138,10 +138,6 @@ local function bind_context(T)
             return (function(self)
  return single(self.ty)
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprOpen) then
-            return (function(self)
- return single(self.ty)
-            end)(node, ...)
         else
             error("phase lalin_sem_const_expr_type: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -324,10 +320,6 @@ local function bind_context(T)
         elseif schema.isa(node, B.ValueRefPath) then
             return (function()
  return single(no())
-            end)(node, ...)
-        elseif schema.isa(node, B.ValueRefHole) then
-            return (function()
- return single(nil)
             end)(node, ...)
         else
             error("phase lalin_sem_value_ref_const: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
@@ -528,14 +520,6 @@ local function bind_context(T)
             return (function()
  return single(no())
             end)(node, ...)
-        elseif schema.isa(node, Tr.ExprSlotValue) then
-            return (function()
- return single(no())
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprUseExprFrag) then
-            return (function()
- return single(no())
-            end)(node, ...)
         else
             error("phase lalin_sem_expr_const_class: no handler for " .. tostring(cls and cls.kind or type(node)), 2)
         end
@@ -621,14 +605,6 @@ local function bind_context(T)
             return single({ kind = "yield_value", env = local_env, value = v })
             end)(node, ...)
         elseif schema.isa(node, Tr.StmtControl) then
-            return (function(_, _, local_env)
- return single({ kind = "falls_through", env = local_env })
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionSlot) then
-            return (function(_, _, local_env)
- return single({ kind = "falls_through", env = local_env })
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtUseRegionFrag) then
             return (function(_, _, local_env)
  return single({ kind = "falls_through", env = local_env })
             end)(node, ...)

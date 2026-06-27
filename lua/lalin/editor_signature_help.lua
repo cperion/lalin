@@ -119,8 +119,6 @@ local function bind_context(T)
         local cls = schema.classof(func)
         if cls == Tr.FuncLocal or cls == Tr.FuncExport or cls == Tr.FuncLocalContract or cls == Tr.FuncExportContract then
             return func.name, func.params, func.result
-        elseif cls == Tr.FuncOpen then
-            return func.sym.name, func.params, func.result
         end
         return nil, {}, Ty.TScalar(C.ScalarVoid)
     end
@@ -210,20 +208,6 @@ local function bind_context(T)
                 local sig = signature_from_params(name, params, result, "extern function")
                 catalog[name] = catalog[name] or {}; catalog[name][#catalog[name] + 1] = sig
             end
-        end
-        local expr_names = fragment_names(analysis, S.AnchorExprName)
-        for i = 1, #analysis.parse.combined.expr_frags do
-            local name = expr_names[i] or ("expr" .. tostring(i))
-            local frag = analysis.parse.combined.expr_frags[i]
-            catalog[name] = catalog[name] or {}
-            catalog[name][#catalog[name] + 1] = signature_from_params(name, frag.params, frag.result, "Lalin expr fragment")
-        end
-        local region_names = fragment_names(analysis, S.AnchorRegionName)
-        for i = 1, #analysis.parse.combined.region_frags do
-            local name = region_names[i] or ("region" .. tostring(i))
-            local frag = analysis.parse.combined.region_frags[i]
-            catalog[name] = catalog[name] or {}
-            catalog[name][#catalog[name] + 1] = region_signature(name, frag)
         end
         for i = 1, #analysis.parse.combined.decls.decls do
             local d = analysis.parse.combined.decls.decls[i]

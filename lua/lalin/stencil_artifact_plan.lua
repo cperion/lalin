@@ -2064,10 +2064,11 @@ local function bind_context(T)
         for i, input in ipairs(inputs) do
             local name = input.name or ("x" .. tostring(i))
             local ty = assert(input.ty, "stencil_artifact_plan.apply_n input requires ty")
-            accesses[#accesses + 1] = shaped(name, Stencil.StencilAccessRead, ty, input.layout, stride)
+            local role = input.role or Stencil.StencilAccessRead
+            accesses[#accesses + 1] = shaped(name, role, ty, input.layout, stride)
             local access = accesses[#accesses]
             abi[#abi + 1] = access_abi_ty(access)
-            args[#args + 1] = access_arg_decl(access, false)
+            args[#args + 1] = access_arg_decl(access, role == Stencil.StencilAccessWrite or role == Stencil.StencilAccessReadWrite)
         end
         append_producer_params(producer, abi, args)
         return inputs, accesses, abi, args
@@ -2080,13 +2081,13 @@ local function bind_context(T)
         local producer_reason = producer_materializer_reject_reason(producer)
         if producer_reason ~= nil then error("stencil_artifact_plan: unsupported apply_n producer: " .. tostring(producer_reason), 2) end
         local inputs, accesses, abi, args = apply_n_inputs(info, stride, producer)
-        local tag = sanitize(info.tag or ("arity" .. tostring(#inputs)))
+        local desc = descriptor("apply", stride, accesses, expr, nil, attrs(info, { producer = producer }), memory(), nil)
+        local sink_reason = sink_materializer_reject_reason(desc)
+        if sink_reason ~= nil then error("stencil_artifact_plan: unsupported apply_n sink/body: " .. tostring(sink_reason), 2) end
+        local tag = sanitize((info.tag or ("arity" .. tostring(#inputs))) .. "_" .. stable_hash32(stable_repr(desc)))
         local ptag = producer_tag(producer)
         local id = Stencil.StencilInstanceId("stencil:apply_n:" .. type_name(result_ty) .. ":" .. tag .. ":" .. ptag)
         local symbol = Stencil.StencilSymbolId("ml_stencil_apply_n_" .. type_name(result_ty) .. "_" .. tag .. "_" .. ptag)
-        local desc = descriptor("apply", stride, accesses, expr, nil, { producer = producer }, memory(), nil)
-        local sink_reason = sink_materializer_reject_reason(desc)
-        if sink_reason ~= nil then error("stencil_artifact_plan: unsupported apply_n sink/body: " .. tostring(sink_reason), 2) end
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), {}, info)
         return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
@@ -2117,10 +2118,11 @@ local function bind_context(T)
         for i, input in ipairs(inputs) do
             local name = input.name or ("x" .. tostring(i))
             local ty = assert(input.ty, "stencil_artifact_plan.reduce_n input requires ty")
-            accesses[#accesses + 1] = shaped(name, Stencil.StencilAccessRead, ty, input.layout, stride)
+            local role = input.role or Stencil.StencilAccessRead
+            accesses[#accesses + 1] = shaped(name, role, ty, input.layout, stride)
             local access = accesses[#accesses]
             abi[#abi + 1] = access_abi_ty(access)
-            args[#args + 1] = access_arg_decl(access, false)
+            args[#args + 1] = access_arg_decl(access, role == Stencil.StencilAccessWrite or role == Stencil.StencilAccessReadWrite)
         end
         accesses[#accesses + 1] = scalar("acc", Stencil.StencilAccessReduce, result_ty, reducer_identity(reduction, result_ty))
         append_producer_params(producer, abi, args)
@@ -2128,13 +2130,13 @@ local function bind_context(T)
             abi[#abi + 1] = result_ty
             args[#args + 1] = c_type(result_ty) .. " init"
         end
-        local tag = sanitize(info.tag or ("arity" .. tostring(#inputs)))
-        local ptag = producer_tag(producer)
-        local id = Stencil.StencilInstanceId("stencil:reduce_n:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":" .. tag .. ":" .. ptag)
-        local symbol = Stencil.StencilSymbolId("ml_stencil_reduce_n_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_" .. tag .. "_" .. ptag)
         local desc = descriptor("reduce", stride, accesses, expr, reducer_desc(reduction, result_ty), { producer = producer, reduce_scope = scope }, memory(), result_ty)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported reduce_n sink/body: " .. tostring(sink_reason), 2) end
+        local tag = sanitize((info.tag or ("arity" .. tostring(#inputs))) .. "_" .. stable_hash32(stable_repr(desc)))
+        local ptag = producer_tag(producer)
+        local id = Stencil.StencilInstanceId("stencil:reduce_n:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":" .. tag .. ":" .. ptag)
+        local symbol = Stencil.StencilSymbolId("ml_stencil_reduce_n_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_" .. tag .. "_" .. ptag)
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, scoped_output and nil or result_ty), proof_list(plan), info)
         if scoped_output then return artifact(inst, symbol, void_desc_decl(symbol, desc, args)) end
@@ -2157,23 +2159,24 @@ local function bind_context(T)
         for i, input in ipairs(inputs) do
             local name = input.name or ("x" .. tostring(i))
             local ty = assert(input.ty, "stencil_artifact_plan.scan_n input requires ty")
-            accesses[#accesses + 1] = shaped(name, Stencil.StencilAccessRead, ty, input.layout, stride)
+            local role = input.role or Stencil.StencilAccessRead
+            accesses[#accesses + 1] = shaped(name, role, ty, input.layout, stride)
             local access = accesses[#accesses]
             abi[#abi + 1] = access_abi_ty(access)
-            args[#args + 1] = access_arg_decl(access, false)
+            args[#args + 1] = access_arg_decl(access, role == Stencil.StencilAccessWrite or role == Stencil.StencilAccessReadWrite)
         end
         accesses[#accesses + 1] = scalar("acc", Stencil.StencilAccessReduce, result_ty, reducer_identity(reduction, result_ty))
         append_producer_params(producer, abi, args)
         abi[#abi + 1] = result_ty
         args[#args + 1] = c_type(result_ty) .. " init"
-        local tag = sanitize(info.tag or ("arity" .. tostring(#inputs)))
-        local ptag = producer_tag(producer)
-        local id = Stencil.StencilInstanceId("stencil:scan_n:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":" .. scan_mode_name(mode) .. ":" .. tag .. ":" .. ptag)
-        local symbol = Stencil.StencilSymbolId("ml_stencil_scan_n_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_" .. scan_mode_name(mode) .. "_" .. tag .. "_" .. ptag)
         local reducer = reducer_desc(reduction, result_ty)
         local desc = descriptor("scan", stride, accesses, expr, reducer, { mode = mode, producer = producer, axis = info.axis or info.scan_axis }, memory(), result_ty)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported scan_n sink/body: " .. tostring(sink_reason), 2) end
+        local tag = sanitize((info.tag or ("arity" .. tostring(#inputs))) .. "_" .. stable_hash32(stable_repr(desc)))
+        local ptag = producer_tag(producer)
+        local id = Stencil.StencilInstanceId("stencil:scan_n:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":" .. scan_mode_name(mode) .. ":" .. tag .. ":" .. ptag)
+        local symbol = Stencil.StencilSymbolId("ml_stencil_scan_n_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_" .. scan_mode_name(mode) .. "_" .. tag .. "_" .. ptag)
         local inst
         inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), proof_list(plan), info)
         return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
