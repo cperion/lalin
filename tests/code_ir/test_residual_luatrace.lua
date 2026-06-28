@@ -14,7 +14,7 @@ local Value = T.LalinValue
 local Schedule = T.LalinSchedule
 local Stencil = T.LalinStencil
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local CopyPatchLuaTrace = require("lalin.copy_patch_luatrace")(T)
+local ResidualLuaTrace = require("lalin.residual_luatrace")(T)
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local u8 = Code.CodeTyInt(8, Code.CodeUnsigned)
@@ -131,8 +131,8 @@ local artifacts = {
     StencilArtifactPlan.select_array_artifact(Stencil.StencilPredNonZero, { cond_ty = bool8, elem_ty = i32, result_ty = i32, step_num = 1 }),
 }
 
-local realization = CopyPatchLuaTrace.realize_artifacts(artifacts)
-assert(realization.kind == "BCStencilBankRealization", "expected BC copy-patch realization")
+local realization = ResidualLuaTrace.realize_artifacts(artifacts)
+assert(realization.kind == "BCStencilBankRealization", "expected BC BC residual realization")
 assert(#realization.installed == #artifacts, "all artifacts installed")
 assert(pvm.classof(realization.installed[1].artifact.realized) == Stencil.StencilRealizedUnrolled, "BC autovector trace grouping should record unrolled realization")
 assert(pvm.classof(realization.installed[1].artifact.schedule_rejects[1]) == Stencil.StencilScheduleRejectRequestedRealizedMismatch, "BC autovector trace grouping should record requested/realized mismatch")
@@ -142,9 +142,9 @@ assert(realization.installed[1].artifact.fingerprint.text ~= artifacts[1].finger
 assert(#realization.installed[1].artifact.diagnostics >= 1, "BC realized artifact should carry diagnostics")
 assert(realization.installed[1].artifact.diagnostics[1].source == "realized-schedule", "BC diagnostic should record realized schedule source")
 
-local reduce_template = CopyPatchLuaTrace.emit_mc_stencil_source(artifacts[1])
+local reduce_template = ResidualLuaTrace.emit_mc_stencil_source(artifacts[1])
 assert(reduce_template:match("local function ml_stencil_reduce_array_i32_add_to_i32_s1"), "expected reduce bytecode template")
-local partition_template = CopyPatchLuaTrace.emit_mc_stencil_source(artifacts[9])
+local partition_template = ResidualLuaTrace.emit_mc_stencil_source(artifacts[9])
 assert(partition_template:match("local function ml_stencil_partition_array_i32_gt_stable_s1"), "expected partition bytecode template")
 
 local function access_ref(name)
@@ -212,41 +212,41 @@ local function artifact_with_facts(artifact, rewrite_fact, alias_facts)
     return Stencil.StencilArtifact(next_instance, artifact.provider, artifact.symbol, artifact.c_signature, artifact.fingerprint, artifact.realized, artifact.diagnostics or {}, artifact.schedule_rejects or {})
 end
 
-local stale_bc_bank = assert(CopyPatchLuaTrace.build_bc_bank({ artifacts[1] }, { stem = "test_copy_patch_luatrace_stale" }))
+local stale_bc_bank = assert(ResidualLuaTrace.build_bc_bank({ artifacts[1] }, { stem = "test_residual_luatrace_stale" }))
 local stale_bc_request = artifact_with_facts(artifacts[1], function(fact)
     return Stencil.StencilAccessVectorFact(fact.access, Stencil.StencilAlignmentKnown(64), fact.readonly, fact.unit_stride)
 end)
-local stale_bc_realization, stale_bc_err = CopyPatchLuaTrace.realize_bc_artifacts({ stale_bc_request }, { bank = stale_bc_bank })
+local stale_bc_realization, stale_bc_err = ResidualLuaTrace.realize_bc_artifacts({ stale_bc_request }, { bank = stale_bc_bank })
 assert(stale_bc_realization == nil, "stale BC bank entry must not realize")
 assert(tostring(stale_bc_err):match("fingerprint mismatch"), "stale BC bank rejection should name fingerprint mismatch")
 
-local first_plan = CopyPatchLuaTrace.plan_artifact(artifacts[1])
+local first_plan = ResidualLuaTrace.plan_artifact(artifacts[1])
 assert(first_plan.kind == "LuaTraceArtifactPlan", "expected inspectable LuaTrace artifact plan")
 assert(first_plan.access_by_name.xs.kind == "contiguous", "expected contiguous access plan")
 assert(first_plan.loop_plan.loop_shape == "grouped_while", "AutoVector reduce should use grouped loop plan")
 assert(first_plan.kernel_plan.kind == "reduce_n", "expected generic reduce kernel plan")
 assert(first_plan.kernel_plan.reduction_plan.kind == "ordered_single_accumulator", "LuaTrace reductions should expose ordered accumulator policy")
 assert(first_plan.kernel_plan.reduction_plan.reassociation_required == false, "ordered LuaTrace reduction must not require reassociation")
-assert(CopyPatchLuaTrace.plan_artifact(artifacts[5]).kernel_plan.primitive_plan.kind == "ffi_copy", "no-overlap copy should use ffi.copy primitive")
-assert(CopyPatchLuaTrace.plan_artifact(artifacts[6]).kernel_plan.primitive_plan == nil, "memmove copy must not use ffi.copy primitive")
-assert(CopyPatchLuaTrace.plan_artifact(artifacts[7]).kernel_plan.primitive_plan == nil, "i32 fill should stay loop-shaped")
+assert(ResidualLuaTrace.plan_artifact(artifacts[5]).kernel_plan.primitive_plan.kind == "ffi_copy", "no-overlap copy should use ffi.copy primitive")
+assert(ResidualLuaTrace.plan_artifact(artifacts[6]).kernel_plan.primitive_plan == nil, "memmove copy must not use ffi.copy primitive")
+assert(ResidualLuaTrace.plan_artifact(artifacts[7]).kernel_plan.primitive_plan == nil, "i32 fill should stay loop-shaped")
 local noalias_memmove = artifact_with_facts(artifacts[6], function(fact)
     return Stencil.StencilAccessVectorFact(fact.access, fact.alignment, fact.readonly, fact.unit_stride)
 end, { noalias_pair("dst", "src") })
-local noalias_memmove_primitive = CopyPatchLuaTrace.plan_artifact(noalias_memmove).kernel_plan.primitive_plan
+local noalias_memmove_primitive = ResidualLuaTrace.plan_artifact(noalias_memmove).kernel_plan.primitive_plan
 assert(noalias_memmove_primitive.kind == "ffi_copy", "noalias facts should allow memmove-shaped copy to use ffi.copy")
 assert(noalias_memmove_primitive.no_overlap_source == "noalias_facts", "copy primitive should record noalias legality source")
 local readonly_dst_copy = artifact_with_facts(artifacts[5], function(fact)
     local readonly = fact.access.name == "dst" and true or fact.readonly
     return Stencil.StencilAccessVectorFact(fact.access, fact.alignment, readonly, fact.unit_stride)
 end)
-assert(CopyPatchLuaTrace.plan_artifact(readonly_dst_copy).kernel_plan.primitive_plan == nil, "readonly destination must block ffi.copy primitive")
-assert(CopyPatchLuaTrace.plan_artifact(artifacts[11]).kernel_plan.predicate_plan.kind == "numeric_store", "compare should use measured inline numeric predicate policy")
-assert(CopyPatchLuaTrace.plan_artifact(artifacts[12]).kernel_plan.predicate_plan.kind == "numeric_store", "zip compare should use measured inline numeric compare policy")
-assert(CopyPatchLuaTrace.plan_artifact(artifacts[16]).kernel_plan.predicate_plan.kind == "multi_counter_branch", "count should use measured multi-counter branch policy")
-assert(CopyPatchLuaTrace.plan_artifact(artifacts[16]).kernel_plan.predicate_plan.counters == 4, "count multi-counter policy should follow grouped loop width")
-assert(CopyPatchLuaTrace.plan_artifact(artifacts[11]).kernel_plan.predicate_plan.rejected == "helper_branchless_measured_slower", "predicate plan should record rejected helper branchless candidate")
-local unique_scatter_plan = CopyPatchLuaTrace.plan_artifact(artifacts[14])
+assert(ResidualLuaTrace.plan_artifact(readonly_dst_copy).kernel_plan.primitive_plan == nil, "readonly destination must block ffi.copy primitive")
+assert(ResidualLuaTrace.plan_artifact(artifacts[11]).kernel_plan.predicate_plan.kind == "numeric_store", "compare should use measured inline numeric predicate policy")
+assert(ResidualLuaTrace.plan_artifact(artifacts[12]).kernel_plan.predicate_plan.kind == "numeric_store", "zip compare should use measured inline numeric compare policy")
+assert(ResidualLuaTrace.plan_artifact(artifacts[16]).kernel_plan.predicate_plan.kind == "multi_counter_branch", "count should use measured multi-counter branch policy")
+assert(ResidualLuaTrace.plan_artifact(artifacts[16]).kernel_plan.predicate_plan.counters == 4, "count multi-counter policy should follow grouped loop width")
+assert(ResidualLuaTrace.plan_artifact(artifacts[11]).kernel_plan.predicate_plan.rejected == "helper_branchless_measured_slower", "predicate plan should record rejected helper branchless candidate")
+local unique_scatter_plan = ResidualLuaTrace.plan_artifact(artifacts[14])
 assert(unique_scatter_plan.kernel_plan.scatter_plan.kind == "unique_indices", "unique scatter should expose conflict policy")
 assert(unique_scatter_plan.loop_plan.group == 4, "unique scatter should be eligible for grouped LuaTrace lowering")
 
@@ -256,12 +256,12 @@ local last_write_scatter_artifact = StencilArtifactPlan.scatter_array_artifact({
     conflicts = Stencil.StencilScatterLastWriteWins,
     step_num = 1,
 })
-local last_write_scatter_plan = CopyPatchLuaTrace.plan_artifact(last_write_scatter_artifact)
+local last_write_scatter_plan = ResidualLuaTrace.plan_artifact(last_write_scatter_artifact)
 assert(last_write_scatter_plan.kernel_plan.scatter_plan.kind == "ordered_last_write", "last-write scatter should expose ordered conflict policy")
 assert(last_write_scatter_plan.loop_plan.group == 1, "last-write scatter should remain scalar/conservative")
 
 local u8_fill_artifact = StencilArtifactPlan.fill_array_artifact({ elem_ty = u8, value = u8const(127), step_num = 1 })
-local u8_fill_plan = CopyPatchLuaTrace.plan_artifact(u8_fill_artifact)
+local u8_fill_plan = ResidualLuaTrace.plan_artifact(u8_fill_artifact)
 assert(u8_fill_plan.kernel_plan.primitive_plan.kind == "ffi_fill", "u8 fill should use ffi.fill primitive")
 
 local vector_artifact = StencilArtifactPlan.reduce_array_artifact(reduction(Value.ReductionAdd, 0), nil, {
@@ -272,9 +272,9 @@ local vector_artifact = StencilArtifactPlan.reduce_array_artifact(reduction(Valu
 })
 assert(pvm.classof(vector_artifact.instance.schedule) == Stencil.StencilScheduleVector, "expected vector stencil schedule")
 assert(vector_artifact.instance.schedule.interleave == 2, "vector schedule should preserve interleave")
-local vector_plan = CopyPatchLuaTrace.plan_artifact(vector_artifact)
+local vector_plan = ResidualLuaTrace.plan_artifact(vector_artifact)
 assert(vector_plan.loop_plan.group == 16, "explicit vector plan should preserve lanes * unroll * interleave")
-local vector_template = CopyPatchLuaTrace.emit_mc_stencil_source(vector_artifact)
+local vector_template = ResidualLuaTrace.emit_mc_stencil_source(vector_artifact)
 assert(vector_template:match("luatrace schedule: vector_as_trace_group factor=16"), "LuaTrace should consume vector schedule as trace group")
 assert(vector_template:match("while __ml_i < __ml_stop_group do"), "expected grouped LuaTrace loop")
 assert(reduce_template:match("luatrace plan: autovector_trace_group"), "LuaTrace should consume AutoVector facts")
@@ -324,9 +324,9 @@ local multiple_artifact = Stencil.StencilArtifact(
     vector_artifact.diagnostics or {},
     vector_artifact.schedule_rejects or {}
 )
-local multiple_plan = CopyPatchLuaTrace.plan_artifact(multiple_artifact)
+local multiple_plan = ResidualLuaTrace.plan_artifact(multiple_artifact)
 assert(multiple_plan.loop_plan.tail_strategy == "no_tail_trip_count_multiple", "trip-count multiple should remove generic tail")
-local multiple_template = CopyPatchLuaTrace.emit_mc_stencil_source(multiple_artifact)
+local multiple_template = ResidualLuaTrace.emit_mc_stencil_source(multiple_artifact)
 assert(multiple_template:match("tail=no_tail_trip_count_multiple"), "template should expose no-tail trip-count policy")
 assert(not multiple_template:match("for i = __ml_i, stop %- 1, 1 do"), "no-tail trip-count policy must not emit generic tail loop")
 
@@ -340,7 +340,7 @@ local strict_f64_reduce_artifact = StencilArtifactPlan.reduce_array_artifact({
     result_ty = f64,
     step_num = 1,
 })
-local strict_f64_reduce_plan = CopyPatchLuaTrace.plan_artifact(strict_f64_reduce_artifact).kernel_plan.reduction_plan
+local strict_f64_reduce_plan = ResidualLuaTrace.plan_artifact(strict_f64_reduce_artifact).kernel_plan.reduction_plan
 assert(strict_f64_reduce_plan.kind == "ordered_single_accumulator", "strict float should use ordered reduction policy")
 assert(strict_f64_reduce_plan.reassociable == false, "strict float reduction must record non-reassociable arithmetic")
 assert(strict_f64_reduce_plan.multi_accumulator == false, "strict float reduction must reject multi-accumulator lowering")
@@ -353,10 +353,10 @@ local view_vector_artifact = StencilArtifactPlan.reduce_array_artifact(reduction
     schedule = Schedule.ScheduleVector(Schedule.LaneVector(i32, 4), 2, 1, Schedule.TailScalar),
     array_layout = view_layout("strided_xs"),
 })
-local view_vector_plan = CopyPatchLuaTrace.plan_artifact(view_vector_artifact)
+local view_vector_plan = ResidualLuaTrace.plan_artifact(view_vector_artifact)
 assert(view_vector_plan.access_by_name.xs.kind == "view_dynamic_stride", "expected dynamic view access plan")
 assert(view_vector_plan.access_by_name.xs.dynamic_stride_arg == "xs_stride", "expected named dynamic stride arg")
-local view_vector_template = CopyPatchLuaTrace.emit_mc_stencil_source(view_vector_artifact)
+local view_vector_template = ResidualLuaTrace.emit_mc_stencil_source(view_vector_artifact)
 assert(view_vector_template:match("xs%[%(%(__ml_i %+ 1%) %* xs_stride%)%]"), "grouped dynamic view access must parenthesize the lane index")
 
 local view_zip_artifact = StencilArtifactPlan.zip_map_array_artifact(Stencil.StencilBinaryAdd, {
@@ -368,7 +368,7 @@ local view_zip_artifact = StencilArtifactPlan.zip_map_array_artifact(Stencil.Ste
     lhs_layout = view_layout("zip_lhs"),
     rhs_layout = view_layout("zip_rhs"),
 })
-local view_zip_template = CopyPatchLuaTrace.emit_mc_stencil_source(view_zip_artifact)
+local view_zip_template = ResidualLuaTrace.emit_mc_stencil_source(view_zip_artifact)
 assert(view_zip_template:match("%(dst, lhs, rhs, start, stop, dst_stride, lhs_stride, rhs_stride%)"), "dynamic stride ABI should preserve descriptor access order")
 
 local function exercise(symbols)
@@ -463,7 +463,7 @@ do
             rhs_layout = soa_component("right", 1),
         }),
     }
-    local layout_realization = assert(CopyPatchLuaTrace.realize_artifacts(layout_artifacts, { stem = "test_copy_patch_luatrace_layouts" }))
+    local layout_realization = assert(ResidualLuaTrace.realize_artifacts(layout_artifacts, { stem = "test_residual_luatrace_layouts" }))
     local function layout_sym(artifact)
         return assert(layout_realization.symbols[artifact.symbol.text], artifact.symbol.text)
     end
@@ -518,7 +518,7 @@ do
             src_layout = byte_span_layout("compare_xs"),
         }),
     }
-    local byte_realization = assert(CopyPatchLuaTrace.realize_artifacts(byte_artifacts, { stem = "test_copy_patch_luatrace_byte_span" }))
+    local byte_realization = assert(ResidualLuaTrace.realize_artifacts(byte_artifacts, { stem = "test_residual_luatrace_byte_span" }))
     local function byte_sym(artifact)
         return assert(byte_realization.symbols[artifact.symbol.text], artifact.symbol.text)
     end
@@ -540,7 +540,7 @@ end
 
 do
     local xs = ffi.new("int32_t[17]", { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 })
-    local vf = CopyPatchLuaTrace.compile_artifact(vector_artifact)
+    local vf = ResidualLuaTrace.compile_artifact(vector_artifact)
     assert(vf(xs, 0, 17, 0) == 153, "vector-as-trace-group reduce")
 end
 
@@ -550,7 +550,7 @@ do
         xs[i * 2] = i + 1
         xs[i * 2 + 1] = -1000
     end
-    local vf = CopyPatchLuaTrace.compile_artifact(view_vector_artifact)
+    local vf = ResidualLuaTrace.compile_artifact(view_vector_artifact)
     assert(vf(xs, 0, 17, 0, 2) == 153, "grouped dynamic view reduce")
 end
 
@@ -562,11 +562,11 @@ do
         lhs[i * 2] = i + 1
         rhs[i * 2] = (i + 1) * 10
     end
-    local vf = CopyPatchLuaTrace.compile_artifact(view_zip_artifact)
+    local vf = ResidualLuaTrace.compile_artifact(view_zip_artifact)
     vf(out, lhs, rhs, 0, 5, 2, 2, 2)
     for i = 0, 4 do
         assert(out[i * 2] == lhs[i * 2] + rhs[i * 2], "dynamic stride zip-map argument ordering at " .. tostring(i))
     end
 end
 
-io.write("lalin copy_patch_luatrace ok\n")
+io.write("lalin residual_luatrace ok\n")

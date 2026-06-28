@@ -14,7 +14,7 @@ local C = T.LalinC
 local Stencil = T.LalinStencil
 local Ty = T.LalinType
 local Plan = require("lalin.stencil_artifact_plan")(T)
-local StencilBinary = require("tests.code_ir.copy_patch_mc_helper")
+local StencilBinary = require("tests.code_ir.residual_mc_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local ptr_i32 = Code.CodeTyDataPtr(i32)
@@ -154,7 +154,7 @@ typedef struct { int32_t lane[4]; } ml_vector_4_i32;
 ]])
 
 local build, err, src = StencilBinary.compile(T, ordered, {
-    stem = "test_copy_patch_mc_nonscalar",
+    stem = "test_residual_mc_nonscalar",
     c_decls = c_decls,
     ffi_preamble = ffi_preamble,
 })
@@ -303,4 +303,4 @@ do
     assert(out_vecs[1].lane[2] == 22, "vector element identity")
 end
 
-io.write("lalin copy_patch_mc nonscalar ok\n")
+io.write("lalin residual_mc nonscalar ok\n")

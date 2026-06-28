@@ -1,12 +1,15 @@
--- Public Lalin Lua facade — DSL-only.
+-- Public Lalin Lua facade.
 --
 -- Entry API:
---   lalin.loadstring(src [, name])  — compile DSL source and return a callable unit
---   lalin.loadfile(path)            — compile DSL file and return a callable unit
---   lalin.dofile(path, ...)         — load and immediately execute
---   lalin.eval(src, ...)            — loadstring + immediate call
+--   lalin.loadstring(src [, name])  — load a .lln value chunk from a string
+--   lalin.loadfile(path)            — load a .lln value chunk from a file
+--   lalin.dofile(path, ...)         — load and immediately execute a .lln file
+--   lalin.require(name)             — require a .lln module through lalin.path
+--   lalin.install_searcher()        — let Lua require() discover .lln modules
 --   lalin.format(value [, opts])    — canonical format for evaluated DSL values
 --   lalin.format_file(path [, opts]) — evaluate a format-owned file and render it
+--
+-- DSL source loading lives under lalin.dsl.
 --
 -- Object emission (hosted pipeline):
 --   lalin.emit_c_artifact(decl [, opts])
@@ -34,6 +37,9 @@ M.compiler_driver = require("lalin.compiler_driver")
 M.flatline = require("lalin.flatline")
 M.ast = require("lalin.ast")
 M.dsl = require("lalin.dsl")
+M.syntax = require("lalin.syntax")
+M.loader = require("lalin.loader")
+M.path = M.loader.path
 M.lalin = M.dsl.namespace()
 M.lln = M.dsl.namespace { name = "lln" }
 M.back_program = require("lalin.back_program")
@@ -75,6 +81,23 @@ end
 local function is_lalin_decl(value)
     local mt = type(value) == "table" and getmetatable(value) or nil
     return mt and rawget(mt, "__dsl_class") == "Decl"
+end
+
+local function is_lalin_parsed_decl(value)
+    return type(value) == "table" and type(value.tag) == "string" and value.tag:match("^Decl") ~= nil
+end
+
+local function parsed_decls_from(value)
+    if is_lalin_parsed_decl(value) then return { value } end
+    if type(value) ~= "table" then return nil end
+    local n = #value
+    if n == 0 then return nil end
+    local out = {}
+    for i = 1, n do
+        if not is_lalin_parsed_decl(value[i]) then return nil end
+        out[i] = value[i]
+    end
+    return out
 end
 
 local function is_llpvm_value(value)
@@ -519,34 +542,69 @@ function M.write_format_file(path, opts)
     return M.dsl.write_format_file(path, opts)
 end
 
---- Hosted load/compile via DSL.
+--- Hosted .lln value loading.
 
-function M.loadstring(src, chunk_name)
-    local ds = require("lalin.dsl")
-    return ds.load(src, chunk_name or "=loadstring")
+function M.loadstring(src, chunk_name, opts)
+    return M.loader.loadstring(src, chunk_name or "=(lalin .lln)", opts)
 end
 
-function M.loadfile(path)
-    local f = assert(io.open(path, "r"))
-    local src = f:read("*a")
-    f:close()
-    return M.loadstring(src, path)
+function M.loadfile(path, opts)
+    return M.loader.loadfile(path, opts)
 end
 
-function M.dofile(path, ...)
-    local chunk = M.loadfile(path)
+function M.dofile(path, opts, ...)
+    local chunk, err = M.loadfile(path, opts)
+    if not chunk then error(err, 2) end
     return chunk(...)
 end
 
-function M.eval(src, chunk_name, ...)
-    local chunk = M.loadstring(src, chunk_name or "=eval")
+function M.eval(src, chunk_name, opts, ...)
+    if type(chunk_name) == "table" and opts == nil then
+        opts = chunk_name
+        chunk_name = nil
+    end
+    local chunk, err = M.loadstring(src, chunk_name or "=(lalin eval)", opts)
+    if not chunk then error(err, 2) end
     return chunk(...)
+end
+
+M.load = M.eval
+
+function M.searchpath(name, path, sep, rep)
+    return M.loader.searchpath(name, path or M.path, sep, rep)
+end
+
+local function facade_loader_opts(opts)
+    opts = opts or {}
+    if opts.path ~= nil then return opts end
+    local copy = {}
+    for k, v in pairs(opts) do copy[k] = v end
+    copy.path = function() return M.path end
+    return copy
+end
+
+function M.searcher(name, opts)
+    return M.loader.searcher(name, facade_loader_opts(opts))
+end
+
+function M.install_searcher(opts)
+    return M.loader.install_searcher(facade_loader_opts(opts))
+end
+
+function M.remove_searcher()
+    return M.loader.remove_searcher()
+end
+
+function M.require(name, opts)
+    return M.loader.require(name, facade_loader_opts(opts))
 end
 
 local function module_ast_from(value, name)
     local pvm = require("lalin.pvm")
     local ok, cls = pcall(pvm.classof, value)
     if ok and cls and tostring(cls) == "Class(LalinTree.Module)" then return value end
+    local parsed_decls = parsed_decls_from(value)
+    if parsed_decls then return M.syntax.to_module(parsed_decls, name) end
     if type(value) == "table" and type(value.ast) == "function" then
         local ast = value:ast()
         local ast_ok, ast_cls = pcall(pvm.classof, ast)
@@ -577,7 +635,6 @@ function M.compile(name_or_decls, decls_or_opts, maybe_opts)
         name = opts.name or "Unit"
     end
     opts.name = opts.name or name
-    opts.copy_patch = "bc"
     local artifact = M.emit_luajit_artifact(decls, opts)
     local loader = loadstring or load
     local chunk, err = loader(artifact.source, "@" .. tostring(opts.name or name) .. ".luajit.lua")
@@ -652,9 +709,9 @@ local function prepare_luajit_artifact(decl, name, opts)
 
     local Pipeline = require("lalin.frontend_pipeline")(T)
     local Backend = require("lalin.luajit_backend")(T)
-    local copy_patch = tostring(opts.copy_patch or "mc")
-    if copy_patch ~= "mc" and copy_patch ~= "bc" then
-        error("emit_luajit_artifact: unknown copy_patch materializer " .. copy_patch, 2)
+    local residual = tostring(opts.residual or "mc")
+    if residual ~= "mc" and residual ~= "bc" then
+        error("emit_luajit_artifact: unknown residual materializer " .. residual, 2)
     end
     local checked = Pipeline.typecheck_module(module_ast, {
         context = T,
@@ -681,7 +738,7 @@ local function prepare_luajit_artifact(decl, name, opts)
         schedule = opts.schedule,
         schedule_plan = opts.schedule_plan,
         collect_rejects = opts.collect_rejects,
-        copy_patch = copy_patch,
+        residual = residual,
     })
     if opts.reject_on_stencil_rejects ~= false and rejects and #rejects > 0 then
         error("emit_luajit_artifact rejected module: " .. tostring(rejects[1].reason or rejects[1]), 2)
@@ -690,7 +747,7 @@ local function prepare_luajit_artifact(decl, name, opts)
     return {
         kind = "LuaJITArtifactPlan",
         name = name,
-        copy_patch = copy_patch,
+        residual = residual,
         sanitize = sanitize,
         module_ast = module_ast,
         checked = checked,
@@ -722,10 +779,18 @@ function M.emit_luajit_plan_artifact(plan, path_or_opts, name, opts)
 
     local mc_bank = opts.mc_bank
     local bc_bank = opts.bc_bank
-    if mc_bank == nil and #(plan.artifacts or {}) > 0 and plan.copy_patch == "mc" then
-        error("emit_luajit_plan_artifact: copy_patch='mc' requires a prebuilt MCStencilBank; ad hoc bank builds are not part of the JIT path", 2)
+    local residual = plan.residual
+    if mc_bank == nil and #(plan.artifacts or {}) > 0 and residual == "mc" then
+        local reason = "emit_luajit_plan_artifact: residual='mc' requires a prebuilt MCStencilBank"
+        if opts.allow_bc_fallback == false then error(reason, 2) end
+        local warning = "luajit_backend: falling back from residual_mc to residual_bc: " .. reason
+        if opts.collect_warnings ~= nil then opts.collect_warnings[#opts.collect_warnings + 1] = warning end
+        if opts.on_warning ~= nil then opts.on_warning(warning)
+        elseif opts.warn ~= nil then opts.warn(warning)
+        elseif not opts.silent_warnings and not opts.quiet then io.stderr:write("warning: " .. warning .. "\n") end
+        residual = "bc"
     end
-    if bc_bank == nil and #(plan.artifacts or {}) > 0 and plan.copy_patch == "bc" then
+    if bc_bank == nil and #(plan.artifacts or {}) > 0 and residual == "bc" then
         bc_bank = assert(plan.backend.build_bc_bank(plan.artifacts, {
             stem = opts.stem or plan.sanitize(name),
             id = opts.bc_bank_id,
@@ -738,7 +803,12 @@ function M.emit_luajit_plan_artifact(plan, path_or_opts, name, opts)
         bc_bank = bc_bank,
         path = path,
         chunk_name = opts.chunk_name or name,
-        copy_patch = plan.copy_patch,
+        residual = residual,
+        allow_bc_fallback = opts.allow_bc_fallback,
+        collect_warnings = opts.collect_warnings,
+        on_warning = opts.on_warning,
+        warn = opts.warn,
+        silent_warnings = true,
         native_residual = opts.native_residual,
         tcc_residual = opts.tcc_residual,
     })
@@ -761,6 +831,9 @@ function M.emit_luajit_plan_artifact(plan, path_or_opts, name, opts)
         rejects = plan.rejects,
         mc_bank = mc_bank,
         bc_bank = bc_bank,
+        residual = residual,
+        requested_residual = plan.residual,
+        warnings = opts.collect_warnings,
     }
     function artifact:write(write_path)
         write_path = write_path or self.path

@@ -1,8 +1,8 @@
-# Stencil Backend / Copy+Residual Completeness Gaps
+# Stencil Backend / Copy+Compile Residual Completeness Gaps
 
 This file tracks the remaining work needed before the LuaJIT stencil backend can
-honestly be called complete. The active fast emitted artifact is copy+residual:
-`copy_patch_mc` installs GCC-built bank stencils, and TCC compiles residual glue
+honestly be called complete. The active fast emitted artifact is copy+compile residual:
+`residual_mc` installs GCC-built bank stencils, and TCC compiles residual glue
 that calls those bank stencils. The current backend is complete for a useful
 scalar subset, but not for the full schema space.
 
@@ -104,7 +104,7 @@ Severity tags:
 - [x] `B5` `[T]` Constrain compiler policy and vector compiler policy as one
   legal matrix. `StencilScheduleRejectCompilerMatrix` is now emitted by the
   artifact planner for incoherent vector schedules, including clang plus
-  gcc-autovec, SystemC plus handwritten C vectors, and non-gcc copy-patch
+  gcc-autovec, SystemC plus handwritten C vectors, and non-gcc copy+compile residual
   stencil vector schedules.
 
 ### Stringly-Typed Joins
@@ -142,7 +142,7 @@ Severity tags:
 - [x] `D3` `[C]` Complete the represented producer/unfold shape layer beyond
   1D. `StencilProducerShape` now represents and shape-validates `Range1D`,
   `RangeND`, `WindowND`, and `TiledND`; the support matrix marks the shape
-  layer as covered. `copy_patch_mc` now materializes forward `RangeND`,
+  layer as covered. `residual_mc` now materializes forward `RangeND`,
   center-domain `WindowND`, and forward `TiledND` producers for generic
   `ApplyN`, domain/axis `ReduceN`, and axis-aware `ScanN` through LLBL.C
   producer loops. The LuaTrace bytecode path materializes positive forward
@@ -192,7 +192,7 @@ Severity tags:
 - [x] `E3` `[M]` Make `StencilArtifact.c_signature` provider-dependent or
   document that every provider seals through a C ABI. Decision: every current
   stencil artifact provider seals through the same C-callable ABI surface, so
-  `c_signature` remains mandatory for both `copy_patch_bc` and `copy_patch_mc`.
+  `c_signature` remains mandatory for both `residual_bc` and `residual_mc`.
 - [x] `E4` `[M]` Decide whether producer step is compile-time only. Producer
   step is intentionally a positive compile-time constant for currently
   materialized 1D range producers; runtime stride belongs to
@@ -344,7 +344,7 @@ Open gate question:
 
 Producer-shape completion is the current gate before returning to the other
 open backend checkboxes. The goal is not "a 1D backend"; the materialization
-paths remain `copy_patch_bc`, `copy_patch_mc`, and emitted copy+residual
+paths remain `residual_bc`, `residual_mc`, and emitted copy+compile residual
 artifacts. The gate is
 to make every represented producer shape either fully executable across the
 appropriate materializers or rejected with typed, stable facts at the exact
@@ -378,17 +378,17 @@ and benchmarked where they produce executable MC code.
   backward `Range1D` now works in the LuaJIT MC/native artifact path for
   primary-index store/copy, fold, and scan materialization, plus reverse-affine
   1D store/copy and scan destination layouts.
-- [x] Materialize forward `RangeND` in `copy_patch_mc` and LuaTrace BC for
+- [x] Materialize forward `RangeND` in `residual_mc` and LuaTrace BC for
   generic `ApplyN`, domain/axis `ReduceN`, and axis-aware `ScanN` through
   nested producer loops.
 - [x] Add generic `ScanN` as the third SOAC-basis materializer. `ScanN` carries
   a typed axis; MC and BC both materialize `Range1D` axis 1 and forward
   `RangeND` rank-N axis scans.
-- [x] Guard `copy_patch_bc` so unsupported producer plans cannot silently
+- [x] Guard `residual_bc` so unsupported producer plans cannot silently
   execute as linear `start/stop` loops.
 - [x] Add a shared producer execution-plan object to artifact shapes so every
   generic materializer consumes `producer`, not a loose `stride` field.
-- [x] Remove/demote fixed `copy_patch_mc` stencil shapes as semantic
+- [x] Remove/demote fixed `residual_mc` stencil shapes as semantic
   materializers. `map`, `zip_map`, `select`, `compare`, `zip_compare`, `cast`,
   `copy`, `fill`, `gather`, `scatter`, `in_place_map`, `count`, `find`,
   `partition`, and plain `reduce` must become generated `ApplyN`/`ReduceN`/
@@ -419,20 +419,20 @@ and benchmarked where they produce executable MC code.
   tile-major outer loops, clipped edge tiles, row-major linearization inside the
   compact logical iteration space, and scalar/vector schedule preservation at
   the body level.
-- [x] Materialize `TiledND` in `copy_patch_mc` for generic `ApplyN` and
+- [x] Materialize `TiledND` in `residual_mc` for generic `ApplyN` and
   domain-scope `ReduceN`.
-- [x] Remove fixed `copy_patch_mc` shapes from the producer gate; fixed shape
+- [x] Remove fixed `residual_mc` shapes from the producer gate; fixed shape
   names are no longer semantic materializers.
 - [x] Keep `TiledND` as a typed BC reject with tests.
 - [x] Define current `WindowND` execution semantics: it is an executable
   center-domain producer with validated window metadata and boundary tags.
   Neighbor/window operands remain a future body-expression extension, not a
   producer-shape gap.
-- [x] Materialize `WindowND` in `copy_patch_mc` for the generic expression path.
+- [x] Materialize `WindowND` in `residual_mc` for the generic expression path.
 - [x] Add `WindowND` tests for every boundary policy and zero/edge-only window
   extents.
 - [x] Keep `WindowND` as a typed BC reject with tests.
-- [x] Update `copy_patch_mc_intern_set` so the bank generator intentionally
+- [x] Update `residual_mc_intern_set` so the bank generator intentionally
   includes `Range1D`, `RangeND`, `TiledND`, and `WindowND` producer-shape cells.
 - [x] Add emitted-bank tests proving `RangeND`, `TiledND`, and `WindowND`
   producer cells compile into the generated MC bank.
@@ -499,11 +499,11 @@ and benchmarked where they produce executable MC code.
 ## Copy-Patch BC/MC Materialization Gaps
 
 - [x] Make the MC intern set generated from an explicit matrix table instead of
-  ad hoc hand-enumerated artifact construction. `copy_patch_mc_intern_set` now
+  ad hoc hand-enumerated artifact construction. `residual_mc_intern_set` now
   declares explicit vocab/layout cells and generates artifacts from those
   rows.
 - [x] Add a test that compares the declared support matrix against the embedded
-  MC intern set. `test_copy_patch_mc_intern_set` checks every intern row against
+  MC intern set. `test_residual_mc_intern_set` checks every intern row against
   supported matrix vocab/layout entries and verifies the built bank symbols
   exactly match the intern matrix.
 - [x] Add a test that every artifact selected by the default lowering path can
@@ -521,9 +521,9 @@ and benchmarked where they produce executable MC code.
   default bank shape is an architectural choice, not a build-time search.
 - [x] Decide whether BC and MC banks must have identical logical coverage or
   whether BC is the semantic superset and MC is the fast subset. They must not
-  have identical compiled-bank coverage: `copy_patch_bc` is the semantic
+  have identical compiled-bank coverage: `residual_bc` is the semantic
   coverage probe and must either materialize a supported schema cell or expose
-  the exact typed unsupported cell; `copy_patch_mc` is the fast subset and falls
+  the exact typed unsupported cell; `residual_mc` is the fast subset and falls
   back to BC only through an explicit fallback path when a legal cell has no
   fast compiled artifact; the emitted bank is the deployment subset with
   explicit missing/stale-entry diagnostics. The support matrix now encodes those
@@ -548,14 +548,14 @@ and benchmarked where they produce executable MC code.
 - [ ] Add tests that static binary startup rejects or reports missing MC bank
   entries cleanly when a selected fast artifact is absent.
 
-## Copy+Residual Metastencil / Fusion Track
+## Copy+Compile Residual Metastencil / Fusion Track
 
 This is a tracked architecture tangent, not a reason to stop the current
 materializer fact-consumption pass. The core choice is to build fused
 MC bank artifacts as C/LLB.C source-level metastencils and let GCC see the
 combined body, not to concatenate already compiled machine-code bytes. Cross-op
 optimization only happens if the compiler receives the fused source. The emitted
-copy+residual artifact can still use TCC glue around the resulting bank entry.
+copy+compile residual artifact can still use TCC glue around the resulting bank entry.
 
 - [x] Record the primitive-basis decision: the production hand-coded stencil
   family collapses to four primitives: `Apply`, `Reduce`, `Scan`, and
@@ -581,7 +581,7 @@ copy+residual artifact can still use TCC glue around the resulting bank entry.
   iteration/control generator and carries optional `FlowDomain` provenance only
   as a proof/source anchor; compiled bank identity remains structural through
   descriptor fingerprints, not a separate producer id. The shape layer accepts
-  `Range1D`, `RangeND`, `WindowND`, and `TiledND`; `copy_patch_mc` generic
+  `Range1D`, `RangeND`, `WindowND`, and `TiledND`; `residual_mc` generic
   `ApplyN`, domain/axis `ReduceN`, and axis-aware `ScanN` now consume forward
   `RangeND`, center-domain `WindowND`, and forward `TiledND`, while LuaTrace
   consumes `RangeND` for the same generic rank/scope cases and rejects the
@@ -682,7 +682,7 @@ copy+residual artifact can still use TCC glue around the resulting bank entry.
   gather/scatter/indexed expression forms, and realized-materializer coverage
   checks for every generated constructor family.
 - [x] Record the design direction: metastencils are composed source artifacts
-  that lower through the normal `copy_patch_mc` bank path after GCC has had a
+  that lower through the normal `residual_mc` bank path after GCC has had a
   chance to optimize across primitive operations.
 - [ ] Add a typed metastencil descriptor for small op sequences or DAGs,
   including primitive descriptors, typed wire map, control/loop composition,
@@ -695,9 +695,9 @@ copy+residual artifact can still use TCC glue around the resulting bank entry.
   supported/rejected/future`.
 - [ ] Add a fusion materializer that emits one LLB.C/GCC source unit from
   primitive descriptor fragments, then interns the compiled machine-code
-  artifact as a normal `copy_patch_mc` entry.
+  artifact as a normal `residual_mc` entry.
 - [ ] Add selector support for the longest legal cover over a kernel plan, with
-  fallback to primitive stencils and then `copy_patch_bc`.
+  fallback to primitive stencils and then `residual_bc`.
 - [ ] Add metastencil fingerprints that include primitive descriptors,
   wire/control map, legality facts, schedule, compiler target, and compiler
   flags.
@@ -728,21 +728,21 @@ copy+residual artifact can still use TCC glue around the resulting bank entry.
   nonzero, compare-const, range, compound and/or/not, float isnan/isinf/isfinite,
   and all six zip-compare operators.
 - [x] Add byte-exact tests for byte-span copy/fill/count/find/compare.
-  `test_copy_patch_luatrace` now realizes byte-span layout artifacts for all
+  `test_residual_luatrace` now realizes byte-span layout artifacts for all
   five shapes and checks the exact `uint8_t` results.
 - [x] Add tests for dynamic stride parameter ordering in emitted LuaTrace
-  functions. `test_copy_patch_luatrace` now checks the generated multi-access
+  functions. `test_residual_luatrace` now checks the generated multi-access
   dynamic-stride ABI order and executes a strided zip-map with distinct
   dst/lhs/rhs stride parameters.
 - [x] Add tests for field-projection source and destination access in LuaTrace.
-  `test_copy_patch_luatrace` now realizes an AoS field-projection map that
+  `test_residual_luatrace` now realizes an AoS field-projection map that
   reads `src[i].left` and writes `dst[i].sum`.
 - [x] Add tests for SoA component source and destination access in LuaTrace.
-  `test_copy_patch_luatrace` now realizes a SoA zip-map that reads two component
+  `test_residual_luatrace` now realizes a SoA zip-map that reads two component
   buffers and writes the destination component buffer.
 - [x] Add tests for primitive plans: `ffi.copy`, `ffi.fill`, branch predicates,
   numeric predicate fast paths, scatter plans, and reduction plans.
-  `test_copy_patch_luatrace` asserts the inspectable LuaTrace plans for copy,
+  `test_residual_luatrace` asserts the inspectable LuaTrace plans for copy,
   fill, count, numeric compare, scatter conflict modes, and ordered reductions.
 - [ ] Add tests for grouped/unrolled loops with tails for every supported shape.
 
@@ -853,15 +853,15 @@ copy+residual artifact can still use TCC glue around the resulting bank entry.
   implement the missing lowering/materialization/test coverage, or promote the
   rejection to a permanent typed design decision with explicit docs and tests.
 - [ ] Decide whether `StencilProviderC` still represents source C stencils or
-  whether the provider names should become `copy_patch_bc`/`copy_patch_mc`
+  whether the provider names should become `residual_bc`/`residual_mc`
   aligned.
 - [ ] Rename or document `StencilArtifactPlan` if its role is now stencil bank
   artifact construction rather than generic C artifact planning.
 - [ ] Decide whether descriptors are runtime ABI facts, artifact identity facts,
   or both; currently they serve both roles.
-- [x] Document the fast emitted artifact as copy+residual: `copy_patch_mc`
+- [x] Document the fast emitted artifact as copy+compile residual: `residual_mc`
   installs GCC-built bank stencils, TCC compiles only the residual glue, and
-  `copy_patch_bc` remains the bytecode/semantic path.
+  `residual_bc` remains the bytecode/semantic path.
 
 ## After Schema Closure Meta-Tasks
 
@@ -876,7 +876,7 @@ into smaller tracked tasks as the concrete failures become visible.
   obligation, realized schedule fact, and reject fact is either consumed in the
   best available way or deliberately rejected with a typed reason.
 - [x] Add a materializer fact-consumption matrix that maps every
-  `LalinStencil` schema fact to `copy_patch_bc`, `copy_patch_mc`, and the
+  `LalinStencil` schema fact to `residual_bc`, `residual_mc`, and the
   emitted C/single-binary bank path.
 - [x] Make stale bank reuse impossible: realization must compare requested
   artifact fingerprints against the bank entry artifact before loading or
@@ -889,7 +889,7 @@ Legend: `consume` means the fact changes emitted code, install behavior, or
 plan shape; `reject` means the path returns a typed unsupported cell; `record`
 means the fact is preserved for audit but does not yet drive lowering.
 
-| Schema surface | `copy_patch_bc` | `copy_patch_mc` | emitted copy+residual artifact | Remaining work |
+| Schema surface | `residual_bc` | `residual_mc` | emitted copy+compile residual artifact | Remaining work |
 | --- | --- | --- | --- | --- |
 | Descriptor producer/body/sink / vocab | validate all represented producer/body/sink descriptors; materialize current BC subset and typed-reject missing semantic cells | consume all shape-supported C stencil shapes; materialize current fast subset | record/intern selected shapes | [x] Generate MC intern set from the support matrix, not hand enumeration. |
 | Producer | materialize forward/backward `Range1D` plus forward `RangeND`; reject represented window/tiled producers with typed facts | materialize forward/backward `Range1D`, forward `RangeND`, center-domain `WindowND`, and forward `TiledND` for generic `ApplyN`, domain/axis `ReduceN`, and axis `ScanN` | intern producer cells for generated SOAC combinations plus deliberate rank-specific probe cells for axis/window behavior | [x] Add deliberate emitted-bank cells for axis/window reduce and window-neighbor apply. |
@@ -915,7 +915,7 @@ means the fact is preserved for audit but does not yet drive lowering.
   LuaJIT FFI declarations are a separate `ffi_preamble` boundary on the loaded
   bank record. `llbl.c` also has a first-class `c.fnptr` type so non-scalar
   stencil support structs no longer need raw C declarations.
-- [ ] Treat `copy_patch_bc` as the semantic coverage probe: it should either
+- [ ] Treat `residual_bc` as the semantic coverage probe: it should either
   materialize the full supported schema surface or expose the exact missing
   materialization cell. The support matrix now names this as the policy and
   records the current producer gaps: `WindowND` and `TiledND` are represented
@@ -926,7 +926,7 @@ means the fact is preserved for audit but does not yet drive lowering.
   emitter. Atomic and privatized scatter-reduce modes are represented in ASDL
   but reject before emission until real atomic RMW or private-bin merge lowering
   exists.
-- [ ] Treat `copy_patch_mc` as the fast-path probe: it should exploit the new
+- [ ] Treat `residual_mc` as the fast-path probe: it should exploit the new
   facts for scheduling, aliasing, alignment, vectorization, gather/scatter,
   select/blend, reductions, and descriptor-aware access patterns where doing so
   can close or beat handwritten C.
@@ -986,7 +986,7 @@ means the fact is preserved for audit but does not yet drive lowering.
   longest legal cover selection, and metastencil fingerprints.
 - [x] Add a selector-level metastencil benchmark so cover-ranking changes have
   a local performance probe before full materializer benchmarks.
-- [x] Feed selected metastencil covers into `copy_patch_bc`, `copy_patch_mc`,
+- [x] Feed selected metastencil covers into `residual_bc`, `residual_mc`,
   and emitted-bank materializers as typed bank facts instead of treating them
   only as planning facts.
 - [x] Implement fused-cover materialization for `Apply -> Reduce`: one selected

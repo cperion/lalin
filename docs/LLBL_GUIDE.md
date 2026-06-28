@@ -25,16 +25,16 @@ Lua source
 This is the **builder API** — the right tool for macros, generators, and
 tooling that constructs declarations programmatically.
 
-### 2. Parsed channel (new)
+### 2. `.lln` value chunks
 
-`llbl.syntax` adds a lexer, island-detection driver, and dialect registry.
-Sources that contain `lalin fn ... end`, `lalin region ... end`, etc. are
-loaded through `llbl.syntax.loadfile` instead of plain `require`. The driver
-rewrites parsed islands into constructor invocations at those exact source
-positions.
+`llbl.syntax` adds the lexer, island-detection driver, and dialect registry used
+by `.lln` loading. User-facing `.lln` files are loaded through `lalin.loadfile`
+or Lua `require` after `lalin.install_searcher()`. The driver rewrites parsed
+islands into constructor invocations at those exact source positions.
 
 ```text
-Lua source with parsed islands
+.lln value chunk
+  -> lalin.loader
   -> llbl.syntax.driver
      -> lexer tokenizes full source
      -> identifies registered entrypoints
@@ -45,8 +45,8 @@ Lua source with parsed islands
   -> lalin.syntax.to_module() → tree ASDL
 ```
 
-This is the **primary authoring surface** — the ergonomic way to write Lalin
-code by hand.
+This is the **primary authoring surface**: write Lalin by hand, return Lua
+values, and let Lua tables define the public API.
 
 ### Channel law
 

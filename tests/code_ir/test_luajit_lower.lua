@@ -22,6 +22,7 @@ local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local ptr_i32 = Code.CodeTyDataPtr(i32)
 local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)
 local access = Code.CodeMemoryAccess(Code.CodeMemoryRead, i32, 4, Code.CodeMustNotTrap, false, nil)
+local write_access = Code.CodeMemoryAccess(Code.CodeMemoryWrite, i32, 4, Code.CodeMustNotTrap, false, nil)
 
 local function param(name, ty)
     return Code.CodeParam(Code.CodeValueId("v:" .. name), name, ty, origin)
@@ -158,6 +159,66 @@ for j = 0, count - 1 do
     expected = bit.tobit(expected + arr[j])
 end
 assert(compiled.sum_i32(arr, count) == expected)
+
+do
+    local dst = param("dst", ptr_i32)
+    local src = param("src", ptr_i32)
+    local map_n = param("map_n", i32)
+    local map_zero = Code.CodeValueId("v:map_zero")
+    local map_one = Code.CodeValueId("v:map_one")
+    local map_i = Code.CodeValueId("v:map_i")
+    local map_cond = Code.CodeValueId("v:map_cond")
+    local map_item = Code.CodeValueId("v:map_item")
+    local map_value = Code.CodeValueId("v:map_value")
+    local map_next_i = Code.CodeValueId("v:map_next_i")
+    local map_entry_id = Code.CodeBlockId("block:map_entry")
+    local map_header_id = Code.CodeBlockId("block:map_header")
+    local map_body_id = Code.CodeBlockId("block:map_body")
+    local map_exit_id = Code.CodeBlockId("block:map_exit")
+    local map_sig_id = Code.CodeSigId("sig:map_store")
+    local map_func_id = Code.CodeFuncId("fn:map_store")
+
+    local function indexed(base)
+        return Code.CodePlaceIndex(Code.CodePlaceDeref(base, i32, 4), map_i, i32, 4)
+    end
+
+    local map_entry = Code.CodeBlock(map_entry_id, "entry", {}, {
+        inst("map_zero", Code.CodeInstConst(map_zero, Code.CodeConstLiteral(i32, Core.LitInt("0")))),
+        inst("map_one", Code.CodeInstConst(map_one, Code.CodeConstLiteral(i32, Core.LitInt("1")))),
+    }, term("map_entry", Code.CodeTermJump(map_header_id, { map_zero })), origin)
+
+    local map_header = Code.CodeBlock(map_header_id, "header", {
+        Code.CodeParam(map_i, "i", i32, origin),
+    }, {
+        inst("map_cond", Code.CodeInstCompare(map_cond, Core.CmpLt, i32, map_i, map_n.value)),
+    }, term("map_header", Code.CodeTermBranch(map_cond, map_body_id, {}, map_exit_id, {})), origin)
+
+    local map_body = Code.CodeBlock(map_body_id, "body", {}, {
+        inst("map_load", Code.CodeInstLoad(map_item, indexed(src.value), access)),
+        inst("map_neg", Code.CodeInstUnary(map_value, Core.UnaryNeg, i32, map_item)),
+        inst("map_store", Code.CodeInstStore(indexed(dst.value), map_value, write_access)),
+        inst("map_inc", Code.CodeInstBinary(map_next_i, Core.BinAdd, i32, sem, map_i, map_one)),
+    }, term("map_body", Code.CodeTermJump(map_header_id, { map_next_i })), origin)
+
+    local map_exit = Code.CodeBlock(map_exit_id, "exit", {}, {}, term("map_exit", Code.CodeTermReturn({})), origin)
+    local map_func = Code.CodeFunc(map_func_id, "map_store", Code.CodeLinkageExport, map_sig_id, { dst, src, map_n }, {}, map_entry_id, { map_entry, map_header, map_body, map_exit }, origin)
+    local map_module = Code.CodeModule(Code.CodeModuleId("module:map_store"), { Code.CodeSig(map_sig_id, { ptr_i32, ptr_i32, i32 }, {}) }, {}, {}, {}, {}, { map_func }, origin)
+    local map_contracts = Code.CodeContractFactSet(map_module.id, {
+        Code.CodeFuncContractFact(map_func_id, Code.CodeContractBounds(dst.value, map_n.value), origin),
+        Code.CodeFuncContractFact(map_func_id, Code.CodeContractBounds(src.value, map_n.value), origin),
+        Code.CodeFuncContractFact(map_func_id, Code.CodeContractWriteonly(dst.value), origin),
+        Code.CodeFuncContractFact(map_func_id, Code.CodeContractReadonly(src.value), origin),
+        Code.CodeFuncContractFact(map_func_id, Code.CodeContractDisjoint(dst.value, src.value), origin),
+    })
+    local map_rejects = {}
+    local map_lj = Lower.lower_module(map_module, {
+        contracts = map_contracts,
+        collect_rejects = map_rejects,
+        stencil_skeleton_artifact_for = function() return nil end,
+    })
+    assert(#map_rejects == 0, "original-control map loop should fall back without stencil reject: " .. tostring(map_rejects[1] and map_rejects[1].reason))
+    assert(pvm.classof(map_lj.funcs[1].body) == LJ.LJBodyBlocks, "original-control map loop should keep block body")
+end
 
 local add_sig = Code.CodeSigId("sig:add")
 local a = param("a", i32)

@@ -120,7 +120,7 @@ local stale_artifact = Stencil.StencilArtifact(
     artifacts[1].diagnostics or {},
     artifacts[1].schedule_rejects or {}
 )
-local stale_realization, stale_err = Backend.realize_artifacts({ stale_artifact }, { mc_bank = bank })
+local stale_realization, stale_err = Backend.realize_artifacts({ stale_artifact }, { mc_bank = bank, allow_bc_fallback = false })
 assert(stale_realization == nil, "stale MC bank entry must not realize")
 assert(tostring(stale_err):match("fingerprint mismatch"), "stale MC bank rejection should name fingerprint mismatch")
 

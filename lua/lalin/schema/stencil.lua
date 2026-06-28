@@ -439,11 +439,11 @@ return schema. LalinStencil {
   sum. StencilVectorCompilerPolicy {
     StencilVectorCompilerGccAutovec,
     StencilVectorCompilerHandwritten,
-    StencilVectorCompilerCopyPatchStencil,
+    StencilVectorCompilerCompiledStencil,
   },
   sum. StencilMaterializer {
-    StencilMaterializerCopyPatchBC,
-    StencilMaterializerCopyPatchMC,
+    StencilMaterializerResidualBC,
+    StencilMaterializerResidualMC,
     StencilMaterializerNamed { variant_unique, field. name [str], },
   },
   sum. StencilRealizedScheduleEvidence {

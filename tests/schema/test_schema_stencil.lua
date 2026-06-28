@@ -319,7 +319,7 @@ local realized = Stencil.StencilRealizedVector(
     2,
     1,
     Stencil.StencilVectorScalarTail,
-    Stencil.StencilMaterializerCopyPatchMC,
+    Stencil.StencilMaterializerResidualMC,
     { Stencil.StencilRealizedByConstruction("schema smoke") }
 )
 local schedule_reject = Stencil.StencilRejectSchedule(Stencil.StencilScheduleRejectRequestedRealizedMismatch(schedule, realized, "schema smoke mismatch"))

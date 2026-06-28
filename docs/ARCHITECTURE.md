@@ -18,21 +18,22 @@ Lalin has two surfaces that converge on the same ASDL:
 
 | Path | How | When |
 |------|-----|------|
-| **Parsed channel** (primary) | `lalin fn ... end` syntax captured by `llbl.syntax` | Hand-written code |
+| **`.lln` value chunks** (primary) | `fn ... end` syntax loaded by `lalin.loader` or Lua `require` | Hand-written code |
 | **Builder API** (internal) | `lln.fn. name { ... }` Lua DSL heads | Macros, generators, tooling |
 
 ```text
 ┌─ Hand-written source ─────────────────┐
 │                                        │
-│  lalin fn add(a: i32, b: i32): i32    │
+│  fn add(a: i32, b: i32): i32          │
 │    return a + b                        │
 │  end                                   │
 │                                        │
-│  → llbl.syntax.loadfile               │
-│    → driver rewrites parsed islands    │
-│      → lalin.syntax.parse_entry       │
-│        → parsed AST nodes             │
-│          → lalin.syntax.to_module()   │
+│  → lalin.loadfile / Lua require        │
+│    → lalin.loader activates syntax     │
+│      → llbl.syntax driver rewrites     │
+│        → lalin.syntax.parse_entry      │
+│          → parsed AST nodes            │
+│            → lalin.syntax.to_module()  │
 └────────────────────────────────────────┘
                     │
                     ▼
@@ -112,15 +113,15 @@ LalinTree.Module
   │
   ▼
 ┌─────────────────────────────────────────┐
-│ 7. Materialization (copy_patch_*)       │
+│ 7. Materialization (residual_*)       │
 │    ┌─ MC path (emit_luajit_artifact):    │
-│    │  copy_patch_mc.lua                  │
+│    │  residual_mc.lua                  │
 │    │    → load prebuilt gcc-O3 blobs     │
 │    │    → mmap executable memory         │
 │    │    → (optional) TCC residual glue   │
 │    │                                     │
-│    └─ BC path (lalin.compile default):   │
-│       copy_patch_luatrace.lua            │
+│    └─ BC fallback path:                  │
+│       residual_luatrace.lua            │
 │         → LuaJIT BC stencil tables       │
 │         → inline Lua data with BC patches│
 └─────────────────────────────────────────┘
@@ -166,11 +167,11 @@ becomes a loaded MC artifact:
    → Lower.lower_module() → LJModule{ funcs={add=...} }
    → ExecPlan → ExecModulePlan
 
-On the BC path (default for `lalin.compile()`):
+On the default MC-first path, if no prebuilt MC bank is available:
 
 6. Backend.build_bc_bank(artifacts)
-   → copy_patch_luatrace generates LuaJIT bytecode stencil tables
-   → BC bank built on the fly
+   → residual_luatrace generates LuaJIT bytecode stencil tables
+   → BC fallback bank built on the fly with a warning
 
 7. emit_lua_artifact() emits Lua source with:
    - Inline BC bank data (LuaJIT bytecode stencils)
@@ -180,7 +181,7 @@ On the BC path (default for `lalin.compile()`):
 8. loadstring(source) → chunk() → module table
    module.add(3, 4) → runs via LuaJIT-compiled bytecode
 
-On the MC path (`emit_luajit_artifact` with prebuilt MCStencilBank):
+On the MC path (`lalin.compile()`/`emit_luajit_artifact` with prebuilt MCStencilBank):
 
 6. emit_lua_artifact() with prebuilt MC bank:
    - Embeds pre-compiled MC stencil bytes as C-source-derived data
@@ -276,10 +277,10 @@ On the MC path (`emit_luajit_artifact` with prebuilt MCStencilBank):
 
 | File | Role |
 |------|------|
-| `lua/lalin/copy_patch_mc.lua` | **MC (machine code) path** — installs pre-compiled stencil blobs via mmap+exec, provides FFI wrappers. MC stencils are compiled by gcc at prebuild time. |
-| `lua/lalin/copy_patch_mc_intern_set.lua` | Intern set for MC stencils — deduplicates by canonical content hash, registry of reusable blobs. |
-| `lua/lalin/copy_patch_bc.lua` | BC bank platform — runtime target detection, target matching, bank identity. |
-| `lua/lalin/copy_patch_luatrace.lua` | **BC (bytecode) path** — LuaTrace trace-shaped stencil code, BC copy-patch materialization. Fallback/probe surface. |
+| `lua/lalin/residual_mc.lua` | **MC (machine code) path** — installs pre-compiled stencil blobs via mmap+exec, provides FFI wrappers. MC stencils are compiled by gcc at prebuild time. |
+| `lua/lalin/residual_mc_intern_set.lua` | Intern set for MC stencils — deduplicates by canonical content hash, registry of reusable blobs. |
+| `lua/lalin/residual_bc.lua` | BC bank platform — runtime target detection, target matching, bank identity. |
+| `lua/lalin/residual_luatrace.lua` | **BC (bytecode) path** — LuaTrace trace-shaped stencil code, BC copy+compile residual materialization. Fallback/probe surface. |
 
 ### C Backend
 
@@ -356,7 +357,8 @@ On the MC path (`emit_luajit_artifact` with prebuilt MCStencilBank):
 
 | File | Role |
 |------|------|
-| `lua/lalin/init.lua` | Public facade — `lalin.loadstring`, `lalin.compile`, `lalin.emit_c_artifact`, etc. |
+| `lua/lalin/init.lua` | Public facade — `.lln` value loading, `lalin.compile`, `lalin.emit_c_artifact`, etc. |
+| `lua/lalin/loader.lua` | `.lln` loadfile/loadstring/searchpath/searcher integration. |
 | `lua/lalin/cli.lua` | CLI interface. |
 | `lua/lalin/ast.lua` | AST utility layer. |
 | `lua/lalin/quote.lua` | Quotation utilities. |
@@ -418,11 +420,15 @@ the ASDL types for that domain:
 
 ## Two Copy-Patch Materialization Paths
 
+These are the LuaJIT-hosted executable paths. Lua remains the loader and FFI
+host; hot stencil bodies are materialized as MC bank blobs or bytecode fallback
+artifacts.
+
 ### MC Path (prebuilt, fast)
 
 ```
 PREBUILD (Makefile / gen_lalin_mc_bank.lua):
-  stencil_intern_set (copy_patch_mc_intern_set)
+  stencil_intern_set (residual_mc_intern_set)
     → enumerate all stencil operation combinations
     → StencilC.source(artifacts) → complete C translation unit
     → gcc -c -std=c99 -O3 -march=native -fno-builtin -fno-pic ...
@@ -445,7 +451,7 @@ RUNTIME (emit_luajit_artifact):
 ```
 
 The MCStencilBank is **never built on demand at runtime** — the direct API
-enforces this by requiring an explicit `mc_bank` for `copy_patch = "mc"` and
+enforces this by requiring an explicit `mc_bank` for `residual = "mc"` and
 erroring if one is not provided.
 
 **Key facts**:
@@ -454,20 +460,60 @@ erroring if one is not provided.
 - Output: binary blobs embedded in C source, compiled into the `lalin` host binary
 - TCC role: none for stencils; only for optional residual glue
 
-### BC Path (default for lalin.compile(), fallback for MC)
+### BC Path (explicit bytecode path, fallback for MC)
 
 ```
 Stencil artifacts
-  → copy_patch_luatrace.realize_bc_artifacts(artifacts)
+  → residual_luatrace.realize_bc_artifacts(artifacts)
     → generate LuaTrace trace-shaped stencil tables
     → build BC bank with artifact fingerprints
-    → emit inline Lua data with BC copy-patch
+    → emit inline Lua data with BC copy+compile residual
   → luajit_emit embeds BC bank data
   → load: LuaJIT compiles the emitted functions
 ```
 
-No external compiler needed. The BC bank is built on the fly at runtime.
-`lalin.compile()` defaults to this path (`opts.copy_patch = "bc"`).
+No external compiler needed. The BC bank is built on the fly at runtime when
+`residual = "bc"` is selected explicitly or when default MC materialization
+falls back with a warning.
+
+---
+
+## C / AOT Emission Path
+
+`emit_c_artifact` is the whole-program C path. It is not another LuaJIT
+materializer. It lowers the selected typed program to C so the user can compile
+the generated artifact with `gcc` or another C compiler and get their program.
+
+Conceptually:
+
+```text
+LalinTree.Module
+  -> typecheck
+  -> LalinCode facts
+  -> kernel/stencil selection
+  -> fuse selected stencil-shaped work at C level
+  -> emit C implementation + header/support
+  -> user compiles the C artifact with gcc
+```
+
+This path exists for AOT/native integration:
+
+- The artifact is ordinary C source plus generated header/support pieces.
+- Selected stencil-shaped loops should become C-level fused code, so GCC sees
+  the hot loop body instead of a LuaJIT call boundary.
+- The user owns the final compiler invocation, flags, linker inputs, and target
+  ABI choices.
+- `emit_c_artifact` is the path for “compile the whole program with GCC”.
+  `residual_mc` is the path for “load a LuaJIT module that calls prebuilt GCC
+  stencil blobs”.
+
+The ownership boundary is:
+
+| Path | Host | Compiler role | Output |
+|------|------|---------------|--------|
+| `emit_c_artifact` | user/native program | compile emitted program C | C source/header/support |
+| `residual_mc` | LuaJIT | prebuild reusable stencil blobs | Lua module installing MC bank entries |
+| `residual_bc` | LuaJIT | none | Lua module with bytecode stencil bank |
 
 ---
 
@@ -625,22 +671,22 @@ reductions, alias facts, or safety conditions.
 
 ## Backend Model
 
-The backend has two materialization paths, selected by `opts.copy_patch`:
+The backend has two materialization paths, selected by `opts.residual`:
 
 | Path | Default for | Compiler needed | Build time |
 |------|-------------|-----------------|-----------|
-| `copy_patch = "mc"` | `emit_luajit_artifact()` | `gcc` (or `$CC`) with `-O3 -march=native` | Prebuild (Makefile) |
-| `copy_patch = "bc"` | `lalin.compile()` | None | On the fly at runtime |
+| `residual = "mc"` | `lalin.compile()`, `emit_luajit_artifact()` | `gcc` (or `$CC`) with `-O3 -march=native` | Prebuild (Makefile) |
+| `residual = "bc"` | Explicit bytecode mode and MC fallback | None | On the fly at runtime |
 
 The two paths share the same stencil planning pipeline and differ only in
 materialization strategy.
 
-### MC Path (`copy_patch_mc`)
+### MC Path (`residual_mc`)
 
 The MC path owns hot stencil bodies as pre-compiled native machine code.
 
 **Prebuild** (`tools/gen_lalin_mc_bank.lua`, run by `make`):
-- The intern set (`copy_patch_mc_intern_set.lua`) enumerates every possible
+- The intern set (`residual_mc_intern_set.lua`) enumerates every possible
   stencil operation combination (apply_n, reduce_n, scan_n, scatter_reduce_n
   × all memory layouts × all producer shapes × scalar/vector schedule).
 - `StencilC.source()` generates a complete C translation unit with one
@@ -669,7 +715,7 @@ It is compiled by **libtcc** (in-memory, in-process, no external process):
 - This is optional and skipped if libtcc is unavailable.
 - The residual must not become an element-by-element FFI strategy.
 
-### BC Path (`copy_patch_bc`)
+### BC Path (`residual_bc`)
 
 The BC path is the bytecode semantic path and fallback/probe surface:
 
@@ -678,15 +724,17 @@ The BC path is the bytecode semantic path and fallback/probe surface:
 - The BC bank stores exact compiled prototypes with artifact fingerprints.
 - Materialization loads the selected bytecode entry without bytecode holes.
 - No external compiler needed — the BC bank is built on the fly at runtime.
-- `lalin.compile()` defaults to this path.
+- `lalin.compile()` defaults to MC and falls back to this path with a warning
+  when MC materialization is unavailable.
 
 ### Ground rules
 
 Artifact emission does not perform an ad hoc MC bank build; native emission is
-plan → prebuilt bank → (optional) residual glue. The direct API enforces this
-by requiring an explicit `mc_bank` for `copy_patch = "mc"` and erroring if one
-is not provided, while `copy_patch = "bc"` may build a local bytecode bank
-because BC is the semantic artifact itself.
+plan → prebuilt bank → (optional) residual glue. When a prebuilt MC bank is not
+available, default materialization falls back to `residual_bc` with a warning.
+Set `allow_bc_fallback = false` to make missing or stale MC banks a hard error.
+The explicit `residual = "bc"` path may build a local bytecode bank because
+BC is the semantic artifact itself.
 
 The backend must consume semantic facts honestly:
 

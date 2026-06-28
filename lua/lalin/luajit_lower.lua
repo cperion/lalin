@@ -1472,6 +1472,26 @@ local function bind_context(T)
         return false
     end
 
+    local function kernel_plan_requires_stencil_lowering(plan)
+        if pvm.classof(plan) ~= Kernel.KernelPlanned then return false end
+        local body = plan.body
+        local result = body and body.result or nil
+        if pvm.classof(result) == Kernel.KernelResultReduction
+            or pvm.classof(result) == Kernel.KernelResultFind then
+            return true
+        end
+        for _, effect in ipairs(body and body.effects or {}) do
+            local cls = pvm.classof(effect)
+            if cls == Kernel.KernelEffectScan
+                or cls == Kernel.KernelEffectPartition
+                or cls == Kernel.KernelEffectCopy
+                or cls == Kernel.KernelEffectScatterReduce then
+                return true
+            end
+        end
+        return false
+    end
+
     local function select_skeleton_artifact(opts, func, vocab, op, reduction, plan, info)
         if opts.stencil_skeleton_artifact_for ~= nil then return opts.stencil_skeleton_artifact_for(func, vocab, op, reduction, plan, info) end
         return nil
@@ -1932,7 +1952,7 @@ local function bind_context(T)
                     local artifact = machine.kind and machine.kind.artifact or nil
                     return LJ.LJStencilMachinePlan(func.id, plan.id, machine, artifact), pending_rejects
                 end
-                if kernel_plan_stencil_shaped(plan) then
+                if kernel_plan_requires_stencil_lowering(plan) then
                     pending_rejects[#pending_rejects + 1] = { func = func.id, loop = loop_id, reason = reason }
                 end
             end

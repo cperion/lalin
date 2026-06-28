@@ -62,6 +62,12 @@ local function bind_context(T)
       return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(parsed.name))
 
     elseif tag == "BinOp" then
+      -- and/or are logic operators, not binary arithmetic
+      if parsed.op == "and" then
+        return Tr.ExprLogic(Tr.ExprSurface, C.LogicAnd, ToTree.expr(parsed.left), ToTree.expr(parsed.right))
+      elseif parsed.op == "or" then
+        return Tr.ExprLogic(Tr.ExprSurface, C.LogicOr, ToTree.expr(parsed.left), ToTree.expr(parsed.right))
+      end
       local op = binop_map[parsed.op]
       if op then
         return Tr.ExprBinary(Tr.ExprSurface, op, ToTree.expr(parsed.left), ToTree.expr(parsed.right))
@@ -229,13 +235,15 @@ local function bind_context(T)
       end
 
     elseif tag == "StmtLet" then
+      local let_ty = parsed.type and ToTree.parsed_type(parsed.type) or Ty.TScalar(C.ScalarVoid)
       return Tr.StmtLet(Tr.StmtSurface,
-        Tr.Binding(B.ValueRefName(parsed.name), B.BindingClassLocalValue),
+        B.Binding(C.Id("parsed." .. parsed.name), parsed.name, let_ty, B.BindingClassLocalValue),
         parsed.init and ToTree.expr(parsed.init) or ToTree.literal(0))
 
     elseif tag == "StmtVar" then
+      local var_ty = parsed.type and ToTree.parsed_type(parsed.type) or Ty.TScalar(C.ScalarVoid)
       return Tr.StmtVar(Tr.StmtSurface,
-        Tr.Binding(B.ValueRefName(parsed.name), B.BindingClassLocalValue),
+        B.Binding(C.Id("parsed." .. parsed.name), parsed.name, var_ty, B.BindingClassLocalValue),
         parsed.init and ToTree.expr(parsed.init) or ToTree.literal(0))
 
     elseif tag == "StmtExpr" then
@@ -288,6 +296,9 @@ local function bind_context(T)
 
     elseif tag == "StmtEmit" then
       return Tr.StmtExpr(Tr.StmtSurface, ToTree.expr(parsed.callee))
+
+    elseif tag == "StmtFold" or tag == "StmtScan" then
+      error("parsed_to_tree: " .. tostring(tag) .. " may only appear directly inside a parsed for/range loop", 2)
     end
 
     error("parsed_to_tree: unsupported statement tag " .. tostring(tag), 2)

@@ -13,8 +13,8 @@ local Code = T.LalinCode
 local Value = T.LalinValue
 local Stencil = T.LalinStencil
 local Plan = require("lalin.stencil_artifact_plan")(T)
-local CopyPatchLuaTrace = require("lalin.copy_patch_luatrace")(T)
-local MC = require("tests.code_ir.copy_patch_mc_helper")
+local ResidualLuaTrace = require("lalin.residual_luatrace")(T)
+local MC = require("tests.code_ir.residual_mc_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)
@@ -392,7 +392,7 @@ do
     assert(out[0] == 4 and out[1] == 6 and out[2] == 9 and out[3] == 12 and out[4] == 15 and out[5] == 17, "WindowND local clamp sum")
 end
 
-local bc_nd = assert(CopyPatchLuaTrace.realize_artifacts({
+local bc_nd = assert(ResidualLuaTrace.realize_artifacts({
     nd_artifact,
     nd_reduce_artifact,
     nd_scan_artifact,
@@ -428,20 +428,20 @@ do
     assert(bins[0] == 9 and bins[1] == 12, "BC RangeND ScatterReduceN indexed sums")
 end
 local bc_tiled_ok, bc_tiled_err = pcall(function()
-    CopyPatchLuaTrace.realize_artifacts({ tiled_artifact }, { stem = "test_stencil_apply_n_tiled_bc" })
+    ResidualLuaTrace.realize_artifacts({ tiled_artifact }, { stem = "test_stencil_apply_n_tiled_bc" })
 end)
 assert(not bc_tiled_ok and tostring(bc_tiled_err):find("tiled_nd", 1, true) ~= nil, "LuaTrace should still reject TiledND producers until its producer loop exists")
 local bc_window_ok, bc_window_err = pcall(function()
-    CopyPatchLuaTrace.realize_artifacts({ window_neighbor_artifacts[1], window_reduce_artifact }, { stem = "test_stencil_apply_n_window_bc" })
+    ResidualLuaTrace.realize_artifacts({ window_neighbor_artifacts[1], window_reduce_artifact }, { stem = "test_stencil_apply_n_window_bc" })
 end)
 assert(not bc_window_ok and tostring(bc_window_err):find("window_nd", 1, true) ~= nil, "LuaTrace should reject WindowND window-relative consumers with a producer-shaped error")
 
-local bc = assert(CopyPatchLuaTrace.realize_artifacts(artifacts, { stem = "test_stencil_apply_n_bc" }))
+local bc = assert(ResidualLuaTrace.realize_artifacts(artifacts, { stem = "test_stencil_apply_n_bc" }))
 exercise(bc.symbols, "bc")
 
 local scan_build, scan_err, scan_src = MC.compile(T, { scan_artifact, exclusive_scan_artifact }, { stem = "test_stencil_scan_n" })
 assert(scan_build ~= nil, tostring(scan_err) .. "\n" .. tostring(scan_src))
-local scan_bc = assert(CopyPatchLuaTrace.realize_artifacts({ scan_artifact, exclusive_scan_artifact }, { stem = "test_stencil_scan_n_bc" }))
+local scan_bc = assert(ResidualLuaTrace.realize_artifacts({ scan_artifact, exclusive_scan_artifact }, { stem = "test_stencil_scan_n_bc" }))
 do
     local function exercise_scan(symbols, label)
         local out = ffi.new("int32_t[5]")
@@ -477,7 +477,7 @@ do
     local unary_artifacts = {}
     for _, case in ipairs(cases) do unary_artifacts[#unary_artifacts + 1] = unary_artifact(case[1], case[2]) end
 
-    local bc_unary = assert(CopyPatchLuaTrace.realize_artifacts(unary_artifacts, { stem = "test_stencil_apply_n_unary_bc" }))
+    local bc_unary = assert(ResidualLuaTrace.realize_artifacts(unary_artifacts, { stem = "test_stencil_apply_n_unary_bc" }))
     local out = ffi.new("int32_t[5]")
     local x1 = ffi.new("int32_t[5]", { 8, 0, -16, 31, -42 })
     for i, case in ipairs(cases) do
@@ -518,7 +518,7 @@ do
     local binary_artifacts = {}
     for _, case in ipairs(cases) do binary_artifacts[#binary_artifacts + 1] = binary_artifact(case[1], case[2]) end
 
-    local bc_binary = assert(CopyPatchLuaTrace.realize_artifacts(binary_artifacts, { stem = "test_stencil_apply_n_binary_bc" }))
+    local bc_binary = assert(ResidualLuaTrace.realize_artifacts(binary_artifacts, { stem = "test_stencil_apply_n_binary_bc" }))
     local out = ffi.new("int32_t[5]")
     local x1 = ffi.new("int32_t[5]", { 8, 9, 16, 31, 42 })
     local x2 = ffi.new("int32_t[5]", { 2, 3, 4, 5, 6 })
@@ -564,7 +564,7 @@ do
         reduce_artifacts[#reduce_artifacts + 1] = reduce_artifact(case[1], case[2], case[3])
     end
 
-    local bc_reduce = assert(CopyPatchLuaTrace.realize_artifacts(reduce_artifacts, { stem = "test_stencil_apply_n_reduce_bc" }))
+    local bc_reduce = assert(ResidualLuaTrace.realize_artifacts(reduce_artifacts, { stem = "test_stencil_apply_n_reduce_bc" }))
     local x1 = ffi.new("int32_t[5]", { 1, 2, 3, 4, 5 })
     for i, case in ipairs(cases) do
         local fn = assert(bc_reduce.symbols[reduce_artifacts[i].symbol.text], "bc missing reduction " .. case[1])

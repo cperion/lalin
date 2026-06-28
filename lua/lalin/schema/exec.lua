@@ -8,7 +8,7 @@ return schema. LalinExec {
   sum. ExecRuntime {
     ExecRuntimeC,
     ExecRuntimeLuaJIT,
-    ExecRuntimeCopyPatch,
+    ExecRuntimeResidual,
     ExecRuntimeNamed {
       variant_unique,
       field. name [str],

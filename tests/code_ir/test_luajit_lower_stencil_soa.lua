@@ -17,7 +17,8 @@ local Value = T.LalinValue
 local Lower = require("lalin.luajit_lower")(T)
 local Emit = require("lalin.luajit_emit")(T)
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBinary = require("tests.code_ir.copy_patch_mc_helper")
+local Backend = require("lalin.luajit_backend")(T)
+local StencilBinary = require("tests.code_ir.residual_mc_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_stencil_soa")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -159,27 +160,12 @@ local lj_module, facts = Lower.lower_module(module, {
     contracts = contracts,
     collect_rejects = rejects,
     stencil_store_artifact_for = function(func, vocab, op, plan, info)
-        assert(vocab == "zip_map", "expected SoA zip_map store lowering")
-        local artifact = StencilArtifactPlan.zip_map_array_artifact(op, info)
+        local artifact = Backend.artifact_for(vocab, op, nil, plan, info)
         artifacts[#artifacts + 1] = artifact
         return artifact
     end,
     stencil_reduce_artifact_for = function(func, vocab, op, reduction, plan, info)
-        assert(vocab == "zip_reduce", "expected SoA zip_reduce lowering")
-        local artifact = StencilArtifactPlan.reduce_n_artifact(reduction, plan, {
-            tag = "soa_zip",
-            inputs = {
-                { name = "lhs", ty = info.lhs_ty, layout = info.lhs_layout },
-                { name = "rhs", ty = info.rhs_ty, layout = info.rhs_layout },
-            },
-            expr = StencilArtifactPlan.apply_binary_expr(op, StencilArtifactPlan.input_expr("lhs"), StencilArtifactPlan.input_expr("rhs"), info.mapped_ty, { int_semantics = sem }),
-            item_ty = info.mapped_ty,
-            result_ty = info.result_ty,
-            step_num = info.step_num or info.stride,
-            producer = info.producer,
-            schedule = info.schedule,
-            noalias_pairs = info.noalias_pairs,
-        })
+        local artifact = Backend.artifact_for(vocab, op, reduction, plan, info)
         artifacts[#artifacts + 1] = artifact
         return artifact
     end,
@@ -205,11 +191,23 @@ local function access_named(desc, name)
     error("missing descriptor access " .. tostring(name))
 end
 
+local function access_soa(desc, field_name, component_index)
+    for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(desc)) do
+        local layout = access.layout
+        if pvm.classof(layout) == Stencil.StencilLayoutSoAComponent
+            and layout.field_name == field_name
+            and layout.component_index == component_index then
+            return access
+        end
+    end
+    error("missing SoA descriptor access " .. tostring(field_name))
+end
+
 assert_soa(access_named(artifacts[1].instance.descriptor, "dst"), "sum", 2)
-assert_soa(access_named(artifacts[1].instance.descriptor, "lhs"), "left", 0)
-assert_soa(access_named(artifacts[1].instance.descriptor, "rhs"), "right", 1)
-assert_soa(access_named(artifacts[2].instance.descriptor, "lhs"), "left", 0)
-assert_soa(access_named(artifacts[2].instance.descriptor, "rhs"), "right", 1)
+assert_soa(access_soa(artifacts[1].instance.descriptor, "left", 0), "left", 0)
+assert_soa(access_soa(artifacts[1].instance.descriptor, "right", 1), "right", 1)
+assert_soa(access_soa(artifacts[2].instance.descriptor, "left", 0), "left", 0)
+assert_soa(access_soa(artifacts[2].instance.descriptor, "right", 1), "right", 1)
 
 local build, build_err, csrc = StencilBinary.compile(T, artifacts, {
     stem = "test_luajit_lower_stencil_soa",

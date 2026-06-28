@@ -9,7 +9,7 @@ Schema(T)
 local Code = T.LalinCode
 local Stencil = T.LalinStencil
 local Plan = require("lalin.stencil_artifact_plan")(T)
-local CopyPatchLuaTrace = require("lalin.copy_patch_luatrace")(T)
+local ResidualLuaTrace = require("lalin.residual_luatrace")(T)
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 
@@ -33,7 +33,7 @@ for _, obligation in ipairs(facts.proof_obligations or {}) do
 end
 assert(saw_trip_obligation, "exact trip-count fact should create a proof obligation")
 
-local trace_plan = CopyPatchLuaTrace.plan_artifact(artifact)
+local trace_plan = ResidualLuaTrace.plan_artifact(artifact)
 assert(trace_plan.loop_plan.tail_strategy == "no_tail_trip_count_multiple", "exact trip count should remove generic tail when divisible by group")
 
 io.write("stencil D5 trip count ok\n")

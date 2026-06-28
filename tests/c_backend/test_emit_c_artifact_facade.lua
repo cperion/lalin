@@ -2,7 +2,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local lalin = require("lalin")
 
-local add = lalin.loadstring([[
+local add = lalin.dsl.load([[
 return fn. add { a [i32], b [i32] } [i32] {
   ret (a + b),
 }

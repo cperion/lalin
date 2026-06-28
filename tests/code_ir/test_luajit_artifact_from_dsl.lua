@@ -11,7 +11,7 @@ local pvm = require('lalin.pvm')
 local lalin = require('lalin')
 
 local source = [=[
-return unit. CopyPatchRegression {
+return unit. ResidualRegression {
   fn. sum_i32 { xs [ptr [i32]], n [i32] } [i32] {
     requires { bounds (xs)(n), readonly(xs) },
 
@@ -842,13 +842,13 @@ return unit. CopyPatchRegression {
 local session = lalin.use { scope = 'env' }
 local decl = assert(session:loadstring(source, 'test_luajit_artifact_from_dsl.lua'))()
 local plan = lalin.plan_luajit_artifact(decl, {
-    name = 'CopyPatchRegression',
+    name = 'ResidualRegression',
     stem = 'test_luajit_artifact_from_dsl',
 })
 local bank = assert(plan.backend.build_mc_bank(plan.artifacts, { stem = 'test_luajit_artifact_from_dsl' }))
 local artifact = lalin.emit_luajit_plan_artifact(plan, {
     path = 'target/test_artifacts/test_luajit_artifact_from_dsl.lua',
-    name = 'CopyPatchRegression',
+    name = 'ResidualRegression',
     stem = 'test_luajit_artifact_from_dsl',
     mc_bank = bank,
 })

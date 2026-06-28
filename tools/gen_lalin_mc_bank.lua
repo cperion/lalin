@@ -17,8 +17,8 @@ local T = pvm.context()
 Schema(T)
 
 local LJ = T.LalinLuaJIT
-local InternSet = require("lalin.copy_patch_mc_intern_set")(T)
-local Bank = require("lalin.copy_patch_mc")(T)
+local InternSet = require("lalin.residual_mc_intern_set")(T)
+local Bank = require("lalin.residual_mc")(T)
 
 local embedded_mc_cflags = os.getenv("LALIN_MC_BANK_CFLAGS")
     or "-std=c99 -O3 -march=native -fno-builtin -fno-builtin-memmove -fno-builtin-memcpy -fno-builtin-memset -ffunction-sections -fno-pic -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -c"

@@ -17,7 +17,8 @@ local Value = T.LalinValue
 local Lower = require("lalin.luajit_lower")(T)
 local Emit = require("lalin.luajit_emit")(T)
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBinary = require("tests.code_ir.copy_patch_mc_helper")
+local Backend = require("lalin.luajit_backend")(T)
+local StencilBinary = require("tests.code_ir.residual_mc_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_reductions")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -228,7 +229,7 @@ local function compile_with_stencil(case, values, ctype, stem, expected_values)
         contracts = contracts,
         collect_rejects = rejects,
         stencil_reduce_artifact_for = function(func, vocab, op, reduction, plan, info)
-            local artifact = StencilArtifactPlan.reduce_array_artifact(reduction, plan, info)
+            local artifact = Backend.artifact_for(vocab, op, reduction, plan, info)
             artifacts[#artifacts + 1] = artifact
             return artifact
         end,

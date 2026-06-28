@@ -18,8 +18,8 @@ local function bind_context(T)
     local Lower = require("lalin.luajit_lower")(T)
     local Emit = require("lalin.luajit_emit")(T)
     local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-    local StencilBank = require("lalin.copy_patch_mc")(T)
-    local CopyPatchLuaTrace = require("lalin.copy_patch_luatrace")(T)
+    local StencilBank = require("lalin.residual_mc")(T)
+    local ResidualLuaTrace = require("lalin.residual_luatrace")(T)
     local ExecPlan = require("lalin.exec_plan")(T)
     local CodeSchedulePlan = require("lalin.code_schedule_plan")(T)
     local BackTargetModel = require("lalin.back_target_model")(T)
@@ -112,23 +112,43 @@ local function bind_context(T)
         error("luajit_backend: unsupported selected stencil kind " .. tostring(kind), 3)
     end
 
-    local function copy_patch_mode(opts)
-        local mode = tostring((opts or {}).copy_patch or "mc")
+    local function residual_mode(opts)
+        local mode = tostring((opts or {}).residual or "mc")
         if mode == "mc" or mode == "bc" then return mode end
-        error("luajit_backend: unknown copy_patch materializer " .. mode, 3)
+        error("luajit_backend: unknown residual materializer " .. mode, 3)
+    end
+
+    local function bc_fallback_allowed(opts)
+        opts = opts or {}
+        if opts.allow_bc_fallback ~= nil then return opts.allow_bc_fallback end
+        if opts.residual == "bc" then return false end
+        return true
+    end
+
+    local function warn(opts, message)
+        opts = opts or {}
+        if opts.collect_warnings ~= nil then opts.collect_warnings[#opts.collect_warnings + 1] = message end
+        if opts.on_warning ~= nil then opts.on_warning(message); return end
+        if opts.warn ~= nil then opts.warn(message); return end
+        if opts.silent_warnings or opts.quiet then return end
+        io.stderr:write("warning: " .. tostring(message) .. "\n")
+    end
+
+    local function warn_bc_fallback(opts, reason)
+        warn(opts, "luajit_backend: falling back from residual_mc to residual_bc: " .. tostring(reason))
     end
 
     local function native_residual_mode(opts)
         opts = opts or {}
-        if copy_patch_mode(opts) == "bc" then return nil end
+        if residual_mode(opts) == "bc" then return nil end
         if opts.native_residual ~= nil then return opts.native_residual end
         if opts.tcc_residual ~= nil then return opts.tcc_residual end
         return "tcc"
     end
 
     local function artifact_with_provider(artifact, opts)
-        if copy_patch_mode(opts) == "bc" then
-            return CopyPatchLuaTrace.bc_artifact(artifact)
+        if residual_mode(opts) == "bc" then
+            return ResidualLuaTrace.bc_artifact(artifact)
         end
         return artifact
     end
@@ -210,7 +230,7 @@ local function bind_context(T)
             return { kind = "MCStencilBankRealization", symbols = {}, installed = {}, bank = nil }, nil
         end
         local function realize_bc(fallback_reason)
-            local realized, err, source = CopyPatchLuaTrace.realize_bc_artifacts(artifacts, {
+            local realized, err, source = ResidualLuaTrace.realize_bc_artifacts(artifacts, {
                 bank = opts.bc_bank,
                 stem = opts.stem,
                 id = opts.bc_bank_id,
@@ -218,25 +238,31 @@ local function bind_context(T)
                 env = opts.bc_env,
             })
             if realized ~= nil and fallback_reason ~= nil then
-                realized.fallback_from = "copy_patch_mc"
+                realized.fallback_from = "residual_mc"
                 realized.fallback_reason = fallback_reason
             end
             return realized, err, source
         end
-        if copy_patch_mode(opts) == "bc" then
+        if residual_mode(opts) == "bc" then
             return realize_bc(nil)
         end
         local mc_bank = opts.mc_bank
         if mc_bank == nil then
             local err = "luajit_backend: mc realization requires a prebuilt MCStencilBank"
-            if opts.allow_bc_fallback then return realize_bc(err) end
+            if bc_fallback_allowed(opts) then
+                warn_bc_fallback(opts, err)
+                return realize_bc(err)
+            end
             return nil, err
         end
         local realized, err, source = StencilBank.realize_mc_artifacts(artifacts, {
             mc_bank = mc_bank,
             install_policy = opts.install_policy,
         })
-        if realized == nil and opts.allow_bc_fallback then return realize_bc(err) end
+        if realized == nil and bc_fallback_allowed(opts) then
+            warn_bc_fallback(opts, err)
+            return realize_bc(err)
+        end
         return realized, err, source
     end
 
@@ -245,7 +271,7 @@ local function bind_context(T)
     end
 
     function api.build_bc_bank(artifacts, opts)
-        return CopyPatchLuaTrace.build_bc_bank(artifacts or {}, opts or {})
+        return ResidualLuaTrace.build_bc_bank(artifacts or {}, opts or {})
     end
 
     function api.compile_lj_module(lj_module, artifacts, opts)
@@ -272,7 +298,7 @@ local function bind_context(T)
         opts = opts or {}
         local stencil_source
         local bc_bank
-        local mode = copy_patch_mode(opts)
+        local mode = residual_mode(opts)
         if mode == "bc" then
             bc_bank = opts.bc_bank
             if bc_bank == nil then
@@ -284,22 +310,37 @@ local function bind_context(T)
                 })
                 if bc_bank == nil then return nil, bank_err end
             end
-            stencil_source = CopyPatchLuaTrace.emit_bc_bank_source(bc_bank, opts)
+            stencil_source = ResidualLuaTrace.emit_bc_bank_source(bc_bank, opts)
         else
             local mc_bank = opts.mc_bank
             if mc_bank == nil and #(artifacts or {}) > 0 then
-                return nil, "luajit_backend.emit_lua_artifact requires a prebuilt MCStencilBank"
+                local reason = "luajit_backend.emit_lua_artifact requires a prebuilt MCStencilBank"
+                if not bc_fallback_allowed(opts) then return nil, reason end
+                warn_bc_fallback(opts, reason)
+                bc_bank = opts.bc_bank
+                if bc_bank == nil then
+                    local bank_err
+                    bc_bank, bank_err = api.build_bc_bank(artifacts or {}, {
+                        stem = opts.stem,
+                        id = opts.bc_bank_id,
+                        target = opts.bc_target,
+                    })
+                    if bc_bank == nil then return nil, bank_err end
+                end
+                mode = "bc"
+                stencil_source = ResidualLuaTrace.emit_bc_bank_source(bc_bank, opts)
+            else
+                stencil_source = mc_bank and StencilBank.emit_mc_bank_source(mc_bank, opts) or "local __lalin_luajit_stencil_symbols = {}\n"
             end
-            stencil_source = mc_bank and StencilBank.emit_mc_bank_source(mc_bank, opts) or "local __lalin_luajit_stencil_symbols = {}\n"
         end
         local module_source = Emit.emit_module(lj_module, {
             chunk_name = opts.chunk_name or "lalin_luajit_artifact",
-            native_residual = native_residual_mode(opts),
+            native_residual = mode == "bc" and nil or native_residual_mode(opts),
         })
         local source = table.concat({
             mode == "bc"
-                and "-- Generated Lalin LuaJIT LuaTrace BC copy-patch artifact.\n"
-                or "-- Generated Lalin LuaJIT MC copy+residual artifact.\n",
+                and "-- Generated Lalin LuaJIT LuaTrace BC copy+compile residual artifact.\n"
+                or "-- Generated Lalin LuaJIT MC copy+compile residual artifact.\n",
             mode == "bc"
                 and "-- Stencil descriptors are emitted below as LuaJIT BC stencils.\n"
                 or "-- Native MC stencil bytes are embedded below as data; TCC residual glue calls installed bank stencils.\n",
@@ -334,6 +375,7 @@ local function bind_context(T)
             artifacts = artifacts,
             rejects = rejects,
             mc_bank = opts.mc_bank,
+            warnings = opts.collect_warnings,
         }
     end
 
@@ -351,6 +393,7 @@ local function bind_context(T)
         result.exec_plan = facts.exec
         result.artifacts = artifacts
         result.rejects = rejects
+        result.warnings = opts.collect_warnings
         return result
     end
 

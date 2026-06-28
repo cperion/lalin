@@ -1670,7 +1670,6 @@ function Decl:compile(opts)
     opts = merge_source_ctx(opts, self)
     if opts.backend == "c" or opts.codegen == "c" then return self:emit_c_artifact(opts) end
     opts.name = opts.name or self.name or "lalin_luajit"
-    opts.copy_patch = opts.copy_patch or "bc"
     return require("lalin").compile(self, opts)
 end
 

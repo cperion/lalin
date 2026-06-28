@@ -10,8 +10,8 @@ local Core = T.LalinCore
 local Code = T.LalinCode
 local Stencil = T.LalinStencil
 local Backend = require("lalin.luajit_backend")(T)
-local InternSet = require("lalin.copy_patch_mc_intern_set")(T)
-local Bank = require("lalin.copy_patch_mc")(T)
+local InternSet = require("lalin.residual_mc_intern_set")(T)
+local Bank = require("lalin.residual_mc")(T)
 
 local origin = Code.CodeOriginGenerated("test_luajit_embedded_mc_coverage")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)

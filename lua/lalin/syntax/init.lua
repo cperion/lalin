@@ -82,12 +82,12 @@ function LalinSyntax.register()
     name = "lalin",
     owner = "lalin",
     entrypoints = { "fn", "struct", "union", "region", "module", "quote", "expr", "stmt" },
-    direct_entrypoints = nil, -- parse-time import activates entrypoints; namespaced form always works.
+    direct_entrypoints = nil, -- callers choose whether to activate bare entrypoints.
     keywords = {
       "fn", "region", "struct", "union", "module", "requires", "ensures",
-      "do", "end", "if", "then", "elseif", "else", "for", "in", "range",
-      "range_nd", "window_nd", "tiled_nd", "return", "jump", "emit", "entry", "block",
-      "let", "var",
+      "do", "end", "if", "then", "elseif", "else", "loop", "in",
+      "grid", "tiled", "window", "return", "jump", "emit", "entry", "block",
+      "let", "var", "fold", "scan", "by", "over", "step", "into",
     },
     parse_entry = LalinSyntax.parse_entry,
     expression = LalinSyntax.parse_expression,
@@ -158,6 +158,53 @@ function LalinSyntax.to_module(parsed_decls, name, T)
   -- Helper: convert a single parsed decl to a Tr.Item for the module.
   -- The tree ASDL uses Tr.ItemFunc(FuncLocal/FuncExport) for functions,
   -- Tr.ItemType(TypeDeclStruct/TypeDeclTaggedUnionSugar) for structs/unions.
+  local function call_name(expr)
+    if expr and expr.tag == "Name" then return expr.name end
+    return nil
+  end
+
+  local function contract_from_expr(expr)
+    if not expr or expr.tag ~= "Call" then
+      error("parsed requires expects contract calls such as bounds(ptr)(n), readonly(ptr), or disjoint(a)(b)", 2)
+    end
+    local name = call_name(expr.callee)
+    if name == "readonly" then
+      if #(expr.args or {}) ~= 1 then error("readonly contract expects one argument", 2) end
+      return Tr.ContractReadonly(to_tree.expr(expr.args[1]))
+    elseif name == "writeonly" then
+      if #(expr.args or {}) ~= 1 then error("writeonly contract expects one argument", 2) end
+      return Tr.ContractWriteonly(to_tree.expr(expr.args[1]))
+    elseif name == "noalias" then
+      if #(expr.args or {}) ~= 1 then error("noalias contract expects one argument", 2) end
+      return Tr.ContractNoAlias(to_tree.expr(expr.args[1]))
+    elseif name == "invalidate" then
+      if #(expr.args or {}) ~= 1 then error("invalidate contract expects one argument", 2) end
+      return Tr.ContractInvalidate(to_tree.expr(expr.args[1]))
+    elseif name == "preserve" then
+      if #(expr.args or {}) ~= 1 then error("preserve contract expects one argument", 2) end
+      return Tr.ContractPreserve(to_tree.expr(expr.args[1]))
+    end
+
+    local callee = expr.callee
+    if callee and callee.tag == "Call" then
+      local outer_args = expr.args or {}
+      local inner_args = callee.args or {}
+      local inner_name = call_name(callee.callee)
+      if inner_name == "bounds" then
+        if #inner_args ~= 1 or #outer_args ~= 1 then error("bounds contract expects bounds(base)(len)", 2) end
+        return Tr.ContractBounds(to_tree.expr(inner_args[1]), to_tree.expr(outer_args[1]))
+      elseif inner_name == "disjoint" then
+        if #inner_args ~= 1 or #outer_args ~= 1 then error("disjoint contract expects disjoint(a)(b)", 2) end
+        return Tr.ContractDisjoint(to_tree.expr(inner_args[1]), to_tree.expr(outer_args[1]))
+      elseif inner_name == "same_len" then
+        if #inner_args ~= 1 or #outer_args ~= 1 then error("same_len contract expects same_len(a)(b)", 2) end
+        return Tr.ContractSameLen(to_tree.expr(inner_args[1]), to_tree.expr(outer_args[1]))
+      end
+    end
+
+    error("parsed requires: unsupported contract expression", 2)
+  end
+
   local function decl_to_item(parsed)
     if not parsed then return nil end
     if parsed.tag == "DeclFunc" then
@@ -166,11 +213,23 @@ function LalinSyntax.to_module(parsed_decls, name, T)
         params[i] = T.LalinType.Param(p.name, parsed_type(p.type))
       end
       local result_ty = parsed_type(parsed.result)
-      local body = to_tree.stmts(parsed.body)
+      local body_src, contracts = {}, {}
+      for _, stmt in ipairs(parsed.body or {}) do
+        if stmt.tag == "StmtRequires" then
+          for _, expr in ipairs(stmt.exprs or {}) do
+            contracts[#contracts + 1] = contract_from_expr(expr)
+          end
+        else
+          body_src[#body_src + 1] = stmt
+        end
+      end
+      local body = to_tree.stmts(body_src)
       if #body == 0 then
         body = { Tr.StmtReturnVoid(Tr.StmtSurface) }
       end
-      local func_spec = Tr.FuncLocal(parsed.name, params, result_ty, body)
+      local func_spec = #contracts > 0
+        and Tr.FuncLocalContract(parsed.name, params, result_ty, contracts, body)
+        or Tr.FuncLocal(parsed.name, params, result_ty, body)
       return Tr.ItemFunc(func_spec)
     elseif parsed.tag == "DeclStruct" then
       local fields = {}

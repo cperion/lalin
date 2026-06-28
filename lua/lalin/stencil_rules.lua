@@ -550,10 +550,19 @@ local function bind_context(T)
     local function predicate_expr_operand(class)
         if class == nil then return nil, nil end
         local cls = pvm.classof(class.expr)
-        if cls ~= Stencil.StencilApplyPredicate then return nil, nil end
-        if pvm.classof(class.expr.arg) ~= Stencil.StencilApplyInput then return nil, nil end
-        local input = input_by_name(class, class.expr.arg.access.name)
-        return input, class.expr.pred
+        if cls == Stencil.StencilApplyPredicate then
+            if pvm.classof(class.expr.arg) ~= Stencil.StencilApplyInput then return nil, nil end
+            local input = input_by_name(class, class.expr.arg.access.name)
+            return input, class.expr.pred
+        end
+        if cls == Stencil.StencilApplyCompare then
+            if pvm.classof(class.expr.left) ~= Stencil.StencilApplyInput then return nil, nil end
+            if pvm.classof(class.expr.right) ~= Stencil.StencilApplyConst then return nil, nil end
+            local input = input_by_name(class, class.expr.left.access.name)
+            if input == nil then return nil, nil end
+            return input, Stencil.StencilPredCompareConst(class.expr.cmp, input.ty, class.expr.right.value)
+        end
+        return nil, nil
     end
 
     local function indexed_layout(parent, idx, step_num)

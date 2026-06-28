@@ -7,7 +7,7 @@ The design goal is not to add a new backend primitive. The design goal is to
 let source programs author regular loop domains and loop-local sinks, then let
 the existing `Code -> Flow -> Kernel -> Stencil` pipeline prove that the loop is
 eligible for stencil materialization by the BC path, the MC bank path, or the
-emitted copy+residual artifact.
+emitted copy+compile residual artifact.
 
 ## Core Decision
 

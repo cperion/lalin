@@ -95,7 +95,7 @@ function M.emit_artifact(opts)
     for k, v in pairs(opts) do emit_opts[k] = v end
     emit_opts.site = emit_opts.site or "llpvm C blob"
     emit_opts.support_source = emit_opts.support_source or LLPVM_SUPPORT_SOURCE
-    local chunk = lalin.loadfile("lua/llpvm/native/llpvm_abi.mlua")
+    local chunk = lalin.dsl.loadfile("lua/llpvm/native/llpvm_abi.mlua")
     local decl = chunk()
     return lalin.emit_c_artifact(decl, emit_opts, opts.name or "llpvm")
 end

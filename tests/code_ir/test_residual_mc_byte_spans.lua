@@ -12,7 +12,7 @@ local Code = T.LalinCode
 local Value = T.LalinValue
 local Stencil = T.LalinStencil
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBinary = require("tests.code_ir.copy_patch_mc_helper")
+local StencilBinary = require("tests.code_ir.residual_mc_helper")
 
 local u8 = Code.CodeTyInt(8, Code.CodeUnsigned)
 local bool8 = Code.CodeTyBool8
@@ -42,7 +42,7 @@ local artifacts = {
     StencilArtifactPlan.count_array_artifact(pred(Core.CmpGt, u8, u8const(9)), { elem_ty = u8, step_num = 1, array_layout = bytespan_layout("count_xs") }),
 }
 
-local build, err, src = StencilBinary.compile(T, artifacts, { stem = "test_copy_patch_mc_byte_spans" })
+local build, err, src = StencilBinary.compile(T, artifacts, { stem = "test_residual_mc_byte_spans" })
 assert(build ~= nil, tostring(err) .. "\n" .. tostring(src))
 
 local xs = ffi.new("uint8_t[6]", { 3, 5, 255, 8, 13, 21 })
@@ -70,4 +70,4 @@ assert(mask[0] == 0 and mask[1] == 0 and mask[2] == 1 and mask[3] == 0 and mask[
 
 assert(sym(artifacts[6])(xs, 0, 6) == 3, "byte count")
 
-io.write("lalin copy_patch_mc byte spans ok\n")
+io.write("lalin residual_mc byte spans ok\n")

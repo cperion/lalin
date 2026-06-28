@@ -6,6 +6,7 @@ local function bind_context(T)
     M.status = {
         supported = "supported",
         rejected = "rejected",
+        partial = "partial",
         future = "future",
     }
 
@@ -27,7 +28,7 @@ local function bind_context(T)
     M.vocabs = {
         StencilApply = { status = "supported", scope = "primitive generator for elementwise, copy/fill/cast/compare/select, gather/scatter, and current generated partition artifacts" },
         StencilReduce = { status = "supported", scope = "primitive generator for folds plus generated count/find and generic reduce_n fusion artifacts" },
-        StencilScan = { status = "supported", scope = "primitive generator for axis-aware prefix reductions; copy_patch_mc and LuaTrace materialize Range1D and RangeND axis scans" },
+        StencilScan = { status = "supported", scope = "primitive generator for axis-aware prefix reductions; residual_mc and LuaTrace materialize Range1D and RangeND axis scans" },
         StencilScatterReduce = { status = "supported", scope = "primitive generator for indexed accumulation/reduce_by_index over an externally initialized destination" },
     }
 
@@ -73,34 +74,34 @@ local function bind_context(T)
             status = "supported",
             scope = "shape-supported; positive forward ranges materialize in BC, MC, and emitted-bank cells",
             shape = "supported",
-            copy_patch_bc = "materialized",
-            copy_patch_mc = "materialized",
+            residual_bc = "materialized",
+            residual_mc = "materialized",
             bank = "covered",
         },
         StencilProduceRangeND = {
             status = "supported",
-            scope = "shape-supported; forward ND ranges materialize in copy_patch_bc and copy_patch_mc generic ApplyN/domain-ReduceN/axis-ReduceN/axis-ScanN plus emitted-bank cells",
+            scope = "shape-supported; forward ND ranges materialize in residual_bc and residual_mc generic ApplyN/domain-ReduceN/axis-ReduceN/axis-ScanN plus emitted-bank cells",
             shape = "supported",
-            copy_patch_bc = "materialized",
-            copy_patch_mc = "materialized",
+            residual_bc = "materialized",
+            residual_mc = "materialized",
             bank = "covered",
         },
         StencilProduceWindowND = {
             status = "supported",
-            scope = "shape-supported; center-domain WindowND materializes in copy_patch_mc generic ApplyN/domain-ReduceN/axis-ScanN, window-neighbor apply, and window-local reduce; BC rejects with typed producer facts",
+            scope = "shape-supported; center-domain WindowND materializes in residual_mc generic ApplyN/domain-ReduceN/axis-ScanN, window-neighbor apply, and window-local reduce; BC rejects with typed producer facts",
             shape = "supported",
-            copy_patch_bc = "typed_reject",
-            copy_patch_bc_gap = "semantic BC producer materializer does not yet execute WindowND loops or window-relative body inputs",
-            copy_patch_mc = "materialized_center_domain",
+            residual_bc = "typed_reject",
+            residual_bc_gap = "semantic BC producer materializer does not yet execute WindowND loops or window-relative body inputs",
+            residual_mc = "materialized_center_domain",
             bank = "covered",
         },
         StencilProduceTiledND = {
             status = "supported",
-            scope = "shape-supported; forward tiled ND loops materialize in copy_patch_mc generic ApplyN/domain-ReduceN/axis-ScanN and emitted-bank cells; BC rejects with typed producer facts",
+            scope = "shape-supported; forward tiled ND loops materialize in residual_mc generic ApplyN/domain-ReduceN/axis-ScanN and emitted-bank cells; BC rejects with typed producer facts",
             shape = "supported",
-            copy_patch_bc = "typed_reject",
-            copy_patch_bc_gap = "semantic BC producer materializer does not yet execute tiled ND loops",
-            copy_patch_mc = "materialized",
+            residual_bc = "typed_reject",
+            residual_bc_gap = "semantic BC producer materializer does not yet execute tiled ND loops",
+            residual_mc = "materialized",
             bank = "covered",
         },
     }
@@ -139,23 +140,23 @@ local function bind_context(T)
     }
 
     M.materializers = {
-        copy_patch_bc = {
+        residual_bc = {
             status = "supported",
             policy = M.coverage_policy.semantic_probe,
             fallback_rank = 2,
             scope = "semantic LuaTrace bytecode materializer; it is the correctness probe and must either materialize a supported cell or expose an exact typed unsupported cell",
         },
-        copy_patch_mc = {
+        residual_mc = {
             status = "supported",
             policy = M.coverage_policy.fast_subset,
-            fallback = "copy_patch_bc",
+            fallback = "residual_bc",
             fallback_rank = 1,
-            scope = "fast machine-code subset from explicit compiled artifacts; missing fast cells can explicitly fall back to copy_patch_bc when the semantic materializer supports the cell",
+            scope = "fast machine-code subset from explicit compiled artifacts; missing fast cells can explicitly fall back to residual_bc when the semantic materializer supports the cell",
         },
         emitted_bank = {
             status = "supported",
             policy = M.coverage_policy.deployment_bank,
-            fallback = "copy_patch_bc",
+            fallback = "residual_bc",
             fallback_rank = 0,
             scope = "deployment bank containing the intended interned BC/MC artifacts; missing or stale entries must be visible, with explicit BC fallback available instead of silent satisfaction",
         },
@@ -164,17 +165,17 @@ local function bind_context(T)
     function M.producer_materializer_status(producer_name, materializer)
         local row = M.producers[producer_name]
         if row == nil then return nil end
-        if materializer == "copy_patch_bc" then return row.copy_patch_bc end
-        if materializer == "copy_patch_mc" then return row.copy_patch_mc end
+        if materializer == "residual_bc" then return row.residual_bc end
+        if materializer == "residual_mc" then return row.residual_mc end
         if materializer == "emitted_bank" then return row.bank end
         return nil
     end
 
-    function M.copy_patch_bc_semantic_gap(producer_name)
+    function M.residual_bc_semantic_gap(producer_name)
         local row = M.producers[producer_name]
         if row == nil or row.shape ~= "supported" then return nil end
-        if row.copy_patch_bc == M.materializer_status.materialized then return nil end
-        return row.copy_patch_bc_gap or ("copy_patch_bc does not materialize " .. tostring(producer_name))
+        if row.residual_bc == M.materializer_status.materialized then return nil end
+        return row.residual_bc_gap or ("residual_bc does not materialize " .. tostring(producer_name))
     end
 
     M.artifact_constructors = {

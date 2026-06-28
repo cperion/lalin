@@ -7,8 +7,8 @@ local T = pvm.context()
 Schema(T)
 
 local Matrix = require("lalin.stencil_support_matrix")(T)
-local InternSet = require("lalin.copy_patch_mc_intern_set")(T)
-local Bank = require("lalin.copy_patch_mc")(T)
+local InternSet = require("lalin.residual_mc_intern_set")(T)
+local Bank = require("lalin.residual_mc")(T)
 
 local function set(xs)
     local out = {}
@@ -100,8 +100,8 @@ local expected_symbols = InternSet.expected_symbols(smoke_opts)
 assert(#expected_symbols == #smoke_cells, "MC intern matrix smoke cells should produce unique symbols")
 
 local bank, err, source = Bank.build_mc_bank(artifacts, {
-    stem = "test_copy_patch_mc_intern_set",
-    dir = "target/test_artifacts/test_copy_patch_mc_intern_set",
+    stem = "test_residual_mc_intern_set",
+    dir = "target/test_artifacts/test_residual_mc_intern_set",
     c_decls = InternSet.c_decls(),
     ffi_preamble = InternSet.ffi_preamble(),
 })
@@ -118,4 +118,4 @@ for _, symbol in ipairs(sorted_keys(actual)) do
     assert(expected[symbol], "MC bank produced symbol outside intern matrix " .. symbol)
 end
 
-io.write("lalin copy_patch_mc intern set ok\n")
+io.write("lalin residual_mc intern set ok\n")

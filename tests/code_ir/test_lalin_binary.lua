@@ -22,7 +22,7 @@ local path = "target/lalin_binary_smoke/smoke.lua"
 local f = assert(io.open(path, "wb"))
 f:write([=[
 local lalin = require("lalin")
-local add = lalin.loadstring([[return fn. add { a [i32], b [i32] } [i32] { ret (a + b), }]], "embedded_smoke.lua")
+local add = lalin.dsl.load([[return fn. add { a [i32], b [i32] } [i32] { ret (a + b), }]], "embedded_smoke.lua")
 local m = lalin.compile("embedded_smoke", { add })
 assert(m.add(20, 22) == 42)
 ]=])

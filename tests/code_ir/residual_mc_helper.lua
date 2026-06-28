@@ -2,7 +2,7 @@ local M = {}
 
 function M.compile(T, artifacts, opts)
     opts = opts or {}
-    local Bank = require("lalin.copy_patch_mc")(T)
+    local Bank = require("lalin.residual_mc")(T)
     local bank, bank_err, source = Bank.build_mc_bank(artifacts, opts)
     if bank == nil then return nil, bank_err, source end
     local realization, realize_err = Bank.realize_mc_artifacts(artifacts, {

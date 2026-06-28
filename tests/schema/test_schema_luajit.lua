@@ -154,9 +154,5 @@ assert(stencil_machine_plan.artifact == artifact, "stencil machine plan should c
 local install = LJ.LJMCInstallPolicy(LJ.LJMCInstallLow32Address, LJ.LJMCInstallWriteThenExec)
 assert(install.address == LJ.LJMCInstallLow32Address, "MC bank install policy should carry address constraints")
 assert(install.protection == LJ.LJMCInstallWriteThenExec, "MC bank install policy should carry W^X policy")
-local local_abs = LJ.LJMCPatchRecord(4, LJ.LJMCPatchLocalAbs32, "R_X86_64_32S", nil, nil, 16)
-assert(local_abs.kind == LJ.LJMCPatchLocalAbs32, "binary patch records should represent local absolute32 relocations")
-local local_abs64 = LJ.LJMCPatchRecord(8, LJ.LJMCPatchLocalAbs64, "R_X86_64_64", nil, nil, 24)
-assert(local_abs64.kind == LJ.LJMCPatchLocalAbs64, "binary patch records should represent local absolute64 relocations")
 
 io.write("lalin schema_luajit ok\n")

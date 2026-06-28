@@ -15,6 +15,16 @@ local function run_chunk(src, chunk_name, args)
     return pcall(loader, unpack(args or {}))
 end
 
+local function run_file_chunk(src, chunk_name, path, args)
+    if tostring(path or ""):match("%.lln$") then
+        local lalin = require("lalin")
+        local loader, err = lalin.loadstring(src, chunk_name)
+        if loader == nil then return nil, err end
+        return pcall(loader, unpack(args or {}))
+    end
+    return run_chunk(src, chunk_name, args)
+end
+
 function M.main(argv)
     argv = argv or _G.arg or {}
     local cmd = argv[1]
@@ -51,7 +61,7 @@ function M.main(argv)
     f:close()
     local args = {}
     for i = 2, #argv do args[#args + 1] = argv[i] end
-    local ok, run_err = run_chunk(src, "@" .. tostring(cmd), args)
+    local ok, run_err = run_file_chunk(src, "@" .. tostring(cmd), cmd, args)
     if not ok then
         io.stderr:write(tostring(run_err), "\n")
         return 70

@@ -21,7 +21,8 @@ local Emit = require("lalin.luajit_emit")(T)
 local CodeGraph = require("lalin.code_graph")(T)
 local CodeFlowFacts = require("lalin.code_flow_facts")(T)
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBinary = require("tests.code_ir.copy_patch_mc_helper")
+local Backend = require("lalin.luajit_backend")(T)
+local StencilBinary = require("tests.code_ir.residual_mc_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_stencil_extended")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -42,48 +43,11 @@ local function term(id, kind) return Code.CodeTerm(Code.CodeTermId("term:" .. id
 local function place(base, index, ty) return Code.CodePlaceIndex(Code.CodePlaceDeref(base, ty, bytes(ty)), index, ty, bytes(ty)) end
 
 local function store_provider(func, vocab, op, plan, info)
-    if vocab == "cast" then return StencilArtifactPlan.cast_array_artifact(op, info) end
-    if vocab == "compare" then return StencilArtifactPlan.compare_array_artifact(op, info) end
-    if vocab == "zip_compare" then return StencilArtifactPlan.zip_compare_array_artifact(op, info) end
-    if vocab == "gather" then return StencilArtifactPlan.gather_array_artifact(info) end
-    if vocab == "scatter" then return StencilArtifactPlan.scatter_array_artifact(info) end
-    if vocab == "in_place_map" then return StencilArtifactPlan.in_place_map_array_artifact(op, info) end
-    error("unexpected store stencil vocab " .. tostring(vocab))
+    return Backend.artifact_for(vocab, op, nil, plan, info)
 end
 
 local function reduce_provider(func, vocab, op, reduction, plan, info)
-    if vocab == "count" then return StencilArtifactPlan.count_array_artifact(op, info) end
-    if vocab == "map_reduce" then
-        return StencilArtifactPlan.reduce_n_artifact(reduction, plan, {
-            tag = "map",
-            inputs = { { name = "xs", ty = info.elem_ty, layout = info.array_layout or info.src_layout } },
-            expr = StencilArtifactPlan.apply_unary_expr(op, StencilArtifactPlan.input_expr("xs"), info.mapped_ty, { int_semantics = sem }),
-            item_ty = info.mapped_ty,
-            result_ty = info.result_ty,
-            step_num = info.step_num or info.stride,
-            producer = info.producer,
-            schedule = info.schedule,
-            noalias_pairs = info.noalias_pairs,
-        })
-    end
-    if vocab == "zip_reduce" then
-        return StencilArtifactPlan.reduce_n_artifact(reduction, plan, {
-            tag = "zip",
-            inputs = {
-                { name = "lhs", ty = info.lhs_ty, layout = info.lhs_layout },
-                { name = "rhs", ty = info.rhs_ty, layout = info.rhs_layout },
-            },
-            expr = StencilArtifactPlan.apply_binary_expr(op, StencilArtifactPlan.input_expr("lhs"), StencilArtifactPlan.input_expr("rhs"), info.mapped_ty, { int_semantics = sem }),
-            item_ty = info.mapped_ty,
-            result_ty = info.result_ty,
-            step_num = info.step_num or info.stride,
-            producer = info.producer,
-            schedule = info.schedule,
-            noalias_pairs = info.noalias_pairs,
-        })
-    end
-    if vocab == "reduce" then return StencilArtifactPlan.reduce_array_artifact(reduction, plan, info) end
-    error("unexpected reduction stencil vocab " .. tostring(vocab))
+    return Backend.artifact_for(vocab, op, reduction, plan, info)
 end
 
 local function compile_module(module, contracts, opts)

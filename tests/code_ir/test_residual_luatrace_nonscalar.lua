@@ -10,7 +10,7 @@ Schema(T)
 local Code = T.LalinCode
 local Stencil = T.LalinStencil
 local Plan = require("lalin.stencil_artifact_plan")(T)
-local CopyPatchLuaTrace = require("lalin.copy_patch_luatrace")(T)
+local ResidualLuaTrace = require("lalin.residual_luatrace")(T)
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local ptr_i32 = Code.CodeTyDataPtr(i32)
@@ -39,7 +39,7 @@ local ordered = {
     artifacts.slice_identity,
 }
 
-local realization = CopyPatchLuaTrace.realize_artifacts(ordered)
+local realization = ResidualLuaTrace.realize_artifacts(ordered)
 assert(realization.kind == "BCStencilBankRealization", "expected BC realization")
 
 local function sym(artifact)
@@ -106,7 +106,7 @@ do
     assert(out2[0].data == backing_a and out2[1].data == backing_b, "slice descriptor identity map")
 end
 
-local ptr_copy_plan = CopyPatchLuaTrace.plan_artifact(artifacts.ptr_copy)
+local ptr_copy_plan = ResidualLuaTrace.plan_artifact(artifacts.ptr_copy)
 assert(ptr_copy_plan.kernel_plan.primitive_plan.kind == "ffi_copy", "pointer copy should have byte-width primitive plan")
 
-io.write("lalin copy_patch_luatrace_nonscalar ok\n")
+io.write("lalin residual_luatrace_nonscalar ok\n")

@@ -12,7 +12,7 @@ local Code = T.LalinCode
 local Value = T.LalinValue
 local Stencil = T.LalinStencil
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBinary = require("tests.code_ir.copy_patch_mc_helper")
+local StencilBinary = require("tests.code_ir.residual_mc_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local f64 = Code.CodeTyFloat(64)
@@ -191,7 +191,7 @@ for _, artifact in ipairs(slice_artifacts) do
     artifacts[#artifacts + 1] = artifact
 end
 
-local build, err, src = StencilBinary.compile(T, artifacts, { stem = "test_copy_patch_mc_all_shapes" })
+local build, err, src = StencilBinary.compile(T, artifacts, { stem = "test_residual_mc_all_shapes" })
 assert(build ~= nil, tostring(err) .. "\n" .. tostring(src))
 local function bank_entry(artifact)
     for _, entry in ipairs(build.mc_bank.entries or {}) do
@@ -282,4 +282,4 @@ local dup_idx = ffi.new("int32_t[5]", { 0, 2, 0, 2, 2 })
 sym(artifacts[20])(out, xs, dup_idx, 0, 5)
 assert(out[0] == 6 and out[1] == 0 and out[2] == 1 and out[3] == 0 and out[4] == 0, "scatter reduce")
 
-io.write("lalin copy_patch_mc all shapes ok\n")
+io.write("lalin residual_mc all shapes ok\n")

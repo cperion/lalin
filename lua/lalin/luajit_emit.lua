@@ -238,7 +238,16 @@ local function bind_context(T)
         if cls == LJ.LJPlaceLocal then return id_name(p.local_id) end
         if cls == LJ.LJPlaceDeref then return "(" .. expr(p.addr) .. ")[0]" end
         if cls == LJ.LJPlaceField then return "(" .. place_expr(p.base) .. ")." .. sanitize(p.name) end
-        if cls == LJ.LJPlaceIndex then return "(" .. place_expr(p.base) .. ")[" .. expr(p.index) .. "]" end
+        if cls == LJ.LJPlaceIndex then
+            local base = place_expr(p.base)
+            -- If the base is already parenthesized (Deref, Field, or nested
+            -- Index all produce parenthesized output), adding outer parens
+            -- creates ambiguous syntax in LuaJIT.  Only wrap bare locals.
+            if base:sub(1,1) == "(" then
+                return base .. "[" .. expr(p.index) .. "]"
+            end
+            return "(" .. base .. ")[" .. expr(p.index) .. "]"
+        end
         unsupported(p, "place")
     end
 

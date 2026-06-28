@@ -15,7 +15,7 @@ end
 
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
-    if T._lalin_api_cache.copy_patch_luatrace ~= nil then return T._lalin_api_cache.copy_patch_luatrace end
+    if T._lalin_api_cache.residual_luatrace ~= nil then return T._lalin_api_cache.residual_luatrace end
 
     local Core = T.LalinCore
     local Code = T.LalinCode
@@ -24,7 +24,7 @@ local function bind_context(T)
     local LT = T.LalinLuaTrace
     local ArtifactPlan = require("lalin.stencil_artifact_plan")(T)
     local Meta = require("lalin.stencil_metastencil")(T)
-    local BCBank = require("lalin.copy_patch_bc")(T)
+    local BCBank = require("lalin.residual_bc")(T)
 
     local api = {}
 
@@ -61,7 +61,7 @@ local function bind_context(T)
                 if pvm.classof(lit) == Core.LitBool then return lit.value and 1 or 0 end
             end
         end
-        error("copy_patch_luatrace: unsupported constant expression", 3)
+        error("residual_luatrace: unsupported constant expression", 3)
     end
 
     local function access_ref_name(ref)
@@ -188,7 +188,7 @@ local function bind_context(T)
             return lua_access_offset(plan.parent, index)
         end
         if cls == Stencil.StencilLayoutIndexed then
-            local index_plan = assert(plan.index_plan, "copy_patch_luatrace: indexed layout missing index access plan")
+            local index_plan = assert(plan.index_plan, "residual_luatrace: indexed layout missing index access plan")
             local indexed = table.concat({ tostring(plan.index_name), "[", lua_access_offset(index_plan, index), "]" })
             if tonumber(plan.index_stride) ~= nil and tonumber(plan.index_stride) ~= 1 then
                 indexed = "((" .. indexed .. ") * " .. tostring(plan.index_stride) .. ")"
@@ -222,7 +222,7 @@ local function bind_context(T)
         if op == Stencil.StencilUnaryNeg then return lua_int_expr(ty, "(-" .. v .. ")") end
         if op == Stencil.StencilUnaryBitNot then return "__ml_bnot(" .. v .. ")" end
         if op == Stencil.StencilUnaryBoolNot then return "((" .. v .. ") == 0 and 1 or 0)" end
-        error("copy_patch_luatrace: unsupported unary op", 3)
+        error("residual_luatrace: unsupported unary op", 3)
     end
 
     local function lua_binary_expr(op, a, b, ty, int_semantics, float_mode)
@@ -234,7 +234,7 @@ local function bind_context(T)
             return "((" .. a .. ") / (" .. b .. "))"
         end
         if op == Stencil.StencilBinaryMod then
-            if not is_int_ty(ty) then error("copy_patch_luatrace: modulo requires integer type", 3) end
+            if not is_int_ty(ty) then error("residual_luatrace: modulo requires integer type", 3) end
             return "__ml_imod(" .. a .. ", " .. b .. ")"
         end
         if op == Stencil.StencilBinaryAnd then return "__ml_band(" .. a .. ", " .. b .. ")" end
@@ -245,7 +245,7 @@ local function bind_context(T)
         if op == Stencil.StencilBinaryAShr then return lua_int_expr(ty, "__ml_arshift(" .. a .. ", " .. b .. ")") end
         if op == Stencil.StencilBinaryMin then return "((" .. a .. ") < (" .. b .. ") and (" .. a .. ") or (" .. b .. "))" end
         if op == Stencil.StencilBinaryMax then return "((" .. a .. ") > (" .. b .. ") and (" .. a .. ") or (" .. b .. "))" end
-        error("copy_patch_luatrace: unsupported binary op", 3)
+        error("residual_luatrace: unsupported binary op", 3)
     end
 
     local function lua_reduce_expr(kind, acc, item, ty)
@@ -256,7 +256,7 @@ local function bind_context(T)
         if kind == Value.ReductionXor then return "__ml_bxor(" .. acc .. ", " .. item .. ")" end
         if kind == Value.ReductionMin then return "((" .. item .. ") < (" .. acc .. ") and (" .. item .. ") or (" .. acc .. "))" end
         if kind == Value.ReductionMax then return "((" .. item .. ") > (" .. acc .. ") and (" .. item .. ") or (" .. acc .. "))" end
-        error("copy_patch_luatrace: unsupported reduction", 3)
+        error("residual_luatrace: unsupported reduction", 3)
     end
 
     local lua_cmp_expr
@@ -284,7 +284,7 @@ local function bind_context(T)
         if cls == Stencil.StencilPredIsNaN then return "((" .. v .. ") ~= (" .. v .. "))" end
         if cls == Stencil.StencilPredIsInf then return "(((" .. v .. ") == math.huge) or ((" .. v .. ") == -math.huge))" end
         if cls == Stencil.StencilPredIsFinite then return "(((" .. v .. ") == (" .. v .. ")) and ((" .. v .. ") ~= math.huge) and ((" .. v .. ") ~= -math.huge))" end
-        error("copy_patch_luatrace: unsupported predicate", 3)
+        error("residual_luatrace: unsupported predicate", 3)
     end
 
     lua_cmp_expr = function(op, a, b)
@@ -294,7 +294,7 @@ local function bind_context(T)
         if op == Core.CmpLe then return "(" .. a .. " <= " .. b .. ")" end
         if op == Core.CmpGt then return "(" .. a .. " > " .. b .. ")" end
         if op == Core.CmpGe then return "(" .. a .. " >= " .. b .. ")" end
-        error("copy_patch_luatrace: unsupported compare op", 3)
+        error("residual_luatrace: unsupported compare op", 3)
     end
 
     local function is_i32_signed(ty)
@@ -638,12 +638,12 @@ local function bind_context(T)
         local cls = pvm.classof(expr)
         if cls == Stencil.StencilApplyInput then
             local name = tostring(expr.access.name)
-            local access = assert(access_by_name[name], "copy_patch_luatrace: missing apply input access " .. tostring(name))
+            local access = assert(access_by_name[name], "residual_luatrace: missing apply input access " .. tostring(name))
             if pvm.classof(access.layout) == Stencil.StencilLayoutScalar then return name end
             return lua_access_ref(access, name, index)
         end
         if cls == Stencil.StencilApplyWindowInput then
-            error("copy_patch_luatrace: window-relative apply inputs are not materialized by LuaTrace", 3)
+            error("residual_luatrace: window-relative apply inputs are not materialized by LuaTrace", 3)
         end
         if cls == Stencil.StencilApplyConst then return tostring(iconst(expr.value)) end
         if cls == Stencil.StencilApplyUnary then
@@ -681,7 +681,7 @@ local function bind_context(T)
                 .. lua_apply_expr(expr.else_expr, desc, access_by_name, index)
                 .. ")"
         end
-        error("copy_patch_luatrace: unsupported apply expression", 3)
+        error("residual_luatrace: unsupported apply expression", 3)
     end
 
     local function luatrace_producer_reject_reason(shape)
@@ -710,7 +710,7 @@ local function bind_context(T)
         local shape = ArtifactPlan.artifact_shape(artifact)
         local producer_reject = luatrace_producer_reject_reason(shape)
         if producer_reject ~= nil then
-            error("copy_patch_luatrace: " .. tostring(producer_reject), 3)
+            error("residual_luatrace: " .. tostring(producer_reject), 3)
         end
         local schedule = artifact.instance.schedule
         local facts = schedule_facts(schedule)
@@ -734,13 +734,13 @@ local function bind_context(T)
     local function realized_bc_schedule(artifact)
         local plan = build_artifact_plan(artifact)
         local evidence = {
-            Stencil.StencilRealizedByConstruction("LuaTrace copy-patch materializer emitted " .. tostring(plan.loop_plan.reason)),
+            Stencil.StencilRealizedByConstruction("LuaTrace copy+compile residual materializer emitted " .. tostring(plan.loop_plan.reason)),
         }
         local group = tonumber(plan.loop_plan.group) or 1
         if group > 1 then
-            return Stencil.StencilRealizedUnrolled(group, Stencil.StencilMaterializerCopyPatchBC, evidence)
+            return Stencil.StencilRealizedUnrolled(group, Stencil.StencilMaterializerResidualBC, evidence)
         end
-        return Stencil.StencilRealizedScalar(Stencil.StencilMaterializerCopyPatchBC, evidence)
+        return Stencil.StencilRealizedScalar(Stencil.StencilMaterializerResidualBC, evidence)
     end
 
     local function with_realized(artifact, provider, realized)
@@ -763,7 +763,7 @@ local function bind_context(T)
             end
             return params
         end
-        error("copy_patch_luatrace: unsupported producer params for " .. tostring(producer.kind), 3)
+        error("residual_luatrace: unsupported producer params for " .. tostring(producer.kind), 3)
     end
 
     local function append_producer_params(params, producer)
@@ -911,7 +911,7 @@ local function bind_context(T)
     local function emit_range_nd_axis_reduce(out, artifact_plan, body_expr)
         local shape = artifact_plan.shape
         local producer = shape.producer
-        local dst_name = assert(shape.dst_name, "copy_patch_luatrace: axis reduce needs destination")
+        local dst_name = assert(shape.dst_name, "residual_luatrace: axis reduce needs destination")
         local dst_access = assert(artifact_plan.access_by_name[dst_name], "missing axis reduce destination access plan")
         local reduce_axes = axis_ref_set(shape.axes)
         local keep_axes = {}
@@ -1296,7 +1296,7 @@ local function bind_context(T)
             end
         elseif kind == "scatter_reduce_n" then
             if not scatter_reduce_conflicts_materialized(shape.conflicts) then
-                error("copy_patch_luatrace: unsupported scatter-reduce conflict semantics", 3)
+                error("residual_luatrace: unsupported scatter-reduce conflict semantics", 3)
             end
             local dst_name = shape.dst_name or "dst"
             local dst_access = assert(access[dst_name], "missing scatter-reduce destination access plan")
@@ -1313,7 +1313,7 @@ local function bind_context(T)
                 out[#out + 1] = indent .. slot .. " = " .. lua_reduce_expr(shape.reduction, slot, lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
             end)
         else
-            error("copy_patch_luatrace: unsupported stencil shape " .. tostring(kind), 3)
+            error("residual_luatrace: unsupported stencil shape " .. tostring(kind), 3)
         end
 
         out[#out + 1] = "end"
@@ -1322,7 +1322,7 @@ local function bind_context(T)
             if type(out[i]) ~= "string" then
                 local detail = {}
                 for k, v in pairs(out[i]) do detail[#detail + 1] = tostring(k) .. "=" .. tostring(v) end
-                error("copy_patch_luatrace: emitted non-string fragment " .. tostring(i) .. " for " .. tostring(artifact.symbol.text) .. ": " .. tostring(out[i]) .. " {" .. table.concat(detail, ",") .. "}", 3)
+                error("residual_luatrace: emitted non-string fragment " .. tostring(i) .. " for " .. tostring(artifact.symbol.text) .. ": " .. tostring(out[i]) .. " {" .. table.concat(detail, ",") .. "}", 3)
             end
         end
         return table.concat(out, "\n")
@@ -1431,13 +1431,13 @@ local function bind_context(T)
             local entry = bank and BCBank.entry_by_symbol and BCBank.entry_by_symbol(bank, symbol) or nil
             if entry ~= nil then
                 if entry.artifact == nil or entry.artifact.fingerprint == nil or entry.artifact.fingerprint.text == nil then
-                    return nil, "copy_patch_bc: bank entry missing artifact fingerprint for " .. tostring(symbol)
+                    return nil, "residual_bc: bank entry missing artifact fingerprint for " .. tostring(symbol)
                 end
                 if requested_artifact.fingerprint == nil or requested_artifact.fingerprint.text == nil then
-                    return nil, "copy_patch_bc: requested artifact missing fingerprint for " .. tostring(symbol)
+                    return nil, "residual_bc: requested artifact missing fingerprint for " .. tostring(symbol)
                 end
                 if entry.artifact.fingerprint.text ~= requested_artifact.fingerprint.text then
-                    return nil, "copy_patch_bc: artifact fingerprint mismatch for " .. tostring(symbol)
+                    return nil, "residual_bc: artifact fingerprint mismatch for " .. tostring(symbol)
                 end
             end
             local fn, err = BCBank.load_symbol(bank, symbol, {
@@ -1484,7 +1484,7 @@ local function bind_context(T)
     function api.emit_bc_bank_source(bank, opts)
         opts = opts or {}
         local out = {
-            "-- Generated Lalin LuaTrace BC copy-patch bank.",
+            "-- Generated Lalin LuaTrace BC copy+compile residual bank.",
             "local bit = require('bit')",
             "local ffi = require('ffi')",
             target_check_source(bank.target),
@@ -1543,7 +1543,7 @@ local function bind_context(T)
         return assert(realization, err or "LuaTrace bytecode realization failed")
     end
 
-    T._lalin_api_cache.copy_patch_luatrace = api
+    T._lalin_api_cache.residual_luatrace = api
     return api
 end
 

@@ -70,9 +70,9 @@ assert_matrix_covers("producers", variants(stencil_schema, "StencilProducerShape
 assert_matrix_covers("predicates", variants(stencil_schema, "StencilPredicate"))
 assert_matrix_covers("type_families", variants(code_schema, "CodeType"))
 
-assert(Matrix.materializers.copy_patch_bc.policy == Matrix.coverage_policy.semantic_probe, "copy_patch_bc must be the semantic coverage probe")
-assert(Matrix.materializers.copy_patch_mc.policy == Matrix.coverage_policy.fast_subset, "copy_patch_mc must be the fast subset")
-assert(Matrix.materializers.copy_patch_mc.fallback == "copy_patch_bc", "copy_patch_mc must name copy_patch_bc as semantic fallback")
+assert(Matrix.materializers.residual_bc.policy == Matrix.coverage_policy.semantic_probe, "residual_bc must be the semantic coverage probe")
+assert(Matrix.materializers.residual_mc.policy == Matrix.coverage_policy.fast_subset, "residual_mc must be the fast subset")
+assert(Matrix.materializers.residual_mc.fallback == "residual_bc", "residual_mc must name residual_bc as semantic fallback")
 assert(Matrix.materializers.emitted_bank.policy == Matrix.coverage_policy.deployment_bank, "emitted bank must be the deployment coverage probe")
 
 local known_bc_producer_gaps = {
@@ -81,17 +81,17 @@ local known_bc_producer_gaps = {
 }
 local saw_bc_gap = false
 for producer_name, entry in pairs(Matrix.producers) do
-    assert(Matrix.materializer_status[entry.copy_patch_bc] ~= nil, "producer " .. producer_name .. " has invalid copy_patch_bc status " .. tostring(entry.copy_patch_bc))
-    assert(Matrix.materializer_status[entry.copy_patch_mc] ~= nil, "producer " .. producer_name .. " has invalid copy_patch_mc status " .. tostring(entry.copy_patch_mc))
+    assert(Matrix.materializer_status[entry.residual_bc] ~= nil, "producer " .. producer_name .. " has invalid residual_bc status " .. tostring(entry.residual_bc))
+    assert(Matrix.materializer_status[entry.residual_mc] ~= nil, "producer " .. producer_name .. " has invalid residual_mc status " .. tostring(entry.residual_mc))
     assert(Matrix.materializer_status[entry.bank] ~= nil, "producer " .. producer_name .. " has invalid emitted-bank status " .. tostring(entry.bank))
-    assert(Matrix.producer_materializer_status(producer_name, "copy_patch_bc") == entry.copy_patch_bc, "producer BC status query mismatch for " .. producer_name)
-    assert(Matrix.producer_materializer_status(producer_name, "copy_patch_mc") == entry.copy_patch_mc, "producer MC status query mismatch for " .. producer_name)
+    assert(Matrix.producer_materializer_status(producer_name, "residual_bc") == entry.residual_bc, "producer BC status query mismatch for " .. producer_name)
+    assert(Matrix.producer_materializer_status(producer_name, "residual_mc") == entry.residual_mc, "producer MC status query mismatch for " .. producer_name)
     assert(Matrix.producer_materializer_status(producer_name, "emitted_bank") == entry.bank, "producer bank status query mismatch for " .. producer_name)
-    local bc_gap = Matrix.copy_patch_bc_semantic_gap(producer_name)
+    local bc_gap = Matrix.residual_bc_semantic_gap(producer_name)
     if bc_gap ~= nil then
         saw_bc_gap = true
-        assert(known_bc_producer_gaps[producer_name], "unexpected copy_patch_bc semantic producer gap: " .. producer_name .. ": " .. bc_gap)
-        assert(type(entry.copy_patch_bc_gap) == "string" and entry.copy_patch_bc_gap ~= "", "known BC producer gap needs explicit reason: " .. producer_name)
+        assert(known_bc_producer_gaps[producer_name], "unexpected residual_bc semantic producer gap: " .. producer_name .. ": " .. bc_gap)
+        assert(type(entry.residual_bc_gap) == "string" and entry.residual_bc_gap ~= "", "known BC producer gap needs explicit reason: " .. producer_name)
     end
 end
 assert(saw_bc_gap, "matrix should expose current BC semantic producer gaps until they are closed")

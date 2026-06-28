@@ -378,12 +378,12 @@ local function bind_context(T)
 
     local function check_cell(cell)
         local vocab = Matrix.vocabs[cell.vocab]
-        assert(vocab and vocab.status == Matrix.status.supported, "copy_patch_mc_intern_set: unsupported vocab cell " .. tostring(cell.vocab))
+        assert(vocab and vocab.status == Matrix.status.supported, "residual_mc_intern_set: unsupported vocab cell " .. tostring(cell.vocab))
         local derived = Matrix.derived_plans[cell.derived or cell.kind]
-        assert(derived and derived.status == Matrix.status.supported, "copy_patch_mc_intern_set: unsupported derived plan cell " .. tostring(cell.derived or cell.kind))
-        assert(derived.basis == cell.vocab, "copy_patch_mc_intern_set: derived plan " .. tostring(cell.derived or cell.kind) .. " belongs to " .. tostring(derived.basis) .. ", not " .. tostring(cell.vocab))
+        assert(derived and derived.status == Matrix.status.supported, "residual_mc_intern_set: unsupported derived plan cell " .. tostring(cell.derived or cell.kind))
+        assert(derived.basis == cell.vocab, "residual_mc_intern_set: derived plan " .. tostring(cell.derived or cell.kind) .. " belongs to " .. tostring(derived.basis) .. ", not " .. tostring(cell.vocab))
         local layout = Matrix.layouts[cell.layout]
-        assert(layout and layout.status == Matrix.status.supported, "copy_patch_mc_intern_set: unsupported layout cell " .. tostring(cell.layout))
+        assert(layout and layout.status == Matrix.status.supported, "residual_mc_intern_set: unsupported layout cell " .. tostring(cell.layout))
     end
 
     local function input(name)
@@ -797,8 +797,8 @@ local function bind_context(T)
         local shard_count = tonumber(opts.shard_count or os.getenv("LALIN_MC_BANK_SHARD_COUNT"))
         local shard_index = tonumber(opts.shard_index or os.getenv("LALIN_MC_BANK_SHARD_INDEX"))
         if shard_count == nil and shard_index == nil then return emit end
-        assert(shard_count ~= nil and shard_count >= 1, "copy_patch_mc_intern_set: shard_count must be >= 1")
-        assert(shard_index ~= nil and shard_index >= 1 and shard_index <= shard_count, "copy_patch_mc_intern_set: shard_index must be in 1..shard_count")
+        assert(shard_count ~= nil and shard_count >= 1, "residual_mc_intern_set: shard_count must be >= 1")
+        assert(shard_index ~= nil and shard_index >= 1 and shard_index <= shard_count, "residual_mc_intern_set: shard_index must be in 1..shard_count")
         local ordinal = 0
         return function(cell)
             ordinal = ordinal + 1
@@ -809,7 +809,7 @@ local function bind_context(T)
 
     function M.each_cell(opts, emit)
         opts = opts or {}
-        emit = shard_filter(opts, assert(emit, "copy_patch_mc_intern_set.each_cell requires an emit callback"))
+        emit = shard_filter(opts, assert(emit, "residual_mc_intern_set.each_cell requires an emit callback"))
         append_fixed_1x1_cells(emit)
         append_rank_scope_window_probe_cells(emit)
     end
@@ -987,14 +987,14 @@ local function bind_context(T)
     end
 
     function M.artifact_for_cell(cell)
-        local build = assert(builders[cell.kind], "copy_patch_mc_intern_set: no builder for cell kind " .. tostring(cell.kind))
+        local build = assert(builders[cell.kind], "residual_mc_intern_set: no builder for cell kind " .. tostring(cell.kind))
         local artifact = build(cell)
-        assert(Plan.descriptor_vocab(artifact.instance.descriptor) == Stencil[cell.vocab], "copy_patch_mc_intern_set: cell " .. cell.name .. " produced wrong basis vocab")
+        assert(Plan.descriptor_vocab(artifact.instance.descriptor) == Stencil[cell.vocab], "residual_mc_intern_set: cell " .. cell.name .. " produced wrong basis vocab")
         return artifact
     end
 
     function M.each_artifact(opts, emit)
-        emit = assert(emit, "copy_patch_mc_intern_set.each_artifact requires an emit callback")
+        emit = assert(emit, "residual_mc_intern_set.each_artifact requires an emit callback")
         return M.each_cell(opts, function(cell)
             return emit(M.artifact_for_cell(cell), cell)
         end)
@@ -1002,7 +1002,7 @@ local function bind_context(T)
 
     function M.artifact_batches(opts, emit)
         opts = opts or {}
-        emit = assert(emit, "copy_patch_mc_intern_set.artifact_batches requires an emit callback")
+        emit = assert(emit, "residual_mc_intern_set.artifact_batches requires an emit callback")
         local batch_size = tonumber(opts.batch_size or os.getenv("LALIN_MC_BANK_BATCH_SIZE")) or 1024
         if batch_size < 1 then batch_size = 1 end
         batch_size = math.floor(batch_size)

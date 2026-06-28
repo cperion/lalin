@@ -129,12 +129,14 @@ function Driver.compile(source, chunkname, opts)
   while not lex:at_eof() do
     local t = lex:peek()
 
-    -- Parse-time import.  `import "lalin.syntax"` is rewritten to
-    -- `require("lalin.syntax")` and activates direct entrypoints for the rest
-    -- of this driver pass.  Namespaced entrypoints never require import.
+    -- Parse-time syntax import for the mixed-source driver.  .lln value chunks
+    -- disable this path and use Lua require for modules.
     if t.kind == "name" and t.value == "import" and lex:peek(1).kind == "string" then
       local import_tok = lex:next()
       local module_tok = lex:next()
+      if opts.allow_import == false then
+        lex:error_at(import_tok, "`import` is not part of .lln value chunks; use Lua `require(...)` for modules")
+      end
       local modname = unquote_lua_string(module_tok.raw)
       local ok, mod = pcall(require, modname)
       if not ok then lex:error_at(module_tok, "failed to import syntax module `" .. modname .. "`: " .. tostring(mod)) end

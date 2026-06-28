@@ -21,7 +21,8 @@ local Value = T.LalinValue
 local Lower = require("lalin.luajit_lower")(T)
 local Emit = require("lalin.luajit_emit")(T)
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBinary = require("tests.code_ir.copy_patch_mc_helper")
+local Backend = require("lalin.luajit_backend")(T)
+local StencilBinary = require("tests.code_ir.residual_mc_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_stencil_fields")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -54,15 +55,18 @@ local function access_named(desc, name)
     error("missing descriptor access " .. tostring(name))
 end
 
-local function assert_field_layout(artifact, access_name)
-    local access = access_named(artifact.instance.descriptor, access_name)
-    local layout = access.layout
-    assert(pvm.classof(layout) == Stencil.StencilLayoutFieldProjection, access_name .. " should be field layout")
-    assert(layout.record_ty == pair_ty, access_name .. " should keep record type")
-    assert(layout.field_name == "right", access_name .. " should keep field name")
-    assert(layout.field_offset == 4, access_name .. " should keep field offset")
-    assert(pvm.classof(layout.parent) == Stencil.StencilLayoutContiguous, access_name .. " should keep parent layout")
-    return access
+local function assert_field_layout(artifact, label)
+    for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(artifact.instance.descriptor)) do
+        local layout = access.layout
+        if pvm.classof(layout) == Stencil.StencilLayoutFieldProjection
+            and layout.record_ty == pair_ty
+            and layout.field_name == "right"
+            and layout.field_offset == 4 then
+            assert(pvm.classof(layout.parent) == Stencil.StencilLayoutContiguous, label .. " should keep parent layout")
+            return access
+        end
+    end
+    error("missing field descriptor access for " .. tostring(label))
 end
 
 local xs = param("xs", ptr_pair)
@@ -173,14 +177,12 @@ local lj_module, facts = Lower.lower_module(module, {
     contracts = contracts,
     collect_rejects = rejects,
     stencil_reduce_artifact_for = function(func, vocab, op, reduction, plan, info)
-        assert(vocab == "reduce")
-        local artifact = StencilArtifactPlan.reduce_array_artifact(reduction, plan, info)
+        local artifact = Backend.artifact_for(vocab, op, reduction, plan, info)
         artifacts[#artifacts + 1] = artifact
         return artifact
     end,
     stencil_store_artifact_for = function(func, vocab, op, plan, info)
-        assert(vocab == "map")
-        local artifact = StencilArtifactPlan.map_array_artifact(op, info)
+        local artifact = Backend.artifact_for(vocab, op, nil, plan, info)
         artifacts[#artifacts + 1] = artifact
         return artifact
     end,
@@ -199,8 +201,8 @@ assert(#artifacts == 2, "field lowering should select reduce and map artifacts")
 assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, "sum should lower to machine body")
 assert(pvm.classof(lj_module.funcs[2].body) == LJ.LJBodyMachine, "map should lower to machine body")
 
-local reduce_access = assert_field_layout(artifacts[1], "xs")
-local map_access = assert_field_layout(artifacts[2], "xs")
+local reduce_access = assert_field_layout(artifacts[1], "reduce")
+local map_access = assert_field_layout(artifacts[2], "map")
 assert(reduce_access.ty == i32 and map_access.ty == i32, "field accesses should expose field element type")
 
 local ffi_preamble = "typedef struct { int32_t left; int32_t right; } Demo_Pair;"

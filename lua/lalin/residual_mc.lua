@@ -63,16 +63,16 @@ int mprotect(void *addr, size_t len, int prot);
     local install = opts.install or {}
     local low32 = install.low32 == true
     if low32 and not (ffi.os == "Linux" and ffi.arch == "x64") then
-        error("copy_patch_mc: low32 mc stencil installation requires Linux/x64", 3)
+        error("residual_mc: low32 mc stencil installation requires Linux/x64", 3)
     end
     local policy = install.rwx and "rwx" or "write_exec"
     local prot = install.rwx and bit.bor(PROT_READ, PROT_WRITE, PROT_EXEC) or bit.bor(PROT_READ, PROT_WRITE)
     local flags = bit.bor(MAP_PRIVATE, MAP_ANON, low32 and MAP_32BIT or 0)
     local mem = ffi.C.mmap(nil, #bytes, prot, flags, -1, 0)
-    if mem == MAP_FAILED then error("copy_patch_mc: mmap failed while installing mc stencil", 3) end
+    if mem == MAP_FAILED then error("residual_mc: mmap failed while installing mc stencil", 3) end
     local base_addr = tonumber(ffi.cast("uintptr_t", mem))
     if low32 and base_addr + #bytes - 1 > 2147483647 then
-        error("copy_patch_mc: low32 mc stencil installation returned out-of-range address", 3)
+        error("residual_mc: low32 mc stencil installation returned out-of-range address", 3)
     end
     ffi.copy(mem, bytes, #bytes)
     return mem, ffi.cast("uint8_t *", mem), policy
@@ -161,7 +161,7 @@ local function function_pointer_signature(decl, symbol)
     decl = tostring(decl or ""):gsub("\n", " ")
     symbol = tostring(symbol or "")
     local ret, args = decl:match("^%s*(.-)%s+" .. pattern_escape(symbol) .. "%s*%((.*)%)%s*;?%s*$")
-    if ret == nil then error("copy_patch_mc: cannot derive function pointer signature for " .. symbol .. " from " .. decl, 3) end
+    if ret == nil then error("residual_mc: cannot derive function pointer signature for " .. symbol .. " from " .. decl, 3) end
     return ret .. " (*)(" .. args .. ")"
 end
 
@@ -263,7 +263,7 @@ end
 
 local function patch_u32le(bytes, offset, value)
     if value < -2147483648 or value > 4294967295 then
-        error("copy_patch_mc: local relocation value out of 32-bit range: " .. tostring(value), 3)
+        error("residual_mc: local relocation value out of 32-bit range: " .. tostring(value), 3)
     end
     if value < 0 then value = 4294967296 + value end
     local b0 = value % 256
@@ -279,7 +279,7 @@ end
 
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
-    if T._lalin_api_cache.copy_patch_mc ~= nil then return T._lalin_api_cache.copy_patch_mc end
+    if T._lalin_api_cache.residual_mc ~= nil then return T._lalin_api_cache.residual_mc end
 
     local StencilC = require("lalin.stencil_c")(T)
     local ArtifactPlan = require("lalin.stencil_artifact_plan")(T)
@@ -330,12 +330,12 @@ local function bind_context(T)
     end
 
     local function artifact_symbol(artifact)
-        assert(artifact and artifact.symbol and artifact.symbol.text, "copy_patch_mc: artifact missing symbol")
+        assert(artifact and artifact.symbol and artifact.symbol.text, "residual_mc: artifact missing symbol")
         return artifact.symbol.text
     end
 
     local function artifact_signature(artifact)
-        assert(artifact and artifact.c_signature, "copy_patch_mc: artifact missing C signature")
+        assert(artifact and artifact.c_signature, "residual_mc: artifact missing C signature")
         return artifact.c_signature
     end
 
@@ -359,27 +359,27 @@ local function bind_context(T)
     local function realized_mc_schedule(artifact, cflags)
         local schedule = artifact.instance and artifact.instance.schedule
         local evidence = {
-            Stencil.StencilRealizedByConstruction("MC copy-patch materializer built object code"),
+            Stencil.StencilRealizedByConstruction("MC copy+compile residual materializer built object code"),
         }
         if cflags ~= nil and cflags ~= "" then
             evidence[#evidence + 1] = Stencil.StencilRealizedCompilerRemark("cflags: " .. tostring(cflags))
         end
         if explicit_vector_mc_path(artifact) then
-            local lanes = assert(ArtifactPlan.schedule_lane_count(schedule), "copy_patch_mc: vector schedule requires fixed lane policy for realized MC schedule")
+            local lanes = assert(ArtifactPlan.schedule_lane_count(schedule), "residual_mc: vector schedule requires fixed lane policy for realized MC schedule")
             return Stencil.StencilRealizedVector(
                 schedule.feature,
                 lanes,
                 schedule.vector_unroll,
                 schedule.interleave,
                 schedule.tail,
-                Stencil.StencilMaterializerCopyPatchMC,
+                Stencil.StencilMaterializerResidualMC,
                 evidence
             )
         end
         if pvm.classof(schedule) == Stencil.StencilScheduleUnrolled then
-            return Stencil.StencilRealizedUnrolled(schedule.factor, Stencil.StencilMaterializerCopyPatchMC, evidence)
+            return Stencil.StencilRealizedUnrolled(schedule.factor, Stencil.StencilMaterializerResidualMC, evidence)
         end
-        return Stencil.StencilRealizedScalar(Stencil.StencilMaterializerCopyPatchMC, evidence)
+        return Stencil.StencilRealizedScalar(Stencil.StencilMaterializerResidualMC, evidence)
     end
 
     local function unique_artifacts(artifacts)
@@ -399,7 +399,7 @@ local function bind_context(T)
         local metastencil_covers
         artifacts, metastencil_covers = Meta.normalize_artifact_inputs(artifacts or {})
         artifacts = unique_artifacts(artifacts)
-        local dir = opts.dir or "target/copy_patch_mc"
+        local dir = opts.dir or "target/residual_mc"
         os.execute("mkdir -p " .. shell_quote(dir))
         local stem = opts.stem or ("lalin_stencil_mc_bank_" .. tostring(os.time()) .. "_" .. sanitize(tostring(os.clock())))
         local c_path = dir .. "/" .. stem .. ".c"
@@ -410,15 +410,15 @@ local function bind_context(T)
         local cflags = opts.cflags or "-std=c99 -O3 -march=native -fno-builtin -fno-builtin-memmove -fno-builtin-memcpy -fno-builtin-memset -ffunction-sections -fno-pic -fno-jump-tables -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -c"
         local cmd = table.concat({ shell_quote(cc), cflags, shell_quote(c_path), "-o", shell_quote(o_path) }, " ")
         local ok = os.execute(cmd)
-        if not (ok == true or ok == 0) then return nil, "copy_patch_mc: MC bank object build failed: " .. cmd, source end
+        if not (ok == true or ok == 0) then return nil, "residual_mc: MC bank object build failed: " .. cmd, source end
         local reloc_out, reloc_err = capture("readelf -Wr " .. shell_quote(o_path))
-        if reloc_out == nil then return nil, "copy_patch_mc: readelf relocations failed: " .. tostring(reloc_err), source end
+        if reloc_out == nil then return nil, "residual_mc: readelf relocations failed: " .. tostring(reloc_err), source end
         local relocs = parse_relocations(reloc_out)
         local section_out, section_err = capture("readelf -SW " .. shell_quote(o_path))
-        if section_out == nil then return nil, "copy_patch_mc: readelf sections failed: " .. tostring(section_err), source end
+        if section_out == nil then return nil, "residual_mc: readelf sections failed: " .. tostring(section_err), source end
         local sections, sections_by_name = parse_sections(section_out)
         local symbol_out, symbol_err = capture("readelf -Ws " .. shell_quote(o_path))
-        if symbol_out == nil then return nil, "copy_patch_mc: readelf symbols failed: " .. tostring(symbol_err), source end
+        if symbol_out == nil then return nil, "residual_mc: readelf symbols failed: " .. tostring(symbol_err), source end
         local symbols = parse_symbols(symbol_out, sections)
         local dumped_sections = {}
         local object_bytes
@@ -427,7 +427,7 @@ local function bind_context(T)
             local cached = dumped_sections[section]
             if cached ~= nil then return cached end
             local meta = sections_by_name[section]
-            if meta == nil then error("copy_patch_mc: missing object section " .. tostring(section), 3) end
+            if meta == nil then error("residual_mc: missing object section " .. tostring(section), 3) end
             if object_bytes == nil then object_bytes = read_file(o_path) end
             cached = object_bytes:sub(meta.offset + 1, meta.offset + meta.size)
             dumped_sections[section] = cached
@@ -477,10 +477,10 @@ local function bind_context(T)
                         if patch.kind == "rel32" then
                             blob = patch_u32le(blob, site, target_addr + (patch.addend or 0) - site)
                         else
-                            error("copy_patch_mc: non-relative local relocation " .. tostring(patch.reloc_type) .. " to " .. tostring(patch.symbol) .. " cannot be represented in a no-patch MC bank", 3)
+                            error("residual_mc: non-relative local relocation " .. tostring(patch.reloc_type) .. " to " .. tostring(patch.symbol) .. " cannot be represented in a no-patch MC bank", 3)
                         end
                     else
-                        error("copy_patch_mc: unresolved relocation " .. tostring(patch.reloc_type) .. " to " .. tostring(patch.symbol) .. " cannot be represented in a no-patch MC bank", 3)
+                        error("residual_mc: unresolved relocation " .. tostring(patch.reloc_type) .. " to " .. tostring(patch.symbol) .. " cannot be represented in a no-patch MC bank", 3)
                     end
                 end
             end
@@ -497,7 +497,7 @@ local function bind_context(T)
             local section = ".text." .. symbol
             local section_meta = sections_by_name[section]
             if section_meta == nil then
-                return nil, "copy_patch_mc: missing section " .. section .. " for " .. symbol, source
+                return nil, "residual_mc: missing section " .. section .. " for " .. symbol, source
             end
             local binary = dump_section(section)
             local raw_patches = relocs[".rela" .. section] or relocs[".rel" .. section] or {}
@@ -536,14 +536,14 @@ local function bind_context(T)
 
     function api.install_mc_stencil(entry, opts)
         opts = opts or {}
-        assert(type(entry) == "table", "copy_patch_mc.install_mc_stencil expects an entry")
+        assert(type(entry) == "table", "residual_mc.install_mc_stencil expects an entry")
         assert(type(entry.binary) == "string", "mc stencil entry requires binary bytes")
         assert(type(entry.c_signature) == "string", "mc stencil entry requires c_signature")
         local ffi = require("ffi")
         local mem, base, policy = mmap_install(entry.binary, opts)
         if policy ~= "rwx" then
             local ok = ffi.C.mprotect(mem, #entry.binary, 5)
-            if ok ~= 0 then error("copy_patch_mc: mprotect failed while sealing mc stencil", 3) end
+            if ok ~= 0 then error("residual_mc: mprotect failed while sealing mc stencil", 3) end
         end
         local fn = ffi.cast(entry.c_signature, mem)
         return { kind = "InstalledMCStencil", entry = entry, memory = mem, code = base, size = #entry.binary, fn = fn }
@@ -553,7 +553,7 @@ local function bind_context(T)
         opts = opts or {}
         local metastencil_covers
         artifacts, metastencil_covers = Meta.normalize_artifact_inputs(artifacts or {})
-        local bank = assert(opts.mc_bank, "copy_patch_mc.realize_mc_artifacts requires opts.mc_bank")
+        local bank = assert(opts.mc_bank, "residual_mc.realize_mc_artifacts requires opts.mc_bank")
         local ffi_preamble = opts.ffi_preamble or bank.ffi_preamble
         if type(ffi_preamble) ~= "string" then ffi_preamble = nil end
         if ffi_preamble ~= nil and ffi_preamble ~= "" and not ffi_preambles[ffi_preamble] then
@@ -564,15 +564,15 @@ local function bind_context(T)
         for _, artifact in ipairs(artifacts or {}) do
             local symbol = artifact_symbol(artifact)
             local entry = api.entry_for(bank, symbol)
-            if entry == nil then return nil, "copy_patch_mc: missing mc stencil entry " .. symbol end
+            if entry == nil then return nil, "residual_mc: missing mc stencil entry " .. symbol end
             if entry.artifact == nil or entry.artifact.fingerprint == nil or entry.artifact.fingerprint.text == nil then
-                return nil, "copy_patch_mc: bank entry missing artifact fingerprint for " .. symbol
+                return nil, "residual_mc: bank entry missing artifact fingerprint for " .. symbol
             end
             if artifact.fingerprint == nil or artifact.fingerprint.text == nil then
-                return nil, "copy_patch_mc: requested artifact missing fingerprint for " .. symbol
+                return nil, "residual_mc: requested artifact missing fingerprint for " .. symbol
             end
             if entry.artifact.fingerprint.text ~= artifact.fingerprint.text then
-                return nil, "copy_patch_mc: artifact fingerprint mismatch for " .. symbol
+                return nil, "residual_mc: artifact fingerprint mismatch for " .. symbol
             end
             local inst = api.install_mc_stencil(entry, {
                 install = install_opts(requested_install(opts, bank)),
@@ -651,7 +651,7 @@ local function bind_context(T)
         return source
     end
 
-    T._lalin_api_cache.copy_patch_mc = api
+    T._lalin_api_cache.residual_mc = api
     return api
 end
 

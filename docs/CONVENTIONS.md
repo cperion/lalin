@@ -14,24 +14,19 @@ variables that hold the public module.
 
 ### Primary (hand-written code)
 
-Use the parsed-channel syntax for hand-written Lalin source. Files use `.lua`
-or `.lalin.lua` extensions and are loaded through `llbl.syntax.loadfile`.
+Use `.lln` value chunks for hand-written Lalin source. A `.lln` file is a Lua
+chunk with Lalin parsed syntax active by default. It returns ordinary Lua values;
+Lua `require` and returned tables are the module system.
 
-```lua
--- primary.lalin.lua
-import "lalin.syntax"
-
+```lln
+-- primary.lln
 local add = fn add(a: i32, b: i32): i32
   return a + b
 end
-```
 
-The namespaced form (`lalin fn`) is also valid and does not need `import`:
-
-```lua
-lalin fn add(a: i32, b: i32): i32
-  return a + b
-end
+return {
+  add = add,
+}
 ```
 
 ### Builder API (macros, generators, tooling)
@@ -143,9 +138,14 @@ If lowering needs a fact, represent it in schema first.
 
 ## Backends
 
-The active fast backend architecture is copy+residual. Use `copy_patch_mc` bank
-stencils plus TCC residual glue for emitted fast LuaJIT artifacts, and
-`copy_patch_bc` for the default `lalin.compile` path.
+The active fast backend architecture is copy+compile residual. Use `residual_mc` bank
+stencils plus TCC residual glue by default. `residual_bc` is the explicit
+bytecode path and the fallback when MC materialization is unavailable.
+
+Keep the C/AOT path separate in wording and code. `emit_c_artifact` emits the
+whole selected program as C so the user can compile it with GCC; it should fuse
+selected stencil-shaped work at C level rather than describing itself as a
+LuaJIT copy+compile residual materializer.
 
 Backend code should consume typed facts:
 

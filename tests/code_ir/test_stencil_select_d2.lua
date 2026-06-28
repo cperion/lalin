@@ -12,8 +12,8 @@ local Code = T.LalinCode
 local Value = T.LalinValue
 local Stencil = T.LalinStencil
 local Plan = require("lalin.stencil_artifact_plan")(T)
-local CopyPatchLuaTrace = require("lalin.copy_patch_luatrace")(T)
-local MC = require("tests.code_ir.copy_patch_mc_helper")
+local ResidualLuaTrace = require("lalin.residual_luatrace")(T)
+local MC = require("tests.code_ir.residual_mc_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local bool8 = Code.CodeTyBool8
@@ -58,10 +58,10 @@ assert(mc ~= nil, tostring(mc_err) .. "\n" .. tostring(mc_src))
 assert(mc_src:match("%?"), "MC select should emit a C conditional expression")
 exercise(mc.symbols, "mc")
 
-local bc = assert(CopyPatchLuaTrace.realize_artifacts(artifacts, { stem = "test_stencil_select_d2_bc" }))
+local bc = assert(ResidualLuaTrace.realize_artifacts(artifacts, { stem = "test_stencil_select_d2_bc" }))
 exercise(bc.symbols, "bc")
 
-assert(CopyPatchLuaTrace.plan_artifact(artifacts[1]).shape.kind == "select_array", "select should have its own artifact shape")
-assert(CopyPatchLuaTrace.plan_artifact(artifacts[1]).kernel_plan.predicate_plan.kind == "lua_select", "BC select should expose predicate plan")
+assert(ResidualLuaTrace.plan_artifact(artifacts[1]).shape.kind == "apply_n", "select should lower through generic apply_n artifact shape")
+assert(ResidualLuaTrace.plan_artifact(artifacts[1]).kernel_plan.predicate_plan.kind == "lua_select", "BC select should expose predicate plan")
 
 io.write("stencil D2 select ok\n")

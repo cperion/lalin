@@ -12,8 +12,8 @@ local Code = T.LalinCode
 local Value = T.LalinValue
 local Stencil = T.LalinStencil
 local Plan = require("lalin.stencil_artifact_plan")(T)
-local CopyPatchLuaTrace = require("lalin.copy_patch_luatrace")(T)
-local MC = require("tests.code_ir.copy_patch_mc_helper")
+local ResidualLuaTrace = require("lalin.residual_luatrace")(T)
+local MC = require("tests.code_ir.residual_mc_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local f64 = Code.CodeTyFloat(64)
@@ -121,7 +121,7 @@ assert(mc ~= nil, tostring(mc_err) .. "\n" .. tostring(mc_src))
 assert(mc_src:match("isfinite"), "MC predicate source should emit float-class predicate")
 exercise(mc.symbols, "mc")
 
-local bc = assert(CopyPatchLuaTrace.realize_artifacts(artifacts, { stem = "test_stencil_predicates_d4_bc" }))
+local bc = assert(ResidualLuaTrace.realize_artifacts(artifacts, { stem = "test_stencil_predicates_d4_bc" }))
 exercise(bc.symbols, "bc")
 
 io.write("stencil D4 predicates ok\n")

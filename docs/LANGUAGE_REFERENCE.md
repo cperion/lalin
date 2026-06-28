@@ -1,183 +1,194 @@
 # Lalin Language Reference
 
-This is the public reference for the Lalin language.
+Lalin is the compiled language member of the LLBL workbench. Lua is the
+metaprogramming layer; Lalin receives monomorphic programs and lowers them
+through typed ASDL facts into executable LuaJIT artifacts.
 
-Lalin has **two authoring surfaces** with identical semantics:
-
-1. **Lua/LLBL DSL** — Lua values shaped by LLBL staged heads (the original surface)
-2. **Parsed channel frontend** — Lalin-native syntax captured by `llbl.syntax` (new)
-
-Both produce the same LalinTree ASDL, typecheck through the same pipeline, and
-lower through the same backends.
+This reference treats the parsed syntax as the standard source surface. The
+Lua/LLBL DSL is documented in one chapter near the end because it is still the
+best surface for macros, generators, and advanced producer heads.
 
 ---
 
-## Loading
+## Model
 
-### Lua/LLBL DSL path
+Lalin is not a generic source language in the C++ or Rust sense. Genericity lives
+in Lua and LLBL composition. By the time a Lalin function is compiled, the types
+and generated code are concrete.
 
-```lua
-local lalin = require("lalin")
-lalin.language.use()
+The pipeline is:
 
-return {
-  lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
-    lln.ret (a + b),
-  },
-}
+```text
+.lln value chunk
+  -> lalin.loader
+  -> llbl.syntax driver
+  -> lalin.syntax parsed AST
+  -> LalinTree ASDL
+  -> typecheck
+  -> LalinCode facts
+  -> flow/value/memory/effect/kernel/schedule facts
+  -> LuaJIT artifact
 ```
 
-For isolated loading:
+Important rules:
 
-```lua
-local lalin = require("lalin")
+- LLBL is the workbench; Lalin is the compiled language member.
+- Lua owns genericity.
+- Lalin receives monomorphic values.
+- Types are values in the underlying system; parsed syntax is a source spelling
+  for those type values.
+- Type arguments use `[]`, never angle brackets.
+- Every block path terminates.
+- Region protocols are explicit named exits.
+- Backend facts are explicit ASDL facts.
 
-local unit = lalin.loadstring([[
-  return {
-    lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
-      lln.ret (a + b),
-    },
-  }
-]], "demo.lua")()
-```
+---
 
-### Parsed channel path
+## Loading `.lln` Source
 
-Sources that use Lalin-native syntax must be loaded through `llbl.syntax`:
+The official source extension is `.lln`. A `.lln` file is a Lua-native value
+chunk with Lalin parsed syntax active by default. It does not define a separate
+module system. Use Lua `require`, return Lua values, and compose public APIs with
+tables.
 
-```lua
-local syntax = require("llbl.syntax")
-require("lalin.syntax")
-
-local src = [[
-  local add = lalin fn add(a: i32, b: i32): i32
-    return a + b
-  end
-  return add
-]]
-
-local chunk = assert(syntax.loadstring(src, "@demo.lalin.lua"))
-local fns = chunk()
-```
-
-Use `syntax.loadfile` for `.lua` files with parsed islands:
-
-```lua
-local chunk = assert(syntax.loadfile("demo.lalin.lua"))
-local module = chunk()
-```
-
-Parsed files can use `import` to activate direct entrypoints:
-
-```lua
-import "lalin.syntax"
-
+```lln
 local add = fn add(a: i32, b: i32): i32
   return a + b
 end
-```
 
-For a quick compile-evaluate cycle, use `lalin.compile_parsed`:
-
-```lua
-local add = lalin.compile_parsed([[
-  fn add(a: i32, b: i32): i32
-    return a + b
-  end
-]])
-print(add(3, 4))
-```
-
----
-
-## Language Namespaces
-
-The Lua/LLBL DSL installs namespace values:
-
-```text
-lln / lalin  Lalin native language
-schema      LalinSchema
-llpvm       LLPVM
-region      generic LLBL region head
-_           splice marker
-spread      explicit splice marker
-```
-
-Namespaces are also language zones:
-
-```lua
 return {
-  lln {
-    lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
-      lln.ret (a + b),
-    },
-  },
-
-  llpvm {
-    llpvm.task. compile {
-      llpvm.input [lln.i32],
-      llpvm.output [lln.i32],
-    },
-  },
-
-  schema {
-    schema. Demo {
-      schema.product. Pair {
-        left [schema.any],
-        right [schema.any],
-      },
-    },
-  },
+  add = add,
 }
 ```
 
-The parsed channel path uses `lalin fn ... end` blocks inside Lua. The namespace
-prefix is only needed for the namespaced form (`lalin fn`, `lalin region`, etc.)
-or when mixing with the old DSL. The `import`-activated form uses bare `fn`,
-`struct`, `region`, etc.
+Load it directly from Lua:
+
+```lua
+local lalin = require("lalin")
+
+local chunk = assert(lalin.loadfile("demo.lln"))
+local values = chunk()
+```
+
+Or install the `.lln` package searcher and use Lua `require`:
+
+```lua
+local lalin = require("lalin")
+lalin.path = "./?.lln;./?/init.lln"
+lalin.install_searcher()
+
+local demo = require("demo")
+```
+
+The returned Lua value is the public API. Lalin does not add `module`, `export`,
+or user-facing import declarations on top of Lua.
+
+Parsed declarations are first-class Lua values. A `.lln` chunk may return
+declarations, ordinary Lua values, or a compiled runtime module. `lalin.compile`
+accepts a parsed declaration or an array of parsed declarations:
+
+```lua
+local lalin = require("lalin")
+
+local chunk = assert(lalin.loadstring([[
+  return {
+    fn add(a: i32, b: i32): i32
+      return a + b
+    end
+  }
+]], "@add.lln"))
+
+local parsed_decls = chunk()
+local module = lalin.compile("add", parsed_decls)
+
+print(module.add(3, 4))
+```
+
+The lower-level `llbl.syntax` mixed-source driver remains infrastructure for
+Lua-hosted syntax islands and tooling, not the standard `.lln` loading surface.
+
+---
+
+## Lexical Shape
+
+The parsed syntax appears inside `.lln` Lua value chunks through direct
+entrypoints such as `fn`, `struct`, `union`, and `region`.
+
+Names use the usual identifier shape:
+
+```text
+letter_or_underscore (letter_or_digit_or_underscore)*
+```
+
+Keywords include:
+
+```text
+fn struct union region module
+requires ensures
+do end if then elseif else
+loop in grid tiled window
+return jump emit entry block
+let var
+true false nil
+and or not
+as sizeof
+```
+
+Comments and general Lua file structure are handled by the `.lln` syntax loader.
 
 ---
 
 ## Types
 
-Scalar types:
+Types are written after `:` in bindings and inside `[]` for type constructors.
 
-| Type | DSL form | Parsed form |
-|------|----------|-------------|
-| void | `lln.void` | `: void` |
-| bool | `lln.bool` | `: bool` |
-| i8   | `lln.i8`   | `: i8` |
-| i16  | `lln.i16`  | `: i16` |
-| i32  | `lln.i32`  | `: i32` |
-| i64  | `lln.i64`  | `: i64` |
-| u8   | `lln.u8`   | `: u8` |
-| u16  | `lln.u16`  | `: u16` |
-| u32  | `lln.u32`  | `: u32` |
-| u64  | `lln.u64`  | `: u64` |
-| f32  | `lln.f32`  | `: f32` |
-| f64  | `lln.f64`  | `: f64` |
-| index| `lln.index`| `: index` |
+### Scalar Types
 
-Compound type constructors:
+| Type | Meaning |
+|---|---|
+| `void` | no value |
+| `bool` | boolean value |
+| `i8`, `i16`, `i32`, `i64` | signed integers |
+| `u8`, `u16`, `u32`, `u64` | unsigned integers |
+| `f32`, `f64` | floating point |
+| `index` | index/counted-loop integer |
 
-| Type | DSL form | Parsed form |
-|------|----------|-------------|
-| pointer | `lln.ptr [T]` | `ptr[T]` |
-| view | `lln.view [T]` | `view[T]` |
-| func type | `lln.func_type { ... } [R]` | `func_type(...): R` |
-
-In the parsed surface, types are spelled inline after `:` or inside `[]`:
+### Compound Types
 
 ```lua
-lalin fn scale(dst: ptr[i32], src: ptr[i32], n: index): void
-  ...
+ptr[i32]
+array[i32]
+MyStruct
+some.module.TypeName
+```
+
+The parser accepts dotted type paths and type constructor application:
+
+```lua
+pkg.Buffer[u8]
+```
+
+The currently special-cased constructors in parsed-to-tree conversion are
+`ptr[...]` and `array[...]`. Other names become named type references.
+
+### Function Signatures
+
+Functions declare parameter products and a single result type:
+
+```lua
+fn distance2(x: f32, y: f32): f32
+  return x * x + y * y
 end
 ```
 
-In the DSL, types use Lua bracket syntax because the content is evaluated Lua:
+Use `void` for functions that do not return a value:
 
 ```lua
-lln.fn. scale { dst [lln.ptr [lln.i32]], src [lln.ptr [lln.i32]], n [lln.index] } [lln.void] { ... }
+fn clear(dst: ptr[i32], n: index): void
+  loop i in 0 .. n do
+    dst[i] = 0
+  end
+end
 ```
 
 ---
@@ -186,169 +197,118 @@ lln.fn. scale { dst [lln.ptr [lln.i32]], src [lln.ptr [lln.i32]], n [lln.index] 
 
 ### Functions
 
-DSL:
-
 ```lua
-lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
-  lln.ret (a + b),
-}
-```
-
-Parsed:
-
-```lua
-lalin fn add(a: i32, b: i32): i32
+fn add(a: i32, b: i32): i32
   return a + b
 end
 ```
 
+Functions are lowered to typed function items. Parameters are immutable values.
+Mutable local state is introduced with `var`.
+
 ### Structs
 
-DSL:
-
 ```lua
-lln.struct. Vec2 {
-  x [lln.f32],
-  y [lln.f32],
-}
+struct Pair
+  left: i32
+  right: i32
+end
 ```
 
-Parsed:
+Fields are named and typed. Struct field access uses dot syntax:
 
 ```lua
-lalin struct Vec2
-  x: f32
-  y: f32
-end
+p.right
 ```
 
 ### Unions
 
-DSL:
-
 ```lua
-lln.union. Result {
-  ok { value [lln.i32] },
-  err { code [lln.i32] },
-}
-```
-
-Parsed:
-
-```lua
-lalin union Result
-  Some (value: i32)
+union OptionI32
+  Some(value: i32)
   None
 end
 ```
 
-### Externs
+Variants may have named payload fields or no payload.
 
-DSL only (parsed surface planned):
+### Files And Values
 
-```lua
-lln.extern. puts { s [lln.ptr [lln.u8]] } [lln.i32]
-```
-
-### Constants and statics
-
-DSL only (parsed surface planned):
+Lalin does not add a user-facing module declaration. A `.lln` file is a Lua
+value chunk. Return the declarations or runtime values the caller should see:
 
 ```lua
-lln.const. answer [lln.i32] (42)
-lln.static. counter [lln.i32] (0)
-```
+local add = fn add(a: i32, b: i32): i32
+  return a + b
+end
 
----
-
-## Products And Fragments
-
-Product-shaped lists are ordinary Lua tables of typed names. This is
-DSL-specific; the parsed surface is statement-oriented.
-
-DSL:
-
-```lua
-{ a [lln.i32], b [lln.i32] }
-```
-
-Fragments:
-
-```lua
-local buffer = lln.product {
-  p [lln.ptr [lln.u8]],
-  n [lln.index],
-}
-
-lln.fn. first { _(buffer) } [lln.u8] {
-  lln.ret (p[0]),
+return {
+  add = add,
 }
 ```
-
-Common fragment roles:
-
-```text
-product
-decls
-stmts
-exprs
-conts
-variants
-```
-
-Algebra:
-
-```lua
-params_a .. params_b       -- list/product concatenation
-ok_exits + err_exits       -- protocol/sum choice
-error_exits * position     -- decorate every alternative with a product
-```
-
-`_(fragment)` is the preferred splice. `spread(fragment)` is the explicit
-fallback.
 
 ---
 
 ## Statements
 
-### DSL form
+Statement blocks end at `end`, `elseif`, or `else` depending on context.
+
+### `requires`
+
+`requires` records semantic facts for typechecking and backend planning:
 
 ```lua
-lln.let. x [lln.i32] (1)
-lln.var. acc [lln.i32] (0)
-set (acc)(acc + x)
-lln.ret (acc)
-lln.trap ()
+requires bounds(dst)(n), bounds(src)(n), disjoint(dst)(src)
+requires readonly(src), writeonly(dst)
 ```
 
-Conditional:
+Contracts are not comments. They feed memory classification, non-trapping
+proofs, alias proofs, kernel planning, and stencil selection.
 
-```lua
-lln.when (n :eq (0)) {
-  lln.ret (0),
-}
-```
+### `let`
 
-Switch:
-
-```lua
-lln.switch (tag) {
-  lln.case (0) { lln.ret (10) },
-  lln.case (1) { lln.ret (20) },
-  lln.default { lln.ret (-1) },
-}
-```
-
-### Parsed form
+`let` introduces an immutable local binding:
 
 ```lua
 let x: i32 = 1
-var acc: i32 = 0
-dst[i] = src[i]    -- real assignment
-return acc
+let y: i32 = x + 2
 ```
 
-If/elseif/else:
+If an initializer is omitted, the current conversion supplies a zero literal.
+Prefer writing the initializer explicitly.
+
+### `var`
+
+`var` introduces mutable local storage:
+
+```lua
+var acc: i32 = 0
+acc = acc + 1
+```
+
+Assignments require a place on the left-hand side.
+
+### Assignment
+
+```lua
+x = x + 1
+dst[i] = src[i]
+record.field = value
+```
+
+Index and field assignment are place operations, not function calls.
+
+### Return
+
+```lua
+return
+return x
+return a + b
+```
+
+Current function lowering expects a single returned value or no value.
+
+### If / Elseif / Else
 
 ```lua
 if x < lo then
@@ -360,208 +320,223 @@ else
 end
 ```
 
-Contracts:
+Conditions are expressions. Every path in a function body still has to
+terminate.
+
+### Loops
+
+The parsed source loop is a finite analyzable domain loop. It is not a general
+imperative `for`/`while` construct. In Lalin source, `loop` means:
+
+> iterate over a statically described domain and produce explicit loop facts for
+> the compiler.
+
+Use `loop` for data movement, maps, reductions, scans, and other stencil-shaped
+work. Use regions for explicit control protocols, state-machine-like flow, and
+non-loop control transfers.
+
+This is an intentional mental model difference from Lua, C, or Python. A source
+loop is not where arbitrary code goes. A loop body must remain admissible as
+domain work: stores, fold/scan sinks, pure scalar/index computation, simple
+predicates, and analyzable memory indexing.
 
 ```lua
-requires bounds(dst)(n), bounds(src)(n), disjoint(dst)(src)
-```
-
-For/range:
-
-```lua
-for i in range(0, n) do
-  dst[i] = src[i] * 2
+loop i in 0 .. n do
+  dst[i] = src[i]
 end
 ```
 
-Jump:
+With an explicit step:
 
 ```lua
-jump loop(i + 1)
+loop i in 0 .. n .. 2 do
+  dst[i] = 0
+end
 ```
 
-Emit:
+The 1D range form lowers through a control-region representation, but that is an
+implementation detail. Semantically, source `loop` is a domain loop. If the
+compiler cannot form a valid producer/sink model, it should reject the loop with
+a loop diagnostic rather than treating it as arbitrary imperative control.
+
+Loops can carry a reducer or inclusive scan sink. A reducing loop declares its
+result type after the producer and places one `fold` statement directly in the
+loop body:
+
+```lua
+fn dot(lhs: ptr[i32], rhs: ptr[i32], n: index): i32
+  requires bounds(lhs)(n), readonly(lhs), bounds(rhs)(n), readonly(rhs)
+  loop i in 0 .. n: i32 do
+    fold acc: i32 = 0 by add step lhs[i] * rhs[i]
+  end
+end
+```
+
+A scan loop writes each inclusive accumulator value into a destination:
+
+```lua
+fn prefix_sum(dst: ptr[i32], xs: ptr[i32], n: index): void
+  requires bounds(dst)(n), writeonly(dst), bounds(xs)(n), readonly(xs)
+  requires disjoint(dst)(xs)
+  loop i in 0 .. n do
+    scan acc: i32 = 0 by add step xs[i] into dst[i]
+  end
+end
+```
+
+`fold` and `scan` accept one reducer name: `add`, `mul`, `band`, `bor`,
+`bxor`, `min`, or `max`. A loop may contain at most one sink.
+
+Parsed loops also support multi-axis producers. The loop index list must match
+the producer axis count:
+
+```lua
+loop i, j in grid(0 .. h, 0 .. w) do
+  dst[i * w + j] = src[i * w + j]
+end
+```
+
+Tiled producers add tile metadata:
+
+```lua
+loop i, j in tiled grid(0 .. h, 0 .. w) by 2, 2 do
+  scan acc: i32 = 0 by add over j step xs[i * w + j] into dst[i * w + j]
+end
+```
+
+Window producers add neighbor metadata:
+
+```lua
+loop i in window(0 .. n, before = 1, after = 1, boundary = clamp) do
+  dst[i] = xs[i - 1]
+end
+```
+
+ND scans must specify `over`; the value may be an axis number or axis name.
+
+Allowed loop body forms are intentionally narrow:
+
+- stores to an analyzable destination
+- one `fold` sink, or one `scan` sink
+- `let` bindings for pure scalar/index expressions
+- simple `if` predicates whose branches remain admissible loop bodies
+- arithmetic, comparison, boolean logic, casts, and indexing
+
+Rejected loop body forms include:
+
+- arbitrary calls unless a later pass marks them pure/inlinable
+- `region`, `jump`, or `emit`
+- host escapes after parsing
+- unknown side effects
+- nested loops for now
+- mutation not expressible as the loop sink/store
+
+### Jump
+
+`jump` transfers control to a region block or continuation exit:
+
+```lua
+jump loop(i = i + 1)
+jump done(result = acc)
+```
+
+Payload entries may be named:
+
+```lua
+jump done(result = x)
+```
+
+or positional:
+
+```lua
+jump done(x)
+```
+
+### Emit
+
+`emit` composes a region-like callee into the current control context:
 
 ```lua
 emit finish(result)
 ```
 
-There is no source-level `for`, `while`, `break`, or `continue` in Lalin, even
-in the parsed surface. Loop-like iteration uses `for i in range(...)` which
-lowers to the same `ControlStmtRegion` CPS as `lln.loop`. Flow-sensitive
-iteration (while-like) uses region jumps directly.
-
----
-
-## Regions
-
-Regions are the core control-flow construct. A region is:
-
-```text
-input product ; continuation sum
-  → entry/block declarations
-  → jump control flow
-```
-
-### DSL form
-
-```lua
-region. scan
-  { p [lln.ptr [lln.u8]], n [lln.index], target [lln.u8] }
-  {
-    hit { pos [lln.index] },
-    miss { pos [lln.index] },
-  }
-  {
-    lln.entry. loop { i [lln.index] } {
-      lln.when (i :ge (n)) {
-        lln.jump. miss { pos = i },
-      },
-      lln.when (p[i] :eq (target)) {
-        lln.jump. hit { pos = i },
-      },
-      lln.jump. loop { i = i + 1 },
-    },
-  }
-```
-
-### Parsed form
-
-The `;` separates the input product from the continuation sum in the
-signature. Continuation payloads may use named fields or bare types.
-
-```lua
-lalin region scan(p: ptr[u8], n: index; hit: (pos: index), miss: ())
-  entry loop(i: index)
-    if i >= n then
-      jump miss(pos = i)
-    end
-    if p[i] == target then
-      jump hit(pos = i)
-    end
-    jump loop(i = i + 1)
-  end
-end
-```
-
-Variations:
-
-```lua
--- Data params only (no continuations)
-lalin region simple(x: i32)
-  entry start do jump done() end
-  block done end
-end
-
--- Continuations only (no data params)
-lalin region only_continuations(; done: (i32))
-  entry start do jump done(42) end
-  block done(r: i32) do emit finish(r) end
-end
-
--- Empty signature
-lalin region empty()
-  entry start do jump done() end
-  block done end
-end
-
--- Continuations without the optional colon
-lalin region bare(x: i32; done(result: i32))
-  entry start do jump done(x) end
-  block done(r: i32) do emit finish(r) end
-end
-```
-
----
-
-## Region Call
-
-`emit` is the normal internal composition form: it splices the callee region
-directly into the caller CFG and wires every exit locally.
-
-`call` preserves a region boundary. Use it when the region needs its own frame:
-
-- recursion
-- debugging
-- profiling
-- instrumentation
-- ABI-like isolation without losing named exits
-
-Semantically, a region call is sugar for:
-
-```text
-sealed function
-  → encoded exit union
-  → dispatch back to the region protocol exits
-```
-
-That means `call` handles recursion while preserving the caller-facing protocol.
+The parser records the callee expression and optional handlers. Region
+composition support is still narrower than ordinary function lowering.
 
 ---
 
 ## Expressions
 
-### Operators
-
-DSL:
+### Literals
 
 ```lua
-a + b
-a - b
-a * b
-a / b
-p[i]
-value.field
-fn_call(a, b)
+0
+42
+3.14
+true
+false
+"hello"
+nil
 ```
 
-Parsed (same operators, real syntax):
+Integer and float literal typing is resolved during typechecking and lowering.
+
+### Names
+
+```lua
+x
+dst
+some_binding
+```
+
+Names resolve through the active binding environment.
+
+### Arithmetic
 
 ```lua
 a + b
 a - b
 a * b
 a / b
-dst[i] = src[i]
-value.field
-fn_call(a, b)
+a // b
+a % b
+-a
+```
+
+`//` is parsed as integer division. Backend support depends on the typed
+operation selected during lowering.
+
+### Bit Operations
+
+```lua
+a & b
+a | b
+a ~ b
+a << b
+a >> b
+```
+
+Unary `&x` and `*p` are parsed as address and dereference operators:
+
+```lua
+&x
+*p
 ```
 
 ### Comparisons
 
-DSL uses readable method calls:
-
 ```lua
-i :lt (n)
-i :le (n)
-i :eq (0)
-i :ne (sentinel)
-i :ge (n)
-i :gt (n)
+a == b
+a ~= b
+a < b
+a <= b
+a > b
+a >= b
 ```
 
-Parsed uses real comparison operators:
+Comparisons lower to typed compare expressions.
 
-```lua
-i < n
-i <= n
-i == 0
-i ~= sentinel
-i >= n
-i > n
-```
-
-### Boolean operators
-
-DSL:
-
-```lua
-a :and (b)
-a :or (b)
-not a
-```
-
-Parsed:
+### Boolean Logic
 
 ```lua
 a and b
@@ -569,99 +544,451 @@ a or b
 not a
 ```
 
-### Conversions
-
-Both surfaces:
+### Calls
 
 ```lua
-lln.as [lln.i32] (x)    -- DSL
-as [i32](x)              -- parsed (planned)
+f(a, b)
+bounds(xs)(n)
 ```
 
-### Host escapes (parsed-only)
+Calls are ordinary expression calls. Contract helpers such as `bounds` and
+`disjoint` are represented this way in parsed syntax before semantic conversion.
 
-The parsed surface can splice Lua values into Lalin expressions with `[...]`:
+### Indexing
 
 ```lua
-local factor = 4
-lalin fn scaled_copy(dst: ptr[i32], src: ptr[i32], n: index): void
-  for i in range(0, n) do
-    dst[i] = src[i] * [factor]
+xs[i]
+matrix[i * width + j]
+```
+
+Index expressions can appear in value position or place position.
+
+### Field Access
+
+```lua
+pair.left
+pair.right
+```
+
+Field access can also appear in place position:
+
+```lua
+pair.right = 42
+```
+
+### Cast
+
+```lua
+as [i32](x)
+as [f64](count)
+```
+
+The parsed conversion currently emits a surface cast; typechecking/lowering
+selects the concrete machine cast.
+
+### Sizeof
+
+```lua
+sizeof [Pair]
+sizeof [i32]
+```
+
+`sizeof` produces a size expression for the target type.
+
+### Host Escape
+
+Host escapes splice Lua values into parsed syntax at construction time:
+
+```lua
+local scale = 4
+
+local copy_scale = fn copy_scale(dst: ptr[i32], src: ptr[i32], n: index): void
+  loop i in 0 .. n do
+    dst[i] = src[i] * [scale]
   end
 end
 ```
 
-The bracket expression is evaluated at construction time using the Lua
-environment captured at the definition site.
+The expression inside `[...]` is evaluated in the Lua environment captured at
+the syntax site. The resulting Lua value is converted into a Lalin literal when
+possible.
 
 ---
 
-## Contracts
+## Regions
 
-Contracts are semantic facts, not comments.
+Regions are explicit control protocols. They are the source construct to reach
+for when the problem is control flow rather than domain iteration.
 
-DSL:
+Use regions for:
+
+- named continuations and exits
+- state-machine-like flow
+- repeated control steps that are not stencil/domain loops
+- explicit transfer with payloads
+- control protocols consumed by another dialect/member
+
+A region has:
+
+- input data parameters
+- continuation exits
+- one or more `entry` / `block` labels
+- explicit `jump` terminators
+
+Shape:
 
 ```lua
-lln.fn. sum { xs [lln.ptr [lln.i32]], n [lln.index] } [lln.i32] {
-  lln.requires {
-    lln.bounds (xs)(n),
-    lln.readonly(xs),
-  },
+region name(inputs; exits)
+  entry start(...)
+    ...
+  end
 
-  -- body
-}
-```
-
-Parsed:
-
-```lua
-lalin fn sum(xs: ptr[i32], n: index): i32
-  requires bounds(xs)(n), readonly(xs)
-
-  -- body
+  block next(...)
+    ...
+  end
 end
 ```
 
-Contracts feed lowering and diagnostics. If the backend needs a fact, it should
-be represented explicitly.
+Example:
+
+```lua
+region clamp_region(x: i32, lo: i32, hi: i32; done(result: i32))
+  entry start()
+    if x < lo then
+      jump done(result = lo)
+    end
+
+    if x > hi then
+      jump done(result = hi)
+    end
+
+    jump done(result = x)
+  end
+end
+```
+
+Continuation exits can be written with a colon:
+
+```lua
+region r(x: i32; done: (result: i32), fail: ())
+  entry start()
+    jump done(result = x)
+  end
+end
+```
+
+or without it:
+
+```lua
+region r(x: i32; done(result: i32))
+  entry start()
+    jump done(result = x)
+  end
+end
+```
+
+Payload fields may be named or anonymous:
+
+```lua
+done(result: i32)
+done(i32)
+```
+
+Parsed region parsing is implemented. The most mature end-to-end path today is
+function/struct/union conversion; region integration is still narrower.
 
 ---
 
-## Native Loops And Stencil-Shaped Work
+## Contracts And Memory Facts
 
-`lln.loop` (DSL) and `for i in range(...)` (parsed) are equivalent. Both produce
-a `ControlStmtRegion` CPS that flows through `Code → Flow → Kernel → Stencil`.
+Contracts describe semantic facts the compiler is allowed to rely on.
 
-### One-dimensional range
+Common contracts:
 
-DSL:
+```lua
+requires bounds(xs)(n)
+requires bounds(dst)(n), bounds(src)(n)
+requires readonly(xs)
+requires writeonly(dst)
+requires disjoint(dst)(src)
+```
+
+Typical meanings:
+
+| Contract | Meaning |
+|---|---|
+| `bounds(ptr)(n)` | memory object has at least `n` elements available |
+| `readonly(ptr)` | function does not write through this pointer |
+| `writeonly(ptr)` | function writes but does not read old values through this pointer |
+| `disjoint(a)(b)` | pointer-backed memory objects do not alias |
+
+These contracts feed:
+
+- `MemBackendAccessInfo`
+- non-trapping memory proofs
+- lane selection facts
+- copy/map/reduce skeleton recognition
+- MC/BC stencil artifact selection
+
+If a source loop has missing memory proofs, the kernel planner may reject
+stencil selection. Internal generated control can still be represented as
+ordinary block code, but source `loop` is the domain/stencil-facing construct.
+
+---
+
+## Loops And Backend Recognition
+
+A parsed 1D domain loop:
+
+```lua
+fn copy_scale(dst: ptr[i32], src: ptr[i32], n: index): void
+  requires bounds(dst)(n), bounds(src)(n), disjoint(dst)(src)
+
+  loop i in 0 .. n do
+    dst[i] = src[i] * 2
+  end
+end
+```
+
+lowers through control-region blocks, then the backend records producer, body,
+sink, memory, effect, and schedule facts. The backend recognizes semantic
+shapes, not textual patterns.
+
+For source `loop`, forming those facts is part of the language contract. Missing
+memory proofs, unsupported body forms, or unsupported producer/sink combinations
+should become diagnostics instead of silently becoming general imperative loops.
+
+Supported stencil families include:
+
+- copy
+- fill
+- map and zip-map
+- cast
+- compare and zip-compare
+- select
+- gather and scatter
+- in-place map
+- reduce, count, find
+- generic `apply_n`, `reduce_n`, and `scan_n`
+- scan
+- scatter-reduce
+
+Facts determine whether a valid source loop becomes:
+
+- a stencil machine call/effect
+- an MC copy+compile residual artifact
+- a BC fallback artifact
+- a typed reject
+
+The internal IR can still contain generic control regions. That is how regions,
+lowering internals, and generated control are represented. The public source
+`loop` surface is narrower: it is a finite domain loop intended to become
+stencil-shaped backend facts.
+
+---
+
+## Backend Defaults
+
+The default executable backend is LuaJIT artifact generation with MC
+copy+compile residual materialization.
+
+```text
+typed Lalin module
+  -> LuaJIT IR projection
+  -> stencil descriptors
+  -> residual_mc bank stencil
+  -> optional TCC residual glue
+  -> loaded module
+```
+
+If MC materialization needs a prebuilt bank that is not available, the default
+path falls back to `residual_bc` and emits a warning. Disable that fallback
+with `allow_bc_fallback = false`.
+
+```lua
+local warnings = {}
+
+local module = lalin.compile("demo", decls, {
+  collect_warnings = warnings,
+})
+```
+
+Explicit BC mode:
+
+```lua
+local module = lalin.compile("demo", decls, {
+  residual = "bc",
+})
+```
+
+Strict MC mode requires an MC bank. Use the plan API when you want to make
+missing or stale MC materialization a hard error:
+
+```lua
+local plan = lalin.plan_luajit_artifact(decls, {
+  name = "Demo",
+  residual = "mc",
+})
+
+local bank = assert(plan.backend.build_mc_bank(plan.artifacts, {
+  stem = "demo_mc_bank",
+}))
+
+local result = assert(plan.backend.compile_lj_module(plan.lj_module, plan.artifacts, {
+  mc_bank = bank,
+  allow_bc_fallback = false,
+  chunk_name = "Demo",
+}))
+
+local module = result.module
+```
+
+Explicit artifact emission:
+
+```lua
+local plan = lalin.plan_luajit_artifact(decls, {
+  name = "Demo",
+  residual = "mc",
+})
+
+local bank = assert(plan.backend.build_mc_bank(plan.artifacts, {
+  stem = "demo_mc_bank",
+}))
+
+local artifact = lalin.emit_luajit_plan_artifact(plan, {
+  name = "Demo",
+  path = "target/artifacts/demo.lua",
+  mc_bank = bank,
+})
+```
+
+### C / AOT Emission
+
+Use `emit_c_artifact` when the desired product is a C artifact that the user
+compiles as a native program or library:
+
+```lua
+local artifact = lalin.emit_c_artifact(decls, {
+  name = "demo",
+  c_path = "target/demo.c",
+  h_path = "target/demo.h",
+  combined_path = "target/demo_combined.c",
+})
+```
+
+The C path is intentionally simple at the boundary: lower the typed program,
+fuse selected stencil-shaped work at C level, emit C, then compile that C with
+`gcc` or the user's chosen C toolchain. It is the whole-program AOT path. The
+LuaJIT MC/BC paths are runtime artifact paths for Lua-hosted modules.
+
+---
+
+## DSL Syntax
+
+The Lua/LLBL DSL is the programmatic construction surface. It is ordinary Lua
+that constructs Lalin declarations through staged heads.
+
+Use the DSL when:
+
+- generating declarations with Lua functions
+- writing macros
+- sharing fragments
+- using ND/tiled/window producer heads today
+- composing Lalin with other LLBL members
+
+### Setup
+
+```lua
+local lalin = require("lalin")
+lalin.language.use()
+```
+
+This installs the usual namespace values, including `lln`.
+
+### Function
+
+```lua
+local add = lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
+  lln.ret (a + b),
+}
+```
+
+### Struct
+
+```lua
+local Pair = lln.struct. Pair {
+  left [lln.i32],
+  right [lln.i32],
+}
+```
+
+### Contracts
+
+```lua
+lln.requires {
+  lln.bounds(xs)(n),
+  lln.readonly(xs),
+}
+```
+
+### Let, Var, Set, Return
+
+```lua
+lln.let. x [lln.i32] (1)
+lln.var. acc [lln.i32] (0)
+set (acc)(acc + x)
+lln.ret (acc)
+```
+
+### Conditionals
+
+```lua
+lln.when (n :eq (0)) {
+  lln.ret (0),
+}
+```
+
+### 1D Loop
 
 ```lua
 lln.loop. i [lln.range { 0, n }] {
-  set (dst[i])(lhs[i] + rhs[i]),
+  set (dst[i])(src[i]),
 }
 ```
 
-Parsed:
+### ND Range
 
 ```lua
-for i in range(0, n) do
-  dst[i] = lhs[i] + rhs[i]
-end
+lln.loop { i, j } [lln.range_nd { { 0, h }, { 0, w } }] {
+  set (dst[i * w + j])(src[i * w + j]),
+}
 ```
 
-Range with explicit step:
+### Tiled ND
 
 ```lua
-for i in range(0, n, 2) do
-  dst[i] = 0
-end
+lln.loop { i, j } [lln.tiled_nd {
+  axes = { { 0, h }, { 0, w } },
+  tiles = { 2, 2 },
+}] {
+  set (dst[i * w + j])(src[i * w + j]),
+}
 ```
 
-### Fold (reduction)
+### Window ND
 
-DSL:
+```lua
+lln.loop { i } [lln.window_nd {
+  axes = { { 0, n } },
+  windows = { { 1, 1, boundary = "clamp" } },
+}] {
+  set (dst[i])(xs[i - 1] + xs[i] + xs[i + 1]),
+}
+```
+
+### Fold And Scan
+
+The DSL has reducer heads for folds and scans used by the native-loop backend.
 
 ```lua
 lln.loop. i [lln.range { 0, n }] [lln.i32] {
@@ -673,54 +1000,8 @@ lln.loop. i [lln.range { 0, n }] [lln.i32] {
 }
 ```
 
-Parsed form is planned, roughly:
-
-```lua
-for i in range(0, n) do
-  fold acc: i32 = init 0, by add { acc + xs[i] }
-end
-```
-
-### N-dimensional ranges
-
-DSL:
-
 ```lua
 lln.loop { i, j } [lln.range_nd { { 0, h }, { 0, w } }] {
-  set (dst[i * w + j])(src[i * w + j]),
-}
-```
-
-Parsed form is planned:
-
-```lua
-for i, j in range_nd({0, h}, {0, w}) do
-  dst[i * w + j] = src[i * w + j]
-end
-```
-
-### Window domains
-
-DSL:
-
-```lua
-lln.loop { i } [lln.window_nd {
-  axes = { { 0, n } },
-  windows = { { 1, 1, boundary = "clamp" } },
-}] {
-  set (dst[i])(xs[i - 1] + xs[i] + xs[i + 1]),
-}
-```
-
-### Tiled scan
-
-DSL:
-
-```lua
-lln.loop { i, j } [lln.tiled_nd {
-  axes = { { 0, h }, { 0, w } },
-  tiles = { 4, 8 },
-}] {
   lln.scan. acc [lln.i32] {
     init = 0,
     by = lln.add,
@@ -731,60 +1012,42 @@ lln.loop { i, j } [lln.tiled_nd {
 }
 ```
 
-### Select (branchless stencil body)
+### Fragments And Splicing
 
-DSL:
+Fragments are Lua values that carry product/list roles.
 
 ```lua
-lln.loop. i [lln.range { 0, n }] {
-  set (dst[i])(select (lhs[i] :gt (0))(lhs[i])(rhs[i])),
+local buffer = lln.product {
+  p [lln.ptr [lln.u8]],
+  n [lln.index],
+}
+
+local first = lln.fn. first { _(buffer) } [lln.u8] {
+  lln.ret (p[0]),
 }
 ```
 
-Parsed uses `select` expression:
+`_(fragment)` is the common splice form. `spread(fragment)` is the explicit
+fallback.
+
+### Compiling DSL Values
 
 ```lua
-for i in range(0, n) do
-  dst[i] = select(lhs[i] > 0, lhs[i], rhs[i])
-end
+local module = lalin.compile("demo", { add })
 ```
 
-### Scatter-reduce
-
-Scatter-reduce is recognized from immediate indexed read-modify-write forms:
+or:
 
 ```lua
-set (bins[idx[i]])(bins[idx[i]] + src[i])
+local unit = lalin.unit("demo", { add })
+local module = lalin.compile("demo", unit)
 ```
-
-Contracts such as `bounds`, `readonly`, `writeonly`, and `disjoint` are consumed
-by these paths. Unsupported loop shapes should be rejected through typed facts
-or fall back through the semantic path; they should not silently become
-element-level FFI code.
-
----
-
-## Ownership
-
-Owned values are the same in both surfaces.
-
-`owned T` values must be discharged or transferred exactly once. They cannot be
-silently copied. Leases describe temporary access to owned or store-managed
-resources.
-
-Important rules:
-
-- owned values cannot be fields of aggregates
-- owned values cannot be copied
-- region calls cannot carry owned or lease payloads; use `emit`
-- handle representation casts are explicit trust boundaries
 
 ---
 
 ## Formatting
 
-Lalin formatting is semantic. It formats evaluated Lalin/LLBL values, not
-arbitrary Lua text.
+Lalin formatting formats evaluated Lalin/LLBL values, not arbitrary source text.
 
 ```sh
 luajit scripts/lalinfmt.lua demo.lua
@@ -795,188 +1058,35 @@ luajit scripts/lalinfmt.lua --write demo.lua
 Programmatic API:
 
 ```lua
-local text = require("lalin").format(value)
-local text = require("lalin").format_file("demo.lua")
-require("lalin").write_format_file("demo.lua")
-```
-
-The formatted output uses the Lua/LLBL DSL surface regardless of how the
-source was authored.
-
----
-
-## Diagnostics
-
-Common early errors for the DSL surface are documented in the underlying LLBL
-system. Common parsed-surface errors:
-
-```text
-expected expression atom, got `end`
-unsupported Lalin syntax entrypoint `foo`
-expected Lalin loop producer range/range_nd/window_nd/tiled_nd
-expected region entry/block or end
-parsed_to_tree: unsupported expression tag ...
-parsed_to_tree: unsupported statement tag ...
-```
-
----
-
-## Compilation
-
-### DSL path
-
-```lua
-local module = lalin.compile("demo", {
-  lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
-    lln.ret (a + b),
-  },
-})
-
-print(module.add(3, 4))
-```
-
-### Parsed path
-
-Parse, convert to tree ASDL, then compile:
-
-```lua
-local syntax = require("llbl.syntax")
-require("lalin.syntax")
-
 local lalin = require("lalin")
-local pvm = require("lalin.pvm")
-local T = pvm.context()
 
-local src = [[
-lalin fn add(a: i32, b: i32): i32
-  return a + b
-end
-]]
-
-local chunk = syntax.loadstring("return {" .. src .. "}")
-local parsed = chunk()
-local module_ast = require("lalin.syntax").to_module(parsed, "add", T)
-
--- Through compiler pipeline
-local Pipeline = require("lalin.frontend_pipeline")(T)
-local checked = Pipeline.typecheck_module(module_ast, { context = T })
-local code_result = Pipeline.checked_to_code_result(checked, { context = T })
-
--- Emit LuaJIT artifact
-local Backend = require("lalin.luajit_backend")(T)
-local lj_module, facts = Backend.lower_module(code_result.module, {
-  contracts = code_result.contracts,
-  copy_patch = "bc",
-})
-local bc_bank = Backend.build_bc_bank(facts.artifacts or {}, { stem = "add" })
-local source = Backend.emit_lua_artifact(lj_module, facts.artifacts, {
-  bc_bank = bc_bank,
-  copy_patch = "bc",
-})
+local text = lalin.format(value)
+local text = lalin.format_file("demo.lua")
+lalin.write_format_file("demo.lua")
 ```
 
-A convenience `lalin.compile_parsed` wrapper is planned.
-
-### LuaJIT artifact emission
-
-Emit a LuaJIT artifact from the DSL path:
-
-```lua
-local artifact = lalin.emit_luajit_artifact(decls, {
-  name = "Demo",
-  path = "target/artifacts/demo.lua",
-  copy_patch = "bc",
-})
-
-artifact:write()
-```
-
-`lalin.compile` uses the LuaTrace BC copy-patch path by default. It is the
-portable semantic path and does not require the native stencil toolchain.
-
-`lalin.emit_luajit_artifact` defaults to the fast copy+residual path:
-
-```text
-typed stencil plans
-  → copy_patch_mc bank stencils
-  → embedded/installed MC bytes
-  → TCC residual glue
-  → loaded LuaJIT module
-```
-
-The MC path requires an already selected and built `MCStencilBank`; it does not
-build one during artifact emission:
-
-```lua
-local plan = lalin.plan_luajit_artifact(decls, {
-  name = "Demo",
-  copy_patch = "mc",
-})
-
-local bank = assert(plan.backend.build_mc_bank(plan.artifacts, {
-  stem = "demo_aot_bank",
-}))
-
-local artifact = lalin.emit_luajit_plan_artifact(plan, {
-  name = "Demo",
-  path = "target/artifacts/demo.lua",
-  mc_bank = bank,
-})
-```
+The formatter currently prints the Lua/LLBL DSL surface.
 
 ---
 
-## Parsed-Channel Frontend
-
-The parsed-channel frontend is built on the generic `llbl.syntax` subsystem:
-
-```text
-llbl.syntax        lexer, registry, constructor, driver, Pratt parser
-lalin.syntax       Lalin grammar: declarations, expressions, statements
-  to_tree.lua      parsed AST → LalinTree ASDL converter
-  for_to_loop.lua  parsed StmtForRange → ControlStmtRegion lowering
-```
-
-Integration seam: `lalin.syntax.to_module(parsed_decls, name, T)` converts
-parsed AST nodes into a `LalinTree.Module` that feeds the existing
-typecheck→lower→backend pipeline.
-
-The parsed frontend supports:
+## Current Parsed Surface Status
 
 | Construct | Status |
-|-----------|--------|
-| `fn name(params): result body end` | ✅ |
-| `struct Name fields end` | ✅ |
-| `union Name variants end` | ✅ |
-| `region name(params; exits) entry/block body end` | ✅ |
-| `for i in range(...) do body end` | ✅ (lowers to `ControlStmtRegion`) |
-| `if/elseif/else/end` | ✅ |
-| `let` / `var` | ✅ |
-| `return expr` | ✅ |
-| `place = expr` (assignment) | ✅ |
-| `requires expr, ...` (contracts) | ✅ |
-| `jump target(payload)` / `emit callee` | ✅ |
-| `[lua_expr]` host escapes | ✅ |
-| `range_nd` / `tiled_nd` / `window_nd` | parser accepts, lowering planned |
-| `fold` / `scan` reducers | planned |
-| `quote` / `expr` / `stmt` fragments | ✅ |
-| Module declarations | parser accepts, conversion planned |
-
----
-
-## Non-Negotiable Rules
-
-These apply to both surfaces equally:
-
-1. Lua owns genericity; Lalin receives monomorphic programs.
-2. Types are values — in the DSL they arrive through `[]`, in the parsed
-   surface they are parsed tokens that become the same ASDL type values.
-3. No angle-bracket type arguments.
-4. No source-level `for`, `while`, `break`, or `continue` beyond the
-   structured `for i in range(...)`.
-5. Every block path terminates with return, jump, emit, trap, or equivalent.
-6. Switches require a default arm and have no fallthrough.
-7. Region protocols are explicit named exits in the signature.
-8. Semantic facts belong in ASDL, not comments or strings.
-9. Fragments are role-tagged values.
-10. Backends consume validated facts; they do not infer hidden semantics.
+|---|---|
+| `fn name(params): result ... end` | implemented |
+| `struct Name ... end` | implemented |
+| `union Name ... end` | implemented |
+| `region name(params; exits) ... end` | parser implemented; integration is narrower than function/struct/union |
+| `module Name ... end` | internal parser surface only; not the public module model |
+| `let` / `var` | implemented |
+| assignment | implemented |
+| `return` | implemented |
+| `requires` | implemented |
+| `if` / `elseif` / `else` | implemented |
+| `loop i in 0 .. n do ... end` | implemented |
+| parsed `fold` / `scan` inside loops | implemented |
+| parsed `grid`, `tiled grid`, `window` domains | implemented |
+| host escapes `[lua_expr]` | implemented |
+| `as [T](expr)` | implemented |
+| `sizeof [T]` | implemented |
+| source `while`, `break`, `continue` | not supported |

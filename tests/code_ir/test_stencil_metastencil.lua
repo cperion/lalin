@@ -15,8 +15,8 @@ local Value = T.LalinValue
 local Stencil = T.LalinStencil
 local Plan = require("lalin.stencil_artifact_plan")(T)
 local Meta = require("lalin.stencil_metastencil")(T)
-local CopyPatchLuaTrace = require("lalin.copy_patch_luatrace")(T)
-local MC = require("tests.code_ir.copy_patch_mc_helper")
+local ResidualLuaTrace = require("lalin.residual_luatrace")(T)
+local MC = require("tests.code_ir.residual_mc_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local bool8 = Code.CodeTyBool8
@@ -154,7 +154,7 @@ local mc_fused_symbol = mc.mc_bank.entries[1].artifact.symbol.text
 assert(Plan.artifact_shape(mc.mc_bank.entries[1].artifact).kind == "reduce_n", "MC fused cover should lower to reduce_n")
 assert(mc.symbols[mc_fused_symbol], "MC selected cover should install fused artifact")
 
-local bc = assert(CopyPatchLuaTrace.realize_artifacts({ selection }, { stem = "test_stencil_metastencil_cover_bc" }))
+local bc = assert(ResidualLuaTrace.realize_artifacts({ selection }, { stem = "test_stencil_metastencil_cover_bc" }))
 assert(#bc.bc_bank.metastencil_covers == 1, "BC bank should own selected cover metadata")
 assert(bc.bc_bank.metastencil_covers[1].descriptor.id.text == "meta:add_then_sum")
 assert(#bc.metastencil_covers == 1, "BC realization should preserve selected cover metadata")

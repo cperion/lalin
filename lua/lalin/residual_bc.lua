@@ -1,6 +1,6 @@
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
-    if T._lalin_api_cache.copy_patch_bc ~= nil then return T._lalin_api_cache.copy_patch_bc end
+    if T._lalin_api_cache.residual_bc ~= nil then return T._lalin_api_cache.residual_bc end
 
     local LJ = T.LalinLuaJIT
 
@@ -52,7 +52,7 @@ local function bind_context(T)
 
     function api.compile_entry(opts)
         opts = opts or {}
-        local source = assert(opts.source, "copy_patch_bc.compile_entry requires source")
+        local source = assert(opts.source, "residual_bc.compile_entry requires source")
         local chunk_name = opts.chunk_name or ("@llbl.codegen/luajit-bc/" .. tostring(opts.symbol or "stencil"))
         local loader, load_err = loadstring(source, chunk_name)
         if loader == nil then return nil, load_err end
@@ -60,7 +60,7 @@ local function bind_context(T)
         local ok, fn_or_err = pcall(loader)
         if not ok then return nil, fn_or_err end
         if type(fn_or_err) ~= "function" then
-            return nil, "copy_patch_bc: BC stencil source must return a function"
+            return nil, "residual_bc: BC stencil source must return a function"
         end
         local bytecode = string.dump(fn_or_err)
         return LJ.LJBCStencilEntry(
@@ -104,14 +104,14 @@ local function bind_context(T)
 
     function api.load_symbol(bank, symbol, opts)
         if not api.target_matches(bank.target) then
-            return nil, "copy_patch_bc: LuaJIT BC bank target does not match current LuaJIT runtime"
+            return nil, "residual_bc: LuaJIT BC bank target does not match current LuaJIT runtime"
         end
         local entry = entry_by_symbol(bank, symbol)
-        if entry == nil then return nil, "copy_patch_bc: unknown BC stencil symbol " .. tostring(symbol) end
+        if entry == nil then return nil, "residual_bc: unknown BC stencil symbol " .. tostring(symbol) end
         return api.load_entry(entry, opts)
     end
 
-    T._lalin_api_cache.copy_patch_bc = api
+    T._lalin_api_cache.residual_bc = api
     return api
 end
 

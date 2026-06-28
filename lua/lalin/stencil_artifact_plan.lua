@@ -830,8 +830,8 @@ local function bind_context(T)
             reason = "gcc autovec vector compiler requires gcc"
         elseif vector_compiler == Stencil.StencilVectorCompilerHandwritten and cc == Stencil.StencilCompilerSystemC then
             reason = "handwritten C vector compiler requires a C compiler"
-        elseif vector_compiler == Stencil.StencilVectorCompilerCopyPatchStencil and cc ~= Stencil.StencilCompilerGcc then
-            reason = "copy-patch stencil vector compiler is currently built by gcc"
+        elseif vector_compiler == Stencil.StencilVectorCompilerCompiledStencil and cc ~= Stencil.StencilCompilerGcc then
+            reason = "copy+compile residual stencil vector compiler is currently built by gcc"
         end
         if reason == nil then return {} end
         return {
@@ -1215,7 +1215,7 @@ local function bind_context(T)
                     Stencil.StencilVectorUnaligned,
                     sched.tail == Schedule.TailMasked and Stencil.StencilVectorMaskTail or Stencil.StencilVectorScalarTail,
                     Stencil.StencilVectorReductionHorizontal,
-                    Stencil.StencilVectorCompilerCopyPatchStencil,
+                    Stencil.StencilVectorCompilerCompiledStencil,
                     tonumber(sched.unroll) or 1,
                     tonumber(sched.interleave) or 1,
                     policy,
