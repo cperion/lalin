@@ -1,0 +1,135 @@
+-- lalin.syntax.decl
+
+local Ast = require("lalin.syntax.ast")
+local Type = require("lalin.syntax.type")
+local Stmt = require("lalin.syntax.stmt")
+local Expr = require("lalin.syntax.expr")
+
+local Decl = {}
+
+local function optional_do(lex)
+  lex:next_if("do")
+end
+
+function Decl.parse_fn(lex, ctx, entry_start)
+  local start = entry_start or ctx.entry_token
+  local name = lex:expect_name("function name")
+  local params = Type.parse_params(lex, ctx)
+  local result = Ast.node("TypeName", { name = "void" }, Ast.origin(lex, name, name, "parsed:type"))
+  if lex:next_if(":") then result = Type.parse(lex, ctx) end
+  optional_do(lex)
+  local body = Stmt.parse_block(lex, ctx, { "end" })
+  lex:expect("end")
+  return Ast.node("DeclFunc", {
+    name = name.value,
+    params = params,
+    result = result,
+    body = body,
+  }, Ast.origin(lex, start, lex.last, "parsed:decl"))
+end
+
+function Decl.parse_struct(lex, ctx, entry_start)
+  local start = entry_start or ctx.entry_token
+  local name = lex:expect_name("struct name")
+  optional_do(lex)
+  local fields = Type.parse_field_block(lex, ctx, "end")
+  lex:expect("end")
+  return Ast.node("DeclStruct", { name = name.value, fields = fields }, Ast.origin(lex, start, lex.last, "parsed:decl"))
+end
+
+function Decl.parse_union(lex, ctx, entry_start)
+  local start = entry_start or ctx.entry_token
+  local name = lex:expect_name("union name")
+  optional_do(lex)
+  local variants = {}
+  while not lex:at_eof() and lex:peek().value ~= "end" do
+    local vstart = lex:expect_name("variant name")
+    local fields = {}
+    if lex:peek().value == "(" then fields = Type.parse_params(lex, ctx) end
+    variants[#variants + 1] = Ast.node("Variant", { name = vstart.value, fields = fields }, Ast.origin(lex, vstart, lex.last or vstart, "parsed:variant"))
+    lex:skip_separators()
+  end
+  lex:expect("end")
+  return Ast.node("DeclUnion", { name = name.value, variants = variants }, Ast.origin(lex, start, lex.last, "parsed:decl"))
+end
+
+local function parse_exits(lex, ctx)
+  local exits = {}
+  lex:expect("exits")
+  while not lex:at_eof() and lex:peek().value ~= "end" do
+    local name = lex:expect_name("exit name")
+    local fields = {}
+    if lex:peek().value == "(" then fields = Type.parse_params(lex, ctx) end
+    exits[#exits + 1] = Ast.node("Exit", { name = name.value, fields = fields }, Ast.origin(lex, name, lex.last or name, "parsed:exit"))
+    lex:skip_separators()
+  end
+  lex:expect("end")
+  return exits
+end
+
+local function parse_entry_block(lex, ctx)
+  local start = lex:next() -- entry or block
+  local kind = start.value
+  local name = lex:expect_name(kind .. " name")
+  local state = {}
+  if lex:peek().value == "(" then state = Type.parse_params(lex, ctx) end
+  optional_do(lex)
+  local body = Stmt.parse_block(lex, ctx, { "end" })
+  lex:expect("end")
+  return Ast.node(kind == "entry" and "RegionEntry" or "RegionBlock", {
+    name = name.value,
+    state = state,
+    body = body,
+  }, Ast.origin(lex, start, lex.last, "parsed:region_block"))
+end
+
+function Decl.parse_region(lex, ctx, entry_start)
+  local start = entry_start or ctx.entry_token
+  local name = lex:expect_name("region name")
+  local inputs = Type.parse_params(lex, ctx)
+  local exits = parse_exits(lex, ctx)
+  local blocks = {}
+  while not lex:at_eof() and lex:peek().value ~= "end" do
+    if lex:peek().value ~= "entry" and lex:peek().value ~= "block" then
+      lex:error_at(lex:peek(), "expected region entry/block or end")
+    end
+    blocks[#blocks + 1] = parse_entry_block(lex, ctx)
+  end
+  lex:expect("end")
+  return Ast.node("DeclRegion", { name = name.value, inputs = inputs, exits = exits, blocks = blocks }, Ast.origin(lex, start, lex.last, "parsed:decl"))
+end
+
+function Decl.parse_module(lex, ctx, entry_start)
+  local start = entry_start or ctx.entry_token
+  local name = nil
+  if lex:peek().kind == "name" and lex:peek().value ~= "do" then name = lex:next().value end
+  optional_do(lex)
+  local items = {}
+  while not lex:at_eof() and lex:peek().value ~= "end" do
+    local t = lex:peek()
+    if t.value == "fn" then lex:next(); items[#items + 1] = Decl.parse_fn(lex, ctx, t)
+    elseif t.value == "struct" then lex:next(); items[#items + 1] = Decl.parse_struct(lex, ctx, t)
+    elseif t.value == "union" then lex:next(); items[#items + 1] = Decl.parse_union(lex, ctx, t)
+    elseif t.value == "region" then lex:next(); items[#items + 1] = Decl.parse_region(lex, ctx, t)
+    else lex:error_at(t, "expected declaration in Lalin module") end
+    lex:skip_separators()
+  end
+  lex:expect("end")
+  return Ast.node("DeclModule", { name = name, items = items }, Ast.origin(lex, start, lex.last, "parsed:decl"))
+end
+
+function Decl.parse_expr_fragment(lex, ctx)
+  local start = ctx.entry_token
+  local expr = Expr.parse(lex, ctx)
+  lex:expect("end")
+  return Ast.node("ExprFragment", { expr = expr }, Ast.origin(lex, start, lex.last, "parsed:expr"))
+end
+
+function Decl.parse_stmt_fragment(lex, ctx)
+  local start = ctx.entry_token
+  local body = Stmt.parse_block(lex, ctx, { "end" })
+  lex:expect("end")
+  return Ast.node("StmtFragment", { body = body }, Ast.origin(lex, start, lex.last, "parsed:stmt"))
+end
+
+return Decl

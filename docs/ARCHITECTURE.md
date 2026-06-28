@@ -20,14 +20,487 @@ Lua source
   -> typecheck
   -> LalinCode facts
   -> kernel and schedule facts
-  -> LuaTrace stencil plans or C stencil plans
-  -> LuaJIT copy+residual artifact
+  -> stencil plans
+  -> LuaJIT artifact (BC or MC copy+residual)
   -> loaded LuaJIT module
 ```
 
 There is no Cranelift/Rust runtime path in the active architecture. C emission
 and native MC banks are the fast artifact path and remain useful for validation,
-benchmarking, and optional artifact generation.
+benchmarking, and prebuilt artifact generation. The LuaJIT BC path is the default
+runtime for `lalin.compile()`.
+
+---
+
+## Full Compiler Pipeline
+
+The compiler is organized around semantic products, not chronological steps.
+Each phase answers one question and produces a typed value or fact set.
+
+```
+Lua source text
+  │
+  ▼
+┌─────────────────────────────────────────┐
+│ 1. DSL Surface (lua/lalin/dsl/)         │
+│    Lua DSL heads evaluate to Decl values │
+│    Decl:syntax() → LalinTree.Module     │
+└─────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────┐
+│ 2. Frontend Pipeline                    │
+│    Pipeline.typecheck_module()          │
+│      ├─ SurfaceResolve                  │
+│      ├─ ClosureConvert                  │
+│      └─ Typecheck.check_module          │
+│    → LalinTree.TypeModuleResult         │
+└─────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────┐
+│ 3. Tree → Code IR                       │
+│    Pipeline.checked_to_code_result()    │
+│      ├─ LayoutResolve                   │
+│      ├─ tree_to_code (LalinTree→LalinCode)│
+│      └─ CodeValidate                    │
+│    → CodeResult(code_module, contracts) │
+└─────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────┐
+│ 4. Fact Analysis (code_*.lua)           │
+│    Backend.lower_module()               │
+│      ├─ CodeGraph (CFG builder)          │
+│      ├─ FlowFacts (loops, domains)       │
+│      ├─ ValueFacts (algebra, ranges)     │
+│      ├─ MemFacts (objects, aliasing)     │
+│      ├─ EffectFacts (side effects)       │
+│      ├─ KernelPlan (parallelizable kernels)│
+│      ├─ SchedulePlan (exec policy)       │
+│      └─ LowerPlan (strategy per fragment)│
+│    → KernelModulePlan + SchedulePlan     │
+└─────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────┐
+│ 5. Stencil Planning                     │
+│    StencilRules + StencilArtifactPlan   │
+│    → StencilArtifact[] (apply, reduce,   │
+│       scan, gather, scatter, etc.)       │
+└─────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────┐
+│ 6. LuaJIT Lowering (luajit_lower)       │
+│    Lower → LalinLuaJIT IR (LJModule)    │
+│    ExecPlan (fragment division)          │
+└─────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────┐
+│ 7. Materialization (copy_patch_*)       │
+│    ┌─ MC path (emit_luajit_artifact):    │
+│    │  copy_patch_mc.lua                  │
+│    │    → load prebuilt gcc-O3 blobs     │
+│    │    → mmap executable memory         │
+│    │    → (optional) TCC residual glue   │
+│    │                                     │
+│    └─ BC path (lalin.compile default):   │
+│       copy_patch_luatrace.lua            │
+│         → LuaJIT BC stencil tables       │
+│         → inline Lua data with BC patches│
+└─────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────┐
+│ 8. Lua Source Emission (luajit_emit)    │
+│    → embed MC bytes or BC bank          │
+│    → emit LuaJIT function definitions   │
+│    → wrap in loadable Lua module         │
+│    → loadstring → chunk() → module       │
+└─────────────────────────────────────────┘
+```
+
+---
+
+## Concrete Example Trace
+
+How `lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] { lln.ret (a + b) }`
+becomes a loaded MC artifact:
+
+```
+1. LuaJIT evaluates lln.fn.add{...}
+   → DSL Decl metatable (kind="fn", name="add", params=[a,b], ...)
+
+2. dsl.to_unit("demo", decl)
+   → Decl:syntax() → LalinTree.Module{ items={ItemFunc{...}} }
+
+3. Pipeline.typecheck_module(module)
+   → SurfaceResolve → ClosureConvert → Typecheck
+   → TypeModuleResult{ checked = { module = { funcs={...} } } }
+
+4. Pipeline.checked_to_code_result(checked)
+   → LayoutResolve → tree_to_code → CodeValidate
+   → CodeResult{ code_module = CodeModule{ funcs={...} } }
+
+5. Backend.lower_module(code_module)
+   → graph(CFG) → flow_facts → value_facts → mem_facts → effect_facts
+   → kernel_plan (identifies "add" as trivial, no kernel needed)
+   → schedule_plan → lower_plan
+   → StencilRules + StencilArtifactPlan
+     (for a+b, produces no stencil — scalar path is fine)
+   → Lower.lower_module() → LJModule{ funcs={add=...} }
+   → ExecPlan → ExecModulePlan
+
+On the BC path (default for `lalin.compile()`):
+
+6. Backend.build_bc_bank(artifacts)
+   → copy_patch_luatrace generates LuaJIT bytecode stencil tables
+   → BC bank built on the fly
+
+7. emit_lua_artifact() emits Lua source with:
+   - Inline BC bank data (LuaJIT bytecode stencils)
+   - LuaJIT function definitions for non-stencil code
+   - No external compiler needed
+
+8. loadstring(source) → chunk() → module table
+   module.add(3, 4) → runs via LuaJIT-compiled bytecode
+
+On the MC path (`emit_luajit_artifact` with prebuilt MCStencilBank):
+
+6. emit_lua_artifact() with prebuilt MC bank:
+   - Embeds pre-compiled MC stencil bytes as C-source-derived data
+   - Generates mmap + ffi.copy installation code
+   - Optionally generates TCC residual wrappers
+
+7. At load time:
+   - mmap() executable memory
+   - ffi.copy() to install pre-compiled stencil blobs
+   - mprotect() to make executable
+   - ffi.cast() to get function pointers
+   - Optional: libtcc compiles thin C wrappers in-memory
+     that replace LuaJIT trace calls with direct native calls
+
+8. loadstring(source) → chunk() → module table
+   module.add(3, 4) → calls pre-compiled native blob via FFI
+```
+
+---
+
+## File Map
+
+### DSL Surface
+
+| File | Role |
+|------|------|
+| `lua/lalin/dsl/init.lua` | Lua-owned DSL surface. Defines `fn`, `struct`, `ret`, `if`, `region`, etc. heads. `to_unit()` converts Lua values into `LalinTree` ASDL. |
+| `lua/lalin/dsl/format.lua` | Canonical semantic formatter for evaluated DSL values. |
+
+### Frontend / Typecheck
+
+| File | Role |
+|------|------|
+| `lua/lalin/frontend_pipeline.lua` | Orchestrates DSL→Tree→Typecheck→Code pipeline. Entry points: `typecheck_module`, `checked_to_code_result`, `code_result_to_back`, `code_result_to_c`. |
+| `lua/lalin/tree_typecheck.lua` | Full LalinTree typechecker — walks expressions, statements, functions, regions, modules. |
+| `lua/lalin/tree_typecheck_rules.lua` | Rule dispatch for statement/expression typechecking. |
+| `lua/lalin/tree_expr_type.lua` | Expression type inference. |
+| `lua/lalin/tree_stmt_type.lua` | Statement-level type operations (termination, etc.). |
+| `lua/lalin/tree_place_type.lua` | Place (lvalue) type inference. |
+| `lua/lalin/tree_module_type.lua` | Module-level type resolution, type environments, imports. |
+| `lua/lalin/tree_field_resolve.lua` | Field resolution — struct.field to types and offsets. |
+| `lua/lalin/tree_contract_facts.lua` | Contract facts from function declarations (bounds, disjointness, SoA). |
+| `lua/lalin/tree_control_facts.lua` | Control-flow facts from control regions (entry/block/continuation). |
+| `lua/lalin/tree_to_code.lua` | Lowers `LalinTree` (typed AST) to `LalinCode` (code IR). |
+| `lua/lalin/tree_to_code_rules.lua` | Dispatch tables for tree→code lowering (27 expr, 5 place, 16 stmt variants). |
+
+### Code IR & Fact Analysis
+
+| File | Role |
+|------|------|
+| `lua/lalin/code_type.lua` | Code type operations, size/alignment, target configuration. |
+| `lua/lalin/code_validate.lua` | Validates `LalinCode` IR invariants. |
+| `lua/lalin/code_graph.lua` | CFG builder — basic blocks, edges, loops, function-level graphs. |
+| `lua/lalin/code_flow_facts.lua` | Flow analysis — domains, trip counts, loop structure. |
+| `lua/lalin/code_value_facts.lua` | Value analysis — algebra, closed-form expressions, ranges, reductions. |
+| `lua/lalin/code_mem_facts.lua` | Memory analysis — objects, intervals, aliasing, access patterns. |
+| `lua/lalin/code_effect_facts.lua` | Effect analysis — read/write/atomic/rw, contract effects. |
+| `lua/lalin/code_kernel_plan.lua` | Kernel identification — finds parallelizable loop/function fragments, produces `LalinKernel` plans. |
+| `lua/lalin/code_kernel_plan_rules.lua` | Rule dispatch for kernel classification. |
+| `lua/lalin/code_schedule_plan.lua` | Schedule planning — assigns scalar/vector/closed-form strategies per kernel. |
+| `lua/lalin/code_schedule_plan_rules.lua` | Rule dispatch for schedule plan. |
+| `lua/lalin/code_lower_plan.lua` | Lowering strategy — decides code/kernel/closed-form per fragment. |
+| `lua/lalin/code_lower_plan_rules.lua` | Rule dispatch for lower plan. |
+| `lua/lalin/code_aggregate_abi.lua` | Aggregate type ABI classification — scalar/view/slice/bytespan/aggregate. |
+| `lua/lalin/code_to_back.lua` | Maps `LalinCode` types/shapes to `LalinBack` back IR. |
+| `lua/lalin/code_to_c.lua` | Maps `LalinCode` types/shapes to `LalinC` C IR. |
+
+### Stencil & Execution Plans
+
+| File | Role |
+|------|------|
+| `lua/lalin/exec_plan.lua` | Produces `LalinExec` plans — divides functions into scalar blocks, stencil calls, control, calls, returns, traps. |
+| `lua/lalin/exec_plan_rules.lua` | Rule dispatch for exec plan fragments. |
+| `lua/lalin/stencil_rules.lua` | Stencil rule engine — classifies kernel body into apply/reduce/scan/scatter_reduce vocabulary. |
+| `lua/lalin/stencil_artifact_plan.lua` | Generates concrete stencil artifacts (~30 kinds: copy, map, reduce, scan, gather, scatter, etc.). |
+| `lua/lalin/stencil_c.lua` | Generates complete C translation unit from stencil artifacts for GCC compilation. Produces the C source that becomes the MC bank. |
+| `lua/lalin/stencil_metastencil.lua` | Cross-provider stencil matching (MC bank ↔ BC bank equivalence). |
+| `lua/lalin/stencil_support_matrix.lua` | Declares which stencil operations are supported/rejected/future. |
+
+### LuaJIT Backend
+
+| File | Role |
+|------|------|
+| `lua/lalin/luajit_backend.lua` | Central backend orchestration — lower_module(), build_mc_bank(), build_bc_bank(), emit_lua_artifact(). |
+| `lua/lalin/luajit_lower.lua` | Lowers `LalinCode` + kernel plans to `LalinLuaJIT` IR. Builds stencil machines. |
+| `lua/lalin/luajit_lower_rules.lua` | Rule dispatch for LuaJIT lowering. |
+| `lua/lalin/luajit_emit.lua` | Emits Lua source from `LalinLuaJIT` IR — LuaJIT functions with FFI ctypes and stencil calls. |
+| `lua/lalin/luajit_expr.lua` | Lua expression utilities for emission. |
+| `lua/lalin/luajit_ctype.lua` | Converts `LalinCode.CodeType` to LuaJIT FFI ctype descriptors. |
+| `lua/lalin/luajit_measure.lua` | Runtime measurement utilities (sizes, alignment, pointer bits). |
+
+### Copy-Patch Materialization
+
+| File | Role |
+|------|------|
+| `lua/lalin/copy_patch_mc.lua` | **MC (machine code) path** — installs pre-compiled stencil blobs via mmap+exec, provides FFI wrappers. MC stencils are compiled by gcc at prebuild time. |
+| `lua/lalin/copy_patch_mc_intern_set.lua` | Intern set for MC stencils — deduplicates by canonical content hash, registry of reusable blobs. |
+| `lua/lalin/copy_patch_bc.lua` | BC bank platform — runtime target detection, target matching, bank identity. |
+| `lua/lalin/copy_patch_luatrace.lua` | **BC (bytecode) path** — LuaTrace trace-shaped stencil code, BC copy-patch materialization. Fallback/probe surface. |
+
+### C Backend
+
+| File | Role |
+|------|------|
+| `lua/lalin/c_emit.lua` | Emits C source from `LalinC.BackendUnit` — .c, .h, combined artifact output. |
+| `lua/lalin/lower_to_c.lua` | Lowers `LalinCode` + lower plan to C IR. |
+| `lua/lalin/c_validate.lua` | Validates C IR invariants. |
+| `lua/lalin/c_helpers.lua` | C helper function library for stencil operations. |
+| `lua/lalin/c_tcc.lua` | libtcc (TinyCC) integration for in-process C JIT compilation of residual glue wrappers. Not used for stencil compilation. |
+| `lua/lalin/c_abi.lua` | C ABI classification — how types are passed/returned. |
+| `lua/lalin/c_coverage.lua` | Coverage tracking — marks unimplemented C backend constructs. |
+
+### Compiler Driver & Phases
+
+| File | Role |
+|------|------|
+| `lua/lalin/compiler_driver.lua` | Public orchestration boundary — lowers modules through phase graph. |
+| `lua/lalin/compiler_package.lua` | Defines the compiler as a `LalinPhase` package with worlds, machines, phases, roots. |
+| `lua/lalin/compiler_machines.lua` | Concrete machine implementations (typecheck, checked→c_code, code→c). |
+| `lua/lalin/compiler_model.lua` | Loads full schema into a context. |
+| `lua/lalin/compiler_abi.lua` | CodeResult ABI validation. |
+| `lua/lalin/phase_model.lua` | Loads LalinPhase schema. |
+| `lua/lalin/phase_dsl.lua` | LLBL dialect for authoring phase packages. |
+| `lua/lalin/phase_plan.lua` | Phase graph planner — finds valid paths, produces ordered Plan. |
+| `lua/lalin/phase_execute.lua` | Plan executor — runs phase steps, resolves machines, passes outputs. |
+| `lua/lalin/phase_validate.lua` | Validates phase package structure. |
+
+### Back Infrastructure
+
+| File | Role |
+|------|------|
+| `lua/lalin/back_program.lua` | Back IR program construction utilities. |
+| `lua/lalin/back_inspect.lua` | Inspection/debug tools for back IR. |
+| `lua/lalin/back_command_binary.lua` | External compiler invocation (TCC, GCC). |
+| `lua/lalin/back_provenance.lua` | Provenance tracking for back IR values. |
+| `lua/lalin/back_target_model.lua` | Target model — CPU features, ABI, capabilities. |
+| `lua/lalin/back_validate.lua` | Back IR validation. |
+
+### Error / Diagnostics
+
+| File | Role |
+|------|------|
+| `lua/lalin/error/init.lua` | Error management facade — registry, emit, reports, render. |
+| `lua/lalin/error/span.lua` | Source span type and operations. |
+| `lua/lalin/error/report.lua` | ErrorReport construction. |
+| `lua/lalin/error/catalog.lua` | Error catalog — code registry, explainers by phase. |
+| `lua/lalin/error/registry.lua` | Issue registry — collects, deduplicates, produces reports. |
+| `lua/lalin/error/format.lua` | Shared formatting utilities. |
+| `lua/lalin/error/present_terminal.lua` | Terminal rendering of diagnostics. |
+| `lua/lalin/error/issue_collector.lua` | CollectingCollector and ThrowingCollector — phase boundary to diagnostic engine. |
+| `lua/lalin/error/cascade_filter.lua` | Cascade suppression filter. |
+| `lua/lalin/error/span_resolvers.lua` | Phase-specific span resolvers. |
+| `lua/lalin/error/suggest.lua` | Error suggestions. |
+
+### Source Infrastructure
+
+| File | Role |
+|------|------|
+| `lua/lalin/source_anchor_index.lua` | Source anchor index — maps positions to anchors. |
+| `lua/lalin/source_position_index.lua` | Line/column position index. |
+| `lua/lalin/source_map.lua` | Source location mapping utilities. |
+| `lua/lalin/source_analysis.lua` | Source analysis utilities. |
+| `lua/lalin/source_text_apply.lua` | Source text manipulation operations. |
+
+### Prebuild Tools
+
+| File | Role |
+|------|------|
+| `tools/gen_lalin_mc_bank.lua` | Prebuilds the embedded MC stencil bank. Generates all stencil artifacts from the intern set, compiles them via `gcc -O3 -march=native`, extracts binary blobs, and emits `lalin_embedded_mc_bank.c`/`.h`. |
+| `tools/gen_lalin_module_bank.lua` | Prebuilds the LuaJIT BC bank. Dumps all required `.lua` source files to bytecode and emits C byte-array sources for embedding. |
+
+### Other
+
+| File | Role |
+|------|------|
+| `lua/lalin/init.lua` | Public facade — `lalin.loadstring`, `lalin.compile`, `lalin.emit_c_artifact`, etc. |
+| `lua/lalin/cli.lua` | CLI interface. |
+| `lua/lalin/ast.lua` | AST utility layer. |
+| `lua/lalin/quote.lua` | Quotation utilities. |
+| `lua/lalin/reduction_algebra.lua` | Reduction algebra (commutative, associative) for stencil optimization. |
+| `lua/lalin/value_proxy.lua` | Value proxy for DSL values. |
+| `lua/lalin/closure_convert.lua` | Closure conversion pass. |
+| `lua/lalin/surface_resolve.lua` | Surface name resolution. |
+| `lua/lalin/sem_call_decide.lua` | Call semantic decision. |
+| `lua/lalin/sem_const_eval.lua` | Constant evaluation. |
+| `lua/lalin/sem_layout_resolve.lua` | Layout resolution. |
+| `lua/lalin/sem_switch_decide.lua` | Switch dispatch decision. |
+| `lua/lalin/project_asdl.lua` | Project ASDL utilities. |
+| `lua/lalin/project_ready_facts.lua` | Project readiness facts. |
+| `lua/lalin/project_report.lua` | Project report generation. |
+| `lua/lalin/buffer_view.lua` | Buffer view utilities. |
+| `lua/lalin/flatline.lua` | Flatline — debug representation for ASDL values. |
+
+---
+
+## Schema / ASDL Modules
+
+Each file in `lua/lalin/schema/` returns a `lalinschema` Module defining
+the ASDL types for that domain:
+
+| File | Key Types |
+|------|-----------|
+| `core.lua` | Name, Path, Id, Scalar, Literal, BinaryOp, CmpOp, CastOp, Intrinsic, AtomicOrdering |
+| `type.lua` | Type — TScalar, TPtr, TView, TSlice, TArray, TLease, TOwned, TAccess, THandle, TClosure, TFunc, Param, FieldDecl |
+| `tree.lua` | Module, Expr (30+ variants), Stmt (20+), Place, Func, ConstItem, Region, ControlBlock, SwitchArm, Domain |
+| `code.lua` | CodeModule, CodeFunc, CodeBlock, CodeInst, CodeTerm, CodeType, CodeValue, CodeOp, CodeContract |
+| `graph.lua` | Graph, GraphFunc, GraphEdge, GraphLoop, GraphBlock |
+| `flow.lua` | FlowDomain, FlowTripCount, FlowEdgeFact, FlowModuleFacts |
+| `value.lua` | ValueExpr, ClosedFormFact, ReductionFact, AlgebraProof, ValueModuleFacts |
+| `mem.lua` | MemObject, MemAccess, MemInterval, MemAccessPattern, MemModuleFacts |
+| `effect.lua` | OpEffect, EffectModuleFacts |
+| `kernel.lua` | KernelSubject, KernelDomain, KernelLane, KernelPlan, KernelReject, KernelModulePlan |
+| `stencil.lua` | StencilArtifact, StencilPlan, StencilVocab, StencilLayout, StencilModulePlan |
+| `schedule.lua` | KernelSchedule, ScheduleKind, ScheduleModulePlan |
+| `lower.lua` | LowerFragment, LowerStrategy, LowerModulePlan |
+| `exec.lua` | ExecFragment, ExecFragmentKind, ExecModulePlan |
+| `back.lua` | BackTargetModel, BackFunc, BackBlock, BackInst, BackProgram |
+| `c.lua` | CBackendUnit, CBackendFunc, CBackendType, CBackendStmt |
+| `c_ast.lua` | C AST node types |
+| `luajit.lua` | LJModule, LJFunc, LJBlock, LJExpr, LJInst, LJCType, LJStencilMachine |
+| `luatrace.lua` | LuaTrace trace descriptors, BC bank types |
+| `compiler.lua` | CodeResult, FlatlineImageIssue |
+| `phase.lua` | Package, World, Machine, Phase, Root, Plan, PlanStep |
+| `bind.lua` | Binding, ValueRef |
+| `sem.lua` | FieldRef, FieldLayout, TypeLayout, LayoutEnv, ConstValue |
+| `link.lua` | Link plan and target model |
+| `dasm.lua` | Disassembly types |
+| `host.lua` | Host field representation |
+| `parse.lua` | Parse tree types |
+| `source.lua` | Source location types |
+| `mlua.lua` | MLua document analysis |
+| `project.lua` | Project structure |
+
+---
+
+## Two Copy-Patch Materialization Paths
+
+### MC Path (prebuilt, fast)
+
+```
+PREBUILD (Makefile / gen_lalin_mc_bank.lua):
+  stencil_intern_set (copy_patch_mc_intern_set)
+    → enumerate all stencil operation combinations
+    → StencilC.source(artifacts) → complete C translation unit
+    → gcc -c -std=c99 -O3 -march=native -fno-builtin -fno-pic ...
+    → readelf -Wr (relocations) / -SW (sections) / -Ws (symbols)
+    → materialize each .text.<symbol> section into binary blob
+      (resolve all local relocations, no runtime fixups needed)
+    → embed as unsigned char[] arrays in
+      lalin_embedded_mc_bank.c / lalin_embedded_mc_bank.h
+
+RUNTIME (emit_luajit_artifact):
+  emit_mc_bank_source(prebuilt_bank)
+    → emit Lua source with embedded MC blobs
+    → at load: mmap() executable memory, ffi.copy() stencil bytes,
+      mprotect() RW→X, ffi.cast() to function pointers
+  Optional: emit_native_residuals()
+    → libtcc compiles thin C wrappers in-memory
+    → wrappers call installed stencils at coarse function boundaries
+    → replaces LuaJIT trace calls with direct native FFI calls
+  → load: installed native code, optionally wrapped by TCC glue
+```
+
+The MCStencilBank is **never built on demand at runtime** — the direct API
+enforces this by requiring an explicit `mc_bank` for `copy_patch = "mc"` and
+erroring if one is not provided.
+
+**Key facts**:
+- Compiler: `gcc` (or `$CC`), default flags `-std=c99 -O3 -march=native -c`
+- Time: prebuild only (Makefile), never at runtime
+- Output: binary blobs embedded in C source, compiled into the `lalin` host binary
+- TCC role: none for stencils; only for optional residual glue
+
+### BC Path (default for lalin.compile(), fallback for MC)
+
+```
+Stencil artifacts
+  → copy_patch_luatrace.realize_bc_artifacts(artifacts)
+    → generate LuaTrace trace-shaped stencil tables
+    → build BC bank with artifact fingerprints
+    → emit inline Lua data with BC copy-patch
+  → luajit_emit embeds BC bank data
+  → load: LuaJIT compiles the emitted functions
+```
+
+No external compiler needed. The BC bank is built on the fly at runtime.
+`lalin.compile()` defaults to this path (`opts.copy_patch = "bc"`).
+
+---
+
+## Region Model
+
+`region.` is the generic LLBL control-machine head. This is one of the main
+reasons LLBL composes the whole language: the same control algebra can describe
+native CFG, processes, parser steps, scheduler steps, LLPVM tasks, and backend
+pull machines. A region is:
+
+```text
+input product + state product + named exit protocol + transition body
+```
+
+Streams are not a separate semantic category. A pull stream is a region with a
+pull protocol. GPS is one lowering of a pull-shaped region:
+
+```lua
+gen(param, state) -> nil
+gen(param, state) -> next_state, payload...
+```
+
+This keeps laziness and fusion explicit. A consumer asks for the next exit; the
+machine computes only enough to produce that exit. Whole arrays, reports,
+diagnostic bags, backend buffers, and artifacts are materializers, not the
+region itself.
+
+Lalin consumes generic region descriptors when the body uses native Lalin
+`entry`, `block`, `jump`, and `emit` vocabulary. LLPVM consumes region-shaped
+work as phase/task machines. LLBL processes lower event protocols to GPS.
+
+Region composition has two runtime shapes:
+
+```text
+emit
+  direct CFG splice; no frame; all exits wired at the call site
+
+call
+  instrumentable/recursive boundary; implemented as sealed function plus
+  encoded exit union plus dispatch back to named exits
+```
+
+Use `emit` for ordinary internal composition. Use `call` when the region needs
+its own frame for recursion, profiling, debugging, or instrumentation.
+
+---
 
 ## Language Layers
 
@@ -117,52 +590,9 @@ The reduction rule is strict: if two members can express the same semantic
 primitive, one member owns it and the other projects to it. Overlapping
 implementations are a design bug, not a feature.
 
-## Region Model
-
-`region.` is the generic LLBL control-machine head. This is one of the main
-reasons LLBL composes the whole language: the same control algebra can describe
-native CFG, processes, parser steps, scheduler steps, LLPVM tasks, and backend
-pull machines. A region is:
-
-```text
-input product + state product + named exit protocol + transition body
-```
-
-Streams are not a separate semantic category. A pull stream is a region with a
-pull protocol. GPS is one lowering of a pull-shaped region:
-
-```lua
-gen(param, state) -> nil
-gen(param, state) -> next_state, payload...
-```
-
-This keeps laziness and fusion explicit. A consumer asks for the next exit; the
-machine computes only enough to produce that exit. Whole arrays, reports,
-diagnostic bags, backend buffers, and artifacts are materializers, not the
-region itself.
-
-Lalin consumes generic region descriptors when the body uses native Lalin
-`entry`, `block`, `jump`, and `emit` vocabulary. LLPVM consumes region-shaped
-work as phase/task machines. LLBL processes lower event protocols to GPS.
-
-Region composition has two runtime shapes:
-
-```text
-emit
-  direct CFG splice; no frame; all exits wired at the call site
-
-call
-  instrumentable/recursive boundary; implemented as sealed function plus
-  encoded exit union plus dispatch back to named exits
-```
-
-Use `emit` for ordinary internal composition. Use `call` when the region needs
-its own frame for recursion, profiling, debugging, or instrumentation.
+---
 
 ## Compiler Boundaries
-
-The compiler is organized around semantic products, not chronological steps.
-Each phase answers one question and produces a typed value or fact set.
 
 Important boundaries:
 
@@ -178,35 +608,74 @@ Schedules are not semantics. They may choose lanes, tails, grouping, and
 compiler/materializer policy, but they may not invent effects, stores,
 reductions, alias facts, or safety conditions.
 
+---
+
 ## Backend Model
 
-The active fast backend architecture is copy+residual. Emitted LuaJIT artifacts
-default to `copy_patch_mc` bank stencils plus TCC residual glue; `lalin.compile`
-defaults to `copy_patch_bc`.
+The backend has two materialization paths, selected by `opts.copy_patch`:
 
-This split is intentional:
+| Path | Default for | Compiler needed | Build time |
+|------|-------------|-----------------|-----------|
+| `copy_patch = "mc"` | `emit_luajit_artifact()` | `gcc` (or `$CC`) with `-O3 -march=native` | Prebuild (Makefile) |
+| `copy_patch = "bc"` | `lalin.compile()` | None | On the fly at runtime |
 
-- `copy_patch_mc` owns the hot stencil bodies. They are generated as C through
-  the LLBL C dialect, compiled by GCC/compatible C compilers, extracted into the
-  MC bank, and installed as executable bytes.
-- The residual JIT owns glue around selected bank stencils. It is compiled by
-  TCC and should stay at coarse function/stencil boundaries; it must not become
-  an element-by-element FFI strategy.
-- `copy_patch_bc` remains the bytecode semantic path and fallback/probe surface.
+The two paths share the same stencil planning pipeline and differ only in
+materialization strategy.
 
-LuaTrace lowering emits trusted LuaJIT-shaped functions from typed stencil
-plans. LuaJIT compiles those functions into bytecode. The BC bank stores exact
-compiled prototypes with artifact fingerprints; materialization loads the
-selected bytecode entry without bytecode holes.
+### MC Path (`copy_patch_mc`)
 
-Native binary stencils are C-compiled `copy_patch_mc` bank entries with no
-runtime holes. The emitted artifact installs those bank bytes, then the residual
-JIT compiles thin TCC wrappers that call the installed bank stencils at coarse
-function boundaries.
+The MC path owns hot stencil bodies as pre-compiled native machine code.
+
+**Prebuild** (`tools/gen_lalin_mc_bank.lua`, run by `make`):
+- The intern set (`copy_patch_mc_intern_set.lua`) enumerates every possible
+  stencil operation combination (apply_n, reduce_n, scan_n, scatter_reduce_n
+  × all memory layouts × all producer shapes × scalar/vector schedule).
+- `StencilC.source()` generates a complete C translation unit with one
+  function per stencil variant.
+- `gcc -c -std=c99 -O3 -march=native` compiles to an object file.
+- `readelf` parses relocations, sections, and symbols; each `.text.<symbol>`
+  section is materialized into a self-contained binary blob with all local
+  relocations resolved.
+- The blobs are embedded as `unsigned char[]` in
+  `lalin_embedded_mc_bank.c` / `.h` and compiled into the `lalin` host binary.
+
+**Runtime** (in the emitted LuaJIT artifact):
+- The pre-compiled MC stencil bytes are installed via `mmap()` + `ffi.copy()`
+  into executable memory, then `ffi.cast()` to get function pointers.
+
+### Residual JIT (TCC, optional, MC path only)
+
+The residual JIT compiles thin C wrappers around installed MC bank stencils.
+It is compiled by **libtcc** (in-memory, in-process, no external process):
+
+- For each LuaJIT function that calls an MC bank stencil, a small C wrapper
+  function is generated (e.g., `int32_t wrapper(void *xs, int32_t start, int32_t stop) { ... }`).
+- libtcc compiles all wrappers as a single in-memory translation unit.
+- The resulting symbols replace the original LuaJIT trace calls with direct
+  native FFI calls at coarse function/stencil boundaries.
+- This is optional and skipped if libtcc is unavailable.
+- The residual must not become an element-by-element FFI strategy.
+
+### BC Path (`copy_patch_bc`)
+
+The BC path is the bytecode semantic path and fallback/probe surface:
+
+- LuaTrace lowering emits trusted LuaJIT-shaped functions from typed stencil
+  plans.
+- The BC bank stores exact compiled prototypes with artifact fingerprints.
+- Materialization loads the selected bytecode entry without bytecode holes.
+- No external compiler needed — the BC bank is built on the fly at runtime.
+- `lalin.compile()` defaults to this path.
+
+### Ground rules
+
 Artifact emission does not perform an ad hoc MC bank build; native emission is
-plan -> prebuilt bank -> residual glue. The direct API enforces this by requiring
-`mc_bank` for `copy_patch = "mc"`, while `copy_patch = "bc"` may still build a
-local bytecode bank because BC is the semantic artifact itself.
+plan → prebuilt bank → (optional) residual glue. The direct API enforces this
+by requiring an explicit `mc_bank` for `copy_patch = "mc"` and erroring if one
+is not provided, while `copy_patch = "bc"` may build a local bytecode bank
+because BC is the semantic artifact itself.
+
+The backend must consume semantic facts honestly:
 
 The backend must consume semantic facts honestly:
 
@@ -220,6 +689,8 @@ The backend must consume semantic facts honestly:
 If a fact is required for correctness or performance but is not represented in
 ASDL, the schema is incomplete and must be fixed before lowering is extended.
 
+---
+
 ## C And Native Stencil Role
 
 The C path is an optional projection and measurement tool. It is useful for:
@@ -230,6 +701,8 @@ The C path is an optional projection and measurement tool. It is useful for:
 - making target ABI decisions explicit
 
 It is not the main authoring runtime.
+
+---
 
 ## Diagnostics
 
@@ -246,22 +719,7 @@ Fast generated paths should be diagnostically lazy. They carry compact metadata
 and replay through reflective machinery on failure when a rich diagnostic is
 needed.
 
-## File Map
-
-```text
-lua/llbl.lua                  LLBL substrate
-lua/lalin/dsl/               Lalin authoring surface
-lua/lalin/schema/            ASDL/schema modules
-lua/lalin/frontend_pipeline.lua
-                             DSL/tree/typecheck/code pipeline
-lua/lalin/luajit_backend.lua LuaTrace/LuaJIT backend facade
-lua/lalin/copy_patch_luatrace.lua LuaTrace stencil lowering
-lua/lalin/copy_patch_bc.lua LuaJIT BC bank
-lua/lalin/copy_patch_mc.lua MC bank extraction and installation
-lua/lalin/c_tcc.lua TCC residual compiler binding
-lua/llpvm/                   LLPVM language member
-lua/ui/                      UI kernel and widgets
-```
+---
 
 ## Completion Law
 

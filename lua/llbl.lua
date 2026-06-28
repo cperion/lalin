@@ -7264,4 +7264,10 @@ end
 
 require("llbl.bootstrap").install(llbl)
 
+-- LLBL parsed-channel subsystem: lexer, island detection, entrypoint registry,
+-- parse-time import, constructor invocation, lexical ref capture, and the mixed
+-- Lua + parsed-channel loader driver.  Dialects register grammars through the
+-- generic llbl.syntax.registry; meaning is owned by each dialect.
+require("llbl.syntax").install(llbl)
+
 return llbl
