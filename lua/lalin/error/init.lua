@@ -30,7 +30,6 @@ M.Catalog = require("lalin.error.catalog")
 M.Registry = require("lalin.error.registry")
 M.Suggest = require("lalin.error.suggest")
 M.Terminal = require("lalin.error.present_terminal")
-M.LSP = require("lalin.error.present_lsp")
 
 -- New Issue Stream modules
 M.CollectingCollector = require("lalin.error.issue_collector").CollectingCollector
@@ -91,13 +90,6 @@ function M.reports_from_resolved(resolved, analysis_ctx)
         reports[#reports + 1] = M.report_from_resolved(resolved[i], analysis_ctx)
     end
     return reports
-end
-
-function M.render_lsp(reports_or_resolved, analysis_ctx)
-    if reports_or_resolved and reports_or_resolved[1] and is_resolved_issue(reports_or_resolved[1]) then
-        return M.LSP.render_all(M.reports_from_resolved(reports_or_resolved, analysis_ctx))
-    end
-    return M.LSP.render_all(reports_or_resolved or {})
 end
 
 -------------------------------------------------------------------------------

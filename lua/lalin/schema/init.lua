@@ -36,9 +36,6 @@ local SCHEMA_MODULES = {
     "host",
     "source",
     "mlua",
-    "editor",
-    "lsp",
-    "rpc",
 }
 
 local function append(dst, src)

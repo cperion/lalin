@@ -36,7 +36,6 @@ M.ast = require("lalin.ast")
 M.dsl = require("lalin.dsl")
 M.lalin = M.dsl.namespace()
 M.lln = M.dsl.namespace { name = "lln" }
-M.debugger_core = require("lalin.debugger_core")
 M.back_program = require("lalin.back_program")
 M.back_target_model = require("lalin.back_target_model")
 M.back_inspect = require("lalin.back_inspect")
@@ -57,7 +56,6 @@ M.c_emit = require("lalin.c_emit")
 M.c_helpers = require("lalin.c_helpers")
 M.c_tcc = require("lalin.c_tcc")
 
-M.lsp = require("lalin.rpc_stdio_loop")
 
 local llbl = require("llbl")
 local llpvm_dsl = require("llpvm.dsl")

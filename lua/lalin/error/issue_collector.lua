@@ -115,13 +115,6 @@ function CollectingCollector:reports()
     return reports
 end
 
---- Render to LSP diagnostics
-function CollectingCollector:render_lsp()
-    local reports = self:reports()
-    local LSP = require("lalin.error.present_lsp")
-    return LSP.render_all(reports)
-end
-
 --- Render to terminal string
 function CollectingCollector:render_terminal()
     local reports = self:reports()

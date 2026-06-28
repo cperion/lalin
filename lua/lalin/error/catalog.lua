@@ -241,7 +241,7 @@ local function ensure_explainers()
     if explainers.parse then return end
     explainers.parse = function(issue, analysis) return { kind = "ParseIssue", primary = issue.message or "parse error" } end
     explainers.host = function(issue, analysis) return { kind = "HostIssue", primary = issue.message or "host error" } end
-    explainers.binding = require("lalin.editor_binding_facts").explain_binding_issue
+    explainers.binding = function(issue, analysis) return { kind = "BindingIssue", primary = issue.message or "binding error" } end
     explainers.typecheck = require("lalin.tree_typecheck").explain_type_issue
     explainers.backend = require("lalin.back_validate").explain_back_issue
     explainers.link = require("lalin.link_plan_validate").explain_link_issue
