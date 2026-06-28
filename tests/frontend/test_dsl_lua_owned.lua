@@ -37,7 +37,7 @@ return {
 
   fn. greeting
     {}
-    [ptr [u8]]
+    [slice [u8]]
     {
       ret "hello, lalin",
     },

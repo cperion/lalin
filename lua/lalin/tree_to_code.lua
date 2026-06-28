@@ -188,7 +188,8 @@ local function bind_context(T)
         module_ctx.next_string_data = (module_ctx.next_string_data or 0) + 1
         local stem = "str_" .. sanitize(ctx.func_name) .. "_" .. tostring(module_ctx.next_string_data)
         local id = Code.CodeDataId("data:" .. tostring(module_ctx.module_name or "module") .. ":" .. stem)
-        local nul_terminated = decoded_string_bytes(bytes) .. "\0"
+        local decoded = decoded_string_bytes(bytes)
+        local nul_terminated = decoded .. "\0"
         module_ctx.generated_data[#module_ctx.generated_data + 1] = Code.CodeData(
             id,
             stem,
@@ -198,7 +199,7 @@ local function bind_context(T)
             { Code.CodeDataBytes(0, nul_terminated) },
             Code.CodeOriginGenerated("string literal " .. stem)
         )
-        return id
+        return id, #decoded
     end
 
     local function value_id_for_binding(ctx, binding)
@@ -249,6 +250,10 @@ local function bind_context(T)
 
     local function code_ty(ctx, ty)
         return CodeType.type_to_code(ty, ctx.module_ctx)
+    end
+
+    local function u8_code_ty()
+        return Code.CodeTyInt(8, Code.CodeUnsigned)
     end
 
     local function variant_def(ctx, type_name)
@@ -749,7 +754,12 @@ local function bind_context(T)
                 append_inst(ctx, Code.CodeInstBinary(scaled, Core.BinMul, Code.CodeTyIndex, default_int_semantics(), idx, stride), origin_generated("view index scale"))
                 idx = scaled
                 base_place = Code.CodePlaceDeref(data, code_ty(ctx, elem_ty), align_of(ctx, elem_ty))
-            elseif btcls == Ty.TArray or btcls == Ty.TSlice or is_aggregate_code_ty(code_ty(ctx, base_ty)) then
+            elseif btcls == Ty.TSlice then
+                local slice = lower_expr(ctx, base.base)
+                local data = new_temp(ctx, "slice_index_data")
+                append_inst(ctx, Code.CodeInstSliceData(data, slice), origin_generated("slice index data"))
+                base_place = Code.CodePlaceDeref(data, code_ty(ctx, elem_ty), align_of(ctx, elem_ty))
+            elseif btcls == Ty.TArray or is_aggregate_code_ty(code_ty(ctx, base_ty)) then
                 base_place = expr_as_place(ctx, base.base)
             else
                 unsupported(ctx, base, "index expression base type " .. class_name(base_ty))
@@ -837,9 +847,14 @@ local function bind_context(T)
         if action == "lit" then
             local ty = code_ty(ctx, expr_type(expr))
             if pvm.classof(expr.value) == Core.LitString then
+                local elem_ty = u8_code_ty()
+                local data_id, len_bytes = fresh_string_data(ctx, expr.value.bytes)
+                local data = new_temp(ctx, "str_data")
+                append_inst(ctx, Code.CodeInstGlobalRef(data, Code.CodeGlobalRefData(data_id), Code.CodeTyDataPtr(elem_ty)), origin_generated("string literal data ref"))
+                local len = new_temp(ctx, "str_len")
+                append_inst(ctx, Code.CodeInstConst(len, Code.CodeConstLiteral(Code.CodeTyIndex, Core.LitInt(tostring(len_bytes)))), origin_generated("string literal length"))
                 local dst = new_temp(ctx, "str")
-                local data_id = fresh_string_data(ctx, expr.value.bytes)
-                append_inst(ctx, Code.CodeInstGlobalRef(dst, Code.CodeGlobalRefData(data_id), ty), origin_generated("string literal data ref"))
+                append_inst(ctx, Code.CodeInstSliceMake(dst, elem_ty, data, len), origin_generated("string literal slice"))
                 return dst, ty
             end
             local dst = new_temp(ctx, "lit")

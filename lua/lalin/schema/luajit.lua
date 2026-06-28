@@ -573,6 +573,7 @@ return schema. LalinLuaJIT {
     sigs [many [LalinLuaJIT.LJFuncSig]],
     types [many [LalinLuaJIT.LJCDecl]],
     helpers [many [LalinLuaJIT.LJHelperId]],
+    data [many [LalinCode.CodeData]],
   },
 
   product. LJMCTarget {

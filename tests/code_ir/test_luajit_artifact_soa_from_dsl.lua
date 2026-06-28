@@ -89,7 +89,7 @@ local artifact = lalin.emit_luajit_plan_artifact(plan, {
 })
 
 assert(artifact.kind == 'LuaJITSourceArtifact')
-assert(#artifact.artifacts == 2, 'expected selected SoA zip_map and zip_reduce artifacts')
+assert(#artifact.artifacts == 2, 'expected selected SoA StoreN and ReduceN artifacts')
 assert(not artifact.source:match('%.left'), 'SoA component buffers must not emit AoS field loads')
 
 local function access_named(desc, name)
@@ -121,11 +121,11 @@ for _, selected in ipairs(artifact.artifacts) do
     local desc = selected.instance.descriptor
     local sink_kind = tostring(pvm.classof(desc.sink)):match('Class%((.-)%)')
     local expr_kind = tostring(pvm.classof(desc.body.expr)):match('Class%((.-)%)')
-    if sink_kind == 'LalinStencil.StencilSinkStore' and expr_kind == 'LalinStencil.StencilApplyBinary' then
+    if sink_kind == 'LalinStencil.StencilSinkStore' and expr_kind == 'LalinStencil.StencilPointBinary' then
         assert_soa(access_named(desc, 'dst'), 'total', 2)
         assert_soa(soa_access(desc, 'left'), 'left', 0)
         assert_soa(soa_access(desc, 'right'), 'right', 1)
-    elseif sink_kind == 'LalinStencil.StencilSinkReduce' and expr_kind == 'LalinStencil.StencilApplyBinary' then
+    elseif sink_kind == 'LalinStencil.StencilSinkReduce' and expr_kind == 'LalinStencil.StencilPointBinary' then
         assert_soa(soa_access(desc, 'left'), 'left', 0)
         assert_soa(soa_access(desc, 'right'), 'right', 1)
     else

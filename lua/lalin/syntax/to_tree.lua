@@ -46,6 +46,12 @@ local function bind_context(T)
     len = C.UnaryLen,
   }
 
+  local function numeric_literal(raw)
+    raw = tostring(raw or "0")
+    if raw:find("[%.eE]") then return C.LitFloat(raw) end
+    return C.LitInt(raw)
+  end
+
   --- Convert a parsed AST expression node to a LalinTree.Expr.
   function ToTree.expr(parsed)
     if not parsed then return nil end
@@ -58,12 +64,11 @@ local function bind_context(T)
     local tag = parsed.tag
     if tag == "Literal" then
       if parsed.kind == "number" then
-        local raw = tostring(parsed.value or parsed.source or "0")
-        return Tr.ExprLit(Tr.ExprSurface, C.LitInt(raw))
+        return Tr.ExprLit(Tr.ExprSurface, numeric_literal(parsed.source or parsed.value or "0"))
       elseif parsed.kind == "boolean" then
         return Tr.ExprLit(Tr.ExprSurface, C.LitBool(parsed.value))
       elseif parsed.kind == "string" then
-        return Tr.ExprLit(Tr.ExprSurface, C.LitString(parsed.source or ""))
+        return Tr.ExprLit(Tr.ExprSurface, C.LitString(parsed.value or parsed.source or ""))
       elseif parsed.kind == "nil" then
         return Tr.ExprLit(Tr.ExprSurface, C.LitNil)
       end
@@ -109,6 +114,26 @@ local function bind_context(T)
 
     elseif tag == "Field" then
       return Tr.ExprDot(Tr.ExprSurface, ToTree.expr(parsed.base), parsed.name)
+
+    elseif tag == "Record" then
+      local fields = parsed.fields or {}
+      local has_named, has_positional = false, false
+      for _, f in ipairs(fields) do
+        if f.key ~= nil then has_named = true else has_positional = true end
+      end
+      if has_named and has_positional then
+        error("parsed_to_tree: record literals cannot mix named and positional fields", 2)
+      end
+      if has_named then
+        local inits = {}
+        for i, f in ipairs(fields) do
+          inits[i] = Tr.FieldInit(f.key, ToTree.expr(f.value), 0)
+        end
+        return Tr.ExprAgg(Tr.ExprSurface, Ty.TScalar(C.ScalarVoid), inits)
+      end
+      local elems = {}
+      for i, f in ipairs(fields) do elems[i] = ToTree.expr(f.value) end
+      return Tr.ExprArray(Tr.ExprSurface, Ty.TScalar(C.ScalarVoid), elems)
 
     elseif tag == "Paren" then
       return ToTree.expr(parsed.value)

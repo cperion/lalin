@@ -354,7 +354,7 @@ local function bind_context(T)
         return out
     end
 
-    local function node_is_apply(node)
+    local function node_is_store(node)
         return pvm.classof(node.artifact.instance.descriptor.sink) == Stencil.StencilSinkStore
     end
 
@@ -368,36 +368,36 @@ local function bind_context(T)
         return "meta_" .. desc.id.text:gsub("[^%w_]", "_")
     end
 
-    local function fused_apply_reduce_artifact(desc)
-        if #(desc.nodes or {}) ~= 2 then return nil, "fused cover currently requires exactly Apply -> Reduce" end
+    local function fused_store_reduce_artifact(desc)
+        if #(desc.nodes or {}) ~= 2 then return nil, "fused cover currently requires exactly Store -> Reduce" end
         local nodes = node_by_id(desc)
-        local apply_node, reduce_node, apply_out, reduce_in
+        local store_node, reduce_node, store_out, reduce_in
         for _, wire0 in ipairs(desc.wires or {}) do
             local src_node = wire0.src.node and nodes[wire0.src.node.text] or nil
             local dst_node = wire0.dst.node and nodes[wire0.dst.node.text] or nil
-            if src_node ~= nil and dst_node ~= nil and node_is_apply(src_node) and node_is_reduce_fold(dst_node) then
-                apply_node, reduce_node = src_node, dst_node
-                apply_out, reduce_in = wire0.src.name, wire0.dst.name
+            if src_node ~= nil and dst_node ~= nil and node_is_store(src_node) and node_is_reduce_fold(dst_node) then
+                store_node, reduce_node = src_node, dst_node
+                store_out, reduce_in = wire0.src.name, wire0.dst.name
                 break
             end
         end
-        if apply_node == nil then return nil, "fused cover is not an Apply -> Reduce dataflow" end
-        local apply_desc = apply_node.artifact.instance.descriptor
+        if store_node == nil then return nil, "fused cover is not a Store -> Reduce dataflow" end
+        local store_desc = store_node.artifact.instance.descriptor
         local reduce_desc = reduce_node.artifact.instance.descriptor
-        local apply_accesses = access_by_name(apply_desc)
+        local store_accesses = access_by_name(store_desc)
         local reduce_accesses = access_by_name(reduce_desc)
-        local out_access = apply_accesses[apply_out]
+        local out_access = store_accesses[store_out]
         local in_access = reduce_accesses[reduce_in]
-        if out_access == nil or in_access == nil then return nil, "fused cover wire references missing Apply/Reduce access" end
-        if not same_value(out_access.ty, in_access.ty) then return nil, "fused Apply output type does not match Reduce input type" end
+        if out_access == nil or in_access == nil then return nil, "fused cover wire references missing Store/Reduce access" end
+        if not same_value(out_access.ty, in_access.ty) then return nil, "fused Store output type does not match Reduce input type" end
         local inputs = {}
-        for _, access in ipairs(Plan.descriptor_accesses(apply_desc)) do
-            if access.name ~= apply_out and access.role ~= Stencil.StencilAccessWrite then
+        for _, access in ipairs(Plan.descriptor_accesses(store_desc)) do
+            if access.name ~= store_out and access.role ~= Stencil.StencilAccessWrite then
                 inputs[#inputs + 1] = { name = access.name, ty = access.ty, layout = access.layout }
             end
         end
         local reducer = reduce_desc.sink.mode.reducer
-        local apply_shape = Plan.artifact_shape(apply_node.artifact)
+        local store_shape = Plan.artifact_shape(store_node.artifact)
         return Plan.reduce_n_artifact({
             kind = reducer.reduction,
             int_semantics = reducer.int_semantics,
@@ -407,8 +407,8 @@ local function bind_context(T)
             item_ty = out_access.ty,
             result_ty = reducer.result_ty,
             inputs = inputs,
-            expr = apply_desc.body.expr,
-            step_num = apply_shape.stride or 1,
+            expr = store_desc.body.expr,
+            step_num = store_shape.stride or 1,
         })
     end
 
@@ -466,7 +466,7 @@ local function bind_context(T)
                     error("stencil_metastencil: cannot materialize rejected metastencil cover", 3)
                 end
                 covers[#covers + 1] = cover_record(item)
-                local fused, reason = fused_apply_reduce_artifact(cover_descriptor(item))
+                local fused, reason = fused_store_reduce_artifact(cover_descriptor(item))
                 if fused == nil then
                     error("stencil_metastencil: selected cover is not yet fusible: " .. tostring(reason), 3)
                 end
@@ -494,7 +494,7 @@ local function bind_context(T)
     api.candidate = candidate
     api.select_longest_legal_cover = select_longest_legal_cover
     api.descriptor_artifacts = descriptor_artifacts
-    api.fused_apply_reduce_artifact = fused_apply_reduce_artifact
+    api.fused_store_reduce_artifact = fused_store_reduce_artifact
     api.cover_descriptor = cover_descriptor
     api.cover_fingerprint = cover_fingerprint
     api.cover_rejects = cover_rejects

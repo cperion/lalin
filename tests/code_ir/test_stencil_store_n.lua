@@ -70,42 +70,42 @@ local function window_nd_producer(boundary, before, after)
 end
 
 local artifacts = {
-    Plan.apply_n_artifact({
+    Plan.store_n_artifact({
         tag = "arity0_const",
         result_ty = i32,
         inputs = {},
         expr = Plan.const_expr(iconst(7), i32),
         step_num = 1,
     }),
-    Plan.apply_n_artifact({
+    Plan.store_n_artifact({
         tag = "arity1_neg",
         result_ty = i32,
         inputs = inputs(1),
-        expr = Plan.apply_unary_expr(Stencil.StencilUnaryNeg, input("x1"), i32, { int_semantics = sem }),
+        expr = Plan.point_unary_expr(Stencil.StencilUnaryNeg, input("x1"), i32, { int_semantics = sem }),
         step_num = 1,
     }),
-    Plan.apply_n_artifact({
+    Plan.store_n_artifact({
         tag = "arity2_add",
         result_ty = i32,
         inputs = inputs(2),
-        expr = Plan.apply_binary_expr(Stencil.StencilBinaryAdd, input("x1"), input("x2"), i32, { int_semantics = sem }),
+        expr = Plan.point_binary_expr(Stencil.StencilBinaryAdd, input("x1"), input("x2"), i32, { int_semantics = sem }),
         step_num = 1,
     }),
-    Plan.apply_n_artifact({
+    Plan.store_n_artifact({
         tag = "arity3_select",
         result_ty = i32,
         inputs = inputs(3),
-        expr = Plan.apply_select_expr(Stencil.StencilPredNonZero, input("x1"), input("x2"), input("x3"), i32),
+        expr = Plan.point_select_expr(Stencil.StencilPredNonZero, input("x1"), input("x2"), input("x3"), i32),
         step_num = 1,
     }),
-    Plan.apply_n_artifact({
+    Plan.store_n_artifact({
         tag = "arity4_mix",
         result_ty = i32,
         inputs = inputs(4),
-        expr = Plan.apply_binary_expr(
+        expr = Plan.point_binary_expr(
             Stencil.StencilBinaryAdd,
-            Plan.apply_binary_expr(Stencil.StencilBinaryMul, input("x1"), input("x2"), i32, { int_semantics = sem }),
-            Plan.apply_binary_expr(Stencil.StencilBinarySub, input("x3"), input("x4"), i32, { int_semantics = sem }),
+            Plan.point_binary_expr(Stencil.StencilBinaryMul, input("x1"), input("x2"), i32, { int_semantics = sem }),
+            Plan.point_binary_expr(Stencil.StencilBinarySub, input("x3"), input("x4"), i32, { int_semantics = sem }),
             i32,
             { int_semantics = sem }
         ),
@@ -115,15 +115,15 @@ local artifacts = {
 
 for i, artifact in ipairs(artifacts) do
     local shape = Plan.artifact_shape(artifact)
-    assert(shape.kind == "apply_n", "artifact " .. tostring(i) .. " should be generic apply_n")
+    assert(shape.kind == "store_n", "artifact " .. tostring(i) .. " should be generic store_n")
     assert(#shape.inputs == i - 1, "artifact " .. tostring(i) .. " should have saturated arity " .. tostring(i - 1))
 end
 
-local nd_artifact = Plan.apply_n_artifact({
+local nd_artifact = Plan.store_n_artifact({
     tag = "range_nd2_add",
     result_ty = i32,
     inputs = inputs(2),
-    expr = Plan.apply_binary_expr(Stencil.StencilBinaryAdd, input("x1"), input("x2"), i32, { int_semantics = sem }),
+    expr = Plan.point_binary_expr(Stencil.StencilBinaryAdd, input("x1"), input("x2"), i32, { int_semantics = sem }),
     producer = range_nd_producer(2, 3),
 })
 
@@ -132,7 +132,7 @@ local nd_reduce_artifact = Plan.reduce_n_artifact(reduction(Value.ReductionAdd, 
     result_ty = i32,
     item_ty = i32,
     inputs = inputs(2),
-    expr = Plan.apply_binary_expr(Stencil.StencilBinaryAdd, input("x1"), input("x2"), i32, { int_semantics = sem }),
+    expr = Plan.point_binary_expr(Stencil.StencilBinaryAdd, input("x1"), input("x2"), i32, { int_semantics = sem }),
     producer = range_nd_producer(2, 3),
 })
 
@@ -166,11 +166,11 @@ local nd_axis_reduce_artifact = Plan.reduce_n_artifact(reduction(Value.Reduction
     scope = Stencil.StencilReduceScopeAxes({ Stencil.StencilAxisRef(2) }, Stencil.StencilAccessRef("dst")),
 })
 
-local nd_step_artifact = Plan.apply_n_artifact({
+local nd_step_artifact = Plan.store_n_artifact({
     tag = "range_nd2_step_add",
     result_ty = i32,
     inputs = inputs(2),
-    expr = Plan.apply_binary_expr(Stencil.StencilBinaryAdd, input("x1"), input("x2"), i32, { int_semantics = sem }),
+    expr = Plan.point_binary_expr(Stencil.StencilBinaryAdd, input("x1"), input("x2"), i32, { int_semantics = sem }),
     producer = range_nd_axes(axis(2), axis(2)),
 })
 
@@ -190,11 +190,11 @@ local nd_scatter_reduce_artifact = Plan.scatter_reduce_n_artifact(reduction(Valu
     producer = range_nd_producer(2, 3),
 })
 
-local tiled_artifact = Plan.apply_n_artifact({
+local tiled_artifact = Plan.store_n_artifact({
     tag = "tiled_nd2_add",
     result_ty = i32,
     inputs = inputs(2),
-    expr = Plan.apply_binary_expr(Stencil.StencilBinaryAdd, input("x1"), input("x2"), i32, { int_semantics = sem }),
+    expr = Plan.point_binary_expr(Stencil.StencilBinaryAdd, input("x1"), input("x2"), i32, { int_semantics = sem }),
     producer = tiled_nd_producer({ 2, 2 }, axis(1), axis(1)),
 })
 
@@ -215,28 +215,28 @@ local tiled_scan_artifact = Plan.scan_array_artifact(reduction(Value.ReductionAd
 })
 
 local window_artifacts = {
-    Plan.apply_n_artifact({
+    Plan.store_n_artifact({
         tag = "window_reject_center",
         result_ty = i32,
         inputs = inputs(1),
         expr = input("x1"),
         producer = window_nd_producer(Stencil.StencilWindowBoundaryReject, 0, 0),
     }),
-    Plan.apply_n_artifact({
+    Plan.store_n_artifact({
         tag = "window_clamp_center",
         result_ty = i32,
         inputs = inputs(1),
         expr = input("x1"),
         producer = window_nd_producer(Stencil.StencilWindowBoundaryClamp, 1, 1),
     }),
-    Plan.apply_n_artifact({
+    Plan.store_n_artifact({
         tag = "window_wrap_center",
         result_ty = i32,
         inputs = inputs(1),
         expr = input("x1"),
         producer = window_nd_producer(Stencil.StencilWindowBoundaryWrap, 2, 0),
     }),
-    Plan.apply_n_artifact({
+    Plan.store_n_artifact({
         tag = "window_zero_center",
         result_ty = i32,
         inputs = inputs(1),
@@ -246,29 +246,29 @@ local window_artifacts = {
 }
 
 local window_neighbor_artifacts = {
-    Plan.apply_n_artifact({
+    Plan.store_n_artifact({
         tag = "window_neighbor_clamp",
         result_ty = i32,
         inputs = inputs(1),
-        expr = Stencil.StencilApplyWindowInput(Stencil.StencilAccessRef("x1"), {
+        expr = Stencil.StencilPointWindowInput(Stencil.StencilAccessRef("x1"), {
             Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), -1),
         }),
         producer = window_nd_producer(Stencil.StencilWindowBoundaryClamp, 1, 1),
     }),
-    Plan.apply_n_artifact({
+    Plan.store_n_artifact({
         tag = "window_neighbor_wrap",
         result_ty = i32,
         inputs = inputs(1),
-        expr = Stencil.StencilApplyWindowInput(Stencil.StencilAccessRef("x1"), {
+        expr = Stencil.StencilPointWindowInput(Stencil.StencilAccessRef("x1"), {
             Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), -1),
         }),
         producer = window_nd_producer(Stencil.StencilWindowBoundaryWrap, 1, 1),
     }),
-    Plan.apply_n_artifact({
+    Plan.store_n_artifact({
         tag = "window_neighbor_zero",
         result_ty = i32,
         inputs = inputs(1),
-        expr = Stencil.StencilApplyWindowInput(Stencil.StencilAccessRef("x1"), {
+        expr = Stencil.StencilPointWindowInput(Stencil.StencilAccessRef("x1"), {
             Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), -1),
         }),
         producer = window_nd_producer(Stencil.StencilWindowBoundaryZero, 1, 1),
@@ -287,8 +287,8 @@ local window_reduce_artifact = Plan.reduce_n_artifact(reduction(Value.ReductionA
 
 do
     local shape = Plan.artifact_shape(nd_artifact)
-    assert(shape.producer.kind == "range_nd", "RangeND ApplyN should carry a producer execution plan")
-    assert(shape.producer.rank == 2, "RangeND ApplyN should preserve rank")
+    assert(shape.producer.kind == "range_nd", "RangeND StoreN should carry a producer execution plan")
+    assert(shape.producer.rank == 2, "RangeND StoreN should preserve rank")
     local reduce_shape = Plan.artifact_shape(nd_reduce_artifact)
     assert(reduce_shape.producer.kind == "range_nd", "RangeND ReduceN should carry a producer execution plan")
     assert(reduce_shape.producer.rank == 2, "RangeND ReduceN should preserve rank")
@@ -299,11 +299,11 @@ do
     assert(Plan.artifact_shape(nd_step_artifact).producer.kind == "range_nd", "non-unit RangeND should carry a producer execution plan")
     assert(Plan.artifact_shape(nd_find_artifact).producer.kind == "range_nd", "RangeND FindN should carry a producer execution plan")
     assert(Plan.artifact_shape(nd_scatter_reduce_artifact).producer.kind == "range_nd", "RangeND ScatterReduceN should carry a producer execution plan")
-    assert(Plan.artifact_shape(tiled_artifact).producer.kind == "tiled_nd", "TiledND ApplyN should carry a producer execution plan")
+    assert(Plan.artifact_shape(tiled_artifact).producer.kind == "tiled_nd", "TiledND StoreN should carry a producer execution plan")
     assert(Plan.artifact_shape(tiled_reduce_artifact).producer.kind == "tiled_nd", "TiledND ReduceN should carry a producer execution plan")
     assert(Plan.artifact_shape(tiled_scan_artifact).producer.kind == "tiled_nd", "TiledND ScanN should carry a producer execution plan")
     for _, artifact in ipairs(window_artifacts) do
-        assert(Plan.artifact_shape(artifact).producer.kind == "window_nd", "WindowND ApplyN should carry a producer execution plan")
+        assert(Plan.artifact_shape(artifact).producer.kind == "window_nd", "WindowND StoreN should carry a producer execution plan")
     end
 end
 
@@ -330,7 +330,7 @@ local function exercise(symbols, label)
     assert(out[0] == -2 and out[1] == -23 and out[2] == -124 and out[3] == 115 and out[4] == 194, label .. " arity4")
 end
 
-local mc, mc_err, mc_src = MC.compile(T, artifacts, { stem = "test_stencil_apply_n" })
+local mc, mc_err, mc_src = MC.compile(T, artifacts, { stem = "test_stencil_store_n" })
 assert(mc ~= nil, tostring(mc_err) .. "\n" .. tostring(mc_src))
 exercise(mc.symbols, "mc")
 
@@ -339,15 +339,15 @@ for _, artifact in ipairs(window_artifacts) do producer_artifacts[#producer_arti
 for _, artifact in ipairs(window_neighbor_artifacts) do producer_artifacts[#producer_artifacts + 1] = artifact end
 producer_artifacts[#producer_artifacts + 1] = window_reduce_artifact
 
-local mc_nd, mc_nd_err, mc_nd_src = MC.compile(T, producer_artifacts, { stem = "test_stencil_apply_n_producers" })
+local mc_nd, mc_nd_err, mc_nd_src = MC.compile(T, producer_artifacts, { stem = "test_stencil_store_n_producers" })
 assert(mc_nd ~= nil, tostring(mc_nd_err) .. "\n" .. tostring(mc_nd_src))
 do
     local out = ffi.new("int32_t[6]")
     local x1 = ffi.new("int32_t[6]", { 1, 2, 3, 4, 5, 6 })
     local x2 = ffi.new("int32_t[6]", { 10, 20, 30, 40, 50, 60 })
-    assert(mc_nd.symbols[nd_artifact.symbol.text], "mc missing RangeND ApplyN")(out, x1, x2, 0, 2, 0, 3)
+    assert(mc_nd.symbols[nd_artifact.symbol.text], "mc missing RangeND StoreN")(out, x1, x2, 0, 2, 0, 3)
     for i = 0, 5 do
-        assert(out[i] == x1[i] + x2[i], "RangeND ApplyN row-major element " .. tostring(i))
+        assert(out[i] == x1[i] + x2[i], "RangeND StoreN row-major element " .. tostring(i))
     end
     local sum = assert(mc_nd.symbols[nd_reduce_artifact.symbol.text], "mc missing RangeND ReduceN")(x1, x2, 0, 2, 0, 3, 0)
     assert(sum == 231, "RangeND ReduceN row-major sum")
@@ -356,7 +356,7 @@ do
     local reduced = ffi.new("int32_t[2]")
     assert(mc_nd.symbols[nd_axis_reduce_artifact.symbol.text], "mc missing RangeND axis ReduceN")(reduced, x1, 0, 2, 0, 3)
     assert(reduced[0] == 6 and reduced[1] == 15, "RangeND axis-2 ReduceN row sums")
-    assert(mc_nd.symbols[nd_step_artifact.symbol.text], "mc missing stepped RangeND ApplyN")(out, x1, x2, 0, 4, 0, 6)
+    assert(mc_nd.symbols[nd_step_artifact.symbol.text], "mc missing stepped RangeND StoreN")(out, x1, x2, 0, 4, 0, 6)
     for i = 0, 5 do
         assert(out[i] == x1[i] + x2[i], "stepped RangeND compact row-major element " .. tostring(i))
     end
@@ -367,9 +367,9 @@ do
     assert(mc_nd.symbols[nd_scatter_reduce_artifact.symbol.text], "mc missing RangeND ScatterReduceN")(bins, x1, idx, 0, 2, 0, 3)
     assert(bins[0] == 9 and bins[1] == 12, "RangeND ScatterReduceN indexed sums")
 
-    assert(mc_nd.symbols[tiled_artifact.symbol.text], "mc missing TiledND ApplyN")(out, x1, x2, 0, 2, 0, 3)
+    assert(mc_nd.symbols[tiled_artifact.symbol.text], "mc missing TiledND StoreN")(out, x1, x2, 0, 2, 0, 3)
     for i = 0, 5 do
-        assert(out[i] == x1[i] + x2[i], "TiledND ApplyN element " .. tostring(i))
+        assert(out[i] == x1[i] + x2[i], "TiledND StoreN element " .. tostring(i))
     end
     sum = assert(mc_nd.symbols[tiled_reduce_artifact.symbol.text], "mc missing TiledND ReduceN")(x1, 0, 2, 0, 3, 0)
     assert(sum == 21, "TiledND ReduceN sum")
@@ -377,7 +377,7 @@ do
     assert(out[0] == 1 and out[1] == 3 and out[2] == 6 and out[3] == 4 and out[4] == 9 and out[5] == 15, "TiledND axis-2 ScanN row prefixes")
 
     for _, artifact in ipairs(window_artifacts) do
-        assert(mc_nd.symbols[artifact.symbol.text], "mc missing WindowND ApplyN")(out, x1, 0, 6)
+        assert(mc_nd.symbols[artifact.symbol.text], "mc missing WindowND StoreN")(out, x1, 0, 6)
         for i = 0, 5 do
             assert(out[i] == x1[i], "WindowND center iteration element " .. tostring(i))
         end
@@ -400,14 +400,14 @@ local bc_nd = assert(ResidualLuaTrace.realize_artifacts({
     nd_step_artifact,
     nd_find_artifact,
     nd_scatter_reduce_artifact,
-}, { stem = "test_stencil_apply_n_range_nd_bc" }))
+}, { stem = "test_stencil_store_n_range_nd_bc" }))
 do
     local out = ffi.new("int32_t[6]")
     local x1 = ffi.new("int32_t[6]", { 1, 2, 3, 4, 5, 6 })
     local x2 = ffi.new("int32_t[6]", { 10, 20, 30, 40, 50, 60 })
-    assert(bc_nd.symbols[nd_artifact.symbol.text], "bc missing RangeND ApplyN")(out, x1, x2, 0, 2, 0, 3)
+    assert(bc_nd.symbols[nd_artifact.symbol.text], "bc missing RangeND StoreN")(out, x1, x2, 0, 2, 0, 3)
     for i = 0, 5 do
-        assert(out[i] == x1[i] + x2[i], "BC RangeND ApplyN row-major element " .. tostring(i))
+        assert(out[i] == x1[i] + x2[i], "BC RangeND StoreN row-major element " .. tostring(i))
     end
     local sum = assert(bc_nd.symbols[nd_reduce_artifact.symbol.text], "bc missing RangeND ReduceN")(x1, x2, 0, 2, 0, 3, 0)
     assert(sum == 231, "BC RangeND ReduceN row-major sum")
@@ -416,7 +416,7 @@ do
     local reduced = ffi.new("int32_t[2]")
     assert(bc_nd.symbols[nd_axis_reduce_artifact.symbol.text], "bc missing RangeND axis ReduceN")(reduced, x1, 0, 2, 0, 3)
     assert(reduced[0] == 6 and reduced[1] == 15, "BC RangeND axis-2 ReduceN row sums")
-    assert(bc_nd.symbols[nd_step_artifact.symbol.text], "bc missing stepped RangeND ApplyN")(out, x1, x2, 0, 4, 0, 6)
+    assert(bc_nd.symbols[nd_step_artifact.symbol.text], "bc missing stepped RangeND StoreN")(out, x1, x2, 0, 4, 0, 6)
     for i = 0, 5 do
         assert(out[i] == x1[i] + x2[i], "BC stepped RangeND compact row-major element " .. tostring(i))
     end
@@ -428,15 +428,15 @@ do
     assert(bins[0] == 9 and bins[1] == 12, "BC RangeND ScatterReduceN indexed sums")
 end
 local bc_tiled_ok, bc_tiled_err = pcall(function()
-    ResidualLuaTrace.realize_artifacts({ tiled_artifact }, { stem = "test_stencil_apply_n_tiled_bc" })
+    ResidualLuaTrace.realize_artifacts({ tiled_artifact }, { stem = "test_stencil_store_n_tiled_bc" })
 end)
 assert(not bc_tiled_ok and tostring(bc_tiled_err):find("tiled_nd", 1, true) ~= nil, "LuaTrace should still reject TiledND producers until its producer loop exists")
 local bc_window_ok, bc_window_err = pcall(function()
-    ResidualLuaTrace.realize_artifacts({ window_neighbor_artifacts[1], window_reduce_artifact }, { stem = "test_stencil_apply_n_window_bc" })
+    ResidualLuaTrace.realize_artifacts({ window_neighbor_artifacts[1], window_reduce_artifact }, { stem = "test_stencil_store_n_window_bc" })
 end)
 assert(not bc_window_ok and tostring(bc_window_err):find("window_nd", 1, true) ~= nil, "LuaTrace should reject WindowND window-relative consumers with a producer-shaped error")
 
-local bc = assert(ResidualLuaTrace.realize_artifacts(artifacts, { stem = "test_stencil_apply_n_bc" }))
+local bc = assert(ResidualLuaTrace.realize_artifacts(artifacts, { stem = "test_stencil_store_n_bc" }))
 exercise(bc.symbols, "bc")
 
 local scan_build, scan_err, scan_src = MC.compile(T, { scan_artifact, exclusive_scan_artifact }, { stem = "test_stencil_scan_n" })
@@ -459,11 +459,11 @@ end
 
 do
     local function unary_artifact(tag, op)
-        return Plan.apply_n_artifact({
+        return Plan.store_n_artifact({
             tag = "bc_unary_" .. tag,
             result_ty = i32,
             inputs = inputs(1),
-            expr = Plan.apply_unary_expr(op, input("x1"), i32, { int_semantics = sem }),
+            expr = Plan.point_unary_expr(op, input("x1"), i32, { int_semantics = sem }),
             step_num = 1,
         })
     end
@@ -477,7 +477,7 @@ do
     local unary_artifacts = {}
     for _, case in ipairs(cases) do unary_artifacts[#unary_artifacts + 1] = unary_artifact(case[1], case[2]) end
 
-    local bc_unary = assert(ResidualLuaTrace.realize_artifacts(unary_artifacts, { stem = "test_stencil_apply_n_unary_bc" }))
+    local bc_unary = assert(ResidualLuaTrace.realize_artifacts(unary_artifacts, { stem = "test_stencil_store_n_unary_bc" }))
     local out = ffi.new("int32_t[5]")
     local x1 = ffi.new("int32_t[5]", { 8, 0, -16, 31, -42 })
     for i, case in ipairs(cases) do
@@ -491,11 +491,11 @@ end
 
 do
     local function binary_artifact(tag, op)
-        return Plan.apply_n_artifact({
+        return Plan.store_n_artifact({
             tag = "bc_binary_" .. tag,
             result_ty = i32,
             inputs = inputs(2),
-            expr = Plan.apply_binary_expr(op, input("x1"), input("x2"), i32, { int_semantics = sem }),
+            expr = Plan.point_binary_expr(op, input("x1"), input("x2"), i32, { int_semantics = sem }),
             step_num = 1,
         })
     end
@@ -518,7 +518,7 @@ do
     local binary_artifacts = {}
     for _, case in ipairs(cases) do binary_artifacts[#binary_artifacts + 1] = binary_artifact(case[1], case[2]) end
 
-    local bc_binary = assert(ResidualLuaTrace.realize_artifacts(binary_artifacts, { stem = "test_stencil_apply_n_binary_bc" }))
+    local bc_binary = assert(ResidualLuaTrace.realize_artifacts(binary_artifacts, { stem = "test_stencil_store_n_binary_bc" }))
     local out = ffi.new("int32_t[5]")
     local x1 = ffi.new("int32_t[5]", { 8, 9, 16, 31, 42 })
     local x2 = ffi.new("int32_t[5]", { 2, 3, 4, 5, 6 })
@@ -564,7 +564,7 @@ do
         reduce_artifacts[#reduce_artifacts + 1] = reduce_artifact(case[1], case[2], case[3])
     end
 
-    local bc_reduce = assert(ResidualLuaTrace.realize_artifacts(reduce_artifacts, { stem = "test_stencil_apply_n_reduce_bc" }))
+    local bc_reduce = assert(ResidualLuaTrace.realize_artifacts(reduce_artifacts, { stem = "test_stencil_store_n_reduce_bc" }))
     local x1 = ffi.new("int32_t[5]", { 1, 2, 3, 4, 5 })
     for i, case in ipairs(cases) do
         local fn = assert(bc_reduce.symbols[reduce_artifacts[i].symbol.text], "bc missing reduction " .. case[1])
@@ -573,4 +573,4 @@ do
     end
 end
 
-io.write("stencil apply_n ok\n")
+io.write("stencil store_n ok\n")

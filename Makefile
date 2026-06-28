@@ -44,7 +44,7 @@ $(LALIN_BIN): src/lalin.c $(LALIN_BC_BANK_C) $(LALIN_BC_BANK_H) $(LALIN_MC_BANK_
 		if [ "$$running" -ge "$$maxprocs" ]; then wait; running=0; fi; \
 	done; \
 	wait; \
-	$(CC) $$objs $(LUAJIT)/libluajit.a -lm -ldl -pthread -o $(LALIN_BIN)
+	$(CC) -Wl,-E $$objs $(LUAJIT)/libluajit.a -lm -ldl -pthread -o $(LALIN_BIN)
 
 libtcc: $(LIBTCC)
 

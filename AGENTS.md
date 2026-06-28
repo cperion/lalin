@@ -18,9 +18,9 @@ meaning.
 
 The active fast backend is `copy_patch_mc` bank stencils plus TCC residual glue.
 `copy_patch_bc` is the LuaTrace/LuaJIT bytecode artifact path. `lalin.compile`
-currently defaults to bytecode copy-patch; emitted LuaJIT artifacts default to
-machine-code copy+residual. The old Cranelift/Rust runtime path is not part of
-the current architecture.
+defaults to machine-code copy+residual and falls back to bytecode copy-patch
+with a warning when no compatible MC bank is supplied or materialization fails.
+The old Cranelift/Rust runtime path is not part of the current architecture.
 
 ## Build
 

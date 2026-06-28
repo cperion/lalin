@@ -105,7 +105,7 @@ local descriptor = Stencil.StencilDescriptor(
             Stencil.StencilLayoutScalar(init)
         ),
     },
-    Stencil.StencilBodyApply(Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs"))),
+    Stencil.StencilBodyPoint(Stencil.StencilPointInput(Stencil.StencilAccessRef("xs"))),
     Stencil.StencilSinkReduce(i32, Stencil.StencilReduceScopeDomain, Stencil.StencilReduceFold(Stencil.StencilReducer(Value.ReductionAdd, i32, init, sem, nil)))
 )
 local instance = Stencil.StencilInstance(
@@ -130,7 +130,7 @@ assert(StencilArtifactPlan.descriptor_vocab(instance.descriptor) == Stencil.Sten
 assert(pvm.classof(StencilArtifactPlan.descriptor_producer(instance.descriptor).shape) == Stencil.StencilProduceRange1D)
 assert(StencilArtifactPlan.descriptor_accesses(instance.descriptor)[1].role == Stencil.StencilAccessRead)
 assert(StencilArtifactPlan.descriptor_accesses(instance.descriptor)[2].role == Stencil.StencilAccessReduce)
-assert(pvm.classof(instance.descriptor.body) == Stencil.StencilBodyApply)
+assert(pvm.classof(instance.descriptor.body) == Stencil.StencilBodyPoint)
 assert(pvm.classof(instance.descriptor.sink.mode) == Stencil.StencilReduceFold)
 assert(instance.descriptor.sink.scope == Stencil.StencilReduceScopeDomain)
 assert(pvm.classof(instance.descriptor.sink.mode.reducer) == Stencil.StencilReducer)
@@ -285,13 +285,13 @@ local nd_descriptor = Stencil.StencilDescriptor(
         Stencil.StencilAccess("dst", Stencil.StencilAccessWrite, i32, Stencil.StencilLayoutContiguous(1)),
         Stencil.StencilAccess("xs", Stencil.StencilAccessRead, i32, Stencil.StencilLayoutContiguous(1)),
     },
-    Stencil.StencilBodyApply(Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs"))),
+    Stencil.StencilBodyPoint(Stencil.StencilPointInput(Stencil.StencilAccessRef("xs"))),
     Stencil.StencilSinkStore(Stencil.StencilAccessRef("dst"), Stencil.StencilStoreElementwise)
 )
 local nd_instance = Stencil.StencilInstance(instance.id, nd_descriptor, instance.schedule, instance.abi, instance.proofs)
 local nd_artifact = Stencil.StencilArtifact(nd_instance, artifact.provider, artifact.symbol, artifact.c_signature, artifact.fingerprint, nil, {}, {})
 local nd_shape = StencilArtifactPlan.artifact_shape(nd_artifact)
-assert(nd_shape.kind == "apply_n")
+assert(nd_shape.kind == "store_n")
 assert(nd_shape.producer.kind == "range_nd")
 assert(nd_shape.producer.rank == 2)
 
@@ -329,21 +329,21 @@ assert(pvm.classof(schedule_reject.reject) == Stencil.StencilScheduleRejectReque
 assert(pvm.classof(missing_proof.obligation) == Stencil.StencilProofTripCount)
 
 local pred = Stencil.StencilPredCompareConst(Core.CmpEq, i32, init)
-local input_xs = Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs"))
-local input_lhs = Stencil.StencilApplyInput(Stencil.StencilAccessRef("lhs"))
-local input_rhs = Stencil.StencilApplyInput(Stencil.StencilAccessRef("rhs"))
-local window_input = Stencil.StencilApplyWindowInput(
+local input_xs = Stencil.StencilPointInput(Stencil.StencilAccessRef("xs"))
+local input_lhs = Stencil.StencilPointInput(Stencil.StencilAccessRef("lhs"))
+local input_rhs = Stencil.StencilPointInput(Stencil.StencilAccessRef("rhs"))
+local window_input = Stencil.StencilPointWindowInput(
     Stencil.StencilAccessRef("xs"),
     { Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), -1) }
 )
-assert(pvm.classof(window_input) == Stencil.StencilApplyWindowInput)
+assert(pvm.classof(window_input) == Stencil.StencilPointWindowInput)
 assert(window_input.offsets[1].axis.index == 1)
 assert(window_input.offsets[1].offset == -1)
-local op = Stencil.StencilApplyUnary(Stencil.StencilUnaryNeg, input_xs, i32, sem, nil)
-local zip_op = Stencil.StencilApplyBinary(Stencil.StencilBinaryAdd, input_lhs, input_rhs, i32, sem, nil)
-local cast_op = Stencil.StencilApplyCast(Core.MachineCastSToF, input_xs, i32, Code.CodeTyFloat(64))
-local pred_op = Stencil.StencilApplyPredicate(pred, input_xs, Code.CodeTyBool8)
-local cmp_op = Stencil.StencilApplyCompare(Core.CmpLt, input_lhs, input_rhs, Code.CodeTyBool8)
+local op = Stencil.StencilPointUnary(Stencil.StencilUnaryNeg, input_xs, i32, sem, nil)
+local zip_op = Stencil.StencilPointBinary(Stencil.StencilBinaryAdd, input_lhs, input_rhs, i32, sem, nil)
+local cast_op = Stencil.StencilPointCast(Core.MachineCastSToF, input_xs, i32, Code.CodeTyFloat(64))
+local pred_op = Stencil.StencilPointPredicate(pred, input_xs, Code.CodeTyBool8)
+local cmp_op = Stencil.StencilPointCompare(Core.CmpLt, input_lhs, input_rhs, Code.CodeTyBool8)
 local indexed = Stencil.StencilLayoutIndexed(Stencil.StencilLayoutContiguous(1), Stencil.StencilAccessRef("idx"), i32, 1)
 local affine_layout = Stencil.StencilLayoutAffine1D(Stencil.StencilLayoutContiguous(1), -1, init)
 local affine_nd_layout = Stencil.StencilLayoutAffineND(

@@ -1654,12 +1654,9 @@ function Decl:emit_c_artifact(opts)
     opts = merge_source_ctx(opts, self)
     opts.site = opts.site or "lalin.dsl c"
     opts.context = opts.context or T
-    opts.root = "emit_c"
-    local c_unit = require("lalin.compiler_driver").lower_module(module_ast_of(self), opts)
-    local artifact = require("lalin.c_emit")(T).emit_artifact(c_unit, opts)
+    local artifact = (package.loaded.lalin or require("lalin")).emit_c_artifact(self, opts)
     artifact.dsl_module = self
     artifact.module = self
-    artifact.unit = c_unit
     if getmetatable(artifact) == nil then
         setmetatable(artifact, { __index = c_artifact_mt })
     end

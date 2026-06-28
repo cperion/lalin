@@ -75,7 +75,7 @@ local function compile_module(module, contracts, opts)
     local expected_producer = opts.producer or Stencil.StencilProduceRange1D
     assert(pvm.classof(shape) == expected_producer, opts.name .. " should feed the expected typed producer from lowering")
     if expected_producer == Stencil.StencilProduceRange1D then
-        assert(shape.start ~= nil and shape.stop ~= nil, opts.name .. " producer should preserve counted loop bounds")
+        assert(shape.start == nil and shape.stop == nil, opts.name .. " producer bounds should be runtime call arguments, not descriptor identity")
     end
     assert(pvm.classof(lj_module.funcs[1].machines[1].kind) == (opts.reduce and LJ.LJMachineStencilCall or LJ.LJMachineStencilEffect), opts.name .. " should lower through stencil machine")
     local build, build_err, csrc = StencilBinary.compile(T, artifacts, { stem = "test_luajit_lower_stencil_extended_" .. opts.name })
@@ -170,9 +170,9 @@ local function reduction_case(kind)
     local body_insts = { inst(name .. ":load", Code.CodeInstLoad(item, place(xs.value, i, i32), access(Code.CodeMemoryRead, i32))) }
     if kind == "count" then
         body_insts[#body_insts + 1] = inst(name .. ":map", Code.CodeInstCompare(mapped, Core.CmpGt, i32, item, zero))
-    elseif kind == "map_reduce" then
+    elseif kind == "unary_reduce_n" then
         body_insts[#body_insts + 1] = inst(name .. ":map", Code.CodeInstUnary(mapped, Core.UnaryNeg, i32, item))
-    elseif kind == "zip_reduce" then
+    elseif kind == "binary_reduce_n" then
         body_insts[#body_insts + 1] = inst(name .. ":load_rhs", Code.CodeInstLoad(other, place(ys.value, i, i32), access(Code.CodeMemoryRead, i32)))
         body_insts[#body_insts + 1] = inst(name .. ":map", Code.CodeInstBinary(mapped, Core.BinAdd, i32, sem, item, other))
     end
@@ -180,14 +180,14 @@ local function reduction_case(kind)
     body_insts[#body_insts + 1] = inst(name .. ":inc", Code.CodeInstBinary(next_i, Core.BinAdd, i32, sem, i, one))
     local body = Code.CodeBlock(body_id, "body", {}, body_insts, term(name .. ":body", Code.CodeTermJump(header_id, { next_i, next_acc })), origin)
     local exit = Code.CodeBlock(exit_id, "exit", { Code.CodeParam(out, "out", i32, origin) }, {}, term(name .. ":exit", Code.CodeTermReturn({ out })), origin)
-    local params = kind == "zip_reduce" and { xs, ys, n } or { xs, n }
-    local sig_params = kind == "zip_reduce" and { ptr(i32), ptr(i32), i32 } or { ptr(i32), i32 }
+    local params = kind == "binary_reduce_n" and { xs, ys, n } or { xs, n }
+    local sig_params = kind == "binary_reduce_n" and { ptr(i32), ptr(i32), i32 } or { ptr(i32), i32 }
     local func = Code.CodeFunc(func_id, name, Code.CodeLinkageExport, sig_id, params, {}, entry_id, { entry, header, body, exit }, origin)
     local module = Code.CodeModule(Code.CodeModuleId("module:" .. name), { Code.CodeSig(sig_id, sig_params, { i32 }) }, {}, {}, {}, {}, { func }, origin)
     local facts = {
         Code.CodeFuncContractFact(func_id, Code.CodeContractBounds(xs.value, n.value), origin),
     }
-    if kind == "zip_reduce" then
+    if kind == "binary_reduce_n" then
         facts[#facts + 1] = Code.CodeFuncContractFact(func_id, Code.CodeContractBounds(ys.value, n.value), origin)
         facts[#facts + 1] = Code.CodeFuncContractFact(func_id, Code.CodeContractDisjoint(xs.value, ys.value), origin)
     end
@@ -204,13 +204,13 @@ local out_f64 = ffi.new("double[5]")
 
 do
     local module, contracts, name = store_case("cast", f64)
-    compile_module(module, contracts, { name = name, store = true, basis = Stencil.StencilApply })(out_f64, xs, ys, idx, n)
+    compile_module(module, contracts, { name = name, store = true, basis = Stencil.StencilStore })(out_f64, xs, ys, idx, n)
     assert(out_f64[0] == 1 and out_f64[1] == -2 and out_f64[2] == 5 and out_f64[3] == 0 and out_f64[4] == 3, "lower cast")
 end
 
 do
     local module, contracts, name = store_case("compare", bool8)
-    compile_module(module, contracts, { name = name, store = true, basis = Stencil.StencilApply })(out_bool, xs, ys, idx, n)
+    compile_module(module, contracts, { name = name, store = true, basis = Stencil.StencilStore })(out_bool, xs, ys, idx, n)
     assert(out_bool[0] == 1 and out_bool[1] == 0 and out_bool[2] == 1 and out_bool[3] == 0 and out_bool[4] == 1, "lower compare")
 end
 
@@ -245,7 +245,7 @@ do
     compile_module(module, contracts, {
         name = name,
         store = true,
-        basis = Stencil.StencilApply,
+        basis = Stencil.StencilStore,
         producer = Stencil.StencilProduceRangeND,
         flow = flow,
     })(out_bool, xs, ys, idx, n)
@@ -254,27 +254,27 @@ end
 
 do
     local module, contracts, name = store_case("zip_compare", bool8)
-    compile_module(module, contracts, { name = name, store = true, basis = Stencil.StencilApply })(out_bool, xs, ys, idx, n)
+    compile_module(module, contracts, { name = name, store = true, basis = Stencil.StencilStore })(out_bool, xs, ys, idx, n)
     assert(out_bool[0] == 1 and out_bool[1] == 1 and out_bool[2] == 1 and out_bool[3] == 1 and out_bool[4] == 1, "lower zip compare")
 end
 
 do
     local module, contracts, name = store_case("gather", i32)
-    compile_module(module, contracts, { name = name, store = true, basis = Stencil.StencilApply })(out_i32, xs, ys, idx, n)
+    compile_module(module, contracts, { name = name, store = true, basis = Stencil.StencilStore })(out_i32, xs, ys, idx, n)
     assert(out_i32[0] == 5 and out_i32[1] == 1 and out_i32[2] == 3 and out_i32[3] == -2 and out_i32[4] == 0, "lower gather")
 end
 
 do
     local module, contracts, name = store_case("scatter", i32)
     for i = 0, n - 1 do out_i32[i] = 0 end
-    compile_module(module, contracts, { name = name, store = true, basis = Stencil.StencilApply })(out_i32, xs, ys, idx, n)
+    compile_module(module, contracts, { name = name, store = true, basis = Stencil.StencilStore })(out_i32, xs, ys, idx, n)
     assert(out_i32[0] == -2 and out_i32[1] == 0 and out_i32[2] == 1 and out_i32[3] == 3 and out_i32[4] == 5, "lower scatter")
 end
 
 do
     local module, contracts, name = store_case("in_place_map", i32)
     local inplace = ffi.new("int32_t[5]", { 1, -2, 5, 0, 3 })
-    compile_module(module, contracts, { name = name, store = true, basis = Stencil.StencilApply })(inplace, n)
+    compile_module(module, contracts, { name = name, store = true, basis = Stencil.StencilStore })(inplace, n)
     assert(inplace[0] == -1 and inplace[1] == 2 and inplace[2] == -5 and inplace[3] == 0 and inplace[4] == -3, "lower in-place map")
 end
 
@@ -284,13 +284,13 @@ do
 end
 
 do
-    local module, contracts, name = reduction_case("map_reduce")
-    assert(compile_module(module, contracts, { name = name, reduce = true, basis = Stencil.StencilReduce })(xs, n) == -7, "lower map reduce")
+    local module, contracts, name = reduction_case("unary_reduce_n")
+    assert(compile_module(module, contracts, { name = name, reduce = true, basis = Stencil.StencilReduce })(xs, n) == -7, "lower unary reduce_n")
 end
 
 do
-    local module, contracts, name = reduction_case("zip_reduce")
-    assert(compile_module(module, contracts, { name = name, reduce = true, basis = Stencil.StencilReduce })(xs, ys, n) == 157, "lower zip reduce")
+    local module, contracts, name = reduction_case("binary_reduce_n")
+    assert(compile_module(module, contracts, { name = name, reduce = true, basis = Stencil.StencilReduce })(xs, ys, n) == 157, "lower binary reduce_n")
 end
 
 io.write("lalin luajit_lower_stencil_extended ok\n")

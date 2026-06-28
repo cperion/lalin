@@ -858,22 +858,10 @@ assert(#artifact.artifacts == 30, 'expected selected stencil artifact for each D
 assert(artifact.source:match('__ml_check_stencil_target'), 'expected generated target guard')
 
 local expected_counts = {
+    store_n = 15,
     reduce = 1,
-    copy = 1,
-    copy_memmove = 1,
-    fill = 1,
-    map = 2,
-    zip_map = 3,
-    select = 2,
-    cast = 1,
-    compare = 1,
-    zip_compare = 1,
-    gather = 1,
-    scatter = 1,
+    reduce_n = 3,
     scatter_reduce = 8,
-    apply_reduce = 1,
-    map_reduce = 1,
-    zip_reduce = 1,
     scan = 1,
     find = 1,
     partition = 1,
@@ -914,50 +902,26 @@ local function selected_label(descriptor)
     if sink_kind == 'LalinStencil.StencilSinkReduce' then
         local mode_kind = class_name(descriptor.sink.mode)
         if mode_kind == 'LalinStencil.StencilReduceFind' then return 'find' end
-        if expr_kind == 'LalinStencil.StencilApplyCast' then return 'apply_reduce' end
-        if expr_kind == 'LalinStencil.StencilApplyUnary' then return 'map_reduce' end
-        if expr_kind == 'LalinStencil.StencilApplyBinary' then return 'zip_reduce' end
+        if expr_kind ~= 'LalinStencil.StencilPointInput' then return 'reduce_n' end
         return 'reduce'
     end
     if sink_kind == 'LalinStencil.StencilSinkStore' then
         local mode_kind = class_name(descriptor.sink.mode)
-        if mode_kind == 'LalinStencil.StencilStoreCopy' then
-            if tostring(descriptor.sink.mode.semantics):match('StencilCopyMemMove') then return 'copy_memmove' end
-            return 'copy'
-        end
-        if mode_kind == 'LalinStencil.StencilStoreScatter' then return 'scatter' end
         if mode_kind == 'LalinStencil.StencilStorePartition' then return 'partition' end
-        if expr_kind == 'LalinStencil.StencilApplyInput' then
-            local access = access_named(expr.access.name)
-            if access and class_name(access.layout) == 'LalinStencil.StencilLayoutScalar' then return 'fill' end
-            if has_indexed_read() then return 'gather' end
-            return 'map'
-        end
-        if expr_kind == 'LalinStencil.StencilApplyUnary' then
-            return 'map'
-        end
-        if expr_kind == 'LalinStencil.StencilApplyBinary' then return 'zip_map' end
-        if expr_kind == 'LalinStencil.StencilApplyCast' then return 'cast' end
-        if expr_kind == 'LalinStencil.StencilApplyPredicate' then return 'compare' end
-        if expr_kind == 'LalinStencil.StencilApplyCompare' then
-            if read_count() == 1 then return 'compare' end
-            return 'zip_compare'
-        end
-        if expr_kind == 'LalinStencil.StencilApplySelect' then return 'select' end
-        return 'map'
+        return 'store_n'
     end
     return nil
 end
 local seen = {}
-local nested_apply_binary = 0
+local nested_point_binary = 0
 for _, selected in ipairs(artifact.artifacts) do
     local descriptor = selected.instance.descriptor
     local label = selected_label(descriptor)
     assert(label ~= nil, 'unexpected selected stencil descriptor ' .. tostring(pvm.classof(descriptor)))
-    if tostring(pvm.classof(descriptor.body.expr)):match('StencilApplyBinary')
-        and tostring(pvm.classof(descriptor.body.expr.left)):match('StencilApplyBinary')
-        and tostring(pvm.classof(descriptor.body.expr.right)):match('StencilApplyBinary') then
-        nested_apply_binary = nested_apply_binary + 1
+    if tostring(pvm.classof(descriptor.body.expr)):match('StencilPointBinary')
+        and tostring(pvm.classof(descriptor.body.expr.left)):match('StencilPointBinary')
+        and tostring(pvm.classof(descriptor.body.expr.right)):match('StencilPointBinary') then
+        nested_point_binary = nested_point_binary + 1
     end
     if label == 'find' or label == 'partition' or label == 'scatter_reduce' then
         assert(tostring(selected.instance.schedule):match('StencilScheduleScalar'), label .. ' should carry a scalar ordered-control stencil schedule')
@@ -969,7 +933,7 @@ end
 for label, count in pairs(expected_counts) do
     assert(seen[label] == count, 'expected ' .. tostring(count) .. ' selected stencil artifact(s) for ' .. label .. ', got ' .. tostring(seen[label] or 0))
 end
-assert(nested_apply_binary >= 2, 'expected nested ApplyN binary bodies from fused source expressions')
+assert(nested_point_binary >= 2, 'expected nested point binary bodies from fused source expressions')
 
 local loaded = assert(loadfile(artifact.path))()
 local arr = ffi.new('int32_t[6]', { 1, 2, 3, 4, 5, 6 })

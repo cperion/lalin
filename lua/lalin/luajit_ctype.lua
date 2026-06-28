@@ -18,7 +18,10 @@ local function bind_context(T)
 
     local Code = T.LalinCode
     local Back = T.LalinBack
+    local Ty = T.LalinType
+    local Sem = T.LalinSem
     local LJ = T.LalinLuaJIT
+    local CodeType = require("lalin.code_type")(T)
 
     local api = {}
 
@@ -160,6 +163,56 @@ local function bind_context(T)
         return named_ctype(id, spelling)
     end
 
+    local function named_type_identity(ty)
+        local spelling = sanitize(ty.module_name) .. "_" .. sanitize(ty.type_name)
+        return LJ.LJTypeId("lj_named_" .. sanitize(ty.module_name) .. "_" .. sanitize(ty.type_name)), spelling
+    end
+
+    local function named_layout(ctx, ty)
+        if ctx == nil or ctx.layout_env == nil then return nil end
+        local source_ref = ty.source_ty and ty.source_ty.ref
+        for _, layout in ipairs(ctx.layout_env.layouts or {}) do
+            local cls = pvm.classof(layout)
+            if cls == Sem.LayoutNamed and layout.module_name == ty.module_name and layout.type_name == ty.type_name then
+                return layout
+            end
+            if cls == Sem.LayoutNamed and pvm.classof(source_ref) == Ty.TypeRefGlobal
+                and layout.module_name == source_ref.module_name and layout.type_name == source_ref.type_name then
+                return layout
+            end
+            if cls == Sem.LayoutLocal and ty.module_name == "local" and layout.sym and layout.sym.name == ty.type_name then
+                return layout
+            end
+        end
+        return nil
+    end
+
+    local function ensure_named_decl(ctx, ty)
+        if ctx == nil then return end
+        local id, spelling = named_type_identity(ty)
+        local state = ctx.lj_named_decl_state or {}
+        ctx.lj_named_decl_state = state
+        if state[id.text] == "declaring" or state[id.text] == "done" then return end
+
+        state[id.text] = "declaring"
+        remember_decl(ctx, LJ.LJCDeclRaw("typedef struct " .. spelling .. " " .. spelling .. ";", "named struct forward " .. spelling))
+
+        local layout = named_layout(ctx, ty)
+        if layout ~= nil then
+            local lines = { "struct " .. spelling .. " {" }
+            for i = 1, #(layout.fields or {}) do
+                local field = layout.fields[i]
+                local field_code_ty = CodeType.type_to_code(field.ty, ctx)
+                local field_physical = physical_type(field_code_ty, ctx)
+                lines[#lines + 1] = "  " .. ctype_spelling(field_physical.storage, ctx) .. " " .. sanitize(field.field_name) .. ";"
+            end
+            lines[#lines + 1] = "};"
+            remember_decl(ctx, LJ.LJCDeclRaw(table.concat(lines, "\n"), "named struct " .. spelling))
+        end
+
+        state[id.text] = "done"
+    end
+
     local function scalar_physical(semantic, scalar)
         local cty = scalar_ctype(scalar)
         return LJ.LJPhysicalType(semantic, scalar_register_rep(scalar), cty, cty)
@@ -203,7 +256,9 @@ local function bind_context(T)
             return LJ.LJCTypeFuncPtr(ensure_lj_sig(ctx, ty.sig))
         end
         if cls == Code.CodeTyNamed then
-            return named_ctype(LJ.LJTypeId("lj_named_" .. sanitize(ty.module_name) .. "_" .. sanitize(ty.type_name)), sanitize(ty.module_name) .. "_" .. sanitize(ty.type_name))
+            ensure_named_decl(ctx, ty)
+            local id, spelling = named_type_identity(ty)
+            return named_ctype(id, spelling)
         end
         if cls == Code.CodeTyArray then
             return LJ.LJCTypeArray(ctype_for_code_type(ty.elem, ctx), ty.count)

@@ -186,7 +186,7 @@ local function bind_context(T)
         indexed_write = {
             layout = "StencilLayoutIndexed",
             scatter_reduce_dst = true,
-            supports = function(kind) return kind == "apply_n" or kind == "scan_n" or kind == "scatter_reduce_n" end,
+            supports = function(kind) return kind == "store_n" or kind == "scan_n" or kind == "scatter_reduce_n" end,
             dst_layout = function() return indexed_layout("dst") end,
             input_layout = function() return nil end,
             extra_inputs = function()
@@ -196,7 +196,7 @@ local function bind_context(T)
         indexed_view_write = {
             layout = "StencilLayoutIndexed",
             scatter_reduce_dst = true,
-            supports = function(kind) return kind == "apply_n" or kind == "scan_n" or kind == "scatter_reduce_n" end,
+            supports = function(kind) return kind == "store_n" or kind == "scan_n" or kind == "scatter_reduce_n" end,
             dst_layout = function() return indexed_layout("dst", view_layout("dst")) end,
             input_layout = function() return nil end,
             extra_inputs = function()
@@ -206,7 +206,7 @@ local function bind_context(T)
         indexed_slice_write = {
             layout = "StencilLayoutIndexed",
             scatter_reduce_dst = true,
-            supports = function(kind) return kind == "apply_n" or kind == "scan_n" or kind == "scatter_reduce_n" end,
+            supports = function(kind) return kind == "store_n" or kind == "scan_n" or kind == "scatter_reduce_n" end,
             dst_layout = function() return indexed_layout("dst", slice_layout("dst")) end,
             input_layout = function() return nil end,
             extra_inputs = function()
@@ -216,7 +216,7 @@ local function bind_context(T)
         indexed_bytespan_write = {
             layout = "StencilLayoutIndexed",
             scatter_reduce_dst = true,
-            supports = function(kind) return kind == "apply_n" or kind == "scan_n" or kind == "scatter_reduce_n" end,
+            supports = function(kind) return kind == "store_n" or kind == "scan_n" or kind == "scatter_reduce_n" end,
             dst_layout = function() return indexed_layout("dst", bytespan_layout("dst")) end,
             input_layout = function() return nil end,
             extra_inputs = function()
@@ -280,22 +280,26 @@ local function bind_context(T)
     local producer_groups = {
         range1d = {
             name = "range1d",
+            matrix_key = "StencilProduceRange1D",
             producer = nil,
         },
         range_nd2 = {
             name = "range_nd2",
+            matrix_key = "StencilProduceRangeND",
             producer = function()
                 return Stencil.StencilProducer(nil, Stencil.StencilProduceRangeND({ producer_axis(1), producer_axis(1) }))
             end,
         },
         tiled_nd2 = {
             name = "tiled_nd2",
+            matrix_key = "StencilProduceTiledND",
             producer = function()
                 return Stencil.StencilProducer(nil, Stencil.StencilProduceTiledND({ producer_axis(1), producer_axis(1) }, { 2, 2 }))
             end,
         },
         window_nd1 = {
             name = "window_nd1",
+            matrix_key = "StencilProduceWindowND",
             producer = function()
                 return Stencil.StencilProducer(nil, Stencil.StencilProduceWindowND({ producer_axis(1) }, {
                     Stencil.StencilWindowAxis(1, 1, Stencil.StencilWindowBoundaryClamp),
@@ -348,8 +352,9 @@ local function bind_context(T)
     }
     local fixed_soac_order = 1
     local fixed_input_count = 1
-    local fixed_sink_apply_stage_count = 0
-    local fixed_apply_stage_count = 1
+    local fixed_point_input_counts = { 1, 2 }
+    local fixed_sink_point_stage_count = 0
+    local fixed_point_stage_count = 1
 
     local function estimated_bytes_for_soac(cell)
         local input_count = tonumber(cell and cell.input_count) or 1
@@ -379,11 +384,11 @@ local function bind_context(T)
     local function check_cell(cell)
         local vocab = Matrix.vocabs[cell.vocab]
         assert(vocab and vocab.status == Matrix.status.supported, "residual_mc_intern_set: unsupported vocab cell " .. tostring(cell.vocab))
-        local derived = Matrix.derived_plans[cell.derived or cell.kind]
-        assert(derived and derived.status == Matrix.status.supported, "residual_mc_intern_set: unsupported derived plan cell " .. tostring(cell.derived or cell.kind))
-        assert(derived.basis == cell.vocab, "residual_mc_intern_set: derived plan " .. tostring(cell.derived or cell.kind) .. " belongs to " .. tostring(derived.basis) .. ", not " .. tostring(cell.vocab))
         local layout = Matrix.layouts[cell.layout]
         assert(layout and layout.status == Matrix.status.supported, "residual_mc_intern_set: unsupported layout cell " .. tostring(cell.layout))
+        local producer_group = producer_groups[cell.producer_group]
+        local producer = Matrix.producers[producer_group and producer_group.matrix_key]
+        assert(producer and producer.status == Matrix.status.supported, "residual_mc_intern_set: unsupported producer cell " .. tostring(cell.producer_group))
     end
 
     local function input(name)
@@ -494,29 +499,23 @@ local function bind_context(T)
         if kind == "reduce_n" then return "StencilReduce" end
         if kind == "scan_n" then return "StencilScan" end
         if kind == "scatter_reduce_n" then return "StencilScatterReduce" end
-        return "StencilApply"
-    end
-
-    local function soac_derived(kind)
-        if kind == "scatter_reduce_n" then return "scatter_reduce" end
-        return kind
+        return "StencilStore"
     end
 
     local function soac_cell(kind, group_name, producer_group_name, schedule_variant, spec, serial)
         local group = assert(layout_groups[group_name], group_name)
         local producer_group = assert(producer_groups[producer_group_name], producer_group_name)
         local cell = {
-            name = producer_group.name .. "." .. group_name .. "." .. kind .. ".o" .. tostring(spec.order) .. ".in" .. tostring(spec.input_count) .. ".s" .. tostring(spec.apply_stage_count) .. "." .. tostring(spec.name) .. "." .. schedule_variant.name .. "." .. tostring(serial),
+            name = producer_group.name .. "." .. group_name .. "." .. kind .. ".o" .. tostring(spec.order) .. ".in" .. tostring(spec.input_count) .. ".s" .. tostring(spec.point_stage_count) .. "." .. tostring(spec.name) .. "." .. schedule_variant.name .. "." .. tostring(serial),
             vocab = soac_vocab(kind),
             layout = group.layout,
             kind = kind,
-            derived = soac_derived(kind),
             group = group_name,
             producer_group = producer_group_name,
             schedule = schedule_variant.schedule and schedule_variant.schedule() or nil,
             input_count = spec.input_count,
             order = spec.order,
-            apply_stage_count = spec.apply_stage_count,
+            point_stage_count = spec.point_stage_count,
             expr_name = spec.name,
             expr = spec.expr,
             result_ty = spec.result_ty,
@@ -534,7 +533,7 @@ local function bind_context(T)
             if supports_unary(op.op, base.result_ty) then
                 if emit({
                     name = op.name .. "_" .. base.name,
-                    expr = Plan.apply_unary_expr(op.op, base.expr, base.result_ty, info),
+                    expr = Plan.point_unary_expr(op.op, base.expr, base.result_ty, info),
                     result_ty = base.result_ty,
                     cost = (base.cost or 1) + unary_cost(op.op),
                 }) == false then return false end
@@ -543,7 +542,7 @@ local function bind_context(T)
         for _, pred in ipairs(predicates_for(base.result_ty)) do
             if emit({
                 name = pred.name .. "_" .. base.name,
-                expr = Plan.apply_predicate_expr(pred.pred, base.expr, bool8),
+                expr = Plan.point_predicate_expr(pred.pred, base.expr, bool8),
                 result_ty = bool8,
                 cost = (base.cost or 1) + 2,
             }) == false then return false end
@@ -551,7 +550,7 @@ local function bind_context(T)
         for _, cast in ipairs(casts_for(base.result_ty)) do
             if emit({
                 name = cast.name .. "_" .. base.name,
-                expr = Plan.apply_cast_expr(cast.op, base.expr, cast.from, cast.to),
+                expr = Plan.point_cast_expr(cast.op, base.expr, cast.from, cast.to),
                 result_ty = cast.to,
                 cost = (base.cost or 1) + 2 + type_cost(cast.to),
             }) == false then return false end
@@ -593,7 +592,7 @@ local function bind_context(T)
                         if same_ty(left.result_ty, right.result_ty) and supports_binary(op.op, left.result_ty) then
                             if emit({
                                 name = op.name .. "_" .. left.name .. "_" .. right.name,
-                                expr = Plan.apply_binary_expr(op.op, left.expr, right.expr, left.result_ty, info),
+                                expr = Plan.point_binary_expr(op.op, left.expr, right.expr, left.result_ty, info),
                                 result_ty = left.result_ty,
                                 input_count = input_count,
                                 cost = (left.cost or 1) + (right.cost or 1) + binary_cost(op.op),
@@ -604,7 +603,7 @@ local function bind_context(T)
                         if same_ty(left.result_ty, right.result_ty) then
                             if emit({
                                 name = "cmp_" .. cmp.name .. "_" .. left.name .. "_" .. right.name,
-                                expr = Plan.apply_compare_expr(cmp.op, left.expr, right.expr, bool8),
+                                expr = Plan.point_compare_expr(cmp.op, left.expr, right.expr, bool8),
                                 result_ty = bool8,
                                 input_count = input_count,
                                 cost = (left.cost or 1) + (right.cost or 1) + 2,
@@ -620,7 +619,7 @@ local function bind_context(T)
                     if (cond == primary or then_spec == primary or else_spec == primary) and same_ty(then_spec.result_ty, else_spec.result_ty) then
                         if emit({
                             name = "select_" .. cond.name .. "_" .. then_spec.name .. "_" .. else_spec.name,
-                            expr = Plan.apply_select_expr(Stencil.StencilPredNonZero, cond.expr, then_spec.expr, else_spec.expr, then_spec.result_ty),
+                            expr = Plan.point_select_expr(Stencil.StencilPredNonZero, cond.expr, then_spec.expr, else_spec.expr, then_spec.result_ty),
                             result_ty = then_spec.result_ty,
                             input_count = input_count,
                             cost = (cond.cost or 1) + (then_spec.cost or 1) + (else_spec.cost or 1) + 4,
@@ -634,13 +633,13 @@ local function bind_context(T)
 
     local stream_stage_specs
 
-    stream_stage_specs = function(input_count, apply_stage_count, emit)
+    stream_stage_specs = function(input_count, point_stage_count, emit)
         local function emit_one(spec)
             spec.input_count = input_count
-            spec.apply_stage_count = apply_stage_count
+            spec.point_stage_count = point_stage_count
             return emit(spec)
         end
-        if apply_stage_count <= 0 then
+        if point_stage_count <= 0 then
             for _, base in ipairs(base_terms(input_count)) do
                 if emit_one({
                     name = base.name,
@@ -652,7 +651,7 @@ local function bind_context(T)
             return true
         end
         local bases = base_terms(input_count)
-        return stream_stage_specs(input_count, apply_stage_count - 1, function(primary)
+        return stream_stage_specs(input_count, point_stage_count - 1, function(primary)
             return stream_stage_from_primary(input_count, primary, bases, emit_one)
         end)
     end
@@ -702,7 +701,7 @@ local function bind_context(T)
         local serial = 0
         local estimated_total = cells_estimated_bytes(out)
         local keep_going = true
-        stream_stage_specs(fixed_input_count, fixed_sink_apply_stage_count, function(spec)
+        stream_stage_specs(fixed_input_count, fixed_sink_point_stage_count, function(spec)
             if same_ty(spec.result_ty, i32) then
                 spec.order = fixed_soac_order
                 serial, estimated_total, keep_going = append_soac_spec(out, "reduce_n", spec, serial, estimated_total)
@@ -716,11 +715,14 @@ local function bind_context(T)
             return keep_going
         end)
         if keep_going == false then return estimated_total, false end
-        stream_stage_specs(fixed_input_count, fixed_apply_stage_count, function(spec)
-            spec.order = fixed_soac_order
-            serial, estimated_total, keep_going = append_soac_spec(out, "apply_n", spec, serial, estimated_total)
-            return keep_going
-        end)
+        for _, input_count in ipairs(fixed_point_input_counts) do
+            stream_stage_specs(input_count, fixed_point_stage_count, function(spec)
+                spec.order = fixed_soac_order
+                serial, estimated_total, keep_going = append_soac_spec(out, "store_n", spec, serial, estimated_total)
+                return keep_going
+            end)
+            if keep_going == false then return estimated_total, false end
+        end
         return estimated_total, keep_going
     end
 
@@ -731,12 +733,11 @@ local function bind_context(T)
                 vocab = "StencilReduce",
                 layout = "StencilLayoutContiguous",
                 kind = "reduce_n",
-                derived = "reduce_n",
                 group = "contiguous",
                 producer_group = "range_nd2",
                 input_count = 1,
                 order = 1,
-                apply_stage_count = 0,
+                point_stage_count = 0,
                 expr_name = "axis2_sum_x1",
                 expr = input("x1"),
                 result_ty = i32,
@@ -750,12 +751,11 @@ local function bind_context(T)
                 vocab = "StencilReduce",
                 layout = "StencilLayoutContiguous",
                 kind = "reduce_n",
-                derived = "reduce_n",
                 group = "contiguous",
                 producer_group = "window_nd1",
                 input_count = 1,
                 order = 1,
-                apply_stage_count = 0,
+                point_stage_count = 0,
                 expr_name = "window_sum_x1",
                 expr = input("x1"),
                 result_ty = i32,
@@ -765,23 +765,22 @@ local function bind_context(T)
                 serial = "rank_window_reduce",
             },
             {
-                name = "rank.window_nd1.contiguous.apply_n.neighbor_minus1",
-                vocab = "StencilApply",
+                name = "rank.window_nd1.contiguous.store_n.neighbor_minus1",
+                vocab = "StencilStore",
                 layout = "StencilLayoutContiguous",
-                kind = "apply_n",
-                derived = "apply_n",
+                kind = "store_n",
                 group = "contiguous",
                 producer_group = "window_nd1",
                 input_count = 1,
                 order = 1,
-                apply_stage_count = 0,
+                point_stage_count = 0,
                 expr_name = "window_neighbor_minus1",
-                expr = Stencil.StencilApplyWindowInput(Stencil.StencilAccessRef("x1"), {
+                expr = Stencil.StencilPointWindowInput(Stencil.StencilAccessRef("x1"), {
                     Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), -1),
                 }),
                 result_ty = i32,
                 item_ty = i32,
-                estimated_bytes = estimated_bytes_for_soac({ kind = "apply_n", input_count = 1, order = 1 }),
+                estimated_bytes = estimated_bytes_for_soac({ kind = "store_n", input_count = 1, order = 1 }),
                 serial = "rank_window_neighbor",
             },
         }
@@ -824,7 +823,7 @@ local function bind_context(T)
     end
 
     local function profile_fixed_1x1_cells(cells, estimated)
-        stream_stage_specs(fixed_input_count, fixed_sink_apply_stage_count, function(spec)
+        stream_stage_specs(fixed_input_count, fixed_sink_point_stage_count, function(spec)
             if same_ty(spec.result_ty, i32) then
                 spec.order = fixed_soac_order
                 cells, estimated = profile_sink_kind("reduce_n", spec, cells, estimated)
@@ -833,11 +832,13 @@ local function bind_context(T)
             end
             return true
         end)
-        stream_stage_specs(fixed_input_count, fixed_apply_stage_count, function(spec)
-            spec.order = fixed_soac_order
-            cells, estimated = profile_sink_kind("apply_n", spec, cells, estimated)
-            return true
-        end)
+        for _, input_count in ipairs(fixed_point_input_counts) do
+            stream_stage_specs(input_count, fixed_point_stage_count, function(spec)
+                spec.order = fixed_soac_order
+                cells, estimated = profile_sink_kind("store_n", spec, cells, estimated)
+                return true
+            end)
+        end
         return cells, estimated
     end
 
@@ -858,9 +859,10 @@ local function bind_context(T)
         return {
             cells = cells,
             estimated_embedded_bytes = estimated,
-            shape = "fixed_1x1",
+            shape = "fixed_1x1_sink_point_1x2",
             soac_order = fixed_soac_order,
             input_count = fixed_input_count,
+            point_input_counts = fixed_point_input_counts,
         }
     end
 
@@ -908,19 +910,18 @@ local function bind_context(T)
 
     local builders = {}
 
-    function builders.apply_n(cell)
-        local input_count = assert(cell.input_count, "apply_n cell requires input_count")
+    function builders.store_n(cell)
+        local input_count = assert(cell.input_count, "store_n cell requires input_count")
         local inputs = {}
         for i = 1, input_count do
             local name = "x" .. tostring(i)
             inputs[i] = { name = name, ty = i32, layout = input_layout(cell, name) }
         end
         append_extra_inputs(inputs, cell, input_count)
-        return Plan.apply_n_artifact(with_producer(cell, {
-            tag = "bank_o" .. tostring(cell.order) .. "_in" .. tostring(cell.input_count) .. "_" .. tostring(cell.expr_name) .. "_" .. tostring(cell.serial),
+        return Plan.store_n_artifact(with_producer(cell, {
             result_ty = cell.result_ty or i32,
             inputs = inputs,
-            expr = assert(cell.expr, "apply_n cell requires generated expression"),
+            expr = assert(cell.expr, "store_n cell requires generated expression"),
             step_num = 1,
             dst_layout = dst_layout(cell),
         }))
@@ -935,7 +936,7 @@ local function bind_context(T)
         end
         append_extra_inputs(inputs, cell, input_count)
         return Plan.reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, with_producer(cell, {
-            tag = "bank_o" .. tostring(cell.order) .. "_in" .. tostring(cell.input_count) .. "_s" .. tostring(cell.apply_stage_count) .. "_" .. tostring(cell.expr_name) .. "_" .. tostring(cell.serial),
+            tag = "bank_o" .. tostring(cell.order) .. "_in" .. tostring(cell.input_count) .. "_s" .. tostring(cell.point_stage_count) .. "_" .. tostring(cell.expr_name) .. "_" .. tostring(cell.serial),
             inputs = inputs,
             expr = assert(cell.expr, "reduce_n cell requires generated expression"),
             item_ty = cell.item_ty or cell.result_ty or i32,
@@ -955,7 +956,7 @@ local function bind_context(T)
         end
         append_extra_inputs(inputs, cell, input_count)
         return Plan.scan_n_artifact(reduction(Value.ReductionAdd, 0), nil, with_producer(cell, {
-            tag = "bank_o" .. tostring(cell.order) .. "_in" .. tostring(cell.input_count) .. "_s" .. tostring(cell.apply_stage_count) .. "_" .. tostring(cell.expr_name) .. "_" .. tostring(cell.serial),
+            tag = "bank_o" .. tostring(cell.order) .. "_in" .. tostring(cell.input_count) .. "_s" .. tostring(cell.point_stage_count) .. "_" .. tostring(cell.expr_name) .. "_" .. tostring(cell.serial),
             inputs = inputs,
             expr = assert(cell.expr, "scan_n cell requires generated expression"),
             item_ty = cell.item_ty or cell.result_ty or i32,
@@ -975,7 +976,7 @@ local function bind_context(T)
         end
         append_extra_inputs(inputs, cell, input_count)
         return Plan.scatter_reduce_n_artifact(reduction(Value.ReductionAdd, 0), nil, with_producer(cell, {
-            tag = "bank_o" .. tostring(cell.order) .. "_in" .. tostring(cell.input_count) .. "_s" .. tostring(cell.apply_stage_count) .. "_" .. tostring(cell.expr_name) .. "_" .. tostring(cell.serial),
+            tag = "bank_o" .. tostring(cell.order) .. "_in" .. tostring(cell.input_count) .. "_s" .. tostring(cell.point_stage_count) .. "_" .. tostring(cell.expr_name) .. "_" .. tostring(cell.serial),
             inputs = inputs,
             expr = assert(cell.expr, "scatter_reduce_n cell requires generated expression"),
             item_ty = cell.item_ty or cell.result_ty or i32,

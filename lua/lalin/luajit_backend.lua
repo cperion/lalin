@@ -33,7 +33,13 @@ local function bind_context(T)
     end
 
     local function target_model(opts)
-        return opts.target_model or opts.back_target_model or opts.target or default_target_model()
+        return opts.target_model or opts.back_target_model or default_target_model()
+    end
+
+    local function host_target(opts)
+        opts = opts or {}
+        if opts.target ~= nil then return opts.target end
+        return BackTargetModel.host_target(target_model(opts))
     end
 
     local function schedule_index(schedule_plan)
@@ -56,59 +62,14 @@ local function bind_context(T)
     end
 
     local function artifact_for(kind, op, reduction, plan, info)
-        if kind == "copy" then return StencilArtifactPlan.copy_array_artifact(info) end
-        if kind == "fill" then return StencilArtifactPlan.fill_array_artifact(info) end
-        if kind == "map" then return StencilArtifactPlan.map_array_artifact(op, info) end
-        if kind == "zip_map" then return StencilArtifactPlan.zip_map_array_artifact(op, info) end
-        if kind == "cast" then return StencilArtifactPlan.cast_array_artifact(op, info) end
-        if kind == "compare" then return StencilArtifactPlan.compare_array_artifact(op, info) end
-        if kind == "zip_compare" then return StencilArtifactPlan.zip_compare_array_artifact(op, info) end
-        if kind == "gather" then return StencilArtifactPlan.gather_array_artifact(info) end
-        if kind == "scatter" then return StencilArtifactPlan.scatter_array_artifact(info) end
         if kind == "scatter_reduce" then return StencilArtifactPlan.scatter_reduce_n_artifact(reduction, plan, info) end
-        if kind == "apply_n" then return StencilArtifactPlan.apply_n_artifact(info) end
-        if kind == "in_place_map" then return StencilArtifactPlan.in_place_map_array_artifact(op, info) end
+        if kind == "store_n" then return StencilArtifactPlan.store_n_artifact(info) end
         if kind == "scan" then return StencilArtifactPlan.scan_array_artifact(reduction, plan, info) end
         if kind == "find" then return StencilArtifactPlan.find_array_artifact(op, info) end
         if kind == "partition" then return StencilArtifactPlan.partition_array_artifact(op, info) end
         if kind == "reduce" then return StencilArtifactPlan.reduce_array_artifact(reduction, plan, info) end
         if kind == "reduce_n" then return StencilArtifactPlan.reduce_n_artifact(reduction, plan, info) end
         if kind == "count" then return StencilArtifactPlan.count_array_artifact(op, info) end
-        if kind == "map_reduce" then
-            return StencilArtifactPlan.reduce_n_artifact(reduction, plan, {
-                tag = "map_" .. tostring(op),
-                inputs = { { name = "xs", ty = assert(info.elem_ty), layout = info.array_layout or info.src_layout } },
-                expr = StencilArtifactPlan.apply_unary_expr(op, StencilArtifactPlan.input_expr("xs"), assert(info.mapped_ty), info),
-                item_ty = info.mapped_ty,
-                result_ty = info.result_ty,
-                step_num = info.step_num or info.stride,
-                producer = info.producer,
-                schedule = info.schedule,
-                noalias = info.noalias,
-                noalias_pairs = info.noalias_pairs,
-                alignment = info.alignment,
-                alignments = info.alignments,
-            })
-        end
-        if kind == "zip_reduce" then
-            return StencilArtifactPlan.reduce_n_artifact(reduction, plan, {
-                tag = "zip_" .. tostring(op),
-                inputs = {
-                    { name = "lhs", ty = assert(info.lhs_ty), layout = info.lhs_layout },
-                    { name = "rhs", ty = assert(info.rhs_ty), layout = info.rhs_layout },
-                },
-                expr = StencilArtifactPlan.apply_binary_expr(op, StencilArtifactPlan.input_expr("lhs"), StencilArtifactPlan.input_expr("rhs"), assert(info.mapped_ty), info),
-                item_ty = info.mapped_ty,
-                result_ty = info.result_ty,
-                step_num = info.step_num or info.stride,
-                producer = info.producer,
-                schedule = info.schedule,
-                noalias = info.noalias,
-                noalias_pairs = info.noalias_pairs,
-                alignment = info.alignment,
-                alignments = info.alignments,
-            })
-        end
         error("luajit_backend: unsupported selected stencil kind " .. tostring(kind), 3)
     end
 
@@ -172,6 +133,7 @@ local function bind_context(T)
         local artifacts = {}
         local selections = {}
         local rejects = opts.collect_rejects or {}
+        local target = host_target(opts)
         local graph, flow, value, mem, effect, kernel = Lower.build_kernel(module, opts)
         local schedule_plan = opts.schedule_plan or opts.schedule or CodeSchedulePlan.plan(module, kernel, flow, value, mem, effect, target_model(opts))
         local schedules = schedule_index(schedule_plan)
@@ -183,6 +145,8 @@ local function bind_context(T)
             mem = mem,
             effect = effect,
             kernel = kernel,
+            layout_env = opts.layout_env,
+            target = target,
             stencil_store_artifact_for = function(_func, vocab, op, plan, info)
                 return collect_artifact(artifacts, selections, vocab, op, nil, plan, attach_schedule(info, plan, schedules), opts)
             end,
@@ -203,6 +167,8 @@ local function bind_context(T)
             effect = effect,
             kernel = kernel,
             stencil_machines_by_func = stencil_machines.machines_by_func,
+            layout_env = opts.layout_env,
+            target = target,
         })
         facts.schedule = schedule_plan
         facts.schedule_plan = schedule_plan
@@ -248,12 +214,19 @@ local function bind_context(T)
         end
         local mc_bank = opts.mc_bank
         if mc_bank == nil then
-            local err = "luajit_backend: mc realization requires a prebuilt MCStencilBank"
-            if bc_fallback_allowed(opts) then
-                warn_bc_fallback(opts, err)
-                return realize_bc(err)
+            local embedded_err
+            mc_bank, embedded_err = StencilBank.embedded_mc_bank_for(artifacts or {}, {
+                install_policy = opts.install_policy,
+                ffi_preamble = opts.ffi_preamble,
+            })
+            if mc_bank == nil then
+                local err = "luajit_backend: residual_mc requires an embedded or supplied MC bank: " .. tostring(embedded_err)
+                if bc_fallback_allowed(opts) then
+                    warn_bc_fallback(opts, err)
+                    return realize_bc(err)
+                end
+                return nil, err
             end
-            return nil, err
         end
         local realized, err, source = StencilBank.realize_mc_artifacts(artifacts, {
             mc_bank = mc_bank,
@@ -314,22 +287,30 @@ local function bind_context(T)
         else
             local mc_bank = opts.mc_bank
             if mc_bank == nil and #(artifacts or {}) > 0 then
-                local reason = "luajit_backend.emit_lua_artifact requires a prebuilt MCStencilBank"
-                if not bc_fallback_allowed(opts) then return nil, reason end
-                warn_bc_fallback(opts, reason)
-                bc_bank = opts.bc_bank
-                if bc_bank == nil then
-                    local bank_err
-                    bc_bank, bank_err = api.build_bc_bank(artifacts or {}, {
-                        stem = opts.stem,
-                        id = opts.bc_bank_id,
-                        target = opts.bc_target,
-                    })
-                    if bc_bank == nil then return nil, bank_err end
+                local embedded_err
+                mc_bank, embedded_err = StencilBank.embedded_mc_bank_for(artifacts or {}, {
+                    install_policy = opts.install_policy,
+                    ffi_preamble = opts.ffi_preamble,
+                })
+                if mc_bank == nil then
+                    local reason = "luajit_backend: residual_mc requires an embedded or supplied MC bank: " .. tostring(embedded_err)
+                    if not bc_fallback_allowed(opts) then return nil, reason end
+                    warn_bc_fallback(opts, reason)
+                    bc_bank = opts.bc_bank
+                    if bc_bank == nil then
+                        local bank_err
+                        bc_bank, bank_err = api.build_bc_bank(artifacts or {}, {
+                            stem = opts.stem,
+                            id = opts.bc_bank_id,
+                            target = opts.bc_target,
+                        })
+                        if bc_bank == nil then return nil, bank_err end
+                    end
+                    mode = "bc"
+                    stencil_source = ResidualLuaTrace.emit_bc_bank_source(bc_bank, opts)
                 end
-                mode = "bc"
-                stencil_source = ResidualLuaTrace.emit_bc_bank_source(bc_bank, opts)
-            else
+            end
+            if stencil_source == nil then
                 stencil_source = mc_bank and StencilBank.emit_mc_bank_source(mc_bank, opts) or "local __lalin_luajit_stencil_symbols = {}\n"
             end
         end
@@ -353,7 +334,11 @@ local function bind_context(T)
             f:write(source)
             f:close()
         end
-        return source
+        return source, nil, {
+            residual = mode,
+            selected_mc_bank = mc_bank,
+            selected_bc_bank = bc_bank,
+        }
     end
 
     function api.emit_module_artifact(module, opts)

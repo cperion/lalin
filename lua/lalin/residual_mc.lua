@@ -526,6 +526,108 @@ local function bind_context(T)
         return bank, nil, source
     end
 
+    local embedded_cdef_done = false
+
+    local function cdef_embedded_mc_bank()
+        if embedded_cdef_done then return true end
+        local ok = pcall(require("ffi").cdef, [[
+typedef struct LalinEmbeddedMCEntry {
+  const char *symbol;
+  const char *c_signature;
+  const unsigned char *data;
+  size_t size;
+} LalinEmbeddedMCEntry;
+typedef const LalinEmbeddedMCEntry *(*LalinEmbeddedMCShardEntriesFn)(void);
+typedef size_t (*LalinEmbeddedMCShardCountFn)(void);
+typedef struct LalinEmbeddedMCShard {
+  LalinEmbeddedMCShardEntriesFn entries;
+  LalinEmbeddedMCShardCountFn count;
+} LalinEmbeddedMCShard;
+const LalinEmbeddedMCShard *lalin_embedded_mc_bank_shards(void);
+size_t lalin_embedded_mc_bank_shard_count(void);
+size_t lalin_embedded_mc_bank_count(void);
+]])
+        embedded_cdef_done = ok
+        return ok
+    end
+
+    local function embedded_entry_index()
+        if not cdef_embedded_mc_bank() then return nil end
+        local ffi = require("ffi")
+        local ok, shard_count = pcall(function() return tonumber(ffi.C.lalin_embedded_mc_bank_shard_count()) end)
+        if not ok or shard_count == nil or shard_count == 0 then return nil end
+        local shards = ffi.C.lalin_embedded_mc_bank_shards()
+        if shards == nil then return nil end
+        local by_symbol = {}
+        for shard_index = 0, shard_count - 1 do
+            local shard = shards[shard_index]
+            local count = tonumber(shard.count())
+            local entries = shard.entries()
+            for entry_index = 0, count - 1 do
+                local entry = entries[entry_index]
+                local symbol = ffi.string(entry.symbol)
+                by_symbol[symbol] = {
+                    symbol = symbol,
+                    c_signature = ffi.string(entry.c_signature),
+                    binary = ffi.string(entry.data, tonumber(entry.size)),
+                }
+            end
+        end
+        return by_symbol
+    end
+
+    function api.embedded_mc_bank_for(artifacts, opts)
+        opts = opts or {}
+        local metastencil_covers
+        artifacts, metastencil_covers = Meta.normalize_artifact_inputs(artifacts or {})
+        artifacts = unique_artifacts(artifacts)
+        if #artifacts == 0 then
+            return LJ.LJMCStencilBank(
+                bank_id("embedded"),
+                target_for(opts),
+                install_policy(opts, false),
+                "<embedded>",
+                "<embedded>",
+                "",
+                "",
+                opts.ffi_preamble,
+                {},
+                metastencil_covers or {}
+            )
+        end
+        local embedded = embedded_entry_index()
+        if embedded == nil then return nil, "residual_mc: no embedded MC bank exported by host" end
+        local entries = {}
+        for _, artifact in ipairs(artifacts) do
+            local symbol = artifact_symbol(artifact)
+            local embedded_entry = embedded[symbol]
+            if embedded_entry == nil then return nil, "residual_mc: missing embedded mc stencil entry " .. symbol end
+            local signature = function_pointer_signature(artifact_signature(artifact), symbol)
+            if embedded_entry.c_signature ~= signature then
+                return nil, "residual_mc: embedded mc stencil signature mismatch for " .. symbol
+            end
+            entries[#entries + 1] = LJ.LJMCStencilEntry(
+                symbol,
+                "<embedded>",
+                embedded_entry.binary,
+                embedded_entry.c_signature,
+                artifact
+            )
+        end
+        return LJ.LJMCStencilBank(
+            bank_id("embedded"),
+            target_for(opts),
+            install_policy(opts, false),
+            "<embedded>",
+            "<embedded>",
+            "",
+            "",
+            opts.ffi_preamble,
+            entries,
+            metastencil_covers or {}
+        )
+    end
+
     function api.entry_for(bank, symbol)
         symbol = tostring(symbol)
         for _, entry in ipairs(bank.entries or {}) do

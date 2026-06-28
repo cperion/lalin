@@ -30,9 +30,10 @@ local coverage_cells = InternSet.cells()
 assert(#coverage_cells > #smoke_cells, "fixed MC intern matrix must be larger than one smoke shard")
 
 local default_profile = InternSet.bank_profile()
-assert(default_profile.shape == "fixed_1x1", "default MC intern matrix should be the fixed 1x1 bank")
+assert(default_profile.shape == "fixed_1x1_sink_point_1x2", "default MC intern matrix should be the canonical point/sink bank")
 assert(default_profile.soac_order == 1, "fixed MC intern matrix should saturate SOAC order 1")
 assert(default_profile.input_count == 1, "fixed MC intern matrix should use width 1")
+assert(default_profile.point_input_counts[1] == 1 and default_profile.point_input_counts[2] == 2, "fixed MC intern matrix should cover point input count 1 and 2")
 assert(default_profile.cells == #coverage_cells, "fixed MC intern profile should match the emitted matrix")
 
 local covered_vocabs = {}
@@ -97,7 +98,8 @@ local artifacts = InternSet.artifacts(smoke_opts)
 assert(#artifacts == #smoke_cells, "MC intern matrix should build exactly one artifact per smoke cell")
 
 local expected_symbols = InternSet.expected_symbols(smoke_opts)
-assert(#expected_symbols == #smoke_cells, "MC intern matrix smoke cells should produce unique symbols")
+assert(#expected_symbols > 0, "MC intern matrix should produce at least one canonical symbol")
+assert(#expected_symbols <= #smoke_cells, "MC intern matrix canonical symbols should not exceed smoke cells")
 
 local bank, err, source = Bank.build_mc_bank(artifacts, {
     stem = "test_residual_mc_intern_set",

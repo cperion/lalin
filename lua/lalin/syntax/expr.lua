@@ -28,6 +28,21 @@ end
 
 local parser
 
+local function decode_lua_string(raw, lex, tok)
+  local loader = loadstring or load
+  local fn, err = loader("return " .. tostring(raw), lex and lex.name or "=(lalin string literal)")
+  if not fn then
+    if lex then lex:error_at(tok, "invalid string literal: " .. tostring(err)) end
+    error(err, 0)
+  end
+  local ok, value = pcall(fn)
+  if not ok or type(value) ~= "string" then
+    if lex then lex:error_at(tok, "invalid string literal") end
+    error("invalid string literal", 0)
+  end
+  return value
+end
+
 local function binop(name)
   return function(op, left, right, ctx)
     return Ast.node("BinOp", { op = name or op.value, left = left, right = right }, Ast.origin(ctx.lex, op, ctx.lex.last, "parsed:binop"))
@@ -84,7 +99,7 @@ local function atom(lex, ctx)
     return Ast.node("Literal", { kind = "number", source = t.raw, value = tonumber(t.raw) }, Ast.origin(lex, t, t, "parsed:literal"))
   elseif t.kind == "string" then
     lex:next()
-    return Ast.node("Literal", { kind = "string", source = t.raw }, Ast.origin(lex, t, t, "parsed:literal"))
+    return Ast.node("Literal", { kind = "string", source = t.raw, value = decode_lua_string(t.raw, lex, t) }, Ast.origin(lex, t, t, "parsed:literal"))
   elseif t.kind == "name" then
     lex:next()
     if t.value == "true" or t.value == "false" then

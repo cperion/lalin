@@ -43,7 +43,7 @@ local artifact = lalin.emit_luajit_plan_artifact(plan, {
 assert(#artifact.artifacts == 1, 'window neighbor source should select one native stencil artifact')
 local desc = artifact.artifacts[1].instance.descriptor
 assert(tostring(pvm.classof(desc.producer.shape)):match('StencilProduceWindowND'), 'source window neighbor should preserve WindowND producer')
-assert(tostring(pvm.classof(desc.body.expr)):match('StencilApplyWindowInput'), 'source neighbor access should lower to StencilApplyWindowInput')
+assert(tostring(pvm.classof(desc.body.expr)):match('StencilPointWindowInput'), 'source neighbor access should lower to StencilPointWindowInput')
 
 local loaded = assert(loadfile(artifact.path))()
 local src = ffi.new('int32_t[6]', { 1, 2, 3, 4, 5, 6 })

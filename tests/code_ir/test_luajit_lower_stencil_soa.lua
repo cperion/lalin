@@ -172,9 +172,9 @@ local lj_module, facts = Lower.lower_module(module, {
 })
 
 assert(#rejects == 0, "SoA lowering rejected: " .. tostring(rejects[1] and rejects[1].reason))
-assert(#artifacts == 2, "SoA lowering should select zip_map and zip_reduce artifacts")
-assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, "zip_map should lower to machine body")
-assert(pvm.classof(lj_module.funcs[2].body) == LJ.LJBodyMachine, "zip_reduce should lower to machine body")
+assert(#artifacts == 2, "SoA lowering should select StoreN and ReduceN artifacts")
+assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, "StoreN SoA store should lower to machine body")
+assert(pvm.classof(lj_module.funcs[2].body) == LJ.LJBodyMachine, "ReduceN SoA fold should lower to machine body")
 
 local function assert_soa(access, field_name, component_index)
     local top = access.layout

@@ -81,7 +81,8 @@ local function bind_context(T)
     local function i32_ty() return Ty.TScalar(C.ScalarI32) end
     local function index_ty() return Ty.TScalar(C.ScalarIndex) end
     local function f64_ty() return Ty.TScalar(C.ScalarF64) end
-    local function cstr_ty() return Ty.TPtr(Ty.TScalar(C.ScalarU8)) end
+    local function u8_ty() return Ty.TScalar(C.ScalarU8) end
+    local function string_ty() return Ty.TSlice(u8_ty()) end
 
     local function select_stmt_typecheck(stmt)
         local selection, err = TypecheckRules:run("select_stmt_typecheck", { stmt = stmt }, "selection", "no tree typecheck statement dispatch")
@@ -301,6 +302,11 @@ local function bind_context(T)
             or s == C.ScalarIndex
     end
 
+    local function is_float_scalar(ty)
+        local s = scalar_kind(ty)
+        return s == C.ScalarF32 or s == C.ScalarF64
+    end
+
     local int_scalar_info = {
         [C.ScalarBool] = { bits = 1, signed = false },
         [C.ScalarI8] = { bits = 8, signed = true },
@@ -397,6 +403,18 @@ local function bind_context(T)
         return schema.classof(expr) == Tr.ExprLit
             and schema.classof(expr.value) == C.LitInt
             and is_integer_scalar(expected)
+    end
+
+    local function float_literal_can_adopt(expr, expected)
+        return schema.classof(expr) == Tr.ExprLit
+            and schema.classof(expr.value) == C.LitFloat
+            and is_float_scalar(expected)
+    end
+
+    local function string_literal_can_adopt(expr, expected)
+        if schema.classof(expr) ~= Tr.ExprLit or schema.classof(expr.value) ~= C.LitString then return false end
+        local cls = schema.classof(expected)
+        return cls == Ty.TSlice and type_eq(expected.elem, u8_ty())
     end
 
     local function is_nil_literal(expr)
@@ -817,6 +835,12 @@ local function bind_context(T)
         if expected ~= nil and int_literal_can_adopt(expr, expected) then
             return result_expr(Tr.ExprLit(Tr.ExprTyped(expected), expr.value), expected, result.issues)
         end
+        if expected ~= nil and float_literal_can_adopt(expr, expected) then
+            return result_expr(Tr.ExprLit(Tr.ExprTyped(expected), expr.value), expected, result.issues)
+        end
+        if expected ~= nil and string_literal_can_adopt(expr, expected) then
+            return result_expr(Tr.ExprLit(Tr.ExprTyped(expected), expr.value), expected, result.issues)
+        end
         if expected ~= nil and is_nil_literal(expr) and schema.classof(expected) == Ty.TPtr then
             return result_expr(Tr.ExprLit(Tr.ExprTyped(expected), expr.value), expected, result.issues)
         end
@@ -980,6 +1004,9 @@ local function bind_context(T)
             if schema.classof(base_access) == Ty.TView or schema.classof(base_access) == Ty.TPtr then
                 return single(Tr.TypeIndexBaseResult(Tr.IndexBaseView(Tr.ViewFromExpr(base.expr, base_access.elem)), base_access.elem, issues))
             end
+            if schema.classof(base_access) == Ty.TSlice then
+                return single(Tr.TypeIndexBaseResult(Tr.IndexBaseExpr(base.expr), base_access.elem, issues))
+            end
             if schema.classof(base_access) == Ty.TArray then
                 if schema.classof(base.expr) == Tr.ExprRef then
                     return single(Tr.TypeIndexBaseResult(Tr.IndexBasePlace(Tr.PlaceRef(Tr.PlaceTyped(base_access), base.expr.ref), base_access.elem), base_access.elem, issues))
@@ -1065,7 +1092,7 @@ local function bind_context(T)
 
             local cls = schema.classof(self.value)
             local ty = void_ty()
-            if cls == C.LitInt then ty = i32_ty() elseif cls == C.LitFloat then ty = f64_ty() elseif cls == C.LitBool then ty = bool_ty() elseif cls == C.LitString then ty = cstr_ty() end
+            if cls == C.LitInt then ty = i32_ty() elseif cls == C.LitFloat then ty = f64_ty() elseif cls == C.LitBool then ty = bool_ty() elseif cls == C.LitString then ty = string_ty() end
             return single(result_expr(Tr.ExprLit(Tr.ExprTyped(ty), self.value), ty, {}))
             end)(node, ...)
         elseif action == "ref" then

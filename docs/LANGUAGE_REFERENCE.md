@@ -689,7 +689,7 @@ composition support is still narrower than ordinary function lowering.
 
 ### Literals
 
-```lua
+```lln
 0
 42
 3.14
@@ -700,6 +700,32 @@ nil
 ```
 
 Integer and float literal typing is resolved during typechecking and lowering.
+Integer literals can adopt an expected integer type. Float literals can adopt an
+expected `f32` or `f64` type. `nil` can adopt an expected pointer type.
+
+String literals are byte slices:
+
+```lln
+let bytes [slice [u8]] = "A\n"
+return as [i32](bytes[0])
+```
+
+The compiler stores the decoded Lua string bytes in module data and produces a
+`slice [u8]`. The slice length is the number of string bytes; backend storage may
+include a trailing NUL for C/LuaJIT interop, but that byte is not part of the
+slice length.
+
+Brace literals are contextual:
+
+```lln
+let xs [array [i32] [3]] = { 10, 20, 12 }
+let pair [named("Pair")] = { left = 20, right = 22 }
+```
+
+Positional braces lower to array literals. Named braces lower to struct
+aggregate literals. A single brace literal cannot mix positional and named
+fields. Empty `{}` is accepted only where the expected type makes the aggregate
+meaning unambiguous.
 
 ### Names
 
@@ -968,26 +994,26 @@ For source `loop`, forming those facts is part of the language contract. Missing
 memory proofs, unsupported body forms, or unsupported producer/sink combinations
 should become diagnostics instead of silently becoming general imperative loops.
 
-Supported stencil families include:
+Supported stencil vocabulary is structural:
 
-- copy
-- fill
-- map and zip-map
-- cast
-- compare and zip-compare
-- select
-- gather and scatter
-- in-place map
-- reduce, count, find
-- generic `apply_n`, `reduce_n`, and `scan_n`
-- scan
-- scatter-reduce
+- `StoreN`: producer plus N-input point body plus store sink
+- `ReduceN`: producer plus N-input point body plus reduce sink
+- `ScanN`: producer plus N-input point body plus scan sink
+- `ScatterReduceN`: producer plus N-input point body plus indexed reduce sink
+
+Here `_n` always means point input count: the number of logical input
+streams referenced by the point body. It does not mean rank, output count,
+loop axes, fused stage count, or a derived SOAC family.
+
+Source patterns such as scalar fill, copy, indexed reads/writes, casts,
+comparisons, and blends are configurations of those descriptors, not separate
+backend families.
 
 Facts determine whether a valid source loop becomes:
 
 - a stencil machine call/effect
 - an MC copy+compile residual artifact
-- a BC fallback artifact
+- a BC fallback artifact for the same canonical descriptor
 - a typed reject
 
 The internal IR can still contain generic control regions. That is how regions,
@@ -1011,9 +1037,11 @@ inferred Lalin compilation unit
   -> loaded Lua API table
 ```
 
-If MC materialization needs a prebuilt bank that is not available, the default
-path falls back to `residual_bc` and emits a warning. Disable that fallback
-with `allow_bc_fallback = false`.
+The default path requests MC residuals. It consumes a supplied/prebuilt MC bank;
+it does not run a C compiler from the normal runtime compile path. If no
+compatible MC bank is supplied, or if MC materialization is unavailable, it falls
+back to `residual_bc` and emits a warning. Disable that fallback with
+`allow_bc_fallback = false`.
 
 ```lua
 local warnings = {}
@@ -1031,8 +1059,16 @@ local module = lalin.compile("demo", decls, {
 })
 ```
 
-Strict MC mode requires an MC bank. Use the plan API when you want to make
-missing or stale MC materialization a hard error:
+Strict MC mode makes missing-bank or MC materialization failures hard errors:
+
+```lua
+local module = lalin.compile("demo", decls, {
+  residual = "mc",
+  allow_bc_fallback = false,
+})
+```
+
+Use the plan API when you want to prebuild or reuse a specific MC bank:
 
 ```lua
 local plan = lalin.plan_luajit_artifact(decls, {
@@ -1086,10 +1122,11 @@ local artifact = lalin.emit_c_artifact(decls, {
 })
 ```
 
-The C path is intentionally simple at the boundary: lower the typed program,
-fuse selected stencil-shaped work at C level, emit C, then compile that C with
-`gcc` or the user's chosen C toolchain. It is the whole-program AOT path. The
-LuaJIT MC/BC paths are runtime artifact paths for Lua-hosted modules.
+The C path reuses the LuaJIT lowering plan: selected stencil bodies are emitted
+as inline C in the same translation unit as the residual functions that call
+them. The user then compiles that C with `gcc` or another C toolchain. It is the
+whole-program AOT path. The LuaJIT MC/BC paths are runtime artifact paths for
+Lua-hosted modules.
 
 ---
 

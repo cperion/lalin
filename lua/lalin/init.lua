@@ -658,24 +658,28 @@ function M.compile(name_or_decls, decls_or_opts, maybe_opts)
     return module
 end
 
+local prepare_luajit_artifact
+
 function M.emit_c_artifact(decl, path_or_opts, name, opts)
     if type(path_or_opts) == "table" and opts == nil then
         opts = path_or_opts
         path_or_opts = nil
     end
     opts = opts or {}
-    local pvm = require("lalin.pvm")
-    local A2 = require("lalin.schema_projection")
-    local Driver = require("lalin.compiler_driver")
-    local CEmit = require("lalin.c_emit")
-
-    local module_ast = module_ast_from(decl, name or opts.name or "lalin_c")
-    local cls = pvm.classof(module_ast)
-    local T = (cls and rawget(cls, "__context")) or pvm.context()
-    if T.LalinCompiler == nil then A2(T) end
-    local driver_opts = { site = "emit_c_artifact", root = "emit_c", context = T, c_opts = opts, c_target = opts.c_target, target = opts.target, name = name or opts.name }
-    local c_unit = Driver.lower_module(module_ast, driver_opts)
-    local artifact = CEmit(T).emit_artifact(c_unit, opts)
+    name = name or opts.name or "lalin_c"
+    local plan = prepare_luajit_artifact(decl, name, opts)
+    local Emit = require("lalin.luajit_emit")(plan.context)
+    local artifact = Emit.emit_c_artifact(plan.lj_module, plan.artifacts, opts)
+    artifact.name = name
+    artifact.unit = plan.lj_module
+    artifact.module_ast = plan.module_ast
+    artifact.checked = plan.checked
+    artifact.code_result = plan.code_result
+    artifact.facts = plan.facts
+    artifact.stencil_plan = plan.stencil_plan
+    artifact.luajit_stencil_machines = plan.luajit_stencil_machines
+    artifact.exec_plan = plan.exec_plan
+    artifact.rejects = plan.rejects
     function artifact:write(write_opts)
         write_opts = write_opts or {}
         if type(write_opts) == "string" then write_opts = { c_path = write_opts } end
@@ -702,7 +706,7 @@ function M.emit_c_artifact(decl, path_or_opts, name, opts)
     return artifact
 end
 
-local function prepare_luajit_artifact(decl, name, opts)
+function prepare_luajit_artifact(decl, name, opts)
     opts = opts or {}
     name = name or opts.name or "lalin_luajit"
     local function sanitize(s)
@@ -738,6 +742,7 @@ local function prepare_luajit_artifact(decl, name, opts)
 
     local lj_module, facts, artifacts, rejects = Backend.lower_module(code_result.module, {
         contracts = code_result.contracts,
+        layout_env = code_result.layout_env,
         graph = opts.graph,
         flow = opts.flow,
         value = opts.value,
@@ -758,6 +763,7 @@ local function prepare_luajit_artifact(decl, name, opts)
 
     return {
         kind = "LuaJITArtifactPlan",
+        context = T,
         name = name,
         residual = residual,
         sanitize = sanitize,
@@ -789,42 +795,28 @@ function M.emit_luajit_plan_artifact(plan, path_or_opts, name, opts)
     local path = path_or_opts or opts.path
     name = name or opts.name or plan.name or "lalin_luajit"
 
-    local mc_bank = opts.mc_bank
-    local bc_bank = opts.bc_bank
-    local residual = plan.residual
-    if mc_bank == nil and #(plan.artifacts or {}) > 0 and residual == "mc" then
-        local reason = "emit_luajit_plan_artifact: residual='mc' requires a prebuilt MCStencilBank"
-        if opts.allow_bc_fallback == false then error(reason, 2) end
-        local warning = "luajit_backend: falling back from residual_mc to residual_bc: " .. reason
-        if opts.collect_warnings ~= nil then opts.collect_warnings[#opts.collect_warnings + 1] = warning end
-        if opts.on_warning ~= nil then opts.on_warning(warning)
-        elseif opts.warn ~= nil then opts.warn(warning)
-        elseif not opts.silent_warnings and not opts.quiet then io.stderr:write("warning: " .. warning .. "\n") end
-        residual = "bc"
-    end
-    if bc_bank == nil and #(plan.artifacts or {}) > 0 and residual == "bc" then
-        bc_bank = assert(plan.backend.build_bc_bank(plan.artifacts, {
-            stem = opts.stem or plan.sanitize(name),
-            id = opts.bc_bank_id,
-            target = opts.bc_target,
-        }))
-    end
-
-    local source, err = plan.backend.emit_lua_artifact(plan.lj_module, plan.artifacts, {
-        mc_bank = mc_bank,
-        bc_bank = bc_bank,
+    local source, err, backend_artifact = plan.backend.emit_lua_artifact(plan.lj_module, plan.artifacts, {
+        mc_bank = opts.mc_bank,
+        bc_bank = opts.bc_bank,
         path = path,
         chunk_name = opts.chunk_name or name,
-        residual = residual,
+        residual = plan.residual,
         allow_bc_fallback = opts.allow_bc_fallback,
         collect_warnings = opts.collect_warnings,
         on_warning = opts.on_warning,
         warn = opts.warn,
-        silent_warnings = true,
+        silent_warnings = opts.silent_warnings,
+        quiet = opts.quiet,
         native_residual = opts.native_residual,
         tcc_residual = opts.tcc_residual,
+        install_policy = opts.install_policy,
+        ffi_preamble = opts.ffi_preamble,
+        stem = opts.stem or plan.sanitize(name),
+        bc_bank_id = opts.bc_bank_id,
+        bc_target = opts.bc_target,
     })
     if source == nil then error(err or "emit_luajit_plan_artifact failed", 2) end
+    backend_artifact = backend_artifact or {}
 
     local artifact = {
         kind = "LuaJITSourceArtifact",
@@ -841,9 +833,9 @@ function M.emit_luajit_plan_artifact(plan, path_or_opts, name, opts)
         exec_plan = plan.exec_plan,
         artifacts = plan.artifacts,
         rejects = plan.rejects,
-        mc_bank = mc_bank,
-        bc_bank = bc_bank,
-        residual = residual,
+        mc_bank = backend_artifact.residual == "mc" and (opts.mc_bank or backend_artifact.selected_mc_bank) or nil,
+        bc_bank = backend_artifact.residual == "bc" and (opts.bc_bank or backend_artifact.selected_bc_bank) or nil,
+        residual = backend_artifact.residual or plan.residual,
         requested_residual = plan.residual,
         warnings = opts.collect_warnings,
     }

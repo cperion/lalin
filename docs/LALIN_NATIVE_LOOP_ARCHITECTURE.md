@@ -149,7 +149,7 @@ The existing LuaJIT lowering boundary already projects
 already contain:
 
 - `StencilProducer`
-- `StencilBodyApply`
+- `StencilBodyPoint`
 - `StencilSinkStore`
 - `StencilSinkReduce`
 - `StencilSinkScan`
@@ -208,9 +208,9 @@ reduce/store modes:
 
 - count: reduce predicate
 - find: reduce/find mode
-- copy/fill/cast/compare/select: store/apply modes or body expressions
+- scalar/input/cast/compare/select expressions: StoreN body/sink configurations
 - partition: store/partition mode
-- gather/scatter: access layout and store mode
+- indexed read/write: access layout and store mode
 
 ## Domain Facts
 

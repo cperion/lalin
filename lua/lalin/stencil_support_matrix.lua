@@ -26,47 +26,23 @@ local function bind_context(T)
     }
 
     M.vocabs = {
-        StencilApply = { status = "supported", scope = "primitive generator for elementwise, copy/fill/cast/compare/select, gather/scatter, and current generated partition artifacts" },
+        StencilStore = { status = "supported", scope = "canonical StoreN generator for producer + N-input point body + store sink descriptors" },
         StencilReduce = { status = "supported", scope = "primitive generator for folds plus generated count/find and generic reduce_n fusion artifacts" },
         StencilScan = { status = "supported", scope = "primitive generator for axis-aware prefix reductions; residual_mc and LuaTrace materialize Range1D and RangeND axis scans" },
         StencilScatterReduce = { status = "supported", scope = "primitive generator for indexed accumulation/reduce_by_index over an externally initialized destination" },
     }
 
-    M.derived_plans = {
-        map = { status = "supported", basis = "StencilApply", scope = "unary apply over one input lane" },
-        zip_map = { status = "supported", basis = "StencilApply", scope = "binary apply over two input lanes" },
-        copy = { status = "supported", basis = "StencilApply", scope = "identity apply with copy overlap contract" },
-        copy_memmove = { status = "supported", basis = "StencilApply", scope = "identity apply with memmove overlap contract" },
-        fill = { status = "supported", basis = "StencilApply", scope = "fill apply with scalar value" },
-        cast = { status = "supported", basis = "StencilApply", scope = "cast apply" },
-        compare = { status = "supported", basis = "StencilApply", scope = "predicate apply to bool8 result" },
-        zip_compare = { status = "supported", basis = "StencilApply", scope = "comparison apply over two input lanes" },
-        select = { status = "supported", basis = "StencilApply", scope = "predicate-controlled blend apply" },
-        apply_n = { status = "supported", basis = "StencilApply", scope = "generic expression-backed ApplyN with arity capped at 4" },
-        gather = { status = "supported", basis = "StencilApply", scope = "identity apply with indexed read layout" },
-        scatter = { status = "supported", basis = "StencilApply", scope = "identity apply with indexed write layout and conflict contract" },
-        scatter_reduce = { status = "supported", basis = "StencilScatterReduce", scope = "indexed accumulation with reducer over readwrite destination layout" },
-        in_place_map = { status = "supported", basis = "StencilApply", scope = "unary apply over readwrite lane" },
-        partition = { status = "supported", basis = "StencilApply", scope = "current generated partition artifact; target derivation is apply + scan + scatter" },
-        reduce = { status = "supported", basis = "StencilReduce", scope = "plain fold" },
-        count = { status = "supported", basis = "StencilReduce", scope = "predicate apply fused into count reduction" },
-        find = { status = "supported", basis = "StencilReduce", scope = "predicate apply fused into min-index/not-found reduction" },
-        reduce_n = { status = "supported", basis = "StencilReduce", scope = "generic expression-backed ApplyN fused into fold with arity capped at 4" },
-        scan = { status = "supported", basis = "StencilScan", scope = "prefix fold" },
-        scan_n = { status = "supported", basis = "StencilScan", scope = "generic expression-backed ApplyN fused into prefix fold with arity capped at 4; MC and BC support Range1D plus RangeND axis scan" },
-    }
-
     M.layouts = {
         StencilLayoutScalar = { status = "supported", scope = "reduction accumulators/control values, not memory lanes" },
-        StencilLayoutContiguous = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout" },
-        StencilLayoutIndexed = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout with explicit index access reference" },
-        StencilLayoutAffine1D = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN/ScatterReduceN basis layout for affine 1D access remapping" },
-        StencilLayoutAffineND = { status = "partial", scope = "MC/C ApplyN over RangeND with constant axis coefficients; dynamic coefficients and BC coverage remain open" },
-        StencilLayoutFieldProjection = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout with record-pointer ABI projection" },
-        StencilLayoutSoAComponent = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout over component buffers" },
-        StencilLayoutSliceDescriptor = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout" },
-        StencilLayoutByteSpanDescriptor = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout" },
-        StencilLayoutViewDescriptor = { status = "supported", scope = "generated ApplyN/ReduceN/ScanN basis layout with dynamic stride parameterization" },
+        StencilLayoutContiguous = { status = "supported", scope = "generated StoreN/ReduceN/ScanN basis layout" },
+        StencilLayoutIndexed = { status = "supported", scope = "generated StoreN/ReduceN/ScanN basis layout with explicit index access reference" },
+        StencilLayoutAffine1D = { status = "supported", scope = "generated StoreN/ReduceN/ScanN/ScatterReduceN basis layout for affine 1D access remapping" },
+        StencilLayoutAffineND = { status = "partial", scope = "MC/C StoreN over RangeND with constant axis coefficients; dynamic coefficients and BC coverage remain open" },
+        StencilLayoutFieldProjection = { status = "supported", scope = "generated StoreN/ReduceN/ScanN basis layout with record-pointer ABI projection" },
+        StencilLayoutSoAComponent = { status = "supported", scope = "generated StoreN/ReduceN/ScanN basis layout over component buffers" },
+        StencilLayoutSliceDescriptor = { status = "supported", scope = "generated StoreN/ReduceN/ScanN basis layout" },
+        StencilLayoutByteSpanDescriptor = { status = "supported", scope = "generated StoreN/ReduceN/ScanN basis layout" },
+        StencilLayoutViewDescriptor = { status = "supported", scope = "generated StoreN/ReduceN/ScanN basis layout with dynamic stride parameterization" },
     }
 
     M.producers = {
@@ -80,7 +56,7 @@ local function bind_context(T)
         },
         StencilProduceRangeND = {
             status = "supported",
-            scope = "shape-supported; forward ND ranges materialize in residual_bc and residual_mc generic ApplyN/domain-ReduceN/axis-ReduceN/axis-ScanN plus emitted-bank cells",
+            scope = "shape-supported; forward ND ranges materialize in residual_bc and residual_mc generic StoreN/domain-ReduceN/axis-ReduceN/axis-ScanN plus emitted-bank cells",
             shape = "supported",
             residual_bc = "materialized",
             residual_mc = "materialized",
@@ -88,7 +64,7 @@ local function bind_context(T)
         },
         StencilProduceWindowND = {
             status = "supported",
-            scope = "shape-supported; center-domain WindowND materializes in residual_mc generic ApplyN/domain-ReduceN/axis-ScanN, window-neighbor apply, and window-local reduce; BC rejects with typed producer facts",
+            scope = "shape-supported; center-domain WindowND materializes in residual_mc generic StoreN/domain-ReduceN/axis-ScanN, window-neighbor store, and window-local reduce; BC rejects with typed producer facts",
             shape = "supported",
             residual_bc = "typed_reject",
             residual_bc_gap = "semantic BC producer materializer does not yet execute WindowND loops or window-relative body inputs",
@@ -97,7 +73,7 @@ local function bind_context(T)
         },
         StencilProduceTiledND = {
             status = "supported",
-            scope = "shape-supported; forward tiled ND loops materialize in residual_mc generic ApplyN/domain-ReduceN/axis-ScanN and emitted-bank cells; BC rejects with typed producer facts",
+            scope = "shape-supported; forward tiled ND loops materialize in residual_mc generic StoreN/domain-ReduceN/axis-ScanN and emitted-bank cells; BC rejects with typed producer facts",
             shape = "supported",
             residual_bc = "typed_reject",
             residual_bc_gap = "semantic BC producer materializer does not yet execute tiled ND loops",
@@ -124,19 +100,19 @@ local function bind_context(T)
         CodeTyFloat = { status = "supported", scope = "f32/f64 scalar cells; no bitwise reductions" },
         CodeTyIndex = { status = "supported", scope = "index scalar cells and index-lane classification" },
         CodeTyVoid = { status = "rejected", scope = "not an element type" },
-        CodeTyDataPtr = { status = "supported", scope = "pointer-valued element lanes for copy/fill/gather/scatter/identity-map" },
-        CodeTyCodePtr = { status = "supported", scope = "code-pointer element lanes for copy/fill/gather/scatter/identity-map" },
-        CodeTyNamed = { status = "supported", scope = "whole-record element lanes for copy/fill/gather/scatter/identity-map" },
-        CodeTyArray = { status = "supported", scope = "whole-array element lanes for copy/fill/gather/scatter/identity-map" },
-        CodeTySlice = { status = "supported", scope = "descriptor-valued element lanes for copy/fill/gather/scatter/identity-map" },
-        CodeTyView = { status = "supported", scope = "descriptor-valued element lanes for copy/fill/gather/scatter/identity-map" },
-        CodeTyByteSpan = { status = "supported", scope = "descriptor-valued element lanes for copy/fill/gather/scatter/identity-map" },
-        CodeTyHandle = { status = "supported", scope = "handle representation element lanes for copy/fill/gather/scatter/identity-map" },
-        CodeTyLease = { status = "supported", scope = "lease representation element lanes for copy/fill/gather/scatter/identity-map" },
-        CodeTyClosure = { status = "supported", scope = "closure descriptor element lanes for copy/fill/gather/scatter/identity-map" },
-        CodeTyImportedC = { status = "supported", scope = "imported C element lanes for copy/fill/gather/scatter/identity-map" },
-        CodeTyImportedCFuncPtr = { status = "supported", scope = "imported C function-pointer lanes for copy/fill/gather/scatter/identity-map" },
-        CodeTyVector = { status = "supported", scope = "vector element lanes for copy/fill/gather/scatter/identity-map" },
+        CodeTyDataPtr = { status = "supported", scope = "pointer-valued element lanes for StoreN identity/scalar/indexed bodies" },
+        CodeTyCodePtr = { status = "supported", scope = "code-pointer element lanes for StoreN identity/scalar/indexed bodies" },
+        CodeTyNamed = { status = "supported", scope = "whole-record element lanes for StoreN identity/scalar/indexed bodies" },
+        CodeTyArray = { status = "supported", scope = "whole-array element lanes for StoreN identity/scalar/indexed bodies" },
+        CodeTySlice = { status = "supported", scope = "descriptor-valued element lanes for StoreN identity/scalar/indexed bodies" },
+        CodeTyView = { status = "supported", scope = "descriptor-valued element lanes for StoreN identity/scalar/indexed bodies" },
+        CodeTyByteSpan = { status = "supported", scope = "descriptor-valued element lanes for StoreN identity/scalar/indexed bodies" },
+        CodeTyHandle = { status = "supported", scope = "handle representation element lanes for StoreN identity/scalar/indexed bodies" },
+        CodeTyLease = { status = "supported", scope = "lease representation element lanes for StoreN identity/scalar/indexed bodies" },
+        CodeTyClosure = { status = "supported", scope = "closure descriptor element lanes for StoreN identity/scalar/indexed bodies" },
+        CodeTyImportedC = { status = "supported", scope = "imported C element lanes for StoreN identity/scalar/indexed bodies" },
+        CodeTyImportedCFuncPtr = { status = "supported", scope = "imported C function-pointer lanes for StoreN identity/scalar/indexed bodies" },
+        CodeTyVector = { status = "supported", scope = "vector element lanes for StoreN identity/scalar/indexed bodies" },
     }
 
     M.materializers = {
@@ -177,30 +153,6 @@ local function bind_context(T)
         if row.residual_bc == M.materializer_status.materialized then return nil end
         return row.residual_bc_gap or ("residual_bc does not materialize " .. tostring(producer_name))
     end
-
-    M.artifact_constructors = {
-        map = "map_array_artifact",
-        zip_map = "zip_map_array_artifact",
-        scan = "scan_array_artifact",
-        copy = "copy_array_artifact",
-        copy_memmove = "copy_array_artifact",
-        fill = "fill_array_artifact",
-        find = "find_array_artifact",
-        partition = "partition_array_artifact",
-        cast = "cast_array_artifact",
-        compare = "compare_array_artifact",
-        zip_compare = "zip_compare_array_artifact",
-        select = "select_array_artifact",
-        apply_n = "apply_n_artifact",
-        gather = "gather_array_artifact",
-        scatter = "scatter_array_artifact",
-        scatter_reduce = "scatter_reduce_n_artifact",
-        in_place_map = "in_place_map_array_artifact",
-        reduce = "reduce_array_artifact",
-        count = "count_array_artifact",
-        reduce_n = "reduce_n_artifact",
-        scan_n = "scan_n_artifact",
-    }
 
     function M.type_family_for(ty)
         local cls = require("lalin.pvm").classof(ty)

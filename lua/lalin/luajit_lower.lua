@@ -1000,7 +1000,7 @@ local function bind_context(T)
         return class
     end
 
-    local function enrich_apply_n_class(ctx, class, graph_loop, loop_fact, bindings)
+    local function enrich_point_class(ctx, class, graph_loop, loop_fact, bindings)
         local producer_fact = ctx and ctx.producer_facts and loop_fact and loop_fact.domain and ctx.producer_facts[flow_domain_key(loop_fact.domain)] or nil
         local producer_shape = producer_fact and producer_fact.producer and StencilArtifactPlan.producer_shape(producer_fact.producer) or nil
         local window_1d = producer_shape ~= nil and pvm.classof(producer_shape) == Stencil.StencilProduceWindowND and #(producer_shape.axes or {}) == 1
@@ -1086,17 +1086,17 @@ local function bind_context(T)
         local rewrite_expr
         rewrite_expr = function(expr)
             local cls = pvm.classof(expr)
-            if cls == Stencil.StencilApplyInput then
+            if cls == Stencil.StencilPointInput then
                 local offsets = window_by_input[expr.access.name]
-                if offsets ~= nil then return Stencil.StencilApplyWindowInput(expr.access, offsets) end
+                if offsets ~= nil then return Stencil.StencilPointWindowInput(expr.access, offsets) end
                 return expr
             end
-            if cls == Stencil.StencilApplyUnary then return Stencil.StencilApplyUnary(expr.op, rewrite_expr(expr.arg), expr.result_ty, expr.int_semantics, expr.float_mode) end
-            if cls == Stencil.StencilApplyBinary then return Stencil.StencilApplyBinary(expr.op, rewrite_expr(expr.left), rewrite_expr(expr.right), expr.result_ty, expr.int_semantics, expr.float_mode) end
-            if cls == Stencil.StencilApplyCast then return Stencil.StencilApplyCast(expr.op, rewrite_expr(expr.arg), expr.from, expr.to) end
-            if cls == Stencil.StencilApplyPredicate then return Stencil.StencilApplyPredicate(expr.pred, rewrite_expr(expr.arg), expr.result_ty) end
-            if cls == Stencil.StencilApplyCompare then return Stencil.StencilApplyCompare(expr.cmp, rewrite_expr(expr.left), rewrite_expr(expr.right), expr.result_ty) end
-            if cls == Stencil.StencilApplySelect then return Stencil.StencilApplySelect(expr.pred, rewrite_expr(expr.cond), rewrite_expr(expr.then_expr), rewrite_expr(expr.else_expr), expr.result_ty) end
+            if cls == Stencil.StencilPointUnary then return Stencil.StencilPointUnary(expr.op, rewrite_expr(expr.arg), expr.result_ty, expr.int_semantics, expr.float_mode) end
+            if cls == Stencil.StencilPointBinary then return Stencil.StencilPointBinary(expr.op, rewrite_expr(expr.left), rewrite_expr(expr.right), expr.result_ty, expr.int_semantics, expr.float_mode) end
+            if cls == Stencil.StencilPointCast then return Stencil.StencilPointCast(expr.op, rewrite_expr(expr.arg), expr.from, expr.to) end
+            if cls == Stencil.StencilPointPredicate then return Stencil.StencilPointPredicate(expr.pred, rewrite_expr(expr.arg), expr.result_ty) end
+            if cls == Stencil.StencilPointCompare then return Stencil.StencilPointCompare(expr.cmp, rewrite_expr(expr.left), rewrite_expr(expr.right), expr.result_ty) end
+            if cls == Stencil.StencilPointSelect then return Stencil.StencilPointSelect(expr.pred, rewrite_expr(expr.cond), rewrite_expr(expr.then_expr), rewrite_expr(expr.else_expr), expr.result_ty) end
             return expr
         end
         if next(window_by_input) ~= nil then class.expr = rewrite_expr(class.expr) end
@@ -1104,22 +1104,9 @@ local function bind_context(T)
     end
 
     local function enrich_stencil_class(ctx, class, graph_loop, loop_fact, bindings, dst_base, dst_ty)
-        if class.kind == "apply_n" then
-            local ok, err = enrich_apply_n_class(ctx, class, graph_loop, loop_fact, bindings)
+        if class.kind == "point" then
+            local ok, err = enrich_point_class(ctx, class, graph_loop, loop_fact, bindings)
             if not ok then return nil, err end
-        elseif class.kind == "load" or class.kind == "map" or class.kind == "cast" or class.kind == "compare" then
-            local ok, err = enrich_lane_class(ctx, class, graph_loop, loop_fact, bindings, "lane")
-            if not ok then return nil, err end
-            if class.kind == "map" then
-                class.same_src_dst_ty = class.src == dst_base and same_code_type(class.elem_ty, dst_ty)
-            end
-        elseif class.kind == "zip_map" or class.kind == "zip_compare" then
-            local ok, err = enrich_lane_class(ctx, class, graph_loop, loop_fact, bindings, "lhs")
-            if not ok then return nil, err end
-            ok, err = enrich_lane_class(ctx, class, graph_loop, loop_fact, bindings, "rhs")
-            if not ok then return nil, err end
-        elseif class.kind == "fill" then
-            class.value_expr = value_expr(ctx, class.value)
         end
         return class
     end
@@ -1192,7 +1179,7 @@ local function bind_context(T)
         local bindings = binding_index(plan.body)
         local classified, reason = classify_store_expr(store.value, bindings)
         if classified == nil then return nil, reason end
-        local start_expr, stop_expr = value_id_expr(ctx, loop_fact.counted.start), value_id_expr(ctx, loop_fact.counted.stop)
+        local start_expr, stop_expr = producer_value_id_expr(ctx, loop_fact.counted.start), producer_value_id_expr(ctx, loop_fact.counted.stop)
         local dst_expr = value_id_expr(ctx, dst_base)
         local store_index_is_primary = expr_is_primary(ctx, store.index, graph_loop, loop_fact, bindings)
         local dst_layout = dst_fact and dst_fact.layout or nil
@@ -1291,16 +1278,18 @@ local function bind_context(T)
 
     local function append_producer_args(ctx, producer, out, fallback)
         local shape = StencilArtifactPlan.producer_shape(producer)
+        local call_shape = fallback and fallback.producer and StencilArtifactPlan.producer_shape(fallback.producer) or shape
         local cls = pvm.classof(shape)
         if cls == Stencil.StencilProduceRange1D then
-            out[#out + 1] = shape.start and producer_value_expr(ctx, shape.start) or assert(fallback and fallback.start_expr, "Range1D producer call is missing start")
-            out[#out + 1] = shape.stop and producer_value_expr(ctx, shape.stop) or assert(fallback and fallback.stop_expr, "Range1D producer call is missing stop")
+            out[#out + 1] = call_shape.start and producer_value_expr(ctx, call_shape.start) or assert(fallback and fallback.start_expr, "Range1D producer call is missing start")
+            out[#out + 1] = call_shape.stop and producer_value_expr(ctx, call_shape.stop) or assert(fallback and fallback.stop_expr, "Range1D producer call is missing stop")
             return
         end
         if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then
-            for _, axis in ipairs(shape.axes or {}) do
-                out[#out + 1] = assert(axis.start and producer_value_expr(ctx, axis.start), "ND producer call is missing axis start")
-                out[#out + 1] = assert(axis.stop and producer_value_expr(ctx, axis.stop), "ND producer call is missing axis stop")
+            for axis_index, axis in ipairs(shape.axes or {}) do
+                local call_axis = call_shape.axes and call_shape.axes[axis_index] or axis
+                out[#out + 1] = assert(call_axis.start and producer_value_expr(ctx, call_axis.start), "ND producer call is missing axis start")
+                out[#out + 1] = assert(call_axis.stop and producer_value_expr(ctx, call_axis.stop), "ND producer call is missing axis stop")
             end
             return
         end
@@ -1387,7 +1376,7 @@ local function bind_context(T)
         local descriptor_step = math.abs(step_num)
         local classified, reason = classify_store_expr(Kernel.KernelExprAlgebra(reduction.contribution), binding_index(plan.body))
         if classified == nil then return nil, reason end
-        local start_expr, stop_expr = value_id_expr(ctx, loop_fact.counted.start), value_id_expr(ctx, loop_fact.counted.stop)
+        local start_expr, stop_expr = producer_value_id_expr(ctx, loop_fact.counted.start), producer_value_id_expr(ctx, loop_fact.counted.stop)
         local init_expr = value_expr(ctx, reduction.init)
         local class, class_reason = enrich_stencil_class(ctx, classified, graph_loop, loop_fact, binding_index(plan.body), nil, nil)
         if class == nil then return nil, class_reason end
@@ -1516,7 +1505,7 @@ local function bind_context(T)
         local bindings = binding_index(plan.body)
         local class, class_reason = enriched_class_for_expr(ctx, Kernel.KernelExprAlgebra(reduction.contribution), graph_loop, loop_fact, bindings, dst_base, effect.dst.elem_ty)
         if class == nil then return nil, class_reason end
-        local start_expr, stop_expr = value_id_expr(ctx, loop_fact.counted.start), value_id_expr(ctx, loop_fact.counted.stop)
+        local start_expr, stop_expr = producer_value_id_expr(ctx, loop_fact.counted.start), producer_value_id_expr(ctx, loop_fact.counted.stop)
         local step_num = const_int_value(ctx, loop_fact.counted.step)
         if step_num == nil or step_num == 0 then return nil, "scan stencil requires a non-zero constant step" end
         local descriptor_step = math.abs(step_num)
@@ -1575,8 +1564,8 @@ local function bind_context(T)
             producer = producer_from_loop(ctx, loop_fact, step_num),
             start = loop_fact.counted.start,
             stop = loop_fact.counted.stop,
-            start_expr = value_id_expr(ctx, loop_fact.counted.start),
-            stop_expr = value_id_expr(ctx, loop_fact.counted.stop),
+            start_expr = producer_value_id_expr(ctx, loop_fact.counted.start),
+            stop_expr = producer_value_id_expr(ctx, loop_fact.counted.stop),
             pred = result.pred,
             not_found_minus_one = is_minus_one_const(result.not_found),
             class = class,
@@ -1604,8 +1593,8 @@ local function bind_context(T)
             dst_layout = dst_fact and dst_fact.layout or nil,
             start = loop_fact.counted.start,
             stop = loop_fact.counted.stop,
-            start_expr = value_id_expr(ctx, loop_fact.counted.start),
-            stop_expr = value_id_expr(ctx, loop_fact.counted.stop),
+            start_expr = producer_value_id_expr(ctx, loop_fact.counted.start),
+            stop_expr = producer_value_id_expr(ctx, loop_fact.counted.stop),
             store_index_primary = true,
             pred = effect.pred,
             semantics = effect.semantics,
@@ -1636,8 +1625,8 @@ local function bind_context(T)
             dst_layout = dst_fact and dst_fact.layout or nil,
             start = loop_fact.counted.start,
             stop = loop_fact.counted.stop,
-            start_expr = value_id_expr(ctx, loop_fact.counted.start),
-            stop_expr = value_id_expr(ctx, loop_fact.counted.stop),
+            start_expr = producer_value_id_expr(ctx, loop_fact.counted.start),
+            stop_expr = producer_value_id_expr(ctx, loop_fact.counted.stop),
             store_index_primary = true,
             copy_semantics = effect.semantics,
             class = class,
@@ -1658,7 +1647,7 @@ local function bind_context(T)
         local class, class_reason = enriched_class_for_expr(ctx, effect.value, graph_loop, loop_fact, bindings, dst_base, effect.dst.elem_ty)
         if class == nil then return nil, class_reason end
         local contribution = nil
-        if class.kind == "apply_n" then
+        if class.kind == "point" then
             for _, input in ipairs(class.inputs or {}) do
                 if input.index_primary ~= true then return nil, "scatter-reduce contribution inputs must be primary-indexed" end
             end
@@ -1667,24 +1656,8 @@ local function bind_context(T)
                 expr = class.expr,
                 inputs = class.inputs,
             }
-        elseif class.kind == "load" then
-            contribution = {
-                ty = class.elem_ty,
-                expr = Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs")),
-                inputs = {
-                    {
-                        name = "xs",
-                        base = class.src,
-                        base_expr = class.src_expr,
-                        ty = class.elem_ty,
-                        layout = class.src_layout,
-                        index_primary = class.index_primary,
-                    },
-                },
-            }
-            if not class.index_primary then return nil, "scatter-reduce contribution must be primary-indexed" end
         end
-        if contribution == nil then return nil, "scatter-reduce requires an ApplyN contribution" end
+        if contribution == nil then return nil, "scatter-reduce requires a point contribution" end
         local index_lane = index_lane_selection_fact(ctx, effect.index, graph_loop, loop_fact, bindings)
         if index_lane == nil then return nil, "scatter-reduce destination index must come from an index lane" end
         if not index_lane.index_primary then return nil, "scatter-reduce index lane must be primary-indexed" end
@@ -1877,26 +1850,43 @@ local function bind_context(T)
 
     local build_kernel
 
-    local function module_ctx_for(module, flow, mem, contracts)
+    local function module_ctx_for(module, flow, mem, contracts, opts)
+        opts = opts or {}
         return {
             code_sigs = code_sigs(module),
+            lj_sigs = {},
+            lj_sig_order = {},
+            lj_cdefs = {},
+            lj_cdef_order = {},
+            lj_named_decl_state = {},
             mem_objects = mem_object_index(mem),
             mem_accesses = mem_access_index(mem),
             soa_contracts = soa_contract_index(contracts),
             producer_facts = producer_fact_index(flow),
             flow = flow,
+            layout_env = opts.layout_env,
+            target = opts.target,
+            module_name = module.id and module.id.text or "module",
         }
     end
 
     local function func_lower_ctx(module_ctx, func)
         local ctx = {
             code_sigs = module_ctx.code_sigs,
+            lj_sigs = module_ctx.lj_sigs,
+            lj_sig_order = module_ctx.lj_sig_order,
+            lj_cdefs = module_ctx.lj_cdefs,
+            lj_cdef_order = module_ctx.lj_cdef_order,
+            lj_named_decl_state = module_ctx.lj_named_decl_state,
             mem_objects = module_ctx.mem_objects,
             mem_accesses = module_ctx.mem_accesses,
             soa_contracts = module_ctx.soa_contracts,
             producer_facts = module_ctx.producer_facts,
             func_id = func.id,
             flow = module_ctx.flow,
+            layout_env = module_ctx.layout_env,
+            target = module_ctx.target,
+            module_name = module_ctx.module_name,
             value_types = {},
             defs = value_defs(func),
         }
@@ -1965,7 +1955,7 @@ local function bind_context(T)
         local graph, flow, value, mem, effect, kernel = build_kernel(module, opts)
         local graph_loops, loop_func = graph_loop_index(graph)
         local flow_loops = flow_loop_index(flow)
-        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts)
+        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts, opts)
         local by_func, plans, rejects = {}, {}, {}
         for _, func in ipairs(module.funcs or {}) do
             local plan, pending = plan_func_stencil_machine(module_ctx, func, kernel, graph_loops, flow_loops, loop_func, opts)
@@ -1993,15 +1983,16 @@ local function bind_context(T)
     local function lower_func(module_ctx, func, kernel, graph_loops, flow_loops, loop_func, opts)
         local ctx = func_lower_ctx(module_ctx, func)
         local params = lower_params(ctx, func.params)
+        local sig = CType.ensure_lj_sig(ctx, func.sig)
         local machines, body = nil, nil
         local planned_machine = opts.stencil_machines_by_func and opts.stencil_machines_by_func[func.id.text] or nil
         if planned_machine ~= nil then
             machines = { planned_machine }
             body = LJ.LJBodyMachine(planned_machine.id, LJ.LJTerminalFirst(nil))
-            return LJ.LJFunc(fid(func.id), func.id, func.name, sigid(func.sig), params, {}, machines, body, LJ.LJTraceHot)
+            return LJ.LJFunc(fid(func.id), func.id, func.name, sig, params, {}, machines, body, LJ.LJTraceHot)
         end
         if body == nil then machines, body = lower_blocks_func(ctx, func) end
-        return LJ.LJFunc(fid(func.id), func.id, func.name, sigid(func.sig), params, {}, machines, body, LJ.LJTraceHot)
+        return LJ.LJFunc(fid(func.id), func.id, func.name, sig, params, {}, machines, body, LJ.LJTraceHot)
     end
 
     build_kernel = function(module, opts)
@@ -2040,10 +2031,10 @@ local function bind_context(T)
         end
         local graph_loops, loop_func = graph_loop_index(graph)
         local flow_loops = flow_loop_index(flow)
-        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts)
+        local module_ctx = module_ctx_for(module, flow, mem, opts.contracts, opts)
         local funcs = {}
         for i, func in ipairs(module.funcs or {}) do funcs[i] = lower_func(module_ctx, func, kernel, graph_loops, flow_loops, loop_func, opts) end
-        return LJ.LJModule(module.id, funcs, {}, {}, {}), {
+        return LJ.LJModule(module.id, funcs, module_ctx.lj_sig_order or {}, module_ctx.lj_cdef_order or {}, {}, module.data or {}), {
             graph = graph,
             flow = flow,
             value = value,

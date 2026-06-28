@@ -12,22 +12,20 @@ scalar subset, but not for the full schema space.
   surface, with `void` rejected as a non-element type.
 - [x] Scalar stencil type classification for signed/unsigned integers
   `i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32`, `f64`, `index`, and `bool8`.
-- [x] Non-scalar element-lane selection for copy, gather, scatter, and identity
-  map across pointer, code-pointer, named, array, descriptor, handle, lease,
-  closure, imported C, imported C function-pointer, and vector families.
-- [x] Store-family selection for fill, copy, gather, scatter, in-place map,
-  map, cast, compare, zip-map, and zip-compare across scalar element types.
+- [x] Non-scalar element lanes lower through `StoreN` descriptors across
+  pointer, code-pointer, named, array, descriptor, handle, lease, closure,
+  imported C, imported C function-pointer, and vector families.
+- [x] Store-shaped loops lower through one `StoreN` path: producer, expression
+  body, access layouts, and store sink mode.
 - [x] Reduction-family selection for integer add/mul/and/or/xor/min/max.
 - [x] Reduction-family selection for float add/mul/min/max.
-- [x] Higher reduction selection for map-reduce and zip-reduce over the
-  currently supported scalar reduction cells.
+- [x] Expression-backed reductions lower through one `ReduceN` path.
 - [x] Descriptor/layout representation for contiguous, indexed, scalar,
   field projection, SoA component, slice descriptor, byte-span descriptor, and
   view descriptor. In-place is represented by `StencilAccessReadWrite`, not by
   a layout variant.
-- [x] LuaTrace emission for the current stencil shape set: reduce, map,
-  zip-map, scan, copy, fill, find, partition, cast, compare, zip-compare,
-  gather, scatter, in-place map, count, map-reduce, and zip-reduce.
+- [x] LuaTrace emission for canonical `StoreN`, `ReduceN`, `ScanN`,
+  `ScatterReduceN`, and the remaining explicit reduce/find/partition paths.
 - [x] Embedded MC intern set for the current default scalar matrix and selected
   descriptor families.
 
@@ -129,7 +127,7 @@ Severity tags:
   Stencil binary ops now include division, modulo, left shift, logical right
   shift, and arithmetic right shift. Core lowering maps `BinDiv`, `BinRem`,
   `BinShl`, `BinLShr`, and `BinAShr`; planner/rule support constrains modulo
-  and shifts to integer-like lanes. MC zip-map/zip-reduce materialization uses
+  and shifts to integer-like lanes. MC StoreN/ReduceN materialization uses
   structured `llbl.c` expression nodes with trap guards for integer div/rem and
   masked shift counts; LuaTrace BC uses explicit C-truncating integer div/rem
   helpers for parity.
@@ -144,9 +142,9 @@ Severity tags:
   `RangeND`, `WindowND`, and `TiledND`; the support matrix marks the shape
   layer as covered. `residual_mc` now materializes forward `RangeND`,
   center-domain `WindowND`, and forward `TiledND` producers for generic
-  `ApplyN`, domain/axis `ReduceN`, and axis-aware `ScanN` through LLBL.C
+  `StoreN`, domain/axis `ReduceN`, and axis-aware `ScanN` through LLBL.C
   producer loops. The LuaTrace bytecode path materializes positive forward
-  `Range1D` and forward `RangeND` for generic `ApplyN`, domain/axis `ReduceN`,
+  `Range1D` and forward `RangeND` for generic `StoreN`, domain/axis `ReduceN`,
   axis-aware `ScanN`, `FindN`, and sequential/unique `ScatterReduceN`, while
   still rejecting `WindowND` and `TiledND` with typed producer facts.
 - [x] `D4` `[C]` Add range, compound, and float-class predicates, or document
@@ -251,9 +249,9 @@ Open gate question:
   C function-pointer, and vector element cells.
 - [ ] Add widening reductions, or document that reductions require
   `elem_ty == result_ty`.
-- [ ] Add widening map-reduce and zip-reduce, or document that mapped/result
+- [ ] Add widening expression-backed reductions, or document that mapped/result
   types must match through the current reduction contract.
-- [ ] Add mixed-type zip-map, or document that lhs/rhs/result types must match.
+- [ ] Add mixed-type binary StoreN bodies, or document that lhs/rhs/result types must match.
 - [ ] Add mixed-type zip-compare where lhs/rhs differ but comparison is legal.
 - [ ] Audit all cast stencil combinations against `MachineCastOp`; current tests
   cover identity and selected numeric casts, not the full cast matrix.
@@ -290,9 +288,9 @@ Open gate question:
 - [ ] Decide whether gather/scatter should support non-i32 index element types
   beyond the current selected cases.
 - [ ] Add gather/scatter runtime tests for all allowed index types.
-- [ ] Add map-reduce and zip-reduce coverage for min/max and bitwise reductions,
-  not only add-oriented default interned stencils.
-- [ ] Add map/zip-map coverage for all unary/binary operators:
+- [ ] Add ReduceN coverage for min/max and bitwise reductions, not only
+  add-oriented default interned stencils.
+- [ ] Add StoreN coverage for all unary/binary operators:
   identity, neg, bitnot, boolnot, add, sub, mul, and/or/xor, min, max.
 - [ ] Add compare/zip-compare coverage for all `CmpOp` values.
 - [ ] Add predicate coverage for all predicate constructors:
@@ -302,9 +300,7 @@ Open gate question:
 
 - [x] Build a vocab-by-layout matrix and decide which cells are supported,
   rejected, or intentionally unreachable. The matrix is now basis-shaped:
-  `ApplyN`, `ReduceN`, and `ScanN` are the supported generated consumers;
-  old fixed vocab names are frontend/optimization rewrites, not materializer
-  shapes.
+  `StoreN`, `ReduceN`, and `ScanN` are the supported generated consumers.
 - [x] Complete contiguous layout coverage for every supported generated basis
   consumer.
 - [x] Complete indexed layout coverage for every supported generated basis
@@ -334,8 +330,8 @@ Open gate question:
   represented as positive descriptor step plus backward producer order and is
   materialized for primary-index store/copy, fold, and scan loops. Reverse-affine
   1D destination indexes are represented as explicit affine access layouts.
-- [ ] Add descriptor aliasing tests for copy, map, in-place map, partition, and
-  scatter.
+- [ ] Add descriptor aliasing tests for StoreN copy/map/in-place/partition and
+  scatter-mode descriptors.
 - [ ] Add tests that descriptor lengths dominate loop bounds where applicable.
 - [ ] Add tests that descriptor data/len/stride extraction survives frontend
   lowering into stencil layout facts.
@@ -361,8 +357,7 @@ and benchmarked where they produce executable MC code.
   `StencilProducerShape` in the schema.
 - [x] Rename the remaining array/topology-biased ASDL surface:
   `StencilSinkEmitArray` became `StencilSinkStore`,
-  `StencilApplyMode` became `StencilStoreMode`, and
-  `StencilAccessTopology` became `StencilAccessLayout` with the access field
+    `StencilAccessTopology` became `StencilAccessLayout` with the access field
   renamed from `topology` to `layout`. Arrays are now one layout/ABI case, not
   the descriptor's default meaning.
 - [x] Represent `Range1D`, `RangeND`, `WindowND`, and `TiledND` as first-class
@@ -379,7 +374,7 @@ and benchmarked where they produce executable MC code.
   primary-index store/copy, fold, and scan materialization, plus reverse-affine
   1D store/copy and scan destination layouts.
 - [x] Materialize forward `RangeND` in `residual_mc` and LuaTrace BC for
-  generic `ApplyN`, domain/axis `ReduceN`, and axis-aware `ScanN` through
+  generic `StoreN`, domain/axis `ReduceN`, and axis-aware `ScanN` through
   nested producer loops.
 - [x] Add generic `ScanN` as the third SOAC-basis materializer. `ScanN` carries
   a typed axis; MC and BC both materialize `Range1D` axis 1 and forward
@@ -388,17 +383,15 @@ and benchmarked where they produce executable MC code.
   execute as linear `start/stop` loops.
 - [x] Add a shared producer execution-plan object to artifact shapes so every
   generic materializer consumes `producer`, not a loose `stride` field.
-- [x] Remove/demote fixed `residual_mc` stencil shapes as semantic
-  materializers. `map`, `zip_map`, `select`, `compare`, `zip_compare`, `cast`,
-  `copy`, `fill`, `gather`, `scatter`, `in_place_map`, `count`, `find`,
-  `partition`, and plain `reduce` must become generated `ApplyN`/`ReduceN`/
-  `ScanN` cells or explicit optimization rewrites after the generic descriptor
-  exists. The MC intern bank is now generated-only; `artifact_shape` projects
-  descriptor bodies to `apply_n`, `reduce_n`, or `scan_n`
-  instead of selecting fixed materializer shapes.
+- [x] Remove/demote named store shapes as semantic materializers. Store-shaped
+  loops lower into canonical `StoreN` descriptors with explicit
+  body/sink/layout modes. `count`, `find`, `partition`, and plain `reduce`
+  remain explicit reduction/store modes or generated `ReduceN`/`ScanN` cells.
+  The MC intern bank is generated-only; `artifact_shape` projects descriptor
+  bodies to canonical SOAC artifact shapes.
 - [x] Close the represented sink modes in the generic MC materializer.
   `StoreElementwise`, `StoreCopy`, `StoreScatter`, and read/write in-place
-  stores lower through `apply_n`; `ReduceFold` lowers through `reduce_n`;
+  stores lower through `store_n`; `ReduceFold` lowers through `reduce_n`;
   `ReduceCount` lowers through `reduce_n` with an internal zero identity;
   `ReduceFind` lowers through `find_n`; `StorePartition` lowers through
   `partition_n`; and `Scan` lowers through `scan_n`.
@@ -407,7 +400,7 @@ and benchmarked where they produce executable MC code.
   functions, params, loops, branches, expressions, and statements.
 - [x] Add forward `RangeND` runtime tests for every currently materialized
   basis-backed shape that can be expressed over row-major linear storage:
-  `ApplyN`, domain-scope `ReduceN`, axis `ReduceN`, and axis `ScanN`.
+  `StoreN`, domain-scope `ReduceN`, axis `ReduceN`, and axis `ScanN`.
 - [x] Keep `TiledND` and `WindowND` producers as typed BC rejects with focused
   tests until their BC loops/window-relative bodies are implemented.
 - [x] Add non-unit positive producer-step tests for `RangeND` generic shapes.
@@ -419,10 +412,10 @@ and benchmarked where they produce executable MC code.
   tile-major outer loops, clipped edge tiles, row-major linearization inside the
   compact logical iteration space, and scalar/vector schedule preservation at
   the body level.
-- [x] Materialize `TiledND` in `residual_mc` for generic `ApplyN` and
+- [x] Materialize `TiledND` in `residual_mc` for generic `StoreN` and
   domain-scope `ReduceN`.
-- [x] Remove fixed `residual_mc` shapes from the producer gate; fixed shape
-  names are no longer semantic materializers.
+- [x] Remove named store shapes from the producer gate; producer support is
+  checked against canonical SOAC descriptors.
 - [x] Keep `TiledND` as a typed BC reject with tests.
 - [x] Define current `WindowND` execution semantics: it is an executable
   center-domain producer with validated window metadata and boundary tags.
@@ -452,7 +445,7 @@ and benchmarked where they produce executable MC code.
   `StencilRejectUnsupportedSink` / constructor checks instead of flattening the
   producer.
 - [x] Add represented `WindowND` body-relative access semantics.
-  `StencilApplyWindowInput` plus `StencilWindowOffset` now names neighbor
+  `StencilPointWindowInput` plus `StencilWindowOffset` now names neighbor
   access explicitly; MC materializes boundary-aware neighbor addressing for
   clamp, wrap, zero, and reject policies.
 - [x] Materialize rank/scope/window consumers in MC: axis/partial reduce,
@@ -462,7 +455,7 @@ and benchmarked where they produce executable MC code.
   consumers. BC now materializes `RangeND` axis reduce and axis scan while
   preserving typed rejects for `WindowND` window consumers and `TiledND`; the
   emitted bank includes deliberate axis-reduce, window-reduce, and
-  window-neighbor apply cells in addition to generic producer cells.
+  window-neighbor store cells in addition to generic producer cells.
 - [x] Feed producer shapes from the frontend/lowering pipeline instead of only
   hand-built test descriptors. Lowering now turns counted loops into explicit
   `StencilProducer(StencilProduceRange1D)` descriptors with preserved loop
@@ -535,7 +528,7 @@ and benchmarked where they produce executable MC code.
   same-symbol bank entries whose stored artifact fingerprint differs from the
   requested artifact.
 - [ ] Add coverage for local relocations in every vectorized MC shape, not only
-  selected SoA zip-map/zip-reduce cases.
+  selected SoA StoreN/ReduceN cases.
 - [ ] Add tests for MC bank generation with view/slice/byte-span dynamic
   descriptors in the single-binary path.
 - [x] Add tests that generated embedded MC bank count matches an explicit
@@ -558,31 +551,27 @@ optimization only happens if the compiler receives the fused source. The emitted
 copy+compile residual artifact can still use TCC glue around the resulting bank entry.
 
 - [x] Record the primitive-basis decision: the production hand-coded stencil
-  family collapses to four primitives: `Apply`, `Reduce`, `Scan`, and
-  `ScatterReduce`. Plain `Scatter` remains `Apply` with indexed write layout
-  and conflict semantics; `ScatterReduce` owns collision-combine / histogram /
+  family collapses to point body plus sink descriptors. `StoreN`, `ReduceN`,
+  `ScanN`, and `ScatterReduceN` are sink-shaped materializations over the same
+  N-input point body. Plain scatter remains `StoreN` with indexed write layout
+  and conflict semantics; `ScatterReduceN` owns collision-combine / histogram /
   reduce-by-index semantics.
-- [x] Record the derivation rule: non-basis vocabulary is generated from the
-  primitive basis, not maintained as independent handwritten production
-  lowerings. `Map`, `ZipMap`, `InPlaceMap`, `Copy`, `Fill`, `Cast`, `Compare`,
-  `ZipCompare`, `Gather`, and plain `Scatter` are `Apply` configurations;
-  `Count`, `Find`, `MapReduce`, and `ZipReduce` are `Apply + Reduce`;
-  `Filter` and `Partition` are `Apply + Scan + Scatter`; histogram and
-  reduce-by-index families are `ScatterReduce`.
+- [x] Record the composition rule: source patterns are represented directly as
+  producer/body/sink descriptors over the primitive basis, not maintained as
+  independent handwritten production lowerings.
 - [x] Refactor the descriptor/support-matrix vocabulary so the real physical
-  shape is `producer + body + sink`, and the old operation names become derived
-  plan labels or aliases with no separate skeleton authority.
+  shape is `producer + body + sink`; old operation names have no separate
+  skeleton authority.
   `StencilDescriptor` is now one structural product: `StencilProducer`
-  plus typed accesses, a `StencilBody`, and a `StencilSink`. `Apply`, `Reduce`,
-  and `Scan` are recovered from sink/body combinations rather than descriptor
-  variants, while the support matrix tracks primitive vocabs separately from
-  derived plans.
+  plus typed accesses, a `StencilBodyPoint`, and a `StencilSink`. Store,
+  reduce, scan, and scatter-reduce behavior is recovered from the sink rather
+  than descriptor variants.
 - [x] Make the hidden unfold explicit. `StencilProducer` owns the physical
   iteration/control generator and carries optional `FlowDomain` provenance only
   as a proof/source anchor; compiled bank identity remains structural through
   descriptor fingerprints, not a separate producer id. The shape layer accepts
   `Range1D`, `RangeND`, `WindowND`, and `TiledND`; `residual_mc` generic
-  `ApplyN`, domain/axis `ReduceN`, and axis-aware `ScanN` now consume forward
+  `StoreN`, domain/axis `ReduceN`, and axis-aware `ScanN` now consume forward
   `RangeND`, center-domain `WindowND`, and forward `TiledND`, while LuaTrace
   consumes `RangeND` for the same generic rank/scope cases and rejects the
   remaining unsupported producer shapes with typed facts.
@@ -590,24 +579,23 @@ copy+compile residual artifact can still use TCC glue around the resulting bank 
   generated metastencils from the primitive fragments; keep handwritten versions
   only as benchmarks, regression fixtures, or temporary scaffolding until the
   generated artifacts match or beat them.
-- [x] Add expression-backed `ApplyN` descriptors/materializers with input-count
-  capped at 4. The current `StencilApplyExpr` tree covers const/input/unary/binary/
-  cast/predicate/compare/select expressions, and `apply_n` is tested on
+- [x] Add expression-backed `StoreN` descriptors/materializers with input-count
+  capped at 4. The current `StencilPointExpr` tree covers const/input/unary/binary/
+  cast/predicate/compare/select expressions, and `store_n` is tested on
   input counts 0 through 4 through both BC and MC.
 - [x] Generate MC bank candidates by SOAC order, not by the old scalar
-  depth/input-arity grid. Order `1` emits primitive `Apply`, `Reduce`, and
-  `Scan`; order `2` emits `Apply -> Apply`, `Apply -> Reduce`, and
-  `Apply -> Scan`; order `3` extends the Apply chain one stage before either
-  array output or sink. Input count is a separate coverage axis.
-- [x] Stream the actual `StencilApplyExpr` grammar in constructor order, not by
+  depth/input-arity grid. Order `1` emits single point-stage store, reduce, and scan sinks; higher
+  orders compose point stages before the final sink. Point input count is a
+  separate coverage axis.
+- [x] Stream the actual `StencilPointExpr` grammar in constructor order, not by
   hand-picked templates.
   The stream covers input, const, unary, binary, predicate, compare, cast, and
   select expressions over the currently consumable scalar surface. Explicit
   compiled-payload targets remain available only as caller-selected probes.
-- [x] Let `ScatterReduce` consume a generic `ApplyN` contribution body instead
+- [x] Let `ScatterReduce` consume a generic `StoreN` contribution body instead
   of only a single lane-load contribution. The frontend regression now covers
   `dst[idx[i]] += src[i] + rhs[i]`, proving the scatter-reduce sink receives a
-  typed binary `StencilApplyExpr` with two read accesses.
+  typed binary `StencilPointExpr` with two read accesses.
 - [x] Set the generated MC bank shape to the fixed saturated 1x1 surface. There
   is no default growth generator anymore: SOAC order is 1, input width is 1, and
   wider/fused banks are deferred architecture work rather than hidden build
@@ -620,7 +608,7 @@ copy+compile residual artifact can still use TCC glue around the resulting bank 
 - [x] Replace the old linear-producer-only embedded bank shape with the
   represented producer/body/sink bank. The current bounded default includes
   `Range1D`, `RangeND`, `TiledND`, and `WindowND` producer cells over the
-  available scalar Apply/Reduce/Scan/ScatterReduce surface. `ScatterReduce` is
+  available scalar StoreN/ReduceN/ScanN/ScatterReduceN surface. `ScatterReduce` is
   now generated as a real SOAC sink family over indexed-write destination
   layouts, with scalar ordered schedules only until atomic/privatized lowering
   is implemented.
@@ -635,23 +623,23 @@ copy+compile residual artifact can still use TCC glue around the resulting bank 
   materializer boundary as typed bank facts. `LJBCStencilBank` and
   `LJMCStencilBank` now own `metastencil_covers`, and the materializers accept
   selected covers/candidates/descriptors as inputs. For the current bounded
-  bank family, selected `Apply -> Reduce` covers lower to one fused artifact and
+  bank family, selected store-to-reduce covers lower to one fused artifact and
   preserve the selected cover metadata through realization.
-- [x] Lower selected `Apply -> Reduce` metastencil covers to one fused executable
+- [x] Lower selected store-to-reduce metastencil covers to one fused executable
   artifact. The selected cover now becomes a single `reduce_n` artifact
   whose body is emitted through `llbl.c` nodes, so GCC sees the composed
   expression and reduction in one function.
 - [x] Add a focused materializer benchmark against handwritten C:
   `benchmarks/bench_luajit_metastencil_fused_reduce.lua` builds a width-4
-  typed `Apply -> Reduce` cover, verifies it materializes as one fused
+  typed store-to-reduce cover, verifies it materializes as one fused
   `reduce_n` MC entry, compares it with direct `reduce_n`, and
   compiles the handwritten baseline from `llbl.c`. Quick probe on 2026-06-25:
-  `mc fused Apply->Reduce` median 0.069 ms, `mc direct reduce_n` median
+  `mc fused store->reduce` median 0.069 ms, `mc direct reduce_n` median
   0.064 ms, handwritten `gcc -O3` median 0.066 ms for 120k elements.
 - [ ] Optional future budget expansion: extend fused-cover materialization beyond
-  the current bounded `Apply -> Reduce` bank family to `Apply -> Apply`,
-  `Apply -> Scan`, `Apply -> Scan -> Scatter`, and composed
-  `Apply -> ScatterReduce` families when bank size/compile budget can carry
+  the current bounded store-to-reduce bank family to point-stage-to-point-stage,
+  point-stage-to-scan, point-stage-to-scan-to-store, and composed
+  point-stage-to-scatter-reduce families when bank size/compile budget can carry
   them.
 - [x] Remove the default compiled-payload frontier and the eager-enumerator
   guards. A real unbounded SOAC order-3/input-count-3 profile run was attempted
@@ -702,7 +690,7 @@ copy+compile residual artifact can still use TCC glue around the resulting bank 
   wire/control map, legality facts, schedule, compiler target, and compiler
   flags.
 - [ ] Add benchmarks against the unfused primitive sequence and handwritten C
-  compiled with `gcc -O3`. Current bounded `Apply -> Reduce` has a focused
+  compiled with `gcc -O3`. Current bounded store-to-reduce has a focused
   direct-materializer benchmark; this remains open for the broader family and
   source-level frontend path.
 - [ ] Reuse lessons from the SpongeJIT experiment: typed variant keys, no
@@ -714,32 +702,29 @@ copy+compile residual artifact can still use TCC glue around the resulting bank 
 - [ ] Replace unsupported-expression errors in LuaTrace constant lowering with
   structured rejects.
 - [x] Add runtime tests for all supported unary operators in LuaTrace output.
-  `test_stencil_apply_n` now realizes BC `ApplyN` artifacts for identity,
+  `test_stencil_store_n` now realizes BC `StoreN` artifacts for identity,
   negation, bit-not, and bool-not.
 - [x] Add runtime tests for all supported binary operators in LuaTrace output.
-  `test_stencil_apply_n` now realizes BC `ApplyN` artifacts for add, sub, mul,
+  `test_stencil_store_n` now realizes BC `StoreN` artifacts for add, sub, mul,
   div, mod, bit-and/or/xor, left/logical-right/arithmetic-right shift, min, and
   max.
 - [x] Add runtime tests for all supported reductions in LuaTrace output.
-  `test_stencil_apply_n` now realizes BC `ReduceN` artifacts for add, mul,
+  `test_stencil_store_n` now realizes BC `ReduceN` artifacts for add, mul,
   bit-and/or/xor, min, and max.
 - [x] Add runtime tests for all supported predicates and comparisons in LuaTrace
   output. `test_stencil_predicates_d4` now realizes BC predicate artifacts for
   nonzero, compare-const, range, compound and/or/not, float isnan/isinf/isfinite,
   and all six zip-compare operators.
-- [x] Add byte-exact tests for byte-span copy/fill/count/find/compare.
-  `test_residual_luatrace` now realizes byte-span layout artifacts for all
-  five shapes and checks the exact `uint8_t` results.
+- [x] Add byte-exact tests for byte-span StoreN/count/find cases.
+  The canonical path checks exact `uint8_t` results through StoreN store
+  descriptors and reduction/find descriptors.
 - [x] Add tests for dynamic stride parameter ordering in emitted LuaTrace
-  functions. `test_residual_luatrace` now checks the generated multi-access
-  dynamic-stride ABI order and executes a strided zip-map with distinct
-  dst/lhs/rhs stride parameters.
-- [x] Add tests for field-projection source and destination access in LuaTrace.
-  `test_residual_luatrace` now realizes an AoS field-projection map that
-  reads `src[i].left` and writes `dst[i].sum`.
-- [x] Add tests for SoA component source and destination access in LuaTrace.
-  `test_residual_luatrace` now realizes a SoA zip-map that reads two component
-  buffers and writes the destination component buffer.
+  functions. The canonical path checks generated multi-access dynamic-stride
+  ABI order through StoreN descriptors.
+- [x] Add tests for field-projection source and destination access through
+  StoreN descriptors.
+- [x] Add tests for SoA component source and destination access through StoreN
+  descriptors.
 - [x] Add tests for primitive plans: `ffi.copy`, `ffi.fill`, branch predicates,
   numeric predicate fast paths, scatter plans, and reduction plans.
   `test_residual_luatrace` asserts the inspectable LuaTrace plans for copy,
@@ -792,7 +777,7 @@ copy+compile residual artifact can still use TCC glue around the resulting bank 
     and execute through MC/C. Dynamic coefficients such as `j * h + i`,
     broader affine normalization, and BC/LuaTrace coverage remain open.
   - [x] Source-level window-neighbor syntax that lowers to typed
-    `StencilApplyWindowInput` instead of only testing direct descriptors.
+    `StencilPointWindowInput` instead of only testing direct descriptors.
     Inside `lln.window_nd`, ordinary 1D neighbor indexing such as `xs[i - 1]`
     is recognized as a window-relative input and materialized by MC.
   - [x] Decide and implement source semantics for `lln.scan` over `lln.tiled_nd`.
@@ -801,20 +786,20 @@ copy+compile residual artifact can still use TCC glue around the resulting bank 
     prefix-reset scope. `test_luajit_artifact_tiled_scan_dsl` executes the
     source path, while missing axis selection remains rejected in a focused
     test.
-  - [x] Feed source-level select/blend bodies into generic `ApplyN`.
+  - [x] Feed source-level select/blend bodies into generic `StoreN`.
     `test_luajit_artifact_from_dsl` now lowers `select (lhs[i] :gt (0))(lhs[i])(rhs[i])`
-    to a `StencilApplySelect` descriptor and executes it.
+    to a `StencilPointSelect` descriptor and executes it.
   - [x] Feed source-level bitwise/remainder/shift/min/max and deeper mixed
-    expression bodies through generic `ApplyN` coverage tests.
+    expression bodies through generic `StoreN` coverage tests.
     `ValueExprRem` now preserves remainder separately from division,
     bitwise/shift expressions flow through `ValueExprBinary`, and
     `test_luajit_artifact_from_dsl` executes authored `%`, `shl`, `band`,
-    `bor`, `bxor`, `min`, and `max` loops selected as generic `ApplyN`.
+    `bor`, `bxor`, `min`, and `max` loops selected as generic `StoreN`.
   - [ ] Predicate composition from source: backend predicates support
     range/and/or/not/float-class, but source short-circuit `and`/`or` lowers as
     control flow and needs a pure-predicate normalization/design before it can
     become `StencilPredAnd`/`StencilPredOr`.
-  - [x] Scatter-reduce can consume generic `ApplyN` contribution bodies from
+  - [x] Scatter-reduce can consume generic `StoreN` contribution bodies from
     source for the current reducer vocabulary. Immediate RMW forms over
     `add`, `mul`, bitwise `and`/`or`/`xor`, and select-shaped `min`/`max` are
     selected and executed; `dst[idx[i]] += src[i] + rhs[i]` proves the sink
@@ -892,9 +877,9 @@ means the fact is preserved for audit but does not yet drive lowering.
 | Schema surface | `residual_bc` | `residual_mc` | emitted copy+compile residual artifact | Remaining work |
 | --- | --- | --- | --- | --- |
 | Descriptor producer/body/sink / vocab | validate all represented producer/body/sink descriptors; materialize current BC subset and typed-reject missing semantic cells | consume all shape-supported C stencil shapes; materialize current fast subset | record/intern selected shapes | [x] Generate MC intern set from the support matrix, not hand enumeration. |
-| Producer | materialize forward/backward `Range1D` plus forward `RangeND`; reject represented window/tiled producers with typed facts | materialize forward/backward `Range1D`, forward `RangeND`, center-domain `WindowND`, and forward `TiledND` for generic `ApplyN`, domain/axis `ReduceN`, and axis `ScanN` | intern producer cells for generated SOAC combinations plus deliberate rank-specific probe cells for axis/window behavior | [x] Add deliberate emitted-bank cells for axis/window reduce and window-neighbor apply. |
+| Producer | materialize forward/backward `Range1D` plus forward `RangeND`; reject represented window/tiled producers with typed facts | materialize forward/backward `Range1D`, forward `RangeND`, center-domain `WindowND`, and forward `TiledND` for generic `StoreN`, domain/axis `ReduceN`, and axis `ScanN` | intern producer cells for generated SOAC combinations plus deliberate rank-specific probe cells for axis/window behavior | [x] Add deliberate emitted-bank cells for axis/window reduce and window-neighbor store. |
 | Sink rank/scope | materialize domain reduce, `Range1D` axis-1 scan, and `RangeND` axis reduce/scan; reject window/tiled producers | materialize domain reduce, axis/partial reduce, window-local reduce, and rank-N axis scan | bank records domain reduce, generated rank-N scan, and deliberate axis/window reduce cells | [x] Add emitted-bank coverage for axis/window reduce cells. |
-| Window body offsets | represented as `StencilApplyWindowInput`; BC rejects `WindowND` producer shapes | MC consumes boundary-aware window-relative access expressions | bank includes deliberate window-neighbor apply cell | [x] Add emitted-bank cells and BC typed-reject tests for window-relative bodies. |
+| Window body offsets | represented as `StencilPointWindowInput`; BC rejects `WindowND` producer shapes | MC consumes boundary-aware window-relative access expressions | bank includes deliberate window-neighbor store cell | [x] Add emitted-bank cells and BC typed-reject tests for window-relative bodies. |
 | Layout | consume contiguous, view, slice, byte-span, field, SoA, indexed, scalar | consume same through C access expressions | partial dynamic-descriptor coverage | [ ] Add embedded-bank tests for view/slice/byte-span/field/SoA descriptors. |
 | Access roles | consume read/write/readwrite/reduce/index in access plans | consume read/write/readwrite/reduce/index in generated C signatures/accesses | record through artifacts | [ ] Add index-role bounds/alias tests for gather/scatter in both banks. |
 | Alias facts | consume noalias for BC copy primitive legality | consume noalias as C `restrict` where legal | record through artifact fingerprint | [ ] Benchmark alias-driven gather/scatter/copy materialization against handwritten C. |
@@ -908,7 +893,7 @@ means the fact is preserved for audit but does not yet drive lowering.
 | Realized schedule | consume into installed artifact diagnostics/rejects | consume compiler/disassembly construction evidence | record through bank entry artifacts | [ ] Add query tests over emitted-bank realized schedule metadata. |
 | Reject facts | record selection/planning rejects | record selection/planning rejects | partial startup visibility | [ ] Make single-binary startup report missing/rejected intern cells with typed facts. |
 | Artifact fingerprint | consume before BC load | consume before MC install | record in bank entry artifacts | [x] Reject same-symbol stale bank entries before code load/install. |
-| Metastencil descriptor | consume selected covers as typed bank facts; current bounded `Apply -> Reduce` family lowers to one fused artifact | consume selected covers as typed bank facts; current bounded `Apply -> Reduce` family lowers to one fused artifact | fingerprint selected cover on the typed bank | [ ] Optional budget expansion: extend fused-cover lowering beyond the current bank family. |
+| Metastencil descriptor | consume selected covers as typed bank facts; current bounded store-to-reduce family lowers to one fused artifact | consume selected covers as typed bank facts; current bounded store-to-reduce family lowers to one fused artifact | fingerprint selected cover on the typed bank | [ ] Optional budget expansion: extend fused-cover lowering beyond the current bank family. |
 
 - [x] Remove the raw C preamble escape from the stencil C emitter. MC C source
   now accepts only structured `llbl.c` declaration nodes through `c_decls`;
@@ -942,7 +927,7 @@ means the fact is preserved for audit but does not yet drive lowering.
   family and layout, including negative/control cases where a materializer
   should reject.
 - [x] Add the first focused materializer-consumption probe for the current
-  bounded metastencil family: width-4 `Apply -> Reduce` fused MC versus direct
+  bounded metastencil family: width-4 store-to-reduce fused MC versus direct
   MC versus handwritten GCC C. The probe confirmed selected-cover metadata is
   consumed by the MC bank boundary; the generated MC bank default now leaves GCC
   vectorization enabled so generated asm is a real performance signal.
@@ -989,11 +974,11 @@ means the fact is preserved for audit but does not yet drive lowering.
 - [x] Feed selected metastencil covers into `residual_bc`, `residual_mc`,
   and emitted-bank materializers as typed bank facts instead of treating them
   only as planning facts.
-- [x] Implement fused-cover materialization for `Apply -> Reduce`: one selected
+- [x] Implement fused-cover materialization for store-to-reduce: one selected
   cover becomes one compiled artifact/body, not only a typed grouping of node
   artifacts.
 - [ ] Optional future budget expansion: implement fused-cover materialization for
-  legal cover families outside the current `Apply -> Reduce` bank shape.
+  legal cover families outside the current store-to-reduce bank shape.
 - [ ] Then run the materializer consumption and benchmark meta-task above.
 - [ ] Finally, make frontend lowering feed the full schema and prove the matrix
   from source program to loaded LuaJIT module.

@@ -2,6 +2,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local ffi = require("ffi")
 local bit = require("bit")
+local lalin = require("lalin")
 local pvm = require("lalin.pvm")
 local Schema = require("lalin.schema")
 
@@ -132,5 +133,35 @@ for j = 0, count - 1 do
     expected = bit.tobit(expected + arr[j])
 end
 assert(result.module.sum_i32(arr, count) == expected)
+
+local facade_src = [=[
+local zip_add = fn(dst [ptr [i32]], lhs [ptr [i32]], rhs [ptr [i32]], n [index]) [void]
+  requires bounds(dst)(n), writeonly(dst), bounds(lhs)(n), readonly(lhs), bounds(rhs)(n), readonly(rhs)
+  requires disjoint(dst)(lhs), disjoint(dst)(rhs), disjoint(lhs)(rhs)
+  loop i in 0 .. n do
+    dst[i] = lhs[i] + rhs[i]
+  end
+end
+
+return { zip_add }
+]=]
+local parsed = assert(lalin.loadstring(facade_src, "@test_luajit_backend_mc_facade.lln"))()
+local facade_plan = lalin.plan_luajit_artifact(parsed, { name = "BackendMCFacade" })
+local facade_bank, facade_bank_err, facade_bank_src = facade_plan.backend.build_mc_bank(facade_plan.artifacts, {
+    stem = "test_luajit_backend_mc_facade",
+})
+assert(facade_bank ~= nil, tostring(facade_bank_err) .. "\n" .. tostring(facade_bank_src))
+local facade = lalin.compile("BackendMCFacade", parsed, {
+    mc_bank = facade_bank,
+    silent_warnings = true,
+    allow_bc_fallback = false,
+})
+assert(facade.__lalin_artifact.residual == "mc", "public compile should default to MC")
+assert(facade.__lalin_artifact.mc_bank == facade_bank, "public compile should use the supplied MC bank")
+local lhs = ffi.new("int32_t[3]", { 1, 2, 3 })
+local rhs = ffi.new("int32_t[3]", { 10, 20, 30 })
+local dst = ffi.new("int32_t[3]")
+facade.zip_add(dst, lhs, rhs, 3)
+assert(dst[0] == 11 and dst[1] == 22 and dst[2] == 33, "public compile MC result mismatch")
 
 io.write("lalin luajit_backend mc ok\n")

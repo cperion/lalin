@@ -770,7 +770,7 @@ local function bind_context(T)
 
     local function c_window_input_expr(expr, desc, access_by_name, ctx)
         if ctx == nil or ctx.producer == nil or ctx.producer.kind ~= "window_nd" then
-            error("stencil_c: window-relative apply input requires a WindowND producer context", 3)
+            error("stencil_c: window-relative point input requires a WindowND producer context", 3)
         end
         local name = expr.access.name
         local access = access_by_name[name] or access_named(desc, name)
@@ -872,61 +872,61 @@ local function bind_context(T)
         return c_cast(ty, const_literal_value(value))
     end
 
-    local function c_apply_expr(expr, desc, access_by_name, index, ctx)
+    local function c_point_expr(expr, desc, access_by_name, index, ctx)
         local cls = pvm.classof(expr)
-        if cls == Stencil.StencilApplyInput then
+        if cls == Stencil.StencilPointInput then
             local name = expr.access.name
             local access = access_by_name[name] or access_named(desc, name)
             if pvm.classof(access.layout) == Stencil.StencilLayoutScalar then return cn(name) end
             return access_c_expr(access, name, index, access_by_name, ctx)
         end
-        if cls == Stencil.StencilApplyWindowInput then
+        if cls == Stencil.StencilPointWindowInput then
             return c_window_input_expr(expr, desc, access_by_name, ctx)
         end
-        if cls == Stencil.StencilApplyConst then return c_value_const_expr(expr.value, expr.ty) end
-        if cls == Stencil.StencilApplyUnary then
+        if cls == Stencil.StencilPointConst then return c_value_const_expr(expr.value, expr.ty) end
+        if cls == Stencil.StencilPointUnary then
             local result_ty = assert(expr.result_ty, "stencil_c: generic unary apply requires result_ty")
-            local arg = c_apply_expr(expr.arg, desc, access_by_name, index, ctx)
+            local arg = c_point_expr(expr.arg, desc, access_by_name, index, ctx)
             if expr.op == Stencil.StencilUnaryIdentity then return c_cast(result_ty, arg) end
             if expr.op == Stencil.StencilUnaryNeg then return c_cast(result_ty, C.cast[c_unsigned_type_node(result_ty)](0) - c_unsigned_cast(result_ty, arg)) end
             if expr.op == Stencil.StencilUnaryBitNot then return c_cast(result_ty, C.bnot(c_unsigned_cast(result_ty, arg))) end
             if expr.op == Stencil.StencilUnaryBoolNot then return c_cast(result_ty, C.not_(arg)) end
             error("stencil_c: unsupported generic unary apply " .. unary_name(expr.op), 3)
         end
-        if cls == Stencil.StencilApplyBinary then
+        if cls == Stencil.StencilPointBinary then
             return c_binary_expr(
                 expr.op,
-                c_apply_expr(expr.left, desc, access_by_name, index, ctx),
-                c_apply_expr(expr.right, desc, access_by_name, index, ctx),
+                c_point_expr(expr.left, desc, access_by_name, index, ctx),
+                c_point_expr(expr.right, desc, access_by_name, index, ctx),
                 assert(expr.result_ty, "stencil_c: generic binary apply requires result_ty"),
                 expr.int_semantics,
                 expr.float_mode
             )
         end
-        if cls == Stencil.StencilApplyCast then
-            if expr.op == Core.MachineCastBitcast then error("stencil_c: generic apply bitcast requires a dedicated lowering", 3) end
-            return c_cast(expr.to, c_apply_expr(expr.arg, desc, access_by_name, index, ctx))
+        if cls == Stencil.StencilPointCast then
+            if expr.op == Core.MachineCastBitcast then error("stencil_c: generic point bitcast requires a dedicated lowering", 3) end
+            return c_cast(expr.to, c_point_expr(expr.arg, desc, access_by_name, index, ctx))
         end
-        if cls == Stencil.StencilApplyPredicate then
-            return c_cast(expr.result_ty, c_predicate_expr(expr.pred, c_apply_expr(expr.arg, desc, access_by_name, index, ctx)))
+        if cls == Stencil.StencilPointPredicate then
+            return c_cast(expr.result_ty, c_predicate_expr(expr.pred, c_point_expr(expr.arg, desc, access_by_name, index, ctx)))
         end
-        if cls == Stencil.StencilApplyCompare then
+        if cls == Stencil.StencilPointCompare then
             return c_cast(
                 expr.result_ty,
                 c_compare_expr(
                     expr.cmp,
-                    c_apply_expr(expr.left, desc, access_by_name, index, ctx),
-                    c_apply_expr(expr.right, desc, access_by_name, index, ctx)
+                    c_point_expr(expr.left, desc, access_by_name, index, ctx),
+                    c_point_expr(expr.right, desc, access_by_name, index, ctx)
                 )
             )
         end
-        if cls == Stencil.StencilApplySelect then
+        if cls == Stencil.StencilPointSelect then
             return c_cast(
                 expr.result_ty,
-                C.select (c_predicate_expr(expr.pred, c_apply_expr(expr.cond, desc, access_by_name, index, ctx)))(c_apply_expr(expr.then_expr, desc, access_by_name, index, ctx))(c_apply_expr(expr.else_expr, desc, access_by_name, index, ctx))
+                C.select (c_predicate_expr(expr.pred, c_point_expr(expr.cond, desc, access_by_name, index, ctx)))(c_point_expr(expr.then_expr, desc, access_by_name, index, ctx))(c_point_expr(expr.else_expr, desc, access_by_name, index, ctx))
             )
         end
-        error("stencil_c: unsupported generic apply expression", 3)
+        error("stencil_c: unsupported generic point expression", 3)
     end
 
     local function c_reduction_update_expr(kind, acc, item, ty)
@@ -940,7 +940,7 @@ local function bind_context(T)
         error("stencil_c: unsupported reduction " .. reduction_name(kind), 3)
     end
 
-    local function apply_n_decl(artifact)
+    local function store_n_decl(artifact)
         local shape = artifact_shape(artifact)
         local desc = artifact.instance.descriptor
         local dst_name = shape.dst_name or "dst"
@@ -972,13 +972,13 @@ local function bind_context(T)
             return {
                 C.assign(
                     access_c_expr(dst_access, dst_name, i, access_by_name, ctx),
-                    c_apply_expr(shape.expr, desc, access_by_name, i, ctx)
+                    c_point_expr(shape.expr, desc, access_by_name, i, ctx)
                 ),
             }
         end
         local function copy_input_name()
             if pvm.classof(shape.store_mode) ~= Stencil.StencilStoreCopy then return nil end
-            if pvm.classof(shape.expr) ~= Stencil.StencilApplyInput then return nil end
+            if pvm.classof(shape.expr) ~= Stencil.StencilPointInput then return nil end
             local name = shape.expr.access.name
             if name == dst_name then return nil end
             return name
@@ -1048,7 +1048,7 @@ local function bind_context(T)
                         c_reduction_update_expr(
                             shape.reduction,
                             cn("acc"),
-                            c_apply_expr(shape.expr, desc, access_by_name, idx, ctx),
+                            c_point_expr(shape.expr, desc, access_by_name, idx, ctx),
                             shape.result_ty
                         )
                     ),
@@ -1079,7 +1079,7 @@ local function bind_context(T)
                 local coords, bounds = window_coords_with_offsets(shape.producer, offsets)
                 local idx = range_nd_linear_index_from_coords(shape.producer, coords)
                 local ctx = loop_ctx(shape.producer, idx, coords)
-                local item = c_apply_expr(shape.expr, desc, access_by_name, idx, ctx)
+                local item = c_point_expr(shape.expr, desc, access_by_name, idx, ctx)
                 local prefix = {}
                 if #bounds > 0 then
                     local in_bounds = all_c_node(bounds)
@@ -1118,7 +1118,7 @@ local function bind_context(T)
                         c_reduction_update_expr(
                             shape.reduction,
                             cn("acc"),
-                            c_apply_expr(shape.expr, desc, access_by_name, i, ctx),
+                            c_point_expr(shape.expr, desc, access_by_name, i, ctx),
                             shape.result_ty
                         )
                     ),
@@ -1157,7 +1157,7 @@ local function bind_context(T)
             local function scan_line_body()
                 local i = cn("__ml_i")
                 local ctx = loop_ctx(shape.producer, i, current_axis_values(shape.producer))
-                local item = c_apply_expr(shape.expr, desc, access_by_name, i, ctx)
+                local item = c_point_expr(shape.expr, desc, access_by_name, i, ctx)
                 local scan_stmts
                 if shape.mode == Stencil.StencilScanExclusive then
                     scan_stmts = {
@@ -1189,7 +1189,7 @@ local function bind_context(T)
             _(assume_aligned_stmts(artifact, pointer_access_names(artifact))),
             C.decl. acc[acc_type_node](C.cast[acc_type_node](cn("init"))),
             _(producer_loop(shape.producer, function(i, ctx)
-                local item = c_apply_expr(shape.expr, desc, access_by_name, i, ctx)
+                local item = c_point_expr(shape.expr, desc, access_by_name, i, ctx)
                 if shape.mode == Stencil.StencilScanExclusive then
                     return {
                         C.assign(access_c_expr(dst_access, "dst", i, access_by_name), c_cast(shape.result_ty, cn("acc"))),
@@ -1241,7 +1241,7 @@ local function bind_context(T)
                         c_reduction_update_expr(
                             shape.reduction,
                             slot,
-                            c_apply_expr(shape.expr, desc, access_by_name, i, ctx),
+                            c_point_expr(shape.expr, desc, access_by_name, i, ctx),
                             shape.result_ty
                         )
                     ),
@@ -1271,7 +1271,7 @@ local function bind_context(T)
             _(assume_aligned_stmts(artifact, pointer_access_names(artifact))),
             _(producer_loop(shape.producer, function(i, ctx)
                 return {
-                    C.if_(C.ne (c_apply_expr(shape.expr, desc, access_by_name, i, ctx))(0)) {
+                    C.if_(C.ne (c_point_expr(shape.expr, desc, access_by_name, i, ctx))(0)) {
                         C.return_(c_cast(shape.result_ty, i)),
                     },
                 }
@@ -1310,7 +1310,7 @@ local function bind_context(T)
             C.decl. out[C.i32](out_init),
             _(producer_loop(shape.producer, function(i, ctx)
                 return {
-                    C.if_(C.ne (c_apply_expr(shape.expr, desc, access_by_name, i, ctx))(0)) {
+                    C.if_(C.ne (c_point_expr(shape.expr, desc, access_by_name, i, ctx))(0)) {
                         C.assign(access_c_expr(dst_access, dst_name, cn("out"), access_by_name), access_c_expr(src_access, "xs", i, access_by_name)),
                         C.assign(cn("out"), cn("out") + 1),
                     },
@@ -1319,7 +1319,7 @@ local function bind_context(T)
             C.decl. split[C.i32](cn("out")),
             _(producer_loop(shape.producer, function(i, ctx)
                 return {
-                    C.if_(C.eq (c_apply_expr(shape.expr, desc, access_by_name, i, ctx))(0)) {
+                    C.if_(C.eq (c_point_expr(shape.expr, desc, access_by_name, i, ctx))(0)) {
                         C.assign(access_c_expr(dst_access, dst_name, cn("out"), access_by_name), access_c_expr(src_access, "xs", i, access_by_name)),
                         C.assign(cn("out"), cn("out") + 1),
                     },
@@ -1331,7 +1331,7 @@ local function bind_context(T)
 
     local function artifact_decl(artifact)
         local kind = artifact_shape(artifact).kind
-        if kind == "apply_n" then return apply_n_decl(artifact) end
+        if kind == "store_n" then return store_n_decl(artifact) end
         if kind == "reduce_n" then return reduce_n_decl(artifact) end
         if kind == "scan_n" then return scan_n_decl(artifact) end
         if kind == "scatter_reduce_n" then return scatter_reduce_n_decl(artifact) end
@@ -1342,13 +1342,14 @@ local function bind_context(T)
 
     function api.source(artifacts, opts)
         opts = opts or {}
-        local decls = {
-            C.include "stdint.h",
-            C.include "stddef.h",
-            C.include "string.h",
-            C.include "math.h",
-            C.typedef. ml_index [C.intptr_t],
-        }
+        local decls = {}
+        if opts.omit_preamble ~= true then
+            decls[#decls + 1] = C.include "stdint.h"
+            decls[#decls + 1] = C.include "stddef.h"
+            decls[#decls + 1] = C.include "string.h"
+            decls[#decls + 1] = C.include "math.h"
+            decls[#decls + 1] = C.typedef. ml_index [C.intptr_t]
+        end
         for _, decl in ipairs(opts.c_decls or opts.decls or {}) do
             if C.role(decl) ~= "decl" then
                 error("stencil_c: c_decls entries must be llbl.c declaration nodes", 2)

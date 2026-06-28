@@ -24,7 +24,8 @@ assert(tostring(pvm.classof(lowered)):match("LalinC%.CBackendUnit"))
 
 local artifact = decl:emit_c_artifact()
 assert(artifact.unit)
-assert(tostring(pvm.classof(artifact.unit)):match("LalinC%.CBackendUnit"))
+assert(artifact.kind == "LuaJITCSourceArtifact")
+assert(tostring(pvm.classof(artifact.unit)):match("LalinLuaJIT%.LJModule"))
 assert(type(artifact.source) == "string")
 
 local native = lalin.compile("DriverSmoke", decls)

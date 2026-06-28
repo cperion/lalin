@@ -14,7 +14,7 @@ return schema. LalinStencil {
       field. name [str],
     },
   },
-  sum. StencilVocab { StencilApply, StencilReduce, StencilScan, StencilScatterReduce, },
+  sum. StencilVocab { StencilStore, StencilReduce, StencilScan, StencilScatterReduce, },
   sum. StencilUnaryOp {
     StencilUnaryIdentity,
     StencilUnaryNeg,
@@ -227,61 +227,61 @@ return schema. LalinStencil {
     layout [LalinStencil.StencilAccessLayout],
   },
   product. StencilAccessRef { interned, field. name [str], },
-  sum. StencilApplyExpr {
-    StencilApplyInput { variant_unique, access [LalinStencil.StencilAccessRef], },
-    StencilApplyWindowInput {
+  sum. StencilPointExpr {
+    StencilPointInput { variant_unique, access [LalinStencil.StencilAccessRef], },
+    StencilPointWindowInput {
       variant_unique,
       access [LalinStencil.StencilAccessRef],
       offsets [many [LalinStencil.StencilWindowOffset]],
     },
-    StencilApplyConst {
+    StencilPointConst {
       variant_unique,
       field. value [LalinValue.ValueExpr],
       ty [LalinCode.CodeType],
     },
-    StencilApplyUnary {
+    StencilPointUnary {
       variant_unique,
       op [LalinStencil.StencilUnaryOp],
-      field. arg [LalinStencil.StencilApplyExpr],
+      field. arg [LalinStencil.StencilPointExpr],
       result_ty [optional [LalinCode.CodeType]],
       int_semantics [optional [LalinCode.CodeIntSemantics]],
       float_mode [optional [LalinCode.CodeFloatMode]],
     },
-    StencilApplyBinary {
+    StencilPointBinary {
       variant_unique,
       op [LalinStencil.StencilBinaryOp],
-      left [LalinStencil.StencilApplyExpr],
-      right [LalinStencil.StencilApplyExpr],
+      left [LalinStencil.StencilPointExpr],
+      right [LalinStencil.StencilPointExpr],
       result_ty [optional [LalinCode.CodeType]],
       int_semantics [optional [LalinCode.CodeIntSemantics]],
       float_mode [optional [LalinCode.CodeFloatMode]],
     },
-    StencilApplyCast {
+    StencilPointCast {
       variant_unique,
       op [LalinCore.MachineCastOp],
-      field. arg [LalinStencil.StencilApplyExpr],
+      field. arg [LalinStencil.StencilPointExpr],
       from [LalinCode.CodeType],
       to [LalinCode.CodeType],
     },
-    StencilApplyPredicate {
+    StencilPointPredicate {
       variant_unique,
       pred [LalinStencil.StencilPredicate],
-      field. arg [LalinStencil.StencilApplyExpr],
+      field. arg [LalinStencil.StencilPointExpr],
       result_ty [LalinCode.CodeType],
     },
-    StencilApplyCompare {
+    StencilPointCompare {
       variant_unique,
       cmp [LalinCore.CmpOp],
-      left [LalinStencil.StencilApplyExpr],
-      right [LalinStencil.StencilApplyExpr],
+      left [LalinStencil.StencilPointExpr],
+      right [LalinStencil.StencilPointExpr],
       result_ty [LalinCode.CodeType],
     },
-    StencilApplySelect {
+    StencilPointSelect {
       variant_unique,
       pred [LalinStencil.StencilPredicate],
-      cond [LalinStencil.StencilApplyExpr],
-      then_expr [LalinStencil.StencilApplyExpr],
-      else_expr [LalinStencil.StencilApplyExpr],
+      cond [LalinStencil.StencilPointExpr],
+      then_expr [LalinStencil.StencilPointExpr],
+      else_expr [LalinStencil.StencilPointExpr],
       result_ty [LalinCode.CodeType],
     },
   },
@@ -534,9 +534,9 @@ return schema. LalinStencil {
     },
   },
   sum. StencilBody {
-    StencilBodyApply {
+    StencilBodyPoint {
       variant_unique,
-      field. expr [LalinStencil.StencilApplyExpr],
+      field. expr [LalinStencil.StencilPointExpr],
     },
   },
   sum. StencilSink {

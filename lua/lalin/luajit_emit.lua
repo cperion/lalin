@@ -46,6 +46,10 @@ local function bind_context(T)
         return func_name(text)
     end
 
+    local function data_name(id)
+        return "__lalin_data_" .. sanitize(id and (id.text or id) or "data")
+    end
+
     local function indent(n)
         return string.rep("    ", n)
     end
@@ -92,7 +96,29 @@ local function bind_context(T)
     local function global_ref_expr(ref)
         local cls = pvm.classof(ref)
         if cls == Code.CodeGlobalRefFunc then return func_ref_name(ref.func) end
+        if cls == Code.CodeGlobalRefData then return data_name(ref.data) end
         unsupported(ref, "global reference")
+    end
+
+    local function overlay_bytes(base, offset, bytes)
+        offset = tonumber(offset) or 0
+        bytes = tostring(bytes or "")
+        return base:sub(1, offset) .. bytes .. base:sub(offset + #bytes + 1)
+    end
+
+    local function data_bytes(data)
+        local bytes = string.rep("\0", tonumber(data.size or 0) or 0)
+        for _, init in ipairs(data.inits or {}) do
+            local cls = pvm.classof(init)
+            if cls == Code.CodeDataZero then
+                bytes = overlay_bytes(bytes, init.offset, string.rep("\0", tonumber(init.size or 0) or 0))
+            elseif cls == Code.CodeDataBytes then
+                bytes = overlay_bytes(bytes, init.offset, init.bytes)
+            else
+                unsupported(init, "LuaJIT data initializer")
+            end
+        end
+        return bytes
     end
 
     local function emit_cdecl(decl)
@@ -239,6 +265,9 @@ local function bind_context(T)
         if cls == LJ.LJPlaceDeref then return "(" .. expr(p.addr) .. ")[0]" end
         if cls == LJ.LJPlaceField then return "(" .. place_expr(p.base) .. ")." .. sanitize(p.name) end
         if cls == LJ.LJPlaceIndex then
+            if pvm.classof(p.base) == LJ.LJPlaceDeref then
+                return "(" .. expr(p.base.addr) .. ")[" .. expr(p.index) .. "]"
+            end
             local base = place_expr(p.base)
             -- If the base is already parenthesized (Deref, Field, or nested
             -- Index all produce parenthesized output), adding outer parens
@@ -313,7 +342,7 @@ local function bind_context(T)
         if cls == LJ.LJExprRecord then return record_expr(e) end
         if cls == LJ.LJExprArray then
             local elems = {}
-            for i = 1, #e.elems do elems[i] = "[" .. tostring(e.elems[i].index + 1) .. "] = " .. expr(e.elems[i].expr) end
+            for i = 1, #e.elems do elems[i] = "[" .. tostring(e.elems[i].index) .. "] = " .. expr(e.elems[i].expr) end
             return "{ " .. table.concat(elems, ", ") .. " }"
         end
         if cls == LJ.LJExprClosure then return "{ __lalin_fn = " .. expr(e.fn) .. ", __lalin_ctx = " .. expr(e.ctx) .. " }" end
@@ -853,6 +882,10 @@ local function bind_context(T)
         return ret, params
     end
 
+    local function pattern_escape(s)
+        return (tostring(s):gsub("([^%w])", "%%%1"))
+    end
+
     local function native_symbol_addr_token(symbol)
         return "__LALIN_STENCIL_ADDR_" .. sanitize(symbol) .. "__"
     end
@@ -914,6 +947,523 @@ local function bind_context(T)
         return ret .. " (*)(" .. (#params > 0 and table.concat(params, ", ") or "void") .. ")"
     end
 
+    local function c_func_name(name)
+        return sanitize(name)
+    end
+
+    local function c_func_ref_name(ctx, id)
+        local text = tostring(id and (id.text or id) or "")
+        local mapped = ctx and ctx.func_symbol_by_id and ctx.func_symbol_by_id[text]
+        if mapped ~= nil then return mapped end
+        text = text:gsub("^fn:", ""):gsub("^func:", ""):gsub("^function:", "")
+        return c_func_name(text)
+    end
+
+    local function c_label(id)
+        return "bb_" .. sanitize(id.text or id)
+    end
+
+    local function c_xfer_name(block, index)
+        return "__xfer_" .. sanitize(block.id.text) .. "_" .. tostring(index)
+    end
+
+    local function c_literal(lit, phys)
+        local cls = pvm.classof(lit)
+        if cls == Core.LitInt then
+            local suffix = ""
+            local storage = phys and phys.storage
+            if pvm.classof(storage) == LJ.LJCTypeScalar then
+                local scalar = storage.scalar
+                if scalar == Back.BackI64 then suffix = "LL"
+                elseif scalar == Back.BackU64 then suffix = "ULL" end
+            end
+            return tostring(lit.raw) .. suffix
+        end
+        if cls == Core.LitFloat then return tostring(lit.raw) end
+        if cls == Core.LitBool then return lit.value and "1" or "0" end
+        if lit == Core.LitNil or cls == Core.LitNil then return "0" end
+        if cls == Core.LitString then
+            local out = { '"' }
+            for i = 1, #lit.bytes do
+                local b = lit.bytes:byte(i)
+                if b == 34 then out[#out + 1] = '\\"'
+                elseif b == 92 then out[#out + 1] = "\\\\"
+                elseif b == 10 then out[#out + 1] = "\\n"
+                elseif b == 13 then out[#out + 1] = "\\r"
+                elseif b == 9 then out[#out + 1] = "\\t"
+                elseif b >= 32 and b <= 126 then out[#out + 1] = string.char(b)
+                else out[#out + 1] = string.format("\\x%02x", b) end
+            end
+            out[#out + 1] = '"'
+            return table.concat(out)
+        end
+        unsupported(lit, "C literal")
+    end
+
+    local function c_decl(ty, name)
+        if pvm.classof(ty) == LJ.LJCTypeArray then
+            return ctype_spelling(ty.elem) .. " " .. name .. "[" .. tostring(ty.count) .. "]"
+        end
+        return ctype_spelling(ty) .. " " .. name
+    end
+
+    local function c_param_decl(param)
+        return c_decl(param.ty.abi, id_name(param.value))
+    end
+
+    local function c_result_type(sig)
+        return sig and sig.result and ctype_spelling(sig.result.abi) or "void"
+    end
+
+    local c_expr
+    local c_place_expr
+
+    local function c_unsigned_type(bits)
+        bits = tonumber(bits)
+        if bits == 8 then return "uint8_t" end
+        if bits == 16 then return "uint16_t" end
+        if bits == 32 then return "uint32_t" end
+        if bits == 64 then return "uint64_t" end
+        return nil
+    end
+
+    local function c_wrapping_binary(e, lhs, rhs, op)
+        local sem_ty = e.ty and e.ty.semantic
+        if pvm.classof(sem_ty) ~= Code.CodeTyInt then return nil end
+        if sem_ty.signedness ~= Code.CodeSigned then return nil end
+        if e.semantics == nil or e.semantics.overflow ~= Code.CodeIntWrap then return nil end
+        if op ~= "+" and op ~= "-" and op ~= "*" then return nil end
+        local uty = c_unsigned_type(sem_ty.bits)
+        if uty == nil then return nil end
+        local cty = ctype_spelling(e.ty.abi)
+        return "((" .. cty .. ")((" .. uty .. ")(" .. lhs .. ") " .. op .. " (" .. uty .. ")(" .. rhs .. ")))"
+    end
+
+    local function c_int_binary(ctx, e)
+        local op = native_binop[e.op]
+        if op == nil then unsupported(e.op, "C integer binary op") end
+        local lhs, rhs = c_expr(ctx, e.lhs), c_expr(ctx, e.rhs)
+        return c_wrapping_binary(e, lhs, rhs, op) or "((" .. lhs .. ") " .. op .. " (" .. rhs .. "))"
+    end
+
+    local function c_call_target_expr(ctx, target, args)
+        local cls = pvm.classof(target)
+        if cls == LJ.LJCallDirect then return c_func_ref_name(ctx, target.func) .. "(" .. table.concat(args, ", ") .. ")" end
+        if cls == LJ.LJCallExtern then return sanitize(target.extern_name) .. "(" .. table.concat(args, ", ") .. ")" end
+        if cls == LJ.LJCallIndirect then return c_expr(ctx, target.callee) .. "(" .. table.concat(args, ", ") .. ")" end
+        unsupported(target, "C call target")
+    end
+
+    local function c_call_expr(ctx, e)
+        local args = {}
+        for i = 1, #e.args do args[i] = c_expr(ctx, e.args[i]) end
+        return c_call_target_expr(ctx, e.target, args)
+    end
+
+    local function c_record_expr(ctx, e)
+        local fields = {}
+        for i = 1, #e.fields do
+            fields[#fields + 1] = "." .. sanitize(e.fields[i].name) .. " = " .. c_expr(ctx, e.fields[i].expr)
+        end
+        return "((" .. ctype_spelling(e.ty.abi) .. "){ " .. table.concat(fields, ", ") .. " })"
+    end
+
+    c_place_expr = function(ctx, p)
+        local cls = pvm.classof(p)
+        if cls == LJ.LJPlaceLocal then return id_name(p.local_id) end
+        if cls == LJ.LJPlaceGlobal then return sanitize(p.global.text) end
+        if cls == LJ.LJPlaceData then return data_name(p.data) end
+        if cls == LJ.LJPlaceDeref then return "(*(" .. c_expr(ctx, p.addr) .. "))" end
+        if cls == LJ.LJPlaceField then return "(" .. c_place_expr(ctx, p.base) .. ")." .. sanitize(p.name) end
+        if cls == LJ.LJPlaceIndex then
+            if pvm.classof(p.base) == LJ.LJPlaceDeref then
+                return "(" .. c_expr(ctx, p.base.addr) .. ")[" .. c_expr(ctx, p.index) .. "]"
+            end
+            return "(" .. c_place_expr(ctx, p.base) .. ")[" .. c_expr(ctx, p.index) .. "]"
+        end
+        if cls == LJ.LJPlaceBytes then
+            return "(*(" .. ctype_spelling(p.ty.abi) .. "*)((char*)(" .. c_expr(ctx, p.base) .. ") + " .. tostring(p.offset or 0) .. "))"
+        end
+        unsupported(p, "C place")
+    end
+
+    local function c_ptr_offset_expr(ctx, e)
+        local base = c_expr(ctx, e.base)
+        local index = c_expr(ctx, e.index)
+        local elem = tonumber(e.elem_size or 1) or 1
+        local offset = tonumber(e.const_offset or 0) or 0
+        return "((" .. ctype_spelling(e.ptr_ty.abi) .. ")((char*)(" .. base .. ") + (" .. index .. ") * " .. tostring(elem) .. " + " .. tostring(offset) .. "))"
+    end
+
+    c_expr = function(ctx, e)
+        local cls = pvm.classof(e)
+        if cls == LJ.LJExprValue then return id_name(e.value) end
+        if cls == LJ.LJExprLiteral then return c_literal(e.literal, e.ty) end
+        if cls == LJ.LJExprUnary then
+            if e.op == Core.UnaryNeg then return "(-(" .. c_expr(ctx, e.value) .. "))" end
+            if e.op == Core.UnaryNot then return "(!(" .. c_expr(ctx, e.value) .. "))" end
+            if e.op == Core.UnaryBitNot then return "(~(" .. c_expr(ctx, e.value) .. "))" end
+            unsupported(e.op, "C unary op")
+        end
+        if cls == LJ.LJExprIntBinary then return c_int_binary(ctx, e) end
+        if cls == LJ.LJExprFloatBinary then
+            local op = native_binop[e.op]
+            if op == nil then unsupported(e.op, "C float binary op") end
+            return "((" .. c_expr(ctx, e.lhs) .. ") " .. op .. " (" .. c_expr(ctx, e.rhs) .. "))"
+        end
+        if cls == LJ.LJExprCompare then
+            local op = native_cmpop[e.op]
+            if op == nil then unsupported(e.op, "C compare op") end
+            return "((" .. c_expr(ctx, e.lhs) .. ") " .. op .. " (" .. c_expr(ctx, e.rhs) .. "))"
+        end
+        if cls == LJ.LJExprSelect then return "((" .. c_expr(ctx, e.cond) .. ") ? (" .. c_expr(ctx, e.then_value) .. ") : (" .. c_expr(ctx, e.else_value) .. "))" end
+        if cls == LJ.LJExprCast then return "((" .. ctype_spelling(e.to.abi) .. ")(" .. c_expr(ctx, e.value) .. "))" end
+        if cls == LJ.LJExprCDataCast then return "((" .. ctype_spelling(e.ty) .. ")(" .. c_expr(ctx, e.value) .. "))" end
+        if cls == LJ.LJExprAddrOfPlace then return "(&(" .. c_place_expr(ctx, e.place) .. "))" end
+        if cls == LJ.LJExprPtrOffset then return c_ptr_offset_expr(ctx, e) end
+        if cls == LJ.LJExprLoad then return c_place_expr(ctx, e.place) end
+        if cls == LJ.LJExprProjectField then return "(" .. c_expr(ctx, e.base) .. ")." .. sanitize(e.name) end
+        if cls == LJ.LJExprRecord then return c_record_expr(ctx, e) end
+        if cls == LJ.LJExprArray then
+            local elems = {}
+            for i = 1, #e.elems do elems[#elems + 1] = "[" .. tostring(e.elems[i].index) .. "] = " .. c_expr(ctx, e.elems[i].expr) end
+            return "((" .. ctype_spelling(e.ty.abi) .. "){ " .. table.concat(elems, ", ") .. " })"
+        end
+        if cls == LJ.LJExprCall then return c_call_expr(ctx, e) end
+        if cls == LJ.LJExprGlobalRef then
+            local rcls = pvm.classof(e.ref)
+            if rcls == Code.CodeGlobalRefFunc then return c_func_ref_name(ctx, e.ref.func) end
+            if rcls == Code.CodeGlobalRefData then return data_name(e.ref.data) end
+        end
+        unsupported(e, "C expression")
+    end
+
+    local function c_stencil_call_expr(ctx, kind)
+        local args = {}
+        for i = 1, #kind.args do args[i] = c_expr(ctx, kind.args[i]) end
+        return kind.artifact.symbol.text .. "(" .. table.concat(args, ", ") .. ")"
+    end
+
+    local function c_stencil_wrapper_source(ctx, func, sig, kind, kind_cls)
+        local ret = native_wrapper_result_type(func, sig, kind, kind_cls)
+        local params = {}
+        for i = 1, #func.params do params[i] = c_param_decl(func.params[i]) end
+        local call = c_stencil_call_expr(ctx, kind)
+        local out = { ret .. " " .. c_func_name(func.name) .. "(" .. (#params > 0 and table.concat(params, ", ") or "void") .. ") {" }
+        if kind_cls == LJ.LJMachineStencilEffect or ret == "void" then
+            out[#out + 1] = "    " .. call .. ";"
+            out[#out + 1] = "}"
+        else
+            out[#out + 1] = "    return " .. call .. ";"
+            out[#out + 1] = "}"
+        end
+        return table.concat(out, "\n")
+    end
+
+    local function c_emit_transfer(out, n, ctx, block, args)
+        if #block.params ~= #(args or {}) then error("luajit_emit: C block transfer arity mismatch for " .. tostring(block.id.text), 3) end
+        for i = 1, #block.params do
+            line(out, n, c_xfer_name(block, i) .. " = " .. c_expr(ctx, args[i]) .. ";")
+        end
+        line(out, n, "goto " .. c_label(block.id) .. ";")
+    end
+
+    local function c_emit_machine_stmt(out, n, ctx, machine_id)
+        local machine = ctx.machine_by_id[machine_id.text]
+        if machine == nil then error("luajit_emit: missing C machine " .. tostring(machine_id.text), 3) end
+        local kind = machine.kind
+        local cls = pvm.classof(kind)
+        if cls == LJ.LJMachineStencilEffect or cls == LJ.LJMachineStencilCall then
+            line(out, n, c_stencil_call_expr(ctx, kind) .. ";")
+            return
+        end
+        unsupported(kind, "C emitted machine")
+    end
+
+    local function c_emit_stmt(out, n, ctx, stmt)
+        local cls = pvm.classof(stmt)
+        if cls == LJ.LJStmtLet then
+            line(out, n, id_name(stmt.dst) .. " = " .. c_expr(ctx, stmt.expr) .. ";")
+        elseif cls == LJ.LJStmtStore then
+            line(out, n, c_place_expr(ctx, stmt.place) .. " = " .. c_expr(ctx, stmt.value) .. ";")
+        elseif cls == LJ.LJStmtCall then
+            local args = {}
+            for i = 1, #stmt.args do args[i] = c_expr(ctx, stmt.args[i]) end
+            line(out, n, c_call_target_expr(ctx, stmt.target, args) .. ";")
+        elseif cls == LJ.LJStmtEmitMachine then
+            c_emit_machine_stmt(out, n, ctx, stmt.machine)
+        else
+            unsupported(stmt, "C statement")
+        end
+    end
+
+    local function c_emit_term(out, n, ctx, term, block_by_id)
+        local cls = pvm.classof(term)
+        if cls == LJ.LJTermReturn then
+            if #term.values == 0 then
+                line(out, n, "return;")
+            elseif #term.values == 1 then
+                line(out, n, "return " .. c_expr(ctx, term.values[1]) .. ";")
+            else
+                unsupported(term, "C multi-value return")
+            end
+        elseif cls == LJ.LJTermTrap then
+            line(out, n, "abort();")
+        elseif cls == LJ.LJTermJump then
+            local dest = block_by_id[term.dest.text]
+            if dest == nil then error("luajit_emit: missing C jump dest " .. tostring(term.dest.text), 3) end
+            c_emit_transfer(out, n, ctx, dest, term.args)
+        elseif cls == LJ.LJTermBranch then
+            local td, ed = block_by_id[term.then_dest.text], block_by_id[term.else_dest.text]
+            if td == nil or ed == nil then error("luajit_emit: missing C branch dest", 3) end
+            line(out, n, "if (" .. c_expr(ctx, term.cond) .. ") {")
+            c_emit_transfer(out, n + 1, ctx, td, term.then_args)
+            line(out, n, "} else {")
+            c_emit_transfer(out, n + 1, ctx, ed, term.else_args)
+            line(out, n, "}")
+        elseif cls == LJ.LJTermSwitch then
+            line(out, n, "switch (" .. c_expr(ctx, term.value) .. ") {")
+            for i = 1, #term.cases do
+                local case = term.cases[i]
+                local dest = block_by_id[case.dest.text]
+                if dest == nil then error("luajit_emit: missing C switch dest " .. tostring(case.dest.text), 3) end
+                line(out, n, "case " .. c_literal(case.literal) .. ":")
+                c_emit_transfer(out, n + 1, ctx, dest, case.args)
+            end
+            local dd = block_by_id[term.default_dest.text]
+            if dd == nil then error("luajit_emit: missing C switch default dest " .. tostring(term.default_dest.text), 3) end
+            line(out, n, "default:")
+            c_emit_transfer(out, n + 1, ctx, dd, term.default_args)
+            line(out, n, "}")
+        else
+            unsupported(term, "C term")
+        end
+    end
+
+    local function c_collect_func_locals(func)
+        local locals, seen = {}, {}
+        local function mark(id)
+            if id ~= nil then seen[id.text] = true end
+        end
+        local function add(id, phys)
+            if id == nil or phys == nil or seen[id.text] then return end
+            seen[id.text] = true
+            locals[#locals + 1] = { name = id_name(id), ty = phys.abi }
+        end
+        for _, param in ipairs(func.params or {}) do mark(param.value) end
+        if pvm.classof(func.body) == LJ.LJBodyBlocks then
+            for _, block in ipairs(func.body.blocks or {}) do
+                for i, param in ipairs(block.params or {}) do
+                    add(param.value, param.ty)
+                    locals[#locals + 1] = { name = c_xfer_name(block, i), ty = param.ty.abi }
+                end
+                for _, stmt in ipairs(block.stmts or {}) do
+                    local cls = pvm.classof(stmt)
+                    if cls == LJ.LJStmtLet then
+                        add(stmt.dst, stmt.ty)
+                    elseif cls == LJ.LJStmtStore and pvm.classof(stmt.place) == LJ.LJPlaceLocal then
+                        add(stmt.place.local_id, stmt.place.ty)
+                    end
+                end
+            end
+        end
+        return locals
+    end
+
+    local function c_emit_blocks_func(ctx, func, sig)
+        local block_by_id, order = build_block_map(func.body.blocks)
+        local entry = block_by_id[func.body.entry.text]
+        if entry == nil then error("luajit_emit: C function missing entry block " .. tostring(func.body.entry.text), 3) end
+        if #(entry.params or {}) ~= 0 then error("luajit_emit: C function entry block parameters are not supported", 3) end
+        local params = {}
+        for i = 1, #func.params do params[i] = c_param_decl(func.params[i]) end
+        local out = { c_result_type(sig) .. " " .. c_func_name(func.name) .. "(" .. (#params > 0 and table.concat(params, ", ") or "void") .. ") {" }
+        for _, local_ in ipairs(c_collect_func_locals(func)) do
+            line(out, 1, c_decl(local_.ty, local_.name) .. ";")
+        end
+        line(out, 1, "goto " .. c_label(func.body.entry) .. ";")
+        for _, key in ipairs(order) do
+            local block = block_by_id[key]
+            out[#out + 1] = c_label(block.id) .. ":"
+            for i = 1, #block.params do
+                line(out, 1, id_name(block.params[i].value) .. " = " .. c_xfer_name(block, i) .. ";")
+            end
+            for i = 1, #block.stmts do c_emit_stmt(out, 1, ctx, block.stmts[i]) end
+            c_emit_term(out, 1, ctx, block.term, block_by_id)
+        end
+        out[#out + 1] = "}"
+        return table.concat(out, "\n")
+    end
+
+    local function c_func_prototype(func, sig)
+        local params = {}
+        for i = 1, #func.params do params[i] = c_param_decl(func.params[i]) end
+        return c_result_type(sig) .. " " .. c_func_name(func.name) .. "(" .. (#params > 0 and table.concat(params, ", ") or "void") .. ");"
+    end
+
+    local function c_func_symbol_index(module)
+        local out = {}
+        for _, func in ipairs(module.funcs or {}) do
+            out[func.id.text] = c_func_name(func.name)
+            if func.source ~= nil then out[func.source.text] = c_func_name(func.name) end
+        end
+        return out
+    end
+
+    local function c_module_context(module)
+        return {
+            sigs = sig_index(module),
+            func_symbol_by_id = c_func_symbol_index(module),
+        }
+    end
+
+    local function c_emit_func(ctx, func)
+        local sig = ctx.sigs[func.sig.text]
+        if sig == nil then error("luajit_emit: C function references missing signature " .. tostring(func.sig.text), 3) end
+        local body_cls = pvm.classof(func.body)
+        if body_cls == LJ.LJBodyBlocks then
+            ctx.machine_by_id = machine_map(func)
+            return c_emit_blocks_func(ctx, func, sig)
+        end
+        if body_cls == LJ.LJBodyMachine then
+            local kind, kind_cls = native_residual_candidate(func)
+            if kind ~= nil then return c_stencil_wrapper_source(ctx, func, sig, kind, kind_cls) end
+        end
+        unsupported(func.body, "C function body")
+    end
+
+    local function c_byte_init_list(bytes)
+        bytes = tostring(bytes or "")
+        if #bytes == 0 then return "{0}" end
+        local out = {}
+        for i = 1, #bytes do out[#out + 1] = "[" .. tostring(i - 1) .. "] = " .. tostring(bytes:byte(i)) end
+        return "{ " .. table.concat(out, ", ") .. " }"
+    end
+
+    local function c_emit_data(module, out)
+        for i = 1, #(module.data or {}) do
+            local data = module.data[i]
+            local bytes = data_bytes(data)
+            local size = tonumber(data.size or #bytes) or #bytes
+            if size < 1 then size = 1 end
+            out[#out + 1] = "static unsigned char " .. data_name(data.id) .. "[" .. tostring(size) .. "] = " .. c_byte_init_list(bytes) .. ";"
+        end
+    end
+
+    local function c_emit_cdefs(module, out)
+        local seen = {}
+        local function add(decl)
+            local source = emit_cdecl(decl)
+            if source ~= nil and source ~= "" and not seen[source] then
+                seen[source] = true
+                out[#out + 1] = source
+            end
+        end
+        for i = 1, #(module.types or {}) do add(module.types[i]) end
+        for i = 1, #(module.funcs or {}) do
+            for j = 1, #(module.funcs[i].cdefs or {}) do add(module.funcs[i].cdefs[j]) end
+        end
+    end
+
+    local function c_common_preamble()
+        return {
+            "#include <stdint.h>",
+            "#include <stddef.h>",
+            "#include <stdbool.h>",
+            "#include <string.h>",
+            "#include <stdlib.h>",
+            "#include <math.h>",
+            "typedef intptr_t ml_index;",
+        }
+    end
+
+    local function emit_c_module(module, artifacts, opts)
+        opts = opts or {}
+        local StencilC = require("lalin.stencil_c")(T)
+        local ctx = c_module_context(module)
+        local out = { "/* generated by lalin LuaJIT whole-program C emitter */" }
+        for _, item in ipairs(c_common_preamble()) do out[#out + 1] = item end
+        out[#out + 1] = ""
+        c_emit_cdefs(module, out)
+        out[#out + 1] = ""
+        c_emit_data(module, out)
+        out[#out + 1] = ""
+        for _, func in ipairs(module.funcs or {}) do out[#out + 1] = c_func_prototype(func, ctx.sigs[func.sig.text]) end
+        out[#out + 1] = ""
+        if #(artifacts or {}) > 0 then
+            local stencil_source = StencilC.source(artifacts, {
+                omit_preamble = true,
+                c_decls = opts.c_decls or opts.decls,
+            })
+            if opts.static_stencils ~= false then
+                local seen = {}
+                for _, artifact in ipairs(artifacts or {}) do
+                    local symbol = artifact.symbol.text
+                    if not seen[symbol] then
+                        local ret = c_signature_parts(symbol, artifact.c_signature)
+                        stencil_source = stencil_source:gsub(
+                            "([^\n]*)" .. pattern_escape(ret) .. "%s+" .. pattern_escape(symbol) .. "%s*%(",
+                            function(prefix)
+                                if prefix ~= "" then return prefix .. ret .. " " .. symbol .. "(" end
+                                return "static inline " .. ret .. " " .. symbol .. "("
+                            end,
+                            1
+                        )
+                        seen[symbol] = true
+                    end
+                end
+            end
+            out[#out + 1] = stencil_source
+        end
+        for _, func in ipairs(module.funcs or {}) do
+            out[#out + 1] = c_emit_func(ctx, func)
+            out[#out + 1] = ""
+        end
+        return table.concat(out, "\n")
+    end
+
+    local function emit_c_header(module, opts)
+        opts = opts or {}
+        local ctx = c_module_context(module)
+        local guard = sanitize((opts.guard or opts.name or "lalin_jit") .. "_h"):upper()
+        local out = {
+            "/* generated by lalin LuaJIT whole-program C emitter */",
+            "#ifndef " .. guard,
+            "#define " .. guard,
+            "",
+        }
+        for _, item in ipairs(c_common_preamble()) do out[#out + 1] = item end
+        out[#out + 1] = ""
+        out[#out + 1] = "#ifdef __cplusplus"
+        out[#out + 1] = "extern \"C\" {"
+        out[#out + 1] = "#endif"
+        out[#out + 1] = ""
+        c_emit_cdefs(module, out)
+        out[#out + 1] = ""
+        for _, func in ipairs(module.funcs or {}) do out[#out + 1] = c_func_prototype(func, ctx.sigs[func.sig.text]) end
+        out[#out + 1] = ""
+        out[#out + 1] = "#ifdef __cplusplus"
+        out[#out + 1] = "}"
+        out[#out + 1] = "#endif"
+        out[#out + 1] = ""
+        out[#out + 1] = "#endif"
+        return table.concat(out, "\n") .. "\n"
+    end
+
+    local function emit_c_artifact(module, artifacts, opts)
+        local source = emit_c_module(module, artifacts, opts)
+        local header = emit_c_header(module, opts)
+        return {
+            kind = "LuaJITCSourceArtifact",
+            source = source,
+            header = header,
+            support = "",
+            combined = source,
+            lj_module = module,
+            artifacts = artifacts or {},
+        }
+    end
+
     local function emit_native_residuals(out, module, opts)
         if not (opts.native_residual == true or opts.native_residual == "tcc" or opts.tcc_residual == true) then return end
         local sigs = sig_index(module)
@@ -938,6 +1488,7 @@ local function bind_context(T)
         table.sort(host_symbols)
         c_units[#c_units + 1] = ""
         table.insert(c_units, 1, "#include <stdint.h>")
+        table.insert(c_units, 2, "#include <stdbool.h>")
         line(out, 0, "local __lalin_native_residual_sessions = debug.getregistry().__lalin_native_residual_sessions")
         line(out, 0, "if __lalin_native_residual_sessions == nil then __lalin_native_residual_sessions = {}; debug.getregistry().__lalin_native_residual_sessions = __lalin_native_residual_sessions end")
         line(out, 0, "do")
@@ -985,6 +1536,14 @@ local function bind_context(T)
         if #cdefs > 0 then
             line(out, 0, "pcall(ffi.cdef, " .. lua_string(table.concat(cdefs, "\n")) .. ")")
         end
+        for i = 1, #(module.data or {}) do
+            local data = module.data[i]
+            local bytes = data_bytes(data)
+            line(out, 0, "local " .. data_name(data.id) .. " = ffi.new('unsigned char[?]', " .. tostring(#bytes) .. ")")
+            if #bytes > 0 then
+                line(out, 0, "ffi.copy(" .. data_name(data.id) .. ", " .. lua_string(bytes) .. ", " .. tostring(#bytes) .. ")")
+            end
+        end
         for i = 1, #(module.funcs or {}) do
             line(out, 0, "local " .. func_name(module.funcs[i].name))
         end
@@ -1016,6 +1575,9 @@ local function bind_context(T)
     end
 
     api.emit_module = emit_module
+    api.emit_c_module = emit_c_module
+    api.emit_c_header = emit_c_header
+    api.emit_c_artifact = emit_c_artifact
     api.compile_module = compile_module
     api.expr = expr
 

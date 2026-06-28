@@ -11,9 +11,9 @@ local function bind_context(T)
     local Value = T.LalinValue
 
     local function basis_vocab_for_kind(kind)
-        if kind == "reduce" or kind == "reduce_n" or kind == "count" or kind == "find" or kind == "map_reduce" or kind == "zip_reduce" then return Stencil.StencilReduce end
+        if kind == "reduce" or kind == "reduce_n" or kind == "count" or kind == "find" then return Stencil.StencilReduce end
         if kind == "scan" then return Stencil.StencilScan end
-        return Stencil.StencilApply
+        return Stencil.StencilStore
     end
 
     local function selection(kind, fields)
@@ -206,35 +206,35 @@ local function bind_context(T)
     end
 
     local function input_expr(name)
-        return Stencil.StencilApplyInput(access_ref(name))
+        return Stencil.StencilPointInput(access_ref(name))
     end
 
     local function const_expr(value, ty)
-        return Stencil.StencilApplyConst(value, ty)
+        return Stencil.StencilPointConst(value, ty)
     end
 
-    local function apply_unary_expr(op, arg, result_ty)
-        return Stencil.StencilApplyUnary(op, arg, result_ty, nil, nil)
+    local function point_unary_expr(op, arg, result_ty)
+        return Stencil.StencilPointUnary(op, arg, result_ty, nil, nil)
     end
 
-    local function apply_binary_expr(op, left, right, result_ty, int_semantics)
-        return Stencil.StencilApplyBinary(op, left, right, result_ty, int_semantics, nil)
+    local function point_binary_expr(op, left, right, result_ty, int_semantics)
+        return Stencil.StencilPointBinary(op, left, right, result_ty, int_semantics, nil)
     end
 
-    local function apply_cast_expr(op, arg, from, to)
-        return Stencil.StencilApplyCast(op, arg, from, to)
+    local function point_cast_expr(op, arg, from, to)
+        return Stencil.StencilPointCast(op, arg, from, to)
     end
 
-    local function apply_predicate_expr(pred, arg, result_ty)
-        return Stencil.StencilApplyPredicate(pred, arg, result_ty)
+    local function point_predicate_expr(pred, arg, result_ty)
+        return Stencil.StencilPointPredicate(pred, arg, result_ty)
     end
 
-    local function apply_compare_expr(cmp, left, right, result_ty)
-        return Stencil.StencilApplyCompare(cmp, left, right, result_ty)
+    local function point_compare_expr(cmp, left, right, result_ty)
+        return Stencil.StencilPointCompare(cmp, left, right, result_ty)
     end
 
-    local function apply_select_expr(cond, then_expr, else_expr, result_ty)
-        return Stencil.StencilApplySelect(Stencil.StencilPredNonZero, cond, then_expr, else_expr, result_ty)
+    local function point_select_expr(cond, then_expr, else_expr, result_ty)
+        return Stencil.StencilPointSelect(Stencil.StencilPredNonZero, cond, then_expr, else_expr, result_ty)
     end
 
     local function scalar_input_expr(value, state)
@@ -353,35 +353,35 @@ local function bind_context(T)
     end
 
     local function single_input_expr(class)
-        if class == nil or pvm.classof(class.expr) ~= Stencil.StencilApplyInput then return nil end
+        if class == nil or pvm.classof(class.expr) ~= Stencil.StencilPointInput then return nil end
         return input_by_name(class, class.expr.access.name)
     end
 
-    local function apply_const_int(expr)
-        if pvm.classof(expr) ~= Stencil.StencilApplyConst then return nil end
+    local function point_const_int(expr)
+        if pvm.classof(expr) ~= Stencil.StencilPointConst then return nil end
         return const_int_value(expr.value)
     end
 
-    local function index_input_from_apply_expr(class, expr)
+    local function index_input_from_point_expr(class, expr)
         local cls = pvm.classof(expr)
-        if cls == Stencil.StencilApplyInput then return input_by_name(class, expr.access.name) end
-        if cls == Stencil.StencilApplyCast then return index_input_from_apply_expr(class, expr.arg) end
-        if cls == Stencil.StencilApplyBinary then
-            local lc, rc = apply_const_int(expr.left), apply_const_int(expr.right)
+        if cls == Stencil.StencilPointInput then return input_by_name(class, expr.access.name) end
+        if cls == Stencil.StencilPointCast then return index_input_from_point_expr(class, expr.arg) end
+        if cls == Stencil.StencilPointBinary then
+            local lc, rc = point_const_int(expr.left), point_const_int(expr.right)
             if (expr.op == Stencil.StencilBinaryMul and rc == 1)
                 or (expr.op == Stencil.StencilBinaryAdd and rc == 0)
                 or (expr.op == Stencil.StencilBinarySub and rc == 0) then
-                return index_input_from_apply_expr(class, expr.left)
+                return index_input_from_point_expr(class, expr.left)
             end
             if (expr.op == Stencil.StencilBinaryMul and lc == 1)
                 or (expr.op == Stencil.StencilBinaryAdd and lc == 0) then
-                return index_input_from_apply_expr(class, expr.right)
+                return index_input_from_point_expr(class, expr.right)
             end
         end
         return nil
     end
 
-    local function apply_input_for_load(expr, state)
+    local function point_input_for_load(expr, state)
         local key = lane_key(expr.lane, expr.index)
         local existing = state.by_key[key]
         if existing ~= nil then return input_expr(existing.name), existing.ty end
@@ -397,10 +397,10 @@ local function bind_context(T)
         return input_expr(name), input.ty
     end
 
-    local fact_to_apply_expr
-    fact_to_apply_expr = function(expr, state)
-        if expr.kind == "kernel_value" and expr.binding ~= nil then return fact_to_apply_expr(expr.binding, state) end
-        if expr.kind == "load" then return apply_input_for_load(expr, state) end
+    local fact_to_point_expr
+    fact_to_point_expr = function(expr, state)
+        if expr.kind == "kernel_value" and expr.binding ~= nil then return fact_to_point_expr(expr.binding, state) end
+        if expr.kind == "load" then return point_input_for_load(expr, state) end
         if expr.kind == "fill" then
             local ty = const_ty(expr.value)
             if ty == nil then return scalar_input_expr(expr.value, state), nil end
@@ -408,56 +408,56 @@ local function bind_context(T)
         end
         if expr.kind == "unary" then
             if expr.op == nil then return nil, nil, "unsupported unary stencil operator" end
-            local arg, _, err = fact_to_apply_expr(expr.value, state)
+            local arg, _, err = fact_to_point_expr(expr.value, state)
             if arg == nil then return nil, nil, err end
-            return apply_unary_expr(expr.op, arg, expr.result_ty), expr.result_ty
+            return point_unary_expr(expr.op, arg, expr.result_ty), expr.result_ty
         end
         if expr.kind == "cast" then
-            local arg, _, err = fact_to_apply_expr(expr.value, state)
+            local arg, _, err = fact_to_point_expr(expr.value, state)
             if arg == nil then return nil, nil, err end
-            return apply_cast_expr(expr.op, arg, expr.src_ty, expr.result_ty), expr.result_ty
+            return point_cast_expr(expr.op, arg, expr.src_ty, expr.result_ty), expr.result_ty
         end
         if expr.kind == "binary" then
             if expr.op == nil then return nil, nil, "unsupported binary stencil operator" end
-            local lhs, _, lhs_err = fact_to_apply_expr(expr.lhs, state)
+            local lhs, _, lhs_err = fact_to_point_expr(expr.lhs, state)
             if lhs == nil then return nil, nil, lhs_err end
-            local rhs, _, rhs_err = fact_to_apply_expr(expr.rhs, state)
+            local rhs, _, rhs_err = fact_to_point_expr(expr.rhs, state)
             if rhs == nil then return nil, nil, rhs_err end
-            return apply_binary_expr(expr.op, lhs, rhs, expr.result_ty, expr.int_semantics), expr.result_ty
+            return point_binary_expr(expr.op, lhs, rhs, expr.result_ty, expr.int_semantics), expr.result_ty
         end
         if expr.kind == "cmp" then
-            local lhs, lhs_ty, lhs_err = fact_to_apply_expr(expr.lhs, state)
+            local lhs, lhs_ty, lhs_err = fact_to_point_expr(expr.lhs, state)
             if lhs == nil then return nil, nil, lhs_err end
-            local rhs, rhs_ty, rhs_err = fact_to_apply_expr(expr.rhs, state)
+            local rhs, rhs_ty, rhs_err = fact_to_point_expr(expr.rhs, state)
             if rhs == nil then return nil, nil, rhs_err end
             if expr.lhs.kind == "load" and expr.rhs.kind == "fill" then
                 local pred = predicate_from_cmp_const(expr.op, lhs_ty, expr.rhs.value, false)
-                if pred ~= nil then return apply_predicate_expr(pred, lhs, expr.result_ty), expr.result_ty end
+                if pred ~= nil then return point_predicate_expr(pred, lhs, expr.result_ty), expr.result_ty end
             end
             if expr.lhs.kind == "fill" and expr.rhs.kind == "load" then
                 local pred = predicate_from_cmp_const(expr.op, rhs_ty, expr.lhs.value, true)
-                if pred ~= nil then return apply_predicate_expr(pred, rhs, expr.result_ty), expr.result_ty end
+                if pred ~= nil then return point_predicate_expr(pred, rhs, expr.result_ty), expr.result_ty end
             end
-            return apply_compare_expr(expr.op, lhs, rhs, expr.result_ty), expr.result_ty
+            return point_compare_expr(expr.op, lhs, rhs, expr.result_ty), expr.result_ty
         end
         if expr.kind == "select" then
-            local cond, _, cond_err = fact_to_apply_expr(expr.cond, state)
+            local cond, _, cond_err = fact_to_point_expr(expr.cond, state)
             if cond == nil then return nil, nil, cond_err end
-            local t, result_ty, t_err = fact_to_apply_expr(expr.t, state)
+            local t, result_ty, t_err = fact_to_point_expr(expr.t, state)
             if t == nil then return nil, nil, t_err end
-            local f, _, f_err = fact_to_apply_expr(expr.f, state)
+            local f, _, f_err = fact_to_point_expr(expr.f, state)
             if f == nil then return nil, nil, f_err end
-            return apply_select_expr(cond, t, f, result_ty), result_ty
+            return point_select_expr(cond, t, f, result_ty), result_ty
         end
         return nil, nil, "unsupported store stencil expression"
     end
 
     local function classify_expr(expr)
         local state = { inputs = {}, by_key = {} }
-        local apply_expr, result_ty, err = fact_to_apply_expr(expr, state)
-        if apply_expr == nil then return nil, err end
-        return with_class("apply_n", {
-            expr = apply_expr,
+        local point_expr, result_ty, err = fact_to_point_expr(expr, state)
+        if point_expr == nil then return nil, err end
+        return with_class("point", {
+            expr = point_expr,
             inputs = state.inputs,
             result_ty = result_ty,
             const_int = expr.kind == "fill" and const_int_value(expr.value) or nil,
@@ -482,9 +482,8 @@ local function bind_context(T)
     local function type_ok(ty) return classify_type(ty) ~= nil end
 
     local function select_index_lane(class)
-        if class.kind == "load" or class.kind == "cast" then return { lane = class.lane, index = class.index } end
-        if class.kind == "apply_n" then
-            local input = index_input_from_apply_expr(class, class.expr)
+        if class.kind == "point" then
+            local input = index_input_from_point_expr(class, class.expr)
             if input ~= nil then return { lane = input.lane, index = input.index } end
         end
         return nil
@@ -495,7 +494,7 @@ local function bind_context(T)
         return info
     end
 
-    local function all_apply_inputs_primary(class)
+    local function all_point_inputs_primary(class)
         for _, input in ipairs(class.inputs or {}) do
             if input.index_primary ~= true then return false end
         end
@@ -527,8 +526,12 @@ local function bind_context(T)
         return inputs
     end
 
-    local function apply_n_info(ctx, class, extra)
+    local function store_n_info(ctx, class, extra)
         local inputs = extra and extra.inputs or class.inputs
+        local store_mode = extra and extra.store_mode or ctx.store_mode
+        if store_mode == nil and ctx.copy_semantics ~= nil then
+            store_mode = Stencil.StencilStoreCopy(ctx.copy_semantics)
+        end
         local info = {
             step_num = ctx.step_num,
             producer = ctx.producer,
@@ -539,6 +542,9 @@ local function bind_context(T)
             expr = class.expr,
             start = ctx.start,
             stop = ctx.stop,
+            start_expr = ctx.start_expr,
+            stop_expr = ctx.stop_expr,
+            store_mode = store_mode,
             tag = "expr" .. tostring(#(inputs or {})),
         }
         for k, v in pairs(extra or {}) do
@@ -550,14 +556,14 @@ local function bind_context(T)
     local function predicate_expr_operand(class)
         if class == nil then return nil, nil end
         local cls = pvm.classof(class.expr)
-        if cls == Stencil.StencilApplyPredicate then
-            if pvm.classof(class.expr.arg) ~= Stencil.StencilApplyInput then return nil, nil end
+        if cls == Stencil.StencilPointPredicate then
+            if pvm.classof(class.expr.arg) ~= Stencil.StencilPointInput then return nil, nil end
             local input = input_by_name(class, class.expr.arg.access.name)
             return input, class.expr.pred
         end
-        if cls == Stencil.StencilApplyCompare then
-            if pvm.classof(class.expr.left) ~= Stencil.StencilApplyInput then return nil, nil end
-            if pvm.classof(class.expr.right) ~= Stencil.StencilApplyConst then return nil, nil end
+        if cls == Stencil.StencilPointCompare then
+            if pvm.classof(class.expr.left) ~= Stencil.StencilPointInput then return nil, nil end
+            if pvm.classof(class.expr.right) ~= Stencil.StencilPointConst then return nil, nil end
             local input = input_by_name(class, class.expr.left.access.name)
             if input == nil then return nil, nil end
             return input, Stencil.StencilPredCompareConst(class.expr.cmp, input.ty, class.expr.right.value)
@@ -571,26 +577,14 @@ local function bind_context(T)
 
     local function select_store(ctx)
         local class = ctx.class or {}
-        local copy_input = class.kind == "apply_n" and single_input_expr(class) or nil
-        if copy_input ~= nil and ctx.copy_semantics ~= nil and ctx.store_index_primary == true and copy_input.index_primary == true
-            and same_type(copy_input.ty, ctx.dst_elem_ty) and type_ok(copy_input.ty) and type_ok(ctx.dst_elem_ty) then
-            return selection("copy", {
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = copy_input.ty, result_ty = ctx.dst_elem_ty,
-                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = copy_input.base, semantics = ctx.copy_semantics,
-                    dst_layout = ctx.dst_layout, src_layout = copy_input.layout,
-                },
-                args = { ctx.dst_expr, copy_input.base_expr, ctx.start_expr, ctx.stop_expr },
-            })
-        end
-        if class.kind == "apply_n" and ctx.store_index_primary == true and (class.result_ty == nil or same_type(class.result_ty, ctx.dst_elem_ty))
-            and all_apply_inputs_primary(class) and type_ok(class.result_ty or ctx.dst_elem_ty) and type_ok(ctx.dst_elem_ty) then
-            return selection("apply_n", {
-                info = apply_n_info(ctx, class),
+        if class.kind == "point" and ctx.store_index_primary == true and (class.result_ty == nil or same_type(class.result_ty, ctx.dst_elem_ty))
+            and all_point_inputs_primary(class) and type_ok(class.result_ty or ctx.dst_elem_ty) and type_ok(ctx.dst_elem_ty) then
+            return selection("store_n", {
+                info = store_n_info(ctx, class),
                 args = {},
             })
         end
-        if class.kind == "apply_n" and ctx.store_index_primary == true and (class.result_ty == nil or same_type(class.result_ty, ctx.dst_elem_ty))
+        if class.kind == "point" and ctx.store_index_primary == true and (class.result_ty == nil or same_type(class.result_ty, ctx.dst_elem_ty))
             and type_ok(class.result_ty or ctx.dst_elem_ty) and type_ok(ctx.dst_elem_ty) then
             local inputs, ok = copy_inputs(class.inputs), true
             for _, input in ipairs(inputs) do
@@ -602,16 +596,16 @@ local function bind_context(T)
                 end
             end
             if ok then
-                return selection("apply_n", {
-                    info = apply_n_info(ctx, class, {
+                return selection("store_n", {
+                    info = store_n_info(ctx, class, {
                         inputs = inputs,
                     }),
                     args = {},
                 })
             end
         end
-        if class.kind == "apply_n" and ctx.store_index_lane ~= nil
-            and (class.result_ty == nil or same_type(class.result_ty, ctx.dst_elem_ty)) and all_apply_inputs_primary(class)
+        if class.kind == "point" and ctx.store_index_lane ~= nil
+            and (class.result_ty == nil or same_type(class.result_ty, ctx.dst_elem_ty)) and all_point_inputs_primary(class)
             and is_index_data_type(ctx.store_index_lane.elem_ty) and type_ok(class.result_ty or ctx.dst_elem_ty) and type_ok(ctx.dst_elem_ty) then
             local idx = {
                 name = "dst_idx",
@@ -625,139 +619,13 @@ local function bind_context(T)
             }
             local inputs = copy_inputs(class.inputs)
             append_input_once(inputs, idx)
-            return selection("apply_n", {
-                info = apply_n_info(ctx, class, {
+            return selection("store_n", {
+                info = store_n_info(ctx, class, {
                     inputs = inputs,
                     dst_layout = indexed_layout(ctx.dst_layout, idx, ctx.step_num),
-                    apply_mode = Stencil.StencilStoreScatter(ctx.scatter_conflicts or Stencil.StencilScatterUniqueIndices),
+                    store_mode = Stencil.StencilStoreScatter(ctx.scatter_conflicts or Stencil.StencilScatterUniqueIndices),
                 }),
                 args = {},
-            })
-        end
-        if class.kind == "fill" and ctx.store_index_primary == true and type_ok(ctx.dst_elem_ty) then
-            return selection("fill", {
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = ctx.dst_elem_ty, result_ty = ctx.dst_elem_ty,
-                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, value = class.value, dst_layout = ctx.dst_layout,
-                },
-                args = { ctx.dst_expr, ctx.start_expr, ctx.stop_expr, class.value_expr },
-            })
-        end
-        if class.kind == "load" and ctx.store_index_primary == true and class.index_primary == true
-            and same_type(class.elem_ty, ctx.dst_elem_ty) and type_ok(class.elem_ty) and type_ok(ctx.dst_elem_ty) then
-            return selection("copy", {
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = ctx.dst_elem_ty,
-                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, semantics = ctx.copy_semantics,
-                    dst_layout = ctx.dst_layout, src_layout = class.src_layout,
-                },
-                args = { ctx.dst_expr, class.src_expr, ctx.start_expr, ctx.stop_expr },
-            })
-        end
-        if class.kind == "load" and ctx.store_index_primary == true and class.index_lane ~= nil
-            and class.index_lane.index_primary == true and same_type(class.elem_ty, ctx.dst_elem_ty)
-            and is_index_data_type(class.index_lane.elem_ty) and type_ok(class.elem_ty) and type_ok(ctx.dst_elem_ty) then
-            return selection("gather", {
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = ctx.dst_elem_ty,
-                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, index = class.index_lane.base,
-                    index_ty = class.index_lane.elem_ty, dst_layout = ctx.dst_layout, src_layout = class.src_layout,
-                    index_layout = class.index_lane.layout,
-                },
-                args = { ctx.dst_expr, class.src_expr, class.index_lane.base_expr, ctx.start_expr, ctx.stop_expr },
-            })
-        end
-        if class.kind == "load" and ctx.store_index_lane ~= nil and ctx.store_index_lane.index_primary == true
-            and class.index_primary == true and same_type(class.elem_ty, ctx.dst_elem_ty)
-            and is_index_data_type(ctx.store_index_lane.elem_ty) and type_ok(class.elem_ty) and type_ok(ctx.dst_elem_ty) then
-            return selection("scatter", {
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = ctx.dst_elem_ty,
-                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, index = ctx.store_index_lane.base,
-                    index_ty = ctx.store_index_lane.elem_ty, conflicts = ctx.scatter_conflicts, dst_layout = ctx.dst_layout,
-                    src_layout = class.src_layout, index_layout = ctx.store_index_lane.layout,
-                },
-                args = { ctx.dst_expr, class.src_expr, ctx.store_index_lane.base_expr, ctx.start_expr, ctx.stop_expr },
-            })
-        end
-        if class.kind == "map" and ctx.store_index_primary == true and class.index_primary == true
-            and class.same_src_dst_ty == true and unary_supported(class.op, class.elem_ty)
-            and same_type(class.result_ty, class.elem_ty) and type_ok(class.elem_ty) then
-            return selection("in_place_map", {
-                op = class.op,
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = class.result_ty,
-                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, dst_layout = ctx.dst_layout,
-                    src_layout = class.src_layout,
-                },
-                args = { ctx.dst_expr, ctx.start_expr, ctx.stop_expr },
-            })
-        end
-        if class.kind == "map" and ctx.store_index_primary == true and class.index_primary == true
-            and unary_supported(class.op, class.elem_ty) and same_type(class.result_ty, ctx.dst_elem_ty)
-            and type_ok(class.elem_ty) and type_ok(ctx.dst_elem_ty) and type_ok(class.result_ty) then
-            return selection("map", {
-                op = class.op,
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = class.result_ty,
-                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, dst_layout = ctx.dst_layout,
-                    src_layout = class.src_layout,
-                },
-                args = { ctx.dst_expr, class.src_expr, ctx.start_expr, ctx.stop_expr },
-            })
-        end
-        if class.kind == "cast" and ctx.store_index_primary == true and class.index_primary == true
-            and same_type(class.result_ty, ctx.dst_elem_ty) and cast_supported(class.op, class.src_ty, class.result_ty)
-            and type_ok(class.src_ty) and type_ok(ctx.dst_elem_ty) then
-            return selection("cast", {
-                op = class.op,
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = ctx.dst_elem_ty, result_ty = ctx.dst_elem_ty,
-                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, src_ty = class.src_ty,
-                    dst_ty = class.result_ty, dst_layout = ctx.dst_layout, src_layout = class.src_layout,
-                },
-                args = { ctx.dst_expr, class.src_expr, ctx.start_expr, ctx.stop_expr },
-            })
-        end
-        if class.kind == "compare" and ctx.store_index_primary == true and class.index_primary == true
-            and is_bool8_type(ctx.dst_elem_ty) and same_type(class.result_ty, ctx.dst_elem_ty) and type_ok(class.elem_ty) then
-            return selection("compare", {
-                op = class.pred,
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = ctx.dst_elem_ty,
-                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, src = class.src, pred = class.pred,
-                    dst_layout = ctx.dst_layout, src_layout = class.src_layout,
-                },
-                args = { ctx.dst_expr, class.src_expr, ctx.start_expr, ctx.stop_expr },
-            })
-        end
-        if class.kind == "zip_map" and ctx.store_index_primary == true and class.lhs_index_primary == true
-            and class.rhs_index_primary == true and same_type(class.lhs_ty, class.rhs_ty)
-            and same_type(class.lhs_ty, class.result_ty) and same_type(class.result_ty, ctx.dst_elem_ty)
-            and binary_supported(class.op, class.result_ty) and type_ok(class.result_ty) and type_ok(ctx.dst_elem_ty) then
-            return selection("zip_map", {
-                op = class.op,
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = ctx.dst_elem_ty, result_ty = class.result_ty,
-                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, lhs = class.lhs_base, rhs = class.rhs_base,
-                    lhs_ty = class.lhs_ty, rhs_ty = class.rhs_ty, dst_layout = ctx.dst_layout,
-                    lhs_layout = class.lhs_layout, rhs_layout = class.rhs_layout,
-                },
-                args = { ctx.dst_expr, class.lhs_expr, class.rhs_expr, ctx.start_expr, ctx.stop_expr },
-            })
-        end
-        if class.kind == "zip_compare" and ctx.store_index_primary == true and class.lhs_index_primary == true
-            and class.rhs_index_primary == true and same_type(class.lhs_ty, class.rhs_ty) and is_bool8_type(ctx.dst_elem_ty)
-            and type_ok(class.lhs_ty) and type_ok(ctx.dst_elem_ty) then
-            return selection("zip_compare", {
-                op = class.cmp,
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = ctx.dst_elem_ty, result_ty = ctx.dst_elem_ty,
-                    dst = ctx.dst, start = ctx.start, stop = ctx.stop, lhs = class.lhs_base, rhs = class.rhs_base,
-                    lhs_ty = class.lhs_ty, rhs_ty = class.rhs_ty, dst_layout = ctx.dst_layout,
-                    lhs_layout = class.lhs_layout, rhs_layout = class.rhs_layout,
-                },
-                args = { ctx.dst_expr, class.lhs_expr, class.rhs_expr, ctx.start_expr, ctx.stop_expr },
             })
         end
         return nil
@@ -765,7 +633,7 @@ local function bind_context(T)
 
     local function select_scan(ctx)
         local class = ctx.class or {}
-        local input = class.kind == "apply_n" and single_input_expr(class) or nil
+        local input = class.kind == "point" and single_input_expr(class) or nil
         if input ~= nil and ctx.store_index_primary == true and input.index_primary == true
             and same_type(ctx.result_ty, ctx.dst_elem_ty)
             and reduction_supported(ctx.reduction_kind, input.ty, ctx.result_ty) then
@@ -775,21 +643,9 @@ local function bind_context(T)
                     step_num = ctx.step_num, producer = ctx.producer, elem_ty = input.ty, result_ty = ctx.result_ty,
                     init = ctx.init, mode = ctx.mode, axis = ctx.axis, dst = ctx.dst, array = input.base,
                     dst_layout = ctx.dst_layout, array_layout = input.layout,
+                    start_expr = ctx.start_expr, stop_expr = ctx.stop_expr,
                 },
                 args = { ctx.dst_expr, input.base_expr, ctx.start_expr, ctx.stop_expr, ctx.init_expr },
-            })
-        end
-        if class.kind == "load" and ctx.store_index_primary == true and class.index_primary == true
-            and same_type(ctx.result_ty, ctx.dst_elem_ty)
-            and reduction_supported(ctx.reduction_kind, class.elem_ty, ctx.result_ty) then
-            return selection("scan", {
-                reduction = ctx.reduction,
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty, result_ty = ctx.result_ty,
-                    init = ctx.init, mode = ctx.mode, axis = ctx.axis, dst = ctx.dst, array = class.src,
-                    dst_layout = ctx.dst_layout, array_layout = class.src_layout,
-                },
-                args = { ctx.dst_expr, class.src_expr, ctx.start_expr, ctx.stop_expr, ctx.init_expr },
             })
         end
         return nil
@@ -797,25 +653,16 @@ local function bind_context(T)
 
     local function select_find(ctx)
         local class = ctx.class or {}
-        local input = class.kind == "apply_n" and single_input_expr(class) or nil
+        local input = class.kind == "point" and single_input_expr(class) or nil
         if input ~= nil and input.index_primary == true and ctx.not_found_minus_one == true and type_ok(input.ty) then
             return selection("find", {
                 op = ctx.pred,
                 info = {
                     step_num = ctx.step_num, producer = ctx.producer, elem_ty = input.ty,
                     array = input.base, pred = ctx.pred, array_layout = input.layout,
+                    start_expr = ctx.start_expr, stop_expr = ctx.stop_expr,
                 },
                 args = { input.base_expr, ctx.start_expr, ctx.stop_expr },
-            })
-        end
-        if class.kind == "load" and class.index_primary == true and ctx.not_found_minus_one == true and type_ok(class.elem_ty) then
-            return selection("find", {
-                op = ctx.pred,
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty,
-                    array = class.src, pred = ctx.pred, array_layout = class.src_layout,
-                },
-                args = { class.src_expr, ctx.start_expr, ctx.stop_expr },
             })
         end
         return nil
@@ -823,7 +670,7 @@ local function bind_context(T)
 
     local function select_partition(ctx)
         local class = ctx.class or {}
-        local input = class.kind == "apply_n" and single_input_expr(class) or nil
+        local input = class.kind == "point" and single_input_expr(class) or nil
         if input ~= nil and ctx.store_index_primary == true and input.index_primary == true
             and same_type(input.ty, ctx.dst_elem_ty) and type_ok(input.ty) and type_ok(ctx.dst_elem_ty) then
             return selection("partition", {
@@ -832,20 +679,9 @@ local function bind_context(T)
                     step_num = ctx.step_num, producer = ctx.producer, elem_ty = input.ty,
                     dst = ctx.dst, array = input.base, pred = ctx.pred, semantics = ctx.semantics,
                     dst_layout = ctx.dst_layout, array_layout = input.layout,
+                    start_expr = ctx.start_expr, stop_expr = ctx.stop_expr,
                 },
                 args = { ctx.dst_expr, input.base_expr, ctx.start_expr, ctx.stop_expr },
-            })
-        end
-        if class.kind == "load" and ctx.store_index_primary == true and class.index_primary == true
-            and same_type(class.elem_ty, ctx.dst_elem_ty) and type_ok(class.elem_ty) and type_ok(ctx.dst_elem_ty) then
-            return selection("partition", {
-                op = ctx.pred,
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, elem_ty = class.elem_ty,
-                    dst = ctx.dst, array = class.src, pred = ctx.pred, semantics = ctx.semantics,
-                    dst_layout = ctx.dst_layout, array_layout = class.src_layout,
-                },
-                args = { ctx.dst_expr, class.src_expr, ctx.start_expr, ctx.stop_expr },
             })
         end
         return nil
@@ -853,7 +689,7 @@ local function bind_context(T)
 
     local function select_reduce(ctx)
         local class = ctx.class or {}
-        if class.kind == "apply_n" and all_apply_inputs_primary(class)
+        if class.kind == "point" and all_point_inputs_primary(class)
             and reduction_supported(ctx.reduction_kind, class.result_ty, ctx.result_ty) then
             return selection("reduce_n", {
                 info = append_info_inputs({
@@ -864,6 +700,8 @@ local function bind_context(T)
                     inputs = class.inputs,
                     expr = class.expr,
                     item_ty = class.result_ty,
+                    start_expr = ctx.start_expr,
+                    stop_expr = ctx.stop_expr,
                     tag = "expr" .. tostring(#(class.inputs or {})),
                 }, class.inputs),
                 args = {},
@@ -878,79 +716,20 @@ local function bind_context(T)
                     step_num = ctx.step_num, producer = ctx.producer, result_ty = ctx.result_ty,
                     init = ctx.init, array = pred_input.base, elem_ty = pred_input.ty, pred = pred,
                     array_layout = pred_input.layout,
+                    start_expr = ctx.start_expr, stop_expr = ctx.stop_expr,
                 },
                 args = { pred_input.base_expr, ctx.start_expr, ctx.stop_expr },
-            })
-        end
-        if class.kind == "load" and class.index_primary == true
-            and reduction_supported(ctx.reduction_kind, class.elem_ty, ctx.result_ty) then
-            return selection("reduce", {
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, result_ty = ctx.result_ty,
-                    init = ctx.init, array = class.src, elem_ty = class.elem_ty, array_layout = class.src_layout,
-                },
-                args = { class.src_expr, ctx.start_expr, ctx.stop_expr, ctx.init_expr },
-            })
-        end
-        if class.kind == "map" and class.index_primary == true and unary_supported(class.op, class.elem_ty)
-            and reduction_supported(ctx.reduction_kind, class.result_ty, ctx.result_ty) then
-            return selection("map_reduce", {
-                op = class.op,
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, result_ty = ctx.result_ty,
-                    init = ctx.init, array = class.src, elem_ty = class.elem_ty, mapped_ty = class.result_ty,
-                    array_layout = class.src_layout,
-                },
-                args = { class.src_expr, ctx.start_expr, ctx.stop_expr, ctx.init_expr },
-            })
-        end
-        if class.kind == "zip_map" and class.lhs_index_primary == true and class.rhs_index_primary == true
-            and same_type(class.lhs_ty, class.rhs_ty) and same_type(class.lhs_ty, class.result_ty)
-            and binary_supported(class.op, class.result_ty)
-            and reduction_supported(ctx.reduction_kind, class.result_ty, ctx.result_ty) then
-            return selection("zip_reduce", {
-                op = class.op,
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, result_ty = ctx.result_ty,
-                    init = ctx.init, lhs = class.lhs_base, rhs = class.rhs_base, lhs_ty = class.lhs_ty,
-                    rhs_ty = class.rhs_ty, mapped_ty = class.result_ty, lhs_layout = class.lhs_layout,
-                    rhs_layout = class.rhs_layout,
-                },
-                args = { class.lhs_expr, class.rhs_expr, ctx.start_expr, ctx.stop_expr, ctx.init_expr },
-            })
-        end
-        if class.kind == "compare" and class.index_primary == true and ctx.reduction_add == true
-            and ctx.init_zero == true and ctx.result_i32 == true then
-            return selection("count", {
-                op = class.pred,
-                info = {
-                    step_num = ctx.step_num, producer = ctx.producer, result_ty = ctx.result_ty,
-                    init = ctx.init, array = class.src, elem_ty = class.elem_ty, pred = class.pred,
-                    array_layout = class.src_layout,
-                },
-                args = { class.src_expr, ctx.start_expr, ctx.stop_expr },
             })
         end
         return nil
     end
 
     local constructors = {
-        store_fill = { input = { "info", "args" }, output = { "selection" } },
-        store_copy = { input = { "info", "args" }, output = { "selection" } },
-        store_gather = { input = { "info", "args" }, output = { "selection" } },
-        store_scatter = { input = { "info", "args" }, output = { "selection" } },
-        store_in_place_map = { input = { "op", "info", "args" }, output = { "selection" } },
-        store_map = { input = { "op", "info", "args" }, output = { "selection" } },
-        store_cast = { input = { "op", "info", "args" }, output = { "selection" } },
-        store_compare = { input = { "op", "info", "args" }, output = { "selection" } },
-        store_zip_map = { input = { "op", "info", "args" }, output = { "selection" } },
-        store_zip_compare = { input = { "op", "info", "args" }, output = { "selection" } },
+        store_n = { input = { "info" }, output = { "selection" } },
         reduce_array = { input = { "info", "args" }, output = { "selection" } },
         scan_array = { input = { "reduction", "info", "args" }, output = { "selection" } },
         find_array = { input = { "op", "info", "args" }, output = { "selection" } },
         partition_array = { input = { "op", "info", "args" }, output = { "selection" } },
-        reduce_map = { input = { "op", "info", "args" }, output = { "selection" } },
-        reduce_zip = { input = { "op", "info", "args" }, output = { "selection" } },
         reduce_count = { input = { "op", "info", "args" }, output = { "selection" } },
         store_stencil_plan = { input = { "selection" }, output = { "plan" } },
         store_stencil_no_plan = { input = { "reason" }, output = { "plan" } },

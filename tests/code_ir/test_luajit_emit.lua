@@ -61,7 +61,7 @@ local fn = LJ.LJFunc(
     LJ.LJBodyMachine(fold_id, LJ.LJTerminalFirst(nil)),
     LJ.LJTraceHot
 )
-local module = LJ.LJModule(nil, { fn }, {}, {}, {})
+local module = LJ.LJModule(nil, { fn }, {}, {}, {}, {})
 local compiled, err, src = Emit.compile_module(module)
 assert(compiled ~= nil, tostring(err) .. "\n" .. tostring(src))
 
@@ -125,7 +125,7 @@ local stencil_fn = LJ.LJFunc(
     LJ.LJBodyMachine(stencil_machine_id, LJ.LJTerminalFirst(nil)),
     LJ.LJTraceHot
 )
-local stencil_compiled, stencil_err, stencil_src = Emit.compile_module(LJ.LJModule(nil, { stencil_fn }, {}, {}, {}), {
+local stencil_compiled, stencil_err, stencil_src = Emit.compile_module(LJ.LJModule(nil, { stencil_fn }, {}, {}, {}, {}), {
     stencil_symbols = stencil_build.symbols,
 })
 assert(stencil_compiled ~= nil, tostring(stencil_err) .. "\n" .. tostring(stencil_src))
@@ -182,7 +182,7 @@ local max_fn = LJ.LJFunc(
     }),
     LJ.LJTraceHot
 )
-local max_mod = LJ.LJModule(nil, { max_fn }, {}, {}, {})
+local max_mod = LJ.LJModule(nil, { max_fn }, {}, {}, {}, {})
 local max_compiled, max_err, max_src = Emit.compile_module(max_mod)
 assert(max_compiled ~= nil, tostring(max_err) .. "\n" .. tostring(max_src))
 assert(max_compiled.max_i32(3, 9) == 9)

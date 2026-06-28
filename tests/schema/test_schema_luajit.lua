@@ -101,7 +101,7 @@ local func = LJ.LJFunc(
     LJ.LJBodyMachine(fold_id, LJ.LJTerminalFold(zero, sum_step)),
     LJ.LJTraceHot
 )
-local module = LJ.LJModule(nil, { func }, { sig }, {}, {})
+local module = LJ.LJModule(nil, { func }, { sig }, {}, {}, {})
 
 assert(module.funcs[1].machines[4].kind.input == filter_id, "fold should consume filter machine")
 assert(module.funcs[1].body.machine == fold_id, "function body should expose terminal machine")
@@ -116,7 +116,7 @@ local descriptor = Stencil.StencilDescriptor(
         Stencil.StencilAccess("xs", Stencil.StencilAccessRead, Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilLayoutContiguous(1)),
         Stencil.StencilAccess("acc", Stencil.StencilAccessReduce, Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilLayoutScalar(init)),
     },
-    Stencil.StencilBodyApply(Stencil.StencilApplyInput(Stencil.StencilAccessRef("xs"))),
+    Stencil.StencilBodyPoint(Stencil.StencilPointInput(Stencil.StencilAccessRef("xs"))),
     Stencil.StencilSinkReduce(Code.CodeTyInt(32, Code.CodeSigned), Stencil.StencilReduceScopeDomain, Stencil.StencilReduceFold(reducer))
 )
 local artifact = Stencil.StencilArtifact(

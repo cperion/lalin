@@ -384,17 +384,13 @@ local function bind_context(T)
 
     local function kind_group_cap(shape)
         local kind = shape.kind
-        if kind == "apply_n" and pvm.classof(shape.store_mode) == Stencil.StencilStoreScatter then
+        if kind == "store_n" and pvm.classof(shape.store_mode) == Stencil.StencilStoreScatter then
             return shape.store_mode.conflicts == Stencil.StencilScatterUniqueIndices and 4 or 1
         end
         if kind == "reduce_array" or kind == "scan_array" or kind == "scan_n" then return 16 end
-        if kind == "map_array" or kind == "zip_map_array" or kind == "select_array" or kind == "apply_n" or kind == "copy_array" or kind == "fill_array" or kind == "cast_array" then
-            return 8
-        end
-        if kind == "in_place_map_array" then return 8 end
+        if kind == "store_n" then return 8 end
         if kind == "reduce_n" then return shape.external_init == false and 4 or 8 end
-        if kind == "compare_array" or kind == "zip_compare_array" or kind == "count_array" then return 4 end
-        if kind == "scatter_array" and shape.conflicts == Stencil.StencilScatterUniqueIndices then return 4 end
+        if kind == "count_array" then return 4 end
         return 1
     end
 
@@ -476,49 +472,27 @@ local function bind_context(T)
                 rejected = "numeric_count_measured_slower",
             }
         end
-        if shape.kind == "compare_array" then
-            local xs = access_by_name.xs
-            local numeric = xs ~= nil and lua_numeric_pred_expr(shape.pred, "__ml_x", xs.ty) ~= nil
-            return {
-                kind = numeric and "numeric_store" or "lua_select",
-                rejected = numeric and "helper_branchless_measured_slower" or "numeric_predicate_unavailable",
-            }
-        end
-        if shape.kind == "apply_n" and expr_cls == Stencil.StencilApplyPredicate then
+        if shape.kind == "store_n" and expr_cls == Stencil.StencilPointPredicate then
             local arg_cls = pvm.classof(shape.expr.arg)
-            local input = arg_cls == Stencil.StencilApplyInput and access_by_name[shape.expr.arg.access.name] or nil
+            local input = arg_cls == Stencil.StencilPointInput and access_by_name[shape.expr.arg.access.name] or nil
             local numeric = input ~= nil and lua_numeric_pred_expr(shape.expr.pred, "__ml_x", input.ty) ~= nil
             return {
                 kind = numeric and "numeric_store" or "lua_select",
                 rejected = numeric and "helper_branchless_measured_slower" or "numeric_predicate_unavailable",
             }
         end
-        if shape.kind == "zip_compare_array" then
-            local lhs, rhs = access_by_name.lhs, access_by_name.rhs
-            local numeric = lhs ~= nil and rhs ~= nil and lua_numeric_cmp_expr(shape.cmp, "__ml_a", "__ml_b", lhs.ty, rhs.ty) ~= nil
-            return {
-                kind = numeric and "numeric_store" or "lua_select",
-                rejected = numeric and "helper_branchless_measured_slower" or "numeric_compare_unavailable",
-            }
-        end
-        if shape.kind == "apply_n" and expr_cls == Stencil.StencilApplyCompare then
+        if shape.kind == "store_n" and expr_cls == Stencil.StencilPointCompare then
             local left_cls = pvm.classof(shape.expr.left)
             local right_cls = pvm.classof(shape.expr.right)
-            local lhs = left_cls == Stencil.StencilApplyInput and access_by_name[shape.expr.left.access.name] or nil
-            local rhs = right_cls == Stencil.StencilApplyInput and access_by_name[shape.expr.right.access.name] or nil
+            local lhs = left_cls == Stencil.StencilPointInput and access_by_name[shape.expr.left.access.name] or nil
+            local rhs = right_cls == Stencil.StencilPointInput and access_by_name[shape.expr.right.access.name] or nil
             local numeric = lhs ~= nil and rhs ~= nil and lua_numeric_cmp_expr(shape.expr.cmp, "__ml_a", "__ml_b", lhs.ty, rhs.ty) ~= nil
             return {
                 kind = numeric and "numeric_store" or "lua_select",
                 rejected = numeric and "helper_branchless_measured_slower" or "numeric_compare_unavailable",
             }
         end
-        if shape.kind == "select_array" then
-            return {
-                kind = "lua_select",
-                rejected = "branchless_numeric_select_not_measured",
-            }
-        end
-        if shape.kind == "apply_n" and expr_cls == Stencil.StencilApplySelect then
+        if shape.kind == "store_n" and expr_cls == Stencil.StencilPointSelect then
             return {
                 kind = "lua_select",
                 rejected = "branchless_numeric_select_not_measured",
@@ -528,24 +502,14 @@ local function bind_context(T)
     end
 
     local function build_scatter_plan(shape)
-        if shape.kind == "apply_n" and pvm.classof(shape.store_mode) == Stencil.StencilStoreScatter then
+        if shape.kind == "store_n" and pvm.classof(shape.store_mode) == Stencil.StencilStoreScatter then
             local conflicts = shape.store_mode.conflicts
             if conflicts == Stencil.StencilScatterUniqueIndices then return { kind = "unique_indices", may_group = true } end
             if conflicts == Stencil.StencilScatterLastWriteWins then return { kind = "ordered_last_write", may_group = false } end
             if conflicts == Stencil.StencilScatterConflictUndefined then return { kind = "conflict_undefined", may_group = false } end
             return { kind = "unknown_conflicts", may_group = false }
         end
-        if shape.kind ~= "scatter_array" then return nil end
-        if shape.conflicts == Stencil.StencilScatterUniqueIndices then
-            return { kind = "unique_indices", may_group = true }
-        end
-        if shape.conflicts == Stencil.StencilScatterLastWriteWins then
-            return { kind = "ordered_last_write", may_group = false }
-        end
-        if shape.conflicts == Stencil.StencilScatterConflictUndefined then
-            return { kind = "conflict_undefined", may_group = false }
-        end
-        return { kind = "unknown_conflicts", may_group = false }
+        return nil
     end
 
     local function build_reduction_plan(shape, facts)
@@ -573,12 +537,12 @@ local function bind_context(T)
         local producer = shape.producer
         local can_use_linear_range_primitive = producer == nil or producer.kind == "range1d"
         local copy_src_name
-        if shape.kind == "apply_n"
+        if shape.kind == "store_n"
             and pvm.classof(shape.store_mode) == Stencil.StencilStoreCopy
-            and pvm.classof(shape.expr) == Stencil.StencilApplyInput then
+            and pvm.classof(shape.expr) == Stencil.StencilPointInput then
             copy_src_name = shape.expr.access.name
         end
-        if shape.kind == "copy_array" or copy_src_name ~= nil then
+        if copy_src_name ~= nil then
             local dst_name = shape.dst_name or "dst"
             local src_name = copy_src_name or "src"
             local dst, src = access_by_name[dst_name], access_by_name[src_name]
@@ -599,9 +563,9 @@ local function bind_context(T)
                     no_overlap_source = semantics == Stencil.StencilCopyNoOverlap and "copy_semantics" or "noalias_facts",
                 }
             end
-        elseif shape.kind == "apply_n"
+        elseif shape.kind == "store_n"
             and (shape.store_mode == Stencil.StencilStoreElementwise or pvm.classof(shape.store_mode) == Stencil.StencilStoreElementwise)
-            and pvm.classof(shape.expr) == Stencil.StencilApplyInput then
+            and pvm.classof(shape.expr) == Stencil.StencilPointInput then
             local dst_name = shape.dst_name or "dst"
             local value_name = shape.expr.access.name
             local dst, value_access = access_by_name[dst_name], access_by_name[value_name]
@@ -616,14 +580,6 @@ local function bind_context(T)
                     value_name = value_name,
                 }
             end
-        elseif shape.kind == "fill_array" then
-            local dst = access_by_name.dst
-            if can_use_linear_range_primitive and dst ~= nil and not dst.readonly and dst.can_bulk_fill then
-                primitive_plan = {
-                    kind = "ffi_fill",
-                    bytes_per_element = dst.element_bytes,
-                }
-            end
         end
         return {
             kind = shape.kind,
@@ -634,51 +590,51 @@ local function bind_context(T)
         }
     end
 
-    local function lua_apply_expr(expr, desc, access_by_name, index)
+    local function lua_point_expr(expr, desc, access_by_name, index)
         local cls = pvm.classof(expr)
-        if cls == Stencil.StencilApplyInput then
+        if cls == Stencil.StencilPointInput then
             local name = tostring(expr.access.name)
-            local access = assert(access_by_name[name], "residual_luatrace: missing apply input access " .. tostring(name))
+            local access = assert(access_by_name[name], "residual_luatrace: missing point input access " .. tostring(name))
             if pvm.classof(access.layout) == Stencil.StencilLayoutScalar then return name end
             return lua_access_ref(access, name, index)
         end
-        if cls == Stencil.StencilApplyWindowInput then
-            error("residual_luatrace: window-relative apply inputs are not materialized by LuaTrace", 3)
+        if cls == Stencil.StencilPointWindowInput then
+            error("residual_luatrace: window-relative point inputs are not materialized by LuaTrace", 3)
         end
-        if cls == Stencil.StencilApplyConst then return tostring(iconst(expr.value)) end
-        if cls == Stencil.StencilApplyUnary then
-            return lua_unary_expr(expr.op, lua_apply_expr(expr.arg, desc, access_by_name, index), expr.result_ty, expr.int_semantics, expr.float_mode)
+        if cls == Stencil.StencilPointConst then return tostring(iconst(expr.value)) end
+        if cls == Stencil.StencilPointUnary then
+            return lua_unary_expr(expr.op, lua_point_expr(expr.arg, desc, access_by_name, index), expr.result_ty, expr.int_semantics, expr.float_mode)
         end
-        if cls == Stencil.StencilApplyBinary then
+        if cls == Stencil.StencilPointBinary then
             return lua_binary_expr(
                 expr.op,
-                lua_apply_expr(expr.left, desc, access_by_name, index),
-                lua_apply_expr(expr.right, desc, access_by_name, index),
+                lua_point_expr(expr.left, desc, access_by_name, index),
+                lua_point_expr(expr.right, desc, access_by_name, index),
                 expr.result_ty,
                 expr.int_semantics,
                 expr.float_mode
             )
         end
-        if cls == Stencil.StencilApplyCast then
-            return lua_apply_expr(expr.arg, desc, access_by_name, index)
+        if cls == Stencil.StencilPointCast then
+            return lua_point_expr(expr.arg, desc, access_by_name, index)
         end
-        if cls == Stencil.StencilApplyPredicate then
-            return "(" .. lua_pred_expr(expr.pred, lua_apply_expr(expr.arg, desc, access_by_name, index)) .. " and 1 or 0)"
+        if cls == Stencil.StencilPointPredicate then
+            return "(" .. lua_pred_expr(expr.pred, lua_point_expr(expr.arg, desc, access_by_name, index)) .. " and 1 or 0)"
         end
-        if cls == Stencil.StencilApplyCompare then
+        if cls == Stencil.StencilPointCompare then
             return "(" .. lua_cmp_expr(
                 expr.cmp,
-                lua_apply_expr(expr.left, desc, access_by_name, index),
-                lua_apply_expr(expr.right, desc, access_by_name, index)
+                lua_point_expr(expr.left, desc, access_by_name, index),
+                lua_point_expr(expr.right, desc, access_by_name, index)
             ) .. " and 1 or 0)"
         end
-        if cls == Stencil.StencilApplySelect then
+        if cls == Stencil.StencilPointSelect then
             return "("
-                .. lua_pred_expr(expr.pred, lua_apply_expr(expr.cond, desc, access_by_name, index))
+                .. lua_pred_expr(expr.pred, lua_point_expr(expr.cond, desc, access_by_name, index))
                 .. " and "
-                .. lua_apply_expr(expr.then_expr, desc, access_by_name, index)
+                .. lua_point_expr(expr.then_expr, desc, access_by_name, index)
                 .. " or "
-                .. lua_apply_expr(expr.else_expr, desc, access_by_name, index)
+                .. lua_point_expr(expr.else_expr, desc, access_by_name, index)
                 .. ")"
         end
         error("residual_luatrace: unsupported apply expression", 3)
@@ -688,19 +644,19 @@ local function bind_context(T)
         local producer = shape.producer
         if producer == nil or producer.kind == "range1d" then return nil end
         if producer.kind == "range_nd" then
-            if shape.kind == "apply_n"
+            if shape.kind == "store_n"
                 and pvm.classof(shape.store_mode) == Stencil.StencilStoreCopy
                 and (shape.store_mode.semantics == Stencil.StencilCopyMemMove
                     or shape.store_mode.semantics == Stencil.StencilCopyMayOverlapBackward) then
                 return "RangeND copy with overlapping memmove semantics is not materialized by LuaTrace yet"
             end
-            if shape.kind == "apply_n" or shape.kind == "reduce_n" or shape.kind == "scan_n" or shape.kind == "find_n" or shape.kind == "scatter_reduce_n" then
+            if shape.kind == "store_n" or shape.kind == "reduce_n" or shape.kind == "scan_n" or shape.kind == "find_n" or shape.kind == "scatter_reduce_n" then
                 if shape.kind == "reduce_n" and shape.scope_kind == "window" then
                     return "RangeND window-local reduction needs WindowND producer semantics"
                 end
                 return nil
             end
-            return "RangeND producer is only materialized for generic ApplyN/ReduceN/ScanN/FindN/ScatterReduceN in LuaTrace"
+            return "RangeND producer is only materialized for generic StoreN/ReduceN/ScanN/FindN/ScatterReduceN in LuaTrace"
         end
         return "producer " .. tostring(producer.kind) .. " is not materialized by the LuaTrace bytecode path yet"
     end
@@ -974,19 +930,6 @@ local function bind_context(T)
                 out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_access_ref(xs_access, "xs", i), shape.result_ty)
             end)
             out[#out + 1] = "    return acc"
-        elseif kind == "map_array" then
-            local dst_access, xs_access = assert(access.dst, "missing dst access plan"), assert(access.xs, "missing xs access plan")
-            out[#out + 1] = fn_header(artifact, { "dst", "xs", "start", "stop" })
-            emit_forward_loop(out, artifact_plan, function(i, indent)
-                out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = " .. lua_unary_expr(shape.op, lua_access_ref(xs_access, "xs", i), shape.result_ty, shape.int_semantics, shape.float_mode)
-            end)
-        elseif kind == "zip_map_array" then
-            local dst_access = assert(access.dst, "missing dst access plan")
-            local lhs_access, rhs_access = assert(access.lhs, "missing lhs access plan"), assert(access.rhs, "missing rhs access plan")
-            out[#out + 1] = fn_header(artifact, { "dst", "lhs", "rhs", "start", "stop" })
-            emit_forward_loop(out, artifact_plan, function(i, indent)
-                out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = " .. lua_binary_expr(shape.op, lua_access_ref(lhs_access, "lhs", i), lua_access_ref(rhs_access, "rhs", i), shape.result_ty, shape.int_semantics, shape.float_mode)
-            end)
         elseif kind == "scan_array" then
             local dst_access, xs_access = assert(access.dst, "missing dst access plan"), assert(access.xs, "missing xs access plan")
             out[#out + 1] = fn_header(artifact, { "dst", "xs", "start", "stop", "init" })
@@ -1001,32 +944,6 @@ local function bind_context(T)
                 end
             end)
             out[#out + 1] = "    return acc"
-        elseif kind == "copy_array" then
-            local dst_access, src_access = assert(access.dst, "missing dst access plan"), assert(access.src, "missing src access plan")
-            out[#out + 1] = fn_header(artifact, { "dst", "src", "start", "stop" })
-            if kernel_plan.primitive_plan and kernel_plan.primitive_plan.kind == "ffi_copy" then
-                out[#out + 1] = "    local __ml_n = stop - start"
-                out[#out + 1] = "    if __ml_n > 0 then ffi.copy(dst + start, src + start, __ml_n * " .. tostring(kernel_plan.primitive_plan.bytes_per_element) .. ") end"
-            elseif shape.semantics == Stencil.StencilCopyMemMove or shape.semantics == Stencil.StencilCopyMayOverlapBackward then
-                out[#out + 1] = "    for i = stop - 1, start, -" .. tostring(stride) .. " do"
-                out[#out + 1] = "        " .. lua_access_ref(dst_access, "dst", "i") .. " = " .. lua_access_ref(src_access, "src", "i")
-                out[#out + 1] = "    end"
-            else
-                emit_forward_loop(out, artifact_plan, function(i, indent)
-                    out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = " .. lua_access_ref(src_access, "src", i)
-                end)
-            end
-        elseif kind == "fill_array" then
-            local dst_access = assert(access.dst, "missing dst access plan")
-            out[#out + 1] = fn_header(artifact, { "dst", "start", "stop", "value" })
-            if kernel_plan.primitive_plan and kernel_plan.primitive_plan.kind == "ffi_fill" then
-                out[#out + 1] = "    local __ml_n = stop - start"
-                out[#out + 1] = "    if __ml_n > 0 then ffi.fill(dst + start, __ml_n, value) end"
-            else
-                emit_forward_loop(out, artifact_plan, function(i, indent)
-                    out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = value"
-                end)
-            end
         elseif kind == "find_array" then
             local xs_access = assert(access.xs, "missing xs access plan")
             out[#out + 1] = fn_header(artifact, { "xs", "start", "stop" })
@@ -1048,55 +965,7 @@ local function bind_context(T)
                 out[#out + 1] = indent .. "if not " .. lua_pred_expr(shape.pred, x) .. " then " .. lua_access_ref(dst_access, "dst", "out_i") .. " = " .. x .. "; out_i = out_i + 1 end"
             end)
             out[#out + 1] = "    return split"
-        elseif kind == "cast_array" then
-            local dst_access, xs_access = assert(access.dst, "missing dst access plan"), assert(access.xs, "missing xs access plan")
-            out[#out + 1] = fn_header(artifact, { "dst", "xs", "start", "stop" })
-            emit_forward_loop(out, artifact_plan, function(i, indent)
-                out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = " .. lua_access_ref(xs_access, "xs", i)
-            end)
-        elseif kind == "compare_array" then
-            local dst_access, xs_access = assert(access.dst, "missing dst access plan"), assert(access.xs, "missing xs access plan")
-            out[#out + 1] = fn_header(artifact, { "dst", "xs", "start", "stop" })
-            emit_forward_loop(out, artifact_plan, function(i, indent)
-                local numeric = lua_numeric_pred_expr(shape.pred, "__ml_x", xs_access.ty)
-                if numeric ~= nil then
-                    out[#out + 1] = indent .. "local __ml_x = __ml_tobit(" .. lua_access_ref(xs_access, "xs", i) .. ")"
-                    out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = " .. numeric
-                else
-                    out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = " .. lua_pred_expr(shape.pred, lua_access_ref(xs_access, "xs", i)) .. " and 1 or 0"
-                end
-            end)
-        elseif kind == "zip_compare_array" then
-            local dst_access = assert(access.dst, "missing dst access plan")
-            local lhs_access, rhs_access = assert(access.lhs, "missing lhs access plan"), assert(access.rhs, "missing rhs access plan")
-            out[#out + 1] = fn_header(artifact, { "dst", "lhs", "rhs", "start", "stop" })
-            emit_forward_loop(out, artifact_plan, function(i, indent)
-                local numeric = lua_numeric_cmp_expr(shape.cmp, "__ml_a", "__ml_b", lhs_access.ty, rhs_access.ty)
-                if numeric ~= nil then
-                    out[#out + 1] = indent .. "local __ml_a = __ml_tobit(" .. lua_access_ref(lhs_access, "lhs", i) .. ")"
-                    out[#out + 1] = indent .. "local __ml_b = __ml_tobit(" .. lua_access_ref(rhs_access, "rhs", i) .. ")"
-                    out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = " .. numeric
-                else
-                    out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = " .. lua_cmp_expr(shape.cmp, lua_access_ref(lhs_access, "lhs", i), lua_access_ref(rhs_access, "rhs", i)) .. " and 1 or 0"
-                end
-            end)
-        elseif kind == "select_array" then
-            local dst_access = assert(access.dst, "missing dst access plan")
-            local cond_access = assert(access.cond, "missing cond access plan")
-            local then_access = assert(access.then_xs, "missing then access plan")
-            local else_access = assert(access.else_xs, "missing else access plan")
-            out[#out + 1] = fn_header(artifact, { "dst", "cond", "then_xs", "else_xs", "start", "stop" })
-            emit_forward_loop(out, artifact_plan, function(i, indent)
-                out[#out + 1] = indent
-                    .. lua_access_ref(dst_access, "dst", i)
-                    .. " = "
-                    .. lua_pred_expr(shape.pred, lua_access_ref(cond_access, "cond", i))
-                    .. " and "
-                    .. lua_access_ref(then_access, "then_xs", i)
-                    .. " or "
-                    .. lua_access_ref(else_access, "else_xs", i)
-            end)
-        elseif kind == "apply_n" then
+        elseif kind == "store_n" then
             local dst_name = shape.dst_name or "dst"
             local dst_access = assert(access[dst_name], "missing destination access plan")
             local params = { dst_name }
@@ -1126,7 +995,7 @@ local function bind_context(T)
                 out[#out + 1] = "    local __ml_n = stop - start"
                 out[#out + 1] = "    if __ml_n > 0 then ffi.fill(" .. dst_name .. " + start, __ml_n, " .. value_name .. ") end"
             elseif pvm.classof(shape.store_mode) == Stencil.StencilStoreCopy
-                and pvm.classof(shape.expr) == Stencil.StencilApplyInput
+                and pvm.classof(shape.expr) == Stencil.StencilPointInput
                 and (shape.producer == nil or shape.producer.kind == "range1d")
                 and (shape.store_mode.semantics == Stencil.StencilCopyMemMove or shape.store_mode.semantics == Stencil.StencilCopyMayOverlapBackward) then
                 local src_name = shape.expr.access.name
@@ -1136,7 +1005,7 @@ local function bind_context(T)
                     else
                         out[#out + 1] = "        for i = start, stop - 1, " .. tostring(stride) .. " do"
                     end
-                    out[#out + 1] = "            " .. lua_access_ref(dst_access, dst_name, "i") .. " = " .. lua_apply_expr(shape.expr, artifact_plan.descriptor, access, "i")
+                    out[#out + 1] = "            " .. lua_access_ref(dst_access, dst_name, "i") .. " = " .. lua_point_expr(shape.expr, artifact_plan.descriptor, access, "i")
                     out[#out + 1] = "        end"
                 end
                 if shape.store_mode.semantics == Stencil.StencilCopyMayOverlapBackward then
@@ -1155,27 +1024,9 @@ local function bind_context(T)
                     out[#out + 1] = indent
                         .. lua_access_ref(dst_access, dst_name, i)
                         .. " = "
-                        .. lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i)
+                        .. lua_point_expr(shape.expr, artifact_plan.descriptor, access, i)
                 end)
             end
-        elseif kind == "gather_array" then
-            local dst_access, idx_access = assert(access.dst, "missing dst access plan"), assert(access.idx, "missing idx access plan")
-            out[#out + 1] = fn_header(artifact, { "dst", "src", "idx", "start", "stop" })
-            emit_forward_loop(out, artifact_plan, function(i, indent)
-                out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = src[" .. lua_access_ref(idx_access, "idx", i) .. "]"
-            end)
-        elseif kind == "scatter_array" then
-            local src_access, idx_access = assert(access.src, "missing src access plan"), assert(access.idx, "missing idx access plan")
-            out[#out + 1] = fn_header(artifact, { "dst", "src", "idx", "start", "stop" })
-            emit_forward_loop(out, artifact_plan, function(i, indent)
-                out[#out + 1] = indent .. "dst[" .. lua_access_ref(idx_access, "idx", i) .. "] = " .. lua_access_ref(src_access, "src", i)
-            end)
-        elseif kind == "in_place_map_array" then
-            local xs_access = assert(access.xs, "missing xs access plan")
-            out[#out + 1] = fn_header(artifact, { "xs", "start", "stop" })
-            emit_forward_loop(out, artifact_plan, function(i, indent)
-                out[#out + 1] = indent .. lua_access_ref(xs_access, "xs", i) .. " = " .. lua_unary_expr(shape.op, lua_access_ref(xs_access, "xs", i), shape.elem_ty, shape.int_semantics, shape.float_mode)
-            end)
         elseif kind == "count_array" then
             local xs_access = assert(access.xs, "missing xs access plan")
             out[#out + 1] = fn_header(artifact, { "xs", "start", "stop" })
@@ -1230,12 +1081,12 @@ local function bind_context(T)
             out[#out + 1] = fn_header(artifact, params)
             if shape.producer ~= nil and shape.producer.kind == "range_nd" and shape.scope_kind == "axes" then
                 emit_range_nd_axis_reduce(out, artifact_plan, function(i)
-                    return lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i)
+                    return lua_point_expr(shape.expr, artifact_plan.descriptor, access, i)
                 end)
             else
                 out[#out + 1] = "    local acc = " .. (shape.external_init == false and tostring(iconst(shape.identity)) or "init")
                 emit_forward_loop(out, artifact_plan, function(i, indent)
-                    out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
+                    out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_point_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
                 end)
                 out[#out + 1] = "    return acc"
             end
@@ -1245,7 +1096,7 @@ local function bind_context(T)
             append_producer_params(params, shape.producer)
             out[#out + 1] = fn_header(artifact, params)
             emit_forward_loop(out, artifact_plan, function(i, indent)
-                out[#out + 1] = indent .. "if " .. lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i) .. " ~= 0 then return " .. i .. " end"
+                out[#out + 1] = indent .. "if " .. lua_point_expr(shape.expr, artifact_plan.descriptor, access, i) .. " ~= 0 then return " .. i .. " end"
             end)
             out[#out + 1] = "    return " .. tostring(iconst(shape.not_found))
         elseif kind == "partition_n" then
@@ -1262,12 +1113,12 @@ local function bind_context(T)
             out[#out + 1] = "    local out_i = start"
             emit_forward_loop(out, artifact_plan, function(i, indent)
                 local x = lua_access_ref(xs_access, "xs", i)
-                out[#out + 1] = indent .. "if " .. lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i) .. " ~= 0 then " .. lua_access_ref(dst_access, dst_name, "out_i") .. " = " .. x .. "; out_i = out_i + 1 end"
+                out[#out + 1] = indent .. "if " .. lua_point_expr(shape.expr, artifact_plan.descriptor, access, i) .. " ~= 0 then " .. lua_access_ref(dst_access, dst_name, "out_i") .. " = " .. x .. "; out_i = out_i + 1 end"
             end)
             out[#out + 1] = "    local split = out_i"
             emit_forward_loop(out, artifact_plan, function(i, indent)
                 local x = lua_access_ref(xs_access, "xs", i)
-                out[#out + 1] = indent .. "if " .. lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i) .. " == 0 then " .. lua_access_ref(dst_access, dst_name, "out_i") .. " = " .. x .. "; out_i = out_i + 1 end"
+                out[#out + 1] = indent .. "if " .. lua_point_expr(shape.expr, artifact_plan.descriptor, access, i) .. " == 0 then " .. lua_access_ref(dst_access, dst_name, "out_i") .. " = " .. x .. "; out_i = out_i + 1 end"
             end)
             out[#out + 1] = "    return split"
         elseif kind == "scan_n" then
@@ -1279,16 +1130,16 @@ local function bind_context(T)
             out[#out + 1] = fn_header(artifact, params)
             if shape.producer ~= nil and shape.producer.kind == "range_nd" then
                 emit_range_nd_axis_scan(out, artifact_plan, function(i)
-                    return lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i)
+                    return lua_point_expr(shape.expr, artifact_plan.descriptor, access, i)
                 end)
             else
                 out[#out + 1] = "    local acc = init"
                 emit_forward_loop(out, artifact_plan, function(i, indent)
                     if shape.mode == Stencil.StencilScanExclusive then
                         out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = acc"
-                        out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
+                        out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_point_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
                     else
-                        out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
+                        out[#out + 1] = indent .. "acc = " .. lua_reduce_expr(shape.reduction, "acc", lua_point_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
                         out[#out + 1] = indent .. lua_access_ref(dst_access, "dst", i) .. " = acc"
                     end
                 end)
@@ -1310,7 +1161,7 @@ local function bind_context(T)
             out[#out + 1] = fn_header(artifact, params)
             emit_forward_loop(out, artifact_plan, function(i, indent)
                 local slot = lua_access_ref(dst_access, dst_name, i)
-                out[#out + 1] = indent .. slot .. " = " .. lua_reduce_expr(shape.reduction, slot, lua_apply_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
+                out[#out + 1] = indent .. slot .. " = " .. lua_reduce_expr(shape.reduction, slot, lua_point_expr(shape.expr, artifact_plan.descriptor, access, i), shape.result_ty)
             end)
         else
             error("residual_luatrace: unsupported stencil shape " .. tostring(kind), 3)
