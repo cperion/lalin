@@ -98,9 +98,111 @@ function LalinSyntax.register()
   return llbl_syntax.register(spec)
 end
 
--- Register on require.  This mirrors Terra-style import behavior for a simple
--- implementation bundle.  A full LLBL loader can switch this to scope-local
--- parse-time imports.
+-- ── Convert parsed AST to LalinTree for the compiler pipeline ──────────
+
+function LalinSyntax.to_module(parsed_decls, name, T)
+  -- Use caller's pvm context or create a default one.
+  local pvm = require("lalin.pvm")
+  T = T or pvm.context()
+  if not T.LalinTree then
+    require("lalin.schema_projection")(T)
+  end
+  local to_tree = require("lalin.syntax.to_tree")(T)
+  local Tr, C, B = T.LalinTree, T.LalinCore, T.LalinBind
+
+  name = name or "parsed"
+  local decls = {}
+
+  -- Convert parsed type (e.g. "i32", "ptr[i32]", "array(f64, 4)") to LalinType.Type
+  local function parsed_type(ptype)
+    if not ptype then return T.LalinType.TScalar(C.ScalarVoid) end
+    local Ty = T.LalinType
+    local scalars = {
+      void = C.ScalarVoid, bool = C.ScalarBool,
+      i8 = C.ScalarI8, i16 = C.ScalarI16,
+      i32 = C.ScalarI32, i64 = C.ScalarI64,
+      u8 = C.ScalarU8, u16 = C.ScalarU16,
+      u32 = C.ScalarU32, u64 = C.ScalarU64,
+      f32 = C.ScalarF32, f64 = C.ScalarF64,
+      index = C.ScalarIndex, rawptr = C.ScalarRawPtr,
+    }
+    -- Known type constructors with special ASDL representation
+    local type_ctors = {
+      ptr = function(args)
+        return Ty.TPtr(args[1] or Ty.TScalar(C.ScalarVoid))
+      end,
+      array = function(args)
+        return Ty.TArray(Ty.ArrayLenStatic(0), args[1] or Ty.TScalar(C.ScalarVoid))
+      end,
+    }
+    if ptype.tag == "TypeName" then
+      if scalars[ptype.name] then
+        return Ty.TScalar(scalars[ptype.name])
+      end
+      return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(ptype.name) })))
+    elseif ptype.tag == "TypeApply" then
+      local ctor = type_ctors[ptype.name]
+      if ctor then
+        local args = {}
+        for i, a in ipairs(ptype.args or {}) do
+          args[i] = parsed_type(a)
+        end
+        return ctor(args)
+      end
+      -- Fallback: treat as named application
+      return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(ptype.name) })))
+    end
+    return Ty.TScalar(C.ScalarVoid)
+  end
+
+  -- Helper: convert a single parsed decl to a Tr.Item for the module.
+  -- The tree ASDL uses Tr.ItemFunc(FuncLocal/FuncExport) for functions,
+  -- Tr.ItemType(TypeDeclStruct/TypeDeclTaggedUnionSugar) for structs/unions.
+  local function decl_to_item(parsed)
+    if not parsed then return nil end
+    if parsed.tag == "DeclFunc" then
+      local params = {}
+      for i, p in ipairs(parsed.params or {}) do
+        params[i] = T.LalinType.Param(p.name, parsed_type(p.type))
+      end
+      local result_ty = parsed_type(parsed.result)
+      local body = to_tree.stmts(parsed.body)
+      if #body == 0 then
+        body = { Tr.StmtReturnVoid(Tr.StmtSurface) }
+      end
+      local func_spec = Tr.FuncLocal(parsed.name, params, result_ty, body)
+      return Tr.ItemFunc(func_spec)
+    elseif parsed.tag == "DeclStruct" then
+      local fields = {}
+      for i, f in ipairs(parsed.fields or {}) do
+        fields[i] = T.LalinType.FieldDecl(f.name, parsed_type(f.type))
+      end
+      return Tr.ItemType(Tr.TypeDeclStruct(parsed.name, fields))
+    elseif parsed.tag == "DeclUnion" then
+      local variants = {}
+      for _, v in ipairs(parsed.variants or {}) do
+        local fields = {}
+        for i, f in ipairs(v.fields or {}) do
+          fields[i] = T.LalinType.FieldDecl(f.name, parsed_type(f.type))
+        end
+        variants[#variants + 1] = Tr.VariantDecl(v.name, fields)
+      end
+      return Tr.ItemType(Tr.TypeDeclTaggedUnionSugar(parsed.name, variants))
+    end
+    error("parsed_to_module: unsupported decl tag " .. tostring(parsed.tag), 2)
+  end
+
+  -- Accept single decl or array
+  local items = parsed_decls
+  if items.tag then items = { items } end
+  for _, d in ipairs(items or {}) do
+    decls[#decls + 1] = decl_to_item(d)
+  end
+
+  return Tr.Module(Tr.ModuleSurface, decls)
+end
+
+-- Register on require.
 LalinSyntax.register()
 
 return LalinSyntax

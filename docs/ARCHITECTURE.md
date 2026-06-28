@@ -12,49 +12,62 @@ artifacts.
 
 The main path is intentionally small:
 
-```text
-Lua source
-  -> Lua values
-  -> LLBL language capture
-  -> Lalin syntax/tree ASDL
-  -> typecheck
-  -> LalinCode facts
-  -> kernel and schedule facts
-  -> stencil plans
-  -> LuaJIT artifact (BC or MC copy+residual)
-  -> loaded LuaJIT module
-```
+## Two authoring paths
 
-There is no Cranelift/Rust runtime path in the active architecture. C emission
-and native MC banks are the fast artifact path and remain useful for validation,
-benchmarking, and prebuilt artifact generation. The LuaJIT BC path is the default
-runtime for `lalin.compile()`.
+Lalin has two surfaces that converge on the same ASDL:
+
+| Path | How | When |
+|------|-----|------|
+| **Parsed channel** (primary) | `lalin fn ... end` syntax captured by `llbl.syntax` | Hand-written code |
+| **Builder API** (internal) | `lln.fn. name { ... }` Lua DSL heads | Macros, generators, tooling |
+
+```text
+┌─ Hand-written source ─────────────────┐
+│                                        │
+│  lalin fn add(a: i32, b: i32): i32    │
+│    return a + b                        │
+│  end                                   │
+│                                        │
+│  → llbl.syntax.loadfile               │
+│    → driver rewrites parsed islands    │
+│      → lalin.syntax.parse_entry       │
+│        → parsed AST nodes             │
+│          → lalin.syntax.to_module()   │
+└────────────────────────────────────────┘
+                    │
+                    ▼
+┌─ Builder / Macro ─────────────────────┐
+│                                        │
+│  lln.fn. add { a [lln.i32], ... }     │
+│    lln.ret (a + b),                    │
+│                                        │
+│  → Lua evaluates table literals        │
+│    → LLBL staged heads capture values  │
+│      → Decl values with Decl:syntax()  │
+│        → LalinTree.Module             │
+└────────────────────────────────────────┘
+                    │
+                    ▼
+
+Both paths produce the same LalinTree.Module and share the pipeline below.
 
 ---
 
-## Full Compiler Pipeline
+## Shared Compiler Pipeline
 
 The compiler is organized around semantic products, not chronological steps.
-Each phase answers one question and produces a typed value or fact set.
 
 ```
-Lua source text
+LalinTree.Module
   │
   ▼
 ┌─────────────────────────────────────────┐
-│ 1. DSL Surface (lua/lalin/dsl/)         │
-│    Lua DSL heads evaluate to Decl values │
-│    Decl:syntax() → LalinTree.Module     │
-└─────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────┐
-│ 2. Frontend Pipeline                    │
-│    Pipeline.typecheck_module()          │
-│      ├─ SurfaceResolve                  │
-│      ├─ ClosureConvert                  │
-│      └─ Typecheck.check_module          │
-│    → LalinTree.TypeModuleResult         │
+│ Frontend Pipeline                       │
+│  Pipeline.typecheck_module()            │
+│    ├─ SurfaceResolve                    │
+│    ├─ ClosureConvert                    │
+│    └─ Typecheck.check_module            │
+│  → LalinTree.TypeModuleResult           │
 └─────────────────────────────────────────┘
   │
   ▼

@@ -31,6 +31,10 @@ syntax.channel = {
     jump_stmt   = "parsed:jump",
     emit_stmt   = "parsed:emit",
     escape      = "parsed:escape",
+
+    -- LLBL-owned hole and spread (underscore sentinels)
+    hole        = "parsed:hole",
+    spread      = "parsed:spread",
   }
 }
 

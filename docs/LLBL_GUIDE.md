@@ -4,25 +4,70 @@ LLBL is the Lua Language Builder language workbench in `lua/llbl.lua`. It is the
 center of the Lalin language and the bootstrap language used to define the other
 language dialects.
 
-It lets ordinary Lua syntax act as a structured language surface without adding
-a parser, but that is only the first layer. LLBL also owns the machinery that
-makes language dialects compose: namespaces, roles, staged heads, fragments,
-origins, diagnostics, formatting, indexing, generic regions, protocols,
-processes, GPS lowering, and managed environments.
+## Two delivery mechanisms
+
+LLBL delivers language content through two channels:
+
+### 1. Lua channel (original)
+
+Lua syntax evaluates to table values. LLBL staged heads (`g.head .fn { ... }`)
+capture those values into structured events. Dialect heads normalize the
+result into typed declarations.
 
 ```text
-Lua syntax
-  -> Lua values
-  -> LLBL events, roles, heads, fragments, origins
-  -> member-dialect values
-  -> diagnostics, formatting, indexing, compilation
+Lua source
+  -> Lua values (tables, symbols, captures)
+  -> LLBL staged head events
+  -> normalized dialect values (Decl, Stmt, etc.)
+  -> Decl:syntax() → tree ASDL
 ```
 
-LLBL is generic. It owns the shared metaprogramming language: heads, roles,
-namespaces, origins, diagnostics, formatting, indexing, dialect extension, and generic
-regions. Lalin-specific types, ownership, native CFG checking, and backend
-behavior belong to the Lalin dialect. The generic region algebra belongs to
-LLBL; Lalin consumes it.
+This is the **builder API** — the right tool for macros, generators, and
+tooling that constructs declarations programmatically.
+
+### 2. Parsed channel (new)
+
+`llbl.syntax` adds a lexer, island-detection driver, and dialect registry.
+Sources that contain `lalin fn ... end`, `lalin region ... end`, etc. are
+loaded through `llbl.syntax.loadfile` instead of plain `require`. The driver
+rewrites parsed islands into constructor invocations at those exact source
+positions.
+
+```text
+Lua source with parsed islands
+  -> llbl.syntax.driver
+     -> lexer tokenizes full source
+     -> identifies registered entrypoints
+     -> rewrites islands to constructor calls
+     -> ordinary Lua for everything else
+  -> lalin.syntax.parse_entry (dialect parser)
+  -> parsed AST nodes
+  -> lalin.syntax.to_module() → tree ASDL
+```
+
+This is the **primary authoring surface** — the ergonomic way to write Lalin
+code by hand.
+
+### Channel law
+
+LLBL owns both delivery mechanisms. Dialects own meaning:
+
+```text
+Lua channels deliver what Lua can already evaluate.
+Parsed channels deliver what Lua cannot evaluate.
+LLBL owns both delivery mechanisms.
+Dialects own semantic meaning.
+```
+
+## LLBL shared machinery
+
+Beyond delivery, LLBL owns the shared metaprogramming language: heads, roles,
+namespaces, origins, diagnostics, formatting, indexing, dialect extension,
+generic regions, protocols, processes, GPS lowering, and managed environments.
+
+Lalin-specific types, ownership, native CFG checking, and backend behavior
+belong to the Lalin dialect. The generic region algebra belongs to LLBL;
+Lalin consumes it.
 
 ## Bootstrap Shape
 

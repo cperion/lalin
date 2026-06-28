@@ -2,6 +2,7 @@
 
 local Pratt = require("llbl.syntax.pratt")
 local Ast = require("lalin.syntax.ast")
+local Type = require("lalin.syntax.type")
 
 local Expr = {}
 
@@ -90,6 +91,32 @@ local function atom(lex, ctx)
       return Ast.node("Literal", { kind = "boolean", value = (t.value == "true") }, Ast.origin(lex, t, t, "parsed:literal"))
     elseif t.value == "nil" then
       return Ast.node("Literal", { kind = "nil" }, Ast.origin(lex, t, t, "parsed:literal"))
+    elseif t.value == "as" then
+      -- as [type] (expr)  — type conversion
+      lex:expect("[")
+      local ty_node = Type.parse(lex, ctx)
+      lex:expect("]")
+      lex:expect("(")
+      local value = Expr.parse(lex, ctx)
+      lex:expect(")")
+      return Ast.node("Cast", { ty = ty_node, value = value, cast = "surface" }, Ast.origin(lex, t, lex.last, "parsed:cast"))
+    elseif t.value == "sizeof" then
+      -- sizeof [type]  — type size query
+      lex:expect("[")
+      local ty_node = Type.parse(lex, ctx)
+      lex:expect("]")
+      return Ast.node("SizeOf", { ty = ty_node }, Ast.origin(lex, t, lex.last, "parsed:sizeof"))
+    elseif t.value == "_" then
+      -- LLBL-owned sentinel.  Lookahead decides form:
+      -- _(expr)  → spread
+      -- _        → hole
+      if lex:peek().value == "(" then
+        lex:next() -- consume (
+        local fragment = Expr.parse(lex, ctx)
+        lex:expect(")")
+        return Ast.node("Spread", { fragment = fragment }, Ast.origin(lex, t, lex.last, "parsed:spread"))
+      end
+      return Ast.node("Hole", {}, Ast.origin(lex, t, t, "parsed:hole"))
     end
     return Ast.node("Name", { name = t.value }, Ast.origin(lex, t, t, "parsed:name"))
   elseif t.value == "(" then

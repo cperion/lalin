@@ -35,7 +35,50 @@ git submodule update --init --recursive
 make libtcc
 ```
 
-## Run DSL Files
+## Authoring Lalin Code
+
+### Primary surface — parsed channel (hand-written)
+
+Load files with parsed Lalin syntax through `llbl.syntax`:
+
+```lua
+local syntax = require("llbl.syntax")
+require("lalin.syntax")
+
+local chunk = assert(syntax.loadfile("demo.lalin.lua"))
+local module = chunk()
+```
+
+Or inline:
+
+```lua
+local syntax = require("llbl.syntax")
+require("lalin.syntax")
+
+local src = [[
+  local add = lalin fn add(a: i32, b: i32): i32
+    return a + b
+  end
+  return add
+]]
+
+local chunk, compiled = syntax.loadstring(src, "@demo.lalin.lua")
+local fns = chunk()
+```
+
+Files can use `import` to activate bare entrypoints:
+
+```lua
+import "lalin.syntax"
+
+local add = fn add(a: i32, b: i32): i32
+  return a + b
+end
+```
+
+### Builder API — Lua/LLBL DSL (macros, generators)
+
+Use the Lua DSL for programmatic construction:
 
 ```lua
 local lalin = require("lalin")
@@ -86,16 +129,34 @@ luajit tests/pvm/test_compiler_driver.lua
 
 ## Architecture
 
+Two authoring paths converge on one pipeline:
+
+### Primary (hand-written)
+```text
+Lalin syntax source
+  -> llbl.syntax lexer + driver
+  -> lalin.syntax parsed AST
+  -> lalin.syntax.to_module()
+  -> LalinTree ASDL
+```
+
+### Builder API (macros/generators)
 ```text
 Lua source
   -> Lua values
-  -> LLBL language capture
-  -> Lalin ASDL
+  -> LLBL staged heads
+  -> Decl values, Decl:syntax()
+  -> LalinTree ASDL
+```
+
+### Shared backend
+```text
+LalinTree ASDL
   -> typecheck
   -> LalinCode facts
   -> kernel and schedule facts
-  -> LuaTrace stencil plans or C stencil plans
-  -> LuaJIT copy+residual artifact
+  -> stencil plans
+  -> LuaJIT artifact (BC or MC copy+residual)
   -> loaded LuaJIT module
 ```
 

@@ -34,10 +34,20 @@ function Type.parse(lex, ctx)
 end
 
 function Type.parse_field(lex, ctx)
-  local start = lex:expect_name("field name")
+  local t = lex:peek()
+  local name, anonymous
+  if t.kind == "name" and t.value == "_" then
+    lex:next()
+    name = "_"
+    anonymous = true
+  else
+    local start = lex:expect_name("field name")
+    name = start.value
+    anonymous = false
+  end
   lex:expect(":")
   local ty = Type.parse(lex, ctx)
-  return Ast.node("Field", { name = start.value, type = ty }, Ast.origin(lex, start, lex.last, "parsed:field"))
+  return Ast.node("Field", { name = name, type = ty, anonymous = anonymous }, Ast.origin(lex, t, lex.last, "parsed:field"))
 end
 
 function Type.parse_params(lex, ctx)

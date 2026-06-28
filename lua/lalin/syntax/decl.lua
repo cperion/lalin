@@ -53,20 +53,6 @@ function Decl.parse_union(lex, ctx, entry_start)
   return Ast.node("DeclUnion", { name = name.value, variants = variants }, Ast.origin(lex, start, lex.last, "parsed:decl"))
 end
 
-local function parse_exits(lex, ctx)
-  local exits = {}
-  lex:expect("exits")
-  while not lex:at_eof() and lex:peek().value ~= "end" do
-    local name = lex:expect_name("exit name")
-    local fields = {}
-    if lex:peek().value == "(" then fields = Type.parse_params(lex, ctx) end
-    exits[#exits + 1] = Ast.node("Exit", { name = name.value, fields = fields }, Ast.origin(lex, name, lex.last or name, "parsed:exit"))
-    lex:skip_separators()
-  end
-  lex:expect("end")
-  return exits
-end
-
 local function parse_entry_block(lex, ctx)
   local start = lex:next() -- entry or block
   local kind = start.value
@@ -83,11 +69,75 @@ local function parse_entry_block(lex, ctx)
   }, Ast.origin(lex, start, lex.last, "parsed:region_block"))
 end
 
+-- Parse a continuation exit entry:  name(fields)  or  name: (fields)
+-- The payload tuple may contain named fields (result: i32) or bare types (i32).
+local function parse_one_exit(lex, ctx)
+  local name = lex:expect_name("continuation name")
+  lex:next_if(":")
+  local fields = {}
+  if lex:peek().value == "(" then
+    lex:next() -- (
+    if not lex:next_if(")") then
+      local t = lex:peek()
+      local t1 = lex:peek(1)
+      if t.kind == "name" and t1 and t1.value == ":" then
+        -- Named fields: (result: i32, ...)
+        repeat
+          fields[#fields + 1] = Type.parse_field(lex, ctx)
+        until not lex:next_if(",")
+      else
+        -- Bare type: (i32) — wrap as anonymous field
+        fields[1] = Ast.node("Field", { name = "", type = Type.parse(lex, ctx) })
+      end
+      lex:expect(")")
+    end
+  end
+  return Ast.node("Exit", { name = name.value, fields = fields },
+    Ast.origin(lex, name, lex.last or name, "parsed:exit"))
+end
+
 function Decl.parse_region(lex, ctx, entry_start)
   local start = entry_start or ctx.entry_token
   local name = lex:expect_name("region name")
-  local inputs = Type.parse_params(lex, ctx)
-  local exits = parse_exits(lex, ctx)
+
+  -- Parse signature: (data_params ; continuation_params)
+  -- Data params before `;` form the input product.
+  -- Continuation params after `;` form the exit sum.
+  -- If no `;`, everything is data params (no continuations).
+  local inputs, exits
+  lex:expect("(")
+  inputs = {}
+  exits = {}
+
+  if lex:peek().value == ";" then
+    -- No data params, only continuations
+    lex:next() -- ;
+    if not lex:next_if(")") then
+      repeat
+        exits[#exits + 1] = parse_one_exit(lex, ctx)
+      until not lex:next_if(",")
+      lex:expect(")")
+    end
+  elseif lex:peek().value == ")" then
+    -- Empty signature
+    lex:next()
+  else
+    -- Parse data params (product), then optionally ; + continuations
+    repeat
+      inputs[#inputs + 1] = Type.parse_field(lex, ctx)
+    until not lex:next_if(",") or lex:peek().value == ";"
+    if lex:next_if(";") then
+      if not lex:next_if(")") then
+        repeat
+          exits[#exits + 1] = parse_one_exit(lex, ctx)
+        until not lex:next_if(",")
+        lex:expect(")")
+      end
+    else
+      lex:expect(")")
+    end
+  end
+
   local blocks = {}
   while not lex:at_eof() and lex:peek().value ~= "end" do
     if lex:peek().value ~= "entry" and lex:peek().value ~= "block" then

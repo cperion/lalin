@@ -10,13 +10,41 @@ Use `Lalin` for the project and native compiled dialect.
 Use `lalin` for package names, module names, file stems, CLI names, and local
 variables that hold the public module.
 
-Use `lln` as the short authoring namespace inside LLBL-authored code:
+## Two authoring surfaces
+
+### Primary (hand-written code)
+
+Use the parsed-channel syntax for hand-written Lalin source. Files use `.lua`
+or `.lalin.lua` extensions and are loaded through `llbl.syntax.loadfile`.
+
+```lua
+-- primary.lalin.lua
+import "lalin.syntax"
+
+local add = fn add(a: i32, b: i32): i32
+  return a + b
+end
+```
+
+The namespaced form (`lalin fn`) is also valid and does not need `import`:
+
+```lua
+lalin fn add(a: i32, b: i32): i32
+  return a + b
+end
+```
+
+### Builder API (macros, generators, tooling)
+
+Use the Lua/LLBL DSL when constructing declarations programmatically:
 
 ```lua
 lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
   lln.ret (a + b),
 }
 ```
+
+Use `lln` as the short authoring namespace inside the builder API.
 
 Use exact subsystem prefixes:
 
