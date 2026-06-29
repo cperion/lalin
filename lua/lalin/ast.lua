@@ -7,10 +7,10 @@
 ---
 ---Usage with an existing compiler context:
 ---```lua
----local pvm = require("lalin.pvm")
+---local asdl = require("lalin.asdl")
 ---local schema = require("lalin.schema_projection")
 ---local ast = require("lalin.ast")
----local T = pvm.context(); schema(T)
+---local T = asdl.context(); schema(T)
 ---local m = ast.new(T).module { ... }
 ---```
 ---
@@ -19,7 +19,7 @@
 ---own a context should prefer `ast.new(T)` so all nodes share the same ASDL
 ---universe.
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local schema = require("lalin.schema_projection")
 
 local M = {}
@@ -179,7 +179,7 @@ local function install(api, T)
             for part in v:gmatch("[^%.]+") do parts[#parts + 1] = C.Name(assert_name(part, site or "path")) end
             return C.Path(parts)
         end
-        if pvm.classof(v) == C.Path then return v end
+        if asdl.classof(v) == C.Path then return v end
         local parts = {}
         for i = 1, #array(v, site or "path") do parts[i] = C.Name(assert_name(v[i], site or "path")) end
         return C.Path(parts)
@@ -342,7 +342,7 @@ local function install(api, T)
                     u8=C.ScalarU8, u16=C.ScalarU16, u32=C.ScalarU32, u64=C.ScalarU64,
                     index=C.ScalarIndex }
         if type(repr) == "string" then return Ty.HandleReprScalar(assert(m[repr], "unsupported handle repr: " .. tostring(repr))) end
-        assert(pvm.classof(repr) == Ty.HandleRepr, "handle repr expects a scalar repr name or LalinType.HandleRepr")
+        assert(asdl.classof(repr) == Ty.HandleRepr, "handle repr expects a scalar repr name or LalinType.HandleRepr")
         return repr
     end
 
@@ -433,9 +433,9 @@ local function install(api, T)
     ---@param v string|string[]|LalinBind.Binding|LalinBind.ValueRef Reference subject.
     ---@return LalinBind.ValueRef
     function api.value_ref(v)
-        if type(v) == "table" and pvm.classof(v) == B.Binding then return B.ValueRefBinding(v) end
-        if type(v) == "table" and pvm.classof(v) == C.Path then return B.ValueRefPath(v) end
-        if type(v) == "table" and not pvm.classof(v) then return B.ValueRefPath(as_path(v, "value_ref path")) end
+        if type(v) == "table" and asdl.classof(v) == B.Binding then return B.ValueRefBinding(v) end
+        if type(v) == "table" and asdl.classof(v) == C.Path then return B.ValueRefPath(v) end
+        if type(v) == "table" and not asdl.classof(v) then return B.ValueRefPath(as_path(v, "value_ref path")) end
         if type(v) == "string" and v:find("%.") then return B.ValueRefPath(as_path(v, "value_ref path")) end
         return as_value_ref(v, "value_ref")
     end
@@ -853,7 +853,7 @@ local function install(api, T)
     ---@param args LalinTree.JumpArg[]? Named jump arguments.
     ---@return lalin.ast.Stmt
     function api.jump(target, args)
-        local label = pvm.classof(target) == Tr.BlockLabel and target or Tr.BlockLabel(assert_name(target, "jump target"))
+        local label = asdl.classof(target) == Tr.BlockLabel and target or Tr.BlockLabel(assert_name(target, "jump target"))
         return Tr.StmtJump(Tr.StmtSurface, label, args or {})
     end
 
@@ -898,7 +898,7 @@ local function install(api, T)
     ---@return LalinTree.EntryControlBlock
     function api.entry_block(spec)
         local label = spec.label or spec.name or spec[1]
-        if pvm.classof(label) ~= Tr.BlockLabel then label = Tr.BlockLabel(assert_name(label, "entry_block label")) end
+        if asdl.classof(label) ~= Tr.BlockLabel then label = Tr.BlockLabel(assert_name(label, "entry_block label")) end
         return Tr.EntryControlBlock(label, spec.params or spec[2] or {}, stmts(spec.body or spec[3] or {}, "entry_block body"))
     end
 
@@ -907,7 +907,7 @@ local function install(api, T)
     ---@return LalinTree.ControlBlock
     function api.control_block(spec)
         local label = spec.label or spec.name or spec[1]
-        if pvm.classof(label) ~= Tr.BlockLabel then label = Tr.BlockLabel(assert_name(label, "control_block label")) end
+        if asdl.classof(label) ~= Tr.BlockLabel then label = Tr.BlockLabel(assert_name(label, "control_block label")) end
         return Tr.ControlBlock(label, spec.params or spec[2] or {}, stmts(spec.body or spec[3] or {}, "control_block body"))
     end
 
@@ -1001,7 +1001,7 @@ local function install(api, T)
         local out = {}
         for i = 1, #array(fields, "fields") do
             local f = fields[i]
-            out[i] = pvm.classof(f) == Ty.FieldDecl and f or api.field_decl(f)
+            out[i] = asdl.classof(f) == Ty.FieldDecl and f or api.field_decl(f)
         end
         return out
     end
@@ -1032,7 +1032,7 @@ local function install(api, T)
         local vars = {}
         for i = 1, #array(spec.variants or spec[1] or {}, "tagged variants") do
             local v = (spec.variants or spec[1])[i]
-            vars[i] = pvm.classof(v) == Ty.VariantDecl and v or api.variant_decl(v)
+            vars[i] = asdl.classof(v) == Ty.VariantDecl and v or api.variant_decl(v)
         end
         return Tr.TypeDeclTaggedUnionSugar(assert_name(spec.name, "tagged_union"), vars)
     end
@@ -1052,7 +1052,7 @@ local function install(api, T)
     ---@param v lalin.ast.Func|LalinTree.ExternFunc|LalinTree.ConstItem|LalinTree.StaticItem|LalinTree.ImportItem|lalin.ast.TypeDecl|lalin.ast.Item Item payload.
     ---@return lalin.ast.Item
     function api.item(v)
-        local cls = pvm.classof(v)
+        local cls = asdl.classof(v)
         if is_a(Tr.Item, v) then return v end
         if is_a(Tr.Func, v) then return Tr.ItemFunc(v) end
         if is_a(Tr.ExternFunc, v) then return Tr.ItemExtern(v) end
@@ -1122,7 +1122,7 @@ local function bind_context(T)
     return M.new(T)
 end
 
-local default_T = pvm.context()
+local default_T = asdl.context()
 schema(default_T)
 local default_api = install(M, default_T)
 

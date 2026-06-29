@@ -1,6 +1,6 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local function single(value) return { value } end
 local function as_list(values) return values end
 local function only(values)
@@ -38,7 +38,7 @@ local function flat_map(fn, values, n)
 end
 local A = require("lalin.schema_projection")
 
-local T = pvm.context()
+local T = asdl.context()
 A(T)
 local C = T.LalinCore
 local Ty = T.LalinType
@@ -64,16 +64,16 @@ local base_expr = Tr.ExprRef(Tr.ExprTyped(ptr_instr), B.ValueRefBinding(binding)
 local typed_dot = Tr.ExprDot(Tr.ExprTyped(u16), base_expr, "op")
 local expr_result = only(TC.expr(typed_dot, ctx))
 assert(expr_result.ty == u16, "typed ExprDot fallback must preserve field type")
-assert(pvm.classof(expr_result.expr) == Tr.ExprDot)
-assert(pvm.classof(expr_result.expr.h) == Tr.ExprTyped)
+assert(asdl.classof(expr_result.expr) == Tr.ExprDot)
+assert(asdl.classof(expr_result.expr.h) == Tr.ExprTyped)
 assert(expr_result.expr.h.ty == u16)
 
 local base_place = Tr.PlaceRef(Tr.PlaceTyped(ptr_instr), B.ValueRefBinding(binding))
 local typed_place_dot = Tr.PlaceDot(Tr.PlaceTyped(u16), base_place, "op")
 local place_result = only(TC.place(typed_place_dot, ctx))
 assert(place_result.ty == u16, "typed PlaceDot fallback must preserve field type")
-assert(pvm.classof(place_result.place) == Tr.PlaceDot)
-assert(pvm.classof(place_result.place.h) == Tr.PlaceTyped)
+assert(asdl.classof(place_result.place) == Tr.PlaceDot)
+assert(asdl.classof(place_result.place.h) == Tr.PlaceTyped)
 assert(place_result.place.h.ty == u16)
 
 -- Typechecking an otherwise standalone caller may receive layouts from the

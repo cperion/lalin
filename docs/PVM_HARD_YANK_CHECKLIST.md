@@ -1,0 +1,690 @@
+# PVM Hard-Yank Checklist
+
+This is the source-of-truth checklist for removing PVM as a Lalin compiler
+concept and replacing freeform lowering passes with typed semantic methods.
+
+The goal is not a rename. The goal is to remove the PVM architecture from the
+compiler, keep only the ASDL runtime services that are real, and make semantic
+lowering live on the ASDL classes/types that own the semantics.
+
+## Non-Negotiable Rewrite Doctrine
+
+Read this section before touching compiler rewrite code.
+
+1. ASDL reasoning comes first. If a method wants broad state, loose tables,
+   hidden fields, or ad hoc parameters, stop and fix the schema before editing
+   implementation code.
+2. After ASDL defines the vocabulary, write methods on the ASDL leaf types that
+   own the behavior. The concrete union member is the dispatch.
+3. Do not dispatch on ASDL class identity in migrated semantic code. No
+   `schema.classof(x) == Variant`, no `kind` strings, no action strings, no
+   selector tables, and no rule runners.
+4. Do not preserve old architecture through new names. No compatibility shims,
+   compatibility aliases, fake visitors, run orchestrators, or relation wrappers.
+5. Do not pass generic `ctx`, `context`, `env`, `type_state`, or option bags
+   through semantic methods. If an operation needs input, model a precise ASDL
+   product for that input and pass that product.
+6. Do not add method parameters casually. A leaf method takes no argument unless
+   the operation genuinely needs another explicit ASDL value.
+7. Parent/sum methods are allowed only as real shared defaults or delegation
+   contracts. They must not inspect leaf classes to choose behavior.
+8. Hidden Lua fields on ASDL values are not semantic state. Semantic state is
+   explicit ASDL data.
+9. Tests may be red during the rewrite. Do not keep old dispatch, bags, or shims
+   to make tests green mid-migration.
+10. If these rules and existing code conflict, rewrite the code. Do not negotiate
+    the rules downward.
+
+## Current Rewrite Progress
+
+Keep this section current after every rewrite pass. It is the short ledger; the
+long checklist below remains the full audit.
+
+- [x] `AGENTS.md` points future agents to this doctrine before PVM/compiler
+      rewrite work.
+- [x] `lua/lalin/asdl.lua` is the active ASDL runtime surface.
+- [x] Direct ASDL method assignment works, including nullary singleton variants.
+- [x] `lua/lalin/tree_typecheck_rules.lua` is deleted.
+- [x] `lua/lalin/tree_type_methods.lua` installs direct schema-context methods.
+- [x] `lua/lalin/tree_layout_methods.lua` installs direct schema-context methods.
+- [x] `lua/lalin/tree_expr_methods.lua` installs direct schema-context methods
+      for the current expression rewrite slice.
+- [x] `lua/lalin/tree_fact_methods.lua` installs direct schema-context methods
+      for explicit module facts.
+- [x] `TypeModuleFacts` and related typed input/result products exist in
+      `lua/lalin/schema/tree.lua`.
+- [x] `tree_typecheck.lua` no longer stores variant, handle, or function-effect
+      facts in hidden raw fields on `LalinBind.Env`.
+- [x] `tree_typecheck.lua` now carries explicit `TypeModuleFacts` in
+      `TypeCheckEnv`.
+- [x] `ItemType` validation now delegates to `TypeDecl*` methods instead of
+      dispatching on the concrete type declaration class.
+- [x] `IndexBase` element typing now delegates to `IndexBase*` methods instead
+      of dispatching on the concrete index-base class.
+- [x] `View` element typing now delegates to `View*` methods instead of
+      dispatching on the concrete view class.
+- [x] Local `TypeRef` leaf extraction now delegates to `TypeRef` methods instead
+      of duplicating class dispatch.
+- [x] Expression/place typed-header extraction now delegates to header methods
+      instead of dispatching on header classes.
+- [ ] Finish replacing `TypeCheckEnv` driver plumbing with narrower typed input
+      products already added to the schema.
+- [ ] Move statement/place/control behavior out of `tree_typecheck.lua` and onto
+      concrete ASDL classes.
+- [ ] Remove remaining class-inspection branches from rewritten typecheck code
+      by adding missing leaf methods or schema products first.
+- [ ] Rename method module filenames to the final semantic-stage names once the
+      typecheck split is stable.
+- [ ] Rewrite `tree_to_code_rules.lua` next after the typecheck rewrite is no
+      longer carrying old dispatch behavior.
+
+## Goal
+
+Make the Lalin compiler architecture direct, typed, and locally understandable.
+
+After this migration, a compiler contributor should be able to answer questions
+like "how does this node typecheck?", "how does this expression lower to
+`LalinCode`?", "how does this code value become C?", or "why is this stencil
+legal?" by going to the ASDL class/type that owns the source semantic form and
+reading the method for that exact operation.
+
+The final architecture is:
+
+- ASDL classes define the vocabulary.
+- Typed semantic methods define class-specific compiler behavior.
+- Compiler drivers orchestrate stages and pass typed state products, but do not
+  own per-class semantics.
+- Backend planners and emitters operate on explicit typed facts and typed IR.
+- There is no PVM compiler layer, no PVM recording phase abstraction, and no
+  compatibility surface that pretends PVM still exists.
+
+## Why This Is Necessary
+
+The current compiler has too much semantic behavior in freeform functions,
+external rule tables, and phase-shaped modules. That makes ownership unclear:
+to understand one node, you often have to search several driver/rule/lowering
+files and mentally reconstruct which table or helper handles it.
+
+This slows down backend work because gaps hide inside dispatch glue instead of
+being visible as missing methods on concrete types. It also makes hard-yank
+changes dangerous: old behavior can survive through fallbacks, compatibility
+shims, or stale rule tables.
+
+The replacement pattern is stricter:
+
+- If a type owns a semantic form, that type owns the lowering/checking method.
+- Migrated semantic code must not dispatch on ASDL class identity. No
+  `schema.classof(x) == SomeVariant`, no `kind` strings, and no selector tables
+  to choose behavior. ASDL union members implement the operation directly; parent
+  union methods provide only shared defaults when that is the real semantic
+  contract.
+- If direct method ownership needs schema/runtime support, add that support to
+  ASDL first. Nullary variants are still ASDL classes: install methods with
+  `function SomeModule.SomeNullaryVariant:operation(...) ... end`, not by
+  inspecting class identity in compiler code.
+- If a stage needs state, that state is an explicit typed product with a precise
+  name and purpose.
+- If a stage crosses an IR boundary, the method name says so explicitly.
+- If a class does not support an operation, the compiler fails loudly or returns
+  a typed reject/diagnostic. It does not silently fall through old machinery.
+
+## Non-Goals
+
+- [x] Do not preserve `lalin.pvm` as a compatibility alias.
+- [x] Do not keep `pvm_erase` migration tooling.
+- [ ] Do not rename freeform rule tables and call the job done.
+- [ ] Do not create a new generic visitor framework that recreates the same
+      indirection.
+- [ ] Do not add one universal `lower` method.
+- [ ] Do not collapse stage boundaries just to reduce files.
+- [ ] Do not hide backend fallback decisions in drivers.
+- [ ] Do not force user-facing modules into Lalin; Lua tables remain the native
+      composition model.
+
+## Definition Of Done
+
+- [x] No compiler code requires `lalin.pvm`.
+- [x] No compiler code requires top-level `pvm`.
+- [x] `require("lalin").pvm` is gone.
+- [x] `lalin.asdl` is a minimal ASDL runtime, not a phase runtime.
+- [x] `pvm.lua`, `pvm_erase.lua`, and `tests/pvm` are gone or moved out of the
+      compiler architecture with explicit justification.
+- [ ] Per-class semantic behavior lives on ASDL class methods.
+- [ ] Old `*_rules.lua` dispatch tables are deleted or listed as remaining
+      migration debt in this document.
+- [ ] Compiler drivers are thin stage orchestrators.
+- [ ] Missing lowering support is visible as a missing method, typed reject, or
+      typed diagnostic.
+- [ ] Backend fallback choices are explicit typed facts, never hidden control
+      flow.
+- [ ] The verification gates at the end of this document pass.
+
+## Target Architecture
+
+- [x] `lalin.asdl` is the compiler ASDL runtime.
+- [x] `lalin.asdl` exposes only:
+  - [x] `context(opts)`
+  - [x] `classof(value)`
+  - [x] `with(node, overrides)`
+  - [x] `require_method(T, node, operation)`
+  - [x] minimal sequence/triplet helpers if still needed by compiler code.
+- [x] `lalin.asdl` does not expose `phase`.
+- [x] `lalin.asdl` does not contain recording caches, memoized phase machinery,
+      hit/miss accounting, warm/cached/report APIs, or phase-boundary concepts.
+- [x] `lalin.pvm` is deleted.
+- [ ] top-level `pvm` compatibility is deleted or moved out of the compiler
+      tree if UI still temporarily needs it.
+- [x] `lalin.pvm_erase` is deleted.
+- [x] `tests/pvm` is deleted or split into correctly named compiler-process
+      tests if any still describe real behavior.
+- [x] `lalin.init` does not export `M.pvm`.
+- [ ] public docs no longer tell users or compiler contributors that PVM is part
+      of Lalin.
+- [ ] LLBL/LLPVM names that contain `pvm` are audited separately. They are not
+      automatically the same problem as `lalin.pvm`, but must not leak a PVM
+      compiler architecture back into Lalin.
+
+## Current Partial State To Resolve
+
+- [x] Review the in-progress mechanical rename from `lalin.pvm` to
+      `lalin.asdl`.
+- [x] Keep the useful part: compiler files should depend on `lalin.asdl`, not
+      `lalin.pvm`.
+- [x] Fix local variable names after the mechanical rename:
+  - [x] `local pvm = require("lalin.asdl")` should become `local asdl = ...`
+        or `local schema = ...` where practical.
+  - [ ] Call sites should read `asdl.classof`, `asdl.context`, `asdl.with`,
+        etc. instead of `pvm.classof`.
+- [x] Verify `lua/lalin/asdl.lua` is a clean runtime, not a copied PVM file with
+      removed pieces.
+- [x] Delete any remaining references to `pvm.phase` in compiler code.
+- [ ] Delete or quarantine UI references before deleting the old module:
+  - [ ] `lua/ui/**`
+  - [ ] `lua/mlui/**`
+  - [ ] `tests/ui/**`
+  - [ ] `tests/mlui/**`
+- [ ] Decide whether UI is still in-scope for this repo. If yes, migrate UI to a
+      UI-owned runtime name. If no, move/retire it.
+
+## ASDL Runtime Cut
+
+- [x] Create/finish `lua/lalin/asdl.lua`.
+- [x] Move only the real ASDL runtime pieces into it:
+  - [x] schema context construction through `schema_context.NewContext`
+  - [x] `classof`
+  - [x] immutable `with`
+  - [x] `NIL` sentinel if generated `__with` still needs it
+  - [x] sequence helpers only if current compiler code truly uses them
+- [x] Remove from the ASDL runtime:
+  - [x] `phase`
+  - [x] `normalize_handlers`
+  - [x] recording cache tables
+  - [x] pending/inflight recording entries
+  - [x] `cached`
+  - [x] `warm`
+  - [x] `stats`
+  - [x] `hit_ratio`
+  - [x] `reuse_ratio`
+  - [x] `reset`
+  - [x] `report`
+  - [x] `report_string`
+- [x] Rename errors from `pvm.*` to `asdl.*`.
+- [x] Add focused ASDL runtime tests:
+  - [x] context builds all schemas
+  - [x] `classof` returns classes for nodes and false for non-nodes
+  - [x] `with` preserves class and updates immutable fields
+  - [x] mutation still errors through generated `__newindex`
+  - [x] sequence helpers, if kept, drain/one/concat/children correctly
+- [x] Remove old PVM phase tests instead of adapting them.
+
+## Public Surface Hard Yank
+
+- [x] Remove `M.pvm` from `lua/lalin/init.lua`.
+- [x] Replace internal `M.pvm.context()` call sites with `asdl.context()`.
+- [x] Ensure `require("lalin").pvm` is nil or absent.
+- [ ] Remove any documented `lalin.pvm` usage.
+- [x] Remove any top-level `require("pvm") == require("lalin.pvm")`
+      compatibility assertion.
+- [x] Remove `tests/pvm` from `tests/run.lua` default and all suites.
+- [x] Delete `tests/pvm/test_pvm_erase.lua`.
+- [x] Delete `lua/lalin/pvm_erase.lua`.
+- [x] Delete `lua/lalin/pvm.lua` only after UI/top-level compatibility is
+      explicitly handled.
+
+## Compiler Process And Package Naming Audit
+
+The current `phase_*` files are not necessarily PVM recording phases, but the
+name is polluted. Audit them by semantics, not by name.
+
+- [ ] Inspect `lua/lalin/schema/phase.lua`.
+- [ ] Decide whether this is still a real compiler package/process model.
+- [ ] If real, rename the concept away from `phase`:
+  - [ ] candidate: `compiler_step`
+  - [ ] candidate: `compiler_process`
+  - [ ] candidate: `compiler_transition`
+- [ ] If not real, delete it.
+- [ ] Audit and either rename or delete:
+  - [ ] `lua/lalin/phase_model.lua`
+  - [ ] `lua/lalin/phase_dsl.lua`
+  - [ ] `lua/lalin/phase_validate.lua`
+  - [ ] `lua/lalin/phase_plan.lua`
+  - [ ] `lua/lalin/phase_execute.lua`
+  - [ ] `lua/lalin/schema/phase.lua`
+- [x] Move surviving tests out of `tests/pvm` into a correctly named suite:
+  - [x] `tests/compiler_process`
+  - [ ] or `tests/compiler_package`
+- [ ] Delete tests that only validate the old PVM migration story.
+
+## Typed Semantic Method Design
+
+- [ ] Extend schema class generation so ASDL classes can own semantic methods.
+- [x] Choose exact method definition mechanism:
+  - [x] direct Lua method assignment on schema class tables
+- [x] Add a small core API:
+  - [x] `T:require_method(node, operation)`
+- [x] Methods must attach to classes, not to ad hoc external dispatch tables.
+- [x] Method lookup must fail loudly with class name and semantic operation.
+- [x] Methodization means moving the actual semantic implementation body onto
+      the concrete ASDL class. A method that only returns a selector string,
+      `kind`, relation name, handler key, or other dispatch token is still the
+      old pattern and is not acceptable.
+- [ ] Method names must be semantic and typed:
+  - [ ] `typecheck_expr`
+  - [ ] `typecheck_stmt`
+  - [ ] `lower_tree_to_code`
+  - [ ] `lower_code_to_back`
+  - [ ] `lower_code_to_c`
+  - [ ] `plan_kernel`
+  - [ ] `plan_schedule`
+  - [ ] `lower_luajit`
+- [ ] Do not create one giant universal `lower` method.
+- [ ] Generic context bags are forbidden. Do not introduce or preserve a vague
+      `ctx` object as the default way to move state through semantic methods.
+- [ ] Methods receive only the typed, well-named semantic inputs they actually
+      need:
+  - [ ] no mandatory context argument by convention
+  - [ ] no hidden globals
+  - [ ] no module-level mutable current context
+  - [ ] if an operation needs bindings, pass the typed binding/type environment
+  - [ ] if an operation needs return/yield expectations, pass a named typed
+        expectation/state value
+  - [ ] if an operation needs nothing, pass nothing
+- [ ] Methods return typed ASDL results or diagnostics directly, not informal
+      tuples and not phase-shaped wrappers.
+
+## Lowering Conventions
+
+These conventions are mandatory for the rewrite. A lowering is not acceptable
+just because it works on one fixture; it must fit this shape.
+
+### Ownership
+
+- [ ] The class that owns the source semantic form owns the lowering method.
+- [ ] A lowering method belongs on the source class, not the destination class.
+      Example: a `LalinTree.ExprBinary` lowers itself to `LalinCode`; a
+      `LalinCode.ValueExprBinary` does not reach backward into tree syntax.
+- [ ] Cross-cutting orchestration may live in driver modules, but per-class
+      behavior may not live in driver modules.
+- [ ] Drivers may sequence work, allocate context, collect diagnostics, and
+      choose backend mode. Drivers may not contain large `if class == ...`
+      semantic ladders.
+- [ ] Helper functions are allowed only when they implement shared mechanics,
+      not when they hide class-specific lowering behind another dispatch table.
+- [ ] Do not replace a rule table with class methods that return `kind`,
+      selector names, relation names, or handler keys. The class method must do
+      the work for that class and return the operation's real result shape.
+
+### Naming
+
+- [ ] Method names must state both source stage and destination stage.
+- [ ] Use `lower_<source>_to_<dest>` for representation changes.
+- [ ] Use `check_<domain>` or `validate_<domain>` for validation that preserves
+      representation.
+- [ ] Use `plan_<domain>` for planning facts that choose strategies but do not
+      emit destination IR.
+- [ ] Use `emit_<target>` only for textual/binary emission from an already
+      target-shaped IR.
+- [ ] Avoid generic names:
+  - [ ] no class method named just `lower`
+  - [ ] no class method named just `emit`
+  - [ ] no class method named just `visit`
+  - [ ] no class method named just `handle`
+- [ ] Preferred operation names:
+  - [ ] `typecheck_tree_expr`
+  - [ ] `typecheck_tree_stmt`
+  - [ ] `lower_tree_expr_to_code`
+  - [ ] `lower_tree_place_to_code`
+  - [ ] `lower_tree_stmt_to_code`
+  - [ ] `lower_code_type_to_back`
+  - [ ] `lower_code_value_to_back`
+  - [ ] `lower_code_place_to_back`
+  - [ ] `lower_code_inst_to_back`
+  - [ ] `lower_code_type_to_c`
+  - [ ] `lower_code_value_to_c`
+  - [ ] `plan_code_kernel`
+  - [ ] `plan_code_schedule`
+  - [ ] `plan_exec_fragment`
+  - [ ] `lower_code_to_luajit`
+  - [ ] `emit_luajit_lua`
+  - [ ] `emit_c_source`
+
+### Signatures
+
+- [ ] Lowering methods take only the typed inputs required by the operation.
+- [ ] There is no default `ctx` parameter.
+- [ ] Example signatures:
+      `function T.LalinCore.LitInt:typecheck_tree_literal() ... end`
+      `function T.LalinBind.ValueRefName:typecheck_tree_ref(type_env) ... end`
+      `function T.LalinTree.StmtReturnValue:typecheck_tree_stmt(type_state) ... end`
+- [ ] The node is always `self`.
+- [ ] Any non-node argument must be a named typed semantic product, not a bag of
+      unrelated state.
+- [ ] No lowering method reads or writes module-level mutable compiler state.
+- [ ] No lowering method mutates `self`.
+- [ ] No lowering method mutates any ASDL node.
+- [ ] Structural changes use `asdl.with(node, overrides)` or construct a new
+      typed node.
+- [ ] Methods must not mutate generic context/state objects. State changes are
+      represented by returning typed products.
+
+### Return Shape
+
+- [ ] Every lowering operation has one documented return shape.
+- [ ] A representation-changing lowering returns the destination ASDL node or a
+      typed result wrapper.
+- [ ] Validation returns a typed validation report or appends typed diagnostics
+      through the context and returns the original node where appropriate.
+- [ ] Planning returns typed plan facts, typed rejects, or a typed plan result.
+- [ ] Lowering methods must not return ambiguous `nil, reason` pairs unless the
+      operation is explicitly an optional probe.
+- [ ] Optional probes must be named as probes:
+  - [ ] `try_plan_*`
+  - [ ] `probe_*`
+  - [ ] `classify_*`
+- [ ] Required lowering failure must be a typed diagnostic or a hard internal
+      compiler error with class and operation in the message.
+- [ ] Do not mix boolean status, string reasons, and ASDL values in one return
+      slot.
+- [ ] Do not return one-element arrays or phase/stream wrappers such as
+      `single(result)` from migrated semantic methods. Return the typed result
+      directly.
+
+### Diagnostics
+
+- [ ] User/source errors produce typed diagnostics.
+- [ ] Internal invariant failures use `error(...)`.
+- [ ] Diagnostic construction belongs near the semantic operation that detects
+      the problem.
+- [ ] Diagnostics must include:
+  - [ ] operation name
+  - [ ] source class
+  - [ ] source origin/span when available
+  - [ ] expected semantic form
+  - [ ] actual semantic form
+- [ ] Lowering must not silently fall back to generic behavior when a typed
+      method is missing.
+- [ ] Missing method is a compiler bug, not a recoverable user error.
+
+### Dispatch
+
+- [ ] Dispatch is method lookup on the ASDL class.
+- [ ] No new external `by_class` dispatch tables.
+- [ ] No new `rules.lua` files.
+- [ ] No generated giant `if cls == ... elseif ...` chains.
+- [ ] No selector-method detours:
+  - [ ] no `node:*_kind()` methods used to choose a later branch
+  - [ ] no `node:*_handler()` methods used to choose a later table entry
+  - [ ] no `node:*_relation()` methods used to call a generic runner
+  - [ ] no `Rules:run(...)`, relation/input/output wrappers, or compatibility
+        runners for newly migrated operations
+- [ ] Sum-type routing should be expressed by installing methods on every
+      concrete member class that supports the operation.
+- [ ] If an operation is illegal for a class, install no method and let the
+      required-call helper report a precise missing-method compiler error.
+- [ ] If an operation is legal but semantically rejected for this node, return a
+      typed reject/diagnostic from the method.
+
+### Method Definition
+
+- [x] Method definition is per ASDL context because schema classes are per
+      context.
+- [x] Direct method assignment uses normal Lua replacement semantics.
+- [ ] Method modules must be named by semantic stage:
+  - [ ] `tree_typecheck_methods.lua`
+  - [ ] `tree_to_code_methods.lua`
+  - [ ] `code_to_back_methods.lua`
+  - [ ] `code_to_c_methods.lua`
+  - [ ] `kernel_plan_methods.lua`
+  - [ ] `schedule_plan_methods.lua`
+  - [ ] `exec_plan_methods.lua`
+  - [ ] `luajit_lower_methods.lua`
+  - [ ] `c_emit_methods.lua`
+- [x] Current typecheck method modules return a schema-context function, not a
+      mutable global table.
+- [x] Current typecheck method module shape:
+      `return function(T) ... end`
+- [x] Current typecheck method modules receive the schema context and assign
+      methods directly.
+- [ ] The module must not create a new schema context.
+
+### Typed State Products
+
+- [ ] Do not introduce generic stage context bags.
+- [ ] Stage state, when needed, is represented as explicit typed ASDL products
+      with narrow names and fields.
+- [ ] Typed state products may contain environment, diagnostics, generated names,
+      or target facts only when those fields are part of that product's precise
+      semantic contract.
+- [ ] Typed state products do not own per-class semantics.
+- [ ] Do not add state-product helpers named like semantic lowering for one
+      class.
+- [x] Required method lookup belongs to the schema context:
+      `T:require_method(node, operation)`.
+
+### Stage Boundaries
+
+- [ ] Each lowering method crosses exactly one stage boundary.
+- [ ] Do not lower `Tree -> Back` directly.
+- [ ] Do not lower `Tree -> LuaJIT` directly.
+- [ ] Do not lower `Code -> C source text` directly; go through C backend IR
+      unless the method is explicitly an emitter for C IR.
+- [ ] Valid stage boundaries:
+  - [ ] parsed syntax to `LalinTree`
+  - [ ] `LalinTree` typechecking
+  - [ ] typed `LalinTree` to `LalinCode`
+  - [ ] `LalinCode` facts/plans
+  - [ ] `LalinCode` to `LalinBack`
+  - [ ] `LalinCode` to `LalinC`
+  - [ ] `LalinCode` plus plans to `LalinLuaJIT`
+  - [ ] `LalinC` to C source
+  - [ ] `LalinLuaJIT` to Lua source/artifact
+- [ ] Backend artifact selection is orchestration, not a method on random
+      syntax nodes.
+
+### Fallbacks
+
+- [ ] No hidden compatibility fallback.
+- [ ] No BC fallback inside the MC path.
+- [ ] MC can emit residuals; residuals are not BC fallback.
+- [ ] Fallback must be a named, typed strategy in the plan if it exists at all.
+- [ ] A missing stencil/artifact method must return typed reject or internal
+      compiler error, not silently choose another backend.
+- [ ] Any fallback path must be visible in facts and tests.
+
+### Tests For Lowering Conventions
+
+- [ ] Add tests that installing duplicate methods fails.
+- [ ] Add tests that missing required method fails with class+operation.
+- [ ] Add tests that method calls do not mutate source ASDL nodes.
+- [ ] Add tests that method assignments are isolated across two schema contexts.
+- [ ] Add tests that no new `*_rules.lua` files are introduced.
+- [ ] Add tests that no new `by_class` tables are introduced in compiler code.
+- [ ] Add tests that backend fallback decisions are represented as typed facts.
+
+## Rule Table Migration
+
+These are the current freeform rule/dispatch modules to eliminate or shrink.
+
+- [x] `lua/lalin/tree_typecheck_rules.lua`
+  - [x] Delete external expression/statement rule tables.
+  - [x] Move literal/ref/expression-expected behavior onto ASDL methods.
+  - [x] Move type-owned policy/canonicalization/layout helpers onto ASDL methods.
+  - [x] Move module fact collection to explicit ASDL methods and
+        `TypeModuleFacts`.
+  - [x] Remove hidden raw fact fields from the typecheck driver.
+  - [ ] Move remaining statement/place/control behavior onto concrete ASDL methods.
+  - [ ] Reduce `tree_typecheck.lua` to stage entrypoints and typed orchestration.
+- [ ] `lua/lalin/tree_to_code_rules.lua`
+  - [ ] Move tree-to-code lowering for expressions onto expression classes.
+  - [ ] Move place lowering onto place classes.
+  - [ ] Move statement lowering onto statement classes.
+  - [ ] Delete external tree-to-code rule dispatch tables.
+- [ ] `lua/lalin/code_kernel_plan_rules.lua`
+  - [ ] Move kernel classification behavior onto relevant `LalinCode`,
+        `LalinKernel`, and `LalinFlow` classes.
+  - [ ] Keep graph-wide analysis as orchestration only.
+- [ ] `lua/lalin/code_schedule_plan_rules.lua`
+  - [ ] Move schedule legality/selection behavior onto schedule/target/stencil
+        classes.
+- [ ] `lua/lalin/code_lower_plan_rules.lua`
+  - [ ] Move lower-plan behavior onto lower-plan and exec strategy classes.
+- [ ] `lua/lalin/lower_strategy_emit_rules.lua`
+  - [ ] Move strategy emission behavior onto lower strategy classes.
+- [ ] `lua/lalin/exec_plan_rules.lua`
+  - [ ] Move exec fragment planning onto exec/stencil/residual classes.
+- [ ] `lua/lalin/luajit_lower_rules.lua`
+  - [ ] Move LuaJIT lowering behavior onto code/LJ/stencil classes.
+- [ ] `lua/lalin/stencil_rules.lua`
+  - [ ] Split pure vocabulary legality from lowering behavior.
+  - [ ] Attach stencil expression/sink legality to stencil classes.
+  - [ ] Keep global saturation vocabulary as data, not rule-table control flow.
+
+## Major Lowering Modules To Refactor Around Methods
+
+- [ ] `lua/lalin/tree_typecheck.lua`
+  - [ ] remains orchestration and context
+  - [ ] stops owning per-class semantics
+- [ ] `lua/lalin/tree_to_code.lua`
+  - [ ] remains module/function lowering driver
+  - [ ] delegates typed operations to node methods
+- [ ] `lua/lalin/code_to_back.lua`
+  - [ ] methodize type, place, expr, inst lowering
+- [ ] `lua/lalin/code_to_c.lua`
+  - [ ] methodize C backend projection
+- [ ] `lua/lalin/lower_to_back.lua`
+  - [ ] methodize semantic-to-back lowering
+- [ ] `lua/lalin/lower_to_c.lua`
+  - [ ] methodize semantic-to-C lowering
+- [ ] `lua/lalin/luajit_lower.lua`
+  - [ ] methodize code/LJ/stencil lowering where class-specific
+  - [ ] keep artifact selection orchestration separate
+- [ ] `lua/lalin/luajit_emit.lua`
+  - [ ] methodize LJ expression/place/stmt emission or create explicit emitter
+        methods on LJ classes
+- [ ] `lua/lalin/c_emit.lua`
+  - [ ] methodize C AST emission or use explicit emitter methods on C classes
+- [ ] `lua/lalin/c_validate.lua`
+  - [ ] methodize class-specific validation
+- [ ] `lua/lalin/code_validate.lua`
+  - [ ] methodize class-specific validation
+- [ ] `lua/lalin/kernel_validate.lua`
+  - [ ] methodize class-specific validation
+
+## Schema Method Work
+
+- [x] ASDL classes are Lua tables that accept direct method assignment.
+- [x] Sum parent class assignment propagates to member classes.
+- [x] `T:require_method(node, operation)` reports missing method with class and
+      operation.
+- [ ] Decide where semantic method modules are loaded:
+  - [ ] during frontend/backend module require
+  - [ ] explicitly through compiler initialization
+- [x] Ensure multiple contexts keep method assignments isolated.
+- [x] Ensure generated class builders remain pure and do not capture stale
+      method state from another context.
+
+## Tests To Rewrite
+
+- [x] Delete `tests/pvm`.
+- [x] Add `tests/asdl`:
+  - [x] runtime basics
+  - [x] direct class method assignment
+  - [x] method dispatch failure diagnostics
+  - [x] multiple context isolation
+- [ ] Rewrite rule tests as behavior tests:
+  - [x] `tests/frontend/test_tree_typecheck_rules.lua`
+  - [ ] `tests/frontend/test_tree_to_code_rules.lua`
+  - [ ] `tests/code_ir/test_code_kernel_plan_rules.lua`
+  - [ ] `tests/code_ir/test_code_schedule_plan_rules.lua`
+  - [ ] `tests/code_ir/test_code_lower_plan_rules.lua`
+  - [ ] `tests/code_ir/test_lower_strategy_emit_rules.lua`
+  - [ ] `tests/code_ir/test_exec_plan_rules.lua`
+  - [ ] `tests/code_ir/test_luajit_lower_rules.lua`
+- [ ] Keep end-to-end tests as the main safety net:
+  - [ ] parsed source to artifact
+  - [ ] DSL to artifact
+  - [ ] MC backend
+  - [ ] emit C path
+  - [ ] bank generator/intern set
+- [x] Remove tests that assert implementation shape of old dispatch tables.
+- [x] Add tests that assert no PVM compiler surface:
+  - [x] `require("lalin.pvm")` fails
+  - [x] `require("lalin").pvm == nil`
+  - [x] no `pvm.phase` in `lua/lalin`
+  - [x] no `require("pvm")` in compiler code
+
+## Documentation Rewrite
+
+- [x] Update `AGENTS.md`.
+- [x] Update `docs/ARCHITECTURE.md`.
+- [ ] Update `docs/LANGUAGE_REFERENCE.md` only where implementation model leaks.
+- [ ] Update `docs/DESIGN_BIBLE.md` or mark old PVM theory as retired.
+- [ ] Update `docs/LLPVM_GUIDE.md` only if LLPVM naming changes.
+- [x] Update `tests/README.md`.
+- [x] Remove references to:
+  - [ ] PVM compiler phases
+  - [x] PVM erase migration
+  - [x] `lalin.pvm`
+  - [x] top-level `pvm` compatibility
+- [x] Add a concise architecture section:
+  - [x] ASDL runtime
+  - [x] typed semantic methods
+  - [x] compiler orchestration
+  - [x] backend artifact selection
+
+## Verification Gates
+
+- [ ] `rg -n 'require\\("lalin\\.pvm"\\)|require\\('\\''lalin\\.pvm'\\''\\)' lua tests tools docs`
+      returns nothing.
+- [ ] `rg -n 'require\\("pvm"\\)|require\\('\\''pvm'\\''\\)' lua/lalin lua/llpvm tests tools`
+      returns nothing unless explicitly isolated in retired UI code.
+- [x] `rg -n 'pvm\\.phase|phase\\(' lua/lalin` has no PVM recording-phase hits.
+- [ ] `rg -n 'M\\.pvm|\\.pvm\\b' lua/lalin docs tests` has no Lalin public API hits.
+- [ ] `rg -n '_rules' lua/lalin` only shows files that are intentionally still
+      waiting in the migration checklist.
+- [x] `luajit tests/run.lua asdl`
+- [x] `luajit tests/run.lua frontend`
+- [x] `luajit tests/run.lua code_ir`
+- [x] `luajit tests/run.lua c_backend`
+- [x] `luajit tests/run.lua schema`
+- [x] `luajit tests/run.lua runtime`
+- [x] `luajit tests/run.lua tooling`
+- [x] `luajit tests/run.lua`
+- [ ] Slow binary gate when needed:
+  - [ ] `LALIN_RUN_SLOW=1 luajit tests/run.lua code_ir`
+
+## Suggested Rewrite Order
+
+- [ ] 1. Freeze the target API in `lalin.asdl`.
+- [ ] 2. Replace compiler `lalin.pvm` imports with `lalin.asdl` imports and sane
+      local names.
+- [ ] 3. Delete PVM erase and PVM phase tests.
+- [ ] 4. Remove `M.pvm` and public PVM docs.
+- [ ] 5. Isolate or retire UI/top-level `pvm` usage.
+- [x] 6. Add ASDL direct method support.
+- [ ] 7. Finish `tree_typecheck.lua` method rewrite after deleting `tree_typecheck_rules.lua`.
+- [ ] 8. Migrate `tree_to_code_rules.lua`.
+- [ ] 9. Migrate code/kernel/schedule/lower/exec rule modules.
+- [ ] 10. Migrate LuaJIT/C/backend lowering emitters.
+- [ ] 11. Delete rule modules as each reaches zero real ownership.
+- [ ] 12. Run the full verification gates and update architecture docs.

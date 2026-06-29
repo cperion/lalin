@@ -1,8 +1,8 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
-local T = pvm.context(); Schema(T)
+local T = asdl.context(); Schema(T)
 
 local Core = T.LalinCore
 local Ty = T.LalinType
@@ -28,7 +28,7 @@ local access = C.CBackendMemoryAccess(i32, 4, C.CBackendMayTrap, true, Core.Atom
 local atomic = C.CBackendHelperUse(Helpers.helper_id(C.CBackendHelperAtomicLoad(access)), C.CBackendHelperAtomicLoad(access))
 local report = Validate.validate(C.CBackendUnit("m", CodeType.default_target({ dialect = "c99" }), {}, {}, {}, {}, { atomic }, {}))
 local saw_atomic_feature = false
-for i = 1, #report.issues do if pvm.classof(report.issues[i]) == C.CBackendIssueInvalidTargetFeature then saw_atomic_feature = true end end
+for i = 1, #report.issues do if asdl.classof(report.issues[i]) == C.CBackendIssueInvalidTargetFeature then saw_atomic_feature = true end end
 assert(saw_atomic_feature, "atomics without C11 target support should be diagnosed")
 assert(package.loaded["lalin.tree_to_c"] == nil)
 assert(package.loaded["lalin.c_places"] == nil)

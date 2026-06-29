@@ -6,7 +6,7 @@
 -- of all issues across all phases. This eliminates the heuristic string
 -- matching and incomplete void-type checks in the current dual systems.
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local M = {}
 
@@ -76,16 +76,16 @@ local void_kinds = {
 
 local function is_void_type(ty)
     if not ty then return false end
-    local cls = pvm.classof(ty)
+    local cls = asdl.classof(ty)
     if cls and cls.kind == "TScalar" and ty.scalar then
-        local scls = pvm.classof(ty.scalar)
+        local scls = asdl.classof(ty.scalar)
         return scls and void_kinds[scls.kind] or false
     end
     return false
 end
 
 local function is_cascade(ri, unresolved_names)
-    local cls = pvm.classof(ri.issue)
+    local cls = asdl.classof(ri.issue)
     if not cls then return false end
     local kind = cls.kind
 
@@ -185,7 +185,7 @@ function M.filter(resolved_issues)
     local seen_keys = {}
 
     for _, ri in ipairs(resolved_issues) do
-        local cls = pvm.classof(ri.issue)
+        local cls = asdl.classof(ri.issue)
         local kind = cls and cls.kind or ""
 
         if ROOT_CAUSE_KINDS[kind] then
@@ -210,7 +210,7 @@ function M.filter(resolved_issues)
     -- Second pass: filter cascades and deduplicate
     local out = {}
     for _, ri in ipairs(resolved_issues) do
-        local cls = pvm.classof(ri.issue)
+        local cls = asdl.classof(ri.issue)
         local kind = cls and cls.kind or ""
 
         -- Root causes always pass

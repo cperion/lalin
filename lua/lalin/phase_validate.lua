@@ -5,11 +5,11 @@
 -- class process so tooling can consume the same event gps as batch callers.
 
 local llbl = require("llbl")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local M = {}
 
-local function classof(v) return pvm.classof(v) end
+local function classof(v) return asdl.classof(v) end
 
 local function class_name(v)
     local cls = classof(v)

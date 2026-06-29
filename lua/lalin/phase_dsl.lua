@@ -1,7 +1,7 @@
 -- LLBL surface for complete LalinPhase compiler-package graph values.
 
 local llbl = require("llbl")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local PhaseModel = require("lalin.phase_model")
 local PhaseValidate = require("lalin.phase_validate")
 
@@ -12,12 +12,12 @@ local function ensure(T)
     return T.LalinPhase
 end
 
-local T = pvm.context()
+local T = asdl.context()
 local P = ensure(T)
 
 local function type_ref(spec)
     if type(spec) == "table" then
-        local cls = pvm.classof(spec)
+        local cls = asdl.classof(spec)
         if cls == P.TypeRef or spec == P.TypeRefAny or cls == P.TypeRefValue then return spec end
         if llbl.is(spec, "Capture") and llbl.is(spec.subject, "Symbol") then
             local module_name = spec.subject.text
@@ -70,7 +70,7 @@ local function machine_abi(spec)
     error("phase_dsl: unknown machine ABI " .. tostring(spec), 3)
 end
 
-local function classof(v) return pvm.classof(v) end
+local function classof(v) return asdl.classof(v) end
 
 local function part(kind, value)
     return { __lalin_phase_dsl_part = kind, value = value }
@@ -296,7 +296,7 @@ local function id_text(v)
 end
 
 local function type_ref_text(v)
-    local cls = pvm.classof(v)
+    local cls = asdl.classof(v)
     if cls == P.TypeRefAny then return "any" end
     if cls == P.TypeRefValue then return "value. " .. tostring(v.field_name) end
     if cls == P.TypeRef then return tostring(v.module_name) .. "." .. tostring(v.type_name) end
@@ -345,7 +345,7 @@ end
 
 function M.format_doc(value, f)
     f = getmetatable(f) == llbl.FormatContext and f or setmetatable({ indent_width = 2, seen = {} }, llbl.FormatContext)
-    local cls = type(value) == "table" and pvm.classof(value) or nil
+    local cls = type(value) == "table" and asdl.classof(value) or nil
     if cls == P.Package then
         local items = {}
         for i = 1, #(value.worlds or {}) do items[#items + 1] = value.worlds[i] end
@@ -389,7 +389,7 @@ function M.format_doc(value, f)
     if part_kind(value) == "capabilities" then return doc.group { "capabilities ", record_doc(value.value) } end
     if part_kind(value) == "impl" then
         local impl = value.value
-        local icls = pvm.classof(impl)
+        local icls = asdl.classof(impl)
         if icls == P.ImplLalin then return doc.group { "impl. lalin ", record_doc { module = impl.module_name, func = impl.function_name } } end
         if icls == P.ImplLua then return doc.group { "impl. lua ", record_doc { module = impl.module_name, func = impl.function_name } } end
         if icls == P.ImplC then return doc.group { "impl. c ", record_doc { symbol = impl.symbol } } end

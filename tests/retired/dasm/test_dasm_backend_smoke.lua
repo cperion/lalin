@@ -4,7 +4,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;./lib/?.lua;" 
                "./.vendor/LuaJIT/dynasm/?.lua;" .. package.path
 
 local ffi       = require("ffi")
-local pvm       = require("lalin.pvm")
+local pvm       = require("lalin.asdl")
 local A2        = require("lalin.schema_projection")
 local dasm_init = require("back.dasm")
 

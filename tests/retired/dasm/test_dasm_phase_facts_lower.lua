@@ -1,6 +1,6 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A2 = require("lalin.schema_projection")
 
 local Mx = require("back.dasm.model")
@@ -11,7 +11,7 @@ local TypeValues = require("back.dasm.phases.type_values")
 local Extract = require("back.dasm.phases.extract_facts")
 local LowerFacts = require("back.dasm.phases.lower_facts")
 
-local T = pvm.context()
+local T = asdl.context()
 A2(T)
 Mx.set_context(T)
 
@@ -42,19 +42,19 @@ local body = {
 }
 
 local cfg = BuildCfg.run(Mx.make_phase_func(body, B.BackFuncId("f")), B.BackSigId("sig:f"))
-assert(pvm.classof(cfg) == D.DFuncCFG)
+assert(asdl.classof(cfg) == D.DFuncCFG)
 
 local lowered_cfg = Phi.run(cfg)
 local pf = Select.run(lowered_cfg)
-assert(pvm.classof(pf) == D.DPhaseFunc)
+assert(asdl.classof(pf) == D.DPhaseFunc)
 
 local sig = { params = { B.BackI32 }, results = { B.BackI32 } }
 local typed = TypeValues.run(pf, sig)
-assert(pvm.classof(typed) == D.DTypedFunc)
+assert(asdl.classof(typed) == D.DTypedFunc)
 local value_scalars = Mx.scalar_map_from_entries(typed.value_scalars)
 
 local facts = Extract.run(pf, value_scalars)
-assert(pvm.classof(facts) == D.DFactSet)
+assert(asdl.classof(facts) == D.DFactSet)
 assert(#facts.families > 0)
 
 local saw_intbin = false
@@ -68,7 +68,7 @@ assert(saw_intbin)
 assert(saw_cmp)
 
 local lowered = LowerFacts.run(facts)
-assert(pvm.classof(lowered) == D.DLoweredFunc)
+assert(asdl.classof(lowered) == D.DLoweredFunc)
 assert(#lowered.decisions > 0)
 
 local saw_int_imm = false

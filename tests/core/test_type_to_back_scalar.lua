@@ -1,10 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A = require("lalin.schema_projection")
 local Scalar = require("lalin.type_to_back_scalar")
 
-local T = pvm.context()
+local T = asdl.context()
 A(T)
 local L = Scalar(T)
 local C = T.LalinCore
@@ -16,7 +16,7 @@ local function known(ty, scalar)
 end
 local function unavailable(ty)
     local result = L.result(ty)
-    assert(pvm.classof(result) == Ty.TypeBackScalarUnavailable)
+    assert(asdl.classof(result) == Ty.TypeBackScalarUnavailable)
     assert(result.ty == ty)
 end
 

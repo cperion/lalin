@@ -1,17 +1,17 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
 local BackProgram = require("lalin.back_program")
 
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 local B = T.LalinBack
 local P = BackProgram(T)
 
 local a = B.CmdFinalizeModule
 local empty = P.empty()
-assert(pvm.classof(empty) == B.BackProgram)
+assert(asdl.classof(empty) == B.BackProgram)
 assert(#empty.cmds == 0)
 
 local one = P.singleton(a)

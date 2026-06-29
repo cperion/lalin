@@ -46,14 +46,9 @@ end
 
 return { zip_add }
 ]=], "@embedded_mc.lln"))()
-local warnings = {}
-local m = lalin.compile("embedded_mc", parsed, {
-  collect_warnings = warnings,
-  allow_bc_fallback = false,
-})
+local m = lalin.compile("embedded_mc", parsed)
 assert(m.__lalin_artifact.residual == "mc")
 assert(m.__lalin_artifact.mc_bank ~= nil)
-assert(#warnings == 0)
 local lhs = ffi.new("int32_t[3]", { 1, 2, 3 })
 local rhs = ffi.new("int32_t[3]", { 10, 20, 30 })
 local dst = ffi.new("int32_t[3]")

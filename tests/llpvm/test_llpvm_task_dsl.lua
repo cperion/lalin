@@ -1,7 +1,7 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local ll = require("llpvm")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local env = {}
 require("lalin").use { scope = "env", target = env, global = false, searcher = false }
@@ -21,7 +21,7 @@ local spec = chunk()
 assert(getmetatable(spec) == ll.TaskSpec)
 
 local asdl = spec:asdl()
-assert(pvm.classof(asdl) == ll.T.LlPvm.TaskSpec)
+assert(asdl.classof(asdl) == ll.T.LlPvm.TaskSpec)
 assert(asdl.name.value == "compile")
 assert(#asdl.events == 2)
 assert(asdl.events[1].name.value == "progress")
@@ -31,7 +31,7 @@ local run = ll.task_run("compile", "done", {
 }, {
     ll.task_step(1, "typecheck", "hosted_typecheck", "done"),
 })
-assert(pvm.classof(run) == ll.T.LlPvm.TaskRun)
+assert(asdl.classof(run) == ll.T.LlPvm.TaskRun)
 assert(run.task.value == "compile")
 assert(run.events[1].kind == "progress")
 assert(run.steps[1].phase == "typecheck")

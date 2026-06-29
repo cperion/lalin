@@ -1,10 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A = require("lalin.schema_projection")
 local Control = require("lalin.tree_control_facts")
 
-local T = pvm.context()
+local T = asdl.context()
 A(T)
 local Ctl = Control(T)
 local C = T.LalinCore
@@ -59,7 +59,7 @@ local bad = Tr.ControlStmtRegion(
     {}
 )
 local bad_decision = Ctl.decide(bad)
-assert(pvm.classof(bad_decision) == Tr.ControlDecisionIrreducible)
+assert(asdl.classof(bad_decision) == Tr.ControlDecisionIrreducible)
 assert(bad_decision.reject == Tr.ControlRejectMissingLabel("control.bad", Tr.BlockLabel("missing")))
 
 local missing_arg = Tr.ControlStmtRegion(

@@ -1,11 +1,11 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local PhaseModel = require("lalin.phase_model")
 local PhaseDsl = require("lalin.phase_dsl")
 local Plan = require("lalin.phase_plan")
 
-local T = pvm.context()
+local T = asdl.context()
 PhaseModel(T)
 PhaseDsl(T)
 local P = T.LalinPhase
@@ -79,7 +79,7 @@ return package "lalin.compiler" {
 
 local report = Plan.plan(pkg, "compile")
 assert(report.ok)
-assert(pvm.classof(report.plan) == P.Plan)
+assert(asdl.classof(report.plan) == P.Plan)
 assert(#report.plan.steps == 3)
 assert(report.plan.steps[1].phase.text == "typecheck")
 assert(report.input == "tree")

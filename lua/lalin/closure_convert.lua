@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function bind_context(T)
     local C = T.LalinCore
@@ -51,36 +51,36 @@ local function bind_context(T)
 
     local function rewrite_jump_args(xs)
         local out = {}
-        for i = 1, #(xs or {}) do out[i] = pvm.with(xs[i], { value = rewrite_expr(xs[i].value) }) end
+        for i = 1, #(xs or {}) do out[i] = asdl.with(xs[i], { value = rewrite_expr(xs[i].value) }) end
         return out
     end
 
     local function rewrite_view(view)
-        local cls = pvm.classof(view)
-        if cls == Tr.ViewFromExpr then return pvm.with(view, { base = rewrite_expr(view.base) }) end
-        if cls == Tr.ViewContiguous then return pvm.with(view, { data = rewrite_expr(view.data), len = rewrite_expr(view.len) }) end
-        if cls == Tr.ViewStrided then return pvm.with(view, { data = rewrite_expr(view.data), len = rewrite_expr(view.len), stride = rewrite_expr(view.stride) }) end
-        if cls == Tr.ViewRestrided then return pvm.with(view, { base = rewrite_view(view.base), stride = rewrite_expr(view.stride) }) end
-        if cls == Tr.ViewWindow then return pvm.with(view, { base = rewrite_view(view.base), start = rewrite_expr(view.start), len = rewrite_expr(view.len) }) end
-        if cls == Tr.ViewRowBase then return pvm.with(view, { base = rewrite_view(view.base), row_offset = rewrite_expr(view.row_offset) }) end
-        if cls == Tr.ViewInterleaved then return pvm.with(view, { data = rewrite_expr(view.data), len = rewrite_expr(view.len), stride = rewrite_expr(view.stride), lane = rewrite_expr(view.lane) }) end
-        if cls == Tr.ViewInterleavedView then return pvm.with(view, { base = rewrite_view(view.base), stride = rewrite_expr(view.stride), lane = rewrite_expr(view.lane) }) end
+        local cls = asdl.classof(view)
+        if cls == Tr.ViewFromExpr then return asdl.with(view, { base = rewrite_expr(view.base) }) end
+        if cls == Tr.ViewContiguous then return asdl.with(view, { data = rewrite_expr(view.data), len = rewrite_expr(view.len) }) end
+        if cls == Tr.ViewStrided then return asdl.with(view, { data = rewrite_expr(view.data), len = rewrite_expr(view.len), stride = rewrite_expr(view.stride) }) end
+        if cls == Tr.ViewRestrided then return asdl.with(view, { base = rewrite_view(view.base), stride = rewrite_expr(view.stride) }) end
+        if cls == Tr.ViewWindow then return asdl.with(view, { base = rewrite_view(view.base), start = rewrite_expr(view.start), len = rewrite_expr(view.len) }) end
+        if cls == Tr.ViewRowBase then return asdl.with(view, { base = rewrite_view(view.base), row_offset = rewrite_expr(view.row_offset) }) end
+        if cls == Tr.ViewInterleaved then return asdl.with(view, { data = rewrite_expr(view.data), len = rewrite_expr(view.len), stride = rewrite_expr(view.stride), lane = rewrite_expr(view.lane) }) end
+        if cls == Tr.ViewInterleavedView then return asdl.with(view, { base = rewrite_view(view.base), stride = rewrite_expr(view.stride), lane = rewrite_expr(view.lane) }) end
         return view
     end
 
     local function rewrite_index_base(base)
-        local cls = pvm.classof(base)
-        if cls == Tr.IndexBaseExpr then return pvm.with(base, { base = rewrite_expr(base.base) }) end
-        if cls == Tr.IndexBasePlace then return pvm.with(base, { base = rewrite_place(base.base) }) end
-        if cls == Tr.IndexBaseView then return pvm.with(base, { view = rewrite_view(base.view) }) end
+        local cls = asdl.classof(base)
+        if cls == Tr.IndexBaseExpr then return asdl.with(base, { base = rewrite_expr(base.base) }) end
+        if cls == Tr.IndexBasePlace then return asdl.with(base, { base = rewrite_place(base.base) }) end
+        if cls == Tr.IndexBaseView then return asdl.with(base, { view = rewrite_view(base.view) }) end
         return base
     end
 
     function rewrite_place(place)
-        local cls = pvm.classof(place)
-        if cls == Tr.PlaceDeref then return pvm.with(place, { base = rewrite_expr(place.base) }) end
-        if cls == Tr.PlaceDot or cls == Tr.PlaceField then return pvm.with(place, { base = rewrite_place(place.base) }) end
-        if cls == Tr.PlaceIndex then return pvm.with(place, { base = rewrite_index_base(place.base), index = rewrite_expr(place.index) }) end
+        local cls = asdl.classof(place)
+        if cls == Tr.PlaceDeref then return asdl.with(place, { base = rewrite_expr(place.base) }) end
+        if cls == Tr.PlaceDot or cls == Tr.PlaceField then return asdl.with(place, { base = rewrite_place(place.base) }) end
+        if cls == Tr.PlaceIndex then return asdl.with(place, { base = rewrite_index_base(place.base), index = rewrite_expr(place.index) }) end
         return place
     end
 
@@ -107,7 +107,7 @@ local function bind_context(T)
     end
 
     local function type_size_align(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Ty.TScalar then
             if ty.scalar == C.ScalarBool or ty.scalar == C.ScalarI8 or ty.scalar == C.ScalarU8 then return 1, 1 end
             if ty.scalar == C.ScalarI16 or ty.scalar == C.ScalarU16 then return 2, 2 end
@@ -151,8 +151,8 @@ local function bind_context(T)
     end
 
     local function collect_captures_expr(expr, locals, out, seen)
-        local cls = pvm.classof(expr)
-        if cls == Tr.ExprRef and pvm.classof(expr.ref) == B.ValueRefName then
+        local cls = asdl.classof(expr)
+        if cls == Tr.ExprRef and asdl.classof(expr.ref) == B.ValueRefName then
             local name = expr.ref.name
             if not locals[name] and not seen[name] then
                 local ty = scope_get(name)
@@ -181,22 +181,22 @@ local function bind_context(T)
     end
 
     collect_captures_place = function(place, locals, out, seen)
-        local cls = pvm.classof(place)
-        if cls == Tr.PlaceRef and pvm.classof(place.ref) == B.ValueRefName then collect_captures_expr(Tr.ExprRef(Tr.ExprSurface, place.ref), locals, out, seen)
+        local cls = asdl.classof(place)
+        if cls == Tr.PlaceRef and asdl.classof(place.ref) == B.ValueRefName then collect_captures_expr(Tr.ExprRef(Tr.ExprSurface, place.ref), locals, out, seen)
         elseif cls == Tr.PlaceDeref then collect_captures_expr(place.base, locals, out, seen)
         elseif cls == Tr.PlaceDot or cls == Tr.PlaceField then collect_captures_place(place.base, locals, out, seen)
         elseif cls == Tr.PlaceIndex then collect_captures_index_base(place.base, locals, out, seen); collect_captures_expr(place.index, locals, out, seen) end
     end
 
     collect_captures_index_base = function(base, locals, out, seen)
-        local cls = pvm.classof(base)
+        local cls = asdl.classof(base)
         if cls == Tr.IndexBaseExpr then collect_captures_expr(base.base, locals, out, seen)
         elseif cls == Tr.IndexBasePlace then collect_captures_place(base.base, locals, out, seen)
         elseif cls == Tr.IndexBaseView then collect_captures_view(base.view, locals, out, seen) end
     end
 
     collect_captures_view = function(view, locals, out, seen)
-        local cls = pvm.classof(view)
+        local cls = asdl.classof(view)
         if cls == Tr.ViewFromExpr then collect_captures_expr(view.base, locals, out, seen)
         elseif cls == Tr.ViewContiguous then collect_captures_expr(view.data, locals, out, seen); collect_captures_expr(view.len, locals, out, seen)
         elseif cls == Tr.ViewStrided then collect_captures_expr(view.data, locals, out, seen); collect_captures_expr(view.len, locals, out, seen); collect_captures_expr(view.stride, locals, out, seen)
@@ -211,7 +211,7 @@ local function bind_context(T)
     collect_captures_stmts = function(stmts, locals, out, seen)
         for i = 1, #(stmts or {}) do
             local stmt = stmts[i]
-            local cls = pvm.classof(stmt)
+            local cls = asdl.classof(stmt)
             if cls == Tr.StmtLet or cls == Tr.StmtVar then collect_captures_expr(stmt.init, locals, out, seen); locals[stmt.binding.name] = stmt.binding.ty
             elseif cls == Tr.StmtSet then collect_captures_place(stmt.place, locals, out, seen); collect_captures_expr(stmt.value, locals, out, seen)
             elseif cls == Tr.StmtExpr then collect_captures_expr(stmt.expr, locals, out, seen)
@@ -280,98 +280,98 @@ local function bind_context(T)
     end
 
     function rewrite_expr(expr)
-        local cls = pvm.classof(expr)
-        if cls == Tr.ExprRef and pvm.classof(expr.ref) == B.ValueRefName and state.capture_env ~= nil then
+        local cls = asdl.classof(expr)
+        if cls == Tr.ExprRef and asdl.classof(expr.ref) == B.ValueRefName and state.capture_env ~= nil then
             local cap = state.capture_env[expr.ref.name]
             if cap ~= nil and scope_get(expr.ref.name) == nil then return captured_load(cap) end
         end
         if cls == Tr.ExprCall then
             local callee = rewrite_expr(expr.callee)
             local args = rewrite_exprs(expr.args)
-            return pvm.with(expr, { callee = callee, args = args })
+            return asdl.with(expr, { callee = callee, args = args })
         end
-        if cls == Tr.ExprUnary or cls == Tr.ExprDeref or cls == Tr.ExprLen then return pvm.with(expr, { value = rewrite_expr(expr.value) }) end
-        if cls == Tr.ExprBinary or cls == Tr.ExprCompare or cls == Tr.ExprLogic then return pvm.with(expr, { lhs = rewrite_expr(expr.lhs), rhs = rewrite_expr(expr.rhs) }) end
-        if cls == Tr.ExprCast or cls == Tr.ExprMachineCast then return pvm.with(expr, { value = rewrite_expr(expr.value) }) end
-        if cls == Tr.ExprIntrinsic then return pvm.with(expr, { args = rewrite_exprs(expr.args) }) end
-        if cls == Tr.ExprAddrOf then return pvm.with(expr, { place = rewrite_place(expr.place) }) end
-        if cls == Tr.ExprField or cls == Tr.ExprDot then return pvm.with(expr, { base = rewrite_expr(expr.base) }) end
-        if cls == Tr.ExprIndex then return pvm.with(expr, { base = rewrite_index_base(expr.base), index = rewrite_expr(expr.index) }) end
-        if cls == Tr.ExprAgg then local fields = {}; for i = 1, #expr.fields do fields[i] = pvm.with(expr.fields[i], { value = rewrite_expr(expr.fields[i].value) }) end; return pvm.with(expr, { fields = fields }) end
-        if cls == Tr.ExprCtor then return pvm.with(expr, { args = rewrite_exprs(expr.args or {}) }) end
-        if cls == Tr.ExprArray then return pvm.with(expr, { elems = rewrite_exprs(expr.elems) }) end
-        if cls == Tr.ExprIf or cls == Tr.ExprSelect then return pvm.with(expr, { cond = rewrite_expr(expr.cond), then_expr = rewrite_expr(expr.then_expr), else_expr = rewrite_expr(expr.else_expr) }) end
-        if cls == Tr.ExprSwitch then local arms = {}; for i = 1, #expr.arms do arms[i] = pvm.with(expr.arms[i], { body = rewrite_stmts(expr.arms[i].body), result = rewrite_expr(expr.arms[i].result) }) end; local var_arms = {}; for i = 1, #(expr.variant_arms or {}) do var_arms[i] = pvm.with(expr.variant_arms[i], { body = rewrite_stmts(expr.variant_arms[i].body), result = rewrite_expr(expr.variant_arms[i].result) }) end; return pvm.with(expr, { value = rewrite_expr(expr.value), arms = arms, variant_arms = var_arms, default_body = rewrite_stmts(expr.default_body or {}), default_expr = rewrite_expr(expr.default_expr) }) end
-        if cls == Tr.ExprControl then return pvm.with(expr, { region = rewrite_control_expr_region(expr.region) }) end
-        if cls == Tr.ExprBlock then return pvm.with(expr, { stmts = rewrite_stmts(expr.stmts), result = rewrite_expr(expr.result) }) end
+        if cls == Tr.ExprUnary or cls == Tr.ExprDeref or cls == Tr.ExprLen then return asdl.with(expr, { value = rewrite_expr(expr.value) }) end
+        if cls == Tr.ExprBinary or cls == Tr.ExprCompare or cls == Tr.ExprLogic then return asdl.with(expr, { lhs = rewrite_expr(expr.lhs), rhs = rewrite_expr(expr.rhs) }) end
+        if cls == Tr.ExprCast or cls == Tr.ExprMachineCast then return asdl.with(expr, { value = rewrite_expr(expr.value) }) end
+        if cls == Tr.ExprIntrinsic then return asdl.with(expr, { args = rewrite_exprs(expr.args) }) end
+        if cls == Tr.ExprAddrOf then return asdl.with(expr, { place = rewrite_place(expr.place) }) end
+        if cls == Tr.ExprField or cls == Tr.ExprDot then return asdl.with(expr, { base = rewrite_expr(expr.base) }) end
+        if cls == Tr.ExprIndex then return asdl.with(expr, { base = rewrite_index_base(expr.base), index = rewrite_expr(expr.index) }) end
+        if cls == Tr.ExprAgg then local fields = {}; for i = 1, #expr.fields do fields[i] = asdl.with(expr.fields[i], { value = rewrite_expr(expr.fields[i].value) }) end; return asdl.with(expr, { fields = fields }) end
+        if cls == Tr.ExprCtor then return asdl.with(expr, { args = rewrite_exprs(expr.args or {}) }) end
+        if cls == Tr.ExprArray then return asdl.with(expr, { elems = rewrite_exprs(expr.elems) }) end
+        if cls == Tr.ExprIf or cls == Tr.ExprSelect then return asdl.with(expr, { cond = rewrite_expr(expr.cond), then_expr = rewrite_expr(expr.then_expr), else_expr = rewrite_expr(expr.else_expr) }) end
+        if cls == Tr.ExprSwitch then local arms = {}; for i = 1, #expr.arms do arms[i] = asdl.with(expr.arms[i], { body = rewrite_stmts(expr.arms[i].body), result = rewrite_expr(expr.arms[i].result) }) end; local var_arms = {}; for i = 1, #(expr.variant_arms or {}) do var_arms[i] = asdl.with(expr.variant_arms[i], { body = rewrite_stmts(expr.variant_arms[i].body), result = rewrite_expr(expr.variant_arms[i].result) }) end; return asdl.with(expr, { value = rewrite_expr(expr.value), arms = arms, variant_arms = var_arms, default_body = rewrite_stmts(expr.default_body or {}), default_expr = rewrite_expr(expr.default_expr) }) end
+        if cls == Tr.ExprControl then return asdl.with(expr, { region = rewrite_control_expr_region(expr.region) }) end
+        if cls == Tr.ExprBlock then return asdl.with(expr, { stmts = rewrite_stmts(expr.stmts), result = rewrite_expr(expr.result) }) end
         if cls == Tr.ExprClosure then return descriptor_for_closure(expr) end
-        if cls == Tr.ExprView then return pvm.with(expr, { view = rewrite_view(expr.view) }) end
-        if cls == Tr.ExprLoad or cls == Tr.ExprAtomicLoad then return pvm.with(expr, { addr = rewrite_expr(expr.addr) }) end
-        if cls == Tr.ExprAtomicRmw then return pvm.with(expr, { addr = rewrite_expr(expr.addr), value = rewrite_expr(expr.value) }) end
-        if cls == Tr.ExprAtomicCas then return pvm.with(expr, { addr = rewrite_expr(expr.addr), expected = rewrite_expr(expr.expected), replacement = rewrite_expr(expr.replacement) }) end
+        if cls == Tr.ExprView then return asdl.with(expr, { view = rewrite_view(expr.view) }) end
+        if cls == Tr.ExprLoad or cls == Tr.ExprAtomicLoad then return asdl.with(expr, { addr = rewrite_expr(expr.addr) }) end
+        if cls == Tr.ExprAtomicRmw then return asdl.with(expr, { addr = rewrite_expr(expr.addr), value = rewrite_expr(expr.value) }) end
+        if cls == Tr.ExprAtomicCas then return asdl.with(expr, { addr = rewrite_expr(expr.addr), expected = rewrite_expr(expr.expected), replacement = rewrite_expr(expr.replacement) }) end
         return expr
     end
 
     function rewrite_control_stmt_region(region)
         local blocks = {}
-        for i = 1, #region.blocks do blocks[i] = pvm.with(region.blocks[i], { body = rewrite_stmts(region.blocks[i].body) }) end
+        for i = 1, #region.blocks do blocks[i] = asdl.with(region.blocks[i], { body = rewrite_stmts(region.blocks[i].body) }) end
         local entry_params = {}
-        for i = 1, #region.entry.params do entry_params[i] = pvm.with(region.entry.params[i], { init = rewrite_expr(region.entry.params[i].init) }) end
-        local entry = pvm.with(region.entry, { params = entry_params, body = rewrite_stmts(region.entry.body) })
-        return pvm.with(region, { entry = entry, blocks = blocks })
+        for i = 1, #region.entry.params do entry_params[i] = asdl.with(region.entry.params[i], { init = rewrite_expr(region.entry.params[i].init) }) end
+        local entry = asdl.with(region.entry, { params = entry_params, body = rewrite_stmts(region.entry.body) })
+        return asdl.with(region, { entry = entry, blocks = blocks })
     end
 
     function rewrite_control_expr_region(region)
         local blocks = {}
-        for i = 1, #region.blocks do blocks[i] = pvm.with(region.blocks[i], { body = rewrite_stmts(region.blocks[i].body) }) end
+        for i = 1, #region.blocks do blocks[i] = asdl.with(region.blocks[i], { body = rewrite_stmts(region.blocks[i].body) }) end
         local entry_params = {}
-        for i = 1, #region.entry.params do entry_params[i] = pvm.with(region.entry.params[i], { init = rewrite_expr(region.entry.params[i].init) }) end
-        local entry = pvm.with(region.entry, { params = entry_params, body = rewrite_stmts(region.entry.body) })
-        return pvm.with(region, { entry = entry, blocks = blocks })
+        for i = 1, #region.entry.params do entry_params[i] = asdl.with(region.entry.params[i], { init = rewrite_expr(region.entry.params[i].init) }) end
+        local entry = asdl.with(region.entry, { params = entry_params, body = rewrite_stmts(region.entry.body) })
+        return asdl.with(region, { entry = entry, blocks = blocks })
     end
 
     function rewrite_stmt(stmt)
-        local cls = pvm.classof(stmt)
+        local cls = asdl.classof(stmt)
         if cls == Tr.StmtLet or cls == Tr.StmtVar then
-            local out = pvm.with(stmt, { init = rewrite_expr(stmt.init) })
+            local out = asdl.with(stmt, { init = rewrite_expr(stmt.init) })
             if #state.scopes > 0 then state.scopes[#state.scopes][stmt.binding.name] = stmt.binding.ty end
             return out
         end
-        if cls == Tr.StmtSet then return pvm.with(stmt, { place = rewrite_place(stmt.place), value = rewrite_expr(stmt.value) }) end
-        if cls == Tr.StmtAtomicStore then return pvm.with(stmt, { addr = rewrite_expr(stmt.addr), value = rewrite_expr(stmt.value) }) end
-        if cls == Tr.StmtExpr then return pvm.with(stmt, { expr = rewrite_expr(stmt.expr) }) end
-        if cls == Tr.StmtAssert then return pvm.with(stmt, { cond = rewrite_expr(stmt.cond) }) end
-        if cls == Tr.StmtIf then return pvm.with(stmt, { cond = rewrite_expr(stmt.cond), then_body = rewrite_stmts(stmt.then_body), else_body = rewrite_stmts(stmt.else_body) }) end
-        if cls == Tr.StmtSwitch then local arms = {}; for i = 1, #stmt.arms do arms[i] = pvm.with(stmt.arms[i], { body = rewrite_stmts(stmt.arms[i].body) }) end; local var_arms = {}; for i = 1, #(stmt.variant_arms or {}) do var_arms[i] = pvm.with(stmt.variant_arms[i], { body = rewrite_stmts(stmt.variant_arms[i].body) }) end; return pvm.with(stmt, { value = rewrite_expr(stmt.value), arms = arms, variant_arms = var_arms, default_body = rewrite_stmts(stmt.default_body or {}) }) end
-        if cls == Tr.StmtJump or cls == Tr.StmtJumpCont then return pvm.with(stmt, { args = rewrite_jump_args(stmt.args) }) end
-        if cls == Tr.StmtYieldValue then return pvm.with(stmt, { value = rewrite_expr(stmt.value) }) end
-        if cls == Tr.StmtReturnValue then return pvm.with(stmt, { value = rewrite_expr(stmt.value) }) end
-        if cls == Tr.StmtControl then return pvm.with(stmt, { region = rewrite_control_stmt_region(stmt.region) }) end
+        if cls == Tr.StmtSet then return asdl.with(stmt, { place = rewrite_place(stmt.place), value = rewrite_expr(stmt.value) }) end
+        if cls == Tr.StmtAtomicStore then return asdl.with(stmt, { addr = rewrite_expr(stmt.addr), value = rewrite_expr(stmt.value) }) end
+        if cls == Tr.StmtExpr then return asdl.with(stmt, { expr = rewrite_expr(stmt.expr) }) end
+        if cls == Tr.StmtAssert then return asdl.with(stmt, { cond = rewrite_expr(stmt.cond) }) end
+        if cls == Tr.StmtIf then return asdl.with(stmt, { cond = rewrite_expr(stmt.cond), then_body = rewrite_stmts(stmt.then_body), else_body = rewrite_stmts(stmt.else_body) }) end
+        if cls == Tr.StmtSwitch then local arms = {}; for i = 1, #stmt.arms do arms[i] = asdl.with(stmt.arms[i], { body = rewrite_stmts(stmt.arms[i].body) }) end; local var_arms = {}; for i = 1, #(stmt.variant_arms or {}) do var_arms[i] = asdl.with(stmt.variant_arms[i], { body = rewrite_stmts(stmt.variant_arms[i].body) }) end; return asdl.with(stmt, { value = rewrite_expr(stmt.value), arms = arms, variant_arms = var_arms, default_body = rewrite_stmts(stmt.default_body or {}) }) end
+        if cls == Tr.StmtJump or cls == Tr.StmtJumpCont then return asdl.with(stmt, { args = rewrite_jump_args(stmt.args) }) end
+        if cls == Tr.StmtYieldValue then return asdl.with(stmt, { value = rewrite_expr(stmt.value) }) end
+        if cls == Tr.StmtReturnValue then return asdl.with(stmt, { value = rewrite_expr(stmt.value) }) end
+        if cls == Tr.StmtControl then return asdl.with(stmt, { region = rewrite_control_stmt_region(stmt.region) }) end
         return stmt
     end
 
     function rewrite_func(func)
         local old_owner = state.owner
-        local cls = pvm.classof(func)
+        local cls = asdl.classof(func)
         if cls == Tr.FuncLocal or cls == Tr.FuncExport or cls == Tr.FuncLocalContract or cls == Tr.FuncExportContract then state.owner = func.name end
         push_scope(params_scope(func.params or {}))
-        local out = pvm.with(func, { body = rewrite_stmts(func.body) })
+        local out = asdl.with(func, { body = rewrite_stmts(func.body) })
         pop_scope()
         state.owner = old_owner
         return out
     end
 
     function rewrite_item(item)
-        local cls = pvm.classof(item)
-        if cls == Tr.ItemFunc then return pvm.with(item, { func = rewrite_func(item.func) }) end
-        if cls == Tr.ItemConst then return pvm.with(item, { c = pvm.with(item.c, { value = rewrite_expr(item.c.value) }) }) end
-        if cls == Tr.ItemStatic then return pvm.with(item, { s = pvm.with(item.s, { value = rewrite_expr(item.s.value) }) }) end
+        local cls = asdl.classof(item)
+        if cls == Tr.ItemFunc then return asdl.with(item, { func = rewrite_func(item.func) }) end
+        if cls == Tr.ItemConst then return asdl.with(item, { c = asdl.with(item.c, { value = rewrite_expr(item.c.value) }) }) end
+        if cls == Tr.ItemStatic then return asdl.with(item, { s = asdl.with(item.s, { value = rewrite_expr(item.s.value) }) }) end
         return item
     end
 
     local function module_name(module)
         local h = module.h
-        local cls = pvm.classof(h)
+        local cls = asdl.classof(h)
         if cls == Tr.ModuleTyped or cls == Tr.ModuleSem or cls == Tr.ModuleCode then return h.module_name end
         return ""
     end
@@ -386,7 +386,7 @@ local function bind_context(T)
             for j = before + 1, #state.helpers do items[#items + 1] = state.helpers[j] end
             items[#items + 1] = rewritten
         end
-        local out = pvm.with(module, { items = items })
+        local out = asdl.with(module, { items = items })
         state = previous
         return out
     end

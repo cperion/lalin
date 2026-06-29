@@ -6,6 +6,12 @@ bootstrap language: heads, roles, fragments, namespaces, origins, diagnostics,
 formatting, indexing, dialect extension, and generic regions. Lalin is the compiled
 language dialect that lowers typed programs into LuaJIT copy+residual artifacts.
 
+Before continuing the PVM hard-yank or compiler method rewrite, read
+`docs/PVM_HARD_YANK_CHECKLIST.md`, especially `Non-Negotiable Rewrite Doctrine`.
+Those rules are binding: ASDL reasoning first, leaf ASDL methods own semantics,
+no class/kind/action dispatch, no generic context bags, and no compatibility
+shims.
+
 LLBL bootstraps itself in plain Lua. `lua/llbl.lua` is the stage-0 kernel;
 `lua/llbl/bootstrap.lua` defines the stage-1 `llbl` dialect and installs the
 public `llbl.grammar` facade. The preserved stage-0 grammar is
@@ -124,7 +130,7 @@ Useful focused checks:
 luajit tests/code_ir/test_copy_patch_bc.lua
 luajit tests/code_ir/test_luajit_backend_bc.lua
 luajit tests/code_ir/test_copy_patch_luatrace.lua
-luajit tests/pvm/test_compiler_driver.lua
+luajit tests/compiler_process/test_compiler_driver.lua
 ```
 
 ## Architecture

@@ -1,7 +1,7 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function class_name(value)
-    local cls = pvm.classof(value) or value
+    local cls = asdl.classof(value) or value
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -46,14 +46,14 @@ local function bind_context(T)
     end
 
     local function field_name(field)
-        local cls = pvm.classof(field)
+        local cls = asdl.classof(field)
         if cls == T.LalinSem.FieldByName or cls == T.LalinSem.FieldByOffset then return field.field_name end
         return "field"
     end
 
     local place
     place = function(ctx, p)
-        local cls = pvm.classof(p)
+        local cls = asdl.classof(p)
         if cls == Code.CodePlaceLocal then
             return LJ.LJPlaceLocal(local_id(p.local_id), physical(ctx, p.ty))
         elseif cls == Code.CodePlaceGlobal then
@@ -73,7 +73,7 @@ local function bind_context(T)
     end
 
     local function const_expr(ctx, const)
-        local cls = pvm.classof(const)
+        local cls = asdl.classof(const)
         if cls == Code.CodeConstLiteral then
             return LJ.LJExprLiteral(const.literal, physical(ctx, const.ty))
         elseif cls == Code.CodeConstNull then
@@ -86,8 +86,8 @@ local function bind_context(T)
 
     local function view_type(ctx, view)
         local ty = value_type(ctx, view)
-        if pvm.classof(ty) == Code.CodeTyLease then ty = ty.base end
-        if pvm.classof(ty) ~= Code.CodeTyView then
+        if asdl.classof(ty) == Code.CodeTyLease then ty = ty.base end
+        if asdl.classof(ty) ~= Code.CodeTyView then
             error("luajit_expr: expected view type for " .. tostring(view.text), 3)
         end
         return ty
@@ -107,8 +107,8 @@ local function bind_context(T)
 
     local function slice_type(ctx, slice)
         local ty = value_type(ctx, slice)
-        if pvm.classof(ty) == Code.CodeTyLease then ty = ty.base end
-        if pvm.classof(ty) ~= Code.CodeTySlice then
+        if asdl.classof(ty) == Code.CodeTyLease then ty = ty.base end
+        if asdl.classof(ty) ~= Code.CodeTySlice then
             error("luajit_expr: expected slice type for " .. tostring(slice.text), 3)
         end
         return ty
@@ -143,7 +143,7 @@ local function bind_context(T)
     end
 
     local function call_target(ctx, target)
-        local cls = pvm.classof(target)
+        local cls = asdl.classof(target)
         if cls == Code.CodeCallDirect then return LJ.LJCallDirect(LJ.LJFuncId(target.func.text)) end
         if cls == Code.CodeCallExtern then return LJ.LJCallExtern(target["extern"].text) end
         if cls == Code.CodeCallIndirect then return LJ.LJCallIndirect(value_expr(target.callee), LJ.LJFuncSigId(target.sig.text)) end
@@ -152,7 +152,7 @@ local function bind_context(T)
     end
 
     local function inst_expr(ctx, k)
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeInstConst then
             return const_expr(ctx, k.const), k.const.ty
         elseif cls == Code.CodeInstAlias then
@@ -244,7 +244,7 @@ local function bind_context(T)
 
     local function inst_to_stmt(ctx, inst)
         local k = inst.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeInstStore then
             return LJ.LJStmtStore(place(ctx, k.place), value_expr(k.value), physical(ctx, k.access.ty), k.access)
         elseif cls == Code.CodeInstCall and k.dst == nil then

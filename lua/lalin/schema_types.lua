@@ -11,13 +11,13 @@
 --
 -- Type values use LalinType.TNamed so they work with or without a runtime session.
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local M = {}
 
 -- ── Context ─────────────────────────────────────────────────────────────────────
 
-local ctx = pvm.context()
+local ctx = asdl.context()
 require("lalin.schema_projection")(ctx)
 
 local A      = ctx.LalinAsdl
@@ -41,7 +41,7 @@ for _, mod in ipairs(schema.modules or {}) do
     local mt = {}
     M.tags[mod.name] = mt
     for _, decl in ipairs(mod.decls or {}) do
-        if pvm.classof(decl) == A.SumDecl then
+        if asdl.classof(decl) == A.SumDecl then
             for vi, v in ipairs(decl.variants or {}) do
                 mt[decl.name .. "_" .. v.name] = vi - 1
             end
@@ -56,7 +56,7 @@ for _, mod in ipairs(schema.modules or {}) do
     local mt = {}
     M.types[mod.name] = mt
     for _, decl in ipairs(mod.decls or {}) do
-        local cls = pvm.classof(decl)
+        local cls = asdl.classof(decl)
         if cls == A.ProductDecl or cls == A.SumDecl then
             local name = fname(mod.name, decl.name)
             mt[decl.name] = {

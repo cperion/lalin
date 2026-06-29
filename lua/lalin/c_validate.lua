@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
@@ -23,7 +23,7 @@ local function bind_context(T)
 
     local function type_eq(a, b, seen)
         if a == b then return true end
-        local ac, bc = pvm.classof(a), pvm.classof(b)
+        local ac, bc = asdl.classof(a), asdl.classof(b)
         if ac ~= bc then
             if ac == C.CBackendArray and bc == C.CBackendDataPtr then return b.pointee == nil or type_eq(a.elem, b.pointee, seen) end
             if ac == C.CBackendDataPtr and bc == C.CBackendArray then return a.pointee == nil or type_eq(a.pointee, b.elem, seen) end
@@ -43,10 +43,10 @@ local function bind_context(T)
         for i = 1, #fields do
             local name = fields[i].name
             local av, bv = a[name], b[name]
-            if type(av) == "table" and pvm.classof(av) == nil then
+            if type(av) == "table" and asdl.classof(av) == nil then
                 if type(bv) ~= "table" or #av ~= #bv then return false end
                 for j = 1, #av do if not type_eq(av[j], bv[j], seen) then return false end end
-            elseif type(av) == "table" and pvm.classof(av) ~= nil then
+            elseif type(av) == "table" and asdl.classof(av) ~= nil then
                 if not type_eq(av, bv, seen) then return false end
             else
                 if av ~= bv then return false end
@@ -75,7 +75,7 @@ local function bind_context(T)
     end
 
     local function type_size(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if ty == C.CBackendBool8 or cls == C.CBackendBool8 then return 1 end
         if ty == C.CBackendIndex or cls == C.CBackendIndex then return 8 end
         if cls == C.CBackendScalar then return scalar_size(ty.scalar) end
@@ -84,7 +84,7 @@ local function bind_context(T)
     end
 
     local function data_init_size(init)
-        local cls = pvm.classof(init)
+        local cls = asdl.classof(init)
         if cls == C.CBackendDataZero then return init.size end
         if cls == C.CBackendDataBytes then return #init.bytes end
         if cls == C.CBackendDataScalar then return type_size(init.ty) end
@@ -136,8 +136,8 @@ local function bind_context(T)
                 local off = init.offset or 0
                 local sz = data_init_size(init)
                 if off < 0 or off + sz > g.size then add_issue(issues, collector, C.CBackendIssueDataInitOutOfBounds(g.id, off, sz, g.size)) end
-                if pvm.classof(init) == C.CBackendDataReloc then
-                    local tcls = pvm.classof(init.target)
+                if asdl.classof(init) == C.CBackendDataReloc then
+                    local tcls = asdl.classof(init.target)
                     if tcls == C.CBackendRelocGlobal and globals[init.target.global.text] == nil then
                         add_issue(issues, collector, C.CBackendIssueMissingGlobal(init.target.global))
                     elseif tcls == C.CBackendRelocFunc and funcs[init.target.func.text] == nil then
@@ -161,14 +161,14 @@ local function bind_context(T)
 
         local function func_blocks(func)
             local body = assert(func.body, "CBackendFunc requires body")
-            local cls = pvm.classof(body)
+            local cls = asdl.classof(body)
             if cls == C.CBackendBodyBlocks or cls == C.CBackendBodyMixed then return body.blocks end
             if cls == C.CBackendBodyExec then return {} end
             error("c_validate: unknown CBackendFunc body", 2)
         end
 
         local function atom_type(atom, locals)
-            local cls = pvm.classof(atom)
+            local cls = asdl.classof(atom)
             if cls == C.CBackendAtomLocal then return locals[atom.local_id.text] end
             if cls == C.CBackendAtomGlobal then local g = globals[atom.global.text]; return g and g.ty or nil end
             if cls == C.CBackendAtomLiteral or cls == C.CBackendAtomNull then return atom.ty end
@@ -178,7 +178,7 @@ local function bind_context(T)
         local place_type
 
         local function check_atom(atom, func, locals, initialized)
-            local cls = pvm.classof(atom)
+            local cls = asdl.classof(atom)
             if cls == C.CBackendAtomLocal then
                 if locals[atom.local_id.text] == nil then add_issue(issues, collector, C.CBackendIssueMissingLocal(func.name, atom.local_id))
                 elseif initialized ~= nil and initialized[atom.local_id.text] == false then add_issue(issues, collector, C.CBackendIssueUninitializedLocal(func.name, atom.local_id)) end
@@ -186,7 +186,7 @@ local function bind_context(T)
         end
 
         local function rvalue_type(rv, func, locals, initialized)
-            local cls = pvm.classof(rv)
+            local cls = asdl.classof(rv)
             if cls == C.CBackendRAtom then check_atom(rv.atom, func, locals, initialized); return atom_type(rv.atom, locals)
             elseif cls == C.CBackendRCompare then check_atom(rv.lhs, func, locals, initialized); check_atom(rv.rhs, func, locals, initialized); return C.CBackendBool8
             elseif cls == C.CBackendRCast then check_atom(rv.value, func, locals, initialized); return rv.to
@@ -209,7 +209,7 @@ local function bind_context(T)
             if dst ~= nil then
                 local dty = locals[dst.text]
                 if dty and not type_eq(dty, sig.result) then add_issue(issues, collector, C.CBackendIssueCallResultType(site, sig.id, sig.result, dty)) end
-            elseif sig.result ~= C.CBackendVoid and pvm.classof(sig.result) ~= C.CBackendVoid then
+            elseif sig.result ~= C.CBackendVoid and asdl.classof(sig.result) ~= C.CBackendVoid then
                 add_issue(issues, collector, C.CBackendIssueCallResultType(site, sig.id, sig.result, C.CBackendVoid))
             end
         end
@@ -235,7 +235,7 @@ local function bind_context(T)
                     add_issue(issues, collector, C.CBackendIssueCallArgType("exec:" .. tostring(arg.name), sig and sig.id or C.CBackendFuncSigId("<exec>"), a, arg.ty, aty))
                 end
             end
-            local rcls = pvm.classof(site.result)
+            local rcls = asdl.classof(site.result)
             if rcls == C.CBackendExecResultLocal then
                 local dty = locals[site.result.dst.text]
                 if dty == nil then
@@ -259,7 +259,7 @@ local function bind_context(T)
         end
 
         place_type = function(p, func, locals)
-            local cls = pvm.classof(p)
+            local cls = asdl.classof(p)
             if cls == C.CBackendPlaceLocal then
                 if locals[p.local_id.text] == nil then add_issue(issues, collector, C.CBackendIssueMissingLocal(func.name, p.local_id)) end
                 return p.ty
@@ -285,20 +285,20 @@ local function bind_context(T)
         end
 
         local function helper_requires_c11_atomic(kind)
-            local cls = pvm.classof(kind)
+            local cls = asdl.classof(kind)
             return cls == C.CBackendHelperAtomicLoad or cls == C.CBackendHelperAtomicStore or cls == C.CBackendHelperAtomicRmw or cls == C.CBackendHelperAtomicCas or cls == C.CBackendHelperAtomicFence
         end
 
         local function target_has_c11_atomics(target)
             if target == nil then return false end
-            local dcls = pvm.classof(target.dialect)
+            local dcls = asdl.classof(target.dialect)
             return target.dialect == C.CBackendC11 or target.dialect == C.CBackendGnuC or target.dialect == C.CBackendClangC
                 or dcls == C.CBackendC11 or dcls == C.CBackendGnuC or dcls == C.CBackendClangC
         end
 
         for i = 1, #unit.types do
             local td = unit.types[i]
-            local cls = pvm.classof(td)
+            local cls = asdl.classof(td)
             if (cls == C.CBackendStructDecl or cls == C.CBackendUnionDecl) and (td.size == nil or td.align == nil) then
                 add_issue(issues, collector, C.CBackendIssueLayoutAssertionMissing(td.id))
             end
@@ -309,7 +309,7 @@ local function bind_context(T)
 
         for i = 1, #unit.helpers do
             local kind = unit.helpers[i].kind
-            local kcls = pvm.classof(kind)
+            local kcls = asdl.classof(kind)
             if helper_requires_c11_atomic(kind) and not target_has_c11_atomics(unit.target) then
                 add_issue(issues, collector, C.CBackendIssueInvalidTargetFeature(C.CBackendFeatureC11Atomics, "atomic helper requires C11 atomics or runtime provider"))
             elseif kcls == C.CBackendHelperRequireFeature then
@@ -335,12 +335,12 @@ local function bind_context(T)
                 if locals[l.id.text] then add_issue(issues, collector, C.CBackendIssueDuplicateLocal(func.name, l.id)) end
                 locals[l.id.text] = l.ty
             end
-            local body_cls = pvm.classof(func.body)
+            local body_cls = asdl.classof(func.body)
             if body_cls == C.CBackendBodyExec then
                 local initialized = {}
                 for _, p in ipairs(func.params) do initialized[p.id.text] = true end
                 for id, rec in pairs(storage_by_func[func.name.text] or {}) do
-                    local icls = pvm.classof(rec.init_state)
+                    local icls = asdl.classof(rec.init_state)
                     initialized[id] = not (rec.init_state == C.CBackendLocalUninitialized or icls == C.CBackendLocalUninitialized)
                 end
                 check_exec_site(func, sig, locals, initialized, func.body.fragment)
@@ -348,7 +348,7 @@ local function bind_context(T)
                 local initialized = {}
                 for _, p in ipairs(func.params) do initialized[p.id.text] = true end
                 for id, rec in pairs(storage_by_func[func.name.text] or {}) do
-                    local icls = pvm.classof(rec.init_state)
+                    local icls = asdl.classof(rec.init_state)
                     initialized[id] = not (rec.init_state == C.CBackendLocalUninitialized or icls == C.CBackendLocalUninitialized)
                 end
                 for _, site in ipairs(func.body.fragments or {}) do
@@ -364,7 +364,7 @@ local function bind_context(T)
             end
             local storage = storage_by_func[func.name.text] or {}
             for _, rec in pairs(storage) do
-                local rcls = pvm.classof(rec.residence)
+                local rcls = asdl.classof(rec.residence)
                 if rec.address_taken and (rec.residence == C.CBackendResidenceValue or rcls == C.CBackendResidenceValue) then
                     add_issue(issues, collector, C.CBackendIssueUnmaterializedAddressTakenValue(func.name, rec.id))
                 end
@@ -375,13 +375,13 @@ local function bind_context(T)
                 for _, p in ipairs(func.params) do initialized[p.id.text] = true end
                 for _, bp in ipairs(b.params) do initialized[bp.local_id.text] = true end
                 for id, rec in pairs(storage) do
-                    local icls = pvm.classof(rec.init_state)
+                    local icls = asdl.classof(rec.init_state)
                     initialized[id] = not (rec.init_state == C.CBackendLocalUninitialized or icls == C.CBackendLocalUninitialized)
                 end
                 local function mark_init(id) if id ~= nil then initialized[id.text] = true end end
                 for k = 1, #b.stmts do
                     local s = b.stmts[k]
-                    local cls = pvm.classof(s)
+                    local cls = asdl.classof(s)
                     if cls == C.CBackendAssign then
                         if locals[s.dst.text] == nil then add_issue(issues, collector, C.CBackendIssueMissingLocal(func.name, s.dst)) end
                         local rty = rvalue_type(s.rhs, func, locals, initialized)
@@ -424,24 +424,24 @@ local function bind_context(T)
                         check_atom(s.value, func, locals, initialized)
                         local vty = atom_type(s.value, locals)
                         if pty ~= nil and vty ~= nil and not type_eq(pty, vty) then add_issue(issues, collector, C.CBackendIssuePlaceTypeMismatch("place-store", s.place, pty, vty)) end
-                        if pvm.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place.local_id) end
+                        if asdl.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place.local_id) end
                     elseif cls == C.CBackendZeroInit then
                         local pty = place_type(s.place, func, locals)
                         if pty ~= nil and not type_eq(pty, s.ty) then add_issue(issues, collector, C.CBackendIssuePlaceTypeMismatch("zero-init", s.place, s.ty, pty)) end
-                        if pvm.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place.local_id) end
+                        if asdl.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place.local_id) end
                     elseif cls == C.CBackendAggregateInit then
                         local pty = place_type(s.place, func, locals)
                         if pty ~= nil and not type_eq(pty, s.ty) then add_issue(issues, collector, C.CBackendIssuePlaceTypeMismatch("aggregate-init", s.place, s.ty, pty)) end
                         for a = 1, #s.fields do check_atom(s.fields[a].value, func, locals, initialized) end
-                        if pvm.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place.local_id) end
+                        if asdl.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place.local_id) end
                     elseif cls == C.CBackendArrayInit then
                         local pty = place_type(s.place, func, locals)
                         if pty ~= nil and not type_eq(pty, s.ty) then add_issue(issues, collector, C.CBackendIssuePlaceTypeMismatch("array-init", s.place, s.ty, pty)) end
                         for a = 1, #s.elems do if s.elems[a].index < 0 then add_issue(issues, collector, C.CBackendIssueLoadStoreTypeMismatch("array-init-index", C.CBackendIndex, C.CBackendVoid)) end; check_atom(s.elems[a].value, func, locals, initialized) end
-                        if pvm.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place.local_id) end
+                        if asdl.classof(s.place) == C.CBackendPlaceLocal then mark_init(s.place.local_id) end
                     elseif cls == C.CBackendCall then
                         for a = 1, #s.args do check_atom(s.args[a], func, locals, initialized) end
-                        local tcls = pvm.classof(s.target)
+                        local tcls = asdl.classof(s.target)
                         if tcls == C.CBackendCallDirect then
                             local tf = funcs[s.target.func.text]
                             if not tf then add_issue(issues, collector, C.CBackendIssueMissingFunc(s.target.func)) else check_call_sig("call:" .. s.target.func.text, sigs[tf.sig.text], s.args, s.dst, s.target.func, locals) end
@@ -451,13 +451,13 @@ local function bind_context(T)
                         elseif tcls == C.CBackendCallIndirect then
                             check_atom(s.target.callee, func, locals)
                             local cty = atom_type(s.target.callee, locals)
-                            if not cty or pvm.classof(cty) ~= C.CBackendCodePtr then add_issue(issues, collector, C.CBackendIssueIndirectCallNonCodePtr("indirect", cty or C.CBackendVoid))
+                            if not cty or asdl.classof(cty) ~= C.CBackendCodePtr then add_issue(issues, collector, C.CBackendIssueIndirectCallNonCodePtr("indirect", cty or C.CBackendVoid))
                             elseif cty.sig.text ~= s.target.sig.text then add_issue(issues, collector, C.CBackendIssueDataCodePtrConfusion("indirect", cty)) end
                             check_call_sig("indirect", sigs[s.target.sig.text], s.args, s.dst, nil, locals)
                         elseif tcls == C.CBackendCallClosure then
                             check_atom(s.target.closure, func, locals)
                             local cty = atom_type(s.target.closure, locals)
-                            if not cty or pvm.classof(cty) ~= C.CBackendClosureDescriptor then
+                            if not cty or asdl.classof(cty) ~= C.CBackendClosureDescriptor then
                                 add_issue(issues, collector, C.CBackendIssueIndirectCallNonCodePtr("closure", cty or C.CBackendVoid))
                             end
                             check_call_sig("closure", sigs[s.target.sig.text], s.args, s.dst, nil, locals)
@@ -466,7 +466,7 @@ local function bind_context(T)
                     end
                 end
                 local t = b.term
-                local tcls = pvm.classof(t)
+                local tcls = asdl.classof(t)
                 if tcls == C.CBackendGoto then check_transfer(func, labels, locals, t.dest, t.args)
                 elseif tcls == C.CBackendIfGoto then check_atom(t.cond, func, locals, initialized); check_transfer(func, labels, locals, t.then_dest, t.then_args); check_transfer(func, labels, locals, t.else_dest, t.else_args)
                 elseif tcls == C.CBackendSwitchGoto then

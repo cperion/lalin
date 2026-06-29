@@ -1,7 +1,7 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function class_name(x)
-    local cls = pvm.classof(x) or x
+    local cls = asdl.classof(x) or x
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -19,7 +19,7 @@ local function bind_context(T)
     local function type_info(ty)
         if ty == Code.CodeTyBool8 then return { class = "bool", bits = 8, signed = false, scalar = Back.BackBool } end
         if ty == Code.CodeTyIndex then return { class = "index", bits = 64, signed = false, scalar = Back.BackIndex } end
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then
             local signed = ty.signedness == Code.CodeSigned
             local scalar
@@ -167,12 +167,12 @@ local function bind_context(T)
     end
 
     function api.literal_identity_raw(expr)
-        if pvm.classof(expr) ~= Value.ValueExprConst then return nil end
+        if asdl.classof(expr) ~= Value.ValueExprConst then return nil end
         local k = expr.const or expr.value
-        if pvm.classof(k) ~= Code.CodeConstLiteral then return nil end
+        if asdl.classof(k) ~= Code.CodeConstLiteral then return nil end
         local lit = k.literal or k.value
-        if pvm.classof(lit) == Core.LitInt or pvm.classof(lit) == Core.LitFloat then return tostring(lit.raw or lit.text) end
-        if pvm.classof(lit) == Core.LitBool then return lit.value and "1" or "0" end
+        if asdl.classof(lit) == Core.LitInt or asdl.classof(lit) == Core.LitFloat then return tostring(lit.raw or lit.text) end
+        if asdl.classof(lit) == Core.LitBool then return lit.value and "1" or "0" end
         return nil
     end
 

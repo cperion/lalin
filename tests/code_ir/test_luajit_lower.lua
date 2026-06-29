@@ -2,10 +2,10 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local ffi = require("ffi")
 local bit = require("bit")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
 
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 
 local Core = T.LalinCore
@@ -133,13 +133,13 @@ assert(#facts.value.reductions == 1, "CodeValueFacts should derive one reduction
 
 local kplan
 for _, plan in ipairs(facts.kernel.plans or {}) do
-    if pvm.classof(plan) == Kernel.KernelPlanned then kplan = plan end
+    if asdl.classof(plan) == Kernel.KernelPlanned then kplan = plan end
 end
 assert(kplan ~= nil, "CodeKernelPlan should produce a planned loop kernel")
 
 local fn = lj_module.funcs[1]
-assert(pvm.classof(fn.body) == LJ.LJBodyMachine, "kernel reduction should lower to a LuaJIT machine body")
-assert(pvm.classof(fn.machines[1].kind) == LJ.LJMachineStencilCall, "planned reduction should lower to a stencil call")
+assert(asdl.classof(fn.body) == LJ.LJBodyMachine, "kernel reduction should lower to a LuaJIT machine body")
+assert(asdl.classof(fn.machines[1].kind) == LJ.LJMachineStencilCall, "planned reduction should lower to a stencil call")
 assert(#artifacts == 1, "planned reduction should produce one C stencil artifact")
 
 local bank, bank_err = Backend.build_mc_bank(artifacts, { stem = "test_luajit_lower" })
@@ -217,7 +217,7 @@ do
         stencil_skeleton_artifact_for = function() return nil end,
     })
     assert(#map_rejects == 0, "original-control map loop should fall back without stencil reject: " .. tostring(map_rejects[1] and map_rejects[1].reason))
-    assert(pvm.classof(map_lj.funcs[1].body) == LJ.LJBodyBlocks, "original-control map loop should keep block body")
+    assert(asdl.classof(map_lj.funcs[1].body) == LJ.LJBodyBlocks, "original-control map loop should keep block body")
 end
 
 local add_sig = Code.CodeSigId("sig:add")
@@ -247,7 +247,7 @@ local add_func = Code.CodeFunc(
 )
 local add_module = Code.CodeModule(Code.CodeModuleId("module:luajit_lower_add"), { Code.CodeSig(add_sig, { i32, i32 }, { i32 }) }, {}, {}, {}, {}, { add_func }, origin)
 local add_lj = Lower.lower_module(add_module)
-assert(pvm.classof(add_lj.funcs[1].body) == LJ.LJBodyBlocks, "non-kernel function should lower through block fallback")
+assert(asdl.classof(add_lj.funcs[1].body) == LJ.LJBodyBlocks, "non-kernel function should lower through block fallback")
 local add_compiled, add_err, add_src = Emit.compile_module(add_lj, { chunk_name = "test_luajit_lower_add" })
 assert(add_compiled ~= nil, tostring(add_err) .. "\n" .. tostring(add_src))
 assert(add_compiled.add(12, 30) == 42)

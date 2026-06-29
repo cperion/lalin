@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local schema_context = require("lalin.schema_context")
 
 local M = {}
@@ -89,7 +89,7 @@ function M.Define(T)
     return T
 end
 
-M.T = M.Define(pvm.context())
+M.T = M.Define(asdl.context())
 M.B = M.T:FastBuilders()
 
 return M

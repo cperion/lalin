@@ -1,7 +1,7 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function class_name(x)
-    local cls = pvm.classof(x) or x
+    local cls = asdl.classof(x) or x
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -28,7 +28,7 @@ local function bind_context(T)
     local function access_proofs(mem)
         local by_access = {}
         for _, proof in ipairs(mem and mem.proofs or {}) do
-            local cls = pvm.classof(proof)
+            local cls = asdl.classof(proof)
             if cls == Mem.MemProofBackend then by_access[proof.access.text] = proof end
             if cls == Mem.MemProofInterval then by_access[proof.interval.access.text] = proof end
         end
@@ -53,7 +53,7 @@ local function bind_context(T)
 
     local function contract_facts(contracts)
         if contracts == nil then return {} end
-        if pvm.classof(contracts) == Code.CodeContractFactSet then return contracts.facts or {} end
+        if asdl.classof(contracts) == Code.CodeContractFactSet then return contracts.facts or {} end
         return contracts
     end
 
@@ -61,7 +61,7 @@ local function bind_context(T)
         local out = {}
         for _, f in ipairs(contract_facts(contracts)) do
             local k = f.fact
-            local cls = pvm.classof(k)
+            local cls = asdl.classof(k)
             local effects = out[f.func.text]
             if effects == nil then effects = {}; out[f.func.text] = effects end
             local proof = Mem.MemProofContract(f, "contract normalized into explicit effect fact")
@@ -89,13 +89,13 @@ local function bind_context(T)
             local ok = true
             for _, block in ipairs(func.blocks or {}) do
                 for _, inst in ipairs(block.insts or {}) do
-                    local cls = pvm.classof(inst.kind)
+                    local cls = asdl.classof(inst.kind)
                     if cls == Code.CodeInstLoad or cls == Code.CodeInstStore or cls == Code.CodeInstAtomicLoad or cls == Code.CodeInstAtomicStore
                         or cls == Code.CodeInstAtomicRmw or cls == Code.CodeInstAtomicCas or cls == Code.CodeInstAtomicFence or cls == Code.CodeInstCall then
                         ok = false
                     end
                 end
-                local tcls = pvm.classof(block.term and block.term.kind or nil)
+                local tcls = asdl.classof(block.term and block.term.kind or nil)
                 if tcls == Code.CodeTermTrap or tcls == Code.CodeTermUnreachable then ok = false end
             end
             if ok then pure[func.id.text] = true end
@@ -104,7 +104,7 @@ local function bind_context(T)
     end
 
     local function call_summary(module, target, contracts, pure_funcs)
-        local cls = pvm.classof(target)
+        local cls = asdl.classof(target)
         if cls == Code.CodeCallDirect then
             if pure_funcs and pure_funcs[target.func.text] then
                 return Effect.CallSummary(target.func, nil, { Effect.EffectNoTrap("direct internal callee has no memory/call/trap effects") })
@@ -132,7 +132,7 @@ local function bind_context(T)
             for _, block in ipairs(func.blocks or {}) do
                 for _, inst in ipairs(block.insts or {}) do
                     local k = inst.kind
-                    local cls = pvm.classof(k)
+                    local cls = asdl.classof(k)
                     local effects = {}
                     if cls == Code.CodeInstLoad or cls == Code.CodeInstStore or cls == Code.CodeInstAtomicLoad or cls == Code.CodeInstAtomicStore or cls == Code.CodeInstAtomicRmw or cls == Code.CodeInstAtomicCas then
                         local aid = access_id_text(func, block, inst)
@@ -146,7 +146,7 @@ local function bind_context(T)
                             effects[#effects + 1] = Effect.EffectWrite(eobj, proof)
                         end
                         local backend = backend_by_access[aid]
-                        if backend ~= nil and pvm.classof(backend.trap) == Mem.MemNonTrapping then
+                        if backend ~= nil and asdl.classof(backend.trap) == Mem.MemNonTrapping then
                             effects[#effects + 1] = Effect.EffectNoTrap(backend.trap.reason or "memory backend info proves non-trapping")
                         elseif k.access.trap == Code.CodeMustNotTrap then
                             effects[#effects + 1] = Effect.EffectNoTrap("Code memory access is marked must-not-trap")
@@ -177,7 +177,7 @@ local function bind_context(T)
             if effects ~= nil and #effects > 0 then terms[#terms + 1] = Effect.TermEffect(func.entry, effects) end
             for _, block in ipairs(func.blocks or {}) do
                 local term = block.term and block.term.kind or nil
-                local cls = pvm.classof(term)
+                local cls = asdl.classof(term)
                 if cls == Code.CodeTermTrap then
                     terms[#terms + 1] = Effect.TermEffect(block.id, { Effect.EffectMayTrap(term.reason or "explicit trap terminator") })
                 elseif cls == Code.CodeTermUnreachable then

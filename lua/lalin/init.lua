@@ -19,7 +19,7 @@
 
 local M = {}
 
-M.pvm = require("lalin.pvm")
+M.asdl = require("lalin.asdl")
 M.triplet = require("lalin.triplet")
 M.schema_context = require("lalin.schema_context")
 M.schema_projection_model = require("lalin.schema_projection_model")
@@ -283,7 +283,7 @@ local function schema_diagnostics(value, bag, opts, language)
     end
     if #modules > 0 then
         local ok, err = pcall(function()
-            local T = opts and opts.context or M.pvm.context()
+            local T = opts and opts.context or M.asdl.context()
             schema_dsl.to_asdl_schema(T, modules)
         end)
         if not ok then family_add_error(bag, err, value, "E_SCHEMA_PROJECTION") end
@@ -612,14 +612,14 @@ function M.require(name, opts)
 end
 
 local function module_ast_from(value, name)
-    local pvm = require("lalin.pvm")
-    local ok, cls = pcall(pvm.classof, value)
+    local asdl = require("lalin.asdl")
+    local ok, cls = pcall(asdl.classof, value)
     if ok and cls and tostring(cls) == "Class(LalinTree.Module)" then return value end
     local parsed_decls = parsed_decls_from(value)
     if parsed_decls then return M.syntax.to_module(parsed_decls, name) end
     if type(value) == "table" and type(value.ast) == "function" then
         local ast = value:ast()
-        local ast_ok, ast_cls = pcall(pvm.classof, ast)
+        local ast_ok, ast_cls = pcall(asdl.classof, ast)
         if ast_ok and ast_cls and tostring(ast_cls) == "Class(LalinTree.Module)" then return ast end
         local unit = M.dsl.to_unit(name or "Unit", value)
         if type(unit.ast) == "function" then return unit:ast() end
@@ -716,11 +716,11 @@ function prepare_luajit_artifact(decl, name, opts)
         return s
     end
 
-    local pvm = require("lalin.pvm")
+    local asdl = require("lalin.asdl")
     local A2 = require("lalin.schema_projection")
     local module_ast = module_ast_from(decl, name)
-    local cls = pvm.classof(module_ast)
-    local T = (cls and rawget(cls, "__context")) or pvm.context()
+    local cls = asdl.classof(module_ast)
+    local T = (cls and rawget(cls, "__context")) or asdl.context()
     if T.LalinCompiler == nil or T.LalinLuaJIT == nil or T.LalinStencil == nil then A2(T) end
 
     local Pipeline = require("lalin.frontend_pipeline")(T)
@@ -801,12 +801,6 @@ function M.emit_luajit_plan_artifact(plan, path_or_opts, name, opts)
         path = path,
         chunk_name = opts.chunk_name or name,
         residual = plan.residual,
-        allow_bc_fallback = opts.allow_bc_fallback,
-        collect_warnings = opts.collect_warnings,
-        on_warning = opts.on_warning,
-        warn = opts.warn,
-        silent_warnings = opts.silent_warnings,
-        quiet = opts.quiet,
         native_residual = opts.native_residual,
         tcc_residual = opts.tcc_residual,
         install_policy = opts.install_policy,
@@ -837,7 +831,6 @@ function M.emit_luajit_plan_artifact(plan, path_or_opts, name, opts)
         bc_bank = backend_artifact.residual == "bc" and (opts.bc_bank or backend_artifact.selected_bc_bank) or nil,
         residual = backend_artifact.residual or plan.residual,
         requested_residual = plan.residual,
-        warnings = opts.collect_warnings,
     }
     function artifact:write(write_path)
         write_path = write_path or self.path
@@ -884,7 +877,7 @@ function M.compile_c(decl, opts)
 end
 
 function M.context(opts)
-    return M.pvm.context(opts)
+    return M.asdl.context(opts)
 end
 
 local function bind_context(T)

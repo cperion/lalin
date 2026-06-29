@@ -4,7 +4,7 @@
 -- plan -> execute. The hosted frontend pipeline is just the implementation of
 -- the current compiler machine, not the public entrypoint.
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local CompilerPackage = require("lalin.compiler_package")
 local PhasePlan = require("lalin.phase_plan")
 local PhaseExecute = require("lalin.phase_execute")
@@ -15,10 +15,10 @@ function M.lower_module(module, opts)
     opts = opts or {}
     local T = opts.context
     if T == nil then
-        local cls = pvm.classof(module)
+        local cls = asdl.classof(module)
         T = cls and rawget(cls, "__context")
     end
-    T = T or pvm.context()
+    T = T or asdl.context()
 
     local package = CompilerPackage(T)
     local planned = PhasePlan.assert_plan(package, opts.root or "compile")

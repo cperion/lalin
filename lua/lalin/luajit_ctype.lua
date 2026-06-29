@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function sanitize(text)
     text = tostring(text or "x"):gsub("[^%w_]", "_")
@@ -8,7 +8,7 @@ local function sanitize(text)
 end
 
 local function class_name(value)
-    local cls = pvm.classof(value) or value
+    local cls = asdl.classof(value) or value
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -47,7 +47,7 @@ local function bind_context(T)
         if ty == Code.CodeTyVoid then return "void" end
         if ty == Code.CodeTyBool8 then return "bool8" end
         if ty == Code.CodeTyIndex then return "index" end
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then return (ty.signedness == Code.CodeSigned and "i" or "u") .. tostring(ty.bits) end
         if cls == Code.CodeTyFloat then return "f" .. tostring(ty.bits) end
         if cls == Code.CodeTyDataPtr then return "ptr_" .. code_type_key(ty.pointee) end
@@ -109,7 +109,7 @@ local function bind_context(T)
         if ty == Code.CodeTyVoid then return Back.BackVoid end
         if ty == Code.CodeTyBool8 then return Back.BackBool end
         if ty == Code.CodeTyIndex then return Back.BackIndex end
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then
             if ty.bits == 8 then return ty.signedness == Code.CodeSigned and Back.BackI8 or Back.BackU8 end
             if ty.bits == 16 then return ty.signedness == Code.CodeSigned and Back.BackI16 or Back.BackU16 end
@@ -126,7 +126,7 @@ local function bind_context(T)
     local physical_type
 
     local function ctype_spelling(ctype, ctx)
-        local cls = pvm.classof(ctype)
+        local cls = asdl.classof(ctype)
         if ctype == LJ.LJCTypeVoid then return "void" end
         if ctype == LJ.LJCTypeBool then return "bool" end
         if cls == LJ.LJCTypeScalar then return ctype.spelling end
@@ -152,7 +152,7 @@ local function bind_context(T)
     end
 
     local function remember_decl(ctx, decl)
-        local key = pvm.classof(decl) == LJ.LJCDeclRaw and ("raw:" .. decl.source) or decl.id.text
+        local key = asdl.classof(decl) == LJ.LJCDeclRaw and ("raw:" .. decl.source) or decl.id.text
         return remember(ctx, "lj_cdefs", "lj_cdef_order", key, decl)
     end
 
@@ -172,11 +172,11 @@ local function bind_context(T)
         if ctx == nil or ctx.layout_env == nil then return nil end
         local source_ref = ty.source_ty and ty.source_ty.ref
         for _, layout in ipairs(ctx.layout_env.layouts or {}) do
-            local cls = pvm.classof(layout)
+            local cls = asdl.classof(layout)
             if cls == Sem.LayoutNamed and layout.module_name == ty.module_name and layout.type_name == ty.type_name then
                 return layout
             end
-            if cls == Sem.LayoutNamed and pvm.classof(source_ref) == Ty.TypeRefGlobal
+            if cls == Sem.LayoutNamed and asdl.classof(source_ref) == Ty.TypeRefGlobal
                 and layout.module_name == source_ref.module_name and layout.type_name == source_ref.type_name then
                 return layout
             end
@@ -248,7 +248,7 @@ local function bind_context(T)
         local scalar = code_scalar(ty)
         if scalar ~= nil then return scalar_ctype(scalar) end
 
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyDataPtr then
             return LJ.LJCTypePointer(ty.pointee and ctype_for_code_type(ty.pointee, ctx) or nil, true)
         end
@@ -308,7 +308,7 @@ local function bind_context(T)
         local scalar = code_scalar(ty)
         if scalar ~= nil then return scalar_physical(ty, scalar) end
 
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyDataPtr or cls == Code.CodeTyCodePtr or cls == Code.CodeTyImportedCFuncPtr then
             local cty = ctype_for_code_type(ty, ctx)
             return LJ.LJPhysicalType(ty, LJ.LJRegCData(cty), cty, cty)

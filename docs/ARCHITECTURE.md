@@ -12,6 +12,44 @@ artifacts.
 
 The main path is intentionally small:
 
+## Current Compiler Architecture
+
+The compiler is split into four ownership layers:
+
+- `lalin.asdl` is the minimal runtime for schema contexts, class lookup,
+  immutable structural updates, required-method checks, and triplet helpers. It is
+  not a phase/cache runtime and does not expose `phase`.
+- ASDL classes own typed semantic behavior through ordinary Lua methods assigned
+  directly to schema class tables. Missing required methods are compiler bugs
+  reported with the source class and operation name.
+- A semantic method is not a selector. It must implement the operation for that
+  concrete class and return the operation's real result. Methods that only
+  return `kind`, handler keys, relation names, or other dispatch tokens preserve
+  the old rule-table architecture and are not allowed.
+- Semantic methods do not take a generic `ctx` bag by convention. They take only
+  the typed, well-named semantic products they actually need, and take no extra
+  argument when none is needed. State changes are represented by returned typed
+  products, not by mutating a catch-all context.
+- Compiler drivers and compiler-process modules sequence stages, allocate
+  context, collect diagnostics, and pass typed products between stages. They do
+  not own per-class semantics.
+- Backends operate on explicit ASDL facts, plans, and IR. Backend artifact
+  selection is represented in typed plans/results, not hidden fallback control
+  flow.
+
+Semantic methods are plain Lua methods on schema-generated classes:
+
+```lua
+local T = require("lalin.asdl").context()
+require("lalin.schema")(T)
+
+function T.LalinTree.ExprBinary:typecheck_tree_expr(type_env)
+  -- node-specific semantics live here
+end
+
+return node:typecheck_tree_expr(type_env)
+```
+
 ## Two authoring paths
 
 Lalin has two surfaces that converge on the same ASDL:
@@ -120,8 +158,8 @@ LalinTree.Module
 │    │    → mmap executable memory         │
 │    │    → (optional) TCC residual glue   │
 │    │                                     │
-│    └─ BC fallback path:                  │
-│       residual_luatrace.lua            │
+│    └─ explicit BC path:                  │
+│       residual_luatrace.lua              │
 │         → LuaJIT BC stencil tables       │
 │         → inline Lua data with BC patches│
 └─────────────────────────────────────────┘
@@ -181,13 +219,11 @@ On the default MC-first path:
 8. loadstring(source) → chunk() → module table
    module.add(3, 4) → runs scalar LuaJIT code or installed native stencils
 
-If the MC bank is missing, stale, or cannot materialize and BC fallback is allowed:
+If the MC bank is missing, stale, or cannot materialize, MC materialization fails
+with an explicit diagnostic. The BC materializer is selected only by
+`residual = "bc"`.
 
-6. Backend builds a BC bank from the same canonical artifacts
-   → residual_luatrace generates LuaJIT bytecode stencil tables
-   → BC fallback bank built on the fly with a warning
-
-7. At load time:
+In explicit BC mode:
    - BC stencil bytecode is loaded
    - LuaJIT function definitions call BC stencils
 
@@ -208,11 +244,20 @@ If the MC bank is missing, stale, or cannot materialize and BC fallback is allow
 
 ### Frontend / Typecheck
 
+Migrated LalinTree semantics live on ASDL classes as ordinary Lua methods.
+Concrete union members own their own behavior; rewritten code must not use
+`schema.classof(x) == Variant`, `kind` strings, or selector tables to choose
+semantic behavior. When the method API needs more schema support, add it to
+ASDL first; nullary variants also receive methods directly with normal
+`function Module.Variant:operation(...) ... end` syntax.
+
 | File | Role |
 |------|------|
 | `lua/lalin/frontend_pipeline.lua` | Orchestrates DSL→Tree→Typecheck→Code pipeline. Entry points: `typecheck_module`, `checked_to_code_result`, `code_result_to_back`, `code_result_to_c`. |
-| `lua/lalin/tree_typecheck.lua` | Full LalinTree typechecker — walks expressions, statements, functions, regions, modules. |
-| `lua/lalin/tree_typecheck_rules.lua` | Rule dispatch for statement/expression typechecking. |
+| `lua/lalin/tree_typecheck.lua` | Typecheck entrypoint and remaining stage orchestration while LalinTree methods are being split out. |
+| `lua/lalin/tree_type_methods.lua` | Type-owned typecheck semantics for `LalinType` and literals. |
+| `lua/lalin/tree_expr_methods.lua` | Expression/ref-owned typecheck semantics for `LalinTree.Expr*` and `LalinBind.ValueRef*`. |
+| `lua/lalin/tree_layout_methods.lua` | Layout/ref matching semantics for `LalinSem.TypeLayout*` and `LalinType.TypeRef*`. |
 | `lua/lalin/tree_expr_type.lua` | Expression type inference. |
 | `lua/lalin/tree_stmt_type.lua` | Statement-level type operations (termination, etc.). |
 | `lua/lalin/tree_place_type.lua` | Place (lvalue) type inference. |
@@ -289,12 +334,12 @@ If the MC bank is missing, stale, or cannot materialize and BC fallback is allow
 | `lua/lalin/c_abi.lua` | C ABI classification — how types are passed/returned. |
 | `lua/lalin/c_coverage.lua` | Coverage tracking — marks unimplemented C backend constructs. |
 
-### Compiler Driver & Phases
+### Compiler Process
 
 | File | Role |
 |------|------|
-| `lua/lalin/compiler_driver.lua` | Public orchestration boundary — lowers modules through phase graph. |
-| `lua/lalin/compiler_package.lua` | Defines the compiler as a `LalinPhase` package with worlds, machines, phases, roots. |
+| `lua/lalin/compiler_driver.lua` | Public orchestration boundary — lowers modules through the compiler-process graph. |
+| `lua/lalin/compiler_package.lua` | Defines the compiler process as a `LalinPhase` package with worlds, machines, phases, roots. `LalinPhase` is process vocabulary, not the removed PVM recording runtime. |
 | `lua/lalin/compiler_machines.lua` | Concrete machine implementations (typecheck, checked→c_code, code→c). |
 | `lua/lalin/compiler_model.lua` | Loads full schema into a context. |
 | `lua/lalin/compiler_abi.lua` | CodeResult ABI validation. |
@@ -390,7 +435,7 @@ the ASDL types for that domain:
 | `mem.lua` | MemObject, MemAccess, MemInterval, MemAccessPattern, MemModuleFacts |
 | `effect.lua` | OpEffect, EffectModuleFacts |
 | `kernel.lua` | KernelSubject, KernelDomain, KernelLane, KernelPlan, KernelReject, KernelModulePlan |
-| `stencil.lua` | StencilArtifact, StencilPlan, StencilVocab, StencilLayout, StencilModulePlan |
+| `stencil.lua` | StencilArtifact, StencilPlan, StencilSinkVocab, StencilLayout, StencilModulePlan |
 | `schedule.lua` | KernelSchedule, ScheduleKind, ScheduleModulePlan |
 | `lower.lua` | LowerFragment, LowerStrategy, LowerModulePlan |
 | `exec.lua` | ExecFragment, ExecFragmentKind, ExecModulePlan |
@@ -416,7 +461,7 @@ the ASDL types for that domain:
 ## Two Copy-Patch Materialization Paths
 
 These are the LuaJIT-hosted executable paths. Lua remains the loader and FFI
-host; hot stencil bodies are materialized as MC bank blobs or bytecode fallback
+host; hot stencil bodies are materialized as MC bank blobs or explicit bytecode
 artifacts.
 
 ### MC Path (prebuilt, fast)
@@ -449,9 +494,8 @@ RUNTIME / ARTIFACT EMISSION (emit_luajit_artifact):
 
 The public MC path consumes an MCStencilBank. It does not invoke `gcc` from the
 normal runtime compile path. Use `build_mc_bank` from an explicit prebuild step
-or supply an externally generated/embedded bank through `mc_bank`. Set
-`allow_bc_fallback = false` to make missing-bank or materialization failures hard
-errors.
+or supply an externally generated/embedded bank through `mc_bank`. Missing-bank
+or materialization failures are hard errors.
 
 **Key facts**:
 - Compiler: `gcc` (or `$CC`), default flags `-std=c99 -O3 -march=native -c`
@@ -460,7 +504,7 @@ errors.
   binary for prebuilt banks
 - TCC role: none for stencils; only for optional residual glue
 
-### BC Path (explicit bytecode path, fallback for MC)
+### BC Path (explicit bytecode path)
 
 ```
 Canonical stencil artifacts
@@ -676,7 +720,7 @@ The backend has two materialization paths, selected by `opts.residual`:
 | Path | Default for | Compiler needed | Build time |
 |------|-------------|-----------------|-----------|
 | `residual = "mc"` | `lalin.compile()`, `emit_luajit_artifact()` | `gcc` (or `$CC`) with `-O3 -march=native` | Explicit prebuild only |
-| `residual = "bc"` | Explicit bytecode mode and MC fallback | None | On the fly at runtime |
+| `residual = "bc"` | Explicit bytecode mode | None | On the fly at runtime |
 
 The two paths share the same stencil planning pipeline and differ only in
 materialization strategy.
@@ -719,23 +763,22 @@ It is compiled by **libtcc** (in-memory, in-process, no external process):
 
 ### BC Path (`residual_bc`)
 
-The BC path is the bytecode semantic path and fallback/probe surface:
+The BC path is the explicit bytecode semantic path and probe surface:
 
 - LuaTrace lowering emits trusted LuaJIT-shaped functions from typed stencil
   plans.
 - The BC bank stores exact compiled prototypes with artifact fingerprints.
 - Materialization loads the selected bytecode entry without bytecode holes.
 - No external compiler needed — the BC bank is built on the fly at runtime.
-- `lalin.compile()` defaults to MC and falls back to this path with a warning
-  when MC materialization is unavailable.
+- `lalin.compile()` defaults to MC. This path is used only when selected with
+  `residual = "bc"`.
 
 ### Ground rules
 
 Artifact emission is plan → selected stencil artifacts → supplied MC bank →
 optional residual glue. If the MC bank is missing or materialization fails,
-default materialization falls back to `residual_bc` with a warning. Set
-`allow_bc_fallback = false` to make that failure a hard error.
-The explicit `residual = "bc"` path may build a local bytecode bank because
+default materialization fails. The explicit `residual = "bc"` path may build a
+local bytecode bank because
 BC is the semantic artifact itself.
 
 The backend must consume semantic facts honestly:

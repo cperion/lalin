@@ -6,7 +6,7 @@
 -- call steps.
 
 local llbl = require("llbl")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local PhaseModel = require("lalin.phase_model")
 local PhaseValidate = require("lalin.phase_validate")
 
@@ -24,10 +24,10 @@ local function maybe_id_text(id)
 end
 
 local function phase_namespace(package)
-    local cls = pvm.classof(package)
+    local cls = asdl.classof(package)
     local ctx = cls and rawget(cls, "__context")
     if ctx and ctx.LalinPhase and ctx.LalinPhase.Plan then return ctx.LalinPhase end
-    local T = pvm.context()
+    local T = asdl.context()
     PhaseModel(T)
     return T.LalinPhase
 end

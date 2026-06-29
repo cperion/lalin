@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
@@ -13,7 +13,7 @@ local function bind_context(T)
     local api = {}
 
     local function class_name(x)
-        local cls = pvm.classof(x) or x
+        local cls = asdl.classof(x) or x
         return tostring(cls):match("Class%((.-)%)") or tostring(cls)
     end
 
@@ -61,7 +61,7 @@ local function bind_context(T)
     local is_cdata_reg
 
     local function literal(lit)
-        local cls = pvm.classof(lit)
+        local cls = asdl.classof(lit)
         if cls == Core.LitInt or cls == Core.LitFloat then return tostring(lit.raw) end
         if cls == Core.LitBool then return lit.value and "true" or "false" end
         if lit == Core.LitNil or cls == Core.LitNil then return "nil" end
@@ -70,8 +70,8 @@ local function bind_context(T)
     end
 
     local function literal_expr(e)
-        local cls = pvm.classof(e.literal)
-        if cls == Core.LitInt and is_cdata_reg(e.ty) and pvm.classof(e.ty.storage) == LJ.LJCTypeScalar then
+        local cls = asdl.classof(e.literal)
+        if cls == Core.LitInt and is_cdata_reg(e.ty) and asdl.classof(e.ty.storage) == LJ.LJCTypeScalar then
             local scalar = e.ty.storage.scalar
             if scalar == Back.BackI64 then return tostring(e.literal.raw) .. "LL" end
             if scalar == Back.BackU64 then return tostring(e.literal.raw) .. "ULL" end
@@ -80,7 +80,7 @@ local function bind_context(T)
     end
 
     local function ctype_spelling(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if ty == LJ.LJCTypeVoid then return "void" end
         if ty == LJ.LJCTypeBool then return "bool" end
         if cls == LJ.LJCTypeScalar then return ty.spelling end
@@ -94,7 +94,7 @@ local function bind_context(T)
     end
 
     local function global_ref_expr(ref)
-        local cls = pvm.classof(ref)
+        local cls = asdl.classof(ref)
         if cls == Code.CodeGlobalRefFunc then return func_ref_name(ref.func) end
         if cls == Code.CodeGlobalRefData then return data_name(ref.data) end
         unsupported(ref, "global reference")
@@ -109,7 +109,7 @@ local function bind_context(T)
     local function data_bytes(data)
         local bytes = string.rep("\0", tonumber(data.size or 0) or 0)
         for _, init in ipairs(data.inits or {}) do
-            local cls = pvm.classof(init)
+            local cls = asdl.classof(init)
             if cls == Code.CodeDataZero then
                 bytes = overlay_bytes(bytes, init.offset, string.rep("\0", tonumber(init.size or 0) or 0))
             elseif cls == Code.CodeDataBytes then
@@ -122,7 +122,7 @@ local function bind_context(T)
     end
 
     local function emit_cdecl(decl)
-        local cls = pvm.classof(decl)
+        local cls = asdl.classof(decl)
         if cls == LJ.LJCDeclRaw then return decl.source end
         if cls == LJ.LJCDeclTypedef then
             return "typedef " .. ctype_spelling(decl.ty) .. " " .. decl.spelling .. ";"
@@ -165,11 +165,11 @@ local function bind_context(T)
     }
 
     local function is_trace_int(phys)
-        return pvm.classof(phys and phys.register) == LJ.LJRegTraceInt32
+        return asdl.classof(phys and phys.register) == LJ.LJRegTraceInt32
     end
 
     function is_cdata_reg(phys)
-        return pvm.classof(phys and phys.register) == LJ.LJRegCData
+        return asdl.classof(phys and phys.register) == LJ.LJRegCData
     end
 
     local expr
@@ -230,7 +230,7 @@ local function bind_context(T)
         if is_trace_int(e.to) then return "bit.tobit(" .. value .. ")" end
         if e.to.register == LJ.LJRegLuaNumber then return "tonumber(" .. value .. ")" end
         if is_cdata_reg(e.to) then
-            if pvm.classof(e.to.storage) == LJ.LJCTypePointer then
+            if asdl.classof(e.to.storage) == LJ.LJCTypePointer then
                 return "((type(" .. value .. ") == 'table') and " .. value .. " or ffi.cast(" .. lua_string(ctype_spelling(e.to.storage)) .. ", " .. value .. "))"
             end
             return "ffi.cast(" .. lua_string(ctype_spelling(e.to.storage)) .. ", " .. value .. ")"
@@ -239,7 +239,7 @@ local function bind_context(T)
     end
 
     local function record_expr(e)
-        local cls = pvm.classof(e.ty.storage)
+        local cls = asdl.classof(e.ty.storage)
         local spelling = tostring(e.ty.storage and e.ty.storage.spelling or "")
         local closure_record = spelling:match("lj_closure_") ~= nil
         local parts = {}
@@ -260,12 +260,12 @@ local function bind_context(T)
     end
 
     place_expr = function(p)
-        local cls = pvm.classof(p)
+        local cls = asdl.classof(p)
         if cls == LJ.LJPlaceLocal then return id_name(p.local_id) end
         if cls == LJ.LJPlaceDeref then return "(" .. expr(p.addr) .. ")[0]" end
         if cls == LJ.LJPlaceField then return "(" .. place_expr(p.base) .. ")." .. sanitize(p.name) end
         if cls == LJ.LJPlaceIndex then
-            if pvm.classof(p.base) == LJ.LJPlaceDeref then
+            if asdl.classof(p.base) == LJ.LJPlaceDeref then
                 return "(" .. expr(p.base.addr) .. ")[" .. expr(p.index) .. "]"
             end
             local base = place_expr(p.base)
@@ -295,7 +295,7 @@ local function bind_context(T)
     end
 
     local function call_target_expr(target, args)
-        local cls = pvm.classof(target)
+        local cls = asdl.classof(target)
         if cls == LJ.LJCallDirect then return func_ref_name(target.func) .. "(" .. table.concat(args, ", ") .. ")" end
         if cls == LJ.LJCallExtern then return "ffi.C." .. sanitize(target.extern_name) .. "(" .. table.concat(args, ", ") .. ")" end
         if cls == LJ.LJCallIndirect then return expr(target.callee) .. "(" .. table.concat(args, ", ") .. ")" end
@@ -315,7 +315,7 @@ local function bind_context(T)
     end
 
     expr = function(e)
-        local cls = pvm.classof(e)
+        local cls = asdl.classof(e)
         if cls == LJ.LJExprValue then return id_name(e.value) end
         if cls == LJ.LJExprLiteral then return literal_expr(e) end
         if cls == LJ.LJExprUnary then
@@ -353,7 +353,7 @@ local function bind_context(T)
     end
 
     local function emit_stmt(out, n, stmt)
-        local cls = pvm.classof(stmt)
+        local cls = asdl.classof(stmt)
         if cls == LJ.LJStmtLet then
             line(out, n, "local " .. id_name(stmt.dst) .. " = " .. expr(stmt.expr))
         elseif cls == LJ.LJStmtStore then
@@ -389,7 +389,7 @@ local function bind_context(T)
         local seen = {}
         for _, b in ipairs(body.blocks or {}) do
             for _, stmt in ipairs(b.stmts or {}) do
-                if pvm.classof(stmt) == LJ.LJStmtStore and pvm.classof(stmt.place) == LJ.LJPlaceLocal then
+                if asdl.classof(stmt) == LJ.LJStmtStore and asdl.classof(stmt.place) == LJ.LJPlaceLocal then
                     local name = id_name(stmt.place.local_id)
                     if not seen[name] then
                         seen[name] = true
@@ -402,7 +402,7 @@ local function bind_context(T)
     end
 
     local function emit_term(out, n, term, block_by_id)
-        local cls = pvm.classof(term)
+        local cls = asdl.classof(term)
         if cls == LJ.LJTermReturn then
             local values = {}
             for i = 1, #term.values do values[i] = expr(term.values[i]) end
@@ -477,7 +477,7 @@ local function bind_context(T)
 
     local function trace_int_reg(phys)
         local reg = phys and phys.register
-        if pvm.classof(reg) == LJ.LJRegTraceInt32 then return reg end
+        if asdl.classof(reg) == LJ.LJRegTraceInt32 then return reg end
         return nil
     end
 
@@ -615,7 +615,7 @@ local function bind_context(T)
         local m = machines[machine_id.text]
         if m == nil then error("luajit_emit: missing machine " .. tostring(machine_id.text), 3) end
         local k = m.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == LJ.LJMachineSourceArray then
             local arr = id_name(k.array)
             local len = k.length and expr(k.length) or ("#" .. arr)
@@ -646,8 +646,8 @@ local function bind_context(T)
         elseif cls == LJ.LJMachineFold then
             local source = machines[k.input.text]
             local source_kind = source and source.kind
-            local source_cls = pvm.classof(source_kind)
-            local step_cls = pvm.classof(k.step)
+            local source_cls = asdl.classof(source_kind)
+            local step_cls = asdl.classof(k.step)
             local sem_ok = step_cls == LJ.LJExprIntBinary
             local reduction = step_cls == LJ.LJExprIntBinary and (
                 k.step.op == Core.BinAdd and Value.ReductionAdd
@@ -659,7 +659,7 @@ local function bind_context(T)
             local support_ok = false
             if sem_ok and reduction ~= nil then support_ok = fold_reduce_support(reduction, k.step.semantics, k.step.ty, k.step.ty) end
             local function is_value(e, id)
-                return pvm.classof(e) == LJ.LJExprValue and e.value == id
+                return asdl.classof(e) == LJ.LJExprValue and e.value == id
             end
             local expr_ok = step_cls == LJ.LJExprIntBinary
                 and ((is_value(k.step.lhs, k.acc) and is_value(k.step.rhs, k.item))
@@ -705,7 +705,7 @@ local function bind_context(T)
     local function emit_machine_body(out, n, func, body)
         local machines = machine_map(func)
         local term = body.terminal
-        local tcls = pvm.classof(term)
+        local tcls = asdl.classof(term)
         if tcls == LJ.LJTerminalFold then
             local acc = "__terminal_acc"
             line(out, n, "local " .. acc .. " = " .. expr(term.init))
@@ -722,7 +722,7 @@ local function bind_context(T)
             line(out, n, "return __out")
         elseif tcls == LJ.LJTerminalFirst then
             local m = machines[body.machine.text]
-            local mcls = m ~= nil and pvm.classof(m.kind) or nil
+            local mcls = m ~= nil and asdl.classof(m.kind) or nil
             if m ~= nil and mcls == LJ.LJMachineStencilEffect and term.default == nil then
                 emit_machine_loop(out, n, machines, body.machine, "__terminal_item", function() end)
                 line(out, n, "return")
@@ -762,7 +762,7 @@ local function bind_context(T)
         local params = {}
         for i = 1, #func.params do params[i] = id_name(func.params[i].value) end
         line(out, n, func_name(func.name) .. " = function(" .. table.concat(params, ", ") .. ")")
-        local body_cls = pvm.classof(func.body)
+        local body_cls = asdl.classof(func.body)
         if body_cls == LJ.LJBodyBlocks then
             emit_blocks_body(out, n + 1, func.body)
         elseif body_cls == LJ.LJBodyMachine then
@@ -826,7 +826,7 @@ local function bind_context(T)
     end
 
     native_place_expr = function(p)
-        local cls = pvm.classof(p)
+        local cls = asdl.classof(p)
         if cls == LJ.LJPlaceValue then return id_name(p.value) end
         if cls == LJ.LJPlaceDeref then return "(*(" .. native_expr(p.addr) .. "))" end
         if cls == LJ.LJPlaceField then return "(" .. native_place_expr(p.base) .. ")." .. sanitize(p.name) end
@@ -835,7 +835,7 @@ local function bind_context(T)
     end
 
     native_expr = function(e)
-        local cls = pvm.classof(e)
+        local cls = asdl.classof(e)
         if cls == LJ.LJExprValue then return id_name(e.value) end
         if cls == LJ.LJExprLiteral then return literal_expr(e) end
         if cls == LJ.LJExprUnary then
@@ -897,12 +897,12 @@ local function bind_context(T)
     end
 
     local function native_residual_candidate(func)
-        if pvm.classof(func.body) ~= LJ.LJBodyMachine then return nil end
+        if asdl.classof(func.body) ~= LJ.LJBodyMachine then return nil end
         local term = func.body.terminal
-        if pvm.classof(term) ~= LJ.LJTerminalFirst or term.default ~= nil then return nil end
+        if asdl.classof(term) ~= LJ.LJTerminalFirst or term.default ~= nil then return nil end
         local machine = machine_by_id(func)[func.body.machine.text]
         local kind = machine and machine.kind or nil
-        local cls = pvm.classof(kind)
+        local cls = asdl.classof(kind)
         if cls == LJ.LJMachineStencilCall or cls == LJ.LJMachineStencilEffect then return kind, cls end
         return nil
     end
@@ -968,11 +968,11 @@ local function bind_context(T)
     end
 
     local function c_literal(lit, phys)
-        local cls = pvm.classof(lit)
+        local cls = asdl.classof(lit)
         if cls == Core.LitInt then
             local suffix = ""
             local storage = phys and phys.storage
-            if pvm.classof(storage) == LJ.LJCTypeScalar then
+            if asdl.classof(storage) == LJ.LJCTypeScalar then
                 local scalar = storage.scalar
                 if scalar == Back.BackI64 then suffix = "LL"
                 elseif scalar == Back.BackU64 then suffix = "ULL" end
@@ -1001,7 +1001,7 @@ local function bind_context(T)
     end
 
     local function c_decl(ty, name)
-        if pvm.classof(ty) == LJ.LJCTypeArray then
+        if asdl.classof(ty) == LJ.LJCTypeArray then
             return ctype_spelling(ty.elem) .. " " .. name .. "[" .. tostring(ty.count) .. "]"
         end
         return ctype_spelling(ty) .. " " .. name
@@ -1029,7 +1029,7 @@ local function bind_context(T)
 
     local function c_wrapping_binary(e, lhs, rhs, op)
         local sem_ty = e.ty and e.ty.semantic
-        if pvm.classof(sem_ty) ~= Code.CodeTyInt then return nil end
+        if asdl.classof(sem_ty) ~= Code.CodeTyInt then return nil end
         if sem_ty.signedness ~= Code.CodeSigned then return nil end
         if e.semantics == nil or e.semantics.overflow ~= Code.CodeIntWrap then return nil end
         if op ~= "+" and op ~= "-" and op ~= "*" then return nil end
@@ -1047,7 +1047,7 @@ local function bind_context(T)
     end
 
     local function c_call_target_expr(ctx, target, args)
-        local cls = pvm.classof(target)
+        local cls = asdl.classof(target)
         if cls == LJ.LJCallDirect then return c_func_ref_name(ctx, target.func) .. "(" .. table.concat(args, ", ") .. ")" end
         if cls == LJ.LJCallExtern then return sanitize(target.extern_name) .. "(" .. table.concat(args, ", ") .. ")" end
         if cls == LJ.LJCallIndirect then return c_expr(ctx, target.callee) .. "(" .. table.concat(args, ", ") .. ")" end
@@ -1069,14 +1069,14 @@ local function bind_context(T)
     end
 
     c_place_expr = function(ctx, p)
-        local cls = pvm.classof(p)
+        local cls = asdl.classof(p)
         if cls == LJ.LJPlaceLocal then return id_name(p.local_id) end
         if cls == LJ.LJPlaceGlobal then return sanitize(p.global.text) end
         if cls == LJ.LJPlaceData then return data_name(p.data) end
         if cls == LJ.LJPlaceDeref then return "(*(" .. c_expr(ctx, p.addr) .. "))" end
         if cls == LJ.LJPlaceField then return "(" .. c_place_expr(ctx, p.base) .. ")." .. sanitize(p.name) end
         if cls == LJ.LJPlaceIndex then
-            if pvm.classof(p.base) == LJ.LJPlaceDeref then
+            if asdl.classof(p.base) == LJ.LJPlaceDeref then
                 return "(" .. c_expr(ctx, p.base.addr) .. ")[" .. c_expr(ctx, p.index) .. "]"
             end
             return "(" .. c_place_expr(ctx, p.base) .. ")[" .. c_expr(ctx, p.index) .. "]"
@@ -1096,7 +1096,7 @@ local function bind_context(T)
     end
 
     c_expr = function(ctx, e)
-        local cls = pvm.classof(e)
+        local cls = asdl.classof(e)
         if cls == LJ.LJExprValue then return id_name(e.value) end
         if cls == LJ.LJExprLiteral then return c_literal(e.literal, e.ty) end
         if cls == LJ.LJExprUnary then
@@ -1131,7 +1131,7 @@ local function bind_context(T)
         end
         if cls == LJ.LJExprCall then return c_call_expr(ctx, e) end
         if cls == LJ.LJExprGlobalRef then
-            local rcls = pvm.classof(e.ref)
+            local rcls = asdl.classof(e.ref)
             if rcls == Code.CodeGlobalRefFunc then return c_func_ref_name(ctx, e.ref.func) end
             if rcls == Code.CodeGlobalRefData then return data_name(e.ref.data) end
         end
@@ -1172,7 +1172,7 @@ local function bind_context(T)
         local machine = ctx.machine_by_id[machine_id.text]
         if machine == nil then error("luajit_emit: missing C machine " .. tostring(machine_id.text), 3) end
         local kind = machine.kind
-        local cls = pvm.classof(kind)
+        local cls = asdl.classof(kind)
         if cls == LJ.LJMachineStencilEffect or cls == LJ.LJMachineStencilCall then
             line(out, n, c_stencil_call_expr(ctx, kind) .. ";")
             return
@@ -1181,7 +1181,7 @@ local function bind_context(T)
     end
 
     local function c_emit_stmt(out, n, ctx, stmt)
-        local cls = pvm.classof(stmt)
+        local cls = asdl.classof(stmt)
         if cls == LJ.LJStmtLet then
             line(out, n, id_name(stmt.dst) .. " = " .. c_expr(ctx, stmt.expr) .. ";")
         elseif cls == LJ.LJStmtStore then
@@ -1198,7 +1198,7 @@ local function bind_context(T)
     end
 
     local function c_emit_term(out, n, ctx, term, block_by_id)
-        local cls = pvm.classof(term)
+        local cls = asdl.classof(term)
         if cls == LJ.LJTermReturn then
             if #term.values == 0 then
                 line(out, n, "return;")
@@ -1251,17 +1251,17 @@ local function bind_context(T)
             locals[#locals + 1] = { name = id_name(id), ty = phys.abi }
         end
         for _, param in ipairs(func.params or {}) do mark(param.value) end
-        if pvm.classof(func.body) == LJ.LJBodyBlocks then
+        if asdl.classof(func.body) == LJ.LJBodyBlocks then
             for _, block in ipairs(func.body.blocks or {}) do
                 for i, param in ipairs(block.params or {}) do
                     add(param.value, param.ty)
                     locals[#locals + 1] = { name = c_xfer_name(block, i), ty = param.ty.abi }
                 end
                 for _, stmt in ipairs(block.stmts or {}) do
-                    local cls = pvm.classof(stmt)
+                    local cls = asdl.classof(stmt)
                     if cls == LJ.LJStmtLet then
                         add(stmt.dst, stmt.ty)
-                    elseif cls == LJ.LJStmtStore and pvm.classof(stmt.place) == LJ.LJPlaceLocal then
+                    elseif cls == LJ.LJStmtStore and asdl.classof(stmt.place) == LJ.LJPlaceLocal then
                         add(stmt.place.local_id, stmt.place.ty)
                     end
                 end
@@ -1320,7 +1320,7 @@ local function bind_context(T)
     local function c_emit_func(ctx, func)
         local sig = ctx.sigs[func.sig.text]
         if sig == nil then error("luajit_emit: C function references missing signature " .. tostring(func.sig.text), 3) end
-        local body_cls = pvm.classof(func.body)
+        local body_cls = asdl.classof(func.body)
         if body_cls == LJ.LJBodyBlocks then
             ctx.machine_by_id = machine_map(func)
             return c_emit_blocks_func(ctx, func, sig)

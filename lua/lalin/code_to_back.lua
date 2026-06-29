@@ -1,7 +1,7 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function class_name(x)
-    local cls = pvm.classof(x) or x
+    local cls = asdl.classof(x) or x
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -50,7 +50,7 @@ local function bind_context(T)
     end
 
     local function literal(lit)
-        local cls = pvm.classof(lit)
+        local cls = asdl.classof(lit)
         if cls == Core.LitInt then return Back.BackLitInt(lit.raw) end
         if cls == Core.LitFloat then return Back.BackLitFloat(lit.raw) end
         if cls == Core.LitBool then return Back.BackLitBool(lit.value) end
@@ -59,7 +59,7 @@ local function bind_context(T)
     end
 
     local function const_literal(k)
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeConstLiteral then return literal(k.literal) end
         if cls == Code.CodeConstNull then return Back.BackLitNull end
         if cls == Code.CodeConstUndef then return Back.BackLitInt("0") end
@@ -121,7 +121,7 @@ local function bind_context(T)
     end
 
     local function cmp_op(op, ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         local unsigned = ty == Code.CodeTyIndex or (cls == Code.CodeTyInt and ty.signedness == Code.CodeUnsigned)
         local float = cls == Code.CodeTyFloat
         if op == Core.CmpEq then return float and Back.BackFCmpEq or Back.BackIcmpEq end
@@ -172,7 +172,7 @@ local function bind_context(T)
         local sem = fact or k.semantics
         local overflow = Back.BackIntWrap
         if sem ~= nil then
-            local ocls = pvm.classof(sem.overflow)
+            local ocls = asdl.classof(sem.overflow)
             if ocls == Code.CodeIntAssumeNoOverflow then overflow = Back.BackIntNoWrap(sem.overflow.reason)
             elseif sem.overflow == Code.CodeIntTrapOnOverflow then overflow = Back.BackIntNoWrap("trap-on-overflow Code semantics") end
         end
@@ -182,7 +182,7 @@ local function bind_context(T)
     local function float_semantics(ctx, k)
         local mode = (ctx.value_float_mode_by_value and ctx.value_float_mode_by_value[k.dst.text]) or k.mode
         if mode == nil or mode == Code.CodeFloatStrict then return Back.BackFloatStrict end
-        local cls = pvm.classof(mode)
+        local cls = asdl.classof(mode)
         if cls == Code.CodeFloatReassoc then return Back.BackFloatReassoc(mode.reason) end
         if cls == Code.CodeFloatFastMath then return Back.BackFloatFastMath(mode.reason) end
         return Back.BackFloatStrict
@@ -202,7 +202,7 @@ local function bind_context(T)
     local function index_value(ctx, id)
         local ty = ctx.value_types[id.text]
         if ty == Code.CodeTyIndex then return bid(id) end
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt and ty.bits < 64 then
             ctx.next_tmp = (ctx.next_tmp or 0) + 1
             local v = Back.BackValId("code_to_back.index." .. tostring(ctx.next_tmp))
@@ -231,7 +231,7 @@ local function bind_context(T)
     end
 
     local function back_alignment(alignment)
-        local cls = pvm.classof(alignment)
+        local cls = asdl.classof(alignment)
         if alignment == nil or alignment == T.LalinMem.MemAlignUnknown then return Back.BackAlignUnknown end
         if cls == T.LalinMem.MemAlignKnown then return Back.BackAlignKnown(alignment.bytes) end
         if cls == T.LalinMem.MemAlignAtLeast then return Back.BackAlignAtLeast(alignment.bytes) end
@@ -240,7 +240,7 @@ local function bind_context(T)
     end
 
     local function back_trap(trap)
-        local cls = pvm.classof(trap)
+        local cls = asdl.classof(trap)
         if trap == T.LalinMem.MemMayTrap then return Back.BackMayTrap end
         if cls == T.LalinMem.MemNonTrapping then return Back.BackNonTrapping(trap.reason) end
         if cls == T.LalinMem.MemCheckedTrap then return Back.BackChecked(trap.reason) end
@@ -280,7 +280,7 @@ local function bind_context(T)
 
     local function address_at_const_offset(ctx, addr, offset)
         local base = addr.base
-        local base_cls = pvm.classof(base)
+        local base_cls = asdl.classof(base)
         if base_cls == Back.BackAddrStack then
             local base_ptr = Back.BackValId("code_to_back.addr_stack_base." .. tostring(ctx.next_tmp or 0))
             ctx.next_tmp = (ctx.next_tmp or 0) + 1
@@ -301,7 +301,7 @@ local function bind_context(T)
 
     local function address_to_ptr_value(ctx, addr, tag)
         local base = addr.base
-        local base_cls = pvm.classof(base)
+        local base_cls = asdl.classof(base)
         if base_cls == Back.BackAddrStack then
             local base_ptr = Back.BackValId((tag or "code_to_back.stack_base") .. ".base." .. tostring(ctx.next_tmp or 0))
             ctx.next_tmp = (ctx.next_tmp or 0) + 1
@@ -320,12 +320,12 @@ local function bind_context(T)
     end
 
     local function back_bounds(info)
-        if info ~= nil and pvm.classof(info.bounds) ~= T.LalinMem.MemBoundsUnknown then return Back.BackPtrInBounds("MemBackendAccessInfo bounds") end
+        if info ~= nil and asdl.classof(info.bounds) ~= T.LalinMem.MemBoundsUnknown then return Back.BackPtrInBounds("MemBackendAccessInfo bounds") end
         return Back.BackPtrBoundsUnknown
     end
 
     local function addr_from_place(ctx, place, info)
-        local cls = pvm.classof(place)
+        local cls = asdl.classof(place)
         if cls == Code.CodePlaceDeref then
             return Back.BackAddress(Back.BackAddrValue(bid(place.addr)), zero(ctx), Back.BackProvUnknown, back_bounds(info))
         elseif cls == Code.CodePlaceGlobal then
@@ -333,7 +333,7 @@ local function bind_context(T)
         elseif cls == Code.CodePlaceData then
             return Back.BackAddress(Back.BackAddrData(data_id(place.data)), zero(ctx), Back.BackProvData(data_id(place.data)), Back.BackPtrInBounds("data"))
         elseif cls == Code.CodePlaceLocal then
-            local ty_cls = pvm.classof(place.ty)
+            local ty_cls = asdl.classof(place.ty)
             if CodeAggregateAbi.is_view(place.ty) or CodeAggregateAbi.is_slice(place.ty) or CodeAggregateAbi.is_byte_span(place.ty) then
                 local stack = ctx.local_stack_slots and ctx.local_stack_slots[place.local_id.text]
                 if stack == nil then error("code_to_back: descriptor local has no materialized storage " .. place.local_id.text, 3) end
@@ -368,7 +368,7 @@ local function bind_context(T)
     end
 
     local function data_init(ctx, init, data)
-        local cls = pvm.classof(init)
+        local cls = asdl.classof(init)
         if cls == Code.CodeDataZero then
             ctx.cmds[#ctx.cmds + 1] = Back.CmdDataInitZero(data, init.offset, init.size)
         elseif cls == Code.CodeDataScalar then
@@ -384,7 +384,7 @@ local function bind_context(T)
     end
 
     local function inst_dst_type(ctx, k)
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeInstConst then return k.dst, k.const.ty end
         if cls == Code.CodeInstAlias then return k.dst, k.ty end
         if cls == Code.CodeInstUnary then return k.dst, k.ty end
@@ -404,15 +404,15 @@ local function bind_context(T)
         if cls == Code.CodeInstViewMake then return k.dst, Code.CodeTyView(k.elem_ty) end
         if cls == Code.CodeInstViewData then
             local vty = ctx.value_types and ctx.value_types[k.view.text] or nil
-            if pvm.classof(vty) == Code.CodeTyLease then vty = vty.base end
-            return k.dst, Code.CodeTyDataPtr(pvm.classof(vty) == Code.CodeTyView and vty.elem or nil)
+            if asdl.classof(vty) == Code.CodeTyLease then vty = vty.base end
+            return k.dst, Code.CodeTyDataPtr(asdl.classof(vty) == Code.CodeTyView and vty.elem or nil)
         end
         if cls == Code.CodeInstViewLen or cls == Code.CodeInstViewStride then return k.dst, Code.CodeTyIndex end
         if cls == Code.CodeInstSliceMake then return k.dst, Code.CodeTySlice(k.elem_ty) end
         if cls == Code.CodeInstSliceData then
             local sty = ctx.value_types and ctx.value_types[k.slice.text] or nil
-            if pvm.classof(sty) == Code.CodeTyLease then sty = sty.base end
-            return k.dst, Code.CodeTyDataPtr(pvm.classof(sty) == Code.CodeTySlice and sty.elem or nil)
+            if asdl.classof(sty) == Code.CodeTyLease then sty = sty.base end
+            return k.dst, Code.CodeTyDataPtr(asdl.classof(sty) == Code.CodeTySlice and sty.elem or nil)
         end
         if cls == Code.CodeInstSliceLen then return k.dst, Code.CodeTyIndex end
         if cls == Code.CodeInstByteSpanMake then return k.dst, Code.CodeTyByteSpan end
@@ -706,7 +706,7 @@ local function bind_context(T)
         local effects = ctx.effect_by_inst and ctx.effect_by_inst[inst_id.text] or nil
         if effects == nil then return end
         for _, effect in ipairs(effects.effects or {}) do
-            if pvm.classof(effect) == T.LalinEffect.EffectUnknown then
+            if asdl.classof(effect) == T.LalinEffect.EffectUnknown then
                 -- Ordinary Code fallback may still emit conservative calls; the
                 -- fact is consulted here so optimized fragment emitters can
                 -- reject motion/vectorization before reaching Back.
@@ -717,7 +717,7 @@ local function bind_context(T)
 
     local function inst(ctx, i)
         local k = i.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeInstConst then
             local s = scalar(k.const.ty); if s == nil then unsupported(k.const.ty) end
             ctx.cmds[#ctx.cmds + 1] = Back.CmdConst(bid(k.dst), s, const_literal(k.const))
@@ -770,12 +770,12 @@ local function bind_context(T)
         elseif cls == Code.CodeInstSelect then
             ctx.cmds[#ctx.cmds + 1] = Back.CmdSelect(bid(k.dst), shape(k.ty), bid(k.cond), bid(k.then_value), bid(k.else_value))
         elseif cls == Code.CodeInstAddrOf then
-            local pcls = pvm.classof(k.place)
+            local pcls = asdl.classof(k.place)
             if pcls == Code.CodePlaceGlobal then ctx.cmds[#ctx.cmds + 1] = Back.CmdDataAddr(bid(k.dst), data_id(k.place.global))
             elseif pcls == Code.CodePlaceData then ctx.cmds[#ctx.cmds + 1] = Back.CmdDataAddr(bid(k.dst), data_id(k.place.data))
             else
                 local addr = addr_from_place(ctx, k.place, ctx.mem_backend_by_inst[i.id.text])
-                if pcls == Code.CodePlaceLocal and pvm.classof(addr.base) == Back.BackAddrStack and pvm.classof(addr.byte_offset) == Back.BackValId then
+                if pcls == Code.CodePlaceLocal and asdl.classof(addr.base) == Back.BackAddrStack and asdl.classof(addr.byte_offset) == Back.BackValId then
                     ctx.cmds[#ctx.cmds + 1] = Back.CmdStackAddr(bid(k.dst), addr.base.slot)
                 else
                     local ptr = address_to_ptr_value(ctx, addr, "code_to_back.addr_of")
@@ -783,7 +783,7 @@ local function bind_context(T)
                 end
             end
         elseif cls == Code.CodeInstGlobalRef then
-            local rcls = pvm.classof(k.ref)
+            local rcls = asdl.classof(k.ref)
             if rcls == Code.CodeGlobalRefFunc then ctx.cmds[#ctx.cmds + 1] = Back.CmdFuncAddr(bid(k.dst), func_id(k.ref.func))
             elseif rcls == Code.CodeGlobalRefExtern then ctx.cmds[#ctx.cmds + 1] = Back.CmdExternAddr(bid(k.dst), extern_id(k.ref["extern"]))
             elseif rcls == Code.CodeGlobalRefData then ctx.cmds[#ctx.cmds + 1] = Back.CmdDataAddr(bid(k.dst), data_id(k.ref.data))
@@ -848,7 +848,7 @@ local function bind_context(T)
                 local len_mem = component_memory_info(ctx, k.access, i.id, "slice_len")
                 ctx.cmds[#ctx.cmds + 1] = Back.CmdLoadInfo(vals[1], shape(data_ty), data_addr, data_mem)
                 ctx.cmds[#ctx.cmds + 1] = Back.CmdLoadInfo(vals[2], shape(Code.CodeTyIndex), len_addr, len_mem)
-            elseif k.access.ty == Code.CodeTyByteSpan or pvm.classof(k.access.ty) == Code.CodeTyByteSpan then
+            elseif k.access.ty == Code.CodeTyByteSpan or asdl.classof(k.access.ty) == Code.CodeTyByteSpan then
                 local data_ty = Code.CodeTyDataPtr(Code.CodeTyInt(8, Code.CodeUnsigned))
                 local vals = component_values(k.dst, k.access.ty)
                 local data_addr = address_at_const_offset(ctx, addr, 0)
@@ -861,13 +861,13 @@ local function bind_context(T)
                 ctx.cmds[#ctx.cmds + 1] = Back.CmdLoadInfo(bid(k.dst), shape(k.access.ty), addr, memory_info(ctx, k.access, i.id))
             end
         elseif cls == Code.CodeInstAggregate then
-            if pvm.classof(k.ty) == Code.CodeTyClosure then
+            if asdl.classof(k.ty) == Code.CodeTyClosure then
                 local size, align = closure_descriptor_size(ctx, k.fields)
                 local addr = create_aggregate_storage(ctx, k.dst, k.ty, "code_to_back.closure", size, align)
                 local fn = nil
                 local captures = {}
                 for _, field in ipairs(k.fields or {}) do
-                    if pvm.classof(field.field) ~= T.LalinSem.FieldByOffset then unsupported(field.field) end
+                    if asdl.classof(field.field) ~= T.LalinSem.FieldByOffset then unsupported(field.field) end
                     if field.field.field_name == "__lalin_fn" then
                         fn = field.value
                     else
@@ -886,7 +886,7 @@ local function bind_context(T)
             else
                 local addr = create_aggregate_storage(ctx, k.dst, k.ty, "code_to_back.aggregate")
                 for _, field in ipairs(k.fields or {}) do
-                    if pvm.classof(field.field) ~= T.LalinSem.FieldByOffset then unsupported(field.field) end
+                    if asdl.classof(field.field) ~= T.LalinSem.FieldByOffset then unsupported(field.field) end
                     local fty = ctx.value_types[field.value.text]
                     if fty == nil then error("code_to_back: aggregate field value has unknown type " .. field.value.text, 3) end
                     copy_value_to_offset(ctx, addr, field.field.offset or 0, field.value, fty, "aggregate_field")
@@ -896,7 +896,7 @@ local function bind_context(T)
             store_closure_descriptor(ctx, k.dst, k.ty, bid(k.fn), bid(k.ctx))
         elseif cls == Code.CodeInstArray then
             local addr = create_aggregate_storage(ctx, k.dst, k.ty, "code_to_back.array")
-            local ty_cls = pvm.classof(k.ty)
+            local ty_cls = asdl.classof(k.ty)
             if ty_cls ~= Code.CodeTyArray then unsupported(k.ty) end
             local elem_s = scalar(k.ty.elem)
             local elem_size
@@ -933,7 +933,7 @@ local function bind_context(T)
             if pty == nil then error("code_to_back: variant payload has no payload type", 3) end
             load_scalar_at_offset(ctx, bid(k.dst), addr, off, pty, "variant_payload")
         elseif cls == Code.CodeInstStore then
-            if pvm.classof(k.place) == Code.CodePlaceLocal and is_byref_aggregate_ty(k.access.ty) then
+            if asdl.classof(k.place) == Code.CodePlaceLocal and is_byref_aggregate_ty(k.access.ty) then
                 ctx.aggregate_local_addr = ctx.aggregate_local_addr or {}
                 ctx.aggregate_local_addr[k.place.local_id.text] = aggregate_addr_for_value(ctx, k.value, k.access.ty) or bid(k.value)
                 note_value(ctx, inst_dst_type(ctx, k))
@@ -963,7 +963,7 @@ local function bind_context(T)
                 local len_mem = component_memory_info(ctx, k.access, i.id, "slice_len")
                 ctx.cmds[#ctx.cmds + 1] = Back.CmdStoreInfo(shape(data_ty), data_addr, vals[1], data_mem)
                 ctx.cmds[#ctx.cmds + 1] = Back.CmdStoreInfo(shape(Code.CodeTyIndex), len_addr, vals[2], len_mem)
-            elseif k.access.ty == Code.CodeTyByteSpan or pvm.classof(k.access.ty) == Code.CodeTyByteSpan then
+            elseif k.access.ty == Code.CodeTyByteSpan or asdl.classof(k.access.ty) == Code.CodeTyByteSpan then
                 local data_ty = Code.CodeTyDataPtr(Code.CodeTyInt(8, Code.CodeUnsigned))
                 local vals = component_values(k.value, k.access.ty)
                 local data_addr = address_at_const_offset(ctx, addr, 0)
@@ -995,7 +995,7 @@ local function bind_context(T)
             ctx.cmds[#ctx.cmds + 1] = Back.CmdAtomicFence(atomic_ordering(k.ordering))
         elseif cls == Code.CodeInstCall then
             check_call_effects(ctx, i.id)
-            local target_cls = pvm.classof(k.target)
+            local target_cls = asdl.classof(k.target)
             local target
             local call_sig = sig_id(k.sig)
             local closure_ctx = nil
@@ -1039,7 +1039,7 @@ local function bind_context(T)
 
     local function term(ctx, t)
         local k = t.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeTermJump then
             local args = {}
             local dest_params = ctx.block_params[k.dest.text] or {}
@@ -1071,7 +1071,7 @@ local function bind_context(T)
             if #k.values == 0 then ctx.cmds[#ctx.cmds + 1] = Back.CmdReturnVoid
             else
                 local rty = ctx.value_types[k.values[1].text]
-                if pvm.classof(rty) == Code.CodeTyClosure and ctx.closure_value_has_captures[k.values[1].text] then
+                if asdl.classof(rty) == Code.CodeTyClosure and ctx.closure_value_has_captures[k.values[1].text] then
                     error("code_to_back: returning captured closure descriptors requires a closure environment ownership model", 3)
                 end
                 if ctx.current_return_sret ~= nil and is_view_ty(rty) then
@@ -1169,7 +1169,7 @@ local function bind_context(T)
         local backend_by_access, object_by_access, readonly_objects = {}, {}, {}
         for _, info in ipairs(mem and mem.backend_info or {}) do backend_by_access[info.access.text] = info end
         for _, interval in ipairs(mem and mem.intervals or {}) do object_by_access[interval.access.text] = interval.object end
-        for _, eff in ipairs(mem and mem.effects or {}) do if pvm.classof(eff) == T.LalinMem.MemObjectReadonly then readonly_objects[eff.object.text] = true end end
+        for _, eff in ipairs(mem and mem.effects or {}) do if asdl.classof(eff) == T.LalinMem.MemObjectReadonly then readonly_objects[eff.object.text] = true end end
         for _, access in ipairs(mem and mem.accesses or {}) do
             local info = backend_by_access[access.id.text]
             if info ~= nil and access.inst ~= nil then
@@ -1220,7 +1220,7 @@ local function bind_context(T)
     end
 
     local function blocks_for_cover(code_module, graph, cover)
-        local cls = pvm.classof(cover)
+        local cls = asdl.classof(cover)
         if cls == Lower.LowerCoverFunction then
             for _, f in ipairs(code_module.funcs or {}) do if f.id == cover.func then return f, f.blocks or {} end end
         elseif cls == Lower.LowerCoverBlock then

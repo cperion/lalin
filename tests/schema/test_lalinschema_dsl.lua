@@ -1,9 +1,9 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local S = require("lalin.schema.dsl")
 
-local T = pvm.context()
+local T = asdl.context()
 
 local Demo = S.schema("LalinSchemaDslTest", {
     S.product("Name", {
@@ -65,7 +65,7 @@ assert(pair.left == item and pair.right == item, "ref wrapper should project as 
 assert(D.Empty.kind == "Empty", "empty variant should project to singleton")
 assert(D.Node:isclassof(D.Empty), "sum parent should recognize empty singleton variant")
 
-local asdl_schema = S.to_asdl_schema(pvm.context(), { Demo })
+local asdl_schema = S.to_asdl_schema(asdl.context(), { Demo })
 assert(#asdl_schema.modules == 1, "LalinSchema should project to one LalinAsdl module")
 assert(asdl_schema.modules[1].name == "LalinSchemaDslTest", "projected module name should match source")
 

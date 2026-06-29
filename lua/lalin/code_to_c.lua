@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -8,7 +8,7 @@ local function sanitize(s)
 end
 
 local function class_name(x)
-    local cls = pvm.classof(x) or x
+    local cls = asdl.classof(x) or x
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -56,7 +56,7 @@ local function bind_context(T)
     end
 
     local function variant_payload_union_id(owner_ty)
-        if pvm.classof(owner_ty) ~= Code.CodeTyNamed then return nil end
+        if asdl.classof(owner_ty) ~= Code.CodeTyNamed then return nil end
         return C.CTypeId(owner_ty.module_name, owner_ty.type_name .. "_payload")
     end
 
@@ -96,7 +96,7 @@ local function bind_context(T)
     end
 
     local function is_pointer_c_ty(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         return cls == C.CBackendDataPtr
             or cls == C.CBackendCodePtr
             or cls == C.CBackendImportedCodePtr
@@ -107,19 +107,19 @@ local function bind_context(T)
     end
 
     local function is_zero_literal(lit)
-        local cls = pvm.classof(lit)
+        local cls = asdl.classof(lit)
         return cls == Core.LitInt and tostring(lit.raw) == "0"
     end
 
     local function is_nullish_const_atom(a)
-        local cls = pvm.classof(a)
+        local cls = asdl.classof(a)
         if cls == C.CBackendAtomNull then return true end
         if cls == C.CBackendAtomLiteral then return is_zero_literal(a.literal) end
         return false
     end
 
     local function field_name(field)
-        local cls = pvm.classof(field)
+        local cls = asdl.classof(field)
         if cls == Sem.FieldByName or cls == Sem.FieldByOffset then return field.field_name end
         return "field"
     end
@@ -130,13 +130,13 @@ local function bind_context(T)
 
     local function view_type(ctx, id)
         local ty = ctx.value_types and id and ctx.value_types[id.text] or nil
-        if pvm.classof(ty) == Code.CodeTyLease then ty = ty.base end
+        if asdl.classof(ty) == Code.CodeTyLease then ty = ty.base end
         return ty
     end
 
     local function view_elem_type(ctx, id)
         local ty = view_type(ctx, id)
-        if pvm.classof(ty) == Code.CodeTyView then return ty.elem end
+        if asdl.classof(ty) == Code.CodeTyView then return ty.elem end
         return nil
     end
 
@@ -146,13 +146,13 @@ local function bind_context(T)
 
     local function slice_type(ctx, id)
         local ty = ctx.value_types and id and ctx.value_types[id.text] or nil
-        if pvm.classof(ty) == Code.CodeTyLease then ty = ty.base end
+        if asdl.classof(ty) == Code.CodeTyLease then ty = ty.base end
         return ty
     end
 
     local function slice_elem_type(ctx, id)
         local ty = slice_type(ctx, id)
-        if pvm.classof(ty) == Code.CodeTySlice then return ty.elem end
+        if asdl.classof(ty) == Code.CodeTySlice then return ty.elem end
         return nil
     end
 
@@ -165,7 +165,7 @@ local function bind_context(T)
     end
 
     local function const_atom(ctx, const)
-        local cls = pvm.classof(const)
+        local cls = asdl.classof(const)
         if cls == Code.CodeConstLiteral then return C.CBackendAtomLiteral(c_ty(ctx, const.ty), const.literal) end
         if cls == Code.CodeConstNull then return C.CBackendAtomNull(c_ty(ctx, const.ty)) end
         if cls == Code.CodeConstUndef then return C.CBackendAtomLiteral(c_ty(ctx, const.ty), Core.LitInt("0")) end
@@ -174,7 +174,7 @@ local function bind_context(T)
 
     local place_to_c
     place_to_c = function(ctx, place)
-        local cls = pvm.classof(place)
+        local cls = asdl.classof(place)
         if cls == Code.CodePlaceLocal then
             return C.CBackendPlaceLocal(c_local_id(place.local_id), c_ty(ctx, place.ty))
         elseif cls == Code.CodePlaceGlobal then
@@ -194,7 +194,7 @@ local function bind_context(T)
     end
 
     local function atomic_place_addr_stmts(ctx, inst_id, place, suffix)
-        if pvm.classof(place) == Code.CodePlaceDeref then return {}, atom(place.addr) end
+        if asdl.classof(place) == Code.CodePlaceDeref then return {}, atom(place.addr) end
         local addr = c_synth_local_id2("atomic_addr", inst_id, suffix or "place")
         return { C.CBackendAssign(addr, C.CBackendRAddrOfPlace(place_to_c(ctx, place))) }, C.CBackendAtomLocal(addr)
     end
@@ -212,7 +212,7 @@ local function bind_context(T)
     end
 
     local function global_ref_name(ctx, ref)
-        local cls = pvm.classof(ref)
+        local cls = asdl.classof(ref)
         if cls == Code.CodeGlobalRefFunc then return code_func_name(ctx, ref.func) end
         if cls == Code.CodeGlobalRefExtern then return code_extern_name(ctx, ref["extern"]) end
         if cls == Code.CodeGlobalRefGlobal then return c_name(ref.global.text) end
@@ -221,7 +221,7 @@ local function bind_context(T)
     end
 
     local function global_ref_sig(ctx, ref)
-        local cls = pvm.classof(ref)
+        local cls = asdl.classof(ref)
         if cls == Code.CodeGlobalRefFunc then
             local f = ctx.funcs[ref.func.text]
             if f == nil then error("code_to_c: missing function ref " .. tostring(ref.func.text), 2) end
@@ -245,14 +245,14 @@ local function bind_context(T)
         else
             local overflow = C.CBackendIntWrap
             if k.semantics and k.semantics.overflow == Code.CodeIntTrapOnOverflow then overflow = C.CBackendIntTrapOnOverflow end
-            if k.semantics and pvm.classof(k.semantics.overflow) == Code.CodeIntAssumeNoOverflow then overflow = C.CBackendIntAssumeNoOverflow end
+            if k.semantics and asdl.classof(k.semantics.overflow) == Code.CodeIntAssumeNoOverflow then overflow = C.CBackendIntAssumeNoOverflow end
             return C.CBackendHelperIntBinary(k.op, ty, overflow)
         end
     end
 
     local function inst_to_stmts(ctx, inst)
         local k = inst.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeInstConst then
             local a = const_atom(ctx, k.const)
             ctx.const_atoms[k.dst.text] = a
@@ -289,7 +289,7 @@ local function bind_context(T)
         elseif cls == Code.CodeInstAddrOf then
             return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRAddrOfPlace(place_to_c(ctx, k.place))) }
         elseif cls == Code.CodeInstGlobalRef then
-            local rcls = pvm.classof(k.ref)
+            local rcls = asdl.classof(k.ref)
             if rcls == Code.CodeGlobalRefFunc then
                 return { C.CBackendAssign(c_local_id(k.dst), C.CBackendRFuncAddr(global_ref_name(ctx, k.ref), global_ref_sig(ctx, k.ref))) }
             elseif rcls == Code.CodeGlobalRefExtern then
@@ -362,7 +362,7 @@ local function bind_context(T)
             return { C.CBackendPlaceLoad(c_local_id(k.dst), variant_payload_member_place(ctx, C.CBackendPlaceLocal(c_local_id(k.value), c_ty(ctx, k.variant.owner_ty)), k.variant)) }
         elseif cls == Code.CodeInstCall then
             local args = {}; for i = 1, #k.args do args[i] = atom(k.args[i]) end
-            local tcls = pvm.classof(k.target)
+            local tcls = asdl.classof(k.target)
             local target
             if tcls == Code.CodeCallDirect then target = C.CBackendCallDirect(code_func_name(ctx, k.target.func))
             elseif tcls == Code.CodeCallExtern then target = C.CBackendCallExtern(code_extern_name(ctx, k.target["extern"]))
@@ -402,7 +402,7 @@ local function bind_context(T)
 
     local function term_to_c(ctx, term)
         local k = term.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeTermJump then
             local args = {}; for i = 1, #k.args do args[i] = atom(k.args[i]) end
             return C.CBackendGoto(c_label(k.dest), args)
@@ -440,7 +440,7 @@ local function bind_context(T)
             local b = func.blocks[i]
             for j = 1, #(b.insts or {}) do
                 local k = b.insts[j].kind
-                local cls = pvm.classof(k)
+                local cls = asdl.classof(k)
                 if cls == Code.CodeInstConst then add(k.dst, k.const.ty)
                 elseif cls == Code.CodeInstAlias then add(k.dst, k.ty)
                 elseif cls == Code.CodeInstUnary or cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary or cls == Code.CodeInstSelect or cls == Code.CodeInstIntrinsic then add(k.dst, k.ty)
@@ -464,13 +464,13 @@ local function bind_context(T)
                     add(k.dst, k.access.ty)
                     local sid = Code.CodeValueId("atomic_cas_expected_addr:" .. b.insts[j].id.text)
                     add(sid, Code.CodeTyDataPtr(k.access.ty))
-                    if pvm.classof(k.place) ~= Code.CodePlaceDeref then
+                    if asdl.classof(k.place) ~= Code.CodePlaceDeref then
                         local aid = Code.CodeValueId("atomic_addr:" .. b.insts[j].id.text .. ":cas")
                         add(aid, Code.CodeTyDataPtr(k.access.ty))
                     end
                 elseif cls == Code.CodeInstAtomicLoad or cls == Code.CodeInstAtomicStore or cls == Code.CodeInstAtomicRmw then
                     if cls == Code.CodeInstAtomicLoad or cls == Code.CodeInstAtomicRmw then add(k.dst, k.access.ty) end
-                    if pvm.classof(k.place) ~= Code.CodePlaceDeref then
+                    if asdl.classof(k.place) ~= Code.CodePlaceDeref then
                         local suffix = (cls == Code.CodeInstAtomicLoad and "load") or (cls == Code.CodeInstAtomicStore and "store") or "rmw"
                         local aid = Code.CodeValueId("atomic_addr:" .. b.insts[j].id.text .. ":" .. suffix)
                         add(aid, Code.CodeTyDataPtr(k.access.ty))
@@ -523,7 +523,7 @@ local function bind_context(T)
     end
 
     local function c_reloc_target(ref)
-        local cls = pvm.classof(ref)
+        local cls = asdl.classof(ref)
         if cls == Code.CodeGlobalRefGlobal then return C.CBackendRelocGlobal(c_global_id(ref.global)) end
         if cls == Code.CodeGlobalRefData then return C.CBackendRelocGlobal(c_global_id(ref.data)) end
         if cls == Code.CodeGlobalRefFunc then return C.CBackendRelocFunc(c_name(ref.func.text)) end
@@ -532,7 +532,7 @@ local function bind_context(T)
     end
 
     local function c_init(ctx, init)
-        local cls = pvm.classof(init)
+        local cls = asdl.classof(init)
         if cls == Code.CodeDataZero then return C.CBackendDataZero(init.offset, init.size) end
         if cls == Code.CodeDataBytes then return C.CBackendDataBytes(init.offset, init.bytes) end
         if cls == Code.CodeDataScalar then return C.CBackendDataScalar(init.offset, c_ty(ctx, init.ty), init.literal) end
@@ -562,10 +562,10 @@ local function bind_context(T)
     end
 
     local function c_type_size_align(ctx, ty)
-        if ty == C.CBackendVoid or pvm.classof(ty) == C.CBackendVoid then return 0, 1 end
-        if ty == C.CBackendBool8 or pvm.classof(ty) == C.CBackendBool8 then return 1, 1 end
-        if ty == C.CBackendIndex or pvm.classof(ty) == C.CBackendIndex then local n = (ctx.target.index_bits or 64) / 8; return n, n end
-        local cls = pvm.classof(ty)
+        if ty == C.CBackendVoid or asdl.classof(ty) == C.CBackendVoid then return 0, 1 end
+        if ty == C.CBackendBool8 or asdl.classof(ty) == C.CBackendBool8 then return 1, 1 end
+        if ty == C.CBackendIndex or asdl.classof(ty) == C.CBackendIndex then local n = (ctx.target.index_bits or 64) / 8; return n, n end
+        local cls = asdl.classof(ty)
         if cls == C.CBackendScalar then
             local s = ty.scalar
             if s == Core.ScalarI8 or s == Core.ScalarU8 or s == Core.ScalarBool then return 1, 1 end
@@ -586,7 +586,7 @@ local function bind_context(T)
     end
 
     local function variant_type_id(owner_ty)
-        if pvm.classof(owner_ty) ~= Code.CodeTyNamed then return nil end
+        if asdl.classof(owner_ty) ~= Code.CodeTyNamed then return nil end
         return C.CTypeId(owner_ty.module_name, owner_ty.type_name)
     end
 
@@ -594,7 +594,7 @@ local function bind_context(T)
         local out = {}
         local env = ctx.layout_env
         for _, layout in ipairs((env and env.layouts) or {}) do
-            local cls = pvm.classof(layout)
+            local cls = asdl.classof(layout)
             local id
             if cls == Sem.LayoutNamed then id = C.CTypeId(layout.module_name, layout.type_name)
             elseif cls == Sem.LayoutLocal then id = C.CTypeId("local", layout.sym.name) end
@@ -635,10 +635,10 @@ local function bind_context(T)
             for _, block in ipairs(func.blocks or {}) do
                 for _, inst in ipairs(block.insts or {}) do
                     local k = inst.kind
-                    local cls = pvm.classof(k)
+                    local cls = asdl.classof(k)
                     if cls == Code.CodeInstVariantCtor or cls == Code.CodeInstVariantPayload then record(k.variant) end
                 end
-                if block.term ~= nil and pvm.classof(block.term.kind) == Code.CodeTermVariantSwitch then
+                if block.term ~= nil and asdl.classof(block.term.kind) == Code.CodeTermVariantSwitch then
                     for _, case in ipairs(block.term.kind.cases or {}) do record(case.variant) end
                 end
             end
@@ -677,7 +677,7 @@ local function bind_context(T)
     local function c_type_layout_index(layout_env)
         local out = {}
         for _, layout in ipairs((layout_env and layout_env.layouts) or {}) do
-            local cls = pvm.classof(layout)
+            local cls = asdl.classof(layout)
             if cls == Sem.LayoutNamed then
                 out[layout.module_name .. "\0" .. layout.type_name] = { size = layout.size, align = layout.align }
             elseif cls == Sem.LayoutLocal then

@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -64,7 +64,7 @@ local function bind_context(T)
     end
 
     local function domain_func_id(domain, loop_to_func)
-        local cls = pvm.classof(domain)
+        local cls = asdl.classof(domain)
         if cls == T.LalinFlow.FlowDomainFunction then return domain.func end
         if cls == T.LalinFlow.FlowDomainBlockRange then return domain.func end
         if cls == T.LalinFlow.FlowDomainLoop then return loop_to_func[domain.loop.text] end
@@ -73,7 +73,7 @@ local function bind_context(T)
 
     local function kernel_func_id(kernel_plan, loop_to_func)
         local subject = kernel_plan and kernel_plan.subject or nil
-        local cls = pvm.classof(subject)
+        local cls = asdl.classof(subject)
         if cls == T.LalinKernel.KernelSubjectFunction then return subject.func end
         if cls == T.LalinKernel.KernelSubjectFragment then return subject.func end
         if cls == T.LalinKernel.KernelSubjectLoop then return loop_to_func[subject.loop.text] end
@@ -89,7 +89,7 @@ local function bind_context(T)
     end
 
     local function domain_blocks(domain, loop_by_id)
-        local cls = pvm.classof(domain)
+        local cls = asdl.classof(domain)
         if cls == T.LalinFlow.FlowDomainBlockRange then return { domain.entry, domain.exit } end
         if cls == T.LalinFlow.FlowDomainLoop then
             local loop = loop_by_id[domain.loop.text]
@@ -103,7 +103,7 @@ local function bind_context(T)
 
     local function kernel_blocks(kernel_plan, loop_by_id)
         local subject = kernel_plan and kernel_plan.subject or nil
-        local cls = pvm.classof(subject)
+        local cls = asdl.classof(subject)
         if cls == T.LalinKernel.KernelSubjectFragment then return { subject.entry, subject.exit } end
         if cls == T.LalinKernel.KernelSubjectLoop then return domain_blocks(T.LalinFlow.FlowDomainLoop(subject.loop), loop_by_id) end
         if cls == T.LalinKernel.KernelSubjectDomain then return domain_blocks(subject.domain, loop_by_id) end
@@ -125,7 +125,7 @@ local function bind_context(T)
         local by_kernel = kernel_plan_index(kernels)
         for i, entry in ipairs(stencil_plan and stencil_plan.selections or {}) do
             local selection = entry.selection
-            local selected = pvm.classof(selection) == Stencil.StencilSelected
+            local selected = asdl.classof(selection) == Stencil.StencilSelected
             local artifact = selected and by_instance[selection.instance.id.text] or nil
             local kernel_plan = by_kernel[entry.kernel.text]
             local func_id = kernel_func_id(kernel_plan, loop_to_func)

@@ -107,8 +107,8 @@ end
 
 function LalinSyntax.to_module(parsed_decls, name, T)
   -- Use caller's pvm context or create a default one.
-  local pvm = require("lalin.pvm")
-  T = T or pvm.context()
+  local asdl = require("lalin.asdl")
+  T = T or asdl.context()
   if not T.LalinTree then
     require("lalin.schema_projection")(T)
   end
@@ -139,7 +139,7 @@ function LalinSyntax.to_module(parsed_decls, name, T)
   -- to LalinType.Type values in the active compiler context.
   local function parsed_type(ptype)
     if not ptype then return T.LalinType.TScalar(C.ScalarVoid) end
-    local cls = pvm.classof(ptype)
+    local cls = asdl.classof(ptype)
     if cls then return ptype end
     if ptype.tag == "HostEscape" then
       if not ptype.resolved then error("parsed_to_module: unresolved type host escape", 2) end

@@ -1,14 +1,14 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local CompilerPackage = require("lalin.compiler_package")
 local Plan = require("lalin.phase_plan")
 
-local T = pvm.context()
+local T = asdl.context()
 local pkg = CompilerPackage(T)
 local P = T.LalinPhase
 
-assert(pvm.classof(pkg) == P.Package)
+assert(asdl.classof(pkg) == P.Package)
 assert(pkg.id.text == "lalin.compiler")
 assert(#pkg.worlds == 5)
 assert(#pkg.machines == 3)
@@ -26,7 +26,7 @@ assert(pkg.worlds[5].ty.module_name == "LalinDiag")
 assert(pkg.worlds[5].ty.type_name == "Report")
 
 local planned = Plan.assert_plan(pkg, "compile")
-assert(pvm.classof(planned.plan) == P.Plan)
+assert(asdl.classof(planned.plan) == P.Plan)
 assert(#planned.plan.steps == 3)
 assert(planned.plan.steps[1].machine.text == "hosted_typecheck")
 assert(planned.plan.steps[2].machine.text == "hosted_checked_to_c_code")
@@ -35,7 +35,7 @@ assert(planned.plan.input.text == "tree")
 assert(planned.plan.output.text == "c")
 
 local c_plan = Plan.assert_plan(pkg, "emit_c")
-assert(pvm.classof(c_plan.plan) == P.Plan)
+assert(asdl.classof(c_plan.plan) == P.Plan)
 assert(#c_plan.plan.steps == 3)
 assert(c_plan.plan.steps[1].machine.text == "hosted_typecheck")
 assert(c_plan.plan.steps[2].machine.text == "hosted_checked_to_c_code")

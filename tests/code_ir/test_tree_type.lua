@@ -1,13 +1,13 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A = require("lalin.schema_projection")
 local ExprType = require("lalin.tree_expr_type")
 local PlaceType = require("lalin.tree_place_type")
 local StmtType = require("lalin.tree_stmt_type")
 local ModuleType = require("lalin.tree_module_type")
 
-local T = pvm.context()
+local T = asdl.context()
 A(T)
 local E = ExprType(T)
 local P = PlaceType(T)

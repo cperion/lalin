@@ -1,10 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
 local Coverage = require("lalin.c_coverage")
 
-local T = pvm.context(); Schema(T)
+local T = asdl.context(); Schema(T)
 
 local VALID = Coverage.statuses()
 assert(VALID.supported and VALID.phase_unreachable and VALID.language_rejected, "missing final C coverage status")

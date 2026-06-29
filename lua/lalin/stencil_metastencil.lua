@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local bit = require("bit")
 
 local function stable_hash32(s)
@@ -7,13 +7,22 @@ local function stable_hash32(s)
     return string.format("%08x", h)
 end
 
+local function stable_hash128(s)
+    return table.concat({
+        stable_hash32("lalin:0:" .. s),
+        stable_hash32("lalin:1:" .. s),
+        stable_hash32("lalin:2:" .. s),
+        stable_hash32("lalin:3:" .. s),
+    })
+end
+
 local function stable_repr(v, seen)
     local tv = type(v)
     if tv == "nil" then return "nil" end
     if tv == "boolean" or tv == "number" then return tostring(v) end
     if tv == "string" then return string.format("%q", v) end
     if tv ~= "table" then return tv .. ":" .. tostring(v) end
-    local cls = pvm.classof(v)
+    local cls = asdl.classof(v)
     if tostring(cls) == "Class(LalinCode.CodeValueId)" then return tostring(cls) .. "{_}" end
     seen = seen or {}
     if seen[v] then return "<cycle>" end
@@ -55,22 +64,93 @@ local function bind_context(T)
 
     local api = {}
 
+    local vocabulary = {
+        sink_nodes = {
+            "StencilStore",
+            "StencilReduce",
+            "StencilScan",
+            "StencilScatterReduce",
+        },
+        producers = {
+            "StencilProduceRange1D",
+            "StencilProduceRangeND",
+            "StencilProduceWindowND",
+            "StencilProduceTiledND",
+        },
+        bodies = {
+            "StencilBodyPoint",
+        },
+        point_exprs = {
+            "StencilPointInput",
+            "StencilPointWindowInput",
+            "StencilPointConst",
+            "StencilPointUnary",
+            "StencilPointBinary",
+            "StencilPointCompare",
+            "StencilPointPredicate",
+            "StencilPointCast",
+            "StencilPointSelect",
+        },
+        access_roles = {
+            "StencilAccessRead",
+            "StencilAccessWrite",
+            "StencilAccessReadWrite",
+            "StencilAccessReduce",
+            "StencilAccessIndex",
+            "StencilAccessControlResult",
+        },
+        layouts = {
+            "StencilLayoutScalar",
+            "StencilLayoutContiguous",
+            "StencilLayoutAffine1D",
+            "StencilLayoutAffineND",
+            "StencilLayoutIndexed",
+            "StencilLayoutFieldProjection",
+            "StencilLayoutSoAComponent",
+            "StencilLayoutSliceDescriptor",
+            "StencilLayoutByteSpanDescriptor",
+            "StencilLayoutViewDescriptor",
+        },
+        graph = {
+            "StencilMetastencilNode",
+            "StencilMetastencilPort",
+            "StencilMetastencilWire",
+            "StencilMetastencilDescriptor",
+            "StencilMetastencilCandidate",
+            "StencilMetastencilCoverSelected",
+            "StencilMetastencilNoCover",
+        },
+        legality = {
+            "StencilFusionSameProducer",
+            "StencilFusionCompatibleAbi",
+            "StencilFusionNoIntermediateMaterialization",
+            "StencilFusionAliasRelation",
+            "StencilFusionProofObligation",
+            "StencilFusionRejectTypeMismatch",
+            "StencilFusionRejectMissingPort",
+            "StencilFusionRejectCycle",
+            "StencilFusionRejectAliasConflict",
+            "StencilFusionRejectUnsupportedComposition",
+            "StencilFusionRejectMissingProof",
+        },
+    }
+
     local function same_value(a, b)
         return stable_repr(a) == stable_repr(b)
     end
 
     local function node_id(id)
-        if pvm.classof(id) == Stencil.StencilMetastencilNodeId then return id end
+        if asdl.classof(id) == Stencil.StencilMetastencilNodeId then return id end
         return Stencil.StencilMetastencilNodeId(id)
     end
 
     local function wire_id(id)
-        if pvm.classof(id) == Stencil.StencilMetastencilWireId then return id end
+        if asdl.classof(id) == Stencil.StencilMetastencilWireId then return id end
         return Stencil.StencilMetastencilWireId(id)
     end
 
     local function meta_id(id)
-        if pvm.classof(id) == Stencil.StencilMetastencilId then return id end
+        if asdl.classof(id) == Stencil.StencilMetastencilId then return id end
         return Stencil.StencilMetastencilId(id)
     end
 
@@ -234,7 +314,7 @@ local function bind_context(T)
 
     local function fingerprint(desc)
         return Stencil.StencilMetastencilFingerprint(
-            "stencil-metastencil-v1:" .. stable_hash32("stencil-metastencil-v1\n" .. stable_repr(desc))
+            "stencil-metastencil-v1:" .. stable_hash128("stencil-metastencil-v1\n" .. stable_repr(desc))
         )
     end
 
@@ -270,7 +350,7 @@ local function bind_context(T)
     end
 
     local function normalize_candidate(x)
-        if pvm.classof(x) == Stencil.StencilMetastencilCandidate then return x end
+        if asdl.classof(x) == Stencil.StencilMetastencilCandidate then return x end
         return candidate(x)
     end
 
@@ -355,17 +435,47 @@ local function bind_context(T)
     end
 
     local function node_is_store(node)
-        return pvm.classof(node.artifact.instance.descriptor.sink) == Stencil.StencilSinkStore
+        return asdl.classof(node.artifact.instance.descriptor.sink) == Stencil.StencilSinkStore
     end
 
     local function node_is_reduce_fold(node)
         local d = node.artifact.instance.descriptor
-        return pvm.classof(d.sink) == Stencil.StencilSinkReduce
-            and pvm.classof(d.sink.mode) == Stencil.StencilReduceFold
+        return asdl.classof(d.sink) == Stencil.StencilSinkReduce
+            and asdl.classof(d.sink.mode) == Stencil.StencilReduceFold
+    end
+
+    local function node_is_scan(node)
+        return asdl.classof(node.artifact.instance.descriptor.sink) == Stencil.StencilSinkScan
+    end
+
+    local function node_is_scatter_reduce(node)
+        return asdl.classof(node.artifact.instance.descriptor.sink) == Stencil.StencilSinkScatterReduce
     end
 
     local function cover_tag(desc)
-        return "meta_" .. desc.id.text:gsub("[^%w_]", "_")
+        return "meta_" .. stable_hash128(stable_repr(desc))
+    end
+
+    local function append_store_inputs(inputs, seen, store_desc, store_out)
+        for _, access in ipairs(Plan.descriptor_accesses(store_desc)) do
+            if access.name ~= store_out and access.role ~= Stencil.StencilAccessWrite and not seen[access.name] then
+                inputs[#inputs + 1] = { name = access.name, ty = access.ty, layout = access.layout }
+                seen[access.name] = true
+            end
+        end
+    end
+
+    local function append_sink_passthrough_inputs(inputs, seen, sink_desc, wired_input_name, dst_name)
+        for _, access in ipairs(Plan.descriptor_accesses(sink_desc)) do
+            if access.name ~= wired_input_name
+                and access.name ~= dst_name
+                and access.role ~= Stencil.StencilAccessReduce
+                and access.role ~= Stencil.StencilAccessIndex
+                and not seen[access.name] then
+                inputs[#inputs + 1] = { name = access.name, ty = access.ty, layout = access.layout }
+                seen[access.name] = true
+            end
+        end
     end
 
     local function fused_store_reduce_artifact(desc)
@@ -390,14 +500,16 @@ local function bind_context(T)
         local in_access = reduce_accesses[reduce_in]
         if out_access == nil or in_access == nil then return nil, "fused cover wire references missing Store/Reduce access" end
         if not same_value(out_access.ty, in_access.ty) then return nil, "fused Store output type does not match Reduce input type" end
-        local inputs = {}
-        for _, access in ipairs(Plan.descriptor_accesses(store_desc)) do
-            if access.name ~= store_out and access.role ~= Stencil.StencilAccessWrite then
-                inputs[#inputs + 1] = { name = access.name, ty = access.ty, layout = access.layout }
-            end
-        end
+        local inputs, seen = {}, {}
+        append_store_inputs(inputs, seen, store_desc, store_out)
         local reducer = reduce_desc.sink.mode.reducer
         local store_shape = Plan.artifact_shape(store_node.artifact)
+        local scope = reduce_desc.sink.scope
+        local dst_layout
+        if scope ~= nil and scope ~= Stencil.StencilReduceScopeDomain and asdl.classof(scope) ~= Stencil.StencilReduceScopeDomain then
+            local dst_name = scope.dst and scope.dst.name
+            dst_layout = dst_name and reduce_accesses[dst_name] and reduce_accesses[dst_name].layout or nil
+        end
         return Plan.reduce_n_artifact({
             kind = reducer.reduction,
             int_semantics = reducer.int_semantics,
@@ -409,11 +521,121 @@ local function bind_context(T)
             inputs = inputs,
             expr = store_desc.body.expr,
             step_num = store_shape.stride or 1,
+            producer = Plan.descriptor_producer(store_desc),
+            scope = scope,
+            dst_layout = dst_layout,
         })
     end
 
+    local function fused_store_scan_artifact(desc)
+        if #(desc.nodes or {}) ~= 2 then return nil, "fused cover currently requires exactly Store -> Scan" end
+        local nodes = node_by_id(desc)
+        local store_node, scan_node, store_out, scan_in
+        for _, wire0 in ipairs(desc.wires or {}) do
+            local src_node = wire0.src.node and nodes[wire0.src.node.text] or nil
+            local dst_node = wire0.dst.node and nodes[wire0.dst.node.text] or nil
+            if src_node ~= nil and dst_node ~= nil and node_is_store(src_node) and node_is_scan(dst_node) then
+                store_node, scan_node = src_node, dst_node
+                store_out, scan_in = wire0.src.name, wire0.dst.name
+                break
+            end
+        end
+        if store_node == nil then return nil, "fused cover is not a Store -> Scan dataflow" end
+        local store_desc = store_node.artifact.instance.descriptor
+        local scan_desc = scan_node.artifact.instance.descriptor
+        local store_accesses = access_by_name(store_desc)
+        local scan_accesses = access_by_name(scan_desc)
+        local out_access = store_accesses[store_out]
+        local in_access = scan_accesses[scan_in]
+        if out_access == nil or in_access == nil then return nil, "fused cover wire references missing Store/Scan access" end
+        if not same_value(out_access.ty, in_access.ty) then return nil, "fused Store output type does not match Scan input type" end
+        local inputs, seen = {}, {}
+        append_store_inputs(inputs, seen, store_desc, store_out)
+        append_sink_passthrough_inputs(inputs, seen, scan_desc, scan_in, scan_desc.sink.dst and scan_desc.sink.dst.name or "dst")
+        local reducer = scan_desc.sink.reducer
+        local dst_name = scan_desc.sink.dst and scan_desc.sink.dst.name or "dst"
+        local dst_access = scan_accesses[dst_name]
+        local store_shape = Plan.artifact_shape(store_node.artifact)
+        return Plan.scan_n_artifact({
+            kind = reducer.reduction,
+            int_semantics = reducer.int_semantics,
+            float_mode = reducer.float_mode,
+        }, nil, {
+            tag = cover_tag(desc),
+            item_ty = out_access.ty,
+            result_ty = scan_desc.sink.result_ty,
+            inputs = inputs,
+            expr = store_desc.body.expr,
+            step_num = store_shape.stride or 1,
+            producer = Plan.descriptor_producer(store_desc),
+            dst_layout = dst_access and dst_access.layout or nil,
+            axis = scan_desc.sink.axis,
+            mode = scan_desc.sink.mode,
+        })
+    end
+
+    local function fused_store_scatter_reduce_artifact(desc)
+        if #(desc.nodes or {}) ~= 2 then return nil, "fused cover currently requires exactly Store -> ScatterReduce" end
+        local nodes = node_by_id(desc)
+        local store_node, scatter_node, store_out, scatter_in
+        for _, wire0 in ipairs(desc.wires or {}) do
+            local src_node = wire0.src.node and nodes[wire0.src.node.text] or nil
+            local dst_node = wire0.dst.node and nodes[wire0.dst.node.text] or nil
+            if src_node ~= nil and dst_node ~= nil and node_is_store(src_node) and node_is_scatter_reduce(dst_node) then
+                store_node, scatter_node = src_node, dst_node
+                store_out, scatter_in = wire0.src.name, wire0.dst.name
+                break
+            end
+        end
+        if store_node == nil then return nil, "fused cover is not a Store -> ScatterReduce dataflow" end
+        local store_desc = store_node.artifact.instance.descriptor
+        local scatter_desc = scatter_node.artifact.instance.descriptor
+        local store_accesses = access_by_name(store_desc)
+        local scatter_accesses = access_by_name(scatter_desc)
+        local out_access = store_accesses[store_out]
+        local in_access = scatter_accesses[scatter_in]
+        if out_access == nil or in_access == nil then return nil, "fused cover wire references missing Store/ScatterReduce access" end
+        if not same_value(out_access.ty, in_access.ty) then return nil, "fused Store output type does not match ScatterReduce input type" end
+        local dst_name = scatter_desc.sink.dst and scatter_desc.sink.dst.name or "dst"
+        local dst_access = scatter_accesses[dst_name]
+        local index_access = descriptor_access_role(scatter_desc, Stencil.StencilAccessIndex)
+        local inputs, seen = {}, {}
+        append_store_inputs(inputs, seen, store_desc, store_out)
+        append_sink_passthrough_inputs(inputs, seen, scatter_desc, scatter_in, dst_name)
+        local reducer = scatter_desc.sink.reducer
+        local store_shape = Plan.artifact_shape(store_node.artifact)
+        return Plan.scatter_reduce_n_artifact({
+            kind = reducer.reduction,
+            int_semantics = reducer.int_semantics,
+            float_mode = reducer.float_mode,
+        }, nil, {
+            tag = cover_tag(desc),
+            item_ty = out_access.ty,
+            result_ty = scatter_desc.sink.result_ty,
+            inputs = inputs,
+            expr = store_desc.body.expr,
+            step_num = store_shape.stride or 1,
+            producer = Plan.descriptor_producer(store_desc),
+            dst_layout = dst_access and dst_access.layout or nil,
+            index_ty = index_access and index_access.ty or out_access.ty,
+            index_name = index_access and index_access.name or nil,
+            index_layout = index_access and index_access.layout or nil,
+            conflicts = scatter_desc.sink.conflicts,
+        })
+    end
+
+    local function fused_store_sink_artifact(desc)
+        local fused, reason = fused_store_reduce_artifact(desc)
+        if fused ~= nil then return fused end
+        fused, reason = fused_store_scan_artifact(desc)
+        if fused ~= nil then return fused end
+        fused, reason = fused_store_scatter_reduce_artifact(desc)
+        if fused ~= nil then return fused end
+        return nil, reason
+    end
+
     local function cover_descriptor(cover)
-        local cls = pvm.classof(cover)
+        local cls = asdl.classof(cover)
         if cls == Stencil.StencilMetastencilDescriptor then return cover end
         if cls == Stencil.StencilMetastencilCandidate then return cover.descriptor end
         if cls == Stencil.StencilMetastencilCoverSelected then return cover.candidate.descriptor end
@@ -421,7 +643,7 @@ local function bind_context(T)
     end
 
     local function cover_fingerprint(cover)
-        local cls = pvm.classof(cover)
+        local cls = asdl.classof(cover)
         if cls == Stencil.StencilMetastencilCandidate then return cover.fingerprint end
         if cls == Stencil.StencilMetastencilCoverSelected then return cover.candidate.fingerprint end
         local desc = cover_descriptor(cover)
@@ -430,7 +652,7 @@ local function bind_context(T)
     end
 
     local function cover_rejects(cover)
-        local cls = pvm.classof(cover)
+        local cls = asdl.classof(cover)
         if cls == Stencil.StencilMetastencilNoCover then return cover.rejects or {} end
         if cls == Stencil.StencilMetastencilCandidate then return cover.rejects or {} end
         if cls == Stencil.StencilMetastencilCoverSelected then return cover.candidate.rejects or {} end
@@ -440,12 +662,12 @@ local function bind_context(T)
     end
 
     local function cover_is_legal(cover)
-        if pvm.classof(cover) == Stencil.StencilMetastencilNoCover then return false end
+        if asdl.classof(cover) == Stencil.StencilMetastencilNoCover then return false end
         return cover_descriptor(cover) ~= nil and #cover_rejects(cover) == 0
     end
 
     local function cover_record(cover)
-        local cls = pvm.classof(cover)
+        local cls = asdl.classof(cover)
         if cls == Stencil.StencilMetastencilCandidate then return cover end
         if cls == Stencil.StencilMetastencilCoverSelected then return cover.candidate end
         local desc = cover_descriptor(cover)
@@ -456,7 +678,7 @@ local function bind_context(T)
     local function normalize_artifact_inputs(inputs)
         local artifacts, covers = {}, {}
         for _, item in ipairs(inputs or {}) do
-            local cls = pvm.classof(item)
+            local cls = asdl.classof(item)
             if cls == Stencil.StencilArtifact then
                 artifacts[#artifacts + 1] = item
             elseif cls == Stencil.StencilMetastencilDescriptor
@@ -466,7 +688,7 @@ local function bind_context(T)
                     error("stencil_metastencil: cannot materialize rejected metastencil cover", 3)
                 end
                 covers[#covers + 1] = cover_record(item)
-                local fused, reason = fused_store_reduce_artifact(cover_descriptor(item))
+                local fused, reason = fused_store_sink_artifact(cover_descriptor(item))
                 if fused == nil then
                     error("stencil_metastencil: selected cover is not yet fusible: " .. tostring(reason), 3)
                 end
@@ -495,12 +717,15 @@ local function bind_context(T)
     api.select_longest_legal_cover = select_longest_legal_cover
     api.descriptor_artifacts = descriptor_artifacts
     api.fused_store_reduce_artifact = fused_store_reduce_artifact
+    api.fused_store_scan_artifact = fused_store_scan_artifact
+    api.fused_store_scatter_reduce_artifact = fused_store_scatter_reduce_artifact
     api.cover_descriptor = cover_descriptor
     api.cover_fingerprint = cover_fingerprint
     api.cover_rejects = cover_rejects
     api.cover_is_legal = cover_is_legal
     api.cover_record = cover_record
     api.normalize_artifact_inputs = normalize_artifact_inputs
+    api.vocabulary = vocabulary
     api.stable_hash32_for_test = stable_hash32
     api.stable_repr_for_test = stable_repr
 

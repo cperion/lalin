@@ -1,12 +1,12 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A2 = require("lalin.schema_projection")
 local LinkTarget = require("lalin.link_target_model")
 local LinkValidate = require("lalin.link_plan_validate")
 local LinkCommand = require("lalin.link_command_plan")
 
-local T = pvm.context()
+local T = asdl.context()
 A2(T)
 local LT = LinkTarget(T)
 local LV = LinkValidate(T)
@@ -30,10 +30,10 @@ local plan = L.LinkPlan(
 local report = LV.validate(plan)
 assert(#report.issues == 0, "expected valid link plan")
 local command_plan = LC.plan(plan)
-assert(pvm.classof(command_plan) == L.LinkCommandPlan)
+assert(asdl.classof(command_plan) == L.LinkCommandPlan)
 assert(#command_plan.commands == 1)
 local cmd = command_plan.commands[1]
-assert(pvm.classof(cmd) == L.LinkCmdRun)
+assert(asdl.classof(cmd) == L.LinkCmdRun)
 local saw_shared, saw_obj, saw_out, saw_lib = false, false, false, false
 for i = 1, #cmd.args do
     if cmd.args[i] == "-shared" or cmd.args[i] == "-dynamiclib" then saw_shared = true end

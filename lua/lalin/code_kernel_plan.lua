@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -68,7 +68,7 @@ local function bind_context(T)
         local sem = CodeFlowFacts.semantic_facts(module, graph, flow)
         local out = {}
         for _, fact in ipairs(sem.facts or {}) do
-            if pvm.classof(fact) == Flow.FlowLoopNormalizedCounted then out[fact.loop.text] = fact.trip_count end
+            if asdl.classof(fact) == Flow.FlowLoopNormalizedCounted then out[fact.loop.text] = fact.trip_count end
         end
         return out
     end
@@ -113,9 +113,9 @@ local function bind_context(T)
                 local backend = backend_by_access[access.id.text]
                 if backend == nil then
                     rejects[#rejects + 1] = Kernel.KernelRejectUnsupportedMemory(access.id, "missing MemBackendAccessInfo for loop-local access")
-                elseif pvm.classof(backend.trap) ~= Mem.MemNonTrapping then
+                elseif asdl.classof(backend.trap) ~= Mem.MemNonTrapping then
                     rejects[#rejects + 1] = Kernel.KernelRejectUnsupportedMemory(access.id, "loop-local access is not proven non-trapping")
-                elseif pvm.classof(backend.bounds) == Mem.MemBoundsUnknown then
+                elseif asdl.classof(backend.bounds) == Mem.MemBoundsUnknown then
                     rejects[#rejects + 1] = Kernel.KernelRejectUnsupportedMemory(access.id, "loop-local access bounds are unknown")
                 elseif object == nil then
                     rejects[#rejects + 1] = Kernel.KernelRejectUnsupportedMemory(access.id, "loop-local access has no proven object interval")
@@ -136,7 +136,7 @@ local function bind_context(T)
         local dep_proved = {}
         local dep_unknown = {}
         for _, dep in ipairs(mem and mem.dependences or {}) do
-            local dcls = pvm.classof(dep)
+            local dcls = asdl.classof(dep)
             if dcls == Mem.MemNoLoopCarriedDependence and dep.loop == loop_id then
                 dep_proved[dep.before.text .. "\0" .. dep.after.text] = true
                 dep_proved[dep.after.text .. "\0" .. dep.before.text] = true
@@ -180,10 +180,10 @@ local function bind_context(T)
     local function reductions_for_domain(value, domain)
         local reductions, closed_forms = {}, {}
         for _, r in ipairs(value and value.reductions or {}) do
-            if pvm.classof(r.domain) == Flow.FlowDomainLoop and pvm.classof(domain) == Flow.FlowDomainLoop and r.domain.loop == domain.loop then reductions[#reductions + 1] = r end
+            if asdl.classof(r.domain) == Flow.FlowDomainLoop and asdl.classof(domain) == Flow.FlowDomainLoop and r.domain.loop == domain.loop then reductions[#reductions + 1] = r end
         end
         for _, cf in ipairs(value and value.closed_forms or {}) do
-            if pvm.classof(cf.reduction.domain) == Flow.FlowDomainLoop and pvm.classof(domain) == Flow.FlowDomainLoop and cf.reduction.domain.loop == domain.loop then closed_forms[#closed_forms + 1] = cf end
+            if asdl.classof(cf.reduction.domain) == Flow.FlowDomainLoop and asdl.classof(domain) == Flow.FlowDomainLoop and cf.reduction.domain.loop == domain.loop then closed_forms[#closed_forms + 1] = cf end
         end
         return reductions, closed_forms
     end
@@ -197,7 +197,7 @@ local function bind_context(T)
     end
 
     local function effect_is_reject(eff)
-        local cls = pvm.classof(eff)
+        local cls = asdl.classof(eff)
         return cls == Effect.EffectUnknown or cls == Effect.EffectVolatile or cls == Effect.EffectAtomic or cls == Effect.EffectMayTrap
     end
 
@@ -237,7 +237,7 @@ local function bind_context(T)
     end
 
     local function index_expr(mem_index)
-        local cls = pvm.classof(mem_index)
+        local cls = asdl.classof(mem_index)
         if mem_index == Mem.MemIndexNone then return Value.ValueExprConst(Code.CodeConstLiteral(Code.CodeTyIndex, Core.LitInt("0"))) end
         if cls == Mem.MemIndexValue then return Value.ValueExprValue(mem_index.value) end
         if cls == Mem.MemIndexInduction then return Value.ValueExprValue(mem_index.induction.value) end
@@ -252,7 +252,7 @@ local function bind_context(T)
     end
 
     local function inst_result_ty(k)
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeInstConst then return k.const.ty end
         if cls == Code.CodeInstAlias then return k.ty end
         if cls == Code.CodeInstUnary or cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary or cls == Code.CodeInstSelect then return k.ty end
@@ -276,7 +276,7 @@ local function bind_context(T)
             if loop_blocks[block.id.text] then
                 for _, inst in ipairs(block.insts or {}) do
                     local k = inst.kind
-                    local cls = pvm.classof(k)
+                    local cls = asdl.classof(k)
                     if cls == Code.CodeInstLoad then
                         local aid = Mem.MemAccessId(access_id_text(func, block, inst))
                         local lane = lane_by_access[aid.text]
@@ -316,7 +316,7 @@ local function bind_context(T)
     local function first_effect(effects, cls)
         local found = nil
         for _, effect in ipairs(effects or {}) do
-            if pvm.classof(effect) == cls then
+            if asdl.classof(effect) == cls then
                 if found ~= nil then return nil, "multiple effects of same skeleton class" end
                 found = effect
             end
@@ -332,7 +332,7 @@ local function bind_context(T)
 
     local function resolve_kernel_expr(expr, bindings, seen)
         if expr == nil then return nil end
-        if pvm.classof(expr) ~= Kernel.KernelExprKernelValue then return expr end
+        if asdl.classof(expr) ~= Kernel.KernelExprKernelValue then return expr end
         seen = seen or {}
         if seen[expr.value.text] then return expr end
         seen[expr.value.text] = true
@@ -375,13 +375,13 @@ local function bind_context(T)
     end
 
     local function value_expr_is_value(expr, id, aliases)
-        if id == nil or pvm.classof(expr) ~= Value.ValueExprValue then return false end
+        if id == nil or asdl.classof(expr) ~= Value.ValueExprValue then return false end
         return canonical_value(expr.value, aliases) == canonical_value(id, aliases)
     end
 
     local function same_value_expr(a, b, aliases)
         if a == b then return true end
-        local ac, bc = pvm.classof(a), pvm.classof(b)
+        local ac, bc = asdl.classof(a), asdl.classof(b)
         if ac ~= bc then return false end
         if ac == Value.ValueExprValue then return canonical_value(a.value, aliases) == canonical_value(b.value, aliases) end
         if ac == Value.ValueExprConst then return a.const == b.const end
@@ -389,9 +389,9 @@ local function bind_context(T)
     end
 
     local function const_int_expr(expr)
-        if pvm.classof(expr) ~= Value.ValueExprConst then return nil end
+        if asdl.classof(expr) ~= Value.ValueExprConst then return nil end
         local c = expr.const
-        if pvm.classof(c) ~= Code.CodeConstLiteral or pvm.classof(c.literal) ~= Core.LitInt then return nil end
+        if asdl.classof(c) ~= Code.CodeConstLiteral or asdl.classof(c.literal) ~= Core.LitInt then return nil end
         return tonumber(c.literal.raw)
     end
 
@@ -400,9 +400,9 @@ local function bind_context(T)
     end
 
     local function reduction_update_matches(expr, reduction, aliases)
-        if pvm.classof(expr) ~= Kernel.KernelExprAlgebra then return false end
+        if asdl.classof(expr) ~= Kernel.KernelExprAlgebra then return false end
         local v = expr.expr
-        local cls = pvm.classof(v)
+        local cls = asdl.classof(v)
         local acc = reduction.accumulator
         local contrib = reduction.contribution
         if reduction.kind == Value.ReductionAdd and cls == Value.ValueExprAdd then
@@ -428,14 +428,14 @@ local function bind_context(T)
         local binding = bindings["kval:" .. value.text]
         if binding == nil then return nil end
         local expr = resolve_kernel_expr(binding.expr, bindings)
-        if pvm.classof(expr) == Kernel.KernelExprAlgebra then return expr.expr end
+        if asdl.classof(expr) == Kernel.KernelExprAlgebra then return expr.expr end
         return nil
     end
 
     local function expr_is_primary(expr, loop, aliases, bindings, seen)
         if expr == nil then return false end
         if value_expr_is_value(expr, loop_primary_induction(loop), aliases) then return true end
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Value.ValueExprValue then
             seen = seen or {}
             if seen[expr.value.text] then return false end
@@ -483,7 +483,7 @@ local function bind_context(T)
 
     local function term_args_to_dest(term, dest)
         local k = term and term.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeTermJump and k.dest == dest then return k.args or {} end
         if cls == Code.CodeTermBranch then
             if k.then_dest == dest then return k.then_args or {} end
@@ -519,7 +519,7 @@ local function bind_context(T)
         while block ~= nil and not seen[block.id.text] do
             seen[block.id.text] = true
             local term = block.term and block.term.kind or nil
-            local cls = pvm.classof(term)
+            local cls = asdl.classof(term)
             if cls == Code.CodeTermReturn then
                 if #(term.values or {}) ~= 1 then return nil end
                 local value = substitute_value(term.values[1], env)
@@ -541,7 +541,7 @@ local function bind_context(T)
     local function edge_branch_polarity(blocks, edge)
         local from = blocks[edge.from.block.text]
         local term = from and from.term and from.term.kind or nil
-        if pvm.classof(term) ~= Code.CodeTermBranch then return nil, nil end
+        if asdl.classof(term) ~= Code.CodeTermBranch then return nil, nil end
         if term.then_dest == edge.to.block then return term.cond, true end
         if term.else_dest == edge.to.block then return term.cond, false end
         return nil, nil
@@ -573,27 +573,27 @@ local function bind_context(T)
     end
 
     local function same_load_expr(a, b)
-        if pvm.classof(a) ~= Kernel.KernelExprLaneLoad or pvm.classof(b) ~= Kernel.KernelExprLaneLoad then return false end
+        if asdl.classof(a) ~= Kernel.KernelExprLaneLoad or asdl.classof(b) ~= Kernel.KernelExprLaneLoad then return false end
         return a.lane == b.lane and same_value_expr(a.index, b.index)
     end
 
     local function expr_as_kernel_value(expr, bindings)
-        if pvm.classof(expr) ~= Value.ValueExprValue then return nil end
+        if asdl.classof(expr) ~= Value.ValueExprValue then return nil end
         return resolve_kernel_expr(Kernel.KernelExprKernelValue(Kernel.KernelValueId("kval:" .. expr.value.text)), bindings)
     end
 
     local function find_predicate_from_cond(cond, polarity, bindings, value_index)
         local expr = cond and value_index.expr_by_value[cond.text] or nil
-        if pvm.classof(expr) ~= Value.ValueExprCmp then return nil end
+        if asdl.classof(expr) ~= Value.ValueExprCmp then return nil end
         local op = polarity and expr.op or invert_cmp(expr.op)
         if op == nil then return nil end
         local a_kernel, b_kernel = expr_as_kernel_value(expr.a, bindings), expr_as_kernel_value(expr.b, bindings)
-        local a_const = pvm.classof(expr.a) == Value.ValueExprConst and expr.a or nil
-        local b_const = pvm.classof(expr.b) == Value.ValueExprConst and expr.b or nil
-        if a_kernel ~= nil and b_const ~= nil and pvm.classof(a_kernel) == Kernel.KernelExprLaneLoad then
+        local a_const = asdl.classof(expr.a) == Value.ValueExprConst and expr.a or nil
+        local b_const = asdl.classof(expr.b) == Value.ValueExprConst and expr.b or nil
+        if a_kernel ~= nil and b_const ~= nil and asdl.classof(a_kernel) == Kernel.KernelExprLaneLoad then
             return a_kernel, pred_from_cmp(op, a_kernel.lane.elem_ty, b_const)
         end
-        if b_kernel ~= nil and a_const ~= nil and pvm.classof(b_kernel) == Kernel.KernelExprLaneLoad then
+        if b_kernel ~= nil and a_const ~= nil and asdl.classof(b_kernel) == Kernel.KernelExprLaneLoad then
             return b_kernel, pred_from_cmp(flip_cmp(op), b_kernel.lane.elem_ty, a_const)
         end
         return nil
@@ -633,7 +633,7 @@ local function bind_context(T)
         local store = first_effect(effects, Kernel.KernelEffectStore)
         if store == nil or not index_is_primary(store.index, loop, aliases, bindings) then return nil end
         local src = resolve_kernel_expr(store.value, bindings)
-        if pvm.classof(src) ~= Kernel.KernelExprLaneLoad then return nil end
+        if asdl.classof(src) ~= Kernel.KernelExprLaneLoad then return nil end
         if not index_is_primary(src.index, loop, aliases, bindings) then return nil end
         if store.dst.elem_ty ~= src.lane.elem_ty then return nil end
         local semantics, dep_reason = copy_dependence_semantics(store.dst, src.lane, dependence_rejects)
@@ -652,7 +652,7 @@ local function bind_context(T)
     end
 
     local function scatter_reduce_kind(expr)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Value.ValueExprAdd then return Value.ReductionAdd, expr.a, expr.b, expr.ty, expr.sem end
         if cls == Value.ValueExprMul then return Value.ReductionMul, expr.a, expr.b, expr.ty, expr.sem end
         if cls == Value.ValueExprBinary then
@@ -664,7 +664,7 @@ local function bind_context(T)
 
     local function resolved_value_expr(expr, bindings, seen)
         if expr == nil then return nil end
-        if pvm.classof(expr) ~= Value.ValueExprValue then return expr end
+        if asdl.classof(expr) ~= Value.ValueExprValue then return expr end
         seen = seen or {}
         if seen[expr.value.text] then return expr end
         seen[expr.value.text] = true
@@ -674,14 +674,14 @@ local function bind_context(T)
     local function value_expr_key(expr, bindings, aliases)
         expr = resolved_value_expr(expr, bindings)
         if expr == nil then return "nil" end
-        local cls = pvm.classof(expr)
-        if cls == Value.ValueExprConst and pvm.classof(expr.const) == Code.CodeConstLiteral then
+        local cls = asdl.classof(expr)
+        if cls == Value.ValueExprConst and asdl.classof(expr.const) == Code.CodeConstLiteral then
             local lit = expr.const.literal
-            return "const:" .. tostring(pvm.classof(lit)) .. ":" .. tostring(lit and (lit.raw or lit.value))
+            return "const:" .. tostring(asdl.classof(lit)) .. ":" .. tostring(lit and (lit.raw or lit.value))
         end
         if cls == Value.ValueExprValue then
             local binding = bindings and bindings["kval:" .. expr.value.text] or nil
-            if binding ~= nil and pvm.classof(binding.expr) == Kernel.KernelExprLaneLoad then
+            if binding ~= nil and asdl.classof(binding.expr) == Kernel.KernelExprLaneLoad then
                 return "load:" .. tostring(binding.expr.lane.id.text) .. ":" .. value_expr_key(binding.expr.index, bindings, aliases)
             end
             local v = canonical_value(expr.value, aliases)
@@ -704,12 +704,12 @@ local function bind_context(T)
     local function scatter_reduce_contribution(store, a, b, bindings, aliases)
         local ka = expr_as_kernel_value(a, bindings)
         local kb = expr_as_kernel_value(b, bindings)
-        if pvm.classof(ka) == Kernel.KernelExprLaneLoad
+        if asdl.classof(ka) == Kernel.KernelExprLaneLoad
             and ka.lane == store.dst
             and same_index_expr(ka.index, store.index, bindings, aliases) then
             return kb or Kernel.KernelExprAlgebra(b)
         end
-        if pvm.classof(kb) == Kernel.KernelExprLaneLoad
+        if asdl.classof(kb) == Kernel.KernelExprLaneLoad
             and kb.lane == store.dst
             and same_index_expr(kb.index, store.index, bindings, aliases) then
             return ka or Kernel.KernelExprAlgebra(a)
@@ -718,9 +718,9 @@ local function bind_context(T)
     end
 
     local function scatter_reduce_select_kind(expr, bindings, aliases)
-        if pvm.classof(expr) ~= Value.ValueExprSelect then return nil end
+        if asdl.classof(expr) ~= Value.ValueExprSelect then return nil end
         local cond = resolved_value_expr(expr.cond, bindings)
-        if pvm.classof(cond) ~= Value.ValueExprCmp then return nil end
+        if asdl.classof(cond) ~= Value.ValueExprCmp then return nil end
         local lhs_key = value_expr_key(cond.a, bindings, aliases)
         local rhs_key = value_expr_key(cond.b, bindings, aliases)
         local t_key = value_expr_key(expr.t, bindings, aliases)
@@ -738,7 +738,7 @@ local function bind_context(T)
         local store = first_effect(effects, Kernel.KernelEffectStore)
         if store == nil then return nil end
         local value = resolve_kernel_expr(store.value, bindings)
-        if pvm.classof(value) ~= Kernel.KernelExprAlgebra then return nil end
+        if asdl.classof(value) ~= Kernel.KernelExprAlgebra then return nil end
         local kind, a, b, ty, sem = scatter_reduce_kind(value.expr)
         if kind == nil then
             kind, a, b = scatter_reduce_select_kind(value.expr, bindings, aliases)
@@ -781,7 +781,7 @@ local function bind_context(T)
             end
         end
         if hit_src == nil or hit_pred == nil or not_found == nil then return nil end
-        if pvm.classof(hit_src) ~= Kernel.KernelExprLaneLoad or not index_is_primary(hit_src.index, loop, aliases, bindings) then return nil end
+        if asdl.classof(hit_src) ~= Kernel.KernelExprLaneLoad or not index_is_primary(hit_src.index, loop, aliases, bindings) then return nil end
         proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("early-exit primary-index search is an array find skeleton")
         return {
             effects = {},
@@ -806,10 +806,10 @@ local function bind_context(T)
 
     local function same_code_const(a, b)
         if a == b then return true end
-        if pvm.classof(a) ~= Code.CodeConstLiteral or pvm.classof(b) ~= Code.CodeConstLiteral then return false end
+        if asdl.classof(a) ~= Code.CodeConstLiteral or asdl.classof(b) ~= Code.CodeConstLiteral then return false end
         if a.ty ~= b.ty then return false end
         local al, bl = a.literal, b.literal
-        local alc, blc = pvm.classof(al), pvm.classof(bl)
+        local alc, blc = asdl.classof(al), asdl.classof(bl)
         if alc ~= blc then return false end
         return al ~= nil and bl ~= nil and al.raw == bl.raw
     end
@@ -818,7 +818,7 @@ local function bind_context(T)
         if a == b then return true end
         local ae = a and value_index and value_index.expr_by_value[a.text] or nil
         local be = b and value_index and value_index.expr_by_value[b.text] or nil
-        if pvm.classof(ae) == Value.ValueExprConst and pvm.classof(be) == Value.ValueExprConst then return same_code_const(ae.const, be.const) end
+        if asdl.classof(ae) == Value.ValueExprConst and asdl.classof(be) == Value.ValueExprConst then return same_code_const(ae.const, be.const) end
         return false
     end
 
@@ -832,7 +832,7 @@ local function bind_context(T)
 
     local function first_store_effect(effects)
         for _, effect in ipairs(effects or {}) do
-            if pvm.classof(effect) == Kernel.KernelEffectStore then return effect end
+            if asdl.classof(effect) == Kernel.KernelEffectStore then return effect end
         end
         return nil
     end
@@ -882,9 +882,9 @@ local function bind_context(T)
         for _, block in ipairs(func.blocks or {}) do
             if loop_blocks[block.id.text] then
                 local term = block.term and block.term.kind or nil
-                if pvm.classof(term) == Code.CodeTermBranch then
+                if asdl.classof(term) == Code.CodeTermBranch then
                     local candidate_src, candidate_pred = find_predicate_from_cond(term.cond, true, bindings, value_index)
-                    if candidate_src ~= nil and candidate_pred ~= nil and pvm.classof(candidate_src) == Kernel.KernelExprLaneLoad then
+                    if candidate_src ~= nil and candidate_pred ~= nil and asdl.classof(candidate_src) == Kernel.KernelExprLaneLoad then
                         src, pred = candidate_src, candidate_pred
                         break
                     end
@@ -1020,7 +1020,7 @@ local function bind_context(T)
                     closed_form = closed_forms[1],
                     reduction = reductions[1],
                     skeleton_result = skeleton and skeleton.result or nil,
-                    closed_form_trip_unknown = #closed_forms > 0 and pvm.classof(trip) == Flow.FlowTripCountUnknown,
+                    closed_form_trip_unknown = #closed_forms > 0 and asdl.classof(trip) == Flow.FlowTripCountUnknown,
                     not_counted_rejects = { Kernel.KernelRejectNoFacts(subject, "loop is not a counted Flow domain") },
                     no_owner_rejects = { Kernel.KernelRejectNoFacts(subject, "graph loop has no function owner") },
                     rejects = rejects,

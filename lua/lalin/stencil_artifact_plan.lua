@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local bit = require("bit")
 
 local function sanitize(s)
@@ -14,13 +14,22 @@ local function stable_hash32(s)
     return string.format("%08x", h)
 end
 
+local function stable_hash128(s)
+    return table.concat({
+        stable_hash32("lalin:0:" .. s),
+        stable_hash32("lalin:1:" .. s),
+        stable_hash32("lalin:2:" .. s),
+        stable_hash32("lalin:3:" .. s),
+    })
+end
+
 local function stable_repr(v, seen)
     local tv = type(v)
     if tv == "nil" then return "nil" end
     if tv == "boolean" or tv == "number" then return tostring(v) end
     if tv == "string" then return string.format("%q", v) end
     if tv ~= "table" then return tv .. ":" .. tostring(v) end
-    local cls = pvm.classof(v)
+    local cls = asdl.classof(v)
     if tostring(cls) == "Class(LalinCode.CodeValueId)" then return tostring(cls) .. "{_}" end
     if tostring(cls):match("^Class%(LalinFlow%.FlowDomain") then return tostring(cls) .. "{_}" end
     if tostring(cls) == "Class(LalinGraph.GraphLoopId)" then return tostring(cls) .. "{_}" end
@@ -73,7 +82,7 @@ local function bind_context(T)
     local api = {}
 
     local function type_name(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then return (ty.signedness == Code.CodeSigned and "i" or "u") .. tostring(ty.bits) end
         if cls == Code.CodeTyFloat then return "f" .. tostring(ty.bits) end
         if ty == Code.CodeTyIndex then return "index" end
@@ -82,7 +91,7 @@ local function bind_context(T)
     end
 
     local function c_type(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyArray then return "ml_array_" .. tostring(ty.count) .. "_" .. type_name(ty.elem) end
         if cls == Code.CodeTyClosure then return "ml_closure_" .. sanitize(ty.sig.text) end
         if cls == Code.CodeTyVector then return "ml_vector_" .. tostring(ty.lanes) .. "_" .. type_name(ty.elem) end
@@ -137,7 +146,7 @@ local function bind_context(T)
     end
 
     local function pred_name(pred)
-        local cls = pvm.classof(pred)
+        local cls = asdl.classof(pred)
         if pred == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return "nonzero" end
         if cls == Stencil.StencilPredCompareConst then return cmp_name(pred.cmp) end
         if cls == Stencil.StencilPredRange then return "range_" .. cmp_name(pred.lower_cmp) .. "_" .. cmp_name(pred.upper_cmp) end
@@ -199,14 +208,14 @@ local function bind_context(T)
     local function scatter_reduce_conflict_name(conflicts)
         if conflicts == Stencil.StencilScatterReduceSequential then return "seq" end
         if conflicts == Stencil.StencilScatterReduceUniqueIndices then return "unique" end
-        if pvm.classof(conflicts) == Stencil.StencilScatterReduceAtomic then return "atomic" end
+        if asdl.classof(conflicts) == Stencil.StencilScatterReduceAtomic then return "atomic" end
         if conflicts == Stencil.StencilScatterReducePrivatized then return "privatized" end
         return "scatter_reduce"
     end
 
     local function proof_list(plan)
         local eq = plan and plan.body and plan.body.equivalence or nil
-        if pvm.classof(eq) == Kernel.KernelEquivalenceProof then return eq.proofs or {} end
+        if asdl.classof(eq) == Kernel.KernelEquivalenceProof then return eq.proofs or {} end
         return {}
     end
 
@@ -227,12 +236,12 @@ local function bind_context(T)
     end
 
     local function access_abi_ty(access)
-        if pvm.classof(access.layout) == Stencil.StencilLayoutScalar then return access.ty end
+        if asdl.classof(access.layout) == Stencil.StencilLayoutScalar then return access.ty end
         return Code.CodeTyDataPtr(access.ty)
     end
 
     local function access_arg_decl(access, mutable)
-        if pvm.classof(access.layout) == Stencil.StencilLayoutScalar then return c_type(access.ty) .. " " .. access.name end
+        if asdl.classof(access.layout) == Stencil.StencilLayoutScalar then return c_type(access.ty) .. " " .. access.name end
         if mutable then return c_type(access.ty) .. " *" .. access.name end
         return const_elem_ptr_decl(access.ty, access.name)
     end
@@ -250,11 +259,15 @@ local function bind_context(T)
     end
 
     local function is_int(ty)
-        return pvm.classof(ty) == Code.CodeTyInt
+        return asdl.classof(ty) == Code.CodeTyInt
+    end
+
+    local function is_integer_like(ty)
+        return asdl.classof(ty) == Code.CodeTyInt or ty == Code.CodeTyIndex
     end
 
     local function is_float(ty)
-        return pvm.classof(ty) == Code.CodeTyFloat
+        return asdl.classof(ty) == Code.CodeTyFloat
     end
 
     local function same_source_type(a, b)
@@ -265,7 +278,7 @@ local function bind_context(T)
 
     local function same_type(a, b)
         if a == b then return true end
-        local ac, bc = pvm.classof(a), pvm.classof(b)
+        local ac, bc = asdl.classof(a), asdl.classof(b)
         if ac ~= bc then return false end
         if ac == Code.CodeTyInt then return a.bits == b.bits and a.signedness == b.signedness end
         if ac == Code.CodeTyFloat then return a.bits == b.bits end
@@ -287,7 +300,7 @@ local function bind_context(T)
     end
 
     local function is_scalar(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         return cls == Code.CodeTyInt or cls == Code.CodeTyFloat or ty == Code.CodeTyIndex or ty == Code.CodeTyBool8
     end
 
@@ -296,13 +309,13 @@ local function bind_context(T)
     end
 
     local function element_int_semantics(ty, info)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls ~= Code.CodeTyInt and ty ~= Code.CodeTyIndex and ty ~= Code.CodeTyBool8 then return nil end
         return info and (info.int_semantics or info.semantics) or default_int_semantics()
     end
 
     local function element_float_mode(ty, info)
-        if pvm.classof(ty) ~= Code.CodeTyFloat then return nil end
+        if asdl.classof(ty) ~= Code.CodeTyFloat then return nil end
         return info and info.float_mode or Code.CodeFloatStrict
     end
 
@@ -358,7 +371,7 @@ local function bind_context(T)
     end
 
     local function predicate_checked(pred, operand_ty)
-        local cls = pvm.classof(pred)
+        local cls = asdl.classof(pred)
         if pred == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return pred end
         if cls == Stencil.StencilPredCompareConst or cls == Stencil.StencilPredRange or cls == Stencil.StencilPredIsNaN or cls == Stencil.StencilPredIsInf or cls == Stencil.StencilPredIsFinite then
             if not same_type(pred.operand_ty, operand_ty) then error("stencil_artifact_plan: predicate operand type does not match stencil element type", 3) end
@@ -380,15 +393,15 @@ local function bind_context(T)
     end
 
     local function supports_bitwise_ty(ty)
-        return pvm.classof(ty) == Code.CodeTyInt or ty == Code.CodeTyBool8
+        return asdl.classof(ty) == Code.CodeTyInt or ty == Code.CodeTyBool8
     end
 
     local function supports_div_ty(ty)
-        return pvm.classof(ty) == Code.CodeTyInt or pvm.classof(ty) == Code.CodeTyFloat or ty == Code.CodeTyIndex
+        return asdl.classof(ty) == Code.CodeTyInt or asdl.classof(ty) == Code.CodeTyFloat or ty == Code.CodeTyIndex
     end
 
     local function supports_integer_arithmetic_ty(ty)
-        return pvm.classof(ty) == Code.CodeTyInt or ty == Code.CodeTyIndex
+        return asdl.classof(ty) == Code.CodeTyInt or ty == Code.CodeTyIndex
     end
 
     function api.reduce_array_supported(reduction, info)
@@ -399,13 +412,19 @@ local function bind_context(T)
         local ok_type, err = pcall(function() c_type(elem_ty); c_type(result_ty) end)
         if not ok_type then return false, tostring(err) end
         local kind = reduction.kind
-        if is_int(result_ty) then
+        if is_integer_like(result_ty) then
             if kind == Value.ReductionAdd or kind == Value.ReductionMul
                 or kind == Value.ReductionAnd or kind == Value.ReductionOr or kind == Value.ReductionXor
                 or kind == Value.ReductionMin or kind == Value.ReductionMax then
                 return true
             end
             return false, "unsupported integer reduction"
+        end
+        if result_ty == Code.CodeTyBool8 then
+            if kind == Value.ReductionAnd or kind == Value.ReductionOr or kind == Value.ReductionXor then
+                return true
+            end
+            return false, "bool8 reduce_array stencil only supports and/or/xor"
         end
         if is_float(result_ty) then
             if kind == Value.ReductionAdd or kind == Value.ReductionMul
@@ -414,7 +433,7 @@ local function bind_context(T)
             end
             return false, "float reduce_array stencil only supports add/mul/min/max"
         end
-        return false, "reduce_array stencil only supports integer and float scalar types"
+        return false, "reduce_array stencil only supports integer, index, bool8, and float scalar types"
     end
 
     local function binary_supported(op, ty)
@@ -450,7 +469,7 @@ local function bind_context(T)
 
     local function canonical_producer(producer)
         local shape = producer and producer.shape or nil
-        local cls = pvm.classof(shape)
+        local cls = asdl.classof(shape)
         if cls == Stencil.StencilProduceRange1D then
             return Stencil.StencilProducer(
                 nil,
@@ -523,7 +542,7 @@ local function bind_context(T)
     end
 
     local function predicate_expr_pred(expr)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Stencil.StencilPointPredicate or cls == Stencil.StencilPointSelect then return expr.pred end
         error("stencil_artifact_plan: descriptor mode requires a predicate point expression", 3)
     end
@@ -574,7 +593,7 @@ local function bind_context(T)
     end
 
     local function descriptor_vocab(desc)
-        local sink_cls = desc and desc.sink and pvm.classof(desc.sink) or nil
+        local sink_cls = desc and desc.sink and asdl.classof(desc.sink) or nil
         if sink_cls == Stencil.StencilSinkStore then return Stencil.StencilStore end
         if sink_cls == Stencil.StencilSinkReduce then return Stencil.StencilReduce end
         if sink_cls == Stencil.StencilSinkScan then return Stencil.StencilScan end
@@ -583,21 +602,21 @@ local function bind_context(T)
     end
 
     local function descriptor_reduce_mode(desc)
-        if desc == nil or pvm.classof(desc.sink) ~= Stencil.StencilSinkReduce then return nil end
+        if desc == nil or asdl.classof(desc.sink) ~= Stencil.StencilSinkReduce then return nil end
         return desc.sink.mode
     end
 
     local function descriptor_reducer(desc)
         if desc == nil then return nil end
-        local sink_cls = pvm.classof(desc.sink)
+        local sink_cls = asdl.classof(desc.sink)
         if sink_cls == Stencil.StencilSinkScan then return desc.sink.reducer end
         if sink_cls == Stencil.StencilSinkScatterReduce then return desc.sink.reducer end
-        if sink_cls == Stencil.StencilSinkReduce and pvm.classof(desc.sink.mode) == Stencil.StencilReduceFold then return desc.sink.mode.reducer end
+        if sink_cls == Stencil.StencilSinkReduce and asdl.classof(desc.sink.mode) == Stencil.StencilReduceFold then return desc.sink.mode.reducer end
         return nil
     end
 
     local function descriptor_expr(desc)
-        if desc == nil or pvm.classof(desc.body) ~= Stencil.StencilBodyPoint then
+        if desc == nil or asdl.classof(desc.body) ~= Stencil.StencilBodyPoint then
             error("stencil_artifact_plan: descriptor body is not an apply expression", 3)
         end
         return desc.body.expr
@@ -611,15 +630,88 @@ local function bind_context(T)
         return desc and desc.producer or nil
     end
 
+    local function descriptor_access_identity_map(desc)
+        local map = {}
+        local input_i, output_i = 0, 0
+        for _, access in ipairs(descriptor_accesses(desc)) do
+            local role = access.role
+            if role == Stencil.StencilAccessWrite
+                or role == Stencil.StencilAccessReadWrite
+                or role == Stencil.StencilAccessReduce
+                or role == Stencil.StencilAccessControlResult then
+                output_i = output_i + 1
+                map[access.name] = output_i == 1 and "dst" or ("dst" .. tostring(output_i))
+            else
+                input_i = input_i + 1
+                map[access.name] = "x" .. tostring(input_i)
+            end
+        end
+        return map
+    end
+
+    local function descriptor_identity_repr(desc)
+        local access_map = descriptor_access_identity_map(desc)
+        local function repr(v, seen, owner_cls, field_name)
+            local tv = type(v)
+            if tv == "nil" then return "nil" end
+            if tv == "boolean" or tv == "number" then return tostring(v) end
+            if tv == "string" then
+                if owner_cls == Stencil.StencilAccess and field_name == "name" then
+                    return string.format("%q", access_map[v] or v)
+                end
+                return string.format("%q", v)
+            end
+            if tv ~= "table" then return tv .. ":" .. tostring(v) end
+            local cls = asdl.classof(v)
+            if cls == Stencil.StencilAccessRef then
+                return tostring(cls) .. "{name=" .. string.format("%q", access_map[v.name] or v.name) .. "}"
+            end
+            if tostring(cls) == "Class(LalinCode.CodeValueId)" then return tostring(cls) .. "{_}" end
+            if tostring(cls):match("^Class%(LalinFlow%.FlowDomain") then return tostring(cls) .. "{_}" end
+            if tostring(cls) == "Class(LalinGraph.GraphLoopId)" then return tostring(cls) .. "{_}" end
+            if tostring(cls) == "Class(LalinCode.CodeFuncId)" then return tostring(cls) .. "{_}" end
+            seen = seen or {}
+            if seen[v] then return "<cycle>" end
+            seen[v] = true
+            local out = {}
+            if cls then
+                out[#out + 1] = tostring(cls)
+                out[#out + 1] = "{"
+                for i, field in ipairs(cls.__fields or {}) do
+                    if i > 1 then out[#out + 1] = "," end
+                    out[#out + 1] = field.name
+                    out[#out + 1] = "="
+                    out[#out + 1] = repr(rawget(v, field.name), seen, cls, field.name)
+                end
+                out[#out + 1] = "}"
+            else
+                local keys = {}
+                for key in pairs(v) do keys[#keys + 1] = key end
+                table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+                out[#out + 1] = "{"
+                for i, key in ipairs(keys) do
+                    if i > 1 then out[#out + 1] = "," end
+                    out[#out + 1] = repr(key, seen)
+                    out[#out + 1] = "="
+                    out[#out + 1] = repr(v[key], seen)
+                end
+                out[#out + 1] = "}"
+            end
+            seen[v] = nil
+            return table.concat(out)
+        end
+        return repr(desc)
+    end
+
     local function producer_shape(producer)
         if producer == nil then return nil end
-        if pvm.classof(producer) == Stencil.StencilProducer then return producer.shape end
+        if asdl.classof(producer) == Stencil.StencilProducer then return producer.shape end
         return producer
     end
 
     local function producer_axis_count(producer)
         local shape = producer_shape(producer)
-        local cls = pvm.classof(shape)
+        local cls = asdl.classof(shape)
         if cls == Stencil.StencilProduceRange1D then return 1 end
         if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then return #(shape.axes or {}) end
         return 0
@@ -661,7 +753,7 @@ local function bind_context(T)
 
     local function producer_shape_reject_reason(producer)
         local shape = producer_shape(producer)
-        local cls = pvm.classof(shape)
+        local cls = asdl.classof(shape)
         if cls == Stencil.StencilProduceRange1D then
             if (tonumber(shape.step) or 0) <= 0 then return "1D stencil producer step must be a positive compile-time constant" end
             return nil
@@ -706,7 +798,7 @@ local function bind_context(T)
     local function producer_materialized(producer)
         local shape = producer_shape(producer)
         if not producer_shape_supported(producer) then return false end
-        local cls = pvm.classof(shape)
+        local cls = asdl.classof(shape)
         if cls == Stencil.StencilProduceRange1D then return true end
         if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then
             return producer_axes_forward(shape.axes)
@@ -718,7 +810,7 @@ local function bind_context(T)
         local shape = producer_shape(producer)
         local shape_reason = producer_shape_reject_reason(producer)
         if shape_reason ~= nil then return shape_reason end
-        local cls = pvm.classof(shape)
+        local cls = asdl.classof(shape)
         if cls == Stencil.StencilProduceRange1D then
             return nil
         end
@@ -744,10 +836,10 @@ local function bind_context(T)
     end
 
     local function expr_window_input_reason(expr, producer)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Stencil.StencilPointWindowInput then
             local shape = producer_shape(producer)
-            if pvm.classof(shape) ~= Stencil.StencilProduceWindowND then return "window-relative point input requires a WindowND producer" end
+            if asdl.classof(shape) ~= Stencil.StencilProduceWindowND then return "window-relative point input requires a WindowND producer" end
             local seen = {}
             for i, offset in ipairs(expr.offsets or {}) do
                 local reason = axis_ref_invalid_reason(offset.axis, producer, "window input offset " .. tostring(i))
@@ -770,7 +862,7 @@ local function bind_context(T)
     end
 
     local function reduce_scope_materializer_reject_reason(scope, producer)
-        local cls = pvm.classof(scope)
+        local cls = asdl.classof(scope)
         if scope == Stencil.StencilReduceScopeDomain or cls == Stencil.StencilReduceScopeDomain then return nil end
         if cls == Stencil.StencilReduceScopeAxes then
             local reason = axis_set_invalid_reason(scope.axes, producer, "reduce axis scope")
@@ -779,7 +871,7 @@ local function bind_context(T)
         end
         if cls == Stencil.StencilReduceScopeWindow then
             local shape = producer_shape(producer)
-            if pvm.classof(shape) ~= Stencil.StencilProduceWindowND then return "window-local reduction requires a WindowND producer" end
+            if asdl.classof(shape) ~= Stencil.StencilProduceWindowND then return "window-local reduction requires a WindowND producer" end
             local reason = axis_set_invalid_reason(scope.axes, producer, "window reduction scope")
             if reason ~= nil then return reason end
             return nil
@@ -793,7 +885,7 @@ local function bind_context(T)
         local body_reason = expr_window_input_reason(descriptor_expr(desc), producer)
         if body_reason ~= nil then return body_reason end
         local sink = desc.sink
-        local sink_cls = pvm.classof(sink)
+        local sink_cls = asdl.classof(sink)
         if sink_cls == Stencil.StencilSinkReduce then
             return reduce_scope_materializer_reject_reason(sink.scope, producer)
         end
@@ -805,7 +897,7 @@ local function bind_context(T)
         if sink_cls == Stencil.StencilSinkStore then return nil end
         if sink_cls == Stencil.StencilSinkScatterReduce then
             if sink.conflicts == Stencil.StencilScatterReduceSequential or sink.conflicts == Stencil.StencilScatterReduceUniqueIndices then return nil end
-            if pvm.classof(sink.conflicts) == Stencil.StencilScatterReduceAtomic then return "atomic scatter-reduce is represented but not materialized yet" end
+            if asdl.classof(sink.conflicts) == Stencil.StencilScatterReduceAtomic then return "atomic scatter-reduce is represented but not materialized yet" end
             if sink.conflicts == Stencil.StencilScatterReducePrivatized then return "privatized scatter-reduce is represented but not materialized yet" end
             return "unknown scatter-reduce conflict semantics"
         end
@@ -819,15 +911,15 @@ local function bind_context(T)
     end
 
     local function schedule_lane_count(schedule)
-        if pvm.classof(schedule) ~= Stencil.StencilScheduleVector then return nil end
+        if asdl.classof(schedule) ~= Stencil.StencilScheduleVector then return nil end
         local policy = schedule.lane_policy
-        if pvm.classof(policy) == Stencil.StencilLaneFixed then return tonumber(policy.lanes) end
+        if asdl.classof(policy) == Stencil.StencilLaneFixed then return tonumber(policy.lanes) end
         return nil
     end
 
     local function realized_matches_request(schedule, realized)
-        local scls = pvm.classof(schedule)
-        local rcls = pvm.classof(realized)
+        local scls = asdl.classof(schedule)
+        local rcls = asdl.classof(realized)
         if scls == Stencil.StencilScheduleScalar then return rcls == Stencil.StencilRealizedScalar end
         if scls == Stencil.StencilScheduleAutoVector then return rcls == Stencil.StencilRealizedVector end
         if scls == Stencil.StencilScheduleUnrolled then
@@ -855,7 +947,7 @@ local function bind_context(T)
     end
 
     local function compiler_matrix_rejects(schedule)
-        if pvm.classof(schedule) ~= Stencil.StencilScheduleVector then return {} end
+        if asdl.classof(schedule) ~= Stencil.StencilScheduleVector then return {} end
         local compiler = schedule.compiler
         local vector_compiler = schedule.vector_compiler
         local cc = compiler and compiler.compiler or nil
@@ -880,7 +972,7 @@ local function bind_context(T)
     local function variant_name(value)
         if value == nil then return "nil" end
         if value.text ~= nil then return value.text end
-        local cls = pvm.classof(value)
+        local cls = asdl.classof(value)
         local s = tostring(cls or value)
         return s:match("([%w_]+)%)$") or s:match("%.([%w_]+)$") or s
     end
@@ -902,7 +994,7 @@ local function bind_context(T)
     end
 
     local function schedule_key(schedule)
-        local cls = pvm.classof(schedule)
+        local cls = asdl.classof(schedule)
         if cls == Stencil.StencilScheduleScalar then return "scalar:" .. compiler_policy_key(schedule.compiler) end
         if cls == Stencil.StencilScheduleAutoVector then return "autovector:" .. compiler_policy_key(schedule.compiler) end
         if cls == Stencil.StencilScheduleUnrolled then return "unrolled:" .. tostring(schedule.factor) .. ":" .. compiler_policy_key(schedule.compiler) end
@@ -927,20 +1019,20 @@ local function bind_context(T)
     local function artifact_fingerprint(instance0, provider, symbol, signature)
         local source = table.concat({
             "stencil-artifact-v1",
-            stable_repr(instance0.descriptor),
+            descriptor_identity_repr(instance0.descriptor),
             stable_repr(instance0.schedule),
             stable_repr(instance0.abi),
             provider_key(provider),
             symbol.text,
             signature,
         }, "\n")
-        return Stencil.StencilArtifactFingerprint("stencil-artifact-v1:" .. stable_hash32(source))
+        return Stencil.StencilArtifactFingerprint("stencil-artifact-v1:" .. stable_hash128(source))
     end
 
     local function append_realized_diagnostics(out, realized)
         if realized == nil then return end
         for _, evidence in ipairs(realized.evidence or {}) do
-            local cls = pvm.classof(evidence)
+            local cls = asdl.classof(evidence)
             if cls == Stencil.StencilRealizedByConstruction then
                 out[#out + 1] = Stencil.StencilArtifactDiagnostic(
                     Stencil.StencilArtifactDiagnosticNote,
@@ -969,7 +1061,7 @@ local function bind_context(T)
         local has_compiler_matrix_reject = false
         for _, reject in ipairs(artifact.schedule_rejects or {}) do
             rejects[#rejects + 1] = reject
-            if pvm.classof(reject) == Stencil.StencilScheduleRejectCompilerMatrix then has_compiler_matrix_reject = true end
+            if asdl.classof(reject) == Stencil.StencilScheduleRejectCompilerMatrix then has_compiler_matrix_reject = true end
         end
         if not has_compiler_matrix_reject then
             for _, reject in ipairs(compiler_matrix_rejects(artifact.instance.schedule)) do rejects[#rejects + 1] = reject end
@@ -997,7 +1089,7 @@ local function bind_context(T)
     end
 
     local function layout_unit_stride(layout)
-        local cls = pvm.classof(layout)
+        local cls = asdl.classof(layout)
         if cls == Stencil.StencilLayoutFieldProjection then return layout_unit_stride(layout.parent) end
         if cls == Stencil.StencilLayoutSoAComponent then return layout_unit_stride(layout.parent) end
         if cls == Stencil.StencilLayoutAffine1D then return math.abs(tonumber(layout.scale) or 0) == 1 and layout_unit_stride(layout.parent) end
@@ -1042,7 +1134,7 @@ local function bind_context(T)
     end
 
     local function is_memory_access(access)
-        return pvm.classof(access.layout) ~= Stencil.StencilLayoutScalar
+        return asdl.classof(access.layout) ~= Stencil.StencilLayoutScalar
     end
 
     local function proof_origin(origin, fallback)
@@ -1122,7 +1214,7 @@ local function bind_context(T)
                     nil
                 )
             end
-            if pvm.classof(fact.alignment) == Stencil.StencilAlignmentKnown then
+            if asdl.classof(fact.alignment) == Stencil.StencilAlignmentKnown then
                 add_proof_obligation(
                     out,
                     Stencil.StencilProofAlignment(fact.access, fact.alignment),
@@ -1144,7 +1236,7 @@ local function bind_context(T)
             end
         end
 
-        local trip_count_cls = pvm.classof(trip_count)
+        local trip_count_cls = asdl.classof(trip_count)
         if trip_count_cls == Stencil.StencilTripCountMultipleOf or trip_count_cls == Stencil.StencilTripCountExact then
             add_proof_obligation(
                 out,
@@ -1176,7 +1268,7 @@ local function bind_context(T)
     local function trip_count_fact(info)
         if info == nil then return Stencil.StencilTripCountDynamic end
         local fact = info.trip_count or info.trip_count_fact
-        local cls = pvm.classof(fact)
+        local cls = asdl.classof(fact)
         if cls == Stencil.StencilTripCountUnknown
             or cls == Stencil.StencilTripCountDynamic
             or cls == Stencil.StencilTripCountExact
@@ -1211,14 +1303,14 @@ local function bind_context(T)
     end
 
     local function auto_vector_descriptor(desc)
-        local sink_cls = desc and desc.sink and pvm.classof(desc.sink) or nil
+        local sink_cls = desc and desc.sink and asdl.classof(desc.sink) or nil
         if sink_cls == Stencil.StencilSinkScan then return true end
         if sink_cls == Stencil.StencilSinkScatterReduce then return false end
         if sink_cls == Stencil.StencilSinkStore then
-            return pvm.classof(desc.sink.mode) ~= Stencil.StencilStorePartition
+            return asdl.classof(desc.sink.mode) ~= Stencil.StencilStorePartition
         end
         if sink_cls == Stencil.StencilSinkReduce then
-            return pvm.classof(desc.sink.mode) ~= Stencil.StencilReduceFind
+            return asdl.classof(desc.sink.mode) ~= Stencil.StencilReduceFind
         end
         return false
     end
@@ -1232,15 +1324,15 @@ local function bind_context(T)
     end
 
     local function schedule_vector_lanes(kind)
-        if Schedule == nil or pvm.classof(kind) ~= Schedule.ScheduleVector then return nil end
-        if pvm.classof(kind.lanes) ~= Schedule.LaneVector then return nil end
+        if Schedule == nil or asdl.classof(kind) ~= Schedule.ScheduleVector then return nil end
+        if asdl.classof(kind.lanes) ~= Schedule.LaneVector then return nil end
         return tonumber(kind.lanes.lanes)
     end
 
     local function schedule_for_descriptor_with_info(desc, info)
         local policy = default_compiler_policy()
         local sched = info and info.schedule or nil
-        if Schedule ~= nil and pvm.classof(sched) == Schedule.ScheduleVector then
+        if Schedule ~= nil and asdl.classof(sched) == Schedule.ScheduleVector then
             local lanes = schedule_vector_lanes(sched)
             if lanes ~= nil and lanes > 1 then
                 return Stencil.StencilScheduleVector(
@@ -1266,7 +1358,7 @@ local function bind_context(T)
     end
 
     local function schedule_suffix(schedule)
-        local cls = pvm.classof(schedule)
+        local cls = asdl.classof(schedule)
         if cls == Stencil.StencilScheduleVector then
             local lanes = schedule_lane_count(schedule)
             local lane_suffix = lanes and tostring(lanes) or "target"
@@ -1282,7 +1374,7 @@ local function bind_context(T)
     end
 
     local function schedule_candidate_name(schedule)
-        local cls = pvm.classof(schedule)
+        local cls = asdl.classof(schedule)
         if cls == Stencil.StencilScheduleScalar then return "scalar" end
         if cls == Stencil.StencilScheduleAutoVector then return "autovector" end
         if cls == Stencil.StencilScheduleUnrolled then return "unrolled:" .. tostring(schedule.factor) end
@@ -1293,7 +1385,7 @@ local function bind_context(T)
     end
 
     local function schedule_candidate_cost(schedule)
-        local cls = pvm.classof(schedule)
+        local cls = asdl.classof(schedule)
         if cls == Stencil.StencilScheduleVector then
             local lanes = schedule_lane_count(schedule) or 4
             local unroll = tonumber(schedule.vector_unroll) or 1
@@ -1327,7 +1419,7 @@ local function bind_context(T)
             artifact.schedule_rejects or {}
         )
         local candidates = { selected }
-        if pvm.classof(schedule) ~= Stencil.StencilScheduleScalar then
+        if asdl.classof(schedule) ~= Stencil.StencilScheduleScalar then
             candidates[#candidates + 1] = schedule_candidate(
                 Stencil.StencilScheduleScalar(compiler),
                 Stencil.StencilScheduleCandidateViable,
@@ -1346,7 +1438,7 @@ local function bind_context(T)
     local function no_selection_provenance(vocab, rejects, reason)
         local schedule_rejects = {}
         for _, reject in ipairs(rejects or {}) do
-            if pvm.classof(reject) == Stencil.StencilRejectSchedule then schedule_rejects[#schedule_rejects + 1] = reject.reject end
+            if asdl.classof(reject) == Stencil.StencilRejectSchedule then schedule_rejects[#schedule_rejects + 1] = reject.reject end
         end
         local candidate = Stencil.StencilScheduleCandidate(
             "none:" .. tostring(vocab),
@@ -1369,7 +1461,7 @@ local function bind_context(T)
     end
 
     local function layout_has_dynamic_stride(layout)
-        local cls = pvm.classof(layout)
+        local cls = asdl.classof(layout)
         if cls == Stencil.StencilLayoutFieldProjection then return layout_has_dynamic_stride(layout.parent) end
         if cls == Stencil.StencilLayoutSoAComponent then return layout_has_dynamic_stride(layout.parent) end
         if cls == Stencil.StencilLayoutAffine1D then return layout_has_dynamic_stride(layout.parent) end
@@ -1379,7 +1471,7 @@ local function bind_context(T)
     end
 
     local function layout_has_affine_offset(layout)
-        local cls = pvm.classof(layout)
+        local cls = asdl.classof(layout)
         if cls == Stencil.StencilLayoutFieldProjection then return layout_has_affine_offset(layout.parent) end
         if cls == Stencil.StencilLayoutSoAComponent then return layout_has_affine_offset(layout.parent) end
         if cls == Stencil.StencilLayoutIndexed then return layout_has_affine_offset(layout.parent) end
@@ -1444,7 +1536,7 @@ local function bind_context(T)
     end
 
     local function field_layout(layout)
-        local cls = pvm.classof(layout)
+        local cls = asdl.classof(layout)
         if cls == Stencil.StencilLayoutFieldProjection then return layout end
         if cls == Stencil.StencilLayoutAffine1D then return field_layout(layout.parent) end
         if cls == Stencil.StencilLayoutAffineND then return field_layout(layout.parent) end
@@ -1454,7 +1546,7 @@ local function bind_context(T)
     local function pointer_accesses(desc)
         local out = {}
         for _, access in ipairs(descriptor_accesses(desc)) do
-            if pvm.classof(access.layout) ~= Stencil.StencilLayoutScalar then out[#out + 1] = access end
+            if asdl.classof(access.layout) ~= Stencil.StencilLayoutScalar then out[#out + 1] = access end
         end
         return out
     end
@@ -1479,7 +1571,7 @@ local function bind_context(T)
         local access_i = 1
         for i = 1, #(params or {}) do
             local p = params[i]
-            if pvm.classof(p) == Code.CodeTyDataPtr and accesses[access_i] ~= nil then
+            if asdl.classof(p) == Code.CodeTyDataPtr and accesses[access_i] ~= nil then
                 out[i] = abi_param_type_for_access(accesses[access_i], p)
                 access_i = access_i + 1
             else
@@ -1491,7 +1583,7 @@ local function bind_context(T)
 
     local function layout_suffix_for(access, layout)
         local top = access.layout
-        local cls = pvm.classof(layout)
+        local cls = asdl.classof(layout)
         if cls == Stencil.StencilLayoutViewDescriptor then
             return "_view_" .. (layout.stride_const ~= nil and ("s" .. tostring(layout.stride_const)) or "sdyn")
         end
@@ -1524,19 +1616,21 @@ local function bind_context(T)
         return ""
     end
 
-    local function layout_suffix(access)
+    local function layout_suffix(access, access_name)
         local suffix = layout_suffix_for(access, access.layout)
         if suffix == "" then return "" end
-        return "_" .. sanitize(access.name) .. suffix
+        return "_" .. sanitize(access_name or access.name) .. suffix
     end
 
     local function descriptor_symbol_suffix(desc)
         local out = {}
+        local access_map = descriptor_access_identity_map(desc)
         for _, access in ipairs(descriptor_accesses(desc)) do
-            local suffix = layout_suffix(access)
+            local suffix = layout_suffix(access, access_map[access.name])
             if suffix ~= "" then out[#out + 1] = suffix end
         end
-        return table.concat(out)
+        if #out == 0 then return "" end
+        return "_l" .. stable_hash128(table.concat(out, "|"))
     end
 
     local function scheduled_instance(id, symbol, desc, abi, proofs, info)
@@ -1777,7 +1871,7 @@ local function bind_context(T)
 
     function producer_tag(producer)
         local shape = producer_shape(producer)
-        local cls = pvm.classof(shape)
+        local cls = asdl.classof(shape)
         if cls == Stencil.StencilProduceRange1D then
             return (shape.order == Stencil.StencilProducerBackward and "b" or "f") .. "s" .. tostring(shape.step)
         end
@@ -1798,7 +1892,7 @@ local function bind_context(T)
 
     function append_producer_params(producer, abi, args)
         local shape = producer_shape(producer)
-        local cls = pvm.classof(shape)
+        local cls = asdl.classof(shape)
         if cls == Stencil.StencilProduceRange1D then
             abi[#abi + 1] = i32_ty()
             abi[#abi + 1] = i32_ty()
@@ -1822,7 +1916,7 @@ local function bind_context(T)
     function descriptor_abi_args(desc, trailing)
         local abi, args = {}, {}
         for _, access in ipairs(descriptor_accesses(desc)) do
-            if pvm.classof(access.layout) ~= Stencil.StencilLayoutScalar then
+            if asdl.classof(access.layout) ~= Stencil.StencilLayoutScalar then
                 local role = access.role
                 if role == Stencil.StencilAccessRead or role == Stencil.StencilAccessWrite or role == Stencil.StencilAccessReadWrite or role == Stencil.StencilAccessIndex then
                     abi[#abi + 1] = access_abi_ty(access)
@@ -1866,7 +1960,7 @@ local function bind_context(T)
         local desc = descriptor("store", stride, accesses, expr, nil, attrs(info, { producer = producer }), memory(), nil)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported store_n sink/body: " .. tostring(sink_reason), 2) end
-        local tag = sanitize("d" .. stable_hash32(stable_repr(desc)))
+        local tag = sanitize("d" .. stable_hash128(descriptor_identity_repr(desc)))
         local ptag = producer_tag(producer)
         local id = Stencil.StencilInstanceId("stencil:store_n:" .. type_name(result_ty) .. ":" .. tag .. ":" .. ptag)
         local symbol = Stencil.StencilSymbolId("ml_stencil_store_n_" .. type_name(result_ty) .. "_" .. tag .. "_" .. ptag)
@@ -1885,7 +1979,7 @@ local function bind_context(T)
         if not ok then error("stencil_artifact_plan: unsupported reduce_n reduction: " .. tostring(reason), 2) end
         local inputs = assert(info.inputs, "stencil_artifact_plan.reduce_n_artifact requires inputs")
         local scope = info.scope or info.reduce_scope or domain_reduce_scope()
-        local scope_cls = pvm.classof(scope)
+        local scope_cls = asdl.classof(scope)
         local scoped_output = not (scope == Stencil.StencilReduceScopeDomain or scope_cls == Stencil.StencilReduceScopeDomain)
         local accesses = {}
         local abi = {}
@@ -1915,7 +2009,7 @@ local function bind_context(T)
         local desc = descriptor("reduce", stride, accesses, expr, reducer_desc(reduction, result_ty), { producer = producer, reduce_scope = scope }, memory(), result_ty)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported reduce_n sink/body: " .. tostring(sink_reason), 2) end
-        local tag = sanitize((info.tag or ("arity" .. tostring(#inputs))) .. "_" .. stable_hash32(stable_repr(desc)))
+        local tag = sanitize((info.tag or ("arity" .. tostring(#inputs))) .. "_" .. stable_hash128(descriptor_identity_repr(desc)))
         local ptag = producer_tag(producer)
         local id = Stencil.StencilInstanceId("stencil:reduce_n:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":" .. tag .. ":" .. ptag)
         local symbol = Stencil.StencilSymbolId("ml_stencil_reduce_n_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_" .. tag .. "_" .. ptag)
@@ -1955,7 +2049,7 @@ local function bind_context(T)
         local desc = descriptor("scan", stride, accesses, expr, reducer, { mode = mode, producer = producer, axis = info.axis or info.scan_axis }, memory(), result_ty)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported scan_n sink/body: " .. tostring(sink_reason), 2) end
-        local tag = sanitize((info.tag or ("arity" .. tostring(#inputs))) .. "_" .. stable_hash32(stable_repr(desc)))
+        local tag = sanitize((info.tag or ("arity" .. tostring(#inputs))) .. "_" .. stable_hash128(descriptor_identity_repr(desc)))
         local ptag = producer_tag(producer)
         local id = Stencil.StencilInstanceId("stencil:scan_n:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.kind) .. ":to:" .. type_name(result_ty) .. ":" .. scan_mode_name(mode) .. ":" .. tag .. ":" .. ptag)
         local symbol = Stencil.StencilSymbolId("ml_stencil_scan_n_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.kind) .. "_to_" .. type_name(result_ty) .. "_" .. scan_mode_name(mode) .. "_" .. tag .. "_" .. ptag)
@@ -1980,7 +2074,7 @@ local function bind_context(T)
     local function producer_stride(desc)
         local producer = descriptor_producer(desc)
         local shape = producer_shape(producer)
-        if pvm.classof(shape) == Stencil.StencilProduceRange1D and producer_materialized(producer) then return tonumber(shape.step) or 1 end
+        if asdl.classof(shape) == Stencil.StencilProduceRange1D and producer_materialized(producer) then return tonumber(shape.step) or 1 end
         local reason = producer_materializer_reject_reason(producer)
         error("stencil_artifact_plan: unsupported stencil producer for artifact shape: " .. tostring(reason), 3)
     end
@@ -1990,7 +2084,7 @@ local function bind_context(T)
         local reason = producer_materializer_reject_reason(producer)
         if reason ~= nil then error("stencil_artifact_plan: unsupported stencil producer for artifact shape: " .. tostring(reason), 3) end
         local shape = producer_shape(producer)
-        local cls = pvm.classof(shape)
+        local cls = asdl.classof(shape)
         if cls == Stencil.StencilProduceRange1D then
             return {
                 kind = "range1d",
@@ -2031,7 +2125,7 @@ local function bind_context(T)
 
     local function indexed_ty(access)
         local top = access.layout
-        if pvm.classof(top) ~= Stencil.StencilLayoutIndexed then
+        if asdl.classof(top) ~= Stencil.StencilLayoutIndexed then
             error("stencil_artifact_plan: descriptor access is not indexed: " .. tostring(access.name), 3)
         end
         return top.index_ty
@@ -2043,7 +2137,7 @@ local function bind_context(T)
     end
 
     local function expr_input_name(expr)
-        if pvm.classof(expr) == Stencil.StencilPointInput then return expr.access.name end
+        if asdl.classof(expr) == Stencil.StencilPointInput then return expr.access.name end
         return nil
     end
 
@@ -2054,7 +2148,7 @@ local function bind_context(T)
     local function collect_expr_inputs(expr, seen, out)
         seen = seen or {}
         out = out or {}
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Stencil.StencilPointInput or cls == Stencil.StencilPointWindowInput then
             local name = expr.access.name
             if not seen[name] then
@@ -2079,7 +2173,7 @@ local function bind_context(T)
     end
 
     local function collect_layout_inputs(layout, seen, out)
-        local cls = pvm.classof(layout)
+        local cls = asdl.classof(layout)
         if cls == Stencil.StencilLayoutIndexed then
             local name = layout.index.name
             if not seen[name] then
@@ -2120,7 +2214,7 @@ local function bind_context(T)
         local inputs = expr_inputs_for_shape(desc, expr)
         local producer = producer_execution_plan(desc)
         local scope = desc.sink.scope
-        local scope_cls = pvm.classof(scope)
+        local scope_cls = asdl.classof(scope)
         local scope_kind = (scope == Stencil.StencilReduceScopeDomain or scope_cls == Stencil.StencilReduceScopeDomain) and "domain"
             or (scope_cls == Stencil.StencilReduceScopeAxes and "axes" or "window")
         return local_shape("reduce_n", {
@@ -2230,10 +2324,10 @@ local function bind_context(T)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported stencil sink: " .. tostring(sink_reason), 3) end
         local sink = desc.sink
-        local sink_cls = pvm.classof(sink)
+        local sink_cls = asdl.classof(sink)
         if sink_cls == Stencil.StencilSinkReduce then
             local mode = sink.mode
-            local mode_cls = pvm.classof(mode)
+            local mode_cls = asdl.classof(mode)
             if mode_cls == Stencil.StencilReduceFold then
                 return reduce_n_shape(desc, mode.reducer)
             end
@@ -2246,7 +2340,7 @@ local function bind_context(T)
             error("stencil_artifact_plan: unsupported reduce sink mode", 3)
         end
         if sink_cls == Stencil.StencilSinkStore then
-            if pvm.classof(sink.mode) == Stencil.StencilStorePartition then
+            if asdl.classof(sink.mode) == Stencil.StencilStorePartition then
                 return partition_n_shape(desc, sink)
             end
             return store_n_shape(desc, access_named(desc, sink.dst.name).ty, sink.dst.name, sink.mode)

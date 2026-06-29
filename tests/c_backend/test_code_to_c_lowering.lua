@@ -1,8 +1,8 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
-local T = pvm.context(); Schema(T)
+local T = asdl.context(); Schema(T)
 
 local Core = T.LalinCore
 local Code = T.LalinCode
@@ -35,6 +35,6 @@ local module = Code.CodeModule(
 local unit = CodeToC.module(module)
 assert(#unit.helpers == 1, "float binary lowering should register one helper")
 local helper_kind = unit.helpers[1].kind
-assert(pvm.classof(helper_kind) == C.CBackendHelperFloatBinary, "float binary must lower to CBackendHelperFloatBinary")
+assert(asdl.classof(helper_kind) == C.CBackendHelperFloatBinary, "float binary must lower to CBackendHelperFloatBinary")
 
 io.write("lalin code_to_c_lowering ok\n")

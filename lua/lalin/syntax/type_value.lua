@@ -1,7 +1,7 @@
 -- lalin.syntax.type_value
 -- Projects evaluated Lua type values into the active compilation-unit context.
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function bind_context(T)
   if not T.LalinCore then require("lalin.schema_projection")(T) end
@@ -9,7 +9,7 @@ local function bind_context(T)
   local M = {}
 
   local function class_name(value)
-    local cls = pvm.classof(value)
+    local cls = asdl.classof(value)
     if not cls then return nil end
     return tostring(cls):match("^Class%((.-)%)$")
   end

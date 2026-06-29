@@ -34,7 +34,7 @@ end
 local function anchor_kind_name(anchor)
     local k = anchor and anchor.kind
     if type(k) == "string" then return k end
-    local ok, cls = pcall(function() return require("lalin.pvm").classof(k) end)
+    local ok, cls = pcall(function() return require("lalin.asdl").classof(k) end)
     return ok and cls and cls.kind or tostring(k)
 end
 
@@ -299,7 +299,7 @@ local function call_range_from_anchors(anchors, analysis, issue)
 end
 
 local function ordinal_for(tracker, issue)
-    local cls = require("lalin.pvm").classof(issue)
+    local cls = require("lalin.asdl").classof(issue)
     local kind = cls and cls.kind or ""
     local key = kind
     if issue.op then
@@ -333,8 +333,8 @@ function M.host_resolver(issue, analysis)
     local prior = resolved_span(issue, analysis)
     if prior then return prior end
     local anchors = analysis.anchors or {}
-    local pvm = require("lalin.pvm")
-    local cls = pvm.classof(issue)
+    local asdl = require("lalin.asdl")
+    local cls = asdl.classof(issue)
     if cls and cls.kind == "HostIssueBareBoolInBoundaryStruct" and issue.field_name then
         local field = first_anchor_kind_label(anchors, "AnchorFieldName", tostring(issue.field_name))
         if field and field.range then
@@ -421,13 +421,13 @@ function M.typecheck_resolver(issue, analysis)
     local anchors = analysis.anchors or {}
     if type(anchors) ~= "table" or #anchors == 0 then
         -- No anchors available; try offset-based fallback
-        local pvm = require("lalin.pvm")
-        local cls2 = pvm.classof(issue)
+        local asdl = require("lalin.asdl")
+        local cls2 = asdl.classof(issue)
         if cls2 and cls2.kind == "TypeIssueUnresolvedValue" and issue.name then
             -- Without anchors, we can't resolve position. Fall through.
         end
     end
-    local cls = require("lalin.pvm").classof(issue)
+    local cls = require("lalin.asdl").classof(issue)
     local kind = cls and cls.kind or ""
 
     -- Unresolved value: label → anchor

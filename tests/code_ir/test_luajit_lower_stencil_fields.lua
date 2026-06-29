@@ -3,10 +3,10 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local ffi = require("ffi")
 local LLBL = require("llbl")
 local C = require("llbl.c")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
 
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 
 local Core = T.LalinCore
@@ -58,11 +58,11 @@ end
 local function assert_field_layout(artifact, label)
     for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(artifact.instance.descriptor)) do
         local layout = access.layout
-        if pvm.classof(layout) == Stencil.StencilLayoutFieldProjection
+        if asdl.classof(layout) == Stencil.StencilLayoutFieldProjection
             and layout.record_ty == pair_ty
             and layout.field_name == "right"
             and layout.field_offset == 4 then
-            assert(pvm.classof(layout.parent) == Stencil.StencilLayoutContiguous, label .. " should keep parent layout")
+            assert(asdl.classof(layout.parent) == Stencil.StencilLayoutContiguous, label .. " should keep parent layout")
             return access
         end
     end
@@ -191,15 +191,15 @@ local lj_module, facts = Lower.lower_module(module, {
 local function plan_summary()
     local out = {}
     for _, plan in ipairs(facts.kernel.plans or {}) do
-        out[#out + 1] = tostring(pvm.classof(plan)) .. ":" .. tostring(plan.rejects and plan.rejects[1] and plan.rejects[1].reason or "ok")
+        out[#out + 1] = tostring(asdl.classof(plan)) .. ":" .. tostring(plan.rejects and plan.rejects[1] and plan.rejects[1].reason or "ok")
     end
     return table.concat(out, ",")
 end
 
 assert(#rejects == 0, "field stencil rejected: " .. tostring(rejects[1] and rejects[1].reason) .. " plans=" .. plan_summary())
 assert(#artifacts == 2, "field lowering should select reduce and map artifacts")
-assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, "sum should lower to machine body")
-assert(pvm.classof(lj_module.funcs[2].body) == LJ.LJBodyMachine, "map should lower to machine body")
+assert(asdl.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, "sum should lower to machine body")
+assert(asdl.classof(lj_module.funcs[2].body) == LJ.LJBodyMachine, "map should lower to machine body")
 
 local reduce_access = assert_field_layout(artifacts[1], "reduce")
 local map_access = assert_field_layout(artifacts[2], "map")

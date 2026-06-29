@@ -1,8 +1,8 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
-local T = pvm.context(); Schema(T)
+local T = asdl.context(); Schema(T)
 
 local Core = T.LalinCore
 local Ty = T.LalinType
@@ -20,7 +20,7 @@ local result = Typecheck.check_module(Tr.Module(Tr.ModuleSurface, { Tr.ItemFunc(
 local saw = false
 for i = 1, #result.issues do
     local issue = result.issues[i]
-    if pvm.classof(issue) == Tr.TypeIssueExpected and issue.site:match("array length") then saw = true end
+    if asdl.classof(issue) == Tr.TypeIssueExpected and issue.site:match("array length") then saw = true end
 end
 assert(saw, "ArrayLenExpr should be rejected during typechecking")
 assert(Coverage.classification("LalinType.ArrayLen", "ArrayLenExpr").status == "language_rejected")

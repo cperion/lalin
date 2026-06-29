@@ -5,12 +5,12 @@
 -- promise comment or metaprogram source preservation.
 
 local llbl = require("llbl")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local schema = require("lalin.schema_projection")
 
 local M = {}
 
-local T = pvm.context()
+local T = asdl.context()
 schema(T)
 
 local C, Ty = T.LalinCore, T.LalinType
@@ -49,7 +49,7 @@ local access_names = {
 }
 
 local function cls_kind(v)
-    local cls = pvm.classof(v)
+    local cls = asdl.classof(v)
     return cls and cls.kind or nil
 end
 

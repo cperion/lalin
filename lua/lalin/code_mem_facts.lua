@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -34,34 +34,34 @@ local function bind_context(T)
     end
 
     local function unwrap_lease(ty)
-        while pvm.classof(ty) == Code.CodeTyLease do ty = ty.base end
+        while asdl.classof(ty) == Code.CodeTyLease do ty = ty.base end
         return ty
     end
 
     local function pointee_ty(ty)
         ty = unwrap_lease(ty)
-        return pvm.classof(ty) == Code.CodeTyDataPtr and ty.pointee or nil
+        return asdl.classof(ty) == Code.CodeTyDataPtr and ty.pointee or nil
     end
 
     local function view_elem_ty(ty)
         ty = unwrap_lease(ty)
-        return pvm.classof(ty) == Code.CodeTyView and ty.elem or nil
+        return asdl.classof(ty) == Code.CodeTyView and ty.elem or nil
     end
 
     local function slice_elem_ty(ty)
         ty = unwrap_lease(ty)
-        return pvm.classof(ty) == Code.CodeTySlice and ty.elem or nil
+        return asdl.classof(ty) == Code.CodeTySlice and ty.elem or nil
     end
 
     local function object_elem_ty(ty)
         ty = unwrap_lease(ty)
-        if ty == Code.CodeTyByteSpan or pvm.classof(ty) == Code.CodeTyByteSpan then return Code.CodeTyInt(8, Code.CodeUnsigned) end
+        if ty == Code.CodeTyByteSpan or asdl.classof(ty) == Code.CodeTyByteSpan then return Code.CodeTyInt(8, Code.CodeUnsigned) end
         return pointee_ty(ty) or view_elem_ty(ty) or slice_elem_ty(ty) or ty
     end
 
     local function storage_extent(ty, size, reason)
         if size ~= nil then return Mem.MemExtentBytes(size, reason or "declared storage size") end
-        local cls = pvm.classof(unwrap_lease(ty))
+        local cls = asdl.classof(unwrap_lease(ty))
         if cls == Code.CodeTyArray then return Mem.MemExtentBytes(0, "array byte size is target-dependent before backend layout") end
         return Mem.MemExtentUnknown(reason or "extent requires layout or contract fact")
     end
@@ -70,7 +70,7 @@ local function bind_context(T)
         ty = unwrap_lease(ty)
         if ty == Code.CodeTyBool8 then return 1 end
         if ty == Code.CodeTyIndex then return 8 end
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt or cls == Code.CodeTyFloat then return math.max(1, math.floor((ty.bits or 64) / 8)) end
         if cls == Code.CodeTyDataPtr or cls == Code.CodeTyCodePtr or cls == Code.CodeTyImportedCFuncPtr then return 8 end
         return nil
@@ -93,7 +93,7 @@ local function bind_context(T)
 
     local function contract_facts(contracts)
         if contracts == nil then return {} end
-        if pvm.classof(contracts) == Code.CodeContractFactSet then return contracts.facts or {} end
+        if asdl.classof(contracts) == Code.CodeContractFactSet then return contracts.facts or {} end
         return contracts
     end
 
@@ -103,7 +103,7 @@ local function bind_context(T)
             idx.by_func[f.func.text] = idx.by_func[f.func.text] or {}
             idx.by_func[f.func.text][#idx.by_func[f.func.text] + 1] = f
             local k = f.fact
-            local cls = pvm.classof(k)
+            local cls = asdl.classof(k)
             if cls == Code.CodeContractBounds then idx.bounds[f.func.text .. "\0" .. k.base.text] = f
             elseif cls == Code.CodeContractWindowBounds then idx.window[f.func.text .. "\0" .. k.base.text] = f
             elseif cls == Code.CodeContractSameLen then idx.same_len[#idx.same_len + 1] = f
@@ -121,7 +121,7 @@ local function bind_context(T)
         for _, block in ipairs(func.blocks or {}) do
             for _, inst in ipairs(block.insts or {}) do
                 local k = inst.kind
-                if pvm.classof(k) == Code.CodeInstConst and pvm.classof(k.const) == Code.CodeConstLiteral then
+                if asdl.classof(k) == Code.CodeInstConst and asdl.classof(k.const) == Code.CodeConstLiteral then
                     local lit = k.const.literal
                     local n = lit and lit.raw and tonumber(lit.raw) or nil
                     if n ~= nil then out[k.dst.text] = n end
@@ -132,7 +132,7 @@ local function bind_context(T)
     end
 
     local function access_kind(k)
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeInstLoad then return Mem.MemLoad end
         if cls == Code.CodeInstStore then return Mem.MemStore end
         if cls == Code.CodeInstAtomicLoad then return Mem.MemAtomicLoad end
@@ -147,7 +147,7 @@ local function bind_context(T)
     end
 
     local function access_value(k)
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeInstStore or cls == Code.CodeInstAtomicStore or cls == Code.CodeInstAtomicRmw then return k.value end
         if cls == Code.CodeInstAtomicCas then return k.replacement end
         return nil
@@ -183,7 +183,7 @@ local function bind_context(T)
     end
 
     local function index_key(index)
-        local cls = pvm.classof(index)
+        local cls = asdl.classof(index)
         if index == Mem.MemIndexNone then return "none" end
         if cls == Mem.MemIndexValue then return "value:" .. index.value.text .. ":" .. tostring(index.elem_size) .. ":" .. tostring(index.const_offset or 0) end
         if cls == Mem.MemIndexInduction then return "induction:" .. index.induction.value.text .. ":" .. tostring(index.elem_size) .. ":" .. tostring(index.const_offset or 0) end
@@ -195,7 +195,7 @@ local function bind_context(T)
         seen = seen or {}
         if seen[expr] then return nil end
         seen[expr] = true
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Value.ValueExprValue then return "value:" .. expr.value.text end
         if cls == Value.ValueExprConst then return "const:" .. tostring(expr.const) end
         if cls == Value.ValueExprCast then return "cast:" .. tostring(expr.op) .. ":" .. tostring(expr.from) .. ":" .. tostring(expr.to) .. "(" .. tostring(value_expr_key(expr.value, seen)) .. ")" end
@@ -207,7 +207,7 @@ local function bind_context(T)
     end
 
     local function canonical_index_key(index, value_index)
-        local cls = pvm.classof(index)
+        local cls = asdl.classof(index)
         if index == Mem.MemIndexNone then return "none" end
         if cls == Mem.MemIndexValue then
             local expr = value_index and value_index.expr_by_value and value_index.expr_by_value[index.value.text] or nil
@@ -239,7 +239,7 @@ local function bind_context(T)
             local function object_proves_access_safety(id)
                 local fact = object_fact(id)
                 if fact == nil then return false, "access object is unknown" end
-                local extent_cls = pvm.classof(fact.extent)
+                local extent_cls = asdl.classof(fact.extent)
             local kind = fact.kind
             if kind == Mem.MemObjectLocal or kind == Mem.MemObjectGlobal or kind == Mem.MemObjectData then
                 return true, "direct local/global/data object access"
@@ -307,23 +307,23 @@ local function bind_context(T)
                 end
                 if view_elem_ty(ty) ~= nil then return Mem.MemExtentUnknown("view extent requires descriptor length or contract"), nil end
                 if slice_elem_ty(ty) ~= nil then return Mem.MemExtentUnknown("slice extent requires descriptor length or contract"), nil end
-                if ty == Code.CodeTyByteSpan or pvm.classof(ty) == Code.CodeTyByteSpan then return Mem.MemExtentUnknown("byte span extent requires descriptor length or contract"), nil end
+                if ty == Code.CodeTyByteSpan or asdl.classof(ty) == Code.CodeTyByteSpan then return Mem.MemExtentUnknown("byte span extent requires descriptor length or contract"), nil end
                 return Mem.MemExtentUnknown("raw pointer parameter has no extent without contract or object provenance"), nil
             end
 
             for _, param in ipairs(func.params or {}) do
                 local ty = unwrap_lease(param.ty)
-                if pvm.classof(param.ty) == Code.CodeTyLease or pvm.classof(ty) == Code.CodeTyDataPtr or pvm.classof(ty) == Code.CodeTyView or pvm.classof(ty) == Code.CodeTySlice or ty == Code.CodeTyByteSpan or pvm.classof(ty) == Code.CodeTyByteSpan then
+                if asdl.classof(param.ty) == Code.CodeTyLease or asdl.classof(ty) == Code.CodeTyDataPtr or asdl.classof(ty) == Code.CodeTyView or asdl.classof(ty) == Code.CodeTySlice or ty == Code.CodeTyByteSpan or asdl.classof(ty) == Code.CodeTyByteSpan then
                     local extent, contract = extent_for_value(param.value, ty)
-                    local id = object_id(func.name, pvm.classof(param.ty) == Code.CodeTyLease and "lease_param" or "param", param.value.text)
+                    local id = object_id(func.name, asdl.classof(param.ty) == Code.CodeTyLease and "lease_param" or "param", param.value.text)
                     value_object[param.value.text] = id
-                    local object_kind = pvm.classof(param.ty) == Code.CodeTyLease and Mem.MemObjectLease
+                    local object_kind = asdl.classof(param.ty) == Code.CodeTyLease and Mem.MemObjectLease
                         or (contract and Mem.MemObjectContract
-                            or (pvm.classof(ty) == Code.CodeTyView and Mem.MemObjectView
-                                or (pvm.classof(ty) == Code.CodeTySlice and Mem.MemObjectSlice
-                                    or ((ty == Code.CodeTyByteSpan or pvm.classof(ty) == Code.CodeTyByteSpan) and Mem.MemObjectByteSpan or Mem.MemObjectParam))))
-                    add_object(Mem.MemObjectFact(id, func.id, object_kind, contract and Mem.MemProvContract(contract) or Mem.MemProvValue(param.value), object_elem_ty(ty), extent, pvm.classof(ty) == Code.CodeTyView and Mem.MemStrideUnknown("view parameter stride requires descriptor stride fact") or Mem.MemStrideUnit))
-                    if pvm.classof(param.ty) == Code.CodeTyLease then
+                            or (asdl.classof(ty) == Code.CodeTyView and Mem.MemObjectView
+                                or (asdl.classof(ty) == Code.CodeTySlice and Mem.MemObjectSlice
+                                    or ((ty == Code.CodeTyByteSpan or asdl.classof(ty) == Code.CodeTyByteSpan) and Mem.MemObjectByteSpan or Mem.MemObjectParam))))
+                    add_object(Mem.MemObjectFact(id, func.id, object_kind, contract and Mem.MemProvContract(contract) or Mem.MemProvValue(param.value), object_elem_ty(ty), extent, asdl.classof(ty) == Code.CodeTyView and Mem.MemStrideUnknown("view parameter stride requires descriptor stride fact") or Mem.MemStrideUnit))
+                    if asdl.classof(param.ty) == Code.CodeTyLease then
                         local proof = Mem.MemProofObject(id, "CodeTyLease parameter grants an explicit memory lease")
                         proofs[#proofs + 1] = proof
                         local lease_id = Mem.MemLeaseId("lease:" .. sanitize(func.name) .. ":" .. sanitize(param.value.text))
@@ -339,7 +339,7 @@ local function bind_context(T)
             end
 
             local function object_for_place(place)
-                local cls = pvm.classof(place)
+                local cls = asdl.classof(place)
                 if cls == Code.CodePlaceLocal then return local_object[place.local_id.text], Mem.MemBaseLocal(place.local_id), Mem.MemIndexNone end
                 if cls == Code.CodePlaceGlobal then return module_objects.global[place.global.text], Mem.MemBaseGlobal(place.global), Mem.MemIndexNone end
                 if cls == Code.CodePlaceData then return module_objects.data[place.data.text], Mem.MemBaseData(place.data), Mem.MemIndexNone end
@@ -386,7 +386,7 @@ local function bind_context(T)
             local function object_stride_const(object)
                 local fact = object_fact(object)
                 if fact == nil then return nil end
-                local cls = pvm.classof(fact.stride)
+                local cls = asdl.classof(fact.stride)
                 if fact.stride == Mem.MemStrideUnit then return 1 end
                 if cls == Mem.MemStrideConstElems then return fact.stride.elems end
                 return nil
@@ -394,7 +394,7 @@ local function bind_context(T)
 
             local function pattern_for_index(index)
                 if index == Mem.MemIndexNone then return Mem.MemAccessScalar end
-                local cls = pvm.classof(index)
+                local cls = asdl.classof(index)
                 if cls == Mem.MemIndexValue then
                     local stride = scaled_index_stride[index.value.text]
                     if stride == "dynamic" then return Mem.MemAccessUnknown end
@@ -406,9 +406,9 @@ local function bind_context(T)
             for _, block in ipairs(func.blocks or {}) do
                 for _, inst in ipairs(block.insts or {}) do
                     local k = inst.kind
-                    local cls = pvm.classof(k)
+                    local cls = asdl.classof(k)
                     if cls == Code.CodeInstGlobalRef then
-                        local rcls = pvm.classof(k.ref)
+                        local rcls = asdl.classof(k.ref)
                         if rcls == Code.CodeGlobalRefData then value_object[k.dst.text] = module_objects.data[k.ref.data.text] end
                         if rcls == Code.CodeGlobalRefGlobal then value_object[k.dst.text] = module_objects.global[k.ref.global.text] end
                     elseif cls == Code.CodeInstAddrOf then
@@ -464,9 +464,9 @@ local function bind_context(T)
                     elseif cls == Code.CodeInstByteSpanData then
                         value_object[k.dst.text] = value_object[k.span.text]
                     elseif cls == Code.CodeInstLoad then
-                        if pvm.classof(k.place) == Code.CodePlaceLocal and local_value_object[k.place.local_id.text] then value_object[k.dst.text] = local_value_object[k.place.local_id.text] end
+                        if asdl.classof(k.place) == Code.CodePlaceLocal and local_value_object[k.place.local_id.text] then value_object[k.dst.text] = local_value_object[k.place.local_id.text] end
                     elseif cls == Code.CodeInstStore then
-                        if pvm.classof(k.place) == Code.CodePlaceLocal then merge_local_value(k.place.local_id, value_object[k.value.text]) end
+                        if asdl.classof(k.place) == Code.CodePlaceLocal then merge_local_value(k.place.local_id, value_object[k.value.text]) end
                     elseif cls == Code.CodeInstAlias then
                         value_object[k.dst.text] = value_object[k.src.text]
                         if consts[k.src.text] ~= nil then consts[k.dst.text] = consts[k.src.text] end
@@ -518,7 +518,7 @@ local function bind_context(T)
                         local deref = scalar_bytes(k.access.ty)
                         local is_atomic = kind == Mem.MemAtomicLoad or kind == Mem.MemAtomicStore or kind == Mem.MemAtomicRmw or kind == Mem.MemAtomicCas or k.access.ordering ~= nil
                         local explicit_nontrap = k.access.trap == Code.CodeMustNotTrap
-                        local movable = (pvm.classof(trap) == Mem.MemNonTrapping) and (in_bounds or explicit_nontrap) and not k.access.volatile and not is_atomic
+                        local movable = (asdl.classof(trap) == Mem.MemNonTrapping) and (in_bounds or explicit_nontrap) and not k.access.volatile and not is_atomic
                         backend_info[#backend_info + 1] = Mem.MemBackendAccessInfo(id, trap, align, bounds, deref, movable, { proof })
                         if object ~= nil and in_bounds then
                             local interval = Mem.MemAccessInterval(id, object, loop_id, index, Flow.FlowBoundDerived("access-length:" .. id.text, {}), deref or 0, 0, "access projected into proven bounded memory object")
@@ -529,7 +529,7 @@ local function bind_context(T)
                         end
                         if deref ~= nil then safety[#safety + 1] = Mem.MemAccessDerefBytes(id, deref, proof) end
                         if k.access.align ~= nil then safety[#safety + 1] = Mem.MemAccessAlignKnown(id, k.access.align, proof) end
-                        if pvm.classof(trap) == Mem.MemNonTrapping then safety[#safety + 1] = Mem.MemAccessNonTrap(id, proof) end
+                        if asdl.classof(trap) == Mem.MemNonTrapping then safety[#safety + 1] = Mem.MemAccessNonTrap(id, proof) end
                         if movable then safety[#safety + 1] = Mem.MemAccessMovable(id, proof) end
                     end
                 end
@@ -537,7 +537,7 @@ local function bind_context(T)
 
             for _, fact in ipairs(cidx.by_func[func.id.text] or {}) do
                 local k = fact.fact
-                local cls = pvm.classof(k)
+                local cls = asdl.classof(k)
                 local proof = Mem.MemProofContract(fact, "memory contract normalized into semantic memory facts")
                 proofs[#proofs + 1] = proof
                 if cls == Code.CodeContractReadonly or cls == Code.CodeContractWriteonly then
@@ -603,7 +603,7 @@ local function bind_context(T)
                     if a.loop ~= nil and b.loop ~= nil and a.loop == b.loop then
                         if not is_write_kind(a.kind) and not is_write_kind(b.kind) then
                             dependences[#dependences + 1] = Mem.MemReadReadIndependent(a.id, b.id, "two reads in the same loop do not carry dependence")
-                        elseif a.in_bounds and b.in_bounds and pvm.classof(a.trap) == Mem.MemNonTrapping and pvm.classof(b.trap) == Mem.MemNonTrapping then
+                        elseif a.in_bounds and b.in_bounds and asdl.classof(a.trap) == Mem.MemNonTrapping and asdl.classof(b.trap) == Mem.MemNonTrapping then
                             local safe, reason = object_pair_safe(a, b)
                             if safe then
                                 local proof = Mem.MemProofNoDependence({ a.id, b.id }, reason)

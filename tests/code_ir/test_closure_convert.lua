@@ -1,10 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A2 = require("lalin.schema_projection")
 local ClosureConvert = require("lalin.closure_convert")
 
-local T = pvm.context()
+local T = asdl.context()
 A2(T)
 local C, Ty, B, Tr = T.LalinCore, T.LalinType, T.LalinBind, T.LalinTree
 local i32 = Ty.TScalar(C.ScalarI32)
@@ -47,9 +47,9 @@ local has_direct = false
 local has_capture = false
 for i = 1, #converted.items do
     local item = converted.items[i]
-    local cls = pvm.classof(item)
+    local cls = asdl.classof(item)
     if cls == Tr.ItemFunc then
-        local func_cls = pvm.classof(item.func)
+        local func_cls = asdl.classof(item.func)
         if func_cls == Tr.FuncLocal then
             if item.func.name:find("closure_direct") then has_direct = true end
             if item.func.name:find("closure_capture") then has_capture = true end
@@ -62,20 +62,20 @@ assert(has_capture, "should hoist a helper for capture closure")
 -- Verify main function has descriptor references instead of closure expressions
 for i = 1, #converted.items do
     local item = converted.items[i]
-    local cls = pvm.classof(item)
+    local cls = asdl.classof(item)
     if cls == Tr.ItemFunc then
-        local func_cls = pvm.classof(item.func)
+        local func_cls = asdl.classof(item.func)
         if func_cls == Tr.FuncExport and item.func.name == "closure_direct" then
             local body = item.func.body
             assert(#body > 0, "closure_direct should have body")
             local last = body[#body]
-            local last_cls = pvm.classof(last)
+            local last_cls = asdl.classof(last)
             assert(last_cls == Tr.StmtReturnValue, "last stmt should be return")
             local ret_expr = last.value
-            local expr_cls = pvm.classof(ret_expr)
+            local expr_cls = asdl.classof(ret_expr)
             assert(expr_cls == Tr.ExprCall, "should have ExprCall")
             -- The callee should be a descriptor (ExprAgg), not the original closure
-            assert(pvm.classof(ret_expr.callee) == Tr.ExprAgg, "callee should be converted to descriptor")
+            assert(asdl.classof(ret_expr.callee) == Tr.ExprAgg, "callee should be converted to descriptor")
         end
     end
 end

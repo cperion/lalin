@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
@@ -68,9 +68,9 @@ local function bind_context(T)
     local function index_kernel(kernels)
         local planned, no_plan = {}, {}
         for _, plan in ipairs(kernels and kernels.plans or {}) do
-            local cls = pvm.classof(plan)
+            local cls = asdl.classof(plan)
             if cls == Kernel.KernelPlanned then planned[plan.id.text] = plan end
-            if cls == Kernel.KernelNoPlan and pvm.classof(plan.subject) == Kernel.KernelSubjectLoop then no_plan[plan.subject.loop.text] = plan end
+            if cls == Kernel.KernelNoPlan and asdl.classof(plan.subject) == Kernel.KernelSubjectLoop then no_plan[plan.subject.loop.text] = plan end
         end
         return planned, no_plan
     end
@@ -79,17 +79,17 @@ local function bind_context(T)
         local planned, all = {}, {}
         for _, sched in ipairs(schedules and schedules.schedules or {}) do
             all[sched.kernel.text] = sched
-            if pvm.classof(sched) == Schedule.SchedulePlanned then planned[sched.id.text] = sched end
+            if asdl.classof(sched) == Schedule.SchedulePlanned then planned[sched.id.text] = sched end
         end
         return planned, all
     end
 
     local function backend_safe(info)
-        return info ~= nil and pvm.classof(info.trap) == Mem.MemNonTrapping and pvm.classof(info.bounds) ~= Mem.MemBoundsUnknown
+        return info ~= nil and asdl.classof(info.trap) == Mem.MemNonTrapping and asdl.classof(info.bounds) ~= Mem.MemBoundsUnknown
     end
 
     local function kernel_expr_refs(expr, out)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Kernel.KernelExprKernelValue then out[#out + 1] = expr.value.text end
         if cls == Kernel.KernelExprLaneLoad then return end
     end
@@ -98,12 +98,12 @@ local function bind_context(T)
         if kernels == nil then add(ctx, "missing-kernel", "missing KernelModulePlan"); return end
         local reductions, closed = index_value(value)
         for _, plan in ipairs(kernels.plans or {}) do
-            local cls = pvm.classof(plan)
+            local cls = asdl.classof(plan)
             if cls == Kernel.KernelNoPlan then
                 if #(plan.rejects or {}) == 0 then add(ctx, "kernel-noplan-without-reject", "KernelNoPlan has no rejects") end
             elseif cls == Kernel.KernelPlanned then
-                if pvm.classof(plan.subject) == Kernel.KernelSubjectLoop and graph_loops[plan.subject.loop.text] == nil then add(ctx, "missing-loop", "kernel cites missing graph loop " .. plan.subject.loop.text) end
-                if pvm.classof(plan.body.equivalence) ~= Kernel.KernelEquivalenceProof or #(plan.body.equivalence.proofs or {}) == 0 then add(ctx, "missing-kernel-proof", "KernelPlanned has no equivalence proofs") end
+                if asdl.classof(plan.subject) == Kernel.KernelSubjectLoop and graph_loops[plan.subject.loop.text] == nil then add(ctx, "missing-loop", "kernel cites missing graph loop " .. plan.subject.loop.text) end
+                if asdl.classof(plan.body.equivalence) ~= Kernel.KernelEquivalenceProof or #(plan.body.equivalence.proofs or {}) == 0 then add(ctx, "missing-kernel-proof", "KernelPlanned has no equivalence proofs") end
                 local binding_ids = {}
                 for _, binding in ipairs(plan.body.bindings or {}) do binding_ids[binding.id.text] = true end
                 for _, binding in ipairs(plan.body.bindings or {}) do
@@ -118,12 +118,12 @@ local function bind_context(T)
                     end
                 end
                 for _, effect in ipairs(plan.body.effects or {}) do
-                    if pvm.classof(effect) == Kernel.KernelEffectStore then
+                    if asdl.classof(effect) == Kernel.KernelEffectStore then
                         local refs = {}; kernel_expr_refs(effect.value, refs)
                         for _, ref in ipairs(refs) do if not binding_ids[ref] then add(ctx, "dangling-kernel-effect", "KernelEffectStore references missing KernelValueId " .. ref) end end
                     end
                 end
-                local rcls = pvm.classof(plan.body.result)
+                local rcls = asdl.classof(plan.body.result)
                 if rcls == Kernel.KernelResultClosedForm and not closed[tostring(plan.body.result.closed_form)] then add(ctx, "missing-closed-form", "kernel result cites a ClosedFormFact outside ValueFactSet") end
                 if rcls == Kernel.KernelResultReduction and not reductions[tostring(plan.body.result.reduction)] then add(ctx, "missing-reduction", "kernel result cites a ReductionFact outside ValueFactSet") end
             end
@@ -133,7 +133,7 @@ local function bind_context(T)
     local function validate_schedule(ctx, kernels_by_id, schedules, flow)
         if schedules == nil then add(ctx, "missing-schedule", "missing ScheduleModulePlan"); return end
         for _, sched in ipairs(schedules.schedules or {}) do
-            local cls = pvm.classof(sched)
+            local cls = asdl.classof(sched)
             if kernels_by_id[sched.kernel.text] == nil then add(ctx, "missing-kernel", "schedule cites missing planned kernel " .. sched.kernel.text) end
             if cls == Schedule.SchedulePlanned then
                 if #(sched.proofs or {}) == 0 then add(ctx, "missing-schedule-proof", "schedule " .. sched.id.text .. " has no proofs") end
@@ -151,7 +151,7 @@ local function bind_context(T)
 
     local function cover_blocks(ctx, cover, code_idx, graph_loops)
         local out = {}
-        local cls = pvm.classof(cover)
+        local cls = asdl.classof(cover)
         if cls == Lower.LowerCoverFunction then
             if code_idx.funcs[cover.func.text] == nil then add(ctx, "missing-func", "cover cites missing function " .. cover.func.text); return out end
             for bid in pairs(code_idx.blocks_by_func[cover.func.text] or {}) do out[cover.func.text .. "\0" .. bid] = true end
@@ -183,7 +183,7 @@ local function bind_context(T)
 
     local function validate_strategy(ctx, fragment, kernels_by_id, schedules_by_id, schedules_by_kernel, closed)
         local strategy = fragment.strategy
-        local cls = pvm.classof(strategy)
+        local cls = asdl.classof(strategy)
         if cls == Lower.LowerStrategyCode then return end
         if cls == Lower.LowerStrategyKernel then
             local kplan = kernels_by_id[strategy.kernel.text]
@@ -194,9 +194,9 @@ local function bind_context(T)
         elseif cls == Lower.LowerStrategyClosedForm then
             local kplan = kernels_by_id[strategy.kernel.text]
             if kplan == nil then add(ctx, "missing-kernel", "LowerStrategyClosedForm cites missing KernelPlanned " .. strategy.kernel.text)
-            elseif pvm.classof(kplan.body.result) ~= Kernel.KernelResultClosedForm or kplan.body.result.closed_form ~= strategy.fact then add(ctx, "strategy-closed-form-mismatch", "LowerStrategyClosedForm fact does not match KernelResultClosedForm") end
+            elseif asdl.classof(kplan.body.result) ~= Kernel.KernelResultClosedForm or kplan.body.result.closed_form ~= strategy.fact then add(ctx, "strategy-closed-form-mismatch", "LowerStrategyClosedForm fact does not match KernelResultClosedForm") end
             local sched = schedules_by_kernel[strategy.kernel.text]
-            if sched == nil or pvm.classof(sched) ~= Schedule.SchedulePlanned or sched.kind ~= Schedule.ScheduleClosedForm then add(ctx, "missing-schedule", "LowerStrategyClosedForm requires SchedulePlanned(ScheduleClosedForm) for kernel " .. strategy.kernel.text) end
+            if sched == nil or asdl.classof(sched) ~= Schedule.SchedulePlanned or sched.kind ~= Schedule.ScheduleClosedForm then add(ctx, "missing-schedule", "LowerStrategyClosedForm requires SchedulePlanned(ScheduleClosedForm) for kernel " .. strategy.kernel.text) end
             if not closed[tostring(strategy.fact)] then add(ctx, "missing-closed-form", "LowerStrategyClosedForm cites ClosedFormFact outside ValueFactSet") end
         else
             add(ctx, "unsupported-strategy", "Lower strategy is not executable by semantic lowering without a dedicated emitter: " .. tostring(cls or strategy))

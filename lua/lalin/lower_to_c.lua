@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -41,7 +41,7 @@ local function bind_context(T)
     local function atom(id) return C.CBackendAtomLocal(cid(id)) end
 
     local function class_name(x)
-        local cls = pvm.classof(x) or x
+        local cls = asdl.classof(x) or x
         return tostring(cls):match("Class%((.-)%)") or tostring(cls)
     end
 
@@ -84,12 +84,12 @@ local function bind_context(T)
     local function value_ty(ctx, id) return id and ctx.value_types[id.text] or nil end
     local function view_type(ctx, id)
         local ty = value_ty(ctx, id)
-        if pvm.classof(ty) == Code.CodeTyLease then ty = ty.base end
+        if asdl.classof(ty) == Code.CodeTyLease then ty = ty.base end
         return ty
     end
     local function view_elem_type(ctx, id)
         local ty = view_type(ctx, id)
-        if pvm.classof(ty) == Code.CodeTyView then return ty.elem end
+        if asdl.classof(ty) == Code.CodeTyView then return ty.elem end
         return nil
     end
     local function view_data_type(ctx, id)
@@ -97,7 +97,7 @@ local function bind_context(T)
     end
     local function slice_elem_type(ctx, id)
         local ty = view_type(ctx, id)
-        if pvm.classof(ty) == Code.CodeTySlice then return ty.elem end
+        if asdl.classof(ty) == Code.CodeTySlice then return ty.elem end
         return nil
     end
     local function slice_data_type(ctx, id)
@@ -115,7 +115,7 @@ local function bind_context(T)
     end
 
     local function const_atom(ctx, const)
-        local cls = pvm.classof(const)
+        local cls = asdl.classof(const)
         if cls == Code.CodeConstLiteral then return C.CBackendAtomLiteral(c_ty(ctx, const.ty), const.literal), const.ty end
         if cls == Code.CodeConstNull then return C.CBackendAtomNull(c_ty(ctx, const.ty)), const.ty end
         if cls == Code.CodeConstUndef then return C.CBackendAtomLiteral(c_ty(ctx, const.ty), Core.LitInt("0")), const.ty end
@@ -135,7 +135,7 @@ local function bind_context(T)
 
     local function overflow_mode(sem)
         if sem and sem.overflow == Code.CodeIntTrapOnOverflow then return C.CBackendIntTrapOnOverflow end
-        if sem and pvm.classof(sem.overflow) == Code.CodeIntAssumeNoOverflow then return C.CBackendIntAssumeNoOverflow end
+        if sem and asdl.classof(sem.overflow) == Code.CodeIntAssumeNoOverflow then return C.CBackendIntAssumeNoOverflow end
         return C.CBackendIntWrap
     end
 
@@ -149,15 +149,15 @@ local function bind_context(T)
 
     local simplify_value_expr
     local function literal_int_raw(expr)
-        if pvm.classof(expr) ~= Value.ValueExprConst then return nil end
-        if pvm.classof(expr.const) ~= Code.CodeConstLiteral then return nil end
-        if pvm.classof(expr.const.literal) ~= Core.LitInt then return nil end
+        if asdl.classof(expr) ~= Value.ValueExprConst then return nil end
+        if asdl.classof(expr.const) ~= Code.CodeConstLiteral then return nil end
+        if asdl.classof(expr.const.literal) ~= Core.LitInt then return nil end
         return expr.const.literal.raw, expr.const.ty
     end
     local function literal_bool_value(expr)
-        if pvm.classof(expr) ~= Value.ValueExprConst then return nil end
-        if pvm.classof(expr.const) ~= Code.CodeConstLiteral then return nil end
-        local lcls = pvm.classof(expr.const.literal)
+        if asdl.classof(expr) ~= Value.ValueExprConst then return nil end
+        if asdl.classof(expr.const) ~= Code.CodeConstLiteral then return nil end
+        local lcls = asdl.classof(expr.const.literal)
         if lcls == Core.LitBool then return expr.const.literal.value end
         if lcls == Core.LitInt then return expr.const.literal.raw ~= "0" end
         return nil
@@ -167,7 +167,7 @@ local function bind_context(T)
     end
     local function is_raw(raw, want) return raw ~= nil and tostring(raw) == tostring(want) end
     simplify_value_expr = function(expr)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
             local a = simplify_value_expr(expr.a)
             local b = simplify_value_expr(expr.b)
@@ -234,7 +234,7 @@ local function bind_context(T)
     local lower_value_expr
     lower_value_expr = function(ctx, expr)
         expr = simplify_value_expr(expr)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Value.ValueExprConst then
             return const_atom(ctx, expr.const)
         elseif cls == Value.ValueExprValue then
@@ -321,7 +321,7 @@ local function bind_context(T)
     end
 
     local function base_atom(ctx, base)
-        local cls = pvm.classof(base)
+        local cls = asdl.classof(base)
         if cls == Mem.MemBaseValue or cls == Mem.MemBaseArgument then return atom(base.value) end
         if cls == Mem.MemBaseGlobal then return C.CBackendAtomGlobal(C.CBackendGlobalId(base.global.text)) end
         if cls == Mem.MemBaseData then return C.CBackendAtomGlobal(C.CBackendGlobalId(base.data.text)) end
@@ -345,7 +345,7 @@ local function bind_context(T)
         local access = first_access(ctx, lane, want_write)
         local elem_size = 1
         local const_offset = 0
-        local icls = access and pvm.classof(access.index) or nil
+        local icls = access and asdl.classof(access.index) or nil
         if icls == Mem.MemIndexValue or icls == Mem.MemIndexInduction then
             elem_size = access.index.elem_size or 1
             const_offset = access.index.const_offset or 0
@@ -369,7 +369,7 @@ local function bind_context(T)
 
     local lower_kernel_expr
     lower_kernel_expr = function(ctx, expr)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Kernel.KernelExprValue then return atom(expr.value), value_ty(ctx, expr.value) end
         if cls == Kernel.KernelExprKernelValue then return kernel_value_atom(ctx, expr.value) end
         if cls == Kernel.KernelExprAlgebra then return lower_value_expr(ctx, expr.expr) end
@@ -396,7 +396,7 @@ local function bind_context(T)
     end
 
     local function emit_kernel_effect(ctx, effect)
-        local cls = pvm.classof(effect)
+        local cls = asdl.classof(effect)
         if cls == Kernel.KernelEffectStore then
             local value, vty = lower_kernel_expr(ctx, effect.value)
             value = cast_to(ctx, value, vty, effect.dst.elem_ty, "store_cast")
@@ -411,7 +411,7 @@ local function bind_context(T)
 
     local function term_to_c(ctx, term)
         local k = term.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         local function args(xs)
             local out = {}
             for i = 1, #(xs or {}) do out[i] = atom(xs[i]) end
@@ -446,13 +446,13 @@ local function bind_context(T)
 
     local function kernel_by_id(kernels)
         local out = {}
-        for _, kp in ipairs(kernels and kernels.plans or {}) do if pvm.classof(kp) == Kernel.KernelPlanned then out[kp.id.text] = kp end end
+        for _, kp in ipairs(kernels and kernels.plans or {}) do if asdl.classof(kp) == Kernel.KernelPlanned then out[kp.id.text] = kp end end
         return out
     end
 
     local function schedule_by_id(schedules)
         local out = {}
-        for _, s in ipairs(schedules and schedules.schedules or {}) do if pvm.classof(s) == Schedule.SchedulePlanned then out[s.id.text] = s end end
+        for _, s in ipairs(schedules and schedules.schedules or {}) do if asdl.classof(s) == Schedule.SchedulePlanned then out[s.id.text] = s end end
         return out
     end
 
@@ -484,7 +484,7 @@ local function bind_context(T)
         local jump_dest = exit.to.block
         local jump_fact = edge_facts[exit.from.block.text .. "\0" .. exit.to.block.text]
         for _, block in ipairs(ctx.code_func.blocks or {}) do
-            if block.id == exit.to.block and pvm.classof(block.term.kind) == Code.CodeTermJump then
+            if block.id == exit.to.block and asdl.classof(block.term.kind) == Code.CodeTermJump then
                 jump_dest = block.term.kind.dest
                 jump_fact = edge_facts[block.id.text .. "\0" .. block.term.kind.dest.text] or jump_fact
             end
@@ -529,11 +529,11 @@ local function bind_context(T)
             if block ~= nil then bindings_by_block[block.text] = bindings_by_block[block.text] or {}; bindings_by_block[block.text][#bindings_by_block[block.text] + 1] = binding end
         end
         for _, effect in ipairs(kplan.body.effects or {}) do
-            if pvm.classof(effect) == Kernel.KernelEffectStore then
+            if asdl.classof(effect) == Kernel.KernelEffectStore then
                 local access = first_access(ctx, effect.dst, true)
                 local block = access and access.block and access.block.block
                 if block ~= nil then effects_by_block[block.text] = effects_by_block[block.text] or {}; effects_by_block[block.text][#effects_by_block[block.text] + 1] = effect end
-            elseif pvm.classof(effect) ~= Kernel.KernelEffectFold then
+            elseif asdl.classof(effect) ~= Kernel.KernelEffectFold then
                 error("lower_to_c: unsupported KernelEffect in planned kernel", 2)
             end
         end
@@ -586,7 +586,7 @@ local function bind_context(T)
         local access = first_access(ctx, lane, want_write)
         local elem_size = 1
         local const_offset = 0
-        local icls = access and pvm.classof(access.index) or nil
+        local icls = access and asdl.classof(access.index) or nil
         if icls == Mem.MemIndexValue or icls == Mem.MemIndexInduction then
             elem_size = access.index.elem_size or 1
             const_offset = access.index.const_offset or 0
@@ -603,7 +603,7 @@ local function bind_context(T)
     local lower_value_expr_lane, lower_kernel_expr_lane
 
     lower_value_expr_lane = function(ctx, expr, lane, index_ty)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Value.ValueExprValue then
             local cached = ctx.lane_value_by_code and ctx.lane_value_by_code[expr.value.text]
             if cached ~= nil then return cached.atom, cached.ty end
@@ -671,7 +671,7 @@ local function bind_context(T)
     end
 
     lower_kernel_expr_lane = function(ctx, expr, lane, index_ty)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Kernel.KernelExprValue then
             local cached = ctx.lane_value_by_code and ctx.lane_value_by_code[expr.value.text]
             if cached ~= nil then return cached.atom, cached.ty end
@@ -698,7 +698,7 @@ local function bind_context(T)
     end
 
     local function emit_vector_lane_effect(ctx, effect, lane, index_ty)
-        if pvm.classof(effect) ~= Kernel.KernelEffectStore then return end
+        if asdl.classof(effect) ~= Kernel.KernelEffectStore then return end
         ctx.lane_value_by_code = {}
         ctx.lane_value_by_kernel = {}
         for _, binding in ipairs(ctx.current_kernel_bindings or {}) do
@@ -713,9 +713,9 @@ local function bind_context(T)
     local function emit_vector_kernel_fragment(ctx, graph, flow, kernels, schedules, fragment)
         local kplan = kernel_by_id(kernels)[fragment.strategy.kernel.text]
         local sched = schedule_by_id(schedules)[fragment.strategy.schedule.text]
-        if kplan == nil or sched == nil or pvm.classof(sched.kind) ~= Schedule.ScheduleVector then error("lower_to_c: vector kernel strategy requires ScheduleVector", 2) end
+        if kplan == nil or sched == nil or asdl.classof(sched.kind) ~= Schedule.ScheduleVector then error("lower_to_c: vector kernel strategy requires ScheduleVector", 2) end
         local lane_shape = sched.kind.lanes
-        if pvm.classof(lane_shape) ~= Schedule.LaneVector then error("lower_to_c: vector schedule requires LaneVector", 2) end
+        if asdl.classof(lane_shape) ~= Schedule.LaneVector then error("lower_to_c: vector schedule requires LaneVector", 2) end
         local lanes = lane_shape.lanes
         local loop, body_set, edge_facts, exit_edge, latch_edge, body_successor, scalar_cond, loop_fact = loop_partition(ctx, graph, flow, kplan)
         if loop_fact == nil or loop_fact.counted == nil or kplan.body.domain.counter == nil then error("lower_to_c: vector kernel requires counted loop", 2) end
@@ -778,7 +778,7 @@ local function bind_context(T)
 
     local function cover_blocks(fragment, func, graph_loops)
         local cover = fragment.cover
-        local cls = pvm.classof(cover)
+        local cls = asdl.classof(cover)
         local out, set = {}, {}
         local function add(block) if block and not set[block.id.text] then set[block.id.text] = true; out[#out + 1] = block end end
         if cls == Lower.LowerCoverFunction then for _, b in ipairs(func.blocks or {}) do add(b) end
@@ -835,7 +835,7 @@ local function bind_context(T)
             if covered[block.id.text] then
                 for _, inst in ipairs(block.insts or {}) do
                     local k = inst.kind
-                    local cls = pvm.classof(k)
+                    local cls = asdl.classof(k)
                     if cls == Code.CodeInstViewMake then
                         local vty = Code.CodeTyView(k.elem_ty)
                         note_value(ctx, k.dst, vty)
@@ -857,7 +857,7 @@ local function bind_context(T)
                             data = ref(k.data, Code.CodeTyDataPtr(byte_ty())),
                             len = ref(k.len, Code.CodeTyIndex),
                         }
-                    elseif cls == Code.CodeInstAlias and (pvm.classof(value_ty(ctx, k.dst)) == Code.CodeTyView or pvm.classof(value_ty(ctx, k.dst)) == Code.CodeTySlice or value_ty(ctx, k.dst) == Code.CodeTyByteSpan or pvm.classof(value_ty(ctx, k.dst)) == Code.CodeTyByteSpan) then
+                    elseif cls == Code.CodeInstAlias and (asdl.classof(value_ty(ctx, k.dst)) == Code.CodeTyView or asdl.classof(value_ty(ctx, k.dst)) == Code.CodeTySlice or value_ty(ctx, k.dst) == Code.CodeTyByteSpan or asdl.classof(value_ty(ctx, k.dst)) == Code.CodeTyByteSpan) then
                         local src = resolve_view(k.src)
                         if src ~= nil then aliases[k.dst.text] = src end
                         if src ~= nil and components[src.text] ~= nil then components[k.dst.text] = components[src.text] end
@@ -870,7 +870,7 @@ local function bind_context(T)
             if covered[block.id.text] and (only_block == nil or only_block == block.id) then
                 for _, inst in ipairs(block.insts or {}) do
                     local k = inst.kind
-                    local cls = pvm.classof(k)
+                    local cls = asdl.classof(k)
                     if cls == Code.CodeInstViewData then
                         local src = component(k.view, "data")
                         if src ~= nil then emit_assign_once(k.dst, src)
@@ -925,7 +925,7 @@ local function bind_context(T)
     end
 
     local function semantic_strategy(fragment)
-        local cls = pvm.classof(fragment.strategy)
+        local cls = asdl.classof(fragment.strategy)
         return cls == Lower.LowerStrategyKernel or cls == Lower.LowerStrategyClosedForm
     end
 
@@ -937,7 +937,7 @@ local function bind_context(T)
             strategy_kernel = cls == Lower.LowerStrategyKernel,
             strategy_closed_form = cls == Lower.LowerStrategyClosedForm,
             has_schedule = sched ~= nil,
-            schedule_vector = sched ~= nil and pvm.classof(sched.kind) == Schedule.ScheduleVector or false,
+            schedule_vector = sched ~= nil and asdl.classof(sched.kind) == Schedule.ScheduleVector or false,
             missing_schedule_reason = cls == Lower.LowerStrategyKernel and ("kernel strategy references missing schedule " .. fragment.strategy.schedule.text) or "",
             unsupported_reason = "unsupported LowerStrategy for C emission " .. class_name(fragment.strategy),
         }
@@ -959,7 +959,7 @@ local function bind_context(T)
         for _, p in ipairs(c_func.params or {}) do ctx.local_seen[p.id.text] = true end
         for _, l in ipairs(c_func.locals or {}) do ctx.local_seen[l.id.text] = true end
         local function note_inst_dst(block, k)
-            local cls = pvm.classof(k)
+            local cls = asdl.classof(k)
             local dst, ty = nil, nil
             if cls == Code.CodeInstConst then dst, ty = k.dst, k.const.ty; ctx.const_by_value[k.dst.text] = k.const
             elseif cls == Code.CodeInstAlias or cls == Code.CodeInstUnary or cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary or cls == Code.CodeInstSelect then dst, ty = k.dst, k.ty
@@ -1007,7 +1007,7 @@ local function bind_context(T)
         local baseline_by_label = {}; for _, b in ipairs(baseline_blocks or {}) do baseline_by_label[b.label.text] = b end
         local schedules_by_id = schedule_by_id(schedules)
         for _, fragment in ipairs(ordered_fragments_for_func(code_func, func_plan, graph_loops)) do
-            local cls = pvm.classof(fragment.strategy)
+            local cls = asdl.classof(fragment.strategy)
             local selection, err = LowerStrategyEmitRules:run("select_lower_emit", { emit = lower_emit_input(fragment, cls, schedules_by_id) }, "selection", "no lower emission selected")
             if selection == nil then error("lower_to_c: " .. tostring(err), 2) end
             if selection.kind == LowerStrategyEmitRules.kind.code then
@@ -1042,7 +1042,7 @@ local function bind_context(T)
 
     local function c_block_body(func)
         local body = assert(func and func.body, "lower_to_c: expected C function with body")
-        if pvm.classof(body) ~= C.CBackendBodyBlocks then error("lower_to_c: semantic lowering requires canonical C block body", 3) end
+        if asdl.classof(body) ~= C.CBackendBodyBlocks then error("lower_to_c: semantic lowering requires canonical C block body", 3) end
         return body.blocks
     end
 
@@ -1054,7 +1054,7 @@ local function bind_context(T)
 
     local function normalize_args(code_module, lower_module, opts)
         opts = opts or {}
-        if lower_module ~= nil and pvm.classof(lower_module) == Lower.LowerModule then
+        if lower_module ~= nil and asdl.classof(lower_module) == Lower.LowerModule then
             local graph = CodeGraph.graph(code_module)
             local flow = lower_module.kernels and lower_module.kernels.flow or CodeFlowFacts.facts(code_module, graph)
             local value = lower_module.kernels and lower_module.kernels.value or CodeValueFacts.facts(code_module, graph, flow)

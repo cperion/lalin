@@ -158,6 +158,51 @@ function Context:FastBuilders()
     return self:Builders(true)
 end
 
+local function class_display_name(cls)
+    local plan = rawget(cls, "__plan")
+    return (plan and plan.name) or tostring(cls)
+end
+
+function Context:RequireMethod(node, operation)
+    if type(operation) ~= "string" then
+        error("asdl.require_method: operation must be a string", 2)
+    end
+    local cls = classof_fast(node)
+    if not cls then
+        error("asdl.require_method: expected ASDL node for " .. operation .. ", got " .. type(node), 2)
+    end
+    local fn = rawget(cls, operation)
+    if type(fn) ~= "function" then
+        error("asdl.require_method: missing method " .. operation .. " for " .. class_display_name(cls), 2)
+    end
+    return fn
+end
+
+function Context:require_method(node, operation)
+    return self:RequireMethod(node, operation)
+end
+
+function Context:Singleton(class)
+    if type(class) ~= "table" then
+        error("ASDL singleton: expected class or singleton", 2)
+    end
+    local node_class = classof_fast(class)
+    if node_class ~= false then
+        class = node_class
+    elseif rawget(class, "__class") ~= class then
+        error("ASDL singleton: expected class or singleton", 2)
+    end
+    local singleton = rawget(class, "__singleton")
+    if singleton == nil then
+        error("ASDL singleton: class is not a nullary singleton variant", 2)
+    end
+    return singleton
+end
+
+function Context:singleton(class)
+    return self:Singleton(class)
+end
+
 classof_fast = function(v)
     if type(v) ~= "table" then
         return false
@@ -332,7 +377,7 @@ local function make_instance_mt(class, instance_tostring, field_lookup)
             return class[k]
         end,
         __newindex = function()
-            error("ASDL nodes are immutable; use pvm.with(...)", 2)
+            error("ASDL nodes are immutable; use asdl.with(...)", 2)
         end,
         __tostring = instance_tostring,
     }
@@ -613,8 +658,12 @@ local function build_class(ctx, name, unique, fields)
             __index = function(self, k)
                 return class[k]
             end,
-            __newindex = function()
-                error("ASDL nodes are immutable; use pvm.with(...)", 2)
+            __newindex = function(_, k, v)
+                if type(k) == "string" and type(v) == "function" then
+                    rawset(class, k, v)
+                    return
+                end
+                error("ASDL nodes are immutable; use asdl.with(...)", 2)
             end,
             __tostring = instance_tostring,
         }

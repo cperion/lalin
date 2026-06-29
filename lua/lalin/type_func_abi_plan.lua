@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
@@ -18,13 +18,13 @@ local function bind_context(T)
 
     local function back_scalar(ty)
         local r = scalar_api.result(ty)
-        if pvm.classof(r) == Ty.TypeBackScalarKnown then return r.scalar end
+        if asdl.classof(r) == Ty.TypeBackScalarKnown then return r.scalar end
         return nil
     end
 
     local function param_plan(func_name, param, index)
         local binding = arg_binding_for_param(func_name, param, index)
-        if pvm.classof(param.ty) == Ty.TView then
+        if asdl.classof(param.ty) == Ty.TView then
             return Ty.AbiParamView(
                 param.name,
                 binding,
@@ -42,18 +42,18 @@ local function bind_context(T)
         -- lowered calling convention passes a pointer to the aggregate storage.
         -- Tree-to-back already treats aggregate bindings whose local value is a
         -- BackPtr as addressable aggregate values for field/index access.
-        if pvm.classof(param.ty) == Ty.TNamed or pvm.classof(classify_api.classify(param.ty)) == Ty.TypeClassAggregate then
+        if asdl.classof(param.ty) == Ty.TNamed or asdl.classof(classify_api.classify(param.ty)) == Ty.TypeClassAggregate then
             return Ty.AbiParamScalar(param.name, binding, Back.BackPtr, Back.BackValId("arg:" .. func_name .. ":" .. param.name))
         end
-        if pvm.classof(param.ty) == Ty.TArray then
+        if asdl.classof(param.ty) == Ty.TArray then
             return Ty.AbiParamScalar(param.name, binding, Back.BackPtr, Back.BackValId("arg:" .. func_name .. ":" .. param.name))
         end
         return Ty.AbiParamRejected(param.name, param.ty, "parameter type has no direct executable ABI yet")
     end
 
     local function result_plan(func_name, result_ty)
-        if pvm.classof(result_ty) == Ty.TScalar and result_ty.scalar == C.ScalarVoid then return Ty.AbiResultVoid end
-        if pvm.classof(result_ty) == Ty.TView then return Ty.AbiResultView(result_ty.elem, Back.BackValId("arg:" .. func_name .. ":return:out")) end
+        if asdl.classof(result_ty) == Ty.TScalar and result_ty.scalar == C.ScalarVoid then return Ty.AbiResultVoid end
+        if asdl.classof(result_ty) == Ty.TView then return Ty.AbiResultView(result_ty.elem, Back.BackValId("arg:" .. func_name .. ":return:out")) end
         local scalar = back_scalar(result_ty)
         if scalar ~= nil then return Ty.AbiResultScalar(scalar) end
         return Ty.AbiResultRejected(result_ty, "result type has no direct executable ABI yet")

@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -8,13 +8,13 @@ local function sanitize(s)
 end
 
 local function class_name(x)
-    local cls = pvm.classof(x) or x
+    local cls = asdl.classof(x) or x
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
 local function list_or_single(results)
     if results == nil then return {} end
-    if pvm.classof(results) then return { results } end
+    if asdl.classof(results) then return { results } end
     return results
 end
 
@@ -60,7 +60,7 @@ local function bind_context(T)
     end
 
     local function normalize_target(target_or_opts)
-        if pvm.classof(target_or_opts) == C.CBackendTarget then return target_or_opts end
+        if asdl.classof(target_or_opts) == C.CBackendTarget then return target_or_opts end
         return default_target(target_or_opts)
     end
 
@@ -115,7 +115,7 @@ local function bind_context(T)
     end
 
     local function named_type_name(ref, ctx)
-        local rcls = pvm.classof(ref)
+        local rcls = asdl.classof(ref)
         if rcls == Ty.TypeRefGlobal then return ref.module_name, ref.type_name end
         if rcls == Ty.TypeRefLocal then return "local", ref.sym.name end
         if rcls == Ty.TypeRefPath and #ref.path.parts > 0 then return (ctx and ctx.module_name) or "", ref.path.parts[#ref.path.parts].text end
@@ -124,7 +124,7 @@ local function bind_context(T)
 
     local function canonical_named_source_ty(ty, module_name, type_name)
         local ref = ty and ty.ref
-        if pvm.classof(ref) == Ty.TypeRefPath and module_name ~= nil and module_name ~= "" then
+        if asdl.classof(ref) == Ty.TypeRefPath and module_name ~= nil and module_name ~= "" then
             return Ty.TNamed(Ty.TypeRefGlobal(module_name, type_name))
         end
         return ty
@@ -139,10 +139,10 @@ local function bind_context(T)
     end
 
     local function lalin_type_key(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Ty.THandle then
             local ref = ty.ref
-            local rcls = pvm.classof(ref)
+            local rcls = asdl.classof(ref)
             if rcls == Ty.TypeRefGlobal then return "handle_" .. sanitize(ref.module_name) .. "_" .. sanitize(ref.type_name) end
             if rcls == Ty.TypeRefLocal then return "handle_local_" .. sanitize(ref.sym.key or ref.sym.name) end
             if rcls == Ty.TypeRefPath then
@@ -152,7 +152,7 @@ local function bind_context(T)
             end
         elseif cls == Ty.TNamed then
             local ref = ty.ref
-            local rcls = pvm.classof(ref)
+            local rcls = asdl.classof(ref)
             if rcls == Ty.TypeRefGlobal then return "named_" .. sanitize(ref.module_name) .. "_" .. sanitize(ref.type_name) end
             if rcls == Ty.TypeRefLocal then return "named_local_" .. sanitize(ref.sym.key or ref.sym.name) end
             if rcls == Ty.TypeRefPath then
@@ -168,7 +168,7 @@ local function bind_context(T)
         if ty == Code.CodeTyVoid then return "void" end
         if ty == Code.CodeTyBool8 then return "bool8" end
         if ty == Code.CodeTyIndex then return "index" end
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then return (ty.signedness == Code.CodeSigned and "i" or "u") .. tostring(ty.bits) end
         if cls == Code.CodeTyFloat then return "f" .. tostring(ty.bits) end
         if cls == Code.CodeTyDataPtr then return "ptr_" .. (ty.pointee and code_type_key(ty.pointee) or "opaque") end
@@ -220,13 +220,13 @@ local function bind_context(T)
 
     local type_to_code
     type_to_code = function(ty, ctx)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Ty.TScalar then
             return scalar_to_code(ty.scalar)
         elseif cls == Ty.TPtr then
             return Code.CodeTyDataPtr(type_to_code(ty.elem, ctx))
         elseif cls == Ty.TArray then
-            if pvm.classof(ty.count) ~= Ty.ArrayLenConst then
+            if asdl.classof(ty.count) ~= Ty.ArrayLenConst then
                 error("code_type: dynamic array length reached CodeType projection; typechecking must reject ArrayLenExpr before backend lowering", 2)
             end
             return Code.CodeTyArray(type_to_code(ty.elem, ctx), ty.count.count)
@@ -241,7 +241,7 @@ local function bind_context(T)
         elseif cls == Ty.TAccess then
             return type_to_code(ty.base, ctx)
         elseif cls == Ty.THandle then
-            local rcls = pvm.classof(ty.repr)
+            local rcls = asdl.classof(ty.repr)
             if rcls == Ty.HandleReprScalar then
                 return Code.CodeTyHandle(scalar_to_code(ty.repr.scalar), ty)
             end
@@ -324,7 +324,7 @@ local function bind_context(T)
         if ty == Code.CodeTyVoid then return C.CBackendVoid end
         if ty == Code.CodeTyBool8 then return C.CBackendBool8 end
         if ty == Code.CodeTyIndex then return C.CBackendIndex end
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then return C.CBackendScalar(int_scalar(ty.bits, ty.signedness)) end
         if cls == Code.CodeTyFloat then return C.CBackendScalar(float_scalar(ty.bits)) end
         if cls == Code.CodeTyDataPtr then return C.CBackendDataPtr(ty.pointee and code_type_to_c(ty.pointee, ctx) or nil) end

@@ -1,10 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local ffi = require("ffi")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
 
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 
 local Core = T.LalinCore
@@ -173,12 +173,12 @@ local lj_module, facts = Lower.lower_module(module, {
 
 assert(#rejects == 0, "SoA lowering rejected: " .. tostring(rejects[1] and rejects[1].reason))
 assert(#artifacts == 2, "SoA lowering should select StoreN and ReduceN artifacts")
-assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, "StoreN SoA store should lower to machine body")
-assert(pvm.classof(lj_module.funcs[2].body) == LJ.LJBodyMachine, "ReduceN SoA fold should lower to machine body")
+assert(asdl.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, "StoreN SoA store should lower to machine body")
+assert(asdl.classof(lj_module.funcs[2].body) == LJ.LJBodyMachine, "ReduceN SoA fold should lower to machine body")
 
 local function assert_soa(access, field_name, component_index)
     local top = access.layout
-    assert(pvm.classof(top) == Stencil.StencilLayoutSoAComponent, access.name .. " should keep SoA layout")
+    assert(asdl.classof(top) == Stencil.StencilLayoutSoAComponent, access.name .. " should keep SoA layout")
     assert(top.record_ty == record_ty, access.name .. " should keep record type")
     assert(top.field_name == field_name, access.name .. " should keep field name")
     assert(top.component_index == component_index, access.name .. " should keep component index")
@@ -194,7 +194,7 @@ end
 local function access_soa(desc, field_name, component_index)
     for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(desc)) do
         local layout = access.layout
-        if pvm.classof(layout) == Stencil.StencilLayoutSoAComponent
+        if asdl.classof(layout) == Stencil.StencilLayoutSoAComponent
             and layout.field_name == field_name
             and layout.component_index == component_index then
             return access

@@ -1,11 +1,11 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A2 = require("lalin.schema_projection")
 local R = require("back.dasm.phases.regalloc_banked")
 local Mx = require("back.dasm.model")
 
-local T = pvm.context()
+local T = asdl.context()
 A2(T)
 Mx.set_context(T)
 
@@ -18,7 +18,7 @@ local body = {
 }
 
 local alloc = R.run(Mx.make_phase_func(body, B.BackFuncId("f")), { a = "BackI32", b = "BackI32", c = "BackI32" })
-assert(pvm.classof(alloc) == T.LalinDasm.DBankedRegalloc)
+assert(asdl.classof(alloc) == T.LalinDasm.DBankedRegalloc)
 
 local seen = {}
 for i = 1, #alloc.allocs do

@@ -1,11 +1,11 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A = require("lalin.schema_projection")
 local Switch = require("lalin.sem_switch_decide")
 local Call = require("lalin.sem_call_decide")
 
-local T = pvm.context()
+local T = asdl.context()
 A(T)
 local S = Switch(T)
 local CallD = Call(T)

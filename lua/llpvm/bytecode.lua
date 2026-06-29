@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Asdl = require("llpvm.asdl")
 local ffi = require("ffi")
 
@@ -184,7 +184,7 @@ local function put_id_list(out, ids)
 end
 
 function Encoder:emit_node(id, node)
-    local cls = pvm.classof(node)
+    local cls = asdl.classof(node)
     assert(cls, "llpvm bytecode can encode ASDL nodes only")
 
     if cls == T.Symbol then
@@ -364,7 +364,7 @@ end
 
 function M.encode(value)
     local node = value
-    local cls = pvm.classof(node)
+    local cls = asdl.classof(node)
     if cls == T.Program then return M.encode_program(node) end
     error("llpvm.bytecode.encode expects LlPvm.Program", 2)
 end

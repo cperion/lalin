@@ -2,11 +2,11 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;"
   .. package.path
 
 local ffi = require("ffi")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A2 = require("lalin.schema_projection")
 local D = require("back.dasm")
 
-local T = pvm.context()
+local T = asdl.context()
 A2(T)
 local api = D(T)
 

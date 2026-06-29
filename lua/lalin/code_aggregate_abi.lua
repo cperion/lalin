@@ -1,7 +1,7 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function class_name(x)
-    local cls = pvm.classof(x) or x
+    local cls = asdl.classof(x) or x
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -19,7 +19,7 @@ local function bind_context(T)
         if ty == Code.CodeTyVoid then return Back.BackVoid end
         if ty == Code.CodeTyBool8 then return Back.BackBool end
         if ty == Code.CodeTyIndex then return Back.BackIndex end
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then
             if ty.bits == 8 then return ty.signedness == Code.CodeSigned and Back.BackI8 or Back.BackU8 end
             if ty.bits == 16 then return ty.signedness == Code.CodeSigned and Back.BackI16 or Back.BackU16 end
@@ -39,29 +39,29 @@ local function bind_context(T)
     end
 
     local function is_view(ty)
-        return pvm.classof(ty) == Code.CodeTyView or (pvm.classof(ty) == Code.CodeTyLease and is_view(ty.base))
+        return asdl.classof(ty) == Code.CodeTyView or (asdl.classof(ty) == Code.CodeTyLease and is_view(ty.base))
     end
 
     local function view_elem(ty)
-        if pvm.classof(ty) == Code.CodeTyLease then ty = ty.base end
-        return pvm.classof(ty) == Code.CodeTyView and ty.elem or nil
+        if asdl.classof(ty) == Code.CodeTyLease then ty = ty.base end
+        return asdl.classof(ty) == Code.CodeTyView and ty.elem or nil
     end
 
     local function is_slice(ty)
-        return pvm.classof(ty) == Code.CodeTySlice or (pvm.classof(ty) == Code.CodeTyLease and is_slice(ty.base))
+        return asdl.classof(ty) == Code.CodeTySlice or (asdl.classof(ty) == Code.CodeTyLease and is_slice(ty.base))
     end
 
     local function slice_elem(ty)
-        if pvm.classof(ty) == Code.CodeTyLease then ty = ty.base end
-        return pvm.classof(ty) == Code.CodeTySlice and ty.elem or nil
+        if asdl.classof(ty) == Code.CodeTyLease then ty = ty.base end
+        return asdl.classof(ty) == Code.CodeTySlice and ty.elem or nil
     end
 
     local function is_byte_span(ty)
-        return ty == Code.CodeTyByteSpan or pvm.classof(ty) == Code.CodeTyByteSpan or (pvm.classof(ty) == Code.CodeTyLease and is_byte_span(ty.base))
+        return ty == Code.CodeTyByteSpan or asdl.classof(ty) == Code.CodeTyByteSpan or (asdl.classof(ty) == Code.CodeTyLease and is_byte_span(ty.base))
     end
 
     local function is_aggregate(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         return cls == Code.CodeTyNamed or cls == Code.CodeTyArray or cls == Code.CodeTyClosure
     end
 
@@ -91,10 +91,10 @@ local function bind_context(T)
     end
 
     local function layout(ctx, ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyNamed and ty.source_ty ~= nil and ctx ~= nil and ctx.layout_env ~= nil then
             local result = TypeSizeAlign.result(ty.source_ty, ctx.layout_env, ctx.target)
-            if pvm.classof(result) == T.LalinType.TypeMemLayoutKnown then return result.layout end
+            if asdl.classof(result) == T.LalinType.TypeMemLayoutKnown then return result.layout end
         end
         return nil
     end
@@ -103,8 +103,8 @@ local function bind_context(T)
         if is_view(ty) then return 24, 8 end
         if is_slice(ty) then return 16, 8 end
         if is_byte_span(ty) then return 16, 8 end
-        if pvm.classof(ty) == Code.CodeTyClosure then return 16, 8 end
-        if pvm.classof(ty) == Code.CodeTyArray then
+        if asdl.classof(ty) == Code.CodeTyClosure then return 16, 8 end
+        if asdl.classof(ty) == Code.CodeTyArray then
             local elem_size, elem_align = size_align(ctx, ty.elem)
             return elem_size * ty.count, elem_align
         end

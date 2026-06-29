@@ -1,7 +1,7 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function class_name(value)
-    local cls = pvm.classof(value) or value
+    local cls = asdl.classof(value) or value
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -60,7 +60,7 @@ local function bind_context(T)
 
     local function contract_facts(contracts)
         if contracts == nil then return {} end
-        if pvm.classof(contracts) == Code.CodeContractFactSet then return contracts.facts or {} end
+        if asdl.classof(contracts) == Code.CodeContractFactSet then return contracts.facts or {} end
         return contracts
     end
 
@@ -68,7 +68,7 @@ local function bind_context(T)
         local out = {}
         for _, fact in ipairs(contract_facts(contracts)) do
             local k = fact.fact
-            if pvm.classof(k) == Code.CodeContractSoAComponent then
+            if asdl.classof(k) == Code.CodeContractSoAComponent then
                 out[fact.func.text .. "\0" .. k.base.text] = k
             end
         end
@@ -76,7 +76,7 @@ local function bind_context(T)
     end
 
     local function flow_domain_key(domain)
-        local cls = pvm.classof(domain)
+        local cls = asdl.classof(domain)
         if cls == Flow.FlowDomainLoop then return "loop:" .. domain.loop.text end
         if cls == Flow.FlowDomainFunction then return "func:" .. domain.func.text end
         return tostring(domain)
@@ -109,7 +109,7 @@ local function bind_context(T)
     end
 
     local function stencil_producer_shape(shape)
-        local cls = pvm.classof(shape)
+        local cls = asdl.classof(shape)
         if cls == Flow.FlowDomainShapeRange1D then
             return Stencil.StencilProduceRange1D(shape.index_ty, shape.start, shape.stop, shape.step, stencil_order(shape.order))
         elseif cls == Flow.FlowDomainShapeRangeND then
@@ -123,7 +123,7 @@ local function bind_context(T)
     end
 
     local function stencil_producer_origin(origin)
-        local cls = pvm.classof(origin)
+        local cls = asdl.classof(origin)
         if origin == Flow.FlowFactCheckerDerived then return Stencil.StencilProducerCheckerDerived end
         if cls == Flow.FlowFactAuthorAsserted then return Stencil.StencilProducerAuthorAsserted(origin.reason) end
         if cls == Flow.FlowFactFrontendFact then return Stencil.StencilProducerFrontendFact(origin.reason) end
@@ -131,7 +131,7 @@ local function bind_context(T)
     end
 
     local function kernel_proof_from_flow_proof(domain, proof)
-        local cls = pvm.classof(proof)
+        local cls = asdl.classof(proof)
         if cls == Flow.FlowProofDomain then return Kernel.KernelProofFlow(proof.domain, proof.reason) end
         if cls == Flow.FlowProofMemory then return Kernel.KernelProofMemory(proof.proof, proof.reason) end
         if cls == Flow.FlowProofAuthorAsserted then return Kernel.KernelProofFlow(domain, proof.reason) end
@@ -187,7 +187,7 @@ local function bind_context(T)
         if def == nil then return Code.CodeTyIndex end
         if def.ty ~= nil then return def.ty end
         local k = def.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeInstConst then return k.const.ty end
         if cls == Code.CodeInstAlias or cls == Code.CodeInstUnary or cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary or cls == Code.CodeInstSelect or cls == Code.CodeInstAggregate or cls == Code.CodeInstArray then return k.ty end
         if cls == Code.CodeInstCompare then return Code.CodeTyBool8 end
@@ -210,7 +210,7 @@ local function bind_context(T)
 
     local function value_id_expr(ctx, id)
         local def = ctx.defs and id and ctx.defs[id.text] or nil
-        if def ~= nil and pvm.classof(def.kind) == Code.CodeInstConst and pvm.classof(def.kind.const) == Code.CodeConstLiteral then
+        if def ~= nil and asdl.classof(def.kind) == Code.CodeInstConst and asdl.classof(def.kind.const) == Code.CodeConstLiteral then
             return LJ.LJExprLiteral(def.kind.const.literal, physical(ctx, def.kind.const.ty))
         end
         return LJ.LJExprValue(vid(id))
@@ -219,14 +219,14 @@ local function bind_context(T)
     local function captured_closure_descriptor(ctx, id)
         local def = ctx.defs and id and ctx.defs[id.text] or nil
         local k = def and def.kind or nil
-        if pvm.classof(k) ~= Code.CodeInstAggregate then return false end
-        if pvm.classof(k.ty) ~= Code.CodeTyClosure then return false end
+        if asdl.classof(k) ~= Code.CodeInstAggregate then return false end
+        if asdl.classof(k.ty) ~= Code.CodeTyClosure then return false end
         return #(k.fields or {}) > 1
     end
 
     local value_expr
     value_expr = function(ctx, expr)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Value.ValueExprConst then
             return Expr.const_expr(ctx, expr.const)
         elseif cls == Value.ValueExprValue then
@@ -252,8 +252,8 @@ local function bind_context(T)
     local function producer_value_id_expr(ctx, id, seen)
         local def = ctx.defs and id and ctx.defs[id.text] or nil
         local k = def and def.kind
-        local cls = pvm.classof(k)
-        if cls == Code.CodeInstConst and pvm.classof(k.const) == Code.CodeConstLiteral then
+        local cls = asdl.classof(k)
+        if cls == Code.CodeInstConst and asdl.classof(k.const) == Code.CodeConstLiteral then
             return Expr.const_expr(ctx, k.const)
         end
         seen = seen or {}
@@ -270,7 +270,7 @@ local function bind_context(T)
     end
 
     producer_value_expr = function(ctx, expr)
-        if pvm.classof(expr) == Value.ValueExprValue then return producer_value_id_expr(ctx, expr.value) end
+        if asdl.classof(expr) == Value.ValueExprValue then return producer_value_id_expr(ctx, expr.value) end
         return value_expr(ctx, expr)
     end
 
@@ -292,7 +292,7 @@ local function bind_context(T)
 
     local function lower_term(ctx, term)
         local k = term.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         local function exprs(ids)
             local out = {}
             for i, id in ipairs(ids or {}) do out[i] = value_id_expr(ctx, id) end
@@ -366,8 +366,8 @@ local function bind_context(T)
     local function const_int_value(ctx, id, seen)
         local def = ctx.defs and id and ctx.defs[id.text] or nil
         local k = def and def.kind
-        local cls = pvm.classof(k)
-        if cls == Code.CodeInstConst and pvm.classof(k.const) == Code.CodeConstLiteral and pvm.classof(k.const.literal) == Core.LitInt then
+        local cls = asdl.classof(k)
+        if cls == Code.CodeInstConst and asdl.classof(k.const) == Code.CodeConstLiteral and asdl.classof(k.const.literal) == Core.LitInt then
             return tonumber(k.const.literal.raw)
         end
         if cls == Code.CodeInstCast then
@@ -387,7 +387,7 @@ local function bind_context(T)
 
     local function term_args_to_dest(term, dest)
         local k = term and term.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeTermJump and k.dest == dest then return k.args or {} end
         if cls == Code.CodeTermBranch then
             if k.then_dest == dest then return k.then_args or {} end
@@ -408,7 +408,7 @@ local function bind_context(T)
 
     local function term_successors(term)
         local k = term and term.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         local out = {}
         if cls == Code.CodeTermJump then
             out[#out + 1] = { dest = k.dest, args = k.args or {} }
@@ -439,7 +439,7 @@ local function bind_context(T)
         if seen[key] then return false end
         seen[key] = true
         local term = block.term and block.term.kind or nil
-        if pvm.classof(term) == Code.CodeTermReturn then
+        if asdl.classof(term) == Code.CodeTermReturn then
             return #(term.values or {}) == 1 and same_value_id(term.values[1], value)
         end
         for _, succ in ipairs(term_successors(block.term)) do
@@ -455,7 +455,7 @@ local function bind_context(T)
         if seen[block.id.text] then return false end
         seen[block.id.text] = true
         local term = block.term and block.term.kind or nil
-        if pvm.classof(term) == Code.CodeTermReturn then return #(term.values or {}) == 0 end
+        if asdl.classof(term) == Code.CodeTermReturn then return #(term.values or {}) == 0 end
         for _, succ in ipairs(term_successors(block.term)) do
             if reaches_void_return(blocks, blocks[succ.dest.text], seen) then return true end
         end
@@ -470,7 +470,7 @@ local function bind_context(T)
         local exit = blocks[edge.to.block.text]
         if from == nil or exit == nil then return false end
         local ret = exit.term and exit.term.kind or nil
-        if pvm.classof(ret) == Code.CodeTermReturn and #(ret.values or {}) == 1 then
+        if asdl.classof(ret) == Code.CodeTermReturn and #(ret.values or {}) == 1 then
             if same_value_id(ret.values[1], reduction.accumulator) then return true end
             for i, param in ipairs(exit.params or {}) do
                 if same_value_id(ret.values[1], param.value) then
@@ -487,13 +487,13 @@ local function bind_context(T)
         local blocks = block_index(func)
         local exit = blocks[graph_loop.exits[1].to.block.text]
         local ret = exit and exit.term and exit.term.kind or nil
-        return pvm.classof(ret) == Code.CodeTermReturn and #(ret.values or {}) == 0 or reaches_void_return(blocks, exit)
+        return asdl.classof(ret) == Code.CodeTermReturn and #(ret.values or {}) == 0 or reaches_void_return(blocks, exit)
     end
 
     local function lane_base_value(lane)
         local base = lane and lane.base or nil
-        if pvm.classof(base) == Mem.MemBaseValue then return base.value end
-        if pvm.classof(base) == Mem.MemBaseProjection then
+        if asdl.classof(base) == Mem.MemBaseValue then return base.value end
+        if asdl.classof(base) == Mem.MemBaseProjection then
             local inner = lane_base_value({ base = base.base })
             if inner ~= nil then return inner end
         end
@@ -501,19 +501,19 @@ local function bind_context(T)
     end
 
     local function mem_stride_const(stride)
-        local cls = pvm.classof(stride)
+        local cls = asdl.classof(stride)
         if stride == Mem.MemStrideUnit then return 1 end
         if cls == Mem.MemStrideConstElems then return stride.elems end
         return nil
     end
 
     local function extent_len(extent)
-        if pvm.classof(extent) == Mem.MemExtentElements then return extent.len end
+        if asdl.classof(extent) == Mem.MemExtentElements then return extent.len end
         return nil
     end
 
     local function pattern_layout(pattern)
-        local cls = pvm.classof(pattern)
+        local cls = asdl.classof(pattern)
         if pattern == Mem.MemAccessContiguous then return Stencil.StencilLayoutContiguous(1) end
         if cls == Mem.MemAccessStrided then return Stencil.StencilLayoutContiguous(pattern.stride_elems) end
         return nil
@@ -524,7 +524,7 @@ local function bind_context(T)
             local access = ctx.mem_accesses and ctx.mem_accesses[access_id.text] or nil
             local place = access and access.place or nil
             while place ~= nil do
-                local cls = pvm.classof(place)
+                local cls = asdl.classof(place)
                 if cls == Code.CodePlaceField then
                     local field = place.field
                     return field and field.field_name or ("field_" .. tostring(place.offset or 0))
@@ -548,7 +548,7 @@ local function bind_context(T)
         end
         if object ~= nil then
             local provenance = object.provenance
-            local pcls = pvm.classof(provenance)
+            local pcls = asdl.classof(provenance)
             if object.kind == Mem.MemObjectDerived and pcls == Mem.MemProvProjection and provenance.projection == Mem.MemProjectField then
                 local parent = ctx.mem_objects and ctx.mem_objects[provenance.parent.text] or nil
                 local parent_layout = lane_layout(ctx, {
@@ -592,7 +592,7 @@ local function bind_context(T)
     end
 
     local function layout_data_value(layout)
-        local cls = pvm.classof(layout)
+        local cls = asdl.classof(layout)
         if cls == Stencil.StencilLayoutAffine1D or cls == Stencil.StencilLayoutAffineND then return layout_data_value(layout.parent) end
         if cls == Stencil.StencilLayoutSoAComponent or cls == Stencil.StencilLayoutFieldProjection then return layout_data_value(layout.parent) end
         if cls == Stencil.StencilLayoutViewDescriptor or cls == Stencil.StencilLayoutSliceDescriptor or cls == Stencil.StencilLayoutByteSpanDescriptor then return layout.data end
@@ -607,7 +607,7 @@ local function bind_context(T)
 
     local function same_code_type(a, b)
         if a == b then return true end
-        local ac, bc = pvm.classof(a), pvm.classof(b)
+        local ac, bc = asdl.classof(a), asdl.classof(b)
         if ac ~= bc then return false end
         if ac == Code.CodeTyInt then return a.bits == b.bits and a.signedness == b.signedness end
         if ac == Code.CodeTyFloat then return a.bits == b.bits end
@@ -674,16 +674,16 @@ local function bind_context(T)
     end
 
     local function expr_is_int_const(expr, raw)
-        return pvm.classof(expr) == Value.ValueExprConst
-            and pvm.classof(expr.const) == Code.CodeConstLiteral
-            and pvm.classof(expr.const.literal) == Core.LitInt
+        return asdl.classof(expr) == Value.ValueExprConst
+            and asdl.classof(expr.const) == Code.CodeConstLiteral
+            and asdl.classof(expr.const.literal) == Core.LitInt
             and tonumber(expr.const.literal.raw) == raw
     end
 
     local function expr_int_const(expr)
-        if pvm.classof(expr) == Value.ValueExprConst
-            and pvm.classof(expr.const) == Code.CodeConstLiteral
-            and pvm.classof(expr.const.literal) == Core.LitInt then
+        if asdl.classof(expr) == Value.ValueExprConst
+            and asdl.classof(expr.const) == Code.CodeConstLiteral
+            and asdl.classof(expr.const.literal) == Core.LitInt then
             return tonumber(expr.const.literal.raw)
         end
         return nil
@@ -691,7 +691,7 @@ local function bind_context(T)
 
     local function bound_algebra_expr(bindings, value)
         local binding = value and bindings and bindings["kval:" .. value.text] or nil
-        if binding ~= nil and pvm.classof(binding.expr) == Kernel.KernelExprAlgebra then return binding.expr.expr end
+        if binding ~= nil and asdl.classof(binding.expr) == Kernel.KernelExprAlgebra then return binding.expr.expr end
         return nil
     end
 
@@ -702,7 +702,7 @@ local function bind_context(T)
         seen[value.text] = true
         local def = ctx.defs and ctx.defs[value.text] or nil
         local k = def and def.kind or nil
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeInstConst then return Value.ValueExprConst(k.const) end
         if cls == Code.CodeInstAlias then return value_expr_from_code(ctx, k.src, seen) end
         if cls == Code.CodeInstUnary then return Value.ValueExprUnary(k.op, value_expr_from_code(ctx, k.value, seen), k.ty) end
@@ -730,7 +730,7 @@ local function bind_context(T)
 
     local function resolved_algebra_expr(ctx, expr, bindings, seen)
         if expr == nil then return nil end
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Value.ValueExprValue then
             seen = seen or {}
             if seen[expr.value.text] then return expr end
@@ -743,10 +743,10 @@ local function bind_context(T)
     local function value_expr_key(ctx, graph_loop, expr, bindings, seen)
         expr = resolved_algebra_expr(ctx, expr, bindings)
         if expr == nil then return "nil" end
-        local cls = pvm.classof(expr)
-        if cls == Value.ValueExprConst and pvm.classof(expr.const) == Code.CodeConstLiteral then
+        local cls = asdl.classof(expr)
+        if cls == Value.ValueExprConst and asdl.classof(expr.const) == Code.CodeConstLiteral then
             local lit = expr.const.literal
-            return "const:" .. tostring(pvm.classof(lit)) .. ":" .. tostring(lit and (lit.raw or lit.value))
+            return "const:" .. tostring(asdl.classof(lit)) .. ":" .. tostring(lit and (lit.raw or lit.value))
         end
         if cls == Value.ValueExprValue then
             local v = canonical_loop_value(ctx, graph_loop, expr.value)
@@ -778,7 +778,7 @@ local function bind_context(T)
         seen = seen or {}
         if seen[expr] then return false end
         seen[expr] = true
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Value.ValueExprValue then
             if same_loop_value(ctx, graph_loop, expr.value, primary) then return true end
             return expr_is_primary(ctx, bound_algebra_expr(bindings, expr.value), graph_loop, loop_fact, bindings, seen)
@@ -802,19 +802,19 @@ local function bind_context(T)
         if counted == nil then return nil end
         local function strip_casts(v)
             v = resolved_algebra_expr(ctx, v, bindings)
-            while v ~= nil and pvm.classof(v) == Value.ValueExprCast do
+            while v ~= nil and asdl.classof(v) == Value.ValueExprCast do
                 v = resolved_algebra_expr(ctx, v.value, bindings)
             end
             return v
         end
         expr = strip_casts(expr)
         if expr == nil then return nil end
-        if pvm.classof(expr) == Value.ValueExprMul then
+        if asdl.classof(expr) == Value.ValueExprMul then
             if expr_is_int_const(expr.a, 1) then expr = strip_casts(expr.b) end
             if expr_is_int_const(expr.b, 1) then expr = strip_casts(expr.a) end
         end
         if expr == nil then return nil end
-        if pvm.classof(expr) ~= Value.ValueExprSub then return nil end
+        if asdl.classof(expr) ~= Value.ValueExprSub then return nil end
         if not expr_is_primary(ctx, expr.b, graph_loop, loop_fact, bindings) then return nil end
         local start_expr = value_expr_from_code(ctx, counted.start)
         if value_expr_key(ctx, graph_loop, expr.a, bindings) ~= value_expr_key(ctx, graph_loop, start_expr, bindings) then return nil end
@@ -851,12 +851,12 @@ local function bind_context(T)
 
     local function affine_nd_layout_for_index(ctx, expr, graph_loop, loop_fact, bindings, parent_layout)
         local shape = producer_shape_for_loop(ctx, loop_fact)
-        if pvm.classof(shape) ~= Stencil.StencilProduceRangeND then return nil end
+        if asdl.classof(shape) ~= Stencil.StencilProduceRangeND then return nil end
         local axis_candidates = axis_expr_candidates(ctx, graph_loop, shape, bindings)
         local function strip(v)
             v = resolved_algebra_expr(ctx, v, bindings)
-            while pvm.classof(v) == Value.ValueExprCast do v = resolved_algebra_expr(ctx, v.value, bindings) end
-            if pvm.classof(v) == Value.ValueExprMul then
+            while asdl.classof(v) == Value.ValueExprCast do v = resolved_algebra_expr(ctx, v.value, bindings) end
+            if asdl.classof(v) == Value.ValueExprMul then
                 if expr_is_int_const(v.a, 1) then return strip(v.b) end
                 if expr_is_int_const(v.b, 1) then return strip(v.a) end
             end
@@ -881,7 +881,7 @@ local function bind_context(T)
             if c ~= nil then return c * sign end
             local ai = axis_index(v)
             if ai ~= nil then add_term(ai, sign); return 0 end
-            local cls = pvm.classof(v)
+            local cls = asdl.classof(v)
             if cls == Value.ValueExprAdd then return walk(v.a, sign) + walk(v.b, sign) end
             if cls == Value.ValueExprSub then return walk(v.a, sign) + walk(v.b, -sign) end
             if cls == Value.ValueExprMul then
@@ -911,16 +911,16 @@ local function bind_context(T)
     end
 
     local function is_zero_const(expr)
-        return pvm.classof(expr) == Value.ValueExprConst
-            and pvm.classof(expr.const) == Code.CodeConstLiteral
-            and pvm.classof(expr.const.literal) == Core.LitInt
+        return asdl.classof(expr) == Value.ValueExprConst
+            and asdl.classof(expr.const) == Code.CodeConstLiteral
+            and asdl.classof(expr.const.literal) == Core.LitInt
             and tonumber(expr.const.literal.raw) == 0
     end
 
     local function is_minus_one_const(expr)
-        return pvm.classof(expr) == Value.ValueExprConst
-            and pvm.classof(expr.const) == Code.CodeConstLiteral
-            and pvm.classof(expr.const.literal) == Core.LitInt
+        return asdl.classof(expr) == Value.ValueExprConst
+            and asdl.classof(expr.const) == Code.CodeConstLiteral
+            and asdl.classof(expr.const.literal) == Core.LitInt
             and tonumber(expr.const.literal.raw) == -1
     end
 
@@ -931,7 +931,7 @@ local function bind_context(T)
     local function single_store_effect(body)
         local store = nil
         for _, effect in ipairs(body and body.effects or {}) do
-            local cls = pvm.classof(effect)
+            local cls = asdl.classof(effect)
             if cls == Kernel.KernelEffectStore then
                 if store ~= nil then return nil, "multiple stores in kernel" end
                 store = effect
@@ -953,7 +953,7 @@ local function bind_context(T)
         local layout = lane_layout(ctx, lane)
         if layout == nil then return nil end
         local base = lane_base_value(lane)
-        local tcls = pvm.classof(layout)
+        local tcls = asdl.classof(layout)
         base = layout_data_value(layout) or base
         if base == nil then return nil end
         return {
@@ -1003,26 +1003,26 @@ local function bind_context(T)
     local function enrich_point_class(ctx, class, graph_loop, loop_fact, bindings)
         local producer_fact = ctx and ctx.producer_facts and loop_fact and loop_fact.domain and ctx.producer_facts[flow_domain_key(loop_fact.domain)] or nil
         local producer_shape = producer_fact and producer_fact.producer and StencilArtifactPlan.producer_shape(producer_fact.producer) or nil
-        local window_1d = producer_shape ~= nil and pvm.classof(producer_shape) == Stencil.StencilProduceWindowND and #(producer_shape.axes or {}) == 1
+        local window_1d = producer_shape ~= nil and asdl.classof(producer_shape) == Stencil.StencilProduceWindowND and #(producer_shape.axes or {}) == 1
         local function strip_casts(expr)
             expr = resolved_algebra_expr(ctx, expr, bindings)
-            if expr ~= nil and pvm.classof(expr) == Value.ValueExprValue then
+            if expr ~= nil and asdl.classof(expr) == Value.ValueExprValue then
                 expr = value_expr_from_code(ctx, expr.value) or expr
             end
-            while expr ~= nil and pvm.classof(expr) == Value.ValueExprCast do expr = resolved_algebra_expr(ctx, expr.value, bindings) end
+            while expr ~= nil and asdl.classof(expr) == Value.ValueExprCast do expr = resolved_algebra_expr(ctx, expr.value, bindings) end
             return expr
         end
         local function window_offset_for_index(index)
             if not window_1d then return nil end
             local expr = strip_casts(index)
             if expr == nil then return nil end
-            if pvm.classof(expr) == Value.ValueExprMul then
+            if asdl.classof(expr) == Value.ValueExprMul then
                 if expr_int_const(strip_casts(expr.a)) ~= nil then expr = strip_casts(expr.b)
                 elseif expr_int_const(strip_casts(expr.b)) ~= nil then expr = strip_casts(expr.a) end
             end
             if expr == nil then return nil end
             if expr_is_primary(ctx, expr, graph_loop, loop_fact, bindings) then return 0 end
-            local cls = pvm.classof(expr)
+            local cls = asdl.classof(expr)
             if cls == Value.ValueExprAdd then
                 local c = expr_int_const(strip_casts(expr.a))
                 if c ~= nil and expr_is_primary(ctx, expr.b, graph_loop, loop_fact, bindings) then return c end
@@ -1085,7 +1085,7 @@ local function bind_context(T)
         end
         local rewrite_expr
         rewrite_expr = function(expr)
-            local cls = pvm.classof(expr)
+            local cls = asdl.classof(expr)
             if cls == Stencil.StencilPointInput then
                 local offsets = window_by_input[expr.access.name]
                 if offsets ~= nil then return Stencil.StencilPointWindowInput(expr.access, offsets) end
@@ -1148,13 +1148,13 @@ local function bind_context(T)
     end
 
     local function same_value_expr_value(expr, value)
-        return pvm.classof(expr) == Value.ValueExprValue and value ~= nil and expr.value.text == value.text
+        return asdl.classof(expr) == Value.ValueExprValue and value ~= nil and expr.value.text == value.text
     end
 
     local function scan_axis_from_loop(ctx, loop_fact, producer)
         if producer == nil or loop_fact == nil or loop_fact.counted == nil then return nil end
         local shape = StencilArtifactPlan.producer_shape(producer)
-        if pvm.classof(shape) ~= Stencil.StencilProduceRangeND then return nil end
+        if asdl.classof(shape) ~= Stencil.StencilProduceRangeND then return nil end
         local counted = loop_fact.counted
         for axis_index, axis in ipairs(shape.axes or {}) do
             if same_value_expr_value(axis.start, counted.start) and same_value_expr_value(axis.stop, counted.stop) then
@@ -1165,7 +1165,7 @@ local function bind_context(T)
     end
 
     local function stencil_store_plan(ctx, func, plan, graph_loop, loop_fact)
-        if pvm.classof(plan) ~= Kernel.KernelPlanned then return nil, "kernel is not planned" end
+        if asdl.classof(plan) ~= Kernel.KernelPlanned then return nil, "kernel is not planned" end
         if not function_returns_void_from_loop(func, graph_loop) then return nil, "store stencil requires loop exit to return void" end
         if loop_fact == nil or loop_fact.counted == nil then return nil, "store stencil requires counted loop" end
         local step_num = const_int_value(ctx, loop_fact.counted.step)
@@ -1216,7 +1216,7 @@ local function bind_context(T)
             class = class,
         }
         local stencil_plan, select_reason = StencilRules.plan_store {
-            planned = pvm.classof(plan) == Kernel.KernelPlanned,
+            planned = asdl.classof(plan) == Kernel.KernelPlanned,
             returns_void = function_returns_void_from_loop(func, graph_loop),
             counted_positive = step_num ~= nil and step_num ~= 0,
             single_store = store ~= nil,
@@ -1229,7 +1229,7 @@ local function bind_context(T)
     end
 
     local function dynamic_stride_layout(layout)
-        local cls = pvm.classof(layout)
+        local cls = asdl.classof(layout)
         if cls == Stencil.StencilLayoutFieldProjection then return dynamic_stride_layout(layout.parent) end
         if cls == Stencil.StencilLayoutSoAComponent then return dynamic_stride_layout(layout.parent) end
         if cls == Stencil.StencilLayoutAffine1D or cls == Stencil.StencilLayoutAffineND then return dynamic_stride_layout(layout.parent) end
@@ -1238,7 +1238,7 @@ local function bind_context(T)
     end
 
     local function dynamic_affine_offset_layout(layout)
-        local cls = pvm.classof(layout)
+        local cls = asdl.classof(layout)
         if cls == Stencil.StencilLayoutFieldProjection then return dynamic_affine_offset_layout(layout.parent) end
         if cls == Stencil.StencilLayoutSoAComponent then return dynamic_affine_offset_layout(layout.parent) end
         if cls == Stencil.StencilLayoutIndexed then return dynamic_affine_offset_layout(layout.parent) end
@@ -1266,7 +1266,7 @@ local function bind_context(T)
 
     local function append_access_args(ctx, desc, info, out)
         for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(desc)) do
-            if pvm.classof(access.layout) ~= Stencil.StencilLayoutScalar then
+            if asdl.classof(access.layout) ~= Stencil.StencilLayoutScalar then
                 local role = access.role
                 if role == Stencil.StencilAccessRead or role == Stencil.StencilAccessWrite or role == Stencil.StencilAccessReadWrite or role == Stencil.StencilAccessIndex then
                     local id = access_arg_value(info, access.name)
@@ -1279,7 +1279,7 @@ local function bind_context(T)
     local function append_producer_args(ctx, producer, out, fallback)
         local shape = StencilArtifactPlan.producer_shape(producer)
         local call_shape = fallback and fallback.producer and StencilArtifactPlan.producer_shape(fallback.producer) or shape
-        local cls = pvm.classof(shape)
+        local cls = asdl.classof(shape)
         if cls == Stencil.StencilProduceRange1D then
             out[#out + 1] = call_shape.start and producer_value_expr(ctx, call_shape.start) or assert(fallback and fallback.start_expr, "Range1D producer call is missing start")
             out[#out + 1] = call_shape.stop and producer_value_expr(ctx, call_shape.stop) or assert(fallback and fallback.stop_expr, "Range1D producer call is missing stop")
@@ -1298,20 +1298,20 @@ local function bind_context(T)
 
     local function append_trailing_scalar_args(ctx, desc, info, out)
         for _, access in ipairs(StencilArtifactPlan.descriptor_accesses(desc)) do
-            if pvm.classof(access.layout) == Stencil.StencilLayoutScalar and access.role == Stencil.StencilAccessRead then
+            if asdl.classof(access.layout) == Stencil.StencilLayoutScalar and access.role == Stencil.StencilAccessRead then
                 local init = access.layout.value or (info and info.value)
                 if init ~= nil then out[#out + 1] = value_expr(ctx, init) end
             end
         end
         local sink = desc.sink
-        local sink_cls = pvm.classof(sink)
+        local sink_cls = asdl.classof(sink)
         if sink_cls == Stencil.StencilSinkScan then
             out[#out + 1] = value_expr(ctx, assert(info and info.init, "scan stencil call is missing init"))
         elseif sink_cls == Stencil.StencilSinkReduce then
             local scope = sink.scope
-            local scope_cls = pvm.classof(scope)
+            local scope_cls = asdl.classof(scope)
             local domain_scope = scope == Stencil.StencilReduceScopeDomain or scope_cls == Stencil.StencilReduceScopeDomain
-            if domain_scope and pvm.classof(sink.mode) == Stencil.StencilReduceFold then
+            if domain_scope and asdl.classof(sink.mode) == Stencil.StencilReduceFold then
                 out[#out + 1] = value_expr(ctx, assert(info and info.init, "reduce stencil call is missing init"))
             end
         end
@@ -1365,9 +1365,9 @@ local function bind_context(T)
     end
 
     local function stencil_reduce_plan(ctx, func, plan, graph_loop, loop_fact)
-        if pvm.classof(plan) ~= Kernel.KernelPlanned then return nil, "kernel is not planned" end
+        if asdl.classof(plan) ~= Kernel.KernelPlanned then return nil, "kernel is not planned" end
         local result = plan.body.result
-        if pvm.classof(result) ~= Kernel.KernelResultReduction then return nil, "kernel result is not a reduction" end
+        if asdl.classof(result) ~= Kernel.KernelResultReduction then return nil, "kernel result is not a reduction" end
         local reduction = result.reduction
         if not function_returns_reduction(func, graph_loop, reduction) then return nil, "function return is not the kernel reduction" end
         if loop_fact == nil or loop_fact.counted == nil then return nil, "reduction stencil requires counted loop" end
@@ -1398,8 +1398,8 @@ local function bind_context(T)
             class = class,
         }
         local stencil_plan, select_reason = StencilRules.plan_reduce {
-            planned = pvm.classof(plan) == Kernel.KernelPlanned,
-            result_reduction = pvm.classof(result) == Kernel.KernelResultReduction,
+            planned = asdl.classof(plan) == Kernel.KernelPlanned,
+            result_reduction = asdl.classof(result) == Kernel.KernelResultReduction,
             returns_reduction = function_returns_reduction(func, graph_loop, reduction),
             counted_positive = step_num ~= nil and step_num ~= 0,
             class_ready = class ~= nil,
@@ -1428,7 +1428,7 @@ local function bind_context(T)
     local function single_effect(body, wanted)
         local found = nil
         for _, effect in ipairs(body and body.effects or {}) do
-            local cls = pvm.classof(effect)
+            local cls = asdl.classof(effect)
             if cls == wanted then
                 if found ~= nil then return nil, "multiple matching skeleton effects" end
                 found = effect
@@ -1441,15 +1441,15 @@ local function bind_context(T)
     end
 
     local function kernel_plan_stencil_shaped(plan)
-        if pvm.classof(plan) ~= Kernel.KernelPlanned then return false end
+        if asdl.classof(plan) ~= Kernel.KernelPlanned then return false end
         local body = plan.body
         local result = body and body.result or nil
-        if pvm.classof(result) == Kernel.KernelResultReduction
-            or pvm.classof(result) == Kernel.KernelResultFind then
+        if asdl.classof(result) == Kernel.KernelResultReduction
+            or asdl.classof(result) == Kernel.KernelResultFind then
             return true
         end
         for _, effect in ipairs(body and body.effects or {}) do
-            local cls = pvm.classof(effect)
+            local cls = asdl.classof(effect)
             if cls == Kernel.KernelEffectStore
                 or cls == Kernel.KernelEffectScan
                 or cls == Kernel.KernelEffectPartition
@@ -1462,15 +1462,15 @@ local function bind_context(T)
     end
 
     local function kernel_plan_requires_stencil_lowering(plan)
-        if pvm.classof(plan) ~= Kernel.KernelPlanned then return false end
+        if asdl.classof(plan) ~= Kernel.KernelPlanned then return false end
         local body = plan.body
         local result = body and body.result or nil
-        if pvm.classof(result) == Kernel.KernelResultReduction
-            or pvm.classof(result) == Kernel.KernelResultFind then
+        if asdl.classof(result) == Kernel.KernelResultReduction
+            or asdl.classof(result) == Kernel.KernelResultFind then
             return true
         end
         for _, effect in ipairs(body and body.effects or {}) do
-            local cls = pvm.classof(effect)
+            local cls = asdl.classof(effect)
             if cls == Kernel.KernelEffectScan
                 or cls == Kernel.KernelEffectPartition
                 or cls == Kernel.KernelEffectCopy
@@ -1494,7 +1494,7 @@ local function bind_context(T)
         local effect, effect_reason = single_effect(plan.body, Kernel.KernelEffectScan)
         if effect == nil then return nil, effect_reason end
         local result = plan.body.result
-        if pvm.classof(result) ~= Kernel.KernelResultReduction then return nil, "scan skeleton requires reduction result" end
+        if asdl.classof(result) ~= Kernel.KernelResultReduction then return nil, "scan skeleton requires reduction result" end
         local reduction = effect.reduction
         if result.reduction ~= reduction then return nil, "scan result reduction does not match scan effect" end
         local returns_reduction = function_returns_reduction(func, graph_loop, reduction)
@@ -1553,7 +1553,7 @@ local function bind_context(T)
 
     local function skeleton_find_plan(ctx, func, plan, graph_loop, loop_fact)
         local result = plan.body.result
-        if pvm.classof(result) ~= Kernel.KernelResultFind then return nil, "kernel result is not find" end
+        if asdl.classof(result) ~= Kernel.KernelResultFind then return nil, "kernel result is not find" end
         if graph_loop == nil then return nil, "find skeleton requires a graph loop" end
         local bindings = binding_index(plan.body)
         local class, class_reason = enriched_class_for_expr(ctx, result.src, graph_loop, loop_fact, bindings, nil, nil)
@@ -1705,7 +1705,7 @@ local function bind_context(T)
     end
 
     local function stencil_skeleton_plan(ctx, func, plan, graph_loop, loop_fact)
-        if pvm.classof(plan) ~= Kernel.KernelPlanned then return nil, "kernel is not planned" end
+        if asdl.classof(plan) ~= Kernel.KernelPlanned then return nil, "kernel is not planned" end
         if loop_fact == nil or loop_fact.counted == nil then return nil, "stencil skeleton requires counted loop" end
         local step_num = const_int_value(ctx, loop_fact.counted.step)
         if step_num == nil or step_num == 0 then return nil, "stencil skeleton requires a non-zero constant step" end
@@ -1760,13 +1760,13 @@ local function bind_context(T)
 
     local function kernel_lowering_input(ctx, func, plan, graph_loop, loop_fact, loop_owner, kernel, opts)
         local subject = plan and plan.subject or nil
-        local subject_cls = pvm.classof(subject)
+        local subject_cls = asdl.classof(subject)
         local loop_plan = subject_cls == Kernel.KernelSubjectLoop or subject_cls == Kernel.KernelSubjectFunction
         local owns_loop = (subject_cls == Kernel.KernelSubjectLoop and loop_owner == func.id)
             or (subject_cls == Kernel.KernelSubjectFunction and subject.func == func.id)
-        local planned = pvm.classof(plan) == Kernel.KernelPlanned
+        local planned = asdl.classof(plan) == Kernel.KernelPlanned
         local result = planned and plan.body and plan.body.result or nil
-        local result_reduction = pvm.classof(result) == Kernel.KernelResultReduction
+        local result_reduction = asdl.classof(result) == Kernel.KernelResultReduction
         local reduction = result_reduction and result.reduction or nil
         local stencil_reduce_ready = false
         local stencil_reduce_reason = nil
@@ -1898,7 +1898,7 @@ local function bind_context(T)
     local function plan_domain_loop(plan)
         local body = plan and plan.body or nil
         local domain = body and body.domain and body.domain.domain or nil
-        if pvm.classof(domain) == Flow.FlowDomainLoop then return domain.loop end
+        if asdl.classof(domain) == Flow.FlowDomainLoop then return domain.loop end
         return nil
     end
 
@@ -1924,7 +1924,7 @@ local function bind_context(T)
         local pending_rejects = {}
         for _, plan in ipairs(kernel.plans or {}) do
             local subject = plan.subject
-            local subject_cls = pvm.classof(subject)
+            local subject_cls = asdl.classof(subject)
             local loop_id = nil
             local owner = nil
             if subject_cls == Kernel.KernelSubjectLoop and loop_func[subject.loop.text] == func.id then

@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local ok_ffi, ffi = pcall(require, "ffi")
 if not ok_ffi then ffi = nil end
 
@@ -29,11 +29,11 @@ local function bind_context(T)
     local api = {}
 
     local function is_int_ty(ty)
-        return pvm.classof(ty) == Code.CodeTyInt or ty == Code.CodeTyIndex or ty == Code.CodeTyBool8
+        return asdl.classof(ty) == Code.CodeTyInt or ty == Code.CodeTyIndex or ty == Code.CodeTyBool8
     end
 
     local function elem_bytes(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if ty == Code.CodeTyBool8 then return 1 end
         if ty == Code.CodeTyIndex then return nil end
         if cls == Code.CodeTyInt or cls == Code.CodeTyFloat then
@@ -52,13 +52,13 @@ local function bind_context(T)
 
     local function iconst(expr)
         if expr == nil then return nil end
-        if pvm.classof(expr) == Value.ValueExprConst then
+        if asdl.classof(expr) == Value.ValueExprConst then
             local k = expr.const or expr.value
-            if pvm.classof(k) == Code.CodeConstLiteral then
+            if asdl.classof(k) == Code.CodeConstLiteral then
                 local lit = k.literal or k.value
-                if pvm.classof(lit) == Core.LitInt then return tonumber(lit.raw or lit.text) end
-                if pvm.classof(lit) == Core.LitFloat then return tonumber(lit.raw or lit.text) end
-                if pvm.classof(lit) == Core.LitBool then return lit.value and 1 or 0 end
+                if asdl.classof(lit) == Core.LitInt then return tonumber(lit.raw or lit.text) end
+                if asdl.classof(lit) == Core.LitFloat then return tonumber(lit.raw or lit.text) end
+                if asdl.classof(lit) == Core.LitBool then return lit.value and 1 or 0 end
             end
         end
         error("residual_luatrace: unsupported constant expression", 3)
@@ -87,7 +87,7 @@ local function bind_context(T)
     end
 
     local function access_kind(layout)
-        local cls = pvm.classof(layout)
+        local cls = asdl.classof(layout)
         if cls == Stencil.StencilLayoutContiguous then return "contiguous" end
         if cls == Stencil.StencilLayoutIndexed then return "indexed" end
         if cls == Stencil.StencilLayoutFieldProjection then return "field_projection" end
@@ -102,7 +102,7 @@ local function bind_context(T)
     end
 
     local function plain_bulk_access(layout)
-        local cls = pvm.classof(layout)
+        local cls = asdl.classof(layout)
         if cls == Stencil.StencilLayoutContiguous then return tonumber(layout.stride) == 1 end
         if cls == Stencil.StencilLayoutSliceDescriptor then return true end
         if cls == Stencil.StencilLayoutByteSpanDescriptor then return true end
@@ -113,7 +113,7 @@ local function bind_context(T)
     local function build_access_plan(access, facts_by_name)
         local fact = facts_by_name and facts_by_name[access.name] or nil
         local top = access.layout
-        local cls = pvm.classof(top)
+        local cls = asdl.classof(top)
         local plan = {
             kind = access_kind(top),
             name = access.name,
@@ -180,7 +180,7 @@ local function bind_context(T)
     local function lua_access_offset(plan, index)
         index = tostring(index)
         local top = plan.layout
-        local cls = pvm.classof(top)
+        local cls = asdl.classof(top)
         if cls == Stencil.StencilLayoutFieldProjection then
             return lua_access_offset(plan.parent, index)
         end
@@ -207,7 +207,7 @@ local function bind_context(T)
         base = tostring(base)
         index = tostring(index)
         local top = plan.layout
-        local cls = pvm.classof(top)
+        local cls = asdl.classof(top)
         if cls == Stencil.StencilLayoutFieldProjection then
             return base .. "[" .. lua_access_offset(plan.parent, index) .. "]." .. sanitize(top.field_name)
         end
@@ -262,7 +262,7 @@ local function bind_context(T)
     local lua_cmp_expr
 
     local function lua_pred_expr(p, v)
-        local cls = pvm.classof(p)
+        local cls = asdl.classof(p)
         if p == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return "(" .. v .. " ~= 0)" end
         if cls == Stencil.StencilPredCompareConst then return lua_cmp_expr(p.cmp, v, tostring(iconst(p.value))) end
         if cls == Stencil.StencilPredRange then
@@ -298,11 +298,11 @@ local function bind_context(T)
     end
 
     local function is_i32_signed(ty)
-        return pvm.classof(ty) == Code.CodeTyInt and tonumber(ty.bits) == 32 and ty.signedness == Code.CodeSigned
+        return asdl.classof(ty) == Code.CodeTyInt and tonumber(ty.bits) == 32 and ty.signedness == Code.CodeSigned
     end
 
     local function is_u8(ty)
-        return pvm.classof(ty) == Code.CodeTyInt and tonumber(ty.bits) == 8 and ty.signedness == Code.CodeUnsigned
+        return asdl.classof(ty) == Code.CodeTyInt and tonumber(ty.bits) == 8 and ty.signedness == Code.CodeUnsigned
     end
 
     local function lua_i32_gt_zero_value(v)
@@ -318,7 +318,7 @@ local function bind_context(T)
     end
 
     local function lua_numeric_pred_expr(pred, v, ty)
-        local cls = pvm.classof(pred)
+        local cls = asdl.classof(pred)
         if cls == Stencil.StencilPredCompareConst and pred.cmp == Core.CmpGt then
             local c = iconst(pred.value)
             if c == 0 and is_i32_signed(ty) then return lua_i32_gt_zero_value(v) end
@@ -348,7 +348,7 @@ local function bind_context(T)
     end
 
     local function schedule_facts(schedule)
-        local cls = pvm.classof(schedule)
+        local cls = asdl.classof(schedule)
         if cls == Stencil.StencilScheduleAutoVector or cls == Stencil.StencilScheduleUnrolled or cls == Stencil.StencilScheduleVector then return schedule.facts end
         return nil
     end
@@ -356,7 +356,7 @@ local function bind_context(T)
     local function trip_count_multiple_of(facts, group)
         if facts == nil or group <= 1 then return false end
         local trip = facts.trip_count
-        local cls = pvm.classof(trip)
+        local cls = asdl.classof(trip)
         if cls == Stencil.StencilTripCountMultipleOf then
             local factor = tonumber(trip.factor) or 1
             return factor >= group and factor % group == 0
@@ -373,7 +373,7 @@ local function bind_context(T)
         local facts_by_name = fact_map(facts)
         local saw_memory_access = false
         for _, access in ipairs(ArtifactPlan.descriptor_accesses(desc)) do
-            if pvm.classof(access.layout) ~= Stencil.StencilLayoutScalar then
+            if asdl.classof(access.layout) ~= Stencil.StencilLayoutScalar then
                 local fact = facts_by_name[access.name]
                 if fact == nil or not fact.unit_stride then return false end
                 saw_memory_access = true
@@ -384,7 +384,7 @@ local function bind_context(T)
 
     local function kind_group_cap(shape)
         local kind = shape.kind
-        if kind == "store_n" and pvm.classof(shape.store_mode) == Stencil.StencilStoreScatter then
+        if kind == "store_n" and asdl.classof(shape.store_mode) == Stencil.StencilStoreScatter then
             return shape.store_mode.conflicts == Stencil.StencilScatterUniqueIndices and 4 or 1
         end
         if kind == "reduce_array" or kind == "scan_array" or kind == "scan_n" then return 16 end
@@ -414,7 +414,7 @@ local function bind_context(T)
         if stride ~= 1 then
             return { domain_stride = stride, group = 1, reason = "domain_stride", tail_strategy = "generic_tail_loop", loop_shape = "scalar_for" }
         end
-        local cls = pvm.classof(schedule)
+        local cls = asdl.classof(schedule)
         if cls == Stencil.StencilScheduleVector then
             local lanes = math.max(1, math.floor(tonumber(ArtifactPlan.schedule_lane_count(schedule)) or 1))
             local unroll = math.max(1, math.floor(tonumber(schedule.vector_unroll) or 1))
@@ -445,7 +445,7 @@ local function bind_context(T)
     end
 
     local function build_predicate_plan(shape, access_by_name, loop_plan)
-        local expr_cls = pvm.classof(shape.expr)
+        local expr_cls = asdl.classof(shape.expr)
         if shape.kind == "count_array" then
             if loop_plan ~= nil and loop_plan.group > 1 then
                 return {
@@ -473,7 +473,7 @@ local function bind_context(T)
             }
         end
         if shape.kind == "store_n" and expr_cls == Stencil.StencilPointPredicate then
-            local arg_cls = pvm.classof(shape.expr.arg)
+            local arg_cls = asdl.classof(shape.expr.arg)
             local input = arg_cls == Stencil.StencilPointInput and access_by_name[shape.expr.arg.access.name] or nil
             local numeric = input ~= nil and lua_numeric_pred_expr(shape.expr.pred, "__ml_x", input.ty) ~= nil
             return {
@@ -482,8 +482,8 @@ local function bind_context(T)
             }
         end
         if shape.kind == "store_n" and expr_cls == Stencil.StencilPointCompare then
-            local left_cls = pvm.classof(shape.expr.left)
-            local right_cls = pvm.classof(shape.expr.right)
+            local left_cls = asdl.classof(shape.expr.left)
+            local right_cls = asdl.classof(shape.expr.right)
             local lhs = left_cls == Stencil.StencilPointInput and access_by_name[shape.expr.left.access.name] or nil
             local rhs = right_cls == Stencil.StencilPointInput and access_by_name[shape.expr.right.access.name] or nil
             local numeric = lhs ~= nil and rhs ~= nil and lua_numeric_cmp_expr(shape.expr.cmp, "__ml_a", "__ml_b", lhs.ty, rhs.ty) ~= nil
@@ -502,7 +502,7 @@ local function bind_context(T)
     end
 
     local function build_scatter_plan(shape)
-        if shape.kind == "store_n" and pvm.classof(shape.store_mode) == Stencil.StencilStoreScatter then
+        if shape.kind == "store_n" and asdl.classof(shape.store_mode) == Stencil.StencilStoreScatter then
             local conflicts = shape.store_mode.conflicts
             if conflicts == Stencil.StencilScatterUniqueIndices then return { kind = "unique_indices", may_group = true } end
             if conflicts == Stencil.StencilScatterLastWriteWins then return { kind = "ordered_last_write", may_group = false } end
@@ -538,8 +538,8 @@ local function bind_context(T)
         local can_use_linear_range_primitive = producer == nil or producer.kind == "range1d"
         local copy_src_name
         if shape.kind == "store_n"
-            and pvm.classof(shape.store_mode) == Stencil.StencilStoreCopy
-            and pvm.classof(shape.expr) == Stencil.StencilPointInput then
+            and asdl.classof(shape.store_mode) == Stencil.StencilStoreCopy
+            and asdl.classof(shape.expr) == Stencil.StencilPointInput then
             copy_src_name = shape.expr.access.name
         end
         if copy_src_name ~= nil then
@@ -564,14 +564,14 @@ local function bind_context(T)
                 }
             end
         elseif shape.kind == "store_n"
-            and (shape.store_mode == Stencil.StencilStoreElementwise or pvm.classof(shape.store_mode) == Stencil.StencilStoreElementwise)
-            and pvm.classof(shape.expr) == Stencil.StencilPointInput then
+            and (shape.store_mode == Stencil.StencilStoreElementwise or asdl.classof(shape.store_mode) == Stencil.StencilStoreElementwise)
+            and asdl.classof(shape.expr) == Stencil.StencilPointInput then
             local dst_name = shape.dst_name or "dst"
             local value_name = shape.expr.access.name
             local dst, value_access = access_by_name[dst_name], access_by_name[value_name]
             if can_use_linear_range_primitive
                 and dst ~= nil and value_access ~= nil
-                and pvm.classof(value_access.layout) == Stencil.StencilLayoutScalar
+                and asdl.classof(value_access.layout) == Stencil.StencilLayoutScalar
                 and not dst.readonly and dst.can_bulk_fill then
                 primitive_plan = {
                     kind = "ffi_fill",
@@ -591,11 +591,11 @@ local function bind_context(T)
     end
 
     local function lua_point_expr(expr, desc, access_by_name, index)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Stencil.StencilPointInput then
             local name = tostring(expr.access.name)
             local access = assert(access_by_name[name], "residual_luatrace: missing point input access " .. tostring(name))
-            if pvm.classof(access.layout) == Stencil.StencilLayoutScalar then return name end
+            if asdl.classof(access.layout) == Stencil.StencilLayoutScalar then return name end
             return lua_access_ref(access, name, index)
         end
         if cls == Stencil.StencilPointWindowInput then
@@ -645,7 +645,7 @@ local function bind_context(T)
         if producer == nil or producer.kind == "range1d" then return nil end
         if producer.kind == "range_nd" then
             if shape.kind == "store_n"
-                and pvm.classof(shape.store_mode) == Stencil.StencilStoreCopy
+                and asdl.classof(shape.store_mode) == Stencil.StencilStoreCopy
                 and (shape.store_mode.semantics == Stencil.StencilCopyMemMove
                     or shape.store_mode.semantics == Stencil.StencilCopyMayOverlapBackward) then
                 return "RangeND copy with overlapping memmove semantics is not materialized by LuaTrace yet"
@@ -974,7 +974,7 @@ local function bind_context(T)
             local input_params = {}
             for _, input in ipairs(shape.inputs or {}) do
                 if input.name ~= dst_name then
-                    if pvm.classof(input.layout) == Stencil.StencilLayoutScalar then
+                    if asdl.classof(input.layout) == Stencil.StencilLayoutScalar then
                         scalar_params[#scalar_params + 1] = input.name
                     else
                         input_params[#input_params + 1] = input.name
@@ -994,8 +994,8 @@ local function bind_context(T)
                 local value_name = kernel_plan.primitive_plan.value_name
                 out[#out + 1] = "    local __ml_n = stop - start"
                 out[#out + 1] = "    if __ml_n > 0 then ffi.fill(" .. dst_name .. " + start, __ml_n, " .. value_name .. ") end"
-            elseif pvm.classof(shape.store_mode) == Stencil.StencilStoreCopy
-                and pvm.classof(shape.expr) == Stencil.StencilPointInput
+            elseif asdl.classof(shape.store_mode) == Stencil.StencilStoreCopy
+                and asdl.classof(shape.expr) == Stencil.StencilPointInput
                 and (shape.producer == nil or shape.producer.kind == "range1d")
                 and (shape.store_mode.semantics == Stencil.StencilCopyMemMove or shape.store_mode.semantics == Stencil.StencilCopyMayOverlapBackward) then
                 local src_name = shape.expr.access.name
@@ -1153,7 +1153,7 @@ local function bind_context(T)
             local dst_access = assert(access[dst_name], "missing scatter-reduce destination access plan")
             local params = { dst_name }
             for _, a in ipairs(ArtifactPlan.descriptor_accesses(artifact_plan.descriptor)) do
-                if a.name ~= dst_name and pvm.classof(a.layout) ~= Stencil.StencilLayoutScalar then
+                if a.name ~= dst_name and asdl.classof(a.layout) ~= Stencil.StencilLayoutScalar then
                     params[#params + 1] = a.name
                 end
             end

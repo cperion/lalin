@@ -4,7 +4,7 @@
 -- flat backend command consumers. The payload is the Flatline v4 binary
 -- image documented in docs/BACK_WIRE_FORMAT.md.
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local M = {}
 
@@ -13,7 +13,7 @@ M.VERSION = 4
 M.MAGIC = 0x4D4C
 
 local function class_name(v)
-    local cls = pvm.classof(v)
+    local cls = asdl.classof(v)
     return cls and (tostring(cls):match("Class%((.-)%)") or tostring(cls)) or type(v)
 end
 
@@ -44,13 +44,13 @@ local function bind_context(T)
     end
 
     function api.encode_back_program(program)
-        assert(pvm.classof(program) == Back.BackProgram, "lalin.flatline encode_back_program expects LalinBack.BackProgram")
+        assert(asdl.classof(program) == Back.BackProgram, "lalin.flatline encode_back_program expects LalinBack.BackProgram")
         return api.image(Binary.encode(program))
     end
 
     function api.validate_image(image)
         local issues = {}
-        if pvm.classof(image) ~= Compiler.FlatlineImage then
+        if asdl.classof(image) ~= Compiler.FlatlineImage then
             add(issues, Compiler.FlatlineImageIssueWrongClass("LalinCompiler.FlatlineImage", class_name(image)))
             return Compiler.FlatlineImageReport(issues)
         end
@@ -92,7 +92,7 @@ local function bind_context(T)
     end
 
     function api.issue_text(issue)
-        local cls = pvm.classof(issue)
+        local cls = asdl.classof(issue)
         if cls == Compiler.FlatlineImageIssueWrongClass then
             return "expected " .. tostring(issue.expected) .. ", got " .. tostring(issue.actual)
         elseif cls == Compiler.FlatlineImageIssueBadHeader then

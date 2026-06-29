@@ -1,10 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local ffi = require("ffi")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
 
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 
 local Core = T.LalinCore
@@ -146,8 +146,8 @@ local function compile_case(case)
     })
     assert(#rejects == 0, case.name .. " rejected: " .. tostring(rejects[1] and rejects[1].reason))
     assert(#artifacts == 1, case.name .. " should select one store stencil artifact")
-    assert(pvm.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, case.name .. " should lower to machine body")
-    assert(pvm.classof(lj_module.funcs[1].machines[1].kind) == LJ.LJMachineStencilEffect, case.name .. " should lower to stencil effect")
+    assert(asdl.classof(lj_module.funcs[1].body) == LJ.LJBodyMachine, case.name .. " should lower to machine body")
+    assert(asdl.classof(lj_module.funcs[1].machines[1].kind) == LJ.LJMachineStencilEffect, case.name .. " should lower to stencil effect")
 
     local build, build_err, csrc = StencilBinary.compile(T, artifacts, { stem = "test_luajit_lower_stencil_store_" .. case.name })
     assert(build ~= nil, tostring(build_err) .. "\n" .. tostring(csrc))

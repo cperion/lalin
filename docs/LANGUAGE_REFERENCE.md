@@ -1003,7 +1003,7 @@ Supported stencil vocabulary is structural:
 
 Here `_n` always means point input count: the number of logical input
 streams referenced by the point body. It does not mean rank, output count,
-loop axes, fused stage count, or a derived SOAC family.
+loop axes, fused stage count, or a derived backend family.
 
 Source patterns such as scalar fill, copy, indexed reads/writes, casts,
 comparisons, and blends are configurations of those descriptors, not separate
@@ -1013,7 +1013,7 @@ Facts determine whether a valid source loop becomes:
 
 - a stencil machine call/effect
 - an MC copy+compile residual artifact
-- a BC fallback artifact for the same canonical descriptor
+- an explicit BC artifact when `residual = "bc"` is selected
 - a typed reject
 
 The internal IR can still contain generic control regions. That is how regions,
@@ -1039,15 +1039,12 @@ inferred Lalin compilation unit
 
 The default path requests MC residuals. It consumes a supplied/prebuilt MC bank;
 it does not run a C compiler from the normal runtime compile path. If no
-compatible MC bank is supplied, or if MC materialization is unavailable, it falls
-back to `residual_bc` and emits a warning. Disable that fallback with
-`allow_bc_fallback = false`.
+compatible MC bank is supplied, or if MC materialization is unavailable, the MC
+path fails with an explicit diagnostic.
 
 ```lua
-local warnings = {}
-
 local module = lalin.compile("demo", decls, {
-  collect_warnings = warnings,
+  residual = "mc",
 })
 ```
 
@@ -1059,12 +1056,11 @@ local module = lalin.compile("demo", decls, {
 })
 ```
 
-Strict MC mode makes missing-bank or MC materialization failures hard errors:
+Missing-bank or MC materialization failures are hard errors in MC mode:
 
 ```lua
 local module = lalin.compile("demo", decls, {
   residual = "mc",
-  allow_bc_fallback = false,
 })
 ```
 
@@ -1082,7 +1078,6 @@ local bank = assert(plan.backend.build_mc_bank(plan.artifacts, {
 
 local result = assert(plan.backend.compile_lj_module(plan.lj_module, plan.artifacts, {
   mc_bank = bank,
-  allow_bc_fallback = false,
   chunk_name = "Demo",
 }))
 

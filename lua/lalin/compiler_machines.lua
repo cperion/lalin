@@ -1,11 +1,11 @@
 -- Hosted machine implementations for lalin.compiler_package.
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local M = {}
 
 local function context_of(node)
-    local cls = pvm.classof(node)
+    local cls = asdl.classof(node)
     local ctx = cls and rawget(cls, "__context")
     if ctx then return ctx end
     error("lalin.compiler_machines: input value does not carry a schema context", 3)

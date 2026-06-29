@@ -1,8 +1,8 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 
 local Core = T.LalinCore
@@ -80,8 +80,8 @@ local flow = Flow.FlowFactSet(module.id, { domain }, { flow_edge }, { flow_loop 
 local trip = Flow.FlowTripCountUnknown("no explicit trip count value")
 local flow_sem = Flow.FlowSemanticFactSet(module.id, { Flow.FlowLoopNormalizedCounted(loop_id, counted, Flow.FlowLoopIncreasing, trip) })
 assert(flow.loops[1].loop == loop_id and flow_sem.facts[1].trip_count == trip)
-assert(flow.domain_shapes[1].shape == domain_shape and pvm.classof(flow.domain_shapes[1].origin) == Flow.FlowFactFrontendFact)
-assert(pvm.classof(flow.domain_intents[1].intent) == Flow.FlowDomainIntentNativeLoop)
+assert(flow.domain_shapes[1].shape == domain_shape and asdl.classof(flow.domain_shapes[1].origin) == Flow.FlowFactFrontendFact)
+assert(asdl.classof(flow.domain_intents[1].intent) == Flow.FlowDomainIntentNativeLoop)
 
 local proof = Value.AlgebraProofFlow(domain, "flow proof")
 local expr_i = Value.ValueExprValue(induction.value)

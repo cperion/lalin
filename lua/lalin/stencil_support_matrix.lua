@@ -1,5 +1,6 @@
 local function bind_context(T)
     local Code = T.LalinCode
+    local Meta = require("lalin.stencil_metastencil")(T)
 
     local M = {}
 
@@ -25,11 +26,27 @@ local function bind_context(T)
         deployment_bank = "deployment_bank",
     }
 
-    M.vocabs = {
-        StencilStore = { status = "supported", scope = "canonical StoreN generator for producer + N-input point body + store sink descriptors" },
-        StencilReduce = { status = "supported", scope = "primitive generator for folds plus generated count/find and generic reduce_n fusion artifacts" },
-        StencilScan = { status = "supported", scope = "primitive generator for axis-aware prefix reductions; residual_mc and LuaTrace materialize Range1D and RangeND axis scans" },
-        StencilScatterReduce = { status = "supported", scope = "primitive generator for indexed accumulation/reduce_by_index over an externally initialized destination" },
+    local sink_scopes = {
+        StencilStore = "canonical StoreN generator for producer + N-input point body + store sink descriptors",
+        StencilReduce = "primitive generator for folds plus generated count/find and generic reduce_n fusion artifacts",
+        StencilScan = "primitive generator for axis-aware prefix reductions; residual_mc and LuaTrace materialize Range1D and RangeND axis scans",
+        StencilScatterReduce = "primitive generator for indexed accumulation/reduce_by_index over an externally initialized destination",
+    }
+
+    M.sink_vocabs = {}
+    for _, name in ipairs(Meta.vocabulary.sink_nodes) do
+        M.sink_vocabs[name] = { status = "supported", scope = assert(sink_scopes[name], name) }
+    end
+
+    M.metastencil_vocabulary = {
+        sink_nodes = Meta.vocabulary.sink_nodes,
+        producers = Meta.vocabulary.producers,
+        bodies = Meta.vocabulary.bodies,
+        point_exprs = Meta.vocabulary.point_exprs,
+        access_roles = Meta.vocabulary.access_roles,
+        layouts = Meta.vocabulary.layouts,
+        graph = Meta.vocabulary.graph,
+        legality = Meta.vocabulary.legality,
     }
 
     M.layouts = {
@@ -125,16 +142,12 @@ local function bind_context(T)
         residual_mc = {
             status = "supported",
             policy = M.coverage_policy.fast_subset,
-            fallback = "residual_bc",
-            fallback_rank = 1,
-            scope = "fast machine-code subset from explicit compiled artifacts; missing fast cells can explicitly fall back to residual_bc when the semantic materializer supports the cell",
+            scope = "fast machine-code subset from explicit compiled artifacts; missing fast cells are hard materialization diagnostics",
         },
         emitted_bank = {
             status = "supported",
             policy = M.coverage_policy.deployment_bank,
-            fallback = "residual_bc",
-            fallback_rank = 0,
-            scope = "deployment bank containing the intended interned BC/MC artifacts; missing or stale entries must be visible, with explicit BC fallback available instead of silent satisfaction",
+            scope = "deployment bank containing the intended interned MC artifacts; missing or stale entries must be visible diagnostics",
         },
     }
 
@@ -155,7 +168,7 @@ local function bind_context(T)
     end
 
     function M.type_family_for(ty)
-        local cls = require("lalin.pvm").classof(ty)
+        local cls = require("lalin.asdl").classof(ty)
         if ty == Code.CodeTyBool8 then return "CodeTyBool8" end
         if ty == Code.CodeTyIndex then return "CodeTyIndex" end
         if cls == nil then return tostring(ty) end

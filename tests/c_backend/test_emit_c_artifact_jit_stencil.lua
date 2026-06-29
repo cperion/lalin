@@ -45,7 +45,7 @@ assert(artifact.source:match("void zip_add%("), "residual function should be emi
 assert(artifact.source:match("ml_stencil_[%w_]+%([^;]-v_zip_add_arg_zip_add_dst"), "residual should call selected stencil directly")
 assert(not artifact.source:match("__lalin_luajit_stencil_symbols"), "emit_c must not route through a LuaJIT stencil symbol table")
 assert(not artifact.source:match("mmap"), "emit_c must not install an MC bank")
-assert(not artifact.source:match("LuaTrace"), "emit_c must not emit BC fallback artifacts")
+assert(not artifact.source:match("LuaTrace"), "emit_c must not emit BC artifacts")
 
 if command_ok("command -v gcc >/dev/null 2>&1") then
     write_file(dir .. "/main.c", [[

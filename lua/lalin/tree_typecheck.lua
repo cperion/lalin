@@ -60,8 +60,9 @@ local function bind_context(T)
 
     local module_type_api = require("lalin.tree_module_type")(T)
     local control_api = require("lalin.tree_control_facts")(T)
-    local TypecheckRules = require("lalin.tree_typecheck_rules")(T)
-
+    require("lalin.tree_type_methods")(T)
+    require("lalin.tree_layout_methods")(T)
+    require("lalin.tree_fact_methods")(T)
     local type_view
     local type_index_base
     local type_place
@@ -84,40 +85,48 @@ local function bind_context(T)
     local function u8_ty() return Ty.TScalar(C.ScalarU8) end
     local function string_ty() return Ty.TSlice(u8_ty()) end
 
-    local function select_stmt_typecheck(stmt)
-        local selection, err = TypecheckRules:run("select_stmt_typecheck", { stmt = stmt }, "selection", "no tree typecheck statement dispatch")
-        if selection == nil then error("phase lalin_tree_typecheck_stmt: " .. tostring(err), 2) end
-        return selection.kind
-    end
-
-    local function select_expr_typecheck(expr)
-        local selection, err = TypecheckRules:run("select_expr_typecheck", { expr = expr }, "selection", "no tree typecheck expression dispatch")
-        if selection == nil then error("phase lalin_tree_typecheck_expr: " .. tostring(err), 2) end
-        return selection.kind
-    end
-
-    local function select_typecheck(kind, relation, node)
-        local selection, err = TypecheckRules:run(relation, { [kind] = node }, "selection", "no tree typecheck " .. kind .. " dispatch")
-        if selection == nil then error("phase lalin_tree_typecheck_" .. kind .. ": " .. tostring(err), 2) end
-        return selection.kind
-    end
-
-    local function view_elem(view)
-        local cls = schema.classof(view)
-        if cls == Tr.ViewFromExpr or cls == Tr.ViewContiguous or cls == Tr.ViewStrided or cls == Tr.ViewRestrided or cls == Tr.ViewRowBase or cls == Tr.ViewInterleaved or cls == Tr.ViewInterleavedView then return view.elem end
-        if cls == Tr.ViewWindow then return view_elem(view.base) end
+    function Tr.View:typecheck_tree_elem()
         return void_ty()
     end
 
-    local function attach_semantic_defs(env, variant_defs, handle_defs, func_effect_defs)
-        if variant_defs ~= nil then rawset(env, "__variant_defs", variant_defs) end
-        if handle_defs ~= nil then rawset(env, "__handle_defs", handle_defs) end
-        if func_effect_defs ~= nil then rawset(env, "__func_effect_defs", func_effect_defs) end
-        return env
+    function Tr.ViewFromExpr:typecheck_tree_elem()
+        return self.elem
+    end
+
+    function Tr.ViewContiguous:typecheck_tree_elem()
+        return self.elem
+    end
+
+    function Tr.ViewStrided:typecheck_tree_elem()
+        return self.elem
+    end
+
+    function Tr.ViewRestrided:typecheck_tree_elem()
+        return self.elem
+    end
+
+    function Tr.ViewRowBase:typecheck_tree_elem()
+        return self.elem
+    end
+
+    function Tr.ViewInterleaved:typecheck_tree_elem()
+        return self.elem
+    end
+
+    function Tr.ViewInterleavedView:typecheck_tree_elem()
+        return self.elem
+    end
+
+    function Tr.ViewWindow:typecheck_tree_elem()
+        return self.base:typecheck_tree_elem()
+    end
+
+    local function view_elem(view)
+        return view:typecheck_tree_elem()
     end
 
     local function env_with_values(env, values)
-        return attach_semantic_defs(B.Env(env.module_name, values, env.types, env.layouts), rawget(env, "__variant_defs"), rawget(env, "__handle_defs"), rawget(env, "__func_effect_defs"))
+        return B.Env(env.module_name, values, env.types, env.layouts)
     end
 
     local function env_add_value(env, entry)
@@ -127,11 +136,11 @@ local function bind_context(T)
     end
 
     local function ctx_with_env(ctx, env)
-        return Tr.TypeCheckEnv(env, ctx.return_ty, ctx.yield)
+        return Tr.TypeCheckEnv(env, ctx.facts, ctx.return_ty, ctx.yield)
     end
 
     local function ctx_with_yield(ctx, yield)
-        return Tr.TypeCheckEnv(ctx.env, ctx.return_ty, yield)
+        return Tr.TypeCheckEnv(ctx.env, ctx.facts, ctx.return_ty, yield)
     end
 
     local function env_lookup_value(env, name)
@@ -145,45 +154,9 @@ local function bind_context(T)
         return a == b
     end
 
-    local function env_lookup_type(env, name)
-        for i = #env.types, 1, -1 do
-            if env.types[i].name == name then return env.types[i].ty end
-        end
-        return nil
-    end
-
     local canonical_type
     canonical_type = function(env, ty)
-        local cls = schema.classof(ty)
-        if cls == Ty.TNamed and schema.classof(ty.ref) == Ty.TypeRefPath and #ty.ref.path.parts >= 1 then
-            local parts = ty.ref.path.parts
-            return env_lookup_type(env, parts[#parts].text) or ty
-        elseif cls == Ty.THandle and schema.classof(ty.ref) == Ty.TypeRefPath and #ty.ref.path.parts >= 1 then
-            local parts = ty.ref.path.parts
-            local found = env_lookup_type(env, parts[#parts].text)
-            if found ~= nil and schema.classof(found) == Ty.THandle then return found end
-            return ty
-        elseif cls == Ty.TPtr then
-            return Ty.TPtr(canonical_type(env, ty.elem))
-        elseif cls == Ty.TArray then
-            return Ty.TArray(ty.count, canonical_type(env, ty.elem))
-        elseif cls == Ty.TSlice then
-            return Ty.TSlice(canonical_type(env, ty.elem))
-        elseif cls == Ty.TView then
-            return Ty.TView(canonical_type(env, ty.elem))
-        elseif cls == Ty.TLease then
-            return Ty.TLease(canonical_type(env, ty.base), ty.origin)
-        elseif cls == Ty.TOwned then
-            return Ty.TOwned(canonical_type(env, ty.base))
-        elseif cls == Ty.TAccess then
-            return Ty.TAccess(ty.access, canonical_type(env, ty.base))
-        elseif cls == Ty.TFunc or cls == Ty.TClosure then
-            local params = {}
-            for i = 1, #ty.params do params[i] = canonical_type(env, ty.params[i]) end
-            local result = canonical_type(env, ty.result)
-            return cls == Ty.TFunc and Ty.TFunc(params, result) or Ty.TClosure(params, result)
-        end
-        return ty
+        return ty:typecheck_tree_canonical(env)
     end
 
     local function canonical_params(env, params)
@@ -193,39 +166,19 @@ local function bind_context(T)
     end
 
     local function type_contains_lease(ty)
-        local cls = schema.classof(ty)
-        if cls == Ty.TLease then return true end
-        if cls == Ty.TOwned then return type_contains_lease(ty.base) end
-        if cls == Ty.TAccess then return type_contains_lease(ty.base) end
-        if cls == Ty.TPtr or cls == Ty.TArray or cls == Ty.TSlice or cls == Ty.TView then return type_contains_lease(ty.elem) end
-        if cls == Ty.TFunc or cls == Ty.TClosure then
-            if type_contains_lease(ty.result) then return true end
-            for i = 1, #ty.params do if type_contains_lease(ty.params[i]) then return true end end
-        end
-        return false
+        return ty:typecheck_tree_contains_lease()
     end
 
     local function type_contains_owned(ty)
-        local cls = schema.classof(ty)
-        if cls == Ty.TOwned then return true end
-        if cls == Ty.TLease then return type_contains_owned(ty.base) end
-        if cls == Ty.TAccess then return type_contains_owned(ty.base) end
-        if cls == Ty.TPtr or cls == Ty.TArray or cls == Ty.TSlice or cls == Ty.TView then return type_contains_owned(ty.elem) end
-        if cls == Ty.TFunc or cls == Ty.TClosure then
-            if type_contains_owned(ty.result) then return true end
-            for i = 1, #ty.params do if type_contains_owned(ty.params[i]) then return true end end
-        end
-        return false
+        return ty:typecheck_tree_contains_owned()
     end
 
     local function is_owned_type(ty)
-        return schema.classof(ty) == Ty.TOwned
+        return ty:typecheck_tree_is_owned_type()
     end
 
     local function lease_access_base(ty)
-        if schema.classof(ty) == Ty.TLease then return ty.base end
-        if schema.classof(ty) == Ty.TAccess then return lease_access_base(ty.base) end
-        return ty
+        return ty:typecheck_tree_lease_access_base()
     end
 
     local function arg_matches_param(env, expected, actual)
@@ -233,26 +186,15 @@ local function bind_context(T)
         actual = canonical_type(env, actual)
         if type_eq(expected, actual) then return true end
         if is_owned_type(expected) or is_owned_type(actual) then return false end
-        if schema.classof(expected) == Ty.TAccess then return arg_matches_param(env, expected.base, actual) end
-        if schema.classof(actual) == Ty.TAccess then return arg_matches_param(env, expected, actual.base) end
-        if schema.classof(expected) == Ty.TLease and schema.classof(actual) == Ty.TLease and type_eq(expected.base, actual.base) then return true end
-        if schema.classof(expected) == Ty.TLease and type_eq(expected.base, actual) then return true end
-        return false
+        return expected:typecheck_tree_arg_matches_actual(env, actual)
     end
 
     local function named_ref(ty)
-        if schema.classof(ty) == Ty.TNamed then return ty.ref end
-        return nil
+        return ty:typecheck_tree_named_ref()
     end
 
     local function path_leaf(ref)
-        local cls = schema.classof(ref)
-        if cls == Ty.TypeRefGlobal then return ref.type_name end
-        if cls == Ty.TypeRefLocal then return ref.sym and ref.sym.name or tostring(ref.sym) end
-        if cls == Ty.TypeRefPath and ref.path and #ref.path.parts > 0 then
-            return ref.path.parts[#ref.path.parts].text
-        end
-        return nil
+        return ref:typecheck_tree_ref_leaf()
     end
 
     local function field_layout_for(env, ty, field_name)
@@ -261,50 +203,25 @@ local function bind_context(T)
         if ref == nil then return nil end
         for i = 1, #env.layouts do
             local layout = env.layouts[i]
-            local cls = schema.classof(layout)
-            local matches = false
-            if cls == Sem.LayoutNamed and schema.classof(ref) == Ty.TypeRefGlobal then
-                matches = layout.module_name == ref.module_name and layout.type_name == ref.type_name
-            elseif cls == Sem.LayoutNamed and schema.classof(ref) == Ty.TypeRefPath then
-                matches = layout.type_name == path_leaf(ref)
-            elseif cls == Sem.LayoutLocal and schema.classof(ref) == Ty.TypeRefLocal then
-                matches = layout.sym == ref.sym
-            end
-            if matches then
-                for j = 1, #layout.fields do
-                    if layout.fields[j].field_name == field_name then return layout.fields[j] end
-                end
-            end
+            if layout:typecheck_tree_matches_ref(ref) then return layout:typecheck_tree_field_layout(field_name) end
         end
         return nil
     end
 
-    local function scalar_kind(ty)
-        if schema.classof(ty) == Ty.TScalar then return ty.scalar end
-        return nil
-    end
-
     local function is_bool(ty)
-        return scalar_kind(ty) == C.ScalarBool
+        return ty:typecheck_tree_is_bool()
     end
 
     local function is_numeric_scalar(ty)
-        local s = scalar_kind(ty)
-        return s == C.ScalarI8 or s == C.ScalarI16 or s == C.ScalarI32 or s == C.ScalarI64
-            or s == C.ScalarU8 or s == C.ScalarU16 or s == C.ScalarU32 or s == C.ScalarU64
-            or s == C.ScalarF32 or s == C.ScalarF64 or s == C.ScalarIndex
+        return ty:typecheck_tree_is_numeric_scalar()
     end
 
     local function is_integer_scalar(ty)
-        local s = scalar_kind(ty)
-        return s == C.ScalarI8 or s == C.ScalarI16 or s == C.ScalarI32 or s == C.ScalarI64
-            or s == C.ScalarU8 or s == C.ScalarU16 or s == C.ScalarU32 or s == C.ScalarU64
-            or s == C.ScalarIndex
+        return ty:typecheck_tree_is_integer_scalar()
     end
 
     local function is_float_scalar(ty)
-        local s = scalar_kind(ty)
-        return s == C.ScalarF32 or s == C.ScalarF64
+        return ty:typecheck_tree_is_float_scalar()
     end
 
     local int_scalar_info = {
@@ -357,7 +274,7 @@ local function bind_context(T)
     end
 
     local function is_atomic_value_type(ty)
-        return is_integer_scalar(ty) or is_bool(ty) or schema.classof(ty) == Ty.TPtr
+        return ty:typecheck_tree_is_atomic_value_type()
     end
 
     local function check_atomic_value_type(site, ty, issues)
@@ -367,7 +284,7 @@ local function bind_context(T)
     local function check_atomic_rmw_value_type(op, ty, issues)
         check_atomic_value_type("atomic_rmw", ty, issues)
         if op == C.AtomicRmwXchg then return end
-        if schema.classof(ty) == Ty.TPtr then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("atomic_rmw pointer op", ty); return end
+        if ty:typecheck_tree_rejects_atomic_rmw_arithmetic() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("atomic_rmw pointer op", ty); return end
         if is_bool(ty) and (op == C.AtomicRmwAdd or op == C.AtomicRmwSub) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("atomic_rmw bool add/sub", ty) end
     end
 
@@ -379,16 +296,30 @@ local function bind_context(T)
         return Tr.TypePlaceResult(place, ty, issues or {})
     end
 
-    local function typed_expr_header_ty(h)
-        local cls = schema.classof(h)
-        if cls == Tr.ExprTyped then return h.ty end
+    require("lalin.tree_expr_methods")(T)
+
+    function Tr.ExprHeader:typecheck_tree_typed_ty()
         return nil
     end
 
-    local function typed_place_header_ty(h)
-        local cls = schema.classof(h)
-        if cls == Tr.PlaceTyped then return h.ty end
+    function Tr.ExprTyped:typecheck_tree_typed_ty()
+        return self.ty
+    end
+
+    local function typed_expr_header_ty(h)
+        return h:typecheck_tree_typed_ty()
+    end
+
+    function Tr.PlaceHeader:typecheck_tree_typed_ty()
         return nil
+    end
+
+    function Tr.PlaceTyped:typecheck_tree_typed_ty()
+        return self.ty
+    end
+
+    local function typed_place_header_ty(h)
+        return h:typecheck_tree_typed_ty()
     end
 
     local function merge_env_layouts(env, extra_layout_env)
@@ -396,115 +327,31 @@ local function bind_context(T)
         if extra == nil or #extra == 0 then return env end
         local layouts = clone_values(env.layouts)
         for i = 1, #extra do layouts[#layouts + 1] = extra[i] end
-        return attach_semantic_defs(B.Env(env.module_name, env.values, env.types, layouts), rawget(env, "__variant_defs"), rawget(env, "__handle_defs"), rawget(env, "__func_effect_defs"))
-    end
-
-    local function int_literal_can_adopt(expr, expected)
-        return schema.classof(expr) == Tr.ExprLit
-            and schema.classof(expr.value) == C.LitInt
-            and is_integer_scalar(expected)
-    end
-
-    local function float_literal_can_adopt(expr, expected)
-        return schema.classof(expr) == Tr.ExprLit
-            and schema.classof(expr.value) == C.LitFloat
-            and is_float_scalar(expected)
-    end
-
-    local function string_literal_can_adopt(expr, expected)
-        if schema.classof(expr) ~= Tr.ExprLit or schema.classof(expr.value) ~= C.LitString then return false end
-        local cls = schema.classof(expected)
-        return cls == Ty.TSlice and type_eq(expected.elem, u8_ty())
-    end
-
-    local function is_nil_literal(expr)
-        if schema.classof(expr) ~= Tr.ExprLit then return false end
-        if expr.value == C.LitNil then return true end
-        local cls = schema.classof(expr.value)
-        return cls ~= false and cls.kind == "LitNil"
+        return B.Env(env.module_name, env.values, env.types, layouts)
     end
 
     local function array_len_const(len)
-        if schema.classof(len) == Ty.ArrayLenConst then return len.count end
-        return nil
+        return len:typecheck_tree_const_count()
     end
 
     local function check_type_policy(ty, issues, site)
-        local cls = schema.classof(ty)
-        if cls == Ty.TArray then
-            if schema.classof(ty.count) == Ty.ArrayLenExpr then
-                issues[#issues + 1] = Tr.TypeIssueExpected((site or "type") .. " array length", Ty.TArray(Ty.ArrayLenConst(0), ty.elem), ty)
-            end
-            check_type_policy(ty.elem, issues, site)
-        elseif cls == Ty.TPtr or cls == Ty.TSlice or cls == Ty.TView then
-            check_type_policy(ty.elem, issues, site)
-        elseif cls == Ty.TLease then
-            check_type_policy(ty.base, issues, site)
-            if schema.classof(ty.base) ~= Ty.TPtr and schema.classof(ty.base) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected((site or "type") .. " lease base", Ty.TPtr(Ty.TScalar(C.ScalarVoid)), ty.base) end
-            if type_contains_owned(ty.base) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned lease composition", ty) end
-        elseif cls == Ty.TOwned then
-            check_type_policy(ty.base, issues, site)
-            local bcls = schema.classof(ty.base)
-            if bcls == Ty.TOwned or bcls == Ty.TLease or bcls == Ty.TAccess or bcls == Ty.TPtr or bcls == Ty.TView then
-                issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned invalid base", ty)
-            end
-            if type_contains_lease(ty.base) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned lease composition", ty) end
-        elseif cls == Ty.TAccess then
-            check_type_policy(ty.base, issues, site)
-            if type_contains_owned(ty.base) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned access composition", ty) end
-        elseif cls == Ty.THandle then
-            if schema.classof(ty.repr) ~= Ty.HandleReprScalar then issues[#issues + 1] = Tr.TypeIssueExpected((site or "type") .. " handle repr", Ty.THandle(ty.ref, Ty.HandleReprScalar(C.ScalarU32)), ty) end
-        elseif cls == Ty.TFunc or cls == Ty.TClosure then
-            for i = 1, #ty.params do check_type_policy(ty.params[i], issues, site) end
-            check_type_policy(ty.result, issues, site)
-        end
+        ty:typecheck_tree_check_policy(issues, site)
     end
 
     local function type_ref_text(ref)
-        local cls = schema.classof(ref)
-        if cls == Ty.TypeRefGlobal then return ref.type_name end
-        if cls == Ty.TypeRefLocal then return ref.sym and ref.sym.name or tostring(ref.sym) end
-        if cls == Ty.TypeRefPath and ref.path and #ref.path.parts > 0 then
-            local parts = {}
-            for i = 1, #ref.path.parts do parts[i] = ref.path.parts[i].text end
-            return table.concat(parts, ".")
-        end
-        return nil
+        return ref:typecheck_tree_ref_text()
     end
 
     local function type_ref_leaf(ref)
-        local text = type_ref_text(ref)
-        if text == nil then return nil end
-        return text:match("([^%.]+)$") or text
+        return ref:typecheck_tree_ref_leaf()
     end
 
     local function type_ref_matches_ty(ref, ty)
-        local cls = schema.classof(ty)
-        local ty_ref = nil
-        if cls == Ty.TNamed then ty_ref = ty.ref
-        elseif cls == Ty.THandle then ty_ref = ty.ref end
-        if ty_ref == nil then return false end
-        local a, b = type_ref_leaf(ref), type_ref_leaf(ty_ref)
-        return a ~= nil and b ~= nil and a == b
+        return ty:typecheck_tree_matches_type_ref(ref)
     end
 
-    local function is_void_type(ty)
-        return schema.classof(ty) == Ty.TScalar and ty.scalar == C.ScalarVoid
-    end
-
-    local function is_handle_type(ty)
-        return schema.classof(ty) == Ty.THandle
-    end
-
-    local function handle_repr_type(handle_ty)
-        if schema.classof(handle_ty) == Ty.TOwned then handle_ty = handle_ty.base end
-        if schema.classof(handle_ty) ~= Ty.THandle then return nil end
-        if schema.classof(handle_ty.repr) == Ty.HandleReprScalar then return Ty.TScalar(handle_ty.repr.scalar) end
-        return nil
-    end
-
-    local function type_name_for_ctor(type_name)
-        return Ty.TNamed(Ty.TypeRefGlobal("", type_name))
+    local function empty_type_module_facts()
+        return Tr.TypeModuleFacts({}, {}, {})
     end
 
     local function variant_name_text(v)
@@ -512,150 +359,59 @@ local function bind_context(T)
         return v and (v.text or v.name) or tostring(v)
     end
 
-    local function build_variant_defs(module, module_name)
-        local defs = {}
-        local function add_type_decl(t, mod_name)
-            local cls = schema.classof(t)
-            if cls == Tr.TypeDeclEnumSugar then
-                local variants = {}
-                for i = 1, #t.variants do
-                    local name = variant_name_text(t.variants[i])
-                    variants[name] = { name = name, tag = i - 1, payload = void_ty(), fields = {} }
-                end
-                defs[t.name] = { type_name = t.name, ty = Ty.TNamed(Ty.TypeRefGlobal(mod_name, t.name)), variants = variants }
-            elseif cls == Tr.TypeDeclTaggedUnionSugar then
-                local variants = {}
-                for i = 1, #t.variants do
-                    local v = t.variants[i]
-                    variants[v.name] = { name = v.name, tag = i - 1, payload = v.payload, fields = v.fields or {} }
-                end
-                defs[t.name] = { type_name = t.name, ty = Ty.TNamed(Ty.TypeRefGlobal(mod_name, t.name)), variants = variants }
-            end
-        end
-        for i = 1, #module.items do
-            local item = module.items[i]
-            local cls = schema.classof(item)
-            if cls == Tr.ItemType then add_type_decl(item.t, module_name) end
-        end
-        return defs
+    local function type_value_scope_from_env(env)
+        return Tr.TypeValueScope(env.module_name, env.values, env.types, env.layouts, empty_type_module_facts())
     end
 
-    local function build_handle_defs(module, module_name)
-        local defs = {}
-        local function add_type_decl(t, mod_name)
-            if schema.classof(t) == Tr.TypeDeclHandle then
-                local domain, target = nil, nil
-                for i = 1, #(t.facts or {}) do
-                    local fact = t.facts[i]
-                    local fcls = schema.classof(fact)
-                    if fcls == Ty.HandleDomain then domain = fact.domain
-                    elseif fcls == Ty.HandleTarget then target = fact.target end
-                end
-                defs[t.name] = { name = t.name, ty = Ty.THandle(Ty.TypeRefGlobal(mod_name, t.name), t.repr), repr = t.repr, invalid = t.invalid, domain = domain, target = target }
-            end
-        end
-        for i = 1, #module.items do
-            local item = module.items[i]
-            local cls = schema.classof(item)
-            if cls == Tr.ItemType then add_type_decl(item.t, module_name) end
-        end
-        return defs
+    local function type_value_scope_from_state(type_state)
+        return Tr.TypeValueScope(type_state.env.module_name, type_state.env.values, type_state.env.types, type_state.env.layouts, type_state.facts)
     end
 
-    local function func_parts_for_effect(func)
-        local cls = schema.classof(func)
-        if cls == Tr.FuncLocal or cls == Tr.FuncExport then return func.name, func.params, {} end
-        if cls == Tr.FuncLocalContract or cls == Tr.FuncExportContract then return func.name, func.params, func.contracts or {} end
-        if cls == Tr.FuncDecl then return func.name, func.params, {} end
-        return nil, nil, nil
+    local function type_expr_input_from_state(type_state)
+        return Tr.TypeExprInput(type_value_scope_from_state(type_state))
     end
 
-    local function effect_param_names(contracts)
-        local out = { readonly = {}, preserve = {}, invalidate = {} }
-        for i = 1, #(contracts or {}) do
-            local c = contracts[i]
-            local cls = schema.classof(c)
-            if schema.classof(c.base) == Tr.ExprRef and schema.classof(c.base.ref) == B.ValueRefName then
-                local name = c.base.ref.name
-                if cls == Tr.ContractReadonly then out.readonly[name] = true; out.preserve[name] = true
-                elseif cls == Tr.ContractPreserve then out.preserve[name] = true
-                elseif cls == Tr.ContractInvalidate then out.invalidate[name] = true end
-            end
-        end
-        return out
+    local function type_expected_expr_input_from_state(type_state, expected)
+        return Tr.TypeExpectedExprInput(type_value_scope_from_state(type_state), expected)
     end
 
-    local function build_func_effect_defs(module)
-        local defs = {}
-        for i = 1, #module.items do
-            local item = module.items[i]
-            local cls = schema.classof(item)
-            if cls == Tr.ItemFunc then
-                local name, params, contracts = func_parts_for_effect(item.func)
-                if name ~= nil then
-                    local effects = effect_param_names(contracts)
-                    defs[name] = { params = params or {}, readonly = effects.readonly, preserve = effects.preserve, invalidate = effects.invalidate }
-                end
-            elseif cls == Tr.ItemExtern then
-                if schema.classof(item.func) == Tr.ExternFunc then
-                    defs[item.func.name] = { params = item.func.params or {}, readonly = {}, preserve = {}, invalidate = {} }
-                end
-            end
-        end
-        return defs
+    local function is_void_type(ty)
+        return ty:typecheck_tree_is_void_type()
+    end
+
+    local function is_handle_type(ty)
+        return ty:typecheck_tree_is_handle_type()
+    end
+
+    local function handle_repr_type(handle_ty)
+        return handle_ty:typecheck_tree_handle_repr_type()
     end
 
     local function find_handle_def(ctx, name)
-        local defs = rawget(ctx.env, "__handle_defs") or {}
-        return defs[name]
-    end
-
-    local function find_handle_def_for_type(ctx, ty)
-        if schema.classof(ty) == Ty.TOwned then return find_handle_def_for_type(ctx, ty.base) end
-        if schema.classof(ty) ~= Ty.THandle then return nil end
-        local defs = rawget(ctx.env, "__handle_defs") or {}
-        local ref = ty.ref
-        local rcls = schema.classof(ref)
-        if rcls == Ty.TypeRefGlobal then return defs[ref.type_name] end
-        if rcls == Ty.TypeRefLocal then return defs[ref.sym.name] end
-        if rcls == Ty.TypeRefPath and #ref.path.parts == 1 then return defs[type_ref_leaf(ref)] end
-        return nil
-    end
-
-    local function lease_target_type(ty)
-        local cls = schema.classof(ty)
-        if cls == Ty.TAccess then return lease_target_type(ty.base) end
-        if cls ~= Ty.TLease then return nil end
-        local base = lease_access_base(ty.base)
-        local bcls = schema.classof(base)
-        if bcls == Ty.TPtr or bcls == Ty.TView then return base.elem end
-        return nil
-    end
-
-    local function lease_origin_name(lease_ty)
-        if schema.classof(lease_ty) ~= Ty.TLease then return nil end
-        if schema.classof(lease_ty.origin) == Ty.LeaseOriginParam then return lease_ty.origin.name end
-        return nil
-    end
-
-    local function lease_payload_info(ty)
-        local cls = schema.classof(ty)
-        if cls == Ty.TAccess then return lease_payload_info(ty.base) end
-        if cls ~= Ty.TLease then return nil end
-        local base = lease_access_base(ty.base)
-        local bcls = schema.classof(base)
-        if bcls == Ty.TPtr or bcls == Ty.TView then
-            return { lease = ty, target = base.elem, origin = lease_origin_name(ty) }
+        for i = 1, #(ctx.facts.handles or {}) do
+            if ctx.facts.handles[i].name == name then return ctx.facts.handles[i] end
         end
         return nil
     end
 
+    local function find_handle_def_for_type(ctx, ty)
+        return ty:typecheck_tree_handle_def(ctx)
+    end
+
+    local function lease_target_type(ty)
+        return ty:typecheck_tree_lease_target_type()
+    end
+
+    local function lease_origin_name(lease_ty)
+        return lease_ty:typecheck_tree_lease_origin_name()
+    end
+
+    local function lease_payload_info(ty)
+        return ty:typecheck_tree_lease_payload_info()
+    end
+
     local function access_allows_lease_grant(ty)
-        local cls = schema.classof(ty)
-        if cls ~= Ty.TAccess then return false end
-        if ty.access == Ty.TypeAccessReadonly or ty.access == Ty.TypeAccessPreserve then return true end
-        if ty.access == Ty.TypeAccessInvalidate or ty.access == Ty.TypeAccessWriteonly then return false end
-        return access_allows_lease_grant(ty.base)
+        return ty:typecheck_tree_access_allows_lease_grant()
     end
 
     local function param_domain_matches(param_ty, domain_ref)
@@ -681,12 +437,13 @@ local function bind_context(T)
         local handle_defs = {}
         local domain_params = {}
         local preserving_domain_params = {}
-        local all_defs = rawget(ctx.env, "__handle_defs") or {}
+        local all_defs = ctx.facts.handles or {}
         for i = 1, #(params or {}) do
             local pty = canonical_type(ctx.env, params[i].ty)
             local def = find_handle_def_for_type(ctx, pty)
             if def and def.target then handle_defs[#handle_defs + 1] = def end
-            for _, hdef in pairs(all_defs) do
+            for j = 1, #all_defs do
+                local hdef = all_defs[j]
                 if hdef.domain and param_domain_matches(pty, hdef.domain) then
                     append_domain_param(domain_params, hdef.domain, params[i].name)
                     if access_allows_lease_grant(pty) then append_domain_param(preserving_domain_params, hdef.domain, params[i].name) end
@@ -723,20 +480,20 @@ local function bind_context(T)
     end
 
     local function find_variant(ctx, type_name, variant_name)
-        local defs = rawget(ctx.env, "__variant_defs") or {}
-        local def = defs[type_name]
-        if def == nil then return nil, nil end
-        return def, def.variants[variant_name]
+        for i = 1, #(ctx.facts.variants or {}) do
+            local def = ctx.facts.variants[i]
+            if def.type_name == type_name then
+                for j = 1, #(def.variants or {}) do
+                    if def.variants[j].name == variant_name then return def, def.variants[j] end
+                end
+                return def, nil
+            end
+        end
+        return nil, nil
     end
 
     local function variant_def_for_value_ty(ctx, ty)
-        if schema.classof(ty) ~= Ty.TNamed then return nil end
-        local defs = rawget(ctx.env, "__variant_defs") or {}
-        local ref = ty.ref
-        local rcls = schema.classof(ref)
-        if rcls == Ty.TypeRefGlobal or rcls == Ty.TypeRefLocal then return defs[ref.type_name or ref.sym.name] end
-        if rcls == Ty.TypeRefPath and #ref.path.parts == 1 then return defs[ref.path.parts[1].text] end
-        return nil
+        return ty:typecheck_tree_variant_def(ctx.facts)
     end
 
     local function bind_env_for_variant(ctx, region_id, variant, requested_binds)
@@ -768,20 +525,16 @@ local function bind_context(T)
         local out = {}
         for i = #ctx.env.values, 1, -1 do
             local ty = canonical_type(ctx.env, ctx.env.values[i].binding.ty)
-            if schema.classof(ty) == Ty.TLease then out[#out + 1] = ty end
+            ty:typecheck_tree_append_live_lease(out)
         end
         return out
     end
 
-    local function expr_binding_name(expr)
-        if schema.classof(expr) == Tr.ExprRef and schema.classof(expr.ref) == B.ValueRefBinding then return expr.ref.binding.name end
-        return nil
-    end
-
-    local function callee_effect_def(ctx, callee_expr)
-        if schema.classof(callee_expr) == Tr.ExprRef and schema.classof(callee_expr.ref) == B.ValueRefBinding then
-            local defs = rawget(ctx.env, "__func_effect_defs") or {}
-            return defs[callee_expr.ref.binding.name]
+    local function callee_effect_def(type_state, callee_expr)
+        local binding_name = callee_expr:typecheck_tree_binding_name()
+        if binding_name == nil then return nil end
+        for i = 1, #(type_state.facts.effects or {}) do
+            if type_state.facts.effects[i].name == binding_name then return type_state.facts.effects[i] end
         end
         return nil
     end
@@ -797,10 +550,10 @@ local function bind_context(T)
             local pcls = schema.classof(pty)
             if pcls ~= Ty.TLease and (pcls == Ty.TPtr or pcls == Ty.TView) then
                 local pname = effect and effect.params and effect.params[i] and effect.params[i].name
-                local preserves_param = pname and preserve[pname]
-                local invalidates_param = (pname and explicit_invalidate[pname]) or not preserves_param
+                local preserves_param = pname and contains_name(preserve, pname)
+                local invalidates_param = (pname and contains_name(explicit_invalidate, pname)) or not preserves_param
                 if invalidates_param then
-                    local arg_name = typed_args and typed_args[i] and expr_binding_name(typed_args[i]) or nil
+                    local arg_name = typed_args and typed_args[i] and typed_args[i]:typecheck_tree_binding_name() or nil
                     for j = 1, #leases do
                         local origin = lease_origin_name(leases[j])
                         if origin == nil or arg_name == nil or origin == arg_name then return leases[j] end
@@ -811,58 +564,12 @@ local function bind_context(T)
         return nil
     end
 
-    type_expr_expect = function(expr, ctx, expected)
-        if expected ~= nil and schema.classof(expr) == Tr.ExprAgg and schema.classof(expected) == Ty.TNamed then
-            return only(type_expr(schema.with(expr, { ty = expected }), ctx))
-        end
-        if expected ~= nil and schema.classof(expr) == Tr.ExprArray and schema.classof(expected) == Ty.TArray then
-            local expected_count = array_len_const(expected.count)
-            local issues = {}
-            if expected_count ~= nil and expected_count ~= #expr.elems then
-                issues[#issues + 1] = Tr.TypeIssueExpected("array length", expected, Ty.TArray(Ty.ArrayLenConst(#expr.elems), expected.elem))
-            end
-            local elems = {}
-            for i = 1, #expr.elems do
-                local e = type_expr_expect(expr.elems[i], ctx, expected.elem)
-                append_all(issues, e.issues)
-                if not type_eq(expected.elem, e.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("array elem", expected.elem, e.ty) end
-                elems[#elems + 1] = e.expr
-            end
-            local ty = Ty.TArray(Ty.ArrayLenConst(#elems), expected.elem)
-            return result_expr(Tr.ExprArray(Tr.ExprTyped(ty), expected.elem, elems), ty, issues)
-        end
-        local result = only(type_expr(expr, ctx))
-        if expected ~= nil and int_literal_can_adopt(expr, expected) then
-            return result_expr(Tr.ExprLit(Tr.ExprTyped(expected), expr.value), expected, result.issues)
-        end
-        if expected ~= nil and float_literal_can_adopt(expr, expected) then
-            return result_expr(Tr.ExprLit(Tr.ExprTyped(expected), expr.value), expected, result.issues)
-        end
-        if expected ~= nil and string_literal_can_adopt(expr, expected) then
-            return result_expr(Tr.ExprLit(Tr.ExprTyped(expected), expr.value), expected, result.issues)
-        end
-        if expected ~= nil and is_nil_literal(expr) and schema.classof(expected) == Ty.TPtr then
-            return result_expr(Tr.ExprLit(Tr.ExprTyped(expected), expr.value), expected, result.issues)
-        end
-        return result
-    end
-
-    local function ref_type(ref, env)
-        local cls = schema.classof(ref)
-        if cls == B.ValueRefBinding then return ref.binding.ty, ref, {} end
-        if cls == B.ValueRefName then
-            local binding = env_lookup_value(env, ref.name)
-            if binding ~= nil then return binding.ty, B.ValueRefBinding(binding), {} end
-            return void_ty(), ref, { Tr.TypeIssueUnresolvedValue(ref.name) }
-        end
-        if cls == B.ValueRefPath then return void_ty(), ref, { Tr.TypeIssueUnresolvedPath(ref.path) } end
-        return void_ty(), ref, { Tr.TypeIssueUnresolvedValue("<unknown>") }
+    type_expr_expect = function(expr, type_state, expected)
+        return expr:typecheck_tree_expr_expected(type_expected_expr_input_from_state(type_state, expected))
     end
 
     local function callable_result(fn_ty)
-        local cls = schema.classof(fn_ty)
-        if cls == Ty.TFunc or cls == Ty.TClosure then return fn_ty.result, fn_ty.params end
-        return nil, nil
+        return fn_ty:typecheck_tree_callable_result()
     end
 
     local function check_expected(site, expected, actual, issues)
@@ -870,15 +577,13 @@ local function bind_context(T)
     end
 
     local function type_binary_op(op, lhs_ty, rhs_ty, issues)
-        -- Pointer arithmetic: ptr + int, int + ptr, ptr - int
         if op == C.BinAdd then
-            local lhs_is_ptr = schema.classof(lhs_ty) == Ty.TPtr
-            local rhs_is_ptr = schema.classof(rhs_ty) == Ty.TPtr
-            if lhs_is_ptr and is_integer_scalar(rhs_ty) then return lhs_ty end
-            if rhs_is_ptr and is_integer_scalar(lhs_ty) then return rhs_ty end
+            local ty = lhs_ty:typecheck_tree_bin_add(rhs_ty)
+            if ty ~= nil then return ty end
         end
         if op == C.BinSub then
-            if schema.classof(lhs_ty) == Ty.TPtr and is_integer_scalar(rhs_ty) then return lhs_ty end
+            local ty = lhs_ty:typecheck_tree_bin_sub(rhs_ty)
+            if ty ~= nil then return ty end
         end
         if not type_eq(lhs_ty, rhs_ty) then
             issues[#issues + 1] = Tr.TypeIssueInvalidBinary(tostring(op), lhs_ty, rhs_ty)
@@ -899,598 +604,39 @@ local function bind_context(T)
     end
 
     function type_view(node, ...)
-        local action = select_typecheck("view", "select_view_typecheck", node)
-        if action == "from_expr" then
-            return (function(self, ctx)
-
-            local base = only(type_expr(self.base, ctx))
-            local issues = {}; append_all(issues, base.issues)
-            local elem = self.elem
-            local base_access = lease_access_base(base.ty)
-            if schema.classof(base_access) == Ty.TView then elem = base_access.elem elseif schema.classof(base_access) == Ty.TPtr then elem = base_access.elem end
-            return single(Tr.TypeViewResult(schema.with(self, { base = base.expr, elem = elem }), issues))
-            end)(node, ...)
-        elseif action == "contiguous" then
-            return (function(self, ctx)
-
-            local data = only(type_expr(self.data, ctx)); local len = type_expr_expect(self.len, ctx, index_ty())
-            local issues = {}; append_all(issues, data.issues); append_all(issues, len.issues)
-            local elem = self.elem
-            local data_access = lease_access_base(data.ty)
-            if schema.classof(data_access) == Ty.TPtr then elem = data_access.elem
-            elseif schema.classof(data_access) == Ty.TView then elem = data_access.elem
-            else issues[#issues + 1] = Tr.TypeIssueExpected("view data", Ty.TScalar(C.ScalarRawPtr), data.ty) end
-            if not is_integer_scalar(len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view len", index_ty(), len.ty) end
-            return single(Tr.TypeViewResult(schema.with(self, { data = data.expr, elem = elem, len = len.expr }), issues))
-            end)(node, ...)
-        elseif action == "strided" then
-            return (function(self, ctx)
-
-            local data = only(type_expr(self.data, ctx)); local len = type_expr_expect(self.len, ctx, index_ty()); local stride = type_expr_expect(self.stride, ctx, index_ty())
-            local issues = {}; append_all(issues, data.issues); append_all(issues, len.issues); append_all(issues, stride.issues)
-            local elem = self.elem
-            local data_access = lease_access_base(data.ty)
-            if schema.classof(data_access) == Ty.TPtr then elem = data_access.elem
-            elseif schema.classof(data_access) == Ty.TView then elem = data_access.elem
-            else issues[#issues + 1] = Tr.TypeIssueExpected("view data", Ty.TScalar(C.ScalarRawPtr), data.ty) end
-            if not is_integer_scalar(len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view len", index_ty(), len.ty) end
-            if not is_integer_scalar(stride.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view stride", index_ty(), stride.ty) end
-            return single(Tr.TypeViewResult(schema.with(self, { data = data.expr, elem = elem, len = len.expr, stride = stride.expr }), issues))
-            end)(node, ...)
-        elseif action == "restrided" then
-            return (function(self, ctx)
-
-            local base = only(type_view(self.base, ctx)); local stride = type_expr_expect(self.stride, ctx, index_ty())
-            local issues = {}; append_all(issues, base.issues); append_all(issues, stride.issues)
-            if not is_integer_scalar(stride.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view stride", index_ty(), stride.ty) end
-            return single(Tr.TypeViewResult(schema.with(self, { base = base.view, stride = stride.expr }), issues))
-            end)(node, ...)
-        elseif action == "window" then
-            return (function(self, ctx)
-
-            local base = only(type_view(self.base, ctx)); local start = type_expr_expect(self.start, ctx, index_ty()); local len = type_expr_expect(self.len, ctx, index_ty())
-            local issues = {}; append_all(issues, base.issues); append_all(issues, start.issues); append_all(issues, len.issues)
-            if not is_integer_scalar(start.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view window start", index_ty(), start.ty) end
-            if not is_integer_scalar(len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view window len", index_ty(), len.ty) end
-            return single(Tr.TypeViewResult(schema.with(self, { base = base.view, start = start.expr, len = len.expr }), issues))
-            end)(node, ...)
-        elseif action == "row_base" then
-            return (function(self, ctx)
-
-            local base = only(type_view(self.base, ctx)); local row_offset = type_expr_expect(self.row_offset, ctx, index_ty())
-            local issues = {}; append_all(issues, base.issues); append_all(issues, row_offset.issues)
-            if not is_integer_scalar(row_offset.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view row offset", index_ty(), row_offset.ty) end
-            return single(Tr.TypeViewResult(schema.with(self, { base = base.view, row_offset = row_offset.expr }), issues))
-            end)(node, ...)
-        elseif action == "interleaved" then
-            return (function(self, ctx)
-
-            local data = only(type_expr(self.data, ctx)); local len = type_expr_expect(self.len, ctx, index_ty()); local stride = type_expr_expect(self.stride, ctx, index_ty()); local lane = type_expr_expect(self.lane, ctx, index_ty())
-            local issues = {}; append_all(issues, data.issues); append_all(issues, len.issues); append_all(issues, stride.issues); append_all(issues, lane.issues)
-            if not is_integer_scalar(len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view len", index_ty(), len.ty) end
-            if not is_integer_scalar(stride.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view stride", index_ty(), stride.ty) end
-            if not is_integer_scalar(lane.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view lane", index_ty(), lane.ty) end
-            return single(Tr.TypeViewResult(schema.with(self, { data = data.expr, len = len.expr, stride = stride.expr, lane = lane.expr }), issues))
-            end)(node, ...)
-        elseif action == "interleaved_view" then
-            return (function(self, ctx)
-
-            local base = only(type_view(self.base, ctx)); local stride = type_expr_expect(self.stride, ctx, index_ty()); local lane = type_expr_expect(self.lane, ctx, index_ty())
-            local issues = {}; append_all(issues, base.issues); append_all(issues, stride.issues); append_all(issues, lane.issues)
-            if not is_integer_scalar(stride.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view stride", index_ty(), stride.ty) end
-            if not is_integer_scalar(lane.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("view lane", index_ty(), lane.ty) end
-            return single(Tr.TypeViewResult(schema.with(self, { base = base.view, stride = stride.expr, lane = lane.expr }), issues))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_typecheck_view: no handler for " .. tostring(action), 2)
-        end
+        return node:typecheck_tree_view(...)
     end
 
-    local function index_base_elem(base)
-        if schema.classof(base) == Tr.IndexBaseView then return base.view.elem end
-        if schema.classof(base) == Tr.IndexBasePlace then return base.elem end
-        if schema.classof(base) == Tr.IndexBaseExpr then return void_ty() end
+    function Tr.IndexBase:typecheck_tree_elem()
         return void_ty()
     end
 
+    function Tr.IndexBaseView:typecheck_tree_elem()
+        return self.view.elem
+    end
+
+    function Tr.IndexBasePlace:typecheck_tree_elem()
+        return self.elem
+    end
+
+    function Tr.IndexBaseExpr:typecheck_tree_elem()
+        return void_ty()
+    end
+
+    local function index_base_elem(base)
+        return base:typecheck_tree_elem()
+    end
+
     function type_index_base(node, ...)
-        local action = select_typecheck("index_base", "select_index_base_typecheck", node)
-        if action == "expr" then
-            return (function(self, ctx)
-
-            local base = only(type_expr(self.base, ctx))
-            local issues = {}; append_all(issues, base.issues)
-            local base_access = lease_access_base(base.ty)
-            if schema.classof(base_access) == Ty.TView or schema.classof(base_access) == Ty.TPtr then
-                return single(Tr.TypeIndexBaseResult(Tr.IndexBaseView(Tr.ViewFromExpr(base.expr, base_access.elem)), base_access.elem, issues))
-            end
-            if schema.classof(base_access) == Ty.TSlice then
-                return single(Tr.TypeIndexBaseResult(Tr.IndexBaseExpr(base.expr), base_access.elem, issues))
-            end
-            if schema.classof(base_access) == Ty.TArray then
-                if schema.classof(base.expr) == Tr.ExprRef then
-                    return single(Tr.TypeIndexBaseResult(Tr.IndexBasePlace(Tr.PlaceRef(Tr.PlaceTyped(base_access), base.expr.ref), base_access.elem), base_access.elem, issues))
-                end
-                issues[#issues + 1] = Tr.TypeIssueNotIndexable(base.ty)
-                return single(Tr.TypeIndexBaseResult(Tr.IndexBaseView(Tr.ViewFromExpr(base.expr, base_access.elem)), base_access.elem, issues))
-            end
-            issues[#issues + 1] = Tr.TypeIssueNotIndexable(base.ty)
-            return single(Tr.TypeIndexBaseResult(Tr.IndexBaseView(Tr.ViewFromExpr(base.expr, void_ty())), void_ty(), issues))
-            end)(node, ...)
-        elseif action == "view" then
-            return (function(self, ctx)
-
-            local view = only(type_view(self.view, ctx))
-            return single(Tr.TypeIndexBaseResult(schema.with(self, { view = view.view }), view_elem(view.view), view.issues))
-            end)(node, ...)
-        elseif action == "place" then
-            return (function(self, ctx)
-
-            local base = only(type_place(self.base, ctx))
-            local issues = {}; append_all(issues, base.issues)
-            return single(Tr.TypeIndexBaseResult(schema.with(self, { base = base.place }), self.elem, issues))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_typecheck_index_base: no handler for " .. tostring(action), 2)
-        end
+        return node:typecheck_tree_index_base(...)
     end
 
     function type_place(node, ...)
-        local action = select_typecheck("place", "select_place_typecheck", node)
-        if action == "ref" then
-            return (function(self, ctx)
-
-            local ty, ref, issues = ref_type(self.ref, ctx.env)
-            return single(result_place(Tr.PlaceRef(Tr.PlaceTyped(ty), ref), ty, issues))
-            end)(node, ...)
-        elseif action == "deref" then
-            return (function(self, ctx)
-
-            local base = only(type_expr(self.base, ctx))
-            local issues = {}; append_all(issues, base.issues)
-            local ty = void_ty()
-            local base_access = lease_access_base(base.ty)
-            if schema.classof(base_access) == Ty.TPtr then ty = base_access.elem else issues[#issues + 1] = Tr.TypeIssueNotPointer(base.ty) end
-            return single(result_place(Tr.PlaceDeref(Tr.PlaceTyped(ty), base.expr), ty, issues))
-            end)(node, ...)
-        elseif action == "dot" then
-            return (function(self, ctx)
-
-            local base = only(type_place(self.base, ctx)); local issues = {}; append_all(issues, base.issues)
-            local lookup_ty = lease_access_base(base.ty)
-            if schema.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
-            local layout = field_layout_for(ctx.env, lookup_ty, self.name)
-            if layout ~= nil then
-                return single(result_place(Tr.PlaceField(Tr.PlaceTyped(layout.ty), base.place, Sem.FieldByName(layout.field_name, layout.ty)), layout.ty, issues))
-            end
-            local preserved_ty = typed_place_header_ty(self.h) or base.ty
-            return single(result_place(Tr.PlaceDot(Tr.PlaceTyped(preserved_ty), base.place, self.name), preserved_ty, issues))
-            end)(node, ...)
-        elseif action == "field" then
-            return (function(self, ctx)
-
-            local base = only(type_place(self.base, ctx)); local issues = {}; append_all(issues, base.issues)
-            return single(result_place(Tr.PlaceField(Tr.PlaceTyped(self.field.ty), base.place, self.field), self.field.ty, issues))
-            end)(node, ...)
-        elseif action == "index" then
-            return (function(self, ctx)
-
-            local base = only(type_index_base(self.base, ctx)); local index = type_expr_expect(self.index, ctx, Ty.TScalar(C.ScalarIndex))
-            local issues = {}; append_all(issues, base.issues); append_all(issues, index.issues)
-            if not is_integer_scalar(index.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("index", Ty.TScalar(C.ScalarIndex), index.ty) end
-            return single(result_place(Tr.PlaceIndex(Tr.PlaceTyped(base.elem), base.base, index.expr), base.elem, issues))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_typecheck_place: no handler for " .. tostring(action), 2)
-        end
+        return node:typecheck_tree_place(...)
     end
 
-    function type_expr(node, ...)
-        local action = select_expr_typecheck(node)
-        if action == "lit" then
-            return (function(self, ctx)
-
-            local cls = schema.classof(self.value)
-            local ty = void_ty()
-            if cls == C.LitInt then ty = i32_ty() elseif cls == C.LitFloat then ty = f64_ty() elseif cls == C.LitBool then ty = bool_ty() elseif cls == C.LitString then ty = string_ty() end
-            return single(result_expr(Tr.ExprLit(Tr.ExprTyped(ty), self.value), ty, {}))
-            end)(node, ...)
-        elseif action == "ref" then
-            return (function(self, ctx)
-
-            local ty, ref, issues = ref_type(self.ref, ctx.env)
-            return single(result_expr(Tr.ExprRef(Tr.ExprTyped(ty), ref), ty, issues))
-            end)(node, ...)
-        elseif action == "unary" then
-            return (function(self, ctx)
-
-            local value = only(type_expr(self.value, ctx)); local issues = {}; append_all(issues, value.issues)
-            if self.op == C.UnaryNot then if not is_bool(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("not", value.ty) end; return single(result_expr(Tr.ExprUnary(Tr.ExprTyped(bool_ty()), self.op, value.expr), bool_ty(), issues)) end
-            if not is_numeric_scalar(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(tostring(self.op), value.ty) end
-            return single(result_expr(Tr.ExprUnary(Tr.ExprTyped(value.ty), self.op, value.expr), value.ty, issues))
-            end)(node, ...)
-        elseif action == "binary" then
-            return (function(self, ctx)
-
-            local lhs = only(type_expr(self.lhs, ctx)); local issues = {}
-            append_all(issues, lhs.issues)
-            -- Pointer arithmetic: ptr(T) +/- integer — don't constrain rhs to ptr type
-            local lhs_is_ptr = schema.classof(lhs.ty) == Ty.TPtr
-            local rhs
-            if lhs_is_ptr and (self.op == C.BinAdd or self.op == C.BinSub) then
-                rhs = only(type_expr(self.rhs, ctx))
-            else
-                rhs = type_expr_expect(self.rhs, ctx, lhs.ty)
-            end
-            append_all(issues, rhs.issues)
-            local ty = type_binary_op(self.op, lhs.ty, rhs.ty, issues)
-            return single(result_expr(Tr.ExprBinary(Tr.ExprTyped(ty), self.op, lhs.expr, rhs.expr), ty, issues))
-            end)(node, ...)
-        elseif action == "compare" then
-            return (function(self, ctx)
-
-            local lhs = only(type_expr(self.lhs, ctx)); local rhs = type_expr_expect(self.rhs, ctx, lhs.ty); local issues = {}
-            append_all(issues, lhs.issues); append_all(issues, rhs.issues); type_compare_op(self.op, lhs.ty, rhs.ty, issues)
-            return single(result_expr(Tr.ExprCompare(Tr.ExprTyped(bool_ty()), self.op, lhs.expr, rhs.expr), bool_ty(), issues))
-            end)(node, ...)
-        elseif action == "logic" then
-            return (function(self, ctx)
-
-            local lhs = only(type_expr(self.lhs, ctx)); local rhs = only(type_expr(self.rhs, ctx)); local issues = {}
-            append_all(issues, lhs.issues); append_all(issues, rhs.issues)
-            if not is_bool(lhs.ty) or not is_bool(rhs.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidLogic(tostring(self.op), lhs.ty, rhs.ty) end
-            return single(result_expr(Tr.ExprLogic(Tr.ExprTyped(bool_ty()), self.op, lhs.expr, rhs.expr), bool_ty(), issues))
-            end)(node, ...)
-        elseif action == "cast" then
-            return (function(self, ctx)
-
-            local dst_ty = canonical_type(ctx.env, self.ty)
-            local value = only(type_expr(self.value, ctx))
-            local issues = {}; append_all(issues, value.issues); check_type_policy(dst_ty, issues, "cast")
-            if (is_handle_type(value.ty) or is_handle_type(dst_ty)) and not type_eq(value.ty, dst_ty) then
-                issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle cast", is_handle_type(value.ty) and value.ty or dst_ty)
-            end
-            local op = surface_cast_to_machine_op(self.op, value.ty, dst_ty)
-            return single(result_expr(Tr.ExprMachineCast(Tr.ExprTyped(dst_ty), op, dst_ty, value.expr), dst_ty, issues))
-            end)(node, ...)
-        elseif action == "machine_cast" then
-            return (function(self, ctx)
- local value = only(type_expr(self.value, ctx)); local issues = {}; append_all(issues, value.issues); check_type_policy(self.ty, issues, "machine cast"); return single(result_expr(Tr.ExprMachineCast(Tr.ExprTyped(self.ty), self.op, self.ty, value.expr), self.ty, issues))
-            end)(node, ...)
-        elseif action == "len" then
-            return (function(self, ctx)
-
-            local value = only(type_expr(self.value, ctx)); local issues = {}; append_all(issues, value.issues)
-            local value_access = lease_access_base(value.ty)
-            if schema.classof(value_access) ~= Ty.TView and schema.classof(value_access) ~= Ty.TArray then issues[#issues + 1] = Tr.TypeIssueExpected("len", Ty.TView(void_ty()), value.ty) end
-            return single(result_expr(Tr.ExprLen(Tr.ExprTyped(index_ty()), value.expr), index_ty(), issues))
-            end)(node, ...)
-        elseif action == "call" then
-            return (function(self, ctx)
-
-            local issues = {}; local typed_args = {}
-            -- Trusted/internal handle representation operations.
-            -- `repr(handle_value)` exposes the declared scalar representation.
-            if schema.classof(self.callee) == Tr.ExprRef and schema.classof(self.callee.ref) == B.ValueRefName and self.callee.ref.name == "repr" and #self.args == 1 then
-                local arg = only(type_expr(self.args[1], ctx)); append_all(issues, arg.issues)
-                local hty = canonical_type(ctx.env, arg.ty)
-                local rty = handle_repr_type(hty)
-                if rty == nil then
-                    issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle repr", arg.ty)
-                    rty = void_ty()
-                end
-                return single(result_expr(Tr.ExprMachineCast(Tr.ExprTyped(rty), C.MachineCastBitcast, rty, arg.expr), rty, issues))
-            end
-            -- `HandleType.from_repr(raw)` creates a handle at an explicit trust boundary.
-            if schema.classof(self.callee) == Tr.ExprDot and self.callee.name == "from_repr"
-               and schema.classof(self.callee.base) == Tr.ExprRef and schema.classof(self.callee.base.ref) == B.ValueRefName
-               and #self.args == 1 then
-                local def = find_handle_def(ctx, self.callee.base.ref.name)
-                if def ~= nil then
-                    local rty = handle_repr_type(def.ty) or void_ty()
-                    local arg = type_expr_expect(self.args[1], ctx, rty); append_all(issues, arg.issues); check_expected("handle from_repr", rty, arg.ty, issues)
-                    return single(result_expr(Tr.ExprMachineCast(Tr.ExprTyped(def.ty), C.MachineCastBitcast, def.ty, arg.expr), def.ty, issues))
-                end
-            end
-            -- self.callee is the callee expression, self.args is the argument list
-            local callee_r = only(type_expr(self.callee, ctx)); append_all(issues, callee_r.issues)
-            local fn_ty = callee_r.ty
-            if schema.classof(fn_ty) ~= Ty.TFunc and schema.classof(fn_ty) ~= Ty.TClosure then
-                issues[#issues + 1] = Tr.TypeIssueNotCallable(fn_ty or void_ty())
-                return single(result_expr(Tr.ExprCall(Tr.ExprTyped(void_ty()), callee_r.expr, {}), void_ty(), issues))
-            end
-            local result_ty, param_tys = callable_result(fn_ty)
-            result_ty = canonical_type(ctx.env, result_ty)
-            local canonical_param_tys = {}
-            for i = 1, #(param_tys or {}) do canonical_param_tys[i] = canonical_type(ctx.env, param_tys[i]) end
-            param_tys = canonical_param_tys
-            if #param_tys ~= #self.args then issues[#issues + 1] = Tr.TypeIssueArgCount("call", #param_tys, #self.args) end
-            for i = 1, #self.args do
-                local arg = type_expr_expect(self.args[i], ctx, param_tys[i]); append_all(issues, arg.issues); typed_args[#typed_args + 1] = arg.expr
-                if param_tys[i] ~= nil then
-                    if not arg_matches_param(ctx.env, param_tys[i], arg.ty) then check_expected("call arg", param_tys[i], arg.ty, issues) end
-                    if type_contains_lease(arg.ty) and not type_contains_lease(param_tys[i]) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape call", arg.ty) end
-                    if type_contains_owned(arg.ty) and not type_contains_owned(param_tys[i]) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned passed to non-owned parameter", arg.ty) end
-                end
-            end
-            local invalidated_lease = call_may_invalidate_while_lease_live(ctx, callee_r.expr, param_tys, typed_args)
-            if invalidated_lease ~= nil then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease invalidating call", invalidated_lease) end
-            return single(result_expr(Tr.ExprCall(Tr.ExprTyped(result_ty), callee_r.expr, typed_args), result_ty, issues))
-            end)(node, ...)
-        elseif action == "field" then
-            return (function(self, ctx)
- local base = only(type_expr(self.base, ctx)); local issues = {}; append_all(issues, base.issues); return single(result_expr(Tr.ExprField(Tr.ExprTyped(self.field.ty), base.expr, self.field), self.field.ty, issues))
-            end)(node, ...)
-        elseif action == "index" then
-            return (function(self, ctx)
-
-            local base = only(type_index_base(self.base, ctx)); local index = type_expr_expect(self.index, ctx, Ty.TScalar(C.ScalarIndex)); local issues = {}
-            append_all(issues, base.issues); append_all(issues, index.issues); if not is_integer_scalar(index.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("index", Ty.TScalar(C.ScalarIndex), index.ty) end
-            return single(result_expr(Tr.ExprIndex(Tr.ExprTyped(base.elem), base.base, index.expr), base.elem, issues))
-            end)(node, ...)
-        elseif action == "if" then
-            return (function(self, ctx)
-
-            local cond = only(type_expr(self.cond, ctx)); local a = only(type_expr(self.then_expr, ctx)); local b = only(type_expr(self.else_expr, ctx)); local issues = {}
-            append_all(issues, cond.issues); append_all(issues, a.issues); append_all(issues, b.issues); check_expected("if cond", bool_ty(), cond.ty, issues); check_expected("if branches", a.ty, b.ty, issues)
-            return single(result_expr(Tr.ExprIf(Tr.ExprTyped(a.ty), cond.expr, a.expr, b.expr), a.ty, issues))
-            end)(node, ...)
-        elseif action == "select" then
-            return (function(self, ctx)
-
-            local cond = only(type_expr(self.cond, ctx)); local a = only(type_expr(self.then_expr, ctx)); local b = only(type_expr(self.else_expr, ctx)); local issues = {}
-            append_all(issues, cond.issues); append_all(issues, a.issues); append_all(issues, b.issues); check_expected("select cond", bool_ty(), cond.ty, issues); check_expected("select branches", a.ty, b.ty, issues)
-            return single(result_expr(Tr.ExprSelect(Tr.ExprTyped(a.ty), cond.expr, a.expr, b.expr), a.ty, issues))
-            end)(node, ...)
-        elseif action == "control" then
-            return (function(self, ctx)
-
-            local region = only(type_control_expr_region(self.region, ctx)); return single(result_expr(Tr.ExprControl(Tr.ExprTyped(region.region.result_ty), region.region), region.region.result_ty, region.issues))
-            end)(node, ...)
-        elseif action == "block" then
-            return (function(self, ctx)
-
-            local body = type_stmt_body(self.stmts, ctx); local result = only(type_expr(self.result, body.env)); local issues = {}; append_all(issues, body.issues); append_all(issues, result.issues)
-            return single(result_expr(Tr.ExprBlock(Tr.ExprTyped(result.ty), body.stmts, result.expr), result.ty, issues))
-            end)(node, ...)
-        elseif action == "array" then
-            return (function(self, ctx)
-
-            local elems = {}; local issues = {}
-            for i = 1, #self.elems do local e = type_expr_expect(self.elems[i], ctx, self.elem_ty); elems[#elems + 1] = e.expr; append_all(issues, e.issues); check_expected("array elem", self.elem_ty, e.ty, issues); if type_contains_owned(e.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned captured in aggregate", e.ty) end end
-            local ty = Ty.TArray(Ty.ArrayLenConst(#elems), self.elem_ty)
-            return single(result_expr(Tr.ExprArray(Tr.ExprTyped(ty), self.elem_ty, elems), ty, issues))
-            end)(node, ...)
-        elseif action == "agg" then
-            return (function(self, ctx)
-
-            local issues = {}
-            if schema.classof(self.ty) == Ty.TClosure then
-                local field_exprs = {}
-                for j = 1, #self.fields do
-                    local fi = self.fields[j]
-                    local ev = only(type_expr(fi.value, ctx))
-                    append_all(issues, ev.issues)
-                    if type_contains_lease(ev.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape aggregate", ev.ty) end
-                    if type_contains_owned(ev.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned captured in aggregate", ev.ty) end
-                    field_exprs[j] = Tr.FieldInit(fi.name, ev.expr, fi.offset)
-                end
-                return single(result_expr(Tr.ExprAgg(Tr.ExprTyped(self.ty), self.ty, field_exprs), self.ty, issues))
-            end
-            local ref = named_ref(self.ty)
-            local layout
-            if ref then
-                for i = 1, #ctx.env.layouts do
-                    local l = ctx.env.layouts[i]
-                    local cls = schema.classof(l)
-                    local matches = false
-                    if cls == Sem.LayoutNamed and schema.classof(ref) == Ty.TypeRefPath then
-                        matches = #ref.path.parts == 1 and l.type_name == ref.path.parts[1].text
-                    elseif cls == Sem.LayoutNamed and schema.classof(ref) == Ty.TypeRefGlobal then
-                        matches = l.module_name == ref.module_name and l.type_name == ref.type_name
-                    end
-                    if matches then layout = l; break end
-                end
-                if not layout then
-                    if schema.classof(ref) == Ty.TypeRefPath then issues[#issues + 1] = Tr.TypeIssueUnresolvedPath(ref.path)
-                    else issues[#issues + 1] = Tr.TypeIssueExpected("struct literal", self.ty, void_ty()) end
-                end
-            end
-            if layout then
-                local field_map = {}
-                for j = 1, #layout.fields do field_map[layout.fields[j].field_name] = layout.fields[j] end
-                local field_exprs = {}
-                for j = 1, #self.fields do
-                    local fi = self.fields[j]
-                    local decl = field_map[fi.name]
-                    if not decl then
-                        issues[#issues + 1] = Tr.TypeIssueUnresolvedValue(fi.name)
-                    else
-                        local ev = type_expr_expect(fi.value, ctx, decl.ty)
-                        append_all(issues, ev.issues)
-                        check_expected("struct field '" .. fi.name .. "'", decl.ty, ev.ty, issues)
-                        if type_contains_lease(ev.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape aggregate", ev.ty) end
-                        if type_contains_owned(ev.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned captured in aggregate", ev.ty) end
-                        field_exprs[j] = Tr.FieldInit(fi.name, ev.expr, decl.offset)
-                    end
-                end
-                return single(result_expr(Tr.ExprAgg(Tr.ExprTyped(self.ty), self.ty, field_exprs), self.ty, issues))
-            end
-            return single(result_expr(schema.with(self, { h = Tr.ExprTyped(self.ty) }), self.ty, {}))
-            end)(node, ...)
-        elseif action == "view" then
-            return (function(self, ctx)
- local view = only(type_view(self.view, ctx)); local ty = Ty.TView(view_elem(view.view)); return single(result_expr(Tr.ExprView(Tr.ExprTyped(ty), view.view), ty, view.issues))
-            end)(node, ...)
-        elseif action == "load" then
-            return (function(self, ctx)
- local addr = only(type_expr(self.addr, ctx)); return single(result_expr(Tr.ExprLoad(Tr.ExprTyped(self.ty), self.ty, addr.expr), self.ty, addr.issues))
-            end)(node, ...)
-        elseif action == "atomic_load" then
-            return (function(self, ctx)
-
-            local addr = type_expr_expect(self.addr, ctx, Ty.TPtr(self.ty)); local issues = {}; append_all(issues, addr.issues)
-            check_expected("atomic_load addr", Ty.TPtr(self.ty), addr.ty, issues); check_atomic_value_type("atomic_load", self.ty, issues)
-            return single(result_expr(Tr.ExprAtomicLoad(Tr.ExprTyped(self.ty), self.ty, addr.expr, self.ordering), self.ty, issues))
-            end)(node, ...)
-        elseif action == "atomic_rmw" then
-            return (function(self, ctx)
-
-            local addr = type_expr_expect(self.addr, ctx, Ty.TPtr(self.ty)); local value = type_expr_expect(self.value, ctx, self.ty); local issues = {}; append_all(issues, addr.issues); append_all(issues, value.issues)
-            check_expected("atomic_rmw addr", Ty.TPtr(self.ty), addr.ty, issues); check_expected("atomic_rmw value", self.ty, value.ty, issues); check_atomic_rmw_value_type(self.op, self.ty, issues)
-            return single(result_expr(Tr.ExprAtomicRmw(Tr.ExprTyped(self.ty), self.op, self.ty, addr.expr, value.expr, self.ordering), self.ty, issues))
-            end)(node, ...)
-        elseif action == "atomic_cas" then
-            return (function(self, ctx)
-
-            local addr = type_expr_expect(self.addr, ctx, Ty.TPtr(self.ty)); local expected = type_expr_expect(self.expected, ctx, self.ty); local replacement = type_expr_expect(self.replacement, ctx, self.ty); local issues = {}
-            append_all(issues, addr.issues); append_all(issues, expected.issues); append_all(issues, replacement.issues)
-            check_expected("atomic_cas addr", Ty.TPtr(self.ty), addr.ty, issues); check_expected("atomic_cas expected", self.ty, expected.ty, issues); check_expected("atomic_cas replacement", self.ty, replacement.ty, issues); check_atomic_value_type("atomic_cas", self.ty, issues)
-            return single(result_expr(Tr.ExprAtomicCas(Tr.ExprTyped(self.ty), self.ty, addr.expr, expected.expr, replacement.expr, self.ordering), self.ty, issues))
-            end)(node, ...)
-        elseif action == "dot" then
-            return (function(self, ctx)
-
-            if self.name == "invalid" and schema.classof(self.base) == Tr.ExprRef and schema.classof(self.base.ref) == B.ValueRefName then
-                local def = find_handle_def(ctx, self.base.ref.name)
-                if def ~= nil and schema.classof(def.invalid) == Ty.HandleInvalidInt then
-                    return single(result_expr(Tr.ExprLit(Tr.ExprTyped(def.ty), C.LitInt(def.invalid.raw)), def.ty, {}))
-                end
-            end
-            local base = only(type_expr(self.base, ctx)); local issues = {}; append_all(issues, base.issues)
-            local base_ty = lease_access_base(base.ty)
-            if schema.classof(base_ty) == Ty.TPtr then
-                local layout = field_layout_for(ctx.env, base_ty.elem, self.name)
-                if layout ~= nil then
-                    return single(result_expr(Tr.ExprField(Tr.ExprTyped(layout.ty), base.expr, Sem.FieldByName(layout.field_name, layout.ty)), layout.ty, issues))
-                end
-            end
-            local layout = field_layout_for(ctx.env, base_ty, self.name)
-            if layout ~= nil then
-                return single(result_expr(Tr.ExprField(Tr.ExprTyped(layout.ty), base.expr, Sem.FieldByName(layout.field_name, layout.ty)), layout.ty, issues))
-            end
-            local preserved_ty = typed_expr_header_ty(self.h) or base.ty
-            return single(result_expr(Tr.ExprDot(Tr.ExprTyped(preserved_ty), base.expr, self.name), preserved_ty, issues))
-            end)(node, ...)
-        elseif action == "intrinsic" then
-            return (function(self, ctx)
-
-            local issues = {}; local args = {}
-            for i = 1, #self.args do local a = only(type_expr(self.args[i], ctx)); args[#args + 1] = a.expr; append_all(issues, a.issues) end
-            local h_cls = schema.classof(self.h)
-            local ty = nil
-            if h_cls == Tr.ExprTyped then ty = self.h.ty end
-            if ty == nil or (schema.classof(ty) == Ty.TScalar and ty.scalar == C.ScalarVoid and self.op ~= C.IntrinsicTrap and self.op ~= C.IntrinsicAssume) then
-                ty = (#self.args > 0) and only(type_expr(self.args[1], ctx)).ty or void_ty()
-            end
-            if self.op == C.IntrinsicTrap or self.op == C.IntrinsicAssume then ty = void_ty() end
-            return single(result_expr(Tr.ExprIntrinsic(Tr.ExprTyped(ty), self.op, args), ty, issues))
-            end)(node, ...)
-        elseif action == "addr_of" then
-            return (function(self, ctx)
- local place = only(type_place(self.place, ctx)); local ty = Ty.TPtr(place.ty); return single(result_expr(Tr.ExprAddrOf(Tr.ExprTyped(ty), place.place), ty, place.issues))
-            end)(node, ...)
-        elseif action == "deref" then
-            return (function(self, ctx)
- local value = only(type_expr(self.value, ctx)); local issues = {}; append_all(issues, value.issues); local ty = void_ty(); local access = lease_access_base(value.ty); if schema.classof(access) == Ty.TPtr then ty = access.elem else issues[#issues + 1] = Tr.TypeIssueNotPointer(value.ty) end; return single(result_expr(Tr.ExprDeref(Tr.ExprTyped(ty), value.expr), ty, issues))
-            end)(node, ...)
-        elseif action == "switch" then
-            return (function(self, ctx)
-
-            local value = only(type_expr(self.value, ctx))
-            local default_body = type_stmt_body(self.default_body or {}, ctx)
-            local default = only(type_expr(self.default_expr, default_body.env))
-            local issues = {}; append_all(issues, value.issues); append_all(issues, default_body.issues); append_all(issues, default.issues)
-            local arms = {}
-            for i = 1, #self.arms do
-                local body = type_stmt_body(self.arms[i].body, ctx)
-                local result = only(type_expr(self.arms[i].result, body.env))
-                append_all(issues, body.issues); append_all(issues, result.issues)
-                check_expected("switch arm", default.ty, result.ty, issues)
-                arms[#arms + 1] = Tr.SwitchExprArm(self.arms[i].raw_key, body.stmts, result.expr)
-            end
-            local var_arms = {}
-            local def = variant_def_for_value_ty(ctx, value.ty)
-            for i = 1, #(self.variant_arms or {}) do
-                local arm = self.variant_arms[i]
-                local variant = def and def.variants[arm.variant_name] or nil
-                if variant == nil then issues[#issues + 1] = Tr.TypeIssueUnknownVariant(def and def.type_name or "?", arm.variant_name) end
-                local arm_ctx, typed_binds = ctx, arm.binds
-                if variant ~= nil then local env, binds = bind_env_for_variant(ctx, "expr_switch", variant, arm.binds); arm_ctx = ctx_with_env(ctx, env); typed_binds = {}; for j = 1, #binds do typed_binds[#typed_binds + 1] = Tr.VariantBind(binds[j].name, binds[j].ty) end end
-                local body = type_stmt_body(arm.body, arm_ctx)
-                local result = only(type_expr(arm.result, body.env))
-                append_all(issues, body.issues); append_all(issues, result.issues)
-                check_expected("variant switch arm", default.ty, result.ty, issues)
-                var_arms[#var_arms + 1] = Tr.SwitchVariantExprArm(arm.variant_name, typed_binds, body.stmts, result.expr)
-            end
-            return single(result_expr(Tr.ExprSwitch(Tr.ExprTyped(default.ty), value.expr, arms, var_arms, default_body.stmts, default.expr), default.ty, issues))
-            end)(node, ...)
-        elseif action == "closure" then
-            return (function(self, ctx)
- local ty = Ty.TClosure(self.params, self.result); return single(result_expr(schema.with(self, { h = Tr.ExprTyped(ty) }), ty, {}))
-            end)(node, ...)
-        elseif action == "ctor" then
-            return (function(self, ctx)
-
-            local def, variant = find_variant(ctx, self.type_name, self.variant_name)
-            local ty = (def and def.ty) or type_name_for_ctor(self.type_name)
-            local args, issues = {}, {}
-            if variant == nil then
-                issues[#issues + 1] = Tr.TypeIssueUnknownVariant(self.type_name, self.variant_name)
-                for i = 1, #(self.args or {}) do local a = only(type_expr(self.args[i], ctx)); args[#args + 1] = a.expr; append_all(issues, a.issues) end
-                return single(result_expr(Tr.ExprCtor(Tr.ExprTyped(ty), self.type_name, self.variant_name, args), ty, issues))
-            end
-            local expected = {}
-            if #(variant.fields or {}) > 0 then
-                for i = 1, #variant.fields do expected[#expected + 1] = variant.fields[i].ty end
-            elseif not is_void_type(variant.payload) then
-                expected[#expected + 1] = variant.payload
-            end
-            if #expected ~= #(self.args or {}) then
-                issues[#issues + 1] = Tr.TypeIssueVariantPayloadMismatch(self.type_name, self.variant_name, expected[1] or void_ty(), self.args[1] and only(type_expr(self.args[1], ctx)).ty or void_ty())
-            end
-            for i = 1, #(self.args or {}) do
-                local a = expected[i] and type_expr_expect(self.args[i], ctx, expected[i]) or only(type_expr(self.args[i], ctx))
-                args[#args + 1] = a.expr
-                append_all(issues, a.issues)
-                if expected[i] then check_expected("variant payload", expected[i], a.ty, issues) end
-            end
-            return single(result_expr(Tr.ExprCtor(Tr.ExprTyped(ty), self.type_name, self.variant_name, args), ty, issues))
-            end)(node, ...)
-        elseif action == "null" then
-            return (function(self, ctx)
-
-            local issues = {}
-            if schema.classof(self.elem) ~= Ty.TPtr then
-                issues[#issues + 1] = Tr.TypeIssueExpected("null", Ty.TPtr(Ty.TVoid), self.elem)
-            end
-            return single(result_expr(Tr.ExprNull(Tr.ExprTyped(self.elem), self.elem), self.elem, issues))
-            end)(node, ...)
-        elseif action == "sizeof" then
-            return (function(self, ctx)
-
-            local issues = {}; check_type_policy(self.ty, issues, "sizeof")
-            return single(result_expr(Tr.ExprSizeOf(Tr.ExprTyped(index_ty()), self.ty), index_ty(), issues))
-            end)(node, ...)
-        elseif action == "alignof" then
-            return (function(self, ctx)
-
-            local issues = {}; check_type_policy(self.ty, issues, "alignof")
-            return single(result_expr(Tr.ExprAlignOf(Tr.ExprTyped(index_ty()), self.ty), index_ty(), issues))
-            end)(node, ...)
-        elseif action == "is_null" then
-            return (function(self, ctx)
-
-            local value = only(type_expr(self.value, ctx))
-            local issues = {}; append_all(issues, value.issues)
-            if schema.classof(lease_access_base(value.ty)) ~= Ty.TPtr then
-                issues[#issues + 1] = Tr.TypeIssueNotPointer(value.ty)
-            end
-            return single(result_expr(Tr.ExprIsNull(Tr.ExprTyped(bool_ty()), value.expr), bool_ty(), issues))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_typecheck_expr: no handler for " .. tostring(action), 2)
-        end
+    function type_expr(node, type_state)
+        return node:typecheck_tree_expr(type_expr_input_from_state(type_state))
     end
 
     type_switch_key = function(key, ctx, value_ty, issues)
@@ -1542,584 +688,15 @@ local function bind_context(T)
     end
 
     function type_stmt(node, ...)
-        local action = select_stmt_typecheck(node)
-        if action == "let" then
-            return (function(self, ctx)
-
-            local binding_ty = canonical_type(ctx.env, self.binding.ty)
-            local is_inferred = schema.classof(binding_ty) == Ty.TScalar and binding_ty.scalar == C.ScalarVoid
-            local init = is_inferred and only(type_expr(self.init, ctx)) or type_expr_expect(self.init, ctx, binding_ty)
-            local issues = {}; append_all(issues, init.issues)
-            local actual_ty = is_inferred and init.ty or binding_ty
-            if not is_inferred and not arg_matches_param(ctx.env, actual_ty, init.ty) then check_expected("let " .. self.binding.name, actual_ty, init.ty, issues) end
-            local binding = schema.with(self.binding, { ty = actual_ty, class = B.BindingClassLocalValue })
-            local env = env_add_value(ctx.env, B.ValueEntry(binding.name, binding))
-            return single(Tr.TypeStmtResult(ctx_with_env(ctx, env), { Tr.StmtLet(Tr.StmtSurface, binding, init.expr) }, issues))
-            end)(node, ...)
-        elseif action == "var" then
-            return (function(self, ctx)
-
-            local binding_ty = canonical_type(ctx.env, self.binding.ty)
-            local is_inferred = schema.classof(binding_ty) == Ty.TScalar and binding_ty.scalar == C.ScalarVoid
-            local init = is_inferred and only(type_expr(self.init, ctx)) or type_expr_expect(self.init, ctx, binding_ty)
-            local issues = {}; append_all(issues, init.issues)
-            local actual_ty = is_inferred and init.ty or binding_ty
-            if not is_inferred and not arg_matches_param(ctx.env, actual_ty, init.ty) then check_expected("var " .. self.binding.name, actual_ty, init.ty, issues) end
-            local binding = schema.with(self.binding, { ty = actual_ty, class = B.BindingClassLocalCell })
-            local env = env_add_value(ctx.env, B.ValueEntry(binding.name, binding))
-            return single(Tr.TypeStmtResult(ctx_with_env(ctx, env), { Tr.StmtVar(Tr.StmtSurface, binding, init.expr) }, issues))
-            end)(node, ...)
-        elseif action == "set" then
-            return (function(self, ctx)
- local place = only(type_place(self.place, ctx)); local value = type_expr_expect(self.value, ctx, place.ty); local issues = {}; append_all(issues, place.issues); append_all(issues, value.issues); check_expected("set", place.ty, value.ty, issues); if type_contains_lease(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape store", value.ty) end; if type_contains_owned(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", value.ty) end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtSet(Tr.StmtSurface, place.place, value.expr) }, issues))
-            end)(node, ...)
-        elseif action == "atomic_store" then
-            return (function(self, ctx)
-
-            local addr = type_expr_expect(self.addr, ctx, Ty.TPtr(self.ty)); local value = type_expr_expect(self.value, ctx, self.ty); local issues = {}; append_all(issues, addr.issues); append_all(issues, value.issues)
-            check_expected("atomic_store addr", Ty.TPtr(self.ty), addr.ty, issues); check_expected("atomic_store value", self.ty, value.ty, issues); check_atomic_value_type("atomic_store", self.ty, issues)
-            return single(Tr.TypeStmtResult(ctx, { Tr.StmtAtomicStore(Tr.StmtSurface, self.ty, addr.expr, value.expr, self.ordering) }, issues))
-            end)(node, ...)
-        elseif action == "atomic_fence" then
-            return (function(self, ctx)
- return single(Tr.TypeStmtResult(ctx, { Tr.StmtAtomicFence(Tr.StmtSurface, self.ordering) }, {}))
-            end)(node, ...)
-        elseif action == "expr" then
-            return (function(self, ctx)
- local expr = only(type_expr(self.expr, ctx)); return single(Tr.TypeStmtResult(ctx, { Tr.StmtExpr(Tr.StmtSurface, expr.expr) }, expr.issues))
-            end)(node, ...)
-        elseif action == "assert" then
-            return (function(self, ctx)
- local cond = type_expr_expect(self.cond, ctx, bool_ty()); local issues = {}; append_all(issues, cond.issues); check_expected("assert", bool_ty(), cond.ty, issues); return single(Tr.TypeStmtResult(ctx, { Tr.StmtAssert(Tr.StmtSurface, cond.expr) }, issues))
-            end)(node, ...)
-        elseif action == "return_void" then
-            return (function(self, ctx)
- local issues = {}; check_expected("return", void_ty(), ctx.return_ty, issues); return single(Tr.TypeStmtResult(ctx, { Tr.StmtReturnVoid(Tr.StmtSurface) }, issues))
-            end)(node, ...)
-        elseif action == "return_value" then
-            return (function(self, ctx)
- local value = type_expr_expect(self.value, ctx, ctx.return_ty); local issues = {}; append_all(issues, value.issues); check_expected("return", ctx.return_ty, value.ty, issues); if type_contains_lease(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape return", value.ty) end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtReturnValue(Tr.StmtSurface, value.expr) }, issues))
-            end)(node, ...)
-        elseif action == "yield_void" then
-            return (function(self, ctx)
- local issues = {}; if ctx.yield ~= Tr.TypeYieldVoid then issues[#issues + 1] = Tr.TypeIssueUnexpectedYield("yield") end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtYieldVoid(Tr.StmtSurface) }, issues))
-            end)(node, ...)
-        elseif action == "yield_value" then
-            return (function(self, ctx)
- local expected = schema.classof(ctx.yield) == Tr.TypeYieldValue and ctx.yield.ty or nil; local value = type_expr_expect(self.value, ctx, expected); local issues = {}; append_all(issues, value.issues); if schema.classof(ctx.yield) == Tr.TypeYieldValue then check_expected("yield", ctx.yield.ty, value.ty, issues) else issues[#issues + 1] = Tr.TypeIssueUnexpectedYield("yield value") end; if type_contains_lease(value.ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape yield", value.ty) end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtYieldValue(Tr.StmtSurface, value.expr) }, issues))
-            end)(node, ...)
-        elseif action == "if" then
-            return (function(self, ctx)
-
-            local cond = type_expr_expect(self.cond, ctx, bool_ty()); local then_r = type_stmt_body(self.then_body, ctx); local else_r = type_stmt_body(self.else_body, ctx); local issues = {}
-            append_all(issues, cond.issues); append_all(issues, then_r.issues); append_all(issues, else_r.issues); check_expected("if cond", bool_ty(), cond.ty, issues)
-            return single(Tr.TypeStmtResult(ctx, { Tr.StmtIf(Tr.StmtSurface, cond.expr, then_r.stmts, else_r.stmts) }, issues))
-            end)(node, ...)
-        elseif action == "jump" then
-            return (function(self, ctx)
- local args = {}; local issues = {}; for i = 1, #self.args do local value = only(type_expr(self.args[i].value, ctx)); args[#args + 1] = Tr.JumpArg(self.args[i].name, value.expr); append_all(issues, value.issues) end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtJump(Tr.StmtSurface, self.target, args) }, issues))
-            end)(node, ...)
-        elseif action == "jump_cont" then
-            return (function(self, ctx)
- local args = {}; local issues = {}; for i = 1, #self.args do local value = only(type_expr(self.args[i].value, ctx)); args[#args + 1] = Tr.JumpArg(self.args[i].name, value.expr); append_all(issues, value.issues) end; return single(Tr.TypeStmtResult(ctx, { Tr.StmtJumpCont(Tr.StmtSurface, self.cont, args) }, issues))
-            end)(node, ...)
-        elseif action == "switch" then
-            return (function(self, ctx)
-
-            local value = only(type_expr(self.value, ctx))
-            local issues = {}; append_all(issues, value.issues)
-            local arms = {}
-            for i = 1, #self.arms do
-                local body = type_stmt_body(self.arms[i].body, ctx)
-                append_all(issues, body.issues)
-                arms[#arms + 1] = Tr.SwitchStmtArm(self.arms[i].raw_key, body.stmts)
-            end
-            local variant_arms = {}
-            local def = variant_def_for_value_ty(ctx, value.ty)
-            for i = 1, #(self.variant_arms or {}) do
-                local arm = self.variant_arms[i]
-                local variant = def and def.variants[arm.variant_name] or nil
-                if variant == nil then issues[#issues + 1] = Tr.TypeIssueUnknownVariant(def and def.type_name or "?", arm.variant_name) end
-                local arm_ctx, typed_binds = ctx, arm.binds
-                if variant ~= nil then local env, binds = bind_env_for_variant(ctx, "stmt_switch", variant, arm.binds); arm_ctx = ctx_with_env(ctx, env); typed_binds = {}; for j = 1, #binds do typed_binds[#typed_binds + 1] = Tr.VariantBind(binds[j].name, binds[j].ty) end end
-                local body = type_stmt_body(arm.body, arm_ctx)
-                append_all(issues, body.issues)
-                variant_arms[#variant_arms + 1] = Tr.SwitchVariantStmtArm(arm.variant_name, typed_binds, body.stmts)
-            end
-            local default = type_stmt_body(self.default_body, ctx)
-            append_all(issues, default.issues)
-            return single(Tr.TypeStmtResult(ctx, { Tr.StmtSwitch(Tr.StmtSurface, value.expr, arms, variant_arms, default.stmts) }, issues))
-            end)(node, ...)
-        elseif action == "control" then
-            return (function(self, ctx)
- local region = only(type_control_stmt_region(self.region, ctx)); return single(Tr.TypeStmtResult(ctx, { Tr.StmtControl(Tr.StmtSurface, region.region) }, region.issues))
-            end)(node, ...)
-        elseif action == "trap" then
-            return (function(self, ctx)
-
-            return single(Tr.TypeStmtResult(ctx, { Tr.StmtTrap(Tr.StmtSurface) }, {}))
-            end)(node, ...)
-        end
-        error("phase lalin_tree_typecheck_stmt: no handler for " .. tostring(action), 2)
-    end
-
-    type_stmt_body = function(stmts, ctx)
-        local current = ctx
-        local out = {}
-        local issues = {}
-        for i = 1, #stmts do
-            local r = only(type_stmt(stmts[i], current))
-            append_all(out, r.stmts)
-            append_all(issues, r.issues)
-            current = r.env
-        end
-        return Tr.TypeStmtResult(current, out, issues)
-    end
-
-    local function owned_issue(issues, op, ty)
-        issues[#issues + 1] = Tr.TypeIssueInvalidUnary(op, ty or void_ty())
-    end
-
-    local function binding_key(binding)
-        return binding and binding.id and (binding.id.text or binding.id.name or tostring(binding.id)) or nil
-    end
-
-    local function expr_ty(expr)
-        return expr and typed_expr_header_ty(expr.h) or void_ty()
-    end
-
-    local function place_ty(place)
-        return place and typed_place_header_ty(place.h) or void_ty()
-    end
-
-    local function state_new(bindings)
-        local state = { live = {}, reachable = true }
-        for i = 1, #(bindings or {}) do
-            local b = bindings[i].binding or bindings[i]
-            if is_owned_type(b.ty) then
-                local key = binding_key(b)
-                if key then state.live[key] = b end
-            end
-        end
-        return state
-    end
-
-    local function state_clone(state)
-        local live = {}
-        for k, v in pairs(state.live or {}) do live[k] = v end
-        return { live = live, reachable = state.reachable }
-    end
-
-    local function state_report_live(state, issues, op)
-        for _, b in pairs(state.live or {}) do owned_issue(issues, op, b.ty) end
-    end
-
-    local function state_same_live(a, b)
-        for k, _ in pairs(a.live or {}) do if not (b.live or {})[k] then return false end end
-        for k, _ in pairs(b.live or {}) do if not (a.live or {})[k] then return false end end
-        return true
-    end
-
-    local check_owned_expr
-    local check_owned_stmt_body
-
-    local function expr_binding(expr)
-        if not expr or schema.classof(expr) ~= Tr.ExprRef then return nil end
-        if schema.classof(expr.ref) == B.ValueRefBinding then return expr.ref.binding end
-        return nil
-    end
-
-    local function consume_binding(state, binding, issues)
-        local key = binding_key(binding)
-        if not key then return end
-        if state.live[key] == nil then owned_issue(issues, "owned use after move", binding.ty)
-        else state.live[key] = nil end
-    end
-
-    local function check_owned_exprs(exprs, state, issues, mode)
-        for i = 1, #(exprs or {}) do check_owned_expr(exprs[i], state, issues, mode or "observe") end
-    end
-
-    local function callable_param_tys(callee)
-        local ty = expr_ty(callee)
-        local cls = schema.classof(ty)
-        if cls == Ty.TFunc or cls == Ty.TClosure then return ty.params or {} end
-        return {}
-    end
-
-    local function is_owned_handle_repr_cast(expr)
-        if schema.classof(expr) ~= Tr.ExprMachineCast then return false end
-        local value_ty = expr_ty(expr.value)
-        if schema.classof(value_ty) ~= Ty.TOwned then return false end
-        local repr_ty = handle_repr_type(value_ty)
-        return repr_ty ~= nil and type_eq(repr_ty, expr.ty)
-    end
-
-    check_owned_expr = function(expr, state, issues, mode)
-        if not state.reachable or expr == nil then return end
-        mode = mode or "observe"
-        local cls = schema.classof(expr)
-        local ty = expr_ty(expr)
-        if cls == Tr.ExprRef then
-            local binding = expr_binding(expr)
-            if binding and is_owned_type(binding.ty) then
-                if mode == "consume" then consume_binding(state, binding, issues)
-                else owned_issue(issues, "owned observed without transfer", binding.ty) end
-            end
-            return
-        elseif cls == Tr.ExprCall then
-            check_owned_expr(expr.callee, state, issues, "observe")
-            local params = callable_param_tys(expr.callee)
-            for i = 1, #(expr.args or {}) do
-                local pty = params[i]
-                if pty ~= nil and is_owned_type(pty) then
-                    check_owned_expr(expr.args[i], state, issues, "consume")
-                else
-                    if type_contains_owned(expr_ty(expr.args[i])) then owned_issue(issues, "owned passed to non-owned parameter", expr_ty(expr.args[i])) end
-                    check_owned_expr(expr.args[i], state, issues, "observe")
-                end
-            end
-            if is_owned_type(ty) and mode ~= "consume" then owned_issue(issues, "owned dropped", ty) end
-            return
-        elseif cls == Tr.ExprIf or cls == Tr.ExprSelect then
-            check_owned_expr(expr.cond, state, issues, "observe")
-            local a, b = state_clone(state), state_clone(state)
-            check_owned_expr(expr.then_expr, a, issues, mode)
-            check_owned_expr(expr.else_expr, b, issues, mode)
-            if a.reachable and b.reachable and not state_same_live(a, b) then owned_issue(issues, "owned branch mismatch", ty) end
-            if a.reachable and not b.reachable then state.live = a.live
-            elseif b.reachable and not a.reachable then state.live = b.live
-            elseif a.reachable and b.reachable then state.live = a.live
-            else state.reachable = false; state.live = {} end
-            return
-        elseif cls == Tr.ExprBlock then
-            local s = check_owned_stmt_body(expr.stmts or {}, state, issues, nil, nil)
-            check_owned_expr(expr.result, s, issues, mode)
-            return
-        elseif cls == Tr.ExprAgg or cls == Tr.ExprArray or cls == Tr.ExprCtor then
-            if type_contains_owned(ty) then owned_issue(issues, "owned captured in aggregate", ty) end
-            if cls == Tr.ExprAgg then
-                for i = 1, #(expr.fields or {}) do
-                    if type_contains_owned(expr_ty(expr.fields[i].value)) then owned_issue(issues, "owned captured in aggregate", expr_ty(expr.fields[i].value)) end
-                    check_owned_expr(expr.fields[i].value, state, issues, "observe")
-                end
-            else
-                check_owned_exprs(expr.elems or expr.args, state, issues, "observe")
-            end
-            return
-        elseif cls == Tr.ExprControl then
-            for i = 1, #(expr.region.entry.params or {}) do
-                local p = expr.region.entry.params[i]
-                if is_owned_type(p.ty) then check_owned_expr(p.init, state, issues, "consume")
-                else check_owned_expr(p.init, state, issues, "observe") end
-            end
-            if is_owned_type(ty) and mode ~= "consume" then owned_issue(issues, "owned dropped", ty) end
-            return
-        elseif cls == Tr.ExprDot or cls == Tr.ExprField then check_owned_expr(expr.base, state, issues, "observe")
-        elseif cls == Tr.ExprMachineCast and is_owned_handle_repr_cast(expr) then return
-        elseif cls == Tr.ExprUnary or cls == Tr.ExprCast or cls == Tr.ExprMachineCast or cls == Tr.ExprDeref or cls == Tr.ExprLen or cls == Tr.ExprIsNull then check_owned_expr(expr.value, state, issues, "observe")
-        elseif cls == Tr.ExprBinary or cls == Tr.ExprCompare or cls == Tr.ExprLogic then check_owned_expr(expr.lhs, state, issues, "observe"); check_owned_expr(expr.rhs, state, issues, "observe")
-        elseif cls == Tr.ExprIntrinsic then check_owned_exprs(expr.args, state, issues, "observe")
-        elseif cls == Tr.ExprIndex then check_owned_expr(expr.index, state, issues, "observe")
-        elseif cls == Tr.ExprView then
-            local v = expr.view
-            if v then check_owned_expr(v.data, state, issues, "observe"); check_owned_expr(v.len, state, issues, "observe"); check_owned_expr(v.stride, state, issues, "observe") end
-        elseif cls == Tr.ExprLoad or cls == Tr.ExprAtomicLoad then check_owned_expr(expr.addr, state, issues, "observe")
-        elseif cls == Tr.ExprAtomicRmw then check_owned_expr(expr.addr, state, issues, "observe"); check_owned_expr(expr.value, state, issues, "observe")
-        elseif cls == Tr.ExprAtomicCas then check_owned_expr(expr.addr, state, issues, "observe"); check_owned_expr(expr.expected, state, issues, "observe"); check_owned_expr(expr.replacement, state, issues, "observe")
-        end
-        if is_owned_type(ty) and mode ~= "consume" then owned_issue(issues, "owned dropped", ty) end
-    end
-
-    local function target_params(params)
-        local by_name = {}
-        for i = 1, #(params or {}) do by_name[params[i].name] = params[i].ty end
-        return by_name
-    end
-
-    local function check_jump_args(args, target, state, issues, allow_discharge)
-        for i = 1, #(args or {}) do
-            local arg = args[i]
-            local pty = target and target[arg.name]
-            if pty ~= nil and is_owned_type(pty) then
-                check_owned_expr(arg.value, state, issues, "consume")
-            else
-                if type_contains_owned(expr_ty(arg.value)) then owned_issue(issues, "owned passed to non-owned parameter", expr_ty(arg.value)) end
-                check_owned_expr(arg.value, state, issues, "observe")
-            end
-        end
-        if not allow_discharge then state_report_live(state, issues, "owned dropped") end
-        state.live = {}
-        state.reachable = false
-    end
-
-    local function merge_branch_states(base, branches, issues, ty)
-        local merged, any = nil, false
-        for i = 1, #branches do
-            local s = branches[i]
-            if s.reachable then
-                if merged == nil then merged = s
-                elseif not state_same_live(merged, s) then owned_issue(issues, "owned branch mismatch", ty or void_ty()) end
-                any = true
-            end
-        end
-        if any and merged then base.live = merged.live; base.reachable = true else base.live = {}; base.reachable = false end
-    end
-
-    local function variant_bindings(binds)
-        local out = {}
-        for i = 1, #(binds or {}) do out[#out + 1] = B.Binding(C.Id("variant:" .. tostring(binds[i].name)), binds[i].name, binds[i].ty, B.BindingClassLocalValue) end
-        return out
-    end
-
-    local function check_owned_stmt(stmt, state, issues, block_targets, cont_targets)
-        if not state.reachable then return state end
-        local cls = schema.classof(stmt)
-        if cls == Tr.StmtLet then
-            if is_owned_type(stmt.binding.ty) then
-                check_owned_expr(stmt.init, state, issues, "consume")
-                state.live[binding_key(stmt.binding)] = stmt.binding
-            else
-                if type_contains_owned(expr_ty(stmt.init)) then owned_issue(issues, "owned captured in aggregate", expr_ty(stmt.init)) end
-                check_owned_expr(stmt.init, state, issues, "observe")
-            end
-        elseif cls == Tr.StmtVar then
-            if type_contains_owned(stmt.binding.ty) then owned_issue(issues, "owned var cell unsupported", stmt.binding.ty) end
-            check_owned_expr(stmt.init, state, issues, "observe")
-        elseif cls == Tr.StmtSet then
-            if type_contains_owned(place_ty(stmt.place)) or type_contains_owned(expr_ty(stmt.value)) then owned_issue(issues, "owned stored in durable field", expr_ty(stmt.value)) end
-            check_owned_expr(stmt.value, state, issues, "observe")
-        elseif cls == Tr.StmtAtomicStore then
-            check_owned_expr(stmt.addr, state, issues, "observe"); check_owned_expr(stmt.value, state, issues, "observe")
-        elseif cls == Tr.StmtExpr then
-            check_owned_expr(stmt.expr, state, issues, "observe")
-        elseif cls == Tr.StmtAssert then
-            check_owned_expr(stmt.cond, state, issues, "observe")
-        elseif cls == Tr.StmtIf then
-            check_owned_expr(stmt.cond, state, issues, "observe")
-            local a = check_owned_stmt_body(stmt.then_body or {}, state_clone(state), issues, block_targets, cont_targets)
-            local b = check_owned_stmt_body(stmt.else_body or {}, state_clone(state), issues, block_targets, cont_targets)
-            merge_branch_states(state, { a, b }, issues, void_ty())
-        elseif cls == Tr.StmtSwitch then
-            check_owned_expr(stmt.value, state, issues, "observe")
-            local branches = {}
-            for i = 1, #(stmt.arms or {}) do branches[#branches + 1] = check_owned_stmt_body(stmt.arms[i].body or {}, state_clone(state), issues, block_targets, cont_targets) end
-            for i = 1, #(stmt.variant_arms or {}) do
-                local s = state_clone(state)
-                for _, b in ipairs(variant_bindings(stmt.variant_arms[i].binds)) do if is_owned_type(b.ty) then s.live[binding_key(b)] = b end end
-                branches[#branches + 1] = check_owned_stmt_body(stmt.variant_arms[i].body or {}, s, issues, block_targets, cont_targets)
-            end
-            branches[#branches + 1] = check_owned_stmt_body(stmt.default_body or {}, state_clone(state), issues, block_targets, cont_targets)
-            merge_branch_states(state, branches, issues, void_ty())
-        elseif cls == Tr.StmtJump then
-            check_jump_args(stmt.args, block_targets and block_targets[stmt.target.name], state, issues, cont_targets and cont_targets[stmt.target.name] == true)
-        elseif cls == Tr.StmtJumpCont then
-            check_jump_args(stmt.args, target_params(stmt.cont.params), state, issues, true)
-        elseif cls == Tr.StmtYieldVoid or cls == Tr.StmtReturnVoid or cls == Tr.StmtTrap then
-            state_report_live(state, issues, "owned dropped")
-            state.live = {}
-            state.reachable = false
-        elseif cls == Tr.StmtYieldValue or cls == Tr.StmtReturnValue then
-            if is_owned_type(expr_ty(stmt.value)) then check_owned_expr(stmt.value, state, issues, "consume") else check_owned_expr(stmt.value, state, issues, "observe") end
-            state_report_live(state, issues, "owned dropped")
-            state.live = {}
-            state.reachable = false
-        elseif cls == Tr.StmtControl then
-            for i = 1, #(stmt.region.entry.params or {}) do
-                local p = stmt.region.entry.params[i]
-                if is_owned_type(p.ty) then check_owned_expr(p.init, state, issues, "consume")
-                else check_owned_expr(p.init, state, issues, "observe") end
-            end
-            -- Nested control ownership is checked on the typed region.
-        end
-        return state
-    end
-
-    check_owned_stmt_body = function(stmts, state, issues, block_targets, cont_targets)
-        for i = 1, #(stmts or {}) do check_owned_stmt(stmts[i], state, issues, block_targets, cont_targets) end
-        return state
-    end
-
-    local function check_owned_function(func_name, params, body, issues)
-        local bindings = {}
-        for i = 1, #(params or {}) do bindings[#bindings + 1] = B.Binding(C.Id("arg:" .. tostring(func_name) .. ":" .. tostring(params[i].name)), params[i].name, params[i].ty, B.BindingClassArg(i - 1)) end
-        local state = check_owned_stmt_body(body or {}, state_new(bindings), issues, nil, nil)
-        if state.reachable then state_report_live(state, issues, "owned dropped") end
-    end
-
-    local function block_param_target(params)
-        local map = {}
-        for i = 1, #(params or {}) do map[params[i].name] = params[i].ty end
-        return map
-    end
-
-    local function check_owned_control_region(region, issues, entry_extra_bindings, cont_targets)
-        local block_targets = {}
-        block_targets[region.entry.label.name] = block_param_target(region.entry.params)
-        for i = 1, #(region.blocks or {}) do block_targets[region.blocks[i].label.name] = block_param_target(region.blocks[i].params) end
-        local function check_block(block, is_entry)
-            local bindings = block_param_bindings(region.region_id, block.label, block.params, is_entry)
-            if is_entry then append_all(bindings, entry_extra_bindings or {}) end
-            local state = check_owned_stmt_body(block.body or {}, state_new(bindings), issues, block_targets, cont_targets)
-            if state.reachable then state_report_live(state, issues, "owned dropped") end
-        end
-        check_block(region.entry, true)
-        for i = 1, #(region.blocks or {}) do check_block(region.blocks[i], false) end
-    end
-
-    local function type_entry_block(region_id, block, ctx, yield_mode)
-        local entry_params = {}
-        local issues = {}
-        local params = {}
-        for i = 1, #block.params do
-            local p = schema.with(block.params[i], { ty = canonical_type(ctx.env, block.params[i].ty) })
-            local init = type_expr_expect(block.params[i].init, ctx, p.ty)
-            params[i] = schema.with(p, { init = init.expr })
-            append_all(issues, init.issues)
-            if not arg_matches_param(ctx.env, p.ty, init.ty) then check_expected("block param " .. block.params[i].name, p.ty, init.ty, issues) end
-        end
-        entry_params = params
-        local block_env = env_with_block_params(ctx.env, region_id, block.label, entry_params, true)
-        local body = type_stmt_body(block.body, ctx_with_yield(ctx_with_env(ctx, block_env), yield_mode))
-        append_all(issues, body.issues)
-        return Tr.EntryControlBlock(block.label, entry_params, body.stmts), issues
-    end
-
-    local function type_control_block(region_id, block, ctx, yield_mode)
-        local params = {}
-        for i = 1, #block.params do params[i] = schema.with(block.params[i], { ty = canonical_type(ctx.env, block.params[i].ty) }) end
-        local block_env = env_with_block_params(ctx.env, region_id, block.label, params, false)
-        local body = type_stmt_body(block.body, ctx_with_yield(ctx_with_env(ctx, block_env), yield_mode))
-        return Tr.ControlBlock(block.label, params, body.stmts), body.issues
-    end
-
-    local function validate_control(region)
-        local issues = {}
-        local decision = control_api.decide(region)
-        if schema.classof(decision) == Tr.ControlDecisionIrreducible then issues[#issues + 1] = Tr.TypeIssueInvalidControl(region.region_id, decision.reject) end
-        return issues
-    end
-
-    local function body_has_region_use(stmts)
-        for i = 1, #(stmts or {}) do
-            local stmt = stmts[i]
-            local cls = schema.classof(stmt)
-            if cls == Tr.StmtIf and (body_has_region_use(stmt.then_body) or body_has_region_use(stmt.else_body)) then return true end
-            if cls == Tr.StmtSwitch then
-                for j = 1, #(stmt.arms or {}) do if body_has_region_use(stmt.arms[j].body) then return true end end
-                for j = 1, #(stmt.variant_arms or {}) do if body_has_region_use(stmt.variant_arms[j].body) then return true end end
-                if body_has_region_use(stmt.default_body) then return true end
-            end
-            if cls == Tr.StmtControl then
-                if body_has_region_use(stmt.region.entry.body) then return true end
-                for j = 1, #(stmt.region.blocks or {}) do if body_has_region_use(stmt.region.blocks[j].body) then return true end end
-            end
-        end
-        return false
-    end
-
-    local function region_has_region_use(region)
-        if body_has_region_use(region.entry.body) then return true end
-        for i = 1, #(region.blocks or {}) do if body_has_region_use(region.blocks[i].body) then return true end end
-        return false
+        return node:typecheck_tree_stmt(...)
     end
 
     function type_control_stmt_region(node, ...)
-        local action = select_typecheck("control_stmt_region", "select_control_stmt_region_typecheck", node)
-        if action == "stmt_region" then
-            return (function(self, ctx)
-
-            local entry, issues = type_entry_block(self.region_id, self.entry, ctx, Tr.TypeYieldVoid)
-            local blocks = {}
-            for i = 1, #self.blocks do local b, bi = type_control_block(self.region_id, self.blocks[i], ctx, Tr.TypeYieldVoid); blocks[#blocks + 1] = b; append_all(issues, bi) end
-            local region = Tr.ControlStmtRegion(self.region_id, entry, blocks); if not region_has_region_use(region) then append_all(issues, validate_control(region)) end
-            check_owned_control_region(region, issues)
-            return single(Tr.TypeControlStmtRegionResult(region, issues))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_typecheck_control_stmt_region: no handler for " .. tostring(action), 2)
-        end
+        return node:typecheck_tree_control_stmt_region(...)
     end
 
     function type_control_expr_region(node, ...)
-        local action = select_typecheck("control_expr_region", "select_control_expr_region_typecheck", node)
-        if action == "expr_region" then
-            return (function(self, ctx)
-
-            local result_ty = canonical_type(ctx.env, self.result_ty)
-            local entry, issues = type_entry_block(self.region_id, self.entry, ctx, Tr.TypeYieldValue(result_ty))
-            local blocks = {}
-            for i = 1, #self.blocks do local b, bi = type_control_block(self.region_id, self.blocks[i], ctx, Tr.TypeYieldValue(result_ty)); blocks[#blocks + 1] = b; append_all(issues, bi) end
-            local region = Tr.ControlExprRegion(self.region_id, result_ty, entry, blocks); if not region_has_region_use(region) then append_all(issues, validate_control(region)) end
-            check_owned_control_region(region, issues)
-            return single(Tr.TypeControlExprRegionResult(region, issues))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_typecheck_control_expr_region: no handler for " .. tostring(action), 2)
-        end
-    end
-
-    local function env_with_params(module_env, name, params)
-        local env = module_env
-        for i = 1, #params do
-            local binding = B.Binding(C.Id("arg:" .. name .. ":" .. params[i].name), params[i].name, params[i].ty, B.BindingClassArg(i - 1))
-            env = env_add_value(env, B.ValueEntry(params[i].name, binding))
-        end
-        return env
-    end
-
-    local function type_contract(contract, ctx)
-        local cls = schema.classof(contract)
-        local issues = {}
-        if cls == Tr.ContractBounds then
-            local base = only(type_expr(contract.base, ctx)); local len = type_expr_expect(contract.len, ctx, Ty.TScalar(C.ScalarIndex))
-            append_all(issues, base.issues); append_all(issues, len.issues)
-            local base_access = lease_access_base(base.ty)
-            if schema.classof(base_access) ~= Ty.TPtr and schema.classof(base_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("bounds base", Ty.TScalar(C.ScalarRawPtr), base.ty) end
-            if not is_integer_scalar(len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("bounds len", Ty.TScalar(C.ScalarIndex), len.ty) end
-            return Tr.ContractBounds(base.expr, len.expr), issues
-        elseif cls == Tr.ContractWindowBounds then
-            local base = only(type_expr(contract.base, ctx)); local base_len = type_expr_expect(contract.base_len, ctx, Ty.TScalar(C.ScalarIndex)); local start = type_expr_expect(contract.start, ctx, Ty.TScalar(C.ScalarIndex)); local len = type_expr_expect(contract.len, ctx, Ty.TScalar(C.ScalarIndex))
-            append_all(issues, base.issues); append_all(issues, base_len.issues); append_all(issues, start.issues); append_all(issues, len.issues)
-            local base_access = lease_access_base(base.ty)
-            if schema.classof(base_access) ~= Ty.TPtr and schema.classof(base_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("window_bounds base", Ty.TScalar(C.ScalarRawPtr), base.ty) end
-            if not is_integer_scalar(base_len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("window_bounds base_len", Ty.TScalar(C.ScalarIndex), base_len.ty) end
-            if not is_integer_scalar(start.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("window_bounds start", Ty.TScalar(C.ScalarIndex), start.ty) end
-            if not is_integer_scalar(len.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("window_bounds len", Ty.TScalar(C.ScalarIndex), len.ty) end
-            return Tr.ContractWindowBounds(base.expr, base_len.expr, start.expr, len.expr), issues
-        elseif cls == Tr.ContractDisjoint then
-            local a = only(type_expr(contract.a, ctx)); local b = only(type_expr(contract.b, ctx))
-            append_all(issues, a.issues); append_all(issues, b.issues)
-            local a_access, b_access = lease_access_base(a.ty), lease_access_base(b.ty)
-            if schema.classof(a_access) ~= Ty.TPtr and schema.classof(a_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("disjoint lhs", Ty.TScalar(C.ScalarRawPtr), a.ty) end
-            if schema.classof(b_access) ~= Ty.TPtr and schema.classof(b_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("disjoint rhs", Ty.TScalar(C.ScalarRawPtr), b.ty) end
-            return Tr.ContractDisjoint(a.expr, b.expr), issues
-        elseif cls == Tr.ContractSameLen then
-            local a = only(type_expr(contract.a, ctx)); local b = only(type_expr(contract.b, ctx))
-            append_all(issues, a.issues); append_all(issues, b.issues)
-            local a_access, b_access = lease_access_base(a.ty), lease_access_base(b.ty)
-            if schema.classof(a_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("same_len lhs", Ty.TView(void_ty()), a.ty) end
-            if schema.classof(b_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("same_len rhs", Ty.TView(void_ty()), b.ty) end
-            return Tr.ContractSameLen(a.expr, b.expr), issues
-        elseif cls == Tr.ContractSoAComponent then
-            local base = only(type_expr(contract.base, ctx))
-            append_all(issues, base.issues)
-            local base_access = lease_access_base(base.ty)
-            if schema.classof(base_access) ~= Ty.TPtr and schema.classof(base_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("soa_component base", Ty.TScalar(C.ScalarRawPtr), base.ty) end
-            local record_ty = canonical_type(ctx.env, contract.record_ty)
-            if field_layout_for(ctx.env, record_ty, contract.field_name) == nil then issues[#issues + 1] = Tr.TypeIssueUnresolvedValue(contract.field_name) end
-            return Tr.ContractSoAComponent(base.expr, record_ty, contract.field_name, contract.component_index), issues
-        elseif cls == Tr.ContractNoAlias or cls == Tr.ContractReadonly or cls == Tr.ContractWriteonly or cls == Tr.ContractInvalidate or cls == Tr.ContractPreserve then
-            local base = only(type_expr(contract.base, ctx)); append_all(issues, base.issues)
-            local base_access = lease_access_base(base.ty)
-            if schema.classof(base_access) ~= Ty.TPtr and schema.classof(base_access) ~= Ty.TView then issues[#issues + 1] = Tr.TypeIssueExpected("memory contract base", Ty.TScalar(C.ScalarRawPtr), base.ty) end
-            if cls == Tr.ContractNoAlias then return Tr.ContractNoAlias(base.expr), issues end
-            if cls == Tr.ContractReadonly then return Tr.ContractReadonly(base.expr), issues end
-            if cls == Tr.ContractWriteonly then return Tr.ContractWriteonly(base.expr), issues end
-            if cls == Tr.ContractInvalidate then return Tr.ContractInvalidate(base.expr), issues end
-            return Tr.ContractPreserve(base.expr), issues
-        end
-        return contract, issues
+        return node:typecheck_tree_control_expr_region(...)
     end
 
     local function type_contracts(contracts, ctx)
@@ -2134,8 +711,8 @@ local function bind_context(T)
         if type_contains_lease(func.result) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape result", func.result) end
     end
 
-    local function check_region_signature(region, module_env, issues)
-        local ctx = Tr.TypeCheckEnv(module_env, Ty.TScalar(C.ScalarVoid), Tr.TypeYieldNone)
+    local function check_region_signature(region, module_env, facts, issues)
+        local ctx = Tr.TypeCheckEnv(module_env, facts, Ty.TScalar(C.ScalarVoid), Tr.TypeYieldNone)
         for i = 1, #(region.params or {}) do
             check_type_policy(region.params[i].ty, issues, "region param " .. tostring(region.params[i].name))
         end
@@ -2175,18 +752,18 @@ local function bind_context(T)
         return schema.with(region, { params = params, conts = conts, entry = entry, blocks = blocks })
     end
 
-    local function type_plain_func(self, module_env)
+    local function type_plain_func(self, module_env, facts)
         local func = canonical_func(self, module_env)
-        local ctx = Tr.TypeCheckEnv(env_with_params(module_env, func.name, func.params), func.result, Tr.TypeYieldNone)
+        local ctx = Tr.TypeCheckEnv(env_with_params(module_env, func.name, func.params), facts, func.result, Tr.TypeYieldNone)
         local body = type_stmt_body(func.body, ctx)
         local issues = {}; check_func_types(func, issues); append_all(issues, body.issues)
         check_owned_function(func.name, func.params, body.stmts, issues)
         return Tr.TypeFuncResult(schema.with(func, { body = body.stmts }), issues)
     end
 
-    local function type_contract_func(self, module_env)
+    local function type_contract_func(self, module_env, facts)
         local func = canonical_func(self, module_env)
-        local ctx = Tr.TypeCheckEnv(env_with_params(module_env, func.name, func.params), func.result, Tr.TypeYieldNone)
+        local ctx = Tr.TypeCheckEnv(env_with_params(module_env, func.name, func.params), facts, func.result, Tr.TypeYieldNone)
         local contracts, issues = type_contracts(func.contracts, ctx)
         check_func_types(func, issues)
         local body = type_stmt_body(func.body, ctx)
@@ -2195,139 +772,162 @@ local function bind_context(T)
         return Tr.TypeFuncResult(schema.with(func, { contracts = contracts, body = body.stmts }), issues)
     end
 
+    function Tr.FuncLocal:typecheck_tree_func(module_env, facts)
+        return type_plain_func(self, module_env, facts)
+    end
+
+    function Tr.FuncExport:typecheck_tree_func(module_env, facts)
+        return type_plain_func(self, module_env, facts)
+    end
+
+    function Tr.FuncLocalContract:typecheck_tree_func(module_env, facts)
+        return type_contract_func(self, module_env, facts)
+    end
+
+    function Tr.FuncExportContract:typecheck_tree_func(module_env, facts)
+        return type_contract_func(self, module_env, facts)
+    end
+
     function type_func(node, ...)
-        local action = select_typecheck("func", "select_func_typecheck", node)
-        if action == "local" then
-            return (function(self, module_env)
- return single(type_plain_func(self, module_env))
-            end)(node, ...)
-        elseif action == "export" then
-            return (function(self, module_env)
- return single(type_plain_func(self, module_env))
-            end)(node, ...)
-        elseif action == "local_contract" then
-            return (function(self, module_env)
- return single(type_contract_func(self, module_env))
-            end)(node, ...)
-        elseif action == "export_contract" then
-            return (function(self, module_env)
- return single(type_contract_func(self, module_env))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_typecheck_func: no handler for " .. tostring(action), 2)
+        return node:typecheck_tree_func(...)
+    end
+
+    function Tr.ItemFunc:typecheck_tree_item(module_env, facts)
+        local r = type_func(self.func, module_env, facts)
+        return Tr.TypeItemResult({ Tr.ItemFunc(r.func) }, r.issues)
+    end
+
+    function Tr.ItemConst:typecheck_tree_item(module_env, facts)
+        local ty = canonical_type(module_env, self.c.ty)
+        local type_state = Tr.TypeCheckEnv(module_env, facts, ty, Tr.TypeYieldNone)
+        local value = type_expr(self.c.value, type_state)
+        local issues = {}
+        check_type_policy(ty, issues, "const")
+        append_all(issues, value.issues)
+        check_expected("const", ty, value.ty, issues)
+        if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape const", ty) end
+        if type_contains_owned(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", ty) end
+        return Tr.TypeItemResult({ Tr.ItemConst(schema.with(self.c, { ty = ty, value = value.expr })) }, issues)
+    end
+
+    function Tr.ItemStatic:typecheck_tree_item(module_env, facts)
+        local ty = canonical_type(module_env, self.s.ty)
+        local type_state = Tr.TypeCheckEnv(module_env, facts, ty, Tr.TypeYieldNone)
+        local value = type_expr(self.s.value, type_state)
+        local issues = {}
+        check_type_policy(ty, issues, "static")
+        append_all(issues, value.issues)
+        check_expected("static", ty, value.ty, issues)
+        if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape static", ty) end
+        if type_contains_owned(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", ty) end
+        return Tr.TypeItemResult({ Tr.ItemStatic(schema.with(self.s, { ty = ty, value = value.expr })) }, issues)
+    end
+
+    function Tr.ItemExtern:typecheck_tree_item()
+        local issues = {}
+        check_func_types(self.func, issues)
+        return Tr.TypeItemResult({ self }, issues)
+    end
+
+    function Tr.ItemImport:typecheck_tree_item()
+        return Tr.TypeItemResult({ self }, {})
+    end
+
+    function Tr.TypeDecl:typecheck_tree_item_issues()
+        return {}
+    end
+
+    function Tr.TypeDeclStruct:typecheck_tree_item_issues()
+        local issues = {}
+        for i = 1, #self.fields do
+            check_type_policy(self.fields[i].ty, issues, "field " .. self.fields[i].field_name)
+            if type_contains_lease(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape field", self.fields[i].ty) end
+            if type_contains_owned(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", self.fields[i].ty) end
         end
+        return issues
+    end
+
+    function Tr.TypeDeclUnion:typecheck_tree_item_issues()
+        local issues = {}
+        for i = 1, #self.fields do
+            check_type_policy(self.fields[i].ty, issues, "field " .. self.fields[i].field_name)
+            if type_contains_lease(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape field", self.fields[i].ty) end
+            if type_contains_owned(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", self.fields[i].ty) end
+        end
+        return issues
+    end
+
+    function Tr.TypeDeclEnumSugar:typecheck_tree_item_issues()
+        local issues = {}
+        local seen = {}
+        for i = 1, #self.variants do
+            local name = variant_name_text(self.variants[i])
+            if seen[name] then issues[#issues + 1] = Tr.TypeIssueDuplicateVariant(self.name, name) end
+            seen[name] = true
+        end
+        return issues
+    end
+
+    function Tr.TypeDeclTaggedUnionSugar:typecheck_tree_item_issues()
+        local issues = {}
+        local seen = {}
+        local is_region_call_result = type(self.name) == "string" and self.name:match("^__lalin_region_call_") ~= nil
+        for i = 1, #self.variants do
+            local v = self.variants[i]
+            local name = v.name
+            check_type_policy(v.payload, issues, "variant " .. name)
+            if type_contains_lease(v.payload) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and "region call lease payload" or "lease escape variant field", v.payload) end
+            if type_contains_owned(v.payload) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and "owned region call payload" or "owned stored in durable field", v.payload) end
+            for j = 1, #(v.fields or {}) do
+                check_type_policy(v.fields[j].ty, issues, "variant field " .. v.fields[j].field_name)
+                if type_contains_lease(v.fields[j].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and "region call lease payload" or "lease escape variant field", v.fields[j].ty) end
+                if type_contains_owned(v.fields[j].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and "owned region call payload" or "owned stored in durable field", v.fields[j].ty) end
+            end
+            if seen[name] then issues[#issues + 1] = Tr.TypeIssueDuplicateVariant(self.name, name) end
+            seen[name] = true
+        end
+        return issues
+    end
+
+    function Tr.TypeDeclHandle:typecheck_tree_item_issues()
+        local issues = {}
+        self.repr:typecheck_tree_check_handle_decl(self.name, issues)
+        return issues
+    end
+
+    function Tr.ItemType:typecheck_tree_item()
+        local issues = self.t:typecheck_tree_item_issues()
+        return Tr.TypeItemResult({ self }, issues)
+    end
+
+    function Tr.ItemRegion:typecheck_tree_item(module_env, facts)
+        local region = canonical_region(module_env, self.region)
+        local issues = {}
+        check_region_signature(region, module_env, facts, issues)
+        local type_state = Tr.TypeCheckEnv(env_with_params(module_env, "region:" .. tostring(region.name), region.params), facts, Ty.TScalar(C.ScalarVoid), Tr.TypeYieldNone)
+        local region_id = "region:" .. tostring(region.name)
+        local typed_entry, entry_issues = type_entry_block(region_id, region.entry, type_state, Tr.TypeYieldVoid)
+        append_all(issues, entry_issues)
+        local typed_blocks = {}
+        for i = 1, #(region.blocks or {}) do
+            local b, bi = type_control_block(region_id, region.blocks[i], type_state, Tr.TypeYieldVoid)
+            typed_blocks[#typed_blocks + 1] = b
+            append_all(issues, bi)
+        end
+        local runtime_bindings = {}
+        for i = 1, #region.params do
+            local p = region.params[i]
+            local b = B.Binding(C.Id("region-param:" .. region.name .. ":" .. p.name), p.name, p.ty, B.BindingClassArg(i - 1))
+            runtime_bindings[#runtime_bindings + 1] = B.ValueEntry(p.name, b)
+        end
+        local cont_targets = {}
+        for i = 1, #(region.conts or {}) do cont_targets[region.conts[i].name] = true end
+        check_owned_control_region(Tr.ControlStmtRegion(region_id, typed_entry, typed_blocks), issues, runtime_bindings, cont_targets)
+        return Tr.TypeItemResult({}, issues)
     end
 
     function type_item(node, ...)
-        local action = select_typecheck("item", "select_item_typecheck", node)
-        if action == "func" then
-            return (function(self, module_env)
- local r = only(type_func(self.func, module_env)); return single(Tr.TypeItemResult({ Tr.ItemFunc(r.func) }, r.issues))
-            end)(node, ...)
-        elseif action == "const" then
-            return (function(self, module_env)
-
-            local ty = canonical_type(module_env, self.c.ty)
-            local ctx = Tr.TypeCheckEnv(module_env, ty, Tr.TypeYieldNone)
-            local value = only(type_expr(self.c.value, ctx))
-            local issues = {}; check_type_policy(ty, issues, "const"); append_all(issues, value.issues); check_expected("const", ty, value.ty, issues)
-            if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape const", ty) end
-            if type_contains_owned(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", ty) end
-            return single(Tr.TypeItemResult({ Tr.ItemConst(schema.with(self.c, { ty = ty, value = value.expr })) }, issues))
-            end)(node, ...)
-        elseif action == "static" then
-            return (function(self, module_env)
-
-            local ty = canonical_type(module_env, self.s.ty)
-            local ctx = Tr.TypeCheckEnv(module_env, ty, Tr.TypeYieldNone)
-            local value = only(type_expr(self.s.value, ctx))
-            local issues = {}; check_type_policy(ty, issues, "static"); append_all(issues, value.issues); check_expected("static", ty, value.ty, issues)
-            if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape static", ty) end
-            if type_contains_owned(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", ty) end
-            return single(Tr.TypeItemResult({ Tr.ItemStatic(schema.with(self.s, { ty = ty, value = value.expr })) }, issues))
-            end)(node, ...)
-        elseif action == "extern" then
-            return (function(self)
- local issues = {}; check_func_types(self.func, issues); return single(Tr.TypeItemResult({ self }, issues))
-            end)(node, ...)
-        elseif action == "import" then
-            return (function(self)
- return single(Tr.TypeItemResult({ self }, {}))
-            end)(node, ...)
-        elseif action == "type" then
-            return (function(self)
-
-            local issues = {}
-            local cls = schema.classof(self.t)
-            if cls == Tr.TypeDeclStruct or cls == Tr.TypeDeclUnion then
-                for i = 1, #self.t.fields do check_type_policy(self.t.fields[i].ty, issues, "field " .. self.t.fields[i].field_name); if type_contains_lease(self.t.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape field", self.t.fields[i].ty) end; if type_contains_owned(self.t.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", self.t.fields[i].ty) end end
-            elseif cls == Tr.TypeDeclEnumSugar then
-                local seen = {}
-                for i = 1, #self.t.variants do
-                    local name = variant_name_text(self.t.variants[i])
-                    if seen[name] then issues[#issues + 1] = Tr.TypeIssueDuplicateVariant(self.t.name, name) end
-                    seen[name] = true
-                end
-            elseif cls == Tr.TypeDeclTaggedUnionSugar then
-                local seen = {}
-                local is_region_call_result = type(self.t.name) == "string" and self.t.name:match("^__lalin_region_call_") ~= nil
-                for i = 1, #self.t.variants do
-                    local v = self.t.variants[i]
-                    local name = v.name
-                    check_type_policy(v.payload, issues, "variant " .. name)
-                    if type_contains_lease(v.payload) then
-                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and "region call lease payload" or "lease escape variant field", v.payload)
-                    end
-                    if type_contains_owned(v.payload) then
-                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and "owned region call payload" or "owned stored in durable field", v.payload)
-                    end
-                    for j = 1, #(v.fields or {}) do
-                        check_type_policy(v.fields[j].ty, issues, "variant field " .. v.fields[j].field_name)
-                        if type_contains_lease(v.fields[j].ty) then
-                            issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and "region call lease payload" or "lease escape variant field", v.fields[j].ty)
-                        end
-                        if type_contains_owned(v.fields[j].ty) then
-                            issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and "owned region call payload" or "owned stored in durable field", v.fields[j].ty)
-                        end
-                    end
-                    if seen[name] then issues[#issues + 1] = Tr.TypeIssueDuplicateVariant(self.t.name, name) end
-                    seen[name] = true
-                end
-            elseif cls == Tr.TypeDeclHandle then
-                if schema.classof(self.t.repr) ~= Ty.HandleReprScalar then issues[#issues + 1] = Tr.TypeIssueExpected("handle repr", Ty.THandle(Ty.TypeRefPath(C.Path({ C.Name(self.t.name) })), Ty.HandleReprScalar(C.ScalarU32)), Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(self.t.name) })))) end
-            end
-            return single(Tr.TypeItemResult({ self }, issues))
-            end)(node, ...)
-        elseif action == "region" then
-            return (function(self, module_env)
-
-            local region = canonical_region(module_env, self.region)
-            local issues = {}
-            check_region_signature(region, module_env, issues)
-            local ctx = Tr.TypeCheckEnv(env_with_params(module_env, "region:" .. tostring(region.name), region.params), Ty.TScalar(C.ScalarVoid), Tr.TypeYieldNone)
-            local region_id = "region:" .. tostring(region.name)
-            local typed_entry, entry_issues = type_entry_block(region_id, region.entry, ctx, Tr.TypeYieldVoid)
-            append_all(issues, entry_issues)
-            local typed_blocks = {}
-            for i = 1, #(region.blocks or {}) do
-                local b, bi = type_control_block(region_id, region.blocks[i], ctx, Tr.TypeYieldVoid)
-                typed_blocks[#typed_blocks + 1] = b
-                append_all(issues, bi)
-            end
-            local runtime_bindings = {}
-            for i = 1, #region.params do
-                local p = region.params[i]
-                local b = B.Binding(C.Id("region-param:" .. region.name .. ":" .. p.name), p.name, p.ty, B.BindingClassArg(i - 1))
-                runtime_bindings[#runtime_bindings + 1] = B.ValueEntry(p.name, b)
-            end
-            local cont_targets = {}
-            for i = 1, #(region.conts or {}) do cont_targets[region.conts[i].name] = true end
-            check_owned_control_region(Tr.ControlStmtRegion(region_id, typed_entry, typed_blocks), issues, runtime_bindings, cont_targets)
-            return single(Tr.TypeItemResult({}, issues))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_typecheck_item: no handler for " .. tostring(action), 2)
-        end
+        return node:typecheck_tree_item(...)
     end
 
     local function item_diagnostic_name(item)
@@ -2362,13 +962,13 @@ local function bind_context(T)
 
     local function type_module_with_layout_env(module, extra_layout_env, target, collector, analysis_ctx)
         local base_env = module_type_api.env(module, target)
-        attach_semantic_defs(base_env, build_variant_defs(module, base_env.module_name), build_handle_defs(module, base_env.module_name), build_func_effect_defs(module))
+        local facts = module:typecheck_tree_module_facts(Tr.TypeModuleFactsInput(base_env.module_name))
         local module_env = merge_env_layouts(base_env, extra_layout_env)
         local items = {}
         local issues = {}
         for i = 1, #module.items do
             local item = module.items[i]
-            local r = only(type_item(item, module_env))
+            local r = type_item(item, module_env, facts)
             append_all(items, r.items)
             append_all(issues, r.issues)
             emit_item_issues(collector, analysis_ctx or {}, item, r.issues)
@@ -2377,15 +977,11 @@ local function bind_context(T)
     end
 
     function type_module(node, ...)
-        local action = select_typecheck("module", "select_module_typecheck", node)
-        if action == "module" then
-            return (function(module)
+        return node:typecheck_tree_module(...)
+    end
 
-            return single(type_module_with_layout_env(module, nil, nil))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_typecheck_module: no handler for " .. tostring(action), 2)
-        end
+    function Tr.Module:typecheck_tree_module(extra_layout_env, target, collector, analysis_ctx)
+        return type_module_with_layout_env(self, extra_layout_env, target, collector, analysis_ctx)
     end
 
     return {
@@ -2523,17 +1119,7 @@ local function explain_type_issue(issue, analysis)
 
         -- Numeric conversion hint
         local function is_integer(ty)
-            if not ty then return false end
-            local tcls = schema.classof(ty)
-            if tcls and tcls.kind == "TScalar" and ty.scalar then
-                local scls = schema.classof(ty.scalar)
-                return scls and (scls.kind == "ScalarI32" or scls.kind == "ScalarI64"
-                    or scls.kind == "ScalarU32" or scls.kind == "ScalarU8"
-                    or scls.kind == "ScalarI8" or scls.kind == "ScalarI16"
-                    or scls.kind == "ScalarU16" or scls.kind == "ScalarU64"
-                    or scls.kind == "ScalarIndex")
-            end
-            return false
+            return ty ~= nil and ty:typecheck_tree_is_integer_scalar()
         end
 
         if actual == "bool" and expected ~= "bool" then

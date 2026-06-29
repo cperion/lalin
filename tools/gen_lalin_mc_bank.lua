@@ -10,7 +10,7 @@ local out_c = assert(arg[1], "usage: luajit tools/gen_lalin_mc_bank.lua OUT_C OU
 local out_h = assert(arg[2], "usage: luajit tools/gen_lalin_mc_bank.lua OUT_C OUT_H")
 local script_path = arg[0] or "tools/gen_lalin_mc_bank.lua"
 
-local pvm = require("lalin.pvm")
+local pvm = require("lalin.asdl")
 local Schema = require("lalin.schema")
 
 local T = pvm.context()
@@ -161,6 +161,29 @@ local function bank_fragments(mc_bank)
     return table.concat(arrays, "\n"), table.concat(entries, "\n"), #(mc_bank.entries or {}), payload_bytes
 end
 
+local function artifact_symbol(artifact)
+    return assert(artifact and artifact.symbol and artifact.symbol.text, "embedded MC bank artifact missing symbol")
+end
+
+local function artifact_fingerprint(artifact)
+    return artifact.fingerprint and artifact.fingerprint.text or ""
+end
+
+local function append_unique_artifacts(out, seen, artifacts)
+    for _, artifact in ipairs(artifacts or {}) do
+        local symbol = artifact_symbol(artifact)
+        local fingerprint = artifact_fingerprint(artifact)
+        local previous = seen[symbol]
+        if previous == nil then
+            out[#out + 1] = artifact
+            seen[symbol] = fingerprint
+        elseif previous ~= fingerprint then
+            error("embedded MC bank symbol collision for " .. tostring(symbol), 0)
+        end
+    end
+    return out
+end
+
 local function build_bank(artifacts, stem, dir)
     if #artifacts == 0 then
         return { entries = {} }
@@ -202,12 +225,15 @@ local function build_shard_fragments(shard_index, shard_count, prefix)
     write_file(entries_path, "")
     local total = 0
     local payload_bytes = 0
+    local seen_symbols = {}
     InternSet.artifact_batches({
         shard_index = shard_index,
         shard_count = shard_count,
     }, function(artifacts, batch_index)
+        local unique_artifacts = append_unique_artifacts({}, seen_symbols, artifacts)
+        if #unique_artifacts == 0 then return true end
         local mc_bank = build_bank(
-            artifacts,
+            unique_artifacts,
             "lalin_embedded_mc_bank_shard_" .. tostring(shard_index) .. "_batch_" .. tostring(batch_index),
             prefix .. ".build/batch_" .. tostring(batch_index)
         )

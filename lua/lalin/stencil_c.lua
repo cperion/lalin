@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -29,7 +29,7 @@ local function bind_context(T)
     local api = {}
 
     local function type_name(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then return (ty.signedness == Code.CodeSigned and "i" or "u") .. tostring(ty.bits) end
         if cls == Code.CodeTyFloat then return "f" .. tostring(ty.bits) end
         if ty == Code.CodeTyIndex then return "index" end
@@ -38,7 +38,7 @@ local function bind_context(T)
     end
 
     local function c_type(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyArray then return "ml_array_" .. tostring(ty.count) .. "_" .. sanitize(CodeType.code_type_key(ty.elem)) end
         if cls == Code.CodeTyClosure then return "ml_closure_" .. sanitize(ty.sig.text) end
         if cls == Code.CodeTyVector then return "ml_vector_" .. tostring(ty.lanes) .. "_" .. sanitize(CodeType.code_type_key(ty.elem)) end
@@ -75,7 +75,7 @@ local function bind_context(T)
         local out = {}
         local desc = artifact.instance and artifact.instance.descriptor
         for _, access in ipairs(descriptor_accesses(desc)) do
-            if pvm.classof(access.layout) ~= Stencil.StencilLayoutScalar then out[#out + 1] = access.name end
+            if asdl.classof(access.layout) ~= Stencil.StencilLayoutScalar then out[#out + 1] = access.name end
         end
         return out
     end
@@ -95,7 +95,7 @@ local function bind_context(T)
     local function access_alignment_bytes(artifact, name)
         local fact = access_vector_fact(artifact, name)
         if fact == nil then return nil end
-        if pvm.classof(fact.alignment) == Stencil.StencilAlignmentKnown then return tonumber(fact.alignment.bytes) end
+        if asdl.classof(fact.alignment) == Stencil.StencilAlignmentKnown then return tonumber(fact.alignment.bytes) end
         return nil
     end
 
@@ -386,7 +386,7 @@ local function bind_context(T)
     end
 
     local function unsigned_c_type(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt and (ty.bits == 8 or ty.bits == 16 or ty.bits == 32 or ty.bits == 64) then return "uint" .. tostring(ty.bits) .. "_t" end
         return c_type(ty)
     end
@@ -438,7 +438,7 @@ local function bind_context(T)
     end
 
     local function pred_name(pred)
-        local cls = pvm.classof(pred)
+        local cls = asdl.classof(pred)
         if pred == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return "nonzero" end
         if cls == Stencil.StencilPredCompareConst then return cmp_name(pred.cmp) end
         if cls == Stencil.StencilPredRange then return "range_" .. cmp_name(pred.lower_cmp) .. "_" .. cmp_name(pred.upper_cmp) end
@@ -501,21 +501,21 @@ local function bind_context(T)
 
     local function proof_list(plan)
         local eq = plan and plan.body and plan.body.equivalence or nil
-        if pvm.classof(eq) == Kernel.KernelEquivalenceProof then return eq.proofs or {} end
+        if asdl.classof(eq) == Kernel.KernelEquivalenceProof then return eq.proofs or {} end
         return {}
     end
 
     local function is_int(ty)
-        return pvm.classof(ty) == Code.CodeTyInt
+        return asdl.classof(ty) == Code.CodeTyInt
     end
 
     local function is_float(ty)
-        return pvm.classof(ty) == Code.CodeTyFloat
+        return asdl.classof(ty) == Code.CodeTyFloat
     end
 
     local function same_type(a, b)
         if a == b then return true end
-        local ac, bc = pvm.classof(a), pvm.classof(b)
+        local ac, bc = asdl.classof(a), asdl.classof(b)
         if ac ~= bc then return false end
         if ac == Code.CodeTyInt then return a.bits == b.bits and a.signedness == b.signedness end
         if ac == Code.CodeTyFloat then return a.bits == b.bits end
@@ -523,21 +523,21 @@ local function bind_context(T)
     end
 
     local function is_scalar(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         return cls == Code.CodeTyInt or cls == Code.CodeTyFloat or ty == Code.CodeTyIndex or ty == Code.CodeTyBool8
     end
 
     local function supports_bitwise_ty(ty)
-        return pvm.classof(ty) == Code.CodeTyInt or ty == Code.CodeTyBool8
+        return asdl.classof(ty) == Code.CodeTyInt or ty == Code.CodeTyBool8
     end
 
     local function is_int_like(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         return cls == Code.CodeTyInt or ty == Code.CodeTyIndex or ty == Code.CodeTyBool8
     end
 
     local function is_signed_int(ty)
-        return pvm.classof(ty) == Code.CodeTyInt and ty.signedness == Code.CodeSigned
+        return asdl.classof(ty) == Code.CodeTyInt and ty.signedness == Code.CodeSigned
     end
 
     local ArtifactPlan = require("lalin.stencil_artifact_plan")(T)
@@ -554,7 +554,7 @@ local function bind_context(T)
     end
 
     local function c_type_node(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then
             if ty.bits == 8 then return ty.signedness == Code.CodeSigned and C.i8 or C.u8 end
             if ty.bits == 16 then return ty.signedness == Code.CodeSigned and C.i16 or C.u16 end
@@ -574,7 +574,7 @@ local function bind_context(T)
     end
 
     local function c_unsigned_type_node(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then
             if ty.bits == 8 then return C.u8 end
             if ty.bits == 16 then return C.u16 end
@@ -589,17 +589,17 @@ local function bind_context(T)
     local access_c_expr
 
     local function value_expr_c_expr(expr)
-        local cls = pvm.classof(expr)
-        if cls == Value.ValueExprConst and pvm.classof(expr.const) == Code.CodeConstLiteral then
+        local cls = asdl.classof(expr)
+        if cls == Value.ValueExprConst and asdl.classof(expr.const) == Code.CodeConstLiteral then
             local lit = expr.const.literal
-            if pvm.classof(lit) == Core.LitInt then return tonumber(lit.raw) or 0 end
+            if asdl.classof(lit) == Core.LitInt then return tonumber(lit.raw) or 0 end
         end
         error("stencil_c: AffineND layout currently requires constant coefficients", 3)
     end
 
     local function access_offset_c_expr(access, index, access_by_name, ctx)
         local top = access.layout
-        local cls = pvm.classof(top)
+        local cls = asdl.classof(top)
         if cls == Stencil.StencilLayoutFieldProjection then
             return access_offset_c_expr({ layout = top.parent, name = access.name }, index, access_by_name, ctx)
         end
@@ -640,14 +640,14 @@ local function bind_context(T)
     access_c_expr = function(access, base, index, access_by_name, ctx)
         local base_expr = cn(base)
         local top = access.layout
-        if pvm.classof(top) == Stencil.StencilLayoutFieldProjection then
+        if asdl.classof(top) == Stencil.StencilLayoutFieldProjection then
             return base_expr[access_offset_c_expr({ layout = top.parent, name = access.name }, index, access_by_name, ctx)][sanitize(top.field_name)]
         end
         return base_expr[access_offset_c_expr(access, index, access_by_name, ctx)]
     end
 
     local function field_layout_for_param(layout)
-        local cls = pvm.classof(layout)
+        local cls = asdl.classof(layout)
         if cls == Stencil.StencilLayoutFieldProjection then return layout end
         if cls == Stencil.StencilLayoutIndexed then return field_layout_for_param(layout.parent) end
         if cls == Stencil.StencilLayoutAffine1D then return field_layout_for_param(layout.parent) end
@@ -656,7 +656,7 @@ local function bind_context(T)
     end
 
     local function c_access_param_type_node(access, mutable, artifact)
-        if pvm.classof(access.layout) == Stencil.StencilLayoutScalar then return c_type_node(access.ty) end
+        if asdl.classof(access.layout) == Stencil.StencilLayoutScalar then return c_type_node(access.ty) end
         local field = field_layout_for_param(access.layout)
         local base_ty = field and field.record_ty or access.ty
         local ptr_ty = mutable and C.ptr[c_type_node(base_ty)] or C.ptr[C.const[c_type_node(base_ty)]]
@@ -673,12 +673,12 @@ local function bind_context(T)
     end
 
     local function const_literal_value(expr)
-        local cls = pvm.classof(expr)
-        if cls ~= Value.ValueExprConst or pvm.classof(expr.const) ~= Code.CodeConstLiteral then
+        local cls = asdl.classof(expr)
+        if cls ~= Value.ValueExprConst or asdl.classof(expr.const) ~= Code.CodeConstLiteral then
             error("stencil_c: select predicate const must be a literal ValueExprConst", 3)
         end
         local lit = expr.const.literal
-        local lcls = pvm.classof(lit)
+        local lcls = asdl.classof(lit)
         if lcls == Core.LitInt or lcls == Core.LitFloat then return tonumber(lit.raw) end
         if lcls == Core.LitBool then return lit.value and 1 or 0 end
         error("stencil_c: unsupported select predicate literal", 3)
@@ -709,7 +709,7 @@ local function bind_context(T)
     end
 
     local function c_predicate_expr(pred, value)
-        local cls = pvm.classof(pred)
+        local cls = asdl.classof(pred)
         if pred == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return C.ne (value)(0) end
         if cls == Stencil.StencilPredCompareConst then
             return c_compare_expr(
@@ -829,7 +829,7 @@ local function bind_context(T)
 
     local function c_shift_expr(op, lhs, rhs, result_ty)
         if not is_int_like(result_ty) then error("stencil_c: shift requires an integer result type", 3) end
-        local bits = pvm.classof(result_ty) == Code.CodeTyInt and tonumber(result_ty.bits) or 8
+        local bits = asdl.classof(result_ty) == Code.CodeTyInt and tonumber(result_ty.bits) or 8
         local a, s, x, mask = cn("__ml_a"), cn("__ml_s"), cn("__ml_x"), cn("__ml_mask")
         local body = {
             C.decl. __ml_a[c_type_node(result_ty)](c_cast(result_ty, lhs)),
@@ -873,11 +873,11 @@ local function bind_context(T)
     end
 
     local function c_point_expr(expr, desc, access_by_name, index, ctx)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Stencil.StencilPointInput then
             local name = expr.access.name
             local access = access_by_name[name] or access_named(desc, name)
-            if pvm.classof(access.layout) == Stencil.StencilLayoutScalar then return cn(name) end
+            if asdl.classof(access.layout) == Stencil.StencilLayoutScalar then return cn(name) end
             return access_c_expr(access, name, index, access_by_name, ctx)
         end
         if cls == Stencil.StencilPointWindowInput then
@@ -953,7 +953,7 @@ local function bind_context(T)
         local scalar_params = {}
         for _, access in ipairs(shape.inputs or {}) do
             if access.name ~= dst_name then
-                if pvm.classof(access.layout) == Stencil.StencilLayoutScalar then
+                if asdl.classof(access.layout) == Stencil.StencilLayoutScalar then
                     scalar_params[#scalar_params + 1] = structured_param(access.name, c_access_param_type_node(access, false, artifact))
                 else
                     params[#params + 1] = structured_param(access.name, c_access_param_type_node(access, false, artifact))
@@ -977,14 +977,14 @@ local function bind_context(T)
             }
         end
         local function copy_input_name()
-            if pvm.classof(shape.store_mode) ~= Stencil.StencilStoreCopy then return nil end
-            if pvm.classof(shape.expr) ~= Stencil.StencilPointInput then return nil end
+            if asdl.classof(shape.store_mode) ~= Stencil.StencilStoreCopy then return nil end
+            if asdl.classof(shape.expr) ~= Stencil.StencilPointInput then return nil end
             local name = shape.expr.access.name
             if name == dst_name then return nil end
             return name
         end
         local copy_src_name = copy_input_name()
-        local copy_semantics = pvm.classof(shape.store_mode) == Stencil.StencilStoreCopy and shape.store_mode.semantics or nil
+        local copy_semantics = asdl.classof(shape.store_mode) == Stencil.StencilStoreCopy and shape.store_mode.semantics or nil
         local name = LLBL.N[artifact.symbol.text]
         if copy_src_name ~= nil and shape.producer.kind == "range1d" and (copy_semantics == Stencil.StencilCopyMemMove or copy_semantics == Stencil.StencilCopyMayOverlapBackward) then
             local forward_body = producer_loop(shape.producer, assign_stmts)
@@ -1219,7 +1219,7 @@ local function bind_context(T)
             structured_param(dst_name, c_access_param_type_node(dst_access, true, artifact)),
         }
         for _, access in ipairs(descriptor_accesses(desc)) do
-            if access.name ~= dst_name and pvm.classof(access.layout) ~= Stencil.StencilLayoutScalar then
+            if access.name ~= dst_name and asdl.classof(access.layout) ~= Stencil.StencilLayoutScalar then
                 params[#params + 1] = structured_param(access.name, c_access_param_type_node(access, false, artifact))
             end
         end

@@ -7,7 +7,7 @@ package.path = table.concat({
 }, ';')
 
 local ffi = require('ffi')
-local pvm = require('lalin.pvm')
+local asdl = require("lalin.asdl")
 local lalin = require('lalin')
 
 local source = [=[
@@ -868,7 +868,7 @@ local expected_counts = {
 }
 local function selected_label(descriptor)
     local function class_name(v)
-        return tostring(pvm.classof(v)):match('Class%((.-)%)')
+        return tostring(asdl.classof(v)):match('Class%((.-)%)')
     end
     local function access_named(name)
         for _, access in ipairs(descriptor.accesses or {}) do
@@ -917,10 +917,10 @@ local nested_point_binary = 0
 for _, selected in ipairs(artifact.artifacts) do
     local descriptor = selected.instance.descriptor
     local label = selected_label(descriptor)
-    assert(label ~= nil, 'unexpected selected stencil descriptor ' .. tostring(pvm.classof(descriptor)))
-    if tostring(pvm.classof(descriptor.body.expr)):match('StencilPointBinary')
-        and tostring(pvm.classof(descriptor.body.expr.left)):match('StencilPointBinary')
-        and tostring(pvm.classof(descriptor.body.expr.right)):match('StencilPointBinary') then
+    assert(label ~= nil, 'unexpected selected stencil descriptor ' .. tostring(asdl.classof(descriptor)))
+    if tostring(asdl.classof(descriptor.body.expr)):match('StencilPointBinary')
+        and tostring(asdl.classof(descriptor.body.expr.left)):match('StencilPointBinary')
+        and tostring(asdl.classof(descriptor.body.expr.right)):match('StencilPointBinary') then
         nested_point_binary = nested_point_binary + 1
     end
     if label == 'find' or label == 'partition' or label == 'scatter_reduce' then

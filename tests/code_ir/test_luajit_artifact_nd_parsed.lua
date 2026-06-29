@@ -7,7 +7,7 @@ package.path = table.concat({
 }, ';')
 
 local ffi = require('ffi')
-local pvm = require('lalin.pvm')
+local asdl = require("lalin.asdl")
 local lalin = require('lalin')
 
 local source = [=[
@@ -56,7 +56,7 @@ assert(#artifact.artifacts == 3, 'parsed ND source should select range, tiled sc
 local seen = {}
 for _, item in ipairs(artifact.artifacts) do
     local desc = item.instance.descriptor
-    seen[tostring(pvm.classof(desc.producer.shape))] = true
+    seen[tostring(asdl.classof(desc.producer.shape))] = true
 end
 assert(seen['Class(LalinStencil.StencilProduceRangeND)'], 'parsed range_nd should preserve RangeND producer')
 assert(seen['Class(LalinStencil.StencilProduceTiledND)'], 'parsed tiled_nd should preserve TiledND producer')

@@ -214,8 +214,8 @@ function M.code_for_issue(issue)
     if issue.error_code then return issue.error_code end
 
     -- Map by class kind
-    local pvm = require("lalin.pvm")
-    local cls = pvm.classof(issue)
+    local asdl = require("lalin.asdl")
+    local cls = asdl.classof(issue)
     if cls then
         local code = issue_code_map[cls.kind]
         if code then return code end
@@ -246,8 +246,8 @@ local function ensure_explainers()
     explainers.backend = require("lalin.back_validate").explain_back_issue
     explainers.link = require("lalin.link_plan_validate").explain_link_issue
     explainers.vec = function(issue, analysis)
-        local pvm = require("lalin.pvm")
-        local cls = pvm.classof(issue)
+        local asdl = require("lalin.asdl")
+        local cls = asdl.classof(issue)
         local kind = (cls and cls.kind) or issue.kind or "VecReject"
         local reason = issue.reason or issue.message or kind
         return {

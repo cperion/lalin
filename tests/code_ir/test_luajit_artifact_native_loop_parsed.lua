@@ -56,24 +56,40 @@ return {
 ]=]
 
 local parsed = assert(lalin.loadstring(source, '@test_luajit_artifact_native_loop_parsed.lln'))()
-local loaded = lalin.compile('ParsedNativeLoop', parsed, { residual = 'bc' })
+local loaded = lalin.compile('ParsedNativeLoopBC', parsed, { residual = 'bc' })
+local mc_plan = lalin.plan_luajit_artifact(parsed, { name = 'ParsedNativeLoopMC' })
+local mc_bank, mc_bank_err, mc_bank_src = mc_plan.backend.build_mc_bank(mc_plan.artifacts, {
+  stem = 'test_luajit_artifact_native_loop_parsed',
+})
+assert(mc_bank ~= nil, tostring(mc_bank_err) .. '\n' .. tostring(mc_bank_src))
+local loaded_mc = lalin.compile('ParsedNativeLoopMC', parsed, {
+  mc_bank = mc_bank,
+})
 
-local lhs = ffi.new('int32_t[5]', { 1, -2, 5, 0, 3 })
-local rhs = ffi.new('int32_t[5]', { 10, 20, -5, 7, 4 })
-local out = ffi.new('int32_t[5]')
+local function check_loaded(module, label)
+  assert(module.__lalin_artifact == nil or module.__lalin_artifact.residual ~= 'bc' or label == 'bc', label .. ' unexpectedly fell back to BC')
 
-loaded.zip_add(out, lhs, rhs, 5)
-assert(out[0] == 11 and out[1] == 18 and out[2] == 0 and out[3] == 7 and out[4] == 7, 'parsed range store loop')
+  local lhs = ffi.new('int32_t[5]', { 1, -2, 5, 0, 3 })
+  local rhs = ffi.new('int32_t[5]', { 10, 20, -5, 7, 4 })
+  local out = ffi.new('int32_t[5]')
 
-assert(loaded.dot(lhs, rhs, 5) == -43, 'parsed fold add dot')
+  module.zip_add(out, lhs, rhs, 5)
+  assert(out[0] == 11 and out[1] == 18 and out[2] == 0 and out[3] == 7 and out[4] == 7, label .. ' parsed range store loop')
 
-local product_xs = ffi.new('int32_t[4]', { 2, -3, 4, 5 })
-assert(loaded.product(product_xs, 4) == -120, 'parsed fold mul product')
-assert(loaded.min_i32(product_xs, 4) == -3, 'parsed fold min')
+  assert(module.dot(lhs, rhs, 5) == -43, label .. ' parsed fold add dot')
 
-local scan_xs = ffi.new('int32_t[5]', { 1, -2, 5, 0, 3 })
-local scan_out = ffi.new('int32_t[5]')
-loaded.scan_sum(scan_out, scan_xs, 5)
-assert(scan_out[0] == 1 and scan_out[1] == -1 and scan_out[2] == 4 and scan_out[3] == 4 and scan_out[4] == 7, 'parsed scan add')
+  local product_xs = ffi.new('int32_t[4]', { 2, -3, 4, 5 })
+  assert(module.product(product_xs, 4) == -120, label .. ' parsed fold mul product')
+  assert(module.min_i32(product_xs, 4) == -3, label .. ' parsed fold min')
+
+  local scan_xs = ffi.new('int32_t[5]', { 1, -2, 5, 0, 3 })
+  local scan_out = ffi.new('int32_t[5]')
+  module.scan_sum(scan_out, scan_xs, 5)
+  assert(scan_out[0] == 1 and scan_out[1] == -1 and scan_out[2] == 4 and scan_out[3] == 4 and scan_out[4] == 7, label .. ' parsed scan add')
+end
+
+check_loaded(loaded, 'bc')
+check_loaded(loaded_mc, 'mc')
+assert(loaded_mc.__lalin_artifact.residual == 'mc', 'parsed native loop MC test should run through MC')
 
 io.write('test_luajit_artifact_native_loop_parsed: ok\n')

@@ -1,11 +1,11 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local PhaseModel = require("lalin.phase_model")
 local PhaseDsl = require("lalin.phase_dsl")
 local Validate = require("lalin.phase_validate")
 
-local T = pvm.context()
+local T = asdl.context()
 PhaseModel(T)
 PhaseDsl(T)
 local P = T.LalinPhase

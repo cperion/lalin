@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
@@ -30,16 +30,16 @@ local function bind_context(T)
     end
 
     local function const_int_value(value)
-        if pvm.classof(value) == Value.ValueExprConst
-            and pvm.classof(value.const) == Code.CodeConstLiteral
-            and pvm.classof(value.const.literal) == Core.LitInt then
+        if asdl.classof(value) == Value.ValueExprConst
+            and asdl.classof(value.const) == Code.CodeConstLiteral
+            and asdl.classof(value.const.literal) == Core.LitInt then
             return tonumber(value.const.literal.raw)
         end
         return nil
     end
 
     local function const_ty(value)
-        if pvm.classof(value) == Value.ValueExprConst and value.const ~= nil then return value.const.ty end
+        if asdl.classof(value) == Value.ValueExprConst and value.const ~= nil then return value.const.ty end
         return nil
     end
 
@@ -65,14 +65,14 @@ local function bind_context(T)
         return nil
     end
 
-    local function is_int_type(ty) return pvm.classof(ty) == Code.CodeTyInt end
-    local function is_float_type(ty) return pvm.classof(ty) == Code.CodeTyFloat end
+    local function is_int_type(ty) return asdl.classof(ty) == Code.CodeTyInt end
+    local function is_float_type(ty) return asdl.classof(ty) == Code.CodeTyFloat end
     local function is_index_type(ty) return ty == Code.CodeTyIndex end
     local function is_bool8_type(ty) return ty == Code.CodeTyBool8 end
 
     local function is_type_family(ty, family)
         family = tostring(family)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if family == "pointer" then return cls == Code.CodeTyDataPtr end
         if family == "code_pointer" then return cls == Code.CodeTyCodePtr end
         if family == "named" then return cls == Code.CodeTyNamed end
@@ -102,7 +102,7 @@ local function bind_context(T)
     local same_type
     same_type = function(a, b)
         if a == b then return true end
-        local ac, bc = pvm.classof(a), pvm.classof(b)
+        local ac, bc = asdl.classof(a), asdl.classof(b)
         if ac ~= bc then return false end
         if ac == Code.CodeTyInt then return a.bits == b.bits and a.signedness == b.signedness end
         if ac == Code.CodeTyFloat then return a.bits == b.bits end
@@ -165,19 +165,22 @@ local function bind_context(T)
 
     local function type_bits(ty)
         if is_int_type(ty) or is_float_type(ty) then return tonumber(ty.bits) end
+        if is_index_type(ty) then return 64 end
         if is_bool8_type(ty) then return 8 end
         return nil
     end
 
     local function is_signed_int_type(ty) return is_int_type(ty) and ty.signedness == Code.CodeSigned end
-    local function is_unsigned_int_type(ty) return is_int_type(ty) and ty.signedness == Code.CodeUnsigned end
+    local function is_unsigned_int_type(ty) return is_index_type(ty) or is_bool8_type(ty) or (is_int_type(ty) and ty.signedness == Code.CodeUnsigned) end
+    local function is_integer_storage_type(ty) return is_int_type(ty) or is_index_type(ty) or is_bool8_type(ty) end
 
     local function cast_supported(op, src_ty, dst_ty)
         if not is_scalar_type(src_ty) or not is_scalar_type(dst_ty) then return false end
         if op == Core.MachineCastIdentity then return same_type(src_ty, dst_ty) end
         if op == Core.MachineCastBitcast then return type_bits(src_ty) ~= nil and type_bits(src_ty) == type_bits(dst_ty) end
-        if op == Core.MachineCastIreduce then return is_int_type(src_ty) and is_int_type(dst_ty) and type_bits(dst_ty) <= type_bits(src_ty) end
-        if op == Core.MachineCastSextend or op == Core.MachineCastUextend then return is_int_type(src_ty) and is_int_type(dst_ty) and type_bits(dst_ty) >= type_bits(src_ty) end
+        if op == Core.MachineCastIreduce then return is_integer_storage_type(src_ty) and is_integer_storage_type(dst_ty) and type_bits(dst_ty) <= type_bits(src_ty) end
+        if op == Core.MachineCastSextend then return is_signed_int_type(src_ty) and is_integer_storage_type(dst_ty) and type_bits(dst_ty) >= type_bits(src_ty) end
+        if op == Core.MachineCastUextend then return is_unsigned_int_type(src_ty) and is_integer_storage_type(dst_ty) and type_bits(dst_ty) >= type_bits(src_ty) end
         if op == Core.MachineCastFpromote then return is_float_type(src_ty) and is_float_type(dst_ty) and type_bits(dst_ty) >= type_bits(src_ty) end
         if op == Core.MachineCastFdemote then return is_float_type(src_ty) and is_float_type(dst_ty) and type_bits(dst_ty) <= type_bits(src_ty) end
         if op == Core.MachineCastSToF then return is_signed_int_type(src_ty) and is_float_type(dst_ty) end
@@ -188,7 +191,7 @@ local function bind_context(T)
     end
 
     local function predicate_from_cmp_const(op, operand_ty, cexpr, const_on_left)
-        if pvm.classof(cexpr) ~= Value.ValueExprConst then return nil end
+        if asdl.classof(cexpr) ~= Value.ValueExprConst then return nil end
         if const_on_left then
             if op == Core.CmpLt then op = Core.CmpGt
             elseif op == Core.CmpLe then op = Core.CmpGe
@@ -253,7 +256,7 @@ local function bind_context(T)
     expr_fact = function(expr, bindings, seen)
         if expr == nil then return nil, "missing stencil expression" end
         seen = seen or {}
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Kernel.KernelExprKernelValue then
             if seen[expr.value.text] then return nil, "cyclic kernel binding" end
             local binding = bindings and bindings[expr.value.text] or nil
@@ -268,7 +271,7 @@ local function bind_context(T)
             return { kind = "load", lane = expr.lane, index = expr.index }, nil
         elseif cls == Kernel.KernelExprAlgebra then
             local v = expr.expr
-            local vcls = pvm.classof(v)
+            local vcls = asdl.classof(v)
             if vcls == Value.ValueExprConst then
                 return { kind = "fill", value = v }, nil
             elseif vcls == Value.ValueExprValue then
@@ -353,17 +356,17 @@ local function bind_context(T)
     end
 
     local function single_input_expr(class)
-        if class == nil or pvm.classof(class.expr) ~= Stencil.StencilPointInput then return nil end
+        if class == nil or asdl.classof(class.expr) ~= Stencil.StencilPointInput then return nil end
         return input_by_name(class, class.expr.access.name)
     end
 
     local function point_const_int(expr)
-        if pvm.classof(expr) ~= Stencil.StencilPointConst then return nil end
+        if asdl.classof(expr) ~= Stencil.StencilPointConst then return nil end
         return const_int_value(expr.value)
     end
 
     local function index_input_from_point_expr(class, expr)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Stencil.StencilPointInput then return input_by_name(class, expr.access.name) end
         if cls == Stencil.StencilPointCast then return index_input_from_point_expr(class, expr.arg) end
         if cls == Stencil.StencilPointBinary then
@@ -555,15 +558,15 @@ local function bind_context(T)
 
     local function predicate_expr_operand(class)
         if class == nil then return nil, nil end
-        local cls = pvm.classof(class.expr)
+        local cls = asdl.classof(class.expr)
         if cls == Stencil.StencilPointPredicate then
-            if pvm.classof(class.expr.arg) ~= Stencil.StencilPointInput then return nil, nil end
+            if asdl.classof(class.expr.arg) ~= Stencil.StencilPointInput then return nil, nil end
             local input = input_by_name(class, class.expr.arg.access.name)
             return input, class.expr.pred
         end
         if cls == Stencil.StencilPointCompare then
-            if pvm.classof(class.expr.left) ~= Stencil.StencilPointInput then return nil, nil end
-            if pvm.classof(class.expr.right) ~= Stencil.StencilPointConst then return nil, nil end
+            if asdl.classof(class.expr.left) ~= Stencil.StencilPointInput then return nil, nil end
+            if asdl.classof(class.expr.right) ~= Stencil.StencilPointConst then return nil, nil end
             local input = input_by_name(class, class.expr.left.access.name)
             if input == nil then return nil, nil end
             return input, Stencil.StencilPredCompareConst(class.expr.cmp, input.ty, class.expr.right.value)

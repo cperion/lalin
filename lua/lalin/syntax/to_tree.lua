@@ -6,7 +6,7 @@
 -- Usage: local to_tree = require("lalin.syntax.to_tree")(T)
 -- where T is a pvm context with LalinTree/LalinCore/LalinBind/LalinType.
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function bind_context(T)
   -- Project the context if not already done.  Idempotent check:
@@ -58,7 +58,7 @@ local function bind_context(T)
     if type(parsed) ~= "table" then
       return ToTree.literal(parsed)
     end
-    local cls = pvm.classof(parsed)
+    local cls = asdl.classof(parsed)
     if cls then return parsed end -- already ASDL
 
     local tag = parsed.tag
@@ -142,7 +142,7 @@ local function bind_context(T)
       if parsed.resolved then
         local value = parsed.value
         if type(value) == "table" then
-          local value_cls = pvm.classof(value)
+          local value_cls = asdl.classof(value)
           if value_cls then return value end
           if value.tag == "ExprFragment" then return ToTree.expr(value.expr) end
           if value.tag then return ToTree.expr(value) end
@@ -180,7 +180,7 @@ local function bind_context(T)
   -- are always host escapes: `[i32]`, `[ptr [i32]]`, `[some_lua_type]`.
   function ToTree.parsed_type(ptype)
     if not ptype then return Ty.TScalar(C.ScalarVoid) end
-    local cls = pvm.classof(ptype)
+    local cls = asdl.classof(ptype)
     if cls then return ptype end
     if ptype.tag == "HostEscape" then
       if not ptype.resolved then error("parsed_to_tree: unresolved type host escape", 2) end
@@ -217,7 +217,7 @@ local function bind_context(T)
     if type(parsed) ~= "table" then
       error("parsed_to_tree: expected table for place, got " .. type(parsed), 2)
     end
-    local cls = pvm.classof(parsed)
+    local cls = asdl.classof(parsed)
     if cls then return parsed end
 
     local tag = parsed.tag
@@ -242,7 +242,7 @@ local function bind_context(T)
     if type(value) ~= "table" then
       error("parsed_to_tree: statement splice expected statement fragment, got " .. type(value), 2)
     end
-    local cls = pvm.classof(value)
+    local cls = asdl.classof(value)
     if cls then return value end
     if value.tag == "StmtFragment" then return stmt_list(ToTree.stmts(value.body)) end
     if value.tag then return ToTree.stmt(value) end
@@ -263,7 +263,7 @@ local function bind_context(T)
     if type(parsed) ~= "table" then
       return Tr.StmtExpr(Tr.StmtSurface, ToTree.expr(parsed))
     end
-    local cls = pvm.classof(parsed)
+    local cls = asdl.classof(parsed)
     if cls then return parsed end
 
     local tag = parsed.tag

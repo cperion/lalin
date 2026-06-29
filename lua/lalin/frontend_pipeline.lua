@@ -3,7 +3,7 @@
 -- The DSL produces closed LalinTree directly; no parse/open-module phase is part
 -- of the normal compiler path.
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local llbl = require("llbl")
 
 local function progress(ctx, name, payload)
@@ -27,7 +27,7 @@ local function assert_no_c_phase_unreachable(root, site)
     local function walk(node)
         if type(node) ~= "table" or seen[node] then return end
         seen[node] = true
-        local cls = pvm.classof(node)
+        local cls = asdl.classof(node)
         if cls then
             local kind = cls.kind
             if kind ~= nil and phase_unreachable[kind] then
@@ -93,7 +93,7 @@ local function bind_context(T)
             else
                 local merged, seen = {}, {}
                 local function key(layout)
-                    local cls = pvm.classof(layout)
+                    local cls = asdl.classof(layout)
                     if cls == T.LalinSem.LayoutNamed then return "named\0" .. tostring(layout.module_name) .. "\0" .. tostring(layout.type_name) end
                     if cls == T.LalinSem.LayoutLocal then return "local\0" .. tostring(layout.sym and layout.sym.name or layout) end
                     return tostring(layout)

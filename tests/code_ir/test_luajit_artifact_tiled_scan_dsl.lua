@@ -47,8 +47,8 @@ local artifact = lalin.emit_luajit_plan_artifact(plan, {
 
 assert(#artifact.artifacts == 1, 'tiled_nd scan source should select one native stencil artifact')
 local desc = artifact.artifacts[1].instance.descriptor
-assert(tostring(require('lalin.pvm').classof(desc.producer.shape)):match('StencilProduceTiledND'), 'source tiled scan should preserve TiledND producer')
-assert(tostring(require('lalin.pvm').classof(desc.sink)):match('StencilSinkScan'), 'source tiled scan should preserve Scan sink')
+assert(tostring(require('lalin.asdl').classof(desc.producer.shape)):match('StencilProduceTiledND'), 'source tiled scan should preserve TiledND producer')
+assert(tostring(require('lalin.asdl').classof(desc.sink)):match('StencilSinkScan'), 'source tiled scan should preserve Scan sink')
 
 local loaded = assert(loadfile(artifact.path))()
 local src = ffi.new('int32_t[6]', { 1, 2, 3, 4, 5, 6 })

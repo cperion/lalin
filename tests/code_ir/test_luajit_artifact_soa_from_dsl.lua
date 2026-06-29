@@ -7,7 +7,7 @@ package.path = table.concat({
 }, ';')
 
 local ffi = require('ffi')
-local pvm = require('lalin.pvm')
+local asdl = require("lalin.asdl")
 local lalin = require('lalin')
 
 local source = [=[
@@ -102,7 +102,7 @@ end
 local function soa_access(desc, field_name)
     for _, access in ipairs(desc.accesses or {}) do
         local top = access.layout
-        if tostring(pvm.classof(top)) == 'Class(LalinStencil.StencilLayoutSoAComponent)' and top.field_name == field_name then
+        if tostring(asdl.classof(top)) == 'Class(LalinStencil.StencilLayoutSoAComponent)' and top.field_name == field_name then
             return access
         end
     end
@@ -111,7 +111,7 @@ end
 
 local function assert_soa(access, field_name, component_index)
     local top = access.layout
-    assert(tostring(pvm.classof(top)) == 'Class(LalinStencil.StencilLayoutSoAComponent)', access.name .. ' should use SoA layout')
+    assert(tostring(asdl.classof(top)) == 'Class(LalinStencil.StencilLayoutSoAComponent)', access.name .. ' should use SoA layout')
     assert(top.field_name == field_name, access.name .. ' should keep SoA field')
     assert(top.component_index == component_index, access.name .. ' should keep SoA component index')
     assert(tostring(top.record_ty):match('PairSoA'), access.name .. ' should keep logical record type')
@@ -119,8 +119,8 @@ end
 
 for _, selected in ipairs(artifact.artifacts) do
     local desc = selected.instance.descriptor
-    local sink_kind = tostring(pvm.classof(desc.sink)):match('Class%((.-)%)')
-    local expr_kind = tostring(pvm.classof(desc.body.expr)):match('Class%((.-)%)')
+    local sink_kind = tostring(asdl.classof(desc.sink)):match('Class%((.-)%)')
+    local expr_kind = tostring(asdl.classof(desc.body.expr)):match('Class%((.-)%)')
     if sink_kind == 'LalinStencil.StencilSinkStore' and expr_kind == 'LalinStencil.StencilPointBinary' then
         assert_soa(access_named(desc, 'dst'), 'total', 2)
         assert_soa(soa_access(desc, 'left'), 'left', 0)
@@ -129,7 +129,7 @@ for _, selected in ipairs(artifact.artifacts) do
         assert_soa(soa_access(desc, 'left'), 'left', 0)
         assert_soa(soa_access(desc, 'right'), 'right', 1)
     else
-        error('unexpected SoA artifact descriptor ' .. tostring(pvm.classof(desc)))
+        error('unexpected SoA artifact descriptor ' .. tostring(asdl.classof(desc)))
     end
 end
 

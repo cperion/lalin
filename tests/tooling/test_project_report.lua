@@ -1,11 +1,11 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A = require("lalin.project_asdl")
 local Facts = require("lalin.project_ready_facts")
 local Report = require("lalin.project_report")
 
-local T = pvm.context()
+local T = asdl.context()
 A(T)
 local F = Facts(T)
 local R = Report(T)

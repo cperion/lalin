@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -37,7 +37,7 @@ local function bind_context(T)
 
     local function target_prefers_unroll(target)
         for _, fact in ipairs(target and target.facts or {}) do
-            if pvm.classof(fact) == Back.BackTargetPrefersUnroll then return fact.unroll end
+            if asdl.classof(fact) == Back.BackTargetPrefersUnroll then return fact.unroll end
         end
         return 1
     end
@@ -45,9 +45,9 @@ local function bind_context(T)
     local function proofs_for(plan, capability)
         local proofs = { Schedule.ScheduleProofTarget(capability.reason or "kernel emitter support classified executable") }
         local eq = plan.body and plan.body.equivalence or nil
-        if pvm.classof(eq) == Kernel.KernelEquivalenceProof then
+        if asdl.classof(eq) == Kernel.KernelEquivalenceProof then
             for _, proof in ipairs(eq.proofs or {}) do
-                local cls = pvm.classof(proof)
+                local cls = asdl.classof(proof)
                 if cls == Kernel.KernelProofMemory then proofs[#proofs + 1] = Schedule.ScheduleProofMemory(proof.proof)
                 elseif cls == Kernel.KernelProofValue then proofs[#proofs + 1] = Schedule.ScheduleProofAlgebra(proof.proof) end
             end
@@ -59,7 +59,7 @@ local function bind_context(T)
     local function scalar_for_code_ty(ty)
         if ty == Code.CodeTyBool8 then return Back.BackBool end
         if ty == Code.CodeTyIndex then return Back.BackIndex end
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then
             if ty.bits == 8 then return ty.signedness == Code.CodeSigned and Back.BackI8 or Back.BackU8 end
             if ty.bits == 16 then return ty.signedness == Code.CodeSigned and Back.BackI16 or Back.BackU16 end
@@ -76,7 +76,7 @@ local function bind_context(T)
     local function vector_schedule_kind(plan, target)
         local body = plan.body
         if body == nil or #(body.lanes or {}) == 0 then return nil end
-        if pvm.classof(body.result) == Kernel.KernelResultClosedForm then return nil end
+        if asdl.classof(body.result) == Kernel.KernelResultClosedForm then return nil end
         local elem_ty = nil
         for _, lane in ipairs(body.lanes or {}) do
             if lane.pattern ~= T.LalinMem.MemAccessContiguous then return nil end
@@ -86,7 +86,7 @@ local function bind_context(T)
         local elem = scalar_for_code_ty(elem_ty)
         if elem == nil then return nil end
         for _, fact in ipairs(target and target.facts or {}) do
-            if pvm.classof(fact) == Back.BackTargetSupportsShape and pvm.classof(fact.shape) == Back.BackShapeVec and fact.shape.vec.elem == elem then
+            if asdl.classof(fact) == Back.BackTargetSupportsShape and asdl.classof(fact.shape) == Back.BackShapeVec and fact.shape.vec.elem == elem then
                 return Schedule.ScheduleVector(Schedule.LaneVector(elem_ty, fact.shape.vec.lanes), target_prefers_unroll(target), 1, Schedule.TailScalar)
             end
         end
@@ -95,7 +95,7 @@ local function bind_context(T)
 
     local function scalar_or_closed_kind_for(plan)
         local result = plan.body and plan.body.result or nil
-        if pvm.classof(result) == Kernel.KernelResultClosedForm then return Schedule.ScheduleClosedForm end
+        if asdl.classof(result) == Kernel.KernelResultClosedForm then return Schedule.ScheduleClosedForm end
         return Schedule.ScheduleScalarIndex
     end
 
@@ -143,7 +143,7 @@ local function bind_context(T)
         target = target or default_target()
         local schedules = {}
         for _, kernel_plan in ipairs(kernels.plans or {}) do
-            if pvm.classof(kernel_plan) == Kernel.KernelPlanned then
+            if asdl.classof(kernel_plan) == Kernel.KernelPlanned then
                 schedules[#schedules + 1] = schedule_for_plan(kernel_plan, target, flow)
             end
         end

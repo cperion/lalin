@@ -1,8 +1,8 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function safe_classof(value)
     if type(value) ~= "table" and type(value) ~= "userdata" then return nil end
-    local ok, cls = pcall(pvm.classof, value)
+    local ok, cls = pcall(asdl.classof, value)
     return ok and cls or nil
 end
 

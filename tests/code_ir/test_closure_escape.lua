@@ -1,11 +1,11 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local lalin = require("lalin")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A2 = require("lalin.schema_projection")
 local ClosureConvert = require("lalin.closure_convert")
 
-local T = pvm.context()
+local T = asdl.context()
 A2(T)
 local C, Ty, B, Sem, Tr = T.LalinCore, T.LalinType, T.LalinBind, T.LalinSem, T.LalinTree
 local i32 = Ty.TScalar(C.ScalarI32)

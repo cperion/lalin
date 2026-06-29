@@ -272,28 +272,22 @@ facts. Compile `-O3`, extract, bank.
 
 ---
 
-## Composition: stop at SOAC order 2, and enumerate
+## Composition: saturate legal primitive DAGs under budget
 
-You do **not** need a general op-chaining engine. Two facts kill the need for
-one:
+Composition is not a second stencil product axis. It is a typed metastencil DAG
+over the primitive vocabulary:
 
-- **Pointwise-on-pointwise is not a chain.** `map ∘ map ∘ map` of any depth is
-  *one apply with a deeper body tree* — composition lives inside the body, at
-  order 1. You already have it for free.
-- **Fusion only pays when the intermediate is a full array.** That happens at
-  exactly one seam: a producing body feeding a collapsing sink — `apply → reduce`
-  and `apply → scan`. *After* a collapse the intermediate is a scalar (or a
-  handful), so materializing it costs nothing, and `reduce → apply` does not
-  need fusion at all.
+- producer nodes: `Range1D`, `RangeND`, `WindowND`, `TiledND`
+- body node: `PointExpr`
+- sink nodes: `Store`, `Reduce`, `Scan`, `ScatterReduce`
+- graph nodes: node, port, wire, candidate, selected cover
+- legality facts: same producer, compatible ABI, no intermediate
+  materialization, alias/proof obligations, and typed rejects
 
-So **cap composition at order 2 and enumerate the two seam shapes where the
-intermediate is large** (`apply→reduce`, `apply→scan`), each as a single fused
-template. Everything past a collapse becomes multiple stencil calls in your host
-language, passing the small scalar between them. The stencil layer does dense
-fused kernels; the host does orchestration and control flow — which it is
-already good at. You pay for the fusions you actually use, one entry at a time,
-instead of maintaining a topology-general fusion checker for cases that rarely
-arise.
+The generator walks legal primitive DAGs with an explicit budget, selects covers
+through the typed legality checker, and materializes selected covers back into
+ordinary fused artifacts. The budget is a build/deployment control, not a
+semantic family name.
 
 ---
 
@@ -311,7 +305,7 @@ different axes:
   specialized into one template rather than a stencil per computation. The bank
   is finite — in fact it is a small *cache* over an unbounded body-space, and a
   bank miss just synthesizes-and-bakes a new entry.
-- **Complete** is satisfied by *the free axes plus order-2 composition*:
+- **Complete** is satisfied by *the free axes plus budgeted legal composition*:
   producer × body × sink spans the single-pass streaming universe — pointwise
   pipelines, map-reduce, scan, windowed stencils, pooling, reductions — and the
   two things outside it (data-dependent iteration, and fusing across a collapse
@@ -335,14 +329,11 @@ vocabulary: the unit of pre-compilation has to be coarse enough to vectorize,
 finite enough to pre-bake, and complete enough to cover real code, and those
 pull against each other. Factor every kernel as **producer × body × sink**:
 the producer is the loop header and the loads, the body is a pure fused
-expression tree (data, not code), and the sink is one of exactly three
-catamorphism shapes — **apply, reduce, scan** — which is closed because there is
-no fourth way to consume a stream in one pass. The closed sink makes the bank
-finite; the free producer and body axes make it expressive; the loop shape makes
-`-O3` optimize the whole body inside one stencil. Carry proved facts (`noalias`,
+expression tree (data, not code), and the sink is one of the primitive sink
+nodes — **store, reduce, scan, scatter-reduce**. Carry proved facts (`noalias`,
 alignment, trip-count, reassociability) into the emitted C as `restrict` and
-friends so the vectorizer is licensed, not guessing. Cap composition at SOAC
-order 2 and enumerate the two fused seams where the intermediate is a full array
-(`apply→reduce`, `apply→scan`); push everything else to your host language.
-That is the whole compiler. The stencils are the part everyone gets wrong, and
-producer/body/sink is what they were looking for.
+friends so the vectorizer is licensed, not guessing. Compose by saturating legal
+primitive metastencil DAGs under a budget, then materialize selected covers as
+ordinary fused artifacts. That is the whole compiler. The stencils are the part
+everyone gets wrong, and producer/body/sink plus legality-checked composition is
+what they were looking for.

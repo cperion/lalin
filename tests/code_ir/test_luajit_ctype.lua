@@ -1,9 +1,9 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
 
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 
 local Core = T.LalinCore
@@ -13,7 +13,7 @@ local Back = T.LalinBack
 local LJ = T.LalinLuaJIT
 local CType = require("lalin.luajit_ctype")(T)
 
-local function cls(value) return pvm.classof(value) end
+local function cls(value) return asdl.classof(value) end
 
 assert(CType.scalar_spelling(Back.BackI32) == "int32_t")
 assert(CType.scalar_spelling(Back.BackIndex) == "intptr_t")

@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function bind_context(T)
     local Back = T.LalinBack
@@ -50,7 +50,7 @@ local function bind_context(T)
 
     local function first_fact(model, cls)
         for i = 1, #model.facts do
-            if pvm.classof(model.facts[i]) == cls then return model.facts[i] end
+            if asdl.classof(model.facts[i]) == cls then return model.facts[i] end
         end
         return nil
     end

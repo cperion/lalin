@@ -1,11 +1,11 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A2 = require("lalin.schema_projection")
 local lalin = require("lalin")
 local Typecheck = require("lalin.tree_typecheck")
 
-local T = pvm.context()
+local T = asdl.context()
 A2(T)
 local TC = Typecheck(T)
 
@@ -47,13 +47,13 @@ local module = Tr.Module(Tr.ModuleSurface, {
 
 local checked = TC.check_module(module)
 assert(#checked.issues == 0)
-assert(pvm.classof(checked.module.h) == Tr.ModuleTyped)
+assert(asdl.classof(checked.module.h) == Tr.ModuleTyped)
 local typed_func = checked.module.items[1].func
 local typed_region = typed_func.body[1].region
 local typed_jump = typed_region.entry.body[2]
 assert(typed_jump.h == Tr.StmtSurface)
-assert(pvm.classof(typed_jump.args[1].value.h) == Tr.ExprTyped)
-assert(pvm.classof(typed_region.entry.body[1].cond.h) == Tr.ExprTyped)
+assert(asdl.classof(typed_jump.args[1].value.h) == Tr.ExprTyped)
+assert(asdl.classof(typed_region.entry.body[1].cond.h) == Tr.ExprTyped)
 
 local compiled = lalin.compile("TreeTypecheckSmoke", module)
 local f = compiled.sum_typechecked

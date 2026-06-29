@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function shell_quote(s)
     s = tostring(s)
@@ -340,19 +340,19 @@ local function bind_context(T)
     end
 
     local function is_i32(ty)
-        return pvm.classof(ty) == Code.CodeTyInt and tonumber(ty.bits) == 32 and ty.signedness == Code.CodeSigned
+        return asdl.classof(ty) == Code.CodeTyInt and tonumber(ty.bits) == 32 and ty.signedness == Code.CodeSigned
     end
 
     local function explicit_vector_mc_path(artifact)
         local schedule = artifact.instance and artifact.instance.schedule
-        if pvm.classof(schedule) ~= Stencil.StencilScheduleVector then return false end
+        if asdl.classof(schedule) ~= Stencil.StencilScheduleVector then return false end
         local shape = ArtifactPlan.artifact_shape(artifact)
         if shape.kind ~= "reduce_array" then return false end
         if shape.reduction ~= Value.ReductionAdd then return false end
         if not is_i32(shape.elem_ty) or not is_i32(shape.result_ty) then return false end
         if tonumber(shape.stride) ~= 1 then return false end
         local xs = ArtifactPlan.access_named(artifact.instance.descriptor, "xs")
-        local top = pvm.classof(xs.layout)
+        local top = asdl.classof(xs.layout)
         return top == Stencil.StencilLayoutContiguous or top == Stencil.StencilLayoutSliceDescriptor
     end
 
@@ -376,7 +376,7 @@ local function bind_context(T)
                 evidence
             )
         end
-        if pvm.classof(schedule) == Stencil.StencilScheduleUnrolled then
+        if asdl.classof(schedule) == Stencil.StencilScheduleUnrolled then
             return Stencil.StencilRealizedUnrolled(schedule.factor, Stencil.StencilMaterializerResidualMC, evidence)
         end
         return Stencil.StencilRealizedScalar(Stencil.StencilMaterializerResidualMC, evidence)

@@ -1,10 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A = require("lalin.schema_projection")
 local Size = require("lalin.type_size_align")
 
-local T = pvm.context()
+local T = asdl.context()
 A(T)
 local L = Size(T)
 local C = T.LalinCore
@@ -17,7 +17,7 @@ local function known(ty, size, align, env)
 end
 local function unknown(ty, env)
     local result = L.result(ty, env)
-    assert(pvm.classof(result) == Ty.TypeMemLayoutUnknown)
+    assert(asdl.classof(result) == Ty.TypeMemLayoutUnknown)
     assert(result.ty == ty)
 end
 

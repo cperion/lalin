@@ -14,7 +14,7 @@ return schema. LalinStencil {
       field. name [str],
     },
   },
-  sum. StencilVocab { StencilStore, StencilReduce, StencilScan, StencilScatterReduce, },
+  sum. StencilSinkVocab { StencilStore, StencilReduce, StencilScan, StencilScatterReduce, },
   sum. StencilUnaryOp {
     StencilUnaryIdentity,
     StencilUnaryNeg,
@@ -590,7 +590,7 @@ return schema. LalinStencil {
   sum. StencilReject {
     StencilRejectUnsupportedVocab {
       variant_unique,
-      vocab [LalinStencil.StencilVocab],
+      vocab [LalinStencil.StencilSinkVocab],
       reason [str],
     },
     StencilRejectUnsupportedType { variant_unique, ty [LalinCode.CodeType], reason [str], },
@@ -651,7 +651,7 @@ return schema. LalinStencil {
     },
     StencilNoSelection {
       variant_unique,
-      vocab [LalinStencil.StencilVocab],
+      vocab [LalinStencil.StencilSinkVocab],
       rejects [many [LalinStencil.StencilReject]],
       provenance [LalinStencil.StencilScheduleSelectionProvenance],
     },

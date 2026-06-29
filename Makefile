@@ -34,16 +34,26 @@ $(LALIN_BIN): src/lalin.c $(LALIN_BC_BANK_C) $(LALIN_BC_BANK_H) $(LALIN_MC_BANK_
 	maxprocs="$(MAXPROCS)"; \
 	case "$$maxprocs" in ""|0|*[!0-9]*) maxprocs=1 ;; esac; \
 	running=0; \
+	pids=""; \
 	objs=""; \
 	for src in src/lalin.c $(LALIN_BC_BANK_C) $(LALIN_MC_BANK_C) $(LALIN_BIN_DIR)/lalin_embedded_mc_bank_shard_*.c; do \
 		[ -e "$$src" ] || continue; \
 		obj="$(LALIN_BIN_OBJ_DIR)/$$(printf '%s' "$$src" | sed 's#[^A-Za-z0-9_]#_#g').o"; \
 		objs="$$objs $$obj"; \
 		$(CC) -O2 -I$(LUAJIT) -I$(LALIN_BIN_DIR) -c "$$src" -o "$$obj" & \
+		pids="$$pids $$!"; \
 		running=$$((running + 1)); \
-		if [ "$$running" -ge "$$maxprocs" ]; then wait; running=0; fi; \
+		if [ "$$running" -ge "$$maxprocs" ]; then \
+			status=0; \
+			for pid in $$pids; do wait "$$pid" || status=1; done; \
+			[ "$$status" -eq 0 ]; \
+			pids=""; \
+			running=0; \
+		fi; \
 	done; \
-	wait; \
+	status=0; \
+	for pid in $$pids; do wait "$$pid" || status=1; done; \
+	[ "$$status" -eq 0 ]; \
 	$(CC) -Wl,-E $$objs $(LUAJIT)/libluajit.a -lm -ldl -pthread -o $(LALIN_BIN)
 
 libtcc: $(LIBTCC)

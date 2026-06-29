@@ -7,7 +7,7 @@ local llbl = require("llbl")
 local role_region_head = llbl.role_region
 local Model = require("lalin.schema_projection_model")
 local SchemaInstall = require("lalin.context_define_schema")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local M = {}
 

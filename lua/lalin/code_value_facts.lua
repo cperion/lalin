@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -59,7 +59,7 @@ local function bind_context(T)
         for _, block in ipairs(func.blocks or {}) do
             for _, inst in ipairs(block.insts or {}) do
                 local k = inst.kind
-                local cls = pvm.classof(k)
+                local cls = asdl.classof(k)
                 if k.dst ~= nil then defs[k.dst.text] = { cls = cls, inst = inst, kind = k, block = block } end
             end
         end
@@ -99,7 +99,7 @@ local function bind_context(T)
             for _, param in ipairs(block.params or {}) do exprs[param.value.text] = Value.ValueExprValue(param.value) end
             for _, inst in ipairs(block.insts or {}) do
                 local k = inst.kind
-                local cls = pvm.classof(k)
+                local cls = asdl.classof(k)
                 if cls == Code.CodeInstConst then
                     add_expr_fact(out_values, exprs, k.dst, Value.ValueExprConst(k.const), identity("Code constant"))
                 elseif cls == Code.CodeInstAlias then
@@ -319,7 +319,7 @@ local function bind_context(T)
 
     local function add_flow_ranges(flow, out_values)
         for _, fact in ipairs(flow and flow.facts or {}) do
-            if pvm.classof(fact) == Flow.FlowLoopInductionRange then
+            if asdl.classof(fact) == Flow.FlowLoopInductionRange then
                 local r = fact.range
                 out_values[#out_values + 1] = Value.ValueRangeFact(Value.ValueRangeInt(r.value, Value.ValueExprValue(r.min.value or r.value), Value.ValueExprValue(r.max.value or r.value), not r.max_exclusive, Value.AlgebraProofFlow(Flow.FlowDomainLoop(r.loop), r.reason)))
             end
@@ -338,7 +338,7 @@ local function bind_context(T)
     local function expr_index(value_fact_set)
         local index = { expr_by_value = {}, proof_by_value = {}, no_wrap_by_value = {}, float_mode_by_value = {} }
         for _, fact in ipairs(value_fact_set and value_fact_set.values or {}) do
-            local cls = pvm.classof(fact)
+            local cls = asdl.classof(fact)
             if cls == Value.ValueExprFact then
                 index.expr_by_value[fact.value.text] = fact.expr
                 index.proof_by_value[fact.value.text] = fact.proof
@@ -357,7 +357,7 @@ local function bind_context(T)
         seen = seen or {}
         if seen[expr] then return true end
         seen[expr] = true
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Value.ValueExprConst or cls == Value.ValueExprValue or cls == Value.ValueExprAffine then return true end
         if cls == Value.ValueExprUnary then return lowerable_expr(expr.value, seen) end
         if cls == Value.ValueExprCast then return lowerable_expr(expr.value, seen) end

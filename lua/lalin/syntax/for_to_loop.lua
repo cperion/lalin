@@ -4,7 +4,7 @@
 --
 -- Usage: local for_to_loop = require("lalin.syntax.for_to_loop")(T)
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function bind_context(T)
   if not T.LalinCore then
@@ -280,19 +280,19 @@ local function bind_context(T)
     end
 
     local function expr_ref_name(expr)
-      if pvm.classof(expr) ~= Tr.ExprRef then return nil end
+      if asdl.classof(expr) ~= Tr.ExprRef then return nil end
       local r = expr.ref
-      if pvm.classof(r) == B.ValueRefName then return r.name end
+      if asdl.classof(r) == B.ValueRefName then return r.name end
       return nil
     end
     local function expr_lit_int(expr)
-      if pvm.classof(expr) ~= Tr.ExprLit then return nil end
+      if asdl.classof(expr) ~= Tr.ExprLit then return nil end
       local value = expr.value
-      if pvm.classof(value) == C.LitInt then return tostring(value.raw) end
+      if asdl.classof(value) == C.LitInt then return tostring(value.raw) end
       return nil
     end
     local function expr_key(expr)
-      local cls = pvm.classof(expr)
+      local cls = asdl.classof(expr)
       if cls == Tr.ExprRef then return "ref:" .. tostring(expr_ref_name(expr)) end
       if cls == Tr.ExprLit then return "int:" .. tostring(expr_lit_int(expr)) end
       if cls == Tr.ExprCast then return expr_key(expr.value) end
@@ -318,7 +318,7 @@ local function bind_context(T)
     local function strip_axis_start(expr, axis_i)
       local axis = domain.axes[axis_i]
       if source_zero(axis.start) then return expr end
-      if pvm.classof(expr) ~= Tr.ExprBinary or expr.op ~= C.BinSub then return nil end
+      if asdl.classof(expr) ~= Tr.ExprBinary or expr.op ~= C.BinSub then return nil end
       if not is_ref(expr.lhs, axis_specs[axis_i].index) then return nil end
       if not same_expr(expr.rhs, expr_from_value(axis.start)) then return nil end
       return expr.lhs
@@ -327,7 +327,7 @@ local function bind_context(T)
       local axis = domain.axes[axis_i]
       local lane = expr
       if axis.step ~= 1 then
-        if pvm.classof(lane) ~= Tr.ExprBinary or lane.op ~= C.BinDiv then return false end
+        if asdl.classof(lane) ~= Tr.ExprBinary or lane.op ~= C.BinDiv then return false end
         if not same_expr(lane.rhs, expr_from_value(axis.step)) then return false end
         lane = lane.lhs
       end
@@ -336,13 +336,13 @@ local function bind_context(T)
     end
     local is_row_major_prefix
     local function is_mul_prefix_extent(expr, prefix_axis)
-      return pvm.classof(expr) == Tr.ExprBinary and expr.op == C.BinMul
+      return asdl.classof(expr) == Tr.ExprBinary and expr.op == C.BinMul
         and ((is_row_major_prefix(expr.lhs, prefix_axis) and is_extent(expr.rhs, prefix_axis + 1))
           or (is_row_major_prefix(expr.rhs, prefix_axis) and is_extent(expr.lhs, prefix_axis + 1)))
     end
     is_row_major_prefix = function(expr, axis_i)
       if axis_i == 1 then return is_axis_lane(expr, 1) end
-      return pvm.classof(expr) == Tr.ExprBinary and expr.op == C.BinAdd
+      return asdl.classof(expr) == Tr.ExprBinary and expr.op == C.BinAdd
         and ((is_mul_prefix_extent(expr.lhs, axis_i - 1) and is_axis_lane(expr.rhs, axis_i))
           or (is_mul_prefix_extent(expr.rhs, axis_i - 1) and is_axis_lane(expr.lhs, axis_i)))
     end
@@ -350,7 +350,7 @@ local function bind_context(T)
 
     local rewrite_expr, rewrite_place, rewrite_index_base
     rewrite_expr = function(expr)
-      local cls = pvm.classof(expr)
+      local cls = asdl.classof(expr)
       if is_row_major_nd(expr) then return flat_ref end
       if cls == Tr.ExprBinary then return Tr.ExprBinary(expr.h, expr.op, rewrite_expr(expr.lhs), rewrite_expr(expr.rhs)) end
       if cls == Tr.ExprCompare then return Tr.ExprCompare(expr.h, expr.op, rewrite_expr(expr.lhs), rewrite_expr(expr.rhs)) end
@@ -366,19 +366,19 @@ local function bind_context(T)
       return expr
     end
     rewrite_place = function(place)
-      local cls = pvm.classof(place)
+      local cls = asdl.classof(place)
       if cls == Tr.PlaceIndex then return Tr.PlaceIndex(place.h, rewrite_index_base(place.base), rewrite_expr(place.index)) end
       if cls == Tr.PlaceDot then return Tr.PlaceDot(place.h, rewrite_place(place.base), place.name) end
       return place
     end
     rewrite_index_base = function(base)
-      local cls = pvm.classof(base)
+      local cls = asdl.classof(base)
       if cls == Tr.IndexBaseExpr then return Tr.IndexBaseExpr(rewrite_expr(base.base)) end
       if cls == Tr.IndexBasePlace then return Tr.IndexBasePlace(rewrite_place(base.base), base.elem) end
       return base
     end
     local function rewrite_stmt(stmt)
-      local cls = pvm.classof(stmt)
+      local cls = asdl.classof(stmt)
       if cls == Tr.StmtSet then return Tr.StmtSet(stmt.h, rewrite_place(stmt.place), rewrite_expr(stmt.value)) end
       if cls == Tr.StmtLet then return Tr.StmtLet(stmt.h, stmt.binding, rewrite_expr(stmt.init)) end
       if cls == Tr.StmtVar then return Tr.StmtVar(stmt.h, stmt.binding, rewrite_expr(stmt.init)) end

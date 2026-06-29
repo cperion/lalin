@@ -2,7 +2,7 @@
 -- No text round-trip — converts LalinAsdl values straight to the definition
 -- format that schema_context expects.
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local schema_context = require("lalin.schema_context")
 
 local M = {}
@@ -12,7 +12,7 @@ local function basename(name)
 end
 
 local function type_name(A, ty)
-    local cls = pvm.classof(ty)
+    local cls = asdl.classof(ty)
     if cls == A.TypeBuiltin then return ty.name end
     if cls == A.TypeName then return ty.module_name .. "." .. ty.name end
     if cls == A.TypeRelativeName then return ty.name end
@@ -24,16 +24,16 @@ end
 local function convert_field(A, field)
     local d = { name = field.name }
     local ty = field.ty
-    local cls = pvm.classof(ty)
+    local cls = asdl.classof(ty)
     -- Unwrap TypeList/TypeOptional: set field flags, use inner type name
     if cls == A.TypeList then
         d.list = true
         ty = ty.elem
-        cls = pvm.classof(ty)
+        cls = asdl.classof(ty)
     elseif cls == A.TypeOptional then
         d.optional = true
         ty = ty.elem
-        cls = pvm.classof(ty)
+        cls = asdl.classof(ty)
     end
     d.type = type_name(A, ty)
     return d
@@ -50,7 +50,7 @@ end
 
 local function has_attr(attrs, class_or_singleton)
     for i = 1, #(attrs or {}) do
-        if attrs[i] == class_or_singleton or pvm.classof(attrs[i]) == class_or_singleton then
+        if attrs[i] == class_or_singleton or asdl.classof(attrs[i]) == class_or_singleton then
             return true
         end
     end
@@ -61,7 +61,7 @@ local function convert_module(A, module)
     local defs = {}
     local mod_ns = module.name .. "."
     for _, decl in ipairs(module.decls or {}) do
-        local cls = pvm.classof(decl)
+        local cls = asdl.classof(decl)
         local fq_name = mod_ns .. decl.name
         if cls == A.ProductDecl then
             defs[#defs + 1] = {
@@ -106,7 +106,7 @@ end
 
 function M.define(T, schema)
     local A = assert(T.LalinAsdl, "context_define_schema.define expects LalinAsdl to be defined in the context")
-    if pvm.classof(schema) ~= A.Schema then
+    if asdl.classof(schema) ~= A.Schema then
         error("context_define_schema.define expects LalinAsdl.Schema", 2)
     end
 

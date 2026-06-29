@@ -1,8 +1,8 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
-local T = pvm.context(); Schema(T)
+local T = asdl.context(); Schema(T)
 
 local Core = T.LalinCore
 local C = T.LalinC
@@ -36,7 +36,7 @@ local unit = C.CBackendUnit("m", target, { sig }, {}, {}, {}, { helper }, { func
 assert(#Validate.validate(unit).issues == 0, "valid unit validates")
 
 local function has_issue(report, cls)
-    for i = 1, #report.issues do if pvm.classof(report.issues[i]) == cls then return true end end
+    for i = 1, #report.issues do if asdl.classof(report.issues[i]) == cls then return true end end
     return false
 end
 

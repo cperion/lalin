@@ -1,10 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local PhaseModel = require("lalin.phase_model")
 local PhaseDsl = require("lalin.phase_dsl")
 
-local T = pvm.context()
+local T = asdl.context()
 PhaseModel(T)
 PhaseDsl(T)
 local P = T.LalinPhase
@@ -76,7 +76,7 @@ return package "lalin.compiler" {
 }
 ]], "phase_dsl_test.lua"))()
 
-assert(pvm.classof(pkg) == P.Package)
+assert(asdl.classof(pkg) == P.Package)
 assert(pkg.id.text == "lalin.compiler")
 
 local formatted = PhaseDsl.format(pkg)
@@ -91,7 +91,7 @@ assert(#pkg.roots == 1)
 
 local tree = pkg.worlds[1]
 assert(tree.id.text == "tree")
-assert(pvm.classof(tree.ty) == P.TypeRef)
+assert(asdl.classof(tree.ty) == P.TypeRef)
 assert(tree.ty.module_name == "LalinTree")
 assert(tree.ty.type_name == "Module")
 
@@ -101,7 +101,7 @@ assert(machine.input.text == "tree")
 assert(machine.output.text == "checked")
 assert(machine.diagnostics.text == "diag")
 assert(machine.abi == P.MachineAbiStatusReturning)
-assert(pvm.classof(machine.impl) == P.ImplLua)
+assert(asdl.classof(machine.impl) == P.ImplLua)
 assert(machine.impl.module_name == "lalin.tree_typecheck")
 assert(machine.impl.function_name == "typecheck")
 assert(machine.capabilities[1] == "diagnostics")

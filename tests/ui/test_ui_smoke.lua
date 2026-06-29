@@ -8,8 +8,6 @@ assert(ui.build, "ui facade exposes builders")
 assert(ui.tw, "ui facade exposes Tailwind-style tokens")
 assert(ui.paint, "ui facade exposes paint builders")
 assert(ui.theme, "ui facade exposes default theme/env helpers")
-assert(require("pvm") == require("lalin.pvm"), "top-level pvm compatibility shim")
-
 local b = ui.build
 local tw = ui.tw
 local paint = ui.paint

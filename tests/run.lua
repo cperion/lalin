@@ -6,13 +6,13 @@ local suite = arg and arg[1] or "default"
 local suites = {
     default = {
         "c_backend", "code_ir", "core", "frontend",
-        "pvm", "runtime", "schema", "tooling",
+        "asdl", "compiler_process", "runtime", "schema", "tooling",
     },
-    optional = { "experiments", "ui", "retired" },
+    optional = { "experiments", "retired" },
     all = {
         "c_backend", "code_ir", "core",
         "experiments", "frontend",
-        "pvm", "retired", "runtime", "schema", "tooling", "ui",
+        "asdl", "compiler_process", "retired", "runtime", "schema", "tooling",
     },
 }
 
@@ -53,7 +53,6 @@ local passed, skipped, failed = 0, 0, 0
 local run_slow = os.getenv("LALIN_RUN_SLOW") == "1" or os.getenv("LALIN_RUN_SLOW") == "true"
 local slow_tests = {
     ["tests/code_ir/test_lalin_binary.lua"] = "builds and links the full embedded single binary",
-    ["tests/code_ir/test_luajit_embedded_mc_coverage.lua"] = "builds the full embedded MC intern bank",
 }
 for i = 1, #tests do
     local path = tests[i]

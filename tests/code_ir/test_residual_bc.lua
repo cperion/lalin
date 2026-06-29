@@ -1,9 +1,9 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local Schema = require("lalin.schema")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 
 local BC = require("lalin.residual_bc")(T)

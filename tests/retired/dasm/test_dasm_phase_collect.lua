@@ -1,11 +1,11 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A2 = require("lalin.schema_projection")
 local Collect = require("back.dasm.phases.collect_module")
 local Mx = require("back.dasm.model")
 
-local T = pvm.context()
+local T = asdl.context()
 A2(T)
 Mx.set_context(T)
 
@@ -34,7 +34,7 @@ local program = B.BackProgram({
 })
 
 local m = Collect.run(program)
-assert(pvm.classof(m) == D.DPhaseModule)
+assert(asdl.classof(m) == D.DPhaseModule)
 local mm = Mx.phase_module_maps(m)
 assert(mm.sigs["sig:f"] ~= nil)
 assert(mm.funcs["f"] ~= nil)

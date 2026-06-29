@@ -2,10 +2,10 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local ffi = require("ffi")
 local bit = require("bit")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
 
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 
 local Core = T.LalinCore
@@ -58,7 +58,7 @@ local function mul32(a, b)
 end
 
 local function is_float_ty(ty)
-    return pvm.classof(ty) == Code.CodeTyFloat
+    return asdl.classof(ty) == Code.CodeTyFloat
 end
 
 local function reduce_expect(case, values)
@@ -237,8 +237,8 @@ local function compile_with_stencil(case, values, ctype, stem, expected_values)
     assert(#rejects == 0, case.name .. " rejected through stencil: " .. tostring(rejects[1] and rejects[1].reason))
     assert(#facts.value.reductions == 1 and facts.value.reductions[1].kind == case.reduction, case.name .. " should derive expected ReductionKind")
     assert(#artifacts == 1, case.name .. " should collect one stencil artifact")
-    assert(pvm.classof(artifacts[1].instance.schedule) == Stencil.StencilScheduleAutoVector, case.name .. " should carry an auto-vector stencil schedule")
-    assert(pvm.classof(lj_module.funcs[1].machines[1].kind) == LJ.LJMachineStencilCall, case.name .. " should emit LJMachineStencilCall")
+    assert(asdl.classof(artifacts[1].instance.schedule) == Stencil.StencilScheduleAutoVector, case.name .. " should carry an auto-vector stencil schedule")
+    assert(asdl.classof(lj_module.funcs[1].machines[1].kind) == LJ.LJMachineStencilCall, case.name .. " should emit LJMachineStencilCall")
     local build, build_err = StencilBinary.compile(T, artifacts, { stem = stem or ("test_luajit_lower_reductions_" .. case.name) })
     assert(build ~= nil, tostring(build_err))
     local compiled, err, src = Emit.compile_module(lj_module, {

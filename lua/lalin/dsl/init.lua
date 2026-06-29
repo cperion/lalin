@@ -5,7 +5,7 @@
 -- Lua value T. Normalization then consumes those already-resolved values by
 -- role and emits closed LalinTree ASDL directly.
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local schema = require("lalin.schema_projection")
 local llbl = require("llbl")
 local ErrorSpan = require("lalin.error.span")
@@ -14,7 +14,7 @@ local SourceAnalysis = require("lalin.source_analysis")
 local M = {}
 local role_region_head = llbl.role_region
 
-local T = pvm.context()
+local T = asdl.context()
 schema(T)
 
 local C, Ty, B, Tr = T.LalinCore, T.LalinType, T.LalinBind, T.LalinTree
@@ -61,7 +61,7 @@ end
 
 local function classof(v)
     if type(v) ~= "table" and type(v) ~= "userdata" then return false end
-    local ok, cls = pcall(pvm.classof, v)
+    local ok, cls = pcall(asdl.classof, v)
     return ok and cls or false
 end
 
@@ -677,19 +677,19 @@ local function native_loop_nd_stmt_tree(loop, domain)
     end
 
     local function expr_ref_name(expr)
-        if pvm.classof(expr) ~= Tr.ExprRef then return nil end
+        if asdl.classof(expr) ~= Tr.ExprRef then return nil end
         local r = expr.ref
-        if pvm.classof(r) == B.ValueRefName then return r.name end
+        if asdl.classof(r) == B.ValueRefName then return r.name end
         return nil
     end
     local function expr_lit_int(expr)
-        if pvm.classof(expr) ~= Tr.ExprLit then return nil end
+        if asdl.classof(expr) ~= Tr.ExprLit then return nil end
         local lit = expr.value
-        if pvm.classof(lit) == C.LitInt then return tostring(lit.raw) end
+        if asdl.classof(lit) == C.LitInt then return tostring(lit.raw) end
         return nil
     end
     local function expr_key(expr)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Tr.ExprRef then return "ref:" .. tostring(expr_ref_name(expr)) end
         if cls == Tr.ExprLit then return "int:" .. tostring(expr_lit_int(expr)) end
         if cls == Tr.ExprBinary then return "bin:" .. tostring(expr.op) .. "(" .. tostring(expr_key(expr.lhs)) .. "," .. tostring(expr_key(expr.rhs)) .. ")" end
@@ -727,7 +727,7 @@ local function native_loop_nd_stmt_tree(loop, domain)
     local function strip_axis_start(expr, axis_i)
         local axis = domain.axes[axis_i]
         if source_zero(axis.start) then return expr end
-        if pvm.classof(expr) ~= Tr.ExprBinary or expr.op ~= C.BinSub then return nil end
+        if asdl.classof(expr) ~= Tr.ExprBinary or expr.op ~= C.BinSub then return nil end
         if not is_ref(expr.lhs, axis_specs[axis_i].index) then return nil end
         if not same_expr(expr.rhs, tree_expr(axis.start)) then return nil end
         return expr.lhs
@@ -736,7 +736,7 @@ local function native_loop_nd_stmt_tree(loop, domain)
         local axis = domain.axes[axis_i]
         local lane = expr
         if axis.step ~= 1 then
-            if pvm.classof(lane) ~= Tr.ExprBinary or lane.op ~= C.BinDiv then return false end
+            if asdl.classof(lane) ~= Tr.ExprBinary or lane.op ~= C.BinDiv then return false end
             if not same_expr(lane.rhs, tree_expr(axis.step)) then return false end
             lane = lane.lhs
         end
@@ -745,14 +745,14 @@ local function native_loop_nd_stmt_tree(loop, domain)
     end
     local is_row_major_prefix
     local function is_mul_prefix_extent(expr, prefix_axis)
-        return pvm.classof(expr) == Tr.ExprBinary
+        return asdl.classof(expr) == Tr.ExprBinary
             and expr.op == C.BinMul
             and ((is_row_major_prefix(expr.lhs, prefix_axis) and is_extent(expr.rhs, prefix_axis + 1))
                 or (is_row_major_prefix(expr.rhs, prefix_axis) and is_extent(expr.lhs, prefix_axis + 1)))
     end
     is_row_major_prefix = function(expr, axis_i)
         if axis_i == 1 then return is_axis_lane(expr, 1) end
-        return pvm.classof(expr) == Tr.ExprBinary
+        return asdl.classof(expr) == Tr.ExprBinary
             and expr.op == C.BinAdd
             and ((is_mul_prefix_extent(expr.lhs, axis_i - 1) and is_axis_lane(expr.rhs, axis_i))
                 or (is_mul_prefix_extent(expr.rhs, axis_i - 1) and is_axis_lane(expr.lhs, axis_i)))
@@ -762,7 +762,7 @@ local function native_loop_nd_stmt_tree(loop, domain)
     end
     local rewrite_expr, rewrite_place, rewrite_index_base
     rewrite_expr = function(expr)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if is_row_major_nd(expr) then return flat_ref end
         if cls == Tr.ExprBinary then return Tr.ExprBinary(expr.h, expr.op, rewrite_expr(expr.lhs), rewrite_expr(expr.rhs)) end
         if cls == Tr.ExprCompare then return Tr.ExprCompare(expr.h, expr.op, rewrite_expr(expr.lhs), rewrite_expr(expr.rhs)) end
@@ -781,19 +781,19 @@ local function native_loop_nd_stmt_tree(loop, domain)
         return expr
     end
     rewrite_place = function(place)
-        local cls = pvm.classof(place)
+        local cls = asdl.classof(place)
         if cls == Tr.PlaceIndex then return Tr.PlaceIndex(place.h, rewrite_index_base(place.base), rewrite_expr(place.index)) end
         if cls == Tr.PlaceDot then return Tr.PlaceDot(place.h, rewrite_place(place.base), place.name) end
         return place
     end
     rewrite_index_base = function(base)
-        local cls = pvm.classof(base)
+        local cls = asdl.classof(base)
         if cls == Tr.IndexBaseExpr then return Tr.IndexBaseExpr(rewrite_expr(base.base)) end
         if cls == Tr.IndexBasePlace then return Tr.IndexBasePlace(rewrite_place(base.base), base.elem) end
         return base
     end
     local function rewrite_stmt(stmt)
-        local cls = pvm.classof(stmt)
+        local cls = asdl.classof(stmt)
         if cls == Tr.StmtSet then return Tr.StmtSet(stmt.h, rewrite_place(stmt.place), rewrite_expr(stmt.value)) end
         if cls == Tr.StmtLet then return Tr.StmtLet(stmt.h, stmt.binding, rewrite_expr(stmt.init)) end
         if cls == Tr.StmtVar then return Tr.StmtVar(stmt.h, stmt.binding, rewrite_expr(stmt.init)) end
@@ -1372,7 +1372,7 @@ function Decl:typecheck(opts)
 end
 
 local function retarget_cont_jumps_stmt(stmt, cont_by_name)
-    local cls = pvm.classof(stmt)
+    local cls = asdl.classof(stmt)
     if cls == Tr.StmtJump then
         local slot = cont_by_name[stmt.target.name]
         if slot then return Tr.StmtJumpCont(stmt.h, slot, stmt.args) end
@@ -1382,22 +1382,22 @@ local function retarget_cont_jumps_stmt(stmt, cont_by_name)
         local then_body, else_body = {}, {}
         for i = 1, #stmt.then_body do then_body[i] = retarget_cont_jumps_stmt(stmt.then_body[i], cont_by_name) end
         for i = 1, #stmt.else_body do else_body[i] = retarget_cont_jumps_stmt(stmt.else_body[i], cont_by_name) end
-        return pvm.with(stmt, { then_body = then_body, else_body = else_body })
+        return asdl.with(stmt, { then_body = then_body, else_body = else_body })
     end
     if cls == Tr.StmtSwitch then
         local arms, variant_arms, default_body = {}, {}, {}
         for i = 1, #stmt.arms do
             local body = {}
             for j = 1, #stmt.arms[i].body do body[j] = retarget_cont_jumps_stmt(stmt.arms[i].body[j], cont_by_name) end
-            arms[i] = pvm.with(stmt.arms[i], { body = body })
+            arms[i] = asdl.with(stmt.arms[i], { body = body })
         end
         for i = 1, #stmt.variant_arms do
             local body = {}
             for j = 1, #stmt.variant_arms[i].body do body[j] = retarget_cont_jumps_stmt(stmt.variant_arms[i].body[j], cont_by_name) end
-            variant_arms[i] = pvm.with(stmt.variant_arms[i], { body = body })
+            variant_arms[i] = asdl.with(stmt.variant_arms[i], { body = body })
         end
         for i = 1, #stmt.default_body do default_body[i] = retarget_cont_jumps_stmt(stmt.default_body[i], cont_by_name) end
-        return pvm.with(stmt, { arms = arms, variant_arms = variant_arms, default_body = default_body })
+        return asdl.with(stmt, { arms = arms, variant_arms = variant_arms, default_body = default_body })
     end
     return stmt
 end
@@ -1470,7 +1470,7 @@ function Decl:syntax_item()
         end
         local retargeted_blocks = {}
         for i = 1, #blocks do
-            retargeted_blocks[i] = pvm.with(blocks[i], { body = retarget_cont_jumps_stmts(blocks[i].body, cont_by_name) })
+            retargeted_blocks[i] = asdl.with(blocks[i], { body = retarget_cont_jumps_stmts(blocks[i].body, cont_by_name) })
         end
         return Tr.ItemRegion(Tr.Region(
             self.name,

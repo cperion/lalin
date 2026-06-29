@@ -1,8 +1,8 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
-local T = pvm.context(); Schema(T)
+local T = asdl.context(); Schema(T)
 
 local Core = T.LalinCore
 local Code = T.LalinCode
@@ -40,7 +40,7 @@ end
 local function assert_no_issues(report, label)
     if #report.issues == 0 then return end
     local names = {}
-    for i = 1, #report.issues do names[i] = tostring(pvm.classof(report.issues[i])) end
+    for i = 1, #report.issues do names[i] = tostring(asdl.classof(report.issues[i])) end
     error(label .. ": " .. table.concat(names, ", "), 2)
 end
 

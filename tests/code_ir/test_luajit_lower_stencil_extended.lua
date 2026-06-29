@@ -1,10 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local ffi = require("ffi")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
 
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 
 local Core = T.LalinCore
@@ -33,7 +33,7 @@ local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOver
 local function ptr(ty) return Code.CodeTyDataPtr(ty) end
 local function bytes(ty)
     if ty == bool8 then return 1 end
-    if pvm.classof(ty) == Code.CodeTyFloat and ty.bits == 64 then return 8 end
+    if asdl.classof(ty) == Code.CodeTyFloat and ty.bits == 64 then return 8 end
     return 4
 end
 local function access(mode, ty) return Code.CodeMemoryAccess(mode, ty, bytes(ty), Code.CodeMustNotTrap, false, nil) end
@@ -73,11 +73,11 @@ local function compile_module(module, contracts, opts)
     local producer = StencilArtifactPlan.descriptor_producer(artifacts[1].instance.descriptor)
     local shape = StencilArtifactPlan.producer_shape(producer)
     local expected_producer = opts.producer or Stencil.StencilProduceRange1D
-    assert(pvm.classof(shape) == expected_producer, opts.name .. " should feed the expected typed producer from lowering")
+    assert(asdl.classof(shape) == expected_producer, opts.name .. " should feed the expected typed producer from lowering")
     if expected_producer == Stencil.StencilProduceRange1D then
         assert(shape.start == nil and shape.stop == nil, opts.name .. " producer bounds should be runtime call arguments, not descriptor identity")
     end
-    assert(pvm.classof(lj_module.funcs[1].machines[1].kind) == (opts.reduce and LJ.LJMachineStencilCall or LJ.LJMachineStencilEffect), opts.name .. " should lower through stencil machine")
+    assert(asdl.classof(lj_module.funcs[1].machines[1].kind) == (opts.reduce and LJ.LJMachineStencilCall or LJ.LJMachineStencilEffect), opts.name .. " should lower through stencil machine")
     local build, build_err, csrc = StencilBinary.compile(T, artifacts, { stem = "test_luajit_lower_stencil_extended_" .. opts.name })
     assert(build ~= nil, tostring(build_err) .. "\n" .. tostring(csrc))
     local compiled, err, src = Emit.compile_module(lj_module, {

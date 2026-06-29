@@ -53,9 +53,9 @@ function M.emit(registry, issue, phase, analysis)
     local root_key = nil
 
     -- Unresolved names are root causes
-    local pvm = require("lalin.pvm")
+    local asdl = require("lalin.asdl")
     if pvm then
-        local cls = pvm.classof and pvm.classof(issue)
+        local cls = asdl.classof and asdl.classof(issue)
         if cls then
             if cls.kind == "TypeIssueUnresolvedValue" and issue.name then
                 root_key = "unresolved:" .. issue.name
@@ -73,10 +73,10 @@ function M.emit(registry, issue, phase, analysis)
         local function is_void_type(ty)
             if not ty then return false end
             if type(ty) == "string" and ty == "void" then return true end
-            local cls2 = pvm and pvm.classof and pvm.classof(ty)
+            local cls2 = pvm and asdl.classof and asdl.classof(ty)
             if cls2 then
                 return cls2.kind == "TScalar" and ty.scalar
-                    and pvm.classof(ty.scalar) and pvm.classof(ty.scalar).kind == "ScalarVoid"
+                    and asdl.classof(ty.scalar) and asdl.classof(ty.scalar).kind == "ScalarVoid"
             end
             return false
         end

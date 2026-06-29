@@ -6,7 +6,7 @@
 -- require(module)[function] for hosted compiler code.
 
 local llbl = require("llbl")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local LlTask = require("llpvm.task")
 
 local M = {}
@@ -21,7 +21,7 @@ local function id_text(id)
 end
 
 local function class_kind(v)
-    local cls = pvm.classof(v)
+    local cls = asdl.classof(v)
     return type(cls) == "table" and cls.kind or nil
 end
 

@@ -785,9 +785,151 @@ return schema. LalinTree {
     TypeYieldVoid,
     TypeYieldValue { variant_unique, field. ty [LalinType.Type], },
   },
+  product. TypeVariantCase {
+    interned,
+    field. name [str],
+    tag [number],
+    payload [LalinType.Type],
+    fields [many [LalinType.FieldDecl]],
+  },
+  product. TypeVariantDef {
+    interned,
+    type_name [str],
+    field. ty [LalinType.Type],
+    variants [many [LalinTree.TypeVariantCase]],
+  },
+  product. TypeHandleDef {
+    interned,
+    field. name [str],
+    field. ty [LalinType.Type],
+    repr [LalinType.HandleRepr],
+    invalid [LalinType.HandleInvalid],
+    domain [optional [LalinType.TypeRef]],
+    target [optional [LalinType.TypeRef]],
+  },
+  product. TypeFuncEffect {
+    interned,
+    field. name [str],
+    params [many [LalinType.Param]],
+    readonly [many [str]],
+    preserve [many [str]],
+    invalidate [many [str]],
+  },
+  product. TypeModuleFacts {
+    interned,
+    variants [many [LalinTree.TypeVariantDef]],
+    handles [many [LalinTree.TypeHandleDef]],
+    effects [many [LalinTree.TypeFuncEffect]],
+  },
+  product. TypeModuleFactsInput {
+    interned,
+    module_name [str],
+  },
+  product. TypeNameScope {
+    interned,
+    types [many [LalinBind.TypeEntry]],
+  },
+  product. TypeValueScope {
+    interned,
+    module_name [str],
+    values [many [LalinBind.ValueEntry]],
+    types [many [LalinBind.TypeEntry]],
+    layouts [many [LalinSem.TypeLayout]],
+    facts [LalinTree.TypeModuleFacts],
+  },
+  product. TypeScopeChange {
+    interned,
+    scope [LalinTree.TypeValueScope],
+  },
+  product. TypeExprInput {
+    interned,
+    scope [LalinTree.TypeValueScope],
+  },
+  product. TypeExpectedExprInput {
+    interned,
+    scope [LalinTree.TypeValueScope],
+    expected [LalinType.Type],
+  },
+  product. TypeValueRefInput {
+    interned,
+    scope [LalinTree.TypeValueScope],
+  },
+  product. TypeValueRefResult {
+    interned,
+    field. ref [LalinBind.ValueRef],
+    field. ty [LalinType.Type],
+    issues [many [LalinTree.TypeIssue]],
+  },
+  product. TypePlaceInput {
+    interned,
+    scope [LalinTree.TypeValueScope],
+  },
+  product. TypeIndexBaseInput {
+    interned,
+    scope [LalinTree.TypeValueScope],
+  },
+  product. TypeViewInput {
+    interned,
+    scope [LalinTree.TypeValueScope],
+  },
+  product. TypeStmtInput {
+    interned,
+    scope [LalinTree.TypeValueScope],
+    return_ty [LalinType.Type],
+    yield [LalinTree.TypeYieldMode],
+  },
+  product. TypeControlInput {
+    interned,
+    stmt [LalinTree.TypeStmtInput],
+  },
+  product. TypeFuncInput {
+    interned,
+    scope [LalinTree.TypeValueScope],
+  },
+  product. TypeItemInput {
+    interned,
+    scope [LalinTree.TypeValueScope],
+  },
+  product. TypePolicyInput {
+    interned,
+    site [str],
+  },
+  product. TypePolicyResult {
+    interned,
+    issues [many [LalinTree.TypeIssue]],
+  },
+  product. TypeCanonicalInput {
+    interned,
+    names [LalinTree.TypeNameScope],
+  },
+  product. TypeCanonicalResult {
+    interned,
+    field. ty [LalinType.Type],
+  },
+  product. TypeBinaryInput {
+    interned,
+    op [LalinCore.BinaryOp],
+    rhs [LalinType.Type],
+  },
+  product. TypeBinaryResult {
+    interned,
+    field. ty [LalinType.Type],
+    issues [many [LalinTree.TypeIssue]],
+  },
+  product. TypeCompareInput {
+    interned,
+    op [LalinCore.CmpOp],
+    rhs [LalinType.Type],
+  },
+  product. TypeCompareResult {
+    interned,
+    field. ty [LalinType.Type],
+    issues [many [LalinTree.TypeIssue]],
+  },
   product. TypeCheckEnv {
     interned,
     env [LalinBind.Env],
+    facts [LalinTree.TypeModuleFacts],
     return_ty [LalinType.Type],
     yield [LalinTree.TypeYieldMode],
   },

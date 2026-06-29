@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -37,9 +37,9 @@ local function bind_context(T)
     local function kernels_by_loop(kernels)
         local planned, no_plan = {}, {}
         for _, plan in ipairs(kernels and kernels.plans or {}) do
-            local cls = pvm.classof(plan)
-            if cls == Kernel.KernelPlanned and pvm.classof(plan.subject) == Kernel.KernelSubjectLoop then planned[plan.subject.loop.text] = plan end
-            if cls == Kernel.KernelNoPlan and pvm.classof(plan.subject) == Kernel.KernelSubjectLoop then no_plan[plan.subject.loop.text] = plan end
+            local cls = asdl.classof(plan)
+            if cls == Kernel.KernelPlanned and asdl.classof(plan.subject) == Kernel.KernelSubjectLoop then planned[plan.subject.loop.text] = plan end
+            if cls == Kernel.KernelNoPlan and asdl.classof(plan.subject) == Kernel.KernelSubjectLoop then no_plan[plan.subject.loop.text] = plan end
         end
         return planned, no_plan
     end
@@ -84,24 +84,24 @@ local function bind_context(T)
 
     local function loop_result_closed_form(kernel_plan)
         local result = kernel_plan and kernel_plan.body and kernel_plan.body.result or nil
-        if pvm.classof(result) == Kernel.KernelResultClosedForm then return result.closed_form end
+        if asdl.classof(result) == Kernel.KernelResultClosedForm then return result.closed_form end
         return nil
     end
 
     local function reject_summary(rejects)
         local out = {}
-        for _, reject in ipairs(rejects or {}) do out[#out + 1] = tostring(pvm.classof(reject) or reject) end
+        for _, reject in ipairs(rejects or {}) do out[#out + 1] = tostring(asdl.classof(reject) or reject) end
         return #out > 0 and table.concat(out, ",") or "no detailed rejects"
     end
 
     local function schedule_summary(sched)
         if sched == nil then return "no schedule was produced" end
-        if pvm.classof(sched) == Schedule.ScheduleNoPlan then return "schedule rejected: " .. reject_summary(sched.rejects) end
+        if asdl.classof(sched) == Schedule.ScheduleNoPlan then return "schedule rejected: " .. reject_summary(sched.rejects) end
         return "schedule selected"
     end
 
     local function lower_fragment_input(loop, kplan, no_plan, sched)
-        local schedule_planned = sched ~= nil and pvm.classof(sched) == Schedule.SchedulePlanned
+        local schedule_planned = sched ~= nil and asdl.classof(sched) == Schedule.SchedulePlanned
         local cf = loop_result_closed_form(kplan)
         local skipped
         if cf ~= nil then

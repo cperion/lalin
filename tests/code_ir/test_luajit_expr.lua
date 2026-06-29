@@ -1,9 +1,9 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
 
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 
 local Core = T.LalinCore
@@ -12,7 +12,7 @@ local Code = T.LalinCode
 local LJ = T.LalinLuaJIT
 local Expr = require("lalin.luajit_expr")(T)
 
-local function cls(value) return pvm.classof(value) end
+local function cls(value) return asdl.classof(value) end
 
 local origin = Code.CodeOriginGenerated("luajit expr test")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)

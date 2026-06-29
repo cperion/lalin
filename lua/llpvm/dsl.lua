@@ -643,7 +643,7 @@ function Lower:resolve_type(ref, current_lang)
     end
     local ty = ref
     if type(ref) == "table" then
-        local ok, c = pcall(function() return tostring(require("lalin.pvm").classof(ref)) end)
+        local ok, c = pcall(function() return tostring(require("lalin.asdl").classof(ref)) end)
         if not ok or not c or not c:match("^Class%(LalinType%.") then ty = lalin_type_value(ref) end
     else
         ty = lalin_type_value(ref)
@@ -652,8 +652,8 @@ function Lower:resolve_type(ref, current_lang)
         if type(ty) == "table" and ty.scalar ~= nil then
             return self:scalar_type(assert(scalar_type_names[tostring(ty.scalar)], "unsupported scalar"))
         end
-        local pvm = require("lalin.pvm")
-        local cls = tostring(pvm.classof(ty))
+        local asdl = require("lalin.asdl")
+        local cls = tostring(asdl.classof(ty))
         if cls == "Class(LalinType.TScalar)" then return self:scalar_type(assert(scalar_type_names[tostring(ty.scalar)], "unsupported scalar")) end
         if cls == "Class(LalinType.TPtr)" then local elem = self:resolve_type(ty.elem, current_lang); return { kind = "ptr", id = self.builder:pointer(elem.id), elem = elem } end
         if cls == "Class(LalinType.TView)" then local elem = self:resolve_type(ty.elem, current_lang); return { kind = "view", id = self.builder:view(elem.id), elem = elem } end
@@ -977,7 +977,7 @@ local function process_type_asdl(ref)
     local T = asdl_mod.T.LlPvm
     local ty = ref
     if type(ref) == "table" then
-        local ok, c = pcall(function() return tostring(require("lalin.pvm").classof(ref)) end)
+        local ok, c = pcall(function() return tostring(require("lalin.asdl").classof(ref)) end)
         if not ok or not c or not c:match("^Class%(LalinType%.") then ty = lalin_type_value(ref) end
     else
         ty = lalin_type_value(ref)
@@ -987,8 +987,8 @@ local function process_type_asdl(ref)
             local scalar_name = assert(scalar_type_names[tostring(ty.scalar)], "unsupported process scalar type")
             return T.Scalar(T[assert(scalar_names[scalar_name])])
         end
-        local pvm = require("lalin.pvm")
-        local cls = tostring(pvm.classof(ty))
+        local asdl = require("lalin.asdl")
+        local cls = tostring(asdl.classof(ty))
         if cls == "Class(LalinType.TScalar)" then
             local scalar_name = assert(scalar_type_names[tostring(ty.scalar)], "unsupported process scalar type")
             return T.Scalar(T[assert(scalar_names[scalar_name])])
@@ -1030,7 +1030,7 @@ local function fmt_type_ref(v)
         return v.text
     end
     if type(v) == "table" then
-        local ok, c = pcall(function() return tostring(require("lalin.pvm").classof(v)) end)
+        local ok, c = pcall(function() return tostring(require("lalin.asdl").classof(v)) end)
         if ok and c == "Class(LalinType.TScalar)" then return assert(scalar_type_names[tostring(v.scalar)], "unsupported scalar") end
     end
     local text = tostring(v)
@@ -1046,7 +1046,7 @@ local function fmt_value(v, f)
     if llbl.is(v, "Name") or llbl.is(v, "Symbol") then return doc.text(v.text) end
     if llbl.is(v, "Head") and v.spec and v.spec.name then return doc.text(v.spec.name) end
     if type(v) == "table" then
-        local ok, c = pcall(function() return tostring(require("lalin.pvm").classof(v)) end)
+        local ok, c = pcall(function() return tostring(require("lalin.asdl").classof(v)) end)
         if ok and c and c:match("^Class%(LalinType%.") then return doc.text(fmt_type_ref(v)) end
     end
     if type(v) == "table" then

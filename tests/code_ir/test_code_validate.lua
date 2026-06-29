@@ -3,9 +3,9 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 assert(package.loaded["lalin.tree_to_c"] == nil)
 assert(package.loaded["lalin.type_to_c"] == nil)
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 
 local Validate = require("lalin.code_validate")(T)
@@ -22,7 +22,7 @@ local ptr_i32 = Code.CodeTyDataPtr(i32)
 
 local function has_issue(report, cls)
     for i = 1, #report.issues do
-        if pvm.classof(report.issues[i]) == cls then return true, report.issues[i] end
+        if asdl.classof(report.issues[i]) == cls then return true, report.issues[i] end
     end
     return false, nil
 end

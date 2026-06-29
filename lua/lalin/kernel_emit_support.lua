@@ -1,7 +1,7 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function class_name(x)
-    local cls = pvm.classof(x) or x
+    local cls = asdl.classof(x) or x
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -43,7 +43,7 @@ local function bind_context(T)
     end
 
     local function is_scalar_code_ty(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         return ty == Code.CodeTyVoid
             or ty == Code.CodeTyBool8
             or ty == Code.CodeTyIndex
@@ -61,7 +61,7 @@ local function bind_context(T)
         seen = seen or {}
         if seen[expr] then return true end
         seen[expr] = true
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Value.ValueExprConst or cls == Value.ValueExprValue then return true end
         if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul then
             if not is_scalar_code_ty(expr.ty) then return false, "non-scalar arithmetic type in " .. class_name(expr) end
@@ -96,11 +96,11 @@ local function bind_context(T)
 
     local function kernel_expr_supported(expr)
         if expr == nil then return false, "missing KernelExpr" end
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Kernel.KernelExprValue or cls == Kernel.KernelExprKernelValue then return true end
         if cls == Kernel.KernelExprAlgebra then return value_expr_supported(expr.expr) end
         if cls == Kernel.KernelExprLaneLoad then
-            if pvm.classof(expr.lane) ~= Kernel.KernelLane then return false, "KernelExprLaneLoad has no concrete KernelLane" end
+            if asdl.classof(expr.lane) ~= Kernel.KernelLane then return false, "KernelExprLaneLoad has no concrete KernelLane" end
             local ok, reason = value_expr_supported(expr.index); if not ok then return false, reason end
             if #(expr.lane.backend_info or {}) == 0 then return false, "KernelExprLaneLoad lane lacks backend access info" end
             return true
@@ -109,23 +109,23 @@ local function bind_context(T)
     end
 
     local function lane_supported(lane)
-        if pvm.classof(lane) ~= Kernel.KernelLane then return false, "not a KernelLane" end
+        if asdl.classof(lane) ~= Kernel.KernelLane then return false, "not a KernelLane" end
         if not is_scalar_code_ty(lane.elem_ty) then return false, "lane element type is not scalar-lowerable" end
-        local pat_cls = pvm.classof(lane.pattern)
+        local pat_cls = asdl.classof(lane.pattern)
         if not (lane.pattern == Mem.MemAccessScalar or lane.pattern == Mem.MemAccessContiguous or pat_cls == Mem.MemAccessStrided) then
             return false, "unsupported lane access pattern " .. class_name(lane.pattern)
         end
         if #(lane.backend_info or {}) == 0 then return false, "lane has no backend memory info" end
         for _, info in ipairs(lane.backend_info or {}) do
-            if pvm.classof(info.trap) ~= Mem.MemNonTrapping then return false, "lane access may trap" end
-            if pvm.classof(info.bounds) == Mem.MemBoundsUnknown then return false, "lane access has unknown bounds" end
+            if asdl.classof(info.trap) ~= Mem.MemNonTrapping then return false, "lane access may trap" end
+            if asdl.classof(info.bounds) == Mem.MemBoundsUnknown then return false, "lane access has unknown bounds" end
             if info.deref_bytes == nil then return false, "lane access lacks dereference byte proof" end
         end
         return true
     end
 
     local function schedule_kind_name(kind)
-        local cls = pvm.classof(kind)
+        local cls = asdl.classof(kind)
         if kind == Schedule.ScheduleClosedForm then return "closed_form" end
         if kind == Schedule.ScheduleScalarIndex then return "scalar_index" end
         if kind == Schedule.ScheduleScalarPointer then return "scalar_pointer" end
@@ -136,7 +136,7 @@ local function bind_context(T)
     local function target_supports_vector(target, elem_ty, lanes)
         if target == nil then return false end
         local scalar = nil
-        local cls = pvm.classof(elem_ty)
+        local cls = asdl.classof(elem_ty)
         if elem_ty == Code.CodeTyIndex then scalar = Back.BackIndex
         elseif cls == Code.CodeTyInt then
             if elem_ty.bits == 32 then scalar = elem_ty.signedness == Code.CodeSigned and Back.BackI32 or Back.BackU32
@@ -148,7 +148,7 @@ local function bind_context(T)
         end
         if scalar == nil then return false end
         for _, fact in ipairs(target and target.facts or {}) do
-            if pvm.classof(fact) == Back.BackTargetSupportsShape and pvm.classof(fact.shape) == Back.BackShapeVec then
+            if asdl.classof(fact) == Back.BackTargetSupportsShape and asdl.classof(fact.shape) == Back.BackShapeVec then
                 local vec = fact.shape.vec
                 if vec.elem == scalar and vec.lanes == lanes then return true end
             end
@@ -158,17 +158,17 @@ local function bind_context(T)
 
     local function base_rejects(plan)
         local rejects = {}
-        if pvm.classof(plan) ~= Kernel.KernelPlanned then
+        if asdl.classof(plan) ~= Kernel.KernelPlanned then
             rejects[#rejects + 1] = reject_target("only KernelPlanned can be emitted")
             return rejects
         end
-        if pvm.classof(plan.subject) ~= Kernel.KernelSubjectLoop then rejects[#rejects + 1] = reject_target("only loop kernels have emitters") end
+        if asdl.classof(plan.subject) ~= Kernel.KernelSubjectLoop then rejects[#rejects + 1] = reject_target("only loop kernels have emitters") end
         local body = plan.body
         if body == nil then rejects[#rejects + 1] = reject_target("kernel has no body"); return rejects end
-        if pvm.classof(body.equivalence) ~= Kernel.KernelEquivalenceProof or #(body.equivalence.proofs or {}) == 0 then
+        if asdl.classof(body.equivalence) ~= Kernel.KernelEquivalenceProof or #(body.equivalence.proofs or {}) == 0 then
             rejects[#rejects + 1] = reject_algebra("kernel lacks equivalence proof")
         end
-        if pvm.classof(body.domain) ~= Kernel.KernelDomainFlow then rejects[#rejects + 1] = reject_target("kernel domain is not Flow-backed") end
+        if asdl.classof(body.domain) ~= Kernel.KernelDomainFlow then rejects[#rejects + 1] = reject_target("kernel domain is not Flow-backed") end
         for _, lane in ipairs(body.lanes or {}) do
             local ok, reason = lane_supported(lane)
             if not ok then rejects[#rejects + 1] = reject_memory(reason) end
@@ -179,7 +179,7 @@ local function bind_context(T)
             if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
         end
         for _, effect in ipairs(body.effects or {}) do
-            local ecls = pvm.classof(effect)
+            local ecls = asdl.classof(effect)
             if ecls == Kernel.KernelEffectStore then
                 local ok, reason = lane_supported(effect.dst)
                 if not ok then rejects[#rejects + 1] = reject_memory(reason) end
@@ -205,10 +205,10 @@ local function bind_context(T)
 
     local function loop_variant_values(body, flow)
         local out = {}
-        if body == nil or pvm.classof(body.domain) ~= Kernel.KernelDomainFlow then return out end
+        if body == nil or asdl.classof(body.domain) ~= Kernel.KernelDomainFlow then return out end
         if body.domain.counter ~= nil then out[body.domain.counter.text] = true end
         local domain = body.domain.domain
-        if pvm.classof(domain) ~= Flow.FlowDomainLoop then return out end
+        if asdl.classof(domain) ~= Flow.FlowDomainLoop then return out end
         local loop_id = domain.loop
         local body_blocks = {}
         for _, loop in ipairs(flow and flow.loops or {}) do
@@ -234,7 +234,7 @@ local function bind_context(T)
         seen = seen or {}
         if seen[expr] then return true end
         seen[expr] = true
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Value.ValueExprConst then return true end
         if cls == Value.ValueExprValue then
             if binding_by_code[expr.value.text] ~= nil then return true end
@@ -267,7 +267,7 @@ local function bind_context(T)
     local function vector_kernel_expr_supported(expr, binding_by_id, binding_by_code, variant_by_code, seen)
         if expr == nil then return false, "missing vector KernelExpr" end
         seen = seen or {}
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Kernel.KernelExprLaneLoad then return true end
         if cls == Kernel.KernelExprAlgebra then return vector_value_expr_supported(expr.expr, binding_by_code, variant_by_code, seen) end
         if cls == Kernel.KernelExprKernelValue then
@@ -286,12 +286,12 @@ local function bind_context(T)
         local result = body and body.result or nil
         local kind_name = schedule_kind_name(schedule_kind)
         if kind_name == nil then
-            if pvm.classof(result) == Kernel.KernelResultClosedForm then kind_name = "closed_form"
+            if asdl.classof(result) == Kernel.KernelResultClosedForm then kind_name = "closed_form"
             elseif #(body and body.lanes or {}) > 0 then kind_name = "scalar_index"
             else kind_name = "scalar_index" end
         end
         if kind_name == "closed_form" then
-            if pvm.classof(result) ~= Kernel.KernelResultClosedForm then
+            if asdl.classof(result) ~= Kernel.KernelResultClosedForm then
                 rejects[#rejects + 1] = reject_algebra("closed-form schedule requires KernelResultClosedForm")
             else
                 local ok, reason = value_expr_supported(result.closed_form.expr)
@@ -299,12 +299,12 @@ local function bind_context(T)
             end
             if #(body and body.lanes or {}) > 0 then rejects[#rejects + 1] = reject_target("closed-form emitter only supports scalar control/result replacement, not lane stores") end
         elseif kind_name == "scalar_index" or kind_name == "scalar_pointer" then
-            if pvm.classof(result) == Kernel.KernelResultClosedForm then rejects[#rejects + 1] = reject_algebra("closed-form result must use ScheduleClosedForm") end
+            if asdl.classof(result) == Kernel.KernelResultClosedForm then rejects[#rejects + 1] = reject_algebra("closed-form result must use ScheduleClosedForm") end
             if body and body.domain and body.domain.counter == nil then rejects[#rejects + 1] = reject_algebra("scalar kernel requires loop counter") end
-            if #(body and body.effects or {}) == 0 and pvm.classof(result) == Kernel.KernelResultOriginalControl then rejects[#rejects + 1] = reject_profit("scalar kernel has no executable effects/result") end
+            if #(body and body.effects or {}) == 0 and asdl.classof(result) == Kernel.KernelResultOriginalControl then rejects[#rejects + 1] = reject_profit("scalar kernel has no executable effects/result") end
         elseif kind_name == "vector_contiguous" then
-            local sk = pvm.classof(schedule_kind) == Schedule.ScheduleVector and schedule_kind or nil
-            if sk == nil or pvm.classof(sk.lanes) ~= Schedule.LaneVector then
+            local sk = asdl.classof(schedule_kind) == Schedule.ScheduleVector and schedule_kind or nil
+            if sk == nil or asdl.classof(sk.lanes) ~= Schedule.LaneVector then
                 rejects[#rejects + 1] = reject_target("vector schedule requires LaneVector")
             elseif not target_supports_vector(target, sk.lanes.elem_ty, sk.lanes.lanes) then
                 rejects[#rejects + 1] = reject_target("target lacks requested vector shape")
@@ -312,8 +312,8 @@ local function bind_context(T)
             for _, lane in ipairs(body and body.lanes or {}) do
                 if lane.pattern ~= Mem.MemAccessContiguous then rejects[#rejects + 1] = reject_memory("vector emitter only supports contiguous lanes") end
             end
-            if pvm.classof(result) == Kernel.KernelResultClosedForm then rejects[#rejects + 1] = reject_target("closed-form results must use ScheduleClosedForm") end
-            if pvm.classof(result) == Kernel.KernelResultReduction then
+            if asdl.classof(result) == Kernel.KernelResultClosedForm then rejects[#rejects + 1] = reject_target("closed-form results must use ScheduleClosedForm") end
+            if asdl.classof(result) == Kernel.KernelResultReduction then
                 if sk ~= nil and sk.tail ~= Schedule.TailScalar then rejects[#rejects + 1] = reject_target("vector reductions require TailScalar") end
                 local ok, reason = ReductionAlgebra.vector_support(result.reduction, sk and sk.lanes and sk.lanes.elem_ty or nil)
                 if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
@@ -326,10 +326,10 @@ local function bind_context(T)
             end
             local variant_by_code = loop_variant_values(body, flow)
             for _, effect in ipairs(body and body.effects or {}) do
-                if pvm.classof(effect) == Kernel.KernelEffectStore then
+                if asdl.classof(effect) == Kernel.KernelEffectStore then
                     local ok, reason = vector_kernel_expr_supported(effect.value, binding_by_id, binding_by_code, variant_by_code)
                     if not ok then rejects[#rejects + 1] = reject_target(reason) end
-                elseif pvm.classof(effect) == Kernel.KernelEffectFold then
+                elseif asdl.classof(effect) == Kernel.KernelEffectFold then
                     if sk ~= nil and sk.tail ~= Schedule.TailScalar then rejects[#rejects + 1] = reject_target("vector reductions require TailScalar") end
                     local ok, reason = ReductionAlgebra.vector_support(effect.reduction, sk and sk.lanes and sk.lanes.elem_ty or nil)
                     if not ok then rejects[#rejects + 1] = reject_algebra(reason) end

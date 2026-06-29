@@ -1,10 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A = require("lalin.schema_projection")
 local Const = require("lalin.sem_const_eval")
 
-local T = pvm.context()
+local T = asdl.context()
 A(T)
 local E = Const(T)
 local C = T.LalinCore

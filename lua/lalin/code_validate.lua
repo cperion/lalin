@@ -1,7 +1,7 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function class_name(x)
-    local cls = pvm.classof(x) or x
+    local cls = asdl.classof(x) or x
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -32,7 +32,7 @@ local function bind_context(T)
 
     local function type_eq(a, b, seen)
         if a == b then return true end
-        local ac, bc = pvm.classof(a), pvm.classof(b)
+        local ac, bc = asdl.classof(a), asdl.classof(b)
         if ac == Code.CodeTyLease then return type_eq(a.base, b, seen) end
         if bc == Code.CodeTyLease then return type_eq(a, b.base, seen) end
         if ac ~= bc then
@@ -50,10 +50,10 @@ local function bind_context(T)
         for i = 1, #fields do
             local name = fields[i].name
             local av, bv = a[name], b[name]
-            if type(av) == "table" and pvm.classof(av) == nil then
+            if type(av) == "table" and asdl.classof(av) == nil then
                 if type(bv) ~= "table" or #av ~= #bv then return false end
                 for j = 1, #av do if not type_eq(av[j], bv[j], seen) then return false end end
-            elseif type(av) == "table" and pvm.classof(av) ~= nil then
+            elseif type(av) == "table" and asdl.classof(av) ~= nil then
                 if not type_eq(av, bv, seen) then return false end
             else
                 if av ~= bv then return false end
@@ -67,12 +67,12 @@ local function bind_context(T)
     end
 
     local function is_integer_like(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         return ty == Code.CodeTyIndex or cls == Code.CodeTyInt
     end
 
     local function type_uses_code_sig(ty, ctx)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Code.CodeTyCodePtr or cls == Code.CodeTyClosure then
             if ctx.sigs[ty.sig.text] == nil then add_issue(ctx, Code.CodeIssueMissingSig(ty.sig)) end
         elseif cls == Code.CodeTyDataPtr and ty.pointee ~= nil then
@@ -121,7 +121,7 @@ local function bind_context(T)
     end
 
     local function global_ref_exists(ctx, ref)
-        local cls = pvm.classof(ref)
+        local cls = asdl.classof(ref)
         if cls == Code.CodeGlobalRefData then
             if ctx.data[ref.data.text] == nil then add_issue(ctx, Code.CodeIssueMissingData(ref.data)); return nil end
             return ctx.data[ref.data.text]
@@ -164,7 +164,7 @@ local function bind_context(T)
     end
 
     local function type_size(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if ty == Code.CodeTyBool8 then return 1 end
         if ty == Code.CodeTyIndex then return 8 end
         if cls == Code.CodeTyInt or cls == Code.CodeTyFloat then return scalar_size(ty.bits) end
@@ -178,7 +178,7 @@ local function bind_context(T)
     end
 
     local function data_init_extent(init)
-        local cls = pvm.classof(init)
+        local cls = asdl.classof(init)
         if cls == Code.CodeDataZero then return init.offset, init.size end
         if cls == Code.CodeDataBytes then return init.offset, #init.bytes end
         if cls == Code.CodeDataScalar then return init.offset, type_size(init.ty) or 0 end
@@ -211,10 +211,10 @@ local function bind_context(T)
 
     local function view_elem_type(fctx, ctx, site, view)
         local vty = value_type(fctx, ctx, view)
-        local cls = pvm.classof(vty)
+        local cls = asdl.classof(vty)
         if cls == Code.CodeTyLease then
             vty = vty.base
-            cls = pvm.classof(vty)
+            cls = asdl.classof(vty)
         end
         if vty ~= nil and cls ~= Code.CodeTyView then
             add_issue(ctx, Code.CodeIssueTypeMismatch(site, Code.CodeTyView(Code.CodeTyVoid), vty))
@@ -225,10 +225,10 @@ local function bind_context(T)
 
     local function slice_elem_type(fctx, ctx, site, slice)
         local sty = value_type(fctx, ctx, slice)
-        local cls = pvm.classof(sty)
+        local cls = asdl.classof(sty)
         if cls == Code.CodeTyLease then
             sty = sty.base
-            cls = pvm.classof(sty)
+            cls = asdl.classof(sty)
         end
         if sty ~= nil and cls ~= Code.CodeTySlice then
             add_issue(ctx, Code.CodeIssueTypeMismatch(site, Code.CodeTySlice(Code.CodeTyVoid), sty))
@@ -239,10 +239,10 @@ local function bind_context(T)
 
     local function byte_span_type(fctx, ctx, site, span)
         local sty = value_type(fctx, ctx, span)
-        local cls = pvm.classof(sty)
+        local cls = asdl.classof(sty)
         if cls == Code.CodeTyLease then
             sty = sty.base
-            cls = pvm.classof(sty)
+            cls = asdl.classof(sty)
         end
         if sty ~= nil and sty ~= Code.CodeTyByteSpan and cls ~= Code.CodeTyByteSpan then
             add_issue(ctx, Code.CodeIssueTypeMismatch(site, Code.CodeTyByteSpan, sty))
@@ -253,7 +253,7 @@ local function bind_context(T)
 
     local place_type
     place_type = function(ctx, fctx, place, site)
-        local cls = pvm.classof(place)
+        local cls = asdl.classof(place)
         if cls == Code.CodePlaceLocal then
             local local_id = place.local_id
             local local_ = fctx.locals[local_id.text]
@@ -273,7 +273,7 @@ local function bind_context(T)
             return place.ty
         elseif cls == Code.CodePlaceDeref then
             local aty = value_type(fctx, ctx, place.addr)
-            local ac = pvm.classof(aty)
+            local ac = asdl.classof(aty)
             if aty ~= nil and ac ~= Code.CodeTyDataPtr then
                 if ac == Code.CodeTyCodePtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":deref", aty))
                 else add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":deref", Code.CodeTyDataPtr(nil), aty)) end
@@ -293,7 +293,7 @@ local function bind_context(T)
             return place.ty
         elseif cls == Code.CodePlaceBytes then
             local bty = value_type(fctx, ctx, place.base)
-            local bc = pvm.classof(bty)
+            local bc = asdl.classof(bty)
             if bty ~= nil and bc ~= Code.CodeTyDataPtr then
                 if bc == Code.CodeTyCodePtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":bytes", bty))
                 else add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":bytes", Code.CodeTyDataPtr(nil), bty)) end
@@ -321,7 +321,7 @@ local function bind_context(T)
 
     local function check_call(ctx, fctx, site, sig_id, target, args, dst)
         local sig = check_sig_ref(ctx, sig_id)
-        local tcls = pvm.classof(target)
+        local tcls = asdl.classof(target)
         if tcls == Code.CodeCallDirect then
             local fn = ctx.funcs[target.func.text]
             if fn == nil then add_issue(ctx, Code.CodeIssueMissingFunc(target.func))
@@ -335,9 +335,9 @@ local function bind_context(T)
             if sig_id ~= nil and target.sig ~= sig_id then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":indirect-sig", Code.CodeTyCodePtr(target.sig), Code.CodeTyCodePtr(sig_id))) end
             local callee_ty = value_type(fctx, ctx, target.callee)
             if callee_ty ~= nil then
-                if pvm.classof(callee_ty) == Code.CodeTyCodePtr then
+                if asdl.classof(callee_ty) == Code.CodeTyCodePtr then
                     if target.sig ~= callee_ty.sig then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":callee", Code.CodeTyCodePtr(target.sig), callee_ty)) end
-                elseif pvm.classof(callee_ty) == Code.CodeTyDataPtr then
+                elseif asdl.classof(callee_ty) == Code.CodeTyDataPtr then
                     add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":callee", callee_ty))
                 else
                     add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":callee", Code.CodeTyCodePtr(target.sig), callee_ty))
@@ -348,7 +348,7 @@ local function bind_context(T)
             if sig_id ~= nil and target.sig ~= sig_id then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure-sig", Code.CodeTyClosure(target.sig), Code.CodeTyClosure(sig_id))) end
             local closure_ty = value_type(fctx, ctx, target.closure)
             if closure_ty ~= nil then
-                if pvm.classof(closure_ty) == Code.CodeTyClosure then
+                if asdl.classof(closure_ty) == Code.CodeTyClosure then
                     if target.sig ~= closure_ty.sig then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure", Code.CodeTyClosure(target.sig), closure_ty)) end
                 else
                     add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure", Code.CodeTyClosure(target.sig), closure_ty))
@@ -386,7 +386,7 @@ local function bind_context(T)
     end
 
     local function inst_dst_type(ctx, fctx, kind)
-        local cls = pvm.classof(kind)
+        local cls = asdl.classof(kind)
         if cls == Code.CodeInstConst then return kind.dst, kind.const.ty
         elseif cls == Code.CodeInstAlias then return kind.dst, kind.ty
         elseif cls == Code.CodeInstUnary then return kind.dst, kind.ty
@@ -451,7 +451,7 @@ local function bind_context(T)
                 if fctx.insts[inst.id.text] ~= nil then add_issue(ctx, Code.CodeIssueDuplicateInst(inst.id)) end
                 fctx.insts[inst.id.text] = true
                 local dst, ty = inst_dst_type(ctx, fctx, inst.kind)
-                if pvm.classof(inst.kind) == Code.CodeInstCall then
+                if asdl.classof(inst.kind) == Code.CodeInstCall then
                     local sig = inst.kind.sig and ctx.sigs[inst.kind.sig.text] or nil
                     if sig ~= nil and #sig.results == 1 then dst, ty = inst.kind.dst, sig.results[1] end
                 end
@@ -463,7 +463,7 @@ local function bind_context(T)
     local function check_inst(ctx, fctx, func, block, inst)
         local site = "func:" .. func.name .. ":block:" .. block.name .. ":inst:" .. inst.id.text
         local k = inst.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeInstConst then
             type_uses_code_sig(k.const.ty, ctx)
         elseif cls == Code.CodeInstAlias then
@@ -486,23 +486,23 @@ local function bind_context(T)
             for i = 1, #k.args do value_type(fctx, ctx, k.args[i]) end
         elseif cls == Code.CodeInstAddrOf then
             local pty = place_type(ctx, fctx, k.place, site .. ":addr_of")
-            if pvm.classof(k.ptr_ty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":addr_of", k.ptr_ty))
+            if asdl.classof(k.ptr_ty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":addr_of", k.ptr_ty))
             elseif pty ~= nil and k.ptr_ty.pointee ~= nil then expect_type(ctx, site .. ":addr_of", k.ptr_ty.pointee, pty) end
         elseif cls == Code.CodeInstGlobalRef then
             local target = global_ref_exists(ctx, k.ref)
-            local rcls = pvm.classof(k.ref)
+            local rcls = asdl.classof(k.ref)
             if rcls == Code.CodeGlobalRefFunc or rcls == Code.CodeGlobalRefExtern then
                 local sig = target and target.sig or nil
                 local expected = sig and Code.CodeTyCodePtr(sig) or nil
-                if pvm.classof(k.ptr_ty) ~= Code.CodeTyCodePtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":global_ref", k.ptr_ty))
+                if asdl.classof(k.ptr_ty) ~= Code.CodeTyCodePtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":global_ref", k.ptr_ty))
                 elseif expected ~= nil then expect_type(ctx, site .. ":global_ref", expected, k.ptr_ty) end
             else
-                if pvm.classof(k.ptr_ty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":global_ref", k.ptr_ty)) end
+                if asdl.classof(k.ptr_ty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":global_ref", k.ptr_ty)) end
             end
         elseif cls == Code.CodeInstPtrOffset then
-            if pvm.classof(k.ptr_ty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":ptr_offset", k.ptr_ty)) end
+            if asdl.classof(k.ptr_ty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":ptr_offset", k.ptr_ty)) end
             local bty = value_type(fctx, ctx, k.base)
-            if bty ~= nil and pvm.classof(bty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":base", Code.CodeTyDataPtr(nil), bty)) end
+            if bty ~= nil and asdl.classof(bty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":base", Code.CodeTyDataPtr(nil), bty)) end
             local ity = value_type(fctx, ctx, k.index)
             if ity ~= nil and not is_integer_like(ity) then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":index", Code.CodeTyIndex, ity)) end
             if k.elem_size <= 0 then add_issue(ctx, Code.CodeIssueUnsupportedSource(site, "invalid element size")) end
@@ -523,7 +523,7 @@ local function bind_context(T)
             type_uses_code_sig(k.elem_ty, ctx)
             local expected_data_ty = Code.CodeTyDataPtr(k.elem_ty)
             local dty = value_type(fctx, ctx, k.data)
-            if dty ~= nil and pvm.classof(dty) ~= Code.CodeTyDataPtr then
+            if dty ~= nil and asdl.classof(dty) ~= Code.CodeTyDataPtr then
                 add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":view.data", Code.CodeTyDataPtr(nil), dty))
             elseif dty ~= nil and dty.pointee ~= nil then
                 expect_type(ctx, site .. ":view.data", expected_data_ty, dty)
@@ -541,7 +541,7 @@ local function bind_context(T)
             type_uses_code_sig(k.elem_ty, ctx)
             local expected_data_ty = Code.CodeTyDataPtr(k.elem_ty)
             local dty = value_type(fctx, ctx, k.data)
-            if dty ~= nil and pvm.classof(dty) ~= Code.CodeTyDataPtr then
+            if dty ~= nil and asdl.classof(dty) ~= Code.CodeTyDataPtr then
                 add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":slice.data", Code.CodeTyDataPtr(nil), dty))
             elseif dty ~= nil and dty.pointee ~= nil then
                 expect_type(ctx, site .. ":slice.data", expected_data_ty, dty)
@@ -556,7 +556,7 @@ local function bind_context(T)
         elseif cls == Code.CodeInstByteSpanMake then
             local expected_data_ty = Code.CodeTyDataPtr(Code.CodeTyInt(8, Code.CodeUnsigned))
             local dty = value_type(fctx, ctx, k.data)
-            if dty ~= nil and pvm.classof(dty) ~= Code.CodeTyDataPtr then
+            if dty ~= nil and asdl.classof(dty) ~= Code.CodeTyDataPtr then
                 add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":bytespan.data", Code.CodeTyDataPtr(nil), dty))
             elseif dty ~= nil and dty.pointee ~= nil then
                 expect_type(ctx, site .. ":bytespan.data", expected_data_ty, dty)
@@ -569,11 +569,11 @@ local function bind_context(T)
             byte_span_type(fctx, ctx, site .. ":bytespan", k.span)
         elseif cls == Code.CodeInstClosure then
             check_sig_ref(ctx, k.sig)
-            if pvm.classof(k.ty) ~= Code.CodeTyClosure then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure", Code.CodeTyClosure(k.sig), k.ty))
+            if asdl.classof(k.ty) ~= Code.CodeTyClosure then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure", Code.CodeTyClosure(k.sig), k.ty))
             elseif k.ty.sig ~= k.sig then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure", Code.CodeTyClosure(k.sig), k.ty)) end
             expect_type(ctx, site .. ":closure.fn", Code.CodeTyCodePtr(k.sig), value_type(fctx, ctx, k.fn))
             local cty = value_type(fctx, ctx, k.ctx)
-            if cty ~= nil and pvm.classof(cty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure.ctx", Code.CodeTyDataPtr(nil), cty)) end
+            if cty ~= nil and asdl.classof(cty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure.ctx", Code.CodeTyDataPtr(nil), cty)) end
         elseif cls == Code.CodeInstVariantCtor then
             if k.payload ~= nil then
                 if k.variant.payload_ty == nil then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":variant.payload", Code.CodeTyVoid, value_type(fctx, ctx, k.payload) or Code.CodeTyVoid))
@@ -620,7 +620,7 @@ local function bind_context(T)
         if term == nil then return end
         local site = "func:" .. func.name .. ":block:" .. block.name .. ":term:" .. term.id.text
         local k = term.kind
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         if cls == Code.CodeTermJump then
             check_transfer(ctx, fctx, site .. ":jump", k.dest, k.args)
         elseif cls == Code.CodeTermBranch then
@@ -694,7 +694,7 @@ local function bind_context(T)
             for j = 1, #(g.inits or {}) do
                 local init = g.inits[j]
                 check_init_bounds(ctx, "global", g.id, g.size, init)
-                if pvm.classof(init) == Code.CodeDataReloc then check_reloc(ctx, init.reloc) end
+                if asdl.classof(init) == Code.CodeDataReloc then check_reloc(ctx, init.reloc) end
             end
         end
         for i = 1, #(code_module.data or {}) do
@@ -703,7 +703,7 @@ local function bind_context(T)
             for j = 1, #(d.inits or {}) do
                 local init = d.inits[j]
                 check_init_bounds(ctx, "data", d.id, d.size, init)
-                if pvm.classof(init) == Code.CodeDataReloc then check_reloc(ctx, init.reloc) end
+                if asdl.classof(init) == Code.CodeDataReloc then check_reloc(ctx, init.reloc) end
             end
         end
         for i = 1, #(code_module.funcs or {}) do validate_func(ctx, code_module.funcs[i]) end

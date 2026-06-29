@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -8,7 +8,7 @@ local function sanitize(s)
 end
 
 local function class_name(x)
-    local cls = pvm.classof(x) or x
+    local cls = asdl.classof(x) or x
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -47,7 +47,7 @@ local function bind_context(T)
 
     local function module_name(module)
         local h = module and module.h
-        local cls = pvm.classof(h)
+        local cls = asdl.classof(h)
         if cls == Tr.ModuleTyped or cls == Tr.ModuleSem or cls == Tr.ModuleCode then return h.module_name end
         return "module"
     end
@@ -95,13 +95,13 @@ local function bind_context(T)
     end
 
     local function is_void_type(ty)
-        return pvm.classof(ty) == Ty.TScalar and ty.scalar == Core.ScalarVoid
+        return asdl.classof(ty) == Ty.TScalar and ty.scalar == Core.ScalarVoid
     end
 
     local function source_access_base(ty)
-        if pvm.classof(ty) == Ty.TLease then return ty.base end
-        if pvm.classof(ty) == Ty.TOwned then return source_access_base(ty.base) end
-        if pvm.classof(ty) == Ty.TAccess then return source_access_base(ty.base) end
+        if asdl.classof(ty) == Ty.TLease then return ty.base end
+        if asdl.classof(ty) == Ty.TOwned then return source_access_base(ty.base) end
+        if asdl.classof(ty) == Ty.TAccess then return source_access_base(ty.base) end
         return ty
     end
 
@@ -111,9 +111,9 @@ local function bind_context(T)
     end
 
     local function named_type_name(ty)
-        if pvm.classof(ty) ~= Ty.TNamed then return nil end
+        if asdl.classof(ty) ~= Ty.TNamed then return nil end
         local ref = ty.ref
-        local rcls = pvm.classof(ref)
+        local rcls = asdl.classof(ref)
         if rcls == Ty.TypeRefGlobal then return ref.type_name end
         if rcls == Ty.TypeRefLocal then return ref.sym.name end
         if rcls == Ty.TypeRefPath and #ref.path.parts > 0 then return ref.path.parts[#ref.path.parts].text end
@@ -123,7 +123,7 @@ local function bind_context(T)
     local function build_variant_defs(module, module_name)
         local defs = {}
         local function add_type_decl(t, mod_name)
-            local cls = pvm.classof(t)
+            local cls = asdl.classof(t)
             if cls == Tr.TypeDeclEnumSugar then
                 local variants = {}
                 for i = 1, #t.variants do
@@ -142,7 +142,7 @@ local function bind_context(T)
         end
         for i = 1, #(module.items or {}) do
             local item = module.items[i]
-            local cls = pvm.classof(item)
+            local cls = asdl.classof(item)
             if cls == Tr.ItemType then add_type_decl(item.t, module_name)
             end
         end
@@ -221,24 +221,24 @@ local function bind_context(T)
 
     local function expr_type(expr)
         local h = expr and expr.h
-        local cls = pvm.classof(h)
+        local cls = asdl.classof(h)
         if cls == Tr.ExprTyped then return h.ty end
         unsupported(nil, expr, "untyped expression " .. class_name(expr))
     end
 
     local function place_type(place)
         local h = place and place.h
-        local cls = pvm.classof(h)
+        local cls = asdl.classof(h)
         if cls == Tr.PlaceTyped then return h.ty end
         unsupported(nil, place, "untyped place " .. class_name(place))
     end
 
     local function index_base_elem_ty(base)
-        local cls = pvm.classof(base)
+        local cls = asdl.classof(base)
         if cls == Tr.IndexBaseExpr then
             local ty = expr_type(base.base)
             ty = source_access_base(ty)
-            local tcls = pvm.classof(ty)
+            local tcls = asdl.classof(ty)
             if tcls == Ty.TPtr or tcls == Ty.TArray or tcls == Ty.TSlice or tcls == Ty.TView then return ty.elem end
         elseif cls == Tr.IndexBasePlace then
             return base.elem
@@ -277,17 +277,17 @@ local function bind_context(T)
     end
 
     local function is_float_code_ty(ty)
-        return pvm.classof(ty) == Code.CodeTyFloat
+        return asdl.classof(ty) == Code.CodeTyFloat
     end
 
     local function is_aggregate_code_ty(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         return cls == Code.CodeTyNamed or cls == Code.CodeTyArray or cls == Code.CodeTySlice or cls == Code.CodeTyView or cls == Code.CodeTyClosure
     end
 
     local function layout_of(ctx, ty)
         local result = TypeSizeAlign.result(ty, ctx.layout_env, ctx.target)
-        if pvm.classof(result) == Ty.TypeMemLayoutKnown then return result.layout end
+        if asdl.classof(result) == Ty.TypeMemLayoutKnown then return result.layout end
         return nil
     end
 
@@ -374,7 +374,7 @@ local function bind_context(T)
     end
 
     local function is_view_code_ty(ty)
-        return pvm.classof(ty) == Code.CodeTyView
+        return asdl.classof(ty) == Code.CodeTyView
     end
 
     local function ensure_local(ctx, binding, ty, residence)
@@ -392,20 +392,20 @@ local function bind_context(T)
     local collect_address_taken_expr, collect_address_taken_place, collect_address_taken_stmts
 
     local function mark_addressed_place(place, out)
-        local cls = pvm.classof(place)
-        if cls == Tr.PlaceRef and pvm.classof(place.ref) == Bind.ValueRefBinding then
+        local cls = asdl.classof(place)
+        if cls == Tr.PlaceRef and asdl.classof(place.ref) == Bind.ValueRefBinding then
             out.addressed[binding_key(place.ref.binding)] = true
         elseif cls == Tr.PlaceField or cls == Tr.PlaceDot then
             mark_addressed_place(place.base, out)
         elseif cls == Tr.PlaceIndex then
             -- Taking the address of an indexed place takes the address of the base storage.
-            local bcls = pvm.classof(place.base)
+            local bcls = asdl.classof(place.base)
             if bcls == Tr.IndexBasePlace then mark_addressed_place(place.base.base, out) end
         end
     end
 
     collect_address_taken_place = function(place, out)
-        local cls = pvm.classof(place)
+        local cls = asdl.classof(place)
         if cls == Tr.PlaceRef then
             -- Plain stores/loads through a place do not make immutable values address-taken.
         elseif cls == Tr.PlaceDeref then
@@ -413,7 +413,7 @@ local function bind_context(T)
         elseif cls == Tr.PlaceField or cls == Tr.PlaceDot then
             collect_address_taken_place(place.base, out)
         elseif cls == Tr.PlaceIndex then
-            local bcls = pvm.classof(place.base)
+            local bcls = asdl.classof(place.base)
             if bcls == Tr.IndexBaseExpr then collect_address_taken_expr(place.base.base, out)
             elseif bcls == Tr.IndexBasePlace then collect_address_taken_place(place.base.base, out)
             elseif bcls == Tr.IndexBaseView then collect_address_taken_expr(place.base.view.base, out) end
@@ -423,7 +423,7 @@ local function bind_context(T)
 
     collect_address_taken_expr = function(expr, out)
         if expr == nil then return end
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Tr.ExprAddrOf then
             mark_addressed_place(expr.place, out)
             collect_address_taken_place(expr.place, out)
@@ -443,7 +443,7 @@ local function bind_context(T)
         elseif cls == Tr.ExprField or cls == Tr.ExprDot then
             collect_address_taken_expr(expr.base, out)
         elseif cls == Tr.ExprIndex then
-            local bcls = pvm.classof(expr.base)
+            local bcls = asdl.classof(expr.base)
             if bcls == Tr.IndexBaseExpr then collect_address_taken_expr(expr.base.base, out)
             elseif bcls == Tr.IndexBasePlace then collect_address_taken_place(expr.base.base, out)
             elseif bcls == Tr.IndexBaseView then collect_address_taken_expr(expr.base.view.base, out) end
@@ -465,7 +465,7 @@ local function bind_context(T)
             collect_address_taken_stmts(expr.region.entry.body, out)
             for i = 1, #(expr.region.blocks or {}) do collect_address_taken_stmts(expr.region.blocks[i].body, out) end
         elseif cls == Tr.ExprView then
-            local vcls = pvm.classof(expr.view)
+            local vcls = asdl.classof(expr.view)
             if vcls == Tr.ViewFromExpr then collect_address_taken_expr(expr.view.base, out)
             elseif vcls == Tr.ViewContiguous then collect_address_taken_expr(expr.view.data, out); collect_address_taken_expr(expr.view.len, out)
             elseif vcls == Tr.ViewStrided then collect_address_taken_expr(expr.view.data, out); collect_address_taken_expr(expr.view.len, out); collect_address_taken_expr(expr.view.stride, out)
@@ -482,7 +482,7 @@ local function bind_context(T)
     collect_address_taken_stmts = function(stmts, out)
         for i = 1, #(stmts or {}) do
             local stmt = stmts[i]
-            local cls = pvm.classof(stmt)
+            local cls = asdl.classof(stmt)
             if cls == Tr.StmtLet then
                 collect_address_taken_expr(stmt.init, out)
             elseif cls == Tr.StmtVar then
@@ -525,7 +525,7 @@ local function bind_context(T)
     local lower_stmt_switch
 
     local function lookup_binding(ctx, ref)
-        if pvm.classof(ref) ~= Bind.ValueRefBinding then unsupported(ctx, ref, "non-binding value reference " .. class_name(ref)) end
+        if asdl.classof(ref) ~= Bind.ValueRefBinding then unsupported(ctx, ref, "non-binding value reference " .. class_name(ref)) end
         return ref.binding, scoped_binding_key(ctx, ref.binding)
     end
 
@@ -551,7 +551,7 @@ local function bind_context(T)
 
     local function as_index_value(ctx, value, value_ty, reason)
         if value_ty == Code.CodeTyIndex then return value end
-        local cls = pvm.classof(value_ty)
+        local cls = asdl.classof(value_ty)
         local op = nil
         if cls == Code.CodeTyInt then
             if value_ty.bits < 64 then
@@ -589,7 +589,7 @@ local function bind_context(T)
             return dst
         end
 
-        local vcls = pvm.classof(view)
+        local vcls = asdl.classof(view)
         if vcls == Tr.ViewContiguous or vcls == Tr.ViewStrided then
             local data = lower_expr(ctx, view.data)
             local len = lower_index_expr(view.len, "view_len")
@@ -599,12 +599,12 @@ local function bind_context(T)
             return data, len, stride
         elseif vcls == Tr.ViewFromExpr then
             local base_ty = source_access_base(expr_type(view.base))
-            if pvm.classof(base_ty) == Ty.TPtr then
+            if asdl.classof(base_ty) == Ty.TPtr then
                 local data = lower_expr(ctx, view.base)
                 local len = const_index(ctx, 1, "view_len")
                 local stride = const_index(ctx, 1, "view_stride")
                 return data, len, stride
-            elseif pvm.classof(base_ty) == Ty.TView then
+            elseif asdl.classof(base_ty) == Ty.TView then
                 local base = lower_expr(ctx, view.base)
                 local data = new_temp(ctx, "view_data")
                 local len = new_temp(ctx, "view_len")
@@ -655,7 +655,7 @@ local function bind_context(T)
         end
         local id = ctx.bindings[key]
         if id ~= nil then return id, code_ty(ctx, binding.ty) end
-        local bcls = pvm.classof(binding.class)
+        local bcls = asdl.classof(binding.class)
         if bcls == Bind.BindingClassGlobalFunc then
             local fn = code_func_id(binding.class.item_name)
             local ptr_ty = code_ty(ctx, binding.ty)
@@ -676,7 +676,7 @@ local function bind_context(T)
     end
 
     local function call_sig_id(ctx, fn_ty)
-        local cls = pvm.classof(fn_ty)
+        local cls = asdl.classof(fn_ty)
         if cls == Ty.TFunc or cls == Ty.TClosure then
             return CodeType.ensure_type_sig(ctx.module_ctx, fn_ty.params, fn_ty.result)
         end
@@ -689,9 +689,9 @@ local function bind_context(T)
         local args = {}
         for i = 1, #(expr.args or {}) do args[i] = lower_expr(ctx, expr.args[i]) end
         local target
-        if pvm.classof(expr.callee) == Tr.ExprRef and pvm.classof(expr.callee.ref) == Bind.ValueRefBinding then
+        if asdl.classof(expr.callee) == Tr.ExprRef and asdl.classof(expr.callee.ref) == Bind.ValueRefBinding then
             local binding = expr.callee.ref.binding
-            local bcls = pvm.classof(binding.class)
+            local bcls = asdl.classof(binding.class)
             if bcls == Bind.BindingClassGlobalFunc then
                 target = Code.CodeCallDirect(code_func_id(binding.class.item_name))
             elseif bcls == Bind.BindingClassExtern then
@@ -700,7 +700,7 @@ local function bind_context(T)
         end
         if target == nil then
             local callee = lower_expr(ctx, expr.callee)
-            if pvm.classof(fn_ty) == Ty.TClosure then
+            if asdl.classof(fn_ty) == Ty.TClosure then
                 target = Code.CodeCallClosure(callee, sig)
             else
                 target = Code.CodeCallIndirect(callee, sig)
@@ -715,7 +715,7 @@ local function bind_context(T)
 
     local function lower_field_base_place(ctx, base, base_ty)
         base_ty = source_access_base(base_ty)
-        if pvm.classof(base_ty) == Ty.TPtr then
+        if asdl.classof(base_ty) == Ty.TPtr then
             local addr = lower_expr(ctx, base)
             local elem_ty = base_ty.elem
             return Code.CodePlaceDeref(addr, code_ty(ctx, elem_ty), align_of(ctx, elem_ty)), elem_ty
@@ -724,7 +724,7 @@ local function bind_context(T)
     end
 
     local function lower_field_place(ctx, base, field)
-        if pvm.classof(field) ~= Sem.FieldByOffset then unsupported(ctx, field, "field access before sem_layout_resolve") end
+        if asdl.classof(field) ~= Sem.FieldByOffset then unsupported(ctx, field, "field access before sem_layout_resolve") end
         local base_ty = expr_type(base)
         local base_place = lower_field_base_place(ctx, base, base_ty)
         local field_layout = layout_of(ctx, field.ty)
@@ -736,11 +736,11 @@ local function bind_context(T)
         idx = as_index_value(ctx, idx, idx_ty, "index")
         local elem_size = size_of(ctx, elem_ty)
         if elem_size == nil then unsupported(ctx, base, "index element without known size") end
-        local bcls = pvm.classof(base)
+        local bcls = asdl.classof(base)
         local base_place
         if bcls == Tr.IndexBaseExpr then
             local base_ty = source_access_base(expr_type(base.base))
-            local btcls = pvm.classof(base_ty)
+            local btcls = asdl.classof(base_ty)
             if btcls == Ty.TPtr then
                 local addr = lower_expr(ctx, base.base)
                 base_place = Code.CodePlaceDeref(addr, code_ty(ctx, elem_ty), align_of(ctx, elem_ty))
@@ -766,7 +766,7 @@ local function bind_context(T)
             end
         elseif bcls == Tr.IndexBasePlace then
             local base_ty = source_access_base(place_type(base.base))
-            if pvm.classof(base_ty) == Ty.TView then
+            if asdl.classof(base_ty) == Ty.TView then
                 local view = load_place(ctx, lower_place(ctx, base.base), base_ty, "view_index")
                 local data = new_temp(ctx, "view_index_data")
                 local stride = new_temp(ctx, "view_index_stride")
@@ -795,7 +795,7 @@ local function bind_context(T)
         local action = select_lowering(ctx, "select_place_lowering", place)
         if action == "ref" then
             local binding, key = lookup_binding(ctx, place.ref)
-            local bcls = pvm.classof(binding.class)
+            local bcls = asdl.classof(binding.class)
             if bcls == Bind.BindingClassGlobalConst or bcls == Bind.BindingClassGlobalStatic then
                 return Code.CodePlaceGlobal(code_global_id(binding.class.module_name, binding.class.item_name), code_ty(ctx, binding.ty))
             end
@@ -814,10 +814,10 @@ local function bind_context(T)
             local ty = place_type(place)
             return Code.CodePlaceDeref(addr, code_ty(ctx, ty), align_of(ctx, ty))
         elseif action == "field" then
-            if pvm.classof(place.field) ~= Sem.FieldByOffset then unsupported(ctx, place, "field place before sem_layout_resolve") end
+            if asdl.classof(place.field) ~= Sem.FieldByOffset then unsupported(ctx, place, "field place before sem_layout_resolve") end
             local base_ty = source_access_base(place_type(place.base))
             local base_place
-            if pvm.classof(base_ty) == Ty.TPtr and pvm.classof(place.base) == Tr.PlaceRef then
+            if asdl.classof(base_ty) == Ty.TPtr and asdl.classof(place.base) == Tr.PlaceRef then
                 local addr = lower_expr(ctx, Tr.ExprRef(Tr.ExprTyped(base_ty), place.base.ref))
                 base_place = Code.CodePlaceDeref(addr, code_ty(ctx, base_ty.elem), align_of(ctx, base_ty.elem))
             else
@@ -834,7 +834,7 @@ local function bind_context(T)
     end
 
     expr_as_place = function(ctx, expr)
-        local cls = pvm.classof(expr)
+        local cls = asdl.classof(expr)
         if cls == Tr.ExprRef then return lower_place(ctx, Tr.PlaceRef(Tr.PlaceTyped(expr_type(expr)), expr.ref)) end
         if cls == Tr.ExprDeref then return Code.CodePlaceDeref(lower_expr(ctx, expr.value), code_ty(ctx, expr_type(expr)), align_of(ctx, expr_type(expr))) end
         if cls == Tr.ExprField then return lower_field_place(ctx, expr.base, expr.field) end
@@ -846,7 +846,7 @@ local function bind_context(T)
         local action = select_lowering(ctx, "select_expr_lowering", expr)
         if action == "lit" then
             local ty = code_ty(ctx, expr_type(expr))
-            if pvm.classof(expr.value) == Core.LitString then
+            if asdl.classof(expr.value) == Core.LitString then
                 local elem_ty = u8_code_ty()
                 local data_id, len_bytes = fresh_string_data(ctx, expr.value.bytes)
                 local data = new_temp(ctx, "str_data")
@@ -875,8 +875,8 @@ local function bind_context(T)
             local dst = new_temp(ctx, "bin")
             local lhs_src_ty = source_access_base(expr_type(expr.lhs))
             local rhs_src_ty = source_access_base(expr_type(expr.rhs))
-            local lhs_is_ptr = pvm.classof(lhs_src_ty) == Ty.TPtr
-            local rhs_is_ptr = pvm.classof(rhs_src_ty) == Ty.TPtr
+            local lhs_is_ptr = asdl.classof(lhs_src_ty) == Ty.TPtr
+            local rhs_is_ptr = asdl.classof(rhs_src_ty) == Ty.TPtr
             if expr.op == Core.BinAdd and (lhs_is_ptr or rhs_is_ptr) then
                 local ptr_value, index_value, index_ty, elem_ty
                 if lhs_is_ptr then
@@ -981,9 +981,9 @@ local function bind_context(T)
             return dst, ty
         elseif action == "len" then
             local vty = source_access_base(expr_type(expr.value))
-            if pvm.classof(vty) == Ty.TArray and pvm.classof(vty.count) == Ty.ArrayLenConst then
+            if asdl.classof(vty) == Ty.TArray and asdl.classof(vty.count) == Ty.ArrayLenConst then
                 return const_index(ctx, vty.count.count, "array_len")
-            elseif pvm.classof(vty) == Ty.TView then
+            elseif asdl.classof(vty) == Ty.TView then
                 local view = lower_expr(ctx, expr.value)
                 local dst = new_temp(ctx, "view_len")
                 append_inst(ctx, Code.CodeInstViewLen(dst, view), origin_generated("view len"))
@@ -1522,7 +1522,7 @@ local function bind_context(T)
 
     local function global_init_for_const(ctx, source_ty, value_expr, site)
         local value = ConstEval.value(value_expr, ctx.module_ctx.const_env, ConstEval.empty_local_env())
-        local cls = pvm.classof(value)
+        local cls = asdl.classof(value)
         local ty = code_ty(ctx, source_ty)
         if cls == Sem.ConstInt then return { Code.CodeDataScalar(0, ty, Core.LitInt(value.raw)) } end
         if cls == Sem.ConstFloat then return { Code.CodeDataScalar(0, ty, Core.LitFloat(value.raw)) } end
@@ -1541,7 +1541,7 @@ local function bind_context(T)
     end
 
     local function contract_value_for_expr(func_name, expr)
-        if pvm.classof(expr) == Tr.ExprRef and pvm.classof(expr.ref) == Bind.ValueRefBinding then
+        if asdl.classof(expr) == Tr.ExprRef and asdl.classof(expr.ref) == Bind.ValueRefBinding then
             return contract_value_for_binding(func_name, expr.ref.binding)
         end
         return nil, "contract expression is not a lowered binding reference: " .. class_name(expr)
@@ -1632,9 +1632,9 @@ local function bind_context(T)
         local const_entries = {}
         for i = 1, #(module.items or {}) do
             local item = module.items[i]
-            if pvm.classof(item) == Tr.ItemConst then
+            if asdl.classof(item) == Tr.ItemConst then
                 local c = item.c
-                if pvm.classof(c) == Tr.ConstItem then const_entries[#const_entries + 1] = Bind.ConstEntry(mod_name, c.name, c.ty, c.value) end
+                if asdl.classof(c) == Tr.ConstItem then const_entries[#const_entries + 1] = Bind.ConstEntry(mod_name, c.name, c.ty, c.value) end
             end
         end
         local module_ctx = { code_sigs = {}, code_sig_order = {}, layout_env = layout_env, target = opts.target, module_name = mod_name, funcs = {}, externs = {}, variant_defs = build_variant_defs(module, mod_name), const_env = Bind.ConstEnv(const_entries), generated_data = {}, next_string_data = 0 }
@@ -1648,7 +1648,7 @@ local function bind_context(T)
                 module_ctx.funcs[func_key(module_ctx.module_name, name)] = { id = code_func_id(name), sig = sig }
             elseif action == "extern" then
                 local f = item.func
-                if pvm.classof(f) ~= Tr.ExternFunc then unsupported({ func_name = module_ctx.module_name }, f, "open extern after expansion") end
+                if asdl.classof(f) ~= Tr.ExternFunc then unsupported({ func_name = module_ctx.module_name }, f, "open extern after expansion") end
                 local param_tys = {}
                 for j = 1, #(f.params or {}) do param_tys[j] = f.params[j].ty end
                 local sig = CodeType.ensure_type_sig(module_ctx, param_tys, f.result)
@@ -1750,10 +1750,10 @@ local function bind_context(T)
             elseif action == "data" then
                 data[#data + 1] = Code.CodeData(code_data_id(item.data.id), item.data.id.text, Code.CodeLinkageLocal, item.data.size, item.data.align, { Code.CodeDataBytes(0, item.data.bytes) }, origin_generated("data " .. tostring(item.data.id.text)))
             elseif action == "const" then
-                if pvm.classof(item.c) ~= Tr.ConstItem then unsupported({ func_name = mod_name }, item, "open const item after expansion") end
+                if asdl.classof(item.c) ~= Tr.ConstItem then unsupported({ func_name = mod_name }, item, "open const item after expansion") end
                 globals[#globals + 1] = lower_global(module_ctx, item.c.name, item.c.ty, item.c.value)
             elseif action == "static" then
-                if pvm.classof(item.s) ~= Tr.StaticItem then unsupported({ func_name = mod_name }, item, "open static item after expansion") end
+                if asdl.classof(item.s) ~= Tr.StaticItem then unsupported({ func_name = mod_name }, item, "open static item after expansion") end
                 globals[#globals + 1] = lower_global(module_ctx, item.s.name, item.s.ty, item.s.value)
             elseif action == "extern" or action == "type" or action == "import" then
                 -- Declarations do not produce executable LalinCode blocks.

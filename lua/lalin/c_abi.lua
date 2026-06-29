@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
@@ -8,7 +8,7 @@ local function sanitize(s)
 end
 
 local function class_name(x)
-    local cls = pvm.classof(x) or x
+    local cls = asdl.classof(x) or x
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -25,12 +25,12 @@ local function bind_context(T)
     local api = {}
 
     local function type_key(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if not cls then return sanitize(tostring(ty)) end
         if cls == Ty.TScalar then return sanitize(class_name(ty.scalar)) end
         if cls == Ty.TPtr then return "ptr_" .. type_key(ty.elem) end
         if cls == Ty.TArray then
-            local count = pvm.classof(ty.count) == Ty.ArrayLenConst and tostring(ty.count.count) or "open"
+            local count = asdl.classof(ty.count) == Ty.ArrayLenConst and tostring(ty.count.count) or "open"
             return "arr_" .. count .. "_" .. type_key(ty.elem)
         end
         if cls == Ty.TSlice then return "slice_" .. type_key(ty.elem) end
@@ -43,7 +43,7 @@ local function bind_context(T)
         if cls == Ty.TClosure then return "closure_" .. tostring(#ty.params) .. "_" .. type_key(ty.result) end
         if cls == Ty.TNamed then
             local ref = ty.ref
-            local rcls = pvm.classof(ref)
+            local rcls = asdl.classof(ref)
             if rcls == Ty.TypeRefGlobal then return sanitize(ref.module_name .. "_" .. ref.type_name) end
             if rcls == Ty.TypeRefLocal then return sanitize(ref.sym.key or ref.sym.name) end
             if rcls == Ty.TypeRefPath then
@@ -86,7 +86,7 @@ local function bind_context(T)
     end
 
     local function named_type_for_ref(ref)
-        local rcls = pvm.classof(ref)
+        local rcls = asdl.classof(ref)
         if rcls == Ty.TypeRefGlobal then return C.CBackendNamed(C.CTypeId(ref.module_name, ref.type_name)) end
         if rcls == Ty.TypeRefLocal then return C.CBackendNamed(C.CTypeId("local", ref.sym.name)) end
         if rcls == Ty.TypeRefPath and #ref.path.parts > 0 then return C.CBackendNamed(C.CTypeId("", ref.path.parts[#ref.path.parts].text)) end
@@ -94,7 +94,7 @@ local function bind_context(T)
     end
 
     project_type = function(ty, ctx)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Ty.TScalar then
             if ty.scalar == Core.ScalarVoid then return C.CBackendVoid end
             if ty.scalar == Core.ScalarBool then return C.CBackendBool8 end
@@ -104,7 +104,7 @@ local function bind_context(T)
         elseif cls == Ty.TPtr then
             return C.CBackendDataPtr(project_type(ty.elem, ctx))
         elseif cls == Ty.TArray then
-            if pvm.classof(ty.count) ~= Ty.ArrayLenConst then error("c_abi: ABI array type requires constant length", 3) end
+            if asdl.classof(ty.count) ~= Ty.ArrayLenConst then error("c_abi: ABI array type requires constant length", 3) end
             return C.CBackendArray(project_type(ty.elem, ctx), ty.count.count)
         elseif cls == Ty.TSlice then
             return C.CBackendSliceDescriptor(project_type(ty.elem, ctx))
@@ -181,14 +181,14 @@ local function bind_context(T)
     end
 
     local function is_void_type(ty)
-        return pvm.classof(ty) == Ty.TScalar and ty.scalar == Core.ScalarVoid
+        return asdl.classof(ty) == Ty.TScalar and ty.scalar == Core.ScalarVoid
     end
 
     local function is_by_address_source_type(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == Ty.TArray or cls == Ty.TNamed then return true end
         local tcls = classify_api.classify(ty)
-        return pvm.classof(tcls) == Ty.TypeClassAggregate
+        return asdl.classof(tcls) == Ty.TypeClassAggregate
     end
 
     local function issue(sig_id, site, reason)
@@ -198,7 +198,7 @@ local function bind_context(T)
     local function lower_param(ctx, func_name, param, sig_id, out, issues)
         local name = param.name or ("arg" .. tostring(#out + 1))
         local ty = param.ty or param
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         local source = project_type(ty, ctx)
         if cls == Ty.TView then
             out[#out + 1] = C.CBackendAbiParam(C.CBackendName(sanitize(name) .. "_data"), source, C.CBackendDataPtr(project_type(ty.elem, ctx)), C.CBackendAbiParamDescriptor)
@@ -218,7 +218,7 @@ local function bind_context(T)
     end
 
     local function lower_result(ctx, func_name, result_ty, sig_id, out_params, issues)
-        local cls = pvm.classof(result_ty)
+        local cls = asdl.classof(result_ty)
         local source = project_type(result_ty, ctx)
         if is_void_type(result_ty) then return C.CBackendAbiResult(source, C.CBackendVoid, C.CBackendAbiResultVoid), C.CBackendVoid end
         if cls == Ty.TView then

@@ -1,11 +1,11 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local S = require("lalin.schema.dsl")
 local Phase = require("lalin.phase_model")
 local Project = require("lalin.project_asdl")
 
-local T = pvm.context()
+local T = asdl.context()
 Phase(T)
 Project(T)
 
@@ -44,7 +44,7 @@ local task = P.Task(id, "schema projection", P.TaskDone, {})
 assert(task.id == id)
 assert(P.TaskStatus:isclassof(P.TaskDone))
 
-local schema = Project.schema(pvm.context())
+local schema = Project.schema(asdl.context())
 assert(schema.modules[1].name == "LalinProject")
 
 local text = S.file_text(require("lalin.schema.project"), { width = 100, indent = 2 })

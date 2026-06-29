@@ -1,10 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A = require("lalin.schema_projection")
 local SourceApply = require("lalin.source_text_apply")
 
-local T = pvm.context()
+local T = asdl.context()
 A(T)
 local S = T.LalinSource
 local Apply = SourceApply(T)
@@ -17,13 +17,13 @@ end
 
 local d1 = doc(1, "hello")
 local full = Apply.apply(d1, S.DocumentEdit(uri, S.DocVersion(2), { S.ReplaceAll("world") }))
-assert(pvm.classof(full) == S.SourceApplyOk)
+assert(asdl.classof(full) == S.SourceApplyOk)
 assert(full.document.version == S.DocVersion(2))
 assert(full.document.text == "world")
 
 local r_mid = Apply.range(d1, 1, 4)
 local mid = Apply.apply(d1, S.DocumentEdit(uri, S.DocVersion(2), { S.ReplaceRange(r_mid, "ipp") }))
-assert(pvm.classof(mid) == S.SourceApplyOk)
+assert(asdl.classof(mid) == S.SourceApplyOk)
 assert(mid.document.text == "hippo")
 
 local d2 = doc(1, "abcdef")
@@ -31,7 +31,7 @@ local multi = Apply.apply(d2, S.DocumentEdit(uri, S.DocVersion(2), {
     S.ReplaceRange(Apply.range(d2, 1, 2), "B"),
     S.ReplaceRange(Apply.range(d2, 4, 5), "E"),
 }))
-assert(pvm.classof(multi) == S.SourceApplyOk)
+assert(asdl.classof(multi) == S.SourceApplyOk)
 assert(multi.document.text == "aBcdEf")
 
 local insert = Apply.apply(d2, S.DocumentEdit(uri, S.DocVersion(2), {
@@ -56,22 +56,22 @@ local overlap = Apply.apply(d2, S.DocumentEdit(uri, S.DocVersion(2), {
     S.ReplaceRange(Apply.range(d2, 1, 4), "x"),
     S.ReplaceRange(Apply.range(d2, 3, 5), "y"),
 }))
-assert(pvm.classof(overlap) == S.SourceApplyRejected)
-assert(pvm.classof(overlap.issues[1]) == S.SourceIssueOverlappingRanges)
+assert(asdl.classof(overlap) == S.SourceApplyRejected)
+assert(asdl.classof(overlap.issues[1]) == S.SourceIssueOverlappingRanges)
 
 local stale = Apply.apply(d2, S.DocumentEdit(uri, S.DocVersion(0), { S.ReplaceAll("x") }))
-assert(pvm.classof(stale) == S.SourceApplyRejected)
-assert(pvm.classof(stale.issues[1]) == S.SourceIssueStaleVersion)
+assert(asdl.classof(stale) == S.SourceApplyRejected)
+assert(asdl.classof(stale.issues[1]) == S.SourceIssueStaleVersion)
 
 local wrong = Apply.apply(d2, S.DocumentEdit(other, S.DocVersion(2), { S.ReplaceAll("x") }))
-assert(pvm.classof(wrong) == S.SourceApplyRejected)
-assert(pvm.classof(wrong.issues[1]) == S.SourceIssueWrongDocument)
+assert(asdl.classof(wrong) == S.SourceApplyRejected)
+assert(asdl.classof(wrong.issues[1]) == S.SourceIssueWrongDocument)
 
 local mixed = Apply.apply(d2, S.DocumentEdit(uri, S.DocVersion(2), {
     S.ReplaceAll("x"),
     S.ReplaceRange(Apply.range(d2, 0, 1), "y"),
 }))
-assert(pvm.classof(mixed) == S.SourceApplyRejected)
+assert(asdl.classof(mixed) == S.SourceApplyRejected)
 assert(mixed.issues[1] == S.SourceIssueMixedReplaceAll)
 
 print("lalin source text apply ok")

@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
@@ -11,7 +11,7 @@ local function bind_context(T)
 
     local function append_all(out, xs) for i = 1, #(xs or {}) do out[#out + 1] = xs[i] end end
     local function class_name(x)
-        local cls = pvm.classof(x) or x
+        local cls = asdl.classof(x) or x
         return tostring(cls):match("Class%((.-)%)") or tostring(cls)
     end
 
@@ -28,9 +28,9 @@ local function bind_context(T)
 
     local function descriptor_type_name(kind, ty)
         if kind == "bytespan" then return "ml_bytespan" end
-        local elem = ty and ty.elem and sanitize(tostring(pvm.classof(ty.elem) and pvm.classof(ty.elem).kind or ty.elem)) or "any"
+        local elem = ty and ty.elem and sanitize(tostring(asdl.classof(ty.elem) and asdl.classof(ty.elem).kind or ty.elem)) or "any"
         if ty and ty.elem then
-            local ecls = pvm.classof(ty.elem)
+            local ecls = asdl.classof(ty.elem)
             if ecls and ecls.kind then elem = sanitize(ecls.kind .. "_" .. tostring(ty.elem.scalar and ty.elem.scalar.kind or ty.elem.id and ty.elem.id.spelling or "elem")) end
         end
         return "ml_" .. kind .. "_" .. elem
@@ -56,7 +56,7 @@ local function bind_context(T)
 
     local emit_type
     emit_type = function(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if ty == C.CBackendVoid or cls == C.CBackendVoid then return "void" end
         if ty == C.CBackendBool8 or cls == C.CBackendBool8 then return "uint8_t" end
         if cls == C.CBackendScalar then return scalar_name(ty.scalar) end
@@ -92,7 +92,7 @@ local function bind_context(T)
     end
 
     local function literal(lit)
-        local cls = pvm.classof(lit)
+        local cls = asdl.classof(lit)
         if cls == Core.LitInt or cls == Core.LitFloat then return lit.raw end
         if cls == Core.LitBool then return lit.value and "1" or "0" end
         if cls == Core.LitNil then return "0" end
@@ -101,7 +101,7 @@ local function bind_context(T)
     end
 
     local function atom(a)
-        local cls = pvm.classof(a)
+        local cls = asdl.classof(a)
         if cls == C.CBackendAtomLocal then return a.local_id.text end
         if cls == C.CBackendAtomGlobal then return a.global.text end
         if cls == C.CBackendAtomLiteral then return "(" .. emit_type(a.ty) .. ")" .. literal(a.literal) end
@@ -111,13 +111,13 @@ local function bind_context(T)
 
     local place
     place = function(p)
-        local cls = pvm.classof(p)
+        local cls = asdl.classof(p)
         if cls == C.CBackendPlaceLocal then return p.local_id.text end
         if cls == C.CBackendPlaceGlobal then return p.global.text end
         if cls == C.CBackendPlaceDeref then return "(*(" .. emit_type(p.ty) .. "*)" .. atom(p.addr) .. ")" end
         if cls == C.CBackendPlaceField then return place(p.base) .. "." .. p.field.text end
         if cls == C.CBackendPlaceIndex then
-            if pvm.classof(p.base) == C.CBackendPlaceDeref then return "((" .. emit_type(p.ty) .. "*)" .. atom(p.base.addr) .. ")[" .. atom(p.index) .. "]" end
+            if asdl.classof(p.base) == C.CBackendPlaceDeref then return "((" .. emit_type(p.ty) .. "*)" .. atom(p.base.addr) .. ")[" .. atom(p.index) .. "]" end
             return place(p.base) .. "[" .. atom(p.index) .. "]"
         end
         if cls == C.CBackendPlaceBytes then return "(*(" .. emit_type(p.ty) .. "*)((unsigned char*)" .. atom(p.base) .. " + " .. tostring(p.offset) .. "))" end
@@ -139,7 +139,7 @@ local function bind_context(T)
     end
 
     local function rvalue(rv)
-        local cls = pvm.classof(rv)
+        local cls = asdl.classof(rv)
         if cls == C.CBackendRAtom then return atom(rv.atom) end
         if cls == C.CBackendRCompare then return "(" .. atom(rv.lhs) .. " " .. cmp_op(rv.op) .. " " .. atom(rv.rhs) .. ")" end
         if cls == C.CBackendRCast then return cast_expr(rv.op, rv.to, rv.value) end
@@ -152,7 +152,7 @@ local function bind_context(T)
     end
 
     local function decl(ty, name)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == C.CBackendArray then return emit_type(ty.elem) .. " " .. name .. "[" .. tostring(ty.count) .. "]" end
         return emit_type(ty) .. " " .. name
     end
@@ -179,7 +179,7 @@ local function bind_context(T)
 
     local function func_blocks(func)
         local body = assert(func.body, "CBackendFunc requires body")
-        local cls = pvm.classof(body)
+        local cls = asdl.classof(body)
         if cls == C.CBackendBodyBlocks or cls == C.CBackendBodyMixed then return body.blocks end
         if cls == C.CBackendBodyExec then return {} end
         error("c_emit: unknown CBackendFunc body", 2)
@@ -187,7 +187,7 @@ local function bind_context(T)
 
     local function visit_exec_site_types(site, visit_ty)
         for i = 1, #(site.args or {}) do visit_ty(site.args[i].ty) end
-        if pvm.classof(site.result) == C.CBackendExecResultLocal then visit_ty(site.result.ty) end
+        if asdl.classof(site.result) == C.CBackendExecResultLocal then visit_ty(site.result.ty) end
     end
 
     local function collect_implicit_types(unit)
@@ -197,7 +197,7 @@ local function bind_context(T)
             if descriptors[name] == nil then descriptors[name] = { kind = kind, ty = ty }; descriptor_order[#descriptor_order + 1] = name end
         end
         local function visit_ty(ty)
-            local cls = pvm.classof(ty)
+            local cls = asdl.classof(ty)
             if cls == C.CBackendClosureDescriptor then
                 local name = closure_type_name(ty)
                 if out[name] == nil then out[name] = ty; order[#order + 1] = name end
@@ -216,9 +216,9 @@ local function bind_context(T)
             for j = 1, #unit.funcs[i].params do visit_ty(unit.funcs[i].params[j].ty) end
             for j = 1, #unit.funcs[i].locals do visit_ty(unit.funcs[i].locals[j].ty) end
             local body = unit.funcs[i].body
-            if pvm.classof(body) == C.CBackendBodyExec then
+            if asdl.classof(body) == C.CBackendBodyExec then
                 visit_exec_site_types(body.fragment, visit_ty)
-            elseif pvm.classof(body) == C.CBackendBodyMixed then
+            elseif asdl.classof(body) == C.CBackendBodyMixed then
                 for j = 1, #(body.fragments or {}) do visit_exec_site_types(body.fragments[j], visit_ty) end
             end
             local blocks = func_blocks(unit.funcs[i])
@@ -258,7 +258,7 @@ local function bind_context(T)
     end
 
     local function type_deps(ty, out)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if cls == C.CBackendNamed then
             out[#out + 1] = ty.id.module_name .. "\0" .. ty.id.spelling
         elseif cls == C.CBackendArray or cls == C.CBackendVector then
@@ -270,7 +270,7 @@ local function bind_context(T)
 
     local function type_decl_deps(td)
         local out = {}
-        local cls = pvm.classof(td)
+        local cls = asdl.classof(td)
         if cls == C.CBackendTypedef then
             type_deps(td.ty, out)
         elseif cls == C.CBackendStructDecl or cls == C.CBackendUnionDecl then
@@ -307,7 +307,7 @@ local function bind_context(T)
         local types = ordered_type_decls(unit.types)
         for i = 1, #types do
             local td = types[i]
-            local cls = pvm.classof(td)
+            local cls = asdl.classof(td)
             local name = (td.id.module_name .. "_" .. td.id.spelling):gsub("[^%w_]", "_")
             if cls == C.CBackendTypedef then out[#out + 1] = "typedef " .. decl(td.ty, name) .. ";"
             elseif cls == C.CBackendStructDecl then
@@ -330,7 +330,7 @@ local function bind_context(T)
         local entries = {}
         for j = 1, #g.inits do
             local init = g.inits[j]
-            local icls = pvm.classof(init)
+            local icls = asdl.classof(init)
             if icls == C.CBackendDataBytes then
                 for k = 1, #init.bytes do
                     entries[#entries + 1] = "[" .. tostring(init.offset + k - 1) .. "] = " .. tostring(init.bytes:byte(k))
@@ -346,8 +346,8 @@ local function bind_context(T)
     local function scalar_init_literal(g)
         if #(g.inits or {}) ~= 1 then return nil end
         local init = g.inits[1]
-        if pvm.classof(init) ~= C.CBackendDataScalar or (init.offset or 0) ~= 0 then return nil end
-        local gty = pvm.classof(g.ty)
+        if asdl.classof(init) ~= C.CBackendDataScalar or (init.offset or 0) ~= 0 then return nil end
+        local gty = asdl.classof(g.ty)
         if g.ty ~= C.CBackendBool8 and gty ~= C.CBackendBool8 and g.ty ~= C.CBackendIndex and gty ~= C.CBackendIndex and gty ~= C.CBackendScalar then return nil end
         return literal(init.literal)
     end
@@ -355,8 +355,8 @@ local function bind_context(T)
     local function emit_globals(unit, out)
         for i = 1, #unit.globals do
             local g = unit.globals[i]
-            local gcls = pvm.classof(g.ty)
-            local byte_global = (gcls == C.CBackendDataPtr) or (#g.inits > 0 and pvm.classof(g.inits[1]) == C.CBackendDataBytes)
+            local gcls = asdl.classof(g.ty)
+            local byte_global = (gcls == C.CBackendDataPtr) or (#g.inits > 0 and asdl.classof(g.inits[1]) == C.CBackendDataBytes)
             local scalar_init = scalar_init_literal(g)
             if byte_global then
                 out[#out + 1] = "static unsigned char " .. g.name.text .. "[" .. tostring(g.size) .. "] = " .. byte_init_list(g) .. ";"
@@ -367,7 +367,7 @@ local function bind_context(T)
             end
             for j = 1, #g.inits do
                 local init = g.inits[j]
-                local icls = pvm.classof(init)
+                local icls = asdl.classof(init)
                 if icls == C.CBackendDataBytes then
                     out[#out + 1] = "/* bytes init at " .. tostring(init.offset) .. " size " .. tostring(#init.bytes) .. " */"
                 elseif icls == C.CBackendDataZero then
@@ -382,7 +382,7 @@ local function bind_context(T)
     end
 
     local function is_array_type(ty)
-        return pvm.classof(ty) == C.CBackendArray
+        return asdl.classof(ty) == C.CBackendArray
     end
 
     local function emit_storage_copy(out, dst, src)
@@ -402,10 +402,10 @@ local function bind_context(T)
     end
 
     local function emit_stmt(s, out, blocks, local_types)
-        local cls = pvm.classof(s)
+        local cls = asdl.classof(s)
         if cls == C.CBackendAssign then
             if is_array_type(local_types[s.dst.text]) then
-                if pvm.classof(s.rhs) ~= C.CBackendRAtom then error("c_emit: array assignment requires atom rvalue", 2) end
+                if asdl.classof(s.rhs) ~= C.CBackendRAtom then error("c_emit: array assignment requires atom rvalue", 2) end
                 emit_storage_copy(out, s.dst.text, atom(s.rhs.atom))
             else
                 out[#out + 1] = "    " .. s.dst.text .. " = " .. rvalue(s.rhs) .. ";"
@@ -435,7 +435,7 @@ local function bind_context(T)
             for i = 1, #s.elems do out[#out + 1] = "    " .. place(s.place) .. "[" .. tostring(s.elems[i].index) .. "] = " .. atom(s.elems[i].value) .. ";" end
         elseif cls == C.CBackendCall then
             local args = {}; for i = 1, #s.args do args[i] = atom(s.args[i]) end
-            local tcls = pvm.classof(s.target)
+            local tcls = asdl.classof(s.target)
             local callee
             if tcls == C.CBackendCallDirect then callee = s.target.func.text
             elseif tcls == C.CBackendCallExtern then callee = s.target["extern"].text
@@ -452,7 +452,7 @@ local function bind_context(T)
     end
 
     local function emit_term(t, out, blocks)
-        local cls = pvm.classof(t)
+        local cls = asdl.classof(t)
         if cls == C.CBackendGoto then emit_transfer(out, blocks[t.dest.text], t.args)
         elseif cls == C.CBackendIfGoto then
             out[#out + 1] = "    if (" .. atom(t.cond) .. ") {"
@@ -490,18 +490,18 @@ local function bind_context(T)
 
     local function exec_fragment_symbol(fragment)
         local kind = fragment and fragment.kind or nil
-        local cls = pvm.classof(kind)
+        local cls = asdl.classof(kind)
         if cls == Exec.ExecFragmentStencil then return kind.artifact.symbol.text end
         if cls == Exec.ExecFragmentCall then return code_symbol_from_id(kind.callee) end
         error("c_emit: unsupported exec fragment kind " .. class_name(kind), 3)
     end
 
     local function emit_exec_site(site, out)
-        local ecls = pvm.classof(site.emission)
+        local ecls = asdl.classof(site.emission)
         local args = {}
         for i = 1, #(site.args or {}) do args[i] = atom(site.args[i].atom) end
         local call = exec_fragment_symbol(site.fragment) .. "(" .. table.concat(args, ", ") .. ")"
-        local rcls = pvm.classof(site.result)
+        local rcls = asdl.classof(site.result)
         if rcls == C.CBackendExecResultLocal then
             out[#out + 1] = "    " .. site.result.dst.text .. " = " .. call .. ";"
             return site.result.dst
@@ -514,7 +514,7 @@ local function bind_context(T)
         local sig = sigs[f.sig.text]
         out[#out + 1] = emit_type(sig.result) .. " " .. f.name.text .. "(" .. func_params(f.params) .. ") {"
         local function needs_compound_decl_only(ty)
-            local cls = pvm.classof(ty)
+            local cls = asdl.classof(ty)
             return cls == C.CBackendArray or cls == C.CBackendSliceDescriptor or cls == C.CBackendByteSpanDescriptor or cls == C.CBackendViewDescriptor or cls == C.CBackendClosureDescriptor or cls == C.CBackendNamed
         end
         local function emit_local_decl(local_id, ty)
@@ -530,10 +530,10 @@ local function bind_context(T)
             local_types[f.locals[i].id.text] = f.locals[i].ty
             emit_local_decl(f.locals[i].id.text, f.locals[i].ty)
         end
-        local body_cls = pvm.classof(f.body)
+        local body_cls = asdl.classof(f.body)
         if body_cls == C.CBackendBodyExec then
             local result = emit_exec_site(f.body.fragment, out)
-            if sig.result == C.CBackendVoid or pvm.classof(sig.result) == C.CBackendVoid then
+            if sig.result == C.CBackendVoid or asdl.classof(sig.result) == C.CBackendVoid then
                 out[#out + 1] = "    return;"
             elseif result ~= nil then
                 out[#out + 1] = "    return " .. result.text .. ";"
@@ -576,7 +576,7 @@ local function bind_context(T)
 
     local function helper_is_atomic(h)
         local k = h.kind or h
-        local cls = pvm.classof(k)
+        local cls = asdl.classof(k)
         return cls == C.CBackendHelperAtomicLoad or cls == C.CBackendHelperAtomicStore
             or cls == C.CBackendHelperAtomicRmw or cls == C.CBackendHelperAtomicCas
             or cls == C.CBackendHelperAtomicFence
@@ -584,7 +584,7 @@ local function bind_context(T)
 
     local function target_supports_c11_atomics(target)
         if target == nil then return false end
-        local dcls = pvm.classof(target.dialect)
+        local dcls = asdl.classof(target.dialect)
         return target.dialect == C.CBackendC11 or target.dialect == C.CBackendGnuC or target.dialect == C.CBackendClangC
             or dcls == C.CBackendC11 or dcls == C.CBackendGnuC or dcls == C.CBackendClangC
     end
@@ -607,7 +607,7 @@ local function bind_context(T)
         for i = 1, #closure_order do out[#out + 1] = "typedef struct " .. closure_order[i] .. " " .. closure_order[i] .. ";" end
         for i = 1, #unit.types do
             local td = unit.types[i]
-            local cls = pvm.classof(td)
+            local cls = asdl.classof(td)
             local name = (td.id.module_name .. "_" .. td.id.spelling):gsub("[^%w_]", "_")
             if cls == C.CBackendStructDecl or cls == C.CBackendOpaqueDecl then out[#out + 1] = "typedef struct " .. name .. " " .. name .. ";"
             elseif cls == C.CBackendUnionDecl then out[#out + 1] = "typedef union " .. name .. " " .. name .. ";" end
@@ -633,7 +633,7 @@ local function bind_context(T)
         local out = {}
         for i = 1, #(unit.funcs or {}) do
             local body = unit.funcs[i].body
-            local cls = pvm.classof(body)
+            local cls = asdl.classof(body)
             if cls == C.CBackendBodyExec then
                 out[#out + 1] = body.fragment
             elseif cls == C.CBackendBodyMixed then
@@ -647,7 +647,7 @@ local function bind_context(T)
         local seen = {}
         for _, site in ipairs(collect_exec_sites(unit)) do
             local kind = site.fragment and site.fragment.kind or nil
-            if pvm.classof(kind) == Exec.ExecFragmentStencil then
+            if asdl.classof(kind) == Exec.ExecFragmentStencil then
                 local decl = kind.artifact.c_signature
                 if decl ~= nil and decl ~= "" and not seen[decl] then
                     seen[decl] = true

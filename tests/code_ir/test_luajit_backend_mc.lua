@@ -3,10 +3,10 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local ffi = require("ffi")
 local bit = require("bit")
 local lalin = require("lalin")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
 
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 
 local Core = T.LalinCore
@@ -89,18 +89,18 @@ local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
 assert(StencilArtifactPlan.descriptor_vocab(artifacts[1].instance.descriptor) == Stencil.StencilReduce, "expected reduce stencil")
 assert(artifacts[1].fingerprint.text:match("^stencil%-artifact%-v1:"), "MC artifact should carry a build fingerprint")
 local selection = facts.stencil.selections[1].selection
-assert(pvm.classof(selection) == Stencil.StencilSelected, "expected selected stencil fact")
+assert(asdl.classof(selection) == Stencil.StencilSelected, "expected selected stencil fact")
 assert(selection.provenance.winner == selection.provenance.candidates[1].name, "selection provenance should name the winning candidate")
 assert(selection.provenance.candidates[1].status == Stencil.StencilScheduleCandidateSelected, "first schedule candidate should be selected")
 assert(selection.provenance.candidates[1].cost > 0, "selected candidate should carry a positive cost")
 assert(#selection.provenance.candidates >= 2, "autovector selection should record scalar fallback candidate")
 assert(selection.provenance.candidates[2].status == Stencil.StencilScheduleCandidateViable, "fallback candidate should remain viable")
-assert(pvm.classof(facts.luajit_stencil_machines) == LJ.LJStencilMachineModulePlan, "expected ASDL LuaJIT stencil machine plan")
+assert(asdl.classof(facts.luajit_stencil_machines) == LJ.LJStencilMachineModulePlan, "expected ASDL LuaJIT stencil machine plan")
 assert(#facts.luajit_stencil_machines.machines == 1, "expected one planned LuaJIT stencil machine")
 assert(facts.luajit_stencil_machines.machines[1].artifact == artifacts[1], "planned LuaJIT stencil machine should reference selected artifact")
-assert(pvm.classof(facts.exec_plan) == Exec.ExecModulePlan, "expected ASDL exec plan")
+assert(asdl.classof(facts.exec_plan) == Exec.ExecModulePlan, "expected ASDL exec plan")
 assert(#facts.exec_plan.entries == 1, "expected one exec stencil decision")
-assert(pvm.classof(facts.exec_plan.entries[1].decision) == Exec.ExecMaterializeStencil, "selected artifact should materialize an exec stencil fragment")
+assert(asdl.classof(facts.exec_plan.entries[1].decision) == Exec.ExecMaterializeStencil, "selected artifact should materialize an exec stencil fragment")
 assert(facts.exec_plan.entries[1].decision.fragment.kind.artifact == artifacts[1], "exec materialization should reference selected artifact")
 assert(result.realization.kind == "MCStencilBankRealization", "expected mc bank realization")
 assert(#result.realization.installed == 1, "expected one installed mc stencil")
@@ -121,7 +121,7 @@ local stale_artifact = Stencil.StencilArtifact(
     artifacts[1].diagnostics or {},
     artifacts[1].schedule_rejects or {}
 )
-local stale_realization, stale_err = Backend.realize_artifacts({ stale_artifact }, { mc_bank = bank, allow_bc_fallback = false })
+local stale_realization, stale_err = Backend.realize_artifacts({ stale_artifact }, { mc_bank = bank })
 assert(stale_realization == nil, "stale MC bank entry must not realize")
 assert(tostring(stale_err):match("fingerprint mismatch"), "stale MC bank rejection should name fingerprint mismatch")
 
@@ -153,8 +153,6 @@ local facade_bank, facade_bank_err, facade_bank_src = facade_plan.backend.build_
 assert(facade_bank ~= nil, tostring(facade_bank_err) .. "\n" .. tostring(facade_bank_src))
 local facade = lalin.compile("BackendMCFacade", parsed, {
     mc_bank = facade_bank,
-    silent_warnings = true,
-    allow_bc_fallback = false,
 })
 assert(facade.__lalin_artifact.residual == "mc", "public compile should default to MC")
 assert(facade.__lalin_artifact.mc_bank == facade_bank, "public compile should use the supplied MC bank")

@@ -9,7 +9,7 @@
 --   local blob = Emit.emit_all(T)   -- string of Lalin declarations
 --   -- then in a .mlua island:  @{blob}
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local M = {}
 
@@ -22,7 +22,7 @@ end
 -- ── Field type ─────────────────────────────────────────────────────────────────
 
 local function field_type_str(A, ty)
-    local cls = pvm.classof(ty)
+    local cls = asdl.classof(ty)
 
     if cls == A.TypeBuiltin then
         if ty.name == "string" then return "ptr(u8)" end
@@ -47,7 +47,7 @@ end
 
 local function variant_has_no_fields(A, variant)
     for _, f in ipairs(variant.fields or {}) do
-        if not (pvm.classof(f.ty) == A.TypeBuiltin and f.ty.name == "boolean" and f.name == "__marker") then
+        if not (asdl.classof(f.ty) == A.TypeBuiltin and f.ty.name == "boolean" and f.name == "__marker") then
             return false
         end
     end
@@ -57,7 +57,7 @@ end
 local function variant_single_field_name(A, variant)
     local name = nil
     for _, f in ipairs(variant.fields or {}) do
-        if not (pvm.classof(f.ty) == A.TypeBuiltin and f.ty.name == "boolean" and f.name == "__marker") then
+        if not (asdl.classof(f.ty) == A.TypeBuiltin and f.ty.name == "boolean" and f.name == "__marker") then
             if name then return nil end
             name = f
         end
@@ -126,7 +126,7 @@ function M.emit_all(T)
     for _, mod in ipairs(schema.modules or {}) do
         out[#out + 1] = "-- " .. mod.name
         for _, decl in ipairs(mod.decls or {}) do
-            local cls = pvm.classof(decl)
+            local cls = asdl.classof(decl)
             if cls == A.ProductDecl then
                 emit_product(A, out, decl, mod.name)
             elseif cls == A.SumDecl then

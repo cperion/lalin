@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function shell_quote(s)
     return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
@@ -46,7 +46,7 @@ local function bind_context(T)
         local Schedule = T.LalinSchedule
         local by_kernel = {}
         for _, sched in ipairs(schedule_plan and schedule_plan.schedules or {}) do
-            if pvm.classof(sched) == Schedule.SchedulePlanned then by_kernel[sched.kernel.text] = sched end
+            if asdl.classof(sched) == Schedule.SchedulePlanned then by_kernel[sched.kernel.text] = sched end
         end
         return by_kernel
     end
@@ -77,26 +77,6 @@ local function bind_context(T)
         local mode = tostring((opts or {}).residual or "mc")
         if mode == "mc" or mode == "bc" then return mode end
         error("luajit_backend: unknown residual materializer " .. mode, 3)
-    end
-
-    local function bc_fallback_allowed(opts)
-        opts = opts or {}
-        if opts.allow_bc_fallback ~= nil then return opts.allow_bc_fallback end
-        if opts.residual == "bc" then return false end
-        return true
-    end
-
-    local function warn(opts, message)
-        opts = opts or {}
-        if opts.collect_warnings ~= nil then opts.collect_warnings[#opts.collect_warnings + 1] = message end
-        if opts.on_warning ~= nil then opts.on_warning(message); return end
-        if opts.warn ~= nil then opts.warn(message); return end
-        if opts.silent_warnings or opts.quiet then return end
-        io.stderr:write("warning: " .. tostring(message) .. "\n")
-    end
-
-    local function warn_bc_fallback(opts, reason)
-        warn(opts, "luajit_backend: falling back from residual_mc to residual_bc: " .. tostring(reason))
     end
 
     local function native_residual_mode(opts)
@@ -195,7 +175,7 @@ local function bind_context(T)
         if #artifacts == 0 then
             return { kind = "MCStencilBankRealization", symbols = {}, installed = {}, bank = nil }, nil
         end
-        local function realize_bc(fallback_reason)
+        local function realize_bc()
             local realized, err, source = ResidualLuaTrace.realize_bc_artifacts(artifacts, {
                 bank = opts.bc_bank,
                 stem = opts.stem,
@@ -203,14 +183,10 @@ local function bind_context(T)
                 target = opts.bc_target,
                 env = opts.bc_env,
             })
-            if realized ~= nil and fallback_reason ~= nil then
-                realized.fallback_from = "residual_mc"
-                realized.fallback_reason = fallback_reason
-            end
             return realized, err, source
         end
         if residual_mode(opts) == "bc" then
-            return realize_bc(nil)
+            return realize_bc()
         end
         local mc_bank = opts.mc_bank
         if mc_bank == nil then
@@ -220,22 +196,13 @@ local function bind_context(T)
                 ffi_preamble = opts.ffi_preamble,
             })
             if mc_bank == nil then
-                local err = "luajit_backend: residual_mc requires an embedded or supplied MC bank: " .. tostring(embedded_err)
-                if bc_fallback_allowed(opts) then
-                    warn_bc_fallback(opts, err)
-                    return realize_bc(err)
-                end
-                return nil, err
+                return nil, "luajit_backend: residual_mc requires an embedded or supplied MC bank: " .. tostring(embedded_err)
             end
         end
         local realized, err, source = StencilBank.realize_mc_artifacts(artifacts, {
             mc_bank = mc_bank,
             install_policy = opts.install_policy,
         })
-        if realized == nil and bc_fallback_allowed(opts) then
-            warn_bc_fallback(opts, err)
-            return realize_bc(err)
-        end
         return realized, err, source
     end
 
@@ -293,21 +260,7 @@ local function bind_context(T)
                     ffi_preamble = opts.ffi_preamble,
                 })
                 if mc_bank == nil then
-                    local reason = "luajit_backend: residual_mc requires an embedded or supplied MC bank: " .. tostring(embedded_err)
-                    if not bc_fallback_allowed(opts) then return nil, reason end
-                    warn_bc_fallback(opts, reason)
-                    bc_bank = opts.bc_bank
-                    if bc_bank == nil then
-                        local bank_err
-                        bc_bank, bank_err = api.build_bc_bank(artifacts or {}, {
-                            stem = opts.stem,
-                            id = opts.bc_bank_id,
-                            target = opts.bc_target,
-                        })
-                        if bc_bank == nil then return nil, bank_err end
-                    end
-                    mode = "bc"
-                    stencil_source = ResidualLuaTrace.emit_bc_bank_source(bc_bank, opts)
+                    return nil, "luajit_backend: residual_mc requires an embedded or supplied MC bank: " .. tostring(embedded_err)
                 end
             end
             if stencil_source == nil then
@@ -360,7 +313,6 @@ local function bind_context(T)
             artifacts = artifacts,
             rejects = rejects,
             mc_bank = opts.mc_bank,
-            warnings = opts.collect_warnings,
         }
     end
 
@@ -378,7 +330,6 @@ local function bind_context(T)
         result.exec_plan = facts.exec
         result.artifacts = artifacts
         result.rejects = rejects
-        result.warnings = opts.collect_warnings
         return result
     end
 

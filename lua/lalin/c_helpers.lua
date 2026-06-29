@@ -1,7 +1,7 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function class_name(x)
-    local cls = pvm.classof(x) or x
+    local cls = asdl.classof(x) or x
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -18,7 +18,7 @@ local function bind_context(T)
         seen = seen or {}
         if seen[x] then return "<cycle>" end
         seen[x] = true
-        local cls = pvm.classof(x)
+        local cls = asdl.classof(x)
         local parts = { class_name(x) }
         if cls and cls.__fields then
             for i = 1, #cls.__fields do
@@ -56,7 +56,7 @@ local function bind_context(T)
     end
 
     local function type_suffix(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if ty == C.CBackendVoid or cls == C.CBackendVoid then return "void" end
         if ty == C.CBackendBool8 or cls == C.CBackendBool8 then return "bool8" end
         if cls == C.CBackendScalar then return scalar_suffix(ty.scalar) end
@@ -100,7 +100,7 @@ local function bind_context(T)
     end
 
     local function helper_id(kind)
-        local cls = pvm.classof(kind)
+        local cls = asdl.classof(kind)
         if cls == C.CBackendHelperUnary then
             return C.CBackendHelperId("ml_" .. type_suffix(kind.ty) .. "_" .. mode_suffix(kind.op))
         elseif cls == C.CBackendHelperBoolNormalize then
@@ -169,8 +169,8 @@ local function bind_context(T)
     end
 
     local function helper_signature(use)
-        local kind = (pvm.classof(use) == C.CBackendHelperUse) and use.kind or use
-        local cls = pvm.classof(kind)
+        local kind = (asdl.classof(use) == C.CBackendHelperUse) and use.kind or use
+        local cls = asdl.classof(kind)
         local void = C.CBackendVoid
         local ptr = C.CBackendDataPtr(nil)
         local index = C.CBackendIndex
@@ -241,7 +241,7 @@ local function bind_context(T)
     end
 
     local function unsigned_c_name_for_type(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if ty == C.CBackendIndex or cls == C.CBackendIndex then return "uintptr_t" end
         if cls == C.CBackendScalar then
             local s = ty.scalar
@@ -254,11 +254,11 @@ local function bind_context(T)
     end
 
     local function cbackend_scalar_is_signed(ty)
-        return pvm.classof(ty) == C.CBackendScalar and (ty.scalar == Core.ScalarI8 or ty.scalar == Core.ScalarI16 or ty.scalar == Core.ScalarI32 or ty.scalar == Core.ScalarI64 or ty.scalar == Core.ScalarIndex)
+        return asdl.classof(ty) == C.CBackendScalar and (ty.scalar == Core.ScalarI8 or ty.scalar == Core.ScalarI16 or ty.scalar == Core.ScalarI32 or ty.scalar == Core.ScalarI64 or ty.scalar == Core.ScalarIndex)
     end
 
     local function fallback_emit_type(ty)
-        local cls = pvm.classof(ty)
+        local cls = asdl.classof(ty)
         if ty == C.CBackendVoid or cls == C.CBackendVoid then return "void" end
         if ty == C.CBackendBool8 or cls == C.CBackendBool8 then return "uint8_t" end
         if cls == C.CBackendScalar then return scalar_c_name(ty.scalar) end
@@ -289,14 +289,14 @@ local function bind_context(T)
 
     local function emit_helper(use, emit_type)
         emit_type = emit_type or fallback_emit_type
-        local kind = (pvm.classof(use) == C.CBackendHelperUse) and use.kind or use
-        local id = (pvm.classof(use) == C.CBackendHelperUse) and use.id or helper_id(kind)
+        local kind = (asdl.classof(use) == C.CBackendHelperUse) and use.kind or use
+        local id = (asdl.classof(use) == C.CBackendHelperUse) and use.id or helper_id(kind)
         local sig = helper_signature(use)
         local ret = emit_type(sig.result)
         local params = {}
         for i, ty in ipairs(sig.params) do params[i] = emit_type(ty) .. " a" .. tostring(i) end
         local lines = { "static inline " .. ret .. " " .. id.text .. "(" .. table.concat(params, ", ") .. ") {" }
-        local cls = pvm.classof(kind)
+        local cls = asdl.classof(kind)
         local uret = unsigned_c_name_for_type((sig.result ~= C.CBackendVoid and sig.result) or (sig.params and sig.params[1]))
         if cls == C.CBackendHelperUnary then
             if kind.op == Core.UnaryNot then lines[#lines + 1] = "    return (" .. ret .. ")(!a1);"

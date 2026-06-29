@@ -1,4 +1,4 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local M = {}
 
@@ -14,7 +14,7 @@ local function is_decl(v)
 end
 
 local function append_decl_items(out, value)
-    local ok, cls = pcall(pvm.classof, value)
+    local ok, cls = pcall(asdl.classof, value)
     cls = ok and cls or nil
     if cls and tostring(cls) == "Class(LalinTree.Module)" then
         for i = 1, #(value.items or {}) do out[#out + 1] = value.items[i] end
@@ -69,7 +69,7 @@ local function bind_context(T)
         seen = seen or {}
         if seen[v] then return seen[v] end
 
-        local ok, cls = pcall(pvm.classof, v)
+        local ok, cls = pcall(asdl.classof, v)
         cls = ok and cls or nil
         local cls_text = cls and tostring(cls) or ""
         local mod_name, ctor_name = cls_text:match("^Class%((Lalin[%w_]+)%.([%w_]+)%)$")

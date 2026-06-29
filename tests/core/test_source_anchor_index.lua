@@ -1,11 +1,11 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A = require("lalin.schema_projection")
 local PositionIndex = require("lalin.source_position_index")
 local AnchorIndex = require("lalin.source_anchor_index")
 
-local T = pvm.context()
+local T = asdl.context()
 A(T)
 local S = T.LalinSource
 local P = PositionIndex(T)

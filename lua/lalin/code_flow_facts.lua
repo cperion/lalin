@@ -1,7 +1,7 @@
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function class_name(x)
-    local cls = pvm.classof(x) or x
+    local cls = asdl.classof(x) or x
     return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -40,7 +40,7 @@ local function bind_context(T)
     local function term_edge_args(func, block_by_id, block)
         local out = {}
         local term = block.term and block.term.kind or nil
-        local cls = pvm.classof(term)
+        local cls = asdl.classof(term)
         local function add(dest, args)
             if dest ~= nil then out[dest.text] = edge_args(block_by_id[dest.text], args or {}) end
         end
@@ -79,7 +79,7 @@ local function bind_context(T)
             for _, param in ipairs(block.params or {}) do types[param.value.text] = param.ty end
             for _, inst in ipairs(block.insts or {}) do
                 local k = inst.kind
-                local cls = pvm.classof(k)
+                local cls = asdl.classof(k)
                 if cls == Code.CodeInstConst then
                     defs[k.dst.text] = { cls = cls, inst = inst, const = k.const }
                     types[k.dst.text] = k.const.ty
@@ -100,15 +100,15 @@ local function bind_context(T)
                     if cls == Code.CodeInstViewMake then ty = Code.CodeTyView(k.elem_ty) end
                     if cls == Code.CodeInstViewData then
                         local vty = types[k.view.text]
-                        if pvm.classof(vty) == Code.CodeTyLease then vty = vty.base end
-                        ty = Code.CodeTyDataPtr(pvm.classof(vty) == Code.CodeTyView and vty.elem or nil)
+                        if asdl.classof(vty) == Code.CodeTyLease then vty = vty.base end
+                        ty = Code.CodeTyDataPtr(asdl.classof(vty) == Code.CodeTyView and vty.elem or nil)
                     end
                     if cls == Code.CodeInstViewLen or cls == Code.CodeInstViewStride then ty = Code.CodeTyIndex end
                     if cls == Code.CodeInstSliceMake then ty = Code.CodeTySlice(k.elem_ty) end
                     if cls == Code.CodeInstSliceData then
                         local sty = types[k.slice.text]
-                        if pvm.classof(sty) == Code.CodeTyLease then sty = sty.base end
-                        ty = Code.CodeTyDataPtr(pvm.classof(sty) == Code.CodeTySlice and sty.elem or nil)
+                        if asdl.classof(sty) == Code.CodeTyLease then sty = sty.base end
+                        ty = Code.CodeTyDataPtr(asdl.classof(sty) == Code.CodeTySlice and sty.elem or nil)
                     end
                     if cls == Code.CodeInstSliceLen then ty = Code.CodeTyIndex end
                     if cls == Code.CodeInstByteSpanMake then ty = Code.CodeTyByteSpan end
@@ -126,7 +126,7 @@ local function bind_context(T)
     local function const_values(defs)
         local out = {}
         for key, def in pairs(defs or {}) do
-            if def.cls == Code.CodeInstConst and pvm.classof(def.const) == Code.CodeConstLiteral then
+            if def.cls == Code.CodeInstConst and asdl.classof(def.const) == Code.CodeConstLiteral then
                 local lit = def.const.literal
                 local n = lit and lit.raw and tonumber(lit.raw) or nil
                 if n ~= nil then out[key] = n end
@@ -142,7 +142,7 @@ local function bind_context(T)
         table.sort(keys)
         for _, key in ipairs(keys) do
             local def = defs[key]
-            if def.cls == Code.CodeInstConst and pvm.classof(def.const) == Code.CodeConstLiteral then
+            if def.cls == Code.CodeInstConst and asdl.classof(def.const) == Code.CodeConstLiteral then
                 local lit = def.const.literal
                 if lit ~= nil and lit.raw ~= nil then ranges[#ranges + 1] = Flow.FlowRangeExact(Code.CodeValueId(key), Flow.FlowBoundConst(lit.raw)) end
             end
@@ -153,7 +153,7 @@ local function bind_context(T)
     local function edge_condition(block_by_id, edge)
         local block = edge and edge.from and edge.from.block and block_by_id[edge.from.block.text]
         local term = block and block.term and block.term.kind or nil
-        if pvm.classof(term) == Code.CodeTermBranch then return term.cond end
+        if asdl.classof(term) == Code.CodeTermBranch then return term.cond end
         return nil
     end
 
@@ -451,7 +451,7 @@ local function bind_context(T)
     end
 
     local function is_primary_induction(induction)
-        return pvm.classof(induction.kind) == nil and induction.kind == Flow.FlowPrimaryInduction
+        return asdl.classof(induction.kind) == nil and induction.kind == Flow.FlowPrimaryInduction
     end
 
     local function direction_for(primary, defs, consts)
@@ -466,7 +466,7 @@ local function bind_context(T)
         local flow_facts
         if maybe_flow ~= nil then
             flow_facts = maybe_flow
-        elseif graph_or_flow ~= nil and pvm.classof(graph_or_flow) == Flow.FlowFactSet then
+        elseif graph_or_flow ~= nil and asdl.classof(graph_or_flow) == Flow.FlowFactSet then
             flow_facts = graph_or_flow
         else
             flow_facts = facts(module, graph_or_flow)
@@ -480,7 +480,7 @@ local function bind_context(T)
         end
 
         local graph_loop_func = {}
-        local graph = (graph_or_flow ~= nil and pvm.classof(graph_or_flow) == Graph.CodeGraph) and graph_or_flow or nil
+        local graph = (graph_or_flow ~= nil and asdl.classof(graph_or_flow) == Graph.CodeGraph) and graph_or_flow or nil
         if graph ~= nil then
             for _, fg in ipairs(graph.funcs or {}) do
                 for _, loop in ipairs(fg.loops or {}) do graph_loop_func[loop.id.text] = fg.func end

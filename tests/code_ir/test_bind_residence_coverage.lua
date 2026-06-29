@@ -1,12 +1,12 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local A = require("lalin.schema_projection")
 local Gather = require("lalin.bind_residence_gather")
 local Decide = require("lalin.bind_residence_decide")
 local Machine = require("lalin.bind_machine_binding")
 
-local T = pvm.context()
+local T = asdl.context()
 A(T)
 local G = Gather(T)
 local D = Decide(T)

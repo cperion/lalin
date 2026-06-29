@@ -3,10 +3,10 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local ffi = require("ffi")
 local bit = require("bit")
 local lalin = require("lalin")
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
 
-local T = pvm.context()
+local T = asdl.context()
 Schema(T)
 
 local Core = T.LalinCore
@@ -99,41 +99,19 @@ for j = 0, count - 1 do
 end
 assert(result.module.sum_i32(arr, count) == expected)
 
-local default_warnings = {}
 local default_result, default_err, default_src = Backend.compile_module(module, {
     contracts = contracts,
-    collect_warnings = default_warnings,
-    silent_warnings = true,
     chunk_name = "test_luajit_backend_bc_default_mc",
 })
-assert(default_result ~= nil, tostring(default_err) .. "\n" .. tostring(default_src))
-assert(default_result.realization.kind == "BCStencilBankRealization", "default backend should fall back when no MC bank is supplied")
-assert(default_result.realization.fallback_from == "residual_mc", "default fallback should record source materializer")
-assert(tostring(default_result.realization.fallback_reason):match("embedded or supplied MC bank"), "default fallback should name missing MC bank")
-assert(#default_warnings == 1 and default_warnings[1]:match("residual_mc") and default_warnings[1]:match("residual_bc"), "default fallback should record one warning")
-assert(default_result.module.sum_i32(arr, count) == expected)
-
-local fallback_warnings = {}
-local fallback_result, fallback_err, fallback_src = Backend.compile_module(module, {
-    contracts = contracts,
-    collect_warnings = fallback_warnings,
-    silent_warnings = true,
-    chunk_name = "test_luajit_backend_bc_fallback",
-})
-assert(fallback_result ~= nil, tostring(fallback_err) .. "\n" .. tostring(fallback_src))
-assert(fallback_result.realization.kind == "BCStencilBankRealization", "missing MC bank should realize through BC fallback")
-assert(fallback_result.realization.fallback_from == "residual_mc", "BC fallback should record source materializer")
-assert(tostring(fallback_result.realization.fallback_reason):match("embedded or supplied MC bank"), "BC fallback should preserve missing bank reason")
-assert(#fallback_warnings == 1 and fallback_warnings[1]:match("residual_mc") and fallback_warnings[1]:match("residual_bc"), "MC fallback should record one warning")
-assert(fallback_result.module.sum_i32(arr, count) == expected)
+assert(default_result == nil, "default MC without a bank should fail instead of falling back to BC")
+assert(tostring(default_err):match("embedded or supplied MC bank"), "default missing-bank failure should be explicit")
+assert(default_src == nil, "default missing-bank failure should not emit BC source")
 
 local strict_result, strict_err = Backend.compile_module(module, {
     contracts = contracts,
-    allow_bc_fallback = false,
-    silent_warnings = true,
     chunk_name = "test_luajit_backend_bc_strict_missing_mc_bank",
 })
-assert(strict_result == nil, "strict MC without a bank should fail")
+assert(strict_result == nil, "MC without a bank should fail")
 assert(tostring(strict_err):match("embedded or supplied MC bank"), "strict missing-bank failure should be explicit")
 
 local loader = loadstring or load

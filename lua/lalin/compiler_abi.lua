@@ -4,10 +4,10 @@
 -- and backend projections. Back/C consumers must validate this product before
 -- deriving target-specific programs.
 
-local pvm = require("lalin.pvm")
+local asdl = require("lalin.asdl")
 
 local function class_name(v)
-    local cls = pvm.classof(v)
+    local cls = asdl.classof(v)
     return cls and (tostring(cls):match("Class%((.-)%)") or tostring(cls)) or type(v)
 end
 
@@ -29,7 +29,7 @@ local function bind_context(T)
     end
 
     local function check_field(issues, value, field_name, expected_class, expected_name)
-        if pvm.classof(value) ~= expected_class then
+        if asdl.classof(value) ~= expected_class then
             add(issues, Compiler.CodeResultIssueInvalidField(field_name, expected_name, class_name(value)))
             return false
         end
@@ -40,7 +40,7 @@ local function bind_context(T)
         opts = opts or {}
         local issues = {}
 
-        if pvm.classof(code_result) ~= Compiler.CodeResult then
+        if asdl.classof(code_result) ~= Compiler.CodeResult then
             add(issues, Compiler.CodeResultIssueWrongClass("LalinCompiler.CodeResult", class_name(code_result)))
             return Compiler.CodeResultReport(issues)
         end
@@ -48,11 +48,11 @@ local function bind_context(T)
         local module_ok = check_field(issues, code_result.module, "module", Code.CodeModule, "LalinCode.CodeModule")
         check_field(issues, code_result.layout_env, "layout_env", Sem.LayoutEnv, "LalinSem.LayoutEnv")
 
-        if type(code_result.contracts) ~= "table" or pvm.classof(code_result.contracts) then
+        if type(code_result.contracts) ~= "table" or asdl.classof(code_result.contracts) then
             add(issues, Compiler.CodeResultIssueInvalidField("contracts", "LalinCode.CodeFuncContractFact[]", class_name(code_result.contracts)))
         else
             for i = 1, #code_result.contracts do
-                if pvm.classof(code_result.contracts[i]) ~= Code.CodeFuncContractFact then
+                if asdl.classof(code_result.contracts[i]) ~= Code.CodeFuncContractFact then
                     add(issues, Compiler.CodeResultIssueInvalidField("contracts[" .. tostring(i) .. "]", "LalinCode.CodeFuncContractFact", class_name(code_result.contracts[i])))
                 end
             end
@@ -69,7 +69,7 @@ local function bind_context(T)
     end
 
     function api.issue_text(issue)
-        local cls = pvm.classof(issue)
+        local cls = asdl.classof(issue)
         if cls == Compiler.CodeResultIssueWrongClass then
             return "expected " .. tostring(issue.expected) .. ", got " .. tostring(issue.actual)
         elseif cls == Compiler.CodeResultIssueInvalidField then
