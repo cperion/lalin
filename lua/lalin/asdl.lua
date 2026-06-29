@@ -48,13 +48,6 @@ function asdl.with(node, overrides)
 	return cls.__with(node, overrides, asdl.NIL)
 end
 
-function asdl.require_method(T, node, operation)
-	if type(T) ~= "table" or type(T.require_method) ~= "function" then
-		error("asdl.require_method: expected ASDL context", 2)
-	end
-	return T:require_method(node, operation)
-end
-
 function asdl.singleton(T, class)
 	if type(T) ~= "table" or type(T.singleton) ~= "function" then
 		error("asdl.singleton: expected ASDL context", 2)

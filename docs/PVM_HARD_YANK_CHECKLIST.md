@@ -44,6 +44,8 @@ long checklist below remains the full audit.
       rewrite work.
 - [x] `lua/lalin/asdl.lua` is the active ASDL runtime surface.
 - [x] Direct ASDL method assignment works, including nullary singleton variants.
+- [x] ASDL sum parents provide nil-returning default methods to variants, so
+      unsupported leaf behavior can be expressed by absence instead of dispatch.
 - [x] `lua/lalin/tree_typecheck_rules.lua` is deleted.
 - [x] `lua/lalin/tree_type_methods.lua` installs direct schema-context methods.
 - [x] `lua/lalin/tree_layout_methods.lua` installs direct schema-context methods.
@@ -67,6 +69,24 @@ long checklist below remains the full audit.
       of duplicating class dispatch.
 - [x] Expression/place typed-header extraction now delegates to header methods
       instead of dispatching on header classes.
+- [x] Handle lease domain/invalidation type-shape checks now delegate to
+      `Type` leaf methods instead of checking `TPtr`, `TView`, or `TLease` in
+      the driver.
+- [x] Item diagnostic names now delegate to `Item*` methods instead of
+      dispatching on item classes in the driver.
+- [x] Dead `type_switch_key` table-dispatch code was removed from
+      `tree_typecheck.lua`.
+- [x] `ControlReject*` explanation methods return typed
+      `ControlRejectExplanation` ASDL values, not plain Lua report tables.
+- [x] `TypeIssueExplanation` ASDL exists and most non-unary diagnostic
+      explanation branches now convert from typed issue methods instead of
+      returning plain Lua report tables directly.
+- [x] `TypeIssueInvalidUnary` carries a typed `TypeUnaryIssueReason` ASDL sum;
+      unary diagnostic explanation lives on the issue/reason ASDL methods and
+      `explain_type_issue` no longer dispatches on issue `kind`.
+- [ ] Broader switch-key handling outside `tree_typecheck.lua` still uses plain
+      Lua tables/strings; add an ASDL switch-key sum before rewriting that
+      surface.
 - [ ] Finish replacing `TypeCheckEnv` driver plumbing with narrower typed input
       products already added to the schema.
 - [ ] Move statement/place/control behavior out of `tree_typecheck.lua` and onto
@@ -166,7 +186,7 @@ The replacement pattern is stricter:
   - [x] `context(opts)`
   - [x] `classof(value)`
   - [x] `with(node, overrides)`
-  - [x] `require_method(T, node, operation)`
+  - [x] `singleton(T, class)`
   - [x] minimal sequence/triplet helpers if still needed by compiler code.
 - [x] `lalin.asdl` does not expose `phase`.
 - [x] `lalin.asdl` does not contain recording caches, memoized phase machinery,
@@ -280,10 +300,10 @@ name is polluted. Audit them by semantics, not by name.
 - [ ] Extend schema class generation so ASDL classes can own semantic methods.
 - [x] Choose exact method definition mechanism:
   - [x] direct Lua method assignment on schema class tables
-- [x] Add a small core API:
-  - [x] `T:require_method(node, operation)`
+- [x] Method calls use ordinary Lua colon syntax on ASDL values.
 - [x] Methods must attach to classes, not to ad hoc external dispatch tables.
-- [x] Method lookup must fail loudly with class name and semantic operation.
+- [x] Missing sum-parent methods return nil by default; unsupported leaf
+      behavior is absence, not a driver-side dispatch branch.
 - [x] Methodization means moving the actual semantic implementation body onto
       the concrete ASDL class. A method that only returns a selector string,
       `kind`, relation name, handler key, or other dispatch token is still the
@@ -478,8 +498,7 @@ just because it works on one fixture; it must fit this shape.
 - [ ] Typed state products do not own per-class semantics.
 - [ ] Do not add state-product helpers named like semantic lowering for one
       class.
-- [x] Required method lookup belongs to the schema context:
-      `T:require_method(node, operation)`.
+- [x] No required-method lookup API remains in the ASDL runtime.
 
 ### Stage Boundaries
 
@@ -594,8 +613,7 @@ These are the current freeform rule/dispatch modules to eliminate or shrink.
 
 - [x] ASDL classes are Lua tables that accept direct method assignment.
 - [x] Sum parent class assignment propagates to member classes.
-- [x] `T:require_method(node, operation)` reports missing method with class and
-      operation.
+- [x] Sum parent classes provide nil-returning default methods to variants.
 - [ ] Decide where semantic method modules are loaded:
   - [ ] during frontend/backend module require
   - [ ] explicitly through compiler initialization

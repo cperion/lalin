@@ -324,16 +324,16 @@ return function(T)
         if not self.base:typecheck_tree_valid_lease_base() then
             issues[#issues + 1] = Tr.TypeIssueExpected((site or "type") .. " lease base", Ty.TPtr(Ty.TScalar(C.ScalarVoid)), self.base)
         end
-        if self.base:typecheck_tree_contains_owned() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned lease composition", self) end
+        if self.base:typecheck_tree_contains_owned() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedInvalidComposition, self) end
     end
     function Ty.TOwned:typecheck_tree_check_policy(issues, site)
         self.base:typecheck_tree_check_policy(issues, site)
-        if not self.base:typecheck_tree_valid_owned_base() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned invalid base", self) end
-        if self.base:typecheck_tree_contains_lease() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned lease composition", self) end
+        if not self.base:typecheck_tree_valid_owned_base() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedInvalidComposition, self) end
+        if self.base:typecheck_tree_contains_lease() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedInvalidComposition, self) end
     end
     function Ty.TAccess:typecheck_tree_check_policy(issues, site)
         self.base:typecheck_tree_check_policy(issues, site)
-        if self.base:typecheck_tree_contains_owned() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned access composition", self) end
+        if self.base:typecheck_tree_contains_owned() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedInvalidComposition, self) end
     end
     function Ty.THandle:typecheck_tree_check_policy(issues, site)
         self.repr:typecheck_tree_check_policy(self, issues, site)
@@ -360,6 +360,15 @@ return function(T)
     function Ty.TAccess:typecheck_tree_lease_base_target_type() return self.base:typecheck_tree_lease_base_target_type() end
     function Ty.TPtr:typecheck_tree_lease_base_target_type() return self.elem end
     function Ty.TView:typecheck_tree_lease_base_target_type() return self.elem end
+
+    function Ty.Type:typecheck_tree_domain_match_elem() return nil end
+    function Ty.TAccess:typecheck_tree_domain_match_elem() return self.base:typecheck_tree_domain_match_elem() end
+    function Ty.TPtr:typecheck_tree_domain_match_elem() return self.elem end
+    function Ty.TView:typecheck_tree_domain_match_elem() return self.elem end
+
+    function Ty.Type:typecheck_tree_call_may_invalidate_live_lease_param() return false end
+    function Ty.TPtr:typecheck_tree_call_may_invalidate_live_lease_param() return true end
+    function Ty.TView:typecheck_tree_call_may_invalidate_live_lease_param() return true end
 
     function Ty.LeaseOrigin:typecheck_tree_origin_name() return nil end
     function Ty.LeaseOriginParam:typecheck_tree_origin_name() return self.name end

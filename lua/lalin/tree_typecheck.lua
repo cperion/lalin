@@ -72,7 +72,6 @@ local function bind_context(T)
     local type_stmt_body
     local type_control_stmt_region
     local type_control_expr_region
-    local type_switch_key
     local type_func
     local type_item
     local type_module
@@ -278,14 +277,14 @@ local function bind_context(T)
     end
 
     local function check_atomic_value_type(site, ty, issues)
-        if not is_atomic_value_type(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(site, ty) end
+        if not is_atomic_value_type(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryAtomicInvalidValue(site), ty) end
     end
 
     local function check_atomic_rmw_value_type(op, ty, issues)
         check_atomic_value_type("atomic_rmw", ty, issues)
         if op == C.AtomicRmwXchg then return end
-        if ty:typecheck_tree_rejects_atomic_rmw_arithmetic() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("atomic_rmw pointer op", ty); return end
-        if is_bool(ty) and (op == C.AtomicRmwAdd or op == C.AtomicRmwSub) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("atomic_rmw bool add/sub", ty) end
+        if ty:typecheck_tree_rejects_atomic_rmw_arithmetic() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryAtomicRmwPointerOp, ty); return end
+        if is_bool(ty) and (op == C.AtomicRmwAdd or op == C.AtomicRmwSub) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryAtomicRmwBoolAddSub, ty) end
     end
 
     local function result_expr(expr, ty, issues)
@@ -415,10 +414,9 @@ local function bind_context(T)
     end
 
     local function param_domain_matches(param_ty, domain_ref)
-        local base = lease_access_base(param_ty)
-        local cls = schema.classof(base)
-        if cls ~= Ty.TPtr and cls ~= Ty.TView then return false end
-        return type_ref_matches_ty(domain_ref, base.elem)
+        local elem = param_ty:typecheck_tree_domain_match_elem()
+        if elem == nil then return false end
+        return type_ref_matches_ty(domain_ref, elem)
     end
 
     local function append_domain_param(params_by_domain, domain_ref, param_name)
@@ -462,17 +460,17 @@ local function bind_context(T)
                     end
                 end
                 if matched == nil then
-                    issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle target mismatch", info.lease)
+                    issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryHandleTargetMismatch, info.lease)
                 elseif matched.domain then
                     local key = type_ref_leaf(matched.domain) or ""
                     if #(domain_params[key] or {}) == 0 then
-                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle domain missing", info.lease)
+                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryHandleDomainMissing, info.lease)
                     elseif #(preserving_domain_params[key] or {}) == 0 then
-                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle domain access", info.lease)
+                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryHandleDomainAccess, info.lease)
                     elseif info.origin == nil then
-                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle lease origin missing", info.lease)
+                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryHandleLeaseOriginMissing, info.lease)
                     elseif not contains_name(preserving_domain_params[key], info.origin) then
-                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary("handle lease origin mismatch", info.lease)
+                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryHandleLeaseOriginMismatch, info.lease)
                     end
                 end
             end
@@ -547,8 +545,7 @@ local function bind_context(T)
         local explicit_invalidate = effect and effect.invalidate or {}
         for i = 1, #(param_tys or {}) do
             local pty = canonical_type(ctx.env, param_tys[i])
-            local pcls = schema.classof(pty)
-            if pcls ~= Ty.TLease and (pcls == Ty.TPtr or pcls == Ty.TView) then
+            if pty:typecheck_tree_call_may_invalidate_live_lease_param() then
                 local pname = effect and effect.params and effect.params[i] and effect.params[i].name
                 local preserves_param = pname and contains_name(preserve, pname)
                 local invalidates_param = (pname and contains_name(explicit_invalidate, pname)) or not preserves_param
@@ -639,31 +636,6 @@ local function bind_context(T)
         return node:typecheck_tree_expr(type_expr_input_from_state(type_state))
     end
 
-    type_switch_key = function(key, ctx, value_ty, issues)
-        if key.kind == "expr" then
-            local expr = only(type_expr(key.expr, ctx))
-            append_all(issues, expr.issues)
-            check_expected("switch key", value_ty, expr.ty, issues)
-            return { kind = "expr", expr = expr.expr }
-        end
-        -- SwitchKeyRaw: if the raw string is a bare name (not a literal number),
-        -- re-typecheck it as an expression so named constants resolve to their values.
-        if key.kind == "raw" then
-            local raw = key.raw
-            -- Check if it looks like a non-numeric identifier
-            if raw:match("^[%a_][%w_]*$") then
-                local ref_expr = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(raw))
-                local expr = only(type_expr(ref_expr, ctx))
-                if #expr.issues == 0 then
-                    check_expected("switch key", value_ty, expr.ty, issues)
-                    return { kind = "expr", expr = expr.expr }
-                end
-                -- Name not found — fall through to keep raw (will fail at backend with clear error)
-            end
-        end
-        return key
-    end
-
     local function jump_args_by_name(args)
         local out = {}; local dup = {}
         for i = 1, #args do if out[args[i].name] ~= nil then dup[args[i].name] = true end; out[args[i].name] = args[i] end
@@ -708,7 +680,7 @@ local function bind_context(T)
     local function check_func_types(func, issues)
         for i = 1, #(func.params or {}) do check_type_policy(func.params[i].ty, issues, "param " .. tostring(func.params[i].name)) end
         check_type_policy(func.result, issues, "result")
-        if type_contains_lease(func.result) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape result", func.result) end
+        if type_contains_lease(func.result) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryLeaseEscapeDurable, func.result) end
     end
 
     local function check_region_signature(region, module_env, facts, issues)
@@ -805,8 +777,8 @@ local function bind_context(T)
         check_type_policy(ty, issues, "const")
         append_all(issues, value.issues)
         check_expected("const", ty, value.ty, issues)
-        if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape const", ty) end
-        if type_contains_owned(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", ty) end
+        if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryLeaseEscapeDurable, ty) end
+        if type_contains_owned(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedCapturedDurable, ty) end
         return Tr.TypeItemResult({ Tr.ItemConst(schema.with(self.c, { ty = ty, value = value.expr })) }, issues)
     end
 
@@ -818,8 +790,8 @@ local function bind_context(T)
         check_type_policy(ty, issues, "static")
         append_all(issues, value.issues)
         check_expected("static", ty, value.ty, issues)
-        if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape static", ty) end
-        if type_contains_owned(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", ty) end
+        if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryLeaseEscapeDurable, ty) end
+        if type_contains_owned(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedCapturedDurable, ty) end
         return Tr.TypeItemResult({ Tr.ItemStatic(schema.with(self.s, { ty = ty, value = value.expr })) }, issues)
     end
 
@@ -841,8 +813,8 @@ local function bind_context(T)
         local issues = {}
         for i = 1, #self.fields do
             check_type_policy(self.fields[i].ty, issues, "field " .. self.fields[i].field_name)
-            if type_contains_lease(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape field", self.fields[i].ty) end
-            if type_contains_owned(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", self.fields[i].ty) end
+            if type_contains_lease(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryLeaseEscapeDurable, self.fields[i].ty) end
+            if type_contains_owned(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedCapturedDurable, self.fields[i].ty) end
         end
         return issues
     end
@@ -851,8 +823,8 @@ local function bind_context(T)
         local issues = {}
         for i = 1, #self.fields do
             check_type_policy(self.fields[i].ty, issues, "field " .. self.fields[i].field_name)
-            if type_contains_lease(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("lease escape field", self.fields[i].ty) end
-            if type_contains_owned(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary("owned stored in durable field", self.fields[i].ty) end
+            if type_contains_lease(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryLeaseEscapeDurable, self.fields[i].ty) end
+            if type_contains_owned(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedCapturedDurable, self.fields[i].ty) end
         end
         return issues
     end
@@ -876,12 +848,12 @@ local function bind_context(T)
             local v = self.variants[i]
             local name = v.name
             check_type_policy(v.payload, issues, "variant " .. name)
-            if type_contains_lease(v.payload) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and "region call lease payload" or "lease escape variant field", v.payload) end
-            if type_contains_owned(v.payload) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and "owned region call payload" or "owned stored in durable field", v.payload) end
+            if type_contains_lease(v.payload) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and Tr.TypeUnaryRegionCallLeasePayload or Tr.TypeUnaryLeaseEscapeDurable, v.payload) end
+            if type_contains_owned(v.payload) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and Tr.TypeUnaryOwnedRegionCallPayload or Tr.TypeUnaryOwnedCapturedDurable, v.payload) end
             for j = 1, #(v.fields or {}) do
                 check_type_policy(v.fields[j].ty, issues, "variant field " .. v.fields[j].field_name)
-                if type_contains_lease(v.fields[j].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and "region call lease payload" or "lease escape variant field", v.fields[j].ty) end
-                if type_contains_owned(v.fields[j].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and "owned region call payload" or "owned stored in durable field", v.fields[j].ty) end
+                if type_contains_lease(v.fields[j].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and Tr.TypeUnaryRegionCallLeasePayload or Tr.TypeUnaryLeaseEscapeDurable, v.fields[j].ty) end
+                if type_contains_owned(v.fields[j].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and Tr.TypeUnaryOwnedRegionCallPayload or Tr.TypeUnaryOwnedCapturedDurable, v.fields[j].ty) end
             end
             if seen[name] then issues[#issues + 1] = Tr.TypeIssueDuplicateVariant(self.name, name) end
             seen[name] = true
@@ -930,15 +902,565 @@ local function bind_context(T)
         return node:typecheck_tree_item(...)
     end
 
-    local function item_diagnostic_name(item)
-        local cls = schema.classof(item)
-        if cls == Tr.ItemFunc and item.func then return item.func.name end
-        if cls == Tr.ItemRegion and item.region then return item.region.name end
-        if cls == Tr.ItemType and item.t then return item.t.name end
-        if cls == Tr.ItemExtern and item.func then return item.func.name end
-        if cls == Tr.ItemConst and item.c then return item.c.name end
-        if cls == Tr.ItemStatic and item.s then return item.s.name end
+    function Tr.Item:typecheck_tree_diagnostic_name()
         return nil
+    end
+
+    function Tr.ItemFunc:typecheck_tree_diagnostic_name()
+        return self.func and self.func.name or nil
+    end
+
+    function Tr.ItemRegion:typecheck_tree_diagnostic_name()
+        return self.region and self.region.name or nil
+    end
+
+    function Tr.ItemType:typecheck_tree_diagnostic_name()
+        return self.t and self.t.name or nil
+    end
+
+    function Tr.ItemExtern:typecheck_tree_diagnostic_name()
+        return self.func and self.func.name or nil
+    end
+
+    function Tr.ItemConst:typecheck_tree_diagnostic_name()
+        return self.c and self.c.name or nil
+    end
+
+    function Tr.ItemStatic:typecheck_tree_diagnostic_name()
+        return self.s and self.s.name or nil
+    end
+
+    local function item_diagnostic_name(item)
+        return item:typecheck_tree_diagnostic_name()
+    end
+
+    function Tr.ControlReject:typecheck_tree_report(region)
+        return Tr.ControlRejectExplanation("E0405", "irreducible control flow", {
+            "region: " .. tostring(region),
+            self.reason or "irreducible cycle detected",
+            "control flow is irreducible when no block dominates the others - restructure so one block is the single entry point",
+        }, {
+            "add a dispatch block that dominates all other blocks in this region",
+        })
+    end
+
+    function Tr.ControlRejectMissingJumpArg:typecheck_tree_report(region)
+        local label = self.label and self.label.name or "?"
+        local name = tostring(self.name)
+        return Tr.ControlRejectExplanation("E0404", "jump to `" .. label .. "` is missing argument `" .. name .. "`", {
+            "region: " .. tostring(region),
+            "target block `" .. label .. "` declares parameter `" .. name .. "`, but this jump does not provide it",
+        }, {
+            "pass `" .. name .. " = ...` at the jump, or rename the target block parameter to match the existing argument",
+        })
+    end
+
+    function Tr.ControlRejectExtraJumpArg:typecheck_tree_report(region)
+        local label = self.label and self.label.name or "?"
+        local name = tostring(self.name)
+        return Tr.ControlRejectExplanation("E0404", "jump to `" .. label .. "` has extra argument `" .. name .. "`", {
+            "region: " .. tostring(region),
+            "target block `" .. label .. "` has no parameter named `" .. name .. "`",
+        }, {
+            "remove the extra argument or add a matching block parameter",
+        })
+    end
+
+    function Tr.ControlRejectDuplicateJumpArg:typecheck_tree_report(region)
+        local label = self.label and self.label.name or "?"
+        return Tr.ControlRejectExplanation("E0203", "duplicate jump argument `" .. tostring(self.name) .. "` for `" .. label .. "`", {
+            "region: " .. tostring(region),
+        }, {
+            "provide each jump argument name only once",
+        })
+    end
+
+    function Tr.ControlRejectJumpType:typecheck_tree_report(region)
+        local Format = require("lalin.error.format")
+        local label = self.label and self.label.name or "?"
+        return Tr.ControlRejectExplanation("E0301", "jump argument `" .. tostring(self.name) .. "` for `" .. label .. "` has wrong type", {
+            "region: " .. tostring(region),
+            "expected `" .. Format.type_name(self.expected) .. "`, got `" .. Format.type_name(self.actual) .. "`",
+        }, {})
+    end
+
+    function Tr.ControlRejectMissingLabel:typecheck_tree_report(region)
+        local label = self.label and self.label.name or "?"
+        return Tr.ControlRejectExplanation("E0402", "missing jump target `" .. label .. "`", {
+            "region: " .. tostring(region),
+            "block `" .. label .. "` is not defined in this region",
+        }, {})
+    end
+
+    function Tr.ControlRejectDuplicateLabel:typecheck_tree_report(region)
+        local label = self.label and self.label.name or "?"
+        return Tr.ControlRejectExplanation("E0203", "duplicate block label `" .. label .. "`", {
+            "region: " .. tostring(region),
+        }, {
+            "rename one of the blocks",
+        })
+    end
+
+    function Tr.ControlRejectUnterminatedBlock:typecheck_tree_report(region)
+        local label = self.label and self.label.name or "?"
+        return Tr.ControlRejectExplanation("E0406", "block `" .. label .. "` does not terminate", {
+            "region: " .. tostring(region),
+            "every block path must end in jump, yield, return, or trap",
+        }, {})
+    end
+
+    function Tr.ControlRejectYieldOutsideRegion:typecheck_tree_report(region)
+        return Tr.ControlRejectExplanation("E0407", "invalid yield in control region", {
+            "region: " .. tostring(region),
+            self.reason or "yield kind does not match this region",
+        }, {})
+    end
+
+    function Tr.ControlRejectYieldType:typecheck_tree_report(region)
+        local Format = require("lalin.error.format")
+        return Tr.ControlRejectExplanation("E0301", "yield has wrong type", {
+            "region: " .. tostring(region),
+            "expected `" .. Format.type_name(self.expected) .. "`, got `" .. Format.type_name(self.actual) .. "`",
+        }, {})
+    end
+
+    function Tr.ControlRejectUnknownVariant:typecheck_tree_report(region)
+        return Tr.ControlRejectExplanation("E0201", "unknown switch variant `" .. tostring(self.variant_name or "?") .. "`", {
+            "region: " .. tostring(region),
+        }, {})
+    end
+
+    function Tr.TypeIssueInvalidControl:typecheck_tree_fallback_control_report(region)
+        return Tr.ControlRejectExplanation("E0405", "irreducible control flow", {
+            "region: " .. tostring(region),
+            "irreducible cycle detected",
+            "control flow is irreducible when no block dominates the others - restructure so one block is the single entry point",
+        }, {
+            "add a dispatch block that dominates all other blocks in this region",
+        })
+    end
+
+    function Tr.TypeIssue:typecheck_tree_explanation()
+        return Tr.TypeIssueExplanation("E9999", "", tostring(self), {}, {})
+    end
+
+    function Tr.TypeIssueInvalidControl:typecheck_tree_explanation()
+        local reject = self.reject
+        local region = self.region_id or (reject and reject.region_id) or "?"
+        local report = reject and reject:typecheck_tree_report(region) or self:typecheck_tree_fallback_control_report(region)
+        return Tr.TypeIssueExplanation(report.code, "while checking control flow", report.primary, report.notes, report.suggestions)
+    end
+
+    function Tr.TypeIssueMissingJumpTarget:typecheck_tree_explanation()
+        local label = (self.label and self.label.name) or "?"
+        return Tr.TypeIssueExplanation("E0402", "while checking control flow", "missing jump target `" .. label .. "`", {
+            "block `" .. label .. "` is not defined in this region",
+        }, {})
+    end
+
+    function Tr.TypeIssueMissingJumpArg:typecheck_tree_explanation()
+        return Tr.TypeIssueExplanation("E0404", "while checking control flow", "jump argument count mismatch for `" .. tostring(self.name or "?") .. "`", {
+            "check that the number of arguments passed to the jump matches the block parameters",
+        }, {})
+    end
+
+    function Tr.TypeIssueExtraJumpArg:typecheck_tree_explanation()
+        return Tr.TypeIssueExplanation("E0404", "while checking control flow", "jump argument count mismatch for `" .. tostring(self.name or "?") .. "`", {
+            "check that the number of arguments passed to the jump matches the block parameters",
+        }, {})
+    end
+
+    function Tr.TypeIssueDuplicateJumpArg:typecheck_tree_explanation()
+        return Tr.TypeIssueExplanation("E0203", "while checking control flow", "duplicate jump argument `" .. tostring(self.name or "?") .. "`", {}, {
+            "remove the duplicate argument or rename one of them",
+        })
+    end
+
+    function Tr.TypeIssueUnexpectedYield:typecheck_tree_explanation()
+        return Tr.TypeIssueExplanation("E0407", "while type-checking", "`yield` used outside a region", {
+            "`yield` can only be used inside a `region` or a `return region: T` expression",
+        }, {
+            "did you mean `return`? Functions use `return`, not `yield`",
+        })
+    end
+
+    function Tr.TypeIssueUnknownVariant:typecheck_tree_explanation()
+        local Format = require("lalin.error.format")
+        return Tr.TypeIssueExplanation("E0201", "while resolving names", "unknown variant `" .. tostring(self.variant_name or "?") .. "` in type `" .. Format.type_name(self.type_name) .. "`", {}, {})
+    end
+
+    function Tr.TypeIssueVariantPayloadMismatch:typecheck_tree_explanation()
+        return Tr.TypeIssueExplanation("E0301", "while type-checking", "variant payload mismatch for `" .. tostring(self.variant_name or "?") .. "`", {}, {})
+    end
+
+    function Tr.TypeIssueDuplicateVariant:typecheck_tree_explanation()
+        return Tr.TypeIssueExplanation("E0203", "while checking declarations", "duplicate variant `" .. tostring(self.variant_name or "?") .. "`", {}, {})
+    end
+
+    function Tr.TypeIssueNotCallable:typecheck_tree_explanation()
+        local Format = require("lalin.error.format")
+        local ty = Format.type_name(self.ty)
+        return Tr.TypeIssueExplanation("E0302", "while type-checking a call", "type `" .. ty .. "` is not callable", {
+            "only `func` and `closure` types can be called",
+        }, {
+            "did you mean to index? write `expr[idx]` for element access",
+        })
+    end
+
+    function Tr.TypeIssueNotIndexable:typecheck_tree_explanation()
+        local Format = require("lalin.error.format")
+        local ty = Format.type_name(self.ty)
+        return Tr.TypeIssueExplanation("E0303", "while type-checking an index", "type `" .. ty .. "` is not indexable", {
+            "only `view`, `ptr`, and `array` types support indexing",
+        }, {
+            "if you meant to access a field, use `.` syntax: `expr.field`",
+        })
+    end
+
+    function Tr.TypeIssueNotPointer:typecheck_tree_explanation()
+        return self:typecheck_tree_explanation_not_indexable()
+    end
+
+    function Tr.TypeIssueNotPointer:typecheck_tree_explanation_not_indexable()
+        local Format = require("lalin.error.format")
+        local ty = Format.type_name(self.ty)
+        return Tr.TypeIssueExplanation("E0303", "while type-checking an index", "type `" .. ty .. "` is not indexable", {
+            "only `view`, `ptr`, and `array` types support indexing",
+        }, {
+            "if you meant to access a field, use `.` syntax: `expr.field`",
+        })
+    end
+
+    function Tr.TypeIssueArgCount:typecheck_tree_explanation()
+        return Tr.TypeIssueExplanation("E0305", "while type-checking", (self.site or "call") .. " expected " .. tostring(self.expected) .. " arguments, got " .. tostring(self.actual), {}, {
+            "check the function signature and add or remove arguments",
+        })
+    end
+
+    function Tr.TypeIssueInvalidBinary:typecheck_tree_explanation()
+        local Format = require("lalin.error.format")
+        local op = Format.op_symbol(self.op)
+        local lhs = Format.type_name(self.lhs)
+        local rhs = Format.type_name(self.rhs)
+        local notes = { "operator `" .. op .. "` is not defined for `" .. lhs .. "` and `" .. rhs .. "`" }
+        local suggestions = {}
+        if lhs == "bool" and rhs == "bool" and (op == "+" or op == "-" or op == "*" or op == "/") then
+            notes[#notes + 1] = "arithmetic operators require numeric types (i8, i16, i32, ...)"
+            suggestions[#suggestions + 1] = "for boolean logic, use `and` / `or`: `a and b` or `a or b`"
+        end
+        if lhs ~= rhs then notes[#notes + 1] = "both operands must have the same type" end
+        return Tr.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid operator `" .. op .. "`", notes, suggestions)
+    end
+
+    function Tr.TypeIssueInvalidCompare:typecheck_tree_explanation()
+        local Format = require("lalin.error.format")
+        local op = Format.op_symbol(self.op)
+        local lhs = Format.type_name(self.lhs)
+        local rhs = Format.type_name(self.rhs)
+        local notes = { "operator `" .. op .. "` is not defined for `" .. lhs .. "` and `" .. rhs .. "`" }
+        if lhs ~= rhs then notes[#notes + 1] = "both operands must have the same type" end
+        return Tr.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid operator `" .. op .. "`", notes, {})
+    end
+
+    function Tr.TypeIssueInvalidLogic:typecheck_tree_explanation()
+        return self:typecheck_tree_explanation_compare_like()
+    end
+
+    function Tr.TypeIssueInvalidLogic:typecheck_tree_explanation_compare_like()
+        local Format = require("lalin.error.format")
+        local op = Format.op_symbol(self.op)
+        local lhs = Format.type_name(self.lhs)
+        local rhs = Format.type_name(self.rhs)
+        local notes = { "operator `" .. op .. "` is not defined for `" .. lhs .. "` and `" .. rhs .. "`" }
+        if lhs ~= rhs then notes[#notes + 1] = "both operands must have the same type" end
+        return Tr.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid operator `" .. op .. "`", notes, {})
+    end
+
+    function Tr.TypeIssueUnresolvedValue:typecheck_tree_explanation()
+        return Tr.TypeIssueExplanation("E0201", "while resolving names", "unresolved name `" .. tostring(self.name or "?") .. "`", {
+            "`" .. tostring(self.name or "?") .. "` is not defined in this scope",
+        }, {})
+    end
+
+    function Tr.TypeIssueUnresolvedPath:typecheck_tree_explanation()
+        local parts = {}
+        for i = 1, #((self.path and self.path.parts) or {}) do parts[i] = self.path.parts[i].text end
+        local path_text = #parts > 0 and table.concat(parts, ".") or "?"
+        local first_segment = parts[1] or "?"
+        return Tr.TypeIssueExplanation("E0202", "while resolving names", "unresolved path `" .. path_text .. "`", {
+            "the first segment `" .. first_segment .. "` could not be resolved",
+        }, {})
+    end
+
+    function Tr.TypeIssueExpected:typecheck_tree_explanation()
+        local Format = require("lalin.error.format")
+        local site = self.site or "expression"
+        local expected = Format.type_name(self.expected)
+        local actual = Format.type_name(self.actual)
+        local notes = {}
+        local suggestions = {}
+
+        if site:find("call") then
+            notes[#notes + 1] = "this argument has type `" .. actual .. "`, but the function expects `" .. expected .. "`"
+        elseif site:find("let ") or site:find("var ") then
+            notes[#notes + 1] = "the initializer has type `" .. actual .. "`, but the variable is declared as `" .. expected .. "`"
+        elseif site:find("return") then
+            notes[#notes + 1] = "the return value has type `" .. actual .. "`, but the function returns `" .. expected .. "`"
+        elseif site:find("yield") then
+            notes[#notes + 1] = "the yielded value has type `" .. actual .. "`, but the region yields `" .. expected .. "`"
+        elseif site:find("set") then
+            notes[#notes + 1] = "the assigned value has type `" .. actual .. "`, but the target has type `" .. expected .. "`"
+        elseif site:find("if cond") or site:find("select cond") then
+            notes[#notes + 1] = "the condition has type `" .. actual .. "`, but the condition must be `bool`"
+        elseif site:find("if branches") or site:find("select branches") then
+            notes[#notes + 1] = "both branches must have the same type; the then-branch is `" .. actual .. "`, the else-branch is `" .. expected .. "`"
+        elseif site:find("index") then
+            notes[#notes + 1] = "indexing requires an integer type, got `" .. actual .. "`"
+        elseif site:find("view data") then
+            notes[#notes + 1] = "view data must be a `ptr` or `view`, got `" .. actual .. "`"
+        elseif site:find("view len") or site:find("view stride") or site:find("view window") or site:find("bounds") or site:find("window_bounds") then
+            notes[#notes + 1] = "expected `" .. expected .. "`, got `" .. actual .. "`"
+        elseif site:find("disjoint") then
+            notes[#notes + 1] = "disjoint contract requires `ptr` or `view`, got `" .. actual .. "`"
+        elseif site:find("same_len") then
+            notes[#notes + 1] = "same_len contract requires `view`, got `" .. actual .. "`"
+        elseif site:find("memory contract") then
+            notes[#notes + 1] = "memory contract requires `ptr` or `view`, got `" .. actual .. "`"
+        elseif site:find("atomic") then
+            notes[#notes + 1] = "expected `" .. expected .. "`, got `" .. actual .. "`"
+        elseif site:find("block param") then
+            notes[#notes + 1] = "block parameter initializer has type `" .. actual .. "`, but the parameter is declared as `" .. expected .. "`"
+        elseif site:find("assert") then
+            notes[#notes + 1] = "assert condition must be `bool`, got `" .. actual .. "`"
+        elseif site:find("switch key") then
+            notes[#notes + 1] = "switch key has type `" .. actual .. "`, but the switch expression is `" .. expected .. "`"
+        elseif site:find("switch arm") then
+            notes[#notes + 1] = "switch arm has type `" .. actual .. "`, but the default arm is `" .. expected .. "`"
+        elseif site:find("array elem") then
+            notes[#notes + 1] = "array element has type `" .. actual .. "`, but the array expects `" .. expected .. "`"
+        elseif site:find("len") then
+            notes[#notes + 1] = "`len` requires a `view`, got `" .. actual .. "`"
+        elseif site:find("const") or site:find("static") then
+            notes[#notes + 1] = "the initializer has type `" .. actual .. "`, but the declaration is `" .. expected .. "`"
+        else
+            notes[#notes + 1] = "expected `" .. expected .. "`, got `" .. actual .. "`"
+        end
+
+        if actual == "bool" and expected ~= "bool" then
+            suggestions[#suggestions + 1] = "to convert a boolean to an integer, use a conditional: `select(flag, 1, 0)`"
+        elseif actual == "f64" and self.expected:typecheck_tree_is_integer_scalar() then
+            suggestions[#suggestions + 1] = "to convert a float to an integer, use `as(i32, value)`"
+        elseif self.actual:typecheck_tree_is_integer_scalar() and expected == "f64" then
+            suggestions[#suggestions + 1] = "to convert an integer to a float, use `as(f64, value)`"
+        end
+
+        return Tr.TypeIssueExplanation("E0301", "while type-checking", "type mismatch", notes, suggestions)
+    end
+
+    function Tr.TypeIssueInvalidUnary:typecheck_tree_explanation()
+        return self.reason:typecheck_tree_explanation(self.ty)
+    end
+
+    function Tr.TypeUnaryIssueReason:typecheck_tree_explanation(ty)
+        local Format = require("lalin.error.format")
+        local ty_text = Format.type_name(ty)
+        return Tr.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid unary operator for type `" .. ty_text .. "`", {}, {})
+    end
+
+    function Tr.TypeUnaryInvalidOperator:typecheck_tree_explanation(ty)
+        local Format = require("lalin.error.format")
+        local op = Format.op_symbol(self.op)
+        local ty_text = Format.type_name(ty)
+        local notes = {}
+        local suggestions = {}
+        if op == "not" then
+            notes[#notes + 1] = "`not` requires a `bool` operand, got `" .. ty_text .. "`"
+        else
+            notes[#notes + 1] = "operator `" .. op .. "` is not defined for type `" .. ty_text .. "`"
+            notes[#notes + 1] = "arithmetic operators require numeric types (i8, i16, i32, ...)"
+        end
+        if ty_text == "bool" and op ~= "not" then suggestions[#suggestions + 1] = "for boolean logic, use `not`: `not value`" end
+        return Tr.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid unary operator `" .. op .. "` for type `" .. ty_text .. "`", notes, suggestions)
+    end
+
+    local function unary_reason_report(primary, notes, suggestions)
+        return Tr.TypeIssueExplanation("E0304", "while type-checking an expression", primary, notes or {}, suggestions or {})
+    end
+
+    function Tr.TypeUnaryLeaseEscapeReturn:typecheck_tree_explanation(ty)
+        local ty_text = require("lalin.error.format").type_name(ty)
+        return unary_reason_report("lease escapes through return", {
+            "lease value `" .. ty_text .. "` is temporary access produced by a store or boundary",
+            "leases may access memory inside their dynamic extent but may not be returned as durable identity",
+        }, { "return a handle or copied scalar data instead, or keep the pointer parameter marked `noescape`" })
+    end
+
+    function Tr.TypeUnaryLeaseEscapeYield:typecheck_tree_explanation(ty)
+        local ty_text = require("lalin.error.format").type_name(ty)
+        return unary_reason_report("lease escapes through yield", {
+            "yielding `" .. ty_text .. "` would move temporary access outside the granting region",
+        }, { "yield a handle/status protocol, not the lease pointer/view" })
+    end
+
+    function Tr.TypeUnaryLeaseEscapeStore:typecheck_tree_explanation(ty)
+        return unary_reason_report("lease escapes through store", {
+            "storing `" .. require("lalin.error.format").type_name(ty) .. "` would make temporary access durable",
+        }, { "store the handle, or copy the data through the lease instead" })
+    end
+
+    function Tr.TypeUnaryLeaseEscapeCall:typecheck_tree_explanation(ty)
+        return unary_reason_report("lease passed to retaining parameter", {
+            "a lease can only be passed to another `lease` or `noescape` parameter",
+            "plain `ptr`/`view` parameters are treated as possibly retained",
+        }, { "mark the callee parameter `noescape`, or change it to `lease ptr(T)` / `lease view(T)`" })
+    end
+
+    function Tr.TypeUnaryLeaseInvalidatingCall:typecheck_tree_explanation(ty)
+        return unary_reason_report("call may invalidate store while lease is live", {
+            "live lease `" .. require("lalin.error.format").type_name(ty) .. "` may refer to storage that this call can move, free, compact, clear, or reuse",
+            "`readonly` and `preserve` parameters keep leases valid; unannotated pointer/view parameters are conservative invalidators",
+        }, { "end the lease scope before the call, call a `preserve`/`readonly` API, or use `lease(store)` to associate the lease with the correct store" })
+    end
+
+    function Tr.TypeUnaryLeaseEscapeAggregate:typecheck_tree_explanation(ty)
+        return unary_reason_report("lease captured in aggregate", {
+            "aggregates can outlive the current access extent, so they cannot contain `" .. require("lalin.error.format").type_name(ty) .. "`",
+        }, { "store a handle or copied data instead of the lease" })
+    end
+
+    function Tr.TypeUnaryRegionCallLeasePayload:typecheck_tree_explanation(ty)
+        return unary_reason_report("cannot call region because continuation payload contains a lease", {
+            "continuation payload `" .. require("lalin.error.format").type_name(ty) .. "` is temporary access and cannot be packed into the generated region-call result",
+        }, { "use `emit` so temporary access stays in control flow" })
+    end
+
+    function Tr.TypeUnaryLeaseEscapeDurable:typecheck_tree_explanation(ty)
+        return unary_reason_report("lease appears in durable type position", {
+            "`" .. require("lalin.error.format").type_name(ty) .. "` is temporary access, not storable data",
+            "leases may appear in function/block/continuation parameters, not durable fields/results/statics",
+        }, { "use a handle type for durable identity, or a plain pointer only at an unchecked ABI boundary" })
+    end
+
+    function Tr.TypeUnaryOwnedDropped:typecheck_tree_explanation(ty)
+        return unary_reason_report("owned obligation is not discharged", {
+            "`" .. require("lalin.error.format").type_name(ty) .. "` must be transferred to an owned parameter/result or consumed by a closing protocol",
+            "owned values do not have destructors and cannot silently fall out of scope",
+        }, { "jump/return/yield/pass the owner to an `owned` slot, or call the explicit close/retire region" })
+    end
+
+    function Tr.TypeUnaryOwnedUseAfterMove:typecheck_tree_explanation(ty)
+        return unary_reason_report("owned value used after transfer", {
+            "`" .. require("lalin.error.format").type_name(ty) .. "` was already consumed by an ownership transfer",
+        }, { "thread the returned/re-yielded owner forward if the protocol preserves the obligation" })
+    end
+
+    function Tr.TypeUnaryOwnedObservedWithoutTransfer:typecheck_tree_explanation(ty)
+        return unary_reason_report("owned value used without an ownership contract", {
+            "`" .. require("lalin.error.format").type_name(ty) .. "` is linear authority and cannot be copied or borrowed as a plain value",
+        }, { "make the callee parameter `owned`, or use a protocol that returns the owner on every preserving edge" })
+    end
+
+    function Tr.TypeUnaryOwnedCapturedDurable:typecheck_tree_explanation(ty)
+        return unary_reason_report("owned value captured in durable storage", {
+            "`" .. require("lalin.error.format").type_name(ty) .. "` is a CFG obligation, not storable data",
+        }, { "store the plain handle separately and keep the owned obligation in control flow" })
+    end
+
+    function Tr.TypeUnaryOwnedBranchMismatch:typecheck_tree_explanation(ty)
+        return unary_reason_report("branches leave different owned obligations live", {
+            "all continuing paths must preserve the same live owned set",
+        }, { "move the transfer before the branch, or return/jump/yield on the consuming path" })
+    end
+
+    function Tr.TypeUnaryOwnedVarCellUnsupported:typecheck_tree_explanation(ty)
+        return unary_reason_report("owned values cannot live in mutable cells", {
+            "`var owned T` needs explicit take/put semantics and is rejected",
+        }, { "use `let` ownership threading through CFG parameters" })
+    end
+
+    function Tr.TypeUnaryOwnedRegionCallPayload:typecheck_tree_explanation(ty)
+        return unary_reason_report("owned payload cannot use expression-style region call", {
+            "`" .. require("lalin.error.format").type_name(ty) .. "` cannot be packed into the generated region-call result aggregate",
+        }, { "use `emit`/explicit continuations so ownership stays in CFG" })
+    end
+
+    function Tr.TypeUnaryOwnedEmitTargetMismatch:typecheck_tree_explanation(ty)
+        return unary_reason_report("owned continuation payload has no matching target parameter", {
+            "`" .. require("lalin.error.format").type_name(ty) .. "` must land in a target block/continuation parameter with the same owned type and name",
+        }, { "add the owned parameter to the filled target, or consume the owner inside the emitted fragment" })
+    end
+
+    function Tr.TypeUnaryOwnedInvalidComposition:typecheck_tree_explanation(ty)
+        return unary_reason_report("invalid owned type composition", {
+            "`" .. require("lalin.error.format").type_name(ty) .. "` mixes ownership authority with access modifiers or temporary leases",
+        }, { "own the durable handle/resource token; borrow access through a protocol that returns the owner" })
+    end
+
+    function Tr.TypeUnaryHandleCast:typecheck_tree_explanation(ty)
+        return unary_reason_report("handle representation is opaque", {
+            "handle `" .. require("lalin.error.format").type_name(ty) .. "` is not its integer representation in safe casts",
+            "ordinary `as(...)` cannot convert handles to or from raw scalars",
+        }, { "resolve the handle through a store region, or use trusted `repr(handle)` / `Handle.from_repr(raw)` inside store implementation code" })
+    end
+
+    function Tr.TypeUnaryHandleRepr:typecheck_tree_explanation(ty)
+        return unary_reason_report("`repr` expects a handle", {
+            "`repr(value)` is the explicit trusted handle-to-scalar boundary",
+            "the value has type `" .. require("lalin.error.format").type_name(ty) .. "`, not a handle",
+        })
+    end
+
+    function Tr.TypeUnaryHandleTargetMismatch:typecheck_tree_explanation(ty)
+        return unary_reason_report("handle resolver returns a lease to the wrong target", {
+            "a handle with a `target` fact may only grant leases to that target type",
+            "the continuation payload has type `" .. require("lalin.error.format").type_name(ty) .. "`",
+        }, { "change the lease payload target, or declare a different handle target fact" })
+    end
+
+    function Tr.TypeUnaryHandleDomainMissing:typecheck_tree_explanation(ty)
+        return unary_reason_report("handle resolver does not take the owning domain", {
+            "a handle with a `domain` fact must be resolved through that store/domain parameter",
+            "the continuation payload has type `" .. require("lalin.error.format").type_name(ty) .. "`",
+        }, { "add a `readonly` or `preserve` `ptr(Store)` parameter matching the handle domain" })
+    end
+
+    function Tr.TypeUnaryHandleDomainAccess:typecheck_tree_explanation(ty)
+        return unary_reason_report("handle resolver domain parameter does not preserve leases", {
+            "resolver regions that grant leases must take the owning domain as `readonly` or `preserve`",
+            "bare pointer/view parameters are conservative invalidators",
+        }, { "mark the domain parameter `readonly` or `preserve`" })
+    end
+
+    function Tr.TypeUnaryHandleLeaseOriginMissing:typecheck_tree_explanation(ty)
+        return unary_reason_report("handle resolver lease is not tied to its store parameter", {
+            "a handle resolver must return `lease(store) ptr(Target)` or `lease(store) view(Target)`",
+            "anonymous leases cannot participate in store invalidation checks",
+        }, { "write the lease as `lease(store_param) ptr(T)`" })
+    end
+
+    function Tr.TypeUnaryHandleLeaseOriginMismatch:typecheck_tree_explanation(ty)
+        return unary_reason_report("handle resolver lease is tied to the wrong store parameter", {
+            "the lease origin must name the `readonly` or `preserve` domain parameter for the handle",
+            "the continuation payload has type `" .. require("lalin.error.format").type_name(ty) .. "`",
+        }, { "change the `lease(...)` origin to the matching store parameter" })
+    end
+
+    function Tr.TypeUnaryAtomicRmwPointerOp:typecheck_tree_explanation(ty)
+        return unary_reason_report("invalid atomic read-modify-write operation", {
+            "atomic read-modify-write arithmetic is not defined for pointer type `" .. require("lalin.error.format").type_name(ty) .. "`",
+        }, {})
+    end
+
+    function Tr.TypeUnaryAtomicRmwBoolAddSub:typecheck_tree_explanation(ty)
+        return unary_reason_report("invalid atomic read-modify-write operation", {
+            "atomic add/sub is not defined for `bool`",
+        }, {})
+    end
+
+    function Tr.TypeUnaryAtomicInvalidValue:typecheck_tree_explanation(ty)
+        return unary_reason_report("invalid atomic value type", {
+            (self.site or "atomic") .. " requires an atomic scalar or pointer type, got `" .. require("lalin.error.format").type_name(ty) .. "`",
+        }, {})
     end
 
     local function emit_item_issues(collector, base_analysis, item, issues)
@@ -1015,454 +1537,18 @@ end
 -- explain_type_issue: explains a single TypeIssue
 -----------------------------------------------------------------------------
 
-local Format = require("lalin.error.format")
-
-local function site_description(site)
-    -- Produces a human-readable context string from a site string
-    if not site or site == "" then return "expression" end
-    -- Check specific site types
-    if site:find("let ") then return "variable initializer" end
-    if site:find("var ") then return "variable initializer" end
-    if site:find("return") then return "return value" end
-    if site:find("yield") then return "yielded value" end
-    if site:find("set") then return "assignment" end
-    if site:find("if cond") then return "if condition" end
-    if site:find("select cond") then return "select condition" end
-    if site:find("if branches") then return "if branches" end
-    if site:find("select branches") then return "select branches" end
-    if site:find("call") then return "call argument" end
-    if site:find("index") then return "index expression" end
-    if site:find("view data") then return "view data" end
-    if site:find("view len") or site:find("view stride") or site:find("view window") then return "view" end
-    if site:find("bounds") then return "bounds" end
-    if site:find("window_bounds") then return "window_bounds" end
-    if site:find("disjoint") then return "disjoint" end
-    if site:find("same_len") then return "same_len" end
-    if site:find("memory contract") then return "memory contract" end
-    if site:find("atomic") then return "atomic" end
-    if site:find("block param") then return "block parameter" end
-    if site:find("assert") then return "assert" end
-    if site:find("switch key") then return "switch key" end
-    if site:find("switch arm") then return "switch arm" end
-    if site:find("array elem") then return "array element" end
-    if site:find("len") then return "len" end
-    if site:find("const") or site:find("static") then return "constant initializer" end
-    return site
-end
-
 local function explain_type_issue(issue, analysis)
 	analysis = analysis or { anchors = {} }
 	local resolvers = require("lalin.error.span_resolvers")
-	local schema = require("lalin.schema_runtime")
 	local span = resolvers.typecheck_resolver(issue, analysis)
-    local cls = schema.classof(issue)
-    if not cls then return { code = "E9999", severity = "error", primary = { span = span, message = tostring(issue) } } end
-    local kind = cls.kind
-
-    if kind == "TypeIssueExpected" then
-        -- Port of E0301 builder logic
-        local site = issue.site or "expression"
-        local expected = Format.type_name(issue.expected)
-        local actual = Format.type_name(issue.actual)
-        local expected_raw = issue.expected
-        local actual_raw = issue.actual
-        local notes = {}
-        local suggestions = {}
-
-        -- Context-specific notes
-        if site:find("call") then
-            notes[#notes + 1] = { message = "this argument has type `" .. actual .. "`, but the function expects `" .. expected .. "`" }
-        elseif site:find("let ") or site:find("var ") then
-            local var_name = site:match("let (%w+)") or site:match("var (%w+)") or ""
-            notes[#notes + 1] = { message = "the initializer has type `" .. actual .. "`, but the variable is declared as `" .. expected .. "`" }
-        elseif site:find("return") then
-            notes[#notes + 1] = { message = "the return value has type `" .. actual .. "`, but the function returns `" .. expected .. "`" }
-        elseif site:find("yield") then
-            notes[#notes + 1] = { message = "the yielded value has type `" .. actual .. "`, but the region yields `" .. expected .. "`" }
-        elseif site:find("set") then
-            notes[#notes + 1] = { message = "the assigned value has type `" .. actual .. "`, but the target has type `" .. expected .. "`" }
-        elseif site:find("if cond") or site:find("select cond") then
-            notes[#notes + 1] = { message = "the condition has type `" .. actual .. "`, but the condition must be `bool`" }
-        elseif site:find("if branches") or site:find("select branches") then
-            notes[#notes + 1] = { message = "both branches must have the same type; the then-branch is `" .. actual .. "`, the else-branch is `" .. expected .. "`" }
-        elseif site:find("index") then
-            notes[#notes + 1] = { message = "indexing requires an integer type, got `" .. actual .. "`" }
-        elseif site:find("view data") then
-            notes[#notes + 1] = { message = "view data must be a `ptr` or `view`, got `" .. actual .. "`" }
-        elseif site:find("view len") or site:find("view stride") or site:find("view window") or site:find("bounds") or site:find("window_bounds") then
-            notes[#notes + 1] = { message = "expected `" .. expected .. "`, got `" .. actual .. "`" }
-        elseif site:find("disjoint") then
-            notes[#notes + 1] = { message = "disjoint contract requires `ptr` or `view`, got `" .. actual .. "`" }
-        elseif site:find("same_len") then
-            notes[#notes + 1] = { message = "same_len contract requires `view`, got `" .. actual .. "`" }
-        elseif site:find("memory contract") then
-            notes[#notes + 1] = { message = "memory contract requires `ptr` or `view`, got `" .. actual .. "`" }
-        elseif site:find("atomic") then
-            notes[#notes + 1] = { message = "expected `" .. expected .. "`, got `" .. actual .. "`" }
-        elseif site:find("block param") then
-            notes[#notes + 1] = { message = "block parameter initializer has type `" .. actual .. "`, but the parameter is declared as `" .. expected .. "`" }
-        elseif site:find("assert") then
-            notes[#notes + 1] = { message = "assert condition must be `bool`, got `" .. actual .. "`" }
-        elseif site:find("switch key") then
-            notes[#notes + 1] = { message = "switch key has type `" .. actual .. "`, but the switch expression is `" .. expected .. "`" }
-        elseif site:find("switch arm") then
-            notes[#notes + 1] = { message = "switch arm has type `" .. actual .. "`, but the default arm is `" .. expected .. "`" }
-        elseif site:find("array elem") then
-            notes[#notes + 1] = { message = "array element has type `" .. actual .. "`, but the array expects `" .. expected .. "`" }
-        elseif site:find("len") then
-            notes[#notes + 1] = { message = "`len` requires a `view`, got `" .. actual .. "`" }
-        elseif site:find("const") or site:find("static") then
-            notes[#notes + 1] = { message = "the initializer has type `" .. actual .. "`, but the declaration is `" .. expected .. "`" }
-        else
-            notes[#notes + 1] = { message = "expected `" .. expected .. "`, got `" .. actual .. "`" }
-        end
-
-        -- Numeric conversion hint
-        local function is_integer(ty)
-            return ty ~= nil and ty:typecheck_tree_is_integer_scalar()
-        end
-
-        if actual == "bool" and expected ~= "bool" then
-            suggestions[#suggestions + 1] = { message = "to convert a boolean to an integer, use a conditional: `select(flag, 1, 0)`" }
-        elseif actual == "f64" and is_integer(expected_raw) then
-            suggestions[#suggestions + 1] = { message = "to convert a float to an integer, use `as(i32, value)`" }
-        elseif is_integer(actual_raw) and expected == "f64" then
-            suggestions[#suggestions + 1] = { message = "to convert an integer to a float, use `as(f64, value)`" }
-        end
-
-        return {
-            code = "E0301",
-            severity = "error",
-            phase_context = "while type-checking",
-            primary = { span = span, message = "type mismatch" },
-            notes = notes,
-            suggestions = suggestions,
-        }
+    local function message_list(lines)
+        local out = {}
+        for i = 1, #(lines or {}) do out[i] = { message = lines[i] } end
+        return out
     end
-
-    if kind == "TypeIssueNotCallable" then
-        local ty = Format.type_name(issue.ty)
-        return { code = "E0302", severity = "error", phase_context = "while type-checking a call",
-            primary = { span = span, message = "type `" .. ty .. "` is not callable" },
-            notes = { { message = "only `func` and `closure` types can be called" } },
-            suggestions = { { message = "did you mean to index? write `expr[idx]` for element access" } } }
-    end
-
-    if kind == "TypeIssueNotIndexable" or kind == "TypeIssueNotPointer" then
-        local ty = Format.type_name(issue.ty)
-        return { code = "E0303", severity = "error", phase_context = "while type-checking an index",
-            primary = { span = span, message = "type `" .. ty .. "` is not indexable" },
-            notes = { { message = "only `view`, `ptr`, and `array` types support indexing" } },
-            suggestions = { { message = "if you meant to access a field, use `.` syntax: `expr.field`" } } }
-    end
-
-    if kind == "TypeIssueArgCount" then
-        return { code = "E0305", severity = "error", phase_context = "while type-checking",
-            primary = { span = span, message = (issue.site or "call") .. " expected " .. tostring(issue.expected) .. " arguments, got " .. tostring(issue.actual) },
-            suggestions = { { message = "check the function signature and add or remove arguments" } } }
-    end
-
-    if kind == "TypeIssueInvalidUnary" then
-        local op = Format.op_symbol(issue.op)
-        local ty = Format.type_name(issue.ty)
-        local raw_op = tostring(issue.op or "")
-        local function report(primary, notes, suggestions)
-            return { code = "E0304", severity = "error", phase_context = "while type-checking an expression",
-                primary = { span = span, message = primary }, notes = notes or {}, suggestions = suggestions or {} }
-        end
-        if raw_op == "lease escape return" then
-            return report("lease escapes through return", {
-                { message = "lease value `" .. ty .. "` is temporary access produced by a store or boundary" },
-                { message = "leases may access memory inside their dynamic extent but may not be returned as durable identity" },
-            }, { { message = "return a handle or copied scalar data instead, or keep the pointer parameter marked `noescape`" } })
-        elseif raw_op == "lease escape yield" then
-            return report("lease escapes through yield", {
-                { message = "yielding `" .. ty .. "` would move temporary access outside the granting region" },
-            }, { { message = "yield a handle/status protocol, not the lease pointer/view" } })
-        elseif raw_op == "lease escape store" then
-            return report("lease escapes through store", {
-                { message = "storing `" .. ty .. "` would make temporary access durable" },
-            }, { { message = "store the handle, or copy the data through the lease instead" } })
-        elseif raw_op == "lease escape call" then
-            return report("lease passed to retaining parameter", {
-                { message = "a lease can only be passed to another `lease` or `noescape` parameter" },
-                { message = "plain `ptr`/`view` parameters are treated as possibly retained" },
-            }, { { message = "mark the callee parameter `noescape`, or change it to `lease ptr(T)` / `lease view(T)`" } })
-        elseif raw_op == "lease invalidating call" then
-            return report("call may invalidate store while lease is live", {
-                { message = "live lease `" .. ty .. "` may refer to storage that this call can move, free, compact, clear, or reuse" },
-                { message = "`readonly` and `preserve` parameters keep leases valid; unannotated pointer/view parameters are conservative invalidators" },
-            }, { { message = "end the lease scope before the call, call a `preserve`/`readonly` API, or use `lease(store)` to associate the lease with the correct store" } })
-        elseif raw_op == "lease escape aggregate" then
-            return report("lease captured in aggregate", {
-                { message = "aggregates can outlive the current access extent, so they cannot contain `" .. ty .. "`" },
-            }, { { message = "store a handle or copied data instead of the lease" } })
-        elseif raw_op == "region call lease payload" then
-            return report("cannot call region because continuation payload contains a lease", {
-                { message = "continuation payload `" .. ty .. "` is temporary access and cannot be packed into the generated region-call result" },
-            }, { { message = "use `emit` so temporary access stays in control flow" } })
-        elseif raw_op == "lease escape field" or raw_op == "lease escape variant field" or raw_op == "lease escape result" or raw_op == "lease escape const" or raw_op == "lease escape static" then
-            return report("lease appears in durable type position", {
-                { message = "`" .. ty .. "` is temporary access, not storable data" },
-                { message = "leases may appear in function/block/continuation parameters, not durable fields/results/statics" },
-            }, { { message = "use a handle type for durable identity, or a plain pointer only at an unchecked ABI boundary" } })
-        elseif raw_op == "owned dropped" then
-            return report("owned obligation is not discharged", {
-                { message = "`" .. ty .. "` must be transferred to an owned parameter/result or consumed by a closing protocol" },
-                { message = "owned values do not have destructors and cannot silently fall out of scope" },
-            }, { { message = "jump/return/yield/pass the owner to an `owned` slot, or call the explicit close/retire region" } })
-        elseif raw_op == "owned use after move" then
-            return report("owned value used after transfer", {
-                { message = "`" .. ty .. "` was already consumed by an ownership transfer" },
-            }, { { message = "thread the returned/re-yielded owner forward if the protocol preserves the obligation" } })
-        elseif raw_op == "owned observed without transfer" or raw_op == "owned passed to non-owned parameter" then
-            return report("owned value used without an ownership contract", {
-                { message = "`" .. ty .. "` is linear authority and cannot be copied or borrowed as a plain value" },
-            }, { { message = "make the callee parameter `owned`, or use a protocol that returns the owner on every preserving edge" } })
-        elseif raw_op == "owned captured in aggregate" or raw_op == "owned stored in durable field" then
-            return report("owned value captured in durable storage", {
-                { message = "`" .. ty .. "` is a CFG obligation, not storable data" },
-            }, { { message = "store the plain handle separately and keep the owned obligation in control flow" } })
-        elseif raw_op == "owned branch mismatch" then
-            return report("branches leave different owned obligations live", {
-                { message = "all continuing paths must preserve the same live owned set" },
-            }, { { message = "move the transfer before the branch, or return/jump/yield on the consuming path" } })
-        elseif raw_op == "owned var cell unsupported" then
-            return report("owned values cannot live in mutable cells", {
-                { message = "`var owned T` needs explicit take/put semantics and is rejected" },
-            }, { { message = "use `let` ownership threading through CFG parameters" } })
-        elseif raw_op == "owned region call payload" then
-            return report("owned payload cannot use expression-style region call", {
-                { message = "`" .. ty .. "` cannot be packed into the generated region-call result aggregate" },
-            }, { { message = "use `emit`/explicit continuations so ownership stays in CFG" } })
-        elseif raw_op == "owned emit target mismatch" then
-            return report("owned continuation payload has no matching target parameter", {
-                { message = "`" .. ty .. "` must land in a target block/continuation parameter with the same owned type and name" },
-            }, { { message = "add the owned parameter to the filled target, or consume the owner inside the emitted fragment" } })
-        elseif raw_op == "owned lease composition" or raw_op == "owned access composition" or raw_op == "owned invalid base" then
-            return report("invalid owned type composition", {
-                { message = "`" .. ty .. "` mixes ownership authority with access modifiers or temporary leases" },
-            }, { { message = "own the durable handle/resource token; borrow access through a protocol that returns the owner" } })
-        elseif raw_op == "handle cast" then
-            return report("handle representation is opaque", {
-                { message = "handle `" .. ty .. "` is not its integer representation in safe casts" },
-                { message = "ordinary `as(...)` cannot convert handles to or from raw scalars" },
-            }, { { message = "resolve the handle through a store region, or use trusted `repr(handle)` / `Handle.from_repr(raw)` inside store implementation code" } })
-        elseif raw_op == "handle repr" then
-            return report("`repr` expects a handle", {
-                { message = "`repr(value)` is the explicit trusted handle-to-scalar boundary" },
-                { message = "the value has type `" .. ty .. "`, not a handle" },
-            })
-        elseif raw_op == "handle target mismatch" then
-            return report("handle resolver returns a lease to the wrong target", {
-                { message = "a handle with a `target` fact may only grant leases to that target type" },
-                { message = "the continuation payload has type `" .. ty .. "`" },
-            }, { { message = "change the lease payload target, or declare a different handle target fact" } })
-        elseif raw_op == "handle domain missing" then
-            return report("handle resolver does not take the owning domain", {
-                { message = "a handle with a `domain` fact must be resolved through that store/domain parameter" },
-                { message = "the continuation payload has type `" .. ty .. "`" },
-            }, { { message = "add a `readonly` or `preserve` `ptr(Store)` parameter matching the handle domain" } })
-        elseif raw_op == "handle domain access" then
-            return report("handle resolver domain parameter does not preserve leases", {
-                { message = "resolver regions that grant leases must take the owning domain as `readonly` or `preserve`" },
-                { message = "bare pointer/view parameters are conservative invalidators" },
-            }, { { message = "mark the domain parameter `readonly` or `preserve`" } })
-        elseif raw_op == "handle lease origin missing" then
-            return report("handle resolver lease is not tied to its store parameter", {
-                { message = "a handle resolver must return `lease(store) ptr(Target)` or `lease(store) view(Target)`" },
-                { message = "anonymous leases cannot participate in store invalidation checks" },
-            }, { { message = "write the lease as `lease(store_param) ptr(T)`" } })
-        elseif raw_op == "handle lease origin mismatch" then
-            return report("handle resolver lease is tied to the wrong store parameter", {
-                { message = "the lease origin must name the `readonly` or `preserve` domain parameter for the handle" },
-                { message = "the continuation payload has type `" .. ty .. "`" },
-            }, { { message = "change the `lease(...)` origin to the matching store parameter" } })
-        end
-        local unotes = {}
-        local usuggestions = {}
-        if op == "not" then
-            unotes[#unotes + 1] = { message = "`not` requires a `bool` operand, got `" .. ty .. "`" }
-        else
-            unotes[#unotes + 1] = { message = "operator `" .. op .. "` is not defined for type `" .. ty .. "`" }
-            unotes[#unotes + 1] = { message = "arithmetic operators require numeric types (i8, i16, i32, ...)" }
-        end
-        if ty == "bool" and op ~= "not" then
-            usuggestions[#usuggestions + 1] = { message = "for boolean logic, use `not`: `not value`" }
-        end
-        return { code = "E0304", severity = "error", phase_context = "while type-checking an expression",
-            primary = { span = span, message = "invalid unary operator `" .. op .. "` for type `" .. ty .. "`" },
-            notes = unotes, suggestions = usuggestions }
-    end
-
-    if kind == "TypeIssueInvalidBinary" then
-        local op = Format.op_symbol(issue.op)
-        local lhs = Format.type_name(issue.lhs)
-        local rhs = Format.type_name(issue.rhs)
-        local bnotes = { { message = "operator `" .. op .. "` is not defined for `" .. lhs .. "` and `" .. rhs .. "`" } }
-        local bsuggestions = {}
-        if lhs == "bool" and rhs == "bool" then
-            if op == "+" or op == "-" or op == "*" or op == "/" then
-                bnotes[#bnotes + 1] = { message = "arithmetic operators require numeric types (i8, i16, i32, ...)" }
-                bsuggestions[#bsuggestions + 1] = { message = "for boolean logic, use `and` / `or`: `a and b` or `a or b`" }
-            end
-        end
-        if lhs ~= rhs then
-            bnotes[#bnotes + 1] = { message = "both operands must have the same type" }
-        end
-        return { code = "E0304", severity = "error", phase_context = "while type-checking an expression",
-            primary = { span = span, message = "invalid operator `" .. op .. "`" },
-            notes = bnotes, suggestions = bsuggestions }
-    end
-
-    if kind == "TypeIssueInvalidCompare" or kind == "TypeIssueInvalidLogic" then
-        local op = Format.op_symbol(issue.op)
-        local lhs = Format.type_name(issue.lhs)
-        local rhs = Format.type_name(issue.rhs)
-        local cnotes = { { message = "operator `" .. op .. "` is not defined for `" .. lhs .. "` and `" .. rhs .. "`" } }
-        if lhs ~= rhs then
-            cnotes[#cnotes + 1] = { message = "both operands must have the same type" }
-        end
-        return { code = "E0304", severity = "error", phase_context = "while type-checking an expression",
-            primary = { span = span, message = "invalid operator `" .. op .. "`" },
-            notes = cnotes }
-    end
-
-    if kind == "TypeIssueUnresolvedValue" then
-        return { code = "E0201", severity = "error", phase_context = "while resolving names",
-            primary = { span = span, message = "unresolved name `" .. tostring(issue.name or "?") .. "`" },
-            notes = { { message = "`" .. tostring(issue.name or "?") .. "` is not defined in this scope" } } }
-    end
-
-    if kind == "TypeIssueUnresolvedPath" then
-        local path_text = tostring(issue.path_text or "?")
-        local first_segment = issue.first_name or path_text:match("^([%w_]+)") or "?"
-        -- Try did_you_mean on the first path segment
-        local dym = nil
-        local analysis_scope = analysis and analysis.in_scope_names or {}
-        if #analysis_scope > 0 then
-            local suggest = require("lalin.error.suggest")
-            dym = suggest.did_you_mean(first_segment, analysis_scope)
-        end
-        local suggestions = {}
-        if dym then suggestions[#suggestions + 1] = { message = dym } end
-        return { code = "E0202", severity = "error", phase_context = "while resolving names",
-            primary = { span = span, message = "unresolved path `" .. path_text .. "`" },
-            notes = { { message = "the first segment `" .. first_segment .. "` could not be resolved" } },
-            suggestions = suggestions }
-    end
-
-    if kind == "TypeIssueInvalidControl" then
-        local reject = issue.reject
-        local reject_kind = reject and schema.classof(reject).kind or "ControlRejectIrreducible"
-        local label = reject and reject.label and reject.label.name or "?"
-        local name = reject and reject.name or "?"
-        local region = issue.region_id or (reject and reject.region_id) or "?"
-        local code = "E0405"
-        local primary = "invalid control flow"
-        local notes = { { message = "region: " .. tostring(region) } }
-        local suggestions = {}
-
-        if reject_kind == "ControlRejectMissingJumpArg" then
-            code = "E0404"
-            primary = "jump to `" .. label .. "` is missing argument `" .. tostring(name) .. "`"
-            notes[#notes + 1] = { message = "target block `" .. label .. "` declares parameter `" .. tostring(name) .. "`, but this jump does not provide it" }
-            suggestions[#suggestions + 1] = { message = "pass `" .. tostring(name) .. " = ...` at the jump, or rename the target block parameter to match the existing argument" }
-        elseif reject_kind == "ControlRejectExtraJumpArg" then
-            code = "E0404"
-            primary = "jump to `" .. label .. "` has extra argument `" .. tostring(name) .. "`"
-            notes[#notes + 1] = { message = "target block `" .. label .. "` has no parameter named `" .. tostring(name) .. "`" }
-            suggestions[#suggestions + 1] = { message = "remove the extra argument or add a matching block parameter" }
-        elseif reject_kind == "ControlRejectDuplicateJumpArg" then
-            code = "E0203"
-            primary = "duplicate jump argument `" .. tostring(name) .. "` for `" .. label .. "`"
-            suggestions[#suggestions + 1] = { message = "provide each jump argument name only once" }
-        elseif reject_kind == "ControlRejectJumpType" then
-            code = "E0301"
-            primary = "jump argument `" .. tostring(name) .. "` for `" .. label .. "` has wrong type"
-            notes[#notes + 1] = { message = "expected `" .. Format.type_name(reject.expected) .. "`, got `" .. Format.type_name(reject.actual) .. "`" }
-        elseif reject_kind == "ControlRejectMissingLabel" then
-            code = "E0402"
-            primary = "missing jump target `" .. label .. "`"
-            notes[#notes + 1] = { message = "block `" .. label .. "` is not defined in this region" }
-        elseif reject_kind == "ControlRejectDuplicateLabel" then
-            code = "E0203"
-            primary = "duplicate block label `" .. label .. "`"
-            suggestions[#suggestions + 1] = { message = "rename one of the blocks" }
-        elseif reject_kind == "ControlRejectUnterminatedBlock" then
-            code = "E0406"
-            primary = "block `" .. label .. "` does not terminate"
-            notes[#notes + 1] = { message = "every block path must end in jump, yield, return, or trap" }
-        elseif reject_kind == "ControlRejectYieldOutsideRegion" then
-            code = "E0407"
-            primary = "invalid yield in control region"
-            notes[#notes + 1] = { message = reject.reason or "yield kind does not match this region" }
-        elseif reject_kind == "ControlRejectYieldType" then
-            code = "E0301"
-            primary = "yield has wrong type"
-            notes[#notes + 1] = { message = "expected `" .. Format.type_name(reject.expected) .. "`, got `" .. Format.type_name(reject.actual) .. "`" }
-        elseif reject_kind == "ControlRejectUnknownVariant" then
-            code = "E0201"
-            primary = "unknown switch variant `" .. tostring(reject.variant_name or "?") .. "`"
-        else
-            primary = "irreducible control flow"
-            notes[#notes + 1] = { message = (reject and reject.reason) or "irreducible cycle detected" }
-            notes[#notes + 1] = { message = "control flow is irreducible when no block dominates the others — restructure so one block is the single entry point" }
-            suggestions[#suggestions + 1] = { message = "add a dispatch block that dominates all other blocks in this region" }
-        end
-
-        return { code = code, severity = "error", phase_context = "while checking control flow",
-            primary = { span = span, message = primary }, notes = notes, suggestions = suggestions }
-    end
-
-    if kind == "TypeIssueMissingJumpTarget" then
-        local label = (issue.label and issue.label.name) or (issue.label_name) or "?"
-        local candidates = issue.block_names or {}
-        local dym = Format.Suggest.did_you_mean(label, candidates)
-        local mnotes = { { message = "block `" .. label .. "` is not defined in this region" } }
-        local msuggestions = {}
-        if dym then msuggestions[#msuggestions + 1] = { message = dym } end
-        return { code = "E0402", severity = "error", phase_context = "while checking control flow",
-            primary = { span = span, message = "missing jump target `" .. label .. "`" },
-            notes = mnotes, suggestions = msuggestions }
-    end
-
-    if kind == "TypeIssueMissingJumpArg" or kind == "TypeIssueExtraJumpArg" then
-        return { code = "E0404", severity = "error", phase_context = "while checking control flow",
-            primary = { span = span, message = "jump argument count mismatch for `" .. tostring(issue.name or "?") .. "`" },
-            notes = { { message = "check that the number of arguments passed to the jump matches the block parameters" } } }
-    end
-
-    if kind == "TypeIssueDuplicateJumpArg" then
-        return { code = "E0203", severity = "error", phase_context = "while checking control flow",
-            primary = { span = span, message = "duplicate jump argument `" .. tostring(issue.name or "?") .. "`" },
-            suggestions = { { message = "remove the duplicate argument or rename one of them" } } }
-    end
-
-    if kind == "TypeIssueUnexpectedYield" then
-        return { code = "E0407", severity = "error", phase_context = "while type-checking",
-            primary = { span = span, message = "`yield` used outside a region" },
-            notes = { { message = "`yield` can only be used inside a `region` or a `return region: T` expression" } },
-            suggestions = { { message = "did you mean `return`? Functions use `return`, not `yield`" } } }
-    end
-
-    if kind == "TypeIssueUnknownVariant" then
-        return { code = "E0201", severity = "error", phase_context = "while resolving names",
-            primary = { span = span, message = "unknown variant `" .. tostring(issue.variant_name or "?") .. "` in type `" .. Format.type_name(issue.type_name) .. "`" } }
-    end
-
-    if kind == "TypeIssueVariantPayloadMismatch" then
-        return { code = "E0301", severity = "error", phase_context = "while type-checking",
-            primary = { span = span, message = "variant payload mismatch for `" .. tostring(issue.variant_name or "?") .. "`" } }
-    end
-
-    if kind == "TypeIssueDuplicateVariant" then
-        return { code = "E0203", severity = "error", phase_context = "while checking declarations",
-            primary = { span = span, message = "duplicate variant `" .. tostring(issue.variant_name or "?") .. "`" } }
-    end
-
-    -- Fallback
-    return { code = "E9999", severity = "error", primary = { span = span, message = kind or tostring(issue) } }
+    local report = issue:typecheck_tree_explanation()
+    return { code = report.code, severity = "error", phase_context = report.phase_context,
+        primary = { span = span, message = report.primary }, notes = message_list(report.notes), suggestions = message_list(report.suggestions) }
 end
 
 return setmetatable({

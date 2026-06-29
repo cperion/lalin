@@ -42,6 +42,19 @@ local MAX_SPECIAL_ARITY = 16
 local normalize_field
 local classof_fast
 
+local DEFAULT_NIL_METHODS = setmetatable({}, { __mode = "v" })
+
+local function default_nil_method_for(key)
+    local fn = DEFAULT_NIL_METHODS[key]
+    if fn == nil then
+        fn = function()
+            return nil
+        end
+        DEFAULT_NIL_METHODS[key] = fn
+    end
+    return fn
+end
+
 -- ── Builtin type checks ─────────────────────────────────────
 
 local builtin_checks = {}
@@ -156,30 +169,6 @@ end
 
 function Context:FastBuilders()
     return self:Builders(true)
-end
-
-local function class_display_name(cls)
-    local plan = rawget(cls, "__plan")
-    return (plan and plan.name) or tostring(cls)
-end
-
-function Context:RequireMethod(node, operation)
-    if type(operation) ~= "string" then
-        error("asdl.require_method: operation must be a string", 2)
-    end
-    local cls = classof_fast(node)
-    if not cls then
-        error("asdl.require_method: expected ASDL node for " .. operation .. ", got " .. type(node), 2)
-    end
-    local fn = rawget(cls, operation)
-    if type(fn) ~= "function" then
-        error("asdl.require_method: missing method " .. operation .. " for " .. class_display_name(cls), 2)
-    end
-    return fn
-end
-
-function Context:require_method(node, operation)
-    return self:RequireMethod(node, operation)
 end
 
 function Context:Singleton(class)
@@ -592,7 +581,7 @@ end
 
 -- ── Class building ───────────────────────────────────────────
 
-local function build_class(ctx, name, unique, fields)
+local function build_class(ctx, name, unique, fields, is_sum_parent)
     local class = ctx.definitions[name]
     if unique and rawget(class, "__ref_class_id") == nil then
         class.__ref_class_id = ctx._next_ref_class_id
@@ -607,6 +596,7 @@ local function build_class(ctx, name, unique, fields)
     class.__cachekey = false
     class.members = class.members or {}
     class.members[class] = true
+    class.__is_sum_parent = is_sum_parent or false
 
     local mt = {}
 
@@ -703,6 +693,20 @@ local function build_class(ctx, name, unique, fields)
         end
     end
 
+    function mt:__index(k)
+        local parent = rawget(self, "__sum_parent")
+        if parent ~= nil then
+            local inherited = parent[k]
+            if inherited ~= nil then
+                return inherited
+            end
+        end
+        if rawget(self, "__is_sum_parent") then
+            return default_nil_method_for(k)
+        end
+        return nil
+    end
+
     function mt:__tostring()
         return sfmt("Class(%s)", name)
     end
@@ -744,17 +748,18 @@ function M.define(ctx, definitions)
 
     for _, d in ipairs(definitions) do
         if d.type.kind == "sum" then
-            local parent = build_class(ctx, d.name, false, nil)
+            local parent = build_class(ctx, d.name, false, nil, true)
             for _, c in ipairs(d.type.constructors) do
-                local child = build_class(ctx, c.name, c.unique, c.fields)
+                local child = build_class(ctx, c.name, c.unique, c.fields, false)
                 parent.members[child] = true
+                child.__sum_parent = parent
                 child.kind = basename(c.name)
                 if not c.fields then
                     ctx:_SetDefinition(c.name, child())
                 end
             end
         else
-            build_class(ctx, d.name, d.type.unique, d.type.fields)
+            build_class(ctx, d.name, d.type.unique, d.type.fields, false)
         end
     end
 end
