@@ -451,6 +451,16 @@ the ASDL types for that domain:
 
 ---
 
+## Native Residual Direction
+
+The target backend direction is described in
+`docs/RESIDUAL_NATIVE_ARCHITECTURE.md`: saturated stencils define exact
+semantics, copy-patch compresses/decompresses saturated stencil artifacts, TCC
+compiles non-stencil C residuals, and LuaJIT hosts/loads rather than silently
+executing fallback loops.
+
+The sections below describe the current materializers and C/AOT path.
+
 ## Two Copy-Patch Materialization Paths
 
 These are the LuaJIT-hosted executable paths. Lua remains the loader and FFI

@@ -138,14 +138,20 @@ If lowering needs a fact, represent it in schema first.
 
 ## Backends
 
-The active fast backend architecture is copy+compile residual. Use `residual_mc` bank
-stencils plus TCC residual glue by default. `residual_bc` is the explicit
-bytecode path and the fallback when MC materialization is unavailable.
+The target fast backend architecture is native residual materialization. Use
+saturated stencil descriptors first, copy-patch only as compression/
+decompression of saturated stencil artifacts, and TCC-compiled C residuals for
+non-stencil native code. See `docs/RESIDUAL_NATIVE_ARCHITECTURE.md`.
+
+The current implementation still contains `residual_mc` bank stencils, optional
+TCC residual wrappers, and the explicit `residual_bc` bytecode path. Treat the
+LuaJIT trace/block path as an implementation/debug path, not the target
+semantic fallback.
 
 Keep the C/AOT path separate in wording and code. `emit_c_artifact` emits the
 whole selected program as C so the user can compile it with GCC; it should fuse
 selected stencil-shaped work at C level rather than describing itself as a
-LuaJIT copy+compile residual materializer.
+LuaJIT residual materializer.
 
 Backend code should consume typed facts:
 

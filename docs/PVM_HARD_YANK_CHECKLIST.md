@@ -387,13 +387,13 @@ manual dispatch, or large mutable context bags.
       - [x] Delete the generated/manual `schema.isa`/`schema.classof` ladders.
       - [x] Delete `yes/no`, nil-as-not-constant, `single(...)` phase wrappers,
             and `{ kind = ..., env = ... }` result records.
-- [ ] Repair `lua/lalin/tree_to_code.lua` state semantics.
+- [x] Repair `lua/lalin/tree_to_code.lua` state semantics.
       - [x] Split `TreeCodeFuncContext` into precise ASDL products such as
             module facts, function facts, block state, control state, binding
             projection, and emission result.
       - [x] Stop treating one mutable context product as the default semantic
             input for all leaf methods.
-      - [ ] Make leaf methods return typed state/result products instead of
+      - [x] Make leaf methods return typed state/result products instead of
             mutating maps, counters, current block slots, control-region slots,
             and alpha-renaming slots in place.
             - [x] Removed illegal ASDL product-field mutation from the active
@@ -404,9 +404,21 @@ manual dispatch, or large mutable context bags.
             - [x] Control target storage now uses
                   `TreeCodeControlTargetEntry` values instead of a hidden
                   string-keyed map inside `TreeCodeControlRegion.targets`.
+            - [x] Keyed Tree-to-Code state relations now store their declared
+                  ASDL entry products instead of raw Lua payloads: counters,
+                  binding values, local bindings, residence presence facts,
+                  alpha renames, module registrations, signatures, and variant
+                  definitions.
             - [x] Module lowering reads back `funcs`, `data`, `globals`, and
                   contract facts from the typed input products after ASDL
                   construction, rather than relying on pre-constructor tables.
+            - [x] Tree-to-Code state-changing methods now return typed ASDL
+                  products such as `TreeCodeStateResult`,
+                  `TreeCodeCounterResult`, `TreeCodeValueIdResult`,
+                  `TreeCodeTermResult`, `TreeCodeLocalResult`,
+                  `TreeCodeControlExitResult`, `TreeCodeFallthroughResult`,
+                  and `TreeCodeViewPartsResult`; callers thread state through
+                  `TreeCode*Input:tree_code_with_result_state`.
       - [x] Rename `TreeCodeFuncContext` only if the resulting shape is honest:
             use `TreeCodeFuncState` for explicit state, or split it instead of
             renaming a bag.
@@ -1020,7 +1032,7 @@ These are the current freeform rule/dispatch modules to eliminate or shrink.
 - [ ] `lua/lalin/tree_to_code.lua`
   - [x] remains module/function lowering driver
   - [x] delegates typed operations to node methods
-  - [ ] Replace remaining `ctx`/`module_ctx` driver bags with precise typed
+  - [x] Replace remaining `ctx`/`module_ctx` driver bags with precise typed
         Tree-to-Code ASDL input/state/result products.
         - [x] Added typed Tree-to-Code module facts/state fields, function
               registrations, variant definitions, local binding snapshots,
@@ -1032,10 +1044,10 @@ These are the current freeform rule/dispatch modules to eliminate or shrink.
               `TreeCodeModuleRegistrationState`, and
               `TreeCodeModuleEmissionState` own signatures, registrations,
               externs, generated data, and counters.
-        - [x] `build_module_parts` constructs separate module facts/signature/
-              registration/emission ASDL products; function registrations and
-              variant definitions use typed ASDL products instead of raw
-              registration tables.
+        - [x] `Module:tree_code_module_parts` constructs separate module facts/
+              signature/registration/emission ASDL products; function
+              registrations and variant definitions use typed ASDL products
+              instead of raw registration tables.
         - [x] Tree-to-Code function-local binding snapshots and local binding
               entries now use typed ASDL products.
         - [x] Function lowering now constructs `TreeCodeFuncFacts` and
@@ -1059,9 +1071,20 @@ These are the current freeform rule/dispatch modules to eliminate or shrink.
               `lower_control_region`, `lower_variant_binds`, and
               `lower_func`; call sites now invoke installed ASDL methods
               directly.
-        - [ ] Convert remaining mutable state methods on `TreeCodeFuncState`
+        - [x] Convert remaining mutable state methods on `TreeCodeFuncState`
               and Tree-to-Code input products into typed state/result-returning
               methods instead of in-place updates.
+        - [x] `TreeCodeExprInput`, `TreeCodePlaceInput`, `TreeCodeStmtInput`,
+              and `TreeCodeControlInput` are now leaves of the `TreeCodeInput`
+              ASDL sum; shared lowering behavior is installed once on the
+              parent instead of through a Lua installer helper.
+        - [x] Module, function, contract, and parameter lowering now use
+              `TreeCodeModuleParts`, `TreeCodeFuncLoweringStart`,
+              `TreeCodeFuncParts`, and `TreeCodeParamResult` ASDL products
+              instead of tuple-return helpers.
+        - [x] Tree-to-Code result construction and binding key derivation moved
+              onto ASDL methods (`TreeCodeInput:*_result` and
+              `Binding:tree_code_binding_key`) instead of local wrappers.
 - [x] `lua/lalin/code_to_back.lua`
   - [x] Finish the remaining `CodeInst.kind` / `CodeTerm.kind` wrapper schema
         debt: wrapper fields are now named `op`, and compiler consumers no

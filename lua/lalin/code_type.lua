@@ -200,15 +200,25 @@ local function bind_context(T)
         return Code.CodeSigId(table.concat(parts, "_"))
     end
 
+    local function stored_code_sig(entry)
+        return entry and entry.sig or entry
+    end
+
     local function remember_code_sig(ctx, sig)
         if ctx == nil then return sig end
         ctx.code_sigs = ctx.code_sigs or {}
         ctx.code_sig_order = ctx.code_sig_order or {}
-        if ctx.code_sigs[sig.id.text] == nil then
-            ctx.code_sigs[sig.id.text] = sig
+        local existing = stored_code_sig(ctx.code_sigs[sig.id.text])
+        if existing == nil then
+            if type(ctx.tree_code_sig_entry) == "function" then
+                ctx.code_sigs[sig.id.text] = ctx:tree_code_sig_entry(sig)
+            else
+                ctx.code_sigs[sig.id.text] = sig
+            end
             ctx.code_sig_order[#ctx.code_sig_order + 1] = sig
+            return sig
         end
-        return ctx.code_sigs[sig.id.text]
+        return existing
     end
 
     local function ensure_code_sig(ctx, params, results)
@@ -286,7 +296,7 @@ local function bind_context(T)
 
     local function ensure_c_backend_sig(ctx, sig_id)
         local id = c_backend_sig_id(sig_id)
-        local sig = ctx and ctx.code_sigs and ctx.code_sigs[sig_id.text]
+        local sig = stored_code_sig(ctx and ctx.code_sigs and ctx.code_sigs[sig_id.text])
         if sig and ctx then
             ctx.sigs = ctx.sigs or {}
             ctx.sig_order = ctx.sig_order or {}
@@ -304,7 +314,7 @@ local function bind_context(T)
 
     local function ensure_c_backend_closure_sig(ctx, sig_id)
         local id = c_backend_closure_sig_id(sig_id)
-        local sig = ctx and ctx.code_sigs and ctx.code_sigs[sig_id.text]
+        local sig = stored_code_sig(ctx and ctx.code_sigs and ctx.code_sigs[sig_id.text])
         if sig and ctx then
             ctx.sigs = ctx.sigs or {}
             ctx.sig_order = ctx.sig_order or {}

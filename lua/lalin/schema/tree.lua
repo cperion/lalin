@@ -1243,6 +1243,16 @@ return schema. LalinTree {
     alpha [LalinTree.TreeCodeAlphaState],
     control [LalinTree.TreeCodeControlState],
   },
+  product. TreeCodeFuncLoweringStart {
+    facts [LalinTree.TreeCodeFuncFacts],
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeModuleParts {
+    module_facts [LalinTree.TreeCodeModuleFacts],
+    sigs [LalinTree.TreeCodeModuleSigState],
+    registrations [LalinTree.TreeCodeModuleRegistrationState],
+    emission [LalinTree.TreeCodeModuleEmissionState],
+  },
   product. TreeCodeItemRegisterInput {
     interned,
     module_facts [LalinTree.TreeCodeModuleFacts],
@@ -1268,25 +1278,27 @@ return schema. LalinTree {
     data [many [LalinCode.CodeData]],
     globals [many [LalinCode.CodeGlobal]],
   },
-  product. TreeCodeExprInput {
-    interned,
-    facts [LalinTree.TreeCodeFuncFacts],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodePlaceInput {
-    interned,
-    facts [LalinTree.TreeCodeFuncFacts],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeStmtInput {
-    interned,
-    facts [LalinTree.TreeCodeFuncFacts],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeControlInput {
-    interned,
-    facts [LalinTree.TreeCodeFuncFacts],
-    state [LalinTree.TreeCodeFuncState],
+  sum. TreeCodeInput {
+    TreeCodeExprInput {
+      variant_unique,
+      facts [LalinTree.TreeCodeFuncFacts],
+      state [LalinTree.TreeCodeFuncState],
+    },
+    TreeCodePlaceInput {
+      variant_unique,
+      facts [LalinTree.TreeCodeFuncFacts],
+      state [LalinTree.TreeCodeFuncState],
+    },
+    TreeCodeStmtInput {
+      variant_unique,
+      facts [LalinTree.TreeCodeFuncFacts],
+      state [LalinTree.TreeCodeFuncState],
+    },
+    TreeCodeControlInput {
+      variant_unique,
+      facts [LalinTree.TreeCodeFuncFacts],
+      state [LalinTree.TreeCodeFuncState],
+    },
   },
   product. TreeCodeContractInput {
     interned,
@@ -1294,6 +1306,54 @@ return schema. LalinTree {
     sigs [LalinTree.TreeCodeModuleSigState],
     func_name [str],
     func_id [LalinCode.CodeFuncId],
+  },
+  product. TreeCodeStateResult {
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeCounterResult {
+    field. value [number],
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeBindingKeyResult {
+    binding_name [str],
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeValueIdResult {
+    field. value [LalinCode.CodeValueId],
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeInstIdResult {
+    field. id [LalinCode.CodeInstId],
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeTermIdResult {
+    field. id [LalinCode.CodeTermId],
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeBlockIdResult {
+    field. id [LalinCode.CodeBlockId],
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeTermResult {
+    field. term [LalinCode.CodeTerm],
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeLocalResult {
+    field. id [LalinCode.CodeLocalId],
+    field. ty [LalinCode.CodeType],
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeAlphaResult {
+    renamed_by_key [many [LalinTree.TreeCodeAlphaRenameEntry]],
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeControlExitResult {
+    saw_exit [bool],
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeFallthroughResult {
+    falls [bool],
+    state [LalinTree.TreeCodeFuncState],
   },
   product. TreeCodeExprResult {
     interned,
@@ -1306,7 +1366,23 @@ return schema. LalinTree {
     place [LalinCode.CodePlace],
     state [LalinTree.TreeCodeFuncState],
   },
+  product. TreeCodeIndexPlaceResult {
+    place [LalinCode.CodePlace],
+    index [LalinCode.CodeValueId],
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeViewPartsResult {
+    data [LalinCode.CodeValueId],
+    len [LalinCode.CodeValueId],
+    stride [LalinCode.CodeValueId],
+    state [LalinTree.TreeCodeFuncState],
+  },
   product. TreeCodeStmtResult {
+    state [LalinTree.TreeCodeFuncState],
+  },
+  product. TreeCodeParamResult {
+    field. param [LalinCode.CodeParam],
+    field. ty [LalinCode.CodeType],
     state [LalinTree.TreeCodeFuncState],
   },
   product. TreeCodeFuncParts {

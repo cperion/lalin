@@ -342,6 +342,8 @@ lua/llpvm/                   LLPVM member
 docs/LLBL_GUIDE.md            central LLBL workbench and region guide
 docs/LANGUAGE_REFERENCE.md   public Lalin language reference
 docs/ARCHITECTURE.md         language, compiler, backend, and lowering architecture
+docs/RESIDUAL_NATIVE_ARCHITECTURE.md
+                             target native residual/stencil compression architecture
 docs/LLPVM_GUIDE.md          low-level VM/task language member
 docs/UI_GUIDE.md             UI package guide
 docs/CONVENTIONS.md          naming, style, and repository conventions
