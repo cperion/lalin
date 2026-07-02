@@ -39,7 +39,7 @@ return {
 ]=]
 
 local parsed = assert(lalin.loadstring(source, '@test_luajit_artifact_parsed_metaprogramming.lln'))()
-local loaded = lalin.compile('ParsedMetaprogramming', parsed, { residual = 'bc' })
+local loaded = lalin.compile_luajit('ParsedMetaprogramming', parsed, { bytecode = true })
 
 assert(loaded.scale_one(4) == 17, 'parsed expr fragment splice with host literals')
 

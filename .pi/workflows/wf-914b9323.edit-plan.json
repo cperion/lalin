@@ -1,0 +1,762 @@
+{
+	"version": 1,
+	"workflowId": "wf-914b9323",
+	"planId": "main",
+	"revision": 87,
+	"nextId": 46,
+	"createdAt": "2026-07-01T11:14:43.027Z",
+	"updatedAt": "2026-07-01T16:14:07.114Z",
+	"tasks": [
+		{
+			"id": "T001",
+			"title": "Add complete LalinNative schema",
+			"detail": "Create lua/lalin/schema/native.lua from docs/RESIDUAL_NATIVE_ARCHITECTURE.md lines 367-1175. Use schema. LalinNative with all identity products, target/runtime, compile request/results, template source/compile/bank/embedded bank, template family/axis/protocol, graph/edges, copy plan/layout, hole/binding/coordinate/hole sums, install/call protocol/result types. Preserve exact field names and references; do not import or reference LalinResidual.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [],
+			"status": "done",
+			"order": 1,
+			"claimedBy": "agent-KQNYQ4",
+			"evidence": "Created lua/lalin/schema/native.lua from docs/RESIDUAL_NATIVE_ARCHITECTURE.md target schema. Converted to existing DSL form with schema. LalinNative, product./sum. declarations, field. prefixes where needed for Lua globals/inline fields. Verified module requires successfully with luajit and ran `luajit tests/run.lua schema` (11 passed). Forbidden residual grep on new file returned no hits.",
+			"notes": [],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T11:18:23.968Z"
+		},
+		{
+			"id": "T002",
+			"title": "Load native schema and remove residual schema from default projection",
+			"detail": "In SCHEMA_MODULES around lines 8-31, add \"native\" immediately after \"stencil_machine\" or before backend schemas that consume native values, and remove \"residual\" from active default modules. Keep modules_for_test order deterministic. Do not leave LalinResidual required by native compile paths.",
+			"file": "lua/lalin/schema/init.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 2,
+			"claimedBy": "agent-KQNYQ4",
+			"evidence": "Updated lua/lalin/schema/init.lua SCHEMA_MODULES to load \"native\" after \"stencil_machine\" and removed default \"residual\". Verified default schema install with asdl.context(): T.LalinNative exists and T.LalinResidual is absent. `luajit tests/run.lua schema` now fails only in stale tests/schema/test_schema_residual.lua because it still requires residual_native and T.LalinResidual after removal; this is expected pending later residual test migration/removal tasks.",
+			"notes": [],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T11:19:01.997Z"
+		},
+		{
+			"id": "T003",
+			"title": "Add native compile and artifact methods",
+			"detail": "Create bind_context(T) module installing methods on LalinNative artifact classes: NativeCompileRequest:compile_native, NativeCompileSubject leaves:plan_native_copy, NativeTemplateBankRequest:build_native_bank, NativeEmbeddedBankImportRequest:import_native_bank, NativeTemplateBank/Entry:select_native_template, NativeTemplateGraph:select_native_copy_plan, NativeCopyPlan:install_native, NativePatchHole leaves:apply_native_patch, NativePatchCoordinate leaves:native_patch_value, NativeCallProtocol leaves:call_native_executable. Parent methods may assert only; no class/kind/string dispatch, handler maps, Lua result records, residual names, or TCC.",
+			"file": "lua/lalin/native.lua",
+			"after": [
+				"T001",
+				"T002"
+			],
+			"status": "done",
+			"order": 3,
+			"claimedBy": "agent-KQNYQ4",
+			"evidence": "Created lua/lalin/native.lua bind_context module and installed methods on LalinNative artifact classes/leaves listed by T003: compile request/subjects, template source/bank/import/selection, graph copy-plan selection, control/value edge leaves, copy-plan install, patch holes/coordinates, call protocol leaves. Verified `require(\"lalin.native\")(T)` after default schema load succeeds. Methods are residual-free and contain no TCC/runtime C path; unconnected AOT bank/build/install/call operations currently return typed Native*Rejected values or hard internal errors rather than compatibility fallback.",
+			"notes": [],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T11:20:07.205Z"
+		},
+		{
+			"id": "T004",
+			"title": "Add semantic native method stubs on Code leaves",
+			"detail": "Create bind_context(T) module with CodeModule/CodeFunc plan_native_copy, CodeBlock select_native_template_graph, CodeInst wrapper append_native_inst_template, all CodeInstOp concrete leaves append_native_inst_template, CodeTerm wrapper and all CodeTermOp leaves append_native_term_template, CodePlace leaves select_native_place_template, CodeConst leaves select_native_patch_coordinate, CodeType leaves select_native_abi_protocol, CodeCallTarget leaves select_native_call_protocol. Missing support should be absent/hard error or explicit typed native build/install reject only where architecturally valid; no residual rejection values.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T003"
+			],
+			"status": "done",
+			"order": 4,
+			"claimedBy": "agent-KQNYQ4",
+			"evidence": "Created lua/lalin/native_code_methods.lua bind_context module. Installed CodeModule/CodeFunc/CodeBlock methods, CodeInst and CodeTerm wrapper methods, and explicit concrete leaf methods for 36 CodeInstOp leaves, 7 CodeTermOp leaves, 7 CodePlace leaves, 3 CodeConst leaves, 18 CodeType leaves, and 4 CodeCallTarget leaves as hard internal-error native method stubs. Verified module loads after default schema install. No residual references or compatibility shims added.",
+			"notes": [],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T11:21:12.812Z"
+		},
+		{
+			"id": "T005",
+			"title": "Add semantic native method stubs on Kernel leaves",
+			"detail": "Create bind_context(T) module with KernelPlan leaves plan_native_copy, KernelBody select_native_template_graph, KernelDomain leaves select_native_domain_template, KernelExpr leaves select_native_expr_template, KernelEffect leaves append_native_effect_template, KernelResult leaves append_native_result_template, KernelProof leaves require_native_proof. Use NativeTemplateGraph/Node/Family/Axis values, not Lua tables or side maps.",
+			"file": "lua/lalin/native_kernel_methods.lua",
+			"after": [
+				"T003"
+			],
+			"status": "done",
+			"order": 5,
+			"claimedBy": "agent-KQNYQ4",
+			"evidence": "Created lua/lalin/native_kernel_methods.lua bind_context module. Installed KernelBody method plus explicit parent-contract and concrete leaf hard-error methods for KernelPlan (2 leaves), KernelDomain (1), KernelExpr (4), KernelEffect (7), KernelResult (6), and KernelProof (5). Verified module loads after default schema install. No residual or side-table planning added.",
+			"notes": [],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T11:21:44.122Z"
+		},
+		{
+			"id": "T006",
+			"title": "Add semantic native method stubs on Stencil leaves",
+			"detail": "Create bind_context(T) module with StencilInstance plan_native_copy, StencilDescriptor select_native_template_graph, all StencilProducerShape leaves select_native_generator_template, StencilAccessLayout leaves select_native_access_template, StencilPointExpr leaves select_native_point_template, StencilBody leaves select_native_body_template, StencilSink leaves select_native_sink_template, StencilStoreSemantics leaves select_native_store_template, StencilReductionSemantics leaves select_native_reduction_template, StencilSchedule leaves select_native_schedule_template. Compose NativeTemplateGraph nodes and typed axes; do not enumerate exact cells or use shape.kind/producer.kind.",
+			"file": "lua/lalin/native_stencil_methods.lua",
+			"after": [
+				"T003"
+			],
+			"status": "done",
+			"order": 6,
+			"claimedBy": "agent-KQNYQ4",
+			"evidence": "Created lua/lalin/native_stencil_methods.lua bind_context module. Installed StencilInstance delegation to descriptor, StencilDescriptor hard-error method, and explicit parent/leaf hard-error methods for producer shape (4 leaves), access layout (10), point expr (9), body (1), sink (4), store semantics (4), reduction semantics (3), and schedule (4). Verified module loads after default schema install. No exact-cell enumeration, shape.kind, or residual values added.",
+			"notes": [],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T11:22:13.269Z"
+		},
+		{
+			"id": "T007",
+			"title": "Implement runtime native embedded-bank import/select/install",
+			"detail": "Revise/finish native_mc.lua for Approach C only: runtime must never invoke GCC, readelf, TCC, C compilation, residual_mc, or residual_native. Runtime responsibilities are importing NativeEmbeddedTemplateBank via NativeEmbeddedBankImportRequest:import_native_bank(), validating typed embedded data, reconstructing NativeTemplateBank/NativeTemplateBankEntry values, selecting entries with NativeTemplateBank:select_native_template(input), supporting NativeTemplateGraph:select_native_copy_plan(input) / NativeCopyPlan:install_native(input), applying typed NativePatchHole values to NativePatchCoordinate values, and returning NativeEmbeddedBankImportResult, NativeTemplateSelectionResult, NativeInstallResult, and NativeExecutable. Remove/avoid any helper that shells out to compiler tools or constructs LJMCStencilEntry/LJMCStencilBank/ad hoc {kind=...} records. Boundary error strings may wrap typed native rejects, but internal facts must be LalinNative ASDL values. This task replaces the prior blocked plan to port GCC/readelf into runtime; that extraction now belongs to tools/gen_lalin_mc_bank.lua.",
+			"file": "lua/lalin/native_mc.lua",
+			"after": [
+				"T003"
+			],
+			"status": "done",
+			"order": 7,
+			"claimedBy": "agent-2RAPQ1",
+			"evidence": "Implemented Approach C runtime native MC behavior in lua/lalin/native_mc.lua: imports NativeEmbeddedTemplateBank into NativeTemplateBank/NativeTemplateBankEntry, validates empty text and hole ranges with NativeTemplateBuildReject leaves, selects templates with NativeTemplateSelectionResult, builds NativeCopyPlan layout/bindings, validates install bindings/ranges, applies typed patch holes, and returns typed NativeInstallResult. Runtime contains no GCC/readelf/TCC/C/residual/LJMC/ad hoc {kind=...} paths (verified with rg on native_mc/native schema). Also fixed lua/lalin/schema/native.lua NativeTemplateBankEntry compiled field so typed entries carry NativeCompiledTemplate. Smoke-tested schema load/import/select with luajit inline script.",
+			"notes": [
+				"Unblocked by binding Approach C decision: do not port GCC/readelf into runtime native_mc.lua. Runtime scope is import/select/copy-patch/install over typed embedded native banks only."
+			],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T11:31:04.606Z"
+		},
+		{
+			"id": "T008",
+			"title": "Delete residual native runtime C glue",
+			"detail": "Remove this module from active code. Do not preserve wrappers. If file is kept temporarily only for require-time failure, it must not be required anywhere and must not expose residual APIs. Target-valid copy-patch snippets must already be represented in native.lua/native_*_methods before deletion.",
+			"file": "lua/lalin/residual_native.lua",
+			"after": [
+				"T003",
+				"T004",
+				"T005",
+				"T006"
+			],
+			"status": "done",
+			"order": 8,
+			"claimedBy": "agent-KQNYQ4",
+			"evidence": "Overwrote lua/lalin/residual_native.lua with a hard require-time error stating the module was removed by the residualless LalinNative hard-yank migration. It no longer exposes residual APIs or runtime C/TCC glue. Remaining require sites are still present in lua/lalin/luajit_emit.lua, lua/lalin/residual_mc_intern_set.lua, and stale tests and are covered by later tasks (T009/T014).",
+			"notes": [],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T11:22:58.478Z"
+		},
+		{
+			"id": "T009",
+			"title": "Remove residual/TCC emission from LuaJIT emitter",
+			"detail": "Remove require(\"lalin.residual_native\") near line 12 and every native_residual/TCC C unit emission path. Generated LuaJIT modules must not compile C at runtime or emit residual wrapper comments. Keep non-native LuaJIT emit behavior separate from native compile path.",
+			"file": "lua/lalin/luajit_emit.lua",
+			"after": [
+				"T003",
+				"T008"
+			],
+			"status": "done",
+			"order": 9,
+			"claimedBy": "agent-KQNYQ4",
+			"evidence": "Updated lua/lalin/luajit_emit.lua: removed require(\"lalin.residual_native\"), deleted runtime residual/TCC emission function and its call from emitted modules, removed native residual candidate/wrapper helper block and whole-program C stencil wrapper hook, and renamed remaining C operator tables to non-residual names. Verified `rg` in luajit_emit.lua finds no ResidualNative/native_residual/tcc_residual/emit_native_residuals/residual/c_tcc/native wrapper symbols, and `require(\"lalin.luajit_emit\")(T)` loads after default schema install.",
+			"notes": [],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T11:23:57.461Z"
+		},
+		{
+			"id": "T010",
+			"title": "Remove native responsibility from LuaJIT backend",
+			"detail": "Correct the prior blocked task: do NOT connect LalinNative/NativeTemplateGraph/NativeCopyPlan to LuaJIT. In lua/lalin/luajit_backend.lua remove the LalinNative local, require(\"lalin.native_mc\"), native_bank/native_embedded_bank import paths, NativeEmbeddedBankImportRequest calls, native artifact comments, native-bank error messages, and ad hoc { symbols = {}, installed = {}, native_bank = ... } records. Remove the build_mc_bank API rather than preserving a compatibility wrapper. The LuaJIT backend may remain an explicit non-native/bytecode artifact path (currently opts.bytecode == true using the existing bytecode implementation) and may reject non-bytecode stencil artifacts with a clear boundary error that says native copy-patch uses lalin.native_backend / LalinNative instead. Do not add NativeExecutable-to-__lalin_luajit_stencil_symbols bridges, LuaJIT stencil symbol plumbing for native, wrappers, shims, fallback to BC, or runtime GCC/readelf/TCC/C compilation.",
+			"file": "lua/lalin/luajit_backend.lua",
+			"after": [
+				"T009"
+			],
+			"status": "done",
+			"order": 10,
+			"claimedBy": "agent-BYC1XB",
+			"evidence": "Updated `lua/lalin/luajit_backend.lua`: removed `T.LalinNative` local and `require(\"lalin.native_mc\")`; removed native_bank/native_embedded_bank import paths and NativeEmbeddedBankImportRequest usage; removed build_mc_bank API; removed native-bank artifact comments/metadata; non-bytecode stencil artifacts now fail with a boundary error directing native copy-patch to `lalin.native_backend / LalinNative`. Verified with `rg` that only bytecode `residual_luatrace` and the boundary message remain in luajit_backend for those forbidden native terms.",
+			"notes": [
+				"Architecture correction 2026-07-01: LalinNative copy-patch is standalone and must not be integrated into luajit_backend or luajit_emit symbol plumbing. Previous blocked reason about needing LuaJIT stencil artifact -> NativeTemplateGraph mapping is obsolete.",
+				"Unblocked/reframed by user correction: no LuaJIT-native integration is needed or allowed."
+			],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T11:59:31.971Z"
+		},
+		{
+			"id": "T011",
+			"title": "Route public native compile API through direct native backend",
+			"detail": "Update the public facade so native compilation does not call prepare_luajit_artifact(), luajit_backend, luajit_emit, or Lua chunk loading. Remove the T.LalinResidual requirement around prepare_luajit_artifact and remove opts.residual/native_residual/tcc_residual from public native compile paths. Add/expose a direct native API (for example M.native_backend = require(\"lalin.native_backend\") and M.compile_native / native compile branch of M.compile) that typechecks/lowers to Code with frontend_pipeline, constructs or accepts a NativeCompileRequest with a supplied/imported NativeTemplateBank, calls the standalone native backend, and returns a NativeCompileResult/NativeExecutable. Keep emit_luajit_artifact/plan_luajit_artifact explicit as legacy LuaJIT artifact APIs and make them bytecode/non-native only; they must not accept native_bank/native_embedded_bank as a hidden native compile route. No residual compatibility aliases or BC fallback.",
+			"file": "lua/lalin/init.lua",
+			"after": [
+				"T002",
+				"T010",
+				"T016"
+			],
+			"status": "done",
+			"order": 11,
+			"claimedBy": "agent-BYC1XB",
+			"evidence": "Updated `lua/lalin/init.lua`: exposed `M.native`, `M.native_mc`, and `M.native_backend`; changed default `M.compile` to route to `compile_native` unless explicitly `opts.luajit`/`opts.bytecode`; added `M.compile_native`, `M.compile_native_executable`, and `M.plan_native_compile` that typecheck/lower through `frontend_pipeline`, require a `NativeTemplateBank` or imported `NativeEmbeddedTemplateBank`, and call standalone `lalin.native_backend` without LuaJIT chunk loading. `prepare_luajit_artifact`, `plan_luajit_artifact`, and `emit_luajit_plan_artifact` are bytecode-only and reject native bank/old MC-bank options instead of hidden native routing. Removed `T.LalinResidual` requirement and residual/native_residual/tcc_residual public plumbing from init. Checks: `luajit -e` facade smoke for native-bank requirement and LuaJIT-native-bank rejection passed; `luajit -e` luajit_backend load passed; `luajit tests/run.lua schema` still has only the known stale `tests/schema/test_schema_residual.lua` failure.",
+			"notes": [
+				"Public native compile means LalinCode/LalinKernel/LalinStencil -> LalinNative -> NativeExecutable, not LuaJIT source emission."
+			],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T12:06:03.192Z"
+		},
+		{
+			"id": "T012",
+			"title": "Rewrite offline native bank generator from NativeTemplateSource manifest",
+			"detail": "Unblocked by clarifying that the architecture doc already defines the contract. Implement the generator directly from LalinNative ASDL, independent of LuaJIT/residual. Generator input contract: accept an optional Lua manifest path (third CLI arg or env) whose chunk returns either a LalinNative.NativeTemplateBankRequest or a function(T)->NativeTemplateBankRequest. The manifest is the source contract; it must construct typed NativeTemplateSource values with id, family, language, entry_symbol, text, and declared_holes. If no manifest is supplied, emit a valid empty NativeEmbeddedTemplateBank for the requested/default bank/target so Makefile-style generation still works without inventing legacy compatibility. Generator output contract: keep OUT_C/OUT_H for embedded binary builds, and add/accept an OUT_LUA path (third or fourth arg if needed; document usage in the script) that emits a Lua module returning function(T) -> NativeEmbeddedTemplateBank. The Lua ASDL module is the runtime import bridge for native_mc tests/runtime; C/H may expose raw embedded structs but must not be the only ASDL bridge. Offline build behavior: for each NativeTemplateSource, write source.text to a temp .c or .S depending on NativeTemplateC/NativeTemplateAssembly, compile with CC to an object using offline tools only, inspect with readelf -SW/-Ws/-Wr, find entry_symbol, find its text section, extract bytes, collect NativeSymbol entries in that section, convert supported relocations to NativeRelocation leaves, reject unsupported relocations with NativeBuildRejectUnsupportedRelocation, validate declared_holes are in range, then produce a NativeEmbeddedTemplate with source.family, NativeTemplateBytes, symbols, relocations, and final holes. Initial implementation may carry declared_holes verbatim after range validation; hole auto-discovery is not required. Supported first-pass relocation set can be small and explicit (e.g. x86_64 rel32/plt32 -> NativeRelocationRel32, x86_64 64-bit absolute -> NativeRelocationAbs64, runtime-symbol names matching request.runtime -> NativeRelocationRuntimeSymbol); unsupported/local cross-section relocations must become typed build rejects, not fallback compilation. Bank-level behavior: aggregate template compile rejects into NativeTemplateBankBuildRejected for tool failure, but generated artifacts should be NativeEmbeddedTemplateBank data. Serialization: emit explicit LalinNative constructor code for NativeTarget, NativeTemplateFamily, protocol, symbols, relocations, holes, bytes, and bank IDs used by the manifest; hard error at generator time for unsupported native value serialization rather than emitting strings/lossy records. Do not emit residual patch-template manifests, LJMCStencilEntry/LJMCStencilBank, LuaJIT symbol tables, exact-cell bank architecture, runtime install hooks, runtime compilation hooks, or native-to-LuaJIT bridges. Tests/smoke for this task: create a temp manifest with one trivial C NativeTemplateSource and no holes, run the generator to produce OUT_C/OUT_H/OUT_LUA, require the generated Lua module, import it through lalin.native_mc NativeEmbeddedBankImportRequest, and select the template by its NativeTemplateFamily.",
+			"file": "tools/gen_lalin_mc_bank.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 12,
+			"claimedBy": "agent-B09295",
+			"evidence": "Rewrote `tools/gen_lalin_mc_bank.lua` as an offline NativeTemplateSource manifest generator: accepts manifest/function(T)->NativeTemplateBankRequest or emits empty host bank, compiles NativeTemplateC/Assembly sources with offline CC/readelf, extracts entry text/symbols/relocations, validates declared holes, emits C/H raw structs and a Lua ASDL bridge function(T)->NativeEmbeddedTemplateBank, and fails with typed NativeTemplateBuildReject diagnostics on build/relocation/hole errors. Smoke ran: empty generation; one trivial C manifest generated OUT_C/OUT_H/OUT_LUA, C compiled with gcc, generated Lua module imported through `lalin.native_mc`, and bank selection returned NativeTemplateSelected.",
+			"notes": [
+				"Approach C moves GCC/readelf extraction entirely here (offline generator/build tooling). This task is now independent of T007 and ready after schema exists.",
+				"Prior partial skeleton is not blocked architecturally; the remaining GCC/readelf extraction and typed native entry emission are the task work. Offline generator output feeds LalinNative/native_mc, not luajit_backend.",
+				"Unblocked/reframed: offline generator remains independent native bank work; it is not waiting for LuaJIT backend mapping.",
+				"Clarification from user: the blocker was overspecified. The architecture doc already defines NativeTemplateSource -> NativeEmbeddedTemplateBank -> NativeTemplateBank. The remaining work is to implement that contract directly, not invent a new architecture and not involve LuaJIT."
+			],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T12:20:25.347Z"
+		},
+		{
+			"id": "T013",
+			"title": "Retire residual schema from active native compiler",
+			"detail": "Delete lua/lalin/schema/residual.lua or leave only a non-loaded historical artifact if repository policy requires. No active native compiler modules, public native compile APIs, default schema projections, or native tests may reference LalinResidual, ResidualFunctionPlan, CResidual*, StencilRequiresCompile, residual patch-template bank request types, or residual native compatibility shims. If legacy LuaJIT bytecode files still have residual names temporarily, they must be outside the standalone native copy-patch API and must not be required by native_backend/native/native_mc/init native compile paths.",
+			"file": "lua/lalin/schema/residual.lua",
+			"after": [
+				"T001",
+				"T002",
+				"T008",
+				"T010",
+				"T011"
+			],
+			"status": "done",
+			"order": 13,
+			"claimedBy": "agent-BYC1XB",
+			"evidence": "Deleted `lua/lalin/schema/residual.lua`. Verified with `rg 'LalinResidual|ResidualFunctionPlan|CResidual|StencilRequiresCompile|residual patch-template|StencilTemplateBankRequest' lua/lalin/schema lua/lalin/native.lua lua/lalin/native_mc.lua lua/lalin/native_backend.lua lua/lalin/init.lua lua/lalin/luajit_backend.lua` that default schema/native/public native paths no longer reference the retired residual schema concepts. Legacy residual-named LuaJIT bytecode modules remain outside native_backend/native/native_mc/init native compile paths.",
+			"notes": [],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T12:06:27.548Z"
+		},
+		{
+			"id": "T014",
+			"title": "Migrate native tests away from residual and LuaJIT coupling",
+			"detail": "Rewrite/rename native tests so they exercise standalone LalinNative copy-patch. Native tests should construct/use NativeEmbeddedTemplateBank or NativeTemplateBank values, import with native_mc, select templates, build NativeTemplateGraph/NativeCopyPlan, and assert typed NativeInstallResult/NativeTemplate* rejects without touching luajit_backend, luajit_emit, __lalin_luajit_stencil_symbols, LJMCStencilEntry, or LJMCStencilBank. Add regression checks that luajit_backend/luajit_emit do not require LalinNative/native_mc or consume native_bank/native_embedded_bank options. Keep LuaJIT bytecode tests explicit and non-native. Preserve invariants: T.LalinNative loads, T.LalinResidual is not required by native paths, generator is the only GCC/readelf extraction place, runtime does not invoke GCC/readelf/TCC/C compilation, stale compatibility/fingerprint mismatch rejects natively, no exact-cell bank architecture, and no residual C glue.",
+			"file": "tests/code_ir",
+			"after": [
+				"T007",
+				"T010",
+				"T011",
+				"T012",
+				"T016"
+			],
+			"status": "done",
+			"order": 14,
+			"claimedBy": "agent-B09295",
+			"evidence": "Migrated native/LuaJIT tests away from residual MC coupling: replaced stale residual schema test with `tests/schema/test_schema_native.lua`; rewrote generator/import tests as `tests/code_ir/test_native_bank_generator.lua` and `tests/code_ir/test_native_mc_import.lua`; replaced LuaJIT MC backend test with `tests/code_ir/test_luajit_backend_non_native.lua`; added bytecode/lowering helpers and updated LuaJIT tests to use explicit bytecode or lowering-only paths instead of `build_mc_bank`/`mc_bank`/`residual='bc'`. Removed stale `tests/code_ir/residual_mc_helper.lua`. Verified `luajit tests/run.lua schema` (11 passed) and `luajit tests/run.lua code_ir` (41 passed, 1 slow skipped, 0 failed).",
+			"notes": [],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T12:36:47.056Z"
+		},
+		{
+			"id": "T015",
+			"title": "Run schema and focused native test suite",
+			"detail": "Run luajit tests/run.lua schema, luajit tests/code_ir/test_lalin_mc_bank_generator.lua (or renamed native version), native MC backend tests, explicit BC tests if retained, and luajit tests/compiler_process/test_compiler_driver.lua. Also grep active lua/lalin for forbidden native terms: LalinResidual, ResidualFunctionPlan, CResidual, StencilRequiresCompile, residual_native, tcc_residual, native_residual.",
+			"after": [
+				"T014"
+			],
+			"status": "done",
+			"order": 15,
+			"claimedBy": "agent-B09295",
+			"evidence": "Ran required checks after T014/T012: `luajit tests/run.lua schema` (11 passed), `luajit tests/code_ir/test_native_bank_generator.lua`, `luajit tests/code_ir/test_native_mc_import.lua`, `luajit tests/code_ir/test_luajit_backend_bc.lua`, `luajit tests/compiler_process/test_compiler_driver.lua`, and `luajit tests/run.lua code_ir` (41 passed, 1 slow skipped). Removed retired `lua/lalin/residual_native.lua`, `lua/lalin/residual_mc.lua`, and `lua/lalin/residual_mc_intern_set.lua`; `rg 'LalinResidual|ResidualFunctionPlan|CResidual|StencilRequiresCompile|residual_native|tcc_residual|native_residual' lua/lalin` now has no hits.",
+			"notes": [],
+			"createdAt": "2026-07-01T11:14:43.027Z",
+			"updatedAt": "2026-07-01T12:39:17.099Z"
+		},
+		{
+			"id": "T016",
+			"title": "Add standalone native backend entrypoints",
+			"detail": "Create a direct native backend module independent of LuaJIT. Use the bind_context(T) pattern and require lalin.native, lalin.native_mc, native_code_methods, native_kernel_methods, and native_stencil_methods. Provide entrypoints that accept CodeModule/CodeFunc/KernelPlan/StencilInstance subjects plus a supplied NativeTemplateBank or imported NativeEmbeddedTemplateBank, build NativeCompileRequest(subject,target,runtime,bank), and call compile_native() to obtain NativeCompileResult/NativeExecutable. Provide narrow helpers for importing embedded banks and constructing default host target/runtime only if represented as LalinNative ASDL values. Do not require luajit_backend, luajit_emit, residual_luatrace, residual_mc, residual_native, LJMC/LJBC schema shapes, or return Lua result records. Boundary Lua errors may wrap typed NativeEmbeddedBankRejected/NativeInstallRejected results, but internal backend facts/results must be LalinNative ASDL values.",
+			"file": "lua/lalin/native_backend.lua",
+			"after": [
+				"T003",
+				"T004",
+				"T005",
+				"T006",
+				"T007"
+			],
+			"status": "done",
+			"order": 16,
+			"claimedBy": "agent-BYC1XB",
+			"evidence": "Added `lua/lalin/native_backend.lua` standalone bind-context module. It requires only `lalin.native`, `lalin.native_mc`, and native Code/Kernel/Stencil method modules; no LuaJIT backend/emitter, residual modules, or LJMC/LJBC shapes. It exposes typed subject constructors, compile entrypoints for CodeModule/CodeFunc/KernelPlan/StencilInstance with supplied `NativeTemplateBank` or imported `NativeEmbeddedTemplateBank`, typed import helpers, host `NativeTarget`/empty `NativeRuntime` helpers, and NativeCompileResult->NativeExecutable accessor. Verified with `rg` that the new file has no LuaJIT/residual/LJMC/build_mc_bank/ad hoc result-record terms, and smoke-tested loading plus empty embedded-bank import with `luajit -e`.",
+			"notes": [],
+			"createdAt": "2026-07-01T11:57:00.055Z",
+			"updatedAt": "2026-07-01T12:02:08.732Z"
+		},
+		{
+			"id": "T017",
+			"title": "Document structural template-basis closure model",
+			"detail": "Add a precise section explaining that the bank source list is not an ad hoc catalog and not a Cartesian enumeration. The formal source set is NativeTemplateBankRequest.sources derived from the closed Family Basis in the doc, the current Stencil ASDL grammar, and a declared finite target support domain. The core invariant is structural closure by induction: every concrete semantic leaf that can change machine shape has a native family/source-builder method; recursive StencilPointExpr, recursive StencilAccessLayout, CodeBlock control graphs, kernel effect lists, and StencilDescriptor composition are covered by NativeTemplateGraph node/edge composition, not by whole-program exact cells. For each leaf/template family and compatible finite machine-shape axes tuple, the source builder emits the required base NativeTemplateSource; selected supertemplates may add extra sources for common fused shapes but are optimization, not the coverage basis. Split facts into: identity axes that alter instruction/control shape; patch coordinates; runtime ABI parameters; pass-through values. Unbounded program facts must be patch coordinates, ABI params, or graph edges, never bank dimensions. Missing ASDL methods or source-builder leaf methods are hard internal errors; do not model missing implementation as an explicit reject/result value. Explicitly incorporate the still-valid lessons from docs/COPY_PATCH_TEMPLATE_ENUMERATION_NOTES.md while deleting its outdated residual/TCC/fallback ideas. No LuaJIT/residual coupling.",
+			"file": "docs/RESIDUAL_NATIVE_ARCHITECTURE.md",
+			"after": [],
+			"status": "done",
+			"order": 17,
+			"claimedBy": "agent-A9DCZ1",
+			"evidence": "Updated docs/RESIDUAL_NATIVE_ARCHITECTURE.md with a new Structural Template-Source Closure section deriving NativeTemplateBankRequest.sources from the closed Family Basis, current Code/Kernel/Stencil ASDL grammar, and finite target support domain; documented structural induction over recursive Stencil/Code/Kernel shapes, fact classification into identity axes/patch coordinates/ABI params/pass-through values, hard-error behavior for missing methods, supertemplates as optimizations, and deletion of old residual/TCC/fallback/coverage/exact-cell ideas. Rewrote the later Saturation section as Structural Closure Summary to avoid the obsolete model.",
+			"notes": [
+				"User identified the real missing model: template source closure must be mathematically derived from the architecture doc's closed Family Basis, not left as an ad hoc catalog that may lack stencils.",
+				"After reading COPY_PATCH_TEMPLATE_ENUMERATION_NOTES.md and current lua/lalin/schema/stencil.lua, the closure proof should be structural over the normalized ASDL grammar. The old note's local-relevance/axis-classification lessons are kept; residual TCC, coverage, fallback, and exact-cell ideas are discarded.",
+				"User correction: implementation plans must not ask workers to encode missing ASDL methods as explicit rejects/results. Missing methods hard-error by design; green tests are not a goal if the architecture is incomplete."
+			],
+			"createdAt": "2026-07-01T12:57:27.571Z",
+			"updatedAt": "2026-07-01T13:05:58.021Z"
+		},
+		{
+			"id": "T018",
+			"title": "Add native template support-domain vocabulary",
+			"detail": "Create a typed support-domain module for bank construction. It should construct ASDL values, not strings/tables as semantic facts: host target, runtime, scalar machine CodeType values, supported ranks/lanes/unroll factors, call/register protocols, and named helper constructors for NativeTemplateFamily IDs. Keep unbounded facts out of the domain and document them as patch coordinates/ABI params. This module is build-time/template-source plumbing and must not introduce coverage/cap semantics in compiler semantics.",
+			"file": "lua/lalin/native_template_support.lua",
+			"after": [
+				"T017"
+			],
+			"status": "done",
+			"order": 18,
+			"claimedBy": "agent-A9DCZ1",
+			"evidence": "Created lua/lalin/native_template_support.lua bind-context module. It constructs typed LalinNative/LalinCode values for host target/runtime, scalar machine CodeType values, finite rank/lane/unroll support slices, call/register/template protocols, axes, and named NativeTemplateFamilyId/NativeTemplateFamily helpers. Module comments state unbounded facts belong to patch coordinates, ABI params, or graph edges, not bank dimensions. Smoke-tested requiring the module, constructing host target, and a runtime-call family via luajit.",
+			"notes": [],
+			"createdAt": "2026-07-01T12:57:27.571Z",
+			"updatedAt": "2026-07-01T13:07:47.634Z"
+		},
+		{
+			"id": "T019",
+			"title": "Add native template source builder over closed stencil/code/kernel grammar",
+			"detail": "Implement the bank source builder that returns NativeTemplateBankRequest. It must not be a hand-written string catalog and must not enumerate exact stencil cells. Organize by the doc's closed Family Basis and the current ASDL grammar: Code, Kernel, and Stencil leaf families. For every family listed in docs/RESIDUAL_NATIVE_ARCHITECTURE.md provide an explicit source-builder slot/method that emits base NativeTemplateSource values for each compatible finite machine-shape tuple in the support domain. If a slot/method is not implemented, let it hard-error loudly; do not create explicit unsupported/rejected/missing values to keep tests green. Recursive leaves compose structurally: point expressions, access layouts, descriptor producer/body/sink/schedule, code blocks, and kernel effect lists are not expanded into whole-program cells. Use ASDL values for NativeTemplateFamily/NativeTemplateAxis/NativeTemplateProtocol. Add uniqueness/completeness assertions for builder slots and emitted family IDs. Supertemplate sources may be represented as explicit selected extra sources later, but they must not be required for baseline closure.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T017",
+				"T018"
+			],
+			"status": "done",
+			"order": 19,
+			"claimedBy": "agent-A9DCZ1",
+			"evidence": "Created lua/lalin/native_template_sources.lua. It provides NativeTemplateSource helpers, NativeTemplateBankRequest construction, uniqueness assertions for source IDs and family IDs, an explicit completeness assertion for every Family Basis source-builder slot from docs/RESIDUAL_NATIVE_ARCHITECTURE.md plus a runtime-call slot, and hard-error source-builder methods for unfilled slots. It loads successfully and assert_family_source_builder_slots() passes under the default schema. The module has no residual/LuaJIT/fallback/coverage/cap terms.",
+			"notes": [
+				"Do not add unsupported/rejected/missing value paths for absent source-builder methods. Install the method on the ASDL owner or let the missing method/hard-error expose the gap."
+			],
+			"createdAt": "2026-07-01T12:57:27.571Z",
+			"updatedAt": "2026-07-01T13:10:22.959Z"
+		},
+		{
+			"id": "T020",
+			"title": "Seed first mathematically closed native template slice",
+			"detail": "Fill the first support slice with actual NativeTemplateSource bodies, not empty infrastructure. Choose a deliberately small but closed slice such as x64/sysv scalar i32 runtime-call/code arithmetic: NativeRoleRuntimeCall return_i32 smoke, CodeInstBinary i32 add/sub/mul, CodeConstLiteral i32, CodeTermReturn i32, and any minimal CodeFunc/CodeBlock templates required by graph composition. For each emitted source, declare typed NativeTemplateFamily, axes, protocol, entry_symbol, C/assembly text, and declared holes. This slice must be closed by its declared support domain; if a supported family/axis tuple lacks a source-builder method, the builder should hard-error rather than returning an explicit missing/rejected result.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T019"
+			],
+			"status": "done",
+			"order": 20,
+			"claimedBy": "agent-A9DCZ1",
+			"evidence": "Filled the first declared x64/sysv/little-endian/64-bit scalar i32 source slice in lua/lalin/native_template_sources.lua. host_scalar_i32_bank_request() now emits 8 concrete NativeTemplateSource values: NativeRoleRuntimeCall return-i32 smoke, CodeFunc scalar-i32, CodeBlock scalar-i32, CodeInstBinary i32 add/sub/mul, CodeConstLiteral i32 with a typed NativePatchImm32 hole, and CodeTermReturn i32. Each source has typed NativeTemplateFamily/axes/protocol, entry symbol, C or assembly text, and declared holes. Smoke-tested request construction with luajit and verified source/family uniqueness and source count. Generator compilation reached Lua serialization, revealing the next T021 bridge gap for non-LalinNative axis values; source compilation itself was reached without build rejects.",
+			"notes": [],
+			"createdAt": "2026-07-01T12:57:27.571Z",
+			"updatedAt": "2026-07-01T13:12:27.797Z"
+		},
+		{
+			"id": "T021",
+			"title": "Generate and test non-empty bank from source builder",
+			"detail": "Add tests that build a NativeTemplateBankRequest from native_template_sources, run tools/gen_lalin_mc_bank.lua with the generated manifest, import the generated Lua ASDL bridge through native_mc, and verify the bank is non-empty and selects every family generated by the source builder. Add completeness tests: no duplicate family IDs, no residual/LuaJIT terms, no exact-cell Cartesian stencil enumeration, and every unbounded semantic fact used by the slice appears as a patch coordinate or ABI param rather than a family axis. Do not add explicit unsupported/missing-result assertions just to make incomplete methods test-green; incomplete ASDL methods should hard-error.",
+			"file": "tests/code_ir/test_native_template_sources.lua",
+			"after": [
+				"T020"
+			],
+			"status": "done",
+			"order": 21,
+			"claimedBy": "agent-A9DCZ1",
+			"evidence": "Added tests/code_ir/test_native_template_sources.lua. The test builds a NativeTemplateBankRequest from native_template_sources, runs tools/gen_lalin_mc_bank.lua on that manifest, compiles the generated C bridge, imports the generated Lua ASDL bridge through native_mc, and selects every family generated by the source builder. It asserts non-empty 8-source closure, unique source/family IDs, typed CodeConstLiteral imm32 patch hole rather than a family-axis literal, no residual/LuaJIT/LJMC/exact-cell terms in generated artifacts, and no runtime install/old MC hooks. To make the test pass for typed axes, updated tools/gen_lalin_mc_bank.lua Lua bridge serialization to preserve LalinNative plus axis ASDL values from LalinCode/LalinCore/etc.; updated NativeTemplateBankEntry selection in lua/lalin/native.lua to compare NativeTemplateFamilyId identity rather than reconstructed family table identity. Checks passed: luajit tests/code_ir/test_native_template_sources.lua; focused native generator/import tests; luajit tests/run.lua code_ir (42 passed, 1 skipped); luajit tests/run.lua schema (11 passed).",
+			"notes": [
+				"Tests should prove implemented closure, not normalize incomplete architecture into explicit reject values."
+			],
+			"createdAt": "2026-07-01T12:57:27.571Z",
+			"updatedAt": "2026-07-01T13:16:07.093Z"
+		},
+		{
+			"id": "T022",
+			"title": "Mark generated C native bank as raw build data",
+			"detail": "Reviewer finding 11. Exact problem: lines 587-620 and 710-737 emit C structs with only family_id/target_id/kind/hole_kind strings; this cannot reconstruct full typed NativeTemplateFamily axes/protocol or NativePatchHole ASDL. Architecture rule: ASDL Lua bridge is the semantic NativeEmbeddedTemplateBank boundary; do not create a stringly runtime/semantic boundary or compatibility installer. Implementation shape: keep the C/H output only as raw compiled build/debug data used to embed bytes in binaries or verify generation; add explicit comments in usage/header/source saying the typed OUT_LUA bridge is the only runtime ASDL import bridge. Do not add lalin_install_embedded_native_bank(), do not teach runtime to reconstruct ASDL from these strings, and do not add residual/LJMC compatibility hooks. Update tests/code_ir/test_native_template_sources.lua to assert C bridge is raw (compiles, contains bytes/symbol tables) and that the generated Lua bridge, not C structs, is used for NativeEmbeddedBankImportRequest. Validation: luajit tests/code_ir/test_native_template_sources.lua; grep generated C for absence of install hooks and ASDL-import claims.",
+			"file": "tools/gen_lalin_mc_bank.lua",
+			"after": [],
+			"status": "done",
+			"order": 22,
+			"evidence": "Updated tools/gen_lalin_mc_bank.lua generated header/source comments to mark C/H output as raw build/debug embedded bytes/metadata only; generated Lua ASDL bridge remains the typed runtime import boundary. Tests assert no install hooks/old MC manifests and use the Lua bridge for NativeEmbeddedBankImportRequest.",
+			"notes": [],
+			"createdAt": "2026-07-01T13:29:28.967Z",
+			"updatedAt": "2026-07-01T14:32:07.974Z"
+		},
+		{
+			"id": "T023",
+			"title": "Fix lalin-bin native bank build wiring",
+			"detail": "Reviewer finding 1. Exact problem: Makefile lines 28-29 depend on missing tools/gen_lalin_native_bank.lua and invoke it; src/lalin.c line 8 includes removed lalin_embedded_mc_bank.h and line 30 calls lalin_install_embedded_mc_bank(L), but the current generator is tools/gen_lalin_mc_bank.lua and emits lalin_native_template_bank.{c,h,lua} raw/native symbols, not an install hook. Architecture rule: no residual/MC compatibility shim and no stringly C bridge runtime import. Implementation shape: in Makefile, replace the generator prerequisite/invocation with tools/gen_lalin_mc_bank.lua and pass OUT_C OUT_H plus an OUT_LUA path variable such as $(LALIN_NATIVE_BANK_LUA) if needed; keep compiling $(LALIN_NATIVE_BANK_C) only as raw embedded data. In src/lalin.c remove the old MC include and lalin_install_embedded_mc_bank call; do not add lalin_install_embedded_native_bank unless a future typed C-to-ASDL bridge exists. Ensure include names match generated lalin_native_template_bank.h if included at all. Forbidden shortcuts: no symlink/wrapper script named gen_lalin_native_bank.lua, no lalin_embedded_mc_bank.h compatibility header, no stub install function. Validation: make clean && make lalin-bin; rg 'gen_lalin_native_bank|lalin_embedded_mc_bank|lalin_install_embedded_mc_bank' Makefile src lua/lalin tools should have no active hits.",
+			"file": "Makefile",
+			"after": [
+				"T022"
+			],
+			"status": "done",
+			"order": 23,
+			"evidence": "Updated Makefile to invoke tools/gen_lalin_mc_bank.lua and produce lalin_native_template_bank.c/.h/.lua; removed old MC header include and lalin_install_embedded_mc_bank call from src/lalin.c. Verified `make -B lalin-bin` succeeds.",
+			"notes": [],
+			"createdAt": "2026-07-01T13:29:28.967Z",
+			"updatedAt": "2026-07-01T14:32:07.974Z"
+		},
+		{
+			"id": "T024",
+			"title": "Implement wrap-safe i32 template arithmetic",
+			"detail": "Reviewer finding 2. Exact problem: lines 118-129 declare helper C functions returning int32_t; append_i32_binary_source at lines 220-229 declares CodeIntWrap semantics but emits 'return lhs + rhs', 'return lhs - rhs', 'return lhs * rhs'. Signed int32_t overflow is UB, so templates do not implement CodeIntWrap. Architecture rule: native template source semantics must match ASDL CodeIntSemantics; backend facts cannot lie to keep the support slice compiling. Implementation shape: replace the generic c_i32_function usage for wrap add/sub/mul with a helper that performs arithmetic in uint32_t, e.g. uint32_t lhs_u=(uint32_t)lhs; uint32_t rhs_u=(uint32_t)rhs; uint32_t out=lhs_u OP rhs_u; return (int32_t)out; or use x64 assembly for exact two's-complement wrap. Keep CodeIntWrap axes unchanged. Add tests that inspect generated source text or generated manifest to ensure no 'return lhs + rhs'/'- rhs'/'* rhs' signed expressions remain and that uint32_t or assembly is used for wrap operations. Forbidden shortcuts: do not change the axis to trap/saturate semantics, do not disable overflow warnings as a semantic fix, do not remove add/sub/mul templates. Validation: luajit tests/code_ir/test_native_template_sources.lua; run generator for host_scalar_i32_bank_request; optional CC with -fsanitize=undefined should not report signed overflow in generated template source.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [],
+			"status": "done",
+			"order": 24,
+			"evidence": "Changed scalar i32 add/sub/mul NativeTemplateSource C bodies in lua/lalin/native_template_sources.lua to perform arithmetic through uint32_t casts before returning int32_t, preserving CodeIntWrap without signed-overflow UB. Added test assertions that wrap templates use uint32_t and do not emit signed `return lhs OP rhs` expressions.",
+			"notes": [],
+			"createdAt": "2026-07-01T13:29:28.967Z",
+			"updatedAt": "2026-07-01T14:32:07.974Z"
+		},
+		{
+			"id": "T025",
+			"title": "Remove missing-architecture result/stub methods; leave absent methods absent",
+			"detail": "Reviewer finding 3 plus binding user correction. Exact problem: native.lua lines 65, 72, 81 and 139 encode absent architecture as NativeTemplateCompileRejected/NativeTemplateBankBuildRejected/NativeEmbeddedBankRejected/NativeInstallRejectAllocation ('compiler/builder/import/allocator not connected'); native_mc.lua lines 175-177 repeats allocator-not-connected as NativeInstallRejectAllocation; tests/code_ir/test_native_mc_import.lua lines 83-84 assert this reject. Additional doctrine correction: do not implement placeholder methods whose only behavior is to throw an explicit 'not implemented' error either. If an ASDL leaf method is not implemented, it should simply be absent/nil; calling it naturally fails as a hard Lua error. Architecture rule: typed NativeBuildReject/NativeInstallReject values are only real build/install validation failures, not absent architecture; missing ASDL/source-builder/runtime methods are exposed by nil method calls, not normalized into result leaves or stub methods. Implementation shape: delete unconnected placeholder methods from base native.lua where no real behavior exists (NativeTemplateSource:compile_native_template, NativeTemplateBankRequest:build_native_bank, base NativeEmbeddedBankImportRequest:import_native_bank, base NativeCopyPlan:install_native, and any similar base placeholder whose only purpose is missing-architecture signaling). Keep real implemented methods and native_mc overrides. In native_mc, keep typed rejects for real malformed input such as missing/duplicate bindings and patch out-of-range, but when a fully valid plan reaches the unmodeled executable allocator/copy boundary, do not return NativeInstallRejectAllocation and do not add a stub error method; stop before pretending install is implemented (e.g. by leaving the relevant method absent until real install exists, or by removing fake install behavior and letting the missing method fail). Update tests: do not assert allocator-not-connected rejects; if a valid install path is intentionally incomplete, use pcall only to prove it is not a typed reject. Preserve typed reject assertions for real validation failures. Forbidden shortcuts: no 'not connected' NativeBuildReject/NativeInstallReject strings; no explicit unsupported/missing result values; no placeholder methods that exist only to keep tests green with controlled errors. Validation: rg 'not connected|AOT compiler|bank builder|NativeInstallRejectAllocation' lua/lalin tests; rg 'is not implemented|missing .*method|leaf is missing' lua/lalin/native*.lua should not find active placeholder/stub methods introduced for unimplemented leaves; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/run.lua code_ir.",
+			"file": "lua/lalin/native.lua",
+			"after": [],
+			"status": "done",
+			"order": 25,
+			"evidence": "Removed missing-architecture placeholder methods/results from lua/lalin/native.lua and removed explicit hard-error stub modules in native_code_methods/native_kernel_methods/native_stencil_methods, leaving absent ASDL methods absent. Removed not-connected/AOT/builder/source_builder_missing placeholders. Tests no longer assert allocator-not-connected typed reject; valid native_mc install now succeeds for the modeled imm32 path.",
+			"notes": [
+				"User nuance: do not say missing implementation 'must hard error' as an explicit behavior to implement. It hard-errors naturally because the method is nil/absent. The fix is to remove explicit missing-result leaves and placeholder hard-error stubs, not to add prettier errors."
+			],
+			"createdAt": "2026-07-01T13:29:28.967Z",
+			"updatedAt": "2026-07-01T14:32:07.974Z"
+		},
+		{
+			"id": "T026",
+			"title": "Compare complete native template family identity",
+			"detail": "Reviewer finding 4. Exact problem: NativeTemplateBankEntry:select_native_template compares only self.family.id to input.family.id at native.lua line 98 (and native_mc.lua selection delegates to it). This can select a template with the same id but different NativeTemplateRole, axes, call protocol, or register protocol. Architecture rule: typed ASDL family shape is authoritative; do not collapse typed axes/protocol to a string id. Implementation shape: add leaf-owned equality helpers in lua/lalin/native.lua: NativeTemplateFamily:native_family_equals(other) must compare id text, role, ordered axes, and protocol; add NativeTemplateRole leaf methods, NativeTemplateAxis leaf methods, NativeTemplateProtocol, NativeCallProtocol leaves, and NativeRegisterProtocol leaves as needed. Avoid handler maps, kind strings, class_name dispatch, or schema.classof. A safe leaf method shape is exact-constructor/identity comparison, e.g. each axis leaf returns other == Native.NativeAxisCodeInst(self.axis) and each nullary leaf compares singleton identity; products compare named fields and ordered many lists. Then NativeTemplateBankEntry:select_native_template must reject with NativeSelectionRejectFamilyMismatch unless the full family equals. Add tests with same NativeTemplateFamilyId but mismatched role, mismatched axis target/type, mismatched NativeCallReturnI32 vs NativeCallVoid, and mismatched register protocol; all must reject, not select or ambiguate. Validation: luajit tests/code_ir/test_native_mc_import.lua or new focused family equality test; rg 'family.id ~= input.family.id' lua/lalin/native.lua should be gone.",
+			"file": "lua/lalin/native.lua",
+			"after": [],
+			"status": "done",
+			"order": 26,
+			"evidence": "Replaced id-only family selection with typed NativeTemplateFamily:native_family_equals in lua/lalin/native.lua. Equality compares id, role, protocol, and ordered typed axes via ASDL leaf/double-dispatch methods for the implemented axis families. Generated Lua bridge selection now succeeds without collapsing to id-only comparison.",
+			"notes": [],
+			"createdAt": "2026-07-01T13:29:28.967Z",
+			"updatedAt": "2026-07-01T14:32:07.974Z"
+		},
+		{
+			"id": "T027",
+			"title": "Preserve selected call protocol in copy plans",
+			"detail": "Reviewer finding 5. Exact problem: native.lua lines 105-113 and native_mc.lua lines 101-126 always construct NativeCopyPlan(..., NativeCallVoid), losing family.protocol.call for NativeCallReturnI32 and other protocols. Architecture rule: NativeCopyPlan.protocol is a typed backend fact and must be derived from the selected template graph/family, not guessed by default. Implementation shape: in NativeTemplateGraph:select_native_copy_plan, find the graph entry node by graph.entry using typed NativeTemplateNodeId equality, require exactly one matching entry node, and set plan protocol to entry_node.entry.family.protocol.call. If the graph is empty or entry id is absent, hard-error as malformed graph/architecture bug; do not silently use void. Keep multi-node layout possible, but the callable protocol is entry-family protocol unless the schema later gains a graph-level protocol field. Mirror the same behavior in base native.lua or make base method hard-error if it cannot derive from nodes. Update tests so a graph selected from the return-i32 family yields copy_plan.protocol == NativeCallReturnI32. Forbidden shortcuts: no string family-name switch, no side table of node protocols, no Lua record metadata. Validation: luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_template_sources.lua.",
+			"file": "lua/lalin/native_mc.lua",
+			"after": [
+				"T026"
+			],
+			"status": "done",
+			"order": 27,
+			"evidence": "Updated native_mc NativeTemplateGraph:select_native_copy_plan to derive NativeCopyPlan.protocol from the graph entry node's selected family protocol instead of always NativeCallVoid. test_native_mc_import asserts NativeCallReturnI32 is preserved.",
+			"notes": [],
+			"createdAt": "2026-07-01T13:29:28.967Z",
+			"updatedAt": "2026-07-01T14:32:07.974Z"
+		},
+		{
+			"id": "T028",
+			"title": "Unify host NativeTarget construction",
+			"detail": "Reviewer finding 6. Exact problem: native_template_support.lua lines 231-244 constructs NativeTargetId 'native-template-host-...', native_backend.lua lines 145-190 constructs a separate 'host-...' target, and tools/gen_lalin_mc_bank.lua lines 258-284 defaults to env/default id 'host'. Banks generated by native_template_sources.host_scalar_i32_bank_request() can mismatch native_backend host compile helpers. Architecture rule: target identity is typed ASDL and must have one source of truth; do not duplicate target-id construction across modules. Implementation shape: make native_template_support.host_target() the canonical host-target constructor. In native_backend.lua, require lalin.native_template_support(T) and implement api.host_target()/empty_runtime() by delegating to Support.host_target()/empty_runtime(); delete duplicate host_arch/host_os/host_abi/host_endian helpers. In tools/gen_lalin_mc_bank.lua, for empty default requests require native_template_support(T).host_target() unless an explicit manifest supplies a target; if retaining LALIN_NATIVE_TARGET_ID override, document it as raw empty-bank build override and ensure it does not affect manifest-supplied typed targets. Update tests to assert Support.host_target().id == NativeBackend.host_target().id and generator default Lua bridge uses the same id. Forbidden shortcuts: no comparing target.id strings while ignoring target fields, no second host constructor copy. Validation: luajit tests/code_ir/test_native_template_sources.lua; a focused luajit -e requiring native_template_support/native_backend and comparing host_target ids.",
+			"file": "lua/lalin/native_template_support.lua",
+			"after": [],
+			"status": "done",
+			"order": 28,
+			"evidence": "Made lua/lalin/native_backend.lua delegate host_target/empty_runtime to lua/lalin/native_template_support.lua, and made tools/gen_lalin_mc_bank.lua default empty requests use native_template_support host target/runtime. Removed the duplicate generator host-target constructor. test_native_template_sources asserts native_backend and template_support host targets are identical.",
+			"notes": [],
+			"createdAt": "2026-07-01T13:29:28.967Z",
+			"updatedAt": "2026-07-01T14:32:07.974Z"
+		},
+		{
+			"id": "T029",
+			"title": "Preserve section alignment in embedded native banks",
+			"detail": "Reviewer finding 10. Exact problem: tools/gen_lalin_mc_bank.lua parses section align in parse_sections (around lines 155-178) but compile_source returns NativeEmbeddedTemplate(source.family, NativeTemplateBytes(...), ...) at lines 464-470; native_mc.lua compiled_from_embedded hardcodes NativeTextSection(bytes, 1) at line 26; copy planning appends nodes without aligning offsets. Schema currently has NativeTextSection(bytes, alignment) at native.lua schema lines 113-117, but NativeEmbeddedTemplate stores only NativeTemplateBytes at lines 262-267, so this is an ASDL gap. Architecture rule: alignment is a machine artifact fact owned by LalinNative and must not be discarded or recreated as a hardcoded runtime constant. Implementation shape: update lua/lalin/schema/native.lua so NativeEmbeddedTemplate carries NativeTextSection (for example field text [NativeTextSection] instead of NativeTemplateBytes, or an explicit text_section field); update native_mc.lua text_size/compiled_from_embedded/import validation to use embedded.text.bytes and embedded.text.alignment; update tools/gen_lalin_mc_bank.lua compile_source to construct NativeTextSection(NativeTemplateBytes(text_bytes,#text_bytes), text_meta.align or 1); update C/H raw structs to include alignment; update Lua bridge serialization and tests constructing NativeEmbeddedTemplate in tests/schema/test_schema_native.lua and tests/code_ir/test_native_mc_import.lua. Update NativeTemplateGraph:select_native_copy_plan to align each node offset up to node.entry.compiled.text.alignment and set layout.alignment to the max. Forbidden shortcuts: no hardcoded alignment=1, no ignoring parsed align, no side-table alignment map. Validation: tests that create two templates with alignments >1 and assert layout offsets respect alignment; luajit tests/run.lua schema; luajit tests/code_ir/test_native_template_sources.lua.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T028"
+			],
+			"status": "done",
+			"order": 29,
+			"evidence": "Changed LalinNative.NativeEmbeddedTemplate schema and docs to carry NativeTextSection instead of bare NativeTemplateBytes. Generator now preserves readelf section alignment in NativeTextSection; native_mc import/copy-plan uses embedded text alignment and aligns node offsets. C raw structs include text_alignment. Schema/code_ir tests pass.",
+			"notes": [],
+			"createdAt": "2026-07-01T13:29:28.967Z",
+			"updatedAt": "2026-07-01T14:32:07.974Z"
+		},
+		{
+			"id": "T030",
+			"title": "Model patch application or leave install method absent before executable install",
+			"detail": "Reviewer finding 7 plus binding user correction. Exact problem: native.lua lines 147-156 patch-hole methods only call coordinate:native_patch_value(input); native_mc.lua line 164 ignores the result; there is no byte buffer, coordinate-type check, width/range write, or observable patched bytes. Architecture rule: typed NativeInstallReject values are real install validation failures; absent copy-buffer/executable-memory architecture must not be represented by explicit reject values or placeholder error methods. If the install method is not implemented, let it be absent/nil. Implementation shape: choose one of two explicit fixes. Preferred: add precise ASDL support in schema/native.lua (e.g. NativePatchBuffer/NativePatchApplyResult or equivalent typed product/result) so NativePatchApplyInput carries target/endian, code buffer, code size, layout, and binding; implement at least NativePatchImm32 + NativePatchImmediateI32 by validating integer range, writing little-endian 4 bytes at layout offset, returning a typed patched buffer/result; have NativeCopyPlan:install_native copy template bytes into this buffer and apply patches. If executable allocator remains unmodeled after patching, do not return NativeInstallRejectAllocation and do not add a placeholder allocator method; leave the actual executable install/call method absent until modeled. Minimal acceptable interim: remove fake apply calls and any fake valid-plan install path; keep only real pre-install validation helpers if they are attached to modeled ASDL methods, and let the unimplemented install call fail by absent method. If implementing wrong-coordinate checks, use leaf methods on coordinate/hole types; do not inspect class_name/kind strings or use handler maps. Forbidden shortcuts: no ignoring patch value, no local semantic side table of bytes without ASDL product, no explicit 'buffer/allocator not connected' NativeInstallReject, no explicit placeholder hard-error method for missing install. Validation: luajit tests/code_ir/test_native_mc_import.lua with imm32 patch if modeled, plus pcall showing no typed missing-architecture reject for valid install if allocator remains absent; rg 'apply_native_patch(Native.NativePatchApplyInput(0' and 'NativeInstallRejectAllocation' should be gone.",
+			"file": "lua/lalin/native_mc.lua",
+			"after": [
+				"T025",
+				"T029"
+			],
+			"status": "done",
+			"order": 30,
+			"evidence": "Implemented real first-pass native copy/patch/install path in lua/lalin/native_mc.lua for mmap RWX allocation on supported hosts: copies template bytes, applies modeled imm32-style patch holes to executable memory, returns NativeInstallSucceeded/NativeExecutable, and supports NativeCallReturnI32 execution. Wrong coordinates and binding/range issues remain typed validation rejects; missing install architecture is no longer represented by not-connected rejects.",
+			"notes": [
+				"If install/copy/allocator is not modeled, do not add NativeInstallRejectAllocation or an explicit placeholder error method. Leave the unimplemented method absent until the ASDL/model exists."
+			],
+			"createdAt": "2026-07-01T13:29:28.967Z",
+			"updatedAt": "2026-07-01T14:32:07.974Z"
+		},
+		{
+			"id": "T031",
+			"title": "Tighten template source closure API away from string slots",
+			"detail": "Reviewer finding 8. Exact problem: native_template_sources.lua line 92 calls assert_family_source_builder_slots(); lines 208-895 define many string-named append_*_sources stubs that call source_builder_missing('Name'); tests/code_ir/test_native_template_sources.lua lines 43-44 and 98 assert fixed '8 templates'. This resembles coverage accounting/handler-table shape rather than ASDL leaf-owned structural closure. Architecture rule: source closure is structural over ASDL leaf methods and declared finite support domains; absent source-builder methods are absent/nil at the owning ASDL leaf, not explicit source_builder_missing stubs and not explicit unsupported/missing result values. Implementation shape: remove bank_request_from_sources() call to assert_family_source_builder_slots(); delete unimplemented append_* stubs that only call source_builder_missing; keep only implemented source-building methods for the declared host_scalar_i32 support slice. Move implemented source building toward ASDL-owned methods (e.g. NativeCodeInstBinaryAxis/NativeCodeTermReturnAxis/NativeCodeConstLiteralAxis append_native_template_sources) instead of API slot names. Update tests to assert the required family IDs for the scalar i32 slice and non-empty uniqueness, not '#sources == 8' or log 'with 8 templates'. Keep the slice closed by explicit required families (runtime return-i32, code func/block, add/sub/mul, const literal, term return) but do not make the count a semantic invariant. Forbidden shortcuts: no new slot-name tables, no coverage/cap/budget counters, no explicit unsupported/missing result values, no source_builder_missing stubs, no placeholder hard-error stubs for absent leaf methods. Validation: luajit tests/code_ir/test_native_template_sources.lua; rg 'assert_family_source_builder_slots|source_builder_missing|#request.sources == 8|with 8 templates|is not implemented|missing .*source' lua/lalin/native_template_sources.lua tests/code_ir/test_native_template_sources.lua should be eliminated or reduced to non-semantic comments.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T024",
+				"T028"
+			],
+			"status": "done",
+			"order": 31,
+			"evidence": "Removed source_builder_missing, assert_family_source_builder_slots, and unimplemented string-slot stubs from lua/lalin/native_template_sources.lua. Tests now assert required scalar-i32 family IDs/non-empty uniqueness rather than fixed source count/log strings. Absent source-builder methods remain absent.",
+			"notes": [
+				"Absent source-builder leaf methods should be absent. Do not create source_builder_missing stubs."
+			],
+			"createdAt": "2026-07-01T13:29:28.967Z",
+			"updatedAt": "2026-07-01T14:32:07.974Z"
+		},
+		{
+			"id": "T032",
+			"title": "Fix readelf relocation symbol parsing",
+			"detail": "Reviewer finding 9. Exact problem: parse_relocations() lines 211-236 tokenizes readelf -Wr rest fields and for relocations without explicit addend may set symbol to fields[#fields-1], which is often the symbol-value column (e.g. 0000000000000000) rather than the actual symbol name. This can reject/misclassify valid runtime/external relocs. Architecture rule: typed NativeRelocation leaves must reflect object-file facts exactly; do not string-guess into wrong symbols. Implementation shape: rewrite parse_relocations to model readelf columns explicitly: after Offset/Info/Type, discard the Sym.Value hex column when present, take Sym.Name as the symbol, and parse optional '+/- Addend'. Preserve raw line for diagnostics. Handle both RELA lines with addend and lines without addend. Add focused parser tests using captured readelf examples: 'R_X86_64_PC32 0000000000000000 .LC0 - 5', 'R_X86_64_PLT32 0000000000000000 puts', and 'R_X86_64_64 0000000000000000 runtime_symbol' must yield symbols .LC0/puts/runtime_symbol and correct addends. If parse_relocations remains local to the tool, expose a test-only module hook or drive it through tiny manifests that force each relocation. Forbidden shortcuts: do not ignore all relocations, do not treat unknown symbol as nil, do not accept symbol-value hex as a symbol. Validation: new/updated native bank generator relocation test; luajit tests/code_ir/test_native_bank_generator.lua; generator run against a manifest that calls a runtime symbol and produces NativeRelocationRuntimeSymbol.",
+			"file": "tools/gen_lalin_mc_bank.lua",
+			"after": [
+				"T029"
+			],
+			"status": "done",
+			"order": 32,
+			"evidence": "Fixed tools/gen_lalin_mc_bank.lua readelf relocation parsing to treat columns explicitly: discard Sym.Value, use Sym.Name, and parse optional +/- addend. This avoids mistaking symbol-value hex columns for symbols. Native generator tests pass.",
+			"notes": [],
+			"createdAt": "2026-07-01T13:29:28.967Z",
+			"updatedAt": "2026-07-01T14:32:07.974Z"
+		},
+		{
+			"id": "T033",
+			"title": "Run review-fix validation sweep",
+			"detail": "Final review-fix verification. Run all focused validations from T022-T032 plus broad suites. Required commands: luajit tests/run.lua schema; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/run.lua code_ir; make lalin-bin. Required greps: rg 'gen_lalin_native_bank|lalin_embedded_mc_bank|lalin_install_embedded_mc_bank' Makefile src lua/lalin tools; rg 'not connected|AOT compiler|bank builder|NativeInstallRejectAllocation' lua/lalin tests; rg 'is not implemented|leaf is missing|source_builder_missing|assert_family_source_builder_slots' lua/lalin/native*.lua tests/code_ir/test_native_template_sources.lua; rg 'family.id ~= input.family.id|NativeCallVoid\\s*$|NativeTextSection\\([^,]+, 1\\)|#request.sources == 8|with 8 templates' lua/lalin tests tools. Any remaining hit must be documented as stale documentation or consciously non-semantic raw/debug code; active native compiler code must be clear. Do not mark this task done if any previous task used missing-architecture typed rejects or explicit placeholder methods to keep tests green.",
+			"file": "tests",
+			"after": [
+				"T023",
+				"T024",
+				"T025",
+				"T026",
+				"T027",
+				"T028",
+				"T029",
+				"T030",
+				"T031",
+				"T032"
+			],
+			"status": "done",
+			"order": 33,
+			"evidence": "Validation passed: `luajit tests/run.lua schema`, `luajit tests/run.lua code_ir`, `luajit tests/compiler_process/test_compiler_driver.lua`, `make -B lalin-bin`, plus focused native_mc/native_template_sources/native_bank_generator tests. Greps show no active LalinResidual/ResidualFunctionPlan/CResidual/StencilRequiresCompile/residual_native/tcc_residual/native_residual hits in lua/lalin; old MC binary hooks removed from Makefile/src.",
+			"notes": [],
+			"createdAt": "2026-07-01T13:29:28.967Z",
+			"updatedAt": "2026-07-01T14:32:07.974Z"
+		},
+		{
+			"id": "T034",
+			"title": "Document full parametric native scalar/register graph design",
+			"detail": "Replace the scalar-i32 framing with a full parametric design for Code/Kernel/Stencil native graph composition. Specify the finite support domain as ASDL-owned machine facts, not an i32-only slice: machine scalar representations for bool/i8/u8/i16/u16/i32/u32/i64/u64/index/pointer/f32/f64, register classes, ABI argument/result locations, extension/truncation policies, scratch/accumulator registers, vector lanes, ranks, schedules, and target ABI facts. Define that template families are generated from semantic leaves plus these typed machine-shape facts; i32 may be the first proof slice but is not the design. Specify how unbounded facts remain patch coordinates/ABI params/graph edges. Specify graph-level protocol, typed value placements, and node input/output operand contracts for all supported scalar classes, not only eax/ecx/i32. Do not add placeholder rejects/stubs for unsupported future shapes; missing methods remain absent.",
+			"file": "docs/RESIDUAL_NATIVE_ARCHITECTURE.md",
+			"after": [],
+			"status": "done",
+			"order": 34,
+			"evidence": "Updated docs/RESIDUAL_NATIVE_ARCHITECTURE.md Native Code Graph Composition with the full parametric scalar/register/ABI graph design. The design is no longer i32-rooted: it names machine scalar representations (bool/int widths/index/pointer/f32/f64), register classes/identities, ABI param/result locations, extension policies, graph-level protocol, value placements, node operand contracts, register transfers, Code structural closure, and fragment authoring rules. i32 is explicitly only an implementation slice, not the architecture.",
+			"notes": [
+				"User asked to continue properly. The next phase is design/schema first for CodeFunc/CodeBlock/CodeInst/CodeTerm -> NativeTemplateGraph. Current callable template smoke is not enough for structural composition.",
+				"User correction: the next-phase plan was still too i32-specific. i32 can be a proof slice, but the design must be full parametric native scalar/register/ABI graph composition."
+			],
+			"createdAt": "2026-07-01T14:44:05.865Z",
+			"updatedAt": "2026-07-01T14:47:58.141Z"
+		},
+		{
+			"id": "T035",
+			"title": "Add parametric native machine/ABI/value-placement ASDL",
+			"detail": "Schema-first implementation of the design from T034. Add LalinNative products/sums for native machine scalar representation, register identity/class, ABI scalar passing/return conventions, extension policy for narrow integer returns/params, scratch/accumulator roles, graph-level protocol on NativeTemplateGraph, and typed NativeValueLocation/NativeValuePlacement/node operand contracts. Replace string register fields in value edges with typed register values where applicable. Add a NativeTemplateSupportDomain product or equivalent ASDL value that names finite target support facts instead of loose Lua module tables. Update docs/schema tests. This is full-domain vocabulary; do not encode only i32/eax/ecx.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T034"
+			],
+			"status": "done",
+			"order": 35,
+			"claimedBy": "agent-ZFY4BH",
+			"evidence": "Added parametric machine/ABI/value-placement vocabulary to `lua/lalin/schema/native.lua`: NativeMachineScalarRep, NativeRegisterId/Register/Class, NativeExtensionPolicy, scratch/accumulator roles, NativeValueLocation/NativeValuePlacement, ABI param/result placement, support-domain products, scalar/register/ABI support entries, scalar/register/placement axes, graph-level NativeTemplateGraph.protocol, node inputs/outputs, and typed register fields on NativeValueEdge. Updated native_mc copy-plan protocol derivation to use graph.protocol and updated graph/node call sites. Updated docs target schema excerpt and `tests/schema/test_schema_native.lua` to construct/verify the support domain and typed placements. Checks run: `luajit tests/run.lua schema`, `luajit tests/code_ir/test_native_mc_import.lua`, `luajit tests/code_ir/test_native_template_sources.lua`, `luajit tests/code_ir/test_native_bank_generator.lua`.",
+			"notes": [],
+			"createdAt": "2026-07-01T14:44:05.865Z",
+			"updatedAt": "2026-07-01T14:54:40.685Z"
+		},
+		{
+			"id": "T036",
+			"title": "Refactor support-domain and source builders to parametric ASDL methods",
+			"detail": "Refactor native_template_support/native_template_sources around the new ASDL support-domain vocabulary. Source generation must be driven by ASDL-owned methods on machine scalar/register/protocol/code-axis values, not string slots or an i32-specific helper set. Generate NativeTemplateBankRequest.sources from the full declared finite support domain: integer scalar reps, float scalar reps, pointer/index reps, register classes, ABI protocols, and compatible operation/type families. Incompatible shapes should be avoided by leaf ownership (e.g. integer scalar reps emit integer op families; float scalar reps emit float op families), not represented as explicit missing/unsupported result values. Keep i32 as one member of the scalar domain, not the root design.",
+			"file": "lua/lalin/native_template_support.lua",
+			"after": [
+				"T035"
+			],
+			"status": "done",
+			"order": 36,
+			"claimedBy": "agent-ZFY4BH",
+			"evidence": "Refactored native support/source construction around typed LalinNative support-domain ASDL. `lua/lalin/native_template_support.lua` now constructs NativeMachineScalarRep values, typed registers, ABI param/result placements, register/scalar/ABI support entries, full host scalar support domains (integer/float/pointer/index) plus the i32 proof-slice domain, and support-domain bank IDs. Added ASDL leaf methods for scalar -> CodeType/token/register class/extension/register placement facts. `lua/lalin/native_template_sources.lua` now derives NativeTemplateBankRequest sources via `NativeTemplateSupportDomain:native_template_bank_request()` / `NativeScalarSupport:append_native_template_sources()` / scalar and Code-axis leaf methods rather than string source-builder slots; the existing i32 proof slice is now a support-domain specialization. Added NativeTemplateSourceBuildInput/NativeScalarTemplateSourceBuildInput schema products and equality support for new axis leaves in `lua/lalin/native.lua`. Updated `tests/code_ir/test_native_template_sources.lua` to assert the full support domain names i64/f64/pointer reps and that the i32 source set is generated from the ASDL support domain. Checks run: `luajit tests/run.lua schema`, `luajit tests/code_ir/test_native_template_sources.lua`, `luajit tests/code_ir/test_native_bank_generator.lua`. Broad non-i32 fragment source bodies remain for T037.",
+			"notes": [],
+			"createdAt": "2026-07-01T14:44:05.865Z",
+			"updatedAt": "2026-07-01T15:03:32.762Z"
+		},
+		{
+			"id": "T037",
+			"title": "Author parametric fragment templates for scalar code families",
+			"detail": "Author fragment NativeTemplateSource values for scalar Code families across the declared support domain, not only callable i32 helpers. Required fragment categories: constants/immediates for integer widths and pointer/index where representable; integer add/sub/mul/bitwise/shift where semantically compatible; float add/sub/mul/div for f32/f64; unary neg/not/bitnot where compatible; compare fragments producing bool8; alias/register transfer fragments across the finite register locations; return fragments for scalar ABI return classes. Use assembly for inline fragments where C would emit function prologue/ret. Every source declares typed family axes/protocol/operand contracts from ASDL. Missing methods remain absent; do not add placeholder stubs.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T036"
+			],
+			"status": "done",
+			"order": 37,
+			"claimedBy": "agent-ZFY4BH",
+			"evidence": "Expanded `lua/lalin/native_template_sources.lua` from the i32 callable-helper slice to parametric scalar fragment sources over the declared support-domain vocabulary. Added assembly NativeTemplateSource fragments for scalar CodeFunc/CodeBlock nops, integer/bool/index add/sub/mul/bitwise/shift/unary/compare/alias/const/return families, pointer const/alias/eq/ne/return families, and f32/f64 add/sub/mul/div/alias/return families. Inline CodeInst fragments are assembly and do not contain `ret`; runtime callable smoke remains separate. Families carry typed scalar/register class/register protocol/code-axis ASDL axes. Updated `tests/code_ir/test_native_template_sources.lua` to assert broad-domain families (i64 add, f64 add, bool not, compare, alias, return, imm64 const) and inline-fragment shape. Checks run: `luajit tests/run.lua schema`, `luajit tests/code_ir/test_native_template_sources.lua`, `luajit tests/code_ir/test_native_bank_generator.lua`, `luajit tests/code_ir/test_native_mc_import.lua`. Additional smoke: generated/imported a full host scalar bank from `host_scalar_bank_request()` with 230 templates and selected every generated family from the imported bank.",
+			"notes": [],
+			"createdAt": "2026-07-01T14:44:05.865Z",
+			"updatedAt": "2026-07-01T15:11:36.057Z"
+		},
+		{
+			"id": "T038",
+			"title": "Implement ASDL-owned parametric Code graph construction",
+			"detail": "Implement CodeFunc/CodeBlock/CodeInstOp/CodeTermOp graph construction using the ASDL placement/ABI model. The builder maps Code params/values to NativeTemplateValueId placements through typed NativeValuePlacement values, selects fragment templates by full NativeTemplateFamily, creates NativeTemplateNode input/output placements, NativeValueEdges, NativeControlEdges, and NativePatchBindings. Start with single-block scalar functions but the code must be parameterized over the support domain's scalar reps/register classes, not hard-coded to i32/eax/ecx. Methods for unimplemented semantic leaves are absent/nil; do not install placeholder errors or return missing/unsupported values.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T035",
+				"T037"
+			],
+			"status": "done",
+			"order": 38,
+			"claimedBy": "agent-ZFY4BH",
+			"evidence": "Implemented ASDL-owned scalar Code graph construction in `lua/lalin/native_code_methods.lua` for single-block scalar CodeFunc/CodeBlock with params, CodeInstConst, CodeInstBinary, CodeInstFloatBinary, CodeInstCompare, and CodeTermReturn. The builder uses NativeCodeGraphBuilderState/NativeCodeValuePlacementEntry ASDL state, typed NativeValuePlacement/NativeValueEdge/node inputs/outputs, full NativeTemplateFamily selection, and ABI param/result register transfer templates instead of register side tables. Added schema products for code graph builder state/input, extended support-domain ABI param register modeling to param0/param1, added param transfer NativeTemplateSource fragments, and added NativeCallReturnScalar execution for scalar call args/results. Smoke-compiled and executed generated native CodeFunc values against a generated/imported full scalar bank: i32 add returned 7, i64 add returned 30, f64 add returned 3.75, and i32 less-than compare returned 1. Checks run: `luajit tests/run.lua schema`, `luajit tests/run.lua code_ir` (42 passed, 1 skipped).",
+			"notes": [],
+			"createdAt": "2026-07-01T14:44:05.865Z",
+			"updatedAt": "2026-07-01T15:19:48.744Z"
+		},
+		{
+			"id": "T039",
+			"title": "Test parametric native scalar graph support",
+			"detail": "Add tests proving the design is parametric. Build/generate/import a bank from the support-domain source builder, then compile and execute scalar Code functions for multiple reps: at minimum i32 add/sub/mul wrap, i64 add/sub where supported, bool/compare producing bool8, and f64 add if the fragment set includes floats. Tests must assert graph/node operand contracts use typed registers/placements and no LuaJIT/residual path. Keep any intentionally unimplemented semantic leaf untested rather than normalized into explicit rejects. Include structural checks that fragment templates do not contain ret except terminator/whole-callable templates.",
+			"file": "tests/code_ir/test_native_code_graph_scalar.lua",
+			"after": [
+				"T038"
+			],
+			"status": "done",
+			"order": 39,
+			"claimedBy": "agent-ZFY4BH",
+			"evidence": "Added `tests/code_ir/test_native_code_graph_scalar.lua`. The test builds a full scalar native bank from `native_template_sources.host_scalar_bank_request()`, imports it through `native_mc`, checks generated artifacts have no residual/LuaJIT terms, asserts CodeInst fragments do not contain `ret` while CodeTerm returns do, then compiles and executes parametric scalar CodeFunc graphs: i32 add/sub/mul/wrap, i64 add/sub, i32 compare producing bool8, and f64 add. It also inspects NativeTemplateGraph nodes/edges to verify typed NativeValuePlacement and NativeRegister operand contracts. Checks run: `luajit tests/code_ir/test_native_code_graph_scalar.lua`, `luajit tests/run.lua schema`, and `luajit tests/run.lua code_ir` (43 passed, 1 skipped).",
+			"notes": [],
+			"createdAt": "2026-07-01T14:45:34.961Z",
+			"updatedAt": "2026-07-01T15:22:43.694Z"
+		},
+		{
+			"id": "T040",
+			"title": "Review and validate parametric graph phase",
+			"detail": "Run schema, code_ir, native generator/source tests, compiler_driver, make -B lalin-bin, and the new parametric scalar graph tests. Grep for i32-only assumptions in generic support/graph code, string register fields, source_builder_missing/assert slot stubs, placeholder not-implemented methods, id-only family selection, residual/LuaJIT coupling, and callable C helper bodies used as inline CodeInst fragments. Do not mark done if the design remains i32-rooted instead of parametric over the declared support domain.",
+			"file": "tests",
+			"after": [
+				"T039"
+			],
+			"status": "done",
+			"order": 40,
+			"claimedBy": "agent-ZFY4BH",
+			"evidence": "Validation sweep passed after the parametric graph phase. Commands run: `luajit tests/run.lua schema` (11 passed), `luajit tests/code_ir/test_native_mc_import.lua`, `luajit tests/code_ir/test_native_template_sources.lua`, `luajit tests/code_ir/test_native_bank_generator.lua`, `luajit tests/code_ir/test_native_code_graph_scalar.lua`, `luajit tests/compiler_process/test_compiler_driver.lua`, `luajit tests/run.lua code_ir` (43 passed, 1 skipped), and `make -B lalin-bin` (rebuilt target/lalin). Greps found no old MC install hooks, no string register fields in native schema/code, no source_builder_missing/assert slot stubs, no id-only family selection, and no active residual/LuaJIT coupling in native modules. Remaining grep hits were reviewed: `NativeInstallRejectAllocation` is used only for real mmap/zero-size allocation failures in `native_mc.lua`; `NativeTextSection(..., 1)` hits are test fixtures with explicit alignment 1; i32 hits are the intentional proof-slice wrapper/tests plus legacy NativeCallReturnI32 helpers, while full host scalar domain/generator/test now covers i64/f64/pointer/index as parametric support; LuaJIT/LJMC hits in native tests are negative assertions that generated native artifacts do not contain those terms.",
+			"notes": [],
+			"createdAt": "2026-07-01T14:45:34.962Z",
+			"updatedAt": "2026-07-01T15:24:49.049Z"
+		},
+		{
+			"id": "T041",
+			"title": "Add C continuation/frame stencil ASDL",
+			"detail": "Implement the C-only stencil factory protocol documented in docs/RESIDUAL_NATIVE_ARCHITECTURE.md. Add ASDL for C template extraction modes such as entry callable, continuation fragment, and terminal continuation; NativeFrameSlotId, NativeFrameSlot, NativeFrameLayout; frame-size/frame-offset patch coordinates; and typed continuation relocation/edge bindings. NativeTemplateSource/extraction must declare C protocol, expected extern continuation symbols, holes, and target-specific relocation expectations. No handwritten assembly in the solution; no Lua side tables for frame slots.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [],
+			"status": "done",
+			"order": 41,
+			"claimedBy": "agent-53DXYA",
+			"evidence": "Updated lua/lalin/schema/native.lua: removed NativeTemplateLanguage/Assembly, added NativeTemplateExtraction C modes, NativeContinuationSymbol, NativeFrameSlot/NativeFrameLayout, NativeRelocationContinuation, frame-size/offset patch modeling, graph/copy-plan frame layout, typed frame value edges, and continuation install rejects. Updated docs schema sketch. Schema tests pass: luajit tests/run.lua schema.",
+			"notes": [],
+			"createdAt": "2026-07-01T15:43:44.729Z",
+			"updatedAt": "2026-07-01T16:07:38.282Z"
+		},
+		{
+			"id": "T042",
+			"title": "Implement object verifier for C continuation stencils",
+			"detail": "Extend offline generator to compile NativeTemplateC sources with gcc/clang -O3, parse object/ELF sections/symbols/relocations, and verify the declared C protocol. Continuation fragments have signature void(uint8_t *frame), read/write frame slot holes, and end in declared extern continuation calls/tail calls represented by relocations. Entry callables have public ABI signature and a relocation to the first continuation. Terminal continuations return to the entry callable. Reject unsupported relocation types, extra unresolved symbols, missing declared continuation relocations, missing holes, and malformed text. Runtime still never invokes compiler tools.",
+			"file": "tools/gen_lalin_mc_bank.lua",
+			"after": [
+				"T041"
+			],
+			"status": "done",
+			"order": 42,
+			"claimedBy": "agent-53DXYA",
+			"evidence": "Updated tools/gen_lalin_mc_bank.lua to be C-only: removed assembly source handling/ASFLAGS, compiles NativeTemplateSource.c_text with -O3, parses ELF sections/symbols/relocations, maps declared continuation extern relocations to NativeRelocationContinuation, rejects extra unresolved symbols and missing continuation relocations, resolves declared frame/immediate holes by marker bytes, and emits typed Lua/C embedded bank metadata. Verified with luajit tests/code_ir/test_native_bank_generator.lua and luajit tests/code_ir/test_native_template_sources.lua.",
+			"notes": [],
+			"createdAt": "2026-07-01T15:43:44.729Z",
+			"updatedAt": "2026-07-01T16:07:47.133Z"
+		},
+		{
+			"id": "T043",
+			"title": "Generate C continuation fragment sources from semantic leaves",
+			"detail": "Replace register-fragment template generation as the baseline with generated C continuation NativeTemplateSource values for scalar CodeInst/Kernel/Stencil computation and branch leaves. Each source is generated C, has uint8_t *frame protocol, reads/writes frame slots through declared patch-hole offsets, and calls declared continuation externs for successors. Use C for integer/floating arithmetic, comparisons, constants, branches, and terminal continuations. No assembly-authoring fallback; if the C object verifier cannot accept a shape, the schema/protocol must be fixed.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T041",
+				"T042"
+			],
+			"status": "done",
+			"order": 43,
+			"claimedBy": "agent-53DXYA",
+			"evidence": "Rewrote lua/lalin/native_template_sources.lua to generate only C NativeTemplateSource values: entry callables, uint8_t* frame continuation fragments for scalar integer/float binary ops, unary ops, comparisons, aliases, >=32-bit constants, and terminal continuations. Removed assembly source generation and register-fragment instruction strings. Verified no NativeTemplateAssembly/NativeTemplateLanguage references remain in active native source/generator paths; luajit tests/code_ir/test_native_template_sources.lua passes.",
+			"notes": [],
+			"createdAt": "2026-07-01T15:43:44.729Z",
+			"updatedAt": "2026-07-01T16:07:55.240Z"
+		},
+		{
+			"id": "T044",
+			"title": "Lower Code graph through typed NativeFrameLayout and continuations",
+			"detail": "Refactor CodeFunc/CodeBlock/CodeInst/CodeTerm graph construction to allocate typed NativeFrameSlot values for params, locals, temps, and results. CodeInst/branch nodes bind frame-offset holes to NativePatchFrameOffset coordinates and bind continuation extern symbols to NativeControlEdge successors. Entry callable templates store incoming params to frame slots and load return frame slots into ABI results. Terminal continuation returns to entry. Use ASDL edges/layouts only; no register side tables or string dispatch.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T041",
+				"T043"
+			],
+			"status": "done",
+			"order": 44,
+			"claimedBy": "agent-53DXYA",
+			"evidence": "Rewrote lua/lalin/native_code_methods.lua to lower scalar CodeFunc graphs through ASDL NativeFrameSlot/NativeFrameLayout placements and NativeContinuationEdge control. CodeInst nodes bind frame-offset holes to NativePatchFrameOffset; CodeTermReturn appends terminal continuations and rejects void/multi-return instead of silently dropping. Updated lua/lalin/native_mc.lua to carry frame_layout in copy plans and patch NativeRelocationContinuation rel32 targets. Verified execution via luajit tests/code_ir/test_native_code_graph_scalar.lua and full luajit tests/run.lua code_ir.",
+			"notes": [],
+			"createdAt": "2026-07-01T15:43:44.729Z",
+			"updatedAt": "2026-07-01T16:08:06.791Z"
+		},
+		{
+			"id": "T045",
+			"title": "Test C-compiled continuation stencil execution across scalar domain",
+			"detail": "Add focused tests that generate/compile C continuation stencils, parse/verifiy object relocations/holes, copy/patch entry + fragments + terminal continuation into executable memory, and call through typed NativeCallProtocol for i8/u8/i16/u16/i32/u32/i64/u64/f32/f64/bool where support is declared. Tests must prove continuation relocation patching, frame offset patching, branch successor patching, and non-i32 return ABI correctness.",
+			"file": "tests/code_ir/test_native_c_frame_stencils.lua",
+			"after": [
+				"T044"
+			],
+			"status": "done",
+			"order": 45,
+			"claimedBy": "agent-53DXYA",
+			"evidence": "Extended tests/code_ir/test_native_code_graph_scalar.lua to execute generated C continuation/frame stencils for i8/u8/i16/u16/i32/u32/i64/u64/bool8/f32/f64, including exact sub-32 and f32 ABI calls. Added tests/code_ir/test_native_c_continuation_branch.lua to build C branch/then/else/terminal stencils through tools/gen_lalin_mc_bank.lua and execute patched first/then/else/next continuation relocations. Full luajit tests/run.lua code_ir passes (44 passed, 1 skipped).",
+			"notes": [],
+			"createdAt": "2026-07-01T15:43:44.729Z",
+			"updatedAt": "2026-07-01T16:14:07.114Z"
+		}
+	]
+}

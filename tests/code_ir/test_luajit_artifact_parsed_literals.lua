@@ -58,7 +58,7 @@ return {
 ]=]
 
 local parsed = assert(lalin.loadstring(source, '@test_luajit_artifact_parsed_literals.lln'))()
-local loaded = lalin.compile('ParsedLiterals', parsed, { residual = 'bc' })
+local loaded = lalin.compile_luajit('ParsedLiterals', parsed, { bytecode = true })
 
 assert(loaded.int_lit() == 42, 'parsed integer literal')
 assert(loaded.float_lit() == 3.5, 'parsed float literal')

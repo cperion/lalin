@@ -22,7 +22,7 @@ local CodeGraph = require("lalin.code_graph")(T)
 local CodeFlowFacts = require("lalin.code_flow_facts")(T)
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
 local Backend = require("lalin.luajit_backend")(T)
-local StencilBinary = require("tests.code_ir.residual_mc_helper")
+local StencilBinary = require("tests.code_ir.bytecode_stencil_helper")
 
 local origin = Code.CodeOriginGenerated("test_luajit_lower_stencil_extended")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)

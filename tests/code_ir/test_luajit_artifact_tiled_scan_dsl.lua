@@ -6,8 +6,8 @@ package.path = table.concat({
     package.path,
 }, ';')
 
-local ffi = require('ffi')
 local lalin = require('lalin')
+local LowerPlan = require('tests.code_ir.luajit_lower_plan_helper')
 
 local source = [=[
 return unit. NativeTiledScanDSL {
@@ -33,27 +33,13 @@ return unit. NativeTiledScanDSL {
 
 local session = lalin.use { scope = 'env' }
 local decl = assert(session:loadstring(source, 'test_luajit_artifact_tiled_scan_dsl.lua'))()
-local plan = lalin.plan_luajit_artifact(decl, {
+local plan = LowerPlan.plan(decl, {
     name = 'NativeTiledScanDSL',
-    stem = 'test_luajit_artifact_tiled_scan_dsl',
-})
-local bank = assert(plan.backend.build_mc_bank(plan.artifacts, { stem = 'test_luajit_artifact_tiled_scan_dsl' }))
-local artifact = lalin.emit_luajit_plan_artifact(plan, {
-    path = 'target/test_artifacts/test_luajit_artifact_tiled_scan_dsl.lua',
-    name = 'NativeTiledScanDSL',
-    stem = 'test_luajit_artifact_tiled_scan_dsl',
-    mc_bank = bank,
 })
 
-assert(#artifact.artifacts == 1, 'tiled_nd scan source should select one native stencil artifact')
-local desc = artifact.artifacts[1].instance.descriptor
+assert(#plan.artifacts == 1, 'tiled_nd scan source should select one stencil artifact during lowering')
+local desc = plan.artifacts[1].instance.descriptor
 assert(tostring(require('lalin.asdl').classof(desc.producer.shape)):match('StencilProduceTiledND'), 'source tiled scan should preserve TiledND producer')
 assert(tostring(require('lalin.asdl').classof(desc.sink)):match('StencilSinkScan'), 'source tiled scan should preserve Scan sink')
-
-local loaded = assert(loadfile(artifact.path))()
-local src = ffi.new('int32_t[6]', { 1, 2, 3, 4, 5, 6 })
-local dst = ffi.new('int32_t[6]')
-loaded.tiled_scan_rows(dst, src, 2, 3, 6)
-assert(dst[0] == 1 and dst[1] == 3 and dst[2] == 6 and dst[3] == 4 and dst[4] == 9 and dst[5] == 15, 'native lln.tiled_nd axis scan output')
 
 io.write('test_luajit_artifact_tiled_scan_dsl: ok\n')

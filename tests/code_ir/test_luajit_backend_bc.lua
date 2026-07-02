@@ -71,24 +71,24 @@ local contracts = Code.CodeContractFactSet(module.id, {
 
 local result, err, src = Backend.compile_module(module, {
     contracts = contracts,
-    residual = "bc",
+    bytecode = true,
     chunk_name = "test_luajit_backend_bc",
 })
 assert(result ~= nil, tostring(err) .. "\n" .. tostring(src))
 assert(#result.artifacts == 1, "expected one selected stencil artifact")
 assert(result.artifacts[1].provider == Stencil.StencilProviderLuaTrace, "expected BC stencil provider")
 assert(result.artifacts[1].fingerprint.text:match("^stencil%-artifact%-v1:"), "BC artifact should carry a build fingerprint")
-assert(result.realization.kind == "BCStencilBankRealization", "expected BC BC residual realization")
+assert(result.realization.kind == "BCStencilBankRealization", "expected LuaJIT bytecode stencil realization")
 assert(result.realization.bc_bank ~= nil, "expected LuaTrace BC bank")
 local artifact_source, artifact_err = Backend.emit_lua_artifact(result.lj_module, result.artifacts, {
-    residual = "bc",
+    bytecode = true,
     chunk_name = "test_luajit_backend_bc_artifact",
 })
 assert(artifact_source ~= nil, tostring(artifact_err))
-assert(artifact_source:match("LuaTrace BC copy%+compile residual artifact"), "expected LuaTrace BC residual artifact header")
+assert(artifact_source:match("LuaJIT bytecode artifact"), "expected LuaJIT bytecode artifact header")
 assert(artifact_source:match("__ml_load_bc"), "expected embedded bytecode loader")
 assert(not artifact_source:match("local function ml_stencil_reduce_array_i32_add_to_i32_s1"), "bytecode artifact should not embed LuaTrace source function")
-assert(not artifact_source:match("__ml_install"), "LuaTrace artifact must not install MC residual stencils")
+assert(not artifact_source:match("__ml_install"), "LuaTrace artifact must not install native stencils")
 
 local count = 1024
 local arr = ffi.new("int32_t[?]", count)
@@ -103,16 +103,16 @@ local default_result, default_err, default_src = Backend.compile_module(module, 
     contracts = contracts,
     chunk_name = "test_luajit_backend_bc_default_mc",
 })
-assert(default_result == nil, "default MC without a bank should fail instead of falling back to BC")
-assert(tostring(default_err):match("embedded or supplied MC bank"), "default missing-bank failure should be explicit")
-assert(default_src == nil, "default missing-bank failure should not emit BC source")
+assert(default_result == nil, "LuaJIT backend without explicit bytecode should not fall back to BC")
+assert(tostring(default_err):match("explicit LuaJIT bytecode"), "default non-bytecode failure should be explicit")
+assert(default_src == nil, "default non-bytecode failure should not emit BC source")
 
 local strict_result, strict_err = Backend.compile_module(module, {
     contracts = contracts,
-    chunk_name = "test_luajit_backend_bc_strict_missing_mc_bank",
+    chunk_name = "test_luajit_backend_bc_strict_non_bytecode",
 })
-assert(strict_result == nil, "MC without a bank should fail")
-assert(tostring(strict_err):match("embedded or supplied MC bank"), "strict missing-bank failure should be explicit")
+assert(strict_result == nil, "LuaJIT backend without bytecode should fail")
+assert(tostring(strict_err):match("explicit LuaJIT bytecode"), "strict non-bytecode failure should be explicit")
 
 local loader = loadstring or load
 local artifact_chunk, load_err = loader(artifact_source, "@test_luajit_backend_bc_artifact")
@@ -146,12 +146,11 @@ return fn. sum_i32 { xs [ptr [i32]], n [i32] } [i32] {
 
 local dsl_artifact = lalin.emit_luajit_artifact(dsl_sum, {
     name = "test_luajit_backend_bc_dsl_artifact",
-    residual = "bc",
 })
-assert(dsl_artifact.source:match("LuaTrace BC copy%+compile residual artifact"), "facade should emit LuaTrace BC residual artifact")
+assert(dsl_artifact.source:match("LuaJIT bytecode artifact"), "facade should emit LuaJIT bytecode artifact")
 assert(dsl_artifact.bc_bank ~= nil, "facade should expose LuaTrace BC bank")
 assert(not dsl_artifact.source:match("local function ml_stencil_reduce_array_i32_add_to_i32_s1"), "facade bytecode artifact should not emit LuaTrace source")
-assert(not dsl_artifact.source:match("__ml_install"), "facade LuaTrace artifact must not build/install an MC bank")
+assert(not dsl_artifact.source:match("__ml_install"), "facade LuaTrace artifact must not build/install native stencils")
 local dsl_chunk, dsl_load_err = loader(dsl_artifact.source, "@test_luajit_backend_bc_dsl_artifact")
 assert(dsl_chunk ~= nil, tostring(dsl_load_err) .. "\n" .. dsl_artifact.source)
 local dsl_module = dsl_chunk()

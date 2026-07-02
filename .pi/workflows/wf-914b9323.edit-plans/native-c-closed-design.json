@@ -1,0 +1,589 @@
+{
+	"version": 1,
+	"workflowId": "wf-914b9323",
+	"planId": "native-c-closed-design",
+	"revision": 1,
+	"nextId": 1,
+	"createdAt": "2026-07-01T21:02:14.365Z",
+	"updatedAt": "2026-07-01T21:02:14.365Z",
+	"tasks": [
+		{
+			"id": "T001",
+			"title": "Extend native schema for closed design",
+			"detail": "At schema/native.lua lines 1-1065, add missing closed-design ASDL: NativeAbiProjection/AbiValue/AbiResult/AbiParam products and leaves; exact NativeCallArg leaves; frame slot role/layout/support-domain stack-limit facts; constant-pool entries/layout/bindings/relocation; native object file/section/symbol/relocation parse result/reject facts; runtime symbol address/protocol facts; call-target binding facts; update NativeTemplateBankRequest/Bank/EmbeddedBank to carry NativeTemplateSupportDomain; update NativeTemplateSource extraction fields for frame-size hole/alignment; update NativeCopyPlan/Executable to carry constant pool and ABI protocol. Preserve no NativeTemplateAssembly, residual, generic table/map/any, or unsupported placeholder values.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [],
+			"status": "todo",
+			"order": 1,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T002",
+			"title": "Cover new native schema vocabulary",
+			"detail": "Update schema native test to construct the new ABI projection, exact call args, frame roles, constant-pool layout, object parse products, runtime symbol address/protocol, support domain on bank, and copy-plan/executable fields. Remove assumptions that NativeFrameSlot has only id/scalar/offset/size/alignment or that runtime symbols use c_signature strings.",
+			"file": "tests/schema/test_schema_native.lua",
+			"after": [
+				"T001"
+			],
+			"status": "todo",
+			"order": 2,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T003",
+			"title": "Implement native ABI classification",
+			"detail": "Create a new bind-context module. Install CodeType leaf methods selecting NativeAbiValue/Result projections for bool/int/index/pointer/codeptr/imported func ptr, f32/f64, slice/view/bytespan/closure descriptors, arrays/vectors/named/imported-C aggregates as by-ref, and CodeTyVoid invalid except void result. Install CodeSig:select_native_abi_projection(target/support) enforcing zero-or-one result and no CodeTyVoid params/results. Install CodeCallTarget leaf methods selecting direct/extern/indirect/closure call target ABI projections. No helper may dispatch on class/kind strings; leaf methods own classification.",
+			"file": "lua/lalin/native_abi.lua",
+			"after": [
+				"T001"
+			],
+			"status": "todo",
+			"order": 3,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T004",
+			"title": "Implement deterministic native frame layout",
+			"detail": "Create a new bind-context module implementing the closed layout algorithm: allocate ABI params, hidden sret/result pointer, canonical result slot, block params in reverse-postorder block order, locals/addressed storage, instruction temps, kernel/stencil loop/effect state, and call scratch slots. Use NativeFrameSlotRole leaves and NativeFrameLayout ASDL only; no Lua side maps. Enforce size/alignment via CodeType/NativeMachineScalarRep leaf methods, final target alignment, and NativeFrameStackLimit from support domain; frame > stack limit hard-errors until typed heap-frame protocol exists.",
+			"file": "lua/lalin/native_frame.lua",
+			"after": [
+				"T001",
+				"T003"
+			],
+			"status": "todo",
+			"order": 4,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T005",
+			"title": "Implement internal native object parser",
+			"detail": "Create a new bind-context module. Parse ELF64 little-endian relocatable object bytes directly into LalinNative object ASDL: file format, target, sections with flags/offset/size/alignment/raw bytes, symbols with binding/type/section/value/size, relocations with typed x64 kinds PC32/PLT32/ABS64 or typed unsupported kind. Implement NativeObjectBytes:parse_native_object(input) returning typed parse result/rejects. Do not shell to readelf/objdump or return Lua parse tables as semantic results.",
+			"file": "lua/lalin/native_object.lua",
+			"after": [
+				"T001"
+			],
+			"status": "todo",
+			"order": 5,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T006",
+			"title": "Update native artifact methods for ABI and constants",
+			"detail": "Amend native.lua lines 1-564. Require native_abi/native_frame as needed. Replace scalar-only call inference with NativeCallCodeSig and NativeAbiProjection-driven FFI call methods; exact f32/sub-32 signedness/extension/sret/byref args must use typed NativeCallArg leaves. Add family equality for all new axis/protocol/value leaves used by Code/Kernel/Stencil. Add constant-pool patch coordinate writers and remove any normal-result representation of missing architecture.",
+			"file": "lua/lalin/native.lua",
+			"after": [
+				"T001",
+				"T003",
+				"T004"
+			],
+			"status": "todo",
+			"order": 6,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T007",
+			"title": "Install constant pools and runtime symbols",
+			"detail": "Amend native_mc.lua lines 1-340. Carry bank.support through import. Layout code nodes with text alignment plus aligned constant-pool bytes. Copy code and constant-pool bytes into one executable allocation. Apply NativeRelocationConstantPool, NativeRelocationContinuation, local rel32/abs64, and NativeRelocationRuntimeSymbol using typed runtime symbol addresses/protocols. Validate missing/duplicate bindings, unsupported relocations, missing continuation targets, constant-pool range/alignment, and runtime address absence as NativeInstallReject leaves.",
+			"file": "lua/lalin/native_mc.lua",
+			"after": [
+				"T001",
+				"T004",
+				"T006"
+			],
+			"status": "todo",
+			"order": 7,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T008",
+			"title": "Update support-domain helpers",
+			"detail": "Amend native_template_support.lua lines 1-796. Add support-domain fields and constructors for stack frame limit, supported ABI projections/call protocols, scalar layout facts, runtime symbol declarations with typed addresses, and target-specific x64 SysV frame/call alignment. Remove param0/param1-only ABI convention helpers as the source of truth; keep only projection builders that call CodeSig/CodeType leaf methods. Ensure generated family axes use typed ABI projection/call protocol facts, not family-id strings or register-fragment baseline assumptions.",
+			"file": "lua/lalin/native_template_support.lua",
+			"after": [
+				"T001",
+				"T003",
+				"T004"
+			],
+			"status": "todo",
+			"order": 8,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T009",
+			"title": "Generate ABI entry and return C stencils",
+			"detail": "Refactor native_template_sources.lua lines 1-718. Remove fixed FRAME_PARAM0_OFFSET/FRAME_PARAM1_OFFSET/FRAME_RESULT_OFFSET/FRAME_BYTES. Add generated C frame helpers using __builtin_memcpy when needed. Entry callable sources must be generated from NativeAbiProjection: exact param list, hidden sret pointer when needed, alloca frame with NativePatchFrameSize hole, param/result frame-offset holes, and first-continuation relocation. Add void and scalar/sret terminal return sources. Require -fno-strict-aliasing-compatible C; no assembly source.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T001",
+				"T003",
+				"T004",
+				"T008"
+			],
+			"status": "todo",
+			"order": 9,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T010",
+			"title": "Generate constant-pool literal sources",
+			"detail": "In native_template_sources.lua, replace scalar literal marker immediates beyond verifier-proven offset holes with constant-pool protocol. Add sources for sub-width ints, f32/f64, pointers/nulls, and aggregate bytes that reference declared constant-pool extern symbols/relocations. Generate NativeConstantPoolEntry declarations and NativePatchConstantPoolEntry coordinates; keep frame offsets as marker holes only when unique-marker verifier can prove them.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T001",
+				"T007",
+				"T009"
+			],
+			"status": "todo",
+			"order": 10,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T011",
+			"title": "Generate Code control C stencils",
+			"detail": "Add C source-builder methods for NativeCodeTermJumpAxis, BranchAxis, SwitchAxis, VariantSwitchAxis, TrapAxis, and UnreachableAxis. Jump fragments call declared successor continuation after explicit edge-copy nodes. Branch fragments read bool frame slot and call then/else continuation symbols. Switch/variant-switch fragments declare one continuation per case plus default. Trap fragments call a typed runtime trap symbol then follow terminal unreachable protocol. No destination block arg count in family axes.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T001",
+				"T009"
+			],
+			"status": "todo",
+			"order": 11,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T012",
+			"title": "Generate Code value and memory C stencils",
+			"detail": "Add source-builder methods for missing NativeCodeInstAxis leaves: Unary, Cast, Select, PtrOffset, Load, Store, Aggregate, Array, View/Slice/ByteSpan make/data/len/stride, VariantCtor/Tag/Payload. Use frame slots/descriptors, field-offset/stride/frame-offset patch coordinates, and runtime ABI params where dynamic. Generate valid C under -O3 -fno-strict-aliasing; no unaligned typed access without memcpy helper.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T001",
+				"T009",
+				"T010"
+			],
+			"status": "todo",
+			"order": 12,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T013",
+			"title": "Generate Code call and atomic C stencils",
+			"detail": "Add source-builder methods for NativeCodeInstCallAxis, AtomicLoad/Store/Rmw/Cas/Fence. Calls must use NativeAbiProjection for argument/result frame slots and declared call/runtime relocations; extern calls use NativeRuntimeSymbol, direct internal calls use typed native call-target binding, indirect/closure calls load function/env slots. Atomics use C11/GCC builtins only when represented by typed axes and runtime support; otherwise absent leaf method/hard error at owner.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T001",
+				"T003",
+				"T009",
+				"T012"
+			],
+			"status": "todo",
+			"order": 13,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T014",
+			"title": "Replace readelf generator path",
+			"detail": "Amend generator lines 1-852. Remove parse_sections/parse_symbols/parse_relocations and READELF usage. After offline GCC/clang compile, read object bytes and call native_object parser + extraction verifier. Add -fno-strict-aliasing to default CFLAGS. Emit Lua bridge with bank.support and constant-pool/object-derived ASDL. Keep C output explicitly raw/debug only. No readelf/objdump/TCC/runtime compiler invocation remains in runtime or generator parser path.",
+			"file": "tools/gen_lalin_mc_bank.lua",
+			"after": [
+				"T001",
+				"T005",
+				"T009",
+				"T010",
+				"T011",
+				"T012",
+				"T013"
+			],
+			"status": "todo",
+			"order": 14,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T015",
+			"title": "Verify extraction policies by leaf",
+			"detail": "In native_object.lua, implement NativeTemplateExtraction leaf-owned verification: StandaloneCallable verifies public entry only; EntryCallable verifies entry symbol, frame-size marker hole, first-continuation relocation, and ABI-compatible symbol; ContinuationFragment verifies all declared successors and no undeclared unresolved symbols; TerminalContinuation verifies no undeclared successor relocation. Map allowed x64 relocations to NativeRelocation leaves; reject missing entry/empty text/extra symbol/unsupported relocation/missing or ambiguous hole/alignment not represented.",
+			"file": "lua/lalin/native_object.lua",
+			"after": [
+				"T005",
+				"T014"
+			],
+			"status": "todo",
+			"order": 15,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T016",
+			"title": "Refactor Code graph entry lowering",
+			"detail": "Amend native_code_methods.lua lines 1-387. Require native_abi/native_frame. Replace single-function/at-least-one-param/fixed-first-param logic with CodeSig ABI projection and NativeFrameLayout from native_frame. CodeModule must lower each exported function or hard-error through explicit subject scope if multi-function executable entry is not modeled. CodeFunc selects entry family by NativeCallCodeSig/ABI projection, not scalar tokens; graph.protocol must be NativeCallCodeSig.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T003",
+				"T004",
+				"T006",
+				"T009",
+				"T014"
+			],
+			"status": "todo",
+			"order": 16,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T017",
+			"title": "Lower Code control flow graph",
+			"detail": "Implement CodeBlock/CodeTermJump/Branch/Switch/VariantSwitch/Return/Trap/Unreachable lowering. Build block-entry continuation nodes for all blocks, allocate block-param frame slots in RPO order, emit explicit edge-copy chain nodes with typed parallel-copy temp slots where needed, emit continuation edges for jumps/branches/switch/default/backedges, and derive graph exits from terminal returns/traps. Return lowering supports void and one result/sret; >1 remains invalid before backend codegen.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T011",
+				"T016"
+			],
+			"status": "todo",
+			"order": 17,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T018",
+			"title": "Lower Code values, memory, calls, atomics",
+			"detail": "Implement concrete leaf methods for CodeInstAlias, Unary, Cast, Select, PtrOffset, Load, Store, Aggregate, Array, View/Slice/ByteSpan, Closure, VariantCtor/Tag/Payload, Call, AtomicLoad/Store/Rmw/Cas/Fence, plus CodePlace and CodeConst leaves. Use ABI/frame/constant-pool projections and source families from T012/T013. No class dispatch, handler tables, nil success, or hidden maps; placements are NativeCodeValuePlacementEntry ASDL values.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T012",
+				"T013",
+				"T017"
+			],
+			"status": "todo",
+			"order": 18,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T019",
+			"title": "Add kernel template sources",
+			"detail": "Add NativeKernelAxis source-builder methods for KernelDomainFlow, KernelExprValue/Algebra/LaneLoad/KernelValue, KernelEffectStore/Scan/Partition/Copy/ScatterReduce/Fold/Call, KernelResultVoid/Value/Find/Reduction/ClosedForm/OriginalControl, and KernelSkeleton Scan/Copy/ScatterReduce/Find. Sources use frame slots for loop state, lanes, accumulators, and runtime helper symbols for atomics/traps/helpers; no native semantic mirror or exact-cell enumeration.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T001",
+				"T009",
+				"T012",
+				"T013"
+			],
+			"status": "todo",
+			"order": 19,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T020",
+			"title": "Lower Kernel plans to native graphs",
+			"detail": "Replace empty module lines 1-11 with KernelPlan/KernelBody/KernelDomain/KernelExpr/KernelEffect/KernelResult/KernelProof leaf methods. KernelNoPlan hard-errors as invalid native subject; KernelPlanned composes domain loop skeleton, binding expr nodes, effect nodes, result/finalization nodes, and proof requirements into a NativeTemplateGraph with frame layout. Use Kernel semantic leaves as owners and typed NativeKernelAxis families.",
+			"file": "lua/lalin/native_kernel_methods.lua",
+			"after": [
+				"T004",
+				"T019"
+			],
+			"status": "todo",
+			"order": 20,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T021",
+			"title": "Add stencil template sources",
+			"detail": "Add NativeStencilProducer/Access/Point/Sink/Schedule axis source builders for Range1D/ND, Window/Tiled, scalar/contiguous/indexed/affine/field/SoA/slice/bytespan/view layouts, point input/const/unary/binary/cast/predicate/compare/select, store/reduce/scan/scatter-reduce sinks, store/reduction semantics, scalar/unroll/vector schedules. Generate C continuation fragments using frame slots, ABI params, patch coordinates, and runtime symbols; do not enumerate producer x layout x scalar x sink exact cells.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T001",
+				"T009",
+				"T012",
+				"T013"
+			],
+			"status": "todo",
+			"order": 21,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T022",
+			"title": "Lower Stencil instances to native graphs",
+			"detail": "Expand native_stencil_methods.lua lines 1-16. Implement StencilDescriptor composition plus leaf methods on StencilProducerShape, StencilAccessLayout, StencilPointExpr, StencilBody, StencilSink, StencilStoreSemantics, StencilReductionSemantics, and StencilSchedule. Build generator/body/sink/schedule continuation graph with frame slots for indices, descriptor fields, addresses, accumulators, scan state, and output values. Dynamic bounds/strides remain ABI params/frame slots; static offsets/strides are patch coordinates.",
+			"file": "lua/lalin/native_stencil_methods.lua",
+			"after": [
+				"T004",
+				"T021"
+			],
+			"status": "todo",
+			"order": 22,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T023",
+			"title": "Update native backend entrypoints",
+			"detail": "Amend native_backend.lua lines 1-188. Load native_abi/native_frame/native_object modules. Require bank.support/target/runtime consistency before compiling. Expose helpers for compile_code_func/module/kernel/stencil with support-domain-aware bank import. Do not expose LuaJIT/native bridges, residual options, or compatibility aliases. Make unsupported public entrypoints fail at the owning semantic method, not by prechecking with string modes.",
+			"file": "lua/lalin/native_backend.lua",
+			"after": [
+				"T001",
+				"T003",
+				"T004",
+				"T005",
+				"T016",
+				"T020",
+				"T022"
+			],
+			"status": "todo",
+			"order": 23,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T024",
+			"title": "Update native bank binary wiring",
+			"detail": "Update Makefile native bank rule to pass a generated manifest that returns a NativeTemplateBankRequest with support domain, and ensure generated Lua bridge path is available for tests/tools. Keep lalin-bin compiling raw C bank as debug data only; src/lalin.c must not install native banks or old MC hooks.",
+			"file": "Makefile",
+			"after": [
+				"T014",
+				"T023"
+			],
+			"status": "todo",
+			"order": 24,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T025",
+			"title": "Update host binary stale native assumptions",
+			"detail": "Verify src/lalin.c remains BC-bank-only for bootstrap. Do not include lalin_native_template_bank.h unless there is a typed Lua ASDL import path. Ensure no lalin_install_embedded_mc_bank or lalin_install_embedded_native_bank hook is added.",
+			"file": "src/lalin.c",
+			"after": [
+				"T024"
+			],
+			"status": "todo",
+			"order": 25,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T026",
+			"title": "Test ABI projection and frame layout",
+			"detail": "Add focused tests for CodeSig arity 0/1/>1, CodeTyVoid invalid params/results, scalar/pointer/descriptor/byref/sret classification, exact extension policies for i8/u8/i16/u16/u32/u64/f32/f64, deterministic frame slot role order, stack limit enforcement, and alloca frame-size patch hole presence in generated entry source.",
+			"file": "tests/code_ir/test_native_abi_frame.lua",
+			"after": [
+				"T002",
+				"T003",
+				"T004",
+				"T009",
+				"T016"
+			],
+			"status": "todo",
+			"order": 26,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T027",
+			"title": "Test object parser and verifier",
+			"detail": "Add tests that compile small C templates to object bytes and parse them without readelf. Assert typed sections/symbols/relocations/alignments. Add negative cases for bad magic, unsupported target, missing entry symbol, empty text, unsupported relocation, undeclared continuation/runtime symbol, missing continuation relocation, duplicate marker hole, missing marker hole, and hole out of range.",
+			"file": "tests/code_ir/test_native_object_parser.lua",
+			"after": [
+				"T005",
+				"T014",
+				"T015"
+			],
+			"status": "todo",
+			"order": 27,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T028",
+			"title": "Test constant pools and runtime symbols",
+			"detail": "Add tests for sub-width int/f32/f64/pointer/null constants via constant-pool relocation and copied pool bytes. Add runtime symbol relocation test using a typed NativeRuntimeSymbol with address and protocol, plus missing-address rejection. Assert generator output contains NativeRelocationConstantPool/RuntimeSymbol in Lua ASDL bridge and runtime install patches them correctly.",
+			"file": "tests/code_ir/test_native_constant_pool_runtime.lua",
+			"after": [
+				"T007",
+				"T010",
+				"T013",
+				"T014"
+			],
+			"status": "todo",
+			"order": 28,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T029",
+			"title": "Test Code control lowering",
+			"detail": "Replace manual branch-only coverage with Code ASDL lowering tests for Jump with block args, Branch then/else, Switch/default, VariantSwitch/default, loop backedge, void return, scalar return, sret aggregate return, trap, and unreachable. Assert graph contains typed block-entry nodes, edge-copy chains, continuation edges, no hidden arg-count family axes, and executes expected results.",
+			"file": "tests/code_ir/test_native_code_control.lua",
+			"after": [
+				"T011",
+				"T017"
+			],
+			"status": "todo",
+			"order": 29,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T030",
+			"title": "Test Code memory call aggregate lowering",
+			"detail": "Add tests covering Cast, Select, PtrOffset, Load, Store, Aggregate, Array, View/Slice/ByteSpan descriptor ops, Closure construction, VariantCtor/Tag/Payload, direct/extern/indirect/closure calls, and atomic leaves. For each, assert selected NativeTemplateFamily axes are typed and execute or typed runtime-helper behavior matches semantics.",
+			"file": "tests/code_ir/test_native_code_full_leaves.lua",
+			"after": [
+				"T012",
+				"T013",
+				"T018"
+			],
+			"status": "todo",
+			"order": 30,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T031",
+			"title": "Test kernel native lowering",
+			"detail": "Add kernel tests constructing KernelPlanned bodies for flow domain, lane load, store, copy, fold/reduction, scan, scatter-reduce, find, and effect call. Assert Kernel leaf methods produce NativeTemplateGraph with frame slots for lanes/state, typed NativeKernelAxis families, runtime symbols where required, and executable results for scalar proof cases.",
+			"file": "tests/code_ir/test_native_kernel_lowering.lua",
+			"after": [
+				"T019",
+				"T020"
+			],
+			"status": "todo",
+			"order": 31,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T032",
+			"title": "Test stencil native lowering",
+			"detail": "Add stencil tests for Range1D scalar store, contiguous/affine/field/SoA/slice/view/bytespan access layouts, point const/unary/binary/compare/select, store/reduce/scan/scatter-reduce sinks, and scalar/unrolled/vector schedule axes. Assert graph composition is recursive and typed, not exact-cell enumeration, and execute representative scalar cases.",
+			"file": "tests/code_ir/test_native_stencil_lowering.lua",
+			"after": [
+				"T021",
+				"T022"
+			],
+			"status": "todo",
+			"order": 32,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T033",
+			"title": "Update native source/generator tests",
+			"detail": "Update existing source/generator tests for support-domain bank.support, ABI-projection entry families, frame-size holes, constant-pool literals, no readelf dependency, no assembly source, no residual/LuaJIT terms, and generated Lua bridge preserving new ASDL values. Remove fixed scalar proof-slice counts and any family-id-only assertions.",
+			"file": "tests/code_ir/test_native_template_sources.lua",
+			"after": [
+				"T008",
+				"T009",
+				"T010",
+				"T014"
+			],
+			"status": "todo",
+			"order": 33,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T034",
+			"title": "Update native import and scalar graph tests",
+			"detail": "Update native_mc_import and test_native_code_graph_scalar for new NativeTemplateBank support field, exact NativeCallCodeSig protocols, exact NativeCallArg leaves, constant-pool/call-protocol install behavior, and runtime symbol/continuation relocation validation. Keep imm32 smoke only as raw runtime-call template test, not Code lowering proof.",
+			"file": "tests/code_ir/test_native_mc_import.lua",
+			"after": [
+				"T006",
+				"T007",
+				"T016"
+			],
+			"status": "todo",
+			"order": 34,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T035",
+			"title": "Clean stale residual docs and slow tests",
+			"detail": "Update stale docs and tests after implementation. In docs/ARCHITECTURE.md, docs/LANGUAGE_REFERENCE.md, docs/CONVENTIONS.md, and AGENTS.md, remove old residual_mc/TCC/native residual/default fallback claims and point to closed native C-stencil copy-patch plus explicit bytecode path. Update tests/code_ir/test_lalin_binary.lua to expect native_template_bank raw C/Lua outputs or remove old embedded MC registry assertions. Do not edit docs/RESIDUAL_NATIVE_ARCHITECTURE.md unless syncing actual closed-design status.",
+			"file": "docs/ARCHITECTURE.md",
+			"after": [
+				"T024",
+				"T025",
+				"T026",
+				"T027",
+				"T028",
+				"T029",
+				"T030",
+				"T031",
+				"T032",
+				"T033",
+				"T034"
+			],
+			"status": "todo",
+			"order": 35,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		},
+		{
+			"id": "T036",
+			"title": "Run closed native validation sweep",
+			"detail": "Run luajit tests/run.lua schema; all native focused tests; luajit tests/run.lua code_ir; slow lalin binary test if enabled; tests/compiler_process/test_compiler_driver.lua; make -B lalin-bin. Grep lua/lalin tests docs for forbidden native terms and runtime-tool use: ResidualFunctionPlan, CResidual, StencilRequiresCompile, residual_mc, lalin_embedded_mc_bank, NativeTemplateAssembly, readelf in runtime modules, opts.residual in native paths, handler maps in native modules. Record failures honestly instead of marking done.",
+			"file": "tests/run.lua",
+			"after": [
+				"T035"
+			],
+			"status": "todo",
+			"order": 36,
+			"notes": [],
+			"createdAt": "2026-07-01T21:02:14.365Z",
+			"updatedAt": "2026-07-01T21:02:14.365Z"
+		}
+	]
+}

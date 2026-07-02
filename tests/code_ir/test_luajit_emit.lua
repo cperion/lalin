@@ -18,7 +18,7 @@ local Value = T.LalinValue
 local CType = require("lalin.luajit_ctype")(T)
 local Emit = require("lalin.luajit_emit")(T)
 local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-local StencilBinary = require("tests.code_ir.residual_mc_helper")
+local StencilBinary = require("tests.code_ir.bytecode_stencil_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)

@@ -28,7 +28,12 @@ assert(artifact.kind == "LuaJITCSourceArtifact")
 assert(tostring(asdl.classof(artifact.unit)):match("LalinLuaJIT%.LJModule"))
 assert(type(artifact.source) == "string")
 
-local native = lalin.compile("DriverSmoke", decls)
-assert(native.add(3, 4) == 7)
+local bytecode = lalin.compile_luajit("DriverSmoke", decls, { bytecode = true })
+assert(bytecode.add(3, 4) == 7)
+
+local ok, err = pcall(function()
+    lalin.compile("DriverSmokeNativeRequiresBank", decls)
+end)
+assert(not ok and tostring(err):match("NativeTemplateBank"), "default native compile should require a native bank")
 
 io.write("lalin compiler_driver ok\n")

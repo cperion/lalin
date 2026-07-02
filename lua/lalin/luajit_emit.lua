@@ -9,7 +9,6 @@ local function bind_context(T)
     local Value = T.LalinValue
     local LJ = T.LalinLuaJIT
     local Back = T.LalinBack
-    local ResidualNative = require("lalin.residual_native")(T)
 
     local api = {}
 
@@ -774,22 +773,7 @@ local function bind_context(T)
         line(out, n, "end")
     end
 
-    local function native_c_string(s)
-        return string.format("%q", tostring(s))
-    end
-
-    local function native_c_name(prefix, name)
-        return "__lalin_native_" .. prefix .. "_" .. sanitize(name)
-    end
-
-    local function native_param_decl(param)
-        return ctype_spelling(param.ty.abi) .. " " .. id_name(param.value)
-    end
-
-    local native_expr
-    local native_place_expr
-
-    local native_binop = {
+    local c_binop = {
         [Core.BinAdd] = "+",
         [Core.BinSub] = "-",
         [Core.BinMul] = "*",
@@ -803,7 +787,7 @@ local function bind_context(T)
         [Core.BinAShr] = ">>",
     }
 
-    local native_cmpop = {
+    local c_cmpop = {
         [Core.CmpEq] = "==",
         [Core.CmpNe] = "!=",
         [Core.CmpLt] = "<",
@@ -811,139 +795,6 @@ local function bind_context(T)
         [Core.CmpGt] = ">",
         [Core.CmpGe] = ">=",
     }
-
-    local function native_ptr_offset_expr(e)
-        local offset = tonumber(e.const_offset or 0) or 0
-        local elem = tonumber(e.elem_size or 1) or 1
-        local terms = { native_expr(e.base), "(" .. native_expr(e.index) .. ")" }
-        if offset ~= 0 then
-            if elem ~= 0 and offset % elem == 0 then
-                terms[#terms + 1] = tostring(offset / elem)
-            else
-                unsupported(e, "native residual byte-granular pointer offset")
-            end
-        end
-        return "(" .. table.concat(terms, " + ") .. ")"
-    end
-
-    native_place_expr = function(p)
-        local cls = asdl.classof(p)
-        if cls == LJ.LJPlaceValue then return id_name(p.value) end
-        if cls == LJ.LJPlaceDeref then return "(*(" .. native_expr(p.addr) .. "))" end
-        if cls == LJ.LJPlaceField then return "(" .. native_place_expr(p.base) .. ")." .. sanitize(p.name) end
-        if cls == LJ.LJPlaceIndex then return "(" .. native_place_expr(p.base) .. ")[" .. native_expr(p.index) .. "]" end
-        unsupported(p, "native residual place")
-    end
-
-    native_expr = function(e)
-        local cls = asdl.classof(e)
-        if cls == LJ.LJExprValue then return id_name(e.value) end
-        if cls == LJ.LJExprLiteral then return literal_expr(e) end
-        if cls == LJ.LJExprUnary then
-            if e.op == Core.UnaryNeg then return "(-(" .. native_expr(e.value) .. "))" end
-            if e.op == Core.UnaryNot then return "(!(" .. native_expr(e.value) .. "))" end
-            if e.op == Core.UnaryBitNot then return "(~(" .. native_expr(e.value) .. "))" end
-            unsupported(e.op, "native residual unary op")
-        end
-        if cls == LJ.LJExprIntBinary or cls == LJ.LJExprFloatBinary then
-            local op = native_binop[e.op]
-            if op == nil then unsupported(e.op, "native residual binary op") end
-            return "((" .. native_expr(e.lhs) .. ") " .. op .. " (" .. native_expr(e.rhs) .. "))"
-        end
-        if cls == LJ.LJExprCompare then
-            local op = native_cmpop[e.op]
-            if op == nil then unsupported(e.op, "native residual compare op") end
-            return "((" .. native_expr(e.lhs) .. ") " .. op .. " (" .. native_expr(e.rhs) .. "))"
-        end
-        if cls == LJ.LJExprSelect then
-            return "((" .. native_expr(e.cond) .. ") ? (" .. native_expr(e.then_value) .. ") : (" .. native_expr(e.else_value) .. "))"
-        end
-        if cls == LJ.LJExprCast then
-            return "((" .. ctype_spelling(e.to.abi) .. ")(" .. native_expr(e.value) .. "))"
-        end
-        if cls == LJ.LJExprCDataCast then
-            return "((" .. ctype_spelling(e.ty) .. ")(" .. native_expr(e.value) .. "))"
-        end
-        if cls == LJ.LJExprAddrOfPlace then return "(&(" .. native_place_expr(e.place) .. "))" end
-        if cls == LJ.LJExprPtrOffset then return native_ptr_offset_expr(e) end
-        if cls == LJ.LJExprLoad then return native_place_expr(e.place) end
-        unsupported(e, "native residual expression")
-    end
-
-    local function c_signature_parts(symbol, c_signature)
-        local sig = tostring(c_signature or "")
-        local ret, params = sig:match("^%s*(.-)%s*%(%s*%*%s*%)%s*%((.*)%)%s*$")
-        if ret == nil then
-            local direct_ret, direct_name, direct_params = sig:match("^%s*(.-)%s+([_%a][_%w]*)%s*%((.*)%)%s*;?%s*$")
-            if direct_ret ~= nil and direct_name == symbol then
-                ret, params = direct_ret, direct_params
-            end
-        end
-        if ret == nil then error("luajit_emit: cannot derive C prototype from stencil signature " .. sig, 3) end
-        return ret, params
-    end
-
-    local function pattern_escape(s)
-        return (tostring(s):gsub("([^%w])", "%%%1"))
-    end
-
-    local function machine_by_id(func)
-        local out = {}
-        for _, machine in ipairs(func.machines or {}) do out[machine.id.text] = machine end
-        return out
-    end
-
-    local function native_residual_candidate(func)
-        if asdl.classof(func.body) ~= LJ.LJBodyMachine then return nil end
-        local term = func.body.terminal
-        if asdl.classof(term) ~= LJ.LJTerminalFirst or term.default ~= nil then return nil end
-        local machine = machine_by_id(func)[func.body.machine.text]
-        local op = machine and machine.op or nil
-        local cls = asdl.classof(op)
-        if cls == LJ.LJMachineStencilCall or cls == LJ.LJMachineStencilEffect then return op, cls end
-        return nil
-    end
-
-    local function native_wrapper_result_type(func, sig, op, op_cls)
-        if op_cls == LJ.LJMachineStencilEffect then return "void" end
-        local result = op.result_ty or (sig and sig.result)
-        if result == nil then return "void" end
-        return ctype_spelling(result.abi)
-    end
-
-    local function native_wrapper_source(func, sig, op, op_cls)
-        local wrapper = native_c_name("fn", func.name)
-        local ret = native_wrapper_result_type(func, sig, op, op_cls)
-        local params = {}
-        for i = 1, #func.params do params[i] = native_param_decl(func.params[i]) end
-        local args = {}
-        for i = 1, #op.args do args[i] = native_expr(op.args[i]) end
-        local symbol = op.artifact.symbol.text
-        local stencil_ret, stencil_params = c_signature_parts(symbol, op.artifact.c_signature)
-        local out = {
-            stencil_ret .. " " .. symbol .. "(" .. stencil_params .. ");",
-            "",
-            ret .. " " .. wrapper .. "(" .. (#params > 0 and table.concat(params, ", ") or "void") .. ") {",
-        }
-        if op_cls == LJ.LJMachineStencilEffect then
-            out[#out + 1] = "  " .. symbol .. "(" .. table.concat(args, ", ") .. ");"
-            out[#out + 1] = "}"
-        elseif ret == "void" then
-            out[#out + 1] = "  " .. symbol .. "(" .. table.concat(args, ", ") .. ");"
-            out[#out + 1] = "}"
-        else
-            out[#out + 1] = "  return " .. symbol .. "(" .. table.concat(args, ", ") .. ");"
-            out[#out + 1] = "}"
-        end
-        return table.concat(out, "\n"), wrapper, symbol
-    end
-
-    local function native_func_pointer_ctype(func, sig, op, op_cls)
-        local ret = native_wrapper_result_type(func, sig, op, op_cls)
-        local params = {}
-        for i = 1, #func.params do params[i] = ctype_spelling(func.params[i].ty.abi) end
-        return ret .. " (*)(" .. (#params > 0 and table.concat(params, ", ") or "void") .. ")"
-    end
 
     local function c_func_name(name)
         return sanitize(name)
@@ -1038,7 +889,7 @@ local function bind_context(T)
     end
 
     local function c_int_binary(ctx, e)
-        local op = native_binop[e.op]
+        local op = c_binop[e.op]
         if op == nil then unsupported(e.op, "C integer binary op") end
         local lhs, rhs = c_expr(ctx, e.lhs), c_expr(ctx, e.rhs)
         return c_wrapping_binary(e, lhs, rhs, op) or "((" .. lhs .. ") " .. op .. " (" .. rhs .. "))"
@@ -1105,12 +956,12 @@ local function bind_context(T)
         end
         if cls == LJ.LJExprIntBinary then return c_int_binary(ctx, e) end
         if cls == LJ.LJExprFloatBinary then
-            local op = native_binop[e.op]
+            local op = c_binop[e.op]
             if op == nil then unsupported(e.op, "C float binary op") end
             return "((" .. c_expr(ctx, e.lhs) .. ") " .. op .. " (" .. c_expr(ctx, e.rhs) .. "))"
         end
         if cls == LJ.LJExprCompare then
-            local op = native_cmpop[e.op]
+            local op = c_cmpop[e.op]
             if op == nil then unsupported(e.op, "C compare op") end
             return "((" .. c_expr(ctx, e.lhs) .. ") " .. op .. " (" .. c_expr(ctx, e.rhs) .. "))"
         end
@@ -1140,132 +991,6 @@ local function bind_context(T)
         local args = {}
         for i = 1, #op.args do args[i] = c_expr(ctx, op.args[i]) end
         return op.artifact.symbol.text .. "(" .. table.concat(args, ", ") .. ")"
-    end
-
-    local function c_stencil_wrapper_source(ctx, func, sig, op, op_cls)
-        local ret = native_wrapper_result_type(func, sig, op, op_cls)
-        local params = {}
-        for i = 1, #func.params do params[i] = c_param_decl(func.params[i]) end
-        local call = c_stencil_call_expr(ctx, op)
-        local out = { ret .. " " .. c_func_name(func.name) .. "(" .. (#params > 0 and table.concat(params, ", ") or "void") .. ") {" }
-        if op_cls == LJ.LJMachineStencilEffect or ret == "void" then
-            out[#out + 1] = "    " .. call .. ";"
-            out[#out + 1] = "}"
-        else
-            out[#out + 1] = "    return " .. call .. ";"
-            out[#out + 1] = "}"
-        end
-        return table.concat(out, "\n")
-    end
-
-    local function c_emit_transfer(out, n, ctx, block, args)
-        if #block.params ~= #(args or {}) then error("luajit_emit: C block transfer arity mismatch for " .. tostring(block.id.text), 3) end
-        for i = 1, #block.params do
-            line(out, n, c_xfer_name(block, i) .. " = " .. c_expr(ctx, args[i]) .. ";")
-        end
-        line(out, n, "goto " .. c_label(block.id) .. ";")
-    end
-
-    local function c_emit_machine_stmt(out, n, ctx, machine_id)
-        local machine = ctx.machine_by_id[machine_id.text]
-        if machine == nil then error("luajit_emit: missing C machine " .. tostring(machine_id.text), 3) end
-        local op = machine.op
-        local cls = asdl.classof(op)
-        if cls == LJ.LJMachineStencilEffect or cls == LJ.LJMachineStencilCall then
-            line(out, n, c_stencil_call_expr(ctx, op) .. ";")
-            return
-        end
-        unsupported(op, "C emitted machine")
-    end
-
-    local function c_emit_stmt(out, n, ctx, stmt)
-        local cls = asdl.classof(stmt)
-        if cls == LJ.LJStmtLet then
-            line(out, n, id_name(stmt.dst) .. " = " .. c_expr(ctx, stmt.expr) .. ";")
-        elseif cls == LJ.LJStmtStore then
-            line(out, n, c_place_expr(ctx, stmt.place) .. " = " .. c_expr(ctx, stmt.value) .. ";")
-        elseif cls == LJ.LJStmtCall then
-            local args = {}
-            for i = 1, #stmt.args do args[i] = c_expr(ctx, stmt.args[i]) end
-            line(out, n, c_call_target_expr(ctx, stmt.target, args) .. ";")
-        elseif cls == LJ.LJStmtEmitMachine then
-            c_emit_machine_stmt(out, n, ctx, stmt.machine)
-        else
-            unsupported(stmt, "C statement")
-        end
-    end
-
-    local function c_emit_term(out, n, ctx, term, block_by_id)
-        local cls = asdl.classof(term)
-        if cls == LJ.LJTermReturn then
-            if #term.values == 0 then
-                line(out, n, "return;")
-            elseif #term.values == 1 then
-                line(out, n, "return " .. c_expr(ctx, term.values[1]) .. ";")
-            else
-                unsupported(term, "C multi-value return")
-            end
-        elseif cls == LJ.LJTermTrap then
-            line(out, n, "abort();")
-        elseif cls == LJ.LJTermJump then
-            local dest = block_by_id[term.dest.text]
-            if dest == nil then error("luajit_emit: missing C jump dest " .. tostring(term.dest.text), 3) end
-            c_emit_transfer(out, n, ctx, dest, term.args)
-        elseif cls == LJ.LJTermBranch then
-            local td, ed = block_by_id[term.then_dest.text], block_by_id[term.else_dest.text]
-            if td == nil or ed == nil then error("luajit_emit: missing C branch dest", 3) end
-            line(out, n, "if (" .. c_expr(ctx, term.cond) .. ") {")
-            c_emit_transfer(out, n + 1, ctx, td, term.then_args)
-            line(out, n, "} else {")
-            c_emit_transfer(out, n + 1, ctx, ed, term.else_args)
-            line(out, n, "}")
-        elseif cls == LJ.LJTermSwitch then
-            line(out, n, "switch (" .. c_expr(ctx, term.value) .. ") {")
-            for i = 1, #term.cases do
-                local case = term.cases[i]
-                local dest = block_by_id[case.dest.text]
-                if dest == nil then error("luajit_emit: missing C switch dest " .. tostring(case.dest.text), 3) end
-                line(out, n, "case " .. c_literal(case.literal) .. ":")
-                c_emit_transfer(out, n + 1, ctx, dest, case.args)
-            end
-            local dd = block_by_id[term.default_dest.text]
-            if dd == nil then error("luajit_emit: missing C switch default dest " .. tostring(term.default_dest.text), 3) end
-            line(out, n, "default:")
-            c_emit_transfer(out, n + 1, ctx, dd, term.default_args)
-            line(out, n, "}")
-        else
-            unsupported(term, "C term")
-        end
-    end
-
-    local function c_collect_func_locals(func)
-        local locals, seen = {}, {}
-        local function mark(id)
-            if id ~= nil then seen[id.text] = true end
-        end
-        local function add(id, phys)
-            if id == nil or phys == nil or seen[id.text] then return end
-            seen[id.text] = true
-            locals[#locals + 1] = { name = id_name(id), ty = phys.abi }
-        end
-        for _, param in ipairs(func.params or {}) do mark(param.value) end
-        if asdl.classof(func.body) == LJ.LJBodyBlocks then
-            for _, block in ipairs(func.body.blocks or {}) do
-                for i, param in ipairs(block.params or {}) do
-                    add(param.value, param.ty)
-                    locals[#locals + 1] = { name = c_xfer_name(block, i), ty = param.ty.abi }
-                end
-                for _, stmt in ipairs(block.stmts or {}) do
-                    local cls = asdl.classof(stmt)
-                    if cls == LJ.LJStmtLet then
-                        add(stmt.dst, stmt.ty)
-                    elseif cls == LJ.LJStmtStore and asdl.classof(stmt.place) == LJ.LJPlaceLocal then
-                        add(stmt.place.local_id, stmt.place.ty)
-                    end
-                end
-            end
-        end
-        return locals
     end
 
     local function c_emit_blocks_func(ctx, func, sig)
@@ -1324,8 +1049,7 @@ local function bind_context(T)
             return c_emit_blocks_func(ctx, func, sig)
         end
         if body_cls == LJ.LJBodyMachine then
-            local op, op_cls = native_residual_candidate(func)
-            if op ~= nil then return c_stencil_wrapper_source(ctx, func, sig, op, op_cls) end
+            unsupported(func.body, "C machine function body")
         end
         unsupported(func.body, "C function body")
     end
@@ -1462,49 +1186,6 @@ local function bind_context(T)
         }
     end
 
-    local function emit_native_residuals(out, module, opts)
-        if not (opts.native_residual == true or opts.native_residual == "tcc" or opts.tcc_residual == true) then return end
-        local plan = ResidualNative.select_luajit_module(module, opts)
-        local c_units, replacements, host_symbols = {}, {}, {}
-        local function has_host_symbol(name)
-            for _, existing in ipairs(host_symbols) do
-                if existing.name == name then return true end
-            end
-            return false
-        end
-        for _, unit in ipairs(plan.c_units or {}) do
-            c_units[#c_units + 1] = unit.source
-            for _, wrapper in ipairs(unit.wrappers or {}) do
-                replacements[#replacements + 1] = wrapper
-            end
-            for _, symbol in ipairs(unit.host_symbols or {}) do
-                if not has_host_symbol(symbol.name) then host_symbols[#host_symbols + 1] = symbol end
-            end
-        end
-        if #replacements == 0 then return end
-        table.sort(host_symbols, function(a, b) return a.name < b.name end)
-        c_units[#c_units + 1] = ""
-        table.insert(c_units, 1, "#include <stdint.h>")
-        table.insert(c_units, 2, "#include <stdbool.h>")
-        line(out, 0, "local __lalin_native_residual_sessions = debug.getregistry().__lalin_native_residual_sessions")
-        line(out, 0, "if __lalin_native_residual_sessions == nil then __lalin_native_residual_sessions = {}; debug.getregistry().__lalin_native_residual_sessions = __lalin_native_residual_sessions end")
-        line(out, 0, "do")
-        line(out, 1, "local __c_tcc = require('lalin.c_tcc')")
-        line(out, 1, "local __native_source = " .. native_c_string(table.concat(c_units, "\n\n") .. "\n"))
-        line(out, 1, "local __native_host_symbols = {}")
-        for _, symbol in ipairs(host_symbols) do
-            line(out, 1, "if __lalin_luajit_stencil_symbols[" .. lua_string(symbol.name) .. "] == nil then error(" .. lua_string("missing LalinStencil symbol " .. symbol.name) .. ", 0) end")
-            line(out, 1, "__native_host_symbols[" .. lua_string(symbol.name) .. "] = ffi.cast('void *', ffi.cast('uintptr_t', __lalin_luajit_stencil_symbols[" .. lua_string(symbol.name) .. "]))")
-        end
-        line(out, 1, "local __session, __err = __c_tcc.compile(__native_source, { libraries = { 'm' }, host_symbols = __native_host_symbols })")
-        line(out, 1, "if not __session then error((__err and __err.message) or 'native residual TCC compile failed', 0) end")
-        line(out, 1, "__lalin_native_residual_sessions[#__lalin_native_residual_sessions + 1] = __session")
-        for _, replacement in ipairs(replacements) do
-            line(out, 1, replacement.func_name .. " = assert(__session:symbol(" .. lua_string(replacement.wrapper_symbol) .. ", " .. lua_string(replacement.wrapper_ctype) .. "))")
-        end
-        line(out, 0, "end")
-    end
-
     local function emit_module(module, opts)
         opts = opts or {}
         local out = {}
@@ -1546,7 +1227,6 @@ local function bind_context(T)
             line(out, 0, "local " .. func_name(module.funcs[i].name))
         end
         for i = 1, #(module.funcs or {}) do emit_func(out, 0, module.funcs[i]) end
-        emit_native_residuals(out, module, opts)
         line(out, 0, "return {")
         for i = 1, #(module.funcs or {}) do
             local f = module.funcs[i]

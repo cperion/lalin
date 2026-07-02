@@ -5,7 +5,6 @@
 #include "lauxlib.h"
 #include "lualib.h"
 #include "lalin_embedded_bc_bank.h"
-#include "lalin_embedded_mc_bank.h"
 
 static void lalin_push_argv(lua_State *L, int argc, char **argv) {
   int i;
@@ -27,7 +26,6 @@ int main(int argc, char **argv) {
 
   luaL_openlibs(L);
   lalin_install_embedded_bc_bank(L);
-  lalin_install_embedded_mc_bank(L);
   lalin_push_argv(L, argc, argv);
 
   lua_getglobal(L, "require");

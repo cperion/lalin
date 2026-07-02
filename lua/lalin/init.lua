@@ -63,6 +63,9 @@ M.c_validate = require("lalin.c_validate")
 M.c_emit = require("lalin.c_emit")
 M.c_helpers = require("lalin.c_helpers")
 M.c_tcc = require("lalin.c_tcc")
+M.native = require("lalin.native")
+M.native_mc = require("lalin.native_mc")
+M.native_backend = require("lalin.native_backend")
 
 
 local llbl = require("llbl")
@@ -637,7 +640,7 @@ function M.unit(name, decls)
     return M.dsl.unit(name, decls)
 end
 
-function M.compile(name_or_decls, decls_or_opts, maybe_opts)
+local function compile_args(name_or_decls, decls_or_opts, maybe_opts)
     local name, decls, opts
     if type(name_or_decls) == "string" then
         name = name_or_decls
@@ -649,6 +652,30 @@ function M.compile(name_or_decls, decls_or_opts, maybe_opts)
         name = opts.name or "Unit"
     end
     opts.name = opts.name or name
+    return name, decls, opts
+end
+
+local function reject_luajit_native_options(opts, where)
+    if opts.native_bank ~= nil or opts.native_embedded_bank ~= nil or opts.bank ~= nil or opts.embedded_bank ~= nil then
+        error(where .. ": native banks are not accepted by LuaJIT artifact APIs; use compile_native or lalin.native_backend", 3)
+    end
+    if opts.mc_bank ~= nil then
+        error(where .. ": mc_bank belongs to the removed LuaJIT machine-code path; use NativeTemplateBank with compile_native", 3)
+    end
+end
+
+function M.compile(name_or_decls, decls_or_opts, maybe_opts)
+    local name, decls, opts = compile_args(name_or_decls, decls_or_opts, maybe_opts)
+    if opts.luajit == true or opts.bytecode == true then
+        return M.compile_luajit(name, decls, opts)
+    end
+    return M.compile_native(name, decls, opts)
+end
+
+function M.compile_luajit(name_or_decls, decls_or_opts, maybe_opts)
+    local name, decls, opts = compile_args(name_or_decls, decls_or_opts, maybe_opts)
+    reject_luajit_native_options(opts, "compile_luajit")
+    opts.bytecode = true
     local artifact = M.emit_luajit_artifact(decls, opts)
     local loader = loadstring or load
     local chunk, err = loader(artifact.source, "@" .. tostring(opts.name or name) .. ".luajit.lua")
@@ -661,6 +688,7 @@ function M.compile(name_or_decls, decls_or_opts, maybe_opts)
 end
 
 local prepare_luajit_artifact
+local prepare_native_compile
 
 function M.emit_c_artifact(decl, path_or_opts, name, opts)
     if type(path_or_opts) == "table" and opts == nil then
@@ -723,14 +751,12 @@ function prepare_luajit_artifact(decl, name, opts)
     local module_ast = module_ast_from(decl, name)
     local cls = asdl.classof(module_ast)
     local T = (cls and asdl.context_of(cls)) or asdl.context()
-    if T.LalinCompiler == nil or T.LalinLuaJIT == nil or T.LalinStencil == nil or T.LalinResidual == nil then A2(T) end
+    if T.LalinCompiler == nil or T.LalinLuaJIT == nil or T.LalinStencil == nil or T.LalinNative == nil then A2(T) end
+    reject_luajit_native_options(opts, "emit_luajit_artifact")
+    opts.bytecode = true
 
     local Pipeline = require("lalin.frontend_pipeline")(T)
     local Backend = require("lalin.luajit_backend")(T)
-    local residual = tostring(opts.residual or "mc")
-    if residual ~= "mc" and residual ~= "bc" then
-        error("emit_luajit_artifact: unknown residual materializer " .. residual, 2)
-    end
     local checked = Pipeline.typecheck_module(module_ast, {
         context = T,
         site = "emit_luajit_artifact:typecheck",
@@ -757,7 +783,7 @@ function prepare_luajit_artifact(decl, name, opts)
         schedule = opts.schedule,
         schedule_plan = opts.schedule_plan,
         collect_rejects = opts.collect_rejects,
-        residual = residual,
+        bytecode = true,
     })
     if opts.reject_on_stencil_rejects ~= false and rejects and #rejects > 0 then
         error("emit_luajit_artifact rejected module: " .. tostring(rejects[1].reason or rejects[1]), 2)
@@ -767,7 +793,7 @@ function prepare_luajit_artifact(decl, name, opts)
         kind = "LuaJITArtifactPlan",
         context = T,
         name = name,
-        residual = residual,
+        bytecode = true,
         sanitize = sanitize,
         module_ast = module_ast,
         checked = checked,
@@ -783,8 +809,74 @@ function prepare_luajit_artifact(decl, name, opts)
     }
 end
 
+local function native_bank_for(Backend, opts)
+    if opts.native_bank ~= nil then return opts.native_bank end
+    if opts.bank ~= nil then return opts.bank end
+    if opts.native_embedded_bank ~= nil then return Backend.require_imported_bank(opts.native_embedded_bank) end
+    if opts.embedded_bank ~= nil then return Backend.require_imported_bank(opts.embedded_bank) end
+    error("compile_native requires a NativeTemplateBank or NativeEmbeddedTemplateBank", 3)
+end
+
+function prepare_native_compile(decl, name, opts)
+    opts = opts or {}
+    name = name or opts.name or "lalin_native"
+
+    local asdl = require("lalin.asdl")
+    local A2 = require("lalin.schema_projection")
+    local module_ast = module_ast_from(decl, name)
+    local cls = asdl.classof(module_ast)
+    local T = (cls and asdl.context_of(cls)) or asdl.context()
+    if T.LalinCompiler == nil or T.LalinCode == nil or T.LalinKernel == nil or T.LalinStencil == nil or T.LalinNative == nil then A2(T) end
+
+    local Pipeline = require("lalin.frontend_pipeline")(T)
+    local Backend = require("lalin.native_backend")(T)
+    local checked = Pipeline.typecheck_module(module_ast, {
+        context = T,
+        site = "compile_native:typecheck",
+        name = name,
+    })
+    local code_result = Pipeline.checked_to_code_result(checked, {
+        context = T,
+        site = "compile_native:code",
+        name = name,
+    })
+    local target = opts.native_target or opts.target or Backend.host_target()
+    local runtime = opts.native_runtime or opts.runtime or Backend.empty_runtime()
+    local bank = native_bank_for(Backend, opts)
+    local result = Backend.compile_code_module(code_result.module, target, runtime, bank)
+    return {
+        kind = "NativeCompilePlan",
+        context = T,
+        name = name,
+        module_ast = module_ast,
+        checked = checked,
+        code_result = code_result,
+        target = target,
+        runtime = runtime,
+        bank = bank,
+        result = result,
+        executable = result.executable,
+    }
+end
+
+function M.plan_native_compile(decl, opts)
+    opts = opts or {}
+    return prepare_native_compile(decl, opts.name or "lalin_native", opts)
+end
+
+function M.compile_native(name_or_decls, decls_or_opts, maybe_opts)
+    local name, decls, opts = compile_args(name_or_decls, decls_or_opts, maybe_opts)
+    return prepare_native_compile(decls, name, opts).result
+end
+
+function M.compile_native_executable(name_or_decls, decls_or_opts, maybe_opts)
+    return M.compile_native(name_or_decls, decls_or_opts, maybe_opts).executable
+end
+
 function M.plan_luajit_artifact(decl, opts)
     opts = opts or {}
+    reject_luajit_native_options(opts, "plan_luajit_artifact")
+    opts.bytecode = true
     return prepare_luajit_artifact(decl, opts.name or "lalin_luajit", opts)
 end
 
@@ -796,16 +888,13 @@ function M.emit_luajit_plan_artifact(plan, path_or_opts, name, opts)
     opts = opts or {}
     local path = path_or_opts or opts.path
     name = name or opts.name or plan.name or "lalin_luajit"
+    reject_luajit_native_options(opts, "emit_luajit_plan_artifact")
 
     local source, err, backend_artifact = plan.backend.emit_lua_artifact(plan.lj_module, plan.artifacts, {
-        mc_bank = opts.mc_bank,
+        bytecode = true,
         bc_bank = opts.bc_bank,
         path = path,
         chunk_name = opts.chunk_name or name,
-        residual = plan.residual,
-        native_residual = opts.native_residual,
-        tcc_residual = opts.tcc_residual,
-        install_policy = opts.install_policy,
         ffi_preamble = opts.ffi_preamble,
         stem = opts.stem or plan.sanitize(name),
         bc_bank_id = opts.bc_bank_id,
@@ -829,10 +918,8 @@ function M.emit_luajit_plan_artifact(plan, path_or_opts, name, opts)
         exec_plan = plan.exec_plan,
         artifacts = plan.artifacts,
         rejects = plan.rejects,
-        mc_bank = backend_artifact.residual == "mc" and (opts.mc_bank or backend_artifact.selected_mc_bank) or nil,
-        bc_bank = backend_artifact.residual == "bc" and (opts.bc_bank or backend_artifact.selected_bc_bank) or nil,
-        residual = backend_artifact.residual or plan.residual,
-        requested_residual = plan.residual,
+        bc_bank = opts.bc_bank or backend_artifact.selected_bc_bank,
+        bytecode = true,
     }
     function artifact:write(write_path)
         write_path = write_path or self.path

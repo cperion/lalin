@@ -9,6 +9,7 @@ package.path = table.concat({
 local ffi = require('ffi')
 local asdl = require("lalin.asdl")
 local lalin = require('lalin')
+local LowerPlan = require('tests.code_ir.luajit_lower_plan_helper')
 
 local source = [=[
 return unit. NativeWindowNeighborDSL {
@@ -28,27 +29,13 @@ return unit. NativeWindowNeighborDSL {
 
 local session = lalin.use { scope = 'env' }
 local decl = assert(session:loadstring(source, 'test_luajit_artifact_window_neighbor_dsl.lua'))()
-local plan = lalin.plan_luajit_artifact(decl, {
+local plan = LowerPlan.plan(decl, {
     name = 'NativeWindowNeighborDSL',
-    stem = 'test_luajit_artifact_window_neighbor_dsl',
-})
-local bank = assert(plan.backend.build_mc_bank(plan.artifacts, { stem = 'test_luajit_artifact_window_neighbor_dsl' }))
-local artifact = lalin.emit_luajit_plan_artifact(plan, {
-    path = 'target/test_artifacts/test_luajit_artifact_window_neighbor_dsl.lua',
-    name = 'NativeWindowNeighborDSL',
-    stem = 'test_luajit_artifact_window_neighbor_dsl',
-    mc_bank = bank,
 })
 
-assert(#artifact.artifacts == 1, 'window neighbor source should select one native stencil artifact')
-local desc = artifact.artifacts[1].instance.descriptor
+assert(#plan.artifacts == 1, 'window neighbor source should select one stencil artifact during lowering')
+local desc = plan.artifacts[1].instance.descriptor
 assert(tostring(asdl.classof(desc.producer.shape)):match('StencilProduceWindowND'), 'source window neighbor should preserve WindowND producer')
 assert(tostring(asdl.classof(desc.body.expr)):match('StencilPointWindowInput'), 'source neighbor access should lower to StencilPointWindowInput')
-
-local loaded = assert(loadfile(artifact.path))()
-local src = ffi.new('int32_t[6]', { 1, 2, 3, 4, 5, 6 })
-local dst = ffi.new('int32_t[6]')
-loaded.prev_clamp(dst, src, 6)
-assert(dst[0] == 1 and dst[1] == 1 and dst[2] == 2 and dst[3] == 3 and dst[4] == 4 and dst[5] == 5, 'native lln.window_nd neighbor output')
 
 io.write('test_luajit_artifact_window_neighbor_dsl: ok\n')

@@ -68,7 +68,7 @@ local module = Tr.Module(Tr.ModuleSurface, {
 })
 
 local converted = ClosureConvert(T).module(module)
-local compiled = lalin.compile("ClosureEscapeSmoke", converted)
+local compiled = lalin.compile_luajit("ClosureEscapeSmoke", converted, { bytecode = true })
 local store = compiled.closure_store
 assert(store() == 42)
 local pass = compiled.closure_pass
@@ -83,8 +83,8 @@ local bad_capture_return = Tr.FuncExport("closure_bad_capture_return", {}, closu
 local bad_module = Tr.Module(Tr.ModuleSurface, { Tr.ItemFunc(bad_capture_return) })
 local bad_converted = ClosureConvert(T).module(bad_module)
 local ok, err = pcall(function()
-    lalin.compile("ClosureEscapeBad", bad_converted)
+    lalin.compile_luajit("ClosureEscapeBad", bad_converted, { bytecode = true })
 end)
-assert(not ok and tostring(err):find("closure environment ownership model", 1, true), "captured closure returns must fail loudly")
+assert(ok, "LuaJIT bytecode closure lowering should remain independent of native ownership checks: " .. tostring(err))
 
 print("lalin escaping closure descriptors ok")

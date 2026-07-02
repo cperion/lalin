@@ -6,8 +6,9 @@ LALIN_BIN_DIR = target/lalin_binary
 LALIN_BIN = target/lalin
 LALIN_BC_BANK_C = $(LALIN_BIN_DIR)/lalin_embedded_bc_bank.c
 LALIN_BC_BANK_H = $(LALIN_BIN_DIR)/lalin_embedded_bc_bank.h
-LALIN_MC_BANK_C = $(LALIN_BIN_DIR)/lalin_embedded_mc_bank.c
-LALIN_MC_BANK_H = $(LALIN_BIN_DIR)/lalin_embedded_mc_bank.h
+LALIN_NATIVE_BANK_C = $(LALIN_BIN_DIR)/lalin_native_template_bank.c
+LALIN_NATIVE_BANK_H = $(LALIN_BIN_DIR)/lalin_native_template_bank.h
+LALIN_NATIVE_BANK_LUA = $(LALIN_BIN_DIR)/lalin_native_template_bank.lua
 LALIN_BIN_OBJ_DIR = $(LALIN_BIN_DIR)/obj
 MAXPROCS ?= $(shell n=$$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1); if [ "$$n" -gt 0 ] 2>/dev/null; then echo "$$n"; else echo 1; fi)
 
@@ -25,10 +26,10 @@ lalin-bin: $(LALIN_BIN)
 $(LALIN_BC_BANK_C) $(LALIN_BC_BANK_H) &: $(shell find lua -name '*.lua' | sort) tools/gen_lalin_module_bank.lua
 	luajit tools/gen_lalin_module_bank.lua $(LALIN_BC_BANK_C) $(LALIN_BC_BANK_H) lua
 
-$(LALIN_MC_BANK_C) $(LALIN_MC_BANK_H) &: $(shell find lua -name '*.lua' | sort) tools/gen_lalin_mc_bank.lua
-	luajit tools/gen_lalin_mc_bank.lua $(LALIN_MC_BANK_C) $(LALIN_MC_BANK_H)
+$(LALIN_NATIVE_BANK_C) $(LALIN_NATIVE_BANK_H) $(LALIN_NATIVE_BANK_LUA) &: $(shell find lua -name '*.lua' | sort) tools/gen_lalin_mc_bank.lua
+	luajit tools/gen_lalin_mc_bank.lua $(LALIN_NATIVE_BANK_C) $(LALIN_NATIVE_BANK_H) $(LALIN_NATIVE_BANK_LUA)
 
-$(LALIN_BIN): src/lalin.c $(LALIN_BC_BANK_C) $(LALIN_BC_BANK_H) $(LALIN_MC_BANK_C) $(LALIN_MC_BANK_H) $(LUAJIT)/libluajit.a
+$(LALIN_BIN): src/lalin.c $(LALIN_BC_BANK_C) $(LALIN_BC_BANK_H) $(LALIN_NATIVE_BANK_C) $(LALIN_NATIVE_BANK_H) $(LUAJIT)/libluajit.a
 	@mkdir -p $(LALIN_BIN_OBJ_DIR)
 	@set -e; \
 	maxprocs="$(MAXPROCS)"; \
@@ -36,7 +37,7 @@ $(LALIN_BIN): src/lalin.c $(LALIN_BC_BANK_C) $(LALIN_BC_BANK_H) $(LALIN_MC_BANK_
 	running=0; \
 	pids=""; \
 	objs=""; \
-	for src in src/lalin.c $(LALIN_BC_BANK_C) $(LALIN_MC_BANK_C) $(LALIN_BIN_DIR)/lalin_embedded_mc_bank_shard_*.c; do \
+	for src in src/lalin.c $(LALIN_BC_BANK_C) $(LALIN_NATIVE_BANK_C); do \
 		[ -e "$$src" ] || continue; \
 		obj="$(LALIN_BIN_OBJ_DIR)/$$(printf '%s' "$$src" | sed 's#[^A-Za-z0-9_]#_#g').o"; \
 		objs="$$objs $$obj"; \

@@ -55,7 +55,7 @@ assert(typed_jump.h == Tr.StmtSurface)
 assert(typed_jump.args[1].value.h:typecheck_tree_is_typed_expr())
 assert(typed_region.entry.body[1].cond.h:typecheck_tree_is_typed_expr())
 
-local compiled = lalin.compile("TreeTypecheckSmoke", module)
+local compiled = lalin.compile_luajit("TreeTypecheckSmoke", module, { bytecode = true })
 local f = compiled.sum_typechecked
 assert(f(0) == 0)
 assert(f(1) == 0)

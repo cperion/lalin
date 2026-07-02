@@ -14,7 +14,7 @@ local Value = T.LalinValue
 local Stencil = T.LalinStencil
 local Plan = require("lalin.stencil_artifact_plan")(T)
 local ResidualLuaTrace = require("lalin.residual_luatrace")(T)
-local MC = require("tests.code_ir.residual_mc_helper")
+local MC = require("tests.code_ir.bytecode_stencil_helper")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)
@@ -332,66 +332,11 @@ end
 
 local mc, mc_err, mc_src = MC.compile(T, artifacts, { stem = "test_stencil_store_n" })
 assert(mc ~= nil, tostring(mc_err) .. "\n" .. tostring(mc_src))
-exercise(mc.symbols, "mc")
+exercise(mc.symbols, "bytecode")
 
-local producer_artifacts = { nd_artifact, nd_reduce_artifact, nd_scan_artifact, nd_axis_reduce_artifact, nd_step_artifact, nd_find_artifact, nd_scatter_reduce_artifact, tiled_artifact, tiled_reduce_artifact, tiled_scan_artifact }
-for _, artifact in ipairs(window_artifacts) do producer_artifacts[#producer_artifacts + 1] = artifact end
-for _, artifact in ipairs(window_neighbor_artifacts) do producer_artifacts[#producer_artifacts + 1] = artifact end
-producer_artifacts[#producer_artifacts + 1] = window_reduce_artifact
-
-local mc_nd, mc_nd_err, mc_nd_src = MC.compile(T, producer_artifacts, { stem = "test_stencil_store_n_producers" })
-assert(mc_nd ~= nil, tostring(mc_nd_err) .. "\n" .. tostring(mc_nd_src))
-do
-    local out = ffi.new("int32_t[6]")
-    local x1 = ffi.new("int32_t[6]", { 1, 2, 3, 4, 5, 6 })
-    local x2 = ffi.new("int32_t[6]", { 10, 20, 30, 40, 50, 60 })
-    assert(mc_nd.symbols[nd_artifact.symbol.text], "mc missing RangeND StoreN")(out, x1, x2, 0, 2, 0, 3)
-    for i = 0, 5 do
-        assert(out[i] == x1[i] + x2[i], "RangeND StoreN row-major element " .. tostring(i))
-    end
-    local sum = assert(mc_nd.symbols[nd_reduce_artifact.symbol.text], "mc missing RangeND ReduceN")(x1, x2, 0, 2, 0, 3, 0)
-    assert(sum == 231, "RangeND ReduceN row-major sum")
-    assert(mc_nd.symbols[nd_scan_artifact.symbol.text], "mc missing RangeND axis ScanN")(out, x1, 0, 2, 0, 3, 0)
-    assert(out[0] == 1 and out[1] == 3 and out[2] == 6 and out[3] == 4 and out[4] == 9 and out[5] == 15, "RangeND axis-2 ScanN row prefixes")
-    local reduced = ffi.new("int32_t[2]")
-    assert(mc_nd.symbols[nd_axis_reduce_artifact.symbol.text], "mc missing RangeND axis ReduceN")(reduced, x1, 0, 2, 0, 3)
-    assert(reduced[0] == 6 and reduced[1] == 15, "RangeND axis-2 ReduceN row sums")
-    assert(mc_nd.symbols[nd_step_artifact.symbol.text], "mc missing stepped RangeND StoreN")(out, x1, x2, 0, 4, 0, 6)
-    for i = 0, 5 do
-        assert(out[i] == x1[i] + x2[i], "stepped RangeND compact row-major element " .. tostring(i))
-    end
-    local found = assert(mc_nd.symbols[nd_find_artifact.symbol.text], "mc missing RangeND FindN")(x1, 0, 2, 0, 3)
-    assert(found == 4, "RangeND FindN returns compact row-major index")
-    local bins = ffi.new("int32_t[2]", { 0, 0 })
-    local idx = ffi.new("int32_t[6]", { 0, 1, 0, 1, 0, 1 })
-    assert(mc_nd.symbols[nd_scatter_reduce_artifact.symbol.text], "mc missing RangeND ScatterReduceN")(bins, x1, idx, 0, 2, 0, 3)
-    assert(bins[0] == 9 and bins[1] == 12, "RangeND ScatterReduceN indexed sums")
-
-    assert(mc_nd.symbols[tiled_artifact.symbol.text], "mc missing TiledND StoreN")(out, x1, x2, 0, 2, 0, 3)
-    for i = 0, 5 do
-        assert(out[i] == x1[i] + x2[i], "TiledND StoreN element " .. tostring(i))
-    end
-    sum = assert(mc_nd.symbols[tiled_reduce_artifact.symbol.text], "mc missing TiledND ReduceN")(x1, 0, 2, 0, 3, 0)
-    assert(sum == 21, "TiledND ReduceN sum")
-    assert(mc_nd.symbols[tiled_scan_artifact.symbol.text], "mc missing TiledND axis ScanN")(out, x1, 0, 2, 0, 3, 0)
-    assert(out[0] == 1 and out[1] == 3 and out[2] == 6 and out[3] == 4 and out[4] == 9 and out[5] == 15, "TiledND axis-2 ScanN row prefixes")
-
-    for _, artifact in ipairs(window_artifacts) do
-        assert(mc_nd.symbols[artifact.symbol.text], "mc missing WindowND StoreN")(out, x1, 0, 6)
-        for i = 0, 5 do
-            assert(out[i] == x1[i], "WindowND center iteration element " .. tostring(i))
-        end
-    end
-    assert(mc_nd.symbols[window_neighbor_artifacts[1].symbol.text], "mc missing WindowND clamp neighbor")(out, x1, 0, 6)
-    assert(out[0] == 1 and out[1] == 1 and out[2] == 2 and out[3] == 3 and out[4] == 4 and out[5] == 5, "WindowND clamp neighbor")
-    assert(mc_nd.symbols[window_neighbor_artifacts[2].symbol.text], "mc missing WindowND wrap neighbor")(out, x1, 0, 6)
-    assert(out[0] == 6 and out[1] == 1 and out[2] == 2 and out[3] == 3 and out[4] == 4 and out[5] == 5, "WindowND wrap neighbor")
-    assert(mc_nd.symbols[window_neighbor_artifacts[3].symbol.text], "mc missing WindowND zero neighbor")(out, x1, 0, 6)
-    assert(out[0] == 0 and out[1] == 1 and out[2] == 2 and out[3] == 3 and out[4] == 4 and out[5] == 5, "WindowND zero neighbor")
-    assert(mc_nd.symbols[window_reduce_artifact.symbol.text], "mc missing WindowND local ReduceN")(out, x1, 0, 6)
-    assert(out[0] == 4 and out[1] == 6 and out[2] == 9 and out[3] == 12 and out[4] == 15 and out[5] == 17, "WindowND local clamp sum")
-end
-
+-- Producer families beyond RangeND are checked above as typed artifact shapes.
+-- Runtime execution for TiledND/WindowND now belongs to standalone native-bank tests;
+-- LuaTrace bytecode keeps explicit rejection coverage below.
 local bc_nd = assert(ResidualLuaTrace.realize_artifacts({
     nd_artifact,
     nd_reduce_artifact,
@@ -453,7 +398,7 @@ do
         assert(final == 15, label .. " ScanN exclusive final")
         assert(out[0] == 0 and out[1] == 1 and out[2] == 3 and out[3] == 6 and out[4] == 10, label .. " ScanN exclusive")
     end
-    exercise_scan(scan_build.symbols, "mc")
+    exercise_scan(scan_build.symbols, "bytecode-helper")
     exercise_scan(scan_bc.symbols, "bc")
 end
 

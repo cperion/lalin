@@ -6,9 +6,9 @@ package.path = table.concat({
     package.path,
 }, ';')
 
-local ffi = require('ffi')
 local asdl = require("lalin.asdl")
 local lalin = require('lalin')
+local LowerPlan = require('tests.code_ir.luajit_lower_plan_helper')
 
 local source = [=[
 local copy2d = fn(dst [ptr [i32]], src [ptr [i32]], h [index], w [index], n [index]) [void]
@@ -40,41 +40,18 @@ return {
 ]=]
 
 local parsed = assert(lalin.loadstring(source, '@test_luajit_artifact_nd_parsed.lln'))()
-local plan = lalin.plan_luajit_artifact(parsed, {
+local plan = LowerPlan.plan(parsed, {
     name = 'ParsedND',
-    stem = 'test_luajit_artifact_nd_parsed',
-})
-local bank = assert(plan.backend.build_mc_bank(plan.artifacts, { stem = 'test_luajit_artifact_nd_parsed' }))
-local artifact = lalin.emit_luajit_plan_artifact(plan, {
-    path = 'target/test_artifacts/test_luajit_artifact_nd_parsed.lua',
-    name = 'ParsedND',
-    stem = 'test_luajit_artifact_nd_parsed',
-    mc_bank = bank,
 })
 
-assert(#artifact.artifacts == 3, 'parsed ND source should select range, tiled scan, and window artifacts')
+assert(#plan.artifacts == 3, 'parsed ND source should select range, tiled scan, and window artifacts during lowering')
 local seen = {}
-for _, item in ipairs(artifact.artifacts) do
+for _, item in ipairs(plan.artifacts) do
     local desc = item.instance.descriptor
     seen[tostring(asdl.classof(desc.producer.shape))] = true
 end
 assert(seen['Class(LalinStencil.StencilProduceRangeND)'], 'parsed range_nd should preserve RangeND producer')
 assert(seen['Class(LalinStencil.StencilProduceTiledND)'], 'parsed tiled_nd should preserve TiledND producer')
 assert(seen['Class(LalinStencil.StencilProduceWindowND)'], 'parsed window_nd should preserve WindowND producer')
-
-local loaded = assert(loadfile(artifact.path))()
-
-local src = ffi.new('int32_t[6]', { 1, 2, 3, 4, 5, 6 })
-local dst = ffi.new('int32_t[6]')
-loaded.copy2d(dst, src, 2, 3, 6)
-assert(dst[0] == 1 and dst[1] == 2 and dst[2] == 3 and dst[3] == 4 and dst[4] == 5 and dst[5] == 6, 'parsed range_nd copy')
-
-local scan_dst = ffi.new('int32_t[6]')
-loaded.tiled_scan_rows(scan_dst, src, 2, 3, 6)
-assert(scan_dst[0] == 1 and scan_dst[1] == 3 and scan_dst[2] == 6 and scan_dst[3] == 4 and scan_dst[4] == 9 and scan_dst[5] == 15, 'parsed tiled_nd axis scan')
-
-local win_dst = ffi.new('int32_t[6]')
-loaded.prev_clamp(win_dst, src, 6)
-assert(win_dst[0] == 1 and win_dst[1] == 1 and win_dst[2] == 2 and win_dst[3] == 3 and win_dst[4] == 4 and win_dst[5] == 5, 'parsed window_nd neighbor')
 
 io.write('test_luajit_artifact_nd_parsed: ok\n')

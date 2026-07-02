@@ -18,8 +18,7 @@ local function bind_context(T)
     local Lower = require("lalin.luajit_lower")(T)
     local Emit = require("lalin.luajit_emit")(T)
     local StencilArtifactPlan = require("lalin.stencil_artifact_plan")(T)
-    local StencilBank = require("lalin.residual_mc")(T)
-    local ResidualLuaTrace = require("lalin.residual_luatrace")(T)
+    local BytecodeTrace = require("lalin.residual_luatrace")(T)
     local ExecPlan = require("lalin.exec_plan")(T)
     local CodeSchedulePlan = require("lalin.code_schedule_plan")(T)
     local BackTargetModel = require("lalin.back_target_model")(T)
@@ -71,23 +70,13 @@ local function bind_context(T)
         error("luajit_backend: unsupported selected stencil kind " .. tostring(kind), 3)
     end
 
-    local function residual_mode(opts)
-        local mode = tostring((opts or {}).residual or "mc")
-        if mode == "mc" or mode == "bc" then return mode end
-        error("luajit_backend: unknown residual materializer " .. mode, 3)
-    end
-
-    local function native_residual_mode(opts)
-        opts = opts or {}
-        if residual_mode(opts) == "bc" then return nil end
-        if opts.native_residual ~= nil then return opts.native_residual end
-        if opts.tcc_residual ~= nil then return opts.tcc_residual end
-        return "tcc"
+    local function bytecode_mode(opts)
+        return opts and opts.bytecode == true
     end
 
     local function artifact_with_provider(artifact, opts)
-        if residual_mode(opts) == "bc" then
-            return ResidualLuaTrace.bc_artifact(artifact)
+        if bytecode_mode(opts) then
+            return BytecodeTrace.bc_artifact(artifact)
         end
         return artifact
     end
@@ -168,60 +157,43 @@ local function bind_context(T)
         return lj_module, facts, artifacts, rejects
     end
 
-    function api.realize_artifacts(artifacts, opts)
-        opts = opts or {}
-        if #artifacts == 0 then
-            return { kind = "MCStencilBankRealization", symbols = {}, installed = {}, bank = nil }, nil
-        end
-        local function realize_bc()
-            local realized, err, source = ResidualLuaTrace.realize_bc_artifacts(artifacts, {
-                bank = opts.bc_bank,
-                stem = opts.stem,
-                id = opts.bc_bank_id,
-                target = opts.bc_target,
-                env = opts.bc_env,
-            })
-            return realized, err, source
-        end
-        if residual_mode(opts) == "bc" then
-            return realize_bc()
-        end
-        local mc_bank = opts.mc_bank
-        if mc_bank == nil then
-            local embedded_err
-            mc_bank, embedded_err = StencilBank.embedded_mc_bank_for(artifacts or {}, {
-                install_policy = opts.install_policy,
-                ffi_preamble = opts.ffi_preamble,
-            })
-            if mc_bank == nil then
-                return nil, "luajit_backend: residual_mc requires an embedded or supplied MC bank: " .. tostring(embedded_err)
-            end
-        end
-        local realized, err, source = StencilBank.realize_mc_artifacts(artifacts, {
-            mc_bank = mc_bank,
-            install_policy = opts.install_policy,
-        })
-        return realized, err, source
+    local function native_boundary_error(operation)
+        return "luajit_backend: " .. operation .. " only supports explicit LuaJIT bytecode stencil artifacts; native copy-patch uses lalin.native_backend / LalinNative"
     end
 
-    function api.build_mc_bank(artifacts, opts)
-        return StencilBank.build_mc_bank(artifacts or {}, opts or {})
+    function api.realize_artifacts(artifacts, opts)
+        opts = opts or {}
+        if not bytecode_mode(opts) then
+            return nil, native_boundary_error("artifact realization")
+        end
+        return BytecodeTrace.realize_bc_artifacts(artifacts, {
+            bank = opts.bc_bank,
+            stem = opts.stem,
+            id = opts.bc_bank_id,
+            target = opts.bc_target,
+            env = opts.bc_env,
+        })
     end
 
     function api.build_bc_bank(artifacts, opts)
-        return ResidualLuaTrace.build_bc_bank(artifacts or {}, opts or {})
+        return BytecodeTrace.build_bc_bank(artifacts or {}, opts or {})
     end
 
     function api.compile_lj_module(lj_module, artifacts, opts)
         opts = opts or {}
-        local realized, realize_err, realize_source = api.realize_artifacts(artifacts or {}, opts)
-        if realized == nil then return nil, realize_err, realize_source end
-        local native_residual = native_residual_mode(opts)
-        if realized.kind ~= "MCStencilBankRealization" then native_residual = nil end
+        local stencil_symbols = {}
+        local realized = nil
+        if bytecode_mode(opts) then
+            local realize_err, realize_source
+            realized, realize_err, realize_source = api.realize_artifacts(artifacts or {}, opts)
+            if realized == nil then return nil, realize_err, realize_source end
+            stencil_symbols = realized.symbols
+        elseif #(artifacts or {}) > 0 then
+            return nil, native_boundary_error("module compilation")
+        end
         local compiled, emit_err, source = Emit.compile_module(lj_module, {
             chunk_name = opts.chunk_name or "lalin_luajit_backend",
-            stencil_symbols = realized.symbols,
-            native_residual = native_residual,
+            stencil_symbols = stencil_symbols,
         })
         if compiled == nil then return nil, emit_err, source end
         return {
@@ -236,8 +208,7 @@ local function bind_context(T)
         opts = opts or {}
         local stencil_source
         local bc_bank
-        local mode = residual_mode(opts)
-        if mode == "bc" then
+        if bytecode_mode(opts) then
             bc_bank = opts.bc_bank
             if bc_bank == nil then
                 local bank_err
@@ -248,34 +219,23 @@ local function bind_context(T)
                 })
                 if bc_bank == nil then return nil, bank_err end
             end
-            stencil_source = ResidualLuaTrace.emit_bc_bank_source(bc_bank, opts)
+            stencil_source = BytecodeTrace.emit_bc_bank_source(bc_bank, opts)
         else
-            local mc_bank = opts.mc_bank
-            if mc_bank == nil and #(artifacts or {}) > 0 then
-                local embedded_err
-                mc_bank, embedded_err = StencilBank.embedded_mc_bank_for(artifacts or {}, {
-                    install_policy = opts.install_policy,
-                    ffi_preamble = opts.ffi_preamble,
-                })
-                if mc_bank == nil then
-                    return nil, "luajit_backend: residual_mc requires an embedded or supplied MC bank: " .. tostring(embedded_err)
-                end
+            if #(artifacts or {}) > 0 then
+                return nil, native_boundary_error("source artifact emission")
             end
-            if stencil_source == nil then
-                stencil_source = mc_bank and StencilBank.emit_mc_bank_source(mc_bank, opts) or "local __lalin_luajit_stencil_symbols = {}\n"
-            end
+            stencil_source = "local __lalin_luajit_stencil_symbols = {}\n"
         end
         local module_source = Emit.emit_module(lj_module, {
             chunk_name = opts.chunk_name or "lalin_luajit_artifact",
-            native_residual = mode == "bc" and nil or native_residual_mode(opts),
         })
         local source = table.concat({
-            mode == "bc"
-                and "-- Generated Lalin LuaJIT LuaTrace BC copy+compile residual artifact.\n"
-                or "-- Generated Lalin LuaJIT MC copy+compile residual artifact.\n",
-            mode == "bc"
-                and "-- Stencil descriptors are emitted below as LuaJIT BC stencils.\n"
-                or "-- Native MC stencil bytes are embedded below as data; TCC residual glue calls installed bank stencils.\n",
+            bytecode_mode(opts)
+                and "-- Generated Lalin LuaJIT bytecode artifact.\n"
+                or "-- Generated Lalin LuaJIT artifact.\n",
+            bytecode_mode(opts)
+                and "-- Stencil descriptors are emitted below as LuaJIT bytecode stencils.\n"
+                or "-- No stencil bytecode bank is embedded in this LuaJIT artifact.\n",
             stencil_source,
             module_source,
         })
@@ -286,8 +246,6 @@ local function bind_context(T)
             f:close()
         end
         return source, nil, {
-            residual = mode,
-            selected_mc_bank = mc_bank,
             selected_bc_bank = bc_bank,
         }
     end
@@ -310,7 +268,6 @@ local function bind_context(T)
             exec_plan = facts.exec,
             artifacts = artifacts,
             rejects = rejects,
-            mc_bank = opts.mc_bank,
         }
     end
 
