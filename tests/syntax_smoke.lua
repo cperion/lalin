@@ -3,24 +3,21 @@ package.path = "../lua/?.lua;../lua/?/init.lua;" .. package.path
 local lalin = require("lalin")
 
 local src = [=[
-local scale = 4
-local copy_scale = fn(dst [ptr [i32]], src [ptr [i32]], n [index]) [void]
+fn copy_scale(dst [ptr [i32]], src [ptr [i32]], n [index]) [void] do
   requires bounds(dst)(n), bounds(src)(n), disjoint(dst)(src)
   loop i in 0 .. n do
     dst[i] = src[i] * [scale]
   end
 end
-return copy_scale
 ]=]
 
-local chunk, compiled_or_err, compiled_if_err = lalin.loadstring(src, "@smoke.lln")
-if not chunk then
-  error(tostring(compiled_or_err) .. "\nGenerated Lua:\n" .. tostring(compiled_if_err and compiled_if_err.lua or "<none>"))
+local decls, doc_or_err = lalin.loadstring(src, "@smoke.lln", { env = { scale = 4 } })
+if not decls then
+  error(tostring(doc_or_err))
 end
-local compiled = compiled_or_err
-assert(#compiled.constructors == 1, "expected one parsed constructor")
-assert(compiled.lua:match("__llbl_syntax.invoke"), "generated source should invoke parsed constructor")
-local f = chunk()
+assert(doc_or_err and doc_or_err.tag == "DeclDocument", "expected document metadata")
+assert(#decls == 1, "expected one parsed declaration")
+local f = decls[1]
 assert(f.tag == "DeclFunc", "expected DeclFunc")
 assert(f.name == "copy_scale", "wrong function name")
 assert(f.body[1].tag == "StmtRequires", "requires statement missing")

@@ -2,10 +2,10 @@
 	"version": 1,
 	"workflowId": "wf-native-cp-refactor",
 	"planId": "main",
-	"revision": 170,
+	"revision": 171,
 	"nextId": 38,
 	"createdAt": "2026-07-02T17:26:00.699Z",
-	"updatedAt": "2026-07-04T19:37:09.021Z",
+	"updatedAt": "2026-07-04T20:04:38.096Z",
 	"tasks": [
 		{
 			"id": "T001",
@@ -821,7 +821,7 @@
 		{
 			"id": "T019S",
 			"title": "Implement StencilOp source builders",
-			"detail": "Add concrete NativeChunkStencilOp C stencil source builders and manifest entries before stencil lowering. Owners are concrete Stencil ASDL leaves/axes: StencilProducerShape loop skeletons, StencilAccessLayout address/descriptor fragments, StencilPointExpr scalar fragments, StencilBody, StencilSink, StencilStoreSemantics, StencilReductionSemantics, StencilReduceScope, StencilReducer, and StencilSchedule where source/control shape changes. Dynamic bounds/strides/descriptors stay ABI/frame values; static offsets/ranks/lanes/schedules are finite axes or holes. Recursive point/access expressions compose graph nodes, not exact-cell C chunks. Add precise ASDL projection/facet if required; no semantic mirror or placeholders.",
+			"detail": "Add concrete NativeChunkStencilOp C stencil source builders and manifest entries before stencil lowering. The ASDL-first blocker has been processed: NativeStencil*Projection facets, NativeStencil*SourceShape vocabulary, NativeStencilSourceSupport on NativeTemplateSupportDomain, source-shape axes, structural equality, and stencil projection methods/tests now exist. Owners are concrete Stencil ASDL leaves/axes: StencilProducerShape loop skeletons, StencilAccessLayout address/descriptor fragments, StencilPointExpr scalar fragments, StencilBody, StencilSink, StencilStoreSemantics, StencilReductionSemantics, StencilReduceScope, StencilReducer, and StencilSchedule where source/control shape changes. Dynamic bounds/strides/descriptors stay ABI/frame values; static offsets/ranks/lanes/schedules are finite axes or holes. Recursive point/access expressions compose graph nodes, not exact-cell C chunks. No semantic mirror or placeholders.",
 			"file": "lua/lalin/native_template_sources.lua",
 			"after": [
 				"T010B",
@@ -833,7 +833,7 @@
 				"T018S",
 				"T018R"
 			],
-			"status": "blocked",
+			"status": "todo",
 			"order": 49,
 			"claimedBy": "agent-PCWEJX",
 			"blockedReason": "Cannot implement honest StencilOp source builders from the current ASDL/source-manifest model. The schema has broad NativeStencilProducer/Access/Point/Sink/Schedule axes and NativeChunkStencilOp/NativeRoleStencil* roles, but it lacks the T018-style separation between program-specific Stencil semantic projections and finite bank-enumerable StencilOp source-shape facts: no NativeStencil*Projection facets for descriptor/access/body/sink/schedule ownership, no NativeStencil*SourceShape vocabulary, no NativeStencilSourceSupport field on NativeTemplateSupportDomain, no source-shape axis for StencilOp families, and no typed frame/ABI/value-location input for dynamic access descriptors, producer bounds, point-expression temps, sink/reduction state, or schedule control. Implementing T019S now would require either enumerating program-specific StencilDescriptor/AccessRef/PointExpr values as bank axes, inventing placeholder C chunks, or mirroring stencil semantics in LalinNative optional builders, violating the ASDL-first/no semantic mirror/no exact-cell enumeration rules. Need ASDL-first unblock tasks analogous to T018U/T018V for Stencil projection and finite source-shape/source-support contracts before concrete NativeChunkStencilOp C source builders can be added.",
@@ -842,10 +842,11 @@
 				"Added T016R4 dependency to respect current user priority: do not start Kernel/Stencil before Code source-axis/address-plan unblock path.",
 				"Dependency tightened after T017U so Stencil source work cannot be claimed before Code control/call lowering resumes.",
 				"Dependency tightened after T018U so Stencil source work cannot be claimed before Kernel source-builder work resumes.",
-				"Dependency tightened after T018W so Stencil source work cannot be claimed before Kernel lowering resumes."
+				"Dependency tightened after T018W so Stencil source work cannot be claimed before Kernel lowering resumes.",
+				"Blocker processed by adding stencil projection/source-shape/source-support ASDL contracts and methods: lua/lalin/schema/native.lua, lua/lalin/native.lua, lua/lalin/native_stencil_methods.lua, lua/lalin/native_template_support.lua, tests/code_ir/test_native_stencil_contracts.lua, docs/COPY_PATCH_TEMPLATE_ENUMERATION_NOTES.md. Checks: luajit tests/run.lua schema; luajit tests/run.lua code_ir."
 			],
 			"createdAt": "2026-07-04T08:35:30.132Z",
-			"updatedAt": "2026-07-04T19:37:09.021Z"
+			"updatedAt": "2026-07-04T20:04:38.096Z"
 		},
 		{
 			"id": "T019R",

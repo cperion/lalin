@@ -245,13 +245,13 @@ function Driver.compile(source, chunkname, opts)
   while not lex:at_eof() do
     local t = lex:peek()
 
-    -- Parse-time syntax import for the mixed-source driver.  .lln value chunks
-    -- disable this path and use Lua require for modules.
+    -- Parse-time syntax import for the mixed Lua+parsed driver.  The dedicated
+    -- .lln document loader does not route through this path.
     if t.kind == "name" and t.value == "import" and lex:peek(1).kind == "string" then
       local import_tok = lex:next()
       local module_tok = lex:next()
       if opts.allow_import == false then
-        lex:error_at(import_tok, "`import` is not part of .lln value chunks; use Lua `require(...)` for modules")
+        lex:error_at(import_tok, "`import` is disabled for this mixed-source load; use require(...) or the caller's active language options")
       end
       local modname = unquote_lua_string(module_tok.raw)
       local ok, mod = pcall(require, modname)

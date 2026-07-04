@@ -18,9 +18,9 @@ end
 local function run_file_chunk(src, chunk_name, path, args)
     if tostring(path or ""):match("%.lln$") then
         local lalin = require("lalin")
-        local loader, err = lalin.loadstring(src, chunk_name)
-        if loader == nil then return nil, err end
-        return pcall(loader, unpack(args or {}))
+        local decls, err = lalin.loadstring(src, chunk_name)
+        if decls == nil then return false, err end
+        return true, decls
     end
     return run_chunk(src, chunk_name, args)
 end

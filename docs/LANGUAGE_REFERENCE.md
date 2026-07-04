@@ -19,9 +19,9 @@ and generated code are concrete.
 The pipeline is:
 
 ```text
-.lln value chunk
+.lln declaration document (root role Lalin.decls)
   -> lalin.loader
-  -> llbl.syntax driver
+  -> lalin.syntax.document
   -> lalin.syntax parsed AST
   -> LalinTree ASDL
   -> typecheck
@@ -49,64 +49,56 @@ Important rules:
 
 ## Loading `.lln` Source
 
-The official source extension is `.lln`. A `.lln` file is a Lua-native value
-chunk with Lalin parsed syntax active by default. It does not define a separate
-module system. Use Lua `require`, return Lua values, and compose public APIs with
-tables.
+The official source extension is `.lln`. A `.lln` file is a Lalin declaration
+**document** rooted at the `Lalin.decls` role. It is not a Lua chunk and it does
+not execute top-level Lua statements.
+
+Root document items are:
+
+- Lalin declarations: `fn`, `struct`, `union`, `handle`, and `region`
+- top-level `[lua_expr]` HostEval splices that produce declarations or ordered
+  declaration arrays
+
+Top-level Lua chunk forms such as `local`, `return`, `module`, and parse-time
+`import` are rejected by the document loader.
 
 ```lln
-local add = fn(a [i32], b [i32]) [i32]
-  return a + b
+struct Pair
+  x [i32]
 end
 
-return {
-  add = add,
-}
+fn add(a [i32], b [i32]) [i32] do
+  return a + b
+end
 ```
 
-Load it directly from Lua:
+Load a document directly from Lua:
 
 ```lua
 local lalin = require("lalin")
 
-local chunk = assert(lalin.loadfile("demo.lln"))
-local values = chunk()
+local decls, doc = assert(lalin.loadfile("demo.lln"))
+local compiled = lalin.compile("demo", decls, { luajit = true })
 ```
 
-Or install the `.lln` package searcher and use Lua `require`:
+`lalin.loadstring` and `lalin.loadfile` return the ordered declaration array and
+a `DeclDocument` metadata value. `lalin.dofile` returns the declaration array. A
+`.lln` document does not return an arbitrary Lua API table.
+
+Install the `.lln` package searcher to let Lua `require` discover declaration
+documents:
 
 ```lua
 local lalin = require("lalin")
 lalin.path = "./?.lln;./?/init.lln"
 lalin.install_searcher()
 
-local demo = require("demo")
+local decls = require("demo") -- declaration array
 ```
 
-The returned Lua value is the public API. Lalin does not add `module`, `export`,
-or user-facing import declarations on top of Lua.
-
-Parsed declarations are first-class Lua values. A `.lln` chunk may return
-declarations, ordinary Lua values, or a compiled runtime API table.
-`lalin.compile` accepts a parsed declaration, an array of declarations, or a Lua
-API table containing declarations:
-
-```lua
-local lalin = require("lalin")
-
-local chunk = assert(lalin.loadstring([[
-  return {
-    add = fn(a [i32], b [i32]) [i32]
-      return a + b
-    end
-  }
-]], "@add.lln"))
-
-local parsed_decls = chunk()
-local compiled = lalin.compile("add", parsed_decls)
-
-print(compiled.add(3, 4))
-```
+Lua builder/metaprogramming code remains in `.lua` and under `lalin.dsl`. Use
+ordinary Lua modules to build constants, fragments, and generated declarations,
+then pass them through `opts.env` or through HostEval brackets.
 
 The lower-level `llbl.syntax` mixed-source driver remains infrastructure for
 Lua-hosted syntax islands and tooling, not the standard `.lln` loading surface.
@@ -115,140 +107,84 @@ Lua-hosted syntax islands and tooling, not the standard `.lln` loading surface.
 
 ## Parsed Metaprogramming
 
-LLBL metaprogramming is not string substitution. A `.lln` file is a Lua value
-chunk that contains parsed-channel islands. The syntax driver rewrites each
-island into an LLBL constructor invocation with:
-
-- `owner`: the dialect that owns the island, such as `lalin`
-- `role`: the semantic role, such as declaration, expression, or statement
-- `channel`: the delivery channel, such as `parsed:lalin` or `parsed:expr`
-- `origin`: source span/provenance for diagnostics and tooling
-- `refs`: Lua lexical names captured by host escapes
-
-The constructor is invoked when the Lua chunk evaluates. At that point the
-captured Lua environment is available, host escapes are resolved, and the result
-is an ordinary Lua value carrying parsed Lalin structure.
+LLBL metaprogramming is not string substitution. In a `.lln` document,
+`[lua_expr]` is an LLBL HostEval value: it records the Lua source, captured
+references, bracket origin, and the expected role supplied by the surrounding
+parser. The document loader evaluates HostEval forms against the document host
+environment and adapts the produced value through the current Lalin role.
 
 The core rule is:
 
 ```text
-Lua builds values.
-LLBL channels deliver syntax islands as values with roles and origins.
+Lua builds host values.
+.lln documents offer those values to roles through HostEval brackets.
 The Lalin dialect gives those values typed/backend meaning.
 ```
 
-### Lua Around Islands
+### Document Host Environment
 
-Use ordinary Lua for files, tables, `require`, conditionals, helper functions,
-and public APIs. Use parsed Lalin islands for object-language declarations and
-fragments:
-
-```lln
-local factor = 4
-
-local scale = fn(dst [ptr [i32]], src [ptr [i32]], n [index]) [void]
-  requires bounds(dst)(n), writeonly(dst), bounds(src)(n), readonly(src)
-  requires disjoint(dst)(src)
-  loop i in 0 .. n do
-    dst[i] = src[i] * [factor]
-  end
-end
-
-return {
-  scale = scale,
-  factor = factor,
-}
-```
-
-The returned table is the Lua API. There is no separate Lalin import/export
-system layered on top of Lua.
-
-### Declaration Values
-
-Parsed declarations are Lua values. They can be collected, returned, filtered,
-or passed to `lalin.compile`:
-
-```lln
-local decls = {}
-
-decls[#decls + 1] = fn(a [i32], b [i32]) [i32]
-  return a + b
-end
-
-decls[#decls + 1] = fn(a [i32], b [i32]) [i32]
-  return a - b
-end
-
-return decls
-```
-
-Anonymous source declarations are still named before backend lowering. LLBL
-records obvious Lua context such as `local add = fn(...)` and table fields such
-as `{ add = fn(...) }`; Lalin uses that as the declaration's public/debug name.
-If no Lua slot name exists, Lalin assigns a generated compiler name such as
-`__lln_fn_1`. Codegen uses that internal name for symbols, while Lua tables stay
-the user-facing API model.
-
-```lln
-return {
-  add = fn(a [i32], b [i32]) [i32]
-    return a + b
-  end,
-}
-```
-
-Compile them from Lua:
+The loader supplies the standard Lalin host environment (`i32`, `ptr`, `array`,
+`named`, and related type/building values). Callers may add values with
+`opts.env`:
 
 ```lua
-local lalin = require("lalin")
-local decls = assert(lalin.loadfile("arith.lln"))()
-local arith = lalin.compile("arith", decls)
+local decls = assert(lalin.loadstring([[
+fn scaled(x [i32]) [i32] do
+  return x * [scale]
+end
+]], "@scaled.lln", {
+  env = { scale = 4 },
+}))
 ```
 
-### Role-Directed HostEval Brackets
+Declarations bind by name as the document materializes. A declaration can be
+used by later HostEval brackets in the same document:
 
-Parsed brackets use `[lua_expr]`. The bracket produces an LLBL HostEval value:
-it records the Lua source, captured lexical references, bracket origin, and the
-expected role supplied by the surrounding parser. Lua evaluation happens when
-the syntax constructor runs; adaptation happens later through the current Lalin
-role.
+```lln
+struct Pair
+  x [i32]
+end
+
+fn accept(p [Pair]) [void] do
+  return
+end
+```
+
+Top-level `[generated]` evaluates under the declaration-stream role and splices
+ordered declarations into the document:
+
+```lln
+[generated_decls]
+
+fn use_generated(x [Generated]) [void] do
+  return
+end
+```
+
+Here `generated_decls` is supplied by Lua, for example through
+`lalin.loadstring(source, name, { env = { generated_decls = decls } })`.
+
+### Role-Directed HostEval Brackets
 
 The bracket itself does not mean "type" or "expression". The surrounding role
 means that.
 
-In expression position, `[lua_expr]` adapts:
-
-- primitive literals: numbers, booleans, strings, `nil`
-- parsed expression fragments
-- parsed expression AST values
-- already-constructed LalinTree expression values
+In expression position, `[lua_expr]` adapts primitive literals, parsed expression
+fragments, parsed expression AST values, or already-constructed LalinTree
+expression values:
 
 ```lln
-local factor = 3
-local bias = 5
-
-local scaled = expr x * [factor] + [bias] end
-
-local scale_one = fn(x [i32]) [i32]
-  return [scaled]
+fn scale_one(x [i32]) [i32] do
+  return [scaled_expr]
 end
 ```
 
-In statement-list position, `[lua_expr]` can splice:
-
-- a parsed statement fragment
-- a parsed statement AST value
-- an array of statement fragments/statements
-- already-constructed LalinTree statement values
+In statement-list position, `[lua_expr]` can splice statement fragments,
+statement AST values, arrays of statements, or already-constructed LalinTree
+statements:
 
 ```lln
-local factor = 3
-
-local scale_step = stmt
-  dst[i] = src[i] * [factor]
-end
-
-local scale = fn(dst [ptr [i32]], src [ptr [i32]], n [index]) [void]
+fn scale(dst [ptr [i32]], src [ptr [i32]], n [index]) [void] do
   requires bounds(dst)(n), writeonly(dst), bounds(src)(n), readonly(src)
   requires disjoint(dst)(src)
   loop i in 0 .. n do
@@ -258,46 +194,21 @@ end
 ```
 
 In type position, `[lua_expr]` adapts under the `type` role. The Lua expression
-may evaluate to a Lalin type value or to a declaration value with a stable type
-identity:
-
-- built-in scalar type values such as `i32`, `f64`, or `index`
-- constructor results such as `ptr [i32]`, `array [i32] [4]`, or `view [i32]`
-- named type values such as `named("Pair")`
-- parsed or DSL declarations such as `DeclStruct`, `DeclUnion`, or `DeclHandle`
-  when their names define type identities
-- values produced by Lua helper functions, factories, or required packages
+may evaluate to a Lalin type value or to a named declaration value:
 
 ```lln
-local elem_ty = i32
-local ptr_elem_ty = ptr [elem_ty]
-
-local Pair = struct Pair
-  value [i32]
-end
-
-local use_pair = fn(p [Pair]) [void]
-  return
-end
-
-local scale = fn(dst [ptr_elem_ty], src [ptr_elem_ty], n [index]) [void]
-  requires bounds(dst)(n), writeonly(dst), bounds(src)(n), readonly(src)
-  requires disjoint(dst)(src)
-  loop i in 0 .. n do
-    dst[i] = src[i]
-  end
-end
+[i32]
+[ptr [i32]]
+[array [i32] [4]]
+[named("Pair")]
+[Pair]         -- after `struct Pair ... end` in the same document
 ```
 
 In product/field-list positions, `[lua_expr]` adapts under the product role and
 can splice generated fields:
 
 ```lln
-local header_fields = {
-  { tag = "Field", name = "len", type = i32 },
-}
-
-local Packet = struct Packet
+struct Packet
   [header_fields]
   payload [ptr [u8]]
 end
@@ -305,14 +216,7 @@ end
 
 At declaration-stream boundaries, `[lua_expr]` adapts under the `decls` role.
 The value may be one declaration, a positional array of declarations, or a
-role-compatible declaration fragment. Positional order is preserved. Keyed Lua
-tables are accepted only when the keyed values are parsed declarations; string
-keys are applied as deterministic public/debug names in sorted-key order.
-
-```lln
-local generated = make_declarations()
-[generated]
-```
+role-compatible declaration fragment. Positional order is preserved.
 
 Parsed expression indexing is a hard boundary:
 
@@ -324,51 +228,39 @@ a[x]          -- parsed Lalin index expression
 
 ### Fragments
 
-The parsed channel has `expr` and `stmt` entrypoints. They produce role-bearing
-Lua values with parsed origins, not text snippets:
+Expression and statement fragments are host values produced by Lua/mixed-source
+builder code, not top-level `.lln` statements. A document consumes them through
+role-directed brackets:
 
 ```lln
-local rhs = expr x + 1 end
-
-local store = stmt
-  dst[i] = [rhs]
+fn use_fragment(x [i32]) [i32] do
+  [prologue]
+  return [rhs]
 end
 ```
 
-Fragments can close over Lua values through their own host escapes and can be
-spliced into later parsed islands. This is the parsed-channel analogue of LLBL
-role-tagged fragments in the Lua DSL.
+This is the parsed-channel analogue of LLBL role-tagged fragments in the Lua
+DSL: Lua owns generation, while Lalin roles own adaptation and splicing.
 
 ### Requiring `.lln` Packages
 
-`.lln` packages compose through Lua `require` and returned values:
+`.lln` packages compose as declaration documents. After installing the searcher,
+Lua `require("pkg")` returns that package's declaration array. Inside another
+`.lln` document, use HostEval to splice declarations produced by Lua:
 
 ```lln
-local cfg = require("scale_config")
-
-local scale = fn(dst [ptr [i32]], src [ptr [i32]], n [index]) [void]
-  requires bounds(dst)(n), writeonly(dst), bounds(src)(n), readonly(src)
-  requires disjoint(dst)(src)
-  loop i in 0 .. n do
-    dst[i] = src[i] * [cfg.factor]
-  end
-end
-
-return {
-  scale = scale,
-  cfg = cfg,
-}
+[require("pkg.generated_decls")]
 ```
 
-This is still LLBL: Lua carries package values, LLBL carries language islands,
-and Lalin owns the meaning of those islands.
+There is no `.lln` source-level `module`, `export`, or `import` declaration.
 
 ---
 
 ## Lexical Shape
 
-The parsed syntax appears inside `.lln` Lua value chunks through direct
-entrypoints such as `fn`, `struct`, `union`, and `region`.
+A `.lln` declaration document is a token stream of root entries such as `fn`,
+`struct`, `union`, `handle`, `region`, and top-level HostEval declaration
+splices.
 
 Names use the usual identifier shape:
 
@@ -487,7 +379,7 @@ they are not storable data.
 Functions declare parameter products and a single result type:
 
 ```lln
-local distance2 = fn(x [f32], y [f32]) [f32]
+fn distance2(x [f32], y [f32]) [f32]
   return x * x + y * y
 end
 ```
@@ -495,7 +387,7 @@ end
 Use `void` for functions that do not return a value:
 
 ```lln
-local clear = fn(dst [ptr [i32]], n [index]) [void]
+fn clear(dst [ptr [i32]], n [index]) [void]
   loop i in 0 .. n do
     dst[i] = 0
   end
@@ -509,12 +401,12 @@ end
 ### Functions
 
 ```lln
-local add = fn(a [i32], b [i32]) [i32]
+fn add(a [i32], b [i32]) [i32]
   return a + b
 end
 ```
 
-Functions are Lua values at source level and typed function items after Lalin
+Functions are declaration values in the document stream and typed function items after Lalin
 normalization. Parameters are immutable values. Mutable local state is
 introduced with `var`.
 
@@ -554,15 +446,15 @@ indexable, and not implicitly convertible to its integer representation.
 Handle declarations are available in parsed `.lln` syntax:
 
 ```lln
-local AudioBufferStore = struct AudioBufferStore
+struct AudioBufferStore
   capacity [index]
 end
 
-local AudioBufferRecord = struct AudioBufferRecord
+struct AudioBufferRecord
   first [index]
 end
 
-local AudioBuffer = handle AudioBuffer [u32]
+handle AudioBuffer [u32]
   invalid = 0
   domain [AudioBufferStore]
   target [AudioBufferRecord]
@@ -589,19 +481,17 @@ Trusted store code can cross the representation boundary with explicit
 `repr(handle)` / `Handle.from_repr(raw)` operations. Ordinary safe casts do not
 convert handles to or from scalars.
 
-### Files And Values
+### Documents And Values
 
-Lalin does not add a user-facing module declaration. A `.lln` file is a Lua
-value chunk. Return the declarations or runtime values the caller should see:
+Lalin does not add a user-facing module declaration. A `.lln` file is an ordered
+declaration document, and loading it returns the document's declaration array.
+Runtime Lua APIs, tables, and macros live in `.lua` builder modules; pass their
+results into documents through `opts.env` or HostEval brackets.
 
 ```lln
-local add = fn(a [i32], b [i32]) [i32]
+fn add(a [i32], b [i32]) [i32] do
   return a + b
 end
-
-return {
-  add = add,
-}
 ```
 
 ---
@@ -721,7 +611,7 @@ Loops can carry a reducer or inclusive scan sink. A reducing loop places one
 reduction result type:
 
 ```lln
-local dot = fn(lhs [ptr [i32]], rhs [ptr [i32]], n [index]) [i32]
+fn dot(lhs [ptr [i32]], rhs [ptr [i32]], n [index]) [i32]
   requires bounds(lhs)(n), readonly(lhs), bounds(rhs)(n), readonly(rhs)
   loop i in 0 .. n do
     fold acc [i32] = 0 by add step lhs[i] * rhs[i]
@@ -732,7 +622,7 @@ end
 A scan loop writes each inclusive accumulator value into a destination:
 
 ```lln
-local prefix_sum = fn(dst [ptr [i32]], xs [ptr [i32]], n [index]) [void]
+fn prefix_sum(dst [ptr [i32]], xs [ptr [i32]], n [index]) [void]
   requires bounds(dst)(n), writeonly(dst), bounds(xs)(n), readonly(xs)
   requires disjoint(dst)(xs)
   loop i in 0 .. n do
@@ -980,20 +870,18 @@ sizeof [i32]
 
 ### Host Escape
 
-Host escapes splice Lua values into parsed syntax at construction time:
+Host escapes splice Lua values from the document host environment into parsed syntax:
 
 ```lln
-local scale = 4
-
-local copy_scale = fn(dst [ptr [i32]], src [ptr [i32]], n [index]) [void]
+fn copy_scale(dst [ptr [i32]], src [ptr [i32]], n [index]) [void]
   loop i in 0 .. n do
     dst[i] = src[i] * [scale]
   end
 end
 ```
 
-The expression inside `[...]` is evaluated in the Lua environment captured at
-the syntax site. In expression position, primitive Lua values become Lalin
+The expression inside `[...]` is evaluated in the document host environment
+(default Lalin values plus caller-supplied `opts.env`). In expression position, primitive Lua values become Lalin
 literals and expression fragments/ASDL expressions are spliced directly.
 
 ---
@@ -1208,7 +1096,7 @@ obligation.
 A parsed 1D domain loop:
 
 ```lln
-local copy_scale = fn(dst [ptr [i32]], src [ptr [i32]], n [index]) [void]
+fn copy_scale(dst [ptr [i32]], src [ptr [i32]], n [index]) [void]
   requires bounds(dst)(n), bounds(src)(n), disjoint(dst)(src)
 
   loop i in 0 .. n do
@@ -1551,7 +1439,7 @@ The formatter currently prints the Lua/LLBL DSL surface.
 
 | Construct | Status |
 |---|---|
-| `local name = fn(params) [result] ... end` | implemented |
+| `fn name(params) [result] ... end` | implemented |
 | `fn name(params) [result] ... end` | implemented as explicit direct declaration |
 | `struct Name ... end` | implemented |
 | `union Name ... end` | implemented |

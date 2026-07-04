@@ -25,28 +25,30 @@ Lua source
 This is the **builder API** — the right tool for macros, generators, and
 tooling that constructs declarations programmatically.
 
-### 2. `.lln` value chunks
+### 2. `.lln` declaration documents
 
-`llbl.syntax` adds the lexer, island-detection driver, and dialect registry used
-by `.lln` loading. User-facing `.lln` files are loaded through `lalin.loadfile`
-or Lua `require` after `lalin.install_searcher()`. The driver rewrites parsed
-islands into constructor invocations at those exact source positions.
+User-facing `.lln` files are loaded through `lalin.loadfile` or Lua `require`
+after `lalin.install_searcher()`. A `.lln` file is a role-rooted Lalin
+declaration document (`Lalin.decls`), not a Lua value chunk. Root entries are
+Lalin declarations plus top-level HostEval declaration splices.
 
 ```text
-.lln value chunk
+.lln declaration document
   -> lalin.loader
-  -> llbl.syntax.driver
+  -> lalin.syntax.document
      -> lexer tokenizes full source
-     -> identifies registered entrypoints
-     -> rewrites islands to constructor calls
-     -> ordinary Lua for everything else
-  -> lalin.syntax.parse_entry (dialect parser)
-  -> parsed AST nodes
+     -> parses root declaration stream
+     -> rejects Lua chunk forms such as local/return/module/import
+     -> materializes HostEval splices under Lalin.decls
+  -> parsed AST declaration array
   -> lalin.syntax.to_module() → tree ASDL
 ```
 
-This is the **primary authoring surface**: write Lalin by hand, return Lua
-values, and let Lua tables define the public API.
+This is the **primary authoring surface**: write Lalin declarations by hand and
+let loading return the ordered declaration array.
+
+`llbl.syntax.driver` still exists as mixed Lua+parsed infrastructure for `.lua`
+tooling/syntax islands. It is not the standard `.lln` loader path.
 
 ### Channel law
 

@@ -22,14 +22,13 @@ local fixtures = {
             'LalinStencil.StencilAccessIndex:LalinStencil.StencilLayoutContiguous',
         },
         source = [=[
-local f = fn(dst [ptr [i32]], src [ptr [i32]], idx [ptr [i32]], n [index]) [void]
+fn f(dst [ptr [i32]], src [ptr [i32]], idx [ptr [i32]], n [index]) [void]
   requires bounds(dst)(n), writeonly(dst), bounds(src)(n), readonly(src), bounds(idx)(n), readonly(idx)
   requires disjoint(dst)(src), disjoint(dst)(idx), disjoint(src)(idx)
   loop i in 0 .. n do
     dst[i] = src[idx[i]]
   end
 end
-return { f }
 ]=],
     },
     {
@@ -42,14 +41,13 @@ return { f }
             'LalinStencil.StencilAccessIndex:LalinStencil.StencilLayoutContiguous',
         },
         source = [=[
-local f = fn(dst [ptr [i32]], src [ptr [i32]], idx [ptr [i32]], n [index]) [void]
+fn f(dst [ptr [i32]], src [ptr [i32]], idx [ptr [i32]], n [index]) [void]
   requires bounds(dst)(n), bounds(src)(n), readonly(src), bounds(idx)(n), readonly(idx)
   requires disjoint(dst)(src), disjoint(dst)(idx), disjoint(src)(idx)
   loop i in 0 .. n do
     dst[idx[i]] = src[i]
   end
 end
-return { f }
 ]=],
     },
     {
@@ -62,14 +60,13 @@ return { f }
             'LalinStencil.StencilAccessIndex:LalinStencil.StencilLayoutContiguous',
         },
         source = [=[
-local f = fn(dst [ptr [i32]], src [ptr [i32]], idx [ptr [i32]], n [index]) [void]
+fn f(dst [ptr [i32]], src [ptr [i32]], idx [ptr [i32]], n [index]) [void]
   requires bounds(dst)(n), bounds(src)(n), readonly(src), bounds(idx)(n), readonly(idx)
   requires disjoint(dst)(src), disjoint(dst)(idx), disjoint(src)(idx)
   loop i in 0 .. n do
     dst[idx[i]] = dst[idx[i]] + src[i]
   end
 end
-return { f }
 ]=],
     },
     {
@@ -77,26 +74,24 @@ return { f }
         expect = 'backend_error',
         error_pattern = 'attempt to perform arithmetic on a nil value',
         source = [=[
-local f = fn(dst [ptr [i32]], src [ptr [i32]], h [index], w [index], n [index]) [void]
+fn f(dst [ptr [i32]], src [ptr [i32]], h [index], w [index], n [index]) [void]
   requires bounds(dst)(n), writeonly(dst), bounds(src)(n), readonly(src), disjoint(dst)(src)
   loop i, j in grid(0 .. h, 0 .. w) do
     dst[j * h + i] = src[i * w + j]
   end
 end
-return { f }
 ]=],
     },
     {
         name = 'parsed_predicate_composition_i32_range',
         expect = 'frontend_only',
         source = [=[
-local f = fn(dst [ptr [bool]], xs [ptr [i32]], lo [i32], hi [i32], n [index]) [void]
+fn f(dst [ptr [bool]], xs [ptr [i32]], lo [i32], hi [i32], n [index]) [void]
   requires bounds(dst)(n), writeonly(dst), bounds(xs)(n), readonly(xs), disjoint(dst)(xs)
   loop i in 0 .. n do
     dst[i] = xs[i] > lo and xs[i] < hi
   end
 end
-return { f }
 ]=],
     },
 }
@@ -114,8 +109,7 @@ end
 
 local function plan_fixture(fixture)
     return with_instruction_budget(function()
-        local chunk = assert(lalin.loadstring(fixture.source, '@' .. fixture.name .. '.lln'))
-        local parsed = chunk()
+        local parsed = assert(lalin.loadstring(fixture.source, '@' .. fixture.name .. '.lln'))
         return lalin.plan_luajit_artifact(parsed, {
             name = fixture.name,
             collect_rejects = true,
@@ -161,8 +155,8 @@ end
 
 for _, fixture in ipairs(fixtures) do
     if fixture.expect == 'frontend_only' then
-        local chunk = assert(lalin.loadstring(fixture.source, '@' .. fixture.name .. '.lln'))
-        assert(chunk() ~= nil, fixture.name .. ' should parse and convert to LalinTree')
+        local parsed = assert(lalin.loadstring(fixture.source, '@' .. fixture.name .. '.lln'))
+        assert(lalin.syntax.to_module(parsed, fixture.name) ~= nil, fixture.name .. ' should parse and convert to LalinTree')
     else
         local ok, result = plan_fixture(fixture)
         if fixture.expect == 'backend_error' then

@@ -16,14 +16,14 @@ local ToTree = require("lalin.syntax.to_tree")(T)
 
 -- Parsed [Pair] adapts a declaration value to a type position through the role adapter.
 local parsed = assert(lalin.loadstring([[
-local Pair = struct Pair
+struct Pair
   x [i32]
 end
-local accept = fn(p [Pair]) [void]
+
+fn accept(p [Pair]) [void] do
   return
 end
-return { Pair, accept }
-]], "@pair-type.lln"))()
+]], "@pair-type.lln"))
 local module = lalin.syntax.to_module(parsed, "PairType", T)
 assert(asdl.classof(module) == T.LalinTree.Module, "[Pair] declaration-to-type should lower to a module")
 assert(#module.items == 2, "expected Pair and accept items")

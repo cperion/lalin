@@ -1,15 +1,15 @@
 -- Public Lalin Lua facade.
 --
 -- Entry API:
---   lalin.loadstring(src [, name])  — load a .lln value chunk from a string
---   lalin.loadfile(path)            — load a .lln value chunk from a file
---   lalin.dofile(path, ...)         — load and immediately execute a .lln file
+--   lalin.loadstring(src [, name])  — parse a .lln declaration document string
+--   lalin.loadfile(path)            — parse a .lln declaration document file
+--   lalin.dofile(path)              — parse a .lln file and return its decl array
 --   lalin.require(name)             — require a .lln module through lalin.path
 --   lalin.install_searcher()        — let Lua require() discover .lln modules
 --   lalin.format(value [, opts])    — canonical format for evaluated DSL values
---   lalin.format_file(path [, opts]) — evaluate a format-owned file and render it
+--   lalin.format_file(path [, opts]) — evaluate a format-owned Lua builder file and render it
 --
--- DSL source loading lives under lalin.dsl.
+-- Lua builder source loading lives under lalin.dsl.
 --
 -- Object emission (hosted pipeline):
 --   lalin.emit_c_artifact(decl [, opts])
@@ -545,7 +545,7 @@ function M.write_format_file(path, opts)
     return M.dsl.write_format_file(path, opts)
 end
 
---- Hosted .lln value loading.
+--- Hosted .lln declaration document loading.
 
 function M.loadstring(src, chunk_name, opts)
     return M.loader.loadstring(src, chunk_name or "=(lalin .lln)", opts)
@@ -555,23 +555,23 @@ function M.loadfile(path, opts)
     return M.loader.loadfile(path, opts)
 end
 
-function M.dofile(path, opts, ...)
-    local chunk, err = M.loadfile(path, opts)
-    if not chunk then error(err, 2) end
-    return chunk(...)
+function M.dofile(path, opts)
+    local decls, err = M.loadfile(path, opts)
+    if not decls then error(err, 2) end
+    return decls
 end
 
-function M.eval(src, chunk_name, opts, ...)
+function M.eval(src, chunk_name, opts)
     if type(chunk_name) == "table" and opts == nil then
         opts = chunk_name
         chunk_name = nil
     end
-    local chunk, err = M.loadstring(src, chunk_name or "=(lalin eval)", opts)
-    if not chunk then error(err, 2) end
-    return chunk(...)
+    local decls, err = M.loadstring(src, chunk_name or "=(lalin eval)", opts)
+    if not decls then error(err, 2) end
+    return decls
 end
 
-M.load = M.eval
+M.load = M.loadstring
 
 function M.searchpath(name, path, sep, rep)
     return M.loader.searchpath(name, path or M.path, sep, rep)

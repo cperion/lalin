@@ -783,6 +783,9 @@ local function bind_context(T)
     function Native.NativeAxisStencilPoint:native_axis_equals(other) return other:native_axis_equals_stencil_point(self.axis) end
     function Native.NativeTemplateAxis:native_axis_equals_stencil_point(_axis) return false end
     function Native.NativeAxisStencilPoint:native_axis_equals_stencil_point(axis) return self.axis:native_stencil_point_axis_equals(axis) end
+    function Native.NativeAxisStencilBody:native_axis_equals(other) return other:native_axis_equals_stencil_body(self.axis) end
+    function Native.NativeTemplateAxis:native_axis_equals_stencil_body(_axis) return false end
+    function Native.NativeAxisStencilBody:native_axis_equals_stencil_body(axis) return self.axis:native_stencil_body_axis_equals(axis) end
     function Native.NativeAxisStencilSink:native_axis_equals(other) return other:native_axis_equals_stencil_sink(self.axis) end
     function Native.NativeTemplateAxis:native_axis_equals_stencil_sink(_axis) return false end
     function Native.NativeAxisStencilSink:native_axis_equals_stencil_sink(axis) return self.axis:native_stencil_sink_axis_equals(axis) end
@@ -1312,7 +1315,129 @@ local function bind_context(T)
     function Native.NativeKernelAxis:native_kernel_result_original_control_axis_equals() return false end
     function Native.NativeKernelResultOriginalControlAxis:native_kernel_result_original_control_axis_equals() return true end
 
+    function Native.NativeStencilValueSourceShape:native_stencil_value_source_shape_equals(other) return self == other end
+    function Native.NativeStencilValueScalarShape:native_stencil_value_source_shape_equals(other) return other ~= nil and other.native_stencil_value_scalar_shape_equals ~= nil and other:native_stencil_value_scalar_shape_equals(self.scalar) end
+    function Native.NativeStencilValueSourceShape:native_stencil_value_scalar_shape_equals(_scalar) return false end
+    function Native.NativeStencilValueScalarShape:native_stencil_value_scalar_shape_equals(scalar) return self.scalar == scalar end
+    function Native.NativeStencilValuePointerShape:native_stencil_value_source_shape_equals(other) return other ~= nil and other.native_stencil_value_pointer_shape_equals ~= nil and other:native_stencil_value_pointer_shape_equals(self.pointer) end
+    function Native.NativeStencilValueSourceShape:native_stencil_value_pointer_shape_equals(_pointer) return false end
+    function Native.NativeStencilValuePointerShape:native_stencil_value_pointer_shape_equals(pointer) return self.pointer == pointer end
+    function Native.NativeStencilValueBytesShape:native_stencil_value_source_shape_equals(other) return other ~= nil and other.native_stencil_value_bytes_shape_equals ~= nil and other:native_stencil_value_bytes_shape_equals(self.size, self.alignment) end
+    function Native.NativeStencilValueSourceShape:native_stencil_value_bytes_shape_equals(_size, _alignment) return false end
+    function Native.NativeStencilValueBytesShape:native_stencil_value_bytes_shape_equals(size, alignment) return self.size == size and self.alignment == alignment end
+
+    function Native.NativeStencilProducerSourceShape:native_stencil_producer_source_shape_equals(other) return self == other end
+    function Native.NativeStencilProducerRange1DShape:native_stencil_producer_source_shape_equals(other) return other ~= nil and other.native_stencil_producer_range_1d_shape_equals ~= nil and other:native_stencil_producer_range_1d_shape_equals(self.index, self.step, self.order) end
+    function Native.NativeStencilProducerSourceShape:native_stencil_producer_range_1d_shape_equals(_index, _step, _order) return false end
+    function Native.NativeStencilProducerRange1DShape:native_stencil_producer_range_1d_shape_equals(index, step, order) return self.index:native_stencil_value_source_shape_equals(index) and self.step == step and self.order == order end
+    function Native.NativeStencilProducerRangeNDShape:native_stencil_producer_source_shape_equals(other) return other ~= nil and other.native_stencil_producer_range_nd_shape_equals ~= nil and other:native_stencil_producer_range_nd_shape_equals(self.rank) end
+    function Native.NativeStencilProducerSourceShape:native_stencil_producer_range_nd_shape_equals(_rank) return false end
+    function Native.NativeStencilProducerRangeNDShape:native_stencil_producer_range_nd_shape_equals(rank) return self.rank == rank end
+    function Native.NativeStencilProducerWindowNDShape:native_stencil_producer_source_shape_equals(other) return other ~= nil and other.native_stencil_producer_window_nd_shape_equals ~= nil and other:native_stencil_producer_window_nd_shape_equals(self.rank, self.window_count) end
+    function Native.NativeStencilProducerSourceShape:native_stencil_producer_window_nd_shape_equals(_rank, _window_count) return false end
+    function Native.NativeStencilProducerWindowNDShape:native_stencil_producer_window_nd_shape_equals(rank, window_count) return self.rank == rank and self.window_count == window_count end
+    function Native.NativeStencilProducerTiledNDShape:native_stencil_producer_source_shape_equals(other) return other ~= nil and other.native_stencil_producer_tiled_nd_shape_equals ~= nil and other:native_stencil_producer_tiled_nd_shape_equals(self.rank, self.tile_count) end
+    function Native.NativeStencilProducerSourceShape:native_stencil_producer_tiled_nd_shape_equals(_rank, _tile_count) return false end
+    function Native.NativeStencilProducerTiledNDShape:native_stencil_producer_tiled_nd_shape_equals(rank, tile_count) return self.rank == rank and self.tile_count == tile_count end
+
+    function Native.NativeStencilAccessSourceShape:native_stencil_access_source_shape_equals(other) return self == other end
+    function Native.NativeStencilAccessScalarShape:native_stencil_access_source_shape_equals(other) return other ~= nil and other.native_stencil_access_scalar_shape_equals ~= nil and other:native_stencil_access_scalar_shape_equals(self.value) end
+    function Native.NativeStencilAccessSourceShape:native_stencil_access_scalar_shape_equals(_value) return false end
+    function Native.NativeStencilAccessScalarShape:native_stencil_access_scalar_shape_equals(value) return self.value:native_stencil_value_source_shape_equals(value) end
+    function Native.NativeStencilAccessContiguousShape:native_stencil_access_source_shape_equals(other) return other ~= nil and other.native_stencil_access_contiguous_shape_equals ~= nil and other:native_stencil_access_contiguous_shape_equals(self.value, self.stride) end
+    function Native.NativeStencilAccessSourceShape:native_stencil_access_contiguous_shape_equals(_value, _stride) return false end
+    function Native.NativeStencilAccessContiguousShape:native_stencil_access_contiguous_shape_equals(value, stride) return self.value:native_stencil_value_source_shape_equals(value) and self.stride == stride end
+    function Native.NativeStencilAccessIndexedShape:native_stencil_access_source_shape_equals(other) return other ~= nil and other.native_stencil_access_indexed_shape_equals ~= nil and other:native_stencil_access_indexed_shape_equals(self.value, self.index, self.stride) end
+    function Native.NativeStencilAccessSourceShape:native_stencil_access_indexed_shape_equals(_value, _index, _stride) return false end
+    function Native.NativeStencilAccessIndexedShape:native_stencil_access_indexed_shape_equals(value, index, stride) return self.value:native_stencil_value_source_shape_equals(value) and self.index:native_stencil_value_source_shape_equals(index) and self.stride == stride end
+    function Native.NativeStencilAccessAffine1DShape:native_stencil_access_source_shape_equals(other) return other ~= nil and other.native_stencil_access_affine_1d_shape_equals ~= nil and other:native_stencil_access_affine_1d_shape_equals(self.value, self.scale) end
+    function Native.NativeStencilAccessSourceShape:native_stencil_access_affine_1d_shape_equals(_value, _scale) return false end
+    function Native.NativeStencilAccessAffine1DShape:native_stencil_access_affine_1d_shape_equals(value, scale) return self.value:native_stencil_value_source_shape_equals(value) and self.scale == scale end
+    function Native.NativeStencilAccessAffineNDShape:native_stencil_access_source_shape_equals(other) return other ~= nil and other.native_stencil_access_affine_nd_shape_equals ~= nil and other:native_stencil_access_affine_nd_shape_equals(self.value, self.term_count) end
+    function Native.NativeStencilAccessSourceShape:native_stencil_access_affine_nd_shape_equals(_value, _term_count) return false end
+    function Native.NativeStencilAccessAffineNDShape:native_stencil_access_affine_nd_shape_equals(value, term_count) return self.value:native_stencil_value_source_shape_equals(value) and self.term_count == term_count end
+    function Native.NativeStencilAccessFieldProjectionShape:native_stencil_access_source_shape_equals(other) return other ~= nil and other.native_stencil_access_field_projection_shape_equals ~= nil and other:native_stencil_access_field_projection_shape_equals(self.value, self.field_name) end
+    function Native.NativeStencilAccessSourceShape:native_stencil_access_field_projection_shape_equals(_value, _field_name) return false end
+    function Native.NativeStencilAccessFieldProjectionShape:native_stencil_access_field_projection_shape_equals(value, field_name) return self.value:native_stencil_value_source_shape_equals(value) and self.field_name == field_name end
+    function Native.NativeStencilAccessSoAComponentShape:native_stencil_access_source_shape_equals(other) return other ~= nil and other.native_stencil_access_soa_component_shape_equals ~= nil and other:native_stencil_access_soa_component_shape_equals(self.value, self.field_name) end
+    function Native.NativeStencilAccessSourceShape:native_stencil_access_soa_component_shape_equals(_value, _field_name) return false end
+    function Native.NativeStencilAccessSoAComponentShape:native_stencil_access_soa_component_shape_equals(value, field_name) return self.value:native_stencil_value_source_shape_equals(value) and self.field_name == field_name end
+    function Native.NativeStencilAccessSliceDescriptorShape:native_stencil_access_source_shape_equals(other) return other ~= nil and other.native_stencil_access_slice_descriptor_shape_equals ~= nil and other:native_stencil_access_slice_descriptor_shape_equals(self.value) end
+    function Native.NativeStencilAccessSourceShape:native_stencil_access_slice_descriptor_shape_equals(_value) return false end
+    function Native.NativeStencilAccessSliceDescriptorShape:native_stencil_access_slice_descriptor_shape_equals(value) return self.value:native_stencil_value_source_shape_equals(value) end
+    function Native.NativeStencilAccessByteSpanDescriptorShape:native_stencil_access_source_shape_equals(other) return other ~= nil and other.native_stencil_access_byte_span_descriptor_shape_equals ~= nil and other:native_stencil_access_byte_span_descriptor_shape_equals(self.value) end
+    function Native.NativeStencilAccessSourceShape:native_stencil_access_byte_span_descriptor_shape_equals(_value) return false end
+    function Native.NativeStencilAccessByteSpanDescriptorShape:native_stencil_access_byte_span_descriptor_shape_equals(value) return self.value:native_stencil_value_source_shape_equals(value) end
+    function Native.NativeStencilAccessViewDescriptorShape:native_stencil_access_source_shape_equals(other) return other ~= nil and other.native_stencil_access_view_descriptor_shape_equals ~= nil and other:native_stencil_access_view_descriptor_shape_equals(self.value, self.has_const_stride) end
+    function Native.NativeStencilAccessSourceShape:native_stencil_access_view_descriptor_shape_equals(_value, _has_const_stride) return false end
+    function Native.NativeStencilAccessViewDescriptorShape:native_stencil_access_view_descriptor_shape_equals(value, has_const_stride) return self.value:native_stencil_value_source_shape_equals(value) and self.has_const_stride == has_const_stride end
+
+    function Native.NativeStencilPointSourceShape:native_stencil_point_source_shape_equals(other) return self == other end
+    function Native.NativeStencilPointInputShape:native_stencil_point_source_shape_equals(other) return other ~= nil and other.native_stencil_point_input_shape_equals ~= nil and other:native_stencil_point_input_shape_equals(self.value) end
+    function Native.NativeStencilPointSourceShape:native_stencil_point_input_shape_equals(_value) return false end
+    function Native.NativeStencilPointInputShape:native_stencil_point_input_shape_equals(value) return self.value:native_stencil_value_source_shape_equals(value) end
+    function Native.NativeStencilPointWindowInputShape:native_stencil_point_source_shape_equals(other) return other ~= nil and other.native_stencil_point_window_input_shape_equals ~= nil and other:native_stencil_point_window_input_shape_equals(self.value, self.offset_count) end
+    function Native.NativeStencilPointSourceShape:native_stencil_point_window_input_shape_equals(_value, _offset_count) return false end
+    function Native.NativeStencilPointWindowInputShape:native_stencil_point_window_input_shape_equals(value, offset_count) return self.value:native_stencil_value_source_shape_equals(value) and self.offset_count == offset_count end
+    function Native.NativeStencilPointConstShape:native_stencil_point_source_shape_equals(other) return other ~= nil and other.native_stencil_point_const_shape_equals ~= nil and other:native_stencil_point_const_shape_equals(self.value) end
+    function Native.NativeStencilPointSourceShape:native_stencil_point_const_shape_equals(_value) return false end
+    function Native.NativeStencilPointConstShape:native_stencil_point_const_shape_equals(value) return self.value:native_stencil_value_source_shape_equals(value) end
+    function Native.NativeStencilPointUnaryShape:native_stencil_point_source_shape_equals(other) return other ~= nil and other.native_stencil_point_unary_shape_equals ~= nil and other:native_stencil_point_unary_shape_equals(self.op, self.value) end
+    function Native.NativeStencilPointSourceShape:native_stencil_point_unary_shape_equals(_op, _value) return false end
+    function Native.NativeStencilPointUnaryShape:native_stencil_point_unary_shape_equals(op, value) return self.op == op and self.value:native_stencil_value_source_shape_equals(value) end
+    function Native.NativeStencilPointBinaryShape:native_stencil_point_source_shape_equals(other) return other ~= nil and other.native_stencil_point_binary_shape_equals ~= nil and other:native_stencil_point_binary_shape_equals(self.op, self.value) end
+    function Native.NativeStencilPointSourceShape:native_stencil_point_binary_shape_equals(_op, _value) return false end
+    function Native.NativeStencilPointBinaryShape:native_stencil_point_binary_shape_equals(op, value) return self.op == op and self.value:native_stencil_value_source_shape_equals(value) end
+    function Native.NativeStencilPointCastShape:native_stencil_point_source_shape_equals(other) return other ~= nil and other.native_stencil_point_cast_shape_equals ~= nil and other:native_stencil_point_cast_shape_equals(self.op, self.from, self.to) end
+    function Native.NativeStencilPointSourceShape:native_stencil_point_cast_shape_equals(_op, _from, _to) return false end
+    function Native.NativeStencilPointCastShape:native_stencil_point_cast_shape_equals(op, from, to) return self.op == op and self.from:native_stencil_value_source_shape_equals(from) and self.to:native_stencil_value_source_shape_equals(to) end
+    function Native.NativeStencilPointPredicateShape:native_stencil_point_source_shape_equals(other) return other ~= nil and other.native_stencil_point_predicate_shape_equals ~= nil and other:native_stencil_point_predicate_shape_equals(self.pred, self.value) end
+    function Native.NativeStencilPointSourceShape:native_stencil_point_predicate_shape_equals(_pred, _value) return false end
+    function Native.NativeStencilPointPredicateShape:native_stencil_point_predicate_shape_equals(pred, value) return self.pred:native_kernel_predicate_source_shape_equals(pred) and self.value:native_stencil_value_source_shape_equals(value) end
+    function Native.NativeStencilPointCompareShape:native_stencil_point_source_shape_equals(other) return other ~= nil and other.native_stencil_point_compare_shape_equals ~= nil and other:native_stencil_point_compare_shape_equals(self.cmp, self.value) end
+    function Native.NativeStencilPointSourceShape:native_stencil_point_compare_shape_equals(_cmp, _value) return false end
+    function Native.NativeStencilPointCompareShape:native_stencil_point_compare_shape_equals(cmp, value) return self.cmp == cmp and self.value:native_stencil_value_source_shape_equals(value) end
+    function Native.NativeStencilPointSelectShape:native_stencil_point_source_shape_equals(other) return other ~= nil and other.native_stencil_point_select_shape_equals ~= nil and other:native_stencil_point_select_shape_equals(self.pred, self.value) end
+    function Native.NativeStencilPointSourceShape:native_stencil_point_select_shape_equals(_pred, _value) return false end
+    function Native.NativeStencilPointSelectShape:native_stencil_point_select_shape_equals(pred, value) return self.pred:native_kernel_predicate_source_shape_equals(pred) and self.value:native_stencil_value_source_shape_equals(value) end
+
+    function Native.NativeStencilBodySourceShape:native_stencil_body_source_shape_equals(other) return self == other end
+    function Native.NativeStencilBodyPointShape:native_stencil_body_source_shape_equals(other) return other ~= nil and other.native_stencil_body_point_shape_equals ~= nil and other:native_stencil_body_point_shape_equals(self.expr) end
+    function Native.NativeStencilBodySourceShape:native_stencil_body_point_shape_equals(_expr) return false end
+    function Native.NativeStencilBodyPointShape:native_stencil_body_point_shape_equals(expr) return self.expr:native_stencil_point_source_shape_equals(expr) end
+
+    function Native.NativeStencilSinkSourceShape:native_stencil_sink_source_shape_equals(other) return self == other end
+    function Native.NativeStencilSinkStoreShape:native_stencil_sink_source_shape_equals(other) return other ~= nil and other.native_stencil_sink_store_shape_equals ~= nil and other:native_stencil_sink_store_shape_equals(self.semantics, self.dst) end
+    function Native.NativeStencilSinkSourceShape:native_stencil_sink_store_shape_equals(_semantics, _dst) return false end
+    function Native.NativeStencilSinkStoreShape:native_stencil_sink_store_shape_equals(semantics, dst) return self.semantics == semantics and self.dst:native_stencil_access_source_shape_equals(dst) end
+    function Native.NativeStencilSinkReduceShape:native_stencil_sink_source_shape_equals(other) return other ~= nil and other.native_stencil_sink_reduce_shape_equals ~= nil and other:native_stencil_sink_reduce_shape_equals(self.value, self.scope, self.semantics) end
+    function Native.NativeStencilSinkSourceShape:native_stencil_sink_reduce_shape_equals(_value, _scope, _semantics) return false end
+    function Native.NativeStencilSinkReduceShape:native_stencil_sink_reduce_shape_equals(value, scope, semantics) return self.value:native_stencil_value_source_shape_equals(value) and self.scope == scope and self.semantics == semantics end
+    function Native.NativeStencilSinkScanShape:native_stencil_sink_source_shape_equals(other) return other ~= nil and other.native_stencil_sink_scan_shape_equals ~= nil and other:native_stencil_sink_scan_shape_equals(self.reducer, self.mode, self.value) end
+    function Native.NativeStencilSinkSourceShape:native_stencil_sink_scan_shape_equals(_reducer, _mode, _value) return false end
+    function Native.NativeStencilSinkScanShape:native_stencil_sink_scan_shape_equals(reducer, mode, value) return self.reducer:native_kernel_reducer_source_shape_equals(reducer) and self.mode == mode and self.value:native_stencil_value_source_shape_equals(value) end
+    function Native.NativeStencilSinkScatterReduceShape:native_stencil_sink_source_shape_equals(other) return other ~= nil and other.native_stencil_sink_scatter_reduce_shape_equals ~= nil and other:native_stencil_sink_scatter_reduce_shape_equals(self.reducer, self.conflicts, self.value) end
+    function Native.NativeStencilSinkSourceShape:native_stencil_sink_scatter_reduce_shape_equals(_reducer, _conflicts, _value) return false end
+    function Native.NativeStencilSinkScatterReduceShape:native_stencil_sink_scatter_reduce_shape_equals(reducer, conflicts, value) return self.reducer:native_kernel_reducer_source_shape_equals(reducer) and self.conflicts == conflicts and self.value:native_stencil_value_source_shape_equals(value) end
+
+    function Native.NativeStencilScheduleSourceShape:native_stencil_schedule_source_shape_equals(other) return self == other end
+    function Native.NativeStencilScheduleScalarShape:native_stencil_schedule_source_shape_equals(other) return other ~= nil and other.native_stencil_schedule_scalar_shape_equals ~= nil and other:native_stencil_schedule_scalar_shape_equals(self.compiler) end
+    function Native.NativeStencilScheduleSourceShape:native_stencil_schedule_scalar_shape_equals(_compiler) return false end
+    function Native.NativeStencilScheduleScalarShape:native_stencil_schedule_scalar_shape_equals(compiler) return self.compiler == compiler end
+    function Native.NativeStencilScheduleAutoVectorShape:native_stencil_schedule_source_shape_equals(other) return other ~= nil and other.native_stencil_schedule_auto_vector_shape_equals ~= nil and other:native_stencil_schedule_auto_vector_shape_equals(self.trip_count) end
+    function Native.NativeStencilScheduleSourceShape:native_stencil_schedule_auto_vector_shape_equals(_trip_count) return false end
+    function Native.NativeStencilScheduleAutoVectorShape:native_stencil_schedule_auto_vector_shape_equals(trip_count) return self.trip_count == trip_count end
+    function Native.NativeStencilScheduleUnrolledShape:native_stencil_schedule_source_shape_equals(other) return other ~= nil and other.native_stencil_schedule_unrolled_shape_equals ~= nil and other:native_stencil_schedule_unrolled_shape_equals(self.factor, self.trip_count) end
+    function Native.NativeStencilScheduleSourceShape:native_stencil_schedule_unrolled_shape_equals(_factor, _trip_count) return false end
+    function Native.NativeStencilScheduleUnrolledShape:native_stencil_schedule_unrolled_shape_equals(factor, trip_count) return self.factor == factor and self.trip_count == trip_count end
+    function Native.NativeStencilScheduleVectorShape:native_stencil_schedule_source_shape_equals(other) return other ~= nil and other.native_stencil_schedule_vector_shape_equals ~= nil and other:native_stencil_schedule_vector_shape_equals(self.feature, self.lane_policy, self.required_alignment, self.tail, self.reduction, self.vector_unroll, self.interleave) end
+    function Native.NativeStencilScheduleSourceShape:native_stencil_schedule_vector_shape_equals(_feature, _lane_policy, _required_alignment, _tail, _reduction, _vector_unroll, _interleave) return false end
+    function Native.NativeStencilScheduleVectorShape:native_stencil_schedule_vector_shape_equals(feature, lane_policy, required_alignment, tail, reduction, vector_unroll, interleave) return self.feature == feature and self.lane_policy == lane_policy and self.required_alignment == required_alignment and self.tail == tail and self.reduction == reduction and self.vector_unroll == vector_unroll and self.interleave == interleave end
+
     function Native.NativeStencilProducerAxis:native_stencil_producer_axis_equals(_other) return false end
+    function Native.NativeStencilProducerSourceShapeAxis:native_stencil_producer_axis_equals(other) return other:native_stencil_producer_source_shape_axis_equals(self.shape) end
+    function Native.NativeStencilProducerAxis:native_stencil_producer_source_shape_axis_equals(_shape) return false end
+    function Native.NativeStencilProducerSourceShapeAxis:native_stencil_producer_source_shape_axis_equals(shape) return self.shape:native_stencil_producer_source_shape_equals(shape) end
     function Native.NativeStencilRange1DAxis:native_stencil_producer_axis_equals(other) return other:native_stencil_range_1d_axis_equals(self.index_ty, self.step, self.order) end
     function Native.NativeStencilProducerAxis:native_stencil_range_1d_axis_equals(_index_ty, _step, _order) return false end
     function Native.NativeStencilRange1DAxis:native_stencil_range_1d_axis_equals(index_ty, step, order) return self.index_ty == index_ty and self.step == step and self.order == order end
@@ -1327,6 +1452,9 @@ local function bind_context(T)
     function Native.NativeStencilTiledNDAxis:native_stencil_tiled_nd_axis_equals(rank, tile_sizes) return self.rank == rank and value_list_equals(self.tile_sizes, tile_sizes) end
 
     function Native.NativeStencilAccessAxis:native_stencil_access_axis_equals(_other) return false end
+    function Native.NativeStencilAccessSourceShapeAxis:native_stencil_access_axis_equals(other) return other:native_stencil_access_source_shape_axis_equals(self.shape) end
+    function Native.NativeStencilAccessAxis:native_stencil_access_source_shape_axis_equals(_shape) return false end
+    function Native.NativeStencilAccessSourceShapeAxis:native_stencil_access_source_shape_axis_equals(shape) return self.shape:native_stencil_access_source_shape_equals(shape) end
     function Native.NativeStencilLayoutScalarAxis:native_stencil_access_axis_equals(other) return other:native_stencil_layout_scalar_axis_equals(self.ty) end
     function Native.NativeStencilAccessAxis:native_stencil_layout_scalar_axis_equals(_ty) return false end
     function Native.NativeStencilLayoutScalarAxis:native_stencil_layout_scalar_axis_equals(ty) return self.ty == ty end
@@ -1359,6 +1487,9 @@ local function bind_context(T)
     function Native.NativeStencilLayoutViewDescriptorAxis:native_stencil_layout_view_descriptor_axis_equals(ty) return self.ty == ty end
 
     function Native.NativeStencilPointAxis:native_stencil_point_axis_equals(_other) return false end
+    function Native.NativeStencilPointSourceShapeAxis:native_stencil_point_axis_equals(other) return other:native_stencil_point_source_shape_axis_equals(self.shape) end
+    function Native.NativeStencilPointAxis:native_stencil_point_source_shape_axis_equals(_shape) return false end
+    function Native.NativeStencilPointSourceShapeAxis:native_stencil_point_source_shape_axis_equals(shape) return self.shape:native_stencil_point_source_shape_equals(shape) end
     function Native.NativeStencilPointInputAxis:native_stencil_point_axis_equals(other) return other:native_stencil_point_input_axis_equals() end
     function Native.NativeStencilPointAxis:native_stencil_point_input_axis_equals() return false end
     function Native.NativeStencilPointInputAxis:native_stencil_point_input_axis_equals() return true end
@@ -1387,7 +1518,15 @@ local function bind_context(T)
     function Native.NativeStencilPointAxis:native_stencil_point_select_axis_equals(_pred, _result_ty) return false end
     function Native.NativeStencilPointSelectAxis:native_stencil_point_select_axis_equals(pred, result_ty) return self.pred == pred and self.result_ty == result_ty end
 
+    function Native.NativeStencilBodyAxis:native_stencil_body_axis_equals(_other) return false end
+    function Native.NativeStencilBodySourceShapeAxis:native_stencil_body_axis_equals(other) return other:native_stencil_body_source_shape_axis_equals(self.shape) end
+    function Native.NativeStencilBodyAxis:native_stencil_body_source_shape_axis_equals(_shape) return false end
+    function Native.NativeStencilBodySourceShapeAxis:native_stencil_body_source_shape_axis_equals(shape) return self.shape:native_stencil_body_source_shape_equals(shape) end
+
     function Native.NativeStencilSinkAxis:native_stencil_sink_axis_equals(_other) return false end
+    function Native.NativeStencilSinkSourceShapeAxis:native_stencil_sink_axis_equals(other) return other:native_stencil_sink_source_shape_axis_equals(self.shape) end
+    function Native.NativeStencilSinkAxis:native_stencil_sink_source_shape_axis_equals(_shape) return false end
+    function Native.NativeStencilSinkSourceShapeAxis:native_stencil_sink_source_shape_axis_equals(shape) return self.shape:native_stencil_sink_source_shape_equals(shape) end
     function Native.NativeStencilSinkStoreAxis:native_stencil_sink_axis_equals(other) return other:native_stencil_sink_store_axis_equals(self.semantics) end
     function Native.NativeStencilSinkAxis:native_stencil_sink_store_axis_equals(_semantics) return false end
     function Native.NativeStencilSinkStoreAxis:native_stencil_sink_store_axis_equals(semantics) return self.semantics == semantics end
@@ -1402,6 +1541,9 @@ local function bind_context(T)
     function Native.NativeStencilSinkScatterReduceAxis:native_stencil_sink_scatter_reduce_axis_equals(reducer, conflicts, result_ty) return self.reducer == reducer and self.conflicts == conflicts and self.result_ty == result_ty end
 
     function Native.NativeStencilScheduleAxis:native_stencil_schedule_axis_equals(_other) return false end
+    function Native.NativeStencilScheduleSourceShapeAxis:native_stencil_schedule_axis_equals(other) return other:native_stencil_schedule_source_shape_axis_equals(self.shape) end
+    function Native.NativeStencilScheduleAxis:native_stencil_schedule_source_shape_axis_equals(_shape) return false end
+    function Native.NativeStencilScheduleSourceShapeAxis:native_stencil_schedule_source_shape_axis_equals(shape) return self.shape:native_stencil_schedule_source_shape_equals(shape) end
     function Native.NativeStencilScheduleScalarAxis:native_stencil_schedule_axis_equals(other) return other:native_stencil_schedule_scalar_axis_equals(self.compiler) end
     function Native.NativeStencilScheduleAxis:native_stencil_schedule_scalar_axis_equals(_compiler) return false end
     function Native.NativeStencilScheduleScalarAxis:native_stencil_schedule_scalar_axis_equals(compiler) return self.compiler == compiler end

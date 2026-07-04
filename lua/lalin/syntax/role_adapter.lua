@@ -207,12 +207,23 @@ local function bind(T, callbacks)
     local host
     value, host = self:value(value, "decls", ctx)
     if value == nil then return {} end
+    if type(value) == "table" and value.tag == "DeclDocument" then
+      value = value.decls or value.body or {}
+    end
     if llbl.is(value, "Fragment") then value = value.items or {} end
     if is_parsed_decl(value) then return { value } end
     if type(value) ~= "table" then role_error("decls", "declaration list expected table/fragment", value, host) end
 
     local out = {}
-    for i = 1, #value do out[#out + 1] = self:decl(value[i], ctx) end
+    for i = 1, #value do
+      local item = value[i]
+      if llbl.is(item, "HostEval") or llbl.is(item, "Fragment") or (type(item) == "table" and item.tag == "DeclDocument") then
+        local nested = self:decls(item, ctx)
+        for _, decl in ipairs(nested) do out[#out + 1] = decl end
+      else
+        out[#out + 1] = self:decl(item, ctx)
+      end
+    end
     for _, k in ipairs(sorted_string_keys(value)) do
       local v = value[k]
       if is_parsed_decl(v) then

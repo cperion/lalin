@@ -618,6 +618,10 @@ return schema. LalinNative {
       field. id [LalinNative.NativeStencilMetavarId],
       field. axes [many [LalinNative.NativeStencilPointAxis]],
     },
+    NativeStencilBodyMetavar {
+      field. id [LalinNative.NativeStencilMetavarId],
+      field. axes [many [LalinNative.NativeStencilBodyAxis]],
+    },
     NativeStencilSinkMetavar {
       field. id [LalinNative.NativeStencilMetavarId],
       field. axes [many [LalinNative.NativeStencilSinkAxis]],
@@ -640,6 +644,7 @@ return schema. LalinNative {
     NativeStencilProducerMetavarValue { field. axis [LalinNative.NativeStencilProducerAxis], },
     NativeStencilAccessMetavarValue { field. axis [LalinNative.NativeStencilAccessAxis], },
     NativeStencilPointMetavarValue { field. axis [LalinNative.NativeStencilPointAxis], },
+    NativeStencilBodyMetavarValue { field. axis [LalinNative.NativeStencilBodyAxis], },
     NativeStencilSinkMetavarValue { field. axis [LalinNative.NativeStencilSinkAxis], },
     NativeStencilScheduleMetavarValue { field. axis [LalinNative.NativeStencilScheduleAxis], },
   },
@@ -745,6 +750,7 @@ return schema. LalinNative {
     field. passthrough_float_limit [number],
     field. frame_stack_limit [LalinNative.NativeFrameStackLimit],
     field. kernel_sources [LalinNative.NativeKernelSourceSupport],
+    field. stencil_sources [LalinNative.NativeStencilSourceSupport],
     field. public_abi_adapters [many [LalinNative.NativeAbiFunctionProjection]],
     field. continuation_signatures [many [LalinNative.NativeStencilSignature]],
     field. constant_pool_support [LalinNative.NativeConstantPoolSupport],
@@ -1576,6 +1582,7 @@ return schema. LalinNative {
     NativeAxisStencilProducer { field. axis [LalinNative.NativeStencilProducerAxis], },
     NativeAxisStencilAccess { field. axis [LalinNative.NativeStencilAccessAxis], },
     NativeAxisStencilPoint { field. axis [LalinNative.NativeStencilPointAxis], },
+    NativeAxisStencilBody { field. axis [LalinNative.NativeStencilBodyAxis], },
     NativeAxisStencilSink { field. axis [LalinNative.NativeStencilSinkAxis], },
     NativeAxisStencilSchedule { field. axis [LalinNative.NativeStencilScheduleAxis], },
     NativeAxisAbi { field. protocol [LalinNative.NativeCallProtocol], },
@@ -2214,7 +2221,157 @@ return schema. LalinNative {
     NativeKernelResultOriginalControlAxis,
   },
 
+  sum. NativeStencilValueSourceShape {
+    NativeStencilValueVoidShape,
+    NativeStencilValueScalarShape { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeStencilValuePointerShape { field. pointer [LalinNative.NativeMachineScalarRep], },
+    NativeStencilValueBytesShape { field. size [number], field. alignment [number], },
+  },
+
+  sum. NativeStencilProducerSourceShape {
+    NativeStencilProducerRange1DShape {
+      field. index [LalinNative.NativeStencilValueSourceShape],
+      field. step [number],
+      field. order [LalinStencil.StencilProducerOrder],
+    },
+    NativeStencilProducerRangeNDShape { field. rank [number], },
+    NativeStencilProducerWindowNDShape { field. rank [number], field. window_count [number], },
+    NativeStencilProducerTiledNDShape { field. rank [number], field. tile_count [number], },
+  },
+
+  sum. NativeStencilAccessSourceShape {
+    NativeStencilAccessScalarShape { field. value [LalinNative.NativeStencilValueSourceShape], },
+    NativeStencilAccessContiguousShape { field. value [LalinNative.NativeStencilValueSourceShape], field. stride [number], },
+    NativeStencilAccessIndexedShape { field. value [LalinNative.NativeStencilValueSourceShape], field. index [LalinNative.NativeStencilValueSourceShape], field. stride [number], },
+    NativeStencilAccessAffine1DShape { field. value [LalinNative.NativeStencilValueSourceShape], field. scale [number], },
+    NativeStencilAccessAffineNDShape { field. value [LalinNative.NativeStencilValueSourceShape], field. term_count [number], },
+    NativeStencilAccessFieldProjectionShape { field. value [LalinNative.NativeStencilValueSourceShape], field. field_name [str], },
+    NativeStencilAccessSoAComponentShape { field. value [LalinNative.NativeStencilValueSourceShape], field. field_name [str], },
+    NativeStencilAccessSliceDescriptorShape { field. value [LalinNative.NativeStencilValueSourceShape], },
+    NativeStencilAccessByteSpanDescriptorShape { field. value [LalinNative.NativeStencilValueSourceShape], },
+    NativeStencilAccessViewDescriptorShape { field. value [LalinNative.NativeStencilValueSourceShape], field. has_const_stride [bool], },
+  },
+
+  sum. NativeStencilPointSourceShape {
+    NativeStencilPointInputShape { field. value [LalinNative.NativeStencilValueSourceShape], },
+    NativeStencilPointWindowInputShape { field. value [LalinNative.NativeStencilValueSourceShape], field. offset_count [number], },
+    NativeStencilPointConstShape { field. value [LalinNative.NativeStencilValueSourceShape], },
+    NativeStencilPointUnaryShape { field. op [LalinStencil.StencilUnaryOp], field. value [LalinNative.NativeStencilValueSourceShape], },
+    NativeStencilPointBinaryShape { field. op [LalinStencil.StencilBinaryOp], field. value [LalinNative.NativeStencilValueSourceShape], },
+    NativeStencilPointCastShape { field. op [LalinCore.MachineCastOp], field. from [LalinNative.NativeStencilValueSourceShape], field. to [LalinNative.NativeStencilValueSourceShape], },
+    NativeStencilPointPredicateShape { field. pred [LalinNative.NativeKernelPredicateSourceShape], field. value [LalinNative.NativeStencilValueSourceShape], },
+    NativeStencilPointCompareShape { field. cmp [LalinCore.CmpOp], field. value [LalinNative.NativeStencilValueSourceShape], },
+    NativeStencilPointSelectShape { field. pred [LalinNative.NativeKernelPredicateSourceShape], field. value [LalinNative.NativeStencilValueSourceShape], },
+  },
+
+  sum. NativeStencilBodySourceShape {
+    NativeStencilBodyPointShape { field. expr [LalinNative.NativeStencilPointSourceShape], },
+  },
+
+  sum. NativeStencilSinkSourceShape {
+    NativeStencilSinkStoreShape {
+      field. semantics [LalinStencil.StencilStoreSemantics],
+      field. dst [LalinNative.NativeStencilAccessSourceShape],
+    },
+    NativeStencilSinkReduceShape {
+      field. value [LalinNative.NativeStencilValueSourceShape],
+      field. scope [LalinStencil.StencilReduceScope],
+      field. semantics [LalinStencil.StencilReductionSemantics],
+    },
+    NativeStencilSinkScanShape {
+      field. reducer [LalinNative.NativeKernelReducerSourceShape],
+      field. mode [LalinStencil.StencilScanMode],
+      field. value [LalinNative.NativeStencilValueSourceShape],
+    },
+    NativeStencilSinkScatterReduceShape {
+      field. reducer [LalinNative.NativeKernelReducerSourceShape],
+      field. conflicts [LalinStencil.StencilScatterReduceConflictSemantics],
+      field. value [LalinNative.NativeStencilValueSourceShape],
+    },
+  },
+
+  sum. NativeStencilScheduleSourceShape {
+    NativeStencilScheduleScalarShape { field. compiler [LalinStencil.StencilCompilerPolicy], },
+    NativeStencilScheduleAutoVectorShape { field. trip_count [LalinStencil.StencilTripCountFact], },
+    NativeStencilScheduleUnrolledShape { field. factor [number], field. trip_count [LalinStencil.StencilTripCountFact], },
+    NativeStencilScheduleVectorShape {
+      field. feature [LalinStencil.StencilVectorFeatureRequirement],
+      field. lane_policy [LalinStencil.StencilLanePolicy],
+      field. required_alignment [LalinStencil.StencilVectorAlignmentPolicy],
+      field. tail [LalinStencil.StencilVectorTailPolicy],
+      field. reduction [LalinStencil.StencilVectorReductionStrategy],
+      field. vector_unroll [number],
+      field. interleave [number],
+    },
+  },
+
+  product. NativeStencilAccessProjection {
+    interned,
+    field. access [LalinStencil.StencilAccess],
+    field. storage [LalinNative.NativeStorageLayout],
+    field. shape [LalinNative.NativeStencilAccessSourceShape],
+  },
+
+  product. NativeStencilProducerProjection {
+    interned,
+    field. producer [LalinStencil.StencilProducer],
+    field. shape [LalinNative.NativeStencilProducerSourceShape],
+  },
+
+  product. NativeStencilPointProjection {
+    interned,
+    field. expr [LalinStencil.StencilPointExpr],
+    field. result_storage [LalinNative.NativeStorageLayout],
+    field. shape [LalinNative.NativeStencilPointSourceShape],
+  },
+
+  product. NativeStencilBodyProjection {
+    interned,
+    field. body [LalinStencil.StencilBody],
+    field. point [LalinNative.NativeStencilPointProjection],
+    field. shape [LalinNative.NativeStencilBodySourceShape],
+  },
+
+  product. NativeStencilSinkProjection {
+    interned,
+    field. sink [LalinStencil.StencilSink],
+    field. shape [LalinNative.NativeStencilSinkSourceShape],
+  },
+
+  product. NativeStencilScheduleProjection {
+    interned,
+    field. schedule [LalinStencil.StencilSchedule],
+    field. shape [LalinNative.NativeStencilScheduleSourceShape],
+  },
+
+  product. NativeStencilDescriptorProjection {
+    interned,
+    field. descriptor [LalinStencil.StencilDescriptor],
+    field. producer [LalinNative.NativeStencilProducerProjection],
+    field. accesses [many [LalinNative.NativeStencilAccessProjection]],
+    field. body [LalinNative.NativeStencilBodyProjection],
+    field. sink [LalinNative.NativeStencilSinkProjection],
+  },
+
+  product. NativeStencilInstanceProjection {
+    interned,
+    field. instance [LalinStencil.StencilInstance],
+    field. descriptor [LalinNative.NativeStencilDescriptorProjection],
+    field. schedule [LalinNative.NativeStencilScheduleProjection],
+    field. abi [LalinStencil.StencilAbi],
+  },
+
+  product. NativeStencilSourceSupport {
+    field. producers [many [LalinNative.NativeStencilProducerSourceShape]],
+    field. accesses [many [LalinNative.NativeStencilAccessSourceShape]],
+    field. points [many [LalinNative.NativeStencilPointSourceShape]],
+    field. bodies [many [LalinNative.NativeStencilBodySourceShape]],
+    field. sinks [many [LalinNative.NativeStencilSinkSourceShape]],
+    field. schedules [many [LalinNative.NativeStencilScheduleSourceShape]],
+  },
+
   sum. NativeStencilProducerAxis {
+    NativeStencilProducerSourceShapeAxis { field. shape [LalinNative.NativeStencilProducerSourceShape], },
     NativeStencilRange1DAxis {
       field. index_ty [LalinCode.CodeType],
       field. step [number],
@@ -2226,6 +2383,7 @@ return schema. LalinNative {
   },
 
   sum. NativeStencilAccessAxis {
+    NativeStencilAccessSourceShapeAxis { field. shape [LalinNative.NativeStencilAccessSourceShape], },
     NativeStencilLayoutScalarAxis { field. ty [LalinCode.CodeType], },
     NativeStencilLayoutContiguousAxis { field. ty [LalinCode.CodeType], },
     NativeStencilLayoutIndexedAxis { field. ty [LalinCode.CodeType], index_ty [LalinCode.CodeType], },
@@ -2239,6 +2397,7 @@ return schema. LalinNative {
   },
 
   sum. NativeStencilPointAxis {
+    NativeStencilPointSourceShapeAxis { field. shape [LalinNative.NativeStencilPointSourceShape], },
     NativeStencilPointInputAxis,
     NativeStencilPointWindowInputAxis { field. offset_count [number], },
     NativeStencilPointConstAxis { field. ty [LalinCode.CodeType], },
@@ -2269,7 +2428,12 @@ return schema. LalinNative {
     },
   },
 
+  sum. NativeStencilBodyAxis {
+    NativeStencilBodySourceShapeAxis { field. shape [LalinNative.NativeStencilBodySourceShape], },
+  },
+
   sum. NativeStencilSinkAxis {
+    NativeStencilSinkSourceShapeAxis { field. shape [LalinNative.NativeStencilSinkSourceShape], },
     NativeStencilSinkStoreAxis { field. semantics [LalinStencil.StencilStoreSemantics], },
     NativeStencilSinkReduceAxis {
       field. result_ty [LalinCode.CodeType],
@@ -2289,6 +2453,7 @@ return schema. LalinNative {
   },
 
   sum. NativeStencilScheduleAxis {
+    NativeStencilScheduleSourceShapeAxis { field. shape [LalinNative.NativeStencilScheduleSourceShape], },
     NativeStencilScheduleScalarAxis { field. compiler [LalinStencil.StencilCompilerPolicy], },
     NativeStencilScheduleAutoVectorAxis { field. facts [LalinStencil.StencilVectorizationFacts], },
     NativeStencilScheduleUnrolledAxis {

@@ -19,18 +19,16 @@ local function write_file(path, text)
 end
 
 local src = [=[
-local zip_add = fn(dst [ptr [i32]], lhs [ptr [i32]], rhs [ptr [i32]], n [index]) [void]
+fn zip_add(dst [ptr [i32]], lhs [ptr [i32]], rhs [ptr [i32]], n [index]) [void] do
   requires bounds(dst)(n), writeonly(dst), bounds(lhs)(n), readonly(lhs), bounds(rhs)(n), readonly(rhs)
   requires disjoint(dst)(lhs), disjoint(dst)(rhs), disjoint(lhs)(rhs)
   loop i in 0 .. n do
     dst[i] = lhs[i] + rhs[i]
   end
 end
-
-return { zip_add }
 ]=]
 
-local parsed = assert(lalin.loadstring(src, "@test_emit_c_artifact_jit_stencil.lln"))()
+local parsed = assert(lalin.loadstring(src, "@test_emit_c_artifact_jit_stencil.lln"))
 local dir = "target/test_emit_c_artifact_jit_stencil"
 local artifact = lalin.emit_c_artifact(parsed, {
     name = "emit_c_jit_stencil",

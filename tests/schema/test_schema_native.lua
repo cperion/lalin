@@ -375,6 +375,7 @@ local support_domain = N.NativeTemplateSupportDomain(
     0,
     frame_stack_limit,
     N.NativeKernelSourceSupport({}),
+    N.NativeStencilSourceSupport({}, {}, {}, {}, {}, {}),
     {},
     {},
     constant_pool_support,

@@ -11,35 +11,30 @@ local lalin = require('lalin')
 local LowerPlan = require('tests.code_ir.luajit_lower_plan_helper')
 
 local source = [=[
-local copy2d = fn(dst [ptr [i32]], src [ptr [i32]], h [index], w [index], n [index]) [void]
+fn copy2d(dst [ptr [i32]], src [ptr [i32]], h [index], w [index], n [index]) [void]
   requires bounds(dst)(n), writeonly(dst), bounds(src)(n), readonly(src), disjoint(dst)(src)
   loop i, j in grid(0 .. h, 0 .. w) do
     dst[i * w + j] = src[i * w + j]
   end
 end
 
-local tiled_scan_rows = fn(dst [ptr [i32]], xs [ptr [i32]], h [index], w [index], n [index]) [void]
+fn tiled_scan_rows(dst [ptr [i32]], xs [ptr [i32]], h [index], w [index], n [index]) [void]
   requires bounds(dst)(n), writeonly(dst), bounds(xs)(n), readonly(xs), disjoint(dst)(xs)
   loop i, j in tiled grid(0 .. h, 0 .. w) by 2, 2 do
     scan acc [i32] = 0 by add over j step xs[i * w + j] into dst[i * w + j]
   end
 end
 
-local prev_clamp = fn(dst [ptr [i32]], xs [ptr [i32]], n [index]) [void]
+fn prev_clamp(dst [ptr [i32]], xs [ptr [i32]], n [index]) [void]
   requires bounds(dst)(n), writeonly(dst), bounds(xs)(n), readonly(xs), disjoint(dst)(xs)
   loop i in window(0 .. n, before = 1, after = 1, boundary = clamp) do
     dst[i] = xs[i - 1]
   end
 end
 
-return {
-  copy2d,
-  tiled_scan_rows,
-  prev_clamp,
-}
 ]=]
 
-local parsed = assert(lalin.loadstring(source, '@test_luajit_artifact_nd_parsed.lln'))()
+local parsed = assert(lalin.loadstring(source, '@test_luajit_artifact_nd_parsed.lln'))
 local plan = LowerPlan.plan(parsed, {
     name = 'ParsedND',
 })

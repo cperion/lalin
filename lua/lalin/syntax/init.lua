@@ -10,6 +10,7 @@ local Ast = require("lalin.syntax.ast")
 local Decl = require("lalin.syntax.decl")
 local Expr = require("lalin.syntax.expr")
 local Stmt = require("lalin.syntax.stmt")
+local Document = require("lalin.syntax.document")
 
 local LalinSyntax = {}
 
@@ -94,6 +95,26 @@ function LalinSyntax.parse_decl_stream(lex, ctx)
   return wrap_ast(ast, ctx, { role = ast.expected_role or "decls", channel = "parsed:host_eval" })
 end
 
+function LalinSyntax.parse_document(source, chunkname, opts)
+  return Document.parse(source, chunkname, opts)
+end
+
+function LalinSyntax.materialize_document(doc, opts)
+  return Document.materialize(doc, opts)
+end
+
+function LalinSyntax.load_document(source, chunkname, opts)
+  return Document.load(source, chunkname, opts)
+end
+
+function LalinSyntax.to_decls(value, opts)
+  if type(value) == "table" and value.tag == "DeclDocument" then
+    if value.decls ~= nil then return value.decls, value end
+    return Document.materialize(value, opts)
+  end
+  return value
+end
+
 function LalinSyntax.register()
   local spec = {
     name = "lalin",
@@ -121,6 +142,7 @@ end
 -- ── Convert parsed AST to LalinTree for the compiler pipeline ──────────
 
 function LalinSyntax.to_module(parsed_decls, name, T)
+  parsed_decls = LalinSyntax.to_decls(parsed_decls)
   -- Use the caller's schema context, or create one at this public boundary.
   local asdl = require("lalin.asdl")
   T = T or asdl.context()

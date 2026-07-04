@@ -1,13 +1,13 @@
 -- lalin.loader
 --
--- First-class .lln value loading.  A .lln file is a Lua chunk with Lalin parsed
--- syntax active by default.  It returns ordinary Lua values; Lua require and
--- package.loaded remain the module system.
+-- First-class .lln document loading.  A .lln file is a Lalin declaration
+-- document rooted at Lalin.decls, not a Lua value chunk.  Loading returns an
+-- ordered parsed declaration array (plus document metadata from loadstring /
+-- loadfile), and .lln require caches that declaration array.
 
 local Loader = {}
 
-local syntax = require("llbl.syntax")
-require("lalin.syntax")
+local syntax = require("lalin.syntax")
 
 Loader.path = os.getenv("LALIN_PATH") or "./?.lln;./?/init.lln;lua/?.lln;lua/?/init.lln"
 
@@ -28,18 +28,6 @@ local function path_value(path_or_fn)
   return path_or_fn or Loader.path
 end
 
-local function active_languages(opts)
-  local out = { "lalin" }
-  local seen = { lalin = true }
-  for _, lang in ipairs(opts.active_languages or {}) do
-    if type(lang) == "string" and not seen[lang] then
-      seen[lang] = true
-      out[#out + 1] = lang
-    end
-  end
-  return out
-end
-
 local function default_env()
   return require("lalin").dsl.make_env { no_namespaces = true }
 end
@@ -53,17 +41,17 @@ local function merge_env(user_env)
   return out
 end
 
-local function compile_opts(opts)
+local function document_opts(opts)
   opts = copy_opts(opts)
-  opts.active_languages = active_languages(opts)
-  opts.decl_stream_role = opts.decl_stream_role or "decls"
-  opts.allow_import = false
   opts.env = merge_env(opts.env)
+  opts.root_role = opts.root_role or "decls"
   return opts
 end
 
 function Loader.loadstring(source, chunkname, opts)
-  return syntax.loadstring(source, chunkname or "=(lalin .lln)", compile_opts(opts))
+  local ok, decls, doc = pcall(syntax.load_document, source, chunkname or "=(lalin .lln)", document_opts(opts))
+  if not ok then return nil, decls end
+  return decls, doc
 end
 
 function Loader.loadfile(path, opts)
@@ -74,10 +62,10 @@ function Loader.loadfile(path, opts)
   return Loader.loadstring(source, "@" .. path, opts)
 end
 
-function Loader.dofile(path, opts, ...)
-  local chunk, err = Loader.loadfile(path, opts)
-  if not chunk then error(err, 2) end
-  return chunk(...)
+function Loader.dofile(path, opts)
+  local decls, doc_or_err = Loader.loadfile(path, opts)
+  if not decls then error(doc_or_err, 2) end
+  return decls, doc_or_err
 end
 
 local function escape_pattern(s)
@@ -105,31 +93,24 @@ function Loader.loadmodule(name, opts)
   local path, err = Loader.searchpath(name, opts.path or Loader.path, opts.sep, opts.rep)
   if not path then return nil, err end
   local load_opts = opts.load_opts or opts
-  local chunk, load_err = Loader.loadfile(path, load_opts)
-  if not chunk then return nil, load_err end
-  return chunk, path
+  local decls, doc_or_err = Loader.loadfile(path, load_opts)
+  if not decls then return nil, doc_or_err end
+  return decls, path, doc_or_err
 end
 
 function Loader.require(name, opts)
   if package.loaded[name] then return package.loaded[name] end
-  local chunk, path_or_err = Loader.loadmodule(name, opts)
-  if not chunk then error("module '" .. tostring(name) .. "' not found:" .. tostring(path_or_err), 2) end
-
-  package.loaded[name] = true
-  local ok, result = pcall(chunk, name, path_or_err)
-  if not ok then
-    package.loaded[name] = nil
-    error(result, 0)
-  end
-  if result ~= nil then package.loaded[name] = result end
-  return package.loaded[name]
+  local decls, path_or_err = Loader.loadmodule(name, opts)
+  if not decls then error("module '" .. tostring(name) .. "' not found:" .. tostring(path_or_err), 2) end
+  package.loaded[name] = decls
+  return decls
 end
 
 function Loader.searcher(name, opts)
-  local chunk, path_or_err = Loader.loadmodule(name, opts)
-  if not chunk then return path_or_err end
+  local decls, path_or_err = Loader.loadmodule(name, opts)
+  if not decls then return path_or_err end
   return function()
-    return chunk(name, path_or_err)
+    return decls
   end, path_or_err
 end
 

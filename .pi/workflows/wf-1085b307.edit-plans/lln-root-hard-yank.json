@@ -1,0 +1,288 @@
+{
+	"version": 1,
+	"workflowId": "wf-1085b307",
+	"planId": "lln-root-hard-yank",
+	"revision": 35,
+	"nextId": 18,
+	"createdAt": "2026-07-04T19:42:09.602Z",
+	"updatedAt": "2026-07-04T20:06:36.225Z",
+	"tasks": [
+		{
+			"id": "T001",
+			"title": "Add Lalin document root parser",
+			"detail": "Create the new .lln document parser/root materializer. It must lex whole source as Lalin, parse only root-role declaration-stream items under role display Lalin.decls, reject Lua chunk constructs (`local`, `return`, parse-time `import`, `module`) with hard-yank messages, accept top-level `[ ... ]` HostEval splices, and produce a `DeclDocument` AST plus ordered parsed declarations. Materialization must be sequential: merge the default Lalin host env with opts.env, bind each named parsed/generated decl into the document host env before resolving following HostEvals, resolve HostEval values with that env, flatten root splices through the Lalin decls adapter, and preserve bracket/source origins.",
+			"file": "lua/lalin/syntax/document.lua",
+			"after": [],
+			"status": "done",
+			"order": 1,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Created `lua/lalin/syntax/document.lua` with DeclDocument parser/materializer. Verified direct parser/materializer with `luajit -e` root struct/fn document, top-level `[gen]` declaration splice with later `[Generated]` type reference via opts.env, and hard-yank `local` rejection message.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:47:36.989Z"
+		},
+		{
+			"id": "T002",
+			"title": "Expose document parsing through lalin.syntax",
+			"detail": "Require the new document module, add public helpers such as `parse_document`, `materialize_document`, and `load_document`/`to_decls`, and make `to_module` accept either a plain decl array or a `DeclDocument`/document result by routing through `to_tree.decls`. Keep existing `parse_entry`, `parse_expression`, and mixed-source registration intact for `.lua`/tooling syntax islands.",
+			"file": "lua/lalin/syntax/init.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 2,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Updated `lua/lalin/syntax/init.lua`: requires `lalin.syntax.document`, exposes `parse_document`, `materialize_document`, `load_document`, and `to_decls`, and routes `to_module` through `LalinSyntax.to_decls`. Verified with `luajit -e` that `syntax.load_document` returns decls/DeclDocument and `syntax.to_module(doc, \"X\")` succeeds.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:48:12.555Z"
+		},
+		{
+			"id": "T003",
+			"title": "Teach role adapter DeclDocument decl collection",
+			"detail": "Update `Adapter:decls` so a `DeclDocument` wrapper or document result with `body`/`decls` is treated as the declaration stream under role `decls`. Do not loosen arbitrary keyed-table policy for .lln documents; keyed table support remains only for Lua-built API values at compile boundaries.",
+			"file": "lua/lalin/syntax/role_adapter.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 3,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Updated `lua/lalin/syntax/role_adapter.lua` so `Adapter:decls` unwraps `DeclDocument` via `decls` or `body` and recursively flattens HostEval/Fragment/document items in declaration streams. Verified with `luajit -e` parsing a DeclDocument and collecting it through `to_tree.decls(doc)`.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:48:45.757Z"
+		},
+		{
+			"id": "T004",
+			"title": "Replace lalin.loader value chunks with document loading",
+			"detail": "Hard-yank the old call to `llbl.syntax.loadstring`. `Loader.loadstring` should call `lalin.syntax.load_document` and return `(decls, document)` or `(nil, err)`, not a Lua chunk. `loadfile` reads and delegates. `dofile` returns decls directly. `loadmodule` returns document decls plus path. `require` caches and returns decl arrays. `searcher` returns a Lua require loader function that returns the already-parsed decl array. Keep path/searcher plumbing and default host env merging, but remove `allow_import`/Lua chunk option semantics from the .lln path.",
+			"file": "lua/lalin/loader.lua",
+			"after": [
+				"T002",
+				"T003"
+			],
+			"status": "done",
+			"order": 4,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Rewrote `lua/lalin/loader.lua` so `.lln` loading uses `lalin.syntax.load_document` instead of `llbl.syntax.loadstring`: `loadstring`/`loadfile` return decls plus document metadata, `dofile` returns decls, `loadmodule` returns decls/path, `require` caches decl arrays, and `searcher` returns a loader that returns parsed decls. Verified direct loader loadstring success and hard-yank `return` rejection with `luajit -e`.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:49:43.316Z"
+		},
+		{
+			"id": "T005",
+			"title": "Update public lalin facade load APIs",
+			"detail": "Change top comments and hosted-loading functions to document semantics. `M.loadstring`/`loadfile` return parsed declaration arrays, `M.dofile` returns the parsed document decls, `M.eval`/`M.load` must no longer execute returned chunks and should either alias document loading or be renamed in comments as document parsing. Ensure `module_ast_from` still compiles parsed document arrays and Lua builder values, while not implying .lln files may return arbitrary Lua tables.",
+			"file": "lua/lalin/init.lua",
+			"after": [
+				"T004"
+			],
+			"status": "done",
+			"order": 5,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Updated `lua/lalin/init.lua` public comments and hosted loading API: `loadstring`/`loadfile` parse documents and return decl arrays, `dofile` returns decls without calling a chunk, `eval` parses documents without executing chunks, and `M.load` aliases `M.loadstring`. Verified with `luajit -e` that `lalin.loadstring`/`lalin.eval` return decl arrays/document metadata and no callable chunk.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:50:18.167Z"
+		},
+		{
+			"id": "T006",
+			"title": "Update CLI .lln execution boundary",
+			"detail": "For paths ending `.lln`, stop treating `lalin.loadstring` as a callable chunk. Parse the document, return success when parsing/materialization succeeds, and report parse/materialization errors. Leave `-e` and non-.lln files as ordinary Lua chunks so Lua builder workflows remain possible in `.lua`.",
+			"file": "lua/lalin/cli.lua",
+			"after": [
+				"T004"
+			],
+			"status": "done",
+			"order": 6,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Updated `lua/lalin/cli.lua` .lln branch to parse documents via `lalin.loadstring` and return success/decls instead of calling a chunk; `-e` and non-.lln paths still use normal Lua chunks. Verified with `luajit -e` invoking `cli.main` on a temp `.lln` document (exit 0) and a `return {}` `.lln` (exit 70 with document-root rejection).",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:50:48.335Z"
+		},
+		{
+			"id": "T007",
+			"title": "Clean mixed-source driver wording",
+			"detail": "Do not route .lln loading through this driver anymore. Update comments and the `allow_import == false` diagnostic around the import branch so it describes mixed Lua+parsed syntax islands/tooling, not `.lln value chunks`. Preserve behavior for explicit `llbl.syntax.loadstring` callers.",
+			"file": "lua/llbl/syntax/driver.lua",
+			"after": [],
+			"status": "done",
+			"order": 7,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Updated `lua/llbl/syntax/driver.lua` import comment and `allow_import == false` diagnostic to describe mixed Lua+parsed syntax loads instead of `.lln value chunks`. Verified diagnostic with `luajit -e` pcalling `llbl.syntax.loadstring(..., { allow_import=false })`.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:51:14.027Z"
+		},
+		{
+			"id": "T008",
+			"title": "Add document-root hard-yank tests",
+			"detail": "Create focused frontend tests for the new .lln contract: `lalin.loadstring` returns an ordered decl array without `()`, root `fn/struct/union/handle/region` parse directly, top-level `[generated]` splices decls via Lalin.decls, document-scope named declarations are visible to later `[Name]` type HostEvals, opts.env supplies host constants/fragments, and `local`/`return`/`import`/`module` are rejected as non-document Lua/value-chunk constructs.",
+			"file": "tests/frontend/test_lalin_lln_document_root.lua",
+			"after": [
+				"T004",
+				"T006"
+			],
+			"status": "done",
+			"order": 8,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Added `tests/frontend/test_lalin_lln_document_root.lua` covering document-root loadstring returns decl arrays/DeclDocument metadata, root decl parsing, document-scope `[Pair]`, top-level `[generated_decls]` splicing, opts.env host constants, and hard-yank local/return/import/module rejections. Verified with `luajit tests/frontend/test_lalin_lln_document_root.lua`.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:52:26.314Z"
+		},
+		{
+			"id": "T009",
+			"title": "Rewrite loader regression test for documents",
+			"detail": "Replace value-chunk assertions with document-root assertions. Remove `chunk()` calls and `return` tables. Use named root declarations, document env binding for declaration-to-type, document opts.env for host constants, and `.lln` package require/searcher tests that return decl arrays. Keep a CLI smoke case but expect parse success, not chunk execution.",
+			"file": "tests/frontend/test_lalin_loader.lua",
+			"after": [
+				"T004",
+				"T005",
+				"T006"
+			],
+			"status": "done",
+			"order": 9,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Rewrote `tests/frontend/test_lalin_loader.lua` for document semantics: no chunk calls/returned tables, root declarations, opts.env HostEval constants, document name binding, handle lowering, local/return/import/module rejection, lalin.require/searcher returning decl arrays, dofile returning decls, and CLI parse smoke. Verified with `luajit tests/frontend/test_lalin_loader.lua`.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:53:46.585Z"
+		},
+		{
+			"id": "T010",
+			"title": "Update bracket role frontend test sources",
+			"detail": "Rewrite the initial lalin.loadstring fixture from Lua value-chunk syntax to document-root syntax (`struct Pair ...; fn accept ...`). Remove the trailing `return` and `chunk()` call. Preserve direct parser tests for statement/product/declaration HostEval splices.",
+			"file": "tests/frontend/test_lalin_bracket_role_eval.lua",
+			"after": [
+				"T004"
+			],
+			"status": "done",
+			"order": 10,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Updated the initial fixture in `tests/frontend/test_lalin_bracket_role_eval.lua` from a Lua value chunk with `local`/`return`/`()`, to a root `.lln` declaration document. Preserved direct parser HostEval/splice/index tests. Verified with `luajit tests/frontend/test_lalin_bracket_role_eval.lua`.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:54:02.932Z"
+		},
+		{
+			"id": "T011",
+			"title": "Update syntax smoke for document loadstring",
+			"detail": "Rewrite the smoke source as a root Lalin document with no `local`/`return`; pass `scale` through opts.env for `[scale]`; expect `lalin.loadstring` to return parsed decls plus document metadata rather than a Lua chunk/compiled driver output. Keep assertions that HostEval resolved and the function body parsed correctly.",
+			"file": "tests/syntax_smoke.lua",
+			"after": [
+				"T004"
+			],
+			"status": "done",
+			"order": 11,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Updated `tests/syntax_smoke.lua` to use a root `.lln` declaration document, pass `scale` through opts.env, and assert `lalin.loadstring` returns decls plus DeclDocument metadata rather than a generated mixed-source chunk. Verified with `(cd tests && luajit syntax_smoke.lua)`.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:54:30.793Z"
+		},
+		{
+			"id": "T012",
+			"title": "Update parsed artifact tests to document roots",
+			"detail": "Rewrite parsed `.lln` source strings in code_ir tests to root declaration documents and remove `chunk()` calls. Affected files from grep: `test_luajit_artifact_native_loop_parsed.lua`, `test_luajit_artifact_nd_parsed.lua`, `test_luajit_artifact_parsed_literals.lua`, `test_luajit_artifact_parsed_metaprogramming.lua`, and `test_luajit_artifact_source_loop_fixtures.lua`. Move former top-level Lua locals/constants/fragments into `opts.env` or explicit helper construction in the test.",
+			"file": "tests/code_ir",
+			"after": [
+				"T004"
+			],
+			"status": "done",
+			"order": 12,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Updated parsed `.lln` fixtures in code_ir tests to root declaration documents and removed chunk calls across `tests/code_ir/test_luajit_artifact_native_loop_parsed.lua`, `test_luajit_artifact_nd_parsed.lua`, `test_luajit_artifact_parsed_literals.lua`, `test_luajit_artifact_parsed_metaprogramming.lua`, and `test_luajit_artifact_source_loop_fixtures.lua`. Moved metaprogramming fragments/constants into test-side opts.env/direct parser construction. Verified all five touched tests with `luajit`.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:56:30.746Z"
+		},
+		{
+			"id": "T013",
+			"title": "Update C backend parsed .lln test",
+			"detail": "Rewrite the parsed source as a root document (`fn zip_add ... end`), remove `return { zip_add }`, and change `assert(lalin.loadstring(...))()` to direct document decls returned by `lalin.loadstring`.",
+			"file": "tests/c_backend/test_emit_c_artifact_jit_stencil.lua",
+			"after": [
+				"T004"
+			],
+			"status": "done",
+			"order": 13,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Updated `tests/c_backend/test_emit_c_artifact_jit_stencil.lua` parsed source to a root `.lln` document (`fn zip_add ... end`) and changed `assert(lalin.loadstring(...))()` to direct decl-array loading. Grep confirms old `local zip_add`, `return {`, and chunk-call patterns are removed. Ran `luajit tests/c_backend/test_emit_c_artifact_jit_stencil.lua`; document parsing succeeded but the test currently fails later in `lua/lalin/luajit_emit.lua:1126` (`stencil_source:gsub` got table), recorded for verification follow-up.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:58:09.784Z"
+		},
+		{
+			"id": "T014",
+			"title": "Document .lln declaration documents",
+			"detail": "Replace the `.lln value chunk` model with `.lln declaration document` semantics: root role Lalin.decls, no Lua `local`/`return`/module chunk execution, loadstring/loadfile return decl arrays, top-level `[generated]` splices declarations, document declarations bind by name for later HostEval type references, Lua builder/metaprogramming remains in `.lua` through the DSL or explicit opts.env.",
+			"file": "docs/LANGUAGE_REFERENCE.md",
+			"after": [
+				"T004"
+			],
+			"status": "done",
+			"order": 14,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Updated `docs/LANGUAGE_REFERENCE.md` to describe `.lln` as declaration documents rooted at `Lalin.decls`: pipeline now uses `lalin.syntax.document`, loading APIs return decl arrays/DeclDocument metadata, top-level Lua chunk forms are rejected, top-level `[generated]` splices declarations, document names bind for later HostEval type references, and Lua builder/metaprogramming remains in `.lua`/opts.env. Grep no longer finds old `value chunk`/callable loadfile/loadstring references in this doc.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T19:59:56.938Z"
+		},
+		{
+			"id": "T015",
+			"title": "Update architecture and convention docs",
+			"detail": "Update `docs/LLBL_GUIDE.md`, `docs/CONVENTIONS.md`, and `docs/ARCHITECTURE.md` to describe the two surfaces as `.lln` role-rooted declaration documents vs Lua/LLBL builder API. Remove default-user-facing `.lln value chunk`/returned table language. Mention `llbl.syntax.driver` as mixed-source infrastructure, not the .lln loader.",
+			"file": "docs",
+			"after": [
+				"T014"
+			],
+			"status": "done",
+			"order": 15,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Updated `docs/LLBL_GUIDE.md`, `docs/CONVENTIONS.md`, and `docs/ARCHITECTURE.md` to describe primary `.lln` as role-rooted declaration documents vs Lua/LLBL builder API, with `lalin.syntax.document`/`Lalin.decls` in architecture paths and `llbl.syntax.driver` documented as mixed-source infrastructure rather than the `.lln` loader. Grep shows no default-user-facing `.lln value chunks`/returned-table language remains in these touched docs aside from explicit rejection wording.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T20:00:55.919Z"
+		},
+		{
+			"id": "T016",
+			"title": "Audit remaining value-chunk references",
+			"detail": "Run grep for `value chunk`, `chunk()`, `lalin.loadstring`, `return {`, and `.lln chunks` across docs/lua/tests. Update or intentionally leave only references that explicitly discuss removed legacy behavior. Ensure no default path or test still assumes `.lln` loadstring returns a callable Lua chunk.",
+			"file": "docs lua tests",
+			"after": [
+				"T009",
+				"T010",
+				"T011",
+				"T012",
+				"T013",
+				"T014",
+				"T015"
+			],
+			"status": "done",
+			"order": 16,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Ran audit grep for `value chunk`, `.lln chunk(s)`, `chunk()`, `lalin.loadstring`, and `return {` across docs/lua/tests. Updated remaining default-facing language in `docs/LANGUAGE_REFERENCE.md` examples/status rows from `local name = fn/struct/handle` and callable/value-chunk assumptions to document-root forms. Remaining `chunk()` hits are non-.lln Lua/DSL/LLBL driver/bytecode paths; remaining `value chunk` hits explicitly say `.lln` is not a Lua value chunk in code/docs comments.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T20:02:31.538Z"
+		},
+		{
+			"id": "T017",
+			"title": "Run hard-yank verification suite",
+			"detail": "Run focused checks after implementation: `luajit tests/frontend/test_lalin_lln_document_root.lua`, `luajit tests/frontend/test_lalin_loader.lua`, `(cd tests && luajit syntax_smoke.lua)`, `luajit tests/frontend/test_lalin_bracket_role_eval.lua`, parsed artifact tests touched in code_ir/c_backend, then `luajit tests/run.lua frontend` and relevant `luajit tests/run.lua code_ir` subset. Record any pre-existing native-bank/runtime failures honestly.",
+			"after": [
+				"T016"
+			],
+			"status": "done",
+			"order": 17,
+			"claimedBy": "agent-ARAMHH",
+			"evidence": "Ran hard-yank verification. Passed: `luajit tests/frontend/test_lalin_lln_document_root.lua`, `luajit tests/frontend/test_lalin_loader.lua`, `(cd tests && luajit syntax_smoke.lua)`, `luajit tests/frontend/test_lalin_bracket_role_eval.lua`, all five touched code_ir parsed tests, and full `luajit tests/run.lua code_ir` (48 passed, 1 skipped). Known/remaining failures: `luajit tests/c_backend/test_emit_c_artifact_jit_stencil.lua` fails after document parsing in `lua/lalin/luajit_emit.lua:1126` (`stencil_source:gsub` got table); `luajit tests/run.lua frontend` fails only `tests/frontend/test_dsl_lua_owned.lua` in existing `tree_typecheck_expr.lua:469` atomic expression typecheck path while the new/updated frontend tests pass.",
+			"notes": [],
+			"createdAt": "2026-07-04T19:42:09.602Z",
+			"updatedAt": "2026-07-04T20:06:36.225Z"
+		}
+	]
+}

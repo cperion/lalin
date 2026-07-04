@@ -211,6 +211,29 @@ It is invalid for a `NativeChunkKernelOp` family axis to carry a concrete
 family, add the missing finite source-shape ASDL leaf and keep the concrete value
 as a patch/frame fact.
 
+## Native Stencil Source-Shape Contract
+
+Stencil native lowering follows the same two-layer rule as Kernel lowering.
+Concrete `StencilDescriptor`, `StencilProducer`, `StencilAccess`,
+`StencilPointExpr`, `StencilBody`, `StencilSink`, `StencilSchedule`, and
+`StencilInstance` values are semantic/native projections: they can own frame
+roles, storage layouts, runtime value ids, descriptors, and patch bindings. Bank
+selection does not key on those program-specific values.
+
+Finite source-shape ASDL now names the reusable stencil template vocabulary:
+`NativeStencilProducerSourceShape`, `NativeStencilAccessSourceShape`,
+`NativeStencilPointSourceShape`, `NativeStencilBodySourceShape`,
+`NativeStencilSinkSourceShape`, and `NativeStencilScheduleSourceShape`, with
+`NativeStencilSourceSupport` carried by `NativeTemplateSupportDomain`. Template
+axes use `NativeStencil*SourceShapeAxis` leaves so `NativeChunkStencilOp` source
+builders enumerate shapes supplied by support, not concrete stencil bodies or
+access identities.
+
+Program-specific stencil facts bind later through lowering inputs, frame roles,
+holes, patch coordinates, ABI/runtime parameters, and descriptor/object facts.
+Dynamic bounds, bases, lengths, strides, point-expression values, sink state, and
+schedule control are values to bind, not axes to enumerate.
+
 ## Axis Classification
 
 Family axes should be fixed only when they alter instruction shape or control

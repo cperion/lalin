@@ -14,19 +14,17 @@ variables that hold the public module.
 
 ### Primary (hand-written code)
 
-Use `.lln` value chunks for hand-written Lalin source. A `.lln` file is a Lua
-chunk with Lalin parsed syntax active by default. It returns ordinary Lua values;
-Lua `require` and returned tables are the module system.
+Use `.lln` declaration documents for hand-written Lalin source. A `.lln` file is
+rooted at `Lalin.decls`; it contains root declarations and top-level HostEval
+declaration splices, and loading returns an ordered declaration array. Lua
+`local`/`return` chunk structure belongs in `.lua` builder modules, not `.lln`
+documents.
 
 ```lln
 -- primary.lln
-local add = fn add(a: i32, b: i32): i32
+fn add(a [i32], b [i32]) [i32] do
   return a + b
 end
-
-return {
-  add = add,
-}
 ```
 
 ### Builder API (macros, generators, tooling)

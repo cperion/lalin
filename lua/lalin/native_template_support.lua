@@ -379,6 +379,12 @@ local function bind_context(T)
     function api.axis_code_const(axis) return Native.NativeAxisCodeConst(require_value(axis, "NativeCodeConstAxis")) end
     function api.axis_code_type(ty) return Native.NativeAxisCodeType(require_value(ty, "CodeType")) end
     function api.axis_kernel(axis) return Native.NativeAxisKernel(require_value(axis, "NativeKernelAxis")) end
+    function api.axis_stencil_producer(axis) return Native.NativeAxisStencilProducer(require_value(axis, "NativeStencilProducerAxis")) end
+    function api.axis_stencil_access(axis) return Native.NativeAxisStencilAccess(require_value(axis, "NativeStencilAccessAxis")) end
+    function api.axis_stencil_point(axis) return Native.NativeAxisStencilPoint(require_value(axis, "NativeStencilPointAxis")) end
+    function api.axis_stencil_body(axis) return Native.NativeAxisStencilBody(require_value(axis, "NativeStencilBodyAxis")) end
+    function api.axis_stencil_sink(axis) return Native.NativeAxisStencilSink(require_value(axis, "NativeStencilSinkAxis")) end
+    function api.axis_stencil_schedule(axis) return Native.NativeAxisStencilSchedule(require_value(axis, "NativeStencilScheduleAxis")) end
     function api.axis_abi(protocol) return Native.NativeAxisAbi(require_value(protocol, "NativeCallProtocol")) end
     function api.axis_register_protocol(protocol) return Native.NativeAxisRegisterProtocol(require_value(protocol, "NativeRegisterProtocol")) end
     function api.axis_machine_scalar(scalar) return Native.NativeAxisMachineScalar(require_value(scalar, "NativeMachineScalarRep")) end
@@ -789,6 +795,10 @@ local function bind_context(T)
         return Native.NativeStencilPointMetavar(require_value(id, "NativeStencilMetavarId"), axes or {})
     end
 
+    function api.stencil_body_metavar(id, axes)
+        return Native.NativeStencilBodyMetavar(require_value(id, "NativeStencilMetavarId"), axes or {})
+    end
+
     function api.stencil_sink_metavar(id, axes)
         return Native.NativeStencilSinkMetavar(require_value(id, "NativeStencilMetavarId"), axes or {})
     end
@@ -808,6 +818,7 @@ local function bind_context(T)
     function api.stencil_producer_metavar_value(axis) return Native.NativeStencilProducerMetavarValue(require_value(axis, "NativeStencilProducerAxis")) end
     function api.stencil_access_metavar_value(axis) return Native.NativeStencilAccessMetavarValue(require_value(axis, "NativeStencilAccessAxis")) end
     function api.stencil_point_metavar_value(axis) return Native.NativeStencilPointMetavarValue(require_value(axis, "NativeStencilPointAxis")) end
+    function api.stencil_body_metavar_value(axis) return Native.NativeStencilBodyMetavarValue(require_value(axis, "NativeStencilBodyAxis")) end
     function api.stencil_sink_metavar_value(axis) return Native.NativeStencilSinkMetavarValue(require_value(axis, "NativeStencilSinkAxis")) end
     function api.stencil_schedule_metavar_value(axis) return Native.NativeStencilScheduleMetavarValue(require_value(axis, "NativeStencilScheduleAxis")) end
 
@@ -1225,6 +1236,14 @@ local function bind_context(T)
         return Native.NativeKernelSourceSupport(shapes or {})
     end
 
+    function api.empty_stencil_source_support()
+        return Native.NativeStencilSourceSupport({}, {}, {}, {}, {}, {})
+    end
+
+    function api.stencil_source_support(producers, accesses, points, bodies, sinks, schedules)
+        return Native.NativeStencilSourceSupport(producers or {}, accesses or {}, points or {}, bodies or {}, sinks or {}, schedules or {})
+    end
+
     function api.support_domain(
         id,
         target,
@@ -1237,7 +1256,8 @@ local function bind_context(T)
         passthrough_float_limit,
         frame_stack_limit,
         atomic_codegen,
-        kernel_source_support
+        kernel_source_support,
+        stencil_source_support
     )
         target = require_value(target, "NativeTarget")
         runtime = require_value(runtime, "NativeRuntime")
@@ -1250,6 +1270,7 @@ local function bind_context(T)
         frame_stack_limit = frame_stack_limit or api.x64_sysv_frame_stack_limit()
         atomic_codegen = atomic_codegen or api.atomic_gcc_builtins_support()
         local kernel_sources = kernel_source_support or api.empty_kernel_source_support()
+        local stencil_sources = stencil_source_support or api.empty_stencil_source_support()
         local scalar_supports = {}
         local register_supports = {}
         local abi = {}
@@ -1280,6 +1301,7 @@ local function bind_context(T)
             passthrough_float_limit,
             frame_stack_limit,
             kernel_sources,
+            stencil_sources,
             public_abi_adapters,
             continuation_signatures,
             constant_pool_support,
@@ -1300,7 +1322,26 @@ local function bind_context(T)
             nil,
             nil,
             nil,
-            require_value(kernel_source_support, "NativeKernelSourceSupport")
+            require_value(kernel_source_support, "NativeKernelSourceSupport"),
+            nil
+        )
+    end
+
+    function api.support_domain_with_sources(id, target, runtime, scalar_reps, kernel_source_support, stencil_source_support)
+        return api.support_domain(
+            id,
+            target,
+            runtime,
+            scalar_reps,
+            nil,
+            nil,
+            nil,
+            nil,
+            nil,
+            nil,
+            nil,
+            kernel_source_support or api.empty_kernel_source_support(),
+            stencil_source_support or api.empty_stencil_source_support()
         )
     end
 

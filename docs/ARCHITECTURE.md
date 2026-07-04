@@ -56,8 +56,8 @@ Lalin has two surfaces that converge on the same ASDL:
 
 | Path | How | When |
 |------|-----|------|
-| **`.lln` value chunks** (primary) | `fn ... end` syntax loaded by `lalin.loader` or Lua `require` | Hand-written code |
-| **Builder API** (internal) | `lln.fn. name { ... }` Lua DSL heads | Macros, generators, tooling |
+| **`.lln` declaration documents** (primary) | Root `fn`/`struct`/`region` declarations loaded by `lalin.loader` or Lua `require` | Hand-written code |
+| **Builder API** (Lua/LLBL) | `lln.fn. name { ... }` Lua DSL heads | Macros, generators, tooling |
 
 ```text
 ┌─ Hand-written source ─────────────────┐
@@ -67,10 +67,10 @@ Lalin has two surfaces that converge on the same ASDL:
 │  end                                   │
 │                                        │
 │  → lalin.loadfile / Lua require        │
-│    → lalin.loader activates syntax     │
-│      → llbl.syntax driver rewrites     │
-│        → lalin.syntax.parse_entry      │
-│          → parsed AST nodes            │
+│    → lalin.loader parses document      │
+│      → lalin.syntax.document           │
+│        → root Lalin.decls stream       │
+│          → parsed AST declarations     │
 │            → lalin.syntax.to_module()  │
 └────────────────────────────────────────┘
                     │
@@ -381,8 +381,8 @@ ASDL first; nullary variants also receive methods directly with normal
 
 | File | Role |
 |------|------|
-| `lua/lalin/init.lua` | Public facade — `.lln` value loading, `lalin.compile`, `lalin.emit_c_artifact`, etc. |
-| `lua/lalin/loader.lua` | `.lln` loadfile/loadstring/searchpath/searcher integration. |
+| `lua/lalin/init.lua` | Public facade — `.lln` declaration-document loading, `lalin.compile`, `lalin.emit_c_artifact`, etc. |
+| `lua/lalin/loader.lua` | `.lln` loadfile/loadstring/searchpath/searcher integration returning declaration arrays. |
 | `lua/lalin/cli.lua` | CLI interface. |
 | `lua/lalin/ast.lua` | AST utility layer. |
 | `lua/lalin/quote.lua` | Quotation utilities. |

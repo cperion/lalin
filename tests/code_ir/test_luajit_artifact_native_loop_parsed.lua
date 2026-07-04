@@ -10,7 +10,7 @@ local ffi = require('ffi')
 local lalin = require('lalin')
 
 local source = [=[
-local zip_add = fn(dst [ptr [i32]], lhs [ptr [i32]], rhs [ptr [i32]], n [index]) [void]
+fn zip_add(dst [ptr [i32]], lhs [ptr [i32]], rhs [ptr [i32]], n [index]) [void]
   requires bounds(dst)(n), writeonly(dst), bounds(lhs)(n), readonly(lhs), bounds(rhs)(n), readonly(rhs)
   requires disjoint(dst)(lhs), disjoint(dst)(rhs), disjoint(lhs)(rhs)
   loop i in 0 .. n do
@@ -18,44 +18,37 @@ local zip_add = fn(dst [ptr [i32]], lhs [ptr [i32]], rhs [ptr [i32]], n [index])
   end
 end
 
-local dot = fn(lhs [ptr [i32]], rhs [ptr [i32]], n [index]) [i32]
+fn dot(lhs [ptr [i32]], rhs [ptr [i32]], n [index]) [i32]
   requires bounds(lhs)(n), readonly(lhs), bounds(rhs)(n), readonly(rhs)
   loop i in 0 .. n do
     fold acc [i32] = 0 by add step lhs[i] * rhs[i]
   end
 end
 
-local product = fn(xs [ptr [i32]], n [index]) [i32]
+fn product(xs [ptr [i32]], n [index]) [i32]
   requires bounds(xs)(n), readonly(xs)
   loop i in 0 .. n do
     fold acc [i32] = 1 by mul step xs[i]
   end
 end
 
-local min_i32 = fn(xs [ptr [i32]], n [index]) [i32]
+fn min_i32(xs [ptr [i32]], n [index]) [i32]
   requires bounds(xs)(n), readonly(xs)
   loop i in 0 .. n do
     fold acc [i32] = 2147483647 by min step xs[i]
   end
 end
 
-local scan_sum = fn(dst [ptr [i32]], xs [ptr [i32]], n [index]) [void]
+fn scan_sum(dst [ptr [i32]], xs [ptr [i32]], n [index]) [void]
   requires bounds(dst)(n), writeonly(dst), bounds(xs)(n), readonly(xs), disjoint(dst)(xs)
   loop i in 0 .. n do
     scan acc [i32] = 0 by add step xs[i] into dst[i]
   end
 end
 
-return {
-  zip_add,
-  dot,
-  product,
-  min_i32,
-  scan_sum,
-}
 ]=]
 
-local parsed = assert(lalin.loadstring(source, '@test_luajit_artifact_native_loop_parsed.lln'))()
+local parsed = assert(lalin.loadstring(source, '@test_luajit_artifact_native_loop_parsed.lln'))
 local loaded = lalin.compile_luajit('ParsedNativeLoopBytecode', parsed, { bytecode = true })
 
 local function check_loaded(module, label)
