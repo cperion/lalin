@@ -119,6 +119,10 @@ local function bind_context(T)
         return bank_symbol_address(input, self.symbol_name)
     end
 
+    function Native.NativeCodeAddressFunctionEntry:native_code_address(input)
+        return bank_symbol_address(input, self.symbol_name)
+    end
+
     function Native.NativeCodeAddressRuntimeSymbol:native_code_address(input)
         local symbol = runtime_symbol(input, self.symbol)
         return symbol and symbol.address and symbol.address:native_runtime_address() or nil
@@ -211,11 +215,11 @@ local function bind_context(T)
     end
 
     function Native.NativeCompileCodeFunc:plan_native_copy(input)
-        return self.func:plan_native_copy(input)
+        return self.func:plan_native_copy(input, nil, self.signature)
     end
 
     function Native.NativeCompileKernelPlan:plan_native_copy(input)
-        return self.plan:plan_native_copy(input)
+        return self.plan:plan_native_copy(input, self.lowering)
     end
 
     function Native.NativeCompileStencilInstance:plan_native_copy(input)
@@ -469,6 +473,38 @@ local function bind_context(T)
 
     function Native.NativeAbiSRetResult:native_abi_projection_equals_sret_result(result_ty, pointer_param)
         return self.result_ty == result_ty and self.pointer_param:native_abi_param_projection_equals(pointer_param)
+    end
+
+    function Native.NativeAbiProjection:native_code_result_shape()
+        error("lalin.native: unsupported ABI projection result shape", 2)
+    end
+
+    function Native.NativeAbiVoidResult:native_code_result_shape()
+        return Native.NativeCodeResultVoidShape
+    end
+
+    function Native.NativeAbiScalarValue:native_code_result_shape()
+        return Native.NativeCodeResultScalarShape(self.scalar)
+    end
+
+    function Native.NativeAbiPointerValue:native_code_result_shape()
+        return Native.NativeCodeResultPointerShape(self.scalar)
+    end
+
+    function Native.NativeAbiDescriptorValue:native_code_result_shape()
+        return Native.NativeCodeResultDescriptorShape(self.layout)
+    end
+
+    function Native.NativeAbiByRefValue:native_code_result_shape()
+        return Native.NativeCodeResultByRefShape(self.pointee_ty, self.mutability, self.alignment)
+    end
+
+    function Native.NativeAbiSRetResult:native_code_result_shape()
+        return Native.NativeCodeResultSRetShape(self.result_ty)
+    end
+
+    function Native.NativeAbiResultProjection:native_code_result_shape()
+        return self.abi:native_code_result_shape()
     end
 
     function Native.NativePatchFormula:native_patch_formula_equals(_other)
@@ -754,6 +790,26 @@ local function bind_context(T)
     function Native.NativeTemplateAxis:native_axis_equals_stencil_schedule(_axis) return false end
     function Native.NativeAxisStencilSchedule:native_axis_equals_stencil_schedule(axis) return self.axis:native_stencil_schedule_axis_equals(axis) end
 
+    function Native.NativeCodeResultShape:native_code_result_shape_equals(_other) return false end
+    function Native.NativeCodeResultVoidShape:native_code_result_shape_equals(other) return other:native_code_result_shape_equals_void() end
+    function Native.NativeCodeResultShape:native_code_result_shape_equals_void() return false end
+    function Native.NativeCodeResultVoidShape:native_code_result_shape_equals_void() return true end
+    function Native.NativeCodeResultScalarShape:native_code_result_shape_equals(other) return other:native_code_result_shape_equals_scalar(self.scalar) end
+    function Native.NativeCodeResultShape:native_code_result_shape_equals_scalar(_scalar) return false end
+    function Native.NativeCodeResultScalarShape:native_code_result_shape_equals_scalar(scalar) return self.scalar == scalar end
+    function Native.NativeCodeResultPointerShape:native_code_result_shape_equals(other) return other:native_code_result_shape_equals_pointer(self.scalar) end
+    function Native.NativeCodeResultShape:native_code_result_shape_equals_pointer(_scalar) return false end
+    function Native.NativeCodeResultPointerShape:native_code_result_shape_equals_pointer(scalar) return self.scalar == scalar end
+    function Native.NativeCodeResultDescriptorShape:native_code_result_shape_equals(other) return other:native_code_result_shape_equals_descriptor(self.layout) end
+    function Native.NativeCodeResultShape:native_code_result_shape_equals_descriptor(_layout) return false end
+    function Native.NativeCodeResultDescriptorShape:native_code_result_shape_equals_descriptor(layout) return self.layout == layout end
+    function Native.NativeCodeResultByRefShape:native_code_result_shape_equals(other) return other:native_code_result_shape_equals_byref(self.pointee_ty, self.mutability, self.alignment) end
+    function Native.NativeCodeResultShape:native_code_result_shape_equals_byref(_pointee_ty, _mutability, _alignment) return false end
+    function Native.NativeCodeResultByRefShape:native_code_result_shape_equals_byref(pointee_ty, mutability, alignment) return self.pointee_ty == pointee_ty and self.mutability == mutability and self.alignment == alignment end
+    function Native.NativeCodeResultSRetShape:native_code_result_shape_equals(other) return other:native_code_result_shape_equals_sret(self.result_ty) end
+    function Native.NativeCodeResultShape:native_code_result_shape_equals_sret(_result_ty) return false end
+    function Native.NativeCodeResultSRetShape:native_code_result_shape_equals_sret(result_ty) return self.result_ty == result_ty end
+
     function Native.NativeCodeInstAxis:native_code_inst_axis_equals(_other) return false end
     function Native.NativeCodeInstConstAxis:native_code_inst_axis_equals(other) return other:native_code_inst_const_axis_equals(self.ty) end
     function Native.NativeCodeInstAxis:native_code_inst_const_axis_equals(_ty) return false end
@@ -866,9 +922,12 @@ local function bind_context(T)
     function Native.NativeCodeInstVariantPayloadAxis:native_code_inst_axis_equals(other) return other:native_code_inst_variant_payload_axis_equals(self.variant) end
     function Native.NativeCodeInstAxis:native_code_inst_variant_payload_axis_equals(_variant) return false end
     function Native.NativeCodeInstVariantPayloadAxis:native_code_inst_variant_payload_axis_equals(variant) return self.variant == variant end
-    function Native.NativeCodeInstCallAxis:native_code_inst_axis_equals(other) return other:native_code_inst_call_axis_equals(self.target, self.sig) end
-    function Native.NativeCodeInstAxis:native_code_inst_call_axis_equals(_target, _sig) return false end
-    function Native.NativeCodeInstCallAxis:native_code_inst_call_axis_equals(target, sig) return self.target == target and self.sig == sig end
+    function Native.NativeCodeInstCallShapeAxis:native_code_inst_axis_equals(other) return other:native_code_inst_call_shape_axis_equals(self.shape, self.abi) end
+    function Native.NativeCodeInstAxis:native_code_inst_call_shape_axis_equals(_shape, _abi) return false end
+    function Native.NativeCodeInstCallShapeAxis:native_code_inst_call_shape_axis_equals(shape, abi) return self.shape == shape and self.abi:native_abi_function_projection_equals(abi) end
+    function Native.NativeCodeInstResultCopyAxis:native_code_inst_axis_equals(other) return other:native_code_inst_result_copy_axis_equals(self.result) end
+    function Native.NativeCodeInstAxis:native_code_inst_result_copy_axis_equals(_result) return false end
+    function Native.NativeCodeInstResultCopyAxis:native_code_inst_result_copy_axis_equals(result) return self.result:native_code_result_shape_equals(result) end
     function Native.NativeCodeInstAtomicLoadAxis:native_code_inst_axis_equals(other) return other:native_code_inst_atomic_load_axis_equals(self.access, self.ordering) end
     function Native.NativeCodeInstAxis:native_code_inst_atomic_load_axis_equals(_access, _ordering) return false end
     function Native.NativeCodeInstAtomicLoadAxis:native_code_inst_atomic_load_axis_equals(access, ordering) return self.access == access and self.ordering == ordering end
@@ -901,6 +960,9 @@ local function bind_context(T)
     function Native.NativeCodeTermReturnAxis:native_code_term_axis_equals(other) return other:native_code_term_return_axis_equals(self.results) end
     function Native.NativeCodeTermAxis:native_code_term_return_axis_equals(_results) return false end
     function Native.NativeCodeTermReturnAxis:native_code_term_return_axis_equals(results) return value_list_equals(self.results, results) end
+    function Native.NativeCodeTermReturnShapeAxis:native_code_term_axis_equals(other) return other:native_code_term_return_shape_axis_equals(self.result) end
+    function Native.NativeCodeTermAxis:native_code_term_return_shape_axis_equals(_result) return false end
+    function Native.NativeCodeTermReturnShapeAxis:native_code_term_return_shape_axis_equals(result) return self.result:native_code_result_shape_equals(result) end
     function Native.NativeCodeTermTrapAxis:native_code_term_axis_equals(other) return other:native_code_term_trap_axis_equals() end
     function Native.NativeCodeTermAxis:native_code_term_trap_axis_equals() return false end
     function Native.NativeCodeTermTrapAxis:native_code_term_trap_axis_equals() return true end
@@ -942,7 +1004,259 @@ local function bind_context(T)
     function Native.NativeCodePlaceAxis:native_code_place_bytes_axis_equals(_ty, _size, _align) return false end
     function Native.NativeCodePlaceBytesAxis:native_code_place_bytes_axis_equals(ty, size, align) return self.ty == ty and self.size == size and self.align == align end
 
+    local function native_storage_layout_equals(left, right)
+        return left == right or (left ~= nil and right ~= nil and left.size == right.size and left.alignment == right.alignment)
+    end
+
+    function Native.NativeKernelLoopProjection:native_kernel_loop_projection_equals(other)
+        return other ~= nil and self.domain == other.domain and self.trip_count == other.trip_count and self.counter == other.counter and self.index_scalar == other.index_scalar and self.trip_count_value == other.trip_count_value
+    end
+
+    function Native.NativeKernelLaneProjection:native_kernel_lane_projection_equals(other)
+        return other ~= nil and self.lane == other.lane and native_storage_layout_equals(self.elem_storage, other.elem_storage) and self.address_scalar == other.address_scalar and self.index_scalar == other.index_scalar
+    end
+
+    function Native.NativeKernelFrameEntry:native_kernel_frame_entry_equals(other)
+        return other ~= nil and self.role == other.role and native_storage_layout_equals(self.storage, other.storage) and self.template_value == other.template_value
+    end
+
+    function Native.NativeKernelExprProjection:native_kernel_expr_projection_equals(other)
+        return self == other
+    end
+    function Native.NativeKernelExprCodeValueProjection:native_kernel_expr_projection_equals(other) return other ~= nil and other.native_kernel_expr_code_value_projection_equals ~= nil and other:native_kernel_expr_code_value_projection_equals(self.value, self.storage) end
+    function Native.NativeKernelExprProjection:native_kernel_expr_code_value_projection_equals(_value, _storage) return false end
+    function Native.NativeKernelExprCodeValueProjection:native_kernel_expr_code_value_projection_equals(value, storage) return self.value == value and native_storage_layout_equals(self.storage, storage) end
+    function Native.NativeKernelExprAlgebraProjection:native_kernel_expr_projection_equals(other) return other ~= nil and other.native_kernel_expr_algebra_projection_equals ~= nil and other:native_kernel_expr_algebra_projection_equals(self.expr, self.storage) end
+    function Native.NativeKernelExprProjection:native_kernel_expr_algebra_projection_equals(_expr, _storage) return false end
+    function Native.NativeKernelExprAlgebraProjection:native_kernel_expr_algebra_projection_equals(expr, storage) return self.expr == expr and native_storage_layout_equals(self.storage, storage) end
+    function Native.NativeKernelExprLaneLoadProjection:native_kernel_expr_projection_equals(other) return other ~= nil and other.native_kernel_expr_lane_load_projection_equals ~= nil and other:native_kernel_expr_lane_load_projection_equals(self.lane, self.index) end
+    function Native.NativeKernelExprProjection:native_kernel_expr_lane_load_projection_equals(_lane, _index) return false end
+    function Native.NativeKernelExprLaneLoadProjection:native_kernel_expr_lane_load_projection_equals(lane, index) return self.lane:native_kernel_lane_projection_equals(lane) and self.index == index end
+    function Native.NativeKernelExprKernelValueProjection:native_kernel_expr_projection_equals(other) return other ~= nil and other.native_kernel_expr_kernel_value_projection_equals ~= nil and other:native_kernel_expr_kernel_value_projection_equals(self.value, self.storage) end
+    function Native.NativeKernelExprProjection:native_kernel_expr_kernel_value_projection_equals(_value, _storage) return false end
+    function Native.NativeKernelExprKernelValueProjection:native_kernel_expr_kernel_value_projection_equals(value, storage) return self.value == value and native_storage_layout_equals(self.storage, storage) end
+
+    function Native.NativeKernelEffectStateProjection:native_kernel_effect_state_projection_equals(other) return self == other end
+    function Native.NativeKernelEffectNoState:native_kernel_effect_state_projection_equals(other) return other == Native.NativeKernelEffectNoState end
+    function Native.NativeKernelEffectScratchState:native_kernel_effect_state_projection_equals(other) return other ~= nil and other.native_kernel_effect_scratch_state_equals ~= nil and other:native_kernel_effect_scratch_state_equals(self.storage) end
+    function Native.NativeKernelEffectStateProjection:native_kernel_effect_scratch_state_equals(_storage) return false end
+    function Native.NativeKernelEffectScratchState:native_kernel_effect_scratch_state_equals(storage) return native_storage_layout_equals(self.storage, storage) end
+    function Native.NativeKernelEffectReductionState:native_kernel_effect_state_projection_equals(other) return other ~= nil and other.native_kernel_effect_reduction_state_equals ~= nil and other:native_kernel_effect_reduction_state_equals(self.reduction, self.storage) end
+    function Native.NativeKernelEffectStateProjection:native_kernel_effect_reduction_state_equals(_reduction, _storage) return false end
+    function Native.NativeKernelEffectReductionState:native_kernel_effect_reduction_state_equals(reduction, storage) return self.reduction == reduction and native_storage_layout_equals(self.storage, storage) end
+    function Native.NativeKernelEffectScanState:native_kernel_effect_state_projection_equals(other) return other ~= nil and other.native_kernel_effect_scan_state_equals ~= nil and other:native_kernel_effect_scan_state_equals(self.reduction, self.mode, self.storage) end
+    function Native.NativeKernelEffectStateProjection:native_kernel_effect_scan_state_equals(_reduction, _mode, _storage) return false end
+    function Native.NativeKernelEffectScanState:native_kernel_effect_scan_state_equals(reduction, mode, storage) return self.reduction == reduction and self.mode == mode and native_storage_layout_equals(self.storage, storage) end
+
+    function Native.NativeKernelEffectProjection:native_kernel_effect_projection_equals(other) return self == other end
+    function Native.NativeKernelEffectStoreProjection:native_kernel_effect_projection_equals(other) return other ~= nil and other.native_kernel_effect_store_projection_equals ~= nil and other:native_kernel_effect_store_projection_equals(self.dst, self.index, self.value, self.state) end
+    function Native.NativeKernelEffectProjection:native_kernel_effect_store_projection_equals(_dst, _index, _value, _state) return false end
+    function Native.NativeKernelEffectStoreProjection:native_kernel_effect_store_projection_equals(dst, index, value, state) return self.dst:native_kernel_lane_projection_equals(dst) and self.index == index and self.value:native_kernel_expr_projection_equals(value) and self.state:native_kernel_effect_state_projection_equals(state) end
+    function Native.NativeKernelEffectFoldProjection:native_kernel_effect_projection_equals(other) return other ~= nil and other.native_kernel_effect_fold_projection_equals ~= nil and other:native_kernel_effect_fold_projection_equals(self.reduction, self.state) end
+    function Native.NativeKernelEffectProjection:native_kernel_effect_fold_projection_equals(_reduction, _state) return false end
+    function Native.NativeKernelEffectFoldProjection:native_kernel_effect_fold_projection_equals(reduction, state) return self.reduction == reduction and self.state:native_kernel_effect_state_projection_equals(state) end
+
+    function Native.NativeKernelResultProjection:native_kernel_result_projection_equals(other) return self == other end
+    function Native.NativeKernelResultVoidProjection:native_kernel_result_projection_equals(other) return other == Native.NativeKernelResultVoidProjection end
+    function Native.NativeKernelResultClosedFormProjection:native_kernel_result_projection_equals(other) return other ~= nil and other.native_kernel_result_closed_form_projection_equals ~= nil and other:native_kernel_result_closed_form_projection_equals(self.closed_form) end
+    function Native.NativeKernelResultProjection:native_kernel_result_closed_form_projection_equals(_closed_form) return false end
+    function Native.NativeKernelResultClosedFormProjection:native_kernel_result_closed_form_projection_equals(closed_form) return self.closed_form == closed_form end
+
+    function Native.NativeKernelBodyProjection:native_kernel_body_projection_equals(other)
+        return other ~= nil and self.body == other.body and self.domain:native_kernel_loop_projection_equals(other.domain) and #self.lanes == #other.lanes and #self.bindings == #other.bindings and #self.effects == #other.effects and self.result:native_kernel_result_projection_equals(other.result)
+    end
+
+    function Native.NativeKernelPlanProjection:native_kernel_plan_projection_equals(other) return self == other end
+    function Native.NativeKernelNoPlanProjection:native_kernel_plan_projection_equals(other) return other ~= nil and other.native_kernel_no_plan_projection_equals ~= nil and other:native_kernel_no_plan_projection_equals(self.plan) end
+    function Native.NativeKernelPlanProjection:native_kernel_no_plan_projection_equals(_plan) return false end
+    function Native.NativeKernelNoPlanProjection:native_kernel_no_plan_projection_equals(plan) return self.plan == plan end
+    function Native.NativeKernelPlannedProjection:native_kernel_plan_projection_equals(other) return other ~= nil and other.native_kernel_planned_projection_equals ~= nil and other:native_kernel_planned_projection_equals(self.plan, self.body) end
+    function Native.NativeKernelPlanProjection:native_kernel_planned_projection_equals(_plan, _body) return false end
+    function Native.NativeKernelPlannedProjection:native_kernel_planned_projection_equals(plan, body) return self.plan == plan and self.body:native_kernel_body_projection_equals(body) end
+
     function Native.NativeKernelAxis:native_kernel_axis_equals(_other) return false end
+    function Native.NativeKernelDomainProjectionAxis:native_kernel_axis_equals(other) return other:native_kernel_domain_projection_axis_equals(self.projection) end
+    function Native.NativeKernelAxis:native_kernel_domain_projection_axis_equals(_projection) return false end
+    function Native.NativeKernelDomainProjectionAxis:native_kernel_domain_projection_axis_equals(projection) return self.projection:native_kernel_loop_projection_equals(projection) end
+    function Native.NativeKernelLaneProjectionAxis:native_kernel_axis_equals(other) return other:native_kernel_lane_projection_axis_equals(self.projection) end
+    function Native.NativeKernelAxis:native_kernel_lane_projection_axis_equals(_projection) return false end
+    function Native.NativeKernelLaneProjectionAxis:native_kernel_lane_projection_axis_equals(projection) return self.projection:native_kernel_lane_projection_equals(projection) end
+    function Native.NativeKernelExprProjectionAxis:native_kernel_axis_equals(other) return other:native_kernel_expr_projection_axis_equals(self.projection) end
+    function Native.NativeKernelAxis:native_kernel_expr_projection_axis_equals(_projection) return false end
+    function Native.NativeKernelExprProjectionAxis:native_kernel_expr_projection_axis_equals(projection) return self.projection:native_kernel_expr_projection_equals(projection) end
+    function Native.NativeKernelEffectProjectionAxis:native_kernel_axis_equals(other) return other:native_kernel_effect_projection_axis_equals(self.projection) end
+    function Native.NativeKernelAxis:native_kernel_effect_projection_axis_equals(_projection) return false end
+    function Native.NativeKernelEffectProjectionAxis:native_kernel_effect_projection_axis_equals(projection) return self.projection:native_kernel_effect_projection_equals(projection) end
+    function Native.NativeKernelResultProjectionAxis:native_kernel_axis_equals(other) return other:native_kernel_result_projection_axis_equals(self.projection) end
+    function Native.NativeKernelAxis:native_kernel_result_projection_axis_equals(_projection) return false end
+    function Native.NativeKernelResultProjectionAxis:native_kernel_result_projection_axis_equals(projection) return self.projection:native_kernel_result_projection_equals(projection) end
+    function Native.NativeKernelProofProjectionAxis:native_kernel_axis_equals(other) return other:native_kernel_proof_projection_axis_equals(self.projection) end
+    function Native.NativeKernelAxis:native_kernel_proof_projection_axis_equals(_projection) return false end
+    function Native.NativeKernelProofProjectionAxis:native_kernel_proof_projection_axis_equals(projection) return self.projection == projection end
+    function Native.NativeKernelBodyProjectionAxis:native_kernel_axis_equals(other) return other:native_kernel_body_projection_axis_equals(self.projection) end
+    function Native.NativeKernelAxis:native_kernel_body_projection_axis_equals(_projection) return false end
+    function Native.NativeKernelBodyProjectionAxis:native_kernel_body_projection_axis_equals(projection) return self.projection:native_kernel_body_projection_equals(projection) end
+    function Native.NativeKernelPlanProjectionAxis:native_kernel_axis_equals(other) return other:native_kernel_plan_projection_axis_equals(self.projection) end
+    function Native.NativeKernelAxis:native_kernel_plan_projection_axis_equals(_projection) return false end
+    function Native.NativeKernelPlanProjectionAxis:native_kernel_plan_projection_axis_equals(projection) return self.projection:native_kernel_plan_projection_equals(projection) end
+    function Native.NativeKernelValueSourceShape:native_kernel_value_source_shape_equals(other) return self == other end
+    function Native.NativeKernelValueScalarShape:native_kernel_value_source_shape_equals(other) return other ~= nil and other.native_kernel_value_scalar_shape_equals ~= nil and other:native_kernel_value_scalar_shape_equals(self.scalar) end
+    function Native.NativeKernelValueSourceShape:native_kernel_value_scalar_shape_equals(_scalar) return false end
+    function Native.NativeKernelValueScalarShape:native_kernel_value_scalar_shape_equals(scalar) return self.scalar == scalar end
+    function Native.NativeKernelValuePointerShape:native_kernel_value_source_shape_equals(other) return other ~= nil and other.native_kernel_value_pointer_shape_equals ~= nil and other:native_kernel_value_pointer_shape_equals(self.pointer) end
+    function Native.NativeKernelValueSourceShape:native_kernel_value_pointer_shape_equals(_pointer) return false end
+    function Native.NativeKernelValuePointerShape:native_kernel_value_pointer_shape_equals(pointer) return self.pointer == pointer end
+    function Native.NativeKernelValueBytesShape:native_kernel_value_source_shape_equals(other) return other ~= nil and other.native_kernel_value_bytes_shape_equals ~= nil and other:native_kernel_value_bytes_shape_equals(self.size, self.alignment) end
+    function Native.NativeKernelValueSourceShape:native_kernel_value_bytes_shape_equals(_size, _alignment) return false end
+    function Native.NativeKernelValueBytesShape:native_kernel_value_bytes_shape_equals(size, alignment) return self.size == size and self.alignment == alignment end
+
+    function Native.NativeKernelLoopSourceShape:native_kernel_loop_source_shape_equals(other) return self == other end
+    function Native.NativeKernelLoopRange1DShape:native_kernel_loop_source_shape_equals(other) return other ~= nil and other.native_kernel_loop_range_1d_shape_equals ~= nil and other:native_kernel_loop_range_1d_shape_equals(self.index_scalar, self.trip_count, self.has_counter) end
+    function Native.NativeKernelLoopSourceShape:native_kernel_loop_range_1d_shape_equals(_index_scalar, _trip_count, _has_counter) return false end
+    function Native.NativeKernelLoopRange1DShape:native_kernel_loop_range_1d_shape_equals(index_scalar, trip_count, has_counter) return self.index_scalar == index_scalar and self.trip_count == trip_count and self.has_counter == has_counter end
+
+    function Native.NativeKernelLaneAddressSourceShape:native_kernel_lane_address_source_shape_equals(other) return self == other end
+    function Native.NativeKernelLaneScalarAddressShape:native_kernel_lane_address_source_shape_equals(other) return other ~= nil and other.native_kernel_lane_scalar_address_shape_equals ~= nil and other:native_kernel_lane_scalar_address_shape_equals(self.elem, self.address, self.index) end
+    function Native.NativeKernelLaneAddressSourceShape:native_kernel_lane_scalar_address_shape_equals(_elem, _address, _index) return false end
+    function Native.NativeKernelLaneScalarAddressShape:native_kernel_lane_scalar_address_shape_equals(elem, address, index) return self.elem:native_kernel_value_source_shape_equals(elem) and self.address == address and self.index == index end
+    function Native.NativeKernelLaneContiguousAddressShape:native_kernel_lane_address_source_shape_equals(other) return other ~= nil and other.native_kernel_lane_contiguous_address_shape_equals ~= nil and other:native_kernel_lane_contiguous_address_shape_equals(self.elem, self.address, self.index) end
+    function Native.NativeKernelLaneAddressSourceShape:native_kernel_lane_contiguous_address_shape_equals(_elem, _address, _index) return false end
+    function Native.NativeKernelLaneContiguousAddressShape:native_kernel_lane_contiguous_address_shape_equals(elem, address, index) return self.elem:native_kernel_value_source_shape_equals(elem) and self.address == address and self.index == index end
+    function Native.NativeKernelLaneStridedAddressShape:native_kernel_lane_address_source_shape_equals(other) return other ~= nil and other.native_kernel_lane_strided_address_shape_equals ~= nil and other:native_kernel_lane_strided_address_shape_equals(self.elem, self.address, self.index) end
+    function Native.NativeKernelLaneAddressSourceShape:native_kernel_lane_strided_address_shape_equals(_elem, _address, _index) return false end
+    function Native.NativeKernelLaneStridedAddressShape:native_kernel_lane_strided_address_shape_equals(elem, address, index) return self.elem:native_kernel_value_source_shape_equals(elem) and self.address == address and self.index == index end
+    function Native.NativeKernelLaneIndexedAddressShape:native_kernel_lane_address_source_shape_equals(other) return other ~= nil and other.native_kernel_lane_indexed_address_shape_equals ~= nil and other:native_kernel_lane_indexed_address_shape_equals(self.elem, self.address, self.index) end
+    function Native.NativeKernelLaneAddressSourceShape:native_kernel_lane_indexed_address_shape_equals(_elem, _address, _index) return false end
+    function Native.NativeKernelLaneIndexedAddressShape:native_kernel_lane_indexed_address_shape_equals(elem, address, index) return self.elem:native_kernel_value_source_shape_equals(elem) and self.address == address and self.index == index end
+
+    function Native.NativeKernelValueExprSourceShape:native_kernel_value_expr_source_shape_equals(other) return self == other end
+    function Native.NativeKernelExprCodeValueShape:native_kernel_value_expr_source_shape_equals(other) return other ~= nil and other.native_kernel_expr_code_value_shape_equals ~= nil and other:native_kernel_expr_code_value_shape_equals(self.value) end
+    function Native.NativeKernelValueExprSourceShape:native_kernel_expr_code_value_shape_equals(_value) return false end
+    function Native.NativeKernelExprCodeValueShape:native_kernel_expr_code_value_shape_equals(value) return self.value:native_kernel_value_source_shape_equals(value) end
+    function Native.NativeKernelExprKernelValueShape:native_kernel_value_expr_source_shape_equals(other) return other ~= nil and other.native_kernel_expr_kernel_value_shape_equals ~= nil and other:native_kernel_expr_kernel_value_shape_equals(self.value) end
+    function Native.NativeKernelValueExprSourceShape:native_kernel_expr_kernel_value_shape_equals(_value) return false end
+    function Native.NativeKernelExprKernelValueShape:native_kernel_expr_kernel_value_shape_equals(value) return self.value:native_kernel_value_source_shape_equals(value) end
+    function Native.NativeKernelExprConstShape:native_kernel_value_expr_source_shape_equals(other) return other ~= nil and other.native_kernel_expr_const_shape_equals ~= nil and other:native_kernel_expr_const_shape_equals(self.value) end
+    function Native.NativeKernelValueExprSourceShape:native_kernel_expr_const_shape_equals(_value) return false end
+    function Native.NativeKernelExprConstShape:native_kernel_expr_const_shape_equals(value) return self.value:native_kernel_value_source_shape_equals(value) end
+    function Native.NativeKernelExprAffineShape:native_kernel_value_expr_source_shape_equals(other) return other ~= nil and other.native_kernel_expr_affine_shape_equals ~= nil and other:native_kernel_expr_affine_shape_equals(self.value, self.term_count) end
+    function Native.NativeKernelValueExprSourceShape:native_kernel_expr_affine_shape_equals(_value, _term_count) return false end
+    function Native.NativeKernelExprAffineShape:native_kernel_expr_affine_shape_equals(value, term_count) return self.value:native_kernel_value_source_shape_equals(value) and self.term_count == term_count end
+    function Native.NativeKernelExprUnaryShape:native_kernel_value_expr_source_shape_equals(other) return other ~= nil and other.native_kernel_expr_unary_shape_equals ~= nil and other:native_kernel_expr_unary_shape_equals(self.op, self.value) end
+    function Native.NativeKernelValueExprSourceShape:native_kernel_expr_unary_shape_equals(_op, _value) return false end
+    function Native.NativeKernelExprUnaryShape:native_kernel_expr_unary_shape_equals(op, value) return self.op == op and self.value:native_kernel_value_source_shape_equals(value) end
+    function Native.NativeKernelExprCastShape:native_kernel_value_expr_source_shape_equals(other) return other ~= nil and other.native_kernel_expr_cast_shape_equals ~= nil and other:native_kernel_expr_cast_shape_equals(self.op, self.from, self.to) end
+    function Native.NativeKernelValueExprSourceShape:native_kernel_expr_cast_shape_equals(_op, _from, _to) return false end
+    function Native.NativeKernelExprCastShape:native_kernel_expr_cast_shape_equals(op, from, to) return self.op == op and self.from:native_kernel_value_source_shape_equals(from) and self.to:native_kernel_value_source_shape_equals(to) end
+    function Native.NativeKernelExprBinaryShape:native_kernel_value_expr_source_shape_equals(other) return other ~= nil and other.native_kernel_expr_binary_shape_equals ~= nil and other:native_kernel_expr_binary_shape_equals(self.op, self.value) end
+    function Native.NativeKernelValueExprSourceShape:native_kernel_expr_binary_shape_equals(_op, _value) return false end
+    function Native.NativeKernelExprBinaryShape:native_kernel_expr_binary_shape_equals(op, value) return self.op == op and self.value:native_kernel_value_source_shape_equals(value) end
+    function Native.NativeKernelExprCompareShape:native_kernel_value_expr_source_shape_equals(other) return other ~= nil and other.native_kernel_expr_compare_shape_equals ~= nil and other:native_kernel_expr_compare_shape_equals(self.cmp, self.operand) end
+    function Native.NativeKernelValueExprSourceShape:native_kernel_expr_compare_shape_equals(_cmp, _operand) return false end
+    function Native.NativeKernelExprCompareShape:native_kernel_expr_compare_shape_equals(cmp, operand) return self.cmp == cmp and self.operand:native_kernel_value_source_shape_equals(operand) end
+    function Native.NativeKernelExprSelectShape:native_kernel_value_expr_source_shape_equals(other) return other ~= nil and other.native_kernel_expr_select_shape_equals ~= nil and other:native_kernel_expr_select_shape_equals(self.value) end
+    function Native.NativeKernelValueExprSourceShape:native_kernel_expr_select_shape_equals(_value) return false end
+    function Native.NativeKernelExprSelectShape:native_kernel_expr_select_shape_equals(value) return self.value:native_kernel_value_source_shape_equals(value) end
+    function Native.NativeKernelExprLaneLoadShape:native_kernel_value_expr_source_shape_equals(other) return other ~= nil and other.native_kernel_expr_lane_load_shape_equals ~= nil and other:native_kernel_expr_lane_load_shape_equals(self.lane) end
+    function Native.NativeKernelValueExprSourceShape:native_kernel_expr_lane_load_shape_equals(_lane) return false end
+    function Native.NativeKernelExprLaneLoadShape:native_kernel_expr_lane_load_shape_equals(lane) return self.lane:native_kernel_lane_address_source_shape_equals(lane) end
+
+    function Native.NativeKernelPredicateSourceShape:native_kernel_predicate_source_shape_equals(other) return self == other end
+    function Native.NativeKernelPredicateCompareConstShape:native_kernel_predicate_source_shape_equals(other) return other ~= nil and other.native_kernel_predicate_compare_const_shape_equals ~= nil and other:native_kernel_predicate_compare_const_shape_equals(self.cmp, self.operand) end
+    function Native.NativeKernelPredicateSourceShape:native_kernel_predicate_compare_const_shape_equals(_cmp, _operand) return false end
+    function Native.NativeKernelPredicateCompareConstShape:native_kernel_predicate_compare_const_shape_equals(cmp, operand) return self.cmp == cmp and self.operand:native_kernel_value_source_shape_equals(operand) end
+    function Native.NativeKernelPredicateRangeShape:native_kernel_predicate_source_shape_equals(other) return other ~= nil and other.native_kernel_predicate_range_shape_equals ~= nil and other:native_kernel_predicate_range_shape_equals(self.operand) end
+    function Native.NativeKernelPredicateSourceShape:native_kernel_predicate_range_shape_equals(_operand) return false end
+    function Native.NativeKernelPredicateRangeShape:native_kernel_predicate_range_shape_equals(operand) return self.operand:native_kernel_value_source_shape_equals(operand) end
+    function Native.NativeKernelPredicateLogicalShape:native_kernel_predicate_source_shape_equals(other) return other ~= nil and other.native_kernel_predicate_logical_shape_equals ~= nil and other:native_kernel_predicate_logical_shape_equals(self.term_count) end
+    function Native.NativeKernelPredicateSourceShape:native_kernel_predicate_logical_shape_equals(_term_count) return false end
+    function Native.NativeKernelPredicateLogicalShape:native_kernel_predicate_logical_shape_equals(term_count) return self.term_count == term_count end
+    function Native.NativeKernelPredicateFloatClassShape:native_kernel_predicate_source_shape_equals(other) return other ~= nil and other.native_kernel_predicate_float_class_shape_equals ~= nil and other:native_kernel_predicate_float_class_shape_equals(self.operand) end
+    function Native.NativeKernelPredicateSourceShape:native_kernel_predicate_float_class_shape_equals(_operand) return false end
+    function Native.NativeKernelPredicateFloatClassShape:native_kernel_predicate_float_class_shape_equals(operand) return self.operand:native_kernel_value_source_shape_equals(operand) end
+
+    function Native.NativeKernelReducerSourceShape:native_kernel_reducer_source_shape_equals(other)
+        return other ~= nil and self.op == other.op and self.value:native_kernel_value_source_shape_equals(other.value)
+    end
+
+    function Native.NativeKernelCallSourceShape:native_kernel_call_source_shape_equals(other) return self == other end
+    function Native.NativeKernelCallEffectOnlyShape:native_kernel_call_source_shape_equals(other) return other ~= nil and other.native_kernel_call_effect_only_shape_equals ~= nil and other:native_kernel_call_effect_only_shape_equals(self.effect_count) end
+    function Native.NativeKernelCallSourceShape:native_kernel_call_effect_only_shape_equals(_effect_count) return false end
+    function Native.NativeKernelCallEffectOnlyShape:native_kernel_call_effect_only_shape_equals(effect_count) return self.effect_count == effect_count end
+
+    function Native.NativeKernelEffectSourceShape:native_kernel_effect_source_shape_equals(other) return self == other end
+    function Native.NativeKernelEffectStoreShape:native_kernel_effect_source_shape_equals(other) return other ~= nil and other.native_kernel_effect_store_shape_equals ~= nil and other:native_kernel_effect_store_shape_equals(self.dst, self.value) end
+    function Native.NativeKernelEffectSourceShape:native_kernel_effect_store_shape_equals(_dst, _value) return false end
+    function Native.NativeKernelEffectStoreShape:native_kernel_effect_store_shape_equals(dst, value) return self.dst:native_kernel_lane_address_source_shape_equals(dst) and self.value:native_kernel_value_expr_source_shape_equals(value) end
+    function Native.NativeKernelEffectScanShape:native_kernel_effect_source_shape_equals(other) return other ~= nil and other.native_kernel_effect_scan_shape_equals ~= nil and other:native_kernel_effect_scan_shape_equals(self.dst, self.reducer, self.mode) end
+    function Native.NativeKernelEffectSourceShape:native_kernel_effect_scan_shape_equals(_dst, _reducer, _mode) return false end
+    function Native.NativeKernelEffectScanShape:native_kernel_effect_scan_shape_equals(dst, reducer, mode) return self.dst:native_kernel_lane_address_source_shape_equals(dst) and self.reducer:native_kernel_reducer_source_shape_equals(reducer) and self.mode == mode end
+    function Native.NativeKernelEffectPartitionShape:native_kernel_effect_source_shape_equals(other) return other ~= nil and other.native_kernel_effect_partition_shape_equals ~= nil and other:native_kernel_effect_partition_shape_equals(self.dst, self.src, self.pred, self.semantics) end
+    function Native.NativeKernelEffectSourceShape:native_kernel_effect_partition_shape_equals(_dst, _src, _pred, _semantics) return false end
+    function Native.NativeKernelEffectPartitionShape:native_kernel_effect_partition_shape_equals(dst, src, pred, semantics) return self.dst:native_kernel_lane_address_source_shape_equals(dst) and self.src:native_kernel_value_expr_source_shape_equals(src) and self.pred:native_kernel_predicate_source_shape_equals(pred) and self.semantics == semantics end
+    function Native.NativeKernelEffectCopyShape:native_kernel_effect_source_shape_equals(other) return other ~= nil and other.native_kernel_effect_copy_shape_equals ~= nil and other:native_kernel_effect_copy_shape_equals(self.dst, self.src, self.semantics) end
+    function Native.NativeKernelEffectSourceShape:native_kernel_effect_copy_shape_equals(_dst, _src, _semantics) return false end
+    function Native.NativeKernelEffectCopyShape:native_kernel_effect_copy_shape_equals(dst, src, semantics) return self.dst:native_kernel_lane_address_source_shape_equals(dst) and self.src:native_kernel_value_expr_source_shape_equals(src) and self.semantics == semantics end
+    function Native.NativeKernelEffectScatterReduceShape:native_kernel_effect_source_shape_equals(other) return other ~= nil and other.native_kernel_effect_scatter_reduce_shape_equals ~= nil and other:native_kernel_effect_scatter_reduce_shape_equals(self.dst, self.value, self.reducer) end
+    function Native.NativeKernelEffectSourceShape:native_kernel_effect_scatter_reduce_shape_equals(_dst, _value, _reducer) return false end
+    function Native.NativeKernelEffectScatterReduceShape:native_kernel_effect_scatter_reduce_shape_equals(dst, value, reducer) return self.dst:native_kernel_lane_address_source_shape_equals(dst) and self.value:native_kernel_value_expr_source_shape_equals(value) and self.reducer:native_kernel_reducer_source_shape_equals(reducer) end
+    function Native.NativeKernelEffectFoldShape:native_kernel_effect_source_shape_equals(other) return other ~= nil and other.native_kernel_effect_fold_shape_equals ~= nil and other:native_kernel_effect_fold_shape_equals(self.reducer) end
+    function Native.NativeKernelEffectSourceShape:native_kernel_effect_fold_shape_equals(_reducer) return false end
+    function Native.NativeKernelEffectFoldShape:native_kernel_effect_fold_shape_equals(reducer) return self.reducer:native_kernel_reducer_source_shape_equals(reducer) end
+    function Native.NativeKernelEffectCallShape:native_kernel_effect_source_shape_equals(other) return other ~= nil and other.native_kernel_effect_call_shape_equals ~= nil and other:native_kernel_effect_call_shape_equals(self.call) end
+    function Native.NativeKernelEffectSourceShape:native_kernel_effect_call_shape_equals(_call) return false end
+    function Native.NativeKernelEffectCallShape:native_kernel_effect_call_shape_equals(call) return self.call:native_kernel_call_source_shape_equals(call) end
+
+    function Native.NativeKernelResultSourceShape:native_kernel_result_source_shape_equals(other) return self == other end
+    function Native.NativeKernelResultValueShape:native_kernel_result_source_shape_equals(other) return other ~= nil and other.native_kernel_result_value_shape_equals ~= nil and other:native_kernel_result_value_shape_equals(self.value) end
+    function Native.NativeKernelResultSourceShape:native_kernel_result_value_shape_equals(_value) return false end
+    function Native.NativeKernelResultValueShape:native_kernel_result_value_shape_equals(value) return self.value:native_kernel_value_expr_source_shape_equals(value) end
+    function Native.NativeKernelResultFindShape:native_kernel_result_source_shape_equals(other) return other ~= nil and other.native_kernel_result_find_shape_equals ~= nil and other:native_kernel_result_find_shape_equals(self.src, self.pred) end
+    function Native.NativeKernelResultSourceShape:native_kernel_result_find_shape_equals(_src, _pred) return false end
+    function Native.NativeKernelResultFindShape:native_kernel_result_find_shape_equals(src, pred) return self.src:native_kernel_value_expr_source_shape_equals(src) and self.pred:native_kernel_predicate_source_shape_equals(pred) end
+    function Native.NativeKernelResultReductionShape:native_kernel_result_source_shape_equals(other) return other ~= nil and other.native_kernel_result_reduction_shape_equals ~= nil and other:native_kernel_result_reduction_shape_equals(self.reducer) end
+    function Native.NativeKernelResultSourceShape:native_kernel_result_reduction_shape_equals(_reducer) return false end
+    function Native.NativeKernelResultReductionShape:native_kernel_result_reduction_shape_equals(reducer) return self.reducer:native_kernel_reducer_source_shape_equals(reducer) end
+    function Native.NativeKernelResultClosedFormShape:native_kernel_result_source_shape_equals(other) return other ~= nil and other.native_kernel_result_closed_form_shape_equals ~= nil and other:native_kernel_result_closed_form_shape_equals(self.value) end
+    function Native.NativeKernelResultSourceShape:native_kernel_result_closed_form_shape_equals(_value) return false end
+    function Native.NativeKernelResultClosedFormShape:native_kernel_result_closed_form_shape_equals(value) return self.value:native_kernel_value_source_shape_equals(value) end
+
+    function Native.NativeKernelBodySourceShape:native_kernel_body_source_shape_equals(other)
+        return other ~= nil and self.loop:native_kernel_loop_source_shape_equals(other.loop) and self.lane_count == other.lane_count and self.binding_count == other.binding_count and self.effect_count == other.effect_count and self.result:native_kernel_result_source_shape_equals(other.result)
+    end
+    function Native.NativeKernelPlanSourceShape:native_kernel_plan_source_shape_equals(other) return self == other end
+    function Native.NativeKernelPlannedSourceShape:native_kernel_plan_source_shape_equals(other) return other ~= nil and other.native_kernel_planned_source_shape_equals ~= nil and other:native_kernel_planned_source_shape_equals(self.body) end
+    function Native.NativeKernelPlanSourceShape:native_kernel_planned_source_shape_equals(_body) return false end
+    function Native.NativeKernelPlannedSourceShape:native_kernel_planned_source_shape_equals(body) return self.body:native_kernel_body_source_shape_equals(body) end
+
+    function Native.NativeKernelOpSourceShape:native_kernel_op_source_shape_equals(other) return self == other end
+    function Native.NativeKernelDomainOpShape:native_kernel_op_source_shape_equals(other) return other ~= nil and other.native_kernel_domain_op_shape_equals ~= nil and other:native_kernel_domain_op_shape_equals(self.loop) end
+    function Native.NativeKernelOpSourceShape:native_kernel_domain_op_shape_equals(_loop) return false end
+    function Native.NativeKernelDomainOpShape:native_kernel_domain_op_shape_equals(loop) return self.loop:native_kernel_loop_source_shape_equals(loop) end
+    function Native.NativeKernelLaneOpShape:native_kernel_op_source_shape_equals(other) return other ~= nil and other.native_kernel_lane_op_shape_equals ~= nil and other:native_kernel_lane_op_shape_equals(self.lane) end
+    function Native.NativeKernelOpSourceShape:native_kernel_lane_op_shape_equals(_lane) return false end
+    function Native.NativeKernelLaneOpShape:native_kernel_lane_op_shape_equals(lane) return self.lane:native_kernel_lane_address_source_shape_equals(lane) end
+    function Native.NativeKernelExprOpShape:native_kernel_op_source_shape_equals(other) return other ~= nil and other.native_kernel_expr_op_shape_equals ~= nil and other:native_kernel_expr_op_shape_equals(self.expr) end
+    function Native.NativeKernelOpSourceShape:native_kernel_expr_op_shape_equals(_expr) return false end
+    function Native.NativeKernelExprOpShape:native_kernel_expr_op_shape_equals(expr) return self.expr:native_kernel_value_expr_source_shape_equals(expr) end
+    function Native.NativeKernelBodyOpShape:native_kernel_op_source_shape_equals(other) return other ~= nil and other.native_kernel_body_op_shape_equals ~= nil and other:native_kernel_body_op_shape_equals(self.body) end
+    function Native.NativeKernelOpSourceShape:native_kernel_body_op_shape_equals(_body) return false end
+    function Native.NativeKernelBodyOpShape:native_kernel_body_op_shape_equals(body) return self.body:native_kernel_body_source_shape_equals(body) end
+    function Native.NativeKernelEffectOpShape:native_kernel_op_source_shape_equals(other) return other ~= nil and other.native_kernel_effect_op_shape_equals ~= nil and other:native_kernel_effect_op_shape_equals(self.effect) end
+    function Native.NativeKernelOpSourceShape:native_kernel_effect_op_shape_equals(_effect) return false end
+    function Native.NativeKernelEffectOpShape:native_kernel_effect_op_shape_equals(effect) return self.effect:native_kernel_effect_source_shape_equals(effect) end
+    function Native.NativeKernelResultOpShape:native_kernel_op_source_shape_equals(other) return other ~= nil and other.native_kernel_result_op_shape_equals ~= nil and other:native_kernel_result_op_shape_equals(self.result) end
+    function Native.NativeKernelOpSourceShape:native_kernel_result_op_shape_equals(_result) return false end
+    function Native.NativeKernelResultOpShape:native_kernel_result_op_shape_equals(result) return self.result:native_kernel_result_source_shape_equals(result) end
+    function Native.NativeKernelProofOpShape:native_kernel_op_source_shape_equals(other) return other ~= nil and other.native_kernel_proof_op_shape_equals ~= nil and other:native_kernel_proof_op_shape_equals(self.proof) end
+    function Native.NativeKernelOpSourceShape:native_kernel_proof_op_shape_equals(_proof) return false end
+    function Native.NativeKernelProofOpShape:native_kernel_proof_op_shape_equals(proof) return self.proof == proof end
+    function Native.NativeKernelPlanOpShape:native_kernel_op_source_shape_equals(other) return other ~= nil and other.native_kernel_plan_op_shape_equals ~= nil and other:native_kernel_plan_op_shape_equals(self.plan) end
+    function Native.NativeKernelOpSourceShape:native_kernel_plan_op_shape_equals(_plan) return false end
+    function Native.NativeKernelPlanOpShape:native_kernel_plan_op_shape_equals(plan) return self.plan:native_kernel_plan_source_shape_equals(plan) end
+    function Native.NativeKernelSourceShapeAxis:native_kernel_axis_equals(other) return other:native_kernel_source_shape_axis_equals(self.shape) end
+    function Native.NativeKernelAxis:native_kernel_source_shape_axis_equals(_shape) return false end
+    function Native.NativeKernelSourceShapeAxis:native_kernel_source_shape_axis_equals(shape) return self.shape:native_kernel_op_source_shape_equals(shape) end
     function Native.NativeKernelDomainFlowAxis:native_kernel_axis_equals(other) return other:native_kernel_domain_flow_axis_equals() end
     function Native.NativeKernelAxis:native_kernel_domain_flow_axis_equals() return false end
     function Native.NativeKernelDomainFlowAxis:native_kernel_domain_flow_axis_equals() return true end
@@ -1170,11 +1484,11 @@ local function bind_context(T)
     end
 
     function Native.NativePatchFrameOffset:write_native_patch_imm32(input)
-        return write_patch_u32(input, self.offset)
+        return write_patch_u32(input, self.offset + (input.addend or 0))
     end
 
     function Native.NativePatchFrameSize:write_native_patch_imm32(input)
-        return write_patch_u32(input, self.size)
+        return write_patch_u32(input, self.size + (input.addend or 0))
     end
 
     function Native.NativePatchCoordinate:write_native_patch_imm64(input)
@@ -1284,6 +1598,10 @@ local function bind_context(T)
         local target_address = module_patch_coordinate_address(input, self)
         if target_address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
         return write_patch_rel32(input, target_address, input.addend)
+    end
+
+    function Native.NativePatchFrameSize:write_native_patch_rel32(input)
+        return write_patch_rel32(input, self.size, input.addend)
     end
 
     function Native.NativePatchCoordinate:write_native_patch_branch_rel32(input)

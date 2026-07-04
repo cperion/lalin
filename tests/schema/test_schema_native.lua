@@ -162,17 +162,48 @@ local pointer_offset_axis = N.NativeCodeInstPointerOffsetAxis(scalar_ptr, N.Nati
 local variant_ctor_axis = N.NativeCodeInstVariantScalarCtorAxis(scalar_i32, scalar_i32)
 local variant_tag_axis = N.NativeCodeInstVariantScalarTagAxis(scalar_i32)
 local variant_payload_axis = N.NativeCodeInstVariantScalarPayloadAxis(scalar_i32)
+local direct_call_axis = N.NativeCodeInstCallShapeAxis(N.NativeCodeCallDirectTarget, abi_function)
+local extern_call_axis = N.NativeCodeInstCallShapeAxis(N.NativeCodeCallExternTarget, abi_function)
+local indirect_call_axis = N.NativeCodeInstCallShapeAxis(N.NativeCodeCallIndirectPointer, abi_function)
+local closure_call_axis = N.NativeCodeInstCallShapeAxis(N.NativeCodeCallClosurePointer, abi_function)
+local void_result_shape = N.NativeCodeResultVoidShape
+local scalar_result_shape = N.NativeCodeResultScalarShape(scalar_i32)
+local pointer_result_shape = N.NativeCodeResultPointerShape(scalar_ptr)
+local descriptor_result_shape = N.NativeCodeResultDescriptorShape(descriptor_layout)
+local byref_result_shape = N.NativeCodeResultByRefShape(code_ty_i32, N.NativeAbiByRefReadonly, 4)
+local sret_result_shape = N.NativeCodeResultSRetShape(code_ty_i32)
+local result_copy_axis = N.NativeCodeInstResultCopyAxis(scalar_result_shape)
+local return_shape_axis = N.NativeCodeTermReturnShapeAxis(void_result_shape)
 assert(asdl.isa(aggregate_store_axis, N.NativeCodeInstAxis), "layout-parametric aggregate store axes should be CodeInst axes")
 assert(asdl.isa(array_load_axis, N.NativeCodeInstAxis), "layout-parametric array load axes should be CodeInst axes")
 assert(asdl.isa(module_address_axis, N.NativeCodeInstAxis), "module address materialization axes should be CodeInst axes")
 assert(asdl.isa(frame_address_axis, N.NativeCodeInstAxis), "frame address materialization axes should be CodeInst axes")
 assert(asdl.isa(pointer_offset_axis, N.NativeCodeInstAxis), "pointer offset axes should be scalar/layout-parametric CodeInst axes")
 assert(asdl.isa(variant_ctor_axis, N.NativeCodeInstAxis), "variant ctor axes should be scalar/layout-parametric CodeInst axes")
+assert(asdl.isa(direct_call_axis, N.NativeCodeInstAxis), "call shape axes should be CodeInst axes")
+assert(asdl.isa(result_copy_axis, N.NativeCodeInstAxis), "result copy axes should be CodeInst axes")
+assert(asdl.isa(return_shape_axis, N.NativeCodeTermAxis), "return shape axes should be CodeTerm axes")
+assert(asdl.isa(void_result_shape, N.NativeCodeResultShape), "void result shape should be typed")
+assert(asdl.isa(scalar_result_shape, N.NativeCodeResultShape), "scalar result shape should be typed")
+assert(asdl.isa(pointer_result_shape, N.NativeCodeResultShape), "pointer result shape should be typed")
+assert(asdl.isa(descriptor_result_shape, N.NativeCodeResultShape), "descriptor result shape should be typed")
+assert(asdl.isa(byref_result_shape, N.NativeCodeResultShape), "byref result shape should be typed")
+assert(asdl.isa(sret_result_shape, N.NativeCodeResultShape), "sret result shape should be typed")
+assert(asdl.isa(N.NativeCodeCallDirectTarget, N.NativeCodeCallShape), "direct call target shape should be a typed call shape")
+assert(asdl.isa(N.NativeCodeCallExternTarget, N.NativeCodeCallShape), "extern call target shape should be a typed call shape")
+assert(asdl.isa(N.NativeCodeCallIndirectPointer, N.NativeCodeCallShape), "indirect call target shape should be a typed call shape")
+assert(asdl.isa(N.NativeCodeCallClosurePointer, N.NativeCodeCallShape), "closure call target shape should be a typed call shape")
 assert(aggregate_store_axis:native_code_inst_axis_equals(N.NativeCodeInstLayoutFieldStoreAxis(N.NativeCodeAggregateObjectStorage, scalar_i32)), "layout field store equality should use storage kind and scalar representation")
 assert(not aggregate_store_axis:native_code_inst_axis_equals(N.NativeCodeInstLayoutFieldStoreAxis(N.NativeCodeArrayElementStorage, scalar_i32)), "layout field store equality must distinguish aggregate and array storage shape")
 assert(not module_address_axis:native_code_inst_axis_equals(frame_address_axis), "address materialization equality must distinguish module-symbol and frame-slot source shape")
 assert(variant_tag_axis:native_code_inst_axis_equals(N.NativeCodeInstVariantScalarTagAxis(scalar_i32)), "variant tag equality should use tag scalar representation")
 assert(variant_payload_axis:native_code_inst_axis_equals(N.NativeCodeInstVariantScalarPayloadAxis(scalar_i32)), "variant payload equality should use payload scalar representation")
+assert(direct_call_axis:native_code_inst_axis_equals(N.NativeCodeInstCallShapeAxis(N.NativeCodeCallDirectTarget, abi_function)), "call shape equality should use kind and ABI projection")
+assert(not direct_call_axis:native_code_inst_axis_equals(extern_call_axis), "call shape equality must distinguish direct and extern call targets")
+assert(not indirect_call_axis:native_code_inst_axis_equals(closure_call_axis), "call shape equality must distinguish indirect and closure pointer protocols")
+assert(result_copy_axis:native_code_inst_axis_equals(N.NativeCodeInstResultCopyAxis(N.NativeCodeResultScalarShape(scalar_i32))), "result copy equality should use typed result shape")
+assert(not result_copy_axis:native_code_inst_axis_equals(N.NativeCodeInstResultCopyAxis(pointer_result_shape)), "result copy equality should distinguish scalar and pointer shapes")
+assert(return_shape_axis:native_code_term_axis_equals(N.NativeCodeTermReturnShapeAxis(N.NativeCodeResultVoidShape)), "return shape equality should use typed result shape")
 local code_sig = Code.CodeSig(Code.CodeSigId("schema.code.sig"), { code_ty_i32 }, { code_ty_i32 })
 local code_func_id = Code.CodeFuncId("schema.code.func")
 local code_param = Code.CodeParam(Code.CodeValueId("schema.code.value.param"), "x", code_ty_i32, Code.CodeOriginUnknown)
@@ -220,7 +251,7 @@ local global_address_projection = N.NativeCodeAddressProjection(
 local func_address_projection = N.NativeCodeAddressProjection(
     N.NativeCodeFuncAddressTarget(code_func_id, code_sig.id),
     N.NativeAddressValueRepresentation(scalar_ptr, N.NativeCodeFuncAddressTarget(code_func_id, code_sig.id)),
-    N.NativeCodeAddressPatchable(N.NativePatchCodeFuncAddress(code_func_id))
+    N.NativeCodeAddressFunctionEntry(code_func_id, "schema_native_func_entry")
 )
 local extern_address_projection = N.NativeCodeAddressProjection(
     N.NativeCodeExternAddressTarget(code_extern.id),
@@ -256,6 +287,9 @@ local module_address_plan = N.NativeModuleAddressPlan(
 local function_plan = N.NativeCodeFunctionPlan(
     code_func_id,
     code_sig.id,
+    code_sig,
+    abi_function,
+    func_address_projection,
     { N.NativeCodeValueTypePlanEntry(code_param.value, code_param.ty, scalar_storage_layout) },
     { N.NativeCodeBlockParamPlanEntry(code_block_id, { code_param }) },
     { N.NativeCodeLocalStoragePlanEntry(code_local.id, code_local.name, code_local.ty, code_local.residence, scalar_storage_layout) }
@@ -265,7 +299,7 @@ local module_plan = N.NativeCodeModulePlan(
     type_layout_plan,
     module_address_plan,
     { N.NativeCodeSignaturePlanEntry(code_sig.id, code_sig, abi_function) },
-    { N.NativeCodeFunctionSignaturePlanEntry(code_func_id, code_sig.id) },
+    { N.NativeCodeFunctionSignaturePlanEntry(code_func_id, code_sig.id, code_sig, abi_function) },
     {
         N.NativeCodeDataStoragePlanEntry(
             code_data.id,
@@ -303,6 +337,9 @@ local lowering_input = N.NativeCodeLoweringInput(module_plan, function_plan)
 assert(asdl.isa(module_plan.origin, N.NativeCodeModulePlanOrigin), "native Code module plans should carry a typed origin")
 assert(asdl.isa(raw_data_target, N.NativeCodeAddressTarget), "raw CodeData addresses should have a typed untyped-data address target")
 assert(module_plan.signatures[1].abi == abi_function, "native Code module plans should carry a signature/ABI table")
+assert(module_plan.function_signatures[1].signature == code_sig, "native Code function signature plans should carry the actual CodeSig")
+assert(module_plan.functions[1].abi == abi_function, "native Code function plans should carry the selected ABI projection")
+assert(asdl.isa(module_plan.functions[1].entry_address.capability, N.NativeCodeAddressFunctionEntry), "native Code function plans should carry copied entry address facts")
 assert(module_plan.data_storage[1].size == code_data.size, "native Code data storage plans should carry concrete size/alignment")
 assert(module_plan.data_storage[1].backing.entry == data_pool_entry, "readonly CodeData plans should name constant-pool backing")
 assert(asdl.isa(module_plan.data_storage[1].inits[1], N.NativeCodeStaticInit), "CodeData initializers should be native typed static init facts")
@@ -337,6 +374,7 @@ local support_domain = N.NativeTemplateSupportDomain(
     0,
     0,
     frame_stack_limit,
+    N.NativeKernelSourceSupport({}),
     {},
     {},
     constant_pool_support,
@@ -345,6 +383,12 @@ local support_domain = N.NativeTemplateSupportDomain(
 assert(support_domain.scalars[1].scalar == scalar_i32, "support domain must carry typed scalar facts")
 assert(support_domain.passthrough_int_limit == 0, "support domain should carry explicit passthrough bounds")
 assert(support_domain.frame_stack_limit == frame_stack_limit, "support domain should carry a typed frame stack limit")
+assert(asdl.isa(support_domain.kernel_sources, N.NativeKernelSourceSupport), "support domain should carry finite Kernel source-shape support")
+local kernel_bytes_shape = N.NativeKernelValueBytesShape(16, 8)
+local kernel_cast_shape = N.NativeKernelExprCastShape(Core.MachineCastIdentity, N.NativeKernelValueScalarShape(scalar_i32), N.NativeKernelValueScalarShape(scalar_i32))
+assert(kernel_bytes_shape.size == 16 and kernel_bytes_shape.alignment == 8, "kernel byte source shape should carry size and alignment")
+assert(asdl.isa(N.NativeKernelExprOpShape(kernel_cast_shape), N.NativeKernelOpSourceShape), "kernel cast source shape should type-check as a KernelOp source shape")
+assert(asdl.isa(N.NativeRoleKernelLane, N.NativeTemplateRole) and asdl.isa(N.NativeRoleKernelPlan, N.NativeTemplateRole), "kernel source roles should cover lane/body/plan source families")
 assert(support_domain.atomic_codegen == N.NativeAtomicGccBuiltins, "support domain should carry typed atomic codegen capability")
 assert(#support_domain.register_protocols == 0, "schema smoke should not treat register protocols as a baseline source axis")
 local protocol = N.NativeTemplateProtocol(N.NativeCallReturnI32, N.NativeRegisterProtocolNone)
@@ -595,6 +639,7 @@ local value_plan = N.NativeValueLocationPlan({ N.NativeCodeValuePlacementEntry(C
 local frame_plan = N.NativeFrameLayoutPlan(
     { N.NativeFrameValueSlotEntry(Code.CodeValueId("schema.code.value"), scalar_representation, frame_slot) },
     { N.NativeFrameBlockSlotEntry(Code.CodeBlockId("schema.code.block"), { frame_slot }) },
+    { N.NativeFrameDirectResultSlot(N.NativeCodeResultScalarShape(scalar_i32), frame_slot) },
     { frame_slot },
     16
 )

@@ -1,6 +1,7 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local lalin = require("lalin")
+local asdl = require("lalin.asdl")
 
 local function shell_quote(s)
     return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
@@ -61,6 +62,28 @@ return {
 ]=], "@named.lln"))()
 local named_module = lalin.compile("loader_named_type", named_decls, { residual = "bc" })
 assert(named_module.accept ~= nil, "named Lua type values should work in parsed type positions")
+
+local parsed_handle = assert(lalin.loadstring([=[
+local AudioBufferStore = struct AudioBufferStore
+  capacity [index]
+end
+local AudioBufferRecord = struct AudioBufferRecord
+  first [index]
+end
+local AudioBuffer = handle AudioBuffer [u32]
+  invalid = 0
+  domain [AudioBufferStore]
+  target [AudioBufferRecord]
+end
+
+return { AudioBufferStore, AudioBufferRecord, AudioBuffer }
+]=], "@handle.lln"))()
+assert(parsed_handle[3].tag == "DeclHandle", "parsed handle entrypoint should produce a handle declaration")
+local handle_unit = lalin.syntax.to_module(parsed_handle, "loader_handle")
+local handle_item = handle_unit.items[3]
+assert(tostring(asdl.classof(handle_item.t)):match("TypeDeclHandle"), "parsed handles should lower to TypeDeclHandle")
+assert(tostring(asdl.classof(handle_item.t.repr.scalar)):match("ScalarU32"), "parsed handle repr should use bracket type syntax")
+assert(#handle_item.t.facts == 2, "parsed handle domain/target facts should lower")
 
 local table_api = assert(lalin.loadstring([=[
 return {

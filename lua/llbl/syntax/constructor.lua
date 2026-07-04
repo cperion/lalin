@@ -35,6 +35,13 @@ function Constructor:run(env_fn, ctx)
   ctx.constructor = self
   ctx.origin = self.origin
   ctx.owner = self.owner
+  ctx.env = env
+  ctx.evaluate_host = function(host_eval)
+    if type(host_eval) == "table" and type(host_eval.evaluate) == "function" then
+      return host_eval:evaluate(env)
+    end
+    return host_eval
+  end
   return self.build(env, ctx)
 end
 

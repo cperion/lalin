@@ -18,7 +18,7 @@ local function wrap_ast(ast, ctx, opts)
   local refs = {}
   for _, r in ipairs(ctx.refs or {}) do refs[#refs + 1] = r end
   local outputs = {}
-  if ast.name and (ast.tag == "DeclFunc" or ast.tag == "DeclStruct" or ast.tag == "DeclUnion" or ast.tag == "DeclRegion") then
+  if ast.name and (ast.tag == "DeclFunc" or ast.tag == "DeclStruct" or ast.tag == "DeclUnion" or ast.tag == "DeclHandle" or ast.tag == "DeclRegion") then
     outputs[1] = { name = ast.name }
   end
   local lua_binding = ctx.lua_binding
@@ -42,7 +42,7 @@ local function wrap_ast(ast, ctx, opts)
         copy.public_name = copy.public_name or lua_binding.name
         copy.debug_name = copy.debug_name or lua_binding.name
       end
-      Ast.resolve_host_escapes(copy, env)
+      Ast.resolve_host_evals(copy, env)
       return copy
     end,
   }
@@ -56,6 +56,8 @@ function LalinSyntax.parse_entry(lex, entry, ctx)
     ast = Decl.parse_struct(lex, ctx, ctx.entry_token)
   elseif entry == "union" then
     ast = Decl.parse_union(lex, ctx, ctx.entry_token)
+  elseif entry == "handle" then
+    ast = Decl.parse_handle(lex, ctx, ctx.entry_token)
   elseif entry == "region" then
     ast = Decl.parse_region(lex, ctx, ctx.entry_token)
   elseif entry == "expr" then
@@ -82,19 +84,32 @@ function LalinSyntax.parse_statement(lex, ctx)
   return wrap_ast(ast, ctx, { role = "stmt", channel = "parsed:stmt" })
 end
 
+function LalinSyntax.parse_host_eval(lex, ctx, role)
+  local ast = Decl.parse_host_eval(lex, ctx, role or (ctx and ctx.expected_role) or "decls")
+  return wrap_ast(ast, ctx, { role = role or ast.expected_role or "decls", channel = "parsed:host_eval" })
+end
+
+function LalinSyntax.parse_decl_stream(lex, ctx)
+  local ast = Decl.parse_decl_stream(lex, ctx)
+  return wrap_ast(ast, ctx, { role = ast.expected_role or "decls", channel = "parsed:host_eval" })
+end
+
 function LalinSyntax.register()
   local spec = {
     name = "lalin",
     owner = "lalin",
-    entrypoints = { "fn", "struct", "union", "region", "quote", "expr", "stmt" },
+    entrypoints = { "fn", "struct", "union", "handle", "region", "quote", "expr", "stmt" },
     direct_entrypoints = nil, -- callers choose whether to activate bare entrypoints.
     keywords = {
-      "fn", "region", "struct", "union", "requires", "ensures",
+      "fn", "region", "struct", "union", "handle", "requires", "ensures",
       "do", "end", "if", "then", "elseif", "else", "loop", "in",
       "grid", "tiled", "window", "return", "jump", "emit", "entry", "block",
       "let", "var", "fold", "scan", "by", "over", "step", "into",
     },
     parse_entry = LalinSyntax.parse_entry,
+    parse_host_eval = LalinSyntax.parse_host_eval,
+    parse_decl_stream = LalinSyntax.parse_decl_stream,
+    decl_stream_role = "decls",
     expression = LalinSyntax.parse_expression,
     statement = LalinSyntax.parse_statement,
   }
@@ -113,8 +128,7 @@ function LalinSyntax.to_module(parsed_decls, name, T)
     require("lalin.schema_projection")(T)
   end
   local to_tree = require("lalin.syntax.to_tree")(T)
-  local TypeValue = require("lalin.syntax.type_value")(T)
-  local Tr, C, B = T.LalinTree, T.LalinCore, T.LalinBind
+  local Tr, C, B, Ty = T.LalinTree, T.LalinCore, T.LalinBind, T.LalinType
 
   name = name or "parsed"
   local decls = {}
@@ -135,23 +149,29 @@ function LalinSyntax.to_module(parsed_decls, name, T)
     return "__lln_fn_" .. tostring(anon_id)
   end
 
-  -- Convert parsed type escapes (`[i32]`, `[ptr [i32]]`, `[some_lua_type]`)
-  -- to LalinType.Type values in the active compiler context.
   local function parsed_type(ptype)
-    if not ptype then return T.LalinType.TScalar(C.ScalarVoid) end
-    local cls = asdl.classof(ptype)
-    if cls then return ptype end
-    if ptype.tag == "HostEscape" then
-      if not ptype.resolved then error("parsed_to_module: unresolved type host escape", 2) end
-      local value = ptype.value
-      local projected = TypeValue.type(value)
-      if projected ~= nil then return projected end
-      if type(value) == "table" and value.tag then
-        return parsed_type(value)
-      end
-      error("parsed_to_module: type host escape produced unsupported value " .. tostring(value), 2)
+    return to_tree.parsed_type(ptype)
+  end
+
+  local function handle_repr(ptype)
+    if ptype == nil then return Ty.HandleReprScalar(C.ScalarU32) end
+    local ty = parsed_type(ptype)
+    if asdl.classof(ty) ~= Ty.TScalar then
+      error("parsed_to_module: handle repr must be a scalar type such as `[u32]`", 2)
     end
-    error("parsed_to_module: unsupported parsed type tag " .. tostring(ptype.tag) .. "; type positions use `[ ... ]`", 2)
+    return Ty.HandleReprScalar(ty.scalar)
+  end
+
+  local function handle_type_ref(ptype, site)
+    local ty = parsed_type(ptype)
+    local cls = asdl.classof(ty)
+    if cls == Ty.TNamed or cls == Ty.THandle then return ty.ref end
+    error("parsed_to_module: " .. (site or "handle fact") .. " must be a named type such as `[named(\"Store\")]`", 2)
+  end
+
+  local function handle_invalid(raw)
+    if raw == nil then return Ty.HandleInvalidNone end
+    return Ty.HandleInvalidInt(tostring(raw))
   end
 
   -- Helper: convert a single parsed decl to a Tr.Item for the module.
@@ -209,7 +229,7 @@ function LalinSyntax.to_module(parsed_decls, name, T)
     if parsed.tag == "DeclFunc" then
       local fname = compiler_name(parsed)
       local params = {}
-      for i, p in ipairs(parsed.params or {}) do
+      for i, p in ipairs(to_tree.product_fields(parsed.params or {})) do
         params[i] = T.LalinType.Param(p.name, parsed_type(p.type))
       end
       local result_ty = parsed_type(parsed.result)
@@ -233,52 +253,30 @@ function LalinSyntax.to_module(parsed_decls, name, T)
       return Tr.ItemFunc(func_spec)
     elseif parsed.tag == "DeclStruct" then
       local fields = {}
-      for i, f in ipairs(parsed.fields or {}) do
+      for i, f in ipairs(to_tree.product_fields(parsed.fields or {})) do
         fields[i] = T.LalinType.FieldDecl(f.name, parsed_type(f.type))
       end
       return Tr.ItemType(Tr.TypeDeclStruct(parsed.name, fields))
     elseif parsed.tag == "DeclUnion" then
       local variants = {}
-      for _, v in ipairs(parsed.variants or {}) do
+      for _, v in ipairs(to_tree.variants(parsed.variants or {})) do
         local fields = {}
-        for i, f in ipairs(v.fields or {}) do
+        for i, f in ipairs(to_tree.product_fields(v.fields or {})) do
           fields[i] = T.LalinType.FieldDecl(f.name, parsed_type(f.type))
         end
         variants[#variants + 1] = Tr.VariantDecl(v.name, fields)
       end
       return Tr.ItemType(Tr.TypeDeclTaggedUnionSugar(parsed.name, variants))
+    elseif parsed.tag == "DeclHandle" then
+      local facts = {}
+      if parsed.domain ~= nil then facts[#facts + 1] = Ty.HandleDomain(handle_type_ref(parsed.domain, "handle domain")) end
+      if parsed.target ~= nil then facts[#facts + 1] = Ty.HandleTarget(handle_type_ref(parsed.target, "handle target")) end
+      return Tr.ItemType(Tr.TypeDeclHandle(parsed.name, handle_repr(parsed.repr), handle_invalid(parsed.invalid), facts))
     end
     error("parsed_to_module: unsupported decl tag " .. tostring(parsed.tag), 2)
   end
 
-  local function is_parsed_decl(value)
-    return type(value) == "table" and type(value.tag) == "string" and value.tag:match("^Decl") ~= nil
-  end
-
-  local function collect_parsed_decls(value)
-    if is_parsed_decl(value) then return { value } end
-    if type(value) ~= "table" then return {} end
-    local out = {}
-    for i = 1, #value do
-      if not is_parsed_decl(value[i]) then
-        error("parsed_to_module: positional entries must be parsed declarations", 2)
-      end
-      out[#out + 1] = value[i]
-    end
-    for k, v in pairs(value) do
-      if type(k) ~= "number" and is_parsed_decl(v) then
-        if type(k) == "string" and v.name == nil then
-          v.public_name = v.public_name or k
-          v.debug_name = v.debug_name or k
-          v.name = k
-        end
-        out[#out + 1] = v
-      end
-    end
-    return out
-  end
-
-  for _, d in ipairs(collect_parsed_decls(parsed_decls)) do
+  for _, d in ipairs(to_tree.decls(parsed_decls)) do
     decls[#decls + 1] = decl_to_item(d)
   end
 

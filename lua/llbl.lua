@@ -216,6 +216,7 @@ function llbl.shape_of(value)
   if tag == "Expr" then return "expr" end
   if tag == "Fragment" then return "fragment" end
   if tag == "Spread" then return "spread" end
+  if tag == "HostEval" then return "host_eval" end
   if tag then return "llbl_node" end
   if getmetatable(value) ~= nil then return "foreign_table" end
   return table_shape(value)
@@ -626,6 +627,7 @@ end
 llbl.channel = {
   index_name = "index:name",
   index_type = "index:type",
+  index_host = "index:host",
   index_value = "index:value",
   call_none = "call:none",
   call_value = "call:value",
@@ -659,6 +661,9 @@ function llbl.event(channel, value, opts)
     action = opts.action,
     origin = opts.origin or source.capture("event"),
     shape = opts.shape or llbl.shape_of(value),
+    raw_value = opts.raw_value,
+    legacy_channel = opts.legacy_channel,
+    expected_role = opts.expected_role,
   }, Event)
 end
 
@@ -674,6 +679,9 @@ function llbl.describe_event(event)
     action = event.action,
     origin = event.origin,
     value = event.value,
+    raw_value = event.raw_value,
+    legacy_channel = event.legacy_channel,
+    expected_role = event.expected_role,
   }
 end
 
@@ -683,6 +691,207 @@ local function event_label(event)
 end
 
 llbl.Event = Event
+
+-- ---------------------------------------------------------------------------
+-- Role identity and host evaluation
+-- ---------------------------------------------------------------------------
+--
+-- RoleId is the stable, dialect-qualified identity used by the role algebra
+-- migration.  Existing code still passes plain role names through most paths;
+-- these helpers are intentionally additive so legacy Fragment/Spread behavior
+-- keeps working until later tasks switch compatibility checks over to RoleId.
+
+do
+local RoleId = {}
+RoleId.__index = RoleId
+
+local function role_owner_name(owner)
+  if owner == nil then return "llbl" end
+  if type(owner) == "string" then return owner end
+  if type(owner) == "table" then
+    return tostring(rawget(owner, "role_owner")
+      or rawget(owner, "member")
+      or rawget(owner, "name")
+      or rawget(owner, "language")
+      or rawget(owner, "__llbl_tag")
+      or tostring(owner))
+  end
+  return tostring(owner)
+end
+
+local function role_id_from(owner, name)
+  if is_tag(owner, "RoleId") and name == nil then return owner end
+  if name == nil then name, owner = owner, nil end
+  local owner_name = role_owner_name(owner)
+  local role_name = tostring(name or "")
+  return setmetatable({
+    __llbl_tag = "RoleId",
+    owner = owner,
+    owner_name = owner_name,
+    name = role_name,
+    key = owner_name .. "/" .. role_name,
+  }, RoleId)
+end
+
+function llbl.role_id(owner, name) return role_id_from(owner, name) end
+
+function llbl.role_id_key(id, name)
+  id = role_id_from(id, name)
+  return id.key
+end
+
+function llbl.role_id_display(id, name)
+  id = role_id_from(id, name)
+  if id.owner_name == nil or id.owner_name == "" then return tostring(id.name) end
+  return tostring(id.owner_name) .. "." .. tostring(id.name)
+end
+
+function llbl.role_id_equal(a, b)
+  if a == nil or b == nil then return a == b end
+  return llbl.role_id_key(a) == llbl.role_id_key(b)
+end
+
+llbl.role_id_eq = llbl.role_id_equal
+RoleId.__tostring = function(self) return llbl.role_id_display(self) end
+llbl.RoleId = RoleId
+
+local HostEval = {}
+HostEval.__index = HostEval
+
+local function host_eval_merged_env(env)
+  env = env or {}
+  if type(env) ~= "table" then
+    llbl.fail("host evaluation environment must be a table, got " .. type(env), {
+      code = "E_HOST_EVAL_ENV",
+    }, 2)
+  end
+  return setmetatable({}, {
+    __index = function(_, k)
+      local v = env[k]
+      if v ~= nil then return v end
+      return _G[k]
+    end,
+    __newindex = env,
+  })
+end
+
+local function host_eval_env(host_eval, override)
+  local env = override
+  if env == nil then
+    local env_fn = rawget(host_eval, "env_fn")
+    if env_fn ~= nil then env = env_fn(host_eval) else env = rawget(host_eval, "env") end
+  end
+  return host_eval_merged_env(env)
+end
+
+local function host_eval_chunk_name(host_eval)
+  local origin = rawget(host_eval, "origin")
+  if origin then return origin.source or origin.file or origin.short_src end
+  return "=(llbl host eval)"
+end
+
+local function host_eval_compile_source(host_eval, env)
+  local src = tostring(rawget(host_eval, "source") or "")
+  local f, err = compile_lua("return (" .. src .. ")", host_eval_chunk_name(host_eval))
+  if not f then
+    llbl.fail("host evaluation parse error: " .. tostring(err), {
+      code = "E_HOST_EVAL_PARSE",
+      primary = rawget(host_eval, "origin"),
+    }, 2)
+  end
+  setfenv0(f, host_eval_env(host_eval, env))
+  return f()
+end
+
+local function host_eval_new(spec)
+  spec = shallow_copy(spec or {})
+  spec.__llbl_tag = "HostEval"
+  spec.kind = spec.kind or (spec.source ~= nil and "parsed" or "lua")
+  spec.channel = spec.channel or (spec.kind == "parsed" and "parsed:host_eval" or llbl.channel.index_host)
+  spec.refs = spec.refs or {}
+  spec.origin = spec.origin or source.capture("host-eval", { hint = spec.channel })
+  if spec.evaluated == nil then spec.evaluated = spec.source == nil and spec.thunk == nil and spec.value ~= nil end
+  return setmetatable(spec, HostEval)
+end
+
+function HostEval:evaluate(env)
+  if rawget(self, "evaluated") then return rawget(self, "value") end
+  local thunk = rawget(self, "thunk")
+  local value
+  if type(thunk) == "function" then
+    value = thunk(host_eval_env(self, env), self)
+  elseif rawget(self, "source") ~= nil then
+    value = host_eval_compile_source(self, env)
+  else
+    value = rawget(self, "value")
+  end
+  rawset(self, "value", value)
+  rawset(self, "evaluated", true)
+  return value
+end
+
+function HostEval:resolve(env) return self:evaluate(env) end
+HostEval.__tostring = function(self)
+  local role = rawget(self, "role") or rawget(self, "expected_role")
+  local suffix = role and (" role=" .. (is_tag(role, "RoleId") and llbl.role_id_display(role) or tostring(role))) or ""
+  return "llbl.host_eval(" .. tostring(rawget(self, "kind") or "?") .. ", " .. tostring(rawget(self, "channel") or "?") .. suffix .. ")"
+end
+
+llbl.HostEval = HostEval
+llbl.host_eval = setmetatable({}, { __call = function(_, spec) return host_eval_new(spec) end })
+
+function llbl.host_eval.parsed(src, refs, env_or_fn, origin, spec)
+  if is_tag(refs, "Origin") and env_or_fn == nil and origin == nil then origin, refs = refs, nil end
+  if is_tag(env_or_fn, "Origin") and origin == nil then origin, env_or_fn = env_or_fn, nil end
+  spec = shallow_copy(spec or {})
+  spec.kind = "parsed"
+  spec.channel = spec.channel or "parsed:host_eval"
+  spec.source = src or ""
+  spec.refs = refs or spec.refs or {}
+  spec.origin = origin or spec.origin
+  if type(env_or_fn) == "function" then spec.env_fn = env_or_fn
+  elseif env_or_fn ~= nil then spec.env = env_or_fn end
+  spec.evaluated = spec.evaluated or false
+  return host_eval_new(spec)
+end
+
+function llbl.host_eval.lua(value, channel, origin, spec)
+  if is_tag(channel, "Origin") and origin == nil then origin, channel = channel, nil end
+  spec = shallow_copy(spec or {})
+  spec.kind = "lua"
+  spec.channel = channel or spec.channel or llbl.channel.index_host
+  spec.value = value
+  spec.raw_value = spec.raw_value or value
+  spec.origin = origin or spec.origin
+  spec.evaluated = true
+  return host_eval_new(spec)
+end
+
+function llbl.host_eval.is(value) return is_tag(value, "HostEval") end
+function llbl.host_eval.evaluate(value, env) return is_tag(value, "HostEval") and value:evaluate(env) or value end
+function llbl.host_eval.resolve(value, env) return llbl.host_eval.evaluate(value, env) end
+function llbl.host_eval.value(value, ctx)
+  local env = ctx
+  if type(ctx) == "table" and rawget(ctx, "env") ~= nil then env = rawget(ctx, "env") end
+  return llbl.host_eval.evaluate(value, env)
+end
+
+function llbl.describe_host_eval(value)
+  if not is_tag(value, "HostEval") then return nil end
+  return {
+    tag = "HostEval",
+    kind = value.kind,
+    channel = value.channel,
+    source = value.source,
+    refs = array_copy(value.refs or {}),
+    evaluated = value.evaluated and true or false,
+    value_shape = value.evaluated and llbl.shape_of(value.value) or nil,
+    role = value.role,
+    expected_role = value.expected_role,
+    origin = value.origin,
+  }
+end
+end
 
 -- ---------------------------------------------------------------------------
 -- Diagnostics
@@ -2833,13 +3042,29 @@ local Fragment = {}; Fragment.__index = Fragment
 
 local function fragment(role, items, origin, spec)
   items = items or {}
+  spec = spec or {}
+  local role_id = spec.role_id or spec.fragment_role_id or (is_tag(role, "RoleId") and role or nil)
+  local owner = spec.owner or spec.dialect or spec.lang or spec.language or (role_id and role_id.owner) or nil
+  local role_name = role_id and role_id.name or tostring(role)
+  if role_id == nil then role_id = llbl.role_id(owner, role_name) end
+  local container_role_id = spec.container_role_id or spec.container_role or nil
+  if container_role_id ~= nil and not is_tag(container_role_id, "RoleId") then container_role_id = llbl.role_id(owner, container_role_id) end
   local out = {
     __llbl_tag = "Fragment",
-    role = tostring(role),
+    role = role_name,
+    role_id = role_id,
+    container_role_id = container_role_id,
+    owner = owner,
+    owner_name = role_id and role_id.owner_name or nil,
     items = items,
-    origin = origin or source.capture("fragment", { hint = role }),
+    origin = origin or source.capture("fragment", { hint = role_name }),
   }
-  for k, v in pairs(spec or {}) do out[k] = v end
+  for k, v in pairs(spec) do out[k] = v end
+  out.role = role_name
+  out.role_id = role_id
+  out.container_role_id = container_role_id
+  out.owner = owner
+  out.owner_name = role_id and role_id.owner_name or nil
   for i = 1, #items do out[i] = items[i] end
   return setmetatable(out, Fragment)
 end
@@ -3053,10 +3278,14 @@ local function fragment_algebra(f)
 end
 
 local function fragment_like(f, items, origin)
-  return fragment(f.role, items, origin or f.origin, {
+  return fragment(rawget(f, "role_id") or f.role, items, origin or f.origin, {
     algebra = rawget(f, "algebra"),
     role_spec = rawget(f, "role_spec"),
+    role_descriptor = rawget(f, "role_descriptor"),
+    role_id = rawget(f, "role_id"),
+    container_role_id = rawget(f, "container_role_id"),
     dialect = rawget(f, "dialect"),
+    owner = rawget(f, "owner"),
     payload_role = rawget(f, "payload_role"),
   })
 end
@@ -3124,7 +3353,7 @@ end
 
 function llbl.concat(a, b)
   assert_fragment(a, ".."); assert_fragment(b, "..")
-  if a.role ~= b.role then
+  if not ((a.role_id and b.role_id and llbl.role_id_equal(a.role_id, b.role_id)) or a.role == b.role) then
     llbl.fail("cannot concatenate " .. tostring(a.role) .. " fragment with " .. tostring(b.role) .. " fragment", {
       code = "E_CONCAT_ROLE_MISMATCH",
       primary = origin_of(b) or b.origin,
@@ -3146,7 +3375,7 @@ end
 
 function llbl.choice(a, b)
   assert_fragment(a, "+"); assert_fragment(b, "+")
-  if a.role ~= b.role then
+  if not ((a.role_id and b.role_id and llbl.role_id_equal(a.role_id, b.role_id)) or a.role == b.role) then
     llbl.fail("cannot compose " .. tostring(a.role) .. " alternatives with " .. tostring(b.role) .. " alternatives", {
       code = "E_CHOICE_ROLE_MISMATCH",
       primary = origin_of(b) or b.origin,
@@ -3494,6 +3723,156 @@ llbl.grammar = setmetatable({
 
 local normalize_role, normalize_expr, role_region, collect_role, spread_region
 
+(function()
+  local RoleDescriptor = {}
+  RoleDescriptor.__index = RoleDescriptor
+
+  local function role_algebra_for_kind(kind)
+    kind = tostring(kind or "value")
+    if kind == "array" or kind == "list" then return "list" end
+    if kind == "product" then return "product" end
+    if kind == "sum" then return "sum" end
+    if kind == "protocol" then return "protocol" end
+    if kind == "record" then return "record" end
+    if kind == "mixed" then return "mixed" end
+    return "single"
+  end
+
+  local function role_ref_id(owner, ref)
+    if ref == nil or ref == false then return nil end
+    if is_tag(ref, "RoleId") then return ref end
+    if is_tag(ref, "RoleDescriptor") then return ref.id end
+    if type(ref) == "table" and is_tag(rawget(ref, "id"), "RoleId") then return rawget(ref, "id") end
+    return llbl.role_id(owner, ref)
+  end
+
+  local function role_descriptor_new(lang, role_name, spec)
+    spec = spec or {}
+    local cached = rawget(spec, "role_descriptor")
+    if is_tag(cached, "RoleDescriptor") then return cached end
+    local owner = rawget(spec, "owner") or rawget(spec, "dialect") or lang
+    local name = tostring(role_name or rawget(spec, "name") or "")
+    local kind = rawget(spec, "kind") or name
+    local id = role_ref_id(owner, rawget(spec, "role_id") or name)
+    local item_role = role_ref_id(owner, rawget(spec, "item_role") or rawget(spec, "item"))
+    local fragment_role = role_ref_id(owner, rawget(spec, "fragment_role") or rawget(spec, "fragment") or rawget(spec, "fragment_role_id") or name)
+    local payload_role = role_ref_id(owner, rawget(spec, "payload_role") or rawget(spec, "payload"))
+    local descriptor = setmetatable({
+      __llbl_tag = "RoleDescriptor",
+      id = id,
+      owner = owner,
+      owner_name = id and id.owner_name or nil,
+      name = name,
+      kind = kind,
+      algebra = rawget(spec, "algebra") or role_algebra_for_kind(kind),
+      item_role = item_role,
+      fragment_role = fragment_role,
+      payload_role = payload_role,
+      adapter = rawget(spec, "adapter") or rawget(spec, "adapt"),
+      splice_policy = rawget(spec, "splice_policy") or rawget(spec, "splice") or { explicit = true, bare_fragment = false },
+      nil_policy = rawget(spec, "nil_policy") or "legacy",
+      diagnostics = rawget(spec, "diagnostics"),
+      origin = rawget(spec, "origin"),
+      spec = spec,
+    }, RoleDescriptor)
+    rawset(spec, "role_descriptor", descriptor)
+    return descriptor
+  end
+
+  local function role_descriptor_from(ctx_or_lang, role_name, spec)
+    if is_tag(ctx_or_lang, "RoleDescriptor") and role_name == nil then return ctx_or_lang end
+    if is_tag(role_name, "RoleDescriptor") and spec == nil then return role_name end
+    local lang = ctx_or_lang
+    if type(ctx_or_lang) == "table" and not is_tag(ctx_or_lang, "Dialect") then
+      local ctx_desc = rawget(ctx_or_lang, "role_descriptor")
+      if is_tag(ctx_desc, "RoleDescriptor") and (role_name == nil or ctx_desc.name == tostring(role_name)) then return ctx_desc end
+      lang = rawget(ctx_or_lang, "dialect") or rawget(ctx_or_lang, "lang") or rawget(ctx_or_lang, "language")
+      local ctx_role = rawget(ctx_or_lang, "role")
+      if spec == nil and (role_name == nil or ctx_role == nil or tostring(role_name) == tostring(ctx_role)) then
+        spec = rawget(ctx_or_lang, "role_spec")
+      end
+    end
+    if spec == nil and type(lang) == "table" and rawget(lang, "roles") and role_name ~= nil then
+      spec = lang.roles[role_name]
+    end
+    return role_descriptor_new(lang, role_name, spec or {})
+  end
+
+  local function role_arg_name(role)
+    if is_tag(role, "RoleDescriptor") then return role.name end
+    if is_tag(role, "RoleId") then return role.name end
+    return tostring(role)
+  end
+
+  local function role_adapt_value(ctx, descriptor, value, origin)
+    local produced = value
+    if is_tag(produced, "HostEval") then
+      if rawget(produced, "expected_role") == nil then rawset(produced, "expected_role", descriptor.id) end
+      if rawget(produced, "role") == nil then rawset(produced, "role", descriptor.name) end
+      produced = llbl.host_eval.value(produced, ctx)
+    end
+    if type(descriptor.adapter) == "function" then
+      return descriptor.adapter(ctx, produced, descriptor, value, origin), true
+    end
+    return produced, false
+  end
+
+  local function role_fragment_compatible(descriptor, fragment_value, ctx)
+    if descriptor == nil or not is_tag(fragment_value, "Fragment") then return false end
+    local expected = descriptor.fragment_role or descriptor.id
+    local fragment_id = rawget(fragment_value, "role_id")
+    if fragment_id and expected and llbl.role_id_equal(fragment_id, expected) then return true end
+    if fragment_value.role == descriptor.name then return true end
+    if expected and fragment_value.role == expected.name then return true end
+    -- During the RoleId migration, fragments produced outside a dialect often only
+    -- carry the legacy role string. Preserve that behavior until fragment
+    -- creation is upgraded to attach qualified role ids everywhere.
+    if fragment_value.role and ctx and ctx.dialect then
+      local legacy_id = llbl.role_id(ctx.dialect, fragment_value.role)
+      if expected and llbl.role_id_equal(legacy_id, expected) then return true end
+    end
+    return false
+  end
+
+  function llbl.role_descriptor(lang, role_name, spec) return role_descriptor_from(lang, role_name, spec) end
+  llbl.RoleDescriptor = RoleDescriptor
+  llbl.role = llbl.role or {}
+  llbl.role._descriptor_from = role_descriptor_from
+  llbl.role._adapt_value = role_adapt_value
+  llbl.role._fragment_compatible = role_fragment_compatible
+  llbl.role.descriptor = role_descriptor_from
+  llbl.role.id = function(ctx_or_lang, role_name, spec) return role_descriptor_from(ctx_or_lang, role_name, spec).id end
+  llbl.role.display = function(ctx_or_lang, role_name, spec) return llbl.role_id_display(role_descriptor_from(ctx_or_lang, role_name, spec).id) end
+  llbl.role.adapt = function(ctx, role, value, origin)
+    local descriptor = role_descriptor_from(ctx, role)
+    local out = role_adapt_value(ctx, descriptor, value, origin)
+    return out
+  end
+  llbl.role.normalize = function(ctx, role, value)
+    if not normalize_role then llbl.fail("role normalizer is not initialized", { code = "E_ROLE_API_NOT_READY" }, 2) end
+    return normalize_role(ctx, role_arg_name(role), value)
+  end
+  llbl.role.collect = llbl.role.normalize
+  llbl.role.fragment_compatible = function(ctx_or_descriptor, role_or_fragment, maybe_fragment)
+    local descriptor, fragment_value, ctx
+    if is_tag(ctx_or_descriptor, "RoleDescriptor") then
+      descriptor, fragment_value = ctx_or_descriptor, role_or_fragment
+    else
+      ctx = ctx_or_descriptor
+      descriptor = role_descriptor_from(ctx_or_descriptor, role_or_fragment)
+      fragment_value = maybe_fragment
+    end
+    return role_fragment_compatible(descriptor, fragment_value, ctx)
+  end
+  llbl.role.splice = function(ctx, role, value, origin)
+    if not spread_region then llbl.fail("role splice expander is not initialized", { code = "E_ROLE_API_NOT_READY" }, 2) end
+    local descriptor = role_descriptor_from(ctx, role)
+    local spread = is_tag(value, "Spread") and value or llbl.spread(value)
+    if origin and is_tag(spread, "Spread") then spread.origin = origin end
+    return spread_region(ctx, descriptor.name, spread)
+  end
+end)()
+
 local function norm_name(ctx, v)
   if is_tag(v, "Name") then return v end
   if is_tag(v, "Symbol") then return llbl.name(v.text, { origin = v.origin }) end
@@ -3547,8 +3926,12 @@ local normalize_role_reflective
 local role_ops = (function()
 local function role_context(ctx, role_name, spec)
   local subctx = shallow_copy(ctx or {})
+  local descriptor = llbl.role._descriptor_from(subctx, role_name, spec)
   subctx.role = role_name
   subctx.role_spec = spec
+  subctx.role_descriptor = descriptor
+  subctx.role_id = descriptor.id
+  subctx.role_algebra = descriptor.algebra
   return subctx
 end
 
@@ -3583,6 +3966,41 @@ local function ensure_table_for_role(ctx, role_name, code, label, v)
   end
 end
 
+local function role_splice_policy(descriptor)
+  local policy = descriptor and descriptor.splice_policy
+  if type(policy) == "table" then return policy end
+  if policy == true then return { bare_fragment = true } end
+  return {}
+end
+
+local function role_begin_splice(param, value, origin)
+  return llbl.role.splice(param.ctx, param.role_descriptor or param.role_name, value, origin)
+end
+
+local function role_maybe_splice_item(param, item)
+  if is_tag(item, "Spread") then
+    local gen, p, s = role_begin_splice(param, item)
+    return true, gen, p, s
+  end
+  if is_tag(item, "HostEval") then
+    local produced = llbl.host_eval.value(item, param.ctx)
+    if is_tag(produced, "Fragment") then
+      local gen, p, s = role_begin_splice(param, produced, item.origin)
+      return true, gen, p, s
+    end
+    return false, nil, nil, nil, produced
+  end
+  if is_tag(item, "Fragment") then
+    local descriptor = param.role_descriptor or (param.ctx and param.ctx.role_descriptor)
+    local policy = role_splice_policy(descriptor)
+    if (policy.bare_fragment == true or policy.bare == true) and llbl.role._fragment_compatible(descriptor, item, param.ctx) then
+      local gen, p, s = role_begin_splice(param, item, item.origin)
+      return true, gen, p, s
+    end
+  end
+  return false, nil, nil, nil, item
+end
+
 local function role_array_gen(param, state)
   state = state or { source_state = param.source_state }
   while true do
@@ -3598,12 +4016,13 @@ local function role_array_gen(param, state)
     local next_state, item = param.source_gen(param.source_param, state.source_state)
     if next_state == nil then return nil end
     state.source_state = next_state
-    if is_tag(item, "Spread") then
-      state.inner_gen, state.inner_param, state.inner_state = spread_region(param.ctx, param.role_name, item)
+    local spliced, inner_gen, inner_param, inner_state, item_value = role_maybe_splice_item(param, item)
+    if spliced then
+      state.inner_gen, state.inner_param, state.inner_state = inner_gen, inner_param, inner_state
     elseif param.item_role then
-      return state, collect_role(param.ctx, param.item_role, item)
+      return state, collect_role(param.ctx, param.item_role, item_value)
     else
-      return state, item
+      return state, item_value
     end
   end
 end
@@ -3648,22 +4067,23 @@ local function role_product_gen(param, state)
     local next_state, item = param.source_gen(param.source_param, state.source_state)
     if next_state == nil then return nil end
     state.source_state = next_state
-    if is_tag(item, "Spread") then
-      state.inner_gen, state.inner_param, state.inner_state = spread_region(param.ctx, param.role_name, item)
-    elseif is_tag(item, "Capture") then
-      if not is_tag(item.subject, "Symbol") then llbl.fail("product capture subject must be a symbol", { primary = item.origin }) end
-      local f = { tag = "field", name = item.subject.text, type = collect_role(param.ctx, param.type_role, item.value), origin = item.origin }
+    local spliced, inner_gen, inner_param, inner_state, item_value = role_maybe_splice_item(param, item)
+    if spliced then
+      state.inner_gen, state.inner_param, state.inner_state = inner_gen, inner_param, inner_state
+    elseif is_tag(item_value, "Capture") then
+      if not is_tag(item_value.subject, "Symbol") then llbl.fail("product capture subject must be a symbol", { primary = item_value.origin }) end
+      local f = { tag = "field", name = item_value.subject.text, type = collect_role(param.ctx, param.type_role, item_value.value), origin = item_value.origin }
       check_product_field_unique(param, state.seen, f)
       return state, f
-    elseif is_tag(item, "CaptureInit") then
-      local c = item.capture
-      if not is_tag(c.subject, "Symbol") then llbl.fail("product initializer subject must be a symbol", { primary = item.origin }) end
-      local f = { tag = "field", name = c.subject.text, type = collect_role(param.ctx, param.type_role, c.value), init = normalize_expr(param.ctx, item.init), origin = item.origin }
+    elseif is_tag(item_value, "CaptureInit") then
+      local c = item_value.capture
+      if not is_tag(c.subject, "Symbol") then llbl.fail("product initializer subject must be a symbol", { primary = item_value.origin }) end
+      local f = { tag = "field", name = c.subject.text, type = collect_role(param.ctx, param.type_role, c.value), init = normalize_expr(param.ctx, item_value.init), origin = item_value.origin }
       check_product_field_unique(param, state.seen, f)
       return state, f
     else
-      llbl.fail("product entries must be typed names or spreads, got " .. repr(item), {
-        primary = origin_of(item) or (param.ctx and param.ctx.origin),
+      llbl.fail("product entries must be typed names or spreads, got " .. repr(item_value), {
+        primary = origin_of(item_value) or (param.ctx and param.ctx.origin),
         code = "E_BAD_PRODUCT_ENTRY",
         notes = { "write x [T] for a typed field" },
       })
@@ -3699,20 +4119,21 @@ local function role_sum_gen(param, state)
     local next_state, item = param.source_gen(param.source_param, state.source_state)
     if next_state == nil then return nil end
     state.source_state = next_state
-    if is_tag(item, "Spread") then
-      state.inner_gen, state.inner_param, state.inner_state = spread_region(param.ctx, param.role_name, item)
-    elseif is_tag(item, "Symbol") or is_tag(item, "Name") then
-      check_sum_variant_unique(state.seen, item.text, item.origin)
-      return state, { tag = "variant", name = item.text, payload = nil, origin = item.origin }
-    elseif is_tag(item, "Expr") and item.kind == "call" and is_tag(item.callee, "Symbol") then
-      if (item.args.n or #item.args) ~= 1 or type(item.args[1]) ~= "table" then
-        llbl.fail("variant payload must be a single product table", { primary = item.origin })
+    local spliced, inner_gen, inner_param, inner_state, item_value = role_maybe_splice_item(param, item)
+    if spliced then
+      state.inner_gen, state.inner_param, state.inner_state = inner_gen, inner_param, inner_state
+    elseif is_tag(item_value, "Symbol") or is_tag(item_value, "Name") then
+      check_sum_variant_unique(state.seen, item_value.text, item_value.origin)
+      return state, { tag = "variant", name = item_value.text, payload = nil, origin = item_value.origin }
+    elseif is_tag(item_value, "Expr") and item_value.kind == "call" and is_tag(item_value.callee, "Symbol") then
+      if (item_value.args.n or #item_value.args) ~= 1 or type(item_value.args[1]) ~= "table" then
+        llbl.fail("variant payload must be a single product table", { primary = item_value.origin })
       end
-      check_sum_variant_unique(state.seen, item.callee.text, item.origin)
-      return state, { tag = "variant", name = item.callee.text, payload = collect_role(param.ctx, param.payload_role, item.args[1]), origin = item.origin }
+      check_sum_variant_unique(state.seen, item_value.callee.text, item_value.origin)
+      return state, { tag = "variant", name = item_value.callee.text, payload = collect_role(param.ctx, param.payload_role, item_value.args[1]), origin = item_value.origin }
     else
-      llbl.fail("sum entries must be variants or spreads, got " .. repr(item), {
-        primary = origin_of(item) or (param.ctx and param.ctx.origin),
+      llbl.fail("sum entries must be variants or spreads, got " .. repr(item_value), {
+        primary = origin_of(item_value) or (param.ctx and param.ctx.origin),
         code = "E_BAD_SUM_ENTRY",
       })
     end
@@ -3725,6 +4146,7 @@ local function array_role_region(ctx, role_name, spec, v)
   return llbl.gps.raw(llbl.gps.wrap(role_array_gen, {
     ctx = ctx,
     role_name = role_name,
+    role_descriptor = ctx and ctx.role_descriptor or llbl.role._descriptor_from(ctx, role_name, spec),
     item_role = spec.item_role or spec.item,
     source_gen = gen,
     source_param = param,
@@ -3738,6 +4160,7 @@ local function record_role_region(ctx, role_name, spec, v)
   return llbl.gps.raw(llbl.gps.wrap(role_record_gen, {
     ctx = ctx,
     role_name = role_name,
+    role_descriptor = ctx and ctx.role_descriptor or llbl.role._descriptor_from(ctx, role_name, spec),
     value_role = spec.value_role or spec.value,
     source_gen = gen,
     source_param = param,
@@ -3753,6 +4176,7 @@ local function product_role_region(ctx, role_name, spec, v)
   return llbl.gps.raw(llbl.gps.wrap(role_product_gen, {
     ctx = ctx,
     role_name = role_name,
+    role_descriptor = ctx and ctx.role_descriptor or llbl.role._descriptor_from(ctx, role_name, spec),
     type_role = spec.type_role or "type",
     unique = unique,
     source_gen = gen,
@@ -3767,6 +4191,7 @@ local function sum_role_region(ctx, role_name, spec, v)
   return llbl.gps.raw(llbl.gps.wrap(role_sum_gen, {
     ctx = ctx,
     role_name = role_name,
+    role_descriptor = ctx and ctx.role_descriptor or llbl.role._descriptor_from(ctx, role_name, spec),
     payload_role = spec.payload_role or "product",
     source_gen = gen,
     source_param = param,
@@ -3775,7 +4200,11 @@ local function sum_role_region(ctx, role_name, spec, v)
 end
 
 local function role_region_by_spec(ctx, role_name, spec, v)
-  local kind = spec.kind or role_name
+  local descriptor = (ctx and ctx.role_descriptor) or llbl.role._descriptor_from(ctx, role_name, spec)
+  local adapted, used_adapter = llbl.role._adapt_value(ctx, descriptor, v)
+  if used_adapter then return llbl.gps.raw(llbl.gps.once(adapted)) end
+  v = adapted
+  local kind = descriptor.kind or spec.kind or role_name
   if spec.region then
     if is_tag(spec.region, "Region") then return spec.region:gps(ctx.dialect, ctx, v) end
     llbl.fail("role " .. tostring(role_name) .. " custom region must be an LLBL Region descriptor", {
@@ -3821,8 +4250,8 @@ local function collect_role_reflective(ctx, role_name, v)
   ctx = ctx or {}
   local lang = ctx.dialect
   local spec = (lang and lang.roles and lang.roles[role_name]) or {}
-  local kind = spec.kind or role_name
   local subctx = role_context(ctx, role_name, spec)
+  local kind = subctx.role_descriptor.kind or spec.kind or role_name
   local out
   if kind == "mixed" and not spec.region then
     out = {
@@ -3840,19 +4269,23 @@ spread_region = function(ctx, role_name, spread)
   if not is_tag(spread, "Spread") then
     llbl.fail("expected spread value", { primary = origin_of(spread) or (ctx and ctx.origin), code = "E_EXPECTED_SPREAD" })
   end
+  local descriptor = llbl.role._descriptor_from(ctx, role_name)
   local v = spread.value
+  if is_tag(v, "HostEval") then v = llbl.host_eval.value(v, ctx) end
   if is_tag(v, "Fragment") then
-    if v.role ~= role_name then
+    if not llbl.role._fragment_compatible(descriptor, v, ctx) then
       llbl.fail("cannot spread " .. tostring(v.role) .. " fragment into " .. tostring(role_name) .. " role", {
         code = "E_SPREAD_ROLE",
         primary = spread.origin,
         labels = { { origin = v.origin, message = "fragment created here as role " .. tostring(v.role) } },
+        role = descriptor.id,
+        notes = { "expected fragment role " .. llbl.role_id_display(descriptor.fragment_role or descriptor.id) },
       })
     end
     return llbl.gps.raw(llbl.gps.from.array(v.items or {}))
   end
   if type(v) == "table" then return role_region(ctx, role_name, v) end
-  llbl.fail("cannot spread value " .. repr(v), { primary = spread.origin, code = "E_BAD_SPREAD" })
+  llbl.fail("cannot spread value " .. repr(v), { primary = spread.origin, code = "E_BAD_SPREAD", role = descriptor.id })
 end
 
 local function expand_spread(ctx, role_name, out, spread)
@@ -3893,6 +4326,7 @@ end
 
 local function compile_spread_expander(lang, role_name, spec)
   spec = spec or {}
+  local role_descriptor = llbl.role_descriptor(lang, role_name, spec)
   local function region_fn(ctx, spread)
     return spread_region(role_context(ctx, role_name, spec), role_name, spread)
   end
@@ -3912,6 +4346,7 @@ local function compile_spread_expander(lang, role_name, spec)
     dialect = lang,
     role = role_name,
     role_kind = spec.kind or role_name,
+    role_descriptor = role_descriptor,
     descriptor = descriptor,
     region = llbl.codegen.register(region_fn, {
       id = tostring(lang.name) .. ".spread." .. tostring(role_name) .. ".region",
@@ -3933,7 +4368,7 @@ local function compile_spread_expander(lang, role_name, spec)
       origin = spec.origin,
       generated = false,
     }),
-    meta = { dialect = lang.name, role = role_name, role_kind = spec.kind or role_name, origin = spec.origin },
+    meta = { dialect = lang.name, role = role_name, role_kind = spec.kind or role_name, role_id = role_descriptor.id, origin = spec.origin },
   }, SpreadMachine)
   return llbl.codegen.register(machine, {
     id = tostring(lang.name) .. ".spread." .. tostring(role_name),
@@ -3958,7 +4393,8 @@ end
 
 local function compile_role_collector(lang, role_name, spec, region_fn)
   spec = spec or {}
-  local kind = spec.kind or role_name
+  local descriptor = llbl.role_descriptor(lang, role_name, spec)
+  local kind = descriptor.kind or spec.kind or role_name
   return function(ctx, value)
     local subctx = role_context(ctx, role_name, spec)
     subctx.dialect = subctx.dialect or lang
@@ -3978,9 +4414,10 @@ end
 
 local function compile_role_normalizer(lang, role_name, spec)
   spec = spec or {}
+  local role_descriptor = llbl.role_descriptor(lang, role_name, spec)
   local region_fn = compile_role_region(lang, role_name, spec)
   local collect_fn = compile_role_collector(lang, role_name, spec, region_fn)
-  local role_kind_name = spec.kind or role_name
+  local role_kind_name = role_descriptor.kind or spec.kind or role_name
   local descriptor
   if is_tag(spec.region, "Region") then
     descriptor = spec.region
@@ -4002,6 +4439,7 @@ local function compile_role_normalizer(lang, role_name, spec)
     dialect = lang,
     role = role_name,
     role_kind = role_kind_name,
+    role_descriptor = role_descriptor,
     descriptor = descriptor,
     region = llbl.codegen.register(region_fn, {
       id = tostring(lang.name) .. ".role." .. tostring(role_name) .. ".region",
@@ -4025,7 +4463,7 @@ local function compile_role_normalizer(lang, role_name, spec)
       reflective = normalize_role_reflective,
       generated = false,
     }),
-    meta = { dialect = lang.name, role = role_name, role_kind = role_kind_name, origin = spec.origin },
+    meta = { dialect = lang.name, role = role_name, role_kind = role_kind_name, role_id = role_descriptor.id, origin = spec.origin },
   }, RoleMachine)
   return llbl.codegen.register(machine, {
     id = tostring(lang.name) .. ".role." .. tostring(role_name),
@@ -4147,7 +4585,7 @@ local function slot_channels(lang, slot)
   if slot.channel then return { slot.channel } end
   local k = role_kind(lang, slot.role)
   if k == "name" then return { llbl.channel.index_name } end
-  if k == "type" then return { llbl.channel.index_type } end
+  if k == "type" then return { llbl.channel.index_host, llbl.channel.index_type } end
   if k == "string" or k == "number" or k == "boolean" then return { llbl.channel.call_value } end
   if k == "array" or k == "record" or k == "mixed" or k == "product" or k == "sum" or k == "protocol" then return { llbl.channel.call_table } end
   if k == "expr" or k == "value" or k == "identity" then return { "call:any" } end
@@ -4157,6 +4595,8 @@ local function channels_overlap(a, b)
   if a == b then return true end
   if starts_with(a, "call:") and b == "call:any" then return true end
   if starts_with(b, "call:") and a == "call:any" then return true end
+  if a == llbl.channel.index_host and (b == llbl.channel.index_type or b == llbl.channel.index_value) then return true end
+  if b == llbl.channel.index_host and (a == llbl.channel.index_type or a == llbl.channel.index_value) then return true end
   return false
 end
 local function validate_slot_ambiguity(lang, head_name, slots)
@@ -4165,7 +4605,7 @@ local function validate_slot_ambiguity(lang, head_name, slots)
     if a.optional and b.optional then
       local ca, cb = slot_channels(lang, a), slot_channels(lang, b)
       local overlap
-      for ai = 1, #ca do for bi = 1, #cb do if channels_overlap(ca[ai], cb[bi]) then overlap = ca[ai] == cb[bi] and ca[ai] or "call" end end end
+      for ai = 1, #ca do for bi = 1, #cb do if channels_overlap(ca[ai], cb[bi]) then overlap = ca[ai] == cb[bi] and ca[ai] or ((starts_with(ca[ai], "call:") or starts_with(cb[bi], "call:")) and "call" or (tostring(ca[ai]) .. "/" .. tostring(cb[bi]))) end end end
       if overlap then
         llbl.fail("ambiguous optional slot sequence in head " .. tostring(head_name) .. ": slot " .. tostring(a.name) .. " [" .. tostring(a.role) .. "] and slot " .. tostring(b.name) .. " [" .. tostring(b.role) .. "] can both consume " .. tostring(overlap) .. " input", {
           code = "E_AMBIGUOUS_OPTIONAL_SLOTS",
@@ -4188,7 +4628,7 @@ end
 local function action_fits(lang, slot, action, value, argc)
   local k = role_kind(lang, slot.role)
   if k == "name" then return action == "name" end
-  if k == "type" then return action == "index" and type_slot(lang, slot, value) end
+  if k == "type" then return action == "index" end
   if k == "string" then return action == "call" and argc == 1 and type(value) == "string" end
   if k == "number" then return action == "call" and argc == 1 and type(value) == "number" end
   if k == "boolean" then return action == "call" and argc == 1 and type(value) == "boolean" end
@@ -4204,10 +4644,7 @@ local function event_fits(lang, slot, event)
 end
 local function channel_for_action(action, value, argc)
   if action == "name" then return llbl.channel.index_name end
-  if action == "index" then
-    if llbl.is_type_like(value) or is_tag(value, "Symbol") or type(value) == "string" then return llbl.channel.index_type end
-    return llbl.channel.index_value
-  end
+  if action == "index" then return llbl.channel.index_host end
   if action == "call" then
     if argc == 0 then return llbl.channel.call_none end
     if argc and argc > 1 then return llbl.channel.call_many end
@@ -4286,6 +4723,9 @@ local function consume_event(stage, event)
   while i <= #slots do
     local slot = slots[i]
     if event_fits(stage.dialect, slot, event) then
+      local slot_descriptor = llbl.role_descriptor(stage.dialect, slot.role)
+      event.expected_role = slot_descriptor.id
+      if is_tag(value, "HostEval") and rawget(value, "expected_role") == nil then rawset(value, "expected_role", slot_descriptor.id) end
       local ns = setmetatable({ __llbl_tag = "Stage", dialect = stage.dialect, head = stage.head, raw = shallow_copy(stage.raw), origins = shallow_copy(stage.origins), events = shallow_copy(stage.events), seen = shallow_copy(stage.seen), next_index = i + 1, origin = stage.origin }, RuntimeStage)
       ns.raw[slot.name], ns.origins[slot.name], ns.events[slot.name], ns.seen[slot.name] = value, origin or stage.origin, event, true
       return maybe_finish(ns)
@@ -4307,10 +4747,25 @@ local function consume(stage, action, value, argc, origin)
   local override_origin
   value, override_origin = unwrap_origin_value(value)
   origin = override_origin or origin
+  local raw_value, legacy_channel
+  if action == "index" then
+    raw_value = is_tag(value, "HostEval") and (rawget(value, "raw_value") or rawget(value, "value")) or value
+    legacy_channel = (llbl.is_type_like(raw_value) or is_tag(raw_value, "Symbol") or type(raw_value) == "string") and llbl.channel.index_type or llbl.channel.index_value
+    if is_tag(value, "HostEval") then
+      value.channel = value.channel or llbl.channel.index_host
+      value.legacy_channel = value.legacy_channel or legacy_channel
+      value.raw_value = value.raw_value or raw_value
+      value.origin = value.origin or origin or stage.origin
+    else
+      value = llbl.host_eval.lua(value, llbl.channel.index_host, origin or stage.origin, { legacy_channel = legacy_channel, raw_value = raw_value })
+    end
+  end
   return consume_event(stage, llbl.event(channel_for_action(action, value, argc or 0), value, {
     action = action,
     argc = argc or 0,
     origin = origin or stage.origin,
+    raw_value = raw_value,
+    legacy_channel = legacy_channel,
   }))
 end
 local function head_origin(h)
@@ -4486,6 +4941,9 @@ local function compiled_consume_event(stage, event)
   while i <= #slots do
     local slot = slots[i]
     if event_fits(stage.dialect, slot, event) then
+      local slot_descriptor = llbl.role_descriptor(stage.dialect, slot.role)
+      event.expected_role = slot_descriptor.id
+      if is_tag(event.value, "HostEval") and rawget(event.value, "expected_role") == nil then rawset(event.value, "expected_role", slot_descriptor.id) end
       local ns = setmetatable({
         __llbl_tag = "Stage",
         dialect = stage.dialect,
@@ -4513,10 +4971,25 @@ local function compiled_consume(stage, action, value, argc, origin)
   local override_origin
   value, override_origin = unwrap_origin_value(value)
   origin = override_origin or origin
+  local raw_value, legacy_channel
+  if action == "index" then
+    raw_value = is_tag(value, "HostEval") and (rawget(value, "raw_value") or rawget(value, "value")) or value
+    legacy_channel = (llbl.is_type_like(raw_value) or is_tag(raw_value, "Symbol") or type(raw_value) == "string") and llbl.channel.index_type or llbl.channel.index_value
+    if is_tag(value, "HostEval") then
+      value.channel = value.channel or llbl.channel.index_host
+      value.legacy_channel = value.legacy_channel or legacy_channel
+      value.raw_value = value.raw_value or raw_value
+      value.origin = value.origin or origin or stage.origin
+    else
+      value = llbl.host_eval.lua(value, llbl.channel.index_host, origin or stage.origin, { legacy_channel = legacy_channel, raw_value = raw_value })
+    end
+  end
   return compiled_consume_event(stage, llbl.event(channel_for_action(action, value, argc or 0), value, {
     action = action,
     argc = argc or 0,
     origin = origin or stage.origin,
+    raw_value = raw_value,
+    legacy_channel = legacy_channel,
   }))
 end
 
@@ -6310,10 +6783,16 @@ Dialect.__sub = function(a, b) return Language.subtract(language_of(a), b) end
 
 function Dialect:fragment(role, value)
   local spec = self.roles and self.roles[role] or {}
-  return llbl.fragment(role, normalize_role({ dialect = self, origin = source.capture("fragment-normalize") }, role, value), source.capture("fragment"), {
+  local descriptor = llbl.role_descriptor(self, role, spec)
+  local fragment_role = descriptor.fragment_role or descriptor.id
+  return llbl.fragment(fragment_role, normalize_role({ dialect = self, origin = source.capture("fragment-normalize") }, role, value), source.capture("fragment"), {
     dialect = self,
+    owner = self,
     role_spec = spec,
-    algebra = spec.algebra,
+    role_descriptor = descriptor,
+    role_id = fragment_role,
+    container_role_id = descriptor.id,
+    algebra = spec.algebra or descriptor.algebra,
     payload_role = spec.payload_role or spec.payload,
   })
 end
@@ -6367,13 +6846,20 @@ function llbl.describe_role(lang, name)
   if is_tag(lang, "Dialect") then
     local spec = lang.roles and lang.roles[name]
     if not spec then return nil end
+    local descriptor = llbl.role_descriptor(lang, name, spec)
     return {
       tag = "Role",
       name = name,
-      kind = spec.kind or name,
-      algebra = spec.algebra,
-      item_role = spec.item_role or spec.item,
-      payload_role = spec.payload_role or spec.payload,
+      role_id = descriptor.id,
+      role_id_display = llbl.role_id_display(descriptor.id),
+      kind = descriptor.kind or spec.kind or name,
+      algebra = descriptor.algebra,
+      item_role = descriptor.item_role,
+      fragment_role = descriptor.fragment_role,
+      payload_role = descriptor.payload_role,
+      splice_policy = descriptor.splice_policy,
+      nil_policy = descriptor.nil_policy,
+      has_adapter = type(descriptor.adapter) == "function",
       unique_names = spec.unique_names,
       region = is_tag(spec.region, "Region") and llbl.describe_region(spec.region) or nil,
       has_region = is_tag(spec.region, "Region"),
@@ -6424,6 +6910,11 @@ function llbl.describe_fragment(fragment_value)
   return {
     tag = "Fragment",
     role = fragment_value.role,
+    role_id = fragment_value.role_id,
+    role_id_display = fragment_value.role_id and llbl.role_id_display(fragment_value.role_id) or nil,
+    container_role_id = fragment_value.container_role_id,
+    container_role_id_display = fragment_value.container_role_id and llbl.role_id_display(fragment_value.container_role_id) or nil,
+    owner_name = fragment_value.owner_name,
     algebra = fragment_algebra(fragment_value),
     count = #(fragment_value.items or {}),
     items = fragment_value.items or {},
@@ -6510,6 +7001,7 @@ function llbl.describe(value)
     return { tag = "Dialect", name = value.name, roles = roles, heads = heads, traits = traits, protocols = protocols, passes = passes }
   end
   if is_tag(value, "Event") then return llbl.describe_event(value) end
+  if is_tag(value, "HostEval") then return llbl.describe_host_eval(value) end
   if is_tag(value, "Process") then return llbl.describe_process(value) end
   if is_tag(value, "Gps") and value.describe then return value:describe() end
   if is_tag(value, "GpsPlan") and value.describe then return value:describe() end
@@ -6628,6 +7120,7 @@ local function define_dialect(name, decls)
     elseif is_tag(d, "LspDecl") then lang.lsp[d.name] = d.spec or {}
     elseif is_tag(d, "TypeSystemDecl") then lang.type_system = d.spec or {} end
   end
+  for role, spec in pairs(lang.roles) do llbl.role_descriptor(lang, role, spec) end
   for role in pairs(lang.roles) do if not lang.exports[role] then lang.exports[role] = function(tbl) return lang:fragment(role, tbl) end end end
   for k, v in pairs(DEFAULT_EXPORTS) do lang.exports[k] = lang.exports[k] or v end
   for i = 1, #(decls or {}) do

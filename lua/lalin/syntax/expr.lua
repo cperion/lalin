@@ -6,26 +6,6 @@ local Type = require("lalin.syntax.type")
 
 local Expr = {}
 
-local lua_keywords = {
-  ["and"] = true, ["break"] = true, ["do"] = true, ["else"] = true,
-  ["elseif"] = true, ["end"] = true, ["false"] = true, ["for"] = true,
-  ["function"] = true, ["if"] = true, ["in"] = true, ["local"] = true,
-  ["nil"] = true, ["not"] = true, ["or"] = true, ["repeat"] = true,
-  ["return"] = true, ["then"] = true, ["true"] = true, ["until"] = true,
-  ["while"] = true,
-}
-
-local function extract_refs(src)
-  local refs, seen = {}, {}
-  for name in tostring(src):gmatch("[%a_][%w_]*") do
-    if not lua_keywords[name] and not seen[name] then
-      seen[name] = true
-      refs[#refs + 1] = name
-    end
-  end
-  return refs
-end
-
 local parser
 
 local function decode_lua_string(raw, lex, tok)
@@ -137,8 +117,9 @@ local function atom(lex, ctx)
     return Ast.node("Paren", { value = e }, Ast.origin(lex, start, lex.last, "parsed:expr"))
   elseif t.value == "[" then
     local raw, open, close = lex:consume_balanced_from_open("[", "]")
-    for _, r in ipairs(extract_refs(raw)) do if ctx.add_ref then ctx:add_ref(r) end end
-    return Ast.node("HostEscape", { source = raw, refs = extract_refs(raw) }, Ast.origin(lex, open, close, "parsed:escape"))
+    local refs = Ast.extract_refs(raw)
+    Ast.add_refs(ctx, refs)
+    return Ast.host_eval(raw, refs, Ast.origin(lex, open, close, "parsed:host_eval"), "expr")
   elseif t.value == "{" then
     return parse_record(lex, ctx)
   else

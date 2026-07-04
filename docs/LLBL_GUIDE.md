@@ -54,8 +54,9 @@ LLBL owns both delivery mechanisms. Dialects own meaning:
 
 ```text
 Lua channels deliver what Lua can already evaluate.
-Parsed channels deliver what Lua cannot evaluate.
-LLBL owns both delivery mechanisms.
+Parsed channels deliver source spans and lexical captures that must be evaluated later.
+Bracket forms in both channels enter LLBL as HostEval values/events.
+LLBL owns delivery, HostEval metadata, role algebra, fragments, origins, and diagnostics.
 Dialects own semantic meaning.
 ```
 
@@ -169,10 +170,11 @@ LLBL code is built from a small set of atoms:
 shape       the Lua value shape
 channel     how Lua delivered it
 event       a value plus channel/origin information
+host_eval   host Lua value/source entering a role through brackets
 role        normalization rule for a semantic position
 slot        one staged head position
 head        staged constructor
-fragment    role-tagged reusable value
+fragment    qualified role-tagged reusable value
 curried     unary callable table with staged operands
 hole        placeholder operand for partial application
 origin      source/provenance handle
@@ -206,7 +208,7 @@ local Mini = llbl.dialect "Mini" {
   g.head. fn {
     g.slot. name   [g.name]   { channel = ch.index_name },
     g.slot. params [g.fields] { channel = ch.call_table },
-    g.slot. result [g.type]   { channel = ch.index_type, optional = true },
+    g.slot. result [g.type]   { channel = ch.index_host, optional = true },
     g.slot. body   [g.body]   { channel = ch.call_table },
     emit = function(n) return Mini.ast.fn(n) end,
   },
@@ -215,12 +217,15 @@ local Mini = llbl.dialect "Mini" {
 
 ## Channels
 
-Channels describe Lua syntax shape:
+Channels describe syntax shape:
 
 ```text
 index:name       fn. add
-index:type       [i32]
-index:value      head [computed]
+index:host       head [value]       -- Lua [] operand wrapped as HostEval
+index:type       [i32]              -- legacy/type-shaped index channel
+index:value      head [computed]    -- legacy/value-shaped index channel
+parsed:host_eval [lua] in parsed syntax with source + refs
+parsed:escape    legacy parsed host escape alias
 call:none        ret ()
 call:value       ret (x)
 call:table       { ... }
@@ -232,9 +237,13 @@ env:lookup       unknown global as symbol
 ```
 
 Choose channels deliberately. Diagnostics are only as good as the slot/channel
-model. Public LLBL and member-dialect helpers should prefer unary calls. If a
-helper has several operands, expose it as a curried callable table and let each
-Lua call deliver one operand.
+model. Modern bracket slots should normally admit `index:host`; the expected
+role decides whether the evaluated value is a type, expression, declaration,
+fragment, or error. Legacy `index:type`/`index:value` remain useful for
+compatibility and diagnostics but should not pre-reject values before role
+adaptation. Public LLBL and member-dialect helpers should prefer unary calls. If
+a helper has several operands, expose it as a curried callable table and let
+each Lua call deliver one operand.
 
 ## Roles
 
@@ -260,6 +269,14 @@ identity
 If two heads need the same shape rule, that rule belongs in a role, not in
 duplicated emit callbacks.
 
+Roles are descriptors, not just strings. A descriptor carries a qualified role
+id, role kind/algebra, optional item role, fragment role, payload role, adapter,
+splice policy, nil policy, and diagnostic metadata. Container roles and fragment
+roles are distinct: a `decls` list role may accept or splice `decl` fragments
+without pretending the two roles have the same identity. Dialects install
+adapter functions for semantic projection, such as Lalin adapting a declaration
+value to a type only when the current role is `type`.
+
 ## Heads
 
 A head is a staged constructor. It consumes slots in order. Each slot names:
@@ -277,8 +294,9 @@ remain the diagnostic reference.
 
 ## Fragments
 
-Fragments are role-tagged reusable values. They preserve metaprogramming
-structure after Lua evaluation.
+Fragments are qualified role-tagged reusable values. They preserve
+metaprogramming structure after Lua evaluation and carry both legacy role text
+and a dialect-qualified `RoleId` for compatibility checks.
 
 ```lua
 local params = product {
@@ -304,8 +322,27 @@ Operators:
 *  decorate every protocol alternative with a product
 ```
 
-`_(fragment)` is the preferred splice marker. `spread(fragment)` is the
-explicit spelling.
+LLBL role algebra checks fragment compatibility through the target role
+descriptor. A list/product/sum/protocol role decides whether explicit
+`Spread`, bare matching fragments, or HostEval-produced fragments splice.
+
+In parsed syntax, `[fragment]` is the normal way to offer a generated fragment
+or list to the current role:
+
+```text
+struct Packet
+  [header_fields]
+  payload [ptr [u8]]
+end
+
+fn generated() [void]
+  [body_fragment]
+end
+```
+
+In Lua syntax, `_(fragment)` is the convenient splice marker and
+`spread(fragment)` is the explicit spelling. They remain conveniences for the
+Lua channel, where there is no parsed list-splice token.
 
 ## Curried Forms, Holes, And Loadstrings
 
@@ -471,7 +508,10 @@ compute one pure value.
 ## Origins And Diagnostics
 
 Origins connect evaluated values to source/provenance. Diagnostics should carry
-head, slot, role, event, and origin context where possible.
+head, slot, role, event, HostEval origin, produced-value origin, fragment role,
+and channel context where possible. A failed bracket adaptation should say both
+where the bracket occurred and, if the value was a fragment or generated AST,
+where that value was created.
 
 Generated fast paths should be diagnostically lazy:
 

@@ -302,6 +302,24 @@ local function bind_context(T)
         return edge
     end
 
+    local function replace_conditional_else_target(state, from, to)
+        for i = #state.control_plan.edges, 1, -1 do
+            local edge = state.control_plan.edges[i]
+            if asdl.isa(edge, Native.NativeConditionalBranchEdge) and edge.from == from then
+                state.control_plan.edges[i] = Native.NativeConditionalBranchEdge(
+                    edge.from,
+                    edge.then_to,
+                    edge.then_symbol,
+                    to,
+                    edge.else_symbol,
+                    edge.condition
+                )
+                return true
+            end
+        end
+        return false
+    end
+
     local function materialize_bindings(node_id, instance, entry, binding_specs)
         local bindings = {}
         for _, spec in ipairs(binding_specs or {}) do
@@ -389,6 +407,11 @@ local function bind_context(T)
 
     local function frame_offset_value_binding(id, offset)
         return hole(id, Native.NativePatchFrameOffset(offset))
+    end
+
+    local function scalar_immediate_hole_id(id, scalar)
+        if scalar.bits and scalar.bits > 32 then return id .. ".imm64" end
+        return id .. ".imm32"
     end
 
     local function block_entry_node_id(block_id)
@@ -2807,16 +2830,57 @@ local function bind_context(T)
         return append_frame_value_edge(input, dest, node, scalar)
     end
 
+    local function append_parallel_copy_node(input, dest_block, args, params)
+        local src0 = placement_for_value(input.state, args[1])
+        local src1 = placement_for_value(input.state, args[2])
+        local dst0 = placement_for_value(input.state, params[1].value)
+        local dst1 = placement_for_value(input.state, params[2].value)
+        local scalar = src0.representation:native_scalar_rep()
+        if src1.representation:native_scalar_rep() ~= scalar
+            or dst0.representation:native_scalar_rep() ~= scalar
+            or dst1.representation:native_scalar_rep() ~= scalar then
+            return nil
+        end
+        local temp_value = Code.CodeValueId("native.edge.parallel.tmp." .. dest_block.text .. "." .. tostring(#input.state.edge_copy_plan.entries + 1))
+        local temp = allocate_value_slot(input.state, temp_value, scalar, target_frame_alignment(input.plan.target))
+        local token = scalar_token(scalar)
+        local family = Support.code_inst_frame_family("parallel_copy." .. token .. ".slot.slot.temp", input.plan.target, scalar, Native.NativeCodeInstAliasAxis(scalar:native_code_type()))
+        local id_base = "native.hole.code.inst.parallel_copy." .. token
+        local node = append_family_node(input, "parallel_copy", family, { src0, src1 }, { dst0, dst1 }, {
+            frame_offset_binding(id_base .. ".src0", src0),
+            frame_offset_binding(id_base .. ".src1", src1),
+            frame_offset_binding(id_base .. ".dst0", dst0),
+            frame_offset_binding(id_base .. ".dst1", dst1),
+            frame_offset_binding(id_base .. ".tmp", temp),
+        })
+        input.state.edge_copy_plan.entries[#input.state.edge_copy_plan.entries + 1] = Native.NativeEdgeCopyEntry(dest_block, dest_block, {
+            Native.NativeEdgeCopyValue(args[1], params[1].value, dst0),
+            Native.NativeEdgeCopyValue(args[2], params[2].value, dst1),
+        })
+        append_frame_value_edge(input, dst0, node, scalar)
+        append_frame_value_edge(input, dst1, node, scalar)
+        return node
+    end
+
     local function append_successor_copy_chain(input, dest_block, args, source_symbol)
         local params = find_block_param_plan(input, dest_block)
         if #(args or {}) ~= #params then internal_error("native control edge argument count does not match destination block params") end
         local first_node
         local last_node
         local previous_tail = input.state.control_plan.nodes[#input.state.control_plan.nodes]
-        for i, arg in ipairs(args or {}) do
-            local node = append_edge_copy_node(input, arg, params[i].value)
-            if first_node == nil then first_node = node end
-            last_node = node
+        if #(args or {}) == 2 then
+            local parallel = append_parallel_copy_node(input, dest_block, args, params)
+            if parallel ~= nil then
+                first_node = parallel
+                last_node = parallel
+            end
+        end
+        if first_node == nil then
+            for i, arg in ipairs(args or {}) do
+                local node = append_edge_copy_node(input, arg, params[i].value)
+                if first_node == nil then first_node = node end
+                last_node = node
+            end
         end
         local target = first_node and first_node.id or block_entry_node_id(dest_block)
         if first_node ~= nil then
@@ -2920,9 +2984,9 @@ local function bind_context(T)
             local family = Support.code_term_family("switch_step." .. scalar_token(scalar) .. ".slot.imm", input.plan.target, Native.NativeCodeTermSwitchAxis, Support.protocol_void_none())
             local node = append_family_node(input, "switch", family, { key }, {}, {
                 frame_offset_binding("native.hole.code.term.switch_step." .. scalar_token(scalar) .. ".slot.src", key),
-                hole("native.hole.code.term.switch_step." .. scalar_token(scalar) .. ".slot.case", case.literal:native_patch_coordinate_for_scalar(scalar)),
+                hole(scalar_immediate_hole_id("native.hole.code.term.switch_step." .. scalar_token(scalar) .. ".slot.case", scalar), case.literal:native_patch_coordinate_for_scalar(scalar)),
             })
-            if previous_compare ~= nil then append_control_edge(input.state, Native.NativeContinuationEdge(previous_compare.id, node.id, Support.else_continuation_symbol())) end
+            if previous_compare ~= nil then replace_conditional_else_target(input.state, previous_compare.id, node.id) end
             local case_target = append_successor_copy_chain(input, case.dest, case.args, Support.then_continuation_symbol())
             append_control_edge(input.state, Native.NativeConditionalBranchEdge(node.id, case_target, Support.then_continuation_symbol(), block_entry_node_id(self.default_dest), Support.else_continuation_symbol(), key.value))
             previous_compare = node
@@ -2934,7 +2998,7 @@ local function bind_context(T)
             append_control_edge(input.state, Native.NativeContinuationEdge(node.id, default_target, Support.next_continuation_symbol()))
             return node
         end
-        append_control_edge(input.state, Native.NativeContinuationEdge(previous_compare.id, default_target, Support.else_continuation_symbol()))
+        replace_conditional_else_target(input.state, previous_compare.id, default_target)
         return previous_compare
     end
 
@@ -2944,10 +3008,12 @@ local function bind_context(T)
         local last_node
         for _, case in ipairs(self.cases or {}) do
             local family = Support.code_term_family("variant_switch_step." .. scalar_token(scalar) .. ".slot.imm", input.plan.target, Native.NativeCodeTermVariantSwitchAxis, Support.protocol_void_none())
+            local previous_node = last_node
             last_node = append_family_node(input, "variant_switch", family, { key }, {}, {
                 frame_offset_binding("native.hole.code.term.variant_switch_step." .. scalar_token(scalar) .. ".slot.src", key),
-                hole("native.hole.code.term.variant_switch_step." .. scalar_token(scalar) .. ".slot.case", Native.NativePatchImmediateI32(case.variant.tag_value)),
+                hole(scalar_immediate_hole_id("native.hole.code.term.variant_switch_step." .. scalar_token(scalar) .. ".slot.case", scalar), Native.NativePatchImmediateI32(case.variant.tag_value)),
             })
+            if previous_node ~= nil then replace_conditional_else_target(input.state, previous_node.id, last_node.id) end
             local case_target = append_successor_copy_chain(input, case.dest, case.args, Support.then_continuation_symbol())
             append_control_edge(input.state, Native.NativeConditionalBranchEdge(last_node.id, case_target, Support.then_continuation_symbol(), block_entry_node_id(self.default_dest), Support.else_continuation_symbol(), key.value))
         end
@@ -2958,7 +3024,7 @@ local function bind_context(T)
             append_control_edge(input.state, Native.NativeContinuationEdge(node.id, default_target, Support.next_continuation_symbol()))
             return node
         end
-        append_control_edge(input.state, Native.NativeContinuationEdge(last_node.id, default_target, Support.else_continuation_symbol()))
+        replace_conditional_else_target(input.state, last_node.id, default_target)
         return last_node
     end
 

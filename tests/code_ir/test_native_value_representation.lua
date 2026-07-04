@@ -221,7 +221,7 @@ local address_module = Code.CodeModule(
 local address_lowering = address_module:native_code_lowering_input(module_facts, address_func, lowering_plan)
 local address_state = Native.NativeCodeGraphBuilderState(
     Native.NativeValueLocationPlan({}, address_lowering.module.addresses),
-    Native.NativeFrameLayoutPlan({}, {}, {}, 0),
+    Native.NativeFrameLayoutPlan({}, {}, {}, {}, 0),
     Native.NativeControlPlan({}, {}, {}, {}),
     Native.NativeEdgeCopyPlan({}),
     {}

@@ -205,12 +205,18 @@ local decls = assert(lalin.loadfile("arith.lln"))()
 local arith = lalin.compile("arith", decls)
 ```
 
-### Host Escapes
+### Role-Directed HostEval Brackets
 
-Host escapes use `[lua_expr]`. They evaluate `lua_expr` in the lexical Lua
-environment captured by the syntax constructor.
+Parsed brackets use `[lua_expr]`. The bracket produces an LLBL HostEval value:
+it records the Lua source, captured lexical references, bracket origin, and the
+expected role supplied by the surrounding parser. Lua evaluation happens when
+the syntax constructor runs; adaptation happens later through the current Lalin
+role.
 
-In expression position, a host escape can splice:
+The bracket itself does not mean "type" or "expression". The surrounding role
+means that.
+
+In expression position, `[lua_expr]` adapts:
 
 - primitive literals: numbers, booleans, strings, `nil`
 - parsed expression fragments
@@ -228,7 +234,7 @@ local scale_one = fn(x [i32]) [i32]
 end
 ```
 
-In statement position, a host escape can splice:
+In statement-list position, `[lua_expr]` can splice:
 
 - a parsed statement fragment
 - a parsed statement AST value
@@ -251,17 +257,28 @@ local scale = fn(dst [ptr [i32]], src [ptr [i32]], n [index]) [void]
 end
 ```
 
-In type position, the brackets are the type mechanism. The Lua expression must
-evaluate to a Lalin type value:
+In type position, `[lua_expr]` adapts under the `type` role. The Lua expression
+may evaluate to a Lalin type value or to a declaration value with a stable type
+identity:
 
 - built-in scalar type values such as `i32`, `f64`, or `index`
 - constructor results such as `ptr [i32]`, `array [i32] [4]`, or `view [i32]`
 - named type values such as `named("Pair")`
+- parsed or DSL declarations such as `DeclStruct`, `DeclUnion`, or `DeclHandle`
+  when their names define type identities
 - values produced by Lua helper functions, factories, or required packages
 
 ```lln
 local elem_ty = i32
 local ptr_elem_ty = ptr [elem_ty]
+
+local Pair = struct Pair
+  value [i32]
+end
+
+local use_pair = fn(p [Pair]) [void]
+  return
+end
 
 local scale = fn(dst [ptr_elem_ty], src [ptr_elem_ty], n [index]) [void]
   requires bounds(dst)(n), writeonly(dst), bounds(src)(n), readonly(src)
@@ -270,6 +287,39 @@ local scale = fn(dst [ptr_elem_ty], src [ptr_elem_ty], n [index]) [void]
     dst[i] = src[i]
   end
 end
+```
+
+In product/field-list positions, `[lua_expr]` adapts under the product role and
+can splice generated fields:
+
+```lln
+local header_fields = {
+  { tag = "Field", name = "len", type = i32 },
+}
+
+local Packet = struct Packet
+  [header_fields]
+  payload [ptr [u8]]
+end
+```
+
+At declaration-stream boundaries, `[lua_expr]` adapts under the `decls` role.
+The value may be one declaration, a positional array of declarations, or a
+role-compatible declaration fragment. Positional order is preserved. Keyed Lua
+tables are accepted only when the keyed values are parsed declarations; string
+keys are applied as deterministic public/debug names in sorted-key order.
+
+```lln
+local generated = make_declarations()
+[generated]
+```
+
+Parsed expression indexing is a hard boundary:
+
+```lln
+a[x]          -- parsed Lalin index expression
+[make()][i]   -- HostEval expression, then parsed index postfix
+[ptr [Pair]]  -- one HostEval; the inner brackets are Lua source
 ```
 
 ### Fragments
@@ -329,7 +379,7 @@ letter_or_underscore (letter_or_digit_or_underscore)*
 Keywords include:
 
 ```text
-fn struct union region
+fn struct union handle region
 requires ensures
 do end if then elseif else
 loop in grid tiled window
@@ -346,11 +396,13 @@ Comments and general Lua file structure are handled by the `.lln` syntax loader.
 
 ## Types
 
-Typed binders use bracket application: `name[type_value]` or `name [type_value]`.
-Function results, casts, and `sizeof` use the same bracketed type value form.
+Typed binders use role-directed bracket application: `name[type_value]` or
+`name [type_value]`. Function results, casts, and `sizeof` use the same
+bracketed type role.
 
-The expression inside the brackets is evaluated by Lua and must produce a Lalin
-type value:
+The expression inside the brackets is evaluated by Lua and adapts under the
+Lalin `type` role. It may produce a Lalin type value or a named declaration
+value:
 
 ```lln
 [i32]
@@ -387,9 +439,11 @@ also Lua-like bracket application, so both `x[i32]` and `x [i32]` are accepted.
 [pkg.SomeType]
 ```
 
-Any Lua expression is legal between the brackets if it evaluates to a type
-value. For named Lalin declarations, use `named("TypeName")` or return/pass a
-type value from another Lua package.
+Any Lua expression is legal between the brackets if it adapts to the `type`
+role. For named declarations, `[Pair]` can project a parsed or DSL `struct Pair`
+/ `union Pair` declaration to a named type, and handle declarations project to
+handle types. You can still use `named("TypeName")` or return/pass type values
+from another Lua package when that is clearer.
 
 ### Access, Lease, And Ownership Types
 
@@ -415,7 +469,8 @@ callee may use an access value but must not retain it.
 A `lease` is temporary access, normally produced by a resolver region or trusted
 boundary. Its base must be `ptr(T)` or `view(T)`. When a lease is tied to a store
 parameter, use an explicit origin in the Lua type expression, for example
-`lease("store", ptr [Record])`; diagnostics print this idea as
+`lease("store", ptr [Record])` when `Record` is a type value in scope;
+diagnostics print this idea as
 `lease(store) ptr(Record)`. Leases may appear in function, region, block, and
 continuation parameters, but not in durable positions such as struct fields,
 static/const values, union payloads, function results, or generated region-call
@@ -496,8 +551,25 @@ A handle is a nominal durable identity value. It may be copied, stored, compared
 with the same handle type, passed, and returned. It is not dereferenceable, not
 indexable, and not implicitly convertible to its integer representation.
 
-Handle declarations are currently authored through the Lua/LLBL DSL and LLBL
-member syntax, then used from parsed `.lln` code as named type values:
+Handle declarations are available in parsed `.lln` syntax:
+
+```lln
+local AudioBufferStore = struct AudioBufferStore
+  capacity [index]
+end
+
+local AudioBufferRecord = struct AudioBufferRecord
+  first [index]
+end
+
+local AudioBuffer = handle AudioBuffer [u32]
+  invalid = 0
+  domain [AudioBufferStore]
+  target [AudioBufferRecord]
+end
+```
+
+The same declaration can be generated from the Lua/LLBL DSL:
 
 ```lua
 local AudioBuffer = lln.handle. AudioBuffer {
@@ -1065,11 +1137,11 @@ through its successful continuation:
 
 ```lln
 region borrow_audio_buffer(
-  store [readonly [ptr [named("AudioBufferStore")]]],
-  buffer [named("AudioBuffer")];
-  borrowed(record [lease("store", ptr [named("AudioBufferRecord")])]),
-  stale(buffer [named("AudioBuffer")]),
-  missing(buffer [named("AudioBuffer")])
+  store [readonly [ptr [AudioBufferStore]]],
+  buffer [AudioBuffer];
+  borrowed(record [lease("store", ptr [AudioBufferRecord])]),
+  stale(buffer [AudioBuffer]),
+  missing(buffer [AudioBuffer])
 )
   entry start()
     -- store-private validation and jump borrowed/stale/missing
@@ -1483,7 +1555,7 @@ The formatter currently prints the Lua/LLBL DSL surface.
 | `fn name(params) [result] ... end` | implemented as explicit direct declaration |
 | `struct Name ... end` | implemented |
 | `union Name ... end` | implemented |
-| handle declarations | implemented through Lua/LLBL DSL and LLBL member syntax; no bare parsed `.lln` `handle` entrypoint yet |
+| `handle Name [repr] ... end` | implemented; handle fact types use bracket type values |
 | `region name(params; exits) ... end` | parser implemented; integration is narrower than function/struct/union |
 | `let` / `var` | implemented |
 | assignment | implemented |

@@ -93,28 +93,14 @@ local function is_lalin_parsed_decl(value)
 end
 
 local function parsed_decls_from(value)
-    if is_lalin_parsed_decl(value) then return { value } end
-    if type(value) ~= "table" then return nil end
-    local out = {}
-    local n = #value
-    for i = 1, n do
-        if not is_lalin_parsed_decl(value[i]) then return nil end
-        out[#out + 1] = value[i]
-    end
-    for k, v in pairs(value) do
-        if type(k) ~= "number" then
-            if is_lalin_parsed_decl(v) then
-                if type(k) == "string" and v.name == nil then
-                    v.public_name = v.public_name or k
-                    v.debug_name = v.debug_name or k
-                    v.name = k
-                end
-                out[#out + 1] = v
-            end
-        end
-    end
-    if #out == 0 then return nil end
-    return out
+    if value == nil then return nil end
+    local asdl = require("lalin.asdl")
+    local T = asdl.context()
+    require("lalin.schema_projection")(T)
+    local adapter = require("lalin.syntax.role_adapter")(T)
+    local ok, decls = pcall(function() return adapter:decls(value) end)
+    if not ok or #(decls or {}) == 0 then return nil end
+    return decls
 end
 
 local function is_llpvm_value(value)

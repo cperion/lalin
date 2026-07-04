@@ -30,7 +30,8 @@ syntax.channel = {
     return_stmt = "parsed:return",
     jump_stmt   = "parsed:jump",
     emit_stmt   = "parsed:emit",
-    escape      = "parsed:escape",
+    host_eval   = "parsed:host_eval",
+    escape      = "parsed:escape", -- legacy alias during HostEval migration
 
     -- LLBL-owned hole and spread (underscore sentinels)
     hole        = "parsed:hole",

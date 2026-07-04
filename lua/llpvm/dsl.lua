@@ -110,20 +110,34 @@ Path.__call = function(self, ...)
     return setmetatable({ callee = self, args = { ... }, origin = llbl.here("llpvm-call", { skip = 1 }) }, Call)
 end
 
-local function array_items(t)
+local function llpvm_role_id(role)
+    return llbl.role_id("LLPVMDsl", role)
+end
+
+local function compatible_fragment(frag, role, descriptor, ctx)
+    if not llbl.is(frag, "Fragment") then return false end
+    if descriptor then return llbl.role._fragment_compatible(descriptor, frag, ctx) end
+    if role == nil then return true end
+    return frag.role == role or (frag.role_id and llbl.role_id_equal(frag.role_id, llpvm_role_id(role)))
+end
+
+local function array_items(t, role)
     local out = {}
     for i = 1, #(t or {}) do
         local v = t[i]
+        if llbl.is(v, "HostEval") then v = llbl.host_eval.value(v) end
         if llbl.is(v, "Spread") then
             local frag = v.value
+            if llbl.is(frag, "HostEval") then frag = llbl.host_eval.value(frag) end
             if llbl.is(frag, "Fragment") then
+                if not compatible_fragment(frag, role) then die("spread received incompatible " .. tostring(frag.role) .. " fragment", v.origin) end
                 for j = 1, #(frag.items or {}) do out[#out + 1] = frag.items[j] end
             elseif type(frag) == "table" then
                 for j = 1, #frag do out[#out + 1] = frag[j] end
             else
                 die("spread expects a fragment or array", v.origin)
             end
-        elseif llbl.is(v, "Fragment") then
+        elseif llbl.is(v, "Fragment") and compatible_fragment(v, role) then
             for j = 1, #(v.items or {}) do out[#out + 1] = v.items[j] end
         else
             out[#out + 1] = v
@@ -148,16 +162,19 @@ local function array_items_gen(param, state)
         state.index = state.index + 1
         local v = param.value[state.index]
         if v == nil then return nil end
+        if llbl.is(v, "HostEval") then v = llbl.host_eval.value(v, param.ctx) end
         if llbl.is(v, "Spread") then
             local frag = v.value
+            if llbl.is(frag, "HostEval") then frag = llbl.host_eval.value(frag, param.ctx) end
             if llbl.is(frag, "Fragment") then
+                if not compatible_fragment(frag, param.role, param.role_descriptor, param.ctx) then die("spread received incompatible " .. tostring(frag.role) .. " fragment", v.origin) end
                 push_items_reverse(stack, frag.items)
             elseif type(frag) == "table" then
                 push_items_reverse(stack, frag)
             else
                 die("spread expects a fragment or array", v.origin)
             end
-        elseif llbl.is(v, "Fragment") then
+        elseif llbl.is(v, "Fragment") and compatible_fragment(v, param.role, param.role_descriptor, param.ctx) then
             push_items_reverse(stack, v.items)
         else
             return state, v
@@ -165,8 +182,8 @@ local function array_items_gen(param, state)
     end
 end
 
-local function array_items_region(t, kind)
-    return llbl.gps.raw(llbl.gps.wrap(array_items_gen, { value = t or {} }, nil, { kind = kind or "llpvm:items" }))
+local function array_items_region(t, kind, role, descriptor, ctx)
+    return llbl.gps.raw(llbl.gps.wrap(array_items_gen, { value = t or {}, role = role, role_descriptor = descriptor, ctx = ctx }, nil, { kind = kind or "llpvm:items" }))
 end
 
 local function fields_from_table(t)
@@ -212,8 +229,8 @@ local function fields_region_gen(param, state)
     return next_state, field_from_item(item)
 end
 
-local function fields_region(t)
-    local gen, param, state = array_items_region(t or {}, "llpvm:field-source")
+local function fields_region(t, ctx)
+    local gen, param, state = array_items_region(t or {}, "llpvm:field-source", "fields", ctx and ctx.role_descriptor, ctx)
     return llbl.gps.raw(llbl.gps.wrap(fields_region_gen, {
         source_gen = gen,
         source_param = param,
@@ -222,7 +239,7 @@ local function fields_region(t)
 end
 
 local function fragment(role, items)
-    return llbl.fragment(role, array_items(items or {}), llbl.here("llpvm-fragment", { skip = 2 }), { algebra = "list" })
+    return llbl.fragment(llpvm_role_id(role), array_items(items or {}, role), llbl.here("llpvm-fragment", { skip = 2 }), { owner = "LLPVMDsl", algebra = "list" })
 end
 
 function M.schema(t) return fragment("llpvm_decl", t) end
@@ -271,7 +288,8 @@ end
 
 local function role_list(label, allowed)
     local function body(_, ctx, v)
-        local gen, param, state = array_items_region(v or {}, "llpvm:" .. label)
+        local descriptor = ctx and ctx.role_descriptor
+        local gen, param, state = array_items_region(v or {}, "llpvm:" .. label, label, descriptor, ctx)
         local function checked_gen(p, s)
             local next_state, item = p.gen(p.param, s)
             if next_state == nil then return nil end
@@ -285,6 +303,9 @@ local function role_list(label, allowed)
     return {
         kind = "array",
         algebra = "list",
+        item_role = label,
+        fragment_role = label,
+        splice_policy = { bare_fragment = true, host_eval = true },
         region = role_region(label, "role_items", body),
     }
 end
@@ -340,8 +361,8 @@ local function tape_body_region_gen(param, state)
     return next_state, item
 end
 
-local function tape_body_region(t, origin)
-    local gen, param, state = array_items_region(t or {}, "llpvm:tape-source")
+local function tape_body_region(t, origin, ctx)
+    local gen, param, state = array_items_region(t or {}, "llpvm:tape-source", "tape_body", ctx and ctx.role_descriptor, ctx)
     return llbl.gps.raw(llbl.gps.wrap(tape_body_region_gen, {
         source_gen = gen,
         source_param = param,
@@ -354,11 +375,14 @@ local LL = llbl.dialect "LLPVMDsl" {
     g.role .decls (role_list("program", { LangSpec = true, WorldSpec = true, TapeSpec = true, MachineSpec = true, PhaseSpec = true, TaskSpec = true, RootSpec = true })),
     g.role .lang_body (role_list("language", { TypeSpec = true })),
     g.role .type_body (role_list("type", { OpSpec = true })),
-    g.role .fields { kind = "array", algebra = "product", region = role_region("fields", "role_items", function(_, _, v) return fields_region(v) end) },
+    g.role .fields { kind = "array", algebra = "product", item_role = "fields", fragment_role = "fields", splice_policy = { bare_fragment = true, host_eval = true }, region = role_region("fields", "role_items", function(_, ctx, v) return fields_region(v, ctx) end) },
     g.role .tape_body {
         kind = "array",
         algebra = "list",
-        region = role_region("tape_body", "role_items", function(_, ctx, v) return tape_body_region(v, ctx and ctx.origin) end),
+        item_role = "tape_body",
+        fragment_role = "tape_body",
+        splice_policy = { bare_fragment = true, host_eval = true },
+        region = role_region("tape_body", "role_items", function(_, ctx, v) return tape_body_region(v, ctx and ctx.origin, ctx) end),
     },
     g.role .phase_body (role_list("phase", { Directive = true, Stage = true })),
     g.role .task_body (role_list("task", { Directive = true, EventSpec = true })),

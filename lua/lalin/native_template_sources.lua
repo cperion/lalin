@@ -7,6 +7,9 @@ local function bind_context(T)
     local Native = T.LalinNative
     local Code = T.LalinCode
     local Core = T.LalinCore
+    local Value = T.LalinValue
+    local Stencil = T.LalinStencil
+    require("lalin.native")(T)
     local Support = require("lalin.native_template_support")(T)
     local api = {}
 
@@ -579,6 +582,7 @@ local function bind_context(T)
     function Native.NativeAbiVoidResult:native_c_boundary_type() return "void" end
     function Native.NativeAbiScalarValue:native_c_boundary_type() return self.scalar:native_c_scalar_type() end
     function Native.NativeAbiPointerValue:native_c_boundary_type() return "void *" end
+    function Native.NativeAbiDescriptorValue:native_c_boundary_type() return "struct lalin_native_abi_descriptor_" .. symbol_fragment(self:native_projection_token()) end
     function Native.NativeAbiByRefValue:native_c_boundary_type() return "void *" end
     function Native.NativeAbiSRetResult:native_c_boundary_type() return "void" end
 
@@ -589,6 +593,7 @@ local function bind_context(T)
     function Native.NativeAbiVoidResult:native_projection_token(_target) return "void" end
     function Native.NativeAbiScalarValue:native_projection_token(_target) return self.scalar:native_scalar_token() end
     function Native.NativeAbiPointerValue:native_projection_token(_target) return "ptr" .. tostring(self.scalar.bits) end
+    function Native.NativeAbiDescriptorValue:native_projection_token(_target) return "desc." .. symbol_fragment(self.layout.name or "layout") .. "." .. tostring(self.layout.size) .. "." .. tostring(self.layout.align or self.layout.alignment or 1) end
     function Native.NativeAbiByRefValue:native_projection_token(_target) return "byref" .. tostring(self.alignment) end
     function Native.NativeAbiSRetResult:native_projection_token(target) return "sret." .. self.pointer_param.abi:native_projection_token(target) end
 
@@ -598,6 +603,7 @@ local function bind_context(T)
 
     function Native.NativeAbiScalarValue:native_frame_c_type(_target) return self.scalar:native_c_scalar_type() end
     function Native.NativeAbiPointerValue:native_frame_c_type(_target) return "uintptr_t" end
+    function Native.NativeAbiDescriptorValue:native_frame_c_type(_target) return self:native_c_boundary_type() end
     function Native.NativeAbiByRefValue:native_frame_c_type(_target) return "uintptr_t" end
 
     function Native.NativeAbiProjection:native_store_param_to_frame(_target, _hole, _param_name)
@@ -616,6 +622,10 @@ local function bind_context(T)
         return frame_store(self:native_frame_c_type(target), hole_address_expr(hole), "(uintptr_t)" .. param_name)
     end
 
+    function Native.NativeAbiDescriptorValue:native_store_param_to_frame(_target, hole, param_name)
+        return "    __builtin_memcpy(frame + (uintptr_t)&" .. hole.symbol .. ", &" .. param_name .. ", " .. tostring(self.layout.size) .. ");"
+    end
+
     function Native.NativeAbiProjection:native_load_arg_from_frame(_target, _hole)
         internal_error("unsupported native ABI argument frame load")
     end
@@ -632,6 +642,10 @@ local function bind_context(T)
         return "(void *)(uintptr_t)" .. frame_load(self:native_frame_c_type(target), hole_address_expr(hole))
     end
 
+    function Native.NativeAbiDescriptorValue:native_load_arg_from_frame(target, hole)
+        return "*(" .. self:native_frame_c_type(target) .. " *)(void *)(frame + (uintptr_t)&" .. hole.symbol .. ")"
+    end
+
     function Native.NativeAbiProjection:native_store_result_to_frame(_target, _hole, _expr)
         internal_error("unsupported native ABI result frame store")
     end
@@ -644,6 +658,14 @@ local function bind_context(T)
         return frame_store(self:native_frame_c_type(target), hole_address_expr(hole), "(uintptr_t)(" .. expr .. ")")
     end
 
+    function Native.NativeAbiByRefValue:native_store_result_to_frame(target, hole, expr)
+        return frame_store(self:native_frame_c_type(target), hole_address_expr(hole), "(uintptr_t)(" .. expr .. ")")
+    end
+
+    function Native.NativeAbiDescriptorValue:native_store_result_to_frame(_target, hole, expr)
+        return "    __builtin_memcpy(frame + (uintptr_t)&" .. hole.symbol .. ", &(" .. expr .. "), " .. tostring(self.layout.size) .. ");"
+    end
+
     function Native.NativeAbiProjection:native_return_from_frame(_target, _hole)
         internal_error("unsupported native ABI return frame load")
     end
@@ -654,6 +676,36 @@ local function bind_context(T)
 
     function Native.NativeAbiPointerValue:native_return_from_frame(target, hole)
         return "(void *)(uintptr_t)" .. frame_load(self:native_frame_c_type(target), hole_address_expr(hole))
+    end
+
+    function Native.NativeAbiByRefValue:native_return_from_frame(target, hole)
+        return "(void *)(uintptr_t)" .. frame_load(self:native_frame_c_type(target), hole_address_expr(hole))
+    end
+
+    function Native.NativeAbiDescriptorValue:native_return_from_frame(target, hole)
+        return "*(" .. self:native_frame_c_type(target) .. " *)(void *)(frame + (uintptr_t)&" .. hole.symbol .. ")"
+    end
+
+    function Native.NativeAbiProjection:append_native_c_declarations(_lines, _seen)
+        return nil
+    end
+
+    function Native.NativeAbiDescriptorValue:append_native_c_declarations(lines, seen)
+        seen = seen or {}
+        local ty = self:native_c_boundary_type()
+        if seen[ty] then return end
+        seen[ty] = true
+        lines[#lines + 1] = ty .. " {"
+        for _, field in ipairs(self.fields or {}) do
+            lines[#lines + 1] = "    " .. field.value:native_frame_c_type() .. " " .. symbol_fragment(field.field_name) .. ";"
+        end
+        lines[#lines + 1] = "};"
+    end
+
+    function Native.NativeAbiFunctionProjection:append_native_c_declarations(lines)
+        local seen = {}
+        self.result.abi:append_native_c_declarations(lines, seen)
+        for _, param in ipairs(self.params or {}) do param.abi:append_native_c_declarations(lines, seen) end
     end
 
     function Native.NativeAbiFunctionProjection:native_projection_token()
@@ -689,6 +741,34 @@ local function bind_context(T)
     function Native.NativeAbiFunctionProjection:native_result_is_void()
         return asdl.isa(self.result.abi, Native.NativeAbiVoidResult) or asdl.isa(self.result.abi, Native.NativeAbiSRetResult)
     end
+
+    function Native.NativeCodeResultShape:native_result_shape_token()
+        internal_error("unsupported native Code result shape token")
+    end
+
+    function Native.NativeCodeResultVoidShape:native_result_shape_token() return "void" end
+    function Native.NativeCodeResultScalarShape:native_result_shape_token() return self.scalar:native_scalar_token() end
+    function Native.NativeCodeResultPointerShape:native_result_shape_token() return "ptr" .. tostring(self.scalar.bits) end
+    function Native.NativeCodeResultDescriptorShape:native_result_shape_token() return "descriptor." .. symbol_fragment(self.layout.name or "layout") .. "." .. tostring(self.layout.size) end
+    function Native.NativeCodeResultByRefShape:native_result_shape_token() return "byref" .. tostring(self.alignment) end
+    function Native.NativeCodeResultSRetShape:native_result_shape_token() return "sret." .. symbol_fragment(self.result_ty:native_source_type_token()) end
+
+    function Native.NativeCodeResultShape:native_result_copy_size(_target)
+        internal_error("unsupported native Code result copy size")
+    end
+
+    function Native.NativeCodeResultScalarShape:native_result_copy_size(_target) return self.scalar:native_size_bytes() end
+    function Native.NativeCodeResultPointerShape:native_result_copy_size(target) return target.pointer_bits / 8 end
+    function Native.NativeCodeResultDescriptorShape:native_result_copy_size(_target) return self.layout.size end
+    function Native.NativeCodeResultByRefShape:native_result_copy_size(target) return target.pointer_bits / 8 end
+
+    function Native.NativeCodeResultShape:native_result_family_scalar(target)
+        return Support.scalar_bool8(target and target.pointer_bits or nil)
+    end
+
+    function Native.NativeCodeResultScalarShape:native_result_family_scalar(_target) return self.scalar end
+    function Native.NativeCodeResultPointerShape:native_result_family_scalar(_target) return self.scalar end
+    function Native.NativeCodeResultByRefShape:native_result_family_scalar(target) return Support.scalar_pointer(target.pointer_bits) end
 
     function Core.BinAdd:native_integer_c_expr(scalar, lhs, rhs)
         local u = scalar:native_c_unsigned_type()
@@ -1013,10 +1093,10 @@ local function bind_context(T)
         )
     end
 
-    local function append_terminal_source(out, input, scalar)
-        local token = scalar:native_scalar_token()
-        local ty = scalar:native_code_type()
-        local axis = Native.NativeCodeTermReturnAxis({ ty })
+    local function append_terminal_source_for_shape(out, input, shape)
+        local token = shape:native_result_shape_token()
+        local scalar = shape:native_result_family_scalar(input.domain.target)
+        local axis = Native.NativeCodeTermReturnShapeAxis(shape)
         local family = Support.code_term_frame_family("return." .. token, input.domain.target, scalar, axis)
         local entry = "lalin_native_code_term_return_" .. symbol_fragment(token)
         local lines = c_prelude()
@@ -1035,6 +1115,79 @@ local function bind_context(T)
             lines,
             {},
             {}
+        )
+    end
+
+    local function append_terminal_source(out, input, scalar)
+        append_terminal_source_for_shape(out, input, Native.NativeCodeResultScalarShape(scalar))
+    end
+
+    local function append_void_terminal_source(out, input)
+        append_terminal_source_for_shape(out, input, Native.NativeCodeResultVoidShape)
+    end
+
+    local function append_result_copy_source(out, input, shape)
+        if asdl.isa(shape, Native.NativeCodeResultVoidShape) then return end
+        local token = shape:native_result_shape_token()
+        local scalar = shape:native_result_family_scalar(input.domain.target)
+        local axis = Native.NativeCodeInstResultCopyAxis(shape)
+        local family = Support.code_inst_frame_family("result_copy." .. token, input.domain.target, scalar, axis)
+        local id_base = "native.hole.code.inst.result_copy." .. token
+        local src_hole = frame_offset_hole(id_base .. ".src")
+        local dst_hole = frame_offset_hole(id_base .. ".dst")
+        local holes = { src_hole, dst_hole }
+        local next_symbol = Support.next_continuation_symbol()
+        local lines = c_prelude()
+        append_hole_externs(lines, holes)
+        lines[#lines + 1] = continuation_extern(next_symbol)
+        lines[#lines + 1] = "void lalin_native_code_inst_result_copy_" .. symbol_fragment(token) .. "(uint8_t *frame) {"
+        lines[#lines + 1] = "    __builtin_memcpy(frame + (uintptr_t)&" .. dst_hole.symbol .. ", frame + (uintptr_t)&" .. src_hole.symbol .. ", " .. tostring(shape:native_result_copy_size(input.domain.target)) .. ");"
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        append_manifest_source(
+            out,
+            "code.inst.result_copy." .. token,
+            family,
+            Native.NativeChunkParallelCopy,
+            scalar_frame_signature(scalar, 2, { Support.next_continuation_ordinal() }),
+            Native.NativeExtractContinuationFragment({ next_symbol }),
+            "lalin_native_code_inst_result_copy_" .. symbol_fragment(token),
+            lines,
+            holes,
+            { Support.next_continuation_ordinal() }
+        )
+    end
+
+    local function append_sret_result_copy_source(out, input, shape)
+        local token = shape:native_result_shape_token()
+        local scalar = shape:native_result_family_scalar(input.domain.target)
+        local axis = Native.NativeCodeInstResultCopyAxis(shape)
+        local family = Support.code_inst_frame_family("result_copy." .. token, input.domain.target, scalar, axis)
+        local id_base = "native.hole.code.inst.result_copy." .. token
+        local src_hole = frame_offset_hole(id_base .. ".src")
+        local ptr_hole = frame_offset_hole(id_base .. ".sret_ptr")
+        local size_hole = imm32_hole(id_base .. ".size")
+        local holes = { src_hole, ptr_hole, size_hole }
+        local next_symbol = Support.next_continuation_symbol()
+        local lines = c_prelude()
+        append_hole_externs(lines, holes)
+        lines[#lines + 1] = continuation_extern(next_symbol)
+        lines[#lines + 1] = "void lalin_native_code_inst_result_copy_" .. symbol_fragment(token) .. "(uint8_t *frame) {"
+        lines[#lines + 1] = "    uint8_t *dst = (uint8_t *)(uintptr_t)" .. frame_load("uintptr_t", hole_address_expr(ptr_hole)) .. ";"
+        lines[#lines + 1] = "    __builtin_memcpy(dst, frame + (uintptr_t)&" .. src_hole.symbol .. ", (uint32_t)(uintptr_t)&" .. size_hole.symbol .. ");"
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        append_manifest_source(
+            out,
+            "code.inst.result_copy." .. token,
+            family,
+            Native.NativeChunkParallelCopy,
+            scalar_frame_signature(scalar, 3, { Support.next_continuation_ordinal() }),
+            Native.NativeExtractContinuationFragment({ next_symbol }),
+            "lalin_native_code_inst_result_copy_" .. symbol_fragment(token),
+            lines,
+            holes,
+            { Support.next_continuation_ordinal() }
         )
     end
 
@@ -2198,6 +2351,37 @@ local function bind_context(T)
         append_manifest_source(out, "code.term.switch_step." .. token .. "." .. loc_token .. ".imm", family, Native.NativeChunkControlOp, signature, Native.NativeExtractContinuationFragment({ then_symbol, else_symbol }), entry, lines, holes, { then_ordinal, else_ordinal })
     end
 
+    local function append_variant_switch_step_control_source(out, input, scalar, key_location)
+        local token = scalar:native_scalar_token()
+        local loc_token = Support.logical_location_token(key_location)
+        local id_base = "native.hole.code.term.variant_switch_step." .. token .. "." .. loc_token
+        local key_holes = key_location:native_edge_copy_source_holes(id_base, scalar)
+        local case_hole = scalar_immediate_hole(id_base .. ".case", scalar)
+        local holes = {}
+        for _, hole in ipairs(key_holes) do holes[#holes + 1] = hole end
+        holes[#holes + 1] = case_hole
+        local operands = { Support.stencil_operand(0, scalar, key_location), Support.stencil_operand(1, scalar, Support.location_class_immediate()) }
+        local then_ordinal = Support.then_continuation_ordinal()
+        local else_ordinal = Support.else_continuation_ordinal()
+        local then_symbol = Support.then_continuation_symbol()
+        local else_symbol = Support.else_continuation_symbol()
+        local then_signature = Support.stencil_continuation_signature(then_ordinal, {})
+        local else_signature = Support.stencil_continuation_signature(else_ordinal, {})
+        local signature = control_signature(scalar, operands, { then_signature, else_signature })
+        local family = control_family(input, "variant_switch_step." .. token .. "." .. loc_token .. ".imm", Native.NativeCodeTermVariantSwitchAxis)
+        local entry = "lalin_native_code_term_variant_switch_step_" .. symbol_fragment(token .. "_" .. loc_token)
+        local lines = c_prelude()
+        append_hole_externs(lines, holes)
+        lines[#lines + 1] = continuation_extern(then_symbol, then_signature)
+        lines[#lines + 1] = continuation_extern(else_symbol, else_signature)
+        lines[#lines + 1] = "void " .. entry .. "(" .. table.concat(fragment_signature_params(signature), ", ") .. ") {"
+        lines[#lines + 1] = "    " .. scalar:native_c_scalar_type() .. " key = " .. key_location:native_edge_copy_source_expr(scalar, key_holes) .. ";"
+        lines[#lines + 1] = "    " .. scalar:native_c_scalar_type() .. " case_value = (" .. scalar:native_c_scalar_type() .. ")" .. hole_address_expr(case_hole) .. ";"
+        lines[#lines + 1] = "    if (key == case_value) { " .. then_symbol.name .. "(frame); } else { " .. else_symbol.name .. "(frame); }"
+        lines[#lines + 1] = "}"
+        append_manifest_source(out, "code.term.variant_switch_step." .. token .. "." .. loc_token .. ".imm", family, Native.NativeChunkControlOp, signature, Native.NativeExtractContinuationFragment({ then_symbol, else_symbol }), entry, lines, holes, { then_ordinal, else_ordinal })
+    end
+
     local function append_unreachable_control_source(out, input)
         local frame_scalar = Support.scalar_bool8()
         local signature = control_signature(frame_scalar, {}, {})
@@ -2209,6 +2393,19 @@ local function bind_context(T)
         lines[#lines + 1] = "    __builtin_trap();"
         lines[#lines + 1] = "}"
         append_manifest_source(out, "code.term.unreachable.trap", family, Native.NativeChunkControlOp, signature, Native.NativeExtractTerminalContinuation, entry, lines, {}, {})
+    end
+
+    local function append_trap_control_source(out, input)
+        local frame_scalar = Support.scalar_bool8()
+        local signature = control_signature(frame_scalar, {}, {})
+        local family = control_family(input, "trap.trap", Native.NativeCodeTermTrapAxis)
+        local entry = "lalin_native_code_term_trap"
+        local lines = c_prelude()
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        lines[#lines + 1] = "    (void)frame;"
+        lines[#lines + 1] = "    __builtin_trap();"
+        lines[#lines + 1] = "}"
+        append_manifest_source(out, "code.term.trap.trap", family, Native.NativeChunkControlOp, signature, Native.NativeExtractTerminalContinuation, entry, lines, {}, {})
     end
 
     local function append_call_return_control_source(out, input)
@@ -2248,11 +2445,15 @@ local function bind_context(T)
         append_branch_control_source(out, input, Support.location_class_frame_slot())
         append_branch_control_source(out, input, Support.location_class_continuation_arg())
         append_unreachable_control_source(out, input)
+        append_trap_control_source(out, input)
         append_call_return_control_source(out, input)
+        append_void_terminal_source(out, input)
         for _, scalar_support in ipairs(input.domain.scalars or {}) do
             local scalar = scalar_support.scalar
             append_switch_step_control_source(out, input, scalar, Support.location_class_frame_slot())
             append_switch_step_control_source(out, input, scalar, Support.location_class_continuation_arg())
+            append_variant_switch_step_control_source(out, input, scalar, Support.location_class_frame_slot())
+            append_variant_switch_step_control_source(out, input, scalar, Support.location_class_continuation_arg())
         end
         for _, symbol in ipairs((input.domain.runtime and input.domain.runtime.symbols) or {}) do
             if symbol.abi:native_has_no_params() then append_trap_runtime_source(out, input, symbol) end
@@ -2276,6 +2477,8 @@ local function bind_context(T)
         )
     end
 
+    local call_result_hole_needed
+
     local function append_public_abi_adapter_source(out, input, projection)
         local token = projection:native_projection_token()
         local id_text = "code.func.public_abi_adapter." .. token
@@ -2288,7 +2491,7 @@ local function bind_context(T)
             holes[#holes + 1] = frame_offset_hole("native.hole.code.func.public_abi_adapter." .. token .. ".param" .. tostring(param.param_index))
         end
         local result_hole
-        if asdl.isa(projection.result.abi, Native.NativeAbiScalarValue) or asdl.isa(projection.result.abi, Native.NativeAbiPointerValue) then
+        if call_result_hole_needed(projection) then
             result_hole = frame_offset_hole("native.hole.code.func.public_abi_adapter." .. token .. ".result")
             holes[#holes + 1] = result_hole
         end
@@ -2312,10 +2515,12 @@ local function bind_context(T)
             relocation_declarations(hole_ordinals, { first_ordinal })
         )
         local lines = c_prelude()
+        projection:append_native_c_declarations(lines)
         append_hole_externs(lines, holes)
         lines[#lines + 1] = continuation_extern(first_symbol, first_signature)
         lines[#lines + 1] = projection:native_c_function_declaration(entry) .. " {"
-        lines[#lines + 1] = "    uint8_t frame[(uint32_t)(uintptr_t)&" .. frame_size_hole.symbol .. "];"
+        lines[#lines + 1] = "    __asm__ volatile(\"jmp 1f\\n .long " .. frame_size_hole.symbol .. "\\n1:\");"
+        lines[#lines + 1] = "    uint8_t frame[" .. tostring(FRAME_BYTES) .. "];"
         lines[#lines + 1] = "    (void)frame;"
         local hole_index = 2
         for _, param in ipairs(projection.params or {}) do
@@ -2344,15 +2549,18 @@ local function bind_context(T)
         local result_abi = projection.result.abi
         if asdl.isa(result_abi, Native.NativeAbiScalarValue) then
             operands[#operands + 1] = Support.stencil_operand(#operands, result_abi.scalar, Support.location_class_frame_slot())
-        elseif asdl.isa(result_abi, Native.NativeAbiPointerValue) then
+        elseif asdl.isa(result_abi, Native.NativeAbiPointerValue) or asdl.isa(result_abi, Native.NativeAbiByRefValue) or asdl.isa(result_abi, Native.NativeAbiDescriptorValue) then
             operands[#operands + 1] = Support.stencil_operand(#operands, Support.scalar_pointer(projection.target.pointer_bits), Support.location_class_frame_slot())
         end
         local next_ordinal = Support.next_continuation_ordinal()
         return Support.spill_all_stencil_signature(Support.scalar_bool8(), operands, { Support.stencil_continuation_signature(next_ordinal, {}) })
     end
 
-    local function call_result_hole_needed(projection)
-        return asdl.isa(projection.result.abi, Native.NativeAbiScalarValue) or asdl.isa(projection.result.abi, Native.NativeAbiPointerValue)
+    function call_result_hole_needed(projection)
+        return asdl.isa(projection.result.abi, Native.NativeAbiScalarValue)
+            or asdl.isa(projection.result.abi, Native.NativeAbiPointerValue)
+            or asdl.isa(projection.result.abi, Native.NativeAbiDescriptorValue)
+            or asdl.isa(projection.result.abi, Native.NativeAbiByRefValue)
     end
 
     local function append_call_common_lines(lines, input, projection, holes, call_expr)
@@ -2375,7 +2583,7 @@ local function bind_context(T)
     local function append_direct_call_source(out, input, projection)
         local token = projection:native_projection_token()
         local id_text = "code.inst.call.direct." .. token
-        local axis = Native.NativeCodeInstCallAxis(Code.CodeCallDirect(Code.CodeFuncId("native.call.direct." .. token)), Code.CodeSigId("native.call.sig." .. token))
+        local axis = Native.NativeCodeInstCallShapeAxis(Native.NativeCodeCallDirectTarget, projection)
         local family = Support.code_inst_frame_family("call.direct." .. token, input.domain.target, Support.scalar_bool8(), axis)
         local call_hole = call_rel32_hole("native.hole.code.inst.call.direct." .. token .. ".target")
         local holes = { call_hole }
@@ -2385,6 +2593,7 @@ local function bind_context(T)
         local signature = call_source_signature(projection)
         local entry = "lalin_native_code_inst_call_direct_" .. symbol_fragment(token)
         local lines = c_prelude()
+        projection:append_native_c_declarations(lines)
         for i = 2, #holes do lines[#lines + 1] = "extern const uint8_t " .. holes[i].symbol .. ";" end
         lines[#lines + 1] = "extern " .. projection:native_c_function_declaration(call_hole.symbol) .. ";"
         lines[#lines + 1] = continuation_extern(next_symbol, Support.stencil_continuation_signature(Support.next_continuation_ordinal(), {}))
@@ -2399,9 +2608,7 @@ local function bind_context(T)
         local token = projection:native_projection_token()
         local mode = closure and "closure" or "indirect"
         local id_text = "code.inst.call." .. mode .. "." .. token
-        local sig_id = Code.CodeSigId("native.call.sig." .. token)
-        local call_target = closure and Code.CodeCallClosure(Code.CodeValueId("native.call.closure." .. token), sig_id) or Code.CodeCallIndirect(Code.CodeValueId("native.call.indirect." .. token), sig_id)
-        local axis = Native.NativeCodeInstCallAxis(call_target, sig_id)
+        local axis = Native.NativeCodeInstCallShapeAxis(closure and Native.NativeCodeCallClosurePointer or Native.NativeCodeCallIndirectPointer, projection)
         local family = Support.code_inst_frame_family("call." .. mode .. "." .. token, input.domain.target, Support.scalar_bool8(), axis)
         local holes = { frame_offset_hole("native.hole.code.inst.call." .. mode .. "." .. token .. ".fn") }
         if closure then holes[#holes + 1] = frame_offset_hole("native.hole.code.inst.call." .. mode .. "." .. token .. ".env") end
@@ -2411,6 +2618,7 @@ local function bind_context(T)
         local signature = call_source_signature(projection)
         local entry = "lalin_native_code_inst_call_" .. mode .. "_" .. symbol_fragment(token)
         local lines = c_prelude()
+        projection:append_native_c_declarations(lines)
         append_hole_externs(lines, holes)
         if closure then
             local closure_params = { "void *" }
@@ -2438,37 +2646,923 @@ local function bind_context(T)
         append_manifest_source(out, id_text, family, Native.NativeChunkCallOp, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, holes, { Support.next_continuation_ordinal() })
     end
 
-    local function append_runtime_call_source(out, input, symbol)
-        local projection = symbol.abi
-        local token = symbol.id.text .. "." .. projection:native_projection_token()
-        local axis = Native.NativeCodeInstCallAxis(Code.CodeCallExtern(Code.CodeExternId(symbol.id.text)), Code.CodeSigId("native.call.sig." .. token))
+    local function append_extern_call_source(out, input, projection)
+        local token = projection:native_projection_token()
+        local id_text = "code.inst.call.extern." .. token
+        local axis = Native.NativeCodeInstCallShapeAxis(Native.NativeCodeCallExternTarget, projection)
         local family = Support.code_inst_frame_family("call.extern." .. token, input.domain.target, Support.scalar_bool8(), axis)
-        local holes = {}
+        local call_hole = call_rel32_hole("native.hole.code.inst.call.extern." .. token .. ".target")
+        local holes = { call_hole }
         for _, param in ipairs(projection.params or {}) do holes[#holes + 1] = frame_offset_hole("native.hole.code.inst.call.extern." .. token .. ".arg" .. tostring(param.param_index)) end
         if call_result_hole_needed(projection) then holes[#holes + 1] = frame_offset_hole("native.hole.code.inst.call.extern." .. token .. ".result") end
         local next_symbol = Support.next_continuation_symbol()
         local signature = call_source_signature(projection)
         local entry = "lalin_native_code_inst_call_extern_" .. symbol_fragment(token)
         local lines = c_prelude()
-        append_hole_externs(lines, holes)
-        lines[#lines + 1] = "extern " .. projection:native_c_function_declaration(symbol.name) .. ";"
+        projection:append_native_c_declarations(lines)
+        for i = 2, #holes do lines[#lines + 1] = "extern const uint8_t " .. holes[i].symbol .. ";" end
+        lines[#lines + 1] = "extern " .. projection:native_c_function_declaration(call_hole.symbol) .. ";"
         lines[#lines + 1] = continuation_extern(next_symbol, Support.stencil_continuation_signature(Support.next_continuation_ordinal(), {}))
         lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
-        append_call_common_lines(lines, input, projection, holes, function(args) return symbol.name .. "(" .. args .. ")" end)
+        append_call_common_lines(lines, input, projection, { unpack(holes, 2) }, function(args) return call_hole.symbol .. "(" .. args .. ")" end)
         lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
         lines[#lines + 1] = "}"
-        append_manifest_source(out, "code.inst.call.extern." .. token, family, Native.NativeChunkCallOp, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, holes, { Support.next_continuation_ordinal() }, { Native.NativeTemplateRelocationRuntimeSymbol })
+        append_manifest_source(out, id_text, family, Native.NativeChunkCallOp, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, holes, { Support.next_continuation_ordinal() })
+    end
+
+    local function append_unique_extern_call_source(out, input, projections, projection)
+        for _, existing in ipairs(projections) do
+            if existing:native_abi_function_projection_equals(projection) then return end
+        end
+        projections[#projections + 1] = projection
+        append_extern_call_source(out, input, projection)
+    end
+
+    local function append_result_sources_for_projection(out, input, projection)
+        local shape = projection.result:native_code_result_shape()
+        append_terminal_source_for_shape(out, input, shape)
+        if asdl.isa(shape, Native.NativeCodeResultSRetShape) then
+            append_sret_result_copy_source(out, input, shape)
+        else
+            append_result_copy_source(out, input, shape)
+        end
+    end
+
+    local function append_unique_result_sources_for_projection(out, input, shapes, projection)
+        local shape = projection.result:native_code_result_shape()
+        for _, existing in ipairs(shapes) do
+            if existing:native_code_result_shape_equals(shape) then return end
+        end
+        shapes[#shapes + 1] = shape
+        append_result_sources_for_projection(out, input, projection)
     end
 
     local function append_domain_abi_and_call_sources(out, input)
+        local extern_call_projections = {}
+        local result_shapes = { Native.NativeCodeResultVoidShape }
+        for _, scalar_support in ipairs(input.domain.scalars or {}) do
+            local scalar = scalar_support.scalar
+            if asdl.isa(scalar, Native.NativeScalarPointer) then
+                result_shapes[#result_shapes + 1] = Native.NativeCodeResultPointerShape(scalar)
+            else
+                result_shapes[#result_shapes + 1] = Native.NativeCodeResultScalarShape(scalar)
+            end
+        end
         for _, projection in ipairs(input.domain.public_abi_adapters or {}) do
             append_public_abi_adapter_source(out, input, projection)
+            append_unique_result_sources_for_projection(out, input, result_shapes, projection)
             append_direct_call_source(out, input, projection)
             append_indirect_call_source(out, input, projection, false)
             append_indirect_call_source(out, input, projection, true)
+            append_unique_extern_call_source(out, input, extern_call_projections, projection)
         end
         for _, symbol in ipairs((input.domain.runtime and input.domain.runtime.symbols) or {}) do
-            append_runtime_call_source(out, input, symbol)
+            append_unique_result_sources_for_projection(out, input, result_shapes, symbol.abi)
+            append_unique_extern_call_source(out, input, extern_call_projections, symbol.abi)
+        end
+    end
+
+    function Core.BinRem:native_binary_family_name() return "rem" end
+
+    function Core.BinDiv:native_integer_c_expr(_scalar, lhs, rhs)
+        return "((" .. rhs .. ") == 0 ? 0 : (" .. lhs .. ") / (" .. rhs .. "))", "div"
+    end
+
+    function Core.BinRem:native_integer_c_expr(_scalar, lhs, rhs)
+        return "((" .. rhs .. ") == 0 ? 0 : (" .. lhs .. ") % (" .. rhs .. "))", "rem"
+    end
+
+    function Value.ReductionOp:native_kernel_reduction_token()
+        internal_error("unsupported kernel reduction op token")
+    end
+
+    function Value.ReductionAdd:native_kernel_reduction_token() return "add" end
+    function Value.ReductionMul:native_kernel_reduction_token() return "mul" end
+    function Value.ReductionMin:native_kernel_reduction_token() return "min" end
+    function Value.ReductionMax:native_kernel_reduction_token() return "max" end
+    function Value.ReductionAnd:native_kernel_reduction_token() return "and" end
+    function Value.ReductionOr:native_kernel_reduction_token() return "or" end
+    function Value.ReductionXor:native_kernel_reduction_token() return "xor" end
+
+    function Value.ReductionOp:native_kernel_reduce_expr(_scalar, _acc, _value)
+        internal_error("unsupported kernel reduction op C expression")
+    end
+
+    function Value.ReductionAdd:native_kernel_reduce_expr(scalar, acc, value)
+        if asdl.isa(scalar, Native.NativeScalarFloat) then return "(" .. acc .. " + " .. value .. ")" end
+        return Core.BinAdd:native_integer_c_expr(scalar, acc, value)
+    end
+
+    function Value.ReductionMul:native_kernel_reduce_expr(scalar, acc, value)
+        if asdl.isa(scalar, Native.NativeScalarFloat) then return "(" .. acc .. " * " .. value .. ")" end
+        return Core.BinMul:native_integer_c_expr(scalar, acc, value)
+    end
+
+    function Value.ReductionMin:native_kernel_reduce_expr(_scalar, acc, value)
+        return "((" .. value .. ") < (" .. acc .. ") ? (" .. value .. ") : (" .. acc .. "))"
+    end
+
+    function Value.ReductionMax:native_kernel_reduce_expr(_scalar, acc, value)
+        return "((" .. value .. ") > (" .. acc .. ") ? (" .. value .. ") : (" .. acc .. "))"
+    end
+
+    function Value.ReductionAnd:native_kernel_reduce_expr(_scalar, acc, value)
+        return "(" .. acc .. " & " .. value .. ")"
+    end
+
+    function Value.ReductionOr:native_kernel_reduce_expr(_scalar, acc, value)
+        return "(" .. acc .. " | " .. value .. ")"
+    end
+
+    function Value.ReductionXor:native_kernel_reduce_expr(_scalar, acc, value)
+        return "(" .. acc .. " ^ " .. value .. ")"
+    end
+
+    function Stencil.StencilScanMode:native_kernel_scan_token()
+        internal_error("unsupported kernel scan mode token")
+    end
+
+    function Stencil.StencilScanInclusive:native_kernel_scan_token() return "inclusive" end
+    function Stencil.StencilScanExclusive:native_kernel_scan_token() return "exclusive" end
+
+    function Stencil.StencilCopySemantics:native_kernel_copy_token()
+        internal_error("unsupported kernel copy semantics token")
+    end
+
+    function Stencil.StencilCopyNoOverlap:native_kernel_copy_token() return "no_overlap" end
+    function Stencil.StencilCopyMayOverlapForward:native_kernel_copy_token() return "may_overlap_forward" end
+    function Stencil.StencilCopyMayOverlapBackward:native_kernel_copy_token() return "may_overlap_backward" end
+    function Stencil.StencilCopyMemMove:native_kernel_copy_token() return "memmove" end
+
+    function Stencil.StencilPartitionSemantics:native_kernel_partition_token()
+        internal_error("unsupported kernel partition semantics token")
+    end
+
+    function Stencil.StencilPartitionStable:native_kernel_partition_token() return "stable" end
+    function Stencil.StencilPartitionUnstable:native_kernel_partition_token() return "unstable" end
+
+    function Native.NativeKernelValueSourceShape:native_kernel_value_token()
+        internal_error("unsupported kernel value source-shape token")
+    end
+
+    function Native.NativeKernelValueVoidShape:native_kernel_value_token() return "void" end
+    function Native.NativeKernelValueScalarShape:native_kernel_value_token() return self.scalar:native_scalar_token() end
+    function Native.NativeKernelValuePointerShape:native_kernel_value_token() return "ptr." .. self.pointer:native_scalar_token() end
+    function Native.NativeKernelValueBytesShape:native_kernel_value_token() return "bytes" .. tostring(self.size) .. ".align" .. tostring(self.alignment) end
+
+    function Native.NativeKernelValueSourceShape:native_kernel_family_scalar(target)
+        return Support.scalar_bool8(target and target.pointer_bits or nil)
+    end
+
+    function Native.NativeKernelValueScalarShape:native_kernel_family_scalar(_target) return self.scalar end
+    function Native.NativeKernelValuePointerShape:native_kernel_family_scalar(_target) return self.pointer end
+
+    function Native.NativeKernelValueSourceShape:native_kernel_c_scalar(_target)
+        return nil
+    end
+
+    function Native.NativeKernelValueScalarShape:native_kernel_c_scalar(_target) return self.scalar end
+    function Native.NativeKernelValuePointerShape:native_kernel_c_scalar(_target) return self.pointer end
+
+    function Native.NativeKernelValueSourceShape:native_kernel_value_size(target)
+        return target.pointer_bits / 8
+    end
+
+    function Native.NativeKernelValueVoidShape:native_kernel_value_size(_target) return 0 end
+    function Native.NativeKernelValueScalarShape:native_kernel_value_size(_target) return self.scalar:native_size_bytes() end
+    function Native.NativeKernelValuePointerShape:native_kernel_value_size(_target) return self.pointer:native_size_bytes() end
+    function Native.NativeKernelValueBytesShape:native_kernel_value_size(_target) return self.size end
+
+    function Native.NativeKernelValueSourceShape:native_kernel_load_expr(_target, _hole)
+        internal_error("kernel value source shape is not scalar-loadable")
+    end
+
+    function Native.NativeKernelValueScalarShape:native_kernel_load_expr(_target, hole)
+        return frame_load(self.scalar:native_c_scalar_type(), hole_address_expr(hole))
+    end
+
+    function Native.NativeKernelValuePointerShape:native_kernel_load_expr(_target, hole)
+        return frame_load(self.pointer:native_c_scalar_type(), hole_address_expr(hole))
+    end
+
+    function Native.NativeKernelValueSourceShape:native_kernel_store_line(_target, _hole, _expr)
+        internal_error("kernel value source shape is not scalar-storable")
+    end
+
+    function Native.NativeKernelValueScalarShape:native_kernel_store_line(_target, hole, expr)
+        return frame_store(self.scalar:native_c_scalar_type(), hole_address_expr(hole), expr)
+    end
+
+    function Native.NativeKernelValuePointerShape:native_kernel_store_line(_target, hole, expr)
+        return frame_store(self.pointer:native_c_scalar_type(), hole_address_expr(hole), expr)
+    end
+
+    function Native.NativeKernelTripCountSourceShape:native_kernel_trip_token()
+        internal_error("unsupported kernel trip-count source-shape token")
+    end
+
+    function Native.NativeKernelTripUnknownShape:native_kernel_trip_token() return "unknown" end
+    function Native.NativeKernelTripDynamicExactShape:native_kernel_trip_token() return "dynamic_exact" end
+    function Native.NativeKernelTripDynamicNonNegativeShape:native_kernel_trip_token() return "dynamic_nonnegative" end
+
+    function Native.NativeKernelTripCountSourceShape:native_kernel_trip_holes(_id_base)
+        return {}
+    end
+
+    function Native.NativeKernelTripDynamicExactShape:native_kernel_trip_holes(id_base)
+        return { frame_offset_hole(id_base .. ".trip") }
+    end
+
+    function Native.NativeKernelTripDynamicNonNegativeShape:native_kernel_trip_holes(id_base)
+        return { frame_offset_hole(id_base .. ".trip") }
+    end
+
+    function Native.NativeKernelTripCountSourceShape:native_kernel_trip_expr(_target, _holes)
+        return nil
+    end
+
+    function Native.NativeKernelTripDynamicExactShape:native_kernel_trip_expr(_target, holes)
+        return frame_load("intptr_t", hole_address_expr(holes[1]))
+    end
+
+    function Native.NativeKernelTripDynamicNonNegativeShape:native_kernel_trip_expr(_target, holes)
+        return frame_load("intptr_t", hole_address_expr(holes[1]))
+    end
+
+    function Native.NativeKernelTripCountSourceShape:native_kernel_trip_adjust_lines(_lines, _trip_name)
+        return nil
+    end
+
+    function Native.NativeKernelTripDynamicNonNegativeShape:native_kernel_trip_adjust_lines(lines, trip_name)
+        lines[#lines + 1] = "    if (" .. trip_name .. " < 0) { " .. trip_name .. " = 0; }"
+    end
+
+    function Native.NativeKernelLoopSourceShape:native_kernel_loop_token()
+        internal_error("unsupported kernel loop source-shape token")
+    end
+
+    function Native.NativeKernelLoopRange1DShape:native_kernel_loop_token()
+        return "range1d." .. self.index_scalar:native_scalar_token() .. ".trip." .. self.trip_count:native_kernel_trip_token() .. (self.has_counter and ".counter" or ".nocounter")
+    end
+
+    function Native.NativeKernelLaneAddressSourceShape:native_kernel_lane_token()
+        internal_error("unsupported kernel lane address source-shape token")
+    end
+
+    function Native.NativeKernelLaneScalarAddressShape:native_kernel_lane_token()
+        return "scalar." .. self.elem:native_kernel_value_token() .. ".addr." .. self.address:native_scalar_token() .. ".index." .. self.index:native_scalar_token()
+    end
+
+    function Native.NativeKernelLaneContiguousAddressShape:native_kernel_lane_token()
+        return "contiguous." .. self.elem:native_kernel_value_token() .. ".addr." .. self.address:native_scalar_token() .. ".index." .. self.index:native_scalar_token()
+    end
+
+    function Native.NativeKernelLaneStridedAddressShape:native_kernel_lane_token()
+        return "strided." .. self.elem:native_kernel_value_token() .. ".addr." .. self.address:native_scalar_token() .. ".index." .. self.index:native_scalar_token()
+    end
+
+    function Native.NativeKernelLaneIndexedAddressShape:native_kernel_lane_token()
+        return "indexed." .. self.elem:native_kernel_value_token() .. ".addr." .. self.address:native_scalar_token() .. ".index." .. self.index:native_scalar_token()
+    end
+
+    local function add_hole(holes, hole)
+        holes[#holes + 1] = hole
+        return hole
+    end
+
+    local function append_kernel_hole_externs(lines, holes)
+        for _, hole in ipairs(holes or {}) do
+            if not asdl.isa(hole.hole, Native.NativePatchCallRel32) then
+                lines[#lines + 1] = "extern const uint8_t " .. hole.symbol .. ";"
+            end
+        end
+    end
+
+    function Native.NativeKernelLaneAddressSourceShape:native_kernel_address_expr(_input, _id_base, _holes, _lines)
+        internal_error("unsupported kernel lane address source-shape expression")
+    end
+
+    local function lane_base_and_index(shape, _input, id_base, holes)
+        local base_hole = add_hole(holes, frame_offset_hole(id_base .. ".base"))
+        local index_hole = add_hole(holes, frame_offset_hole(id_base .. ".index"))
+        local base = frame_load(shape.address:native_c_scalar_type(), hole_address_expr(base_hole))
+        local index = frame_load(shape.index:native_c_scalar_type(), hole_address_expr(index_hole))
+        return base, index
+    end
+
+    function Native.NativeKernelLaneScalarAddressShape:native_kernel_address_expr(input, id_base, holes, _lines)
+        local base_hole = add_hole(holes, frame_offset_hole(id_base .. ".base"))
+        return frame_load(self.address:native_c_scalar_type(), hole_address_expr(base_hole))
+    end
+
+    function Native.NativeKernelLaneContiguousAddressShape:native_kernel_address_expr(input, id_base, holes, _lines)
+        local base, index = lane_base_and_index(self, input, id_base, holes)
+        local elem_hole = add_hole(holes, imm32_hole(id_base .. ".elem_size"))
+        return "((uintptr_t)(" .. base .. ") + (uintptr_t)(" .. index .. ") * (uintptr_t)" .. hole_address_expr(elem_hole) .. ")"
+    end
+
+    function Native.NativeKernelLaneStridedAddressShape:native_kernel_address_expr(input, id_base, holes, _lines)
+        local base, index = lane_base_and_index(self, input, id_base, holes)
+        local stride_hole = add_hole(holes, frame_offset_hole(id_base .. ".stride"))
+        local stride = frame_load(self.index:native_c_scalar_type(), hole_address_expr(stride_hole))
+        return "((uintptr_t)(" .. base .. ") + (uintptr_t)(" .. index .. ") * (uintptr_t)(" .. stride .. "))"
+    end
+
+    function Native.NativeKernelLaneIndexedAddressShape:native_kernel_address_expr(input, id_base, holes, _lines)
+        local base, index = lane_base_and_index(self, input, id_base, holes)
+        local elem_hole = add_hole(holes, imm32_hole(id_base .. ".elem_size"))
+        return "((uintptr_t)(" .. base .. ") + (uintptr_t)(" .. index .. ") * (uintptr_t)" .. hole_address_expr(elem_hole) .. ")"
+    end
+
+    function Native.NativeKernelValueExprSourceShape:native_kernel_expr_token()
+        internal_error("unsupported kernel expression source-shape token")
+    end
+
+    function Native.NativeKernelExprCodeValueShape:native_kernel_expr_token() return "code_value." .. self.value:native_kernel_value_token() end
+    function Native.NativeKernelExprKernelValueShape:native_kernel_expr_token() return "kernel_value." .. self.value:native_kernel_value_token() end
+    function Native.NativeKernelExprConstShape:native_kernel_expr_token() return "const." .. self.value:native_kernel_value_token() end
+    function Native.NativeKernelExprAffineShape:native_kernel_expr_token() return "affine." .. self.value:native_kernel_value_token() .. ".terms" .. tostring(self.term_count) end
+    function Native.NativeKernelExprUnaryShape:native_kernel_expr_token() return "unary." .. self.op:native_unary_family_name() .. "." .. self.value:native_kernel_value_token() end
+    function Native.NativeKernelExprCastShape:native_kernel_expr_token() return "cast." .. self.op:native_cast_family_name() .. "." .. self.from:native_kernel_value_token() .. ".to." .. self.to:native_kernel_value_token() end
+    function Native.NativeKernelExprBinaryShape:native_kernel_expr_token() return "binary." .. self.op:native_binary_family_name() .. "." .. self.value:native_kernel_value_token() end
+    function Native.NativeKernelExprCompareShape:native_kernel_expr_token() return "compare." .. self.cmp:native_compare_family_name() .. "." .. self.operand:native_kernel_value_token() end
+    function Native.NativeKernelExprSelectShape:native_kernel_expr_token() return "select." .. self.value:native_kernel_value_token() end
+    function Native.NativeKernelExprLaneLoadShape:native_kernel_expr_token() return "lane_load." .. self.lane:native_kernel_lane_token() end
+
+    function Native.NativeKernelValueExprSourceShape:native_kernel_result_value_shape()
+        internal_error("unsupported kernel expression result value shape")
+    end
+
+    function Native.NativeKernelExprCodeValueShape:native_kernel_result_value_shape() return self.value end
+    function Native.NativeKernelExprKernelValueShape:native_kernel_result_value_shape() return self.value end
+    function Native.NativeKernelExprConstShape:native_kernel_result_value_shape() return self.value end
+    function Native.NativeKernelExprAffineShape:native_kernel_result_value_shape() return self.value end
+    function Native.NativeKernelExprUnaryShape:native_kernel_result_value_shape() return self.value end
+    function Native.NativeKernelExprCastShape:native_kernel_result_value_shape() return self.to end
+    function Native.NativeKernelExprBinaryShape:native_kernel_result_value_shape() return self.value end
+    function Native.NativeKernelExprCompareShape:native_kernel_result_value_shape() return Native.NativeKernelValueScalarShape(Support.scalar_bool8()) end
+    function Native.NativeKernelExprSelectShape:native_kernel_result_value_shape() return self.value end
+    function Native.NativeKernelExprLaneLoadShape:native_kernel_result_value_shape() return self.lane.elem end
+
+    function Native.NativeKernelValueExprSourceShape:native_kernel_inline_expr(_input, _id_base, _holes, _lines)
+        internal_error("unsupported kernel inline expression source shape")
+    end
+
+    function Native.NativeKernelExprCodeValueShape:native_kernel_inline_expr(input, id_base, holes, _lines)
+        local src = add_hole(holes, frame_offset_hole(id_base .. ".src"))
+        return self.value:native_kernel_load_expr(input.domain.target, src)
+    end
+
+    function Native.NativeKernelExprKernelValueShape:native_kernel_inline_expr(input, id_base, holes, _lines)
+        local src = add_hole(holes, frame_offset_hole(id_base .. ".src"))
+        return self.value:native_kernel_load_expr(input.domain.target, src)
+    end
+
+    function Native.NativeKernelExprConstShape:native_kernel_inline_expr(input, id_base, holes, _lines)
+        local scalar = self.value:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes kernel const expressions must be emitted by a byte-copy source") end
+        local hole = add_hole(holes, asdl.isa(scalar, Native.NativeScalarPointer) and ptr64_hole(id_base .. ".const") or scalar_immediate_hole(id_base .. ".const", scalar))
+        return "(" .. scalar:native_c_scalar_type() .. ")" .. hole_address_expr(hole)
+    end
+
+    function Native.NativeKernelExprAffineShape:native_kernel_inline_expr(input, id_base, holes, lines)
+        local scalar = self.value:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes kernel affine expressions are not scalar source shapes") end
+        local c_type = scalar:native_c_scalar_type()
+        local var = "kernel_affine_" .. symbol_fragment(id_base)
+        local base_hole = add_hole(holes, scalar_immediate_hole(id_base .. ".base", scalar))
+        lines[#lines + 1] = "    " .. c_type .. " " .. var .. " = (" .. c_type .. ")" .. hole_address_expr(base_hole) .. ";"
+        for i = 0, self.term_count - 1 do
+            local term_hole = add_hole(holes, frame_offset_hole(id_base .. ".term" .. tostring(i)))
+            local coeff_hole = add_hole(holes, imm32_hole(id_base .. ".coeff" .. tostring(i)))
+            lines[#lines + 1] = "    " .. var .. " = (" .. c_type .. ")((intptr_t)" .. var .. " + (intptr_t)" .. self.value:native_kernel_load_expr(input.domain.target, term_hole) .. " * (intptr_t)" .. hole_address_expr(coeff_hole) .. ");"
+        end
+        return var
+    end
+
+    local function kernel_unary_expr(op, scalar, value)
+        if op == Core.UnaryNeg then
+            if asdl.isa(scalar, Native.NativeScalarFloat) then return "(-(" .. value .. "))" end
+            return op:native_integer_c_expr(scalar, value)
+        end
+        if op == Core.UnaryNot then return "((" .. value .. ") == 0)" end
+        if op == Core.UnaryBitNot then return "(~(" .. value .. "))" end
+        internal_error("unsupported kernel unary op")
+    end
+
+    function Native.NativeKernelExprUnaryShape:native_kernel_inline_expr(input, id_base, holes, lines)
+        local scalar = self.value:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes kernel unary expressions are not scalar source shapes") end
+        return kernel_unary_expr(self.op, scalar, self.value:native_kernel_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".src"))))
+    end
+
+    local function kernel_binary_expr(op, scalar, lhs, rhs)
+        if asdl.isa(scalar, Native.NativeScalarFloat) then
+            if op == Core.BinAdd or op == Core.BinSub or op == Core.BinMul or op == Core.BinDiv then return op:native_float_c_expr(scalar, lhs, rhs) end
+        else
+            return op:native_integer_c_expr(scalar, lhs, rhs)
+        end
+        internal_error("unsupported kernel binary op for scalar")
+    end
+
+    function Native.NativeKernelExprCastShape:native_kernel_inline_expr(input, id_base, holes, lines)
+        local from_scalar = self.from:native_kernel_c_scalar(input.domain.target)
+        local to_scalar = self.to:native_kernel_c_scalar(input.domain.target)
+        if from_scalar == nil or to_scalar == nil then internal_error("bytes kernel cast expressions are not scalar source shapes") end
+        local src = self.from:native_kernel_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".src")))
+        local var = "kernel_cast_" .. symbol_fragment(id_base)
+        self.op:append_native_cast_c_lines(lines, from_scalar, to_scalar, src, var)
+        return var
+    end
+
+    function Native.NativeKernelExprBinaryShape:native_kernel_inline_expr(input, id_base, holes, _lines)
+        local scalar = self.value:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes kernel binary expressions are not scalar source shapes") end
+        local lhs = self.value:native_kernel_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".lhs")))
+        local rhs = self.value:native_kernel_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".rhs")))
+        return kernel_binary_expr(self.op, scalar, lhs, rhs)
+    end
+
+    function Native.NativeKernelExprCompareShape:native_kernel_inline_expr(input, id_base, holes, _lines)
+        local scalar = self.operand:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes kernel compare expressions are not scalar source shapes") end
+        local lhs = self.operand:native_kernel_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".lhs")))
+        local rhs = self.operand:native_kernel_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".rhs")))
+        return "(uint8_t)(" .. self.cmp:native_c_compare_expr(scalar, lhs, rhs) .. ")"
+    end
+
+    function Native.NativeKernelExprSelectShape:native_kernel_inline_expr(input, id_base, holes, _lines)
+        local scalar = self.value:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes kernel select expressions are not scalar source shapes") end
+        local cond = frame_load("uint8_t", hole_address_expr(add_hole(holes, frame_offset_hole(id_base .. ".cond"))))
+        local lhs = self.value:native_kernel_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".true")))
+        local rhs = self.value:native_kernel_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".false")))
+        return "((" .. cond .. ") != 0 ? (" .. lhs .. ") : (" .. rhs .. "))"
+    end
+
+    function Native.NativeKernelExprLaneLoadShape:native_kernel_inline_expr(input, id_base, holes, lines)
+        local address = self.lane:native_kernel_address_expr(input, id_base .. ".lane", holes, lines)
+        local scalar = self.lane.elem:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes kernel lane loads require byte-copy lowering") end
+        return "*(" .. scalar:native_c_scalar_type() .. " *)(void *)(uintptr_t)(" .. address .. ")"
+    end
+
+    function Native.NativeKernelPredicateSourceShape:native_kernel_predicate_token()
+        internal_error("unsupported kernel predicate source-shape token")
+    end
+
+    function Native.NativeKernelPredicateNonZeroShape:native_kernel_predicate_token() return "nonzero" end
+    function Native.NativeKernelPredicateCompareConstShape:native_kernel_predicate_token() return "compare_const." .. self.cmp:native_compare_family_name() .. "." .. self.operand:native_kernel_value_token() end
+    function Native.NativeKernelPredicateRangeShape:native_kernel_predicate_token() return "range." .. self.operand:native_kernel_value_token() end
+    function Native.NativeKernelPredicateLogicalShape:native_kernel_predicate_token() return "logical" .. tostring(self.term_count) end
+    function Native.NativeKernelPredicateFloatClassShape:native_kernel_predicate_token() return "float_class." .. self.operand:native_kernel_value_token() end
+
+    function Native.NativeKernelPredicateSourceShape:native_kernel_inline_predicate(_input, _id_base, _holes, _lines)
+        internal_error("unsupported kernel predicate source-shape expression")
+    end
+
+    function Native.NativeKernelPredicateNonZeroShape:native_kernel_inline_predicate(_input, _id_base, _holes, _lines)
+        return "1"
+    end
+
+    function Native.NativeKernelPredicateCompareConstShape:native_kernel_inline_predicate(input, id_base, holes, _lines)
+        local scalar = self.operand:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes kernel compare predicate is not scalar source shape") end
+        local lhs = self.operand:native_kernel_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".value")))
+        local rhs_hole = add_hole(holes, scalar_immediate_hole(id_base .. ".const", scalar))
+        local rhs = "(" .. scalar:native_c_scalar_type() .. ")" .. hole_address_expr(rhs_hole)
+        return self.cmp:native_c_compare_expr(scalar, lhs, rhs)
+    end
+
+    function Native.NativeKernelPredicateRangeShape:native_kernel_inline_predicate(input, id_base, holes, _lines)
+        local scalar = self.operand:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes kernel range predicate is not scalar source shape") end
+        local value = self.operand:native_kernel_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".value")))
+        local lo = add_hole(holes, scalar_immediate_hole(id_base .. ".lo", scalar))
+        local hi = add_hole(holes, scalar_immediate_hole(id_base .. ".hi", scalar))
+        return "((" .. value .. ") >= (" .. scalar:native_c_scalar_type() .. ")" .. hole_address_expr(lo) .. " && (" .. value .. ") < (" .. scalar:native_c_scalar_type() .. ")" .. hole_address_expr(hi) .. ")"
+    end
+
+    function Native.NativeKernelPredicateLogicalShape:native_kernel_inline_predicate(input, id_base, holes, _lines)
+        local parts = {}
+        for i = 0, self.term_count - 1 do
+            parts[#parts + 1] = "(" .. frame_load("uint8_t", hole_address_expr(add_hole(holes, frame_offset_hole(id_base .. ".term" .. tostring(i))))) .. " != 0)"
+        end
+        if #parts == 0 then return "1" end
+        return table.concat(parts, " && ")
+    end
+
+    function Native.NativeKernelPredicateFloatClassShape:native_kernel_inline_predicate(input, id_base, holes, _lines)
+        local scalar = self.operand:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes kernel float-class predicate is not scalar source shape") end
+        local value = self.operand:native_kernel_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".value")))
+        return "((" .. value .. ") == (" .. value .. "))"
+    end
+
+    function Native.NativeKernelReducerSourceShape:native_kernel_reducer_token()
+        return self.op:native_kernel_reduction_token() .. "." .. self.value:native_kernel_value_token()
+    end
+
+    function Native.NativeKernelCallSourceShape:native_kernel_call_token()
+        internal_error("unsupported kernel call source-shape token")
+    end
+
+    function Native.NativeKernelCallInternalShape:native_kernel_call_token() return "internal" end
+    function Native.NativeKernelCallExternShape:native_kernel_call_token() return "extern" end
+    function Native.NativeKernelCallEffectOnlyShape:native_kernel_call_token() return "effect_only" .. tostring(self.effect_count) end
+
+    function Native.NativeKernelEffectSourceShape:native_kernel_effect_token()
+        internal_error("unsupported kernel effect source-shape token")
+    end
+
+    function Native.NativeKernelEffectStoreShape:native_kernel_effect_token() return "store." .. self.dst:native_kernel_lane_token() .. "." .. self.value:native_kernel_expr_token() end
+    function Native.NativeKernelEffectScanShape:native_kernel_effect_token() return "scan." .. self.mode:native_kernel_scan_token() .. "." .. self.dst:native_kernel_lane_token() .. "." .. self.reducer:native_kernel_reducer_token() end
+    function Native.NativeKernelEffectPartitionShape:native_kernel_effect_token() return "partition." .. self.semantics:native_kernel_partition_token() .. "." .. self.dst:native_kernel_lane_token() .. "." .. self.src:native_kernel_expr_token() .. "." .. self.pred:native_kernel_predicate_token() end
+    function Native.NativeKernelEffectCopyShape:native_kernel_effect_token() return "copy." .. self.semantics:native_kernel_copy_token() .. "." .. self.dst:native_kernel_lane_token() .. "." .. self.src:native_kernel_expr_token() end
+    function Native.NativeKernelEffectScatterReduceShape:native_kernel_effect_token() return "scatter_reduce." .. self.dst:native_kernel_lane_token() .. "." .. self.value:native_kernel_expr_token() .. "." .. self.reducer:native_kernel_reducer_token() end
+    function Native.NativeKernelEffectFoldShape:native_kernel_effect_token() return "fold." .. self.reducer:native_kernel_reducer_token() end
+    function Native.NativeKernelEffectCallShape:native_kernel_effect_token() return "call." .. self.call:native_kernel_call_token() end
+
+    function Native.NativeKernelResultSourceShape:native_kernel_result_token()
+        internal_error("unsupported kernel result source-shape token")
+    end
+
+    function Native.NativeKernelResultVoidShape:native_kernel_result_token() return "void" end
+    function Native.NativeKernelResultValueShape:native_kernel_result_token() return "value." .. self.value:native_kernel_expr_token() end
+    function Native.NativeKernelResultFindShape:native_kernel_result_token() return "find." .. self.src:native_kernel_expr_token() .. "." .. self.pred:native_kernel_predicate_token() end
+    function Native.NativeKernelResultReductionShape:native_kernel_result_token() return "reduction." .. self.reducer:native_kernel_reducer_token() end
+    function Native.NativeKernelResultClosedFormShape:native_kernel_result_token() return "closed_form." .. self.value:native_kernel_value_token() end
+    function Native.NativeKernelResultOriginalControlShape:native_kernel_result_token() return "original_control" end
+
+    function Native.NativeKernelProofSourceShape:native_kernel_proof_token()
+        internal_error("unsupported kernel proof source-shape token")
+    end
+
+    function Native.NativeKernelProofFlowShape:native_kernel_proof_token() return "flow" end
+    function Native.NativeKernelProofValueShape:native_kernel_proof_token() return "value" end
+    function Native.NativeKernelProofMemoryShape:native_kernel_proof_token() return "memory" end
+    function Native.NativeKernelProofEffectShape:native_kernel_proof_token() return "effect" end
+    function Native.NativeKernelProofFunctionEquivalenceShape:native_kernel_proof_token() return "function_equivalence" end
+
+    function Native.NativeKernelBodySourceShape:native_kernel_body_token()
+        return "body." .. self.loop:native_kernel_loop_token() .. ".lanes" .. tostring(self.lane_count) .. ".bindings" .. tostring(self.binding_count) .. ".effects" .. tostring(self.effect_count) .. ".result." .. self.result:native_kernel_result_token()
+    end
+
+    function Native.NativeKernelPlanSourceShape:native_kernel_plan_token()
+        internal_error("unsupported kernel plan source-shape token")
+    end
+
+    function Native.NativeKernelNoPlanSourceShape:native_kernel_plan_token() return "no_plan" end
+    function Native.NativeKernelPlannedSourceShape:native_kernel_plan_token() return "planned." .. self.body:native_kernel_body_token() end
+
+    function Native.NativeKernelOpSourceShape:native_kernel_op_source_token()
+        internal_error("unsupported kernel op source-shape token")
+    end
+
+    function Native.NativeKernelDomainOpShape:native_kernel_op_source_token() return "domain." .. self.loop:native_kernel_loop_token() end
+    function Native.NativeKernelLaneOpShape:native_kernel_op_source_token() return "lane." .. self.lane:native_kernel_lane_token() end
+    function Native.NativeKernelExprOpShape:native_kernel_op_source_token() return "expr." .. self.expr:native_kernel_expr_token() end
+    function Native.NativeKernelEffectOpShape:native_kernel_op_source_token() return "effect." .. self.effect:native_kernel_effect_token() end
+    function Native.NativeKernelResultOpShape:native_kernel_op_source_token() return "result." .. self.result:native_kernel_result_token() end
+    function Native.NativeKernelProofOpShape:native_kernel_op_source_token() return "proof." .. self.proof:native_kernel_proof_token() end
+    function Native.NativeKernelBodyOpShape:native_kernel_op_source_token() return self.body:native_kernel_body_token() end
+    function Native.NativeKernelPlanOpShape:native_kernel_op_source_token() return "plan." .. self.plan:native_kernel_plan_token() end
+
+    local function kernel_family(input, op_shape, role)
+        local name = op_shape:native_kernel_op_source_token()
+        return Support.family(
+            Support.kernel_family_id(name),
+            role,
+            {
+                Support.axis_target(input.domain.target),
+                Support.axis_kernel(Native.NativeKernelSourceShapeAxis(op_shape)),
+            },
+            Support.protocol_void_none()
+        )
+    end
+
+    local function kernel_next_signature(frame_scalar)
+        local next_ordinal = Support.next_continuation_ordinal()
+        local next_signature = Support.stencil_continuation_signature(next_ordinal, {})
+        return Support.spill_all_stencil_signature(frame_scalar, {}, { next_signature }), next_ordinal, next_signature, Support.next_continuation_symbol()
+    end
+
+    local function append_kernel_manifest_source(out, input, op_shape, role, signature, extraction, entry, lines, holes, continuation_ordinals, extra_relocations)
+        append_manifest_source(
+            out,
+            "kernel." .. op_shape:native_kernel_op_source_token(),
+            kernel_family(input, op_shape, role),
+            Native.NativeChunkKernelOp,
+            signature,
+            extraction,
+            entry,
+            lines,
+            holes,
+            continuation_ordinals or {},
+            extra_relocations or {}
+        )
+    end
+
+    function Native.NativeKernelOpSourceShape:append_native_template_sources(_out, _input)
+        internal_error("unsupported KernelOp source shape")
+    end
+
+    function Native.NativeKernelDomainOpShape:append_native_template_sources(out, input)
+        local token = self:native_kernel_op_source_token()
+        local id_base = "native.hole.kernel." .. token
+        local holes = {}
+        local counter_hole
+        if self.loop.has_counter then counter_hole = add_hole(holes, frame_offset_hole(id_base .. ".counter")) end
+        local trip_holes = self.loop.trip_count:native_kernel_trip_holes(id_base)
+        for _, hole in ipairs(trip_holes) do holes[#holes + 1] = hole end
+        local then_ordinal = Support.then_continuation_ordinal()
+        local else_ordinal = Support.else_continuation_ordinal()
+        local then_signature = Support.stencil_continuation_signature(then_ordinal, {})
+        local else_signature = Support.stencil_continuation_signature(else_ordinal, {})
+        local signature = Support.spill_all_stencil_signature(self.loop.index_scalar, {}, { then_signature, else_signature })
+        local then_symbol = Support.then_continuation_symbol()
+        local else_symbol = Support.else_continuation_symbol()
+        local entry = "lalin_native_kernel_" .. symbol_fragment(token)
+        local lines = c_prelude()
+        append_kernel_hole_externs(lines, holes)
+        lines[#lines + 1] = continuation_extern(then_symbol, then_signature)
+        lines[#lines + 1] = continuation_extern(else_symbol, else_signature)
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        local counter_expr = counter_hole and frame_load(self.loop.index_scalar:native_c_scalar_type(), hole_address_expr(counter_hole)) or "0"
+        local trip_expr = self.loop.trip_count:native_kernel_trip_expr(input.domain.target, trip_holes)
+        lines[#lines + 1] = "    intptr_t kernel_counter = (intptr_t)(" .. counter_expr .. ");"
+        if trip_expr ~= nil then
+            lines[#lines + 1] = "    intptr_t kernel_trip = (intptr_t)(" .. trip_expr .. ");"
+            self.loop.trip_count:native_kernel_trip_adjust_lines(lines, "kernel_trip")
+            lines[#lines + 1] = "    if (kernel_counter < kernel_trip) {"
+        else
+            lines[#lines + 1] = "    if (1) {"
+        end
+        if counter_hole ~= nil then lines[#lines + 1] = frame_store(self.loop.index_scalar:native_c_scalar_type(), hole_address_expr(counter_hole), "(" .. self.loop.index_scalar:native_c_scalar_type() .. ")(kernel_counter + 1)") end
+        lines[#lines + 1] = "        " .. then_symbol.name .. "(frame);"
+        lines[#lines + 1] = "    } else {"
+        lines[#lines + 1] = "        " .. else_symbol.name .. "(frame);"
+        lines[#lines + 1] = "    }"
+        lines[#lines + 1] = "}"
+        append_kernel_manifest_source(out, input, self, Native.NativeRoleKernelDomain, signature, Native.NativeExtractContinuationFragment({ then_symbol, else_symbol }), entry, lines, holes, { then_ordinal, else_ordinal })
+    end
+
+    function Native.NativeKernelLaneOpShape:append_native_template_sources(out, input)
+        local token = self:native_kernel_op_source_token()
+        local id_base = "native.hole.kernel." .. token
+        local holes = {}
+        local dst_hole = add_hole(holes, frame_offset_hole(id_base .. ".dst"))
+        local address = self.lane:native_kernel_address_expr(input, id_base, holes, {})
+        local signature, next_ordinal, next_signature, next_symbol = kernel_next_signature(self.lane.address)
+        local entry = "lalin_native_kernel_" .. symbol_fragment(token)
+        local lines = c_prelude()
+        append_kernel_hole_externs(lines, holes)
+        lines[#lines + 1] = continuation_extern(next_symbol, next_signature)
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        lines[#lines + 1] = frame_store(self.lane.address:native_c_scalar_type(), hole_address_expr(dst_hole), "(" .. self.lane.address:native_c_scalar_type() .. ")(" .. address .. ")")
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        append_kernel_manifest_source(out, input, self, Native.NativeRoleKernelLane, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, holes, { next_ordinal })
+    end
+
+    function Native.NativeKernelExprOpShape:append_native_template_sources(out, input)
+        local token = self:native_kernel_op_source_token()
+        local id_base = "native.hole.kernel." .. token
+        local holes = {}
+        local result_shape = self.expr:native_kernel_result_value_shape()
+        local dst_hole = add_hole(holes, frame_offset_hole(id_base .. ".dst"))
+        local scalar = result_shape:native_kernel_family_scalar(input.domain.target)
+        local signature, next_ordinal, next_signature, next_symbol = kernel_next_signature(scalar)
+        local entry = "lalin_native_kernel_" .. symbol_fragment(token)
+        local body = {}
+        body[#body + 1] = continuation_extern(next_symbol, next_signature)
+        body[#body + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        if asdl.isa(result_shape, Native.NativeKernelValueBytesShape) then
+            body[#body + 1] = "    __builtin_memset(frame + " .. hole_address_expr(dst_hole) .. ", 0, " .. tostring(result_shape.size) .. ");"
+        else
+            local expr = self.expr:native_kernel_inline_expr(input, id_base, holes, body)
+            body[#body + 1] = result_shape:native_kernel_store_line(input.domain.target, dst_hole, expr)
+        end
+        body[#body + 1] = "    " .. next_symbol.name .. "(frame);"
+        body[#body + 1] = "}"
+        local lines = c_prelude()
+        append_kernel_hole_externs(lines, holes)
+        for _, line in ipairs(body) do lines[#lines + 1] = line end
+        append_kernel_manifest_source(out, input, self, Native.NativeRoleKernelExpr, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, holes, { next_ordinal })
+    end
+
+    local function kernel_store_value_to_address(lines, input, value_shape, address_expr, value_expr)
+        local scalar = value_shape:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then
+            internal_error("bytes kernel stores require explicit byte-copy source shape")
+        end
+        lines[#lines + 1] = "    *(" .. scalar:native_c_scalar_type() .. " *)(void *)(uintptr_t)(" .. address_expr .. ") = (" .. scalar:native_c_scalar_type() .. ")(" .. value_expr .. ");"
+    end
+
+    function Native.NativeKernelEffectSourceShape:native_kernel_emit_effect(_input, _id_base, _holes, _lines)
+        internal_error("unsupported kernel effect source-shape emission")
+    end
+
+    function Native.NativeKernelEffectStoreShape:native_kernel_emit_effect(input, id_base, holes, lines)
+        local address = self.dst:native_kernel_address_expr(input, id_base .. ".dst", holes, lines)
+        local value = self.value:native_kernel_inline_expr(input, id_base .. ".value", holes, lines)
+        kernel_store_value_to_address(lines, input, self.value:native_kernel_result_value_shape(), address, value)
+    end
+
+    function Native.NativeKernelEffectCopyShape:native_kernel_emit_effect(input, id_base, holes, lines)
+        local address = self.dst:native_kernel_address_expr(input, id_base .. ".dst", holes, lines)
+        local value = self.src:native_kernel_inline_expr(input, id_base .. ".src", holes, lines)
+        kernel_store_value_to_address(lines, input, self.src:native_kernel_result_value_shape(), address, value)
+    end
+
+    function Native.NativeKernelEffectPartitionShape:native_kernel_emit_effect(input, id_base, holes, lines)
+        local pred = self.pred:native_kernel_inline_predicate(input, id_base .. ".pred", holes, lines)
+        lines[#lines + 1] = "    if (" .. pred .. ") {"
+        local address = self.dst:native_kernel_address_expr(input, id_base .. ".dst", holes, lines)
+        local value = self.src:native_kernel_inline_expr(input, id_base .. ".src", holes, lines)
+        kernel_store_value_to_address(lines, input, self.src:native_kernel_result_value_shape(), address, value)
+        lines[#lines + 1] = "    }"
+    end
+
+    function Native.NativeKernelEffectScanShape:native_kernel_emit_effect(input, id_base, holes, lines)
+        local value_shape = self.reducer.value
+        local scalar = value_shape:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes kernel scan reducers require byte-aware source shapes") end
+        local state_hole = add_hole(holes, frame_offset_hole(id_base .. ".state"))
+        local address = self.dst:native_kernel_address_expr(input, id_base .. ".dst", holes, lines)
+        local old = value_shape:native_kernel_load_expr(input.domain.target, state_hole)
+        local loaded = "*(" .. scalar:native_c_scalar_type() .. " *)(void *)(uintptr_t)(" .. address .. ")"
+        local reduced = self.reducer.op:native_kernel_reduce_expr(scalar, old, loaded)
+        if self.mode == Stencil.StencilScanExclusive then
+            kernel_store_value_to_address(lines, input, value_shape, address, old)
+            lines[#lines + 1] = value_shape:native_kernel_store_line(input.domain.target, state_hole, reduced)
+        else
+            lines[#lines + 1] = value_shape:native_kernel_store_line(input.domain.target, state_hole, reduced)
+            kernel_store_value_to_address(lines, input, value_shape, address, reduced)
+        end
+    end
+
+    function Native.NativeKernelEffectScatterReduceShape:native_kernel_emit_effect(input, id_base, holes, lines)
+        local value_shape = self.reducer.value
+        local scalar = value_shape:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes kernel scatter-reduce reducers require byte-aware source shapes") end
+        local address = self.dst:native_kernel_address_expr(input, id_base .. ".dst", holes, lines)
+        local value = self.value:native_kernel_inline_expr(input, id_base .. ".value", holes, lines)
+        local old = "*(" .. scalar:native_c_scalar_type() .. " *)(void *)(uintptr_t)(" .. address .. ")"
+        local reduced = self.reducer.op:native_kernel_reduce_expr(scalar, old, value)
+        kernel_store_value_to_address(lines, input, value_shape, address, reduced)
+    end
+
+    function Native.NativeKernelEffectFoldShape:native_kernel_emit_effect(input, id_base, holes, lines)
+        local value_shape = self.reducer.value
+        local scalar = value_shape:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes kernel fold reducers require byte-aware source shapes") end
+        local state_hole = add_hole(holes, frame_offset_hole(id_base .. ".state"))
+        local value_hole = add_hole(holes, frame_offset_hole(id_base .. ".value"))
+        local old = value_shape:native_kernel_load_expr(input.domain.target, state_hole)
+        local value = value_shape:native_kernel_load_expr(input.domain.target, value_hole)
+        lines[#lines + 1] = value_shape:native_kernel_store_line(input.domain.target, state_hole, self.reducer.op:native_kernel_reduce_expr(scalar, old, value))
+    end
+
+    function Native.NativeKernelEffectCallShape:native_kernel_emit_effect(input, id_base, holes, lines)
+        return self.call:native_kernel_emit_call(input, id_base, holes, lines)
+    end
+
+    function Native.NativeKernelCallSourceShape:native_kernel_emit_call(_input, _id_base, _holes, _lines)
+        internal_error("unsupported kernel call source-shape emission")
+    end
+
+    function Native.NativeKernelCallEffectOnlyShape:native_kernel_emit_call(_input, _id_base, _holes, lines)
+        lines[#lines + 1] = "    __asm__ volatile(\"\" ::: \"memory\");"
+    end
+
+    function Native.NativeKernelCallInternalShape:native_kernel_emit_call(_input, id_base, holes, lines)
+        local target_hole = add_hole(holes, call_rel32_hole(id_base .. ".target"))
+        lines[#lines + 1] = "    extern void " .. target_hole.symbol .. "(uint8_t *frame);"
+        lines[#lines + 1] = "    " .. target_hole.symbol .. "(frame);"
+    end
+
+    function Native.NativeKernelCallExternShape:native_kernel_emit_call(_input, id_base, holes, lines)
+        local target_hole = add_hole(holes, call_rel32_hole(id_base .. ".target"))
+        lines[#lines + 1] = "    extern void " .. target_hole.symbol .. "(uint8_t *frame);"
+        lines[#lines + 1] = "    " .. target_hole.symbol .. "(frame);"
+    end
+
+    function Native.NativeKernelEffectOpShape:append_native_template_sources(out, input)
+        local token = self:native_kernel_op_source_token()
+        local id_base = "native.hole.kernel." .. token
+        local holes = {}
+        local signature, next_ordinal, next_signature, next_symbol = kernel_next_signature(Support.scalar_bool8())
+        local entry = "lalin_native_kernel_" .. symbol_fragment(token)
+        local lines = c_prelude()
+        lines[#lines + 1] = continuation_extern(next_symbol, next_signature)
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        self.effect:native_kernel_emit_effect(input, id_base, holes, lines)
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        local header = c_prelude()
+        append_kernel_hole_externs(header, holes)
+        for i = 4, #lines do header[#header + 1] = lines[i] end
+        append_kernel_manifest_source(out, input, self, Native.NativeRoleKernelEffect, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, header, holes, { next_ordinal })
+    end
+
+    function Native.NativeKernelResultSourceShape:native_kernel_emit_result(_input, _id_base, _holes, _lines)
+        internal_error("unsupported kernel result source-shape emission")
+    end
+
+    function Native.NativeKernelResultVoidShape:native_kernel_emit_result(_input, _id_base, _holes, lines)
+        lines[#lines + 1] = "    (void)frame;"
+    end
+
+    function Native.NativeKernelResultValueShape:native_kernel_emit_result(input, id_base, holes, lines)
+        local dst = add_hole(holes, frame_offset_hole(id_base .. ".result"))
+        local expr = self.value:native_kernel_inline_expr(input, id_base .. ".value", holes, lines)
+        lines[#lines + 1] = self.value:native_kernel_result_value_shape():native_kernel_store_line(input.domain.target, dst, expr)
+    end
+
+    function Native.NativeKernelResultFindShape:native_kernel_emit_result(input, id_base, holes, lines)
+        local dst = add_hole(holes, frame_offset_hole(id_base .. ".result"))
+        local pred = self.pred:native_kernel_inline_predicate(input, id_base .. ".pred", holes, lines)
+        local expr = self.src:native_kernel_inline_expr(input, id_base .. ".src", holes, lines)
+        lines[#lines + 1] = "    if (" .. pred .. ") {"
+        lines[#lines + 1] = self.src:native_kernel_result_value_shape():native_kernel_store_line(input.domain.target, dst, expr)
+        lines[#lines + 1] = "    }"
+    end
+
+    function Native.NativeKernelResultReductionShape:native_kernel_emit_result(input, id_base, holes, lines)
+        local dst = add_hole(holes, frame_offset_hole(id_base .. ".result"))
+        local state = add_hole(holes, frame_offset_hole(id_base .. ".state"))
+        lines[#lines + 1] = self.reducer.value:native_kernel_store_line(input.domain.target, dst, self.reducer.value:native_kernel_load_expr(input.domain.target, state))
+    end
+
+    function Native.NativeKernelResultClosedFormShape:native_kernel_emit_result(input, id_base, holes, lines)
+        local dst = add_hole(holes, frame_offset_hole(id_base .. ".result"))
+        local src = add_hole(holes, frame_offset_hole(id_base .. ".value"))
+        lines[#lines + 1] = self.value:native_kernel_store_line(input.domain.target, dst, self.value:native_kernel_load_expr(input.domain.target, src))
+    end
+
+    function Native.NativeKernelResultOriginalControlShape:native_kernel_emit_result(_input, _id_base, _holes, lines)
+        lines[#lines + 1] = "    __asm__ volatile(\"\" ::: \"memory\");"
+    end
+
+    function Native.NativeKernelResultOpShape:append_native_template_sources(out, input)
+        local token = self:native_kernel_op_source_token()
+        local id_base = "native.hole.kernel." .. token
+        local holes = {}
+        local signature = Support.spill_all_stencil_signature(Support.scalar_bool8(), {}, {})
+        local entry = "lalin_native_kernel_" .. symbol_fragment(token)
+        local lines = c_prelude()
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        self.result:native_kernel_emit_result(input, id_base, holes, lines)
+        lines[#lines + 1] = "}"
+        local header = c_prelude()
+        append_kernel_hole_externs(header, holes)
+        for i = 4, #lines do header[#header + 1] = lines[i] end
+        append_kernel_manifest_source(out, input, self, Native.NativeRoleKernelResult, signature, Native.NativeExtractTerminalContinuation, entry, header, holes, {})
+    end
+
+    function Native.NativeKernelProofOpShape:append_native_template_sources(out, input)
+        local token = self:native_kernel_op_source_token()
+        local signature, next_ordinal, next_signature, next_symbol = kernel_next_signature(Support.scalar_bool8())
+        local entry = "lalin_native_kernel_" .. symbol_fragment(token)
+        local lines = c_prelude()
+        lines[#lines + 1] = continuation_extern(next_symbol, next_signature)
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        lines[#lines + 1] = "    __asm__ volatile(\"\" ::: \"memory\");"
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        append_kernel_manifest_source(out, input, self, Native.NativeRoleKernelProof, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, {}, { next_ordinal })
+    end
+
+    function Native.NativeKernelBodyOpShape:append_native_template_sources(out, input)
+        local token = self:native_kernel_op_source_token()
+        local signature, next_ordinal, next_signature, next_symbol = kernel_next_signature(Support.scalar_bool8())
+        local entry = "lalin_native_kernel_" .. symbol_fragment(token)
+        local lines = c_prelude()
+        lines[#lines + 1] = continuation_extern(next_symbol, next_signature)
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        lines[#lines + 1] = "    __asm__ volatile(\"\" ::: \"memory\");"
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        append_kernel_manifest_source(out, input, self, Native.NativeRoleKernelBody, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, {}, { next_ordinal })
+    end
+
+    function Native.NativeKernelPlanOpShape:append_native_template_sources(out, input)
+        local token = self:native_kernel_op_source_token()
+        local signature, next_ordinal, next_signature, next_symbol = kernel_next_signature(Support.scalar_bool8())
+        local entry = "lalin_native_kernel_" .. symbol_fragment(token)
+        local lines = c_prelude()
+        lines[#lines + 1] = continuation_extern(next_symbol, next_signature)
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        lines[#lines + 1] = "    __asm__ volatile(\"\" ::: \"memory\");"
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        append_kernel_manifest_source(out, input, self, Native.NativeRoleKernelPlan, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, {}, { next_ordinal })
+    end
+
+    local function append_domain_kernel_sources(out, input)
+        for _, shape in ipairs((input.domain.kernel_sources and input.domain.kernel_sources.shapes) or {}) do
+            shape:append_native_template_sources(out, input)
         end
     end
 
@@ -2731,6 +3825,7 @@ local function bind_context(T)
             Native.NativeCodeConstLiteralAxis(ty):append_native_template_sources(out, input)
         end
         append_terminal_source(out, input, scalar)
+        append_result_copy_source(out, input, Native.NativeCodeResultScalarShape(scalar))
     end
 
     function Native.NativeScalarBool8:append_native_template_sources(out, input)
@@ -2743,6 +3838,7 @@ local function bind_context(T)
         Native.NativeCodeInstCompareAxis(Core.CmpEq, ty):append_native_template_sources(out, input)
         Native.NativeCodeInstCompareAxis(Core.CmpNe, ty):append_native_template_sources(out, input)
         append_terminal_source(out, input, self)
+        append_result_copy_source(out, input, Native.NativeCodeResultScalarShape(self))
     end
 
     function Native.NativeScalarInt:append_native_template_sources(out, input)
@@ -2761,7 +3857,8 @@ local function bind_context(T)
         append_entry_source(out, input, self, Support.scalar_bool8())
         Native.NativeCodeInstAliasAxis(ty):append_native_template_sources(out, input)
         Native.NativeCodeConstLiteralAxis(ty):append_native_template_sources(out, input)
-        append_terminal_source(out, input, self)
+        append_terminal_source_for_shape(out, input, Native.NativeCodeResultPointerShape(self))
+        append_result_copy_source(out, input, Native.NativeCodeResultPointerShape(self))
         Native.NativeCodeInstCompareAxis(Core.CmpEq, ty):append_native_template_sources(out, input)
         Native.NativeCodeInstCompareAxis(Core.CmpNe, ty):append_native_template_sources(out, input)
     end
@@ -2777,6 +3874,7 @@ local function bind_context(T)
         end
         Native.NativeCodeInstAliasAxis(ty):append_native_template_sources(out, input)
         append_terminal_source(out, input, scalar)
+        append_result_copy_source(out, input, Native.NativeCodeResultScalarShape(scalar))
     end
 
     local function build_sources_for_domain(domain)
@@ -2795,6 +3893,7 @@ local function bind_context(T)
         append_domain_atomic_sources(out, input)
         append_domain_control_sources(out, input)
         append_domain_abi_and_call_sources(out, input)
+        append_domain_kernel_sources(out, input)
         return out
     end
 

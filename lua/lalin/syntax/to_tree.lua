@@ -6,6 +6,7 @@
 -- Usage: local to_tree = require("lalin.syntax.to_tree")(T)
 -- where T is a projected ASDL context with LalinTree/LalinCore/LalinBind/LalinType.
 
+local llbl = require("llbl")
 local asdl = require("lalin.asdl")
 
 local function bind_context(T)
@@ -15,6 +16,7 @@ local function bind_context(T)
 
   local ToTree = {}
   local TypeValue = require("lalin.syntax.type_value")(T)
+  local adapter = require("lalin.syntax.role_adapter")(T)
   local stmt_list_tag = {}
 
   local function stmt_list(items)
@@ -24,6 +26,11 @@ local function bind_context(T)
   local function is_stmt_list(value)
     return type(value) == "table" and value[stmt_list_tag] == true
   end
+
+  adapter.stmt_list = function(_, items) return stmt_list(items) end
+  adapter.is_stmt_list = function(_, value) return is_stmt_list(value) end
+  adapter:set_lowering(ToTree)
+  ToTree.role_adapter = adapter
 
   local binop_map = {
     add = C.BinAdd, sub = C.BinSub, mul = C.BinMul, div = C.BinDiv,
@@ -58,6 +65,7 @@ local function bind_context(T)
     end
     local cls = asdl.classof(parsed)
     if cls then return parsed end -- already ASDL
+    if llbl.is(parsed, "HostEval") then return adapter:expr(parsed) end
 
     local tag = parsed.tag
     if tag == "Literal" then
@@ -137,17 +145,7 @@ local function bind_context(T)
       return ToTree.expr(parsed.value)
 
     elseif tag == "HostEscape" then
-      if parsed.resolved then
-        local value = parsed.value
-        if type(value) == "table" then
-          local value_cls = asdl.classof(value)
-          if value_cls then return value end
-          if value.tag == "ExprFragment" then return ToTree.expr(value.expr) end
-          if value.tag then return ToTree.expr(value) end
-        end
-        return ToTree.literal(value)
-      end
-      return Tr.ExprLit(Tr.ExprSurface, C.LitNil)
+      return adapter:expr(parsed)
 
     elseif tag == "Cast" then
       local ty = ToTree.parsed_type(parsed.ty)
@@ -180,15 +178,8 @@ local function bind_context(T)
     if not ptype then return Ty.TScalar(C.ScalarVoid) end
     local cls = asdl.classof(ptype)
     if cls then return ptype end
-    if ptype.tag == "HostEscape" then
-      if not ptype.resolved then error("parsed_to_tree: unresolved type host escape", 2) end
-      local value = ptype.value
-      local projected = TypeValue.type(value)
-      if projected ~= nil then return projected end
-      if type(value) == "table" and value.tag then
-        return ToTree.parsed_type(value)
-      end
-      error("parsed_to_tree: type host escape produced unsupported value " .. tostring(value), 2)
+    if llbl.is(ptype, "HostEval") or ptype.tag == "HostEscape" then
+      return adapter:type(ptype)
     end
     error("parsed_to_tree: unsupported parsed type tag " .. tostring(ptype.tag) .. "; type positions use `[ ... ]`", 2)
   end
@@ -217,6 +208,7 @@ local function bind_context(T)
     end
     local cls = asdl.classof(parsed)
     if cls then return parsed end
+    if llbl.is(parsed, "HostEval") then return adapter:place(parsed) end
 
     local tag = parsed.tag
     if tag == "Name" then
@@ -230,30 +222,13 @@ local function bind_context(T)
     elseif tag == "Paren" then
       return ToTree.place(parsed.value)
     elseif tag == "HostEscape" then
-      if not parsed.resolved then error("parsed_to_tree: unresolved place host escape", 2) end
-      return ToTree.place(parsed.value)
+      return adapter:place(parsed)
     end
     error("parsed_to_tree: unsupported place tag " .. tostring(tag), 2)
   end
 
   function ToTree.stmt_splice(value)
-    if type(value) ~= "table" then
-      error("parsed_to_tree: statement splice expected statement fragment, got " .. type(value), 2)
-    end
-    local cls = asdl.classof(value)
-    if cls then return value end
-    if value.tag == "StmtFragment" then return stmt_list(ToTree.stmts(value.body)) end
-    if value.tag then return ToTree.stmt(value) end
-    local out = {}
-    for _, stmt in ipairs(value) do
-      local converted = ToTree.stmt_splice(stmt)
-      if is_stmt_list(converted) then
-        for _, item in ipairs(converted.items) do out[#out + 1] = item end
-      else
-        out[#out + 1] = converted
-      end
-    end
-    return stmt_list(out)
+    return adapter:stmt(value)
   end
 
   --- Convert a parsed statement node to a LalinTree.Stmt.
@@ -263,6 +238,7 @@ local function bind_context(T)
     end
     local cls = asdl.classof(parsed)
     if cls then return parsed end
+    if llbl.is(parsed, "HostEval") then return adapter:stmt(parsed) end
 
     local tag = parsed.tag
     if tag == "StmtAssign" then
@@ -290,8 +266,8 @@ local function bind_context(T)
         parsed.init and ToTree.expr(parsed.init) or ToTree.literal(0))
 
     elseif tag == "StmtExpr" then
-      if parsed.expr and parsed.expr.tag == "HostEscape" and parsed.expr.resolved then
-        return ToTree.stmt_splice(parsed.expr.value)
+      if parsed.expr and (llbl.is(parsed.expr, "HostEval") or parsed.expr.tag == "HostEscape") then
+        return ToTree.stmt_splice(parsed.expr)
       end
       return Tr.StmtExpr(Tr.StmtSurface, ToTree.expr(parsed.expr))
 
@@ -341,6 +317,12 @@ local function bind_context(T)
 
     error("parsed_to_tree: unsupported statement tag " .. tostring(tag), 2)
   end
+
+  function ToTree.decls(value) return adapter:decls(value) end
+  function ToTree.decl(value) return adapter:decl(value) end
+  function ToTree.product_fields(value) return adapter:product_fields(value) end
+  function ToTree.variants(value) return adapter:variants(value) end
+  function ToTree.conts(value) return adapter:conts(value) end
 
   --- Convert an array of parsed statement nodes.
   function ToTree.stmts(list)

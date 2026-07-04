@@ -56,6 +56,7 @@ end
 local function compile_opts(opts)
   opts = copy_opts(opts)
   opts.active_languages = active_languages(opts)
+  opts.decl_stream_role = opts.decl_stream_role or "decls"
   opts.allow_import = false
   opts.env = merge_env(opts.env)
   return opts

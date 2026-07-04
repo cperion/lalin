@@ -11,6 +11,17 @@ local function optional_do(lex)
   lex:next_if("do")
 end
 
+function Decl.parse_host_eval(lex, ctx, role)
+  local raw, open, close = lex:consume_balanced_from_open("[", "]")
+  local refs = Ast.extract_refs(raw)
+  Ast.add_refs(ctx, refs)
+  return Ast.host_eval(raw, refs, Ast.origin(lex, open, close, "parsed:host_eval"), role or (ctx and ctx.expected_role) or "decls")
+end
+
+function Decl.parse_decl_stream(lex, ctx)
+  return Decl.parse_host_eval(lex, ctx, (ctx and ctx.expected_role) or "decls")
+end
+
 function Decl.parse_fn(lex, ctx, entry_start)
   local start = entry_start or ctx.entry_token
   local name = nil
@@ -48,14 +59,79 @@ function Decl.parse_union(lex, ctx, entry_start)
   optional_do(lex)
   local variants = {}
   while not lex:at_eof() and lex:peek().value ~= "end" do
-    local vstart = lex:expect_name("variant name")
-    local fields = {}
-    if lex:peek().value == "(" then fields = Type.parse_params(lex, ctx) end
-    variants[#variants + 1] = Ast.node("Variant", { name = vstart.value, fields = fields }, Ast.origin(lex, vstart, lex.last or vstart, "parsed:variant"))
+    if lex:peek().value == "[" then
+      variants[#variants + 1] = Decl.parse_host_eval(lex, ctx, "variants")
+    else
+      local vstart = lex:expect_name("variant name")
+      local fields = {}
+      if lex:peek().value == "(" then fields = Type.parse_params(lex, ctx) end
+      variants[#variants + 1] = Ast.node("Variant", { name = vstart.value, fields = fields }, Ast.origin(lex, vstart, lex.last or vstart, "parsed:variant"))
+    end
     lex:skip_separators()
   end
   lex:expect("end")
   return Ast.node("DeclUnion", { name = name.value, variants = variants }, Ast.origin(lex, start, lex.last, "parsed:decl"))
+end
+
+local function parse_handle_type(lex, ctx, label)
+  if lex:peek().value ~= "[" then
+    lex:error_at(lex:peek(), "expected " .. (label or "handle type") .. " in `[type]` form")
+  end
+  return Type.parse(lex, ctx)
+end
+
+local function parse_handle_invalid(lex)
+  local t = lex:peek()
+  if t.kind == "number" or t.kind == "string" or t.kind == "name" then
+    lex:next()
+    return t.raw or t.value
+  end
+  lex:error_at(t, "expected handle invalid representation")
+end
+
+function Decl.parse_handle(lex, ctx, entry_start)
+  local start = entry_start or ctx.entry_token
+  local name = lex:expect_name("handle name")
+  local repr = nil
+  local invalid = nil
+  local domain = nil
+  local target = nil
+
+  if lex:peek().value == "[" then
+    repr = parse_handle_type(lex, ctx, "handle representation")
+  end
+  if lex:peek().value == "invalid" then
+    lex:next()
+    lex:next_if("=")
+    invalid = parse_handle_invalid(lex)
+  end
+
+  optional_do(lex)
+  lex:skip_separators()
+  while not lex:at_eof() and lex:peek().value ~= "end" do
+    local key = lex:expect_name("handle fact").value
+    if key == "repr" then
+      repr = parse_handle_type(lex, ctx, "handle representation")
+    elseif key == "invalid" then
+      lex:next_if("=")
+      invalid = parse_handle_invalid(lex)
+    elseif key == "domain" then
+      domain = parse_handle_type(lex, ctx, "handle domain")
+    elseif key == "target" then
+      target = parse_handle_type(lex, ctx, "handle target")
+    else
+      lex:error_at(lex.last, "expected handle fact `repr`, `invalid`, `domain`, or `target`")
+    end
+    lex:skip_separators()
+  end
+  lex:expect("end")
+  return Ast.node("DeclHandle", {
+    name = name.value,
+    repr = repr,
+    invalid = invalid,
+    domain = domain,
+    target = target,
+  }, Ast.origin(lex, start, lex.last, "parsed:decl"))
 end
 
 local function parse_entry_block(lex, ctx)
@@ -88,7 +164,7 @@ local function parse_one_exit(lex, ctx)
         if t.kind == "name" and t1 and t1.value == "[" then
           fields[#fields + 1] = Type.parse_field(lex, ctx)
         elseif t.value == "[" then
-          fields[#fields + 1] = Type.parse_anonymous_field(lex, ctx)
+          fields[#fields + 1] = Type.parse_product_splice(lex, ctx)
         else
           lex:error_at(t, "expected continuation field `name [type]` or anonymous `[type]`")
         end
@@ -118,7 +194,11 @@ function Decl.parse_region(lex, ctx, entry_start)
     lex:next() -- ;
     if not lex:next_if(")") then
       repeat
-        exits[#exits + 1] = parse_one_exit(lex, ctx)
+        if lex:peek().value == "[" then
+          exits[#exits + 1] = Decl.parse_host_eval(lex, ctx, "conts")
+        else
+          exits[#exits + 1] = parse_one_exit(lex, ctx)
+        end
       until not lex:next_if(",")
       lex:expect(")")
     end
@@ -128,12 +208,20 @@ function Decl.parse_region(lex, ctx, entry_start)
   else
     -- Parse data params (product), then optionally ; + continuations
     repeat
-      inputs[#inputs + 1] = Type.parse_field(lex, ctx)
+      if lex:peek().value == "[" then
+        inputs[#inputs + 1] = Type.parse_product_splice(lex, ctx)
+      else
+        inputs[#inputs + 1] = Type.parse_field(lex, ctx)
+      end
     until not lex:next_if(",") or lex:peek().value == ";"
     if lex:next_if(";") then
       if not lex:next_if(")") then
         repeat
-          exits[#exits + 1] = parse_one_exit(lex, ctx)
+          if lex:peek().value == "[" then
+            exits[#exits + 1] = Decl.parse_host_eval(lex, ctx, "conts")
+          else
+            exits[#exits + 1] = parse_one_exit(lex, ctx)
+          end
         until not lex:next_if(",")
         lex:expect(")")
       end

@@ -96,6 +96,7 @@ local attach_source_context
 local build_source_context
 
 local function concrete_type(v)
+    if llbl.is(v, "HostEval") then v = llbl.host_eval.value(v) end
     if is_member(Ty.Type, v) then return v end
     if is(v, Decl) and v.type_name then return Ty.TNamed(Ty.TypeRefPath(path(v.type_name))) end
     local name = symbol_text(v, "type name")
@@ -146,6 +147,7 @@ local function field_inits_from_record(t)
 end
 
 tree_expr = function(v)
+    if llbl.is(v, "HostEval") then v = llbl.host_eval.value(v) end
     if is(v, Expr) then return v:tree() end
     if is_member(Tr.Expr, v) then return v end
     if llbl.is(v, "Symbol") or llbl.is(v, "Name") then return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(ident(v.text, "name"))) end
@@ -213,6 +215,7 @@ local function is_foreign_zone(v)
 end
 
 local function typed_name(v, site)
+    if llbl.is(v, "HostEval") then v = llbl.host_eval.value(v) end
     if is(v, TypedName) then return v end
     if llbl.is(v, "Capture") then
         local name = symbol_text(v.subject, site or "name")
@@ -246,10 +249,12 @@ function expand_array(t, role)
     local out = {}
     for i = 1, #(t or {}) do
         local v = t[i]
+        if llbl.is(v, "HostEval") then v = llbl.host_eval.value(v) end
         if llbl.is(v, "Spread") then
             local frag = v.value
+            if llbl.is(frag, "HostEval") then frag = llbl.host_eval.value(frag) end
             if llbl.is(frag, "Fragment") then
-                if frag.role ~= role then die("expected " .. role .. " fragment, got " .. tostring(frag.role), 2) end
+                if not (frag.role == role or (frag.role_id and llbl.role_id_equal(frag.role_id, llbl.role_id("LalinDSL", role)))) then die("expected " .. role .. " fragment, got " .. tostring(frag.role), 2) end
                 for j = 1, #frag.items do out[#out + 1] = frag.items[j] end
             elseif type(frag) == "table" then
                 for j = 1, #frag do out[#out + 1] = frag[j] end
@@ -267,7 +272,7 @@ function expand_array(t, role)
         elseif role == "decl" and is_foreign_zone(v) then
             -- Language zones are semantic partitions. Lalin projection ignores
             -- non-Lalin zones instead of accepting their values by accident.
-        elseif llbl.is(v, "Fragment") and v.role == role then
+        elseif llbl.is(v, "Fragment") and (v.role == role or (v.role_id and llbl.role_id_equal(v.role_id, llbl.role_id("LalinDSL", role)))) then
             for j = 1, #v.items do out[#out + 1] = v.items[j] end
         else
             out[#out + 1] = v
@@ -1712,7 +1717,8 @@ function TypeCtor:__call(a, b)
 end
 
 local function dsl_fragment(role, items, algebra, payload_role)
-    return llbl.fragment(role, items or {}, llbl.here(role, { skip = 2 }), {
+    return llbl.fragment(llbl.role_id("LalinDSL", role), items or {}, llbl.here(role, { skip = 2 }), {
+        owner = "LalinDSL",
         algebra = algebra,
         payload_role = payload_role,
     })
@@ -1905,10 +1911,12 @@ local function role_array_gen(param, state)
         state.index = state.index + 1
         local v = param.value[state.index]
         if v == nil then return nil end
+        if llbl.is(v, "HostEval") then v = llbl.host_eval.value(v, param.ctx) end
         if llbl.is(v, "Spread") then
             local frag = v.value
+            if llbl.is(frag, "HostEval") then frag = llbl.host_eval.value(frag, param.ctx) end
             if llbl.is(frag, "Fragment") then
-                if frag.role ~= param.fragment_role then
+                if not llbl.role._fragment_compatible(param.role_descriptor, frag, param.ctx) then
                     die("expected " .. param.fragment_role .. " fragment, got " .. tostring(frag.role), 2)
                 end
                 push_items_reverse(stack, frag.items)
@@ -1926,7 +1934,7 @@ local function role_array_gen(param, state)
             end
         elseif param.fragment_role == "decl" and is_foreign_zone(v) then
             -- ignored by Lalin projection
-        elseif llbl.is(v, "Fragment") and v.role == param.fragment_role then
+        elseif llbl.is(v, "Fragment") and llbl.role._fragment_compatible(param.role_descriptor, v, param.ctx) then
             push_items_reverse(stack, v.items)
         else
             return state, v
@@ -1936,8 +1944,10 @@ end
 
 local function role_array(fragment_role, label)
     local function role_body(_, ctx, v)
+        local descriptor = ctx and ctx.role_descriptor or llbl.role.descriptor(ctx, fragment_role)
+        if llbl.is(v, "HostEval") then v = llbl.host_eval.value(v, ctx) end
         if llbl.is(v, "Fragment") then
-            if v.role ~= fragment_role then
+            if not llbl.role._fragment_compatible(descriptor, v, ctx) then
                 llbl.fail("expected " .. label .. " fragment, got " .. tostring(v.role), {
                     code = "E_LALIN_FRAGMENT_ROLE",
                     primary = v.origin or (ctx and ctx.origin),
@@ -1954,10 +1964,15 @@ local function role_array(fragment_role, label)
         return llbl.gps.raw(llbl.gps.wrap(role_array_gen, {
             value = v,
             fragment_role = fragment_role,
+            role_descriptor = descriptor,
+            ctx = ctx,
         }, nil, { kind = "lalin:role-array", role = fragment_role }))
     end
     return {
         kind = "array",
+        item_role = fragment_role,
+        fragment_role = fragment_role,
+        splice_policy = { bare_fragment = true, host_eval = true },
         region = role_region_head("LalinDSL.role." .. tostring(fragment_role))["role_items"] (role_body),
     }
 end
@@ -1973,7 +1988,7 @@ end
 
 local function slot_name(slot) return slot[g.name] { channel = ch.index_name } end
 local function slot_string(slot) return slot[g.string] { channel = ch.call_value } end
-local function slot_type(slot) return slot[g.type] { channel = ch.index_type } end
+local function slot_type(slot) return slot[g.type] { channels = { ch.index_host, ch.index_type } } end
 local function slot_params(slot) return slot[g.params] { channel = ch.call_table } end
 local function slot_decls(slot) return slot[g.decls] { channel = ch.call_table } end
 local function slot_stmts(slot) return slot[g.stmts] { channel = ch.call_table } end
@@ -1995,6 +2010,11 @@ variants_role.algebra = "sum"
 variants_role.payload_role = "product"
 
 local LalinLLB = llbl.dialect "LalinDSL" {
+    g.role .type   { kind = "type", adapter = function(_, v) return concrete_type(v) end },
+    g.role .expr   { kind = "value", adapter = function(_, v) return tree_expr(v) end },
+    g.role .decl   { kind = "value" },
+    g.role .stmt   { kind = "value" },
+    g.role .product { kind = "value" },
     g.role .decls  (role_array("decl", "declaration")),
     g.role .stmts  (role_array("stmt", "statement")),
     g.role .params (role_array("product", "product")),

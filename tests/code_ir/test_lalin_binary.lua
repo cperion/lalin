@@ -107,7 +107,8 @@ local func = Code.CodeFunc(
   block_id,
   { block },
   origin)
-local result = NativeBackend.compile_code_func(func, target, runtime, bank)
+local sig = Code.CodeSig(func.sig, { i32, i32 }, { i32 })
+local result = NativeBackend.compile_code_func(func, sig, target, runtime, bank)
 local call = result.executable.protocol:call_native_executable(Native.NativeExecutableCallInput(result.executable, { Native.NativeCallArgI32(20), Native.NativeCallArgI32(22) }))
 assert(call.value == 42, "minimal scalar native compile should execute from supplied non-empty NativeTemplateBank")
 ]=], native_lua))

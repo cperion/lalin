@@ -178,6 +178,39 @@ Bad root domains:
 - budget-limited enumeration as architecture;
 - synthetic stage names that do not correspond to ASDL semantics.
 
+## Native Kernel Source-Shape Contract
+
+Kernel lowering has two distinct ASDL layers and they must not be collapsed.
+
+**Semantic/native projections** are program-specific. They may mention concrete
+`KernelBody`, `KernelLane`, `ValueExpr`, `ReductionFact`, `StencilPredicate`,
+`CallSummary`, frame roles, and value ids. These facts are for lowering and patch
+binding.
+
+**Source-shape projections** are bank-specific and finite. They must not mention
+program identities or exact kernel bodies. They describe only the instruction or
+control shape needed to choose reusable `NativeChunkKernelOp` templates: loop
+shape, lane address shape, value storage shape, expression operator shape,
+predicate/reducer/call shape, effect shape, result shape, and body summary
+counts. Program values become frame roles, ABI params, holes, or patch
+coordinates.
+
+The required flow is:
+
+```text
+Kernel semantic leaf
+  -> NativeKernel*Projection        -- program-specific lowering facts
+  -> NativeKernel*SourceShape       -- finite bank/source family facts
+  -> NativeKernelSourceShapeAxis    -- template selection
+  -> holes/frame roles/patches      -- program-specific binding
+```
+
+It is invalid for a `NativeChunkKernelOp` family axis to carry a concrete
+`KernelBody`, `KernelLane`, `ValueExpr`, `ReductionFact`, `StencilPredicate`, or
+`CallSummary`. If a source builder seems to need one of those values to select a
+family, add the missing finite source-shape ASDL leaf and keep the concrete value
+as a patch/frame fact.
+
 ## Axis Classification
 
 Family axes should be fixed only when they alter instruction shape or control

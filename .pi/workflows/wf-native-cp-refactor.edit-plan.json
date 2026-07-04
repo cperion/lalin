@@ -2,10 +2,10 @@
 	"version": 1,
 	"workflowId": "wf-native-cp-refactor",
 	"planId": "main",
-	"revision": 138,
+	"revision": 170,
 	"nextId": 38,
 	"createdAt": "2026-07-02T17:26:00.699Z",
-	"updatedAt": "2026-07-04T14:08:39.045Z",
+	"updatedAt": "2026-07-04T19:37:09.021Z",
 	"tasks": [
 		{
 			"id": "T001",
@@ -295,28 +295,6 @@
 			"updatedAt": "2026-07-04T08:35:30.132Z"
 		},
 		{
-			"id": "T017",
-			"title": "Lower Code control, edge copies, calls, and returns",
-			"detail": "Replace append_node linear next-edge insertion at lines 119-131 with explicit block-entry node identities and symbol-bearing control edge creation. Around lines 265-389 implement CodeBlock graph construction for all blocks, block params as frame slots, edge-copy chains as explicit NativeTemplateNode values, and terminator leaf methods for CodeTermJump, Branch, Switch, VariantSwitch, Return, Trap, Unreachable. Return supports zero values (void terminal), one scalar/descriptor/byref result copied to canonical result/sret slot, and rejects >1 as invalid Code before native lowering. Add CodeInstCall lowering for direct internal, extern runtime symbol, indirect code pointer, and closure calls using NativeAbiProjection and call-return continuation edges. Branch/switch templates must specialize on successor shape and condition/key location, not destination arg count.",
-			"file": "lua/lalin/native_code_methods.lua",
-			"after": [
-				"T010B",
-				"T010C",
-				"T010D",
-				"T013",
-				"T014",
-				"T015",
-				"T016R4"
-			],
-			"status": "blocked",
-			"order": 17,
-			"claimedBy": "agent-T6S302",
-			"blockedReason": "Blocked before implementation. T017 requires CodeInstCall lowering for real CodeCallDirect/Extern/Indirect/Closure targets, but current call source families in lua/lalin/native_template_sources.lua use synthetic placeholder NativeCodeInstCallAxis identities (e.g. CodeCallDirect(CodeFuncId('native.call.direct.'..token)), CodeCallIndirect(CodeValueId('native.call.indirect.'..token)), CodeCallExtern(CodeExternId(symbol.id.text)) plus synthetic CodeSigId). NativeCodeInstAxis equality is strict, so real CodeCallTarget/CodeSigId values from Code methods would select non-existent bank families unless the lowerer lies about semantic axes. This is the same ASDL-first source-axis issue fixed for aggregate/variant/address, now for call/control. Need a precise layout-parametric/generic call-axis ASDL/source repair (target kind + ABI projection facts only; real function/extern/value identities stay in patch coordinates/address plans) before honest T017 call lowering can proceed. No T017 code changes were made after claiming.",
-			"notes": [],
-			"createdAt": "2026-07-02T17:26:00.699Z",
-			"updatedAt": "2026-07-04T14:08:39.045Z"
-		},
-		{
 			"id": "T018",
 			"title": "Add Kernel native lowering methods",
 			"detail": "Replace the empty module at lines 1-10 with leaf methods required by the architecture: KernelPlanned:plan_native_copy, KernelBody:select_native_template_graph, KernelDomainFlow:select_native_domain_template, KernelExprValue/Algebra/LaneLoad/KernelValue:select_native_expr_template, KernelEffectStore/Scan/Partition/Copy/ScatterReduce/Fold/Call:append_native_effect_template, KernelResultVoid/Value/Find/Reduction/ClosedForm/OriginalControl:append_native_result_template, KernelProof*:require_native_proof. Methods must compose frame/continuation graph nodes using NativeFrameLayout and NativeContinuationEdge, not mirror Kernel semantics in LalinNative axes or return placeholder unsupported values.",
@@ -491,11 +469,13 @@
 				"T016R4",
 				"T017"
 			],
-			"status": "todo",
+			"status": "done",
 			"order": 27,
+			"claimedBy": "agent-XV5KKK",
+			"evidence": "Updated tests/code_ir/test_native_code_graph_scalar.lua with Code ABI/frame/value validation: explicit NativeAbiFunctionProjection assertions, frame ordering/alignment/NativeFrameStackLimit checks, node-scoped ordinal patch binding checks, spill-all frame-slot location checks, zero/one/mixed-param/void/pointer/index/descriptor/aggregate/address representation smoke, and typed execution through ABI projections. Repaired lua/lalin/native_template_sources.lua so pointer CodeTermReturn selects a NativeCodeResultPointerShape terminal source instead of the scalar-shape terminal. Checks passed: luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/schema/test_schema_native.lua; luajit tests/run.lua code_ir (45 passed, 1 skipped).",
 			"notes": [],
 			"createdAt": "2026-07-02T17:26:00.699Z",
-			"updatedAt": "2026-07-04T13:26:57.663Z"
+			"updatedAt": "2026-07-04T16:55:11.776Z"
 		},
 		{
 			"id": "T028",
@@ -505,11 +485,13 @@
 			"after": [
 				"T017"
 			],
-			"status": "todo",
+			"status": "done",
 			"order": 28,
+			"claimedBy": "agent-XV5KKK",
+			"evidence": "Added tests/code_ir/test_native_code_control.lua and implemented supporting native control fixes. The new focused test builds CodeFunc ASDL graphs for CodeTermJump, CodeTermBranch, CodeTermSwitch, CodeTermVariantSwitch, loop-shaped jumps, CodeTermTrap, CodeTermUnreachable, and CodeInstCall direct/extern/indirect/closure. It asserts explicit block-entry nodes, symbol-bearing control edges, node/instance-scoped bindings, edge-copy and parallel-copy nodes, call/result-copy nodes, and typed extern install rejection via NativeInstallRejectWrongCoordinate. It executes jump, branch, and switch scalar cases against a generated focused bank. Code fixes: lua/lalin/native_code_methods.lua now emits same-scalar two-value successor copies via the existing NativeChunkParallelCopy family, uses exact scalar immediate hole ids for switch/variant switch, and rewrites switch/variant else targets to the next compare/default without duplicate stale else edges; lua/lalin/native_template_sources.lua already includes the pointer terminal source repair from T027. Checks passed: luajit tests/code_ir/test_native_code_control.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/schema/test_schema_native.lua; luajit tests/run.lua code_ir (46 passed, 1 skipped).",
 			"notes": [],
 			"createdAt": "2026-07-02T17:26:00.699Z",
-			"updatedAt": "2026-07-04T09:45:41.810Z"
+			"updatedAt": "2026-07-04T17:11:52.538Z"
 		},
 		{
 			"id": "T029",
@@ -837,42 +819,6 @@
 			"updatedAt": "2026-07-04T09:45:41.810Z"
 		},
 		{
-			"id": "T018S",
-			"title": "Implement KernelOp source builders",
-			"detail": "Add concrete NativeChunkKernelOp C stencil source builders and manifest entries before kernel lowering. Owners are concrete Kernel ASDL leaves/axes: KernelDomainFlow loop skeletons, KernelExprValue/Algebra/LaneLoad/KernelValue scalar fragments, KernelEffectStore/Scan/Partition/Copy/ScatterReduce/Fold/Call effects, KernelResultVoid/Value/Find/Reduction/ClosedForm/OriginalControl, and KernelProof requirements where they change source/verifier contracts. Use frame slots/continuation edges for loop/effect state; static offsets/ranks/lanes/schedules are finite axes or holes; dynamic bounds/strides/descriptors stay frame/ABI params. If current schema lacks a required kernel projection/facet, add the precise ASDL fact first; no LalinNative semantic mirror, exact-cell enumeration, or placeholder unsupported methods.",
-			"file": "lua/lalin/native_template_sources.lua",
-			"after": [
-				"T010B",
-				"T010C",
-				"T013",
-				"T015",
-				"T016R4"
-			],
-			"status": "todo",
-			"order": 47,
-			"claimedBy": "agent-T6S302",
-			"notes": [
-				"Unblock for T018: kernel lowering must follow concrete KernelOp source builders/manifest entries.",
-				"agent-T6S302 accidentally claimed this while selecting by file; returned to todo and added T016R4 dependency to respect current user priority: do not start Kernel/Stencil before Code source-axis/address-plan unblock path."
-			],
-			"createdAt": "2026-07-04T08:35:30.132Z",
-			"updatedAt": "2026-07-04T13:34:23.217Z"
-		},
-		{
-			"id": "T018R",
-			"title": "Add Kernel native lowering methods",
-			"detail": "Replacement for broad blocked T018. Implement KernelPlanned:plan_native_copy, KernelBody:select_native_template_graph, KernelDomainFlow:select_native_domain_template, KernelExprValue/Algebra/LaneLoad/KernelValue:select_native_expr_template, KernelEffectStore/Scan/Partition/Copy/ScatterReduce/Fold/Call:append_native_effect_template, KernelResultVoid/Value/Find/Reduction/ClosedForm/OriginalControl:append_native_result_template, KernelProof*:require_native_proof. These methods compose NativeTemplateGraph nodes using source families from T018S, NativeFrameLayout, and NativeControlEdge/ContinuationSymbol. No placeholder reject methods or native semantic mirror.",
-			"file": "lua/lalin/native_kernel_methods.lua",
-			"after": [
-				"T018S"
-			],
-			"status": "todo",
-			"order": 48,
-			"notes": [],
-			"createdAt": "2026-07-04T08:35:30.132Z",
-			"updatedAt": "2026-07-04T08:35:30.132Z"
-		},
-		{
 			"id": "T019S",
 			"title": "Implement StencilOp source builders",
 			"detail": "Add concrete NativeChunkStencilOp C stencil source builders and manifest entries before stencil lowering. Owners are concrete Stencil ASDL leaves/axes: StencilProducerShape loop skeletons, StencilAccessLayout address/descriptor fragments, StencilPointExpr scalar fragments, StencilBody, StencilSink, StencilStoreSemantics, StencilReductionSemantics, StencilReduceScope, StencilReducer, and StencilSchedule where source/control shape changes. Dynamic bounds/strides/descriptors stay ABI/frame values; static offsets/ranks/lanes/schedules are finite axes or holes. Recursive point/access expressions compose graph nodes, not exact-cell C chunks. Add precise ASDL projection/facet if required; no semantic mirror or placeholders.",
@@ -882,16 +828,24 @@
 				"T010C",
 				"T013",
 				"T015",
-				"T016R4"
+				"T016R4",
+				"T017",
+				"T018S",
+				"T018R"
 			],
-			"status": "todo",
+			"status": "blocked",
 			"order": 49,
+			"claimedBy": "agent-PCWEJX",
+			"blockedReason": "Cannot implement honest StencilOp source builders from the current ASDL/source-manifest model. The schema has broad NativeStencilProducer/Access/Point/Sink/Schedule axes and NativeChunkStencilOp/NativeRoleStencil* roles, but it lacks the T018-style separation between program-specific Stencil semantic projections and finite bank-enumerable StencilOp source-shape facts: no NativeStencil*Projection facets for descriptor/access/body/sink/schedule ownership, no NativeStencil*SourceShape vocabulary, no NativeStencilSourceSupport field on NativeTemplateSupportDomain, no source-shape axis for StencilOp families, and no typed frame/ABI/value-location input for dynamic access descriptors, producer bounds, point-expression temps, sink/reduction state, or schedule control. Implementing T019S now would require either enumerating program-specific StencilDescriptor/AccessRef/PointExpr values as bank axes, inventing placeholder C chunks, or mirroring stencil semantics in LalinNative optional builders, violating the ASDL-first/no semantic mirror/no exact-cell enumeration rules. Need ASDL-first unblock tasks analogous to T018U/T018V for Stencil projection and finite source-shape/source-support contracts before concrete NativeChunkStencilOp C source builders can be added.",
 			"notes": [
 				"Unblock for T019: stencil lowering must follow concrete StencilOp source builders/manifest entries.",
-				"Added T016R4 dependency to respect current user priority: do not start Kernel/Stencil before Code source-axis/address-plan unblock path."
+				"Added T016R4 dependency to respect current user priority: do not start Kernel/Stencil before Code source-axis/address-plan unblock path.",
+				"Dependency tightened after T017U so Stencil source work cannot be claimed before Code control/call lowering resumes.",
+				"Dependency tightened after T018U so Stencil source work cannot be claimed before Kernel source-builder work resumes.",
+				"Dependency tightened after T018W so Stencil source work cannot be claimed before Kernel lowering resumes."
 			],
 			"createdAt": "2026-07-04T08:35:30.132Z",
-			"updatedAt": "2026-07-04T13:34:23.217Z"
+			"updatedAt": "2026-07-04T19:37:09.021Z"
 		},
 		{
 			"id": "T019R",
@@ -1189,6 +1143,183 @@
 			"notes": [],
 			"createdAt": "2026-07-04T13:26:57.663Z",
 			"updatedAt": "2026-07-04T14:07:42.516Z"
+		},
+		{
+			"id": "T017",
+			"title": "Lower Code control, edge copies, calls, and returns",
+			"detail": "Replace append_node linear next-edge insertion at lines 119-131 with explicit block-entry node identities and symbol-bearing control edge creation. Around lines 265-389 implement CodeBlock graph construction for all blocks, block params as frame slots, edge-copy chains as explicit NativeTemplateNode values, and terminator leaf methods for CodeTermJump, Branch, Switch, VariantSwitch, Return, Trap, Unreachable. Return supports zero values (void terminal), one scalar/descriptor/byref result copied to canonical result/sret slot, and rejects >1 as invalid Code before native lowering. Add CodeInstCall lowering for direct internal, extern runtime symbol, indirect code pointer, and closure calls using NativeAbiProjection and call-return continuation edges. Branch/switch templates must specialize on successor shape and condition/key location, not destination arg count. The call-axis blocker was processed by T017U; the return/result blocker was processed by T017V; the CodeSig/function-entry/direct-call/descriptor ABI blocker was processed by T017W. Lowerers should select NativeCodeInstCallShapeAxis by target shape plus ABI projection, NativeCodeTermReturnShapeAxis by result shape, NativeCodeInstResultCopyAxis for canonical result/sret copies, and function direct-call coordinates from NativeCodeAddressFunctionEntry/module address plans.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T010B",
+				"T010C",
+				"T010D",
+				"T013",
+				"T014",
+				"T015",
+				"T016R4",
+				"T017U",
+				"T017V",
+				"T017W"
+			],
+			"status": "done",
+			"order": 1700,
+			"claimedBy": "agent-RV0MY6",
+			"evidence": "Implemented Code native control/call/return lowering in lua/lalin/native_code_methods.lua: public ABI adapter graph entry from NativeCompileCodeFunc(signature), explicit block-entry nodes, ABI-owned result slots/copies, void/direct/sret return paths, CodeCallTarget leaf-owned call shapes/bindings for direct/extern/indirect/closure call families, and term leaf lowering for jump/branch/switch/variant-switch/trap/unreachable. Updated source/support/runtime pieces needed by the lowering: default finite scalar public ABI adapter support in lua/lalin/native_template_support.lua; public ABI adapter/control source repairs plus trap/variant-switch sources in lua/lalin/native_template_sources.lua; frame-size/frame-offset relocation addend handling in lua/lalin/native.lua/native_mc.lua; tests adjusted in tests/code_ir/test_native_template_sources.lua and tests/code_ir/test_native_code_graph_scalar.lua. Verification: luajit tests/run.lua schema (11 passed); luajit tests/run.lua code_ir (45 passed, 1 skipped, 0 failed); focused native tests test_native_template_sources.lua, test_native_bank_generator.lua, test_native_mc_import.lua, test_native_c_continuation_branch.lua, and test_native_code_graph_scalar.lua passed.",
+			"notes": [
+				"Blocker processed by T017U. T017 may resume with generic call-shape source families.",
+				"Blocker processed by T017V. T017 may resume with ABI-owned result shapes, void return source, and result-copy source families.",
+				"Orchestrator/user instruction: future workers must not use coms-net for questions or coordination. Workers must either complete the claimed edit-plan task, or stop and mark it blocked with a precise reason in the edit plan. All worker prompts for this workflow must explicitly forbid coms-net use.",
+				"Blocker processed by T017W. T017 may resume. Workers must not use coms-net."
+			],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T16:16:59.804Z"
+		},
+		{
+			"id": "T017U",
+			"title": "Repair Code call source axes ASDL-first",
+			"detail": "Add ASDL call-shape vocabulary and generic NativeCodeInstCallShapeAxis keyed by target shape plus NativeAbiFunctionProjection. Update equality and call source builders so direct/extern/indirect/closure families no longer encode synthetic CodeFuncId/CodeExternId/CodeValueId/CodeSigId identities; concrete function/extern/value targets remain patch coordinates/address plans for lowering.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T016R4"
+			],
+			"status": "done",
+			"order": 1705,
+			"notes": [
+				"Evidence: lua/lalin/schema/native.lua adds NativeCodeCallShape and NativeCodeInstCallShapeAxis; lua/lalin/native.lua adds ABI-projection equality; lua/lalin/native_template_sources.lua uses generic call shape axes and a patchable extern target hole; tests/schema/test_schema_native.lua and tests/code_ir/test_native_template_sources.lua cover the new model. Checks: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; focused native mc/value/bank tests.",
+				"Follow-up: removed obsolete NativeCodeInstCallAxis after migrating sources so there is no synthetic CodeCallTarget/CodeSigId compatibility axis left in schema.",
+				"Added CodeCallTarget leaf method native_code_call_shape() in lua/lalin/native_code_methods.lua so T017 can select call-shape axes by ASDL dispatch, not target-kind if/else.",
+				"Checks after final edits: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; time luajit tests/code_ir/test_native_code_graph_scalar.lua."
+			],
+			"createdAt": "2026-07-04T14:21:06.414Z",
+			"updatedAt": "2026-07-04T14:30:32.891Z"
+		},
+		{
+			"id": "T017V",
+			"title": "Repair Code ABI return/result source model ASDL-first",
+			"detail": "Add ASDL-owned Code result shapes, result-copy axes, return-shape axes, and frame result slot entries. Source builders must cover void terminal returns, scalar/pointer result copies, ABI-derived descriptor/byref/sret result shapes, and sret byte-copy through a canonical sret pointer slot. Code methods expose CodeSig/NativeAbiProjection result-shape selection for T017 lowering without scalar placeholders.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T017U"
+			],
+			"status": "done",
+			"order": 1706,
+			"notes": [
+				"Evidence: lua/lalin/schema/native.lua adds NativeCodeResultShape, NativeFrameResultSlotEntry, NativeCodeInstResultCopyAxis, and NativeCodeTermReturnShapeAxis; lua/lalin/native.lua adds result-shape equality and ABI projection -> result-shape methods; lua/lalin/native_template_sources.lua emits void return and result-copy families keyed by result shape; lua/lalin/native_code_methods.lua exposes CodeSig:native_code_result_shape and current scalar return lowering selects return-shape axes. Tests updated in tests/schema/test_schema_native.lua, tests/code_ir/test_native_template_sources.lua, tests/code_ir/test_native_code_graph_scalar.lua. Checks: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_value_representation.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_bank_generator.lua."
+			],
+			"createdAt": "2026-07-04T14:49:04.478Z",
+			"updatedAt": "2026-07-04T14:49:04.478Z"
+		},
+		{
+			"id": "T017W",
+			"title": "Repair CodeSig/function-entry/direct-call/descriptor ABI model ASDL-first",
+			"detail": "Resolve the second T017 blocker completely at the ASDL/source boundary. NativeCompileCodeFunc carries an actual CodeSig; NativeCodeFunctionPlan and NativeCodeFunctionSignaturePlanEntry carry CodeSig plus NativeAbiFunctionProjection; function address projections use an ASDL-owned copied function entry capability instead of recursive NativePatchCodeFuncAddress; descriptor ABI projections own C boundary/load/store/return source behavior.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T017V"
+			],
+			"status": "done",
+			"order": 1707,
+			"notes": [
+				"Evidence: lua/lalin/schema/native.lua adds NativeCodeAddressFunctionEntry, extends NativeCompileCodeFunc with signature, extends NativeCodeFunctionSignaturePlanEntry and NativeCodeFunctionPlan with signature/abi/entry_address. lua/lalin/native.lua resolves NativeCodeAddressFunctionEntry through copied bank symbols. lua/lalin/native_code_methods.lua builds function plans from real CodeSig values, records function entry addresses, and rejects standalone CodeFunc planning without a CodeSig. lua/lalin/native_backend.lua hard-yanks compile_code_func APIs to require CodeSig. lua/lalin/native_template_sources.lua adds NativeAbiDescriptorValue C boundary/type/load/store/return leaf methods and descriptor declarations in public/call sources. Tests updated in tests/schema/test_schema_native.lua, tests/code_ir/test_native_template_sources.lua, tests/code_ir/test_native_code_graph_scalar.lua, tests/code_ir/test_lalin_binary.lua. Checks: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_value_representation.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_bank_generator.lua."
+			],
+			"createdAt": "2026-07-04T15:09:18.544Z",
+			"updatedAt": "2026-07-04T15:09:18.544Z"
+		},
+		{
+			"id": "T018U",
+			"title": "Add Kernel native projection/source-manifest contracts ASDL-first",
+			"detail": "Define ASDL-owned kernel native projection facets before KernelOp source builders: loop/domain state, lane/address projection, value environment, frame roles, expression/binding/effect/result/proof/body/plan projections, and projection-based Kernel axes. Implement leaf-owned projection methods in native_kernel_methods.lua so KernelDomainFlow, KernelLane, KernelExpr*, KernelEffect*, KernelResult*, KernelProof*, KernelBody, and KernelPlan choose concrete native projection contracts without LalinNative semantic mirrors or class/kind dispatch.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T017"
+			],
+			"status": "done",
+			"order": 1801,
+			"notes": [
+				"Evidence: lua/lalin/schema/native.lua adds NativeKernelLoopProjection, NativeKernelLaneProjection, NativeKernelFrameRole/Entry, NativeKernelValueEnvironmentProjection, NativeKernelExpr/Binding/EffectState/Effect/Result/Proof/Body/Plan projections, and projection-based NativeKernelAxis leaves. lua/lalin/native.lua adds equality for projection axes. lua/lalin/native_kernel_methods.lua now installs concrete Kernel leaf projection methods. tests/code_ir/test_native_kernel_contracts.lua covers the ASDL contracts and leaf-owned methods. Checks: luajit tests/code_ir/test_native_kernel_contracts.lua; luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_code_control.lua; luajit tests/run.lua code_ir."
+			],
+			"createdAt": "2026-07-04T17:32:43.224Z",
+			"updatedAt": "2026-07-04T17:32:43.224Z"
+		},
+		{
+			"id": "T018S",
+			"title": "Implement KernelOp source builders",
+			"detail": "Add concrete NativeChunkKernelOp C stencil source builders and manifest entries before kernel lowering. Owners are concrete Kernel ASDL leaves/axes: KernelDomainFlow loop skeletons, KernelExprValue/Algebra/LaneLoad/KernelValue scalar fragments, KernelEffectStore/Scan/Partition/Copy/ScatterReduce/Fold/Call effects, KernelResultVoid/Value/Find/Reduction/ClosedForm/OriginalControl, and KernelProof requirements where they change source/verifier contracts. Use frame slots/continuation edges for loop/effect state; static offsets/ranks/lanes/schedules are finite axes or holes; dynamic bounds/strides/descriptors stay frame/ABI params. Use T018U semantic projection contracts and T018V finite source-shape contracts: NativeKernel*Projection facts feed NativeKernel*SourceShape and NativeKernelSourceShapeAxis. Do not use program-specific KernelBody/KernelLane/ValueExpr/ReductionFact/StencilPredicate/CallSummary as bank axes; bind those only through frame roles, holes, or patch coordinates. If current schema lacks a required kernel projection/facet, add the precise ASDL fact first; no LalinNative semantic mirror, exact-cell enumeration, or placeholder unsupported methods.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T010B",
+				"T010C",
+				"T013",
+				"T015",
+				"T016R4",
+				"T017",
+				"T018U",
+				"T018V"
+			],
+			"status": "done",
+			"order": 1802,
+			"claimedBy": "agent-JYPQT1",
+			"evidence": "Implemented concrete NativeChunkKernelOp source builders and manifest entries. Files changed: lua/lalin/schema/native.lua adds precise kernel source roles plus NativeKernelExprCastShape and byte source size; lua/lalin/native_template_support.lua adds axis/kernel-source support helpers; lua/lalin/native_kernel_methods.lua maps byte/cast projections to finite source shapes; lua/lalin/native.lua extends kernel source-shape equality; lua/lalin/native_template_sources.lua emits KernelOp C sources for domain loops, lane address materialization, scalar expr/cast/affine/unary/binary/compare/select/lane-load, store/copy/scan/partition/scatter-reduce/fold/call effects, result/proof/body/plan shapes using NativeKernelSourceShapeAxis and holes/continuations; tests/schema/test_schema_native.lua and tests/code_ir/test_native_template_sources.lua cover schema/source generation. Focused checks passed: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_kernel_contracts.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_control.lua; luajit tests/code_ir/test_native_value_representation.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua. Custom kernel-source bank generation/import/bridge compile passed via tools/gen_lalin_mc_bank.lua + gcc for target/test_artifacts/t018s_kernel (49 templates).",
+			"notes": [
+				"Unblock for T018: kernel lowering must follow concrete KernelOp source builders/manifest entries.",
+				"agent-T6S302 accidentally claimed this while selecting by file; returned to todo and added T016R4 dependency to respect current user priority: do not start Kernel/Stencil before Code source-axis/address-plan unblock path.",
+				"Dependency tightened after T017U so Kernel source work cannot be claimed before Code control/call lowering resumes.",
+				"Blocker processed by T018U. T018S may resume using Kernel native projection/source-manifest contracts. Workers must not use coms-net.",
+				"Blocker processed by T018V. T018S may resume using finite KernelOp source-shape contracts. Workers must not use coms-net."
+			],
+			"createdAt": "2026-07-04T08:35:30.132Z",
+			"updatedAt": "2026-07-04T18:34:41.539Z"
+		},
+		{
+			"id": "T018W",
+			"title": "Add Kernel native lowering input and frame/call plans ASDL-first",
+			"detail": "Resolve T018R blocker by adding typed NativeKernelLoweringInput and supporting ASDL facts: result type, Code type layout plan, value environment inputs, code/kernel value input entries, role-to-slot NativeKernelFrameLayout, lane address entries, call target capabilities, module addresses, and NativeCompileKernelPlan(lowering). Provide leaf-owned builders in native_kernel_methods.lua so KernelPlanned can construct the lowering input from Kernel projections without hidden side tables or guessed result types.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T018S"
+			],
+			"status": "done",
+			"order": 1803,
+			"notes": [
+				"Evidence: lua/lalin/schema/native.lua adds NativeKernelFrameSlotEntry, NativeKernelFrameLayout, NativeKernelCodeValueInputEntry, NativeKernelKernelValueInputEntry, NativeKernelLaneAddressEntry, NativeKernelCallTargetCapability/Entry, NativeKernelLoweringInput, and NativeCompileKernelPlan now carries lowering. lua/lalin/native_backend.lua compile/kernel subject APIs require NativeKernelLoweringInput. lua/lalin/native.lua passes lowering into KernelPlan:plan_native_copy. lua/lalin/native_kernel_methods.lua builds role-to-slot frame layouts, code/kernel inputs, lane address entries, effect-only call target entries, and KernelPlanned:native_kernel_lowering_input. tests/code_ir/test_native_kernel_contracts.lua covers the new lowering input. Checks: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_kernel_contracts.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/run.lua code_ir."
+			],
+			"createdAt": "2026-07-04T18:48:58.394Z",
+			"updatedAt": "2026-07-04T18:48:58.394Z"
+		},
+		{
+			"id": "T018R",
+			"title": "Add Kernel native lowering methods",
+			"detail": "Replacement for broad blocked T018. Implement KernelPlanned:plan_native_copy, KernelBody:select_native_template_graph, KernelDomainFlow:select_native_domain_template, KernelExprValue/Algebra/LaneLoad/KernelValue:select_native_expr_template, KernelEffectStore/Scan/Partition/Copy/ScatterReduce/Fold/Call:append_native_effect_template, KernelResultVoid/Value/Find/Reduction/ClosedForm/OriginalControl:append_native_result_template, KernelProof*:require_native_proof. These methods compose NativeTemplateGraph nodes using source families from T018S, NativeFrameLayout, and NativeControlEdge/ContinuationSymbol. Use T018W NativeKernelLoweringInput for result type, type layouts, value environment, frame-role layout/offset plan, lane address entries, call capabilities, and module addresses. No placeholder reject methods or native semantic mirror.",
+			"file": "lua/lalin/native_kernel_methods.lua",
+			"after": [
+				"T018S",
+				"T018W"
+			],
+			"status": "done",
+			"order": 1804,
+			"claimedBy": "agent-PCWEJX",
+			"evidence": "Implemented Kernel native graph lowering in lua/lalin/native_kernel_methods.lua: KernelPlanned:plan_native_copy builds NativeTemplateGraph from NativeKernelLoweringInput; KernelBody composes plan/body/domain/lane/binding/effect/proof/result NativeChunkKernelOp nodes with symbol-bearing ConditionalBranch/LoopBackedge/Continuation edges; KernelDomainFlow, KernelLane, KernelExpr*, KernelEffect*, KernelResult*, and KernelProof* leaf methods select NativeKernelSourceShapeAxis families and node-scoped patch bindings from lowering.frame/lanes/calls/addresses. Added precise NativeKernelGraphBuilderState/NativeKernelGraphBuildInput and NativeKernelFrameLaneAddress/NativeKernelLaneAddressEntry.address schema in lua/lalin/schema/native.lua; updated lua/lalin/native_template_sources.lua so KernelResultOp sources are terminal continuations; extended tests/code_ir/test_native_kernel_contracts.lua with graph-lowering assertions. Checks passed: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_kernel_contracts.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/run.lua schema (11 passed); luajit tests/run.lua code_ir (47 passed, 1 skipped); custom kernel bank graph/install smoke (9 nodes, 8 control edges, install succeeded).",
+			"notes": [
+				"Blocker processed by T018W. T018R may resume. Workers must not use coms-net."
+			],
+			"createdAt": "2026-07-04T08:35:30.132Z",
+			"updatedAt": "2026-07-04T19:36:09.068Z"
+		},
+		{
+			"id": "T018V",
+			"title": "Add finite KernelOp source-shape contracts",
+			"detail": "Complete the Kernel source-builder specification by separating program-specific NativeKernel*Projection facts from finite bank-enumerable NativeKernel*SourceShape facts. Add source-shape vocabulary for loop/trip-count, lane addressing, value/expression, predicate, reducer, call, effect, result, proof, body, and plan shapes; add NativeKernelSourceSupport on support domains; add NativeKernelSourceShapeAxis. Implement leaf-owned conversion methods from Kernel/Value/Stencil/Effect projections to source shapes and frame-role allocation for domain/lane/result state. Document that KernelOp families must select by finite source shapes and bind concrete program facts through holes/frame roles/patches.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T018U"
+			],
+			"status": "done",
+			"order": 18015,
+			"notes": [
+				"Evidence: lua/lalin/schema/native.lua adds NativeKernel*SourceShape vocabulary, NativeKernelSourceSupport, and NativeKernelSourceShapeAxis. lua/lalin/native_template_support.lua carries NativeKernelSourceSupport in NativeTemplateSupportDomain. lua/lalin/native_kernel_methods.lua maps Kernel/Value/Stencil/Effect leaves and projections to finite source shapes and allocates domain/lane/result frame entries. lua/lalin/native.lua adds source-shape axis equality. docs/COPY_PATCH_TEMPLATE_ENUMERATION_NOTES.md documents semantic projection vs source-shape projection. tests/code_ir/test_native_kernel_contracts.lua covers finite source-shape contracts. Checks: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_kernel_contracts.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/run.lua code_ir."
+			],
+			"createdAt": "2026-07-04T17:59:52.425Z",
+			"updatedAt": "2026-07-04T17:59:52.425Z"
 		}
 	]
 }

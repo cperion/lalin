@@ -1499,3 +1499,147 @@ Checks passed:
 - `luajit tests/run.lua code_ir` — 45 passed, 1 skipped
 - Focused native/schema tests passed
 - Custom native array build/load/execute smoke passed.
+
+## Worker Output — 2026-07-04 14:35:14
+
+## Completed
+Claimed `T017` as requested, inspected the current Code native backend/source model, and stopped immediately on a real blocker. Marked `T017` blocked in edit plan `main`.
+
+## Files Changed
+- None
+
+## Notes
+`T017` cannot be completed honestly yet because return lowering still lacks ASDL/source support for:
+- void `CodeTermReturn({})`
+- descriptor/byref result returns
+- canonical result/sret frame slots
+- CodeSig/NativeAbiProjection-owned entry/return families
+
+Current implementation remains scalar-entry/scalar-return oriented, so completing T017 would require placeholder axes or incorrect scalar shims.
+
+## Worker Output — 2026-07-04 14:54:26
+
+## Completed
+Claimed `T017` as requested, inspected the current Code native backend/source/runtime model, and stopped on real ASDL/modeling blockers.
+
+Marked `T017` blocked in edit plan `main`.
+
+## Files Changed
+- None
+
+## Notes
+Blockers recorded in the edit plan:
+- `NativeCompileCodeFunc` lacks a carried `CodeSig`, so CodeSig/ABI-owned entry/result selection would require synthetic reconstruction.
+- Direct internal calls lack an ASDL-owned copied-function entry/bank-symbol address plan; current function address projection is recursively unresolved.
+- `NativeAbiDescriptorValue` lacks call/public-ABI C source leaf support, so full descriptor call/return lowering would require forbidden shims.
+
+No focused checks were run because no code was changed and the task required stopping immediately on a real blocker.
+
+## Worker Output — 2026-07-04 16:17:09
+
+## Completed
+Implemented and marked `T017` done.
+
+- Code native graph now uses public ABI adapter entry from `NativeCompileCodeFunc(signature)`.
+- Added explicit block-entry nodes, control edges, result slots/copies, void/direct/sret return paths.
+- Added Code call lowering for direct/extern/indirect/closure via `CodeCallTarget` leaf methods.
+- Added jump/branch/switch/variant-switch/trap/unreachable term lowering.
+- Repaired public ABI adapter source/runtime patching needed for execution.
+
+## Files Changed
+- `lua/lalin/native_code_methods.lua` - Code control/call/return lowering.
+- `lua/lalin/native_template_support.lua` - finite scalar public ABI adapter support.
+- `lua/lalin/native_template_sources.lua` - ABI/control source fixes, trap/variant-switch sources.
+- `lua/lalin/native.lua` - frame patch addend handling.
+- `lua/lalin/native_mc.lua` - hole relocation patch behavior.
+- `tests/code_ir/test_native_template_sources.lua` - updated manifest counts.
+- `tests/code_ir/test_native_code_graph_scalar.lua` - ABI protocol expectation and signature helper.
+
+## Notes
+Checks passed:
+- `luajit tests/run.lua schema`
+- `luajit tests/run.lua code_ir` — 45 passed, 1 skipped, 0 failed
+- Focused native tests also passed.
+
+## Worker Output — 2026-07-04 17:12:28
+
+## Completed
+- Implemented `T027` Code ABI/frame/value validation.
+- Implemented `T028` Code control/call lowering tests.
+- Claimed `T018S`, found a real ASDL/modeling blocker, marked it blocked, and stopped.
+
+## Files Changed
+- `tests/code_ir/test_native_code_graph_scalar.lua` - added ABI projection, frame layout, node-scoped binding, spill-all, mixed/void/pointer/index/value-representation validation.
+- `tests/code_ir/test_native_code_control.lua` - new focused Code control/call lowering test.
+- `lua/lalin/native_code_methods.lua` - added parallel-copy lowering for two-value successor copies; fixed switch/variant-switch hole ids and else-target chaining.
+- `lua/lalin/native_template_sources.lua` - repaired pointer result terminal source selection.
+
+## Notes
+Checks passed:
+- `luajit tests/run.lua code_ir` — 46 passed, 1 skipped
+- Focused native/schema checks also passed.
+
+`T018S` is blocked because Kernel native source builders need precise ASDL-owned Kernel projection/source-manifest contracts before implementation; current native schema only has broad Kernel axes and `native_kernel_methods.lua` is empty.
+
+## Worker Output — 2026-07-04 17:38:14
+
+## Completed
+Claimed `T018S` with `edit_plan_next`, inspected the current Kernel projection/source-generation contracts, and marked `T018S` blocked with a precise ASDL/modeling reason.
+
+## Files Changed
+- None in source code.
+- `.pi/workflows/wf-native-cp-refactor.edit-plan.json` - `T018S` marked blocked.
+
+## Notes
+No coms-net was used.
+
+Blocker summary: T018U added Kernel projection facets, but the current schema still lacks finite KernelOp source-shape manifest contracts, kernel frame-role allocation for loop/lane/result state, and source-shape projections for `ValueExpr`/predicates/reducers/calls. Implementing source builders now would require program-specific bank enumeration or placeholder Kernel C chunks, which violates the architecture.
+
+## Worker Output — 2026-07-04 18:37:26
+
+## Completed
+- Completed `T018S`: implemented concrete `NativeChunkKernelOp` source builders and manifest entries.
+- Claimed `T018R`, found a real ASDL/modeling blocker, marked it blocked, and stopped without claiming further tasks.
+
+## Files Changed
+- `lua/lalin/schema/native.lua` - added kernel source roles, `NativeKernelExprCastShape`, and sized byte source shape.
+- `lua/lalin/native_template_support.lua` - added kernel axis/support-domain helpers.
+- `lua/lalin/native_template_sources.lua` - added KernelOp C source builders for domain/lane/expr/effect/result/proof/body/plan shapes.
+- `lua/lalin/native_kernel_methods.lua` - updated kernel byte/cast source-shape projection.
+- `lua/lalin/native.lua` - extended kernel source-shape equality.
+- `tests/schema/test_schema_native.lua` - added schema smoke coverage.
+- `tests/code_ir/test_native_template_sources.lua` - added KernelOp source/manifest assertions.
+
+## Notes
+Focused checks passed, including schema, native template sources, bank generator, kernel contracts, MC import, continuation branch, code control, value representation, and scalar graph tests.
+
+`luajit tests/run.lua code_ir` was attempted but failed in 5 existing parsed LuaJIT syntax tests with `unsupported parsed type tag nil`; native-focused tests passed.
+
+`T018R` blocker: kernel lowering needs a typed `NativeKernelLoweringInput` carrying result type, code value/type env, kernel frame-role layout/offset plan, and call/address capabilities before honest graph lowering can proceed.
+
+## Worker Output — 2026-07-04 19:37:22
+
+## Completed
+- Claimed and completed `T018R`.
+- Implemented Kernel native graph lowering using `NativeKernelLoweringInput`.
+- Claimed next ready task `T019S`, found a real ASDL/source-manifest blocker, marked it blocked, and stopped.
+
+## Files Changed
+- `lua/lalin/native_kernel_methods.lua` - added Kernel graph lowering methods, node composition, frame/patch bindings, Kernel effect/result/proof lowering.
+- `lua/lalin/schema/native.lua` - added Kernel graph builder input/state and lane materialized-address frame role.
+- `lua/lalin/native_template_sources.lua` - made Kernel result sources terminal continuations.
+- `tests/code_ir/test_native_kernel_contracts.lua` - added Kernel lowering graph assertions.
+
+## Checks
+Passed:
+- `luajit tests/schema/test_schema_native.lua`
+- `luajit tests/code_ir/test_native_kernel_contracts.lua`
+- `luajit tests/code_ir/test_native_template_sources.lua`
+- `luajit tests/code_ir/test_native_bank_generator.lua`
+- `luajit tests/code_ir/test_native_mc_import.lua`
+- `luajit tests/run.lua schema`
+- `luajit tests/run.lua code_ir` — 47 passed, 1 skipped
+- Custom Kernel bank graph/install smoke succeeded.
+
+## Notes
+`T019S` is blocked because Stencil source builders need ASDL-first Stencil projection/source-shape/source-support contracts before honest `NativeChunkStencilOp` generation can proceed.

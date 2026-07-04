@@ -1,0 +1,438 @@
+{
+	"version": 1,
+	"workflowId": "wf-1085b307",
+	"planId": "main",
+	"revision": 52,
+	"nextId": 26,
+	"createdAt": "2026-07-04T17:14:24.647Z",
+	"updatedAt": "2026-07-04T18:56:12.616Z",
+	"tasks": [
+		{
+			"id": "T001",
+			"title": "Add LLBL HostEval and role identity foundations",
+			"detail": "Add `llbl.channel.index_host`, the `HostEval` tagged value with parsed/Lua constructors and cached evaluation, and qualified `RoleId` helpers (`llbl.role_id`, key/equality/display helpers). Do not change slot behavior yet. Preserve legacy `llbl.is(value, \"Fragment\")`/`llbl.is(value, \"Spread\")` behavior.",
+			"file": "lua/llbl.lua",
+			"after": [],
+			"status": "done",
+			"order": 1,
+			"claimedBy": "agent-F12TZ0",
+			"evidence": "Implemented in `lua/llbl.lua`: added `llbl.channel.index_host`, HostEval tagged value/API (`llbl.host_eval(...)`, `.parsed`, `.lua`, cached `HostEval:evaluate/resolve`, shape/describe support), and qualified RoleId helpers (`llbl.role_id`, `llbl.role_id_key`, `llbl.role_id_display`, `llbl.role_id_equal`). Verified with an inline `luajit -e` HostEval/RoleId smoke check, `luajit tests/run.lua core` (17 passed), and `luajit tests/llpvm/test_llbl_language_algebra.lua`.",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T17:25:36.515Z"
+		},
+		{
+			"id": "T002",
+			"title": "Introduce LLBL role descriptors and public role API",
+			"detail": "Extend role specs into descriptors carrying qualified id, algebra, item_role, fragment_role, payload_role, adapter, splice_policy, nil_policy, and diagnostics metadata. Add `llbl.role.normalize/adapt/collect/splice/descriptor` entrypoints and wire `role_context`, `role_region_by_spec`, and collectors through descriptors while keeping existing reflective/codegen paths operational.",
+			"file": "lua/llbl.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 2,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/llbl.lua: added RoleDescriptor-backed llbl.role_descriptor and llbl.role.{descriptor,id,display,adapt,normalize,collect,fragment_compatible,splice}; role_context now records role_descriptor/role_id/algebra; role_region_by_spec unwraps HostEval and honors descriptor adapters; array/product/sum spread paths go through llbl.role.splice; spread_region checks descriptor fragment compatibility; dialect construction materializes descriptors; describe_role reports role_id, item/fragment/payload roles, policies, and adapter presence. Checks: inline role API smoke via luajit; luajit tests/core/test_llbl_codegen.lua; luajit tests/run.lua core; luajit tests/llpvm/test_llbl_language_algebra.lua.",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T17:50:11.402Z"
+		},
+		{
+			"id": "T003",
+			"title": "Qualify fragments and centralize splice compatibility",
+			"detail": "Upgrade `llbl.fragment`, `Dialect:fragment`, `fragment_like`, `describe_fragment`, `spread_region`, and array/product/sum generators to use descriptor-based qualified fragment compatibility instead of plain string equality. Support explicit Spread plus descriptor-controlled bare fragment and HostEval fragment splicing.",
+			"file": "lua/llbl.lua",
+			"after": [
+				"T002"
+			],
+			"status": "done",
+			"order": 3,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/llbl.lua: llbl.fragment now attaches qualified role_id/container_role_id/owner metadata; fragment_like preserves qualified metadata; concat/choice accept matching role_id; Dialect:fragment uses descriptor-derived fragment_role/container role ids; describe_fragment reports qualified ids; role generators support explicit Spread, descriptor-controlled bare Fragment splicing, and HostEval values that evaluate to fragments; spread_region uses descriptor compatibility. Checks: luajit inline fragment qualification/bare/HostEval splice smoke; luajit tests/core/test_llbl_codegen.lua; luajit tests/run.lua core; luajit tests/llpvm/test_llbl_language_algebra.lua.",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T17:56:54.457Z"
+		},
+		{
+			"id": "T004",
+			"title": "Route Lua index brackets through HostEval slot admission",
+			"detail": "Change runtime and compiled stage index handling so `RuntimeStage.__index`/`CompiledStage.__index` wrap the already-evaluated Lua operand as `llbl.host_eval.lua(...)`, emit `index:host`, and let expected slot role decide adaptation. Update channel overlap, action_fits, ambiguity validation, and diagnostics to avoid raw shape pre-rejection for type slots.",
+			"file": "lua/llbl.lua",
+			"after": [
+				"T001",
+				"T002"
+			],
+			"status": "done",
+			"order": 4,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/llbl.lua: RuntimeStage.__index and CompiledStage.__index/consume now wrap Lua index operands in llbl.host_eval.lua, emit index:host, preserve raw_value/legacy_channel on HostEval/Event, and stamp expected_role once a slot accepts the event. Type slots now advertise index:host/index:type and action_fits no longer pre-rejects by raw type shape; channel overlap/ambiguity labels handle index:host vs legacy index channels. Checks: inline IndexHostSmoke dialect showing a non-type table adapts through a type role adapter via Lua brackets and legacy index:type events still work; luajit tests/core/test_llbl_codegen.lua; luajit tests/run.lua core; luajit tests/llpvm/test_llbl_language_algebra.lua.",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:01:04.898Z"
+		},
+		{
+			"id": "T005",
+			"title": "Add parsed HostEval channel support",
+			"detail": "Add parsed host-eval channel names/exports (at minimum keep `parsed:escape` and add/use `parsed:host_eval`) and ensure `syntax.install` exposes them under `llbl.channel.parsed`. This is the LLBL syntax-side name used by Lalin parsed brackets.",
+			"file": "lua/llbl/syntax/init.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 5,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/llbl/syntax/init.lua: added syntax.channel.parsed.host_eval = \"parsed:host_eval\" while preserving escape = \"parsed:escape\" as the legacy alias; syntax.install continues exporting syntax.channel.parsed through llbl.channel.parsed. Checks: inline luajit syntax channel install assertion; (cd tests && luajit syntax_smoke.lua).",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:02:24.021Z"
+		},
+		{
+			"id": "T006",
+			"title": "Preserve constructor env for parsed HostEval",
+			"detail": "Ensure parsed constructor `run` passes a stable env table/context that can be stored on/evaluate HostEval objects once. Do not adapt in the constructor; only provide enough env for HostEval evaluation and origin/owner metadata.",
+			"file": "lua/llbl/syntax/constructor.lua",
+			"after": [
+				"T001",
+				"T005"
+			],
+			"status": "done",
+			"order": 6,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/llbl/syntax/constructor.lua: Constructor:run now places the stable lexical env table on ctx.env and provides ctx.evaluate_host(host_eval) that evaluates HostEval objects against that env without role adaptation; existing constructor/origin/owner metadata preserved. Checks: inline luajit Constructor HostEval env/evaluation smoke; (cd tests && luajit syntax_smoke.lua).",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:03:13.663Z"
+		},
+		{
+			"id": "T007",
+			"title": "Plan parsed declaration stream HostEval support in driver",
+			"detail": "Add driver hooks for active parsed languages to recognize bare bracket islands at statement/declaration-stream positions and route them to the language `parse_host_eval`/`parse_decl_stream` hook with an expected role. Preserve parsed expression indexing and normal Lua syntax; do not treat arbitrary Lua `[` as HostEval without a declared role.",
+			"file": "lua/llbl/syntax/driver.lua",
+			"after": [
+				"T005",
+				"T006"
+			],
+			"status": "done",
+			"order": 7,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/llbl/syntax/driver.lua: active syntax specs are tracked; make_ctx carries expected_role; descriptor_from recognizes synthetic __host_eval_stream entries and calls parse_decl_stream or parse_host_eval; the compile loop detects bare '[' only at statement/declaration-stream boundaries when exactly one active language declares a stream hook; constructor emission is shared and marks parsed:host_eval origins/expected_role. Expression/index/table-key bracket forms remain copied as normal Lua. Checks: inline FakeStreamT007 syntax.compile test confirmed only statement-position [generated] becomes a constructor while return a [b] and table {[generated]=1} remain Lua; (cd tests && luajit syntax_smoke.lua).",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:07:55.303Z"
+		},
+		{
+			"id": "T008",
+			"title": "Replace Lalin HostEscape construction with LLBL HostEval",
+			"detail": "Require `llbl`, replace/evolve `Ast.resolve_host_escapes` into HostEval evaluation that calls `llbl.host_eval.resolve/evaluate` for `__llbl_tag == \"HostEval\"` while keeping a temporary legacy HostEscape branch only if needed for tests during migration. Keep evaluation eager at constructor build time; adaptation remains later.",
+			"file": "lua/lalin/syntax/ast.lua",
+			"after": [
+				"T001",
+				"T006"
+			],
+			"status": "done",
+			"order": 8,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/lalin/syntax/ast.lua: required llbl; Ast.eval_lua_expr now delegates to llbl.host_eval.parsed evaluation; added Ast.resolve_host_evals that eagerly evaluates LLBL HostEval nodes via :evaluate(env), keeps a temporary legacy HostEscape branch, and aliases resolve_host_escapes; Ast.walk now visits HostEval child fields but stops at HostEval itself so evaluated external values are not recursively mutated. Checks: inline luajit HostEval/legacy HostEscape/external-value walk smoke; (cd tests && luajit syntax_smoke.lua).",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:09:52.794Z"
+		},
+		{
+			"id": "T009",
+			"title": "Emit HostEval from Lalin type parser and support field splices",
+			"detail": "Use `llbl.host_eval.parsed` instead of `Ast.node(\"HostEscape\", ...)` for bracketed type positions. In `parse_field_block` and parameter/product contexts, recognize a leading `[` as a product-role HostEval splice item, not a named field. Share ref extraction through the new AST/HostEval helper.",
+			"file": "lua/lalin/syntax/type.lua",
+			"after": [
+				"T008"
+			],
+			"status": "done",
+			"order": 9,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/lalin/syntax/ast.lua and lua/lalin/syntax/type.lua: added shared Ast.extract_refs/Ast.add_refs/Ast.host_eval helpers; Type.parse now emits llbl HostEval with expected_role=type for bracketed type positions; Type.parse_params and Type.parse_field_block recognize leading '[' entries as product-role HostEval splices via Type.parse_product_splice. Checks: inline luajit type/params/field-block HostEval parse smoke; (cd tests && luajit syntax_smoke.lua).",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:12:19.529Z"
+		},
+		{
+			"id": "T010",
+			"title": "Emit HostEval from Lalin expression parser",
+			"detail": "Replace atom-level HostEscape with LLBL HostEval for leading `[ ... ]` only. Preserve postfix `expr[index]` as parsed `Index`, and keep nested brackets inside HostEval source opaque Lua source. Share ref extraction with type parser.",
+			"file": "lua/lalin/syntax/expr.lua",
+			"after": [
+				"T008"
+			],
+			"status": "done",
+			"order": 10,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/lalin/syntax/expr.lua: removed duplicate ref extraction in favor of Ast.extract_refs/Ast.add_refs; atom-level leading [ ... ] now emits LLBL HostEval with expected_role=expr/channel parsed:host_eval; postfix expr[index] parsing is unchanged, so a[b] remains parsed Index and [make()][i] is HostEval atom plus parsed Index. Also updated lua/lalin/syntax/ast.lua to set HostEval.resolved=true after eager evaluation for legacy tests during migration. Checks: inline luajit expression HostEval/index/nested-bracket parse smoke; (cd tests && luajit syntax_smoke.lua).",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:14:05.862Z"
+		},
+		{
+			"id": "T011",
+			"title": "Add statement and declaration role HostEval parse sites",
+			"detail": "In statement blocks, recognize a leading `[` as a statement-list HostEval item instead of only an expression statement. The resulting AST node should carry expected role `stmts`/`stmt` so lowering can splice through LLBL role algebra.",
+			"file": "lua/lalin/syntax/stmt.lua",
+			"after": [
+				"T010"
+			],
+			"status": "done",
+			"order": 11,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/lalin/syntax/stmt.lua: Stmt.parse now recognizes leading [ ... ] in statement/block position, captures refs through Ast.extract_refs/Ast.add_refs, and emits LLBL HostEval with expected_role=stmts/channel parsed:host_eval instead of parsing it as a StmtExpr HostEscape. Checks: inline luajit statement block HostEval parse smoke; (cd tests && luajit syntax_smoke.lua).",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:15:02.605Z"
+		},
+		{
+			"id": "T012",
+			"title": "Add union/region/declaration HostEval parse sites",
+			"detail": "Allow bracket HostEval entries in union variant lists, region continuation lists, and declaration streams where the parser owns a current role. Add `Decl.parse_host_eval`/`parse_decl_stream` helpers for the driver hook. Do not alter `expr[index]` parsing.",
+			"file": "lua/lalin/syntax/decl.lua",
+			"after": [
+				"T009",
+				"T011"
+			],
+			"status": "done",
+			"order": 12,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/lalin/syntax/decl.lua: added Decl.parse_host_eval and Decl.parse_decl_stream helpers that emit LLBL HostEval with expected role; union bodies accept leading [ ... ] entries as variants-role HostEval; region input product lists accept product HostEval splices; continuation exit lists accept conts-role HostEval; continuation payload tuples accept product HostEval entries. Checks: inline luajit union/region/decl-stream HostEval parse-site smoke; (cd tests && luajit syntax_smoke.lua).",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:17:29.662Z"
+		},
+		{
+			"id": "T013",
+			"title": "Create Lalin parsed role adapter module",
+			"detail": "New module bound to an ASDL context and recursive lowering callbacks. Implement role-local adapters for type, expr, stmt/stmts, decl/decls, product fields, variants, and continuations. Include declaration-to-type projection for DeclStruct/DeclUnion/DeclHandle, schema-context TypeValue projection, nil policies, deterministic declaration list handling, and LLBL diagnostics with HostEval origin/value origin.",
+			"file": "lua/lalin/syntax/role_adapter.lua",
+			"after": [
+				"T002",
+				"T008"
+			],
+			"status": "done",
+			"order": 13,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Created lua/lalin/syntax/role_adapter.lua. The module binds to the active ASDL context, unwraps/evaluates LLBL HostEval values, projects schema-context type values through TypeValue, implements declaration-to-type projection for DeclStruct/DeclUnion/DeclHandle, supports expr/place/stmt/stmts adapters with recursive lowering callbacks, deterministic decls collection with sorted keyed entries, product/variants/conts list collectors, nil policies, and LLBL diagnostic failures. Checks: luajit require/instantiate smoke; inline adapter smoke for DeclStruct-to-type, sorted keyed decls, HostEval product fields, and stmt Fragment handling; (cd tests && luajit syntax_smoke.lua).",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:20:50.941Z"
+		},
+		{
+			"id": "T014",
+			"title": "Use role adapters in parsed tree lowering",
+			"detail": "Instantiate `role_adapter`, replace HostEscape-specific expression/type/place/statement branches with HostEval/role-adapter calls, remove `stmt_splice` as an ad hoc special case, and expose adapter helpers for module lowering. Ensure adapted ASDL nodes carry bracket origin where possible.",
+			"file": "lua/lalin/syntax/to_tree.lua",
+			"after": [
+				"T013"
+			],
+			"status": "done",
+			"order": 14,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/lalin/syntax/to_tree.lua and lua/lalin/syntax/role_adapter.lua: ToTree now instantiates the Lalin role adapter, handles LLBL HostEval in expr/type/place/stmt paths, routes legacy HostEscape through the adapter, replaces stmt_splice with adapter:stmt, exposes decl/product/variant/cont adapter helpers, and uses the local stmt_list wrapper from adapter statement splicing. Role adapter also unwraps legacy HostEscape. Checks: inline to_tree adapter smoke for HostEval type/expr/stmts/decls; (cd tests && luajit syntax_smoke.lua). Note: luajit tests/run.lua frontend was attempted and currently fails in known downstream pending areas (syntax/init module lowering still has old HostEscape parsed_type path; Lua DSL type slot handling still needs HostEval unwrapping), which correspond to later edit-plan tasks rather than incomplete to_tree wiring.",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:24:50.074Z"
+		},
+		{
+			"id": "T015",
+			"title": "Use role adapters in Lalin syntax module conversion",
+			"detail": "Update constructor wrapping to evaluate HostEval objects without adapting. Replace local parsed_type/collect_parsed_decls duplicate logic with role_adapter/to_tree helpers. Add/register syntax hooks for declaration-stream HostEval if supported by the driver. Remove HostEscape assumptions from to_module.",
+			"file": "lua/lalin/syntax/init.lua",
+			"after": [
+				"T007",
+				"T013",
+				"T014"
+			],
+			"status": "done",
+			"order": 15,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/lalin/syntax/init.lua plus role_adapter fix: constructor wrapping now calls Ast.resolve_host_evals; registered parse_host_eval/parse_decl_stream hooks with decl_stream_role=decls; to_module now uses to_tree/role_adapter for parsed_type, product fields, variants, and declaration collection, removing duplicate HostEscape-only parsed_type/collect logic. RoleAdapter:type now projects through TypeValue before returning ASDL values so host types from other schema contexts are reprojected. Checks: (cd tests && luajit syntax_smoke.lua); inline llbl.syntax compile smoke for lalin bare [generated] declaration-stream hook; luajit tests/frontend/test_lalin_loader.lua was rerun and advanced past the prior HostEval parsed_type failure to an existing native-option removal error in lalin.compile, unrelated to syntax module conversion.",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:29:05.032Z"
+		},
+		{
+			"id": "T016",
+			"title": "Port Lalin Lua DSL roles to descriptors",
+			"detail": "Define explicit descriptors for `type`, `expr`, `decl`, `decls`, `stmt`, `stmts`, `product`, `params`, `variants`, `conts`, and `value`. Replace custom role_array/spread compatibility internals with LLBL descriptor-driven role algebra while preserving Lalin zone/LanguageBundle rules via adapter hooks. Update `slot_type` to admit `index:host` and let the type adapter project DSL declarations to types.",
+			"file": "lua/lalin/dsl/init.lua",
+			"after": [
+				"T002",
+				"T003",
+				"T004"
+			],
+			"status": "done",
+			"order": 16,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/lalin/dsl/init.lua: concrete_type/tree_expr/typed_name unwrap LLBL HostEval; slot_type now accepts index:host/index:type; LalinDSL declares explicit type/expr/decl/stmt/product/container/value roles with a type adapter; role_array specs now carry item_role/fragment_role/splice_policy descriptors; custom role array and expand_array fragment/spread handling now use qualified descriptor compatibility and unwrap HostEval while preserving Lalin/foreign zone behavior; DSL fragments now carry LalinDSL-qualified RoleIds. Checks: require('lalin.dsl') smoke; (cd tests && luajit syntax_smoke.lua); luajit tests/core/test_llbl_codegen.lua; inline DSL function type-slot smoke typechecked; inline DSL result [Decl] declaration-to-type bracket smoke built AST. Note: full tests/frontend/test_dsl_lua_owned.lua still fails in existing atomic expression typecheck paths (ExprAtomicLoad/Rmw/Cas lack direct typecheck_tree_expr), not in the simple HostEval type-slot path covered here.",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:38:10.856Z"
+		},
+		{
+			"id": "T025",
+			"title": "Configure Lalin loader for parsed declaration streams",
+			"detail": "If the driver stream hook requires opt-in, set the `.lln` compile options so the active Lalin language owns declaration-stream HostEval/bracket handling under the `decls` role. Preserve `allow_import=false`, merged env behavior, and existing Lua value chunk semantics.",
+			"file": "lua/lalin/loader.lua",
+			"after": [
+				"T007",
+				"T015"
+			],
+			"status": "done",
+			"order": 16,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/lalin/loader.lua and lua/llbl/syntax/driver.lua: loader compile_opts now sets decl_stream_role=\"decls\" while preserving active_languages, allow_import=false, and merged env; driver stream HostEval context honors opts.decl_stream_role before spec defaults. Checks: inline loader.loadstring smoke with statement-position [generated] under merged env compiled and ran; (cd tests && luajit syntax_smoke.lua).",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:44.277Z",
+			"updatedAt": "2026-07-04T18:39:14.523Z"
+		},
+		{
+			"id": "T017",
+			"title": "Align LLPVM fragment handling with qualified roles",
+			"detail": "Update LLPVM's permissive fragment/spread expansion to use LLBL role descriptor/fragment compatibility helpers instead of unqualified bare `Fragment` acceptance. Preserve existing LLPVM tests by declaring compatible LLPVM role ids/descriptors rather than relying on string collisions.",
+			"file": "lua/llpvm/dsl.lua",
+			"after": [
+				"T003"
+			],
+			"status": "done",
+			"order": 17,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/llpvm/dsl.lua: LLPVM fragments now carry LLPVMDsl-qualified RoleIds; array/spread expansion unwraps HostEval and checks fragment compatibility via LLBL descriptor helpers in role contexts; role_list/fields/tape_body specs declare item_role, fragment_role, and splice_policy; fields/tape/role_list regions pass descriptors into expansion. Checks: luajit tests/llpvm/test_llbl_language_algebra.lua; inline LLPVM fragment qualification smoke.",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:42:44.386Z"
+		},
+		{
+			"id": "T018",
+			"title": "Update Lalin compile boundary for HostEval declaration lists",
+			"detail": "Teach `parsed_decls_from` to recognize HostEval/Fragment/list declaration streams through the role adapter instead of only raw parsed `Decl*` tables. Preserve deterministic order; reject unordered keyed tables unless explicitly assigning names to parsed declarations.",
+			"file": "lua/lalin/init.lua",
+			"after": [
+				"T013",
+				"T015"
+			],
+			"status": "done",
+			"order": 18,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Implemented in lua/lalin/init.lua: parsed_decls_from now constructs a projected ASDL context and uses lalin.syntax.role_adapter:decls to recognize parsed declaration streams, including HostEval, Fragment, positional lists, and deterministic keyed declaration tables, instead of manually accepting only raw Decl* arrays. Empty/non-declaration values still return nil so DSL/module fallback behavior is preserved. Checks: inline lalin.syntax.to_module HostEval declaration-list smoke; (cd tests && luajit syntax_smoke.lua).",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:44:33.623Z"
+		},
+		{
+			"id": "T019",
+			"title": "Add LLBL HostEval and role algebra tests",
+			"detail": "New core test covering HostEval constructors/evaluation caching, Lua index `index:host` slot admission, declaration-to-type-style adapter opportunity, qualified fragment compatibility, spread diagnostics, and optional-slot ambiguity detection with `index:host`.",
+			"file": "tests/core/test_llbl_host_eval_role_algebra.lua",
+			"after": [
+				"T001",
+				"T002",
+				"T003",
+				"T004"
+			],
+			"status": "done",
+			"order": 19,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Added tests/core/test_llbl_host_eval_role_algebra.lua covering HostEval constructors/evaluation caching, parsed source env evaluation, Lua index:host slot admission with declaration-to-type-style adapter opportunity, HostEval raw/event metadata, qualified fragment metadata, descriptor-controlled bare and HostEval fragment splicing, spread role diagnostics, and optional-slot ambiguity involving index:host. Checks: luajit tests/core/test_llbl_host_eval_role_algebra.lua; luajit tests/run.lua core (18 passed).",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:46:17.868Z"
+		},
+		{
+			"id": "T020",
+			"title": "Add parsed Lalin bracket role tests",
+			"detail": "New frontend tests for parsed `[Pair]` declaration-to-type, statement fragment splicing with `[body]`, product field splicing inside struct, declaration stream splicing, preserving `a[x]` as parsed index, nested Lua brackets inside host source, and unsupported role diagnostics.",
+			"file": "tests/frontend/test_lalin_bracket_role_eval.lua",
+			"after": [
+				"T009",
+				"T010",
+				"T011",
+				"T012",
+				"T013",
+				"T014",
+				"T015",
+				"T018",
+				"T025"
+			],
+			"status": "done",
+			"order": 20,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Added tests/frontend/test_lalin_bracket_role_eval.lua covering parsed [Pair] declaration-to-type lowering, [body] statement-list HostEval splicing, [fields] product-field HostEval splicing, HostEval/list declaration stream lowering and Decl.parse_decl_stream, preserving a[x] as parsed Index, [make_expr()][i] as HostEval atom plus parsed index, nested Lua brackets remaining opaque in HostEval source, and unsupported product role diagnostics. Checks: luajit tests/frontend/test_lalin_bracket_role_eval.lua; (cd tests && luajit syntax_smoke.lua).",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:49:04.612Z"
+		},
+		{
+			"id": "T021",
+			"title": "Add Lua DSL and LLPVM regression tests",
+			"detail": "Extend existing Lua DSL test and/or add focused tests proving Lua `[]` operands are HostEval-routed, DSL declaration values adapt to type slots, `_`/`spread` remain valid, Lalin fragments qualify correctly, and LLPVM fragment behavior still passes.",
+			"file": "tests/frontend/test_dsl_lua_owned.lua",
+			"after": [
+				"T016",
+				"T017"
+			],
+			"status": "done",
+			"order": 21,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Added focused regression test tests/frontend/test_lua_dsl_host_eval_role.lua covering Lua DSL HostEval-routed result type slots adapting declaration values, qualified Lalin statement fragments, _/spread statement and declaration fragment splicing, and LLPVM qualified fragments. Checks: luajit tests/frontend/test_lua_dsl_host_eval_role.lua; luajit tests/llpvm/test_llbl_language_algebra.lua.",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:50:54.508Z"
+		},
+		{
+			"id": "T022",
+			"title": "Document role-directed brackets",
+			"detail": "Update LLBL guide channel table, role/fragment sections, diagnostics guidance, and examples to describe HostEval, `index:host`, qualified roles, parsed `[fragment]`, and Lua `_`/`spread` as conveniences.",
+			"file": "docs/LLBL_GUIDE.md",
+			"after": [
+				"T019",
+				"T020",
+				"T021"
+			],
+			"status": "done",
+			"order": 22,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Updated docs/LLBL_GUIDE.md: Channel law now names HostEval as the bracket bridge; core atoms include host_eval and qualified fragments; channel table documents index:host, parsed:host_eval, and legacy aliases; role section describes descriptor fields/container-vs-fragment roles; fragments section documents qualified RoleIds, descriptor-controlled splicing, parsed [fragment], and Lua _/spread conveniences; diagnostics guidance includes HostEval and produced-value origins. Documentation-only change; no code checks required.",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:52:43.239Z"
+		},
+		{
+			"id": "T023",
+			"title": "Update Lalin language reference for bracket semantics",
+			"detail": "Replace HostEscape/type-only wording with role-directed HostEval wording. Document declaration-to-type projection, field/statement/declaration splicing, parsed index boundary, nested Lua brackets, and deterministic declaration-list rules.",
+			"file": "docs/LANGUAGE_REFERENCE.md",
+			"after": [
+				"T020"
+			],
+			"status": "done",
+			"order": 23,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Updated docs/LANGUAGE_REFERENCE.md: renamed Host Escapes section to role-directed HostEval brackets; documented evaluation/adaptation split, declaration-to-type projection, statement-list splicing, product/field splicing, declaration-stream splicing and deterministic keyed declaration-list rules, parsed index boundary a[x] vs [make()][i], and nested Lua brackets remaining opaque. Updated Types section from type-only bracket wording to type-role adaptation including named declaration projection. Documentation-only change; no code checks required.",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:54:38.246Z"
+		},
+		{
+			"id": "T024",
+			"title": "Run focused and full regression suites",
+			"detail": "Run `luajit tests/core/test_llbl_host_eval_role_algebra.lua`, `luajit tests/frontend/test_lalin_bracket_role_eval.lua`, `luajit tests/frontend/test_dsl_lua_owned.lua`, `luajit tests/llpvm/test_llbl_language_algebra.lua`, `luajit tests/syntax_smoke.lua`, `luajit tests/run.lua frontend`, `luajit tests/run.lua core`, and finally `make` if Lua tests pass. Record any unsupported top-level declaration stream behavior honestly.",
+			"after": [
+				"T019",
+				"T020",
+				"T021",
+				"T022",
+				"T023"
+			],
+			"status": "done",
+			"order": 24,
+			"claimedBy": "agent-MVSF0C",
+			"evidence": "Ran requested regression commands. Passed: luajit tests/core/test_llbl_host_eval_role_algebra.lua; luajit tests/frontend/test_lalin_bracket_role_eval.lua; luajit tests/frontend/test_lua_dsl_host_eval_role.lua; luajit tests/llpvm/test_llbl_language_algebra.lua; (cd tests && luajit syntax_smoke.lua); luajit tests/run.lua core (18 passed). As requested command from repo root, luajit tests/syntax_smoke.lua failed because that script prepends ../lua paths and must be run from tests/. Failed frontend: tests/frontend/test_dsl_lua_owned.lua still fails in existing atomic expression typecheck path (ExprAtomicLoad/Rmw/Cas missing direct typecheck_tree_expr); tests/frontend/test_lalin_loader.lua now reaches an existing native-option removal error for opts.residual='bc'. Therefore luajit tests/run.lua frontend reports 3 passed, 2 failed. make was not run because Lua frontend tests did not pass. No unsupported top-level declaration-stream behavior was observed in focused tests; loader statement-position [generated] smoke passed earlier.",
+			"notes": [],
+			"createdAt": "2026-07-04T17:14:24.647Z",
+			"updatedAt": "2026-07-04T18:56:12.616Z"
+		}
+	]
+}

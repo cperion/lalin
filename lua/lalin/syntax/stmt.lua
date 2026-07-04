@@ -162,7 +162,13 @@ function Stmt.parse(lex, ctx)
   ctx.lex = lex
   local t = lex:peek()
 
-  if t.value == "requires" then
+  if t.value == "[" then
+    local raw, open, close = lex:consume_balanced_from_open("[", "]")
+    local refs = Ast.extract_refs(raw)
+    Ast.add_refs(ctx, refs)
+    return Ast.host_eval(raw, refs, Ast.origin(lex, open, close, "parsed:host_eval"), "stmts")
+
+  elseif t.value == "requires" then
     local start = lex:next()
     local exprs = parse_expr_list_until_no_comma(lex, ctx)
     return Ast.node("StmtRequires", { exprs = exprs }, Ast.origin(lex, start, lex.last, "parsed:requires"))

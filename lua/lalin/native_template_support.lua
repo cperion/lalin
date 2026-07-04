@@ -378,6 +378,7 @@ local function bind_context(T)
     function api.axis_code_term(axis) return Native.NativeAxisCodeTerm(require_value(axis, "NativeCodeTermAxis")) end
     function api.axis_code_const(axis) return Native.NativeAxisCodeConst(require_value(axis, "NativeCodeConstAxis")) end
     function api.axis_code_type(ty) return Native.NativeAxisCodeType(require_value(ty, "CodeType")) end
+    function api.axis_kernel(axis) return Native.NativeAxisKernel(require_value(axis, "NativeKernelAxis")) end
     function api.axis_abi(protocol) return Native.NativeAxisAbi(require_value(protocol, "NativeCallProtocol")) end
     function api.axis_register_protocol(protocol) return Native.NativeAxisRegisterProtocol(require_value(protocol, "NativeRegisterProtocol")) end
     function api.axis_machine_scalar(scalar) return Native.NativeAxisMachineScalar(require_value(scalar, "NativeMachineScalarRep")) end
@@ -550,8 +551,39 @@ local function bind_context(T)
         return api.frame_stack_limit(256, 16)
     end
 
-    function api.public_abi_adapter_support(projections)
-        return projections or {}
+    local function default_abi_for_scalar(scalar)
+        if asdl.isa(scalar, Native.NativeScalarPointer) then return api.abi_pointer_value(scalar) end
+        return api.abi_scalar_value(scalar)
+    end
+
+    function api.default_scalar_public_abi_adapters(target, scalar_reps)
+        local out = {}
+        for _, scalar in ipairs(scalar_reps or {}) do
+            local ty = scalar:native_code_type()
+            local abi = default_abi_for_scalar(scalar)
+            for param_count = 0, 2 do
+                local params = {}
+                for index = 0, param_count - 1 do
+                    params[#params + 1] = api.abi_param_projection(index, ty, abi)
+                end
+                out[#out + 1] = api.abi_function_projection(target, params, api.abi_result_projection(ty, abi))
+            end
+            local bool_abi = api.abi_scalar_value(api.scalar_bool8())
+            if scalar ~= api.scalar_bool8() then
+                out[#out + 1] = api.abi_function_projection(target, {
+                    api.abi_param_projection(0, ty, abi),
+                    api.abi_param_projection(1, ty, abi),
+                }, api.abi_result_projection(Code.CodeTyBool8, bool_abi))
+            end
+            local void_params = { api.abi_param_projection(0, ty, abi) }
+            out[#out + 1] = api.abi_function_projection(target, void_params, api.abi_result_projection(nil, api.abi_void_result()))
+        end
+        return out
+    end
+
+    function api.public_abi_adapter_support(projections, target, scalar_reps)
+        if projections ~= nil then return projections end
+        return api.default_scalar_public_abi_adapters(target, scalar_reps)
     end
 
     function api.constant_pool_scalar_const_kind(scalar)
@@ -1185,6 +1217,14 @@ local function bind_context(T)
         return Native.NativeAtomicGccBuiltins
     end
 
+    function api.empty_kernel_source_support()
+        return Native.NativeKernelSourceSupport({})
+    end
+
+    function api.kernel_source_support(shapes)
+        return Native.NativeKernelSourceSupport(shapes or {})
+    end
+
     function api.support_domain(
         id,
         target,
@@ -1196,18 +1236,20 @@ local function bind_context(T)
         passthrough_int_limit,
         passthrough_float_limit,
         frame_stack_limit,
-        atomic_codegen
+        atomic_codegen,
+        kernel_source_support
     )
         target = require_value(target, "NativeTarget")
         runtime = require_value(runtime, "NativeRuntime")
         scalar_reps = scalar_reps or {}
-        public_abi_adapters = api.public_abi_adapter_support(public_abi_adapters)
+        public_abi_adapters = api.public_abi_adapter_support(public_abi_adapters, target, scalar_reps)
         continuation_signatures = continuation_signatures or {}
         constant_pool_support = constant_pool_support or api.empty_constant_pool_support()
         passthrough_int_limit = passthrough_int_limit or api.spill_all_passthrough_int_limit()
         passthrough_float_limit = passthrough_float_limit or api.spill_all_passthrough_float_limit()
         frame_stack_limit = frame_stack_limit or api.x64_sysv_frame_stack_limit()
         atomic_codegen = atomic_codegen or api.atomic_gcc_builtins_support()
+        local kernel_sources = kernel_source_support or api.empty_kernel_source_support()
         local scalar_supports = {}
         local register_supports = {}
         local abi = {}
@@ -1237,10 +1279,28 @@ local function bind_context(T)
             passthrough_int_limit,
             passthrough_float_limit,
             frame_stack_limit,
+            kernel_sources,
             public_abi_adapters,
             continuation_signatures,
             constant_pool_support,
             atomic_codegen
+        )
+    end
+
+    function api.support_domain_with_kernel_sources(id, target, runtime, scalar_reps, kernel_source_support)
+        return api.support_domain(
+            id,
+            target,
+            runtime,
+            scalar_reps,
+            nil,
+            nil,
+            nil,
+            nil,
+            nil,
+            nil,
+            nil,
+            require_value(kernel_source_support, "NativeKernelSourceSupport")
         )
     end
 

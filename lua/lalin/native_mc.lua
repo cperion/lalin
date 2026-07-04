@@ -473,7 +473,9 @@ local function bind_context(T)
             local binding = binding_for_ordinal(plan, node, relocation.ordinal)
             if binding == nil then return Native.NativeInstallRejectMissingBinding(hole_layout.id) end
             local patch_input = native_patch_apply_input(input, plan, node, base_address, node_offset, hole_layout, binding, relocation.addend, nil)
-            if asdl.isa(relocation.formula, Native.NativePatchPcRel32) then
+            if asdl.isa(relocation.formula, Native.NativePatchPcRel32)
+                and not asdl.isa(hole_layout.hole, Native.NativePatchFrameOffset32)
+                and not asdl.isa(hole_layout.hole, Native.NativePatchImm32) then
                 return binding.coordinate:write_native_patch_rel32(patch_input)
             end
             return hole_layout.hole:apply_native_patch(patch_input)

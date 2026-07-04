@@ -115,12 +115,13 @@ local function is_expression_context(source, start_i)
   return false
 end
 
-local function make_ctx(chunkname, source, start_tok, entry_tok)
+local function make_ctx(chunkname, source, start_tok, entry_tok, expected_role)
   local ctx = {
     chunkname = chunkname,
     source = source,
     start_token = start_tok,
     entry_token = entry_tok,
+    expected_role = expected_role,
     refs = {},
     ref_seen = {},
   }
@@ -139,6 +140,10 @@ local function make_ctx(chunkname, source, start_tok, entry_tok)
 end
 
 local function descriptor_from(spec, entry, lex, ctx)
+  if entry == "__host_eval_stream" then
+    if spec.parse_decl_stream then return spec.parse_decl_stream(lex, ctx) end
+    if spec.parse_host_eval then return spec.parse_host_eval(lex, ctx, ctx and ctx.expected_role) end
+  end
   if spec.parse_entry then
     return spec.parse_entry(lex, entry, ctx)
   end
@@ -165,9 +170,14 @@ function Driver.compile(source, chunkname, opts)
   local constructors = {}
   local pieces = { "local __llbl_syntax = require(\"llbl.syntax\")\n" }
   local active_direct = {}
+  local active_specs, active_seen = {}, {}
 
   local function activate(spec)
     if not spec then return end
+    if not active_seen[spec] then
+      active_seen[spec] = true
+      active_specs[#active_specs + 1] = spec
+    end
     for _, e in ipairs(spec.direct_entrypoints or spec.entrypoints or {}) do
       active_direct[e] = spec
     end
@@ -179,6 +189,58 @@ function Driver.compile(source, chunkname, opts)
 
   local cursor = 1
   local chunk_id = opts.chunk_id or (chunkname .. "#" .. tostring({}):gsub("table: ", ""))
+
+  local function stream_host_spec()
+    local found
+    for i = 1, #active_specs do
+      local spec = active_specs[i]
+      if spec.parse_decl_stream or spec.parse_host_eval then
+        if found and found ~= spec then return nil, "ambiguous" end
+        found = spec
+      end
+    end
+    return found
+  end
+
+  local function bracket_decl_stream_context(tok)
+    local prev = lex.tokens[lex.pos - 1]
+    if not prev then return true end
+    if prev.value == "=" or prev.value == "(" or prev.value == "{" or prev.value == "[" or prev.value == "," or prev.value == ":" then return false end
+    if prev.kind == "name" and prev.value == "return" then return false end
+    if prev.value == ";" or separated_by_statement_boundary(source, prev.finish, tok.start) then return true end
+    if prev.kind == "name" and (prev.value == "then" or prev.value == "do" or prev.value == "else" or prev.value == "repeat") then return true end
+    return false
+  end
+
+  local function append_constructor(spec, entry, desc, island_start, entry_tok, ctx)
+    pieces[#pieces + 1] = source:sub(cursor, island_start.start - 1)
+    desc.refs = unique_refs(desc.refs or ctx.refs)
+    desc.owner = desc.owner or spec.owner or spec.name
+    desc.entry = desc.entry or entry
+    desc.expected_role = desc.expected_role or ctx.expected_role
+    desc.lua_binding = desc.lua_binding or ctx.lua_binding
+    desc.origin = desc.origin or ctx:origin(lex, island_start, lex.last, entry == "__host_eval_stream" and "parsed:host_eval" or ("parsed:" .. tostring(entry)))
+
+    local ctor = Constructor.new(desc)
+    constructors[#constructors + 1] = ctor
+    local id = #constructors
+    local invoke = string.format("__llbl_syntax.invoke(%s,%d,%s)", q(chunk_id), id, Constructor.env_source(ctor.refs))
+
+    local output = ctor.outputs and ctor.outputs[1]
+    local in_expr = is_expression_context(source, island_start.start)
+    if output and output.name and valid_ident(output.name) and not in_expr then
+      if output.local_decl then
+        pieces[#pieces + 1] = "local " .. output.name .. " = " .. invoke
+      else
+        pieces[#pieces + 1] = output.name .. " = " .. invoke
+      end
+    else
+      pieces[#pieces + 1] = invoke
+    end
+
+    local last = lex.last or island_start
+    cursor = last.finish + 1
+  end
 
   while not lex:at_eof() do
     local t = lex:peek()
@@ -200,61 +262,52 @@ function Driver.compile(source, chunkname, opts)
       cursor = module_tok.finish + 1
 
     else
-      local spec, entry, namespaced
-      if t.kind == "name" then
-        local t2 = lex:peek(1)
-        spec, entry = registry.resolve_namespaced(t.value, t2 and t2.value)
-        if spec then
-          namespaced = true
-        elseif active_direct[t.value] then
-          spec, entry = active_direct[t.value], t.value
-        elseif opts.direct_entrypoints then
-          spec, entry = registry.resolve_direct(t.value)
+      local handled = false
+      if t.value == "[" and bracket_decl_stream_context(t) then
+        local stream_spec, stream_err = stream_host_spec()
+        if stream_err == "ambiguous" then
+          lex:error_at(t, "bare parsed host-eval stream is ambiguous between active syntax languages")
+        elseif stream_spec then
+          local island_start = t
+          local ctx = make_ctx(chunkname, source, island_start, island_start, opts.decl_stream_role or stream_spec.decl_stream_role or stream_spec.expected_role or "decls")
+          local desc = descriptor_from(stream_spec, "__host_eval_stream", lex, ctx)
+          append_constructor(stream_spec, "__host_eval_stream", desc, island_start, island_start, ctx)
+          handled = true
         end
       end
 
-      if spec then
-        local island_start = t
-        local lua_binding = infer_lua_binding(lex, source)
-        local entry_tok
-        if namespaced then
-          lex:next() -- namespace token
-          entry_tok = lex:next() -- entry token
-        else
-          entry_tok = lex:next()
-        end
-
-        pieces[#pieces + 1] = source:sub(cursor, island_start.start - 1)
-        local ctx = make_ctx(chunkname, source, island_start, entry_tok)
-        ctx.lua_binding = lua_binding
-        local desc = descriptor_from(spec, entry, lex, ctx)
-        desc.refs = unique_refs(desc.refs or ctx.refs)
-        desc.owner = desc.owner or spec.owner or spec.name
-        desc.entry = desc.entry or entry
-        desc.lua_binding = desc.lua_binding or ctx.lua_binding
-        desc.origin = desc.origin or ctx:origin(lex, island_start, lex.last, "parsed:" .. tostring(entry))
-
-        local ctor = Constructor.new(desc)
-        constructors[#constructors + 1] = ctor
-        local id = #constructors
-        local invoke = string.format("__llbl_syntax.invoke(%s,%d,%s)", q(chunk_id), id, Constructor.env_source(ctor.refs))
-
-        local output = ctor.outputs and ctor.outputs[1]
-        local in_expr = is_expression_context(source, island_start.start)
-        if output and output.name and valid_ident(output.name) and not in_expr then
-          if output.local_decl then
-            pieces[#pieces + 1] = "local " .. output.name .. " = " .. invoke
-          else
-            pieces[#pieces + 1] = output.name .. " = " .. invoke
+      if not handled then
+        local spec, entry, namespaced
+        if t.kind == "name" then
+          local t2 = lex:peek(1)
+          spec, entry = registry.resolve_namespaced(t.value, t2 and t2.value)
+          if spec then
+            namespaced = true
+          elseif active_direct[t.value] then
+            spec, entry = active_direct[t.value], t.value
+          elseif opts.direct_entrypoints then
+            spec, entry = registry.resolve_direct(t.value)
           end
-        else
-          pieces[#pieces + 1] = invoke
         end
 
-        local last = lex.last or island_start
-        cursor = last.finish + 1
-      else
-        lex:next()
+        if spec then
+          local island_start = t
+          local lua_binding = infer_lua_binding(lex, source)
+          local entry_tok
+          if namespaced then
+            lex:next() -- namespace token
+            entry_tok = lex:next() -- entry token
+          else
+            entry_tok = lex:next()
+          end
+
+          local ctx = make_ctx(chunkname, source, island_start, entry_tok)
+          ctx.lua_binding = lua_binding
+          local desc = descriptor_from(spec, entry, lex, ctx)
+          append_constructor(spec, entry, desc, island_start, entry_tok, ctx)
+        else
+          lex:next()
+        end
       end
     end
   end

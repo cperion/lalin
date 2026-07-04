@@ -39,6 +39,9 @@ Schema(T)
 require("lalin.native_mc")(T)
 local Native = T.LalinNative
 local Code = T.LalinCode
+local Core = T.LalinCore
+local Value = T.LalinValue
+local Stencil = T.LalinStencil
 local Support = require("lalin.native_template_support")(T)
 local NativeBackend = require("lalin.native_backend")(T)
 local Sources = require("lalin.native_template_sources")(T)
@@ -138,7 +141,7 @@ end
 assert(saw_i64 and saw_f64 and saw_pointer, "full support domain should name integer, float, and pointer scalar reps")
 
 local full_request = Sources.host_scalar_bank_request()
-assert_source_manifest_closure("full host scalar bank request", full_request, full_domain, 3570)
+assert_source_manifest_closure("full host scalar bank request", full_request, full_domain, 3931)
 assert(#full_request.sources > #i32_domain.scalars, "full scalar source request should be generated from the full support domain")
 local function full_source_for_family(family_id)
     for _, source in ipairs(full_request.sources) do
@@ -179,6 +182,8 @@ for _, family_id in ipairs({
     "native.code.inst.atomic_fence.seq_cst",
     "native.code.inst.alias.f64",
     "native.code.term.return.f64",
+    "native.code.term.return.void",
+    "native.code.inst.result_copy.f64",
     "native.code.const.literal.i64",
     "native.code.term.jump.next",
     "native.code.term.branch.bool8.slot",
@@ -189,6 +194,8 @@ for _, family_id in ipairs({
 }) do
     assert(full_source_for_family(family_id) ~= nil, "full scalar domain should include " .. family_id)
 end
+assert(asdl.isa(full_source_for_family("native.code.term.return.void").family.axes[3].axis, Native.NativeCodeTermReturnShapeAxis), "void return source should use ABI/result-shape return axis")
+assert(asdl.isa(full_source_for_family("native.code.inst.result_copy.f64").family.axes[3].axis, Native.NativeCodeInstResultCopyAxis), "result copy source should use result-copy axis")
 assert(asdl.isa(full_source_for_family("native.code.inst.float_binary.f64.add").extraction, Native.NativeExtractContinuationFragment), "f64 add should be a C continuation fragment")
 assert(full_source_for_family("native.code.inst.float_binary.f64.add").c_text:find("lalin_native_cont_next", 1, true), "f64 add should tail into the declared C continuation")
 assert(full_source_for_family("native.code.const.literal.i64").declared_holes[2].hole == Native.NativePatchImm64, "i64 literal should declare an imm64 hole")
@@ -251,19 +258,110 @@ for _, family_id in ipairs({
     "native.code.inst.call.direct." .. abi_token,
     "native.code.inst.call.indirect." .. abi_token,
     "native.code.inst.call.closure." .. abi_token,
-    "native.code.inst.call.extern.native.runtime.add." .. abi_token,
+    "native.code.inst.call.extern." .. abi_token,
 }) do
     local source = abi_source(family_id)
     assert(source ~= nil, "ABI/call support domain should include " .. family_id)
     assert(asdl.isa(source.generator.chunk_class, Native.NativeChunkCallOp), family_id .. " should be a CallOp source")
 end
+assert(asdl.isa(abi_source("native.code.inst.call.direct." .. abi_token).family.axes[3].axis, Native.NativeCodeInstCallShapeAxis), "direct call source should use generic call-shape axis")
+assert(abi_source("native.code.inst.call.direct." .. abi_token).family.axes[3].axis.shape == Native.NativeCodeCallDirectTarget, "direct call source axis should carry direct target shape")
+assert(abi_source("native.code.inst.call.extern." .. abi_token).family.axes[3].axis.shape == Native.NativeCodeCallExternTarget, "extern call source axis should carry extern target shape, not a synthetic CodeExternId")
+assert(abi_source("native.code.inst.call.indirect." .. abi_token).family.axes[3].axis.shape == Native.NativeCodeCallIndirectPointer, "indirect call source axis should carry indirect pointer shape")
+assert(abi_source("native.code.inst.call.closure." .. abi_token).family.axes[3].axis.shape == Native.NativeCodeCallClosurePointer, "closure call source axis should carry closure pointer shape")
 assert_relocation_kinds(
-    abi_source("native.code.inst.call.extern.native.runtime.add." .. abi_token),
-    { Native.NativeTemplateRelocationHoleOrdinal, Native.NativeTemplateRelocationContinuation, Native.NativeTemplateRelocationRuntimeSymbol }
+    abi_source("native.code.inst.call.extern." .. abi_token),
+    { Native.NativeTemplateRelocationHoleOrdinal, Native.NativeTemplateRelocationContinuation }
 )
 
+local descriptor_abi = Code.CodeTySlice(Code.CodeTyInt(32, Code.CodeSigned)):native_abi_projection(NativeBackend.host_target())
+local descriptor_projection = Native.NativeAbiFunctionProjection(
+    NativeBackend.host_target(),
+    { Native.NativeAbiParamProjection(0, Code.CodeTySlice(Code.CodeTyInt(32, Code.CodeSigned)), descriptor_abi) },
+    Native.NativeAbiResultProjection(Code.CodeTySlice(Code.CodeTyInt(32, Code.CodeSigned)), descriptor_abi)
+)
+local descriptor_domain = Support.support_domain(
+    Native.NativeTemplateSupportDomainId("native.template.support.test.descriptor.abi"),
+    NativeBackend.host_target(),
+    NativeBackend.empty_runtime(),
+    { Support.scalar_i32(), Support.scalar_pointer(NativeBackend.host_target().pointer_bits) },
+    { descriptor_projection }
+)
+local descriptor_request = Sources.bank_request_for_support_domain(descriptor_domain, Native.NativeBankId("native.template.test.descriptor.abi"))
+Sources.assert_manifest_matches_sources(descriptor_request.manifest, descriptor_request.sources)
+local descriptor_token = descriptor_projection:native_projection_token()
+local function descriptor_source(family_id)
+    for _, source in ipairs(descriptor_request.sources) do
+        if source.family.id.text == family_id then return source end
+    end
+end
+assert(descriptor_source("native.code.func.public_abi_adapter." .. descriptor_token).c_text:find("struct lalin_native_abi_descriptor", 1, true), "descriptor public ABI source should declare descriptor C boundary type")
+assert(descriptor_source("native.code.inst.call.direct." .. descriptor_token).c_text:find("__builtin_memcpy", 1, true), "descriptor call source should copy descriptor results through frame storage")
+assert(descriptor_source("native.code.inst.result_copy.descriptor.layout.16").c_text:find("__builtin_memcpy", 1, true), "descriptor result-copy source should be byte-copy based")
+
+local kernel_value_i32 = Native.NativeKernelValueScalarShape(Support.scalar_i32())
+local kernel_loop_shape = Native.NativeKernelLoopRange1DShape(Support.scalar_index(NativeBackend.host_target().pointer_bits), Native.NativeKernelTripDynamicNonNegativeShape, true)
+local kernel_lane_shape = Native.NativeKernelLaneContiguousAddressShape(kernel_value_i32, Support.scalar_pointer(NativeBackend.host_target().pointer_bits), Support.scalar_index(NativeBackend.host_target().pointer_bits))
+local kernel_expr_shape = Native.NativeKernelExprBinaryShape(Core.BinAdd, kernel_value_i32)
+local kernel_reducer_shape = Native.NativeKernelReducerSourceShape(Value.ReductionAdd, kernel_value_i32)
+local kernel_pred_shape = Native.NativeKernelPredicateCompareConstShape(Core.CmpGt, kernel_value_i32)
+local kernel_result_shape = Native.NativeKernelResultValueShape(Native.NativeKernelExprKernelValueShape(kernel_value_i32))
+local kernel_body_shape = Native.NativeKernelBodySourceShape(kernel_loop_shape, 1, 1, 2, kernel_result_shape)
+local kernel_shapes = {
+    Native.NativeKernelDomainOpShape(kernel_loop_shape),
+    Native.NativeKernelLaneOpShape(kernel_lane_shape),
+    Native.NativeKernelExprOpShape(kernel_expr_shape),
+    Native.NativeKernelExprOpShape(Native.NativeKernelExprCastShape(Core.MachineCastIdentity, kernel_value_i32, kernel_value_i32)),
+    Native.NativeKernelEffectOpShape(Native.NativeKernelEffectStoreShape(kernel_lane_shape, Native.NativeKernelExprKernelValueShape(kernel_value_i32))),
+    Native.NativeKernelEffectOpShape(Native.NativeKernelEffectFoldShape(kernel_reducer_shape)),
+    Native.NativeKernelEffectOpShape(Native.NativeKernelEffectCallShape(Native.NativeKernelCallInternalShape)),
+    Native.NativeKernelResultOpShape(kernel_result_shape),
+    Native.NativeKernelResultOpShape(Native.NativeKernelResultFindShape(Native.NativeKernelExprKernelValueShape(kernel_value_i32), kernel_pred_shape)),
+    Native.NativeKernelProofOpShape(Native.NativeKernelProofFlowShape),
+    Native.NativeKernelBodyOpShape(kernel_body_shape),
+    Native.NativeKernelPlanOpShape(Native.NativeKernelPlannedSourceShape(kernel_body_shape)),
+}
+local kernel_domain = Support.support_domain_with_kernel_sources(
+    Native.NativeTemplateSupportDomainId("native.template.support.test.kernel.sources"),
+    NativeBackend.host_target(),
+    NativeBackend.empty_runtime(),
+    {},
+    Support.kernel_source_support(kernel_shapes)
+)
+local kernel_request = Sources.bank_request_for_support_domain(kernel_domain, Native.NativeBankId("native.template.test.kernel.sources"))
+Sources.assert_manifest_matches_sources(kernel_request.manifest, kernel_request.sources)
+local kernel_source_count = 0
+local function kernel_source_for(shape)
+    local family_id = "native.kernel." .. shape:native_kernel_op_source_token()
+    for _, source in ipairs(kernel_request.sources) do
+        if source.family.id.text == family_id then return source end
+    end
+end
+for _, shape in ipairs(kernel_shapes) do
+    local source = kernel_source_for(shape)
+    assert(source ~= nil, "kernel source support should emit " .. shape:native_kernel_op_source_token())
+    kernel_source_count = kernel_source_count + 1
+    assert(asdl.isa(source.generator.chunk_class, Native.NativeChunkKernelOp), "kernel source should be a NativeChunkKernelOp")
+    assert(asdl.isa(source.family.axes[2].axis, Native.NativeKernelSourceShapeAxis), "kernel source family must select by finite source-shape axis")
+    assert(source.family.axes[2].axis.shape:native_kernel_op_source_shape_equals(shape), "kernel source axis must carry the exact finite source shape")
+    assert(not source.family.id.text:find("native.kernel.func", 1, true), "kernel source family must not encode program function identities")
+    assert(not source.family.id.text:find("native.kernel.plan.id", 1, true), "kernel source family must not encode program plan identities")
+end
+assert(kernel_source_count == #kernel_shapes, "all requested KernelOp source shapes should be generated")
+local domain_kernel_source = kernel_source_for(kernel_shapes[1])
+assert(#domain_kernel_source.declared_continuation_ordinals == 2, "kernel domain loop source should declare body/exit continuations")
+assert(#domain_kernel_source.declared_hole_ordinals >= 2, "kernel domain loop source should use frame holes for counter/trip state")
+assert(domain_kernel_source.c_text:find("kernel_trip", 1, true), "kernel domain source should materialize trip-count loop state")
+local lane_kernel_source = kernel_source_for(kernel_shapes[2])
+assert(lane_kernel_source.c_text:find("elem_size", 1, true), "kernel lane source should bind static element size through a hole")
+local expr_kernel_source = kernel_source_for(kernel_shapes[3])
+assert(expr_kernel_source.c_text:find("uint32_t", 1, true), "kernel expression source should use typed scalar arithmetic")
+local call_kernel_source = kernel_source_for(kernel_shapes[7])
+assert(call_kernel_source.c_text:find("extern void lalin_native_hole_", 1, true), "kernel call source should patch a frame-protocol helper target through a hole")
+assert_relocation_kinds(call_kernel_source, { Native.NativeTemplateRelocationHoleOrdinal, Native.NativeTemplateRelocationContinuation })
+
 local request = Sources.bank_request_for_support_domain(i32_domain, Support.host_scalar_i32_bank_id())
-assert_source_manifest_closure("i32 host scalar bank request", request, i32_domain, 269)
+assert_source_manifest_closure("i32 host scalar bank request", request, i32_domain, 301)
 assert(#request.sources > 0, "scalar i32 support slice should be non-empty")
 
 local required_families = {
@@ -272,6 +370,8 @@ local required_families = {
     ["native.code.inst.binary.i32.add"] = true,
     ["native.code.inst.binary.i32.sub"] = true,
     ["native.code.inst.binary.i32.mul"] = true,
+    ["native.code.inst.result_copy.i32"] = true,
+    ["native.code.term.return.void"] = true,
     ["native.code.inst.cast.identity.i32.to.i32.slot.to.slot"] = true,
     ["native.code.inst.select.i32.cond.arg.true.arg.false.arg.to.arg"] = true,
     ["native.code.inst.global_ref.ptr64.to.slot"] = true,

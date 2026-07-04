@@ -146,12 +146,12 @@ local function bind_context(T)
         return Native.NativeCompileCodeModule(require_value(module, "CodeModule"))
     end
 
-    function api.code_func_subject(func)
-        return Native.NativeCompileCodeFunc(require_value(func, "CodeFunc"))
+    function api.code_func_subject(func, signature)
+        return Native.NativeCompileCodeFunc(require_value(func, "CodeFunc"), require_value(signature, "CodeSig"))
     end
 
-    function api.kernel_plan_subject(plan)
-        return Native.NativeCompileKernelPlan(require_value(plan, "KernelPlan"))
+    function api.kernel_plan_subject(plan, lowering)
+        return Native.NativeCompileKernelPlan(require_value(plan, "KernelPlan"), require_value(lowering, "NativeKernelLoweringInput"))
     end
 
     function api.stencil_instance_subject(instance)
@@ -166,24 +166,24 @@ local function bind_context(T)
         return compile_subject(api.code_module_subject(module), target, runtime, bank_from_embedded(embedded, expected_manifest), expected_manifest)
     end
 
-    function api.compile_code_func(func, target, runtime, bank, expected_manifest)
-        return compile_subject(api.code_func_subject(func), target, runtime, bank, expected_manifest)
+    function api.compile_code_func(func, signature, target, runtime, bank, expected_manifest)
+        return compile_subject(api.code_func_subject(func, signature), target, runtime, bank, expected_manifest)
     end
 
-    function api.compile_code_func_with_embedded_bank(func, target, runtime, embedded, expected_manifest)
-        return compile_subject(api.code_func_subject(func), target, runtime, bank_from_embedded(embedded, expected_manifest), expected_manifest)
+    function api.compile_code_func_with_embedded_bank(func, signature, target, runtime, embedded, expected_manifest)
+        return compile_subject(api.code_func_subject(func, signature), target, runtime, bank_from_embedded(embedded, expected_manifest), expected_manifest)
     end
 
-    function api.compile_code_func_with_runtime_symbols(func, target, symbols, bank, expected_manifest)
-        return compile_subject(api.code_func_subject(func), target, api.runtime(symbols), bank, expected_manifest)
+    function api.compile_code_func_with_runtime_symbols(func, signature, target, symbols, bank, expected_manifest)
+        return compile_subject(api.code_func_subject(func, signature), target, api.runtime(symbols), bank, expected_manifest)
     end
 
-    function api.compile_kernel_plan(plan, target, runtime, bank)
-        return compile_subject(api.kernel_plan_subject(plan), target, runtime, bank)
+    function api.compile_kernel_plan(plan, lowering, target, runtime, bank)
+        return compile_subject(api.kernel_plan_subject(plan, lowering), target, runtime, bank)
     end
 
-    function api.compile_kernel_plan_with_embedded_bank(plan, target, runtime, embedded)
-        return compile_subject(api.kernel_plan_subject(plan), target, runtime, bank_from_embedded(embedded))
+    function api.compile_kernel_plan_with_embedded_bank(plan, lowering, target, runtime, embedded)
+        return compile_subject(api.kernel_plan_subject(plan, lowering), target, runtime, bank_from_embedded(embedded))
     end
 
     function api.compile_stencil_instance(instance, target, runtime, bank)
@@ -218,20 +218,20 @@ local function bind_context(T)
         return compile_subject(api.code_module_subject(module), api.host_target(), api.empty_runtime(), bank_from_embedded(embedded))
     end
 
-    function api.compile_code_func_on_host(func, bank)
-        return compile_subject(api.code_func_subject(func), api.host_target(), api.empty_runtime(), bank)
+    function api.compile_code_func_on_host(func, signature, bank)
+        return compile_subject(api.code_func_subject(func, signature), api.host_target(), api.empty_runtime(), bank)
     end
 
-    function api.compile_code_func_with_embedded_bank_on_host(func, embedded)
-        return compile_subject(api.code_func_subject(func), api.host_target(), api.empty_runtime(), bank_from_embedded(embedded))
+    function api.compile_code_func_with_embedded_bank_on_host(func, signature, embedded)
+        return compile_subject(api.code_func_subject(func, signature), api.host_target(), api.empty_runtime(), bank_from_embedded(embedded))
     end
 
-    function api.compile_kernel_plan_on_host(plan, bank)
-        return compile_subject(api.kernel_plan_subject(plan), api.host_target(), api.empty_runtime(), bank)
+    function api.compile_kernel_plan_on_host(plan, lowering, bank)
+        return compile_subject(api.kernel_plan_subject(plan, lowering), api.host_target(), api.empty_runtime(), bank)
     end
 
-    function api.compile_kernel_plan_with_embedded_bank_on_host(plan, embedded)
-        return compile_subject(api.kernel_plan_subject(plan), api.host_target(), api.empty_runtime(), bank_from_embedded(embedded))
+    function api.compile_kernel_plan_with_embedded_bank_on_host(plan, lowering, embedded)
+        return compile_subject(api.kernel_plan_subject(plan, lowering), api.host_target(), api.empty_runtime(), bank_from_embedded(embedded))
     end
 
     function api.compile_stencil_instance_on_host(instance, bank)
