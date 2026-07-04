@@ -10,6 +10,7 @@ local function bind_context(T)
     local Sem = T.LalinSem
     local C = T.LalinC
     local Support = require("lalin.native_template_support")(T)
+    require("lalin.native_template_sources")(T)
     local CodeType = require("lalin.code_type")(T)
     local TypeSizeAlign = require("lalin.type_size_align")(T)
     local api = {}
@@ -281,6 +282,26 @@ local function bind_context(T)
         return node
     end
 
+    local function remove_auto_continuation_edge(state, from_node, to_node)
+        if from_node == nil or to_node == nil then return false end
+        for i = #state.control_plan.edges, 1, -1 do
+            local edge = state.control_plan.edges[i]
+            if asdl.isa(edge, Native.NativeContinuationEdge)
+                and edge.from == from_node.id
+                and edge.to == to_node.id
+                and edge.symbol == Support.next_continuation_symbol() then
+                table.remove(state.control_plan.edges, i)
+                return true
+            end
+        end
+        return false
+    end
+
+    local function append_control_edge(state, edge)
+        state.control_plan.edges[#state.control_plan.edges + 1] = edge
+        return edge
+    end
+
     local function materialize_bindings(node_id, instance, entry, binding_specs)
         local bindings = {}
         for _, spec in ipairs(binding_specs or {}) do
@@ -321,6 +342,8 @@ local function bind_context(T)
             Native.NativeContinuationEdge(entry_node.id, state.control_plan.nodes[1].id, Support.first_continuation_symbol()),
         }
         for _, edge in ipairs(state.control_plan.edges) do control_edges[#control_edges + 1] = edge end
+        local exits = state.control_plan.exits
+        if #(exits or {}) == 0 then exits = { state.control_plan.nodes[#state.control_plan.nodes].id } end
         return Native.NativeTemplateGraph(
             plan.target,
             protocol,
@@ -330,7 +353,7 @@ local function bind_context(T)
             state.value_edges,
             state.value_locations.addresses,
             entry_node.id,
-            { state.control_plan.nodes[#state.control_plan.nodes].id }
+            exits
         )
     end
 
@@ -366,6 +389,18 @@ local function bind_context(T)
 
     local function frame_offset_value_binding(id, offset)
         return hole(id, Native.NativePatchFrameOffset(offset))
+    end
+
+    local function block_entry_node_id(block_id)
+        return Native.NativeTemplateNodeId("native.code.block_entry." .. block_id.text)
+    end
+
+    local function result_frame_slot_id(func_id, suffix)
+        return Native.NativeFrameSlotId("native.frame.result." .. func_id.text .. "." .. suffix)
+    end
+
+    local function sret_pointer_value_id(func_id)
+        return Code.CodeValueId("native.value.sret_ptr." .. func_id.text)
     end
 
     function Code.CodeTyBool8:native_machine_scalar(_target)
@@ -918,6 +953,10 @@ local function bind_context(T)
         return Native.NativeCallCodeSig(self:native_abi_projection(target))
     end
 
+    function Code.CodeSig:native_code_result_shape(target)
+        return self:native_abi_projection(target).result:native_code_result_shape()
+    end
+
     function Code.CodeCallDirect:select_native_call_projection(sig, target)
         return sig:native_abi_projection(target)
     end
@@ -932,6 +971,35 @@ local function bind_context(T)
 
     function Code.CodeCallClosure:select_native_call_projection(sig, target)
         return sig:native_abi_projection(target)
+    end
+
+    function Code.CodeCallTarget:native_code_call_shape()
+        internal_error("Code call target has no native call shape")
+    end
+
+    function Code.CodeCallTarget:native_call_family_mode()
+        internal_error("Code call target has no native call family mode")
+    end
+
+    function Code.CodeCallDirect:native_call_family_mode() return "direct" end
+    function Code.CodeCallExtern:native_call_family_mode() return "extern" end
+    function Code.CodeCallIndirect:native_call_family_mode() return "indirect" end
+    function Code.CodeCallClosure:native_call_family_mode() return "closure" end
+
+    function Code.CodeCallDirect:native_code_call_shape()
+        return Native.NativeCodeCallDirectTarget
+    end
+
+    function Code.CodeCallExtern:native_code_call_shape()
+        return Native.NativeCodeCallExternTarget
+    end
+
+    function Code.CodeCallIndirect:native_code_call_shape()
+        return Native.NativeCodeCallIndirectPointer
+    end
+
+    function Code.CodeCallClosure:native_code_call_shape()
+        return Native.NativeCodeCallClosurePointer
     end
 
     function Code.CodePlace:native_code_address_target(_target)
@@ -1299,7 +1367,30 @@ local function bind_context(T)
         out[#out + 1] = Native.NativeCodeValueTypePlanEntry(value, ty, ty:native_storage_layout(target, layout_plan))
     end
 
-    local function native_code_function_plan(func, target, layout_plan)
+    local function native_code_function_entry_symbol(signature, target)
+        return "lalin_native_public_abi_adapter_" .. signature:native_abi_projection(target):native_projection_token()
+    end
+
+    local function native_public_abi_adapter_family(target, projection)
+        return Native.NativeTemplateFamily(
+            Support.code_func_family_id("public_abi_adapter." .. projection:native_projection_token()),
+            Native.NativeRoleCodeFunc,
+            { Support.axis_target(target), Support.axis_abi(Support.native_call_code_sig(projection)) },
+            Support.protocol(Support.native_call_code_sig(projection), Support.register_none())
+        )
+    end
+
+    local function native_code_function_entry_address(func, signature, target)
+        local address_target = Native.NativeCodeFuncAddressTarget(func.id, func.sig)
+        return Native.NativeCodeAddressProjection(
+            address_target,
+            Native.NativeAddressValueRepresentation(Support.scalar_pointer(target.pointer_bits), address_target),
+            Native.NativeCodeAddressFunctionEntry(func.id, native_code_function_entry_symbol(signature, target))
+        )
+    end
+
+    local function native_code_function_plan(func, signature, target, layout_plan)
+        local abi = signature:native_abi_projection(target)
         local value_types = {}
         local block_params = {}
         local local_storage = {}
@@ -1321,7 +1412,7 @@ local function bind_context(T)
                 local_decl.ty:native_storage_layout(target, layout_plan)
             )
         end
-        return Native.NativeCodeFunctionPlan(func.id, func.sig, value_types, block_params, local_storage)
+        return Native.NativeCodeFunctionPlan(func.id, func.sig, signature, abi, native_code_function_entry_address(func, signature, target), value_types, block_params, local_storage)
     end
 
     local function native_code_module_plan(module, target, runtime, type_layouts)
@@ -1404,14 +1495,12 @@ local function bind_context(T)
             )
         end
         for _, func in ipairs(module.funcs or {}) do
-            module_sig_for_func(module, func)
-            function_signatures[#function_signatures + 1] = Native.NativeCodeFunctionSignaturePlanEntry(func.id, func.sig)
-            local address_target = Native.NativeCodeFuncAddressTarget(func.id, func.sig)
-            addresses.funcs[#addresses.funcs + 1] = Native.NativeModuleFuncAddressEntry(
-                func.id,
-                patchable_address_projection(target, address_target, Native.NativePatchCodeFuncAddress(func.id))
-            )
-            functions[#functions + 1] = native_code_function_plan(func, target, type_layouts)
+            local signature = module_sig_for_func(module, func)
+            local abi = signature:native_abi_projection(target)
+            function_signatures[#function_signatures + 1] = Native.NativeCodeFunctionSignaturePlanEntry(func.id, func.sig, signature, abi)
+            local entry_address = native_code_function_entry_address(func, signature, target)
+            addresses.funcs[#addresses.funcs + 1] = Native.NativeModuleFuncAddressEntry(func.id, entry_address)
+            functions[#functions + 1] = native_code_function_plan(func, signature, target, type_layouts)
         end
         return Native.NativeCodeModulePlan(
             Native.NativeCodeModulePlanFromCodeModule(module.id),
@@ -1428,13 +1517,13 @@ local function bind_context(T)
 
     local function native_code_lowering_for_module(module, func, plan)
         local module_plan = native_code_module_plan(module, plan.target, plan.runtime, empty_type_layout_plan())
-        return Native.NativeCodeLoweringInput(module_plan, native_code_function_plan(func, plan.target, module_plan.type_layouts))
+        return Native.NativeCodeLoweringInput(module_plan, native_code_function_plan(func, module_sig_for_func(module, func), plan.target, module_plan.type_layouts))
     end
 
     function Code.CodeBackModuleFacts:native_code_lowering_input(module, func, plan)
         local type_layouts = self:native_code_type_layout_plan(module, plan.target)
         local module_plan = native_code_module_plan(module, plan.target, plan.runtime, type_layouts)
-        return Native.NativeCodeLoweringInput(module_plan, native_code_function_plan(func, plan.target, type_layouts))
+        return Native.NativeCodeLoweringInput(module_plan, native_code_function_plan(func, module_sig_for_func(module, func), plan.target, type_layouts))
     end
 
     function Code.CodeModule:native_code_lowering_input(facts, func, plan)
@@ -1442,15 +1531,17 @@ local function bind_context(T)
         return native_code_lowering_for_module(self, func, plan)
     end
 
-    local function native_code_lowering_for_single_function(func, plan)
+    local function native_code_lowering_for_single_function(func, signature, plan)
         local type_layouts = empty_type_layout_plan()
-        local func_plan = native_code_function_plan(func, plan.target, type_layouts)
+        local func_plan = native_code_function_plan(func, signature, plan.target, type_layouts)
+        local addresses = empty_module_address_plan()
+        addresses.funcs[#addresses.funcs + 1] = Native.NativeModuleFuncAddressEntry(func.id, func_plan.entry_address)
         local module_plan = Native.NativeCodeModulePlan(
             Native.NativeCodeModulePlanForSingleFunction(func.id),
             type_layouts,
-            empty_module_address_plan(),
-            {},
-            { Native.NativeCodeFunctionSignaturePlanEntry(func.id, func.sig) },
+            addresses,
+            { Native.NativeCodeSignaturePlanEntry(signature.id, signature, func_plan.abi) },
+            { Native.NativeCodeFunctionSignaturePlanEntry(func.id, func.sig, signature, func_plan.abi) },
             {},
             {},
             {},
@@ -1471,6 +1562,57 @@ local function bind_context(T)
         internal_error("native C frame entry selection requires a scalar return protocol")
     end
 
+    local function abi_projection_storage_layout(abi, target)
+        if asdl.isa(abi, Native.NativeAbiScalarValue) then
+            return scalar_storage_layout_for_frame(abi.scalar)
+        end
+        if asdl.isa(abi, Native.NativeAbiPointerValue) or asdl.isa(abi, Native.NativeAbiByRefValue) then
+            return scalar_storage_layout_for_frame(Support.scalar_pointer(target.pointer_bits))
+        end
+        if asdl.isa(abi, Native.NativeAbiDescriptorValue) then
+            local fields = {}
+            for _, field in ipairs(abi.fields or {}) do
+                fields[#fields + 1] = Native.NativeDescriptorRepresentationField(field.field_name, field.offset, abi_projection_storage_layout(field.value, target).representation)
+            end
+            return Native.NativeStorageLayout(Native.NativeDescriptorValueRepresentation(abi.layout, fields), abi.layout.size, abi.layout.align or abi.layout.alignment or 1)
+        end
+        internal_error("native Code ABI projection has no direct frame storage layout")
+    end
+
+    local function append_direct_result_slot(state, func_id, shape, storage)
+        local existing
+        for _, entry in ipairs(state.frame_layout_plan.result_slots or {}) do
+            if asdl.isa(entry, Native.NativeFrameDirectResultSlot) and entry.shape:native_code_result_shape_equals(shape) then return entry.slot end
+        end
+        local offset = align_up(state.frame_layout_plan.next_frame_offset, storage.alignment)
+        local slot = Native.NativeFrameSlot(result_frame_slot_id(func_id, "direct"), storage.representation, offset, storage.size, storage.alignment)
+        state.frame_layout_plan.slots[#state.frame_layout_plan.slots + 1] = slot
+        state.frame_layout_plan.result_slots[#state.frame_layout_plan.result_slots + 1] = Native.NativeFrameDirectResultSlot(shape, slot)
+        state.frame_layout_plan.next_frame_offset = slot.offset + slot.size
+        return slot
+    end
+
+    local function append_sret_result_pointer_slot(state, func_id, pointer_slot, shape)
+        state.frame_layout_plan.result_slots[#state.frame_layout_plan.result_slots + 1] = Native.NativeFrameSRetResultSlot(shape, pointer_slot)
+        return pointer_slot
+    end
+
+    local function append_void_result_slot(state, shape)
+        state.frame_layout_plan.result_slots[#state.frame_layout_plan.result_slots + 1] = Native.NativeFrameVoidResultSlot(shape)
+    end
+
+    local function direct_result_slot(state)
+        for _, entry in ipairs(state.frame_layout_plan.result_slots or {}) do
+            if asdl.isa(entry, Native.NativeFrameDirectResultSlot) then return entry.slot, entry.shape end
+        end
+    end
+
+    local function sret_result_pointer_slot(state)
+        for _, entry in ipairs(state.frame_layout_plan.result_slots or {}) do
+            if asdl.isa(entry, Native.NativeFrameSRetResultSlot) then return entry.pointer_slot, entry.shape end
+        end
+    end
+
     local function frame_size_coordinate_value(coordinate)
         if asdl.isa(coordinate, Native.NativePatchFrameSize) then return coordinate.size end
         internal_error("native entry extraction must carry a concrete NativePatchFrameSize for frame-limit enforcement")
@@ -1480,6 +1622,9 @@ local function bind_context(T)
         local extraction = entry.compiled.extraction
         if asdl.isa(extraction, Native.NativeExtractEntryCallable) then
             return Native.NativeFrameStackLimit(frame_size_coordinate_value(extraction.frame_bytes), target_frame_alignment(entry.compiled.target))
+        end
+        if asdl.isa(extraction, Native.NativeExtractPublicAbiAdapter) then
+            return Native.NativeFrameStackLimit(256, extraction.frame_alignment)
         end
         internal_error("native Code graph entry is not a frame-owning entry callable")
     end
@@ -1652,54 +1797,108 @@ local function bind_context(T)
         internal_error("native frame planner cannot resolve scalar type for CodeValueId " .. tostring(value and value.text))
     end
 
-    function Code.CodeTermReturn:native_return_value()
-        if #(self.values or {}) == 0 then internal_error("native C frame protocol does not yet model void CodeTermReturn") end
-        if #(self.values or {}) > 1 then internal_error("Lalin native CodeTermReturn is invalid: Lalin has zero or one return value") end
-        return self.values[1]
+    local function find_func_param(func, user_index)
+        local param = (func.params or {})[user_index]
+        if param == nil then internal_error("native ABI parameter plan has no matching CodeFunc parameter " .. tostring(user_index)) end
+        return param
     end
 
-    local function return_value_for_block(block)
-        if block.term.op.native_return_value == nil then internal_error("native frame planner currently requires CodeTermReturn in the entry block") end
-        return block.term.op:native_return_value()
+    local function allocate_abi_frame_slots(func, projection, state, target, layout_plan, frame_alignment)
+        local user_index = 1
+        for _, param in ipairs(projection.params or {}) do
+            if asdl.isa(projection.result.abi, Native.NativeAbiSRetResult) and param == projection.result.abi.pointer_param then
+                local value = sret_pointer_value_id(func.id)
+                local slot = allocate_param_storage_slot(state, value, scalar_storage_layout_for_frame(Support.scalar_pointer(target.pointer_bits)), param.param_index, frame_alignment)
+                append_sret_result_pointer_slot(state, func.id, slot.location.slot, projection.result:native_code_result_shape())
+            else
+                local code_param = find_func_param(func, user_index)
+                allocate_param_storage_slot(state, code_param.value, code_param.ty:native_storage_layout(target, layout_plan), param.param_index, frame_alignment)
+                user_index = user_index + 1
+            end
+        end
+        if user_index <= #(func.params or {}) then internal_error("native ABI parameter plan did not consume all CodeFunc parameters") end
     end
 
-    function Code.CodeFunc:plan_native_copy(plan, lowering)
-        if #(self.params or {}) == 0 then internal_error("native C frame entry currently requires at least one scalar parameter") end
-        local lowering_input = lowering or native_code_lowering_for_single_function(self, plan)
+    local function allocate_result_frame_slot(func, projection, state, target)
+        local shape = projection.result:native_code_result_shape()
+        if asdl.isa(shape, Native.NativeCodeResultVoidShape) then
+            append_void_result_slot(state, shape)
+            return nil
+        end
+        if asdl.isa(shape, Native.NativeCodeResultSRetShape) then return sret_result_pointer_slot(state) end
+        return append_direct_result_slot(state, func.id, shape, abi_projection_storage_layout(projection.result.abi, target))
+    end
+
+    local function append_block_entry_node(input, block)
+        local family = Support.code_term_family("jump.next", input.plan.target, Native.NativeCodeTermJumpAxis, Support.protocol_void_none())
+        local node_id = block_entry_node_id(block.id)
+        local entry = selected_entry(input.plan, family)
+        local node = Native.NativeTemplateNode(node_id, instance_id_for(node_id), entry, {}, {}, {})
+        return append_node(input.state, node)
+    end
+
+    local function entry_binding_specs_for_projection(func, projection, state)
+        local token = projection:native_projection_token()
+        local specs = { hole("native.hole.code.func.public_abi_adapter." .. token .. ".frame_size", Native.NativePatchFrameSize(align_up(state.frame_layout_plan.next_frame_offset, target_frame_alignment(projection.target)))) }
+        local user_index = 1
+        for _, param in ipairs(projection.params or {}) do
+            local offset
+            if asdl.isa(projection.result.abi, Native.NativeAbiSRetResult) and param == projection.result.abi.pointer_param then
+                local slot = sret_result_pointer_slot(state)
+                if slot == nil then internal_error("native public ABI adapter needs reserved sret pointer slot") end
+                offset = slot.offset
+            else
+                local code_param = find_func_param(func, user_index)
+                offset = placement_for_value(state, code_param.value).location.slot.offset
+                user_index = user_index + 1
+            end
+            specs[#specs + 1] = hole("native.hole.code.func.public_abi_adapter." .. token .. ".param" .. tostring(param.param_index), Native.NativePatchFrameOffset(offset))
+        end
+        if not asdl.isa(projection.result.abi, Native.NativeAbiVoidResult) and not asdl.isa(projection.result.abi, Native.NativeAbiSRetResult) then
+            local result_slot = direct_result_slot(state)
+            if result_slot == nil then internal_error("native public ABI adapter needs reserved direct result slot") end
+            specs[#specs + 1] = hole("native.hole.code.func.public_abi_adapter." .. token .. ".result", Native.NativePatchFrameOffset(result_slot.offset))
+        end
+        return specs
+    end
+
+    function Code.CodeFunc:plan_native_copy(plan, lowering, signature)
+        if lowering == nil and signature == nil then internal_error("native CodeFunc compilation requires an ASDL CodeSig, not only CodeFunc.sig id") end
+        local lowering_input = lowering or native_code_lowering_for_single_function(self, signature, plan)
         local state = Native.NativeCodeGraphBuilderState(
             Native.NativeValueLocationPlan({}, lowering_input.module.addresses),
-            Native.NativeFrameLayoutPlan({}, {}, {}, 0),
+            Native.NativeFrameLayoutPlan({}, {}, {}, {}, 0),
             Native.NativeControlPlan({}, {}, {}, {}),
             Native.NativeEdgeCopyPlan({}),
             {}
         )
         local build = Native.NativeCodeGraphBuildInput(plan, lowering_input, state)
         local frame_alignment = target_frame_alignment(plan.target)
-        local block
-        for _, candidate in ipairs(self.blocks or {}) do
-            if candidate.id == self.entry then block = candidate end
+        local entry_block
+        for _, candidate in ipairs(self.blocks or {}) do if candidate.id == self.entry then entry_block = candidate end end
+        if entry_block == nil then internal_error("native CodeFunc entry block is absent: " .. self.entry.text) end
+        allocate_abi_frame_slots(self, lowering_input.active_func.abi, state, plan.target, lowering_input.module.type_layouts, frame_alignment)
+        allocate_result_frame_slot(self, lowering_input.active_func.abi, state, plan.target)
+        for _, block in ipairs(self.blocks or {}) do
+            for _, param in ipairs(block.params or {}) do
+                allocate_ordered_storage_slot(state, param.value, param.ty:native_storage_layout(plan.target, lowering_input.module.type_layouts), "block_param", frame_alignment)
+            end
         end
-        if block == nil then internal_error("native CodeFunc entry block is absent: " .. self.entry.text) end
-        for index, param in ipairs(self.params or {}) do
-            allocate_param_storage_slot(state, param.value, param.ty:native_storage_layout(plan.target, lowering_input.module.type_layouts), index - 1, frame_alignment)
-        end
-        local return_value = return_value_for_block(block)
-        local planned_result_scalar = scalar_for_code_value(self, return_value, plan.target)
-        reserve_return_storage_slot(state, return_value, self:native_storage_layout_for_value(return_value, plan.target, lowering_input.module.type_layouts), frame_alignment)
         for _, local_storage_entry in ipairs(lowering_input.active_func.local_storage or {}) do
             if local_storage_entry.residence ~= Code.CodeResidenceStatic then
                 local slot = allocate_local_storage_slot(state, local_storage_entry.local_id, local_storage_entry.storage, frame_alignment)
                 append_local_address_entry(state, plan.target, local_storage_entry.local_id, local_storage_entry.ty, Native.NativeCodeAddressFrameSlot(slot.id))
             end
         end
-        for _, inst in ipairs(block.insts or {}) do inst:preallocate_native_storage(build, frame_alignment) end
-        for _, inst in ipairs(block.insts or {}) do inst:append_native_address_plan(build) end
-        local protocol = block:select_native_template_graph(build)
-        local param_scalar = self.params[1].ty:native_machine_scalar(plan.target)
-        local result_scalar = result_scalar_from_protocol(protocol)
-        if result_scalar ~= planned_result_scalar then internal_error("native Code graph result scalar disagrees with deterministic frame layout") end
-        local family_name = "entry." .. scalar_token(param_scalar) .. ".return." .. scalar_token(result_scalar)
-        local family = Support.code_func_frame_family(family_name, plan.target, param_scalar, result_scalar)
+        for _, block in ipairs(self.blocks or {}) do
+            for _, inst in ipairs(block.insts or {}) do inst:preallocate_native_storage(build, frame_alignment) end
+        end
+        for _, block in ipairs(self.blocks or {}) do
+            for _, inst in ipairs(block.insts or {}) do inst:append_native_address_plan(build) end
+        end
+        for _, block in ipairs(self.blocks or {}) do block:select_native_template_graph(build) end
+        local projection = lowering_input.active_func.abi
+        local family = native_public_abi_adapter_family(plan.target, projection)
         local entry_node_id = Native.NativeTemplateNodeId("native.code.node.entry." .. self.id.text)
         local entry_entry = selected_entry(plan, family)
         local entry_node = Native.NativeTemplateNode(
@@ -1708,17 +1907,22 @@ local function bind_context(T)
             entry_entry,
             {},
             {},
-            {}
+            materialize_bindings(entry_node_id, instance_id_for(entry_node_id), entry_entry, entry_binding_specs_for_projection(self, projection, state))
         )
         enforce_entry_frame_stack_limit(entry_entry, frame_layout_from_state(plan.target, state))
-        return graph_from_state(plan, state, protocol, entry_node)
+        return graph_from_state(plan, state, Support.native_call_code_sig(projection), entry_node)
     end
 
     function Code.CodeBlock:select_native_template_graph(input)
-        for _, inst in ipairs(self.insts or {}) do
-            inst:append_native_inst_template(input)
-        end
-        return self.term:append_native_term_template(input)
+        local before_node = input.state.control_plan.nodes[#input.state.control_plan.nodes]
+        local before_count = #input.state.control_plan.nodes
+        local entry_node = append_block_entry_node(input, self)
+        if before_count > 0 then remove_auto_continuation_edge(input.state, before_node, entry_node) end
+        for _, inst in ipairs(self.insts or {}) do inst:append_native_inst_template(input) end
+        self.term:append_native_term_template(input)
+        local exit_node = input.state.control_plan.nodes[#input.state.control_plan.nodes]
+        input.state.control_plan.blocks[#input.state.control_plan.blocks + 1] = Native.NativeControlBlockEntry(self.id, entry_node.id, { exit_node.id })
+        return exit_node
     end
 
     function Code.CodeInst:append_native_inst_template(input)
@@ -2495,19 +2699,171 @@ local function bind_context(T)
         return append_family_node(input, "atomic_fence", family, {}, {}, {})
     end
 
-    local function append_alias_to_return_slot(input, value, placement)
-        local scalar = placement.representation:native_scalar_rep()
-        local return_slot = find_frame_slot(input.state, value, "return")
-        if return_slot ~= nil and placement.location.slot == return_slot then return placement end
-        local output = return_slot_for(input.state, value, scalar)
-        local axis = Native.NativeCodeInstAliasAxis(scalar:native_code_type())
-        local family = Support.code_inst_frame_family("alias." .. scalar_token(scalar), input.plan.target, scalar, axis)
-        local token = scalar_token(scalar)
-        append_family_node(input, "return.alias", family, { placement }, { output }, {
-            frame_offset_binding("native.hole.code.inst.alias." .. token .. ".src", placement),
-            frame_offset_binding("native.hole.code.inst.alias." .. token .. ".dst", output),
+    local function signature_for_call(input, sig_id)
+        for _, entry in ipairs(input.lowering.module.signatures or {}) do
+            if entry.sig == sig_id then return entry.signature end
+        end
+        internal_error("native CodeInstCall references unknown CodeSig " .. tostring(sig_id and sig_id.text))
+    end
+
+    local function call_result_storage_layout(projection, target, layout_plan)
+        if asdl.isa(projection.result.abi, Native.NativeAbiVoidResult) then return nil end
+        if asdl.isa(projection.result.abi, Native.NativeAbiSRetResult) then return projection.result.abi.result_ty:native_storage_layout(target, layout_plan) end
+        return abi_projection_storage_layout(projection.result.abi, target)
+    end
+
+    local function append_call_result_output(input, dst, projection)
+        if dst == nil then return nil end
+        local storage = call_result_storage_layout(projection, input.plan.target, input.lowering.module.type_layouts)
+        if storage == nil then internal_error("native CodeInstCall has a destination for a void ABI projection") end
+        return ensure_value_storage_slot(input.state, dst, storage, target_frame_alignment(input.plan.target))
+    end
+
+    local function append_call_arg_bindings(input, token, mode, projection, args, result_output, prefix_bindings)
+        local bindings = prefix_bindings or {}
+        local arg_index = 1
+        for _, param in ipairs(projection.params or {}) do
+            if asdl.isa(projection.result.abi, Native.NativeAbiSRetResult) and param == projection.result.abi.pointer_param then
+                if result_output == nil then internal_error("native sret call requires a destination frame slot") end
+                local ptr_value = Code.CodeValueId((result_output.value and result_output.value.text or "native.sret") .. ".sret_addr")
+                local _, ptr_placement = append_addr_of_frame_to_slot(input, "call.sret_addr", ptr_value, Support.scalar_pointer(input.plan.target.pointer_bits), result_output.location.slot.offset)
+                bindings[#bindings + 1] = frame_offset_binding("native.hole.code.inst.call." .. mode .. "." .. token .. ".arg" .. tostring(param.param_index), ptr_placement)
+            else
+                local arg_value = (args or {})[arg_index]
+                if arg_value == nil then internal_error("native call missing argument " .. tostring(arg_index)) end
+                bindings[#bindings + 1] = frame_offset_binding("native.hole.code.inst.call." .. mode .. "." .. token .. ".arg" .. tostring(param.param_index), placement_for_value(input.state, arg_value))
+                arg_index = arg_index + 1
+            end
+        end
+        if arg_index <= #(args or {}) then internal_error("native call argument list has more values than ABI params") end
+        if result_output ~= nil and not asdl.isa(projection.result.abi, Native.NativeAbiSRetResult) then
+            bindings[#bindings + 1] = frame_offset_binding("native.hole.code.inst.call." .. mode .. "." .. token .. ".result", result_output)
+        end
+        return bindings
+    end
+
+    function Code.CodeCallTarget:append_native_call_bindings(_input, _token, _projection, _args, _result_output)
+        internal_error("CodeCallTarget leaf is missing native call binding lowering")
+    end
+
+    function Code.CodeCallDirect:append_native_call_bindings(input, token, projection, args, result_output)
+        return append_call_arg_bindings(input, token, "direct", projection, args, result_output, {
+            hole("native.hole.code.inst.call.direct." .. token .. ".target", Native.NativePatchCodeFuncAddress(self.func)),
         })
-        return output
+    end
+
+    function Code.CodeCallExtern:append_native_call_bindings(input, token, projection, args, result_output)
+        return append_call_arg_bindings(input, token, "extern", projection, args, result_output, {
+            hole("native.hole.code.inst.call.extern." .. token .. ".target", Native.NativePatchCodeExternAddress(self.extern)),
+        })
+    end
+
+    function Code.CodeCallIndirect:append_native_call_bindings(input, token, projection, args, result_output)
+        return append_call_arg_bindings(input, token, "indirect", projection, args, result_output, {
+            frame_offset_binding("native.hole.code.inst.call.indirect." .. token .. ".fn", placement_for_value(input.state, self.callee)),
+        })
+    end
+
+    function Code.CodeCallClosure:append_native_call_bindings(input, token, projection, args, result_output)
+        local closure = placement_for_value(input.state, self.closure)
+        if not asdl.isa(closure.location, Native.NativeValueFrameSlotLocation) then internal_error("native closure call requires a frame-slot closure value") end
+        return append_call_arg_bindings(input, token, "closure", projection, args, result_output, {
+            frame_offset_value_binding("native.hole.code.inst.call.closure." .. token .. ".fn", closure.location.slot.offset),
+            frame_offset_value_binding("native.hole.code.inst.call.closure." .. token .. ".env", closure.location.slot.offset + 8),
+        })
+    end
+
+    function Code.CodeInstCall:append_native_inst_template(input)
+        local sig = signature_for_call(input, self.sig)
+        local projection = self.target:select_native_call_projection(sig, input.plan.target)
+        local shape = self.target:native_code_call_shape()
+        local token = projection:native_projection_token()
+        local mode = self.target:native_call_family_mode()
+        local output = append_call_result_output(input, self.dst, projection)
+        local family = Support.code_inst_frame_family("call." .. mode .. "." .. token, input.plan.target, Support.scalar_bool8(), Native.NativeCodeInstCallShapeAxis(shape, projection))
+        local node = append_family_node(input, "call", family, {}, output and { output } or {}, self.target:append_native_call_bindings(input, token, projection, self.args, output))
+        if output ~= nil then append_storage_value_edge(input, output, node) end
+        return node
+    end
+
+    local function find_block_param_plan(input, block_id)
+        for _, entry in ipairs(input.lowering.active_func.block_params or {}) do
+            if entry.block == block_id then return entry.params or {} end
+        end
+        internal_error("native control lowering cannot find block parameter plan for " .. tostring(block_id and block_id.text))
+    end
+
+    local function append_edge_copy_node(input, source_value, dest_value)
+        local source = placement_for_value(input.state, source_value)
+        local dest = placement_for_value(input.state, dest_value)
+        local scalar = source.representation:native_scalar_rep()
+        local family = Support.code_inst_frame_family("edge_copy." .. scalar_token(scalar) .. ".slot.to.slot", input.plan.target, scalar, Native.NativeCodeInstAliasAxis(scalar:native_code_type()))
+        local id_base = "native.hole.code.inst.edge_copy." .. scalar_token(scalar) .. ".slot.to.slot"
+        local node = append_family_node(input, "edge_copy", family, { source }, { dest }, {
+            frame_offset_binding(id_base .. ".src", source),
+            frame_offset_binding(id_base .. ".dst", dest),
+        })
+        input.state.edge_copy_plan.entries[#input.state.edge_copy_plan.entries + 1] = Native.NativeEdgeCopyEntry(Code.CodeBlockId("native.edge.unknown.from"), Code.CodeBlockId("native.edge.unknown.to"), { Native.NativeEdgeCopyValue(source_value, dest_value, dest) })
+        return append_frame_value_edge(input, dest, node, scalar)
+    end
+
+    local function append_successor_copy_chain(input, dest_block, args, source_symbol)
+        local params = find_block_param_plan(input, dest_block)
+        if #(args or {}) ~= #params then internal_error("native control edge argument count does not match destination block params") end
+        local first_node
+        local last_node
+        local previous_tail = input.state.control_plan.nodes[#input.state.control_plan.nodes]
+        for i, arg in ipairs(args or {}) do
+            local node = append_edge_copy_node(input, arg, params[i].value)
+            if first_node == nil then first_node = node end
+            last_node = node
+        end
+        local target = first_node and first_node.id or block_entry_node_id(dest_block)
+        if first_node ~= nil then
+            remove_auto_continuation_edge(input.state, previous_tail, first_node)
+            append_control_edge(input.state, Native.NativeContinuationEdge(last_node.id, block_entry_node_id(dest_block), Support.next_continuation_symbol()))
+        end
+        return target
+    end
+
+    local function append_terminal_exit(input, node)
+        input.state.control_plan.exits[#input.state.control_plan.exits + 1] = node.id
+        return node
+    end
+
+    local function append_result_copy_to_direct_slot(input, value, shape, result_slot)
+        local placement = placement_for_value(input.state, value)
+        local scalar = shape:native_result_family_scalar(input.plan.target)
+        local result_placement = Native.NativeValuePlacement(
+            Native.NativeTemplateValueId("native.code.result." .. result_slot.id.text),
+            result_slot.representation,
+            Native.NativeValueFrameSlotLocation(result_slot)
+        )
+        local family = Support.code_inst_frame_family("result_copy." .. shape:native_result_shape_token(), input.plan.target, scalar, Native.NativeCodeInstResultCopyAxis(shape))
+        local id_base = "native.hole.code.inst.result_copy." .. shape:native_result_shape_token()
+        return append_family_node(input, "result_copy", family, { placement }, { result_placement }, {
+            frame_offset_binding(id_base .. ".src", placement),
+            frame_offset_binding(id_base .. ".dst", result_placement),
+        })
+    end
+
+    local function append_result_copy_to_sret(input, value, shape, pointer_slot)
+        local placement = placement_for_value(input.state, value)
+        local scalar = shape:native_result_family_scalar(input.plan.target)
+        local family = Support.code_inst_frame_family("result_copy." .. shape:native_result_shape_token(), input.plan.target, scalar, Native.NativeCodeInstResultCopyAxis(shape))
+        local id_base = "native.hole.code.inst.result_copy." .. shape:native_result_shape_token()
+        return append_family_node(input, "result_copy", family, { placement }, {}, {
+            frame_offset_binding(id_base .. ".src", placement),
+            frame_offset_value_binding(id_base .. ".sret_ptr", pointer_slot.offset),
+            hole(id_base .. ".size", Native.NativePatchImmediateI32(placement.location.slot.size)),
+        })
+    end
+
+    local function append_return_terminal(input, shape, inputs)
+        local scalar = shape:native_result_family_scalar(input.plan.target)
+        local family = Support.code_term_frame_family("return." .. shape:native_result_shape_token(), input.plan.target, scalar, Native.NativeCodeTermReturnShapeAxis(shape))
+        local node = append_family_node(input, "return", family, inputs or {}, {}, {})
+        return append_terminal_exit(input, node)
     end
 
     function Code.CodeTerm:append_native_term_template(input)
@@ -2515,16 +2871,105 @@ local function bind_context(T)
     end
 
     function Code.CodeTermReturn:append_native_term_template(input)
-        if #(self.values or {}) == 0 then internal_error("native C frame protocol does not yet model void CodeTermReturn") end
         if #(self.values or {}) > 1 then internal_error("Lalin native CodeTermReturn is invalid: Lalin has zero or one return value") end
+        local shape = input.lowering.active_func.abi.result:native_code_result_shape()
+        if asdl.isa(shape, Native.NativeCodeResultVoidShape) then
+            if #(self.values or {}) ~= 0 then internal_error("native void CodeTermReturn must not carry result values") end
+            return append_return_terminal(input, shape, {})
+        end
+        if #(self.values or {}) ~= 1 then internal_error("native non-void CodeTermReturn requires exactly one result value") end
         local value = self.values[1]
-        local placement = append_alias_to_return_slot(input, value, placement_for_value(input.state, value))
-        local scalar = placement.representation:native_scalar_rep()
-        local ty = scalar:native_code_type()
-        local axis = Native.NativeCodeTermReturnAxis({ ty })
-        local family = Support.code_term_frame_family("return." .. scalar_token(scalar), input.plan.target, scalar, axis)
-        append_family_node(input, "return", family, { placement }, {}, {})
-        return Native.NativeCallReturnScalar(scalar)
+        if asdl.isa(shape, Native.NativeCodeResultSRetShape) then
+            local pointer_slot = sret_result_pointer_slot(input.state)
+            if pointer_slot == nil then internal_error("native sret CodeTermReturn has no reserved sret pointer slot") end
+            local copy_node = append_result_copy_to_sret(input, value, shape, pointer_slot)
+            return append_return_terminal(input, shape, { placement_for_value(input.state, value) })
+        end
+        local result_slot = direct_result_slot(input.state)
+        if result_slot == nil then internal_error("native direct CodeTermReturn has no reserved result slot") end
+        append_result_copy_to_direct_slot(input, value, shape, result_slot)
+        return append_return_terminal(input, shape, { placement_for_value(input.state, value) })
+    end
+
+    function Code.CodeTermJump:append_native_term_template(input)
+        local family = Support.code_term_family("jump.next", input.plan.target, Native.NativeCodeTermJumpAxis, Support.protocol_void_none())
+        local node = append_family_node(input, "jump", family, {}, {}, {})
+        local target = append_successor_copy_chain(input, self.dest, self.args, Support.next_continuation_symbol())
+        append_control_edge(input.state, Native.NativeContinuationEdge(node.id, target, Support.next_continuation_symbol()))
+        return node
+    end
+
+    function Code.CodeTermBranch:append_native_term_template(input)
+        local cond = placement_for_value(input.state, self.cond)
+        local family = Support.code_term_family("branch.bool8.slot", input.plan.target, Native.NativeCodeTermBranchAxis, Support.protocol_void_none())
+        local node = append_family_node(input, "branch", family, { cond }, {}, {
+            frame_offset_binding("native.hole.code.term.branch.bool8.slot.src", cond),
+        })
+        local then_target = append_successor_copy_chain(input, self.then_dest, self.then_args, Support.then_continuation_symbol())
+        local then_first = input.state.control_plan.nodes[#input.state.control_plan.nodes]
+        local else_target = append_successor_copy_chain(input, self.else_dest, self.else_args, Support.else_continuation_symbol())
+        append_control_edge(input.state, Native.NativeConditionalBranchEdge(node.id, then_target, Support.then_continuation_symbol(), else_target, Support.else_continuation_symbol(), cond.value))
+        return node
+    end
+
+    function Code.CodeTermSwitch:append_native_term_template(input)
+        local key = placement_for_value(input.state, self.value)
+        local scalar = key.representation:native_scalar_rep()
+        local previous_compare
+        for _, case in ipairs(self.cases or {}) do
+            local family = Support.code_term_family("switch_step." .. scalar_token(scalar) .. ".slot.imm", input.plan.target, Native.NativeCodeTermSwitchAxis, Support.protocol_void_none())
+            local node = append_family_node(input, "switch", family, { key }, {}, {
+                frame_offset_binding("native.hole.code.term.switch_step." .. scalar_token(scalar) .. ".slot.src", key),
+                hole("native.hole.code.term.switch_step." .. scalar_token(scalar) .. ".slot.case", case.literal:native_patch_coordinate_for_scalar(scalar)),
+            })
+            if previous_compare ~= nil then append_control_edge(input.state, Native.NativeContinuationEdge(previous_compare.id, node.id, Support.else_continuation_symbol())) end
+            local case_target = append_successor_copy_chain(input, case.dest, case.args, Support.then_continuation_symbol())
+            append_control_edge(input.state, Native.NativeConditionalBranchEdge(node.id, case_target, Support.then_continuation_symbol(), block_entry_node_id(self.default_dest), Support.else_continuation_symbol(), key.value))
+            previous_compare = node
+        end
+        local default_target = append_successor_copy_chain(input, self.default_dest, self.default_args, Support.next_continuation_symbol())
+        if previous_compare == nil then
+            local family = Support.code_term_family("jump.next", input.plan.target, Native.NativeCodeTermJumpAxis, Support.protocol_void_none())
+            local node = append_family_node(input, "switch.default", family, {}, {}, {})
+            append_control_edge(input.state, Native.NativeContinuationEdge(node.id, default_target, Support.next_continuation_symbol()))
+            return node
+        end
+        append_control_edge(input.state, Native.NativeContinuationEdge(previous_compare.id, default_target, Support.else_continuation_symbol()))
+        return previous_compare
+    end
+
+    function Code.CodeTermVariantSwitch:append_native_term_template(input)
+        local key = placement_for_value(input.state, self.tag)
+        local scalar = key.representation:native_scalar_rep()
+        local last_node
+        for _, case in ipairs(self.cases or {}) do
+            local family = Support.code_term_family("variant_switch_step." .. scalar_token(scalar) .. ".slot.imm", input.plan.target, Native.NativeCodeTermVariantSwitchAxis, Support.protocol_void_none())
+            last_node = append_family_node(input, "variant_switch", family, { key }, {}, {
+                frame_offset_binding("native.hole.code.term.variant_switch_step." .. scalar_token(scalar) .. ".slot.src", key),
+                hole("native.hole.code.term.variant_switch_step." .. scalar_token(scalar) .. ".slot.case", Native.NativePatchImmediateI32(case.variant.tag_value)),
+            })
+            local case_target = append_successor_copy_chain(input, case.dest, case.args, Support.then_continuation_symbol())
+            append_control_edge(input.state, Native.NativeConditionalBranchEdge(last_node.id, case_target, Support.then_continuation_symbol(), block_entry_node_id(self.default_dest), Support.else_continuation_symbol(), key.value))
+        end
+        local default_target = append_successor_copy_chain(input, self.default_dest, self.default_args, Support.next_continuation_symbol())
+        if last_node == nil then
+            local family = Support.code_term_family("jump.next", input.plan.target, Native.NativeCodeTermJumpAxis, Support.protocol_void_none())
+            local node = append_family_node(input, "variant_switch.default", family, {}, {}, {})
+            append_control_edge(input.state, Native.NativeContinuationEdge(node.id, default_target, Support.next_continuation_symbol()))
+            return node
+        end
+        append_control_edge(input.state, Native.NativeContinuationEdge(last_node.id, default_target, Support.else_continuation_symbol()))
+        return last_node
+    end
+
+    function Code.CodeTermTrap:append_native_term_template(input)
+        local family = Support.code_term_family("trap.trap", input.plan.target, Native.NativeCodeTermTrapAxis, Support.protocol_void_none())
+        return append_terminal_exit(input, append_family_node(input, "trap", family, {}, {}, {}))
+    end
+
+    function Code.CodeTermUnreachable:append_native_term_template(input)
+        local family = Support.code_term_family("unreachable.trap", input.plan.target, Native.NativeCodeTermUnreachableAxis, Support.protocol_void_none())
+        return append_terminal_exit(input, append_family_node(input, "unreachable", family, {}, {}, {}))
     end
 
     T._lalin_api_cache.native_code_methods = api
