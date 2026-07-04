@@ -4,7 +4,8 @@ Lalin is a LuaJIT-hosted dialect of the LLBL language. Lua is the
 metaprogramming layer. LLBL is the central extensible language workbench and
 bootstrap language: heads, roles, fragments, namespaces, origins, diagnostics,
 formatting, indexing, dialect extension, and generic regions. Lalin is the compiled
-language dialect that lowers typed programs into LuaJIT copy+residual artifacts.
+language dialect that lowers typed programs into native C-stencil copy-patch
+artifacts or explicitly selected LuaJIT bytecode artifacts.
 
 Before continuing the PVM hard-yank or compiler method rewrite, read
 `docs/PVM_HARD_YANK_CHECKLIST.md`, especially `Non-Negotiable Rewrite Doctrine`,
@@ -179,11 +180,15 @@ mechanics: source/generated symbols, origins, diagnostics, fragments, regions,
 formatting docs, and language-level symbol bindings. Dialects own semantic
 meaning.
 
-The active fast backend is `copy_patch_mc` bank stencils plus TCC residual glue.
-`copy_patch_bc` is the LuaTrace/LuaJIT bytecode artifact path. `lalin.compile`
-defaults to machine-code copy+residual and falls back to bytecode copy-patch
-with a warning when no compatible MC bank is supplied or materialization fails.
-The old Cranelift/Rust runtime path is not part of the current architecture.
+The active fast backend is the residualless C-stencil native copy-patch
+architecture described by `docs/RESIDUAL_NATIVE_ARCHITECTURE.md` (despite that
+file's historical name). `lalin.compile` defaults to native copy-patch and
+requires a prebuilt `NativeTemplateBank`/`NativeEmbeddedTemplateBank`; runtime
+native compilation only selects, copies, patches, and installs bank templates. It
+must not invoke C compilation, TCC, readelf/object-dump tools, or an implicit
+bytecode recovery path. LuaJIT bytecode is explicit via `opts.luajit`,
+`opts.bytecode`, or `compile_luajit`. The old Cranelift/Rust runtime path is not
+part of the current architecture.
 
 ## Build
 
@@ -191,12 +196,8 @@ The old Cranelift/Rust runtime path is not part of the current architecture.
 make
 ```
 
-Optional C/native stencil work may need:
-
-```sh
-git submodule update --init --recursive
-make libtcc
-```
+Offline native bank generation may need the configured C toolchain during the
+explicit prebuild step; the runtime native path does not.
 
 ## Authoring Lalin Code
 
@@ -318,9 +319,9 @@ LalinTree ASDL
   -> typecheck
   -> LalinCode facts
   -> kernel and schedule facts
-  -> stencil plans
-  -> LuaJIT artifact (BC or MC copy+residual)
-  -> loaded LuaJIT module
+  -> stencil/native template plans
+  -> native copy-patch install or explicit LuaJIT bytecode artifact
+  -> loaded module
 ```
 
 Key files:
@@ -331,8 +332,8 @@ lua/lalin/dsl/               Lalin authoring heads
 lua/lalin/schema/            ASDL/schema definitions
 lua/lalin/frontend_pipeline.lua
                              DSL/tree/typecheck/code pipeline
-lua/lalin/luajit_backend.lua LuaTrace/LuaJIT backend facade
-lua/lalin/copy_patch_bc.lua LuaJIT BC bank
+lua/lalin/native_backend.lua native C-stencil copy-patch backend facade
+lua/lalin/luajit_backend.lua explicit LuaTrace/LuaJIT bytecode backend facade
 lua/llpvm/                   LLPVM member
 ```
 
@@ -343,7 +344,7 @@ docs/LLBL_GUIDE.md            central LLBL workbench and region guide
 docs/LANGUAGE_REFERENCE.md   public Lalin language reference
 docs/ARCHITECTURE.md         language, compiler, backend, and lowering architecture
 docs/RESIDUAL_NATIVE_ARCHITECTURE.md
-                             target native residual/stencil compression architecture
+                             binding native C-stencil copy-patch architecture
 docs/LLPVM_GUIDE.md          low-level VM/task language member
 docs/UI_GUIDE.md             UI package guide
 docs/CONVENTIONS.md          naming, style, and repository conventions

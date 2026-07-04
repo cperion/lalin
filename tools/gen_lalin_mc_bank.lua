@@ -23,7 +23,6 @@ local usage = table.concat({
     "  LALIN_NATIVE_BANK_ID        default bank id for empty generation",
     "  LALIN_NATIVE_BANK_BUILD_DIR offline object build directory",
     "  CC                         C compiler used by the offline stencil factory (default: gcc)",
-    "  READELF                    readelf binary (default: readelf)",
     "  LALIN_NATIVE_BANK_CFLAGS    flags for NativeTemplateSource C compilation",
 }, "\n")
 
@@ -129,127 +128,28 @@ local function lua_string_expr(s)
     return table.concat(out, " .. ")
 end
 
-local function parse_int(s)
-    if s == nil then return 0 end
-    s = tostring(s)
-    local sign = 1
-    if s:sub(1, 1) == "-" then sign = -1; s = s:sub(2) end
-    if s:match("^0x") or s:match("^0X") then return sign * tonumber(s) end
-    if s:match("^[0-9a-fA-F]+$") and s:match("[a-fA-F]") then return sign * tonumber(s, 16) end
-    return sign * (tonumber(s) or 0)
-end
-
-local function parse_reloc_addend(s)
-    if s == nil then return 0 end
-    s = tostring(s)
-    local sign = 1
-    if s:sub(1, 1) == "-" then sign = -1; s = s:sub(2) end
-    if s:match("^0x") or s:match("^0X") then return sign * tonumber(s) end
-    return sign * (tonumber(s, 16) or tonumber(s) or 0)
-end
-
-local function parse_sections(readelf_output)
-    local by_index = {}
-    local by_name = {}
-    for line in tostring(readelf_output or ""):gmatch("[^\n]+") do
-        local idx, name, typ, _addr, off, size, _es, flags, _link, _info, align =
-            line:match("^%s*%[%s*(%d+)%]%s+(%S+)%s+(%S+)%s+([0-9a-fA-F]+)%s+([0-9a-fA-F]+)%s+([0-9a-fA-F]+)%s+([0-9a-fA-F]+)%s+(%S*)%s+(%d+)%s+(%d+)%s+(%d+)%s*$")
-        if idx ~= nil and name ~= "" then
-            local section = {
-                index = tonumber(idx),
-                name = name,
-                typ = typ,
-                offset = tonumber(off, 16) or 0,
-                size = tonumber(size, 16) or 0,
-                flags = flags or "",
-                align = tonumber(align) or 1,
-            }
-            by_index[section.index] = section
-            by_name[section.name] = section
-        end
-    end
-    return by_index, by_name
-end
-
-local function parse_symbols(readelf_output, sections)
-    local by_name = {}
-    local order = {}
-    for line in tostring(readelf_output or ""):gmatch("[^\n]+") do
-        local _num, value, size, typ, bind, _vis, ndx, name =
-            line:match("^%s*(%d+):%s+([0-9a-fA-F]+)%s+(%d+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(.+)%s*$")
-        if name ~= nil and name ~= "" and ndx:match("^%d+$") then
-            local section = sections[tonumber(ndx)]
-            local sym = {
-                name = name,
-                value = tonumber(value, 16) or 0,
-                size = tonumber(size) or 0,
-                typ = typ,
-                bind = bind,
-                section_index = tonumber(ndx),
-                section = section and section.name or nil,
-                section_flags = section and section.flags or "",
-                section_align = section and section.align or 1,
-            }
-            by_name[name] = sym
-            order[#order + 1] = sym
-        end
-    end
-    return by_name, order
-end
-
-local function parse_relocations(readelf_output)
-    local current
-    local by_section = {}
-    for line in tostring(readelf_output or ""):gmatch("[^\n]+") do
-        local sec = line:match("Relocation section '([^']+)'")
-        if sec ~= nil then
-            current = sec
-            by_section[current] = by_section[current] or {}
-        else
-            local off, typ, rest = line:match("^%s*([0-9a-fA-F]+)%s+[%x]+%s+(R_%S+)%s*(.*)$")
-            if current ~= nil and off ~= nil then
-                local fields = {}
-                for f in tostring(rest or ""):gmatch("%S+") do fields[#fields + 1] = f end
-                local symbol, addend = nil, 0
-                if fields[1] ~= nil and fields[1]:match("^[0-9a-fA-F]+$") and fields[2] ~= nil then
-                    symbol = fields[2]
-                    if fields[3] == "+" or fields[3] == "-" then
-                        addend = (fields[3] == "-" and -1 or 1) * parse_reloc_addend(fields[4])
-                    end
-                elseif fields[1] ~= nil then
-                    symbol = fields[1]
-                    if fields[2] == "+" or fields[2] == "-" then
-                        addend = (fields[2] == "-" and -1 or 1) * parse_reloc_addend(fields[3])
-                    end
-                end
-                if symbol == "0" or symbol == "0000000000000000" then symbol = nil end
-                by_section[current][#by_section[current] + 1] = {
-                    offset = tonumber(off, 16) or 0,
-                    reloc_type = typ,
-                    symbol = symbol,
-                    addend = addend or 0,
-                    raw = line,
-                }
-            end
-        end
-    end
-    return by_section
-end
-
 local T = asdl.context()
 Schema(T)
 local Native = T.LalinNative
 local Support = require("lalin.native_template_support")(T)
+require("lalin.native_object")(T)
 
 local function native_bank_id()
     return os.getenv("LALIN_NATIVE_BANK_ID") or "lalin.native.empty"
 end
 
 local function empty_request()
+    local target = Support.host_target()
+    local manifest = Support.template_source_manifest(
+        Support.template_manifest_id("empty." .. native_bank_id()),
+        Native.NativeTemplateSupportDomainId("native.template.support.empty"),
+        {}
+    )
     return Native.NativeTemplateBankRequest(
         Native.NativeBankId(native_bank_id()),
-        Support.host_target(),
+        target,
         Support.empty_runtime(),
+        manifest,
         {}
     )
 end
@@ -283,10 +183,6 @@ local function runtime_symbol_index(runtime)
     return by_name
 end
 
-local function text_section_relocations(relocs_by_section, text_section)
-    return relocs_by_section[".rela" .. text_section] or relocs_by_section[".rel" .. text_section] or {}
-end
-
 function Native.NativeExtractStandaloneCallable:native_continuation_symbols()
     return {}
 end
@@ -303,6 +199,10 @@ function Native.NativeExtractTerminalContinuation:native_continuation_symbols()
     return {}
 end
 
+function Native.NativeExtractPublicAbiAdapter:native_continuation_symbols()
+    return { self.first_continuation }
+end
+
 local function continuation_symbol_index(source)
     local by_name = {}
     for _, sym in ipairs(source.extraction:native_continuation_symbols()) do
@@ -312,23 +212,187 @@ local function continuation_symbol_index(source)
     return by_name
 end
 
-local function native_relocation_for(source, raw, text_section, symbols, sections_by_name, runtime_symbols, continuation_symbols)
-    local sym_name = raw.symbol
+local function require_seen_continuations(source, symbols, seen_continuations)
+    local rejects = {}
+    for _, cont in ipairs(symbols or {}) do
+        if not seen_continuations[cont.name] then
+            rejects[#rejects + 1] = Native.NativeBuildRejectMissingContinuationRelocation(source.id, cont)
+        end
+    end
+    return rejects
+end
+
+function Native.NativeExtractStandaloneCallable:verify_native_object_relocations(_source, _seen_continuations)
+    return {}
+end
+
+function Native.NativeExtractEntryCallable:verify_native_object_relocations(source, seen_continuations)
+    return require_seen_continuations(source, { self.first_continuation }, seen_continuations)
+end
+
+function Native.NativeExtractPublicAbiAdapter:verify_native_object_relocations(source, seen_continuations)
+    return require_seen_continuations(source, { self.first_continuation }, seen_continuations)
+end
+
+function Native.NativeExtractContinuationFragment:verify_native_object_relocations(source, seen_continuations)
+    return require_seen_continuations(source, self.successors or {}, seen_continuations)
+end
+
+function Native.NativeExtractTerminalContinuation:verify_native_object_relocations(_source, _seen_continuations)
+    return {}
+end
+
+local function hole_ordinal_symbol_index(source)
+    local by_name = {}
+    for _, ordinal in ipairs(source.declared_hole_ordinals or {}) do
+        by_name[ordinal.symbol] = ordinal
+        by_name[ordinal.id.text] = ordinal
+    end
+    return by_name
+end
+
+function Native.NativeObjectRelocationKind:native_object_relocation_name()
+    return asdl.class_basename(self)
+end
+
+function Native.NativeObjectRelocX64Pc32:native_object_relocation_name() return "R_X86_64_PC32" end
+function Native.NativeObjectRelocX64Plt32:native_object_relocation_name() return "R_X86_64_PLT32" end
+function Native.NativeObjectRelocX64Abs64:native_object_relocation_name() return "R_X86_64_64" end
+function Native.NativeObjectRelocX64Abs32:native_object_relocation_name() return "R_X86_64_32" end
+function Native.NativeObjectRelocX64Abs32S:native_object_relocation_name() return "R_X86_64_32S" end
+
+function Native.NativeObjectRelocationKind:native_continuation_relocation(source, relocation, _symbol)
+    return nil, Native.NativeBuildRejectUnsupportedRelocation(
+        source.id,
+        relocation.offset,
+        self:native_object_relocation_name(),
+        "continuation relocation must be PC-relative"
+    )
+end
+
+function Native.NativeObjectRelocX64Pc32:native_continuation_relocation(_source, relocation, symbol)
+    return Native.NativeRelocationContinuation(relocation.offset, symbol, relocation.addend or 0)
+end
+
+function Native.NativeObjectRelocX64Plt32:native_continuation_relocation(_source, relocation, symbol)
+    return Native.NativeRelocationContinuation(relocation.offset, symbol, relocation.addend or 0)
+end
+
+function Native.NativeObjectRelocationKind:native_hole_ordinal_relocation(source, relocation, _ordinal)
+    return nil, Native.NativeBuildRejectUnsupportedRelocation(
+        source.id,
+        relocation.offset,
+        self:native_object_relocation_name(),
+        "hole ordinal relocation must be 32-bit, 64-bit, or PC-relative"
+    )
+end
+
+function Native.NativeObjectRelocX64Abs32:native_hole_ordinal_relocation(_source, relocation, ordinal)
+    return Native.NativeRelocationHoleOrdinal(relocation.offset, ordinal, Native.NativePatchSym32, relocation.addend or 0)
+end
+
+function Native.NativeObjectRelocX64Abs32S:native_hole_ordinal_relocation(_source, relocation, ordinal)
+    return Native.NativeRelocationHoleOrdinal(relocation.offset, ordinal, Native.NativePatchSym32, relocation.addend or 0)
+end
+
+function Native.NativeObjectRelocX64Abs64:native_hole_ordinal_relocation(_source, relocation, ordinal)
+    return Native.NativeRelocationHoleOrdinal(relocation.offset, ordinal, Native.NativePatchSym64, relocation.addend or 0)
+end
+
+function Native.NativeObjectRelocX64Pc32:native_hole_ordinal_relocation(_source, relocation, ordinal)
+    return Native.NativeRelocationHoleOrdinal(relocation.offset, ordinal, Native.NativePatchPcRel32, relocation.addend or 0)
+end
+
+function Native.NativeObjectRelocX64Plt32:native_hole_ordinal_relocation(_source, relocation, ordinal)
+    return Native.NativeRelocationHoleOrdinal(relocation.offset, ordinal, Native.NativePatchPcRel32, relocation.addend or 0)
+end
+
+function Native.NativeObjectRelocationKind:native_runtime_symbol_relocation(source, relocation, _runtime_id)
+    return nil, Native.NativeBuildRejectUnsupportedRelocation(
+        source.id,
+        relocation.offset,
+        self:native_object_relocation_name(),
+        "runtime symbol relocation must be PC-relative until runtime relocations carry an explicit formula"
+    )
+end
+
+function Native.NativeObjectRelocX64Pc32:native_runtime_symbol_relocation(_source, relocation, runtime_id)
+    return Native.NativeRelocationRuntimeSymbol(relocation.offset, runtime_id, relocation.addend or 0)
+end
+
+function Native.NativeObjectRelocX64Plt32:native_runtime_symbol_relocation(_source, relocation, runtime_id)
+    return Native.NativeRelocationRuntimeSymbol(relocation.offset, runtime_id, relocation.addend or 0)
+end
+
+function Native.NativeObjectRelocationKind:native_constant_pool_relocation(source, relocation, _entry_id, _addend_bias)
+    return nil, Native.NativeBuildRejectUnsupportedConstantPoolRelocation(
+        source.id,
+        relocation.offset,
+        self:native_object_relocation_name(),
+        "unsupported relocation formula for object constant-pool reference"
+    )
+end
+
+function Native.NativeObjectRelocX64Pc32:native_constant_pool_relocation(_source, relocation, entry_id, addend_bias)
+    return Native.NativeRelocationConstantPool(relocation.offset, entry_id, Native.NativePatchPcRel32, (relocation.addend or 0) + (addend_bias or 0))
+end
+
+function Native.NativeObjectRelocX64Plt32:native_constant_pool_relocation(_source, relocation, entry_id, addend_bias)
+    return Native.NativeRelocationConstantPool(relocation.offset, entry_id, Native.NativePatchPcRel32, (relocation.addend or 0) + (addend_bias or 0))
+end
+
+function Native.NativeObjectRelocX64Abs64:native_constant_pool_relocation(_source, relocation, entry_id, addend_bias)
+    return Native.NativeRelocationConstantPool(relocation.offset, entry_id, Native.NativePatchSym64, (relocation.addend or 0) + (addend_bias or 0))
+end
+
+function Native.NativeObjectRelocX64Abs32:native_constant_pool_relocation(_source, relocation, entry_id, addend_bias)
+    return Native.NativeRelocationConstantPool(relocation.offset, entry_id, Native.NativePatchSym32, (relocation.addend or 0) + (addend_bias or 0))
+end
+
+function Native.NativeObjectRelocX64Abs32S:native_constant_pool_relocation(_source, relocation, entry_id, addend_bias)
+    return Native.NativeRelocationConstantPool(relocation.offset, entry_id, Native.NativePatchSym32, (relocation.addend or 0) + (addend_bias or 0))
+end
+
+function Native.NativeObjectRelocationKind:native_local_symbol_relocation(source, relocation, _symbol_name)
+    return nil, Native.NativeBuildRejectUnsupportedRelocation(
+        source.id,
+        relocation.offset,
+        self:native_object_relocation_name(),
+        "unsupported relocation type for NativeEmbeddedTemplateBank"
+    )
+end
+
+function Native.NativeObjectRelocX64Pc32:native_local_symbol_relocation(_source, relocation, symbol_name)
+    return Native.NativeRelocationRel32(relocation.offset, symbol_name, relocation.addend or 0)
+end
+
+function Native.NativeObjectRelocX64Plt32:native_local_symbol_relocation(_source, relocation, symbol_name)
+    return Native.NativeRelocationRel32(relocation.offset, symbol_name, relocation.addend or 0)
+end
+
+function Native.NativeObjectRelocX64Abs64:native_local_symbol_relocation(_source, relocation, symbol_name)
+    return Native.NativeRelocationAbs64(relocation.offset, symbol_name, relocation.addend or 0)
+end
+
+local function native_relocation_for(source, object_relocation, text_section, symbols_by_id, symbols_by_name, sections_by_name, runtime_symbols, continuation_symbols, hole_symbols, constant_pool_symbols)
+    local symbol = symbols_by_id[object_relocation.symbol.text]
+    local sym_name = symbol and symbol.name or nil
+    local reloc_name = object_relocation.kind:native_object_relocation_name()
     if sym_name == nil or sym_name == "" then
-        return nil, Native.NativeBuildRejectUnsupportedRelocation(
-            source.id,
-            raw.offset,
-            raw.reloc_type,
-            "relocation has no symbol"
-        )
+        return nil, Native.NativeBuildRejectUnsupportedRelocation(source.id, object_relocation.offset, reloc_name, "relocation has no symbol")
     end
 
-    local sym = symbols[sym_name]
+    local constant_pool_symbol = constant_pool_symbols[sym_name]
+    if constant_pool_symbol ~= nil then
+        return object_relocation.kind:native_constant_pool_relocation(source, object_relocation, constant_pool_symbol.entry.id, constant_pool_symbol.addend_bias)
+    end
+
+    local sym = symbols_by_name[sym_name]
     if sym ~= nil and sym.section ~= nil and sym.section ~= text_section and sym.section ~= "UND" then
         return nil, Native.NativeBuildRejectUnsupportedRelocation(
             source.id,
-            raw.offset,
-            raw.reloc_type,
+            object_relocation.offset,
+            reloc_name,
             "local cross-section relocation to " .. tostring(sym.section) .. " is not supported"
         )
     end
@@ -336,130 +400,229 @@ local function native_relocation_for(source, raw, text_section, symbols, section
     if section ~= nil and section.name ~= text_section then
         return nil, Native.NativeBuildRejectUnsupportedRelocation(
             source.id,
-            raw.offset,
-            raw.reloc_type,
+            object_relocation.offset,
+            reloc_name,
             "section relocation to " .. tostring(section.name) .. " is not supported"
         )
     end
 
     local continuation_symbol = continuation_symbols[sym_name]
     if continuation_symbol ~= nil then
-        if raw.reloc_type == "R_X86_64_PC32" or raw.reloc_type == "R_X86_64_PLT32" then
-            return Native.NativeRelocationContinuation(raw.offset, continuation_symbol, raw.addend or 0)
-        end
-        return nil, Native.NativeBuildRejectUnsupportedRelocation(
-            source.id,
-            raw.offset,
-            raw.reloc_type,
-            "continuation relocation must be PC-relative"
-        )
+        return object_relocation.kind:native_continuation_relocation(source, object_relocation, continuation_symbol)
+    end
+
+    local hole_ordinal = hole_symbols[sym_name]
+    if hole_ordinal ~= nil then
+        return object_relocation.kind:native_hole_ordinal_relocation(source, object_relocation, hole_ordinal)
     end
 
     local runtime_id = runtime_symbols[sym_name]
     if runtime_id ~= nil then
-        return Native.NativeRelocationRuntimeSymbol(raw.offset, runtime_id, raw.addend or 0)
+        return object_relocation.kind:native_runtime_symbol_relocation(source, object_relocation, runtime_id)
     end
 
-    if sym == nil then
-        return nil, Native.NativeBuildRejectUnexpectedSymbol(
+    if sym == nil or sym.section == "UND" or asdl.isa(sym.binding, Native.NativeObjectSymbolExtern) then
+        return nil, Native.NativeBuildRejectExtraUnresolvedSymbol(
             source.id,
             sym_name,
-            "unresolved symbol is not a declared continuation or runtime symbol"
+            "unresolved symbol is not a declared continuation, runtime symbol, hole ordinal, or local object symbol"
         )
     end
 
-    if raw.reloc_type == "R_X86_64_PC32" or raw.reloc_type == "R_X86_64_PLT32" then
-        return Native.NativeRelocationRel32(raw.offset, sym_name, raw.addend or 0)
-    end
-    if raw.reloc_type == "R_X86_64_64" then
-        return Native.NativeRelocationAbs64(raw.offset, sym_name, raw.addend or 0)
-    end
-
-    return nil, Native.NativeBuildRejectUnsupportedRelocation(
-        source.id,
-        raw.offset,
-        raw.reloc_type,
-        "unsupported relocation type for NativeEmbeddedTemplateBank"
-    )
+    return object_relocation.kind:native_local_symbol_relocation(source, object_relocation, sym_name)
 end
 
-local function marker_bytes(marker, width)
-    local s = tostring(marker or ""):gsub("[uUlL]+$", "")
-    if s:match("^0x") or s:match("^0X") then
-        local hex = s:gsub("^0[xX]", "")
-        if #hex % 2 == 1 then hex = "0" .. hex end
-        local bytes = {}
-        for i = #hex - 1, 1, -2 do
-            bytes[#bytes + 1] = string.char(tonumber(hex:sub(i, i + 1), 16) or 0)
-        end
-        while #bytes < width do bytes[#bytes + 1] = string.char(0) end
-        if #bytes > width then
-            local trimmed = {}
-            for i = 1, width do trimmed[i] = bytes[i] end
-            bytes = trimmed
-        end
-        return table.concat(bytes)
-    end
-    local n = tonumber(s)
-    if n == nil then return nil end
-    local out = {}
-    for _ = 1, width do
-        out[#out + 1] = string.char(n % 256)
-        n = math.floor(n / 256)
-    end
-    return table.concat(out)
-end
-
-local function find_unique_marker(text_bytes, marker, width)
-    local needle = marker_bytes(marker, width)
-    if needle == nil then return nil, 0 end
-    local found
-    local count = 0
-    local start = 1
-    while true do
-        local i = text_bytes:find(needle, start, true)
-        if i == nil then break end
-        count = count + 1
-        found = i - 1
-        start = i + 1
-    end
-    return found, count
-end
-
-local function resolve_declared_holes(source, text_bytes)
+local function resolve_declared_holes(source, text_bytes, hole_relocations)
     local holes = {}
     local rejects = {}
+    local declarations_by_symbol = {}
     for _, hole in ipairs(source.declared_holes or {}) do
-        local offset = hole.offset
-        if offset < 0 then
-            local found, count = find_unique_marker(text_bytes, hole.symbol, hole.width)
-            if count == 1 then
-                offset = found
-            elseif count == 0 then
-                rejects[#rejects + 1] = Native.NativeBuildRejectMissingHole(source.id, hole.id, hole.symbol)
+        declarations_by_symbol[hole.symbol] = hole
+    end
+    local seen = {}
+    for _, relocation in ipairs(hole_relocations or {}) do
+        local declared = declarations_by_symbol[relocation.ordinal.symbol]
+        if declared == nil then
+            rejects[#rejects + 1] = Native.NativeBuildRejectMissingHoleOrdinal(
+                source.id,
+                relocation.ordinal.ordinal,
+                relocation.ordinal.symbol
+            )
+        else
+            local width = declared.width
+            if asdl.isa(relocation.formula, Native.NativePatchSym64) then width = 8 end
+            if relocation.offset + width > #text_bytes then
+                rejects[#rejects + 1] = Native.NativeBuildRejectHoleOutOfRange(source.id, declared.id, relocation.offset, width)
             else
-                rejects[#rejects + 1] = Native.NativeBuildRejectRoleMismatch(
-                    source.id,
-                    "hole marker " .. tostring(hole.symbol) .. " appears " .. tostring(count) .. " times"
-                )
+                holes[#holes + 1] = Native.NativeHoleLayout(declared.id, declared.symbol, relocation.offset, width, declared.hole)
+                seen[declared.symbol] = true
             end
         end
-        if offset >= 0 then
-            if offset + hole.width > #text_bytes then
-                rejects[#rejects + 1] = Native.NativeBuildRejectHoleOutOfRange(source.id, hole.id, offset, hole.width)
-            else
-                holes[#holes + 1] = Native.NativeHoleLayout(hole.id, hole.symbol, offset, hole.width, hole.hole)
-            end
+    end
+    for _, hole in ipairs(source.declared_holes or {}) do
+        if seen[hole.symbol] == nil then
+            rejects[#rejects + 1] = Native.NativeBuildRejectMissingHole(source.id, hole.id, hole.symbol)
         end
     end
     return holes, rejects
 end
 
-local function compile_source(source, request, build_dir, index)
-    local rejects = {}
-    if source.c_text == "" then
-        return nil, { Native.NativeBuildRejectEmptySource(source.id, "empty native template source") }
+local function object_indexes(object)
+    local sections_by_id = {}
+    local sections_by_name = {}
+    for _, section in ipairs(object.sections or {}) do
+        sections_by_id[section.id.text] = section
+        sections_by_name[section.name] = section
     end
+
+    local symbols_by_id = {}
+    local symbols_by_name = {}
+    local symbol_order = {}
+    for _, symbol in ipairs(object.symbols or {}) do
+        local section_name
+        if symbol.section ~= nil then
+            local section = sections_by_id[symbol.section.text]
+            section_name = section and section.name or nil
+        end
+        local entry = {
+            id = symbol.id,
+            name = symbol.name,
+            value = symbol.value,
+            size = symbol.size,
+            section = section_name,
+            binding = symbol.binding,
+            source = symbol,
+        }
+        symbols_by_id[symbol.id.text] = entry
+        if symbol.name ~= "" then symbols_by_name[symbol.name] = entry end
+        symbol_order[#symbol_order + 1] = entry
+    end
+
+    return sections_by_id, sections_by_name, symbols_by_id, symbols_by_name, symbol_order
+end
+
+local function object_text_relocations(object, text_section)
+    local out = {}
+    for _, relocation in ipairs(object.relocations or {}) do
+        if relocation.section.text == text_section.id.text then out[#out + 1] = relocation end
+    end
+    return out
+end
+
+local function section_has_flag(section, flag)
+    for _, present in ipairs(section.flags or {}) do
+        if present == flag then return true end
+    end
+    return false
+end
+
+local function is_readonly_constant_section(section)
+    if section == nil or section.bytes == nil or section.bytes.size == 0 then return false end
+    if section_has_flag(section, Native.NativeObjectSectionExecutable) then return false end
+    if section_has_flag(section, Native.NativeObjectSectionWritable) then return false end
+    return tostring(section.name):match("^%.rodata") ~= nil
+end
+
+local function constant_pool_entry_id_for_section(source, section)
+    return Native.NativeConstantPoolEntryId(source.id.text .. ".constant_pool.section." .. c_identifier(section.name))
+end
+
+local function object_constant_pool_layout(source, sections_by_id, symbol_order)
+    local entries = {}
+    local symbols = {}
+    local max_align = 1
+    for _, section in pairs(sections_by_id or {}) do
+        if is_readonly_constant_section(section) then
+            local entry = Native.NativeConstantPoolEntry(
+                constant_pool_entry_id_for_section(source, section),
+                section.bytes,
+                section.align or 1,
+                Native.NativeConstantPoolBytes(section.bytes.size, section.align or 1)
+            )
+            entries[#entries + 1] = Native.NativeConstantPoolLayoutEntry(entry, 0)
+            if entry.alignment > max_align then max_align = entry.alignment end
+            symbols[section.name] = { entry = entry, addend_bias = 0 }
+            for _, sym in ipairs(symbol_order or {}) do
+                if sym.section == section.name and sym.name ~= "" then
+                    symbols[sym.name] = { entry = entry, addend_bias = sym.value or 0 }
+                end
+            end
+        end
+    end
+    table.sort(entries, function(a, b) return a.entry.id.text < b.entry.id.text end)
+    local offset = 0
+    local laid_out = {}
+    for _, layout_entry in ipairs(entries) do
+        local alignment = layout_entry.entry.alignment or 1
+        local rem = offset % alignment
+        if rem ~= 0 then offset = offset + (alignment - rem) end
+        laid_out[#laid_out + 1] = Native.NativeConstantPoolLayoutEntry(layout_entry.entry, offset)
+        offset = offset + layout_entry.entry.bytes.size
+    end
+    return Native.NativeConstantPoolLayout(laid_out, offset, max_align), symbols
+end
+
+function Native.NativeTarget:reject_if_not_elf64_x64_object_target(source)
+    if asdl.isa(self.arch, Native.NativeArchX64) and asdl.isa(self.endian, Native.NativeLittleEndian) and self.pointer_bits == 64 then
+        return nil
+    end
+    return Native.NativeBuildRejectUnsupportedObjectFormat(
+        source.id,
+        "elf64-x64",
+        "compiled ELF64/x64 stencil object does not match request target " .. self.id.text
+    )
+end
+
+function Native.NativeRelocation:native_template_relocation_kind()
+    return nil
+end
+
+function Native.NativeRelocationRel32:native_template_relocation_kind() return Native.NativeTemplateRelocationRel32 end
+function Native.NativeRelocationAbs64:native_template_relocation_kind() return Native.NativeTemplateRelocationAbs64 end
+function Native.NativeRelocationRuntimeSymbol:native_template_relocation_kind() return Native.NativeTemplateRelocationRuntimeSymbol end
+function Native.NativeRelocationContinuation:native_template_relocation_kind() return Native.NativeTemplateRelocationContinuation end
+function Native.NativeRelocationHoleOrdinal:native_template_relocation_kind() return Native.NativeTemplateRelocationHoleOrdinal end
+function Native.NativeRelocationConstantPool:native_template_relocation_kind() return Native.NativeTemplateRelocationConstantPool end
+
+local function template_relocation_kind_declared(source, kind)
+    for _, declared in ipairs(source.declared_relocation_kinds or {}) do
+        if declared == kind then return true end
+    end
+    return false
+end
+
+local function reject_undeclared_relocation_kind(source, relocation)
+    local kind = relocation:native_template_relocation_kind()
+    if kind == nil or template_relocation_kind_declared(source, kind) then return nil end
+    return Native.NativeBuildRejectUnsupportedRelocation(
+        source.id,
+        relocation.offset,
+        asdl.class_basename(kind),
+        "object relocation kind is not declared by NativeTemplateSource manifest entry"
+    )
+end
+
+local function declared_hole_ordinal_rejects(source)
+    local rejects = {}
+    local seen_symbol = {}
+    local seen_number = {}
+    for _, ordinal in ipairs(source.declared_hole_ordinals or {}) do
+        if seen_symbol[ordinal.symbol] ~= nil or seen_number[ordinal.ordinal] ~= nil then
+            rejects[#rejects + 1] = Native.NativeBuildRejectDuplicateHoleOrdinal(source.id, ordinal.ordinal, ordinal.symbol)
+        end
+        seen_symbol[ordinal.symbol] = true
+        seen_number[ordinal.ordinal] = true
+    end
+    return rejects
+end
+
+local function compile_source(source, request, build_dir, index)
+    local rejects = declared_hole_ordinal_rejects(source)
+    if source.c_text == "" then
+        rejects[#rejects + 1] = Native.NativeBuildRejectEmptySource(source.id, "empty native template source")
+        return nil, rejects
+    end
+    if #rejects > 0 then return nil, rejects end
 
     local stem = string.format("%03d_%s", index, c_identifier(source.id.text or source.entry_symbol))
     local source_path = build_dir .. "/" .. stem .. source_extension(source)
@@ -472,20 +635,16 @@ local function compile_source(source, request, build_dir, index)
         return nil, { Native.NativeBuildRejectCompileError(source.id, "native template object build failed: " .. cmd) }
     end
 
-    local readelf = os.getenv("READELF") or "readelf"
-    local section_out, section_err = capture(shell_quote(readelf) .. " -SW " .. shell_quote(object_path))
-    if section_out == nil then
-        return nil, { Native.NativeBuildRejectCompileError(source.id, "readelf sections failed: " .. tostring(section_err)) }
-    end
-    local sections, sections_by_name = parse_sections(section_out)
+    local target_reject = request.target:reject_if_not_elf64_x64_object_target(source)
+    if target_reject ~= nil then return nil, { target_reject } end
 
-    local symbol_out, symbol_err = capture(shell_quote(readelf) .. " -Ws " .. shell_quote(object_path))
-    if symbol_out == nil then
-        return nil, { Native.NativeBuildRejectCompileError(source.id, "readelf symbols failed: " .. tostring(symbol_err)) }
-    end
-    local symbols, symbol_order = parse_symbols(symbol_out, sections)
+    local object_bytes = read_file(object_path)
+    local object, object_rejects = Native.NativeTemplateBytes(object_bytes, #object_bytes):parse_native_object(source.id, request.target)
+    if object_rejects ~= nil then return nil, object_rejects end
+
+    local sections_by_id, sections_by_name, symbols_by_id, symbols, symbol_order = object_indexes(object)
     local entry_symbol = symbols[source.entry_symbol]
-    if entry_symbol == nil or entry_symbol.section == nil or entry_symbol.section == "UND" then
+    if entry_symbol == nil or entry_symbol.section == nil then
         return nil, { Native.NativeBuildRejectMissingEntrySymbol(source.id, source.entry_symbol) }
     end
 
@@ -495,8 +654,7 @@ local function compile_source(source, request, build_dir, index)
         return nil, { Native.NativeBuildRejectMissingEntrySymbol(source.id, source.entry_symbol) }
     end
 
-    local object_bytes = read_file(object_path)
-    local text_bytes = object_bytes:sub(text_meta.offset + 1, text_meta.offset + text_meta.size)
+    local text_bytes = text_meta.bytes.bytes
     if #text_bytes == 0 then
         return nil, { Native.NativeBuildRejectEmptyText(source.id, "entry symbol text section is empty") }
     end
@@ -508,51 +666,108 @@ local function compile_source(source, request, build_dir, index)
         end
     end
 
-    local reloc_out, reloc_err = capture(shell_quote(readelf) .. " -Wr " .. shell_quote(object_path))
-    if reloc_out == nil then
-        return nil, { Native.NativeBuildRejectCompileError(source.id, "readelf relocations failed: " .. tostring(reloc_err)) }
-    end
-    local raw_relocs = text_section_relocations(parse_relocations(reloc_out), text_section)
+    local constant_pool_layout, constant_pool_symbols = object_constant_pool_layout(source, sections_by_id, symbol_order)
+    local object_relocs = object_text_relocations(object, text_meta)
     local runtime_symbols = runtime_symbol_index(request.runtime)
     local continuation_symbols = continuation_symbol_index(source)
+    local hole_symbols = hole_ordinal_symbol_index(source)
     local seen_continuations = {}
     local relocations = {}
-    for _, raw in ipairs(raw_relocs) do
-        local relocation, reject = native_relocation_for(source, raw, text_section, symbols, sections_by_name, runtime_symbols, continuation_symbols)
+    local hole_relocations = {}
+    for _, object_relocation in ipairs(object_relocs) do
+        local relocation, reject = native_relocation_for(source, object_relocation, text_section, symbols_by_id, symbols, sections_by_name, runtime_symbols, continuation_symbols, hole_symbols, constant_pool_symbols)
         if reject ~= nil then rejects[#rejects + 1] = reject
         else
+            local declaration_reject = reject_undeclared_relocation_kind(source, relocation)
+            if declaration_reject ~= nil then rejects[#rejects + 1] = declaration_reject end
             if asdl.isa(relocation, Native.NativeRelocationContinuation) then
                 seen_continuations[relocation.symbol.name] = true
+                relocations[#relocations + 1] = relocation
+            elseif asdl.isa(relocation, Native.NativeRelocationHoleOrdinal) then
+                hole_relocations[#hole_relocations + 1] = relocation
+                relocations[#relocations + 1] = relocation
+            else
+                relocations[#relocations + 1] = relocation
             end
-            relocations[#relocations + 1] = relocation
         end
     end
 
-    for _, cont in ipairs(source.extraction:native_continuation_symbols()) do
-        if not seen_continuations[cont.name] then
-            rejects[#rejects + 1] = Native.NativeBuildRejectUnexpectedSymbol(
-                source.id,
-                cont.name,
-                "declared continuation symbol has no relocation in compiled object"
-            )
-        end
+    for _, reject in ipairs(source.extraction:verify_native_object_relocations(source, seen_continuations)) do
+        rejects[#rejects + 1] = reject
     end
 
-    local holes, hole_rejects = resolve_declared_holes(source, text_bytes)
+    local holes, hole_rejects = resolve_declared_holes(source, text_bytes, hole_relocations)
     for _, reject in ipairs(hole_rejects) do rejects[#rejects + 1] = reject end
 
     if #rejects > 0 then return nil, rejects end
 
     return Native.NativeEmbeddedTemplate(
         source.family,
+        source.extraction,
+        source.signature,
         Native.NativeTextSection(Native.NativeTemplateBytes(text_bytes, #text_bytes), text_meta.align or 1),
         symbol_entries,
         relocations,
-        holes
+        holes,
+        source.declared_hole_ordinals,
+        source.declared_relocation_kinds,
+        constant_pool_layout
     ), nil
 end
 
+local function asdl_list_equals(a, b)
+    a = a or {}
+    b = b or {}
+    if #a ~= #b then return false end
+    for i = 1, #a do
+        if a[i] ~= b[i] then return false end
+    end
+    return true
+end
+
+local function request_manifest_rejects(request)
+    local rejects = {}
+    local manifest_source = Native.NativeTemplateId(request.id.text .. ".manifest")
+    local entries = {}
+    for _, group in ipairs((request.manifest and request.manifest.groups) or {}) do
+        for _, entry in ipairs(group.entries or {}) do entries[#entries + 1] = entry end
+    end
+    if request.manifest.total_count ~= #entries then
+        rejects[#rejects + 1] = Native.NativeBuildRejectRoleMismatch(
+            manifest_source,
+            "manifest total_count does not equal manifest entry count"
+        )
+    end
+    if #entries ~= #(request.sources or {}) then
+        rejects[#rejects + 1] = Native.NativeBuildRejectRoleMismatch(
+            manifest_source,
+            "manifest entry count does not equal source count"
+        )
+    end
+    local entries_by_source = {}
+    for _, entry in ipairs(entries) do entries_by_source[entry.source.text] = entry end
+    for _, source in ipairs(request.sources or {}) do
+        local entry = entries_by_source[source.id.text]
+        if entry == nil then
+            rejects[#rejects + 1] = Native.NativeBuildRejectRoleMismatch(source.id, "source is not declared by manifest")
+        elseif source.family ~= entry.family
+            or source.generator ~= entry.generator
+            or source.configuration ~= entry.configuration
+            or source.signature ~= entry.signature
+            or source.extraction ~= entry.extraction
+            or not asdl_list_equals(source.declared_hole_ordinals, entry.declared_hole_ordinals)
+            or not asdl_list_equals(source.declared_continuation_ordinals, entry.declared_continuation_ordinals)
+            or not asdl_list_equals(source.declared_relocation_kinds, entry.declared_relocation_kinds) then
+            rejects[#rejects + 1] = Native.NativeBuildRejectRoleMismatch(source.id, "source facts do not match manifest entry")
+        end
+    end
+    return rejects
+end
+
 local function build_embedded_bank(request)
+    local manifest_rejects = request_manifest_rejects(request)
+    if #manifest_rejects > 0 then return nil, Native.NativeTemplateBankBuildRejected(manifest_rejects) end
+
     local build_root = os.getenv("LALIN_NATIVE_BANK_BUILD_DIR") or "target/native_bank_build"
     os.execute("mkdir -p " .. shell_quote(build_root))
     local build_dir = build_root .. "/" .. tostring(os.time()) .. "_" .. c_identifier(tostring(os.clock()))
@@ -570,7 +785,7 @@ local function build_embedded_bank(request)
     end
 
     if #rejects > 0 then return nil, Native.NativeTemplateBankBuildRejected(rejects) end
-    return Native.NativeEmbeddedTemplateBank(request.id, request.target, entries), nil
+    return Native.NativeEmbeddedTemplateBank(request.id, request.target, request.manifest, entries), nil
 end
 
 local function schema_local_for_class(class_name)
@@ -642,6 +857,8 @@ end
 local function relocation_symbol_for_c(relocation)
     if asdl.isa(relocation, Native.NativeRelocationRuntimeSymbol) then return relocation.symbol.text end
     if asdl.isa(relocation, Native.NativeRelocationContinuation) then return relocation.symbol.name end
+    if asdl.isa(relocation, Native.NativeRelocationHoleOrdinal) then return relocation.ordinal.symbol end
+    if asdl.isa(relocation, Native.NativeRelocationConstantPool) then return relocation.entry.text end
     return relocation.symbol
 end
 
@@ -650,6 +867,8 @@ local function relocation_kind_for_c(relocation)
     if asdl.isa(relocation, Native.NativeRelocationAbs64) then return "abs64" end
     if asdl.isa(relocation, Native.NativeRelocationRuntimeSymbol) then return "runtime_symbol" end
     if asdl.isa(relocation, Native.NativeRelocationContinuation) then return "continuation" end
+    if asdl.isa(relocation, Native.NativeRelocationHoleOrdinal) then return "hole_ordinal" end
+    if asdl.isa(relocation, Native.NativeRelocationConstantPool) then return "constant_pool" end
     return asdl.class_basename(relocation)
 end
 
@@ -686,6 +905,8 @@ local function emit_header()
         "",
         "typedef struct LalinNativeEmbeddedTemplate {",
         "  const char *family_id;",
+        "  const char *extraction_kind;",
+        "  const char *signature_frame_scalar_kind;",
         "  const unsigned char *text;",
         "  size_t text_size;",
         "  size_t text_alignment;",
@@ -695,6 +916,8 @@ local function emit_header()
         "  size_t relocation_count;",
         "  const LalinNativeEmbeddedPatchHole *holes;",
         "  size_t hole_count;",
+        "  size_t constant_pool_size;",
+        "  size_t constant_pool_alignment;",
         "} LalinNativeEmbeddedTemplate;",
         "",
         "typedef struct LalinNativeEmbeddedTemplateBank {",
@@ -702,6 +925,7 @@ local function emit_header()
         "  const char *target_id;",
         "  const LalinNativeEmbeddedTemplate *entries;",
         "  size_t entry_count;",
+        "  size_t manifest_total_count;",
         "} LalinNativeEmbeddedTemplateBank;",
         "",
         "/* Raw C access for binary embedding/debugging only; not an ASDL import hook. */",
@@ -779,7 +1003,7 @@ local function emit_entry_arrays(entry, index)
     }
 end
 
-local function emit_source(embedded)
+local function emit_source(embedded, request)
     local out = {
         "#include <stddef.h>",
         "#include <stdint.h>",
@@ -801,8 +1025,10 @@ local function emit_source(embedded)
     for i, entry in ipairs(embedded.entries) do
         local m = meta[i]
         out[#out + 1] = string.format(
-            "  { %s, %s, %u, %u, %s, %u, %s, %u, %s, %u },",
+            "  { %s, %s, %s, %s, %u, %u, %s, %u, %s, %u, %s, %u, %u, %u },",
             c_string(entry.family.id.text),
+            c_string(asdl.class_basename(entry.extraction)),
+            c_string(asdl.class_basename(entry.signature.frame_param.scalar)),
             m.text_name,
             entry.text.bytes.size,
             entry.text.alignment,
@@ -811,17 +1037,20 @@ local function emit_source(embedded)
             m.reloc_name,
             m.reloc_count,
             m.hole_name,
-            m.hole_count
+            m.hole_count,
+            entry.constant_pool_layout.size,
+            entry.constant_pool_layout.alignment
         )
     end
-    out[#out + 1] = "  { NULL, NULL, 0, 1, NULL, 0, NULL, 0, NULL, 0 },"
+    out[#out + 1] = "  { NULL, NULL, NULL, NULL, 0, 1, NULL, 0, NULL, 0, NULL, 0, 0, 1 },"
     out[#out + 1] = "};"
     out[#out + 1] = ""
     out[#out + 1] = "static const LalinNativeEmbeddedTemplateBank lalin_native_bank = {"
     out[#out + 1] = "  " .. c_string(embedded.id.text) .. ","
     out[#out + 1] = "  " .. c_string(embedded.target.id.text) .. ","
     out[#out + 1] = "  lalin_native_template_entries,"
-    out[#out + 1] = "  " .. tostring(#embedded.entries)
+    out[#out + 1] = "  " .. tostring(#embedded.entries) .. ","
+    out[#out + 1] = "  " .. tostring(request.manifest.total_count)
     out[#out + 1] = "};"
     out[#out + 1] = ""
     out[#out + 1] = "const LalinNativeEmbeddedTemplateBank *lalin_native_embedded_template_bank(void) {"
@@ -842,7 +1071,7 @@ if build_rejected ~= nil then
 end
 
 write_file(out_h, emit_header())
-write_file(out_c, emit_source(embedded))
+write_file(out_c, emit_source(embedded, request))
 write_file(out_lua, emit_lua_module(embedded))
 io.stderr:write(
     "embedded native template bank ", embedded.id.text,

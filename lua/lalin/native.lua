@@ -63,6 +63,142 @@ local function bind_context(T)
         return nil
     end
 
+    local function write_patch_u64(input, value)
+        write_u64_le(patch_address(input), value)
+        return nil
+    end
+
+    local function write_patch_rel32(input, target_address, addend)
+        local address = patch_address(input)
+        write_u32_le(address, target_address + (addend or 0) - address)
+        return nil
+    end
+
+    local function constant_pool_entry_address(input, entry_id)
+        for _, entry in ipairs((input.constant_pool_layout and input.constant_pool_layout.entries) or {}) do
+            if entry.entry.id == entry_id then return input.base_address + entry.offset end
+        end
+        return nil
+    end
+
+    local function runtime_symbol(input, symbol_id)
+        for _, symbol in ipairs((input.runtime and input.runtime.symbols) or {}) do
+            if symbol.id == symbol_id then return symbol end
+        end
+        return nil
+    end
+
+    local function code_layout_node_offset(input, node_id)
+        for _, layout in ipairs((input.code_layout and input.code_layout.nodes) or {}) do
+            if layout.node == node_id then return layout.offset end
+        end
+    end
+
+    local function bank_symbol_address(input, symbol_name)
+        for _, node in ipairs((input.graph and input.graph.nodes) or {}) do
+            local node_offset = code_layout_node_offset(input, node.id)
+            if node_offset ~= nil then
+                for _, symbol in ipairs((node.entry.compiled and node.entry.compiled.symbols) or {}) do
+                    if symbol.name == symbol_name then return input.base_address + node_offset + symbol.offset end
+                end
+            end
+        end
+    end
+
+    local function module_address_entry(entries, key_name, key)
+        for _, entry in ipairs(entries or {}) do
+            if entry[key_name] == key then return entry end
+        end
+    end
+
+    function Native.NativeCodeAddressCapability:native_code_address(_input)
+        return nil
+    end
+
+    function Native.NativeCodeAddressBankSymbol:native_code_address(input)
+        return bank_symbol_address(input, self.symbol_name)
+    end
+
+    function Native.NativeCodeAddressRuntimeSymbol:native_code_address(input)
+        local symbol = runtime_symbol(input, self.symbol)
+        return symbol and symbol.address and symbol.address:native_runtime_address() or nil
+    end
+
+    function Native.NativeCodeAddressConstantPoolEntry:native_code_address(input)
+        return constant_pool_entry_address(input, self.entry)
+    end
+
+    function Native.NativeCodeAddressPatchable:native_code_address(input)
+        return self.coordinate:native_patch_coordinate_address(input)
+    end
+
+    function Native.NativeCodeAddressFrameSlot:native_code_address(_input)
+        return nil
+    end
+
+    function Native.NativeCodeAddressFrameSlotOffset:native_code_address(_input)
+        return nil
+    end
+
+    function Native.NativeCodeAddressValueOffset:native_code_address(_input)
+        return nil
+    end
+
+    function Native.NativeCodeAddressPlaceOffset:native_code_address(_input)
+        return nil
+    end
+
+    function Native.NativeCodeAddressPlaceIndexOffset:native_code_address(_input)
+        return nil
+    end
+
+    function Native.NativePatchCoordinate:native_patch_coordinate_address(_input)
+        return nil
+    end
+
+    function Native.NativePatchPointer64:native_patch_coordinate_address(_input)
+        return self.address
+    end
+
+    function Native.NativePatchConstantPoolEntry:native_patch_coordinate_address(input)
+        return constant_pool_entry_address(input, self.entry)
+    end
+
+    function Native.NativePatchCallTarget:native_patch_coordinate_address(input)
+        local symbol = runtime_symbol(input, self.symbol)
+        return symbol and symbol.address and symbol.address:native_runtime_address() or nil
+    end
+
+    function Native.NativePatchCodeDataAddress:native_module_address_projection(input)
+        local entry = module_address_entry(input.module_addresses and input.module_addresses.data, "data", self.data)
+        return entry and entry.projection or nil
+    end
+
+    function Native.NativePatchCodeGlobalAddress:native_module_address_projection(input)
+        local entry = module_address_entry(input.module_addresses and input.module_addresses.globals, "global", self.global)
+        return entry and entry.projection or nil
+    end
+
+    function Native.NativePatchCodeFuncAddress:native_module_address_projection(input)
+        local entry = module_address_entry(input.module_addresses and input.module_addresses.funcs, "func", self.func)
+        return entry and entry.projection or nil
+    end
+
+    function Native.NativePatchCodeExternAddress:native_module_address_projection(input)
+        local entry = module_address_entry(input.module_addresses and input.module_addresses.externs, "extern", self.extern)
+        return entry and entry.projection or nil
+    end
+
+    function Native.NativePatchCoordinate:native_module_address_projection(_input)
+        return nil
+    end
+
+    local function module_patch_coordinate_address(input, coordinate)
+        local projection = coordinate:native_module_address_projection(input)
+        if projection == nil then return nil end
+        return projection.capability:native_code_address(input)
+    end
+
     function Native.NativeCompileRequest:compile_native()
         local plan = self.subject:plan_native_copy(Native.NativePlanInput(self.target, self.runtime, self.bank))
         local copy_plan = plan:select_native_copy_plan(Native.NativeCopyPlanSelectionInput(self.target, self.runtime))
@@ -124,233 +260,846 @@ local function bind_context(T)
             and self.registers:native_register_protocol_equals(other.registers)
     end
 
-    function Native.NativeCallProtocol:native_call_protocol_equals(other)
-        return self == other
+    function Native.NativeCallProtocol:native_call_protocol_equals(_other)
+        return false
+    end
+
+    function Native.NativeCallVoid:native_call_protocol_equals(other)
+        return other:native_call_protocol_equals_void()
+    end
+
+    function Native.NativeCallProtocol:native_call_protocol_equals_void()
+        return false
+    end
+
+    function Native.NativeCallVoid:native_call_protocol_equals_void()
+        return true
+    end
+
+    function Native.NativeCallReturnI32:native_call_protocol_equals(other)
+        return other:native_call_protocol_equals_return_i32()
+    end
+
+    function Native.NativeCallProtocol:native_call_protocol_equals_return_i32()
+        return false
+    end
+
+    function Native.NativeCallReturnI32:native_call_protocol_equals_return_i32()
+        return true
+    end
+
+    function Native.NativeCallReturnI64:native_call_protocol_equals(other)
+        return other:native_call_protocol_equals_return_i64()
+    end
+
+    function Native.NativeCallProtocol:native_call_protocol_equals_return_i64()
+        return false
+    end
+
+    function Native.NativeCallReturnI64:native_call_protocol_equals_return_i64()
+        return true
+    end
+
+    function Native.NativeCallReturnF64:native_call_protocol_equals(other)
+        return other:native_call_protocol_equals_return_f64()
+    end
+
+    function Native.NativeCallProtocol:native_call_protocol_equals_return_f64()
+        return false
+    end
+
+    function Native.NativeCallReturnF64:native_call_protocol_equals_return_f64()
+        return true
+    end
+
+    function Native.NativeCallReturnScalar:native_call_protocol_equals(other)
+        return other:native_call_protocol_equals_return_scalar(self.scalar)
+    end
+
+    function Native.NativeCallProtocol:native_call_protocol_equals_return_scalar(_scalar)
+        return false
+    end
+
+    function Native.NativeCallReturnScalar:native_call_protocol_equals_return_scalar(scalar)
+        return self.scalar == scalar
+    end
+
+    function Native.NativeCallCodeSig:native_call_protocol_equals(other)
+        return other:native_call_protocol_equals_code_sig(self.projection)
+    end
+
+    function Native.NativeCallProtocol:native_call_protocol_equals_code_sig(_projection)
+        return false
+    end
+
+    function Native.NativeCallCodeSig:native_call_protocol_equals_code_sig(projection)
+        return self.projection:native_abi_function_projection_equals(projection)
+    end
+
+    function Native.NativeCallStencilAbi:native_call_protocol_equals(other)
+        return other:native_call_protocol_equals_stencil_abi(self.projection)
+    end
+
+    function Native.NativeCallProtocol:native_call_protocol_equals_stencil_abi(_projection)
+        return false
+    end
+
+    function Native.NativeCallStencilAbi:native_call_protocol_equals_stencil_abi(projection)
+        return self.projection:native_abi_function_projection_equals(projection)
     end
 
     function Native.NativeRegisterProtocol:native_register_protocol_equals(other)
         return self == other
     end
 
+    local function abi_param_projection_list_equals(left, right)
+        if #(left or {}) ~= #(right or {}) then return false end
+        for i = 1, #(left or {}) do
+            if not left[i]:native_abi_param_projection_equals(right[i]) then return false end
+        end
+        return true
+    end
+
+    local function abi_descriptor_field_list_equals(left, right)
+        if #(left or {}) ~= #(right or {}) then return false end
+        for i = 1, #(left or {}) do
+            if not left[i]:native_abi_descriptor_field_equals(right[i]) then return false end
+        end
+        return true
+    end
+
+    function Native.NativeAbiFunctionProjection:native_abi_function_projection_equals(other)
+        return other ~= nil
+            and self.target == other.target
+            and abi_param_projection_list_equals(self.params, other.params)
+            and self.result:native_abi_result_projection_equals(other.result)
+    end
+
+    function Native.NativeAbiParamProjection:native_abi_param_projection_equals(other)
+        return other ~= nil
+            and self.param_index == other.param_index
+            and self.source_ty == other.source_ty
+            and self.abi:native_abi_projection_equals(other.abi)
+    end
+
+    function Native.NativeAbiResultProjection:native_abi_result_projection_equals(other)
+        return other ~= nil
+            and self.source_ty == other.source_ty
+            and self.abi:native_abi_projection_equals(other.abi)
+    end
+
+    function Native.NativeAbiDescriptorField:native_abi_descriptor_field_equals(other)
+        return other ~= nil
+            and self.field_name == other.field_name
+            and self.offset == other.offset
+            and self.value:native_abi_projection_equals(other.value)
+    end
+
+    function Native.NativeAbiProjection:native_abi_projection_equals(_other)
+        return false
+    end
+
+    function Native.NativeAbiVoidResult:native_abi_projection_equals(other)
+        return other:native_abi_projection_equals_void_result()
+    end
+
+    function Native.NativeAbiProjection:native_abi_projection_equals_void_result()
+        return false
+    end
+
+    function Native.NativeAbiVoidResult:native_abi_projection_equals_void_result()
+        return true
+    end
+
+    function Native.NativeAbiScalarValue:native_abi_projection_equals(other)
+        return other:native_abi_projection_equals_scalar_value(self.scalar, self.extension)
+    end
+
+    function Native.NativeAbiProjection:native_abi_projection_equals_scalar_value(_scalar, _extension)
+        return false
+    end
+
+    function Native.NativeAbiScalarValue:native_abi_projection_equals_scalar_value(scalar, extension)
+        return self.scalar == scalar and self.extension == extension
+    end
+
+    function Native.NativeAbiPointerValue:native_abi_projection_equals(other)
+        return other:native_abi_projection_equals_pointer_value(self.scalar)
+    end
+
+    function Native.NativeAbiProjection:native_abi_projection_equals_pointer_value(_scalar)
+        return false
+    end
+
+    function Native.NativeAbiPointerValue:native_abi_projection_equals_pointer_value(scalar)
+        return self.scalar == scalar
+    end
+
+    function Native.NativeAbiDescriptorValue:native_abi_projection_equals(other)
+        return other:native_abi_projection_equals_descriptor_value(self.layout, self.fields)
+    end
+
+    function Native.NativeAbiProjection:native_abi_projection_equals_descriptor_value(_layout, _fields)
+        return false
+    end
+
+    function Native.NativeAbiDescriptorValue:native_abi_projection_equals_descriptor_value(layout, fields)
+        return self.layout == layout and abi_descriptor_field_list_equals(self.fields, fields)
+    end
+
+    function Native.NativeAbiByRefValue:native_abi_projection_equals(other)
+        return other:native_abi_projection_equals_byref_value(self.pointee_ty, self.mutability, self.alignment)
+    end
+
+    function Native.NativeAbiProjection:native_abi_projection_equals_byref_value(_pointee_ty, _mutability, _alignment)
+        return false
+    end
+
+    function Native.NativeAbiByRefValue:native_abi_projection_equals_byref_value(pointee_ty, mutability, alignment)
+        return self.pointee_ty == pointee_ty and self.mutability == mutability and self.alignment == alignment
+    end
+
+    function Native.NativeAbiSRetResult:native_abi_projection_equals(other)
+        return other:native_abi_projection_equals_sret_result(self.result_ty, self.pointer_param)
+    end
+
+    function Native.NativeAbiProjection:native_abi_projection_equals_sret_result(_result_ty, _pointer_param)
+        return false
+    end
+
+    function Native.NativeAbiSRetResult:native_abi_projection_equals_sret_result(result_ty, pointer_param)
+        return self.result_ty == result_ty and self.pointer_param:native_abi_param_projection_equals(pointer_param)
+    end
+
+    function Native.NativePatchFormula:native_patch_formula_equals(_other)
+        return false
+    end
+
+    function Native.NativePatchSym32:native_patch_formula_equals(other)
+        return other:native_patch_formula_equals_sym32()
+    end
+
+    function Native.NativePatchFormula:native_patch_formula_equals_sym32()
+        return false
+    end
+
+    function Native.NativePatchSym32:native_patch_formula_equals_sym32()
+        return true
+    end
+
+    function Native.NativePatchSym64:native_patch_formula_equals(other)
+        return other:native_patch_formula_equals_sym64()
+    end
+
+    function Native.NativePatchFormula:native_patch_formula_equals_sym64()
+        return false
+    end
+
+    function Native.NativePatchSym64:native_patch_formula_equals_sym64()
+        return true
+    end
+
+    function Native.NativePatchPcRel32:native_patch_formula_equals(other)
+        return other:native_patch_formula_equals_pcrel32()
+    end
+
+    function Native.NativePatchFormula:native_patch_formula_equals_pcrel32()
+        return false
+    end
+
+    function Native.NativePatchPcRel32:native_patch_formula_equals_pcrel32()
+        return true
+    end
+
+    local function stencil_metavar_binding_list_equals(left, right)
+        if #(left or {}) ~= #(right or {}) then return false end
+        for i = 1, #(left or {}) do
+            if not left[i]:native_stencil_metavar_binding_equals(right[i]) then return false end
+        end
+        return true
+    end
+
+    function Native.NativeStencilMetavarBinding:native_stencil_metavar_binding_equals(other)
+        return other ~= nil and self.metavar == other.metavar and self.value:native_stencil_metavar_value_equals(other.value)
+    end
+
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals(_other)
+        return false
+    end
+
+    function Native.NativeStencilScalarMetavarValue:native_stencil_metavar_value_equals(other) return other:native_stencil_metavar_value_equals_scalar(self.scalar) end
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals_scalar(_scalar) return false end
+    function Native.NativeStencilScalarMetavarValue:native_stencil_metavar_value_equals_scalar(scalar) return self.scalar == scalar end
+    function Native.NativeStencilLocationClassMetavarValue:native_stencil_metavar_value_equals(other) return other:native_stencil_metavar_value_equals_location_class(self.location) end
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals_location_class(_location) return false end
+    function Native.NativeStencilLocationClassMetavarValue:native_stencil_metavar_value_equals_location_class(location) return self.location == location end
+    function Native.NativeStencilPassthroughIntCountMetavarValue:native_stencil_metavar_value_equals(other) return other:native_stencil_metavar_value_equals_passthrough_int_count(self.count) end
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals_passthrough_int_count(_count) return false end
+    function Native.NativeStencilPassthroughIntCountMetavarValue:native_stencil_metavar_value_equals_passthrough_int_count(count) return self.count == count end
+    function Native.NativeStencilPassthroughFloatCountMetavarValue:native_stencil_metavar_value_equals(other) return other:native_stencil_metavar_value_equals_passthrough_float_count(self.count) end
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals_passthrough_float_count(_count) return false end
+    function Native.NativeStencilPassthroughFloatCountMetavarValue:native_stencil_metavar_value_equals_passthrough_float_count(count) return self.count == count end
+    function Native.NativeStencilControlShapeMetavarValue:native_stencil_metavar_value_equals(other) return other:native_stencil_metavar_value_equals_control_shape(self.shape) end
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals_control_shape(_shape) return false end
+    function Native.NativeStencilControlShapeMetavarValue:native_stencil_metavar_value_equals_control_shape(shape) return self.shape == shape end
+    function Native.NativeStencilCodeInstMetavarValue:native_stencil_metavar_value_equals(other) return other:native_stencil_metavar_value_equals_code_inst(self.axis) end
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals_code_inst(_axis) return false end
+    function Native.NativeStencilCodeInstMetavarValue:native_stencil_metavar_value_equals_code_inst(axis) return self.axis:native_code_inst_axis_equals(axis) end
+    function Native.NativeStencilCodeTermMetavarValue:native_stencil_metavar_value_equals(other) return other:native_stencil_metavar_value_equals_code_term(self.axis) end
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals_code_term(_axis) return false end
+    function Native.NativeStencilCodeTermMetavarValue:native_stencil_metavar_value_equals_code_term(axis) return self.axis:native_code_term_axis_equals(axis) end
+    function Native.NativeStencilKernelMetavarValue:native_stencil_metavar_value_equals(other) return other:native_stencil_metavar_value_equals_kernel(self.axis) end
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals_kernel(_axis) return false end
+    function Native.NativeStencilKernelMetavarValue:native_stencil_metavar_value_equals_kernel(axis) return self.axis:native_kernel_axis_equals(axis) end
+    function Native.NativeStencilProducerMetavarValue:native_stencil_metavar_value_equals(other) return other:native_stencil_metavar_value_equals_stencil_producer(self.axis) end
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals_stencil_producer(_axis) return false end
+    function Native.NativeStencilProducerMetavarValue:native_stencil_metavar_value_equals_stencil_producer(axis) return self.axis:native_stencil_producer_axis_equals(axis) end
+    function Native.NativeStencilAccessMetavarValue:native_stencil_metavar_value_equals(other) return other:native_stencil_metavar_value_equals_stencil_access(self.axis) end
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals_stencil_access(_axis) return false end
+    function Native.NativeStencilAccessMetavarValue:native_stencil_metavar_value_equals_stencil_access(axis) return self.axis:native_stencil_access_axis_equals(axis) end
+    function Native.NativeStencilPointMetavarValue:native_stencil_metavar_value_equals(other) return other:native_stencil_metavar_value_equals_stencil_point(self.axis) end
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals_stencil_point(_axis) return false end
+    function Native.NativeStencilPointMetavarValue:native_stencil_metavar_value_equals_stencil_point(axis) return self.axis:native_stencil_point_axis_equals(axis) end
+    function Native.NativeStencilSinkMetavarValue:native_stencil_metavar_value_equals(other) return other:native_stencil_metavar_value_equals_stencil_sink(self.axis) end
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals_stencil_sink(_axis) return false end
+    function Native.NativeStencilSinkMetavarValue:native_stencil_metavar_value_equals_stencil_sink(axis) return self.axis:native_stencil_sink_axis_equals(axis) end
+    function Native.NativeStencilScheduleMetavarValue:native_stencil_metavar_value_equals(other) return other:native_stencil_metavar_value_equals_stencil_schedule(self.axis) end
+    function Native.NativeStencilMetavarValue:native_stencil_metavar_value_equals_stencil_schedule(_axis) return false end
+    function Native.NativeStencilScheduleMetavarValue:native_stencil_metavar_value_equals_stencil_schedule(axis) return self.axis:native_stencil_schedule_axis_equals(axis) end
+
+    function Native.NativeStencilConfiguration:native_stencil_configuration_equals(other)
+        return other ~= nil
+            and self.id == other.id
+            and self.generator == other.generator
+            and stencil_metavar_binding_list_equals(self.bindings, other.bindings)
+    end
+
+    local function stencil_passthrough_list_equals(left, right)
+        if #(left or {}) ~= #(right or {}) then return false end
+        for i = 1, #(left or {}) do
+            local a, b = left[i], right[i]
+            if b == nil or a.index ~= b.index or a.scalar ~= b.scalar or a.class ~= b.class then return false end
+        end
+        return true
+    end
+
+    local function stencil_operand_list_equals(left, right)
+        if #(left or {}) ~= #(right or {}) then return false end
+        for i = 1, #(left or {}) do
+            local a, b = left[i], right[i]
+            if b == nil or a.index ~= b.index or a.scalar ~= b.scalar or a.location ~= b.location then return false end
+        end
+        return true
+    end
+
+    local function stencil_continuation_signature_list_equals(left, right)
+        if #(left or {}) ~= #(right or {}) then return false end
+        for i = 1, #(left or {}) do
+            if not left[i]:native_stencil_continuation_signature_equals(right[i]) then return false end
+        end
+        return true
+    end
+
+    local function stencil_continuation_param_list_equals(left, right)
+        if #(left or {}) ~= #(right or {}) then return false end
+        for i = 1, #(left or {}) do
+            local a, b = left[i], right[i]
+            if b == nil or a.index ~= b.index or a.scalar ~= b.scalar or a.location ~= b.location then return false end
+        end
+        return true
+    end
+
+    function Native.NativeContinuationOrdinal:native_continuation_ordinal_equals(other)
+        return other ~= nil and self.ordinal == other.ordinal and self.symbol == other.symbol
+    end
+
+    function Native.NativeStencilContinuationSignature:native_stencil_continuation_signature_equals(other)
+        return other ~= nil
+            and self.ordinal:native_continuation_ordinal_equals(other.ordinal)
+            and stencil_continuation_param_list_equals(self.params, other.params)
+    end
+
+    function Native.NativeStencilSignature:native_stencil_signature_equals(other)
+        return other ~= nil
+            and self.frame_param.scalar == other.frame_param.scalar
+            and stencil_passthrough_list_equals(self.passthroughs, other.passthroughs)
+            and stencil_operand_list_equals(self.operands, other.operands)
+            and stencil_continuation_signature_list_equals(self.continuations, other.continuations)
+    end
+
+    local function hole_ordinal_list_equals(left, right)
+        if #(left or {}) ~= #(right or {}) then return false end
+        for i = 1, #(left or {}) do
+            local a, b = left[i], right[i]
+            if b == nil or a.id ~= b.id or a.ordinal ~= b.ordinal or a.symbol ~= b.symbol or a.hole ~= b.hole then return false end
+        end
+        return true
+    end
+
+    local function continuation_ordinal_list_equals(left, right)
+        if #(left or {}) ~= #(right or {}) then return false end
+        for i = 1, #(left or {}) do
+            if not left[i]:native_continuation_ordinal_equals(right[i]) then return false end
+        end
+        return true
+    end
+
+    local function relocation_kind_list_equals(left, right)
+        return value_list_equals(left, right)
+    end
+
+    function Native.NativeTemplateExtraction:native_template_extraction_equals(_other)
+        return false
+    end
+
+    function Native.NativeExtractStandaloneCallable:native_template_extraction_equals(other) return other:native_template_extraction_equals_standalone_callable() end
+    function Native.NativeTemplateExtraction:native_template_extraction_equals_standalone_callable() return false end
+    function Native.NativeExtractStandaloneCallable:native_template_extraction_equals_standalone_callable() return true end
+    function Native.NativeExtractEntryCallable:native_template_extraction_equals(other) return other:native_template_extraction_equals_entry_callable(self.frame_bytes, self.first_continuation) end
+    function Native.NativeTemplateExtraction:native_template_extraction_equals_entry_callable(_frame_bytes, _first_continuation) return false end
+    function Native.NativeExtractEntryCallable:native_template_extraction_equals_entry_callable(frame_bytes, first_continuation) return self.frame_bytes == frame_bytes and self.first_continuation == first_continuation end
+    function Native.NativeExtractPublicAbiAdapter:native_template_extraction_equals(other) return other:native_template_extraction_equals_public_abi_adapter(self.abi_projection, self.frame_size_hole, self.frame_alignment, self.first_continuation) end
+    function Native.NativeTemplateExtraction:native_template_extraction_equals_public_abi_adapter(_projection, _hole, _alignment, _first) return false end
+    function Native.NativeExtractPublicAbiAdapter:native_template_extraction_equals_public_abi_adapter(projection, hole, alignment, first) return self.abi_projection:native_abi_function_projection_equals(projection) and self.frame_size_hole == hole and self.frame_alignment == alignment and self.first_continuation == first end
+    function Native.NativeExtractContinuationFragment:native_template_extraction_equals(other) return other:native_template_extraction_equals_continuation_fragment(self.successors) end
+    function Native.NativeTemplateExtraction:native_template_extraction_equals_continuation_fragment(_successors) return false end
+    function Native.NativeExtractContinuationFragment:native_template_extraction_equals_continuation_fragment(successors) return value_list_equals(self.successors, successors) end
+    function Native.NativeExtractTerminalContinuation:native_template_extraction_equals(other) return other:native_template_extraction_equals_terminal_continuation() end
+    function Native.NativeTemplateExtraction:native_template_extraction_equals_terminal_continuation() return false end
+    function Native.NativeExtractTerminalContinuation:native_template_extraction_equals_terminal_continuation() return true end
+
+    function Native.NativeStencilGenerator:native_stencil_generator_equals(other)
+        return other ~= nil
+            and self.id == other.id
+            and self.owner_family:native_family_equals(other.owner_family)
+            and self.chunk_class == other.chunk_class
+            and value_list_equals(self.metavars, other.metavars)
+    end
+
+    function Native.NativeTemplateManifestEntry:native_template_manifest_entry_equals(other)
+        return other ~= nil
+            and self.source == other.source
+            and self.family:native_family_equals(other.family)
+            and self.generator:native_stencil_generator_equals(other.generator)
+            and self.configuration:native_stencil_configuration_equals(other.configuration)
+            and self.signature:native_stencil_signature_equals(other.signature)
+            and self.extraction:native_template_extraction_equals(other.extraction)
+            and hole_ordinal_list_equals(self.declared_hole_ordinals, other.declared_hole_ordinals)
+            and continuation_ordinal_list_equals(self.declared_continuation_ordinals, other.declared_continuation_ordinals)
+            and relocation_kind_list_equals(self.declared_relocation_kinds, other.declared_relocation_kinds)
+    end
+
     function Native.NativeTemplateAxis:native_axis_equals(_other)
         return false
     end
 
-    function Native.NativeAxisTarget:native_axis_equals(other)
-        return other:native_axis_equals_target(self.target)
-    end
+    function Native.NativeAxisTarget:native_axis_equals(other) return other:native_axis_equals_target(self.target) end
+    function Native.NativeTemplateAxis:native_axis_equals_target(_target) return false end
+    function Native.NativeAxisTarget:native_axis_equals_target(target) return self.target == target end
+    function Native.NativeAxisRegisterProtocol:native_axis_equals(other) return other:native_axis_equals_register_protocol(self.protocol) end
+    function Native.NativeTemplateAxis:native_axis_equals_register_protocol(_protocol) return false end
+    function Native.NativeAxisRegisterProtocol:native_axis_equals_register_protocol(protocol) return self.protocol:native_register_protocol_equals(protocol) end
+    function Native.NativeAxisMachineScalar:native_axis_equals(other) return other:native_axis_equals_machine_scalar(self.scalar) end
+    function Native.NativeTemplateAxis:native_axis_equals_machine_scalar(_scalar) return false end
+    function Native.NativeAxisMachineScalar:native_axis_equals_machine_scalar(scalar) return self.scalar == scalar end
+    function Native.NativeAxisRegisterClass:native_axis_equals(other) return other:native_axis_equals_register_class(self.class) end
+    function Native.NativeTemplateAxis:native_axis_equals_register_class(_class) return false end
+    function Native.NativeAxisRegisterClass:native_axis_equals_register_class(class) return self.class == class end
+    function Native.NativeAxisValuePlacement:native_axis_equals(other) return other:native_axis_equals_value_placement(self.placement) end
+    function Native.NativeTemplateAxis:native_axis_equals_value_placement(_placement) return false end
+    function Native.NativeAxisValuePlacement:native_axis_equals_value_placement(placement) return self.placement == placement end
+    function Native.NativeAxisAbiParam:native_axis_equals(other) return other:native_axis_equals_abi_param(self.placement) end
+    function Native.NativeTemplateAxis:native_axis_equals_abi_param(_placement) return false end
+    function Native.NativeAxisAbiParam:native_axis_equals_abi_param(placement) return self.placement == placement end
+    function Native.NativeAxisAbiResult:native_axis_equals(other) return other:native_axis_equals_abi_result(self.placement) end
+    function Native.NativeTemplateAxis:native_axis_equals_abi_result(_placement) return false end
+    function Native.NativeAxisAbiResult:native_axis_equals_abi_result(placement) return self.placement == placement end
+    function Native.NativeAxisAbi:native_axis_equals(other) return other:native_axis_equals_abi(self.protocol) end
+    function Native.NativeTemplateAxis:native_axis_equals_abi(_protocol) return false end
+    function Native.NativeAxisAbi:native_axis_equals_abi(protocol) return self.protocol:native_call_protocol_equals(protocol) end
+    function Native.NativeAxisCodeType:native_axis_equals(other) return other:native_axis_equals_code_type(self.ty) end
+    function Native.NativeTemplateAxis:native_axis_equals_code_type(_ty) return false end
+    function Native.NativeAxisCodeType:native_axis_equals_code_type(ty) return self.ty == ty end
+    function Native.NativeAxisCodeSig:native_axis_equals(other) return other:native_axis_equals_code_sig(self.sig) end
+    function Native.NativeTemplateAxis:native_axis_equals_code_sig(_sig) return false end
+    function Native.NativeAxisCodeSig:native_axis_equals_code_sig(sig) return self.sig == sig end
+    function Native.NativeAxisCodeInst:native_axis_equals(other) return other:native_axis_equals_code_inst(self.axis) end
+    function Native.NativeTemplateAxis:native_axis_equals_code_inst(_axis) return false end
+    function Native.NativeAxisCodeInst:native_axis_equals_code_inst(axis) return self.axis:native_code_inst_axis_equals(axis) end
+    function Native.NativeAxisCodeTerm:native_axis_equals(other) return other:native_axis_equals_code_term(self.axis) end
+    function Native.NativeTemplateAxis:native_axis_equals_code_term(_axis) return false end
+    function Native.NativeAxisCodeTerm:native_axis_equals_code_term(axis) return self.axis:native_code_term_axis_equals(axis) end
+    function Native.NativeAxisCodePlace:native_axis_equals(other) return other:native_axis_equals_code_place(self.axis) end
+    function Native.NativeTemplateAxis:native_axis_equals_code_place(_axis) return false end
+    function Native.NativeAxisCodePlace:native_axis_equals_code_place(axis) return self.axis:native_code_place_axis_equals(axis) end
+    function Native.NativeAxisCodeConst:native_axis_equals(other) return other:native_axis_equals_code_const(self.axis) end
+    function Native.NativeTemplateAxis:native_axis_equals_code_const(_axis) return false end
+    function Native.NativeAxisCodeConst:native_axis_equals_code_const(axis) return self.axis:native_code_const_axis_equals(axis) end
+    function Native.NativeAxisKernel:native_axis_equals(other) return other:native_axis_equals_kernel(self.axis) end
+    function Native.NativeTemplateAxis:native_axis_equals_kernel(_axis) return false end
+    function Native.NativeAxisKernel:native_axis_equals_kernel(axis) return self.axis:native_kernel_axis_equals(axis) end
+    function Native.NativeAxisStencilProducer:native_axis_equals(other) return other:native_axis_equals_stencil_producer(self.axis) end
+    function Native.NativeTemplateAxis:native_axis_equals_stencil_producer(_axis) return false end
+    function Native.NativeAxisStencilProducer:native_axis_equals_stencil_producer(axis) return self.axis:native_stencil_producer_axis_equals(axis) end
+    function Native.NativeAxisStencilAccess:native_axis_equals(other) return other:native_axis_equals_stencil_access(self.axis) end
+    function Native.NativeTemplateAxis:native_axis_equals_stencil_access(_axis) return false end
+    function Native.NativeAxisStencilAccess:native_axis_equals_stencil_access(axis) return self.axis:native_stencil_access_axis_equals(axis) end
+    function Native.NativeAxisStencilPoint:native_axis_equals(other) return other:native_axis_equals_stencil_point(self.axis) end
+    function Native.NativeTemplateAxis:native_axis_equals_stencil_point(_axis) return false end
+    function Native.NativeAxisStencilPoint:native_axis_equals_stencil_point(axis) return self.axis:native_stencil_point_axis_equals(axis) end
+    function Native.NativeAxisStencilSink:native_axis_equals(other) return other:native_axis_equals_stencil_sink(self.axis) end
+    function Native.NativeTemplateAxis:native_axis_equals_stencil_sink(_axis) return false end
+    function Native.NativeAxisStencilSink:native_axis_equals_stencil_sink(axis) return self.axis:native_stencil_sink_axis_equals(axis) end
+    function Native.NativeAxisStencilSchedule:native_axis_equals(other) return other:native_axis_equals_stencil_schedule(self.axis) end
+    function Native.NativeTemplateAxis:native_axis_equals_stencil_schedule(_axis) return false end
+    function Native.NativeAxisStencilSchedule:native_axis_equals_stencil_schedule(axis) return self.axis:native_stencil_schedule_axis_equals(axis) end
 
-    function Native.NativeTemplateAxis:native_axis_equals_target(_target)
-        return false
-    end
+    function Native.NativeCodeInstAxis:native_code_inst_axis_equals(_other) return false end
+    function Native.NativeCodeInstConstAxis:native_code_inst_axis_equals(other) return other:native_code_inst_const_axis_equals(self.ty) end
+    function Native.NativeCodeInstAxis:native_code_inst_const_axis_equals(_ty) return false end
+    function Native.NativeCodeInstConstAxis:native_code_inst_const_axis_equals(ty) return self.ty == ty end
+    function Native.NativeCodeInstAliasAxis:native_code_inst_axis_equals(other) return other:native_code_inst_alias_axis_equals(self.ty) end
+    function Native.NativeCodeInstAxis:native_code_inst_alias_axis_equals(_ty) return false end
+    function Native.NativeCodeInstAliasAxis:native_code_inst_alias_axis_equals(ty) return self.ty == ty end
+    function Native.NativeCodeInstUnaryAxis:native_code_inst_axis_equals(other) return other:native_code_inst_unary_axis_equals(self.op, self.ty) end
+    function Native.NativeCodeInstAxis:native_code_inst_unary_axis_equals(_op, _ty) return false end
+    function Native.NativeCodeInstUnaryAxis:native_code_inst_unary_axis_equals(op, ty) return self.op == op and self.ty == ty end
+    function Native.NativeCodeInstBinaryAxis:native_code_inst_axis_equals(other) return other:native_code_inst_binary_axis_equals(self.op, self.ty, self.semantics) end
+    function Native.NativeCodeInstAxis:native_code_inst_binary_axis_equals(_op, _ty, _semantics) return false end
+    function Native.NativeCodeInstBinaryAxis:native_code_inst_binary_axis_equals(op, ty, semantics) return self.op == op and self.ty == ty and self.semantics == semantics end
+    function Native.NativeCodeInstFloatBinaryAxis:native_code_inst_axis_equals(other) return other:native_code_inst_float_binary_axis_equals(self.op, self.ty, self.mode) end
+    function Native.NativeCodeInstAxis:native_code_inst_float_binary_axis_equals(_op, _ty, _mode) return false end
+    function Native.NativeCodeInstFloatBinaryAxis:native_code_inst_float_binary_axis_equals(op, ty, mode) return self.op == op and self.ty == ty and self.mode == mode end
+    function Native.NativeCodeInstCompareAxis:native_code_inst_axis_equals(other) return other:native_code_inst_compare_axis_equals(self.cmp, self.operand_ty) end
+    function Native.NativeCodeInstAxis:native_code_inst_compare_axis_equals(_cmp, _operand_ty) return false end
+    function Native.NativeCodeInstCompareAxis:native_code_inst_compare_axis_equals(cmp, operand_ty) return self.cmp == cmp and self.operand_ty == operand_ty end
+    function Native.NativeCodeInstCastAxis:native_code_inst_axis_equals(other) return other:native_code_inst_cast_axis_equals(self.op, self.from, self.to) end
+    function Native.NativeCodeInstAxis:native_code_inst_cast_axis_equals(_op, _from, _to) return false end
+    function Native.NativeCodeInstCastAxis:native_code_inst_cast_axis_equals(op, from, to) return self.op == op and self.from == from and self.to == to end
+    function Native.NativeCodeInstSelectAxis:native_code_inst_axis_equals(other) return other:native_code_inst_select_axis_equals(self.ty) end
+    function Native.NativeCodeInstAxis:native_code_inst_select_axis_equals(_ty) return false end
+    function Native.NativeCodeInstSelectAxis:native_code_inst_select_axis_equals(ty) return self.ty == ty end
+    function Native.NativeCodeInstIntrinsicAxis:native_code_inst_axis_equals(other) return other:native_code_inst_intrinsic_axis_equals(self.intrinsic, self.ty) end
+    function Native.NativeCodeInstAxis:native_code_inst_intrinsic_axis_equals(_intrinsic, _ty) return false end
+    function Native.NativeCodeInstIntrinsicAxis:native_code_inst_intrinsic_axis_equals(intrinsic, ty) return self.intrinsic == intrinsic and self.ty == ty end
+    function Native.NativeCodeInstAddrOfAxis:native_code_inst_axis_equals(other) return other:native_code_inst_addr_of_axis_equals(self.ptr_ty) end
+    function Native.NativeCodeInstAxis:native_code_inst_addr_of_axis_equals(_ptr_ty) return false end
+    function Native.NativeCodeInstAddrOfAxis:native_code_inst_addr_of_axis_equals(ptr_ty) return self.ptr_ty == ptr_ty end
+    function Native.NativeCodeInstGlobalRefAxis:native_code_inst_axis_equals(other) return other:native_code_inst_global_ref_axis_equals(self.ptr_ty) end
+    function Native.NativeCodeInstAxis:native_code_inst_global_ref_axis_equals(_ptr_ty) return false end
+    function Native.NativeCodeInstGlobalRefAxis:native_code_inst_global_ref_axis_equals(ptr_ty) return self.ptr_ty == ptr_ty end
+    function Native.NativeCodeInstPtrOffsetAxis:native_code_inst_axis_equals(other) return other:native_code_inst_ptr_offset_axis_equals(self.ptr_ty, self.elem_size, self.const_offset) end
+    function Native.NativeCodeInstAxis:native_code_inst_ptr_offset_axis_equals(_ptr_ty, _elem_size, _const_offset) return false end
+    function Native.NativeCodeInstPtrOffsetAxis:native_code_inst_ptr_offset_axis_equals(ptr_ty, elem_size, const_offset) return self.ptr_ty == ptr_ty and self.elem_size == elem_size and self.const_offset == const_offset end
+    function Native.NativeCodeInstPointerOffsetAxis:native_code_inst_axis_equals(other) return other:native_code_inst_pointer_offset_axis_equals(self.pointer, self.index) end
+    function Native.NativeCodeInstAxis:native_code_inst_pointer_offset_axis_equals(_pointer, _index) return false end
+    function Native.NativeCodeInstPointerOffsetAxis:native_code_inst_pointer_offset_axis_equals(pointer, index) return self.pointer == pointer and self.index == index end
+    function Native.NativeCodeInstLoadAxis:native_code_inst_axis_equals(other) return other:native_code_inst_load_axis_equals(self.access) end
+    function Native.NativeCodeInstAxis:native_code_inst_load_axis_equals(_access) return false end
+    function Native.NativeCodeInstLoadAxis:native_code_inst_load_axis_equals(access) return self.access == access end
+    function Native.NativeCodeInstStoreAxis:native_code_inst_axis_equals(other) return other:native_code_inst_store_axis_equals(self.access) end
+    function Native.NativeCodeInstAxis:native_code_inst_store_axis_equals(_access) return false end
+    function Native.NativeCodeInstStoreAxis:native_code_inst_store_axis_equals(access) return self.access == access end
+    function Native.NativeCodeInstLayoutFieldStoreAxis:native_code_inst_axis_equals(other) return other:native_code_inst_layout_field_store_axis_equals(self.storage, self.scalar) end
+    function Native.NativeCodeInstAxis:native_code_inst_layout_field_store_axis_equals(_storage, _scalar) return false end
+    function Native.NativeCodeInstLayoutFieldStoreAxis:native_code_inst_layout_field_store_axis_equals(storage, scalar) return self.storage == storage and self.scalar == scalar end
+    function Native.NativeCodeInstLayoutFieldLoadAxis:native_code_inst_axis_equals(other) return other:native_code_inst_layout_field_load_axis_equals(self.storage, self.scalar) end
+    function Native.NativeCodeInstAxis:native_code_inst_layout_field_load_axis_equals(_storage, _scalar) return false end
+    function Native.NativeCodeInstLayoutFieldLoadAxis:native_code_inst_layout_field_load_axis_equals(storage, scalar) return self.storage == storage and self.scalar == scalar end
+    function Native.NativeCodeInstAddressMaterializeAxis:native_code_inst_axis_equals(other) return other:native_code_inst_address_materialize_axis_equals(self.kind, self.pointer) end
+    function Native.NativeCodeInstAxis:native_code_inst_address_materialize_axis_equals(_kind, _pointer) return false end
+    function Native.NativeCodeInstAddressMaterializeAxis:native_code_inst_address_materialize_axis_equals(kind, pointer) return self.kind == kind and self.pointer == pointer end
+    function Native.NativeCodeInstAggregateAxis:native_code_inst_axis_equals(other) return other:native_code_inst_aggregate_axis_equals(self.ty) end
+    function Native.NativeCodeInstAxis:native_code_inst_aggregate_axis_equals(_ty) return false end
+    function Native.NativeCodeInstAggregateAxis:native_code_inst_aggregate_axis_equals(ty) return self.ty == ty end
+    function Native.NativeCodeInstArrayAxis:native_code_inst_axis_equals(other) return other:native_code_inst_array_axis_equals(self.ty) end
+    function Native.NativeCodeInstAxis:native_code_inst_array_axis_equals(_ty) return false end
+    function Native.NativeCodeInstArrayAxis:native_code_inst_array_axis_equals(ty) return self.ty == ty end
+    function Native.NativeCodeInstViewMakeAxis:native_code_inst_axis_equals(other) return other:native_code_inst_view_make_axis_equals(self.elem_ty) end
+    function Native.NativeCodeInstAxis:native_code_inst_view_make_axis_equals(_elem_ty) return false end
+    function Native.NativeCodeInstViewMakeAxis:native_code_inst_view_make_axis_equals(elem_ty) return self.elem_ty == elem_ty end
+    function Native.NativeCodeInstViewDataAxis:native_code_inst_axis_equals(other) return other:native_code_inst_view_data_axis_equals() end
+    function Native.NativeCodeInstAxis:native_code_inst_view_data_axis_equals() return false end
+    function Native.NativeCodeInstViewDataAxis:native_code_inst_view_data_axis_equals() return true end
+    function Native.NativeCodeInstViewLenAxis:native_code_inst_axis_equals(other) return other:native_code_inst_view_len_axis_equals() end
+    function Native.NativeCodeInstAxis:native_code_inst_view_len_axis_equals() return false end
+    function Native.NativeCodeInstViewLenAxis:native_code_inst_view_len_axis_equals() return true end
+    function Native.NativeCodeInstViewStrideAxis:native_code_inst_axis_equals(other) return other:native_code_inst_view_stride_axis_equals() end
+    function Native.NativeCodeInstAxis:native_code_inst_view_stride_axis_equals() return false end
+    function Native.NativeCodeInstViewStrideAxis:native_code_inst_view_stride_axis_equals() return true end
+    function Native.NativeCodeInstSliceMakeAxis:native_code_inst_axis_equals(other) return other:native_code_inst_slice_make_axis_equals(self.elem_ty) end
+    function Native.NativeCodeInstAxis:native_code_inst_slice_make_axis_equals(_elem_ty) return false end
+    function Native.NativeCodeInstSliceMakeAxis:native_code_inst_slice_make_axis_equals(elem_ty) return self.elem_ty == elem_ty end
+    function Native.NativeCodeInstSliceDataAxis:native_code_inst_axis_equals(other) return other:native_code_inst_slice_data_axis_equals() end
+    function Native.NativeCodeInstAxis:native_code_inst_slice_data_axis_equals() return false end
+    function Native.NativeCodeInstSliceDataAxis:native_code_inst_slice_data_axis_equals() return true end
+    function Native.NativeCodeInstSliceLenAxis:native_code_inst_axis_equals(other) return other:native_code_inst_slice_len_axis_equals() end
+    function Native.NativeCodeInstAxis:native_code_inst_slice_len_axis_equals() return false end
+    function Native.NativeCodeInstSliceLenAxis:native_code_inst_slice_len_axis_equals() return true end
+    function Native.NativeCodeInstByteSpanMakeAxis:native_code_inst_axis_equals(other) return other:native_code_inst_byte_span_make_axis_equals() end
+    function Native.NativeCodeInstAxis:native_code_inst_byte_span_make_axis_equals() return false end
+    function Native.NativeCodeInstByteSpanMakeAxis:native_code_inst_byte_span_make_axis_equals() return true end
+    function Native.NativeCodeInstByteSpanDataAxis:native_code_inst_axis_equals(other) return other:native_code_inst_byte_span_data_axis_equals() end
+    function Native.NativeCodeInstAxis:native_code_inst_byte_span_data_axis_equals() return false end
+    function Native.NativeCodeInstByteSpanDataAxis:native_code_inst_byte_span_data_axis_equals() return true end
+    function Native.NativeCodeInstByteSpanLenAxis:native_code_inst_axis_equals(other) return other:native_code_inst_byte_span_len_axis_equals() end
+    function Native.NativeCodeInstAxis:native_code_inst_byte_span_len_axis_equals() return false end
+    function Native.NativeCodeInstByteSpanLenAxis:native_code_inst_byte_span_len_axis_equals() return true end
+    function Native.NativeCodeInstClosureAxis:native_code_inst_axis_equals(other) return other:native_code_inst_closure_axis_equals(self.ty, self.sig) end
+    function Native.NativeCodeInstAxis:native_code_inst_closure_axis_equals(_ty, _sig) return false end
+    function Native.NativeCodeInstClosureAxis:native_code_inst_closure_axis_equals(ty, sig) return self.ty == ty and self.sig == sig end
+    function Native.NativeCodeInstVariantScalarCtorAxis:native_code_inst_axis_equals(other) return other:native_code_inst_variant_scalar_ctor_axis_equals(self.tag, self.payload) end
+    function Native.NativeCodeInstAxis:native_code_inst_variant_scalar_ctor_axis_equals(_tag, _payload) return false end
+    function Native.NativeCodeInstVariantScalarCtorAxis:native_code_inst_variant_scalar_ctor_axis_equals(tag, payload) return self.tag == tag and self.payload == payload end
+    function Native.NativeCodeInstVariantScalarTagAxis:native_code_inst_axis_equals(other) return other:native_code_inst_variant_scalar_tag_axis_equals(self.tag) end
+    function Native.NativeCodeInstAxis:native_code_inst_variant_scalar_tag_axis_equals(_tag) return false end
+    function Native.NativeCodeInstVariantScalarTagAxis:native_code_inst_variant_scalar_tag_axis_equals(tag) return self.tag == tag end
+    function Native.NativeCodeInstVariantScalarPayloadAxis:native_code_inst_axis_equals(other) return other:native_code_inst_variant_scalar_payload_axis_equals(self.payload) end
+    function Native.NativeCodeInstAxis:native_code_inst_variant_scalar_payload_axis_equals(_payload) return false end
+    function Native.NativeCodeInstVariantScalarPayloadAxis:native_code_inst_variant_scalar_payload_axis_equals(payload) return self.payload == payload end
+    function Native.NativeCodeInstVariantCtorAxis:native_code_inst_axis_equals(other) return other:native_code_inst_variant_ctor_axis_equals(self.ty, self.variant) end
+    function Native.NativeCodeInstAxis:native_code_inst_variant_ctor_axis_equals(_ty, _variant) return false end
+    function Native.NativeCodeInstVariantCtorAxis:native_code_inst_variant_ctor_axis_equals(ty, variant) return self.ty == ty and self.variant == variant end
+    function Native.NativeCodeInstVariantTagAxis:native_code_inst_axis_equals(other) return other:native_code_inst_variant_tag_axis_equals(self.tag_ty) end
+    function Native.NativeCodeInstAxis:native_code_inst_variant_tag_axis_equals(_tag_ty) return false end
+    function Native.NativeCodeInstVariantTagAxis:native_code_inst_variant_tag_axis_equals(tag_ty) return self.tag_ty == tag_ty end
+    function Native.NativeCodeInstVariantPayloadAxis:native_code_inst_axis_equals(other) return other:native_code_inst_variant_payload_axis_equals(self.variant) end
+    function Native.NativeCodeInstAxis:native_code_inst_variant_payload_axis_equals(_variant) return false end
+    function Native.NativeCodeInstVariantPayloadAxis:native_code_inst_variant_payload_axis_equals(variant) return self.variant == variant end
+    function Native.NativeCodeInstCallAxis:native_code_inst_axis_equals(other) return other:native_code_inst_call_axis_equals(self.target, self.sig) end
+    function Native.NativeCodeInstAxis:native_code_inst_call_axis_equals(_target, _sig) return false end
+    function Native.NativeCodeInstCallAxis:native_code_inst_call_axis_equals(target, sig) return self.target == target and self.sig == sig end
+    function Native.NativeCodeInstAtomicLoadAxis:native_code_inst_axis_equals(other) return other:native_code_inst_atomic_load_axis_equals(self.access, self.ordering) end
+    function Native.NativeCodeInstAxis:native_code_inst_atomic_load_axis_equals(_access, _ordering) return false end
+    function Native.NativeCodeInstAtomicLoadAxis:native_code_inst_atomic_load_axis_equals(access, ordering) return self.access == access and self.ordering == ordering end
+    function Native.NativeCodeInstAtomicStoreAxis:native_code_inst_axis_equals(other) return other:native_code_inst_atomic_store_axis_equals(self.access, self.ordering) end
+    function Native.NativeCodeInstAxis:native_code_inst_atomic_store_axis_equals(_access, _ordering) return false end
+    function Native.NativeCodeInstAtomicStoreAxis:native_code_inst_atomic_store_axis_equals(access, ordering) return self.access == access and self.ordering == ordering end
+    function Native.NativeCodeInstAtomicRmwAxis:native_code_inst_axis_equals(other) return other:native_code_inst_atomic_rmw_axis_equals(self.op, self.access, self.ordering) end
+    function Native.NativeCodeInstAxis:native_code_inst_atomic_rmw_axis_equals(_op, _access, _ordering) return false end
+    function Native.NativeCodeInstAtomicRmwAxis:native_code_inst_atomic_rmw_axis_equals(op, access, ordering) return self.op == op and self.access == access and self.ordering == ordering end
+    function Native.NativeCodeInstAtomicCasAxis:native_code_inst_axis_equals(other) return other:native_code_inst_atomic_cas_axis_equals(self.access, self.ordering) end
+    function Native.NativeCodeInstAxis:native_code_inst_atomic_cas_axis_equals(_access, _ordering) return false end
+    function Native.NativeCodeInstAtomicCasAxis:native_code_inst_atomic_cas_axis_equals(access, ordering) return self.access == access and self.ordering == ordering end
+    function Native.NativeCodeInstAtomicFenceAxis:native_code_inst_axis_equals(other) return other:native_code_inst_atomic_fence_axis_equals(self.ordering) end
+    function Native.NativeCodeInstAxis:native_code_inst_atomic_fence_axis_equals(_ordering) return false end
+    function Native.NativeCodeInstAtomicFenceAxis:native_code_inst_atomic_fence_axis_equals(ordering) return self.ordering == ordering end
 
-    function Native.NativeAxisTarget:native_axis_equals_target(target)
-        return self.target == target
-    end
+    function Native.NativeCodeTermAxis:native_code_term_axis_equals(_other) return false end
+    function Native.NativeCodeTermJumpAxis:native_code_term_axis_equals(other) return other:native_code_term_jump_axis_equals() end
+    function Native.NativeCodeTermAxis:native_code_term_jump_axis_equals() return false end
+    function Native.NativeCodeTermJumpAxis:native_code_term_jump_axis_equals() return true end
+    function Native.NativeCodeTermBranchAxis:native_code_term_axis_equals(other) return other:native_code_term_branch_axis_equals() end
+    function Native.NativeCodeTermAxis:native_code_term_branch_axis_equals() return false end
+    function Native.NativeCodeTermBranchAxis:native_code_term_branch_axis_equals() return true end
+    function Native.NativeCodeTermSwitchAxis:native_code_term_axis_equals(other) return other:native_code_term_switch_axis_equals() end
+    function Native.NativeCodeTermAxis:native_code_term_switch_axis_equals() return false end
+    function Native.NativeCodeTermSwitchAxis:native_code_term_switch_axis_equals() return true end
+    function Native.NativeCodeTermVariantSwitchAxis:native_code_term_axis_equals(other) return other:native_code_term_variant_switch_axis_equals() end
+    function Native.NativeCodeTermAxis:native_code_term_variant_switch_axis_equals() return false end
+    function Native.NativeCodeTermVariantSwitchAxis:native_code_term_variant_switch_axis_equals() return true end
+    function Native.NativeCodeTermReturnAxis:native_code_term_axis_equals(other) return other:native_code_term_return_axis_equals(self.results) end
+    function Native.NativeCodeTermAxis:native_code_term_return_axis_equals(_results) return false end
+    function Native.NativeCodeTermReturnAxis:native_code_term_return_axis_equals(results) return value_list_equals(self.results, results) end
+    function Native.NativeCodeTermTrapAxis:native_code_term_axis_equals(other) return other:native_code_term_trap_axis_equals() end
+    function Native.NativeCodeTermAxis:native_code_term_trap_axis_equals() return false end
+    function Native.NativeCodeTermTrapAxis:native_code_term_trap_axis_equals() return true end
+    function Native.NativeCodeTermUnreachableAxis:native_code_term_axis_equals(other) return other:native_code_term_unreachable_axis_equals() end
+    function Native.NativeCodeTermAxis:native_code_term_unreachable_axis_equals() return false end
+    function Native.NativeCodeTermUnreachableAxis:native_code_term_unreachable_axis_equals() return true end
 
-    function Native.NativeAxisRegisterProtocol:native_axis_equals(other)
-        return other:native_axis_equals_register_protocol(self.protocol)
-    end
+    function Native.NativeCodeConstAxis:native_code_const_axis_equals(_other) return false end
+    function Native.NativeCodeConstLiteralAxis:native_code_const_axis_equals(other) return other:native_code_const_literal_axis_equals(self.ty) end
+    function Native.NativeCodeConstAxis:native_code_const_literal_axis_equals(_ty) return false end
+    function Native.NativeCodeConstLiteralAxis:native_code_const_literal_axis_equals(ty) return self.ty == ty end
+    function Native.NativeCodeConstNullAxis:native_code_const_axis_equals(other) return other:native_code_const_null_axis_equals(self.ty) end
+    function Native.NativeCodeConstAxis:native_code_const_null_axis_equals(_ty) return false end
+    function Native.NativeCodeConstNullAxis:native_code_const_null_axis_equals(ty) return self.ty == ty end
+    function Native.NativeCodeConstUndefAxis:native_code_const_axis_equals(other) return other:native_code_const_undef_axis_equals(self.ty) end
+    function Native.NativeCodeConstAxis:native_code_const_undef_axis_equals(_ty) return false end
+    function Native.NativeCodeConstUndefAxis:native_code_const_undef_axis_equals(ty) return self.ty == ty end
 
-    function Native.NativeTemplateAxis:native_axis_equals_register_protocol(_protocol)
-        return false
-    end
+    function Native.NativeCodePlaceAxis:native_code_place_axis_equals(_other) return false end
+    function Native.NativeCodePlaceLocalAxis:native_code_place_axis_equals(other) return other:native_code_place_local_axis_equals(self.ty) end
+    function Native.NativeCodePlaceAxis:native_code_place_local_axis_equals(_ty) return false end
+    function Native.NativeCodePlaceLocalAxis:native_code_place_local_axis_equals(ty) return self.ty == ty end
+    function Native.NativeCodePlaceGlobalAxis:native_code_place_axis_equals(other) return other:native_code_place_global_axis_equals(self.ty) end
+    function Native.NativeCodePlaceAxis:native_code_place_global_axis_equals(_ty) return false end
+    function Native.NativeCodePlaceGlobalAxis:native_code_place_global_axis_equals(ty) return self.ty == ty end
+    function Native.NativeCodePlaceDataAxis:native_code_place_axis_equals(other) return other:native_code_place_data_axis_equals(self.ty) end
+    function Native.NativeCodePlaceAxis:native_code_place_data_axis_equals(_ty) return false end
+    function Native.NativeCodePlaceDataAxis:native_code_place_data_axis_equals(ty) return self.ty == ty end
+    function Native.NativeCodePlaceDerefAxis:native_code_place_axis_equals(other) return other:native_code_place_deref_axis_equals(self.ty, self.align) end
+    function Native.NativeCodePlaceAxis:native_code_place_deref_axis_equals(_ty, _align) return false end
+    function Native.NativeCodePlaceDerefAxis:native_code_place_deref_axis_equals(ty, align) return self.ty == ty and self.align == align end
+    function Native.NativeCodePlaceFieldAxis:native_code_place_axis_equals(other) return other:native_code_place_field_axis_equals(self.ty, self.offset, self.align) end
+    function Native.NativeCodePlaceAxis:native_code_place_field_axis_equals(_ty, _offset, _align) return false end
+    function Native.NativeCodePlaceFieldAxis:native_code_place_field_axis_equals(ty, offset, align) return self.ty == ty and self.offset == offset and self.align == align end
+    function Native.NativeCodePlaceIndexAxis:native_code_place_axis_equals(other) return other:native_code_place_index_axis_equals(self.ty, self.elem_size) end
+    function Native.NativeCodePlaceAxis:native_code_place_index_axis_equals(_ty, _elem_size) return false end
+    function Native.NativeCodePlaceIndexAxis:native_code_place_index_axis_equals(ty, elem_size) return self.ty == ty and self.elem_size == elem_size end
+    function Native.NativeCodePlaceBytesAxis:native_code_place_axis_equals(other) return other:native_code_place_bytes_axis_equals(self.ty, self.size, self.align) end
+    function Native.NativeCodePlaceAxis:native_code_place_bytes_axis_equals(_ty, _size, _align) return false end
+    function Native.NativeCodePlaceBytesAxis:native_code_place_bytes_axis_equals(ty, size, align) return self.ty == ty and self.size == size and self.align == align end
 
-    function Native.NativeAxisRegisterProtocol:native_axis_equals_register_protocol(protocol)
-        return self.protocol:native_register_protocol_equals(protocol)
-    end
+    function Native.NativeKernelAxis:native_kernel_axis_equals(_other) return false end
+    function Native.NativeKernelDomainFlowAxis:native_kernel_axis_equals(other) return other:native_kernel_domain_flow_axis_equals() end
+    function Native.NativeKernelAxis:native_kernel_domain_flow_axis_equals() return false end
+    function Native.NativeKernelDomainFlowAxis:native_kernel_domain_flow_axis_equals() return true end
+    function Native.NativeKernelExprValueAxis:native_kernel_axis_equals(other) return other:native_kernel_expr_value_axis_equals() end
+    function Native.NativeKernelAxis:native_kernel_expr_value_axis_equals() return false end
+    function Native.NativeKernelExprValueAxis:native_kernel_expr_value_axis_equals() return true end
+    function Native.NativeKernelExprAlgebraAxis:native_kernel_axis_equals(other) return other:native_kernel_expr_algebra_axis_equals() end
+    function Native.NativeKernelAxis:native_kernel_expr_algebra_axis_equals() return false end
+    function Native.NativeKernelExprAlgebraAxis:native_kernel_expr_algebra_axis_equals() return true end
+    function Native.NativeKernelExprLaneLoadAxis:native_kernel_axis_equals(other) return other:native_kernel_expr_lane_load_axis_equals(self.elem_ty) end
+    function Native.NativeKernelAxis:native_kernel_expr_lane_load_axis_equals(_elem_ty) return false end
+    function Native.NativeKernelExprLaneLoadAxis:native_kernel_expr_lane_load_axis_equals(elem_ty) return self.elem_ty == elem_ty end
+    function Native.NativeKernelExprKernelValueAxis:native_kernel_axis_equals(other) return other:native_kernel_expr_kernel_value_axis_equals() end
+    function Native.NativeKernelAxis:native_kernel_expr_kernel_value_axis_equals() return false end
+    function Native.NativeKernelExprKernelValueAxis:native_kernel_expr_kernel_value_axis_equals() return true end
+    function Native.NativeKernelEffectStoreAxis:native_kernel_axis_equals(other) return other:native_kernel_effect_store_axis_equals(self.elem_ty) end
+    function Native.NativeKernelAxis:native_kernel_effect_store_axis_equals(_elem_ty) return false end
+    function Native.NativeKernelEffectStoreAxis:native_kernel_effect_store_axis_equals(elem_ty) return self.elem_ty == elem_ty end
+    function Native.NativeKernelEffectScanAxis:native_kernel_axis_equals(other) return other:native_kernel_effect_scan_axis_equals(self.reduction, self.mode) end
+    function Native.NativeKernelAxis:native_kernel_effect_scan_axis_equals(_reduction, _mode) return false end
+    function Native.NativeKernelEffectScanAxis:native_kernel_effect_scan_axis_equals(reduction, mode) return self.reduction == reduction and self.mode == mode end
+    function Native.NativeKernelEffectPartitionAxis:native_kernel_axis_equals(other) return other:native_kernel_effect_partition_axis_equals(self.semantics) end
+    function Native.NativeKernelAxis:native_kernel_effect_partition_axis_equals(_semantics) return false end
+    function Native.NativeKernelEffectPartitionAxis:native_kernel_effect_partition_axis_equals(semantics) return self.semantics == semantics end
+    function Native.NativeKernelEffectCopyAxis:native_kernel_axis_equals(other) return other:native_kernel_effect_copy_axis_equals(self.semantics) end
+    function Native.NativeKernelAxis:native_kernel_effect_copy_axis_equals(_semantics) return false end
+    function Native.NativeKernelEffectCopyAxis:native_kernel_effect_copy_axis_equals(semantics) return self.semantics == semantics end
+    function Native.NativeKernelEffectScatterReduceAxis:native_kernel_axis_equals(other) return other:native_kernel_effect_scatter_reduce_axis_equals(self.reducer) end
+    function Native.NativeKernelAxis:native_kernel_effect_scatter_reduce_axis_equals(_reducer) return false end
+    function Native.NativeKernelEffectScatterReduceAxis:native_kernel_effect_scatter_reduce_axis_equals(reducer) return self.reducer == reducer end
+    function Native.NativeKernelEffectFoldAxis:native_kernel_axis_equals(other) return other:native_kernel_effect_fold_axis_equals(self.reduction) end
+    function Native.NativeKernelAxis:native_kernel_effect_fold_axis_equals(_reduction) return false end
+    function Native.NativeKernelEffectFoldAxis:native_kernel_effect_fold_axis_equals(reduction) return self.reduction == reduction end
+    function Native.NativeKernelEffectCallAxis:native_kernel_axis_equals(other) return other:native_kernel_effect_call_axis_equals(self.call) end
+    function Native.NativeKernelAxis:native_kernel_effect_call_axis_equals(_call) return false end
+    function Native.NativeKernelEffectCallAxis:native_kernel_effect_call_axis_equals(call) return self.call == call end
+    function Native.NativeKernelResultVoidAxis:native_kernel_axis_equals(other) return other:native_kernel_result_void_axis_equals() end
+    function Native.NativeKernelAxis:native_kernel_result_void_axis_equals() return false end
+    function Native.NativeKernelResultVoidAxis:native_kernel_result_void_axis_equals() return true end
+    function Native.NativeKernelResultValueAxis:native_kernel_axis_equals(other) return other:native_kernel_result_value_axis_equals() end
+    function Native.NativeKernelAxis:native_kernel_result_value_axis_equals() return false end
+    function Native.NativeKernelResultValueAxis:native_kernel_result_value_axis_equals() return true end
+    function Native.NativeKernelResultFindAxis:native_kernel_axis_equals(other) return other:native_kernel_result_find_axis_equals(self.pred) end
+    function Native.NativeKernelAxis:native_kernel_result_find_axis_equals(_pred) return false end
+    function Native.NativeKernelResultFindAxis:native_kernel_result_find_axis_equals(pred) return self.pred == pred end
+    function Native.NativeKernelResultReductionAxis:native_kernel_axis_equals(other) return other:native_kernel_result_reduction_axis_equals(self.reduction) end
+    function Native.NativeKernelAxis:native_kernel_result_reduction_axis_equals(_reduction) return false end
+    function Native.NativeKernelResultReductionAxis:native_kernel_result_reduction_axis_equals(reduction) return self.reduction == reduction end
+    function Native.NativeKernelResultClosedFormAxis:native_kernel_axis_equals(other) return other:native_kernel_result_closed_form_axis_equals(self.closed_form) end
+    function Native.NativeKernelAxis:native_kernel_result_closed_form_axis_equals(_closed_form) return false end
+    function Native.NativeKernelResultClosedFormAxis:native_kernel_result_closed_form_axis_equals(closed_form) return self.closed_form == closed_form end
+    function Native.NativeKernelResultOriginalControlAxis:native_kernel_axis_equals(other) return other:native_kernel_result_original_control_axis_equals() end
+    function Native.NativeKernelAxis:native_kernel_result_original_control_axis_equals() return false end
+    function Native.NativeKernelResultOriginalControlAxis:native_kernel_result_original_control_axis_equals() return true end
 
-    function Native.NativeAxisMachineScalar:native_axis_equals(other)
-        return other:native_axis_equals_machine_scalar(self.scalar)
-    end
+    function Native.NativeStencilProducerAxis:native_stencil_producer_axis_equals(_other) return false end
+    function Native.NativeStencilRange1DAxis:native_stencil_producer_axis_equals(other) return other:native_stencil_range_1d_axis_equals(self.index_ty, self.step, self.order) end
+    function Native.NativeStencilProducerAxis:native_stencil_range_1d_axis_equals(_index_ty, _step, _order) return false end
+    function Native.NativeStencilRange1DAxis:native_stencil_range_1d_axis_equals(index_ty, step, order) return self.index_ty == index_ty and self.step == step and self.order == order end
+    function Native.NativeStencilRangeNDAxis:native_stencil_producer_axis_equals(other) return other:native_stencil_range_nd_axis_equals(self.rank) end
+    function Native.NativeStencilProducerAxis:native_stencil_range_nd_axis_equals(_rank) return false end
+    function Native.NativeStencilRangeNDAxis:native_stencil_range_nd_axis_equals(rank) return self.rank == rank end
+    function Native.NativeStencilWindowNDAxis:native_stencil_producer_axis_equals(other) return other:native_stencil_window_nd_axis_equals(self.rank, self.windows) end
+    function Native.NativeStencilProducerAxis:native_stencil_window_nd_axis_equals(_rank, _windows) return false end
+    function Native.NativeStencilWindowNDAxis:native_stencil_window_nd_axis_equals(rank, windows) return self.rank == rank and value_list_equals(self.windows, windows) end
+    function Native.NativeStencilTiledNDAxis:native_stencil_producer_axis_equals(other) return other:native_stencil_tiled_nd_axis_equals(self.rank, self.tile_sizes) end
+    function Native.NativeStencilProducerAxis:native_stencil_tiled_nd_axis_equals(_rank, _tile_sizes) return false end
+    function Native.NativeStencilTiledNDAxis:native_stencil_tiled_nd_axis_equals(rank, tile_sizes) return self.rank == rank and value_list_equals(self.tile_sizes, tile_sizes) end
 
-    function Native.NativeTemplateAxis:native_axis_equals_machine_scalar(_scalar)
-        return false
-    end
+    function Native.NativeStencilAccessAxis:native_stencil_access_axis_equals(_other) return false end
+    function Native.NativeStencilLayoutScalarAxis:native_stencil_access_axis_equals(other) return other:native_stencil_layout_scalar_axis_equals(self.ty) end
+    function Native.NativeStencilAccessAxis:native_stencil_layout_scalar_axis_equals(_ty) return false end
+    function Native.NativeStencilLayoutScalarAxis:native_stencil_layout_scalar_axis_equals(ty) return self.ty == ty end
+    function Native.NativeStencilLayoutContiguousAxis:native_stencil_access_axis_equals(other) return other:native_stencil_layout_contiguous_axis_equals(self.ty) end
+    function Native.NativeStencilAccessAxis:native_stencil_layout_contiguous_axis_equals(_ty) return false end
+    function Native.NativeStencilLayoutContiguousAxis:native_stencil_layout_contiguous_axis_equals(ty) return self.ty == ty end
+    function Native.NativeStencilLayoutIndexedAxis:native_stencil_access_axis_equals(other) return other:native_stencil_layout_indexed_axis_equals(self.ty, self.index_ty) end
+    function Native.NativeStencilAccessAxis:native_stencil_layout_indexed_axis_equals(_ty, _index_ty) return false end
+    function Native.NativeStencilLayoutIndexedAxis:native_stencil_layout_indexed_axis_equals(ty, index_ty) return self.ty == ty and self.index_ty == index_ty end
+    function Native.NativeStencilLayoutAffine1DAxis:native_stencil_access_axis_equals(other) return other:native_stencil_layout_affine_1d_axis_equals(self.ty, self.scale) end
+    function Native.NativeStencilAccessAxis:native_stencil_layout_affine_1d_axis_equals(_ty, _scale) return false end
+    function Native.NativeStencilLayoutAffine1DAxis:native_stencil_layout_affine_1d_axis_equals(ty, scale) return self.ty == ty and self.scale == scale end
+    function Native.NativeStencilLayoutAffineNDAxis:native_stencil_access_axis_equals(other) return other:native_stencil_layout_affine_nd_axis_equals(self.ty, self.rank) end
+    function Native.NativeStencilAccessAxis:native_stencil_layout_affine_nd_axis_equals(_ty, _rank) return false end
+    function Native.NativeStencilLayoutAffineNDAxis:native_stencil_layout_affine_nd_axis_equals(ty, rank) return self.ty == ty and self.rank == rank end
+    function Native.NativeStencilLayoutFieldProjectionAxis:native_stencil_access_axis_equals(other) return other:native_stencil_layout_field_projection_axis_equals(self.record_ty, self.field_name) end
+    function Native.NativeStencilAccessAxis:native_stencil_layout_field_projection_axis_equals(_record_ty, _field_name) return false end
+    function Native.NativeStencilLayoutFieldProjectionAxis:native_stencil_layout_field_projection_axis_equals(record_ty, field_name) return self.record_ty == record_ty and self.field_name == field_name end
+    function Native.NativeStencilLayoutSoAComponentAxis:native_stencil_access_axis_equals(other) return other:native_stencil_layout_soa_component_axis_equals(self.record_ty, self.field_name) end
+    function Native.NativeStencilAccessAxis:native_stencil_layout_soa_component_axis_equals(_record_ty, _field_name) return false end
+    function Native.NativeStencilLayoutSoAComponentAxis:native_stencil_layout_soa_component_axis_equals(record_ty, field_name) return self.record_ty == record_ty and self.field_name == field_name end
+    function Native.NativeStencilLayoutSliceDescriptorAxis:native_stencil_access_axis_equals(other) return other:native_stencil_layout_slice_descriptor_axis_equals(self.ty) end
+    function Native.NativeStencilAccessAxis:native_stencil_layout_slice_descriptor_axis_equals(_ty) return false end
+    function Native.NativeStencilLayoutSliceDescriptorAxis:native_stencil_layout_slice_descriptor_axis_equals(ty) return self.ty == ty end
+    function Native.NativeStencilLayoutByteSpanDescriptorAxis:native_stencil_access_axis_equals(other) return other:native_stencil_layout_byte_span_descriptor_axis_equals(self.ty) end
+    function Native.NativeStencilAccessAxis:native_stencil_layout_byte_span_descriptor_axis_equals(_ty) return false end
+    function Native.NativeStencilLayoutByteSpanDescriptorAxis:native_stencil_layout_byte_span_descriptor_axis_equals(ty) return self.ty == ty end
+    function Native.NativeStencilLayoutViewDescriptorAxis:native_stencil_access_axis_equals(other) return other:native_stencil_layout_view_descriptor_axis_equals(self.ty) end
+    function Native.NativeStencilAccessAxis:native_stencil_layout_view_descriptor_axis_equals(_ty) return false end
+    function Native.NativeStencilLayoutViewDescriptorAxis:native_stencil_layout_view_descriptor_axis_equals(ty) return self.ty == ty end
 
-    function Native.NativeAxisMachineScalar:native_axis_equals_machine_scalar(scalar)
-        return self.scalar == scalar
-    end
+    function Native.NativeStencilPointAxis:native_stencil_point_axis_equals(_other) return false end
+    function Native.NativeStencilPointInputAxis:native_stencil_point_axis_equals(other) return other:native_stencil_point_input_axis_equals() end
+    function Native.NativeStencilPointAxis:native_stencil_point_input_axis_equals() return false end
+    function Native.NativeStencilPointInputAxis:native_stencil_point_input_axis_equals() return true end
+    function Native.NativeStencilPointWindowInputAxis:native_stencil_point_axis_equals(other) return other:native_stencil_point_window_input_axis_equals(self.offset_count) end
+    function Native.NativeStencilPointAxis:native_stencil_point_window_input_axis_equals(_offset_count) return false end
+    function Native.NativeStencilPointWindowInputAxis:native_stencil_point_window_input_axis_equals(offset_count) return self.offset_count == offset_count end
+    function Native.NativeStencilPointConstAxis:native_stencil_point_axis_equals(other) return other:native_stencil_point_const_axis_equals(self.ty) end
+    function Native.NativeStencilPointAxis:native_stencil_point_const_axis_equals(_ty) return false end
+    function Native.NativeStencilPointConstAxis:native_stencil_point_const_axis_equals(ty) return self.ty == ty end
+    function Native.NativeStencilPointUnaryAxis:native_stencil_point_axis_equals(other) return other:native_stencil_point_unary_axis_equals(self.op, self.result_ty) end
+    function Native.NativeStencilPointAxis:native_stencil_point_unary_axis_equals(_op, _result_ty) return false end
+    function Native.NativeStencilPointUnaryAxis:native_stencil_point_unary_axis_equals(op, result_ty) return self.op == op and self.result_ty == result_ty end
+    function Native.NativeStencilPointBinaryAxis:native_stencil_point_axis_equals(other) return other:native_stencil_point_binary_axis_equals(self.op, self.result_ty) end
+    function Native.NativeStencilPointAxis:native_stencil_point_binary_axis_equals(_op, _result_ty) return false end
+    function Native.NativeStencilPointBinaryAxis:native_stencil_point_binary_axis_equals(op, result_ty) return self.op == op and self.result_ty == result_ty end
+    function Native.NativeStencilPointCastAxis:native_stencil_point_axis_equals(other) return other:native_stencil_point_cast_axis_equals(self.op, self.from, self.to) end
+    function Native.NativeStencilPointAxis:native_stencil_point_cast_axis_equals(_op, _from, _to) return false end
+    function Native.NativeStencilPointCastAxis:native_stencil_point_cast_axis_equals(op, from, to) return self.op == op and self.from == from and self.to == to end
+    function Native.NativeStencilPointPredicateAxis:native_stencil_point_axis_equals(other) return other:native_stencil_point_predicate_axis_equals(self.pred, self.result_ty) end
+    function Native.NativeStencilPointAxis:native_stencil_point_predicate_axis_equals(_pred, _result_ty) return false end
+    function Native.NativeStencilPointPredicateAxis:native_stencil_point_predicate_axis_equals(pred, result_ty) return self.pred == pred and self.result_ty == result_ty end
+    function Native.NativeStencilPointCompareAxis:native_stencil_point_axis_equals(other) return other:native_stencil_point_compare_axis_equals(self.cmp, self.result_ty) end
+    function Native.NativeStencilPointAxis:native_stencil_point_compare_axis_equals(_cmp, _result_ty) return false end
+    function Native.NativeStencilPointCompareAxis:native_stencil_point_compare_axis_equals(cmp, result_ty) return self.cmp == cmp and self.result_ty == result_ty end
+    function Native.NativeStencilPointSelectAxis:native_stencil_point_axis_equals(other) return other:native_stencil_point_select_axis_equals(self.pred, self.result_ty) end
+    function Native.NativeStencilPointAxis:native_stencil_point_select_axis_equals(_pred, _result_ty) return false end
+    function Native.NativeStencilPointSelectAxis:native_stencil_point_select_axis_equals(pred, result_ty) return self.pred == pred and self.result_ty == result_ty end
 
-    function Native.NativeAxisRegisterClass:native_axis_equals(other)
-        return other:native_axis_equals_register_class(self.class)
-    end
+    function Native.NativeStencilSinkAxis:native_stencil_sink_axis_equals(_other) return false end
+    function Native.NativeStencilSinkStoreAxis:native_stencil_sink_axis_equals(other) return other:native_stencil_sink_store_axis_equals(self.semantics) end
+    function Native.NativeStencilSinkAxis:native_stencil_sink_store_axis_equals(_semantics) return false end
+    function Native.NativeStencilSinkStoreAxis:native_stencil_sink_store_axis_equals(semantics) return self.semantics == semantics end
+    function Native.NativeStencilSinkReduceAxis:native_stencil_sink_axis_equals(other) return other:native_stencil_sink_reduce_axis_equals(self.result_ty, self.scope, self.semantics) end
+    function Native.NativeStencilSinkAxis:native_stencil_sink_reduce_axis_equals(_result_ty, _scope, _semantics) return false end
+    function Native.NativeStencilSinkReduceAxis:native_stencil_sink_reduce_axis_equals(result_ty, scope, semantics) return self.result_ty == result_ty and self.scope == scope and self.semantics == semantics end
+    function Native.NativeStencilSinkScanAxis:native_stencil_sink_axis_equals(other) return other:native_stencil_sink_scan_axis_equals(self.reducer, self.mode, self.result_ty) end
+    function Native.NativeStencilSinkAxis:native_stencil_sink_scan_axis_equals(_reducer, _mode, _result_ty) return false end
+    function Native.NativeStencilSinkScanAxis:native_stencil_sink_scan_axis_equals(reducer, mode, result_ty) return self.reducer == reducer and self.mode == mode and self.result_ty == result_ty end
+    function Native.NativeStencilSinkScatterReduceAxis:native_stencil_sink_axis_equals(other) return other:native_stencil_sink_scatter_reduce_axis_equals(self.reducer, self.conflicts, self.result_ty) end
+    function Native.NativeStencilSinkAxis:native_stencil_sink_scatter_reduce_axis_equals(_reducer, _conflicts, _result_ty) return false end
+    function Native.NativeStencilSinkScatterReduceAxis:native_stencil_sink_scatter_reduce_axis_equals(reducer, conflicts, result_ty) return self.reducer == reducer and self.conflicts == conflicts and self.result_ty == result_ty end
 
-    function Native.NativeTemplateAxis:native_axis_equals_register_class(_class)
-        return false
-    end
-
-    function Native.NativeAxisRegisterClass:native_axis_equals_register_class(class)
-        return self.class == class
-    end
-
-    function Native.NativeAxisValuePlacement:native_axis_equals(other)
-        return other:native_axis_equals_value_placement(self.placement)
-    end
-
-    function Native.NativeTemplateAxis:native_axis_equals_value_placement(_placement)
-        return false
-    end
-
-    function Native.NativeAxisValuePlacement:native_axis_equals_value_placement(placement)
-        return self.placement == placement
-    end
-
-    function Native.NativeAxisAbiParam:native_axis_equals(other)
-        return other:native_axis_equals_abi_param(self.placement)
-    end
-
-    function Native.NativeTemplateAxis:native_axis_equals_abi_param(_placement)
-        return false
-    end
-
-    function Native.NativeAxisAbiParam:native_axis_equals_abi_param(placement)
-        return self.placement == placement
-    end
-
-    function Native.NativeAxisAbiResult:native_axis_equals(other)
-        return other:native_axis_equals_abi_result(self.placement)
-    end
-
-    function Native.NativeTemplateAxis:native_axis_equals_abi_result(_placement)
-        return false
-    end
-
-    function Native.NativeAxisAbiResult:native_axis_equals_abi_result(placement)
-        return self.placement == placement
-    end
-
-    function Native.NativeAxisCodeInst:native_axis_equals(other)
-        return other:native_axis_equals_code_inst(self.axis)
-    end
-
-    function Native.NativeTemplateAxis:native_axis_equals_code_inst(_axis)
-        return false
-    end
-
-    function Native.NativeAxisCodeInst:native_axis_equals_code_inst(axis)
-        return self.axis:native_code_inst_axis_equals(axis)
-    end
-
-    function Native.NativeAxisCodeTerm:native_axis_equals(other)
-        return other:native_axis_equals_code_term(self.axis)
-    end
-
-    function Native.NativeTemplateAxis:native_axis_equals_code_term(_axis)
-        return false
-    end
-
-    function Native.NativeAxisCodeTerm:native_axis_equals_code_term(axis)
-        return self.axis:native_code_term_axis_equals(axis)
-    end
-
-    function Native.NativeAxisCodeConst:native_axis_equals(other)
-        return other:native_axis_equals_code_const(self.axis)
-    end
-
-    function Native.NativeTemplateAxis:native_axis_equals_code_const(_axis)
-        return false
-    end
-
-    function Native.NativeAxisCodeConst:native_axis_equals_code_const(axis)
-        return self.axis:native_code_const_axis_equals(axis)
-    end
-
-    function Native.NativeCodeInstAxis:native_code_inst_axis_equals(_other)
-        return false
-    end
-
-    function Native.NativeCodeInstAliasAxis:native_code_inst_axis_equals(other)
-        return other:native_code_inst_alias_axis_equals(self.ty)
-    end
-
-    function Native.NativeCodeInstAxis:native_code_inst_alias_axis_equals(_ty)
-        return false
-    end
-
-    function Native.NativeCodeInstAliasAxis:native_code_inst_alias_axis_equals(ty)
-        return self.ty == ty
-    end
-
-    function Native.NativeCodeInstUnaryAxis:native_code_inst_axis_equals(other)
-        return other:native_code_inst_unary_axis_equals(self.op, self.ty)
-    end
-
-    function Native.NativeCodeInstAxis:native_code_inst_unary_axis_equals(_op, _ty)
-        return false
-    end
-
-    function Native.NativeCodeInstUnaryAxis:native_code_inst_unary_axis_equals(op, ty)
-        return self.op == op and self.ty == ty
-    end
-
-    function Native.NativeCodeInstBinaryAxis:native_code_inst_axis_equals(other)
-        return other:native_code_inst_binary_axis_equals(self.op, self.ty, self.semantics)
-    end
-
-    function Native.NativeCodeInstAxis:native_code_inst_binary_axis_equals(_op, _ty, _semantics)
-        return false
-    end
-
-    function Native.NativeCodeInstBinaryAxis:native_code_inst_binary_axis_equals(op, ty, semantics)
-        return self.op == op and self.ty == ty and self.semantics == semantics
-    end
-
-    function Native.NativeCodeInstFloatBinaryAxis:native_code_inst_axis_equals(other)
-        return other:native_code_inst_float_binary_axis_equals(self.op, self.ty, self.mode)
-    end
-
-    function Native.NativeCodeInstAxis:native_code_inst_float_binary_axis_equals(_op, _ty, _mode)
-        return false
-    end
-
-    function Native.NativeCodeInstFloatBinaryAxis:native_code_inst_float_binary_axis_equals(op, ty, mode)
-        return self.op == op and self.ty == ty and self.mode == mode
-    end
-
-    function Native.NativeCodeInstCompareAxis:native_code_inst_axis_equals(other)
-        return other:native_code_inst_compare_axis_equals(self.cmp, self.operand_ty)
-    end
-
-    function Native.NativeCodeInstAxis:native_code_inst_compare_axis_equals(_cmp, _operand_ty)
-        return false
-    end
-
-    function Native.NativeCodeInstCompareAxis:native_code_inst_compare_axis_equals(cmp, operand_ty)
-        return self.cmp == cmp and self.operand_ty == operand_ty
-    end
-
-    function Native.NativeCodeTermAxis:native_code_term_axis_equals(_other)
-        return false
-    end
-
-    function Native.NativeCodeTermReturnAxis:native_code_term_axis_equals(other)
-        return other:native_code_term_return_axis_equals(self.results)
-    end
-
-    function Native.NativeCodeTermAxis:native_code_term_return_axis_equals(_results)
-        return false
-    end
-
-    function Native.NativeCodeTermReturnAxis:native_code_term_return_axis_equals(results)
-        return value_list_equals(self.results, results)
-    end
-
-    function Native.NativeCodeConstAxis:native_code_const_axis_equals(_other)
-        return false
-    end
-
-    function Native.NativeCodeConstLiteralAxis:native_code_const_axis_equals(other)
-        return other:native_code_const_literal_axis_equals(self.ty)
-    end
-
-    function Native.NativeCodeConstAxis:native_code_const_literal_axis_equals(_ty)
-        return false
-    end
-
-    function Native.NativeCodeConstLiteralAxis:native_code_const_literal_axis_equals(ty)
-        return self.ty == ty
-    end
+    function Native.NativeStencilScheduleAxis:native_stencil_schedule_axis_equals(_other) return false end
+    function Native.NativeStencilScheduleScalarAxis:native_stencil_schedule_axis_equals(other) return other:native_stencil_schedule_scalar_axis_equals(self.compiler) end
+    function Native.NativeStencilScheduleAxis:native_stencil_schedule_scalar_axis_equals(_compiler) return false end
+    function Native.NativeStencilScheduleScalarAxis:native_stencil_schedule_scalar_axis_equals(compiler) return self.compiler == compiler end
+    function Native.NativeStencilScheduleAutoVectorAxis:native_stencil_schedule_axis_equals(other) return other:native_stencil_schedule_auto_vector_axis_equals(self.facts) end
+    function Native.NativeStencilScheduleAxis:native_stencil_schedule_auto_vector_axis_equals(_facts) return false end
+    function Native.NativeStencilScheduleAutoVectorAxis:native_stencil_schedule_auto_vector_axis_equals(facts) return self.facts == facts end
+    function Native.NativeStencilScheduleUnrolledAxis:native_stencil_schedule_axis_equals(other) return other:native_stencil_schedule_unrolled_axis_equals(self.factor, self.facts) end
+    function Native.NativeStencilScheduleAxis:native_stencil_schedule_unrolled_axis_equals(_factor, _facts) return false end
+    function Native.NativeStencilScheduleUnrolledAxis:native_stencil_schedule_unrolled_axis_equals(factor, facts) return self.factor == factor and self.facts == facts end
+    function Native.NativeStencilScheduleVectorAxis:native_stencil_schedule_axis_equals(other) return other:native_stencil_schedule_vector_axis_equals(self.feature, self.lane_policy, self.required_alignment, self.tail, self.reduction, self.vector_unroll, self.interleave, self.facts) end
+    function Native.NativeStencilScheduleAxis:native_stencil_schedule_vector_axis_equals(_feature, _lane_policy, _required_alignment, _tail, _reduction, _vector_unroll, _interleave, _facts) return false end
+    function Native.NativeStencilScheduleVectorAxis:native_stencil_schedule_vector_axis_equals(feature, lane_policy, required_alignment, tail, reduction, vector_unroll, interleave, facts) return self.feature == feature and self.lane_policy == lane_policy and self.required_alignment == required_alignment and self.tail == tail and self.reduction == reduction and self.vector_unroll == vector_unroll and self.interleave == interleave and self.facts == facts end
 
     function Native.NativePatchImm32:apply_native_patch(input)
         return input.binding.coordinate:write_native_patch_imm32(input)
@@ -378,6 +1127,22 @@ local function bind_context(T)
 
     function Native.NativePatchImm64:apply_native_patch(input)
         return input.binding.coordinate:write_native_patch_imm64(input)
+    end
+
+    function Native.NativePatchPtr64:apply_native_patch(input)
+        return input.binding.coordinate:write_native_patch_ptr64(input)
+    end
+
+    function Native.NativePatchRel32:apply_native_patch(input)
+        return input.binding.coordinate:write_native_patch_rel32(input)
+    end
+
+    function Native.NativePatchBranchRel32:apply_native_patch(input)
+        return input.binding.coordinate:write_native_patch_branch_rel32(input)
+    end
+
+    function Native.NativePatchCallRel32:apply_native_patch(input)
+        return input.binding.coordinate:write_native_patch_call_rel32(input)
     end
 
     function Native.NativePatchCoordinate:write_native_patch_imm32(input)
@@ -417,37 +1182,146 @@ local function bind_context(T)
     end
 
     function Native.NativePatchImmediateI64:write_native_patch_imm64(input)
-        write_u64_le(patch_address(input), self.value)
-        return nil
+        return write_patch_u64(input, self.value)
     end
 
-    function Native.NativeCallVoid:call_native_executable(input)
-        local f = require_ffi("native executable calls")
-        local fn = f.cast("void (*)()", input.executable.entry_address)
-        fn()
-        return Native.NativeCallReturnedVoid
+    function Native.NativePatchPointer64:write_native_patch_imm64(input)
+        return write_patch_u64(input, self.address)
     end
 
-    function Native.NativeCallReturnI32:call_native_executable(input)
-        local f = require_ffi("native executable calls")
-        local fn = f.cast("int32_t (*)()", input.executable.entry_address)
-        return Native.NativeCallReturnedI32(tonumber(fn()))
+    function Native.NativePatchCoordinate:write_native_patch_ptr64(input)
+        return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self)
     end
 
-    function Native.NativeCallReturnI64:call_native_executable(input)
-        local f = require_ffi("native executable calls")
-        local fn = f.cast("int64_t (*)()", input.executable.entry_address)
-        return Native.NativeCallReturnedI64(tonumber(fn()))
+    function Native.NativePatchPointer64:write_native_patch_ptr64(input)
+        return write_patch_u64(input, self.address)
     end
 
-    function Native.NativeCallReturnF64:call_native_executable(input)
-        local f = require_ffi("native executable calls")
-        local fn = f.cast("double (*)()", input.executable.entry_address)
-        return Native.NativeCallReturnedF64(tonumber(fn()))
+    function Native.NativePatchConstantPoolEntry:write_native_patch_ptr64(input)
+        local address = constant_pool_entry_address(input, self.entry)
+        if address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
+        return write_patch_u64(input, address)
     end
 
-    function Native.NativeCallReturnScalar:call_native_executable(input)
-        return self.scalar:call_native_executable_scalar(input)
+    function Native.NativePatchCallTarget:write_native_patch_ptr64(input)
+        local symbol = runtime_symbol(input, self.symbol)
+        if symbol == nil or symbol.address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
+        return symbol.address:write_native_runtime_address_patch(input)
+    end
+
+    function Native.NativePatchCodeDataAddress:write_native_patch_ptr64(input)
+        local address = module_patch_coordinate_address(input, self)
+        if address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
+        return write_patch_u64(input, address)
+    end
+
+    function Native.NativePatchCodeGlobalAddress:write_native_patch_ptr64(input)
+        local address = module_patch_coordinate_address(input, self)
+        if address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
+        return write_patch_u64(input, address)
+    end
+
+    function Native.NativePatchCodeFuncAddress:write_native_patch_ptr64(input)
+        local address = module_patch_coordinate_address(input, self)
+        if address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
+        return write_patch_u64(input, address)
+    end
+
+    function Native.NativePatchCodeExternAddress:write_native_patch_ptr64(input)
+        local address = module_patch_coordinate_address(input, self)
+        if address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
+        return write_patch_u64(input, address)
+    end
+
+    function Native.NativeRuntimeAddressCapability:write_native_runtime_address_patch(input)
+        return Native.NativeInstallRejectWrongCoordinate(input.layout.id, input.binding.coordinate)
+    end
+
+    function Native.NativeRuntimeAddressSupplied:write_native_runtime_address_patch(input)
+        return write_patch_u64(input, self.address)
+    end
+
+    function Native.NativeRuntimeAddressLinkerSymbol:write_native_runtime_address_patch(input)
+        return Native.NativeInstallRejectWrongCoordinate(input.layout.id, input.binding.coordinate)
+    end
+
+    function Native.NativePatchCoordinate:write_native_patch_rel32(input)
+        return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self)
+    end
+
+    function Native.NativePatchBranchTarget:write_native_patch_rel32(input)
+        local target_address = input.branch_target_address
+        if target_address == nil and input.node_address ~= nil then target_address = input.node_address end
+        if target_address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
+        return write_patch_rel32(input, target_address, input.addend)
+    end
+
+    function Native.NativePatchConstantPoolEntry:write_native_patch_rel32(input)
+        local target_address = constant_pool_entry_address(input, self.entry)
+        if target_address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
+        return write_patch_rel32(input, target_address, input.addend)
+    end
+
+    function Native.NativePatchCodeDataAddress:write_native_patch_rel32(input)
+        local target_address = module_patch_coordinate_address(input, self)
+        if target_address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
+        return write_patch_rel32(input, target_address, input.addend)
+    end
+
+    function Native.NativePatchCodeGlobalAddress:write_native_patch_rel32(input)
+        local target_address = module_patch_coordinate_address(input, self)
+        if target_address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
+        return write_patch_rel32(input, target_address, input.addend)
+    end
+
+    function Native.NativePatchCodeFuncAddress:write_native_patch_rel32(input)
+        local target_address = module_patch_coordinate_address(input, self)
+        if target_address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
+        return write_patch_rel32(input, target_address, input.addend)
+    end
+
+    function Native.NativePatchCodeExternAddress:write_native_patch_rel32(input)
+        local target_address = module_patch_coordinate_address(input, self)
+        if target_address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
+        return write_patch_rel32(input, target_address, input.addend)
+    end
+
+    function Native.NativePatchCoordinate:write_native_patch_branch_rel32(input)
+        return self:write_native_patch_rel32(input)
+    end
+
+    function Native.NativePatchBranchTarget:write_native_patch_branch_rel32(input)
+        return self:write_native_patch_rel32(input)
+    end
+
+    function Native.NativePatchCoordinate:write_native_patch_call_rel32(input)
+        return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self)
+    end
+
+    function Native.NativePatchCallTarget:write_native_patch_call_rel32(input)
+        local symbol = runtime_symbol(input, self.symbol)
+        if symbol == nil or symbol.address == nil then return Native.NativeInstallRejectWrongCoordinate(input.layout.id, self) end
+        return symbol.address:write_native_runtime_rel32_patch(input)
+    end
+
+    function Native.NativePatchCodeFuncAddress:write_native_patch_call_rel32(input)
+        return self:write_native_patch_rel32(input)
+    end
+
+    function Native.NativePatchCodeExternAddress:write_native_patch_call_rel32(input)
+        return self:write_native_patch_rel32(input)
+    end
+
+    function Native.NativeRuntimeAddressCapability:write_native_runtime_rel32_patch(input)
+        return Native.NativeInstallRejectWrongCoordinate(input.layout.id, input.binding.coordinate)
+    end
+
+    function Native.NativeRuntimeAddressSupplied:write_native_runtime_rel32_patch(input)
+        return write_patch_rel32(input, self.address, input.addend)
+    end
+
+    function Native.NativeRuntimeAddressLinkerSymbol:write_native_runtime_rel32_patch(input)
+        return Native.NativeInstallRejectWrongCoordinate(input.layout.id, input.binding.coordinate)
     end
 
     function Native.NativeCallArg:native_arg_i32()
@@ -462,91 +1336,183 @@ local function bind_context(T)
         error("lalin.native: call argument is not an f64-compatible scalar", 3)
     end
 
+    function Native.NativeCallArg:native_arg_pointer()
+        error("lalin.native: call argument is not a pointer-compatible scalar", 3)
+    end
+
     function Native.NativeCallArgI32:native_arg_i32() return self.value end
     function Native.NativeCallArgI32:native_arg_i64() return self.value end
     function Native.NativeCallArgI64:native_arg_i64() return self.value end
     function Native.NativeCallArgF64:native_arg_f64() return self.value end
     function Native.NativeCallArgPtr:native_arg_i64() return self.address end
-
-    local function call_i32(input, c_result, c_arg)
+    function Native.NativeCallArgPtr:native_arg_pointer()
         local f = require_ffi("native executable calls")
-        c_arg = c_arg or "int32_t"
-        if #(input.args or {}) == 0 then
-            local fn = f.cast(c_result .. " (*)()", input.executable.entry_address)
-            return tonumber(fn())
-        end
-        if #(input.args or {}) == 1 then
-            local fn = f.cast(c_result .. " (*)(" .. c_arg .. ")", input.executable.entry_address)
-            return tonumber(fn(input.args[1]:native_arg_i32()))
-        end
-        local fn = f.cast(c_result .. " (*)(" .. c_arg .. ", " .. c_arg .. ")", input.executable.entry_address)
-        return tonumber(fn(input.args[1]:native_arg_i32(), input.args[2]:native_arg_i32()))
+        return f.cast("void *", self.address)
     end
 
-    local function call_i64(input, c_result)
-        local f = require_ffi("native executable calls")
-        if #(input.args or {}) == 0 then
-            local fn = f.cast(c_result .. " (*)()", input.executable.entry_address)
-            return tonumber(fn())
-        end
-        if #(input.args or {}) == 1 then
-            local fn = f.cast(c_result .. " (*)(int64_t)", input.executable.entry_address)
-            return tonumber(fn(input.args[1]:native_arg_i64()))
-        end
-        local fn = f.cast(c_result .. " (*)(int64_t, int64_t)", input.executable.entry_address)
-        return tonumber(fn(input.args[1]:native_arg_i64(), input.args[2]:native_arg_i64()))
-    end
+    function Native.NativeScalarBool8:native_ffi_c_type() return "uint8_t" end
+    function Native.NativeScalarBool8:native_abi_source_type() return Code.CodeTyBool8 end
+    function Native.NativeScalarBool8:native_default_extension_policy() return Native.NativeZeroExtend end
+    function Native.NativeScalarBool8:native_call_arg_value(arg) return arg:native_arg_i32() end
+    function Native.NativeScalarBool8:native_call_result(value) return Native.NativeCallReturnedI32(tonumber(value)) end
 
-    local function call_f32(input, c_result)
-        local f = require_ffi("native executable calls")
-        if #(input.args or {}) == 0 then
-            local fn = f.cast(c_result .. " (*)()", input.executable.entry_address)
-            return tonumber(fn())
-        end
-        if #(input.args or {}) == 1 then
-            local fn = f.cast(c_result .. " (*)(float)", input.executable.entry_address)
-            return tonumber(fn(input.args[1]:native_arg_f64()))
-        end
-        local fn = f.cast(c_result .. " (*)(float, float)", input.executable.entry_address)
-        return tonumber(fn(input.args[1]:native_arg_f64(), input.args[2]:native_arg_f64()))
-    end
-
-    local function call_f64(input, c_result)
-        local f = require_ffi("native executable calls")
-        if #(input.args or {}) == 0 then
-            local fn = f.cast(c_result .. " (*)()", input.executable.entry_address)
-            return tonumber(fn())
-        end
-        if #(input.args or {}) == 1 then
-            local fn = f.cast(c_result .. " (*)(double)", input.executable.entry_address)
-            return tonumber(fn(input.args[1]:native_arg_f64()))
-        end
-        local fn = f.cast(c_result .. " (*)(double, double)", input.executable.entry_address)
-        return tonumber(fn(input.args[1]:native_arg_f64(), input.args[2]:native_arg_f64()))
-    end
-
-    function Native.NativeScalarBool8:call_native_executable_scalar(input)
-        return Native.NativeCallReturnedI32(call_i32(input, "uint8_t", "uint8_t"))
-    end
-
-    function Native.NativeScalarInt:call_native_executable_scalar(input)
+    function Native.NativeScalarInt:native_ffi_c_type()
         local prefix = self.signedness == Code.CodeSigned and "int" or "uint"
-        local c_type = prefix .. tostring(self.bits) .. "_t"
-        if self.bits > 32 then return Native.NativeCallReturnedI64(call_i64(input, c_type)) end
-        return Native.NativeCallReturnedI32(call_i32(input, c_type, c_type))
+        return prefix .. tostring(self.bits) .. "_t"
+    end
+    function Native.NativeScalarInt:native_abi_source_type() return Code.CodeTyInt(self.bits, self.signedness) end
+    function Native.NativeScalarInt:native_default_extension_policy()
+        if self.signedness == Code.CodeSigned then return Native.NativeSignExtend end
+        return Native.NativeZeroExtend
+    end
+    function Native.NativeScalarInt:native_call_arg_value(arg)
+        if self.bits > 32 then return arg:native_arg_i64() end
+        return arg:native_arg_i32()
+    end
+    function Native.NativeScalarInt:native_call_result(value)
+        if self.bits > 32 then return Native.NativeCallReturnedI64(tonumber(value)) end
+        return Native.NativeCallReturnedI32(tonumber(value))
     end
 
-    function Native.NativeScalarIndex:call_native_executable_scalar(input)
-        return Native.NativeCallReturnedI64(call_i64(input, "int64_t"))
+    function Native.NativeScalarIndex:native_ffi_c_type() return "int" .. tostring(self.bits) .. "_t" end
+    function Native.NativeScalarIndex:native_abi_source_type() return Code.CodeTyIndex end
+    function Native.NativeScalarIndex:native_default_extension_policy() return Native.NativePreserveLowerBits end
+    function Native.NativeScalarIndex:native_call_arg_value(arg) return arg:native_arg_i64() end
+    function Native.NativeScalarIndex:native_call_result(value) return Native.NativeCallReturnedI64(tonumber(value)) end
+
+    function Native.NativeScalarPointer:native_ffi_c_type() return "uint" .. tostring(self.bits) .. "_t" end
+    function Native.NativeScalarPointer:native_abi_source_type() return Code.CodeTyDataPtr(nil) end
+    function Native.NativeScalarPointer:native_default_extension_policy() return Native.NativePreserveLowerBits end
+    function Native.NativeScalarPointer:native_call_arg_value(arg) return arg:native_arg_i64() end
+    function Native.NativeScalarPointer:native_call_result(value) return Native.NativeCallReturnedI64(tonumber(value)) end
+
+    function Native.NativeScalarFloat:native_ffi_c_type()
+        if self.bits == 32 then return "float" end
+        return "double"
+    end
+    function Native.NativeScalarFloat:native_abi_source_type() return Code.CodeTyFloat(self.bits) end
+    function Native.NativeScalarFloat:native_default_extension_policy() return Native.NativePreserveLowerBits end
+    function Native.NativeScalarFloat:native_call_arg_value(arg) return arg:native_arg_f64() end
+    function Native.NativeScalarFloat:native_call_result(value) return Native.NativeCallReturnedF64(tonumber(value)) end
+
+    function Native.NativeAbiProjection:native_ffi_param_c_type()
+        error("lalin.native: ABI projection is not a supported FFI parameter", 3)
     end
 
-    function Native.NativeScalarPointer:call_native_executable_scalar(input)
-        return Native.NativeCallReturnedI64(call_i64(input, "uint64_t"))
+    function Native.NativeAbiScalarValue:native_ffi_param_c_type() return self.scalar:native_ffi_c_type() end
+    function Native.NativeAbiPointerValue:native_ffi_param_c_type() return "void *" end
+    function Native.NativeAbiByRefValue:native_ffi_param_c_type() return "void *" end
+
+    function Native.NativeAbiProjection:native_ffi_result_c_type()
+        error("lalin.native: ABI projection is not a supported FFI result", 3)
     end
 
-    function Native.NativeScalarFloat:call_native_executable_scalar(input)
-        if self.bits == 32 then return Native.NativeCallReturnedF64(call_f32(input, "float")) end
-        return Native.NativeCallReturnedF64(call_f64(input, "double"))
+    function Native.NativeAbiVoidResult:native_ffi_result_c_type() return "void" end
+    function Native.NativeAbiScalarValue:native_ffi_result_c_type() return self.scalar:native_ffi_c_type() end
+    function Native.NativeAbiPointerValue:native_ffi_result_c_type() return "void *" end
+    function Native.NativeAbiSRetResult:native_ffi_result_c_type() return "void" end
+
+    function Native.NativeAbiProjection:native_call_arg_value(_arg)
+        error("lalin.native: ABI projection cannot consume a scalar call argument", 3)
+    end
+
+    function Native.NativeAbiScalarValue:native_call_arg_value(arg) return self.scalar:native_call_arg_value(arg) end
+    function Native.NativeAbiPointerValue:native_call_arg_value(arg) return arg:native_arg_pointer() end
+    function Native.NativeAbiByRefValue:native_call_arg_value(arg) return arg:native_arg_pointer() end
+
+    function Native.NativeAbiProjection:native_call_result(_value)
+        error("lalin.native: ABI projection cannot produce a native call result", 3)
+    end
+
+    function Native.NativeAbiVoidResult:native_call_result(_value) return Native.NativeCallReturnedVoid end
+    function Native.NativeAbiScalarValue:native_call_result(value) return self.scalar:native_call_result(value) end
+    function Native.NativeAbiPointerValue:native_call_result(value)
+        local f = require_ffi("native executable calls")
+        return Native.NativeCallReturnedI64(tonumber(f.cast("uintptr_t", value)))
+    end
+    function Native.NativeAbiSRetResult:native_call_result(_value) return Native.NativeCallReturnedVoid end
+
+    function Native.NativeAbiFunctionProjection:native_ffi_signature()
+        local params = {}
+        for i, param in ipairs(self.params or {}) do
+            if param.param_index ~= i - 1 then
+                error("lalin.native: ABI parameter projections must be ordered and zero-based", 3)
+            end
+            params[#params + 1] = param.abi:native_ffi_param_c_type()
+        end
+        return self.result.abi:native_ffi_result_c_type() .. " (*)(" .. table.concat(params, ", ") .. ")"
+    end
+
+    function Native.NativeAbiFunctionProjection:call_native_executable(input)
+        local f = require_ffi("native executable calls")
+        if #(input.args or {}) ~= #(self.params or {}) then
+            error("lalin.native: native call argument count does not match ABI projection", 3)
+        end
+        local c_args = {}
+        for i, param in ipairs(self.params or {}) do
+            c_args[#c_args + 1] = param.abi:native_call_arg_value(input.args[i])
+        end
+        local fn = f.cast(self:native_ffi_signature(), input.executable.entry_address)
+        if self.result.abi:native_ffi_result_c_type() == "void" then
+            fn(unpack(c_args))
+            return self.result.abi:native_call_result(nil)
+        end
+        return self.result.abi:native_call_result(fn(unpack(c_args)))
+    end
+
+    local function scalar_abi_projection(scalar)
+        return Native.NativeAbiScalarValue(scalar, scalar:native_default_extension_policy())
+    end
+
+    local function legacy_scalar_projection(input, scalar)
+        local params = {}
+        for i = 1, #(input.args or {}) do
+            params[#params + 1] = Native.NativeAbiParamProjection(i - 1, scalar:native_abi_source_type(), scalar_abi_projection(scalar))
+        end
+        return Native.NativeAbiFunctionProjection(
+            input.executable.target,
+            params,
+            Native.NativeAbiResultProjection(scalar:native_abi_source_type(), scalar_abi_projection(scalar))
+        )
+    end
+
+    local function no_arg_projection(input, result_abi, result_ty)
+        return Native.NativeAbiFunctionProjection(
+            input.executable.target,
+            {},
+            Native.NativeAbiResultProjection(result_ty, result_abi)
+        )
+    end
+
+    function Native.NativeCallVoid:call_native_executable(input)
+        return no_arg_projection(input, Native.NativeAbiVoidResult, nil):call_native_executable(input)
+    end
+
+    function Native.NativeCallReturnI32:call_native_executable(input)
+        local scalar = Native.NativeScalarInt(32, Code.CodeSigned)
+        return no_arg_projection(input, scalar_abi_projection(scalar), scalar:native_abi_source_type()):call_native_executable(input)
+    end
+
+    function Native.NativeCallReturnI64:call_native_executable(input)
+        local scalar = Native.NativeScalarInt(64, Code.CodeSigned)
+        return no_arg_projection(input, scalar_abi_projection(scalar), scalar:native_abi_source_type()):call_native_executable(input)
+    end
+
+    function Native.NativeCallReturnF64:call_native_executable(input)
+        local scalar = Native.NativeScalarFloat(64)
+        return no_arg_projection(input, scalar_abi_projection(scalar), scalar:native_abi_source_type()):call_native_executable(input)
+    end
+
+    function Native.NativeCallReturnScalar:call_native_executable(input)
+        return legacy_scalar_projection(input, self.scalar):call_native_executable(input)
+    end
+
+    function Native.NativeCallCodeSig:call_native_executable(input)
+        return self.projection:call_native_executable(input)
+    end
+
+    function Native.NativeCallStencilAbi:call_native_executable(input)
+        return self.projection:call_native_executable(input)
     end
 
     function api.write_u32_le(address, value)

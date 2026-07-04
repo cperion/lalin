@@ -1,3 +1,5 @@
+local asdl = require("lalin.asdl")
+
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
     if T._lalin_api_cache.native_backend ~= nil then return T._lalin_api_cache.native_backend end
@@ -21,6 +23,43 @@ local function bind_context(T)
         return value
     end
 
+    local function require_typed(value, class, name)
+        require_value(value, name)
+        if not asdl.isa(value, class) then boundary_error(name .. " must be a typed " .. tostring(class)) end
+        return value
+    end
+
+    local function manifest_matches(left, right)
+        return left ~= nil and right ~= nil and left.id == right.id and left.support_domain == right.support_domain and left.total_count == right.total_count
+    end
+
+    local function require_manifest_cardinality(manifest, entry_count, subject_name)
+        require_typed(manifest, Native.NativeTemplateSourceManifest, subject_name .. " manifest")
+        if manifest.total_count ~= entry_count then
+            boundary_error(subject_name .. " manifest total_count " .. tostring(manifest.total_count) .. " does not match entry count " .. tostring(entry_count))
+        end
+        return manifest
+    end
+
+    local function require_bank(bank, target, expected_manifest)
+        require_typed(bank, Native.NativeTemplateBank, "NativeTemplateBank")
+        if target ~= nil and bank.target ~= target then boundary_error("NativeTemplateBank target does not match compile target") end
+        require_manifest_cardinality(bank.manifest, #(bank.entries or {}), "NativeTemplateBank")
+        if expected_manifest ~= nil and not manifest_matches(bank.manifest, expected_manifest) then
+            boundary_error("NativeTemplateBank manifest does not match expected native template manifest")
+        end
+        return bank
+    end
+
+    local function require_embedded_bank(embedded, expected_manifest)
+        require_typed(embedded, Native.NativeEmbeddedTemplateBank, "NativeEmbeddedTemplateBank")
+        require_manifest_cardinality(embedded.manifest, #(embedded.entries or {}), "NativeEmbeddedTemplateBank")
+        if expected_manifest ~= nil and not manifest_matches(embedded.manifest, expected_manifest) then
+            boundary_error("NativeEmbeddedTemplateBank manifest does not match expected native template manifest")
+        end
+        return embedded
+    end
+
     local function reject_summary(rejects)
         local count = #(rejects or {})
         if count == 0 then return "no typed rejects supplied" end
@@ -39,49 +78,68 @@ local function bind_context(T)
         return self.executable
     end
 
-    local function native_request(subject, target, runtime, bank)
+    local function native_request(subject, target, runtime, bank, expected_manifest)
+        target = require_typed(target, Native.NativeTarget, "NativeTarget")
         return Native.NativeCompileRequest(
             require_value(subject, "NativeCompileSubject"),
-            require_value(target, "NativeTarget"),
-            require_value(runtime, "NativeRuntime"),
-            require_value(bank, "NativeTemplateBank")
+            target,
+            require_typed(runtime, Native.NativeRuntime, "NativeRuntime"),
+            require_bank(bank, target, expected_manifest)
         )
     end
 
-    local function compile_subject(subject, target, runtime, bank)
-        return native_request(subject, target, runtime, bank):compile_native()
+    local function compile_subject(subject, target, runtime, bank, expected_manifest)
+        return native_request(subject, target, runtime, bank, expected_manifest):compile_native()
     end
 
-    local function bank_from_embedded(embedded)
-        return Native.NativeEmbeddedBankImportRequest(
-            require_value(embedded, "NativeEmbeddedTemplateBank")
-        ):import_native_bank():required_native_bank()
+    local function bank_from_embedded(embedded, expected_manifest)
+        embedded = require_embedded_bank(embedded, expected_manifest)
+        return Native.NativeEmbeddedBankImportRequest(embedded):import_native_bank():required_native_bank()
     end
 
-    function api.import_embedded_bank(embedded)
-        return Native.NativeEmbeddedBankImportRequest(
-            require_value(embedded, "NativeEmbeddedTemplateBank")
-        ):import_native_bank()
+    function api.import_embedded_bank(embedded, expected_manifest)
+        embedded = require_embedded_bank(embedded, expected_manifest)
+        return Native.NativeEmbeddedBankImportRequest(embedded):import_native_bank()
     end
 
-    function api.require_imported_bank(embedded)
-        return bank_from_embedded(embedded)
+    function api.require_imported_bank(embedded, expected_manifest)
+        return bank_from_embedded(embedded, expected_manifest)
     end
 
-    function api.compile_subject(subject, target, runtime, bank)
-        return compile_subject(subject, target, runtime, bank)
+    function api.require_native_bank(bank, target, expected_manifest)
+        return require_bank(bank, target, expected_manifest)
     end
 
-    function api.compile_subject_with_embedded_bank(subject, target, runtime, embedded)
-        return compile_subject(subject, target, runtime, bank_from_embedded(embedded))
+    function api.bank_manifest(bank)
+        return require_bank(bank).manifest
     end
 
-    function api.compile_subject_executable(subject, target, runtime, bank)
-        return compile_subject(subject, target, runtime, bank):native_executable()
+    function api.embedded_bank_manifest(embedded)
+        return require_embedded_bank(embedded).manifest
     end
 
-    function api.compile_subject_with_embedded_bank_executable(subject, target, runtime, embedded)
-        return compile_subject(subject, target, runtime, bank_from_embedded(embedded)):native_executable()
+    function api.runtime(symbols)
+        return Native.NativeRuntime(symbols or {})
+    end
+
+    function api.compile_subject(subject, target, runtime, bank, expected_manifest)
+        return compile_subject(subject, target, runtime, bank, expected_manifest)
+    end
+
+    function api.compile_subject_with_embedded_bank(subject, target, runtime, embedded, expected_manifest)
+        return compile_subject(subject, target, runtime, bank_from_embedded(embedded, expected_manifest), expected_manifest)
+    end
+
+    function api.compile_subject_with_runtime_symbols(subject, target, symbols, bank, expected_manifest)
+        return compile_subject(subject, target, api.runtime(symbols), bank, expected_manifest)
+    end
+
+    function api.compile_subject_executable(subject, target, runtime, bank, expected_manifest)
+        return compile_subject(subject, target, runtime, bank, expected_manifest):native_executable()
+    end
+
+    function api.compile_subject_with_embedded_bank_executable(subject, target, runtime, embedded, expected_manifest)
+        return compile_subject(subject, target, runtime, bank_from_embedded(embedded, expected_manifest), expected_manifest):native_executable()
     end
 
     function api.code_module_subject(module)
@@ -100,20 +158,24 @@ local function bind_context(T)
         return Native.NativeCompileStencilInstance(require_value(instance, "StencilInstance"))
     end
 
-    function api.compile_code_module(module, target, runtime, bank)
-        return compile_subject(api.code_module_subject(module), target, runtime, bank)
+    function api.compile_code_module(module, target, runtime, bank, expected_manifest)
+        return compile_subject(api.code_module_subject(module), target, runtime, bank, expected_manifest)
     end
 
-    function api.compile_code_module_with_embedded_bank(module, target, runtime, embedded)
-        return compile_subject(api.code_module_subject(module), target, runtime, bank_from_embedded(embedded))
+    function api.compile_code_module_with_embedded_bank(module, target, runtime, embedded, expected_manifest)
+        return compile_subject(api.code_module_subject(module), target, runtime, bank_from_embedded(embedded, expected_manifest), expected_manifest)
     end
 
-    function api.compile_code_func(func, target, runtime, bank)
-        return compile_subject(api.code_func_subject(func), target, runtime, bank)
+    function api.compile_code_func(func, target, runtime, bank, expected_manifest)
+        return compile_subject(api.code_func_subject(func), target, runtime, bank, expected_manifest)
     end
 
-    function api.compile_code_func_with_embedded_bank(func, target, runtime, embedded)
-        return compile_subject(api.code_func_subject(func), target, runtime, bank_from_embedded(embedded))
+    function api.compile_code_func_with_embedded_bank(func, target, runtime, embedded, expected_manifest)
+        return compile_subject(api.code_func_subject(func), target, runtime, bank_from_embedded(embedded, expected_manifest), expected_manifest)
+    end
+
+    function api.compile_code_func_with_runtime_symbols(func, target, symbols, bank, expected_manifest)
+        return compile_subject(api.code_func_subject(func), target, api.runtime(symbols), bank, expected_manifest)
     end
 
     function api.compile_kernel_plan(plan, target, runtime, bank)

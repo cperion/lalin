@@ -438,32 +438,39 @@ do not describe missing compiler architecture.
 
 ## Native Code Graph Composition
 
-Code native lowering is graph construction. It is not selection of a callable C
-helper for each operation. The graph is copied into one executable body whose
-internal control flow is a continuation chain.
+Code native lowering follows the copy-and-patch paper shape: plan values first,
+select stencil configurations second, then copy a CPS continuation graph.
+It is not selection of a callable C helper per operation.
 
 The structural path is:
 
 ```text
-CodeFunc
-  -> NativeTemplateGraph { protocol, frame_layout }
-  -> C entry callable node
-  -> CodeBlock / CodeInstOp / CodeTermOp continuation nodes
-  -> NativeFrameSlot value placements
+CodeFunc / KernelPlan / StencilInstance
+  -> value-location planning
+       continuation arguments for hot temporaries
+       frame slots for locals, spills, block params, descriptors, aggregates
+       constant-pool entries for literal data
+  -> NativeTemplateGraph { protocol, frame_layout, constant_pool_layout }
+  -> graph nodes with selected stencil configurations
   -> NativeContinuationEdge control edges
-  -> NativePatchBinding frame/hole bindings
+  -> NativeValueEdge value-flow facts
+  -> NativePatchBinding / relocation bindings
   -> NativeCopyPlan
 ```
 
 A `NativeRoleRuntimeCall` template is a standalone callable template. It may be
 used for smoke tests, runtime helper calls, or explicitly selected whole-shape
 supertemplates. It is not the baseline representation of `CodeInstOp` or
-`CodeTermOp` leaves inside a `CodeFunc` graph.
+`CodeTermOp` leaves inside a copied graph.
 
-A baseline `NativeRoleCodeFunc` template is a C entry callable. A baseline
-`NativeRoleCodeInst`, `NativeRoleCodeTerm`, `NativeRoleKernel*`, or
-`NativeRoleStencil*` template is a C continuation fragment unless its concrete
-leaf method explicitly owns a whole callable supertemplate.
+The previous frame-only sketch is only the **spill-all support profile**:
+all operands and results live in `NativeFrameSlot` values and every continuation
+has signature `void(uint8_t *frame)`. That profile is valid for bootstrap and
+correctness, but it is not the final copy-and-patch architecture. The closed
+architecture is **location-parametric CPS stencils**: a stencil configuration
+states which operands are continuation arguments, which are frame/spill slots,
+which are constants, whether the output is passed to the continuation or spilled,
+and how many pass-through values must be preserved.
 
 ### C stencil extraction modes
 
@@ -474,28 +481,277 @@ NativeExtractStandaloneCallable
   whole function body is copied as a standalone callable template
 
 NativeExtractEntryCallable
-  public ABI C function
-  allocates or addresses a typed frame
-  stores ABI params into NativeFrameSlot offsets
+  uniform generated-code entry, normally void entry(uint8_t *frame)
   calls declared first continuation symbol
-  loads ABI result slots and returns
+  returns after terminal continuation unwinds to it
+
+NativeExtractPublicAbiAdapter
+  optional host/export boundary adapter generated from NativeAbiProjection
+  public ABI signature is finite only when explicitly in the support domain
+  materializes a frame, calls first continuation, maps result back to host ABI
 
 NativeExtractContinuationFragment
-  C function signature: void fragment(uint8_t *frame)
-  reads/writes typed frame slots through declared offset holes
+  C function signature generated from NativeStencilSignature
+  first parameter is frame pointer
+  remaining parameters are pass-through values and operand values
   calls or tail-calls declared successor continuation symbols
 
 NativeExtractTerminalContinuation
-  C function signature: void terminal(uint8_t *frame)
-  returns to the entry callable after the continuation chain finishes
+  C function signature generated from NativeStencilSignature
+  returns to the entry/adapter after the continuation chain finishes
 ```
 
 The object verifier checks the compiled object against the declared extraction
 policy. It does not infer semantics from bytes.
 
+### Stencil generators, metavars, and manifest
+
+Human-authored C chunks: **zero**. Humans author ASDL schemas and Lua methods on
+concrete ASDL leaves. Those methods define stencil generators. A generator is a
+closed ASDL value:
+
+```text
+NativeStencilGenerator {
+  id
+  owner_family
+  chunk_class
+  metavars          # finite sets
+  filter_method     # concrete ASDL leaf method
+  signature_method  # concrete ASDL leaf method
+  c_builder_method  # concrete ASDL leaf method
+}
+```
+
+The AOT bank manifest is the exact enumeration of accepted generator
+configurations:
+
+```text
+for each generator G:
+  for each tuple t in cartesian_product(G.metavars):
+    if G.filter_method(t):
+      emit NativeTemplateManifestEntry(G, t, G.signature_method(t))
+```
+
+`NativeTemplateBankRequest.sources` must match the manifest exactly by id,
+family, chunk class, metavar tuple, extraction, logical signature, declared hole
+ordinals, declared continuation ordinals, and declared relocation kinds. A
+mismatch is a bank-build bug. Program size never changes the bank manifest; it
+only changes how many times selected stencils are copied into one executable.
+
+The bank count is therefore not a prose estimate:
+
+```text
+N_bank(D) = Σ over generators G in support domain D
+              |{ t ∈ product(G.metavars) where G.filter(t) }|
+```
+
+The generated manifest records `total_count`; tests for a support profile assert
+that exact number.
+
+### Logical stencil signatures
+
+A C stencil definition is generated from a logical signature. The C compiler owns
+physical register allocation, but the copy-and-patch runtime owns the logical
+locations that determine the stencil variant.
+
+```text
+NativeStencilSignature {
+  frame_param        # always present
+  passthroughs       # values preserved across this stencil
+  operands           # values consumed by this stencil from continuation args
+  continuation       # successor function type/ordinal(s)
+}
+```
+
+Example generated shapes:
+
+```c
+/* output passed to continuation */
+void add_i32_arg_arg(uint8_t *frame, PTs..., int32_t lhs, int32_t rhs) {
+  int32_t out = (int32_t)((uint32_t)lhs + (uint32_t)rhs);
+  CONT_0(frame, PTs..., out);
+}
+
+/* output spilled to frame */
+void add_i32_arg_slot_spill(uint8_t *frame, PTs..., int32_t lhs) {
+  int32_t rhs = load_i32(frame, HOLE_RHS_OFFSET);
+  int32_t out = (int32_t)((uint32_t)lhs + (uint32_t)rhs);
+  store_i32(frame, HOLE_DST_OFFSET, out);
+  CONT_0(frame, PTs...);
+}
+```
+
+Continuation arguments are a logical protocol, not hand-selected physical
+registers. The target C ABI will usually place a bounded number of them in
+registers. If the planner cannot keep a value as a continuation argument, it
+spills that value to a frame slot and selects a spilled-input/output stencil.
+
+### Stencil configuration axes
+
+The closed baseline generator axes are:
+
+```text
+semantic owner leaf / operation
+value representation: bool8, signed/unsigned ints, index, pointer, f32, f64,
+                      descriptor, byref aggregate handle
+operand location: continuation-arg | frame-slot | constant-pool/immediate
+output location: continuation-arg | frame-slot
+num passthrough integer/pointer values: 0..K_int
+num passthrough float values:           0..K_float
+control successor shape: next | then/else | case/default | call-return | terminal
+target/ABI/support profile
+finite schedule/layout/rank/lane axes for kernel/stencil leaves
+```
+
+The pass-through bounds `K_int` and `K_float` are explicit support-domain
+parameters. They are a bank-size/performance tradeoff, not semantic limits. A
+spill-all support domain sets both to zero.
+
+### Closed C definition classes
+
+The generated C definition classes are closed. Each class is a stencil generator
+family; each concrete stencil is one accepted metavar tuple.
+
+```text
+FrameEntry
+  generator count: 1 per generated-code entry protocol
+  C shape: void entry(uint8_t *frame)
+
+PublicAbiAdapter
+  generator count: explicit finite exported CodeSig/StencilAbi adapters only
+  C shape: public ABI signature generated from NativeAbiProjection
+  not part of baseline graph lowering
+
+TerminalContinuation
+  axes: terminal logical signature, passthrough shape
+
+EdgeCopy / ParallelCopy
+  axes: value representation, source location, destination location,
+        overlap/temporary strategy
+
+ConstantLoad
+  axes: constant representation, destination location
+  values are constant-pool entries or relocation holes, never per-literal C chunks
+
+UnaryOp
+  axes: UnaryOp, representation, input location, output location, passthrough counts
+
+BinaryOp
+  axes: BinaryOp, representation, lhs location, rhs location, output location,
+        passthrough counts
+
+CompareOp
+  axes: CmpOp, comparable representation, lhs location, rhs location,
+        output location, passthrough counts
+
+CastOp
+  axes: from representation, to representation, input location, output location
+
+SelectOp
+  axes: value representation, condition location, true/false locations,
+        output location
+
+AddressMemoryOp
+  axes: ptr-offset/load/store/address semantic leaf, value representation,
+        address representation, access/layout class, operand locations
+  offsets/strides/dynamic bases are holes/frame slots/ABI params, not chunk axes
+
+DescriptorOp
+  axes: descriptor kind, field/op, representation, operand/output locations
+
+AggregateVariantOp
+  axes: operation, finite layout class, operand/output locations
+  aggregate bytes/sizes/offsets are holes or constant-pool entries
+
+CallOp
+  axes: call kind, NativeAbiProjection, argument/result locations,
+        passthrough/spill policy
+
+ControlOp
+  axes: jump, bool branch, switch strategy, trap protocol, unreachable,
+        condition/key location, successor shape, passthrough counts
+  switch is compare/branch chain unless a finite switch supertemplate is declared
+
+KernelOp
+  axes: Kernel semantic leaf × finite scalar/layout/schedule/rank/lane axes ×
+        location/passthrough shape
+
+StencilOp
+  axes: Stencil semantic leaf × finite scalar/layout/schedule/rank/lane axes ×
+        location/passthrough shape
+
+Supertemplate
+  axes: explicit finite semantic pattern and the same location/passthrough axes
+  correctness requires proof that it replaces the composed graph contract
+```
+
+### Hole ordinals and object relocations
+
+Holes are declared by ordinal in the generator and represented in C by unique
+extern symbols. The object parser recovers hole locations from relocation
+records, not from ad hoc byte scanning.
+
+```text
+NativeHoleOrdinal
+NativeExternHoleSymbol
+NativePatchFormula
+NativePatchSym32
+NativePatchSym64
+NativePatchPcRel32
+```
+
+All patchable values use this mechanism where the target object format supports
+it:
+
+```text
+frame offsets / stack offsets
+literal constants
+constant-pool addresses
+continuation targets
+branch/jump targets
+call/runtime symbols
+```
+
+Marker-byte immediate scanning is allowed only to keep existing bootstrap tests
+running while relocation-hole support lands. New closed-design stencil generators
+must use extern-symbol relocation holes. Marker scanning is not the architecture.
+
+### Runtime copy-and-patch algorithm
+
+Runtime native compilation performs these steps:
+
+```text
+1. Traverse semantic graph to plan value locations.
+   - continuation args within K_int/K_float budgets
+   - frame/spill slots for locals, block params, values crossing calls, overflow temps
+   - constant-pool entries for literals/data
+
+2. Traverse again to select stencil configurations.
+   - semantic leaf / operation
+   - operand locations
+   - output location
+   - spill/pass-through counts
+   - control successor shape
+   - supertemplate when a declared pattern matches
+
+3. Build the CPS NativeTemplateGraph.
+
+4. Depth-first copy selected stencil bytes into executable memory.
+
+5. Elide tail jumps whose successor is the immediately adjacent copied stencil
+   and whose edge is not required control redirection.
+
+6. Patch holes using object-derived patch records:
+   constants, frame offsets, stack offsets, continuation targets, branch targets,
+   calls, runtime symbols, and constant-pool addresses.
+```
+
+Remaining jumps after elision correspond to real control redirection: branches,
+loops, switches, calls, and non-adjacent continuations.
+
 ### Frame protocol
 
-The baseline value protocol is a typed frame:
+The spill/local/state protocol is a typed frame:
 
 ```text
 NativeFrameLayout {
@@ -514,13 +770,18 @@ NativeFrameSlot {
 ```
 
 Frame layout is an ASDL fact carried by `NativeTemplateGraph` and
-`NativeCopyPlan`. It is not a Lua side table. Every value consumed or produced
-by a baseline fragment has a `NativeValueFrameSlotLocation` and, when it flows
-between nodes, a `NativeFrameSlotValueEdge`.
+`NativeCopyPlan`. It is not a Lua side table. Values that are local variables,
+block parameters, spill slots, values crossing calls, descriptor fields,
+aggregate storage, loop state, or overflow temporaries have
+`NativeValueFrameSlotLocation` and `NativeFrameSlotValueEdge` facts. Values that
+remain in the CPS continuation are represented by typed continuation argument
+placements and pass-through edges, not by hidden registers.
 
-Entry callables map public ABI parameters to frame slots and map result frame
-slots back to ABI results. Continuation fragments only receive `uint8_t *frame`.
-They do not encode caller ABI or physical registers.
+Frame entries receive `uint8_t *frame` and call the first continuation. Public
+ABI adapters, when needed, are separate boundary stencils that map external
+parameters/results to frame slots using `NativeAbiProjection`. Continuation
+fragments receive `uint8_t *frame` plus the logical continuation arguments named
+by their `NativeStencilSignature`. They do not encode physical registers.
 
 The closed layout algorithm is specified in `Closed Design Decisions` below: it
 allocates parameter, result, block-parameter, local, temporary, loop, and effect
@@ -642,17 +903,17 @@ unsupported relocation type
 extra unresolved symbol
 undeclared continuation/runtime symbol
 missing declared continuation relocation
-missing declared marker hole
-ambiguous marker hole
-hole outside copied bytes
-frame-size hole missing when declared
+missing declared hole-ordinal relocation
+duplicate/ambiguous hole-ordinal relocation
+hole relocation outside copied bytes
+frame-size hole ordinal missing when declared
 relocation outside copied bytes
 alignment not represented in NativeTextSection
 ```
 
-Marker-byte holes are allowed only for verifier-proven offset/size-style holes.
-Scalar, pointer, float, and aggregate constants use the constant-pool relocation
-protocol specified in `Closed Design Decisions` below.
+The verifier's normal hole source is object relocation records against declared
+extern hole symbols. Marker-byte holes are a temporary bootstrap implementation
+only and must not be used for new closed-design stencil generators.
 
 ## Patch Coordinates
 
@@ -741,10 +1002,11 @@ The ABI projection is owned by concrete `CodeType` leaves and by `CodeSig` /
 classification or extension policy. The graph builder consumes the projection;
 it does not inspect type classes manually.
 
-Entry callable C signatures are generated from this ABI projection. Internal and
+Public ABI adapter C signatures are generated from this ABI projection. The
+baseline copied graph entry remains uniform `void(uint8_t *frame)`. Internal and
 external call fragments use the same projection. Lua/FFI call helpers are test
-and host-boundary conveniences; they must call through a typed `NativeCallProtocol`
-that already names the projection.
+and host-boundary conveniences; they must call through a typed
+`NativeCallProtocol` that already names the projection.
 
 ### Frame layout algorithm
 
@@ -794,15 +1056,17 @@ There is no silent heap fallback. A heap-frame protocol, when added, must be a
 new ASDL runtime capability with allocator/free symbols, lifetime, failure mode,
 and frame pointer ownership modeled explicitly.
 
-Entry callables use a generated frame-size patch hole, not a bank family axis:
+Public ABI adapters use a generated frame-size patch hole, not a bank family
+axis:
 
 ```c
 uint8_t *raw = (uint8_t *)__builtin_alloca(LALIN_HOLE_FRAME_SIZE + ALIGN - 1);
 uint8_t *frame = (uint8_t *)(((uintptr_t)raw + ALIGN - 1) & ~(uintptr_t)(ALIGN - 1));
 ```
 
-`ALIGN` is a finite support-domain axis. `LALIN_HOLE_FRAME_SIZE` is patched from
-`NativeFrameLayout.size`.
+The baseline graph entry does not allocate the frame; it receives the frame
+pointer. `ALIGN` is a finite support-domain axis. `LALIN_HOLE_FRAME_SIZE` is
+patched from `NativeFrameLayout.size` in boundary adapters.
 
 ### C frame access and UB rules
 
@@ -833,22 +1097,29 @@ written.
 
 ### Hole and constant protocol
 
-Marker-byte immediate holes are not the general constant design. They are allowed
-only for holes whose source-builder method and verifier prove the marker remains
-as one unique byte range in the copied text.
+The architecture uses extern-symbol relocation holes, matching the paper's
+MetaVar mechanism. Each generated C stencil declares unique extern symbols for
+its hole ordinals. The object parser maps relocations against those symbols back
+to `NativeRelocationHoleOrdinal` records and patch formulas.
 
 Closed baseline hole protocol:
 
 ```text
 frame offsets / field offsets / strides / frame size
-  -> marker-immediate holes in text, verifier requires one unique marker
+  -> relocation to declared hole ordinal symbol
+
+literal scalar values that fit the target relocation formula
+  -> relocation to declared hole ordinal symbol
 
 continuation targets / branch targets / call targets / runtime symbols
-  -> object relocations to declared extern symbols, not marker bytes
+  -> relocation to declared continuation/call/runtime symbol
 
-scalar literal constants / float constants / pointer constants / aggregate constants
+float constants / pointer constants / aggregate constants / large scalar constants
   -> constant-pool entries addressed through object relocations
 ```
+
+Marker-byte immediate scanning is only a temporary bootstrap implementation for
+existing proof-slice stencils. It is not an admitted target architecture path.
 
 Add/maintain ASDL for constant pools when constants move beyond the scalar proof
 slice:
@@ -889,7 +1160,7 @@ raw section bytes
 The verifier is extraction-leaf owned:
 
 ```text
-NativeExtractEntryCallable verifies public entry symbol and first continuation relocation
+NativeExtractEntryCallable verifies uniform frame-entry symbol and first continuation relocation
 NativeExtractContinuationFragment verifies all declared successor relocations
 NativeExtractTerminalContinuation verifies no undeclared successor relocation
 NativeExtractStandaloneCallable verifies standalone public callable shape
@@ -1087,12 +1358,36 @@ target ABI class. Lalin does not have multiple return values; `#results > 1` is
 invalid for Lalin native lowering. Lua call helpers must not infer ABI by
 argument count.
 
-### C template source and extraction
+### Stencil generators, C template source, and extraction
 
 ```text
+NativeStencilGenerator {
+  id
+  owner_family
+  chunk_class
+  metavars
+  filter owner method
+  signature owner method
+  C builder owner method
+}
+
+NativeStencilMetavar = finite scalar/operation/location/passthrough/control/layout axis
+NativeStencilConfiguration = generator id + accepted metavar tuple
+NativeStencilSignature = frame param + passthroughs + operands + continuations
+
+NativeTemplateSourceManifest {
+  support_domain id
+  groups with closed chunk class
+  entries with generator/configuration/signature/extraction/hole ordinals
+  total_count
+}
+
 NativeTemplateSource {
   id
   family
+  generator
+  configuration
+  signature
   extraction: NativeTemplateExtraction
   entry_symbol
   c_text
@@ -1101,14 +1396,17 @@ NativeTemplateSource {
 
 NativeTemplateExtraction =
   StandaloneCallable
-  EntryCallable { frame_bytes, first_continuation }
+  EntryCallable { frame_alignment, first_continuation }
+  PublicAbiAdapter { abi_projection, frame_size_hole, frame_alignment, first_continuation }
   ContinuationFragment { successors }
   TerminalContinuation
 ```
 
 There is intentionally no `NativeTemplateAssembly` or template language sum.
-Every source is C. The extraction leaf owns how the compiled object is verified
-and how its bytes/relocations are admitted to a bank.
+Every source is C. The manifest is computed before source text is generated;
+`NativeTemplateBankRequest.sources` must match it exactly. The extraction leaf
+owns how the compiled object is verified and how its bytes/relocations are
+admitted to a bank.
 
 ### Compiled object facts
 
@@ -1120,6 +1418,8 @@ NativeRelocationRel32
 NativeRelocationAbs64
 NativeRelocationRuntimeSymbol
 NativeRelocationContinuation
+NativeRelocationHoleOrdinal
+NativeRelocationConstantPool
 NativeCompiledTemplate
 NativeEmbeddedTemplate
 NativeTemplateBankEntry
@@ -1129,7 +1429,9 @@ NativeEmbeddedTemplateBank
 
 `NativeRelocationContinuation` is the typed artifact produced from a relocation
 to a declared extern continuation symbol. Runtime install resolves it through
-`NativeControlEdge`, not through string lookup tables.
+`NativeControlEdge`, not through string lookup tables. `NativeRelocationHoleOrdinal`
+is the typed artifact produced from a relocation to a declared extern hole
+symbol; it records the ordinal and patch formula recovered from the object file.
 
 ### Frame and value placement
 
@@ -1149,10 +1451,12 @@ NativeFrameLayout {
 }
 
 NativeValueLocation =
+  ContinuationArgLocation { arg_index, value_class }
   FrameSlotLocation
   StackSlotLocation
   RuntimeParamLocation
   PatchCoordinateLocation
+  ConstantPoolLocation
   MemoryAddressLocation
   (Register/Accumulator locations are metadata/optimization only, not baseline)
 
@@ -1160,8 +1464,9 @@ NativeValuePlacement = value id, scalar, location
 NativeCodeValuePlacementEntry = CodeValueId -> NativeValuePlacement
 ```
 
-Baseline graph lowering stores every live value in a typed frame slot. Frame
-slot mapping is ASDL state, not a Lua table hidden outside the graph.
+Graph lowering stores spilled/live-across-call/local/state values in typed frame
+slots and keeps selected temporaries as typed continuation arguments. Both
+placements are ASDL facts, not Lua side tables.
 
 ### Graph, control, and copy plan
 
@@ -1359,12 +1664,14 @@ value that means "unimplemented".
 Bank build is AOT artifact construction:
 
 ```text
-NativeTemplateBankRequest.sources
+NativeTemplateSupportDomain
+  -> compute NativeTemplateSourceManifest
+  -> generate NativeTemplateBankRequest.sources matching manifest
   -> write each NativeTemplateSource.c_text
   -> gcc/clang -O3 object compile
   -> parse object sections/symbols/relocations
   -> verify NativeTemplateExtraction protocol
-  -> resolve declared marker/relocation holes
+  -> resolve declared extern-symbol relocation holes and constant-pool relocs
   -> NativeEmbeddedTemplateBank
 ```
 
@@ -1386,8 +1693,8 @@ Runtime import immediately reconstructs `NativeTemplateBank` through
 
 Bank build must reject malformed template artifacts. It must not silently admit a
 source with extra unresolved symbols, missing continuation relocs, unsupported
-relocation types, missing holes, ambiguous marker holes, or holes outside copied
-text.
+relocation types, missing hole-ordinal relocs, duplicate hole ordinals, or holes
+outside copied text.
 
 ## Structural Closure Summary
 
@@ -1455,11 +1762,11 @@ The architecture above is the target design. The current implementation has a
 working scalar proof slice:
 
 ```text
-C-only source generation
+C-only source generation for spill-all frame-profile stencils
 temporary readelf-backed object extraction
 marker-hole resolution for offset/immediate proof holes
 continuation relocation patching
-frame-slot scalar graph lowering
+frame-slot scalar graph lowering without continuation-arg/pass-through planning
 single-scalar CodeTermReturn
 scalar execution for bool/i8/u8/i16/u16/i32/u32/i64/u64/f32/f64 proof cases
 manual branch-continuation execution test
@@ -1468,6 +1775,9 @@ manual branch-continuation execution test
 Still to implement under this design:
 
 ```text
+NativeStencilGenerator/metavar/manifest ASDL and exact bank-count tests
+extern-symbol hole ordinal protocol replacing marker-hole bootstrap
+value-location planning with continuation args, spills, and pass-through budgets
 NativeAbiProjection ASDL and full zero-or-one-result CodeSig lowering
 void CodeTermReturn and single aggregate-result/sret CodeTermReturn
 CodeTermBranch/Jump/Switch/loop lowering from Code ASDL using edge-copy chains
@@ -1475,7 +1785,7 @@ memory ops, casts, calls, aggregates, closures, atomics
 KernelPlan and StencilInstance continuation lowering under the closed mapping
 internal object parser replacing temporary readelf-backed extraction
 constant-pool ASDL, layout, relocation, and install support
-NativeFrameStackLimit enforcement and frame-size alloca hole in entry templates
+NativeFrameStackLimit enforcement and public-adapter frame-size alloca holes
 target leaf methods beyond x64 SysV little-endian proof slice
 ```
 

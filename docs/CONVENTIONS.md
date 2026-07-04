@@ -138,22 +138,25 @@ If lowering needs a fact, represent it in schema first.
 
 ## Backends
 
-The target fast backend architecture is native residual materialization. Use
-saturated stencil instances first, copy-patch to expand binary patch templates
-for selected instances, and TCC-compiled C residuals for non-stencil native
-code. See `docs/RESIDUAL_NATIVE_ARCHITECTURE.md`.
+The target fast backend architecture is residualless native C-stencil
+copy-patch. `LalinCode`, `LalinKernel`, and `LalinStencil` leaf methods generate
+closed `NativeTemplateSource` C stencils. An explicit offline bank build turns a
+`NativeTemplateBankRequest` and `NativeTemplateSourceManifest` into a typed
+`NativeEmbeddedTemplateBank`. The runtime native path only selects matching bank
+templates, copies bytes, patches typed holes/relocations, installs executable
+memory, and calls the resulting entry point. Despite its historical filename,
+`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` is the binding native architecture.
 
-Backend decisions must be ASDL values. Exact stencil selection, patch-template
-selection, patch coordinates, residual C calls to stencils, and
-typed rejection reasons are not option bags, string tags, raw hole tables, or
-side maps. The leaf that owns the semantic descriptor also owns whether its
-fields are fixed in the template family, runtime ABI parameters, or typed patch
-coordinates.
+Backend decisions must be ASDL values. Exact stencil selection, template-family
+selection, manifest entries, patch coordinates, ABI projections, runtime symbol
+capabilities, and typed rejection reasons are not option bags, string tags, raw
+hole tables, or side maps. The leaf that owns the semantic descriptor also owns
+whether its fields are fixed in the template family, runtime ABI parameters, or
+typed patch coordinates.
 
-The current implementation still contains `residual_mc` bank stencils, optional
-TCC residual wrappers, and the explicit `residual_bc` bytecode path. Treat the
-LuaJIT trace/block path as an implementation/debug path, not the target
-semantic fallback.
+LuaJIT bytecode is an explicit non-native mode. It is not an implicit fallback
+from native compilation, and the runtime native path must never invoke a C
+compiler, object tool, or residual wrapper.
 
 Keep the C/AOT path separate in wording and code. `emit_c_artifact` emits the
 whole selected program as C so the user can compile it with GCC; it should fuse

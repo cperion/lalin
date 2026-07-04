@@ -7,7 +7,8 @@ language for defining member dialects. It turns evaluated Lua values into
 dialect objects with heads, roles, fragments, namespaces, origins, diagnostics,
 formatting, indexing, and generic regions. Region is the shared control algebra
 that composes the language. Lalin is the compiled dialect: it consumes LLBL regions
-and typed values, checks them, and lowers them into LuaJIT artifacts.
+and typed values, checks them, and lowers them into native C-stencil copy-patch
+artifacts or explicitly selected LuaJIT bytecode artifacts.
 
 ```text
 Lua source
@@ -16,8 +17,8 @@ Lua source
   -> Lalin ASDL
   -> typecheck
   -> LalinCode facts
-  -> LuaTrace stencil plans or C stencil plans
-  -> LuaJIT copy+residual artifact
+  -> NativeTemplateGraph or explicit LuaJIT bytecode plan
+  -> supplied NativeTemplateBank copy/patch/install, or bytecode artifact
   -> loaded module
 ```
 
@@ -69,18 +70,13 @@ make
 
 `make` builds the repository-local LuaJIT archive if needed.
 
-Optional C/native stencil work may need:
+Native runtime compilation does not require Cargo, Rust, Cranelift, TCC,
+readelf, or a system C compiler. It does require a prebuilt
+`NativeTemplateBank`/`NativeEmbeddedTemplateBank`; the offline bank build is the
+only step that compiles generated C stencils and verifies object files.
 
-```sh
-git submodule update --init --recursive
-make libtcc
-```
-
-The default `lalin.compile` path uses LuaTrace bytecode copy-patch and does not
-require Cargo, Rust, Cranelift, or a system C compiler. Emitted LuaJIT artifacts
-default to the fast copy+residual path: GCC-built `copy_patch_mc` bank stencils
-installed as machine code plus TCC residual glue. That artifact path needs the
-native stencil toolchain and `libtcc`.
+The default `lalin.compile` path is native copy-patch. Select LuaJIT bytecode
+explicitly with `compile_luajit` or `{ bytecode = true }`.
 
 ## Test
 

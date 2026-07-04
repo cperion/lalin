@@ -1,0 +1,1194 @@
+{
+	"version": 1,
+	"workflowId": "wf-native-cp-refactor",
+	"planId": "main",
+	"revision": 138,
+	"nextId": 38,
+	"createdAt": "2026-07-02T17:26:00.699Z",
+	"updatedAt": "2026-07-04T14:08:39.045Z",
+	"tasks": [
+		{
+			"id": "T001",
+			"title": "Extend native schema for stencil manifest vocabulary",
+			"detail": "Around lines 4-20 add ids for NativeStencilGeneratorId, NativeStencilMetavarId, NativeStencilConfigurationId, NativeTemplateManifestId, NativeHoleOrdinalId, NativeConstantPoolEntryId, NativeObjectSectionId, NativeObjectSymbolId, and NativeObjectRelocationId. Around lines 193-209 extend NativeTemplateSupportDomain with passthrough_int_limit, passthrough_float_limit, frame_stack_limit, public_abi_adapters, continuation_signatures, and constant_pool_support fields; keep register fields only as ABI metadata, not baseline axes. Around lines 210-320 add products/sums for NativeStencilGenerator, NativeStencilMetavar finite axes, NativeStencilConfiguration, NativeStencilSignature, NativeStencilContinuationParam/operand/passthrough facts, NativeTemplateSourceManifest, manifest groups/entries with total_count and declared hole/continuation ordinals. Modify NativeTemplateSource at lines 302-310 to carry generator, configuration, signature, declared_hole_ordinals, declared_continuation_ordinals, and declared_relocation_kinds in addition to family/extraction/entry_symbol/c_text. Add NativeExtractPublicAbiAdapter to NativeTemplateExtraction after NativeExtractEntryCallable.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [],
+			"status": "done",
+			"order": 1,
+			"claimedBy": "agent-G8EBBX",
+			"evidence": "Updated lua/lalin/schema/native.lua with native C-stencil manifest vocabulary: new generator/metavar/configuration/manifest/hole/constant/object ids; support-domain passthrough/frame/public adapter/signature/constant-pool fields; typed generator/metavar/configuration/signature/manifest products; NativeExtractPublicAbiAdapter; NativeTemplateSource generator/configuration/signature and declared ordinal/relocation-kind fields. Updated tests/schema/test_schema_native.lua constructor smoke for new support-domain and manifest/source schema. Verified with `luajit tests/schema/test_schema_native.lua` and `luajit tests/run.lua schema` (11 passed, 0 failed).",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-02T18:12:03.900Z"
+		},
+		{
+			"id": "T002",
+			"title": "Add ABI projection and runtime capability schema",
+			"detail": "After NativeExtensionPolicy around line 96, add NativeAbiProjection leaves required by the architecture: NativeAbiVoidResult, NativeAbiScalarValue{scalar, extension}, NativeAbiPointerValue{scalar}, NativeAbiDescriptorValue{layout, fields}, NativeAbiByRefValue{pointee_ty, mutability, alignment}, NativeAbiSRetResult{result_ty, pointer_param}, plus NativeAbiParamProjection, NativeAbiResultProjection, and NativeAbiFunctionProjection products for parameter order and zero-or-one result. Replace/extend NativeRuntimeSymbol at lines 253-258 so it carries a typed NativeAbiFunctionProjection and an optional/supplied runtime address capability instead of only c_signature. Extend NativeCallProtocol at lines 973-981 so NativeCallCodeSig and NativeCallStencilAbi carry/use NativeAbiFunctionProjection; retain legacy scalar smoke protocols only for tests and mark them as not graph ABI inference.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 2,
+			"claimedBy": "agent-Q9YVHN",
+			"evidence": "Implemented ABI projection schema in lua/lalin/schema/native.lua: added NativeAbiProjection leaves (void/scalar/pointer/descriptor/byref/sret), NativeAbiParamProjection/NativeAbiResultProjection/NativeAbiFunctionProjection, NativeRuntimeAddressCapability, updated NativeRuntimeSymbol to carry typed ABI projection/address capability, changed public ABI adapter/support-domain and NativeCallCodeSig/NativeCallStencilAbi to use NativeAbiFunctionProjection while retaining legacy scalar smoke protocols. Updated lua/lalin/native_template_support.lua helpers to require NativeAbiFunctionProjection and tests/schema/test_schema_native.lua smoke coverage for the new constructors/protocols. Verified with `luajit tests/schema/test_schema_native.lua` and `luajit tests/run.lua schema` (11 passed, 0 failed).",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-02T18:15:45.743Z"
+		},
+		{
+			"id": "T003",
+			"title": "Add object, hole ordinal, relocation, and constant-pool schema",
+			"detail": "Around lines 337-370 extend NativeRelocation with NativeRelocationHoleOrdinal{offset, ordinal, formula, addend} and NativeRelocationConstantPool{offset, entry, addend}. Add NativeHoleOrdinal, NativeExternHoleSymbol, NativePatchFormula leaves (Sym32, Sym64, PcRel32) near NativeHoleLayout lines 920-931. Add LalinNativeObject products: NativeObjectFile, NativeObjectSection, NativeObjectSymbol, NativeObjectRelocation, and a target/file-format enum for x64 ELF. Add NativeConstantPoolEntry/Layout/PatchConstantPoolEntry around NativeTextSection/NativeCodeLayout, and extend NativeCompiledTemplate and NativeEmbeddedTemplate to carry extraction, signature, object-derived hole ordinals, relocation declarations, and constant pool layout. Add build rejects for malformed object, missing/duplicate hole ordinal, missing continuation relocation, extra unresolved symbol, unsupported object format, unsupported constant-pool relocation.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 3,
+			"claimedBy": "agent-085RRW",
+			"evidence": "Implemented object, extern-hole ordinal relocation, and constant-pool schema in `lua/lalin/schema/native.lua`: added NativePatchFormula, NativeObjectFile/Section/Symbol/Relocation plus x64 ELF relocation kinds, NativeConstantPoolEntry/Layout and NativePatchConstantPoolEntry, NativeRelocationHoleOrdinal/NativeRelocationConstantPool, extended compiled/embedded templates with extraction/signature/hole ordinals/relocation declarations/constant_pool_layout, and added typed object/hole/continuation/constant-pool build rejects. Updated `lua/lalin/native_mc.lua`, `tools/gen_lalin_mc_bank.lua`, `tests/schema/test_schema_native.lua`, and `tests/code_ir/test_native_mc_import.lua` for new template fields. Verified `luajit tests/schema/test_schema_native.lua`, `luajit tests/run.lua schema`, and `luajit tests/code_ir/test_native_mc_import.lua` all pass.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-02T18:19:48.870Z"
+		},
+		{
+			"id": "T004",
+			"title": "Repair graph, patch identity, and control edge schema",
+			"detail": "Around lines 121-140 add NativeValueContinuationArgLocation and NativeValueConstantPoolLocation to NativeValueLocation; keep register/accumulator leaves as metadata/optimization only. Around lines 227-245 replace NativeCodeGraphBuilderState with typed planning facets: NativeValueLocationPlan, NativeFrameLayoutPlan, NativeControlPlan, NativeEdgeCopyPlan, and entries keyed by CodeValueId/CodeBlockId as many-entry ASDL products, not side maps. Around lines 805-840 add node-local instance identity to NativeTemplateNode (for example instance_id or node-local hole scope). Modify NativePatchBinding at lines 926-930 to include node id and/or template node instance plus hole ordinal/id so repeated copies of the same template can bind the same template hole differently. Reconcile NativeControlEdge at lines 814-841 so every branch/loop/exit/call-return successor edge carries a NativeContinuationSymbol; remove any edge shape that cannot be matched to a relocation symbol. Extend NativeCopyPlan around lines 902-909 with constant_pool_layout and total executable layout size.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 4,
+			"claimedBy": "agent-A1KCPK",
+			"evidence": "Implemented graph/patch/control schema repair in lua/lalin/schema/native.lua: added NativeTemplateInstanceId and NativeTemplateNode.instance, NativePatchBindingTarget plus node/instance-scoped NativePatchBinding, symbol-bearing NativeControlEdge successor fields, NativeCopyPlan.constant_pool_layout and total_size, and typed NativeValueLocationPlan/NativeFrameLayoutPlan/NativeControlPlan/NativeEdgeCopyPlan facets keyed by CodeValueId/CodeBlockId. Updated lua/lalin/native_mc.lua to use node-scoped bindings, new control-edge continuation matching, constant-pool copy-plan layout, and total allocation size. Updated lua/lalin/native_code_methods.lua to construct the new graph-builder facets and scoped bindings. Updated schema/native_mc tests for new constructors and repeated-template scoped binding coverage. Verification passed: `luajit tests/schema/test_schema_native.lua`; `luajit tests/run.lua schema` (11 passed); `luajit tests/code_ir/test_native_mc_import.lua`; native_code_methods load smoke via luajit. Note: broader existing tests `test_native_template_sources.lua`, `test_native_code_graph_scalar.lua`, and `test_native_c_continuation_branch.lua` still fail earlier in source/bank generation due stale NativeTemplateSupportDomain/NativeTemplateSource constructor paths called out by prior T001 notes, not from this T004 runtime import path.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-02T18:27:39.748Z"
+		},
+		{
+			"id": "T005",
+			"title": "Update native schema smoke tests",
+			"detail": "Add assertions that the new ASDL constructors exist and type-check: NativeStencilGenerator, NativeStencilMetavar leaves, NativeTemplateSourceManifest with total_count, NativeStencilSignature, NativeExtractPublicAbiAdapter, NativeAbiProjection leaves, NativeRelocationHoleOrdinal, NativeRelocationConstantPool, NativeConstantPoolLayout, NativeValueContinuationArgLocation, node-scoped NativePatchBinding, and symbol-bearing control edges. Remove any assertions that treat register protocol as a baseline source axis.",
+			"file": "tests/schema/test_schema_native.lua",
+			"after": [
+				"T001",
+				"T002",
+				"T003",
+				"T004"
+			],
+			"status": "done",
+			"order": 5,
+			"claimedBy": "agent-1N5A5V",
+			"evidence": "Updated tests/schema/test_schema_native.lua to assert/type-check new native ASDL constructors: all NativeStencilMetavar leaves and generator/configuration bindings, NativeExtractPublicAbiAdapter, NativeAbiProjection leaves, manifest total_count, constant-pool layout, hole ordinal relocations, continuation-arg value locations, node/instance-scoped patch bindings including hole-ordinal targets, and symbol-bearing control edges. Removed baseline register protocol assumption by using an empty support_domain.register_protocols assertion. Verified with `luajit tests/schema/test_schema_native.lua` and `luajit tests/run.lua schema` (11 passed, 0 failed).",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-02T18:29:59.693Z"
+		},
+		{
+			"id": "T006",
+			"title": "Add constructors for support domains and manifest facts",
+			"detail": "Around lines 21-31 update the module comment to say support domains declare finite manifest dimensions, not register-fragment protocols. Around lines 343-639 add constructors for NativeStencilGeneratorId/configuration/metavar/signature/hole ordinal/extern symbol/manifest entries, continuation symbols with ordinals, passthrough bounds, frame stack limits, public ABI adapter support, and constant-pool support. Around lines 691-739 update support_domain(...) to populate new NativeTemplateSupportDomain fields with spill-all defaults K_int=0, K_float=0, x64 SysV frame_stack_limit, explicit public adapter set, and constant-pool support; do not add register_protocols to baseline family axes. Add helpers for logical location tokens (arg/slot/const/pool) used by family ids.",
+			"file": "lua/lalin/native_template_support.lua",
+			"after": [
+				"T001",
+				"T002",
+				"T003",
+				"T004"
+			],
+			"status": "done",
+			"order": 6,
+			"claimedBy": "agent-AYHP9N",
+			"evidence": "Updated lua/lalin/native_template_support.lua: module comment now describes finite manifest/support-domain dimensions; added constructors/helpers for ABI projections, stencil generator/configuration/metavar/value/bindings/signatures, continuation ordinals, hole ordinals/extern symbols, manifest entries/groups/manifests, logical location tokens, passthrough bounds, frame stack limit, public adapter support, and constant-pool support; removed register_protocol axes from baseline scalar/frame family axis helpers; support_domain(...) now fills passthrough_int_limit=0, passthrough_float_limit=0, x64 SysV NativeFrameStackLimit(256,16), explicit public_abi_adapters, continuation_signatures, and empty constant_pool_support by default, with register_protocols set to NativeRegisterProtocolNone. Verification: luajit tests/schema/test_schema_native.lua passed; luajit tests/run.lua schema passed (11/11); custom luajit smoke constructed host_scalar_i32_support_domain plus generator/configuration/signature/manifest helpers. Attempted luajit tests/code_ir/test_native_template_sources.lua; it still fails in pre-existing source-generation constructor path because lua/lalin/native_template_sources.lua calls the old NativeTemplateSource signature (expected NativeStencilGenerator, got table), which belongs to later source-generation tasks.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-02T18:35:44.156Z"
+		},
+		{
+			"id": "T007",
+			"title": "Teach native core methods new equality and ABI calls",
+			"detail": "Around lines 45-110 extend equality helpers to compare NativeStencilConfiguration, NativeStencilSignature, NativeAbiFunctionProjection, NativeTemplateSourceManifest entry identity, NativePatchFormula, and all currently missing NativeTemplateAxis leaves; do not add class-name/kind dispatch or wildcard fallbacks. Around lines 292-360 add apply/write methods for Ptr64, Rel32/BranchRel32/CallRel32 where backed by typed coordinates, constant-pool address coordinates, and runtime symbol address coordinates. Around lines 363-550 replace argument-count inference in call_i32/call_i64/call_f32/call_f64 with NativeCallProtocol/NativeAbiFunctionProjection leaf methods that construct exact FFI signatures from parameter projections and enforce zero-or-one results, void results, and sret. Keep legacy scalar smoke call leaves as tiny wrappers over explicit projections.",
+			"file": "lua/lalin/native.lua",
+			"after": [
+				"T002",
+				"T003",
+				"T004"
+			],
+			"status": "done",
+			"order": 7,
+			"claimedBy": "agent-TB5RDV",
+			"evidence": "Changed `lua/lalin/native.lua` only. Added schema-aware equality methods for ABI projections, call protocols, patch formulas, stencil configurations/signatures, manifest entries, extraction identity, and the missing NativeTemplateAxis / CodeInst / CodeTerm / CodePlace / CodeConst / Kernel / Stencil axis leaves without class/kind dispatch. Added patch writer methods for Ptr64, Rel32, BranchRel32, CallRel32, constant-pool entry address and runtime-symbol address coordinates (using typed coordinate/capability methods; later installer tasks can pass runtime/pool context). Replaced generic argument-count FFI helpers with NativeAbiFunctionProjection-driven signature construction/calling; legacy scalar/no-arg protocols now delegate through explicit ABI projections. Verified `luajit tests/schema/test_schema_native.lua`, `luajit tests/run.lua schema`, `luajit tests/code_ir/test_native_mc_import.lua`, and a custom NativeCallCodeSig ABI call smoke. Also attempted `luajit tests/code_ir/test_native_c_continuation_branch.lua`; it remains blocked by the known stale NativeTemplateSource constructor in that test manifest, not by this task.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-02T19:06:30.358Z"
+		},
+		{
+			"id": "T008",
+			"title": "Build manifest-first native source generation",
+			"detail": "At lines 12-24 delete target-architecture marker constants as the source of new holes; leave any marker bootstrap only behind explicitly named compatibility helper used by old tests until removed. Around lines 47-107 add manifest builders: NativeTemplateSupportDomain:native_template_manifest(), manifest exactness validator, NativeStencilGenerator enumeration, cartesian-product of metavars, owner leaf filter/signature/c_builder method calls, and total_count calculation. Modify NativeTemplateSupportDomain:native_template_sources() at lines 646-654 to compute manifest first, generate sources from manifest entries, and assert sources match id/family/chunk_class/configuration/signature/extraction/hole ordinals/continuation ordinals/relocation kinds exactly. NativeTemplateSupportDomain:native_template_bank_request() must carry both manifest and sources or reject mismatches before returning. No source generation path may enumerate exact program cells or handwritten assembly.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T006"
+			],
+			"status": "done",
+			"order": 8,
+			"claimedBy": "agent-D408ZG",
+			"evidence": "Implemented manifest-first native source request path. Changed lua/lalin/native_template_sources.lua to construct NativeTemplateSource values through NativeTemplateManifestEntry metadata (generators/configurations/signatures/hole ordinals/continuation ordinals/relocation declarations), added manifest exactness validation and NativeTemplateSupportDomain:native_template_manifest(), and made bank requests carry manifest+sources. Added schema field NativeTemplateBankRequest.manifest in lua/lalin/schema/native.lua, updated tools/gen_lalin_mc_bank.lua empty request, and updated direct manifest tests in tests/code_ir/test_native_bank_generator.lua and tests/code_ir/test_native_c_continuation_branch.lua. Checks run: luajit tests/schema/test_schema_native.lua; luajit tests/run.lua schema; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-02T19:49:36.062Z"
+		},
+		{
+			"id": "T009",
+			"title": "Generate extern-symbol hole ordinal C stencils",
+			"detail": "Around lines 212-250 replace frame_offset_hole/imm32_hole/imm64_hole marker declarations with NativeHoleOrdinal + NativeExternHoleSymbol helpers that emit unique extern declarations and C expressions referencing those extern symbols. Update continuation_extern to generate function signatures from NativeStencilSignature: always uint8_t *frame plus logical passthrough/operand parameters, not always void(uint8_t *frame). Around lines 337-579 update entry, terminal, binary, float_binary, unary, compare, alias, and const builders to consume manifest entries/configuration/signature, to choose operand/output location variants (continuation arg, frame slot, constant-pool/immediate), to emit extern hole symbols for frame offsets/immediates/frame size, and to declare all successor continuation symbols by ordinal. Do not introduce register-fragment or assembly source variants.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T008"
+			],
+			"status": "done",
+			"order": 9,
+			"claimedBy": "agent-D408ZG",
+			"evidence": "Implemented extern-symbol hole ordinal source generation. lua/lalin/native_template_sources.lua no longer emits magic marker constants; frame/immediate holes use unique extern C symbols, declared NativeHoleOrdinal metadata, and C address expressions. Added hole extern declarations, ordinal-backed source construction, and continuation extern emission from NativeStencilSignature params. Updated tools/gen_lalin_mc_bank.lua readelf-backed extractor to recognize declared hole ordinal relocations (R_X86_64_32/R_X86_64_32S/R_X86_64_64/PC32), convert them into NativeHoleLayout patch sites, and keep hole relocations out of runtime relocation application. Checks run: rg marker constants in lua/lalin/native_template_sources.lua (none); luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/schema/test_schema_native.lua.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-02T19:54:29.238Z"
+		},
+		{
+			"id": "T010",
+			"title": "Add control, ABI adapter, and constant-pool source builders",
+			"detail": "After the existing scalar builders near lines 551-645 add generators/builders for FrameEntry, PublicAbiAdapter, TerminalContinuation void/nonvoid/sret, EdgeCopy/ParallelCopy, ConstantLoad, ControlOp jump/branch/switch/trap/unreachable, and CallOp under the closed C definition classes. Public ABI adapters must use NativeAbiProjection and a frame-size patch hole for alloca. Constants that do not fit explicit immediate formulas must become NativeConstantPoolEntry references. Switch builders must declare one continuation symbol per case plus default; branch builders declare then/else symbols. All generated C must follow UB rules: -O3 safe, fno-strict-aliasing assumptions, unsigned wrapping for signed integer overflow, masked shifts.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T008",
+				"T009"
+			],
+			"status": "skipped",
+			"order": 10,
+			"claimedBy": "agent-D408ZG",
+			"blockedReason": "Cannot honestly implement the requested full control/ABI-adapter/constant-pool source builder set from lua/lalin/native_template_sources.lua alone without new design/modeling decisions. The architecture doc closes the high-level classes, but the current ASDL/support-domain still lacks concrete finite configuration values for public ABI adapter variants (including void/nonvoid/sret C signatures and frame-size alloca binding), switch case arity/default manifests, call target/runtime-symbol projection capabilities, and constant-pool entry value construction/relocation contracts for non-immediate constants. Implementing those now would require ad hoc central classification or optional-soup source builders ahead of the owner leaf/value/control planning tasks (e.g. T014+ control/call lowering), which would violate the ASDL-first/no-manual-dispatch doctrine. No T010 code changes were made after claiming.",
+			"skipReason": "Obsolete as a single broad task. The blocker was valid: control, ABI adapters, calls, and constant pools require different owner facts and dependencies. Split into T010A-T010D with explicit dependencies instead of forcing ad hoc source builders in one file.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-02T20:21:50.996Z"
+		},
+		{
+			"id": "T011",
+			"title": "Implement internal ELF object parser",
+			"detail": "Create a new module loaded by tools/gen_lalin_mc_bank.lua. Define leaf methods that parse object bytes into the LalinNativeObject ASDL added in schema: ELF64 little-endian header, section headers, string tables, symbol tables, SHT_RELA/SHT_REL relocations, section flags/alignment, raw section bytes, and x64 relocation names R_X86_64_PC32, R_X86_64_PLT32, R_X86_64_64. Return typed NativeTemplateBuildReject values for unsupported class/endian/machine/relocation/table corruption. No readelf text or Lua string-table facts should be the source of truth after this file lands.",
+			"file": "lua/lalin/native_object.lua",
+			"after": [
+				"T003"
+			],
+			"status": "done",
+			"order": 11,
+			"claimedBy": "agent-3WDW9F",
+			"evidence": "Implemented/finished internal ELF parser integration: `lua/lalin/native_object.lua` parses ELF64 little-endian x64 object bytes into NativeObjectFile sections/symbols/relocations with typed rejects; `tools/gen_lalin_mc_bank.lua` now loads that parser and uses parsed object ASDL as authority for entry text, symbols, relocations, hole ordinals (no readelf/marker parser references remain); schema/test coverage added for signed 32-bit object relocations. Checks passed: `luajit tests/schema/test_schema_native.lua`, `luajit tests/run.lua schema`, `luajit tests/code_ir/test_native_bank_generator.lua`, `luajit tests/code_ir/test_native_template_sources.lua`, `luajit tests/code_ir/test_native_c_continuation_branch.lua`, `luajit tests/code_ir/test_native_code_graph_scalar.lua`; `rg \"readelf|READELF|parse_sections|parse_symbols|parse_relocations|marker\" tools/gen_lalin_mc_bank.lua lua/lalin/native_object.lua` produced no matches.",
+			"notes": [
+				"Released from stale claimed state after aborted worker; no implementation evidence was reported."
+			],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-03T12:14:07.369Z"
+		},
+		{
+			"id": "T012",
+			"title": "Replace readelf extraction with object verifier",
+			"detail": "REOPENED after review. Fix object verifier so object parser ASDL is authoritative and no readelf/marker path remains. Remove ad hoc Lua relocation tables/string dispatch in verifier; behavior should be on typed NativeObjectRelocationKind/relocation ASDL leaves or typed verifier facts. Runtime-symbol relocation handling must reject/represent unsupported relocation forms; do not accept R_X86_64_64 and later patch it as rel32. Manifest/source validation must compare actual declared hole ordinal identities/order, continuation ordinals, and relocation kinds, and reject observed undeclared relocation kinds. Also reject target/object mismatches (e.g. non-x64 target with x64 ELF) with typed NativeTemplateBuildReject values.",
+			"file": "tools/gen_lalin_mc_bank.lua",
+			"after": [
+				"T008",
+				"T009",
+				"T011"
+			],
+			"status": "done",
+			"order": 12,
+			"claimedBy": "agent-WR76GP",
+			"evidence": "Fixed review issues in tools/gen_lalin_mc_bank.lua. The verifier now consumes NativeObjectRelocation ASDL directly instead of converting to ad hoc relocation tables; relocation behavior is on NativeObjectRelocationKind leaf methods. Runtime-symbol relocations accept only PC-relative x64 relocations until schema carries explicit runtime relocation formulas, so R_X86_64_64 runtime symbols are rejected instead of later patched as rel32. Manifest/source validation now compares actual declared hole ordinal, continuation ordinal, and relocation-kind lists rather than counts only. compile_source rejects non-ELF64/x64/little-endian/64-bit request targets before parsing x64 object output. Observed template relocation kinds are checked against source.declared_relocation_kinds. Checks run: `luajit tests/code_ir/test_native_bank_generator.lua`; `luajit tests/code_ir/test_native_template_sources.lua`; `luajit tests/code_ir/test_native_c_continuation_branch.lua`.",
+			"notes": [
+				"Review found critical issues: runtime-symbol relocation kinds accepted too broadly; typed relocations converted back into ad hoc string tables; manifest validation compares counts only; target/object mismatch not rejected.",
+				"Reviewer critical: tools/gen_lalin_mc_bank.lua accepted runtime-symbol relocations for any object relocation type but install patches them as 4-byte PC-relative rel32; converted NativeObjectRelocation back to ad hoc string tables; manifest validation only checked counts."
+			],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T07:24:48.190Z"
+		},
+		{
+			"id": "T013",
+			"title": "Repair copy-plan install for node-scoped holes and constants",
+			"detail": "REOPENED after review. Fix install/copy-plan support for node-scoped holes and constants. Duplicate binding detection must treat NativePatchBindingHoleId and NativePatchBindingHoleOrdinal aliases for the same physical hole as duplicates within a node/instance, not silently choose the first. Runtime-symbol relocation patching must respect typed relocation/formula from T012 and reject unsupported absolute/rel32 forms honestly. Constant-pool layout offsets are executable-global; per-node patch application must not add node_offset when computing constant-pool entry addresses. Add focused tests or evidence for duplicate mixed hole-id/ordinal bindings and per-node constant-pool patch coordinates.",
+			"file": "lua/lalin/native_mc.lua",
+			"after": [
+				"T003",
+				"T004",
+				"T007",
+				"T012"
+			],
+			"status": "done",
+			"order": 13,
+			"claimedBy": "agent-WR76GP",
+			"evidence": "Fixed review issues in lua/lalin/native_mc.lua and added focused coverage in tests/code_ir/test_native_mc_import.lua. Duplicate binding detection now canonicalizes binding targets through the node/instance template hole, so a NativePatchBindingHoleId and corresponding NativePatchBindingHoleOrdinal for the same physical hole are rejected as duplicates. NativePatchApplyInput now uses executable-global base_address and rewrites node-local hole offsets into executable-global offsets, while preserving node_address separately; constant-pool patch coordinates therefore use global constant-pool layout offsets correctly for non-entry nodes. Runtime-symbol absolute relocation bug is prevented by T012 rejecting non-PC-relative runtime symbol object relocations. Added tests for mixed hole-id/ordinal duplicate bindings and a two-node constant-pool patch that verifies the non-entry node is patched to the executable-global pool address. Checks run: `luajit tests/code_ir/test_native_mc_import.lua`; `luajit tests/code_ir/test_native_c_continuation_branch.lua`; `luajit tests/code_ir/test_native_code_graph_scalar.lua`.",
+			"notes": [
+				"Review found critical issues: mixed hole-id/hole-ordinal duplicate bindings are not detected; runtime-symbol relocations patched as rel32 regardless of object relocation kind; constant-pool coordinates are wrong for non-entry nodes due base_address+node_offset with global pool offsets.",
+				"Reviewer critical: duplicate binding detection misses hole-id vs hole-ordinal aliases; constant-pool offsets are executable-global but per-node patch base uses node base, producing wrong addresses for non-entry nodes."
+			],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T07:26:49.343Z"
+		},
+		{
+			"id": "T014",
+			"title": "Implement ABI projection methods for Code types and signatures",
+			"detail": "Around lines 175-225 add CodeType leaf methods select_native_abi_protocol/native_abi_projection for bool/int/index/pointer/codeptr/imported funcptr, f32/f64, descriptor types (slice/view/bytespan/closure), by-ref aggregates (array/vector/named/imported C aggregate), and invalid CodeTyVoid in params/results. Add CodeSig method to enforce #results == 0 or 1 and reject #results > 1 before native lowering. Add sret projection for one aggregate result. Do not inspect class names in a central dispatcher; install methods on concrete CodeType/CodeSig leaves. Update CodeCallTarget leaves to select direct/extern/indirect/closure call projections.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T002",
+				"T006",
+				"T007"
+			],
+			"status": "done",
+			"order": 14,
+			"claimedBy": "agent-3WDW9F",
+			"evidence": "Implemented Code native ABI projection methods in `lua/lalin/native_code_methods.lua`: CodeType leaf methods now project bool/int/index/pointer/codeptr/imported funcptr/f32/f64 scalars, slice/view/bytespan/closure descriptors, handle/lease delegates, and by-ref named/array/vector/imported-C aggregates; CodeSig produces NativeAbiFunctionProjection, rejects >1 results, inserts sret pointer params for aggregate results, and exposes select_native_abi_protocol; CodeCallTarget leaves select the supplied CodeSig ABI projection. CodeModule native planning now validates its declared CodeSig before lowering. Added focused ABI projection assertions in `tests/code_ir/test_native_code_graph_scalar.lua`. Checks passed: `luajit tests/code_ir/test_native_code_graph_scalar.lua`, `luajit tests/schema/test_schema_native.lua`, `luajit tests/run.lua schema`, `luajit tests/code_ir/test_native_mc_import.lua`, `luajit tests/code_ir/test_native_template_sources.lua`, `luajit tests/code_ir/test_native_bank_generator.lua`, `luajit tests/code_ir/test_native_c_continuation_branch.lua`.",
+			"notes": [
+				"Reviewer warning: implementation direction ok, but add zero-result/void CodeSig test coverage via T014T."
+			],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-03T12:37:37.418Z"
+		},
+		{
+			"id": "T015",
+			"title": "Replace proof-slice frame layout with deterministic planner",
+			"detail": "At lines 11-15 remove fixed FRAME_PARAM_STRIDE, FRAME_RESULT_OFFSET, and FRAME_BYTES assumptions. Replace allocation helpers at lines 33-111 with deterministic NativeFrameLayout planning in the architecture order: ABI params, hidden sret/result pointer, canonical result slot, block params in reverse-postorder, locals, instruction temps, kernel/stencil state placeholders, call scratch. Add NativeFrameStackLimit enforcement from support domain/target; if frame size exceeds the limit, hard-error/typed reject for unsupported domain, no heap fallback. Add NativeValueContinuationArgLocation planning with K_int/K_float budgets and spill-all K=0 default. Store placements as ASDL entries, not side tables. Public ABI adapters own frame allocation; graph entry remains void(uint8_t *frame).",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T004",
+				"T014"
+			],
+			"status": "done",
+			"order": 15,
+			"claimedBy": "agent-QT9HCK",
+			"evidence": "Implemented deterministic frame layout planning in lua/lalin/native_code_methods.lua: target-derived 16-byte x64 SysV frame alignment, ordered ABI param slots, reserved canonical return slot before instruction temps, scalar pre-scan for return value, entry extraction frame stack limit enforcement, and alias-to-return copy through reserved slot. Focused checks passed: luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T07:33:40.272Z"
+		},
+		{
+			"id": "T016",
+			"title": "Lower Code scalar/data instructions with value locations",
+			"detail": "Around lines 272-351 update CodeInstConst, Alias, Binary, FloatBinary, Compare to select manifest configurations using operand/output locations and to bind node-scoped hole ordinals. Add missing leaf methods for CodeInstUnary, Cast, Select, AddrOf, GlobalRef, PtrOffset, Load, Store, Aggregate, Array, View/Slice/ByteSpan descriptor ops, VariantCtor/Tag/Payload, Atomic* and Fence. Literal/null/undef constants must produce NativePatchCoordinate or NativeConstantPoolEntry, not family axes. Memory and descriptor operations must use patch coordinates for static offsets/strides and runtime/frame params for dynamic bases; no generic dispatch table.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T009",
+				"T010B",
+				"T015"
+			],
+			"status": "skipped",
+			"order": 16,
+			"claimedBy": "agent-2R8WZ6",
+			"blockedReason": "Partial T016 progress only: lua/lalin/native_code_methods.lua now materializes generated template bindings as node/instance-scoped NativePatchBindingHoleOrdinal targets (falling back to hole ids only for templates lacking ordinals), and adds real CodeInstAlias/CodeInstUnary lowering plus CodeConstNull coordinate lowering. Verified with focused native scalar/code checks and custom unary/alias ordinal smoke. Cannot honestly complete the full T016 scope because the current closed source/manifest vocabulary still lacks concrete source builders/configuration contracts for CodeInstCast, Select, AddrOf/GlobalRef/PtrOffset, Load/Store, Aggregate/Array, View/Slice/ByteSpan descriptor ops, VariantCtor/Tag/Payload, Atomic* and Fence. Implementing those leaf methods now would select non-existent bank families or require ad hoc unsupported placeholders, which violates the binding architecture.",
+			"skipReason": "Superseded by split unblock tasks T016S1/T016S2/T016S3/T016R. Partial progress from T016 is preserved in lua/lalin/native_code_methods.lua (ordinal bindings, Alias/Unary lowering, CodeConstNull coordinate), but the original task was too broad and depended on missing source-builder families.",
+			"notes": [
+				"agent-C2BH4H claimed this via edit_plan_next after T010B, but current user delegation is scoped to sequential source-builder tasks T010B/T010C/T010D in lua/lalin/native_template_sources.lua. Returning T016 to todo without implementation."
+			],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T08:35:30.132Z"
+		},
+		{
+			"id": "T017",
+			"title": "Lower Code control, edge copies, calls, and returns",
+			"detail": "Replace append_node linear next-edge insertion at lines 119-131 with explicit block-entry node identities and symbol-bearing control edge creation. Around lines 265-389 implement CodeBlock graph construction for all blocks, block params as frame slots, edge-copy chains as explicit NativeTemplateNode values, and terminator leaf methods for CodeTermJump, Branch, Switch, VariantSwitch, Return, Trap, Unreachable. Return supports zero values (void terminal), one scalar/descriptor/byref result copied to canonical result/sret slot, and rejects >1 as invalid Code before native lowering. Add CodeInstCall lowering for direct internal, extern runtime symbol, indirect code pointer, and closure calls using NativeAbiProjection and call-return continuation edges. Branch/switch templates must specialize on successor shape and condition/key location, not destination arg count.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T010B",
+				"T010C",
+				"T010D",
+				"T013",
+				"T014",
+				"T015",
+				"T016R4"
+			],
+			"status": "blocked",
+			"order": 17,
+			"claimedBy": "agent-T6S302",
+			"blockedReason": "Blocked before implementation. T017 requires CodeInstCall lowering for real CodeCallDirect/Extern/Indirect/Closure targets, but current call source families in lua/lalin/native_template_sources.lua use synthetic placeholder NativeCodeInstCallAxis identities (e.g. CodeCallDirect(CodeFuncId('native.call.direct.'..token)), CodeCallIndirect(CodeValueId('native.call.indirect.'..token)), CodeCallExtern(CodeExternId(symbol.id.text)) plus synthetic CodeSigId). NativeCodeInstAxis equality is strict, so real CodeCallTarget/CodeSigId values from Code methods would select non-existent bank families unless the lowerer lies about semantic axes. This is the same ASDL-first source-axis issue fixed for aggregate/variant/address, now for call/control. Need a precise layout-parametric/generic call-axis ASDL/source repair (target kind + ABI projection facts only; real function/extern/value identities stay in patch coordinates/address plans) before honest T017 call lowering can proceed. No T017 code changes were made after claiming.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T14:08:39.045Z"
+		},
+		{
+			"id": "T018",
+			"title": "Add Kernel native lowering methods",
+			"detail": "Replace the empty module at lines 1-10 with leaf methods required by the architecture: KernelPlanned:plan_native_copy, KernelBody:select_native_template_graph, KernelDomainFlow:select_native_domain_template, KernelExprValue/Algebra/LaneLoad/KernelValue:select_native_expr_template, KernelEffectStore/Scan/Partition/Copy/ScatterReduce/Fold/Call:append_native_effect_template, KernelResultVoid/Value/Find/Reduction/ClosedForm/OriginalControl:append_native_result_template, KernelProof*:require_native_proof. Methods must compose frame/continuation graph nodes using NativeFrameLayout and NativeContinuationEdge, not mirror Kernel semantics in LalinNative axes or return placeholder unsupported values.",
+			"file": "lua/lalin/native_kernel_methods.lua",
+			"after": [
+				"T004",
+				"T006",
+				"T010B",
+				"T010C",
+				"T013",
+				"T015"
+			],
+			"status": "skipped",
+			"order": 18,
+			"claimedBy": "agent-WPZC7Y",
+			"blockedReason": "Cannot implement honest Kernel native lowering under the closed architecture in the current code state. lua/lalin/native_kernel_methods.lua is empty, but the bank/source-generation path currently has no NativeChunkKernelOp / NativeRoleKernel* stencil source builders or manifest entries (rg over lua/lalin/native_template_sources.lua finds no kernel generation). Any KernelPlanned/KernelBody/KernelExpr/KernelEffect/KernelResult methods added now would have to select non-existent bank families, return ad hoc unsupported placeholders, or mirror Kernel semantics in LalinNative axes without generated C stencils. That would violate the task's no-placeholder/no-native-semantic-mirror constraints. T018 needs preceding ASDL/source-manifest work defining concrete kernel template families, signatures, hole ordinals, and C stencil builders before leaf lowering methods can be implemented.",
+			"skipReason": "Superseded by split unblock tasks T018S/T018R. The blocked task correctly identified missing KernelOp source-manifest/C-stencil contracts; implement those first, then kernel lowering.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T08:35:30.132Z"
+		},
+		{
+			"id": "T019",
+			"title": "Add Stencil native lowering methods",
+			"detail": "Keep StencilInstance:plan_native_copy at lines 8-10 but make it pass schedule/abi/proofs through a typed input if schema requires it. Add StencilDescriptor:select_native_template_graph and leaf methods on StencilProducerShape, StencilAccessLayout, StencilPointExpr, StencilBody, StencilSink, StencilStoreSemantics, StencilReductionSemantics, StencilReduceScope, StencilReducer, and StencilSchedule. Implement recursive graph composition: producers own loop skeletons, access layouts own address/descriptor fragments, point exprs own scalar computations, sinks own store/reduce/scan/scatter state machines, schedule owns finite control shape axes. Dynamic bounds/strides/descriptors stay ABI params or frame slots; static offsets/strides are patch coordinates; no native semantic mirror or exact-cell Cartesian enumeration.",
+			"file": "lua/lalin/native_stencil_methods.lua",
+			"after": [
+				"T004",
+				"T006",
+				"T010B",
+				"T010C",
+				"T013",
+				"T015"
+			],
+			"status": "skipped",
+			"order": 19,
+			"claimedBy": "agent-WPZC7Y",
+			"blockedReason": "Cannot implement honest Stencil native lowering under the current closed architecture. lua/lalin/native_stencil_methods.lua only delegates StencilInstance to StencilDescriptor, but the generated bank/source path has no NativeChunkStencilOp / NativeRoleStencil* C stencil builders or manifest entries (rg over lua/lalin/native_template_sources.lua finds no stencil producer/access/point/sink/schedule generation beyond generic location-class helpers). Adding StencilDescriptor/producer/access/point/body/sink/schedule methods now would have to select non-existent bank families, invent placeholder unsupported behavior, or encode a native semantic mirror/exact-cell enumeration. That violates the task constraints. T019 needs prior ASDL/source-manifest work defining concrete stencil template families, signatures, hole ordinals, ABI/frame contracts, and generated C stencils before leaf methods can compose a real NativeTemplateGraph.",
+			"skipReason": "Superseded by split unblock tasks T019S/T019R. The blocked task correctly identified missing StencilOp source-manifest/C-stencil contracts; implement those first, then stencil lowering.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T08:35:30.132Z"
+		},
+		{
+			"id": "T020",
+			"title": "Update native backend public boundaries",
+			"detail": "Around lines 42-55 update request construction to require a typed NativeTemplateBank whose manifest matches the target support domain. Add public helpers for importing generated NativeEmbeddedTemplateBank with manifest total_count, for compiling with explicit NativeAbiProjection/NativeRuntime symbols, and for clear no-bank errors. Do not add fallback to LuaJIT/bytecode/native residual paths. Ensure loading order includes the new lalin.native_object only in tooling/offline paths, not runtime compile.",
+			"file": "lua/lalin/native_backend.lua",
+			"after": [
+				"T007",
+				"T013",
+				"T014"
+			],
+			"status": "done",
+			"order": 20,
+			"claimedBy": "agent-QT9HCK",
+			"evidence": "Updated native backend public boundaries and bank schema. Changed lua/lalin/schema/native.lua so NativeTemplateBank and NativeEmbeddedTemplateBank carry NativeTemplateSourceManifest. Updated lua/lalin/native_mc.lua import and tools/gen_lalin_mc_bank.lua emission to preserve manifests. Updated lua/lalin/native_backend.lua to require typed NativeTemplateBank/NativeEmbeddedTemplateBank, validate manifest total_count against entries, validate target and optional expected manifest, expose bank/embedded manifest helpers, runtime(symbols), and runtime-symbol compile helpers; no runtime native_object/readelf/TCC/fallback dependency was added. Updated tests/schema/test_schema_native.lua, tests/code_ir/test_native_mc_import.lua, and target/lalin_binary/lalin_native_template_bank.lua constructors. Checks passed: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/run.lua schema. rg native_object/readelf/TCC/fallback/residual lua/lalin/native_backend.lua found no matches.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T07:37:18.020Z"
+		},
+		{
+			"id": "T021",
+			"title": "Preserve native public API no-fallback contract",
+			"detail": "Around lines 647-735 keep compile() defaulting to compile_native unless luajit/bytecode is explicit, but update error text and option rejection to use NativeTemplateBank/NativeEmbeddedTemplateBank, NativeAbiProjection, and manifest vocabulary. Around lines 823-889 ensure prepare_native_compile supplies explicit target/runtime/bank and never invokes C compilation/readelf/tooling. Remove or reject residual/mc_bank compatibility shims in native paths; LuaJIT bytecode remains explicit via opts.luajit/opts.bytecode.",
+			"file": "lua/lalin/init.lua",
+			"after": [
+				"T020"
+			],
+			"status": "done",
+			"order": 21,
+			"claimedBy": "agent-QT9HCK",
+			"evidence": "Updated lua/lalin/init.lua native public API boundary: compile() still defaults to compile_native unless luajit/bytecode is explicit; LuaJIT APIs reject native banks with NativeTemplateBank/NativeEmbeddedTemplateBank manifest wording; compile_native rejects removed residual/mc_bank/build_mc_bank/TCC/native_compile_c options; native bank resolution validates supplied NativeTemplateBank/NativeEmbeddedTemplateBank through native_backend with optional NativeTemplateSourceManifest; runtime is explicit via opts.native_runtime/opts.runtime or typed runtime_symbols/native_runtime_symbols and never invokes tooling. Checks passed: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_luajit_backend_non_native.lua.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T07:38:50.920Z"
+		},
+		{
+			"id": "T022",
+			"title": "Update native binary build boundary",
+			"detail": "At lines 8-12 keep generated paths lalin_native_template_bank.c/.h/.lua. At lines 31-33 add dependencies for any manifest generator file created by the implementation and ensure the rule invokes tools/gen_lalin_mc_bank.lua with a NativeTemplateBankRequest manifest when the default bank should be non-empty; otherwise document/encode empty bank as an explicit empty manifest. Do not restore lalin_embedded_mc_bank names. Do not add runtime C compilation, TCC, readelf, or fallback rules.",
+			"file": "Makefile",
+			"after": [
+				"T008",
+				"T012"
+			],
+			"status": "done",
+			"order": 22,
+			"claimedBy": "agent-QT9HCK",
+			"evidence": "Updated Makefile native binary bank rule to keep lalin_native_template_bank.c/.h/.lua names, add LALIN_NATIVE_BANK_MANIFEST dependency, and invoke tools/gen_lalin_mc_bank.lua with tools/lalin_empty_native_bank_manifest.lua. Added tools/lalin_empty_native_bank_manifest.lua returning an explicit empty NativeTemplateBankRequest with NativeTemplateSourceManifest total_count=0; regenerated target/lalin_binary/lalin_native_template_bank.c/.h/.lua. Checks passed: make target/lalin_binary/lalin_native_template_bank.lua; LuaJIT dofile smoke asserting embedded empty bank manifest.total_count==0 and #entries==0; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_template_sources.lua. Also ran luajit tests/code_ir/test_lalin_binary.lua, which still fails in its known stale embedded-bank assertion from the workflow context, not from restoring old MC names.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T07:40:03.913Z"
+		},
+		{
+			"id": "T023",
+			"title": "Keep native bank C embedding debug-only",
+			"detail": "Lines 7 and 28 currently install only the BC bank. Decide explicitly whether the generated native raw C bank is linked only for debug/binary inspection or whether a Lua ASDL bridge is packaged separately. If adding native bank visibility, expose only raw count/metadata names consistent with lalin_native_template_bank, not old lalin.embedded_mc_bank registry keys or runtime install hooks. Tests must not require an MC residual bank count.",
+			"file": "src/lalin.c",
+			"after": [
+				"T022"
+			],
+			"status": "done",
+			"order": 23,
+			"claimedBy": "agent-QT9HCK",
+			"evidence": "Updated src/lalin.c to include lalin_native_template_bank.h and install only debug/inspection registry metadata for the raw native C bank under lalin.native_template_bank.raw_id/raw_count/manifest_total_count. The C path still installs only the BC bank for runtime module loading; no NativeTemplateBank runtime install hook and no old lalin.embedded_mc_bank registry key were added. Checks passed: make lalin-bin; target/lalin -e smoke asserting raw native metadata exists, old lalin.embedded_mc_bank.count is nil, and manifest_total_count equals raw_count; luajit tests/code_ir/test_luajit_backend_non_native.lua. rg embedded_mc/residual/mc_bank src/lalin.c found no matches.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T07:41:17.411Z"
+		},
+		{
+			"id": "T024",
+			"title": "Test manifest cardinality and extern holes",
+			"detail": "Rewrite assertions around lines 58-145 to assert NativeTemplateSourceManifest.total_count for host_scalar_i32 and host_scalar profiles, exact manifest/source matching, generator/configuration/signature identity, declared hole ordinals, continuation ordinals, relocation kinds, K_int/K_float spill-all defaults, and absence of marker magic constants in new sources. Update C text checks to look for extern hole symbols and signature-derived continuation prototypes, not magic frame markers. Keep forbidden-term checks for residual/LuaJIT/LJMC/exact-cell wording.",
+			"file": "tests/code_ir/test_native_template_sources.lua",
+			"after": [
+				"T008",
+				"T009",
+				"T010B",
+				"T010C",
+				"T010D"
+			],
+			"status": "done",
+			"order": 24,
+			"claimedBy": "agent-WPZC7Y",
+			"evidence": "Updated tests/code_ir/test_native_template_sources.lua with exact manifest/source closure checks for host_scalar_i32 (39) and host_scalar (378), spill-all K_int/K_float assertions, generator/configuration/signature identity checks, dense extern hole ordinal checks, continuation/relocation declaration checks, marker-hole constant rejection, ABI/call manifest checks, and embedded/imported manifest cardinality assertions. Focused checks passed: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T08:30:19.488Z"
+		},
+		{
+			"id": "T025",
+			"title": "Test bank generator object verification",
+			"detail": "Extend the generator smoke test to build a manifest source that uses extern-symbol hole ordinals, then assert generated Lua reconstructs NativeRelocationHoleOrdinal and concrete NativeHoleLayout offsets without marker scanning. Add malformed source cases for missing hole ordinal relocation, duplicate hole ordinal, extra unresolved symbol, missing continuation relocation, unsupported relocation kind, and constant-pool relocation. Assert readelf is not required for parser correctness (for example READELF=/bin/false still succeeds when gcc produces the object).",
+			"file": "tests/code_ir/test_native_bank_generator.lua",
+			"after": [
+				"T011",
+				"T012"
+			],
+			"status": "done",
+			"order": 25,
+			"claimedBy": "agent-YAYMRH",
+			"evidence": "Extended tests/code_ir/test_native_bank_generator.lua with object-parser verification for extern-symbol hole ordinals, READELF=/bin/false success, emitted NativeRelocationHoleOrdinal/NativeHoleLayout assertions, and reject cases for missing/duplicate hole ordinals, extra unresolved symbols, missing continuation relocation, unsupported continuation relocation, and constant-pool-like unresolved relocation. Updated tools/gen_lalin_mc_bank.lua to retain typed NativeRelocationHoleOrdinal relocations and reject undeclared extern object symbols as NativeBuildRejectExtraUnresolvedSymbol. Checks passed: luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T07:55:55.291Z"
+		},
+		{
+			"id": "T026",
+			"title": "Test install per-node bindings and constant pools",
+			"detail": "Update manual embedded bank/import/install tests to construct two graph nodes using the same compiled template with different node-scoped patch bindings and assert both execute/patch independently. Add cases for NativeRelocationConstantPool, runtime symbol relocation with supplied address, missing runtime symbol address reject, branch/loop/call-return symbol-bearing edges, and duplicate binding only within the same node/hole scope. Existing global duplicate-hole rejection expectations must be removed or changed.",
+			"file": "tests/code_ir/test_native_mc_import.lua",
+			"after": [
+				"T013"
+			],
+			"status": "done",
+			"order": 26,
+			"claimedBy": "agent-YAYMRH",
+			"evidence": "Extended tests/code_ir/test_native_mc_import.lua with execution assertions for two graph nodes sharing the same template but different node-scoped bindings; explicit duplicate binding rejection only within same node/hole scope including hole-id vs hole-ordinal; NativeRelocationConstantPool rel32 load execution; runtime symbol relocation success with supplied address and rejection with missing address; symbol-bearing loop, runtime-call-return, and conditional control edge continuation resolution. Checks passed: luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_bank_generator.lua.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T07:58:09.485Z"
+		},
+		{
+			"id": "T027",
+			"title": "Test Code ABI, frame layout, and value planning",
+			"detail": "Update graph assertions around lines 129-177 to require NativeAbiFunctionProjection, deterministic NativeFrameLayout category ordering, frame size alignment, NativeFrameStackLimit compliance, node-scoped patch bindings, and spill-all K=0 value locations. Add zero-param, one-param, two-param mixed scalar, void-return, bool/int/index/pointer/f32/f64 cases, plus descriptor/aggregate/address representation smoke now that NativeValueRepresentation exists. Remove assumptions that entry C always takes two same-typed params or that result lives at fixed offset 32. Keep scalar execution checks but call via typed NativeCallProtocol projection rather than argument-count inference.",
+			"file": "tests/code_ir/test_native_code_graph_scalar.lua",
+			"after": [
+				"T014",
+				"T015",
+				"T016R4",
+				"T017"
+			],
+			"status": "todo",
+			"order": 27,
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T13:26:57.663Z"
+		},
+		{
+			"id": "T028",
+			"title": "Add Code control and call lowering tests",
+			"detail": "Create a new focused test file that builds CodeFunc ASDL values with CodeTermJump, CodeTermBranch, CodeTermSwitch, CodeTermVariantSwitch, loops/backedges, CodeTermTrap, CodeTermUnreachable, and CodeInstCall direct/extern/indirect/closure where support exists. Assert graph contains block-entry nodes, explicit edge-copy/parallel-copy nodes, symbol-bearing continuation edges for every successor, call-return edges, and no hidden side tables. Execute at least branch/jump/switch scalar cases against generated bank; assert unsupported runtime helper paths reject with typed runtime-symbol/install rejects, not fallback.",
+			"file": "tests/code_ir/test_native_code_control.lua",
+			"after": [
+				"T017"
+			],
+			"status": "todo",
+			"order": 28,
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T09:45:41.810Z"
+		},
+		{
+			"id": "T029",
+			"title": "Add Kernel and Stencil lowering tests",
+			"detail": "Create focused tests that construct small KernelPlanned and StencilInstance ASDL values and call plan_native_copy/select_native_template_graph. Assert producer/domain loop skeleton nodes, access/layout/address nodes, point expr scalar nodes, sink/effect nodes, reduction/scan state frame slots, schedule axes only when source/control shape changes, and typed proof/runtime helper requirements. Tests should validate graph shape and selected manifest families; execute only minimal scalar cases that have complete source generators.",
+			"file": "tests/code_ir/test_native_kernel_stencil.lua",
+			"after": [
+				"T018R",
+				"T019R"
+			],
+			"status": "todo",
+			"order": 29,
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T08:35:30.132Z"
+		},
+		{
+			"id": "T030",
+			"title": "Update lalin binary smoke for native bank names",
+			"detail": "Lines 13-18 must stop expecting lalin_embedded_mc_bank.c/.h and registry key lalin.embedded_mc_bank.count. Assert target/lalin_binary/lalin_native_template_bank.c/.h/.lua exist after make lalin-bin. Lines 20-70 must remove residual == 'mc', mc_bank, and residual-style vector-loop smoke. Replace with: target/lalin starts; LuaJIT bytecode explicit path still works; compile_native without a supplied NativeTemplateBank errors clearly; if a generated non-empty NativeTemplateBank manifest is provided by the test, a minimal scalar native compile runs. No compatibility shims for residual/mc_bank.",
+			"file": "tests/code_ir/test_lalin_binary.lua",
+			"after": [
+				"T021",
+				"T022",
+				"T023"
+			],
+			"status": "done",
+			"order": 30,
+			"claimedBy": "agent-YAYMRH",
+			"evidence": "Rewrote tests/code_ir/test_lalin_binary.lua to assert lalin_native_template_bank.c/.h/.lua artifacts, no stale embedded MC registry shim, target/lalin startup, explicit LuaJIT bytecode compile path, clear compile_native no-bank error, and a supplied non-empty generated native scalar bank executing an i32 add through the native backend. Updated lua/lalin/init.lua no-bank error to avoid fallback/residual wording. Checks passed: luajit tests/code_ir/test_lalin_binary.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_bank_generator.lua.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T08:00:18.019Z"
+		},
+		{
+			"id": "T031",
+			"title": "Regenerate checked-in native bank artifacts",
+			"detail": "After source/generator changes, regenerate target/lalin_binary/lalin_native_template_bank.lua/.c/.h using the Makefile rule. The generated Lua bridge must serialize new NativeEmbeddedTemplateBank fields (manifest/signature/extraction/hole ordinals/constant pool) and must not mention residual, MC exact-cell bank, marker holes, or runtime install hooks. If the repository keeps an empty default bank, ensure it is an explicit empty NativeTemplateSourceManifest with total_count=0.",
+			"file": "target/lalin_binary/lalin_native_template_bank.lua",
+			"after": [
+				"T012",
+				"T022"
+			],
+			"status": "done",
+			"order": 31,
+			"claimedBy": "agent-YAYMRH",
+			"evidence": "Regenerated/verified target/lalin_binary/lalin_native_template_bank.c/.h/.lua via Makefile rule after generator changes. Verified generated Lua bridge constructs NativeEmbeddedTemplateBank with explicit NativeTemplateSourceManifest total_count=0 and no entries. Checked generated artifacts do not mention residual, old MC exact-cell bank names, marker holes, or runtime install hooks; compiled generated C bridge with gcc; loaded Lua bridge with schema smoke. Commands: make target/lalin_binary/lalin_native_template_bank.c target/lalin_binary/lalin_native_template_bank.h target/lalin_binary/lalin_native_template_bank.lua; rg stale terms target/lalin_binary/lalin_native_template_bank.*; gcc -c target/lalin_binary/lalin_native_template_bank.c -I target/lalin_binary; luajit schema load smoke.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T08:00:44.308Z"
+		},
+		{
+			"id": "T032",
+			"title": "Clean stale backend docs",
+			"detail": "Replace lines 139-161. Describe the fast native direction as residualless C-stencil copy-patch: LalinCode/LalinKernel/LalinStencil leaf methods generate NativeTemplateSource C stencils, offline bank build, runtime copy/patch/install. Remove 'native residual materialization', 'TCC-compiled C residuals', 'residual C calls', 'residual_mc', 'optional TCC residual wrappers', and 'semantic fallback'. Keep ASDL-first backend decision guidance and point to docs/RESIDUAL_NATIVE_ARCHITECTURE.md as binding despite filename.",
+			"file": "docs/CONVENTIONS.md",
+			"after": [],
+			"status": "done",
+			"order": 32,
+			"claimedBy": "agent-HJ2Y7B",
+			"evidence": "Updated docs/CONVENTIONS.md Backends section to describe residualless NativeTemplateSource/NativeTemplateBankRequest/Manifest offline C-stencil copy-patch and runtime copy/patch/install only; removed stale native residual/TCC/residual_mc/residual_bc/fallback wording. Focused check: `rg -n \"native residual|TCC|residual C|residual_mc|residual_bc|semantic fallback|mc_bank|build_mc_bank|lalin_embedded_mc_bank\" docs/CONVENTIONS.md` returned no matches.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T07:44:41.643Z"
+		},
+		{
+			"id": "T033",
+			"title": "Rewrite stale architecture native sections",
+			"detail": "Update the materialization diagram around lines 154-224, file-role tables around lines 301-329 and 385-388, and the whole Native Residual Direction / Backend Model sections around lines 455-586 and 742-808. Replace residual_mc/residual_bc/TCC/fallback/build_mc_bank/lalin_embedded_mc_bank wording with corrected native C-stencil copy-patch, NativeTemplateBankRequest/Manifest, tools/gen_lalin_mc_bank.lua generating lalin_native_template_bank.c/.h/.lua, runtime no compiler/tools, and explicit LuaJIT bytecode mode. Do not preserve old terms as aliases.",
+			"file": "docs/ARCHITECTURE.md",
+			"after": [],
+			"status": "done",
+			"order": 33,
+			"claimedBy": "agent-HJ2Y7B",
+			"evidence": "Updated docs/ARCHITECTURE.md materialization diagram/example, backend/file-role tables, Native Copy-Patch Direction, Backend Model, and C/AOT sections to describe NativeTemplateBankRequest/Manifest offline C-stencil generation via tools/gen_lalin_mc_bank.lua, lalin_native_template_bank.c/.h/.lua artifacts, runtime copy/patch/install only, and explicit LuaJIT bytecode mode. Focused check: `rg -n \"residual|fallback|TCC|lalin_embedded_mc_bank|build_mc_bank|mc_bank|residual_bc|residual_mc\" docs/ARCHITECTURE.md` only matches the current tool filename `tools/gen_lalin_mc_bank.lua`.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T07:48:09.833Z"
+		},
+		{
+			"id": "T034",
+			"title": "Rewrite language reference backend options",
+			"detail": "Update lines 1013-1109 to remove residual='mc', residual='bc', mc_bank, build_mc_bank, optional TCC residual glue, and MC copy+compile residual artifact. Document compile() default native requiring a NativeTemplateBank/NativeEmbeddedTemplateBank, explicit compile_luajit/bytecode mode, NativeTemplateBankRequest manifest generation for offline banks, and zero-or-one native result ABI rules. Update C path wording around lines 1120-1123 so residual functions are not mentioned.",
+			"file": "docs/LANGUAGE_REFERENCE.md",
+			"after": [],
+			"status": "done",
+			"order": 34,
+			"claimedBy": "agent-HJ2Y7B",
+			"evidence": "Updated docs/LANGUAGE_REFERENCE.md backend options to describe default native copy-patch requiring NativeTemplateBank/NativeEmbeddedTemplateBank, explicit compile_luajit/bytecode mode, NativeTemplateBankRequest/Manifest offline bank generation, and zero-or-one native ABI result rules; updated C/AOT wording to avoid old runtime artifact terminology. Focused check: `rg -n \"residual|fallback|TCC|mc_bank|build_mc_bank|lalin_embedded_mc_bank|native residual|residual_bc|residual_mc|residual =\" docs/LANGUAGE_REFERENCE.md` only matches current tool filename `tools/gen_lalin_mc_bank.lua`.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T07:49:14.190Z"
+		},
+		{
+			"id": "T035",
+			"title": "Update root guidance for corrected native architecture",
+			"detail": "Replace stale copy+residual/TCC text around lines 18-21 and 79-83 with the corrected backend summary: LalinCode facts lower to native C-stencil copy-patch or explicit LuaJIT bytecode artifact; runtime native does not require Cargo/Rust/Cranelift/TCC/readelf/C compiler but does require a prebuilt NativeTemplateBank. Remove libtcc as a native requirement. If AGENTS.md remains editable project guidance, make the matching stale backend paragraph consistent with docs/RESIDUAL_NATIVE_ARCHITECTURE.md and no fallback/compat shims.",
+			"file": "README.md",
+			"after": [
+				"T032",
+				"T033",
+				"T034"
+			],
+			"status": "done",
+			"order": 35,
+			"claimedBy": "agent-HJ2Y7B",
+			"evidence": "Updated README.md overview/build backend summary to say Lalin lowers to native C-stencil copy-patch or explicit LuaJIT bytecode, default compile is native copy-patch with a prebuilt NativeTemplateBank/NativeEmbeddedTemplateBank, and runtime native compilation does not require Cargo/Rust/Cranelift/TCC/readelf/C compiler. Removed stale copy+residual/libtcc requirement wording. Focused check: `rg -n \"copy\\\\+residual|libtcc|fallback|residual_|residual =|mc_bank|build_mc_bank|lalin_embedded_mc_bank|copy_patch_mc\" README.md` has no matches.",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T07:49:56.719Z"
+		},
+		{
+			"id": "T036",
+			"title": "Run native refactor verification suite",
+			"detail": "After all implementation tasks, run focused checks in order: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_code_control.lua; luajit tests/code_ir/test_native_kernel_stencil.lua; luajit tests/code_ir/test_luajit_backend_non_native.lua; luajit tests/code_ir/test_lalin_binary.lua; then luajit tests/run.lua schema and luajit tests/run.lua code_ir. Record any unsupported leaf as a hard internal error or typed build/install reject, not a placeholder success.",
+			"file": "tests/run.lua",
+			"after": [
+				"T005",
+				"T024",
+				"T025",
+				"T026",
+				"T027",
+				"T028",
+				"T029",
+				"T030",
+				"T031",
+				"T032",
+				"T033",
+				"T034",
+				"T035",
+				"T037"
+			],
+			"status": "todo",
+			"order": 36,
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:00.699Z",
+			"updatedAt": "2026-07-04T09:45:41.810Z"
+		},
+		{
+			"id": "T037",
+			"title": "Update project agent guidance native paragraph",
+			"detail": "Replace the stale backend paragraph around lines 197-205 that says active fast backend is copy_patch_mc/TCC residual glue and fallback bytecode. New wording must defer to docs/RESIDUAL_NATIVE_ARCHITECTURE.md: native backend is residualless C-stencil copy-patch with prebuilt NativeTemplateBank; runtime native compilation does not invoke C/TCC/readelf/fallback; LuaJIT bytecode path is explicit via opts.luajit/bytecode. Keep ASDL doctrine and no compatibility shims unchanged.",
+			"file": "AGENTS.md",
+			"after": [
+				"T032",
+				"T033",
+				"T034"
+			],
+			"status": "done",
+			"order": 37,
+			"claimedBy": "agent-HJ2Y7B",
+			"evidence": "Updated AGENTS.md backend guidance to defer to docs/RESIDUAL_NATIVE_ARCHITECTURE.md, describe residualless C-stencil copy-patch with prebuilt NativeTemplateBank/NativeEmbeddedTemplateBank, state runtime native does not invoke C/TCC/readelf or implicit bytecode recovery, and document explicit LuaJIT bytecode selection. Also updated top-level/backend summary and key docs wording. Focused check: `rg -n \"copy_patch_mc|copy\\\\+residual|falls back|fallback bytecode|libtcc|mc_bank|build_mc_bank|lalin_embedded_mc_bank|residual glue|native residual\" AGENTS.md` returned no matches (excluding the remaining explicit bytecode test filename `test_copy_patch_bc.lua`).",
+			"notes": [],
+			"createdAt": "2026-07-02T17:26:27.730Z",
+			"updatedAt": "2026-07-04T07:50:57.427Z"
+		},
+		{
+			"id": "T010A",
+			"title": "Define concrete source-builder manifest profiles",
+			"detail": "Add closed support-domain manifest profile helpers for the source-builder classes that T010 used to conflate: FrameEntry, TerminalContinuation, EdgeCopy/ParallelCopy, ConstantLoad, ControlOp, PublicAbiAdapter, and CallOp. Use existing NativeStencilGenerator/Metavar/Configuration/Signature ASDL. PublicAbiAdapter profiles come from domain.public_abi_adapters (NativeAbiFunctionProjection). Control profiles include finite jump, bool branch, compare-chain switch/default, trap, unreachable, and call-return shapes using NativeStencilControlShape values and continuation ordinals. Call profiles use typed NativeAbiFunctionProjection/call kind facts, not string modes. Constant profiles use NativeConstantPoolSupport entry kinds. This task only defines manifest/profile construction; it does not emit C source bodies.",
+			"file": "lua/lalin/native_template_support.lua",
+			"after": [
+				"T006",
+				"T014"
+			],
+			"status": "skipped",
+			"order": 38,
+			"skipReason": "Bad orchestration task: it asked the worker to define/design manifest profiles. The design is already closed in docs/RESIDUAL_NATIVE_ARCHITECTURE.md; implementation tasks must consume those decisions directly.",
+			"notes": [],
+			"createdAt": "2026-07-02T20:21:50.996Z",
+			"updatedAt": "2026-07-03T12:07:18.206Z"
+		},
+		{
+			"id": "T010B",
+			"title": "Implement frame entry, terminal, edge-copy, and constant-load source builders",
+			"detail": "Concrete closed decisions to implement, not design: FrameEntry has exactly the uniform graph-entry shape `void entry(uint8_t *frame)` and one first-continuation relocation; it never exposes public ABI params. TerminalContinuation is generated from NativeStencilSignature and is a leaf that returns to entry/adapter after copying zero-or-one result already placed in canonical result/sret frame slots by lowering. EdgeCopy/ParallelCopy stencils copy typed values between continuation-arg, frame-slot, immediate, and constant-pool locations using hole ordinals for frame offsets and temporary frame slots for overlap; no destination block arg count axis. ConstantLoad has axes `{constant representation, destination location}` from NativeConstantPoolSupport.entry_kinds and NativeStencilValueLocationClass; literals are NativeConstantPoolEntry/NativeRelocationConstantPool or explicit immediate holes, never one C chunk per literal. Use existing NativeStencilGenerator/Metavar/Configuration/Signature ASDL and concrete leaf methods only; no new schema, no optional-soup builder records, no marker-byte target path.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T008",
+				"T009",
+				"T014",
+				"T015"
+			],
+			"status": "done",
+			"order": 39,
+			"claimedBy": "agent-C2BH4H",
+			"evidence": "Implemented in lua/lalin/native_template_sources.lua: added true NativeChunkFrameEntry void frame-entry sources, terminal/signature helpers, EdgeCopy and ParallelCopy C stencil source builders with extern-symbol hole ordinals, and constant-pool load builders from NativeConstantPoolSupport.entry_kinds to frame-slot/continuation-arg destinations. Focused checks passed: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; plus a custom constant-pool support bank generation smoke built 38 templates.",
+			"notes": [
+				"Unblock decision recorded by orchestrator: no worker design. Use the closed decisions from RESIDUAL_NATIVE_ARCHITECTURE.md sections CodeSig/public ABI, Frame layout, Hole/constant protocol, Code control lowering, Calls/externs/traps/runtime symbols."
+			],
+			"createdAt": "2026-07-02T20:21:50.996Z",
+			"updatedAt": "2026-07-04T08:09:31.736Z"
+		},
+		{
+			"id": "T010C",
+			"title": "Implement control operation source builders",
+			"detail": "Concrete closed decisions to implement, not design: ControlOp baseline source classes are jump, bool branch, compare-chain switch step, trap, unreachable, and call-return continuation. Jump declares one successor continuation ordinal. Branch declares exactly then/else continuation ordinals. Switch arity is NOT a bank/source axis: CodeTermSwitch lowering composes a chain of compare/branch control stencils, with default as the final successor; finite multi-case switch supertemplates are future optional sources only if explicitly declared. Trap calls a typed NativeRuntimeSymbol and then follows terminal/unreachable protocol. Unreachable emits the closed trap/unreachable leaf shape. All successor targets are declared NativeContinuationSymbol ordinals and patched through object relocations; no destination arg count or program case-count axis.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T008",
+				"T009",
+				"T014",
+				"T015"
+			],
+			"status": "done",
+			"order": 40,
+			"claimedBy": "agent-C2BH4H",
+			"evidence": "Implemented in lua/lalin/native_template_sources.lua: added ControlOp C source builders for jump (one successor), bool branch (then/else ordinals), compare-chain switch step (then/default via then/else ordinals, no case-count axis), unreachable trap, call-return continuation, and runtime trap sources with declared NativeTemplateRelocationRuntimeSymbol. Updated tests/code_ir/test_native_template_sources.lua and tests/code_ir/test_native_code_graph_scalar.lua to cover/allow generated control stencils. Checks passed: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua. Custom runtime-trap domain bank generation smoke built 40 templates.",
+			"notes": [
+				"Unblock decision recorded by orchestrator: switch case count is handled by graph composition as compare/branch chain, not a manifest axis."
+			],
+			"createdAt": "2026-07-02T20:21:50.996Z",
+			"updatedAt": "2026-07-04T08:13:42.162Z"
+		},
+		{
+			"id": "T010D",
+			"title": "Implement public ABI adapter and call source builders",
+			"detail": "Concrete closed decisions to implement, not design: PublicAbiAdapter sources are generated only for explicit `domain.public_abi_adapters` NativeAbiFunctionProjection values. The adapter C signature comes exactly from that projection; it allocates aligned stack frame with a NativePatchFrameSize hole, stores params into deterministic ABI/frame slots from T015, calls the first continuation, and returns void/scalar or uses hidden sret exactly as projected. CallOp sources use the same NativeAbiFunctionProjection as CodeSig/CodeCallTarget methods from T014. Direct internal calls patch to copied callee entry, extern calls patch to declared NativeRuntimeSymbol/link symbol, indirect/closure calls load function pointer/env from planned locations. Args/results are locations from T015; no argument-count inference, no central type/class dispatch, no new ABI design.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T008",
+				"T009",
+				"T014",
+				"T015"
+			],
+			"status": "done",
+			"order": 41,
+			"claimedBy": "agent-C2BH4H",
+			"evidence": "Implemented in lua/lalin/native_template_sources.lua: added PublicAbiAdapter generation for explicit domain.public_abi_adapters NativeAbiFunctionProjection values with frame-size hole ordinal, deterministic param/result frame offset holes, first-continuation relocation, and exact C ABI signatures for scalar/pointer/byref projections. Added CallOp source builders for direct call target holes, runtime extern calls with NativeTemplateRelocationRuntimeSymbol, indirect function-pointer calls, and closure function-pointer/env calls using projection-derived C signatures and frame locations. Updated tests/code_ir/test_native_template_sources.lua with public adapter and direct/indirect/closure/extern call source assertions. Checks passed: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua. Custom explicit ABI+runtime call support-domain bank generation smoke built 44 templates.",
+			"notes": [
+				"Unblock decision recorded by orchestrator: public adapters are finite only through domain.public_abi_adapters; frame-size is a patch hole, not a source axis."
+			],
+			"createdAt": "2026-07-02T20:21:50.996Z",
+			"updatedAt": "2026-07-04T08:19:41.720Z"
+		},
+		{
+			"id": "T014T",
+			"title": "Add zero-result CodeSig ABI projection coverage",
+			"detail": "Add a direct focused assertion that a zero-result CodeSig produces a void NativeAbiResultProjection/NativeAbiVoidResult and is accepted by native ABI projection, while >1 results remain rejected. This is test coverage for T014; do not alter ABI design.",
+			"file": "tests/code_ir/test_native_code_graph_scalar.lua",
+			"after": [
+				"T014"
+			],
+			"status": "done",
+			"order": 42,
+			"claimedBy": "agent-WR76GP",
+			"evidence": "Added zero-result CodeSig ABI projection coverage in tests/code_ir/test_native_code_graph_scalar.lua. The test now asserts that a CodeSig with no results lowers to NativeAbiVoidResult and preserves explicit parameters, alongside the existing multi-result rejection assertion. Check run: `luajit tests/code_ir/test_native_code_graph_scalar.lua`.",
+			"notes": [],
+			"createdAt": "2026-07-03T12:37:37.417Z",
+			"updatedAt": "2026-07-04T07:27:13.923Z"
+		},
+		{
+			"id": "T016S1",
+			"title": "Implement Code cast and select source builders",
+			"detail": "Resume after T016U. Complete concrete NativeChunkCastOp and NativeChunkSelectOp C stencil source builders for the Code scalar proof domain, including previously blocked int↔float casts using formula-typed object constant-pool relocations where GCC emits .rodata/.rodata.cst* references. Owners are NativeCodeInstCastAxis and NativeCodeInstSelectAxis/concrete Code leaves, not a central dispatcher. Cast axes: from scalar rep, to scalar rep, input location, output location, passthrough counts; use MachineCastOp leaf/source methods and UB-safe C conversions. Select axes: result scalar rep, bool condition location, true/false value locations, output location, passthrough counts; emit ternary/branch-safe C and declared next continuation. Use extern-symbol hole ordinals for frame offsets/immediates; no per-literal C chunks, marker holes, or placeholder unsupported methods.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T010B",
+				"T010C",
+				"T010D",
+				"T014",
+				"T015",
+				"T016U"
+			],
+			"status": "done",
+			"order": 43,
+			"claimedBy": "agent-E1NKHT",
+			"evidence": "Completed Code cast/select source-builder unblock in lua/lalin/native_template_sources.lua: NativeScalarRep:native_cast_op_to now emits SToF/UToF/FToS/FToU families for int/index/pointer/bool <-> float scalar pairs; cast source manifests declare NativeTemplateRelocationConstantPool for int/float conversion stencils; int-to-float C source uses volatile source_value to keep extern-symbol immediate holes in text relocations rather than unsupported relocated .rodata holes. Updated tests/code_ir/test_native_template_sources.lua expected full scalar manifest cardinality to 1768 and asserts int<->float cast families plus constant-pool relocation declarations. Checks run: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; custom full host scalar bank generation/import smoke verified 1768 embedded entries.",
+			"notes": [
+				"Unblock for T016: implement missing source families before lowerers select them.",
+				"T016U resolved the blocker: object .rodata constants are now modelled as formula-typed NativeRelocationConstantPool and repeated hole ordinal relocation occurrences are valid patch sites. Resume T016S1 instead of treating int↔float casts as blocked."
+			],
+			"createdAt": "2026-07-04T08:35:30.132Z",
+			"updatedAt": "2026-07-04T09:18:21.802Z"
+		},
+		{
+			"id": "T016S2",
+			"title": "Implement Code address, memory, descriptor, aggregate, and variant source builders",
+			"detail": "Add concrete NativeChunkAddressMemoryOp, NativeChunkDescriptorOp, and NativeChunkAggregateVariantOp C stencil builders needed before data lowering. Cover CodeInstAddrOf, GlobalRef, PtrOffset, Load, Store; View/Slice/ByteSpan make/data/len/stride descriptor ops; Aggregate/Array construction and extraction; VariantCtor/Tag/Payload where current ASDL supplies concrete layout facts. Static offsets/strides/sizes use NativeHoleOrdinal patch coordinates or constant-pool entries; dynamic bases/lengths stay frame slots/ABI params. If a required layout fact is absent, add a precise ASDL product/axis rather than side tables or optional soup. Do not mirror semantics in LalinNative; each source belongs to the concrete Code owner/axis.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T016S1"
+			],
+			"status": "done",
+			"order": 44,
+			"claimedBy": "agent-E1NKHT",
+			"evidence": "Implemented concrete source-builder coverage in lua/lalin/native_template_sources.lua for NativeChunkAddressMemoryOp (global_ref, frame addr_of, ptr_offset, scalar load/store), NativeChunkDescriptorOp (slice/view/bytespan make and data/len/stride extract), and NativeChunkAggregateVariantOp (aggregate/array field store/load plus scalar-payload variant ctor/tag/payload stencils). Static offsets/sizes/tags are extern-symbol NativeHoleOrdinal patch sites; dynamic pointer/index/scalar values use frame slots or continuation args; no runtime tools or assembly source added. Updated tests/code_ir/test_native_template_sources.lua full/i32 manifest counts (2271/150) and assertions for address/memory/descriptor/aggregate/variant families and chunk classes. Checks run: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; custom full host scalar bank generation/import smoke verified 2271 embedded entries.",
+			"notes": [],
+			"createdAt": "2026-07-04T08:35:30.132Z",
+			"updatedAt": "2026-07-04T09:26:53.738Z"
+		},
+		{
+			"id": "T016S3",
+			"title": "Implement Code atomic and fence source builders",
+			"detail": "Add concrete source builders for CodeInstAtomicLoad, AtomicStore, AtomicRmw, AtomicCas, and AtomicFence under NativeChunkAddressMemoryOp or a precise existing chunk role. Atomic ordering/op leaves own emitted C. Use C11/GCC builtins only when represented by typed target/runtime capability facts already in ASDL; otherwise add the missing precise ASDL fact before code. Address/value/order facts must be axes or patch/frame/runtime inputs as defined by docs/RESIDUAL_NATIVE_ARCHITECTURE.md. No generic unsupported stubs.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T016S2"
+			],
+			"status": "done",
+			"order": 45,
+			"claimedBy": "agent-E1NKHT",
+			"evidence": "Implemented Code atomic/fence C stencil source builders in lua/lalin/native_template_sources.lua for AtomicLoad, AtomicStore, AtomicRmw, AtomicCas, and AtomicFence using typed ordering/RMW leaf methods. Added ASDL-first NativeAtomicCodegenCapability to lua/lalin/schema/native.lua and support-domain default NativeAtomicGccBuiltins in lua/lalin/native_template_support.lua so GCC atomic builtins are represented by typed support facts before source emission. Updated tests/schema/test_schema_native.lua for the new support-domain field and tests/code_ir/test_native_template_sources.lua manifest counts (3570 full / 269 i32) plus atomic family/chunk/builtin assertions. Checks run: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; custom full host scalar bank generation/import smoke verified 3570 embedded entries.",
+			"notes": [],
+			"createdAt": "2026-07-04T08:35:30.132Z",
+			"updatedAt": "2026-07-04T09:34:32.574Z"
+		},
+		{
+			"id": "T016R",
+			"title": "Complete Code scalar/data lowering with value locations",
+			"detail": "Replacement for broad blocked T016. Complete native lowering leaf methods for CodeInstConst/Alias/Binary/FloatBinary/Compare/Unary/Cast/Select/AddrOf/GlobalRef/PtrOffset/Load/Store/Aggregate/Array/View/Slice/ByteSpan/Variant/Atomic/Fence using value-location planning from T015 and source families from T016S1-S3. Existing partial progress (ordinal bindings, Alias/Unary, CodeConstNull) should be preserved and integrated. Select NativeTemplateSource manifest configurations; bind node/instance-scoped NativePatchBindingHoleOrdinal where ordinals exist. Literal/null/undef constants must become NativePatchCoordinate or NativeConstantPoolEntry, not family axes. No non-existent family selection or placeholder methods.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T016S1",
+				"T016S2",
+				"T016S3"
+			],
+			"status": "skipped",
+			"order": 46,
+			"claimedBy": "agent-E1NKHT",
+			"blockedReason": "Partial scalar/data lowering was implemented in lua/lalin/native_code_methods.lua: added produced_native_scalar and append_native_inst_template leaf methods for CodeInstCast, CodeInstSelect, PtrOffset, Load/Store on CodePlaceDeref, AtomicLoad/Store/Rmw/Cas/Fence, preserving existing const/alias/unary/binary/compare. These use slot-location source families and node-scoped hole ordinal bindings. Focused checks pass: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua. Blocking the remaining T016R scope honestly: complete GlobalRef/AddrOf(global/data/field/index/bytes), descriptor (View/Slice/ByteSpan values), Aggregate/Array, and Variant lowering requires precise ASDL value-location/frame-layout facts for non-scalar frame objects and module global/data/function address capabilities. Current NativeFrameLayout/NativeFrameSlot/NativeValuePlacement model only scalar frame slots, so selecting descriptor/aggregate/variant source families would overrun scalar slots or require placeholder pointer/global-address shims, which the task forbids.",
+			"skipReason": "Superseded by ASDL-first non-scalar frame/global unblock tasks T016V1-T016V3 and replacement lowering task T016R2. Partial T016R progress remains in lua/lalin/native_code_methods.lua (cast/select/ptr_offset/load/store/atomic lowerers). The blocker showed scalar-only NativeFrameSlot/NativeValuePlacement and missing module/global address capabilities are schema pressure.",
+			"notes": [],
+			"createdAt": "2026-07-04T08:35:30.132Z",
+			"updatedAt": "2026-07-04T09:45:41.810Z"
+		},
+		{
+			"id": "T018S",
+			"title": "Implement KernelOp source builders",
+			"detail": "Add concrete NativeChunkKernelOp C stencil source builders and manifest entries before kernel lowering. Owners are concrete Kernel ASDL leaves/axes: KernelDomainFlow loop skeletons, KernelExprValue/Algebra/LaneLoad/KernelValue scalar fragments, KernelEffectStore/Scan/Partition/Copy/ScatterReduce/Fold/Call effects, KernelResultVoid/Value/Find/Reduction/ClosedForm/OriginalControl, and KernelProof requirements where they change source/verifier contracts. Use frame slots/continuation edges for loop/effect state; static offsets/ranks/lanes/schedules are finite axes or holes; dynamic bounds/strides/descriptors stay frame/ABI params. If current schema lacks a required kernel projection/facet, add the precise ASDL fact first; no LalinNative semantic mirror, exact-cell enumeration, or placeholder unsupported methods.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T010B",
+				"T010C",
+				"T013",
+				"T015",
+				"T016R4"
+			],
+			"status": "todo",
+			"order": 47,
+			"claimedBy": "agent-T6S302",
+			"notes": [
+				"Unblock for T018: kernel lowering must follow concrete KernelOp source builders/manifest entries.",
+				"agent-T6S302 accidentally claimed this while selecting by file; returned to todo and added T016R4 dependency to respect current user priority: do not start Kernel/Stencil before Code source-axis/address-plan unblock path."
+			],
+			"createdAt": "2026-07-04T08:35:30.132Z",
+			"updatedAt": "2026-07-04T13:34:23.217Z"
+		},
+		{
+			"id": "T018R",
+			"title": "Add Kernel native lowering methods",
+			"detail": "Replacement for broad blocked T018. Implement KernelPlanned:plan_native_copy, KernelBody:select_native_template_graph, KernelDomainFlow:select_native_domain_template, KernelExprValue/Algebra/LaneLoad/KernelValue:select_native_expr_template, KernelEffectStore/Scan/Partition/Copy/ScatterReduce/Fold/Call:append_native_effect_template, KernelResultVoid/Value/Find/Reduction/ClosedForm/OriginalControl:append_native_result_template, KernelProof*:require_native_proof. These methods compose NativeTemplateGraph nodes using source families from T018S, NativeFrameLayout, and NativeControlEdge/ContinuationSymbol. No placeholder reject methods or native semantic mirror.",
+			"file": "lua/lalin/native_kernel_methods.lua",
+			"after": [
+				"T018S"
+			],
+			"status": "todo",
+			"order": 48,
+			"notes": [],
+			"createdAt": "2026-07-04T08:35:30.132Z",
+			"updatedAt": "2026-07-04T08:35:30.132Z"
+		},
+		{
+			"id": "T019S",
+			"title": "Implement StencilOp source builders",
+			"detail": "Add concrete NativeChunkStencilOp C stencil source builders and manifest entries before stencil lowering. Owners are concrete Stencil ASDL leaves/axes: StencilProducerShape loop skeletons, StencilAccessLayout address/descriptor fragments, StencilPointExpr scalar fragments, StencilBody, StencilSink, StencilStoreSemantics, StencilReductionSemantics, StencilReduceScope, StencilReducer, and StencilSchedule where source/control shape changes. Dynamic bounds/strides/descriptors stay ABI/frame values; static offsets/ranks/lanes/schedules are finite axes or holes. Recursive point/access expressions compose graph nodes, not exact-cell C chunks. Add precise ASDL projection/facet if required; no semantic mirror or placeholders.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T010B",
+				"T010C",
+				"T013",
+				"T015",
+				"T016R4"
+			],
+			"status": "todo",
+			"order": 49,
+			"notes": [
+				"Unblock for T019: stencil lowering must follow concrete StencilOp source builders/manifest entries.",
+				"Added T016R4 dependency to respect current user priority: do not start Kernel/Stencil before Code source-axis/address-plan unblock path."
+			],
+			"createdAt": "2026-07-04T08:35:30.132Z",
+			"updatedAt": "2026-07-04T13:34:23.217Z"
+		},
+		{
+			"id": "T019R",
+			"title": "Add Stencil native lowering methods",
+			"detail": "Replacement for broad blocked T019. Keep StencilInstance:plan_native_copy but pass schedule/abi/proofs through typed input if schema requires it. Add StencilDescriptor:select_native_template_graph and leaf methods on StencilProducerShape, StencilAccessLayout, StencilPointExpr, StencilBody, StencilSink, StencilStoreSemantics, StencilReductionSemantics, StencilReduceScope, StencilReducer, and StencilSchedule. Compose graph nodes using source families from T019S, frame/ABI params, continuation edges, and patch coordinates. No exact-cell enumeration or LalinNative semantic mirror.",
+			"file": "lua/lalin/native_stencil_methods.lua",
+			"after": [
+				"T019S"
+			],
+			"status": "todo",
+			"order": 50,
+			"notes": [],
+			"createdAt": "2026-07-04T08:35:30.132Z",
+			"updatedAt": "2026-07-04T08:35:30.132Z"
+		},
+		{
+			"id": "T016U",
+			"title": "Repair ASDL/object/install constant-pool and hole-site model",
+			"detail": "ASDL-first unblock for T016S1. Extend NativeRelocationConstantPool with a NativePatchFormula field. Make the object/verifier/install path model readonly object sections (.rodata/.rodata.cst*) as NativeConstantPoolEntry/Layout data and convert text relocations to those symbols into formula-typed NativeRelocationConstantPool. Treat NativeHoleOrdinal as a logical metavariable that may have many physical relocation patch sites; duplicate hole ordinal declarations are rejects, duplicate relocation occurrences are valid. Update schema tests, generator emission/serialization, native_mc install formula handling, and focused tests. Do not change source builders to avoid compiler constants, do not lower int↔float casts by hand, and do not add fallback/shims.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T003",
+				"T012",
+				"T013"
+			],
+			"status": "done",
+			"order": 51,
+			"claimedBy": "agent-WR76GP",
+			"evidence": "Implemented ASDL-first constant-pool/hole-site unblock. Changed lua/lalin/schema/native.lua so NativeRelocationConstantPool carries NativePatchFormula. Updated tools/gen_lalin_mc_bank.lua so readonly object sections matching .rodata* are extracted as NativeConstantPoolEntry/Layout, text relocations to those object symbols become formula-typed NativeRelocationConstantPool, duplicate declared hole ordinals reject, and multiple physical relocations to one logical NativeHoleOrdinal are accepted as multiple patch sites. Updated lua/lalin/native_mc.lua to apply constant-pool relocations according to PcRel32/Sym64/Sym32 formulas. Updated tests/schema/test_schema_native.lua, tests/code_ir/test_native_bank_generator.lua, and tests/code_ir/test_native_mc_import.lua for formula constructors, object .rodata extraction, duplicate-declaration rejects, and multi-occurrence hole patch sites. Checks passed: `luajit tests/schema/test_schema_native.lua`; `luajit tests/code_ir/test_native_bank_generator.lua`; `luajit tests/code_ir/test_native_mc_import.lua`; `luajit tests/code_ir/test_native_template_sources.lua`; `luajit tests/code_ir/test_native_c_continuation_branch.lua`; `luajit tests/code_ir/test_native_code_graph_scalar.lua`.",
+			"notes": [],
+			"createdAt": "2026-07-04T09:06:11.579Z",
+			"updatedAt": "2026-07-04T09:12:13.167Z"
+		},
+		{
+			"id": "T016V1",
+			"title": "Add native value representations, object frame slots, and address capabilities to ASDL",
+			"detail": "ASDL-first unblock for remaining T016R. Replace the scalar-only native value/frame vocabulary with precise representation facts. Add a NativeValueRepresentation sum with leaves for scalar values, pointer/address values, descriptor values (layout + fields), byte/object storage (source CodeType, size, alignment), aggregate/vector storage, and variant storage. Extend/repair NativeFrameSlot so frame layout can carry non-scalar object/descriptor/aggregate/variant slots without unsafe scalar slot overruns; scalar slots remain represented explicitly as scalar representation, not as an implicit default. Update NativeValuePlacement, NativeValueLocation, NativeFrameSlotValueEdge, NativeValueLocationPlan, and frame-layout plan entries to carry NativeValueRepresentation where they currently only carry NativeMachineScalarRep. Add precise native address capability/projection vocabulary for CodeDataId, CodeGlobalId, CodeFuncId, CodeExternId, and local/place addresses: e.g. NativeCodeAddressTarget leaves and NativeModuleAddressPlan entries, plus patch coordinates for data/global/function/extern addresses if required. Do not use optional soup, side tables, string tags, or Lua maps; use many-entry ASDL products keyed by Code ids.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T016S1",
+				"T016S2",
+				"T016S3"
+			],
+			"status": "done",
+			"order": 52,
+			"claimedBy": "agent-E79DY4",
+			"evidence": "Implemented ASDL-first native value representation/address unblock. Changed lua/lalin/schema/native.lua to add NativeValueRepresentation leaves for scalar/address/opaque pointer/descriptor/object/aggregate/vector/variant values; changed NativeFrameSlot, NativeValuePlacement, NativeValueLocationPlan, NativeFrameValueSlotEntry, and NativeValueEdge fields to carry explicit representations; added typed NativeCodeAddressTarget, NativeCodeAddressProjection/capability, NativeModuleAddressPlan entries keyed by CodeDataId/CodeGlobalId/CodeFuncId/CodeExternId/local/place, plus module address patch coordinates. Updated lua/lalin/native_code_methods.lua scalar proof-slice constructors to build explicit scalar representations and empty address plans. Updated tests/schema/test_schema_native.lua and tests/code_ir/test_native_c_continuation_branch.lua constructor coverage. Checks passed: luajit tests/schema/test_schema_native.lua; luajit tests/run.lua schema; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/run.lua code_ir (44 passed, 1 skipped).",
+			"notes": [
+				"Processed T016R blocker: current scalar-only NativeFrameSlot/NativeValuePlacement is insufficient for descriptors/aggregates/variants and composite places. Fix schema vocabulary first."
+			],
+			"createdAt": "2026-07-04T09:45:41.810Z",
+			"updatedAt": "2026-07-04T09:59:08.406Z"
+		},
+		{
+			"id": "T016V2",
+			"title": "Implement representation/frame/address schema methods and tests",
+			"detail": "Update native code/schema methods to use NativeValueRepresentation and non-scalar frame slots. Add CodeType leaf methods for native_value_representation/native_storage_layout: bool/int/index/pointer/codeptr/imported funcptr/f32/f64 scalars; slice/view/bytespan/closure descriptors; array/vector/named/imported-C aggregate byte storage; variant storage. Add deterministic frame allocation for object/descriptor/aggregate/variant values in T015 order using representation size/alignment. Add CodePlace leaf methods that project local/global/data/deref/field/index/bytes addresses into typed NativeCodeAddressTarget/NativePatchCoordinate facts. Add schema smoke coverage in tests/schema/test_schema_native.lua and focused representation/frame tests. No central class/kind dispatcher.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T016V1"
+			],
+			"status": "skipped",
+			"order": 53,
+			"claimedBy": "agent-E79DY4",
+			"blockedReason": "Partial implementation landed, but full T016V2 cannot be completed honestly with the current ASDL inputs. Implemented NativeStorageLayout/NativeUntypedPointerValueRepresentation/aggregate element_count schema, CodeType leaf methods for scalar/pointer/codeptr/imported funcptr/f32/f64/slice/view/bytespan/closure/array/vector/handle/lease storage representations, scalar/address frame allocation plumbing, CodePlace address target/patch projection methods, schema smoke coverage, and new tests/code_ir/test_native_value_representation.lua. Focused checks pass: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_value_representation.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/run.lua schema; luajit tests/run.lua code_ir (45 passed, 1 skipped). Blocker: completing named/imported-C aggregate byte storage and variant storage requires a precise type-layout projection/input (size, alignment, fields/cases) that CodeTyNamed/CodeTyImportedC do not currently carry and native_storage_layout(target) cannot derive without a layout environment/imported-C layout fact. Faking size/alignment or adding placeholder unsupported storage would violate ASDL-first/no-placeholder rules. Need an ASDL layout projection/input task before this can be marked done.",
+			"skipReason": "Superseded by ASDL-first layout projection tasks T016L1/T016L2 and replacement T016V2R. Partial implementation remains: NativeStorageLayout/NativeUntypedPointerValueRepresentation, aggregate element_count, CodeType scalar/pointer/descriptor/array/vector/handle/lease representations, frame allocation plumbing, CodePlace address projection methods, and tests.",
+			"notes": [],
+			"createdAt": "2026-07-04T09:45:41.810Z",
+			"updatedAt": "2026-07-04T10:16:51.352Z"
+		},
+		{
+			"id": "T016V3",
+			"title": "Implement native address install/runtime support",
+			"detail": "Implement runtime/install support for the address capabilities added in T016V1/T016L1. Module data/global/function/extern address patch coordinates must resolve through typed NativeModuleAddressPlan/NativeRuntimeSymbol/copied-function-entry facts, not guessed names. If static CodeData/CodeGlobal bytes are placed in the native constant/data pool, model them as NativeConstantPoolEntry or a precise writable data layout ASDL product before patching. Function addresses resolve to copied entry addresses where available; externs resolve through typed runtime symbols/address capabilities. Update tools/gen_lalin_mc_bank.lua serialization if new ASDL values appear in embedded banks. Add focused tests for data/global/function/extern address patching and missing address typed rejects.",
+			"file": "lua/lalin/native_mc.lua",
+			"after": [
+				"T016V2R"
+			],
+			"status": "done",
+			"order": 54,
+			"claimedBy": "agent-HAW2S0",
+			"evidence": "Implemented native address install/runtime support across lua/lalin/schema/native.lua, lua/lalin/native.lua, lua/lalin/native_mc.lua, and graph constructor call sites. NativeTemplateGraph/NativeCopyPlan/NativePatchApplyInput now carry NativeModuleAddressPlan plus graph/code layout facts needed for install-time address resolution. Added typed address resolution for NativeCodeAddressConstantPoolEntry, NativeCodeAddressPatchable, NativeCodeAddressBankSymbol, and NativeCodeAddressRuntimeSymbol; NativePatchCodeDataAddress/GlobalAddress/FuncAddress/ExternAddress now write ptr64/rel32/call-rel32 patches through those capabilities. Updated native_mc copy planning and patch application to pass address plans. Added focused tests/code_ir/test_native_mc_import.lua coverage for data/global/function/extern address patching and missing extern runtime address rejection. Updated schema/manual graph constructors for the new graph address-plan field. Checks run: luajit tests/code_ir/test_native_mc_import.lua; luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_value_representation.lua; luajit tests/run.lua schema; luajit tests/run.lua code_ir (45 passed, 1 skipped).",
+			"notes": [],
+			"createdAt": "2026-07-04T09:45:41.810Z",
+			"updatedAt": "2026-07-04T10:52:35.901Z"
+		},
+		{
+			"id": "T016R2",
+			"title": "Complete Code scalar/data lowering with non-scalar frame and address model",
+			"detail": "Replacement for blocked T016R. Preserve existing partial lowerers, then complete GlobalRef, composite AddrOf places, descriptors, aggregates, arrays, variants, and any remaining scalar/data lowerers using the NativeValueRepresentation, non-scalar frame slots, native type layout plan, and module address capabilities from T016V1/T016L1/T016V2R/T016V3. Descriptor make/data/len/stride must read/write typed descriptor frame slots or ABI params, not overrun scalar slots. Aggregate/array/variant lowerers must use byte/object/variant frame storage and explicit layout/offset patch coordinates. GlobalRef/AddrOf must produce typed address patch coordinates/capabilities for CodeData/CodeGlobal/CodeFunc/CodeExtern/local/place addresses. No pointer shims, unsafe slot overruns, non-existent family selection, or placeholder methods.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T016V1",
+				"T016V2R",
+				"T016V3"
+			],
+			"status": "skipped",
+			"order": 55,
+			"claimedBy": "agent-HAW2S0",
+			"blockedReason": "Blocked before making T016R2 changes. The remaining Code lowering scope needs a typed native lowering input that carries CodeBackModuleFacts/LayoutEnv-derived NativeCodeTypeLayoutPlan and a constructed NativeModuleAddressPlan into CodeFunc/CodeBlock lowering. Current NativePlanInput/NativeCodeGraphBuildInput only carry target/runtime/bank and mutable state; CodeModule:plan_native_copy has no CodeBackModuleFacts/layout_env/imported-C layout facts to build named/imported/variant layouts for real modules. GlobalRef/AddrOf for CodeData/CodeGlobal also needs a precise ASDL model for static data/global storage (constant-pool entries for readonly data or a writable data layout) before lowerers can emit NativePatchCodeDataAddress/NativePatchCodeGlobalAddress without pointer shims or guessed addresses. Implementing descriptor/aggregate/variant/global lowerers now would either select families without the required layout/address inputs or invent unsupported placeholder addresses, violating ASDL-first/no-shim rules.",
+			"skipReason": "Superseded by ASDL-first native module lowering input/data storage tasks T016I1-T016I3 and replacement T016R3. T016R2 correctly blocked because CodeFunc/CodeBlock lowering lacks typed module facts/layout/address input and CodeData/CodeGlobal storage model.",
+			"notes": [
+				"Resume Code scalar/data lowering only after representation/frame/address ASDL and runtime support land."
+			],
+			"createdAt": "2026-07-04T09:45:41.810Z",
+			"updatedAt": "2026-07-04T11:12:40.193Z"
+		},
+		{
+			"id": "T016L1",
+			"title": "Add native type layout projection ASDL",
+			"detail": "ASDL-first unblock for named/imported-C aggregate and variant storage. Add precise layout projection vocabulary consumed by native Code lowering: NativeCodeTypeLayoutPlan with many-entry products keyed by CodeTypeId/module+name/source CodeType where necessary; NativeCodeNamedLayoutEntry for CodeTyNamed, NativeCodeImportedCLayoutEntry for CodeTyImportedC, NativeCodeVariantLayoutEntry for CodeVariantRef/owner type; NativeCodeFieldStorageLayout carrying field name/ref, offset, size, alignment, and NativeValueRepresentation; NativeCodeVariantCaseLayout carrying variant ref/tag, payload offset, optional payload NativeStorageLayout, total size/alignment. Reuse LalinSem.TypeLayout where it has enough field/size/align facts, but add CodeType-facing entries so native_storage_layout never guesses. No Lua maps, string dispatch, optional soup, fake sizes, or placeholder unknown layout leaves.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T016V1"
+			],
+			"status": "done",
+			"order": 56,
+			"claimedBy": "agent-HAW2S0",
+			"evidence": "Added ASDL-first native Code type layout projection vocabulary in lua/lalin/schema/native.lua: NativeCodeTypeLayoutPlan, NativeCodeNamedLayoutEntry keyed by typed NativeCodeNamedLayoutKey (CodeTypeId or module/name/source type), NativeCodeImportedCLayoutEntry keyed by CTypeId/CLayoutFact, NativeCodeFieldStorageLayout with typed Sem/C/synthetic field refs, and NativeCodeVariantLayoutEntry/NativeCodeVariantCaseLayout with CodeVariantRef payload storage and total size/alignment. Updated tests/schema/test_schema_native.lua constructor smoke for named/imported-C/variant layout projections. Checks run: luajit tests/schema/test_schema_native.lua; luajit tests/run.lua schema; luajit tests/code_ir/test_native_value_representation.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua.",
+			"notes": [
+				"Processed T016V2 blocker: named/imported-C aggregate and variant storage require typed layout projections as ASDL facts before methods can finish."
+			],
+			"createdAt": "2026-07-04T10:16:51.351Z",
+			"updatedAt": "2026-07-04T10:21:38.897Z"
+		},
+		{
+			"id": "T016L2",
+			"title": "Build native type layout projections from Code module facts",
+			"detail": "Implement methods that construct and consume NativeCodeTypeLayoutPlan from CodeModule/CodeBackModuleFacts layout_env, CodeTypeDecl, CodeGlobal, CodeData, CodeVariantRef, and imported-C layout facts where available. CodeTyNamed:native_storage_layout and CodeTyImportedC:native_storage_layout must require a typed layout input/projection and return precise NativeStorageLayout; variants must require NativeCodeVariantLayoutEntry. If a module truly lacks a layout fact, fail as a hard internal error at the missing ASDL fact, not via placeholder unsupported storage. Update tests/schema/test_schema_native.lua and tests/code_ir/test_native_value_representation.lua with named/imported-C/variant layout projection smokes.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T016L1"
+			],
+			"status": "done",
+			"order": 57,
+			"claimedBy": "agent-HAW2S0",
+			"evidence": "Implemented native type layout projection construction/consumption in lua/lalin/native_code_methods.lua. Added CodeBackModuleFacts/CodeModule:native_code_type_layout_plan for CodeTypeDecl and CodeGlobal named types from Sem.LayoutEnv; Sem.LayoutNamed field projections become NativeCodeFieldStorageLayout entries with typed Sem field refs and TypeSizeAlign-checked field storage. Added C.CLayoutFact:native_code_imported_c_layout_entry for imported-C layout facts. Updated CodeTyNamed and CodeTyImportedC native_storage_layout(target, layout_plan) to require typed NativeCodeNamedLayoutEntry/NativeCodeImportedCLayoutEntry, and added CodeVariantRef layout/payload consumers requiring NativeCodeVariantLayoutEntry/NativeCodeVariantCaseLayout. Updated tests/code_ir/test_native_value_representation.lua with named/imported-C/variant layout projection smokes. Checks run: luajit tests/code_ir/test_native_value_representation.lua; luajit tests/schema/test_schema_native.lua; luajit tests/run.lua schema; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/run.lua code_ir (45 passed, 1 skipped).",
+			"notes": [],
+			"createdAt": "2026-07-04T10:16:51.351Z",
+			"updatedAt": "2026-07-04T10:32:44.672Z"
+		},
+		{
+			"id": "T016V2R",
+			"title": "Finish representation/frame/address methods with layout projections",
+			"detail": "Replacement for blocked T016V2. Preserve partial implementation, then complete CodeType storage/representation methods for named/imported-C aggregate byte storage and variant storage using NativeCodeTypeLayoutPlan, NativeCodeFieldStorageLayout, and NativeCodeVariantCaseLayout. Complete deterministic frame allocation for object/descriptor/aggregate/variant values in T015 order. Ensure CodePlace local/global/data/deref/field/index/bytes address projection methods use typed layout projections for field/index/byte offsets and storage representations. No guessed size/alignment, pointer/global-address shims, or unsafe descriptor/aggregate slot overruns.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T016L2"
+			],
+			"status": "done",
+			"order": 58,
+			"claimedBy": "agent-HAW2S0",
+			"evidence": "Finished layout-projection-backed representation/address methods in lua/lalin/native_code_methods.lua. CodeTyArray/Vector/Handle/Lease now propagate NativeCodeTypeLayoutPlan to nested storage; CodeTyNamed consumes NativeCodeVariantLayoutEntry for variant owner storage when present, otherwise NativeCodeNamedLayoutEntry; CodeTyImportedC consumes NativeCodeImportedCLayoutEntry. Added CodePlace native_storage_layout/native_field_storage_layout methods for local/global/data/deref/field/index/bytes with size/alignment verification from typed layout facts. Added produced_native_storage_layout methods for aggregate/array/descriptor make/closure/variant ctor/payload so deterministic frame planning can request non-scalar storage layouts with layout projections. Updated tests/code_ir/test_native_value_representation.lua with variant-owner, field/index/byte place, named, imported-C, and variant layout assertions. Checks run: luajit tests/code_ir/test_native_value_representation.lua; luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/run.lua schema; luajit tests/run.lua code_ir (45 passed, 1 skipped).",
+			"notes": [
+				"Resume representation/frame/address methods after T016L1/T016L2 provide precise layout inputs."
+			],
+			"createdAt": "2026-07-04T10:16:51.351Z",
+			"updatedAt": "2026-07-04T10:39:13.334Z"
+		},
+		{
+			"id": "T016I1",
+			"title": "Add native Code lowering input ASDL",
+			"detail": "ASDL-first unblock for T016R2. Add a typed NativeCodeModulePlan / NativeCodeLoweringInput vocabulary that carries the CodeModule or CodeBackModuleFacts-derived facts needed by all CodeFunc/CodeBlock lowering: NativeCodeTypeLayoutPlan, NativeModuleAddressPlan, function signature table, CodeData/CodeGlobal storage plans, CodeExtern/runtime symbol mapping, and per-function facts such as value type/block-param projections. Extend NativePlanInput and/or NativeCodeGraphBuildInput to carry this named input rather than only target/runtime/bank. Use many-entry ASDL products keyed by Code ids; no Lua maps, hidden context bag, or optional soup. Existing scalar tests may use an explicit empty/minimal module input.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T016V2R",
+				"T016V3"
+			],
+			"status": "done",
+			"order": 59,
+			"claimedBy": "agent-PYB48C",
+			"evidence": "Implemented typed native Code lowering input schema in `lua/lalin/schema/native.lua`: NativeCodeModulePlanOrigin, NativeCodeModulePlan, NativeCodeLoweringInput, signature/function/data/global/extern/function-fact plan entries, raw CodeData address target, and NativeCodeGraphBuildInput.lowering. Updated `lua/lalin/native_code_methods.lua` to construct minimal/module lowering inputs and pass them into graph builds. Added constructor smoke coverage in `tests/schema/test_schema_native.lua`. Checks passed: `luajit tests/schema/test_schema_native.lua`, `luajit tests/run.lua schema`, `luajit tests/code_ir/test_native_code_graph_scalar.lua`, `luajit tests/code_ir/test_native_template_sources.lua`, `luajit tests/code_ir/test_native_mc_import.lua`, `luajit tests/code_ir/test_native_value_representation.lua`, `luajit tests/code_ir/test_native_c_continuation_branch.lua`.",
+			"notes": [
+				"Processed T016R2 blocker: native lowering needs a typed module/function input carrying layout/address/data/global facts, not target/runtime/bank only."
+			],
+			"createdAt": "2026-07-04T11:12:40.192Z",
+			"updatedAt": "2026-07-04T11:19:47.570Z"
+		},
+		{
+			"id": "T016I2",
+			"title": "Model CodeData and CodeGlobal native storage/address plans",
+			"detail": "Add precise ASDL for CodeData/CodeGlobal storage consumed by native lowering/install. Model readonly/static data as NativeConstantPoolEntry-backed or NativeReadOnlyDataLayout entries; model mutable globals as a typed writable data layout/runtime allocation capability if supported. Add NativeCodeDataStorageEntry and NativeCodeGlobalStorageEntry carrying id, linkage, bytes/init/relocs, size, alignment, mutability, and resulting NativeCodeAddressProjection. CodeDataInit/CodeDataReloc must become typed constant/data reloc facts, not ad hoc bytes. If mutable global allocation is not yet supported, represent the required runtime capability explicitly and make tests use readonly constant-pool data. No guessed addresses or pointer shims.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T016I1"
+			],
+			"status": "done",
+			"order": 60,
+			"claimedBy": "agent-PYB48C",
+			"evidence": "Implemented precise CodeData/CodeGlobal native storage/address plan schema in `lua/lalin/schema/native.lua`: typed static mutability, static init and relocation facts, readonly constant-pool backing, writable runtime storage capability/backing, address capability for writable runtime data, and storage entries carrying size/alignment/mutability/backing/inits/relocs/address. Updated `lua/lalin/native_code_methods.lua` to project CodeDataInit leaves into typed NativeCodeStaticInit/NativeCodeStaticRelocation facts, constant-pool-backed readonly CodeData addresses, and explicit writable global runtime capabilities. Updated `tests/schema/test_schema_native.lua` constructor smoke coverage. Checks passed: `luajit tests/schema/test_schema_native.lua`, `luajit tests/run.lua schema`, `luajit tests/code_ir/test_native_code_graph_scalar.lua`, `luajit tests/code_ir/test_native_value_representation.lua`, `luajit tests/code_ir/test_native_mc_import.lua`, `luajit tests/code_ir/test_native_template_sources.lua`, `luajit tests/code_ir/test_native_c_continuation_branch.lua`, `luajit tests/run.lua code_ir` (45 passed, 1 skipped).",
+			"notes": [
+				"Processed T016R2 blocker: CodeData/CodeGlobal storage and addresses must be modelled before GlobalRef/AddrOf lowering."
+			],
+			"createdAt": "2026-07-04T11:12:40.192Z",
+			"updatedAt": "2026-07-04T11:27:15.760Z"
+		},
+		{
+			"id": "T016I3",
+			"title": "Build native Code module lowering input from CodeModule facts",
+			"detail": "Implement CodeModule/CodeBackModuleFacts leaf methods that construct NativeCode lowering input: derive NativeCodeTypeLayoutPlan from layout_env/imported-C facts, derive NativeModuleAddressPlan from CodeData/CodeGlobal/CodeFunc/CodeExtern storage/address entries, and pass it into every CodeFunc/CodeBlock lowering via NativePlanInput/NativeCodeGraphBuildInput. Populate CodeData/CodeGlobal readonly constant-pool entries and function/extern address projections with typed capabilities. Add tests for missing layout/address facts as hard internal errors or typed install/build rejects as appropriate. Do not pass a generic ctx table.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T016I2"
+			],
+			"status": "done",
+			"order": 61,
+			"claimedBy": "agent-PYB48C",
+			"evidence": "Implemented Code module lowering-input construction in `lua/lalin/native_code_methods.lua`: `CodeBackModuleFacts:native_code_lowering_input` derives `NativeCodeTypeLayoutPlan`, module address/storage/signature/runtime-symbol plans, and active `NativeCodeFunctionPlan`; `CodeModule:native_code_lowering_input`/`plan_native_copy` pass the typed lowering input into `NativeCodeGraphBuildInput`. CodeData is projected to readonly constant-pool-backed addresses; CodeGlobal to explicit writable runtime capability; CodeExtern to runtime-symbol address projections. Added focused assertions in `tests/code_ir/test_native_value_representation.lua` for signature ABI entries, readonly data backing bytes, writable global capability, extern runtime mapping, and active value facts. Checks passed: `luajit tests/code_ir/test_native_value_representation.lua`, `luajit tests/schema/test_schema_native.lua`, `luajit tests/code_ir/test_native_code_graph_scalar.lua`, `luajit tests/code_ir/test_native_mc_import.lua`, `luajit tests/run.lua code_ir` (45 passed, 1 skipped), `luajit tests/run.lua schema` (11 passed).",
+			"notes": [],
+			"createdAt": "2026-07-04T11:12:40.192Z",
+			"updatedAt": "2026-07-04T11:33:40.711Z"
+		},
+		{
+			"id": "T016R3",
+			"title": "Complete Code scalar/data lowering with module input and storage plans",
+			"detail": "Replacement for skipped T016R2. Complete GlobalRef, composite AddrOf places, descriptors, aggregates, arrays, variants, and remaining data lowerers using the NativeCode lowering input from T016I1-I3. Descriptor make/data/len/stride must use typed descriptor slots/fields; aggregate/array/variant lowerers use object/variant storage and layout entries; GlobalRef/AddrOf uses NativeModuleAddressPlan and CodeData/CodeGlobal storage entries. Preserve existing partial lowerers and tests. No pointer shims, unsafe slot overruns, non-existent family selection, or placeholder methods.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T016I3"
+			],
+			"status": "skipped",
+			"order": 62,
+			"claimedBy": "agent-PYB48C",
+			"blockedReason": "Partial progress implemented: `lua/lalin/native_code_methods.lua` now lowers `CodeInstGlobalRef` through `NativeModuleAddressPlan`/typed `NativePatchCode{Data,Global,Func,Extern}Address` coordinates, adds `CodeGlobalRef*` leaf coordinate methods, and records a patch-coordinate value edge; `tests/code_ir/test_native_value_representation.lua` asserts the typed CodeGlobalRef coordinate leaves. Checks passed: `luajit tests/code_ir/test_native_value_representation.lua`, `luajit tests/code_ir/test_native_code_graph_scalar.lua`, `luajit tests/schema/test_schema_native.lua`, `luajit tests/run.lua code_ir` (45 passed, 1 skipped). Blocker for the rest of T016R3: completing composite AddrOf plus descriptor/aggregate/array/variant lowerers without shims requires a precise source/manifest contract for semantic layouts. Current generated aggregate/array/variant source families use placeholder axes such as `CodeTyArray(scalar:native_code_type(), 0)` and synthetic scalar variant refs while `NativeCodeInstAxis` equality is strict; selecting those for real CodeInstAggregate/Array/Variant semantic types would require lying about the semantic axis, while selecting real axes would be a non-existent family. Composite AddrOf also needs ASDL-owned local/composite frame address entries with allocated frame slots/field/index byte offsets in the lowering input before it can lower safely. Need ASDL/source-manifest repair for generic layout-parametric object/descriptor stencils or exact semantic layout axes before proceeding.",
+			"skipReason": "Superseded by source-axis/address-plan repair tasks T016A1/T016A2 and replacement lowering task T016R4. T016R3 correctly blocked because layout-parametric aggregate/array/variant source stencils used placeholder semantic axes and composite AddrOf lacked ASDL-owned local/place address entries.",
+			"notes": [],
+			"createdAt": "2026-07-04T11:12:40.192Z",
+			"updatedAt": "2026-07-04T13:26:57.663Z"
+		},
+		{
+			"id": "T016A1",
+			"title": "Repair layout-parametric Code source axes",
+			"detail": "ASDL-first unblock for T016R3. Add precise layout-parametric NativeCodeInstAxis leaves for stencils whose C source shape is independent of exact semantic CodeType: aggregate/array scalar field store, aggregate/array scalar field load, variant scalar ctor, variant scalar payload, generic global/address materialization if needed. These axes should carry only facts that alter C shape (e.g. scalar representation, descriptor kind/field, address kind), while semantic type/layout details remain NativeCodeTypeLayoutPlan/NativeCodeVariantLayoutEntry and patch coordinates. Update lua/lalin/native.lua equality methods and tests/schema/test_schema_native.lua. This must replace placeholder axes such as CodeTyArray(scalar_ty, 0) and synthetic scalar variant refs; do not weaken strict equality or lie about semantic axes.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T016I3"
+			],
+			"status": "done",
+			"order": 63,
+			"claimedBy": "agent-T6S302",
+			"evidence": "Implemented layout-parametric Code source axes in lua/lalin/schema/native.lua: added aggregate/array storage-kind axes, scalar variant axes, address-materialization axis, and pointer-offset scalar axis. Updated equality in lua/lalin/native.lua, replaced existing placeholder source/code family uses in lua/lalin/native_template_sources.lua and lua/lalin/native_code_methods.lua, and added schema/source assertions in tests/schema/test_schema_native.lua and tests/code_ir/test_native_template_sources.lua. Checks passed: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_value_representation.lua. rg found no old CodeTyArray(scalar,0)/native_scalar_payload/CodeTyDataPtr(nil) placeholder axis uses in native_template_sources.lua/native_code_methods.lua.",
+			"notes": [
+				"Processed T016R3 blocker: source families for layout-parametric operations need their own precise axes; exact semantic layout stays in layout/address plans and patch bindings."
+			],
+			"createdAt": "2026-07-04T13:26:57.663Z",
+			"updatedAt": "2026-07-04T13:33:53.973Z"
+		},
+		{
+			"id": "T016A2",
+			"title": "Update source builders to use layout-parametric axes",
+			"detail": "Change aggregate/array/variant/address source builders to emit families using the new layout-parametric axes from T016A1. Keep source builders generic and patch-driven: base frame offset, field/index/payload/tag offsets, tag values, element sizes, and static strides are hole ordinals/patch coordinates; dynamic bases/values are frame/continuation operands. Descriptor source builders should continue using descriptor-kind axes where exact elem type is irrelevant to C shape, or use a precise descriptor layout axis if C shape differs. Update tests/code_ir/test_native_template_sources.lua manifest counts/assertions. No placeholder CodeTyArray(...,0), synthetic variant refs, exact-cell family enumeration, or marker holes.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T016A1"
+			],
+			"status": "done",
+			"order": 64,
+			"claimedBy": "agent-T6S302",
+			"evidence": "Updated lua/lalin/native_template_sources.lua source-builder families to use layout-parametric axes from T016A1: global_ref/addr_of use NativeCodeInstAddressMaterializeAxis, ptr_offset uses NativeCodeInstPointerOffsetAxis, aggregate/array field store/load use NativeCodeInstLayoutFieldStoreAxis/LoadAxis, and variant ctor/tag/payload use NativeCodeInstVariantScalar* axes. Static frame/offset/tag/element facts remain extern hole ordinals/patch coordinates. Updated tests/code_ir/test_native_template_sources.lua assertions to verify these source families use the new axes and not placeholder CodeType/synthetic variant refs. Checks passed: luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua.",
+			"notes": [],
+			"createdAt": "2026-07-04T13:26:57.663Z",
+			"updatedAt": "2026-07-04T13:36:19.949Z"
+		},
+		{
+			"id": "T016A3",
+			"title": "Build local and composite place address plans",
+			"detail": "Add ASDL-owned construction of NativeLocalAddressEntry and NativePlaceAddressEntry during CodeFunc frame planning. Addressed locals and non-scalar/composite values must have allocated NativeFrameSlot storage; local/place address projections point at NativeCodeAddressFrameSlot or a precise frame-slot-plus-offset capability/patch coordinate. Composite CodePlaceField/Index/Bytes address entries must carry base slot/address plus typed offset/element-size facts from NativeCodeTypeLayoutPlan, not ad hoc arithmetic or side tables. Deref places use the address value placement plus typed offset. Update schema if a frame-slot-plus-offset address capability is missing; otherwise use existing NativeCodeAddressPatchable/FrameSlot precisely. Add focused tests in tests/code_ir/test_native_value_representation.lua.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T016I3"
+			],
+			"status": "done",
+			"order": 65,
+			"claimedBy": "agent-T6S302",
+			"evidence": "Implemented ASDL-owned local/place address planning. Added NativeCodeAddressFrameSlotOffset, NativeCodeAddressValueOffset, NativeCodeAddressPlaceOffset, and NativeCodeAddressPlaceIndexOffset capabilities in lua/lalin/schema/native.lua; added runtime nil address methods for these plan-only capabilities in lua/lalin/native.lua. Updated lua/lalin/native_code_methods.lua to allocate addressed local NativeFrameSlot storage during CodeFunc frame planning, append NativeLocalAddressEntry entries, and add CodePlace leaf methods that append NativePlaceAddressEntry projections for local/global/data/deref/field/index/bytes places using typed frame-slot, base-place, index, element-size, and value-offset facts. CodeInst AddrOf/Load/Store/Atomic* leaves now ask their places to contribute address-plan entries before graph lowering. Added schema smoke and focused tests in tests/code_ir/test_native_value_representation.lua. Checks passed: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_value_representation.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_mc_import.lua.",
+			"notes": [
+				"Processed T016R3 blocker: composite AddrOf needs ASDL-owned local/place address entries backed by allocated frame storage."
+			],
+			"createdAt": "2026-07-04T13:26:57.663Z",
+			"updatedAt": "2026-07-04T13:42:34.739Z"
+		},
+		{
+			"id": "T016R4",
+			"title": "Complete Code scalar/data lowering after source-axis/address repair",
+			"detail": "Replacement for skipped T016R3. Complete GlobalRef, composite AddrOf, descriptors, aggregates, arrays, variants, and remaining data lowerers using NativeCodeLoweringInput, NativeCodeTypeLayoutPlan, NativeModuleAddressPlan, repaired layout-parametric source axes, and local/place address plans. Aggregate/array/variant lowerers select generic layout-parametric families and bind semantic layout offsets/tag values via node-scoped hole ordinals. Descriptor make/data/len/stride uses typed descriptor storage fields. GlobalRef/AddrOf uses typed address projections, no pointer shims. Preserve partial lowerers and tests; no non-existent family selection or placeholder methods.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T016A2",
+				"T016A3"
+			],
+			"status": "done",
+			"order": 66,
+			"claimedBy": "agent-T6S302",
+			"evidence": "Completed Code scalar/data lowering repair in lua/lalin/native_code_methods.lua after T016A1/A2/A3. Added AddrOf lowering through typed NativeCodeAddressProjection capabilities; GlobalRef/PtrOffset now reuse layout-parametric address axes; Load/Store handle deref, static frame local/composite places, and patchable/dynamic materialized addresses; descriptor make/extract lowerers for view/slice/bytespan; aggregate/array construction lowerers using layout-parametric field-store axes and semantic layout/element offsets as hole bindings; variant ctor/tag/payload lowerers using typed NativeCodeVariantLayoutEntry/CaseLayout offsets/tag values. Added non-scalar preallocation so composite values have frame slots before address planning, and fixed CodeInst storage/scalar planning to skip non-scalar ops safely. Checks passed: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_value_representation.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/run.lua code_ir (45 passed, 1 skipped). Additional custom LuaJIT native compile/execute smoke built an i32 array, loaded the first element via CodePlaceBytes, and returned 11 through the generated native bank.",
+			"notes": [],
+			"createdAt": "2026-07-04T13:26:57.663Z",
+			"updatedAt": "2026-07-04T14:07:42.516Z"
+		}
+	]
+}

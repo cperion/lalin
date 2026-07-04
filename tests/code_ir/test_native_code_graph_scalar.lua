@@ -72,12 +72,38 @@ for _, source in ipairs(request.sources) do
         assert(source.c_text:find("uint8_t %*frame", 1, false), "CodeInst source must use the C frame protocol: " .. source.family.id.text)
     end
     if asdl.isa(source.family.role, Native.NativeRoleCodeTerm) then
-        assert(asdl.isa(source.extraction, Native.NativeExtractTerminalContinuation), "CodeTerm return source should be a terminal C continuation: " .. source.family.id.text)
+        if asdl.isa(source.generator.chunk_class, Native.NativeChunkTerminalContinuation) then
+            assert(asdl.isa(source.extraction, Native.NativeExtractTerminalContinuation), "CodeTerm return source should be a terminal C continuation: " .. source.family.id.text)
+        elseif asdl.isa(source.generator.chunk_class, Native.NativeChunkControlOp) then
+            assert(asdl.isa(source.extraction, Native.NativeExtractContinuationFragment) or asdl.isa(source.extraction, Native.NativeExtractTerminalContinuation), "CodeTerm control source should be a continuation or terminal control stencil: " .. source.family.id.text)
+        end
     end
 end
 
 local target = NativeBackend.host_target()
 local runtime = NativeBackend.empty_runtime()
+
+local i32_abi_sig = Code.CodeSig(Code.CodeSigId("native.abi.i32"), { Code.CodeTyInt(32, Code.CodeSigned), Code.CodeTyDataPtr(Code.CodeTyInt(32, Code.CodeSigned)) }, { Code.CodeTyInt(32, Code.CodeSigned) })
+local i32_projection = i32_abi_sig:native_abi_projection(target)
+assert(asdl.isa(i32_projection.result.abi, Native.NativeAbiScalarValue), "scalar CodeSig result should lower to a scalar ABI result")
+assert(#i32_projection.params == 2, "scalar CodeSig params should preserve explicit params without hidden sret")
+local void_projection = Code.CodeSig(Code.CodeSigId("native.abi.void"), { Code.CodeTyInt(32, Code.CodeSigned) }, {}):native_abi_projection(target)
+assert(asdl.isa(void_projection.result.abi, Native.NativeAbiVoidResult), "zero-result CodeSig should lower to a void ABI result")
+assert(#void_projection.params == 1, "zero-result CodeSig should preserve explicit params")
+local slice_projection = Code.CodeTySlice(Code.CodeTyInt(32, Code.CodeSigned)):native_abi_projection(target)
+assert(asdl.isa(slice_projection, Native.NativeAbiDescriptorValue), "CodeTySlice should lower to a descriptor ABI projection")
+assert(#slice_projection.fields == 2, "slice descriptor projection should carry data/len fields")
+local aggregate_sig = Code.CodeSig(Code.CodeSigId("native.abi.aggregate"), { Code.CodeTyIndex }, { Code.CodeTyArray(Code.CodeTyInt(32, Code.CodeSigned), 4) })
+local aggregate_projection = aggregate_sig:native_abi_projection(target)
+assert(asdl.isa(aggregate_projection.result.abi, Native.NativeAbiSRetResult), "aggregate result should lower through sret")
+assert(#aggregate_projection.params == 2 and aggregate_projection.params[1].param_index == 0, "sret result should insert hidden pointer parameter before explicit params")
+local extern_projection = Code.CodeCallExtern(Code.CodeExternId("native.abi.extern")):select_native_call_projection(i32_abi_sig, target)
+assert(extern_projection.result.abi:native_abi_projection_equals(i32_projection.result.abi), "CodeCallTarget leaves should select the supplied CodeSig ABI projection")
+local ok_multi_result, err_multi_result = pcall(function()
+    Code.CodeSig(Code.CodeSigId("native.abi.bad"), {}, { Code.CodeTyIndex, Code.CodeTyIndex }):native_abi_projection(target)
+end)
+assert(not ok_multi_result and tostring(err_multi_result):find("zero or one result", 1, true), "native ABI projection must reject multi-result CodeSig values")
+
 local embedded = dofile(lua_path)(T)
 local bank = NativeBackend.require_imported_bank(embedded)
 local origin = Code.CodeOriginUnknown

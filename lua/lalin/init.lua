@@ -657,10 +657,19 @@ end
 
 local function reject_luajit_native_options(opts, where)
     if opts.native_bank ~= nil or opts.native_embedded_bank ~= nil or opts.bank ~= nil or opts.embedded_bank ~= nil then
-        error(where .. ": native banks are not accepted by LuaJIT artifact APIs; use compile_native or lalin.native_backend", 3)
+        error(where .. ": native banks are not accepted by LuaJIT artifact APIs; use compile_native with a NativeTemplateBank/NativeEmbeddedTemplateBank manifest", 3)
     end
     if opts.mc_bank ~= nil then
         error(where .. ": mc_bank belongs to the removed LuaJIT machine-code path; use NativeTemplateBank with compile_native", 3)
+    end
+end
+
+local function reject_native_removed_options(opts, where)
+    if opts.mc_bank ~= nil then
+        error(where .. ": mc_bank is removed; pass opts.native_bank/opts.bank as a NativeTemplateBank with a NativeTemplateSourceManifest", 3)
+    end
+    if opts.residual ~= nil or opts.residual_mode ~= nil or opts.build_mc_bank ~= nil or opts.tcc ~= nil or opts.native_compile_c ~= nil then
+        error(where .. ": residual/TCC/build_mc_bank options are removed; native runtime compilation only copies, patches, and installs a supplied NativeTemplateBank", 3)
     end
 end
 
@@ -809,12 +818,26 @@ function prepare_luajit_artifact(decl, name, opts)
     }
 end
 
-local function native_bank_for(Backend, opts)
-    if opts.native_bank ~= nil then return opts.native_bank end
-    if opts.bank ~= nil then return opts.bank end
-    if opts.native_embedded_bank ~= nil then return Backend.require_imported_bank(opts.native_embedded_bank) end
-    if opts.embedded_bank ~= nil then return Backend.require_imported_bank(opts.embedded_bank) end
-    error("compile_native requires a NativeTemplateBank or NativeEmbeddedTemplateBank", 3)
+local function native_manifest_for(opts)
+    return opts.native_template_manifest or opts.native_manifest or opts.template_manifest
+end
+
+local function native_bank_for(Backend, opts, target)
+    local expected_manifest = native_manifest_for(opts)
+    if opts.native_bank ~= nil then return Backend.require_native_bank(opts.native_bank, target, expected_manifest) end
+    if opts.bank ~= nil then return Backend.require_native_bank(opts.bank, target, expected_manifest) end
+    if opts.native_embedded_bank ~= nil then return Backend.require_imported_bank(opts.native_embedded_bank, expected_manifest) end
+    if opts.embedded_bank ~= nil then return Backend.require_imported_bank(opts.embedded_bank, expected_manifest) end
+    error("compile_native requires opts.native_bank/opts.bank NativeTemplateBank or opts.native_embedded_bank/opts.embedded_bank NativeEmbeddedTemplateBank; runtime native compilation does not invoke compilers, readelf/object tools, TCC, or implicit bank builders", 3)
+end
+
+local function native_runtime_for(Backend, opts)
+    if opts.native_runtime ~= nil and opts.native_runtime_symbols ~= nil then
+        error("compile_native accepts either opts.native_runtime or opts.native_runtime_symbols, not both", 3)
+    end
+    if opts.native_runtime_symbols ~= nil then return Backend.runtime(opts.native_runtime_symbols) end
+    if opts.runtime_symbols ~= nil then return Backend.runtime(opts.runtime_symbols) end
+    return opts.native_runtime or opts.runtime or Backend.empty_runtime()
 end
 
 function prepare_native_compile(decl, name, opts)
@@ -827,6 +850,8 @@ function prepare_native_compile(decl, name, opts)
     local cls = asdl.classof(module_ast)
     local T = (cls and asdl.context_of(cls)) or asdl.context()
     if T.LalinCompiler == nil or T.LalinCode == nil or T.LalinKernel == nil or T.LalinStencil == nil or T.LalinNative == nil then A2(T) end
+
+    reject_native_removed_options(opts, "compile_native")
 
     local Pipeline = require("lalin.frontend_pipeline")(T)
     local Backend = require("lalin.native_backend")(T)
@@ -841,9 +866,9 @@ function prepare_native_compile(decl, name, opts)
         name = name,
     })
     local target = opts.native_target or opts.target or Backend.host_target()
-    local runtime = opts.native_runtime or opts.runtime or Backend.empty_runtime()
-    local bank = native_bank_for(Backend, opts)
-    local result = Backend.compile_code_module(code_result.module, target, runtime, bank)
+    local runtime = native_runtime_for(Backend, opts)
+    local bank = native_bank_for(Backend, opts, target)
+    local result = Backend.compile_code_module(code_result.module, target, runtime, bank, native_manifest_for(opts))
     return {
         kind = "NativeCompilePlan",
         context = T,

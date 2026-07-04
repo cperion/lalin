@@ -99,13 +99,30 @@ void lalin_test_branch_false(uint8_t *frame) {
 #include <stdint.h>
 void lalin_test_branch_terminal(uint8_t *frame) { (void)frame; return; }
 ]]
-  return N.NativeTemplateBankRequest(N.NativeBankId('native-test-branch-bank'), target, Support.empty_runtime(), {
-    N.NativeTemplateSource(N.NativeTemplateId('native.test.branch.entry'), entry_family, N.NativeExtractEntryCallable(N.NativePatchFrameSize(32), first), 'lalin_test_branch_entry', entry_c, {}),
-    N.NativeTemplateSource(N.NativeTemplateId('native.test.branch.branch'), branch_family, N.NativeExtractContinuationFragment({ then_sym, else_sym }), 'lalin_test_branch', branch_c, {}),
-    N.NativeTemplateSource(N.NativeTemplateId('native.test.branch.true'), true_family, N.NativeExtractContinuationFragment({ next }), 'lalin_test_branch_true', true_c, {}),
-    N.NativeTemplateSource(N.NativeTemplateId('native.test.branch.false'), false_family, N.NativeExtractContinuationFragment({ next }), 'lalin_test_branch_false', false_c, {}),
-    N.NativeTemplateSource(N.NativeTemplateId('native.test.branch.terminal'), terminal_family, N.NativeExtractTerminalContinuation, 'lalin_test_branch_terminal', terminal_c, {}),
-  })
+  local function source(id, family_value, chunk_class, extraction, symbol, c_text, continuation_ordinals)
+    local generator = Support.stencil_generator(Support.stencil_generator_id(id), family_value, chunk_class, {})
+    local configuration = Support.stencil_configuration(Support.stencil_configuration_id(id), generator, {})
+    local continuations = {}
+    for _, ordinal in ipairs(continuation_ordinals or {}) do
+      continuations[#continuations + 1] = Support.stencil_continuation_signature(ordinal, {})
+    end
+    local signature = Support.spill_all_stencil_signature(scalar, {}, continuations)
+    local relocation_kinds = #continuations > 0 and { N.NativeTemplateRelocationContinuation } or {}
+    return N.NativeTemplateSource(N.NativeTemplateId(id), family_value, generator, configuration, signature, extraction, symbol, c_text, {}, {}, continuation_ordinals or {}, relocation_kinds)
+  end
+  local sources = {
+    source('native.test.branch.entry', entry_family, N.NativeChunkFrameEntry, N.NativeExtractEntryCallable(N.NativePatchFrameSize(32), first), 'lalin_test_branch_entry', entry_c, { Support.first_continuation_ordinal() }),
+    source('native.test.branch.branch', branch_family, N.NativeChunkControlOp, N.NativeExtractContinuationFragment({ then_sym, else_sym }), 'lalin_test_branch', branch_c, { Support.then_continuation_ordinal(), Support.else_continuation_ordinal() }),
+    source('native.test.branch.true', true_family, N.NativeChunkConstantLoad, N.NativeExtractContinuationFragment({ next }), 'lalin_test_branch_true', true_c, { Support.next_continuation_ordinal() }),
+    source('native.test.branch.false', false_family, N.NativeChunkConstantLoad, N.NativeExtractContinuationFragment({ next }), 'lalin_test_branch_false', false_c, { Support.next_continuation_ordinal() }),
+    source('native.test.branch.terminal', terminal_family, N.NativeChunkTerminalContinuation, N.NativeExtractTerminalContinuation, 'lalin_test_branch_terminal', terminal_c, {}),
+  }
+  local groups = {}
+  for _, src in ipairs(sources) do
+    groups[#groups + 1] = Support.template_manifest_group(src.generator, { Support.template_manifest_entry_for_source(src) })
+  end
+  local manifest = Support.template_source_manifest(Support.template_manifest_id('test.branch'), N.NativeTemplateSupportDomainId('native.template.support.test.branch'), groups)
+  return N.NativeTemplateBankRequest(N.NativeBankId('native-test-branch-bank'), target, Support.empty_runtime(), manifest, sources)
 end
 ]=])
 mf:close()
@@ -141,19 +158,22 @@ local branch_node_id = Native.NativeTemplateNodeId("branch.node.branch")
 local true_node_id = Native.NativeTemplateNodeId("branch.node.true")
 local false_node_id = Native.NativeTemplateNodeId("branch.node.false")
 local terminal_node_id = Native.NativeTemplateNodeId("branch.node.terminal")
+local function instance_for(node_id)
+    return Native.NativeTemplateInstanceId("branch.instance." .. node_id.text)
+end
 local graph = Native.NativeTemplateGraph(
     Support.host_target(),
     Native.NativeCallReturnScalar(Support.scalar_i32()),
     Native.NativeFrameLayout({
-        Native.NativeFrameSlot(Native.NativeFrameSlotId("branch.frame.cond"), Support.scalar_i32(), 0, 4, 4),
-        Native.NativeFrameSlot(Native.NativeFrameSlotId("branch.frame.result"), Support.scalar_i32(), 4, 4, 4),
+        Native.NativeFrameSlot(Native.NativeFrameSlotId("branch.frame.cond"), Native.NativeScalarValueRepresentation(Support.scalar_i32()), 0, 4, 4),
+        Native.NativeFrameSlot(Native.NativeFrameSlotId("branch.frame.result"), Native.NativeScalarValueRepresentation(Support.scalar_i32()), 4, 4, 4),
     }, 32, 16),
     {
-        Native.NativeTemplateNode(entry_node_id, entry("native.test.branch.entry"), {}, {}, {}),
-        Native.NativeTemplateNode(branch_node_id, entry("native.test.branch.branch"), {}, {}, {}),
-        Native.NativeTemplateNode(true_node_id, entry("native.test.branch.true"), {}, {}, {}),
-        Native.NativeTemplateNode(false_node_id, entry("native.test.branch.false"), {}, {}, {}),
-        Native.NativeTemplateNode(terminal_node_id, entry("native.test.branch.terminal"), {}, {}, {}),
+        Native.NativeTemplateNode(entry_node_id, instance_for(entry_node_id), entry("native.test.branch.entry"), {}, {}, {}),
+        Native.NativeTemplateNode(branch_node_id, instance_for(branch_node_id), entry("native.test.branch.branch"), {}, {}, {}),
+        Native.NativeTemplateNode(true_node_id, instance_for(true_node_id), entry("native.test.branch.true"), {}, {}, {}),
+        Native.NativeTemplateNode(false_node_id, instance_for(false_node_id), entry("native.test.branch.false"), {}, {}, {}),
+        Native.NativeTemplateNode(terminal_node_id, instance_for(terminal_node_id), entry("native.test.branch.terminal"), {}, {}, {}),
     },
     {
         Native.NativeContinuationEdge(entry_node_id, branch_node_id, Support.first_continuation_symbol()),
@@ -163,6 +183,7 @@ local graph = Native.NativeTemplateGraph(
         Native.NativeContinuationEdge(false_node_id, terminal_node_id, Support.next_continuation_symbol()),
     },
     {},
+    Native.NativeModuleAddressPlan({}, {}, {}, {}, {}, {}),
     entry_node_id,
     { terminal_node_id }
 )

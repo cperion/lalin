@@ -42,6 +42,7 @@ Important rules:
   `view [i32]`, and similar constructor calls inside the outer type escape.
 - Every block path terminates.
 - Region protocols are explicit named exits.
+- Memory identity and access are explicit: handles are durable names, leases are temporary access facts, and owned values are exactly-once obligations.
 - Backend facts are explicit ASDL facts.
 
 ---
@@ -390,6 +391,42 @@ Any Lua expression is legal between the brackets if it evaluates to a type
 value. For named Lalin declarations, use `named("TypeName")` or return/pass a
 type value from another Lua package.
 
+### Access, Lease, And Ownership Types
+
+The type vocabulary also carries borrow-checking facts:
+
+```lln
+[readonly [ptr [Store]]]
+[writeonly [ptr [i32]]]
+[noalias [ptr [u8]]]
+[noescape [ptr [i32]]]
+[preserve [ptr [Store]]]
+[invalidate [ptr [Store]]]
+[lease [ptr [Record]]]
+[lease [view [f32]]]
+[owned [ResourceRef]]
+```
+
+Access wrappers refine how a parameter may be used. `readonly` and `preserve`
+are preserving accesses for lease grants; `writeonly`, `invalidate`, and plain
+mutable pointer/view parameters are conservative invalidators. `noescape` says a
+callee may use an access value but must not retain it.
+
+A `lease` is temporary access, normally produced by a resolver region or trusted
+boundary. Its base must be `ptr(T)` or `view(T)`. When a lease is tied to a store
+parameter, use an explicit origin in the Lua type expression, for example
+`lease("store", ptr [Record])`; diagnostics print this idea as
+`lease(store) ptr(Record)`. Leases may appear in function, region, block, and
+continuation parameters, but not in durable positions such as struct fields,
+static/const values, union payloads, function results, or generated region-call
+result objects.
+
+An `owned T` is linear authority to release, close, retire, or transfer a
+resource exactly once. There is no destructor or inferred drop. The base must be
+a durable token such as a handle/resource value, not a raw pointer, view, lease,
+access wrapper, or another owned value. Owned obligations stay in control flow;
+they are not storable data.
+
 ### Function Signatures
 
 Functions declare parameter products and a single result type:
@@ -450,7 +487,35 @@ union OptionI32
 end
 ```
 
-Variants may have named payload fields or no payload.
+Variants may have named payload fields or no payload. Union payloads are durable
+stored data, so they cannot contain leases or owned obligations.
+
+### Handles
+
+A handle is a nominal durable identity value. It may be copied, stored, compared
+with the same handle type, passed, and returned. It is not dereferenceable, not
+indexable, and not implicitly convertible to its integer representation.
+
+Handle declarations are currently authored through the Lua/LLBL DSL and LLBL
+member syntax, then used from parsed `.lln` code as named type values:
+
+```lua
+local AudioBuffer = lln.handle. AudioBuffer {
+  invalid = 0,
+  domain = "AudioBufferStore",
+  target = "AudioBufferRecord",
+}
+```
+
+The representation defaults to `u32`; a DSL declaration may choose another
+scalar representation with `repr`. `domain` names the store/namespace that can
+validate the handle. `target` names the logical product that a successful
+resolver may grant as a lease. These are type facts, not comments, and they do
+not create implicit dereference.
+
+Trusted store code can cross the representation boundary with explicit
+`repr(handle)` / `Handle.from_repr(raw)` operations. Ordinary safe casts do not
+convert handles to or from scalars.
 
 ### Files And Values
 
@@ -946,7 +1011,10 @@ requires bounds(xs)(n)
 requires bounds(dst)(n), bounds(src)(n)
 requires readonly(xs)
 requires writeonly(dst)
+requires noalias(tmp)
 requires disjoint(dst)(src)
+requires preserve(store)
+requires invalidate(store)
 ```
 
 Typical meanings:
@@ -956,7 +1024,10 @@ Typical meanings:
 | `bounds(ptr)(n)` | memory object has at least `n` elements available |
 | `readonly(ptr)` | function does not write through this pointer |
 | `writeonly(ptr)` | function writes but does not read old values through this pointer |
+| `noalias(ptr)` | pointer-backed memory object has no aliases in this access context |
 | `disjoint(a)(b)` | pointer-backed memory objects do not alias |
+| `preserve(store)` | call preserves leases associated with this store/domain access |
+| `invalidate(store)` | call may move, free, compact, clear, or reuse storage for this store/domain |
 
 These contracts feed:
 
@@ -969,6 +1040,94 @@ These contracts feed:
 If a source loop has missing memory proofs, the kernel planner may reject
 stencil selection. Internal generated control can still be represented as
 ordinary block code, but source `loop` is the domain/stencil-facing construct.
+
+---
+
+## Borrow Checking, Handles, And Ownership
+
+Lalin's borrow checking is region-shaped rather than Rust-shaped. The core
+rules are:
+
+```text
+Handles may escape. Leases may not.
+Stores own bytes. Regions grant access facts.
+Owned values must be discharged exactly once.
+```
+
+A raw `ptr(T)` is only an address. Durable identity is a handle. Temporary
+memory access is a lease, usually granted by a resolver region or by a trusted
+boundary contract.
+
+### Handle Resolution
+
+A resolver takes a handle plus access to its domain store and exposes access only
+through its successful continuation:
+
+```lln
+region borrow_audio_buffer(
+  store [readonly [ptr [named("AudioBufferStore")]]],
+  buffer [named("AudioBuffer")];
+  borrowed(record [lease("store", ptr [named("AudioBufferRecord")])]),
+  stale(buffer [named("AudioBuffer")]),
+  missing(buffer [named("AudioBuffer")])
+)
+  entry start()
+    -- store-private validation and jump borrowed/stale/missing
+  end
+end
+```
+
+For a handle with `target = "AudioBufferRecord"`, a resolver may only grant a
+lease to that target type. For a handle with `domain = "AudioBufferStore"`, the
+resolver must take the owning domain as a `readonly` or `preserve` access and
+tie the lease origin to that domain parameter. Anonymous leases are allowed for
+simple boundary access, but store leases need an origin so invalidation checks
+can tell which store they came from.
+
+### Lease Escape Rules
+
+A lease is temporary access. The checker rejects leases in durable type
+positions and in expression-style region-call result objects. In source terms:
+
+- do not return a lease as durable identity
+- do not store a lease in a struct, union payload, const, static, array, or
+  closure-like aggregate
+- do not pass a lease to a retaining plain `ptr`/`view` parameter; use a lease or
+  `noescape` parameter
+- use `emit`/explicit continuations for region protocols whose payload carries a
+  lease; do not box that protocol into a generated result union
+
+Field lookup and indexing can use lease bases, so a `lease ptr(T)` behaves like
+temporary access to `T` while it is in scope.
+
+### Invalidation Rules
+
+An operation that may move, free, compact, clear, or reuse a store cannot run
+while leases from that same store are live. Mark preserving APIs with
+`readonly`, `preserve`, or `requires preserve(store)`. Mark invalidating APIs
+with `invalidate` or `requires invalidate(store)`. Unannotated mutable
+`ptr`/`view` parameters are conservative invalidators.
+
+End the lease scope before calling an invalidating operation, or redesign the
+protocol so the resolver grants the lease only inside the continuation that uses
+it.
+
+### Owned Obligations
+
+`owned T` is linear authority, not a managed pointer. The checker treats it as a
+CFG obligation:
+
+- it must be transferred to another `owned` parameter/result/continuation or
+  consumed by a close/retire/destroy protocol
+- it cannot be copied or observed as plain `T`
+- it cannot be stored in durable fields/statics or hidden in aggregates
+- continuing branches must preserve the same live owned-obligation set
+- `var owned T` is rejected; thread ownership through `let`, returns, jumps, and
+  continuations instead
+
+There are no semantic destructors. If a resource changes lifetime, name the
+region/function that does it and state whether it consumes or returns the owned
+obligation.
 
 ---
 
@@ -1011,9 +1170,8 @@ backend families.
 
 Facts determine whether a valid source loop becomes:
 
-- a stencil machine call/effect
-- an MC copy+compile residual artifact
-- an explicit BC artifact when `residual = "bc"` is selected
+- native template graph nodes selected from a matching `NativeTemplateBank`
+- an explicit LuaJIT bytecode artifact when that non-native mode is selected
 - a typed reject
 
 The internal IR can still contain generic control regions. That is how regions,
@@ -1025,83 +1183,73 @@ stencil-shaped backend facts.
 
 ## Backend Defaults
 
-The default executable backend is LuaJIT artifact generation with MC
-copy+compile residual materialization.
+The default executable backend is native copy-patch. It requires a supplied
+`NativeTemplateBank` or `NativeEmbeddedTemplateBank` whose target and
+`NativeTemplateSourceManifest` match the program being compiled.
 
 ```text
 inferred Lalin compilation unit
-  -> LuaJIT IR projection
-  -> stencil descriptors
-  -> residual_mc bank stencil
-  -> optional TCC residual glue
-  -> loaded Lua API table
+  -> LalinCode / LalinKernel / LalinStencil facts
+  -> NativeTemplateGraph and ABI projection
+  -> supplied NativeTemplateBank selection
+  -> copy code/constant-pool bytes
+  -> patch typed holes, continuations, constants, and runtime symbols
+  -> installed native entry point
 ```
 
-The default path requests MC residuals. It consumes a supplied/prebuilt MC bank;
-it does not run a C compiler from the normal runtime compile path. If no
-compatible MC bank is supplied, or if MC materialization is unavailable, the MC
-path fails with an explicit diagnostic.
+The runtime native path never runs a C compiler, object parser, linker, object
+dumper, shell tool, or alternate backend. If no compatible native bank is
+supplied, compilation fails with an explicit diagnostic.
 
 ```lua
+local bank = require("target.lalin_binary.lalin_native_template_bank")
+
 local module = lalin.compile("demo", decls, {
-  residual = "mc",
+  native_embedded_bank = bank,
 })
 ```
 
-Explicit BC mode:
+Equivalent native-bank option names are `native_bank`/`bank` for an imported
+`NativeTemplateBank`, and `native_embedded_bank`/`embedded_bank` for an embedded
+bank value. A manifest may be supplied as `native_template_manifest`,
+`native_manifest`, or `template_manifest` when the caller wants an exact manifest
+check.
+
+Native public ABI projections support zero or one result. A scalar result is
+returned through the projected return register; aggregate or by-reference result
+forms use the projected hidden result pointer. Multiple native results are not a
+single function ABI and must be represented before native lowering.
+
+Explicit LuaJIT bytecode mode is selected separately:
 
 ```lua
-local module = lalin.compile("demo", decls, {
-  residual = "bc",
+local module = lalin.compile_luajit("demo", decls)
+
+local module2 = lalin.compile("demo", decls, {
+  bytecode = true,
 })
 ```
 
-Missing-bank or MC materialization failures are hard errors in MC mode:
+LuaJIT bytecode mode is not a recovery path for a missing native bank, and native
+banks are rejected by the LuaJIT artifact APIs.
 
-```lua
-local module = lalin.compile("demo", decls, {
-  residual = "mc",
-})
+### Offline Native Template Banks
+
+Use `NativeTemplateBankRequest` and its `NativeTemplateSourceManifest` when you
+want to build or reuse a native bank outside the runtime compile path. The
+offline generator consumes the request, compiles the generated C stencils ahead
+of time, verifies object facts, and emits the checked-in/native binary artifacts:
+
+```sh
+luajit tools/gen_lalin_mc_bank.lua \
+  target/lalin_binary/lalin_native_template_bank.c \
+  target/lalin_binary/lalin_native_template_bank.h \
+  target/lalin_binary/lalin_native_template_bank.lua
 ```
 
-Use the plan API when you want to prebuild or reuse a specific MC bank:
-
-```lua
-local plan = lalin.plan_luajit_artifact(decls, {
-  name = "Demo",
-  residual = "mc",
-})
-
-local bank = assert(plan.backend.build_mc_bank(plan.artifacts, {
-  stem = "demo_mc_bank",
-}))
-
-local result = assert(plan.backend.compile_lj_module(plan.lj_module, plan.artifacts, {
-  mc_bank = bank,
-  chunk_name = "Demo",
-}))
-
-local module = result.module
-```
-
-Explicit artifact emission:
-
-```lua
-local plan = lalin.plan_luajit_artifact(decls, {
-  name = "Demo",
-  residual = "mc",
-})
-
-local bank = assert(plan.backend.build_mc_bank(plan.artifacts, {
-  stem = "demo_mc_bank",
-}))
-
-local artifact = lalin.emit_luajit_plan_artifact(plan, {
-  name = "Demo",
-  path = "target/artifacts/demo.lua",
-  mc_bank = bank,
-})
-```
+The generated Lua bridge reconstructs a `NativeEmbeddedTemplateBank` carrying the
+manifest, target, compiled templates, signatures, extraction facts, hole
+ordinals, relocations, and constant-pool layout.
 
 ### C / AOT Emission
 
@@ -1117,11 +1265,11 @@ local artifact = lalin.emit_c_artifact(decls, {
 })
 ```
 
-The C path reuses the LuaJIT lowering plan: selected stencil bodies are emitted
-as inline C in the same translation unit as the residual functions that call
-them. The user then compiles that C with `gcc` or another C toolchain. It is the
-whole-program AOT path. The LuaJIT MC/BC paths are runtime artifact paths for
-Lua-hosted modules.
+The C path emits the selected program as ordinary C translation units. Selected
+stencil-shaped bodies are emitted inline in the same generated C artifact. The
+user then compiles that C with `gcc` or another C toolchain. It is the
+whole-program AOT path, separate from native copy-patch and explicit LuaJIT
+bytecode runtime artifact paths.
 
 ---
 
@@ -1161,6 +1309,22 @@ local add = lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
 local Pair = lln.struct. Pair {
   left [lln.i32],
   right [lln.i32],
+}
+```
+
+### Handle And Borrowing Types
+
+```lua
+local AudioBuffer = lln.handle. AudioBuffer {
+  invalid = 0,
+  domain = "AudioBufferStore",
+  target = "AudioBufferRecord",
+}
+
+local borrow_sig = lln.product {
+  store [lln.readonly [lln.ptr [lln.named("AudioBufferStore")]]],
+  samples [lln.lease("store", lln.view [lln.f32])],
+  resource [lln.owned [lln.named("AudioBuffer")]],
 }
 ```
 
@@ -1270,7 +1434,7 @@ local first = lln.fn. first { _(buffer) } [lln.u8] {
 ```
 
 `_(fragment)` is the common splice form. `spread(fragment)` is the explicit
-fallback.
+long-form splice.
 
 ### Compiling DSL Values
 
@@ -1319,11 +1483,13 @@ The formatter currently prints the Lua/LLBL DSL surface.
 | `fn name(params) [result] ... end` | implemented as explicit direct declaration |
 | `struct Name ... end` | implemented |
 | `union Name ... end` | implemented |
+| handle declarations | implemented through Lua/LLBL DSL and LLBL member syntax; no bare parsed `.lln` `handle` entrypoint yet |
 | `region name(params; exits) ... end` | parser implemented; integration is narrower than function/struct/union |
 | `let` / `var` | implemented |
 | assignment | implemented |
 | `return` | implemented |
-| `requires` | implemented |
+| `requires` | implemented, including memory/effect contracts such as `bounds`, `readonly`, `writeonly`, `noalias`, `disjoint`, `preserve`, and `invalidate` |
+| access / lease / owned type values | implemented through Lua type values in brackets |
 | `if` / `elseif` / `else` | implemented |
 | `loop i in 0 .. n do ... end` | implemented |
 | parsed `fold` / `scan` inside loops | implemented |

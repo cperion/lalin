@@ -7,8 +7,8 @@ bootstrap language used to define member dialects. It gives Lua values dialect
 meaning through heads, roles, fragments, namespaces, origins, diagnostics,
 formatting, indexing, regions, protocols, processes, and language composition.
 Lalin is the compiled dialect in that language. It consumes LLBL regions and typed
-values, checks native semantics, and lowers the resulting program into LuaJIT
-artifacts.
+values, checks native semantics, and lowers the resulting program into native
+copy-patch artifacts or explicitly selected LuaJIT bytecode artifacts.
 
 The main path is intentionally small:
 
@@ -34,7 +34,7 @@ The compiler is split into four ownership layers:
   context, collect diagnostics, and pass typed products between stages. They do
   not own per-class semantics.
 - Backends operate on explicit ASDL facts, plans, and IR. Backend artifact
-  selection is represented in typed plans/results, not hidden fallback control
+  selection is represented in typed plans/results, not hidden alternate control
   flow.
 
 Semantic methods are plain Lua methods on schema-generated classes:
@@ -144,33 +144,28 @@ LalinTree.Module
   │
   ▼
 ┌─────────────────────────────────────────┐
-│ 6. LuaJIT Lowering (luajit_lower)       │
-│    Lower → LalinLuaJIT IR (LJModule)    │
-│    ExecPlan (fragment division)          │
+│ 6. Native Template Planning             │
+│    Code/Kernel/Stencil leaf methods     │
+│    → NativeTemplateGraph + manifest use │
 └─────────────────────────────────────────┘
   │
   ▼
 ┌─────────────────────────────────────────┐
-│ 7. Materialization (residual_*)       │
-│    ┌─ MC path (emit_luajit_artifact):    │
-│    │  residual_mc.lua                  │
-│    │    → load prebuilt gcc-O3 blobs     │
-│    │    → mmap executable memory         │
-│    │    → (optional) TCC residual glue   │
-│    │                                     │
-│    └─ explicit BC path:                  │
-│       residual_luatrace.lua              │
-│         → LuaJIT BC stencil tables       │
-│         → inline Lua data with BC patches│
+│ 7. Native Copy-Patch Install            │
+│    supplied NativeTemplateBank          │
+│      → select matching templates        │
+│      → copy bytes and constant pools    │
+│      → patch typed holes/relocations    │
+│      → install executable memory        │
+│    Runtime invokes no compiler/tools.   │
 └─────────────────────────────────────────┘
   │
   ▼
 ┌─────────────────────────────────────────┐
-│ 8. Lua Source Emission (luajit_emit)    │
-│    → embed MC bytes or BC bank          │
-│    → emit LuaJIT function definitions   │
-│    → wrap in loadable Lua module         │
-│    → loadstring → chunk() → module       │
+│ 8. Explicit LuaJIT Bytecode Mode        │
+│    selected only by explicit API/options│
+│    → LuaJIT IR / bytecode artifact      │
+│    → loadstring → chunk() → module      │
 └─────────────────────────────────────────┘
 ```
 
@@ -179,7 +174,7 @@ LalinTree.Module
 ## Concrete Example Trace
 
 How `lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] { lln.ret (a + b) }`
-becomes a loaded MC artifact:
+becomes a native copy-patch artifact:
 
 ```
 1. LuaJIT evaluates lln.fn.add{...}
@@ -196,39 +191,28 @@ becomes a loaded MC artifact:
    → LayoutResolve → tree_to_code → CodeValidate
    → CodeResult{ code_module = CodeModule{ funcs={...} } }
 
-5. Backend.lower_module(code_module)
-   → graph(CFG) → flow_facts → value_facts → mem_facts → effect_facts
-   → kernel_plan (identifies "add" as trivial, no kernel needed)
-   → schedule_plan → lower_plan
-   → StencilMachine + StencilArtifactPlan
-     (for a+b, produces no stencil — scalar path is fine)
-   → Lower.lower_module() → LJModule{ funcs={add=...} }
-   → ExecPlan → ExecModulePlan
+5. Native backend planning on `LalinCode`
+   → deterministic ABI/frame/value/control facts
+   → leaf methods select closed C-stencil template families
+   → NativeTemplateGraph with node-scoped patch bindings
 
-On the default MC-first path:
+6. Resolve the supplied or embedded `NativeTemplateBank`
+   → verify target and `NativeTemplateSourceManifest`
+   → select matching compiled templates for graph nodes
+   → no C compiler, object tool, linker, or code generator is invoked by the
+     runtime native compile path
 
-6. Resolve the supplied/prebuilt MC bank
-   → match selected artifact fingerprints against bank entries
-   → no C compiler is invoked by the runtime compile path
+7. Copy-patch-install
+   → lay out copied code and constant-pool bytes
+   → patch typed hole ordinals, frame offsets, continuations, constants, and
+     runtime-symbol capabilities
+   → install executable memory and produce a typed native entry point
 
-7. emit_lua_artifact() emits Lua source with:
-   - Embedded MC stencil bytes
-   - LuaJIT function definitions for non-stencil code
-   - Optional TCC residual wrappers
+8. module.add(3, 4) calls the installed native entry through its ABI projection
 
-8. loadstring(source) → chunk() → module table
-   module.add(3, 4) → runs scalar LuaJIT code or installed native stencils
-
-If the MC bank is missing, stale, or cannot materialize, MC materialization fails
-with an explicit diagnostic. The BC materializer is selected only by
-`residual = "bc"`.
-
-In explicit BC mode:
-   - BC stencil bytecode is loaded
-   - LuaJIT function definitions call BC stencils
-
-8. loadstring(source) → chunk() → module table
-   module.add(3, 4) → runs via LuaJIT bytecode stencils
+If the native bank is missing, stale, or cannot satisfy the manifest/target, the
+native path fails with an explicit diagnostic. LuaJIT bytecode is selected only
+by an explicit non-native API/option.
 ```
 
 ---
@@ -296,25 +280,31 @@ ASDL first; nullary variants also receive methods directly with normal
 | `lua/lalin/stencil_metastencil.lua` | Cross-provider stencil matching (MC bank ↔ BC bank equivalence). |
 | `lua/lalin/stencil_support_matrix.lua` | Declares which stencil operations are supported/rejected/future. |
 
-### LuaJIT Backend
+### Explicit LuaJIT Bytecode Backend
 
 | File | Role |
 |------|------|
-| `lua/lalin/luajit_backend.lua` | Central backend orchestration — lower_module(), build_mc_bank(), build_bc_bank(), emit_lua_artifact(). |
-| `lua/lalin/luajit_lower.lua` | Lowers `LalinCode` + kernel plans to `LalinLuaJIT` IR. Builds stencil machines; kernel/skeleton stencil lowering selection uses typed ASDL methods. |
-| `lua/lalin/luajit_emit.lua` | Emits Lua source from `LalinLuaJIT` IR — LuaJIT functions with FFI ctypes and stencil calls. |
+| `lua/lalin/luajit_backend.lua` | Explicit non-native backend facade for LuaJIT artifact planning/emission. |
+| `lua/lalin/luajit_lower.lua` | Lowers `LalinCode` + kernel plans to `LalinLuaJIT` IR for the bytecode path. |
+| `lua/lalin/luajit_emit.lua` | Emits Lua source from `LalinLuaJIT` IR — LuaJIT functions with FFI ctypes and bytecode-path calls. |
 | `lua/lalin/luajit_expr.lua` | Lua expression utilities for emission. |
 | `lua/lalin/luajit_ctype.lua` | Converts `LalinCode.CodeType` to LuaJIT FFI ctype descriptors. |
 | `lua/lalin/luajit_measure.lua` | Runtime measurement utilities (sizes, alignment, pointer bits). |
+| LuaJIT bytecode support modules | Target identity and trace-shaped bytecode support for explicit LuaJIT bytecode mode. |
 
-### Copy-Patch Materialization
+### Native Copy-Patch Materialization
 
 | File | Role |
 |------|------|
-| `lua/lalin/residual_mc.lua` | **MC (machine code) path** — installs pre-compiled stencil blobs via mmap+exec, provides FFI wrappers. MC stencils are compiled by gcc at prebuild time. |
-| `lua/lalin/residual_mc_intern_set.lua` | Intern set for MC stencils — deduplicates by canonical content hash, registry of reusable blobs. |
-| `lua/lalin/residual_bc.lua` | BC bank platform — runtime target detection, target matching, bank identity. |
-| `lua/lalin/residual_luatrace.lua` | **BC (bytecode) path** — LuaTrace trace-shaped stencil code, BC copy+compile residual materialization. Fallback/probe surface. |
+| `lua/lalin/native_backend.lua` | Public native backend facade; validates target/bank/manifest boundaries and runtime capabilities. |
+| `lua/lalin/native.lua` | Core `LalinNative` methods: compile request, equality, patch writes, ABI-projection calls. |
+| `lua/lalin/native_mc.lua` | Imports embedded template banks, selects copy plans, lays out copied code/constants, applies relocations and patches, and installs executable memory. |
+| `lua/lalin/native_object.lua` | Internal ELF64/x64 object parser used by the offline bank generator/verifier. |
+| `lua/lalin/native_template_sources.lua` | ASDL leaf-owned C-stencil source generation from support domains and manifests. |
+| `lua/lalin/native_template_support.lua` | Constructors/helpers for native support domains, manifests, generators, signatures, and ABI projections. |
+| `lua/lalin/native_code_methods.lua` | Native lowering methods owned by `LalinCode` leaves. |
+| `lua/lalin/native_kernel_methods.lua` | Native lowering methods owned by `LalinKernel` leaves. |
+| `lua/lalin/native_stencil_methods.lua` | Native lowering methods owned by `LalinStencil` leaves. |
 
 ### C Backend
 
@@ -324,7 +314,7 @@ ASDL first; nullary variants also receive methods directly with normal
 | `lua/lalin/lower_to_c.lua` | Lowers `LalinCode` + lower plan to C IR. |
 | `lua/lalin/c_validate.lua` | Validates C IR invariants. |
 | `lua/lalin/c_helpers.lua` | C helper function library for stencil operations. |
-| `lua/lalin/c_tcc.lua` | libtcc (TinyCC) integration for in-process C JIT compilation of residual glue wrappers. Not used for stencil compilation. |
+| `lua/lalin/c_tcc.lua` | Legacy in-process C tooling boundary; not part of runtime native copy-patch compilation. |
 | `lua/lalin/c_abi.lua` | C ABI classification — how types are passed/returned. |
 | `lua/lalin/c_coverage.lua` | Coverage tracking — marks unimplemented C backend constructs. |
 
@@ -349,7 +339,7 @@ ASDL first; nullary variants also receive methods directly with normal
 |------|------|
 | `lua/lalin/back_program.lua` | Back IR program construction utilities. |
 | `lua/lalin/back_inspect.lua` | Inspection/debug tools for back IR. |
-| `lua/lalin/back_command_binary.lua` | External compiler invocation (TCC, GCC). |
+| `lua/lalin/back_command_binary.lua` | External compiler invocation for explicit offline/AOT tooling; not used by runtime native copy-patch compilation. |
 | `lua/lalin/back_provenance.lua` | Provenance tracking for back IR values. |
 | `lua/lalin/back_target_model.lua` | Target model — CPU features, ABI, capabilities. |
 | `lua/lalin/back_validate.lua` | Back IR validation. |
@@ -384,8 +374,8 @@ ASDL first; nullary variants also receive methods directly with normal
 
 | File | Role |
 |------|------|
-| `tools/gen_lalin_mc_bank.lua` | Prebuilds the embedded MC stencil bank. Generates all stencil artifacts from the intern set, compiles them via `gcc -O3 -march=native`, extracts binary blobs, and emits `lalin_embedded_mc_bank.c`/`.h`. |
-| `tools/gen_lalin_module_bank.lua` | Prebuilds the LuaJIT BC bank. Dumps all required `.lua` source files to bytecode and emits C byte-array sources for embedding. |
+| `tools/gen_lalin_mc_bank.lua` | Offline native template-bank generator. Consumes a `NativeTemplateBankRequest`/manifest, compiles generated C stencils ahead of time, verifies object facts, and emits `lalin_native_template_bank.c`/`.h`/`.lua`. |
+| `tools/gen_lalin_module_bank.lua` | Prebuilds explicit LuaJIT bytecode support. Dumps required `.lua` source files to bytecode and emits C byte-array sources for embedding. |
 
 ### Other
 
@@ -433,7 +423,7 @@ the ASDL types for that domain:
 | `schedule.lua` | KernelSchedule, ScheduleKind, ScheduleModulePlan |
 | `lower.lua` | LowerFragment, LowerStrategy, LowerModulePlan |
 | `exec.lua` | ExecFragment, ExecFragmentKind, ExecModulePlan |
-| `residual.lua` | ResidualFunctionPlan, stencil patch-template families/coordinates, patch plans, C residual units |
+| `native.lua` | NativeTemplateBankRequest/Manifest, template sources, object facts, copy plans, patch coordinates, ABI projections |
 | `back.lua` | BackTargetModel, BackFunc, BackBlock, BackInst, BackProgram |
 | `c.lua` | CBackendUnit, CBackendFunc, CBackendType, CBackendStmt |
 | `c_ast.lua` | C AST node types |
@@ -452,107 +442,63 @@ the ASDL types for that domain:
 
 ---
 
-## Native Residual Direction
+## Native Copy-Patch Direction
 
-The target backend direction is described in
-`docs/RESIDUAL_NATIVE_ARCHITECTURE.md`: stencil instances define exact
-semantics, copy-patch expands binary patch templates for selected instances, TCC
-compiles non-stencil C residuals, and LuaJIT hosts/loads rather than silently
-executing fallback loops.
+The fast native backend is a closed C-stencil copy-patch architecture. Semantic
+owners remain the `LalinCode`, `LalinKernel`, and `LalinStencil` ASDL leaves.
+Those leaves produce `NativeTemplateSource` C stencils and template graphs; they
+do not hand semantics to artifact-side tables or runtime probes.
 
-The target decision is a typed residual function plan:
+The native bank boundary is explicit:
 
 ```text
-ResidualFunctionExactStencil
-| ResidualFunctionPatchTemplate
-| ResidualFunctionC
-| ResidualFunctionRejected
+LalinCode / LalinKernel / LalinStencil
+  -> NativeTemplateSourceManifest + NativeTemplateBankRequest
+  -> offline tools/gen_lalin_mc_bank.lua
+  -> NativeEmbeddedTemplateBank
+  -> runtime NativeTemplateGraph selection
+  -> copied code/constant-pool layout
+  -> typed hole, continuation, runtime-symbol, and constant relocations
+  -> installed executable native code
 ```
 
-Stencil instances remain the semantic identity. Patch-template families are a
-typed projection of those instances into binary templates with holes, not a
-looser stencil language and not a SOAC storage category. C residuals are the
-native path for code that does not squarely fit a selected stencil template.
-Rejection is explicit and typed.
+The offline generator is the only place that compiles generated C stencils or
+parses object files. It emits `target/lalin_binary/lalin_native_template_bank.c`,
+`.h`, and `.lua` for embedding/debug import. Runtime native compilation consumes
+an already-built `NativeTemplateBank`/`NativeEmbeddedTemplateBank`; it never
+invokes a compiler, linker, object dumper, shell tool, or alternate backend.
 
-The sections below describe the current materializers and C/AOT path. Some of
-that implementation still has LuaJIT-shaped names because LuaJIT remains the
-host and loader, but the architectural direction is native residual
-materialization.
+Template-bank cardinality is closed by the manifest. Program size changes how
+many template instances are copied into the executable layout, not which source
+families exist in the bank. Patch identity is node/instance-scoped so the same
+compiled template can be copied repeatedly with different frame offsets,
+constants, continuations, or runtime capabilities.
 
-## Two Copy-Patch Materialization Paths
+## Explicit LuaJIT Bytecode Mode
 
-These are the LuaJIT-hosted executable paths. Lua remains the loader and FFI
-host; hot stencil bodies are materialized as MC bank blobs or explicit bytecode
-artifacts.
+LuaJIT bytecode remains a separate non-native backend mode for debugging,
+measurement, and platforms that choose it explicitly. It is selected by the
+explicit LuaJIT/bytecode API or option and is not an implicit native recovery
+path.
 
-### MC Path (prebuilt, fast)
-
-```
-PREBUILD (Makefile / gen_lalin_mc_bank.lua):
-  stencil_intern_set (residual_mc_intern_set)
-    → enumerate all stencil operation combinations
-    → StencilC.source(artifacts) → complete C translation unit
-    → gcc -c -std=c99 -O3 -march=native -fno-builtin -fno-pic ...
-    → readelf -Wr (relocations) / -SW (sections) / -Ws (symbols)
-    → materialize each .text.<symbol> section into binary blob
-      (resolve all local relocations, no runtime fixups needed)
-    → embed as unsigned char[] arrays in
-      lalin_embedded_mc_bank.c / lalin_embedded_mc_bank.h
-
-RUNTIME / ARTIFACT EMISSION (emit_luajit_artifact):
-  selected artifacts
-    → resolve supplied/prebuilt MCStencilBank
-    → emit_mc_bank_source(bank)
-    → emit Lua source with embedded MC blobs
-    → at load: mmap() executable memory, ffi.copy() stencil bytes,
-      mprotect() RW→X, ffi.cast() to function pointers
-  Current optional step: emit_native_residuals()
-    → libtcc compiles C wrappers in-memory
-    → wrappers call installed stencils through host symbols
-    → replaces LuaJIT trace calls with direct native FFI calls
-  Target step:
-    → ResidualFunctionC emits non-stencil residual code as C
-    → TCC links residual C to exact/patched stencils
-  → load: installed native code, optionally wrapped by TCC glue
+```text
+LalinCode facts
+  -> LuaJIT IR / LuaTrace-shaped bytecode support
+  -> bytecode artifact data
+  -> loadstring/chunk/module through LuaJIT
 ```
 
-The public MC path consumes an MCStencilBank. It does not invoke `gcc` from the
-normal runtime compile path. Use `build_mc_bank` from an explicit prebuild step
-or supply an externally generated/embedded bank through `mc_bank`. Missing-bank
-or materialization failures are hard errors.
-
-**Key facts**:
-- Compiler: `gcc` (or `$CC`), default flags `-std=c99 -O3 -march=native -c`
-- Time: explicit prebuild only; runtime loads or embeds an existing bank
-- Output: binary blobs embedded in emitted Lua artifacts, or in the `lalin` host
-  binary for prebuilt banks
-- TCC role: runtime C residuals and host-symbol linking to installed stencils;
-  not stencil optimization
-
-### BC Path (explicit bytecode path)
-
-```
-Canonical stencil artifacts
-  → residual_luatrace.realize_bc_artifacts(artifacts)
-    → generate LuaTrace trace-shaped stencil tables
-    → build BC bank with artifact fingerprints
-    → emit inline Lua data with BC copy+compile residual
-  → luajit_emit embeds BC bank data
-  → load: LuaJIT compiles the emitted functions
-```
-
-No external compiler needed. The BC bank is built on the fly at runtime when
-`residual = "bc"` is selected explicitly or when default MC materialization
-falls back with a warning.
+The bytecode path may build bytecode artifacts in-process because bytecode is
+its own selected artifact form. It does not satisfy a missing native bank.
 
 ---
 
 ## C / AOT Emission Path
 
-`emit_c_artifact` is the whole-program C path. It is not another LuaJIT
-materializer. It lowers the selected typed program to C so the user can compile
-the generated artifact with `gcc` or another C compiler and get their program.
+`emit_c_artifact` is the whole-program C path. It is not the runtime native
+copy-patch path. It lowers the selected typed program to C so the user can
+compile the generated artifact with their chosen C compiler and link it into a
+program or library.
 
 Conceptually:
 
@@ -563,27 +509,26 @@ LalinTree.Module
   -> kernel/stencil selection
   -> fuse selected stencil-shaped work at C level
   -> emit C implementation + header/support
-  -> user compiles the C artifact with gcc
+  -> user compiles the C artifact
 ```
 
 This path exists for AOT/native integration:
 
 - The artifact is ordinary C source plus generated header/support pieces.
-- Selected stencil-shaped loops should become C-level fused code, so GCC sees
-  the hot loop body instead of a LuaJIT call boundary.
+- Selected stencil-shaped loops should become C-level fused code so the user's C
+  compiler sees the hot loop body directly.
 - The user owns the final compiler invocation, flags, linker inputs, and target
   ABI choices.
-- `emit_c_artifact` is the path for “compile the whole program with GCC”.
-  `residual_mc` is the path for “load a LuaJIT module that calls prebuilt GCC
-  stencil blobs”.
+- `emit_c_artifact` compiles the whole program outside the Lua-hosted runtime;
+  native copy-patch loads and patches prebuilt template-bank entries.
 
 The ownership boundary is:
 
 | Path | Host | Compiler role | Output |
 |------|------|---------------|--------|
-| `emit_c_artifact` | user/native program | compile emitted program C | C source/header/support |
-| `residual_mc` | LuaJIT | prebuild reusable stencil blobs | Lua module installing MC bank entries |
-| `residual_bc` | LuaJIT | none | Lua module with bytecode stencil bank |
+| native copy-patch | Lua host/native allocator | offline bank build only | installed native executable from `NativeTemplateBank` |
+| explicit LuaJIT bytecode | LuaJIT | none for native code | LuaJIT bytecode artifact/module |
+| `emit_c_artifact` | user/native program | user compiles emitted program C | C source/header/support |
 
 ---
 
@@ -731,7 +676,8 @@ Important boundaries:
 - Kernel facts describe recognized loop/control/dataflow structure.
 - Schedule facts describe execution policy such as vectorization and unroll.
 - Stencil plans select materializable execution descriptors.
-- LuaTrace/LuaJIT materializers build executable artifacts.
+- Native copy-patch consumes explicit template-bank artifacts; LuaJIT bytecode is
+  an explicit non-native mode.
 
 Schedules are not semantics. They may choose lanes, tails, grouping, and
 compiler/materializer policy, but they may not invent effects, stores,
@@ -741,73 +687,49 @@ reductions, alias facts, or safety conditions.
 
 ## Backend Model
 
-The backend has two materialization paths, selected by `opts.residual`:
+The default executable backend is native copy-patch and requires a matching
+`NativeTemplateBank` or `NativeEmbeddedTemplateBank`. LuaJIT bytecode is a
+separate explicit mode.
 
-| Path | Default for | Compiler needed | Build time |
-|------|-------------|-----------------|-----------|
-| `residual = "mc"` | `lalin.compile()`, `emit_luajit_artifact()` | `gcc` (or `$CC`) with `-O3 -march=native` | Explicit prebuild only |
-| `residual = "bc"` | Explicit bytecode mode | None | On the fly at runtime |
+| Path | Default for | Compiler needed at runtime | Build time |
+|------|-------------|----------------------------|-----------|
+| native copy-patch | `lalin.compile()` / `compile_native()` | None | Offline template-bank generation |
+| explicit LuaJIT bytecode | explicit `compile_luajit`/bytecode selection | None | In-process bytecode artifact construction |
 
-The two paths share the same stencil planning pipeline and differ only in
-materialization strategy.
+### Native Copy-Patch Path
 
-### MC Path (`residual_mc`)
+**Offline bank generation** (`tools/gen_lalin_mc_bank.lua`, run by `make` or an
+explicit prebuild step):
+- ASDL leaf methods generate a closed `NativeTemplateBankRequest` and
+  `NativeTemplateSourceManifest`.
+- Generated C stencils are compiled ahead of time for the requested target.
+- The internal object parser/verifier recovers typed sections, symbols,
+  relocations, hole ordinals, continuation ordinals, constant-pool references,
+  and runtime-symbol declarations.
+- The generator emits `lalin_native_template_bank.c`, `.h`, and `.lua` with the
+  manifest and compiled template facts.
 
-The MC path owns hot stencil bodies as pre-compiled native machine code.
+**Runtime native compile/install**:
+- Validate target, manifest, ABI projection, and bank identity.
+- Select matching templates for `NativeTemplateGraph` nodes.
+- Lay out copied code and constant pools.
+- Apply node-scoped patch bindings and typed relocations.
+- Install executable memory and expose the entry through its ABI projection.
 
-**Prebuild** (`tools/gen_lalin_mc_bank.lua`, run by `make`):
-- The intern set (`residual_mc_intern_set.lua`) enumerates every covered
-  stencil descriptor combination (`store_n`, `reduce_n`, `scan_n`, `scatter_reduce_n`
-  × all memory layouts × all producer shapes × scalar/vector schedule).
-- `StencilC.source()` generates a complete C translation unit with one
-  function per stencil variant.
-- `gcc -c -std=c99 -O3 -march=native` compiles to an object file.
-- `readelf` parses relocations, sections, and symbols; each `.text.<symbol>`
-  section is materialized into a self-contained binary blob with all local
-  relocations resolved.
-- The blobs are embedded as `unsigned char[]` in
-  `lalin_embedded_mc_bank.c` / `.h` and compiled into the `lalin` host binary.
+Runtime native compilation does not invoke a C compiler, object parser, object
+dumper, linker, shell command, bytecode path, or compatibility layer.
 
-**Artifact emission / runtime**:
-- The selected stencil artifacts are matched against a supplied/prebuilt MC bank.
-- The MC stencil bytes are embedded in the emitted LuaJIT artifact and installed
-  via `mmap()` + `ffi.copy()` into executable memory, then `ffi.cast()` to get
-  function pointers.
+### Explicit LuaJIT Bytecode Path
 
-### Residual JIT (TCC, optional, MC path only)
+The bytecode path is selected only by explicit non-native API/options:
 
-The residual JIT compiles thin C wrappers around installed MC bank stencils.
-It is compiled by **libtcc** (in-memory, in-process, no external process):
-
-- For each LuaJIT function that calls an MC bank stencil, a small C wrapper
-  function is generated (e.g., `int32_t wrapper(void *xs, int32_t start, int32_t stop) { ... }`).
-- libtcc compiles all wrappers as a single in-memory translation unit.
-- The resulting symbols replace the original LuaJIT trace calls with direct
-  native FFI calls at coarse function/stencil boundaries.
-- This is optional and skipped if libtcc is unavailable.
-- The residual must not become an element-by-element FFI strategy.
-
-### BC Path (`residual_bc`)
-
-The BC path is the explicit bytecode semantic path and probe surface:
-
-- LuaTrace lowering emits trusted LuaJIT-shaped functions from typed stencil
+- LuaTrace/LuaJIT lowering emits trusted LuaJIT-shaped functions from typed
   plans.
-- The BC bank stores exact compiled prototypes with artifact fingerprints.
-- Materialization loads the selected bytecode entry without bytecode holes.
-- No external compiler needed — the BC bank is built on the fly at runtime.
-- `lalin.compile()` defaults to MC. This path is used only when selected with
-  `residual = "bc"`.
+- Bytecode support stores compiled prototypes/artifacts with typed identity.
+- Materialization loads the selected bytecode artifact through LuaJIT.
+- It does not satisfy a missing native template bank.
 
 ### Ground rules
-
-Artifact emission is plan → selected stencil artifacts → supplied MC bank →
-optional residual glue. If the MC bank is missing or materialization fails,
-default materialization fails. The explicit `residual = "bc"` path may build a
-local bytecode bank because
-BC is the semantic artifact itself.
-
-The backend must consume semantic facts honestly:
 
 The backend must consume semantic facts honestly:
 
@@ -828,8 +750,8 @@ ASDL, the schema is incomplete and must be fixed before lowering is extended.
 The C path is an optional projection and measurement tool. It is useful for:
 
 - checking semantic equivalence against a simple generated target
-- generating native MC banks ahead of time
-- comparing LuaJIT and C compiler performance
+- generating native template banks ahead of time
+- comparing explicit LuaJIT bytecode and C compiler performance
 - making target ABI decisions explicit
 
 It is not the main authoring runtime.
