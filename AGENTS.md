@@ -242,7 +242,9 @@ end
 
 ### Builder API — Lua/LLBL DSL (macros, generators)
 
-Use the Lua DSL for programmatic construction:
+Use the Lua DSL for programmatic construction. The default `lalin.compile` path
+is native copy-patch and requires a supplied native template bank, so examples
+that should run without a bank must select explicit LuaJIT bytecode mode:
 
 ```lua
 local lalin = require("lalin")
@@ -252,7 +254,7 @@ local add = lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
   lln.ret (a + b),
 }
 
-local module = lalin.compile("demo", { add })
+local module = lalin.compile("demo", { add }, { bytecode = true })
 print(module.add(3, 4)) -- 7
 ```
 
@@ -285,9 +287,14 @@ luajit tests/run.lua llpvm
 Useful focused checks:
 
 ```sh
-luajit tests/code_ir/test_copy_patch_bc.lua
+luajit tests/code_ir/test_native_template_sources.lua
+luajit tests/code_ir/test_native_bank_generator.lua
+luajit tests/code_ir/test_native_mc_import.lua
+luajit tests/code_ir/test_native_code_graph_scalar.lua
+luajit tests/code_ir/test_native_code_control.lua
+luajit tests/code_ir/test_native_kernel_contracts.lua
+luajit tests/code_ir/test_native_stencil_contracts.lua
 luajit tests/code_ir/test_luajit_backend_bc.lua
-luajit tests/code_ir/test_copy_patch_luatrace.lua
 luajit tests/compiler_process/test_compiler_driver.lua
 ```
 
